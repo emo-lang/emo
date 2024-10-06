@@ -44,6 +44,31 @@ func (rs *ReturnStatement) String() string {
 	return out.String()
 }
 
+type ImportStatement struct {
+	Token token.Token // the 'import' token
+	Name  Expression
+}
+
+func (is *ImportStatement) statementNode() {}
+func (is *ImportStatement) TokenLiteral() string {
+	return is.Token.Literal
+}
+
+func (is *ImportStatement) String() string {
+	var out bytes.Buffer
+
+	out.WriteString("import ")
+	if is.Name != nil {
+		out.WriteString("\"")
+		out.WriteString(is.Name.String())
+		out.WriteString("\"")
+	}
+
+	out.WriteString(";")
+
+	return out.String()
+}
+
 type Boolean struct {
 	Token token.Token
 	Value bool

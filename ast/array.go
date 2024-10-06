@@ -51,3 +51,21 @@ func (ie *IndexExpression) String() string {
 
 	return out.String()
 }
+
+type DotExpression struct {
+	Token token.Token // The . token
+	Left  Expression
+	Right Expression
+}
+
+func (de *DotExpression) expressionNode()      {}
+func (de *DotExpression) TokenLiteral() string { return de.Token.Literal }
+func (de *DotExpression) String() string {
+	var out bytes.Buffer
+
+	out.WriteString(de.Left.String())
+	out.WriteString(".")
+	out.WriteString(de.Right.String())
+
+	return out.String()
+}

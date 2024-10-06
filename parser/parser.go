@@ -19,6 +19,7 @@ const (
 	PRIFIX      // -X or !X
 	CALL        // myFunction(X)
 	INDEX       // array[index]
+	DOT         // object.property
 )
 
 type (
@@ -37,6 +38,7 @@ var precedences = map[token.TokenType]int{
 	token.ASTERISK: PRODUCT,
 	token.LPAREN:   CALL,
 	token.LBRACKET: INDEX,
+	token.DOT:      DOT,
 }
 
 type Parser struct {
@@ -101,6 +103,7 @@ func New(l *lexer.Lexer) *Parser {
 
 	p.registerInfix(token.LPAREN, p.parseCallExpression)
 	p.registerInfix(token.LBRACKET, p.parseIndexExpression)
+	p.registerInfix(token.DOT, p.parseDotExpression)
 
 	p.registerPrefix(token.TRUE, p.parseBoolean)
 	p.registerPrefix(token.FALSE, p.parseBoolean)
@@ -161,6 +164,19 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 
 }
 
+func (p *Parser) parseDotExpression(left ast.Expression) ast.Expression {
+	exp := &ast.DotExpression{Token: p.curToken, Left: left}
+	p.nextToken()
+	exp.Right = p.parseExpression(LOWEST)
+
+	// if !p.expectPeek(token.RBRACKET) {
+	// 	return nil
+	// }
+
+	return exp
+
+}
+
 func (p *Parser) parseArrayLiteral() ast.Expression {
 	array := &ast.ArrayLiteral{Token: p.curToken}
 	array.Elements = p.parseExpressionList(token.RBRACKET)
@@ -189,6 +205,21 @@ func (p *Parser) parseExpressionList(end token.TokenType) []ast.Expression {
 	}
 
 	return list
+}
+
+func (p *Parser) parseImportStatement() *ast.ImportStatement {
+	stmt := &ast.ImportStatement{Token: p.curToken}
+
+	p.nextToken()
+
+	stmt.Name = p.parseExpression(LOWEST)
+
+	// TODO: replace semicolon with newline
+	// if p.peekTokenIs(token.SEMICOLON) {
+	// 	p.nextToken()
+	// }
+
+	return stmt
 }
 
 func (p *Parser) parseStringLiteral() ast.Expression {
@@ -401,6 +432,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseLetStatement()
 	case token.RETURN:
 		return p.parseReturnStatement()
+	case token.IMPORT:
+		return p.parseImportStatement()
 	default:
 		return p.parseExpressionStatement()
 	}

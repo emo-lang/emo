@@ -35,7 +35,7 @@ var builtins = map[string]*object.Builtin{
 				return arr.Elements[0]
 			}
 
-			return NULL
+			return NIL
 		},
 	},
 
@@ -56,7 +56,7 @@ var builtins = map[string]*object.Builtin{
 				return arr.Elements[length-1]
 			}
 
-			return NULL
+			return NIL
 		},
 	},
 
@@ -79,7 +79,7 @@ var builtins = map[string]*object.Builtin{
 				return &object.Array{Elements: newElements}
 			}
 
-			return NULL
+			return NIL
 		},
 	},
 
@@ -105,12 +105,12 @@ var builtins = map[string]*object.Builtin{
 		},
 	},
 
-	"puts": {
+	"println": {
 		Fn: func(args ...object.Object) object.Object {
 			for _, arg := range args {
 				println(arg.Inspect())
 			}
-			return NULL
+			return NIL
 		},
 	},
 }

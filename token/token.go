@@ -42,6 +42,7 @@ const (
 
 	ARROW = "->"
 
+	IMPORT   = "IMPORT"
 	FUNCTION = "FUNCTION"
 	LET      = "LET"
 	IF       = "IF"
@@ -52,7 +53,8 @@ const (
 )
 
 var keywords = map[string]TokenType{
-	"fn":     FUNCTION,
+	"import": IMPORT,
+	"func":   FUNCTION,
 	"let":    LET,
 	"if":     IF,
 	"else":   ELSE,

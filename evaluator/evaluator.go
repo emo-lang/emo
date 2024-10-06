@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	NULL  = &object.Null{}
+	NIL   = &object.Nil{}
 	TRUE  = &object.Boolean{Value: true}
 	FALSE = &object.Boolean{Value: false}
 )
@@ -96,6 +96,13 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 
 		return applyFunction(function, args)
 
+	case *ast.DotExpression:
+		// pkg := Eval(node.Left, env)
+		// fmt.Println("calling dot expression of pkg: ", pkg.Inspect())
+		fn := Eval(node.Right, env)
+
+		return fn
+		// fmt.Println("calling dot expression of fn: ", fn.Inspect())
 	case *ast.ReturnStatement:
 		val := Eval(node.ReturnValue, env)
 		if isError(val) {
@@ -103,6 +110,11 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		}
 
 		return &object.ReturnValue{Value: val}
+	case *ast.ImportStatement:
+		val := Eval(node.Name, env)
+		// fmt.Printf("Importing: '%s'\n", val.Inspect())
+
+		env.Set(val.Inspect(), val)
 	}
 
 	return nil
@@ -155,7 +167,7 @@ func evalHashIndexExpression(hash, index object.Object) object.Object {
 
 	pair, ok := hashObject.Pairs[key.HashKey()]
 	if !ok {
-		return NULL
+		return NIL
 	}
 
 	return pair.Value
@@ -167,7 +179,7 @@ func evalArrayIndexExpression(left, index object.Object) object.Object {
 	max := int64(len(array.Elements) - 1)
 
 	if idx < 0 || idx > max {
-		return NULL
+		return NIL
 	}
 
 	return array.Elements[idx]
@@ -247,13 +259,13 @@ func evalIfExpression(ie *ast.IfExpression, env *object.Environment) object.Obje
 	} else if ie.Alternative != nil {
 		return Eval(ie.Alternative, env)
 	} else {
-		return NULL
+		return NIL
 	}
 }
 
 func isTruthy(obj object.Object) bool {
 	switch obj {
-	case NULL:
+	case NIL:
 		return false
 	case TRUE:
 		return true
@@ -343,7 +355,7 @@ func evalBangOperatorExpression(right object.Object) object.Object {
 		return FALSE
 	case FALSE:
 		return TRUE
-	case NULL:
+	case NIL:
 		return TRUE
 	default:
 		return FALSE

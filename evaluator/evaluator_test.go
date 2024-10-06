@@ -153,14 +153,14 @@ func TestIfElseExpressions(t *testing.T) {
 		if ok {
 			testIntegerObject(t, evaluated, int64(integer))
 		} else {
-			testNullObject(t, evaluated)
+			testNilObject(t, evaluated)
 		}
 	}
 }
 
-func testNullObject(t *testing.T, obj object.Object) bool {
-	if obj != NULL {
-		t.Errorf("object is not NULL. got=%T (%+v)", obj, obj)
+func testNilObject(t *testing.T, obj object.Object) bool {
+	if obj != NIL {
+		t.Errorf("object is not NIL. got=%T (%+v)", obj, obj)
 		return false
 	}
 	return true
