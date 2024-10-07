@@ -12,18 +12,43 @@ type LetStatement struct {
 	Value Expression
 }
 
-func (ls *LetStatement) statementNode()       {}
-func (ls *LetStatement) TokenLiteral() string { return ls.Token.Literal }
+func (vs *LetStatement) statementNode()       {}
+func (vs *LetStatement) TokenLiteral() string { return vs.Token.Literal }
 
-func (ls *LetStatement) String() string {
+func (vs *LetStatement) String() string {
 	var out bytes.Buffer
 
-	out.WriteString(ls.TokenLiteral() + " ")
-	out.WriteString(ls.Name.String())
+	out.WriteString(vs.TokenLiteral() + " ")
+	out.WriteString(vs.Name.String())
 	out.WriteString(" = ")
 
-	if ls.Value != nil {
-		out.WriteString(ls.Value.String())
+	if vs.Value != nil {
+		out.WriteString(vs.Value.String())
+	}
+
+	out.WriteString(";")
+
+	return out.String()
+}
+
+type VarStatement struct {
+	Token token.Token // the token.LET token
+	Name  *Identifier
+	Value Expression
+}
+
+func (vs *VarStatement) statementNode()       {}
+func (vs *VarStatement) TokenLiteral() string { return vs.Token.Literal }
+
+func (vs *VarStatement) String() string {
+	var out bytes.Buffer
+
+	out.WriteString(vs.TokenLiteral() + " ")
+	out.WriteString(vs.Name.String())
+	out.WriteString(" = ")
+
+	if vs.Value != nil {
+		out.WriteString(vs.Value.String())
 	}
 
 	out.WriteString(";")

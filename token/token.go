@@ -45,6 +45,7 @@ const (
 	IMPORT   = "IMPORT"
 	FUNCTION = "FUNCTION"
 	LET      = "LET"
+	VAR      = "VAR"
 	IF       = "IF"
 	ELSE     = "ELSE"
 	RETURN   = "RETURN"
@@ -56,6 +57,7 @@ var keywords = map[string]TokenType{
 	"import": IMPORT,
 	"func":   FUNCTION,
 	"let":    LET,
+	"var":    VAR,
 	"if":     IF,
 	"else":   ELSE,
 	"return": RETURN,
