@@ -1,0 +1,5 @@
+import "io"
+
+let x = 10
+
+io.println(x)

@@ -35,8 +35,5 @@ func main() {
 
 	env := object.NewEnvironment()
 
-	evaluated := evaluator.Eval(program, env)
-	if evaluated != nil {
-		fmt.Println(evaluated.Inspect())
-	}
+	evaluator.Eval(program, env)
 }
