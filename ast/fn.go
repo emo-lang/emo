@@ -8,29 +8,62 @@ import (
 )
 
 type FunctionLiteral struct {
-	Token      token.Token // the 'fn' token
-	Parameters []*Identifier
-	Body       *BlockStatement
+	Token       token.Token // the 'func' token
+	Parameters  []*Identifier
+	ReturnTypes []*Identifier
+	Body        *BlockStatement
 }
 
-func (fl *FunctionLiteral) expressionNode() {}
-func (fl *FunctionLiteral) TokenLiteral() string {
-	return fl.Token.Literal
+func (fd *FunctionLiteral) expressionNode() {}
+func (fd *FunctionLiteral) TokenLiteral() string {
+	return fd.Token.Literal
 }
 
-func (fl *FunctionLiteral) String() string {
+func (fd *FunctionLiteral) String() string {
 	var out bytes.Buffer
 
 	params := []string{}
-	for _, p := range fl.Parameters {
+	for _, p := range fd.Parameters {
 		params = append(params, p.String())
 	}
 
-	out.WriteString(fl.TokenLiteral())
+	out.WriteString(fd.TokenLiteral())
 	out.WriteString("(")
 	out.WriteString(strings.Join(params, ", "))
 	out.WriteString(") ")
-	out.WriteString(fl.Body.String())
+	out.WriteString(fd.Body.String())
+
+	return out.String()
+}
+
+type FunctionDefinition struct {
+	Token       token.Token // the 'func' token
+	Name        *Identifier
+	Parameters  []*Identifier
+	ReturnTypes []*Identifier
+	Body        *BlockStatement
+}
+
+func (fd *FunctionDefinition) expressionNode() {}
+func (fd *FunctionDefinition) TokenLiteral() string {
+	return fd.Token.Literal
+}
+
+func (fd *FunctionDefinition) String() string {
+	var out bytes.Buffer
+
+	params := []string{}
+	for _, p := range fd.Parameters {
+		params = append(params, p.String())
+	}
+
+	out.WriteString(fd.TokenLiteral())
+	out.WriteString(" ")
+	out.WriteString(fd.Name.String())
+	out.WriteString("(")
+	out.WriteString(strings.Join(params, ", "))
+	out.WriteString(") ")
+	out.WriteString(fd.Body.String())
 
 	return out.String()
 }

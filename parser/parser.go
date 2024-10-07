@@ -99,7 +99,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(token.LBRACE, p.parseHashLiteral)
 
 	p.registerPrefix(token.IF, p.parseIfExpression)
-	p.registerPrefix(token.FUNCTION, p.parseFunctionLiteral)
+	p.registerPrefix(token.FUNCTION, p.parseFunctionExpression)
 
 	p.infixParseFns = make(map[token.TokenType]infixParseFn)
 	p.registerInfix(token.PLUS, p.parseInfixExpression)
@@ -214,6 +214,50 @@ func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	return exp
 }
 
+// parse the following code:
+//
+// 1. func add(a: Int, b: Int) -> Int { return a + b }
+// 2. let fx = func(a: Int, b: Int) -> Int { return a + b }
+// 3. func add(a: Int, b: Int) -> (Int, String) { return a + b, "ok" }
+func (p *Parser) parseFunctionExpression() ast.Expression {
+	if p.peekTokenIs(token.IDENT) {
+		return p.parseFunctionDefinition()
+	} else {
+		return p.parseFunctionLiteral()
+	}
+}
+
+func (p *Parser) parseFunctionDefinition() ast.Expression {
+	fn := &ast.FunctionDefinition{Token: p.curToken}
+
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+
+	fn.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	if !p.expectPeek(token.LPAREN) {
+		return nil
+	}
+
+	fn.Parameters = p.parseFunctionParameters()
+
+	// parse return type
+	if !p.expectPeek(token.ARROW) {
+		return nil
+	}
+
+	fn.ReturnTypes = p.parseReturnTypes()
+
+	if !p.expectPeek(token.LBRACE) {
+		return nil
+	}
+
+	fn.Body = p.parseBlockStatement()
+
+	return fn
+}
+
 func (p *Parser) parseFunctionLiteral() ast.Expression {
 	lit := &ast.FunctionLiteral{Token: p.curToken}
 
@@ -222,6 +266,13 @@ func (p *Parser) parseFunctionLiteral() ast.Expression {
 	}
 
 	lit.Parameters = p.parseFunctionParameters()
+
+	// parse return type
+	if !p.expectPeek(token.ARROW) {
+		return nil
+	}
+
+	lit.ReturnTypes = p.parseReturnTypes()
 
 	if !p.expectPeek(token.LBRACE) {
 		return nil
@@ -242,14 +293,16 @@ func (p *Parser) parseFunctionParameters() []*ast.Identifier {
 
 	p.nextToken()
 
-	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	ident := p.parseParameter()
 	identifiers = append(identifiers, ident)
 
+	// fmt.Println("current token after parse one params: ", p.curToken)
+	// fmt.Println("current token after parse one params, peek token: ", p.peekToken)
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
 		p.nextToken()
 
-		ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		ident := p.parseParameter()
 		identifiers = append(identifiers, ident)
 	}
 
@@ -260,19 +313,59 @@ func (p *Parser) parseFunctionParameters() []*ast.Identifier {
 	return identifiers
 }
 
+func (p *Parser) parseParameter() *ast.Identifier {
+	// fmt.Println("parse one parameter: ", p.curToken)
+
+	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+
+	// skip: `:`
+	p.nextToken()
+
+	ident.DataType = p.curToken.Literal
+
+	return ident
+}
+
+func (p *Parser) parseReturnTypes() []*ast.Identifier {
+	identifiers := []*ast.Identifier{}
+
+	// skip: `->`
+	p.nextToken()
+
+	if p.curTokenIs(token.LPAREN) {
+		// parsing: (Foo, Bar)
+		p.nextToken()
+
+		for !p.peekTokenIs(token.RPAREN) {
+			p.nextToken()
+
+			ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+			identifiers = append(identifiers, ident)
+
+			if p.peekTokenIs(token.COMMA) {
+				p.nextToken()
+			}
+		}
+
+		return identifiers
+	}
+
+	// if not starting with `(`, then it should be a single type
+	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	identifiers = append(identifiers, ident)
+
+	return identifiers
+}
+
 func (p *Parser) parseIfExpression() ast.Expression {
 	expression := ast.IfExpression{Token: p.curToken}
 
-	if !p.expectPeek(token.LPAREN) {
-		return nil
-	}
-
 	p.nextToken()
 	expression.Condition = p.parseExpression(LOWEST)
-
-	if !p.expectPeek(token.RPAREN) {
-		return nil
-	}
 
 	if !p.expectPeek(token.LBRACE) {
 		return nil
@@ -301,9 +394,10 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 
 	for !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
 		stmt := p.parseStatement()
-		// if stmt != nil {
-		block.Statements = append(block.Statements, stmt)
-		// }
+		if stmt != nil {
+			block.Statements = append(block.Statements, stmt)
+		}
+
 		p.nextToken()
 	}
 
