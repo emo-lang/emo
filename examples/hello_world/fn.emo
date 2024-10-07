@@ -1,7 +1,0 @@
-import "io"
-
-func sum(a: Int, b: Int) -> Int {
-  return a + b
-}
-
-io.println(sum(10, 20))

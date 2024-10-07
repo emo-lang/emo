@@ -1,10 +1,10 @@
-import "io"
-
 func greet(name: String, age: Int) {
   if _tooOld?(age) {
-    io.println("you are too old to find a job.")
+    print("Oh, ", name, "! ")
+    println("you are too old to find a job.")
   } else {
-    io.println("you are young.")
+    print("Good morning, ", name)
+    println()
   }
 }
 
@@ -20,4 +20,7 @@ func _tooOld?(age: Int) -> Bool {
   return _gt?(age, 35)
 }
 
-greet("David", _age())
+let name = "David"
+var full_name = name + " Lee"
+
+greet(full_name, _age())
