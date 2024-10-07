@@ -242,12 +242,16 @@ func (p *Parser) parseFunctionDefinition() ast.Expression {
 
 	fn.Parameters = p.parseFunctionParameters()
 
+	// fmt.Printf("[parse function definition] name = %s, current token: %v; peek token: %v;\n", fn.Name, p.curToken, p.peekToken)
+
 	// parse return type
-	if !p.expectPeek(token.ARROW) {
-		return nil
+	if p.peekTokenIs(token.ARROW) {
+		fn.ReturnTypes = p.parseReturnTypes()
+	} else {
+		fn.ReturnTypes = []*ast.Identifier{}
 	}
 
-	fn.ReturnTypes = p.parseReturnTypes()
+	// fmt.Printf("---> (after parse return type) name = %s, current token: %v; peek token: %v;\n", fn.Name, p.curToken, p.peekToken)
 
 	if !p.expectPeek(token.LBRACE) {
 		return nil
@@ -267,12 +271,14 @@ func (p *Parser) parseFunctionLiteral() ast.Expression {
 
 	lit.Parameters = p.parseFunctionParameters()
 
-	// parse return type
-	if !p.expectPeek(token.ARROW) {
-		return nil
-	}
+	fmt.Printf("[parse function literal] current token: %v; peek token: %v;\n", p.curToken, p.peekToken)
 
-	lit.ReturnTypes = p.parseReturnTypes()
+	// parse return type
+	if p.peekTokenIs(token.ARROW) {
+		lit.ReturnTypes = p.parseReturnTypes()
+	} else {
+		lit.ReturnTypes = []*ast.Identifier{}
+	}
 
 	if !p.expectPeek(token.LBRACE) {
 		return nil
@@ -331,6 +337,8 @@ func (p *Parser) parseParameter() *ast.Identifier {
 }
 
 func (p *Parser) parseReturnTypes() []*ast.Identifier {
+	// fmt.Println("parse return types...")
+
 	identifiers := []*ast.Identifier{}
 
 	// skip: `->`
@@ -357,6 +365,8 @@ func (p *Parser) parseReturnTypes() []*ast.Identifier {
 	// if not starting with `(`, then it should be a single type
 	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 	identifiers = append(identifiers, ident)
+
+	p.nextToken()
 
 	return identifiers
 }
@@ -476,8 +486,8 @@ func (p *Parser) Errors() []string {
 }
 
 func (p *Parser) peekError(t token.TokenType) {
-	msg := fmt.Sprintf("expected next token to be %s, got %s instead",
-		t, p.peekToken.Type)
+	msg := fmt.Sprintf("expected next token to be %s, got %+v instead",
+		t, p.peekToken)
 
 	p.errors = append(p.errors, msg)
 }

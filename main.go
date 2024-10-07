@@ -29,7 +29,9 @@ func main() {
 	program := p.ParseProgram()
 
 	if len(p.Errors()) != 0 {
-		fmt.Println(p.Errors())
+		for _, msg := range p.Errors() {
+			fmt.Printf("Err: %s\n", msg)
+		}
 		os.Exit(1)
 	}
 
