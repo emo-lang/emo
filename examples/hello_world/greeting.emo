@@ -8,19 +8,21 @@ func greet(name: String, age: Int) {
   }
 }
 
-func _age() -> Int {
-  return 42
-}
-
-func _gt?(a: Int, b: Int) -> Bool {
-  return a > b
-}
-
 func _tooOld?(age: Int) -> Bool {
   return _gt?(age, 35)
 }
 
+func _gt?(a: Int, b: Int) -> Bool { // Swift
+  return a > b
+}
+
+func age() -> Int {
+  return 22
+}
+
+let age = func() -> Int { return 22 }
+
 let name = "David"
 var full_name = name + " Lee"
 
-greet(full_name, _age())
+greet(full_name, age())

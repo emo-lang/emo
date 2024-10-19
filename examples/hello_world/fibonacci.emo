@@ -1,0 +1,14 @@
+func fibo(n: Int) -> Int {
+  if n == 0 {
+    return 0
+  }
+
+  if n == 1 {
+    return 1
+  }
+
+  return fibo(n-1) + fibo(n-2)
+}
+
+print("Fibo(13) = ", fibo(20))
+println()
