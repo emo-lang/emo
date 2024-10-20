@@ -113,8 +113,10 @@ var builtins = map[string]*object.Builtin{
 			}
 
 			for _, arg := range args {
-				println(arg.Inspect())
+				print(arg.Inspect())
 			}
+
+			println()
 
 			return NIL
 		},
