@@ -1,0 +1,38 @@
+struct Person {
+	name: String
+	age: Int
+	role: Role
+
+	let maxAge = 35
+
+	func tooOld?() -> Bool {
+		return self.age > maxAge
+	}
+
+	func becomeAdmin() {
+		self.role = Role.admin
+	}
+
+	func canDeletePost?() -> Bool {
+		return self.role == Role.admin
+	}
+}
+
+enum Role {
+	admin
+	normal
+}
+
+let person = new(Person, {name: "David Lee", age: 33, role: Role.normal})
+
+if person.tooOld?() {
+	println("You're too old to find a job")
+} else {
+	println("Welcome, ${person.name}")
+
+	person.becomeAdmin()
+
+	if !person.canDeletePost?() {
+		panic("become admin failed")
+	}
+}

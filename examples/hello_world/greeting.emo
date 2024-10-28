@@ -1,28 +1,23 @@
 func greet(name: String, age: Int) {
-  if _tooOld?(age) {
-    print("Oh, ", name, "! ")
-    println("you are too old to find a job.")
+  if too_old?(age) {
+    println("Oh, ", name, "! ", "you are too old to find a job.")
   } else {
-    print("Good morning, ", name)
-    println()
+    println("Good morning, ", name)
   }
 }
 
-func _tooOld?(age: Int) -> Bool {
-  return _gt?(age, 35)
+func too_old?(age: Int) -> Bool {
+  return gt?(age, MAX_AGE)
 }
 
-func _gt?(a: Int, b: Int) -> Bool { // Swift
+func gt?(a: Int, b: Int) -> Bool {
   return a > b
 }
 
-func age() -> Int {
-  return 22
-}
-
-let age = func() -> Int { return 22 }
+let age = func() -> Int { return 32 }
 
 let name = "David"
 var full_name = name + " Lee"
+def MAX_AGE = 35
 
 greet(full_name, age())
