@@ -34,6 +34,9 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseDefStatement()
 	case token.RETURN:
 		return p.parseReturnStatement()
+	case token.NEWLINE:
+		// empty line
+		return nil
 	default:
 		return p.parseExpressionStatement()
 	}

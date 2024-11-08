@@ -28,6 +28,8 @@ const (
 	SEMICOLON = ";"
 	COLON     = ":"
 
+	NEWLINE = "\n"
+
 	LPAREN   = "("
 	RPAREN   = ")"
 	LBRACE   = "{"
