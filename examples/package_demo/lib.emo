@@ -1,0 +1,24 @@
+package lib
+
+func greet(name: String, age: Int) {
+  if _tooOld?(age) {
+    print("Oh, ", name, "! ")
+    println("you are too old to find a job.")
+  } else {
+    print("Good morning, ", name)
+    println()
+  }
+}
+
+func _age() -> Int {
+  return 42
+}
+
+func _gt?(a: Int, b: Int) -> Bool {
+  return a > b
+}
+
+func _tooOld?(age: Int) -> Bool {
+  return _gt?(age, 35)
+}
+

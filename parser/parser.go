@@ -271,8 +271,6 @@ func (p *Parser) parseFunctionLiteral() ast.Expression {
 
 	lit.Parameters = p.parseFunctionParameters()
 
-	fmt.Printf("[parse function literal] current token: %v; peek token: %v;\n", p.curToken, p.peekToken)
-
 	// parse return type
 	if p.peekTokenIs(token.ARROW) {
 		lit.ReturnTypes = p.parseReturnTypes()
@@ -337,8 +335,6 @@ func (p *Parser) parseParameter() *ast.Identifier {
 }
 
 func (p *Parser) parseReturnTypes() []*ast.Identifier {
-	// fmt.Println("parse return types...")
-
 	identifiers := []*ast.Identifier{}
 
 	// skip: `->`
@@ -498,7 +494,6 @@ func (p *Parser) nextToken() {
 }
 
 func (p *Parser) parseExpression(precedence int) ast.Expression {
-	// fmt.Printf("parseExpression, current token: %+v\n", p.curToken)
 
 	prefix := p.prefixParseFns[p.curToken.Type]
 	if prefix == nil {

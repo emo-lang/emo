@@ -1,10 +1,4 @@
-import "io"
-
 func fibo(n: Int) -> Int {
-  if n < 0 {
-    return -1
-  }
-
   if n == 0 {
     return 0
   }
@@ -16,4 +10,6 @@ func fibo(n: Int) -> Int {
   return fibo(n-1) + fibo(n-2)
 }
 
-io.println(fibo(13))
+let n = 20
+
+println(fibo(n))

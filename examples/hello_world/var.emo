@@ -1,5 +1,0 @@
-import "io"
-
-var x = 42
-
-io.println(x)

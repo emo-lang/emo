@@ -1,23 +1,23 @@
-import "io"
-
 func greet(name: String, age: Int) {
-  if _tooOld?(age) {
-    io.println("you are too old to find a job.")
+  if too_old?(age) {
+    println("Oh, ", name, "! ", "you are too old to find a job.")
   } else {
-    io.println("you are young.")
+    println("Good morning, ", name)
   }
 }
 
-func _age() -> Int {
-  return 42
+func too_old?(age: Int) -> Bool {
+  return gt?(age, MAX_AGE)
 }
 
-func _gt?(a: Int, b: Int) -> Bool {
+func gt?(a: Int, b: Int) -> Bool {
   return a > b
 }
 
-func _tooOld?(age: Int) -> Bool {
-  return _gt?(age, 35)
-}
+let age = func() -> Int { return 32 }
 
-greet("David", _age())
+let name = "David"
+var full_name = name + " Lee"
+def MAX_AGE = 35
+
+greet(full_name, age())

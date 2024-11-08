@@ -32,7 +32,7 @@ func (vs *LetStatement) String() string {
 }
 
 type VarStatement struct {
-	Token token.Token // the token.LET token
+	Token token.Token // the token.VAR token
 	Name  *Identifier
 	Value Expression
 }
@@ -41,6 +41,31 @@ func (vs *VarStatement) statementNode()       {}
 func (vs *VarStatement) TokenLiteral() string { return vs.Token.Literal }
 
 func (vs *VarStatement) String() string {
+	var out bytes.Buffer
+
+	out.WriteString(vs.TokenLiteral() + " ")
+	out.WriteString(vs.Name.String())
+	out.WriteString(" = ")
+
+	if vs.Value != nil {
+		out.WriteString(vs.Value.String())
+	}
+
+	out.WriteString(";")
+
+	return out.String()
+}
+
+type DefStatement struct {
+	Token token.Token // the token.DEF token
+	Name  *Identifier
+	Value Expression
+}
+
+func (vs *DefStatement) statementNode()       {}
+func (vs *DefStatement) TokenLiteral() string { return vs.Token.Literal }
+
+func (vs *DefStatement) String() string {
 	var out bytes.Buffer
 
 	out.WriteString(vs.TokenLiteral() + " ")

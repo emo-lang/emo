@@ -19,11 +19,15 @@ func New(input string) *Lexer {
 }
 
 func (l *Lexer) readChar() {
+	// fmt.Println("l.readPosition", l.readPosition)
+	// fmt.Println("len(l.input)", len(l.input))
+
 	if l.readPosition >= len(l.input) {
 		l.ch = 0
 	} else {
 		l.ch = l.input[l.readPosition]
 	}
+
 	l.position = l.readPosition
 	l.readPosition++
 }
