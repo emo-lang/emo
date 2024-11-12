@@ -30,8 +30,6 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseLetStatement()
 	case token.VAR:
 		return p.parseVarStatement()
-	case token.DEF:
-		return p.parseDefStatement()
 	case token.RETURN:
 		return p.parseReturnStatement()
 	case token.NEWLINE:
@@ -74,26 +72,6 @@ func (p *Parser) parseLetStatement() *ast.LetStatement {
 
 func (p *Parser) parseVarStatement() *ast.VarStatement {
 	stmt := &ast.VarStatement{Token: p.curToken}
-
-	if !p.expectPeek(token.IDENT) {
-		return nil
-	}
-
-	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-
-	if !p.expectPeek(token.ASSIGN) {
-		return nil
-	}
-
-	p.nextToken()
-
-	stmt.Value = p.parseExpression(LOWEST)
-
-	return stmt
-}
-
-func (p *Parser) parseDefStatement() *ast.DefStatement {
-	stmt := &ast.DefStatement{Token: p.curToken}
 
 	if !p.expectPeek(token.IDENT) {
 		return nil

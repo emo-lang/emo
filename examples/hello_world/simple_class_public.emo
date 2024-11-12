@@ -2,8 +2,10 @@ class Person {
   var name: String
   public var age: Int
 
+  const maxAge = 35
+
   func tooOld?() {
-    return age > 35
+    return age > maxAge
   }
 
   private

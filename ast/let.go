@@ -56,31 +56,6 @@ func (vs *VarStatement) String() string {
 	return out.String()
 }
 
-type DefStatement struct {
-	Token token.Token // the token.DEF token
-	Name  *Identifier
-	Value Expression
-}
-
-func (vs *DefStatement) statementNode()       {}
-func (vs *DefStatement) TokenLiteral() string { return vs.Token.Literal }
-
-func (vs *DefStatement) String() string {
-	var out bytes.Buffer
-
-	out.WriteString(vs.TokenLiteral() + " ")
-	out.WriteString(vs.Name.String())
-	out.WriteString(" = ")
-
-	if vs.Value != nil {
-		out.WriteString(vs.Value.String())
-	}
-
-	out.WriteString(";")
-
-	return out.String()
-}
-
 type Identifier struct {
 	Token token.Token // the token.IDENT token
 	Value string
