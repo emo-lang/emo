@@ -112,14 +112,39 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 
 	case *ast.DotExpression:
 		receiver := Eval(node.Left, env)
-		fmt.Println("calling dot expression of receiver: ", receiver.Inspect())
 
-		methodName := node.Right.Value
-		fmt.Println("calling dot expression of method name: ", methodName)
+		if receiver.Type() != object.CLASS_INSTANCE_OBJ {
+			return NIL
+		}
+
+		switch receiver := receiver.(type) {
+		case *object.ClassInstance:
+			switch right := node.Right.(type) {
+			case *ast.Identifier:
+				// lookup field
+				if val, ok := receiver.Fields[right.Value]; ok {
+					return val
+				}
+
+				return NIL
+			case *ast.CallExpression:
+				// call method
+				switch fn := right.Function.(type) {
+				case *ast.Identifier:
+
+					objectEnv := object.NewEnclosedEnvironment(env)
+					objectEnv.Set("self", receiver)
+
+					if method, ok := receiver.Klass.Methods[fn.Value]; ok {
+						return applyFunction(Eval(method.Function, objectEnv), evalExpressions(right.Arguments, objectEnv))
+					}
+				}
+			}
+		}
 
 		return receiver
 	case *ast.ClassExpression:
-		// create new class
+		// define new class
 		klass := &object.Class{Name: node.Name, Fields: node.Fields, Methods: node.Methods, Env: env}
 
 		env.Set(node.Name.Value, klass)
@@ -127,10 +152,25 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return klass
 	case *ast.NewExpression:
 		// create new object from class
-		klass := Eval(node.What, env)
-		instance := &object.ClassInstance{Klass: klass.(*object.Class), Name: node.What, Env: env}
+		klass := Eval(node.What, env).(*object.Class)
+		hash := Eval(node.Data, env)
 
-		return instance
+		var objectFields = make(map[string]object.Object)
+
+		switch hash := hash.(type) {
+		case *object.Hash:
+			for key := range klass.Fields {
+				keyObj := object.String{Value: key}
+
+				if pair, ok := hash.Pairs[keyObj.HashKey()]; ok {
+					objectFields[key] = pair.Value
+				} else {
+					objectFields[key] = &object.String{Value: "<default value>"}
+				}
+			}
+		}
+
+		return &object.ClassInstance{Klass: klass, Name: node.What, Fields: objectFields, Env: env}
 	case *ast.ReturnStatement:
 		val := Eval(node.ReturnValue, env)
 		if isError(val) {

@@ -201,7 +201,7 @@ func (p *Parser) parseDotExpression(left ast.Expression) ast.Expression {
 
 		p.nextToken()
 
-		exp.Right = p.parseIdentifier().(*ast.Identifier)
+		exp.Right = p.parseExpression(LOWEST)
 
 		return exp
 	default:

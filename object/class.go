@@ -25,9 +25,10 @@ func (klass *Class) Inspect() string {
 }
 
 type ClassInstance struct {
-	Klass *Class
-	Name  *ast.Identifier
-	Env   *Environment
+	Klass  *Class
+	Name   *ast.Identifier
+	Fields map[string]Object
+	Env    *Environment
 }
 
 func (ci *ClassInstance) Type() ObjectType { return CLASS_INSTANCE_OBJ }
