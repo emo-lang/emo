@@ -10,6 +10,6 @@ class Person {
 
   private
   func olderThan?(max: Int) -> Bool {
-    return age > max
+    return self.age > max
   }
 }

@@ -84,6 +84,7 @@ func New(l *lexer.Lexer) *Parser {
 	}
 
 	p.prefixParseFns = make(map[token.TokenType]prefixParseFn)
+	p.registerPrefix(token.SELF, p.parseIdentifier)
 	p.registerPrefix(token.IDENT, p.parseIdentifier)
 	p.registerPrefix(token.INT, p.parseIntegerLiteral)
 	p.registerPrefix(token.STRING, p.parseStringLiteral)
@@ -170,7 +171,7 @@ func (p *Parser) parseDotExpression(left ast.Expression) ast.Expression {
 
 	p.nextToken()
 
-	exp.Right = p.parseExpression(LOWEST)
+	exp.Right = p.parseExpression(DOT)
 
 	return exp
 }
@@ -271,6 +272,8 @@ func (p *Parser) parseClassExpression() ast.Expression {
 			p.parseClassMethod(class, true)
 		}
 	}
+
+	fmt.Println("class methods: ", class.Methods)
 
 	return class
 }
