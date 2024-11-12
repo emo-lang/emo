@@ -26,8 +26,8 @@ func (p *Parser) parseStatement() ast.Statement {
 	switch p.curToken.Type {
 	case token.IMPORT:
 		return p.parseImportStatement()
-	case token.LET:
-		return p.parseLetStatement()
+	case token.CONST:
+		return p.parseConstStatement()
 	case token.VAR:
 		return p.parseVarStatement()
 	case token.RETURN:
@@ -50,8 +50,8 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 	return stmt
 }
 
-func (p *Parser) parseLetStatement() *ast.LetStatement {
-	stmt := &ast.LetStatement{Token: p.curToken}
+func (p *Parser) parseConstStatement() *ast.ConstStatement {
+	stmt := &ast.ConstStatement{Token: p.curToken}
 
 	if !p.expectPeek(token.IDENT) {
 		return nil

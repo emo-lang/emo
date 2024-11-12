@@ -45,7 +45,7 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalBlockStatement(node, env)
 	case *ast.IfExpression:
 		return evalIfExpression(node, env)
-	case *ast.LetStatement:
+	case *ast.ConstStatement:
 		val := Eval(node.Value, env)
 		if isError(val) {
 			return val
