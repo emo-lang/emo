@@ -65,6 +65,7 @@ const (
 	FALSE    = "FALSE"
 
 	CLASS = "CLASS"
+	NEW   = "NEW"
 	SELF  = "SELF"
 	ENUM  = "ENUM"
 
@@ -83,6 +84,7 @@ var keywords = map[string]TokenType{
 	"true":    TRUE,
 	"false":   FALSE,
 	"class":   CLASS,
+	"new":     NEW,
 	"self":    SELF,
 	"enum":    ENUM,
 	"public":  PUBLIC,

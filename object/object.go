@@ -12,16 +12,18 @@ import (
 type ObjectType string
 
 const (
-	INTEGER_OBJ      = "INTEGER"
-	BOOLEAN_OBJ      = "BOOLEAN"
-	NIL_OBJ          = "NIL"
-	RETURN_VALUE_OBJ = "RETURN_VALUE"
-	FUNCTION_OBJ     = "FUNCTION"
-	STRING_OBJ       = "STRING"
-	BUILTIN_OBJ      = "BUILTIN"
-	ARRAY_OBJ        = "ARRAY"
-	HASH_OBJ         = "HASH"
-	ERROR_OBJ        = "ERROR"
+	INTEGER_OBJ        = "INTEGER"
+	BOOLEAN_OBJ        = "BOOLEAN"
+	NIL_OBJ            = "NIL"
+	RETURN_VALUE_OBJ   = "RETURN_VALUE"
+	FUNCTION_OBJ       = "FUNCTION"
+	STRING_OBJ         = "STRING"
+	BUILTIN_OBJ        = "BUILTIN"
+	ARRAY_OBJ          = "ARRAY"
+	HASH_OBJ           = "HASH"
+	ERROR_OBJ          = "ERROR"
+	CLASS_OBJ          = "CLASS"
+	CLASS_INSTANCE_OBJ = "CLASS_INSTANCE"
 )
 
 type Object interface {

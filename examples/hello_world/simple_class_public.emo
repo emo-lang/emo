@@ -5,7 +5,15 @@ class Person {
   const maxAge = 35
 
   func tooOld?() {
-    return age > maxAge
+    return self.age > maxAge
+  }
+
+  func greeting() {
+    if self.tooOld?() {
+      println(self.name, " is too old to find a job")
+    } else {
+      println("Welcome, ", self.name)
+    }
   }
 
   private
@@ -13,3 +21,7 @@ class Person {
     return self.age > max
   }
 }
+
+const person = new(Person, {name: "David Lee", age: 33})
+
+person.greeting()

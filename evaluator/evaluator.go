@@ -111,12 +111,26 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return applyFunction(function, args)
 
 	case *ast.DotExpression:
-		// pkg := Eval(node.Left, env)
-		// fmt.Println("calling dot expression of pkg: ", pkg.Inspect())
-		fn := Eval(node.Right, env)
+		receiver := Eval(node.Left, env)
+		fmt.Println("calling dot expression of receiver: ", receiver.Inspect())
 
-		return fn
-		// fmt.Println("calling dot expression of fn: ", fn.Inspect())
+		methodName := node.Right.Value
+		fmt.Println("calling dot expression of method name: ", methodName)
+
+		return receiver
+	case *ast.ClassExpression:
+		// create new class
+		klass := &object.Class{Name: node.Name, Fields: node.Fields, Methods: node.Methods, Env: env}
+
+		env.Set(node.Name.Value, klass)
+
+		return klass
+	case *ast.NewExpression:
+		// create new object from class
+		klass := Eval(node.What, env)
+		instance := &object.ClassInstance{Klass: klass.(*object.Class), Name: node.What, Env: env}
+
+		return instance
 	case *ast.ReturnStatement:
 		val := Eval(node.ReturnValue, env)
 		if isError(val) {

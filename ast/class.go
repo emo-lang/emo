@@ -49,3 +49,18 @@ func (ce *ClassExpression) TokenLiteral() string {
 func (ce *ClassExpression) String() string {
 	return "<class " + ce.Name.String() + ">"
 }
+
+type NewExpression struct {
+	Token token.Token // the 'new' token
+	What  *Identifier
+	Data  Expression
+}
+
+func (ne *NewExpression) expressionNode() {}
+func (ne *NewExpression) TokenLiteral() string {
+	return ne.Token.Literal
+}
+
+func (ne *NewExpression) String() string {
+	return "new(" + ne.What.String() + ", " + fmt.Sprintf("%s", ne.Data) + ")"
+}

@@ -85,6 +85,8 @@ func New(l *lexer.Lexer) *Parser {
 
 	p.prefixParseFns = make(map[token.TokenType]prefixParseFn)
 	p.registerPrefix(token.SELF, p.parseIdentifier)
+	p.registerPrefix(token.NEW, p.parseNewExpression)
+
 	p.registerPrefix(token.IDENT, p.parseIdentifier)
 	p.registerPrefix(token.INT, p.parseIntegerLiteral)
 	p.registerPrefix(token.STRING, p.parseStringLiteral)
@@ -166,14 +168,46 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 
 }
 
-func (p *Parser) parseDotExpression(left ast.Expression) ast.Expression {
-	exp := &ast.DotExpression{Token: p.curToken, Left: left}
+func (p *Parser) parseNewExpression() ast.Expression {
+	exp := &ast.NewExpression{Token: p.curToken}
 
-	p.nextToken()
+	if !p.expectPeek(token.LPAREN) {
+		return nil
+	}
 
-	exp.Right = p.parseExpression(DOT)
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+
+	exp.What = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	if p.peekTokenIs(token.COMMA) {
+		p.nextToken()
+		p.nextToken()
+		exp.Data = p.parseHashLiteral()
+	}
+
+	if !p.expectPeek(token.RPAREN) {
+		// return nil
+	}
 
 	return exp
+}
+
+func (p *Parser) parseDotExpression(left ast.Expression) ast.Expression {
+	switch left := left.(type) {
+	case *ast.Identifier:
+		exp := &ast.DotExpression{Token: p.curToken, Left: left}
+
+		p.nextToken()
+
+		exp.Right = p.parseIdentifier().(*ast.Identifier)
+
+		return exp
+	default:
+		return nil
+	}
+
 }
 
 func (p *Parser) parseArrayLiteral() ast.Expression {
@@ -272,8 +306,6 @@ func (p *Parser) parseClassExpression() ast.Expression {
 			p.parseClassMethod(class, true)
 		}
 	}
-
-	fmt.Println("class methods: ", class.Methods)
 
 	return class
 }

@@ -54,8 +54,8 @@ func (ie *IndexExpression) String() string {
 
 type DotExpression struct {
 	Token token.Token // The . token
-	Left  Expression
-	Right Expression
+	Left  *Identifier
+	Right *Identifier
 }
 
 func (de *DotExpression) expressionNode()      {}
