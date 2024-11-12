@@ -82,9 +82,8 @@ func (vs *DefStatement) String() string {
 }
 
 type Identifier struct {
-	Token    token.Token // the token.IDENT token
-	DataType string
-	Value    string
+	Token token.Token // the token.IDENT token
+	Value string
 }
 
 func (i *Identifier) expressionNode()      {}

@@ -100,6 +100,7 @@ func New(l *lexer.Lexer) *Parser {
 
 	p.registerPrefix(token.IF, p.parseIfExpression)
 	p.registerPrefix(token.FUNCTION, p.parseFunctionExpression)
+	p.registerPrefix(token.CLASS, p.parseClassExpression)
 
 	p.infixParseFns = make(map[token.TokenType]infixParseFn)
 	p.registerInfix(token.PLUS, p.parseInfixExpression)
@@ -227,7 +228,102 @@ func (p *Parser) parseFunctionExpression() ast.Expression {
 	}
 }
 
-func (p *Parser) parseFunctionDefinition() ast.Expression {
+func (p *Parser) parseClassExpression() ast.Expression {
+	class := &ast.ClassExpression{Token: p.curToken}
+
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+
+	class.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	if !p.expectPeek(token.LBRACE) {
+		return nil
+	}
+
+	class.Fields = make(map[string]*ast.ClassField)
+	class.Methods = make(map[string]*ast.ClassMethod)
+
+	for !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
+		p.nextToken()
+
+		if p.curTokenIs(token.PUBLIC) || p.curTokenIs(token.PRIVATE) {
+			if p.peekTokenIs(token.NEWLINE) {
+				p.nextToken()
+			}
+
+			if p.peekTokenIs(token.FUNCTION) {
+				isPublic := p.curTokenIs(token.PUBLIC)
+				p.nextToken()
+
+				p.parseClassMethod(class, isPublic)
+			} else if p.peekTokenIs(token.VAR) {
+				isPublic := p.curTokenIs(token.PUBLIC)
+
+				p.nextToken()
+				p.parseClassField(class, isPublic)
+			}
+		}
+
+		if p.curTokenIs(token.VAR) {
+			p.parseClassField(class, false)
+		} else if p.curTokenIs(token.FUNCTION) {
+			p.parseClassMethod(class, true)
+		}
+	}
+
+	return class
+}
+
+func (p *Parser) parseClassField(class *ast.ClassExpression, isPublic bool) {
+	field := &ast.ClassField{}
+
+	if !p.expectPeek(token.IDENT) {
+		return
+	}
+
+	field.Field = p.parseTypedField()
+	field.Public = isPublic
+
+	class.Fields[field.Field.Name.Value] = field
+}
+
+func (p *Parser) parseClassMethod(class *ast.ClassExpression, isPublic bool) {
+	method := &ast.ClassMethod{}
+
+	fn := p.parseFunctionDefinition()
+
+	if fn == nil {
+		return
+	}
+
+	method.Function = fn
+	method.Public = isPublic
+
+	class.Methods[fn.Name.Value] = method
+
+	if p.curTokenIs(token.RBRACE) {
+		p.nextToken()
+	}
+}
+
+func (p *Parser) parseTypedField() *ast.TypedField {
+	field := &ast.TypedField{}
+
+	field.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+
+	p.nextToken()
+
+	field.Type = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	return field
+}
+
+func (p *Parser) parseFunctionDefinition() *ast.FunctionDefinition {
 	fn := &ast.FunctionDefinition{Token: p.curToken}
 
 	if !p.expectPeek(token.IDENT) {
@@ -241,8 +337,6 @@ func (p *Parser) parseFunctionDefinition() ast.Expression {
 	}
 
 	fn.Parameters = p.parseFunctionParameters()
-
-	// fmt.Printf("[parse function definition] name = %s, current token: %v; peek token: %v;\n", fn.Name, p.curToken, p.peekToken)
 
 	// parse return type
 	if p.peekTokenIs(token.ARROW) {
@@ -287,8 +381,8 @@ func (p *Parser) parseFunctionLiteral() ast.Expression {
 	return lit
 }
 
-func (p *Parser) parseFunctionParameters() []*ast.Identifier {
-	identifiers := []*ast.Identifier{}
+func (p *Parser) parseFunctionParameters() []*ast.TypedField {
+	identifiers := []*ast.TypedField{}
 
 	if p.peekTokenIs(token.RPAREN) {
 		p.nextToken()
@@ -297,8 +391,8 @@ func (p *Parser) parseFunctionParameters() []*ast.Identifier {
 
 	p.nextToken()
 
-	ident := p.parseParameter()
-	identifiers = append(identifiers, ident)
+	var tf = p.parseTypedField()
+	identifiers = append(identifiers, tf)
 
 	// fmt.Println("current token after parse one params: ", p.curToken)
 	// fmt.Println("current token after parse one params, peek token: ", p.peekToken)
@@ -306,7 +400,7 @@ func (p *Parser) parseFunctionParameters() []*ast.Identifier {
 		p.nextToken()
 		p.nextToken()
 
-		ident := p.parseParameter()
+		ident := p.parseTypedField()
 		identifiers = append(identifiers, ident)
 	}
 
@@ -318,18 +412,13 @@ func (p *Parser) parseFunctionParameters() []*ast.Identifier {
 }
 
 func (p *Parser) parseParameter() *ast.Identifier {
-	// fmt.Println("parse one parameter: ", p.curToken)
+	fmt.Println("parse one parameter: ", p.curToken)
 
 	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
 	if !p.expectPeek(token.COLON) {
 		return nil
 	}
-
-	// skip: `:`
-	p.nextToken()
-
-	ident.DataType = p.curToken.Literal
 
 	return ident
 }
@@ -522,6 +611,12 @@ func (p *Parser) curTokenIs(t token.TokenType) bool {
 }
 
 func (p *Parser) peekTokenIs(t token.TokenType) bool {
+	// if t == token.NEWLINE {
+	// 	fmt.Println("expected peek token to be <newline>, got: ", p.peekToken)
+	// } else {
+	// 	fmt.Println("current peek token: ", p.peekToken, "expected: ", t)
+	// }
+
 	return p.peekToken.Type == t
 }
 

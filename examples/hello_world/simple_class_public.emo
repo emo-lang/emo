@@ -1,0 +1,13 @@
+class Person {
+  var name: String
+  public var age: Int
+
+  func tooOld?() {
+    return age > 35
+  }
+
+  private
+  func olderThan?(max: Int) -> Bool {
+    return age > max
+  }
+}
