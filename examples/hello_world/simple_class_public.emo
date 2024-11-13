@@ -1,0 +1,24 @@
+class Person {
+  var name: String
+  public var age: Int
+
+  func tooOld?() {
+    return self.age > MAX_AGE
+  }
+
+  func greeting() {
+    if self.tooOld?() {
+      println(self.name, " is too old to find a job")
+    } else {
+      println("Welcome, ", self.name)
+    }
+  }
+}
+
+const MAX_AGE = 50
+const person = new(Person, {"name": "David Lee", "age": 10})
+
+person.greeting()
+
+const p2 = new(Person, {"name": "Super Large", "age": 65})
+p2.greeting()

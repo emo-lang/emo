@@ -12,16 +12,18 @@ import (
 type ObjectType string
 
 const (
-	INTEGER_OBJ      = "INTEGER"
-	BOOLEAN_OBJ      = "BOOLEAN"
-	NIL_OBJ          = "NIL"
-	RETURN_VALUE_OBJ = "RETURN_VALUE"
-	FUNCTION_OBJ     = "FUNCTION"
-	STRING_OBJ       = "STRING"
-	BUILTIN_OBJ      = "BUILTIN"
-	ARRAY_OBJ        = "ARRAY"
-	HASH_OBJ         = "HASH"
-	ERROR_OBJ        = "ERROR"
+	INTEGER_OBJ        = "INTEGER"
+	BOOLEAN_OBJ        = "BOOLEAN"
+	NIL_OBJ            = "NIL"
+	RETURN_VALUE_OBJ   = "RETURN_VALUE"
+	FUNCTION_OBJ       = "FUNCTION"
+	STRING_OBJ         = "STRING"
+	BUILTIN_OBJ        = "BUILTIN"
+	ARRAY_OBJ          = "ARRAY"
+	HASH_OBJ           = "HASH"
+	ERROR_OBJ          = "ERROR"
+	CLASS_OBJ          = "CLASS"
+	CLASS_INSTANCE_OBJ = "CLASS_INSTANCE"
 )
 
 type Object interface {
@@ -63,7 +65,7 @@ func (e *Error) Type() ObjectType { return ERROR_OBJ }
 func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
 
 type Function struct {
-	Parameters []*ast.Identifier
+	Parameters []*ast.TypedField
 	Body       *ast.BlockStatement
 	Env        *Environment
 }
@@ -101,7 +103,7 @@ type Builtin struct {
 }
 
 func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
-func (b *Builtin) Inspect() string  { return "builtin function" }
+func (b *Builtin) Inspect() string  { return "<builtin function>" }
 
 type HashKey struct {
 	Type  ObjectType

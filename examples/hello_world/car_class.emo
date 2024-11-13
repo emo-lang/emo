@@ -1,0 +1,27 @@
+class Car {
+  var direction: Direction
+
+  public
+  var speed: Int
+
+  func forward() {
+    self.direction = Direction.forward
+    self.speed += 1
+  }
+
+  private
+
+  func backward() {
+    self.direction = Direction.backward
+    self.speed -= 1
+  }
+
+  func speedTooHigh?() {
+    return self.speed > 3
+  }
+}
+
+enum Direction {
+  case forward
+  case backward
+}

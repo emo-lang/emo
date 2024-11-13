@@ -1,11 +1,3 @@
-let foo = "bar"
-let bar = "foo"
-
-
-
-
-println(foo, ",", bar, "!")
-
-
-
-
+let a = [1, 2, "3"]
+let b = {"x": a}
+println(len(b))

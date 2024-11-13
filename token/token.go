@@ -1,10 +1,20 @@
 package token
 
+import "fmt"
+
 type TokenType string
 
 type Token struct {
 	Type    TokenType
 	Literal string
+}
+
+func (t Token) String() string {
+	if t.Type == NEWLINE {
+		return "<NEWLINE>"
+	}
+
+	return fmt.Sprintf("(%+v):<%+v>", t.Type, t.Literal)
 }
 
 const (
@@ -46,27 +56,39 @@ const (
 
 	IMPORT   = "IMPORT"
 	FUNCTION = "FUNCTION"
-	LET      = "LET"
+	CONST    = "CONST"
 	VAR      = "VAR"
-	DEF      = "DEF"
 	IF       = "IF"
 	ELSE     = "ELSE"
 	RETURN   = "RETURN"
 	TRUE     = "TRUE"
 	FALSE    = "FALSE"
+
+	CLASS = "CLASS"
+	NEW   = "NEW"
+	SELF  = "SELF"
+	ENUM  = "ENUM"
+
+	PUBLIC  = "PUBLIC"
+	PRIVATE = "PRIVATE"
 )
 
 var keywords = map[string]TokenType{
-	"import": IMPORT,
-	"func":   FUNCTION,
-	"let":    LET,
-	"var":    VAR,
-	"def":    DEF,
-	"if":     IF,
-	"else":   ELSE,
-	"return": RETURN,
-	"true":   TRUE,
-	"false":  FALSE,
+	"import":  IMPORT,
+	"func":    FUNCTION,
+	"const":   CONST,
+	"var":     VAR,
+	"if":      IF,
+	"else":    ELSE,
+	"return":  RETURN,
+	"true":    TRUE,
+	"false":   FALSE,
+	"class":   CLASS,
+	"new":     NEW,
+	"self":    SELF,
+	"enum":    ENUM,
+	"public":  PUBLIC,
+	"private": PRIVATE,
 }
 
 func LookupKeyword(ident string) TokenType {

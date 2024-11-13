@@ -9,7 +9,7 @@ import (
 
 type FunctionLiteral struct {
 	Token       token.Token // the 'func' token
-	Parameters  []*Identifier
+	Parameters  []*TypedField
 	ReturnTypes []*Identifier
 	Body        *BlockStatement
 }
@@ -39,7 +39,7 @@ func (fd *FunctionLiteral) String() string {
 type FunctionDefinition struct {
 	Token       token.Token // the 'func' token
 	Name        *Identifier
-	Parameters  []*Identifier
+	Parameters  []*TypedField
 	ReturnTypes []*Identifier
 	Body        *BlockStatement
 }

@@ -267,7 +267,7 @@ if (10 > 1) {
 	}
 }
 
-func TestLetStatements(t *testing.T) {
+func TestConstStatements(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected int64

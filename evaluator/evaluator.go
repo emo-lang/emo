@@ -45,21 +45,16 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalBlockStatement(node, env)
 	case *ast.IfExpression:
 		return evalIfExpression(node, env)
-	case *ast.LetStatement:
-		val := Eval(node.Value, env)
-		if isError(val) {
-			return val
-		}
+	case *ast.ConstStatement:
+		if _, ok := env.Get(node.Name.Value); !ok {
+			val := Eval(node.Value, env)
+			if isError(val) {
+				return val
+			}
 
-		env.Set(node.Name.Value, val)
+			env.Set(node.Name.Value, val)
+		}
 	case *ast.VarStatement:
-		val := Eval(node.Value, env)
-		if isError(val) {
-			return val
-		}
-
-		env.Set(node.Name.Value, val)
-	case *ast.DefStatement:
 		val := Eval(node.Value, env)
 		if isError(val) {
 			return val
@@ -118,12 +113,73 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return applyFunction(function, args)
 
 	case *ast.DotExpression:
-		// pkg := Eval(node.Left, env)
-		// fmt.Println("calling dot expression of pkg: ", pkg.Inspect())
-		fn := Eval(node.Right, env)
+		receiver := Eval(node.Left, env)
 
-		return fn
-		// fmt.Println("calling dot expression of fn: ", fn.Inspect())
+		if receiver.Type() != object.CLASS_INSTANCE_OBJ {
+			return NIL
+		}
+
+		switch receiver := receiver.(type) {
+		case *object.ClassInstance:
+			switch right := node.Right.(type) {
+			case *ast.Identifier:
+				// lookup field
+				if val, ok := receiver.Fields[right.Value]; ok {
+					return val
+				}
+
+				// then lookup method for method call
+				objectEnv := object.NewEnclosedEnvironment(env)
+				objectEnv.Set("self", receiver)
+
+				if method, ok := receiver.Klass.Methods[right.Value]; ok {
+					return Eval(method.Function, objectEnv)
+				}
+
+				return NIL
+			case *ast.CallExpression:
+				// call method
+				switch fn := right.Function.(type) {
+				case *ast.Identifier:
+
+					objectEnv := object.NewEnclosedEnvironment(env)
+					objectEnv.Set("self", receiver)
+
+					if method, ok := receiver.Klass.Methods[fn.Value]; ok {
+						return applyFunction(Eval(method.Function, objectEnv), evalExpressions(right.Arguments, objectEnv))
+					}
+				}
+			}
+		}
+
+		return receiver
+	case *ast.ClassExpression:
+		klass := &object.Class{Name: node.Name, Fields: node.Fields, Methods: node.Methods, Env: env}
+
+		env.Set(node.Name.Value, klass)
+
+		return klass
+	case *ast.NewExpression:
+		// create new object from class
+		klass := Eval(node.What, env).(*object.Class)
+		hash := Eval(node.Data, env)
+
+		var objectFields = make(map[string]object.Object)
+
+		switch hash := hash.(type) {
+		case *object.Hash:
+			for key := range klass.Fields {
+				keyObj := object.String{Value: key}
+
+				if pair, ok := hash.Pairs[keyObj.HashKey()]; ok {
+					objectFields[key] = pair.Value
+				} else {
+					objectFields[key] = &object.String{Value: "<default value>"}
+				}
+			}
+		}
+
+		return &object.ClassInstance{Klass: klass, Name: node.What, Fields: objectFields, Env: env}
 	case *ast.ReturnStatement:
 		val := Eval(node.ReturnValue, env)
 		if isError(val) {
@@ -227,7 +283,7 @@ func extendFunctionEnv(fn *object.Function, args []object.Object) *object.Enviro
 	env := object.NewEnclosedEnvironment(fn.Env)
 
 	for paramIdx, param := range fn.Parameters {
-		env.Set(param.Value, args[paramIdx])
+		env.Set(param.Name.Value, args[paramIdx])
 	}
 
 	return env
