@@ -9,7 +9,7 @@ import (
 
 type HashLiteral struct {
 	Token token.Token // the '{' token
-	Pairs map[Expression]Expression
+	Pairs map[string]Expression
 }
 
 func (hl *HashLiteral) expressionNode()      {}
@@ -19,7 +19,7 @@ func (hl *HashLiteral) String() string {
 
 	pairs := []string{}
 	for key, value := range hl.Pairs {
-		pairs = append(pairs, key.String()+":"+value.String())
+		pairs = append(pairs, key+":"+value.String())
 	}
 
 	out.WriteString("{")

@@ -9,10 +9,10 @@ class Person {
 
 define(MAX_AGE, 35)
 
-var person = new(Person, {"name": "David Lee", "age": 36})
+var person = new(Person, {name: "David Lee", age: 32})
 
 if person.tooOld?() {
-	println("You're too old to find a job")
+	println("Sorry ", person.name, ", you're too old to find a job.")
 } else {
-	println("Welcome, ", person.name)
+	println("Welcome, ", person.name, ".")
 }

@@ -128,11 +128,11 @@ func New(l *lexer.Lexer) *Parser {
 
 func (p *Parser) parseHashLiteral() ast.Expression {
 	hash := &ast.HashLiteral{Token: p.curToken}
-	hash.Pairs = make(map[ast.Expression]ast.Expression)
+	hash.Pairs = make(map[string]ast.Expression)
 
 	for !p.peekTokenIs(token.RBRACE) {
 		p.nextToken()
-		key := p.parseExpression(LOWEST)
+		key := p.curToken.Literal
 
 		if !p.expectPeek(token.COLON) {
 			return nil
