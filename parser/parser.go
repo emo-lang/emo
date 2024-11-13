@@ -198,10 +198,15 @@ func (p *Parser) parseDotExpression(left ast.Expression) ast.Expression {
 	switch left := left.(type) {
 	case *ast.Identifier:
 		exp := &ast.DotExpression{Token: p.curToken, Left: left}
+		isSelf := (left.Value == "self")
 
 		p.nextToken()
 
-		exp.Right = p.parseExpression(LOWEST)
+		if isSelf {
+			exp.Right = p.parseExpression(CALL)
+		} else {
+			exp.Right = p.parseExpression(LOWEST)
+		}
 
 		return exp
 	default:

@@ -46,12 +46,14 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 	case *ast.IfExpression:
 		return evalIfExpression(node, env)
 	case *ast.ConstStatement:
-		val := Eval(node.Value, env)
-		if isError(val) {
-			return val
-		}
+		if _, ok := env.Get(node.Name.Value); !ok {
+			val := Eval(node.Value, env)
+			if isError(val) {
+				return val
+			}
 
-		env.Set(node.Name.Value, val)
+			env.Set(node.Name.Value, val)
+		}
 	case *ast.VarStatement:
 		val := Eval(node.Value, env)
 		if isError(val) {
@@ -126,6 +128,14 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 					return val
 				}
 
+				// then lookup method for method call
+				objectEnv := object.NewEnclosedEnvironment(env)
+				objectEnv.Set("self", receiver)
+
+				if method, ok := receiver.Klass.Methods[right.Value]; ok {
+					return Eval(method.Function, objectEnv)
+				}
+
 				return NIL
 			case *ast.CallExpression:
 				// call method
@@ -144,7 +154,6 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 
 		return receiver
 	case *ast.ClassExpression:
-		// define new class
 		klass := &object.Class{Name: node.Name, Fields: node.Fields, Methods: node.Methods, Env: env}
 
 		env.Set(node.Name.Value, klass)

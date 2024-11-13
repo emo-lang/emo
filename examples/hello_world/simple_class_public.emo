@@ -2,10 +2,8 @@ class Person {
   var name: String
   public var age: Int
 
-  const maxAge = 35
-
   func tooOld?() {
-    return false
+    return self.age > MAX_AGE
   }
 
   func greeting() {
@@ -17,7 +15,10 @@ class Person {
   }
 }
 
-const person = new(Person, {"name": "David Lee", "age": 20})
+const MAX_AGE = 50
+const person = new(Person, {"name": "David Lee", "age": 10})
 
-println("Your age: ", person.age)
 person.greeting()
+
+const p2 = new(Person, {"name": "Super Large", "age": 65})
+p2.greeting()
