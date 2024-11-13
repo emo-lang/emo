@@ -15,10 +15,10 @@ class Person {
   }
 }
 
-const MAX_AGE = 50
-const person = new(Person, {"name": "David Lee", "age": 10})
+define(MAX_AGE, 50)
+var person = new(Person, {name: "David Lee", age: 10})
 
 person.greeting()
 
-const p2 = new(Person, {"name": "Super Large", "age": 65})
+var p2 = new(Person, {name: "Super Large", age: 65})
 p2.greeting()

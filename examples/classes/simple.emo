@@ -1,0 +1,10 @@
+class Person {
+  public var name: String
+  public var age: Int
+}
+
+var p = new(Person, {name: "David"})
+println(p.name)
+
+var p2 = new(Person)
+println(p2.name)

@@ -14,10 +14,11 @@ func gt?(a: Int, b: Int) -> Bool {
   return a > b
 }
 
-let age = func() -> Int { return 32 }
+var age = func() -> Int { return 32 }
 
-let name = "David"
+var name = "David"
 var full_name = name + " Lee"
-def MAX_AGE = 35
+
+define(MAX_AGE, 35)
 
 greet(full_name, age())
