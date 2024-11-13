@@ -1,0 +1,8 @@
+class HelloWorld {
+  func run() {
+    println("Hello, World!")
+  }
+}
+
+const runner = new(HelloWorld)
+runner.run()

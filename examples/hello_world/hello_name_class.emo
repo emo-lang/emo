@@ -1,0 +1,17 @@
+class HelloName {
+  var name: String
+
+  func run() {
+    println("Hello, ", self.name, "!")
+  }
+}
+
+func hello(name: String) {
+  const runner = new(HelloName, {"name": name})
+
+  runner.run()
+}
+
+println("Hello, world!")
+
+hello("David Zhang")
