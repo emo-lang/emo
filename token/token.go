@@ -64,6 +64,8 @@ const (
 	TRUE     = "TRUE"
 	FALSE    = "FALSE"
 
+	DEFINE = "DEFINE"
+
 	CLASS = "CLASS"
 	NEW   = "NEW"
 	SELF  = "SELF"
@@ -76,7 +78,7 @@ const (
 var keywords = map[string]TokenType{
 	"import":  IMPORT,
 	"func":    FUNCTION,
-	"const":   CONST,
+	"define":  DEFINE,
 	"var":     VAR,
 	"if":      IF,
 	"else":    ELSE,

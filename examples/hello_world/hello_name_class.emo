@@ -3,14 +3,17 @@ class HelloName {
 
   func run() {
     println("Hello, ", self.name, "!")
+    println("Your title is: ", TITLE)
   }
 }
 
 func hello(name: String) {
-  const runner = new(HelloName, {"name": name})
+  var runner = new(HelloName, {"name": name})
 
   runner.run()
 }
+
+define(TITLE, "CTO")
 
 println("Hello, world!")
 

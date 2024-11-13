@@ -63,9 +63,9 @@ func testLetStatment(t *testing.T, s ast.Statement, name string) bool {
 		return false
 	}
 
-	letStmt, ok := s.(*ast.ConstStatement)
+	letStmt, ok := s.(*ast.DefineStatement)
 	if !ok {
-		t.Errorf("s not *ast.ConstStatement. got=%T", s)
+		t.Errorf("s not *ast.DefineStatement. got=%T", s)
 		return false
 	}
 

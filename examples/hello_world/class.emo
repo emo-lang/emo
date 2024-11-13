@@ -2,13 +2,8 @@ class Person {
 	var name: String // 字段默认为 private
 	var age: Int
 
-	public var role: Role // 显式声明字段为 public
-
-	const maxAge = 35
-
-  // 构造函数
-	func init() {
-  }
+	public
+	var role: Role // 显式声明字段为 public
 
 	// 函数默认为 public
 	// 如果函数名以问号结尾，默认返回Bool值
@@ -53,7 +48,7 @@ enum Direction {
   case right
 }
 
-const person = new(Person, {name: "David Lee", age: 33, role: Role.normal})
+var person = new(Person, {name: "David Lee", age: 33, role: Role.normal})
 
 if person.tooOld?() {
 	println("You're too old to find a job")
@@ -66,4 +61,3 @@ if person.tooOld?() {
 		panic()
   }
 }
-

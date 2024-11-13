@@ -6,16 +6,16 @@ import (
 	"github.com/emo-lang/emo/token"
 )
 
-type ConstStatement struct {
-	Token token.Token // the token.CONST token
+type DefineStatement struct {
+	Token token.Token // the token.DEFINE token
 	Name  *Identifier
 	Value Expression
 }
 
-func (vs *ConstStatement) statementNode()       {}
-func (vs *ConstStatement) TokenLiteral() string { return vs.Token.Literal }
+func (vs *DefineStatement) statementNode()       {}
+func (vs *DefineStatement) TokenLiteral() string { return vs.Token.Literal }
 
-func (vs *ConstStatement) String() string {
+func (vs *DefineStatement) String() string {
 	var out bytes.Buffer
 
 	out.WriteString(vs.TokenLiteral() + " ")
