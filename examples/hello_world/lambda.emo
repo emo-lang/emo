@@ -1,2 +1,2 @@
-let x = func() -> Int { return 42 }
+var x = func() -> Int { return 42 }
 println("Your age: ", x())

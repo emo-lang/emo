@@ -10,6 +10,6 @@ func fibo(n: Int) -> Int {
   return fibo(n-1) + fibo(n-2)
 }
 
-let n = 20
+var n = 20
 
 println(fibo(n))
