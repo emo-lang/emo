@@ -1,6 +1,0 @@
-import "./lib"
-
-let name = "David"
-var full_name = name + " Lee"
-
-lib.greet(full_name, _age())

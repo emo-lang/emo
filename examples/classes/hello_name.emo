@@ -8,13 +8,11 @@ class HelloName {
 }
 
 func hello(name: String) {
-  var runner = new(HelloName, {"name": name})
+  var runner = new(HelloName, {name: name})
 
   runner.run()
 }
 
 define(TITLE, "CTO")
-
-println("Hello, world!")
 
 hello("David Zhang")
