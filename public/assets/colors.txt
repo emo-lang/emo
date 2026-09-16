@@ -1,0 +1,11 @@
+= Yellow (Primary) =
+#EFBF6B
+
+= Dark =
+#202022
+
+= Grey =
+#F9FAFC
+
+= Blue =
+#7678ED
