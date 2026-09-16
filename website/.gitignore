@@ -4,6 +4,10 @@ dist/
 # generated from the repository-root README.md
 src/content/page.md
 
+# astro generated local state
+.astro/data-store.json
+.astro/settings.json
+
 # dependencies
 node_modules/
 

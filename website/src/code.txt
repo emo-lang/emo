@@ -1,4 +1,6 @@
 require "http"
+require "emo"
+require "emo-ui"
 
 class User {
   def init(name String, age Int) {
@@ -9,9 +11,13 @@ class User {
   def adult?() Bool {
     return self.age >= 18
   }
+
+  def verbose?() Bool {
+    return emo.len(self.name) > 100
+  }
 }
 
-def user_list(users Array[User]) Component {
+def user_list(users Array[User]) EmoUI.Component {
   return Page.new(title: "Users") {
     list(users) -> (user) {
       row {
@@ -25,7 +31,10 @@ def user_list(users Array[User]) Component {
 }
 
 def main() {
-  const users = [User.new("alice", 30), User.new("bob", 16)]
+  const users = [
+    User.new("alice", 30),
+    User.new(name: "bob", age: 16)
+  ]
 
   http.serve(port: 3000) -> (req, res) {
     return res.render_component(user_list(users))
