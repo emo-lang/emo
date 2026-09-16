@@ -29,3 +29,6 @@ _build/
 
 # Node (root-level tooling)
 node_modules/
+
+# Website deploy worktree
+gh-pages-worktree/

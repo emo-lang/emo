@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node scripts/copy-readme.mjs && astro dev",
     "build": "node scripts/copy-readme.mjs && astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "deploy": "pnpm build && node scripts/deploy-gh-pages.mjs"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
