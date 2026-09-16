@@ -1,0 +1,273 @@
+<!DOCTYPE html><html lang="en"> <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Emo — clean, explicit, intuitive</title><meta name="description" content="Emo is a general-purpose programming language, implemented in OCaml 5."><meta property="og:title" content="Emo — clean, explicit, intuitive"><meta property="og:description" content="Emo is a general-purpose programming language, implemented in OCaml 5."><meta property="og:type" content="website"><link rel="icon" type="image/png" href="/emo/logo.png"><script>
+      (function () {
+        var stored = localStorage.getItem("theme");
+        var theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script><link rel="stylesheet" href="/emo/_astro/index.CmPe4cAr.css"></head> <body>  <header class="site-nav"> <div class="nav-inner"> <a class="brand" href="/emo/"> <img src="/emo/logo.png" alt="Emo logo" width="22" height="22"> <span>Emo</span> </a> <div class="nav-actions"> <button id="theme-toggle" type="button" aria-label="Toggle color theme" title="Toggle theme" data-astro-cid-x3pjskd3> <svg class="icon icon-moon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-astro-cid-x3pjskd3> <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" data-astro-cid-x3pjskd3></path> </svg> <svg class="icon icon-sun" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-astro-cid-x3pjskd3> <circle cx="12" cy="12" r="5" data-astro-cid-x3pjskd3></circle> <line x1="12" y1="1" x2="12" y2="3" data-astro-cid-x3pjskd3></line> <line x1="12" y1="21" x2="12" y2="23" data-astro-cid-x3pjskd3></line> <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" data-astro-cid-x3pjskd3></line> <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" data-astro-cid-x3pjskd3></line> <line x1="1" y1="12" x2="3" y2="12" data-astro-cid-x3pjskd3></line> <line x1="21" y1="12" x2="23" y2="12" data-astro-cid-x3pjskd3></line> <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" data-astro-cid-x3pjskd3></line> <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" data-astro-cid-x3pjskd3></line> </svg> </button> <script type="module">document.getElementById("theme-toggle")?.addEventListener("click",()=>{const e=document.documentElement,t=e.dataset.theme==="dark"?"light":"dark";e.dataset.theme=t,localStorage.setItem("theme",t)});</script>  </div> </div> </header> <main> <section class="hero"> <div class="hero-copy"> <img class="hero-logo" src="/emo/logo.png" alt="Emo logo" width="72" height="72"> <h1>Emo</h1> <p class="tagline"> <span>clean</span><i>·</i><span>explicit</span><i>·</i><span>intuitive</span> </p> <div class="hero-actions"> <a class="button primary" href="https://github.com/emo-lang/emo" target="_blank" rel="noreferrer">Repository</a> <a class="button" href="#what-is-emo">Learn the language</a> </div> </div> <div class="hero-code"> <div class="terminal"> <div class="terminal-bar"> <span class="dot red"></span> <span class="dot yellow"></span> <span class="dot green"></span> <span class="terminal-title">main.emo</span> </div> <div class="terminal-body"> <pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="ruby"><code><span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">require</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "http"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">class</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> User</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> init</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(name </span><span style="color:#005CC5;--shiki-dark:#79B8FF">String</span><span style="color:#24292E;--shiki-dark:#E1E4E8">, age </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Int</span><span style="color:#24292E;--shiki-dark:#E1E4E8">) {</span></span>
+<span class="line"><span style="color:#005CC5;--shiki-dark:#79B8FF">    self</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">name</span><span style="color:#D73A49;--shiki-dark:#F97583"> =</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> name</span></span>
+<span class="line"><span style="color:#005CC5;--shiki-dark:#79B8FF">    self</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">age</span><span style="color:#D73A49;--shiki-dark:#F97583"> =</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> age</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> adult?</span><span style="color:#24292E;--shiki-dark:#E1E4E8">() </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Bool</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">    return</span><span style="color:#005CC5;--shiki-dark:#79B8FF"> self</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">age</span><span style="color:#D73A49;--shiki-dark:#F97583"> >=</span><span style="color:#005CC5;--shiki-dark:#79B8FF"> 18</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> user_list</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(users </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Array</span><span style="color:#24292E;--shiki-dark:#E1E4E8">[</span><span style="color:#005CC5;--shiki-dark:#79B8FF">User</span><span style="color:#24292E;--shiki-dark:#E1E4E8">]) </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Component</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  return</span><span style="color:#005CC5;--shiki-dark:#79B8FF"> Page</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#D73A49;--shiki-dark:#F97583">new</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(</span><span style="color:#005CC5;--shiki-dark:#79B8FF">title:</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "Users"</span><span style="color:#24292E;--shiki-dark:#E1E4E8">) {</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">    list</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(users) </span><span style="color:#005CC5;--shiki-dark:#79B8FF">-></span><span style="color:#24292E;--shiki-dark:#E1E4E8"> (user) {</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">      row {</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">        text</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(</span><span style="color:#032F62;--shiki-dark:#9ECBFF">"${user.name} (${user.age})"</span><span style="color:#24292E;--shiki-dark:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">        if</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> user.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">adult?</span><span style="color:#24292E;--shiki-dark:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">          badge</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(</span><span style="color:#032F62;--shiki-dark:#9ECBFF">"verified"</span><span style="color:#24292E;--shiki-dark:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">        }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">      }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">    }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> main</span><span style="color:#24292E;--shiki-dark:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  const users </span><span style="color:#D73A49;--shiki-dark:#F97583">=</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> [</span><span style="color:#005CC5;--shiki-dark:#79B8FF">User</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#D73A49;--shiki-dark:#F97583">new</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(</span><span style="color:#032F62;--shiki-dark:#9ECBFF">"alice"</span><span style="color:#24292E;--shiki-dark:#E1E4E8">, </span><span style="color:#005CC5;--shiki-dark:#79B8FF">30</span><span style="color:#24292E;--shiki-dark:#E1E4E8">), </span><span style="color:#005CC5;--shiki-dark:#79B8FF">User</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#D73A49;--shiki-dark:#F97583">new</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(</span><span style="color:#032F62;--shiki-dark:#9ECBFF">"bob"</span><span style="color:#24292E;--shiki-dark:#E1E4E8">, </span><span style="color:#005CC5;--shiki-dark:#79B8FF">16</span><span style="color:#24292E;--shiki-dark:#E1E4E8">)]</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  http.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">serve</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(</span><span style="color:#005CC5;--shiki-dark:#79B8FF">port:</span><span style="color:#005CC5;--shiki-dark:#79B8FF"> 3000</span><span style="color:#24292E;--shiki-dark:#E1E4E8">) </span><span style="color:#005CC5;--shiki-dark:#79B8FF">-></span><span style="color:#24292E;--shiki-dark:#E1E4E8"> (req, res) {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">    return</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> res.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">render_component</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(</span><span style="color:#6F42C1;--shiki-dark:#B392F0">user_list</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(users))</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span></code></pre> </div> </div> </div> </section> <div class="content-grid"> <aside class="toc"> <nav aria-label="Table of contents"> <p class="toc-title">Contents</p> <ul> <li><a href="#what-is-emo">What is Emo?</a></li><li><a href="#syntax">Syntax</a></li><li><a href="#type-system">Type System</a></li><li><a href="#modules-and-visibility">Modules and Visibility</a></li><li><a href="#package-management">Package Management</a></li><li><a href="#concurrency">Concurrency</a></li><li><a href="#networking">Networking</a></li><li><a href="#configuration">Configuration</a></li><li><a href="#emoui">EmoUI</a></li><li><a href="#emoos">EmoOS</a></li><li><a href="#implementation">Implementation</a></li><li><a href="#documentation">Documentation</a></li><li><a href="#license">License</a></li> </ul> </nav> </aside> <article class="md-body"> <h1 id="emo">Emo</h1>
+<p>Emo is a general-purpose programming language, implemented in OCaml 5.</p>
+<p>Repository: <a href="https://github.com/emo-lang/emo">https://github.com/emo-lang/emo</a></p>
+<h2 id="what-is-emo">What is Emo?</h2>
+<p>Emo is <strong>clean, explicit, and intuitive</strong>. It draws on three decades of open-source programming languages — their strengths and their missteps — and is designed around three core principles:</p>
+<ul>
+<li><strong>Highly expressive syntax.</strong> Code should read naturally and say what it means.</li>
+<li><strong>Principle of least surprise.</strong> The language rules should match programmer intuition; things should work the way you expect them to.</li>
+<li><strong>Multiple compilation targets.</strong> Emo compiles to native executables, to WebAssembly, to other languages such as TypeScript, to the BEAM virtual machine, and to bare metal (the <code>qemu</code> target — see EmoOS).</li>
+</ul>
+<h2 id="syntax">Syntax</h2>
+<p>Emo’s syntax favors explicitness: everything is visibly what it is — a call looks like a call, a return is written out, a block has one shape.</p>
+<ul>
+<li><strong>Calls always use explicit parentheses.</strong> No optional-parenthesis calls; every call is visibly a call, keeping code readable for beginners and the parser free of ambiguity resolution.</li>
+<li><strong>Blocks have a single form</strong>: <code>{ ... }</code> and <code>-> (x) { ... }</code> — the latter being the parameterized block and the anonymous function.</li>
+<li><strong>Functions and methods are defined with <code>def</code></strong>, uniformly at top level and inside classes. <code>def</code> is the named form of the arrow block: <code>def total(cart Cart) Decimal { ... }</code> pairs with <code>const total = -> (cart Cart) { ... }</code>.</li>
+<li><strong>Bindings are <code>const</code> (immutable) or <code>var</code> (mutable, block-scoped)</strong> — constants versus variables, self-explanatory by wording. <code>var</code> bindings cannot escape their block; capturing one in a closure that outlives the block is a compile error.</li>
+<li><strong>Arguments can be passed by position or by name.</strong> Given <code>def hello(name String)</code>, both <code>hello("world")</code> and <code>hello(name: "world")</code> are valid calls. Named form is the natural shape for props and options: <code>page(title: "Home") { ... }</code>.</li>
+<li><strong>Type annotations are postfix, separated by a space</strong>: parameters as <code>name String</code>, return types as <code>def full_name() String</code>. <strong>Function signatures always carry explicit types — parameters and return types alike</strong>; signatures are contracts, and contracts are checked strictly. <code>init</code> is exempt — it returns the class it constructs. Arrow blocks (<code>-> (cart Cart) { ... }</code>) always take annotated parameters but infer their return types; when inference fails, the compiler reports an error asking for an explicit annotation. Elsewhere, annotations remain optional (see Type System).</li>
+<li><strong>Predicate methods end in <code>?</code></strong>: <code>def is_older?() bool</code> reads naturally at the call site.</li>
+<li><strong><code>return</code> is always explicit</strong> — there is no implicit “last expression is the return value” rule.</li>
+<li><strong>Naming follows a strict case convention, enforced by the compiler.</strong> All types start with an uppercase letter — built-in ones (<code>String</code>, <code>Int</code>, <code>Bool</code>, <code>Float</code>, <code>Char</code>) and user-defined ones alike (<code>class Foo</code>, <code>interface Bar</code>, exceptions as in <code>class Exception</code>). Everything else — variables, keywords, function names — is lowercase, and function names use snake_case only; camelCase is not allowed.</li>
+<li><strong>Strings are always double-quoted, with a single interpolation form.</strong> <code>"hello, ${name}"</code> — the braces hold any expression. Single quotes denote the <code>char</code> type: <code>'a'</code> is a character, <code>"a"</code> is a String of length one.</li>
+</ul>
+<h3 id="classes">Classes</h3>
+<p><code>class</code> is the single notation for user-defined types: methods live inside the class body, next to the type they belong to.</p>
+<pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;" tabindex="0" data-language="ruby"><code><span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">class</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> User</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> init</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(name </span><span style="color:#005CC5;--shiki-dark:#79B8FF">String</span><span style="color:#24292E;--shiki-dark:#E1E4E8">, age </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Int</span><span style="color:#24292E;--shiki-dark:#E1E4E8">) {</span></span>
+<span class="line"><span style="color:#005CC5;--shiki-dark:#79B8FF">    self</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">name</span><span style="color:#D73A49;--shiki-dark:#F97583"> =</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> name</span></span>
+<span class="line"><span style="color:#005CC5;--shiki-dark:#79B8FF">    self</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">age</span><span style="color:#D73A49;--shiki-dark:#F97583"> =</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> age</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> full_name</span><span style="color:#24292E;--shiki-dark:#E1E4E8">() </span><span style="color:#005CC5;--shiki-dark:#79B8FF">String</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">    return</span><span style="color:#005CC5;--shiki-dark:#79B8FF"> self</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">name</span><span style="color:#D73A49;--shiki-dark:#F97583"> +</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> " "</span><span style="color:#D73A49;--shiki-dark:#F97583"> +</span><span style="color:#005CC5;--shiki-dark:#79B8FF"> self</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">age</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">to_string</span><span style="color:#24292E;--shiki-dark:#E1E4E8">()</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> is_older?</span><span style="color:#24292E;--shiki-dark:#E1E4E8">() </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Bool</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">    return</span><span style="color:#005CC5;--shiki-dark:#79B8FF"> self</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">age</span><span style="color:#D73A49;--shiki-dark:#F97583"> ></span><span style="color:#005CC5;--shiki-dark:#79B8FF"> 35</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<ul>
+<li><strong><code>init</code> is the only window where fields are assigned.</strong> Fields come into existence through <code>self.x = ...</code> inside <code>init</code>; assigning to <code>self.x</code> anywhere else is a compile error. Classes are therefore immutable value types: instances are copied on assignment (copy-on-write under the hood), and two instances with equal content are <code>==</code>.</li>
+<li><strong><code>self</code> is passed implicitly and used explicitly</strong> — no <code>self</code> in signatures, but always spelled out in bodies (<code>self.name</code>), so fields never blur with local variables.</li>
+<li><strong>No inheritance — neither single nor multiple.</strong> Reuse is served by duck-typed functions, composition, and interfaces instead of class hierarchies.</li>
+</ul>
+<h3 id="interfaces">Interfaces</h3>
+<p>Polymorphism is structural: an <code>interface</code> declares a set of method signatures, and any class whose shape matches satisfies it — with no <code>implements</code> declaration.</p>
+<pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;" tabindex="0" data-language="ruby"><code><span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">interface </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Greeter</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> greet</span><span style="color:#24292E;--shiki-dark:#E1E4E8">() </span><span style="color:#005CC5;--shiki-dark:#79B8FF">String</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">class</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> English</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> greet</span><span style="color:#24292E;--shiki-dark:#E1E4E8">() </span><span style="color:#005CC5;--shiki-dark:#79B8FF">String</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">    return</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "Hello"</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> welcome</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(g </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Greeter</span><span style="color:#24292E;--shiki-dark:#E1E4E8">) </span><span style="color:#005CC5;--shiki-dark:#79B8FF">String</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  return</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> g.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">greet</span><span style="color:#24292E;--shiki-dark:#E1E4E8">()</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<ul>
+<li>Interfaces belong to the consumer: an implementation does not need to know the interface exists.</li>
+<li>Interfaces are compile-time contracts: the checker verifies shapes at annotated positions, while runtime dispatch stays duck-typed with zero overhead.</li>
+<li>Narrowing applies uniformly: <code>if g.is(Greeter) { ... }</code> works for interfaces as it does for classes.</li>
+</ul>
+<h3 id="enums">Enums</h3>
+<p>An enum is a closed, nominal set of named values — nothing more. Carrying data on members is deliberately excluded as an anti-pattern: data-carrying cases are classes organized by an interface, and failure paths are exceptions.</p>
+<pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;" tabindex="0" data-language="ruby"><code><span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">enum </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Color</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> { red, green, blue }</span></span></code></pre>
+<ul>
+<li>Members are the only values of the type — there is no way to construct an enum value from outside the set.</li>
+<li>Members are immutable values: comparable with <code>==</code>, hashable, usable as map keys.</li>
+<li>Matching on an enum must cover every member; the checker reports the missing one wherever the type is decidable.</li>
+</ul>
+<h3 id="exceptions">Exceptions</h3>
+<p>Errors are exceptions. An exception is an ordinary class instance, raised like this:</p>
+<pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;" tabindex="0" data-language="ruby"><code><span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">raise</span><span style="color:#005CC5;--shiki-dark:#79B8FF"> Exception</span><span style="color:#24292E;--shiki-dark:#E1E4E8">.</span><span style="color:#D73A49;--shiki-dark:#F97583">new</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(</span><span style="color:#005CC5;--shiki-dark:#79B8FF">message:</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "something went wrong"</span><span style="color:#24292E;--shiki-dark:#E1E4E8">)</span></span></code></pre>
+<p>Uncaught exceptions kill only the offending process, and supervision is library-level (see Concurrency). There are no checked exceptions.</p>
+<h3 id="mutability">Mutability</h3>
+<p>Mutability is layered, and every layer is explicit:</p>
+<ul>
+<li><code>const</code> bindings never change; <code>var</code> bindings are mutable within their block and cannot escape it.</li>
+<li>Class fields are assigned only inside <code>init</code> and freeze afterwards.</li>
+<li>Long-lived mutable state — per process — lives in a mutable-cell primitive: a small container whose content can be read and replaced. Sending a cell to another process delivers a snapshot copy, so mutability never crosses a process boundary.</li>
+</ul>
+<h2 id="type-system">Type System</h2>
+<p>Emo is gradually typed: <strong>types are dynamic at runtime, but statically checked at compile time</strong>.</p>
+<ul>
+<li>Runtime semantics are dynamically typed — every value carries a type tag. This aligns natively with BEAM and keeps everyday code free of type ceremony.</li>
+<li>The compiler has a built-in type-checking pass. Annotations are optional across the language — except on function signatures, where parameters and return types are both explicit — and unannotated code is still inferred and checked, reporting only errors that are certain; annotated code is checked strictly.</li>
+<li>Typing is structural and flow-sensitive — after <code>if user.is(Admin)</code>, <code>user</code> is narrowed to <code>Admin</code> — matching duck-typing intuition.</li>
+<li>There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as annotation vocabulary (e.g. <code>Array[User]</code>) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all.</li>
+<li>Strictness defaults high and can be relaxed explicitly.</li>
+<li>Type information feeds back into performance: modules with sufficiently complete type knowledge can be specialized (unboxed representations, direct dispatch) on the native backend.</li>
+</ul>
+<h2 id="modules-and-visibility">Modules and Visibility</h2>
+<p>Emo’s module system is fully structural: no <code>import</code>, no <code>export</code>, no visibility keywords, and no naming conventions carrying visibility. <strong>The directory tree is the module tree:</strong></p>
+<pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;" tabindex="0" data-language="plaintext"><code><span class="line"><span>shop/</span></span>
+<span class="line"><span>  order.emo           # module shop.order</span></span>
+<span class="line"><span>  pricing.emo         # module shop.pricing</span></span>
+<span class="line"><span>  internal/</span></span>
+<span class="line"><span>    discounts.emo     # module shop.internal.discounts — subtree-private</span></span>
+<span class="line"><span>  checkout.emo        # module shop.checkout</span></span></code></pre>
+<ul>
+<li>
+<p><strong>The path is the module.</strong> A file automatically becomes the module at its path — no registration, no declaration.</p>
+</li>
+<li>
+<p><strong>References are qualified paths.</strong> Nothing is imported; paths are used directly, like URLs. When a path is long, an ordinary <code>const</code> binding aliases it — no new syntax, since an import statement was only ever an alias assignment:</p>
+<pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;" tabindex="0" data-language="ruby"><code><span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">const order </span><span style="color:#D73A49;--shiki-dark:#F97583">=</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> shop.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">order</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> checkout</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(cart </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Cart</span><span style="color:#24292E;--shiki-dark:#E1E4E8">) </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Decimal</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  const total </span><span style="color:#D73A49;--shiki-dark:#F97583">=</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> order.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">total</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(cart)</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  return</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> total</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+</li>
+<li>
+<p><strong>Visibility is structural.</strong> Definitions inside functions and blocks are private by scoping; module-level definitions are public (addressable by their qualified paths); and an <code>internal/</code> directory is subtree-private, enforced by the compiler — everything under <code>shop/internal/</code> is usable within <code>shop</code> and its descendants, and a compile error anywhere else.</p>
+</li>
+<li>
+<p><strong>The dependency graph is explicit.</strong> Path references are the dependency declarations, giving automatic module discovery, incremental compilation, and compile-time cycle detection.</p>
+</li>
+</ul>
+<h2 id="package-management">Package Management</h2>
+<p>Packages slot directly into the module system: a package name becomes a top-level module path prefix. There is no <code>install</code> step for libraries — dependency resolution is a side effect of building. Using a package is <code>require</code>:</p>
+<pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;" tabindex="0" data-language="ruby"><code><span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">require</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "acme/json_tools"</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">def</span><span style="color:#6F42C1;--shiki-dark:#B392F0"> parse_config</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(text </span><span style="color:#005CC5;--shiki-dark:#79B8FF">String</span><span style="color:#24292E;--shiki-dark:#E1E4E8">) </span><span style="color:#005CC5;--shiki-dark:#79B8FF">Json</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#D73A49;--shiki-dark:#F97583">  return</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> json_tools.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">parse</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(text)</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<ul>
+<li>
+<p><strong><code>require</code> is a file-level statement that brings the package’s short name into scope.</strong> It needs no counterpart on the package side — a package’s public surface is simply its module tree. Fully qualified paths are always available.</p>
+</li>
+<li>
+<p><strong><code>require</code> pairs with the manifest, strictly.</strong> Requiring a package that is missing from <code>deps</code> is a compile error — strictness comes first, and the manifest changes only by explicit action.</p>
+</li>
+<li>
+<p><strong>Central registry, with configurable endpoints.</strong> Packages are addressed by <code>name@version</code> through a central registry, backed by a global content-addressed cache shared across projects — no per-project dependency copies. The registry endpoint is configurable per project or globally, serving private and on-premises distribution.</p>
+</li>
+<li>
+<p><strong>Scoped package names.</strong> Third-party packages are named under a scope prefix, so ownership is explicit and name squatting has no ground to stand on; the scope prefix becomes the module path prefix. The official standard library alone owns the top-level short names (<code>json.decode()</code>, <code>http.get(url)</code>).</p>
+</li>
+<li>
+<p><strong>The manifest is an Emo config file</strong>, written in the restricted profile (terminating, hermetic, side-effect free). <strong>Dependencies are exact versions</strong> — the version a package is developed and tested against — and <strong>targets declare which compilation targets the package supports</strong>:</p>
+<pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;" tabindex="0" data-language="ruby"><code><span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">package {</span></span>
+<span class="line"><span style="color:#E36209;--shiki-dark:#FFAB70">  name</span><span style="color:#D73A49;--shiki-dark:#F97583"> =</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "acme/json_tools"</span></span>
+<span class="line"><span style="color:#E36209;--shiki-dark:#FFAB70">  version</span><span style="color:#D73A49;--shiki-dark:#F97583"> =</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "0.1.0"</span></span>
+<span class="line"><span style="color:#E36209;--shiki-dark:#FFAB70">  targets</span><span style="color:#D73A49;--shiki-dark:#F97583"> =</span><span style="color:#24292E;--shiki-dark:#E1E4E8"> [</span><span style="color:#032F62;--shiki-dark:#9ECBFF">"native"</span><span style="color:#24292E;--shiki-dark:#E1E4E8">, </span><span style="color:#032F62;--shiki-dark:#9ECBFF">"wasm"</span><span style="color:#24292E;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  deps {</span></span>
+<span class="line"><span style="color:#E36209;--shiki-dark:#FFAB70">    json</span><span style="color:#D73A49;--shiki-dark:#F97583"> =</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "2.3.1"</span></span>
+<span class="line"><span style="color:#E36209;--shiki-dark:#FFAB70">    http</span><span style="color:#D73A49;--shiki-dark:#F97583"> =</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "1.4.2"</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+</li>
+<li>
+<p><strong>Versions are semantic (major.minor.patch), resolved by Minimal Version Selection (MVS).</strong> When different packages require different versions of the same dependency, the smallest version satisfying every requirement wins — for exact requirements, the highest one named. Upgrades are always explicit actions. A lockfile records the resolution with checksums and belongs in version control.</p>
+</li>
+<li>
+<p><strong>Target compatibility is checked at resolution time.</strong> A dependency that does not support the target being built fails resolution with a clear error, not midway through compilation.</p>
+</li>
+</ul>
+<h2 id="concurrency">Concurrency</h2>
+<p>Emo ships with a native concurrency model built around <strong>processes and message passing</strong>, in the spirit of the actor model. This choice is deliberate: it maps natively onto BEAM processes, while the native backend implements it with a scheduler built on OCaml 5 effects — the same foundation proven by runtimes such as Eio.</p>
+<p>The concurrency semantics are shaped by the following decisions:</p>
+<ul>
+<li>Message passing is the core concurrency primitive; shared-memory primitives are not part of the core semantics.</li>
+<li>Data is immutable by default, so messages can be passed by copying on BEAM and by reference on the native backend while keeping identical observable semantics.</li>
+<li>Tail calls are guaranteed; recursion is the idiomatic shape of a receive loop.</li>
+<li>Crash isolation and supervision are library-level on both backends: an unhandled error kills only the offending process.</li>
+</ul>
+<h2 id="networking">Networking</h2>
+<p>Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API, implemented on each backend by its native facilities:</p>
+<ul>
+<li><strong>Native (OCaml)</strong>: an effects-based scheduler on top of io_uring (Linux), kqueue (macOS), and IOCP (Windows), with libuv as the portable fallback — the same foundation as the concurrency runtime.</li>
+<li><strong>BEAM</strong>: <code>gen_tcp</code> / <code>gen_udp</code> / <code>ssl</code>, one process per connection.</li>
+<li><strong>Wasm</strong>: WASI sockets, or fetch/WebSocket in the browser.</li>
+<li><strong>TypeScript</strong>: the target runtime’s net/HTTP modules.</li>
+</ul>
+<p>The API is <strong>direct style</strong>: network calls look like ordinary blocking calls, and the scheduler switches processes under the hood. There is no <code>async</code>/<code>await</code> and therefore no function coloring — any function can perform IO, and the API ecosystem stays single-tracked.</p>
+<p>Layering is conventional: sockets (TCP/UDP/Unix domain, plus TLS) live in the core library, and HTTP (client and server) is part of the standard library. TLS starts as an OpenSSL binding on the native backend, with a pure-OCaml TLS stack as an optional alternative.</p>
+<h2 id="configuration">Configuration</h2>
+<p>Emo is its own configuration language: a config file is just an Emo expression, and loading it means evaluating that expression. No separate format to learn — blocks, literals, string interpolation, and method calls are all available to configuration.</p>
+<p>Config files are evaluated in a restricted profile:</p>
+<ul>
+<li><strong>Termination is guaranteed</strong> — unbounded loops are disabled and iteration is bounded.</li>
+<li><strong>Evaluation is hermetic</strong> — the result depends only on the file’s content and explicitly declared inputs; no hidden file-system or network access.</li>
+<li><strong>Side-effect free</strong> — evaluating a config produces data, nothing else.</li>
+</ul>
+<p>Because the type checker is built in, configuration schemas are just type annotations checked by the same pass — no second schema language needed.</p>
+<p>For interop with the outside world, JSON/YAML/TOML remain supported as exchange formats: the standard library reads and writes them, with Emo as the source of truth and those formats as export products.</p>
+<h2 id="emoui">EmoUI</h2>
+<p><a href="https://github.com/emo-lang/emo-ui">EmoUI</a> is the component-based UI framework written in Emo: UIs composed as trees of components that render from reactive state. Emo’s syntax is shaped to serve it, and the principle is <strong>no template language — the UI is plain Emo code</strong>, the same philosophy as configuration. A component tree is nested calls with blocks (illustrative syntax):</p>
+<pre class="astro-code astro-code-themes github-light github-dark" style="background-color:#fff;--shiki-dark-bg:#24292e;color:#24292e;--shiki-dark:#e1e4e8; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;" tabindex="0" data-language="ruby"><code><span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">page</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(</span><span style="color:#005CC5;--shiki-dark:#79B8FF">title:</span><span style="color:#032F62;--shiki-dark:#9ECBFF"> "Home"</span><span style="color:#24292E;--shiki-dark:#E1E4E8">) {</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">  navbar</span><span style="color:#24292E;--shiki-dark:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">    logo</span><span style="color:#24292E;--shiki-dark:#E1E4E8">()</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">    menu</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(routes)</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">  list</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(users) </span><span style="color:#005CC5;--shiki-dark:#79B8FF">-></span><span style="color:#24292E;--shiki-dark:#E1E4E8"> (user) {</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">    card</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(user) {</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">      text</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(user.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">name</span><span style="color:#24292E;--shiki-dark:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#6F42C1;--shiki-dark:#B392F0">      text</span><span style="color:#24292E;--shiki-dark:#E1E4E8">(user.</span><span style="color:#6F42C1;--shiki-dark:#B392F0">bio</span><span style="color:#24292E;--shiki-dark:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">    }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="color:#24292E;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<p>Everything here is ordinary syntax (see Syntax): calls with explicit parentheses, single-form blocks, named arguments. A component tree consists of plain function calls — components are defined as functions (<code>def card(user User) Component { ... }</code>), or as classes exposed through a same-named lowercase factory function (<code>def card(user User) Component { return Card.new(user) }</code>). From the caller’s side, every component is a lowercase function; capitalized types are never invoked, and <code>.new</code> never appears in a tree. One rule specific to this domain: structured literals are immutable, so props and component trees are plain immutable data.</p>
+<p>Reactivity is explicit rather than implicit:</p>
+<ul>
+<li>Reactivity primitives live in the standard library with explicit, predictable semantics — no hidden dependency graphs.</li>
+<li>Compiler awareness optimizes them: statically decidable updates compile into targeted refreshes instead of runtime diffing.</li>
+</ul>
+<p>These decisions interlock with the core design: props are checked by the built-in type checker (gradual typing), UI events are process messages (a UI process plus its mailbox yields the Elm architecture on top of Emo’s concurrency), and platform backends only consume the component tree and its reactive updates — the language layer knows no platform details.</p>
+<h2 id="emoos">EmoOS</h2>
+<p>Emo’s reach extends down to the operating system layer: the language is capable of writing a kernel, so that an Emo kernel plus an Emo shell — with EmoUI on top — forms a complete OS, EmoOS.</p>
+<p>The <code>qemu</code> compilation target is the bare-metal target. It assumes no OS, no libc, and no default runtime; it supports RISC-V and builds images bootable by QEMU — the kernel development loop is compile, boot, debug, with no hardware required.</p>
+<p>Writing a kernel shapes the language in four ways:</p>
+<ul>
+<li><strong>Layered core library.</strong> <code>core</code> (integers, strings, tuples, control flow) has zero runtime dependencies and is the only layer available to kernel code; the standard library requires the runtime.</li>
+<li><strong>Explicit memory primitives.</strong> Raw memory access (<code>peek</code>/<code>poke</code> and friends) is provided as explicitly named library functions — dangerous operations are visibly dangerous.</li>
+<li><strong>Pluggable runtime.</strong> The GC, allocator, and scheduler are replaceable components on the bare-metal target, not injected defaults — a kernel may choose a minimal GC, arenas, or static allocation.</li>
+<li><strong>Single-language closure.</strong> The kernel builds with the <code>qemu</code> target while the shell and user programs build as ordinary native binaries — one language spanning both sides of the system.</li>
+</ul>
+<h2 id="implementation">Implementation</h2>
+<p>The reference implementation of Emo is written in OCaml 5. Self-hosting is explicitly not a goal: Emo’s reference implementation stays in OCaml.</p>
+<p>Emo interoperates with C through OCaml’s first-class C FFI: on the native backend, Emo binaries link directly against C libraries.</p>
+<h2 id="documentation">Documentation</h2>
+<p>Documentation lives under <code>docs/</code>. Chinese translations are maintained under <code>docs/zh-CN/</code>.</p>
+<h2 id="license">License</h2>
+<p>Emo is released under the <a href="LICENSE">MIT License</a>.</p> </article> </div> </main> <footer class="site-footer"> <p>Emo — clean, explicit, intuitive.</p> <p><a href="https://github.com/emo-lang/emo" target="_blank" rel="noreferrer">github.com/emo-lang/emo</a></p> </footer>  </body></html> <script type="module">const s=[...document.querySelectorAll(".toc li a")],n=s.map(t=>document.getElementById(t.hash.slice(1))).filter(t=>t!==null),o=t=>{for(const e of s)e.classList.toggle("active",e.hash==="#"+t)},c=()=>{if(scrollY+innerHeight>=document.body.scrollHeight-4){const l=n[n.length-1];l&&o(l.id);return}const t=scrollY+innerHeight*.15;let e=n[0];for(const l of n)l.getBoundingClientRect().top+scrollY<=t&&(e=l);e&&o(e.id)};addEventListener("scroll",c,{passive:!0});c();</script>
