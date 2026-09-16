@@ -269,3 +269,7 @@ Emo interoperates with C through OCaml's first-class C FFI: on the native backen
 ## Documentation
 
 Documentation lives under `docs/`. Chinese translations are maintained under `docs/zh-CN/`.
+
+## License
+
+Emo is released under the [MIT License](LICENSE).
