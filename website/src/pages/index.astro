@@ -1,0 +1,113 @@
+---
+import Layout from "../layouts/Layout.astro";
+import ThemeToggle from "../components/ThemeToggle.astro";
+import { Code } from "astro/components";
+import * as page from "../content/page.md";
+import sample from "../code.txt?raw";
+
+const Content = page.Content;
+const headings = page.getHeadings();
+const toc = headings.filter((h) => h.depth === 2);
+const base = import.meta.env.BASE_URL;
+---
+
+<Layout title="Emo — clean, explicit, intuitive" description="Emo is a general-purpose programming language, implemented in OCaml 5.">
+  <header class="site-nav">
+    <div class="nav-inner">
+      <a class="brand" href={`${base}/`}>
+        <img src={`${base}/logo.png`} alt="Emo logo" width="22" height="22" />
+        <span>Emo</span>
+      </a>
+      <div class="nav-actions">
+        <ThemeToggle />
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <img class="hero-logo" src={`${base}/logo.png`} alt="Emo logo" width="72" height="72" />
+        <h1>Emo</h1>
+        <p class="tagline">
+          <span>clean</span><i>·</i><span>explicit</span><i>·</i><span>intuitive</span>
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="https://github.com/emo-lang/emo" target="_blank" rel="noreferrer">Repository</a>
+          <a class="button" href="#what-is-emo">Learn the language</a>
+        </div>
+      </div>
+      <div class="hero-code">
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+            <span class="terminal-title">main.emo</span>
+          </div>
+          <div class="terminal-body">
+            <Code code={sample} lang="ruby" themes={{ light: "github-light", dark: "github-dark" }} />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="content-grid">
+      {toc.length > 0 && (
+        <aside class="toc">
+          <nav aria-label="Table of contents">
+            <p class="toc-title">Contents</p>
+            <ul>
+              {toc.map((h) => (
+                <li><a href={`#${h.slug}`}>{h.text}</a></li>
+              ))}
+            </ul>
+          </nav>
+        </aside>
+      )}
+
+      <article class="md-body">
+        <Content />
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p>Emo — clean, explicit, intuitive.</p>
+    <p><a href="https://github.com/emo-lang/emo" target="_blank" rel="noreferrer">github.com/emo-lang/emo</a></p>
+  </footer>
+</Layout>
+
+<script>
+  const links = [...document.querySelectorAll<HTMLAnchorElement>(".toc li a")];
+  const targets = links
+    .map((a) => document.getElementById(a.hash.slice(1)))
+    .filter((el): el is HTMLElement => el !== null);
+
+  const setActive = (id: string) => {
+    for (const a of links) {
+      a.classList.toggle("active", a.hash === "#" + id);
+    }
+  };
+
+  // The active section is the last heading above an anchor line
+  // placed 15% down the viewport; at the very bottom, the last section wins.
+  const onScroll = () => {
+    if (scrollY + innerHeight >= document.body.scrollHeight - 4) {
+      const last = targets[targets.length - 1];
+      if (last) setActive(last.id);
+      return;
+    }
+    const line = scrollY + innerHeight * 0.15;
+    let current = targets[0];
+    for (const t of targets) {
+      if (t.getBoundingClientRect().top + scrollY <= line) {
+        current = t;
+      }
+    }
+    if (current) setActive(current.id);
+  };
+
+  addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
+</script>

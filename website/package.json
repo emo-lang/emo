@@ -1,0 +1,16 @@
+{
+  "name": "emo-website",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/copy-readme.mjs && astro dev",
+    "build": "node scripts/copy-readme.mjs && astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "astro": "^5.14.0",
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,0 +1,33 @@
+require "http"
+
+class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+
+  def adult?() Bool {
+    return self.age >= 18
+  }
+}
+
+def user_list(users Array[User]) Component {
+  return Page.new(title: "Users") {
+    list(users) -> (user) {
+      row {
+        text("${user.name} (${user.age})")
+        if user.adult?() {
+          badge("verified")
+        }
+      }
+    }
+  }
+}
+
+def main() {
+  const users = [User.new("alice", 30), User.new("bob", 16)]
+
+  http.serve(port: 3000) -> (req, res) {
+    return res.render_component(user_list(users))
+  }
+}
