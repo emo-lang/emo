@@ -16,7 +16,7 @@ Emo is **clean, explicit, and intuitive**. It draws on three decades of open-sou
 
 Emo's syntax favors explicitness: everything is visibly what it is — a call looks like a call, a return is written out, a block has one shape.
 
-- **Calls always use explicit parentheses.** No optional-parenthesis calls; every call is visibly a call, keeping code readable for beginners and the parser free of ambiguity resolution.
+- **Calls always use explicit parentheses, juxtaposed to the callee.** No optional-parenthesis calls; every call is visibly a call, keeping code readable for beginners and the parser free of ambiguity resolution. The parentheses must touch the callee — `f (a)` with a space in between is an error, never silently a call.
 - **Blocks have a single form**: `{ ... }` and `-> (x) { ... }` — the latter being the parameterized block and the anonymous function.
 - **Functions and methods are defined with `def`**, uniformly at top level and inside classes. `def` is the named form of the arrow block: `def total(cart Cart) Decimal { ... }` pairs with `const total = -> (cart Cart) { ... }`.
 - **Bindings are `const` (immutable) or `var` (mutable, block-scoped)** — constants versus variables, self-explanatory by wording. `var` bindings cannot escape their block; capturing one in a closure that outlives the block is a compile error.
@@ -24,8 +24,12 @@ Emo's syntax favors explicitness: everything is visibly what it is — a call lo
 - **Type annotations are postfix, separated by a space**: parameters as `name String`, return types as `def full_name() String`. **Function signatures always carry explicit types — parameters and return types alike**; signatures are contracts, and contracts are checked strictly. `init` is exempt — it returns the class it constructs. Arrow blocks (`-> (cart Cart) { ... }`) always take annotated parameters but infer their return types; when inference fails, the compiler reports an error asking for an explicit annotation. Elsewhere, annotations remain optional (see Type System).
 - **Predicate methods end in `?`**: `def is_older?() bool` reads naturally at the call site.
 - **`return` is always explicit** — there is no implicit "last expression is the return value" rule.
+- **`if` has exactly one shape.** `if <cond> { ... }` with an optional `else { ... }` — there is no `else if`, `elif`, or any chaining form; a further test is an `if` visibly nested inside the `else` block. Like all control flow, `if` is a statement.
+- **`case` matches a value against patterns.** Branches are `pattern -> { ... }`, first match wins, and a branch may carry a guard: `Color.red when signal.is_bright?()`. Patterns are enum members by qualified name (`Color.red` — a bare lowercase name is a binding pattern, since members and variables share the lowercase space), literals matching by value, and `_` matching anything. Like all control flow, `case` is a statement: results leave a branch through explicit `return` or binding. A scrutinee that matches no branch is a runtime error — never a silent skip.
+- **Tuples are `(a, b, c)`.** Fixed-length, heterogeneous, immutable values that compare element-wise; the annotation form mirrors the literal — `(Int, String)`. The paren rule resolves by content, with no trailing-comma forms: a comma makes a tuple (`()`, `(a, b)`); a single operator-free value in parentheses is a one-element tuple (`(a)` — grouping a lone value is meaningless); an expression containing operators is a group (`(sum * 3)`, `x && (y || z)`). `(a,)` is a syntax error — the one-element tuple is written `(a)` — and so is a `(` directly opening onto a `(`: `((x))` and `f((a, b))` never parse; an inline tuple argument is bound to a name first. Nesting after a comma is legal and never adjacent: `(a, (b, c))`. In `case` patterns, parentheses are always tuple patterns, destructuring by position: `(Color.red, count) -> { ... }`.
 - **Naming follows a strict case convention, enforced by the compiler.** All types start with an uppercase letter — built-in ones (`String`, `Int`, `Bool`, `Float`, `Char`) and user-defined ones alike (`class Foo`, `interface Bar`, exceptions as in `class Exception`). Everything else — variables, keywords, function names — is lowercase, and function names use snake_case only; camelCase is not allowed.
 - **Strings are always double-quoted, with a single interpolation form.** `"hello, ${name}"` — the braces hold any expression. Single quotes denote the `char` type: `'a'` is a character, `"a"` is a String of length one.
+- **Comments are `//` to end of line; there are no block comments.**
 
 ### Classes
 
@@ -78,7 +82,7 @@ def welcome(g Greeter) String {
 
 ### Enums
 
-An enum is a closed, nominal set of named values — nothing more. Carrying data on members is deliberately excluded as an anti-pattern: data-carrying cases are classes organized by an interface, and failure paths are exceptions.
+An enum is a closed, nominal set of named values — nothing more. Carrying data on members is deliberately excluded as an anti-pattern: when a value must be one of a known set with data attached, the idiomatic shape is an enum tag carried in a tuple — `(Outcome.ok, value)` — destructured directly in `case` and `receive`. Polymorphic data heavier than that is classes organized by an interface, and failure paths are exceptions.
 
 ```emo
 enum Color { red, green, blue }
@@ -86,7 +90,7 @@ enum Color { red, green, blue }
 
 - Members are the only values of the type — there is no way to construct an enum value from outside the set.
 - Members are immutable values: comparable with `==`, hashable, usable as map keys.
-- Matching on an enum must cover every member; the checker reports the missing one wherever the type is decidable.
+- Matching an enum in `case` must cover every member; the checker reports the missing members wherever the type is decidable.
 
 ### Exceptions
 
@@ -103,8 +107,9 @@ Uncaught exceptions kill only the offending process, and supervision is library-
 Mutability is layered, and every layer is explicit:
 
 - `const` bindings never change; `var` bindings are mutable within their block and cannot escape it.
+- Arrays are immutable values: length is fixed and contents are never changed in place — operations that transform an array return a new one, and `==` compares element-wise.
 - Class fields are assigned only inside `init` and freeze afterwards.
-- Long-lived mutable state — per process — lives in a mutable-cell primitive: a small container whose content can be read and replaced. Sending a cell to another process delivers a snapshot copy, so mutability never crosses a process boundary.
+- Long-lived mutable state — per process — lives in a `Box`: `Box.new(0)` constructs, `box.read()` reads, `box.replace(v)` replaces — deliberately nothing else. Sending a Box to another process delivers a snapshot copy, so mutability never crosses a process boundary.
 
 ## Type System
 
@@ -113,7 +118,7 @@ Emo is gradually typed: **types are dynamic at runtime, but statically checked a
 - Runtime semantics are dynamically typed — every value carries a type tag. This aligns natively with BEAM and keeps everyday code free of type ceremony.
 - The compiler has a built-in type-checking pass. Annotations are optional across the language — except on function signatures, where parameters and return types are both explicit — and unannotated code is still inferred and checked, reporting only errors that are certain; annotated code is checked strictly.
 - Typing is structural and flow-sensitive — after `if user.is(Admin)`, `user` is narrowed to `Admin` — matching duck-typing intuition.
-- There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as annotation vocabulary (e.g. `Array[User]`) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all.
+- There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as annotation vocabulary (e.g. `Array[User]`, `Box[Int]`) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all.
 - Strictness defaults high and can be relaxed explicitly.
 - Type information feeds back into performance: modules with sufficiently complete type knowledge can be specialized (unboxed representations, direct dispatch) on the native backend.
 
@@ -186,6 +191,9 @@ Emo ships with a native concurrency model built around **processes and message p
 
 The concurrency semantics are shaped by the following decisions:
 
+- **`do` starts a process and yields its pid.** `do work(item)` runs the call in a new process; the value of the `do`-expression is the new process's pid, and the call's own result is discarded.
+- **`pid <- message` sends.** `<-` delivers a message to a process's mailbox, and is always written with a space on each side — a juxtaposed `a<-b` is a syntax error rather than a guess, and comparison against a negated value is `a < -b`.
+- **`receive` takes the same branches as `case`.** `receive { ... }` scans the mailbox for the first message matching any branch; non-matching messages stay queued, and the process blocks while nothing matches — selective receive comes from ordinary patterns, with no separate mechanism.
 - Message passing is the core concurrency primitive; shared-memory primitives are not part of the core semantics.
 - Data is immutable by default, so messages can be passed by copying on BEAM and by reference on the native backend while keeping identical observable semantics.
 - Tail calls are guaranteed; recursion is the idiomatic shape of a receive loop.

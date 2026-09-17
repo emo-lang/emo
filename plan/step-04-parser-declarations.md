@@ -1,0 +1,79 @@
+# Step 04 — Parser: Declarations
+
+**Milestone:** M1 · **Prereq:** step 03 · **Status:** not started
+
+## Goal
+
+Parse the full single-file language surface: functions, classes, interfaces,
+enums, `raise`, and the naming-convention rules that belong to syntax. After
+this step the README's code examples all parse completely.
+
+## Scope
+
+### In
+
+- **Program shape** — a file is a sequence of top-level items: `def`,
+  `class`, `interface`, `enum`, `const` / `var` bindings, and expression
+  statements, executed/registered in order.
+- **`def`** — `def name(param Type, ...) ReturnType { ... }`.
+  - Names: `snake_case`, optionally ending in `?` (predicate methods);
+    camelCase is a parse error.
+  - Return type is **required** on `def` and **forbidden-but-defaulted** on
+    `init` (`init` returns the class it constructs — no annotation allowed,
+    per the README exemption).
+  - Parameters: annotated, positional; `def` parameters do not have defaults
+    (undecided feature — not built).
+- **`class`** — body contains exactly one `init` and any number of `def`s
+  (provisional: a missing or duplicated `init` is an error — strictness
+  first). Fields are *not declared*: the field set is whatever `init`
+  assigns via `self.x = ...` (collected here for later stages).
+  No inheritance syntax exists and none is added.
+- **`interface`** — body is method signatures only (`def greet() String`,
+  no body, no `init`).
+- **`enum`** — `enum Color { red, green, blue }`; members are bare
+  lower_snake identifiers. No payloads — `enum Color(String)` or
+  Rust-shaped variants are rejected by construction.
+- **`raise`** — statement `raise <expression>`; the catch form is undecided
+  (`CHECK.md`) and intentionally absent.
+- **Naming conventions enforced here** (they are syntactic in Emo): type
+  positions (`class` / `interface` / `enum` names, annotation types) must be
+  `UPPER_IDENT`; function/variable/parameter names and enum members must be
+  lower_snake; method names may end in `?` only on `def`s, and `?` names are
+  not valid as variables. Violations are errors with precise spans.
+- **`const` / `var`** distinction is carried on the binding node; whether a
+  `var` may be reassigned is a later-stage check, but `const` rebinding in
+  the same scope is rejected at parse time.
+- Basic multi-error recovery: after a declaration error, resync at the next
+  top-level keyword and keep parsing — report as many errors as possible in
+  one pass.
+
+### Out
+
+- `require` (step 10), pattern matching, mixins (undecided), default
+  arguments, visibility keywords (do not exist structurally).
+
+## Tasks
+
+- [ ] Declaration AST nodes; top-level item sequence.
+- [ ] `def` parsing with the `init` exemption and `?`-name rules.
+- [ ] `class` (single-`init` rule, field collection from `self.x =`).
+- [ ] `interface` signature-only bodies.
+- [ ] `enum` member lists.
+- [ ] `raise` statement.
+- [ ] Naming-convention checks with spans; multi-error resync.
+- [ ] Golden tests: `User`, `Greeter` / `English`, `Color` examples from the
+  README parse cleanly; convention violations produce the expected errors.
+
+## Acceptance
+
+- The README's `User`, `Greeter`, `English`, `welcome`, and `Color` snippets
+  parse to golden ASTs.
+- Negative tests: camelCase `def`, `UPPER` variable, `enum Color(String, Int)`,
+  duplicate `init`, annotated `init` return — each rejected with the right
+  message and span.
+- `dune test` green.
+
+## Open design items
+
+- Exactly-one-`init` per class is a provisional decision (the README only
+  fixes that `init` is the sole field-assignment window).

@@ -3,10 +3,11 @@
 Pending design decisions — deliberately kept out of the README until they are settled.
 
 - Mixin mechanism: include syntax, single vs. multiple includes, name-collision rules.
-- Match syntax: pattern matching, destructuring, guards — enum exhaustiveness checking depends on it.
+- How a process obtains its own pid (needed for the reply pattern), and the pid's type-annotation spelling.
 - Exception catching syntax (`raise` is decided; the catch form is not).
 - String escape rules, and whether raw strings are needed.
-- Mutable-cell primitive: keyword and method names.
+- Numeric literal formats: hexadecimal, binary, digit separators (decimal-only for now).
+- C FFI binding-surface syntax (blocks step 13's FFI task).
 - Package management:
   - Manifest file name.
   - Lockfile name.
