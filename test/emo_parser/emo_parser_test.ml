@@ -471,6 +471,73 @@ let string_tests =
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
   ]
 
+let golden_tests =
+  [
+    tc "the full postfix chain pins precedence" (fun () ->
+        Alcotest.(check string)
+          "shape" "(((((x.foo) call 1)[i]).bar?) call)"
+          (render pp_expr (parse_expr "x.foo(1)[i].bar?()")));
+    tc "dangling operators continue the expression" (fun () ->
+        Alcotest.check expr "plus" (parse_expr "1 +\n2") (parse_expr "1 + 2");
+        Alcotest.check expr "and-or"
+          (parse_expr "a &&\n  b ||\n  c")
+          (parse_expr "a && b || c"));
+    tc "call arguments span lines" (fun () ->
+        Alcotest.(check string)
+          "shape" "(f call a b)"
+          (render pp_expr (parse_expr "f(\n  a,\n  b\n)")));
+    tc "README: raising an exception" (fun () ->
+        Alcotest.(check string)
+          "shape"
+          "(((type Exception).new) call message: \"something went wrong\")"
+          (render pp_expr
+             (parse_expr "Exception.new(message: \"something went wrong\")")));
+    tc "README: narrowing with is" (fun () ->
+        Alcotest.(check string)
+          "shape" "((u.is) call (type Greeter))"
+          (render pp_expr (parse_expr "u.is(Greeter)")));
+    tc "README: greeting interpolation" (fun () ->
+        Alcotest.(check string)
+          "shape" "(string \"hello, \" (interp name))"
+          (render pp_expr (parse_expr "\"hello, ${name}\"")));
+    tc "README: a component tree is nested calls" (fun () ->
+        Alcotest.(check string)
+          "shape"
+          "(page call title: \"Home\" (block |(navbar call (block |(logo \
+           call)))))"
+          (render pp_expr
+             (parse_expr
+                "page(title: \"Home\") {\n  navbar() {\n    logo()\n  }\n}")));
+    tc "README: tuples bind to names" (fun () ->
+        match parse_program "const point = (x, y)\nmove_to(point)" with
+        | [ binding; call ] ->
+            Alcotest.(check string)
+              "binding" "(const point (tuple x y))" (render pp_stmt binding);
+            Alcotest.(check string)
+              "call" "(move_to call point)" (render pp_stmt call)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 statements, got %d"
+                 (List.length stmts)));
+    tc "README: qualified enum members are member access" (fun () ->
+        Alcotest.(check string)
+          "shape" "((type Color).red)"
+          (render pp_expr (parse_expr "Color.red")));
+    tc "malformed input reports the first missing token" (fun () ->
+        List.iter
+          (fun source ->
+            let diagnostic = parse_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) "E2001" (code_of diagnostic))
+          [ "1 +"; "x."; ")"; "if"; "-> { return 1" ]);
+    tc "unclosed calls report at end of input" (fun () ->
+        let diagnostic = program_err "f(" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:3"
+          (Span.to_string diagnostic.Diagnostic.span));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -485,4 +552,5 @@ let () =
       ("control", control_tests);
       ("stmt", stmt_tests);
       ("string", string_tests);
+      ("golden", golden_tests);
     ]
