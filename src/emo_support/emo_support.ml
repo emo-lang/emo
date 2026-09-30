@@ -1,11 +1,7 @@
 module Severity = struct
-  type t =
-    | Error
-    | Warning
+  type t = Error | Warning
 
-  let to_string = function
-    | Error -> "error"
-    | Warning -> "warning"
+  let to_string = function Error -> "error" | Warning -> "warning"
 end
 
 module Span = struct
@@ -45,13 +41,17 @@ module Render = struct
     let head =
       match d.Diagnostic.code with
       | Some code ->
-          Printf.sprintf "%s[%s]: %s" (Severity.to_string d.Diagnostic.severity)
+          Printf.sprintf "%s[%s]: %s"
+            (Severity.to_string d.Diagnostic.severity)
             code d.Diagnostic.message
       | None ->
-          Printf.sprintf "%s: %s" (Severity.to_string d.Diagnostic.severity)
+          Printf.sprintf "%s: %s"
+            (Severity.to_string d.Diagnostic.severity)
             d.Diagnostic.message
     in
-    let location = Printf.sprintf "  --> %s" (Span.to_string d.Diagnostic.span) in
+    let location =
+      Printf.sprintf "  --> %s" (Span.to_string d.Diagnostic.span)
+    in
     match d.Diagnostic.hint with
     | Some hint -> String.concat "\n" [ head; location; "  hint: " ^ hint ]
     | None -> String.concat "\n" [ head; location ]

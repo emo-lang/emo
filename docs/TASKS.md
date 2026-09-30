@@ -57,7 +57,7 @@ before starting the gated work:
 - [x] **T1.2** — Implement `emo_support`: span, severity, diagnostic, renderer; unit tests for the renderer.
 - [x] **T1.3** — Implement `emo_cli` with cmdliner; wire the four subcommands to placeholder actions.
 - [x] **T1.4** — Add alcotest smoke tests per library and the CI workflow (setup-ocaml, `dune build`, `dune test`, Linux + macOS).
-- [ ] **T1.5** — Add `.ocamlformat` (conventional profile); format the tree once (`dune build @fmt` passes).
+- [x] **T1.5** — Add `.ocamlformat` (conventional profile); format the tree once (`dune build @fmt` passes).
 
 ### Step 02 — Lexer · `plan/step-02-lexer.md`
 
