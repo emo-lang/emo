@@ -88,6 +88,7 @@ let expect_op st op what =
 
 let merge_span a b = Emo_support.Span.merge a b
 let node span desc = { Ast.span; desc }
+let stmt span desc = { Ast.stmt_span = span; stmt_desc = desc }
 
 let comparison_binop = function
   | Tok.Eq -> Some Ast.Eq
@@ -221,6 +222,36 @@ and parse_postfix st =
         let close_span = span st in
         expect_op st Tok.RBracket "`]`";
         e := node (merge_span !e.Ast.span close_span) (Ast.Index (!e, index))
+    | Tok.Op Tok.LParen when not (newline_before st) -> (
+        let lparen = peek st in
+        if
+          lparen.Tok.span.Emo_support.Span.start
+          > !e.Ast.span.Emo_support.Span.stop
+        then
+          error "E2003" lparen.Tok.span "call parentheses must touch the callee"
+            ~hint:"write `f(a)`, never `f (a)`";
+        advance st |> ignore;
+        let args = parse_args st in
+        let close_span = span st in
+        expect_op st Tok.RParen "`)`" |> ignore;
+        let call =
+          node (merge_span !e.Ast.span close_span) (Ast.Call (!e, args))
+        in
+        e :=
+          match kind st with
+          | Tok.Op Tok.LBrace when not (newline_before st) ->
+              let lbrace_span = span st in
+              let body, close_span = parse_block st in
+              let block =
+                node
+                  (merge_span lbrace_span close_span)
+                  (Ast.Arrow_block ([], body))
+              in
+              node
+                (merge_span call.Ast.span close_span)
+                (Ast.Call
+                   (!e, args @ [ { Ast.arg_name = None; arg_value = block } ]))
+          | _ -> call)
     | _ -> continue := false
   done;
   !e
@@ -283,6 +314,71 @@ and parse_paren st =
       | Binary _ | Unary _ -> first
       | _ -> node (merge_span open_span close_span) (Ast.Tuple [ first ])
 
+and parse_args st =
+  if at_op st Tok.RParen then []
+  else
+    let args = ref [] in
+    let rec loop () =
+      let name =
+        match kind st with
+        | Tok.Lower_ident n
+          when (Emo_lexer.Stream.peek_ahead st.stream 1).Tok.kind
+               = Tok.Op Tok.Colon ->
+            advance st |> ignore;
+            advance st |> ignore;
+            Some n
+        | _ -> None
+      in
+      let value = parse_expr st in
+      args := { Ast.arg_name = name; arg_value = value } :: !args;
+      if at_op st Tok.Comma then (
+        advance st |> ignore;
+        if at_op st Tok.RParen then
+          error "E2003" (span st) "argument lists do not take a trailing comma";
+        loop ())
+    in
+    loop ();
+    List.rev !args
+
+and parse_block st =
+  advance st |> ignore;
+  let stmts = ref [] in
+  let rec loop () =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else (
+      stmts := parse_stmt st :: !stmts;
+      loop ())
+  in
+  loop ();
+  if at_eof st then error "E2001" (span st) "expected `}`, found end of input";
+  let close_span = span st in
+  expect_op st Tok.RBrace "`}`" |> ignore;
+  (List.rev !stmts, close_span)
+
+and parse_stmt st =
+  let start_span = span st in
+  match kind st with
+  | Tok.Keyword Tok.Return ->
+      advance st |> ignore;
+      if at_op st Tok.RBrace || at_eof st || newline_before st then
+        stmt start_span (Ast.Return None)
+      else
+        let e = parse_expr st in
+        end_statement st;
+        stmt start_span (Ast.Return (Some e))
+  | _ ->
+      let e = parse_expr st in
+      end_statement st;
+      stmt start_span (Ast.Expr_stmt e)
+
+and end_statement st =
+  match kind st with
+  | Tok.Eof | Tok.Op Tok.RBrace -> ()
+  | _ when newline_before st -> ()
+  | _ ->
+      error "E2002" (span st) "expressions cannot be juxtaposed"
+        ~hint:"start a new statement on the next line"
+
 (* Parses a source that holds exactly one expression. *)
 let parse_expr_source ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
@@ -292,3 +388,17 @@ let parse_expr_source ~file ~source =
     error "E2001" (span st)
       (Printf.sprintf "unexpected %s after the expression" (describe_here st));
   e
+
+(* Parses a file: a sequence of statements ended by newlines. *)
+let parse_program ~file ~source =
+  let stream = Emo_lexer.lex ~file ~source in
+  let st = { stream; file } in
+  let stmts = ref [] in
+  let rec loop () =
+    if at_eof st then ()
+    else (
+      stmts := parse_stmt st :: !stmts;
+      loop ())
+  in
+  loop ();
+  List.rev !stmts

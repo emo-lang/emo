@@ -43,12 +43,15 @@ let rec pp_expr fmt (e : Emo_ast.expr) =
   | Self -> Format.pp_print_string fmt "self"
   | Member (e, n) -> Format.fprintf fmt "(%a.%s)" pp_expr e n
   | Index (e, i) -> Format.fprintf fmt "(%a[%a])" pp_expr e pp_expr i
+  | Call (callee, ([] as args)) ->
+      Format.fprintf fmt "(%a call%a)" pp_expr callee (pp_list pp_arg) args
   | Call (callee, args) ->
       Format.fprintf fmt "(%a call @[<hov>%a@])" pp_expr callee (pp_list pp_arg)
         args
   | Arrow_block (params, body) ->
       Format.fprintf fmt "(block @[<hov>%a|%a@])" (pp_list pp_param) params
         (pp_list pp_stmt) body
+  | Tuple ([] as es) -> Format.fprintf fmt "(tuple%a)" (pp_list pp_expr) es
   | Tuple es -> Format.fprintf fmt "(tuple @[<hov>%a@])" (pp_list pp_expr) es
   | Unary (op, e) ->
       Format.fprintf fmt "(%s %a)"
@@ -182,7 +185,7 @@ let expression_tests =
         Alcotest.check expr "shape" (parse_expr "(a + b)") (parse_expr "a + b"));
     tc "empty parens are the empty tuple" (fun () ->
         Alcotest.(check string)
-          "shape" "(tuple )"
+          "shape" "(tuple)"
           (render pp_expr (parse_expr "()")));
     (* the printer emits a trailing space for empty lists *)
     tc "trailing comma in a tuple is rejected" (fun () ->
@@ -192,6 +195,61 @@ let expression_tests =
         let e = parse_expr "1 + 2" in
         Alcotest.(check int) "start" 0 e.Emo_ast.span.Emo_support.Span.start;
         Alcotest.(check int) "stop" 5 e.Emo_ast.span.Emo_support.Span.stop);
+  ]
+
+let parse_program source = Emo_parser.parse_program ~file:"test.emo" ~source
+
+let program_err source =
+  match parse_program source with
+  | _ -> Alcotest.fail "expected a parse error"
+  | exception Emo_parser.Error diagnostic -> diagnostic
+
+let call_tests =
+  [
+    tc "positional and named arguments mix" (fun () ->
+        Alcotest.(check string)
+          "shape" "(f call a b k: c)"
+          (render pp_expr (parse_expr "f(a, b, k: c)")));
+    tc "named arguments come first in the shape" (fun () ->
+        Alcotest.(check string)
+          "shape" "(hello call name: world)"
+          (render pp_expr (parse_expr "hello(name: world)")));
+    tc "call parens must touch the callee" (fun () ->
+        let diagnostic = program_err "f (a)" in
+        Alcotest.(check string) "code" "E2003" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:3"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "trailing block sugar adds a final block argument" (fun () ->
+        Alcotest.(check string)
+          "shape" "(page call title: home (block |(render call)))"
+          (render pp_expr (parse_expr "page(title: home) { render() }")));
+    tc "a trailing block must follow on the same line" (fun () ->
+        let diagnostic = program_err "page(title: home)\n{ render() }" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+    tc "argument lists reject trailing commas" (fun () ->
+        let diagnostic = parse_err "f(a,)" in
+        Alcotest.(check string) "code" "E2003" (code_of diagnostic));
+    tc "a block holds one statement per line" (fun () ->
+        Alcotest.(check string)
+          "shape" "(f call a (block |x y))"
+          (render pp_expr (parse_expr "f(a) {\n  x\n  y\n}")));
+    tc "return may omit its value at the end of a block" (fun () ->
+        Alcotest.(check string)
+          "shape" "(f call (block |return))"
+          (render pp_expr (parse_expr "f() {\n  return\n}")));
+    tc "same-line statements are rejected" (fun () ->
+        let diagnostic = program_err "f() { a b }" in
+        Alcotest.(check string) "code" "E2002" (code_of diagnostic));
+    tc "programs are newline-separated statements" (fun () ->
+        match parse_program "a\nb" with
+        | [ first; second ] ->
+            Alcotest.(check string) "first" "a" (render pp_stmt first);
+            Alcotest.(check string) "second" "b" (render pp_stmt second)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 statements, got %d"
+                 (List.length stmts)));
   ]
 
 let () =
@@ -204,4 +262,5 @@ let () =
               ());
         ] );
       ("expression", expression_tests);
+      ("call", call_tests);
     ]
