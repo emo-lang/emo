@@ -425,6 +425,52 @@ let stmt_tests =
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
   ]
 
+let string_tests =
+  [
+    tc "a plain string is a string literal" (fun () ->
+        Alcotest.(check string)
+          "shape" "\"hello\""
+          (render pp_expr (parse_expr "\"hello\"")));
+    tc "an empty string is empty" (fun () ->
+        Alcotest.(check string)
+          "shape" "\"\""
+          (render pp_expr (parse_expr "\"\"")));
+    tc "interpolation reassembles the parts" (fun () ->
+        Alcotest.(check string)
+          "shape" "(string \"a \" (interp x) \" b\")"
+          (render pp_expr (parse_expr "\"a ${x} b\"")));
+    tc "consecutive interpolations keep their order" (fun () ->
+        Alcotest.(check string)
+          "shape" "(string (interp a) (interp b))"
+          (render pp_expr (parse_expr "\"${a}${b}\"")));
+    tc "a string may be interpolation only" (fun () ->
+        Alcotest.(check string)
+          "shape" "(string (interp x))"
+          (render pp_expr (parse_expr "\"${x}\"")));
+    tc "interpolation holds full expressions" (fun () ->
+        Alcotest.(check string)
+          "shape" "(string (interp (f call 1)))"
+          (render pp_expr (parse_expr "\"${f(1)}\"")));
+    tc "nested strings interpolate correctly" (fun () ->
+        Alcotest.(check string)
+          "shape" "(string \"a \" (interp \"b\") \" c\")"
+          (render pp_expr (parse_expr "\"a ${ \"b\" } c\"")));
+    tc "plain string patterns match" (fun () ->
+        match parse_program "case s {\n  \"red\" -> { return 1 }\n}" with
+        | [ case_stmt ] ->
+            Alcotest.(check string)
+              "shape" "(case s (branch \"red\" |(return 1)))"
+              (render pp_stmt case_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "interpolated strings are not patterns" (fun () ->
+        let diagnostic =
+          program_err "case s {\n  \"a${b}c\" -> { return 1 }\n}"
+        in
+        Alcotest.(check string) "code" "E2007" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -438,4 +484,5 @@ let () =
       ("call", call_tests);
       ("control", control_tests);
       ("stmt", stmt_tests);
+      ("string", string_tests);
     ]
