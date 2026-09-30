@@ -100,6 +100,30 @@ let error code span ?hint message =
        Emo_support.Diagnostic.
          { severity = Error; code = Some code; message; span; hint })
 
+let is_ws c = c = ' ' || c = '\t' || c = '\r' || c = '\n'
+let is_digit c = c >= '0' && c <= '9'
+let is_lower c = c >= 'a' && c <= 'z'
+let is_upper c = c >= 'A' && c <= 'Z'
+let is_ident_letter c = is_digit c || is_lower c || is_upper c || c = '_'
+
+let keyword_of_string = function
+  | "def" -> Some Token.Def
+  | "const" -> Some Token.Const
+  | "var" -> Some Token.Var
+  | "class" -> Some Token.Class
+  | "interface" -> Some Token.Interface
+  | "enum" -> Some Token.Enum
+  | "if" -> Some Token.If
+  | "else" -> Some Token.Else
+  | "case" -> Some Token.Case
+  | "when" -> Some Token.When
+  | "receive" -> Some Token.Receive
+  | "return" -> Some Token.Return
+  | "raise" -> Some Token.Raise
+  | "self" -> Some Token.Self
+  | "do" -> Some Token.Do
+  | _ -> None
+
 let lex ~file ~source =
   let len = String.length source in
   let line = ref 1 and col = ref 1 and offset = ref 0 in
@@ -113,6 +137,9 @@ let lex ~file ~source =
   in
   let eof () = !offset >= len in
   let cur () = source.[!offset] in
+  let char_at k =
+    if !offset + k < len then Some source.[!offset + k] else None
+  in
   let span_from start_line start_col start_off =
     Emo_support.Span.make ~file ~line:start_line ~col:start_col ~start:start_off
       ~stop:!offset
@@ -139,21 +166,26 @@ let lex ~file ~source =
   let interp_start =
     ref (Emo_support.Span.make ~file ~line:0 ~col:0 ~start:0 ~stop:0)
   in
+  let ws_before = ref false in
   let skip_trivia () =
+    let skipped = ref false in
     let rec go () =
       if eof () then ()
       else
         match cur () with
         | ' ' | '\t' | '\r' ->
+            skipped := true;
             bump ();
             go ()
         | '\n' ->
+            skipped := true;
             newline_pending := true;
             bump ();
             go ()
         | _ -> ()
     in
-    go ()
+    go ();
+    ws_before := !skipped || !offset = 0
   in
   let rec run () =
     skip_trivia ();
@@ -165,6 +197,11 @@ let lex ~file ~source =
     else
       let l, c, o = (!line, !col, !offset) in
       let single kind =
+        bump ();
+        emit kind l c o
+      in
+      let double kind =
+        bump ();
         bump ();
         emit kind l c o
       in
@@ -191,6 +228,75 @@ let lex ~file ~source =
       | ',' -> single (Token.Op Token.Comma)
       | ':' -> single (Token.Op Token.Colon)
       | '.' -> single (Token.Op Token.Dot)
+      | '-' ->
+          if char_at 1 = Some '>' then double (Token.Op Token.Arrow)
+          else single (Token.Op Token.Minus)
+      | '<' ->
+          if char_at 1 = Some '-' then (
+            let ws_after =
+              match char_at 2 with Some c2 -> is_ws c2 | None -> true
+            in
+            if not (!ws_before && ws_after) then
+              error "E1008"
+                (Emo_support.Span.make ~file ~line:l ~col:c ~start:o
+                   ~stop:(o + 2))
+                "the send operator `<-` needs a space on each side"
+                ~hint:"write `a <- b`, never `a<-b`";
+            double (Token.Op Token.Send))
+          else if char_at 1 = Some '=' then double (Token.Op Token.Le)
+          else single (Token.Op Token.Lt)
+      | '=' ->
+          if char_at 1 = Some '=' then double (Token.Op Token.Eq)
+          else single (Token.Op Token.Assign)
+      | '!' ->
+          if char_at 1 = Some '=' then double (Token.Op Token.Ne)
+          else single (Token.Op Token.Not)
+      | '>' ->
+          if char_at 1 = Some '=' then double (Token.Op Token.Ge)
+          else single (Token.Op Token.Gt)
+      | '&' ->
+          if char_at 1 = Some '&' then double (Token.Op Token.AndAnd)
+          else
+            error "E1001" (here ()) "unexpected character `&`"
+              ~hint:"Emo uses `&&` for logical and"
+      | '|' ->
+          if char_at 1 = Some '|' then double (Token.Op Token.OrOr)
+          else
+            error "E1001" (here ()) "unexpected character `|`"
+              ~hint:"Emo uses `||` for logical or"
+      | '+' -> single (Token.Op Token.Plus)
+      | '*' -> single (Token.Op Token.Star)
+      | '/' -> single (Token.Op Token.Slash)
+      | '%' -> single (Token.Op Token.Percent)
+      | ch when is_lower ch || ch = '_' -> (
+          let rec ident_tail () =
+            if (not (eof ())) && is_ident_letter (cur ()) then (
+              bump ();
+              ident_tail ())
+          in
+          ident_tail ();
+          (if (not (eof ())) && cur () = '?' then
+             match char_at 1 with
+             | Some next when is_ident_letter next || next = '?' ->
+                 error "E1007" (here ())
+                   "a predicate name's `?` must be its last character"
+             | _ -> bump ());
+          let text = String.sub source o (!offset - o) in
+          match text with
+          | "true" -> emit Token.True l c o
+          | "false" -> emit Token.False l c o
+          | t -> (
+              match keyword_of_string t with
+              | Some k -> emit (Token.Keyword k) l c o
+              | None -> emit (Token.Lower_ident t) l c o))
+      | ch when is_upper ch ->
+          let rec ident_tail () =
+            if (not (eof ())) && is_ident_letter (cur ()) then (
+              bump ();
+              ident_tail ())
+          in
+          ident_tail ();
+          emit (Token.Upper_ident (String.sub source o (!offset - o))) l c o
       | c ->
           error "E1001" (here ()) (Printf.sprintf "unexpected character `%c`" c));
       run ()

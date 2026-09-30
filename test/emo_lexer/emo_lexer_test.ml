@@ -135,4 +135,125 @@ let foundation_tests =
         Alcotest.(check bool) "at_eof" true (Stream.at_eof stream));
   ]
 
-let () = Alcotest.run "emo_lexer" [ ("foundation", foundation_tests) ]
+let ident_tests =
+  [
+    tc "lower and upper identifiers lex to their classes" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Lower_ident "user"; Upper_ident "Color"; Lower_ident "_tmp"; Eof ]
+          (kinds (lex_all "user Color _tmp")));
+    tc "true and false are literal tokens" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds" [ True; False; Eof ]
+          (kinds (lex_all "true false")));
+    tc "a trailing question mark joins the name" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Lower_ident "is_older?"; Op LParen; Op RParen; Eof ]
+          (kinds (lex_all "is_older?()")));
+    tc "keyword prefixes and camelCase stay one lower token" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Lower_ident "doing"; Lower_ident "classX"; Eof ]
+          (kinds (lex_all "doing classX")));
+    tc "every keyword lexes" (fun () ->
+        let source =
+          "def const var class interface enum if else case when receive return \
+           raise self do"
+        in
+        let expected =
+          [
+            Token.Keyword Token.Def;
+            Token.Keyword Token.Const;
+            Token.Keyword Token.Var;
+            Token.Keyword Token.Class;
+            Token.Keyword Token.Interface;
+            Token.Keyword Token.Enum;
+            Token.Keyword Token.If;
+            Token.Keyword Token.Else;
+            Token.Keyword Token.Case;
+            Token.Keyword Token.When;
+            Token.Keyword Token.Receive;
+            Token.Keyword Token.Return;
+            Token.Keyword Token.Raise;
+            Token.Keyword Token.Self;
+            Token.Keyword Token.Do;
+            Token.Eof;
+          ]
+        in
+        Alcotest.(check (list kind)) "kinds" expected (kinds (lex_all source)));
+  ]
+
+let operator_tests =
+  [
+    tc "every operator lexes in sequence" (fun () ->
+        let source =
+          "( ) { } [ ] , : . -> <- = == != < <= > >= + - * / % && || !"
+        in
+        let expected =
+          [
+            Token.Op Token.LParen;
+            Token.Op Token.RParen;
+            Token.Op Token.LBrace;
+            Token.Op Token.RBrace;
+            Token.Op Token.LBracket;
+            Token.Op Token.RBracket;
+            Token.Op Token.Comma;
+            Token.Op Token.Colon;
+            Token.Op Token.Dot;
+            Token.Op Token.Arrow;
+            Token.Op Token.Send;
+            Token.Op Token.Assign;
+            Token.Op Token.Eq;
+            Token.Op Token.Ne;
+            Token.Op Token.Lt;
+            Token.Op Token.Le;
+            Token.Op Token.Gt;
+            Token.Op Token.Ge;
+            Token.Op Token.Plus;
+            Token.Op Token.Minus;
+            Token.Op Token.Star;
+            Token.Op Token.Slash;
+            Token.Op Token.Percent;
+            Token.Op Token.AndAnd;
+            Token.Op Token.OrOr;
+            Token.Op Token.Not;
+            Token.Eof;
+          ]
+        in
+        Alcotest.(check (list kind)) "kinds" expected (kinds (lex_all source)));
+    tc "send requires whitespace on both sides" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Lower_ident "a"; Op Send; Lower_ident "b"; Eof ]
+          (kinds (lex_all "a <- b")));
+    tc "a < -b lexes as less-than then unary minus" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Lower_ident "a"; Op Lt; Op Minus; Lower_ident "b"; Eof ]
+          (kinds (lex_all "a < -b")));
+    tc "a single ampersand is rejected toward &&" (fun () ->
+        let diagnostic = lex_err "&" in
+        Alcotest.(check string)
+          "code" "E1001"
+          (match diagnostic.Diagnostic.code with Some c -> c | None -> "");
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a single bar is rejected toward ||" (fun () ->
+        let diagnostic = lex_err "|" in
+        Alcotest.(check string)
+          "code" "E1001"
+          (match diagnostic.Diagnostic.code with Some c -> c | None -> "");
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+  ]
+
+let () =
+  Alcotest.run "emo_lexer"
+    [
+      ("foundation", foundation_tests);
+      ("ident", ident_tests);
+      ("operator", operator_tests);
+    ]
