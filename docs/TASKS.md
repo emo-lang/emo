@@ -66,7 +66,7 @@ before starting the gated work:
 
 - [x] **T2.1** — Token type + positioned token stream in `emo_lexer`.
 - [x] **T2.2** — Identifier classes (`LOWER_IDENT` / `UPPER_IDENT`), keywords, operators.
-- [ ] **T2.3** — Numeric and char literals with escape handling.
+- [x] **T2.3** — Numeric and char literals with escape handling.
 - [ ] **T2.4** — Interpolated-string token scheme with nesting tests.
 - [ ] **T2.5** — Newline-preserving stream API.
 - [ ] **T2.6** — Error cases: each rejects with correct line:col via `emo_support`.

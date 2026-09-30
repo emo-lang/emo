@@ -250,10 +250,73 @@ let operator_tests =
           (Span.to_string diagnostic.Diagnostic.span));
   ]
 
+let literal_tests =
+  [
+    tc "integers lex with their values" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds" [ Int 0; Int 42; Eof ]
+          (kinds (lex_all "0 42")));
+    tc "floats require digits around the dot" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Float 1.0; Float 2.5; Eof ]
+          (kinds (lex_all "1.0 2.5")));
+    tc "a trailing dot is member access on an integer" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Int 1; Op Dot; Lower_ident "to_string"; Op LParen; Op RParen; Eof ]
+          (kinds (lex_all "1.to_string()")));
+    tc "an underscore directly after a number is a lexical error" (fun () ->
+        let diagnostic = lex_err "1_a" in
+        Alcotest.(check string)
+          "code" "E1006"
+          (match diagnostic.Diagnostic.code with Some c -> c | None -> "");
+        Alcotest.(check string)
+          "span" "test.emo:1:2"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "integer literals beyond machine range are rejected" (fun () ->
+        let diagnostic = lex_err "99999999999999999999999999" in
+        Alcotest.(check string)
+          "code" "E1006"
+          (match diagnostic.Diagnostic.code with Some c -> c | None -> "");
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "character literals carry their value" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Char 'a'; Char '\n'; Char '\''; Eof ]
+          (kinds (lex_all "'a' '\\n' '\\''")));
+    tc "character literals must hold exactly one character" (fun () ->
+        let diagnostic = lex_err "'ab'" in
+        Alcotest.(check string)
+          "code" "E1005"
+          (match diagnostic.Diagnostic.code with Some c -> c | None -> "");
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "empty character literals are rejected" (fun () ->
+        let diagnostic = lex_err "''" in
+        Alcotest.(check string)
+          "code" "E1005"
+          (match diagnostic.Diagnostic.code with Some c -> c | None -> ""));
+    tc "unterminated character literals are rejected" (fun () ->
+        let diagnostic = lex_err "'a" in
+        Alcotest.(check string)
+          "code" "E1005"
+          (match diagnostic.Diagnostic.code with Some c -> c | None -> ""));
+    tc "unknown escapes are rejected with the supported set" (fun () ->
+        let diagnostic = lex_err "'\\q'" in
+        Alcotest.(check string)
+          "code" "E1004"
+          (match diagnostic.Diagnostic.code with Some c -> c | None -> ""));
+  ]
+
 let () =
   Alcotest.run "emo_lexer"
     [
       ("foundation", foundation_tests);
       ("ident", ident_tests);
       ("operator", operator_tests);
+      ("literal", literal_tests);
     ]
