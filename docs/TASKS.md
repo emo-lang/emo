@@ -76,13 +76,13 @@ before starting the gated work:
 **Prereq:** Step 02.
 **Done when:** every expression snippet in the README parses to the expected AST (golden tests); precedence pinned (`1 + 2 * 3`, `a && b || !c`, `x.foo(1)[i].bar?()`); `dune test` green.
 
-- [ ] **T3.1** — `emo_ast` expression/statement types with spans on every node.
-- [ ] **T3.2** — Pratt-style expression parser with the precedence table.
-- [ ] **T3.3** — Call parsing: positional + named args, trailing-block sugar.
-- [ ] **T3.4** — Arrow blocks; `if` / `else` (single shape, no chaining).
-- [ ] **T3.5** — Newline-termination rules with depth tracking.
-- [ ] **T3.6** — Interpolated-string reassembly from lexer parts.
-- [ ] **T3.7** — Parser tests: precedence table, dangling-operator continuations, malformed input errors.
+- [x] **T3.1** — `emo_ast` expression/statement types with spans on every node.
+- [x] **T3.2** — Pratt-style expression parser with the precedence table.
+- [x] **T3.3** — Call parsing: positional + named args, trailing-block sugar.
+- [x] **T3.4** — Arrow blocks; `if` / `else` (single shape, no chaining).
+- [x] **T3.5** — Newline-termination rules with depth tracking.
+- [x] **T3.6** — Interpolated-string reassembly from lexer parts.
+- [x] **T3.7** — Parser tests: precedence table, dangling-operator continuations, malformed input errors.
 
 Scope note: tuple literals under the content rule, tuple patterns, `case` / `receive` / `do` / send syntax all parse within this step (semantics stay "not yet" errors until steps 05 / 11).
 

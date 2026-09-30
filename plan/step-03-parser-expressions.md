@@ -1,6 +1,6 @@
 # Step 03 — Parser: Expressions
 
-**Milestone:** M1 · **Prereq:** step 02 · **Status:** not started
+**Milestone:** M1 · **Prereq:** step 02 · **Status:** done
 
 ## Goal
 
@@ -109,13 +109,13 @@ every runtime-level construct in the README parses.
 
 ## Tasks
 
-- [ ] `emo_ast` expression/statement types with spans on every node.
-- [ ] Pratt-style expression parser with the precedence table above.
-- [ ] Call parsing: positional + named args, trailing-block sugar.
-- [ ] Arrow blocks; `if` / `else` (single shape, no chaining).
-- [ ] Newline-termination rules with depth tracking.
-- [ ] Interpolated-string reassembly from lexer parts.
-- [ ] Parser tests: precedence table, dangling-operator continuations,
+- [x] `emo_ast` expression/statement types with spans on every node.
+- [x] Pratt-style expression parser with the precedence table above.
+- [x] Call parsing: positional + named args, trailing-block sugar.
+- [x] Arrow blocks; `if` / `else` (single shape, no chaining).
+- [x] Newline-termination rules with depth tracking.
+- [x] Interpolated-string reassembly from lexer parts.
+- [x] Parser tests: precedence table, dangling-operator continuations,
       malformed input errors.
 
 ## Acceptance
