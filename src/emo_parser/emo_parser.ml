@@ -283,6 +283,7 @@ and parse_primary st =
   | Tok.Keyword Tok.Self ->
       advance st |> ignore;
       node tok.Tok.span Ast.Self
+  | Tok.String_chunk _ | Tok.String_end | Tok.Interp_open -> parse_string st
   | Tok.Keyword Tok.Do -> (
       advance st |> ignore;
       let operand = parse_unary st in
@@ -545,6 +546,44 @@ and parse_type_ann st =
       error "E2001" (span st)
         (Printf.sprintf "expected a type annotation, found %s" (describe_kind t))
 
+and parse_string st =
+  let start_span = span st in
+  let parts = ref [] in
+  let rec loop () =
+    match kind st with
+    | Tok.String_chunk text ->
+        advance st |> ignore;
+        parts := Ast.Literal_text text :: !parts;
+        loop ()
+    | Tok.Interp_open ->
+        advance st |> ignore;
+        let e = parse_expr st in
+        (match kind st with
+        | Tok.Interp_close -> advance st |> ignore
+        | t ->
+            error "E2001" (span st)
+              (Printf.sprintf
+                 "expected `}` to close the interpolation, found %s"
+                 (describe_kind t)));
+        parts := Ast.Part_expr e :: !parts;
+        loop ()
+    | Tok.String_end ->
+        let close_span = span st in
+        advance st |> ignore;
+        let desc =
+          match List.rev !parts with
+          | [] -> Ast.String ""
+          | [ Ast.Literal_text text ] -> Ast.String text
+          | parts -> Ast.Interpolated parts
+        in
+        node (merge_span start_span close_span) desc
+    | t ->
+        error "E2001" (span st)
+          (Printf.sprintf "expected the rest of the string, found %s"
+             (describe_kind t))
+  in
+  loop ()
+
 and parse_pattern st =
   let tok = peek st in
   match tok.Tok.kind with
@@ -595,6 +634,16 @@ and parse_pattern st =
         Ast.pattern_span = tok.Tok.span;
         pattern_desc = Ast.Pattern_literal (Ast.L_bool false);
       }
+  | Tok.String_chunk _ | Tok.String_end | Tok.Interp_open -> (
+      match (parse_string st).Ast.desc with
+      | Ast.String text ->
+          {
+            Ast.pattern_span = tok.Tok.span;
+            pattern_desc = Ast.Pattern_literal (Ast.L_string text);
+          }
+      | _ ->
+          error "E2007" (span st) "patterns match plain strings only"
+            ~hint:"interpolation in a pattern would never match a known value")
   | Tok.Lower_ident "_" ->
       advance st |> ignore;
       { Ast.pattern_span = tok.Tok.span; pattern_desc = Ast.Wildcard }

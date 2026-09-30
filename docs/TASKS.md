@@ -81,7 +81,7 @@ before starting the gated work:
 - [x] **T3.3** — Call parsing: positional + named args, trailing-block sugar.
 - [x] **T3.4** — Arrow blocks; `if` / `else` (single shape, no chaining).
 - [x] **T3.5** — Newline-termination rules with depth tracking.
-- [ ] **T3.6** — Interpolated-string reassembly from lexer parts.
+- [x] **T3.6** — Interpolated-string reassembly from lexer parts.
 - [ ] **T3.7** — Parser tests: precedence table, dangling-operator continuations, malformed input errors.
 
 Scope note: tuple literals under the content rule, tuple patterns, `case` / `receive` / `do` / send syntax all parse within this step (semantics stay "not yet" errors until steps 05 / 11).
