@@ -11,12 +11,10 @@ let print_version () =
   Cmd.Exit.ok
 
 let run =
-  let file =
-    Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE")
-  in
+  let file = Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE") in
   Cmd.v
     (Cmd.info "run" ~doc:"Run an Emo program.")
-    (Term.(const (fun _ -> not_yet ()) $ file))
+    Term.(const (fun _ -> not_yet ()) $ file)
 
 let repl =
   Cmd.v
@@ -24,12 +22,10 @@ let repl =
     Term.(const not_yet $ const ())
 
 let check =
-  let path =
-    Arg.(required & pos 0 (some string) None & info [] ~docv:"PATH")
-  in
+  let path = Arg.(required & pos 0 (some string) None & info [] ~docv:"PATH") in
   Cmd.v
     (Cmd.info "check" ~doc:"Check Emo files.")
-    (Term.(const (fun _ -> not_yet ()) $ path))
+    Term.(const (fun _ -> not_yet ()) $ path)
 
 let version_cmd =
   Cmd.v
