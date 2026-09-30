@@ -1,0 +1,9 @@
+(library
+ (name emo_cli)
+ (libraries cmdliner)
+ (modules emo_cli))
+
+(executable
+ (name emo)
+ (libraries emo_cli)
+ (modules emo))

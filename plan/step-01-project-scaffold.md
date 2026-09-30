@@ -1,6 +1,6 @@
 # Step 01 — Project Scaffold & CLI Skeleton
 
-**Milestone:** M1 · **Prereq:** none · **Status:** not started
+**Milestone:** M1 · **Prereq:** none · **Status:** done
 
 ## Goal
 
@@ -55,14 +55,14 @@ intentionally do nothing yet. No Emo language functionality in this step.
 
 ## Tasks
 
-- [ ] Create `dune-project` and `src/` library skeletons with placeholder
+- [x] Create `dune-project` and `src/` library skeletons with placeholder
       modules that compile.
-- [ ] Implement `emo_support`: span, severity, diagnostic, renderer; unit
+- [x] Implement `emo_support`: span, severity, diagnostic, renderer; unit
       tests for the renderer.
-- [ ] Implement `emo_cli` with cmdliner; wire the four subcommands to
+- [x] Implement `emo_cli` with cmdliner; wire the four subcommands to
       placeholder actions.
-- [ ] Add alcotest smoke tests and the CI workflow.
-- [ ] Add `.ocamlformat`; format the tree once (`dune build @fmt` passes).
+- [x] Add alcotest smoke tests and the CI workflow.
+- [x] Add `.ocamlformat`; format the tree once (`dune build @fmt` passes).
 
 ## Acceptance
 

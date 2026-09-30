@@ -1,0 +1,8 @@
+(executable
+ (name emo_check_test)
+ (libraries alcotest emo_check))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{exe:emo_check_test.exe})))
