@@ -100,6 +100,12 @@ let error code span ?hint message =
        Emo_support.Diagnostic.
          { severity = Error; code = Some code; message; span; hint })
 
+type frame =
+  | String_frame of Emo_support.Span.t (* the opening quote *)
+  | Interp_frame of
+      Emo_support.Span.t (* the ${ that opened the interpolation *)
+  | Block_frame
+
 let is_ws c = c = ' ' || c = '\t' || c = '\r' || c = '\n'
 let is_digit c = c >= '0' && c <= '9'
 let is_lower c = c >= 'a' && c <= 'z'
@@ -170,9 +176,9 @@ let lex ~file ~source =
     newline_pending := false;
     prev_was_lparen := kind = Token.Op Token.LParen
   in
-  let depth = ref 0 in
-  let interp_start =
-    ref (Emo_support.Span.make ~file ~line:0 ~col:0 ~start:0 ~stop:0)
+  let frames = ref [] in
+  let current_string_span () =
+    match !frames with String_frame span :: _ -> span | _ -> assert false
   in
   let ws_before = ref false in
   let skip_trivia () =
@@ -195,190 +201,268 @@ let lex ~file ~source =
     go ();
     ws_before := !skipped || !offset = 0
   in
-  let rec run () =
-    skip_trivia ();
-    if eof () then (
-      if !depth > 0 then
-        error "E1003" !interp_start "unterminated string interpolation";
-      let l, c, o = (!line, !col, !offset) in
-      emit Token.Eof l c o)
-    else
-      let l, c, o = (!line, !col, !offset) in
-      let single kind =
-        bump ();
-        emit kind l c o
-      in
-      let double kind =
-        bump ();
-        bump ();
-        emit kind l c o
-      in
-      (match cur () with
-      | '(' ->
-          if !prev_was_lparen then
-            error "E1009" (here ()) "a `(` cannot directly follow another `(`"
-              ~hint:"bind the inner value to a name first";
-          single (Token.Op Token.LParen)
-      | ')' -> single (Token.Op Token.RParen)
-      | '{' ->
-          single (Token.Op Token.LBrace);
-          if !depth > 0 then incr depth
-      | '}' ->
-          if !depth = 1 then (
+  let scan_chunk () =
+    let start_line, start_col, start_off = (!line, !col, !offset) in
+    let buf = Buffer.create 16 in
+    let finish () =
+      if Buffer.length buf > 0 then
+        emit
+          (Token.String_chunk (Buffer.contents buf))
+          start_line start_col start_off
+    in
+    let rec go () =
+      if eof () then
+        error "E1002" (current_string_span ()) "unterminated string literal"
+      else
+        match cur () with
+        | '"' ->
+            finish ();
+            let l, c, o = (!line, !col, !offset) in
             bump ();
-            emit Token.Interp_close l c o;
-            decr depth)
-          else (
-            single (Token.Op Token.RBrace);
-            if !depth > 1 then decr depth)
-      | '[' -> single (Token.Op Token.LBracket)
-      | ']' -> single (Token.Op Token.RBracket)
-      | ',' -> single (Token.Op Token.Comma)
-      | ':' -> single (Token.Op Token.Colon)
-      | '.' -> single (Token.Op Token.Dot)
-      | '-' ->
-          if char_at 1 = Some '>' then double (Token.Op Token.Arrow)
-          else single (Token.Op Token.Minus)
-      | '<' ->
-          if char_at 1 = Some '-' then (
-            let ws_after =
-              match char_at 2 with Some c2 -> is_ws c2 | None -> true
-            in
-            if not (!ws_before && ws_after) then
-              error "E1008"
+            emit Token.String_end l c o;
+            frames := List.tl !frames
+        | '$' when char_at 1 = Some '{' ->
+            finish ();
+            let l, c, o = (!line, !col, !offset) in
+            bump ();
+            bump ();
+            emit Token.Interp_open l c o;
+            frames :=
+              Interp_frame
                 (Emo_support.Span.make ~file ~line:l ~col:c ~start:o
                    ~stop:(o + 2))
-                "the send operator `<-` needs a space on each side"
-                ~hint:"write `a <- b`, never `a<-b`";
-            double (Token.Op Token.Send))
-          else if char_at 1 = Some '=' then double (Token.Op Token.Le)
-          else single (Token.Op Token.Lt)
-      | '=' ->
-          if char_at 1 = Some '=' then double (Token.Op Token.Eq)
-          else single (Token.Op Token.Assign)
-      | '!' ->
-          if char_at 1 = Some '=' then double (Token.Op Token.Ne)
-          else single (Token.Op Token.Not)
-      | '>' ->
-          if char_at 1 = Some '=' then double (Token.Op Token.Ge)
-          else single (Token.Op Token.Gt)
-      | '&' ->
-          if char_at 1 = Some '&' then double (Token.Op Token.AndAnd)
-          else
-            error "E1001" (here ()) "unexpected character `&`"
-              ~hint:"Emo uses `&&` for logical and"
-      | '|' ->
-          if char_at 1 = Some '|' then double (Token.Op Token.OrOr)
-          else
-            error "E1001" (here ()) "unexpected character `|`"
-              ~hint:"Emo uses `||` for logical or"
-      | '+' -> single (Token.Op Token.Plus)
-      | '*' -> single (Token.Op Token.Star)
-      | '/' -> single (Token.Op Token.Slash)
-      | '%' -> single (Token.Op Token.Percent)
-      | dc when is_digit dc -> (
-          let rec digits () =
-            if (not (eof ())) && is_digit (cur ()) then (
-              bump ();
-              digits ())
-          in
-          digits ();
-          match char_at 0 with
-          | Some '.'
-            when match char_at 1 with Some d -> is_digit d | None -> false ->
-              bump ();
-              digits ();
-              emit
-                (Token.Float
-                   (float_of_string (String.sub source o (!offset - o))))
-                l c o
-          | _ -> (
-              if (not (eof ())) && cur () = '_' then
-                error "E1006" (here ())
-                  "a number cannot be directly followed by `_`"
-                  ~hint:"digit separators are not supported";
-              match int_of_string_opt (String.sub source o (!offset - o)) with
-              | Some n -> emit (Token.Int n) l c o
-              | None ->
-                  error "E1006" (span_from l c o) "integer literal out of range"
-              ))
-      | '\'' ->
-          let qline, qcol, qoff = (l, c, o) in
-          let quoted_span =
-            Emo_support.Span.make ~file ~line:qline ~col:qcol ~start:qoff
-              ~stop:(qoff + 2)
-          in
+              :: !frames
+        | '\\' -> (
+            match char_at 1 with
+            | Some e -> (
+                match escape_char e with
+                | Some ec ->
+                    bump ();
+                    bump ();
+                    Buffer.add_char buf ec;
+                    go ()
+                | None ->
+                    error "E1004"
+                      (Emo_support.Span.make ~file ~line:!line ~col:!col
+                         ~start:!offset ~stop:(!offset + 2))
+                      "invalid escape sequence"
+                      ~hint:"supported escapes are \\n \\t \\\\ \\' and \\\"")
+            | None ->
+                error "E1002" (current_string_span ())
+                  "unterminated string literal")
+        | '\n' ->
+            error "E1002" (current_string_span ()) "unterminated string literal"
+        | ch ->
+            Buffer.add_char buf ch;
+            bump ();
+            go ()
+    in
+    go ()
+  in
+  let rec run () =
+    if match !frames with String_frame _ :: _ -> true | _ -> false then (
+      scan_chunk ();
+      run ())
+    else (
+      skip_trivia ();
+      if eof () then (
+        let rec unterminated = function
+          | String_frame span :: _ ->
+              Some (span, "unterminated string literal", "E1002")
+          | Interp_frame span :: _ ->
+              Some (span, "unterminated string interpolation", "E1003")
+          | Block_frame :: rest -> unterminated rest
+          | [] -> None
+        in
+        (match unterminated !frames with
+        | Some (span, message, code) -> error code span message
+        | None -> ());
+        let l, c, o = (!line, !col, !offset) in
+        emit Token.Eof l c o)
+      else
+        let l, c, o = (!line, !col, !offset) in
+        let single kind =
           bump ();
-          if eof () then
-            error "E1005"
-              (span_from qline qcol qoff)
-              "unterminated character literal";
-          if cur () = '\'' then
-            error "E1005" quoted_span
-              "character literal must contain exactly one character";
-          let content =
-            if cur () = '\\' then
-              match char_at 1 with
-              | Some e -> (
-                  match escape_char e with
-                  | Some ec ->
-                      bump ();
-                      bump ();
-                      ec
-                  | None ->
-                      error "E1004" quoted_span "invalid escape sequence"
-                        ~hint:"supported escapes are \\n \\t \\\\ \\' and \\\"")
-              | None ->
+          emit kind l c o
+        in
+        let double kind =
+          bump ();
+          bump ();
+          emit kind l c o
+        in
+        (match cur () with
+        | '(' ->
+            if !prev_was_lparen then
+              error "E1009" (here ()) "a `(` cannot directly follow another `(`"
+                ~hint:"bind the inner value to a name first";
+            single (Token.Op Token.LParen)
+        | ')' -> single (Token.Op Token.RParen)
+        | '{' ->
+            single (Token.Op Token.LBrace);
+            frames := Block_frame :: !frames
+        | '}' -> (
+            match !frames with
+            | Interp_frame _ :: rest ->
+                bump ();
+                emit Token.Interp_close l c o;
+                frames := rest
+            | Block_frame :: rest ->
+                single (Token.Op Token.RBrace);
+                frames := rest
+            | _ -> single (Token.Op Token.RBrace))
+        | '[' -> single (Token.Op Token.LBracket)
+        | ']' -> single (Token.Op Token.RBracket)
+        | ',' -> single (Token.Op Token.Comma)
+        | ':' -> single (Token.Op Token.Colon)
+        | '.' -> single (Token.Op Token.Dot)
+        | '"' ->
+            frames := String_frame (here ()) :: !frames;
+            bump ()
+        | '-' ->
+            if char_at 1 = Some '>' then double (Token.Op Token.Arrow)
+            else single (Token.Op Token.Minus)
+        | '<' ->
+            if char_at 1 = Some '-' then (
+              let ws_after =
+                match char_at 2 with Some c2 -> is_ws c2 | None -> true
+              in
+              if not (!ws_before && ws_after) then
+                error "E1008"
+                  (Emo_support.Span.make ~file ~line:l ~col:c ~start:o
+                     ~stop:(o + 2))
+                  "the send operator `<-` needs a space on each side"
+                  ~hint:"write `a <- b`, never `a<-b`";
+              double (Token.Op Token.Send))
+            else if char_at 1 = Some '=' then double (Token.Op Token.Le)
+            else single (Token.Op Token.Lt)
+        | '=' ->
+            if char_at 1 = Some '=' then double (Token.Op Token.Eq)
+            else single (Token.Op Token.Assign)
+        | '!' ->
+            if char_at 1 = Some '=' then double (Token.Op Token.Ne)
+            else single (Token.Op Token.Not)
+        | '>' ->
+            if char_at 1 = Some '=' then double (Token.Op Token.Ge)
+            else single (Token.Op Token.Gt)
+        | '&' ->
+            if char_at 1 = Some '&' then double (Token.Op Token.AndAnd)
+            else
+              error "E1001" (here ()) "unexpected character `&`"
+                ~hint:"Emo uses `&&` for logical and"
+        | '|' ->
+            if char_at 1 = Some '|' then double (Token.Op Token.OrOr)
+            else
+              error "E1001" (here ()) "unexpected character `|`"
+                ~hint:"Emo uses `||` for logical or"
+        | '+' -> single (Token.Op Token.Plus)
+        | '*' -> single (Token.Op Token.Star)
+        | '/' -> single (Token.Op Token.Slash)
+        | '%' -> single (Token.Op Token.Percent)
+        | dc when is_digit dc -> (
+            let rec digits () =
+              if (not (eof ())) && is_digit (cur ()) then (
+                bump ();
+                digits ())
+            in
+            digits ();
+            match char_at 0 with
+            | Some '.'
+              when match char_at 1 with Some d -> is_digit d | None -> false ->
+                bump ();
+                digits ();
+                emit
+                  (Token.Float
+                     (float_of_string (String.sub source o (!offset - o))))
+                  l c o
+            | _ -> (
+                if (not (eof ())) && cur () = '_' then
+                  error "E1006" (here ())
+                    "a number cannot be directly followed by `_`"
+                    ~hint:"digit separators are not supported";
+                match int_of_string_opt (String.sub source o (!offset - o)) with
+                | Some n -> emit (Token.Int n) l c o
+                | None ->
+                    error "E1006" (span_from l c o)
+                      "integer literal out of range"))
+        | '\'' ->
+            let qline, qcol, qoff = (l, c, o) in
+            let quoted_span =
+              Emo_support.Span.make ~file ~line:qline ~col:qcol ~start:qoff
+                ~stop:(qoff + 2)
+            in
+            bump ();
+            if eof () then
+              error "E1005"
+                (span_from qline qcol qoff)
+                "unterminated character literal";
+            if cur () = '\'' then
+              error "E1005" quoted_span
+                "character literal must contain exactly one character";
+            let content =
+              if cur () = '\\' then
+                match char_at 1 with
+                | Some e -> (
+                    match escape_char e with
+                    | Some ec ->
+                        bump ();
+                        bump ();
+                        ec
+                    | None ->
+                        error "E1004" quoted_span "invalid escape sequence"
+                          ~hint:
+                            "supported escapes are \\n \\t \\\\ \\' and \\\"")
+                | None ->
+                    error "E1005"
+                      (span_from qline qcol qoff)
+                      "unterminated character literal"
+              else (
+                if cur () = '\n' then
                   error "E1005"
                     (span_from qline qcol qoff)
-                    "unterminated character literal"
-            else (
-              if cur () = '\n' then
-                error "E1005"
-                  (span_from qline qcol qoff)
-                  "unterminated character literal";
-              let ch = cur () in
-              bump ();
-              ch)
-          in
-          if eof () || cur () <> '\'' then
-            error "E1005"
-              (span_from qline qcol qoff)
-              "character literal must contain exactly one character";
-          bump ();
-          emit (Token.Char content) qline qcol qoff
-      | ch when is_lower ch || ch = '_' -> (
-          let rec ident_tail () =
-            if (not (eof ())) && is_ident_letter (cur ()) then (
-              bump ();
-              ident_tail ())
-          in
-          ident_tail ();
-          (if (not (eof ())) && cur () = '?' then
-             match char_at 1 with
-             | Some next when is_ident_letter next || next = '?' ->
-                 error "E1007" (here ())
-                   "a predicate name's `?` must be its last character"
-             | _ -> bump ());
-          let text = String.sub source o (!offset - o) in
-          match text with
-          | "true" -> emit Token.True l c o
-          | "false" -> emit Token.False l c o
-          | t -> (
-              match keyword_of_string t with
-              | Some k -> emit (Token.Keyword k) l c o
-              | None -> emit (Token.Lower_ident t) l c o))
-      | ch when is_upper ch ->
-          let rec ident_tail () =
-            if (not (eof ())) && is_ident_letter (cur ()) then (
-              bump ();
-              ident_tail ())
-          in
-          ident_tail ();
-          emit (Token.Upper_ident (String.sub source o (!offset - o))) l c o
-      | c ->
-          error "E1001" (here ()) (Printf.sprintf "unexpected character `%c`" c));
-      run ()
+                    "unterminated character literal";
+                let ch = cur () in
+                bump ();
+                ch)
+            in
+            if eof () || cur () <> '\'' then
+              error "E1005"
+                (span_from qline qcol qoff)
+                "character literal must contain exactly one character";
+            bump ();
+            emit (Token.Char content) qline qcol qoff
+        | ch when is_lower ch || ch = '_' -> (
+            let rec ident_tail () =
+              if (not (eof ())) && is_ident_letter (cur ()) then (
+                bump ();
+                ident_tail ())
+            in
+            ident_tail ();
+            (if (not (eof ())) && cur () = '?' then
+               match char_at 1 with
+               | Some next when is_ident_letter next || next = '?' ->
+                   error "E1007" (here ())
+                     "a predicate name's `?` must be its last character"
+               | _ -> bump ());
+            let text = String.sub source o (!offset - o) in
+            match text with
+            | "true" -> emit Token.True l c o
+            | "false" -> emit Token.False l c o
+            | t -> (
+                match keyword_of_string t with
+                | Some k -> emit (Token.Keyword k) l c o
+                | None -> emit (Token.Lower_ident t) l c o))
+        | ch when is_upper ch ->
+            let rec ident_tail () =
+              if (not (eof ())) && is_ident_letter (cur ()) then (
+                bump ();
+                ident_tail ())
+            in
+            ident_tail ();
+            emit (Token.Upper_ident (String.sub source o (!offset - o))) l c o
+        | c ->
+            error "E1001" (here ())
+              (Printf.sprintf "unexpected character `%c`" c));
+        run ())
   in
   run ();
   Stream.of_array (Array.of_list (List.rev !toks))

@@ -82,6 +82,9 @@ let lex_err source =
   | _ -> Alcotest.fail "expected a lexical error"
   | exception Error diagnostic -> diagnostic
 
+let code_of diagnostic =
+  match diagnostic.Diagnostic.code with Some c -> c | None -> ""
+
 let foundation_tests =
   [
     tc "empty source lexes to a positioned eof" (fun () ->
@@ -312,6 +315,101 @@ let literal_tests =
           (match diagnostic.Diagnostic.code with Some c -> c | None -> ""));
   ]
 
+let string_tests =
+  [
+    tc "a plain string lexes as one chunk plus string_end" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ String_chunk "hello"; String_end; Eof ]
+          (kinds (lex_all "\"hello\"")));
+    tc "an empty string is just string_end" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds" [ String_end; Eof ]
+          (kinds (lex_all "\"\"")));
+    tc "interpolation opens and closes with braces" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            String_chunk "a ";
+            Interp_open;
+            Lower_ident "x";
+            Interp_close;
+            String_chunk " b";
+            String_end;
+            Eof;
+          ]
+          (kinds (lex_all "\"a ${x} b\"")));
+    tc "nested interpolation keeps brace depth" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            String_chunk "a ";
+            Interp_open;
+            String_chunk "b ";
+            Interp_open;
+            Lower_ident "x";
+            Interp_close;
+            String_end;
+            Interp_close;
+            String_chunk " c";
+            String_end;
+            Eof;
+          ]
+          (kinds (lex_all "\"a ${ \"b ${x}\" } c\"")));
+    tc "a block brace inside an interpolation stays a block" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Interp_open;
+            Op LBrace;
+            Lower_ident "x";
+            Op RBrace;
+            Interp_close;
+            String_end;
+            Eof;
+          ]
+          (kinds (lex_all "\"${ {x} }\"")));
+    tc "a dollar not followed by a brace is literal text" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ String_chunk "cost: $5"; String_end; Eof ]
+          (kinds (lex_all "\"cost: $5\"")));
+    tc "interpolation may contain operators" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Interp_open;
+            Lower_ident "a";
+            Op Plus;
+            Lower_ident "b";
+            Interp_close;
+            String_end;
+            Eof;
+          ]
+          (kinds (lex_all "\"${a + b}\"")));
+    tc "an unterminated string at eof is an error" (fun () ->
+        let diagnostic = lex_err "\"abc" in
+        Alcotest.(check string) "code" "E1002" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a raw newline inside a string is unterminated" (fun () ->
+        let diagnostic = lex_err "\"a\nb\"" in
+        Alcotest.(check string) "code" "E1002" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "an unterminated interpolation is an error" (fun () ->
+        let diagnostic = lex_err "\"a ${x" in
+        Alcotest.(check string) "code" "E1003" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:4"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "unknown escapes inside strings are rejected" (fun () ->
+        let diagnostic = lex_err "\"\\q\"" in
+        Alcotest.(check string) "code" "E1004" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_lexer"
     [
@@ -319,4 +417,5 @@ let () =
       ("ident", ident_tests);
       ("operator", operator_tests);
       ("literal", literal_tests);
+      ("string", string_tests);
     ]
