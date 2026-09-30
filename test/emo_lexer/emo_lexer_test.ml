@@ -410,6 +410,68 @@ let string_tests =
         Alcotest.(check string) "code" "E1004" (code_of diagnostic));
   ]
 
+let stream_tests =
+  [
+    tc "comments run to end of line" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Lower_ident "a"; Lower_ident "b"; Eof ]
+          (kinds (lex_all "a // trailing comment\nb")));
+    tc "a comment line marks a newline on the next token" (fun () ->
+        match lex_all "// header\nx" with
+        | [ x; eof ] ->
+            Alcotest.(check bool) "newline before x" true x.Token.newline_before;
+            Alcotest.(check bool)
+              "no newline before eof" false eof.Token.newline_before
+        | toks ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 tokens, got %d" (List.length toks)));
+    tc "a comment at eof adds no newline" (fun () ->
+        match lex_all "a // done" with
+        | [ a; eof ] ->
+            Alcotest.(check bool)
+              "no newline before eof" false eof.Token.newline_before
+        | toks ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 tokens, got %d" (List.length toks)));
+    tc "a single slash is division, not a comment" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Lower_ident "a"; Op Slash; Lower_ident "b"; Eof ]
+          (kinds (lex_all "a / b")));
+    tc "slashes inside strings are text" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ String_chunk "http://x"; String_end; Eof ]
+          (kinds (lex_all "\"http://x\"")));
+    tc "positions stay faithful across lines" (fun () ->
+        let toks = lex_all "aaa\n  bb\nccc" in
+        Alcotest.(check (list string))
+          "spans"
+          [ "test.emo:1:1"; "test.emo:2:3"; "test.emo:3:1"; "test.emo:3:4" ]
+          (List.map token_span toks);
+        match toks with
+        | [ _; bb; ccc; _ ] ->
+            Alcotest.(check bool)
+              "newline before bb" true bb.Token.newline_before;
+            Alcotest.(check bool)
+              "newline before ccc" true ccc.Token.newline_before
+        | toks ->
+            Alcotest.fail
+              (Printf.sprintf "expected 4 tokens, got %d" (List.length toks)));
+    tc "peek_ahead sees past the cursor" (fun () ->
+        let stream = lex ~file:"test.emo" ~source:"a b" in
+        let _first = Stream.advance stream in
+        Alcotest.check kind "next" (Lower_ident "b")
+          (Stream.peek stream).Token.kind;
+        Alcotest.check kind "ahead" Eof (Stream.peek_ahead stream 1).Token.kind;
+        Alcotest.check kind "clamped" Eof
+          (Stream.peek_ahead stream 9).Token.kind;
+        Alcotest.(check bool)
+          "newline_before query" false
+          (Stream.newline_before stream));
+  ]
+
 let () =
   Alcotest.run "emo_lexer"
     [
@@ -418,4 +480,5 @@ let () =
       ("operator", operator_tests);
       ("literal", literal_tests);
       ("string", string_tests);
+      ("stream", stream_tests);
     ]

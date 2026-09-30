@@ -75,8 +75,10 @@ module Stream : sig
 
   val of_array : Token.t array -> t
   val peek : t -> Token.t
+  val peek_ahead : t -> int -> Token.t
   val advance : t -> Token.t
   val at_eof : t -> bool
+  val newline_before : t -> bool
   val to_list : t -> Token.t list
 end = struct
   type t = { toks : Token.t array; mutable cursor : int }
@@ -90,7 +92,9 @@ end = struct
     if (peek s).Token.kind <> Token.Eof then s.cursor <- s.cursor + 1;
     tok
 
+  let peek_ahead s k = s.toks.(clamp s (s.cursor + k))
   let at_eof s = (peek s).Token.kind = Token.Eof
+  let newline_before s = (peek s).Token.newline_before
   let to_list s = Array.to_list s.toks
 end
 
@@ -196,6 +200,16 @@ let lex ~file ~source =
             newline_pending := true;
             bump ();
             go ()
+        | '/' when char_at 1 = Some '/' ->
+            skipped := true;
+            let rec line () =
+              if eof () then ()
+              else if cur () = '\n' then go ()
+              else (
+                bump ();
+                line ())
+            in
+            line ()
         | _ -> ()
     in
     go ();
