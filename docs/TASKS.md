@@ -77,7 +77,7 @@ before starting the gated work:
 **Done when:** every expression snippet in the README parses to the expected AST (golden tests); precedence pinned (`1 + 2 * 3`, `a && b || !c`, `x.foo(1)[i].bar?()`); `dune test` green.
 
 - [x] **T3.1** — `emo_ast` expression/statement types with spans on every node.
-- [ ] **T3.2** — Pratt-style expression parser with the precedence table.
+- [x] **T3.2** — Pratt-style expression parser with the precedence table.
 - [ ] **T3.3** — Call parsing: positional + named args, trailing-block sugar.
 - [ ] **T3.4** — Arrow blocks; `if` / `else` (single shape, no chaining).
 - [ ] **T3.5** — Newline-termination rules with depth tracking.
