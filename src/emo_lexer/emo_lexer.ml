@@ -124,6 +124,14 @@ let keyword_of_string = function
   | "do" -> Some Token.Do
   | _ -> None
 
+let escape_char = function
+  | 'n' -> Some '\n'
+  | 't' -> Some '\t'
+  | '\\' -> Some '\\'
+  | '\'' -> Some '\''
+  | '"' -> Some '"'
+  | _ -> None
+
 let lex ~file ~source =
   let len = String.length source in
   let line = ref 1 and col = ref 1 and offset = ref 0 in
@@ -268,6 +276,77 @@ let lex ~file ~source =
       | '*' -> single (Token.Op Token.Star)
       | '/' -> single (Token.Op Token.Slash)
       | '%' -> single (Token.Op Token.Percent)
+      | dc when is_digit dc -> (
+          let rec digits () =
+            if (not (eof ())) && is_digit (cur ()) then (
+              bump ();
+              digits ())
+          in
+          digits ();
+          match char_at 0 with
+          | Some '.'
+            when match char_at 1 with Some d -> is_digit d | None -> false ->
+              bump ();
+              digits ();
+              emit
+                (Token.Float
+                   (float_of_string (String.sub source o (!offset - o))))
+                l c o
+          | _ -> (
+              if (not (eof ())) && cur () = '_' then
+                error "E1006" (here ())
+                  "a number cannot be directly followed by `_`"
+                  ~hint:"digit separators are not supported";
+              match int_of_string_opt (String.sub source o (!offset - o)) with
+              | Some n -> emit (Token.Int n) l c o
+              | None ->
+                  error "E1006" (span_from l c o) "integer literal out of range"
+              ))
+      | '\'' ->
+          let qline, qcol, qoff = (l, c, o) in
+          let quoted_span =
+            Emo_support.Span.make ~file ~line:qline ~col:qcol ~start:qoff
+              ~stop:(qoff + 2)
+          in
+          bump ();
+          if eof () then
+            error "E1005"
+              (span_from qline qcol qoff)
+              "unterminated character literal";
+          if cur () = '\'' then
+            error "E1005" quoted_span
+              "character literal must contain exactly one character";
+          let content =
+            if cur () = '\\' then
+              match char_at 1 with
+              | Some e -> (
+                  match escape_char e with
+                  | Some ec ->
+                      bump ();
+                      bump ();
+                      ec
+                  | None ->
+                      error "E1004" quoted_span "invalid escape sequence"
+                        ~hint:"supported escapes are \\n \\t \\\\ \\' and \\\"")
+              | None ->
+                  error "E1005"
+                    (span_from qline qcol qoff)
+                    "unterminated character literal"
+            else (
+              if cur () = '\n' then
+                error "E1005"
+                  (span_from qline qcol qoff)
+                  "unterminated character literal";
+              let ch = cur () in
+              bump ();
+              ch)
+          in
+          if eof () || cur () <> '\'' then
+            error "E1005"
+              (span_from qline qcol qoff)
+              "character literal must contain exactly one character";
+          bump ();
+          emit (Token.Char content) qline qcol qoff
       | ch when is_lower ch || ch = '_' -> (
           let rec ident_tail () =
             if (not (eof ())) && is_ident_letter (cur ()) then (
