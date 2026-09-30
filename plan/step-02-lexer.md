@@ -1,6 +1,6 @@
 # Step 02 — Lexer
 
-**Milestone:** M1 · **Prereq:** step 01 · **Status:** not started
+**Milestone:** M1 · **Prereq:** step 01 · **Status:** done
 
 ## Goal
 
@@ -64,12 +64,12 @@ strings both want manual control, and the grammar has no LR hazards to offload
 
 ## Tasks
 
-- [ ] Token type + positioned token stream in `emo_lexer`.
-- [ ] Identifier classes, keywords, operators.
-- [ ] Numeric and char literals with escape handling.
-- [ ] Interpolated-string token scheme with nesting tests.
-- [ ] Newline-preserving stream API.
-- [ ] Error cases: each rejects with correct line:col via `emo_support`.
+- [x] Token type + positioned token stream in `emo_lexer`.
+- [x] Identifier classes, keywords, operators.
+- [x] Numeric and char literals with escape handling.
+- [x] Interpolated-string token scheme with nesting tests.
+- [x] Newline-preserving stream API.
+- [x] Error cases: each rejects with correct line:col via `emo_support`.
 
 ## Acceptance
 
