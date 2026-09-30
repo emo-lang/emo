@@ -106,7 +106,7 @@ and pp_stmt fmt (s : Emo_ast.stmt) =
       Format.fprintf fmt "(<- %a %a)" pp_expr target pp_expr message
 
 and pp_branch fmt { Emo_ast.pattern; guard; body } =
-  Format.fprintf fmt "(branch %a%a @[<hov>%a@])" pp_pattern pattern
+  Format.fprintf fmt "(branch %a%a |@[<hov>%a@])" pp_pattern pattern
     (fun fmt g ->
       match g with
       | None -> ()
@@ -311,6 +311,120 @@ let control_tests =
              (parse_expr "f() {\n  if done {\n    return\n  }\n  return\n}")));
   ]
 
+let stmt_tests =
+  [
+    tc "const and var bindings" (fun () ->
+        match parse_program "const x = 1\nvar y = x + 2" with
+        | [ x; y ] ->
+            Alcotest.(check string) "const" "(const x 1)" (render pp_stmt x);
+            Alcotest.(check string) "var" "(var y (+ x 2))" (render pp_stmt y)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 statements, got %d"
+                 (List.length stmts)));
+    tc "a binding name cannot end in a question mark" (fun () ->
+        let diagnostic = program_err "const is_x? = true" in
+        Alcotest.(check string) "code" "E2007" (code_of diagnostic));
+    tc "the initializer stays on the = line" (fun () ->
+        let diagnostic = program_err "const x =\n1" in
+        Alcotest.(check string) "code" "E2002" (code_of diagnostic));
+    tc "send statements carry target and message" (fun () ->
+        match parse_program "pid <- message" with
+        | [ send_stmt ] ->
+            Alcotest.(check string)
+              "shape" "(<- pid message)" (render pp_stmt send_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "send targets may be member paths" (fun () ->
+        match parse_program "box.value <- 1" with
+        | [ send_stmt ] ->
+            Alcotest.(check string)
+              "shape" "(<- (box.value) 1)" (render pp_stmt send_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "do wraps a call and yields the pid" (fun () ->
+        Alcotest.(check string)
+          "shape" "(do (worker call x))"
+          (render pp_expr (parse_expr "do worker(x)")));
+    tc "do accepts an immediately invoked block" (fun () ->
+        Alcotest.(check string)
+          "shape" "(do ((block |(return 1)) call))"
+          (render pp_expr (parse_expr "do -> {\n  return 1\n}()")));
+    tc "do rejects a non-call operand" (fun () ->
+        let diagnostic = parse_err "do x" in
+        Alcotest.(check string) "code" "E2008" (code_of diagnostic));
+    tc "case matches enum members and wildcard" (fun () ->
+        match
+          parse_program
+            "case c {\n  Color.red -> { return 1 }\n  _ -> { return 2 }\n}"
+        with
+        | [ case_stmt ] ->
+            Alcotest.(check string)
+              "shape"
+              "(case c (branch Color.red |(return 1)) (branch _ |(return 2)))"
+              (render pp_stmt case_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "case branches may carry guards" (fun () ->
+        match
+          parse_program
+            "case c {\n\
+            \  Color.red when loud -> { return 1 }\n\
+            \  _ -> { return 2 }\n\
+             }"
+        with
+        | [ case_stmt ] ->
+            Alcotest.(check string)
+              "shape"
+              "(case c (branch Color.red when loud |(return 1)) (branch _ \
+               |(return 2)))"
+              (render pp_stmt case_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "tuple patterns destructure by position" (fun () ->
+        match
+          parse_program "case p {\n  (Color.red, count) -> { return count }\n}"
+        with
+        | [ case_stmt ] ->
+            Alcotest.(check string)
+              "shape"
+              "(case p (branch (tuple Color.red count) |(return count)))"
+              (render pp_stmt case_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "a bare type name is not a pattern" (fun () ->
+        let diagnostic = program_err "case c {\n  Red -> { return 1 }\n}" in
+        Alcotest.(check string) "code" "E2007" (code_of diagnostic));
+    tc "a bare lowercase name is a binding pattern" (fun () ->
+        match parse_program "case c {\n  other -> { return 1 }\n}" with
+        | [ case_stmt ] ->
+            Alcotest.(check string)
+              "shape" "(case c (branch other |(return 1)))"
+              (render pp_stmt case_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "branches are separated by newlines" (fun () ->
+        let diagnostic =
+          program_err "case c { Color.red -> { return 1 } _ -> { return 2 } }"
+        in
+        Alcotest.(check string) "code" "E2007" (code_of diagnostic));
+    tc "receive reuses the case branch shape" (fun () ->
+        match parse_program "receive {\n  (from, msg) -> { return msg }\n}" with
+        | [ receive_stmt ] ->
+            Alcotest.(check string)
+              "shape" "(receive (branch (tuple from msg) |(return msg)))"
+              (render pp_stmt receive_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -323,4 +437,5 @@ let () =
       ("expression", expression_tests);
       ("call", call_tests);
       ("control", control_tests);
+      ("stmt", stmt_tests);
     ]

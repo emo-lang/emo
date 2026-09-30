@@ -80,7 +80,7 @@ before starting the gated work:
 - [x] **T3.2** — Pratt-style expression parser with the precedence table.
 - [x] **T3.3** — Call parsing: positional + named args, trailing-block sugar.
 - [x] **T3.4** — Arrow blocks; `if` / `else` (single shape, no chaining).
-- [ ] **T3.5** — Newline-termination rules with depth tracking.
+- [x] **T3.5** — Newline-termination rules with depth tracking.
 - [ ] **T3.6** — Interpolated-string reassembly from lexer parts.
 - [ ] **T3.7** — Parser tests: precedence table, dangling-operator continuations, malformed input errors.
 
