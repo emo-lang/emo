@@ -1,0 +1,3 @@
+def main() {
+  std.println("Hello, world!")
+}
