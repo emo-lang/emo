@@ -474,8 +474,13 @@ let lex ~file ~source =
             ident_tail ();
             emit (Token.Upper_ident (String.sub source o (!offset - o))) l c o
         | c ->
-            error "E1001" (here ())
-              (Printf.sprintf "unexpected character `%c`" c));
+            if c = '@' || c = '$' || c = ';' || c = '#' then
+              error "E1001" (here ())
+                (Printf.sprintf "unexpected character `%c`" c)
+                ~hint:"`@`, `$`, `;` and `#` have no meaning in Emo"
+            else
+              error "E1001" (here ())
+                (Printf.sprintf "unexpected character `%c`" c));
         run ())
   in
   run ();

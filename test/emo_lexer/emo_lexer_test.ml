@@ -472,6 +472,62 @@ let stream_tests =
           (Stream.newline_before stream));
   ]
 
+let errors_tests =
+  [
+    tc "stray sigils are rejected with position and hint" (fun () ->
+        List.iter
+          (fun (source, col) ->
+            let diagnostic = lex_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) "E1001" (code_of diagnostic);
+            Alcotest.(check string)
+              ("span of " ^ source)
+              (Printf.sprintf "test.emo:1:%d" col)
+              (Span.to_string diagnostic.Diagnostic.span);
+            Alcotest.(check bool)
+              ("hint for " ^ source) true
+              (match diagnostic.Diagnostic.hint with
+              | Some _ -> true
+              | None -> false))
+          [ ("@", 1); ("$", 1); (";", 1); ("#", 1); ("a @ b", 3) ]);
+    tc "a number followed by a name is two tokens for the parser" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Int 9; Lower_ident "x"; Eof ]
+          (kinds (lex_all "9x")));
+    tc "adjacent parentheses are a lexical error" (fun () ->
+        let diagnostic = lex_err "((x))" in
+        Alcotest.(check string) "code" "E1009" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:2"
+          (Span.to_string diagnostic.Diagnostic.span);
+        let diagnostic = lex_err "f((a, b))" in
+        Alcotest.(check string)
+          "call-arg span" "test.emo:1:3"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "juxtaposed send forms are rejected with a hint" (fun () ->
+        List.iter
+          (fun source ->
+            let diagnostic = lex_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) "E1008" (code_of diagnostic);
+            Alcotest.(check bool)
+              ("hint for " ^ source) true
+              (match diagnostic.Diagnostic.hint with
+              | Some _ -> true
+              | None -> false))
+          [ "a<-b"; "a <-b"; "a<- b" ]);
+    tc "a predicate question mark must end the name" (fun () ->
+        let diagnostic = lex_err "f?oo" in
+        Alcotest.(check string) "code" "E1007" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:2"
+          (Span.to_string diagnostic.Diagnostic.span);
+        let diagnostic = lex_err "f??" in
+        Alcotest.(check string)
+          "double question code" "E1007" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_lexer"
     [
@@ -481,4 +537,5 @@ let () =
       ("literal", literal_tests);
       ("string", string_tests);
       ("stream", stream_tests);
+      ("errors", errors_tests);
     ]
