@@ -64,7 +64,7 @@ before starting the gated work:
 **Prereq:** Step 01.
 **Done when:** suites cover every token kind, interpolation nesting (`"a ${ "b ${x}" } c"`), position fidelity on multi-line input, and every error case; `dune test` green.
 
-- [ ] **T2.1** — Token type + positioned token stream in `emo_lexer`.
+- [x] **T2.1** — Token type + positioned token stream in `emo_lexer`.
 - [ ] **T2.2** — Identifier classes (`LOWER_IDENT` / `UPPER_IDENT`), keywords, operators.
 - [ ] **T2.3** — Numeric and char literals with escape handling.
 - [ ] **T2.4** — Interpolated-string token scheme with nesting tests.
