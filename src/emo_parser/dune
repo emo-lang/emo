@@ -1,2 +1,3 @@
 (library
- (name emo_parser))
+ (name emo_parser)
+ (libraries emo_support emo_lexer emo_ast))
