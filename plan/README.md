@@ -47,7 +47,7 @@ incrementally shippable steps — one file per step, executed in order.
 |------|-------|--------|
 | 01 | Project scaffold & CLI skeleton | done |
 | 02 | Lexer | done |
-| 03 | Parser — expressions | not started |
+| 03 | Parser — expressions | done |
 | 04 | Parser — declarations | not started |
 | 05 | Interpreter — core values & evaluation | not started |
 | 06 | Interpreter — classes, enums, interfaces | not started |
