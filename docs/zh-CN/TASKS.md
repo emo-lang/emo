@@ -45,7 +45,7 @@
 **前置:** 无。
 **完成标准:** 干净检出后 `dune build` 和 `dune test` 通过;`emo version` 输出 `emo 0.0.1`;占位子命令以非零码退出;CI 在 Linux 和 macOS 上全绿。
 
-- [ ] **T1.1** — 创建 `dune-project` 和 `src/` 各库骨架(`emo_support`、`emo_lexer`、`emo_parser`、`emo_ast`、`emo_eval`、`emo_check`、`emo_cli`),用能编译的占位模块填充。
+- [x] **T1.1** — 创建 `dune-project` 和 `src/` 各库骨架(`emo_support`、`emo_lexer`、`emo_parser`、`emo_ast`、`emo_eval`、`emo_check`、`emo_cli`),用能编译的占位模块填充。
 - [ ] **T1.2** — 实现 `emo_support`:span、severity、diagnostic、渲染器;为渲染器写单元测试。
 - [ ] **T1.3** — 用 cmdliner 实现 `emo_cli`;把四个子命令接到占位动作上。
 - [ ] **T1.4** — 为每个库添加 alcotest 冒烟测试和 CI 工作流(setup-ocaml、`dune build`、`dune test`,Linux + macOS)。
