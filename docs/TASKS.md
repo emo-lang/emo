@@ -54,7 +54,7 @@ before starting the gated work:
 **Done when:** `dune build` and `dune test` pass from a clean checkout; `emo version` prints `emo 0.0.1`; placeholder subcommands exit non-zero; CI green on Linux and macOS.
 
 - [x] **T1.1** — Create `dune-project` and the `src/` library skeletons (`emo_support`, `emo_lexer`, `emo_parser`, `emo_ast`, `emo_eval`, `emo_check`, `emo_cli`) with placeholder modules that compile.
-- [ ] **T1.2** — Implement `emo_support`: span, severity, diagnostic, renderer; unit tests for the renderer.
+- [x] **T1.2** — Implement `emo_support`: span, severity, diagnostic, renderer; unit tests for the renderer.
 - [ ] **T1.3** — Implement `emo_cli` with cmdliner; wire the four subcommands to placeholder actions.
 - [ ] **T1.4** — Add alcotest smoke tests per library and the CI workflow (setup-ocaml, `dune build`, `dune test`, Linux + macOS).
 - [ ] **T1.5** — Add `.ocamlformat` (conventional profile); format the tree once (`dune build @fmt` passes).
