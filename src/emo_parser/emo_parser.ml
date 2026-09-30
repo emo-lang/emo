@@ -283,6 +283,11 @@ and parse_primary st =
   | Tok.Keyword Tok.Self ->
       advance st |> ignore;
       node tok.Tok.span Ast.Self
+  | Tok.Op Tok.Arrow ->
+      advance st |> ignore;
+      let params = parse_params st in
+      let body, close_span = parse_block st in
+      node (merge_span tok.Tok.span close_span) (Ast.Arrow_block (params, body))
   | Tok.Op Tok.LParen -> parse_paren st
   | t ->
       error "E2001" (span st)
@@ -341,7 +346,7 @@ and parse_args st =
     List.rev !args
 
 and parse_block st =
-  advance st |> ignore;
+  expect_op st Tok.LBrace "`{`" |> ignore;
   let stmts = ref [] in
   let rec loop () =
     if at_op st Tok.RBrace || at_eof st then ()
@@ -358,6 +363,26 @@ and parse_block st =
 and parse_stmt st =
   let start_span = span st in
   match kind st with
+  | Tok.Keyword Tok.If ->
+      advance st |> ignore;
+      let cond = parse_expr st in
+      if at_op st Tok.LBrace && newline_before st then
+        error "E2001" (span st)
+          "the `if` body must open on the condition's line";
+      let then_body, _ = parse_block st in
+      let else_body =
+        match kind st with
+        | Tok.Keyword Tok.Else ->
+            if newline_before st then
+              error "E2005" (span st)
+                "`else` must stay on the closing brace's line"
+                ~hint:"write `} else {`";
+            advance st |> ignore;
+            let body, _ = parse_block st in
+            Some body
+        | _ -> None
+      in
+      stmt start_span (Ast.If { cond; then_body; else_body })
   | Tok.Keyword Tok.Return ->
       advance st |> ignore;
       if at_op st Tok.RBrace || at_eof st || newline_before st then
@@ -378,6 +403,90 @@ and end_statement st =
   | _ ->
       error "E2002" (span st) "expressions cannot be juxtaposed"
         ~hint:"start a new statement on the next line"
+
+and parse_params st =
+  if at_op st Tok.LParen then (
+    advance st |> ignore;
+    if at_op st Tok.RParen then []
+    else
+      let params = ref [] in
+      let rec loop () =
+        let name =
+          match kind st with
+          | Tok.Lower_ident n ->
+              if String.length n > 0 && n.[String.length n - 1] = '?' then
+                error "E2006" (span st) "a parameter name cannot end in `?`";
+              advance st |> ignore;
+              n
+          | t ->
+              error "E2006" (span st)
+                (Printf.sprintf "expected a parameter name, found %s"
+                   (describe_kind t))
+        in
+        let param_type = parse_type_ann st in
+        params := { Ast.param_name = name; param_type } :: !params;
+        if at_op st Tok.Comma then (
+          advance st |> ignore;
+          if at_op st Tok.RParen then
+            error "E2006" (span st)
+              "parameter lists do not take a trailing comma";
+          loop ())
+      in
+      loop ();
+      expect_op st Tok.RParen "`)`" |> ignore;
+      List.rev !params)
+  else []
+
+and parse_type_ann st =
+  let tok = peek st in
+  match tok.Tok.kind with
+  | Tok.Upper_ident name ->
+      advance st |> ignore;
+      if at_op st Tok.LBracket then (
+        advance st |> ignore;
+        if at_op st Tok.RBracket then
+          error "E2001" (span st) "a type application needs type arguments";
+        let args = ref [] in
+        let rec loop () =
+          args := parse_type_ann st :: !args;
+          if at_op st Tok.Comma then (
+            advance st |> ignore;
+            if at_op st Tok.RBracket then
+              error "E2001" (span st)
+                "type applications do not take a trailing comma");
+          if not (at_op st Tok.RBracket) then loop ()
+        in
+        loop ();
+        let close_span = span st in
+        expect_op st Tok.RBracket "`]`" |> ignore;
+        {
+          Ast.type_span = merge_span tok.Tok.span close_span;
+          type_desc = Ast.Applied_type (name, List.rev !args);
+        })
+      else { Ast.type_span = tok.Tok.span; type_desc = Ast.Named_type name }
+  | Tok.Op Tok.LParen ->
+      advance st |> ignore;
+      let types = ref [] in
+      let rec loop () =
+        if at_op st Tok.RParen then ()
+        else (
+          types := parse_type_ann st :: !types;
+          if at_op st Tok.Comma then (
+            advance st |> ignore;
+            if at_op st Tok.RParen then
+              error "E2004" (span st) "type tuples do not take a trailing comma");
+          loop ())
+      in
+      loop ();
+      let close_span = span st in
+      expect_op st Tok.RParen "`)`" |> ignore;
+      {
+        Ast.type_span = merge_span tok.Tok.span close_span;
+        type_desc = Ast.Tuple_type (List.rev !types);
+      }
+  | t ->
+      error "E2001" (span st)
+        (Printf.sprintf "expected a type annotation, found %s" (describe_kind t))
 
 (* Parses a source that holds exactly one expression. *)
 let parse_expr_source ~file ~source =

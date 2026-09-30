@@ -252,6 +252,65 @@ let call_tests =
                  (List.length stmts)));
   ]
 
+let control_tests =
+  [
+    tc "an arrow block takes annotated parameters" (fun () ->
+        Alcotest.(check string)
+          "shape" "(block (param x Int) (param y Float)|(return x))"
+          (render pp_expr (parse_expr "-> (x Int, y Float) {\n  return x\n}")));
+    tc "an arrow block may omit its parameters" (fun () ->
+        Alcotest.(check string)
+          "shape" "(block |(return 1))"
+          (render pp_expr (parse_expr "-> {\n  return 1\n}")));
+    tc "arrow block parameters need annotations" (fun () ->
+        let diagnostic = parse_err "-> (x) { x }" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+    tc "if without else" (fun () ->
+        match parse_program "if a {\n  b\n}" with
+        | [ if_stmt ] ->
+            Alcotest.(check string)
+              "shape" "(if a then b)" (render pp_stmt if_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "if with else" (fun () ->
+        match parse_program "if a {\n  b\n} else {\n  c\n}" with
+        | [ if_stmt ] ->
+            Alcotest.(check string)
+              "shape" "(if a then b else c)" (render pp_stmt if_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "else must stay on the closing brace's line" (fun () ->
+        let diagnostic = program_err "if a {\n  b\n}\nelse {\n  c\n}" in
+        Alcotest.(check string) "code" "E2005" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:4:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "else-if chaining does not exist" (fun () ->
+        let diagnostic = program_err "if a {\n  b\n} else if c {\n  d\n}" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+    tc "a further test is an if nested in the else block" (fun () ->
+        match
+          parse_program "if a {\n  b\n} else {\n  if c {\n    d\n  }\n}"
+        with
+        | [ if_stmt ] ->
+            Alcotest.(check string)
+              "shape" "(if a then b else (if c then d))"
+              (render pp_stmt if_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "the if body opens on the condition's line" (fun () ->
+        let diagnostic = program_err "if a\n{ b }" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+    tc "if works as a statement inside blocks" (fun () ->
+        Alcotest.(check string)
+          "shape" "(f call (block |(if done then return) return))"
+          (render pp_expr
+             (parse_expr "f() {\n  if done {\n    return\n  }\n  return\n}")));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -263,4 +322,5 @@ let () =
         ] );
       ("expression", expression_tests);
       ("call", call_tests);
+      ("control", control_tests);
     ]
