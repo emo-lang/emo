@@ -283,6 +283,15 @@ and parse_primary st =
   | Tok.Keyword Tok.Self ->
       advance st |> ignore;
       node tok.Tok.span Ast.Self
+  | Tok.Keyword Tok.Do -> (
+      advance st |> ignore;
+      let operand = parse_unary st in
+      match operand.Ast.desc with
+      | Ast.Call _ ->
+          node (merge_span tok.Tok.span operand.Ast.span) (Ast.Do operand)
+      | _ ->
+          error "E2008" (span st) "the operand of `do` must be a call"
+            ~hint:"write `do task(x)`")
   | Tok.Op Tok.Arrow ->
       advance st |> ignore;
       let params = parse_params st in
@@ -383,6 +392,44 @@ and parse_stmt st =
         | _ -> None
       in
       stmt start_span (Ast.If { cond; then_body; else_body })
+  | Tok.Keyword ((Tok.Const | Tok.Var) as kw) ->
+      advance st |> ignore;
+      let mutable_ = kw = Tok.Var in
+      let name =
+        match kind st with
+        | Tok.Lower_ident n ->
+            if n <> "" && n.[String.length n - 1] = '?' then
+              error "E2007" (span st) "a binding name cannot end in `?`";
+            advance st |> ignore;
+            n
+        | t ->
+            error "E2007" (span st)
+              (Printf.sprintf "expected a binding name, found %s"
+                 (describe_kind t))
+      in
+      expect_op st Tok.Assign "`=`" |> ignore;
+      if at_eof st || newline_before st then
+        error "E2002" (span st)
+          "the binding's initializer must stay on the `=`'s line";
+      let init = parse_expr st in
+      end_statement st;
+      stmt start_span (Ast.Binding { mutable_; name; init })
+  | Tok.Keyword Tok.Case ->
+      advance st |> ignore;
+      let scrutinee = parse_expr st in
+      if at_op st Tok.LBrace && newline_before st then
+        error "E2001" (span st)
+          "the `case` branches must open on the scrutinee's line";
+      expect_op st Tok.LBrace "`{`" |> ignore;
+      let branches = parse_branches st in
+      expect_op st Tok.RBrace "`}`" |> ignore;
+      stmt start_span (Ast.Case { scrutinee; branches })
+  | Tok.Keyword Tok.Receive ->
+      advance st |> ignore;
+      expect_op st Tok.LBrace "`{`" |> ignore;
+      let branches = parse_branches st in
+      expect_op st Tok.RBrace "`}`" |> ignore;
+      stmt start_span (Ast.Receive branches)
   | Tok.Keyword Tok.Return ->
       advance st |> ignore;
       if at_op st Tok.RBrace || at_eof st || newline_before st then
@@ -393,8 +440,18 @@ and parse_stmt st =
         stmt start_span (Ast.Return (Some e))
   | _ ->
       let e = parse_expr st in
-      end_statement st;
-      stmt start_span (Ast.Expr_stmt e)
+      let stmt_desc =
+        match kind st with
+        | Tok.Op Tok.Send when not (newline_before st) ->
+            advance st |> ignore;
+            let message = parse_expr st in
+            end_statement st;
+            Ast.Send { target = e; message }
+        | _ ->
+            end_statement st;
+            Ast.Expr_stmt e
+      in
+      stmt start_span stmt_desc
 
 and end_statement st =
   match kind st with
@@ -487,6 +544,111 @@ and parse_type_ann st =
   | t ->
       error "E2001" (span st)
         (Printf.sprintf "expected a type annotation, found %s" (describe_kind t))
+
+and parse_pattern st =
+  let tok = peek st in
+  match tok.Tok.kind with
+  | Tok.Upper_ident tname -> (
+      advance st |> ignore;
+      if not (at_op st Tok.Dot) then
+        error "E2007" (span st) "enum members are matched by qualified name"
+          ~hint:"write `Color.red`, not a bare type name";
+      expect_op st Tok.Dot "`.`" |> ignore;
+      match kind st with
+      | Tok.Lower_ident member ->
+          let mspan = (advance st).Tok.span in
+          {
+            Ast.pattern_span = merge_span tok.Tok.span mspan;
+            pattern_desc = Ast.Enum_member (tname, member);
+          }
+      | t ->
+          error "E2007" (span st)
+            (Printf.sprintf "expected an enum member after `%s.`, found %s"
+               tname (describe_kind t)))
+  | Tok.Int n ->
+      advance st |> ignore;
+      {
+        Ast.pattern_span = tok.Tok.span;
+        pattern_desc = Ast.Pattern_literal (Ast.L_int n);
+      }
+  | Tok.Float f ->
+      advance st |> ignore;
+      {
+        Ast.pattern_span = tok.Tok.span;
+        pattern_desc = Ast.Pattern_literal (Ast.L_float f);
+      }
+  | Tok.Char c ->
+      advance st |> ignore;
+      {
+        Ast.pattern_span = tok.Tok.span;
+        pattern_desc = Ast.Pattern_literal (Ast.L_char c);
+      }
+  | Tok.True ->
+      advance st |> ignore;
+      {
+        Ast.pattern_span = tok.Tok.span;
+        pattern_desc = Ast.Pattern_literal (Ast.L_bool true);
+      }
+  | Tok.False ->
+      advance st |> ignore;
+      {
+        Ast.pattern_span = tok.Tok.span;
+        pattern_desc = Ast.Pattern_literal (Ast.L_bool false);
+      }
+  | Tok.Lower_ident "_" ->
+      advance st |> ignore;
+      { Ast.pattern_span = tok.Tok.span; pattern_desc = Ast.Wildcard }
+  | Tok.Lower_ident name ->
+      advance st |> ignore;
+      {
+        Ast.pattern_span = tok.Tok.span;
+        pattern_desc = Ast.Pattern_binding name;
+      }
+  | Tok.Op Tok.LParen ->
+      advance st |> ignore;
+      if at_op st Tok.RParen then
+        { Ast.pattern_span = tok.Tok.span; pattern_desc = Ast.Tuple_pattern [] }
+      else
+        let patterns = ref [ parse_pattern st ] in
+        while at_op st Tok.Comma do
+          advance st |> ignore;
+          if at_op st Tok.RParen then
+            error "E2004" (span st) "patterns do not take a trailing comma";
+          patterns := parse_pattern st :: !patterns
+        done;
+        let close_span = span st in
+        expect_op st Tok.RParen "`)`" |> ignore;
+        {
+          Ast.pattern_span = merge_span tok.Tok.span close_span;
+          pattern_desc = Ast.Tuple_pattern (List.rev !patterns);
+        }
+  | t ->
+      error "E2007" (span st)
+        (Printf.sprintf "expected a pattern, found %s" (describe_kind t))
+
+and parse_branches st =
+  let branches = ref [] in
+  let first = ref true in
+  let rec loop () =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else (
+      if (not !first) && not (newline_before st) then
+        error "E2007" (span st) "branches are separated by newlines";
+      first := false;
+      let pattern = parse_pattern st in
+      let guard =
+        if at_keyword st Tok.When then (
+          advance st |> ignore;
+          Some (parse_expr st))
+        else None
+      in
+      expect_op st Tok.Arrow "`->`" |> ignore;
+      let body, _ = parse_block st in
+      branches := { Ast.pattern; guard; body } :: !branches;
+      loop ())
+  in
+  loop ();
+  List.rev !branches
 
 (* Parses a source that holds exactly one expression. *)
 let parse_expr_source ~file ~source =
