@@ -709,16 +709,22 @@ let parse_expr_source ~file ~source =
       (Printf.sprintf "unexpected %s after the expression" (describe_here st));
   e
 
-(* Parses a file: a sequence of statements ended by newlines. *)
+(* Parses a file: a sequence of top-level items ended by newlines. *)
 let parse_program ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
   let st = { stream; file } in
-  let stmts = ref [] in
+  let items = ref [] in
   let rec loop () =
     if at_eof st then ()
     else (
-      stmts := parse_stmt st :: !stmts;
+      let item_span = span st in
+      items :=
+        {
+          Ast.item_span;
+          item_desc = Ast.Item_stmt (parse_stmt st);
+        }
+        :: !items;
       loop ())
   in
   loop ();
-  List.rev !stmts
+  List.rev !items
