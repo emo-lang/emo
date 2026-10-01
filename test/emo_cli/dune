@@ -1,6 +1,6 @@
 (executable
  (name emo_cli_test)
- (libraries alcotest emo_cli))
+ (libraries alcotest emo_cli emo_support))
 
 (rule
  (alias runtest)

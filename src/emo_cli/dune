@@ -1,6 +1,6 @@
 (library
  (name emo_cli)
- (libraries cmdliner)
+ (libraries cmdliner emo_support emo_lexer emo_parser emo_ast emo_eval)
  (modules emo_cli))
 
 (executable
