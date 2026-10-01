@@ -98,6 +98,8 @@ type item = { item_span : Emo_support.Span.t; item_desc : item_desc }
 
 and item_desc =
   | Item_stmt of stmt
+  | Item_require of string
+    (* file-level `require "owner/name"`; the short name enters scope *)
   | Item_def of fun_def
   | Item_class of class_def
   | Item_interface of interface_def

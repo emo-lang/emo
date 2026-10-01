@@ -35,7 +35,8 @@ let pp_kind fmt (k : Token.kind) =
         | Return -> "return"
         | Raise -> "raise"
         | Self -> "self"
-        | Do -> "do")
+        | Do -> "do"
+        | Require -> "require")
     | Token.Op o -> (
         "Op "
         ^

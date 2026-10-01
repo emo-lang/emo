@@ -947,6 +947,10 @@ let method_closure class_name env d =
 let eval_item env item =
   match item.Ast.item_desc with
   | Ast.Item_stmt s -> eval_stmt env s
+  | Ast.Item_require _ ->
+      (* Scope comes from the module table once the package layer registers
+         the package; the statement itself needs no evaluation. *)
+      ()
   | Ast.Item_def d ->
       define env d.Ast.def_name ~mutable_:false
         (ArrowBlock
