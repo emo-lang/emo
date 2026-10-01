@@ -105,13 +105,13 @@ Scope note: tuple literals under the content rule, tuple patterns, `case` / `rec
 **Prereq:** Step 04.
 **Done when:** the acceptance program runs (`fib(20)` → 6765, interpolated greeting, `count_down(1000000)` with a flat stack); `dune test` green including the deep-recursion case.
 
-- [ ] **T5.1** — Value ADT + equality; environment chain.
-- [ ] **T5.2** — Expression evaluation with tag-checked operators.
-- [ ] **T5.3** — Interpolation; `print` builtin; `.to_string()`.
-- [ ] **T5.4** — Closure capture (lexical, by reference to the environment).
-- [ ] **T5.5** — Tail-call loop in the evaluator; deep-recursion test.
-- [ ] **T5.6** — `if` / `return` semantics; runtime type errors with spans.
-- [ ] **T5.7** — Alcotest suites running real programs end to end (assert on captured stdout).
+- [x] **T5.1** — Value ADT + equality; environment chain.
+- [x] **T5.2** — Expression evaluation with tag-checked operators.
+- [x] **T5.3** — Interpolation; `print` builtin; `.to_string()`.
+- [x] **T5.4** — Closure capture (lexical, by reference to the environment).
+- [x] **T5.5** — Tail-call loop in the evaluator; deep-recursion test.
+- [x] **T5.6** — `if` / `return` semantics; runtime type errors with spans.
+- [x] **T5.7** — Alcotest suites running real programs end to end (assert on captured stdout).
 
 Scope note: arrays, tuples, and `Box` (with its three-operation set) are part of this step's value model. `print` is a provisional name — promote it into the README once the I/O surface settles.
 

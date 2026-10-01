@@ -54,6 +54,10 @@ let rec pp_expr fmt (e : Emo_ast.expr) =
         (pp_list pp_stmt) body
   | Tuple ([] as es) -> Format.fprintf fmt "(tuple%a)" (pp_list pp_expr) es
   | Tuple es -> Format.fprintf fmt "(tuple @[<hov>%a@])" (pp_list pp_expr) es
+  | Array_literal ([] as es) ->
+      Format.fprintf fmt "(array%a)" (pp_list pp_expr) es
+  | Array_literal es ->
+      Format.fprintf fmt "(array @[<hov>%a@])" (pp_list pp_expr) es
   | Unary (op, e) ->
       Format.fprintf fmt "(%s %a)"
         (match op with Emo_ast.Not -> "!" | Emo_ast.Neg -> "-")
@@ -247,6 +251,20 @@ let expression_tests =
           (render pp_expr (parse_expr "(a)")));
     tc "operator parens are groupings" (fun () ->
         Alcotest.check expr "shape" (parse_expr "(a + b)") (parse_expr "a + b"));
+    tc "array literals parse with elements" (fun () ->
+        Alcotest.(check string)
+          "shape" "(array 1 2 3)"
+          (render pp_expr (parse_expr "[1, 2, 3]"));
+        Alcotest.(check string)
+          "nested" "(array 1 (array 2))"
+          (render pp_expr (parse_expr "[1, [2]]")));
+    tc "the empty array literal" (fun () ->
+        Alcotest.(check string)
+          "shape" "(array)"
+          (render pp_expr (parse_expr "[]")));
+    tc "arrays reject a trailing comma" (fun () ->
+        let diagnostic = parse_err "[1,]" in
+        Alcotest.(check string) "code" "E2004" (code_of diagnostic));
     tc "empty parens are the empty tuple" (fun () ->
         Alcotest.(check string)
           "shape" "(tuple)"
