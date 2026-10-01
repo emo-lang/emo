@@ -3,17 +3,17 @@
    paths. Codes for this stage are E5xxx.
 
    Transitional root rule (replaced by manifest-based roots in step 10): the
-   project root is the entry file's directory, and a module path whose first
-   segment equals the root directory's own name has that segment elided —
-   `emo run shop/checkout.emo` resolves `shop.order` to shop/order.emo. *)
+   project root is the working directory the compiler runs in —
+   `emo run shop/checkout.emo` resolves `shop.order` to ./shop/order.emo and
+   `other.thing` to ./other/thing.emo, so the README's shop tree and its
+   internal-privacy scenario both work verbatim. *)
 
 type module_kind =
   | File of string (* the .emo file backing the module *)
   | Dir of string (* the directory holding child modules *)
 
 type project = {
-  root : string; (* filesystem path of the entry file's directory *)
-  root_name : string; (* basename of root, elidable as a path prefix *)
+  root : string; (* filesystem path of the project root (the working dir) *)
   files : (string list, string) Hashtbl.t; (* module path → .emo file *)
   dirs : (string list, string) Hashtbl.t; (* module path → directory *)
   diagnostics : Emo_support.Diagnostic.t list ref;
@@ -71,13 +71,12 @@ let rec walk p rel fs_dir =
           else Hashtbl.replace p.files path fs_path)
     (entries fs_dir)
 
-(* Discovers the module tree under the entry file's directory. *)
+(* Discovers the module tree under the working directory. *)
 let discover ~entry_file : project =
-  let root = Filename.dirname entry_file in
+  let root = Sys.getcwd () in
   let p =
     {
       root;
-      root_name = Filename.basename (if root = "" then "." else root);
       files = Hashtbl.create 8;
       dirs = Hashtbl.create 8;
       diagnostics = ref [];
@@ -87,13 +86,6 @@ let discover ~entry_file : project =
   Hashtbl.replace p.dirs [] p.root;
   walk p [] p.root;
   p
-
-(* Elides the project-name prefix: inside the `shop` project, `shop.order`
-   addresses the same module as `order`. *)
-let normalize p (path : string list) : string list =
-  match path with
-  | first :: rest when String.equal first p.root_name -> rest
-  | _ -> path
 
 (* Resolves a (normalized) module path to its file or directory. *)
 let resolve p (path : string list) : module_kind option =
@@ -150,14 +142,12 @@ let load_module p (path : string list) : Emo_eval.env =
 (* Installs the evaluator's module hooks for this project: discovery
    (normalized path → handle with children) and loading. *)
 let install_hooks p =
-  let normalize = normalize p in
   (* Handles are memoized per module path: every reference to `shop.order`
      shares one namespace and one load. *)
   let handles : (string list, Emo_eval.module_handle) Hashtbl.t =
     Hashtbl.create 8
   in
-  let handle_of raw_path =
-    let path = normalize raw_path in
+  let handle_of path =
     match Hashtbl.find_opt handles path with
     | Some h -> Some h
     | None -> (
@@ -176,28 +166,35 @@ let install_hooks p =
             Some h)
   in
   Emo_eval.module_handle_of := handle_of;
-  Emo_eval.module_loader := fun raw_path -> load_module p (normalize raw_path)
+  Emo_eval.module_loader := fun path -> load_module p path
 
 (* `internal` is subtree-private: a module whose path contains an internal
    segment may only be referenced from modules under that segment's parent.
    Returns one diagnostic per violation, naming both modules. *)
-let check_internal_privacy (graph : (string list * string list list) list) :
+let check_internal_privacy (graph : (string list, string list list) Hashtbl.t) :
     Emo_support.Diagnostic.t list =
   let dotted path = String.concat "." path in
   List.concat_map
     (fun (use_site, refs) ->
       List.filter_map
         (fun r ->
-          let rec internal_parent = function
-            | "internal" :: parent -> Some parent
-            | _ :: rest -> internal_parent rest
+          let rec internal_parent before = function
+            | "internal" :: _ -> Some (List.rev before)
+            | seg :: rest -> internal_parent (seg :: before) rest
             | [] -> None
           in
-          match internal_parent r with
-          | Some parent -> (
+          match internal_parent [] r with
+          | Some parent ->
+              let rec prefix n xs =
+                if n <= 0 then []
+                else
+                  match xs with
+                  | [] -> []
+                  | x :: rest -> x :: prefix (n - 1) rest
+              in
               let shares =
                 List.length use_site >= List.length parent
-                && List.for_all2 String.equal use_site parent
+                && prefix (List.length parent) use_site = parent
               in
               if shares then None
               else
@@ -211,14 +208,13 @@ let check_internal_privacy (graph : (string list * string list list) list) :
                          subtree-private"
                         (dotted use_site) (dotted r);
                     span =
-                      Emo_support.Span.make
-                        ~file:(dotted use_site)
-                        ~line:1 ~col:1 ~start:0 ~stop:0;
+                      Emo_support.Span.make ~file:(dotted use_site) ~line:1
+                        ~col:1 ~start:0 ~stop:0;
                     hint = None;
-                  })
+                  }
           | None -> None)
         refs)
-    graph
+    (Hashtbl.fold (fun path refs acc -> (path, refs) :: acc) graph [])
 
 (* Checks every module in the project, collecting the reference graph.
    Returns per-module references and every diagnostic found. *)
@@ -226,6 +222,13 @@ let check_project p :
     string list list
     * (string list * string list list) list
     * Emo_support.Diagnostic.t list =
+  let () =
+    let oc = open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-cp.txt" in
+    output_string oc
+      (Printf.sprintf "check_project: files=%d root=%s\n"
+         (Hashtbl.length p.files) p.root);
+    close_out oc
+  in
   let module_paths = module_paths p in
   let graph : (string list, string list list) Hashtbl.t = Hashtbl.create 8 in
   let errors, entries =
@@ -245,12 +248,20 @@ let check_project p :
           Emo_check.check_module ~modules:module_paths ~current:path items
         in
         Hashtbl.replace graph path refs;
+        let oc =
+          open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-refs.txt"
+        in
+        output_string oc
+          (String.concat "." path ^ " -> "
+          ^ String.concat "; " (List.map (String.concat ".") refs)
+          ^ "\n");
+        close_out oc;
         match diagnostics with
         | [] -> acc
         | ds -> (ds @ errors, (path, refs) :: entries))
       p.files ([], [])
   in
-  let internal_errors = check_internal_privacy entries in
+  let internal_errors = check_internal_privacy graph in
   (module_paths, entries, errors @ internal_errors)
 
 (* Runs the entry file: the graph is discovered up front (collisions report
