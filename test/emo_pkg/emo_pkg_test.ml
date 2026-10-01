@@ -2,6 +2,8 @@ open Emo_support
 
 let tc name f = Alcotest.test_case name `Quick f
 
+module R = Emo_pkg.Resolve
+
 let smoke_tests =
   [
     tc "library links" (fun () ->
@@ -185,4 +187,147 @@ let () =
       ("smoke", smoke_tests);
       ("version", version_tests);
       ("manifest", manifest_tests);
+    ]
+
+let resolve_tests =
+  [
+    tc "a single root resolves" (fun () ->
+        let index =
+          [
+            ( "json",
+              [
+                {
+                  R.pv_version =
+                    ( Emo_pkg.Version.parse "2.3.1" |> function
+                      | Ok v -> v
+                      | _ -> assert false );
+                  R.pv_targets = [ "native" ];
+                  R.pv_deps = [];
+                };
+              ] );
+          ]
+        in
+        match
+          Emo_pkg.Resolve.solve ~target:"native"
+            ~roots:
+              [
+                ( "json",
+                  Emo_pkg.Version.parse "2.3.1" |> function
+                  | Ok v -> v
+                  | _ -> assert false );
+              ]
+            ~index
+        with
+        | Ok r ->
+            Alcotest.(check int)
+              "resolved" 1
+              (List.length r.Emo_pkg.Resolve.resolved)
+        | Error es ->
+            Alcotest.fail
+              (String.concat ";"
+                 (List.map (fun e -> e.Emo_pkg.Resolve.e_dep) es)));
+    tc "the highest exact pin wins across consumers" (fun () ->
+        let v s =
+          Emo_pkg.Version.parse s |> function Ok v -> v | _ -> assert false
+        in
+        let index =
+          [
+            ( "shared",
+              [
+                {
+                  R.pv_version = v "1.0.0";
+                  R.pv_targets = [ "native" ];
+                  R.pv_deps = [];
+                };
+                {
+                  R.pv_version = v "1.2.0";
+                  R.pv_targets = [ "native" ];
+                  R.pv_deps = [];
+                };
+              ] );
+          ]
+        in
+        match
+          Emo_pkg.Resolve.solve ~target:"native"
+            ~roots:[ ("shared", v "1.0.0"); ("shared", v "1.2.0") ]
+            ~index
+        with
+        | Ok r -> (
+            match List.assoc_opt "shared" r.Emo_pkg.Resolve.resolved with
+            | Some version ->
+                Alcotest.(check string)
+                  "highest wins" "1.2.0"
+                  (Emo_pkg.Version.to_string version)
+            | None -> Alcotest.fail "shared not resolved")
+        | Error es -> Alcotest.fail "expected resolution");
+    tc "a dep without the current target fails resolution" (fun () ->
+        let v s =
+          Emo_pkg.Version.parse s |> function Ok v -> v | _ -> assert false
+        in
+        let index =
+          [
+            ( "web",
+              [
+                {
+                  R.pv_version = v "3.0.0";
+                  R.pv_targets = [ "wasm" ];
+                  R.pv_deps = [];
+                };
+              ] );
+          ]
+        in
+        match
+          Emo_pkg.Resolve.solve ~target:"native"
+            ~roots:[ ("web", v "3.0.0") ]
+            ~index
+        with
+        | Ok _ -> Alcotest.fail "expected a target failure"
+        | Error es -> (
+            match es with
+            | [ e ] ->
+                Alcotest.(check string) "dep" "web" e.Emo_pkg.Resolve.e_dep
+            | _ -> Alcotest.fail "expected one error"));
+    tc "transitive pins resolve" (fun () ->
+        let v s =
+          Emo_pkg.Version.parse s |> function Ok v -> v | _ -> assert false
+        in
+        let index =
+          [
+            ( "app",
+              [
+                {
+                  R.pv_version = v "1.0.0";
+                  R.pv_targets = [ "native" ];
+                  R.pv_deps = [ ("lib", v "2.0.0") ];
+                };
+              ] );
+            ( "lib",
+              [
+                {
+                  R.pv_version = v "2.0.0";
+                  R.pv_targets = [ "native" ];
+                  R.pv_deps = [];
+                };
+              ] );
+          ]
+        in
+        match
+          Emo_pkg.Resolve.solve ~target:"native"
+            ~roots:[ ("app", v "1.0.0") ]
+            ~index
+        with
+        | Ok r ->
+            Alcotest.(check bool)
+              "lib resolved" true
+              (List.mem_assoc "lib" r.Emo_pkg.Resolve.resolved)
+        | Error _ -> Alcotest.fail "expected resolution");
+  ]
+
+let () =
+  Alcotest.run "emo_pkg"
+    [
+      ("smoke", smoke_tests);
+      ("version", version_tests);
+      ("manifest", manifest_tests);
+      ("resolve", resolve_tests);
     ]
