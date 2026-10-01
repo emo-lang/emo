@@ -106,3 +106,100 @@ let module_paths p : string list list =
   Hashtbl.fold (fun path _ acc -> path :: acc) p.files []
 
 let diagnostics p : Emo_support.Diagnostic.t list = List.rev !(p.diagnostics)
+
+(* Child module names of a directory module, with their normalized paths. *)
+let children p (path : string list) : (string * string list) list =
+  match Hashtbl.find_opt p.dirs path with
+  | None -> []
+  | Some fs_dir ->
+      List.map (fun (name, _) -> (name, path @ [ name ])) (entries fs_dir)
+
+let read_file path =
+  let ic = open_in_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
+
+(* Raised when the static stages of any module found errors. *)
+exception Static_errors of Emo_support.Diagnostic.t list
+
+(* Evaluates one module's items in a fresh environment (the module's
+   namespace) and returns it. This is the whole load story: top-level items
+   run once, on first load, in file order. *)
+let load_module p (path : string list) : Emo_eval.env =
+  match Hashtbl.find_opt p.files path with
+  | None ->
+      failwith
+        (Printf.sprintf "module `%s` has no backing file"
+           (String.concat "." path))
+  | Some file ->
+      let source = read_file file in
+      let items =
+        match Emo_parser.parse_program_with_diagnostics ~file ~source with
+        | exception Emo_lexer.Error d -> raise (Static_errors [ d ])
+        | (_, first :: _) as parsed ->
+            let _, diagnostics = parsed in
+            ignore first;
+            raise (Static_errors diagnostics)
+        | items, [] -> items
+      in
+      let env = Emo_eval.global_env () in
+      List.iter (Emo_eval.eval_item env) items;
+      env
+
+(* Installs the evaluator's module hooks for this project: discovery
+   (normalized path → handle with children) and loading. *)
+let install_hooks p =
+  let normalize = normalize p in
+  (* Handles are memoized per module path: every reference to `shop.order`
+     shares one namespace and one load. *)
+  let handles : (string list, Emo_eval.module_handle) Hashtbl.t =
+    Hashtbl.create 8
+  in
+  let handle_of raw_path =
+    let path = normalize raw_path in
+    match Hashtbl.find_opt handles path with
+    | Some h -> Some h
+    | None -> (
+        match resolve p path with
+        | None -> None
+        | Some _ ->
+            let h =
+              {
+                Emo_eval.mpath = path;
+                mchildren = children p path;
+                menv = None;
+                loading = false;
+              }
+            in
+            Hashtbl.replace handles path h;
+            Some h)
+  in
+  Emo_eval.module_handle_of := handle_of;
+  Emo_eval.module_loader := fun raw_path -> load_module p (normalize raw_path)
+
+(* Runs the entry file: the graph is discovered up front (collisions report
+   immediately), modules load lazily on first access with load-once
+   semantics, and the entry's own items evaluate in file order. *)
+let run_entry ~entry_file ?(check = false) () : unit =
+  let p = discover ~entry_file in
+  (match diagnostics p with [] -> () | ds -> raise (Static_errors ds));
+  install_hooks p;
+  let source = read_file entry_file in
+  let items =
+    match
+      Emo_parser.parse_program_with_diagnostics ~file:entry_file ~source
+    with
+    | exception Emo_lexer.Error d -> raise (Static_errors [ d ])
+    | (_, first :: _) as parsed ->
+        let _, diagnostics = parsed in
+        ignore first;
+        raise (Static_errors diagnostics)
+    | items, [] -> items
+  in
+  (if check then
+     match Emo_check.check_parsed items with
+     | [] -> ()
+     | ds -> raise (Static_errors ds));
+  let env = Emo_eval.global_env () in
+  List.iter (Emo_eval.eval_item env) items
