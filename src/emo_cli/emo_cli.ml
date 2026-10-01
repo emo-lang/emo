@@ -102,7 +102,10 @@ let repl_loop ~(prompt : bool) ~(input : unit -> string option)
                     ("= " ^ Emo_eval.to_string (Emo_eval.eval_expr env e) ^ "\n")
               | _ -> Emo_eval.eval_item env item)
             items
-        with Emo_eval.Error diagnostic -> render diagnostic)
+        with
+        | Emo_eval.Error diagnostic -> render diagnostic
+        | Emo_eval.Emo_raise (v, span, trace) ->
+            render (Emo_eval.uncaught_diagnostic (v, span, trace)))
   in
   let rec loop pending =
     if prompt then output (if pending = "" then "emo> " else "... ");
