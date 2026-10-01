@@ -53,6 +53,7 @@ let keyword_spelling = function
   | Tok.Raise -> "raise"
   | Tok.Self -> "self"
   | Tok.Do -> "do"
+  | Tok.Require -> "`require`"
 
 let describe_kind (k : Tok.kind) =
   match k with
@@ -229,6 +230,28 @@ and parse_postfix st =
         let close_span = span st in
         expect_op st Tok.RBracket "`]`";
         e := node (merge_span !e.Ast.span close_span) (Ast.Index (!e, index))
+    | Tok.Op Tok.LBrace
+      when (not (newline_before st)) && not st.suppress_block_sugar -> (
+        (* A trailing block attaches to the preceding expression as its final
+           argument: `f(a) { ... }` and the config shape `package { ... }`
+           share this one rule. *)
+        let lbrace_span = span st in
+        let body, close_span = parse_block st in
+        let block =
+          node (merge_span lbrace_span close_span) (Ast.Arrow_block ([], body))
+        in
+        let attach_args args =
+          args @ [ { Ast.arg_name = None; arg_value = block } ]
+        in
+        e :=
+          match !e.Ast.desc with
+          | Ast.Call (callee, args) ->
+              let span' = merge_span !e.Ast.span close_span in
+              node span' (Ast.Call (callee, attach_args args))
+          | _ ->
+              node
+                (merge_span !e.Ast.span close_span)
+                (Ast.Call (!e, attach_args [])))
     | Tok.Op Tok.LParen when not (newline_before st) -> (
         let lparen = peek st in
         if
@@ -246,19 +269,6 @@ and parse_postfix st =
         in
         e :=
           match kind st with
-          | Tok.Op Tok.LBrace
-            when (not (newline_before st)) && not st.suppress_block_sugar ->
-              let lbrace_span = span st in
-              let body, close_span = parse_block st in
-              let block =
-                node
-                  (merge_span lbrace_span close_span)
-                  (Ast.Arrow_block ([], body))
-              in
-              node
-                (merge_span call.Ast.span close_span)
-                (Ast.Call
-                   (!e, args @ [ { Ast.arg_name = None; arg_value = block } ]))
           | Tok.Op Tok.Arrow when not (newline_before st) ->
               let arrow_span = span st in
               advance st |> ignore;
@@ -505,15 +515,30 @@ and parse_stmt st =
             Ast.Send { target = e; message }
         | Tok.Op Tok.Assign when not (newline_before st) ->
             advance st |> ignore;
-            check_assign_target st e;
+            let target = scoped_target e in
+            check_assign_target st target;
             let value = parse_expr st in
             end_statement st;
-            Ast.Assign { target = e; value }
+            Ast.Assign { target; value }
         | _ ->
             end_statement st;
             Ast.Expr_stmt e
       in
       stmt start_span stmt_desc
+
+(* `acme/json_tools = "2.3.1"` — a scoped package name as a manifest deps
+   key. In target position the slash form is unambiguous (a division is
+   never assignable), so it folds into one ident; the checker confines
+   slash idents to manifests. *)
+and scoped_target target =
+  match target.Ast.desc with
+  | Ast.Binary
+      ( Ast.Div,
+        { Ast.desc = Ast.Ident owner; _ },
+        { Ast.desc = Ast.Ident name; _ } )
+    when (not (String.contains owner '/')) && not (String.contains name '/') ->
+      { target with Ast.desc = Ast.Ident (owner ^ "/" ^ name) }
+  | _ -> target
 
 (* `x = v` rebinds a variable; `self.x = v` is a field assignment, legal
    only inside init. *)
@@ -539,6 +564,25 @@ and end_statement st =
 and parse_item st =
   let item_span = span st in
   match kind st with
+  | Tok.Keyword Tok.Require ->
+      advance st |> ignore;
+      if at_eof st || newline_before st then
+        error "E2009" (span st)
+          "`require` expects a package name string on the same line";
+      let e = parse_string st in
+      let name =
+        match e.Ast.desc with
+        | Ast.String s when s <> "" -> s
+        | Ast.String _ ->
+            error "E2009" e.Ast.span "`require` expects a package name"
+        | Ast.Interpolated _ ->
+            error "E2009" e.Ast.span
+              "`require` takes a plain string, not interpolation"
+        | _ ->
+            error "E2009" e.Ast.span "`require` expects a package name string"
+      in
+      end_statement st;
+      { Ast.item_span; item_desc = Ast.Item_require name }
   | Tok.Keyword Tok.Def ->
       let d = parse_def st ~in_class:false in
       { Ast.item_span = d.Ast.def_span; item_desc = Ast.Item_def d }
@@ -1146,8 +1190,23 @@ let parse_program_with_diagnostics ~file ~source =
   (List.rev !items, List.rev !diagnostics)
 
 (* Parses a file: a sequence of top-level items ended by newlines. Raises on
-   the first diagnostic. *)
+   the first diagnostic. Duplicate `require`s of one package in a file are
+   an error. *)
 let parse_program ~file ~source =
   match parse_program_with_diagnostics ~file ~source with
-  | items, [] -> items
+  | items, [] ->
+      let seen = Hashtbl.create 4 in
+      List.iter
+        (fun item ->
+          match item.Ast.item_desc with
+          | Ast.Item_require name -> (
+              match Hashtbl.find_opt seen name with
+              | Some span ->
+                  error "E2010" span
+                    (Printf.sprintf
+                       "`require \"%s\"` appears twice in this file" name)
+              | None -> Hashtbl.replace seen name item.Ast.item_span)
+          | _ -> ())
+        items;
+      items
   | _, first :: _ -> raise (Error first)

@@ -15,6 +15,7 @@ module Token = struct
     | Raise
     | Self
     | Do
+    | Require
 
   type op =
     | LParen
@@ -132,6 +133,7 @@ let keyword_of_string = function
   | "raise" -> Some Token.Raise
   | "self" -> Some Token.Self
   | "do" -> Some Token.Do
+  | "require" -> Some Token.Require
   | _ -> None
 
 let escape_char = function

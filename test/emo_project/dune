@@ -1,6 +1,6 @@
 (executable
  (name emo_project_test)
- (libraries alcotest emo_project emo_support emo_eval))
+ (libraries alcotest unix emo_project emo_support emo_eval))
 
 (rule
  (alias runtest)
@@ -8,7 +8,7 @@
   (source_tree ../../examples)
   emo_project_test.exe)
  (action
-  (run
-   env
-   EMO_EXAMPLES_DIR=%{workspace_root}/examples
-   %{exe:emo_project_test.exe})))
+  (setenv
+   EMO_EXAMPLES_DIR
+   %{workspace_root}/examples
+   (run %{exe:emo_project_test.exe}))))

@@ -144,6 +144,7 @@ and pp_item fmt (i : Emo_ast.item) =
   | Emo_ast.Item_class c -> pp_class_def fmt c
   | Emo_ast.Item_interface i -> pp_interface_def fmt i
   | Emo_ast.Item_enum e -> pp_enum_def fmt e
+  | Emo_ast.Item_require name -> Format.fprintf fmt "(require %s)" name
 
 and pp_params fmt = function
   | [] -> Format.pp_print_string fmt "()"
@@ -1258,6 +1259,66 @@ def ok() Int {
           (code_of (List.nth diagnostics 0)));
   ]
 
+let require_tests =
+  [
+    tc "require parses with the package name" (fun () ->
+        match
+          parse_program
+            {|require "acme/json_tools"
+print(json_tools.parse("{}"))|}
+        with
+        | [ req; call ] ->
+            Alcotest.(check string)
+              "require" "(require acme/json_tools)" (render pp_item req);
+            Alcotest.(check string)
+              "call" "(print call ((json_tools.parse) call \"{}\"))"
+              (render pp_item call)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 items, got %d" (List.length items)));
+    tc "a scoped deps key folds into one ident" (fun () ->
+        match parse_program {|acme/json_tools = "2.3.1"|} with
+        | [ item ] -> (
+            match item.Emo_ast.item_desc with
+            | Emo_ast.Item_stmt
+                {
+                  stmt_desc =
+                    Emo_ast.Assign
+                      { target = { Emo_ast.desc = Emo_ast.Ident name }; _ };
+                } ->
+                Alcotest.(check string) "key" "acme/json_tools" name
+            | _ -> Alcotest.fail "expected a scoped assignment")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "a scoped name keeps owner/name shape" (fun () ->
+        match parse_program {|require "a/b/c"|} with
+        | [ req ] ->
+            Alcotest.(check string)
+              "shape" "(require a/b/c)" (render pp_item req)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "duplicate requires in one file are errors" (fun () ->
+        try
+          ignore (parse_program {|require "a/b"
+require "a/b"|});
+          Alcotest.fail "expected a duplicate-require error"
+        with Emo_parser.Error d ->
+          Alcotest.(check string) "code" "E2010" (code_of d));
+    tc "require is file-level only" (fun () ->
+        let diagnostic =
+          program_err {|def f() Int {
+  require "a/b"
+  return 1
+}|}
+        in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+    tc "require takes a plain string" (fun () ->
+        let diagnostic = program_err {|require "a/${"b"}"|} in
+        Alcotest.(check string) "code" "E2009" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -1280,4 +1341,5 @@ let () =
       ("naming", naming_tests);
       ("recovery", recovery_tests);
       ("golden", golden_tests);
+      ("require", require_tests);
     ]

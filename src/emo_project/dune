@@ -1,3 +1,10 @@
 (library
  (name emo_project)
- (libraries emo_support emo_lexer emo_parser emo_ast emo_eval emo_check))
+ (libraries
+  emo_support
+  emo_lexer
+  emo_parser
+  emo_ast
+  emo_eval
+  emo_check
+  emo_pkg))
