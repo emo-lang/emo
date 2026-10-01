@@ -19,6 +19,7 @@ and expr_desc =
   | Arrow_block of
       param list * stmt list (* -> (x Int) { ... } and -> { ... } *)
   | Tuple of expr list
+  | Array_literal of expr list (* [a, b, c] — fixed length, immutable *)
   | Unary of unop * expr
   | Binary of binop * expr * expr
   | Do of expr (* do <call> — the operand is always a Call node *)
