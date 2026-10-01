@@ -59,6 +59,8 @@ type ctx = {
   modules : string list list; (* every known module path in the project *)
   current : string list; (* the module being checked *)
   refs : string list list ref; (* module paths referenced by this module *)
+  requires : (string * Emo_support.Span.t) list ref;
+      (* packages required by this module, with the require's span *)
 }
 
 let report ctx span code message =
@@ -158,6 +160,7 @@ let collect ctx (items : Ast.item list) : unit =
       | Ast.Item_enum e ->
           Hashtbl.replace ctx.enums e.Ast.enum_name
             (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
+      | Ast.Item_require _ -> () (* pairing is the driver's job *)
       | Ast.Item_stmt _ -> ())
     items
 
@@ -176,6 +179,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       modules = [];
       current = [];
       refs = ref [];
+      requires = ref [];
     }
   in
   let parsed = Emo_parser.parse_program_with_diagnostics ~file ~source in
@@ -789,6 +793,13 @@ and check_stmt ctx env (s : Ast.stmt) : env =
   | Ast.Assign { target; value } -> (
       let vt = check_expr ctx env value in
       match target.Ast.desc with
+      | Ast.Ident name when String.contains name '/' ->
+          report ctx target.Ast.span "E4015"
+            (Printf.sprintf
+               "`%s` is a scoped package name — assign it only in a manifest's \
+                `deps` block"
+               name);
+          env
       | Ast.Ident name -> (
           match lookup_env env name with
           | Some info when info.is_var ->
@@ -1086,6 +1097,9 @@ let check_items ctx (items : Ast.item list) : unit =
     (List.fold_left
        (fun env item ->
          match item.Ast.item_desc with
+         | Ast.Item_require name ->
+             ctx.requires := (name, item.Ast.item_span) :: !(ctx.requires);
+             env
          | Ast.Item_stmt s -> check_stmt ctx env s
          | Ast.Item_def d ->
              let ft = signature_of_def ctx d in
@@ -1116,7 +1130,10 @@ let sort_diagnostics diagnostics =
    that address modules resolve silently, qualified references are recorded.
    Returns the diagnostics and the referenced module paths. *)
 let check_module ~(modules : string list list) ~(current : string list)
-    (items : Ast.item list) : Emo_support.Diagnostic.t list * string list list =
+    (items : Ast.item list) :
+    Emo_support.Diagnostic.t list
+    * string list list
+    * (string * Emo_support.Span.t) list =
   let ctx =
     {
       file = String.concat "." current;
@@ -1129,16 +1146,21 @@ let check_module ~(modules : string list list) ~(current : string list)
       modules;
       current;
       refs = ref [];
+      requires = ref [];
     }
   in
   collect ctx items;
   if List.length !(ctx.diagnostics) = 0 then check_items ctx items;
-  (sort_diagnostics (List.rev !(ctx.diagnostics)), List.rev !(ctx.refs))
+  ( sort_diagnostics (List.rev !(ctx.diagnostics)),
+    List.rev !(ctx.refs),
+    List.rev !(ctx.requires) )
 
 (* Checks pre-parsed items without module context. Every diagnostic found,
    sorted by position. *)
 let check_parsed (items : Ast.item list) : Emo_support.Diagnostic.t list =
-  let diagnostics, _refs = check_module ~modules:[] ~current:[] items in
+  let diagnostics, _refs, _requires =
+    check_module ~modules:[] ~current:[] items
+  in
   diagnostics
 
 let check_source ~file ~(source : string) : Emo_support.Diagnostic.t list =

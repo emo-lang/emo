@@ -177,23 +177,23 @@ Follow-up: the chosen `var`-escape approximation is documented in `docs/var-esca
 - [x] **T9.7** — In-process caching keyed by content hash.
 - [x] **T9.8** — Multi-file test project under `examples/` mirroring the README's `shop/` tree.
 
-Caution: the transitional root rule (the working directory) must be swapped for manifest-based roots in step 10 — do not let it fossilize.
+Caution: resolved in step 10 — a project roots at its nearest `package.emo`; manifest-less trees keep the working-directory rule.
 
 ### Step 10 — Packages & version resolution · `plan/step-10-packages.md`
 
 **Prereq:** Steps 01–09.
 **Done when:** the README's `require "acme/json_tools"` scenario runs against a fixture registry; removing a dep from `deps` while its `require` remains is a compile error; conflicting exact pins resolve to the highest and the lockfile checksums verify on a second run; a dep whose `targets` exclude the current target fails at resolution time. **M2 exit criteria met.**
 
-- [ ] **T10.1** — `require` parsing + scope rules.
-- [ ] **T10.2** — Manifest phase A: strict schema parser, errors with spans.
-- [ ] **T10.3** — Strict require/deps pairing check.
-- [ ] **T10.4** — MVS resolver with target-compatibility gate; unit tests over version lattices.
-- [ ] **T10.5** — Lockfile read/write/verify; mismatch errors.
-- [ ] **T10.6** — Registry client + content-addressed cache + directory registry for tests.
-- [ ] **T10.7** — Manifest phase B: restricted-profile evaluation with step budget.
-- [ ] **T10.8** — End-to-end fixture: two local packages, one requiring the other, resolved, locked, built, run.
+- [x] **T10.1** — `require` parsing + scope rules.
+- [x] **T10.2** — Manifest phase A: strict schema parser, errors with spans.
+- [x] **T10.3** — Strict require/deps pairing check.
+- [x] **T10.4** — MVS resolver with target-compatibility gate; unit tests over version lattices.
+- [x] **T10.5** — Lockfile read/write/verify; mismatch errors.
+- [x] **T10.6** — Registry client + content-addressed cache + directory registry for tests.
+- [x] **T10.7** — Manifest phase B: restricted-profile evaluation with step budget.
+- [x] **T10.8** — End-to-end fixture: two local packages, one requiring the other, resolved, locked, built, run.
 
-Also here: swap step 09's transitional root rule for manifest-based roots.
+Also here: swap step 09's transitional root rule for manifest-based roots — done; the root rule now prefers the nearest `package.emo`.
 
 ---
 
