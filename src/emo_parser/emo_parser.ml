@@ -494,6 +494,9 @@ and parse_item st =
   | Tok.Keyword Tok.Class ->
       let c = parse_class st in
       { Ast.item_span = c.Ast.class_span; item_desc = Ast.Item_class c }
+  | Tok.Keyword Tok.Interface ->
+      let i = parse_interface st in
+      { Ast.item_span = i.Ast.interface_span; item_desc = Ast.Item_interface i }
   | _ -> { Ast.item_span; item_desc = Ast.Item_stmt (parse_stmt st) }
 
 (* `true` when the current token can begin a type annotation. *)
@@ -649,6 +652,75 @@ and collect_fields stmts =
   in
   walk stmts;
   List.rev !fields
+
+and parse_interface st =
+  let kw_tok = peek st in
+  advance st |> ignore;
+  let interface_name, _ = parse_type_name st "interface" in
+  if at_op st Tok.LBrace && newline_before st then
+    error "E2001" (span st)
+      "the interface body must open on the interface's line";
+  expect_op st Tok.LBrace "`{`" |> ignore;
+  let methods = ref [] in
+  let rec members first =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else (
+      if (not first) && not (newline_before st) then
+        error "E2001" (span st) "interface members are separated by newlines";
+      match kind st with
+      | Tok.Keyword Tok.Def ->
+          methods := parse_method_sig st :: !methods;
+          members false
+      | t ->
+          error "E2001" (span st)
+            (Printf.sprintf "expected a `def` in the interface body, found %s"
+               (describe_kind t)))
+  in
+  members true;
+  if at_eof st then error "E2001" (span st) "expected `}`, found end of input";
+  let close_span = span st in
+  expect_op st Tok.RBrace "`}`" |> ignore;
+  {
+    Ast.interface_span = merge_span kw_tok.Tok.span close_span;
+    interface_name;
+    interface_methods = List.rev !methods;
+  }
+
+(* A method signature inside an interface: name, annotated parameters, and a
+   required return type — never a body. *)
+and parse_method_sig st =
+  let def_tok = peek st in
+  advance st |> ignore;
+  let sig_name, name_span =
+    match kind st with
+    | Tok.Lower_ident n ->
+        let tok = advance st in
+        (n, tok.Tok.span)
+    | t ->
+        error "E2009" (span st)
+          (Printf.sprintf "expected a def name, found %s" (describe_kind t))
+  in
+  if sig_name = "init" then
+    error "E2019" name_span "an interface cannot declare `init`"
+      ~hint:"interfaces describe shapes, not construction";
+  let sig_params = parse_params st in
+  let sig_return =
+    if (not (newline_before st)) && starts_type st then parse_type_ann st
+    else if at_op st Tok.LBrace && not (newline_before st) then
+      error "E2018" (span st) "an interface method is a signature only"
+        ~hint:"drop the body — a method's shape is its whole contract"
+    else
+      error "E2012" (span st) "an interface method must declare its return type"
+  in
+  if at_op st Tok.LBrace && not (newline_before st) then
+    error "E2018" (span st) "an interface method is a signature only"
+      ~hint:"drop the body — a method's shape is its whole contract";
+  {
+    Ast.sig_span = merge_span def_tok.Tok.span sig_return.Ast.type_span;
+    sig_name;
+    sig_params;
+    sig_return;
+  }
 
 and parse_params st =
   if at_op st Tok.LParen then (
