@@ -255,6 +255,20 @@ and parse_postfix st =
                 (merge_span call.Ast.span close_span)
                 (Ast.Call
                    (!e, args @ [ { Ast.arg_name = None; arg_value = block } ]))
+          | Tok.Op Tok.Arrow when not (newline_before st) ->
+              let arrow_span = span st in
+              advance st |> ignore;
+              let params = parse_params st in
+              let body, close_span = parse_block st in
+              let block =
+                node
+                  (merge_span arrow_span close_span)
+                  (Ast.Arrow_block (params, body))
+              in
+              node
+                (merge_span call.Ast.span close_span)
+                (Ast.Call
+                   (!e, args @ [ { Ast.arg_name = None; arg_value = block } ]))
           | _ -> call)
     | _ -> continue := false
   done;
@@ -609,7 +623,7 @@ and parse_def_body st =
 and parse_class st =
   let class_tok = peek st in
   advance st |> ignore;
-  let class_name, name_span = parse_type_name st "class" in
+  let class_name, _ = parse_type_name st "class" in
   if at_op st Tok.LBrace && newline_before st then
     error "E2001" (span st) "the class body must open on the class's line";
   expect_op st Tok.LBrace "`{`" |> ignore;
@@ -635,12 +649,11 @@ and parse_class st =
   if at_eof st then error "E2001" (span st) "expected `}`, found end of input";
   let close_span = span st in
   expect_op st Tok.RBrace "`}`" |> ignore;
-  let class_init, class_methods =
+  let class_methods = List.rev !methods in
+  let class_init =
     match List.rev !inits with
-    | [ init ] -> (init, List.rev !methods)
-    | [] ->
-        error "E2013" name_span
-          (Printf.sprintf "class `%s` must declare an `init`" class_name)
+    | [ init ] -> Some init
+    | [] -> None
     | _ :: duplicate :: _ ->
         error "E2014" duplicate.Ast.def_span
           "a class can only declare one `init`"
@@ -652,7 +665,10 @@ and parse_class st =
     class_name;
     class_init;
     class_methods;
-    class_fields = collect_fields class_init.Ast.def_body;
+    class_fields =
+      (match class_init with
+      | Some init -> collect_fields init.Ast.def_body
+      | None -> []);
   }
 
 (* The field set is whatever init assigns via self.x = ..., in first-assignment

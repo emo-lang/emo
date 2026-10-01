@@ -124,12 +124,12 @@ and method_sig = {
 and class_def = {
   class_span : Emo_support.Span.t;
   class_name : string;
-  class_init : fun_def;
+  class_init : fun_def option; (* None for stateless classes *)
   class_methods : fun_def list;
   class_fields : field list;
 }
-(** A `class`: exactly one [class_init] (guaranteed by the parser), any number
-    of methods, and the fields [class_init] assigns. *)
+(** A `class`: at most one [class_init] (a duplicate is an error), any number of
+    methods, and the fields [class_init] assigns. *)
 
 and field = { field_name : string; field_span : Emo_support.Span.t }
 

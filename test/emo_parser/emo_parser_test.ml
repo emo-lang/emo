@@ -162,13 +162,21 @@ and pp_method_sig fmt (s : Emo_ast.method_sig) =
 and pp_field fmt (f : Emo_ast.field) =
   Format.fprintf fmt "(field %s)" f.Emo_ast.field_name
 
+and pp_fields fmt = function
+  | [] -> Format.pp_print_string fmt "(fields)"
+  | fs -> Format.fprintf fmt "(fields @[<hov>%a@])" (pp_list pp_field) fs
+
 and pp_class_def fmt (c : Emo_ast.class_def) =
-  Format.fprintf fmt
-    "(class %s @[<hov>(fields @[<hov>%a@]) (init %a|@[<hov>%a@]) %a@])"
-    c.Emo_ast.class_name (pp_list pp_field) c.Emo_ast.class_fields pp_params
-    c.Emo_ast.class_init.Emo_ast.def_params (pp_list pp_stmt)
-    c.Emo_ast.class_init.Emo_ast.def_body (pp_list pp_fun_def)
-    c.Emo_ast.class_methods
+  match c.Emo_ast.class_init with
+  | Some init ->
+      Format.fprintf fmt "(class %s @[<hov>%a (init %a|@[<hov>%a@]) %a@])"
+        c.Emo_ast.class_name pp_fields c.Emo_ast.class_fields pp_params
+        init.Emo_ast.def_params (pp_list pp_stmt) init.Emo_ast.def_body
+        (pp_list pp_fun_def) c.Emo_ast.class_methods
+  | None ->
+      Format.fprintf fmt "(class %s @[<hov>%a %a@])" c.Emo_ast.class_name
+        pp_fields c.Emo_ast.class_fields (pp_list pp_fun_def)
+        c.Emo_ast.class_methods
 
 and pp_interface_def fmt (i : Emo_ast.interface_def) =
   match i.Emo_ast.interface_methods with
@@ -627,6 +635,102 @@ let golden_tests =
         Alcotest.(check string)
           "span" "test.emo:1:3"
           (Span.to_string diagnostic.Diagnostic.span));
+    tc "README: the duck-typed greeting program parses as a whole" (fun () ->
+        match
+          parse_program
+            {|interface Greeter {
+  def greet() String
+}
+
+class English {
+  def greet() String {
+    return "Hello"
+  }
+}
+
+def welcome(g Greeter) String {
+  return g.greet()
+}|}
+        with
+        | [ greeter; english; welcome ] ->
+            Alcotest.(check string)
+              "shape"
+              "(interface Greeter (sig greet () String)) (class English \
+               (fields) (def greet () String |(return \"Hello\"))) (def \
+               welcome (param g Greeter) String |(return ((g.greet) call)))"
+              (String.concat " "
+                 (List.map (render pp_item) [ greeter; english; welcome ]))
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 3 items, got %d" (List.length items)));
+    tc "a call takes a parameterized trailing block after ->" (fun () ->
+        Alcotest.(check string)
+          "shape"
+          "(list call users (block (param user User)|(render call user)))"
+          (render pp_expr
+             (parse_expr "list(users) -> (user User) {\n  render(user)\n}")));
+    tc "a newline puts the following arrow block in a new statement" (fun () ->
+        match
+          parse_program "list(users)\n-> (user User) {\n  render(user)\n}"
+        with
+        | [ call; block ] ->
+            Alcotest.(check string)
+              "call" "(list call users)" (render pp_item call);
+            Alcotest.(check string)
+              "block" "(block (param user User)|(render call user))"
+              (render pp_item block)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 items, got %d" (List.length items)));
+    tc "README: module aliases and qualified calls parse" (fun () ->
+        match
+          parse_program
+            {|const order = shop.order
+
+def checkout(cart Cart) Decimal {
+  const total = order.total(cart)
+  return total
+}|}
+        with
+        | [ alias; checkout ] ->
+            Alcotest.(check string)
+              "alias" "(const order (shop.order))" (render pp_item alias);
+            Alcotest.(check string)
+              "checkout"
+              "(def checkout (param cart Cart) Decimal |(const total \
+               ((order.total) call cart)) (return total))"
+              (render pp_item checkout)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 items, got %d" (List.length items)));
+    tc "README: a component tree is nested calls with blocks" (fun () ->
+        match
+          parse_program
+            {|page(title: "Home") {
+  navbar() {
+    logo()
+    menu(routes)
+  }
+
+  list(users) -> (user User) {
+    card(user) {
+      text(user.name)
+      text(user.bio)
+    }
+  }
+}|}
+        with
+        | [ tree ] ->
+            Alcotest.(check string)
+              "shape"
+              "(page call title: \"Home\" (block |(navbar call (block |(logo \
+               call) (menu call routes))) (list call users (block (param user \
+               User)|(card call user (block |(text call (user.name)) (text \
+               call (user.bio))))))))"
+              (render pp_item tree)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
   ]
 
 let item_tests =
@@ -807,15 +911,24 @@ let class_tests =
         Alcotest.(check string)
           "span" "test.emo:3:3"
           (Span.to_string diagnostic.Diagnostic.span));
-    tc "a class without init is rejected" (fun () ->
-        let diagnostic =
-          program_err
-            "class Empty {\n  def greet() String {\n    return \"hi\"\n  }\n}"
-        in
-        Alcotest.(check string) "code" "E2013" (code_of diagnostic);
-        Alcotest.(check string)
-          "span" "test.emo:1:7"
-          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a stateless class without init parses" (fun () ->
+        match
+          parse_program
+            {|class English {
+  def greet() String {
+    return "Hello"
+  }
+}|}
+        with
+        | [ english ] ->
+            Alcotest.(check string)
+              "shape"
+              "(class English (fields) (def greet () String |(return \
+               \"Hello\")))"
+              (render pp_item english)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "init takes no return annotation" (fun () ->
         let diagnostic = program_err "class A {\n  def init() A {}\n}" in
         Alcotest.(check string) "code" "E2011" (code_of diagnostic);
