@@ -497,6 +497,9 @@ and parse_item st =
   | Tok.Keyword Tok.Interface ->
       let i = parse_interface st in
       { Ast.item_span = i.Ast.interface_span; item_desc = Ast.Item_interface i }
+  | Tok.Keyword Tok.Enum ->
+      let e = parse_enum st in
+      { Ast.item_span = e.Ast.enum_span; item_desc = Ast.Item_enum e }
   | _ -> { Ast.item_span; item_desc = Ast.Item_stmt (parse_stmt st) }
 
 (* `true` when the current token can begin a type annotation. *)
@@ -515,6 +518,26 @@ and parse_type_name st what =
       error "E2017" (span st)
         (Printf.sprintf "expected a %s name, found %s" what (describe_kind t))
         ~hint:"type names start with an uppercase letter"
+
+(* Emo's naming convention is syntactic: lower_snake names, with a trailing
+   `?` reserved for predicate defs. [tok] is the name's own token. *)
+and check_snake st tok what ~allow_question =
+  match tok.Tok.kind with
+  | Tok.Lower_ident name ->
+      let ends_question =
+        String.length name > 0 && name.[String.length name - 1] = '?'
+      in
+      let core =
+        if ends_question then String.sub name 0 (String.length name - 1)
+        else name
+      in
+      if String.exists (fun c -> c >= 'A' && c <= 'Z') core then
+        error "E2022" tok.Tok.span
+          (Printf.sprintf "%s names are snake_case; `%s` is camelCase" what name)
+      else if ends_question && not allow_question then
+        error "E2007" tok.Tok.span
+          (Printf.sprintf "only def names may end in `?`; a %s cannot" what)
+  | _ -> ()
 
 and parse_def st ~in_class =
   let def_tok = peek st in
@@ -720,6 +743,58 @@ and parse_method_sig st =
     sig_name;
     sig_params;
     sig_return;
+  }
+
+and parse_enum st =
+  let kw_tok = peek st in
+  advance st |> ignore;
+  let enum_name, _ = parse_type_name st "enum" in
+  if at_op st Tok.LParen then
+    error "E2020" (span st) "enums do not take payloads"
+      ~hint:"carry data beside the member: `(Color.red, value)`";
+  if at_op st Tok.LBrace && newline_before st then
+    error "E2001" (span st) "the enum body must open on the enum's line";
+  expect_op st Tok.LBrace "`{`" |> ignore;
+  let members = ref [] in
+  let seen = Hashtbl.create 8 in
+  let rec members_loop () =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else
+      let tok = peek st in
+      (match kind st with
+      | Tok.Lower_ident name ->
+          check_snake st tok "enum member" ~allow_question:false;
+          if Hashtbl.mem seen name then
+            error "E2021" tok.Tok.span
+              (Printf.sprintf "enum `%s` declares `%s` twice" enum_name name);
+          Hashtbl.add seen name ();
+          members :=
+            { Ast.member_name = name; member_span = tok.Tok.span } :: !members
+      | t ->
+          error "E2001" (span st)
+            (Printf.sprintf "expected an enum member, found %s"
+               (describe_kind t)));
+      let tok = advance st in
+      ignore tok;
+      if at_op st Tok.Comma then (
+        advance st |> ignore;
+        if at_op st Tok.RBrace then
+          error "E2004" (span st) "enums do not take a trailing comma";
+        members_loop ())
+      else if at_op st Tok.RBrace || at_eof st then ()
+      else
+        error "E2001" (span st)
+          (Printf.sprintf "expected `,` or `}` in the enum body, found %s"
+             (describe_here st))
+  in
+  members_loop ();
+  if at_eof st then error "E2001" (span st) "expected `}`, found end of input";
+  let close_span = span st in
+  expect_op st Tok.RBrace "`}`" |> ignore;
+  {
+    Ast.enum_span = merge_span kw_tok.Tok.span close_span;
+    enum_name;
+    enum_members = List.rev !members;
   }
 
 and parse_params st =
