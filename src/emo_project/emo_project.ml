@@ -211,8 +211,9 @@ let check_internal_privacy (graph : (string list * string list list) list) :
                          subtree-private"
                         (dotted use_site) (dotted r);
                     span =
-                      Emo_support.Span.make ~file:p.root ~line:1 ~col:1
-                        ~start:0 ~stop:0;
+                      Emo_support.Span.make
+                        ~file:(dotted use_site)
+                        ~line:1 ~col:1 ~start:0 ~stop:0;
                     hint = None;
                   })
           | None -> None)
