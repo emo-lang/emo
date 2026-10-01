@@ -1,3 +1,5 @@
+module Ast = Emo_ast
+
 (* The project layer: the directory tree is the module tree. Discovers the
    module table under the entry file's directory and resolves qualified
    paths. Codes for this stage are E5xxx.
@@ -8,6 +10,9 @@
    `other.thing` to ./other/thing.emo, so the README's shop tree and its
    internal-privacy scenario both work verbatim. *)
 
+(* Raised when the static stages of any module found errors. *)
+exception Static_errors of Emo_support.Diagnostic.t list
+
 type module_kind =
   | File of string (* the .emo file backing the module *)
   | Dir of string (* the directory holding child modules *)
@@ -17,6 +22,10 @@ type project = {
   files : (string list, string) Hashtbl.t; (* module path → .emo file *)
   dirs : (string list, string) Hashtbl.t; (* module path → directory *)
   diagnostics : Emo_support.Diagnostic.t list ref;
+  cache : (string, string * Ast.item list) Hashtbl.t;
+      (* file → (content hash, parsed items): unchanged modules skip
+         re-lex/parse within a run *)
+  mutable parses : int; (* number of actual lex/parse operations *)
 }
 
 let report p code message =
@@ -80,6 +89,8 @@ let discover ~entry_file : project =
       files = Hashtbl.create 8;
       dirs = Hashtbl.create 8;
       diagnostics = ref [];
+      cache = Hashtbl.create 8;
+      parses = 0;
     }
   in
   (* The root directory is itself a module (the empty path). *)
@@ -112,8 +123,34 @@ let read_file path =
     ~finally:(fun () -> close_in_noerr ic)
     (fun () -> really_input_string ic (in_channel_length ic))
 
-(* Raised when the static stages of any module found errors. *)
-exception Static_errors of Emo_support.Diagnostic.t list
+(* Parses a file through the content-hash cache: unchanged files reuse
+   their parsed items across every stage of a run. *)
+let parse_cached p (file : string) : Ast.item list =
+  let source = read_file file in
+  let hash = Digest.string source in
+  match Hashtbl.find_opt p.cache file with
+  | Some (cached_hash, items) when cached_hash = hash -> items
+  | _ ->
+      p.parses <- p.parses + 1;
+      let () =
+        let oc =
+          open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-parse.txt"
+        in
+        output_string oc
+          ("parse: " ^ file ^ " count=" ^ string_of_int p.parses ^ "\n");
+        close_out oc
+      in
+      let items =
+        match Emo_parser.parse_program_with_diagnostics ~file ~source with
+        | exception Emo_lexer.Error d -> raise (Static_errors [ d ])
+        | (_, first :: _) as parsed ->
+            let _, diagnostics = parsed in
+            ignore first;
+            raise (Static_errors diagnostics)
+        | items, [] -> items
+      in
+      Hashtbl.replace p.cache file (hash, items);
+      items
 
 (* Evaluates one module's items in a fresh environment (the module's
    namespace) and returns it. This is the whole load story: top-level items
@@ -125,16 +162,7 @@ let load_module p (path : string list) : Emo_eval.env =
         (Printf.sprintf "module `%s` has no backing file"
            (String.concat "." path))
   | Some file ->
-      let source = read_file file in
-      let items =
-        match Emo_parser.parse_program_with_diagnostics ~file ~source with
-        | exception Emo_lexer.Error d -> raise (Static_errors [ d ])
-        | (_, first :: _) as parsed ->
-            let _, diagnostics = parsed in
-            ignore first;
-            raise (Static_errors diagnostics)
-        | items, [] -> items
-      in
+      let items = parse_cached p file in
       let env = Emo_eval.global_env () in
       List.iter (Emo_eval.eval_item env) items;
       env
@@ -319,29 +347,18 @@ let check_project p :
    immediately), modules load lazily on first access with load-once
    semantics, and the entry's own items evaluate in file order. With
    ~check:true every module is checked first. *)
-let run_entry ~entry_file ?(check = false) () : unit =
+let run_entry ~entry_file ?(check = false) () : project =
   let p = discover ~entry_file in
   (match diagnostics p with [] -> () | ds -> raise (Static_errors ds));
   install_hooks p;
-  let source = read_file entry_file in
-  let items =
-    match
-      Emo_parser.parse_program_with_diagnostics ~file:entry_file ~source
-    with
-    | exception Emo_lexer.Error d -> raise (Static_errors [ d ])
-    | (_, first :: _) as parsed ->
-        let _, diagnostics = parsed in
-        ignore first;
-        raise (Static_errors diagnostics)
-    | items, [] -> items
+  let entry_file =
+    if Filename.is_relative entry_file then Filename.concat p.root entry_file
+    else entry_file
   in
-  let () =
-    let oc = open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-d5.txt" in
-    output_string oc ("d5: items=" ^ string_of_int (List.length items) ^ "\n");
-    close_out oc
-  in
+  let items = parse_cached p entry_file in
   (if check then
      let _paths, _graph, errors = check_project p in
      match errors with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
-  List.iter (Emo_eval.eval_item env) items
+  List.iter (Emo_eval.eval_item env) items;
+  p
