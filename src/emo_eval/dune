@@ -1,2 +1,3 @@
 (library
- (name emo_eval))
+ (name emo_eval)
+ (libraries emo_support emo_lexer emo_ast))

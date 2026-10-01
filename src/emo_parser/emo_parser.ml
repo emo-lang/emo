@@ -316,6 +316,24 @@ and parse_primary st =
       let params = parse_params st in
       let body, close_span = parse_block st in
       node (merge_span tok.Tok.span close_span) (Ast.Arrow_block (params, body))
+  | Tok.Op Tok.LBracket ->
+      let open_span = (advance st).Tok.span in
+      if at_op st Tok.RBracket then
+        let close_span = (advance st).Tok.span in
+        node (merge_span open_span close_span) (Ast.Array_literal [])
+      else
+        let elems = ref [ parse_expr st ] in
+        while at_op st Tok.Comma do
+          advance st |> ignore;
+          if at_op st Tok.RBracket then
+            error "E2004" (span st) "arrays do not take a trailing comma";
+          elems := parse_expr st :: !elems
+        done;
+        let close_span = span st in
+        expect_op st Tok.RBracket "`]`" |> ignore;
+        node
+          (merge_span open_span close_span)
+          (Ast.Array_literal (List.rev !elems))
   | Tok.Op Tok.LParen -> parse_paren st
   | t ->
       error "E2001" (span st)
