@@ -129,6 +129,49 @@ and pp_literal fmt = function
   | Emo_ast.L_string s -> Format.fprintf fmt "%S" s
   | Emo_ast.L_bool b -> Format.fprintf fmt "%b" b
 
+and pp_item fmt (i : Emo_ast.item) =
+  match i.Emo_ast.item_desc with
+  | Emo_ast.Item_stmt s -> pp_stmt fmt s
+  | Emo_ast.Item_def d -> pp_fun_def fmt d
+  | Emo_ast.Item_class c -> pp_class_def fmt c
+  | Emo_ast.Item_interface i -> pp_interface_def fmt i
+  | Emo_ast.Item_enum e -> pp_enum_def fmt e
+
+and pp_fun_def fmt (d : Emo_ast.fun_def) =
+  match d.Emo_ast.def_return with
+  | None ->
+      Format.fprintf fmt "(init @[<hov>%a@]|%a@])"
+        (pp_list pp_param) d.Emo_ast.def_params
+        (pp_list pp_stmt) d.Emo_ast.def_body
+  | Some ret ->
+      Format.fprintf fmt "(def %s @[<hov>%a@] %a |%a@])" d.Emo_ast.def_name
+        (pp_list pp_param) d.Emo_ast.def_params pp_type_ann ret
+        (pp_list pp_stmt) d.Emo_ast.def_body
+
+and pp_method_sig fmt (s : Emo_ast.method_sig) =
+  Format.fprintf fmt "(sig %s @[<hov>%a@] %a)" s.Emo_ast.sig_name
+    (pp_list pp_param) s.Emo_ast.sig_params pp_type_ann s.Emo_ast.sig_return
+
+and pp_field fmt (f : Emo_ast.field) =
+  Format.fprintf fmt "(field %s)" f.Emo_ast.field_name
+
+and pp_class_def fmt (c : Emo_ast.class_def) =
+  Format.fprintf fmt "(class %s @[<hov>(fields @[<hov>%a@]) (init @[<hov>%a@]|%a@]) %a@])"
+    c.Emo_ast.class_name
+    (pp_list pp_field) c.Emo_ast.class_fields
+    (pp_list pp_param) c.Emo_ast.class_init.Emo_ast.def_params
+    (pp_list pp_stmt) c.Emo_ast.class_init.Emo_ast.def_body
+    (pp_list pp_fun_def) c.Emo_ast.class_methods
+
+and pp_interface_def fmt (i : Emo_ast.interface_def) =
+  Format.fprintf fmt "(interface %s @[<hov>%a@])" i.Emo_ast.interface_name
+    (pp_list pp_method_sig) i.Emo_ast.interface_methods
+
+and pp_enum_def fmt (e : Emo_ast.enum_def) =
+  Format.fprintf fmt "(enum %s @[<hov>%a@])" e.Emo_ast.enum_name
+    (pp_list (fun fmt m -> Format.pp_print_string fmt m.Emo_ast.member_name))
+    e.Emo_ast.enum_members
+
 let expr : Emo_ast.expr Alcotest.testable =
   Alcotest.testable pp_expr (fun a b ->
       String.equal (render pp_expr a) (render pp_expr b))
@@ -244,8 +287,8 @@ let call_tests =
     tc "programs are newline-separated statements" (fun () ->
         match parse_program "a\nb" with
         | [ first; second ] ->
-            Alcotest.(check string) "first" "a" (render pp_stmt first);
-            Alcotest.(check string) "second" "b" (render pp_stmt second)
+            Alcotest.(check string) "first" "a" (render pp_item first);
+            Alcotest.(check string) "second" "b" (render pp_item second)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 2 statements, got %d"
@@ -269,7 +312,7 @@ let control_tests =
         match parse_program "if a {\n  b\n}" with
         | [ if_stmt ] ->
             Alcotest.(check string)
-              "shape" "(if a then b)" (render pp_stmt if_stmt)
+              "shape" "(if a then b)" (render pp_item if_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -277,7 +320,7 @@ let control_tests =
         match parse_program "if a {\n  b\n} else {\n  c\n}" with
         | [ if_stmt ] ->
             Alcotest.(check string)
-              "shape" "(if a then b else c)" (render pp_stmt if_stmt)
+              "shape" "(if a then b else c)" (render pp_item if_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -297,7 +340,7 @@ let control_tests =
         | [ if_stmt ] ->
             Alcotest.(check string)
               "shape" "(if a then b else (if c then d))"
-              (render pp_stmt if_stmt)
+              (render pp_item if_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -316,8 +359,8 @@ let stmt_tests =
     tc "const and var bindings" (fun () ->
         match parse_program "const x = 1\nvar y = x + 2" with
         | [ x; y ] ->
-            Alcotest.(check string) "const" "(const x 1)" (render pp_stmt x);
-            Alcotest.(check string) "var" "(var y (+ x 2))" (render pp_stmt y)
+            Alcotest.(check string) "const" "(const x 1)" (render pp_item x);
+            Alcotest.(check string) "var" "(var y (+ x 2))" (render pp_item y)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 2 statements, got %d"
@@ -332,7 +375,7 @@ let stmt_tests =
         match parse_program "pid <- message" with
         | [ send_stmt ] ->
             Alcotest.(check string)
-              "shape" "(<- pid message)" (render pp_stmt send_stmt)
+              "shape" "(<- pid message)" (render pp_item send_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -340,7 +383,7 @@ let stmt_tests =
         match parse_program "box.value <- 1" with
         | [ send_stmt ] ->
             Alcotest.(check string)
-              "shape" "(<- (box.value) 1)" (render pp_stmt send_stmt)
+              "shape" "(<- (box.value) 1)" (render pp_item send_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -364,7 +407,7 @@ let stmt_tests =
             Alcotest.(check string)
               "shape"
               "(case c (branch Color.red |(return 1)) (branch _ |(return 2)))"
-              (render pp_stmt case_stmt)
+              (render pp_item case_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -381,7 +424,7 @@ let stmt_tests =
               "shape"
               "(case c (branch Color.red when loud |(return 1)) (branch _ \
                |(return 2)))"
-              (render pp_stmt case_stmt)
+              (render pp_item case_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -393,7 +436,7 @@ let stmt_tests =
             Alcotest.(check string)
               "shape"
               "(case p (branch (tuple Color.red count) |(return count)))"
-              (render pp_stmt case_stmt)
+              (render pp_item case_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -405,7 +448,7 @@ let stmt_tests =
         | [ case_stmt ] ->
             Alcotest.(check string)
               "shape" "(case c (branch other |(return 1)))"
-              (render pp_stmt case_stmt)
+              (render pp_item case_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -419,7 +462,7 @@ let stmt_tests =
         | [ receive_stmt ] ->
             Alcotest.(check string)
               "shape" "(receive (branch (tuple from msg) |(return msg)))"
-              (render pp_stmt receive_stmt)
+              (render pp_item receive_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -460,7 +503,7 @@ let string_tests =
         | [ case_stmt ] ->
             Alcotest.(check string)
               "shape" "(case s (branch \"red\" |(return 1)))"
-              (render pp_stmt case_stmt)
+              (render pp_item case_stmt)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
@@ -512,9 +555,9 @@ let golden_tests =
         match parse_program "const point = (x, y)\nmove_to(point)" with
         | [ binding; call ] ->
             Alcotest.(check string)
-              "binding" "(const point (tuple x y))" (render pp_stmt binding);
+              "binding" "(const point (tuple x y))" (render pp_item binding);
             Alcotest.(check string)
-              "call" "(move_to call point)" (render pp_stmt call)
+              "call" "(move_to call point)" (render pp_item call)
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 2 statements, got %d"
@@ -538,6 +581,32 @@ let golden_tests =
           (Span.to_string diagnostic.Diagnostic.span));
   ]
 
+let item_tests =
+  [
+    tc "the empty program holds no items" (fun () ->
+        Alcotest.(check int) "count" 0 (List.length (parse_program "")));
+    tc "statements come back as top-level items" (fun () ->
+        match parse_program "const x = 1\nx + 2\nif x {\n  y\n}" with
+        | [ binding; expr; if_stmt ] ->
+            Alcotest.(check string)
+              "binding" "(const x 1)" (render pp_item binding);
+            Alcotest.(check string)
+              "expression" "(+ x 2)" (render pp_item expr);
+            Alcotest.(check string)
+              "if" "(if x then y)" (render pp_item if_stmt)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 3 items, got %d" (List.length items)));
+    tc "items carry their spans" (fun () ->
+        match parse_program "const x = 1" with
+        | [ item ] ->
+            Alcotest.(check int) "start" 0 item.Emo_ast.item_span.Span.start;
+            Alcotest.(check int) "stop" 5 item.Emo_ast.item_span.Span.stop
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -552,5 +621,6 @@ let () =
       ("control", control_tests);
       ("stmt", stmt_tests);
       ("string", string_tests);
+      ("item", item_tests);
       ("golden", golden_tests);
     ]
