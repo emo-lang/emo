@@ -68,7 +68,11 @@ let describe_kind (k : Tok.kind) =
   | Op o -> "`" ^ op_spelling o ^ "`"
   | Eof -> "end of input"
 
-type parser = { stream : Emo_lexer.Stream.t; file : string }
+type parser = {
+  stream : Emo_lexer.Stream.t;
+  file : string;
+  mutable in_init : bool; (* inside an init body, where self.x = ... is legal *)
+}
 
 let peek st = Emo_lexer.Stream.peek st.stream
 let advance st = Emo_lexer.Stream.advance st.stream
@@ -251,6 +255,20 @@ and parse_postfix st =
                 (merge_span call.Ast.span close_span)
                 (Ast.Call
                    (!e, args @ [ { Ast.arg_name = None; arg_value = block } ]))
+          | Tok.Op Tok.Arrow when not (newline_before st) ->
+              let arrow_span = span st in
+              advance st |> ignore;
+              let params = parse_params st in
+              let body, close_span = parse_block st in
+              let block =
+                node
+                  (merge_span arrow_span close_span)
+                  (Ast.Arrow_block (params, body))
+              in
+              node
+                (merge_span call.Ast.span close_span)
+                (Ast.Call
+                   (!e, args @ [ { Ast.arg_name = None; arg_value = block } ]))
           | _ -> call)
     | _ -> continue := false
   done;
@@ -399,10 +417,13 @@ and parse_stmt st =
       let name =
         match kind st with
         | Tok.Lower_ident n ->
-            if n <> "" && n.[String.length n - 1] = '?' then
-              error "E2007" (span st) "a binding name cannot end in `?`";
-            advance st |> ignore;
+            let tok = advance st in
+            check_snake st tok "binding" ~allow_question:false;
             n
+        | Tok.Upper_ident t ->
+            error "E2007" (span st)
+              (Printf.sprintf "expected a binding name, found type name `%s`" t)
+              ~hint:"variable names are lower_snake; type names are UpperCamel"
         | t ->
             error "E2007" (span st)
               (Printf.sprintf "expected a binding name, found %s"
@@ -439,6 +460,14 @@ and parse_stmt st =
         let e = parse_expr st in
         end_statement st;
         stmt start_span (Ast.Return (Some e))
+  | Tok.Keyword Tok.Raise ->
+      advance st |> ignore;
+      if at_eof st || newline_before st then
+        error "E2023" (span st) "`raise` needs an expression"
+          ~hint:"raise an exception instance, e.g. `raise Exception.new(...)`";
+      let e = parse_expr st in
+      end_statement st;
+      stmt start_span (Ast.Raise e)
   | _ ->
       let e = parse_expr st in
       let stmt_desc =
@@ -448,11 +477,30 @@ and parse_stmt st =
             let message = parse_expr st in
             end_statement st;
             Ast.Send { target = e; message }
+        | Tok.Op Tok.Assign when not (newline_before st) ->
+            advance st |> ignore;
+            check_assign_target st e;
+            let value = parse_expr st in
+            end_statement st;
+            Ast.Assign { target = e; value }
         | _ ->
             end_statement st;
             Ast.Expr_stmt e
       in
       stmt start_span stmt_desc
+
+(* `x = v` rebinds a variable; `self.x = v` is a field assignment, legal
+   only inside init. *)
+and check_assign_target st target =
+  match target.Ast.desc with
+  | Ast.Ident _ -> ()
+  | Ast.Member ({ Ast.desc = Ast.Self; _ }, _) ->
+      if not st.in_init then
+        error "E2016" target.Ast.span "fields are assigned only inside `init`"
+          ~hint:"`init` is the only window where `self.x = ...` may appear"
+  | _ ->
+      error "E2015" target.Ast.span "invalid assignment target"
+        ~hint:"assign to a variable or to a `self` field"
 
 and end_statement st =
   match kind st with
@@ -462,19 +510,336 @@ and end_statement st =
       error "E2002" (span st) "expressions cannot be juxtaposed"
         ~hint:"start a new statement on the next line"
 
+and parse_item st =
+  let item_span = span st in
+  match kind st with
+  | Tok.Keyword Tok.Def ->
+      let d = parse_def st ~in_class:false in
+      { Ast.item_span = d.Ast.def_span; item_desc = Ast.Item_def d }
+  | Tok.Keyword Tok.Class ->
+      let c = parse_class st in
+      { Ast.item_span = c.Ast.class_span; item_desc = Ast.Item_class c }
+  | Tok.Keyword Tok.Interface ->
+      let i = parse_interface st in
+      { Ast.item_span = i.Ast.interface_span; item_desc = Ast.Item_interface i }
+  | Tok.Keyword Tok.Enum ->
+      let e = parse_enum st in
+      { Ast.item_span = e.Ast.enum_span; item_desc = Ast.Item_enum e }
+  | _ -> { Ast.item_span; item_desc = Ast.Item_stmt (parse_stmt st) }
+
+(* `true` when the current token can begin a type annotation. *)
+and starts_type st =
+  match kind st with
+  | Tok.Upper_ident _ | Tok.Op Tok.LParen -> true
+  | _ -> false
+
+(* Type positions take UpperCamel names only. *)
+and parse_type_name st what =
+  match kind st with
+  | Tok.Upper_ident name ->
+      let tok = advance st in
+      (name, tok.Tok.span)
+  | t ->
+      error "E2017" (span st)
+        (Printf.sprintf "expected a %s name, found %s" what (describe_kind t))
+        ~hint:"type names start with an uppercase letter"
+
+(* Emo's naming convention is syntactic: lower_snake names, with a trailing
+   `?` reserved for predicate defs. [tok] is the name's own token. *)
+and check_snake st tok what ~allow_question =
+  match tok.Tok.kind with
+  | Tok.Lower_ident name ->
+      let ends_question =
+        String.length name > 0 && name.[String.length name - 1] = '?'
+      in
+      let core =
+        if ends_question then String.sub name 0 (String.length name - 1)
+        else name
+      in
+      if String.exists (fun c -> c >= 'A' && c <= 'Z') core then
+        error "E2022" tok.Tok.span
+          (Printf.sprintf "%s names are snake_case; `%s` is camelCase" what name)
+      else if ends_question && not allow_question then
+        error "E2007" tok.Tok.span
+          (Printf.sprintf "only def names may end in `?`; a %s cannot" what)
+  | _ -> ()
+
+and parse_def st ~in_class =
+  let def_tok = peek st in
+  advance st |> ignore;
+  let name, name_span =
+    match kind st with
+    | Tok.Lower_ident n ->
+        let tok = advance st in
+        check_snake st tok "def" ~allow_question:true;
+        (n, tok.Tok.span)
+    | t ->
+        error "E2009" (span st)
+          (Printf.sprintf "expected a def name, found %s" (describe_kind t))
+  in
+  if name = "init" then (
+    if not in_class then
+      error "E2010" name_span
+        "`init` is a constructor; it can only be defined in a class body";
+    let def_params = parse_params st in
+    if (not (newline_before st)) && starts_type st then
+      error "E2011" (span st) "`init` takes no return annotation"
+        ~hint:"`init` returns the class it constructs";
+    let saved_in_init = st.in_init in
+    st.in_init <- true;
+    let def_body, close_span = parse_def_body st in
+    st.in_init <- saved_in_init;
+    {
+      Ast.def_span = merge_span def_tok.Tok.span close_span;
+      def_name = name;
+      def_params;
+      def_return = None;
+      def_body;
+    })
+  else
+    let def_params = parse_params st in
+    let def_return =
+      if (not (newline_before st)) && starts_type st then
+        Some (parse_type_ann st)
+      else
+        error "E2012" (span st) "a def must declare its return type"
+          ~hint:"function signatures always carry explicit types"
+    in
+    let def_body, close_span = parse_def_body st in
+    {
+      Ast.def_span = merge_span def_tok.Tok.span close_span;
+      def_name = name;
+      def_params;
+      def_return;
+      def_body;
+    }
+
+and parse_def_body st =
+  if at_op st Tok.LBrace && not (newline_before st) then parse_block st
+  else
+    error "E2001" (span st)
+      "the def's body must open with `{` on the signature's line"
+
+and parse_class st =
+  let class_tok = peek st in
+  advance st |> ignore;
+  let class_name, _ = parse_type_name st "class" in
+  if at_op st Tok.LBrace && newline_before st then
+    error "E2001" (span st) "the class body must open on the class's line";
+  expect_op st Tok.LBrace "`{`" |> ignore;
+  let inits = ref [] in
+  let methods = ref [] in
+  let rec members first =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else (
+      if (not first) && not (newline_before st) then
+        error "E2001" (span st) "class members are separated by newlines";
+      match kind st with
+      | Tok.Keyword Tok.Def ->
+          let d = parse_def st ~in_class:true in
+          if d.Ast.def_name = "init" then inits := d :: !inits
+          else methods := d :: !methods;
+          members false
+      | t ->
+          error "E2001" (span st)
+            (Printf.sprintf "expected a `def` in the class body, found %s"
+               (describe_kind t)))
+  in
+  members true;
+  if at_eof st then error "E2001" (span st) "expected `}`, found end of input";
+  let close_span = span st in
+  expect_op st Tok.RBrace "`}`" |> ignore;
+  let class_methods = List.rev !methods in
+  let class_init =
+    match List.rev !inits with
+    | [ init ] -> Some init
+    | [] -> None
+    | _ :: duplicate :: _ ->
+        error "E2014" duplicate.Ast.def_span
+          "a class can only declare one `init`"
+          ~hint:"fields come into existence in `init`; merge the constructors"
+  in
+  let class_span = merge_span class_tok.Tok.span close_span in
+  {
+    Ast.class_span;
+    class_name;
+    class_init;
+    class_methods;
+    class_fields =
+      (match class_init with
+      | Some init -> collect_fields init.Ast.def_body
+      | None -> []);
+  }
+
+(* The field set is whatever init assigns via self.x = ..., in first-assignment
+   order. Fields are not declared anywhere else. *)
+and collect_fields stmts =
+  let seen = Hashtbl.create 8 in
+  let fields = ref [] in
+  let rec walk stmts =
+    List.iter
+      (fun s ->
+        match s.Ast.stmt_desc with
+        | Ast.Assign
+            {
+              target =
+                {
+                  Ast.desc = Ast.Member ({ Ast.desc = Ast.Self; _ }, name);
+                  span;
+                  _;
+                };
+              _;
+            } ->
+            if not (Hashtbl.mem seen name) then (
+              Hashtbl.add seen name ();
+              fields := { Ast.field_name = name; field_span = span } :: !fields)
+        | Ast.If { then_body; else_body; _ } ->
+            walk then_body;
+            Option.iter walk else_body
+        | Ast.Case { branches; _ } ->
+            List.iter (fun b -> walk b.Ast.body) branches
+        | _ -> ())
+      stmts
+  in
+  walk stmts;
+  List.rev !fields
+
+and parse_interface st =
+  let kw_tok = peek st in
+  advance st |> ignore;
+  let interface_name, _ = parse_type_name st "interface" in
+  if at_op st Tok.LBrace && newline_before st then
+    error "E2001" (span st)
+      "the interface body must open on the interface's line";
+  expect_op st Tok.LBrace "`{`" |> ignore;
+  let methods = ref [] in
+  let rec members first =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else (
+      if (not first) && not (newline_before st) then
+        error "E2001" (span st) "interface members are separated by newlines";
+      match kind st with
+      | Tok.Keyword Tok.Def ->
+          methods := parse_method_sig st :: !methods;
+          members false
+      | t ->
+          error "E2001" (span st)
+            (Printf.sprintf "expected a `def` in the interface body, found %s"
+               (describe_kind t)))
+  in
+  members true;
+  if at_eof st then error "E2001" (span st) "expected `}`, found end of input";
+  let close_span = span st in
+  expect_op st Tok.RBrace "`}`" |> ignore;
+  {
+    Ast.interface_span = merge_span kw_tok.Tok.span close_span;
+    interface_name;
+    interface_methods = List.rev !methods;
+  }
+
+(* A method signature inside an interface: name, annotated parameters, and a
+   required return type — never a body. *)
+and parse_method_sig st =
+  let def_tok = peek st in
+  advance st |> ignore;
+  let sig_name, name_span =
+    match kind st with
+    | Tok.Lower_ident n ->
+        let tok = advance st in
+        check_snake st tok "def" ~allow_question:true;
+        (n, tok.Tok.span)
+    | t ->
+        error "E2009" (span st)
+          (Printf.sprintf "expected a def name, found %s" (describe_kind t))
+  in
+  if sig_name = "init" then
+    error "E2019" name_span "an interface cannot declare `init`"
+      ~hint:"interfaces describe shapes, not construction";
+  let sig_params = parse_params st in
+  let sig_return =
+    if (not (newline_before st)) && starts_type st then parse_type_ann st
+    else if at_op st Tok.LBrace && not (newline_before st) then
+      error "E2018" (span st) "an interface method is a signature only"
+        ~hint:"drop the body — a method's shape is its whole contract"
+    else
+      error "E2012" (span st) "an interface method must declare its return type"
+  in
+  if at_op st Tok.LBrace && not (newline_before st) then
+    error "E2018" (span st) "an interface method is a signature only"
+      ~hint:"drop the body — a method's shape is its whole contract";
+  {
+    Ast.sig_span = merge_span def_tok.Tok.span sig_return.Ast.type_span;
+    sig_name;
+    sig_params;
+    sig_return;
+  }
+
+and parse_enum st =
+  let kw_tok = peek st in
+  advance st |> ignore;
+  let enum_name, _ = parse_type_name st "enum" in
+  if at_op st Tok.LParen then
+    error "E2020" (span st) "enums do not take payloads"
+      ~hint:"carry data beside the member: `(Color.red, value)`";
+  if at_op st Tok.LBrace && newline_before st then
+    error "E2001" (span st) "the enum body must open on the enum's line";
+  expect_op st Tok.LBrace "`{`" |> ignore;
+  let members = ref [] in
+  let seen = Hashtbl.create 8 in
+  let rec members_loop () =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else
+      let tok = peek st in
+      (match kind st with
+      | Tok.Lower_ident name ->
+          check_snake st tok "enum member" ~allow_question:false;
+          if Hashtbl.mem seen name then
+            error "E2021" tok.Tok.span
+              (Printf.sprintf "enum `%s` declares `%s` twice" enum_name name);
+          Hashtbl.add seen name ();
+          members :=
+            { Ast.member_name = name; member_span = tok.Tok.span } :: !members
+      | t ->
+          error "E2001" (span st)
+            (Printf.sprintf "expected an enum member, found %s"
+               (describe_kind t)));
+      let tok = advance st in
+      ignore tok;
+      if at_op st Tok.Comma then (
+        advance st |> ignore;
+        if at_op st Tok.RBrace then
+          error "E2004" (span st) "enums do not take a trailing comma";
+        members_loop ())
+      else if at_op st Tok.RBrace || at_eof st then ()
+      else
+        error "E2001" (span st)
+          (Printf.sprintf "expected `,` or `}` in the enum body, found %s"
+             (describe_here st))
+  in
+  members_loop ();
+  if at_eof st then error "E2001" (span st) "expected `}`, found end of input";
+  let close_span = span st in
+  expect_op st Tok.RBrace "`}`" |> ignore;
+  {
+    Ast.enum_span = merge_span kw_tok.Tok.span close_span;
+    enum_name;
+    enum_members = List.rev !members;
+  }
+
 and parse_params st =
   if at_op st Tok.LParen then (
     advance st |> ignore;
-    if at_op st Tok.RParen then []
+    if at_op st Tok.RParen then (
+      advance st |> ignore;
+      [])
     else
       let params = ref [] in
       let rec loop () =
         let name =
           match kind st with
           | Tok.Lower_ident n ->
-              if String.length n > 0 && n.[String.length n - 1] = '?' then
-                error "E2006" (span st) "a parameter name cannot end in `?`";
-              advance st |> ignore;
+              let tok = advance st in
+              check_snake st tok "parameter" ~allow_question:false;
               n
           | t ->
               error "E2006" (span st)
@@ -648,7 +1013,8 @@ and parse_pattern st =
       advance st |> ignore;
       { Ast.pattern_span = tok.Tok.span; pattern_desc = Ast.Wildcard }
   | Tok.Lower_ident name ->
-      advance st |> ignore;
+      let tok = advance st in
+      check_snake st tok "binding" ~allow_question:false;
       {
         Ast.pattern_span = tok.Tok.span;
         pattern_desc = Ast.Pattern_binding name;
@@ -702,23 +1068,60 @@ and parse_branches st =
 (* Parses a source that holds exactly one expression. *)
 let parse_expr_source ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
-  let st = { stream; file } in
+  let st = { stream; file; in_init = false } in
   let e = parse_expr st in
   if not (at_eof st) then
     error "E2001" (span st)
       (Printf.sprintf "unexpected %s after the expression" (describe_here st));
   e
 
-(* Parses a file: a sequence of statements ended by newlines. *)
-let parse_program ~file ~source =
+(* Skips tokens until the next top-level item can start. Only declarations
+   and bindings anchor the resync — statement keywords inside a half-parsed
+   body would cascade. Always moves past the token the error was reported
+   at. *)
+let resync st =
+  let is_item_start = function
+    | Tok.Keyword
+        (Tok.Def | Tok.Class | Tok.Interface | Tok.Enum | Tok.Const | Tok.Var)
+      ->
+        true
+    | _ -> false
+  in
+  let rec loop first =
+    if at_eof st then ()
+    else if (not first) && newline_before st && is_item_start (kind st) then ()
+    else (
+      advance st |> ignore;
+      loop false)
+  in
+  loop true
+
+(* Parses a file, recovering from item-level errors: after a diagnostic it
+   resyncs at the next top-level item and keeps going, reporting as many
+   errors as possible in one pass. *)
+let parse_program_with_diagnostics ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
-  let st = { stream; file } in
-  let stmts = ref [] in
+  let st = { stream; file; in_init = false } in
+  let items = ref [] in
+  let diagnostics = ref [] in
   let rec loop () =
     if at_eof st then ()
-    else (
-      stmts := parse_stmt st :: !stmts;
-      loop ())
+    else
+      match parse_item st with
+      | item ->
+          items := item :: !items;
+          loop ()
+      | exception Error diagnostic ->
+          diagnostics := diagnostic :: !diagnostics;
+          resync st;
+          loop ()
   in
   loop ();
-  List.rev !stmts
+  (List.rev !items, List.rev !diagnostics)
+
+(* Parses a file: a sequence of top-level items ended by newlines. Raises on
+   the first diagnostic. *)
+let parse_program ~file ~source =
+  match parse_program_with_diagnostics ~file ~source with
+  | items, [] -> items
+  | _, first :: _ -> raise (Error first)

@@ -1,6 +1,6 @@
 # Step 04 — Parser: Declarations
 
-**Milestone:** M1 · **Prereq:** step 03 · **Status:** not started
+**Milestone:** M1 · **Prereq:** step 03 · **Status:** done
 
 ## Goal
 
@@ -54,14 +54,14 @@ this step the README's code examples all parse completely.
 
 ## Tasks
 
-- [ ] Declaration AST nodes; top-level item sequence.
-- [ ] `def` parsing with the `init` exemption and `?`-name rules.
-- [ ] `class` (single-`init` rule, field collection from `self.x =`).
-- [ ] `interface` signature-only bodies.
-- [ ] `enum` member lists.
-- [ ] `raise` statement.
-- [ ] Naming-convention checks with spans; multi-error resync.
-- [ ] Golden tests: `User`, `Greeter` / `English`, `Color` examples from the
+- [x] Declaration AST nodes; top-level item sequence.
+- [x] `def` parsing with the `init` exemption and `?`-name rules.
+- [x] `class` (single-`init` rule, field collection from `self.x =`).
+- [x] `interface` signature-only bodies.
+- [x] `enum` member lists.
+- [x] `raise` statement.
+- [x] Naming-convention checks with spans; multi-error resync.
+- [x] Golden tests: `User`, `Greeter` / `English`, `Color` examples from the
   README parse cleanly; convention violations produce the expected errors.
 
 ## Acceptance
@@ -77,3 +77,12 @@ this step the README's code examples all parse completely.
 
 - Exactly-one-`init` per class is a provisional decision (the README only
   fixes that `init` is the sole field-assignment window).
+
+## Settled during this step
+
+- **At most one `init` per class** — the README's `English` class carries no
+  `init`, so a missing `init` is legal (stateless class, no fields); a
+  duplicate `init` remains an error. The `class_init` node is optional.
+- **Parameterized trailing blocks** — a call may take a block argument after
+  `->` on the same line (`list(users) -> (user User) { ... }`), mirroring the
+  empty-parens sugar; parameters still require annotations.

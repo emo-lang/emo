@@ -22,7 +22,7 @@ Emo's syntax favors explicitness: everything is visibly what it is — a call lo
 - **Bindings are `const` (immutable) or `var` (mutable, block-scoped)** — constants versus variables, self-explanatory by wording. `var` bindings cannot escape their block; capturing one in a closure that outlives the block is a compile error.
 - **Arguments can be passed by position or by name.** Given `def hello(name String)`, both `hello("world")` and `hello(name: "world")` are valid calls. Named form is the natural shape for props and options: `page(title: "Home") { ... }`.
 - **Type annotations are postfix, separated by a space**: parameters as `name String`, return types as `def full_name() String`. **Function signatures always carry explicit types — parameters and return types alike**; signatures are contracts, and contracts are checked strictly. `init` is exempt — it returns the class it constructs. Arrow blocks (`-> (cart Cart) { ... }`) always take annotated parameters but infer their return types; when inference fails, the compiler reports an error asking for an explicit annotation. Elsewhere, annotations remain optional (see Type System).
-- **Predicate methods end in `?`**: `def is_older?() bool` reads naturally at the call site.
+- **Predicate methods end in `?`**: `def is_older?() Bool` reads naturally at the call site.
 - **`return` is always explicit** — there is no implicit "last expression is the return value" rule.
 - **`if` has exactly one shape.** `if <cond> { ... }` with an optional `else { ... }` — there is no `else if`, `elif`, or any chaining form; a further test is an `if` visibly nested inside the `else` block. Like all control flow, `if` is a statement.
 - **`case` matches a value against patterns.** Branches are `pattern -> { ... }`, first match wins, and a branch may carry a guard: `Color.red when signal.is_bright?()`. Patterns are enum members by qualified name (`Color.red` — a bare lowercase name is a binding pattern, since members and variables share the lowercase space), literals matching by value, and `_` matching anything. Like all control flow, `case` is a statement: results leave a branch through explicit `return` or binding. A scrutinee that matches no branch is a runtime error — never a silent skip.
@@ -237,7 +237,7 @@ page(title: "Home") {
     menu(routes)
   }
 
-  list(users) -> (user) {
+  list(users) -> (user User) {
     card(user) {
       text(user.name)
       text(user.bio)
