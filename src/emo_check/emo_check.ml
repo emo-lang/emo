@@ -277,6 +277,16 @@ let resolve_type_name ctx span name =
     ignore span;
     Unknown)
 
+(* What a pattern covers of an enum scrutinee. *)
+type coverage = All | Members of string list
+
+let literal_type = function
+  | Ast.L_int _ -> Int
+  | Ast.L_float _ -> Float
+  | Ast.L_char _ -> Char
+  | Ast.L_string _ -> String
+  | Ast.L_bool _ -> Bool
+
 (* True when a value of [rt] can provably never satisfy a check for [target]. *)
 let provably_excluded ctx rt target =
   match (rt, target) with
@@ -800,25 +810,144 @@ and check_stmt ctx env (s : Ast.stmt) : env =
         else_body;
       env
   | Ast.Case { scrutinee; branches } ->
-      ignore (check_expr ctx env scrutinee);
-      (* Pattern checks and exhaustiveness: T8.8. *)
+      let st = check_expr ctx env scrutinee in
       List.iter
         (fun b ->
           let inner = child_scope env in
-          ignore (check_pattern ctx inner b.Ast.pattern);
-          Option.iter (fun g -> ignore (check_expr ctx inner g)) b.Ast.guard;
+          let inner =
+            check_pattern ctx inner scrutinee.Ast.span st b.Ast.pattern
+          in
+          Option.iter
+            (fun g ->
+              let gt = check_expr ctx inner g in
+              match gt with
+              | Bool | Unknown -> ()
+              | other ->
+                  report ctx g.Ast.span "E4004"
+                    (Printf.sprintf "a `when` guard must be a Bool, got %s"
+                       (to_string other)))
+            b.Ast.guard;
           let (_ : env) =
             List.fold_left (fun env s -> check_stmt ctx env s) inner b.Ast.body
           in
           ())
         branches;
+      check_exhaustive ctx scrutinee.Ast.span st branches;
       env
   | Ast.Receive _ | Ast.Send _ -> env (* processes: step 11 *)
   | Ast.Raise e ->
       ignore (check_expr ctx env e);
       env
 
-and check_pattern ctx env (_p : Ast.pattern) : unit = ()
+(* Checks one pattern against the scrutinee's type when decidable, binding
+   pattern variables. Returns the environment for the branch body. *)
+and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
+  let mismatch what =
+    report ctx p.Ast.pattern_span "E4013"
+      (Printf.sprintf "a %s pattern cannot match %s" what
+         (to_string scrutinee_t))
+  in
+  match p.Ast.pattern_desc with
+  | Ast.Wildcard -> env
+  | Ast.Pattern_binding name ->
+      bind env name { vtype = scrutinee_t; is_var = false; depth = env.depth }
+  | Ast.Pattern_literal l -> (
+      let lt = literal_type l in
+      match scrutinee_t with
+      | Unknown -> env
+      | t when conforms ctx lt t -> env
+      | _ ->
+          mismatch (String.lowercase_ascii (to_string lt));
+          env)
+  | Ast.Enum_member (t, m) -> (
+      match scrutinee_t with
+      | EnumType e ->
+          (if not (String.equal t e) then
+             report ctx p.Ast.pattern_span "E4013"
+               (Printf.sprintf "`%s.%s` cannot match %s" t m
+                  (to_string scrutinee_t))
+           else
+             match Hashtbl.find_opt ctx.enums t with
+             | Some members when not (List.mem m members) ->
+                 report ctx p.Ast.pattern_span "E4013"
+                   (Printf.sprintf "enum `%s` has no member `%s`" t m)
+             | _ -> ());
+          env
+      | Unknown -> env
+      | _ ->
+          mismatch "qualified enum member";
+          env)
+  | Ast.Tuple_pattern ps -> (
+      match scrutinee_t with
+      | TupleType ts ->
+          if List.length ps <> List.length ts then
+            report ctx p.Ast.pattern_span "E4013"
+              (Printf.sprintf "a %d-element tuple pattern cannot match %s"
+                 (List.length ps) (to_string scrutinee_t));
+          let env =
+            List.fold_left2
+              (fun env pat t -> check_pattern ctx env span t pat)
+              env ps ts
+          in
+          env
+      | Unknown ->
+          List.iter
+            (fun pat -> ignore (check_pattern ctx env span Unknown pat))
+            ps;
+          env
+      | _ ->
+          mismatch "tuple";
+          env)
+
+(* What a pattern covers of an enum scrutinee: everything, or specific
+   members; tuple patterns contribute their first element's coverage. *)
+and pattern_coverage scrutinee_t (p : Ast.pattern) : coverage =
+  let first_members d =
+    match d with
+    | Ast.Enum_member (t, m) -> (
+        match scrutinee_t with
+        | EnumType e when String.equal t e -> Members [ m ]
+        | _ -> Members [])
+    | Ast.Wildcard | Ast.Pattern_binding _ -> All
+    | _ -> Members []
+  in
+  match p.Ast.pattern_desc with
+  | Ast.Wildcard | Ast.Pattern_binding _ -> All
+  | Ast.Tuple_pattern (first :: _) -> first_members first.Ast.pattern_desc
+  | _ -> Members []
+
+(* Exhaustiveness: a decidable enum scrutinee needs every member covered by
+   an unguarded branch (or `_`); a decidable `(SomeEnum, ...)` tuple is
+   checked through its first-element patterns. Guarded branches never
+   count — their `when` may be false. *)
+and check_exhaustive ctx span scrutinee_t (branches : Ast.branch list) : unit =
+  let unguarded = List.filter (fun b -> b.Ast.guard = None) branches in
+  let coverings =
+    List.map (fun b -> pattern_coverage scrutinee_t b.Ast.pattern) unguarded
+  in
+  let covers_all = List.exists (fun c -> c = All) coverings in
+  let covered =
+    List.concat_map (function All -> [] | Members ms -> ms) coverings
+  in
+  let check_enum members =
+    if not covers_all then
+      match List.filter (fun m -> not (List.mem m covered)) members with
+      | [] -> ()
+      | missing ->
+          report ctx span "E4014"
+            (Printf.sprintf "this `case` is missing %s"
+               (String.concat ", " missing))
+  in
+  match scrutinee_t with
+  | EnumType e -> (
+      match Hashtbl.find_opt ctx.enums e with
+      | Some members -> check_enum members
+      | None -> ())
+  | TupleType (EnumType e :: _) -> (
+      match Hashtbl.find_opt ctx.enums e with
+      | Some members -> check_enum members
+      | None -> ())
+  | _ -> ()
 
 let signature_of_def ctx (d : Ast.fun_def) : t =
   FuncType

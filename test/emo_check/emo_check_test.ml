@@ -1,6 +1,16 @@
 open Emo_support
 
 let tc name f = Alcotest.test_case name `Quick f
+
+let contains_substring hay needle =
+  let n = String.length needle in
+  let rec go i =
+    if i + n > String.length hay then false
+    else if String.equal (String.sub hay i n) needle then true
+    else go (i + 1)
+  in
+  go 0
+
 let check source = Emo_check.check_source ~file:"test.emo" ~source
 
 let codes_of diagnostics =
@@ -467,6 +477,130 @@ print(g())|})));
         Alcotest.(check int) "count" 0 (List.length diagnostics));
   ]
 
+let case_tests =
+  [
+    tc "guards must be Bools" (fun () ->
+        let diagnostics =
+          check
+            {|def f(n Int) Int {
+  case n {
+    x when x -> { return 1 }
+    _ -> { return 2 }
+  }
+}|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "enum patterns must belong to the scrutinee's enum" (fun () ->
+        let diagnostics =
+          check
+            {|enum Color { red }
+enum Mood { happy }
+
+def f(c Color) Int {
+  case c {
+    Mood.happy -> { return 1 }
+  }
+}|}
+        in
+        Alcotest.(check bool) "E4013" true (has_code diagnostics "E4013"));
+    tc "a literal pattern must match the scrutinee" (fun () ->
+        let diagnostics =
+          check
+            {|def f(n Int) Int {
+  case n {
+    "one" -> { return 1 }
+    _ -> { return 2 }
+  }
+}|}
+        in
+        Alcotest.(check bool) "E4013" true (has_code diagnostics "E4013"));
+    tc "a decidable enum scrutinee needs every member" (fun () ->
+        let diagnostics =
+          check
+            {|enum Color { red, green, blue }
+
+def f(c Color) Int {
+  case c {
+    Color.red -> { return 1 }
+  }
+}|}
+        in
+        if not (has_code diagnostics "E4014") then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check bool) "E4014" true (has_code diagnostics "E4014");
+        let message =
+          match diagnostics with d :: _ -> d.Diagnostic.message | [] -> ""
+        in
+        Alcotest.(check bool)
+          "names the missing members" true
+          (contains_substring message "green"
+          && contains_substring message "blue"));
+    tc "a wildcard covers everything" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|enum Color { red, green }
+
+def f(c Color) Int {
+  case c {
+    Color.red -> { return 1 }
+    _ -> { return 2 }
+  }
+}|})));
+    tc "a guarded branch does not count toward coverage" (fun () ->
+        let diagnostics =
+          check
+            {|enum Color { red, green }
+
+def f(c Color) Int {
+  case c {
+    Color.red when c == Color.red -> { return 1 }
+  }
+}|}
+        in
+        Alcotest.(check bool) "E4014" true (has_code diagnostics "E4014"));
+    tc "the enum-tag tuple idiom is exhaustiveness-checked" (fun () ->
+        let diagnostics =
+          check
+            {|enum Outcome { ok, failed }
+
+def show(p (Outcome, Int)) String {
+  case p {
+    (Outcome.ok, v) -> { return v.to_string() }
+  }
+}|}
+        in
+        if not (has_code diagnostics "E4014") then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check bool) "E4014" true (has_code diagnostics "E4014"));
+    tc "a covered tuple tag is silent" (fun () ->
+        let diagnostics =
+          check
+            {|enum Outcome { ok, failed }
+
+def show(p (Outcome, Int)) String {
+  case p {
+    (Outcome.ok, v) -> { return v.to_string() }
+    (Outcome.failed, _) -> { return "no" }
+    _ -> { return "?" }
+  }
+}|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "an undecidable scrutinee has no coverage requirement" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|const anything = [1, "a"][0]
+case anything {
+  1 -> { print(1) }
+}|})));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -477,4 +611,5 @@ let () =
       ("narrowing", narrowing_tests);
       ("interface", interface_tests);
       ("var_escape", var_escape_tests);
+      ("case", case_tests);
     ]
