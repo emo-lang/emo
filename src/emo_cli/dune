@@ -1,6 +1,14 @@
 (library
  (name emo_cli)
- (libraries cmdliner unix emo_support emo_lexer emo_parser emo_ast emo_eval)
+ (libraries
+  cmdliner
+  unix
+  emo_support
+  emo_lexer
+  emo_parser
+  emo_ast
+  emo_eval
+  emo_check)
  (modules emo_cli))
 
 (executable
