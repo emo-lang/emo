@@ -443,6 +443,14 @@ and parse_stmt st =
         let e = parse_expr st in
         end_statement st;
         stmt start_span (Ast.Return (Some e))
+  | Tok.Keyword Tok.Raise ->
+      advance st |> ignore;
+      if at_eof st || newline_before st then
+        error "E2023" (span st) "`raise` needs an expression"
+          ~hint:"raise an exception instance, e.g. `raise Exception.new(...)`";
+      let e = parse_expr st in
+      end_statement st;
+      stmt start_span (Ast.Raise e)
   | _ ->
       let e = parse_expr st in
       let stmt_desc =

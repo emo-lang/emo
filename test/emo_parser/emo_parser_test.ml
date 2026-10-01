@@ -93,6 +93,7 @@ and pp_stmt fmt (s : Emo_ast.stmt) =
       Format.fprintf fmt "(= %a %a)" pp_expr target pp_expr value
   | Emo_ast.Return None -> Format.pp_print_string fmt "return"
   | Emo_ast.Return (Some e) -> Format.fprintf fmt "(return %a)" pp_expr e
+  | Emo_ast.Raise e -> Format.fprintf fmt "(raise %a)" pp_expr e
   | Emo_ast.If { cond; then_body; else_body } -> (
       Format.fprintf fmt "(if %a then @[<hov>%a@]" pp_expr cond
         (pp_list pp_stmt) then_body;
@@ -478,6 +479,41 @@ let stmt_tests =
         | stmts ->
             Alcotest.fail
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "raise carries the README exception expression" (fun () ->
+        match
+          parse_program {|raise Exception.new(message: "something went wrong")|}
+        with
+        | [ raise_stmt ] ->
+            Alcotest.(check string)
+              "shape"
+              "(raise (((type Exception).new) call message: \"something went \
+               wrong\"))"
+              (render pp_item raise_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "raise works inside a def body" (fun () ->
+        match
+          parse_program
+            {|def fail() Int {
+  raise Exception.new(message: "boom")
+}|}
+        with
+        | [ fail ] ->
+            Alcotest.(check string)
+              "shape"
+              "(def fail () Int |(raise (((type Exception).new) call message: \
+               \"boom\")))"
+              (render pp_item fail)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "bare raise is rejected" (fun () ->
+        let diagnostic = program_err "def f() Int {\n  raise\n}" in
+        Alcotest.(check string) "code" "E2023" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:3:1"
+          (Span.to_string diagnostic.Diagnostic.span));
   ]
 
 let string_tests =
