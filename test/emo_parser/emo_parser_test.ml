@@ -177,9 +177,12 @@ and pp_interface_def fmt (i : Emo_ast.interface_def) =
         (pp_list pp_method_sig) methods
 
 and pp_enum_def fmt (e : Emo_ast.enum_def) =
-  Format.fprintf fmt "(enum %s @[<hov>%a@])" e.Emo_ast.enum_name
-    (pp_list (fun fmt m -> Format.pp_print_string fmt m.Emo_ast.member_name))
-    e.Emo_ast.enum_members
+  match e.Emo_ast.enum_members with
+  | [] -> Format.fprintf fmt "(enum %s)" e.Emo_ast.enum_name
+  | members ->
+      Format.fprintf fmt "(enum %s @[<hov>%a@])" e.Emo_ast.enum_name
+        (pp_list (fun fmt m -> Format.pp_print_string fmt m.Emo_ast.member_name))
+        members
 
 let expr : Emo_ast.expr Alcotest.testable =
   Alcotest.testable pp_expr (fun a b ->
@@ -891,6 +894,82 @@ let interface_tests =
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
   ]
 
+let enum_tests =
+  [
+    tc "the README Color enum parses to its golden shape" (fun () ->
+        match parse_program "enum Color { red, green, blue }" with
+        | [ color ] ->
+            Alcotest.(check string)
+              "shape" "(enum Color red green blue)" (render pp_item color)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "members may span lines between commas" (fun () ->
+        match parse_program "enum Color {\n  red,\n  green,\n  blue\n}" with
+        | [ color ] ->
+            Alcotest.(check string)
+              "shape" "(enum Color red green blue)" (render pp_item color)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "an enum may be empty" (fun () ->
+        match parse_program "enum Void {}" with
+        | [ void_enum ] ->
+            Alcotest.(check string)
+              "shape" "(enum Void)" (render pp_item void_enum)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "members carry their spans" (fun () ->
+        match parse_program "enum T { one }" with
+        | [ t ] -> (
+            match t.Emo_ast.item_desc with
+            | Emo_ast.Item_enum e -> (
+                match e.Emo_ast.enum_members with
+                | [ one ] ->
+                    Alcotest.(check string)
+                      "span" "test.emo:1:10"
+                      (Span.to_string one.Emo_ast.member_span)
+                | ms ->
+                    Alcotest.fail
+                      (Printf.sprintf "expected 1 member, got %d"
+                         (List.length ms)))
+            | _ -> Alcotest.fail "expected an enum")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "enums do not take payloads" (fun () ->
+        let diagnostic = program_err "enum Color(String, Int) { red }" in
+        Alcotest.(check string) "code" "E2020" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:11"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "members are snake_case" (fun () ->
+        let diagnostic = program_err "enum Color { redGreen }" in
+        Alcotest.(check string) "code" "E2022" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:14"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "member names cannot end in ?" (fun () ->
+        let diagnostic = program_err "enum Color { red? }" in
+        Alcotest.(check string) "code" "E2007" (code_of diagnostic));
+    tc "members are declared once" (fun () ->
+        let diagnostic = program_err "enum Color { red, red }" in
+        Alcotest.(check string) "code" "E2021" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:19"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "enums reject a trailing comma" (fun () ->
+        let diagnostic = program_err "enum Color { red, }" in
+        Alcotest.(check string) "code" "E2004" (code_of diagnostic));
+    tc "members are comma-separated" (fun () ->
+        let diagnostic = program_err "enum Color { red green }" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+    tc "an enum needs an UpperCamel name" (fun () ->
+        let diagnostic = program_err "enum color { red }" in
+        Alcotest.(check string) "code" "E2017" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -909,5 +988,6 @@ let () =
       ("def", def_tests);
       ("class", class_tests);
       ("interface", interface_tests);
+      ("enum", enum_tests);
       ("golden", golden_tests);
     ]
