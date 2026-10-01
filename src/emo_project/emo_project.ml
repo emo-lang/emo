@@ -178,6 +178,47 @@ let install_hooks p =
   Emo_eval.module_handle_of := handle_of;
   Emo_eval.module_loader := fun raw_path -> load_module p (normalize raw_path)
 
+(* `internal` is subtree-private: a module whose path contains an internal
+   segment may only be referenced from modules under that segment's parent.
+   Returns one diagnostic per violation, naming both modules. *)
+let check_internal_privacy (graph : (string list * string list list) list) :
+    Emo_support.Diagnostic.t list =
+  let dotted path = String.concat "." path in
+  List.concat_map
+    (fun (use_site, refs) ->
+      List.filter_map
+        (fun r ->
+          let rec internal_parent = function
+            | "internal" :: parent -> Some parent
+            | _ :: rest -> internal_parent rest
+            | [] -> None
+          in
+          match internal_parent r with
+          | Some parent -> (
+              let shares =
+                List.length use_site >= List.length parent
+                && List.for_all2 String.equal use_site parent
+              in
+              if shares then None
+              else
+                Some
+                  {
+                    Emo_support.Diagnostic.severity = Error;
+                    code = Some "E5001";
+                    message =
+                      Printf.sprintf
+                        "module `%s` cannot reference `%s`: `internal` is \
+                         subtree-private"
+                        (dotted use_site) (dotted r);
+                    span =
+                      Emo_support.Span.make ~file:p.root ~line:1 ~col:1
+                        ~start:0 ~stop:0;
+                    hint = None;
+                  })
+          | None -> None)
+        refs)
+    graph
+
 (* Checks every module in the project, collecting the reference graph.
    Returns per-module references and every diagnostic found. *)
 let check_project p :
@@ -208,7 +249,8 @@ let check_project p :
         | ds -> (ds @ errors, (path, refs) :: entries))
       p.files ([], [])
   in
-  (module_paths, entries, errors)
+  let internal_errors = check_internal_privacy entries in
+  (module_paths, entries, errors @ internal_errors)
 
 (* Runs the entry file: the graph is discovered up front (collisions report
    immediately), modules load lazily on first access with load-once
