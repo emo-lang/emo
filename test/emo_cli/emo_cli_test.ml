@@ -16,20 +16,30 @@ let run_tests =
   [
     tc "a successful program exits 0" (fun () ->
         let file = fixture "ok.emo" "const x = 1\nprint(x + 1)\n" in
-        Alcotest.(check int) "exit" 0 (Emo_cli.run_file ~file));
+        Alcotest.(check int)
+          "exit" 0
+          (Emo_cli.run_file ~file ~color:false ~error_limit:20));
     tc "a parse error exits 65" (fun () ->
         let file = fixture "parse.emo" "const x =\n1\n" in
-        Alcotest.(check int) "exit" 65 (Emo_cli.run_file ~file));
+        Alcotest.(check int)
+          "exit" 65
+          (Emo_cli.run_file ~file ~color:false ~error_limit:20));
     tc "a runtime type error exits 70" (fun () ->
         let file = fixture "runtime.emo" {|print(1 + "a")|} in
-        Alcotest.(check int) "exit" 70 (Emo_cli.run_file ~file));
+        Alcotest.(check int)
+          "exit" 70
+          (Emo_cli.run_file ~file ~color:false ~error_limit:20));
     tc "an uncaught exception exits 1" (fun () ->
         let file = fixture "raise.emo" {|raise "boom"|} in
-        Alcotest.(check int) "exit" 1 (Emo_cli.run_file ~file));
+        Alcotest.(check int)
+          "exit" 1
+          (Emo_cli.run_file ~file ~color:false ~error_limit:20));
     tc "an unreadable file exits 66" (fun () ->
         Alcotest.(check int)
           "exit" 66
-          (Emo_cli.run_file ~file:(Filename.concat scratch "missing.emo")));
+          (Emo_cli.run_file
+             ~file:(Filename.concat scratch "missing.emo")
+             ~color:false ~error_limit:20));
   ]
 
 let contains hay needle =

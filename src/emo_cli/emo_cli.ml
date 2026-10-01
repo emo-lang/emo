@@ -25,20 +25,24 @@ let read_file file =
 (* Runs one file through the lex → parse → evaluate pipeline and prints every
    stage's diagnostics. Exit codes: 0 success, 1 uncaught exception,
    65 lex/parse, 66 unreadable input, 70 evaluation. *)
-let run_file ~(file : string) : int =
+let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
   match read_file file with
   | exception Sys_error message ->
       prerr_endline message;
       66
   | source -> (
-      let render = render_diagnostic source in
+      let render_all diagnostics =
+        prerr_endline
+          (Emo_support.Render.render_all ~color ~limit:(Some error_limit)
+             ~source diagnostics)
+      in
+      let render diagnostic = render_all [ diagnostic ] in
       match Emo_parser.parse_program_with_diagnostics ~file ~source with
       | exception Emo_lexer.Error diagnostic ->
           render diagnostic;
           65
-      | _, first :: rest ->
-          render first;
-          List.iter render rest;
+      | _, (_ :: _ as diagnostics) ->
+          render_all diagnostics;
           65
       | items, [] -> (
           match Emo_eval.run_items items with
@@ -54,10 +58,23 @@ let run_file ~(file : string) : int =
 
 let run =
   let file = Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE") in
-  let run file =
-    match run_file ~file with 0 -> Cmd.Exit.ok | code -> exit code
+  let no_color =
+    Arg.(value & flag & info [ "no-color" ] ~doc:"Disable colored diagnostics.")
   in
-  Cmd.v (Cmd.info "run" ~doc:"Run an Emo program.") Term.(const run $ file)
+  let error_limit =
+    Arg.(
+      value & opt int 20
+      & info [ "error-limit" ] ~doc:"Maximum reported errors.")
+  in
+  let run file no_color error_limit =
+    let color = (not no_color) && Unix.isatty Unix.stderr in
+    match run_file ~file ~color ~error_limit with
+    | 0 -> Cmd.Exit.ok
+    | code -> exit code
+  in
+  Cmd.v
+    (Cmd.info "run" ~doc:"Run an Emo program.")
+    Term.(const run $ file $ no_color $ error_limit)
 
 (* True while the source still has open brackets or an unterminated string —
    the REPL keeps reading with a continuation prompt. *)
