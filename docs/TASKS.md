@@ -91,14 +91,14 @@ Scope note: tuple literals under the content rule, tuple patterns, `case` / `rec
 **Prereq:** Step 03.
 **Done when:** the README's `User`, `Greeter` / `English`, `welcome`, and `Color` snippets parse to golden ASTs; negative tests (camelCase `def`, `UPPER` variable, enum payloads, duplicate `init`, annotated `init` return) rejected with the right message and span; `dune test` green.
 
-- [ ] **T4.1** — Declaration AST nodes; top-level item sequence.
-- [ ] **T4.2** — `def` parsing with the `init` exemption and `?`-name rules.
-- [ ] **T4.3** — `class` (single-`init` rule, field collection from `self.x =`).
-- [ ] **T4.4** — `interface` signature-only bodies.
-- [ ] **T4.5** — `enum` member lists.
-- [ ] **T4.6** — `raise` statement.
-- [ ] **T4.7** — Naming-convention checks with spans; multi-error resync.
-- [ ] **T4.8** — Golden tests: README examples parse cleanly; convention violations produce the expected errors.
+- [x] **T4.1** — Declaration AST nodes; top-level item sequence.
+- [x] **T4.2** — `def` parsing with the `init` exemption and `?`-name rules.
+- [x] **T4.3** — `class` (single-`init` rule, field collection from `self.x =`).
+- [x] **T4.4** — `interface` signature-only bodies.
+- [x] **T4.5** — `enum` member lists.
+- [x] **T4.6** — `raise` statement.
+- [x] **T4.7** — Naming-convention checks with spans; multi-error resync.
+- [x] **T4.8** — Golden tests: README examples parse cleanly; convention violations produce the expected errors.
 
 ### Step 05 — Interpreter: core values & evaluation · `plan/step-05-interpreter-core.md`
 
