@@ -53,6 +53,7 @@ let keyword_spelling = function
   | Tok.Raise -> "raise"
   | Tok.Self -> "self"
   | Tok.Do -> "do"
+  | Tok.Require -> "`require`"
 
 let describe_kind (k : Tok.kind) =
   match k with
@@ -539,6 +540,25 @@ and end_statement st =
 and parse_item st =
   let item_span = span st in
   match kind st with
+  | Tok.Keyword Tok.Require ->
+      advance st |> ignore;
+      if at_eof st || newline_before st then
+        error "E2009" (span st)
+          "`require` expects a package name string on the same line";
+      let e = parse_string st in
+      let name =
+        match e.Ast.desc with
+        | Ast.String s when s <> "" -> s
+        | Ast.String _ ->
+            error "E2009" e.Ast.span "`require` expects a package name"
+        | Ast.Interpolated _ ->
+            error "E2009" e.Ast.span
+              "`require` takes a plain string, not interpolation"
+        | _ ->
+            error "E2009" e.Ast.span "`require` expects a package name string"
+      in
+      end_statement st;
+      { Ast.item_span; item_desc = Ast.Item_require name }
   | Tok.Keyword Tok.Def ->
       let d = parse_def st ~in_class:false in
       { Ast.item_span = d.Ast.def_span; item_desc = Ast.Item_def d }
@@ -1146,8 +1166,23 @@ let parse_program_with_diagnostics ~file ~source =
   (List.rev !items, List.rev !diagnostics)
 
 (* Parses a file: a sequence of top-level items ended by newlines. Raises on
-   the first diagnostic. *)
+   the first diagnostic. Duplicate `require`s of one package in a file are
+   an error. *)
 let parse_program ~file ~source =
   match parse_program_with_diagnostics ~file ~source with
-  | items, [] -> items
+  | items, [] ->
+      let seen = Hashtbl.create 4 in
+      List.iter
+        (fun item ->
+          match item.Ast.item_desc with
+          | Ast.Item_require name -> (
+              match Hashtbl.find_opt seen name with
+              | Some span ->
+                  error "E2010" span
+                    (Printf.sprintf
+                       "`require \"%s\"` appears twice in this file" name)
+              | None -> Hashtbl.replace seen name item.Ast.item_span)
+          | _ -> ())
+        items;
+      items
   | _, first :: _ -> raise (Error first)

@@ -158,6 +158,7 @@ let collect ctx (items : Ast.item list) : unit =
       | Ast.Item_enum e ->
           Hashtbl.replace ctx.enums e.Ast.enum_name
             (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
+      | Ast.Item_require _ -> () (* pairing is the driver's job *)
       | Ast.Item_stmt _ -> ())
     items
 
