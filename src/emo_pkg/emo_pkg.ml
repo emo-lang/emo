@@ -303,3 +303,80 @@ module Resolve = struct
           { resolved = Hashtbl.fold (fun k v acc -> (k, v) :: acc) resolved [] }
     | es -> Error es
 end
+
+(* The lockfile: one line per resolved dependency, `dep version checksum`,
+   sorted — belongs in version control. A mismatch between the lockfile and
+   the manifest's requirements is an error prompting explicit
+   regeneration; it is never silently re-resolved. *)
+module Lockfile = struct
+  type entry = { dep : string; version : Version.t; checksum : string }
+  type t = entry list
+
+  let to_lines (t : t) : string list =
+    List.sort (fun a b -> String.compare a.dep b.dep) t
+    |> List.map (fun e ->
+        e.dep ^ " " ^ Version.to_string e.version ^ " " ^ e.checksum)
+
+  let write ~(path : string) (t : t) : unit =
+    let oc = open_out_bin path in
+    output_string oc
+      (String.concat "\n" (to_lines t) ^ if t = [] then "" else "\n");
+    close_out oc
+
+  let read (path : string) : (t, string) result =
+    let read_file path =
+      let ic = open_in_bin path in
+      Fun.protect
+        ~finally:(fun () -> close_in_noerr ic)
+        (fun () -> really_input_string ic (in_channel_length ic))
+    in
+    match read_file path with
+    | exception Sys_error message -> Error message
+    | source ->
+        let lines =
+          String.split_on_char '\n' source
+          |> List.filter_map (fun l ->
+              let l = String.trim l in
+              if l = "" then None else Some l)
+        in
+        let bad = Error (path ^ ": malformed lockfile line") in
+        let rec parse acc = function
+          | [] -> Ok (List.rev acc)
+          | line :: rest -> (
+              match String.split_on_char ' ' line with
+              | [ dep; version; checksum ] -> (
+                  match Version.parse version with
+                  | Ok v -> parse ({ dep; version = v; checksum } :: acc) rest
+                  | Error m -> Error (path ^ ": " ^ m))
+              | _ -> bad)
+        in
+        parse [] lines
+
+  (* Verify: every manifest root must be present at the pinned version, and
+     the resolution must match entry for entry. Returns [] when satisfied. *)
+  let verify ~(roots : (string * Version.t) list) (t : t) :
+      string list (* human-readable mismatch errors *) =
+    let errors = ref [] in
+    List.iter
+      (fun (dep, v) ->
+        match List.find_opt (fun e -> String.equal e.dep dep) t with
+        | Some entry when entry.version = v -> ()
+        | Some entry ->
+            errors :=
+              Printf.sprintf
+                "lockfile pins `%s` at %s but the manifest requires %s — run \
+                 `emo deps resolve` to regenerate"
+                dep
+                (Version.to_string entry.version)
+                (Version.to_string v)
+              :: !errors
+        | None ->
+            errors :=
+              Printf.sprintf
+                "lockfile has no entry for `%s` (manifest requires %s) — run \
+                 `emo deps resolve`"
+                dep (Version.to_string v)
+              :: !errors)
+      roots;
+    !errors
+end

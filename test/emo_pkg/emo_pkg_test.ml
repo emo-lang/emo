@@ -1,6 +1,16 @@
 open Emo_support
 
 let tc name f = Alcotest.test_case name `Quick f
+let v s = Emo_pkg.Version.parse s |> function Ok v -> v | _ -> assert false
+
+let contains_substring hay needle =
+  let n = String.length needle in
+  let rec go i =
+    if i + n > String.length hay then false
+    else if String.equal (String.sub hay i n) needle then true
+    else go (i + 1)
+  in
+  go 0
 
 module R = Emo_pkg.Resolve
 
@@ -181,13 +191,66 @@ let manifest_tests =
         | Ok _ -> Alcotest.fail "expected E5103");
   ]
 
-let () =
-  Alcotest.run "emo_pkg"
-    [
-      ("smoke", smoke_tests);
-      ("version", version_tests);
-      ("manifest", manifest_tests);
-    ]
+let lockfile_tests =
+  [
+    tc "write then read round-trips" (fun () ->
+        let path =
+          Filename.concat (Filename.get_temp_dir_name ()) "emo-lock-test.lock"
+        in
+        let entries =
+          [
+            {
+              Emo_pkg.Lockfile.dep = "json";
+              version = v "2.3.1";
+              checksum = "abc";
+            };
+            {
+              Emo_pkg.Lockfile.dep = "http";
+              version = v "1.4.2";
+              checksum = "def";
+            };
+          ]
+        in
+        Emo_pkg.Lockfile.write ~path entries;
+        match Emo_pkg.Lockfile.read path with
+        | Ok read_back ->
+            Alcotest.(check int) "count" 2 (List.length read_back);
+            Alcotest.(check bool)
+              "sorted" true
+              (match read_back with
+              | e :: _ -> String.equal e.Emo_pkg.Lockfile.dep "http"
+              | [] -> false)
+        | Error m -> Alcotest.fail m);
+    tc "verify flags a version mismatch" (fun () ->
+        let t =
+          [
+            {
+              Emo_pkg.Lockfile.dep = "json";
+              version = v "1.0.0";
+              checksum = "x";
+            };
+          ]
+        in
+        let errors = Emo_pkg.Lockfile.verify ~roots:[ ("json", v "2.3.1") ] t in
+        Alcotest.(check bool)
+          "mismatch reported" true
+          (List.length errors > 0
+          && contains_substring (List.hd errors) "regenerate"));
+    tc "verify accepts a matching lockfile" (fun () ->
+        let t =
+          [
+            {
+              Emo_pkg.Lockfile.dep = "json";
+              version = v "2.3.1";
+              checksum = "x";
+            };
+          ]
+        in
+        Alcotest.(check int)
+          "clean" 0
+          (List.length
+             (Emo_pkg.Lockfile.verify ~roots:[ ("json", v "2.3.1") ] t)));
+  ]
 
 let resolve_tests =
   [
@@ -330,4 +393,5 @@ let () =
       ("version", version_tests);
       ("manifest", manifest_tests);
       ("resolve", resolve_tests);
+      ("lockfile", lockfile_tests);
     ]
