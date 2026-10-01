@@ -150,18 +150,18 @@ Close-out note: promote the provisional decisions that M1 proved (`print`, trail
 **Prereq:** Steps 01–07.
 **Done when:** every README example type-checks clean; the annotated-error corpus (wrong return type, bad named arg, `var` escape, narrowing misuse) is rejected with correct spans; the zero-false-positive corpus passes with no diagnostics; `emo check` works and `emo run` runs the pass first.
 
-- [ ] **T8.1** — Type representation + annotation collection pass.
-- [ ] **T8.2** — Statement/expression checking with `Unknown` discipline.
-- [ ] **T8.3** — Signature checks; arrow-block inference.
-- [ ] **T8.4** — Flow environments with narrowing on `is()`.
-- [ ] **T8.5** — Structural interface conformance.
-- [ ] **T8.6** — `var`-escape detection.
-- [ ] **T8.7** — Call-site checking; named-argument validation.
-- [ ] **T8.8** — `case` checking: pattern typing, `when` guards as `Bool`, exhaustiveness on decidable enums and on the first tuple element of decidable `(Enum, ...)` scrutinees (guarded branches don't count).
-- [ ] **T8.9** — `emo check` command; wire into `emo run`.
-- [ ] **T8.10** — Test categories: strict-annotated rejections, inference successes, zero-false-positive corpus.
+- [x] **T8.1** — Type representation + annotation collection pass.
+- [x] **T8.2** — Statement/expression checking with `Unknown` discipline.
+- [x] **T8.3** — Signature checks; arrow-block inference.
+- [x] **T8.4** — Flow environments with narrowing on `is()`.
+- [x] **T8.5** — Structural interface conformance.
+- [x] **T8.6** — `var`-escape detection.
+- [x] **T8.7** — Call-site checking; named-argument validation.
+- [x] **T8.8** — `case` checking: pattern typing, `when` guards as `Bool`, exhaustiveness on decidable enums and on the first tuple element of decidable `(Enum, ...)` scrutinees (guarded branches don't count).
+- [x] **T8.9** — `emo check` command; wire into `emo run`.
+- [x] **T8.10** — Test categories: strict-annotated rejections, inference successes, zero-false-positive corpus.
 
-Follow-up: document the chosen `var`-escape analysis approximation in `docs/`.
+Follow-up: the chosen `var`-escape approximation is documented in `docs/var-escape.md`.
 
 ### Step 09 — Structural module system · `plan/step-09-modules.md`
 
