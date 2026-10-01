@@ -125,11 +125,20 @@ let capture_output f =
 
 let run_entry source =
   capture_output (fun () ->
-      try Emo_project.run_entry ~entry_file:source ()
-      with Emo_eval.Error d ->
-        let source_text = Emo_project.read_file source in
-        let text = Emo_support.Render.render ~source:source_text d in
-        Buffer.add_string out text)
+      try Emo_project.run_entry ~entry_file:source () with
+      | Emo_eval.Error d ->
+          let source_text = Emo_project.read_file source in
+          let text = Emo_support.Render.render ~source:source_text d in
+          Buffer.add_string out text
+      | Emo_project.Static_errors ds ->
+          List.iter
+            (fun d ->
+              let source_text = Emo_project.read_file source in
+              let text = Emo_support.Render.render ~source:source_text d in
+              Buffer.add_string out (text ^ "\n"))
+            ds
+      | Failure message -> Buffer.add_string out ("failure: " ^ message)
+      | e -> Buffer.add_string out ("EXC: " ^ Printexc.to_string e))
 
 let contains_substring hay needle =
   let n = String.length needle in
