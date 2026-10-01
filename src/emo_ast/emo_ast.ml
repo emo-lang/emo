@@ -64,6 +64,7 @@ and stmt_desc =
       value : expr;
     }
   | Return of expr option
+  | Raise of expr
   | If of { cond : expr; then_body : stmt list; else_body : stmt list option }
   | Case of { scrutinee : expr; branches : branch list }
   | Receive of branch list
