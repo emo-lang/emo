@@ -80,6 +80,14 @@ let repl_tests =
         let text = Buffer.contents out in
         Alcotest.(check bool) "error reported" true (contains text "E3002");
         Alcotest.(check bool) "env survives" true (contains text "= 42"));
+    tc "an uncaught raise prints and the repl survives" (fun () ->
+        let out = Buffer.create 128 in
+        Emo_cli.repl_loop ~prompt:false
+          ~input:(queue_input [ {|raise "boom"|}; "2 * 3"; "exit" ])
+          ~output:(Buffer.add_string out);
+        let text = Buffer.contents out in
+        Alcotest.(check bool) "raise reported" true (contains text "E3010");
+        Alcotest.(check bool) "env survives" true (contains text "= 6"));
     tc "classes register in the repl" (fun () ->
         let out = Buffer.create 128 in
         Emo_cli.repl_loop ~prompt:false

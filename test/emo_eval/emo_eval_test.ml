@@ -2,6 +2,24 @@ open Emo_support
 
 let tc name f = Alcotest.test_case name `Quick f
 
+let contains_substring hay needle =
+  let n = String.length needle in
+  let rec go i =
+    if i + n > String.length hay then false
+    else if String.equal (String.sub hay i n) needle then true
+    else go (i + 1)
+  in
+  go 0
+
+let index_of hay needle =
+  let n = String.length needle in
+  let rec go i =
+    if i + n > String.length hay then -1
+    else if String.equal (String.sub hay i n) needle then i
+    else go (i + 1)
+  in
+  go 0
+
 let span =
   Emo_support.Span.make ~file:"test.emo" ~line:1 ~col:1 ~start:0 ~stop:1
 
@@ -512,6 +530,56 @@ print(e.message)|}));
         Alcotest.(check string)
           "span" "test.emo:1:1"
           (Span.to_string diagnostic.Diagnostic.span));
+    tc "uncaught raises carry the Emo call chain" (fun () ->
+        let diagnostic =
+          program_err
+            {|def inner() Int {
+  raise "boom"
+}
+
+def outer(n Int) Int {
+  return inner() + n
+}
+
+def mid(n Int) Int {
+  return outer(n) + 0
+}
+mid(1)|}
+        in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        let hint =
+          match diagnostic.Diagnostic.hint with Some h -> h | None -> ""
+        in
+        Alcotest.(check bool)
+          "innermost frame" true
+          (contains_substring hint "called from `inner`");
+        Alcotest.(check bool)
+          "outer frames in order" true
+          (contains_substring hint "called from `outer`"
+          && contains_substring hint "called from `mid`"
+          && index_of hint "called from `inner`"
+             < index_of hint "called from `outer`");
+        Alcotest.(check bool)
+          "frames carry spans" true
+          (contains_substring hint "test.emo:6:10"));
+    tc "method frames appear in the chain" (fun () ->
+        let diagnostic =
+          program_err
+            {|class Boomer {
+  def init() {}
+
+  def go() Int {
+    raise "bang"
+  }
+}
+Boomer.new().go()|}
+        in
+        let hint =
+          match diagnostic.Diagnostic.hint with Some h -> h | None -> ""
+        in
+        Alcotest.(check bool)
+          "method frame" true
+          (contains_substring hint "called from `Boomer.go`"));
   ]
 
 let acceptance_tests =

@@ -255,7 +255,35 @@ exception
 
 (* `raise <value>` unwinds as an exception; the driver turns an uncaught one
    into an E3010 diagnostic. *)
-exception Emo_raise of value * Emo_support.Span.t
+exception
+  Emo_raise of value * Emo_support.Span.t * (string * Emo_support.Span.t) list
+(* the raised value, the raise site, and the Emo call chain, innermost first *)
+
+(* The Emo-level call chain, maintained as closures enter and leave frames. *)
+let call_trace : (string * Emo_support.Span.t) list ref = ref []
+
+(* Formats an uncaught raise: the value's to_string plus the call chain. *)
+let uncaught_diagnostic (v, span, trace) =
+  let hint =
+    match trace with
+    | [] -> None
+    | _ ->
+        Some
+          (String.concat ", "
+             (List.map
+                (fun (name, s) ->
+                  Printf.sprintf "called from `%s` (%s)" name
+                    (Emo_support.Span.to_string s))
+                trace))
+  in
+  Emo_support.Diagnostic.
+    {
+      severity = Error;
+      code = Some "E3010";
+      message = Printf.sprintf "uncaught exception: %s" (to_string v);
+      span;
+      hint;
+    }
 
 let literal_value = function
   | Ast.L_int n -> Int n
@@ -629,23 +657,27 @@ and eval_body closure span args =
    flat however long the Emo-level recursion runs. *)
 and eval_frame closure frame span =
   let rec loop closure frame =
-    try
-      let rec run = function
-        | [] ->
-            error span "E3008"
-              (Printf.sprintf "reached the end of %s without `return`"
-                 closure.def_name)
-        | stmt :: rest ->
-            let () = eval_stmt frame stmt in
-            run rest
-      in
-      run closure.body
-    with
-    | Return_signal v -> v
-    | Tail_call (c, args, extras) ->
-        let frame = bind_params c span args in
-        List.iter (fun (k, v) -> define frame k ~mutable_:false v) extras;
-        loop c frame
+    call_trace := (closure.def_name, span) :: !call_trace;
+    Fun.protect
+      (fun () ->
+        try
+          let rec run = function
+            | [] ->
+                error span "E3008"
+                  (Printf.sprintf "reached the end of %s without `return`"
+                     closure.def_name)
+            | stmt :: rest ->
+                let () = eval_stmt frame stmt in
+                run rest
+          in
+          run closure.body
+        with
+        | Return_signal v -> v
+        | Tail_call (c, args, extras) ->
+            let frame = bind_params c span args in
+            List.iter (fun (k, v) -> define frame k ~mutable_:false v) extras;
+            loop c frame)
+      ~finally:(fun () -> call_trace := List.tl !call_trace)
   in
   loop closure frame
 
@@ -769,7 +801,7 @@ and eval_stmt env s =
   | Ast.Send _ -> not_yet span "processes"
   | Ast.Raise e ->
       let v = eval_expr env e in
-      raise (Emo_raise (v, span))
+      raise (Emo_raise (v, span, !call_trace))
 
 and eval_expr env e =
   let span = e.Ast.span in
@@ -885,10 +917,11 @@ let eval_item env item =
    terminates with an E3010 diagnostic. *)
 let run_items items =
   Hashtbl.reset interface_registry;
+  call_trace := [];
   let env = global_env () in
   try List.iter (eval_item env) items
-  with Emo_raise (v, span) ->
-    error span "E3010" (Printf.sprintf "uncaught exception: %s" (to_string v))
+  with Emo_raise (v, span, trace) ->
+    raise (Error (uncaught_diagnostic (v, span, trace)))
 
 (* Runs a whole file: declarations register, statements execute in order. *)
 let run_program ~file ~source =
