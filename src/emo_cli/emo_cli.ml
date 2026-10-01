@@ -10,6 +10,17 @@ let not_implemented () =
   print_endline "not implemented yet";
   1
 
+let static_flags () =
+  let no_color =
+    Arg.(value & flag & info [ "no-color" ] ~doc:"Disable colored diagnostics.")
+  in
+  let error_limit =
+    Arg.(
+      value & opt int 20
+      & info [ "error-limit" ] ~doc:"Maximum reported errors.")
+  in
+  (no_color, error_limit)
+
 let render_diagnostic source diagnostic =
   prerr_endline (Emo_support.Render.render ~source diagnostic)
 
@@ -22,30 +33,54 @@ let read_file file =
     ~finally:(fun () -> close_in_noerr ic)
     (fun () -> really_input_string ic (in_channel_length ic))
 
-(* Runs one file through the lex → parse → evaluate pipeline and prints every
-   stage's diagnostics. Exit codes: 0 success, 1 uncaught exception,
-   65 lex/parse, 66 unreadable input, 70 evaluation. *)
+(* The static stage shared by run and check: parse, then type-check. Renders
+   every diagnostic; returns the exit code when the program must not
+   proceed (None when it is clean). *)
+let static_stage ~file ~(source : string) ~(color : bool) ~(error_limit : int) :
+    int option =
+  let render_all diagnostics =
+    prerr_endline
+      (Emo_support.Render.render_all ~color ~limit:(Some error_limit) ~source
+         diagnostics)
+  in
+  match Emo_parser.parse_program_with_diagnostics ~file ~source with
+  | exception Emo_lexer.Error diagnostic ->
+      render_all [ diagnostic ];
+      Some 65
+  | _, (_ :: _ as diagnostics) ->
+      render_all diagnostics;
+      Some 65
+  | items, [] -> (
+      let diagnostics = Emo_check.check_parsed items in
+      match diagnostics with
+      | [] -> None
+      | _ ->
+          render_all diagnostics;
+          Some 65)
+
+(* Runs one file through the lex → parse → check → evaluate pipeline and
+   prints every stage's diagnostics. Exit codes: 0 success, 1 uncaught
+   exception, 65 lex/parse/check, 66 unreadable input, 70 evaluation. *)
 let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
   match read_file file with
   | exception Sys_error message ->
       prerr_endline message;
       66
   | source -> (
-      let render_all diagnostics =
-        prerr_endline
-          (Emo_support.Render.render_all ~color ~limit:(Some error_limit)
-             ~source diagnostics)
+      let render diagnostic =
+        prerr_endline (Emo_support.Render.render ~color ~source diagnostic)
       in
-      let render diagnostic = render_all [ diagnostic ] in
-      match Emo_parser.parse_program_with_diagnostics ~file ~source with
-      | exception Emo_lexer.Error diagnostic ->
-          render diagnostic;
-          65
-      | _, (_ :: _ as diagnostics) ->
-          render_all diagnostics;
-          65
-      | items, [] -> (
-          match Emo_eval.run_items items with
+      match static_stage ~file ~source ~color ~error_limit with
+      | Some code -> code
+      | None -> (
+          match
+            Emo_eval.run_items
+              (match
+                 Emo_parser.parse_program_with_diagnostics ~file ~source
+               with
+              | items, _ -> items
+              | exception _ -> [])
+          with
           | () -> 0
           | exception Emo_eval.Error diagnostic -> (
               match diagnostic.Emo_support.Diagnostic.code with
@@ -55,6 +90,17 @@ let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
               | _ ->
                   render diagnostic;
                   70)))
+
+(* `emo check`: the static stage only. *)
+let check_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
+  match read_file file with
+  | exception Sys_error message ->
+      prerr_endline message;
+      66
+  | source -> (
+      match static_stage ~file ~source ~color ~error_limit with
+      | Some code -> code
+      | None -> 0)
 
 let run =
   let file = Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE") in
@@ -155,10 +201,17 @@ let repl =
     Term.(const start_repl $ const ())
 
 let check =
-  let path = Arg.(required & pos 0 (some string) None & info [] ~docv:"PATH") in
+  let file = Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE") in
+  let no_color, error_limit = static_flags () in
+  let check file no_color error_limit =
+    let color = (not no_color) && Unix.isatty Unix.stderr in
+    match check_file ~file ~color ~error_limit with
+    | 0 -> Cmd.Exit.ok
+    | code -> exit code
+  in
   Cmd.v
-    (Cmd.info "check" ~doc:"Check Emo files.")
-    Term.(const (fun _ -> not_implemented ()) $ path)
+    (Cmd.info "check" ~doc:"Check an Emo file without running it.")
+    Term.(const check $ file $ no_color $ error_limit)
 
 let version_cmd =
   Cmd.v

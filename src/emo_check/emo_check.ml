@@ -351,6 +351,14 @@ let rec check_expr ctx env (e : Ast.expr) : t =
                 (Printf.sprintf "`%s` has no field `%s`" c name);
               Unknown
           | None -> Unknown)
+      | EnumType e -> (
+          match Hashtbl.find_opt ctx.enums e with
+          | Some members when List.mem name members -> EnumType e
+          | Some members ->
+              report ctx span "E4001"
+                (Printf.sprintf "enum `%s` has no member `%s`" e name);
+              Unknown
+          | None -> Unknown)
       | Unknown -> Unknown
       | other ->
           report ctx span "E4001"
@@ -592,6 +600,8 @@ and check_method_call ctx env span recv mname args : t =
                      "class `%s` declares no `init`; `new` takes no arguments" c);
               ClassType c)
       | None -> Unknown)
+  | ClassType _, "to_string" -> builtin0 String
+  | ClassType _, "is" -> one_expected Bool
   | ClassType c, _ -> (
       match Hashtbl.find_opt ctx.classes c with
       | Some info -> (
@@ -606,6 +616,8 @@ and check_method_call ctx env span recv mname args : t =
                 (Printf.sprintf "NoMethodError: `%s` has no method `%s`" c mname);
               Unknown)
       | None -> Unknown)
+  | InterfaceType _, "to_string" -> builtin0 String
+  | InterfaceType _, "is" -> one_expected Bool
   | InterfaceType i, _ -> (
       match Hashtbl.find_opt ctx.interfaces i with
       | Some sigs -> (
@@ -661,7 +673,11 @@ and check_binary ctx env span op l r =
     let is_num = function Int | Float | Unknown -> true | _ -> false in
     is_num lt && is_num rt
   in
-  let result_number = if lt = Float || rt = Float then Float else Int in
+  let result_number =
+    if lt = Float || rt = Float then Float
+    else if lt = Unknown || rt = Unknown then Unknown
+    else Int
+  in
   let mismatch expects =
     report ctx span "E4004"
       (Printf.sprintf "operator expects %s, got %s and %s" expects
@@ -961,13 +977,19 @@ let signature_of_def ctx (d : Ast.fun_def) : t =
 (* Signature checks: the body runs under the declared parameter types with
    the declared return type as the target; `init` is exempt (it returns the
    class it constructs). *)
-let check_fun_def ctx env ?self (d : Ast.fun_def) : unit =
+let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
   let frame =
     {
       (child_scope env) with
       ret = Option.map (ann_to_type ctx) d.Ast.def_return;
       block_depth = -1;
     }
+  in
+  let frame =
+    List.fold_left
+      (fun env (n, t) ->
+        bind env n { vtype = t; is_var = false; depth = env.depth })
+      frame prebound
   in
   let frame =
     match self with
@@ -992,9 +1014,18 @@ let check_fun_def ctx env ?self (d : Ast.fun_def) : unit =
 (* Class bodies: every method is checked under its signature with self
    bound to the class. *)
 let check_class ctx env (c : Ast.class_def) : unit =
+  let info = Hashtbl.find ctx.classes c.Ast.class_name in
   let self = ("self", ClassType c.Ast.class_name) in
-  Option.iter (fun init -> check_fun_def ctx env ~self init) c.Ast.class_init;
-  List.iter (fun m -> check_fun_def ctx env ~self m) c.Ast.class_methods
+  (* Method signatures are pre-bound so methods can call each other. *)
+  let prebound =
+    List.map (fun (n, mi) -> (n, FuncType (mi.mparams, mi.mret))) info.cmethods
+  in
+  Option.iter
+    (fun init -> check_fun_def ctx env ~self ~prebound init)
+    c.Ast.class_init;
+  List.iter
+    (fun m -> check_fun_def ctx env ~self ~prebound m)
+    c.Ast.class_methods
 
 (* Checks the statement items of a program; declarations register into the
    environment in source order. *)
@@ -1005,18 +1036,45 @@ let check_items ctx (items : Ast.item list) : unit =
          match item.Ast.item_desc with
          | Ast.Item_stmt s -> check_stmt ctx env s
          | Ast.Item_def d ->
+             let ft = signature_of_def ctx d in
+             (* The signature binds before the body: recursion works. *)
+             let env =
+               bind env d.Ast.def_name
+                 { vtype = ft; is_var = false; depth = env.depth }
+             in
              check_fun_def ctx env d;
-             bind env d.Ast.def_name
-               {
-                 vtype = signature_of_def ctx d;
-                 is_var = false;
-                 depth = env.depth;
-               }
+             env
          | Ast.Item_class c ->
              check_class ctx env c;
              env
          | _ -> env)
        empty_env items)
+
+(* Checks pre-parsed items — the driver entry for a pipeline that already
+   parsed. Every diagnostic found, sorted by position. *)
+let check_parsed (items : Ast.item list) : Emo_support.Diagnostic.t list =
+  let ctx =
+    {
+      file = "<checked>";
+      classes = Hashtbl.create 8;
+      interfaces = Hashtbl.create 8;
+      enums = Hashtbl.create 8;
+      funcs = Hashtbl.create 8;
+      diagnostics = ref [];
+      ret_sink = ref [];
+    }
+  in
+  collect ctx items;
+  if List.length !(ctx.diagnostics) = 0 then check_items ctx items;
+  let diagnostics = List.rev !(ctx.diagnostics) in
+  List.sort
+    (fun a b ->
+      let open Emo_support.Diagnostic in
+      let open Emo_support.Span in
+      compare
+        (a.span.line, a.span.col, a.span.start)
+        (b.span.line, b.span.col, b.span.start))
+    diagnostics
 
 let check_source ~file ~(source : string) : Emo_support.Diagnostic.t list =
   let ctx, items = analyze ~file ~source in
