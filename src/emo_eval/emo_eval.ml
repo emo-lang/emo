@@ -153,6 +153,37 @@ let rec assign env span name value =
 exception Return_signal of value
 exception Tail_call of closure * (string option * value) list
 
+(* `raise <value>` unwinds as an exception; the driver turns an uncaught one
+   into an E3010 diagnostic. *)
+exception Emo_raise of value * Emo_support.Span.t
+
+let literal_value = function
+  | Ast.L_int n -> Int n
+  | Ast.L_float f -> Float f
+  | Ast.L_char c -> Char c
+  | Ast.L_string s -> String s
+  | Ast.L_bool b -> Bool b
+
+(* Binds pattern variables into [frame] and reports whether the pattern
+   matches. Bindings from a branch that ends up not matching do not leak:
+   each branch attempts its match in a fresh child frame. *)
+let rec match_pattern frame span pattern value =
+  match pattern.Ast.pattern_desc with
+  | Ast.Wildcard -> true
+  | Ast.Pattern_binding name ->
+      define frame name ~mutable_:false value;
+      true
+  | Ast.Pattern_literal l -> equal_value value (literal_value l)
+  | Ast.Enum_member (t, m) -> (
+      match value with
+      | EnumMember (t', m') -> String.equal t t' && String.equal m m'
+      | _ -> false)
+  | Ast.Tuple_pattern ps -> (
+      match value with
+      | Tuple vs when List.length vs = List.length ps ->
+          List.for_all2 (fun p v -> match_pattern frame span p v) ps vs
+      | _ -> false)
+
 let not_yet span what =
   error span "E3009" (Printf.sprintf "%s is not supported yet" what)
 
@@ -507,13 +538,42 @@ and eval_stmt env s =
           | Some body -> List.iter (eval_stmt env) body
           | None -> ())
       | v ->
-          error span "E3001"
+          error cond.Ast.span "E3001"
             (Printf.sprintf "the `if` condition must be a Bool, got %s"
                (type_name v)))
-  | Ast.Case _ -> not_yet span "`case`"
+  | Ast.Case { scrutinee; branches } ->
+      let v = eval_expr env scrutinee in
+      let rec try_branches = function
+        | [] ->
+            error span "E3006"
+              (Printf.sprintf "no `case` branch matched this %s value"
+                 (type_name v))
+        | branch :: rest ->
+            let frame = child env in
+            if not (match_pattern frame span branch.Ast.pattern v) then
+              try_branches rest
+            else
+              let guard_holds =
+                match branch.Ast.guard with
+                | Some g -> (
+                    match eval_expr frame g with
+                    | Bool b -> b
+                    | gv ->
+                        error span "E3001"
+                          (Printf.sprintf
+                             "a `when` guard must be a Bool, got %s"
+                             (type_name gv)))
+                | None -> true
+              in
+              if guard_holds then List.iter (eval_stmt frame) branch.Ast.body
+              else try_branches rest
+      in
+      try_branches branches
   | Ast.Receive _ -> not_yet span "`receive`"
   | Ast.Send _ -> not_yet span "processes"
-  | Ast.Raise _ -> not_yet span "exceptions"
+  | Ast.Raise e ->
+      let v = eval_expr env e in
+      raise (Emo_raise (v, span))
 
 and eval_expr env e =
   let span = e.Ast.span in
@@ -566,3 +626,12 @@ let eval_item env item =
   | Ast.Item_class _ -> not_yet span "classes"
   | Ast.Item_interface _ -> not_yet span "interfaces"
   | Ast.Item_enum _ -> not_yet span "enums"
+
+(* Runs a whole file: declarations register, statements execute in order.
+   An uncaught `raise` terminates the program with an E3010 diagnostic. *)
+let run_program ~file ~source =
+  let items = Emo_parser.parse_program ~file ~source in
+  let env = global_env () in
+  try List.iter (eval_item env) items
+  with Emo_raise (v, span) ->
+    error span "E3010" (Printf.sprintf "uncaught exception: %s" (to_string v))
