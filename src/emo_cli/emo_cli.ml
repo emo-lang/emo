@@ -33,74 +33,69 @@ let read_file file =
     ~finally:(fun () -> close_in_noerr ic)
     (fun () -> really_input_string ic (in_channel_length ic))
 
-(* The static stage shared by run and check: parse, then type-check. Renders
-   every diagnostic; returns the exit code when the program must not
-   proceed (None when it is clean). *)
-let static_stage ~file ~(source : string) ~(color : bool) ~(error_limit : int) :
-    int option =
-  let render_all diagnostics =
-    prerr_endline
-      (Emo_support.Render.render_all ~color ~limit:(Some error_limit) ~source
-         diagnostics)
-  in
-  match Emo_parser.parse_program_with_diagnostics ~file ~source with
-  | exception Emo_lexer.Error diagnostic ->
-      render_all [ diagnostic ];
-      Some 65
-  | _, (_ :: _ as diagnostics) ->
-      render_all diagnostics;
-      Some 65
-  | items, [] -> (
-      let diagnostics = Emo_check.check_parsed items in
-      match diagnostics with
-      | [] -> None
-      | _ ->
-          render_all diagnostics;
-          Some 65)
+(* Renders a batch of diagnostics, capped at the error limit, with the
+   project root as the excerpt source. *)
+let render_errors ~(color : bool) ~(error_limit : int)
+    (diagnostics : Emo_support.Diagnostic.t list) : unit =
+  match diagnostics with
+  | [] -> ()
+  | _ ->
+      let source = Sys.getcwd () in
+      prerr_endline
+        (Emo_support.Render.render_all ~color ~limit:(Some error_limit) ~source
+           diagnostics)
 
-(* Runs one file through the lex → parse → check → evaluate pipeline and
-   prints every stage's diagnostics. Exit codes: 0 success, 1 uncaught
+(* Runs one file through the project pipeline: discover the module tree,
+   check every module, then evaluate. Exit codes: 0 success, 1 uncaught
    exception, 65 lex/parse/check, 66 unreadable input, 70 evaluation. *)
 let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
-  match read_file file with
-  | exception Sys_error message ->
-      prerr_endline message;
+  match Sys.file_exists file with
+  | false ->
+      prerr_endline (Printf.sprintf "%s: No such file or directory" file);
       66
-  | source -> (
+  | true -> (
       let render diagnostic =
-        prerr_endline (Emo_support.Render.render ~color ~source diagnostic)
+        render_errors ~color ~error_limit [ diagnostic ]
       in
-      match static_stage ~file ~source ~color ~error_limit with
-      | Some code -> code
-      | None -> (
-          match
-            Emo_eval.run_items
-              (match
-                 Emo_parser.parse_program_with_diagnostics ~file ~source
-               with
-              | items, _ -> items
-              | exception _ -> [])
-          with
-          | () -> 0
-          | exception Emo_eval.Error diagnostic -> (
-              match diagnostic.Emo_support.Diagnostic.code with
-              | Some "E3010" ->
-                  render diagnostic;
-                  1
-              | _ ->
-                  render diagnostic;
-                  70)))
+      try
+        ignore (Emo_project.run_entry ~entry_file:file ~check:true ());
+        0
+      with
+      | Emo_project.Static_errors diagnostics ->
+          render_errors ~color ~error_limit diagnostics;
+          65
+      | Emo_lexer.Error diagnostic ->
+          render diagnostic;
+          65
+      | Emo_eval.Error diagnostic -> (
+          match diagnostic.Emo_support.Diagnostic.code with
+          | Some "E3010" ->
+              render diagnostic;
+              1
+          | _ ->
+              render diagnostic;
+              70))
 
-(* `emo check`: the static stage only. *)
+(* `emo check`: the static stages only, over the whole module tree. *)
 let check_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
-  match read_file file with
-  | exception Sys_error message ->
-      prerr_endline message;
+  match Sys.file_exists file with
+  | false ->
+      prerr_endline (Printf.sprintf "%s: No such file or directory" file);
       66
-  | source -> (
-      match static_stage ~file ~source ~color ~error_limit with
-      | Some code -> code
-      | None -> 0)
+  | true -> (
+      try
+        let p = Emo_project.discover ~entry_file:file in
+        let all = Emo_project.diagnostics p in
+        let _, _, errors = Emo_project.check_project p in
+        render_errors ~color ~error_limit (all @ errors);
+        if List.length (all @ errors) > 0 then 65 else 0
+      with
+      | Emo_lexer.Error diagnostic ->
+          render_errors ~color ~error_limit [ diagnostic ];
+          65
+      | Emo_eval.Error diagnostic ->
+          render_errors ~color ~error_limit [ diagnostic ];
+          65)
 
 let run =
   let file = Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE") in

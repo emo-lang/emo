@@ -5,6 +5,10 @@ let tc name f = Alcotest.test_case name `Quick f
 let scratch =
   Filename.concat (Filename.get_temp_dir_name ()) "emo-project-fixtures"
 
+(* The process-start working directory (the dune sandbox rule dir); tests
+   that chdir elsewhere must not break later relative paths. *)
+let original_cwd = Sys.getcwd ()
+
 let codes_dump diagnostics =
   String.concat ","
     (List.map
@@ -366,6 +370,27 @@ let cache_tests =
           "re-parsed" (parses_after_first + 1) p.Emo_project.parses);
   ]
 
+let shop_golden_tests =
+  [
+    tc "the README shop tree runs verbatim from its root" (fun () ->
+        (* The dune rule passes the workspace's examples/ directory. *)
+        (* dune materializes the declared examples/ dependency at its
+           workspace-relative path, two levels up from this rule's dir. *)
+        Sys.chdir (Filename.concat original_cwd "../../examples");
+        let out = Buffer.create 64 in
+        Emo_eval.set_output (Buffer.add_string out);
+        Fun.protect
+          ~finally:(fun () ->
+            Emo_eval.set_output (fun s ->
+                print_string s;
+                flush stdout))
+          (fun () ->
+            ignore
+              (Emo_project.run_entry ~entry_file:"shop/checkout.emo" ~check:true
+                 ()));
+        Alcotest.(check string) "output" "42\n30\n" (Buffer.contents out));
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -374,4 +399,5 @@ let () =
       ("privacy", privacy_tests);
       ("cycle", cycle_tests);
       ("cache", cache_tests);
+      ("shop_golden", shop_golden_tests);
     ]
