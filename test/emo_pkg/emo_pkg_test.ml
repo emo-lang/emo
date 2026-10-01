@@ -386,6 +386,71 @@ let resolve_tests =
         | Error _ -> Alcotest.fail "expected resolution");
   ]
 
+let registry_tests =
+  [
+    tc "a directory registry fetches package sources" (fun () ->
+        let root =
+          Filename.concat (Filename.get_temp_dir_name ()) "emo-reg-test"
+        in
+        let pkg_dir =
+          Filename.concat root
+            (Filename.concat "acme" (Filename.concat "json_tools" "2.3.1"))
+        in
+        ignore (Sys.command ("rm -rf " ^ Filename.quote root));
+        ignore (Sys.command ("mkdir -p " ^ Filename.quote pkg_dir));
+        let write rel content =
+          let oc =
+            open_out_bin (Filename.concat pkg_dir (String.concat "/" rel))
+          in
+          output_string oc content;
+          close_out oc
+        in
+        write [ "package.emo" ]
+          {|package {
+  name = "acme/json_tools"
+  version = "2.3.1"
+  targets = ["native"]
+  deps {}
+}|};
+        write [ "json_tools.emo" ] {|def parse(s String) String {
+  return s
+}|};
+        let reg = { Emo_pkg.Registry.endpoint = root } in
+        match
+          Emo_pkg.Registry.fetch reg ~name:"acme/json_tools"
+            ~version:(v "2.3.1")
+        with
+        | Ok fetched -> (
+            Alcotest.(check int)
+              "files" 2
+              (List.length fetched.Emo_pkg.Registry.f_files);
+            (* cache materialization verifies the checksum *)
+            match
+              Emo_pkg.Registry.materialize
+                ~cache_dir:
+                  (Filename.concat
+                     (Filename.get_temp_dir_name ())
+                     "emo-reg-cache")
+                fetched
+            with
+            | Ok dir ->
+                Alcotest.(check bool)
+                  "manifest cached" true
+                  (Sys.file_exists (Filename.concat dir "package.emo"))
+            | Error m -> Alcotest.fail m)
+        | Error m -> Alcotest.fail m);
+    tc "a missing package version errors" (fun () ->
+        let root =
+          Filename.concat (Filename.get_temp_dir_name ()) "emo-reg-test"
+        in
+        let reg = { Emo_pkg.Registry.endpoint = root } in
+        match
+          Emo_pkg.Registry.fetch reg ~name:"json_tools" ~version:(v "9.9.9")
+        with
+        | Ok _ -> Alcotest.fail "expected a fetch error"
+        | Error _ -> ());
+  ]
+
 let () =
   Alcotest.run "emo_pkg"
     [
@@ -394,4 +459,5 @@ let () =
       ("manifest", manifest_tests);
       ("resolve", resolve_tests);
       ("lockfile", lockfile_tests);
+      ("registry", registry_tests);
     ]

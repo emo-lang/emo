@@ -380,3 +380,118 @@ module Lockfile = struct
       roots;
     !errors
 end
+
+(* The registry and the global content-addressed cache. A directory
+   registry serves tests and offline development over the same protocol the
+   future HTTPS client will use: <endpoint>/<owner>/<name>/<version>/
+   holding the package's manifest (package.emo) and source files. *)
+module Registry = struct
+  type t = { endpoint : string } (* a filesystem directory *)
+
+  type fetched = {
+    f_name : string;
+    f_version : Version.t;
+    f_checksum : string;
+    (* digest over the sorted (path, content) pairs *)
+    f_files : (string * string) list; (* relative path → content *)
+  }
+
+  let digest (files : (string * string) list) : string =
+    let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) files in
+    Digest.string
+      (String.concat ""
+         (List.map (fun (p, c) -> p ^ "\000" ^ c ^ "\000") sorted))
+    |> Digest.to_hex
+
+  (* Collects every .emo file under [dir], relative paths as keys. *)
+  let collect_files (dir : string) : (string * string) list =
+    let rec walk rel =
+      let dir_path = Filename.concat dir (String.concat "/" rel) in
+      let entries =
+        match Sys.readdir dir_path with
+        | exception Sys_error _ -> []
+        | raw -> raw |> Array.to_list |> List.sort compare
+      in
+      List.concat_map
+        (fun entry ->
+          if entry = "." || entry = ".." then []
+          else
+            let rel_entry = rel @ [ entry ] in
+            let path = Filename.concat dir_path entry in
+            if Sys.is_directory path then walk rel_entry
+            else if Filename.check_suffix entry ".emo" then
+              let ic = open_in_bin path in
+              let content =
+                Fun.protect
+                  ~finally:(fun () -> close_in_noerr ic)
+                  (fun () -> really_input_string ic (in_channel_length ic))
+              in
+              [ (String.concat "/" rel_entry, content) ]
+            else [])
+        entries
+    in
+    walk []
+
+  let fetch (t : t) ~(name : string) ~(version : Version.t) :
+      (fetched, string) result =
+    let dir =
+      Filename.concat t.endpoint
+        (Filename.concat name (Version.to_string version))
+    in
+    if not (Sys.file_exists dir) then
+      Error
+        (Printf.sprintf "registry `%s` has no package %s@%s" t.endpoint name
+           (Version.to_string version))
+    else
+      let files = collect_files dir in
+      let has_manifest =
+        List.exists (fun (p, _) -> Filename.basename p = "package.emo") files
+      in
+      if not has_manifest then
+        Error
+          (Printf.sprintf "package %s@%s has no manifest" name
+             (Version.to_string version))
+      else
+        let checksum = digest files in
+        Ok
+          {
+            f_name = name;
+            f_version = version;
+            f_checksum = checksum;
+            f_files = files;
+          }
+
+  (* The global cache: shared across projects, content-addressed — the
+     directory name embeds the checksum, so equal content is stored once. *)
+  let default_cache_dir () =
+    match Sys.getenv_opt "EMO_CACHE_DIR" with
+    | Some dir -> dir
+    | None -> Filename.concat (Filename.get_temp_dir_name ()) "emo-cache"
+
+  let materialize ~(cache_dir : string) (f : fetched) :
+      (string, string) result (* the package sources directory *) =
+    let pkg_dir =
+      Filename.concat cache_dir
+        (f.f_name ^ "-" ^ Version.to_string f.f_version ^ "-" ^ f.f_checksum)
+    in
+    let materialize_file (rel, content) =
+      let path = Filename.concat pkg_dir rel in
+      let dir = Filename.dirname path in
+      if not (Sys.file_exists dir) then
+        ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+      let oc = open_out_bin path in
+      output_string oc content;
+      close_out oc
+    in
+    try
+      List.iter materialize_file f.f_files;
+      (* Checksum verification: materialized content must match the fetched
+         digest. *)
+      let materialized = collect_files pkg_dir in
+      if digest materialized = f.f_checksum then Ok pkg_dir
+      else
+        Error
+          (Printf.sprintf "checksum mismatch for %s@%s" f.f_name
+             (Version.to_string f.f_version))
+    with Sys_error message -> Error message
+end
