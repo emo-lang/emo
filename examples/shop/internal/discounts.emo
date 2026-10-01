@@ -1,0 +1,2 @@
+// The internal subtree is private to shop: only shop/* may reference it.
+const rate = 10

@@ -8,7 +8,8 @@
   emo_parser
   emo_ast
   emo_eval
-  emo_check)
+  emo_check
+  emo_project)
  (modules emo_cli))
 
 (executable

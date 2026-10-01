@@ -1,0 +1,5 @@
+const rate = shop.internal.discounts.rate
+
+def price(n Int) Int {
+  return n * rate
+}
