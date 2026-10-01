@@ -508,6 +508,8 @@ print(e.message)|}));
         let diagnostic = program_err {|raise Exception.new(message: "boom")|} in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
+          "message" "uncaught exception: boom" diagnostic.Diagnostic.message;
+        Alcotest.(check string)
           "span" "test.emo:1:1"
           (Span.to_string diagnostic.Diagnostic.span));
   ]
@@ -823,6 +825,103 @@ print(N.new(5).quadruple())|}));
 print(Walker.new().walk(200000))|}));
   ]
 
+let to_string_tests =
+  [
+    tc "instances render with the provisional default format" (fun () ->
+        Alcotest.(check string)
+          "instance" "#User(name: \"Ada\", age: 36)\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+}
+print(User.new(name: "Ada", age: 36).to_string())|}));
+    tc "enum members render as their member name" (fun () ->
+        Alcotest.(check string)
+          "enum" "red\nred\n"
+          (run_program
+             {|enum Color { red, green }
+print(Color.red.to_string())
+print("${Color.red}")|}));
+    tc "exceptions render as their message" (fun () ->
+        Alcotest.(check string)
+          "exception" "boom\nboom\n"
+          (run_program
+             {|const e = Exception.new(message: "boom")
+print(e.to_string())
+print("${e}")|}));
+  ]
+
+let object_acceptance_tests =
+  [
+    tc "the step-06 acceptance program runs verbatim" (fun () ->
+        Alcotest.(check string)
+          "output" "Ada (36)\ntrue\ntrue\ntrue\nHello\ntrue\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+
+  def full_name() String {
+    return self.name + " (" + self.age.to_string() + ")"
+  }
+
+  def is_older?() Bool {
+    return self.age > 35
+  }
+}
+
+const u = User.new(name: "Ada", age: 36)
+print(u.full_name())            // Ada (36)
+print(u.is_older?())            // true
+print(u == User.new(name: "Ada", age: 36))   // true — value semantics
+
+enum Color { red, green, blue }
+print(Color.red == Color.red)   // true
+
+interface Greeter {
+  def greet() String
+}
+
+class English {
+  def greet() String {
+    return "Hello"
+  }
+}
+
+def welcome(g Greeter) String {
+  return g.greet()
+}
+
+print(welcome(English.new()))   // Hello — duck dispatch, no registration
+print(English.new().is(Greeter))  // true — structural interface check|}));
+    tc "self.x outside init is a parse-time error" (fun () ->
+        match
+          run_program
+            "class U {\n\
+            \  def init() {}\n\
+            \  def m() Int {\n\
+            \    self.x = 1\n\
+            \    return 1\n\
+            \  }\n\
+             }"
+        with
+        | _ -> Alcotest.fail "expected a parse error"
+        | exception Emo_parser.Error d ->
+            Alcotest.(check string) "code" "E2016" (code_of d));
+    tc "an uncaught raise carries the exception's message" (fun () ->
+        let diagnostic =
+          program_err {|raise Exception.new(message: " kaboom ")|}
+        in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "uncaught exception:  kaboom " diagnostic.Diagnostic.message);
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -838,4 +937,6 @@ let () =
       ("class", class_tests);
       ("method", method_tests);
       ("enum", enum_tests);
+      ("to_string", to_string_tests);
+      ("object_acceptance", object_acceptance_tests);
     ]

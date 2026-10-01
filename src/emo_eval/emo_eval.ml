@@ -133,7 +133,8 @@ let output : (string -> unit) ref =
 let set_output f = output := f
 
 (* The one stringification rule: interpolation and `.to_string()` share it. *)
-let rec to_string = function
+let rec to_string v =
+  match v with
   | Int n -> string_of_int n
   | Float f ->
       if Float.is_integer f && Float.abs f < 1e16 then Printf.sprintf "%.1f" f
@@ -148,11 +149,33 @@ let rec to_string = function
   | ArrowBlock _ -> "<arrow block>"
   | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
   | ClassDef c -> c.cname
-  | Instance _ -> "<instance>"
+  | Instance i ->
+      if
+        (* Provisional default format, per the step-06 spec. *)
+        i.iclass.builtin_exception
+      then
+        match List.assoc_opt "message" i.ifields with
+        | Some message -> to_string message
+        | None -> "#Exception()"
+      else
+        let fields =
+          String.concat ", "
+            (List.map (fun (n, fv) -> n ^ ": " ^ debug_value fv) i.ifields)
+        in
+        "#" ^ i.iclass.cname ^ "(" ^ fields ^ ")"
   | EnumType e -> e.ename
-  | EnumMember (t, m) -> t ^ "." ^ m
+  | EnumMember (_, m) -> m
   | TypeValue t -> t
   | Module n -> n
+
+(* Inside an instance's default rendering, strings show quoted. *)
+and debug_value v =
+  match v with
+  | String s -> Printf.sprintf "%S" s
+  | Tuple vs -> "(" ^ String.concat ", " (List.map debug_value vs) ^ ")"
+  | Array vs ->
+      "[" ^ String.concat ", " (List.map debug_value (Array.to_list vs)) ^ "]"
+  | v -> to_string v
 
 (* Interfaces have no runtime artifact beyond this registry: `x.is(T)`
    checks the receiver's class against the declared method shapes. *)
@@ -434,17 +457,6 @@ and eval_method env span recv mname arg_exprs =
       let frame = bind_params closure span args in
       define frame "self" ~mutable_:false (Instance i);
       eval_frame closure frame span
-  | Instance i, "is" -> (
-      let args = eval_args () in
-      match args with
-      | [ t ] -> Bool (runtime_is span (Instance i) t)
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
-  | Instance i, mname ->
-      error span "E3007"
-        (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i.iclass.cname
-           mname)
   | ClassDef c, "new" -> (
       let args = eval_args_named () in
       match c.cinit with
@@ -503,6 +515,13 @@ and eval_method env span recv mname arg_exprs =
       | _ ->
           error span "E3007"
             (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+  | Instance i, "is" -> (
+      let args = eval_args () in
+      match args with
+      | [ t ] -> Bool (runtime_is span (Instance i) t)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
   | (EnumMember _ as v), "is" -> (
       let args = eval_args () in
       match args with
@@ -510,6 +529,10 @@ and eval_method env span recv mname arg_exprs =
       | _ ->
           error span "E3007"
             (Printf.sprintf "`is` expects 1 argument, got %d" argc))
+  | Instance i, mname ->
+      error span "E3007"
+        (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i.iclass.cname
+           mname)
   | v, m ->
       error span "E3007"
         (Printf.sprintf "%s has no method `%s`" (type_name v) m)
@@ -642,9 +665,15 @@ and eval_stmt env s =
              construction. *)
           match lookup env span "self" with
           | Instance i ->
-              (* replace in place, or create the field on first assignment *)
-              let rest = List.remove_assoc name i.ifields in
-              i.ifields <- (name, v) :: rest
+              (* Replace in place, or append the field in first-assignment
+                 order — the list freezes in that order after init. *)
+              if List.mem_assoc name i.ifields then
+                i.ifields <-
+                  List.map
+                    (fun (n, old) ->
+                      if String.equal n name then (n, v) else (n, old))
+                    i.ifields
+              else i.ifields <- i.ifields @ [ (name, v) ]
           | v ->
               error span "E3003"
                 (Printf.sprintf
