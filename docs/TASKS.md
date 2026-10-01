@@ -120,12 +120,12 @@ Scope note: arrays, tuples, and `Box` (with its three-operation set) are part of
 **Prereq:** Step 05.
 **Done when:** the README's object examples run verbatim (value-semantic `User`, `Color`, duck-typed `welcome`, structural `is()`); negative tests (`self.x =` outside `init`, missing method, uncaught raise) error as specified; `dune test` green.
 
-- [ ] **T6.1** — `ClassDef` / `Instance` values; `init` window flag; field freeze.
-- [ ] **T6.2** — Method dispatch + `self`; `NoMethodError`.
-- [ ] **T6.3** — Deep `==` on instances; shared-structure immutability tests.
-- [ ] **T6.4** — Enum singletons; `TypeValue`; `is()` with structural interface check.
-- [ ] **T6.5** — `raise`; builtin `Exception`; uncaught-exception termination.
-- [ ] **T6.6** — `.to_string()` for instances, enums, exceptions.
+- [x] **T6.1** — `ClassDef` / `Instance` values; `init` window flag; field freeze.
+- [x] **T6.2** — Method dispatch + `self`; `NoMethodError`.
+- [x] **T6.3** — Deep `==` on instances; shared-structure immutability tests.
+- [x] **T6.4** — Enum singletons; `TypeValue`; `is()` with structural interface check.
+- [x] **T6.5** — `raise`; builtin `Exception`; uncaught-exception termination.
+- [x] **T6.6** — `.to_string()` for instances, enums, exceptions.
 
 ### Step 07 — CLI & diagnostics · `plan/step-07-cli-diagnostics.md`
 

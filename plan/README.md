@@ -50,7 +50,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 03 | Parser — expressions | done |
 | 04 | Parser — declarations | done |
 | 05 | Interpreter — core values & evaluation | done |
-| 06 | Interpreter — classes, enums, interfaces | not started |
+| 06 | Interpreter — classes, enums, interfaces | done |
 | 07 | CLI & diagnostics (`run`, `repl`, `check`) | not started |
 | 08 | Gradual type checker | not started |
 | 09 | Structural module system | not started |

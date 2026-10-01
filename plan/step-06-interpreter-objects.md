@@ -1,6 +1,6 @@
 # Step 06 — Interpreter: Classes, Enums, Interfaces
 
-**Milestone:** M1 · **Prereq:** step 05 · **Status:** not started
+**Milestone:** M1 · **Prereq:** step 05 · **Status:** done
 
 ## Goal
 
@@ -54,12 +54,12 @@ examples run.
 
 ## Tasks
 
-- [ ] `ClassDef` / `Instance` values; `init` window flag; field freeze.
-- [ ] Method dispatch + `self`; `NoMethodError`.
-- [ ] Deep `==` on instances; shared-structure immutability tests.
-- [ ] Enum singletons; `TypeValue`; `is()` with structural interface check.
-- [ ] `raise`; builtin `Exception`; uncaught-exception termination.
-- [ ] `.to_string()` for instances, enums, exceptions.
+- [x] `ClassDef` / `Instance` values; `init` window flag; field freeze.
+- [x] Method dispatch + `self`; `NoMethodError`.
+- [x] Deep `==` on instances; shared-structure immutability tests.
+- [x] Enum singletons; `TypeValue`; `is()` with structural interface check.
+- [x] `raise`; builtin `Exception`; uncaught-exception termination.
+- [x] `.to_string()` for instances, enums, exceptions.
 
 ## Acceptance
 

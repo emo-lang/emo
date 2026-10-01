@@ -112,12 +112,12 @@
 **前置:** 步骤 05。
 **完成标准:** README 的对象示例原样可跑(值语义的 `User`、`Color`、鸭子类型的 `welcome`、结构化的 `is()`);反向测试(在 `init` 之外 `self.x =`、调用缺失方法、未捕获 raise)按规格报错;`dune test` 全绿。
 
-- [ ] **T6.1** — `ClassDef` / `Instance` 值;`init` 窗口标记;字段冻结。
-- [ ] **T6.2** — 方法分派 + `self`;`NoMethodError`。
-- [ ] **T6.3** — 实例的深 `==`;共享结构的不可变性测试。
-- [ ] **T6.4** — 枚举单例;`TypeValue`;带结构化接口检查的 `is()`。
-- [ ] **T6.5** — `raise`;内建 `Exception`;未捕获异常终止。
-- [ ] **T6.6** — 实例、枚举、异常的 `.to_string()`。
+- [x] **T6.1** — `ClassDef` / `Instance` 值;`init` 窗口标记;字段冻结。
+- [x] **T6.2** — 方法分派 + `self`;`NoMethodError`。
+- [x] **T6.3** — 实例的深 `==`;共享结构的不可变性测试。
+- [x] **T6.4** — 枚举单例;`TypeValue`;带结构化接口检查的 `is()`。
+- [x] **T6.5** — `raise`;内建 `Exception`;未捕获异常终止。
+- [x] **T6.6** — 实例、枚举、异常的 `.to_string()`。
 
 ### 步骤 07 — CLI 与诊断 · `plan/step-07-cli-diagnostics.md`
 
