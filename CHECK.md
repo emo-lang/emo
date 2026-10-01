@@ -14,4 +14,3 @@ Pending design decisions — deliberately kept out of the README until they are 
   - Scope prefix format.
   - Version-range expression for dependencies (exact-only for now).
   - Binary / CLI tool distribution mechanism.
-  - CLI command names.
