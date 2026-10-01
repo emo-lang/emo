@@ -167,7 +167,7 @@ def parse_config(text String) Json {
 - **`require` is a file-level statement that brings the package's short name into scope.** It needs no counterpart on the package side — a package's public surface is simply its module tree. Fully qualified paths are always available.
 - **`require` pairs with the manifest, strictly.** Requiring a package that is missing from `deps` is a compile error — strictness comes first, and the manifest changes only by explicit action.
 
-- **Central registry, with configurable endpoints.** Packages are addressed by `name@version` through a central registry, backed by a global content-addressed cache shared across projects — no per-project dependency copies. The registry endpoint is configurable per project or globally, serving private and on-premises distribution.
+- **Central registry, with configurable endpoints.** Packages are addressed by `name@version` through a central registry, backed by a global content-addressed cache shared across projects — no per-project dependency copies. The registry endpoint is read from the `EMO_REGISTRY` environment variable — set it globally or per project — serving private and on-premises distribution.
 - **Scoped package names.** Third-party packages are named under a scope prefix, so ownership is explicit and name squatting has no ground to stand on; the scope prefix becomes the module path prefix. The official standard library alone owns the top-level short names (`json.decode()`, `http.get(url)`).
 - **The manifest is an Emo config file**, written in the restricted profile (terminating, hermetic, side-effect free). **Dependencies are exact versions** — the version a package is developed and tested against — and **targets declare which compilation targets the package supports**:
 
@@ -184,7 +184,7 @@ def parse_config(text String) Json {
   }
   ```
 
-- **Versions are semantic (major.minor.patch), resolved by Minimal Version Selection (MVS).** When different packages require different versions of the same dependency, the smallest version satisfying every requirement wins — for exact requirements, the highest one named. Upgrades are always explicit actions. A lockfile records the resolution with checksums and belongs in version control.
+- **Versions are semantic (major.minor.patch), resolved by Minimal Version Selection (MVS).** When different packages require different versions of the same dependency, the smallest version satisfying every requirement wins — for exact requirements, the highest one named. Upgrades are always explicit actions. The lockfile (`emo.lock`) records the resolution with checksums and belongs in version control; `emo deps resolve` writes it, `emo deps update` regenerates it after a pin changes, `emo deps list` reads it — building never rewrites it silently.
 - **Target compatibility is checked at resolution time.** A dependency that does not support the target being built fails resolution with a clear error, not midway through compilation.
 
 ## Concurrency
