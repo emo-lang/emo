@@ -51,6 +51,8 @@ type ctx = {
   enums : (string, string list) Hashtbl.t;
   funcs : (string, Ast.fun_def) Hashtbl.t;
   diagnostics : Emo_support.Diagnostic.t list ref;
+  mutable ret_sink : t list ref;
+      (* while checking an arrow block, its return types land here *)
 }
 
 let report ctx span code message =
@@ -154,6 +156,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       enums = Hashtbl.create 8;
       funcs = Hashtbl.create 8;
       diagnostics = ref [];
+      ret_sink = ref [];
     }
   in
   let parsed = Emo_parser.parse_program_with_diagnostics ~file ~source in
@@ -306,10 +309,35 @@ let rec check_expr ctx env (e : Ast.expr) : t =
       in
       ArrayType unified
   | Ast.Arrow_block (params, body) ->
-      (* Signature inference lands in T8.3. *)
-      let param_types = List.map (fun _ -> Unknown) params in
-      ignore body;
-      FuncType (param_types, Unknown)
+      let param_types =
+        List.map (fun p -> ann_to_type ctx p.Ast.param_type) params
+      in
+      let inner =
+        List.fold_left
+          (fun env p ->
+            bind env p.Ast.param_name
+              {
+                vtype = ann_to_type ctx p.Ast.param_type;
+                is_var = false;
+                depth = env.depth;
+              })
+          (child_scope env) params
+      in
+      let sink = ref [] in
+      let saved = ctx.ret_sink in
+      ctx.ret_sink <- sink;
+      let (_ : env) =
+        List.fold_left (fun env s -> check_stmt ctx env s) inner body
+      in
+      ctx.ret_sink <- saved;
+      let rets = List.rev !sink in
+      let inferred =
+        match rets with
+        | [] -> Unknown
+        | first :: rest ->
+            if List.for_all (conforms first) rest then first else Unknown
+      in
+      FuncType (param_types, inferred)
   | Ast.Unary (op, x) -> (
       let xt = check_expr ctx env x in
       match (op, xt) with
@@ -389,7 +417,7 @@ and check_binary ctx env span op l r =
       check_bool_side rt;
       Bool
 
-let rec check_stmt ctx env (s : Ast.stmt) : env =
+and check_stmt ctx env (s : Ast.stmt) : env =
   let span = s.Ast.stmt_span in
   match s.Ast.stmt_desc with
   | Ast.Expr_stmt e ->
@@ -430,10 +458,11 @@ let rec check_stmt ctx env (s : Ast.stmt) : env =
   | Ast.Return None -> env
   | Ast.Return (Some e) ->
       let t = check_expr ctx env e in
+      ctx.ret_sink := t :: !(ctx.ret_sink);
       (match env.ret with
       | Some expected when t <> Unknown && expected <> Unknown ->
           if not (conforms t expected) then
-            report ctx span "E4008"
+            report ctx e.Ast.span "E4008"
               (Printf.sprintf "return type mismatch: expected %s, got %s"
                  (to_string expected) (to_string t))
       | _ -> ());
@@ -470,14 +499,67 @@ let rec check_stmt ctx env (s : Ast.stmt) : env =
 
 and check_pattern ctx env (_p : Ast.pattern) : unit = ()
 
-(* Checks the statement items of a program. *)
+let signature_of_def ctx (d : Ast.fun_def) : t =
+  FuncType
+    ( List.map (fun p -> ann_to_type ctx p.Ast.param_type) d.Ast.def_params,
+      match d.Ast.def_return with
+      | Some r -> ann_to_type ctx r
+      | None -> Unknown )
+
+(* Signature checks: the body runs under the declared parameter types with
+   the declared return type as the target; `init` is exempt (it returns the
+   class it constructs). *)
+let check_fun_def ctx env ?self (d : Ast.fun_def) : unit =
+  let frame =
+    {
+      (child_scope env) with
+      ret = Option.map (ann_to_type ctx) d.Ast.def_return;
+    }
+  in
+  let frame =
+    match self with
+    | Some (name, t) ->
+        bind frame name { vtype = t; is_var = false; depth = frame.depth }
+    | None -> frame
+  in
+  let frame =
+    List.fold_left
+      (fun env p ->
+        bind env p.Ast.param_name
+          {
+            vtype = ann_to_type ctx p.Ast.param_type;
+            is_var = false;
+            depth = frame.depth;
+          })
+      frame d.Ast.def_params
+  in
+  List.iter (fun s -> ignore (check_stmt ctx frame s)) d.Ast.def_body
+
+let check_class ctx env (c : Ast.class_def) : unit =
+  let self = ("self", ClassType c.Ast.class_name) in
+  Option.iter (fun init -> check_fun_def ctx env ~self init) c.Ast.class_init;
+  List.iter (fun m -> check_fun_def ctx env ~self m) c.Ast.class_methods
+
+(* Checks the statement items of a program; declarations register into the
+   environment in source order. *)
 let check_items ctx (items : Ast.item list) : unit =
   ignore
     (List.fold_left
        (fun env item ->
          match item.Ast.item_desc with
          | Ast.Item_stmt s -> check_stmt ctx env s
-         | _ -> env (* declarations: T8.3 *))
+         | Ast.Item_def d ->
+             check_fun_def ctx env d;
+             bind env d.Ast.def_name
+               {
+                 vtype = signature_of_def ctx d;
+                 is_var = false;
+                 depth = env.depth;
+               }
+         | Ast.Item_class c ->
+             check_class ctx env c;
+             env
+         | _ -> env)
        empty_env items)
 
 let check_source ~file ~(source : string) : Emo_support.Diagnostic.t list =

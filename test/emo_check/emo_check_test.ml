@@ -133,10 +133,76 @@ print(first + "!")|}
         Alcotest.(check int) "count" 0 (List.length diagnostics));
   ]
 
+let signature_tests =
+  [
+    tc "a wrong return type against the signature is an error" (fun () ->
+        let diagnostics = check {|def f() Int {
+  return "s"
+}|} in
+        Alcotest.(check bool) "E4008" true (has_code diagnostics "E4008");
+        Alcotest.(check string) "span" "test.emo:2:11" (span_of diagnostics));
+    tc "parameter uses carry the declared types" (fun () ->
+        let diagnostics = check {|def f(a Int) Int {
+  return a + ""
+}|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "top-level defs are callable from later items" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length (check "def f() Int {\n  return 1\n}\nconst x = f()")));
+    tc "init is exempt from return checks" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|class U {
+  def init(n String) {
+    self.name = n
+  }
+}|})));
+    tc "arrow block bodies are checked under their param types" (fun () ->
+        let diagnostics =
+          check {|const bad = -> (n Int) {
+  return n + "s"
+}|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "an inferrable block used as a value is silent" (fun () ->
+        let diagnostics = check {|const g = -> (n Int) {
+  return n + 1
+}|} in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "a block with no returns infers Unknown and stays silent as a value"
+      (fun () ->
+        let diagnostics = check {|const h = -> (n Int) {
+  print(n)
+}|} in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "methods are checked against their signatures" (fun () ->
+        let diagnostics =
+          check
+            {|class U {
+  def init() {
+    self.name = "x"
+  }
+
+  def bad() String {
+    return 42
+  }
+}|}
+        in
+        Alcotest.(check bool) "E4008" true (has_code diagnostics "E4008"));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
       ("smoke", smoke_tests);
       ("collect", collect_tests);
       ("expression", expression_tests);
+      ("signature", signature_tests);
     ]
