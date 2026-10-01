@@ -150,10 +150,7 @@ let run_program source =
       Emo_eval.set_output (fun s ->
           print_string s;
           flush stdout))
-    (fun () ->
-      let items = Emo_parser.parse_program ~file:"test.emo" ~source in
-      let env = Emo_eval.global_env () in
-      List.iter (Emo_eval.eval_item env) items);
+    (fun () -> Emo_eval.run_program ~file:"test.emo" ~source);
   Buffer.contents buf
 
 let program_err source =
@@ -397,6 +394,103 @@ print(even(500000))|}));
              "def arr() String {\n  return [1, 2].to_string()\n}\nprint(arr())"));
   ]
 
+let control_flow_tests =
+  [
+    tc "case matches literals first-match, top to bottom" (fun () ->
+        Alcotest.(check string)
+          "case" "one\ntwo\nmany\n"
+          (run_program
+             {|def name(n Int) String {
+  case n {
+    1 -> { return "one" }
+    2 -> { return "two" }
+    _ -> { return "many" }
+  }
+}
+print(name(1))
+print(name(2))
+print(name(3))|}));
+    tc "binding patterns bind in the branch body" (fun () ->
+        Alcotest.(check string)
+          "binding" "5\n"
+          (run_program
+             {|def identity(n Int) Int {
+  case n {
+    m -> { return m }
+  }
+}
+print(identity(5))|}));
+    tc "tuple patterns destructure by position" (fun () ->
+        Alcotest.(check string)
+          "tuple" "3\n"
+          (run_program
+             {|def sum(p (Int, Int)) Int {
+  case p {
+    (a, b) -> { return a + b }
+  }
+}
+const pair = (1, 2)
+print(sum(pair))|}));
+    tc "guards filter branches and fall through" (fun () ->
+        Alcotest.(check string)
+          "guards" "big\nsmall\n"
+          (run_program
+             {|def size(n Int) String {
+  case n {
+    x when x > 10 -> { return "big" }
+    x -> { return "small" }
+  }
+}
+print(size(42))
+print(size(1))|}));
+    tc "guards must be Bools" (fun () ->
+        let diagnostic =
+          program_err "case 1 {\n  x when x + 1 -> { return 1 }\n}"
+        in
+        Alcotest.(check string) "code" "E3001" (code_of diagnostic));
+    tc "an unmatched scrutinee is a runtime error naming the tag" (fun () ->
+        let diagnostic = program_err "case 1 {\n  \"one\" -> { return 1 }\n}" in
+        Alcotest.(check string) "code" "E3006" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "no `case` branch matched this Int value"
+          diagnostic.Diagnostic.message);
+    tc "enum member patterns only match enum members" (fun () ->
+        Alcotest.(check string)
+          "falls through" "w\n"
+          (run_program
+             {|def check(n Int) String {
+  case n {
+    Color.red -> { return "r" }
+    _ -> { return "w" }
+  }
+}
+print(check(1))|}));
+    tc "if conditions must be Bools, with a span" (fun () ->
+        let diagnostic = program_err "if 1 {\n  print(2)\n}" in
+        Alcotest.(check string) "code" "E3001" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "the `if` condition must be a Bool, got Int"
+          diagnostic.Diagnostic.message;
+        Alcotest.(check string)
+          "span" "test.emo:1:4"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "raise unwinds to an uncaught-exception error" (fun () ->
+        let diagnostic = program_err {|raise "boom"|} in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "uncaught exception: boom" diagnostic.Diagnostic.message;
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "raise inside a def escapes the function" (fun () ->
+        let diagnostic =
+          program_err "def f() Int {\n  raise 7\n}\nprint(f())"
+        in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "uncaught exception: 7" diagnostic.Diagnostic.message);
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -407,4 +501,5 @@ let () =
       ("io", io_tests);
       ("closure", closure_tests);
       ("tail_call", tail_call_tests);
+      ("control_flow", control_flow_tests);
     ]
