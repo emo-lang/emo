@@ -1,0 +1,9 @@
+const order = shop.order
+
+def checkout(cart Int) Int {
+  const total = order.total(cart)
+  return total
+}
+
+print(checkout(21))
+print(shop.pricing.price(3))

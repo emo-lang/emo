@@ -168,16 +168,16 @@ Follow-up: the chosen `var`-escape approximation is documented in `docs/var-esca
 **Prereq:** Steps 01–08.
 **Done when:** the README's `shop/` tree works verbatim (path-as-module, aliasing via `const`); referencing `shop.internal.discounts` from outside `shop` errors naming both modules; a two-module cycle is rejected with the full chain; multi-file fixtures green.
 
-- [ ] **T9.1** — Module path resolution (file ↔ module name; collisions are errors).
-- [ ] **T9.2** — Lazy `Module` values wired into the evaluator's member access.
-- [ ] **T9.3** — Load-order orchestration; load-once semantics.
-- [ ] **T9.4** — Reference-graph extraction during checking.
-- [ ] **T9.5** — `internal/` subtree-privacy check.
-- [ ] **T9.6** — Cycle detection with chain reporting.
-- [ ] **T9.7** — In-process caching keyed by content hash.
-- [ ] **T9.8** — Multi-file test project under `examples/` mirroring the README's `shop/` tree.
+- [x] **T9.1** — Module path resolution (file ↔ module name; collisions are errors).
+- [x] **T9.2** — Lazy `Module` values wired into the evaluator's member access.
+- [x] **T9.3** — Load-order orchestration; load-once semantics.
+- [x] **T9.4** — Reference-graph extraction during checking.
+- [x] **T9.5** — `internal/` subtree-privacy check.
+- [x] **T9.6** — Cycle detection with chain reporting.
+- [x] **T9.7** — In-process caching keyed by content hash.
+- [x] **T9.8** — Multi-file test project under `examples/` mirroring the README's `shop/` tree.
 
-Caution: the transitional root rule (entry file's directory) must be swapped for manifest-based roots in step 10 — do not let it fossilize.
+Caution: the transitional root rule (the working directory) must be swapped for manifest-based roots in step 10 — do not let it fossilize.
 
 ### Step 10 — Packages & version resolution · `plan/step-10-packages.md`
 
