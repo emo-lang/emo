@@ -18,7 +18,7 @@ type t =
   | ArrayType of t
   | TupleType of t list
   | BoxType of t
-  | FuncType of t list * t
+  | FuncType of (string * t) list * t
 
 let rec to_string = function
   | Unknown -> "Unknown"
@@ -34,12 +34,15 @@ let rec to_string = function
   | BoxType e -> "Box[" ^ to_string e ^ "]"
   | TupleType ts -> "(" ^ String.concat ", " (List.map to_string ts) ^ ")"
   | FuncType (ps, r) ->
-      "(" ^ String.concat ", " (List.map to_string ps) ^ ") -> " ^ to_string r
+      "("
+      ^ String.concat ", " (List.map (fun (n, t) -> n ^ ": " ^ to_string t) ps)
+      ^ ") -> " ^ to_string r
 
-type method_info = { mparams : t list; mret : t; mdef : Ast.fun_def }
+type method_info = { mparams : (string * t) list; mret : t; mdef : Ast.fun_def }
 
 type class_info = {
   cname : string;
+  cinit_params : (string * t) list option;
   cmethods : (string * method_info) list;
   cfields : string list;
 }
@@ -47,7 +50,7 @@ type class_info = {
 type ctx = {
   file : string;
   classes : (string, class_info) Hashtbl.t;
-  interfaces : (string, (string * t list * t) list) Hashtbl.t;
+  interfaces : (string, (string * (string * t) list * t) list) Hashtbl.t;
   enums : (string, string list) Hashtbl.t;
   funcs : (string, Ast.fun_def) Hashtbl.t;
   diagnostics : Emo_support.Diagnostic.t list ref;
@@ -111,7 +114,8 @@ let collect ctx (items : Ast.item list) : unit =
                   {
                     mparams =
                       List.map
-                        (fun p -> ann_to_type ctx p.Ast.param_type)
+                        (fun p ->
+                          (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
                         d.Ast.def_params;
                     mret =
                       (match d.Ast.def_return with
@@ -124,6 +128,14 @@ let collect ctx (items : Ast.item list) : unit =
           Hashtbl.replace ctx.classes c.Ast.class_name
             {
               cname = c.Ast.class_name;
+              cinit_params =
+                Option.map
+                  (fun init ->
+                    List.map
+                      (fun p ->
+                        (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+                      init.Ast.def_params)
+                  c.Ast.class_init;
               cmethods = methods;
               cfields = List.map (fun f -> f.Ast.field_name) c.Ast.class_fields;
             }
@@ -133,7 +145,8 @@ let collect ctx (items : Ast.item list) : unit =
               (fun s ->
                 ( s.Ast.sig_name,
                   List.map
-                    (fun p -> ann_to_type ctx p.Ast.param_type)
+                    (fun p ->
+                      (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
                     s.Ast.sig_params,
                   ann_to_type ctx s.Ast.sig_return ))
               i.Ast.interface_methods
@@ -191,8 +204,11 @@ let empty_env =
     bindings =
       [
         ( "print",
-          { vtype = FuncType ([ Unknown ], Unknown); is_var = false; depth = 0 }
-        );
+          {
+            vtype = FuncType ([ ("value", Unknown) ], Unknown);
+            is_var = false;
+            depth = 0;
+          } );
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
@@ -216,12 +232,14 @@ let rec structurally_conforms ctx cname iname =
   with
   | Some cls, Some sigs ->
       List.for_all
-        (fun (m, ptypes, ret) ->
+        (fun (m, iptypes, iret) ->
           match List.assoc_opt m cls.cmethods with
           | Some minfo ->
-              List.length minfo.mparams = List.length ptypes
-              && List.for_all2 (conforms ctx) minfo.mparams ptypes
-              && conforms ctx minfo.mret ret
+              List.length minfo.mparams = List.length iptypes
+              && List.for_all2
+                   (fun (_, it) (_, mt) -> conforms ctx mt it)
+                   iptypes minfo.mparams
+              && conforms ctx minfo.mret iret
           | None -> false)
         sigs
   | _ -> false
@@ -240,7 +258,7 @@ and conforms ctx actual expected =
       List.length as_ = List.length bs && List.for_all2 (conforms ctx) as_ bs
   | FuncType (pa, ra), FuncType (pb, rb) ->
       List.length pa = List.length pb
-      && List.for_all2 (fun b a -> conforms ctx a b) pb pa
+      && List.for_all2 (fun (_, b) (_, a) -> conforms ctx a b) pb pa
       && conforms ctx ra rb
   | ClassType c, InterfaceType i -> structurally_conforms ctx c i
   | InterfaceType a, InterfaceType b -> String.equal a b
@@ -370,7 +388,9 @@ let rec check_expr ctx env (e : Ast.expr) : t =
       ArrayType unified
   | Ast.Arrow_block (params, body) ->
       let param_types =
-        List.map (fun p -> ann_to_type ctx p.Ast.param_type) params
+        List.map
+          (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+          params
       in
       let inner =
         List.fold_left
@@ -417,16 +437,207 @@ let rec check_expr ctx env (e : Ast.expr) : t =
                (to_string other));
           Unknown)
   | Ast.Binary (op, l, r) -> check_binary ctx env span op l r
-  | Ast.Call (callee, args) -> (
-      List.iter (fun a -> ignore (check_expr ctx env a.Ast.arg_value)) args;
-      match callee.Ast.desc with
-      | Ast.Member _ -> Unknown (* method calls: T8.7 *)
-      | _ ->
-          let ft = check_expr ctx env callee in
-          ignore ft;
-          Unknown (* call-site checks: T8.7 *))
   | Ast.Do operand ->
       ignore (check_expr ctx env operand);
+      Unknown
+  | Ast.Call (callee, args) -> (
+      match callee.Ast.desc with
+      | Ast.Member (recv, mname) ->
+          check_method_call ctx env span recv mname args
+      | _ ->
+          let ft = check_expr ctx env callee in
+          check_apply ctx env span "this call" ft args)
+
+(* Validates the arguments of a call against a known signature: arity,
+   unknown or duplicate named arguments, and provable type mismatches.
+   Returns the result type. *)
+and check_apply ctx env span what ft args : t =
+  let arg_values =
+    List.map
+      (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+      args
+  in
+  match ft with
+  | FuncType (params, ret) ->
+      let positionals = List.filter_map (fun a -> a) in
+      ignore positionals;
+      let seen = Hashtbl.create 4 in
+      List.iter
+        (fun (n, _) ->
+          match n with
+          | Some name ->
+              if Hashtbl.mem seen name then
+                report ctx span "E4009"
+                  (Printf.sprintf "the argument `%s` is passed twice" name);
+              Hashtbl.replace seen name ()
+          | None -> ())
+        arg_values;
+      if List.length arg_values <> List.length params then
+        report ctx span "E4009"
+          (Printf.sprintf "%s expects %d argument(s), got %d" what
+             (List.length params) (List.length arg_values));
+      List.iter
+        (fun (n, _) ->
+          match n with
+          | Some name ->
+              if not (List.exists (fun (pn, _) -> pn = name) params) then
+                report ctx span "E4009"
+                  (Printf.sprintf "%s has no parameter named `%s`" what name)
+          | None -> ())
+        arg_values;
+      (* Type conformance: positionals fill the first free slots in order,
+         named arguments address their parameter. *)
+      let used = Array.make (List.length params) false in
+      let params = Array.of_list params in
+      let free_slot () =
+        let rec go i =
+          if i >= Array.length params then -1
+          else if used.(i) then go (i + 1)
+          else i
+        in
+        let i = go 0 in
+        if i >= 0 then used.(i) <- true;
+        i
+      in
+      List.iter
+        (fun (n, vt) ->
+          let slot =
+            match n with
+            | Some name ->
+                let rec go i =
+                  if i >= Array.length params then -1
+                  else if fst params.(i) = name then i
+                  else go (i + 1)
+                in
+                let i = go 0 in
+                if i >= 0 then used.(i) <- true;
+                i
+            | None -> free_slot ()
+          in
+          if slot >= 0 then
+            let _, pt = params.(slot) in
+            if not (conforms ctx vt pt) then
+              report ctx span "E4004"
+                (Printf.sprintf "argument `%s` expects %s, got %s"
+                   (fst params.(slot))
+                   (to_string pt) (to_string vt)))
+        arg_values;
+      ret
+  | Unknown -> Unknown
+  | ClassType c ->
+      report ctx span "E4009"
+        (Printf.sprintf "a class is not callable; use `%s.new`" c);
+      Unknown
+  | other ->
+      report ctx span "E4009"
+        (Printf.sprintf "%s is not callable" (to_string other));
+      Unknown
+
+(* Method calls: dispatch on the receiver's known type against the collected
+   declarations; the builtin method set is typed inline. Unknown receivers
+   stay unchecked. *)
+and check_method_call ctx env span recv mname args : t =
+  let base = check_expr ctx env recv in
+  let arg_values =
+    List.map
+      (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+      args
+  in
+  let none_expected result =
+    if List.length args = 0 then result
+    else (
+      report ctx span "E4009"
+        (Printf.sprintf "`%s` expects no arguments, got %d" mname
+           (List.length args));
+      result)
+  in
+  let builtin0 = none_expected in
+  let one_expected result =
+    if List.length args = 1 then result
+    else (
+      report ctx span "E4009"
+        (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+           (List.length args));
+      result)
+  in
+  match (base, mname) with
+  | ClassType c, "new" when String.equal c "Exception" -> (
+      match arg_values with
+      | [ (Some "message", _) ] | [ (None, _) ] -> ClassType "Exception"
+      | _ ->
+          report ctx span "E4009" "`Exception.new` expects `message`";
+          ClassType "Exception")
+  | ClassType c, "new" -> (
+      match Hashtbl.find_opt ctx.classes c with
+      | Some info -> (
+          match info.cinit_params with
+          | Some params ->
+              check_apply ctx env span (c ^ ".new")
+                (FuncType (params, ClassType c))
+                args
+          | None ->
+              if List.length args > 0 then
+                report ctx span "E4009"
+                  (Printf.sprintf
+                     "class `%s` declares no `init`; `new` takes no arguments" c);
+              ClassType c)
+      | None -> Unknown)
+  | ClassType c, _ -> (
+      match Hashtbl.find_opt ctx.classes c with
+      | Some info -> (
+          match List.assoc_opt mname info.cmethods with
+          | Some mi ->
+              check_apply ctx env span
+                (c ^ "." ^ mname)
+                (FuncType (mi.mparams, mi.mret))
+                args
+          | None ->
+              report ctx span "E4001"
+                (Printf.sprintf "NoMethodError: `%s` has no method `%s`" c mname);
+              Unknown)
+      | None -> Unknown)
+  | InterfaceType i, _ -> (
+      match Hashtbl.find_opt ctx.interfaces i with
+      | Some sigs -> (
+          match List.find_opt (fun (n, _, _) -> String.equal n mname) sigs with
+          | Some (_, iptypes, iret) ->
+              check_apply ctx env span
+                (i ^ "." ^ mname)
+                (FuncType (iptypes, iret))
+                args
+          | None ->
+              report ctx span "E4001"
+                (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i mname);
+              Unknown)
+      | None -> Unknown)
+  | v, "to_string" -> builtin0 String
+  | ArrayType elem, "length" ->
+      builtin0
+        (ignore elem;
+         Int)
+  | TupleType _, "length" -> builtin0 Int
+  | BoxType elem, "read" -> builtin0 elem
+  | BoxType elem, "replace" -> (
+      let args = List.map snd arg_values in
+      match args with
+      | [ v ] ->
+          if not (conforms ctx v elem) then
+            report ctx span "E4004"
+              (Printf.sprintf "`replace` expects %s, got %s" (to_string elem)
+                 (to_string v));
+          elem
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`replace` expects 1 argument, got %d"
+               (List.length args));
+          elem)
+  | _, "is" ->
+      let (_ : t list) = List.map snd arg_values in
+      one_expected Bool
+  | Unknown, _ -> Unknown
+  | v, m ->
+      report ctx span "E4001"
+        (Printf.sprintf "NoMethodError: `%s` has no method `%s`" (to_string v) m);
       Unknown
 
 and check_part ctx env = function
@@ -611,7 +822,9 @@ and check_pattern ctx env (_p : Ast.pattern) : unit = ()
 
 let signature_of_def ctx (d : Ast.fun_def) : t =
   FuncType
-    ( List.map (fun p -> ann_to_type ctx p.Ast.param_type) d.Ast.def_params,
+    ( List.map
+        (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+        d.Ast.def_params,
       match d.Ast.def_return with
       | Some r -> ann_to_type ctx r
       | None -> Unknown )

@@ -64,14 +64,16 @@ print(sum)|})));
         Alcotest.(check bool) "E4005" true (has_code diagnostics "E4005");
         Alcotest.(check string) "span" "test.emo:1:9" (span_of diagnostics));
     tc "parameterized annotation vocabulary resolves" (fun () ->
-        Alcotest.(check int)
-          "count" 0
-          (List.length
-             (check
-                "def first(xs Array[Int]) Int {\n\
-                \  return xs[0]\n\
-                 }\n\
-                 const b = Box.new(1)")));
+        let diagnostics =
+          check
+            "def first(xs Array[Int]) Int {\n\
+            \  return xs[0]\n\
+             }\n\
+             const b = Box.new(1)"
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
     tc "a bad parameterized annotation is an error" (fun () ->
         let diagnostics = check "def f(xs Widget[Int]) Int {\n  return 0\n}" in
         Alcotest.(check bool) "E4005" true (has_code diagnostics "E4005"));
@@ -335,16 +337,18 @@ def probe(s Silent) String {
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check bool) "E4011" true (has_code diagnostics "E4011"));
     tc "an unknown receiver against an interface stays silent" (fun () ->
-        Alcotest.(check int)
-          "count" 0
-          (List.length
-             (check
-                {|interface Greeter {
+        let diagnostics =
+          check
+            {|interface Greeter {
   def greet() String
 }
 
 const anything = [1, "a"][0]
-print(anything.greet())|})));
+print(anything.greet())|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
   ]
 
 let () =
@@ -443,11 +447,9 @@ const g = -> {
 }
 print(g())|})));
     tc "a Box is the legal way to hold mutable state in a block" (fun () ->
-        Alcotest.(check int)
-          "count" 0
-          (List.length
-             (check
-                {|def probe(flag Bool) Int {
+        let diagnostics =
+          check
+            {|def probe(flag Bool) Int {
   if flag {
     const cell = Box.new(1)
     if flag {
@@ -458,7 +460,11 @@ print(g())|})));
     }
   }
   return 0
-}|})));
+}|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
   ]
 
 let () =
