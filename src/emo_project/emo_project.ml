@@ -218,6 +218,34 @@ let check_internal_privacy (graph : (string list, string list list) Hashtbl.t) :
 
 (* Checks every module in the project, collecting the reference graph.
    Returns per-module references and every diagnostic found. *)
+(* Detects a reference cycle between file modules and returns its chain
+   (first module repeated at the end). Only file modules form edges — a
+   directory reference is a namespace, not a load. *)
+let find_cycle (graph : (string list, string list list) Hashtbl.t) :
+    string list list option =
+  let rec dfs visiting node =
+    if List.mem node visiting then
+      (* The cycle runs from [node] (where visiting re-enters) forward. *)
+      let rec chain = function
+        | [] -> [ node ]
+        | x :: rest -> if x = node then [ x ] else x :: chain rest
+      in
+      Some (node :: chain visiting)
+    else
+      match Hashtbl.find_opt graph node with
+      | None | Some [] -> None
+      | Some refs ->
+          let visiting = node :: visiting in
+          List.find_map (dfs visiting) refs
+  in
+  let rec anywhere (nodes : string list list) : string list list option =
+    match nodes with
+    | [] -> None
+    | node :: rest -> (
+        match dfs [] node with Some c -> Some c | None -> anywhere rest)
+  in
+  anywhere (Hashtbl.fold (fun path _ acc -> path :: acc) graph [])
+
 let check_project p :
     string list list
     * (string list * string list list) list
@@ -262,7 +290,30 @@ let check_project p :
       p.files ([], [])
   in
   let internal_errors = check_internal_privacy graph in
-  (module_paths, entries, errors @ internal_errors)
+  let cycle_error =
+    match find_cycle graph with
+    | None -> []
+    | Some chain ->
+        let dotted path = String.concat "." path in
+        let rec chain_string = function
+          | [] -> ""
+          | [ last ] -> dotted last
+          | node :: rest -> dotted node ^ " -> " ^ chain_string rest
+        in
+        [
+          Emo_support.Diagnostic.
+            {
+              severity = Error;
+              code = Some "E5003";
+              message = "module reference cycle: " ^ chain_string chain;
+              span =
+                Emo_support.Span.make ~file:p.root ~line:1 ~col:1 ~start:0
+                  ~stop:0;
+              hint = None;
+            };
+        ]
+  in
+  (module_paths, entries, errors @ internal_errors @ cycle_error)
 
 (* Runs the entry file: the graph is discovered up front (collisions report
    immediately), modules load lazily on first access with load-once

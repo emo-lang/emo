@@ -280,10 +280,47 @@ let privacy_tests =
           (contains_substring message "shop.internal.discounts"));
   ]
 
+let cycle_tests =
+  [
+    tc "a two-module cycle is rejected with the full chain" (fun () ->
+        let p =
+          discover
+            [
+              ("a.emo", {|const from_b = other.b.back
+const once = 1|});
+              ("other/b.emo", {|const back = a.once|});
+            ]
+            "a.emo"
+        in
+        let _, _, errors = Emo_project.check_project p in
+        if not (has_code errors "E5003") then
+          Alcotest.fail ("codes: " ^ codes_dump errors);
+        let message =
+          match errors with d :: _ -> d.Diagnostic.message | [] -> ""
+        in
+        Alcotest.(check bool)
+          "names the chain" true
+          (contains_substring message "->"));
+    tc "an acyclic reference graph is silent" (fun () ->
+        let p =
+          discover
+            [
+              ("main.emo", {|print(helper.run())|});
+              ("helper.emo", {|def run() Int {
+  return 1
+}|});
+            ]
+            "main.emo"
+        in
+        let _, _, errors = Emo_project.check_project p in
+        Alcotest.(check int) "count" 0 (List.length errors));
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
       ("resolution", resolution_tests);
       ("load", load_tests);
       ("privacy", privacy_tests);
+      ("cycle", cycle_tests);
     ]
