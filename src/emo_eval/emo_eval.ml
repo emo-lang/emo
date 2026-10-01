@@ -880,7 +880,15 @@ and eval_expr env e =
   | Ast.Bool b -> Bool b
   | Ast.Char c -> Char c
   | Ast.String s -> String s
-  | Ast.Ident name -> lookup env span name
+  | Ast.Ident name -> (
+      match lookup_opt env name with
+      | Some v -> v
+      | None -> (
+          (* An unbound name may address a module: the directory tree is the
+             module tree. *)
+          match !module_handle_of [ name ] with
+          | Some h -> Module h
+          | None -> lookup env span name))
   | Ast.Type_ident t -> (
       (* A declared class, enum, or interface resolves to its value; an
          unknown upper name stays a bare type value. *)
