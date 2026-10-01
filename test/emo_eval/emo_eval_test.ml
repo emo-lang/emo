@@ -340,8 +340,10 @@ print(tick())|}));
     tc "an unbound name fails at call time" (fun () ->
         let diagnostic = program_err "print(nope)" in
         Alcotest.(check string) "code" "E3002" (code_of diagnostic));
-    tc "declaration items are still not evaluated" (fun () ->
-        let diagnostic = program_err "class User {}" in
+    tc "receive is still not evaluated" (fun () ->
+        let diagnostic =
+          program_err "receive {\n  (from, msg) -> { return msg }\n}"
+        in
         Alcotest.(check string) "code" "E3009" (code_of diagnostic));
   ]
 
@@ -547,6 +549,73 @@ print(box.read().to_string())|}));
             Alcotest.(check string) "code" "E2002" (code_of d));
   ]
 
+let class_tests =
+  [
+    tc "User.new runs init and fields freeze" (fun () ->
+        Alcotest.(check string)
+          "fields via interpolation" "Ada 36\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+}
+const u = User.new(name: "Ada", age: 36)
+print("${u.name} ${u.age}")|}));
+    tc "constructors take positional arguments too" (fun () ->
+        Alcotest.(check string)
+          "positional" "Ada\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+}
+print(User.new("Ada", 36).name)|}));
+    tc "a stateless class constructs without arguments" (fun () ->
+        Alcotest.(check string)
+          "stateless" "true\n"
+          (run_program
+             {|class English {
+  def greet() String {
+    return "Hello"
+  }
+}
+const e = English.new()
+print(e == e)|}));
+    tc "constructor argument errors name the class" (fun () ->
+        let diagnostic =
+          program_err
+            "class U {\n\
+            \  def init(name String) {\n\
+            \    self.name = name\n\
+            \  }\n\
+             }\n\
+             U.new(age: 1)"
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        let diagnostic = program_err "class Empty {}\nEmpty.new(1)" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+    tc "reads of missing fields are errors" (fun () ->
+        let diagnostic =
+          program_err
+            "class U {\n\
+            \  def init(name String) {\n\
+            \    self.name = name\n\
+            \  }\n\
+             }\n\
+             print(U.new(\"a\").missing)"
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "`U` has no field `missing`" diagnostic.Diagnostic.message);
+    tc "self outside a class is unbound" (fun () ->
+        let diagnostic = program_err "print(self)" in
+        Alcotest.(check string) "code" "E3002" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -559,4 +628,5 @@ let () =
       ("tail_call", tail_call_tests);
       ("control_flow", control_flow_tests);
       ("acceptance", acceptance_tests);
+      ("class", class_tests);
     ]
