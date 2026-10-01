@@ -616,6 +616,92 @@ print(e == e)|}));
         Alcotest.(check string) "code" "E3002" (code_of diagnostic));
   ]
 
+let method_tests =
+  [
+    tc "methods dispatch with self bound to the receiver" (fun () ->
+        Alcotest.(check string)
+          "README User" "Ada (36)\ntrue\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+
+  def full_name() String {
+    return self.name + " (" + self.age.to_string() + ")"
+  }
+
+  def is_older?() Bool {
+    return self.age > 35
+  }
+}
+const u = User.new(name: "Ada", age: 36)
+print(u.full_name())
+print(u.is_older?())|}));
+    tc "methods bind arguments by name" (fun () ->
+        Alcotest.(check string)
+          "named args" "7\n"
+          (run_program
+             {|class Calc {
+  def init() {
+    self.base = 1
+  }
+
+  def plus(a Int, b Int) Int {
+    return self.base + a + b
+  }
+}
+print(Calc.new().plus(b: 2, a: 4))|}));
+    tc "a missing method names receiver and method" (fun () ->
+        let diagnostic =
+          program_err
+            "class English {\n\
+            \  def init() {\n\
+            \    self.x = 1\n\
+            \  }\n\
+             }\n\
+             print(English.new().greet())"
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "NoMethodError: `English` has no method `greet`"
+          diagnostic.Diagnostic.message);
+    tc "self methods can call each other" (fun () ->
+        Alcotest.(check string)
+          "delegation" "20\n"
+          (run_program
+             {|class N {
+  def init(n Int) {
+    self.n = n
+  }
+
+  def double() Int {
+    return self.n + self.n
+  }
+
+  def quadruple() Int {
+    return self.double() + self.double()
+  }
+}
+print(N.new(5).quadruple())|}));
+    tc "method tail recursion keeps the stack flat" (fun () ->
+        Alcotest.(check string)
+          "flat recursion" "0\n"
+          (run_program
+             {|class Walker {
+  def init() {}
+
+  def walk(n Int) Int {
+    if n == 0 {
+      return 0
+    }
+    return self.walk(n - 1)
+  }
+}
+print(Walker.new().walk(200000))|}));
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -629,4 +715,5 @@ let () =
       ("control_flow", control_flow_tests);
       ("acceptance", acceptance_tests);
       ("class", class_tests);
+      ("method", method_tests);
     ]
