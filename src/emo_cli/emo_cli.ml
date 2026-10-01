@@ -10,8 +10,8 @@ let not_implemented () =
   print_endline "not implemented yet";
   1
 
-let render_diagnostic diagnostic =
-  prerr_endline (Emo_support.Render.render diagnostic)
+let render_diagnostic source diagnostic =
+  prerr_endline (Emo_support.Render.render ~source diagnostic)
 
 (* Runs one file through the lex → parse → evaluate pipeline and prints every
    stage's diagnostics. Exit codes: 0 success, 1 uncaught exception,
@@ -31,13 +31,14 @@ let run_file ~(file : string) : int =
       prerr_endline message;
       66
   | source -> (
+      let render = render_diagnostic source in
       match Emo_parser.parse_program_with_diagnostics ~file ~source with
       | exception Emo_lexer.Error diagnostic ->
-          render_diagnostic diagnostic;
+          render diagnostic;
           65
       | _, first :: rest ->
-          render_diagnostic first;
-          List.iter render_diagnostic rest;
+          render first;
+          List.iter render rest;
           65
       | items, [] -> (
           match Emo_eval.run_items items with
@@ -45,10 +46,10 @@ let run_file ~(file : string) : int =
           | exception Emo_eval.Error diagnostic -> (
               match diagnostic.Emo_support.Diagnostic.code with
               | Some "E3010" ->
-                  render_diagnostic diagnostic;
+                  render diagnostic;
                   1
               | _ ->
-                  render_diagnostic diagnostic;
+                  render diagnostic;
                   70)))
 
 let run =
@@ -84,12 +85,12 @@ let repl_loop ~(prompt : bool) ~(input : unit -> string option)
   Hashtbl.reset Emo_eval.interface_registry;
   let env = Emo_eval.global_env () in
   let evaluate source =
+    let render d = output (Emo_support.Render.render ~source d ^ "\n") in
     match Emo_parser.parse_program_with_diagnostics ~file:"<repl>" ~source with
-    | exception Emo_lexer.Error diagnostic ->
-        output (Emo_support.Render.render diagnostic ^ "\n")
+    | exception Emo_lexer.Error diagnostic -> render diagnostic
     | _, first :: rest ->
-        output (Emo_support.Render.render first ^ "\n");
-        List.iter (fun d -> output (Emo_support.Render.render d ^ "\n")) rest
+        render first;
+        List.iter render rest
     | items, [] -> (
         try
           List.iter
@@ -101,8 +102,7 @@ let repl_loop ~(prompt : bool) ~(input : unit -> string option)
                     ("= " ^ Emo_eval.to_string (Emo_eval.eval_expr env e) ^ "\n")
               | _ -> Emo_eval.eval_item env item)
             items
-        with Emo_eval.Error diagnostic ->
-          output (Emo_support.Render.render diagnostic ^ "\n"))
+        with Emo_eval.Error diagnostic -> render diagnostic)
   in
   let rec loop pending =
     if prompt then output (if pending = "" then "emo> " else "... ");

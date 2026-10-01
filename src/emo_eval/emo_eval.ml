@@ -816,7 +816,7 @@ and eval_expr env e =
   | Ast.Tuple es -> Tuple (List.map (eval_expr env) es)
   | Ast.Array_literal es -> Array (Array.of_list (List.map (eval_expr env) es))
   | Ast.Arrow_block (params, body) ->
-      ArrowBlock { def_name = "`<arrow block>`"; params; body; env }
+      ArrowBlock { def_name = "<arrow block>"; params; body; env }
   | Ast.Unary (op, x) -> eval_unary env span op x
   | Ast.Binary (op, l, r) -> eval_binary env span op l r
   | Ast.Call (callee, args) -> eval_call env span callee args
@@ -828,7 +828,7 @@ and eval_expr env e =
    and forward references among defs both work. *)
 let method_closure class_name env d =
   {
-    def_name = Printf.sprintf "`%s.%s`" class_name d.Ast.def_name;
+    def_name = Printf.sprintf "%s.%s" class_name d.Ast.def_name;
     params = d.Ast.def_params;
     body = d.Ast.def_body;
     env;
@@ -841,7 +841,7 @@ let eval_item env item =
       define env d.Ast.def_name ~mutable_:false
         (ArrowBlock
            {
-             def_name = Printf.sprintf "`%s`" d.Ast.def_name;
+             def_name = d.Ast.def_name;
              params = d.Ast.def_params;
              body = d.Ast.def_body;
              env;
