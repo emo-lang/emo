@@ -369,4 +369,4 @@ let run_entry ~entry_file ?(check = false) () : project =
     List.iter (Emo_eval.eval_item env) items;
     p
   with Emo_eval.Emo_raise (v, span, _trace) ->
-    error span "E3010" (Printf.sprintf "uncaught exception: %s" (to_string v))
+    raise (Static_errors [ Emo_eval.uncaught_diagnostic (v, span, _trace) ])
