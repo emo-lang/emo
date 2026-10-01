@@ -793,6 +793,13 @@ and check_stmt ctx env (s : Ast.stmt) : env =
   | Ast.Assign { target; value } -> (
       let vt = check_expr ctx env value in
       match target.Ast.desc with
+      | Ast.Ident name when String.contains name '/' ->
+          report ctx target.Ast.span "E4015"
+            (Printf.sprintf
+               "`%s` is a scoped package name — assign it only in a manifest's \
+                `deps` block"
+               name);
+          env
       | Ast.Ident name -> (
           match lookup_env env name with
           | Some info when info.is_var ->

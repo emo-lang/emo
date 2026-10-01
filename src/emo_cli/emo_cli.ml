@@ -93,17 +93,14 @@ let check_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
       66
   | true -> (
       try
-        let p = Emo_project.discover ~entry_file:file in
-        let all = Emo_project.diagnostics p in
-        let manifest = None in
-        let _, _, errors = Emo_project.check_project ~manifest p in
-        render_errors ~color ~error_limit (all @ errors);
-        if List.length (all @ errors) > 0 then 65 else 0
+        let errors = Emo_project.check_entry ~entry_file:file in
+        render_errors ~color ~error_limit errors;
+        if errors = [] then 0 else 65
       with
-      | Emo_lexer.Error diagnostic ->
-          render_errors ~color ~error_limit [ diagnostic ];
+      | Emo_project.Static_errors diagnostics ->
+          render_errors ~color ~error_limit diagnostics;
           65
-      | Emo_eval.Error diagnostic ->
+      | Emo_lexer.Error diagnostic ->
           render_errors ~color ~error_limit [ diagnostic ];
           65)
 
@@ -218,6 +215,82 @@ let check =
     (Cmd.info "check" ~doc:"Check an Emo file without running it.")
     Term.(const check $ file $ no_color $ error_limit)
 
+(* `emo deps`: resolution and regeneration are explicit commands — the
+   lockfile is written only here. *)
+let deps_resolve ~(name : string option) : int =
+  let dir = Sys.getcwd () in
+  let color = Unix.isatty Unix.stderr in
+  try
+    let manifest =
+      match Emo_project.manifest_here () with
+      | Some path -> (
+          match
+            Emo_pkg.parse_manifest ~file:path
+              ~source:(Emo_project.read_file path)
+          with
+          | m -> m
+          | exception Emo_pkg.Manifest_error d ->
+              render_errors ~color ~error_limit:20 [ d ];
+              exit 65)
+      | None ->
+          prerr_endline "no package.emo in the current directory";
+          exit 66
+    in
+    (match name with
+    | Some n ->
+        if not (List.mem_assoc n manifest.Emo_pkg.deps) then (
+          prerr_endline (Printf.sprintf "`%s` is not in the manifest's deps" n);
+          exit 65)
+    | None -> ());
+    let entries = Emo_project.resolve_deps ~manifest ~manifest_dir:dir in
+    Emo_pkg.Lockfile.write ~path:(Filename.concat dir "emo.lock") entries;
+    List.iter
+      (fun e ->
+        Printf.printf "%s %s %s\n" e.Emo_pkg.Lockfile.dep
+          (Emo_pkg.Version.to_string e.Emo_pkg.Lockfile.version)
+          e.Emo_pkg.Lockfile.checksum)
+      entries;
+    Cmd.Exit.ok
+  with Emo_project.Static_errors diagnostics ->
+    render_errors ~color ~error_limit:20 diagnostics;
+    65
+
+let deps_list () : int =
+  let lock = Filename.concat (Sys.getcwd ()) "emo.lock" in
+  match Emo_pkg.Lockfile.read lock with
+  | Ok entries ->
+      List.iter
+        (fun e ->
+          Printf.printf "%s %s %s\n" e.Emo_pkg.Lockfile.dep
+            (Emo_pkg.Version.to_string e.Emo_pkg.Lockfile.version)
+            e.Emo_pkg.Lockfile.checksum)
+        entries;
+      Cmd.Exit.ok
+  | Error message ->
+      prerr_endline message;
+      66
+
+let deps_resolve_cmd =
+  Cmd.v
+    (Cmd.info "resolve" ~doc:"Resolve the manifest and write emo.lock.")
+    Term.(const (fun () -> deps_resolve ~name:None) $ const ())
+
+let deps_update_cmd =
+  let name = Arg.(required & pos 0 (some string) None & info [] ~docv:"NAME") in
+  Cmd.v
+    (Cmd.info "update" ~doc:"Regenerate emo.lock after changing a pin.")
+    Term.(const (fun n -> deps_resolve ~name:(Some n)) $ name)
+
+let deps_list_cmd =
+  Cmd.v
+    (Cmd.info "list" ~doc:"List the locked dependencies.")
+    Term.(const deps_list $ const ())
+
+let deps =
+  Cmd.group
+    (Cmd.info "deps" ~doc:"Manage dependencies.")
+    [ deps_resolve_cmd; deps_update_cmd; deps_list_cmd ]
+
 let version_cmd =
   Cmd.v
     (Cmd.info "version" ~doc:"Print the version.")
@@ -226,6 +299,6 @@ let version_cmd =
 let cmd =
   Cmd.group
     (Cmd.info "emo" ~version ~doc:"The Emo programming language toolchain.")
-    [ run; repl; check; version_cmd ]
+    [ run; repl; check; deps; version_cmd ]
 
 let main () = exit (Cmd.eval' cmd)

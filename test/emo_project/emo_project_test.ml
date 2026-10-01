@@ -2,26 +2,9 @@ open Emo_support
 
 let tc name f = Alcotest.test_case name `Quick f
 
-let scratch =
-  Filename.concat (Filename.get_temp_dir_name ()) "emo-project-fixtures"
-
 (* The process-start working directory (the dune sandbox rule dir); tests
    that chdir elsewhere must not break later relative paths. *)
 let original_cwd = Sys.getcwd ()
-
-let codes_dump diagnostics =
-  String.concat ","
-    (List.map
-       (fun d ->
-         match d.Diagnostic.code with
-         | Some c -> c ^ "@" ^ Span.to_string d.Diagnostic.span
-         | None -> "?")
-       diagnostics)
-
-let codes_of diagnostics =
-  List.map
-    (fun d -> match d.Diagnostic.code with Some c -> c | None -> "?")
-    diagnostics
 
 let codes_dump diagnostics =
   String.concat ","
@@ -48,13 +31,21 @@ let contains_substring hay needle =
   in
   go 0
 
-(* Writes files into a scratch project. *)
+(* Every project gets a fresh scratch directory: no deletion anywhere, and
+   no stale files leaking between tests. *)
+let scratch_counter = ref 0
+
+let fresh_scratch () =
+  incr scratch_counter;
+  Filename.concat
+    (Filename.get_temp_dir_name ())
+    (Printf.sprintf "emo-project-%d-%d"
+       (int_of_float (Sys.time () *. 1000.))
+       !scratch_counter)
+
+(* Writes files into a fresh scratch project and returns its directory. *)
 let write_project files =
-  if Sys.file_exists scratch then
-    (* best-effort clean slate per run *)
-    ignore
-      (Sys.command
-         ("rm -rf " ^ Filename.quote scratch ^ " 2>/dev/null || true"));
+  let scratch = fresh_scratch () in
   List.iter
     (fun (rel, source) ->
       let path = Filename.concat scratch rel in
@@ -64,17 +55,18 @@ let write_project files =
       let oc = open_out_bin path in
       output_string oc source;
       close_out oc)
-    files
+    files;
+  scratch
 
-(* Writes files into a scratch project and discovers it with the scratch
-   directory as the working-directory root. *)
+(* Writes files into a fresh scratch project and discovers it with the
+   scratch directory as the working-directory root. *)
 let discover files entry =
-  write_project files;
+  let scratch = write_project files in
   Sys.chdir scratch;
   Emo_project.discover ~entry_file:entry
 
 let with_project files entry =
-  write_project files;
+  let scratch = write_project files in
   Sys.chdir scratch;
   Filename.concat scratch entry
 
@@ -391,6 +383,221 @@ let shop_golden_tests =
         Alcotest.(check string) "output" "42\n30\n" (Buffer.contents out));
   ]
 
+(* The dependency fixture: a directory registry holding one published
+   package, and a local project that requires it — the README scenario end
+   to end. *)
+let write_file path content =
+  let dir = Filename.dirname path in
+  if not (Sys.file_exists dir) then
+    ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+  let oc = open_out_bin path in
+  output_string oc content;
+  close_out oc
+
+let registry_dir =
+  let dir =
+    Filename.concat
+      (Filename.get_temp_dir_name ())
+      (Printf.sprintf "emo-registry-%d" (int_of_float (Sys.time () *. 1000.)))
+  in
+  let pkg_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "json_tools" "2.3.1"))
+  in
+  write_file
+    (Filename.concat pkg_dir "package.emo")
+    {|package {
+  name = "acme/json_tools"
+  version = "2.3.1"
+  targets = ["native"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat pkg_dir "json_tools.emo")
+    {|def parse(s String) String {
+  return s
+}
+|};
+  dir
+
+let app_manifest =
+  {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["native"]
+
+  deps {
+    acme/json_tools = "2.3.1"
+  }
+}
+|}
+
+let app_main = {|require "acme/json_tools"
+print(json_tools.parse("hello"))
+|}
+
+let with_registry f =
+  let old = Sys.getenv_opt "EMO_REGISTRY" in
+  let old_cache = Sys.getenv_opt "EMO_CACHE_DIR" in
+  Unix.putenv "EMO_REGISTRY" registry_dir;
+  Unix.putenv "EMO_CACHE_DIR" (Filename.concat registry_dir "cache");
+  Fun.protect
+    ~finally:(fun () ->
+      (match old with Some v -> Unix.putenv "EMO_REGISTRY" v | None -> ());
+      match old_cache with
+      | Some v -> Unix.putenv "EMO_CACHE_DIR" v
+      | None -> ())
+    f
+
+let parsed_app_manifest dir =
+  let path = Filename.concat dir "package.emo" in
+  match
+    Emo_pkg.parse_manifest ~file:path ~source:(Emo_project.read_file path)
+  with
+  | m -> m
+  | exception Emo_pkg.Manifest_error d -> Alcotest.fail d.Diagnostic.message
+
+let deps_tests =
+  [
+    tc "the README require scenario runs against a fixture registry" (fun () ->
+        let entry =
+          with_project
+            [ ("package.emo", app_manifest); ("main.emo", app_main) ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        with_registry (fun () ->
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            Alcotest.(check string) "output" "hello\n" output;
+            (* A run resolves in memory when no lockfile exists; writing the
+               lockfile is `emo deps resolve`'s explicit job. *)
+            Alcotest.(check bool)
+              "no lockfile written by a run" false
+              (Sys.file_exists (Filename.concat dir "emo.lock"))));
+    tc "the lockfile pins the resolution and a run verifies it" (fun () ->
+        let entry =
+          with_project
+            [ ("package.emo", app_manifest); ("main.emo", app_main) ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            let entries =
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir
+            in
+            Alcotest.(check int) "count" 1 (List.length entries);
+            (match entries with
+            | [ e ] ->
+                Alcotest.(check string)
+                  "dep" "acme/json_tools" e.Emo_pkg.Lockfile.dep;
+                Alcotest.(check string)
+                  "version" "2.3.1"
+                  (Emo_pkg.Version.to_string e.Emo_pkg.Lockfile.version);
+                Alcotest.(check bool)
+                  "checksum present" true
+                  (String.length e.Emo_pkg.Lockfile.checksum > 0)
+            | _ -> ());
+            Emo_pkg.Lockfile.write
+              ~path:(Filename.concat dir "emo.lock")
+              entries;
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            Alcotest.(check string) "output" "hello\n" output;
+            (* A lockfile drifting from the manifest is an error prompting
+               explicit regeneration — never a silent re-resolve. *)
+            Emo_pkg.Lockfile.write
+              ~path:(Filename.concat dir "emo.lock")
+              [
+                {
+                  Emo_pkg.Lockfile.dep = "acme/json_tools";
+                  version =
+                    (match Emo_pkg.Version.parse "9.9.9" with
+                    | Ok v -> v
+                    | Error _ -> assert false);
+                  checksum = "x";
+                };
+              ];
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected a lockfile mismatch error"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "prompts regeneration" true
+                      (contains_substring d.Diagnostic.message "regenerate")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+    tc "removing a dep while its require remains is a compile error" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["native"]
+  deps {}
+}
+|}
+              );
+              ("main.emo", app_main);
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected E5006"
+            | exception Emo_project.Static_errors ds ->
+                if not (has_code ds "E5006") then
+                  Alcotest.fail ("codes: " ^ codes_dump ds)));
+    tc "a pin the registry cannot satisfy fails before compiling" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["native"]
+
+  deps {
+    acme/json_tools = "9.8.7"
+  }
+}
+|}
+              );
+              ("main.emo", {|print("plain")|});
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected a resolution error"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "names the dep and the cause" true
+                      (contains_substring d.Diagnostic.message
+                         "acme/json_tools: no such version")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -399,5 +606,6 @@ let () =
       ("privacy", privacy_tests);
       ("cycle", cycle_tests);
       ("cache", cache_tests);
+      ("deps", deps_tests);
       ("shop_golden", shop_golden_tests);
     ]
