@@ -2,13 +2,47 @@ open Emo_support
 
 let tc name f = Alcotest.test_case name `Quick f
 
+let scratch =
+  Filename.concat (Filename.get_temp_dir_name ()) "emo-project-fixtures"
+
+let codes_dump diagnostics =
+  String.concat ","
+    (List.map
+       (fun d ->
+         match d.Diagnostic.code with
+         | Some c -> c ^ "@" ^ Span.to_string d.Diagnostic.span
+         | None -> "?")
+       diagnostics)
+
 let codes_of diagnostics =
   List.map
     (fun d -> match d.Diagnostic.code with Some c -> c | None -> "?")
     diagnostics
 
-let scratch =
-  Filename.concat (Filename.get_temp_dir_name ()) "emo-project-fixtures"
+let codes_dump diagnostics =
+  String.concat ","
+    (List.map
+       (fun d ->
+         match d.Diagnostic.code with
+         | Some c -> c ^ "@" ^ Span.to_string d.Diagnostic.span
+         | None -> "?")
+       diagnostics)
+
+let codes_of diagnostics =
+  List.map
+    (fun d -> match d.Diagnostic.code with Some c -> c | None -> "?")
+    diagnostics
+
+let has_code diagnostics code = List.mem code (codes_of diagnostics)
+
+let contains_substring hay needle =
+  let n = String.length needle in
+  let rec go i =
+    if i + n > String.length hay then false
+    else if String.equal (String.sub hay i n) needle then true
+    else go (i + 1)
+  in
+  go 0
 
 (* Writes files into a scratch project. *)
 let write_project files =
@@ -28,87 +62,17 @@ let write_project files =
       close_out oc)
     files
 
-(* Writes files into a scratch project and discovers it from entry. *)
+(* Writes files into a scratch project and discovers it with the scratch
+   directory as the working-directory root. *)
 let discover files entry =
   write_project files;
-  Emo_project.discover ~entry_file:(Filename.concat scratch entry)
+  Sys.chdir scratch;
+  Emo_project.discover ~entry_file:entry
 
 let with_project files entry =
   write_project files;
+  Sys.chdir scratch;
   Filename.concat scratch entry
-
-let resolution_tests =
-  [
-    tc "the shop tree resolves every module" (fun () ->
-        let p =
-          discover
-            [
-              ("shop/order.emo", "");
-              ("shop/pricing.emo", "");
-              ("shop/internal/discounts.emo", "");
-              ("shop/checkout.emo", "");
-            ]
-            "shop/checkout.emo"
-        in
-        let resolve path =
-          Emo_project.resolve p (Emo_project.normalize p path)
-        in
-        Alcotest.(check bool)
-          "order" true
-          (match resolve [ "shop"; "order" ] with
-          | Some (File _) -> true
-          | _ -> false);
-        Alcotest.(check bool)
-          "pricing" true
-          (match resolve [ "shop"; "pricing" ] with
-          | Some (File _) -> true
-          | _ -> false);
-        Alcotest.(check bool)
-          "discounts" true
-          (match resolve [ "shop"; "internal"; "discounts" ] with
-          | Some (File _) -> true
-          | _ -> false);
-        Alcotest.(check bool)
-          "shop is a directory module" true
-          (match resolve [ "shop" ] with Some (Dir _) -> true | _ -> false);
-        Alcotest.(check bool)
-          "internal is a directory module" true
-          (match resolve [ "shop"; "internal" ] with
-          | Some (Dir _) -> true
-          | _ -> false));
-    tc "a missing module resolves to nothing" (fun () ->
-        let p = discover [ ("shop/order.emo", "") ] "shop/order.emo" in
-        Alcotest.(check bool)
-          "nope" false
-          (match
-             Emo_project.resolve p (Emo_project.normalize p [ "shop"; "nope" ])
-           with
-          | Some _ -> true
-          | None -> false));
-    tc "a file and directory with one stem collide" (fun () ->
-        let p =
-          discover
-            [ ("shop/order.emo", ""); ("shop/order/util.emo", "") ]
-            "shop/order.emo"
-        in
-        Alcotest.(check bool)
-          "E5005" true
-          (List.mem "E5005" (codes_of (Emo_project.diagnostics p))));
-    tc "the root-name prefix is elided" (fun () ->
-        let p = discover [ ("shop/order.emo", "") ] "shop/order.emo" in
-        Alcotest.(check bool)
-          "elided resolves" true
-          (match
-             Emo_project.resolve p (Emo_project.normalize p [ "shop"; "order" ])
-           with
-          | Some (File f) -> String.contains f 'o'
-          | _ -> false);
-        (* normalize only strips the leading project name *)
-        let path =
-          Emo_project.normalize p [ "shop"; "internal"; "discounts" ]
-        in
-        Alcotest.(check int) "stripped to two segments" 2 (List.length path));
-  ]
 
 let out = Buffer.create 256
 
@@ -137,17 +101,74 @@ let run_entry source =
               let text = Emo_support.Render.render ~source:source_text d in
               Buffer.add_string out (text ^ "\n"))
             ds
-      | Failure message -> Buffer.add_string out ("failure: " ^ message)
       | e -> Buffer.add_string out ("EXC: " ^ Printexc.to_string e))
 
-let contains_substring hay needle =
-  let n = String.length needle in
-  let rec go i =
-    if i + n > String.length hay then false
-    else if String.equal (String.sub hay i n) needle then true
-    else go (i + 1)
-  in
-  go 0
+let resolution_tests =
+  [
+    tc "the shop tree resolves every module" (fun () ->
+        let p =
+          discover
+            [
+              ("shop/order.emo", "");
+              ("shop/pricing.emo", "");
+              ("shop/internal/discounts.emo", "");
+              ("shop/checkout.emo", "");
+            ]
+            "shop/checkout.emo"
+        in
+        let resolve path = Emo_project.resolve p path in
+        Alcotest.(check bool)
+          "order" true
+          (match resolve [ "shop"; "order" ] with
+          | Some (File _) -> true
+          | _ -> false);
+        Alcotest.(check bool)
+          "pricing" true
+          (match resolve [ "shop"; "pricing" ] with
+          | Some (File _) -> true
+          | _ -> false);
+        Alcotest.(check bool)
+          "discounts" true
+          (match resolve [ "shop"; "internal"; "discounts" ] with
+          | Some (File _) -> true
+          | _ -> false);
+        Alcotest.(check bool)
+          "shop is a directory module" true
+          (match resolve [ "shop" ] with Some (Dir _) -> true | _ -> false);
+        Alcotest.(check bool)
+          "internal is a directory module" true
+          (match resolve [ "shop"; "internal" ] with
+          | Some (Dir _) -> true
+          | _ -> false));
+    tc "a missing module resolves to nothing" (fun () ->
+        let p = discover [ ("shop/order.emo", "") ] "shop/order.emo" in
+        Alcotest.(check bool)
+          "nope" false
+          (match Emo_project.resolve p [ "shop"; "nope" ] with
+          | Some _ -> true
+          | None -> false));
+    tc "a file and directory with one stem collide" (fun () ->
+        let p =
+          discover
+            [ ("shop/order.emo", ""); ("shop/order/util.emo", "") ]
+            "shop/order.emo"
+        in
+        Alcotest.(check bool)
+          "E5005" true
+          (List.mem "E5005" (codes_of (Emo_project.diagnostics p))));
+    tc "module paths resolve from the working directory" (fun () ->
+        let p = discover [ ("shop/order.emo", "") ] "shop/order.emo" in
+        Alcotest.(check bool)
+          "elided resolves" true
+          (match Emo_project.resolve p [ "shop"; "order" ] with
+          | Some (File f) -> String.contains f 'o'
+          | _ -> false);
+        Alcotest.(check bool)
+          "the root itself is the empty-path module" true
+          (match Emo_project.resolve p [] with
+          | Some (Dir _) -> true
+          | _ -> false));
+  ]
 
 let load_tests =
   [
@@ -220,10 +241,49 @@ print(shop.order.total(2))|} );
         Alcotest.(check bool) "E3002" true (contains_substring output "E3002"));
   ]
 
-let () =
-  Alcotest.run "emo_project"
-    [ ("resolution", resolution_tests); ("load", load_tests) ]
+let privacy_tests =
+  [
+    tc "internal is reachable from its own subtree" (fun () ->
+        let p =
+          discover
+            [
+              ("shop/pricing.emo", {|const rate = shop.internal.discounts.rate|});
+              ("shop/internal/discounts.emo", {|const rate = 1|});
+            ]
+            "shop/pricing.emo"
+        in
+        let _, _, errors = Emo_project.check_project p in
+        if List.length errors > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump errors);
+        Alcotest.(check int) "count" 0 (List.length errors));
+    tc "internal is rejected outside its subtree, naming both modules"
+      (fun () ->
+        let p =
+          discover
+            [
+              ("shop/internal/discounts.emo", {|const rate = 1|});
+              ("other/thing.emo", {|const rate = shop.internal.discounts.rate|});
+            ]
+            "other/thing.emo"
+        in
+        let _, _, errors = Emo_project.check_project p in
+        if not (has_code errors "E5001") then
+          Alcotest.fail ("codes: " ^ codes_dump errors);
+        let message =
+          match errors with d :: _ -> d.Diagnostic.message | [] -> ""
+        in
+        Alcotest.(check bool)
+          "names the use site" true
+          (contains_substring message "other.thing");
+        Alcotest.(check bool)
+          "names the internal module" true
+          (contains_substring message "shop.internal.discounts"));
+  ]
 
 let () =
   Alcotest.run "emo_project"
-    [ ("resolution", resolution_tests); ("load", load_tests) ]
+    [
+      ("resolution", resolution_tests);
+      ("load", load_tests);
+      ("privacy", privacy_tests);
+    ]
