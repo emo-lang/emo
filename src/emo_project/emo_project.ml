@@ -365,6 +365,8 @@ let run_entry ~entry_file ?(check = false) () : project =
      in
      match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
-  try List.iter (Emo_eval.eval_item env) items
+  try
+    List.iter (Emo_eval.eval_item env) items;
+    p
   with Emo_eval.Emo_raise (v, span, _trace) ->
     error span "E3010" (Printf.sprintf "uncaught exception: %s" (to_string v))
