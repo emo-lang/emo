@@ -68,7 +68,11 @@ let describe_kind (k : Tok.kind) =
   | Op o -> "`" ^ op_spelling o ^ "`"
   | Eof -> "end of input"
 
-type parser = { stream : Emo_lexer.Stream.t; file : string }
+type parser = {
+  stream : Emo_lexer.Stream.t;
+  file : string;
+  mutable in_init : bool; (* inside an init body, where self.x = ... is legal *)
+}
 
 let peek st = Emo_lexer.Stream.peek st.stream
 let advance st = Emo_lexer.Stream.advance st.stream
@@ -448,11 +452,30 @@ and parse_stmt st =
             let message = parse_expr st in
             end_statement st;
             Ast.Send { target = e; message }
+        | Tok.Op Tok.Assign when not (newline_before st) ->
+            advance st |> ignore;
+            check_assign_target st e;
+            let value = parse_expr st in
+            end_statement st;
+            Ast.Assign { target = e; value }
         | _ ->
             end_statement st;
             Ast.Expr_stmt e
       in
       stmt start_span stmt_desc
+
+(* `x = v` rebinds a variable; `self.x = v` is a field assignment, legal
+   only inside init. *)
+and check_assign_target st target =
+  match target.Ast.desc with
+  | Ast.Ident _ -> ()
+  | Ast.Member ({ Ast.desc = Ast.Self; _ }, _) ->
+      if not st.in_init then
+        error "E2016" target.Ast.span "fields are assigned only inside `init`"
+          ~hint:"`init` is the only window where `self.x = ...` may appear"
+  | _ ->
+      error "E2015" target.Ast.span "invalid assignment target"
+        ~hint:"assign to a variable or to a `self` field"
 
 and end_statement st =
   match kind st with
@@ -468,6 +491,9 @@ and parse_item st =
   | Tok.Keyword Tok.Def ->
       let d = parse_def st ~in_class:false in
       { Ast.item_span = d.Ast.def_span; item_desc = Ast.Item_def d }
+  | Tok.Keyword Tok.Class ->
+      let c = parse_class st in
+      { Ast.item_span = c.Ast.class_span; item_desc = Ast.Item_class c }
   | _ -> { Ast.item_span; item_desc = Ast.Item_stmt (parse_stmt st) }
 
 (* `true` when the current token can begin a type annotation. *)
@@ -475,6 +501,17 @@ and starts_type st =
   match kind st with
   | Tok.Upper_ident _ | Tok.Op Tok.LParen -> true
   | _ -> false
+
+(* Type positions take UpperCamel names only. *)
+and parse_type_name st what =
+  match kind st with
+  | Tok.Upper_ident name ->
+      let tok = advance st in
+      (name, tok.Tok.span)
+  | t ->
+      error "E2017" (span st)
+        (Printf.sprintf "expected a %s name, found %s" what (describe_kind t))
+        ~hint:"type names start with an uppercase letter"
 
 and parse_def st ~in_class =
   let def_tok = peek st in
@@ -496,7 +533,10 @@ and parse_def st ~in_class =
     if (not (newline_before st)) && starts_type st then
       error "E2011" (span st) "`init` takes no return annotation"
         ~hint:"`init` returns the class it constructs";
+    let saved_in_init = st.in_init in
+    st.in_init <- true;
     let def_body, close_span = parse_def_body st in
+    st.in_init <- saved_in_init;
     {
       Ast.def_span = merge_span def_tok.Tok.span close_span;
       def_name = name;
@@ -527,6 +567,88 @@ and parse_def_body st =
   else
     error "E2001" (span st)
       "the def's body must open with `{` on the signature's line"
+
+and parse_class st =
+  let class_tok = peek st in
+  advance st |> ignore;
+  let class_name, name_span = parse_type_name st "class" in
+  if at_op st Tok.LBrace && newline_before st then
+    error "E2001" (span st) "the class body must open on the class's line";
+  expect_op st Tok.LBrace "`{`" |> ignore;
+  let inits = ref [] in
+  let methods = ref [] in
+  let rec members first =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else (
+      if (not first) && not (newline_before st) then
+        error "E2001" (span st) "class members are separated by newlines";
+      match kind st with
+      | Tok.Keyword Tok.Def ->
+          let d = parse_def st ~in_class:true in
+          if d.Ast.def_name = "init" then inits := d :: !inits
+          else methods := d :: !methods;
+          members false
+      | t ->
+          error "E2001" (span st)
+            (Printf.sprintf "expected a `def` in the class body, found %s"
+               (describe_kind t)))
+  in
+  members true;
+  if at_eof st then error "E2001" (span st) "expected `}`, found end of input";
+  let close_span = span st in
+  expect_op st Tok.RBrace "`}`" |> ignore;
+  let class_init, class_methods =
+    match List.rev !inits with
+    | [ init ] -> (init, List.rev !methods)
+    | [] ->
+        error "E2013" name_span
+          (Printf.sprintf "class `%s` must declare an `init`" class_name)
+    | _ :: duplicate :: _ ->
+        error "E2014" duplicate.Ast.def_span
+          "a class can only declare one `init`"
+          ~hint:"fields come into existence in `init`; merge the constructors"
+  in
+  let class_span = merge_span class_tok.Tok.span close_span in
+  {
+    Ast.class_span;
+    class_name;
+    class_init;
+    class_methods;
+    class_fields = collect_fields class_init.Ast.def_body;
+  }
+
+(* The field set is whatever init assigns via self.x = ..., in first-assignment
+   order. Fields are not declared anywhere else. *)
+and collect_fields stmts =
+  let seen = Hashtbl.create 8 in
+  let fields = ref [] in
+  let rec walk stmts =
+    List.iter
+      (fun s ->
+        match s.Ast.stmt_desc with
+        | Ast.Assign
+            {
+              target =
+                {
+                  Ast.desc = Ast.Member ({ Ast.desc = Ast.Self; _ }, name);
+                  span;
+                  _;
+                };
+              _;
+            } ->
+            if not (Hashtbl.mem seen name) then (
+              Hashtbl.add seen name ();
+              fields := { Ast.field_name = name; field_span = span } :: !fields)
+        | Ast.If { then_body; else_body; _ } ->
+            walk then_body;
+            Option.iter walk else_body
+        | Ast.Case { branches; _ } ->
+            List.iter (fun b -> walk b.Ast.body) branches
+        | _ -> ())
+      stmts
+  in
+  walk stmts;
+  List.rev !fields
 
 and parse_params st =
   if at_op st Tok.LParen then (
@@ -770,7 +892,7 @@ and parse_branches st =
 (* Parses a source that holds exactly one expression. *)
 let parse_expr_source ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
-  let st = { stream; file } in
+  let st = { stream; file; in_init = false } in
   let e = parse_expr st in
   if not (at_eof st) then
     error "E2001" (span st)
@@ -780,7 +902,7 @@ let parse_expr_source ~file ~source =
 (* Parses a file: a sequence of top-level items ended by newlines. *)
 let parse_program ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
-  let st = { stream; file } in
+  let st = { stream; file; in_init = false } in
   let items = ref [] in
   let rec loop () =
     if at_eof st then ()

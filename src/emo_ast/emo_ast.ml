@@ -59,6 +59,10 @@ and stmt_desc =
       name : string;
       init : expr;
     }
+  | Assign of {
+      target : expr; (* a variable, or a self field inside init *)
+      value : expr;
+    }
   | Return of expr option
   | If of { cond : expr; then_body : stmt list; else_body : stmt list option }
   | Case of { scrutinee : expr; branches : branch list }
