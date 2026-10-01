@@ -340,8 +340,10 @@ print(tick())|}));
     tc "an unbound name fails at call time" (fun () ->
         let diagnostic = program_err "print(nope)" in
         Alcotest.(check string) "code" "E3002" (code_of diagnostic));
-    tc "declaration items are still not evaluated" (fun () ->
-        let diagnostic = program_err "class User {}" in
+    tc "receive is still not evaluated" (fun () ->
+        let diagnostic =
+          program_err "receive {\n  (from, msg) -> { return msg }\n}"
+        in
         Alcotest.(check string) "code" "E3009" (code_of diagnostic));
   ]
 
@@ -489,6 +491,27 @@ print(check(1))|}));
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
           "message" "uncaught exception: 7" diagnostic.Diagnostic.message);
+    tc "the builtin Exception constructs with a message" (fun () ->
+        Alcotest.(check string)
+          "field" "boom\n"
+          (run_program
+             {|const e = Exception.new(message: "boom")
+print(e.message)|}));
+    tc "Exception.new is strict about its argument" (fun () ->
+        let diagnostic = program_err "Exception.new()" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        let diagnostic =
+          program_err "Exception.new(message: \"a\", other: 1)"
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+    tc "raising the exception instance terminates uncaught" (fun () ->
+        let diagnostic = program_err {|raise Exception.new(message: "boom")|} in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "uncaught exception: boom" diagnostic.Diagnostic.message;
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
   ]
 
 let acceptance_tests =
@@ -547,6 +570,358 @@ print(box.read().to_string())|}));
             Alcotest.(check string) "code" "E2002" (code_of d));
   ]
 
+let class_tests =
+  [
+    tc "User.new runs init and fields freeze" (fun () ->
+        Alcotest.(check string)
+          "fields via interpolation" "Ada 36\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+}
+const u = User.new(name: "Ada", age: 36)
+print("${u.name} ${u.age}")|}));
+    tc "constructors take positional arguments too" (fun () ->
+        Alcotest.(check string)
+          "positional" "Ada\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+}
+print(User.new("Ada", 36).name)|}));
+    tc "a stateless class constructs without arguments" (fun () ->
+        Alcotest.(check string)
+          "stateless" "true\n"
+          (run_program
+             {|class English {
+  def greet() String {
+    return "Hello"
+  }
+}
+const e = English.new()
+print(e == e)|}));
+    tc "constructor argument errors name the class" (fun () ->
+        let diagnostic =
+          program_err
+            "class U {\n\
+            \  def init(name String) {\n\
+            \    self.name = name\n\
+            \  }\n\
+             }\n\
+             U.new(age: 1)"
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        let diagnostic = program_err "class Empty {}\nEmpty.new(1)" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+    tc "reads of missing fields are errors" (fun () ->
+        let diagnostic =
+          program_err
+            "class U {\n\
+            \  def init(name String) {\n\
+            \    self.name = name\n\
+            \  }\n\
+             }\n\
+             print(U.new(\"a\").missing)"
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "`U` has no field `missing`" diagnostic.Diagnostic.message);
+    tc "self outside a class is unbound" (fun () ->
+        let diagnostic = program_err "print(self)" in
+        Alcotest.(check string) "code" "E3002" (code_of diagnostic));
+    tc "instances compare by content, not identity" (fun () ->
+        Alcotest.(check string)
+          "value semantics" "true\ntrue\nfalse\nfalse\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+}
+const u = User.new(name: "Ada", age: 36)
+print(u == User.new(name: "Ada", age: 36))
+const alias = u
+print(alias == u)
+print(u == User.new(name: "Ada", age: 37))
+print(u == User.new(name: "Grace", age: 36))|}));
+    tc "same-shaped instances of different classes are unequal" (fun () ->
+        Alcotest.(check string)
+          "class names differ" "false\n"
+          (run_program
+             {|class A {
+  def init() {
+    self.x = 1
+  }
+}
+
+class B {
+  def init() {
+    self.x = 1
+  }
+}
+print(A.new() == B.new())|}));
+    tc "shared structure stays observably immutable" (fun () ->
+        Alcotest.(check string)
+          "aliasing and boxes" "true\ntrue\nfalse\n"
+          (run_program
+             {|class Holder {
+  def init(items Array[Int], cell Box) {
+    self.items = items
+    self.cell = cell
+  }
+}
+const shared = [1, 2]
+const cell = Box.new(7)
+const h1 = Holder.new(shared, cell)
+const h2 = Holder.new([1, 2], Box.new(7))
+print(h1 == h2)
+const h3 = h1
+print(h3 == h1)
+cell.replace(8)
+print(h1 == h2)|}));
+  ]
+
+let enum_tests =
+  [
+    tc "enum members are singletons" (fun () ->
+        Alcotest.(check string)
+          "README Color" "true\ntrue\n"
+          (run_program
+             {|enum Color { red, green, blue }
+print(Color.red == Color.red)
+const painted = Color.green
+print(painted == Color.green)|}));
+    tc "unknown members are errors" (fun () ->
+        let diagnostic = program_err "enum Color { red }\nprint(Color.pink)" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "enum `Color` has no member `pink`"
+          diagnostic.Diagnostic.message);
+    tc "is() checks classes, enums, and interface shapes" (fun () ->
+        Alcotest.(check string)
+          "README duck typing" "Hello\ntrue\ntrue\ntrue\nfalse\nfalse\n"
+          (run_program
+             {|interface Greeter {
+  def greet() String
+}
+
+class English {
+  def init() {}
+
+  def greet() String {
+    return "Hello"
+  }
+}
+
+class Silent {
+  def init() {}
+}
+
+enum Color { red }
+def welcome(g Greeter) String {
+  return g.greet()
+}
+print(welcome(English.new()))
+print(English.new().is(Greeter))
+print(English.new().is(English))
+print(Color.red.is(Color))
+print(Silent.new().is(Greeter))
+print(Color.red.is(Greeter))|}));
+    tc "is() on primitives is a type error" (fun () ->
+        let diagnostic = program_err "print(1.is(Int))" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+  ]
+
+let method_tests =
+  [
+    tc "methods dispatch with self bound to the receiver" (fun () ->
+        Alcotest.(check string)
+          "README User" "Ada (36)\ntrue\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+
+  def full_name() String {
+    return self.name + " (" + self.age.to_string() + ")"
+  }
+
+  def is_older?() Bool {
+    return self.age > 35
+  }
+}
+const u = User.new(name: "Ada", age: 36)
+print(u.full_name())
+print(u.is_older?())|}));
+    tc "methods bind arguments by name" (fun () ->
+        Alcotest.(check string)
+          "named args" "7\n"
+          (run_program
+             {|class Calc {
+  def init() {
+    self.base = 1
+  }
+
+  def plus(a Int, b Int) Int {
+    return self.base + a + b
+  }
+}
+print(Calc.new().plus(b: 2, a: 4))|}));
+    tc "a missing method names receiver and method" (fun () ->
+        let diagnostic =
+          program_err
+            "class English {\n\
+            \  def init() {\n\
+            \    self.x = 1\n\
+            \  }\n\
+             }\n\
+             print(English.new().greet())"
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "NoMethodError: `English` has no method `greet`"
+          diagnostic.Diagnostic.message);
+    tc "self methods can call each other" (fun () ->
+        Alcotest.(check string)
+          "delegation" "20\n"
+          (run_program
+             {|class N {
+  def init(n Int) {
+    self.n = n
+  }
+
+  def double() Int {
+    return self.n + self.n
+  }
+
+  def quadruple() Int {
+    return self.double() + self.double()
+  }
+}
+print(N.new(5).quadruple())|}));
+    tc "method tail recursion keeps the stack flat" (fun () ->
+        Alcotest.(check string)
+          "flat recursion" "0\n"
+          (run_program
+             {|class Walker {
+  def init() {}
+
+  def walk(n Int) Int {
+    if n == 0 {
+      return 0
+    }
+    return self.walk(n - 1)
+  }
+}
+print(Walker.new().walk(200000))|}));
+  ]
+
+let to_string_tests =
+  [
+    tc "instances render with the provisional default format" (fun () ->
+        Alcotest.(check string)
+          "instance" "#User(name: \"Ada\", age: 36)\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+}
+print(User.new(name: "Ada", age: 36).to_string())|}));
+    tc "enum members render as their member name" (fun () ->
+        Alcotest.(check string)
+          "enum" "red\nred\n"
+          (run_program
+             {|enum Color { red, green }
+print(Color.red.to_string())
+print("${Color.red}")|}));
+    tc "exceptions render as their message" (fun () ->
+        Alcotest.(check string)
+          "exception" "boom\nboom\n"
+          (run_program
+             {|const e = Exception.new(message: "boom")
+print(e.to_string())
+print("${e}")|}));
+  ]
+
+let object_acceptance_tests =
+  [
+    tc "the step-06 acceptance program runs verbatim" (fun () ->
+        Alcotest.(check string)
+          "output" "Ada (36)\ntrue\ntrue\ntrue\nHello\ntrue\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+
+  def full_name() String {
+    return self.name + " (" + self.age.to_string() + ")"
+  }
+
+  def is_older?() Bool {
+    return self.age > 35
+  }
+}
+
+const u = User.new(name: "Ada", age: 36)
+print(u.full_name())            // Ada (36)
+print(u.is_older?())            // true
+print(u == User.new(name: "Ada", age: 36))   // true — value semantics
+
+enum Color { red, green, blue }
+print(Color.red == Color.red)   // true
+
+interface Greeter {
+  def greet() String
+}
+
+class English {
+  def greet() String {
+    return "Hello"
+  }
+}
+
+def welcome(g Greeter) String {
+  return g.greet()
+}
+
+print(welcome(English.new()))   // Hello — duck dispatch, no registration
+print(English.new().is(Greeter))  // true — structural interface check|}));
+    tc "self.x outside init is a parse-time error" (fun () ->
+        match
+          run_program
+            "class U {\n\
+            \  def init() {}\n\
+            \  def m() Int {\n\
+            \    self.x = 1\n\
+            \    return 1\n\
+            \  }\n\
+             }"
+        with
+        | _ -> Alcotest.fail "expected a parse error"
+        | exception Emo_parser.Error d ->
+            Alcotest.(check string) "code" "E2016" (code_of d));
+    tc "an uncaught raise carries the exception's message" (fun () ->
+        let diagnostic =
+          program_err {|raise Exception.new(message: " kaboom ")|}
+        in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "uncaught exception:  kaboom " diagnostic.Diagnostic.message);
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -559,4 +934,9 @@ let () =
       ("tail_call", tail_call_tests);
       ("control_flow", control_flow_tests);
       ("acceptance", acceptance_tests);
+      ("class", class_tests);
+      ("method", method_tests);
+      ("enum", enum_tests);
+      ("to_string", to_string_tests);
+      ("object_acceptance", object_acceptance_tests);
     ]
