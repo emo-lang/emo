@@ -89,7 +89,7 @@ let capture_output f =
 
 let run_entry source =
   capture_output (fun () ->
-      try Emo_project.run_entry ~entry_file:source () with
+      try ignore (Emo_project.run_entry ~entry_file:source ()) with
       | Emo_eval.Error d ->
           let source_text = Emo_project.read_file source in
           let text = Emo_support.Render.render ~source:source_text d in
@@ -316,6 +316,56 @@ const once = 1|});
         Alcotest.(check int) "count" 0 (List.length errors));
   ]
 
+let cache_tests =
+  [
+    tc "unchanged modules parse once across all stages" (fun () ->
+        let entry =
+          with_project
+            [
+              ("shop/order.emo", {|def total(n Int) Int {
+  return n * 2
+}|});
+              ("shop/checkout.emo", {|print(shop.order.total(21))|});
+            ]
+            "shop/checkout.emo"
+        in
+        let p, output =
+          let out = Buffer.create 64 in
+          Emo_eval.set_output (Buffer.add_string out);
+          Fun.protect
+            ~finally:(fun () ->
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout))
+            (fun () ->
+              let proj =
+                Emo_project.run_entry ~entry_file:entry ~check:true ()
+              in
+              (proj, Buffer.contents out))
+        in
+        Alcotest.(check string) "output" "42\n" output;
+        (* entry: 1 parse shared by run + check; order.emo: 1 parse shared
+           by the load and the check. *)
+        Alcotest.(check int) "parses" 2 p.Emo_project.parses);
+    tc "changed content invalidates the cache entry" (fun () ->
+        let entry = with_project [ ("m.emo", "const x = 1") ] "m.emo" in
+        let p = Emo_project.discover ~entry_file:entry in
+        let file = Filename.concat p.Emo_project.root "m.emo" in
+        let (_ : Emo_support.Diagnostic.t list) =
+          Emo_check.check_parsed (Emo_project.parse_cached p file)
+        in
+        let parses_after_first = p.Emo_project.parses in
+        (* rewrite with new content: the cache must miss *)
+        let oc = open_out_bin file in
+        output_string oc "const x = 2";
+        close_out oc;
+        let (_ : Emo_support.Diagnostic.t list) =
+          Emo_check.check_parsed (Emo_project.parse_cached p file)
+        in
+        Alcotest.(check int)
+          "re-parsed" (parses_after_first + 1) p.Emo_project.parses);
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -323,4 +373,5 @@ let () =
       ("load", load_tests);
       ("privacy", privacy_tests);
       ("cycle", cycle_tests);
+      ("cache", cache_tests);
     ]
