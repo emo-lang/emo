@@ -170,8 +170,11 @@ and pp_class_def fmt (c : Emo_ast.class_def) =
     c.Emo_ast.class_methods
 
 and pp_interface_def fmt (i : Emo_ast.interface_def) =
-  Format.fprintf fmt "(interface %s @[<hov>%a@])" i.Emo_ast.interface_name
-    (pp_list pp_method_sig) i.Emo_ast.interface_methods
+  match i.Emo_ast.interface_methods with
+  | [] -> Format.fprintf fmt "(interface %s)" i.Emo_ast.interface_name
+  | methods ->
+      Format.fprintf fmt "(interface %s @[<hov>%a@])" i.Emo_ast.interface_name
+        (pp_list pp_method_sig) methods
 
 and pp_enum_def fmt (e : Emo_ast.enum_def) =
   Format.fprintf fmt "(enum %s @[<hov>%a@])" e.Emo_ast.enum_name
@@ -827,6 +830,67 @@ let class_tests =
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
   ]
 
+let interface_tests =
+  [
+    tc "the README Greeter interface parses to its golden shape" (fun () ->
+        match parse_program "interface Greeter {\n  def greet() String\n}" with
+        | [ greeter ] ->
+            Alcotest.(check string)
+              "shape" "(interface Greeter (sig greet () String))"
+              (render pp_item greeter)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "signatures carry annotated parameters" (fun () ->
+        match
+          parse_program "interface Teller {\n  def total(cart Cart) Int\n}"
+        with
+        | [ teller ] ->
+            Alcotest.(check string)
+              "shape" "(interface Teller (sig total (param cart Cart) Int))"
+              (render pp_item teller)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "an interface may be empty" (fun () ->
+        match parse_program "interface Marker {}" with
+        | [ marker ] ->
+            Alcotest.(check string)
+              "shape" "(interface Marker)" (render pp_item marker)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "an interface method takes no body" (fun () ->
+        let diagnostic =
+          program_err
+            "interface Bad {\n  def greet() String {\n    return \"hi\"\n  }\n}"
+        in
+        Alcotest.(check string) "code" "E2018" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:2:22"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "an interface cannot declare init" (fun () ->
+        let diagnostic = program_err "interface Bad {\n  def init()\n}" in
+        Alcotest.(check string) "code" "E2019" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:2:7"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a signature must declare its return type" (fun () ->
+        let diagnostic = program_err "interface Bad {\n  def greet()\n}" in
+        Alcotest.(check string) "code" "E2012" (code_of diagnostic));
+    tc "an interface needs an UpperCamel name" (fun () ->
+        let diagnostic = program_err "interface greeter {}" in
+        Alcotest.(check string) "code" "E2017" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:11"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "interface members are separated by newlines" (fun () ->
+        let diagnostic =
+          program_err "interface B { def a() Int def b() Int }"
+        in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -844,5 +908,6 @@ let () =
       ("item", item_tests);
       ("def", def_tests);
       ("class", class_tests);
+      ("interface", interface_tests);
       ("golden", golden_tests);
     ]
