@@ -348,6 +348,55 @@ print(tick())|}));
         Alcotest.(check string) "code" "E3009" (code_of diagnostic));
   ]
 
+let tail_call_tests =
+  [
+    tc "the acceptance count_down runs a million frames flat" (fun () ->
+        Alcotest.(check string)
+          "count_down" "0\n"
+          (run_program
+             {|def count_down(n Int) Int {
+  if n == 0 {
+    return 0
+  }
+  return count_down(n - 1)
+}
+print(count_down(1000000))|}));
+    tc "tail calls work through if branches inside arrow blocks" (fun () ->
+        Alcotest.(check string)
+          "loop via blocks" "0\n"
+          (run_program
+             {|const loop = -> (n Int) {
+  if n == 0 {
+    return 0
+  }
+  return loop(n - 1)
+}
+print(loop(500000))|}));
+    tc "mutual recursion stays flat" (fun () ->
+        Alcotest.(check string)
+          "ping-pong" "true\n"
+          (run_program
+             {|def even(n Int) Bool {
+  if n == 0 {
+    return true
+  }
+  return odd(n - 1)
+}
+
+def odd(n Int) Bool {
+  if n == 0 {
+    return false
+  }
+  return even(n - 1)
+}
+print(even(500000))|}));
+    tc "a return of a builtin call still yields its value" (fun () ->
+        Alcotest.(check string)
+          "builtin in return" "[1, 2]\n"
+          (run_program
+             "def arr() String {\n  return [1, 2].to_string()\n}\nprint(arr())"));
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -357,4 +406,5 @@ let () =
       ("expression", expression_tests);
       ("io", io_tests);
       ("closure", closure_tests);
+      ("tail_call", tail_call_tests);
     ]

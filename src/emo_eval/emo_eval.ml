@@ -147,8 +147,11 @@ let rec assign env span name value =
             (Printf.sprintf "cannot assign to `%s`; it is not defined" name))
 
 (* Explicit returns unwind through an exception to the nearest function
-   frame; there is no implicit last-expression value anywhere. *)
+   frame; a return whose expression is a call raises [Tail_call] instead,
+   so the frame can rebind and iterate — tail calls never grow the OCaml
+   stack. *)
 exception Return_signal of value
+exception Tail_call of closure * (string option * value) list
 
 let not_yet span what =
   error span "E3009" (Printf.sprintf "%s is not supported yet" what)
@@ -365,7 +368,7 @@ and apply f span args =
 
 (* Binds the arguments to the parameters: positionals fill the first free
    slot left to right, named arguments address their parameter directly. *)
-and apply_closure closure span args =
+and bind_params closure span args =
   let params = Array.of_list closure.params in
   let positional = Queue.create () in
   let named = Hashtbl.create 4 in
@@ -387,7 +390,7 @@ and apply_closure closure span args =
          (Array.length params)
          (if Array.length params = 1 then "" else "s")
          (positional_count + named_count));
-  let call_env = child closure.env in
+  let frame = child closure.env in
   Array.iter
     (fun { Ast.param_name; _ } ->
       let value =
@@ -402,7 +405,7 @@ and apply_closure closure span args =
                    closure.def_name param_name)
             else Queue.pop positional
       in
-      define call_env param_name ~mutable_:false value)
+      define frame param_name ~mutable_:false value)
     params;
   let leftover =
     Hashtbl.fold (fun k _ acc -> if acc = None then Some k else acc) named None
@@ -411,7 +414,9 @@ and apply_closure closure span args =
   | Some name ->
       error span "E3007"
         (Printf.sprintf "`%s` has no parameter named `%s`" closure.def_name name)
-  | None -> eval_body closure call_env span
+  | None -> frame
+
+and apply_closure closure span args = eval_body closure span args
 
 and apply_builtin span name args =
   match (name, args) with
@@ -423,17 +428,28 @@ and apply_builtin span name args =
         (Printf.sprintf "`print` expects 1 argument, got %d" (List.length vs))
   | _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
-and eval_body closure call_env span =
-  let rec run = function
-    | [] ->
-        error span "E3008"
-          (Printf.sprintf "reached the end of %s without `return`"
-             closure.def_name)
-    | stmt :: rest -> ( match eval_stmt call_env stmt with () -> run rest)
+(* The function frame. A [Tail_call] rebinds callee and arguments and
+   iterates in place; the OCaml stack stays flat however long the Emo-level
+   recursion runs. *)
+and eval_body closure span args =
+  let rec loop closure args =
+    let frame = bind_params closure span args in
+    try
+      let rec run = function
+        | [] ->
+            error span "E3008"
+              (Printf.sprintf "reached the end of %s without `return`"
+                 closure.def_name)
+        | stmt :: rest ->
+            let () = eval_stmt frame stmt in
+            run rest
+      in
+      run closure.body
+    with
+    | Return_signal v -> v
+    | Tail_call (c, args) -> loop c args
   in
-  try run closure.body with
-  | Return_signal v -> v
-  | Error diagnostic -> raise (Error diagnostic)
+  loop closure args
 
 and eval_stmt env s =
   let span = s.Ast.stmt_span in
@@ -449,7 +465,39 @@ and eval_stmt env s =
           not_yet span "field assignment"
       | _ -> error span "E3003" "invalid assignment target")
   | Ast.Return None -> not_yet span "a valueless `return`"
-  | Ast.Return (Some e) -> raise (Return_signal (eval_expr env e))
+  | Ast.Return (Some e) -> (
+      match e.Ast.desc with
+      | Ast.Call (callee, arg_exprs)
+        when not
+               (match callee.Ast.desc with Ast.Member _ -> true | _ -> false)
+        -> (
+          let f = eval_expr env callee in
+          match f with
+          | ArrowBlock closure ->
+              let args =
+                List.map
+                  (fun { Ast.arg_name; arg_value } ->
+                    (arg_name, eval_expr env arg_value))
+                  arg_exprs
+              in
+              raise (Tail_call (closure, args))
+          | not_a_closure ->
+              let args =
+                List.map
+                  (fun { Ast.arg_name; arg_value } ->
+                    match arg_name with
+                    | Some n ->
+                        error span "E3007"
+                          (Printf.sprintf
+                             "builtins take positional arguments only (`%s`)" n)
+                    | None -> eval_expr env arg_value)
+                  arg_exprs
+              in
+              raise
+                (Return_signal
+                   (apply not_a_closure span
+                      (List.map (fun v -> (None, v)) args))))
+      | _ -> raise (Return_signal (eval_expr env e)))
   | Ast.If { cond; then_body; else_body } -> (
       let c = eval_expr env cond in
       match c with
