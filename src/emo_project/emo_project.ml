@@ -358,7 +358,13 @@ let run_entry ~entry_file ?(check = false) () : project =
   let items = parse_cached p entry_file in
   (if check then
      let _paths, _graph, errors = check_project p in
-     match errors with [] -> () | ds -> raise (Static_errors ds));
+     (* The entry file itself may live outside the discovered tree (an
+        absolute path); it is always checked too. *)
+     let entry_diags, _refs =
+       Emo_check.check_module ~modules:_paths ~current:[] items
+     in
+     match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
-  List.iter (Emo_eval.eval_item env) items;
-  p
+  try List.iter (Emo_eval.eval_item env) items
+  with Emo_eval.Emo_raise (v, span, _trace) ->
+    error span "E3010" (Printf.sprintf "uncaught exception: %s" (to_string v))
