@@ -220,6 +220,27 @@ let rec conforms actual expected =
 
 let known_nonovoid = ignore
 
+(* Type-name resolution for `is()` targets; unknown names narrow to nothing. *)
+let resolve_type_name ctx span name =
+  if Hashtbl.mem ctx.classes name then ClassType name
+  else if Hashtbl.mem ctx.interfaces name then InterfaceType name
+  else if Hashtbl.mem ctx.enums name then EnumType name
+  else (
+    ignore span;
+    Unknown)
+
+(* True when a value of [rt] can provably never satisfy a check for [target]. *)
+let provably_excluded rt target =
+  match (rt, target) with
+  | Unknown, _ | _, Unknown -> false
+  | Int, _ | Float, _ | Bool, _ | Char, _ | String, _ -> true
+  | ClassType a, ClassType b -> not (String.equal a b)
+  | ClassType _, InterfaceType _ -> false (* structural check: T8.5 *)
+  | ClassType _, EnumType _ -> true
+  | EnumType a, EnumType b -> not (String.equal a b)
+  | EnumType _, _ -> true
+  | _ -> false
+
 let rec check_expr ctx env (e : Ast.expr) : t =
   let span = e.Ast.span in
   match e.Ast.desc with
@@ -475,10 +496,50 @@ and check_stmt ctx env (s : Ast.stmt) : env =
           report ctx cond.Ast.span "E4004"
             (Printf.sprintf "the `if` condition must be a Bool, got %s"
                (to_string other)));
-      let inner = child_scope env in
-      List.iter (fun s -> ignore (check_stmt ctx inner s)) then_body;
+      (* Flow narrowing: `if x.is(T)` gives x the type T inside the then
+         branch; the else branch keeps the pre-test type, and neither leaks
+         past the if. *)
+      let narrowed =
+        match cond.Ast.desc with
+        | Ast.Call
+            ( { Ast.desc = Ast.Member (recv, "is"); _ },
+              [ { Ast.arg_value = { Ast.desc = Ast.Type_ident tname; _ }; _ } ]
+            )
+          when match recv.Ast.desc with Ast.Ident _ -> true | _ -> false ->
+            let target_type = resolve_type_name ctx recv.Ast.span tname in
+            let rt = check_expr ctx env recv in
+            (match rt with
+            | (ClassType _ | EnumType _ | Int | Float | Bool | Char | String)
+              when provably_excluded rt target_type ->
+                report ctx recv.Ast.span "E4011"
+                  (Printf.sprintf "`%s` can never narrow to %s" (to_string rt)
+                     (to_string target_type))
+            | _ -> ());
+            Some
+              ( (match recv.Ast.desc with Ast.Ident n -> n | _ -> ""),
+                target_type )
+        | Ast.Call ({ Ast.desc = Ast.Member (recv, "is"); _ }, target :: _) ->
+            ignore (check_expr ctx env target.Ast.arg_value);
+            None
+        | _ -> None
+      in
+      let then_env =
+        match narrowed with
+        | Some (name, t) ->
+            let is_var =
+              match lookup_env env name with
+              | Some info -> info.is_var
+              | None -> false
+            in
+            bind (child_scope env) name
+              { vtype = t; is_var; depth = env.depth + 1 }
+        | None -> child_scope env
+      in
+      List.iter (fun s -> ignore (check_stmt ctx then_env s)) then_body;
       Option.iter
-        (fun body -> List.iter (fun s -> ignore (check_stmt ctx inner s)) body)
+        (fun body ->
+          let else_env = child_scope env in
+          List.iter (fun s -> ignore (check_stmt ctx else_env s)) body)
         else_body;
       env
   | Ast.Case { scrutinee; branches } ->
