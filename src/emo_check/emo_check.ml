@@ -175,7 +175,15 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
 (* Flow environment: an ordered binding list; the depth marks the scope that
    introduced a binding (used by the var-escape check). *)
 type var_info = { vtype : t; is_var : bool; depth : int }
-type env = { bindings : (string * var_info) list; depth : int; ret : t option }
+
+type env = {
+  bindings : (string * var_info) list;
+  depth : int;
+  ret : t option;
+  block_depth : int;
+      (* definition depth of the innermost enclosing arrow block, -1 when
+         none; a `var` from a shallower scope cannot be captured *)
+}
 
 (* The built-in surface every program sees. *)
 let empty_env =
@@ -191,6 +199,7 @@ let empty_env =
       ];
     depth = 0;
     ret = None;
+    block_depth = -1;
   }
 
 let lookup_env env name = List.assoc_opt name env.bindings
@@ -272,7 +281,16 @@ let rec check_expr ctx env (e : Ast.expr) : t =
   | Ast.String _ -> String
   | Ast.Ident name -> (
       match lookup_env env name with
-      | Some info -> info.vtype
+      | Some info ->
+          (* The var-escape rule: a `var` from an outer block referenced
+             inside an arrow block can outlive its block. *)
+          if info.is_var && info.depth < env.block_depth then
+            report ctx span "E4012"
+              (Printf.sprintf
+                 "the var `%s` cannot be captured by a block that can outlive \
+                  its own; use a const or a Box"
+                 name);
+          info.vtype
       | None ->
           report ctx span "E4003" (Printf.sprintf "`%s` is not defined" name);
           Unknown)
@@ -363,7 +381,8 @@ let rec check_expr ctx env (e : Ast.expr) : t =
                 is_var = false;
                 depth = env.depth;
               })
-          (child_scope env) params
+          { (child_scope env) with block_depth = env.depth }
+          params
       in
       let sink = ref [] in
       let saved = ctx.ret_sink in
@@ -557,11 +576,16 @@ and check_stmt ctx env (s : Ast.stmt) : env =
               { vtype = t; is_var; depth = env.depth + 1 }
         | None -> child_scope env
       in
-      List.iter (fun s -> ignore (check_stmt ctx then_env s)) then_body;
+      let (_ : env) =
+        List.fold_left (fun env s -> check_stmt ctx env s) then_env then_body
+      in
       Option.iter
         (fun body ->
           let else_env = child_scope env in
-          List.iter (fun s -> ignore (check_stmt ctx else_env s)) body)
+          let (_ : env) =
+            List.fold_left (fun env s -> check_stmt ctx env s) else_env body
+          in
+          ())
         else_body;
       env
   | Ast.Case { scrutinee; branches } ->
@@ -572,7 +596,10 @@ and check_stmt ctx env (s : Ast.stmt) : env =
           let inner = child_scope env in
           ignore (check_pattern ctx inner b.Ast.pattern);
           Option.iter (fun g -> ignore (check_expr ctx inner g)) b.Ast.guard;
-          List.iter (fun s -> ignore (check_stmt ctx inner s)) b.Ast.body)
+          let (_ : env) =
+            List.fold_left (fun env s -> check_stmt ctx env s) inner b.Ast.body
+          in
+          ())
         branches;
       env
   | Ast.Receive _ | Ast.Send _ -> env (* processes: step 11 *)
@@ -597,6 +624,7 @@ let check_fun_def ctx env ?self (d : Ast.fun_def) : unit =
     {
       (child_scope env) with
       ret = Option.map (ann_to_type ctx) d.Ast.def_return;
+      block_depth = -1;
     }
   in
   let frame =
@@ -616,8 +644,11 @@ let check_fun_def ctx env ?self (d : Ast.fun_def) : unit =
           })
       frame d.Ast.def_params
   in
-  List.iter (fun s -> ignore (check_stmt ctx frame s)) d.Ast.def_body
+  ignore
+    (List.fold_left (fun env s -> check_stmt ctx env s) frame d.Ast.def_body)
 
+(* Class bodies: every method is checked under its signature with self
+   bound to the class. *)
 let check_class ctx env (c : Ast.class_def) : unit =
   let self = ("self", ClassType c.Ast.class_name) in
   Option.iter (fun init -> check_fun_def ctx env ~self init) c.Ast.class_init;
