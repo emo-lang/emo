@@ -23,11 +23,27 @@ type value =
   | Box of value ref
   | ArrowBlock of closure
   | BuiltinFn of string
-  | ClassDef of string (* name only — the real payload lands in step 06 *)
-  | Instance of string (* name only — the real payload lands in step 06 *)
+  | ClassDef of class_def_value
+  | Instance of instance_value
+  | EnumType of enum_type_value
   | EnumMember of string * string (* type name, member name *)
   | TypeValue of string
   | Module of string (* path only — the real payload lands in step 09 *)
+
+and class_def_value = {
+  cname : string;
+  cinit : closure option; (* at most one init, per the parser *)
+  cmethods : (string * closure) list;
+  builtin_exception : bool; (* the shipped `Exception` class *)
+}
+
+and instance_value = {
+  iclass : class_def_value;
+  mutable ifields : (string * value) list;
+      (* appended/replaced only by `self.x = ...` inside init; frozen after *)
+}
+
+and enum_type_value = { ename : string; emembers : (string * value) list }
 
 and closure = {
   def_name : string; (* "`fib`" or "`<arrow block>`", for diagnostics *)
@@ -52,6 +68,7 @@ let type_name = function
   | BuiltinFn _ -> "a builtin"
   | ClassDef _ -> "a class"
   | Instance _ -> "an instance"
+  | EnumType _ -> "an enum"
   | EnumMember _ -> "an enum member"
   | TypeValue _ -> "a type"
   | Module _ -> "a module"
@@ -74,8 +91,15 @@ let rec equal_value a b =
   | Box x, Box y -> equal_value !x !y
   | EnumMember (t, m), EnumMember (t', m') ->
       String.equal t t' && String.equal m m'
-  | ClassDef x, ClassDef y | Module x, Module y | TypeValue x, TypeValue y ->
-      String.equal x y
+  | EnumType x, EnumType y -> String.equal x.ename y.ename
+  | ClassDef x, ClassDef y -> x == y (* a declaration is an identity *)
+  | Module x, Module y | TypeValue x, TypeValue y -> String.equal x y
+  | Instance x, Instance y ->
+      String.equal x.iclass.cname y.iclass.cname
+      && List.length x.ifields = List.length y.ifields
+      && List.for_all2
+           (fun (nx, vx) (ny, vy) -> String.equal nx ny && equal_value vx vy)
+           x.ifields y.ifields
   | ArrowBlock x, ArrowBlock y -> x == y (* closures are identities *)
   | BuiltinFn x, BuiltinFn y -> String.equal x y
   | _ -> false
@@ -110,8 +134,9 @@ let rec to_string = function
   | Box _ -> "<box>"
   | ArrowBlock _ -> "<arrow block>"
   | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
-  | ClassDef n -> n
-  | Instance n -> n
+  | ClassDef c -> c.cname
+  | Instance _ -> "<instance>"
+  | EnumType e -> e.ename
   | EnumMember (t, m) -> t ^ "." ^ m
   | TypeValue t -> t
   | Module n -> n
@@ -130,6 +155,14 @@ let rec lookup env span name =
       match env.parent with
       | Some parent -> lookup parent span name
       | None -> error span "E3002" (Printf.sprintf "`%s` is not defined" name))
+
+let rec lookup_opt env name =
+  match Hashtbl.find_opt env.frame name with
+  | Some { bound; _ } -> Some bound
+  | None -> (
+      match env.parent with
+      | Some parent -> lookup_opt parent name
+      | None -> None)
 
 let rec assign env span name value =
   match Hashtbl.find_opt env.frame name with
@@ -151,7 +184,10 @@ let rec assign env span name value =
    so the frame can rebind and iterate — tail calls never grow the OCaml
    stack. *)
 exception Return_signal of value
-exception Tail_call of closure * (string option * value) list
+
+exception
+  Tail_call of closure * (string option * value) list * (string * value) list
+(* callee, arguments, pre-bound extras (a method's `self`) *)
 
 (* `raise <value>` unwinds as an exception; the driver turns an uncaught one
    into an E3010 diagnostic. *)
@@ -336,6 +372,13 @@ and eval_method env span recv mname arg_exprs =
         | None -> eval_expr env arg_value)
       arg_exprs
   in
+  (* Constructors and methods keep the argument names so they can bind by
+     parameter name. *)
+  let eval_args_named () =
+    List.map
+      (fun { Ast.arg_name; arg_value } -> (arg_name, eval_expr env arg_value))
+      arg_exprs
+  in
   let none_expected what =
     if argc = 0 then ()
     else
@@ -344,6 +387,34 @@ and eval_method env span recv mname arg_exprs =
   in
   let base = eval_expr env recv in
   match (base, mname) with
+  | ClassDef c, "new" -> (
+      let args = eval_args_named () in
+      match c.cinit with
+      | Some init ->
+          let instance = Instance { iclass = c; ifields = [] } in
+          let frame = bind_params init span args in
+          define frame "self" ~mutable_:false instance;
+          (* init constructs; it does not return a value. An early `return`
+             simply ends the window, and no implicit value exists. *)
+          (try List.iter (eval_stmt frame) init.body with
+          | Return_signal _ -> ()
+          | Tail_call _ -> ());
+          instance
+      | None when c.builtin_exception -> (
+          match args with
+          | [ (Some "message", v) ] | [ (None, v) ] ->
+              Instance { iclass = c; ifields = [ ("message", v) ] }
+          | _ -> error span "E3007" "`Exception.new` expects `message`")
+      | None ->
+          if List.length args > 0 then
+            error span "E3007"
+              (Printf.sprintf
+                 "class `%s` declares no `init`; `new` takes no arguments"
+                 c.cname);
+          Instance { iclass = c; ifields = [] })
+  | ClassDef c, m ->
+      error span "E3007"
+        (Printf.sprintf "class `%s` has no member `%s`" c.cname m)
   | TypeValue "Box", "new" -> (
       let args = eval_args () in
       match args with
@@ -463,8 +534,13 @@ and apply_builtin span name args =
    iterates in place; the OCaml stack stays flat however long the Emo-level
    recursion runs. *)
 and eval_body closure span args =
-  let rec loop closure args =
-    let frame = bind_params closure span args in
+  eval_frame closure (bind_params closure span args) span
+
+(* Runs a prepared frame. A [Tail_call] rebinds callee, arguments, and any
+   extras (a method's `self`), and iterates in place — the OCaml stack stays
+   flat however long the Emo-level recursion runs. *)
+and eval_frame closure frame span =
+  let rec loop closure frame =
     try
       let rec run = function
         | [] ->
@@ -478,9 +554,12 @@ and eval_body closure span args =
       run closure.body
     with
     | Return_signal v -> v
-    | Tail_call (c, args) -> loop c args
+    | Tail_call (c, args, extras) ->
+        let frame = bind_params c span args in
+        List.iter (fun (k, v) -> define frame k ~mutable_:false v) extras;
+        loop c frame
   in
-  loop closure args
+  loop closure frame
 
 and eval_stmt env s =
   let span = s.Ast.stmt_span in
@@ -492,8 +571,20 @@ and eval_stmt env s =
       let v = eval_expr env value in
       match target.Ast.desc with
       | Ast.Ident name -> assign env span name v
-      | Ast.Member ({ Ast.desc = Ast.Self; _ }, _) ->
-          not_yet span "field assignment"
+      | Ast.Member ({ Ast.desc = Ast.Self; _ }, name) -> (
+          (* Only init bodies contain `self.x = ...` — the parser enforces
+             the window; here `self` must be the instance under
+             construction. *)
+          match lookup env span "self" with
+          | Instance i ->
+              (* replace in place, or create the field on first assignment *)
+              let rest = List.remove_assoc name i.ifields in
+              i.ifields <- (name, v) :: rest
+          | v ->
+              error span "E3003"
+                (Printf.sprintf
+                   "`self.x = ...` needs an instance under construction, got %s"
+                   (type_name v)))
       | _ -> error span "E3003" "invalid assignment target")
   | Ast.Return None -> not_yet span "a valueless `return`"
   | Ast.Return (Some e) -> (
@@ -511,7 +602,7 @@ and eval_stmt env s =
                     (arg_name, eval_expr env arg_value))
                   arg_exprs
               in
-              raise (Tail_call (closure, args))
+              raise (Tail_call (closure, args, []))
           | not_a_closure ->
               let args =
                 List.map
@@ -584,7 +675,12 @@ and eval_expr env e =
   | Ast.Char c -> Char c
   | Ast.String s -> String s
   | Ast.Ident name -> lookup env span name
-  | Ast.Type_ident t -> TypeValue t
+  | Ast.Type_ident t -> (
+      (* A declared class, enum, or interface resolves to its value; an
+         unknown upper name stays a bare type value. *)
+      match lookup_opt env t with
+      | Some v -> v
+      | None -> TypeValue t)
   | Ast.Interpolated parts ->
       String
         (String.concat ""
@@ -593,9 +689,18 @@ and eval_expr env e =
                 | Ast.Literal_text s -> s
                 | Ast.Part_expr e -> to_string (eval_expr env e))
               parts))
-  | Ast.Self -> not_yet span "`self`"
-  | Ast.Member _ ->
-      error span "E3007" "a member access must be a call, like `x.read()`"
+  | Ast.Self -> lookup env span "self"
+  | Ast.Member (inner, name) -> (
+      let base = eval_expr env inner in
+      match base with
+      | Instance i -> (
+          match List.assoc_opt name i.ifields with
+          | Some v -> v
+          | None ->
+              error span "E3007"
+                (Printf.sprintf "`%s` has no field `%s`" i.iclass.cname name))
+      | _ ->
+          error span "E3007" "a member access must be a call, like `x.read()`")
   | Ast.Index (base, index) -> eval_index env span base index
   | Ast.Tuple es -> Tuple (List.map (eval_expr env) es)
   | Ast.Array_literal es -> Array (Array.of_list (List.map (eval_expr env) es))
@@ -610,6 +715,14 @@ and eval_expr env e =
    run in order. Closures capture [env] by reference, so a def resolves
    names against the frame as it stands when the call happens — recursion
    and forward references among defs both work. *)
+let method_closure class_name env d =
+  {
+    def_name = Printf.sprintf "`%s.%s`" class_name d.Ast.def_name;
+    params = d.Ast.def_params;
+    body = d.Ast.def_body;
+    env;
+  }
+
 let eval_item env item =
   let span = item.Ast.item_span in
   match item.Ast.item_desc with
@@ -623,7 +736,22 @@ let eval_item env item =
              body = d.Ast.def_body;
              env;
            })
-  | Ast.Item_class _ -> not_yet span "classes"
+  | Ast.Item_class c ->
+      define env c.Ast.class_name ~mutable_:false
+        (ClassDef
+           {
+             cname = c.Ast.class_name;
+             cinit =
+               Option.map
+                 (fun d -> method_closure c.Ast.class_name env d)
+                 c.Ast.class_init;
+             cmethods =
+               List.map
+                 (fun d ->
+                   (d.Ast.def_name, method_closure c.Ast.class_name env d))
+                 c.Ast.class_methods;
+             builtin_exception = false;
+           })
   | Ast.Item_interface _ -> not_yet span "interfaces"
   | Ast.Item_enum _ -> not_yet span "enums"
 
