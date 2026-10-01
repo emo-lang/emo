@@ -129,8 +129,7 @@ let read_file path =
 let example_names () =
   Sys.readdir examples_dir |> Array.to_list |> List.sort compare
   |> List.filter (fun name ->
-         Sys.file_exists
-           (Filename.concat examples_dir (name ^ "/main.emo")))
+      Sys.file_exists (Filename.concat examples_dir (name ^ "/main.emo")))
 
 let examples_tests =
   List.map
