@@ -56,6 +56,9 @@ type ctx = {
   diagnostics : Emo_support.Diagnostic.t list ref;
   mutable ret_sink : t list ref;
       (* while checking an arrow block, its return types land here *)
+  modules : string list list; (* every known module path in the project *)
+  current : string list; (* the module being checked *)
+  refs : string list list ref; (* module paths referenced by this module *)
 }
 
 let report ctx span code message =
@@ -170,6 +173,9 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       funcs = Hashtbl.create 8;
       diagnostics = ref [];
       ret_sink = ref [];
+      modules = [];
+      current = [];
+      refs = ref [];
     }
   in
   let parsed = Emo_parser.parse_program_with_diagnostics ~file ~source in
@@ -268,6 +274,40 @@ and conforms ctx actual expected =
 
 let known_nonovoid = ignore
 
+(* The dotted path of a member chain rooted at an identifier, if any:
+   `shop.order.total` → ["shop"; "order"; "total"]. *)
+let dotted_path (e : Ast.expr) : string list option =
+  let rec go e =
+    match e.Ast.desc with
+    | Ast.Ident n -> Some [ n ]
+    | Ast.Member (inner, name) -> Option.map (fun p -> p @ [ name ]) (go inner)
+    | _ -> None
+  in
+  go e
+
+(* A module path is known when some declared module lives at or below it. *)
+let module_prefix_known ctx path =
+  List.exists
+    (fun m ->
+      List.length path <= List.length m
+      && List.for_all2 String.equal path (List.take (List.length path) m))
+    ctx.modules
+
+(* The longest known module prefix of a dotted path. *)
+let longest_module_prefix ctx (path : string list) : string list =
+  let rec prefixes path =
+    match path with [] -> [] | _ :: rest -> path :: prefixes rest
+  in
+  let candidates = List.rev (prefixes path) in
+  let rec longest known = function
+    | [] -> known
+    | candidate :: rest ->
+        longest
+          (if module_prefix_known ctx candidate then candidate else known)
+          rest
+  in
+  longest [] candidates
+
 (* Type-name resolution for `is()` targets; unknown names narrow to nothing. *)
 let resolve_type_name ctx span name =
   if Hashtbl.mem ctx.classes name then ClassType name
@@ -320,8 +360,13 @@ let rec check_expr ctx env (e : Ast.expr) : t =
                  name);
           info.vtype
       | None ->
-          report ctx span "E4003" (Printf.sprintf "`%s` is not defined" name);
-          Unknown)
+          if module_prefix_known ctx [ name ] then (
+            (* A root-level module reference. *)
+            ctx.refs := [ name ] :: !(ctx.refs);
+            Unknown)
+          else (
+            report ctx span "E4003" (Printf.sprintf "`%s` is not defined" name);
+            Unknown))
   | Ast.Type_ident name ->
       if
         (* A declared type in value position: classes, enums, interfaces. *)
@@ -341,29 +386,36 @@ let rec check_expr ctx env (e : Ast.expr) : t =
           report ctx span "E4003" "`self` is not defined here";
           Unknown)
   | Ast.Member (recv, name) -> (
-      let rt = check_expr ctx env recv in
-      match rt with
-      | ClassType c -> (
-          match Hashtbl.find_opt ctx.classes c with
-          | Some info when List.mem name info.cfields -> Unknown
-          | Some info ->
-              report ctx span "E4001"
-                (Printf.sprintf "`%s` has no field `%s`" c name);
-              Unknown
-          | None -> Unknown)
-      | EnumType e -> (
-          match Hashtbl.find_opt ctx.enums e with
-          | Some members when List.mem name members -> EnumType e
-          | Some members ->
-              report ctx span "E4001"
-                (Printf.sprintf "enum `%s` has no member `%s`" e name);
-              Unknown
-          | None -> Unknown)
-      | Unknown -> Unknown
-      | other ->
-          report ctx span "E4001"
-            (Printf.sprintf "%s has no field `%s`" (to_string other) name);
-          Unknown)
+      if module_prefix_known ctx (Option.value (dotted_path e) ~default:[]) then (
+        (* A qualified module reference: record the longest known module
+           prefix; cross-module types stay unchecked this step. *)
+        let path = Option.value (dotted_path e) ~default:[] in
+        ctx.refs := longest_module_prefix ctx path :: !(ctx.refs);
+        Unknown)
+      else
+        let rt = check_expr ctx env recv in
+        match rt with
+        | ClassType c -> (
+            match Hashtbl.find_opt ctx.classes c with
+            | Some info when List.mem name info.cfields -> Unknown
+            | Some info ->
+                report ctx span "E4001"
+                  (Printf.sprintf "`%s` has no field `%s`" c name);
+                Unknown
+            | None -> Unknown)
+        | EnumType e -> (
+            match Hashtbl.find_opt ctx.enums e with
+            | Some members when List.mem name members -> EnumType e
+            | Some members ->
+                report ctx span "E4001"
+                  (Printf.sprintf "enum `%s` has no member `%s`" e name);
+                Unknown
+            | None -> Unknown)
+        | Unknown -> Unknown
+        | other ->
+            report ctx span "E4001"
+              (Printf.sprintf "%s has no field `%s`" (to_string other) name);
+            Unknown)
   | Ast.Index (base, index) -> (
       let bt = check_expr ctx env base in
       let it = check_expr ctx env index in
@@ -1050,23 +1102,7 @@ let check_items ctx (items : Ast.item list) : unit =
          | _ -> env)
        empty_env items)
 
-(* Checks pre-parsed items — the driver entry for a pipeline that already
-   parsed. Every diagnostic found, sorted by position. *)
-let check_parsed (items : Ast.item list) : Emo_support.Diagnostic.t list =
-  let ctx =
-    {
-      file = "<checked>";
-      classes = Hashtbl.create 8;
-      interfaces = Hashtbl.create 8;
-      enums = Hashtbl.create 8;
-      funcs = Hashtbl.create 8;
-      diagnostics = ref [];
-      ret_sink = ref [];
-    }
-  in
-  collect ctx items;
-  if List.length !(ctx.diagnostics) = 0 then check_items ctx items;
-  let diagnostics = List.rev !(ctx.diagnostics) in
+let sort_diagnostics diagnostics =
   List.sort
     (fun a b ->
       let open Emo_support.Diagnostic in
@@ -1075,6 +1111,35 @@ let check_parsed (items : Ast.item list) : Emo_support.Diagnostic.t list =
         (a.span.line, a.span.col, a.span.start)
         (b.span.line, b.span.col, b.span.start))
     diagnostics
+
+(* Checks one module's items with the project's module table: unbound names
+   that address modules resolve silently, qualified references are recorded.
+   Returns the diagnostics and the referenced module paths. *)
+let check_module ~(modules : string list list) ~(current : string list)
+    (items : Ast.item list) : Emo_support.Diagnostic.t list * string list list =
+  let ctx =
+    {
+      file = String.concat "." current;
+      classes = Hashtbl.create 8;
+      interfaces = Hashtbl.create 8;
+      enums = Hashtbl.create 8;
+      funcs = Hashtbl.create 8;
+      diagnostics = ref [];
+      ret_sink = ref [];
+      modules;
+      current;
+      refs = ref [];
+    }
+  in
+  collect ctx items;
+  if List.length !(ctx.diagnostics) = 0 then check_items ctx items;
+  (sort_diagnostics (List.rev !(ctx.diagnostics)), List.rev !(ctx.refs))
+
+(* Checks pre-parsed items without module context. Every diagnostic found,
+   sorted by position. *)
+let check_parsed (items : Ast.item list) : Emo_support.Diagnostic.t list =
+  let diagnostics, _refs = check_module ~modules:[] ~current:[] items in
+  diagnostics
 
 let check_source ~file ~(source : string) : Emo_support.Diagnostic.t list =
   let ctx, items = analyze ~file ~source in

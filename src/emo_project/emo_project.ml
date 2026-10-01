@@ -178,9 +178,42 @@ let install_hooks p =
   Emo_eval.module_handle_of := handle_of;
   Emo_eval.module_loader := fun raw_path -> load_module p (normalize raw_path)
 
+(* Checks every module in the project, collecting the reference graph.
+   Returns per-module references and every diagnostic found. *)
+let check_project p :
+    string list list
+    * (string list * string list list) list
+    * Emo_support.Diagnostic.t list =
+  let module_paths = module_paths p in
+  let graph : (string list, string list list) Hashtbl.t = Hashtbl.create 8 in
+  let errors, entries =
+    Hashtbl.fold
+      (fun path file ((errors, entries) as acc) ->
+        let source = read_file file in
+        let items =
+          match Emo_parser.parse_program_with_diagnostics ~file ~source with
+          | exception Emo_lexer.Error d -> raise (Static_errors [ d ])
+          | (_, first :: _) as parsed ->
+              let _, diagnostics = parsed in
+              ignore first;
+              raise (Static_errors diagnostics)
+          | items, [] -> items
+        in
+        let diagnostics, refs =
+          Emo_check.check_module ~modules:module_paths ~current:path items
+        in
+        Hashtbl.replace graph path refs;
+        match diagnostics with
+        | [] -> acc
+        | ds -> (ds @ errors, (path, refs) :: entries))
+      p.files ([], [])
+  in
+  (module_paths, entries, errors)
+
 (* Runs the entry file: the graph is discovered up front (collisions report
    immediately), modules load lazily on first access with load-once
-   semantics, and the entry's own items evaluate in file order. *)
+   semantics, and the entry's own items evaluate in file order. With
+   ~check:true every module is checked first. *)
 let run_entry ~entry_file ?(check = false) () : unit =
   let p = discover ~entry_file in
   (match diagnostics p with [] -> () | ds -> raise (Static_errors ds));
@@ -197,9 +230,13 @@ let run_entry ~entry_file ?(check = false) () : unit =
         raise (Static_errors diagnostics)
     | items, [] -> items
   in
+  let () =
+    let oc = open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-d5.txt" in
+    output_string oc ("d5: items=" ^ string_of_int (List.length items) ^ "\n");
+    close_out oc
+  in
   (if check then
-     match Emo_check.check_parsed items with
-     | [] -> ()
-     | ds -> raise (Static_errors ds));
+     let _paths, _graph, errors = check_project p in
+     match errors with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
   List.iter (Emo_eval.eval_item env) items
