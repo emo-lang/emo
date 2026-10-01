@@ -387,6 +387,16 @@ and eval_method env span recv mname arg_exprs =
   in
   let base = eval_expr env recv in
   match (base, mname) with
+  | Instance i, mname when List.mem_assoc mname i.iclass.cmethods ->
+      let closure = List.assoc mname i.iclass.cmethods in
+      let args = eval_args_named () in
+      let frame = bind_params closure span args in
+      define frame "self" ~mutable_:false (Instance i);
+      eval_frame closure frame span
+  | Instance i, mname ->
+      error span "E3007"
+        (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i.iclass.cname
+           mname)
   | ClassDef c, "new" -> (
       let args = eval_args_named () in
       match c.cinit with
@@ -589,10 +599,21 @@ and eval_stmt env s =
   | Ast.Return None -> not_yet span "a valueless `return`"
   | Ast.Return (Some e) -> (
       match e.Ast.desc with
-      | Ast.Call (callee, arg_exprs)
-        when not
-               (match callee.Ast.desc with Ast.Member _ -> true | _ -> false)
-        -> (
+      | Ast.Call ({ Ast.desc = Ast.Member (recv, mname); _ }, arg_exprs) -> (
+          (* A method call in return position tail-calls with `self`. *)
+          let base = eval_expr env recv in
+          match base with
+          | Instance i when List.mem_assoc mname i.iclass.cmethods ->
+              let closure = List.assoc mname i.iclass.cmethods in
+              let args =
+                List.map
+                  (fun { Ast.arg_name; arg_value } ->
+                    (arg_name, eval_expr env arg_value))
+                  arg_exprs
+              in
+              raise (Tail_call (closure, args, [ ("self", Instance i) ]))
+          | _ -> raise (Return_signal (eval_expr env e)))
+      | Ast.Call (callee, arg_exprs) -> (
           let f = eval_expr env callee in
           match f with
           | ArrowBlock closure ->
