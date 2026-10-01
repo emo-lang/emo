@@ -28,7 +28,7 @@ type value =
   | EnumType of enum_type_value
   | EnumMember of string * string (* type name, member name *)
   | TypeValue of string
-  | Module of string (* path only — the real payload lands in step 09 *)
+  | Module of module_handle
 
 and class_def_value = {
   cname : string;
@@ -50,6 +50,13 @@ and closure = {
   params : Ast.param list;
   body : Ast.stmt list;
   env : env;
+}
+
+and module_handle = {
+  mpath : string list; (* normalized module path, e.g. ["shop"; "order"] *)
+  mchildren : (string * string list) list; (* name → child module path *)
+  mutable menv : env option; (* the namespace once its items have run *)
+  mutable loading : bool; (* cycle guard while items are running *)
 }
 
 and env = { frame : (string, binding) Hashtbl.t; parent : env option }
@@ -93,7 +100,8 @@ let rec equal_value a b =
       String.equal t t' && String.equal m m'
   | EnumType x, EnumType y -> String.equal x.ename y.ename
   | ClassDef x, ClassDef y -> x == y (* a declaration is an identity *)
-  | Module x, Module y | TypeValue x, TypeValue y -> String.equal x y
+  | Module x, Module y -> x == y (* a module is a namespace identity *)
+  | TypeValue x, TypeValue y -> String.equal x y
   | Instance x, Instance y ->
       String.equal x.iclass.cname y.iclass.cname
       && List.length x.ifields = List.length y.ifields
@@ -123,6 +131,42 @@ let global_env () =
       mutable_ = false;
     };
   env
+
+(* The module system hooks: the project layer installs discovery (a
+   normalized module path → handle, with its child module names) and loading
+   (a normalized module path → the namespace from running its items). *)
+let module_handle_of : (string list -> module_handle option) ref =
+  ref (fun _ -> None)
+
+let module_loader : (string list -> env) ref =
+  ref (fun path ->
+      failwith
+        (Printf.sprintf "no module loader for `%s`" (String.concat "." path)))
+
+(* Ensures a module's items have run exactly once. *)
+let ensure_module_loaded h =
+  match h.menv with
+  | Some _ -> ()
+  | None ->
+      if h.loading then
+        raise
+          (Error
+             Emo_support.Diagnostic.
+               {
+                 severity = Error;
+                 code = Some "E5003";
+                 message =
+                   Printf.sprintf "module cycle while loading `%s`"
+                     (String.concat "." h.mpath);
+                 span =
+                   Emo_support.Span.make ~file:"<modules>" ~line:1 ~col:1
+                     ~start:0 ~stop:0;
+                 hint = None;
+               });
+      h.loading <- true;
+      let env = !module_loader h.mpath in
+      h.loading <- false;
+      h.menv <- Some env
 
 (* Program output goes to stdout; tests redirect it through [set_output]. *)
 let output : (string -> unit) ref =
@@ -166,7 +210,7 @@ let rec to_string v =
   | EnumType e -> e.ename
   | EnumMember (_, m) -> m
   | TypeValue t -> t
-  | Module n -> n
+  | Module m -> "<module " ^ String.concat "." m.mpath ^ ">"
 
 (* Inside an instance's default rendering, strings show quoted. *)
 and debug_value v =
@@ -452,6 +496,27 @@ and eval_call env span callee arg_exprs =
 
 (* Methods are only callable directly: `x.to_string()`, `box.read()`,
    `Box.new(v)`. A bare `x.to_string` is not a value. *)
+and module_member span h name =
+  match List.assoc_opt name h.mchildren with
+  | Some child_path -> (
+      match !module_handle_of child_path with
+      | Some child -> Module child
+      | None ->
+          error span "E5002"
+            (Printf.sprintf "module `%s` has no member `%s`"
+               (String.concat "." h.mpath)
+               name))
+  | None -> (
+      ensure_module_loaded h;
+      let menv = match h.menv with Some e -> e | None -> assert false in
+      match lookup_opt menv name with
+      | Some v -> v
+      | None ->
+          error span "E5004"
+            (Printf.sprintf "module `%s` has no member `%s`"
+               (String.concat "." h.mpath)
+               name))
+
 and eval_method env span recv mname arg_exprs =
   let argc = List.length arg_exprs in
   let eval_args () =
@@ -479,6 +544,10 @@ and eval_method env span recv mname arg_exprs =
   in
   let base = eval_expr env recv in
   match (base, mname) with
+  | Module h, _ ->
+      let v = module_member span h mname in
+      let args = eval_args_named () in
+      apply v span args
   | Instance i, mname when List.mem_assoc mname i.iclass.cmethods ->
       let closure = List.assoc mname i.iclass.cmethods in
       let args = eval_args_named () in
@@ -842,6 +911,7 @@ and eval_expr env e =
           | None ->
               error span "E3007"
                 (Printf.sprintf "enum `%s` has no member `%s`" e.ename name))
+      | Module h -> module_member span h name
       | _ ->
           error span "E3007" "a member access must be a call, like `x.read()`")
   | Ast.Index (base, index) -> eval_index env span base index
