@@ -1,2 +1,3 @@
 (library
- (name emo_check))
+ (name emo_check)
+ (libraries emo_support emo_lexer emo_parser emo_ast))
