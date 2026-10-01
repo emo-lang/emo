@@ -141,6 +141,34 @@ let rec to_string = function
   | TypeValue t -> t
   | Module n -> n
 
+(* Interfaces have no runtime artifact beyond this registry: `x.is(T)`
+   checks the receiver's class against the declared method shapes. *)
+let interface_registry : (string, (string * int) list) Hashtbl.t =
+  Hashtbl.create 8
+
+(* `x.is(T)` — the runtime half of narrowing: exact class for classes, the
+   declaring enum for members, and a structural method-shape check for
+   interfaces. *)
+let runtime_is span v t =
+  match (v, t) with
+  | Instance i, ClassDef c -> String.equal i.iclass.cname c.cname
+  | EnumMember (et, _), EnumType e -> String.equal et e.ename
+  | Instance i, TypeValue tname -> (
+      match Hashtbl.find_opt interface_registry tname with
+      | Some sigs ->
+          List.for_all
+            (fun (m, arity) ->
+              match List.assoc_opt m i.iclass.cmethods with
+              | Some closure -> List.length closure.params = arity
+              | None -> false)
+            sigs
+      | None -> false)
+  | EnumMember _, TypeValue _ -> false
+  | _ ->
+      error span "E3007"
+        (Printf.sprintf "`is` checks instances and enum members, not %s"
+           (type_name v))
+
 let child parent = { frame = Hashtbl.create 8; parent = Some parent }
 
 (* Defines a name in exactly this frame; a later definition of the same name
@@ -393,6 +421,13 @@ and eval_method env span recv mname arg_exprs =
       let frame = bind_params closure span args in
       define frame "self" ~mutable_:false (Instance i);
       eval_frame closure frame span
+  | Instance i, "is" -> (
+      let args = eval_args () in
+      match args with
+      | [ t ] -> Bool (runtime_is span (Instance i) t)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
   | Instance i, mname ->
       error span "E3007"
         (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i.iclass.cname
@@ -455,6 +490,13 @@ and eval_method env span recv mname arg_exprs =
       | _ ->
           error span "E3007"
             (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+  | (EnumMember _ as v), "is" -> (
+      let args = eval_args () in
+      match args with
+      | [ t ] -> Bool (runtime_is span v t)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
   | v, m ->
       error span "E3007"
         (Printf.sprintf "%s has no method `%s`" (type_name v) m)
@@ -720,6 +762,12 @@ and eval_expr env e =
           | None ->
               error span "E3007"
                 (Printf.sprintf "`%s` has no field `%s`" i.iclass.cname name))
+      | EnumType e -> (
+          match List.assoc_opt name e.emembers with
+          | Some v -> v
+          | None ->
+              error span "E3007"
+                (Printf.sprintf "enum `%s` has no member `%s`" e.ename name))
       | _ ->
           error span "E3007" "a member access must be a call, like `x.read()`")
   | Ast.Index (base, index) -> eval_index env span base index
@@ -745,7 +793,6 @@ let method_closure class_name env d =
   }
 
 let eval_item env item =
-  let span = item.Ast.item_span in
   match item.Ast.item_desc with
   | Ast.Item_stmt s -> eval_stmt env s
   | Ast.Item_def d ->
@@ -773,12 +820,29 @@ let eval_item env item =
                  c.Ast.class_methods;
              builtin_exception = false;
            })
-  | Ast.Item_interface _ -> not_yet span "interfaces"
-  | Ast.Item_enum _ -> not_yet span "enums"
+  | Ast.Item_interface i ->
+      let sigs =
+        List.map
+          (fun s -> (s.Ast.sig_name, List.length s.Ast.sig_params))
+          i.Ast.interface_methods
+      in
+      Hashtbl.replace interface_registry i.Ast.interface_name sigs;
+      define env i.Ast.interface_name ~mutable_:false
+        (TypeValue i.Ast.interface_name)
+  | Ast.Item_enum e ->
+      let members =
+        List.map
+          (fun m ->
+            (m.Ast.member_name, EnumMember (e.Ast.enum_name, m.Ast.member_name)))
+          e.Ast.enum_members
+      in
+      define env e.Ast.enum_name ~mutable_:false
+        (EnumType { ename = e.Ast.enum_name; emembers = members })
 
 (* Runs a whole file: declarations register, statements execute in order.
    An uncaught `raise` terminates the program with an E3010 diagnostic. *)
 let run_program ~file ~source =
+  Hashtbl.reset interface_registry;
   let items = Emo_parser.parse_program ~file ~source in
   let env = global_env () in
   try List.iter (eval_item env) items

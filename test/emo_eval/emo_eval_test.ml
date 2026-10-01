@@ -667,6 +667,57 @@ cell.replace(8)
 print(h1 == h2)|}));
   ]
 
+let enum_tests =
+  [
+    tc "enum members are singletons" (fun () ->
+        Alcotest.(check string)
+          "README Color" "true\ntrue\n"
+          (run_program
+             {|enum Color { red, green, blue }
+print(Color.red == Color.red)
+const painted = Color.green
+print(painted == Color.green)|}));
+    tc "unknown members are errors" (fun () ->
+        let diagnostic = program_err "enum Color { red }\nprint(Color.pink)" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "enum `Color` has no member `pink`"
+          diagnostic.Diagnostic.message);
+    tc "is() checks classes, enums, and interface shapes" (fun () ->
+        Alcotest.(check string)
+          "README duck typing" "Hello\ntrue\ntrue\ntrue\nfalse\nfalse\n"
+          (run_program
+             {|interface Greeter {
+  def greet() String
+}
+
+class English {
+  def init() {}
+
+  def greet() String {
+    return "Hello"
+  }
+}
+
+class Silent {
+  def init() {}
+}
+
+enum Color { red }
+def welcome(g Greeter) String {
+  return g.greet()
+}
+print(welcome(English.new()))
+print(English.new().is(Greeter))
+print(English.new().is(English))
+print(Color.red.is(Color))
+print(Silent.new().is(Greeter))
+print(Color.red.is(Greeter))|}));
+    tc "is() on primitives is a type error" (fun () ->
+        let diagnostic = program_err "print(1.is(Int))" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+  ]
+
 let method_tests =
   [
     tc "methods dispatch with self bound to the receiver" (fun () ->
@@ -767,4 +818,5 @@ let () =
       ("acceptance", acceptance_tests);
       ("class", class_tests);
       ("method", method_tests);
+      ("enum", enum_tests);
     ]
