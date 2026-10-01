@@ -58,10 +58,81 @@ let run =
   in
   Cmd.v (Cmd.info "run" ~doc:"Run an Emo program.") Term.(const run $ file)
 
+(* True while the source still has open brackets or an unterminated string —
+   the REPL keeps reading with a continuation prompt. *)
+let unbalanced source =
+  match Emo_lexer.lex ~file:"<repl>" ~source with
+  | stream ->
+      let depth =
+        List.fold_left
+          (fun d tok ->
+            match tok.Emo_lexer.Token.kind with
+            | Emo_lexer.Token.(Op LParen | Op LBracket | Op LBrace) -> d + 1
+            | Emo_lexer.Token.(Op RParen | Op RBracket | Op RBrace) -> d - 1
+            | _ -> d)
+          0
+          (Emo_lexer.Stream.to_list stream)
+      in
+      depth > 0
+  | exception Emo_lexer.Error _ -> true
+
+(* The interactive loop: definitions register, statements run, and expression
+   lines echo their value (a REPL convenience, not a language rule). Runtime
+   errors print and the environment survives. *)
+let repl_loop ~(prompt : bool) ~(input : unit -> string option)
+    ~(output : string -> unit) : unit =
+  Hashtbl.reset Emo_eval.interface_registry;
+  let env = Emo_eval.global_env () in
+  let evaluate source =
+    match Emo_parser.parse_program_with_diagnostics ~file:"<repl>" ~source with
+    | exception Emo_lexer.Error diagnostic ->
+        output (Emo_support.Render.render diagnostic ^ "\n")
+    | _, first :: rest ->
+        output (Emo_support.Render.render first ^ "\n");
+        List.iter (fun d -> output (Emo_support.Render.render d ^ "\n")) rest
+    | items, [] -> (
+        try
+          List.iter
+            (fun item ->
+              match item.Emo_ast.item_desc with
+              | Emo_ast.Item_stmt { Emo_ast.stmt_desc = Emo_ast.Expr_stmt e; _ }
+                ->
+                  output
+                    ("= " ^ Emo_eval.to_string (Emo_eval.eval_expr env e) ^ "\n")
+              | _ -> Emo_eval.eval_item env item)
+            items
+        with Emo_eval.Error diagnostic ->
+          output (Emo_support.Render.render diagnostic ^ "\n"))
+  in
+  let rec loop pending =
+    if prompt then output (if pending = "" then "emo> " else "... ");
+    match input () with
+    | None -> if prompt then output "\n"
+    | Some "exit" when pending = "" -> ()
+    | Some line ->
+        let source = if pending = "" then line else pending ^ "\n" ^ line in
+        if unbalanced source then loop source
+        else
+          let () = evaluate source in
+          loop ""
+  in
+  loop ""
+
+let start_repl () =
+  repl_loop ~prompt:true
+    ~input:(fun () ->
+      match read_line () with
+      | line -> Some line
+      | exception End_of_file -> None)
+    ~output:(fun s ->
+      print_string s;
+      flush stdout);
+  0
+
 let repl =
   Cmd.v
     (Cmd.info "repl" ~doc:"Start an interactive Emo session.")
-    Term.(const not_implemented $ const ())
+    Term.(const start_repl $ const ())
 
 let check =
   let path = Arg.(required & pos 0 (some string) None & info [] ~docv:"PATH") in

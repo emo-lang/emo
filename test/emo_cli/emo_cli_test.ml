@@ -32,6 +32,74 @@ let run_tests =
           (Emo_cli.run_file ~file:(Filename.concat scratch "missing.emo")));
   ]
 
+let contains hay needle =
+  let n = String.length needle in
+  let rec go i =
+    if i + n > String.length hay then false
+    else if String.equal (String.sub hay i n) needle then true
+    else go (i + 1)
+  in
+  go 0
+
+let queue_input lines =
+  let q = ref lines in
+  fun () ->
+    match !q with
+    | [] -> None
+    | line :: rest ->
+        q := rest;
+        Some line
+
+let repl_tests =
+  [
+    tc "expression lines echo their value" (fun () ->
+        let out = Buffer.create 64 in
+        Emo_cli.repl_loop ~prompt:false
+          ~input:(queue_input [ "1 + 2"; "exit" ])
+          ~output:(Buffer.add_string out);
+        Alcotest.(check string) "output" "= 3\n" (Buffer.contents out));
+    tc "definitions register and the environment persists" (fun () ->
+        let out = Buffer.create 128 in
+        Emo_cli.repl_loop ~prompt:false
+          ~input:
+            (queue_input
+               [
+                 "def double(n Int) Int {";
+                 "  return n * 2";
+                 "}";
+                 "double(21)";
+                 "exit";
+               ])
+          ~output:(Buffer.add_string out);
+        Alcotest.(check string) "output" "= 42\n" (Buffer.contents out));
+    tc "runtime errors print and the environment survives" (fun () ->
+        let out = Buffer.create 128 in
+        Emo_cli.repl_loop ~prompt:false
+          ~input:(queue_input [ "print(nope)"; "40 + 2"; "exit" ])
+          ~output:(Buffer.add_string out);
+        let text = Buffer.contents out in
+        Alcotest.(check bool) "error reported" true (contains text "E3002");
+        Alcotest.(check bool) "env survives" true (contains text "= 42"));
+    tc "classes register in the repl" (fun () ->
+        let out = Buffer.create 128 in
+        Emo_cli.repl_loop ~prompt:false
+          ~input:
+            (queue_input
+               [
+                 "class Greeter {";
+                 "  def init() {}";
+                 "";
+                 "  def greet() String {";
+                 "    return \"hi\"";
+                 "  }";
+                 "}";
+                 "Greeter.new().greet()";
+                 "exit";
+               ])
+          ~output:(Buffer.add_string out);
+        Alcotest.(check string) "output" "= hi\n" (Buffer.contents out));
+  ]
+
 let smoke_tests =
   [
     tc "library links" (fun () ->
@@ -41,4 +109,6 @@ let smoke_tests =
         Alcotest.(check string) "version" "0.0.1" Emo_cli.version);
   ]
 
-let () = Alcotest.run "emo_cli" [ ("smoke", smoke_tests); ("run", run_tests) ]
+let () =
+  Alcotest.run "emo_cli"
+    [ ("smoke", smoke_tests); ("run", run_tests); ("repl", repl_tests) ]
