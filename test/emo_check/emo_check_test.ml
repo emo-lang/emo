@@ -198,6 +198,95 @@ let signature_tests =
         Alcotest.(check bool) "E4008" true (has_code diagnostics "E4008"));
   ]
 
+let narrowing_tests =
+  [
+    tc "narrowing gives the variable its target type inside the branch"
+      (fun () ->
+        let diagnostics =
+          check
+            {|class User {
+  def init() {
+    self.name = "x"
+  }
+}
+
+var first = [1, "a"][0]
+if first.is(User) {
+  first = 1
+}|}
+        in
+        Alcotest.(check bool)
+          "E4004 proves the narrowing" true
+          (has_code diagnostics "E4004"));
+    tc "the else branch keeps the pre-test type" (fun () ->
+        let diagnostics =
+          check
+            {|class User {
+  def init() {
+    self.name = "x"
+  }
+}
+
+var first = [1, "a"][0]
+if first.is(User) {
+  print(1)
+} else {
+  first = 1
+}|}
+        in
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "narrowing a provably wrong receiver is an error" (fun () ->
+        let diagnostics =
+          check
+            {|class User {
+  def init() {
+    self.name = "x"
+  }
+}
+
+const s = "hi"
+if s.is(User) {
+  print(1)
+}|}
+        in
+        Alcotest.(check bool) "E4011" true (has_code diagnostics "E4011"));
+    tc "narrowing outside the branch does not leak" (fun () ->
+        let diagnostics =
+          check
+            {|class User {
+  def init() {
+    self.name = "x"
+  }
+}
+
+var first = [1, "a"][0]
+if first.is(User) {
+  print(1)
+}
+first = 1|}
+        in
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+  ]
+
+let () =
+  let out = open_out "/tmp/emo-check-debug.txt" in
+  output_string out
+    ("misuse: "
+    ^ codes_dump
+        (check
+           {|class User {
+  def init() {
+    self.name = "x"
+  }
+}
+
+const s = "hi"
+if s.is(User) {
+  print(1)
+}|})
+    ^ "\n");
+  close_out out
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -205,4 +294,5 @@ let () =
       ("collect", collect_tests);
       ("expression", expression_tests);
       ("signature", signature_tests);
+      ("narrowing", narrowing_tests);
     ]
