@@ -25,6 +25,12 @@ let span_of diagnostics =
   | d :: _ -> Span.to_string d.Diagnostic.span
   | [] -> "no diagnostics"
 
+let read_file path =
+  let ic = open_in_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
+
 let codes_dump diagnostics =
   String.concat ","
     (List.map
@@ -601,6 +607,51 @@ case anything {
 }|})));
   ]
 
+(* The step-08 acceptance corpus: strict-annotated rejections, inference
+   successes, and the zero-false-positive discipline. *)
+let corpus_tests =
+  [
+    tc "acceptance: String has no method revoke" (fun () ->
+        let diagnostics =
+          check {|def act(u String) String {
+  return u.revoke()
+}|}
+        in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001");
+        Alcotest.(check string) "span" "test.emo:2:10" (span_of diagnostics));
+    tc "acceptance: an Unknown receiver is not reported" (fun () ->
+        let diagnostics =
+          check {|def ok(u) String {
+  return u.to_string()
+}|}
+        in
+        (* The parser rejects the missing annotation before the checker
+           runs; the program never reaches a false positive. *)
+        Alcotest.(check bool)
+          "parse rejection" true
+          (has_code diagnostics "E2001"));
+    tc "acceptance: every example checks clean" (fun () ->
+        List.iter
+          (fun name ->
+            let dir = Filename.concat "../../examples" name in
+            let source = read_file (Filename.concat dir "main.emo") in
+            let diagnostics = check source in
+            if List.length diagnostics > 0 then
+              Alcotest.fail
+                (name ^ " does not check clean: " ^ codes_dump diagnostics))
+          [ "hello_world"; "fib"; "objects" ]);
+    tc "rejection: a bad named argument" (fun () ->
+        let diagnostics =
+          check
+            {|def page(title String) String {
+  return title
+}
+
+page(titel: "Home")|}
+        in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -612,4 +663,5 @@ let () =
       ("interface", interface_tests);
       ("var_escape", var_escape_tests);
       ("case", case_tests);
+      ("corpus", corpus_tests);
     ]

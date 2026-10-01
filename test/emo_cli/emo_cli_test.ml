@@ -26,7 +26,7 @@ let run_tests =
           (Emo_cli.run_file ~file ~color:false ~error_limit:20));
     tc "a runtime type error exits 70" (fun () ->
         (* The element type is Unknown to the checker; the runtime hits it. *)
-        let file = fixture "runtime.emo" {|print([1, "a"][0] + 1)|} in
+        let file = fixture "runtime.emo" {|print([1, "a"][1] + 1)|} in
         Alcotest.(check int)
           "exit" 70
           (Emo_cli.run_file ~file ~color:false ~error_limit:20));

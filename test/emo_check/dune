@@ -4,5 +4,8 @@
 
 (rule
  (alias runtest)
+ (deps
+  (source_tree ../../examples)
+  emo_check_test.exe)
  (action
   (run %{exe:emo_check_test.exe})))
