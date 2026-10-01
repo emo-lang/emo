@@ -1,5 +1,5 @@
-(** The Emo syntax tree. Every [expr], [stmt], [pattern], [type_ann], and
-    [item] node carries the span of the source it was parsed from. *)
+(** The Emo syntax tree. Every [expr], [stmt], [pattern], [type_ann], and [item]
+    node carries the span of the source it was parsed from. *)
 
 type expr = { span : Emo_support.Span.t; desc : expr_desc }
 
@@ -87,8 +87,8 @@ and literal =
   | L_string of string
   | L_bool of bool
 
-(** A top-level item: a declaration, or a statement executed in order. *)
 type item = { item_span : Emo_support.Span.t; item_desc : item_desc }
+(** A top-level item: a declaration, or a statement executed in order. *)
 
 and item_desc =
   | Item_stmt of stmt
@@ -97,8 +97,6 @@ and item_desc =
   | Item_interface of interface_def
   | Item_enum of enum_def
 
-(** A `def` — at top level, in a class, or the class's `init` (whose return
-    type is [None]; it returns the class it constructs). *)
 and fun_def = {
   def_span : Emo_support.Span.t;
   def_name : string;
@@ -106,18 +104,18 @@ and fun_def = {
   def_return : type_ann option;
   def_body : stmt list;
 }
+(** A `def` — at top level, in a class, or the class's `init` (whose return type
+    is [None]; it returns the class it constructs). *)
 
-(** A method signature inside an `interface` — a name, parameters, and a
-    required return type, with no body. *)
 and method_sig = {
   sig_span : Emo_support.Span.t;
   sig_name : string;
   sig_params : param list;
   sig_return : type_ann;
 }
+(** A method signature inside an `interface` — a name, parameters, and a
+    required return type, with no body. *)
 
-(** A `class`: exactly one [class_init] (guaranteed by the parser), any
-    number of methods, and the fields [class_init] assigns. *)
 and class_def = {
   class_span : Emo_support.Span.t;
   class_name : string;
@@ -125,6 +123,8 @@ and class_def = {
   class_methods : fun_def list;
   class_fields : field list;
 }
+(** A `class`: exactly one [class_init] (guaranteed by the parser), any number
+    of methods, and the fields [class_init] assigns. *)
 
 and field = { field_name : string; field_span : Emo_support.Span.t }
 
