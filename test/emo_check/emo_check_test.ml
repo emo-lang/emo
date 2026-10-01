@@ -395,6 +395,72 @@ if x.is(S2) {
     ^ "\n");
   close_out out
 
+let var_escape_tests =
+  [
+    tc "a var captured by a nested block is an error" (fun () ->
+        let diagnostics =
+          check
+            {|def probe(flag Bool) Int {
+  if flag {
+    var x = 1
+    if flag {
+      const g = -> {
+        return x
+      }
+      return g()
+    }
+  }
+  return 0
+}|}
+        in
+        if not (has_code diagnostics "E4012") then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check bool) "E4012" true (has_code diagnostics "E4012"));
+    tc "a const capture is fine" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|def probe(flag Bool) Int {
+  if flag {
+    const x = 1
+    if flag {
+      const g = -> {
+        return x
+      }
+      return g()
+    }
+  }
+  return 0
+}|})));
+    tc "a top-level var in a top-level block is fine" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check {|var x = 1
+const g = -> {
+  return x
+}
+print(g())|})));
+    tc "a Box is the legal way to hold mutable state in a block" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|def probe(flag Bool) Int {
+  if flag {
+    const cell = Box.new(1)
+    if flag {
+      const g = -> {
+        return cell.read()
+      }
+      return g()
+    }
+  }
+  return 0
+}|})));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -404,4 +470,5 @@ let () =
       ("signature", signature_tests);
       ("narrowing", narrowing_tests);
       ("interface", interface_tests);
+      ("var_escape", var_escape_tests);
     ]
