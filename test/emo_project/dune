@@ -1,0 +1,8 @@
+(executable
+ (name emo_project_test)
+ (libraries alcotest emo_project emo_support))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{exe:emo_project_test.exe})))
