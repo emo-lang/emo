@@ -1,8 +1,11 @@
 (executable
  (name emo_check_test)
- (libraries alcotest emo_check))
+ (libraries alcotest emo_check emo_support))
 
 (rule
  (alias runtest)
+ (deps
+  (source_tree ../../examples)
+  emo_check_test.exe)
  (action
   (run %{exe:emo_check_test.exe})))
