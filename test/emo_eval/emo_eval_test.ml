@@ -141,6 +141,26 @@ let run_stmts source =
     items;
   env
 
+(* Runs a whole program with stdout captured into a buffer. *)
+let run_program source =
+  let buf = Buffer.create 64 in
+  Emo_eval.set_output (Buffer.add_string buf);
+  Fun.protect
+    ~finally:(fun () ->
+      Emo_eval.set_output (fun s ->
+          print_string s;
+          flush stdout))
+    (fun () ->
+      let items = Emo_parser.parse_program ~file:"test.emo" ~source in
+      let env = Emo_eval.global_env () in
+      List.iter (Emo_eval.eval_item env) items);
+  Buffer.contents buf
+
+let program_err source =
+  match run_program source with
+  | _ -> Alcotest.fail "expected a runtime error"
+  | exception Emo_eval.Error diagnostic -> diagnostic
+
 let expression_tests =
   [
     tc "arithmetic respects precedence and promotion" (fun () ->
@@ -265,6 +285,69 @@ let io_tests =
         Alcotest.(check string) "code" "E3007" (code_of diagnostic));
   ]
 
+let closure_tests =
+  [
+    tc "defs register closures and recurse" (fun () ->
+        Alcotest.(check string)
+          "fib" "55\n"
+          (run_program
+             {|def fib(n Int) Int {
+  if n < 2 {
+    return n
+  }
+  return fib(n - 1) + fib(n - 2)
+}
+print(fib(10))|}));
+    tc "a def may call a def defined after it" (fun () ->
+        Alcotest.(check string)
+          "forward reference" "true\nfalse\n"
+          (run_program
+             {|def is_even(n Int) Bool {
+  if n == 0 {
+    return true
+  }
+  return is_odd(n - 1)
+}
+
+def is_odd(n Int) Bool {
+  if n == 0 {
+    return false
+  }
+  return is_even(n - 1)
+}
+print(is_even(4))
+print(is_even(5))|}));
+    tc "closures see bindings that appear after their definition" (fun () ->
+        Alcotest.(check string)
+          "by reference" "42\n"
+          (run_program
+             {|const later = -> {
+  return x + 1
+}
+const x = 41
+print(later())|}));
+    tc "closures share the enclosing frame across calls" (fun () ->
+        Alcotest.(check string)
+          "counter" "1\n2\n"
+          (run_program
+             {|const make_counter = -> {
+  const count = Box.new(0)
+  return -> {
+    count.replace(count.read() + 1)
+    return count.read()
+  }
+}
+const tick = make_counter()
+print(tick())
+print(tick())|}));
+    tc "an unbound name fails at call time" (fun () ->
+        let diagnostic = program_err "print(nope)" in
+        Alcotest.(check string) "code" "E3002" (code_of diagnostic));
+    tc "declaration items are still not evaluated" (fun () ->
+        let diagnostic = program_err "class User {}" in
+        Alcotest.(check string) "code" "E3009" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -273,4 +356,5 @@ let () =
       ("env", env_tests);
       ("expression", expression_tests);
       ("io", io_tests);
+      ("closure", closure_tests);
     ]
