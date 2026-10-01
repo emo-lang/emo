@@ -403,10 +403,13 @@ and parse_stmt st =
       let name =
         match kind st with
         | Tok.Lower_ident n ->
-            if n <> "" && n.[String.length n - 1] = '?' then
-              error "E2007" (span st) "a binding name cannot end in `?`";
-            advance st |> ignore;
+            let tok = advance st in
+            check_snake st tok "binding" ~allow_question:false;
             n
+        | Tok.Upper_ident t ->
+            error "E2007" (span st)
+              (Printf.sprintf "expected a binding name, found type name `%s`" t)
+              ~hint:"variable names are lower_snake; type names are UpperCamel"
         | t ->
             error "E2007" (span st)
               (Printf.sprintf "expected a binding name, found %s"
@@ -554,6 +557,7 @@ and parse_def st ~in_class =
     match kind st with
     | Tok.Lower_ident n ->
         let tok = advance st in
+        check_snake st tok "def" ~allow_question:true;
         (n, tok.Tok.span)
     | t ->
         error "E2009" (span st)
@@ -726,6 +730,7 @@ and parse_method_sig st =
     match kind st with
     | Tok.Lower_ident n ->
         let tok = advance st in
+        check_snake st tok "def" ~allow_question:true;
         (n, tok.Tok.span)
     | t ->
         error "E2009" (span st)
@@ -817,9 +822,8 @@ and parse_params st =
         let name =
           match kind st with
           | Tok.Lower_ident n ->
-              if String.length n > 0 && n.[String.length n - 1] = '?' then
-                error "E2006" (span st) "a parameter name cannot end in `?`";
-              advance st |> ignore;
+              let tok = advance st in
+              check_snake st tok "parameter" ~allow_question:false;
               n
           | t ->
               error "E2006" (span st)
@@ -993,7 +997,8 @@ and parse_pattern st =
       advance st |> ignore;
       { Ast.pattern_span = tok.Tok.span; pattern_desc = Ast.Wildcard }
   | Tok.Lower_ident name ->
-      advance st |> ignore;
+      let tok = advance st in
+      check_snake st tok "binding" ~allow_question:false;
       {
         Ast.pattern_span = tok.Tok.span;
         pattern_desc = Ast.Pattern_binding name;
@@ -1054,16 +1059,53 @@ let parse_expr_source ~file ~source =
       (Printf.sprintf "unexpected %s after the expression" (describe_here st));
   e
 
-(* Parses a file: a sequence of top-level items ended by newlines. *)
-let parse_program ~file ~source =
+(* Skips tokens until the next top-level item can start. Only declarations
+   and bindings anchor the resync — statement keywords inside a half-parsed
+   body would cascade. Always moves past the token the error was reported
+   at. *)
+let resync st =
+  let is_item_start = function
+    | Tok.Keyword
+        (Tok.Def | Tok.Class | Tok.Interface | Tok.Enum | Tok.Const | Tok.Var)
+      ->
+        true
+    | _ -> false
+  in
+  let rec loop first =
+    if at_eof st then ()
+    else if (not first) && newline_before st && is_item_start (kind st) then ()
+    else (
+      advance st |> ignore;
+      loop false)
+  in
+  loop true
+
+(* Parses a file, recovering from item-level errors: after a diagnostic it
+   resyncs at the next top-level item and keeps going, reporting as many
+   errors as possible in one pass. *)
+let parse_program_with_diagnostics ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
   let st = { stream; file; in_init = false } in
   let items = ref [] in
+  let diagnostics = ref [] in
   let rec loop () =
     if at_eof st then ()
-    else (
-      items := parse_item st :: !items;
-      loop ())
+    else
+      match parse_item st with
+      | item ->
+          items := item :: !items;
+          loop ()
+      | exception Error diagnostic ->
+          diagnostics := diagnostic :: !diagnostics;
+          resync st;
+          loop ()
   in
   loop ();
-  List.rev !items
+  (List.rev !items, List.rev !diagnostics)
+
+(* Parses a file: a sequence of top-level items ended by newlines. Raises on
+   the first diagnostic. *)
+let parse_program ~file ~source =
+  match parse_program_with_diagnostics ~file ~source with
+  | items, [] -> items
+  | _, first :: _ -> raise (Error first)

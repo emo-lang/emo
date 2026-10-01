@@ -1006,6 +1006,127 @@ let enum_tests =
         Alcotest.(check string) "code" "E2017" (code_of diagnostic));
   ]
 
+let parse_program_with_diagnostics source =
+  Emo_parser.parse_program_with_diagnostics ~file:"test.emo" ~source
+
+let naming_tests =
+  [
+    tc "camelCase def names are rejected" (fun () ->
+        let diagnostic = program_err "def getUser() Int {\n  return 1\n}" in
+        Alcotest.(check string) "code" "E2022" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:5"
+          (Span.to_string diagnostic.Diagnostic.span);
+        Alcotest.(check string)
+          "message" "def names are snake_case; `getUser` is camelCase"
+          diagnostic.Diagnostic.message);
+    tc "camelCase interface signatures are rejected" (fun () ->
+        let diagnostic =
+          program_err "interface G {\n  def sayHello() String\n}"
+        in
+        Alcotest.(check string) "code" "E2022" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:2:7"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "camelCase bindings are rejected" (fun () ->
+        let diagnostic = program_err "const totalCount = 3" in
+        Alcotest.(check string) "code" "E2022" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:7"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "UPPER bindings are rejected with a naming hint" (fun () ->
+        let diagnostic = program_err "const Total = 2" in
+        Alcotest.(check string) "code" "E2007" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:7"
+          (Span.to_string diagnostic.Diagnostic.span);
+        Alcotest.(check string)
+          "hint" "variable names are lower_snake; type names are UpperCamel"
+          (match diagnostic.Diagnostic.hint with
+          | Some h -> h
+          | None -> Alcotest.fail "expected a hint"));
+    tc "camelCase parameters are rejected" (fun () ->
+        let diagnostic =
+          program_err "def f(cartItem Int) Int {\n  return cartItem\n}"
+        in
+        Alcotest.(check string) "code" "E2022" (code_of diagnostic));
+    tc "camelCase pattern bindings are rejected" (fun () ->
+        let diagnostic =
+          program_err "case c {\n  otherValue -> { return 1 }\n}"
+        in
+        Alcotest.(check string) "code" "E2022" (code_of diagnostic));
+    tc "question-mark names stay exclusive to defs" (fun () ->
+        let diagnostic = program_err "const ready? = true" in
+        Alcotest.(check string) "code" "E2007" (code_of diagnostic);
+        let diagnostic =
+          program_err "def f(ready? Int) Int {\n  return ready?\n}"
+        in
+        Alcotest.(check string) "code" "E2007" (code_of diagnostic);
+        let diagnostic = program_err "case c {\n  ready? -> { return 1 }\n}" in
+        Alcotest.(check string) "code" "E2007" (code_of diagnostic));
+    tc "snake_case names with digits and underscores pass" (fun () ->
+        match
+          parse_program
+            "def is_ready_2?(flag_1 Bool) Bool {\n  return flag_1\n}"
+        with
+        | [ def_item ] ->
+            Alcotest.(check string)
+              "shape"
+              "(def is_ready_2? (param flag_1 Bool) Bool |(return flag_1))"
+              (render pp_item def_item)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+  ]
+
+let recovery_tests =
+  [
+    tc "recovery reports every top-level error in one pass" (fun () ->
+        let _, diagnostics =
+          parse_program_with_diagnostics
+            {|def getUser() Int {
+  return 1
+}
+
+const Total = 2
+
+enum Bad(String) { red }
+
+def ok() Int {
+  return 3
+}|}
+        in
+        Alcotest.(check int) "error count" 3 (List.length diagnostics);
+        Alcotest.(check string)
+          "first" "E2022"
+          (code_of (List.nth diagnostics 0));
+        Alcotest.(check string)
+          "second" "E2007"
+          (code_of (List.nth diagnostics 1));
+        Alcotest.(check string)
+          "third" "E2020"
+          (code_of (List.nth diagnostics 2)));
+    tc "valid items between errors still parse" (fun () ->
+        let items, diagnostics =
+          parse_program_with_diagnostics
+            "const Total = 1\nenum Color { red, green, blue }\nconst other = 2"
+        in
+        Alcotest.(check int) "error count" 1 (List.length diagnostics);
+        Alcotest.(check int) "item count" 2 (List.length items);
+        Alcotest.(check string)
+          "survivor" "(enum Color red green blue)"
+          (render pp_item (List.nth items 0)));
+    tc "resync lands on the next line-start keyword" (fun () ->
+        let _, diagnostics =
+          parse_program_with_diagnostics
+            "enum C { red, redGreen, blue }\ndef ok() Int {\n  return 1\n}"
+        in
+        Alcotest.(check int) "error count" 1 (List.length diagnostics);
+        Alcotest.(check string)
+          "code" "E2022"
+          (code_of (List.nth diagnostics 0)));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -1025,5 +1146,7 @@ let () =
       ("class", class_tests);
       ("interface", interface_tests);
       ("enum", enum_tests);
+      ("naming", naming_tests);
+      ("recovery", recovery_tests);
       ("golden", golden_tests);
     ]
