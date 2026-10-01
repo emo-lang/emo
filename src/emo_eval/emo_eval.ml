@@ -450,7 +450,18 @@ and eval_stmt env s =
       | _ -> error span "E3003" "invalid assignment target")
   | Ast.Return None -> not_yet span "a valueless `return`"
   | Ast.Return (Some e) -> raise (Return_signal (eval_expr env e))
-  | Ast.If _ -> not_yet span "`if`"
+  | Ast.If { cond; then_body; else_body } -> (
+      let c = eval_expr env cond in
+      match c with
+      | Bool true -> List.iter (eval_stmt env) then_body
+      | Bool false -> (
+          match else_body with
+          | Some body -> List.iter (eval_stmt env) body
+          | None -> ())
+      | v ->
+          error span "E3001"
+            (Printf.sprintf "the `if` condition must be a Bool, got %s"
+               (type_name v)))
   | Ast.Case _ -> not_yet span "`case`"
   | Ast.Receive _ -> not_yet span "`receive`"
   | Ast.Send _ -> not_yet span "processes"
@@ -486,3 +497,24 @@ and eval_expr env e =
   | Ast.Binary (op, l, r) -> eval_binary env span op l r
   | Ast.Call (callee, args) -> eval_call env span callee args
   | Ast.Do _ -> not_yet span "processes"
+
+(* Top-level items: defs register closures in the environment, statements
+   run in order. Closures capture [env] by reference, so a def resolves
+   names against the frame as it stands when the call happens — recursion
+   and forward references among defs both work. *)
+let eval_item env item =
+  let span = item.Ast.item_span in
+  match item.Ast.item_desc with
+  | Ast.Item_stmt s -> eval_stmt env s
+  | Ast.Item_def d ->
+      define env d.Ast.def_name ~mutable_:false
+        (ArrowBlock
+           {
+             def_name = Printf.sprintf "`%s`" d.Ast.def_name;
+             params = d.Ast.def_params;
+             body = d.Ast.def_body;
+             env;
+           })
+  | Ast.Item_class _ -> not_yet span "classes"
+  | Ast.Item_interface _ -> not_yet span "interfaces"
+  | Ast.Item_enum _ -> not_yet span "enums"
