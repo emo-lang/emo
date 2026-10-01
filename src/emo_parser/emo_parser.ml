@@ -230,6 +230,28 @@ and parse_postfix st =
         let close_span = span st in
         expect_op st Tok.RBracket "`]`";
         e := node (merge_span !e.Ast.span close_span) (Ast.Index (!e, index))
+    | Tok.Op Tok.LBrace
+      when (not (newline_before st)) && not st.suppress_block_sugar -> (
+        (* A trailing block attaches to the preceding expression as its final
+           argument: `f(a) { ... }` and the config shape `package { ... }`
+           share this one rule. *)
+        let lbrace_span = span st in
+        let body, close_span = parse_block st in
+        let block =
+          node (merge_span lbrace_span close_span) (Ast.Arrow_block ([], body))
+        in
+        let attach_args args =
+          args @ [ { Ast.arg_name = None; arg_value = block } ]
+        in
+        e :=
+          match !e.Ast.desc with
+          | Ast.Call (callee, args) ->
+              let span' = merge_span !e.Ast.span close_span in
+              node span' (Ast.Call (callee, attach_args args))
+          | _ ->
+              node
+                (merge_span !e.Ast.span close_span)
+                (Ast.Call (!e, attach_args [])))
     | Tok.Op Tok.LParen when not (newline_before st) -> (
         let lparen = peek st in
         if
@@ -247,19 +269,6 @@ and parse_postfix st =
         in
         e :=
           match kind st with
-          | Tok.Op Tok.LBrace
-            when (not (newline_before st)) && not st.suppress_block_sugar ->
-              let lbrace_span = span st in
-              let body, close_span = parse_block st in
-              let block =
-                node
-                  (merge_span lbrace_span close_span)
-                  (Ast.Arrow_block ([], body))
-              in
-              node
-                (merge_span call.Ast.span close_span)
-                (Ast.Call
-                   (!e, args @ [ { Ast.arg_name = None; arg_value = block } ]))
           | Tok.Op Tok.Arrow when not (newline_before st) ->
               let arrow_span = span st in
               advance st |> ignore;

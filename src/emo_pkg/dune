@@ -1,3 +1,3 @@
 (library
  (name emo_pkg)
- (libraries emo_support emo_lexer emo_ast))
+ (libraries emo_support emo_lexer emo_ast emo_parser emo_eval))
