@@ -6,6 +6,7 @@ on:
     paths:
       - "src/**"
       - "test/**"
+      - "examples/**"
       - "dune-project"
       - ".github/workflows/ci.yml"
   pull_request:

@@ -1,0 +1,39 @@
+class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+
+  def full_name() String {
+    return self.name + " (" + self.age.to_string() + ")"
+  }
+
+  def is_older?() Bool {
+    return self.age > 35
+  }
+}
+
+const u = User.new(name: "Ada", age: 36)
+print(u.full_name())
+print(u.is_older?())
+print(u == User.new(name: "Ada", age: 36))
+
+enum Color { red, green, blue }
+print(Color.red == Color.red)
+
+interface Greeter {
+  def greet() String
+}
+
+class English {
+  def greet() String {
+    return "Hello"
+  }
+}
+
+def welcome(g Greeter) String {
+  return g.greet()
+}
+
+print(welcome(English.new()))
+print(English.new().is(Greeter))

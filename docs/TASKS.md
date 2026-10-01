@@ -37,7 +37,7 @@ before starting the gated work:
 
 | Decision | Gates | Provisional until settled |
 | --- | --- | --- |
-| CLI command names | T1.3, T7.1–T7.2 | `run` / `repl` / `check` / `version`; rename mechanically once settled |
+| CLI command names | T1.3, T7.1–T7.2 | settled in M1 — `run` / `repl` / `check` / `version` shipped |
 | String escape rules | T2.3, T2.4 | Minimal set `\n \t \\ \' \"` |
 | Self-pid mechanism | Step 11 — settled by T11.1 itself | Reply pattern unusable until settled |
 | Exception catch syntax | T12.5, Step 12 acceptance | Catch form absent; uncaught reporting only |
@@ -132,12 +132,12 @@ Scope note: arrays, tuples, and `Box` (with its three-operation set) are part of
 **Prereq:** Steps 01–06.
 **Done when:** every `examples/*.emo` runs with expected output in CI; a file with three parse errors reports all three at correct line:col, stable under `--no-color`; the REPL runs the step 06 acceptance block interactively. **M1 exit criteria met.**
 
-- [ ] **T7.1** — `run` command with stage pipeline and exit codes (lex/parse 65, eval 70, uncaught exception 1).
-- [ ] **T7.2** — REPL: multi-line reading, persistent environment, value echo.
-- [ ] **T7.3** — Diagnostic renderer completion (excerpts, codes, hints, colors, error limit); unit tests over golden renderings.
-- [ ] **T7.4** — Uncaught-exception trace plumbing in the evaluator.
-- [ ] **T7.5** — `examples/` golden tests wired into CI.
-- [ ] **T7.6** — Manual pass: run each example, use the REPL interactively.
+- [x] **T7.1** — `run` command with stage pipeline and exit codes (lex/parse 65, eval 70, uncaught exception 1).
+- [x] **T7.2** — REPL: multi-line reading, persistent environment, value echo.
+- [x] **T7.3** — Diagnostic renderer completion (excerpts, codes, hints, colors, error limit); unit tests over golden renderings.
+- [x] **T7.4** — Uncaught-exception trace plumbing in the evaluator.
+- [x] **T7.5** — `examples/` golden tests wired into CI.
+- [x] **T7.6** — Manual pass: run each example, use the REPL interactively.
 
 Close-out note: promote the provisional decisions that M1 proved (`print`, trailing-block sugar) into the README.
 

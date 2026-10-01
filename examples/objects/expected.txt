@@ -1,0 +1,6 @@
+Ada (36)
+true
+true
+true
+Hello
+true

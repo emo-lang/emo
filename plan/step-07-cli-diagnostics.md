@@ -1,6 +1,6 @@
 # Step 07 — CLI & Diagnostics: `run`, `repl`
 
-**Milestone:** M1 complete · **Prereq:** steps 01–06 · **Status:** not started
+**Milestone:** M1 complete · **Prereq:** steps 01–06 · **Status:** done
 
 ## Goal
 
@@ -51,13 +51,13 @@ renderer. This step adds no language semantics — it hardens what exists.
 
 ## Tasks
 
-- [ ] `run` command with stage pipeline and exit codes.
-- [ ] REPL: multi-line reading, persistent environment, value echo.
-- [ ] Diagnostic renderer completion (excerpts, codes, hints, colors,
+- [x] `run` command with stage pipeline and exit codes.
+- [x] REPL: multi-line reading, persistent environment, value echo.
+- [x] Diagnostic renderer completion (excerpts, codes, hints, colors,
       error limit); unit tests over golden renderings.
-- [ ] Uncaught-exception trace plumbing in the evaluator.
-- [ ] `examples/` golden tests wired into CI.
-- [ ] Manual pass: run each example, use the REPL interactively.
+- [x] Uncaught-exception trace plumbing in the evaluator.
+- [x] `examples/` golden tests wired into CI.
+- [x] Manual pass: run each example, use the REPL interactively.
 
 ## Acceptance
 
