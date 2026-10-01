@@ -881,12 +881,15 @@ let eval_item env item =
       define env e.Ast.enum_name ~mutable_:false
         (EnumType { ename = e.Ast.enum_name; emembers = members })
 
-(* Runs a whole file: declarations register, statements execute in order.
-   An uncaught `raise` terminates the program with an E3010 diagnostic. *)
-let run_program ~file ~source =
+(* Evaluates pre-parsed items in a fresh environment. An uncaught `raise`
+   terminates with an E3010 diagnostic. *)
+let run_items items =
   Hashtbl.reset interface_registry;
-  let items = Emo_parser.parse_program ~file ~source in
   let env = global_env () in
   try List.iter (eval_item env) items
   with Emo_raise (v, span) ->
     error span "E3010" (Printf.sprintf "uncaught exception: %s" (to_string v))
+
+(* Runs a whole file: declarations register, statements execute in order. *)
+let run_program ~file ~source =
+  run_items (Emo_parser.parse_program ~file ~source)
