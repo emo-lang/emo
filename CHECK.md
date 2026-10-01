@@ -8,9 +8,4 @@ Pending design decisions — deliberately kept out of the README until they are 
 - String escape rules, and whether raw strings are needed.
 - Numeric literal formats: hexadecimal, binary, digit separators (decimal-only for now).
 - C FFI binding-surface syntax (blocks step 13's FFI task).
-- Package management:
-  - Manifest file name.
-  - Lockfile name.
-  - Scope prefix format.
-  - Version-range expression for dependencies (exact-only for now).
-  - Binary / CLI tool distribution mechanism.
+- Binary / CLI tool distribution mechanism.

@@ -1,6 +1,6 @@
 # Step 10 — Packages & Version Resolution
 
-**Milestone:** M2 complete · **Prereq:** steps 01–09 · **Status:** not started
+**Milestone:** M2 complete · **Prereq:** steps 01–09 · **Status:** done
 
 ## Goal
 
@@ -80,16 +80,16 @@ configurable central registry into a global content-addressed cache.
 
 ## Tasks
 
-- [ ] `require` parsing + scope rules.
-- [ ] Manifest phase A: strict schema parser, errors with spans.
-- [ ] Strict require/deps pairing check.
-- [ ] MVS resolver with target-compatibility gate; unit tests over version
+- [x] `require` parsing + scope rules.
+- [x] Manifest phase A: strict schema parser, errors with spans.
+- [x] Strict require/deps pairing check.
+- [x] MVS resolver with target-compatibility gate; unit tests over version
       lattices.
-- [ ] Lockfile read/write/verify; mismatch errors.
-- [ ] Registry client + content-addressed cache + directory registry for
+- [x] Lockfile read/write/verify; mismatch errors.
+- [x] Registry client + content-addressed cache + directory registry for
       tests.
-- [ ] Manifest phase B: restricted-profile evaluation with step budget.
-- [ ] End-to-end fixture: two local packages, one requiring the other,
+- [x] Manifest phase B: restricted-profile evaluation with step budget.
+- [x] End-to-end fixture: two local packages, one requiring the other,
       resolved, locked, built, run.
 
 ## Acceptance
@@ -105,6 +105,6 @@ configurable central registry into a global content-addressed cache.
 
 ## Open design items
 
-- Manifest file name, lockfile name, scope-prefix format, version-range
-  expression, CLI names — all pending in `CHECK.md`; provisional names are
-  used and must be swapped when settled.
+None — the provisional names settled during this step (`package.emo`,
+`emo.lock`, `owner/name` scopes, exact pins, `emo deps *`) now live in the
+README; `CHECK.md` keeps only what is still pending.
