@@ -137,31 +137,34 @@ and pp_item fmt (i : Emo_ast.item) =
   | Emo_ast.Item_interface i -> pp_interface_def fmt i
   | Emo_ast.Item_enum e -> pp_enum_def fmt e
 
+and pp_params fmt = function
+  | [] -> Format.pp_print_string fmt "()"
+  | ps -> pp_list pp_param fmt ps
+
 and pp_fun_def fmt (d : Emo_ast.fun_def) =
   match d.Emo_ast.def_return with
   | None ->
-      Format.fprintf fmt "(init @[<hov>%a@]|%a@])"
-        (pp_list pp_param) d.Emo_ast.def_params
-        (pp_list pp_stmt) d.Emo_ast.def_body
+      Format.fprintf fmt "(init @[<hov>%a@]|%a@])" pp_params
+        d.Emo_ast.def_params (pp_list pp_stmt) d.Emo_ast.def_body
   | Some ret ->
       Format.fprintf fmt "(def %s @[<hov>%a@] %a |%a@])" d.Emo_ast.def_name
-        (pp_list pp_param) d.Emo_ast.def_params pp_type_ann ret
-        (pp_list pp_stmt) d.Emo_ast.def_body
+        pp_params d.Emo_ast.def_params pp_type_ann ret (pp_list pp_stmt)
+        d.Emo_ast.def_body
 
 and pp_method_sig fmt (s : Emo_ast.method_sig) =
-  Format.fprintf fmt "(sig %s @[<hov>%a@] %a)" s.Emo_ast.sig_name
-    (pp_list pp_param) s.Emo_ast.sig_params pp_type_ann s.Emo_ast.sig_return
+  Format.fprintf fmt "(sig %s @[<hov>%a@] %a)" s.Emo_ast.sig_name pp_params
+    s.Emo_ast.sig_params pp_type_ann s.Emo_ast.sig_return
 
 and pp_field fmt (f : Emo_ast.field) =
   Format.fprintf fmt "(field %s)" f.Emo_ast.field_name
 
 and pp_class_def fmt (c : Emo_ast.class_def) =
-  Format.fprintf fmt "(class %s @[<hov>(fields @[<hov>%a@]) (init @[<hov>%a@]|%a@]) %a@])"
-    c.Emo_ast.class_name
-    (pp_list pp_field) c.Emo_ast.class_fields
-    (pp_list pp_param) c.Emo_ast.class_init.Emo_ast.def_params
-    (pp_list pp_stmt) c.Emo_ast.class_init.Emo_ast.def_body
-    (pp_list pp_fun_def) c.Emo_ast.class_methods
+  Format.fprintf fmt
+    "(class %s @[<hov>(fields @[<hov>%a@]) (init @[<hov>%a@]|%a@]) %a@])"
+    c.Emo_ast.class_name (pp_list pp_field) c.Emo_ast.class_fields pp_params
+    c.Emo_ast.class_init.Emo_ast.def_params (pp_list pp_stmt)
+    c.Emo_ast.class_init.Emo_ast.def_body (pp_list pp_fun_def)
+    c.Emo_ast.class_methods
 
 and pp_interface_def fmt (i : Emo_ast.interface_def) =
   Format.fprintf fmt "(interface %s @[<hov>%a@])" i.Emo_ast.interface_name
@@ -590,8 +593,7 @@ let item_tests =
         | [ binding; expr; if_stmt ] ->
             Alcotest.(check string)
               "binding" "(const x 1)" (render pp_item binding);
-            Alcotest.(check string)
-              "expression" "(+ x 2)" (render pp_item expr);
+            Alcotest.(check string) "expression" "(+ x 2)" (render pp_item expr);
             Alcotest.(check string)
               "if" "(if x then y)" (render pp_item if_stmt)
         | items ->
@@ -605,6 +607,77 @@ let item_tests =
         | items ->
             Alcotest.fail
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+  ]
+
+let def_err source =
+  match parse_program source with
+  | _ -> Alcotest.fail "expected a parse error"
+  | exception Emo_parser.Error diagnostic -> diagnostic
+
+let def_tests =
+  [
+    tc "a def parses with params and return type" (fun () ->
+        match
+          parse_program "def add(a Int, b Int) Int {\n  return a + b\n}"
+        with
+        | [ def_item ] ->
+            Alcotest.(check string)
+              "shape"
+              "(def add (param a Int) (param b Int) Int |(return (+ a b)))"
+              (render pp_item def_item)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "a def may take no parameters" (fun () ->
+        match parse_program "def greet() String {\n  return \"hi\"\n}" with
+        | [ def_item ] ->
+            Alcotest.(check string)
+              "shape" "(def greet () String |(return \"hi\"))"
+              (render pp_item def_item)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "predicate defs end their name in ?" (fun () ->
+        match parse_program "def is_older?() Bool {\n  return true\n}" with
+        | [ def_item ] ->
+            Alcotest.(check string)
+              "shape" "(def is_older? () Bool |(return true))"
+              (render pp_item def_item)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "a def's span covers the whole declaration" (fun () ->
+        match parse_program "def f() Int {\n  return 1\n}" with
+        | [ def_item ] ->
+            Alcotest.(check int) "start" 0 def_item.Emo_ast.item_span.Span.start;
+            Alcotest.(check int) "stop" 26 def_item.Emo_ast.item_span.Span.stop
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "init cannot be defined at top level" (fun () ->
+        let diagnostic = def_err "def init(x Int) {\n  self.x = x\n}" in
+        Alcotest.(check string) "code" "E2010" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:5"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a def must declare its return type" (fun () ->
+        let diagnostic = def_err "def f(a Int) {\n  return a\n}" in
+        Alcotest.(check string) "code" "E2012" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:14"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "the return type stays on the signature's line" (fun () ->
+        let diagnostic = def_err "def f()\nInt {\n  return 1\n}" in
+        Alcotest.(check string) "code" "E2012" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:2:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "the def body opens on the signature's line" (fun () ->
+        let diagnostic = def_err "def f() Int\n{\n  return 1\n}" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+    tc "a def needs a name" (fun () ->
+        let diagnostic = def_err "def () Int {\n  return 1\n}" in
+        Alcotest.(check string) "code" "E2009" (code_of diagnostic));
   ]
 
 let () =
@@ -622,5 +695,6 @@ let () =
       ("stmt", stmt_tests);
       ("string", string_tests);
       ("item", item_tests);
+      ("def", def_tests);
       ("golden", golden_tests);
     ]

@@ -462,10 +462,78 @@ and end_statement st =
       error "E2002" (span st) "expressions cannot be juxtaposed"
         ~hint:"start a new statement on the next line"
 
+and parse_item st =
+  let item_span = span st in
+  match kind st with
+  | Tok.Keyword Tok.Def ->
+      let d = parse_def st ~in_class:false in
+      { Ast.item_span = d.Ast.def_span; item_desc = Ast.Item_def d }
+  | _ -> { Ast.item_span; item_desc = Ast.Item_stmt (parse_stmt st) }
+
+(* `true` when the current token can begin a type annotation. *)
+and starts_type st =
+  match kind st with
+  | Tok.Upper_ident _ | Tok.Op Tok.LParen -> true
+  | _ -> false
+
+and parse_def st ~in_class =
+  let def_tok = peek st in
+  advance st |> ignore;
+  let name, name_span =
+    match kind st with
+    | Tok.Lower_ident n ->
+        let tok = advance st in
+        (n, tok.Tok.span)
+    | t ->
+        error "E2009" (span st)
+          (Printf.sprintf "expected a def name, found %s" (describe_kind t))
+  in
+  if name = "init" then (
+    if not in_class then
+      error "E2010" name_span
+        "`init` is a constructor; it can only be defined in a class body";
+    let def_params = parse_params st in
+    if (not (newline_before st)) && starts_type st then
+      error "E2011" (span st) "`init` takes no return annotation"
+        ~hint:"`init` returns the class it constructs";
+    let def_body, close_span = parse_def_body st in
+    {
+      Ast.def_span = merge_span def_tok.Tok.span close_span;
+      def_name = name;
+      def_params;
+      def_return = None;
+      def_body;
+    })
+  else
+    let def_params = parse_params st in
+    let def_return =
+      if (not (newline_before st)) && starts_type st then
+        Some (parse_type_ann st)
+      else
+        error "E2012" (span st) "a def must declare its return type"
+          ~hint:"function signatures always carry explicit types"
+    in
+    let def_body, close_span = parse_def_body st in
+    {
+      Ast.def_span = merge_span def_tok.Tok.span close_span;
+      def_name = name;
+      def_params;
+      def_return;
+      def_body;
+    }
+
+and parse_def_body st =
+  if at_op st Tok.LBrace && not (newline_before st) then parse_block st
+  else
+    error "E2001" (span st)
+      "the def's body must open with `{` on the signature's line"
+
 and parse_params st =
   if at_op st Tok.LParen then (
     advance st |> ignore;
-    if at_op st Tok.RParen then []
+    if at_op st Tok.RParen then (
+      advance st |> ignore;
+      [])
     else
       let params = ref [] in
       let rec loop () =
@@ -717,13 +785,7 @@ let parse_program ~file ~source =
   let rec loop () =
     if at_eof st then ()
     else (
-      let item_span = span st in
-      items :=
-        {
-          Ast.item_span;
-          item_desc = Ast.Item_stmt (parse_stmt st);
-        }
-        :: !items;
+      items := parse_item st :: !items;
       loop ())
   in
   loop ();
