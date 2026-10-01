@@ -614,6 +614,57 @@ print(e == e)|}));
     tc "self outside a class is unbound" (fun () ->
         let diagnostic = program_err "print(self)" in
         Alcotest.(check string) "code" "E3002" (code_of diagnostic));
+    tc "instances compare by content, not identity" (fun () ->
+        Alcotest.(check string)
+          "value semantics" "true\ntrue\nfalse\nfalse\n"
+          (run_program
+             {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+}
+const u = User.new(name: "Ada", age: 36)
+print(u == User.new(name: "Ada", age: 36))
+const alias = u
+print(alias == u)
+print(u == User.new(name: "Ada", age: 37))
+print(u == User.new(name: "Grace", age: 36))|}));
+    tc "same-shaped instances of different classes are unequal" (fun () ->
+        Alcotest.(check string)
+          "class names differ" "false\n"
+          (run_program
+             {|class A {
+  def init() {
+    self.x = 1
+  }
+}
+
+class B {
+  def init() {
+    self.x = 1
+  }
+}
+print(A.new() == B.new())|}));
+    tc "shared structure stays observably immutable" (fun () ->
+        Alcotest.(check string)
+          "aliasing and boxes" "true\ntrue\nfalse\n"
+          (run_program
+             {|class Holder {
+  def init(items Array[Int], cell Box) {
+    self.items = items
+    self.cell = cell
+  }
+}
+const shared = [1, 2]
+const cell = Box.new(7)
+const h1 = Holder.new(shared, cell)
+const h2 = Holder.new([1, 2], Box.new(7))
+print(h1 == h2)
+const h3 = h1
+print(h3 == h1)
+cell.replace(8)
+print(h1 == h2)|}));
   ]
 
 let method_tests =
