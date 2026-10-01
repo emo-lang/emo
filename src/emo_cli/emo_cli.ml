@@ -95,7 +95,8 @@ let check_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
       try
         let p = Emo_project.discover ~entry_file:file in
         let all = Emo_project.diagnostics p in
-        let _, _, errors = Emo_project.check_project p in
+        let manifest = None in
+        let _, _, errors = Emo_project.check_project ~manifest p in
         render_errors ~color ~error_limit (all @ errors);
         if List.length (all @ errors) > 0 then 65 else 0
       with

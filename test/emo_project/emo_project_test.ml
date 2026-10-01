@@ -256,7 +256,7 @@ let privacy_tests =
             ]
             "shop/pricing.emo"
         in
-        let _, _, errors = Emo_project.check_project p in
+        let _, _, errors = Emo_project.check_project ~manifest:None p in
         if List.length errors > 0 then
           Alcotest.fail ("codes: " ^ codes_dump errors);
         Alcotest.(check int) "count" 0 (List.length errors));
@@ -270,7 +270,7 @@ let privacy_tests =
             ]
             "other/thing.emo"
         in
-        let _, _, errors = Emo_project.check_project p in
+        let _, _, errors = Emo_project.check_project ~manifest:None p in
         if not (has_code errors "E5001") then
           Alcotest.fail ("codes: " ^ codes_dump errors);
         let message =
@@ -296,7 +296,7 @@ const once = 1|});
             ]
             "a.emo"
         in
-        let _, _, errors = Emo_project.check_project p in
+        let _, _, errors = Emo_project.check_project ~manifest:None p in
         if not (has_code errors "E5003") then
           Alcotest.fail ("codes: " ^ codes_dump errors);
         let message =
@@ -316,7 +316,7 @@ const once = 1|});
             ]
             "main.emo"
         in
-        let _, _, errors = Emo_project.check_project p in
+        let _, _, errors = Emo_project.check_project ~manifest:None p in
         Alcotest.(check int) "count" 0 (List.length errors));
   ]
 

@@ -274,9 +274,9 @@ let find_cycle (graph : (string list, string list list) Hashtbl.t) :
   in
   anywhere (Hashtbl.fold (fun path _ acc -> path :: acc) graph [])
 
-let check_project p :
+let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
     string list list
-    * (string list * string list list) list
+    * (string list * string list list * (string * Emo_support.Span.t) list) list
     * Emo_support.Diagnostic.t list =
   let () =
     let oc = open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-cp.txt" in
@@ -287,6 +287,10 @@ let check_project p :
   in
   let module_paths = module_paths p in
   let graph : (string list, string list list) Hashtbl.t = Hashtbl.create 8 in
+  let requires_table :
+      (string list, (string * Emo_support.Span.t) list) Hashtbl.t =
+    Hashtbl.create 8
+  in
   let errors, entries =
     Hashtbl.fold
       (fun path file ((errors, entries) as acc) ->
@@ -300,10 +304,11 @@ let check_project p :
               raise (Static_errors diagnostics)
           | items, [] -> items
         in
-        let diagnostics, refs =
+        let diagnostics, refs, requires =
           Emo_check.check_module ~modules:module_paths ~current:path items
         in
         Hashtbl.replace graph path refs;
+        Hashtbl.replace requires_table path requires;
         let oc =
           open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-refs.txt"
         in
@@ -341,26 +346,108 @@ let check_project p :
             };
         ]
   in
-  (module_paths, entries, errors @ internal_errors @ cycle_error)
+  (* Strict pairing: every require must name a manifest dependency. *)
+  let pairing_errors =
+    List.concat_map
+      (fun (path, requires) ->
+        match (manifest, requires) with
+        | None, _ :: _ ->
+            [
+              {
+                Emo_support.Diagnostic.severity = Error;
+                code = Some "E5006";
+                message =
+                  "this project has `require`s but no package.emo manifest \
+                   to                    declare dependencies";
+                span =
+                  (match requires with
+                  | (_, s) :: _ -> s
+                  | [] ->
+                      Emo_support.Span.make ~file:p.root ~line:1 ~col:1 ~start:0
+                        ~stop:0);
+                hint = Some "create a package.emo manifest with a deps block";
+              };
+            ]
+        | Some m, _ ->
+            List.filter_map
+              (fun (pkg, span) ->
+                match List.assoc_opt pkg m.Emo_pkg.deps with
+                | Some _ -> None
+                | None ->
+                    Some
+                      {
+                        Emo_support.Diagnostic.severity = Error;
+                        code = Some "E5006";
+                        message =
+                          Printf.sprintf
+                            "module `%s` requires `%s`, but the \
+                             manifest                              \
+                             (package.emo) does not list it in deps"
+                            (String.concat "." path) pkg;
+                        span;
+                        hint =
+                          Some
+                            "add the package to the manifest's deps block, \
+                             or                              remove the \
+                             require";
+                      })
+              requires
+        | None, [] -> [])
+      (Hashtbl.fold (fun k v acc -> (k, v) :: acc) requires_table [])
+  in
+  let entries =
+    List.map
+      (fun (path, refs) ->
+        let requires =
+          match Hashtbl.find_opt requires_table path with
+          | Some r -> r
+          | None -> []
+        in
+        (path, refs, requires))
+      entries
+  in
+  ( module_paths,
+    entries,
+    errors @ internal_errors @ cycle_error @ pairing_errors )
 
 (* Runs the entry file: the graph is discovered up front (collisions report
    immediately), modules load lazily on first access with load-once
    semantics, and the entry's own items evaluate in file order. With
    ~check:true every module is checked first. *)
+(* The manifest is the nearest package.emo at or above the entry file's
+   directory; None when the project has no manifest. *)
+let find_manifest ~entry_file : string option =
+  let dir = ref (Filename.dirname entry_file) in
+  let rec walk () =
+    let candidate = Filename.concat !dir "package.emo" in
+    if Sys.file_exists candidate then Some candidate
+    else if Filename.dirname !dir = !dir then None
+    else (
+      dir := Filename.dirname !dir;
+      walk ())
+  in
+  walk ()
+
 let run_entry ~entry_file ?(check = false) () : project =
   let p = discover ~entry_file in
   (match diagnostics p with [] -> () | ds -> raise (Static_errors ds));
   install_hooks p;
+  let manifest =
+    Option.bind (find_manifest ~entry_file) (fun path ->
+        match Emo_pkg.parse_manifest ~file:path ~source:(read_file path) with
+        | m -> Some m
+        | exception Emo_pkg.Manifest_error d -> raise (Static_errors [ d ]))
+  in
   let entry_file =
     if Filename.is_relative entry_file then Filename.concat p.root entry_file
     else entry_file
   in
   let items = parse_cached p entry_file in
   (if check then
-     let _paths, _graph, errors = check_project p in
+     let _paths, _graph, errors = check_project ~manifest p in
      (* The entry file itself may live outside the discovered tree (an
         absolute path); it is always checked too. *)
-     let entry_diags, _refs =
+     let entry_diags, _refs, _requires =
        Emo_check.check_module ~modules:_paths ~current:[] items
      in
      match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
