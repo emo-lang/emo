@@ -1,0 +1,21 @@
+def fib(n Int) Int {
+  if n < 2 {
+    return n
+  }
+  return fib(n - 1) + fib(n - 2)
+}
+
+const greeting = -> (name String) {
+  return "hello, ${name}"
+}
+
+print(fib(20))
+print(greeting("emo"))
+
+def count_down(n Int) Int {
+  if n == 0 {
+    return 0
+  }
+  return count_down(n - 1)
+}
+print(count_down(1000000))

@@ -1,8 +1,9 @@
 (executable
  (name emo_cli_test)
- (libraries alcotest emo_cli emo_support))
+ (libraries alcotest emo_cli emo_support emo_eval emo_lexer emo_parser))
 
 (rule
  (alias runtest)
+ (deps (source_tree ../../examples) emo_cli_test.exe)
  (action
   (run %{exe:emo_cli_test.exe})))

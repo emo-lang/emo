@@ -117,6 +117,44 @@ let smoke_tests =
         Alcotest.(check string) "version" "0.0.1" Emo_cli.version);
   ]
 
+(* Every examples/<name>/ runs end to end and prints its expected.txt. *)
+let examples_dir = "../../examples"
+
+let read_file path =
+  let ic = open_in_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_in_noerr ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
+
+let example_names () =
+  Sys.readdir examples_dir |> Array.to_list |> List.sort compare
+  |> List.filter (fun name ->
+         Sys.file_exists
+           (Filename.concat examples_dir (name ^ "/main.emo")))
+
+let examples_tests =
+  List.map
+    (fun name ->
+      tc (Printf.sprintf "%s runs with its expected output" name) (fun () ->
+          let dir = Filename.concat examples_dir name in
+          let source = read_file (Filename.concat dir "main.emo") in
+          let expected = read_file (Filename.concat dir "expected.txt") in
+          let out = Buffer.create 256 in
+          Emo_eval.set_output (Buffer.add_string out);
+          Fun.protect
+            ~finally:(fun () ->
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout))
+            (fun () -> Emo_eval.run_program ~file:(name ^ "/main.emo") ~source);
+          Alcotest.(check string) "output" expected (Buffer.contents out)))
+    (example_names ())
+
 let () =
   Alcotest.run "emo_cli"
-    [ ("smoke", smoke_tests); ("run", run_tests); ("repl", repl_tests) ]
+    [
+      ("smoke", smoke_tests);
+      ("run", run_tests);
+      ("repl", repl_tests);
+      ("examples", examples_tests);
+    ]
