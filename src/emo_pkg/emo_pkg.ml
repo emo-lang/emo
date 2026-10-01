@@ -125,102 +125,195 @@ end
      }
    Unknown fields, missing fields, and non-literal values are errors — the
    manifest is data, not program logic (until phase B). *)
-(* Parses a manifest with the strict phase-A schema. *)
+(* The budget for restricted manifest evaluation: generous but finite. *)
+let manifest_budget = 10_000
+
+exception Manifest_budget_exceeded of int
+
+(* Phase B: the manifest is evaluated as real Emo in the restricted profile
+   (hermetic, step-budgeted, no I/O builtins in scope). The `package { ... }`
+   block's bindings become the fields and a `deps { ... }` block's bindings
+   become the dependencies. *)
 let parse_manifest ~(file : string) ~(source : string) : manifest =
-  let module P = Manifest_parser in
-  let toks =
-    match Emo_lexer.lex ~file ~source with
-    | stream -> Emo_lexer.Stream.to_list stream
+  let items =
+    match Emo_parser.parse_program ~file ~source with
+    | items -> items
     | exception Emo_lexer.Error d -> raise (Manifest_error d)
+    | exception Emo_parser.Error d -> raise (Manifest_error d)
   in
-  let st = { P.toks = Array.of_list toks; P.pos = 0; P.file } in
-  (match P.(peek st).Tok.kind with
-  | Tok.Lower_ident "package" -> P.advance st |> ignore
-  | _ -> P.err st "E5100" "expected `package`");
-  P.expect_op st Tok.LBrace "`{`";
-  let name = ref None in
-  let version = ref None in
-  let targets = ref None in
-  let deps = ref [] in
-  let fields_seen = Hashtbl.create 4 in
-  let rec fields () =
-    match P.(peek st).Tok.kind with
-    | Tok.Op Tok.RBrace -> P.advance st |> ignore
-    | Tok.Lower_ident field_name ->
-        let field_span = P.span st in
-        if Hashtbl.mem fields_seen field_name then
-          P.err st "E5100" (Printf.sprintf "duplicate field `%s`" field_name);
-        Hashtbl.replace fields_seen field_name field_span;
-        P.advance st |> ignore;
-        (match field_name with
-        | "name" ->
-            P.expect_op st Tok.Assign "`=`";
-            name := Some (P.expect_string st "a package name")
-        | "version" ->
-            P.expect_op st Tok.Assign "`=`";
-            version := Some (P.read_version st (P.expect_string st "a version"))
-        | "targets" ->
-            P.expect_op st Tok.Assign "`=`";
-            P.expect_op st Tok.LBracket "a target list `[`";
-            let rec read_targets acc =
-              match P.(peek st).Tok.kind with
-              | Tok.Op Tok.RBracket ->
-                  P.advance st |> ignore;
-                  List.rev acc
-              | Tok.String_chunk _ ->
-                  let t = P.expect_string st "a target name" in
-                  read_targets (t :: acc)
-              | Tok.Op Tok.Comma ->
-                  P.advance st |> ignore;
-                  read_targets acc
-              | _ -> P.err st "E5103" "expected a target name or `]`"
-            in
-            targets := Some (read_targets [])
-        | "deps" ->
-            P.expect_op st Tok.LBrace "`{`";
-            let rec read_deps acc =
-              match P.(peek st).Tok.kind with
-              | Tok.Op Tok.RBrace ->
-                  P.advance st |> ignore;
-                  List.rev acc
-              | Tok.Lower_ident dep ->
-                  P.advance st |> ignore;
-                  P.expect_op st Tok.Assign "`=`";
-                  let raw =
-                    P.expect_string st ("a version for `" ^ dep ^ "`")
-                  in
-                  read_deps ((dep, P.read_version st raw) :: acc)
-              | _ -> P.err st "E5100" "expected a dependency name or `}`"
-            in
-            deps := read_deps []
-        | _ -> P.err st "E5100" (Printf.sprintf "unknown field `%s`" field_name));
-        fields ()
-    | Tok.Eof -> P.err st "E5101" "expected a field or `}`"
-    | _ -> P.err st "E5100" "expected a field name or `}`"
+  let manifest_error code message =
+    Manifest_error
+      Emo_support.Diagnostic.
+        {
+          severity = Error;
+          code = Some code;
+          message;
+          span = Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
+          hint = None;
+        }
   in
-  fields ();
-  let required name = function
-    | Some v -> v
-    | None -> P.err st "E5101" (Printf.sprintf "missing field `%s`" name)
+  let env, deps_pairs =
+    try Emo_eval.run_restricted ~budget:manifest_budget ~file items with
+    | Emo_eval.Budget_exceeded budget ->
+        raise
+          (manifest_error "E5200"
+             (Printf.sprintf "manifest evaluation exceeded %d steps" budget))
+    | Emo_eval.Duplicate_field name ->
+        raise
+          (manifest_error "E5100" (Printf.sprintf "duplicate field `%s`" name))
+    | Emo_eval.Impure_field name ->
+        raise
+          (manifest_error "E5103"
+             (Printf.sprintf "field `%s` must be literal data" name))
+    | Emo_eval.Emo_raise (v, span, trace) ->
+        let d = Emo_eval.uncaught_diagnostic (v, span, trace) in
+        raise
+          (Manifest_error { d with Emo_support.Diagnostic.code = Some "E5103" })
   in
-  let targets =
-    match !targets with
-    | Some t -> t
-    | None -> P.err st "E5101" "missing field `targets`"
+  (* Strict fixed schema: nothing besides name, version, and targets may be
+     defined in the package block. *)
+  Hashtbl.iter
+    (fun k _ ->
+      if
+        not
+          (String.equal k "name" || String.equal k "version"
+         || String.equal k "targets")
+      then
+        raise (manifest_error "E5100" (Printf.sprintf "unknown field `%s`" k)))
+    env.Emo_eval.frame;
+  let read_string name =
+    match Emo_eval.lookup_opt env name with
+    | Some (Emo_eval.String s) -> s
+    | Some v ->
+        raise
+          (Manifest_error
+             Emo_support.Diagnostic.
+               {
+                 severity = Error;
+                 code = Some "E5103";
+                 message =
+                   Printf.sprintf "field `%s` must be a string, got %s" name
+                     (Emo_eval.type_name v);
+                 span =
+                   Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
+                 hint = None;
+               })
+    | None ->
+        raise
+          (Manifest_error
+             Emo_support.Diagnostic.
+               {
+                 severity = Error;
+                 code = Some "E5101";
+                 message = Printf.sprintf "missing field `%s`" name;
+                 span =
+                   Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
+                 hint = None;
+               })
   in
+  let read_targets () =
+    match Emo_eval.lookup_opt env "targets" with
+    | Some (Emo_eval.Array items) ->
+        List.map
+          (fun v ->
+            match v with
+            | Emo_eval.String s -> s
+            | other ->
+                raise
+                  (Manifest_error
+                     Emo_support.Diagnostic.
+                       {
+                         severity = Error;
+                         code = Some "E5103";
+                         message =
+                           Printf.sprintf "targets must be strings, got %s"
+                             (Emo_eval.type_name other);
+                         span =
+                           Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0
+                             ~stop:0;
+                         hint = None;
+                       }))
+          (Array.to_list items)
+    | Some other ->
+        raise
+          (Manifest_error
+             Emo_support.Diagnostic.
+               {
+                 severity = Error;
+                 code = Some "E5103";
+                 message = Printf.sprintf "`targets` must be an array";
+                 span =
+                   Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
+                 hint = None;
+               })
+    | None ->
+        raise
+          (Manifest_error
+             Emo_support.Diagnostic.
+               {
+                 severity = Error;
+                 code = Some "E5101";
+                 message = "missing field `targets`";
+                 span =
+                   Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
+                 hint = None;
+               })
+  in
+  let name = read_string "name" in
+  let version =
+    match Version.parse (read_string "version") with
+    | Ok v -> v
+    | Error message ->
+        raise
+          (Manifest_error
+             Emo_support.Diagnostic.
+               {
+                 severity = Error;
+                 code = Some "E5103";
+                 message;
+                 span =
+                   Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
+                 hint = None;
+               })
+  in
+  let targets = read_targets () in
   List.iter
     (fun t ->
       if not (List.mem t known_targets) then
-        P.err st "E5103" (Printf.sprintf "unknown target `%s`" t))
+        raise
+          (Manifest_error
+             Emo_support.Diagnostic.
+               {
+                 severity = Error;
+                 code = Some "E5103";
+                 message = Printf.sprintf "unknown target `%s`" t;
+                 span =
+                   Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
+                 hint = None;
+               }))
     targets;
-  let name = required "name" !name in
-  let version = required "version" !version in
-  { name; version; targets; deps = !deps }
+  let deps =
+    List.map
+      (fun (dep, raw) ->
+        match Version.parse raw with
+        | Ok v -> (dep, v)
+        | Error message ->
+            raise
+              (Manifest_error
+                 Emo_support.Diagnostic.
+                   {
+                     severity = Error;
+                     code = Some "E5103";
+                     message;
+                     span =
+                       Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0
+                         ~stop:0;
+                     hint = None;
+                   }))
+      deps_pairs
+  in
+  { name; version; targets; deps }
 
-(* Dependency resolution: exact pins resolved by "highest exact version
-   named wins" (MVS over exact pins), with a target-compatibility gate —
-   a package lacking the current build target fails resolution before
-   compilation. *)
 module Resolve = struct
   type package_version = {
     pv_version : Version.t;

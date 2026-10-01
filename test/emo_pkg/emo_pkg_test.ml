@@ -65,16 +65,16 @@ let manifest_tests =
   }
 }|}
         with
+        | Error d ->
+            Alcotest.fail
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
         | Ok m ->
             Alcotest.(check string) "name" "acme/json_tools" m.Emo_pkg.name;
             Alcotest.(check string)
               "version" "0.1.0"
               (Emo_pkg.Version.to_string m.Emo_pkg.version);
             Alcotest.(check int) "targets" 2 (List.length m.Emo_pkg.targets);
-            Alcotest.(check int) "deps" 2 (List.length m.Emo_pkg.deps)
-        | Error d ->
-            Alcotest.fail
-              (d.Diagnostic.message ^ " @ " ^ Span.to_string d.Diagnostic.span));
+            Alcotest.(check int) "deps" 2 (List.length m.Emo_pkg.deps));
     tc "an empty deps block is allowed" (fun () ->
         match
           check
@@ -86,7 +86,9 @@ let manifest_tests =
 }|}
         with
         | Ok m -> Alcotest.(check int) "deps" 0 (List.length m.Emo_pkg.deps)
-        | Error _ -> Alcotest.fail "expected success");
+        | Error d ->
+            Alcotest.fail
+              (match d.Diagnostic.code with Some c -> c | None -> "?"));
     tc "unknown fields are rejected" (fun () ->
         match
           check
@@ -189,6 +191,24 @@ let manifest_tests =
               "code" "E5103"
               (match d.Diagnostic.code with Some c -> c | None -> "?")
         | Ok _ -> Alcotest.fail "expected E5103");
+    tc "runaway evaluation hits the step budget" (fun () ->
+        match
+          check
+            {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["native"]
+  deps {}
+}
+
+def loop() Int { return loop() }
+loop()|}
+        with
+        | Error d ->
+            Alcotest.(check string)
+              "code" "E5200"
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | Ok _ -> Alcotest.fail "expected E5200");
   ]
 
 let lockfile_tests =
@@ -396,7 +416,6 @@ let registry_tests =
           Filename.concat root
             (Filename.concat "acme" (Filename.concat "json_tools" "2.3.1"))
         in
-        ignore (Sys.command ("rm -rf " ^ Filename.quote root));
         ignore (Sys.command ("mkdir -p " ^ Filename.quote pkg_dir));
         let write rel content =
           let oc =

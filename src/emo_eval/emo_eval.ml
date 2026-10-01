@@ -132,6 +132,19 @@ let global_env () =
     };
   env
 
+(* The restricted profile: hermetic evaluation with a step budget — the same
+   machinery serves manifest evaluation and user-facing config files. The
+   budget error names the limit, per the README's configuration story. *)
+exception Budget_exceeded of int (* the budget that was hit *)
+
+let step_budget : int option ref = ref None
+let step_count : int ref = ref 0
+
+let count_step () =
+  match !step_budget with
+  | Some budget when !step_count >= budget -> raise (Budget_exceeded budget)
+  | _ -> step_count := !step_count + 1
+
 (* The module system hooks: the project layer installs discovery (a
    normalized module path → handle, with its child module names) and loading
    (a normalized module path → the namespace from running its items). *)
@@ -751,6 +764,7 @@ and eval_frame closure frame span =
   loop closure frame
 
 and eval_stmt env s =
+  count_step ();
   let span = s.Ast.stmt_span in
   match s.Ast.stmt_desc with
   | Ast.Expr_stmt e -> ignore (eval_expr env e)
@@ -873,6 +887,7 @@ and eval_stmt env s =
       raise (Emo_raise (v, span, !call_trace))
 
 and eval_expr env e =
+  count_step ();
   let span = e.Ast.span in
   match e.Ast.desc with
   | Ast.Int n -> Int n
@@ -995,8 +1010,110 @@ let eval_item env item =
       define env e.Ast.enum_name ~mutable_:false
         (EnumType { ename = e.Ast.enum_name; emembers = members })
 
-(* Evaluates pre-parsed items in a fresh environment. An uncaught `raise`
-   terminates with an E3010 diagnostic. *)
+(* Restricted-profile schema errors: the manifest reader maps them onto the
+   E51xx codes. A field defined twice, and a value that is not literal data
+   (the manifest is data, not program logic). *)
+exception Duplicate_field of string
+exception Impure_field of string
+
+(* Evaluates pre-parsed items hermetically: an empty environment (no I/O
+   builtins in scope), a step budget, and `package`/`deps` blocks whose
+   bindings are collected into a dependency table instead of the scope.
+   Returns the resulting environment and the collected (dep, value) pairs. *)
+let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
+    env * (string * string) list =
+  step_budget := Some budget;
+  step_count := 0;
+  let env = { frame = Hashtbl.create 8; parent = None } in
+  let deps : (string * string) list ref = ref [] in
+  let is_literal (e : Ast.expr) =
+    let rec go (e : Ast.expr) =
+      match e.Ast.desc with
+      | Ast.String _ | Ast.Int _ | Ast.Float _ | Ast.Bool _ | Ast.Char _ -> true
+      | Ast.Array_literal es -> List.for_all go es
+      | _ -> false
+    in
+    go e
+  in
+  let field_target (s : Ast.stmt) =
+    match s.Ast.stmt_desc with
+    | Ast.Binding { name; init; _ } -> Some (name, init)
+    | Ast.Assign { target = { Ast.desc = Ast.Ident name; _ }; value } ->
+        Some (name, value)
+    | _ -> None
+  in
+  let define_field target name (init : Ast.expr) =
+    if Hashtbl.mem target.frame name then raise (Duplicate_field name);
+    if not (is_literal init) then raise (Impure_field name);
+    count_step ();
+    define target name ~mutable_:false (eval_expr env init)
+  in
+  let add_dep name (init : Ast.expr) =
+    if List.mem_assoc name !deps then raise (Duplicate_field name);
+    match init.Ast.desc with
+    | Ast.String s -> deps := !deps @ [ (name, s) ]
+    | _ -> raise (Impure_field name)
+  in
+  let handle_stmt (s : Ast.stmt) =
+    match field_target s with
+    | Some (name, init) -> define_field env name init
+    | None -> ()
+  in
+  let rec handle_block name body =
+    if name = "deps" then
+      List.iter
+        (fun s ->
+          match field_target s with
+          | Some (name, init) -> add_dep name init
+          | None -> ())
+        body
+    else
+      (* A package block defines its fields; a nested `deps { ... }` block is
+         collected in source order. *)
+      List.iter
+        (fun s ->
+          match s.Ast.stmt_desc with
+          | Ast.Expr_stmt
+              {
+                desc = Ast.Call ({ Ast.desc = Ast.Ident "deps"; _ }, block_args);
+                _;
+              } -> (
+              match block_args with
+              | [
+               {
+                 Ast.arg_value = { Ast.desc = Ast.Arrow_block (_, inner); _ };
+                 _;
+               };
+              ] ->
+                  handle_block "deps" inner
+              | _ -> handle_stmt s)
+          | _ -> handle_stmt s)
+        body
+  in
+  let flatten item =
+    let eval_plain () = ignore (eval_item env item) in
+    match item.Ast.item_desc with
+    | Ast.Item_stmt
+        {
+          stmt_desc = Ast.Expr_stmt { desc = Ast.Call (callee, block_args); _ };
+          _;
+        } -> (
+        match (callee.Ast.desc, block_args) with
+        | ( Ast.Ident (("package" | "deps") as name),
+            [
+              { Ast.arg_value = { Ast.desc = Ast.Arrow_block (_, body); _ }; _ };
+            ] ) ->
+            handle_block name body
+        | _ -> eval_plain ())
+    | _ -> eval_plain ()
+  in
+  (try List.iter flatten items
+   with e ->
+     step_budget := None;
+     raise e);
+  step_budget := None;
+  (env, !deps)
+
 let run_items items =
   Hashtbl.reset interface_registry;
   call_trace := [];
