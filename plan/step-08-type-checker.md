@@ -1,6 +1,6 @@
 # Step 08 — Gradual Type Checker
 
-**Milestone:** M2 · **Prereq:** steps 01–07 · **Status:** not started
+**Milestone:** M2 · **Prereq:** steps 01–07 · **Status:** done
 
 ## Goal
 
@@ -82,18 +82,18 @@ before evaluation (`emo run` refuses to run a program with certain errors);
 
 ## Tasks
 
-- [ ] Type representation + annotation collection pass.
-- [ ] Statement/expression checking with `Unknown` discipline.
-- [ ] Signature checks; arrow-block inference.
-- [ ] Flow environments with narrowing on `is()`.
-- [ ] Structural interface conformance.
-- [ ] `var`-escape detection.
-- [ ] Call-site checking; named-argument validation.
-- [ ] `case` checking: pattern typing, `when` guards as `Bool`,
+- [x] Type representation + annotation collection pass.
+- [x] Statement/expression checking with `Unknown` discipline.
+- [x] Signature checks; arrow-block inference.
+- [x] Flow environments with narrowing on `is()`.
+- [x] Structural interface conformance.
+- [x] `var`-escape detection.
+- [x] Call-site checking; named-argument validation.
+- [x] `case` checking: pattern typing, `when` guards as `Bool`,
       exhaustiveness on decidable enums and on the first tuple element of
       decidable `(Enum, ...)` scrutinees (guarded branches don't count).
-- [ ] `emo check` command; wire into `emo run`.
-- [ ] Test categories: strict-annotated rejections, inference successes,
+- [x] `emo check` command; wire into `emo run`.
+- [x] Test categories: strict-annotated rejections, inference successes,
       zero-false-positive corpus.
 
 ## Acceptance

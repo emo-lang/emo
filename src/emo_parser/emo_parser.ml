@@ -72,6 +72,9 @@ type parser = {
   stream : Emo_lexer.Stream.t;
   file : string;
   mutable in_init : bool; (* inside an init body, where self.x = ... is legal *)
+  mutable suppress_block_sugar : bool;
+      (* while parsing an if/case condition, a `{` starts the body, never a
+         call's trailing block *)
 }
 
 let peek st = Emo_lexer.Stream.peek st.stream
@@ -243,7 +246,8 @@ and parse_postfix st =
         in
         e :=
           match kind st with
-          | Tok.Op Tok.LBrace when not (newline_before st) ->
+          | Tok.Op Tok.LBrace
+            when (not (newline_before st)) && not st.suppress_block_sugar ->
               let lbrace_span = span st in
               let body, close_span = parse_block st in
               let block =
@@ -411,7 +415,9 @@ and parse_stmt st =
   match kind st with
   | Tok.Keyword Tok.If ->
       advance st |> ignore;
+      st.suppress_block_sugar <- true;
       let cond = parse_expr st in
+      st.suppress_block_sugar <- false;
       if at_op st Tok.LBrace && newline_before st then
         error "E2001" (span st)
           "the `if` body must open on the condition's line";
@@ -456,7 +462,9 @@ and parse_stmt st =
       stmt start_span (Ast.Binding { mutable_; name; init })
   | Tok.Keyword Tok.Case ->
       advance st |> ignore;
+      st.suppress_block_sugar <- true;
       let scrutinee = parse_expr st in
+      st.suppress_block_sugar <- false;
       if at_op st Tok.LBrace && newline_before st then
         error "E2001" (span st)
           "the `case` branches must open on the scrutinee's line";
@@ -1086,7 +1094,7 @@ and parse_branches st =
 (* Parses a source that holds exactly one expression. *)
 let parse_expr_source ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
-  let st = { stream; file; in_init = false } in
+  let st = { stream; file; in_init = false; suppress_block_sugar = false } in
   let e = parse_expr st in
   if not (at_eof st) then
     error "E2001" (span st)
@@ -1119,7 +1127,7 @@ let resync st =
    errors as possible in one pass. *)
 let parse_program_with_diagnostics ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
-  let st = { stream; file; in_init = false } in
+  let st = { stream; file; in_init = false; suppress_block_sugar = false } in
   let items = ref [] in
   let diagnostics = ref [] in
   let rec loop () =
