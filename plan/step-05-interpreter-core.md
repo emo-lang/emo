@@ -1,6 +1,6 @@
 # Step 05 — Interpreter: Core Values & Evaluation
 
-**Milestone:** M1 · **Prereq:** step 04 · **Status:** not started
+**Milestone:** M1 · **Prereq:** step 04 · **Status:** done
 
 ## Goal
 
@@ -73,13 +73,13 @@ this step, function-only Emo programs run.
 
 ## Tasks
 
-- [ ] Value ADT + equality; environment chain.
-- [ ] Expression evaluation with tag-checked operators.
-- [ ] Interpolation; `print` builtin; `.to_string()`.
-- [ ] Closure capture (lexical, by reference to the environment).
-- [ ] Tail-call loop in the evaluator; deep-recursion test.
-- [ ] `if` / `return` semantics; runtime type errors with spans.
-- [ ] Alcotest suites running real programs end to end (assert on captured
+- [x] Value ADT + equality; environment chain.
+- [x] Expression evaluation with tag-checked operators.
+- [x] Interpolation; `print` builtin; `.to_string()`.
+- [x] Closure capture (lexical, by reference to the environment).
+- [x] Tail-call loop in the evaluator; deep-recursion test.
+- [x] `if` / `return` semantics; runtime type errors with spans.
+- [x] Alcotest suites running real programs end to end (assert on captured
       stdout).
 
 ## Acceptance

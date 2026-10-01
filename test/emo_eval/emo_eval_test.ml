@@ -491,6 +491,62 @@ print(check(1))|}));
           "message" "uncaught exception: 7" diagnostic.Diagnostic.message);
   ]
 
+let acceptance_tests =
+  [
+    tc "the step acceptance program runs end to end" (fun () ->
+        Alcotest.(check string)
+          "output" "6765\nhello, emo\n0\n"
+          (run_program
+             {|def fib(n Int) Int {
+  if n < 2 {
+    return n
+  }
+  return fib(n - 1) + fib(n - 2)
+}
+
+const greeting = -> (name String) {
+  return "hello, ${name}"
+}
+
+print(fib(20))                 // 6765
+print(greeting("emo"))         // hello, emo
+
+def count_down(n Int) Int {
+  if n == 0 {
+    return 0
+  }
+  return count_down(n - 1)
+}
+print(count_down(1000000))     // stack stays flat — tail calls work|}));
+    tc "values compose across the whole surface" (fun () ->
+        Alcotest.(check string)
+          "output" "len=3 first=9\n(2, b)\n"
+          (run_program
+             {|def describe(xs Array[Int]) String {
+  return "len=${xs.length()} first=${xs[0]}"
+}
+
+const first = (1, "a")
+const box = Box.new(first)
+const second = (2, "b")
+box.replace(second)
+print(describe([9, 8, 7]))
+print(box.read().to_string())|}));
+    tc "runtime errors carry the offending span" (fun () ->
+        let diagnostic =
+          program_err "def f(n Int) Int {\n  return n + \"s\"\n}\nf(1)"
+        in
+        Alcotest.(check string) "code" "E3001" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:2:10"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "parse errors surface unchanged from the pipeline" (fun () ->
+        match run_program "def f() Int {\n  return 1 2\n}" with
+        | _ -> Alcotest.fail "expected a parse error"
+        | exception Emo_parser.Error d ->
+            Alcotest.(check string) "code" "E2002" (code_of d));
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -502,4 +558,5 @@ let () =
       ("closure", closure_tests);
       ("tail_call", tail_call_tests);
       ("control_flow", control_flow_tests);
+      ("acceptance", acceptance_tests);
     ]
