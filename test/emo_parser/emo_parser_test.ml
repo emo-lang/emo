@@ -5,6 +5,7 @@ let tc name f = Alcotest.test_case name `Quick f
 let render pp v =
   let buf = Buffer.create 64 in
   let fmt = Format.formatter_of_buffer buf in
+  Format.pp_set_margin fmt 10000;
   pp fmt v;
   Format.pp_print_flush fmt ();
   Buffer.contents buf
@@ -88,6 +89,8 @@ and pp_stmt fmt (s : Emo_ast.stmt) =
       Format.fprintf fmt "(%s %s %a)"
         (if mutable_ then "var" else "const")
         name pp_expr init
+  | Emo_ast.Assign { target; value } ->
+      Format.fprintf fmt "(= %a %a)" pp_expr target pp_expr value
   | Emo_ast.Return None -> Format.pp_print_string fmt "return"
   | Emo_ast.Return (Some e) -> Format.fprintf fmt "(return %a)" pp_expr e
   | Emo_ast.If { cond; then_body; else_body } -> (
@@ -144,10 +147,10 @@ and pp_params fmt = function
 and pp_fun_def fmt (d : Emo_ast.fun_def) =
   match d.Emo_ast.def_return with
   | None ->
-      Format.fprintf fmt "(init @[<hov>%a@]|%a@])" pp_params
-        d.Emo_ast.def_params (pp_list pp_stmt) d.Emo_ast.def_body
+      Format.fprintf fmt "(init %a|@[<hov>%a@])" pp_params d.Emo_ast.def_params
+        (pp_list pp_stmt) d.Emo_ast.def_body
   | Some ret ->
-      Format.fprintf fmt "(def %s @[<hov>%a@] %a |%a@])" d.Emo_ast.def_name
+      Format.fprintf fmt "(def %s %a %a |@[<hov>%a@])" d.Emo_ast.def_name
         pp_params d.Emo_ast.def_params pp_type_ann ret (pp_list pp_stmt)
         d.Emo_ast.def_body
 
@@ -160,7 +163,7 @@ and pp_field fmt (f : Emo_ast.field) =
 
 and pp_class_def fmt (c : Emo_ast.class_def) =
   Format.fprintf fmt
-    "(class %s @[<hov>(fields @[<hov>%a@]) (init @[<hov>%a@]|%a@]) %a@])"
+    "(class %s @[<hov>(fields @[<hov>%a@]) (init %a|@[<hov>%a@]) %a@])"
     c.Emo_ast.class_name (pp_list pp_field) c.Emo_ast.class_fields pp_params
     c.Emo_ast.class_init.Emo_ast.def_params (pp_list pp_stmt)
     c.Emo_ast.class_init.Emo_ast.def_body (pp_list pp_fun_def)
@@ -680,6 +683,150 @@ let def_tests =
         Alcotest.(check string) "code" "E2009" (code_of diagnostic));
   ]
 
+let class_tests =
+  [
+    tc "the README User class parses to its golden shape" (fun () ->
+        match
+          parse_program
+            {|class User {
+  def init(name String, age Int) {
+    self.name = name
+    self.age = age
+  }
+
+  def full_name() String {
+    return self.name + " " + self.age.to_string()
+  }
+
+  def is_older?() Bool {
+    return self.age > 35
+  }
+}|}
+        with
+        | [ user ] ->
+            Alcotest.(check string)
+              "shape"
+              "(class User (fields (field name) (field age)) (init (param name \
+               String) (param age Int)|(= (self.name) name) (= (self.age) \
+               age)) (def full_name () String |(return (+ (+ (self.name) \" \
+               \") (((self.age).to_string) call)))) (def is_older? () Bool \
+               |(return (> (self.age) 35))))"
+              (render pp_item user)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "fields are collected in first-assignment order and deduped" (fun () ->
+        match
+          parse_program
+            {|class P {
+  def init() {
+    self.y = 1
+    self.x = 2
+    self.y = 3
+  }
+}|}
+        with
+        | [ p ] -> (
+            match p.Emo_ast.item_desc with
+            | Emo_ast.Item_class c ->
+                Alcotest.(check string)
+                  "fields" "(field y) (field x)"
+                  (render (pp_list pp_field) c.Emo_ast.class_fields)
+            | _ -> Alcotest.fail "expected a class")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "field assignment may sit in nested blocks inside init" (fun () ->
+        match
+          parse_program
+            "class C {\n\
+            \  def init(flag Bool) {\n\
+            \    if flag {\n\
+            \      self.x = 1\n\
+            \    }\n\
+            \  }\n\
+             }"
+        with
+        | [ c ] -> (
+            match c.Emo_ast.item_desc with
+            | Emo_ast.Item_class cl ->
+                Alcotest.(check string)
+                  "fields" "(field x)"
+                  (render (pp_list pp_field) cl.Emo_ast.class_fields)
+            | _ -> Alcotest.fail "expected a class")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "duplicate init is rejected at the second one" (fun () ->
+        let diagnostic =
+          program_err "class D {\n  def init() {}\n  def init(x Int) {}\n}"
+        in
+        Alcotest.(check string) "code" "E2014" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:3:3"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a class without init is rejected" (fun () ->
+        let diagnostic =
+          program_err
+            "class Empty {\n  def greet() String {\n    return \"hi\"\n  }\n}"
+        in
+        Alcotest.(check string) "code" "E2013" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:7"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "init takes no return annotation" (fun () ->
+        let diagnostic = program_err "class A {\n  def init() A {}\n}" in
+        Alcotest.(check string) "code" "E2011" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:2:14"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "self.x is assigned only inside init" (fun () ->
+        let diagnostic = program_err "self.x = 1" in
+        Alcotest.(check string) "code" "E2016" (code_of diagnostic);
+        let diagnostic =
+          program_err
+            "class M {\n\
+            \  def init() {\n\
+            \    self.x = 1\n\
+            \  }\n\
+            \  def bump() Int {\n\
+            \    self.x = 2\n\
+            \    return self.x\n\
+            \  }\n\
+             }"
+        in
+        Alcotest.(check string) "code" "E2016" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:6:5"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "variables can be rebound with =" (fun () ->
+        match parse_program "var x = 1\nx = 2" with
+        | [ _; assign ] ->
+            Alcotest.(check string) "shape" "(= x 2)" (render pp_item assign)
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 items, got %d" (List.length items)));
+    tc "only variables and self fields are assignment targets" (fun () ->
+        let diagnostic = program_err "a.b = 1" in
+        Alcotest.(check string) "code" "E2015" (code_of diagnostic);
+        let diagnostic = program_err "1 = 2" in
+        Alcotest.(check string) "code" "E2015" (code_of diagnostic));
+    tc "a class needs an UpperCamel name" (fun () ->
+        let diagnostic = program_err "class user {\n  def init() {}\n}" in
+        Alcotest.(check string) "code" "E2017" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:7"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "class members are separated by newlines" (fun () ->
+        let diagnostic =
+          program_err "class C { def init() {} def m() Int { return 1 } }"
+        in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+    tc "the class body opens on the class's line" (fun () ->
+        let diagnostic = program_err "class C\n{\n  def init() {}\n}" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -696,5 +843,6 @@ let () =
       ("string", string_tests);
       ("item", item_tests);
       ("def", def_tests);
+      ("class", class_tests);
       ("golden", golden_tests);
     ]
