@@ -491,6 +491,25 @@ print(check(1))|}));
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
           "message" "uncaught exception: 7" diagnostic.Diagnostic.message);
+    tc "the builtin Exception constructs with a message" (fun () ->
+        Alcotest.(check string)
+          "field" "boom\n"
+          (run_program
+             {|const e = Exception.new(message: "boom")
+print(e.message)|}));
+    tc "Exception.new is strict about its argument" (fun () ->
+        let diagnostic = program_err "Exception.new()" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        let diagnostic =
+          program_err "Exception.new(message: \"a\", other: 1)"
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+    tc "raising the exception instance terminates uncaught" (fun () ->
+        let diagnostic = program_err {|raise Exception.new(message: "boom")|} in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
   ]
 
 let acceptance_tests =

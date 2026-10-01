@@ -109,6 +109,19 @@ let global_env () =
   Hashtbl.replace env.frame "print"
     { bound = BuiltinFn "print"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
+  (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
+  Hashtbl.replace env.frame "Exception"
+    {
+      bound =
+        ClassDef
+          {
+            cname = "Exception";
+            cinit = None;
+            cmethods = [];
+            builtin_exception = true;
+          };
+      mutable_ = false;
+    };
   env
 
 (* Program output goes to stdout; tests redirect it through [set_output]. *)
