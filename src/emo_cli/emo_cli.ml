@@ -61,9 +61,18 @@ let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
         ignore (Emo_project.run_entry ~entry_file:file ~check:true ());
         0
       with
-      | Emo_project.Static_errors diagnostics ->
+      | Emo_project.Static_errors diagnostics -> (
           render_errors ~color ~error_limit diagnostics;
-          65
+          (* An uncaught raise terminated the run: exit 1, not 65. *)
+          let uncaught =
+            List.exists
+              (fun d ->
+                match d.Emo_support.Diagnostic.code with
+                | Some "E3010" -> true
+                | _ -> false)
+              diagnostics
+          in
+          if uncaught then 1 else 65)
       | Emo_lexer.Error diagnostic ->
           render diagnostic;
           65
