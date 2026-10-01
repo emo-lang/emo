@@ -199,23 +199,44 @@ let bind env name info = { env with bindings = (name, info) :: env.bindings }
 let child_scope env =
   { env with bindings = env.bindings; depth = env.depth + 1 }
 
-(* [conforms actual expected] — the gradual conformance relation. Unknown on
-   either side silences the check; a known mismatch is provable. *)
-let rec conforms actual expected =
+(* A class conforms to an interface when it provides every declared method
+   with a compatible shape — no declaration, exactly the README rule. *)
+let rec structurally_conforms ctx cname iname =
+  match
+    (Hashtbl.find_opt ctx.classes cname, Hashtbl.find_opt ctx.interfaces iname)
+  with
+  | Some cls, Some sigs ->
+      List.for_all
+        (fun (m, ptypes, ret) ->
+          match List.assoc_opt m cls.cmethods with
+          | Some minfo ->
+              List.length minfo.mparams = List.length ptypes
+              && List.for_all2 (conforms ctx) minfo.mparams ptypes
+              && conforms ctx minfo.mret ret
+          | None -> false)
+        sigs
+  | _ -> false
+
+(* [conforms ctx actual expected] — the gradual conformance relation. Unknown
+   on either side silences the check; a known mismatch is provable. *)
+and conforms ctx actual expected =
   match (actual, expected) with
   | _, Unknown | Unknown, _ -> true
   | Int, Float -> true
   | ClassType a, ClassType b -> String.equal a b
   | EnumType a, EnumType b -> String.equal a b
-  | ArrayType a, ArrayType b -> conforms a b
-  | BoxType a, BoxType b -> conforms a b
+  | ArrayType a, ArrayType b -> conforms ctx a b
+  | BoxType a, BoxType b -> conforms ctx a b
   | TupleType as_, TupleType bs ->
-      List.length as_ = List.length bs && List.for_all2 conforms as_ bs
+      List.length as_ = List.length bs && List.for_all2 (conforms ctx) as_ bs
   | FuncType (pa, ra), FuncType (pb, rb) ->
       List.length pa = List.length pb
-      && List.for_all2 (fun b a -> conforms a b) pb pa
-      && conforms ra rb
-  | InterfaceType _, _ | _, InterfaceType _ -> true (* structural check: T8.5 *)
+      && List.for_all2 (fun b a -> conforms ctx a b) pb pa
+      && conforms ctx ra rb
+  | ClassType c, InterfaceType i -> structurally_conforms ctx c i
+  | InterfaceType a, InterfaceType b -> String.equal a b
+  | _, InterfaceType _ -> false
+  | InterfaceType _, _ -> false
   | a, b -> a = b
 
 let known_nonovoid = ignore
@@ -230,12 +251,12 @@ let resolve_type_name ctx span name =
     Unknown)
 
 (* True when a value of [rt] can provably never satisfy a check for [target]. *)
-let provably_excluded rt target =
+let provably_excluded ctx rt target =
   match (rt, target) with
   | Unknown, _ | _, Unknown -> false
   | Int, _ | Float, _ | Bool, _ | Char, _ | String, _ -> true
   | ClassType a, ClassType b -> not (String.equal a b)
-  | ClassType _, InterfaceType _ -> false (* structural check: T8.5 *)
+  | ClassType c, InterfaceType i -> not (structurally_conforms ctx c i)
   | ClassType _, EnumType _ -> true
   | EnumType a, EnumType b -> not (String.equal a b)
   | EnumType _, _ -> true
@@ -326,7 +347,7 @@ let rec check_expr ctx env (e : Ast.expr) : t =
         match elem_types with
         | [] -> Unknown
         | first :: rest ->
-            if List.for_all (conforms first) rest then first else Unknown
+            if List.for_all (conforms ctx first) rest then first else Unknown
       in
       ArrayType unified
   | Ast.Arrow_block (params, body) ->
@@ -356,7 +377,7 @@ let rec check_expr ctx env (e : Ast.expr) : t =
         match rets with
         | [] -> Unknown
         | first :: rest ->
-            if List.for_all (conforms first) rest then first else Unknown
+            if List.for_all (conforms ctx first) rest then first else Unknown
       in
       FuncType (param_types, inferred)
   | Ast.Unary (op, x) -> (
@@ -450,7 +471,8 @@ and check_stmt ctx env (s : Ast.stmt) : env =
       | Some existing when existing.depth = env.depth ->
           (* Rebinding in the same scope: drift is an error only when the
              earlier type is known and the new one provably breaks it. *)
-          if (not (conforms t existing.vtype)) && existing.vtype <> Unknown then
+          if (not (conforms ctx t existing.vtype)) && existing.vtype <> Unknown
+          then
             report ctx span "E4004"
               (Printf.sprintf "`%s` was bound as %s, this rebinds it as %s" name
                  (to_string existing.vtype) (to_string t));
@@ -462,7 +484,7 @@ and check_stmt ctx env (s : Ast.stmt) : env =
       | Ast.Ident name -> (
           match lookup_env env name with
           | Some info when info.is_var ->
-              if not (conforms vt info.vtype) then
+              if not (conforms ctx vt info.vtype) then
                 report ctx span "E4004"
                   (Printf.sprintf "cannot assign %s to the %s variable `%s`"
                      (to_string vt) (to_string info.vtype) name);
@@ -482,7 +504,7 @@ and check_stmt ctx env (s : Ast.stmt) : env =
       ctx.ret_sink := t :: !(ctx.ret_sink);
       (match env.ret with
       | Some expected when t <> Unknown && expected <> Unknown ->
-          if not (conforms t expected) then
+          if not (conforms ctx t expected) then
             report ctx e.Ast.span "E4008"
               (Printf.sprintf "return type mismatch: expected %s, got %s"
                  (to_string expected) (to_string t))
@@ -510,7 +532,7 @@ and check_stmt ctx env (s : Ast.stmt) : env =
             let rt = check_expr ctx env recv in
             (match rt with
             | (ClassType _ | EnumType _ | Int | Float | Bool | Char | String)
-              when provably_excluded rt target_type ->
+              when provably_excluded ctx rt target_type ->
                 report ctx recv.Ast.span "E4011"
                   (Printf.sprintf "`%s` can never narrow to %s" (to_string rt)
                      (to_string target_type))

@@ -287,6 +287,114 @@ if s.is(User) {
     ^ "\n");
   close_out out
 
+let interface_tests =
+  [
+    tc "a conforming instance passes where an interface is expected" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|interface Greeter {
+  def greet() String
+}
+
+class English {
+  def init() {}
+
+  def greet() String {
+    return "Hello"
+  }
+}
+
+def welcome(g Greeter) String {
+  return g.greet()
+}
+
+welcome(English.new())|})));
+    (* Missing-method and wrong-shape call-site rejections land with the
+       call-site checks (T8.7). *)
+    tc "narrowing to an interface checks structurally" (fun () ->
+        let diagnostics =
+          check
+            {|interface Greeter {
+  def greet() String
+}
+
+class Silent {
+  def init() {}
+}
+
+def probe(s Silent) String {
+  if s.is(Greeter) {
+    return "yes"
+  }
+  return "no"
+}|}
+        in
+        if not (has_code diagnostics "E4011") then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check bool) "E4011" true (has_code diagnostics "E4011"));
+    tc "an unknown receiver against an interface stays silent" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|interface Greeter {
+  def greet() String
+}
+
+const anything = [1, "a"][0]
+print(anything.greet())|})));
+  ]
+
+let () =
+  let out = open_out "/tmp/emo-check-debug.txt" in
+  output_string out
+    ("narrow0: "
+    ^ codes_dump
+        (check
+           {|class User {
+  def init(name String) {
+    self.name = name
+  }
+}
+
+var first = [1, "a"][0]
+if first.is(User) {
+  first = 1
+}|})
+    ^ "\n");
+  output_string out
+    ("narrow-interface: "
+    ^ codes_dump
+        (check
+           {|interface Greeter {
+  def greet() String
+}
+
+class Silent {
+  def init() {}
+}
+
+var anything = Silent.new()
+if anything.is(Greeter) {
+  print(1)
+}|})
+    ^ "\n");
+  output_string out
+    ("plain-is: "
+    ^ codes_dump
+        (check
+           {|class S2 {
+  def init() {}
+}
+var x = S2.new()
+if x.is(S2) {
+  print(1)
+}|})
+    ^ "\n");
+  close_out out
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -295,4 +403,5 @@ let () =
       ("expression", expression_tests);
       ("signature", signature_tests);
       ("narrowing", narrowing_tests);
+      ("interface", interface_tests);
     ]
