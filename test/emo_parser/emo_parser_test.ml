@@ -1276,6 +1276,21 @@ print(json_tools.parse("{}"))|}
         | items ->
             Alcotest.fail
               (Printf.sprintf "expected 2 items, got %d" (List.length items)));
+    tc "a scoped deps key folds into one ident" (fun () ->
+        match parse_program {|acme/json_tools = "2.3.1"|} with
+        | [ item ] -> (
+            match item.Emo_ast.item_desc with
+            | Emo_ast.Item_stmt
+                {
+                  stmt_desc =
+                    Emo_ast.Assign
+                      { target = { Emo_ast.desc = Emo_ast.Ident name }; _ };
+                } ->
+                Alcotest.(check string) "key" "acme/json_tools" name
+            | _ -> Alcotest.fail "expected a scoped assignment")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "a scoped name keeps owner/name shape" (fun () ->
         match parse_program {|require "a/b/c"|} with
         | [ req ] ->

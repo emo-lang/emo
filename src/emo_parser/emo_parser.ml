@@ -515,15 +515,30 @@ and parse_stmt st =
             Ast.Send { target = e; message }
         | Tok.Op Tok.Assign when not (newline_before st) ->
             advance st |> ignore;
-            check_assign_target st e;
+            let target = scoped_target e in
+            check_assign_target st target;
             let value = parse_expr st in
             end_statement st;
-            Ast.Assign { target = e; value }
+            Ast.Assign { target; value }
         | _ ->
             end_statement st;
             Ast.Expr_stmt e
       in
       stmt start_span stmt_desc
+
+(* `acme/json_tools = "2.3.1"` — a scoped package name as a manifest deps
+   key. In target position the slash form is unambiguous (a division is
+   never assignable), so it folds into one ident; the checker confines
+   slash idents to manifests. *)
+and scoped_target target =
+  match target.Ast.desc with
+  | Ast.Binary
+      ( Ast.Div,
+        { Ast.desc = Ast.Ident owner; _ },
+        { Ast.desc = Ast.Ident name; _ } )
+    when (not (String.contains owner '/')) && not (String.contains name '/') ->
+      { target with Ast.desc = Ast.Ident (owner ^ "/" ^ name) }
+  | _ -> target
 
 (* `x = v` rebinds a variable; `self.x = v` is a field assignment, legal
    only inside init. *)

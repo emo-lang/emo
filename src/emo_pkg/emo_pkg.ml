@@ -314,6 +314,14 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
   in
   { name; version; targets; deps }
 
+(* `acme/json_tools` binds as `json_tools`: the scoped name's short name is
+   what a require brings into scope. Centralized here for a later
+   scope-format swap. *)
+let short_name (name : string) : string =
+  match String.index_opt name '/' with
+  | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+  | None -> name
+
 module Resolve = struct
   type package_version = {
     pv_version : Version.t;
@@ -471,6 +479,16 @@ module Lockfile = struct
                 dep (Version.to_string v)
               :: !errors)
       roots;
+    List.iter
+      (fun e ->
+        if not (List.mem_assoc e.dep roots) then
+          errors :=
+            Printf.sprintf
+              "lockfile pins `%s` but the manifest does not list it — run `emo \
+               deps resolve` to regenerate"
+              e.dep
+            :: !errors)
+      t;
     !errors
 end
 
@@ -553,6 +571,48 @@ module Registry = struct
             f_checksum = checksum;
             f_files = files;
           }
+
+  (* Every version of [name] the registry publishes, in ascending order. *)
+  let versions (t : t) ~(name : string) : Version.t list =
+    let dir = Filename.concat t.endpoint name in
+    match Sys.readdir dir with
+    | exception Sys_error _ -> []
+    | raw ->
+        raw |> Array.to_list
+        |> List.filter_map (fun entry ->
+            match Version.parse entry with Ok v -> Some v | Error _ -> None)
+        |> List.sort Version.compare
+
+  (* Builds a resolver index for [names] by reading each published version's
+     manifest. Versions with unreadable manifests are skipped — resolution
+     only considers complete publishes. *)
+  let index (t : t) (names : string list) : Resolve.index =
+    List.map
+      (fun name ->
+        ( name,
+          List.filter_map
+            (fun version ->
+              match fetch t ~name ~version with
+              | Error _ -> None
+              | Ok f -> (
+                  match
+                    List.find_opt
+                      (fun (path, _) -> Filename.basename path = "package.emo")
+                      f.f_files
+                  with
+                  | None -> None
+                  | Some (_, source) -> (
+                      match parse_manifest ~file:"package.emo" ~source with
+                      | m ->
+                          Some
+                            {
+                              Resolve.pv_version = version;
+                              pv_targets = m.targets;
+                              pv_deps = m.deps;
+                            }
+                      | exception Manifest_error _ -> None)))
+            (versions t ~name) ))
+      names
 
   (* The global cache: shared across projects, content-addressed — the
      directory name embeds the checksum, so equal content is stored once. *)

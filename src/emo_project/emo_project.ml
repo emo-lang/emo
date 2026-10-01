@@ -4,11 +4,10 @@ module Ast = Emo_ast
    module table under the entry file's directory and resolves qualified
    paths. Codes for this stage are E5xxx.
 
-   Transitional root rule (replaced by manifest-based roots in step 10): the
-   project root is the working directory the compiler runs in —
-   `emo run shop/checkout.emo` resolves `shop.order` to ./shop/order.emo and
-   `other.thing` to ./other/thing.emo, so the README's shop tree and its
-   internal-privacy scenario both work verbatim. *)
+   The root rule: a project is rooted at its nearest package.emo manifest —
+   the module tree is the package. Manifest-less trees (the README's shop
+   demo) stay rooted at the working directory, so `emo run
+   shop/checkout.emo` resolves `shop.order` to ./shop/order.emo verbatim. *)
 
 (* Raised when the static stages of any module found errors. *)
 exception Static_errors of Emo_support.Diagnostic.t list
@@ -132,14 +131,6 @@ let parse_cached p (file : string) : Ast.item list =
   | Some (cached_hash, items) when cached_hash = hash -> items
   | _ ->
       p.parses <- p.parses + 1;
-      let () =
-        let oc =
-          open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-parse.txt"
-        in
-        output_string oc
-          ("parse: " ^ file ^ " count=" ^ string_of_int p.parses ^ "\n");
-        close_out oc
-      in
       let items =
         match Emo_parser.parse_program_with_diagnostics ~file ~source with
         | exception Emo_lexer.Error d -> raise (Static_errors [ d ])
@@ -278,13 +269,6 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
     string list list
     * (string list * string list list * (string * Emo_support.Span.t) list) list
     * Emo_support.Diagnostic.t list =
-  let () =
-    let oc = open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-cp.txt" in
-    output_string oc
-      (Printf.sprintf "check_project: files=%d root=%s\n"
-         (Hashtbl.length p.files) p.root);
-    close_out oc
-  in
   let module_paths = module_paths p in
   let graph : (string list, string list list) Hashtbl.t = Hashtbl.create 8 in
   let requires_table :
@@ -309,14 +293,6 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
         in
         Hashtbl.replace graph path refs;
         Hashtbl.replace requires_table path requires;
-        let oc =
-          open_out_gen [ Open_append; Open_creat ] 0o644 "/tmp/emo-refs.txt"
-        in
-        output_string oc
-          (String.concat "." path ^ " -> "
-          ^ String.concat "; " (List.map (String.concat ".") refs)
-          ^ "\n");
-        close_out oc;
         match diagnostics with
         | [] -> acc
         | ds -> (ds @ errors, (path, refs) :: entries))
@@ -357,8 +333,8 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
                 Emo_support.Diagnostic.severity = Error;
                 code = Some "E5006";
                 message =
-                  "this project has `require`s but no package.emo manifest \
-                   to                    declare dependencies";
+                  "this project has `require`s but no package.emo manifest to \
+                   declare dependencies";
                 span =
                   (match requires with
                   | (_, s) :: _ -> s
@@ -380,16 +356,14 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
                         code = Some "E5006";
                         message =
                           Printf.sprintf
-                            "module `%s` requires `%s`, but the \
-                             manifest                              \
+                            "module `%s` requires `%s`, but the manifest \
                              (package.emo) does not list it in deps"
                             (String.concat "." path) pkg;
                         span;
                         hint =
                           Some
-                            "add the package to the manifest's deps block, \
-                             or                              remove the \
-                             require";
+                            "add the package to the manifest's deps block, or \
+                             remove the require";
                       })
               requires
         | None, [] -> [])
@@ -428,27 +402,181 @@ let find_manifest ~entry_file : string option =
   in
   walk ()
 
-let run_entry ~entry_file ?(check = false) () : project =
+(* Discovers the project, parses the nearest manifest, and re-roots the
+   module tree at the manifest's directory — the package, not whatever
+   directory the compiler ran in, is the module tree's root. *)
+let prepare ~entry_file :
+    project * (Emo_pkg.manifest * string (* its directory *)) option =
   let p = discover ~entry_file in
   (match diagnostics p with [] -> () | ds -> raise (Static_errors ds));
+  match find_manifest ~entry_file with
+  | None -> (p, None)
+  | Some manifest_path ->
+      let manifest =
+        match
+          Emo_pkg.parse_manifest ~file:manifest_path
+            ~source:(read_file manifest_path)
+        with
+        | m -> m
+        | exception Emo_pkg.Manifest_error d -> raise (Static_errors [ d ])
+      in
+      let dir = Filename.dirname manifest_path in
+      Hashtbl.reset p.files;
+      Hashtbl.reset p.dirs;
+      Hashtbl.replace p.dirs [] dir;
+      walk p [] dir;
+      (* The project's own manifest is data, not a module. *)
+      Hashtbl.remove p.files [ "package" ];
+      (p, Some (manifest, dir))
+
+let dep_error ~(manifest_dir : string) (message : string) =
+  Static_errors
+    [
+      {
+        Emo_support.Diagnostic.severity = Error;
+        code = Some "E5007";
+        message;
+        span =
+          Emo_support.Span.make ~file:manifest_dir ~line:1 ~col:1 ~start:0
+            ~stop:0;
+        hint = None;
+      };
+    ]
+
+let registry () =
+  match Sys.getenv_opt "EMO_REGISTRY" with
+  | Some endpoint when endpoint <> "" -> { Emo_pkg.Registry.endpoint }
+  | _ ->
+      raise
+        (dep_error ~manifest_dir:"."
+           "this project has dependencies but no registry is configured — set \
+            EMO_REGISTRY")
+
+(* Resolves the manifest's exact pins against the registry, fresh — the
+   explicit regeneration path (`emo deps resolve`). *)
+let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string) :
+    Emo_pkg.Lockfile.entry list =
+  if manifest.Emo_pkg.deps = [] then []
+  else
+    let reg = registry () in
+    let index =
+      Emo_pkg.Registry.index reg (List.map fst manifest.Emo_pkg.deps)
+    in
+    match
+      Emo_pkg.Resolve.solve ~target:"native" ~roots:manifest.Emo_pkg.deps ~index
+    with
+    | Error errors ->
+        raise
+          (dep_error ~manifest_dir
+             (String.concat "; "
+                (List.map
+                   (fun e ->
+                     Printf.sprintf "%s: %s" e.Emo_pkg.Resolve.e_dep
+                       e.Emo_pkg.Resolve.e_message)
+                   errors)))
+    | Ok r ->
+        List.map
+          (fun (dep, version) ->
+            match Emo_pkg.Registry.fetch reg ~name:dep ~version with
+            | Error m -> raise (dep_error ~manifest_dir m)
+            | Ok f ->
+                {
+                  Emo_pkg.Lockfile.dep;
+                  version;
+                  checksum = f.Emo_pkg.Registry.f_checksum;
+                })
+          r.Emo_pkg.Resolve.resolved
+
+(* The build-time resolution: a satisfied lockfile is used as recorded; a
+   mismatch is an error prompting explicit regeneration — never a silent
+   re-resolve. With no lockfile at all, the run resolves in memory and
+   writes nothing. *)
+let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string) :
+    Emo_pkg.Lockfile.entry list =
+  let lock_path = Filename.concat manifest_dir "emo.lock" in
+  match Emo_pkg.Lockfile.read lock_path with
+  | Ok entries -> (
+      match Emo_pkg.Lockfile.verify ~roots:manifest.Emo_pkg.deps entries with
+      | [] -> entries
+      | message :: _ -> raise (dep_error ~manifest_dir message))
+  | Error _ -> resolve_deps ~manifest ~manifest_dir
+
+(* Registers a fetched package's module tree at the top level — a package's
+   directory tree is its public module tree, so `json_tools.emo` at the
+   package root is the module `json_tools` that a require binds. The
+   package's own manifest is data, not a module, and is skipped. *)
+let register_package (p : project) (dir : string) : unit =
+  walk p [] dir;
+  Hashtbl.remove p.files [ "package" ];
+  match diagnostics p with [] -> () | ds -> raise (Static_errors ds)
+
+(* The dependency side of a run: resolve or verify, then fetch every
+   resolved package into the shared cache and register its modules. *)
+let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
+    (p : project) : unit =
+  if manifest.Emo_pkg.deps = [] then ()
+  else
+    let entries = resolution_for_run ~manifest ~manifest_dir in
+    let reg = registry () in
+    List.iter
+      (fun entry ->
+        match
+          Emo_pkg.Registry.fetch reg ~name:entry.Emo_pkg.Lockfile.dep
+            ~version:entry.Emo_pkg.Lockfile.version
+        with
+        | Error m -> raise (dep_error ~manifest_dir m)
+        | Ok f -> (
+            match
+              Emo_pkg.Registry.materialize
+                ~cache_dir:(Emo_pkg.Registry.default_cache_dir ())
+                f
+            with
+            | Error m -> raise (dep_error ~manifest_dir m)
+            | Ok dir -> register_package p dir))
+      entries
+
+let entry_path (entry_file : string) : string =
+  if Filename.is_relative entry_file then
+    Filename.concat (Sys.getcwd ()) entry_file
+  else entry_file
+
+(* The deps commands operate on the project at the working directory — the
+   root rule makes the manifest's directory the project root. *)
+let manifest_here () : string option =
+  let candidate = Filename.concat (Sys.getcwd ()) "package.emo" in
+  if Sys.file_exists candidate then Some candidate else None
+
+(* `emo check`: the static stages over the whole module tree, including the
+   dependency side, without evaluating. *)
+let check_entry ~entry_file : Emo_support.Diagnostic.t list =
+  let p, prepared = prepare ~entry_file in
+  Option.iter
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir p)
+    prepared;
+  let manifest = Option.map fst prepared in
+  let items = parse_cached p (entry_path entry_file) in
+  let module_paths = module_paths p in
+  let _paths, _graph, errors = check_project ~manifest p in
+  let entry_diags, _refs, _requires =
+    Emo_check.check_module ~modules:module_paths ~current:[] items
+  in
+  diagnostics p @ errors @ entry_diags
+
+let run_entry ~entry_file ?(check = false) () : project =
+  let p, prepared = prepare ~entry_file in
+  Option.iter
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir p)
+    prepared;
+  let manifest = Option.map fst prepared in
   install_hooks p;
-  let manifest =
-    Option.bind (find_manifest ~entry_file) (fun path ->
-        match Emo_pkg.parse_manifest ~file:path ~source:(read_file path) with
-        | m -> Some m
-        | exception Emo_pkg.Manifest_error d -> raise (Static_errors [ d ]))
-  in
-  let entry_file =
-    if Filename.is_relative entry_file then Filename.concat p.root entry_file
-    else entry_file
-  in
-  let items = parse_cached p entry_file in
+  let items = parse_cached p (entry_path entry_file) in
   (if check then
+     let module_paths = module_paths p in
      let _paths, _graph, errors = check_project ~manifest p in
      (* The entry file itself may live outside the discovered tree (an
         absolute path); it is always checked too. *)
      let entry_diags, _refs, _requires =
-       Emo_check.check_module ~modules:_paths ~current:[] items
+       Emo_check.check_module ~modules:module_paths ~current:[] items
      in
      match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
