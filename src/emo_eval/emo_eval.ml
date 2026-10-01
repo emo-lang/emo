@@ -80,7 +80,42 @@ let rec equal_value a b =
   | BuiltinFn x, BuiltinFn y -> String.equal x y
   | _ -> false
 
-let global_env () = { frame = Hashtbl.create 16; parent = None }
+let global_env () =
+  let env = { frame = Hashtbl.create 16; parent = None } in
+  Hashtbl.replace env.frame "print"
+    { bound = BuiltinFn "print"; mutable_ = false };
+  Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
+  env
+
+(* Program output goes to stdout; tests redirect it through [set_output]. *)
+let output : (string -> unit) ref =
+  ref (fun s ->
+      print_string s;
+      flush stdout)
+
+let set_output f = output := f
+
+(* The one stringification rule: interpolation and `.to_string()` share it. *)
+let rec to_string = function
+  | Int n -> string_of_int n
+  | Float f ->
+      if Float.is_integer f && Float.abs f < 1e16 then Printf.sprintf "%.1f" f
+      else Printf.sprintf "%g" f
+  | Bool b -> string_of_bool b
+  | Char c -> String.make 1 c
+  | String s -> s
+  | Tuple vs -> "(" ^ String.concat ", " (List.map to_string vs) ^ ")"
+  | Array vs ->
+      "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
+  | Box _ -> "<box>"
+  | ArrowBlock _ -> "<arrow block>"
+  | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
+  | ClassDef n -> n
+  | Instance n -> n
+  | EnumMember (t, m) -> t ^ "." ^ m
+  | TypeValue t -> t
+  | Module n -> n
+
 let child parent = { frame = Hashtbl.create 8; parent = Some parent }
 
 (* Defines a name in exactly this frame; a later definition of the same name
@@ -241,13 +276,73 @@ and eval_index env span base index =
         (Printf.sprintf "%s does not support indexing" (type_name v))
 
 and eval_call env span callee arg_exprs =
-  let f = eval_expr env callee in
-  let args =
+  match callee.Ast.desc with
+  | Ast.Member (recv, mname) -> eval_method env span recv mname arg_exprs
+  | _ ->
+      let f = eval_expr env callee in
+      let args =
+        List.map
+          (fun { Ast.arg_name; arg_value } ->
+            (arg_name, eval_expr env arg_value))
+          arg_exprs
+      in
+      apply f span args
+
+(* Methods are only callable directly: `x.to_string()`, `box.read()`,
+   `Box.new(v)`. A bare `x.to_string` is not a value. *)
+and eval_method env span recv mname arg_exprs =
+  let argc = List.length arg_exprs in
+  let eval_args () =
     List.map
-      (fun { Ast.arg_name; arg_value } -> (arg_name, eval_expr env arg_value))
+      (fun { Ast.arg_name; arg_value } ->
+        match arg_name with
+        | Some n ->
+            error span "E3007"
+              (Printf.sprintf "methods take positional arguments only (`%s`)" n)
+        | None -> eval_expr env arg_value)
       arg_exprs
   in
-  apply f span args
+  let none_expected what =
+    if argc = 0 then ()
+    else
+      error span "E3007"
+        (Printf.sprintf "`%s` expects no arguments, got %d" what argc)
+  in
+  let base = eval_expr env recv in
+  match (base, mname) with
+  | TypeValue "Box", "new" -> (
+      let args = eval_args () in
+      match args with
+      | [ v ] -> Box (ref v)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
+  | TypeValue t, m ->
+      error span "E3009" (Printf.sprintf "type `%s` has no member `%s` yet" t m)
+  | v, "to_string" ->
+      none_expected "to_string";
+      String (to_string v)
+  | Array xs, "length" ->
+      none_expected "length";
+      Int (Array.length xs)
+  | Tuple xs, "length" ->
+      none_expected "length";
+      Int (List.length xs)
+  | Box r, "read" ->
+      none_expected "read";
+      !r
+  | Box r, "replace" -> (
+      let args = eval_args () in
+      match args with
+      | [ v ] ->
+          r := v;
+          v
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+  | v, m ->
+      error span "E3007"
+        (Printf.sprintf "%s has no method `%s`" (type_name v) m)
 
 and apply f span args =
   match f with
@@ -320,6 +415,12 @@ and apply_closure closure span args =
 
 and apply_builtin span name args =
   match (name, args) with
+  | "print", [ v ] ->
+      !output (to_string v ^ "\n");
+      v
+  | "print", vs ->
+      error span "E3007"
+        (Printf.sprintf "`print` expects 1 argument, got %d" (List.length vs))
   | _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 and eval_body closure call_env span =
@@ -365,9 +466,17 @@ and eval_expr env e =
   | Ast.String s -> String s
   | Ast.Ident name -> lookup env span name
   | Ast.Type_ident t -> TypeValue t
-  | Ast.Interpolated _ -> not_yet span "string interpolation"
+  | Ast.Interpolated parts ->
+      String
+        (String.concat ""
+           (List.map
+              (function
+                | Ast.Literal_text s -> s
+                | Ast.Part_expr e -> to_string (eval_expr env e))
+              parts))
   | Ast.Self -> not_yet span "`self`"
-  | Ast.Member _ -> not_yet span "member access"
+  | Ast.Member _ ->
+      error span "E3007" "a member access must be a call, like `x.read()`"
   | Ast.Index (base, index) -> eval_index env span base index
   | Ast.Tuple es -> Tuple (List.map (eval_expr env) es)
   | Ast.Array_literal es -> Array (Array.of_list (List.map (eval_expr env) es))

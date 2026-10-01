@@ -215,6 +215,56 @@ let smoke_tests =
         ());
   ]
 
+let io_tests =
+  [
+    tc "to_string renders every primitive" (fun () ->
+        let check_str name expected v =
+          Alcotest.(check string) name expected (Emo_eval.to_string v)
+        in
+        check_str "int" "42" (Emo_eval.Int 42);
+        check_str "negative int" "-7" (Emo_eval.Int (-7));
+        check_str "whole float" "1.0" (Emo_eval.Float 1.0);
+        check_str "fractional float" "2.5" (Emo_eval.Float 2.5);
+        check_str "bool" "true" (Emo_eval.Bool true);
+        check_str "char" "a" (Emo_eval.Char 'a');
+        check_str "string" "hi" (Emo_eval.String "hi");
+        check_str "tuple" "(1, a)"
+          (Emo_eval.Tuple [ Emo_eval.Int 1; Emo_eval.String "a" ]);
+        check_str "array" "[1, 2]"
+          (Emo_eval.Array [| Emo_eval.Int 1; Emo_eval.Int 2 |]));
+    tc "interpolation stringifies left to right" (fun () ->
+        check_value "interp" (Emo_eval.String "a 3 b true")
+          "\"a ${1 + 2} b ${true}\"");
+    tc "to_string is callable on values" (fun () ->
+        check_value "int" (Emo_eval.String "42") "42.to_string()");
+    tc "print writes through the output hook" (fun () ->
+        let buf = Buffer.create 16 in
+        Emo_eval.set_output (Buffer.add_string buf);
+        Fun.protect
+          ~finally:(fun () ->
+            Emo_eval.set_output (fun s ->
+                print_string s;
+                flush stdout))
+          (fun () -> ignore (run_stmts "print(1 + 1)\nprint(1.0)"));
+        Alcotest.(check string) "output" "2\n1.0\n" (Buffer.contents buf));
+    tc "length works on arrays and tuples" (fun () ->
+        check_value "array" (Emo_eval.Int 3) "[1, 2, 3].length()";
+        check_value "tuple" (Emo_eval.Int 2) "(1, 2).length()");
+    tc "Box constructs, reads, replaces" (fun () ->
+        check_value "read" (Emo_eval.Int 2)
+          "-> {\n  const b = Box.new(1)\n  b.replace(2)\n  return b.read()\n}()";
+        check_value "replace returns the new value" (Emo_eval.String "x")
+          "Box.new(0).replace(\"x\")");
+    tc "method errors name the receiver and method" (fun () ->
+        let diagnostic = eval_err "1.frobnicate()" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "Int has no method `frobnicate`"
+          diagnostic.Diagnostic.message;
+        let diagnostic = eval_err "Box.new()" in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -222,4 +272,5 @@ let () =
       ("equality", equality_tests);
       ("env", env_tests);
       ("expression", expression_tests);
+      ("io", io_tests);
     ]
