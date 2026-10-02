@@ -70,11 +70,20 @@ recommended priority.
 
 ## Tasks (this file's scope)
 
-- [ ] When a target is scheduled, split it into `step-NN-<target>.md` with
+- [x] When a target is scheduled, split it into `step-NN-<target>.md` with
       the full standard format (goal / scope / tasks / acceptance) and
       update `plan/README.md`'s status table.
 - [ ] Record here which key decision each target settled and where
       (README / CHECK.md / docs) — keep the trail.
+
+## Promotion trail
+
+- **TypeScript → `plan/step-15-typescript.md`** (scheduled 2026-10-02,
+  first target). Its key decisions are settled in that file's
+  "Decisions settled here": lowering from the IR (superseding this
+  file's earlier "the AST suffices" note), uniform async mapping, and
+  cooperative tasks. `Wasm` is next in the recommended order; its GC
+  prototyping remains its own gate.
 
 ## Acceptance
 
