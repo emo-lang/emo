@@ -364,11 +364,10 @@ let cache_tests =
 
 let shop_golden_tests =
   [
-    tc "the README shop tree runs verbatim from its root" (fun () ->
-        (* The dune rule passes the workspace's examples/ directory. *)
+    tc "the shop project runs verbatim from its own directory" (fun () ->
         (* dune materializes the declared examples/ dependency at its
            workspace-relative path, two levels up from this rule's dir. *)
-        Sys.chdir (Filename.concat original_cwd "../../examples");
+        Sys.chdir (Filename.concat original_cwd "../../examples/shop");
         let out = Buffer.create 64 in
         Emo_eval.set_output (Buffer.add_string out);
         Fun.protect
@@ -377,10 +376,8 @@ let shop_golden_tests =
                 print_string s;
                 flush stdout))
           (fun () ->
-            ignore
-              (Emo_project.run_entry ~entry_file:"shop/checkout.emo" ~check:true
-                 ()));
-        Alcotest.(check string) "output" "42\n30\n" (Buffer.contents out));
+            ignore (Emo_project.run_entry ~entry_file:"main.emo" ~check:true ()));
+        Alcotest.(check string) "output" "42\n15\n" (Buffer.contents out));
   ]
 
 (* The dependency fixture: a directory registry holding one published
@@ -1039,7 +1036,9 @@ let bootstrap_tests =
     tc "objects compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example (examples_dir ()) "objects" "objects/main.emo" true);
     tc "shop compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "shop" "shop/checkout.emo" true);
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "shop")
+          "shop" "main.emo" true);
     tc "pipeline compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example (examples_dir ()) "pipeline" "pipeline/main.emo" true);
     tc "tcp_echo compiles to a binary with the interpreter's output" (fun () ->

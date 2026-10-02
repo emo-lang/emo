@@ -1,0 +1,12 @@
+// The shop — the module system demo: the directory tree is the module
+// tree, references are qualified paths, and `internal/` is the
+// compiler-enforced private subtree.
+//
+//   emo run main.emo
+//
+// Run it from this directory: the working directory is the project
+// root, and every sibling `.emo` file is a module at its path.
+
+// Sibling modules are referenced by their path — no import statement.
+print(checkout.checkout(21))
+print(pricing.price(3))

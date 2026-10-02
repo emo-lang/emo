@@ -1,0 +1,5 @@
+package {
+  name = "emo/demo_shop"
+  version = "0.1.0"
+  targets = ["native"]
+}

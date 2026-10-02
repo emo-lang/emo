@@ -1,9 +1,5 @@
-const order = shop.order
-
+// Checkout bills a cart through the order module — a plain qualified
+// reference to a sibling module, no import, no registration.
 def checkout(cart Int) Int {
-  const total = order.total(cart)
-  return total
+  return order.total(cart)
 }
-
-print(checkout(21))
-print(shop.pricing.price(3))
