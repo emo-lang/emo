@@ -25,8 +25,8 @@ language's design, not just its features.
 - **[`fib/`](fib/)** — recursion, tail calls, and an arrow function.
 - **[`hello_world/`](hello_world/)** — the smallest program.
 - **[`objects/`](objects/)** — classes, enums, interfaces, equality.
-- **[`shop/`](shop/)** — the module system, including `internal/`
-  privacy, from the README's tree.
+- **[`shop/`](shop/)** — the module system: the directory tree is the
+  module tree, with an `internal/` private subtree.
 - **[`http_roundtrip/`](http_roundtrip/)** — an HTTP server and client
   round-trip on localhost in one direct-style program.
 

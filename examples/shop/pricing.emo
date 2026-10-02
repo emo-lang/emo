@@ -1,5 +1,8 @@
-const rate = shop.internal.discounts.rate
+// Pricing uses the project's private discount table. Long paths get
+// an ordinary const alias — an import statement was only ever an
+// alias assignment.
+const discounts = internal.discounts
 
 def price(n Int) Int {
-  return n * rate
+  return (n * 10) - discounts.seasonal(n)
 }
