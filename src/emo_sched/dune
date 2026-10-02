@@ -1,4 +1,4 @@
 (library
  (name emo_sched)
  (wrapped false)
- (libraries eio_main emo_eval))
+ (libraries eio_main unix emo_eval))

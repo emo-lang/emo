@@ -22,6 +22,8 @@ type value =
   | Array of value array
   | Box of value ref
   | Pid of int (* a process identity, from `do` or `self_pid()` *)
+  | TcpConn of conn
+  | TcpListener of listener
   | ArrowBlock of closure
   | BuiltinFn of string
   | ClassDef of class_def_value
@@ -45,6 +47,26 @@ and instance_value = {
 }
 
 and enum_type_value = { ename : string; emembers : (string * value) list }
+
+(* The networking handles the evaluator hands out: small records describing
+   the endpoint, with the live socket state owned by the scheduler driver
+   behind the id. The timeout is the endpoint's blocking deadline in
+   seconds (0.0 waits indefinitely), set only through `set_timeout` — it is
+   never a default. *)
+and conn = {
+  cid : int;
+  cdesc : string; (* the peer, for diagnostics *)
+  mutable ctimeout : float;
+  mutable cclosed : bool;
+}
+
+and listener = {
+  lid : int;
+  ldesc : string;
+  lport : int; (* the requested port; port 0 resolves to the assigned one *)
+  mutable ltimeout : float;
+  mutable lclosed : bool;
+}
 
 and closure = {
   def_name : string; (* "`fib`" or "`<arrow block>`", for diagnostics *)
@@ -73,6 +95,8 @@ let type_name = function
   | Array _ -> "Array"
   | Box _ -> "Box"
   | Pid _ -> "Pid"
+  | TcpConn _ -> "TcpConn"
+  | TcpListener _ -> "TcpListener"
   | ArrowBlock _ -> "an arrow block"
   | BuiltinFn _ -> "a builtin"
   | ClassDef _ -> "a class"
@@ -99,6 +123,8 @@ let rec equal_value a b =
       !ok
   | Box x, Box y -> equal_value !x !y
   | Pid x, Pid y -> Int.equal x y
+  | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
+  | TcpListener x, TcpListener y -> Int.equal x.lid y.lid
   | EnumMember (t, m), EnumMember (t', m') ->
       String.equal t t' && String.equal m m'
   | EnumType x, EnumType y -> String.equal x.ename y.ename
@@ -123,6 +149,10 @@ let global_env () =
     { bound = BuiltinFn "self_pid"; mutable_ = false };
   Hashtbl.replace env.frame "halt"
     { bound = BuiltinFn "halt"; mutable_ = false };
+  Hashtbl.replace env.frame "net_connect"
+    { bound = BuiltinFn "net_connect"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen"
+    { bound = BuiltinFn "net_listen"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
@@ -211,6 +241,8 @@ let rec to_string v =
       "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
   | Box _ -> "<box>"
   | Pid n -> Printf.sprintf "<pid %d>" n
+  | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
+  | TcpListener l -> Printf.sprintf "<listener %s>" l.ldesc
   | ArrowBlock _ -> "<arrow block>"
   | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
   | ClassDef c -> c.cname
@@ -415,13 +447,43 @@ type _ Effect.t +=
   | Self_pid : int Effect.t
   | Receive : (value -> selected option) -> selected Effect.t
 
+(* ---- Networking core ----
+   Socket operations follow the process operations: the evaluator performs
+   effects and the scheduler driver handles them at the process boundary —
+   every blocking call is a suspension point. Contexts outside a scheduled
+   run refuse them with E3009, like the process operations.
+
+   Failures are ordinary Emo exceptions: an `Exception` instance whose
+   message states exactly what failed — connection refused, name
+   unresolvable, deadline exceeded, socket closed. No error codes, no nil
+   returns (the README error model). *)
+
+type _ Effect.t +=
+  | Net_connect : string * int * float * Emo_support.Span.t -> conn Effect.t
+  | Net_listen : string * int * Emo_support.Span.t -> listener Effect.t
+  | Net_accept : listener * Emo_support.Span.t -> conn Effect.t
+  | Net_read_line : conn * Emo_support.Span.t -> string Effect.t
+  | Net_read_exactly : conn * int * Emo_support.Span.t -> string Effect.t
+  | Net_read_all : conn * Emo_support.Span.t -> string Effect.t
+  | Net_write : conn * string * Emo_support.Span.t -> unit Effect.t
+  | Net_close_conn : conn * Emo_support.Span.t -> conn Effect.t
+  | Net_close_listener : listener * Emo_support.Span.t -> listener Effect.t
+
 let processes : (int, process) Hashtbl.t = Hashtbl.create 8
 let next_pid : int ref = ref 0
+
+(* One id space for the networking handles the driver tracks. *)
+let next_resource_id : int ref = ref 0
+
+let fresh_resource_id () =
+  incr next_resource_id;
+  !next_resource_id
 
 (* (Re)initializes the concurrency state for one program run. *)
 let reset_conc () =
   Hashtbl.reset processes;
-  next_pid := 0
+  next_pid := 0;
+  next_resource_id := 0
 
 let spawn_record () =
   let p = { pid = !next_pid; inbox = []; status = `Running; exit_hooks = [] } in
@@ -517,12 +579,55 @@ let run_without_scheduler (body : unit -> unit) : unit =
             | Receive _ ->
                 Some
                   (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
+            | Net_connect (_, _, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_connect`")
+            | Net_listen (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`net_listen`")
+            | Net_accept (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`accept`")
+            | Net_read_line (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`read_line`")
+            | Net_read_exactly (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`read_exactly`")
+            | Net_read_all (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`read_all`")
+            | Net_write (_, _, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`write`")
+            | Net_close_conn (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`close`")
+            | Net_close_listener (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`close`")
             | _ -> None);
       }
   with Halt_signal -> ()
 
 let not_yet span what =
   error span "E3009" (Printf.sprintf "%s is not supported yet" what)
+
+(* Builds the Emo exception a network failure unwinds with. Drivers
+   discontinue the parked continuation with it. *)
+let net_raise span message =
+  Emo_raise
+    ( Instance
+        {
+          iclass =
+            {
+              cname = "Exception";
+              cinit = None;
+              cmethods = [];
+              builtin_exception = true;
+            };
+          ifields = [ ("message", String message) ];
+        },
+      span,
+      !call_trace )
 
 let rec eval_unary env span op x =
   let v = eval_expr env x in
@@ -777,6 +882,71 @@ and eval_method env span recv mname arg_exprs =
       | _ ->
           error span "E3007"
             (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+  | TcpConn c, "read_line" ->
+      none_expected "read_line";
+      String (Effect.perform (Net_read_line (c, span)))
+  | TcpConn c, "read_exactly" -> (
+      match eval_args () with
+      | [ Int n ] -> String (Effect.perform (Net_read_exactly (c, n, span)))
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`read_exactly` expects an Int, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`read_exactly` expects 1 argument, got %d" argc))
+  | TcpConn c, "read_all" ->
+      none_expected "read_all";
+      String (Effect.perform (Net_read_all (c, span)))
+  | TcpConn c, "write" -> (
+      match eval_args () with
+      | [ String s ] ->
+          Effect.perform (Net_write (c, s, span));
+          TcpConn c
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`write` expects a String, got %s" (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`write` expects 1 argument, got %d" argc))
+  | TcpConn c, "close" ->
+      none_expected "close";
+      TcpConn (Effect.perform (Net_close_conn (c, span)))
+  | TcpConn c, "set_timeout" -> (
+      match eval_args () with
+      | [ Float f ] when f >= 0.0 ->
+          c.ctimeout <- f;
+          TcpConn c
+      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_timeout` expects a Float, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
+  | TcpListener l, "accept" ->
+      none_expected "accept";
+      TcpConn (Effect.perform (Net_accept (l, span)))
+  | TcpListener l, "port" ->
+      none_expected "port";
+      Int l.lport
+  | TcpListener l, "close" ->
+      none_expected "close";
+      TcpListener (Effect.perform (Net_close_listener (l, span)))
+  | TcpListener l, "set_timeout" -> (
+      match eval_args () with
+      | [ Float f ] when f >= 0.0 ->
+          l.ltimeout <- f;
+          TcpListener l
+      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_timeout` expects a Float, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
   | Instance i, "is" -> (
       let args = eval_args () in
       match args with
@@ -889,6 +1059,26 @@ and apply_builtin span name args =
   | "halt", vs ->
       error span "E3007"
         (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
+  | "net_connect", args when List.length args <> 3 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_connect` expects (host String, port Int, timeout Float), got \
+            %d arguments"
+           (List.length args))
+  | "net_connect", [ String host; Int port; Float timeout ] ->
+      TcpConn (Effect.perform (Net_connect (host, port, timeout, span)))
+  | "net_connect", _ ->
+      error span "E3001"
+        "`net_connect` expects (host String, port Int, timeout Float)"
+  | "net_listen", args when List.length args <> 2 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_listen` expects (host String, port Int), got %d arguments"
+           (List.length args))
+  | "net_listen", [ String host; Int port ] ->
+      TcpListener (Effect.perform (Net_listen (host, port, span)))
+  | "net_listen", _ ->
+      error span "E3001" "`net_listen` expects (host String, port Int)"
   | _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The function frame. A [Tail_call] rebinds callee and arguments and

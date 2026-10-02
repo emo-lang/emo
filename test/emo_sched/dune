@@ -1,6 +1,6 @@
 (executable
  (name emo_sched_test)
- (libraries alcotest emo_sched emo_eval emo_parser emo_support))
+ (libraries alcotest unix emo_sched emo_eval emo_parser emo_support))
 
 (rule
  (alias runtest)

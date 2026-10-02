@@ -609,6 +609,214 @@ receive {
         Alcotest.(check string) "output" "100000\n" output);
   ]
 
+(* ---- Networking: the TCP surface (T12.1) ----
+
+   Every test runs on the own scheduler over real loopback sockets: a
+   listener on port 0, a spawned server process, and a client in the root
+   — the process-per-connection shape, in direct style. *)
+
+(* Finds a port with no listener; connecting there is refused. *)
+let closed_port () =
+  let fd = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.bind fd (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+  let port =
+    match (Unix.getsockname fd : Unix.sockaddr) with
+    | Unix.ADDR_INET (_, p) -> p
+    | _ -> assert false
+  in
+  Unix.close fd;
+  port
+
+(* Runs a source program under the deterministic scheduler and returns the
+   message of the Emo exception the root raised, or "no raise". *)
+let run_det_raised ?seed source =
+  let raised = ref "no raise" in
+  (try
+     ignore
+       (Emo_sched_det.run ?seed (fun () ->
+            let items = Emo_parser.parse_program ~file:"<test>" ~source in
+            let env = Emo_eval.global_env () in
+            List.iter (Emo_eval.eval_item env) items))
+   with Emo_eval.Emo_raise (v, _span, _trace) ->
+     raised := Emo_eval.to_string v);
+  !raised
+
+let net_tests =
+  [
+    tc "an echo server round-trips over TCP" (fun () ->
+        let output, _events =
+          run_det
+            {|
+def serve(listener TcpListener) Int {
+  const conn = listener.accept()
+  conn.write(conn.read_line() + "\n")
+  return serve(listener)
+}
+
+const listener = net_listen("127.0.0.1", 0)
+do serve(listener)
+const conn = net_connect("127.0.0.1", listener.port(), 0.0)
+conn.write("ping\n")
+print(conn.read_line())
+print("done")
+|}
+        in
+        Alcotest.(check string) "output" "ping\ndone\n" output);
+    tc "a listener on port 0 reports its assigned port" (fun () ->
+        let output, _events =
+          run_det
+            {|
+const listener = net_listen("127.0.0.1", 0)
+print(listener.port() > 0)
+print(listener.port() < 65536)
+|}
+        in
+        Alcotest.(check string) "output" "true\ntrue\n" output);
+    tc "graceful close delivers pending data before EOF" (fun () ->
+        let output, _events =
+          run_det
+            {|
+def once(listener TcpListener) Int {
+  const conn = listener.accept()
+  conn.write("bye")
+  return conn.close()
+}
+
+const listener = net_listen("127.0.0.1", 0)
+do once(listener)
+const conn = net_connect("127.0.0.1", listener.port(), 0.0)
+print(conn.read_all())
+print(conn.read_all())
+print("after")
+|}
+        in
+        Alcotest.(check string) "output" "bye\n\nafter\n" output);
+    tc "connecting to a closed port raises a precise exception" (fun () ->
+        let port = closed_port () in
+        let message =
+          run_det_raised
+            (Printf.sprintf
+               {|
+net_connect("127.0.0.1", %d, 0.0)
+print("unreachable")
+|} port)
+        in
+        Alcotest.(check string)
+          "message"
+          (Printf.sprintf "connection refused to 127.0.0.1:%d" port)
+          message);
+    tc "a read deadline raises a precise exception" (fun () ->
+        let message =
+          run_det_raised
+            {|
+def silent(listener TcpListener) Int {
+  const conn = listener.accept()
+  return halt()
+}
+
+const listener = net_listen("127.0.0.1", 0)
+do silent(listener)
+const conn = net_connect("127.0.0.1", listener.port(), 0.0)
+conn.set_timeout(0.2)
+print(conn.read_line())
+|}
+        in
+        let expected_prefix = "timed out reading a line from 127.0.0.1:" in
+        let ok =
+          String.length message >= String.length expected_prefix
+          && String.sub message 0 (String.length expected_prefix)
+             = expected_prefix
+        in
+        Alcotest.(check bool) "timeout message names the peer" true ok);
+    tc "reading a closed connection raises" (fun () ->
+        let message =
+          run_det_raised
+            {|
+const listener = net_listen("127.0.0.1", 0)
+const conn = net_connect("127.0.0.1", listener.port(), 0.0)
+conn.close()
+conn.read_line()
+|}
+        in
+        let expected_prefix = "the connection to 127.0.0.1:" in
+        let ok =
+          String.length message >= String.length expected_prefix
+          && String.sub message 0 (String.length expected_prefix)
+             = expected_prefix
+        in
+        Alcotest.(check bool) "closed-connection message" true ok);
+    tc "closing a connection twice raises" (fun () ->
+        let message =
+          run_det_raised
+            {|
+const listener = net_listen("127.0.0.1", 0)
+const conn = net_connect("127.0.0.1", listener.port(), 0.0)
+conn.close()
+conn.close()
+|}
+        in
+        let expected_prefix = "the connection to 127.0.0.1:" in
+        let ok =
+          String.length message >= String.length expected_prefix
+          && String.sub message 0 (String.length expected_prefix)
+             = expected_prefix
+        in
+        Alcotest.(check bool) "double-close message" true ok);
+    tc "a close mid-line surfaces as a precise exception" (fun () ->
+        let message =
+          run_det_raised
+            {|
+def cut(listener TcpListener) Int {
+  const conn = listener.accept()
+  conn.write("half")
+  return conn.close()
+}
+
+const listener = net_listen("127.0.0.1", 0)
+do cut(listener)
+const conn = net_connect("127.0.0.1", listener.port(), 0.0)
+conn.read_line()
+|}
+        in
+        let expected_prefix = "the connection to 127.0.0.1:" in
+        let expected_suffix = "closed mid-line" in
+        let ok =
+          String.length message
+          >= String.length expected_prefix + String.length expected_suffix
+          && String.sub message 0 (String.length expected_prefix)
+             = expected_prefix
+          &&
+          let n = String.length message in
+          String.sub message
+            (n - String.length expected_suffix)
+            (String.length expected_suffix)
+          = expected_suffix
+        in
+        Alcotest.(check bool) "mid-line close message" true ok);
+    tc "networking is refused outside a scheduler" (fun () ->
+        let diagnostic =
+          match
+            Emo_eval.run_without_scheduler (fun () ->
+                let items =
+                  Emo_parser.parse_program ~file:"<test>"
+                    ~source:{|const c = net_connect("127.0.0.1", 1, 0.0)|}
+                in
+                let env = Emo_eval.global_env () in
+                List.iter (Emo_eval.eval_item env) items)
+          with
+          | () -> None
+          | exception Emo_eval.Error d -> Some d
+        in
+        match diagnostic with
+        | None -> Alcotest.fail "expected E3009"
+        | Some d ->
+            Alcotest.(check string)
+              "code" "E3009"
+              (match d.Emo_support.Diagnostic.code with
+              | Some c -> c
+              | None -> "no code"));
+  ]
+
 let () =
   Alcotest.run "emo_sched"
     [
@@ -617,4 +825,5 @@ let () =
       ("box", box_tests);
       ("determinism", determinism_tests);
       ("stress", stress_tests);
+      ("net", net_tests);
     ]
