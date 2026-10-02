@@ -448,14 +448,32 @@ let dep_error ~(manifest_dir : string) (message : string) =
       };
     ]
 
+(* With EMO_REGISTRY unset, the standard library's registry ships with
+   the compiler — the bundled default, resolved next to the running
+   binary (through symlinks, like the runtime libraries). *)
+let bundled_registry () =
+  let exe_dir =
+    Filename.dirname
+      (try Unix.realpath Sys.executable_name with _ -> Sys.executable_name)
+  in
+  let candidate =
+    Filename.concat
+      (Filename.concat (Filename.concat exe_dir "..") "..")
+      "stdlib/registry"
+  in
+  if Sys.file_exists candidate then Some candidate else None
+
 let registry () =
   match Sys.getenv_opt "EMO_REGISTRY" with
   | Some endpoint when endpoint <> "" -> { Emo_pkg.Registry.endpoint }
-  | _ ->
-      raise
-        (dep_error ~manifest_dir:"."
-           "this project has dependencies but no registry is configured — set \
-            EMO_REGISTRY")
+  | _ -> (
+      match bundled_registry () with
+      | Some dir -> { Emo_pkg.Registry.endpoint = dir }
+      | None ->
+          raise
+            (dep_error ~manifest_dir:"."
+               "this project has dependencies but no registry is configured — \
+                set EMO_REGISTRY"))
 
 (* Resolves the manifest's exact pins against the registry, fresh — the
    explicit regeneration path (`emo deps resolve`). *)
