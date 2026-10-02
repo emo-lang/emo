@@ -24,6 +24,7 @@ type value =
   | Pid of int (* a process identity, from `do` or `self_pid()` *)
   | TcpConn of conn
   | TcpListener of listener
+  | UdpSocket of udp
   | ArrowBlock of closure
   | BuiltinFn of string
   | ClassDef of class_def_value
@@ -64,8 +65,17 @@ and listener = {
   lid : int;
   ldesc : string;
   lport : int; (* the requested port; port 0 resolves to the assigned one *)
+  lunix : bool; (* a unix-domain listener: `port` is meaningless *)
   mutable ltimeout : float;
   mutable lclosed : bool;
+}
+
+and udp = {
+  uid : int;
+  udesc : string;
+  uport : int; (* the bound port; port 0 resolves to the assigned one *)
+  mutable utimeout : float;
+  mutable uclosed : bool;
 }
 
 and closure = {
@@ -97,6 +107,7 @@ let type_name = function
   | Pid _ -> "Pid"
   | TcpConn _ -> "TcpConn"
   | TcpListener _ -> "TcpListener"
+  | UdpSocket _ -> "UdpSocket"
   | ArrowBlock _ -> "an arrow block"
   | BuiltinFn _ -> "a builtin"
   | ClassDef _ -> "a class"
@@ -125,6 +136,7 @@ let rec equal_value a b =
   | Pid x, Pid y -> Int.equal x y
   | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
   | TcpListener x, TcpListener y -> Int.equal x.lid y.lid
+  | UdpSocket x, UdpSocket y -> Int.equal x.uid y.uid
   | EnumMember (t, m), EnumMember (t', m') ->
       String.equal t t' && String.equal m m'
   | EnumType x, EnumType y -> String.equal x.ename y.ename
@@ -153,6 +165,12 @@ let global_env () =
     { bound = BuiltinFn "net_connect"; mutable_ = false };
   Hashtbl.replace env.frame "net_listen"
     { bound = BuiltinFn "net_listen"; mutable_ = false };
+  Hashtbl.replace env.frame "net_udp_bind"
+    { bound = BuiltinFn "net_udp_bind"; mutable_ = false };
+  Hashtbl.replace env.frame "net_connect_unix"
+    { bound = BuiltinFn "net_connect_unix"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen_unix"
+    { bound = BuiltinFn "net_listen_unix"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
@@ -243,6 +261,7 @@ let rec to_string v =
   | Pid n -> Printf.sprintf "<pid %d>" n
   | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
   | TcpListener l -> Printf.sprintf "<listener %s>" l.ldesc
+  | UdpSocket u -> Printf.sprintf "<udp %s>" u.udesc
   | ArrowBlock _ -> "<arrow block>"
   | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
   | ClassDef c -> c.cname
@@ -468,6 +487,14 @@ type _ Effect.t +=
   | Net_write : conn * string * Emo_support.Span.t -> unit Effect.t
   | Net_close_conn : conn * Emo_support.Span.t -> conn Effect.t
   | Net_close_listener : listener * Emo_support.Span.t -> listener Effect.t
+  | Net_udp_bind : string * int * Emo_support.Span.t -> udp Effect.t
+  | Net_udp_send_to :
+      (udp * string * int * string * Emo_support.Span.t)
+      -> unit Effect.t
+  | Net_udp_recv_from : udp * Emo_support.Span.t -> value Effect.t
+  | Net_udp_close : udp * Emo_support.Span.t -> udp Effect.t
+  | Net_connect_unix : string * float * Emo_support.Span.t -> conn Effect.t
+  | Net_listen_unix : string * Emo_support.Span.t -> listener Effect.t
 
 let processes : (int, process) Hashtbl.t = Hashtbl.create 8
 let next_pid : int ref = ref 0
@@ -604,6 +631,25 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some (fun (_ : (a, _) continuation) -> refused span "`close`")
             | Net_close_listener (_, span) ->
                 Some (fun (_ : (a, _) continuation) -> refused span "`close`")
+            | Net_udp_bind (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_udp_bind`")
+            | Net_udp_send_to (_, _, _, _, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`send_to`")
+            | Net_udp_recv_from (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`recv_from`")
+            | Net_udp_close (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`close`")
+            | Net_connect_unix (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_connect_unix`")
+            | Net_listen_unix (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_listen_unix`")
             | _ -> None);
       }
   with Halt_signal -> ()
@@ -928,6 +974,9 @@ and eval_method env span recv mname arg_exprs =
   | TcpListener l, "accept" ->
       none_expected "accept";
       TcpConn (Effect.perform (Net_accept (l, span)))
+  | TcpListener { lunix = true; ldesc; _ }, "port" ->
+      error span "E3007"
+        (Printf.sprintf "a unix-domain listener (%s) has no port" ldesc)
   | TcpListener l, "port" ->
       none_expected "port";
       Int l.lport
@@ -939,6 +988,37 @@ and eval_method env span recv mname arg_exprs =
       | [ Float f ] when f >= 0.0 ->
           l.ltimeout <- f;
           TcpListener l
+      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_timeout` expects a Float, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
+  | UdpSocket u, "send_to" -> (
+      match eval_args () with
+      | [ String host; Int port; String data ] ->
+          Effect.perform (Net_udp_send_to (u, host, port, data, span));
+          UdpSocket u
+      | _ ->
+          error span "E3007"
+            "`send_to` expects (host String, port Int, data String)")
+  | UdpSocket u, "recv_from" ->
+      none_expected "recv_from";
+      let received = Effect.perform (Net_udp_recv_from (u, span)) in
+      received
+  | UdpSocket u, "port" ->
+      none_expected "port";
+      Int u.uport
+  | UdpSocket u, "close" ->
+      none_expected "close";
+      UdpSocket (Effect.perform (Net_udp_close (u, span)))
+  | UdpSocket u, "set_timeout" -> (
+      match eval_args () with
+      | [ Float f ] when f >= 0.0 ->
+          u.utimeout <- f;
+          UdpSocket u
       | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
       | [ v ] ->
           error span "E3001"
@@ -1079,6 +1159,35 @@ and apply_builtin span name args =
       TcpListener (Effect.perform (Net_listen (host, port, span)))
   | "net_listen", _ ->
       error span "E3001" "`net_listen` expects (host String, port Int)"
+  | "net_udp_bind", args when List.length args <> 2 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_udp_bind` expects (host String, port Int), got %d arguments"
+           (List.length args))
+  | "net_udp_bind", [ String host; Int port ] ->
+      UdpSocket (Effect.perform (Net_udp_bind (host, port, span)))
+  | "net_udp_bind", _ ->
+      error span "E3001" "`net_udp_bind` expects (host String, port Int)"
+  | "net_connect_unix", args when List.length args <> 2 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_connect_unix` expects (path String, timeout Float), got \
+            %d             arguments"
+           (List.length args))
+  | "net_connect_unix", [ String path; Float timeout ] ->
+      TcpConn (Effect.perform (Net_connect_unix (path, timeout, span)))
+  | "net_connect_unix", _ ->
+      error span "E3001"
+        "`net_connect_unix` expects (path String, timeout Float)"
+  | "net_listen_unix", args when List.length args <> 1 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_listen_unix` expects (path String), got %d arguments"
+           (List.length args))
+  | "net_listen_unix", [ String path ] ->
+      TcpListener (Effect.perform (Net_listen_unix (path, span)))
+  | "net_listen_unix", _ ->
+      error span "E3001" "`net_listen_unix` expects (path String)"
   | _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The function frame. A [Tail_call] rebinds callee and arguments and

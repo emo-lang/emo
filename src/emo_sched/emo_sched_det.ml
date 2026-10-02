@@ -60,6 +60,7 @@ and state = {
   mutable timers : (float * (unit -> unit)) list; (* deadline, wake *)
   live : (int, live) Hashtbl.t; (* conn id → live socket *)
   listeners : (int, Unix.file_descr) Hashtbl.t; (* listener id → fd *)
+  udps : (int, Unix.file_descr) Hashtbl.t; (* udp id → socket *)
   mutable current : int; (* the pid performing effects right now *)
   rng : Random.State.t;
   log : event list ref;
@@ -300,25 +301,36 @@ let rec handler state (proc : Emo_eval.process) () :
         | Emo_eval.Net_connect (host, port, timeout, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
-                try_entry state proc k (fun () ->
-                    connect_entry state proc k ~host ~port ~timeout span))
+                (* Resolution runs before any continuation is resumed, so
+                   its failure discontinues; later failures inside the
+                   resumed process propagate untouched. *)
+                match resolve_addrs span host port with
+                | exception (Emo_eval.Emo_raise _ as exn) ->
+                    Effect.Shallow.discontinue_with k exn
+                      (handler state proc ())
+                | addrs ->
+                    connect_entry state proc k ~host ~port ~timeout span addrs)
         | Emo_eval.Net_listen (host, port, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
-                try_entry state proc k (fun () ->
-                    let fd, bound = listen_on span host port in
+                match listen_on span host port with
+                | exception (Emo_eval.Emo_raise _ as exn) ->
+                    Effect.Shallow.discontinue_with k exn
+                      (handler state proc ())
+                | fd, bound ->
                     Unix.set_nonblock fd;
                     let l =
                       {
                         Emo_eval.lid = Emo_eval.fresh_resource_id ();
                         ldesc = Printf.sprintf "%s:%d" host bound;
                         lport = bound;
+                        lunix = false;
                         ltimeout = 0.0;
                         lclosed = false;
                       }
                     in
                     Hashtbl.replace state.listeners l.Emo_eval.lid fd;
-                    Effect.Shallow.continue_with k l (handler state proc ())))
+                    Effect.Shallow.continue_with k l (handler state proc ()))
         | Emo_eval.Net_accept (l, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -370,6 +382,80 @@ let rec handler state (proc : Emo_eval.process) () :
                     (try Unix.close live.lfd with Unix.Unix_error _ -> ());
                     Hashtbl.remove state.live c.Emo_eval.cid;
                     Effect.Shallow.continue_with k c (handler state proc ())))
+        | Emo_eval.Net_connect_unix (path, timeout, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                connect_unix_entry state proc k ~path ~timeout span)
+        | Emo_eval.Net_listen_unix (path, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                match bind_unix_listener span path with
+                | Error exn ->
+                    Effect.Shallow.discontinue_with k exn
+                      (handler state proc ())
+                | Ok fd ->
+                    Unix.set_nonblock fd;
+                    let l =
+                      {
+                        Emo_eval.lid = Emo_eval.fresh_resource_id ();
+                        ldesc = Printf.sprintf "unix socket %s" path;
+                        lport = 0;
+                        lunix = true;
+                        ltimeout = 0.0;
+                        lclosed = false;
+                      }
+                    in
+                    Hashtbl.replace state.listeners l.Emo_eval.lid fd;
+                    Effect.Shallow.continue_with k l (handler state proc ()))
+        | Emo_eval.Net_udp_bind (host, port, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                match bind_udp_socket span host port with
+                | Error exn ->
+                    Effect.Shallow.discontinue_with k exn
+                      (handler state proc ())
+                | Ok (fd, bound) ->
+                    Unix.set_nonblock fd;
+                    let u =
+                      {
+                        Emo_eval.uid = Emo_eval.fresh_resource_id ();
+                        udesc = Printf.sprintf "%s:%d" host bound;
+                        uport = bound;
+                        utimeout = 0.0;
+                        uclosed = false;
+                      }
+                    in
+                    Hashtbl.replace state.udps u.Emo_eval.uid fd;
+                    Effect.Shallow.continue_with k u (handler state proc ()))
+        | Emo_eval.Net_udp_send_to (u, host, port, data, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                match resolve_dgram_addr span host port with
+                | exception (Emo_eval.Emo_raise _ as exn) ->
+                    Effect.Shallow.discontinue_with k exn
+                      (handler state proc ())
+                | addr -> udp_send_entry state proc k addr data span u)
+        | Emo_eval.Net_udp_recv_from (u, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                udp_recv_entry state proc k span u)
+        | Emo_eval.Net_udp_close (u, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                if u.Emo_eval.uclosed then
+                  Effect.Shallow.discontinue_with k
+                    (Emo_eval.net_raise span
+                       (Printf.sprintf "the udp socket on %s is already closed"
+                          u.Emo_eval.udesc))
+                    (handler state proc ())
+                else (
+                  u.Emo_eval.uclosed <- true;
+                  (match Hashtbl.find_opt state.udps u.Emo_eval.uid with
+                  | Some fd -> (
+                      try Unix.close fd with Unix.Unix_error _ -> ())
+                  | None -> ());
+                  Hashtbl.remove state.udps u.Emo_eval.uid;
+                  Effect.Shallow.continue_with k u (handler state proc ())))
         | Emo_eval.Net_close_listener (l, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -396,22 +482,6 @@ and conn_deadline c =
   if c.Emo_eval.ctimeout > 0.0 then
     Some (Unix.gettimeofday () +. c.Emo_eval.ctimeout)
   else None
-
-(* Synchronous failures at an operation's entry (unresolvable host, closed
-   connection) unwind as the Emo exception they carry, not as stray
-   raises inside the driver. *)
-and try_entry :
-    'x.
-    state ->
-    Emo_eval.process ->
-    ('x, unit) Effect.Shallow.continuation ->
-    (unit -> outcome) ->
-    outcome =
- fun state proc k body ->
-  match body () with
-  | outcome -> outcome
-  | exception ((Emo_eval.Emo_raise _ | Emo_eval.Error _) as exn) ->
-      Effect.Shallow.discontinue_with k exn (handler state proc ())
 
 (* The closed-connection check every connection operation starts with. *)
 and conn_entry :
@@ -524,18 +594,33 @@ and abort_w :
 
 and connect_entry state proc
     (k : (Emo_eval.conn, unit) Effect.Shallow.continuation) ~(host : string)
-    ~(port : int) ~(timeout : float) (span : Emo_support.Span.t) : outcome =
-  let addrs = resolve_addrs span host port in
+    ~(port : int) ~(timeout : float) (span : Emo_support.Span.t)
+    (addrs : candidate list) : outcome =
+  let target = Printf.sprintf "%s:%d" host port in
   let deadline =
     if timeout > 0.0 then Some (Unix.gettimeofday () +. timeout) else None
   in
   let message =
-    Printf.sprintf "timed out after %gs connecting to %s:%d" timeout host port
+    Printf.sprintf "timed out after %gs connecting to %s" timeout target
   in
-  connect_next state proc k ~host ~port ~deadline ~message ~last_error:None span
+  connect_next state proc k ~target ~deadline ~message ~last_error:None span
     addrs
 
-and connect_next state proc k ~host ~port ~deadline ~message
+(* A unix-domain connect has one candidate address: the path itself. *)
+and connect_unix_entry state proc
+    (k : (Emo_eval.conn, unit) Effect.Shallow.continuation) ~(path : string)
+    ~(timeout : float) (span : Emo_support.Span.t) : outcome =
+  let target = Printf.sprintf "unix socket %s" path in
+  let deadline =
+    if timeout > 0.0 then Some (Unix.gettimeofday () +. timeout) else None
+  in
+  let message =
+    Printf.sprintf "timed out after %gs connecting to %s" timeout target
+  in
+  connect_next state proc k ~target ~deadline ~message ~last_error:None span
+    [ { cfam = Unix.PF_UNIX; caddr = Unix.ADDR_UNIX path } ]
+
+and connect_next state proc k ~target ~deadline ~message
     ~(last_error : Unix.error option) span addrs =
   match addrs with
   | [] ->
@@ -544,19 +629,18 @@ and connect_next state proc k ~host ~port ~deadline ~message
         (match last_error with
         | Some Unix.ECONNREFUSED ->
             Emo_eval.net_raise span
-              (Printf.sprintf "connection refused to %s:%d" host port)
+              (Printf.sprintf "connection refused to %s" target)
         | Some err ->
             Emo_eval.net_raise span
-              (Printf.sprintf "cannot connect to %s:%d: %s" host port
+              (Printf.sprintf "cannot connect to %s: %s" target
                  (Unix.error_message err))
         | None ->
             Emo_eval.net_raise span
-              (Printf.sprintf "cannot connect to %s:%d" host port))
+              (Printf.sprintf "cannot connect to %s" target))
   | addr :: rest -> (
       (* One completion flag per address attempt; moving to the next
          candidate starts a fresh attempt with its own flag. *)
       let finished = ref false in
-      let desc = Printf.sprintf "%s:%d" host port in
       let fd = Unix.socket addr.cfam Unix.SOCK_STREAM 0 in
       Unix.set_nonblock fd;
       let cleanup st =
@@ -567,10 +651,10 @@ and connect_next state proc k ~host ~port ~deadline ~message
         match err with
         | Unix.ECONNREFUSED ->
             Emo_eval.net_raise span
-              (Printf.sprintf "connection refused to %s:%d" host port)
+              (Printf.sprintf "connection refused to %s" target)
         | _ ->
             Emo_eval.net_raise span
-              (Printf.sprintf "cannot connect to %s:%d: %s" host port
+              (Printf.sprintf "cannot connect to %s: %s" target
                  (Unix.error_message err))
       in
       let step st =
@@ -579,16 +663,16 @@ and connect_next state proc k ~host ~port ~deadline ~message
             cleanup st;
             (* This address failed; the refusal is only final when the
                last candidate said it. *)
-            connect_next st proc k ~host ~port ~deadline ~message
+            connect_next st proc k ~target ~deadline ~message
               ~last_error:(Some err) span rest
-        | None -> finish_w finished st proc k (make_conn st fd desc)
+        | None -> finish_w finished st proc k (make_conn st fd target)
       in
       let timeout_step st =
         cleanup st;
         abort_w finished st proc k (Emo_eval.net_raise span message)
       in
       match Unix.connect fd addr.caddr with
-      | () -> finish_w finished state proc k (make_conn state fd desc)
+      | () -> finish_w finished state proc k (make_conn state fd target)
       | exception Unix.Unix_error (Unix.EINPROGRESS, _, _) ->
           add_io state fd `W (fun () -> Queue.add (Io (proc, step)) state.runq);
           (match deadline with
@@ -602,7 +686,7 @@ and connect_next state proc k ~host ~port ~deadline ~message
           cleanup state;
           if rest = [] then abort_w finished state proc k (refusal err)
           else
-            connect_next state proc k ~host ~port ~deadline ~message
+            connect_next state proc k ~target ~deadline ~message
               ~last_error:(Some err) span rest)
 
 and accept_loop state proc
@@ -629,6 +713,139 @@ and accept_loop state proc
     | exception Unix.Unix_error (err, _, _) ->
         abort_w finished state proc k
           (io_error span "accept" l.Emo_eval.ldesc err)
+
+(* One datagram address for [host:port]; unresolvable names raise the
+   Emo exception the effc branch converts before resuming anything. *)
+and resolve_dgram_addr span host port : Unix.sockaddr =
+  match
+    Unix.getaddrinfo host (string_of_int port)
+      [ Unix.AI_SOCKTYPE Unix.SOCK_DGRAM ]
+  with
+  | entry :: _ -> entry.Unix.ai_addr
+  | [] ->
+      raise
+        (Emo_eval.net_raise span
+           (Printf.sprintf "cannot resolve host `%s`" host))
+  | exception Unix.Unix_error _ ->
+      raise
+        (Emo_eval.net_raise span
+           (Printf.sprintf "cannot resolve host `%s`" host))
+
+(* The setup half of a unix-domain listener: bind and listen, reporting
+   failure as the Emo exception instead of raising across the entry. *)
+and bind_unix_listener span path : (Unix.file_descr, exn) result =
+  let fd = Unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+  match Unix.bind fd (Unix.ADDR_UNIX path) with
+  | () ->
+      Unix.listen fd 128;
+      Ok fd
+  | exception Unix.Unix_error (err, _, _) ->
+      (try Unix.close fd with Unix.Unix_error _ -> ());
+      Error
+        (Emo_eval.net_raise span
+           (Printf.sprintf "cannot listen on unix socket %s: %s" path
+              (Unix.error_message err)))
+
+(* The setup half of a UDP socket: resolve, socket, bind; returns the fd
+   and the bound port. *)
+and bind_udp_socket span host port : (Unix.file_descr * int, exn) result =
+  match resolve_dgram_addr span host port with
+  | exception (Emo_eval.Emo_raise _ as exn) -> Error exn
+  | addr -> (
+      let fd = Unix.socket Unix.PF_INET Unix.SOCK_DGRAM 0 in
+      match Unix.bind fd addr with
+      | () ->
+          let bound =
+            match (Unix.getsockname fd : Unix.sockaddr) with
+            | Unix.ADDR_INET (_, p) -> p
+            | _ -> port
+          in
+          Ok (fd, bound)
+      | exception Unix.Unix_error (err, _, _) ->
+          (try Unix.close fd with Unix.Unix_error _ -> ());
+          Error
+            (Emo_eval.net_raise span
+               (Printf.sprintf "cannot bind udp on %s:%d: %s" host port
+                  (Unix.error_message err))))
+
+(* Sends one datagram; a full buffer parks the send on write interest.
+   The address arrives resolved — nothing here raises at entry. *)
+and udp_send_entry state proc (k : (unit, unit) Effect.Shallow.continuation)
+    (addr : Unix.sockaddr) (data : string) (span : Emo_support.Span.t)
+    (u : Emo_eval.udp) : outcome =
+  if u.Emo_eval.uclosed then
+    Effect.Shallow.discontinue_with k
+      (Emo_eval.net_raise span
+         (Printf.sprintf "the udp socket on %s is closed" u.Emo_eval.udesc))
+      (handler state proc ())
+  else
+    let fd = Hashtbl.find state.udps u.Emo_eval.uid in
+    let bytes = Bytes.of_string data in
+    let finished = ref false in
+    let deadline =
+      if u.Emo_eval.utimeout > 0.0 then
+        Some (Unix.gettimeofday () +. u.Emo_eval.utimeout)
+      else None
+    in
+    let rec send_step st =
+      match Unix.sendto fd bytes 0 (Bytes.length bytes) [] addr with
+      | _n -> finish_w finished st proc k ()
+      | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
+          park_fd state proc k finished fd `W ~deadline
+            ~timeout_message:
+              (Printf.sprintf "timed out sending on %s" u.Emo_eval.udesc)
+            span send_step
+      | exception Unix.Unix_error (err, _, _) ->
+          abort_w finished st proc k (io_error span "send" u.Emo_eval.udesc err)
+    in
+    send_step state
+
+(* Waits for one datagram and returns it as (data, host, port). *)
+and udp_recv_entry state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+    (span : Emo_support.Span.t) (u : Emo_eval.udp) : outcome =
+  if u.Emo_eval.uclosed then
+    Effect.Shallow.discontinue_with k
+      (Emo_eval.net_raise span
+         (Printf.sprintf "the udp socket on %s is closed" u.Emo_eval.udesc))
+      (handler state proc ())
+  else
+    let fd = Hashtbl.find state.udps u.Emo_eval.uid in
+    let buf = Bytes.create 65536 in
+    match Unix.recvfrom fd buf 0 65536 [] with
+    | n, sockaddr -> (
+        let data = Bytes.sub_string buf 0 n in
+        match sockaddr with
+        | Unix.ADDR_INET (addr, port) ->
+            Effect.Shallow.continue_with k
+              (Emo_eval.Tuple
+                 [
+                   Emo_eval.String data;
+                   Emo_eval.String (Unix.string_of_inet_addr addr);
+                   Emo_eval.Int port;
+                 ])
+              (handler state proc ())
+        | Unix.ADDR_UNIX _ ->
+            Effect.Shallow.continue_with k
+              (Emo_eval.Tuple
+                 [ Emo_eval.String data; Emo_eval.String ""; Emo_eval.Int 0 ])
+              (handler state proc ()))
+    | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
+        let finished = ref false in
+        let deadline =
+          if u.Emo_eval.utimeout > 0.0 then
+            Some (Unix.gettimeofday () +. u.Emo_eval.utimeout)
+          else None
+        in
+        park_fd state proc k finished fd `R ~deadline
+          ~timeout_message:
+            (Printf.sprintf "timed out waiting to receive on %s"
+               u.Emo_eval.udesc) span (fun st ->
+            udp_recv_entry st proc k span u)
+    | exception Unix.Unix_error (err, _, _) ->
+        Effect.Shallow.discontinue_with k
+          (io_error span "receive" u.Emo_eval.udesc err)
+          (handler state proc ())
 
 and read_line_loop state proc (k : (string, unit) Effect.Shallow.continuation)
     (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
@@ -840,6 +1057,7 @@ let run ?(seed = 0) (root_body : unit -> unit) : event list =
       timers = [];
       live = Hashtbl.create 8;
       listeners = Hashtbl.create 8;
+      udps = Hashtbl.create 8;
       current = 0;
       rng = Random.State.make [| seed |];
       log = ref [];

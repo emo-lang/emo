@@ -68,7 +68,13 @@ let rec run_process ~sw ~conditions ~root (proc : Emo_eval.process)
              | Emo_eval.Net_read_all (_, span)
              | Emo_eval.Net_write (_, _, span)
              | Emo_eval.Net_close_conn (_, span)
-             | Emo_eval.Net_close_listener (_, span) ->
+             | Emo_eval.Net_close_listener (_, span)
+             | Emo_eval.Net_udp_bind (_, _, span)
+             | Emo_eval.Net_udp_send_to (_, _, _, _, span)
+             | Emo_eval.Net_udp_recv_from (_, span)
+             | Emo_eval.Net_udp_close (_, span)
+             | Emo_eval.Net_connect_unix (_, _, span)
+             | Emo_eval.Net_listen_unix (_, span) ->
                  Some
                    (fun (k : (a, _) continuation) ->
                      Effect.Deep.discontinue k
