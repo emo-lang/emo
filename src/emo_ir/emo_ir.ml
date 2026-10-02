@@ -60,6 +60,7 @@ type func = {
   fresult : Emo_check.t;
   fbody : stmt list;
   fspecializable : bool; (* Stage B: every value in the body is native *)
+  fforeign : string option; (* the C symbol for `foreign def` bindings *)
 }
 
 type class_ = {
@@ -551,6 +552,7 @@ and lower_func env ~(module_path : string list) ~(mangled : string)
       | None -> Emo_check.Unknown);
     fbody;
     fspecializable = false;
+    fforeign = None;
   }
 
 and ann_type (a : Ast.type_ann) : Emo_check.t =
@@ -693,6 +695,15 @@ let lower (input : input) : program =
                    })
           | Ast.Item_enum e ->
               Hashtbl.replace symbols (m.mpath, e.Ast.enum_name) S_enum
+          | Ast.Item_foreign f ->
+              Hashtbl.replace symbols
+                (m.mpath, f.Ast.foreign_name)
+                (S_func
+                   {
+                     mangled = mangle m.mpath f.Ast.foreign_name;
+                     params =
+                       List.map (fun p -> p.Ast.param_name) f.Ast.foreign_params;
+                   })
           | Ast.Item_stmt
               { stmt_desc = Ast.Binding { mutable_ = false; name; _ }; _ }
             when m.mpath <> input.entry ->
@@ -716,13 +727,11 @@ let lower (input : input) : program =
           (fun (item : Ast.item) ->
             match item.Ast.item_desc with
             | Ast.Item_stmt
-                {
-                  stmt_desc = Ast.Binding { mutable_ = false; name; init };
-                  _;
-                } -> (
+                { stmt_desc = Ast.Binding { mutable_ = false; name; init }; _ }
+              -> (
                 match full_chain init with
-                | Some chain when
-                    List.exists (fun mp -> mp = chain) all_module_paths ->
+                | Some chain
+                  when List.exists (fun mp -> mp = chain) all_module_paths ->
                     Some (name, chain)
                 | _ -> None)
             | _ -> None)
@@ -736,9 +745,14 @@ let lower (input : input) : program =
   List.iter
     (fun (m : module_input) ->
       let const_env =
-        { symbols; current = m.mpath; locals = []; types = m.mtypes;
-            module_paths = all_module_paths;
-            aliases = pre_aliases }
+        {
+          symbols;
+          current = m.mpath;
+          locals = [];
+          types = m.mtypes;
+          module_paths = all_module_paths;
+          aliases = pre_aliases;
+        }
       in
       List.iter
         (fun (item : Ast.item) ->
@@ -754,6 +768,7 @@ let lower (input : input) : program =
                   fresult = Emo_check.Unknown;
                   fbody = [ Return_stmt (lower_expr const_env init) ];
                   fspecializable = false;
+                  fforeign = None;
                 }
                 :: !funcs
           | _ -> ())
@@ -762,9 +777,16 @@ let lower (input : input) : program =
   (* pass 3: defs, classes, interfaces *)
   List.iter
     (fun (m : module_input) ->
-      let env = { symbols; current = m.mpath; locals = []; types = m.mtypes;
-            module_paths = all_module_paths;
-            aliases = pre_aliases } in
+      let env =
+        {
+          symbols;
+          current = m.mpath;
+          locals = [];
+          types = m.mtypes;
+          module_paths = all_module_paths;
+          aliases = pre_aliases;
+        }
+      in
       List.iter
         (fun (item : Ast.item) ->
           match item.Ast.item_desc with
@@ -802,6 +824,21 @@ let lower (input : input) : program =
                   cmethods = methods;
                 }
                 :: !classes
+          | Ast.Item_foreign f ->
+              funcs :=
+                {
+                  fname = mangle m.mpath f.Ast.foreign_name;
+                  fmodule = m.mpath;
+                  fparams =
+                    List.map
+                      (fun p -> (p.Ast.param_name, ann_type p.Ast.param_type))
+                      f.Ast.foreign_params;
+                  fresult = ann_type f.Ast.foreign_return;
+                  fbody = [];
+                  fspecializable = false;
+                  fforeign = Some f.Ast.foreign_symbol;
+                }
+                :: !funcs
           | Ast.Item_interface i ->
               interfaces :=
                 ( i.Ast.interface_name,
@@ -816,9 +853,14 @@ let lower (input : input) : program =
     List.find (fun (m : module_input) -> m.mpath = input.entry) input.modules
   in
   let env =
-    { symbols; current = input.entry; locals = []; types = entry_module.mtypes;
+    {
+      symbols;
+      current = input.entry;
+      locals = [];
+      types = entry_module.mtypes;
       module_paths = all_module_paths;
-      aliases = pre_aliases }
+      aliases = pre_aliases;
+    }
   in
   let pinit =
     entry_module.mitems

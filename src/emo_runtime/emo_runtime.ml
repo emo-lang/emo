@@ -396,8 +396,8 @@ let self_pid () = Emo_eval.Int (Effect.perform Emo_eval.Self_pid)
 (* Spawns a process whose arguments were evaluated eagerly in the
    spawning process — `do f(x)` reads x where the spawn appears, like
    the interpreter. *)
-let spawn_args (vals : Emo_eval.value list)
-    (f : Emo_eval.value list -> unit) : Emo_eval.value =
+let spawn_args (vals : Emo_eval.value list) (f : Emo_eval.value list -> unit) :
+    Emo_eval.value =
   let thunk () = ignore (f vals) in
   let nowhere = Emo_support.Span.zero in
   let pid = Effect.perform (Emo_eval.Spawn (thunk, nowhere)) in
@@ -414,22 +414,20 @@ let send (pid_value : Emo_eval.value) (message : Emo_eval.value) : unit =
   Effect.perform (Emo_eval.Send (pid, message, nowhere))
 
 let receive
-    (matchers :
-      (Emo_eval.value -> (int * Emo_eval.value list) option) list)
-    : int * Emo_eval.value list =
+    (matchers : (Emo_eval.value -> (int * Emo_eval.value list) option) list) :
+    int * Emo_eval.value list =
   (* Each branch matcher already tags its own index; the first branch
      that accepts the message decides. *)
   let matcher v =
     let rec try_branch = function
       | [] -> None
       | m :: rest -> (
-          match m v with
-          | Some picked -> Some picked
-          | None -> try_branch rest)
+          match m v with Some picked -> Some picked | None -> try_branch rest)
     in
     try_branch matchers
   in
-  (Effect.perform (Emo_eval.Compiled_receive matcher) : int * Emo_eval.value list)
+  (Effect.perform (Emo_eval.Compiled_receive matcher)
+    : int * Emo_eval.value list)
 
 (* The items a receive branch's pattern binds against: tuple elements,
    array elements, or the value itself. *)

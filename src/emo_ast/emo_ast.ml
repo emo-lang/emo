@@ -96,11 +96,20 @@ and literal =
 type item = { item_span : Emo_support.Span.t; item_desc : item_desc }
 (** A top-level item: a declaration, or a statement executed in order. *)
 
+and foreign_def = {
+  foreign_span : Emo_support.Span.t;
+  foreign_name : string; (* the Emo-visible name *)
+  foreign_params : param list;
+  foreign_return : type_ann;
+  foreign_symbol : string; (* the C symbol *)
+}
+
 and item_desc =
   | Item_stmt of stmt
   | Item_require of string
     (* file-level `require "owner/name"`; the short name enters scope *)
   | Item_def of fun_def
+  | Item_foreign of foreign_def
   | Item_class of class_def
   | Item_interface of interface_def
   | Item_enum of enum_def
