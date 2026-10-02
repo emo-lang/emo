@@ -58,7 +58,9 @@ let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
         render_errors ~color ~error_limit [ diagnostic ]
       in
       try
-        ignore (Emo_project.run_entry ~entry_file:file ~check:true ());
+        ignore
+          (Emo_project.run_entry ~entry_file:file ~check:true
+             ~sched:Emo_project.Eio ());
         0
       with
       | Emo_project.Static_errors diagnostics ->
@@ -158,15 +160,18 @@ let repl_loop ~(prompt : bool) ~(input : unit -> string option)
         List.iter render rest
     | items, [] -> (
         try
-          List.iter
-            (fun item ->
-              match item.Emo_ast.item_desc with
-              | Emo_ast.Item_stmt { Emo_ast.stmt_desc = Emo_ast.Expr_stmt e; _ }
-                ->
-                  output
-                    ("= " ^ Emo_eval.to_string (Emo_eval.eval_expr env e) ^ "\n")
-              | _ -> Emo_eval.eval_item env item)
-            items
+          Emo_eval.run_without_scheduler (fun () ->
+              List.iter
+                (fun item ->
+                  match item.Emo_ast.item_desc with
+                  | Emo_ast.Item_stmt
+                      { Emo_ast.stmt_desc = Emo_ast.Expr_stmt e; _ } ->
+                      output
+                        ("= "
+                        ^ Emo_eval.to_string (Emo_eval.eval_expr env e)
+                        ^ "\n")
+                  | _ -> Emo_eval.eval_item env item)
+                items)
         with
         | Emo_eval.Error diagnostic -> render diagnostic
         | Emo_eval.Emo_raise (v, span, trace) ->

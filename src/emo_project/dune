@@ -7,4 +7,5 @@
   emo_ast
   emo_eval
   emo_check
-  emo_pkg))
+  emo_pkg
+  emo_sched))

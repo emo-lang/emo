@@ -1,0 +1,9 @@
+(executable
+ (name emo_sched_test)
+ (libraries alcotest emo_sched emo_eval emo_parser emo_support))
+
+(rule
+ (alias runtest)
+ (deps emo_sched_test.exe)
+ (action
+  (run %{exe:emo_sched_test.exe})))
