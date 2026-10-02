@@ -1,6 +1,7 @@
 (library
  (name emo_project)
  (libraries
+  unix
   emo_support
   emo_lexer
   emo_parser
