@@ -759,6 +759,79 @@ print(resp.status)
                           ds)))
         in
         Alcotest.(check string) "output" "hello from emo\n200\n" output);
+    tc "emo build caches by content hash across builds" (fun () ->
+        use_workspace_registry () |> ignore;
+        (* the emo executable lives in the workspace's build tree *)
+        (* The dune rule hands us the emo executable's absolute path;
+           with_project chdirs into the scratch project afterwards. *)
+        (* Under the dune sandbox the setenv value is sandbox-relative;
+           the workspace root is the prefix before /_build/.sandbox/. *)
+        let workspace_root =
+          let cwd = original_cwd in
+          match
+            let rec find i =
+              if i < 0 then None
+              else if
+                String.sub cwd 0 (min i (String.length cwd))
+                |> String.ends_with ~suffix:"/_build/.sandbox/"
+              then
+                Some
+                  (String.sub cwd 0 (i - String.length "/_build/.sandbox/" + 1))
+              else find (i - 1)
+            in
+            find (String.length cwd)
+          with
+          | Some root -> root
+          | None -> Sys.getcwd ()
+        in
+        let emo_exe =
+          match Sys.getenv_opt "EMO_EXE" with
+          | Some path when Filename.is_relative path ->
+              (* dune relativizes the workspace-root value against the
+                 sandbox; re-anchor the _build suffix at the real root. *)
+              let tail =
+                if String.length path > 6 && String.sub path 0 6 = "../../" then
+                  String.sub path 6 (String.length path - 6)
+                else path
+              in
+              Filename.concat workspace_root tail
+          | Some path -> path
+          | None -> Alcotest.fail "EMO_EXE is not set"
+        in
+        let entry =
+          with_project [ ("main.emo", {|print(40 + 2)|}) ] "main.emo"
+        in
+        let bin = Filename.concat (Filename.dirname entry) "cached-prog" in
+        let build () =
+          let out = Buffer.create 128 in
+          let ic =
+            Unix.open_process_in
+              (Printf.sprintf "exec 2>&1; %s build %s -o %s"
+                 (Filename.quote emo_exe) (Filename.quote entry)
+                 (Filename.quote bin))
+          in
+          (try
+             while true do
+               Buffer.add_channel out ic 1
+             done
+           with End_of_file -> ());
+          ignore (Unix.close_process_in ic);
+          Buffer.contents out
+        in
+        (* The first build compiles; the second hits the content-hash
+           cache and skips the toolchain. *)
+        ignore (build ());
+        let second = build () in
+        Alcotest.(check bool)
+          "second build is cached" true
+          (contains_substring second "built"
+          && contains_substring second "(cached)");
+        ignore (build ());
+        (* the binary runs and prints *)
+        let ic = Unix.open_process_in bin in
+        let run_out = input_line ic in
+        ignore (Unix.close_process_in ic);
+        Alcotest.(check string) "output" "42" run_out);
     tc "the stdlib targets are honest: native resolves, wasm refuses" (fun () ->
         let registry = use_workspace_registry () in
         let reg = { Emo_pkg.Registry.endpoint = registry } in
