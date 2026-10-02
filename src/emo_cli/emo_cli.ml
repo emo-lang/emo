@@ -1,6 +1,6 @@
 open Cmdliner
 
-let version = "0.0.1"
+let version = Version.version
 
 let print_version () =
   Printf.printf "emo %s\n" version;

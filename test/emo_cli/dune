@@ -6,6 +6,7 @@
  (alias runtest)
  (deps
   (source_tree ../../examples)
+  (file ../../VERSION)
   emo_cli_test.exe)
  (action
   (run %{exe:emo_cli_test.exe})))
