@@ -249,7 +249,20 @@ Close-out: Stage A emits OCaml source (tradeoff documented in `docs/native-backe
 
 **Prereq:** Steps 01–13 (per target). These are roadmap entries, not execution-ready plans — each target gets its own step file when scheduled. Recommended order: Wasm → TypeScript → BEAM → qemu.
 
-- [ ] **T14.1** — When a target is scheduled, split it into `step-NN-<target>.md` with the full standard format (goal / scope / tasks / acceptance) and update `plan/README.md`'s status table; its tasks continue the numbering (`T15.*`, …).
+- [x] **T14.1** — When a target is scheduled, split it into `step-NN-<target>.md` with the full standard format (goal / scope / tasks / acceptance) and update `plan/README.md`'s status table; its tasks continue the numbering (`T15.*`, …).
 - [ ] **T14.2** — Record which key decision each target settled and where (README / `CHECK.md` / docs) — keep the trail.
 
 Key decisions to settle per target: Wasm — WasmGC vs custom GC (prototype both); TypeScript — direct-style mapping onto the event loop, process mapping; BEAM — class value semantics vs Erlang maps; qemu — pluggable runtime, linker scripts (highest risk; pull the `core`-library layering earlier if EmoOS work starts).
+
+Promotion trail: **TypeScript → `plan/step-15-typescript.md`** (2026-10-02, first target; its key decisions — IR lowering, uniform async, cooperative tasks — are settled in that file). Wasm is next in the recommended order.
+
+### Step 15 — TypeScript target · `plan/step-15-typescript.md`
+
+**Prereq:** Steps 01–13.
+**Done when:** `emo build --target typescript` emits TypeScript that runs on Node, the examples subset (hello_world, fib, objects, language_tour, shop, pipeline, tcp_echo, http_roundtrip) prints byte-for-byte what `emo run` prints (golden in CI), and a package lacking the target fails resolution before emission.
+
+- [ ] **T15.1** — Target plumbing and core emitter: `--target` through CLI, project, and the resolution gate; the IR → TypeScript emitter for the core subset; the tagged-value runtime. Golden: hello_world, fib, objects.
+- [ ] **T15.2** — Full core semantics: patterns and guards, tuples, arrays, Box, interpolation, content equality, multi-file module references. Golden: language_tour, shop.
+- [ ] **T15.3** — Concurrency: cooperative tasks, mailboxes, selective receive, `self_pid`, `halt`. Golden: pipeline.
+- [ ] **T15.4** — Direct-style IO: sockets and HTTP over Node's APIs as awaited promises; stdlib target metadata gains `"typescript"`. Golden: tcp_echo, http_roundtrip.
+- [ ] **T15.5** — Bootstrap: the target-aware golden suite in CI, plus the resolution-gate test for packages lacking the target.
