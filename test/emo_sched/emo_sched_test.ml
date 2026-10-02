@@ -326,10 +326,16 @@ let run_det ?seed source =
           flush stdout))
     (fun () ->
       let events =
-        Emo_sched_det.run ?seed (fun () ->
-            let items = Emo_parser.parse_program ~file:"<test>" ~source in
-            let env = Emo_eval.global_env () in
-            List.iter (Emo_eval.eval_item env) items)
+        try
+          Emo_sched_det.run ?seed (fun () ->
+              let items = Emo_parser.parse_program ~file:"<test>" ~source in
+              let env = Emo_eval.global_env () in
+              List.iter (Emo_eval.eval_item env) items)
+        with Emo_eval.Emo_raise (v, _span, _trace) ->
+          Alcotest.fail
+            (Printf.sprintf "root raised: %s" (Emo_eval.to_string v))
+        (* A runtime diagnostic (E3012 deadlock, ...) escapes unchanged for
+           tests that expect it. *)
       in
       (Buffer.contents out, events))
 
@@ -615,6 +621,16 @@ receive {
    listener on port 0, a spawned server process, and a client in the root
    — the process-per-connection shape, in direct style. *)
 
+(* A fresh unix-socket path per call: test socket files are never
+   deleted, so names must not collide within or across runs. The path is
+   deliberately short — macOS limits a unix socket's path to 104 bytes,
+   and dune's per-action temp dirs are too long to bind under. *)
+let unix_counter = ref 0
+
+let unix_test_path kind =
+  incr unix_counter;
+  Printf.sprintf "/tmp/emo-%s-%d-%d.sock" kind (Unix.getpid ()) !unix_counter
+
 (* Finds a port with no listener; connecting there is refused. *)
 let closed_port () =
   let fd = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
@@ -628,7 +644,8 @@ let closed_port () =
   port
 
 (* Runs a source program under the deterministic scheduler and returns the
-   message of the Emo exception the root raised, or "no raise". *)
+   message the root died with: an Emo exception's rendered value, or a
+   runtime diagnostic's message. "no raise" when the program survives. *)
 let run_det_raised ?seed source =
   let raised = ref "no raise" in
   (try
@@ -637,8 +654,10 @@ let run_det_raised ?seed source =
             let items = Emo_parser.parse_program ~file:"<test>" ~source in
             let env = Emo_eval.global_env () in
             List.iter (Emo_eval.eval_item env) items))
-   with Emo_eval.Emo_raise (v, _span, _trace) ->
-     raised := Emo_eval.to_string v);
+   with
+  | Emo_eval.Emo_raise (v, _span, _trace) -> raised := Emo_eval.to_string v
+  | Emo_eval.Error diagnostic ->
+      raised := diagnostic.Emo_support.Diagnostic.message);
   !raised
 
 let net_tests =
@@ -793,6 +812,95 @@ conn.read_line()
           = expected_suffix
         in
         Alcotest.(check bool) "mid-line close message" true ok);
+    tc "udp sockets exchange datagrams both ways" (fun () ->
+        let output, _events =
+          run_det
+            {|
+const a = net_udp_bind("127.0.0.1", 0)
+const b = net_udp_bind("127.0.0.1", 0)
+a.send_to("127.0.0.1", b.port(), "datagram")
+case b.recv_from() {
+  (data, host, port) -> {
+    print(data)
+    print(host == "127.0.0.1")
+    print(port == a.port())
+  }
+}
+|}
+        in
+        Alcotest.(check string) "output" "datagram\ntrue\ntrue\n" output);
+    tc "a udp receive deadline raises a precise exception" (fun () ->
+        let message =
+          run_det_raised
+            {|
+const a = net_udp_bind("127.0.0.1", 0)
+a.set_timeout(0.1)
+case a.recv_from() {
+  _ -> { print("received") }
+}
+print("unreachable")
+|}
+        in
+        let expected_prefix = "timed out waiting to receive on 127.0.0.1:" in
+        let ok =
+          String.length message >= String.length expected_prefix
+          && String.sub message 0 (String.length expected_prefix)
+             = expected_prefix
+        in
+        Alcotest.(check bool) "udp timeout message names the socket" true ok);
+    tc "unix-domain sockets echo over the connection surface" (fun () ->
+        let path = unix_test_path "echo" in
+        let output, _events =
+          run_det
+            (Printf.sprintf
+               {|
+def serve(listener TcpListener) Int {
+  const conn = listener.accept()
+  conn.write(conn.read_line() + "\n")
+  return serve(listener)
+}
+
+const listener = net_listen_unix("%s")
+do serve(listener)
+const conn = net_connect_unix("%s", 0.0)
+conn.write("hello unix\n")
+print(conn.read_line())
+print("done")
+|}
+               path path)
+        in
+        Alcotest.(check string) "output" "hello unix\ndone\n" output);
+    tc "a unix-domain listener has no port" (fun () ->
+        let path = unix_test_path "port" in
+        let message =
+          run_det_raised
+            (Printf.sprintf
+               {|
+const listener = net_listen_unix("%s")
+listener.port()
+|} path)
+        in
+        Alcotest.(check string)
+          "message"
+          (Printf.sprintf "a unix-domain listener (unix socket %s) has no port"
+             path)
+          message);
+    tc "connecting to an absent unix path raises a precise exception" (fun () ->
+        let path = unix_test_path "absent" in
+        let message =
+          run_det_raised
+            (Printf.sprintf
+               {|net_connect_unix("%s", 0.0)
+print("unreachable")
+|} path)
+        in
+        let expected_prefix = "cannot connect to unix socket " in
+        let ok =
+          String.length message >= String.length expected_prefix
+          && String.sub message 0 (String.length expected_prefix)
+             = expected_prefix
+        in
+        Alcotest.(check bool) "absent-path message" true ok);
     tc "networking is refused outside a scheduler" (fun () ->
         let diagnostic =
           match

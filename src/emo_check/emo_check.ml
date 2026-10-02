@@ -15,6 +15,7 @@ type t =
   | Pid
   | TcpConn
   | TcpListener
+  | UdpSocket
   | ClassType of string
   | InterfaceType of string
   | EnumType of string
@@ -33,6 +34,7 @@ let rec to_string = function
   | Pid -> "Pid"
   | TcpConn -> "TcpConn"
   | TcpListener -> "TcpListener"
+  | UdpSocket -> "UdpSocket"
   | ClassType c -> c
   | InterfaceType i -> i
   | EnumType e -> e
@@ -88,6 +90,7 @@ let rec ann_to_type ctx ({ Ast.type_span = span; type_desc; _ } : Ast.type_ann)
   | Ast.Named_type "Pid" -> Pid
   | Ast.Named_type "TcpConn" -> TcpConn
   | Ast.Named_type "TcpListener" -> TcpListener
+  | Ast.Named_type "UdpSocket" -> UdpSocket
   | Ast.Named_type "Box" -> BoxType Unknown
   | Ast.Named_type name ->
       if Hashtbl.mem ctx.classes name then ClassType name
@@ -242,6 +245,24 @@ let empty_env =
         ( "net_listen",
           {
             vtype = FuncType ([ ("host", String); ("port", Int) ], TcpListener);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "net_udp_bind",
+          {
+            vtype = FuncType ([ ("host", String); ("port", Int) ], UdpSocket);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "net_connect_unix",
+          {
+            vtype = FuncType ([ ("path", String); ("timeout", Float) ], TcpConn);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "net_listen_unix",
+          {
+            vtype = FuncType ([ ("path", String) ], TcpListener);
             is_var = false;
             depth = 0;
           } );
@@ -772,6 +793,34 @@ and check_method_call ctx env span recv mname args : t =
             (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
                (List.length arg_values));
           TcpListener)
+  | UdpSocket, "send_to" -> (
+      match arg_values with
+      | [ (None, String); (None, Int); (None, String) ] -> UdpSocket
+      | [ _; _; _ ] ->
+          report ctx span "E4004"
+            "`send_to` expects (host String, port Int, data String)";
+          UdpSocket
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`send_to` expects 3 arguments, got %d"
+               (List.length arg_values));
+          UdpSocket)
+  | UdpSocket, "recv_from" -> builtin0 (TupleType [ String; String; Int ])
+  | UdpSocket, "port" -> builtin0 Int
+  | UdpSocket, "close" -> builtin0 UdpSocket
+  | UdpSocket, "set_timeout" -> (
+      match arg_values with
+      | [ (None, Float) ] | [ (Some "seconds", Float) ] -> UdpSocket
+      | [ (_, other) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`set_timeout` expects Float, got %s"
+               (to_string other));
+          UdpSocket
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
+               (List.length arg_values));
+          UdpSocket)
   | ArrayType elem, "length" ->
       builtin0
         (ignore elem;
