@@ -621,10 +621,14 @@ and stmt_native special (s : stmt) : bool =
   | Return_stmt e -> expr_native special e
 
 (* Iterates to a fixed point: a function qualifies when its shape is
-   native and every function it calls already qualified. *)
+   native and every function it calls already qualified. A foreign
+   binding has no Emo body to specialize — the external is the whole
+   implementation, reached through the dynamic wrapper. *)
 let specialize (funcs : func list) : func list =
   let shape_ok f =
-    is_native f.fresult && List.for_all (fun (_, t) -> is_native t) f.fparams
+    is_native f.fresult
+    && List.for_all (fun (_, t) -> is_native t) f.fparams
+    && f.fforeign = None
   in
   let rec loop funcs =
     let special =
@@ -877,95 +881,3 @@ let lower (input : input) : program =
     pinit;
     pentry = input.entry;
   }
-
-(* ---- Stage B completeness ----
-
-   A function specializes when every value in it is native — parameters,
-   result, and every expression in the body — and the only calls it makes
-   are to other specialized functions. Native: Int, Float, Bool, Char,
-   String. Everything dynamic (Unknown, objects, sockets, closures)
-   disqualifies. Computed to a fixed point over the call graph. *)
-
-let is_native = function
-  | Emo_check.Int | Emo_check.Float | Emo_check.Bool | Emo_check.Char
-  | Emo_check.String ->
-      true
-  | _ -> false
-
-let rec expr_native (special : string list) (e : expr) : bool =
-  match e.desc with
-  | Const _ | Type_ref _ -> true
-  | Var _ | Global _ -> true
-  | Tuple es | Array_lit es | Interpolate es ->
-      List.for_all (expr_native special) es
-  | Make_enum _ -> true
-  | Unary (_, x) -> expr_native special x
-  | Binary (_, l, r) -> expr_native special l && expr_native special r
-  | Index (b, i) -> expr_native special b && expr_native special i
-  | Field_read { obj; _ } -> expr_native special obj
-  | Call { func; args } ->
-      List.mem func special && List.for_all (expr_native special) args
-  | Call_value _ | Method _ | Builtin _ | Box_new _ | Make_exception _
-  | Do_spawn _ | Spawn_value _ | Closure _ ->
-      false (* dynamic operations keep the function dynamic *)
-
-and stmts_native special (stmts : stmt list) : bool =
-  List.for_all (stmt_native special) stmts
-
-and stmt_native special (s : stmt) : bool =
-  match s with
-  | Effect e -> expr_native special e
-  | Let { init; _ } -> expr_native special init
-  | Assign_var { value; _ } -> expr_native special value
-  | Set_field _ -> false
-  | If { cond; then_; else_ } ->
-      expr_native special cond && stmts_native special then_
-      && stmts_native special else_
-  | Case { scrutinee; branches } ->
-      expr_native special scrutinee
-      && List.for_all
-           (fun b ->
-             (match b.guard with
-               | Some g -> expr_native special g
-               | None -> true)
-             && stmts_native special b.body)
-           branches
-  | Receive _ | Send _ | Raise _ -> false
-  | Return_stmt e -> expr_native special e
-
-(* Iterates to a fixed point: a function qualifies when its shape is
-   native and every function it calls already qualified. *)
-let specialize (funcs : func list) : func list =
-  let shape_ok f =
-    is_native f.fresult && List.for_all (fun (_, t) -> is_native t) f.fparams
-  in
-  let rec loop funcs =
-    let special =
-      List.filter_map
-        (fun g -> if g.fspecializable then Some g.fname else None)
-        funcs
-    in
-    let changed = ref false in
-    let funcs =
-      List.map
-        (fun f ->
-          if
-            (not f.fspecializable) && shape_ok f
-            (* Self-recursion is native when the shape is: seed the
-               function's own name so direct recursion qualifies. *)
-            && stmts_native (f.fname :: special) f.fbody
-          then (
-            changed := true;
-            { f with fspecializable = true })
-          else f)
-        funcs
-    in
-    if !changed then loop funcs else funcs
-  in
-  loop funcs
-
-(* ---- Program lowering ---- *)
-
-(* Lowers a whole program: symbols from every module first (forward
-   references work), then functions, classes, and the entry's top-level
-   statements. *)

@@ -596,6 +596,26 @@ def show(p (Outcome, Int)) String {
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "member branches cover the tuple idiom without a wildcard" (fun () ->
+        (* The scrutinee is a call, so its tuple type is known — the two
+           member branches must be credited on their own. *)
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|enum Outcome { ok, failed }
+
+def grade(p (Outcome, Int)) String {
+  case p {
+    (Outcome.ok, v) -> { return v.to_string() }
+    (Outcome.failed, _) -> { return "no" }
+  }
+}
+
+def go() String {
+  const p = (Outcome.ok, 3)
+  return grade(p)
+}|})));
     tc "an undecidable scrutinee has no coverage requirement" (fun () ->
         Alcotest.(check int)
           "count" 0

@@ -983,8 +983,11 @@ let build_example root entry name =
 let bootstrap_example root name entry expected =
   let golden =
     if expected then
-      Emo_project.read_file
-        (Filename.concat (Filename.concat root name) "expected.txt")
+      (* Root projects keep their golden beside the entry inside
+         <root>/<name>/; a package project is its own root. *)
+      let nested = Filename.concat (Filename.concat root name) "expected.txt" in
+      if Sys.file_exists nested then Emo_project.read_file nested
+      else Emo_project.read_file (Filename.concat root "expected.txt")
     else "hello from emo\n200\n"
   in
   (* Module and package discovery root at the current directory, so the
@@ -1037,6 +1040,13 @@ let bootstrap_tests =
         bootstrap_example (examples_dir ()) "objects" "objects/main.emo" true);
     tc "shop compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example (examples_dir ()) "shop" "shop/checkout.emo" true);
+    tc "pipeline compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example (examples_dir ()) "pipeline" "pipeline/main.emo" true);
+    tc "tcp_echo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "tcp_echo")
+          "tcp_echo" "main.emo" true);
     tc "http_roundtrip compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;

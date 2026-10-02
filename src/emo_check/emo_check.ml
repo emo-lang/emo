@@ -1303,10 +1303,10 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
 (* What a pattern covers of an enum scrutinee: everything, or specific
    members; tuple patterns contribute their first element's coverage. *)
 and pattern_coverage scrutinee_t (p : Ast.pattern) : coverage =
-  let first_members d =
+  let first_members elem_t d =
     match d with
     | Ast.Enum_member (t, m) -> (
-        match scrutinee_t with
+        match elem_t with
         | EnumType e when String.equal t e -> Members [ m ]
         | _ -> Members [])
     | Ast.Wildcard | Ast.Pattern_binding _ -> All
@@ -1314,7 +1314,13 @@ and pattern_coverage scrutinee_t (p : Ast.pattern) : coverage =
   in
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_binding _ -> All
-  | Ast.Tuple_pattern (first :: _) -> first_members first.Ast.pattern_desc
+  | Ast.Tuple_pattern (first :: _) ->
+      (* The first element's coverage is checked against the element's
+         own type, not the whole tuple scrutinee. *)
+      let elem_t =
+        match scrutinee_t with TupleType (t :: _) -> t | _ -> Unknown
+      in
+      first_members elem_t first.Ast.pattern_desc
   | _ -> Members []
 
 (* Exhaustiveness: a decidable enum scrutinee needs every member covered by
