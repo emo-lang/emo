@@ -358,7 +358,7 @@ print(tick())|}));
     tc "an unbound name fails at call time" (fun () ->
         let diagnostic = program_err "print(nope)" in
         Alcotest.(check string) "code" "E3002" (code_of diagnostic));
-    tc "receive is still not evaluated" (fun () ->
+    tc "receive outside a scheduler is refused" (fun () ->
         let diagnostic =
           program_err "receive {\n  (from, msg) -> { return msg }\n}"
         in

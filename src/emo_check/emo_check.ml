@@ -12,6 +12,7 @@ type t =
   | Bool
   | Char
   | String
+  | Pid
   | ClassType of string
   | InterfaceType of string
   | EnumType of string
@@ -27,6 +28,7 @@ let rec to_string = function
   | Bool -> "Bool"
   | Char -> "Char"
   | String -> "String"
+  | Pid -> "Pid"
   | ClassType c -> c
   | InterfaceType i -> i
   | EnumType e -> e
@@ -79,6 +81,7 @@ let rec ann_to_type ctx ({ Ast.type_span = span; type_desc; _ } : Ast.type_ann)
   | Ast.Named_type "Bool" -> Bool
   | Ast.Named_type "Char" -> Char
   | Ast.Named_type "String" -> String
+  | Ast.Named_type "Pid" -> Pid
   | Ast.Named_type "Box" -> BoxType Unknown
   | Ast.Named_type name ->
       if Hashtbl.mem ctx.classes name then ClassType name
@@ -219,6 +222,8 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ("self_pid", { vtype = FuncType ([], Pid); is_var = false; depth = 0 });
+        ("halt", { vtype = FuncType ([], Unknown); is_var = false; depth = 0 });
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
@@ -513,7 +518,7 @@ let rec check_expr ctx env (e : Ast.expr) : t =
   | Ast.Binary (op, l, r) -> check_binary ctx env span op l r
   | Ast.Do operand ->
       ignore (check_expr ctx env operand);
-      Unknown
+      Pid
   | Ast.Call (callee, args) -> (
       match callee.Ast.desc with
       | Ast.Member (recv, mname) ->
@@ -913,7 +918,43 @@ and check_stmt ctx env (s : Ast.stmt) : env =
         branches;
       check_exhaustive ctx scrutinee.Ast.span st branches;
       env
-  | Ast.Receive _ | Ast.Send _ -> env (* processes: step 11 *)
+  | Ast.Receive branches ->
+      (* Selective receive: the branches are ordinary `case` branches over
+         the messages that arrive — checked the same way, minus the
+         exhaustiveness rule (a receive with no match simply keeps
+         waiting). *)
+      List.iter
+        (fun b ->
+          let inner = child_scope env in
+          let inner =
+            check_pattern ctx inner b.Ast.pattern.pattern_span Unknown
+              b.Ast.pattern
+          in
+          Option.iter
+            (fun g ->
+              let gt = check_expr ctx inner g in
+              match gt with
+              | Bool | Unknown -> ()
+              | other ->
+                  report ctx g.Ast.span "E4004"
+                    (Printf.sprintf "a `when` guard must be a Bool, got %s"
+                       (to_string other)))
+            b.Ast.guard;
+          let (_ : env) =
+            List.fold_left (fun env s -> check_stmt ctx env s) inner b.Ast.body
+          in
+          ())
+        branches;
+      env
+  | Ast.Send { target; message } ->
+      let target_t = check_expr ctx env target in
+      (match target_t with
+      | Unknown | Pid -> ()
+      | other ->
+          report ctx target.Ast.span "E4004"
+            (Printf.sprintf "`<-` delivers to a Pid, got %s" (to_string other)));
+      ignore (check_expr ctx env message);
+      env
   | Ast.Raise e ->
       ignore (check_expr ctx env e);
       env
@@ -970,10 +1011,11 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
           in
           env
       | Unknown ->
-          List.iter
-            (fun pat -> ignore (check_pattern ctx env span Unknown pat))
-            ps;
-          env
+          (* The elements' types are unknown, but their bindings must still
+             enter the branch's scope. *)
+          List.fold_left
+            (fun env pat -> check_pattern ctx env span Unknown pat)
+            env ps
       | _ ->
           mismatch "tuple";
           env)

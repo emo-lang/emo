@@ -562,7 +562,12 @@ let check_entry ~entry_file : Emo_support.Diagnostic.t list =
   in
   diagnostics p @ errors @ entry_diags
 
-let run_entry ~entry_file ?(check = false) () : project =
+(* How the entry's evaluation is scheduled. [`Sequential] runs under the
+   guard handler — process operations report E3009; [`Eio] is the phase A
+   scheduler. *)
+type sched = Sequential | Eio
+
+let run_entry ~entry_file ?(check = false) ?(sched = Sequential) () : project =
   let p, prepared = prepare ~entry_file in
   Option.iter
     (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir p)
@@ -580,8 +585,11 @@ let run_entry ~entry_file ?(check = false) () : project =
      in
      match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
-  try
-    List.iter (Emo_eval.eval_item env) items;
-    p
-  with Emo_eval.Emo_raise (v, span, _trace) ->
-    raise (Static_errors [ Emo_eval.uncaught_diagnostic (v, span, _trace) ])
+  let evaluate () = List.iter (Emo_eval.eval_item env) items in
+  (try
+     match sched with
+     | Sequential -> Emo_eval.run_without_scheduler evaluate
+     | Eio -> Emo_sched_eio.run evaluate
+   with Emo_eval.Emo_raise (v, span, trace) ->
+     raise (Static_errors [ Emo_eval.uncaught_diagnostic (v, span, trace) ]));
+  p
