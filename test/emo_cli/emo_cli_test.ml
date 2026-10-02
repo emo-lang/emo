@@ -142,10 +142,15 @@ let read_file path =
     ~finally:(fun () -> close_in_noerr ic)
     (fun () -> really_input_string ic (in_channel_length ic))
 
+(* A directory with its own package.emo is a package project — it runs
+   through resolution and the scheduler in test/emo_project, not here. *)
 let example_names () =
   Sys.readdir examples_dir |> Array.to_list |> List.sort compare
   |> List.filter (fun name ->
-      Sys.file_exists (Filename.concat examples_dir (name ^ "/main.emo")))
+      Sys.file_exists (Filename.concat examples_dir (name ^ "/main.emo"))
+      && not
+           (Sys.file_exists
+              (Filename.concat examples_dir (name ^ "/package.emo"))))
 
 let examples_tests =
   List.map
