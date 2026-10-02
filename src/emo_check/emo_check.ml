@@ -69,6 +69,9 @@ type ctx = {
   refs : string list list ref; (* module paths referenced by this module *)
   requires : (string * Emo_support.Span.t) list ref;
       (* packages required by this module, with the require's span *)
+  types : (int, t) Hashtbl.t;
+      (* every checked expression's type, keyed by its span's start offset
+         — step 08's completeness data, consumed by the backend *)
 }
 
 let report ctx span code message =
@@ -200,6 +203,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       current = [];
       refs = ref [];
       requires = ref [];
+      types = Hashtbl.create 64;
     }
   in
   let parsed = Emo_parser.parse_program_with_diagnostics ~file ~source in
@@ -438,7 +442,13 @@ let provably_excluded ctx rt target =
 
 let rec check_expr ctx env (e : Ast.expr) : t =
   let span = e.Ast.span in
-  match e.Ast.desc with
+  let result = check_expr_desc ctx env span e.Ast.desc in
+  Hashtbl.replace ctx.types span.Emo_support.Span.start result;
+  result
+
+and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
+  let e = { Ast.span; desc } in
+  match desc with
   | Ast.Int _ -> Int
   | Ast.Float _ -> Float
   | Ast.Bool _ -> Bool
@@ -1418,11 +1428,14 @@ let sort_diagnostics diagnostics =
 (* Checks one module's items with the project's module table: unbound names
    that address modules resolve silently, qualified references are recorded.
    Returns the diagnostics and the referenced module paths. *)
-let check_module ~(modules : string list list) ~(current : string list)
+(* The backend entry: checking that also hands back the span→type table —
+   the completeness data specialization lowers from. *)
+let check_module_typed ~(modules : string list list) ~(current : string list)
     (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
-    * (string * Emo_support.Span.t) list =
+    * (string * Emo_support.Span.t) list
+    * (int, t) Hashtbl.t =
   let ctx =
     {
       file = String.concat "." current;
@@ -1436,13 +1449,26 @@ let check_module ~(modules : string list list) ~(current : string list)
       current;
       refs = ref [];
       requires = ref [];
+      types = Hashtbl.create 64;
     }
   in
   collect ctx items;
   if List.length !(ctx.diagnostics) = 0 then check_items ctx items;
   ( sort_diagnostics (List.rev !(ctx.diagnostics)),
     List.rev !(ctx.refs),
-    List.rev !(ctx.requires) )
+    List.rev !(ctx.requires),
+    ctx.types )
+
+(* The plain entry: same checking, types discarded. *)
+let check_module ~(modules : string list list) ~(current : string list)
+    (items : Ast.item list) :
+    Emo_support.Diagnostic.t list
+    * string list list
+    * (string * Emo_support.Span.t) list =
+  let diagnostics, refs, requires, _types =
+    check_module_typed ~modules ~current items
+  in
+  (diagnostics, refs, requires)
 
 (* Checks pre-parsed items without module context. Every diagnostic found,
    sorted by position. *)
