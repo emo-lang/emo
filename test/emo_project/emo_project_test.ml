@@ -650,6 +650,145 @@ receive {
               (match d.Diagnostic.code with Some c -> c | None -> "?"));
   ]
 
+(* ---- The standard library, exercised for real ----
+
+   The stdlib registry in the workspace serves `net` and `http`; the
+   roundtrip runs one program that serves and requests over loopback. *)
+
+(* The stdlib registry rides the build tree next to examples/ (both are
+   declared source-tree deps of this rule), so the path is stable from
+   the process's original working directory — earlier suites chdir into
+   scratch dirs and never come back. *)
+let from_original_cwd dir =
+  if Filename.is_relative dir then Filename.concat original_cwd dir else dir
+
+let use_workspace_registry () =
+  let registry =
+    Filename.concat (from_original_cwd "../../stdlib") "registry"
+  in
+  Unix.putenv "EMO_REGISTRY" registry;
+  registry
+
+let stdlib_http_tests =
+  [
+    tc "an http server and client round-trip on localhost" (fun () ->
+        use_workspace_registry () |> ignore;
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "roundtrip"
+  version = "0.1.0"
+  targets = ["native"]
+
+  deps {
+    http = "0.1.0"
+    net = "0.1.0"
+  }
+}|}
+              );
+              ( "main.emo",
+                {|require "http"
+require "net"
+
+const listener = net.listen("127.0.0.1", 0)
+
+do http.serve_requests(listener) -> (req HttpRequest) {
+  return http.response(200, [], "hello from emo")
+}
+
+const resp = http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello")
+print(resp.body)
+print(resp.status)
+|}
+              );
+            ]
+            "main.emo"
+        in
+        let output =
+          capture_output (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:entry ~check:true
+                  ~sched:Emo_project.Own ()
+              with
+              | _project -> ()
+              | exception Emo_project.Static_errors ds ->
+                  Alcotest.fail
+                    (String.concat "\n"
+                       (List.map
+                          (fun d ->
+                            Printf.sprintf "%s at %s: %s"
+                              (match d.Emo_support.Diagnostic.code with
+                              | Some c -> c
+                              | None -> "?")
+                              (Emo_support.Span.to_string
+                                 d.Emo_support.Diagnostic.span)
+                              d.Emo_support.Diagnostic.message)
+                          ds)))
+        in
+        Alcotest.(check string) "output" "hello from emo\n200\n" output);
+    tc "the http_roundtrip example runs through the committed lockfile"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        let examples =
+          match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
+          | Some dir -> from_original_cwd dir
+          | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
+        in
+        let entry = Filename.concat examples "http_roundtrip/main.emo" in
+        let output =
+          capture_output (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:entry ~check:true
+                  ~sched:Emo_project.Own ()
+              with
+              | _project -> ()
+              | exception Emo_project.Static_errors ds ->
+                  Alcotest.fail
+                    (String.concat "\n"
+                       (List.map
+                          (fun d ->
+                            Printf.sprintf "%s at %s: %s"
+                              (match d.Emo_support.Diagnostic.code with
+                              | Some c -> c
+                              | None -> "?")
+                              (Emo_support.Span.to_string
+                                 d.Emo_support.Diagnostic.span)
+                              d.Emo_support.Diagnostic.message)
+                          ds)))
+        in
+        Alcotest.(check string) "output" "hello from emo\n200\n" output);
+    tc "the stdlib targets are honest: native resolves, wasm refuses" (fun () ->
+        let registry = use_workspace_registry () in
+        let reg = { Emo_pkg.Registry.endpoint = registry } in
+        let index = Emo_pkg.Registry.index reg [ "http"; "net" ] in
+        let roots =
+          match Emo_pkg.Version.parse "0.1.0" with
+          | Ok v -> [ ("http", v) ]
+          | Error _ -> Alcotest.fail "bad fixture version"
+        in
+        (match Emo_pkg.Resolve.solve ~target:"native" ~roots ~index with
+        | Ok _ -> ()
+        | Error errors ->
+            Alcotest.fail
+              (String.concat "; "
+                 (List.map
+                    (fun e ->
+                      Printf.sprintf "%s: %s" e.Emo_pkg.Resolve.e_dep
+                        e.Emo_pkg.Resolve.e_message)
+                    errors)));
+        match Emo_pkg.Resolve.solve ~target:"wasm" ~roots ~index with
+        | Ok _ -> Alcotest.fail "expected resolution to refuse wasm"
+        | Error errors ->
+            let messages =
+              String.concat "; "
+                (List.map (fun e -> e.Emo_pkg.Resolve.e_message) errors)
+            in
+            Alcotest.(check string)
+              "wasm refusal" "no build for target `wasm`" messages);
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -661,4 +800,5 @@ let () =
       ("deps", deps_tests);
       ("sched", sched_tests);
       ("shop_golden", shop_golden_tests);
+      ("stdlib_http", stdlib_http_tests);
     ]

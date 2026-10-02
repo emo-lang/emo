@@ -217,14 +217,14 @@ Also here: swap step 09's transitional root rule for manifest-based roots — do
 **Prereq:** Steps 01–11.
 **Done when:** an Emo HTTP server + client round-trip on localhost runs in one `emo run` program, entirely direct style; a timeout and a refused connection each raise an Emo exception with a precise message; a TLS handshake to a test certificate fails closed on verification error. **M3 exit criteria met.**
 
-- [ ] **T12.1** — TCP socket surface on the scheduler; graceful close semantics.
-- [ ] **T12.2** — UDP + Unix-domain sockets.
-- [ ] **T12.3** — DNS resolution through the same suspension path.
-- [ ] **T12.4** — OpenSSL TLS binding; certificate-verification errors surfaced as Emo exceptions.
-- [ ] **T12.5** — HTTP client; HTTP server with process-per-connection helper.
-- [ ] **T12.6** — Stdlib packaging with target metadata; fixture-based integration tests (loopback listeners, deterministic order).
+- [x] **T12.1** — TCP socket surface on the scheduler; graceful close semantics.
+- [x] **T12.2** — UDP + Unix-domain sockets.
+- [x] **T12.3** — DNS resolution through the same suspension path.
+- [x] **T12.4** — OpenSSL TLS binding; certificate-verification errors surfaced as Emo exceptions.
+- [x] **T12.5** — HTTP client; HTTP server with process-per-connection helper.
+- [x] **T12.6** — Stdlib packaging with target metadata; fixture-based integration tests (loopback listeners, deterministic order).
 
-Follow-up: write the exact stdlib module/method names (`net.*`, `http.*`) into the README when this step settles them.
+Close-out: the exact `net.*` / `http.*` names are in the README (Networking); the stdlib ships as directory-registry packages under `stdlib/registry` with `targets = ["native"]`; the acceptance example is `examples/http_roundtrip`. Step decisions are in `plan/step-12-networking.md` (Close-out). **M3 exit criteria met.**
 
 ---
 

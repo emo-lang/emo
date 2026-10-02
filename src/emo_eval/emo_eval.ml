@@ -22,6 +22,9 @@ type value =
   | Array of value array
   | Box of value ref
   | Pid of int (* a process identity, from `do` or `self_pid()` *)
+  | TcpConn of conn
+  | TcpListener of listener
+  | UdpSocket of udp
   | ArrowBlock of closure
   | BuiltinFn of string
   | ClassDef of class_def_value
@@ -46,6 +49,35 @@ and instance_value = {
 
 and enum_type_value = { ename : string; emembers : (string * value) list }
 
+(* The networking handles the evaluator hands out: small records describing
+   the endpoint, with the live socket state owned by the scheduler driver
+   behind the id. The timeout is the endpoint's blocking deadline in
+   seconds (0.0 waits indefinitely), set only through `set_timeout` — it is
+   never a default. *)
+and conn = {
+  cid : int;
+  cdesc : string; (* the peer, for diagnostics *)
+  mutable ctimeout : float;
+  mutable cclosed : bool;
+}
+
+and listener = {
+  lid : int;
+  ldesc : string;
+  lport : int; (* the requested port; port 0 resolves to the assigned one *)
+  lunix : bool; (* a unix-domain listener: `port` is meaningless *)
+  mutable ltimeout : float;
+  mutable lclosed : bool;
+}
+
+and udp = {
+  uid : int;
+  udesc : string;
+  uport : int; (* the bound port; port 0 resolves to the assigned one *)
+  mutable utimeout : float;
+  mutable uclosed : bool;
+}
+
 and closure = {
   def_name : string; (* "`fib`" or "`<arrow block>`", for diagnostics *)
   params : Ast.param list;
@@ -63,6 +95,34 @@ and module_handle = {
 and env = { frame : (string, binding) Hashtbl.t; parent : env option }
 and binding = { mutable bound : value; mutable_ : bool }
 
+(* Splits on a (possibly multi-character) separator. *)
+let split_on_string sep s =
+  let seplen = String.length sep in
+  let last = String.length s - seplen in
+  let rec find j =
+    if j > last then None
+    else if String.sub s j seplen = sep then Some j
+    else find (j + 1)
+  in
+  let rec go i acc =
+    match find i with
+    | Some j -> go (j + seplen) (String.sub s i (j - i) :: acc)
+    | None -> List.rev (String.sub s i (String.length s - i) :: acc)
+  in
+  go 0 []
+
+(* Decimal only, optional minus, no separators or exponents: `1_000`,
+   `0x10`, and `+5` are not integers here. *)
+let parse_decimal s =
+  let body =
+    if String.length s > 0 && s.[0] = '-' then
+      String.sub s 1 (String.length s - 1)
+    else s
+  in
+  if body = "" || not (String.for_all (fun c -> c >= '0' && c <= '9') body) then
+    None
+  else int_of_string_opt s
+
 let type_name = function
   | Int _ -> "Int"
   | Float _ -> "Float"
@@ -73,6 +133,9 @@ let type_name = function
   | Array _ -> "Array"
   | Box _ -> "Box"
   | Pid _ -> "Pid"
+  | TcpConn _ -> "TcpConn"
+  | TcpListener _ -> "TcpListener"
+  | UdpSocket _ -> "UdpSocket"
   | ArrowBlock _ -> "an arrow block"
   | BuiltinFn _ -> "a builtin"
   | ClassDef _ -> "a class"
@@ -99,6 +162,9 @@ let rec equal_value a b =
       !ok
   | Box x, Box y -> equal_value !x !y
   | Pid x, Pid y -> Int.equal x y
+  | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
+  | TcpListener x, TcpListener y -> Int.equal x.lid y.lid
+  | UdpSocket x, UdpSocket y -> Int.equal x.uid y.uid
   | EnumMember (t, m), EnumMember (t', m') ->
       String.equal t t' && String.equal m m'
   | EnumType x, EnumType y -> String.equal x.ename y.ename
@@ -123,6 +189,24 @@ let global_env () =
     { bound = BuiltinFn "self_pid"; mutable_ = false };
   Hashtbl.replace env.frame "halt"
     { bound = BuiltinFn "halt"; mutable_ = false };
+  Hashtbl.replace env.frame "net_connect"
+    { bound = BuiltinFn "net_connect"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen"
+    { bound = BuiltinFn "net_listen"; mutable_ = false };
+  Hashtbl.replace env.frame "net_resolve"
+    { bound = BuiltinFn "net_resolve"; mutable_ = false };
+  Hashtbl.replace env.frame "net_udp_bind"
+    { bound = BuiltinFn "net_udp_bind"; mutable_ = false };
+  Hashtbl.replace env.frame "net_connect_unix"
+    { bound = BuiltinFn "net_connect_unix"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen_unix"
+    { bound = BuiltinFn "net_listen_unix"; mutable_ = false };
+  Hashtbl.replace env.frame "net_tls_connect"
+    { bound = BuiltinFn "net_tls_connect"; mutable_ = false };
+  Hashtbl.replace env.frame "net_tls_connect_insecure"
+    { bound = BuiltinFn "net_tls_connect_insecure"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen_tls"
+    { bound = BuiltinFn "net_listen_tls"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
@@ -211,6 +295,9 @@ let rec to_string v =
       "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
   | Box _ -> "<box>"
   | Pid n -> Printf.sprintf "<pid %d>" n
+  | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
+  | TcpListener l -> Printf.sprintf "<listener %s>" l.ldesc
+  | UdpSocket u -> Printf.sprintf "<udp %s>" u.udesc
   | ArrowBlock _ -> "<arrow block>"
   | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
   | ClassDef c -> c.cname
@@ -415,13 +502,62 @@ type _ Effect.t +=
   | Self_pid : int Effect.t
   | Receive : (value -> selected option) -> selected Effect.t
 
+(* ---- Networking core ----
+   Socket operations follow the process operations: the evaluator performs
+   effects and the scheduler driver handles them at the process boundary —
+   every blocking call is a suspension point. Contexts outside a scheduled
+   run refuse them with E3009, like the process operations.
+
+   Failures are ordinary Emo exceptions: an `Exception` instance whose
+   message states exactly what failed — connection refused, name
+   unresolvable, deadline exceeded, socket closed. No error codes, no nil
+   returns (the README error model). *)
+
+type _ Effect.t +=
+  | Net_resolve : string * Emo_support.Span.t -> string list Effect.t
+  | Net_connect :
+      (string * int * float * string list * Emo_support.Span.t)
+      -> conn Effect.t
+  | Net_listen : string * int * Emo_support.Span.t -> listener Effect.t
+  | Net_accept : listener * Emo_support.Span.t -> conn Effect.t
+  | Net_read_line : conn * Emo_support.Span.t -> string Effect.t
+  | Net_read_exactly : conn * int * Emo_support.Span.t -> string Effect.t
+  | Net_read_all : conn * Emo_support.Span.t -> string Effect.t
+  | Net_write : conn * string * Emo_support.Span.t -> unit Effect.t
+  | Net_close_conn : conn * Emo_support.Span.t -> conn Effect.t
+  | Net_close_listener : listener * Emo_support.Span.t -> listener Effect.t
+  | Net_udp_bind : string * int * Emo_support.Span.t -> udp Effect.t
+  | Net_udp_send_to :
+      (udp * string * int * string * Emo_support.Span.t)
+      -> unit Effect.t
+  | Net_udp_recv_from : udp * Emo_support.Span.t -> value Effect.t
+  | Net_udp_close : udp * Emo_support.Span.t -> udp Effect.t
+  | Net_connect_unix : string * float * Emo_support.Span.t -> conn Effect.t
+  | Net_listen_unix : string * Emo_support.Span.t -> listener Effect.t
+  | Net_tls_connect :
+      (string * int * float * bool * string list * Emo_support.Span.t)
+      -> conn Effect.t
+  | (* host, port, timeout, insecure, resolved addresses *)
+      Net_tls_listen :
+      (string * int * string * string * Emo_support.Span.t)
+      -> listener Effect.t
+(* host, port, certificate path, key path *)
+
 let processes : (int, process) Hashtbl.t = Hashtbl.create 8
 let next_pid : int ref = ref 0
+
+(* One id space for the networking handles the driver tracks. *)
+let next_resource_id : int ref = ref 0
+
+let fresh_resource_id () =
+  incr next_resource_id;
+  !next_resource_id
 
 (* (Re)initializes the concurrency state for one program run. *)
 let reset_conc () =
   Hashtbl.reset processes;
-  next_pid := 0
+  next_pid := 0;
+  next_resource_id := 0
 
 let spawn_record () =
   let p = { pid = !next_pid; inbox = []; status = `Running; exit_hooks = [] } in
@@ -517,12 +653,86 @@ let run_without_scheduler (body : unit -> unit) : unit =
             | Receive _ ->
                 Some
                   (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
+            | Net_resolve (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_resolve`")
+            | Net_connect (_, _, _, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_connect`")
+            | Net_listen (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`net_listen`")
+            | Net_accept (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`accept`")
+            | Net_read_line (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`read_line`")
+            | Net_read_exactly (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`read_exactly`")
+            | Net_read_all (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`read_all`")
+            | Net_write (_, _, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`write`")
+            | Net_close_conn (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`close`")
+            | Net_close_listener (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`close`")
+            | Net_udp_bind (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_udp_bind`")
+            | Net_udp_send_to (_, _, _, _, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`send_to`")
+            | Net_udp_recv_from (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`recv_from`")
+            | Net_udp_close (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`close`")
+            | Net_connect_unix (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_connect_unix`")
+            | Net_listen_unix (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_listen_unix`")
+            | Net_tls_connect (_, _, _, _, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_tls_connect`")
+            | Net_tls_listen (_, _, _, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_listen_tls`")
             | _ -> None);
       }
   with Halt_signal -> ()
 
 let not_yet span what =
   error span "E3009" (Printf.sprintf "%s is not supported yet" what)
+
+(* Builds the Emo exception a network failure unwinds with. Drivers
+   discontinue the parked continuation with it. *)
+let net_raise span message =
+  Emo_raise
+    ( Instance
+        {
+          iclass =
+            {
+              cname = "Exception";
+              cinit = None;
+              cmethods = [];
+              builtin_exception = true;
+            };
+          ifields = [ ("message", String message) ];
+        },
+      span,
+      !call_trace )
 
 let rec eval_unary env span op x =
   let v = eval_expr env x in
@@ -777,6 +987,165 @@ and eval_method env span recv mname arg_exprs =
       | _ ->
           error span "E3007"
             (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+  | TcpConn c, "read_line" ->
+      none_expected "read_line";
+      String (Effect.perform (Net_read_line (c, span)))
+  | TcpConn c, "read_exactly" -> (
+      match eval_args () with
+      | [ Int n ] -> String (Effect.perform (Net_read_exactly (c, n, span)))
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`read_exactly` expects an Int, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`read_exactly` expects 1 argument, got %d" argc))
+  | TcpConn c, "read_all" ->
+      none_expected "read_all";
+      String (Effect.perform (Net_read_all (c, span)))
+  | TcpConn c, "write" -> (
+      match eval_args () with
+      | [ String s ] ->
+          Effect.perform (Net_write (c, s, span));
+          TcpConn c
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`write` expects a String, got %s" (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`write` expects 1 argument, got %d" argc))
+  | TcpConn c, "close" ->
+      none_expected "close";
+      TcpConn (Effect.perform (Net_close_conn (c, span)))
+  | TcpConn c, "set_timeout" -> (
+      match eval_args () with
+      | [ Float f ] when f >= 0.0 ->
+          c.ctimeout <- f;
+          TcpConn c
+      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_timeout` expects a Float, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
+  | TcpListener l, "accept" ->
+      none_expected "accept";
+      TcpConn (Effect.perform (Net_accept (l, span)))
+  | TcpListener { lunix = true; ldesc; _ }, "port" ->
+      error span "E3007"
+        (Printf.sprintf "a unix-domain listener (%s) has no port" ldesc)
+  | TcpListener l, "port" ->
+      none_expected "port";
+      Int l.lport
+  | TcpListener l, "close" ->
+      none_expected "close";
+      TcpListener (Effect.perform (Net_close_listener (l, span)))
+  | TcpListener l, "set_timeout" -> (
+      match eval_args () with
+      | [ Float f ] when f >= 0.0 ->
+          l.ltimeout <- f;
+          TcpListener l
+      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_timeout` expects a Float, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
+  | UdpSocket u, "send_to" -> (
+      match eval_args () with
+      | [ String host; Int port; String data ] -> (
+          let addrs = Effect.perform (Net_resolve (host, span)) in
+          match addrs with
+          | addr :: _ ->
+              Effect.perform (Net_udp_send_to (u, addr, port, data, span));
+              UdpSocket u
+          | [] ->
+              raise
+                (net_raise span
+                   (Printf.sprintf "cannot resolve host `%s`" host)))
+      | _ ->
+          error span "E3007"
+            "`send_to` expects (host String, port Int, data String)")
+  | UdpSocket u, "recv_from" ->
+      none_expected "recv_from";
+      let received = Effect.perform (Net_udp_recv_from (u, span)) in
+      received
+  | UdpSocket u, "port" ->
+      none_expected "port";
+      Int u.uport
+  | UdpSocket u, "close" ->
+      none_expected "close";
+      UdpSocket (Effect.perform (Net_udp_close (u, span)))
+  | UdpSocket u, "set_timeout" -> (
+      match eval_args () with
+      | [ Float f ] when f >= 0.0 ->
+          u.utimeout <- f;
+          UdpSocket u
+      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+      | [ v ] ->
+          error span "E3001"
+            (Printf.sprintf "`set_timeout` expects a Float, got %s"
+               (type_name v))
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
+  | String s, "length" ->
+      none_expected "length";
+      Int (String.length s)
+  | String s, "substring" -> (
+      match eval_args () with
+      | [ Int start; Int len ]
+        when start >= 0 && len >= 0 && start + len <= String.length s ->
+          String (String.sub s start len)
+      | [ Int start; Int len ] ->
+          error span "E3004"
+            (Printf.sprintf
+               "substring (%d, %d) is out of bounds for a length-%d String"
+               start len (String.length s))
+      | _ -> error span "E3007" "`substring` expects (start Int, length Int)")
+  | String s, "split" -> (
+      match eval_args () with
+      | [ String sep ] when sep <> "" ->
+          Array
+            (Array.of_list
+               (List.map (fun part -> String part) (split_on_string sep s)))
+      | [ String _ ] -> error span "E3007" "the separator must not be empty"
+      | _ -> error span "E3007" "`split` expects a String separator")
+  | String s, "trim" ->
+      none_expected "trim";
+      String (String.trim s)
+  | String s, "lower" ->
+      none_expected "lower";
+      String (String.lowercase_ascii s)
+  | String s, "index_of" -> (
+      match eval_args () with
+      | [ String needle ] ->
+          let rec find i =
+            if i + String.length needle > String.length s then None
+            else if String.sub s i (String.length needle) = needle then Some i
+            else find (i + 1)
+          in
+          Int (match find 0 with Some i -> i | None -> -1)
+      | _ -> error span "E3007" "`index_of` expects a String needle")
+  | String s, "starts_with" -> (
+      match eval_args () with
+      | [ String prefix ] -> Bool (String.starts_with ~prefix s)
+      | _ -> error span "E3007" "`starts_with` expects a String prefix")
+  | String s, "to_int" -> (
+      match parse_decimal s with
+      | Some n -> Int n
+      | None ->
+          error span "E3007" (Printf.sprintf "cannot parse `%s` as an Int" s))
+  | Array xs, "append" -> (
+      match eval_args () with
+      | [ v ] -> Array (Array.append xs [| v |])
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`append` expects 1 argument, got %d" argc))
   | Instance i, "is" -> (
       let args = eval_args () in
       match args with
@@ -889,6 +1258,108 @@ and apply_builtin span name args =
   | "halt", vs ->
       error span "E3007"
         (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
+  | "net_connect", args when List.length args <> 3 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_connect` expects (host String, port Int, timeout Float), got \
+            %d arguments"
+           (List.length args))
+  | "net_connect", [ String host; Int port; Float timeout ] ->
+      let addrs = Effect.perform (Net_resolve (host, span)) in
+      TcpConn (Effect.perform (Net_connect (host, port, timeout, addrs, span)))
+  | "net_resolve", [ String host ] ->
+      Array
+        (Array.of_list
+           (List.map
+              (fun a -> String a)
+              (Effect.perform (Net_resolve (host, span)))))
+  | "net_resolve", vs ->
+      error span "E3007"
+        (Printf.sprintf "`net_resolve` expects 1 argument, got %d"
+           (List.length vs))
+  | "net_connect", _ ->
+      error span "E3001"
+        "`net_connect` expects (host String, port Int, timeout Float)"
+  | "net_listen", args when List.length args <> 2 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_listen` expects (host String, port Int), got %d arguments"
+           (List.length args))
+  | "net_listen", [ String host; Int port ] ->
+      TcpListener (Effect.perform (Net_listen (host, port, span)))
+  | "net_listen", _ ->
+      error span "E3001" "`net_listen` expects (host String, port Int)"
+  | "net_udp_bind", args when List.length args <> 2 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_udp_bind` expects (host String, port Int), got %d arguments"
+           (List.length args))
+  | "net_udp_bind", [ String host; Int port ] ->
+      UdpSocket (Effect.perform (Net_udp_bind (host, port, span)))
+  | "net_udp_bind", _ ->
+      error span "E3001" "`net_udp_bind` expects (host String, port Int)"
+  | "net_connect_unix", args when List.length args <> 2 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_connect_unix` expects (path String, timeout Float), got \
+            %d             arguments"
+           (List.length args))
+  | "net_connect_unix", [ String path; Float timeout ] ->
+      TcpConn (Effect.perform (Net_connect_unix (path, timeout, span)))
+  | "net_connect_unix", _ ->
+      error span "E3001"
+        "`net_connect_unix` expects (path String, timeout Float)"
+  | "net_listen_unix", args when List.length args <> 1 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_listen_unix` expects (path String), got %d arguments"
+           (List.length args))
+  | "net_listen_unix", [ String path ] ->
+      TcpListener (Effect.perform (Net_listen_unix (path, span)))
+  | "net_listen_unix", _ ->
+      error span "E3001" "`net_listen_unix` expects (path String)"
+  | "net_tls_connect", args when List.length args <> 3 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_tls_connect` expects (host String, port Int, timeout \
+            Float),             got %d arguments"
+           (List.length args))
+  | "net_tls_connect", [ String host; Int port; Float timeout ] ->
+      let addrs = Effect.perform (Net_resolve (host, span)) in
+      TcpConn
+        (Effect.perform
+           (Net_tls_connect (host, port, timeout, false, addrs, span)))
+  | "net_tls_connect", _ ->
+      error span "E3001"
+        "`net_tls_connect` expects (host String, port Int, timeout Float)"
+  | "net_tls_connect_insecure", args when List.length args <> 3 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_tls_connect_insecure` expects (host String, port Int, \
+            timeout             Float), got %d arguments"
+           (List.length args))
+  | "net_tls_connect_insecure", [ String host; Int port; Float timeout ] ->
+      let addrs = Effect.perform (Net_resolve (host, span)) in
+      TcpConn
+        (Effect.perform
+           (Net_tls_connect (host, port, timeout, true, addrs, span)))
+  | "net_tls_connect_insecure", _ ->
+      error span "E3001"
+        "`net_tls_connect_insecure` expects (host String, port Int, \
+         timeout          Float)"
+  | "net_listen_tls", args when List.length args <> 4 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_listen_tls` expects (host String, port Int, cert_path \
+            String,             key_path String), got %d arguments"
+           (List.length args))
+  | "net_listen_tls", [ String host; Int port; String cert; String key ] ->
+      TcpListener
+        (Effect.perform (Net_tls_listen (host, port, cert, key, span)))
+  | "net_listen_tls", _ ->
+      error span "E3001"
+        "`net_listen_tls` expects (host String, port Int, cert_path \
+         String,          key_path String)"
   | _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The function frame. A [Tail_call] rebinds callee and arguments and

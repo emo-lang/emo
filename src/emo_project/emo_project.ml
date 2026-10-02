@@ -43,7 +43,9 @@ let entries dir =
       raw |> Array.to_list |> List.sort compare
       |> List.filter_map (fun entry ->
           if entry = "." || entry = ".." || entry = "_build" then None
-          else
+          else if entry = "package.emo" then None
+          (* A package.emo is a manifest, never a module — at any depth. *)
+            else
             let path = Filename.concat dir entry in
             if Sys.file_exists path && Sys.is_directory path then
               Some (entry, `Dir path)
@@ -53,14 +55,17 @@ let entries dir =
 
 (* Registers every .emo file and every directory under [fs_dir] as a module
    at [rel] ^ name. A file and a directory with the same stem are a
-   collision — two modules claiming one path. *)
+   collision — two modules claiming one path. A directory holding its own
+   package.emo is a project of its own: the walk leaves it out entirely —
+   a nested package never leaks its requires into the outer tree. *)
 let rec walk p rel fs_dir =
   List.iter
     (fun (name, kind) ->
       let path = rel @ [ name ] in
       match kind with
       | `Dir fs_path ->
-          if Hashtbl.mem p.files path then
+          if Sys.file_exists (Filename.concat fs_path "package.emo") then ()
+          else if Hashtbl.mem p.files path then
             report p "E5005"
               (Printf.sprintf "module path `%s` is claimed by both %s and %s"
                  (String.concat "." path)

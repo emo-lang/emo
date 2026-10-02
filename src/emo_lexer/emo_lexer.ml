@@ -138,6 +138,7 @@ let keyword_of_string = function
 
 let escape_char = function
   | 'n' -> Some '\n'
+  | 'r' -> Some '\r'
   | 't' -> Some '\t'
   | '\\' -> Some '\\'
   | '\'' -> Some '\''
@@ -262,7 +263,8 @@ let lex ~file ~source =
                       (Emo_support.Span.make ~file ~line:!line ~col:!col
                          ~start:!offset ~stop:(!offset + 2))
                       "invalid escape sequence"
-                      ~hint:"supported escapes are \\n \\t \\\\ \\' and \\\"")
+                      ~hint:
+                        "supported escapes are \\n \\r \\t \\\\ \\' and \\\"")
             | None ->
                 error "E1002" (current_string_span ())
                   "unterminated string literal")
@@ -426,7 +428,8 @@ let lex ~file ~source =
                     | None ->
                         error "E1004" quoted_span "invalid escape sequence"
                           ~hint:
-                            "supported escapes are \\n \\t \\\\ \\' and \\\"")
+                            "supported escapes are \\n \\r \\t \\\\ \\' and \
+                             \\\"")
                 | None ->
                     error "E1005"
                       (span_from qline qcol qoff)
