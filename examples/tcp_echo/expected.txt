@@ -1,0 +1,5 @@
+echo: 你好, socket
+echo: direct style
+echo: no callbacks
+goodbye
+server closed cleanly

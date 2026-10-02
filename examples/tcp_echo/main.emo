@@ -1,0 +1,61 @@
+// One program, both ends of the wire: a server process echoing lines
+// over a TCP connection on loopback, and a client chatting with it.
+//
+//   EMO_REGISTRY=<repo>/stdlib/registry emo run main.emo
+//
+// Networking is direct style — the calls read like blocking IO, and
+// the scheduler switches processes underneath. `require "net"` pulls
+// the standard library's socket package, resolved through the
+// registry; the standard library is Emo source, so `net` and `http`
+// are ordinary modules you can open and read. The listener binds
+// port 0, and the kernel hands back a free port — every run is
+// self-contained, nothing to clean up.
+
+require "net"
+
+// The echo server: accept one connection, echo every line with a
+// prefix, and close politely when the client says goodbye.
+def echo_server(listener TcpListener, boss Pid) Int {
+  const conn = listener.accept()
+  return echo_loop(conn, boss)
+}
+
+def echo_loop(conn TcpConn, boss Pid) Int {
+  const line = conn.read_line()
+  if line == "bye" {
+    conn.write("goodbye\n")
+    conn.close()
+    boss <- "served"
+    return halt()
+  }
+  conn.write("echo: ${line}\n")
+  return echo_loop(conn, boss)
+}
+
+// The client: one line over the wire, one echo back each.
+def chat(conn TcpConn, lines Array[String], i Int) Int {
+  if i == lines.length() {
+    conn.write("bye\n")
+    print(conn.read_line())
+    conn.close()
+    return 0
+  }
+  conn.write("${lines[i]}\n")
+  print(conn.read_line())
+  return chat(conn, lines, i + 1)
+}
+
+// Port 0 asks the kernel for a free port; the server runs in its own
+// process, spawned with `do`.
+const listener = net.listen("127.0.0.1", 0)
+const server = do echo_server(listener, self_pid())
+
+const conn = net.connect("127.0.0.1", listener.port(), 5.0)
+conn.set_timeout(5.0)
+chat(conn, [ "你好, socket", "direct style", "no callbacks" ], 0)
+
+receive {
+  "served" -> {
+    print("server closed cleanly")
+  }
+}

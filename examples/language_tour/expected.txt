@@ -1,0 +1,20 @@
+hello, 世界 — six sevens are 42
+one 伞 costs 28 yuan
+王晓明, age 28
+adult? true
+true
+a machine says: [beep] 你好
+a friend says: 很高兴见到你
+28 -> adult
+12 -> minor
+a big answer: 42
+6
+4
+3
+true
+11
+11
+42
+10
+20
+30

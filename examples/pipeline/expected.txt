@@ -1,0 +1,6 @@
+order 1: 200 units
+order 2: 400 units
+order 3: 600 units
+order 4: 800 units
+order 5: 1000 units
+the line handled 5 orders
