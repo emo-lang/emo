@@ -598,6 +598,58 @@ let deps_tests =
                 | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
   ]
 
+let sched_tests =
+  [
+    tc "the own scheduler runs a process program end to end" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "main.emo",
+                {|def worker(reply_to Pid) Int {
+  receive {
+    n -> {
+      reply_to <- n * 2
+      return halt()
+    }
+  }
+}
+
+const pid = do worker(self_pid())
+pid <- 21
+receive {
+  v -> { print(v) }
+}
+|}
+              );
+            ]
+            "main.emo"
+        in
+        let output =
+          capture_output (fun () ->
+              ignore
+                (Emo_project.run_entry ~entry_file:entry ~check:true
+                   ~sched:Emo_project.Own ()))
+        in
+        Alcotest.(check string) "output" "42\n" output);
+    tc "a deadlock surfaces as a static error" (fun () ->
+        let entry =
+          with_project
+            [ ("main.emo", {|receive {
+  _ -> { print("never") }
+}
+|}) ]
+            "main.emo"
+        in
+        match
+          Emo_project.run_entry ~entry_file:entry ~sched:Emo_project.Own ()
+        with
+        | _ -> Alcotest.fail "expected E3012"
+        | exception Emo_eval.Error d ->
+            Alcotest.(check string)
+              "code" "E3012"
+              (match d.Diagnostic.code with Some c -> c | None -> "?"));
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -607,5 +659,6 @@ let () =
       ("cycle", cycle_tests);
       ("cache", cache_tests);
       ("deps", deps_tests);
+      ("sched", sched_tests);
       ("shop_golden", shop_golden_tests);
     ]

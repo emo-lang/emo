@@ -414,6 +414,18 @@ let determinism_tests =
               (Printf.sprintf "seed %d" seed)
               "a\nb" (String.concat "\n" lines))
           [ 0; 1; 2; 3; 4; 5; 6; 7; 8; 9 ]);
+    tc "both schedulers agree on a concurrent program" (fun () ->
+        let sorted_out out =
+          String.split_on_char '\n' out
+          |> List.filter (fun l -> l <> "")
+          |> List.sort compare |> String.concat ";"
+        in
+        let eio_out, _ = run_source racy |> fun out -> (out, ()) in
+        let own_out, _ = run_det racy in
+        (* The two schedulers may interleave differently, but the program's
+           observable result set is the same. *)
+        Alcotest.(check string)
+          "result set" (sorted_out eio_out) (sorted_out own_out));
     tc "a system-wide deadlock is an error" (fun () ->
         match run_det {|receive {
   _ -> { print("never") }
