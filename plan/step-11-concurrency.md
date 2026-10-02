@@ -1,6 +1,6 @@
 # Step 11 — Processes & Message Passing
 
-**Milestone:** M3 · **Prereq:** steps 01–10 · **Status:** not started
+**Milestone:** M3 · **Prereq:** steps 01–10 · **Status:** done
 
 ## Goal
 
@@ -71,16 +71,16 @@ semantics, not the spellings.
 
 ## Tasks
 
-- [ ] Design pass: the self-pid mechanism settled in `CHECK.md` / README —
+- [x] Design pass: the self-pid mechanism settled in `CHECK.md` / README —
       `do` (start, yields pid), `<-` (send), `receive { ... }` (selective
       receive via `case` branches), and `Box` with its operation set are
       already decided.
-- [ ] Process/mailbox abstraction on Eio; spawn/send/receive.
-- [ ] Crash isolation; process-exit signals for future supervisors.
-- [ ] `Box` with snapshot-on-send semantics.
-- [ ] Deterministic scheduler log for tests.
-- [ ] Phase B: own effects-based scheduler beneath the same interface.
-- [ ] Stress tests: ping-pong, fan-out/fan-in, deep receive-loop recursion.
+- [x] Process/mailbox abstraction on Eio; spawn/send/receive.
+- [x] Crash isolation; process-exit signals for future supervisors.
+- [x] `Box` with snapshot-on-send semantics.
+- [x] Deterministic scheduler log for tests.
+- [x] Phase B: own effects-based scheduler beneath the same interface.
+- [x] Stress tests: ping-pong, fan-out/fan-in, deep receive-loop recursion.
 
 ## Acceptance
 
@@ -112,5 +112,6 @@ pid <- Color.red
 
 ## Open design items
 
-- **How a process obtains its own pid** — needed for the reply pattern
-  (`sender <- (self_pid, request)`) — is pending (`CHECK.md`).
+None — the self-pid mechanism settled in the design pass: `self_pid()`,
+`halt()`, and the `Pid` type (rendered `<pid N>`) live in the README;
+`CHECK.md` keeps only what is still pending.
