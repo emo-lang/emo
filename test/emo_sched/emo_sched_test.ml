@@ -237,6 +237,87 @@ print("main survives")
         Alcotest.(check string) "exit signal" "normal" (Buffer.contents events));
   ]
 
+let box_tests =
+  [
+    tc "sending a Box delivers a snapshot" (fun () ->
+        let output =
+          run_source
+            {|
+def reader(reply_to Pid) Int {
+  receive {
+    b -> {
+      reply_to <- b.read()
+      return halt()
+    }
+  }
+}
+
+const box = Box.new(1)
+const r = do reader(self_pid())
+r <- box
+box.replace(99)
+receive {
+  v -> { print(v) }
+}
+print(box.read())
+|}
+        in
+        (* The receiver saw the snapshot taken at send time; the sender's
+           later mutation stays local. *)
+        Alcotest.(check string) "output" "1\n99\n" output);
+    tc "the receiver's mutations stay on its copy" (fun () ->
+        let output =
+          run_source
+            {|
+def mutator(reply_to Pid) Int {
+  receive {
+    b -> {
+      b.replace(7)
+      reply_to <- "mutated"
+      return halt()
+    }
+  }
+}
+
+const box = Box.new(1)
+const m = do mutator(self_pid())
+m <- box
+receive {
+  _ -> { print(box.read()) }
+}
+|}
+        in
+        Alcotest.(check string) "output" "1\n" output);
+    tc "a Box inside a tuple is snapshotted too" (fun () ->
+        let output =
+          run_source
+            {|
+def reader(reply_to Pid) Int {
+  receive {
+    (b, tag) -> {
+      reply_to <- (b.read(), tag)
+      return halt()
+    }
+  }
+}
+
+const r = do reader(self_pid())
+r <- (Box.new(5), "deep")
+receive {
+  (v, tag) -> {
+    print(tag)
+    print(v)
+  }
+}
+|}
+        in
+        Alcotest.(check string) "output" "deep\n5\n" output);
+  ]
+
 let () =
   Alcotest.run "emo_sched"
-    [ ("scheduler", scheduler_tests); ("isolation", isolation_tests) ]
+    [
+      ("scheduler", scheduler_tests);
+      ("isolation", isolation_tests);
+      ("box", box_tests);
+    ]
