@@ -161,25 +161,19 @@ let line_in_buffer live =
       ignore (buffer_take live (i + 1));
       Some line
 
-(* Resolution is part of the connect path until T12.3 moves it onto its
-   own effect. *)
-let resolve_addrs span host port : candidate list =
-  match
-    Unix.getaddrinfo host (string_of_int port)
-      [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ]
-  with
-  | [] ->
-      raise
-        (Emo_eval.net_raise span
-           (Printf.sprintf "cannot resolve host `%s`" host))
+(* Resolves a host to candidate address strings through the
+   [Net_resolve] effect — the same suspension path as every other
+   network operation. DNS itself resolves inline in this handler. *)
+let resolve_addrs span host : string list =
+  match Unix.getaddrinfo host "0" [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ] with
   | entries ->
-      List.map
-        (fun e -> { cfam = e.Unix.ai_family; caddr = e.Unix.ai_addr })
+      List.filter_map
+        (fun e ->
+          match e.Unix.ai_addr with
+          | Unix.ADDR_INET (addr, _) -> Some (Unix.string_of_inet_addr addr)
+          | Unix.ADDR_UNIX _ -> None)
         entries
-  | exception Unix.Unix_error _ ->
-      raise
-        (Emo_eval.net_raise span
-           (Printf.sprintf "cannot resolve host `%s`" host))
+  | exception Unix.Unix_error _ -> []
 
 (* Binds and listens; port 0 resolves to the assigned port in the
    returned description. Every candidate address is tried. *)
@@ -298,18 +292,22 @@ let rec handler state (proc : Emo_eval.process) () :
                     Hashtbl.replace state.waiters proc.Emo_eval.pid
                       (proc, select, k);
                     None)
-        | Emo_eval.Net_connect (host, port, timeout, span) ->
+        | Emo_eval.Net_resolve (host, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
-                (* Resolution runs before any continuation is resumed, so
-                   its failure discontinues; later failures inside the
-                   resumed process propagate untouched. *)
-                match resolve_addrs span host port with
-                | exception (Emo_eval.Emo_raise _ as exn) ->
-                    Effect.Shallow.discontinue_with k exn
+                match resolve_addrs span host with
+                | [] ->
+                    Effect.Shallow.discontinue_with k
+                      (Emo_eval.net_raise span
+                         (Printf.sprintf "cannot resolve host `%s`" host))
                       (handler state proc ())
-                | addrs ->
-                    connect_entry state proc k ~host ~port ~timeout span addrs)
+                | addresses ->
+                    Effect.Shallow.continue_with k addresses
+                      (handler state proc ()))
+        | Emo_eval.Net_connect (host, port, timeout, addrs, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                connect_entry state proc k ~host ~port ~timeout span addrs)
         | Emo_eval.Net_listen (host, port, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -427,14 +425,10 @@ let rec handler state (proc : Emo_eval.process) () :
                     in
                     Hashtbl.replace state.udps u.Emo_eval.uid fd;
                     Effect.Shallow.continue_with k u (handler state proc ()))
-        | Emo_eval.Net_udp_send_to (u, host, port, data, span) ->
+        | Emo_eval.Net_udp_send_to (u, addr, port, data, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
-                match resolve_dgram_addr span host port with
-                | exception (Emo_eval.Emo_raise _ as exn) ->
-                    Effect.Shallow.discontinue_with k exn
-                      (handler state proc ())
-                | addr -> udp_send_entry state proc k addr data span u)
+                udp_send_entry state proc k addr port data span u)
         | Emo_eval.Net_udp_recv_from (u, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -595,8 +589,17 @@ and abort_w :
 and connect_entry state proc
     (k : (Emo_eval.conn, unit) Effect.Shallow.continuation) ~(host : string)
     ~(port : int) ~(timeout : float) (span : Emo_support.Span.t)
-    (addrs : candidate list) : outcome =
+    (addresses : string list) : outcome =
   let target = Printf.sprintf "%s:%d" host port in
+  let addrs =
+    List.map
+      (fun a ->
+        {
+          cfam = (if String.contains a ':' then Unix.PF_INET6 else Unix.PF_INET);
+          caddr = Unix.ADDR_INET (Unix.inet_addr_of_string a, port);
+        })
+      addresses
+  in
   let deadline =
     if timeout > 0.0 then Some (Unix.gettimeofday () +. timeout) else None
   in
@@ -714,23 +717,6 @@ and accept_loop state proc
         abort_w finished state proc k
           (io_error span "accept" l.Emo_eval.ldesc err)
 
-(* One datagram address for [host:port]; unresolvable names raise the
-   Emo exception the effc branch converts before resuming anything. *)
-and resolve_dgram_addr span host port : Unix.sockaddr =
-  match
-    Unix.getaddrinfo host (string_of_int port)
-      [ Unix.AI_SOCKTYPE Unix.SOCK_DGRAM ]
-  with
-  | entry :: _ -> entry.Unix.ai_addr
-  | [] ->
-      raise
-        (Emo_eval.net_raise span
-           (Printf.sprintf "cannot resolve host `%s`" host))
-  | exception Unix.Unix_error _ ->
-      raise
-        (Emo_eval.net_raise span
-           (Printf.sprintf "cannot resolve host `%s`" host))
-
 (* The setup half of a unix-domain listener: bind and listen, reporting
    failure as the Emo exception instead of raising across the entry. *)
 and bind_unix_listener span path : (Unix.file_descr, exn) result =
@@ -749,10 +735,21 @@ and bind_unix_listener span path : (Unix.file_descr, exn) result =
 (* The setup half of a UDP socket: resolve, socket, bind; returns the fd
    and the bound port. *)
 and bind_udp_socket span host port : (Unix.file_descr * int, exn) result =
-  match resolve_dgram_addr span host port with
-  | exception (Emo_eval.Emo_raise _ as exn) -> Error exn
-  | addr -> (
-      let fd = Unix.socket Unix.PF_INET Unix.SOCK_DGRAM 0 in
+  match
+    match Unix.getaddrinfo host "0" [ Unix.AI_SOCKTYPE Unix.SOCK_DGRAM ] with
+    | entry :: _ -> Ok (entry.Unix.ai_family, entry.Unix.ai_addr)
+    | [] ->
+        Error
+          (Emo_eval.net_raise span
+             (Printf.sprintf "cannot resolve host `%s`" host))
+    | exception Unix.Unix_error _ ->
+        Error
+          (Emo_eval.net_raise span
+             (Printf.sprintf "cannot resolve host `%s`" host))
+  with
+  | Error exn -> Error exn
+  | Ok (family, addr) -> (
+      let fd = Unix.socket family Unix.SOCK_DGRAM 0 in
       match Unix.bind fd addr with
       | () ->
           let bound =
@@ -769,9 +766,9 @@ and bind_udp_socket span host port : (Unix.file_descr * int, exn) result =
                   (Unix.error_message err))))
 
 (* Sends one datagram; a full buffer parks the send on write interest.
-   The address arrives resolved — nothing here raises at entry. *)
+   The peer address arrives resolved. *)
 and udp_send_entry state proc (k : (unit, unit) Effect.Shallow.continuation)
-    (addr : Unix.sockaddr) (data : string) (span : Emo_support.Span.t)
+    (addr : string) (port : int) (data : string) (span : Emo_support.Span.t)
     (u : Emo_eval.udp) : outcome =
   if u.Emo_eval.uclosed then
     Effect.Shallow.discontinue_with k
@@ -787,8 +784,9 @@ and udp_send_entry state proc (k : (unit, unit) Effect.Shallow.continuation)
         Some (Unix.gettimeofday () +. u.Emo_eval.utimeout)
       else None
     in
+    let target = Unix.ADDR_INET (Unix.inet_addr_of_string addr, port) in
     let rec send_step st =
-      match Unix.sendto fd bytes 0 (Bytes.length bytes) [] addr with
+      match Unix.sendto fd bytes 0 (Bytes.length bytes) [] target with
       | _n -> finish_w finished st proc k ()
       | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
           park_fd state proc k finished fd `W ~deadline

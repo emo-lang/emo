@@ -901,6 +901,59 @@ print("unreachable")
              = expected_prefix
         in
         Alcotest.(check bool) "absent-path message" true ok);
+    tc "resolution reaches addresses by name" (fun () ->
+        let output, _events =
+          run_det
+            {|
+const addrs = net_resolve("localhost")
+print(addrs.length() > 0)
+|}
+        in
+        Alcotest.(check string) "output" "true\n" output);
+    tc "connecting through a name resolves via the same path" (fun () ->
+        let output, _events =
+          run_det
+            {|
+def serve(listener TcpListener) Int {
+  const conn = listener.accept()
+  conn.write(conn.read_line() + "\n")
+  return serve(listener)
+}
+
+const listener = net_listen("127.0.0.1", 0)
+do serve(listener)
+const conn = net_connect("localhost", listener.port(), 0.0)
+conn.write("by name\n")
+print(conn.read_line())
+print("done")
+|}
+        in
+        Alcotest.(check string) "output" "by name\ndone\n" output);
+    tc "an unresolvable host raises a precise exception" (fun () ->
+        let message =
+          run_det_raised
+            {|
+net_resolve("definitely not a host")
+print("unreachable")
+|}
+        in
+        Alcotest.(check string)
+          "message" "cannot resolve host `definitely not a host`" message);
+    tc "udp sends resolve the peer by name" (fun () ->
+        let output, _events =
+          run_det
+            {|
+// Both sockets and the send resolve `localhost` the same way, so the
+// first resolved address serves bind and send alike.
+const a = net_udp_bind("localhost", 0)
+const b = net_udp_bind("localhost", 0)
+a.send_to("localhost", b.port(), "named")
+case b.recv_from() {
+  (data, _host, _port) -> { print(data) }
+}
+|}
+        in
+        Alcotest.(check string) "output" "named\n" output);
     tc "networking is refused outside a scheduler" (fun () ->
         let diagnostic =
           match
