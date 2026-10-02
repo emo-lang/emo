@@ -1,0 +1,8 @@
+(executable
+ (name emo_lexer_test)
+ (libraries alcotest emo_lexer))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{exe:emo_lexer_test.exe})))

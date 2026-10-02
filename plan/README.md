@@ -45,17 +45,17 @@ incrementally shippable steps — one file per step, executed in order.
 
 | Step | Focus | Status |
 |------|-------|--------|
-| 01 | Project scaffold & CLI skeleton | not started |
-| 02 | Lexer | not started |
-| 03 | Parser — expressions | not started |
-| 04 | Parser — declarations | not started |
-| 05 | Interpreter — core values & evaluation | not started |
-| 06 | Interpreter — classes, enums, interfaces | not started |
-| 07 | CLI & diagnostics (`run`, `repl`, `check`) | not started |
-| 08 | Gradual type checker | not started |
-| 09 | Structural module system | not started |
-| 10 | Packages & version resolution | not started |
-| 11 | Processes & message passing | not started |
-| 12 | Networking library | not started |
-| 13 | Native backend | not started |
+| 01 | Project scaffold & CLI skeleton | done |
+| 02 | Lexer | done |
+| 03 | Parser — expressions | done |
+| 04 | Parser — declarations | done |
+| 05 | Interpreter — core values & evaluation | done |
+| 06 | Interpreter — classes, enums, interfaces | done |
+| 07 | CLI & diagnostics (`run`, `repl`, `check`) | done |
+| 08 | Gradual type checker | done |
+| 09 | Structural module system | done |
+| 10 | Packages & version resolution | done |
+| 11 | Processes & message passing | done |
+| 12 | Networking library | done |
+| 13 | Native backend | done |
 | 14 | Other targets (wasm / TS / BEAM / qemu) | not started |

@@ -17,18 +17,20 @@ Emo is **clean, explicit, and intuitive**. It draws on three decades of open-sou
 Emo's syntax favors explicitness: everything is visibly what it is — a call looks like a call, a return is written out, a block has one shape.
 
 - **Calls always use explicit parentheses, juxtaposed to the callee.** No optional-parenthesis calls; every call is visibly a call, keeping code readable for beginners and the parser free of ambiguity resolution. The parentheses must touch the callee — `f (a)` with a space in between is an error, never silently a call.
+- **A call may take a trailing block as its final argument.** Right after the closing parenthesis, a block attaches to the call: `page(title: "Home") { ... }` passes a zero-parameter block, and `list(users) -> (user User) { ... }` passes a parameterized one. The block must touch the call, exactly like the parentheses — this is the single notation behind UI trees and callbacks.
 - **Blocks have a single form**: `{ ... }` and `-> (x) { ... }` — the latter being the parameterized block and the anonymous function.
 - **Functions and methods are defined with `def`**, uniformly at top level and inside classes. `def` is the named form of the arrow block: `def total(cart Cart) Decimal { ... }` pairs with `const total = -> (cart Cart) { ... }`.
 - **Bindings are `const` (immutable) or `var` (mutable, block-scoped)** — constants versus variables, self-explanatory by wording. `var` bindings cannot escape their block; capturing one in a closure that outlives the block is a compile error.
 - **Arguments can be passed by position or by name.** Given `def hello(name String)`, both `hello("world")` and `hello(name: "world")` are valid calls. Named form is the natural shape for props and options: `page(title: "Home") { ... }`.
 - **Type annotations are postfix, separated by a space**: parameters as `name String`, return types as `def full_name() String`. **Function signatures always carry explicit types — parameters and return types alike**; signatures are contracts, and contracts are checked strictly. `init` is exempt — it returns the class it constructs. Arrow blocks (`-> (cart Cart) { ... }`) always take annotated parameters but infer their return types; when inference fails, the compiler reports an error asking for an explicit annotation. Elsewhere, annotations remain optional (see Type System).
-- **Predicate methods end in `?`**: `def is_older?() bool` reads naturally at the call site.
+- **Predicate methods end in `?`**: `def is_older?() Bool` reads naturally at the call site.
 - **`return` is always explicit** — there is no implicit "last expression is the return value" rule.
 - **`if` has exactly one shape.** `if <cond> { ... }` with an optional `else { ... }` — there is no `else if`, `elif`, or any chaining form; a further test is an `if` visibly nested inside the `else` block. Like all control flow, `if` is a statement.
 - **`case` matches a value against patterns.** Branches are `pattern -> { ... }`, first match wins, and a branch may carry a guard: `Color.red when signal.is_bright?()`. Patterns are enum members by qualified name (`Color.red` — a bare lowercase name is a binding pattern, since members and variables share the lowercase space), literals matching by value, and `_` matching anything. Like all control flow, `case` is a statement: results leave a branch through explicit `return` or binding. A scrutinee that matches no branch is a runtime error — never a silent skip.
 - **Tuples are `(a, b, c)`.** Fixed-length, heterogeneous, immutable values that compare element-wise; the annotation form mirrors the literal — `(Int, String)`. The paren rule resolves by content, with no trailing-comma forms: a comma makes a tuple (`()`, `(a, b)`); a single operator-free value in parentheses is a one-element tuple (`(a)` — grouping a lone value is meaningless); an expression containing operators is a group (`(sum * 3)`, `x && (y || z)`). `(a,)` is a syntax error — the one-element tuple is written `(a)` — and so is a `(` directly opening onto a `(`: `((x))` and `f((a, b))` never parse; an inline tuple argument is bound to a name first. Nesting after a comma is legal and never adjacent: `(a, (b, c))`. In `case` patterns, parentheses are always tuple patterns, destructuring by position: `(Color.red, count) -> { ... }`.
 - **Naming follows a strict case convention, enforced by the compiler.** All types start with an uppercase letter — built-in ones (`String`, `Int`, `Bool`, `Float`, `Char`) and user-defined ones alike (`class Foo`, `interface Bar`, exceptions as in `class Exception`). Everything else — variables, keywords, function names — is lowercase, and function names use snake_case only; camelCase is not allowed.
-- **Strings are always double-quoted, with a single interpolation form.** `"hello, ${name}"` — the braces hold any expression. Single quotes denote the `char` type: `'a'` is a character, `"a"` is a String of length one.
+- **Strings are always double-quoted, with a single interpolation form.** `"hello, ${name}"` — the braces hold any expression. Escapes are the minimal set `\n \r \t \\ \' \"`. Single quotes denote the `char` type: `'a'` is a character, `"a"` is a String of length one.
+- **`print(value)` writes one line of output** — the value's `.to_string()` rendering plus a newline. Every primitive implements `.to_string()`, and interpolation uses the same rendering.
 - **Comments are `//` to end of line; there are no block comments.**
 
 ### Classes
@@ -118,7 +120,7 @@ Emo is gradually typed: **types are dynamic at runtime, but statically checked a
 - Runtime semantics are dynamically typed — every value carries a type tag. This aligns natively with BEAM and keeps everyday code free of type ceremony.
 - The compiler has a built-in type-checking pass. Annotations are optional across the language — except on function signatures, where parameters and return types are both explicit — and unannotated code is still inferred and checked, reporting only errors that are certain; annotated code is checked strictly.
 - Typing is structural and flow-sensitive — after `if user.is(Admin)`, `user` is narrowed to `Admin` — matching duck-typing intuition.
-- There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as annotation vocabulary (e.g. `Array[User]`, `Box[Int]`) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all.
+- There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as annotation vocabulary (e.g. `Array[User]`, `Box[Int]`) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all. A parameter that receives a block is annotated `Block`.
 - Strictness defaults high and can be relaxed explicitly.
 - Type information feeds back into performance: modules with sufficiently complete type knowledge can be specialized (unboxed representations, direct dispatch) on the native backend.
 
@@ -165,7 +167,7 @@ def parse_config(text String) Json {
 - **`require` is a file-level statement that brings the package's short name into scope.** It needs no counterpart on the package side — a package's public surface is simply its module tree. Fully qualified paths are always available.
 - **`require` pairs with the manifest, strictly.** Requiring a package that is missing from `deps` is a compile error — strictness comes first, and the manifest changes only by explicit action.
 
-- **Central registry, with configurable endpoints.** Packages are addressed by `name@version` through a central registry, backed by a global content-addressed cache shared across projects — no per-project dependency copies. The registry endpoint is configurable per project or globally, serving private and on-premises distribution.
+- **Central registry, with configurable endpoints.** Packages are addressed by `name@version` through a central registry, backed by a global content-addressed cache shared across projects — no per-project dependency copies. The registry endpoint is read from the `EMO_REGISTRY` environment variable — set it globally or per project — serving private and on-premises distribution; unset, the standard library's bundled registry ships with the compiler and serves by default.
 - **Scoped package names.** Third-party packages are named under a scope prefix, so ownership is explicit and name squatting has no ground to stand on; the scope prefix becomes the module path prefix. The official standard library alone owns the top-level short names (`json.decode()`, `http.get(url)`).
 - **The manifest is an Emo config file**, written in the restricted profile (terminating, hermetic, side-effect free). **Dependencies are exact versions** — the version a package is developed and tested against — and **targets declare which compilation targets the package supports**:
 
@@ -182,7 +184,7 @@ def parse_config(text String) Json {
   }
   ```
 
-- **Versions are semantic (major.minor.patch), resolved by Minimal Version Selection (MVS).** When different packages require different versions of the same dependency, the smallest version satisfying every requirement wins — for exact requirements, the highest one named. Upgrades are always explicit actions. A lockfile records the resolution with checksums and belongs in version control.
+- **Versions are semantic (major.minor.patch), resolved by Minimal Version Selection (MVS).** When different packages require different versions of the same dependency, the smallest version satisfying every requirement wins — for exact requirements, the highest one named. Upgrades are always explicit actions. The lockfile (`emo.lock`) records the resolution with checksums and belongs in version control; `emo deps resolve` writes it, `emo deps update` regenerates it after a pin changes, `emo deps list` reads it — building never rewrites it silently.
 - **Target compatibility is checked at resolution time.** A dependency that does not support the target being built fails resolution with a clear error, not midway through compilation.
 
 ## Concurrency
@@ -194,6 +196,8 @@ The concurrency semantics are shaped by the following decisions:
 - **`do` starts a process and yields its pid.** `do work(item)` runs the call in a new process; the value of the `do`-expression is the new process's pid, and the call's own result is discarded.
 - **`pid <- message` sends.** `<-` delivers a message to a process's mailbox, and is always written with a space on each side — a juxtaposed `a<-b` is a syntax error rather than a guess, and comparison against a negated value is `a < -b`.
 - **`receive` takes the same branches as `case`.** `receive { ... }` scans the mailbox for the first message matching any branch; non-matching messages stay queued, and the process blocks while nothing matches — selective receive comes from ordinary patterns, with no separate mechanism.
+- **A process learns its own pid with `self_pid()`.** The idiomatic reply pattern is one line — `sender <- (self_pid(), request)` — with the tuple destructured right in the receiver's branch pattern. Pids are opaque values of type `Pid` that compare by identity and render as `<pid 3>`.
+- **`halt()` stops the current process.** So does an unhandled error, and either kills only the offending process; core provides the process-exit signal a supervisor needs and nothing more — kill, wait, and restart policies are library territory.
 - Message passing is the core concurrency primitive; shared-memory primitives are not part of the core semantics.
 - Data is immutable by default, so messages can be passed by copying on BEAM and by reference on the native backend while keeping identical observable semantics.
 - Tail calls are guaranteed; recursion is the idiomatic shape of a receive loop.
@@ -208,9 +212,37 @@ Networking is a first-class citizen: nearly every modern program talks over the 
 - **Wasm**: WASI sockets, or fetch/WebSocket in the browser.
 - **TypeScript**: the target runtime's net/HTTP modules.
 
-The API is **direct style**: network calls look like ordinary blocking calls, and the scheduler switches processes under the hood. There is no `async`/`await` and therefore no function coloring — any function can perform IO, and the API ecosystem stays single-tracked.
+The API is **direct style**: network calls look like ordinary blocking calls, and the scheduler switches processes under the hood. There is no `async`/`await` and therefore no function coloring — any function can perform IO, and the API ecosystem stays single-tracked. Timeouts are seconds, and every failure — refused connection, unresolvable name, exceeded deadline, closed socket — raises an ordinary Emo exception whose message states the peer, the operation, and the reason.
+
+The core library's socket surface is the `net` module; the standard library's HTTP lives in `http`:
+
+- **Sockets.** `net.connect(host, port, timeout)`, `net.connect_unix(path, timeout)`, `net.tls_connect(host, port, timeout)`, and `net.tls_connect_insecure(host, port, timeout)` — certificate verification is on by default, and the insecure variant is the explicit, visibly dangerous opt-out — return a `TcpConn`. `net.listen(host, port)`, `net.listen_unix(path)`, and `net.listen_tls(host, port, cert_path, key_path)` return a `TcpListener`; `net.udp_bind(host, port)` returns a `UdpSocket`; `net.resolve(host)` resolves a name to its addresses.
+- **Connections.** `read_line()`, `read_exactly(n)`, `read_all()`, `write(data)`, and `close()` — a graceful close delivers pending writes first. `set_timeout(seconds)` bounds the operations that follow (the default is no timeout; `0.0` waits indefinitely). A listener serves `accept()` and reports `port()`; a datagram socket `send_to(host, port, data)`s and `recv_from()`s, and reports `port()`.
+- **HTTP.** `http.get(url)`, `http.post(url, body)`, `http.put(url, body)`, `http.delete(url)`, and the general `http.request(method, url, headers, body, timeout)` return an `HttpResponse` carrying `status`, `headers`, and `body`. Redirects are never followed: a 3xx is a response like any other, and following it is the caller's explicit move. On the server, `http.serve(listener) -> (conn TcpConn) { ... }` is the process-per-connection helper, and `http.serve_requests(listener) -> (req HttpRequest) { ... }` parses each request and writes the handler's `HttpResponse` back — the handler is an ordinary Emo function.
 
 Layering is conventional: sockets (TCP/UDP/Unix domain, plus TLS) live in the core library, and HTTP (client and server) is part of the standard library. TLS starts as an OpenSSL binding on the native backend, with a pure-OCaml TLS stack as an optional alternative.
+
+## Native Builds
+
+`emo build` compiles a program to a standalone native binary — one command, one executable, no separate install step for applications:
+
+```console
+$ emo build main.emo -o myapp
+built myapp
+```
+
+- **The runtime ships inside the binary.** The scheduler and the networking stack are libraries of the backend: a program that spawns processes and serves HTTP runs identically compiled, with no interpreter and no runtime download.
+- **The compiled output is held to the interpreter's standard.** Every example compiles to a binary whose output matches `emo run` byte-for-byte — asserted in CI, not assumed.
+- **Types feed performance.** Functions whose types are fully known compile to specialized native code — unboxed numbers, direct calls — while regions the checker cannot pin down keep dynamic semantics. `benchmarks/` records the numbers (the same fully annotated program runs measurably faster specialized than with `--no-specialize`).
+- **Builds are incremental.** The build caches by content hash: an unchanged program (and unchanged runtime) rebuilds without invoking the toolchain, and the build reports `(cached)`.
+- **C interop is a `foreign def`.** The declaration names the C symbol and marshals through generated C wrappers:
+
+  ```emo
+  foreign def sqrt(x Float) Float = "sqrt"
+  ```
+
+  `Float`, `String`, and `Bool` cross the boundary today; other types are refused by the checker. Link additional C libraries with `--cclib` (`emo build main.emo --cclib m`). Foreign definitions run only in compiled programs — `emo run` refuses them.
+- **The build requires the OCaml toolchain** — the same one that builds Emo itself; there is no second compiler to install.
 
 ## Configuration
 
@@ -237,7 +269,7 @@ page(title: "Home") {
     menu(routes)
   }
 
-  list(users) -> (user) {
+  list(users) -> (user User) {
     card(user) {
       text(user.name)
       text(user.bio)

@@ -1,0 +1,33 @@
+(library
+ (name emo_cli)
+ (libraries
+  cmdliner
+  unix
+  emo_support
+  emo_lexer
+  emo_parser
+  emo_ast
+  emo_eval
+  emo_check
+  emo_ir
+  emo_codegen
+  emo_runtime
+  emo_project)
+ (modules emo_cli version))
+
+; The version string is the repository's VERSION file, read at build
+; time so the binary carries it wherever it runs.
+
+(rule
+ (target version.ml)
+ (deps
+  (:version_file ../../VERSION))
+ (action
+  (with-stdout-to
+   version.ml
+   (bash "printf 'let version = \"%s\"\\n' \"$(cat %{version_file})\""))))
+
+(executable
+ (name emo)
+ (libraries emo_cli)
+ (modules emo))

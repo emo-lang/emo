@@ -1,0 +1,268 @@
+require "net"
+
+// The standard HTTP library: a client over the net surface, and a server
+// that runs one process per connection. Direct style throughout — a
+// request reads like any other function call.
+
+class HttpRequest {
+  def init(method String, path String, headers Array[(String, String)], body String) {
+    self.method = method
+    self.path = path
+    self.headers = headers
+    self.body = body
+  }
+
+  def header(name String) String {
+    return find_header(self.headers, name.lower(), 0)
+  }
+}
+
+class HttpResponse {
+  def init(status Int, headers Array[(String, String)], body String) {
+    self.status = status
+    self.headers = headers
+    self.body = body
+  }
+
+  def header(name String) String {
+    return find_header(self.headers, name.lower(), 0)
+  }
+}
+
+// Constructors for the two message types: classes are constructed
+// through lowercase factories, so callers never reach into `.new` from
+// another module.
+def response(status Int, headers Array[(String, String)], body String) HttpResponse {
+  return HttpResponse.new(status: status, headers: headers, body: body)
+}
+
+def request_value(method String, path String, headers Array[(String, String)], body String) HttpRequest {
+  return HttpRequest.new(method: method, path: path, headers: headers, body: body)
+}
+
+// ---- Client ----
+
+// The general form: every verb and every knob, all explicit.
+def request(method String, url String, headers Array[(String, String)], body String, timeout Float) HttpResponse {
+  const parts = parse_url(url)
+  case parts {
+    ("http", host, port, path) -> {
+      const conn = net.connect(host, port, timeout)
+      return exchange(conn, method, host, path, headers, body)
+    }
+    ("https", host, port, path) -> {
+      const conn = net.tls_connect(host, port, timeout)
+      return exchange(conn, method, host, path, headers, body)
+    }
+    _ -> { raise Exception.new(message: "unsupported url: `" + url + "`") }
+  }
+}
+
+def get(url String) HttpResponse {
+  return request("GET", url, [], "", 0.0)
+}
+
+def post(url String, body String) HttpResponse {
+  return request("POST", url, [], body, 0.0)
+}
+
+def put(url String, body String) HttpResponse {
+  return request("PUT", url, [], body, 0.0)
+}
+
+def delete(url String) HttpResponse {
+  return request("DELETE", url, [], "", 0.0)
+}
+
+// Sends one request and reads one response; the connection closes after
+// each exchange (Connection: close), so no pooling to reason about.
+def exchange(conn TcpConn, method String, host String, path String, headers Array[(String, String)], body String) HttpResponse {
+  conn.write(request_head(method, host, path, headers, body) + body)
+  const resp = read_response(conn)
+  conn.close()
+  return resp
+}
+
+// Splits "scheme://authority/path" into (scheme, host, port, path).
+// Redirects are never followed: a 3xx response is the caller's to read
+// and act on, visibly.
+def parse_url(url String) (String, String, Int, String) {
+  if url.starts_with("https://") {
+    return parse_authority(url.substring(8, url.length() - 8), "https")
+  }
+  if url.starts_with("http://") {
+    return parse_authority(url.substring(7, url.length() - 7), "http")
+  }
+  raise Exception.new(message: "unsupported url scheme in `" + url + "`")
+}
+
+def parse_authority(rest String, scheme String) (String, String, Int, String) {
+  const slash = rest.index_of("/")
+  const authority = authority_before(rest, slash)
+  const path = path_from(rest, slash)
+  const colon = authority.index_of(":")
+  if colon < 0 {
+    return (scheme, authority, default_port(scheme), path)
+  }
+  return (scheme, authority.substring(0, colon), authority.substring(colon + 1, authority.length() - colon - 1).to_int(), path)
+}
+
+def authority_before(rest String, slash Int) String {
+  if slash < 0 {
+    return rest
+  }
+  return rest.substring(0, slash)
+}
+
+def path_from(rest String, slash Int) String {
+  if slash < 0 {
+    return "/"
+  }
+  return rest.substring(slash, rest.length() - slash)
+}
+
+def default_port(scheme String) Int {
+  if scheme == "https" {
+    return 443
+  }
+  return 80
+}
+
+def request_head(method String, host String, path String, headers Array[(String, String)], body String) String {
+  const lines = [method + " " + path + " HTTP/1.1", "Host: " + host, "Content-Length: " + body.length().to_string(), "Connection: close"]
+  // The final blank line closes the header section.
+  return join_lines(add_all(lines, headers, 0)) + "\r\n\r\n"
+}
+
+def add_all(lines Array[String], extra Array[(String, String)], i Int) Array[String] {
+  if i >= extra.length() {
+    return lines
+  }
+  const pair = extra[i]
+  return add_all(lines.append(pair[0] + ": " + pair[1]), extra, i + 1)
+}
+
+def join_lines(lines Array[String]) String {
+  return join(lines, "\r\n", 0, "")
+}
+
+def join(lines Array[String], sep String, i Int, acc String) String {
+  if i >= lines.length() {
+    return acc
+  }
+  if i == 0 {
+    return join(lines, sep, i + 1, lines[0])
+  }
+  return join(lines, sep, i + 1, acc + sep + lines[i])
+}
+
+def read_response(conn TcpConn) HttpResponse {
+  const status = read_status(conn)
+  const headers = read_headers(conn, [])
+  const length = header_value(headers, "content-length")
+  if length == "" {
+    return response(status, headers, conn.read_all())
+  }
+  return response(status, headers, conn.read_exactly(length.to_int()))
+}
+
+def read_status(conn TcpConn) Int {
+  const parts = conn.read_line().split(" ")
+  return parts[1].to_int()
+}
+
+def read_headers(conn TcpConn, acc Array[(String, String)]) Array[(String, String)] {
+  const line = conn.read_line()
+  if line == "" {
+    return acc
+  }
+  return read_headers(conn, acc.append(header_pair(line)))
+}
+
+// Splits "Name: value" into (name, value); a malformed line is kept as a
+// nameless pair with the whole line as its value.
+def header_pair(line String) (String, String) {
+  const at = line.index_of(": ")
+  if at < 0 {
+    return ("", line)
+  }
+  return (line.substring(0, at), line.substring(at + 2, line.length() - at - 2))
+}
+
+def header_value(headers Array[(String, String)], name String) String {
+  return find_header(headers, name.lower(), 0)
+}
+
+def find_header(headers Array[(String, String)], name String, i Int) String {
+  if i >= headers.length() {
+    return ""
+  }
+  const pair = headers[i]
+  if pair[0].lower() == name {
+    return pair[1].trim()
+  }
+  return find_header(headers, name, i + 1)
+}
+
+// ---- Server ----
+
+// The process-per-connection helper: every accepted connection runs its
+// own process, so one slow client never blocks the next.
+def serve(listener TcpListener, handler Block) Int {
+  const conn = listener.accept()
+  do handle_connection(conn, handler)
+  return serve(listener, handler)
+}
+
+// The request-level server: reads the request, hands it to the handler,
+// writes the handler's response back, and closes.
+def serve_requests(listener TcpListener, handler Block) Int {
+  return serve(listener) -> (conn TcpConn) {
+    const req = read_request(conn)
+    const resp = handler(req)
+    write_response(conn, resp)
+    return conn.close()
+  }
+}
+
+def handle_connection(conn TcpConn, handler Block) TcpConn {
+  const conn2 = handler(conn)
+  return conn2.close()
+}
+
+def read_request(conn TcpConn) HttpRequest {
+  const parts = conn.read_line().split(" ")
+  const headers = read_headers(conn, [])
+  const length = header_value(headers, "content-length")
+  if length == "" {
+    return request_value(parts[0], parts[1], headers, "")
+  }
+  return request_value(parts[0], parts[1], headers, conn.read_exactly(length.to_int()))
+}
+
+def write_response(conn TcpConn, resp HttpResponse) TcpConn {
+  const head = "HTTP/1.1 " + resp.status.to_string() + " " + reason_phrase(resp.status) + "\r\nContent-Length: " + resp.body.length().to_string() + "\r\n\r\n"
+  return conn.write(head + resp.body)
+}
+
+def reason_phrase(status Int) String {
+  if status == 200 {
+    return "OK"
+  }
+  if status == 201 {
+    return "Created"
+  }
+  if status == 204 {
+    return "No Content"
+  }
+  if status == 400 {
+    return "Bad Request"
+  }
+  if status == 404 {
+    return "Not Found"
+  }
+  if status == 500 {
+    return "Internal Server Error"
+  }
+  return "Unknown"
+}

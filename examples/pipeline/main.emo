@@ -1,0 +1,62 @@
+// The assembly line — four concurrent processes, one message shape
+// flowing through a linear chain.
+//
+//   emo run main.emo
+//
+// `do` starts a process and yields its pid; `<-` sends to a
+// process's mailbox; `receive` takes the same branches as `case`.
+// Mailboxes are FIFO, so a linear chain delivers in order: the output
+// below is deterministic even though every stage runs concurrently.
+// A failure kills only the offending process, and the entry process
+// keeps the program alive — so it waits for the line's report before
+// leaving.
+
+// The doubler forwards every order, doubled, to the next stage.
+def doubler(next Pid) Int {
+  receive {
+    (id, n) -> {
+      next <- (id, n * 2)
+      return doubler(next)
+    }
+    "done" -> {
+      next <- "done"
+      return halt()
+    }
+  }
+}
+
+// The labeler prints each finished order, counts them, and reports
+// back to the entry process when the line closes.
+def labeler(count Int, boss Pid) Int {
+  receive {
+    (id, n) -> {
+      print("order ${id}: ${n} units")
+      return labeler(count + 1, boss)
+    }
+    "done" -> {
+      boss <- (self_pid(), count)
+      return halt()
+    }
+  }
+}
+
+// The entry process feeds the line, closes it, and waits for the
+// report — the tuple is destructured right in the receive branch.
+def feed(line Pid, i Int) Int {
+  if i > 5 {
+    line <- "done"
+    return 0
+  }
+  line <- (i, i * 100)
+  return feed(line, i + 1)
+}
+
+const lab = do labeler(0, self_pid())
+const line = do doubler(lab)
+feed(line, 1)
+
+receive {
+  (who, handled) -> {
+    print("the line handled ${handled} orders")
+  }
+}

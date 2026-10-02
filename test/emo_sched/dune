@@ -1,0 +1,9 @@
+(executable
+ (name emo_sched_test)
+ (libraries alcotest unix emo_sched emo_eval emo_parser emo_support))
+
+(rule
+ (alias runtest)
+ (deps emo_sched_test.exe fixtures/tls-cert.pem fixtures/tls-key.pem)
+ (action
+  (run %{exe:emo_sched_test.exe})))

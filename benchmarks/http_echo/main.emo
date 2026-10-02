@@ -1,0 +1,16 @@
+// HTTP echo server: a process per connection over the compiled net
+// stack — the load-test target. Writes its port to argv file? Emo has
+// no argv; the harness reads the first stdout line.
+require "http"
+require "net"
+
+const listener = net.listen("127.0.0.1", 0)
+print(listener.port())
+
+do http.serve_requests(listener) -> (req HttpRequest) {
+  return http.response(200, [], "ok")
+}
+
+receive {
+  _ -> { return 0 }
+}

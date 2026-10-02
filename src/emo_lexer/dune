@@ -1,0 +1,3 @@
+(library
+ (name emo_lexer)
+ (libraries emo_support))

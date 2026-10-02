@@ -1,0 +1,255 @@
+# Development Tasks
+
+A numbered checklist of every implementation task, consolidated from
+`plan/step-01-project-scaffold.md` through `plan/step-14-other-targets.md`.
+The plan files remain the specs — each task below belongs to a step that
+holds its full goal, scope, and acceptance details. This file is the tracker.
+
+## How to use this file
+
+- **Numbering:** `T<step>.<n>` — the step number matches `plan/step-NN-*.md`.
+- **Working in spare time:** tasks within a step are ordered; any prefix of
+  completed tasks leaves the tree in a consistent state. A step boundary is
+  the checkpoint where the repo must build and `dune test` green.
+- **Ground rules** (from `plan/README.md`):
+  - Never start the next step on a red build.
+  - `README.md` (repo root) is the design source of truth. Provisional
+    decisions are marked below; settle them in `CHECK.md` / `README.md`
+    before the task that depends on them.
+  - Strictness first: reject early with a clear diagnostic. No auto-fixing,
+    no implicit additions, no silent fallbacks.
+- **Tracking:** check items off here as you go, and update the status table
+  in `plan/README.md` when a step completes.
+
+## Milestones
+
+| Milestone | Steps | Exit criteria |
+| --- | --- | --- |
+| M1 — MVP interpreter | 01–07 | Single-file Emo programs (functions, classes, enums, exceptions) run via `emo run` / `emo repl` with readable errors. |
+| M2 — Compile-time experience | 08–10 | Gradual type checker, structural module system, and packages with MVS resolution; multi-package projects build and run. |
+| M3 — Concurrency & networking | 11–12 | Processes and message passing on an effects-based scheduler; direct-style networking. |
+| M4 — Compilation targets | 13–14 | Native code generation via `emo build`; then wasm / TypeScript / BEAM / qemu. |
+
+## Design gates
+
+Open decisions tracked in `CHECK.md` that gate tasks below. Settle them
+before starting the gated work:
+
+| Decision | Gates | Provisional until settled |
+| --- | --- | --- |
+| CLI command names | T1.3, T7.1–T7.2 | settled in M1 — `run` / `repl` / `check` / `version` shipped |
+| String escape rules | T2.3, T2.4 | Minimal set `\n \t \\ \' \"` |
+| Self-pid mechanism | T11.1 | settled — `self_pid()` builtin, `Pid` type rendering as `<pid N>`, `halt()`; no user-facing kill/wait |
+| Exception catch syntax | T12.5, Step 12 acceptance | Catch form absent; uncaught reporting only |
+| Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T10.2, T10.5–T10.6, T10.8 | `package.emo`, `emo.lock`, `owner/name`, exact pins only, `emo deps *` |
+| C FFI binding-surface syntax | T13.6 | settled — `foreign def name(params) Ret = "c_symbol"`, `Float`/`String`/`Bool` only, through generated C wrappers |
+
+---
+
+## M1 — MVP interpreter
+
+### Step 01 — Project scaffold & CLI skeleton · `plan/step-01-project-scaffold.md`
+
+**Prereq:** none.
+**Done when:** `dune build` and `dune test` pass from a clean checkout; `emo version` prints `emo 0.0.1`; placeholder subcommands exit non-zero; CI green on Linux and macOS.
+
+- [x] **T1.1** — Create `dune-project` and the `src/` library skeletons (`emo_support`, `emo_lexer`, `emo_parser`, `emo_ast`, `emo_eval`, `emo_check`, `emo_cli`) with placeholder modules that compile.
+- [x] **T1.2** — Implement `emo_support`: span, severity, diagnostic, renderer; unit tests for the renderer.
+- [x] **T1.3** — Implement `emo_cli` with cmdliner; wire the four subcommands to placeholder actions.
+- [x] **T1.4** — Add alcotest smoke tests per library and the CI workflow (setup-ocaml, `dune build`, `dune test`, Linux + macOS).
+- [x] **T1.5** — Add `.ocamlformat` (conventional profile); format the tree once (`dune build @fmt` passes).
+
+### Step 02 — Lexer · `plan/step-02-lexer.md`
+
+**Prereq:** Step 01.
+**Done when:** suites cover every token kind, interpolation nesting (`"a ${ "b ${x}" } c"`), position fidelity on multi-line input, and every error case; `dune test` green.
+
+- [x] **T2.1** — Token type + positioned token stream in `emo_lexer`.
+- [x] **T2.2** — Identifier classes (`LOWER_IDENT` / `UPPER_IDENT`), keywords, operators.
+- [x] **T2.3** — Numeric and char literals with escape handling.
+- [x] **T2.4** — Interpolated-string token scheme with nesting tests.
+- [x] **T2.5** — Newline-preserving stream API.
+- [x] **T2.6** — Error cases: each rejects with correct line:col via `emo_support`.
+
+### Step 03 — Parser: expressions · `plan/step-03-parser-expressions.md`
+
+**Prereq:** Step 02.
+**Done when:** every expression snippet in the README parses to the expected AST (golden tests); precedence pinned (`1 + 2 * 3`, `a && b || !c`, `x.foo(1)[i].bar?()`); `dune test` green.
+
+- [x] **T3.1** — `emo_ast` expression/statement types with spans on every node.
+- [x] **T3.2** — Pratt-style expression parser with the precedence table.
+- [x] **T3.3** — Call parsing: positional + named args, trailing-block sugar.
+- [x] **T3.4** — Arrow blocks; `if` / `else` (single shape, no chaining).
+- [x] **T3.5** — Newline-termination rules with depth tracking.
+- [x] **T3.6** — Interpolated-string reassembly from lexer parts.
+- [x] **T3.7** — Parser tests: precedence table, dangling-operator continuations, malformed input errors.
+
+Scope note: tuple literals under the content rule, tuple patterns, `case` / `receive` / `do` / send syntax all parse within this step (semantics stay "not yet" errors until steps 05 / 11).
+
+### Step 04 — Parser: declarations · `plan/step-04-parser-declarations.md`
+
+**Prereq:** Step 03.
+**Done when:** the README's `User`, `Greeter` / `English`, `welcome`, and `Color` snippets parse to golden ASTs; negative tests (camelCase `def`, `UPPER` variable, enum payloads, duplicate `init`, annotated `init` return) rejected with the right message and span; `dune test` green.
+
+- [x] **T4.1** — Declaration AST nodes; top-level item sequence.
+- [x] **T4.2** — `def` parsing with the `init` exemption and `?`-name rules.
+- [x] **T4.3** — `class` (single-`init` rule, field collection from `self.x =`).
+- [x] **T4.4** — `interface` signature-only bodies.
+- [x] **T4.5** — `enum` member lists.
+- [x] **T4.6** — `raise` statement.
+- [x] **T4.7** — Naming-convention checks with spans; multi-error resync.
+- [x] **T4.8** — Golden tests: README examples parse cleanly; convention violations produce the expected errors.
+
+### Step 05 — Interpreter: core values & evaluation · `plan/step-05-interpreter-core.md`
+
+**Prereq:** Step 04.
+**Done when:** the acceptance program runs (`fib(20)` → 6765, interpolated greeting, `count_down(1000000)` with a flat stack); `dune test` green including the deep-recursion case.
+
+- [x] **T5.1** — Value ADT + equality; environment chain.
+- [x] **T5.2** — Expression evaluation with tag-checked operators.
+- [x] **T5.3** — Interpolation; `print` builtin; `.to_string()`.
+- [x] **T5.4** — Closure capture (lexical, by reference to the environment).
+- [x] **T5.5** — Tail-call loop in the evaluator; deep-recursion test.
+- [x] **T5.6** — `if` / `return` semantics; runtime type errors with spans.
+- [x] **T5.7** — Alcotest suites running real programs end to end (assert on captured stdout).
+
+Scope note: arrays, tuples, and `Box` (with its three-operation set) are part of this step's value model. `print` is a provisional name — promote it into the README once the I/O surface settles.
+
+### Step 06 — Interpreter: classes, enums, interfaces · `plan/step-06-interpreter-objects.md`
+
+**Prereq:** Step 05.
+**Done when:** the README's object examples run verbatim (value-semantic `User`, `Color`, duck-typed `welcome`, structural `is()`); negative tests (`self.x =` outside `init`, missing method, uncaught raise) error as specified; `dune test` green.
+
+- [x] **T6.1** — `ClassDef` / `Instance` values; `init` window flag; field freeze.
+- [x] **T6.2** — Method dispatch + `self`; `NoMethodError`.
+- [x] **T6.3** — Deep `==` on instances; shared-structure immutability tests.
+- [x] **T6.4** — Enum singletons; `TypeValue`; `is()` with structural interface check.
+- [x] **T6.5** — `raise`; builtin `Exception`; uncaught-exception termination.
+- [x] **T6.6** — `.to_string()` for instances, enums, exceptions.
+
+### Step 07 — CLI & diagnostics · `plan/step-07-cli-diagnostics.md`
+
+**Prereq:** Steps 01–06.
+**Done when:** every `examples/*.emo` runs with expected output in CI; a file with three parse errors reports all three at correct line:col, stable under `--no-color`; the REPL runs the step 06 acceptance block interactively. **M1 exit criteria met.**
+
+- [x] **T7.1** — `run` command with stage pipeline and exit codes (lex/parse 65, eval 70, uncaught exception 1).
+- [x] **T7.2** — REPL: multi-line reading, persistent environment, value echo.
+- [x] **T7.3** — Diagnostic renderer completion (excerpts, codes, hints, colors, error limit); unit tests over golden renderings.
+- [x] **T7.4** — Uncaught-exception trace plumbing in the evaluator.
+- [x] **T7.5** — `examples/` golden tests wired into CI.
+- [x] **T7.6** — Manual pass: run each example, use the REPL interactively.
+
+Close-out note: promote the provisional decisions that M1 proved (`print`, trailing-block sugar) into the README.
+
+---
+
+## M2 — Compile-time experience
+
+### Step 08 — Gradual type checker · `plan/step-08-type-checker.md`
+
+**Prereq:** Steps 01–07.
+**Done when:** every README example type-checks clean; the annotated-error corpus (wrong return type, bad named arg, `var` escape, narrowing misuse) is rejected with correct spans; the zero-false-positive corpus passes with no diagnostics; `emo check` works and `emo run` runs the pass first.
+
+- [x] **T8.1** — Type representation + annotation collection pass.
+- [x] **T8.2** — Statement/expression checking with `Unknown` discipline.
+- [x] **T8.3** — Signature checks; arrow-block inference.
+- [x] **T8.4** — Flow environments with narrowing on `is()`.
+- [x] **T8.5** — Structural interface conformance.
+- [x] **T8.6** — `var`-escape detection.
+- [x] **T8.7** — Call-site checking; named-argument validation.
+- [x] **T8.8** — `case` checking: pattern typing, `when` guards as `Bool`, exhaustiveness on decidable enums and on the first tuple element of decidable `(Enum, ...)` scrutinees (guarded branches don't count).
+- [x] **T8.9** — `emo check` command; wire into `emo run`.
+- [x] **T8.10** — Test categories: strict-annotated rejections, inference successes, zero-false-positive corpus.
+
+Follow-up: the chosen `var`-escape approximation is documented in `docs/var-escape.md`.
+
+### Step 09 — Structural module system · `plan/step-09-modules.md`
+
+**Prereq:** Steps 01–08.
+**Done when:** the README's `shop/` tree works verbatim (path-as-module, aliasing via `const`); referencing `shop.internal.discounts` from outside `shop` errors naming both modules; a two-module cycle is rejected with the full chain; multi-file fixtures green.
+
+- [x] **T9.1** — Module path resolution (file ↔ module name; collisions are errors).
+- [x] **T9.2** — Lazy `Module` values wired into the evaluator's member access.
+- [x] **T9.3** — Load-order orchestration; load-once semantics.
+- [x] **T9.4** — Reference-graph extraction during checking.
+- [x] **T9.5** — `internal/` subtree-privacy check.
+- [x] **T9.6** — Cycle detection with chain reporting.
+- [x] **T9.7** — In-process caching keyed by content hash.
+- [x] **T9.8** — Multi-file test project under `examples/` mirroring the README's `shop/` tree.
+
+Caution: resolved in step 10 — a project roots at its nearest `package.emo`; manifest-less trees keep the working-directory rule.
+
+### Step 10 — Packages & version resolution · `plan/step-10-packages.md`
+
+**Prereq:** Steps 01–09.
+**Done when:** the README's `require "acme/json_tools"` scenario runs against a fixture registry; removing a dep from `deps` while its `require` remains is a compile error; conflicting exact pins resolve to the highest and the lockfile checksums verify on a second run; a dep whose `targets` exclude the current target fails at resolution time. **M2 exit criteria met.**
+
+- [x] **T10.1** — `require` parsing + scope rules.
+- [x] **T10.2** — Manifest phase A: strict schema parser, errors with spans.
+- [x] **T10.3** — Strict require/deps pairing check.
+- [x] **T10.4** — MVS resolver with target-compatibility gate; unit tests over version lattices.
+- [x] **T10.5** — Lockfile read/write/verify; mismatch errors.
+- [x] **T10.6** — Registry client + content-addressed cache + directory registry for tests.
+- [x] **T10.7** — Manifest phase B: restricted-profile evaluation with step budget.
+- [x] **T10.8** — End-to-end fixture: two local packages, one requiring the other, resolved, locked, built, run.
+
+Also here: swap step 09's transitional root rule for manifest-based roots — done; the root rule now prefers the nearest `package.emo`.
+
+---
+
+## M3 — Concurrency & networking
+
+### Step 11 — Processes & message passing · `plan/step-11-concurrency.md`
+
+**Prereq:** Steps 01–10.
+**Done when:** ping-pong (1M messages) and fan-out/fan-in (1000 workers) run correctly under both the Eio-based and own effects schedulers; a process that raises mid-message dies alone while the parent continues; sending a `Box` yields a snapshot; receive loops recursing millions of times keep the native stack flat; `dune test` green under the deterministic scheduler.
+
+- [x] **T11.1** — Design pass: settle the self-pid mechanism in `CHECK.md` / README (`do`, `<-`, `receive { ... }`, and the `Box` operation set are already decided). Blocking gate for the rest of the step.
+- [x] **T11.2** — Process/mailbox abstraction on Eio; spawn/send/receive.
+- [x] **T11.3** — Crash isolation; process-exit signals for future supervisors.
+- [x] **T11.4** — `Box` with snapshot-on-send semantics.
+- [x] **T11.5** — Deterministic scheduler log for tests.
+- [x] **T11.6** — Phase B: own effects-based scheduler beneath the same interface.
+- [x] **T11.7** — Stress tests: ping-pong, fan-out/fan-in, deep receive-loop recursion.
+
+### Step 12 — Networking library · `plan/step-12-networking.md`
+
+**Prereq:** Steps 01–11.
+**Done when:** an Emo HTTP server + client round-trip on localhost runs in one `emo run` program, entirely direct style; a timeout and a refused connection each raise an Emo exception with a precise message; a TLS handshake to a test certificate fails closed on verification error. **M3 exit criteria met.**
+
+- [x] **T12.1** — TCP socket surface on the scheduler; graceful close semantics.
+- [x] **T12.2** — UDP + Unix-domain sockets.
+- [x] **T12.3** — DNS resolution through the same suspension path.
+- [x] **T12.4** — OpenSSL TLS binding; certificate-verification errors surfaced as Emo exceptions.
+- [x] **T12.5** — HTTP client; HTTP server with process-per-connection helper.
+- [x] **T12.6** — Stdlib packaging with target metadata; fixture-based integration tests (loopback listeners, deterministic order).
+
+Close-out: the exact `net.*` / `http.*` names are in the README (Networking); the stdlib ships as directory-registry packages under `stdlib/registry` with `targets = ["native"]`; the acceptance example is `examples/http_roundtrip`. Step decisions are in `plan/step-12-networking.md` (Close-out). **M3 exit criteria met.**
+
+---
+
+## M4 — Compilation targets
+
+### Step 13 — Native backend · `plan/step-13-native-backend.md`
+
+**Prereq:** Steps 01–12.
+**Done when:** every `examples/*.emo` compiles to a native binary producing output identical to `emo run` (golden comparison in CI); specialized numeric code shows measurably better benchmark numbers than the unspecialized build; a process-per-connection HTTP server built with `emo build` sustains a load test; benchmark results recorded.
+
+- [x] **T13.1** — IR definition + checked-AST lowering.
+- [x] **T13.2** — Stage A: OCaml emission, runtime linking, single-binary output.
+- [x] **T13.3** — `emo build` with incremental caching.
+- [x] **T13.4** — Benchmark set wired into CI (numbers recorded, not just pass/fail).
+- [x] **T13.5** — Stage B: type-driven specialization passes (unboxing, direct dispatch) behind completeness checks from step 08 data.
+- [x] **T13.6** — C FFI linking path once the binding-surface syntax is decided (blocked — settle in `CHECK.md` first).
+- [x] **T13.7** — Bootstrap test: the `examples/` suite as compiled binaries matches interpreter output byte-for-byte.
+
+Close-out: Stage A emits OCaml source (tradeoff documented in `docs/native-backend.md`); the IR lives in `src/emo_ir` with the Stage B `specialize` fixed point, and T13.5's specialization landed with the T13.1/T13.2 commits. `foreign def` settled as above, marshaling through generated C wrappers (`emo build` compiles them with `cc`); `Float`/`String`/`Bool` cross the boundary, everything else refuses with E4200. Benchmarks: `benchmarks/results.md` records fib(30) 345ms unspecialized vs 212ms specialized (~1.6x), ping-pong, JSON scan, and an HTTP echo load test at 112 req/s. Bootstrap: all five examples build to binaries matching `emo run` byte-for-byte (the `bootstrap` suite in `test/emo_project`). Decisions are in `plan/step-13-native-backend.md` (Close-out). **Step 13 acceptance met.**
+
+### Step 14 — Other targets: wasm, TypeScript, BEAM, qemu · `plan/step-14-other-targets.md`
+
+**Prereq:** Steps 01–13 (per target). These are roadmap entries, not execution-ready plans — each target gets its own step file when scheduled. Recommended order: Wasm → TypeScript → BEAM → qemu.
+
+- [ ] **T14.1** — When a target is scheduled, split it into `step-NN-<target>.md` with the full standard format (goal / scope / tasks / acceptance) and update `plan/README.md`'s status table; its tasks continue the numbering (`T15.*`, …).
+- [ ] **T14.2** — Record which key decision each target settled and where (README / `CHECK.md` / docs) — keep the trail.
+
+Key decisions to settle per target: Wasm — WasmGC vs custom GC (prototype both); TypeScript — direct-style mapping onto the event loop, process mapping; BEAM — class value semantics vs Erlang maps; qemu — pluggable runtime, linker scripts (highest risk; pull the `core`-library layering earlier if EmoOS work starts).

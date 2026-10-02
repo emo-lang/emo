@@ -1,0 +1,9 @@
+package {
+  name = "http"
+  version = "0.1.0"
+  targets = ["native"]
+
+  deps {
+    net = "0.1.0"
+  }
+}

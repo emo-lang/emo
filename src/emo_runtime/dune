@@ -1,0 +1,10 @@
+(library
+ (name emo_runtime)
+ (libraries
+  emo_support
+  emo_ast
+  emo_lexer
+  emo_parser
+  emo_check
+  emo_eval
+  emo_sched))

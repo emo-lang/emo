@@ -1,0 +1,8 @@
+// The internal subtree is private to the project: every module in
+// this tree may use it, and nothing outside can even name it.
+def seasonal(n Int) Int {
+  if n >= 3 {
+    return 15
+  }
+  return 0
+}

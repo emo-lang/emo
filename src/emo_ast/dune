@@ -1,0 +1,3 @@
+(library
+ (name emo_ast)
+ (libraries emo_support))
