@@ -1,5 +1,9 @@
 module Ast = Emo_ast
 
+(* The TypeScript backend (emo_ts.ml), re-exported: a wrapped library
+   exposes only its eponymous module. *)
+module Ts = Emo_ts
+
 (* Stage A/B backend: emits OCaml source from the IR, compiled by the
    OCaml toolchain into a single binary linked against emo_runtime (the
    scheduler and builtins ride along).
