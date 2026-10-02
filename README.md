@@ -222,6 +222,28 @@ The core library's socket surface is the `net` module; the standard library's HT
 
 Layering is conventional: sockets (TCP/UDP/Unix domain, plus TLS) live in the core library, and HTTP (client and server) is part of the standard library. TLS starts as an OpenSSL binding on the native backend, with a pure-OCaml TLS stack as an optional alternative.
 
+## Native Builds
+
+`emo build` compiles a program to a standalone native binary — one command, one executable, no separate install step for applications:
+
+```console
+$ emo build main.emo -o myapp
+built myapp
+```
+
+- **The runtime ships inside the binary.** The scheduler and the networking stack are libraries of the backend: a program that spawns processes and serves HTTP runs identically compiled, with no interpreter and no runtime download.
+- **The compiled output is held to the interpreter's standard.** Every example compiles to a binary whose output matches `emo run` byte-for-byte — asserted in CI, not assumed.
+- **Types feed performance.** Functions whose types are fully known compile to specialized native code — unboxed numbers, direct calls — while regions the checker cannot pin down keep dynamic semantics. `benchmarks/` records the numbers (the same fully annotated program runs measurably faster specialized than with `--no-specialize`).
+- **Builds are incremental.** The build caches by content hash: an unchanged program (and unchanged runtime) rebuilds without invoking the toolchain, and the build reports `(cached)`.
+- **C interop is a `foreign def`.** The declaration names the C symbol and marshals through generated C wrappers:
+
+  ```emo
+  foreign def sqrt(x Float) Float = "sqrt"
+  ```
+
+  `Float`, `String`, and `Bool` cross the boundary today; other types are refused by the checker. Link additional C libraries with `--cclib` (`emo build main.emo --cclib m`). Foreign definitions run only in compiled programs — `emo run` refuses them.
+- **The build requires the OCaml toolchain** — the same one that builds Emo itself; there is no second compiler to install.
+
 ## Configuration
 
 Emo is its own configuration language: a config file is just an Emo expression, and loading it means evaluating that expression. No separate format to learn — blocks, literals, string interpolation, and method calls are all available to configuration.

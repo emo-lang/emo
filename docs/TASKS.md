@@ -42,7 +42,7 @@ before starting the gated work:
 | Self-pid mechanism | T11.1 | settled — `self_pid()` builtin, `Pid` type rendering as `<pid N>`, `halt()`; no user-facing kill/wait |
 | Exception catch syntax | T12.5, Step 12 acceptance | Catch form absent; uncaught reporting only |
 | Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T10.2, T10.5–T10.6, T10.8 | `package.emo`, `emo.lock`, `owner/name`, exact pins only, `emo deps *` |
-| C FFI binding-surface syntax | T13.6 | FFI task blocked; add to `CHECK.md` and settle first |
+| C FFI binding-surface syntax | T13.6 | settled — `foreign def name(params) Ret = "c_symbol"`, `Float`/`String`/`Bool` only, through generated C wrappers |
 
 ---
 
@@ -235,15 +235,15 @@ Close-out: the exact `net.*` / `http.*` names are in the README (Networking); th
 **Prereq:** Steps 01–12.
 **Done when:** every `examples/*.emo` compiles to a native binary producing output identical to `emo run` (golden comparison in CI); specialized numeric code shows measurably better benchmark numbers than the unspecialized build; a process-per-connection HTTP server built with `emo build` sustains a load test; benchmark results recorded.
 
-- [ ] **T13.1** — IR definition + checked-AST lowering.
-- [ ] **T13.2** — Stage A: OCaml emission, runtime linking, single-binary output.
-- [ ] **T13.3** — `emo build` with incremental caching.
-- [ ] **T13.4** — Benchmark set wired into CI (numbers recorded, not just pass/fail).
-- [ ] **T13.5** — Stage B: type-driven specialization passes (unboxing, direct dispatch) behind completeness checks from step 08 data.
-- [ ] **T13.6** — C FFI linking path once the binding-surface syntax is decided (blocked — settle in `CHECK.md` first).
-- [ ] **T13.7** — Bootstrap test: the `examples/` suite as compiled binaries matches interpreter output byte-for-byte.
+- [x] **T13.1** — IR definition + checked-AST lowering.
+- [x] **T13.2** — Stage A: OCaml emission, runtime linking, single-binary output.
+- [x] **T13.3** — `emo build` with incremental caching.
+- [x] **T13.4** — Benchmark set wired into CI (numbers recorded, not just pass/fail).
+- [x] **T13.5** — Stage B: type-driven specialization passes (unboxing, direct dispatch) behind completeness checks from step 08 data.
+- [x] **T13.6** — C FFI linking path once the binding-surface syntax is decided (blocked — settle in `CHECK.md` first).
+- [x] **T13.7** — Bootstrap test: the `examples/` suite as compiled binaries matches interpreter output byte-for-byte.
 
-Follow-up: document the Stage A emission choice (source vs constructed module trees) and its tradeoff in `docs/`.
+Close-out: Stage A emits OCaml source (tradeoff documented in `docs/native-backend.md`); the IR lives in `src/emo_ir` with the Stage B `specialize` fixed point, and T13.5's specialization landed with the T13.1/T13.2 commits. `foreign def` settled as above, marshaling through generated C wrappers (`emo build` compiles them with `cc`); `Float`/`String`/`Bool` cross the boundary, everything else refuses with E4200. Benchmarks: `benchmarks/results.md` records fib(30) 345ms unspecialized vs 212ms specialized (~1.6x), ping-pong, JSON scan, and an HTTP echo load test at 112 req/s. Bootstrap: all five examples build to binaries matching `emo run` byte-for-byte (the `bootstrap` suite in `test/emo_project`). Decisions are in `plan/step-13-native-backend.md` (Close-out). **Step 13 acceptance met.**
 
 ### Step 14 — Other targets: wasm, TypeScript, BEAM, qemu · `plan/step-14-other-targets.md`
 
