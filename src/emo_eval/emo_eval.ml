@@ -165,6 +165,8 @@ let global_env () =
     { bound = BuiltinFn "net_connect"; mutable_ = false };
   Hashtbl.replace env.frame "net_listen"
     { bound = BuiltinFn "net_listen"; mutable_ = false };
+  Hashtbl.replace env.frame "net_resolve"
+    { bound = BuiltinFn "net_resolve"; mutable_ = false };
   Hashtbl.replace env.frame "net_udp_bind"
     { bound = BuiltinFn "net_udp_bind"; mutable_ = false };
   Hashtbl.replace env.frame "net_connect_unix"
@@ -478,7 +480,10 @@ type _ Effect.t +=
    returns (the README error model). *)
 
 type _ Effect.t +=
-  | Net_connect : string * int * float * Emo_support.Span.t -> conn Effect.t
+  | Net_resolve : string * Emo_support.Span.t -> string list Effect.t
+  | Net_connect :
+      (string * int * float * string list * Emo_support.Span.t)
+      -> conn Effect.t
   | Net_listen : string * int * Emo_support.Span.t -> listener Effect.t
   | Net_accept : listener * Emo_support.Span.t -> conn Effect.t
   | Net_read_line : conn * Emo_support.Span.t -> string Effect.t
@@ -606,7 +611,11 @@ let run_without_scheduler (body : unit -> unit) : unit =
             | Receive _ ->
                 Some
                   (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
-            | Net_connect (_, _, _, span) ->
+            | Net_resolve (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_resolve`")
+            | Net_connect (_, _, _, _, span) ->
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_connect`")
@@ -998,9 +1007,16 @@ and eval_method env span recv mname arg_exprs =
             (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
   | UdpSocket u, "send_to" -> (
       match eval_args () with
-      | [ String host; Int port; String data ] ->
-          Effect.perform (Net_udp_send_to (u, host, port, data, span));
-          UdpSocket u
+      | [ String host; Int port; String data ] -> (
+          let addrs = Effect.perform (Net_resolve (host, span)) in
+          match addrs with
+          | addr :: _ ->
+              Effect.perform (Net_udp_send_to (u, addr, port, data, span));
+              UdpSocket u
+          | [] ->
+              raise
+                (net_raise span
+                   (Printf.sprintf "cannot resolve host `%s`" host)))
       | _ ->
           error span "E3007"
             "`send_to` expects (host String, port Int, data String)")
@@ -1146,7 +1162,18 @@ and apply_builtin span name args =
             %d arguments"
            (List.length args))
   | "net_connect", [ String host; Int port; Float timeout ] ->
-      TcpConn (Effect.perform (Net_connect (host, port, timeout, span)))
+      let addrs = Effect.perform (Net_resolve (host, span)) in
+      TcpConn (Effect.perform (Net_connect (host, port, timeout, addrs, span)))
+  | "net_resolve", [ String host ] ->
+      Array
+        (Array.of_list
+           (List.map
+              (fun a -> String a)
+              (Effect.perform (Net_resolve (host, span)))))
+  | "net_resolve", vs ->
+      error span "E3007"
+        (Printf.sprintf "`net_resolve` expects 1 argument, got %d"
+           (List.length vs))
   | "net_connect", _ ->
       error span "E3001"
         "`net_connect` expects (host String, port Int, timeout Float)"

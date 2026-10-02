@@ -248,6 +248,12 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ( "net_resolve",
+          {
+            vtype = FuncType ([ ("host", String) ], ArrayType String);
+            is_var = false;
+            depth = 0;
+          } );
         ( "net_udp_bind",
           {
             vtype = FuncType ([ ("host", String); ("port", Int) ], UdpSocket);
