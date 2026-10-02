@@ -148,9 +148,23 @@ and emit_case env scrutinee branches ~tail =
         Printf.sprintf "| %s%s ->\n%s" pattern_with_payload guard body)
       branches
   in
-  let catchall = "| other -> Emo_runtime.case_error other" in
-  Printf.sprintf "(match %s with\n%s\n%s)" scrutinee_code
-    (String.concat "\n" arms) catchall
+  (* The runtime catchall covers non-exhaustive Emo matches; a wildcard
+     Emo arm already covers everything, and a second catchall would be a
+     redundant-case warning in the generated OCaml. *)
+  let exhaustive =
+    List.exists
+      (fun (b : Emo_ir.branch) ->
+        match b.Emo_ir.pattern.Ast.pattern_desc with
+        | Ast.Wildcard | Ast.Pattern_binding _ -> true
+        | _ -> false)
+      branches
+  in
+  let arms = String.concat "\n" arms in
+  let arms =
+    if exhaustive then arms
+    else Printf.sprintf "%s\n| other -> Emo_runtime.case_error other" arms
+  in
+  Printf.sprintf "(match %s with\n%s)" scrutinee_code arms
 
 (* The OCaml pattern over [Emo_eval.value] for an IR pattern, plus the
    branch's pattern variables with their tuple positions. *)
@@ -176,7 +190,7 @@ and pattern_bindings (p : Emo_ast.pattern) : (string * int) list =
     | Ast.Pattern_binding name -> (name, position) :: acc
     | Ast.Tuple_pattern ps ->
         List.fold_left
-          (fun (pos, acc) sub -> (pos + 1, go sub position acc))
+          (fun (pos, acc) sub -> (pos + 1, go sub pos acc))
           (position, acc) ps
         |> snd
     | _ -> acc
