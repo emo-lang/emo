@@ -440,6 +440,175 @@ let determinism_tests =
               | None -> "?"));
   ]
 
+(* ---- Stress: the acceptance volumes, under both schedulers. ---- *)
+
+(* 500k round trips = 1M messages between two processes. *)
+let ping_pong =
+  {|
+def pong(n Int) Int {
+  receive {
+    ("ping", reply_to) -> {
+      reply_to <- "pong"
+      return pong(n + 1)
+    }
+    ("done", report_to) -> {
+      report_to <- n
+      return halt()
+    }
+  }
+}
+
+const p = do pong(0)
+const me = self_pid()
+def round(i Int) Int {
+  if i == 0 {
+    p <- ("done", me)
+    return 0
+  } else {
+    p <- ("ping", me)
+    receive {
+      _ -> { return round(i - 1) }
+    }
+  }
+}
+
+round(500000)
+receive {
+  n -> { print(n) }
+}
+|}
+
+(* 1000 workers, each answering once; the main process folds the answers. *)
+let fan_out =
+  {|
+def worker(reply_to Pid) Int {
+  receive {
+    n -> {
+      reply_to <- n * 2
+      return halt()
+    }
+  }
+}
+
+const me = self_pid()
+def launch(i Int) Int {
+  if i == 0 {
+    return 0
+  } else {
+    const w = do worker(me)
+    w <- i
+    return launch(i - 1)
+  }
+}
+
+launch(1000)
+
+def collect(n Int, sum Int) Int {
+  if n == 0 {
+    return sum
+  } else {
+    receive {
+      v -> { return collect(n - 1, sum + v) }
+    }
+  }
+}
+
+print(collect(1000, 0))
+|}
+
+(* A receive loop recursing a million times — the native stack stays flat. *)
+let deep_loop =
+  {|
+def looper(n Int) Int {
+  receive {
+    ("stop", report_to) -> {
+      report_to <- n
+      return halt()
+    }
+    _ -> {
+      return looper(n + 1)
+    }
+  }
+}
+
+const l = do looper(0)
+const me = self_pid()
+def feed(i Int) Int {
+  if i == 0 {
+    l <- ("stop", me)
+    return 0
+  } else {
+    l <- "tick"
+    return feed(i - 1)
+  }
+}
+
+feed(1000000)
+receive {
+  n -> { print(n) }
+}
+|}
+
+let stress_tests =
+  [
+    tc "ping-pong 1M messages on the own scheduler" (fun () ->
+        let output, _ = run_det ping_pong in
+        Alcotest.(check string) "output" "500000\n" output);
+    tc "ping-pong 1M messages on Eio" (fun () ->
+        let output = run_source ping_pong in
+        Alcotest.(check string) "output" "500000\n" output);
+    tc "fan-out/fan-in 1000 workers on the own scheduler" (fun () ->
+        let output, _ = run_det fan_out in
+        Alcotest.(check string) "output" "1001000\n" output);
+    tc "fan-out/fan-in 1000 workers on Eio" (fun () ->
+        let output = run_source fan_out in
+        Alcotest.(check string) "output" "1001000\n" output);
+    tc "a million receive-loop iterations on the own scheduler" (fun () ->
+        let output, _ = run_det deep_loop in
+        Alcotest.(check string) "output" "1000000\n" output);
+    tc "receive-loop iterations keep the Eio stack flat" (fun () ->
+        (* On Eio the feeder alternates with the looper — the property
+           under test (a receive loop recursing without growing the
+           native stack) is the same. *)
+        let output =
+          run_source
+            {|
+def looper(n Int) Int {
+  receive {
+    ("stop", report_to) -> {
+      report_to <- n
+      return halt()
+    }
+    ("tick", reply_to) -> {
+      reply_to <- "ack"
+      return looper(n + 1)
+    }
+  }
+}
+
+const l = do looper(0)
+const me = self_pid()
+def feed(i Int, who Pid) Int {
+  if i == 0 {
+    who <- ("stop", me)
+    return 0
+  } else {
+    who <- ("tick", me)
+    receive {
+      _ -> { return feed(i - 1, who) }
+    }
+  }
+}
+
+feed(100000, l)
+receive {
+  n -> { print(n) }
+}
+|}
+        in
+        Alcotest.(check string) "output" "100000\n" output);
+  ]
+
 let () =
   Alcotest.run "emo_sched"
     [
@@ -447,4 +616,5 @@ let () =
       ("isolation", isolation_tests);
       ("box", box_tests);
       ("determinism", determinism_tests);
+      ("stress", stress_tests);
     ]

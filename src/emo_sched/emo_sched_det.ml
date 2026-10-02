@@ -20,6 +20,8 @@ type event =
    `receive`, waiting for a message its select accepts. *)
 type runnable =
   | Fresh of Emo_eval.process * (unit -> unit)
+  | (* a sender parked by its own send: resume past the send, no payload *)
+    Continue of Emo_eval.process * (unit, unit) Effect.Shallow.continuation
   | Resumed of
       Emo_eval.process
       * Emo_eval.selected
@@ -115,7 +117,12 @@ let rec handler state (proc : Emo_eval.process) () :
                 Emo_eval.deliver target v;
                 log state (Sent (state.current, pid));
                 wake state pid;
-                Effect.Shallow.continue_with k () (handler state proc ()))
+                (* Sending yields the sender's slice: the continuation
+                   re-joins the run queue instead of nesting one frame per
+                   message, so a process firing a million sends never
+                   grows the stack. *)
+                Queue.add (Continue (proc, k)) state.runq;
+                None)
         | Emo_eval.Self_pid ->
             Some
               (fun (k : (a, _) Effect.Shallow.continuation) ->
@@ -153,19 +160,29 @@ let rec loop state =
     else ()
   else
     let item = pick_and_take state in
-    let proc = match item with Fresh (p, _) -> p | Resumed (p, _, _) -> p in
+    let proc =
+      match item with
+      | Fresh (p, _) -> p
+      | Continue (p, _) -> p
+      | Resumed (p, _, _) -> p
+    in
+    state.current <- proc.Emo_eval.pid;
     let h = handler state proc () in
     let outcome =
       match item with
       | Fresh (_, body) ->
           Effect.Shallow.continue_with (Effect.Shallow.fiber body) () h
+      | Continue (_, k) -> Effect.Shallow.continue_with k () h
       | Resumed (_, picked, k) -> Effect.Shallow.continue_with k picked h
     in
     (match outcome with
     | None -> ()
     | Some info ->
         let proc =
-          match item with Fresh (p, _) -> p | Resumed (p, _, _) -> p
+          match item with
+          | Fresh (p, _) -> p
+          | Continue (p, _) -> p
+          | Resumed (p, _, _) -> p
         in
         log state (Exited (proc.Emo_eval.pid, exit_name info));
         Emo_eval.mark_exit proc info);
