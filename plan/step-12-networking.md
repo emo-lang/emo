@@ -1,6 +1,6 @@
 # Step 12 — Networking Library
 
-**Milestone:** M3 complete · **Prereq:** steps 01–11 · **Status:** not started
+**Milestone:** M3 complete · **Prereq:** steps 01–11 · **Status:** done
 
 ## Goal
 
@@ -48,13 +48,13 @@ coloring is structurally impossible.
 
 ## Tasks
 
-- [ ] TCP socket surface on the scheduler; graceful close semantics.
-- [ ] UDP + Unix-domain sockets.
-- [ ] DNS resolution through the same suspension path.
-- [ ] OpenSSL TLS binding; certificate-verification errors surfaced as
+- [x] TCP socket surface on the scheduler; graceful close semantics.
+- [x] UDP + Unix-domain sockets.
+- [x] DNS resolution through the same suspension path.
+- [x] OpenSSL TLS binding; certificate-verification errors surfaced as
       Emo exceptions.
-- [ ] HTTP client; HTTP server with process-per-connection helper.
-- [ ] Stdlib packaging with target metadata; fixture-based integration
+- [x] HTTP client; HTTP server with process-per-connection helper.
+- [x] Stdlib packaging with target metadata; fixture-based integration
       tests (loopback listeners, deterministic order).
 
 ## Acceptance
@@ -70,9 +70,33 @@ coloring is structurally impossible.
   process-per-connection server — run in direct style with supervision
   available at library level.
 
-## Open design items
+## Close-out
 
-- Exception-catch syntax is pending (`CHECK.md`) and gates the ergonomics
-  tests above; coordinate with step 11's design pass.
-- Exact stdlib module/method names (`net.*`, `http.*`) should be written
-  into the README when this step settles them.
+- **Scheduler mapping** — networking rides the own effects runtime (the
+  `emo run` scheduler). Socket effects park continuations on fd
+  readiness and per-operation deadlines; the Eio bridge refuses them
+  with E3013, per the plan's backend mapping (the own runtime is the
+  native networking backend).
+- **DNS** — resolution is its own effect (`net_resolve`), performed by
+  `net.connect`, `net.tls_connect`, and UDP `send_to` before they
+  connect; the driver resolves inline in its handler today.
+- **TLS** — OpenSSL on the nonblocking fd: want_read / want_write park
+  the handshake through the scheduler. Verification loads the default
+  trust paths and fails closed; `net_tls_connect_insecure` is the
+  explicit opt-out.
+- **Stdlib delivery** — `net` and `http` ship as directory-registry
+  packages under `stdlib/registry` (targets = ["native"]); a project
+  points `EMO_REGISTRY` at it and requires them like any package. The
+  acceptance example is `examples/http_roundtrip` with its lockfile.
+- **Language surface that landed with the library** — the `\r` escape,
+  `Block` annotation vocabulary, lenient block-parameter annotations
+  (cross-module types narrow to Unknown), forward-reference checking in
+  the checker, `String` methods (`length`, `substring`, `split`,
+  `trim`, `lower`, `index_of`, `starts_with`, `to_int`), and
+  `Array.append`.
+- **HTTP posture** — one connection per exchange (`Connection: close`),
+  redirects never followed, chunked responses refused, `Host` sent
+  without the port.
+- Exact stdlib names are in the README (Networking). Exception-catch
+  syntax stays pending in `CHECK.md`; acceptance rests on uncaught
+  reporting, per the design gate.
