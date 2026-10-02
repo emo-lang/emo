@@ -151,4 +151,92 @@ print("main continues")
               | None -> "?"));
   ]
 
-let () = Alcotest.run "emo_sched" [ ("scheduler", scheduler_tests) ]
+(* Evaluates the single expression statement of [source] in [env]. *)
+let eval_one source env =
+  match Emo_parser.parse_program ~file:"<test>" ~source with
+  | [
+   {
+     Emo_ast.item_desc =
+       Emo_ast.Item_stmt { Emo_ast.stmt_desc = Emo_ast.Expr_stmt e; _ };
+     _;
+   };
+  ] ->
+      Emo_eval.eval_expr env e
+  | _ -> failwith "expected one expression statement"
+
+let isolation_tests =
+  [
+    tc "a process that raises dies alone; the parent continues" (fun () ->
+        let output =
+          run_source
+            {|
+def bomber() Int {
+  receive {
+    _ -> { raise Exception.new("boom") }
+  }
+}
+
+const b = do bomber()
+b <- "light the fuse"
+print("still here")
+|}
+        in
+        Alcotest.(check string) "output" "still here\n" output);
+    tc "a runtime error kills only the offending process" (fun () ->
+        let output =
+          run_source
+            {|
+def divider() Int {
+  receive {
+    (_, 0) -> { return 1 / 0 }
+    (_, n) -> { return 100 / n }
+  }
+}
+
+const d = do divider()
+d <- (self_pid(), 0)
+print("main survives")
+|}
+        in
+        Alcotest.(check string) "output" "main survives\n" output);
+    tc "the root's uncaught raise is the program's outcome" (fun () ->
+        match run_source {|raise Exception.new("root boom")|} with
+        | _ -> Alcotest.fail "expected the root's raise to propagate"
+        | exception Emo_eval.Emo_raise _ -> ());
+    tc "exit hooks fire with the recorded exit" (fun () ->
+        let events = Buffer.create 64 in
+        Emo_sched_eio.run (fun () ->
+            let env = Emo_eval.global_env () in
+            List.iter (Emo_eval.eval_item env)
+              (Emo_parser.parse_program ~file:"<test>"
+                 ~source:
+                   {|def quitter() Int {
+  receive {
+    _ -> { return halt() }
+  }
+}
+|});
+            match eval_one "do quitter()" env with
+            | Emo_eval.Pid pid ->
+                Emo_eval.on_exit pid (fun info ->
+                    let name =
+                      match info with
+                      | Emo_eval.Exit_normal -> "normal"
+                      | Emo_eval.Exit_raised _ -> "raised"
+                      | Emo_eval.Exit_failed _ -> "failed"
+                    in
+                    Buffer.add_string events name);
+                let span =
+                  Emo_support.Span.make ~file:"<test>" ~line:1 ~col:1 ~start:0
+                    ~stop:0
+                in
+                ignore
+                  (Effect.perform
+                     (Emo_eval.Send (pid, Emo_eval.String "bye", span)))
+            | _ -> failwith "expected a pid");
+        Alcotest.(check string) "exit signal" "normal" (Buffer.contents events));
+  ]
+
+let () =
+  Alcotest.run "emo_sched"
+    [ ("scheduler", scheduler_tests); ("isolation", isolation_tests) ]
