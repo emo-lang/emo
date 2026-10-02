@@ -924,6 +924,127 @@ print(sqrt(4.0))|} );
               "line" 1 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
   ]
 
+(* ---- Step 13 bootstrap: the examples/ suite as compiled binaries ----
+   Every example runs through the interpreter and through `emo build`,
+   and both outputs must match the example's golden file byte-for-byte. *)
+
+let examples_dir () =
+  match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
+  | Some dir -> from_original_cwd dir
+  | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
+
+let read_all ic =
+  let buf = Buffer.create 256 in
+  (try
+     while true do
+       Buffer.add_char buf (input_char ic)
+     done
+   with End_of_file -> ());
+  Buffer.contents buf
+
+let capture_program_output f =
+  let out = Buffer.create 256 in
+  Emo_eval.set_output (Buffer.add_string out);
+  Fun.protect
+    ~finally:(fun () ->
+      Emo_eval.set_output (fun s ->
+          print_string s;
+          flush stdout))
+    f;
+  Buffer.contents out
+
+(* Builds the example from [root] (the build cache lands in the root's
+   .emo-build directory) and returns (status, build output, binary
+   path). *)
+let build_example root entry name =
+  let emo_exe = emo_exe_path () in
+  let bin = Filename.concat root (name ^ "-bin") in
+  let out = Buffer.create 256 in
+  let ic =
+    Unix.open_process_in
+      (Printf.sprintf "exec 2>&1; cd %s && %s build %s -o %s"
+         (Filename.quote root) (Filename.quote emo_exe) (Filename.quote entry)
+         (Filename.quote bin))
+  in
+  (try
+     while true do
+       Buffer.add_channel out ic 1
+     done
+   with End_of_file -> ());
+  let status = Unix.close_process_in ic in
+  (status, Buffer.contents out, bin)
+
+(* The bootstrap assertion for one example: the interpreter run and the
+   compiled binary agree with the golden text. [expected] picks the
+   golden file; the http example has none, so its fixed output is
+   spelled here. [root] is the project root discovery walks from — the
+   examples/ directory, except http_roundtrip which is a package of its
+   own. *)
+let bootstrap_example root name entry expected =
+  let golden =
+    if expected then
+      Emo_project.read_file
+        (Filename.concat (Filename.concat root name) "expected.txt")
+    else "hello from emo\n200\n"
+  in
+  (* Module and package discovery root at the current directory, so the
+     interpreter runs from the project root, like `emo run`. *)
+  Sys.chdir root;
+  let interpreted =
+    capture_program_output (fun () ->
+        match
+          Emo_project.run_entry ~entry_file:entry ~check:true
+            ~sched:Emo_project.Own ()
+        with
+        | _project -> ()
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.fail
+              (String.concat "\n"
+                 (List.map
+                    (fun d ->
+                      Printf.sprintf "%s at %s: %s"
+                        (match d.Emo_support.Diagnostic.code with
+                        | Some c -> c
+                        | None -> "?")
+                        (Emo_support.Span.to_string
+                           d.Emo_support.Diagnostic.span)
+                        d.Emo_support.Diagnostic.message)
+                    ds)))
+  in
+  Alcotest.(check string)
+    (name ^ ": interpreter matches golden")
+    golden interpreted;
+  let status, build_out, bin = build_example root entry name in
+  (match status with
+  | Unix.WEXITED 0 -> ()
+  | _ -> Alcotest.fail (Printf.sprintf "%s: build failed: %s" name build_out));
+  let ic = Unix.open_process_in bin in
+  let compiled = read_all ic in
+  ignore (Unix.close_process_in ic);
+  Alcotest.(check string)
+    (name ^ ": binary matches interpreter")
+    interpreted compiled
+
+let bootstrap_tests =
+  [
+    tc "fib compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example (examples_dir ()) "fib" "fib/main.emo" true);
+    tc "hello_world compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example (examples_dir ()) "hello_world" "hello_world/main.emo"
+          true);
+    tc "objects compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example (examples_dir ()) "objects" "objects/main.emo" true);
+    tc "shop compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example (examples_dir ()) "shop" "shop/checkout.emo" true);
+    tc "http_roundtrip compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "http_roundtrip")
+          "http_roundtrip" "main.emo" false);
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -937,4 +1058,5 @@ let () =
       ("shop_golden", shop_golden_tests);
       ("stdlib_http", stdlib_http_tests);
       ("ffi", ffi_tests);
+      ("bootstrap", bootstrap_tests);
     ]
