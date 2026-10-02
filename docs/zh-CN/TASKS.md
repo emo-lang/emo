@@ -34,7 +34,7 @@
 | 进程获取自身 pid 的机制 | T11.1 | 已落定——`self_pid()` 内置、`Pid` 类型渲染为 `<pid N>`、`halt()`;核心不提供用户态 kill/wait |
 | 异常捕获语法 | T12.5、步骤 12 验收 | 暂无 catch 形式;仅有未捕获异常报告 |
 | 清单/锁文件文件名、scope 前缀格式、版本区间、deps CLI 命令名 | T10.2、T10.5–T10.6、T10.8 | `package.emo`、`emo.lock`、`owner/name`、仅精确版本、`emo deps *` |
-| C FFI 绑定表面语法 | T13.6 | FFI 任务被阻塞;先写入 `CHECK.md` 并落定 |
+| C FFI 绑定表面语法 | T13.6 | 已落定——`foreign def name(params) Ret = "c_symbol"`,仅 `Float`/`String`/`Bool`,经生成的 C 包装器编组 |
 
 ---
 
@@ -229,15 +229,15 @@
 **前置:** 步骤 01–12。
 **完成标准:** 每个 `examples/*.emo` 都编译为输出与 `emo run` 完全一致的原生二进制(CI 中金测对比);特化后的数值代码在基准测试中显著优于未特化构建;`emo build` 构建的每连接一进程 HTTP 服务器通过负载测试;基准结果被记录。
 
-- [ ] **T13.1** — IR 定义 + 已检查 AST 的 lowering。
-- [ ] **T13.2** — 阶段 A:OCaml 发射、运行时链接、单二进制输出。
-- [ ] **T13.3** — 带增量缓存的 `emo build`。
-- [ ] **T13.4** — 接入 CI 的基准集(记录数字,而非只记通过/失败)。
-- [ ] **T13.5** — 阶段 B:以步骤 08 完整性检查为前置的类型驱动特化 pass(去装箱、直接分派)。
-- [ ] **T13.6** — C FFI 链接路径,待绑定表面语法落定后进行(被阻塞——先在 `CHECK.md` 落定)。
-- [ ] **T13.7** — 引导测试:`examples/` 全套编译出的二进制与解释器输出逐字节一致。
+- [x] **T13.1** — IR 定义 + 已检查 AST 的 lowering。
+- [x] **T13.2** — 阶段 A:OCaml 发射、运行时链接、单二进制输出。
+- [x] **T13.3** — 带增量缓存的 `emo build`。
+- [x] **T13.4** — 接入 CI 的基准集(记录数字,而非只记通过/失败)。
+- [x] **T13.5** — 阶段 B:以步骤 08 完整性检查为前置的类型驱动特化 pass(去装箱、直接分派)。
+- [x] **T13.6** — C FFI 链接路径,待绑定表面语法落定后进行(被阻塞——先在 `CHECK.md` 落定)。
+- [x] **T13.7** — 引导测试:`examples/` 全套编译出的二进制与解释器输出逐字节一致。
 
-后续:把阶段 A 的发射选择(源码 vs 构造模块树)及权衡写进 `docs/`。
+收尾:阶段 A 发射 OCaml 源码(权衡记录在 `docs/zh-CN/native-backend.md`);IR 位于 `src/emo_ir`,含阶段 B 的 `specialize` 不动点,T13.5 的特化随 T13.1/T13.2 提交交付。`foreign def` 按上表落定,经生成的 C 包装器编组(`emo build` 用 `cc` 编译它们);`Float`/`String`/`Bool` 可跨边界,其余类型以 E4200 拒绝。基准:`benchmarks/results.md` 记录 fib(30) 未特化 345ms 对特化 212ms(约 1.6 倍)、ping-pong、JSON 扫描,以及 HTTP echo 负载测试 112 req/s。引导:全部五个示例构建的二进制与 `emo run` 逐字节一致(`test/emo_project` 的 `bootstrap` 套件)。决策见 `plan/step-13-native-backend.md`(收尾)。**步骤 13 验收达成。**
 
 ### 步骤 14 — 其余目标:wasm、TypeScript、BEAM、qemu · `plan/step-14-other-targets.md`
 
