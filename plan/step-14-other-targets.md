@@ -82,8 +82,12 @@ recommended priority.
   first target). Its key decisions are settled in that file's
   "Decisions settled here": lowering from the IR (superseding this
   file's earlier "the AST suffices" note), uniform async mapping, and
-  cooperative tasks. `Wasm` is next in the recommended order; its GC
-  prototyping remains its own gate.
+  cooperative tasks.
+- **Wasm → `plan/step-16-wasm.md`** (scheduled 2026-10-02, second
+  target). The GC question is settled: **WasmGC** — structs and arrays
+  with RTT dispatch, no custom heap. The i31-vs-i64 and unboxing
+  details are that file's recorded follow-ups. BEAM is next in the
+  recommended order; qemu stays last.
 
 ## Acceptance
 
