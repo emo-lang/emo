@@ -150,9 +150,35 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool) : int =
           ignore
             (Sys.command
                (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir)));
-        (* Incremental: the emitted source's digest names the cached
-           binary — an unchanged program skips the toolchain entirely. *)
-        let digest = Digest.to_hex (Digest.string source) in
+        (* Incremental: the emitted source's digest (plus the runtime
+           library's mtime — a runtime change invalidates the cache)
+           names the cached binary — an unchanged program skips the
+           toolchain entirely. *)
+        (* The runtime library's size participates in the digest: a
+           runtime change invalidates cached binaries. *)
+        let exe_dir = Filename.dirname Sys.executable_name in
+        let src_dir = Filename.concat exe_dir ".." in
+        let libs =
+          [ "emo_support"; "emo_lexer"; "emo_parser"; "emo_ast"; "emo_check";
+            "emo_eval"; "emo_sched"; "emo_runtime" ]
+        in
+        let runtime_size =
+          List.fold_left
+            (fun acc lib ->
+              let path =
+                Filename.concat
+                  (Filename.concat src_dir lib)
+                  (lib ^ ".cmxa")
+              in
+              if Sys.file_exists path then acc + (Unix.stat path).st_size
+              else acc)
+            0 libs
+        in
+        let digest =
+          Digest.to_hex
+            (Digest.string
+               (Printf.sprintf "%s|%d|%b" source runtime_size specialize))
+        in
         let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
         if Sys.file_exists cache_binary then begin
           ignore

@@ -1,0 +1,27 @@
+// A JSON-ish scanner: nested string arithmetic over an index — the
+// string-method surface under load.
+def digits(s String, from Int) Int {
+  if from >= s.length() {
+    return from
+  }
+  const c = s.substring(from, 1)
+  if c == "0" { return digits(s, from + 1) }
+  if c == "1" { return digits(s, from + 1) }
+  if c == "2" { return digits(s, from + 1) }
+  if c == "3" { return digits(s, from + 1) }
+  if c == "4" { return digits(s, from + 1) }
+  if c == "5" { return digits(s, from + 1) }
+  if c == "6" { return digits(s, from + 1) }
+  if c == "7" { return digits(s, from + 1) }
+  if c == "8" { return digits(s, from + 1) }
+  if c == "9" { return digits(s, from + 1) }
+  return from
+}
+
+def skip_value(s String, from Int) Int {
+  return digits(s, from)
+}
+
+const doc = "{\"n\": 123456789}"
+const end_i = skip_value(doc, 6)
+print(doc.substring(6, end_i - 6).to_int())

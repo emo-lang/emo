@@ -113,6 +113,9 @@ type env = {
   current : string list;
   mutable locals : string list; (* innermost first *)
   types : (int, Emo_check.t) Hashtbl.t;
+  module_paths : string list list; (* every module in the program *)
+  mutable aliases : (string * string list) list;
+      (* `const order = shop.order` — a name bound to a module path *)
 }
 
 let is_builtin = function
@@ -148,6 +151,32 @@ and dotted_path (e : Ast.expr) : (string list * string) option =
       let name = List.hd (List.rev path) in
       if module_path = [] then None else Some (module_path, name)
   | _ -> None
+
+(* The full segment chain of a dotted expression: [shop.order.total] →
+   ["shop"; "order"; "total"]. *)
+and full_chain (e : Ast.expr) : string list option =
+  let rec go e =
+    match e.Ast.desc with
+    | Ast.Ident name -> Some [ name ]
+    | Ast.Type_ident name -> Some [ name ]
+    | Ast.Member (inner, name) ->
+        Option.map (fun path -> path @ [ name ]) (go inner)
+    | _ -> None
+  in
+  go e
+
+(* Substitutes a leading module alias: [order.total] with [order ↔
+   shop.order] becomes (["shop"; "order"], "total"). *)
+and is_module_path env (path : string list) : bool =
+  List.exists (fun m -> m = path) env.module_paths
+
+and substitute_alias env (path : string list) : string list =
+  match path with
+  | head :: rest -> (
+      match List.assoc_opt head env.aliases with
+      | Some target -> target @ rest
+      | None -> path)
+  | [] -> []
 
 (* Reorders named/positional arguments into the callee's parameter order —
    positionals fill the first free slots left to right, named arguments
@@ -234,6 +263,10 @@ and lower_expr env (e : Ast.expr) : expr =
                 [ (List.rev (List.tl (List.rev path)), type_name) ]
           in
           match Hashtbl.find_opt env.symbols (path, member) with
+          | Some (S_func { mangled; params }) when params = [] ->
+              (* A const binding: calling the zero-arg function
+                 evaluates it. *)
+              expr (Call { func = mangled; args = [] })
           | Some (S_func { mangled; _ }) | Some (S_class { mangled; _ }) ->
               expr (Global mangled)
           | _ -> (
@@ -386,6 +419,7 @@ and lower_call env span callee args =
 and resolve_callee env (callee : Ast.expr) : (string * string list) option =
   match dotted_path callee with
   | Some (module_path, name) -> (
+      let module_path = substitute_alias env module_path in
       match Hashtbl.find_opt env.symbols (module_path, name) with
       | Some (S_func { mangled; params }) -> Some (mangled, params)
       | Some (S_class { mangled; params }) -> Some (mangled, params)
@@ -419,9 +453,25 @@ and lower_stmts env (stmts : Ast.stmt list) : stmt list =
 and lower_stmt env (s : Ast.stmt) : stmt =
   match s.Ast.stmt_desc with
   | Ast.Expr_stmt e -> Effect (lower_expr env e)
-  | Ast.Binding { mutable_; name; init } ->
-      env.locals <- name :: env.locals;
-      Let { mutable_; name; init = lower_expr env init }
+  | Ast.Binding { mutable_; name; init } -> (
+      (* `const order = shop.order` binds a module path: record the
+         alias so later `order.total(x)` resolves through it. *)
+      match
+        ( mutable_,
+          Option.bind (full_chain init) (fun chain ->
+              if is_module_path env chain then Some chain else None) )
+      with
+      | false, Some target ->
+          env.aliases <- (name, target) :: env.aliases;
+          Let
+            {
+              mutable_ = false;
+              name;
+              init = { ety = Unknown; desc = Const (L_string "") };
+            }
+      | _ ->
+          env.locals <- name :: env.locals;
+          Let { mutable_; name; init = lower_expr env init })
   | Ast.Assign { target; value } -> (
       match target.Ast.desc with
       | Ast.Ident name -> Assign_var { name; value = lower_expr env value }
@@ -653,6 +703,32 @@ let lower (input : input) : program =
           | _ -> ())
         m.mitems)
     input.modules;
+  (* Module aliases: `const order = shop.order` in any module. Scanned
+     up front so every def body resolves through them regardless of
+     lowering order. *)
+  let all_module_paths =
+    List.map (fun (m : module_input) -> m.mpath) input.modules
+  in
+  let pre_aliases =
+    List.concat_map
+      (fun (m : module_input) ->
+        List.filter_map
+          (fun (item : Ast.item) ->
+            match item.Ast.item_desc with
+            | Ast.Item_stmt
+                {
+                  stmt_desc = Ast.Binding { mutable_ = false; name; init };
+                  _;
+                } -> (
+                match full_chain init with
+                | Some chain when
+                    List.exists (fun mp -> mp = chain) all_module_paths ->
+                    Some (name, chain)
+                | _ -> None)
+            | _ -> None)
+          m.mitems)
+      input.modules
+  in
   let funcs = ref [] in
   let classes = ref [] in
   let interfaces = ref [] in
@@ -660,7 +736,9 @@ let lower (input : input) : program =
   List.iter
     (fun (m : module_input) ->
       let const_env =
-        { symbols; current = m.mpath; locals = []; types = m.mtypes }
+        { symbols; current = m.mpath; locals = []; types = m.mtypes;
+            module_paths = all_module_paths;
+            aliases = pre_aliases }
       in
       List.iter
         (fun (item : Ast.item) ->
@@ -684,7 +762,9 @@ let lower (input : input) : program =
   (* pass 3: defs, classes, interfaces *)
   List.iter
     (fun (m : module_input) ->
-      let env = { symbols; current = m.mpath; locals = []; types = m.mtypes } in
+      let env = { symbols; current = m.mpath; locals = []; types = m.mtypes;
+            module_paths = all_module_paths;
+            aliases = pre_aliases } in
       List.iter
         (fun (item : Ast.item) ->
           match item.Ast.item_desc with
@@ -736,7 +816,9 @@ let lower (input : input) : program =
     List.find (fun (m : module_input) -> m.mpath = input.entry) input.modules
   in
   let env =
-    { symbols; current = input.entry; locals = []; types = entry_module.mtypes }
+    { symbols; current = input.entry; locals = []; types = entry_module.mtypes;
+      module_paths = all_module_paths;
+      aliases = pre_aliases }
   in
   let pinit =
     entry_module.mitems

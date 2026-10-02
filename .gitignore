@@ -1,4 +1,7 @@
 .emo-build/
+*.emo-bin
+*.emo-bin-nospec
+
 # macOS
 .DS_Store
 
