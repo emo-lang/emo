@@ -94,13 +94,13 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
       emit_case env scrutinee branches ~tail
   | Emo_ir.Receive { branches } -> emit_receive env branches ~tail
   | Emo_ir.Send { target; message } ->
-      Printf.sprintf "Emo_runtime.send %s %s" (emit_expr env target)
-        (emit_expr env message)
+      Printf.sprintf "(Emo_runtime.send (%s) (%s))"
+        (emit_expr env target) (emit_expr env message)
   | Emo_ir.Raise e -> Printf.sprintf "Emo_runtime.raise_ %s" (emit_expr env e)
   | Emo_ir.Return_stmt e ->
       let code = emit_expr env e in
       if tail then code
-      else Printf.sprintf "raise (Emo_runtime.Return_signal %s)" code
+      else Printf.sprintf "raise (Emo_runtime.Return_signal (%s))" code
 
 and unbox env (e : Emo_ir.expr) kind =
   if env.native && e.Emo_ir.ety = Emo_check.Bool then
@@ -131,7 +131,8 @@ and emit_case env scrutinee branches ~tail =
             String.concat ""
               (List.map
                  (fun (name, index) ->
-                   Printf.sprintf "let %s = List.nth payload %d in\n"
+                   Printf.sprintf
+                     "let %s = List.nth (match payload with Emo_eval.Tuple xs -> xs | _ -> []) %d in\n"
                      (local name) index)
                  bindings)
           in
@@ -155,7 +156,9 @@ and emit_case env scrutinee branches ~tail =
 and emit_pattern (p : Emo_ast.pattern) : string =
   match p.Ast.pattern_desc with
   | Ast.Wildcard -> "_"
-  | Ast.Pattern_binding _ -> "payload_binding"
+  (* Bindings are recovered from [payload] by position (see the arm
+     bodies), so the capture itself stays anonymous. *)
+  | Ast.Pattern_binding _ -> "_"
   | Ast.Pattern_literal (L_int n) -> Printf.sprintf "Emo_eval.Int %d" n
   | Ast.Pattern_literal (L_float f) -> Printf.sprintf "Emo_eval.Float %g" f
   | Ast.Pattern_literal (L_string s) -> Printf.sprintf "Emo_eval.String %S" s
@@ -185,35 +188,43 @@ and emit_receive env branches ~tail =
     List.mapi
       (fun i (b : Emo_ir.branch) ->
         let bindings = pattern_bindings b.Emo_ir.pattern in
-        let arity = List.length bindings in
-        ignore arity;
         let pattern_code = emit_pattern b.Emo_ir.pattern in
-        let vars =
-          String.concat "; " (List.map (fun (n, _) -> local n) bindings)
-        in
-        let saved = env.refs in
+        let saved = (env.refs, env.immutables) in
         env.refs <- List.map fst bindings @ env.refs;
+        env.immutables <-
+          List.map (fun (n, _) -> local n) bindings @ env.immutables;
         let guard_inner =
           match b.Emo_ir.guard with
           | Some g -> unbox env g "Bool"
           | None -> "true"
         in
-        env.refs <- saved;
+        env.refs <- fst saved;
+        env.immutables <- snd saved;
+        (* Guards and bindings read the payload's items by position —
+           no partial list patterns in generated code. *)
+        let items_at =
+          String.concat "\n"
+            (List.mapi
+               (fun pos (n, _) ->
+                 Printf.sprintf "let %s = List.nth __items %d in" (local n) pos)
+               bindings)
+        in
         let payload_unpack =
-          if bindings = [] then "let _ = v in true"
-          else Printf.sprintf "(let [%s] = payload in %s)" vars guard_inner
+          if bindings = [] then "true"
+          else
+            Printf.sprintf
+              "(match Emo_runtime.payload_items payload with\n| __items ->\n%s\n%s)"
+              items_at guard_inner
         in
         let payload_return =
           if bindings = [] then Printf.sprintf "Some (%d, [])" i
           else
-            Printf.sprintf "(let [%s] = payload in Some (%d, payload))" vars i
+            Printf.sprintf
+              "(match Emo_runtime.payload_items payload with\n| __items ->\nSome (%d, __items))"
+              i
         in
         Printf.sprintf
-          "(fun v ->\n\
-           (match v with\n\
-           | %s as payload when %s ->\n\
-           %s\n\
-           | _ -> None))"
+          "(fun v ->\n(match v with\n| %s as payload when %s ->\n%s\n| _ -> None))"
           pattern_code payload_unpack payload_return)
       branches
   in
@@ -357,15 +368,19 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Box_new e ->
       Printf.sprintf "Emo_runtime.box_new %s" (emit_expr env e)
   | Emo_ir.Make_exception { message } ->
-      Printf.sprintf "Emo_runtime.exception_new %s" (emit_expr env message)
+      Printf.sprintf "(Emo_runtime.exception_new (%s))" (emit_expr env message)
   | Emo_ir.Do_spawn { func; args } ->
-      Printf.sprintf "Emo_runtime.spawn (fun () -> ignore (%s [%s]))" func
+      (* Arguments evaluate eagerly in the spawning process; the spawned
+         process only runs the call. *)
+      Printf.sprintf
+        "(Emo_runtime.spawn_args [%s] (fun args -> ignore (%s args)))"
         (String.concat "; " (List.map (emit_expr env) args))
+        func
   | Emo_ir.Spawn_value { f; args } ->
       Printf.sprintf
-        "Emo_runtime.spawn (fun () -> ignore (Emo_runtime.apply_value %s [%s]))"
-        (emit_expr env f)
+        "(Emo_runtime.spawn_args [%s] (fun args -> ignore (Emo_runtime.apply_value %s args)))"
         (String.concat "; " (List.map (emit_expr env) args))
+        (emit_expr env f)
   | Emo_ir.Closure { cparams; cbody } ->
       let names = List.map fst cparams in
       let arity = List.length names in
@@ -585,12 +600,7 @@ and emit_specialized_func (f : Emo_ir.func) : string =
          f.Emo_ir.fparams)
   in
   let result = ocaml_type f.Emo_ir.fresult in
-  let body =
-    try emit_native_stmts env f.Emo_ir.fbody ~tail:true ~arm_unit:false
-    with Emo_ir.Lower_error m ->
-      Printf.eprintf "SPEC FAIL %s: %s\n%!" f.Emo_ir.fname m;
-      raise (Emo_ir.Lower_error m)
-  in
+  let body = emit_native_stmts env f.Emo_ir.fbody ~tail:true ~arm_unit:false in
   Printf.sprintf
     "%s %s : %s =\n\
      (let exception Native_return of %s in\n\
@@ -622,6 +632,15 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
     }
   in
   put env "(* generated by emo build — do not edit *)\n";
+  put env "\n(* class method tables *)\n";
+  List.iter
+    (fun (c : Emo_ir.class_) ->
+      put env
+        "let __methods_%s : (string, int * (Emo_eval.value list -> \
+         Emo_eval.value)) Hashtbl.t = Hashtbl.create 8\n"
+        c.Emo_ir.cname)
+    program.Emo_ir.pclasses;
+
   (* Specialized functions first (their own rec group). *)
   if env.specialize then begin
     put env "\n";
@@ -701,38 +720,32 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
           env.immutables <- [];
           put env "\nand %s" (emit_func env f))
         rest);
-  put env "\n\n(* interfaces *)\n";
-  List.iter
-    (fun (name, methods) ->
-      let entries =
-        String.concat "; "
-          (List.map
-             (fun (m, arity) -> Printf.sprintf "(%S, %d)" m arity)
-             methods)
-      in
-      put env "let () = Emo_runtime.register_interface %S [%s]\n" name entries)
-    program.Emo_ir.pinterfaces;
-  put env "\n(* class method tables *)\n";
+
+  (* Class constructors join the same recursion group: they call the
+     class's init (a group member) and their own method table. *)
   List.iter
     (fun (c : Emo_ir.class_) ->
+      env.refs <- [];
+      env.immutables <- [];
+      let init_call =
+        match c.Emo_ir.cinit with
+        | Some init ->
+            Printf.sprintf "let (_ : Emo_eval.value) = %s (self :: args) in"
+              init.Emo_ir.fname
+        | None -> ""
+      in
       put env
-        "let __methods_%s : (string, int * (Emo_eval.value list -> \
-         Emo_eval.value)) Hashtbl.t = Hashtbl.create 8\n"
-        c.Emo_ir.cname)
+        "\nand %s (args : Emo_eval.value list) : Emo_eval.value =\n  let self = Emo_eval.Obj (Emo_runtime.new_obj %S __methods_%s) in\n  %s\n  self"
+        (mangle_class_ctor c) c.Emo_ir.cdisplay c.Emo_ir.cname init_call)
     program.Emo_ir.pclasses;
+  (* Method registrations: after the rec group so the method functions
+     are in scope; method_call passes the receiver as the first
+     argument. *)
   List.iter
     (fun (c : Emo_ir.class_) ->
       put env "\nlet () =\n";
-      (* Only methods enter the dispatch table — the constructor is the
-         class's mangled init, called directly. The registered name is
-         the method's source name (the mangled form is
-         [display ^ "__" ^ sanitize name], so the source name comes back
-         by dropping the prefix and un-sanitizing the predicate suffix). *)
       List.iter
         (fun m ->
-          (* The source name comes back from the mangled function name:
-             drop the mangled class prefix, then un-sanitize the
-             predicate suffix. *)
           let prefix = c.Emo_ir.cname ^ "__" in
           let stripped =
             if
@@ -749,21 +762,24 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
               String.sub stripped 0 (n - 2) ^ "?"
             else stripped
           in
-          let args_list =
-            match m.Emo_ir.fparams with
-            | (_self, _) :: rest -> List.map (fun (p, _) -> local p) rest
-            | [] -> []
-          in
-          put env
-            "  Hashtbl.replace __methods_%s %S (%d, fun args -> %s ([%s] @ \
-             args));\n"
+          put env "  Hashtbl.replace __methods_%s %S (%d, %s);\n"
             c.Emo_ir.cname method_name
             (List.length m.Emo_ir.fparams - 1)
-            m.Emo_ir.fname
-            (String.concat "; " args_list))
+            m.Emo_ir.fname)
         c.Emo_ir.cmethods;
       put env "()\n")
     program.Emo_ir.pclasses;
+  put env "\n\n(* interfaces *)\n";
+  List.iter
+    (fun (name, methods) ->
+      let entries =
+        String.concat "; "
+          (List.map
+             (fun (m, arity) -> Printf.sprintf "(%S, %d)" m arity)
+             methods)
+      in
+      put env "let () = Emo_runtime.register_interface %S [%s]\n" name entries)
+    program.Emo_ir.pinterfaces;
   put env "\n";
   (* the constructor per class: creates the object, runs init (when the
      class has one), returns it — always [C.new], even for init-less

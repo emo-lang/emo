@@ -82,10 +82,14 @@ and state = {
   mutable current : int; (* the pid performing effects right now *)
   rng : Random.State.t;
   log : event list ref;
+  mutable log_enabled : bool;
+      (* compiled programs skip the event log: 400k+ events would pin
+         millions of live list cells and turn every minor GC into a
+         major scan *)
   root : Emo_eval.process;
 }
 
-let log state event = state.log := event :: !(state.log)
+let log state event = if state.log_enabled then state.log := event :: !(state.log)
 
 (* The seeded pick: choose a random index among the runnable processes.
    Same seed, same choice, same interleaving. *)
@@ -1301,7 +1305,8 @@ let rec loop state =
 
 (* Runs [root_body] as the root process under the seeded schedule and
    returns the event log, oldest first. *)
-let run ?(seed = 0) (root_body : unit -> unit) : event list =
+let run ?(seed = 0) ?(log_events = true) (root_body : unit -> unit) :
+    event list =
   Emo_eval.reset_conc ();
   let state =
     {
@@ -1316,6 +1321,7 @@ let run ?(seed = 0) (root_body : unit -> unit) : event list =
       current = 0;
       rng = Random.State.make [| seed |];
       log = ref [];
+      log_enabled = log_events;
       root = Emo_eval.spawn_record ();
     }
   in

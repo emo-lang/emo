@@ -180,7 +180,7 @@ let field obj name =
                name))
   | other -> failwith (type_error other "an instance")
 
-let exception_new message =
+let exception_new (message : Emo_eval.value) : Emo_eval.value =
   let exception_class =
     {
       Emo_eval.cname = "Exception";
@@ -393,28 +393,57 @@ let apply_value f args =
 
 let self_pid () = Emo_eval.Int (Effect.perform Emo_eval.Self_pid)
 
+(* Spawns a process whose arguments were evaluated eagerly in the
+   spawning process — `do f(x)` reads x where the spawn appears, like
+   the interpreter. *)
+let spawn_args (vals : Emo_eval.value list)
+    (f : Emo_eval.value list -> unit) : Emo_eval.value =
+  let thunk () = ignore (f vals) in
+  let nowhere = Emo_support.Span.zero in
+  let pid = Effect.perform (Emo_eval.Spawn (thunk, nowhere)) in
+  Emo_eval.Pid pid
+
 let spawn (thunk : unit -> unit) : Emo_eval.value =
   let nowhere = Emo_support.Span.zero in
   let pid = Effect.perform (Emo_eval.Spawn (thunk, nowhere)) in
-  Emo_eval.Int pid
+  Emo_eval.Pid pid
 
-let send pid_value message =
+let send (pid_value : Emo_eval.value) (message : Emo_eval.value) : unit =
   let pid = unbox_pid pid_value in
   let nowhere = Emo_support.Span.zero in
   Effect.perform (Emo_eval.Send (pid, message, nowhere))
 
-let receive matchers =
+let receive
+    (matchers :
+      (Emo_eval.value -> (int * Emo_eval.value list) option) list)
+    : int * Emo_eval.value list =
+  (* Each branch matcher already tags its own index; the first branch
+     that accepts the message decides. *)
   let matcher v =
-    let rec try_branch i = function
+    let rec try_branch = function
       | [] -> None
       | m :: rest -> (
           match m v with
-          | Some payload -> Some (i, payload)
-          | None -> try_branch (i + 1) rest)
+          | Some picked -> Some picked
+          | None -> try_branch rest)
     in
-    try_branch 0 matchers
+    try_branch matchers
   in
-  Effect.perform (Emo_eval.Compiled_receive matcher)
+  (Effect.perform (Emo_eval.Compiled_receive matcher) : int * Emo_eval.value list)
+
+(* The items a receive branch's pattern binds against: tuple elements,
+   array elements, or the value itself. *)
+let payload_items (v : Emo_eval.value) : Emo_eval.value list =
+  match v with
+  | Emo_eval.Tuple xs -> xs
+  | Emo_eval.Array xs -> Array.to_list xs
+  | other -> [ other ]
+
+(* Binds a receive payload's items: [f] receives the items as a list the
+   emitter destructures with an exhaustive pattern (it knows the
+   branch's own arity). *)
+let bind_items (v : Emo_eval.value) (f : Emo_eval.value list -> 'a) : 'a =
+  f (payload_items v)
 
 let raise_ v =
   let nowhere = Emo_support.Span.zero in
@@ -434,5 +463,17 @@ let run (body : unit -> unit) : int =
   Emo_eval.set_output (fun s ->
       print_string s;
       flush stdout);
-  ignore (Emo_sched_det.run body);
-  0
+  try
+    ignore (Emo_sched_det.run ~log_events:false body);
+    0
+  with
+  | Emo_eval.Error diagnostic ->
+      Printf.eprintf "error[%s]: %s\n%!"
+        (match diagnostic.Emo_support.Diagnostic.code with
+        | Some c -> c
+        | None -> "?")
+        diagnostic.Emo_support.Diagnostic.message;
+      70
+  | Emo_eval.Emo_raise (v, _span, _trace) ->
+      Printf.eprintf "uncaught exception: %s\n%!" (Emo_eval.to_string v);
+      1
