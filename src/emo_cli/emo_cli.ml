@@ -154,13 +154,19 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
           ignore
             (Sys.command
                (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir)));
-        (* Incremental: the emitted source's digest (plus the runtime
-           library's mtime — a runtime change invalidates the cache)
-           names the cached binary — an unchanged program skips the
-           toolchain entirely. *)
-        (* The runtime library's size participates in the digest: a
-           runtime change invalidates cached binaries. *)
-        let exe_dir = Filename.dirname Sys.executable_name in
+        (* Incremental: the digest of the emitted source plus the
+           digests of the runtime libraries names the cached binary —
+           an unchanged program (and unchanged runtime) skips the
+           toolchain entirely, and any runtime change invalidates the
+           cache. *)
+        (* The runtime libraries ride the build tree next to the emo
+           binary; the path is resolved through symlinks so an
+           installed alias still finds them. *)
+        let exe_dir =
+          Filename.dirname
+            (try Unix.realpath Sys.executable_name
+             with _ -> Sys.executable_name)
+        in
         let src_dir = Filename.concat exe_dir ".." in
         let libs =
           [
@@ -174,20 +180,21 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             "emo_runtime";
           ]
         in
-        let runtime_size =
+        let runtime_digest =
           List.fold_left
             (fun acc lib ->
               let path =
                 Filename.concat (Filename.concat src_dir lib) (lib ^ ".cmxa")
               in
-              if Sys.file_exists path then acc + (Unix.stat path).st_size
+              if Sys.file_exists path then
+                acc ^ Digest.to_hex (Digest.file path)
               else acc)
-            0 libs
+            "" libs
         in
         let digest =
           Digest.to_hex
             (Digest.string
-               (Printf.sprintf "%s|%d|%b|%s" source runtime_size specialize
+               (Printf.sprintf "%s|%s|%b|%s" source runtime_digest specialize
                   (String.concat "," cclibs)))
         in
         let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
@@ -205,9 +212,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
           let oc = open_out_bin ml_path in
           output_string oc source;
           close_out oc;
-          (* locate the runtime libraries relative to the emo binary *)
-          let exe_dir = Filename.dirname Sys.executable_name in
-          let src_dir = Filename.concat exe_dir ".." in
+          (* locate the runtime libraries relative to the emo binary
+             (exe_dir/src_dir were resolved at the top of this build) *)
           let libs =
             [
               "emo_support";
