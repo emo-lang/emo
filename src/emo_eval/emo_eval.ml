@@ -21,6 +21,7 @@ type value =
   | Tuple of value list
   | Array of value array
   | Box of value ref
+  | Pid of int (* a process identity, from `do` or `self_pid()` *)
   | ArrowBlock of closure
   | BuiltinFn of string
   | ClassDef of class_def_value
@@ -71,6 +72,7 @@ let type_name = function
   | Tuple _ -> "Tuple"
   | Array _ -> "Array"
   | Box _ -> "Box"
+  | Pid _ -> "Pid"
   | ArrowBlock _ -> "an arrow block"
   | BuiltinFn _ -> "a builtin"
   | ClassDef _ -> "a class"
@@ -96,6 +98,7 @@ let rec equal_value a b =
       Array.iteri (fun i x -> if not (equal_value x ys.(i)) then ok := false) xs;
       !ok
   | Box x, Box y -> equal_value !x !y
+  | Pid x, Pid y -> Int.equal x y
   | EnumMember (t, m), EnumMember (t', m') ->
       String.equal t t' && String.equal m m'
   | EnumType x, EnumType y -> String.equal x.ename y.ename
@@ -116,6 +119,10 @@ let global_env () =
   let env = { frame = Hashtbl.create 16; parent = None } in
   Hashtbl.replace env.frame "print"
     { bound = BuiltinFn "print"; mutable_ = false };
+  Hashtbl.replace env.frame "self_pid"
+    { bound = BuiltinFn "self_pid"; mutable_ = false };
+  Hashtbl.replace env.frame "halt"
+    { bound = BuiltinFn "halt"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
@@ -203,6 +210,7 @@ let rec to_string v =
   | Array vs ->
       "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
   | Box _ -> "<box>"
+  | Pid n -> Printf.sprintf "<pid %d>" n
   | ArrowBlock _ -> "<arrow block>"
   | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
   | ClassDef c -> c.cname
@@ -368,6 +376,150 @@ let rec match_pattern frame span pattern value =
       | Tuple vs when List.length vs = List.length ps ->
           List.for_all2 (fun p v -> match_pattern frame span p v) ps vs
       | _ -> false)
+
+(* ---- Concurrency core ----
+   Processes own mailboxes; the evaluator performs the process operations
+   as OCaml 5 effects, and a scheduler driver handles them at the process
+   boundary (Emo_sched_eio today, the own effects runtime beside it).
+   Contexts that never planned to spawn run under [run_without_scheduler],
+   which turns the operations into diagnostics instead. *)
+
+type exit_info =
+  | Exit_normal
+  | Exit_raised of value * Emo_support.Span.t
+    (* the raised value and the raise site *)
+  | Exit_failed of Emo_support.Diagnostic.t
+(* a runtime diagnostic killed the process *)
+
+type process = {
+  pid : int;
+  mutable inbox : value list; (* oldest message first *)
+  mutable status : [ `Running | `Done of exit_info ];
+  mutable exit_hooks : (exit_info -> unit) list;
+      (* the process-exit signal a supervisor subscribes to *)
+}
+
+exception Halt_signal
+(* `halt()` unwinds the current process; its driver turns it into a normal
+   exit. It never crosses a process boundary. *)
+
+(* The branch a `receive` picked: the branch index and the frame carrying
+   the pattern's bindings, opaque to drivers. *)
+type selected = Selected of int * env
+
+(* The operations the evaluator performs; scheduler drivers handle them.
+   (OCaml 5.5 spells effect declarations as Effect.t extensions.) *)
+type _ Effect.t +=
+  | Spawn : ((unit -> unit) * Emo_support.Span.t) -> int Effect.t
+  | Send : (int * value * Emo_support.Span.t) -> unit Effect.t
+  | Self_pid : int Effect.t
+  | Receive : (value -> selected option) -> selected Effect.t
+
+let processes : (int, process) Hashtbl.t = Hashtbl.create 8
+let next_pid : int ref = ref 0
+
+(* (Re)initializes the concurrency state for one program run. *)
+let reset_conc () =
+  Hashtbl.reset processes;
+  next_pid := 0
+
+let spawn_record () =
+  let p = { pid = !next_pid; inbox = []; status = `Running; exit_hooks = [] } in
+  Hashtbl.replace processes p.pid p;
+  next_pid := !next_pid + 1;
+  p
+
+let find_process span pid =
+  match Hashtbl.find_opt processes pid with
+  | Some p -> p
+  | None -> error span "E3011" (Printf.sprintf "no process has pid %d" pid)
+
+(* Snapshots a message at the process boundary: every Box in the message
+   (directly or inside a tuple, array, or instance) arrives as a fresh
+   copy, so mutability never crosses a process boundary — mutations on
+   either side stay unobservable to the other. Everything else is
+   immutable data or identity and passes as-is. *)
+let rec snapshot (v : value) : value =
+  match v with
+  | Box r -> Box (ref (snapshot !r))
+  | Tuple vs -> Tuple (List.map snapshot vs)
+  | Array xs -> Array (Array.map snapshot xs)
+  | Instance i ->
+      Instance
+        {
+          iclass = i.iclass;
+          ifields = List.map (fun (n, f) -> (n, snapshot f)) i.ifields;
+        }
+  | v -> v
+
+(* Delivers a message to a mailbox. Sends to a process that has already
+   exited are dropped, like any actor system's send to a dead pid. *)
+let deliver proc value =
+  match proc.status with
+  | `Running -> proc.inbox <- proc.inbox @ [ snapshot value ]
+  | `Done _ -> ()
+
+(* Scans the mailbox in order and dequeues the first message [select]
+   accepts; a non-matching message stays queued. None leaves the mailbox
+   untouched. *)
+let take_matching proc select =
+  let rec go before = function
+    | [] -> None
+    | msg :: rest -> (
+        match select msg with
+        | Some picked ->
+            proc.inbox <- List.rev_append before rest;
+            Some picked
+        | None -> go (msg :: before) rest)
+  in
+  go [] proc.inbox
+
+(* Subscribes to a process's exit. A hook on an exited process fires
+   immediately with the recorded exit. *)
+let on_exit pid hook =
+  match Hashtbl.find_opt processes pid with
+  | None -> ()
+  | Some p -> (
+      match p.status with
+      | `Done info -> hook info
+      | `Running -> p.exit_hooks <- hook :: p.exit_hooks)
+
+let mark_exit p info =
+  p.status <- `Done info;
+  List.iter (fun hook -> hook info) p.exit_hooks;
+  p.exit_hooks <- []
+
+(* Runs a body under the guard handler: every process operation reports
+   E3009 — only a scheduled run can spawn, send, or receive. *)
+let run_without_scheduler (body : unit -> unit) : unit =
+  let nowhere =
+    Emo_support.Span.make ~file:"<runtime>" ~line:1 ~col:1 ~start:0 ~stop:0
+  in
+  let refused span what =
+    error span "E3009"
+      (Printf.sprintf
+         "%s runs only under a scheduler — run the program with `emo run`" what)
+  in
+  try
+    Effect.Deep.try_with body ()
+      {
+        effc =
+          (fun (type a) (eff : a Effect.t) ->
+            match eff with
+            | Spawn (_, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`do`")
+            | Send (_, _, span) ->
+                Some (fun (_ : (a, _) continuation) -> refused span "`<-`")
+            | Self_pid ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused nowhere "`self_pid()`")
+            | Receive _ ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
+            | _ -> None);
+      }
+  with Halt_signal -> ()
 
 let not_yet span what =
   error span "E3009" (Printf.sprintf "%s is not supported yet" what)
@@ -726,6 +878,17 @@ and apply_builtin span name args =
   | "print", vs ->
       error span "E3007"
         (Printf.sprintf "`print` expects 1 argument, got %d" (List.length vs))
+  | "self_pid", [] -> Pid (Effect.perform Self_pid)
+  | "self_pid", vs ->
+      error span "E3007"
+        (Printf.sprintf "`self_pid` expects no arguments, got %d"
+           (List.length vs))
+  | "halt", [] ->
+      (* Unwinds the calling process; the scheduler driver records the exit. *)
+      raise Halt_signal
+  | "halt", vs ->
+      error span "E3007"
+        (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
   | _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The function frame. A [Tail_call] rebinds callee and arguments and
@@ -880,8 +1043,48 @@ and eval_stmt env s =
               else try_branches rest
       in
       try_branches branches
-  | Ast.Receive _ -> not_yet span "`receive`"
-  | Ast.Send _ -> not_yet span "processes"
+  | Ast.Receive branches ->
+      (* Selective receive: the mailbox is scanned in order for the first
+         message matching any branch — patterns are ordinary `case`
+         patterns, and a message whose guard fails stays queued. Blocking
+         while nothing matches is the scheduler driver's part. *)
+      let select (msg : value) : selected option =
+        let rec try_branch i = function
+          | [] -> None
+          | branch :: rest ->
+              let frame = child env in
+              if not (match_pattern frame span branch.Ast.pattern msg) then
+                try_branch (i + 1) rest
+              else
+                let guard_holds =
+                  match branch.Ast.guard with
+                  | Some g -> (
+                      match eval_expr frame g with
+                      | Bool b -> b
+                      | gv ->
+                          error span "E3001"
+                            (Printf.sprintf
+                               "a `when` guard must be a Bool, got %s"
+                               (type_name gv)))
+                  | None -> true
+                in
+                if guard_holds then Some (Selected (i, frame))
+                else try_branch (i + 1) rest
+        in
+        try_branch 0 branches
+      in
+      let (Selected (i, frame)) = Effect.perform (Receive select) in
+      List.iter (eval_stmt frame) (List.nth branches i).Ast.body
+  | Ast.Send { target; message } ->
+      let pid =
+        match eval_expr env target with
+        | Pid pid -> pid
+        | other ->
+            error span "E3001"
+              (Printf.sprintf "`<-` delivers to a pid, got %s" (type_name other))
+      in
+      let v = eval_expr env message in
+      Effect.perform (Send (pid, v, span))
   | Ast.Raise e ->
       let v = eval_expr env e in
       raise (Emo_raise (v, span, !call_trace))
@@ -945,7 +1148,26 @@ and eval_expr env e =
   | Ast.Unary (op, x) -> eval_unary env span op x
   | Ast.Binary (op, l, r) -> eval_binary env span op l r
   | Ast.Call (callee, args) -> eval_call env span callee args
-  | Ast.Do _ -> not_yet span "processes"
+  | Ast.Do operand -> (
+      (* `do work(args)` runs the call in a new process: the caller gets the
+         child's pid immediately, and the call's own result is discarded. *)
+      match operand.Ast.desc with
+      | Ast.Call (callee, arg_exprs) ->
+          let f = eval_expr env callee in
+          let args =
+            List.map
+              (fun { Ast.arg_name; arg_value } ->
+                (arg_name, eval_expr env arg_value))
+              arg_exprs
+          in
+          let pid =
+            Effect.perform
+              (Spawn ((fun () -> ignore (apply f span args)), span))
+          in
+          Pid pid
+      | _ ->
+          error span "E3007"
+            "`do` starts a process from a call, like `do work()`")
 
 (* Top-level items: defs register closures in the environment, statements
    run in order. Closures capture [env] by reference, so a def resolves
@@ -1118,7 +1340,8 @@ let run_items items =
   Hashtbl.reset interface_registry;
   call_trace := [];
   let env = global_env () in
-  try List.iter (eval_item env) items
+  (* Unscheduled runs refuse the process operations with E3009. *)
+  try run_without_scheduler (fun () -> List.iter (eval_item env) items)
   with Emo_raise (v, span, trace) ->
     raise (Error (uncaught_diagnostic (v, span, trace)))
 

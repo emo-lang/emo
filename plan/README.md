@@ -55,7 +55,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 08 | Gradual type checker | done |
 | 09 | Structural module system | done |
 | 10 | Packages & version resolution | done |
-| 11 | Processes & message passing | not started |
+| 11 | Processes & message passing | done |
 | 12 | Networking library | not started |
 | 13 | Native backend | not started |
 | 14 | Other targets (wasm / TS / BEAM / qemu) | not started |

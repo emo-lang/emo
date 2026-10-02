@@ -39,7 +39,7 @@ before starting the gated work:
 | --- | --- | --- |
 | CLI command names | T1.3, T7.1–T7.2 | settled in M1 — `run` / `repl` / `check` / `version` shipped |
 | String escape rules | T2.3, T2.4 | Minimal set `\n \t \\ \' \"` |
-| Self-pid mechanism | Step 11 — settled by T11.1 itself | Reply pattern unusable until settled |
+| Self-pid mechanism | T11.1 | settled — `self_pid()` builtin, `Pid` type rendering as `<pid N>`, `halt()`; no user-facing kill/wait |
 | Exception catch syntax | T12.5, Step 12 acceptance | Catch form absent; uncaught reporting only |
 | Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T10.2, T10.5–T10.6, T10.8 | `package.emo`, `emo.lock`, `owner/name`, exact pins only, `emo deps *` |
 | C FFI binding-surface syntax | T13.6 | FFI task blocked; add to `CHECK.md` and settle first |
@@ -204,13 +204,13 @@ Also here: swap step 09's transitional root rule for manifest-based roots — do
 **Prereq:** Steps 01–10.
 **Done when:** ping-pong (1M messages) and fan-out/fan-in (1000 workers) run correctly under both the Eio-based and own effects schedulers; a process that raises mid-message dies alone while the parent continues; sending a `Box` yields a snapshot; receive loops recursing millions of times keep the native stack flat; `dune test` green under the deterministic scheduler.
 
-- [ ] **T11.1** — Design pass: settle the self-pid mechanism in `CHECK.md` / README (`do`, `<-`, `receive { ... }`, and the `Box` operation set are already decided). Blocking gate for the rest of the step.
-- [ ] **T11.2** — Process/mailbox abstraction on Eio; spawn/send/receive.
-- [ ] **T11.3** — Crash isolation; process-exit signals for future supervisors.
-- [ ] **T11.4** — `Box` with snapshot-on-send semantics.
-- [ ] **T11.5** — Deterministic scheduler log for tests.
-- [ ] **T11.6** — Phase B: own effects-based scheduler beneath the same interface.
-- [ ] **T11.7** — Stress tests: ping-pong, fan-out/fan-in, deep receive-loop recursion.
+- [x] **T11.1** — Design pass: settle the self-pid mechanism in `CHECK.md` / README (`do`, `<-`, `receive { ... }`, and the `Box` operation set are already decided). Blocking gate for the rest of the step.
+- [x] **T11.2** — Process/mailbox abstraction on Eio; spawn/send/receive.
+- [x] **T11.3** — Crash isolation; process-exit signals for future supervisors.
+- [x] **T11.4** — `Box` with snapshot-on-send semantics.
+- [x] **T11.5** — Deterministic scheduler log for tests.
+- [x] **T11.6** — Phase B: own effects-based scheduler beneath the same interface.
+- [x] **T11.7** — Stress tests: ping-pong, fan-out/fan-in, deep receive-loop recursion.
 
 ### Step 12 — Networking library · `plan/step-12-networking.md`
 
