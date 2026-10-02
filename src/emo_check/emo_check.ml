@@ -13,6 +13,8 @@ type t =
   | Char
   | String
   | Pid
+  | TcpConn
+  | TcpListener
   | ClassType of string
   | InterfaceType of string
   | EnumType of string
@@ -29,6 +31,8 @@ let rec to_string = function
   | Char -> "Char"
   | String -> "String"
   | Pid -> "Pid"
+  | TcpConn -> "TcpConn"
+  | TcpListener -> "TcpListener"
   | ClassType c -> c
   | InterfaceType i -> i
   | EnumType e -> e
@@ -82,6 +86,8 @@ let rec ann_to_type ctx ({ Ast.type_span = span; type_desc; _ } : Ast.type_ann)
   | Ast.Named_type "Char" -> Char
   | Ast.Named_type "String" -> String
   | Ast.Named_type "Pid" -> Pid
+  | Ast.Named_type "TcpConn" -> TcpConn
+  | Ast.Named_type "TcpListener" -> TcpListener
   | Ast.Named_type "Box" -> BoxType Unknown
   | Ast.Named_type name ->
       if Hashtbl.mem ctx.classes name then ClassType name
@@ -224,6 +230,21 @@ let empty_env =
           } );
         ("self_pid", { vtype = FuncType ([], Pid); is_var = false; depth = 0 });
         ("halt", { vtype = FuncType ([], Unknown); is_var = false; depth = 0 });
+        ( "net_connect",
+          {
+            vtype =
+              FuncType
+                ( [ ("host", String); ("port", Int); ("timeout", Float) ],
+                  TcpConn );
+            is_var = false;
+            depth = 0;
+          } );
+        ( "net_listen",
+          {
+            vtype = FuncType ([ ("host", String); ("port", Int) ], TcpListener);
+            is_var = false;
+            depth = 0;
+          } );
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
@@ -694,6 +715,63 @@ and check_method_call ctx env span recv mname args : t =
               Unknown)
       | None -> Unknown)
   | v, "to_string" -> builtin0 String
+  | TcpConn, "read_line" -> builtin0 String
+  | TcpConn, "read_exactly" -> (
+      match arg_values with
+      | [ (None, Int) ] | [ (Some "n", Int) ] -> String
+      | [ (_, other) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`read_exactly` expects Int, got %s"
+               (to_string other));
+          String
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`read_exactly` expects 1 argument, got %d"
+               (List.length arg_values));
+          String)
+  | TcpConn, "read_all" -> builtin0 String
+  | TcpConn, "write" -> (
+      match arg_values with
+      | [ (None, String) ] | [ (Some "data", String) ] -> TcpConn
+      | [ (_, other) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`write` expects String, got %s" (to_string other));
+          TcpConn
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`write` expects 1 argument, got %d"
+               (List.length arg_values));
+          TcpConn)
+  | TcpConn, "close" -> builtin0 TcpConn
+  | TcpConn, "set_timeout" -> (
+      match arg_values with
+      | [ (None, Float) ] | [ (Some "seconds", Float) ] -> TcpConn
+      | [ (_, other) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`set_timeout` expects Float, got %s"
+               (to_string other));
+          TcpConn
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
+               (List.length arg_values));
+          TcpConn)
+  | TcpListener, "accept" -> builtin0 TcpConn
+  | TcpListener, "port" -> builtin0 Int
+  | TcpListener, "close" -> builtin0 TcpListener
+  | TcpListener, "set_timeout" -> (
+      match arg_values with
+      | [ (None, Float) ] | [ (Some "seconds", Float) ] -> TcpListener
+      | [ (_, other) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`set_timeout` expects Float, got %s"
+               (to_string other));
+          TcpListener
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
+               (List.length arg_values));
+          TcpListener)
   | ArrayType elem, "length" ->
       builtin0
         (ignore elem;

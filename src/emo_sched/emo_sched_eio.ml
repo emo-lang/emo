@@ -60,6 +60,29 @@ let rec run_process ~sw ~conditions ~root (proc : Emo_eval.process)
                          (fun () -> Emo_eval.take_matching proc select)
                      in
                      Effect.Deep.continue k picked)
+             | Emo_eval.Net_connect (_, _, _, span)
+             | Emo_eval.Net_listen (_, _, span)
+             | Emo_eval.Net_accept (_, span)
+             | Emo_eval.Net_read_line (_, span)
+             | Emo_eval.Net_read_exactly (_, _, span)
+             | Emo_eval.Net_read_all (_, span)
+             | Emo_eval.Net_write (_, _, span)
+             | Emo_eval.Net_close_conn (_, span)
+             | Emo_eval.Net_close_listener (_, span) ->
+                 Some
+                   (fun (k : (a, _) continuation) ->
+                     Effect.Deep.discontinue k
+                       (Emo_eval.Error
+                          Emo_support.Diagnostic.
+                            {
+                              severity = Error;
+                              code = Some "E3013";
+                              message =
+                                "networking runs only on the own scheduler — \
+                                 run the program with `emo run`";
+                              span;
+                              hint = None;
+                            }))
              | _ -> None);
        }
    with
