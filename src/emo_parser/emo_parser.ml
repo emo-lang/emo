@@ -586,6 +586,51 @@ and parse_item st =
   | Tok.Keyword Tok.Def ->
       let d = parse_def st ~in_class:false in
       { Ast.item_span = d.Ast.def_span; item_desc = Ast.Item_def d }
+  | Tok.Lower_ident "foreign" ->
+      (* `foreign def name(params) Ret = "symbol"` — the C FFI binding
+         surface (step 13). *)
+      advance st |> ignore;
+      advance st |> ignore;
+      (* `def` consumed; parse the signature without a body. *)
+      let name_tok = advance st in
+      let name =
+        match name_tok.Tok.kind with
+        | Tok.Lower_ident n -> n
+        | _ -> error "E2009" name_tok.Tok.span "expected a foreign def name"
+      in
+      check_snake st name_tok "foreign def" ~allow_question:false;
+      let foreign_params = parse_params st in
+      let foreign_return =
+        if (not (newline_before st)) && starts_type st then
+          Some (parse_type_ann st)
+        else
+          error "E2011" (span st) "`foreign def` requires a return annotation"
+      in
+      if newline_before st || kind st <> Tok.Op Assign then
+        error "E2010" (span st)
+          "`foreign def` expects `= \"C-symbol\"` on the same line";
+      advance st |> ignore;
+      let sym_e = parse_string st in
+      let foreign_symbol =
+        match sym_e.Ast.desc with
+        | Ast.String s when s <> "" -> s
+        | _ ->
+            error "E2010" sym_e.Ast.span
+              "`foreign def` expects a C symbol string"
+      in
+      end_statement st;
+      {
+        Ast.item_span;
+        item_desc =
+          Ast.Item_foreign
+            {
+              Ast.foreign_span = item_span;
+              foreign_name = name;
+              foreign_params;
+              foreign_return = Option.get foreign_return;
+              foreign_symbol;
+            };
+      }
   | Tok.Keyword Tok.Class ->
       let c = parse_class st in
       { Ast.item_span = c.Ast.class_span; item_desc = Ast.Item_class c }

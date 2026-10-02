@@ -89,7 +89,8 @@ and state = {
   root : Emo_eval.process;
 }
 
-let log state event = if state.log_enabled then state.log := event :: !(state.log)
+let log state event =
+  if state.log_enabled then state.log := event :: !(state.log)
 
 (* The seeded pick: choose a random index among the runnable processes.
    Same seed, same choice, same interleaving. *)
@@ -1305,8 +1306,8 @@ let rec loop state =
 
 (* Runs [root_body] as the root process under the seeded schedule and
    returns the event log, oldest first. *)
-let run ?(seed = 0) ?(log_events = true) (root_body : unit -> unit) :
-    event list =
+let run ?(seed = 0) ?(log_events = true) (root_body : unit -> unit) : event list
+    =
   Emo_eval.reset_conc ();
   let state =
     {

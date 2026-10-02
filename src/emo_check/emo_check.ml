@@ -183,6 +183,40 @@ let collect ctx (items : Ast.item list) : unit =
       | Ast.Item_enum e ->
           Hashtbl.replace ctx.enums e.Ast.enum_name
             (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
+      | Ast.Item_foreign f ->
+          (* The C FFI surface: Float/String/Bool marshal directly as
+             C doubles/char*/int; Int (tagged) would need C stubs. *)
+          let ffi_ok = function
+            | Ast.Named_type "Float"
+            | Ast.Named_type "String"
+            | Ast.Named_type "Bool" ->
+                true
+            | _ -> false
+          in
+          List.iter
+            (fun p ->
+              ignore (ann_to_type ctx p.Ast.param_type);
+              if not (ffi_ok p.Ast.param_type.Ast.type_desc) then
+                report ctx p.Ast.param_type.Ast.type_span "E4200"
+                  (Printf.sprintf
+                     "foreign parameter `%s` must be Float, String, or Bool \
+                      (Int needs C stubs, not supported yet)"
+                     p.Ast.param_name))
+            f.Ast.foreign_params;
+          ignore (ann_to_type ctx f.Ast.foreign_return);
+          if not (ffi_ok f.Ast.foreign_return.Ast.type_desc) then
+            report ctx f.Ast.foreign_return.Ast.type_span "E4200"
+              "foreign return must be Float, String, or Bool (Int needs C \
+               stubs, not supported yet)";
+          (* Call-site checking reuses the def signature. *)
+          Hashtbl.replace ctx.funcs f.Ast.foreign_name
+            {
+              Ast.def_span = f.Ast.foreign_span;
+              def_name = f.Ast.foreign_name;
+              def_params = f.Ast.foreign_params;
+              def_return = Some f.Ast.foreign_return;
+              def_body = [];
+            }
       | Ast.Item_require _ -> () (* pairing is the driver's job *)
       | Ast.Item_stmt _ -> ())
     items
@@ -1392,6 +1426,21 @@ let check_items ctx (items : Ast.item list) : unit =
             bind env d.Ast.def_name
               {
                 vtype = signature_of_def ctx d;
+                is_var = false;
+                depth = env.depth;
+              }
+        | Ast.Item_foreign f ->
+            bind env f.Ast.foreign_name
+              {
+                vtype =
+                  signature_of_def ctx
+                    {
+                      Ast.def_span = f.Ast.foreign_span;
+                      def_name = f.Ast.foreign_name;
+                      def_params = f.Ast.foreign_params;
+                      def_return = Some f.Ast.foreign_return;
+                      def_body = [];
+                    };
                 is_var = false;
                 depth = env.depth;
               }

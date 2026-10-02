@@ -1795,6 +1795,11 @@ let eval_item env item =
       in
       define env e.Ast.enum_name ~mutable_:false
         (EnumType { ename = e.Ast.enum_name; emembers = members })
+  | Ast.Item_foreign f ->
+      (* The compiled backend emits the external declaration; the
+         interpreter has no C linkage. *)
+      error f.Ast.foreign_span "E3009"
+        "foreign definitions run only in compiled programs (use emo build)"
 
 (* Restricted-profile schema errors: the manifest reader maps them onto the
    E51xx codes. A field defined twice, and a value that is not literal data
