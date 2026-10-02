@@ -1,12 +1,10 @@
 (library
- (name emo_project)
+ (name emo_runtime)
  (libraries
   emo_support
+  emo_ast
   emo_lexer
   emo_parser
-  emo_ast
-  emo_eval
   emo_check
-  emo_ir
-  emo_pkg
+  emo_eval
   emo_sched))

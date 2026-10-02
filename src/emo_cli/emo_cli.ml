@@ -87,6 +87,160 @@ let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
               render diagnostic;
               70))
 
+(* ---- `emo build`: compile to a native binary ----
+
+   Pipeline: resolve + check the project (the same static stages as
+   `emo run`), lower every module to the IR, emit OCaml, and hand the
+   file to the OCaml toolchain with the runtime libraries. The runtime's
+   compiled interfaces are located relative to the emo executable —
+   building requires the emo source tree today. *)
+
+(* The OCaml toolchain comes from the opam switch: PATH first, then the
+   switch prefixes under ~/.opam (dune test actions run without the opam
+   environment). *)
+let find_ocamlfind () : string =
+  let in_switch sw =
+    Sys.file_exists (Filename.concat (Filename.concat sw "bin") "ocamlfind")
+  in
+  let home = Sys.getenv_opt "HOME" |> Option.value ~default:"" in
+  let opam_dir = Filename.concat home ".opam" in
+  (* The running switch first, then the newest switch with the tool. *)
+  match Sys.getenv_opt "OPAM_SWITCH_PREFIX" with
+  | Some prefix when in_switch prefix ->
+      Filename.concat (Filename.concat prefix "bin") "ocamlfind"
+  | _ -> (
+      let entries =
+        Array.to_list (Sys.readdir opam_dir)
+        |> List.filter (fun e -> e <> "config" && e <> "config.lock")
+        |> List.sort (fun a b -> compare b a)
+      in
+      match
+        List.find_opt
+          (fun sw -> in_switch (Filename.concat opam_dir sw))
+          entries
+      with
+      | Some sw -> Filename.concat (Filename.concat opam_dir sw) "bin/ocamlfind"
+      | None -> "ocamlfind")
+
+(* The build command: entry file → binary at [-o] (default: the entry's
+   stem in the current directory). *)
+let build_file ~(entry : string) ~(output : string) ~(specialize : bool) : int =
+  match Sys.file_exists entry with
+  | false ->
+      prerr_endline (Printf.sprintf "%s: No such file or directory" entry);
+      66
+  | true -> (
+      try
+        let inputs, entry_path, _manifest =
+          Emo_project.compile_inputs ~entry_file:entry
+        in
+        let program =
+          Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path }
+        in
+        let source = Emo_codegen.emit ~specialize program in
+        let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
+        if not (Sys.file_exists build_dir) then
+          ignore
+            (Sys.command
+               (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir)));
+        let ml_path = Filename.concat build_dir "main.ml" in
+        let oc = open_out_bin ml_path in
+        output_string oc source;
+        close_out oc;
+        (* locate the runtime libraries relative to the emo binary *)
+        let exe_dir = Filename.dirname Sys.executable_name in
+        let src_dir = Filename.concat exe_dir ".." in
+        let libs =
+          [
+            "emo_support";
+            "emo_lexer";
+            "emo_parser";
+            "emo_ast";
+            "emo_check";
+            "emo_eval";
+            "emo_sched";
+            "emo_runtime";
+          ]
+        in
+        let includes =
+          String.concat " "
+            (List.concat_map
+               (fun lib ->
+                 let dir = Filename.concat src_dir lib in
+                 [
+                   Printf.sprintf "-I %s"
+                     (Filename.concat dir
+                        (Printf.sprintf ".%s.objs/native" lib));
+                   Printf.sprintf "-I %s"
+                     (Filename.concat dir (Printf.sprintf ".%s.objs/byte" lib));
+                 ])
+               libs)
+        in
+        let cmxas =
+          String.concat " "
+            (List.map
+               (fun lib ->
+                 Filename.concat (Filename.concat src_dir lib) (lib ^ ".cmxa"))
+               libs)
+        in
+        let cmd =
+          Printf.sprintf
+            "%s ocamlopt -package unix,ssl,eio_main,eio_posix -linkpkg %s %s \
+             %s -o %s"
+            (find_ocamlfind ()) includes cmxas (Filename.quote ml_path)
+            (Filename.quote output)
+        in
+        let exit_code = Sys.command cmd in
+        if exit_code <> 0 then begin
+          prerr_endline
+            (Printf.sprintf "emo build: the OCaml toolchain failed (exit %d)"
+               exit_code);
+          70
+        end
+        else begin
+          Printf.printf "built %s\n" output;
+          0
+        end
+      with
+      | Emo_project.Static_errors diagnostics ->
+          render_errors ~color:false ~error_limit:20 diagnostics;
+          65
+      | Emo_lexer.Error diagnostic ->
+          render_errors ~color:false ~error_limit:20 [ diagnostic ];
+          65)
+
+let build =
+  let entry =
+    Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE")
+  in
+  let output =
+    Arg.(
+      value
+      & opt (some string) None
+      & info [ "o" ] ~docv:"FILE"
+          ~doc:"Output binary (default: the entry's stem).")
+  in
+  let no_specialize =
+    Arg.(
+      value & flag
+      & info [ "no-specialize" ] ~doc:"Disable Stage B specialization.")
+  in
+  let build entry output no_specialize =
+    let out =
+      match output with
+      | Some o -> o
+      | None ->
+          let stem = Filename.remove_extension (Filename.basename entry) in
+          stem
+    in
+    match build_file ~entry ~output:out ~specialize:(not no_specialize) with
+    | 0 -> Cmd.Exit.ok
+    | code -> exit code
+  in
+  Cmd.v
+    (Cmd.info "build" ~doc:"Compile an Emo program to a native binary.")
+    Term.(const build $ entry $ output $ no_specialize)
+
 (* `emo check`: the static stages only, over the whole module tree. *)
 let check_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
   match Sys.file_exists file with
@@ -304,6 +458,6 @@ let version_cmd =
 let cmd =
   Cmd.group
     (Cmd.info "emo" ~version ~doc:"The Emo programming language toolchain.")
-    [ run; repl; check; deps; version_cmd ]
+    [ run; repl; check; build; deps; version_cmd ]
 
 let main () = exit (Cmd.eval' cmd)

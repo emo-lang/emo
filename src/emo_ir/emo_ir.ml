@@ -72,6 +72,8 @@ type class_ = {
 type program = {
   pfuncs : func list;
   pclasses : class_ list;
+  pinterfaces : (string * (string * int) list) list;
+      (* interface name → method name/arity, for the runtime's is() *)
   pinit : stmt list; (* the entry module's top-level statements *)
   pentry : string list; (* the entry module's path *)
 }
@@ -84,6 +86,13 @@ exception Lower_error of string
 
 let mangle (module_path : string list) (name : string) : string =
   String.concat "__" (module_path @ [ name ])
+
+(* Predicate methods end in `?`, which backend identifiers cannot
+   carry; the mangled function name normalizes it. *)
+let sanitize_ident (name : string) : string =
+  if String.contains name '?' then
+    String.concat "_q" (String.split_on_char '?' name)
+  else name
 
 (* ---- The lowering ---- *)
 
@@ -166,14 +175,6 @@ and order_args env params args =
     params
 
 and lower_expr env (e : Ast.expr) : expr =
-  Printf.eprintf "LOWER-EXPR %s\n%!"
-    (match e.Ast.desc with
-    | Ast.Member (_, m) -> "Member:" ^ m
-    | Ast.Ident n -> "Ident:" ^ n
-    | Ast.Int _ -> "Int"
-    | Ast.Call _ -> "Call"
-    | Ast.Binary _ -> "Binary"
-    | _ -> "other");
   let expr desc = mk env e.Ast.span desc in
   match e.Ast.desc with
   | Ast.Int n -> expr (Const (L_int n))
@@ -194,6 +195,13 @@ and lower_expr env (e : Ast.expr) : expr =
       if List.mem name env.locals then expr (Var name)
       else
         match lookup_symbol env env.current name with
+        | Some (S_func { mangled; params }) when params = [] ->
+            (* A const binding (e.g. `const order = shop.order`): calling
+               the zero-arg function evaluates it. *)
+            {
+              ety = Emo_check.Unknown;
+              desc = Call { func = mangled; args = [] };
+            }
         | Some (S_func { mangled; _ }) | Some (S_class { mangled; _ }) ->
             expr (Global mangled)
         | Some S_enum -> { ety = Emo_check.EnumType name; desc = Type_ref name }
@@ -250,7 +258,7 @@ and lower_expr env (e : Ast.expr) : expr =
   | Ast.Call (callee, args) -> lower_call env e.Ast.span callee args
   | Ast.Arrow_block (params, body) ->
       {
-        ety = Unknown;
+        ety = Emo_check.Unknown;
         desc =
           Closure
             {
@@ -376,16 +384,6 @@ and lower_call env span callee args =
    class: plain names in the current module (unless shadowed by a
    local), and module-qualified chains. *)
 and resolve_callee env (callee : Ast.expr) : (string * string list) option =
-  let result = resolve_callee_inner env callee in
-  (match dotted_path callee with
-  | Some (p, n) ->
-      Printf.eprintf "RC [%s] %s -> %s\n%!" (String.concat "," p) n
-        (match result with Some (m, _) -> "OK " ^ m | None -> "None")
-  | None -> Printf.eprintf "RC no-dotted\n%!");
-  result
-
-and resolve_callee_inner env (callee : Ast.expr) : (string * string list) option
-    =
   match dotted_path callee with
   | Some (module_path, name) -> (
       match Hashtbl.find_opt env.symbols (module_path, name) with
@@ -435,14 +433,7 @@ and lower_stmt env (s : Ast.stmt) : stmt =
               value = lower_expr env value;
             }
       | _ -> raise (Lower_error "invalid assignment target"))
-  | Ast.Return (Some e) ->
-      Printf.eprintf "RETURN-DESC=%s\n%!"
-        (match e.Ast.desc with
-        | Ast.Member (_, m) -> "Member " ^ m
-        | Ast.Ident n -> "Ident " ^ n
-        | Ast.Call _ -> "Call"
-        | _ -> "other");
-      Return_stmt (lower_expr env e)
+  | Ast.Return (Some e) -> Return_stmt (lower_expr env e)
   | Ast.Return None ->
       Return_stmt { ety = Emo_check.Unknown; desc = Const (L_bool false) }
   | Ast.Raise e -> Raise (lower_expr env e)
@@ -616,10 +607,11 @@ type input = {
 }
 
 (* Lowers a whole program: symbols from every module first (forward
-   references work), then functions, classes, and the entry's top-level
-   statements. *)
+   references work), then const bindings, functions, classes, and the
+   entry's top-level statements. *)
 let lower (input : input) : program =
   let symbols : (string list * string, symbol) Hashtbl.t = Hashtbl.create 16 in
+  (* pass 1: every program-wide symbol *)
   List.iter
     (fun (m : module_input) ->
       List.iter
@@ -634,6 +626,8 @@ let lower (input : input) : program =
                        List.map (fun p -> p.Ast.param_name) d.Ast.def_params;
                    })
           | Ast.Item_class c ->
+              (* The class symbol resolves `C.new` to the constructor
+                 wrapper, whether or not the class has an init. *)
               let init_params =
                 match c.Ast.class_init with
                 | Some init ->
@@ -644,16 +638,50 @@ let lower (input : input) : program =
                 (m.mpath, c.Ast.class_name)
                 (S_class
                    {
-                     mangled = mangle m.mpath (c.Ast.class_name ^ "__init");
+                     mangled = mangle m.mpath (c.Ast.class_name ^ "__new");
                      params = init_params;
                    })
           | Ast.Item_enum e ->
               Hashtbl.replace symbols (m.mpath, e.Ast.enum_name) S_enum
+          | Ast.Item_stmt
+              { stmt_desc = Ast.Binding { mutable_ = false; name; _ }; _ }
+            when m.mpath <> input.entry ->
+              (* A const binding in a non-entry module becomes a zero-arg
+                 function other modules can call. *)
+              Hashtbl.replace symbols (m.mpath, name)
+                (S_func { mangled = mangle m.mpath name; params = [] })
           | _ -> ())
         m.mitems)
     input.modules;
   let funcs = ref [] in
   let classes = ref [] in
+  let interfaces = ref [] in
+  (* pass 2: non-entry const bindings lower to zero-arg functions *)
+  List.iter
+    (fun (m : module_input) ->
+      let const_env =
+        { symbols; current = m.mpath; locals = []; types = m.mtypes }
+      in
+      List.iter
+        (fun (item : Ast.item) ->
+          match item.Ast.item_desc with
+          | Ast.Item_stmt
+              { stmt_desc = Ast.Binding { mutable_ = false; name; init }; _ }
+            when m.mpath <> input.entry ->
+              funcs :=
+                {
+                  fname = mangle m.mpath name;
+                  fmodule = m.mpath;
+                  fparams = [];
+                  fresult = Emo_check.Unknown;
+                  fbody = [ Return_stmt (lower_expr const_env init) ];
+                  fspecializable = false;
+                }
+                :: !funcs
+          | _ -> ())
+        m.mitems)
+    input.modules;
+  (* pass 3: defs, classes, interfaces *)
   List.iter
     (fun (m : module_input) ->
       let env = { symbols; current = m.mpath; locals = []; types = m.mtypes } in
@@ -681,7 +709,8 @@ let lower (input : input) : program =
                   (fun d ->
                     lower_func env ~module_path:m.mpath
                       ~mangled:
-                        (mangle m.mpath (display ^ "__" ^ d.Ast.def_name))
+                        (mangle m.mpath
+                           (display ^ "__" ^ sanitize_ident d.Ast.def_name))
                       ~self:true d)
                   c.Ast.class_methods
               in
@@ -693,17 +722,14 @@ let lower (input : input) : program =
                   cmethods = methods;
                 }
                 :: !classes
-          | Ast.Item_enum _ | Ast.Item_interface _ | Ast.Item_require _ -> ()
-          | Ast.Item_stmt s ->
-              if m.mpath <> input.entry then
-                raise
-                  (Lower_error
-                     (Printf.sprintf
-                        "module `%s` has top-level statements; only the entry \
-                         module may (a compiled program runs the entry's \
-                         statements as its root process)"
-                        (String.concat "." m.mpath)));
-              ())
+          | Ast.Item_interface i ->
+              interfaces :=
+                ( i.Ast.interface_name,
+                  List.map
+                    (fun s -> (s.Ast.sig_name, List.length s.Ast.sig_params))
+                    i.Ast.interface_methods )
+                :: !interfaces
+          | _ -> ())
         m.mitems)
     input.modules;
   let entry_module =
@@ -720,4 +746,102 @@ let lower (input : input) : program =
         | _ -> None)
   in
   let pfuncs = specialize !funcs in
-  { pfuncs; pclasses = !classes; pinit; pentry = input.entry }
+  {
+    pfuncs;
+    pclasses = !classes;
+    pinterfaces = !interfaces;
+    pinit;
+    pentry = input.entry;
+  }
+
+(* ---- Stage B completeness ----
+
+   A function specializes when every value in it is native — parameters,
+   result, and every expression in the body — and the only calls it makes
+   are to other specialized functions. Native: Int, Float, Bool, Char,
+   String. Everything dynamic (Unknown, objects, sockets, closures)
+   disqualifies. Computed to a fixed point over the call graph. *)
+
+let is_native = function
+  | Emo_check.Int | Emo_check.Float | Emo_check.Bool | Emo_check.Char
+  | Emo_check.String ->
+      true
+  | _ -> false
+
+let rec expr_native (special : string list) (e : expr) : bool =
+  match e.desc with
+  | Const _ | Type_ref _ -> true
+  | Var _ | Global _ -> true
+  | Tuple es | Array_lit es | Interpolate es ->
+      List.for_all (expr_native special) es
+  | Make_enum _ -> true
+  | Unary (_, x) -> expr_native special x
+  | Binary (_, l, r) -> expr_native special l && expr_native special r
+  | Index (b, i) -> expr_native special b && expr_native special i
+  | Field_read { obj; _ } -> expr_native special obj
+  | Call { func; args } ->
+      List.mem func special && List.for_all (expr_native special) args
+  | Call_value _ | Method _ | Builtin _ | Box_new _ | Make_exception _
+  | Do_spawn _ | Spawn_value _ | Closure _ ->
+      false (* dynamic operations keep the function dynamic *)
+
+and stmts_native special (stmts : stmt list) : bool =
+  List.for_all (stmt_native special) stmts
+
+and stmt_native special (s : stmt) : bool =
+  match s with
+  | Effect e -> expr_native special e
+  | Let { init; _ } -> expr_native special init
+  | Assign_var { value; _ } -> expr_native special value
+  | Set_field _ -> false
+  | If { cond; then_; else_ } ->
+      expr_native special cond && stmts_native special then_
+      && stmts_native special else_
+  | Case { scrutinee; branches } ->
+      expr_native special scrutinee
+      && List.for_all
+           (fun b ->
+             (match b.guard with
+               | Some g -> expr_native special g
+               | None -> true)
+             && stmts_native special b.body)
+           branches
+  | Receive _ | Send _ | Raise _ -> false
+  | Return_stmt e -> expr_native special e
+
+(* Iterates to a fixed point: a function qualifies when its shape is
+   native and every function it calls already qualified. *)
+let specialize (funcs : func list) : func list =
+  let shape_ok f =
+    is_native f.fresult && List.for_all (fun (_, t) -> is_native t) f.fparams
+  in
+  let rec loop funcs =
+    let special =
+      List.filter_map
+        (fun g -> if g.fspecializable then Some g.fname else None)
+        funcs
+    in
+    let changed = ref false in
+    let funcs =
+      List.map
+        (fun f ->
+          if
+            (not f.fspecializable) && shape_ok f
+            (* Self-recursion is native when the shape is: seed the
+               function's own name so direct recursion qualifies. *)
+            && stmts_native (f.fname :: special) f.fbody
+          then (
+            changed := true;
+            { f with fspecializable = true })
+          else f)
+        funcs
+    in
+    if !changed then loop funcs else funcs
+  in
+  loop funcs
+
+(* ---- Program lowering ---- *)
+
+(* Lowers a whole program: symbols from every module first (forward
+   references work), then functions, classes, and the entry's top-level
+   statements. *)

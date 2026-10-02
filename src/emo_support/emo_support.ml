@@ -17,6 +17,9 @@ module Span = struct
     if stop < start then invalid_arg "Span.make: stop precedes start";
     { file; line; col; start; stop }
 
+  (* A synthetic position for runtime-generated diagnostics (the compiled
+     backend's operations carry no source spans). *)
+  let zero = { file = "<runtime>"; line = 1; col = 1; start = 0; stop = 0 }
   let to_string t = Printf.sprintf "%s:%d:%d" t.file t.line t.col
 
   let merge a b =

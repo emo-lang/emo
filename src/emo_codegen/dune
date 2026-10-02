@@ -1,0 +1,3 @@
+(library
+ (name emo_codegen)
+ (libraries emo_support emo_ast emo_check emo_ir emo_runtime))

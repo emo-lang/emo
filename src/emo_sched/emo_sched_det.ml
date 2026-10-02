@@ -41,6 +41,11 @@ type runnable =
       Emo_eval.process
       * Emo_eval.selected
       * (Emo_eval.selected, unit) Effect.Shallow.continuation
+  | CResumed of
+      Emo_eval.process
+      * int
+      * Emo_eval.value list
+      * (int * Emo_eval.value list, unit) Effect.Shallow.continuation
   | (* a parked socket operation: the step attempts progress and either
        rejoins the process or re-parks it *)
     Io of Emo_eval.process * (state -> outcome)
@@ -61,6 +66,13 @@ and state = {
       * (Emo_eval.value -> Emo_eval.selected option)
       * (Emo_eval.selected, unit) Effect.Shallow.continuation )
     Hashtbl.t;
+  cwaiters :
+    ( int,
+      Emo_eval.process
+      * (Emo_eval.value -> (int * Emo_eval.value list) option)
+      * (int * Emo_eval.value list, unit) Effect.Shallow.continuation )
+    Hashtbl.t;
+      (* the backend's compiled receive *)
   io : (Unix.file_descr, io_interest list) Hashtbl.t;
   mutable timers : (float * (unit -> unit)) list; (* deadline, wake *)
   live : (int, live) Hashtbl.t; (* conn id → live socket *)
@@ -91,17 +103,50 @@ let pick_and_take state =
 
 (* Wakes a parked receiver: rescanning its mailbox with its select, the
    first matching message is dequeued and the continuation rejoins the
-   run queue. Nothing matching leaves the waiter parked. *)
+   run queue. Nothing matching leaves the waiter parked. Both the
+   interpreted and the compiled receive park here. *)
 let wake state pid =
-  match Hashtbl.find_opt state.waiters pid with
-  | None -> ()
-  | Some (proc, select, k) -> (
-      match Emo_eval.take_matching proc select with
-      | None -> ()
-      | Some picked ->
-          Hashtbl.remove state.waiters pid;
-          log state (Received proc.Emo_eval.pid);
-          Queue.add (Resumed (proc, picked, k)) state.runq)
+  let wake_interpreted () =
+    match Hashtbl.find_opt state.waiters pid with
+    | None -> ()
+    | Some (proc, select, k) -> (
+        match Emo_eval.take_matching proc select with
+        | None -> ()
+        | Some picked ->
+            Hashtbl.remove state.waiters pid;
+            log state (Received proc.Emo_eval.pid);
+            Queue.add (Resumed (proc, picked, k)) state.runq)
+  in
+  let wake_compiled () =
+    match Hashtbl.find_opt state.cwaiters pid with
+    | None -> ()
+    | Some (proc, matcher, k) -> (
+        let rec take = function
+          | [] -> None
+          | msg :: rest -> (
+              match matcher msg with
+              | Some (i, bindings) ->
+                  proc.inbox <-
+                    List.rev_append (List.rev (taken_before msg proc)) rest;
+                  Some (i, bindings)
+              | None -> take rest)
+        and taken_before msg _proc =
+          let rec collect acc = function
+            | m :: rest ->
+                if m == msg then List.rev acc else collect (m :: acc) rest
+            | [] -> List.rev acc
+          in
+          collect [] proc.Emo_eval.inbox
+        in
+        match take proc.Emo_eval.inbox with
+        | None -> ()
+        | Some (i, bindings) ->
+            Hashtbl.remove state.cwaiters pid;
+            log state (Received proc.Emo_eval.pid);
+            Queue.add (CResumed (proc, i, bindings, k)) state.runq)
+  in
+  wake_interpreted ();
+  wake_compiled ()
 
 (* ---- IO plumbing ---- *)
 
@@ -510,6 +555,18 @@ let rec handler state (proc : Emo_eval.process) () :
                   | None -> ());
                   Hashtbl.remove state.udps u.Emo_eval.uid;
                   Effect.Shallow.continue_with k u (handler state proc ())))
+        | Emo_eval.Compiled_receive matcher ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                match Emo_eval.take_compiled proc matcher with
+                | Some (i, bindings) ->
+                    log state (Received proc.Emo_eval.pid);
+                    Effect.Shallow.continue_with k (i, bindings)
+                      (handler state proc ())
+                | None ->
+                    Hashtbl.replace state.cwaiters proc.Emo_eval.pid
+                      (proc, matcher, k);
+                    None)
         | Emo_eval.Net_close_listener (l, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -1200,7 +1257,9 @@ let rec loop state =
         pump_io state;
         loop state)
       end
-    else if Hashtbl.length state.waiters > 0 then
+    else if
+      Hashtbl.length state.waiters > 0 || Hashtbl.length state.cwaiters > 0
+    then
       (* Every live process is parked in receive with nothing left to wake
          it: the program can never move again. *)
       let span =
@@ -1209,7 +1268,7 @@ let rec loop state =
       Emo_eval.error span "E3012"
         (Printf.sprintf
            "all %d waiting processes are blocked; no message will ever arrive"
-           (Hashtbl.length state.waiters))
+           (Hashtbl.length state.waiters + Hashtbl.length state.cwaiters))
     else ()
   else
     let item = pick_and_take state in
@@ -1218,6 +1277,7 @@ let rec loop state =
       | Fresh (p, _) -> p
       | Continue (p, _) -> p
       | Resumed (p, _, _) -> p
+      | CResumed (p, _, _, _) -> p
       | Io (p, _) -> p
     in
     state.current <- proc.Emo_eval.pid;
@@ -1228,6 +1288,8 @@ let rec loop state =
           Effect.Shallow.continue_with (Effect.Shallow.fiber body) () h
       | Continue (_, k) -> Effect.Shallow.continue_with k () h
       | Resumed (_, picked, k) -> Effect.Shallow.continue_with k picked h
+      | CResumed (_, i, bindings, k) ->
+          Effect.Shallow.continue_with k (i, bindings) h
       | Io (_, step) -> step state
     in
     (match outcome with
@@ -1245,6 +1307,7 @@ let run ?(seed = 0) (root_body : unit -> unit) : event list =
     {
       runq = Queue.create ();
       waiters = Hashtbl.create 8;
+      cwaiters = Hashtbl.create 8;
       io = Hashtbl.create 8;
       timers = [];
       live = Hashtbl.create 8;
