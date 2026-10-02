@@ -434,11 +434,29 @@ let find_process span pid =
   | Some p -> p
   | None -> error span "E3011" (Printf.sprintf "no process has pid %d" pid)
 
+(* Snapshots a message at the process boundary: every Box in the message
+   (directly or inside a tuple, array, or instance) arrives as a fresh
+   copy, so mutability never crosses a process boundary — mutations on
+   either side stay unobservable to the other. Everything else is
+   immutable data or identity and passes as-is. *)
+let rec snapshot (v : value) : value =
+  match v with
+  | Box r -> Box (ref (snapshot !r))
+  | Tuple vs -> Tuple (List.map snapshot vs)
+  | Array xs -> Array (Array.map snapshot xs)
+  | Instance i ->
+      Instance
+        {
+          iclass = i.iclass;
+          ifields = List.map (fun (n, f) -> (n, snapshot f)) i.ifields;
+        }
+  | v -> v
+
 (* Delivers a message to a mailbox. Sends to a process that has already
    exited are dropped, like any actor system's send to a dead pid. *)
 let deliver proc value =
   match proc.status with
-  | `Running -> proc.inbox <- proc.inbox @ [ value ]
+  | `Running -> proc.inbox <- proc.inbox @ [ snapshot value ]
   | `Done _ -> ()
 
 (* Scans the mailbox in order and dequeues the first message [select]
