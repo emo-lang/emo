@@ -173,6 +173,12 @@ let global_env () =
     { bound = BuiltinFn "net_connect_unix"; mutable_ = false };
   Hashtbl.replace env.frame "net_listen_unix"
     { bound = BuiltinFn "net_listen_unix"; mutable_ = false };
+  Hashtbl.replace env.frame "net_tls_connect"
+    { bound = BuiltinFn "net_tls_connect"; mutable_ = false };
+  Hashtbl.replace env.frame "net_tls_connect_insecure"
+    { bound = BuiltinFn "net_tls_connect_insecure"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen_tls"
+    { bound = BuiltinFn "net_listen_tls"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
@@ -500,6 +506,14 @@ type _ Effect.t +=
   | Net_udp_close : udp * Emo_support.Span.t -> udp Effect.t
   | Net_connect_unix : string * float * Emo_support.Span.t -> conn Effect.t
   | Net_listen_unix : string * Emo_support.Span.t -> listener Effect.t
+  | Net_tls_connect :
+      (string * int * float * bool * string list * Emo_support.Span.t)
+      -> conn Effect.t
+  | (* host, port, timeout, insecure, resolved addresses *)
+      Net_tls_listen :
+      (string * int * string * string * Emo_support.Span.t)
+      -> listener Effect.t
+(* host, port, certificate path, key path *)
 
 let processes : (int, process) Hashtbl.t = Hashtbl.create 8
 let next_pid : int ref = ref 0
@@ -659,6 +673,14 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_listen_unix`")
+            | Net_tls_connect (_, _, _, _, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_tls_connect`")
+            | Net_tls_listen (_, _, _, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) ->
+                    refused span "`net_listen_tls`")
             | _ -> None);
       }
   with Halt_signal -> ()
@@ -1215,6 +1237,48 @@ and apply_builtin span name args =
       TcpListener (Effect.perform (Net_listen_unix (path, span)))
   | "net_listen_unix", _ ->
       error span "E3001" "`net_listen_unix` expects (path String)"
+  | "net_tls_connect", args when List.length args <> 3 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_tls_connect` expects (host String, port Int, timeout \
+            Float),             got %d arguments"
+           (List.length args))
+  | "net_tls_connect", [ String host; Int port; Float timeout ] ->
+      let addrs = Effect.perform (Net_resolve (host, span)) in
+      TcpConn
+        (Effect.perform
+           (Net_tls_connect (host, port, timeout, false, addrs, span)))
+  | "net_tls_connect", _ ->
+      error span "E3001"
+        "`net_tls_connect` expects (host String, port Int, timeout Float)"
+  | "net_tls_connect_insecure", args when List.length args <> 3 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_tls_connect_insecure` expects (host String, port Int, \
+            timeout             Float), got %d arguments"
+           (List.length args))
+  | "net_tls_connect_insecure", [ String host; Int port; Float timeout ] ->
+      let addrs = Effect.perform (Net_resolve (host, span)) in
+      TcpConn
+        (Effect.perform
+           (Net_tls_connect (host, port, timeout, true, addrs, span)))
+  | "net_tls_connect_insecure", _ ->
+      error span "E3001"
+        "`net_tls_connect_insecure` expects (host String, port Int, \
+         timeout          Float)"
+  | "net_listen_tls", args when List.length args <> 4 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_listen_tls` expects (host String, port Int, cert_path \
+            String,             key_path String), got %d arguments"
+           (List.length args))
+  | "net_listen_tls", [ String host; Int port; String cert; String key ] ->
+      TcpListener
+        (Effect.perform (Net_tls_listen (host, port, cert, key, span)))
+  | "net_listen_tls", _ ->
+      error span "E3001"
+        "`net_listen_tls` expects (host String, port Int, cert_path \
+         String,          key_path String)"
   | _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
 (* The function frame. A [Tail_call] rebinds callee and arguments and

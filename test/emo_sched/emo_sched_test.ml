@@ -954,6 +954,67 @@ case b.recv_from() {
 |}
         in
         Alcotest.(check string) "output" "named\n" output);
+    tc "a TLS handshake to a self-signed certificate fails closed" (fun () ->
+        let message =
+          run_det_raised
+            {|
+def serve(listener TcpListener) Int {
+  const conn = listener.accept()
+  conn.write(conn.read_line() + "\n")
+  return serve(listener)
+}
+
+const listener = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
+do serve(listener)
+const conn = net_tls_connect("localhost", listener.port(), 0.0)
+conn.write("no\n")
+print("unreachable")
+|}
+        in
+        let expected_prefix = "the TLS handshake with localhost:" in
+        let ok =
+          String.length message >= String.length expected_prefix
+          && String.sub message 0 (String.length expected_prefix)
+             = expected_prefix
+          && contains_substring message "verify"
+        in
+        Alcotest.(check bool) "verification fails closed" true ok);
+    tc "TLS round-trips when verification is explicitly skipped" (fun () ->
+        let output, _events =
+          run_det
+            {|
+def serve(listener TcpListener) Int {
+  const conn = listener.accept()
+  conn.write(conn.read_line() + "\n")
+  return serve(listener)
+}
+
+const listener = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
+do serve(listener)
+const conn = net_tls_connect_insecure("localhost", listener.port(), 0.0)
+conn.write("secret over tls\n")
+print(conn.read_line())
+print("done")
+|}
+        in
+        Alcotest.(check string) "output" "secret over tls\ndone\n" output);
+    tc "a TLS listener with a missing certificate raises a precise error"
+      (fun () ->
+        let message =
+          run_det_raised
+            {|
+net_listen_tls("127.0.0.1", 0, "fixtures/absent-cert.pem", "fixtures/absent-key.pem")
+print("unreachable")
+|}
+        in
+        let expected_prefix =
+          "cannot load the TLS certificate for 127.0.0.1:0"
+        in
+        Alcotest.(check bool)
+          "missing-certificate message" true
+          (String.length message >= String.length expected_prefix
+          && String.sub message 0 (String.length expected_prefix)
+             = expected_prefix));
     tc "networking is refused outside a scheduler" (fun () ->
         let diagnostic =
           match
