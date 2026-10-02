@@ -372,6 +372,9 @@ let runtime_is span v t =
   match (v, t) with
   | Obj o, ClassDef c -> String.equal o.ocname c.cname
   | Obj o, TypeValue tname -> (
+      (* The compiled backend names classes with TypeValue too: an
+         interface check when one is registered, a class-name compare
+         otherwise. *)
       match Hashtbl.find_opt interface_registry tname with
       | Some sigs ->
           List.for_all
@@ -380,7 +383,7 @@ let runtime_is span v t =
               | Some (a, _) -> a = arity
               | None -> false)
             sigs
-      | None -> false)
+      | None -> String.equal o.ocname tname)
   | Instance i, ClassDef c -> String.equal i.iclass.cname c.cname
   | EnumMember (et, _), EnumType e -> String.equal et e.ename
   | Instance i, TypeValue tname -> (
@@ -392,7 +395,7 @@ let runtime_is span v t =
               | Some closure -> List.length closure.params = arity
               | None -> false)
             sigs
-      | None -> false)
+      | None -> String.equal i.iclass.cname tname)
   | EnumMember _, TypeValue _ -> false
   | _ ->
       error span "E3007"

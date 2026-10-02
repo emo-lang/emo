@@ -42,20 +42,25 @@ let rec emit_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool) : string =
   | [] -> if tail then "Emo_runtime.no_return ()" else "()"
   | [ stmt ] -> emit_stmt env stmt ~tail
   | stmt :: rest -> (
-      let rest_expr = emit_stmts env rest ~tail in
       match stmt with
-      | Emo_ir.Let { mutable_ = false; name; init } ->
-          Printf.sprintf "let %s = %s in\n%s" (local name) (emit_expr env init)
-            rest_expr
       | Emo_ir.Let { mutable_ = true; name; init } ->
+          (* The ref must be registered before the rest of the sequence
+             is emitted: later statements read and assign through it. *)
+          let init_code = emit_expr env init in
           env.refs <- local name :: env.refs;
-          Printf.sprintf "let %s = ref %s in\n%s" (local name)
-            (emit_expr env init) rest_expr
-      | Emo_ir.Effect e ->
-          Printf.sprintf "let _ = %s in\n%s" (emit_expr env e) rest_expr
-      | stmt ->
-          let code = emit_stmt env stmt ~tail:false in
-          Printf.sprintf "let _ = %s in\n%s" code rest_expr)
+          Printf.sprintf "let %s = ref (%s) in\n%s" (local name) init_code
+            (emit_stmts env rest ~tail)
+      | stmt -> (
+          let rest_expr = emit_stmts env rest ~tail in
+          match stmt with
+          | Emo_ir.Let { mutable_ = false; name; init } ->
+              Printf.sprintf "let %s = %s in\n%s" (local name)
+                (emit_expr env init) rest_expr
+          | Emo_ir.Effect e ->
+              Printf.sprintf "let _ = %s in\n%s" (emit_expr env e) rest_expr
+          | stmt ->
+              let code = emit_stmt env stmt ~tail:false in
+              Printf.sprintf "let _ = %s in\n%s" code rest_expr))
 
 and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
   match stmt with
@@ -68,7 +73,7 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
       Printf.sprintf "let %s = %s in ()" (local name) (emit_expr env init)
   | Emo_ir.Let { mutable_ = true; name; init } ->
       env.refs <- local name :: env.refs;
-      Printf.sprintf "let %s = ref %s in ()" (local name) (emit_expr env init)
+      Printf.sprintf "let %s = ref (%s) in ()" (local name) (emit_expr env init)
   | Emo_ir.Assign_var { name; value } ->
       let v = emit_expr env value in
       if List.mem (local name) env.refs then
@@ -117,9 +122,22 @@ and emit_case env scrutinee branches ~tail =
       (fun i (b : Emo_ir.branch) ->
         let bindings = pattern_bindings b.Emo_ir.pattern in
         let pattern_code = emit_pattern b.Emo_ir.pattern in
+        let bindings_code =
+          String.concat ""
+            (List.map
+               (fun (name, index) ->
+                 Printf.sprintf
+                   "let %s = List.nth (match payload with Emo_eval.Tuple xs -> \
+                    xs | _ -> []) %d in\n"
+                   (local name) index)
+               bindings)
+        in
         let guard =
           match b.Emo_ir.guard with
-          | Some g -> Printf.sprintf " when %s\n" (unbox env g "Bool")
+          | Some g ->
+              (* The guard sits before the arm body, where the pattern
+                 bindings are recovered — recover them here too. *)
+              Printf.sprintf " when (%s%s)\n" bindings_code (unbox env g "Bool")
           | None -> "\n"
         in
         let body =
@@ -127,16 +145,6 @@ and emit_case env scrutinee branches ~tail =
           env.refs <- List.map fst bindings @ env.refs;
           let code = emit_stmts env b.Emo_ir.body ~tail in
           env.refs <- saved;
-          let bindings_code =
-            String.concat ""
-              (List.map
-                 (fun (name, index) ->
-                   Printf.sprintf
-                     "let %s = List.nth (match payload with Emo_eval.Tuple xs \
-                      -> xs | _ -> []) %d in\n"
-                     (local name) index)
-                 bindings)
-          in
           Printf.sprintf "(%s%s)" bindings_code code
         in
         let pattern_with_payload =
@@ -390,7 +398,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
       Printf.sprintf "Emo_eval.call_builtin %S [%s]" name
         (String.concat "; " (List.map (emit_expr env) args))
   | Emo_ir.Box_new e ->
-      Printf.sprintf "Emo_runtime.box_new %s" (emit_expr env e)
+      Printf.sprintf "(Emo_runtime.box_new (%s))" (emit_expr env e)
   | Emo_ir.Make_exception { message } ->
       Printf.sprintf "(Emo_runtime.exception_new (%s))" (emit_expr env message)
   | Emo_ir.Do_spawn { func; args } ->

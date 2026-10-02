@@ -344,6 +344,14 @@ and lower_call env span callee args =
           match callee.Ast.desc with
           | Ast.Member (recv, name) -> (
               match recv.Ast.desc with
+              | Ast.Type_ident "Box" when name = "new" -> (
+                  match args with
+                  | [ { Ast.arg_name = None; arg_value } ] ->
+                      {
+                        ety = Emo_check.Unknown;
+                        desc = Box_new (lower_expr env arg_value);
+                      }
+                  | _ -> raise (Lower_error "`Box.new` takes one argument"))
               | Ast.Type_ident class_name when name = "new" -> (
                   match lookup_symbol env env.current class_name with
                   | Some (S_class { mangled; params }) ->
@@ -377,14 +385,6 @@ and lower_call env span callee args =
                                     { ety = String; desc = Const (L_string "") });
                             };
                       })
-              | Ast.Type_ident "Box" when name = "new" -> (
-                  match args with
-                  | [ { Ast.arg_name = None; arg_value } ] ->
-                      {
-                        ety = Emo_check.Unknown;
-                        desc = Box_new (lower_expr env arg_value);
-                      }
-                  | _ -> raise (Lower_error "`Box.new` takes one argument"))
               | _ ->
                   {
                     ety = type_of env span;
