@@ -1,0 +1,16 @@
+// The step 12 acceptance: an HTTP server and client round-trip on
+// localhost, in one program, entirely direct style — the scheduler
+// switches processes underneath while the code reads like blocking calls.
+require "http"
+require "net"
+
+const listener = net.listen("127.0.0.1", 0)
+
+// One process per connection, inside the library's serve helper.
+do http.serve_requests(listener) -> (req HttpRequest) {
+  return http.response(200, [], "hello from emo")
+}
+
+const resp = http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello")
+print(resp.body)
+print(resp.status)

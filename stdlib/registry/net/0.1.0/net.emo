@@ -1,0 +1,40 @@
+// The core networking library: TCP, UDP, Unix-domain sockets, DNS, and
+// TLS, running directly on the scheduler. Every blocking operation is a
+// suspension point, and every failure raises an ordinary Emo exception
+// whose message states exactly what failed — no error codes, no nil.
+
+def resolve(host String) Array[String] {
+  return net_resolve(host)
+}
+
+def connect(host String, port Int, timeout Float) TcpConn {
+  return net_connect(host, port, timeout)
+}
+
+def listen(host String, port Int) TcpListener {
+  return net_listen(host, port)
+}
+
+def connect_unix(path String, timeout Float) TcpConn {
+  return net_connect_unix(path, timeout)
+}
+
+def listen_unix(path String) TcpListener {
+  return net_listen_unix(path)
+}
+
+def tls_connect(host String, port Int, timeout Float) TcpConn {
+  return net_tls_connect(host, port, timeout)
+}
+
+def tls_connect_insecure(host String, port Int, timeout Float) TcpConn {
+  return net_tls_connect_insecure(host, port, timeout)
+}
+
+def listen_tls(host String, port Int, cert_path String, key_path String) TcpListener {
+  return net_listen_tls(host, port, cert_path, key_path)
+}
+
+def udp_bind(host String, port Int) UdpSocket {
+  return net_udp_bind(host, port)
+}
