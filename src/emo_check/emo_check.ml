@@ -272,6 +272,38 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ( "net_tls_connect",
+          {
+            vtype =
+              FuncType
+                ( [ ("host", String); ("port", Int); ("timeout", Float) ],
+                  TcpConn );
+            is_var = false;
+            depth = 0;
+          } );
+        ( "net_tls_connect_insecure",
+          {
+            vtype =
+              FuncType
+                ( [ ("host", String); ("port", Int); ("timeout", Float) ],
+                  TcpConn );
+            is_var = false;
+            depth = 0;
+          } );
+        ( "net_listen_tls",
+          {
+            vtype =
+              FuncType
+                ( [
+                    ("host", String);
+                    ("port", Int);
+                    ("cert_path", String);
+                    ("key_path", String);
+                  ],
+                  TcpListener );
+            is_var = false;
+            depth = 0;
+          } );
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );

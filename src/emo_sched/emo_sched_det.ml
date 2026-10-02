@@ -46,7 +46,12 @@ type runnable =
     Io of Emo_eval.process * (state -> outcome)
 
 and io_interest = { iokind : [ `R | `W ]; iowake : unit -> unit }
-and live = { lfd : Unix.file_descr; rbuf : Buffer.t }
+
+and live = {
+  lfd : Unix.file_descr;
+  ltls : Ssl.socket option; (* a TLS connection rides the same fd *)
+  rbuf : Buffer.t;
+}
 
 and state = {
   runq : runnable Queue.t;
@@ -59,7 +64,8 @@ and state = {
   io : (Unix.file_descr, io_interest list) Hashtbl.t;
   mutable timers : (float * (unit -> unit)) list; (* deadline, wake *)
   live : (int, live) Hashtbl.t; (* conn id → live socket *)
-  listeners : (int, Unix.file_descr) Hashtbl.t; (* listener id → fd *)
+  listeners : (int, Unix.file_descr * Ssl.context option) Hashtbl.t;
+      (* listener id → fd, and its TLS context when serving TLS *)
   udps : (int, Unix.file_descr) Hashtbl.t; (* udp id → socket *)
   mutable current : int; (* the pid performing effects right now *)
   rng : Random.State.t;
@@ -123,7 +129,24 @@ let make_conn state fd desc =
       cclosed = false;
     }
   in
-  Hashtbl.replace state.live c.Emo_eval.cid { lfd = fd; rbuf = Buffer.create 0 };
+  Hashtbl.replace state.live c.Emo_eval.cid
+    { lfd = fd; ltls = None; rbuf = Buffer.create 0 };
+  c
+
+(* A TLS connection: the same handle, with the SSL socket riding its fd.
+   OpenSSL runs on the nonblocking fd; want_read / want_write park the
+   continuation exactly like the plain paths. *)
+let make_tls_conn state fd ssl desc =
+  let c =
+    {
+      Emo_eval.cid = Emo_eval.fresh_resource_id ();
+      cdesc = desc;
+      ctimeout = 0.0;
+      cclosed = false;
+    }
+  in
+  Hashtbl.replace state.live c.Emo_eval.cid
+    { lfd = fd; ltls = Some ssl; rbuf = Buffer.create 0 };
   c
 
 let describe_sockaddr = function
@@ -228,6 +251,16 @@ let listen_on span host port : Unix.file_descr * int =
    the pump. All completions funnel through [guard] so exactly one of a
    readiness wake and a deadline wake finishes the operation. *)
 
+(* One read against the live socket — plain or TLS. TLS runs OpenSSL on
+   the nonblocking fd and reports the readiness it wants; plain sockets
+   report EAGAIN the same way. [RFailed] means the error queue holds the
+   detail. *)
+type read_result =
+  | RData of int
+  | RWant of [ `R | `W ]
+  | REof
+  | RFailed of string (* the reason, ready for the diagnostic *)
+
 let exit_name = function
   | Emo_eval.Exit_normal -> "normal"
   | Emo_eval.Exit_raised _ -> "raised"
@@ -327,8 +360,35 @@ let rec handler state (proc : Emo_eval.process) () :
                         lclosed = false;
                       }
                     in
-                    Hashtbl.replace state.listeners l.Emo_eval.lid fd;
+                    Hashtbl.replace state.listeners l.Emo_eval.lid (fd, None);
                     Effect.Shallow.continue_with k l (handler state proc ()))
+        | Emo_eval.Net_tls_listen (host, port, cert_path, key_path, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                match tls_listener span ~host ~port ~cert_path ~key_path with
+                | Error exn ->
+                    Effect.Shallow.discontinue_with k exn
+                      (handler state proc ())
+                | Ok (fd, bound, ctx) ->
+                    Unix.set_nonblock fd;
+                    let l =
+                      {
+                        Emo_eval.lid = Emo_eval.fresh_resource_id ();
+                        ldesc = Printf.sprintf "%s:%d" host bound;
+                        lport = bound;
+                        lunix = false;
+                        ltimeout = 0.0;
+                        lclosed = false;
+                      }
+                    in
+                    Hashtbl.replace state.listeners l.Emo_eval.lid (fd, Some ctx);
+                    Effect.Shallow.continue_with k l (handler state proc ()))
+        | Emo_eval.Net_tls_connect (host, port, timeout, insecure, addrs, span)
+          ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                connect_tls_entry state proc k ~host ~port ~timeout ~insecure
+                  span addrs)
         | Emo_eval.Net_accept (l, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -403,7 +463,7 @@ let rec handler state (proc : Emo_eval.process) () :
                         lclosed = false;
                       }
                     in
-                    Hashtbl.replace state.listeners l.Emo_eval.lid fd;
+                    Hashtbl.replace state.listeners l.Emo_eval.lid (fd, None);
                     Effect.Shallow.continue_with k l (handler state proc ()))
         | Emo_eval.Net_udp_bind (host, port, span) ->
             Some
@@ -462,7 +522,7 @@ let rec handler state (proc : Emo_eval.process) () :
                 else (
                   l.Emo_eval.lclosed <- true;
                   (match Hashtbl.find_opt state.listeners l.Emo_eval.lid with
-                  | Some fd -> (
+                  | Some (fd, _ctx) -> (
                       try Unix.close fd with Unix.Unix_error _ -> ())
                   | None -> ());
                   Hashtbl.remove state.listeners l.Emo_eval.lid;
@@ -606,8 +666,34 @@ and connect_entry state proc
   let message =
     Printf.sprintf "timed out after %gs connecting to %s" timeout target
   in
-  connect_next state proc k ~target ~deadline ~message ~last_error:None span
-    addrs
+  connect_next state proc k ~target ~deadline ~message ~tls:None
+    ~last_error:None span addrs
+
+(* A TLS connect runs the same connect machinery; on a connected socket
+   the TLS handshake takes over, parking through the scheduler. *)
+and connect_tls_entry state proc
+    (k : (Emo_eval.conn, unit) Effect.Shallow.continuation) ~(host : string)
+    ~(port : int) ~(timeout : float) ~(insecure : bool)
+    (span : Emo_support.Span.t) (addresses : string list) : outcome =
+  let ctx = client_tls_ctx ~insecure in
+  let target = Printf.sprintf "%s:%d" host port in
+  let addrs =
+    List.map
+      (fun a ->
+        {
+          cfam = (if String.contains a ':' then Unix.PF_INET6 else Unix.PF_INET);
+          caddr = Unix.ADDR_INET (Unix.inet_addr_of_string a, port);
+        })
+      addresses
+  in
+  let deadline =
+    if timeout > 0.0 then Some (Unix.gettimeofday () +. timeout) else None
+  in
+  let message =
+    Printf.sprintf "timed out after %gs connecting to %s" timeout target
+  in
+  connect_next state proc k ~target ~deadline ~message ~tls:(Some ctx)
+    ~last_error:None span addrs
 
 (* A unix-domain connect has one candidate address: the path itself. *)
 and connect_unix_entry state proc
@@ -620,11 +706,12 @@ and connect_unix_entry state proc
   let message =
     Printf.sprintf "timed out after %gs connecting to %s" timeout target
   in
-  connect_next state proc k ~target ~deadline ~message ~last_error:None span
+  connect_next state proc k ~target ~deadline ~message ~tls:None
+    ~last_error:None span
     [ { cfam = Unix.PF_UNIX; caddr = Unix.ADDR_UNIX path } ]
 
 and connect_next state proc k ~target ~deadline ~message
-    ~(last_error : Unix.error option) span addrs =
+    ~(tls : Ssl.context option) ~(last_error : Unix.error option) span addrs =
   match addrs with
   | [] ->
       (* Every candidate failed; the last OS error is the precise reason. *)
@@ -666,16 +753,16 @@ and connect_next state proc k ~target ~deadline ~message
             cleanup st;
             (* This address failed; the refusal is only final when the
                last candidate said it. *)
-            connect_next st proc k ~target ~deadline ~message
+            connect_next st proc k ~target ~deadline ~message ~tls
               ~last_error:(Some err) span rest
-        | None -> finish_w finished st proc k (make_conn st fd target)
+        | None -> connect_tls_upgrade st proc k finished fd target tls span
       in
       let timeout_step st =
         cleanup st;
         abort_w finished st proc k (Emo_eval.net_raise span message)
       in
       match Unix.connect fd addr.caddr with
-      | () -> finish_w finished state proc k (make_conn state fd target)
+      | () -> connect_tls_upgrade state proc k finished fd target tls span
       | exception Unix.Unix_error (Unix.EINPROGRESS, _, _) ->
           add_io state fd `W (fun () -> Queue.add (Io (proc, step)) state.runq);
           (match deadline with
@@ -689,8 +776,86 @@ and connect_next state proc k ~target ~deadline ~message
           cleanup state;
           if rest = [] then abort_w finished state proc k (refusal err)
           else
-            connect_next state proc k ~target ~deadline ~message
+            connect_next state proc k ~target ~deadline ~message ~tls
               ~last_error:(Some err) span rest)
+
+(* A verifying client context, or one that explicitly skips verification
+   (`net_tls_connect_insecure` — visibly dangerous, never a default). *)
+and client_tls_ctx ~(insecure : bool) : Ssl.context =
+  (* SSLv23 is the negotiate-all profile; the deprecation alert refers to
+     the SSL 2.0 days, not to what OpenSSL does with it today. *)
+  let[@alert "-deprecated"] ctx =
+    Ssl.create_context Ssl.SSLv23 Ssl.Client_context
+  in
+  if insecure then Ssl.set_verify ctx [] None
+  else (
+    ignore (Ssl.set_default_verify_paths ctx);
+    Ssl.set_verify ctx
+      [ Ssl.Verify_peer; Ssl.Verify_fail_if_no_peer_cert ]
+      (Some Ssl.client_verify_callback));
+  ctx
+
+(* Upgrades a just-connected socket: plain connects finish immediately;
+   TLS hands the socket to OpenSSL and shakes hands asynchronously. *)
+and connect_tls_upgrade state proc
+    (k : (Emo_eval.conn, unit) Effect.Shallow.continuation)
+    (finished : bool ref) (fd : Unix.file_descr) (target : string)
+    (tls : Ssl.context option) (span : Emo_support.Span.t) : outcome =
+  match tls with
+  | None -> finish_w finished state proc k (make_conn state fd target)
+  | Some ctx ->
+      let ssl = Ssl.embed_socket fd ctx in
+      handshake state proc k finished fd ssl target span Ssl.connect
+
+(* Drives a nonblocking TLS handshake to completion: want_read /
+   want_write park the continuation on the fd, so both ends of a
+   loopback handshake progress through the scheduler. *)
+and handshake state proc (k : (Emo_eval.conn, unit) Effect.Shallow.continuation)
+    (finished : bool ref) (fd : Unix.file_descr) (ssl : Ssl.socket)
+    (desc : string) (span : Emo_support.Span.t) (once : Ssl.socket -> unit) :
+    outcome =
+  match once ssl with
+  | () -> finish_w finished state proc k (make_tls_conn state fd ssl desc)
+  | exception
+      ( Ssl.Connection_error (Ssl.Error_want_read as want)
+      | Ssl.Accept_error (Ssl.Error_want_read as want) )
+    when want = Ssl.Error_want_read ->
+      park_and_handshake state proc k finished fd ssl desc span `R once
+  | exception
+      ( Ssl.Connection_error (Ssl.Error_want_write as want)
+      | Ssl.Accept_error (Ssl.Error_want_write as want) )
+    when want = Ssl.Error_want_write ->
+      park_and_handshake state proc k finished fd ssl desc span `W once
+  | exception (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _)
+    ->
+      abort_w finished state proc k
+        (Emo_eval.net_raise span
+           (Printf.sprintf "the TLS handshake with %s failed: %s" desc
+              ((Ssl.get_error_string [@alert "-deprecated"]) ())))
+
+and park_and_handshake state proc k finished fd ssl desc span kind once =
+  park_fd state proc k finished fd kind ~deadline:None
+    ~timeout_message:(Printf.sprintf "timed out handshaking with %s" desc) span
+    (fun st -> handshake st proc k finished fd ssl desc span once)
+
+(* The setup half of a TLS listener: TCP listen plus a server context
+   holding the certificate. *)
+and tls_listener span ~(host : string) ~(port : int) ~(cert_path : string)
+    ~(key_path : string) : (Unix.file_descr * int * Ssl.context, exn) result =
+  let[@alert "-deprecated"] ctx =
+    Ssl.create_context Ssl.SSLv23 Ssl.Server_context
+  in
+  match Ssl.use_certificate ctx cert_path key_path with
+  | () -> (
+      try
+        let fd, bound = listen_on span host port in
+        Ok (fd, bound, ctx)
+      with Emo_eval.Emo_raise _ as exn -> Error exn)
+  | exception (Ssl.Certificate_error message | Ssl.Private_key_error message) ->
+      Error
+        (Emo_eval.net_raise span
+           (Printf.sprintf "cannot load the TLS certificate for %s:%d: %s" host
+              port message))
 
 and accept_loop state proc
     (k : (Emo_eval.conn, unit) Effect.Shallow.continuation)
@@ -702,12 +867,16 @@ and accept_loop state proc
          (Printf.sprintf "the listener on %s is closed" l.Emo_eval.ldesc))
       (handler state proc ())
   else
-    let fd = Hashtbl.find state.listeners l.Emo_eval.lid in
+    let fd, tls_ctx = Hashtbl.find state.listeners l.Emo_eval.lid in
     match Unix.accept fd with
-    | client, sockaddr ->
+    | client, sockaddr -> (
         Unix.set_nonblock client;
-        let conn = make_conn state client (describe_sockaddr sockaddr) in
-        finish_w finished state proc k conn
+        let desc = describe_sockaddr sockaddr in
+        match tls_ctx with
+        | None -> finish_w finished state proc k (make_conn state client desc)
+        | Some ctx ->
+            let ssl = Ssl.embed_socket client ctx in
+            handshake state proc k finished client ssl desc span Ssl.accept)
     | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
         park_fd state proc k finished fd `R ~deadline
           ~timeout_message:
@@ -845,35 +1014,44 @@ and udp_recv_entry state proc
           (io_error span "receive" u.Emo_eval.udesc err)
           (handler state proc ())
 
+and read_chunk live buf : read_result =
+  match live.ltls with
+  | None -> (
+      match Unix.recv live.lfd buf 0 (Bytes.length buf) [] with
+      | 0 -> REof
+      | n -> RData n
+      | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> RWant `R
+      | exception Unix.Unix_error (err, _, _) ->
+          RFailed (Unix.error_message err))
+  | Some ssl -> (
+      match Ssl.read ssl buf 0 (Bytes.length buf) with
+      | 0 -> REof
+      | n -> RData n
+      | exception Ssl.Read_error Ssl.Error_want_read -> RWant `R
+      | exception Ssl.Read_error Ssl.Error_want_write -> RWant `W
+      | exception (Ssl.Read_error _ | Ssl.Connection_error _) ->
+          RFailed ((Ssl.get_error_string [@alert "-deprecated"]) ())
+      | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> RWant `R)
+
 and read_line_loop state proc (k : (string, unit) Effect.Shallow.continuation)
     (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
     (live : live) (deadline : float option) : outcome =
   match line_in_buffer live with
   | Some line -> finish_w finished state proc k line
-  | None -> (
-      let buf = Bytes.create 4096 in
-      match Unix.recv live.lfd buf 0 4096 [] with
-      | 0 ->
-          let rest = Buffer.contents live.rbuf in
-          Buffer.reset live.rbuf;
-          if rest = "" then finish_w finished state proc k ""
+  | None ->
+      read_more state proc k finished c span live deadline
+        ~timeout_what:"reading a line from"
+        ~at_eof:(fun st rest ->
+          (* A clean close completes with an empty line; a close mid-line
+             is a failure, never a silent partial line. *)
+          if rest = "" then finish_w finished st proc k ""
           else
-            abort_w finished state proc k
+            abort_w finished st proc k
               (Emo_eval.net_raise span
                  (Printf.sprintf "the connection to %s closed mid-line"
-                    c.Emo_eval.cdesc))
-      | n ->
-          Buffer.add_subbytes live.rbuf buf 0 n;
-          read_line_loop state proc k finished c span live deadline
-      | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
-          park_fd state proc k finished live.lfd `R ~deadline
-            ~timeout_message:
-              (Printf.sprintf "timed out reading a line from %s"
-                 c.Emo_eval.cdesc) span (fun st ->
-              read_line_loop st proc k finished c span live deadline)
-      | exception Unix.Unix_error (err, _, _) ->
-          abort_w finished state proc k
-            (io_error span "read" c.Emo_eval.cdesc err))
+                    c.Emo_eval.cdesc)))
+        ~again:(fun st ->
+          read_line_loop st proc k finished c span live deadline)
 
 and read_exactly_loop state proc
     (k : (string, unit) Effect.Shallow.continuation) (finished : bool ref)
@@ -882,69 +1060,93 @@ and read_exactly_loop state proc
   if Buffer.length live.rbuf >= n then
     finish_w finished state proc k (buffer_take live n)
   else
-    let buf = Bytes.create 4096 in
-    match Unix.recv live.lfd buf 0 4096 [] with
-    | 0 ->
-        let have = Buffer.length live.rbuf in
-        abort_w finished state proc k
+    read_more state proc k finished c span live deadline
+      ~timeout_what:"reading from"
+      ~at_eof:(fun st rest ->
+        abort_w finished st proc k
           (Emo_eval.net_raise span
              (Printf.sprintf "the connection to %s closed after %d of %d bytes"
-                c.Emo_eval.cdesc have n))
-    | n ->
-        Buffer.add_subbytes live.rbuf buf 0 n;
-        read_exactly_loop state proc k finished c span live deadline n
-    | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
-        park_fd state proc k finished live.lfd `R ~deadline
-          ~timeout_message:
-            (Printf.sprintf "timed out reading from %s" c.Emo_eval.cdesc) span
-          (fun st ->
-            read_exactly_loop st proc k finished c span live deadline n)
-    | exception Unix.Unix_error (err, _, _) ->
-        abort_w finished state proc k
-          (io_error span "read" c.Emo_eval.cdesc err)
+                c.Emo_eval.cdesc (String.length rest) n)))
+      ~again:(fun st ->
+        read_exactly_loop st proc k finished c span live deadline n)
 
 and read_all_loop state proc (k : (string, unit) Effect.Shallow.continuation)
     (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
     (live : live) (deadline : float option) : outcome =
-  let buf = Bytes.create 4096 in
-  match Unix.recv live.lfd buf 0 4096 [] with
-  | 0 ->
-      let data = Buffer.contents live.rbuf in
-      Buffer.reset live.rbuf;
-      finish_w finished state proc k data
-  | n ->
+  read_more state proc k finished c span live deadline
+    ~timeout_what:"reading from"
+    ~at_eof:(fun st rest ->
+      (* read_all delivers everything that arrived, empty included. *)
+      finish_w finished st proc k rest)
+    ~again:(fun st -> read_all_loop st proc k finished c span live deadline)
+
+(* Pulls one chunk into the live buffer and re-runs [again]; the three
+   read operations differ only in when their buffer satisfies them, so
+   EOF and readiness handling is shared here. *)
+and read_more state proc (k : (string, unit) Effect.Shallow.continuation)
+    (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
+    (live : live) (deadline : float option) ~(timeout_what : string)
+    ~(at_eof : state -> string -> outcome) ~(again : state -> outcome) : outcome
+    =
+  let buf = Bytes.create 16384 in
+  match read_chunk live buf with
+  | RData n ->
       Buffer.add_subbytes live.rbuf buf 0 n;
-      read_all_loop state proc k finished c span live deadline
-  | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
-      park_fd state proc k finished live.lfd `R ~deadline
+      again state
+  | REof ->
+      let rest = Buffer.contents live.rbuf in
+      Buffer.reset live.rbuf;
+      at_eof state rest
+  | RWant kind ->
+      park_fd state proc k finished live.lfd kind ~deadline
         ~timeout_message:
-          (Printf.sprintf "timed out reading from %s" c.Emo_eval.cdesc) span
-        (fun st -> read_all_loop st proc k finished c span live deadline)
-  | exception Unix.Unix_error (err, _, _) ->
-      abort_w finished state proc k (io_error span "read" c.Emo_eval.cdesc err)
+          (Printf.sprintf "timed out %s %s" timeout_what c.Emo_eval.cdesc)
+        span again
+  | RFailed detail ->
+      abort_w finished state proc k
+        (Emo_eval.net_raise span
+           (Printf.sprintf "cannot read on %s: %s" c.Emo_eval.cdesc detail))
 
 and write_loop state proc (k : (unit, unit) Effect.Shallow.continuation)
     (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
     (live : live) (deadline : float option) (bytes : Bytes.t) (off : int) :
     outcome =
   let len = Bytes.length bytes in
-  match Unix.send live.lfd bytes off (len - off) [] with
-  | n ->
-      let off = off + n in
-      if off >= len then finish_w finished state proc k ()
-      else
-        park_fd state proc k finished live.lfd `W ~deadline
-          ~timeout_message:
-            (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc) span
-          (fun st ->
-            write_loop st proc k finished c span live deadline bytes off)
-  | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
-      park_fd state proc k finished live.lfd `W ~deadline
-        ~timeout_message:
-          (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc) span
-        (fun st -> write_loop st proc k finished c span live deadline bytes off)
-  | exception Unix.Unix_error (err, _, _) ->
-      abort_w finished state proc k (io_error span "write" c.Emo_eval.cdesc err)
+  let sent, want =
+    match live.ltls with
+    | None -> (
+        match Unix.send live.lfd bytes off (len - off) [] with
+        | n -> (n, None)
+        | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> (0, Some `W)
+        | exception Unix.Unix_error (err, _, _) ->
+            (0, Some (`Failed (io_error span "write" c.Emo_eval.cdesc err))))
+    | Some ssl -> (
+        match Ssl.write ssl bytes off (len - off) with
+        | n -> (n, None)
+        | exception Ssl.Write_error Ssl.Error_want_read -> (0, Some `R)
+        | exception Ssl.Write_error Ssl.Error_want_write -> (0, Some `W)
+        | exception (Ssl.Write_error _ | Ssl.Connection_error _) ->
+            ( 0,
+              Some
+                (`Failed
+                   (Emo_eval.net_raise span
+                      (Printf.sprintf "cannot write on %s: %s" c.Emo_eval.cdesc
+                         ((Ssl.get_error_string [@alert "-deprecated"]) ()))))
+            ))
+  in
+  let off = off + sent in
+  let park kind =
+    park_fd state proc k finished live.lfd kind ~deadline
+      ~timeout_message:
+        (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc) span
+      (fun st -> write_loop st proc k finished c span live deadline bytes off)
+  in
+  match want with
+  | Some (`Failed exn) -> abort_w finished state proc k exn
+  | Some `R -> park `R
+  | Some `W -> park `W
+  | None when off >= len -> finish_w finished state proc k ()
+  | None -> park `W
 
 (* Fires due timers, then polls fd readiness once and wakes the parked
    operations whose fd is ready. Waiters that stay parked are untouched. *)
