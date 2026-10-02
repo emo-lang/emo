@@ -1,0 +1,51 @@
+// Numbers that compile to metal.
+//
+//   emo build main.emo -o numerics
+//   ./numerics
+//
+// `foreign def` binds a C symbol into the compiled binary — here the
+// C math library's `sqrt` and `pow` (on Linux, link it with
+// `emo build main.emo --cclib m`). The interpreter has no C linkage
+// and refuses foreign definitions, so this program runs only
+// compiled: one command, one standalone executable.
+//
+// The kernels below are fully annotated, so the compiler specializes
+// them: unboxed float arithmetic and direct calls, with the tagged
+// dynamic semantics kept only where types are unknown. The same
+// program with `emo build --no-specialize` keeps tagged values — the
+// benchmarks/ tree records what that difference is worth.
+
+foreign def sqrt(x Float) Float = "sqrt"
+foreign def pow(x Float, y Float) Float = "pow"
+
+// Compound growth: principal * (1 + rate) ** years, straight into
+// unboxed doubles and the C library.
+def growth(principal Float, rate Float, years Float) Float {
+  return principal * pow(1.0 + rate, years)
+}
+
+// One table row per year; recursion is the loop.
+def table(principal Float, rate Float, years Float) Float {
+  const value = growth(principal, rate, years)
+  print("year ${years.to_string()}: ${value}")
+  if years == 10.0 {
+    return value
+  }
+  return table(principal, rate, years + 1.0)
+}
+
+// The two roots of a*x^2 + b*x + c = 0.
+def roots(a Float, b Float, c Float) (Float, Float) {
+  const disc = sqrt(b * b - 4.0 * a * c)
+  const x1 = (0.0 - b + disc) / (2.0 * a)
+  const x2 = (0.0 - b - disc) / (2.0 * a)
+  return (x1, x2)
+}
+
+print("== compound growth: 1000 at 5% ==")
+table(1000.0, 0.05, 0.0)
+
+print("== roots of x^2 - 3x + 2 ==")
+const r = roots(1.0, -3.0, 2.0)
+print("x1 = ${r[0]}")
+print("x2 = ${r[1]}")

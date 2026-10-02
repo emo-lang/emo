@@ -1,0 +1,9 @@
+package {
+  name = "emo/demo_tcp_echo"
+  version = "0.1.0"
+  targets = ["native"]
+
+  deps {
+    net = "0.1.0"
+  }
+}
