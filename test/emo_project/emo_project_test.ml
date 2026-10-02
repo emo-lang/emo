@@ -1058,6 +1058,43 @@ let bootstrap_tests =
           "http_roundtrip" "main.emo" false);
   ]
 
+(* ---- The TypeScript target (step 15) ----
+
+   Each core example builds with --target typescript and the emitted
+   program, run on Node, must match the example's golden output. *)
+let ts_golden_tests =
+  List.map
+    (fun (name, entry) ->
+      tc
+        (Printf.sprintf
+           "%s compiles to TypeScript with the interpreter's output" name)
+        (fun () ->
+          let dir = Filename.concat (examples_dir ()) name in
+          let golden =
+            Emo_project.read_file (Filename.concat dir "expected.txt")
+          in
+          Sys.chdir dir;
+          let emo_exe = emo_exe_path () in
+          let out = Filename.concat dir (name ^ "-ts-out") in
+          let build =
+            Printf.sprintf "exec 2>&1; %s build %s --target typescript -o %s"
+              (Filename.quote emo_exe) (Filename.quote entry)
+              (Filename.quote out)
+          in
+          let build_out = read_all (Unix.open_process_in build) in
+          if not (Sys.file_exists (out ^ ".ts")) then
+            Alcotest.fail ("build failed: " ^ build_out);
+          let compiled =
+            read_all
+              (Unix.open_process_in ("node " ^ Filename.quote (out ^ ".ts")))
+          in
+          Alcotest.(check string)
+            (name ^ ": typescript matches golden")
+            golden compiled))
+    [
+      ("hello_world", "main.emo"); ("fib", "main.emo"); ("objects", "main.emo");
+    ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -1072,4 +1109,5 @@ let () =
       ("stdlib_http", stdlib_http_tests);
       ("ffi", ffi_tests);
       ("bootstrap", bootstrap_tests);
+      ("ts_golden", ts_golden_tests);
     ]
