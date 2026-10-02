@@ -318,11 +318,11 @@ and emit_expr env (e : Emo_ir.expr) : string =
       Printf.sprintf "Emo_runtime.interpolate [%s]"
         (String.concat "; " (List.map (emit_expr env) es))
   | Emo_ir.Unary (Ast.Not, x) ->
-      Printf.sprintf "Emo_runtime.not_ %s" (emit_expr env x)
+      Printf.sprintf "(Emo_runtime.not_ (%s))" (emit_expr env x)
   | Emo_ir.Unary (Ast.Neg, x) ->
       if env.native && e.Emo_ir.ety = Emo_check.Int then
         Printf.sprintf "(- %s)" (emit_expr env x)
-      else Printf.sprintf "Emo_runtime.negf %s" (emit_expr env x)
+      else Printf.sprintf "(Emo_runtime.negf (%s))" (emit_expr env x)
   | Emo_ir.Binary (op, l, r) ->
       let lname = emit_expr env l in
       let rname = emit_expr env r in
@@ -437,25 +437,32 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Const (L_string s) -> Printf.sprintf "%S" s
   | Emo_ir.Var name -> local name
   | Emo_ir.Binary (op, l, r) ->
+      (* OCaml spells float arithmetic with a dot — the expression's
+         own type picks the operator family. Comparisons are
+         polymorphic and serve both. *)
+      let float = e.Emo_ir.ety = Emo_check.Float in
       let op_str =
         match op with
-        | Ast.Add -> "+"
-        | Ast.Sub -> "-"
-        | Ast.Mul -> "*"
-        | Ast.Div -> "/"
-        | Ast.Mod -> "mod"
+        | Ast.Add -> if float then "+." else "+"
+        | Ast.Sub -> if float then "-." else "-"
+        | Ast.Mul -> if float then "*." else "*"
+        | Ast.Div -> if float then "/." else "/"
+        | Ast.Mod -> if float then "Float.rem" else "mod"
         | Ast.Lt -> "<"
         | Ast.Le -> "<="
         | Ast.Gt -> ">"
         | Ast.Ge -> ">="
         | Ast.Eq -> "="
         | Ast.Ne -> "<>"
-        | _ -> "+"
+        | Ast.And -> "&&"
+        | Ast.Or -> "||"
       in
       Printf.sprintf "(%s %s %s)" (emit_native_expr env l) op_str
         (emit_native_expr env r)
   | Emo_ir.Unary (Ast.Neg, x) ->
-      Printf.sprintf "(- %s)" (emit_native_expr env x)
+      if e.Emo_ir.ety = Emo_check.Float then
+        Printf.sprintf "(-. %s)" (emit_native_expr env x)
+      else Printf.sprintf "(- %s)" (emit_native_expr env x)
   | Emo_ir.Unary (Ast.Not, x) ->
       Printf.sprintf "(not %s)" (emit_native_expr env x)
   | Emo_ir.Call { func; args } ->
@@ -798,38 +805,6 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
           (List.length f.Emo_ir.fparams))
       specialized
   end;
-  (* Dynamic functions: one rec group. *)
-  put env "\n";
-  let dynamic =
-    List.filter
-      (fun f ->
-        ((not env.specialize) || not f.Emo_ir.fspecializable)
-        && f.Emo_ir.fforeign = None)
-      program.Emo_ir.pfuncs
-  in
-  (* Class inits and methods are part of the same recursion group. *)
-  let class_funcs =
-    List.concat_map
-      (fun (c : Emo_ir.class_) ->
-        (match c.Emo_ir.cinit with Some i -> [ i ] | None -> [])
-        @ c.Emo_ir.cmethods)
-      program.Emo_ir.pclasses
-  in
-  let dynamic = dynamic @ class_funcs in
-  (match dynamic with
-  | [] ->
-      put env
-        "let rec __nothing (args : Emo_eval.value list) : Emo_eval.value =\n\
-        \    Emo_eval.Int 0"
-  | f :: rest ->
-      put env "let rec %s" (emit_func env f);
-      List.iter
-        (fun f ->
-          env.refs <- [];
-          env.immutables <- [];
-          put env "\nand %s" (emit_func env f))
-        rest);
-
   (* Foreign bindings: the external binds to the compiled C wrapper
      (ffi_stubs); the dynamic wrapper unboxes and reboxes around it. *)
   List.iter
@@ -872,6 +847,38 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
             (List.length f.Emo_ir.fparams)
       | None -> ())
     (ffi_wrapper_map program);
+  (* Dynamic functions: one rec group. *)
+  put env "\n";
+  let dynamic =
+    List.filter
+      (fun f ->
+        ((not env.specialize) || not f.Emo_ir.fspecializable)
+        && f.Emo_ir.fforeign = None)
+      program.Emo_ir.pfuncs
+  in
+  (* Class inits and methods are part of the same recursion group. *)
+  let class_funcs =
+    List.concat_map
+      (fun (c : Emo_ir.class_) ->
+        (match c.Emo_ir.cinit with Some i -> [ i ] | None -> [])
+        @ c.Emo_ir.cmethods)
+      program.Emo_ir.pclasses
+  in
+  let dynamic = dynamic @ class_funcs in
+  (match dynamic with
+  | [] ->
+      put env
+        "let rec __nothing (args : Emo_eval.value list) : Emo_eval.value =\n\
+        \    Emo_eval.Int 0"
+  | f :: rest ->
+      put env "let rec %s" (emit_func env f);
+      List.iter
+        (fun f ->
+          env.refs <- [];
+          env.immutables <- [];
+          put env "\nand %s" (emit_func env f))
+        rest);
+
   (* Class constructors join the same recursion group: they call the
      class's init (a group member) and their own method table. *)
   List.iter
