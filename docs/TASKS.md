@@ -204,13 +204,13 @@ Also here: swap step 09's transitional root rule for manifest-based roots — do
 **Prereq:** Steps 01–10.
 **Done when:** ping-pong (1M messages) and fan-out/fan-in (1000 workers) run correctly under both the Eio-based and own effects schedulers; a process that raises mid-message dies alone while the parent continues; sending a `Box` yields a snapshot; receive loops recursing millions of times keep the native stack flat; `dune test` green under the deterministic scheduler.
 
-- [ ] **T11.1** — Design pass: settle the self-pid mechanism in `CHECK.md` / README (`do`, `<-`, `receive { ... }`, and the `Box` operation set are already decided). Blocking gate for the rest of the step.
-- [ ] **T11.2** — Process/mailbox abstraction on Eio; spawn/send/receive.
-- [ ] **T11.3** — Crash isolation; process-exit signals for future supervisors.
-- [ ] **T11.4** — `Box` with snapshot-on-send semantics.
-- [ ] **T11.5** — Deterministic scheduler log for tests.
-- [ ] **T11.6** — Phase B: own effects-based scheduler beneath the same interface.
-- [ ] **T11.7** — Stress tests: ping-pong, fan-out/fan-in, deep receive-loop recursion.
+- [x] **T11.1** — Design pass: settle the self-pid mechanism in `CHECK.md` / README (`do`, `<-`, `receive { ... }`, and the `Box` operation set are already decided). Blocking gate for the rest of the step.
+- [x] **T11.2** — Process/mailbox abstraction on Eio; spawn/send/receive.
+- [x] **T11.3** — Crash isolation; process-exit signals for future supervisors.
+- [x] **T11.4** — `Box` with snapshot-on-send semantics.
+- [x] **T11.5** — Deterministic scheduler log for tests.
+- [x] **T11.6** — Phase B: own effects-based scheduler beneath the same interface.
+- [x] **T11.7** — Stress tests: ping-pong, fan-out/fan-in, deep receive-loop recursion.
 
 ### Step 12 — Networking library · `plan/step-12-networking.md`
 
