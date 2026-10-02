@@ -564,8 +564,9 @@ let check_entry ~entry_file : Emo_support.Diagnostic.t list =
 
 (* How the entry's evaluation is scheduled. [`Sequential] runs under the
    guard handler — process operations report E3009; [`Eio] is the phase A
-   scheduler. *)
-type sched = Sequential | Eio
+   scheduler; [`Own] is the phase B effects runtime, the default for
+   `emo run`. *)
+type sched = Sequential | Eio | Own
 
 let run_entry ~entry_file ?(check = false) ?(sched = Sequential) () : project =
   let p, prepared = prepare ~entry_file in
@@ -590,6 +591,7 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential) () : project =
      match sched with
      | Sequential -> Emo_eval.run_without_scheduler evaluate
      | Eio -> Emo_sched_eio.run evaluate
+     | Own -> ignore (Emo_sched_det.run evaluate)
    with Emo_eval.Emo_raise (v, span, trace) ->
      raise (Static_errors [ Emo_eval.uncaught_diagnostic (v, span, trace) ]));
   p

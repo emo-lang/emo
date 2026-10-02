@@ -60,7 +60,7 @@ let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
       try
         ignore
           (Emo_project.run_entry ~entry_file:file ~check:true
-             ~sched:Emo_project.Eio ());
+             ~sched:Emo_project.Own ());
         0
       with
       | Emo_project.Static_errors diagnostics ->
