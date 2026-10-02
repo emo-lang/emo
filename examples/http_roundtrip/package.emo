@@ -1,0 +1,10 @@
+package {
+  name = "emo/http_roundtrip"
+  version = "0.1.0"
+  targets = ["native"]
+
+  deps {
+    http = "0.1.0"
+    net = "0.1.0"
+  }
+}
