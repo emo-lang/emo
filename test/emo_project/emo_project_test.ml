@@ -1035,6 +1035,10 @@ let bootstrap_tests =
           true);
     tc "objects compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example (examples_dir ()) "objects" "objects/main.emo" true);
+    tc "language_tour compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example (examples_dir ()) "language_tour"
+          "language_tour/main.emo" true);
     tc "shop compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example
           (Filename.concat (examples_dir ()) "shop")
