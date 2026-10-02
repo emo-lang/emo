@@ -870,7 +870,6 @@ and accept_loop state proc
     let fd, tls_ctx = Hashtbl.find state.listeners l.Emo_eval.lid in
     match Unix.accept fd with
     | client, sockaddr -> (
-        Unix.set_nonblock client;
         let desc = describe_sockaddr sockaddr in
         match tls_ctx with
         | None -> finish_w finished state proc k (make_conn state client desc)
@@ -1234,13 +1233,6 @@ let rec loop state =
     (match outcome with
     | None -> ()
     | Some info ->
-        let proc =
-          match item with
-          | Fresh (p, _) -> p
-          | Continue (p, _) -> p
-          | Resumed (p, _, _) -> p
-          | Io (p, _) -> p
-        in
         log state (Exited (proc.Emo_eval.pid, exit_name info));
         Emo_eval.mark_exit proc info);
     loop state

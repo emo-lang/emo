@@ -650,6 +650,80 @@ receive {
               (match d.Diagnostic.code with Some c -> c | None -> "?"));
   ]
 
+(* ---- The standard library, exercised for real ----
+
+   The stdlib registry in the workspace serves `net` and `http`; the
+   roundtrip runs one program that serves and requests over loopback. *)
+
+let stdlib_http_tests =
+  [
+    tc "an http server and client round-trip on localhost" (fun () ->
+        (* The stdlib registry lives in the workspace; dune may hand the
+           env var down relativized, so the absolute path is computed from
+           the build directory's position inside the repo. *)
+        let rec up dir =
+          if Sys.file_exists (Filename.concat dir "dune-project") then dir
+          else up (Filename.dirname dir)
+        in
+        Unix.putenv "EMO_REGISTRY"
+          (Filename.concat (up (Unix.getcwd ())) "stdlib/registry");
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "roundtrip"
+  version = "0.1.0"
+  targets = ["native"]
+
+  deps {
+    http = "0.1.0"
+    net = "0.1.0"
+  }
+}|}
+              );
+              ( "main.emo",
+                {|require "http"
+require "net"
+
+const listener = net.listen("127.0.0.1", 0)
+
+do http.serve_requests(listener) -> (req HttpRequest) {
+  return http.response(200, [], "hello from emo")
+}
+
+const resp = http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello")
+print(resp.body)
+print(resp.status)
+|}
+              );
+            ]
+            "main.emo"
+        in
+        let output =
+          capture_output (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:entry ~check:true
+                  ~sched:Emo_project.Own ()
+              with
+              | _project -> ()
+              | exception Emo_project.Static_errors ds ->
+                  Alcotest.fail
+                    (String.concat "\n"
+                       (List.map
+                          (fun d ->
+                            Printf.sprintf "%s at %s: %s"
+                              (match d.Emo_support.Diagnostic.code with
+                              | Some c -> c
+                              | None -> "?")
+                              (Emo_support.Span.to_string
+                                 d.Emo_support.Diagnostic.span)
+                              d.Emo_support.Diagnostic.message)
+                          ds)))
+        in
+        Alcotest.(check string) "output" "hello from emo\n200\n" output);
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -661,4 +735,5 @@ let () =
       ("deps", deps_tests);
       ("sched", sched_tests);
       ("shop_golden", shop_golden_tests);
+      ("stdlib_http", stdlib_http_tests);
     ]

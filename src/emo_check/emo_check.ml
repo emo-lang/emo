@@ -79,8 +79,12 @@ let report ctx span code message =
 
 (* Annotations resolve names through the collected declarations; an unknown
    name is a certain error (the annotation can never hold). *)
-let rec ann_to_type ctx ({ Ast.type_span = span; type_desc; _ } : Ast.type_ann)
-    =
+(* [lenient] marks block-parameter positions: a name unknown in this
+   module may name a type from the library consuming the block, and
+   cross-module types stay unchecked this step — so it narrows to Unknown
+   instead of reporting E4005. Definitions stay strict. *)
+let rec ann_to_type ?(lenient = false) ctx
+    ({ Ast.type_span = span; type_desc; _ } : Ast.type_ann) =
   match type_desc with
   | Ast.Named_type "Int" -> Int
   | Ast.Named_type "Float" -> Float
@@ -91,20 +95,24 @@ let rec ann_to_type ctx ({ Ast.type_span = span; type_desc; _ } : Ast.type_ann)
   | Ast.Named_type "TcpConn" -> TcpConn
   | Ast.Named_type "TcpListener" -> TcpListener
   | Ast.Named_type "UdpSocket" -> UdpSocket
+  | Ast.Named_type "Block" -> Unknown
   | Ast.Named_type "Box" -> BoxType Unknown
   | Ast.Named_type name ->
       if Hashtbl.mem ctx.classes name then ClassType name
       else if Hashtbl.mem ctx.interfaces name then InterfaceType name
       else if Hashtbl.mem ctx.enums name then EnumType name
+      else if lenient then Unknown
       else (
         report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
         Unknown)
-  | Ast.Applied_type ("Array", [ elem ]) -> ArrayType (ann_to_type ctx elem)
-  | Ast.Applied_type ("Box", [ elem ]) -> BoxType (ann_to_type ctx elem)
+  | Ast.Applied_type ("Array", [ elem ]) ->
+      ArrayType (ann_to_type ~lenient ctx elem)
+  | Ast.Applied_type ("Box", [ elem ]) ->
+      BoxType (ann_to_type ~lenient ctx elem)
   | Ast.Applied_type (name, _) ->
       report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
       Unknown
-  | Ast.Tuple_type ts -> TupleType (List.map (ann_to_type ctx) ts)
+  | Ast.Tuple_type ts -> TupleType (List.map (ann_to_type ~lenient ctx) ts)
 
 (* Pass one: gather every declaration the checker reasons about. *)
 let collect ctx (items : Ast.item list) : unit =
@@ -548,7 +556,8 @@ let rec check_expr ctx env (e : Ast.expr) : t =
   | Ast.Arrow_block (params, body) ->
       let param_types =
         List.map
-          (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+          (fun p ->
+            (p.Ast.param_name, ann_to_type ~lenient:true ctx p.Ast.param_type))
           params
       in
       let inner =
@@ -556,11 +565,11 @@ let rec check_expr ctx env (e : Ast.expr) : t =
           (fun env p ->
             bind env p.Ast.param_name
               {
-                vtype = ann_to_type ctx p.Ast.param_type;
+                vtype = ann_to_type ~lenient:true ctx p.Ast.param_type;
                 is_var = false;
                 depth = env.depth;
               })
-          { (child_scope env) with block_depth = env.depth }
+          { (child_scope env) with block_depth = env.depth; ret = None }
           params
       in
       let sink = ref [] in
@@ -859,6 +868,67 @@ and check_method_call ctx env span recv mname args : t =
             (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
                (List.length arg_values));
           UdpSocket)
+  | String, "length" -> builtin0 Int
+  | String, "substring" -> (
+      match arg_values with
+      | [ (None, Int); (None, Int) ] -> String
+      | [ _; _ ] ->
+          report ctx span "E4004" "`substring` expects (start Int, length Int)";
+          String
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`substring` expects 2 arguments, got %d"
+               (List.length arg_values));
+          String)
+  | String, "split" -> (
+      match arg_values with
+      | [ (None, String) ] | [ (Some "sep", String) ] -> ArrayType String
+      | [ _ ] ->
+          report ctx span "E4004" "`split` expects a String separator";
+          ArrayType String
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`split` expects 1 argument, got %d"
+               (List.length arg_values));
+          ArrayType String)
+  | String, "trim" -> builtin0 String
+  | String, "lower" -> builtin0 String
+  | String, "index_of" -> (
+      match arg_values with
+      | [ (None, String) ] | [ (Some "needle", String) ] -> Int
+      | [ _ ] ->
+          report ctx span "E4004" "`index_of` expects a String needle";
+          Int
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`index_of` expects 1 argument, got %d"
+               (List.length arg_values));
+          Int)
+  | String, "starts_with" -> (
+      match arg_values with
+      | [ (None, String) ] | [ (Some "prefix", String) ] -> Bool
+      | [ _ ] ->
+          report ctx span "E4004" "`starts_with` expects a String prefix";
+          Bool
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`starts_with` expects 1 argument, got %d"
+               (List.length arg_values));
+          Bool)
+  | String, "to_int" -> builtin0 Int
+  | ArrayType elem, "append" -> (
+      match arg_values with
+      | [ (_, vt) ] ->
+          if not (conforms ctx vt elem) then
+            report ctx span "E4004"
+              (Printf.sprintf "`append` expects %s, got %s" (to_string elem)
+                 (to_string vt));
+          ArrayType elem
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`append` expects 1 argument, got %d"
+               (List.length arg_values));
+          ArrayType elem)
   | ArrayType elem, "length" ->
       builtin0
         (ignore elem;
@@ -913,15 +983,16 @@ and check_binary ctx env span op l r =
   | Ast.Add ->
       (* Numbers add as numbers, strings concatenate, and an Unknown side
          stays silent unless the known side could never work. *)
-      let strings = lt = String && rt = String in
       let stringish v = v = String || v = Unknown in
+      let concatenating = stringish lt && stringish rt in
       if
         not
-          (strings
-          || (numeric_pair_ok () && not (lt = String || rt = String))
-          || (stringish lt && stringish rt))
+          (concatenating
+          || (numeric_pair_ok () && not (lt = String || rt = String)))
       then mismatch "two numbers or two strings";
-      if strings then String else result_number
+      (* Concatenation stays a String even when one side is Unknown —
+         the known side already proves the operation is `+` on strings. *)
+      if concatenating then String else result_number
   | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod ->
       if not (numeric_pair_ok ()) then mismatch "two numbers";
       result_number
@@ -1300,6 +1371,23 @@ let check_class ctx env (c : Ast.class_def) : unit =
 (* Checks the statement items of a program; declarations register into the
    environment in source order. *)
 let check_items ctx (items : Ast.item list) : unit =
+  (* Every def's signature binds before any body is checked: closures
+     resolve names at call time, so a forward reference works at runtime
+     and the checker admits it too. *)
+  let env =
+    List.fold_left
+      (fun env item ->
+        match item.Ast.item_desc with
+        | Ast.Item_def d ->
+            bind env d.Ast.def_name
+              {
+                vtype = signature_of_def ctx d;
+                is_var = false;
+                depth = env.depth;
+              }
+        | _ -> env)
+      empty_env items
+  in
   ignore
     (List.fold_left
        (fun env item ->
@@ -1309,19 +1397,13 @@ let check_items ctx (items : Ast.item list) : unit =
              env
          | Ast.Item_stmt s -> check_stmt ctx env s
          | Ast.Item_def d ->
-             let ft = signature_of_def ctx d in
-             (* The signature binds before the body: recursion works. *)
-             let env =
-               bind env d.Ast.def_name
-                 { vtype = ft; is_var = false; depth = env.depth }
-             in
              check_fun_def ctx env d;
              env
          | Ast.Item_class c ->
              check_class ctx env c;
              env
          | _ -> env)
-       empty_env items)
+       env items)
 
 let sort_diagnostics diagnostics =
   List.sort

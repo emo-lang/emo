@@ -95,6 +95,34 @@ and module_handle = {
 and env = { frame : (string, binding) Hashtbl.t; parent : env option }
 and binding = { mutable bound : value; mutable_ : bool }
 
+(* Splits on a (possibly multi-character) separator. *)
+let split_on_string sep s =
+  let seplen = String.length sep in
+  let last = String.length s - seplen in
+  let rec find j =
+    if j > last then None
+    else if String.sub s j seplen = sep then Some j
+    else find (j + 1)
+  in
+  let rec go i acc =
+    match find i with
+    | Some j -> go (j + seplen) (String.sub s i (j - i) :: acc)
+    | None -> List.rev (String.sub s i (String.length s - i) :: acc)
+  in
+  go 0 []
+
+(* Decimal only, optional minus, no separators or exponents: `1_000`,
+   `0x10`, and `+5` are not integers here. *)
+let parse_decimal s =
+  let body =
+    if String.length s > 0 && s.[0] = '-' then
+      String.sub s 1 (String.length s - 1)
+    else s
+  in
+  if body = "" || not (String.for_all (fun c -> c >= '0' && c <= '9') body) then
+    None
+  else int_of_string_opt s
+
 let type_name = function
   | Int _ -> "Int"
   | Float _ -> "Float"
@@ -1065,6 +1093,59 @@ and eval_method env span recv mname arg_exprs =
       | _ ->
           error span "E3007"
             (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
+  | String s, "length" ->
+      none_expected "length";
+      Int (String.length s)
+  | String s, "substring" -> (
+      match eval_args () with
+      | [ Int start; Int len ]
+        when start >= 0 && len >= 0 && start + len <= String.length s ->
+          String (String.sub s start len)
+      | [ Int start; Int len ] ->
+          error span "E3004"
+            (Printf.sprintf
+               "substring (%d, %d) is out of bounds for a length-%d String"
+               start len (String.length s))
+      | _ -> error span "E3007" "`substring` expects (start Int, length Int)")
+  | String s, "split" -> (
+      match eval_args () with
+      | [ String sep ] when sep <> "" ->
+          Array
+            (Array.of_list
+               (List.map (fun part -> String part) (split_on_string sep s)))
+      | [ String _ ] -> error span "E3007" "the separator must not be empty"
+      | _ -> error span "E3007" "`split` expects a String separator")
+  | String s, "trim" ->
+      none_expected "trim";
+      String (String.trim s)
+  | String s, "lower" ->
+      none_expected "lower";
+      String (String.lowercase_ascii s)
+  | String s, "index_of" -> (
+      match eval_args () with
+      | [ String needle ] ->
+          let rec find i =
+            if i + String.length needle > String.length s then None
+            else if String.sub s i (String.length needle) = needle then Some i
+            else find (i + 1)
+          in
+          Int (match find 0 with Some i -> i | None -> -1)
+      | _ -> error span "E3007" "`index_of` expects a String needle")
+  | String s, "starts_with" -> (
+      match eval_args () with
+      | [ String prefix ] -> Bool (String.starts_with ~prefix s)
+      | _ -> error span "E3007" "`starts_with` expects a String prefix")
+  | String s, "to_int" -> (
+      match parse_decimal s with
+      | Some n -> Int n
+      | None ->
+          error span "E3007" (Printf.sprintf "cannot parse `%s` as an Int" s))
+  | Array xs, "append" -> (
+      match eval_args () with
+      | [ v ] -> Array (Array.append xs [| v |])
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`append` expects 1 argument, got %d" argc))
   | Instance i, "is" -> (
       let args = eval_args () in
       match args with
