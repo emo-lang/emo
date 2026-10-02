@@ -1,0 +1,723 @@
+module Ast = Emo_ast
+
+(* The mid-level IR: modules of named functions over typed values, with
+   tagged-dynamic fallbacks. Every backend lowers from this IR — never
+   from the AST again.
+
+   Types are the checker's own [Emo_check.t]: every expression carries the
+   type step 08 gave it, and [Unknown] marks the dynamic regions. A
+   function whose parameters, result, and body are entirely native
+   ([fspecializable]) is Stage B's specialization target; everything else
+   keeps dynamic semantics at its Unknown regions. *)
+
+type expr = { ety : Emo_check.t; desc : expr_desc }
+
+and expr_desc =
+  | Const of Emo_ast.literal
+  | Type_ref of string (* a type name in value position: `is` targets *)
+  | Var of string (* a local binding, or `self` *)
+  | Global of string (* a mangled program-wide def *)
+  | Tuple of expr list
+  | Array_lit of expr list
+  | Make_enum of { enum_name : string; member : string }
+  | Interpolate of expr list
+  | Unary of Emo_ast.unop * expr
+  | Binary of Emo_ast.binop * expr * expr
+  | Index of expr * expr
+  | Field_read of { obj : expr; name : string }
+  | Call of { func : string; args : expr list } (* resolved static call *)
+  | Call_value of { f : expr; args : expr list } (* first-class blocks *)
+  | Method of { self_ : expr; name : string; args : expr list }
+  | Builtin of { name : string; args : expr list }
+  | Box_new of expr
+  | Make_exception of { message : expr }
+  | Do_spawn of { func : string; args : expr list }
+  | Spawn_value of { f : expr; args : expr list }
+  | Closure of { cparams : (string * Emo_check.t) list; cbody : stmt list }
+
+and stmt =
+  | Effect of expr (* an expression run for its effect *)
+  | Let of { mutable_ : bool; name : string; init : expr }
+  | Assign_var of { name : string; value : expr } (* a `var`, in scope *)
+  | Set_field of { self_ : expr; name : string; value : expr }
+  | If of { cond : expr; then_ : stmt list; else_ : stmt list }
+  | Case of { scrutinee : expr; branches : branch list }
+  | Receive of { branches : branch list }
+  | Send of { target : expr; message : expr }
+  | Raise of expr
+  | Return_stmt of expr
+
+and branch = {
+  pattern : Emo_ast.pattern;
+  guard : expr option;
+  body : stmt list;
+}
+
+type func = {
+  fname : string; (* mangled, program-unique *)
+  fmodule : string list;
+  fparams : (string * Emo_check.t) list;
+  fresult : Emo_check.t;
+  fbody : stmt list;
+  fspecializable : bool; (* Stage B: every value in the body is native *)
+}
+
+type class_ = {
+  cname : string; (* mangled *)
+  cdisplay : string; (* the source name *)
+  cinit : func option; (* constructs the object; [self] is its first param *)
+  cmethods : func list; (* [self] is each method's first param *)
+}
+
+type program = {
+  pfuncs : func list;
+  pclasses : class_ list;
+  pinit : stmt list; (* the entry module's top-level statements *)
+  pentry : string list; (* the entry module's path *)
+}
+
+(* Raised when the lowerer meets something the checker admitted but the
+   IR does not model. *)
+exception Lower_error of string
+
+(* ---- Mangling: module path × name → one program-unique identifier. ---- *)
+
+let mangle (module_path : string list) (name : string) : string =
+  String.concat "__" (module_path @ [ name ])
+
+(* ---- The lowering ---- *)
+
+type module_input = {
+  mpath : string list;
+  mitems : Emo_ast.item list;
+  mtypes : (int, Emo_check.t) Hashtbl.t; (* span start → checked type *)
+}
+
+(* One program-wide symbol: a def, a class, or an enum. *)
+type symbol =
+  | S_func of { mangled : string; params : string list }
+  | S_class of { mangled : string; params : string list } (* init's params *)
+  | S_enum
+
+type env = {
+  symbols : (string list * string, symbol) Hashtbl.t; (* module path × name *)
+  current : string list;
+  mutable locals : string list; (* innermost first *)
+  types : (int, Emo_check.t) Hashtbl.t;
+}
+
+let is_builtin = function
+  | "print" | "self_pid" | "halt" -> true
+  | name -> String.length name >= 4 && String.sub name 0 4 = "net_"
+
+let type_of env (span : Emo_support.Span.t) : Emo_check.t =
+  match Hashtbl.find_opt env.types span.Emo_support.Span.start with
+  | Some t -> t
+  | None -> Emo_check.Unknown
+
+let rec mk env span desc : expr = { ety = type_of env span; desc }
+
+and lookup_symbol env (path : string list) (name : string) : symbol option =
+  Hashtbl.find_opt env.symbols (path, name)
+
+(* The dotted chain of an expression that addresses a module member, if
+   any: [shop.order.total] → (["shop"; "order"], "total"). *)
+and dotted_path (e : Ast.expr) : (string list * string) option =
+  let rec go e =
+    match e.Ast.desc with
+    | Ast.Ident name -> Some ([ name ], true)
+    | Ast.Type_ident name -> Some ([ name ], true)
+    | Ast.Member (inner, name) -> (
+        match go inner with
+        | Some (path, _plain) -> Some (path @ [ name ], false)
+        | None -> None)
+    | _ -> None
+  in
+  match go e with
+  | Some (path, false) ->
+      let module_path = List.rev (List.tl (List.rev path)) in
+      let name = List.hd (List.rev path) in
+      if module_path = [] then None else Some (module_path, name)
+  | _ -> None
+
+(* Reorders named/positional arguments into the callee's parameter order —
+   positionals fill the first free slots left to right, named arguments
+   address their parameters (the evaluator's [bind_params] rule). The
+   checker has already validated arity and names. *)
+and order_args env params args =
+  let named =
+    List.filter_map
+      (fun { Ast.arg_name; arg_value } ->
+        match arg_name with Some n -> Some (n, arg_value) | None -> None)
+      args
+  in
+  let positional = Queue.create () in
+  List.iter
+    (fun { Ast.arg_name; arg_value } ->
+      match arg_name with
+      | None -> Queue.push arg_value positional
+      | Some _ -> ())
+    args;
+  List.map
+    (fun param ->
+      match List.assoc_opt param named with
+      | Some arg -> lower_expr env arg
+      | None -> lower_expr env (Queue.pop positional))
+    params
+
+and lower_expr env (e : Ast.expr) : expr =
+  Printf.eprintf "LOWER-EXPR %s\n%!"
+    (match e.Ast.desc with
+    | Ast.Member (_, m) -> "Member:" ^ m
+    | Ast.Ident n -> "Ident:" ^ n
+    | Ast.Int _ -> "Int"
+    | Ast.Call _ -> "Call"
+    | Ast.Binary _ -> "Binary"
+    | _ -> "other");
+  let expr desc = mk env e.Ast.span desc in
+  match e.Ast.desc with
+  | Ast.Int n -> expr (Const (L_int n))
+  | Ast.Float f -> expr (Const (L_float f))
+  | Ast.Bool b -> expr (Const (L_bool b))
+  | Ast.Char c -> expr (Const (L_char c))
+  | Ast.String s -> expr (Const (L_string s))
+  | Ast.Interpolated parts ->
+      expr
+        (Interpolate
+           (List.map
+              (function
+                | Ast.Literal_text s ->
+                    { ety = Emo_check.String; desc = Const (L_string s) }
+                | Ast.Part_expr part -> lower_expr env part)
+              parts))
+  | Ast.Ident name -> (
+      if List.mem name env.locals then expr (Var name)
+      else
+        match lookup_symbol env env.current name with
+        | Some (S_func { mangled; _ }) | Some (S_class { mangled; _ }) ->
+            expr (Global mangled)
+        | Some S_enum -> { ety = Emo_check.EnumType name; desc = Type_ref name }
+        | None when is_builtin name -> expr (Builtin { name; args = [] })
+        | None -> { ety = Emo_check.Unknown; desc = Type_ref name })
+  | Ast.Type_ident name -> { ety = Emo_check.Unknown; desc = Type_ref name }
+  | Ast.Self -> expr (Var "self")
+  | Ast.Member (inner, name) -> (
+      (* A dotted path: a module member (def, class, enum member), or a
+         field read on a value — the symbol table tells them apart. The
+         lookup key is (everything before the member, the member): the
+         prefix is a module path for defs and classes, and the type's own
+         name for enum members. *)
+      match dotted_path e with
+      | None ->
+          {
+            ety = type_of env e.Ast.span;
+            desc = Field_read { obj = lower_expr env inner; name };
+          }
+      | Some (path, member) -> (
+          (* A def or class: (module path, member name). An enum member:
+             the type is the segment before the member — `Color.red`, or
+             `pkg.Color.red` — and an unqualified type lives in the
+             current module. *)
+          let enum_candidates =
+            match path with
+            | [ type_name ] -> [ ([], type_name); (env.current, type_name) ]
+            | _ ->
+                let type_name = List.hd (List.rev path) in
+                [ (List.rev (List.tl (List.rev path)), type_name) ]
+          in
+          match Hashtbl.find_opt env.symbols (path, member) with
+          | Some (S_func { mangled; _ }) | Some (S_class { mangled; _ }) ->
+              expr (Global mangled)
+          | _ -> (
+              match
+                List.find_opt
+                  (fun key ->
+                    match Hashtbl.find_opt env.symbols key with
+                    | Some S_enum -> true
+                    | _ -> false)
+                  enum_candidates
+              with
+              | Some _ ->
+                  let enum_type = snd (List.hd enum_candidates) in
+                  expr (Make_enum { enum_name = enum_type; member })
+              | None ->
+                  {
+                    ety = type_of env e.Ast.span;
+                    desc = Field_read { obj = lower_expr env inner; name };
+                  })))
+  | Ast.Index (base, index) ->
+      expr (Index (lower_expr env base, lower_expr env index))
+  | Ast.Call (callee, args) -> lower_call env e.Ast.span callee args
+  | Ast.Arrow_block (params, body) ->
+      {
+        ety = Unknown;
+        desc =
+          Closure
+            {
+              cparams =
+                List.map (fun p -> (p.Ast.param_name, Emo_check.Unknown)) params;
+              cbody = lower_scoped env params body;
+            };
+      }
+  | Ast.Unary (op, x) -> expr (Unary (op, lower_expr env x))
+  | Ast.Binary (op, l, r) ->
+      expr (Binary (op, lower_expr env l, lower_expr env r))
+  | Ast.Tuple es -> expr (Tuple (List.map (lower_expr env) es))
+  | Ast.Array_literal es -> expr (Array_lit (List.map (lower_expr env) es))
+  | Ast.Do operand -> (
+      match operand.Ast.desc with
+      | Ast.Call (callee, args) -> (
+          match resolve_callee env callee with
+          | Some (mangled, params) ->
+              expr
+                (Do_spawn { func = mangled; args = order_args env params args })
+          | None ->
+              let f, arg_exprs = lower_apply env operand in
+              expr (Spawn_value { f; args = arg_exprs }))
+      | _ -> raise (Lower_error "`do` lowers from a call only"))
+
+and lower_call env span callee args =
+  match callee.Ast.desc with
+  | Ast.Ident name when is_builtin name ->
+      {
+        ety = type_of env span;
+        desc =
+          Builtin
+            {
+              name;
+              args =
+                List.map
+                  (fun { Ast.arg_value; _ } -> lower_expr env arg_value)
+                  args;
+            };
+      }
+  | _ -> (
+      match resolve_callee env callee with
+      | Some (mangled, params) ->
+          {
+            ety = type_of env span;
+            desc = Call { func = mangled; args = order_args env params args };
+          }
+      | None -> (
+          match callee.Ast.desc with
+          | Ast.Member (recv, name) -> (
+              match recv.Ast.desc with
+              | Ast.Type_ident class_name when name = "new" -> (
+                  match lookup_symbol env env.current class_name with
+                  | Some (S_class { mangled; params }) ->
+                      {
+                        ety = type_of env span;
+                        desc =
+                          Call
+                            {
+                              func = mangled;
+                              args = order_args env params args;
+                            };
+                      }
+                  | _ ->
+                      (* The built-in exception, or an unsupported
+                         constructor: the checker admitted only these. *)
+                      {
+                        ety = type_of env span;
+                        desc =
+                          Make_exception
+                            {
+                              message =
+                                (match
+                                   List.map
+                                     (fun { Ast.arg_name; arg_value } ->
+                                       (arg_name, arg_value))
+                                     args
+                                 with
+                                | [ (Some "message", v) ] | [ (None, v) ] ->
+                                    lower_expr env v
+                                | _ ->
+                                    { ety = String; desc = Const (L_string "") });
+                            };
+                      })
+              | Ast.Type_ident "Box" when name = "new" -> (
+                  match args with
+                  | [ { Ast.arg_name = None; arg_value } ] ->
+                      {
+                        ety = Emo_check.Unknown;
+                        desc = Box_new (lower_expr env arg_value);
+                      }
+                  | _ -> raise (Lower_error "`Box.new` takes one argument"))
+              | _ ->
+                  {
+                    ety = type_of env span;
+                    desc =
+                      Method
+                        {
+                          self_ = lower_expr env recv;
+                          name;
+                          args =
+                            List.map
+                              (fun { Ast.arg_value; _ } ->
+                                lower_expr env arg_value)
+                              args;
+                        };
+                  })
+          | _ ->
+              {
+                ety = type_of env span;
+                desc =
+                  Call_value
+                    {
+                      f = lower_expr env callee;
+                      args =
+                        List.map
+                          (fun { Ast.arg_value; _ } -> lower_expr env arg_value)
+                          args;
+                    };
+              }))
+
+(* A call's callee resolves when its dotted chain addresses a def or
+   class: plain names in the current module (unless shadowed by a
+   local), and module-qualified chains. *)
+and resolve_callee env (callee : Ast.expr) : (string * string list) option =
+  let result = resolve_callee_inner env callee in
+  (match dotted_path callee with
+  | Some (p, n) ->
+      Printf.eprintf "RC [%s] %s -> %s\n%!" (String.concat "," p) n
+        (match result with Some (m, _) -> "OK " ^ m | None -> "None")
+  | None -> Printf.eprintf "RC no-dotted\n%!");
+  result
+
+and resolve_callee_inner env (callee : Ast.expr) : (string * string list) option
+    =
+  match dotted_path callee with
+  | Some (module_path, name) -> (
+      match Hashtbl.find_opt env.symbols (module_path, name) with
+      | Some (S_func { mangled; params }) -> Some (mangled, params)
+      | Some (S_class { mangled; params }) -> Some (mangled, params)
+      | Some S_enum | None -> None)
+  | None -> (
+      match callee.Ast.desc with
+      | Ast.Ident name when not (List.mem name env.locals) -> (
+          match lookup_symbol env env.current name with
+          | Some (S_func { mangled; params }) -> Some (mangled, params)
+          | _ -> None)
+      | _ -> None)
+
+and lower_apply env (call : Ast.expr) : expr * expr list =
+  match call.Ast.desc with
+  | Ast.Call (callee, args) ->
+      ( lower_expr env callee,
+        List.map (fun { Ast.arg_value; _ } -> lower_expr env arg_value) args )
+  | _ -> raise (Lower_error "expected a call")
+
+and lower_scoped env (params : Ast.param list) (body : Ast.stmt list) :
+    stmt list =
+  let saved = env.locals in
+  env.locals <- List.map (fun p -> p.Ast.param_name) params @ env.locals;
+  let lowered = lower_stmts env body in
+  env.locals <- saved;
+  lowered
+
+and lower_stmts env (stmts : Ast.stmt list) : stmt list =
+  List.map (lower_stmt env) stmts
+
+and lower_stmt env (s : Ast.stmt) : stmt =
+  match s.Ast.stmt_desc with
+  | Ast.Expr_stmt e -> Effect (lower_expr env e)
+  | Ast.Binding { mutable_; name; init } ->
+      env.locals <- name :: env.locals;
+      Let { mutable_; name; init = lower_expr env init }
+  | Ast.Assign { target; value } -> (
+      match target.Ast.desc with
+      | Ast.Ident name -> Assign_var { name; value = lower_expr env value }
+      | Ast.Member ({ Ast.desc = Ast.Self; _ }, field) ->
+          Set_field
+            {
+              self_ = { ety = Emo_check.Unknown; desc = Var "self" };
+              name = field;
+              value = lower_expr env value;
+            }
+      | _ -> raise (Lower_error "invalid assignment target"))
+  | Ast.Return (Some e) ->
+      Printf.eprintf "RETURN-DESC=%s\n%!"
+        (match e.Ast.desc with
+        | Ast.Member (_, m) -> "Member " ^ m
+        | Ast.Ident n -> "Ident " ^ n
+        | Ast.Call _ -> "Call"
+        | _ -> "other");
+      Return_stmt (lower_expr env e)
+  | Ast.Return None ->
+      Return_stmt { ety = Emo_check.Unknown; desc = Const (L_bool false) }
+  | Ast.Raise e -> Raise (lower_expr env e)
+  | Ast.If { cond; then_body; else_body } ->
+      If
+        {
+          cond = lower_expr env cond;
+          then_ = lower_stmts env then_body;
+          else_ = Option.value else_body ~default:[] |> lower_stmts env;
+        }
+  | Ast.Case { scrutinee; branches } ->
+      Case
+        {
+          scrutinee = lower_expr env scrutinee;
+          branches = List.map (lower_branch env) branches;
+        }
+  | Ast.Receive branches ->
+      Receive { branches = List.map (lower_branch env) branches }
+  | Ast.Send { target; message } ->
+      Send { target = lower_expr env target; message = lower_expr env message }
+
+and lower_branch env (b : Ast.branch) : branch =
+  let saved = env.locals in
+  let () = collect_pattern_locals b.Ast.pattern env in
+  let lowered =
+    {
+      pattern = b.Ast.pattern;
+      guard = Option.map (lower_expr env) b.Ast.guard;
+      body = lower_stmts env b.Ast.body;
+    }
+  in
+  env.locals <- saved;
+  lowered
+
+and collect_pattern_locals (p : Ast.pattern) env =
+  match p.Ast.pattern_desc with
+  | Ast.Pattern_binding name -> env.locals <- name :: env.locals
+  | Ast.Tuple_pattern ps -> List.iter (fun p -> collect_pattern_locals p env) ps
+  | _ -> ()
+
+(* A def lowers with its signature's types. *)
+and lower_func env ~(module_path : string list) ~(mangled : string)
+    ~(self : bool) (d : Ast.fun_def) : func =
+  let self_param = if self then [ ("self", Emo_check.Unknown) ] else [] in
+  let saved = env.locals in
+  env.locals <-
+    List.map (fun p -> p.Ast.param_name) d.Ast.def_params
+    @ (if self then [ "self" ] else [])
+    @ env.locals;
+  let param_types =
+    self_param
+    @ List.map
+        (fun p -> (p.Ast.param_name, ann_type p.Ast.param_type))
+        d.Ast.def_params
+  in
+  let fbody = lower_stmts env d.Ast.def_body in
+  env.locals <- saved;
+  {
+    fname = mangled;
+    fmodule = module_path;
+    fparams = param_types;
+    fresult =
+      (match d.Ast.def_return with
+      | Some r -> ann_type r
+      | None -> Emo_check.Unknown);
+    fbody;
+    fspecializable = false;
+  }
+
+and ann_type (a : Ast.type_ann) : Emo_check.t =
+  match a.Ast.type_desc with
+  | Ast.Named_type "Int" -> Emo_check.Int
+  | Ast.Named_type "Float" -> Emo_check.Float
+  | Ast.Named_type "Bool" -> Emo_check.Bool
+  | Ast.Named_type "Char" -> Emo_check.Char
+  | Ast.Named_type "String" -> Emo_check.String
+  | Ast.Named_type "Pid" -> Emo_check.Pid
+  | _ -> Emo_check.Unknown
+
+(* ---- Stage B completeness ----
+
+   A function specializes when every value in it is native — parameters,
+   result, and every expression in the body — and the only calls it makes
+   are to other specialized functions. Native: Int, Float, Bool, Char,
+   String. Everything dynamic (Unknown, objects, sockets, closures)
+   disqualifies. Computed to a fixed point over the call graph. *)
+
+let is_native = function
+  | Emo_check.Int | Emo_check.Float | Emo_check.Bool | Emo_check.Char
+  | Emo_check.String ->
+      true
+  | _ -> false
+
+let rec expr_native (special : string list) (e : expr) : bool =
+  match e.desc with
+  | Const _ | Type_ref _ -> true
+  | Var _ | Global _ -> true
+  | Tuple es | Array_lit es | Interpolate es ->
+      List.for_all (expr_native special) es
+  | Make_enum _ -> true
+  | Unary (_, x) -> expr_native special x
+  | Binary (_, l, r) -> expr_native special l && expr_native special r
+  | Index (b, i) -> expr_native special b && expr_native special i
+  | Field_read { obj; _ } -> expr_native special obj
+  | Call { func; args } ->
+      List.mem func special && List.for_all (expr_native special) args
+  | Call_value _ | Method _ | Builtin _ | Box_new _ | Make_exception _
+  | Do_spawn _ | Spawn_value _ | Closure _ ->
+      false (* dynamic operations keep the function dynamic *)
+
+and stmts_native special (stmts : stmt list) : bool =
+  List.for_all (stmt_native special) stmts
+
+and stmt_native special (s : stmt) : bool =
+  match s with
+  | Effect e -> expr_native special e
+  | Let { init; _ } -> expr_native special init
+  | Assign_var { value; _ } -> expr_native special value
+  | Set_field _ -> false
+  | If { cond; then_; else_ } ->
+      expr_native special cond && stmts_native special then_
+      && stmts_native special else_
+  | Case { scrutinee; branches } ->
+      expr_native special scrutinee
+      && List.for_all
+           (fun b ->
+             (match b.guard with
+               | Some g -> expr_native special g
+               | None -> true)
+             && stmts_native special b.body)
+           branches
+  | Receive _ | Send _ | Raise _ -> false
+  | Return_stmt e -> expr_native special e
+
+(* Iterates to a fixed point: a function qualifies when its shape is
+   native and every function it calls already qualified. *)
+let specialize (funcs : func list) : func list =
+  let shape_ok f =
+    is_native f.fresult && List.for_all (fun (_, t) -> is_native t) f.fparams
+  in
+  let rec loop funcs =
+    let special =
+      List.filter_map
+        (fun g -> if g.fspecializable then Some g.fname else None)
+        funcs
+    in
+    let changed = ref false in
+    let funcs =
+      List.map
+        (fun f ->
+          if
+            (not f.fspecializable) && shape_ok f
+            (* Self-recursion is native when the shape is: seed the
+               function's own name so direct recursion qualifies. *)
+            && stmts_native (f.fname :: special) f.fbody
+          then (
+            changed := true;
+            { f with fspecializable = true })
+          else f)
+        funcs
+    in
+    if !changed then loop funcs else funcs
+  in
+  loop funcs
+
+(* ---- Program lowering ---- *)
+
+type input = {
+  modules : module_input list; (* every module in the dependency closure *)
+  entry : string list; (* the entry module's path *)
+}
+
+(* Lowers a whole program: symbols from every module first (forward
+   references work), then functions, classes, and the entry's top-level
+   statements. *)
+let lower (input : input) : program =
+  let symbols : (string list * string, symbol) Hashtbl.t = Hashtbl.create 16 in
+  List.iter
+    (fun (m : module_input) ->
+      List.iter
+        (fun (item : Ast.item) ->
+          match item.Ast.item_desc with
+          | Ast.Item_def d ->
+              Hashtbl.replace symbols (m.mpath, d.Ast.def_name)
+                (S_func
+                   {
+                     mangled = mangle m.mpath d.Ast.def_name;
+                     params =
+                       List.map (fun p -> p.Ast.param_name) d.Ast.def_params;
+                   })
+          | Ast.Item_class c ->
+              let init_params =
+                match c.Ast.class_init with
+                | Some init ->
+                    List.map (fun p -> p.Ast.param_name) init.Ast.def_params
+                | None -> []
+              in
+              Hashtbl.replace symbols
+                (m.mpath, c.Ast.class_name)
+                (S_class
+                   {
+                     mangled = mangle m.mpath (c.Ast.class_name ^ "__init");
+                     params = init_params;
+                   })
+          | Ast.Item_enum e ->
+              Hashtbl.replace symbols (m.mpath, e.Ast.enum_name) S_enum
+          | _ -> ())
+        m.mitems)
+    input.modules;
+  let funcs = ref [] in
+  let classes = ref [] in
+  List.iter
+    (fun (m : module_input) ->
+      let env = { symbols; current = m.mpath; locals = []; types = m.mtypes } in
+      List.iter
+        (fun (item : Ast.item) ->
+          match item.Ast.item_desc with
+          | Ast.Item_def d ->
+              funcs :=
+                lower_func env ~module_path:m.mpath
+                  ~mangled:(mangle m.mpath d.Ast.def_name)
+                  ~self:false d
+                :: !funcs
+          | Ast.Item_class c ->
+              let display = c.Ast.class_name in
+              let init =
+                Option.map
+                  (fun d ->
+                    lower_func env ~module_path:m.mpath
+                      ~mangled:(mangle m.mpath (display ^ "__init"))
+                      ~self:true d)
+                  c.Ast.class_init
+              in
+              let methods =
+                List.map
+                  (fun d ->
+                    lower_func env ~module_path:m.mpath
+                      ~mangled:
+                        (mangle m.mpath (display ^ "__" ^ d.Ast.def_name))
+                      ~self:true d)
+                  c.Ast.class_methods
+              in
+              classes :=
+                {
+                  cname = mangle m.mpath display;
+                  cdisplay = display;
+                  cinit = init;
+                  cmethods = methods;
+                }
+                :: !classes
+          | Ast.Item_enum _ | Ast.Item_interface _ | Ast.Item_require _ -> ()
+          | Ast.Item_stmt s ->
+              if m.mpath <> input.entry then
+                raise
+                  (Lower_error
+                     (Printf.sprintf
+                        "module `%s` has top-level statements; only the entry \
+                         module may (a compiled program runs the entry's \
+                         statements as its root process)"
+                        (String.concat "." m.mpath)));
+              ())
+        m.mitems)
+    input.modules;
+  let entry_module =
+    List.find (fun (m : module_input) -> m.mpath = input.entry) input.modules
+  in
+  let env =
+    { symbols; current = input.entry; locals = []; types = entry_module.mtypes }
+  in
+  let pinit =
+    entry_module.mitems
+    |> List.filter_map (fun (item : Ast.item) ->
+        match item.Ast.item_desc with
+        | Ast.Item_stmt s -> Some (lower_stmt env s)
+        | _ -> None)
+  in
+  let pfuncs = specialize !funcs in
+  { pfuncs; pclasses = !classes; pinit; pentry = input.entry }
