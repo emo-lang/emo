@@ -545,6 +545,51 @@ let entry_path (entry_file : string) : string =
     Filename.concat (Sys.getcwd ()) entry_file
   else entry_file
 
+(* The backend's lowering input: every module in the project, parsed and
+   checked (the backend runs the full check), plus the entry module's
+   path. Raises [Static_errors] on any diagnostic. *)
+let compile_inputs ~entry_file :
+    Emo_ir.module_input list * string list * Emo_pkg.manifest option =
+  let p, prepared = prepare ~entry_file in
+  Option.iter
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir p)
+    prepared;
+  let module_paths = module_paths p in
+  let diagnostics = ref [] in
+  let inputs =
+    Hashtbl.fold
+      (fun path file acc ->
+        let items = parse_cached p file in
+        let diags, _refs, _requires, types =
+          Emo_check.check_module_typed ~modules:module_paths ~current:path items
+        in
+        diagnostics := !diagnostics @ diags;
+        { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc)
+      p.files []
+  in
+  let entry_abs = entry_path entry_file in
+  let entry_module =
+    Hashtbl.fold
+      (fun path file acc ->
+        if String.equal file entry_abs then Some path else acc)
+      p.files None
+  in
+  let inputs, entry =
+    match entry_module with
+    | Some path -> (inputs, path)
+    | None ->
+        (* The entry lives outside the discovered tree: it becomes the
+           root module, like the interpreter's root environment. *)
+        let items = parse_cached p entry_abs in
+        let diags, _refs, _requires, types =
+          Emo_check.check_module_typed ~modules:module_paths ~current:[] items
+        in
+        diagnostics := !diagnostics @ diags;
+        ({ Emo_ir.mpath = []; mitems = items; mtypes = types } :: inputs, [])
+  in
+  (match !diagnostics with [] -> () | ds -> raise (Static_errors ds));
+  (inputs, entry, Option.map fst prepared)
+
 (* The deps commands operate on the project at the working directory — the
    root rule makes the manifest's directory the project root. *)
 let manifest_here () : string option =

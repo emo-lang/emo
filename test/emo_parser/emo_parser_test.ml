@@ -140,6 +140,7 @@ and pp_literal fmt = function
 and pp_item fmt (i : Emo_ast.item) =
   match i.Emo_ast.item_desc with
   | Emo_ast.Item_stmt s -> pp_stmt fmt s
+  | Emo_ast.Item_foreign _ -> ignore fmt
   | Emo_ast.Item_def d -> pp_fun_def fmt d
   | Emo_ast.Item_class c -> pp_class_def fmt c
   | Emo_ast.Item_interface i -> pp_interface_def fmt i

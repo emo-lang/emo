@@ -1,0 +1,21 @@
+// Process ping-pong: 40k messages on the compiled scheduler — the
+// receive/send path of the compiled runtime under sustained load.
+def ponger(n Int, pinger Pid) Int {
+  if n == 0 {
+    pinger <- "done"
+    return halt()
+  }
+  pinger <- "ack"
+  return ponger(n - 1, pinger)
+}
+
+def driver(n Int, pong Pid) Int {
+  pong <- (n, self_pid())
+  receive {
+    "ack" -> { return driver(n - 1, pong) }
+    "done" -> { return 0 }
+  }
+}
+
+const p = do ponger(20000, self_pid())
+print(driver(20000, p))
