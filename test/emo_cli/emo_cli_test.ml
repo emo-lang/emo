@@ -124,23 +124,24 @@ let repl_tests =
         Alcotest.(check string) "output" "= hi\n" (Buffer.contents out));
   ]
 
-let smoke_tests =
-  [
-    tc "library links" (fun () ->
-        let module M = Emo_cli in
-        ());
-    tc "version matches the CLI contract" (fun () ->
-        Alcotest.(check string) "version" "0.0.1" Emo_cli.version);
-  ]
-
-(* Every examples/<name>/ runs end to end and prints its expected.txt. *)
-let examples_dir = "../../examples"
-
 let read_file path =
   let ic = open_in_bin path in
   Fun.protect
     ~finally:(fun () -> close_in_noerr ic)
     (fun () -> really_input_string ic (in_channel_length ic))
+
+let smoke_tests =
+  [
+    tc "library links" (fun () ->
+        let module M = Emo_cli in
+        ());
+    tc "version matches the VERSION file" (fun () ->
+        let expected = String.trim (read_file "../../VERSION") in
+        Alcotest.(check string) "version" expected Emo_cli.version);
+  ]
+
+(* Every examples/<name>/ runs end to end and prints its expected.txt. *)
+let examples_dir = "../../examples"
 
 (* A directory with its own package.emo is a package project — it runs
    through resolution and the scheduler in test/emo_project, not here. *)
