@@ -12,4 +12,7 @@
   (setenv
    EMO_EXAMPLES_DIR
    %{workspace_root}/examples
-   (run %{exe:emo_project_test.exe}))))
+   (setenv
+    EMO_EXE
+    %{workspace_root}/_build/default/src/emo_cli/emo.exe
+    (run %{exe:emo_project_test.exe})))))

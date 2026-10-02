@@ -17,6 +17,9 @@ module Span = struct
     if stop < start then invalid_arg "Span.make: stop precedes start";
     { file; line; col; start; stop }
 
+  (* A synthetic position for runtime-generated diagnostics (the compiled
+     backend's operations carry no source spans). *)
+  let zero = { file = "<runtime>"; line = 1; col = 1; start = 0; stop = 0 }
   let to_string t = Printf.sprintf "%s:%d:%d" t.file t.line t.col
 
   let merge a b =
@@ -71,6 +74,17 @@ module Render = struct
       match d.code with
       | Some code -> Printf.sprintf "%s[%s]: %s" label code d.message
       | None -> Printf.sprintf "%s: %s" label d.message
+    in
+    (* The excerpt comes from the span's file when it exists on disk —
+       eval-stage diagnostics can span any project file; the caller's
+       source covers synthetic spans and in-memory text. *)
+    let source =
+      if Sys.file_exists d.span.file && not (Sys.is_directory d.span.file) then (
+        let ic = open_in_bin d.span.file in
+        let text = really_input_string ic (in_channel_length ic) in
+        close_in ic;
+        text)
+      else source
     in
     let line_text = source_line source d.span.line in
     let line_len = String.length line_text in

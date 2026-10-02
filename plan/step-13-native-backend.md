@@ -1,6 +1,6 @@
 # Step 13 — Native Backend
 
-**Milestone:** M4 · **Prereq:** steps 01–12 · **Status:** not started
+**Milestone:** M4 · **Prereq:** steps 01–12 · **Status:** done
 
 ## Goal
 
@@ -52,14 +52,14 @@ step 14's other targets will share.
 
 ## Tasks
 
-- [ ] IR definition + checked-AST lowering.
-- [ ] Stage A: OCaml emission, runtime linking, single-binary output.
-- [ ] `emo build` with incremental caching.
-- [ ] Benchmark set wired into CI (numbers recorded, not just pass/fail).
-- [ ] Stage B: type-driven specialization passes (unboxing, direct
+- [x] IR definition + checked-AST lowering.
+- [x] Stage A: OCaml emission, runtime linking, single-binary output.
+- [x] `emo build` with incremental caching.
+- [x] Benchmark set wired into CI (numbers recorded, not just pass/fail).
+- [x] Stage B: type-driven specialization passes (unboxing, direct
       dispatch) behind completeness checks from step 08 data.
-- [ ] C FFI linking path once binding syntax is decided.
-- [ ] Bootstrap test: the `examples/` suite as compiled binaries matches
+- [x] C FFI linking path once binding syntax is decided.
+- [x] Bootstrap test: the `examples/` suite as compiled binaries matches
       interpreter output byte-for-byte.
 
 ## Acceptance
@@ -79,3 +79,39 @@ step 14's other targets will share.
   — add and settle it before the FFI task starts.
 - Stage A's OCaml emission (source vs constructed module trees) is an
   implementation choice; pick one, document the tradeoff in `docs/`.
+
+## Close-out
+
+Both open design items settled:
+
+- **C FFI binding surface** — `foreign def name(params) Ret = "c_symbol"`,
+  registered in `CHECK.md` and the README (Native Builds). Only
+  `Float`/`String`/`Bool` marshal (E4200 refuses the rest); bindings
+  compile to generated C wrappers (`.emo-build/ffi_stubs.c`) rather than
+  raw OCaml externals, which would pass boxed `value`s and collide with
+  primitives the OCaml compiler inlines (`sqrt` on ARM64 macOS). The
+  interpreter refuses foreign defs with E3009.
+- **Stage A emission** — OCaml source text, tradeoff documented in
+  `docs/native-backend.md` (stable toolchain contract, readable
+  generated code, unchanged optimizer; the IR is the layer backends
+  share).
+
+Notes:
+
+- T13.5's specialization landed with the T13.1/T13.2 commits: the
+  completeness fixed point lives in the checker/`Emo_ir.specialize`, and
+  the T13.2 emitter carries the specialized/dynamic split with dynamic
+  wrappers.
+- The build cache keys on the emitted source, the runtime libraries'
+  sizes, the specialize flag, and `--cclib` flags — any change
+  invalidates the cached binary.
+- Bootstrap: all five examples (fib, hello_world, objects, shop,
+  http_roundtrip) build through `emo build` and match `emo run`
+  byte-for-byte; the suite exposed and fixed two emitter bugs (case
+  tuple bindings all read position 0; wildcard matches carried a
+  redundant catchall).
+- Benchmarks recorded in `benchmarks/results.md`: fib(30) 345ms
+  unspecialized vs 212ms specialized (~1.6x), ping-pong 40k msgs
+  2440ms, JSON-ish scan 57ms, HTTP echo 112 req/s.
+- Error excerpts from eval-stage diagnostics now read the span's file,
+  so runtime errors render real source lines.

@@ -669,6 +669,59 @@ let use_workspace_registry () =
   Unix.putenv "EMO_REGISTRY" registry;
   registry
 
+(* The emo executable under test, re-anchored to the real workspace root
+   when dune relativized the setenv value against the sandbox. *)
+let emo_exe_path () =
+  let workspace_root =
+    let cwd = original_cwd in
+    match
+      let rec find i =
+        if i < 0 then None
+        else if
+          String.sub cwd 0 (min i (String.length cwd))
+          |> String.ends_with ~suffix:"/_build/.sandbox/"
+        then Some (String.sub cwd 0 (i - String.length "/_build/.sandbox/" + 1))
+        else find (i - 1)
+      in
+      find (String.length cwd)
+    with
+    | Some root -> root
+    | None -> Sys.getcwd ()
+  in
+  match Sys.getenv_opt "EMO_EXE" with
+  | Some path when Filename.is_relative path ->
+      let tail =
+        if String.length path > 6 && String.sub path 0 6 = "../../" then
+          String.sub path 6 (String.length path - 6)
+        else path
+      in
+      Filename.concat workspace_root tail
+  | Some path -> path
+  | None -> Alcotest.fail "EMO_EXE is not set"
+
+(* Builds [source] with `emo build` and returns (build output, exit
+   status, binary path). *)
+let build_binary ?(cclib = []) source name =
+  let emo_exe = emo_exe_path () in
+  let entry = with_project [ ("main.emo", source) ] "main.emo" in
+  let bin = Filename.concat (Filename.dirname entry) name in
+  let cclib_args =
+    String.concat "" (List.concat_map (fun lib -> [ " --cclib "; lib ]) cclib)
+  in
+  let out = Buffer.create 256 in
+  let ic =
+    Unix.open_process_in
+      (Printf.sprintf "exec 2>&1; %s build %s -o %s%s" (Filename.quote emo_exe)
+         (Filename.quote entry) (Filename.quote bin) cclib_args)
+  in
+  (try
+     while true do
+       Buffer.add_channel out ic 1
+     done
+   with End_of_file -> ());
+  let status = Unix.close_process_in ic in
+  (Buffer.contents out, status, bin)
+
 let stdlib_http_tests =
   [
     tc "an http server and client round-trip on localhost" (fun () ->
@@ -759,6 +812,43 @@ print(resp.status)
                           ds)))
         in
         Alcotest.(check string) "output" "hello from emo\n200\n" output);
+    tc "emo build caches by content hash across builds" (fun () ->
+        use_workspace_registry () |> ignore;
+        let emo_exe = emo_exe_path () in
+        let entry =
+          with_project [ ("main.emo", {|print(40 + 2)|}) ] "main.emo"
+        in
+        let bin = Filename.concat (Filename.dirname entry) "cached-prog" in
+        let build () =
+          let out = Buffer.create 128 in
+          let ic =
+            Unix.open_process_in
+              (Printf.sprintf "exec 2>&1; %s build %s -o %s"
+                 (Filename.quote emo_exe) (Filename.quote entry)
+                 (Filename.quote bin))
+          in
+          (try
+             while true do
+               Buffer.add_channel out ic 1
+             done
+           with End_of_file -> ());
+          ignore (Unix.close_process_in ic);
+          Buffer.contents out
+        in
+        (* The first build compiles; the second hits the content-hash
+           cache and skips the toolchain. *)
+        ignore (build ());
+        let second = build () in
+        Alcotest.(check bool)
+          "second build is cached" true
+          (contains_substring second "built"
+          && contains_substring second "(cached)");
+        ignore (build ());
+        (* the binary runs and prints *)
+        let ic = Unix.open_process_in bin in
+        let run_out = input_line ic in
+        ignore (Unix.close_process_in ic);
+        Alcotest.(check string) "output" "42" run_out);
     tc "the stdlib targets are honest: native resolves, wasm refuses" (fun () ->
         let registry = use_workspace_registry () in
         let reg = { Emo_pkg.Registry.endpoint = registry } in
@@ -789,6 +879,172 @@ print(resp.status)
               "wasm refusal" "no build for target `wasm`" messages);
   ]
 
+let ffi_tests =
+  [
+    tc "emo build links a foreign def and the binary calls the C symbol"
+      (fun () ->
+        let build_out, status, bin =
+          build_binary
+            {|foreign def sqrt(x Float) Float = "sqrt"
+print(sqrt(4.0))
+print(sqrt(2.0))|}
+            "ffi-prog" ~cclib:[ "m" ]
+        in
+        (match status with
+        | Unix.WEXITED 0 -> ()
+        | _ -> Alcotest.fail (Printf.sprintf "build failed: %s" build_out));
+        let ic = Unix.open_process_in bin in
+        let first = input_line ic in
+        let second = input_line ic in
+        ignore (Unix.close_process_in ic);
+        Alcotest.(check string) "sqrt(4.0)" "2.0" first;
+        Alcotest.(check bool)
+          "sqrt(2.0)" true
+          (String.length second >= 6 && String.sub second 0 6 = "1.4142"));
+    tc "the interpreter refuses foreign defs with E3009" (fun () ->
+        use_workspace_registry () |> ignore;
+        let entry =
+          with_project
+            [
+              ( "main.emo",
+                {|foreign def sqrt(x Float) Float = "sqrt"
+print(sqrt(4.0))|} );
+            ]
+            "main.emo"
+        in
+        match
+          Emo_project.run_entry ~entry_file:entry ~check:true
+            ~sched:Emo_project.Own ()
+        with
+        | _ -> Alcotest.fail "expected the interpreter to refuse foreign defs"
+        | exception Emo_eval.Error d ->
+            Alcotest.(check (option string))
+              "code" (Some "E3009") d.Emo_support.Diagnostic.code;
+            Alcotest.(check int)
+              "line" 1 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
+  ]
+
+(* ---- Step 13 bootstrap: the examples/ suite as compiled binaries ----
+   Every example runs through the interpreter and through `emo build`,
+   and both outputs must match the example's golden file byte-for-byte. *)
+
+let examples_dir () =
+  match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
+  | Some dir -> from_original_cwd dir
+  | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
+
+let read_all ic =
+  let buf = Buffer.create 256 in
+  (try
+     while true do
+       Buffer.add_char buf (input_char ic)
+     done
+   with End_of_file -> ());
+  Buffer.contents buf
+
+let capture_program_output f =
+  let out = Buffer.create 256 in
+  Emo_eval.set_output (Buffer.add_string out);
+  Fun.protect
+    ~finally:(fun () ->
+      Emo_eval.set_output (fun s ->
+          print_string s;
+          flush stdout))
+    f;
+  Buffer.contents out
+
+(* Builds the example from [root] (the build cache lands in the root's
+   .emo-build directory) and returns (status, build output, binary
+   path). *)
+let build_example root entry name =
+  let emo_exe = emo_exe_path () in
+  let bin = Filename.concat root (name ^ "-bin") in
+  let out = Buffer.create 256 in
+  let ic =
+    Unix.open_process_in
+      (Printf.sprintf "exec 2>&1; cd %s && %s build %s -o %s"
+         (Filename.quote root) (Filename.quote emo_exe) (Filename.quote entry)
+         (Filename.quote bin))
+  in
+  (try
+     while true do
+       Buffer.add_channel out ic 1
+     done
+   with End_of_file -> ());
+  let status = Unix.close_process_in ic in
+  (status, Buffer.contents out, bin)
+
+(* The bootstrap assertion for one example: the interpreter run and the
+   compiled binary agree with the golden text. [expected] picks the
+   golden file; the http example has none, so its fixed output is
+   spelled here. [root] is the project root discovery walks from — the
+   examples/ directory, except http_roundtrip which is a package of its
+   own. *)
+let bootstrap_example root name entry expected =
+  let golden =
+    if expected then
+      Emo_project.read_file
+        (Filename.concat (Filename.concat root name) "expected.txt")
+    else "hello from emo\n200\n"
+  in
+  (* Module and package discovery root at the current directory, so the
+     interpreter runs from the project root, like `emo run`. *)
+  Sys.chdir root;
+  let interpreted =
+    capture_program_output (fun () ->
+        match
+          Emo_project.run_entry ~entry_file:entry ~check:true
+            ~sched:Emo_project.Own ()
+        with
+        | _project -> ()
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.fail
+              (String.concat "\n"
+                 (List.map
+                    (fun d ->
+                      Printf.sprintf "%s at %s: %s"
+                        (match d.Emo_support.Diagnostic.code with
+                        | Some c -> c
+                        | None -> "?")
+                        (Emo_support.Span.to_string
+                           d.Emo_support.Diagnostic.span)
+                        d.Emo_support.Diagnostic.message)
+                    ds)))
+  in
+  Alcotest.(check string)
+    (name ^ ": interpreter matches golden")
+    golden interpreted;
+  let status, build_out, bin = build_example root entry name in
+  (match status with
+  | Unix.WEXITED 0 -> ()
+  | _ -> Alcotest.fail (Printf.sprintf "%s: build failed: %s" name build_out));
+  let ic = Unix.open_process_in bin in
+  let compiled = read_all ic in
+  ignore (Unix.close_process_in ic);
+  Alcotest.(check string)
+    (name ^ ": binary matches interpreter")
+    interpreted compiled
+
+let bootstrap_tests =
+  [
+    tc "fib compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example (examples_dir ()) "fib" "fib/main.emo" true);
+    tc "hello_world compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example (examples_dir ()) "hello_world" "hello_world/main.emo"
+          true);
+    tc "objects compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example (examples_dir ()) "objects" "objects/main.emo" true);
+    tc "shop compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example (examples_dir ()) "shop" "shop/checkout.emo" true);
+    tc "http_roundtrip compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "http_roundtrip")
+          "http_roundtrip" "main.emo" false);
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -801,4 +1057,6 @@ let () =
       ("sched", sched_tests);
       ("shop_golden", shop_golden_tests);
       ("stdlib_http", stdlib_http_tests);
+      ("ffi", ffi_tests);
+      ("bootstrap", bootstrap_tests);
     ]

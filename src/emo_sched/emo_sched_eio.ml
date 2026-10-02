@@ -92,6 +92,25 @@ let rec run_process ~sw ~conditions ~root (proc : Emo_eval.process)
                               span;
                               hint = None;
                             }))
+             | Emo_eval.Compiled_receive _ ->
+                 Some
+                   (fun (k : (a, _) continuation) ->
+                     let nowhere =
+                       Emo_support.Span.make ~file:"<eio>" ~line:1 ~col:1
+                         ~start:0 ~stop:0
+                     in
+                     Effect.Deep.discontinue k
+                       (Emo_eval.Error
+                          Emo_support.Diagnostic.
+                            {
+                              severity = Error;
+                              code = Some "E3013";
+                              message =
+                                "compiled programs run on the own scheduler — \
+                                 use `emo run`";
+                              span = nowhere;
+                              hint = None;
+                            }))
              | _ -> None);
        }
    with

@@ -25,6 +25,8 @@ type value =
   | TcpConn of conn
   | TcpListener of listener
   | UdpSocket of udp
+  | Obj of obj_handle
+  | CompiledFn of compiled_fn
   | ArrowBlock of closure
   | BuiltinFn of string
   | ClassDef of class_def_value
@@ -77,6 +79,19 @@ and udp = {
   mutable utimeout : float;
   mutable uclosed : bool;
 }
+
+(* A compiled class instance: the method table is the backend's compiled
+   functions ([arity] and [value list -> value]), the fields live in the
+   init window like the interpreter's. *)
+and obj_handle = {
+  ocname : string; (* the source class name *)
+  mutable ofields : (string * value) list;
+  omethods : (string, int * (value list -> value)) Hashtbl.t;
+}
+
+(* A compiled function as a first-class value (arrow blocks, defs passed
+   around). [fdesc] names it for diagnostics. *)
+and compiled_fn = { fdesc : string; farity : int; fapply : value list -> value }
 
 and closure = {
   def_name : string; (* "`fib`" or "`<arrow block>`", for diagnostics *)
@@ -136,6 +151,8 @@ let type_name = function
   | TcpConn _ -> "TcpConn"
   | TcpListener _ -> "TcpListener"
   | UdpSocket _ -> "UdpSocket"
+  | Obj o -> o.ocname
+  | CompiledFn _ -> "an arrow block"
   | ArrowBlock _ -> "an arrow block"
   | BuiltinFn _ -> "a builtin"
   | ClassDef _ -> "a class"
@@ -165,6 +182,13 @@ let rec equal_value a b =
   | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
   | TcpListener x, TcpListener y -> Int.equal x.lid y.lid
   | UdpSocket x, UdpSocket y -> Int.equal x.uid y.uid
+  | Obj x, Obj y ->
+      String.equal x.ocname y.ocname
+      && List.length x.ofields = List.length y.ofields
+      && List.for_all2
+           (fun (nx, vx) (ny, vy) -> String.equal nx ny && equal_value vx vy)
+           x.ofields y.ofields
+  | CompiledFn x, CompiledFn y -> String.equal x.fdesc y.fdesc
   | EnumMember (t, m), EnumMember (t', m') ->
       String.equal t t' && String.equal m m'
   | EnumType x, EnumType y -> String.equal x.ename y.ename
@@ -298,6 +322,13 @@ let rec to_string v =
   | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
   | TcpListener l -> Printf.sprintf "<listener %s>" l.ldesc
   | UdpSocket u -> Printf.sprintf "<udp %s>" u.udesc
+  | Obj o ->
+      let fields =
+        String.concat ", "
+          (List.map (fun (n, fv) -> n ^ ": " ^ debug_value fv) o.ofields)
+      in
+      "#" ^ o.ocname ^ "(" ^ fields ^ ")"
+  | CompiledFn f -> Printf.sprintf "<block %s>" f.fdesc
   | ArrowBlock _ -> "<arrow block>"
   | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
   | ClassDef c -> c.cname
@@ -339,6 +370,17 @@ let interface_registry : (string, (string * int) list) Hashtbl.t =
    interfaces. *)
 let runtime_is span v t =
   match (v, t) with
+  | Obj o, ClassDef c -> String.equal o.ocname c.cname
+  | Obj o, TypeValue tname -> (
+      match Hashtbl.find_opt interface_registry tname with
+      | Some sigs ->
+          List.for_all
+            (fun (m, arity) ->
+              match Hashtbl.find_opt o.omethods m with
+              | Some (a, _) -> a = arity
+              | None -> false)
+            sigs
+      | None -> false)
   | Instance i, ClassDef c -> String.equal i.iclass.cname c.cname
   | EnumMember (et, _), EnumType e -> String.equal et e.ename
   | Instance i, TypeValue tname -> (
@@ -541,7 +583,26 @@ type _ Effect.t +=
       Net_tls_listen :
       (string * int * string * string * Emo_support.Span.t)
       -> listener Effect.t
-(* host, port, certificate path, key path *)
+  | Compiled_receive :
+      (value -> (int * value list) option)
+      -> (int * value list) Effect.t
+(* the backend's selective receive: the matcher tries each compiled
+     branch (pattern + guard) and returns the branch index with the
+     pattern's bindings *)
+
+(* Dequeues the first message the compiled matcher accepts, mirroring
+   [take_matching] for the backend's receive. *)
+let take_compiled proc matcher =
+  let rec go before = function
+    | [] -> None
+    | msg :: rest -> (
+        match matcher msg with
+        | Some (i, bindings) ->
+            proc.inbox <- List.rev_append before rest;
+            Some (i, bindings)
+        | None -> go (msg :: before) rest)
+  in
+  go [] proc.inbox
 
 let processes : (int, process) Hashtbl.t = Hashtbl.create 8
 let next_pid : int ref = ref 0
@@ -585,6 +646,13 @@ let rec snapshot (v : value) : value =
         {
           iclass = i.iclass;
           ifields = List.map (fun (n, f) -> (n, snapshot f)) i.ifields;
+        }
+  | Obj o ->
+      Obj
+        {
+          ocname = o.ocname;
+          ofields = List.map (fun (n, f) -> (n, snapshot f)) o.ofields;
+          omethods = o.omethods;
         }
   | v -> v
 
@@ -701,6 +769,9 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_listen_unix`")
+            | Compiled_receive _ ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
             | Net_tls_connect (_, _, _, _, _, span) ->
                 Some
                   (fun (_ : (a, _) continuation) ->
@@ -1164,6 +1235,22 @@ and eval_method env span recv mname arg_exprs =
       error span "E3007"
         (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i.iclass.cname
            mname)
+  | Obj o, "is" -> (
+      let args = eval_args () in
+      match args with
+      | [ t ] -> Bool (runtime_is span (Obj o) t)
+      | _ ->
+          error span "E3007"
+            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
+  | Obj o, mname -> (
+      match Hashtbl.find_opt o.omethods mname with
+      | Some (_arity, f) ->
+          let args = eval_args () in
+          f args
+      | None ->
+          error span "E3007"
+            (Printf.sprintf "NoMethodError: `%s` has no method `%s`" o.ocname
+               mname))
   | v, m ->
       error span "E3007"
         (Printf.sprintf "%s has no method `%s`" (type_name v) m)
@@ -1602,6 +1689,12 @@ and eval_expr env e =
           | None ->
               error span "E3007"
                 (Printf.sprintf "`%s` has no field `%s`" i.iclass.cname name))
+      | Obj o -> (
+          match List.assoc_opt name o.ofields with
+          | Some v -> v
+          | None ->
+              error span "E3007"
+                (Printf.sprintf "`%s` has no field `%s`" o.ocname name))
       | EnumType e -> (
           match List.assoc_opt name e.emembers with
           | Some v -> v
@@ -1702,6 +1795,11 @@ let eval_item env item =
       in
       define env e.Ast.enum_name ~mutable_:false
         (EnumType { ename = e.Ast.enum_name; emembers = members })
+  | Ast.Item_foreign f ->
+      (* The compiled backend emits the external declaration; the
+         interpreter has no C linkage. *)
+      error f.Ast.foreign_span "E3009"
+        "foreign definitions run only in compiled programs (use emo build)"
 
 (* Restricted-profile schema errors: the manifest reader maps them onto the
    E51xx codes. A field defined twice, and a value that is not literal data
@@ -1815,6 +1913,76 @@ let run_items items =
   try run_without_scheduler (fun () -> List.iter (eval_item env) items)
   with Emo_raise (v, span, trace) ->
     raise (Error (uncaught_diagnostic (v, span, trace)))
+
+(* Bridges compiled code into the builtin surface (print, the net_*
+   family, halt, ...): the same argument shapes and runtime errors as
+   interpreted calls. *)
+let call_builtin (name : string) (args : value list) : value =
+  let nowhere =
+    Emo_support.Span.make ~file:"<native>" ~line:1 ~col:1 ~start:0 ~stop:0
+  in
+  apply_builtin nowhere name args
+
+(* Sets a field on a compiled object inside the init window: replaces in
+   place, or appends in first-assignment order. *)
+let obj_set_field (o : obj_handle) (name : string) (v : value) : unit =
+  if List.mem_assoc name o.ofields then
+    o.ofields <-
+      List.map
+        (fun (n, old) -> if String.equal n name then (n, v) else (n, old))
+        o.ofields
+  else o.ofields <- o.ofields @ [ (name, v) ]
+
+let new_obj (name : string)
+    (methods : (string, int * (value list -> value)) Hashtbl.t) : obj_handle =
+  { ocname = name; ofields = []; omethods = methods }
+
+(* ---- Synchronous net operations for the compiled backend ----
+
+   Each performs its effect; they only run under the scheduler, exactly
+   like the interpreted paths. *)
+
+let read_line_sync (c : conn) : string =
+  Effect.perform (Net_read_line (c, Emo_support.Span.zero))
+
+let read_exactly_sync (c : conn) (n : int) : string =
+  Effect.perform (Net_read_exactly (c, n, Emo_support.Span.zero))
+
+let read_all_sync (c : conn) : string =
+  Effect.perform (Net_read_all (c, Emo_support.Span.zero))
+
+let write_sync (c : conn) (data : string) : unit =
+  Effect.perform (Net_write (c, data, Emo_support.Span.zero))
+
+let close_sync (c : conn) : conn =
+  Effect.perform (Net_close_conn (c, Emo_support.Span.zero))
+
+let accept_sync (l : listener) : conn =
+  Effect.perform (Net_accept (l, Emo_support.Span.zero))
+
+let close_listener_sync (l : listener) : listener =
+  Effect.perform (Net_close_listener (l, Emo_support.Span.zero))
+
+let udp_send_sync (u : udp) (host : string) (port : int) (data : string) : unit
+    =
+  Effect.perform (Net_udp_send_to (u, host, port, data, Emo_support.Span.zero))
+
+let udp_recv_sync (u : udp) : value =
+  Effect.perform (Net_udp_recv_from (u, Emo_support.Span.zero))
+
+let udp_close_sync (u : udp) : udp =
+  Effect.perform (Net_udp_close (u, Emo_support.Span.zero))
+
+let net_resolve_sync (host : string) : string list =
+  Effect.perform (Net_resolve (host, Emo_support.Span.zero))
+
+let net_connect_sync (host : string) (port : int) (timeout : float) : conn =
+  Effect.perform
+    (Net_connect
+       (host, port, timeout, net_resolve_sync host, Emo_support.Span.zero))
+
+let net_listen_sync (host : string) (port : int) : listener =
+  Effect.perform (Net_listen (host, port, Emo_support.Span.zero))
 
 (* Runs a whole file: declarations register, statements execute in order. *)
 let run_program ~file ~source =
