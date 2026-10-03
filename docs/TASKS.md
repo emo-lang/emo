@@ -272,7 +272,7 @@ Promotion trail: **TypeScript → `plan/step-15-typescript.md`** (2026-10-02, fi
 **Prereq:** Steps 01–13.
 **Done when:** `emo build --target wasm` produces a `.wasm` (plus its `.wat` sibling) that runs on Node's WasmGC, the core subset (hello_world, fib, objects, language_tour, shop) prints byte-for-byte what `emo run` prints (golden in CI), and a package lacking the target fails resolution before any emission.
 
-- [ ] **T16.1** — Backend skeleton: `--target wasm` plumbing (resolution gate reads the target); the WAT intermediate; the binary encoder; the boxed-struct value model with RTT dispatch. Golden: hello_world, fib, objects.
+- [x] **T16.1** — Backend skeleton: `--target wasm` plumbing (resolution gate reads the target); the WAT intermediate; the binary encoder; the boxed-struct value model with RTT dispatch. Golden: hello_world, fib, objects.
 - [ ] **T16.2** — Full core semantics: patterns and guards, tuples, arrays, Box, interpolation, content equality, interface narrowing, multi-file module references. Golden: language_tour, shop.
 - [ ] **T16.3** — Bootstrap: the wasm subset in CI, plus the resolution-gate refusal test for packages lacking `"wasm"`.
 - [ ] **T16.4** — Concurrency: a cooperative driver for `do` / `<-` / `receive`, host-timer preemption points. Golden: pipeline. (Gated on T16.2.)

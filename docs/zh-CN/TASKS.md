@@ -266,7 +266,7 @@
 **前置:** 步骤 01–13。
 **完成标准:** `emo build --target wasm` 产出可运行于 Node WasmGC 的 `.wasm`(附带 `.wat` 可读形式),核心子集(hello_world、fib、objects、language_tour、shop)输出与 `emo run` 逐字节一致(CI 金测),且依赖缺少该 target 的包在发射前就被解析门拒绝。
 
-- [ ] **T16.1** — 后端骨架:`--target wasm` 管线(解析门读取 target);WAT 中间形式;二进制编码器;装箱结构体值模型 + RTT 分派。金测:hello_world、fib、objects。
+- [x] **T16.1** — 后端骨架:`--target wasm` 管线(解析门读取 target);WAT 中间形式;二进制编码器;装箱结构体值模型 + RTT 分派。金测:hello_world、fib、objects。
 - [ ] **T16.2** — 完整核心语义:模式与守卫、元组、数组、Box、插值、内容相等、接口窄化、跨文件模块引用。金测:language_tour、shop。
 - [ ] **T16.3** — 引导:CI 中的 wasm 子集金测,以及缺 `"wasm"` 包的解析门拒绝测试。
 - [ ] **T16.4** — 并发:模块内协作式驱动实现 `do` / `<-` / `receive`,宿主定时器抢占点。金测:pipeline。(以 T16.2 为前置。)

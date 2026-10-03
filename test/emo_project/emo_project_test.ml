@@ -487,7 +487,7 @@ let deps_tests =
         with_registry (fun () ->
             let entries =
               Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
-                ~manifest_dir:dir
+                ~manifest_dir:dir ~target:"native"
             in
             Alcotest.(check int) "count" 1 (List.length entries);
             (match entries with

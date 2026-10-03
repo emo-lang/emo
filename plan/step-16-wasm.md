@@ -63,7 +63,7 @@ itself with no external toolchain.
 
 ## Tasks
 
-- [ ] **T16.1** — The backend skeleton: `--target wasm` plumbing
+- [x] **T16.1** — The backend skeleton: `--target wasm` plumbing
       (including the resolution gate reading the target); the WAT
       intermediate; the binary encoder; the value model and runtime
       helpers emitted into the module. Golden: hello_world, fib,
