@@ -476,18 +476,17 @@ let registry () =
                 set EMO_REGISTRY"))
 
 (* Resolves the manifest's exact pins against the registry, fresh — the
-   explicit regeneration path (`emo deps resolve`). *)
-let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string) :
-    Emo_pkg.Lockfile.entry list =
+   explicit regeneration path (`emo deps resolve`). The target filters
+   which published versions qualify. *)
+let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
+    ~(target : string) : Emo_pkg.Lockfile.entry list =
   if manifest.Emo_pkg.deps = [] then []
   else
     let reg = registry () in
     let index =
       Emo_pkg.Registry.index reg (List.map fst manifest.Emo_pkg.deps)
     in
-    match
-      Emo_pkg.Resolve.solve ~target:"native" ~roots:manifest.Emo_pkg.deps ~index
-    with
+    match Emo_pkg.Resolve.solve ~target ~roots:manifest.Emo_pkg.deps ~index with
     | Error errors ->
         raise
           (dep_error ~manifest_dir
@@ -514,15 +513,15 @@ let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string) :
    mismatch is an error prompting explicit regeneration — never a silent
    re-resolve. With no lockfile at all, the run resolves in memory and
    writes nothing. *)
-let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string) :
-    Emo_pkg.Lockfile.entry list =
+let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
+    ~(target : string) : Emo_pkg.Lockfile.entry list =
   let lock_path = Filename.concat manifest_dir "emo.lock" in
   match Emo_pkg.Lockfile.read lock_path with
   | Ok entries -> (
       match Emo_pkg.Lockfile.verify ~roots:manifest.Emo_pkg.deps entries with
       | [] -> entries
       | message :: _ -> raise (dep_error ~manifest_dir message))
-  | Error _ -> resolve_deps ~manifest ~manifest_dir
+  | Error _ -> resolve_deps ~manifest ~manifest_dir ~target
 
 (* Registers a fetched package's module tree at the top level — a package's
    directory tree is its public module tree, so `json_tools.emo` at the
@@ -534,12 +533,16 @@ let register_package (p : project) (dir : string) : unit =
   match diagnostics p with [] -> () | ds -> raise (Static_errors ds)
 
 (* The dependency side of a run: resolve or verify, then fetch every
-   resolved package into the shared cache and register its modules. *)
+   resolved package into the shared cache and register its modules.
+   The target gates twice: the fresh solve filters published versions,
+   and each fetched package's own manifest must declare the target —
+   a lockfile satisfied for one target must not silently serve
+   another. *)
 let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
-    (p : project) : unit =
+    ~(target : string) (p : project) : unit =
   if manifest.Emo_pkg.deps = [] then ()
   else
-    let entries = resolution_for_run ~manifest ~manifest_dir in
+    let entries = resolution_for_run ~manifest ~manifest_dir ~target in
     let reg = registry () in
     List.iter
       (fun entry ->
@@ -555,7 +558,19 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
                 f
             with
             | Error m -> raise (dep_error ~manifest_dir m)
-            | Ok dir -> register_package p dir))
+            | Ok dir ->
+                let pkg_file = Filename.concat dir "package.emo" in
+                let pkg =
+                  Emo_pkg.parse_manifest ~file:pkg_file
+                    ~source:(read_file pkg_file)
+                in
+                if not (List.mem target pkg.Emo_pkg.targets) then
+                  raise
+                    (dep_error ~manifest_dir
+                       (Printf.sprintf
+                          "package %s does not declare the `%s` target"
+                          entry.Emo_pkg.Lockfile.dep target));
+                register_package p dir))
       entries
 
 let entry_path (entry_file : string) : string =
@@ -566,11 +581,11 @@ let entry_path (entry_file : string) : string =
 (* The backend's lowering input: every module in the project, parsed and
    checked (the backend runs the full check), plus the entry module's
    path. Raises [Static_errors] on any diagnostic. *)
-let compile_inputs ~entry_file :
+let compile_inputs ~entry_file ~target :
     Emo_ir.module_input list * string list * Emo_pkg.manifest option =
   let p, prepared = prepare ~entry_file in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir p)
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target p)
     prepared;
   let module_paths = module_paths p in
   let diagnostics = ref [] in
@@ -619,7 +634,7 @@ let manifest_here () : string option =
 let check_entry ~entry_file : Emo_support.Diagnostic.t list =
   let p, prepared = prepare ~entry_file in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir p)
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"native" p)
     prepared;
   let manifest = Option.map fst prepared in
   let items = parse_cached p (entry_path entry_file) in
@@ -639,7 +654,7 @@ type sched = Sequential | Eio | Own
 let run_entry ~entry_file ?(check = false) ?(sched = Sequential) () : project =
   let p, prepared = prepare ~entry_file in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir p)
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"native" p)
     prepared;
   let manifest = Option.map fst prepared in
   install_hooks p;

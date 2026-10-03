@@ -171,6 +171,104 @@ let examples_tests =
           Alcotest.(check string) "output" expected (Buffer.contents out)))
     (example_names ())
 
+(* The WasmGC goldens: compile each subset example with --target wasm
+   and run it under Node's WasmGC, byte-for-byte against expected.txt.
+   Skips when Node is absent — the runtime is the only WasmGC
+   validator in the toolchain (T16.1, T16.2). *)
+let wasm_goldens =
+  [ "hello_world"; "fib"; "objects"; "language_tour"; "shop"; "pipeline" ]
+
+let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
+
+(* The host boundary: print forwards to stdout, abort exits nonzero
+   with the message, float_str renders into the scratch area at
+   60000 (matching the runtime's convention). *)
+let wasm_runner_source =
+  {|
+import { readFile } from "node:fs/promises";
+const bytes = await readFile(process.argv[2]);
+let mem = null;
+const dec = new TextDecoder();
+const module = await WebAssembly.compile(bytes);
+const instance = await WebAssembly.instantiate(module, { emo: {
+  print: (ptr, len) => {
+    process.stdout.write(dec.decode(new Uint8Array(mem.buffer, ptr, len)) + "\n");
+  },
+  abort: (ptr, len) => {
+    const msg = len ? dec.decode(new Uint8Array(mem.buffer, ptr, len)) : "";
+    console.error("ABORT: " + msg);
+    process.exit(1);
+  },
+  float_str: (f) => {
+    const encoded = new TextEncoder().encode(String(f));
+    const view = new Uint8Array(mem.buffer, 60000, encoded.length);
+    view.set(encoded);
+    return [60000, encoded.length];
+  },
+}});
+mem = instance.exports.mem;
+instance.exports.main();
+|}
+
+let wasm_runner_path =
+  lazy
+    (let path =
+       Filename.concat (Filename.get_temp_dir_name ()) "emo-wasm-golden.mjs"
+     in
+     let oc = open_out_bin path in
+     output_string oc wasm_runner_source;
+     close_out oc;
+     path)
+
+let wasm_examples_tests =
+  List.map
+    (fun name ->
+      tc (Printf.sprintf "%s compiles to wasm and runs on Node" name) (fun () ->
+          if not (Lazy.force node_available) then Alcotest.skip ();
+          let dir = Filename.concat examples_dir name in
+          let expected = read_file (Filename.concat dir "expected.txt") in
+          let out_wasm = Filename.concat scratch (name ^ "-wasm-main.wasm") in
+          let exit_code =
+            Emo_cli.build_file
+              ~entry:(Filename.concat dir "main.emo")
+              ~output:out_wasm ~specialize:false ~cclibs:[] ~target:"wasm"
+          in
+          Alcotest.(check int) "build exit" 0 exit_code;
+          let cmd_stdout, _cmd_stdin, cmd_stderr =
+            Unix.open_process_full
+              (Printf.sprintf "node %s %s"
+                 (Filename.quote (Lazy.force wasm_runner_path))
+                 (Filename.quote out_wasm))
+              (Unix.environment ())
+          in
+          let out = Buffer.create 256 in
+          (try
+             while true do
+               Buffer.add_channel out cmd_stdout 4096
+             done
+           with End_of_file -> ());
+          let err = Buffer.create 256 in
+          (try
+             while true do
+               Buffer.add_channel err cmd_stderr 4096
+             done
+           with End_of_file -> ());
+          let proc_status =
+            Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+          in
+          Alcotest.(check string) "output" expected (Buffer.contents out);
+          match proc_status with
+          | Unix.WEXITED 0 -> ()
+          | s ->
+              Alcotest.fail
+                (Printf.sprintf "node exited %s: %s"
+                   (match s with
+                   | Unix.WEXITED n -> string_of_int n
+                   | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                   | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                   (Buffer.contents err))))
+    wasm_goldens
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -178,4 +276,5 @@ let () =
       ("run", run_tests);
       ("repl", repl_tests);
       ("examples", examples_tests);
+      ("wasm_examples", wasm_examples_tests);
     ]

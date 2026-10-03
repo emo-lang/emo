@@ -58,5 +58,6 @@ incrementally shippable steps — one file per step, executed in order.
 | 11 | Processes & message passing | done |
 | 12 | Networking library | done |
 | 13 | Native backend | done |
-| 14 | Other targets (wasm / TS / BEAM / qemu) | in progress (TS promoted) |
+| 14 | Other targets (wasm / TS / BEAM / qemu) | in progress (TS, Wasm promoted) |
 | 15 | TypeScript target | in progress |
+| 16 | Wasm target (WasmGC) | in progress |
