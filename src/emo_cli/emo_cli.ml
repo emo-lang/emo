@@ -165,6 +165,24 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         in
         let src_dir = Filename.concat exe_dir ".." in
         match target with
+        | "wasm" ->
+            let module_ = Emo_codegen.Wasm.assemble program in
+            let out =
+              if Filename.check_suffix output ".wasm" then output
+              else output ^ ".wasm"
+            in
+            let out_wat =
+              (Filename.remove_extension out) ^ ".wat"
+            in
+            let binary = Emo_codegen.Wasm.to_binary module_ in
+            let oc = open_out_bin out in
+            output_string oc binary;
+            close_out oc;
+            let oc = open_out_bin out_wat in
+            output_string oc (Emo_codegen.Wasm.to_text module_);
+            close_out oc;
+            Printf.printf "built %s\n" out;
+            0
         | "typescript" -> (
             let runtime_path =
               Filename.concat

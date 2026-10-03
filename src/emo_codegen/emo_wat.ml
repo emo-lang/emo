@@ -47,9 +47,18 @@ type instr =
   | Drop
   | I32_eqz
   | I32_eq
+  | I32_ne
   | I32_and
+  | I32_or
+  | I32_add
+  | I32_sub
+  | I32_mul
+  | I32_div_s
+  | I32_ge
+  | I32_gt
   | I32_wrap_i64
   | I64_eq
+  | I64_eqz
   | I64_add
   | I64_sub
   | I64_mul
@@ -80,6 +89,7 @@ type instr =
   | Call of int
   | Return_call of int
   | If of blocktype * instr list * instr list
+  | If_else of blocktype * instr list * instr list * instr list
   | Block of blocktype * instr list
   | Loop of blocktype * instr list
   | Br of int
@@ -87,7 +97,12 @@ type instr =
   | Return
   | Unreachable
 
-type func_type = { ftype_idx : int; fparams : string list; fbody : instr list }
+type func_type = {
+  ftype_idx : int;
+  fparams : string list;
+  flocals : (int * valtype) list; (* count × type groups, beyond params *)
+  fbody : instr list;
+}
 
 type import = {
   imodule : string;
@@ -99,6 +114,8 @@ type module_ = {
   types : typ list;
   imports : import list;
   funcs : func_type list; (* indices continue after the imports *)
+  memory : int; (* minimum pages; 0 = none *)
+  globals : (valtype * bool) list; (* in order; zero/null init *)
   exports : (string * int) list; (* name → func index *)
 }
 
@@ -136,15 +153,24 @@ let rec instr_text indent (i : instr) : string =
   | Array_get t -> Printf.sprintf "%sarray.get $t%d\n" pad t
   | Array_get_u t -> Printf.sprintf "%sarray.get_u $t%d\n" pad t
   | Array_set t -> Printf.sprintf "%sarray.set $t%d\n" pad t
-  | Array_len t -> Printf.sprintf "%sarray.len $t%d\n" pad t
+  | Array_len _ -> Printf.sprintf "%sarray.len\n" pad
   | Ref_test t -> Printf.sprintf "%sref.test (ref $t%d)\n" pad t
   | Ref_cast t -> Printf.sprintf "%sref.cast (ref $t%d)\n" pad t
   | Drop -> Printf.sprintf "%sdrop\n" pad
   | I32_eqz -> Printf.sprintf "%si32.eqz\n" pad
   | I32_eq -> Printf.sprintf "%si32.eq\n" pad
+  | I32_ne -> Printf.sprintf "%si32.ne\n" pad
   | I32_and -> Printf.sprintf "%si32.and\n" pad
+  | I32_or -> Printf.sprintf "%si32.or\n" pad
+  | I32_add -> Printf.sprintf "%si32.add\n" pad
+  | I32_mul -> Printf.sprintf "%si32.mul\n" pad
+  | I32_gt -> Printf.sprintf "%si32.gt\n" pad
+  | I32_sub -> Printf.sprintf "%si32.sub\n" pad
+  | I32_div_s -> Printf.sprintf "%si32.div_s\n" pad
+  | I32_ge -> Printf.sprintf "%si32.ge\n" pad
   | I32_wrap_i64 -> Printf.sprintf "%si32.wrap_i64\n" pad
   | I64_eq -> Printf.sprintf "%si64.eq\n" pad
+  | I64_eqz -> Printf.sprintf "%si64.eqz\n" pad
   | I64_add -> Printf.sprintf "%si64.add\n" pad
   | I64_sub -> Printf.sprintf "%si64.sub\n" pad
   | I64_mul -> Printf.sprintf "%si64.mul\n" pad
@@ -212,6 +238,19 @@ let rec instr_text indent (i : instr) : string =
   | Br_if l -> Printf.sprintf "%sbr_if %d\n" pad l
   | Return -> Printf.sprintf "%sreturn\n" pad
   | Unreachable -> Printf.sprintf "%sunreachable\n" pad
+  | If_else (bt, cond, then_, else_) ->
+      (* The condition's instructions precede the `if` (they leave the
+         tested i32 on the stack); rendered as a nested block so the
+         text stays structurally honest. *)
+      let bt_text = match bt with Void -> "" | Result v -> "(result " ^ valtype_name v ^ ")" in
+      let cond_text = String.concat "" (List.map (instr_text inner) cond) in
+      Printf.sprintf "%sblock (result i32)\n%s%send block\n%sif %s\n%s%selse\n%s%send if\n"
+        pad cond_text pad
+        (String.concat "" (List.map (instr_text inner) then_))
+        pad bt_text
+        (String.concat "" (List.map (instr_text inner) then_))
+        (String.concat "" (List.map (instr_text inner) else_))
+        pad
 
 let typ_text (idx : int) (t : typ) : string =
   let field_text (v, mutable_) : string =
@@ -413,21 +452,29 @@ let rec encode_instr buf (i : instr) =
   | Array_set t ->
       Buffer.add_string buf "\xfb\x0e";
       leb_u buf t
-  | Array_len t ->
-      Buffer.add_string buf "\xfb\x0f";
-      leb_u buf t
+  | Array_len _ ->
+      Buffer.add_string buf "\xfb\x0f"
   | Ref_test t ->
-      Buffer.add_char buf '\xd3';
+      Buffer.add_string buf "\xfb\x14";
       heaptype buf t
   | Ref_cast t ->
-      Buffer.add_char buf '\xd4';
+      Buffer.add_string buf "\xfb\x16";
       heaptype buf t
   | Drop -> Buffer.add_char buf '\x1a'
   | I32_eqz -> Buffer.add_char buf '\x45'
   | I32_eq -> Buffer.add_char buf '\x46'
+  | I32_ne -> Buffer.add_char buf '\x47'
   | I32_and -> Buffer.add_char buf '\x71'
+  | I32_or -> Buffer.add_char buf '\x72'
+  | I32_add -> Buffer.add_char buf '\x6a'
+  | I32_mul -> Buffer.add_char buf '\x6c'
+  | I32_gt -> Buffer.add_char buf '\x4a'
+  | I32_sub -> Buffer.add_char buf '\x6b'
+  | I32_div_s -> Buffer.add_char buf '\x6d'
+  | I32_ge -> Buffer.add_char buf '\x4e'
   | I32_wrap_i64 -> Buffer.add_char buf '\xa7'
   | I64_eq -> Buffer.add_char buf '\x51'
+  | I64_eqz -> Buffer.add_char buf '\x50'
   | I64_add -> Buffer.add_char buf '\x7c'
   | I64_sub -> Buffer.add_char buf '\x7d'
   | I64_mul -> Buffer.add_char buf '\x7e'
@@ -468,6 +515,7 @@ let rec encode_instr buf (i : instr) =
       Buffer.add_char buf '\x12';
       leb_u buf f
   | If (bt, then_, else_) ->
+      Buffer.add_char buf '\x04';
       blocktype_byte buf bt;
       List.iter (encode_instr buf) then_;
       if else_ <> [] then begin
@@ -475,11 +523,26 @@ let rec encode_instr buf (i : instr) =
         List.iter (encode_instr buf) else_
       end;
       Buffer.add_char buf '\x0b'
+  | If_else (bt, cond, then_, else_) ->
+      (* The condition runs first, leaving its i32 on the stack; the
+         wrapper block carries a result so the value survives. *)
+      Buffer.add_char buf '\x02';
+      Buffer.add_char buf '\x7f';
+      List.iter (encode_instr buf) cond;
+      Buffer.add_char buf '\x0b';
+      Buffer.add_char buf '\x04';
+      blocktype_byte buf bt;
+      List.iter (encode_instr buf) then_;
+      Buffer.add_char buf '\x05';
+      List.iter (encode_instr buf) else_;
+      Buffer.add_char buf '\x0b'
   | Block (bt, xs) ->
+      Buffer.add_char buf '\x02';
       blocktype_byte buf bt;
       List.iter (encode_instr buf) xs;
       Buffer.add_char buf '\x0b'
   | Loop (bt, xs) ->
+      Buffer.add_char buf '\x03';
       blocktype_byte buf bt;
       List.iter (encode_instr buf) xs;
       Buffer.add_char buf '\x0b'
@@ -545,13 +608,36 @@ let to_binary (m : module_) : string =
   List.iter
     (fun (f : func_type) ->
       let body = Buffer.create 128 in
-      leb_u body 0;
-      (* no locals *)
+      leb_u body (List.length f.flocals);
+      List.iter
+        (fun (count, t) ->
+          leb_u body count;
+          valtype_byte body t)
+        f.flocals;
       List.iter (encode_instr body) f.fbody;
       Buffer.add_char body '\x0b';
       leb_u code (Buffer.length body);
       Buffer.add_buffer code body)
     m.funcs;
+  let memory = Buffer.create 16 in
+  if m.memory > 0 then begin
+    leb_u memory 1;
+    Buffer.add_char memory '\x00';
+    leb_u memory m.memory
+  end;
+  let globals = Buffer.create 64 in
+  leb_u globals (List.length m.globals);
+  List.iter
+    (fun (v, mutable_) ->
+      valtype_byte globals v;
+      Buffer.add_char globals (if mutable_ then '\x01' else '\x00');
+      (* const init: zero/null *)
+      match v with
+      | I32 -> Buffer.add_char globals '\x41'; leb_s globals 0; Buffer.add_char globals '\x0b'
+      | I64 -> Buffer.add_char globals '\x42'; leb_s64 globals 0L; Buffer.add_char globals '\x0b'
+      | F64 -> Buffer.add_char globals '\x44'; f64_bytes globals 0.0; Buffer.add_char globals '\x0b'
+      | _ -> Buffer.add_char globals '\xd0'; Buffer.add_char globals '\x6e'; Buffer.add_char globals '\x0b')
+    m.globals;
   let exports = Buffer.create 64 in
   leb_u exports (List.length m.exports);
   List.iter
@@ -565,5 +651,7 @@ let to_binary (m : module_) : string =
   section out 1 types;
   section out 2 imports;
   section out 3 funcs;
+  section out 5 memory;
+  section out 6 globals;
   section out 10 code;
   Buffer.contents out
