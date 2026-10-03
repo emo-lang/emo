@@ -36,6 +36,8 @@ let t_vbox = 14
 let t_venum = 15
 let t_vfun = 16
 let t_str_eq = 23
+let t_strcat = 24
+let t_numop = 25
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -70,6 +72,8 @@ let runtime_types : W.typ list =
     W.FuncT ([ W.RefNull t_bytes ], [ W.I32 ]); (* write_bytes *)
     W.FuncT ([ W.Anyref ], []); (* print_v *)
     W.FuncT ([ W.RefNull t_bytes; W.RefNull t_bytes ], [ W.I32 ]); (* str_eq *)
+    W.FuncT ([ W.RefNull t_bytes; W.RefNull t_bytes ], [ W.RefNull t_bytes ]); (* strcat *)
+    W.FuncT ([ W.Anyref; W.Anyref ], [ W.Anyref ]); (* numeric/comparison *)
   ]
 
 let i_print = 0
@@ -78,23 +82,36 @@ let i_float_str = 2
 
 (* Runtime function indices: imports 0..2, then these. *)
 let rt = function
-  | "to_str" -> 3
-  | "print" -> 4
-  | "int_str" -> 5
-  | "bool_str" -> 6
-  | "char_str" -> 7
-  | "instance_str" -> 8
-  | "bytes_from_mem" -> 9
-  | "write_bytes" -> 10
-  | "str_eq" -> 11
-  | "init" -> 12
-  | name ->
-      raise
-        (Emo_ir.Lower_error
-           ("wasm: runtime helper `" ^ name
-          ^ "` lands with the fib task (T16.1)"))
+  | "add" -> 3
+  | "sub" -> 4
+  | "mul" -> 5
+  | "div" -> 6
+  | "mod" -> 7
+  | "neg" -> 8
+  | "lt" -> 9
+  | "le" -> 10
+  | "gt" -> 11
+  | "ge" -> 12
+  | "eq" -> 13
+  | "ne" -> 14
+  | "to_str" -> 15
+  | "print" -> 16
+  | "strcat" -> 17
+  | "box" -> 18
+  | "throw" -> 19
+  | "int_str" -> 20
+  | "bool_str" -> 21
+  | "char_str" -> 22
+  | "instance_str" -> 23
+  | "write_bytes" -> 24
+  | "bytes_from_mem" -> 25
+  | "str_eq" -> 26
+  | "deep_eq" -> 27
+  | "init" -> 28
+  | _ -> failwith "wasm: bad runtime function"
 
-let runtime_count = 14 (* imports 3 + rt funcs 3..11 + init 12 + main 13 *)
+(* imports 3 + runtime funcs 3..28 + main; program funcs follow. *)
+let runtime_count = 30 (* imports 3 + rt 25 + init + main; program funcs follow *)
 
 (* ---- Lowering state ---- *)
 
@@ -124,9 +141,12 @@ let e env i = env.rev <- i :: env.rev
 let es env xs = env.rev <- List.rev_append xs env.rev
 
 let type_idx env (t : W.typ) : int =
+  (* env.types accumulates program types in reverse AFTER the fixed
+     runtime head; indices are absolute (runtime head first). *)
+  let base = List.length runtime_types in
   let rec find i = function
     | [] -> None
-    | t' :: rest -> if t = t' then Some i else find (i + 1) rest
+    | t' :: rest -> if t = t' then Some (base + i) else find (i + 1) rest
   in
   match find 0 (List.rev env.types) with
   | Some i -> i
@@ -183,7 +203,10 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | None -> (
           match List.assoc_opt name env.local_map with
           | Some i -> e env (W.Local_get i)
-          | None -> failwith ("wasm: unbound local " ^ name)))
+          | None ->
+          failwith
+            ("wasm: unbound local " ^ name ^ " in " ^ env.fname
+            ^ " map=" ^ String.concat "," (List.map fst env.local_map))))
   | Global name -> (
       match List.assoc_opt name env.funcs with
       | Some fidx ->
@@ -204,18 +227,25 @@ let rec expr env (x : Emo_ir.expr) : unit =
       string_const env enum_name;
       string_const env member;
       e env (W.Struct_new t_venum)
-  | Interpolate es -> (
-      match es with
-      | [] -> string_const env ""
-      | item :: rest ->
-          expr env item;
-          e env (W.Call (rt "to_str"));
-          List.iter
-            (fun item ->
-              expr env item;
-              e env (W.Call (rt "to_str"));
-              e env (W.Call (rt "strcat")))
-            rest)
+  | Interpolate items ->
+      let rendered =
+        List.concat_map
+          (fun item ->
+            expr_block env item
+            @ [
+                W.Call (rt "to_str");
+                W.Ref_cast t_vstring;
+                W.Struct_get (t_vstring, 0);
+              ])
+          items
+      in
+      (* interleave: bytes0 strcat bytes1 strcat ... *)
+      let rec chain = function
+        | [] -> []
+        | [ x ] -> [ x ]
+        | x :: y :: rest -> x :: W.Call (rt "strcat") :: chain (y :: rest)
+      in
+      es env (chain rendered)
   | Unary (Ast.Neg, operand) -> expr env operand; e env (W.Call (rt "neg"))
   | Unary (Ast.Not, operand) ->
       expr env operand;
@@ -290,6 +320,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
           expr env f;
           e env (W.Ref_cast t_vfun);
           e env (W.Struct_get (t_vfun, 0));
+          e env (W.Ref_cast t_sig1);
           e env (W.Call_ref t_sig1)
       | _ ->
           raise
@@ -414,7 +445,12 @@ and emit_closure env p cbody : int =
 and stmts env (xs : Emo_ir.stmt list) ~(tail : bool) : W.instr list =
   match xs with
   | [] -> if tail then [ W.Unreachable ] else []
-  | s :: rest -> stmt env s ~tail @ stmts env rest ~tail
+  | [ s ] -> stmt env s ~tail
+  | s :: rest ->
+      (* Left-to-right: each statement's instructions (and any local
+         declarations it performs) must precede the rest. *)
+      let code = stmt env s ~tail:false in
+      code @ stmts env rest ~tail
 
 and expr_block env (x : Emo_ir.expr) : W.instr list =
   let before = env.rev in
@@ -432,11 +468,10 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
       | _ -> code @ [ W.Drop ])
   | Emo_ir.Let { mutable_ = _; name; init } ->
       let idx = fresh_local env name W.Anyref in
-      expr env init;
-      [ W.Local_set idx ]
+      expr_block env init @ [ W.Local_set idx ]
   | Emo_ir.Assign_var { name; value } -> (
       match List.assoc_opt name env.local_map with
-      | Some idx -> expr env value; [ W.Local_set idx ]
+      | Some idx -> expr_block env value @ [ W.Local_set idx ]
       | None -> failwith ("wasm: assignment to unbound " ^ name))
   | Emo_ir.Set_field { self_; name; value } -> (
       let class_name =
@@ -452,9 +487,9 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
       | Some fields, Some tidx -> (
           match List.assoc_opt name fields with
           | Some fidx ->
-              expr env self_;
-              expr env value;
-              [ W.Ref_cast tidx; W.Struct_set (tidx, fidx) ]
+              expr_block env self_
+              @ expr_block env value
+              @ [ W.Ref_cast tidx; W.Struct_set (tidx, fidx) ]
           | None -> failwith ("wasm: unknown field " ^ class_name ^ "." ^ name))
       | _ -> failwith ("wasm: unknown class " ^ class_name))
   | Emo_ir.If { cond; then_; else_ } ->
@@ -467,9 +502,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
       raise
         (Emo_ir.Lower_error
            "processes are not supported on the wasm target yet")
-  | Emo_ir.Raise x ->
-      expr env x;
-      [ W.Call (rt "throw"); W.Unreachable ]
+  | Emo_ir.Raise x -> expr_block env x @ [ W.Call (rt "throw"); W.Unreachable ]
   | Emo_ir.Return_stmt x -> (
       match x.Emo_ir.desc with
       | Emo_ir.Call { func = g; args } when g = env.fname ->
@@ -477,9 +510,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
           (match List.assoc_opt g env.funcs with
           | Some fidx -> [ W.Return_call fidx ]
           | None -> failwith ("wasm: unbound call " ^ g))
-      | _ ->
-          expr env x;
-          if tail then [] else [ W.Return ])
+      | _ -> expr_block env x @ (if tail then [] else [ W.Return ]))
 
 and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) :
     W.instr list =
@@ -585,22 +616,22 @@ and pattern_test env (s : W.instr list) (p : Emo_ast.pattern) : W.instr list =
         ]
   | Ast.Enum_member (t, m) ->
       let bytes_of = string_const_bytes env in
+      let field_cmp (f : int) =
+        [ W.Ref_cast t_venum;
+          W.Struct_get (t_venum, f) ]
+        @ bytes_of (if f = 0 then t else m)
+        @ [ W.Call (rt "str_eq") ]
+      in
       s
       @ [
           W.If_else
             ( W.Result W.I32,
               [ W.Ref_test t_venum ],
-              [ W.Ref_cast t_venum;
-                W.Struct_get (t_venum, 0) ]
-              @ bytes_of t
-              @ [ W.Call (rt "str_eq");
-                  W.If
-                    ( W.Result W.I32,
-                      [ W.Ref_cast t_venum;
-                        W.Struct_get (t_venum, 1) ]
-                      @ bytes_of m
-                      @ [ W.Call (rt "str_eq") ],
-                      [ W.I32_const 0 ] ) ],
+              [ W.If_else
+                  ( W.Result W.I32,
+                    field_cmp 0,
+                    field_cmp 1,
+                    [ W.I32_const 0 ] ) ],
               [ W.I32_const 0 ] );
         ]
   | Ast.Tuple_pattern _ ->
@@ -1013,32 +1044,223 @@ let rt_init (pool : string list) : W.func_type =
    value is produced, sig2 where a bool) ---- *)
 
 (* Unwrap a numeric (int or float) to f64. *)
+(* both operands are $vint? *)
+let both_int (a : int) (b : int) : W.instr list =
+  [ W.Local_get a; W.Ref_test t_vint; W.Local_get b; W.Ref_test t_vint;
+    W.I32_and ]
+
+let i64_of (l : int) : W.instr list =
+  [ W.Local_get l; W.Ref_cast t_vint; W.Struct_get (t_vint, 0) ]
+
 let num_to_f64 (local : int) : W.instr list =
-  [
-    W.Block
+  [ W.If_else
       ( W.Result W.F64,
-        [
-          W.Local_get local;
-          W.Ref_test t_vfloat;
-          W.If_else
-            ( W.Result W.F64,
-              [ W.Local_get local;
-                W.Ref_cast t_vfloat;
-                W.Struct_get (t_vfloat, 0) ],
-              [ W.Local_get local;
-                W.Ref_cast t_vint;
-                W.Struct_get (t_vint, 0);
-                W.F64_convert_i64_s ],
-              [] );
-        ] );
-  ]
+        [ W.Local_get local; W.Ref_test t_vfloat ],
+        [ W.Local_get local;
+          W.Ref_cast t_vfloat;
+          W.Struct_get (t_vfloat, 0) ],
+        [ W.Local_get local;
+          W.Ref_cast t_vint;
+          W.Struct_get (t_vint, 0);
+          W.F64_convert_i64_s ] ) ]
 
-(* Wrap an f64 as a value: a Float struct (int downcast is the
-   specialization follow-up, not here). *)
-let f64_to_value (local : int) : W.instr list =
-  [ W.Local_get local; W.Struct_new t_vfloat ]
+(* arithmetic: int path via i64 op, float path via f64 op *)
+let rt_arith (int_body : W.instr list) (float_body : W.instr list) :
+    W.func_type =
+  { W.ftype_idx = t_numop;
+    fparams = [ "a"; "b" ];
+    flocals = [];
+    fbody =
+      [ W.If_else
+          ( W.Result W.Anyref,
+            both_int 0 1,
+            i64_of 0 @ i64_of 1 @ int_body,
+            num_to_f64 0 @ num_to_f64 1 @ float_body ) ] }
 
-(* ---- Module assembly ---- *)
+let rt_add = rt_arith [ W.I64_add; W.Struct_new t_vint ] [ W.F64_add; W.Struct_new t_vfloat ]
+let rt_sub = rt_arith [ W.I64_sub; W.Struct_new t_vint ] [ W.F64_sub; W.Struct_new t_vfloat ]
+let rt_mul = rt_arith [ W.I64_mul; W.Struct_new t_vint ] [ W.F64_mul; W.Struct_new t_vfloat ]
+
+(* div/mod: int division truncates *)
+let rt_div = rt_arith [ W.I64_div_s; W.Struct_new t_vint ] [ W.F64_div; W.Struct_new t_vfloat ]
+let rt_mod = rt_arith [ W.I64_rem_s; W.Struct_new t_vint ] [ W.F64_rem_s; W.Struct_new t_vfloat ]
+
+(* neg *)
+let rt_neg : W.func_type =
+  { W.ftype_idx = t_sig1;
+    fparams = [ "a" ];
+    flocals = [];
+    fbody =
+      [ W.If_else
+          ( W.Result W.Anyref,
+            [ W.Local_get 0; W.Ref_test t_vint ],
+            [ W.I64_const 0L ] @ i64_of 0 @ [ W.I64_sub; W.Struct_new t_vint ],
+            num_to_f64 0 @ [ W.F64_neg; W.Struct_new t_vfloat ] ) ] }
+
+(* comparisons *)
+let rt_cmp (int_body : W.instr list) (float_body : W.instr list) : W.func_type =
+  { W.ftype_idx = t_numop;
+    fparams = [ "a"; "b" ];
+    flocals = [];
+    fbody =
+      [ W.If_else
+          ( W.Result W.Anyref,
+            both_int 0 1,
+            i64_of 0 @ i64_of 1 @ int_body,
+            num_to_f64 0 @ num_to_f64 1 @ float_body ) ] }
+
+let rt_lt = rt_cmp [ W.I64_lt_s; W.Struct_new t_vbool ] [ W.F64_lt; W.Struct_new t_vbool ]
+let rt_le = rt_cmp [ W.I64_le_s; W.Struct_new t_vbool ] [ W.F64_le; W.Struct_new t_vbool ]
+let rt_gt = rt_cmp [ W.I64_gt_s; W.Struct_new t_vbool ] [ W.F64_gt; W.Struct_new t_vbool ]
+let rt_ge = rt_cmp [ W.I64_ge_s; W.Struct_new t_vbool ] [ W.F64_ge; W.Struct_new t_vbool ]
+
+(* eq: primitives by content via deep_eq, boxed $vbool *)
+let rt_eq : W.func_type =
+  { W.ftype_idx = t_numop;
+    fparams = [ "a"; "b" ];
+    flocals = [];
+    fbody =
+      [ W.Local_get 0;
+        W.Call (rt "to_str");
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+        W.Local_get 1;
+        W.Call (rt "to_str");
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+        W.Call (rt "str_eq");
+        W.Struct_new t_vbool ] }
+
+let rt_ne : W.func_type =
+  { W.ftype_idx = t_numop;
+    fparams = [ "a"; "b" ];
+    flocals = [];
+    fbody =
+      [ W.Local_get 0;
+        W.Call (rt "to_str");
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+        W.Local_get 1;
+        W.Call (rt "to_str");
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+        W.Call (rt "str_eq");
+        W.I32_eqz;
+        W.Struct_new t_vbool ] }
+
+(* deep_eq(a, b) -> i32: equality for the primitive shapes (instances
+   arrive with classes; tuples/arrays with T16.2). Shape:
+   bothref T ? (typed compare) : 0 — chained, first match exits. *)
+let rt_deep_eq : W.func_type =
+  (* Canonical-rendering equality: to_str is injective over the
+     primitive shapes (each type renders distinctly: 2 vs 2.0 vs true),
+     so comparing renderings equals comparing values — for the golden
+     subset. Instance/array equality arrives with T16.2. *)
+  { W.ftype_idx = t_sig2;
+    fparams = [ "a"; "b" ];
+    flocals = [];
+    fbody =
+      [ W.Local_get 0;
+        W.Call (rt "to_str");
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+        W.Local_get 1;
+        W.Call (rt "to_str");
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+        W.Call (rt "str_eq") ] }
+
+(* strcat(a, b (ref null $bytes)) -> (ref null $bytes). Locals: 2 arr,
+   3 i, 4 alen. *)
+let rt_strcat : W.func_type =
+  { W.ftype_idx = t_strcat;
+    fparams = [ "a"; "b" ];
+    flocals = [ (1, W.RefNull t_bytes); (2, W.I32); (3, W.I32) ];
+    fbody =
+      [ W.Local_get 0;
+        W.Array_len t_bytes;
+        W.Local_get 1;
+        W.Array_len t_bytes;
+        W.I32_add;
+        W.Array_new_default t_bytes;
+        W.Local_set 2;
+        W.I32_const 0;
+        W.Local_set 3;
+        W.Block
+          ( W.Void,
+            [ W.Loop
+                ( W.Void,
+                  [ W.Local_get 3;
+                    W.Local_get 0;
+                    W.Array_len t_bytes;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 2;
+                    W.Local_get 3;
+                    W.Local_get 0;
+                    W.Local_get 3;
+                    W.Array_get_u t_bytes;
+                    W.Array_set t_bytes;
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0 ] ) ] );
+        W.Block
+          ( W.Void,
+            [ W.I32_const 0;
+              W.Local_set 3;
+              W.Loop
+                ( W.Void,
+                  [ W.Local_get 3;
+                    W.Local_get 1;
+                    W.Array_len t_bytes;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 2;
+                    W.Local_get 0;
+                    W.Array_len t_bytes;
+                    W.Local_get 3;
+                    W.I32_add;
+                    W.Local_get 1;
+                    W.Local_get 3;
+                    W.Array_get_u t_bytes;
+                    W.Array_set t_bytes;
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0 ] ) ] );
+        W.Local_get 2 ] }
+
+(* box(v) -> (ref null $vbox). *)
+let rt_box : W.func_type =
+  { W.ftype_idx = t_sig1;
+    fparams = [ "v" ];
+    flocals = [];
+    fbody =
+      [ W.Local_get 0;
+        W.Struct_new t_vbox ] }
+
+(* throw(msg): render the message into memory and abort through the
+   host, which throws. *)
+let rt_throw : W.func_type =
+  { W.ftype_idx = t_sig1;
+    fparams = [ "v" ];
+    flocals = [ (1, W.RefNull t_bytes) ];
+    fbody =
+      [ W.Local_get 0;
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+        W.Local_set 1;
+        W.Local_get 1;
+        W.Call (rt "write_bytes");
+        W.Local_get 1;
+        W.Array_len t_bytes;
+        W.Call i_abort;
+        W.Unreachable ] }
+
+(* ---- Module assembly ---- *)(* ---- Module assembly ---- *)
 
 (* The exported main runs the entry statements; exported memory backs
    the print/abort exchange. *)
@@ -1081,30 +1303,54 @@ let assemble (program : Emo_ir.program) : W.module_ =
         (idx, emit_func env f))
       program.Emo_ir.pfuncs
   in
-  let hidden = List.rev env.hidden in
   (* Types: the fixed runtime head first, then the program's appended
      types (env.types accumulates in reverse). *)
   let all_types = runtime_types @ List.rev env.types in
   let rt_funcs =
-    [ rt_to_str;
+    [ rt_add;
+      rt_sub;
+      rt_mul;
+      rt_div;
+      rt_mod;
+      rt_neg;
+      rt_lt;
+      rt_le;
+      rt_gt;
+      rt_ge;
+      rt_eq;
+      rt_ne;
+      rt_to_str;
       rt_print;
+      rt_strcat;
+      rt_box;
+      rt_throw;
       rt_int_str;
       rt_bool_str;
       rt_char_str;
       rt_instance_str;
-      rt_bytes_from_mem;
       rt_write_bytes;
-      rt_str_eq ]
+      rt_bytes_from_mem;
+      rt_str_eq;
+      rt_deep_eq ]
   in
+  (* The entry's locals start fresh: the local state still holds the
+     last lowered function's bindings. *)
+  env.local_map <- [];
+  env.local_decls <- [];
+  env.binders <- [];
+  let main_body = stmts env program.Emo_ir.pinit ~tail:false in
   let main_func : W.func_type =
-    { W.ftype_idx = t_main; fparams = []; flocals = [];
-      fbody = stmts env program.Emo_ir.pinit ~tail:false }
+    { W.ftype_idx = t_main;
+      fparams = [];
+      flocals = List.map (fun t -> (1, t)) env.local_decls;
+      fbody = main_body }
   in
   (* The pool fills while the entry lowers; init and globals read it
      after. *)
   let string_pool = List.rev env.string_pool in
   let init_func = rt_init string_pool in
-  let funcs = rt_funcs @ [ init_func; main_func ] @ List.map snd lowered @ List.map snd hidden in
+  let hidden = List.rev env.hidden in
+  let funcs = rt_funcs @ [ init_func; main_func ] @ List.map snd hidden @ List.map snd lowered in
   let main_idx = runtime_count - 1 in
   { W.types = all_types;
     imports =
@@ -1115,6 +1361,8 @@ let assemble (program : Emo_ir.program) : W.module_ =
     funcs;
     memory = 1;
     export_mem = true;
+    declared_funcs = List.map fst hidden;
+
     globals = (W.I32, true) :: List.map (fun _ -> (W.RefNull t_vstring, true)) string_pool;
     start = rt "init";
     exports = [ ("main", main_idx) ] }
