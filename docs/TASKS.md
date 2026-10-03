@@ -275,5 +275,5 @@ Promotion trail: **TypeScript → `plan/step-15-typescript.md`** (2026-10-02, fi
 - [x] **T16.1** — Backend skeleton: `--target wasm` plumbing (resolution gate reads the target); the WAT intermediate; the binary encoder; the boxed-struct value model with RTT dispatch. Golden: hello_world, fib, objects.
 - [x] **T16.2** — Full core semantics: patterns and guards, tuples, arrays, Box, interpolation, content equality, interface narrowing, multi-file module references. Golden: language_tour, shop.
 - [x] **T16.3** — Bootstrap: the wasm subset in CI, plus the resolution-gate refusal test for packages lacking `"wasm"`.
-- [ ] **T16.4** — Concurrency: a cooperative driver for `do` / `<-` / `receive`, host-timer preemption points. Golden: pipeline. (Gated on T16.2.)
+- [x] **T16.4** — Concurrency: a cooperative driver for `do` / `<-` / `receive`, host-timer preemption points. Golden: pipeline. (Gated on T16.2.)
 - [ ] **T16.5** — The WASI and IO audit: stdlib metadata for `"wasm"`, and the io goldens where the host supports it.

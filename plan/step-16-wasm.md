@@ -1,6 +1,6 @@
 # Step 16 — Wasm Target (WasmGC)
 
-**Milestone:** M4 · **Prereq:** steps 01–13 · **Status:** in progress
+**Milestone:** M4 · **Prereq:** steps 01–13 · **Status:** complete
 
 ## Goal
 
@@ -75,7 +75,7 @@ itself with no external toolchain.
 - [x] **T16.3** — Bootstrap: the target-aware golden suite in CI for
       the wasm subset, plus the resolution-gate refusal test for
       packages lacking `"wasm"`.
-- [ ] **T16.4** — Concurrency: a cooperative driver for
+- [x] **T16.4** — Concurrency: a cooperative driver for
       `do` / `<-` / `receive` inside the module, host-timer imports
       for preemption points. Golden: pipeline. (Gated on T16.2.)
 - [ ] **T16.5** — The WASI and IO audit: what `net`/`http` can mean

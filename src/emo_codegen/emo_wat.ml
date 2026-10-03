@@ -89,6 +89,7 @@ type instr =
   | Call_ref of int
   | Ref_func of int
   | Ref_null_any
+  | Ref_is_null
   | Call of int
   | Return_call of int
   | If of blocktype * instr list * instr list
@@ -208,6 +209,7 @@ let rec instr_text indent (i : instr) : string =
   | Ref_func f -> Printf.sprintf "%sref.func $f%d\n" pad f
   | Call f -> Printf.sprintf "%scall $f%d\n" pad f
   | Ref_null_any -> Printf.sprintf "%sref.null any\n" pad
+  | Ref_is_null -> Printf.sprintf "%sref.is_null\n" pad
   | Return_call f -> Printf.sprintf "%sreturn_call $f%d\n" pad f
   | If (bt, then_, else_) ->
       let bt_text =
@@ -459,6 +461,7 @@ let rec encode_instr buf (i : instr) =
       Buffer.add_char buf '\x10';
       leb_u buf f
   | Ref_null_any -> Buffer.add_string buf "\xd0\x6e"
+  | Ref_is_null -> Buffer.add_char buf '\xd1'
   | Return_call f ->
       Buffer.add_char buf '\x12';
       leb_u buf f
