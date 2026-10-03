@@ -72,7 +72,7 @@ itself with no external toolchain.
       arrays, Box, interpolation, content equality, interface
       narrowing, multi-file module references. Golden: language_tour,
       shop.
-- [ ] **T16.3** — Bootstrap: the target-aware golden suite in CI for
+- [x] **T16.3** — Bootstrap: the target-aware golden suite in CI for
       the wasm subset, plus the resolution-gate refusal test for
       packages lacking `"wasm"`.
 - [ ] **T16.4** — Concurrency: a cooperative driver for

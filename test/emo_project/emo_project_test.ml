@@ -416,6 +416,25 @@ let registry_dir =
   return s
 }
 |};
+  let wasm_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "wasm_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat wasm_dir "package.emo")
+    {|package {
+  name = "acme/wasm_tools"
+  version = "1.0.0"
+  targets = ["native", "wasm"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat wasm_dir "wasm_tools.emo")
+    {|def shrink(n Int) Int {
+  return n - 1
+}
+|};
   dir
 
 let app_manifest =
@@ -593,6 +612,76 @@ let deps_tests =
                       (contains_substring d.Diagnostic.message
                          "acme/json_tools: no such version")
                 | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+    tc "a wasm build refuses a package without a wasm build" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["native", "wasm"]
+
+  deps {
+    acme/json_tools = "2.3.1"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/json_tools"
+print(json_tools.parse("hello"))
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"wasm"
+            with
+            | _ -> Alcotest.fail "expected the wasm gate to refuse"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "names the dep and the target" true
+                      (contains_substring d.Diagnostic.message "acme/json_tools"
+                      && contains_substring d.Diagnostic.message "wasm")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+    tc "a wasm build accepts a package that declares the target" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["native", "wasm"]
+
+  deps {
+    acme/wasm_tools = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/wasm_tools"
+print(wasm_tools.shrink(4))
+|} );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"wasm"
+            with
+            | _ -> ()
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.fail ("codes: " ^ codes_dump ds)));
   ]
 
 let sched_tests =
