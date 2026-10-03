@@ -38,6 +38,9 @@ let t_vfun = 16
 let t_str_eq = 23
 let t_strcat = 24
 let t_numop = 25
+let t_vfun2 = 26
+let t_proc = 27
+let t_cons = 28
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -99,6 +102,21 @@ let runtime_types : W.typ list =
     (* strcat *)
     W.FuncT ([ W.Anyref; W.Anyref ], [ W.Anyref ]);
     (* numeric/comparison *)
+    W.StructT [ (W.RefNull t_numop, false) ];
+    (* $vfun2: a receive handler — (msg, captured args) -> value *)
+    W.StructT
+      [
+        (W.I32, false);
+        (W.I32, true);
+        (W.I32, true);
+        (W.Anyref, true);
+        (W.Anyref, true);
+        (W.Anyref, true);
+        (W.Anyref, true);
+      ];
+    (* $proc: id, alive, parked, mailbox head/tail, handler, args *)
+    W.StructT [ (W.Anyref, true); (W.Anyref, true) ];
+    (* $cons: a message-list cell, also the saved-current stack *)
   ]
 
 let i_print = 0
@@ -133,12 +151,24 @@ let rt = function
   | "str_eq" -> 26
   | "deep_eq" -> 27
   | "append" -> 28
-  | "init" -> 29
+  | "spawn_begin" -> 29
+  | "spawn_end" -> 30
+  | "send" -> 31
+  | "recv_poll" -> 32
+  | "recv_take" -> 33
+  | "park" -> 34
+  | "driver_next" -> 35
+  | "driver_resume" -> 36
+  | "driver_run" -> 37
+  | "self_pid" -> 38
+  | "halt" -> 39
+  | "proc_end" -> 40
+  | "init" -> 41
   | _ -> failwith "wasm: bad runtime function"
 
-(* imports 3 + runtime funcs 3..29 + main; program funcs follow. *)
+(* imports 3 + runtime funcs 3..41 + main; program funcs follow. *)
 let runtime_count =
-  31 (* imports 3 + rt 26 + init + main; program funcs follow *)
+  43 (* imports 3 + rt 38 + init + main; program funcs follow *)
 
 (* ---- Lowering state ---- *)
 
@@ -414,6 +444,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | "print", [ v ] ->
           expr env v;
           e env (W.Call (rt "print"))
+      | "self_pid", [] -> e env (W.Call (rt "self_pid"))
+      | "halt", [] -> e env (W.Call (rt "halt"))
       | _ ->
           raise
             (Emo_ir.Lower_error
@@ -425,9 +457,36 @@ let rec expr env (x : Emo_ir.expr) : unit =
       expr env message;
       e env (W.Call (rt "throw"));
       e env W.Unreachable
-  | Do_spawn _ | Spawn_value _ ->
-      raise
-        (Emo_ir.Lower_error "processes are not supported on the wasm target yet")
+  | Do_spawn { func; args } -> (
+      (* the child's first turn runs here: it evaluates with the
+         parent's bindings already on the stack, then parks or ends.
+         The pid lands below the call — stashed so it survives as the
+         spawn's value. *)
+      match List.assoc_opt func env.funcs with
+      | Some fidx ->
+          (* the arguments evaluate in the parent's context — before
+             spawn_begin switches the current process — so self_pid()
+             inside them names the spawner *)
+          let pid = fresh_local env "__spawn_pid" W.Anyref in
+          let arg_locals =
+            List.map (fun _ -> fresh_local env "__spawn_arg" W.Anyref) args
+          in
+          List.iter2
+            (fun a l ->
+              expr env a;
+              e env (W.Local_set l))
+            args arg_locals;
+          e env (W.Call (rt "spawn_begin"));
+          e env (W.Local_set pid);
+          List.iter (fun l -> e env (W.Local_get l)) arg_locals;
+          e env (W.Call fidx);
+          e env W.Drop;
+          e env (W.Call (rt "proc_end"));
+          e env (W.Call (rt "spawn_end"));
+          e env (W.Local_get pid)
+      | None -> failwith ("wasm: unbound spawn " ^ func))
+  | Spawn_value _ ->
+      raise (Emo_ir.Lower_error "wasm: `do` lowers from a call only")
   | Closure { cparams; cbody } -> (
       match cparams with
       | [ (p, _) ] ->
@@ -735,9 +794,10 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
           W.If (W.Void, stmts env then_ ~tail:false, stmts env else_ ~tail:false);
         ]
   | Emo_ir.Case { scrutinee; branches } -> case env scrutinee branches ~tail
-  | Emo_ir.Receive _ | Emo_ir.Send _ ->
-      raise
-        (Emo_ir.Lower_error "processes are not supported on the wasm target yet")
+  | Emo_ir.Receive { branches } -> receive env branches ~tail
+  | Emo_ir.Send { target; message } ->
+      expr_block env target @ expr_block env message
+      @ [ W.Call (rt "send"); W.Drop ]
   | Emo_ir.Raise x -> expr_block env x @ [ W.Call (rt "throw"); W.Unreachable ]
   | Emo_ir.Return_stmt x -> (
       match x.Emo_ir.desc with
@@ -749,17 +809,11 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
           | None -> failwith ("wasm: unbound call " ^ g))
       | _ -> expr_block env x @ if tail then [] else [ W.Return ])
 
-and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) :
-    W.instr list =
-  let sname = Printf.sprintf "__s%d" env.fresh in
-  env.fresh <- env.fresh + 1;
-  let sidx = fresh_local env sname W.Anyref in
+and dispatch_branches env (s : W.instr list) (branches : Emo_ir.branch list)
+    ~(tail : bool) : W.instr list =
   let blocktype = if tail then W.Result W.Anyref else W.Void in
-  (* the scrutinee's code is captured, not left in the rev buffer: it
-     must sit directly before the case's local.set *)
-  let scrutinee_code = expr_block env scrutinee in
   let saved_recv = List.assoc_opt "__is_recv" env.local_map in
-  let recv_local = fresh_local env (sname ^ "_r") W.Anyref in
+  let recv_local = fresh_local env "__is_dispatch_r" W.Anyref in
   env.local_map <- ("__is_recv", recv_local) :: env.local_map;
   let rec build bs =
     match bs with
@@ -768,9 +822,8 @@ and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) :
         @ [ W.Call (rt "throw"); W.Unreachable ]
     | b :: rest ->
         let saved = env.binders in
-        env.binders <-
-          pattern_bindings [ W.Local_get sidx ] b.Emo_ir.pattern @ saved;
-        let test = pattern_test env [ W.Local_get sidx ] b.Emo_ir.pattern in
+        env.binders <- pattern_bindings s b.Emo_ir.pattern @ saved;
+        let test = pattern_test env s b.Emo_ir.pattern in
         let guard =
           match b.Emo_ir.guard with
           | Some g -> truthy (expr_block env g)
@@ -785,10 +838,127 @@ and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) :
         [ W.If_else (blocktype, cond, body, no_match) ]
   in
   let arms = build branches in
-  (match saved_recv with
-  | Some l -> env.local_map <- ("__is_recv", l) :: env.local_map
-  | None -> env.local_map <- List.remove_assoc "__is_recv" env.local_map);
-  scrutinee_code @ [ W.Local_set sidx; W.Block (blocktype, arms) ]
+  match saved_recv with
+  | Some l ->
+      env.local_map <- ("__is_recv", l) :: env.local_map;
+      arms
+  | None ->
+      env.local_map <- List.remove_assoc "__is_recv" env.local_map;
+      arms
+
+and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) :
+    W.instr list =
+  let sname = Printf.sprintf "__s%d" env.fresh in
+  env.fresh <- env.fresh + 1;
+  let sidx = fresh_local env sname W.Anyref in
+  (* the scrutinee's code is captured, not left in the rev buffer: it
+     must sit directly before the case's local.set *)
+  let scrutinee_code = expr_block env scrutinee in
+  scrutinee_code @ [ W.Local_set sidx ]
+  @ dispatch_branches env [ W.Local_get sidx ] branches ~tail
+
+(* The enclosing bindings a receive hands its handler: the newest
+   binding per name, in binding order — the park packs them into a
+   tuple and the handler unpacks them back by name. *)
+and captured_bindings (env : env) : (string * int) list =
+  let rec pick seen = function
+    | [] -> []
+    | ((n, i) as x) :: rest ->
+        if List.mem_assoc n seen then pick seen rest
+        else x :: pick ((n, i) :: seen) rest
+  in
+  pick [] env.local_map
+
+and receive env (branches : Emo_ir.branch list) ~(tail : bool) : W.instr list =
+  (* Non-empty mailbox: the message dispatches inline. Empty: the
+     process parks — the handler (a hidden func of (msg, captured
+     bindings)) re-runs the same dispatch when the driver delivers. A
+     suspending receive continues past the park, so the receive must
+     be the body's last statement: what follows would otherwise run
+     twice (once at park, once at resume). *)
+  if not tail then
+    raise
+      (Emo_ir.Lower_error
+         "wasm: a receive must be the last statement of its body");
+  let caps = captured_bindings env in
+  let handler_idx = emit_receive_handler env caps branches in
+  let msg = fresh_local env "__recv_msg" W.Anyref in
+  let park_code =
+    [ W.Ref_func handler_idx; W.Struct_new t_vfun2 ]
+    @ List.concat_map (fun (_, i) -> [ W.Local_get i ]) caps
+    @ [
+        W.Array_new_fixed (t_anyarray, List.length caps);
+        W.Struct_new t_vtuple;
+        W.Call (rt "park");
+        W.Drop;
+      ]
+  in
+  let dispatch =
+    dispatch_branches env [ W.Local_get msg ] branches ~tail:false
+  in
+  [
+    W.Call (rt "recv_poll");
+    W.Local_set msg;
+    W.Local_get msg;
+    W.Ref_is_null;
+    W.I32_eqz;
+    W.If (W.Void, [ W.Call (rt "recv_take") ] @ dispatch, park_code);
+    (* a trailing receive is the function's return value; a mid-body
+       one leaves nothing behind *)
+    W.Ref_null_any;
+  ]
+  @ if tail then [] else [ W.Drop ]
+
+and emit_receive_handler env (caps : (string * int) list)
+    (branches : Emo_ir.branch list) : int =
+  let fidx = env.nfuncs in
+  env.nfuncs <- env.nfuncs + 1;
+  let saved_rev = env.rev in
+  let saved_locals = env.local_decls in
+  let saved_map = env.local_map in
+  let saved_binders = env.binders in
+  let saved_fname = env.fname in
+  let saved_fparams = env.fparams in
+  let saved_cc = env.current_class in
+  env.rev <- [];
+  env.local_decls <- [ W.Anyref; W.Anyref ];
+  env.local_map <- [ ("__recv_msg", 0); ("__recv_args", 1) ];
+  env.binders <- [];
+  env.fname <- Printf.sprintf "__recv_%d" fidx;
+  env.fparams <- [ "__recv_msg"; "__recv_args" ];
+  env.current_class <- None;
+  let unpacked =
+    List.concat_map
+      (fun (k, (n, _)) ->
+        [
+          W.Local_get 1;
+          W.Ref_cast t_vtuple;
+          W.Struct_get (t_vtuple, 0);
+          W.I32_const k;
+          W.Array_get t_anyarray;
+          W.Local_set (fresh_local env n W.Anyref);
+        ])
+      (List.mapi (fun k x -> (k, x)) caps)
+  in
+  let dispatch = dispatch_branches env [ W.Local_get 0 ] branches ~tail:false in
+  let body = unpacked @ dispatch @ [ W.Ref_null_any ] in
+  env.hidden <-
+    ( fidx,
+      {
+        W.ftype_idx = t_numop;
+        fparams = [ "__recv_msg"; "__recv_args" ];
+        flocals = List.map (fun t -> (1, t)) env.local_decls;
+        fbody = body;
+      } )
+    :: env.hidden;
+  env.rev <- saved_rev;
+  env.local_decls <- saved_locals;
+  env.local_map <- saved_map;
+  env.binders <- saved_binders;
+  env.fname <- saved_fname;
+  env.fparams <- saved_fparams;
+  env.current_class <- saved_cc;
+  fidx
 
 and pattern_test env (s : W.instr list) (p : Emo_ast.pattern) : W.instr list =
   (* [s] re-reads the scrutinee; it goes inside every cond and arm —
@@ -1500,18 +1670,54 @@ let rt_str_eq : W.func_type =
   }
 
 (* init: build every interned string into its global. *)
-let rt_init (pool : string list) : W.func_type =
+(* init: build every interned string into its global, then create the
+   entry process (id 0) on an empty list. *)
+(* The concurrency driver's globals — all indices depend on the string
+   pool, so the rt builders take them. *)
+type driver_globals = {
+  g_cur : int;
+  g_curp : int;
+  g_next : int;
+  g_head : int;
+  g_tail : int;
+  g_saved : int;
+}
+
+let rt_init (pool : string list) ~(g : driver_globals) : W.func_type =
   {
     W.ftype_idx = t_main;
     fparams = [];
-    flocals = [];
+    flocals = [ (1, W.RefNull t_proc); (1, W.RefNull t_cons); (1, W.I32) ];
     fbody =
       List.concat_map
         (fun s -> string_bytes_instrs s @ [ W.Struct_new t_vstring ])
         pool
       @ List.mapi
           (fun i _ -> W.Global_set (1 + (List.length pool - 1 - i)))
-          pool;
+          pool
+      @ [
+          W.I32_const 0;
+          W.I32_const 1;
+          W.I32_const 0;
+          W.Ref_null_any;
+          W.Ref_null_any;
+          W.Ref_null_any;
+          W.Ref_null_any;
+          W.Struct_new t_proc;
+          W.Local_set 0;
+          W.Local_get 0;
+          W.Ref_null_any;
+          W.Struct_new t_cons;
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Global_set g.g_head;
+          W.Local_get 1;
+          W.Global_set g.g_tail;
+          W.Local_get 0;
+          W.Global_set g.g_curp;
+          W.I32_const 1;
+          W.Global_set g.g_next;
+        ];
   }
 
 (* ---- Numeric and comparison runtime (sig1: anyref -> anyref where a
@@ -1981,11 +2187,487 @@ let rt_throw : W.func_type =
       ];
   }
 
-(* ---- Module assembly ---- *)
+(* ---- The concurrency driver ----
+
+   Processes are $proc structs on a creation-ordered $cons list;
+   mailboxes are $cons chains (head + tail for FIFO append). A spawn
+   runs the child's first turn inline — it either ends or parks at a
+   receive; parking records the receive's handler and the enclosing
+   bindings, and the driver resumes by popping the mailbox and calling
+   the handler. *)
+
+let rt_spawn_begin (g : driver_globals) ~(t_pid : int) : W.func_type =
+  {
+    W.ftype_idx = t_pid;
+    fparams = [];
+    flocals = [ (1, W.I32); (1, W.RefNull t_proc); (1, W.RefNull t_cons) ];
+    fbody =
+      [
+        W.Global_get g.g_next;
+        W.Local_set 0;
+        W.Local_get 0;
+        W.I32_const 1;
+        W.I32_const 0;
+        W.Ref_null_any;
+        W.Ref_null_any;
+        W.Ref_null_any;
+        W.Ref_null_any;
+        W.Struct_new t_proc;
+        W.Local_set 1;
+        W.Local_get 1;
+        W.Ref_null_any;
+        W.Struct_new t_cons;
+        W.Local_set 2;
+        W.Global_get g.g_head;
+        W.Ref_is_null;
+        W.If
+          ( W.Void,
+            [
+              W.Local_get 2;
+              W.Global_set g.g_head;
+              W.Local_get 2;
+              W.Global_set g.g_tail;
+            ],
+            [
+              W.Global_get g.g_tail;
+              W.Local_get 2;
+              W.Struct_set (t_cons, 1);
+              W.Local_get 2;
+              W.Global_set g.g_tail;
+            ] );
+        W.Global_get g.g_curp;
+        W.Global_get g.g_saved;
+        W.Struct_new t_cons;
+        W.Global_set g.g_saved;
+        W.Local_get 0;
+        W.Global_set g.g_cur;
+        W.Local_get 1;
+        W.Global_set g.g_curp;
+        W.Global_get g.g_next;
+        W.I32_const 1;
+        W.I32_add;
+        W.Global_set g.g_next;
+        W.Global_get g.g_curp;
+        W.Struct_get (t_proc, 0);
+        W.I64_extend_i32_s;
+        W.Struct_new t_vint;
+      ];
+  }
+
+let rt_spawn_end (g : driver_globals) : W.func_type =
+  {
+    W.ftype_idx = t_main;
+    fparams = [];
+    flocals = [ (1, W.RefNull t_cons) ];
+    fbody =
+      [
+        W.Global_get g.g_saved;
+        W.Ref_is_null;
+        W.If
+          ( W.Void,
+            [],
+            [
+              W.Global_get g.g_saved;
+              W.Ref_cast t_cons;
+              W.Local_tee 0;
+              W.Struct_get (t_cons, 1);
+              W.Global_set g.g_saved;
+              W.Local_get 0;
+              W.Struct_get (t_cons, 0);
+              W.Ref_cast t_proc;
+              W.Global_set g.g_curp;
+              W.Global_get g.g_curp;
+              W.Struct_get (t_proc, 0);
+              W.Global_set g.g_cur;
+            ] );
+      ];
+  }
+
+let rt_send (g : driver_globals) : W.func_type =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "to"; "msg" ];
+    flocals =
+      [
+        (1, W.I32); (1, W.Anyref); (1, W.RefNull t_proc); (1, W.RefNull t_cons);
+      ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vint;
+        W.Struct_get (t_vint, 0);
+        W.I32_wrap_i64;
+        W.Local_set 2;
+        W.Global_get g.g_head;
+        W.Local_set 3;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 3;
+                    W.Ref_is_null;
+                    W.Br_if 1;
+                    W.Local_get 3;
+                    W.Ref_cast t_cons;
+                    W.Struct_get (t_cons, 0);
+                    W.Ref_cast t_proc;
+                    W.Local_set 4;
+                    W.Local_get 4;
+                    W.Struct_get (t_proc, 0);
+                    W.Local_get 2;
+                    W.I32_eq;
+                    W.If
+                      ( W.Void,
+                        [
+                          W.Local_get 1;
+                          W.Ref_null_any;
+                          W.Struct_new t_cons;
+                          W.Local_set 5;
+                          W.Local_get 4;
+                          W.Struct_get (t_proc, 4);
+                          W.Ref_is_null;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.Local_get 4;
+                                W.Local_get 5;
+                                W.Struct_set (t_proc, 3);
+                                W.Local_get 4;
+                                W.Local_get 5;
+                                W.Struct_set (t_proc, 4);
+                              ],
+                              [
+                                W.Local_get 4;
+                                W.Struct_get (t_proc, 4);
+                                W.Ref_cast t_cons;
+                                W.Local_get 5;
+                                W.Struct_set (t_cons, 1);
+                                W.Local_get 4;
+                                W.Local_get 5;
+                                W.Struct_set (t_proc, 4);
+                              ] );
+                          W.Br 2;
+                        ],
+                        [] );
+                    W.Local_get 3;
+                    W.Ref_cast t_cons;
+                    W.Struct_get (t_cons, 1);
+                    W.Local_set 3;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 1;
+      ];
+  }
+
+let rt_recv_poll (g : driver_globals) ~(t_void_anyref : int) : W.func_type =
+  {
+    W.ftype_idx = t_void_anyref;
+    fparams = [];
+    flocals = [];
+    fbody =
+      [
+        W.If_else
+          ( W.Result W.Anyref,
+            [ W.Global_get g.g_curp; W.Struct_get (t_proc, 3); W.Ref_is_null ],
+            [ W.Ref_null_any ],
+            [
+              W.Global_get g.g_curp;
+              W.Struct_get (t_proc, 3);
+              W.Ref_cast t_cons;
+              W.Struct_get (t_cons, 0);
+            ] );
+      ];
+  }
+
+let rt_recv_take (g : driver_globals) : W.func_type =
+  {
+    W.ftype_idx = t_main;
+    fparams = [];
+    flocals = [ (1, W.RefNull t_cons) ];
+    fbody =
+      [
+        W.Global_get g.g_curp;
+        W.Struct_get (t_proc, 3);
+        W.Ref_cast t_cons;
+        W.Local_set 0;
+        W.Local_get 0;
+        W.Struct_get (t_cons, 1);
+        W.Ref_is_null;
+        W.If
+          ( W.Void,
+            [
+              (* the mailbox drained: head and tail go null *)
+              W.Global_get g.g_curp;
+              W.Ref_null_any;
+              W.Struct_set (t_proc, 3);
+              W.Global_get g.g_curp;
+              W.Ref_null_any;
+              W.Struct_set (t_proc, 4);
+            ],
+            [
+              W.Global_get g.g_curp;
+              W.Local_get 0;
+              W.Struct_get (t_cons, 1);
+              W.Ref_cast t_cons;
+              W.Struct_set (t_proc, 3);
+            ] );
+      ];
+  }
+
+let rt_park (g : driver_globals) : W.func_type =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "handler"; "args" ];
+    flocals = [];
+    fbody =
+      [
+        W.Global_get g.g_curp;
+        W.Local_get 0;
+        W.Struct_set (t_proc, 5);
+        W.Global_get g.g_curp;
+        W.Local_get 1;
+        W.Struct_set (t_proc, 6);
+        W.Global_get g.g_curp;
+        W.I32_const 1;
+        W.Struct_set (t_proc, 2);
+        W.Ref_null_any;
+      ];
+  }
+
+let rt_self_pid (g : driver_globals) ~(t_void_anyref : int) : W.func_type =
+  {
+    W.ftype_idx = t_void_anyref;
+    fparams = [];
+    flocals = [];
+    fbody =
+      [
+        W.Global_get g.g_curp;
+        W.Struct_get (t_proc, 0);
+        W.I64_extend_i32_s;
+        W.Struct_new t_vint;
+      ];
+  }
+
+let rt_halt (g : driver_globals) ~(t_void_anyref : int) : W.func_type =
+  {
+    W.ftype_idx = t_void_anyref;
+    fparams = [];
+    flocals = [];
+    fbody =
+      [
+        W.Global_get g.g_curp;
+        W.I32_const 0;
+        W.Struct_set (t_proc, 1);
+        W.Ref_null_any;
+      ];
+  }
+
+let rt_proc_end (g : driver_globals) : W.func_type =
+  {
+    W.ftype_idx = t_main;
+    fparams = [];
+    flocals = [];
+    fbody =
+      [
+        W.Global_get g.g_curp;
+        W.Struct_get (t_proc, 2);
+        W.I32_eqz;
+        W.If
+          ( W.Void,
+            [ W.Global_get g.g_curp; W.I32_const 0; W.Struct_set (t_proc, 1) ],
+            [] );
+      ];
+  }
+
+let rt_driver_next (g : driver_globals) ~(t_void_i32 : int) : W.func_type =
+  {
+    W.ftype_idx = t_void_i32;
+    fparams = [];
+    flocals = [ (1, W.Anyref); (1, W.RefNull t_proc) ];
+    fbody =
+      [
+        W.Global_get g.g_head;
+        W.Local_set 0;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 0;
+                    W.Ref_is_null;
+                    W.If (W.Void, [ W.I32_const (-1); W.Return ], []);
+                    W.Local_get 0;
+                    W.Ref_cast t_cons;
+                    W.Struct_get (t_cons, 0);
+                    W.Ref_cast t_proc;
+                    W.Local_set 1;
+                    W.Local_get 1;
+                    W.Struct_get (t_proc, 1);
+                    W.Local_get 1;
+                    W.Struct_get (t_proc, 2);
+                    W.I32_and;
+                    W.Local_get 1;
+                    W.Struct_get (t_proc, 3);
+                    W.Ref_is_null;
+                    W.I32_eqz;
+                    W.I32_and;
+                    W.If
+                      ( W.Void,
+                        [ W.Local_get 1; W.Struct_get (t_proc, 0); W.Return ],
+                        [] );
+                    W.Local_get 0;
+                    W.Ref_cast t_cons;
+                    W.Struct_get (t_cons, 1);
+                    W.Local_set 0;
+                    W.Br 0;
+                  ] );
+            ] );
+        (* the loop only exits by returning; validation still wants a
+           value on the fall-through path *)
+        W.I32_const (-1);
+      ];
+  }
+
+let rt_driver_resume (g : driver_globals) ~(t_i32_void : int) : W.func_type =
+  {
+    W.ftype_idx = t_i32_void;
+    fparams = [ "id" ];
+    flocals =
+      [
+        (1, W.RefNull t_proc);
+        (1, W.Anyref);
+        (1, W.Anyref);
+        (1, W.Anyref);
+        (1, W.RefNull t_numop);
+        (1, W.RefNull t_cons);
+      ];
+    fbody =
+      [
+        W.Global_get g.g_head;
+        W.Local_set 2;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 2;
+                    W.Ref_is_null;
+                    W.Br_if 1;
+                    W.Local_get 2;
+                    W.Ref_cast t_cons;
+                    W.Struct_get (t_cons, 0);
+                    W.Ref_cast t_proc;
+                    W.Local_set 1;
+                    W.Local_get 1;
+                    W.Struct_get (t_proc, 0);
+                    W.Local_get 0;
+                    W.I32_eq;
+                    W.If
+                      ( W.Void,
+                        [
+                          W.Local_get 1;
+                          W.Struct_get (t_proc, 3);
+                          W.Ref_cast t_cons;
+                          W.Local_set 6;
+                          W.Local_get 1;
+                          W.Local_get 6;
+                          W.Struct_get (t_cons, 1);
+                          W.Struct_set (t_proc, 3);
+                          W.Local_get 1;
+                          W.Struct_get (t_proc, 3);
+                          W.Ref_is_null;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.Local_get 1;
+                                W.Ref_null_any;
+                                W.Struct_set (t_proc, 4);
+                              ],
+                              [] );
+                          W.Local_get 6;
+                          W.Struct_get (t_cons, 0);
+                          W.Local_set 3;
+                          W.Local_get 1;
+                          W.Struct_get (t_proc, 6);
+                          W.Local_set 4;
+                          W.Local_get 1;
+                          W.Struct_get (t_proc, 5);
+                          W.Ref_cast t_vfun2;
+                          W.Struct_get (t_vfun2, 0);
+                          W.Local_set 5;
+                          W.Local_get 1;
+                          W.I32_const 0;
+                          W.Struct_set (t_proc, 2);
+                          W.Local_get 1;
+                          W.Struct_get (t_proc, 0);
+                          W.Global_set g.g_cur;
+                          W.Local_get 1;
+                          W.Global_set g.g_curp;
+                          W.Local_get 3;
+                          W.Local_get 4;
+                          W.Local_get 5;
+                          W.Call_ref t_numop;
+                          W.Drop;
+                          W.Local_get 1;
+                          W.Struct_get (t_proc, 2);
+                          W.I32_eqz;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.Local_get 1;
+                                W.I32_const 0;
+                                W.Struct_set (t_proc, 1);
+                              ],
+                              [] );
+                          W.Br 2;
+                        ],
+                        [] );
+                    W.Local_get 2;
+                    W.Ref_cast t_cons;
+                    W.Struct_get (t_cons, 1);
+                    W.Local_set 2;
+                    W.Br 0;
+                  ] );
+            ] );
+      ];
+  }
+
+let rt_driver_run ~(t_i32_void : int) : W.func_type =
+  {
+    W.ftype_idx = t_main;
+    fparams = [];
+    flocals = [ (1, W.I32) ];
+    fbody =
+      [
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Call (rt "driver_next");
+                    W.Local_set 0;
+                    W.I32_const 0;
+                    W.Local_get 0;
+                    W.I32_gt;
+                    W.Br_if 1;
+                    W.Local_get 0;
+                    W.Call (rt "driver_resume");
+                    W.Br 0;
+                  ] );
+            ] );
+      ];
+  }
+
 (* ---- Module assembly ---- *)
 
-(* The exported main runs the entry statements; exported memory backs
-   the print/abort exchange. *)
+(* The exported main runs the entry statements, then the driver loop;
+   exported memory backs the print/abort exchange. *)
 let assemble (program : Emo_ir.program) : W.module_ =
   let env =
     {
@@ -2098,7 +2780,6 @@ let assemble (program : Emo_ir.program) : W.module_ =
   in
   (* Types: the fixed runtime head first, then the program's appended
      types (env.types accumulates in reverse). *)
-  let all_types = runtime_types @ List.rev env.types in
   let rt_eq, rt_ne, rt_deep_eq = rt_equality_funcs env in
   let rt_funcs =
     [
@@ -2135,7 +2816,18 @@ let assemble (program : Emo_ir.program) : W.module_ =
   env.local_map <- [];
   env.local_decls <- [];
   env.binders <- [];
-  let main_body = stmts env program.Emo_ir.pinit ~tail:false in
+  (* A trailing receive must lower in tail position (it parks the entry
+     process); after it the driver loop takes over. *)
+  let main_body =
+    match List.rev program.Emo_ir.pinit with
+    | (Emo_ir.Receive _ as last) :: rest_rev ->
+        stmts env (List.rev rest_rev) ~tail:false
+        @ stmt env last ~tail:true
+        @ [ W.Drop; W.Call (rt "driver_run") ]
+    | _ ->
+        stmts env program.Emo_ir.pinit ~tail:false
+        @ [ W.Call (rt "driver_run") ]
+  in
   let main_func : W.func_type =
     {
       W.ftype_idx = t_main;
@@ -2147,13 +2839,48 @@ let assemble (program : Emo_ir.program) : W.module_ =
   (* The pool fills while the entry lowers; init and globals read it
      after. *)
   let string_pool = List.rev env.string_pool in
-  let init_func = rt_init string_pool in
+  (* the driver's globals sit after the string pool *)
+  let g =
+    let base = 1 + List.length string_pool in
+    {
+      g_cur = base;
+      g_next = base + 1;
+      g_curp = base + 2;
+      g_head = base + 3;
+      g_tail = base + 4;
+      g_saved = base + 5;
+    }
+  in
+  let t_void_anyref = type_idx env (W.FuncT ([], [ W.Anyref ])) in
+  let t_void_i32 = type_idx env (W.FuncT ([], [ W.I32 ])) in
+  let t_i32_void = type_idx env (W.FuncT ([ W.I32 ], [])) in
+  let init_func = rt_init string_pool ~g in
   let hidden = List.rev env.hidden in
   let funcs =
-    rt_funcs @ [ init_func; main_func ] @ List.map snd lowered
-    @ List.map snd class_funcs @ List.map snd hidden
+    rt_funcs
+    @ [
+        rt_spawn_begin g ~t_pid:t_void_anyref;
+        rt_spawn_end g;
+        rt_send g;
+        rt_recv_poll g ~t_void_anyref;
+        rt_recv_take g;
+        rt_park g;
+        rt_driver_next g ~t_void_i32;
+        rt_driver_resume g ~t_i32_void;
+        rt_driver_run ~t_i32_void;
+        rt_self_pid g ~t_void_anyref;
+        rt_halt g ~t_void_anyref;
+        rt_proc_end g;
+        init_func;
+        main_func;
+      ]
+    @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in
   let main_idx = runtime_count - 1 in
+  (* types: the fixed runtime head, then everything the lowering
+     appended (env.types accumulates in reverse) — snapped last so the
+     driver's own func types are included *)
+  let all_types = runtime_types @ List.rev env.types in
   {
     W.types = all_types;
     imports =
@@ -2168,7 +2895,15 @@ let assemble (program : Emo_ir.program) : W.module_ =
     declared_funcs = List.map fst hidden;
     globals =
       (W.I32, true)
-      :: List.map (fun _ -> (W.RefNull t_vstring, true)) string_pool;
+      :: List.map (fun _ -> (W.RefNull t_vstring, true)) string_pool
+      @ [
+          (W.I32, true);
+          (W.I32, true);
+          (W.RefNull t_proc, true);
+          (W.RefNull t_cons, true);
+          (W.RefNull t_cons, true);
+          (W.Anyref, true);
+        ];
     start = rt "init";
     exports = [ ("main", main_idx) ];
   }

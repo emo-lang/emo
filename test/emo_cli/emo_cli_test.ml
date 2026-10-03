@@ -175,7 +175,9 @@ let examples_tests =
    and run it under Node's WasmGC, byte-for-byte against expected.txt.
    Skips when Node is absent — the runtime is the only WasmGC
    validator in the toolchain (T16.1, T16.2). *)
-let wasm_goldens = [ "hello_world"; "fib"; "objects"; "language_tour"; "shop" ]
+let wasm_goldens =
+  [ "hello_world"; "fib"; "objects"; "language_tour"; "shop"; "pipeline" ]
+
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
 
 (* The host boundary: print forwards to stdout, abort exits nonzero
