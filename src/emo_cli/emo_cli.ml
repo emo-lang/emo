@@ -145,7 +145,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
   | true -> (
       try
         let inputs, entry_path, _manifest =
-          Emo_project.compile_inputs ~entry_file:entry
+          Emo_project.compile_inputs ~entry_file:entry ~target
         in
         let program =
           Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path }
@@ -171,9 +171,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               if Filename.check_suffix output ".wasm" then output
               else output ^ ".wasm"
             in
-            let out_wat =
-              (Filename.remove_extension out) ^ ".wat"
-            in
+            let out_wat = Filename.remove_extension out ^ ".wat" in
             let binary = Emo_codegen.Wasm.to_binary module_ in
             let oc = open_out_bin out in
             output_string oc binary;
@@ -603,7 +601,9 @@ let deps_resolve ~(name : string option) : int =
           prerr_endline (Printf.sprintf "`%s` is not in the manifest's deps" n);
           exit 65)
     | None -> ());
-    let entries = Emo_project.resolve_deps ~manifest ~manifest_dir:dir in
+    let entries =
+      Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"native"
+    in
     Emo_pkg.Lockfile.write ~path:(Filename.concat dir "emo.lock") entries;
     List.iter
       (fun e ->

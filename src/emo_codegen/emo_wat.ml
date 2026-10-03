@@ -87,6 +87,7 @@ type instr =
   | Array_new_default of int
   | Call_ref of int
   | Ref_func of int
+  | Ref_null_any
   | Call of int
   | Return_call of int
   | If of blocktype * instr list * instr list
@@ -204,6 +205,7 @@ let rec instr_text indent (i : instr) : string =
   | Call_ref t -> Printf.sprintf "%scall_ref $t%d\n" pad t
   | Ref_func f -> Printf.sprintf "%sref.func $f%d\n" pad f
   | Call f -> Printf.sprintf "%scall $f%d\n" pad f
+  | Ref_null_any -> Printf.sprintf "%sref.null any\n" pad
   | Return_call f -> Printf.sprintf "%sreturn_call $f%d\n" pad f
   | If (bt, then_, else_) ->
       let bt_text =
@@ -239,7 +241,6 @@ let rec instr_text indent (i : instr) : string =
       Printf.sprintf "%sloop %s\n%s%send loop\n" pad bt_text
         (String.concat "" (List.map (instr_text inner) xs))
         pad
-
   | Br l -> Printf.sprintf "%sbr %d\n" pad l
   | Br_if l -> Printf.sprintf "%sbr_if %d\n" pad l
   | Return -> Printf.sprintf "%sreturn\n" pad
@@ -247,12 +248,17 @@ let rec instr_text indent (i : instr) : string =
   | If_else (bt, cond, then_, else_) ->
       (* The condition's instructions run first (they leave the tested
          i32 on the stack); rendered as a nested block for honesty. *)
-      let bt_text = match bt with Void -> "" | Result v -> "(result " ^ valtype_name v ^ ")" in
+      let bt_text =
+        match bt with
+        | Void -> ""
+        | Result v -> "(result " ^ valtype_name v ^ ")"
+      in
       let cond_text = String.concat "" (List.map (instr_text inner) cond) in
       let then_text = String.concat "" (List.map (instr_text inner) then_) in
       let else_text = String.concat "" (List.map (instr_text inner) else_) in
       String.concat ""
-        [ pad;
+        [
+          pad;
           "block (result i32)\n";
           cond_text;
           "\nend block\n";
@@ -262,9 +268,8 @@ let rec instr_text indent (i : instr) : string =
           then_text;
           "\nelse\n";
           else_text;
-          "\nend if\n" ]
-
-
+          "\nend if\n";
+        ]
 
 let leb_u (buf : Buffer.t) (n : int) =
   let rec go n =
@@ -309,7 +314,9 @@ let f64_bytes (buf : Buffer.t) (f : float) =
   let b = Int64.bits_of_float f in
   for i = 0 to 7 do
     Buffer.add_char buf
-      (Char.chr (Int64.to_int (Int64.logand (Int64.shift_right_logical b (i * 8)) 0xffL)))
+      (Char.chr
+         (Int64.to_int
+            (Int64.logand (Int64.shift_right_logical b (i * 8)) 0xffL)))
   done
 
 let heaptype (buf : Buffer.t) (t : int) = leb_s buf t
@@ -323,8 +330,12 @@ let valtype_byte (buf : Buffer.t) (v : valtype) =
   | Anyref -> Buffer.add_string buf "\x63\x6e"
   | Externref -> Buffer.add_char buf '\x6f'
   | Funcref -> Buffer.add_char buf '\x70'
-  | RefNull t -> Buffer.add_char buf '\x63'; heaptype buf t
-  | Ref t -> Buffer.add_char buf '\x64'; heaptype buf t
+  | RefNull t ->
+      Buffer.add_char buf '\x63';
+      heaptype buf t
+  | Ref t ->
+      Buffer.add_char buf '\x64';
+      heaptype buf t
 
 let blocktype_byte (buf : Buffer.t) (bt : blocktype) =
   match bt with
@@ -334,31 +345,64 @@ let blocktype_byte (buf : Buffer.t) (bt : blocktype) =
 
 let rec encode_instr buf (i : instr) =
   match i with
-  | I32_const n -> Buffer.add_char buf '\x41'; leb_s buf n
-  | I64_const n -> Buffer.add_char buf '\x42'; leb_s64 buf n
-  | F64_const f -> Buffer.add_char buf '\x44'; f64_bytes buf f
-  | Local_get n -> Buffer.add_char buf '\x20'; leb_u buf n
-  | Local_set n -> Buffer.add_char buf '\x21'; leb_u buf n
-  | Local_tee n -> Buffer.add_char buf '\x22'; leb_u buf n
-  | Global_get n -> Buffer.add_char buf '\x23'; leb_u buf n
-  | Global_set n -> Buffer.add_char buf '\x24'; leb_u buf n
-  | Struct_new t -> Buffer.add_string buf "\xfb\x00"; leb_u buf t
+  | I32_const n ->
+      Buffer.add_char buf '\x41';
+      leb_s buf n
+  | I64_const n ->
+      Buffer.add_char buf '\x42';
+      leb_s64 buf n
+  | F64_const f ->
+      Buffer.add_char buf '\x44';
+      f64_bytes buf f
+  | Local_get n ->
+      Buffer.add_char buf '\x20';
+      leb_u buf n
+  | Local_set n ->
+      Buffer.add_char buf '\x21';
+      leb_u buf n
+  | Local_tee n ->
+      Buffer.add_char buf '\x22';
+      leb_u buf n
+  | Global_get n ->
+      Buffer.add_char buf '\x23';
+      leb_u buf n
+  | Global_set n ->
+      Buffer.add_char buf '\x24';
+      leb_u buf n
+  | Struct_new t ->
+      Buffer.add_string buf "\xfb\x00";
+      leb_u buf t
   | Struct_new_default t ->
-      Buffer.add_string buf "\xfb\x01"; leb_u buf t
+      Buffer.add_string buf "\xfb\x01";
+      leb_u buf t
   | Struct_get (t, f) ->
-      Buffer.add_string buf "\xfb\x02"; leb_u buf t; leb_u buf f
+      Buffer.add_string buf "\xfb\x02";
+      leb_u buf t;
+      leb_u buf f
   | Struct_set (t, f) ->
-      Buffer.add_string buf "\xfb\x05"; leb_u buf t; leb_u buf f
+      Buffer.add_string buf "\xfb\x05";
+      leb_u buf t;
+      leb_u buf f
   | Array_new_fixed (t, n) ->
-      Buffer.add_string buf "\xfb\x08"; leb_u buf t; leb_u buf n
-  | Array_get t -> Buffer.add_string buf "\xfb\x0b"; leb_u buf t
-  | Array_get_u t -> Buffer.add_string buf "\xfb\x0d"; leb_u buf t
-  | Array_set t -> Buffer.add_string buf "\xfb\x0e"; leb_u buf t
+      Buffer.add_string buf "\xfb\x08";
+      leb_u buf t;
+      leb_u buf n
+  | Array_get t ->
+      Buffer.add_string buf "\xfb\x0b";
+      leb_u buf t
+  | Array_get_u t ->
+      Buffer.add_string buf "\xfb\x0d";
+      leb_u buf t
+  | Array_set t ->
+      Buffer.add_string buf "\xfb\x0e";
+      leb_u buf t
   | Array_len _ -> Buffer.add_string buf "\xfb\x0f"
   | Ref_test t ->
-      Buffer.add_string buf "\xfb\x14"; heaptype buf t
+      Buffer.add_string buf "\xfb\x14";
+      heaptype buf t
   | Ref_cast t ->
-      Buffer.add_string buf "\xfb\x16"; heaptype buf t
+      Buffer.add_string buf "\xfb\x16";
+      heaptype buf t
   | Drop -> Buffer.add_char buf '\x1a'
   | I32_eqz -> Buffer.add_char buf '\x45'
   | I32_eq -> Buffer.add_char buf '\x46'
@@ -400,11 +444,21 @@ let rec encode_instr buf (i : instr) =
   | I32_load8_u -> Buffer.add_string buf "\x2d\x00\x00"
   | I32_store8 -> Buffer.add_string buf "\x3a\x00\x00"
   | Array_new_default t ->
-      Buffer.add_string buf "\xfb\x07"; leb_u buf t
-  | Call_ref t -> Buffer.add_char buf '\x14'; leb_u buf t
-  | Ref_func f -> Buffer.add_char buf '\xd2'; leb_u buf f
-  | Call f -> Buffer.add_char buf '\x10'; leb_u buf f
-  | Return_call f -> Buffer.add_char buf '\x12'; leb_u buf f
+      Buffer.add_string buf "\xfb\x07";
+      leb_u buf t
+  | Call_ref t ->
+      Buffer.add_char buf '\x14';
+      leb_u buf t
+  | Ref_func f ->
+      Buffer.add_char buf '\xd2';
+      leb_u buf f
+  | Call f ->
+      Buffer.add_char buf '\x10';
+      leb_u buf f
+  | Ref_null_any -> Buffer.add_string buf "\xd0\x6e"
+  | Return_call f ->
+      Buffer.add_char buf '\x12';
+      leb_u buf f
   | If_else (bt, cond, then_, else_) ->
       Buffer.add_char buf '\x02';
       Buffer.add_char buf '\x7f';
@@ -437,8 +491,12 @@ let rec encode_instr buf (i : instr) =
       blocktype_byte buf bt;
       List.iter (encode_instr buf) xs;
       Buffer.add_char buf '\x0b'
-  | Br l -> Buffer.add_char buf '\x0c'; leb_u buf l
-  | Br_if l -> Buffer.add_char buf '\x0d'; leb_u buf l
+  | Br l ->
+      Buffer.add_char buf '\x0c';
+      leb_u buf l
+  | Br_if l ->
+      Buffer.add_char buf '\x0d';
+      leb_u buf l
   | Return -> Buffer.add_char buf '\x0f'
   | Unreachable -> Buffer.add_char buf '\x00'
 
@@ -498,13 +556,13 @@ let to_text (m : module_) : string =
   List.iteri
     (fun i (f : func_type) ->
       let ptypes =
-        match List.nth m.types f.ftype_idx with
-        | FuncT (ps, _) -> ps
-        | _ -> []
+        match List.nth m.types f.ftype_idx with FuncT (ps, _) -> ps | _ -> []
       in
       let params =
         String.concat " "
-          (List.mapi (fun j p -> Printf.sprintf "$p%d %s" j (valtype_name p)) ptypes)
+          (List.mapi
+             (fun j p -> Printf.sprintf "$p%d %s" j (valtype_name p))
+             ptypes)
       in
       Buffer.add_string buf
         (Printf.sprintf "  (func $f%d %s\n%s  )\n" i
@@ -523,7 +581,8 @@ let to_text (m : module_) : string =
     Buffer.add_string buf (Printf.sprintf "  (start $f%d)\n" m.start);
   List.iter
     (fun (name, fidx) ->
-      Buffer.add_string buf (Printf.sprintf "  (export %S (func $f%d))\n" name fidx))
+      Buffer.add_string buf
+        (Printf.sprintf "  (export %S (func $f%d))\n" name fidx))
     m.exports;
   Buffer.add_string buf ")\n";
   Buffer.contents buf
@@ -541,13 +600,13 @@ let to_text (m : module_) : string =
   List.iteri
     (fun i (f : func_type) ->
       let ptypes =
-        match List.nth m.types f.ftype_idx with
-        | FuncT (ps, _) -> ps
-        | _ -> []
+        match List.nth m.types f.ftype_idx with FuncT (ps, _) -> ps | _ -> []
       in
       let params =
         String.concat " "
-          (List.mapi (fun j p -> Printf.sprintf "$p%d %s" j (valtype_name p)) ptypes)
+          (List.mapi
+             (fun j p -> Printf.sprintf "$p%d %s" j (valtype_name p))
+             ptypes)
       in
       Buffer.add_string buf
         (Printf.sprintf "  (func $f%d %s\n%s  )\n" i
@@ -573,7 +632,8 @@ let to_text (m : module_) : string =
     Buffer.add_string buf (Printf.sprintf "  (start $f%d)\n" m.start);
   List.iter
     (fun (name, fidx) ->
-      Buffer.add_string buf (Printf.sprintf "  (export %S (func $f%d))\n" name fidx))
+      Buffer.add_string buf
+        (Printf.sprintf "  (export %S (func $f%d))\n" name fidx))
     m.exports;
   Buffer.add_string buf ")\n";
   Buffer.contents buf
@@ -645,20 +705,35 @@ let to_binary (m : module_) : string =
       Buffer.add_char globals (if mutable_ then '\x01' else '\x00');
       (* const init: zero/null *)
       match v with
-      | I32 -> Buffer.add_char globals '\x41'; leb_s globals 0; Buffer.add_char globals '\x0b'
-      | I64 -> Buffer.add_char globals '\x42'; leb_s64 globals 0L; Buffer.add_char globals '\x0b'
-      | F64 -> Buffer.add_char globals '\x44'; f64_bytes globals 0.0; Buffer.add_char globals '\x0b'
+      | I32 ->
+          Buffer.add_char globals '\x41';
+          leb_s globals 0;
+          Buffer.add_char globals '\x0b'
+      | I64 ->
+          Buffer.add_char globals '\x42';
+          leb_s64 globals 0L;
+          Buffer.add_char globals '\x0b'
+      | F64 ->
+          Buffer.add_char globals '\x44';
+          f64_bytes globals 0.0;
+          Buffer.add_char globals '\x0b'
       | RefNull t ->
-          Buffer.add_char globals '\xd0'; heaptype globals t; Buffer.add_char globals '\x0b'
+          Buffer.add_char globals '\xd0';
+          heaptype globals t;
+          Buffer.add_char globals '\x0b'
       | _ ->
-          Buffer.add_char globals '\xd0'; Buffer.add_char globals '\x6e';
+          Buffer.add_char globals '\xd0';
+          Buffer.add_char globals '\x6e';
           Buffer.add_char globals '\x0b')
     m.globals;
   let elems = Buffer.create 64 in
   if m.declared_funcs <> [] then begin
-    leb_u elems 1; (* one element segment *)
-    Buffer.add_char elems '\x03'; (* declarative *)
-    Buffer.add_char elems '\x00'; (* elemkind: funcref *)
+    leb_u elems 1;
+    (* one element segment *)
+    Buffer.add_char elems '\x03';
+    (* declarative *)
+    Buffer.add_char elems '\x00';
+    (* elemkind: funcref *)
     leb_u elems (List.length m.declared_funcs);
     List.iter (leb_u elems) m.declared_funcs
   end;
@@ -667,7 +742,8 @@ let to_binary (m : module_) : string =
   leb_u exports nexports;
   if m.export_mem then begin
     encode_name exports "mem";
-    Buffer.add_char exports '\x02'; (* memory kind *)
+    Buffer.add_char exports '\x02';
+    (* memory kind *)
     leb_u exports 0
   end;
   List.iter
