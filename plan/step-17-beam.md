@@ -74,7 +74,7 @@ that shares it natively.
       `--target beam` plumbing; the Core Erlang emitter (module, defs,
       literals, call/apply, sequencing); hello_world golden under an
       `erl` runner.
-- [ ] **T17.2** — The value model and arithmetic: masked wrap-around
+- [x] **T17.2** — The value model and arithmetic: masked wrap-around
       Int, binary Strings with interpolation over strcat, tuples,
       arrays, enums, deep content equality; fib golden.
 - [ ] **T17.3** — Classes/instances, Box holding processes, closures
