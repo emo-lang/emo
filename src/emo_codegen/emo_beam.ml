@@ -194,23 +194,31 @@ let rec expr env (x : Emo_ir.expr) : unit =
       expr env b;
       put env ")"
   | Field_read { obj; name } -> (
-      let class_name =
-        match obj.Emo_ir.ety with
-        | Emo_check.ClassType c -> c
-        | _ -> (
-            match env.current_class with
-            | Some c -> c
-            | None -> failwith "beam: field read without a known class")
-      in
-      match List.assoc_opt class_name env.class_field with
-      | Some fields -> (
-          match List.assoc_opt name fields with
-          | Some fidx ->
-              put env (Printf.sprintf "call 'erlang':'element'(%d, " (fidx + 3));
-              expr env obj;
-              put env ")"
-          | None -> failwith ("beam: unknown field " ^ class_name ^ "." ^ name))
-      | None -> failwith ("beam: unknown class " ^ class_name))
+      (* a module reference: the alias's runtime value is never used —
+         qualified calls resolve statically — so the qualified path as
+         a binary stands in (the TypeScript target's inert value) *)
+      match obj.Emo_ir.desc with
+      | Emo_ir.Type_ref m -> put env (binary_lit (m ^ "__" ^ name))
+      | _ -> (
+          let class_name =
+            match obj.Emo_ir.ety with
+            | Emo_check.ClassType c -> c
+            | _ -> (
+                match env.current_class with
+                | Some c -> c
+                | None -> failwith "beam: field read without a known class")
+          in
+          match List.assoc_opt class_name env.class_field with
+          | Some fields -> (
+              match List.assoc_opt name fields with
+              | Some fidx ->
+                  put env
+                    (Printf.sprintf "call 'erlang':'element'(%d, " (fidx + 3));
+                  expr env obj;
+                  put env ")"
+              | None ->
+                  failwith ("beam: unknown field " ^ class_name ^ "." ^ name))
+          | None -> failwith ("beam: unknown class " ^ class_name)))
   | Make_enum { enum_name; member } ->
       put env
         (Printf.sprintf "{'emo_enum', %s, %s}" (atom enum_name) (atom member))
@@ -222,10 +230,53 @@ let rec expr env (x : Emo_ir.expr) : unit =
       expr env v;
       put env ") _boxref"
   | Method { self_; name; args } -> method_call env self_ name args
+  | Do_spawn { func; args } -> (
+      (* the arguments evaluate in the spawner; the fun closes over
+         them lexically. The wrapper turns a `halt` into a clean
+         process end. *)
+      match List.assoc_opt func env.funcs with
+      | Some a ->
+          let arg_locals = List.map (fun _ -> fresh_var env "_spawnarg") args in
+          List.iter2
+            (fun arg l ->
+              put env ("let <" ^ l ^ "> =\n");
+              expr env arg;
+              put env "\nin ")
+            args arg_locals;
+          put env "call 'erlang':'spawn'(fun () -> ";
+          let saved = env.local_map in
+          env.local_map <- [];
+          put env
+            (body_wrapper ~halt:true
+               (Printf.sprintf "apply '%s'/%d (%s)"
+                  (Emo_ir.sanitize_ident func)
+                  a
+                  (String.concat ", " arg_locals)));
+          env.local_map <- saved;
+          put env ")"
+      | None -> failwith ("beam: unbound spawn " ^ func))
+  | Spawn_value { f; args } ->
+      let arg_locals = List.map (fun _ -> fresh_var env "_spawnarg") args in
+      List.iter2
+        (fun arg l ->
+          put env ("let <" ^ l ^ "> =\n");
+          expr env arg;
+          put env "\nin ")
+        args arg_locals;
+      let f_code = expr_block env f in
+      put env "call 'erlang':'spawn'(fun () -> ";
+      let saved = env.local_map in
+      env.local_map <- [];
+      put env
+        (body_wrapper ~halt:true
+           (Printf.sprintf "apply %s (%s)" f_code
+              (String.concat ", " arg_locals)));
+      env.local_map <- saved;
+      put env ")"
   | Builtin { name; args } -> builtin env name args
   | _ ->
       raise
-        (Emo_ir.Lower_error "beam: this construct is not available yet (T17.3)")
+        (Emo_ir.Lower_error "beam: this construct is not available yet (T17.4)")
 
 and method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
@@ -351,7 +402,7 @@ and builtin env name args =
       put env binary_lit_newline;
       put env "}#)"
   | "self_pid", [] -> put env "call 'erlang':'self'()"
-  | "halt", [] -> put env "call 'erlang':'halt'(0)"
+  | "halt", [] -> put env "call 'erlang':'throw'('emo_halt')"
   | _ ->
       raise
         (Emo_ir.Lower_error
@@ -369,8 +420,12 @@ and expr_block env (x : Emo_ir.expr) : string =
 
 (* Every function/closure body runs under this wrapper: a `return`
    anywhere in the body throws the tagged result and the wrapper
-   unwraps it as the function's value. *)
-and body_wrapper (body : string) : string =
+   unwraps it as the function's value. A process wrapper also swallows
+   `halt`: the spawned fun returns and the process ends. *)
+and body_wrapper ?(halt : bool = false) (body : string) : string =
+  let halt_arm =
+    if halt then "\n\t  <'emo_halt'> when 'true' -> 'ok'" else ""
+  in
   Printf.sprintf
     {json|try
 %s
@@ -379,10 +434,10 @@ of
 catch
     <_C, _T, _S> ->
 	case _T of
-	  <{'emo_return', _rv}> when 'true' -> _rv
+	  <{'emo_return', _rv}> when 'true' -> _rv%s
 	  <_other> when 'true' -> call 'erlang':'throw'(_T)
 	end|json}
-    body
+    body halt_arm
 
 (* ---- Statements ----
 
@@ -539,8 +594,34 @@ and stmt env (s : Emo_ir.stmt) : unit =
       in
       emit_branches branches;
       put env "end"
-  | Emo_ir.Receive _ | Emo_ir.Send _ ->
-      raise (Emo_ir.Lower_error "beam: processes arrive with T17.4")
+  | Emo_ir.Send { target; message } ->
+      put env "call 'erlang':'!'(";
+      expr env target;
+      put env ", ";
+      expr env message;
+      put env ")"
+  | Emo_ir.Receive { branches } ->
+      (* BEAM's selective receive IS the semantics: non-matching
+         messages stay in the mailbox. The text grammar requires an
+         after-clause; infinity with a blocking body never fires. *)
+      put env "receive\n";
+      let saved = env.local_map in
+      List.iter
+        (fun b ->
+          put env "  <";
+          emit_pattern env b.Emo_ir.pattern;
+          put env "> ";
+          (match b.Emo_ir.guard with
+          | Some g ->
+              put env "when ";
+              guard_expr env g;
+              put env " ->\n"
+          | None -> put env "when 'true' ->\n");
+          stmts env b.Emo_ir.body;
+          put env "\n")
+        branches;
+      env.local_map <- saved;
+      put env "after 'infinity' ->\n    primop 'recv_wait'()"
   | Emo_ir.Raise x ->
       (* an ordinary Emo exception: a throw the entry reports *)
       put env "call 'erlang':'throw'({'emo_raise', ";

@@ -1,6 +1,6 @@
 # Step 17 — BEAM Target (Core Erlang)
 
-**Milestone:** M5 · **Prereq:** steps 01–16 · **Status:** in progress
+**Milestone:** M5 · **Prereq:** steps 01–16 · **Status:** complete
 
 ## Goal
 
@@ -80,6 +80,6 @@ that shares it natively.
 - [x] **T17.3** — Classes/instances, Box holding processes, closures
       as funs, case patterns with guards; objects + language_tour
       goldens.
-- [ ] **T17.4** — Processes (`do`/`<-`/`receive` via the primop
+- [x] **T17.4** — Processes (`do`/`<-`/`receive` via the primop
       dance), shop multi-module, pipeline golden; the CI `beam_examples`
       group and the resolution-gate test for `"beam"`.
