@@ -180,6 +180,66 @@ let wasm_goldens =
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
 
+(* The BEAM goldens: Core Erlang text assembled by the pinned erlc,
+   run under `erl -noshell`. Skips when Erlang is absent. *)
+let beam_goldens =
+  [ "hello_world"; "fib"; "objects"; "language_tour"; "shop"; "pipeline" ]
+
+let erl_available =
+  lazy (Sys.command "erl -noshell -eval 'halt().' >/dev/null 2>&1" = 0)
+
+let beam_examples_tests =
+  List.map
+    (fun name ->
+      tc (Printf.sprintf "%s compiles to beam and runs on erl" name) (fun () ->
+          if not (Lazy.force erl_available) then Alcotest.skip ();
+          let dir = Filename.concat examples_dir name in
+          let expected = read_file (Filename.concat dir "expected.txt") in
+          let out_core =
+            Filename.concat scratch (name ^ "-beam-emo_main.core")
+          in
+          let exit_code =
+            Emo_cli.build_file
+              ~entry:(Filename.concat dir "main.emo")
+              ~output:out_core ~specialize:false ~cclibs:[] ~target:"beam"
+          in
+          Alcotest.(check int) "build exit" 0 exit_code;
+          let cmd =
+            Printf.sprintf
+              "erl -noshell -pa %s -eval 'emo_main:main(), erlang:halt(0).'"
+              (Filename.quote (Filename.dirname out_core))
+          in
+          let cmd_stdout, _cmd_stdin, cmd_stderr =
+            Unix.open_process_full cmd (Unix.environment ())
+          in
+          let out = Buffer.create 256 in
+          (try
+             while true do
+               Buffer.add_channel out cmd_stdout 4096
+             done
+           with End_of_file -> ());
+          let err = Buffer.create 256 in
+          (try
+             while true do
+               Buffer.add_channel err cmd_stderr 4096
+             done
+           with End_of_file -> ());
+          let proc_status =
+            Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+          in
+          Alcotest.(check string) "output" expected (Buffer.contents out);
+          match proc_status with
+          | Unix.WEXITED 0 -> ()
+          | s ->
+              Alcotest.fail
+                (Printf.sprintf "erl exited %s: %s"
+                   (match s with
+                   | Unix.WEXITED n -> string_of_int n
+                   | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                   | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                   (Buffer.contents err))))
+    beam_goldens
+
 (* The host boundary: print forwards to stdout, abort exits nonzero
    with the message, float_str renders into the scratch area at
    60000 (matching the runtime's convention). *)
@@ -277,4 +337,5 @@ let () =
       ("repl", repl_tests);
       ("examples", examples_tests);
       ("wasm_examples", wasm_examples_tests);
+      ("beam_examples", beam_examples_tests);
     ]
