@@ -35,6 +35,7 @@ let t_vtuple = 13
 let t_vbox = 14
 let t_venum = 15
 let t_vfun = 16
+let t_str_eq = 23
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -68,6 +69,7 @@ let runtime_types : W.typ list =
     W.FuncT ([ W.I32; W.I32 ], [ W.RefNull t_bytes ]); (* bytes_from_mem *)
     W.FuncT ([ W.RefNull t_bytes ], [ W.I32 ]); (* write_bytes *)
     W.FuncT ([ W.Anyref ], []); (* print_v *)
+    W.FuncT ([ W.RefNull t_bytes; W.RefNull t_bytes ], [ W.I32 ]); (* str_eq *)
   ]
 
 let i_print = 0
@@ -92,9 +94,7 @@ let rt = function
            ("wasm: runtime helper `" ^ name
           ^ "` lands with the fib task (T16.1)"))
 
-let runtime_count = 13 (* imports 3 + funcs 3..12; program funcs follow *)
-
-let runtime_count = 29 (* imports 3 + funcs 3..28 *)
+let runtime_count = 14 (* imports 3 + rt funcs 3..11 + init 12 + main 13 *)
 
 (* ---- Lowering state ---- *)
 
@@ -844,7 +844,7 @@ let rt_instance_str : W.func_type =
 let rt_bytes_from_mem : W.func_type =
   { W.ftype_idx = t_bytes_from_mem;
     fparams = [ "ptr"; "len" ];
-    flocals = [ (1, W.RefNull t_bytes); (1, W.I32) ];
+    flocals = [ (1, W.RefNull t_bytes); (2, W.I32) ];
     fbody =
       [ W.Block
           ( W.Void,
@@ -855,15 +855,16 @@ let rt_bytes_from_mem : W.func_type =
               W.Local_set 3;
               W.Loop
                 ( W.Void,
-                  [ W.Local_get 3;
-                    W.Local_get 1;
-                    W.I32_ge;
-                    W.Br_if 1;
-                    W.Local_get 2;
-                    W.Local_get 3;
+                  [ (* the byte lands in local 4 first: array.set reads
+                       its three operands from the stack, so the value
+                       cannot be computed between index and array *)
                     W.Local_get 0;
                     W.Local_get 3;
                     W.I32_load8_u;
+                    W.Local_set 4;
+                    W.Local_get 2;
+                    W.Local_get 3;
+                    W.Local_get 4;
                     W.Array_set t_bytes;
                     W.Local_get 3;
                     W.I32_const 1;
@@ -875,35 +876,61 @@ let rt_bytes_from_mem : W.func_type =
 (* write_bytes(b) -> i32 ptr: bump-allocate and copy. Locals: 1 ptr,
    2 len, 3 i. *)
 let rt_write_bytes : W.func_type =
-  { W.ftype_idx = t_write_bytes; fparams = [ "b" ]; flocals = [ (1, W.I32) ];
+  { W.ftype_idx = t_write_bytes;
+    fparams = [ "b" ];
+    flocals = [ (3, W.I32) ]; (* 1 = ptr, 2 = len, 3 = i *)
+
     fbody =
-      [ W.Global_get 0;
-        W.Local_set 1;
-        W.Local_get 0;
-        W.Array_len t_bytes;
-        W.Local_set 2;
-        W.Global_get 0;
-        W.Local_get 2;
-        W.I32_add;
-        W.Memory_size;
-        W.I32_const 16;
-        W.I32_mul;
-        W.I32_gt;
-        W.If
+      [ W.Block
           ( W.Void,
             [ W.Global_get 0;
+              W.Local_set 1;
+              W.Local_get 0;
+              W.Array_len t_bytes;
+              W.Local_set 2;
+              W.Global_get 0;
               W.Local_get 2;
               W.I32_add;
-              W.I32_const 15;
-              W.I32_add;
+              W.Memory_size;
               W.I32_const 16;
-              W.I32_div_s;
-              W.Memory_grow;
-              W.Drop ], []);
-        W.Global_get 0;
-        W.Local_get 2;
-        W.I32_add;
-        W.Global_set 0;
+              W.I32_mul;
+              W.I32_gt;
+              W.If
+                ( W.Void,
+                  [ W.Global_get 0;
+                    W.Local_get 2;
+                    W.I32_add;
+                    W.I32_const 15;
+                    W.I32_add;
+                    W.I32_const 16;
+                    W.I32_div_s;
+                    W.Memory_grow;
+                    W.Drop ],
+                  [] );
+              W.I32_const 0;
+              W.Local_set 3;
+              W.Loop
+                ( W.Void,
+                  [ W.Local_get 3;
+                    W.Local_get 2;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 1;
+                    W.Local_get 3;
+                    W.I32_add;
+                    W.Local_get 0;
+                    W.Local_get 3;
+                    W.Array_get_u t_bytes;
+                    W.I32_store8;
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0 ] );
+              W.Global_get 0;
+              W.Local_get 2;
+              W.I32_add;
+              W.Global_set 0 ] );
         W.Local_get 1 ] }
 
 (* print(v): render, bump-write, call the host. Local: 1 bytes. *)
@@ -926,7 +953,7 @@ let rt_print : W.func_type =
 (* str_eq(a, b) -> i32 (through sig2): byte-wise compare. Locals: 2
    i, 3 la, 4 lb. *)
 let rt_str_eq : W.func_type =
-  { W.ftype_idx = t_sig2;
+  { W.ftype_idx = t_str_eq;
     fparams = [ "a"; "b" ];
     flocals = [ (3, W.I32) ];
     fbody =
@@ -975,7 +1002,9 @@ let rt_str_eq : W.func_type =
 let rt_init (pool : string list) : W.func_type =
   { W.ftype_idx = t_main; fparams = []; flocals = [];
     fbody =
-      List.concat_map string_bytes_instrs pool
+      List.concat_map
+        (fun s -> string_bytes_instrs s @ [ W.Struct_new t_vstring ])
+        pool
       @ List.mapi
           (fun i _ -> W.Global_set (1 + (List.length pool - 1 - i)))
           pool }
@@ -1053,7 +1082,6 @@ let assemble (program : Emo_ir.program) : W.module_ =
       program.Emo_ir.pfuncs
   in
   let hidden = List.rev env.hidden in
-  let string_pool = List.rev env.string_pool in
   (* Types: the fixed runtime head first, then the program's appended
      types (env.types accumulates in reverse). *)
   let all_types = runtime_types @ List.rev env.types in
@@ -1068,13 +1096,16 @@ let assemble (program : Emo_ir.program) : W.module_ =
       rt_write_bytes;
       rt_str_eq ]
   in
-  let init_func = rt_init string_pool in
   let main_func : W.func_type =
     { W.ftype_idx = t_main; fparams = []; flocals = [];
       fbody = stmts env program.Emo_ir.pinit ~tail:false }
   in
+  (* The pool fills while the entry lowers; init and globals read it
+     after. *)
+  let string_pool = List.rev env.string_pool in
+  let init_func = rt_init string_pool in
   let funcs = rt_funcs @ [ init_func; main_func ] @ List.map snd lowered @ List.map snd hidden in
-  let main_idx = runtime_count in
+  let main_idx = runtime_count - 1 in
   { W.types = all_types;
     imports =
       [ { W.imodule = "emo"; W.iname = "print"; W.itype_idx = t_print };
@@ -1083,10 +1114,10 @@ let assemble (program : Emo_ir.program) : W.module_ =
       ];
     funcs;
     memory = 1;
+    export_mem = true;
     globals = (W.I32, true) :: List.map (fun _ -> (W.RefNull t_vstring, true)) string_pool;
-    exports =
-      [ ("mem", 0) (* memory export for the host runner *);
-        ("main", main_idx) ] }
+    start = rt "init";
+    exports = [ ("main", main_idx) ] }
 
 (* Serializers re-exported for the CLI. *)
 let to_binary (m : W.module_) : string = W.to_binary m

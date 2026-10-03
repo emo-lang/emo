@@ -115,7 +115,9 @@ type module_ = {
   imports : import list;
   funcs : func_type list; (* indices continue after the imports *)
   memory : int; (* minimum pages; 0 = none *)
+  export_mem : bool; (* export the memory as "mem" *)
   globals : (valtype * bool) list; (* in order; zero/null init *)
+  start : int; (* start function index; -1 = none *)
   exports : (string * int) list; (* name → func index *)
 }
 
@@ -384,7 +386,7 @@ let valtype_byte (buf : Buffer.t) (v : valtype) =
   | I64 -> Buffer.add_char buf '\x7e'
   | F64 -> Buffer.add_char buf '\x7c'
   | I8 -> Buffer.add_char buf '\x78'
-  | Anyref -> Buffer.add_char buf '\x6e'
+  | Anyref -> Buffer.add_string buf "\x63\x6e"
   | Externref -> Buffer.add_char buf '\x6f'
   | Funcref -> Buffer.add_char buf '\x70'
   | RefNull t ->
@@ -636,10 +638,20 @@ let to_binary (m : module_) : string =
       | I32 -> Buffer.add_char globals '\x41'; leb_s globals 0; Buffer.add_char globals '\x0b'
       | I64 -> Buffer.add_char globals '\x42'; leb_s64 globals 0L; Buffer.add_char globals '\x0b'
       | F64 -> Buffer.add_char globals '\x44'; f64_bytes globals 0.0; Buffer.add_char globals '\x0b'
-      | _ -> Buffer.add_char globals '\xd0'; Buffer.add_char globals '\x6e'; Buffer.add_char globals '\x0b')
+      | RefNull t ->
+          Buffer.add_char globals '\xd0'; heaptype globals t; Buffer.add_char globals '\x0b'
+      | _ ->
+          Buffer.add_char globals '\xd0'; Buffer.add_char globals '\x6e';
+          Buffer.add_char globals '\x0b')
     m.globals;
   let exports = Buffer.create 64 in
-  leb_u exports (List.length m.exports);
+  let nexports = List.length m.exports + if m.export_mem then 1 else 0 in
+  leb_u exports nexports;
+  if m.export_mem then begin
+    encode_name exports "mem";
+    Buffer.add_char exports '\x02'; (* memory kind *)
+    leb_u exports 0
+  end;
   List.iter
     (fun (name, fidx) ->
       encode_name exports name;
@@ -653,5 +665,11 @@ let to_binary (m : module_) : string =
   section out 3 funcs;
   section out 5 memory;
   section out 6 globals;
+  section out 7 exports;
+  if m.start >= 0 then begin
+    let start = Buffer.create 8 in
+    leb_u start m.start;
+    section out 8 start
+  end;
   section out 10 code;
   Buffer.contents out
