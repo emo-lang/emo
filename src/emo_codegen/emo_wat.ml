@@ -59,6 +59,7 @@ type instr =
   | I32_wrap_i64
   | I64_eq
   | I64_eqz
+  | I64_extend_i32_s
   | I64_add
   | I64_sub
   | I64_mul
@@ -176,6 +177,7 @@ let rec instr_text indent (i : instr) : string =
   | I32_wrap_i64 -> Printf.sprintf "%si32.wrap_i64\n" pad
   | I64_eq -> Printf.sprintf "%si64.eq\n" pad
   | I64_eqz -> Printf.sprintf "%si64.eqz\n" pad
+  | I64_extend_i32_s -> Printf.sprintf "%si64.extend_i32_s\n" pad
   | I64_add -> Printf.sprintf "%si64.add\n" pad
   | I64_sub -> Printf.sprintf "%si64.sub\n" pad
   | I64_mul -> Printf.sprintf "%si64.mul\n" pad
@@ -418,15 +420,16 @@ let rec encode_instr buf (i : instr) =
   | I32_wrap_i64 -> Buffer.add_char buf '\xa7'
   | I64_eq -> Buffer.add_char buf '\x51'
   | I64_eqz -> Buffer.add_char buf '\x50'
+  | I64_extend_i32_s -> Buffer.add_char buf '\xac'
   | I64_add -> Buffer.add_char buf '\x7c'
   | I64_sub -> Buffer.add_char buf '\x7d'
   | I64_mul -> Buffer.add_char buf '\x7e'
   | I64_div_s -> Buffer.add_char buf '\x7f'
   | I64_rem_s -> Buffer.add_char buf '\x81'
   | I64_lt_s -> Buffer.add_char buf '\x53'
-  | I64_le_s -> Buffer.add_char buf '\x54'
+  | I64_le_s -> Buffer.add_char buf '\x57'
   | I64_gt_s -> Buffer.add_char buf '\x55'
-  | I64_ge_s -> Buffer.add_char buf '\x56'
+  | I64_ge_s -> Buffer.add_char buf '\x59'
   | F64_eq -> Buffer.add_char buf '\x61'
   | F64_add -> Buffer.add_char buf '\xa0'
   | F64_sub -> Buffer.add_char buf '\xa1'
@@ -436,8 +439,8 @@ let rec encode_instr buf (i : instr) =
   | F64_neg -> Buffer.add_char buf '\x9a'
   | F64_convert_i64_s -> Buffer.add_char buf '\xb9'
   | F64_lt -> Buffer.add_char buf '\x63'
-  | F64_le -> Buffer.add_char buf '\x64'
-  | F64_gt -> Buffer.add_char buf '\x65'
+  | F64_le -> Buffer.add_char buf '\x65'
+  | F64_gt -> Buffer.add_char buf '\x64'
   | F64_ge -> Buffer.add_char buf '\x66'
   | Memory_size -> Buffer.add_string buf "\x3f\x00"
   | Memory_grow -> Buffer.add_string buf "\x40\x00"

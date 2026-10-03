@@ -132,12 +132,13 @@ let rt = function
   | "bytes_from_mem" -> 25
   | "str_eq" -> 26
   | "deep_eq" -> 27
-  | "init" -> 28
+  | "append" -> 28
+  | "init" -> 29
   | _ -> failwith "wasm: bad runtime function"
 
-(* imports 3 + runtime funcs 3..28 + main; program funcs follow. *)
+(* imports 3 + runtime funcs 3..29 + main; program funcs follow. *)
 let runtime_count =
-  30 (* imports 3 + rt 25 + init + main; program funcs follow *)
+  31 (* imports 3 + rt 26 + init + main; program funcs follow *)
 
 (* ---- Lowering state ---- *)
 
@@ -252,14 +253,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | None -> failwith ("wasm: unbound global " ^ name))
   | Tuple es ->
       List.iter (expr env) es;
-      e env (W.I32_const (List.length es));
       e env (W.Array_new_fixed (t_anyarray, List.length es));
       e env (W.Struct_new t_vtuple)
   | Array_lit es ->
       List.iter (expr env) es;
-      e env (W.I32_const (List.length es));
-      e env (W.Array_new_fixed (t_anyarray, List.length es));
-      e env (W.Struct_new t_anyarray)
+      e env (W.Array_new_fixed (t_anyarray, List.length es))
   | Make_enum { enum_name; member } ->
       string_const env enum_name;
       string_const env member;
@@ -326,38 +324,72 @@ let rec expr env (x : Emo_ir.expr) : unit =
       in
       e env (W.Call (rt fn))
   | Index (b, i) ->
+      (* a tuple wraps its element array; an array is bare. Both the
+         collection and the index go through locals: the arms of the
+         shape chain cannot read the caller's stack. *)
+      let recv = fresh_local env "__idx_recv" W.Anyref in
+      let idx = fresh_local env "__idx_i" W.I32 in
       expr env b;
-      e env (W.Ref_cast t_vtuple);
-      e env (W.Struct_get (t_vtuple, 0));
-      e env (W.Ref_cast t_anyarray);
+      e env (W.Local_set recv);
       expr env i;
+      e env (W.Ref_cast t_vint);
       e env (W.Struct_get (t_vint, 0));
       e env W.I32_wrap_i64;
-      e env (W.Array_get t_anyarray)
-  | Field_read { obj; name } -> (
-      let class_name =
-        match obj.Emo_ir.ety with
-        | Emo_check.ClassType c -> c
-        | _ -> (
-            (* The span type table keys on span start, so `self.x` and
-               the chain it opens share a start and the receiver's type
-               is lost; inside a class member, self is the class. *)
-            match env.current_class with
-            | Some c -> c
-            | None -> failwith "wasm: field read without a known class")
+      e env (W.Local_set idx);
+      let rec chain = function
+        | [] -> [ W.Unreachable ]
+        | (t, unwrap) :: rest ->
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [ W.Local_get recv; W.Ref_test t ],
+                  unwrap recv @ [ W.Local_get idx; W.Array_get t_anyarray ],
+                  chain rest );
+            ]
       in
-      match
-        ( List.assoc_opt class_name env.class_field,
-          List.assoc_opt class_name env.class_type )
-      with
-      | Some fields, Some tidx -> (
-          match List.assoc_opt name fields with
-          | Some fidx ->
-              expr env obj;
-              e env (W.Ref_cast tidx);
-              e env (W.Struct_get (tidx, fidx))
-          | None -> failwith ("wasm: unknown field " ^ class_name ^ "." ^ name))
-      | _ -> failwith ("wasm: unknown class " ^ class_name))
+      es env
+        (chain
+           [
+             ( t_vtuple,
+               fun l ->
+                 [
+                   W.Local_get l; W.Ref_cast t_vtuple; W.Struct_get (t_vtuple, 0);
+                 ] );
+             (t_anyarray, fun l -> [ W.Local_get l; W.Ref_cast t_anyarray ]);
+           ])
+  | Field_read { obj; name } -> (
+      (* a module reference: the alias's runtime value is never used —
+         qualified calls resolve statically — so the qualified path as
+         a string stands in, matching the TypeScript target's inert
+         module value *)
+      match obj.Emo_ir.desc with
+      | Emo_ir.Type_ref m -> string_const env (m ^ "__" ^ name)
+      | _ -> (
+          let class_name =
+            match obj.Emo_ir.ety with
+            | Emo_check.ClassType c -> c
+            | _ -> (
+                (* The span type table keys on span start, so `self.x`
+                   and the chain it opens share a start and the
+                   receiver's type is lost; inside a class member, self
+                   is the class. *)
+                match env.current_class with
+                | Some c -> c
+                | None -> failwith "wasm: field read without a known class")
+          in
+          match
+            ( List.assoc_opt class_name env.class_field,
+              List.assoc_opt class_name env.class_type )
+          with
+          | Some fields, Some tidx -> (
+              match List.assoc_opt name fields with
+              | Some fidx ->
+                  expr env obj;
+                  e env (W.Ref_cast tidx);
+                  e env (W.Struct_get (tidx, fidx))
+              | None ->
+                  failwith ("wasm: unknown field " ^ class_name ^ "." ^ name))
+          | _ -> failwith ("wasm: unknown class " ^ class_name)))
   | Call { func; args } -> (
       List.iter (expr env) args;
       match List.assoc_opt func env.funcs with
@@ -413,6 +445,74 @@ and method_call env self_ name args =
   | "to_string", [] ->
       expr env self_;
       e env (W.Call (rt "to_str"))
+  | "length", [] ->
+      (* arrays, tuples, and strings carry a length; the arms rebuild
+         from a scratch local — the if's arms cannot see the caller's
+         stack *)
+      let recv = fresh_local env "__len_recv" W.Anyref in
+      expr env self_;
+      e env (W.Local_set recv);
+      let rec chain = function
+        | [] -> [ W.Unreachable ]
+        | (t, unwrap) :: rest ->
+            [
+              W.If_else
+                ( W.Result W.I32,
+                  [ W.Local_get recv; W.Ref_test t ],
+                  unwrap recv,
+                  chain rest );
+            ]
+      in
+      es env
+        (chain
+           [
+             ( t_anyarray,
+               fun l ->
+                 [
+                   W.Local_get l; W.Ref_cast t_anyarray; W.Array_len t_anyarray;
+                 ] );
+             ( t_vtuple,
+               fun l ->
+                 [
+                   W.Local_get l;
+                   W.Ref_cast t_vtuple;
+                   W.Struct_get (t_vtuple, 0);
+                   W.Array_len t_anyarray;
+                 ] );
+             ( t_vstring,
+               fun l ->
+                 [
+                   W.Local_get l;
+                   W.Ref_cast t_vstring;
+                   W.Struct_get (t_vstring, 0);
+                   W.Array_len t_bytes;
+                 ] );
+           ]);
+      e env W.I64_extend_i32_s;
+      e env (W.Struct_new t_vint)
+  | "append", [ v ] ->
+      expr env self_;
+      expr env v;
+      e env (W.Call (rt "append"))
+  | "read", [] ->
+      (* the receiver is a Box by construction; the cast is the check *)
+      expr env self_;
+      e env (W.Ref_cast t_vbox);
+      e env (W.Struct_get (t_vbox, 0))
+  | "replace", [ v ] ->
+      (* the new value is both stored and returned; receiver and value
+         go through scratch locals to keep the evaluation order *)
+      let recv = fresh_local env "__box_recv" W.Anyref in
+      let val_local = fresh_local env "__box_val" W.Anyref in
+      expr env self_;
+      e env (W.Local_set recv);
+      expr env v;
+      e env (W.Local_set val_local);
+      e env (W.Local_get recv);
+      e env (W.Ref_cast t_vbox);
+      e env (W.Local_get val_local);
+      e env (W.Struct_set (t_vbox, 0));
+      e env (W.Local_get val_local)
   | "is", [ target ] -> (
       let tname =
         match target.Emo_ir.desc with
@@ -422,7 +522,16 @@ and method_call env self_ name args =
       let classes =
         match List.assoc_opt tname env.iface_classes with
         | Some cs -> cs
-        | None -> [ tname ]
+        | None -> (
+            (* a class `is` test: the name is the display name, the
+               struct type is keyed by the mangled cname *)
+            match
+              List.find_opt
+                (fun c -> String.equal c.Emo_ir.cdisplay tname)
+                env.classes
+            with
+            | Some c -> [ c.Emo_ir.cname ]
+            | None -> [])
       in
       let tests =
         List.filter_map
@@ -646,14 +755,17 @@ and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) :
   env.fresh <- env.fresh + 1;
   let sidx = fresh_local env sname W.Anyref in
   let blocktype = if tail then W.Result W.Anyref else W.Void in
+  (* the scrutinee's code is captured, not left in the rev buffer: it
+     must sit directly before the case's local.set *)
+  let scrutinee_code = expr_block env scrutinee in
   let saved_recv = List.assoc_opt "__is_recv" env.local_map in
   let recv_local = fresh_local env (sname ^ "_r") W.Anyref in
   env.local_map <- ("__is_recv", recv_local) :: env.local_map;
   let rec build bs =
     match bs with
     | [] ->
-        string_const env "no case branch matched this value";
-        [ W.Call (rt "throw"); W.Unreachable ]
+        string_const_boxed env "no case branch matched this value"
+        @ [ W.Call (rt "throw"); W.Unreachable ]
     | b :: rest ->
         let saved = env.binders in
         env.binders <-
@@ -665,7 +777,7 @@ and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) :
           | None -> []
         in
         let cond =
-          match guard with [] -> test | _ -> test @ [ W.I32_and ] @ guard
+          match guard with [] -> test | _ -> test @ guard @ [ W.I32_and ]
         in
         let body = stmts env b.Emo_ir.body ~tail in
         env.binders <- saved;
@@ -676,113 +788,165 @@ and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) :
   (match saved_recv with
   | Some l -> env.local_map <- ("__is_recv", l) :: env.local_map
   | None -> env.local_map <- List.remove_assoc "__is_recv" env.local_map);
-  expr env scrutinee;
-  [ W.Local_set sidx; W.Block (blocktype, arms) ]
+  scrutinee_code @ [ W.Local_set sidx; W.Block (blocktype, arms) ]
 
 and pattern_test env (s : W.instr list) (p : Emo_ast.pattern) : W.instr list =
+  (* [s] re-reads the scrutinee; it goes inside every cond and arm —
+     the if's frames cannot see values pushed before them *)
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_binding _ -> [ W.I32_const 1 ]
   | Ast.Pattern_literal (L_int n) ->
-      s
-      @ [
-          W.If_else
-            ( W.Result W.I32,
-              [ W.Ref_test t_vint ],
-              [
+      [
+        W.If_else
+          ( W.Result W.I32,
+            s @ [ W.Ref_test t_vint ],
+            s
+            @ [
                 W.Ref_cast t_vint;
                 W.Struct_get (t_vint, 0);
                 W.I64_const (Int64.of_int n);
                 W.I64_eq;
               ],
-              [ W.I32_const 0 ] );
-        ]
+            [ W.I32_const 0 ] );
+      ]
   | Ast.Pattern_literal (L_string str) ->
-      s
-      @ [
-          W.If_else
-            ( W.Result W.I32,
-              [ W.Ref_test t_vstring ],
-              [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
-              @ string_const_bytes env str
-              @ [ W.Call (rt "str_eq") ],
-              [ W.I32_const 0 ] );
-        ]
+      [
+        W.If_else
+          ( W.Result W.I32,
+            s @ [ W.Ref_test t_vstring ],
+            s
+            @ [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
+            @ string_const_bytes env str
+            @ [ W.Call (rt "str_eq") ],
+            [ W.I32_const 0 ] );
+      ]
   | Ast.Pattern_literal (L_bool b) ->
-      s
-      @ [
-          W.If_else
-            ( W.Result W.I32,
-              [ W.Ref_test t_vbool ],
-              [
+      [
+        W.If_else
+          ( W.Result W.I32,
+            s @ [ W.Ref_test t_vbool ],
+            s
+            @ [
                 W.Ref_cast t_vbool;
                 W.Struct_get (t_vbool, 0);
                 W.I32_const (if b then 1 else 0);
                 W.I32_eq;
               ],
-              [ W.I32_const 0 ] );
-        ]
+            [ W.I32_const 0 ] );
+      ]
   | Ast.Pattern_literal (L_float f) ->
-      s
-      @ [
-          W.If_else
-            ( W.Result W.I32,
-              [ W.Ref_test t_vfloat ],
-              [
+      [
+        W.If_else
+          ( W.Result W.I32,
+            s @ [ W.Ref_test t_vfloat ],
+            s
+            @ [
                 W.Ref_cast t_vfloat;
                 W.Struct_get (t_vfloat, 0);
                 W.F64_const f;
                 W.F64_eq;
               ],
-              [ W.I32_const 0 ] );
-        ]
+            [ W.I32_const 0 ] );
+      ]
   | Ast.Pattern_literal (L_char c) ->
-      s
-      @ [
-          W.If_else
-            ( W.Result W.I32,
-              [ W.Ref_test t_vchar ],
-              [
+      [
+        W.If_else
+          ( W.Result W.I32,
+            s @ [ W.Ref_test t_vchar ],
+            s
+            @ [
                 W.Ref_cast t_vchar;
                 W.Struct_get (t_vchar, 0);
                 W.I32_const (Char.code c);
                 W.I32_eq;
               ],
-              [ W.I32_const 0 ] );
-        ]
+            [ W.I32_const 0 ] );
+      ]
   | Ast.Enum_member (t, m) ->
       let bytes_of = string_const_bytes env in
       let field_cmp (f : int) =
-        [ W.Ref_cast t_venum; W.Struct_get (t_venum, f) ]
+        s
+        @ [
+            W.Ref_cast t_venum;
+            W.Struct_get (t_venum, f);
+            W.Ref_cast t_vstring;
+            W.Struct_get (t_vstring, 0);
+          ]
         @ bytes_of (if f = 0 then t else m)
         @ [ W.Call (rt "str_eq") ]
       in
-      s
-      @ [
-          W.If_else
-            ( W.Result W.I32,
-              [ W.Ref_test t_venum ],
-              [
-                W.If_else
-                  (W.Result W.I32, field_cmp 0, field_cmp 1, [ W.I32_const 0 ]);
-              ],
-              [ W.I32_const 0 ] );
-        ]
-  | Ast.Tuple_pattern _ ->
-      raise
-        (Emo_ir.Lower_error
-           "wasm: tuple patterns arrive with the next task (T16.2)")
+      [
+        W.If_else
+          ( W.Result W.I32,
+            s @ [ W.Ref_test t_venum ],
+            [
+              W.If_else
+                (W.Result W.I32, field_cmp 0, field_cmp 1, [ W.I32_const 0 ]);
+            ],
+            [ W.I32_const 0 ] );
+      ]
+  | Ast.Tuple_pattern ps ->
+      (* every element must match: one sub-test per position, ANDed —
+         each sub-test re-reads the element from the scrutinee, so the
+         if's arms never touch the caller's stack *)
+      let elem i =
+        s
+        @ [
+            W.Ref_cast t_vtuple;
+            W.Struct_get (t_vtuple, 0);
+            W.I32_const i;
+            W.Array_get t_anyarray;
+          ]
+      in
+      let sub_tests =
+        List.mapi (fun i sub -> pattern_test env (elem i) sub) ps
+      in
+      let rec fold_and = function
+        | [] -> [ W.I32_const 1 ]
+        | [ x ] -> x
+        | x :: rest -> x @ fold_and rest @ [ W.I32_and ]
+      in
+      [
+        W.If_else
+          ( W.Result W.I32,
+            s @ [ W.Ref_test t_vtuple ],
+            fold_and sub_tests,
+            [ W.I32_const 0 ] );
+      ]
 
-and string_const_bytes env (s : string) : W.instr list =
+and string_const_boxed env (s : string) : W.instr list =
+  (* the pooled $vstring itself, as returned instructions *)
   let before = env.rev in
   string_const env s;
   let code = List.rev (List.drop (List.length before) env.rev) in
   env.rev <- before;
   code
 
+and string_const_bytes env (s : string) : W.instr list =
+  (* the pool global holds a boxed $vstring; unwrap it to its bytes *)
+  let before = env.rev in
+  string_const env s;
+  let code = List.rev (List.drop (List.length before) env.rev) in
+  env.rev <- before;
+  code @ [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
+
 and pattern_bindings (s : W.instr list) (p : Emo_ast.pattern) :
     (string * W.instr list) list =
   match p.Ast.pattern_desc with
   | Ast.Pattern_binding name -> [ (name, s) ]
+  | Ast.Tuple_pattern ps ->
+      List.concat_map
+        (fun (i, sub) ->
+          pattern_bindings
+            (s
+            @ [
+                W.Ref_cast t_vtuple;
+                W.Struct_get (t_vtuple, 0);
+                W.I32_const i;
+                W.Array_get t_anyarray;
+              ])
+            sub)
+        (List.mapi (fun i sub -> (i, sub)) ps)
   | _ -> []
 
 (* ---- Function emission ---- *)
@@ -809,10 +973,14 @@ let emit_func env (f : Emo_ir.func) : W.func_type =
   env.current_class <- owner;
   let body = stmts env f.Emo_ir.fbody ~tail:true in
   let param_types = List.map (fun _ -> W.Anyref) f.Emo_ir.fparams in
+  (* local_decls opens with one entry per parameter; only the rest are
+     declared locals *)
+  let nparams = List.length f.Emo_ir.fparams in
+  let scratches = List.filteri (fun i _ -> i >= nparams) env.local_decls in
   {
     W.ftype_idx = type_idx env (W.FuncT (param_types, [ W.Anyref ]));
     fparams = List.map fst f.Emo_ir.fparams;
-    flocals = List.map (fun t -> (1, t)) env.local_decls;
+    flocals = List.map (fun t -> (1, t)) scratches;
     fbody = body;
   }
 
@@ -832,16 +1000,30 @@ let class_fields (c : Emo_ir.class_) : string list =
           match s with Emo_ir.Set_field { name; _ } -> Some name | _ -> None)
         init.Emo_ir.fbody
 
-let emit_class_decls env (c : Emo_ir.class_) : unit =
+(* The dummy-field count that makes a class's struct shape unique:
+   WasmGC canonicalizes identically-shaped struct types into one, so
+   layout-equal classes would share an RTT and ref.test could not tell
+   them apart. The ordinal is encoded in a base wide enough that
+   (ordinal, real-field-count) pairs cannot collide; dummies sit after
+   the real fields, so field indices are untouched. *)
+let class_pad (max_fields : int) (ordinal : int) (c : Emo_ir.class_) : int =
+  (ordinal * (max_fields + 1)) + List.length (class_fields c)
+
+let emit_class_decls env (c : Emo_ir.class_) ~(pad : int) : unit =
   let fields = class_fields c in
-  let tidx =
-    type_idx env (W.StructT (List.map (fun _ -> (W.Anyref, true)) fields))
-  in
+  (* Distinct shape per class: the real fields, then [pad] dummies. *)
+  let tidx = env.ntypes in
+  env.types <-
+    W.StructT
+      (List.map (fun _ -> (W.Anyref, true)) fields
+      @ List.map (fun _ -> (W.Anyref, true)) (List.init pad Fun.id))
+    :: env.types;
+  env.ntypes <- tidx + 1;
   env.class_type <- (c.Emo_ir.cname, tidx) :: env.class_type;
   env.class_field <-
     (c.Emo_ir.cname, List.mapi (fun i n -> (n, i)) fields) :: env.class_field
 
-let emit_ctor_factory env (c : Emo_ir.class_) : W.func_type =
+let emit_ctor_factory env (c : Emo_ir.class_) ~(pad : int) : W.func_type =
   let fields = class_fields c in
   let tidx = List.assoc c.Emo_ir.cname env.class_type in
   let params =
@@ -859,7 +1041,9 @@ let emit_ctor_factory env (c : Emo_ir.class_) : W.func_type =
   env.current_class <- Some c.Emo_ir.cname;
   let self_local = fresh_local env "self" W.Anyref in
   let body =
-    List.concat_map (fun _ -> [ W.Ref_null_any ]) fields
+    List.concat_map
+      (fun _ -> [ W.Ref_null_any ])
+      (List.init (pad + List.length fields) Fun.id)
     @ [ W.Struct_new tidx; W.Local_set self_local ]
     @ (match c.Emo_ir.cinit with
       | Some init -> stmts env init.Emo_ir.fbody ~tail:false
@@ -870,7 +1054,10 @@ let emit_ctor_factory env (c : Emo_ir.class_) : W.func_type =
     W.ftype_idx =
       type_idx env (W.FuncT (List.map (fun _ -> W.Anyref) params, [ W.Anyref ]));
     fparams = List.map fst params;
-    flocals = List.map (fun t -> (1, t)) env.local_decls;
+    flocals =
+      List.map
+        (fun t -> (1, t))
+        (List.filteri (fun i _ -> i >= List.length params) env.local_decls);
     fbody = body;
   }
 
@@ -1535,6 +1722,58 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
         | None -> None)
       env.class_type
   in
+  let array_arm =
+    (* lengths equal, then element-wise deep_eq; the differ exit lands
+       past the inner block, the equal exit carries 1 to the outer *)
+    [
+      W.Block
+        ( W.Result W.I32,
+          [
+            W.Block
+              ( W.Void,
+                [
+                  W.Local_get 0;
+                  W.Ref_cast t_anyarray;
+                  W.Array_len t_anyarray;
+                  W.Local_set 2;
+                  W.Local_get 1;
+                  W.Ref_cast t_anyarray;
+                  W.Array_len t_anyarray;
+                  W.Local_get 2;
+                  W.I32_ne;
+                  W.Br_if 0;
+                  W.I32_const 0;
+                  W.Local_set 3;
+                  W.Loop
+                    ( W.Void,
+                      [
+                        W.I32_const 1;
+                        W.Local_get 3;
+                        W.Local_get 2;
+                        W.I32_ge;
+                        W.Br_if 2;
+                        W.Local_get 0;
+                        W.Ref_cast t_anyarray;
+                        W.Local_get 3;
+                        W.Array_get t_anyarray;
+                        W.Local_get 1;
+                        W.Ref_cast t_anyarray;
+                        W.Local_get 3;
+                        W.Array_get t_anyarray;
+                        W.Call (rt "deep_eq");
+                        W.I32_eqz;
+                        W.Br_if 1;
+                        W.Local_get 3;
+                        W.I32_const 1;
+                        W.I32_add;
+                        W.Local_set 3;
+                        W.Br 0;
+                      ] );
+                ] );
+            W.I32_const 0;
+          ] );
+    ]
+  in
   let arms =
     [
       (both t_vint 0 1, i64_of 0 @ i64_of 1 @ [ W.I64_eq ]);
@@ -1547,6 +1786,7 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
         @ [ W.Call (rt "str_eq") ]
         @ enum_bytes 0 1 @ enum_bytes 1 1
         @ [ W.Call (rt "str_eq"); W.I32_and ] );
+      (both t_anyarray 0 1, array_arm);
     ]
     @ class_arms
   in
@@ -1559,20 +1799,84 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
   ( {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [];
+      flocals = [ (2, W.I32) ];
       fbody = body @ [ W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [];
+      flocals = [ (2, W.I32) ];
       fbody = body @ [ W.I32_eqz; W.Struct_new t_vbool ];
     },
-    { W.ftype_idx = t_sig2; fparams = [ "a"; "b" ]; flocals = []; fbody = body }
-  )
+    {
+      W.ftype_idx = t_sig2;
+      fparams = [ "a"; "b" ];
+      flocals = [ (2, W.I32) ];
+      fbody = body;
+    } )
 
-(* strcat(a, b (ref null $bytes)) -> (ref null $bytes). Locals: 2 arr,
-   3 i, 4 alen. *)
+(* append(xs, v) -> a new array: every element copied, v at the end.
+   Arrays are never mutated. Locals: 2 src, 3 elem, 4 fresh, 5 i. *)
+let rt_append : W.func_type =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "xs"; "v" ];
+    flocals =
+      [
+        (1, W.RefNull t_anyarray);
+        (1, W.Anyref);
+        (1, W.RefNull t_anyarray);
+        (1, W.I32);
+      ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_anyarray;
+        W.Local_set 2;
+        W.Local_get 1;
+        W.Local_set 3;
+        W.Local_get 2;
+        W.Array_len t_anyarray;
+        W.I32_const 1;
+        W.I32_add;
+        W.Array_new_default t_anyarray;
+        W.Local_set 4;
+        W.I32_const 0;
+        W.Local_set 5;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    (* exhausted: the copy is done *)
+                    W.Local_get 5;
+                    W.Local_get 2;
+                    W.Array_len t_anyarray;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 4;
+                    W.Local_get 5;
+                    W.Local_get 2;
+                    W.Local_get 5;
+                    W.Array_get t_anyarray;
+                    W.Array_set t_anyarray;
+                    W.Local_get 5;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 5;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 4;
+        W.Local_get 2;
+        W.Array_len t_anyarray;
+        W.Local_get 3;
+        W.Array_set t_anyarray;
+        W.Local_get 4;
+      ];
+  }
+
 let rt_strcat : W.func_type =
   {
     W.ftype_idx = t_strcat;
@@ -1757,7 +2061,17 @@ let assemble (program : Emo_ir.program) : W.module_ =
       register (c.Emo_ir.cname ^ "__new"))
     program.Emo_ir.pclasses;
   (* Struct types and field maps must exist before any body lowers. *)
-  List.iter (emit_class_decls env) program.Emo_ir.pclasses;
+  (* Distinct shapes per class: pad encodes the class ordinal in a
+     base wide enough that (ordinal, real-field-count) pairs cannot
+     collide. *)
+  let max_fields =
+    List.fold_left
+      (fun acc c -> max acc (List.length (class_fields c)))
+      0 program.Emo_ir.pclasses
+  in
+  List.iteri
+    (fun i c -> emit_class_decls env c ~pad:(class_pad max_fields i c))
+    program.Emo_ir.pclasses;
   let lowered =
     List.map
       (fun (f : Emo_ir.func) ->
@@ -1767,7 +2081,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
   in
   let class_funcs =
     List.concat_map
-      (fun (c : Emo_ir.class_) ->
+      (fun ((ordinal, c) : int * Emo_ir.class_) ->
         let meths =
           List.map
             (fun (m : Emo_ir.func) ->
@@ -1777,10 +2091,10 @@ let assemble (program : Emo_ir.program) : W.module_ =
         in
         let factory =
           let idx = List.assoc (c.Emo_ir.cname ^ "__new") env.funcs in
-          (idx, emit_ctor_factory env c)
+          (idx, emit_ctor_factory env c ~pad:(class_pad max_fields ordinal c))
         in
         meths @ [ factory ])
-      program.Emo_ir.pclasses
+      (List.mapi (fun i c -> (i, c)) program.Emo_ir.pclasses)
   in
   (* Types: the fixed runtime head first, then the program's appended
      types (env.types accumulates in reverse). *)
@@ -1813,6 +2127,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
       rt_bytes_from_mem;
       rt_str_eq;
       rt_deep_eq;
+      rt_append;
     ]
   in
   (* The entry's locals start fresh: the local state still holds the

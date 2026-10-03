@@ -68,7 +68,7 @@ itself with no external toolchain.
       intermediate; the binary encoder; the value model and runtime
       helpers emitted into the module. Golden: hello_world, fib,
       objects (under Node).
-- [ ] **T16.2** — Full core semantics: patterns and guards, tuples,
+- [x] **T16.2** — Full core semantics: patterns and guards, tuples,
       arrays, Box, interpolation, content equality, interface
       narrowing, multi-file module references. Golden: language_tour,
       shop.
