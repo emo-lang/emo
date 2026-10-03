@@ -4,6 +4,7 @@ module Ast = Emo_ast
    eponymous module. *)
 module Ts = Emo_ts
 module Wasm = Emo_wasm
+module Beam = Emo_beam
 
 (* Stage A/B backend: emits OCaml source from the IR, compiled by the
    OCaml toolchain into a single binary linked against emo_runtime (the

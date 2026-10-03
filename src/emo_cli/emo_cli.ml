@@ -181,6 +181,26 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             close_out oc;
             Printf.printf "built %s\n" out;
             0
+        | "beam" ->
+            (* the .core file stem is the BEAM module atom: always
+               emo_main, next to the requested output *)
+            let core = Emo_codegen.Beam.emit program in
+            let out =
+              Filename.concat (Filename.dirname output) "emo_main.core"
+            in
+            let oc = open_out_bin out in
+            output_string oc core;
+            close_out oc;
+            let beam = Filename.remove_extension out ^ ".beam" in
+            let rc =
+              Sys.command (Printf.sprintf "erlc %s" (Filename.quote out))
+            in
+            if rc <> 0 then (
+              prerr_endline (Printf.sprintf "emo build: erlc failed on %s" out);
+              70)
+            else (
+              Printf.printf "built %s\n" beam;
+              0)
         | "typescript" -> (
             let runtime_path =
               Filename.concat
@@ -379,7 +399,9 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         | other ->
             prerr_endline
               (Printf.sprintf
-                 "emo build: unknown target `%s` (native, typescript)" other);
+                 "emo build: unknown target `%s` (native, typescript, wasm, \
+                  beam)"
+                 other);
             65
       with
       | Emo_project.Static_errors diagnostics ->
@@ -420,7 +442,7 @@ let build =
     Arg.(
       value & opt string "native"
       & info [ "target" ] ~docv:"TARGET"
-          ~doc:"The compilation target: native or typescript.")
+          ~doc:"The compilation target: native, typescript, wasm, or beam.")
   in
   let build entry output no_specialize cclibs target =
     let out =
