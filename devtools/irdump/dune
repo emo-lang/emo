@@ -1,0 +1,3 @@
+(executable
+ (name irdump)
+ (libraries emo_ir emo_project))
