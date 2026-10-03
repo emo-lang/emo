@@ -12,7 +12,31 @@ type env = {
   mutable local_map : (string * string) list;
   mutable funcs : (string * int) list;
   mutable fname : string;
+  mutable classes : Emo_ir.class_ list;
+  mutable iface_classes : (string * string list) list;
+  mutable class_field : (string * (string * int) list) list;
+  mutable current_class : string option;
 }
+
+(* The class-member name behind a mangled method fname: the mangled
+   form is `cname "__" member`. *)
+let member_name (c : Emo_ir.class_) (m : Emo_ir.func) : string =
+  let prefix = c.Emo_ir.cname ^ "__" in
+  let n = m.Emo_ir.fname in
+  if String.starts_with ~prefix n then
+    String.sub n (String.length prefix) (String.length n - String.length prefix)
+  else n
+
+(* A class's content fields, in init-assignment order (the IR's only
+   field order). *)
+let class_fields (c : Emo_ir.class_) : string list =
+  match c.Emo_ir.cinit with
+  | None -> []
+  | Some init ->
+      List.filter_map
+        (fun (st : Emo_ir.stmt) ->
+          match st with Emo_ir.Set_field { name; _ } -> Some name | _ -> None)
+        init.Emo_ir.fbody
 
 let fresh_var env name =
   env.fresh <- env.fresh + 1;
@@ -29,6 +53,27 @@ let binary_lit (s : string) : string =
   let n = String.length s in
   if n = 0 then "#{}#"
   else "#{" ^ String.concat "," (List.init n (fun i -> seg s.[i])) ^ "}#"
+
+let atom s = "'" ^ s ^ "'"
+
+(* the instance pattern for a class: the tag, the class atom, then one
+   wildcard per field (fields live inline in the tuple) *)
+let instance_pattern (classes : Emo_ir.class_ list) (cname : string) : string =
+  let n =
+    match
+      List.find_opt
+        (fun (c : Emo_ir.class_) -> String.equal c.Emo_ir.cname cname)
+        classes
+    with
+    | Some c -> List.length (class_fields c)
+    | None -> 0
+  in
+  let wilds =
+    String.concat ", " (List.init n (fun i -> "_f" ^ string_of_int i))
+  in
+  match n with
+  | 0 -> Printf.sprintf "{'emo_inst', %s}" (atom cname)
+  | _ -> Printf.sprintf "{'emo_inst', %s, %s}" (atom cname) wilds
 
 let put env s = Buffer.add_string env.buf s
 
@@ -87,20 +132,21 @@ let rec expr env (x : Emo_ir.expr) : unit =
             (Emo_ir.Lower_error
                "beam: only one-parameter closures are supported yet"))
   | Interpolate items ->
-      (* to_str the first part, then left-fold the concatenation *)
+      (* every part renders through to_str, then the binaries concat *)
       let rec chain = function
         | [] -> put env "#{}#"
-        | [ one ] -> expr env one
+        | [ one ] ->
+            put env "apply 'emo_to_str'/1 (";
+            expr env one;
+            put env ")"
         | first :: rest ->
-            put env "apply 'emo_strcat'/2 (";
+            put env "apply 'emo_strcat'/2 (apply 'emo_to_str'/1 (";
             expr env first;
-            put env ", ";
+            put env "), ";
             chain rest;
             put env ")"
       in
-      put env "apply 'emo_to_str'/1 (";
-      chain items;
-      put env ")"
+      chain items
   | Binary (op, l, r) ->
       put env
         (Printf.sprintf "apply 'emo_%s'/2 "
@@ -124,10 +170,166 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Unary (Emo_ast.Not, x) ->
       put env "apply 'emo_not'/1 ";
       args_list env [ x ]
+  | Tuple es ->
+      put env "{";
+      List.iteri
+        (fun i e ->
+          if i > 0 then put env ", ";
+          expr env e)
+        es;
+      put env "}"
+  | Array_lit es ->
+      put env "[";
+      List.iteri
+        (fun i e ->
+          if i > 0 then put env ", ";
+          expr env e)
+        es;
+      put env "]"
+  | Index (b, i) ->
+      (* lists are 1-based *)
+      put env "call 'lists':'nth'(call 'erlang':'+'(1, ";
+      expr env i;
+      put env "), ";
+      expr env b;
+      put env ")"
+  | Field_read { obj; name } -> (
+      let class_name =
+        match obj.Emo_ir.ety with
+        | Emo_check.ClassType c -> c
+        | _ -> (
+            match env.current_class with
+            | Some c -> c
+            | None -> failwith "beam: field read without a known class")
+      in
+      match List.assoc_opt class_name env.class_field with
+      | Some fields -> (
+          match List.assoc_opt name fields with
+          | Some fidx ->
+              put env (Printf.sprintf "call 'erlang':'element'(%d, " (fidx + 3));
+              expr env obj;
+              put env ")"
+          | None -> failwith ("beam: unknown field " ^ class_name ^ "." ^ name))
+      | None -> failwith ("beam: unknown class " ^ class_name))
+  | Make_enum { enum_name; member } ->
+      put env
+        (Printf.sprintf "{'emo_enum', %s, %s}" (atom enum_name) (atom member))
+  | Box_new v ->
+      (* a Box is a process-dictionary key (T17.4 upgrades to a
+         holding process for cross-process boxes) *)
+      put env "let <_boxref> = call 'erlang':'make_ref'() in ";
+      put env "do call 'erlang':'put'(_boxref, ";
+      expr env v;
+      put env ") _boxref"
+  | Method { self_; name; args } -> method_call env self_ name args
   | Builtin { name; args } -> builtin env name args
   | _ ->
       raise
-        (Emo_ir.Lower_error "beam: this construct is not available yet (T17.2)")
+        (Emo_ir.Lower_error "beam: this construct is not available yet (T17.3)")
+
+and method_call env self_ name args =
+  let mangled = Emo_ir.sanitize_ident name in
+  match (name, args) with
+  | "to_string", [] ->
+      put env "apply 'emo_to_str'/1 ";
+      args_list env [ self_ ]
+  | "length", [] ->
+      put env "call 'erlang':'length'(";
+      expr env self_;
+      put env ")"
+  | "append", [ v ] ->
+      put env "apply 'emo_array_append'/2 ";
+      args_list env [ self_; v ]
+  | "read", [] ->
+      put env "call 'erlang':'get'(";
+      expr env self_;
+      put env ")"
+  | "replace", [ v ] ->
+      put env "apply 'emo_box_replace'/2 ";
+      args_list env [ self_; v ]
+  | "is", [ target ] -> (
+      let tname =
+        match target.Emo_ir.desc with
+        | Emo_ir.Type_ref n -> n
+        | _ -> failwith "beam: `is` expects a type name"
+      in
+      let impls =
+        match List.assoc_opt tname env.iface_classes with
+        | Some cs -> cs
+        | None -> (
+            match
+              List.find_opt
+                (fun c -> String.equal c.Emo_ir.cdisplay tname)
+                env.classes
+            with
+            | Some c -> [ c.Emo_ir.cname ]
+            | None -> [])
+      in
+      match impls with
+      | [] ->
+          raise (Emo_ir.Lower_error ("beam: unknown type in `is`: " ^ tname))
+      | _ ->
+          put env "case ";
+          expr env self_;
+          put env " of\n";
+          List.iter
+            (fun cname ->
+              put env
+                (Printf.sprintf "  <%s> when 'true' ->\n    'true'\n"
+                   (instance_pattern env.classes cname)))
+            impls;
+          put env "  <_> when 'true' ->\n    'false'\nend")
+  | _ -> (
+      (* dispatch: statically on a class-typed receiver, otherwise one
+         arm per class defining the method (the runtime value is one of
+         them — the checker admitted the call) *)
+      let candidates =
+        match self_.Emo_ir.ety with
+        | Emo_check.ClassType c -> [ c ]
+        | _ ->
+            List.filter_map
+              (fun (c : Emo_ir.class_) ->
+                if
+                  List.exists
+                    (fun (m : Emo_ir.func) ->
+                      String.equal (member_name c m) mangled
+                      && List.length m.Emo_ir.fparams - 1 = List.length args)
+                    c.Emo_ir.cmethods
+                then Some c.Emo_ir.cname
+                else None)
+              env.classes
+      in
+      match candidates with
+      | [] ->
+          raise
+            (Emo_ir.Lower_error
+               (Printf.sprintf "beam: method `%s` has no dispatch (in %s)" name
+                  env.fname))
+      | _ ->
+          put env "case ";
+          expr env self_;
+          put env " of\n";
+          List.iter
+            (fun cname ->
+              let full = cname ^ "__" ^ mangled in
+              let arity = List.length args + 1 in
+              put env
+                (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/%d ("
+                   (instance_pattern env.classes cname)
+                   (Emo_ir.sanitize_ident full)
+                   arity);
+              expr env self_;
+              List.iter
+                (fun a ->
+                  put env ", ";
+                  expr env a)
+                args;
+              put env ")\n")
+            candidates;
+          put env
+            "  <_> when 'true' ->\n    call 'erlang':'error'({'emo_no_method', ";
+          put env (atom name);
+          put env "})\nend")
 
 and args_list env args =
   put env "(";
@@ -156,6 +358,14 @@ and builtin env name args =
            ("beam: builtin `" ^ name ^ "` is not available yet (T17.1)"))
 
 and binary_lit_newline = "#<10>(8,1,'integer',['unsigned'|['big']])"
+
+(* an expression's code as a string, without disturbing the buffer *)
+and expr_block env (x : Emo_ir.expr) : string =
+  let before = Buffer.length env.buf in
+  expr env x;
+  let code = Buffer.sub env.buf before (Buffer.length env.buf - before) in
+  Buffer.truncate env.buf before;
+  code
 
 (* Every function/closure body runs under this wrapper: a `return`
    anywhere in the body throws the tagged result and the wrapper
@@ -190,6 +400,48 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
       expr env init;
       put env "\nin ";
       stmts env rest
+  | Emo_ir.Assign_var { name; value } :: rest ->
+      (* a var rebinding: a fresh Core variable shadows the old one
+         over the rest of the block; the value is captured before the
+         shadow exists *)
+      let value_code = expr_block env value in
+      let v = fresh_var env name in
+      put env ("let <" ^ v ^ "> =\n");
+      put env value_code;
+      put env "\nin ";
+      env.local_map <- (name, v) :: env.local_map;
+      stmts env rest
+  | Emo_ir.Set_field { self_; name; value } :: rest ->
+      (* the instance tuple is rebuilt with setelement; self rebinds
+         over the rest of the block *)
+      let class_name =
+        match self_.Emo_ir.ety with
+        | Emo_check.ClassType c -> c
+        | _ -> (
+            match env.current_class with
+            | Some c -> c
+            | None -> failwith "beam: field set without a known class")
+      in
+      let fidx =
+        match List.assoc_opt class_name env.class_field with
+        | Some fields -> (
+            match List.assoc_opt name fields with
+            | Some i -> i
+            | None -> failwith ("beam: unknown field " ^ class_name ^ "." ^ name)
+            )
+        | None -> failwith ("beam: unknown class " ^ class_name)
+      in
+      let self_code = expr_block env self_ in
+      let value_code = expr_block env value in
+      let v = fresh_var env "self" in
+      put env ("let <" ^ v ^ "> =\n");
+      put env (Printf.sprintf "call 'erlang':'setelement'(%d, " (fidx + 3));
+      put env self_code;
+      put env ", ";
+      put env value_code;
+      put env ")\nin ";
+      env.local_map <- ("self", v) :: env.local_map;
+      stmts env rest
   | s :: rest ->
       put env "do\n";
       stmt env s;
@@ -199,16 +451,47 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
 and stmt env (s : Emo_ir.stmt) : unit =
   match s with
   | Emo_ir.Effect x -> expr env x
-  | Emo_ir.Let _ -> failwith "beam: let handled by stmts"
-  | Emo_ir.Assign_var { name; value } -> (
-      (* BEAM variables are single-assignment; a `var` rebinding needs
-         a fresh Core variable with later reads redirected — T17.2. *)
-      match List.assoc_opt name env.local_map with
-      | Some _ ->
-          ignore value;
-          raise
-            (Emo_ir.Lower_error "beam: `var` reassignment arrives with T17.2")
-      | None -> failwith ("beam: assignment to unbound " ^ name))
+  | Emo_ir.Let { name; init; _ } ->
+      (* a single-statement body: bind and produce the value *)
+      let v = fresh_var env name in
+      put env ("let <" ^ v ^ "> =\n");
+      expr env init;
+      put env "\nin ";
+      put env v
+  | Emo_ir.Assign_var { name; value } ->
+      let v = fresh_var env name in
+      put env ("let <" ^ v ^ "> =\n");
+      expr env value;
+      put env "\nin ";
+      put env v
+  | Emo_ir.Set_field { self_; name; value } ->
+      let class_name =
+        match self_.Emo_ir.ety with
+        | Emo_check.ClassType c -> c
+        | _ -> (
+            match env.current_class with
+            | Some c -> c
+            | None -> failwith "beam: field set without a known class")
+      in
+      let fidx =
+        match List.assoc_opt class_name env.class_field with
+        | Some fields -> (
+            match List.assoc_opt name fields with
+            | Some i -> i
+            | None -> failwith ("beam: unknown field " ^ class_name ^ "." ^ name)
+            )
+        | None -> failwith ("beam: unknown class " ^ class_name)
+      in
+      let self_code = expr_block env self_ in
+      let value_code = expr_block env value in
+      let v = fresh_var env "self" in
+      put env ("let <" ^ v ^ "> =\n");
+      put env (Printf.sprintf "call 'erlang':'setelement'(%d, " (fidx + 3));
+      put env self_code;
+      put env ", ";
+      put env value_code;
+      put env ")\nin ";
+      put env v
   | Emo_ir.Return_stmt x ->
       (* the function-body try wrapper turns this into the result *)
       put env "call 'erlang':'throw'({'emo_return', ";
@@ -224,17 +507,84 @@ and stmt env (s : Emo_ir.stmt) : unit =
       put env "\n  <'false'> when 'true' ->\n";
       stmts env else_;
       put env "\nend"
-  | Emo_ir.Case _ ->
-      raise (Emo_ir.Lower_error "beam: case patterns arrive with T17.3")
+  | Emo_ir.Case { scrutinee; branches } ->
+      let scratch = fresh_var env "case" in
+      put env ("let <" ^ scratch ^ "> =\n");
+      expr env scrutinee;
+      put env "\nin case ";
+      put env scratch;
+      put env " of\n";
+      let rec emit_branches bs =
+        match bs with
+        | [] ->
+            put env "  <_> when 'true' ->\n";
+            put env "    call 'erlang':'error'({'emo_no_match', ";
+            put env scratch;
+            put env "})\n"
+        | b :: rest ->
+            let saved = env.local_map in
+            put env "  <";
+            emit_pattern env b.Emo_ir.pattern;
+            put env "> ";
+            (match b.Emo_ir.guard with
+            | Some g ->
+                put env "when ";
+                guard_expr env g;
+                put env " ->\n"
+            | None -> put env "when 'true' ->\n");
+            stmts env b.Emo_ir.body;
+            put env "\n";
+            env.local_map <- saved;
+            emit_branches rest
+      in
+      emit_branches branches;
+      put env "end"
   | Emo_ir.Receive _ | Emo_ir.Send _ ->
       raise (Emo_ir.Lower_error "beam: processes arrive with T17.4")
-  | Emo_ir.Set_field _ ->
-      raise (Emo_ir.Lower_error "beam: classes arrive with T17.3")
   | Emo_ir.Raise x ->
       (* an ordinary Emo exception: a throw the entry reports *)
-      put env "call 'erlang':'throw'({emo_raise, ";
+      put env "call 'erlang':'throw'({'emo_raise', ";
       expr env x;
       put env "})"
+
+(* ---- Guard expressions ----
+
+   Core guards admit calls only (no apply/let/case), so a guard lowers
+   through a restricted emitter: raw comparisons and boolean operators
+   over variables and constants. Comparisons use the BEAM term order —
+   for the numeric/string guards the checker admits, that is exactly
+   the interpreter's result. *)
+
+(* ---- Patterns ----
+
+   Every Emo pattern maps directly onto a Core pattern: enum members
+   become their tagged tuples, literals become literal patterns
+   (strings as per-byte binary patterns), bindings become fresh
+   variables. *)
+
+and emit_pattern env (p : Emo_ast.pattern) : unit =
+  match p.Emo_ast.pattern_desc with
+  | Emo_ast.Wildcard -> put env "_"
+  | Emo_ast.Pattern_binding name ->
+      let v = fresh_var env name in
+      put env v
+  | Emo_ast.Pattern_literal (L_int n) -> put env (string_of_int n)
+  | Emo_ast.Pattern_literal (L_bool b) ->
+      put env (if b then "'true'" else "'false'")
+  | Emo_ast.Pattern_literal (L_char c) ->
+      put env (Printf.sprintf "$\\x%02x" (Char.code c))
+  | Emo_ast.Pattern_literal (L_string str) -> put env (binary_lit str)
+  | Emo_ast.Pattern_literal (L_float f) -> put env (Printf.sprintf "%F" f)
+  | Emo_ast.Enum_member (t, m) ->
+      put env (Printf.sprintf "{'emo_enum', %s, %s}" (atom t) (atom m))
+  | Emo_ast.Tuple_pattern ps ->
+      put env "{";
+      List.iteri
+        (fun i sub ->
+          if i > 0 then put env ", ";
+          emit_pattern env sub)
+        ps;
+      put env "}"
 
 (* ---- The runtime ----
 
@@ -243,6 +593,53 @@ and stmt env (s : Emo_ir.stmt) : unit =
    comparisons via structural equality on tagged values, and to_str/
    strcat for print and interpolation. Raw text — this code never
    varies per program. *)
+
+and guard_expr env (x : Emo_ir.expr) : unit =
+  match x.Emo_ir.desc with
+  | Var name -> (
+      match List.assoc_opt name env.local_map with
+      | Some v -> put env v
+      | None -> failwith ("beam: unbound guard local " ^ name))
+  | Const (L_int n) -> put env (string_of_int n)
+  | Const (L_float f) -> put env (Printf.sprintf "%F" f)
+  | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
+  | Const (L_char c) -> put env (Printf.sprintf "$\\x%02x" (Char.code c))
+  | Const (L_string s) -> put env (binary_lit s)
+  | Binary (op, l, r) ->
+      let raw =
+        match op with
+        | Emo_ast.Lt -> "'<'"
+        | Emo_ast.Le -> "'=<'"
+        | Emo_ast.Gt -> "'>'"
+        | Emo_ast.Ge -> "'>='"
+        | Emo_ast.Eq -> "'=:='"
+        | Emo_ast.Ne -> "'=/='"
+        | Emo_ast.And -> "'andalso'"
+        | Emo_ast.Or -> "'orelse'"
+        | Emo_ast.Add -> "'+'"
+        | Emo_ast.Sub -> "'-'"
+        | Emo_ast.Mul -> "'*'"
+        | Emo_ast.Div -> "'div'"
+        | Emo_ast.Mod -> "'rem'"
+      in
+      put env ("call 'erlang':" ^ raw ^ "(");
+      guard_expr env l;
+      put env ", ";
+      guard_expr env r;
+      put env ")"
+  | Unary (Emo_ast.Not, x) ->
+      put env "call 'erlang':'not'(";
+      guard_expr env x;
+      put env ")"
+  | Unary (Emo_ast.Neg, x) ->
+      put env "call 'erlang':'-'(";
+      guard_expr env x;
+      put env ")"
+  | _ ->
+      raise
+        (Emo_ir.Lower_error
+           "beam: guard expressions are limited to comparisons, \
+            boolean             operators, and constants on this target")
 
 let rt_source =
   {|
@@ -441,6 +838,15 @@ let rt_source =
 	  <{_x, _y}> when 'true' -> call 'erlang':'>='(_x, _y)
 	end
 
+'emo_array_append'/2 =
+    fun (_xs, _x) -> call 'lists':'reverse'(call 'lists':'reverse'([_x | _xs]))
+
+'emo_box_replace'/2 =
+    fun (_k, _v) ->
+	do
+	    call 'erlang':'put'(_k, _v)
+	    _v
+
 'emo_eq'/2 =
     fun (_a, _b) -> call 'erlang':'=:='(_a, _b)
 
@@ -457,35 +863,147 @@ let rt_source =
 
 let emit (program : Emo_ir.program) : string =
   let buf = Buffer.create (16 * 1024) in
-  let env = { buf; fresh = 0; local_map = []; funcs = []; fname = "" } in
+  let env =
+    {
+      buf;
+      fresh = 0;
+      local_map = [];
+      funcs = [];
+      fname = "";
+      classes = [];
+      class_field = [];
+      iface_classes = [];
+      current_class = None;
+    }
+  in
+  let class_fields_assoc =
+    List.map
+      (fun (c : Emo_ir.class_) ->
+        (c.Emo_ir.cname, List.mapi (fun i n -> (n, i)) (class_fields c)))
+      program.Emo_ir.pclasses
+  in
+  env.class_field <- class_fields_assoc;
+  (* interface -> the classes that structurally satisfy it *)
+  let sanitize = Emo_ir.sanitize_ident in
+  env.iface_classes <-
+    List.map
+      (fun (iname, meths) ->
+        ( iname,
+          List.filter_map
+            (fun (c : Emo_ir.class_) ->
+              let conforms =
+                List.for_all
+                  (fun (mname, arity) ->
+                    List.exists
+                      (fun (m : Emo_ir.func) ->
+                        String.equal (member_name c m) (sanitize mname)
+                        && List.length m.Emo_ir.fparams - 1 = arity)
+                      c.Emo_ir.cmethods)
+                  meths
+              in
+              if conforms then Some c.Emo_ir.cname else None)
+            program.Emo_ir.pclasses ))
+      program.Emo_ir.pinterfaces;
+  env.classes <- program.Emo_ir.pclasses;
   env.funcs <-
     List.map
       (fun (f : Emo_ir.func) -> (f.Emo_ir.fname, List.length f.Emo_ir.fparams))
-      program.Emo_ir.pfuncs;
+      program.Emo_ir.pfuncs
+    @ List.concat_map
+        (fun (c : Emo_ir.class_) ->
+          List.map
+            (fun (m : Emo_ir.func) ->
+              (m.Emo_ir.fname, List.length m.Emo_ir.fparams))
+            c.Emo_ir.cmethods
+          @ [ (c.Emo_ir.cname ^ "__new", List.length (class_fields c)) ])
+        program.Emo_ir.pclasses;
   put env "module 'emo_main' ['main'/0]\n";
   put env "    attributes []\n";
   put env rt_source;
+  (* a def emitter shared by program functions and class methods *)
+  let emit_def ~(cc : string option) ~(params : (string * string) list)
+      ~(fname : string) ~(body : Emo_ir.stmt list) : unit =
+    let name = Emo_ir.sanitize_ident fname in
+    put env (Printf.sprintf "'%s'/%d =\n" name (List.length params));
+    put env "    fun (";
+    put env (String.concat ", " (List.map snd params));
+    put env ") ->\n";
+    env.local_map <- params;
+    env.fname <- fname;
+    env.current_class <- cc;
+    let before = Buffer.length buf in
+    stmts env body;
+    let body_text = Buffer.sub buf before (Buffer.length buf - before) in
+    Buffer.truncate buf before;
+    put env (body_wrapper body_text);
+    put env "\n\n";
+    env.local_map <- [];
+    env.current_class <- None
+  in
   List.iter
-    (fun (f : Emo_ir.func) ->
-      let name = Emo_ir.sanitize_ident f.Emo_ir.fname in
-      put env (Printf.sprintf "'%s'/%d =\n" name (List.length f.Emo_ir.fparams));
-      put env "    fun (";
-      let param_vars =
+    (fun (c : Emo_ir.class_) ->
+      let fields = class_fields c in
+      let init_params =
+        match c.Emo_ir.cinit with
+        | Some init -> (
+            match init.Emo_ir.fparams with _ :: rest -> rest | [] -> [])
+        | None -> []
+      in
+      let factory_params =
         List.mapi
           (fun i (pname, _) -> (pname, Printf.sprintf "_p%d" i))
-          f.Emo_ir.fparams
+          init_params
       in
-      put env (String.concat ", " (List.map snd param_vars));
+      let undefineds =
+        match fields with
+        | [] -> ""
+        | _ ->
+            ", " ^ String.concat ", " (List.map (fun _ -> "'undefined'") fields)
+      in
+      (* the factory: fresh instance tuple, init's body with self
+         bound, then the instance *)
+      let name = Emo_ir.sanitize_ident (c.Emo_ir.cname ^ "__new") in
+      put env (Printf.sprintf "'%s'/%d =\n" name (List.length factory_params));
+      put env "    fun (";
+      put env (String.concat ", " (List.map snd factory_params));
       put env ") ->\n";
-      env.local_map <- param_vars;
-      env.fname <- f.Emo_ir.fname;
+      env.local_map <- factory_params;
+      env.fname <- c.Emo_ir.cname ^ "__new";
+      env.current_class <- Some c.Emo_ir.cname;
+      let self_v = fresh_var env "self" in
+      put env ("let <" ^ self_v ^ "> =\n");
+      put env
+        (Printf.sprintf "    {'emo_inst', %s%s}\nin " (atom c.Emo_ir.cname)
+           undefineds);
+      env.local_map <- ("self", self_v) :: env.local_map;
       let before = Buffer.length buf in
-      stmts env f.Emo_ir.fbody;
-      let body = Buffer.sub buf before (Buffer.length buf - before) in
+      (match c.Emo_ir.cinit with
+      | Some init -> stmts env init.Emo_ir.fbody
+      | None -> put env self_v);
+      let body_text = Buffer.sub buf before (Buffer.length buf - before) in
       Buffer.truncate buf before;
-      put env (body_wrapper body);
+      put env (body_wrapper body_text);
       put env "\n\n";
-      env.local_map <- [])
+      env.local_map <- [];
+      env.current_class <- None;
+      List.iter
+        (fun (m : Emo_ir.func) ->
+          emit_def ~cc:(Some c.Emo_ir.cname)
+            ~params:
+              (List.mapi
+                 (fun i (pname, _) -> (pname, Printf.sprintf "_p%d" i))
+                 m.Emo_ir.fparams)
+            ~fname:m.Emo_ir.fname ~body:m.Emo_ir.fbody)
+        c.Emo_ir.cmethods)
+    program.Emo_ir.pclasses;
+  List.iter
+    (fun (f : Emo_ir.func) ->
+      emit_def ~cc:None
+        ~params:
+          (List.mapi
+             (fun i (pname, _) -> (pname, Printf.sprintf "_p%d" i))
+             f.Emo_ir.fparams)
+        ~fname:f.Emo_ir.fname ~body:f.Emo_ir.fbody)
     program.Emo_ir.pfuncs;
   put env "'main'/0 =\n";
   put env "    fun () ->\n";

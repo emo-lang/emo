@@ -182,7 +182,7 @@ let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
 
 (* The BEAM goldens: Core Erlang text assembled by the pinned erlc,
    run under `erl -noshell`. Skips when Erlang is absent. *)
-let beam_goldens = [ "hello_world"; "fib" ]
+let beam_goldens = [ "hello_world"; "fib"; "objects"; "language_tour" ]
 
 let erl_available =
   lazy (Sys.command "erl -noshell -eval 'halt().' >/dev/null 2>&1" = 0)
