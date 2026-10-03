@@ -77,7 +77,7 @@ that shares it natively.
 - [x] **T17.2** — The value model and arithmetic: masked wrap-around
       Int, binary Strings with interpolation over strcat, tuples,
       arrays, enums, deep content equality; fib golden.
-- [ ] **T17.3** — Classes/instances, Box holding processes, closures
+- [x] **T17.3** — Classes/instances, Box holding processes, closures
       as funs, case patterns with guards; objects + language_tour
       goldens.
 - [ ] **T17.4** — Processes (`do`/`<-`/`receive` via the primop

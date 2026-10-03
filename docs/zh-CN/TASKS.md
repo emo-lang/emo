@@ -279,5 +279,5 @@
 
 - [ ] **T17.1** — 后端骨架:`--target beam` 管线;Core Erlang 发射器(模块、定义、字面量、call/apply、序列化),对照已探明的 OTP 29 文法。金测:hello_world。
 - [x] **T17.2** — 值模型与算术:掩码 i64 回绕 Int、binary 字符串与插值、元组、数组、枚举、深内容相等。金测:fib。
-- [ ] **T17.3** — 类/实例(带标签 map)、Box 持有进程、闭包即 fun、case 模式与守卫。金测:objects、language_tour。
+- [x] **T17.3** — 类/实例(带标签 map)、Box 持有进程、闭包即 fun、case 模式与守卫。金测:objects、language_tour。
 - [ ] **T17.4** — 进程(`do` / `<-` / `receive` 走编译器同款 receive primop)、shop 多模块、pipeline 金测;CI `beam_examples` 组与 `"beam"` 解析门测试。
