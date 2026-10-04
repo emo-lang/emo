@@ -703,6 +703,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
           report ctx span "E4004"
             (Printf.sprintf "operator `-` expects a number, got %s"
                (to_string other));
+          Unknown
+      | Ast.Bit_not, (Int | Unknown) -> Int
+      | Ast.Bit_not, other ->
+          report ctx span "E4004"
+            (Printf.sprintf "operator `~` expects an Int, got %s"
+               (to_string other));
           Unknown)
   | Ast.Binary (op, l, r) -> check_binary ctx env span op l r
   | Ast.Do operand ->
@@ -1137,6 +1143,11 @@ and check_binary ctx env span op l r =
   | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod ->
       if not (numeric_pair_ok ()) then mismatch "two numbers";
       result_number
+  | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr ->
+      (* Bitwise work is integer work: no float coercion, ever. *)
+      let int_side_ok t = t = Int || t = Unknown in
+      if not (int_side_ok lt && int_side_ok rt) then mismatch "two Ints";
+      Int
   | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge ->
       if not (numeric_pair_ok ()) then mismatch "two numbers";
       Bool

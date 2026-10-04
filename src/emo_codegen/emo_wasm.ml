@@ -163,12 +163,19 @@ let rt = function
   | "self_pid" -> 38
   | "halt" -> 39
   | "proc_end" -> 40
-  | "init" -> 41
+  | "bit_and" -> 41
+  | "bit_or" -> 42
+  | "bit_xor" -> 43
+  | "shl" -> 44
+  | "shr" -> 45
+  | "bnot" -> 46
+  | "init" -> 47
   | _ -> failwith "wasm: bad runtime function"
 
-(* imports 3 + runtime funcs 3..41 + main; program funcs follow. *)
+(* imports 3 + runtime funcs 3..46 + init + main; program funcs
+   follow. *)
 let runtime_count =
-  43 (* imports 3 + rt 38 + init + main; program funcs follow *)
+  49 (* imports 3 + rt 38 + init + main + bit ops 6; program funcs follow *)
 
 (* ---- Lowering state ---- *)
 
@@ -322,6 +329,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Struct_get (t_vbool, 0));
       e env W.I32_eqz;
       e env (W.Struct_new t_vbool)
+  | Unary (Ast.Bit_not, operand) ->
+      expr env operand;
+      e env (W.Call (rt "bnot"))
   | Binary (Ast.And, l, r) ->
       expr env l;
       e env (W.Struct_get (t_vbool, 0));
@@ -350,6 +360,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
         | Ast.Ge -> "ge"
         | Ast.Eq -> "eq"
         | Ast.Ne -> "ne"
+        | Ast.Bit_and -> "bit_and"
+        | Ast.Bit_or -> "bit_or"
+        | Ast.Bit_xor -> "bit_xor"
+        | Ast.Shl -> "shl"
+        | Ast.Shr -> "shr"
         | Ast.And | Ast.Or -> "add"
       in
       e env (W.Call (rt fn))
@@ -1868,6 +1883,45 @@ let rt_neg : W.func_type =
       ];
   }
 
+(* Bitwise ops are integer-only: the checker guarantees Int, and any
+   other shape traps rather than silently coercing. *)
+let rt_bit (op : W.instr) : W.func_type =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "a"; "b" ];
+    flocals = [];
+    fbody =
+      [
+        W.If_else
+          ( W.Result W.Anyref,
+            both_int 0 1,
+            i64_of 0 @ i64_of 1 @ [ op; W.Struct_new t_vint ],
+            [ W.Unreachable ] );
+      ];
+  }
+
+let rt_bit_and = rt_bit W.I64_and
+let rt_bit_or = rt_bit W.I64_or
+let rt_bit_xor = rt_bit W.I64_xor
+let rt_shl = rt_bit W.I64_shl
+let rt_shr = rt_bit W.I64_shr_s
+
+let rt_bnot : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "a" ];
+    flocals = [];
+    fbody =
+      [
+        W.If_else
+          ( W.Result W.Anyref,
+            [ W.Local_get 0; W.Ref_test t_vint ],
+            [ W.I64_const (-1L) ] @ i64_of 0
+            @ [ W.I64_xor; W.Struct_new t_vint ],
+            [ W.Unreachable ] );
+      ];
+  }
+
 (* comparisons *)
 let rt_cmp (int_body : W.instr list) (float_body : W.instr list) : W.func_type =
   {
@@ -2898,6 +2952,12 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_self_pid g ~t_void_anyref;
         rt_halt g ~t_void_anyref;
         rt_proc_end g;
+        rt_bit_and;
+        rt_bit_or;
+        rt_bit_xor;
+        rt_shl;
+        rt_shr;
+        rt_bnot;
         init_func;
         main_func;
       ]

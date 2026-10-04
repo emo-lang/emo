@@ -170,6 +170,7 @@ let rec expr env (e : Emo_ir.expr) : string =
         (String.concat ", " (List.map (expr env) es))
   | Unary (Ast.Neg, x) -> Printf.sprintf "E.neg(%s)" (expr env x)
   | Unary (Ast.Not, x) -> Printf.sprintf "(!E.truthy(%s))" (expr env x)
+  | Unary (Ast.Bit_not, x) -> Printf.sprintf "E.bitNot(%s)" (expr env x)
   | Binary (op, l, r) -> (
       let lcode = expr env l in
       let rcode = expr env r in
@@ -187,7 +188,12 @@ let rec expr env (e : Emo_ir.expr) : string =
       | Ast.Sub -> call "sub"
       | Ast.Mul -> call "mul"
       | Ast.Div -> call "div"
-      | Ast.Mod -> call "mod")
+      | Ast.Mod -> call "mod"
+      | Ast.Bit_and -> call "bitAnd"
+      | Ast.Bit_or -> call "bitOr"
+      | Ast.Bit_xor -> call "bitXor"
+      | Ast.Shl -> call "shl"
+      | Ast.Shr -> call "shr")
   | Index (b, i) -> Printf.sprintf "E.index(%s, %s)" (expr env b) (expr env i)
   | Field_read { obj; name } -> Printf.sprintf "(%s).%s" (expr env obj) name
   | Call { func; args } ->

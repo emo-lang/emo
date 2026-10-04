@@ -1,0 +1,33 @@
+// Bitwise operators on Int: & | ^ << >> ~
+//
+//   emo run main.emo
+
+print(12 & 10)
+print(12 | 10)
+print(12 ^ 10)
+print(1 << 10)
+print(1024 >> 3)
+print(~5)
+print(0 | 0)
+
+// shifts bind tighter than the bitwise-or tier
+print(2 | 1 << 4)
+
+// comparisons need parens around bitwise work
+if (12 & 10) == 8 {
+  print("masked")
+}
+
+// results compose with arithmetic
+const low = (1 << 5) + (1 << 2)
+print(low)
+
+def pow2(n Int) Int {
+  return 1 << n
+}
+
+print(pow2(20))
+
+// arithmetic shift keeps the sign
+print(-16 >> 2)
+print(~0)

@@ -100,6 +100,42 @@ let modulo a b =
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (Float.rem x y)
   | _ -> failwith "operator `%` expects two numbers"
 
+(* Bitwise work is integer work: no float coercion, and out-of-range
+   shift counts are an error, never a silent platform wrap. *)
+let shift_count = function
+  | Emo_eval.Int y when y >= 0 -> y
+  | v -> failwith (type_error v "non-negative shift count")
+
+let bit_and a b = Emo_eval.Int (unbox_int a land unbox_int b)
+let bit_or a b = Emo_eval.Int (unbox_int a lor unbox_int b)
+let bit_xor a b = Emo_eval.Int (unbox_int a lxor unbox_int b)
+
+let shl a b =
+  let x = unbox_int a in
+  let count = shift_count b in
+  Emo_eval.Int (if count >= 63 then 0 else x lsl count)
+
+let shr a b =
+  let x = unbox_int a in
+  let count = shift_count b in
+  Emo_eval.Int (if count >= 63 then if x < 0 then -1 else 0 else x asr count)
+
+let bit_not = function
+  | Emo_eval.Int x -> Emo_eval.Int (lnot x)
+  | v -> failwith (type_error v "Int")
+
+(* Native-int shifts for the specialized path: the operands are already
+   unboxed, so the guard must live here rather than in emitted code. *)
+let shl_int (x : int) (count : int) : int =
+  if count < 0 then failwith "shift count must be non-negative"
+  else if count >= 63 then 0
+  else x lsl count
+
+let shr_int (x : int) (count : int) : int =
+  if count < 0 then failwith "shift count must be non-negative"
+  else if count >= 63 then if x < 0 then -1 else 0
+  else x asr count
+
 let lt a b =
   match (a, b) with
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Bool (x < y)

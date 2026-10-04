@@ -27,6 +27,11 @@ let binop_spelling = function
   | Emo_ast.Mul -> "*"
   | Emo_ast.Div -> "/"
   | Emo_ast.Mod -> "%"
+  | Emo_ast.Bit_and -> "&"
+  | Emo_ast.Bit_or -> "|"
+  | Emo_ast.Bit_xor -> "^"
+  | Emo_ast.Shl -> "<<"
+  | Emo_ast.Shr -> ">>"
   | Emo_ast.And -> "&&"
   | Emo_ast.Or -> "||"
 
@@ -60,7 +65,10 @@ let rec pp_expr fmt (e : Emo_ast.expr) =
       Format.fprintf fmt "(array @[<hov>%a@])" (pp_list pp_expr) es
   | Unary (op, e) ->
       Format.fprintf fmt "(%s %a)"
-        (match op with Emo_ast.Not -> "!" | Emo_ast.Neg -> "-")
+        (match op with
+        | Emo_ast.Not -> "!"
+        | Emo_ast.Neg -> "-"
+        | Emo_ast.Bit_not -> "~")
         pp_expr e
   | Binary (op, l, r) ->
       Format.fprintf fmt "(%s %a %a)" (binop_spelling op) pp_expr l pp_expr r

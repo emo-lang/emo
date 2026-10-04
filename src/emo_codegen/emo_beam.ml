@@ -162,6 +162,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
            | Emo_ast.Ge -> "ge"
            | Emo_ast.Eq -> "eq"
            | Emo_ast.Ne -> "ne"
+           | Emo_ast.Bit_and -> "band"
+           | Emo_ast.Bit_or -> "bor"
+           | Emo_ast.Bit_xor -> "bxor"
+           | Emo_ast.Shl -> "shl"
+           | Emo_ast.Shr -> "shr"
            | Emo_ast.And | Emo_ast.Or -> "add"));
       args_list env [ l; r ]
   | Unary (Emo_ast.Neg, x) ->
@@ -169,6 +174,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
       args_list env [ x ]
   | Unary (Emo_ast.Not, x) ->
       put env "apply 'emo_not'/1 ";
+      args_list env [ x ]
+  | Unary (Emo_ast.Bit_not, x) ->
+      put env "apply 'emo_bnot'/1 ";
       args_list env [ x ]
   | Tuple es ->
       put env "{";
@@ -702,6 +710,11 @@ and guard_expr env (x : Emo_ir.expr) : unit =
         | Emo_ast.Mul -> "'*'"
         | Emo_ast.Div -> "'div'"
         | Emo_ast.Mod -> "'rem'"
+        | Emo_ast.Bit_and -> "'band'"
+        | Emo_ast.Bit_or -> "'bor'"
+        | Emo_ast.Bit_xor -> "'bxor'"
+        | Emo_ast.Shl -> "'bsl'"
+        | Emo_ast.Shr -> "'bsr'"
       in
       put env ("call 'erlang':" ^ raw ^ "(");
       guard_expr env l;
@@ -714,6 +727,10 @@ and guard_expr env (x : Emo_ir.expr) : unit =
       put env ")"
   | Unary (Emo_ast.Neg, x) ->
       put env "call 'erlang':'-'(";
+      guard_expr env x;
+      put env ")"
+  | Unary (Emo_ast.Bit_not, x) ->
+      put env "call 'erlang':'bnot'(";
       guard_expr env x;
       put env ")"
   | _ ->
@@ -811,6 +828,74 @@ let rt_source =
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_band'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_integer'(_y) ->
+		    apply 'emo_mask'/1 (call 'erlang':'band'(_x, _y))
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_bor'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_integer'(_y) ->
+		    apply 'emo_mask'/1 (call 'erlang':'bor'(_x, _y))
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_bxor'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_integer'(_y) ->
+		    apply 'emo_mask'/1 (call 'erlang':'bxor'(_x, _y))
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_shl'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_integer'(_y) ->
+		    apply 'emo_mask'/1 (call 'erlang':'bsl'(_x, _y))
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_shr'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_integer'(_y) ->
+		    apply 'emo_mask'/1 (call 'erlang':'bsr'(_x, _y))
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_bnot'/1 =
+    fun (_a) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      apply 'emo_mask'/1 (call 'erlang':'bnot'(_x))
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
 	end
 
 'emo_mul'/2 =

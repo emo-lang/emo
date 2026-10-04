@@ -340,6 +340,8 @@ and emit_expr env (e : Emo_ir.expr) : string =
         (String.concat "; " (List.map (emit_expr env) es))
   | Emo_ir.Unary (Ast.Not, x) ->
       Printf.sprintf "(Emo_runtime.not_ (%s))" (emit_expr env x)
+  | Emo_ir.Unary (Ast.Bit_not, x) ->
+      Printf.sprintf "(Emo_runtime.bit_not (%s))" (emit_expr env x)
   | Emo_ir.Unary (Ast.Neg, x) ->
       if env.native && e.Emo_ir.ety = Emo_check.Int then
         Printf.sprintf "(- %s)" (emit_expr env x)
@@ -379,6 +381,11 @@ and emit_expr env (e : Emo_ir.expr) : string =
           | Ast.Mul -> "mul"
           | Ast.Div -> "div"
           | Ast.Mod -> "modulo"
+          | Ast.Bit_and -> "bit_and"
+          | Ast.Bit_or -> "bit_or"
+          | Ast.Bit_xor -> "bit_xor"
+          | Ast.Shl -> "shl"
+          | Ast.Shr -> "shr"
           | Ast.And -> "and_"
           | Ast.Or -> "or_"
         in
@@ -477,13 +484,27 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
         | Ast.Ne -> "<>"
         | Ast.And -> "&&"
         | Ast.Or -> "||"
+        | Ast.Bit_and -> "land"
+        | Ast.Bit_or -> "lor"
+        | Ast.Bit_xor -> "lxor"
+        | Ast.Shl -> ""
+        | Ast.Shr -> ""
       in
-      Printf.sprintf "(%s %s %s)" (emit_native_expr env l) op_str
-        (emit_native_expr env r)
+      if op = Ast.Shl then
+        Printf.sprintf "(Emo_runtime.shl_int %s %s)" (emit_native_expr env l)
+          (emit_native_expr env r)
+      else if op = Ast.Shr then
+        Printf.sprintf "(Emo_runtime.shr_int %s %s)" (emit_native_expr env l)
+          (emit_native_expr env r)
+      else
+        Printf.sprintf "(%s %s %s)" (emit_native_expr env l) op_str
+          (emit_native_expr env r)
   | Emo_ir.Unary (Ast.Neg, x) ->
       if e.Emo_ir.ety = Emo_check.Float then
         Printf.sprintf "(-. %s)" (emit_native_expr env x)
       else Printf.sprintf "(- %s)" (emit_native_expr env x)
+  | Emo_ir.Unary (Ast.Bit_not, x) ->
+      Printf.sprintf "(lnot %s)" (emit_native_expr env x)
   | Emo_ir.Unary (Ast.Not, x) ->
       Printf.sprintf "(not %s)" (emit_native_expr env x)
   | Emo_ir.Call { func; args } ->
