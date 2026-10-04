@@ -1,0 +1,30 @@
+// Bytes: a fixed-length mutable byte buffer
+//
+//   emo run main.emo
+
+const buf = Bytes.new(8)
+print(buf.length())
+print(buf.get(0))
+buf.set(0, 72)
+buf.set(1, 105)
+print(buf.get(0) + buf.get(1))
+
+// little-endian accessors
+const num = Bytes.new(4)
+num.set_u32_le(0, 1094861636)
+print(num.get_u16_le(0))
+print(num.get_u16_le(2))
+print(num.get_u32_le(0))
+
+// String interop: raw reinterpretation
+const raw = "emo".to_bytes()
+print(raw.length())
+raw.set(0, 69)
+print(raw.to_string())
+
+// equality is content equality
+const a = "ab".to_bytes()
+const b = "ab".to_bytes()
+if a == b {
+  print("same bytes")
+}

@@ -140,9 +140,15 @@ already answered by existing mechanisms:
       types: lexer, parser, checker, interpreter, and all four
       backends; `examples/bit_ops/` golden through `emo run` and
       every target's CI group.
-- [ ] **T19.2** — The `Bytes` core type: construction, bounds-
+- [x] **T19.2** — The `Bytes` core type: construction, bounds-
       checked get/set, little-endian accessors, String interop; all
-      four backends; golden example.
+      four backends; golden example. The u64 accessors wait for
+      `Int64` (T19.4) — 63-bit host Int cannot carry them. Known wasm
+      gap: printing a raw `Bytes` value (its labeled display) traps —
+      the `to_str` bytes branch interacts with something subtle in the
+      chain and is backed out; `to_string()` (raw) and every other
+      method work. Revisit with the label as a `to_str` caller-side
+      wrapper.
 - [ ] **T19.3** — `file.read` stdlib package (native, scheduler-
       direct); a golden example reading a file from disk.
 - [ ] **T19.4** — `Int64` and `Byte`: literals, wrap-around

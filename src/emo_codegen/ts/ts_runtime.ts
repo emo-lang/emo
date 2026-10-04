@@ -57,6 +57,13 @@ class EBox {
   }
 }
 
+class EBytes {
+  data: Uint8Array;
+  constructor(n: number) {
+    this.data = new Uint8Array(n);
+  }
+}
+
 class ETuple {
   items: any[];
   constructor(items: any[]) {
@@ -157,6 +164,11 @@ function deepEq(a: any, b: any): boolean {
     );
   if (a instanceof EEnum && b instanceof EEnum)
     return a.type === b.type && a.member === b.member;
+  if (a instanceof EBytes && b instanceof EBytes)
+    return (
+      a.data.length === b.data.length &&
+      a.data.every((x: number, i: number) => x === b.data[i])
+    );
   if (
     a &&
     b &&
@@ -178,6 +190,7 @@ function toStr(v: any): string {
   if (isFloat(v)) return floatStr(v.v);
   if (isChar(v)) return v.c;
   if (v instanceof EBox) return toStr(v.v);
+  if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
   if (v instanceof ETuple) return "(" + v.items.map(toStr).join(", ") + ")";
   if (v instanceof EArray) return "[" + v.items.map(toStr).join(", ") + "]";
   if (v instanceof EEnum) return v.type + "." + v.member;
@@ -202,6 +215,7 @@ function tag(v: any): string {
   if (v instanceof EArray) return "Array";
   if (v instanceof EEnum) return "Enum";
   if (v instanceof EBox) return "Box";
+  if (v instanceof EBytes) return "Bytes";
   return "an instance";
 }
 
@@ -226,6 +240,11 @@ const E: any = {
   tuple: (...items: any[]) => new ETuple(items),
   array: (items: any[]) => new EArray(items),
   box: (v: any) => new EBox(v),
+  bytesNew: (n: any) => {
+    if (!isInt(n) || (n as number) < 0)
+      throw new Error("`Bytes.new` needs a non-negative Int length");
+    return new EBytes(n as number);
+  },
   enum_: (type: string, member: string) => new EEnum(type, member),
 
   eq: deepEq,
@@ -326,6 +345,66 @@ const E: any = {
         recv.v = args[0];
         return args[0];
       }
+      if (recv instanceof EBytes) {
+        const d = recv.data;
+        const idx = (mname2: string) => {
+          if (typeof args[0] !== "number" || !Number.isInteger(args[0]))
+            throw new Error("`" + mname2 + "` expects an Int index");
+          if (args[0] < 0 || args[0] >= d.length)
+            throw new Error(
+              "index " + args[0] + " is out of bounds for a length-" + d.length + " Bytes"
+            );
+          return args[0] as number;
+        };
+        if (name === "length") return d.length;
+        if (name === "get") return d[idx(name)];
+        if (name === "set") {
+          const i = idx(name);
+          const v = args[1] as number;
+          if (!Number.isInteger(v) || v < 0 || v > 255)
+            throw new Error("`set` expects a byte value in 0-255");
+          d[i] = v;
+          return v;
+        }
+        if (name === "get_u16_le" || name === "get_u32_le") {
+          const w = name === "get_u16_le" ? 2 : 4;
+          const i = args[0] as number;
+          if (
+            typeof i !== "number" ||
+            i < 0 ||
+            i + w > d.length
+          )
+            throw new Error(
+              "index " + args[0] + " is out of bounds for a " + name + " read"
+            );
+          let acc = 0;
+          for (let k = w - 1; k >= 0; k--) acc = (acc << 8) | d[i + k];
+          return acc;
+        }
+        if (name === "set_u16_le" || name === "set_u32_le") {
+          const w = name === "set_u16_le" ? 2 : 4;
+          const i = args[0] as number;
+          let v = args[1] as number;
+          if (
+            typeof i !== "number" ||
+            i < 0 ||
+            i + w > d.length
+          )
+            throw new Error(
+              "index " + args[0] + " is out of bounds for a " + name + " write"
+            );
+          if (!Number.isInteger(v))
+            throw new Error("`" + name + "` expects an Int value");
+          v = v >>> 0;
+          for (let k = 0; k < w; k++) d[i + k] = (v >>> (8 * k)) & 0xff;
+          return w === 2 ? v & 0xffff : v >>> 0;
+        }
+        if (name === "to_string") {
+          let s = "";
+          for (let i = 0; i < d.length; i++) s += String.fromCharCode(d[i]);
+          return s;
+        }
+      }
       if (name === "length" && recv instanceof EArray)
         return recv.items.length;
       if (name === "append" && recv instanceof EArray)
@@ -370,6 +449,12 @@ const E: any = {
         if (body === "" || !/^[0-9]+$/.test(body))
           throw new Error("cannot parse `" + recv + "` as an Int");
         return parseInt(recv, 10);
+      }
+      if (name === "to_bytes") {
+        const out = new EBytes(recv.length);
+        for (let i = 0; i < recv.length; i++)
+          out.data[i] = recv.charCodeAt(i) & 0xff;
+        return out;
       }
     }
     throw new Error(
