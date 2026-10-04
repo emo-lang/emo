@@ -1185,6 +1185,7 @@ let ts_golden_tests =
       ("fib", "main.emo");
       ("objects", "main.emo");
       ("function_group", "main.emo");
+      ("showcase", "main.emo");
     ]
 
 let () =

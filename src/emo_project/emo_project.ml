@@ -425,7 +425,15 @@ let prepare ~entry_file :
         | m -> m
         | exception Emo_pkg.Manifest_error d -> raise (Static_errors [ d ])
       in
-      let dir = Filename.dirname manifest_path in
+      (* Re-root at an absolute manifest directory: every registered
+         file path is then absolute, so the entry lookup (which
+         absolutizes the entry file) matches what the walk registers —
+         a relative entry used to slip past the match and get lowered
+         twice, once as the root module and once under its own name. *)
+      let dir =
+        let d = Filename.dirname manifest_path in
+        if Filename.is_relative d then Filename.concat (Sys.getcwd ()) d else d
+      in
       Hashtbl.reset p.files;
       Hashtbl.reset p.dirs;
       Hashtbl.replace p.dirs [] dir;
@@ -589,15 +597,43 @@ let compile_inputs ~entry_file ~target :
     prepared;
   let module_paths = module_paths p in
   let diagnostics = ref [] in
+  (* The entry file is reachable via two paths (the project root and
+     its own name); keep one module_input per distinct file, preferring
+     the shorter path so the entry module stays rooted. *)
+  let seen_files = Hashtbl.create 8 in
   let inputs =
     Hashtbl.fold
       (fun path file acc ->
-        let items = parse_cached p file in
-        let diags, _refs, _requires, types =
-          Emo_check.check_module_typed ~modules:module_paths ~current:path items
-        in
-        diagnostics := !diagnostics @ diags;
-        { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc)
+        match Hashtbl.find_opt seen_files file with
+        | Some kept when List.length kept <= List.length path -> acc
+        | kept ->
+            let keep =
+              match kept with
+              | Some k when List.length k <= List.length path -> false
+              | _ -> true
+            in
+            if not keep then acc
+            else begin
+              Hashtbl.replace seen_files file path;
+              let items = parse_cached p file in
+              let diags, _refs, _requires, types =
+                Emo_check.check_module_typed ~modules:module_paths ~current:path
+                  items
+              in
+              diagnostics := !diagnostics @ diags;
+              match kept with
+              | Some old_path ->
+                  acc
+                  |> List.filter (fun (m : Emo_ir.module_input) ->
+                      not
+                        (String.equal
+                           (String.concat "/" m.Emo_ir.mpath)
+                           (String.concat "/" old_path)))
+                  |> List.cons
+                       { Emo_ir.mpath = path; mitems = items; mtypes = types }
+              | None ->
+                  { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc
+            end)
       p.files []
   in
   let entry_abs = entry_path entry_file in

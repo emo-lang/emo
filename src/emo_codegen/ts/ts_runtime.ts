@@ -3,6 +3,35 @@
 // programs are self-contained — this prelude is prepended to the
 // generated code, so everything lives in one namespace, E.
 
+// Processes: each task runs under an async-local store carrying its
+// pid, so `self_pid()` is correct across awaits.
+import { AsyncLocalStorage } from "node:async_hooks";
+const _als = new AsyncLocalStorage<{ pid: number }>();
+const _mailboxes = new Map<number, any[]>();
+const _waiters = new Map<number, (msg: any) => void>();
+let _nextPid = 1;
+
+class EHalt {}
+class EReturn {
+  value: any;
+  constructor(value: any) {
+    this.value = value;
+  }
+}
+
+// Processes end cleanly on EHalt/EReturn and on an uncaught Emo
+// exception (reported, killing only the offending process).
+function _taskError(e: any): any {
+  if (e instanceof EHalt || e instanceof EReturn) return undefined;
+  if (e instanceof EEmoException) {
+    console.error(
+      "error[E3010]: uncaught exception: " + to_string(e.messageValue)
+    );
+    return undefined;
+  }
+  throw e;
+}
+
 // Node runs emitted programs in strip-only mode: plain field
 // declarations and explicit assignments only — no parameter
 // properties, no enums, no decorators.
@@ -336,6 +365,81 @@ const E: any = {
   // Registered by the emitted program: interface name → method/arity
   // list, for `is` narrowing against interfaces.
   interfaces: {} as Record<string, [string, number][]>,
+
+  // ---- Processes ----
+
+  spawn(task: () => Promise<any>): EPid {
+    const pid = new EPid(_nextPid++);
+    _mailboxes.set(pid.id, []);
+    _als.run({ pid: pid.id }, () => {
+      (async () => task())().catch((e) => _taskError(e));
+    });
+    return pid;
+  },
+
+  self(): EPid {
+    const st = _als.getStore();
+    if (!st) throw new Error("self_pid() outside a process");
+    return new EPid(st.pid);
+  },
+
+  send(to: any, msg: any): any {
+    const id = to instanceof EPid ? to.id : to;
+    const waiter = _waiters.get(id);
+    const q = _mailboxes.get(id) || [];
+    if (waiter) {
+      _waiters.delete(id);
+      waiter(msg);
+    } else {
+      q.push(msg);
+    }
+    return msg;
+  },
+
+  // Selective receive: the dispatch runs each branch's body for the
+  // first message it matches (returning anything but false); non-
+  // matching messages stay in the mailbox in order; no match means the
+  // task waits for the next delivery.
+  async receive(dispatch: (msg: any) => Promise<any>): Promise<any> {
+    const pid = _als.getStore()!.pid;
+    for (;;) {
+      const q = _mailboxes.get(pid)!;
+      let i = 0;
+      while (i < q.length) {
+        const msg = q[i];
+        q.splice(i, 1);
+        const r = await dispatch(msg);
+        if (r !== false) return r;
+        q.splice(i, 0, msg);
+        i++;
+      }
+      // Queue drained: the next delivery resolves us directly with the
+      // message (send hands it to the waiter, not to the mailbox).
+      const fresh = await new Promise<any>((res) => _waiters.set(pid, res));
+      const r = await dispatch(fresh);
+      if (r !== false) return r;
+      // No branch took it: keep it at the head so FIFO order holds.
+      q.unshift(fresh);
+    }
+  },
+
+  halt(): never {
+    throw new EHalt();
+  },
+
+  // Runs the entry under the main process (pid 0). Spawned tasks run
+  // on the event loop; the program ends when the entry ends.
+  runMain(entry: () => Promise<any>): Promise<void> {
+    const pid = _nextPid++;
+    _mailboxes.set(pid, []);
+    return _als.run({ pid }, async () => {
+      try {
+        await entry();
+      } catch (e) {
+        _taskError(e);
+      }
+    });
+  },
 };
 
 // `is` narrowing: an interface check when one is registered under the

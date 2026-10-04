@@ -1,0 +1,9 @@
+// A plain module: quantity pricing with a case over bindings and a
+// guard.
+def price(qty Int) Int {
+  case qty {
+    0 -> { return 0 }
+    n when n > 10 -> { return n * 8 }
+    n -> { return n * 10 }
+  }
+}

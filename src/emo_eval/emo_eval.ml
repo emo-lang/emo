@@ -368,6 +368,11 @@ and debug_value v =
 let interface_registry : (string, (string * int) list) Hashtbl.t =
   Hashtbl.create 8
 
+(* Function groups are project-global at runtime: a group defined in
+   one module is callable from another module's processes. *)
+let group_registry : (string, (string * value) list) Hashtbl.t ref =
+  ref (Hashtbl.create 8)
+
 (* `x.is(T)` — the runtime half of narrowing: exact class for classes, the
    declaring enum for members, and a structural method-shape check for
    interfaces. *)
@@ -994,289 +999,315 @@ and eval_method env span recv mname arg_exprs =
       error span "E3007"
         (Printf.sprintf "`%s` expects no arguments, got %d" what argc)
   in
-  let base = eval_expr env recv in
-  match (base, mname) with
-  | EmoGroup members, _ -> (
-      (* a group member: defs apply, consts produce their value. A bare
-         def reference (`Foo.hello` without a call) is the block itself. *)
+  match recv.Ast.desc with
+  | Ast.Type_ident gname when Hashtbl.mem !group_registry gname ->
+      let members = Hashtbl.find !group_registry gname in
       if not (List.mem_assoc mname members) then
         error span "E4001"
-          (Printf.sprintf "this group has no member `%s`" mname);
+          (Printf.sprintf "the group `%s` has no member `%s`" gname mname);
       let v = List.assoc mname members in
-      match v with
-      | ArrowBlock closure ->
-          let args = eval_args_named () in
-          let frame = bind_params closure span args in
-          eval_frame closure frame span
-      | const_value ->
-          if argc > 0 then
-            error span "E3007"
-              (Printf.sprintf "`%s` is a constant and takes no arguments" mname);
-          const_value)
-  | Module h, _ ->
-      let v = module_member span h mname in
+      let arity =
+        match v with ArrowBlock c -> List.length c.params | _ -> 0
+      in
+      if List.length arg_exprs <> arity then
+        error span "E3007"
+          (Printf.sprintf "`%s.%s` expects %d argument(s), got %d" gname mname
+             arity (List.length arg_exprs));
       let args = eval_args_named () in
       apply v span args
-  | Instance i, mname when List.mem_assoc mname i.iclass.cmethods ->
-      let closure = List.assoc mname i.iclass.cmethods in
-      let args = eval_args_named () in
-      let frame = bind_params closure span args in
-      define frame "self" ~mutable_:false (Instance i);
-      eval_frame closure frame span
-  | ClassDef c, "new" -> (
-      let args = eval_args_named () in
-      match c.cinit with
-      | Some init ->
-          let instance = Instance { iclass = c; ifields = [] } in
-          let frame = bind_params init span args in
-          define frame "self" ~mutable_:false instance;
-          (* init constructs; it does not return a value. An early `return`
+  | _ -> (
+      let base = eval_expr env recv in
+      match (base, mname) with
+      | EmoGroup members, _ -> (
+          (* a group member: defs apply, consts produce their value. A bare
+         def reference (`Foo.hello` without a call) is the block itself. *)
+          if not (List.mem_assoc mname members) then
+            error span "E4001"
+              (Printf.sprintf "this group has no member `%s`" mname);
+          let v = List.assoc mname members in
+          match v with
+          | ArrowBlock closure ->
+              let args = eval_args_named () in
+              let frame = bind_params closure span args in
+              eval_frame closure frame span
+          | const_value ->
+              if argc > 0 then
+                error span "E3007"
+                  (Printf.sprintf "`%s` is a constant and takes no arguments"
+                     mname);
+              const_value)
+      | Module h, _ ->
+          let v = module_member span h mname in
+          let args = eval_args_named () in
+          apply v span args
+      | Instance i, mname when List.mem_assoc mname i.iclass.cmethods ->
+          let closure = List.assoc mname i.iclass.cmethods in
+          let args = eval_args_named () in
+          let frame = bind_params closure span args in
+          define frame "self" ~mutable_:false (Instance i);
+          eval_frame closure frame span
+      | ClassDef c, "new" -> (
+          let args = eval_args_named () in
+          match c.cinit with
+          | Some init ->
+              let instance = Instance { iclass = c; ifields = [] } in
+              let frame = bind_params init span args in
+              define frame "self" ~mutable_:false instance;
+              (* init constructs; it does not return a value. An early `return`
              simply ends the window, and no implicit value exists. *)
-          (try List.iter (eval_stmt frame) init.body with
-          | Return_signal _ -> ()
-          | Tail_call _ -> ());
-          instance
-      | None when c.builtin_exception -> (
-          match args with
-          | [ (Some "message", v) ] | [ (None, v) ] ->
-              Instance { iclass = c; ifields = [ ("message", v) ] }
-          | _ -> error span "E3007" "`Exception.new` expects `message`")
-      | None ->
-          if List.length args > 0 then
-            error span "E3007"
-              (Printf.sprintf
-                 "class `%s` declares no `init`; `new` takes no arguments"
-                 c.cname);
-          Instance { iclass = c; ifields = [] })
-  | ClassDef c, m ->
-      error span "E3007"
-        (Printf.sprintf "class `%s` has no member `%s`" c.cname m)
-  | TypeValue "Box", "new" -> (
-      let args = eval_args () in
-      match args with
-      | [ v ] -> Box (ref v)
-      | _ ->
+              (try List.iter (eval_stmt frame) init.body with
+              | Return_signal _ -> ()
+              | Tail_call _ -> ());
+              instance
+          | None when c.builtin_exception -> (
+              match args with
+              | [ (Some "message", v) ] | [ (None, v) ] ->
+                  Instance { iclass = c; ifields = [ ("message", v) ] }
+              | _ -> error span "E3007" "`Exception.new` expects `message`")
+          | None ->
+              if List.length args > 0 then
+                error span "E3007"
+                  (Printf.sprintf
+                     "class `%s` declares no `init`; `new` takes no arguments"
+                     c.cname);
+              Instance { iclass = c; ifields = [] })
+      | ClassDef c, m ->
           error span "E3007"
-            (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
-  | TypeValue t, m ->
-      error span "E3009" (Printf.sprintf "type `%s` has no member `%s` yet" t m)
-  | v, "to_string" ->
-      none_expected "to_string";
-      String (to_string v)
-  | Array xs, "length" ->
-      none_expected "length";
-      Int (Array.length xs)
-  | Tuple xs, "length" ->
-      none_expected "length";
-      Int (List.length xs)
-  | Box r, "read" ->
-      none_expected "read";
-      !r
-  | Box r, "replace" -> (
-      let args = eval_args () in
-      match args with
-      | [ v ] ->
-          r := v;
-          v
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
-  | TcpConn c, "read_line" ->
-      none_expected "read_line";
-      String (Effect.perform (Net_read_line (c, span)))
-  | TcpConn c, "read_exactly" -> (
-      match eval_args () with
-      | [ Int n ] -> String (Effect.perform (Net_read_exactly (c, n, span)))
-      | [ v ] ->
-          error span "E3001"
-            (Printf.sprintf "`read_exactly` expects an Int, got %s"
-               (type_name v))
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`read_exactly` expects 1 argument, got %d" argc))
-  | TcpConn c, "read_all" ->
-      none_expected "read_all";
-      String (Effect.perform (Net_read_all (c, span)))
-  | TcpConn c, "write" -> (
-      match eval_args () with
-      | [ String s ] ->
-          Effect.perform (Net_write (c, s, span));
-          TcpConn c
-      | [ v ] ->
-          error span "E3001"
-            (Printf.sprintf "`write` expects a String, got %s" (type_name v))
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`write` expects 1 argument, got %d" argc))
-  | TcpConn c, "close" ->
-      none_expected "close";
-      TcpConn (Effect.perform (Net_close_conn (c, span)))
-  | TcpConn c, "set_timeout" -> (
-      match eval_args () with
-      | [ Float f ] when f >= 0.0 ->
-          c.ctimeout <- f;
-          TcpConn c
-      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
-      | [ v ] ->
-          error span "E3001"
-            (Printf.sprintf "`set_timeout` expects a Float, got %s"
-               (type_name v))
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
-  | TcpListener l, "accept" ->
-      none_expected "accept";
-      TcpConn (Effect.perform (Net_accept (l, span)))
-  | TcpListener { lunix = true; ldesc; _ }, "port" ->
-      error span "E3007"
-        (Printf.sprintf "a unix-domain listener (%s) has no port" ldesc)
-  | TcpListener l, "port" ->
-      none_expected "port";
-      Int l.lport
-  | TcpListener l, "close" ->
-      none_expected "close";
-      TcpListener (Effect.perform (Net_close_listener (l, span)))
-  | TcpListener l, "set_timeout" -> (
-      match eval_args () with
-      | [ Float f ] when f >= 0.0 ->
-          l.ltimeout <- f;
-          TcpListener l
-      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
-      | [ v ] ->
-          error span "E3001"
-            (Printf.sprintf "`set_timeout` expects a Float, got %s"
-               (type_name v))
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
-  | UdpSocket u, "send_to" -> (
-      match eval_args () with
-      | [ String host; Int port; String data ] -> (
-          let addrs = Effect.perform (Net_resolve (host, span)) in
-          match addrs with
-          | addr :: _ ->
-              Effect.perform (Net_udp_send_to (u, addr, port, data, span));
-              UdpSocket u
-          | [] ->
-              raise
-                (net_raise span
-                   (Printf.sprintf "cannot resolve host `%s`" host)))
-      | _ ->
-          error span "E3007"
-            "`send_to` expects (host String, port Int, data String)")
-  | UdpSocket u, "recv_from" ->
-      none_expected "recv_from";
-      let received = Effect.perform (Net_udp_recv_from (u, span)) in
-      received
-  | UdpSocket u, "port" ->
-      none_expected "port";
-      Int u.uport
-  | UdpSocket u, "close" ->
-      none_expected "close";
-      UdpSocket (Effect.perform (Net_udp_close (u, span)))
-  | UdpSocket u, "set_timeout" -> (
-      match eval_args () with
-      | [ Float f ] when f >= 0.0 ->
-          u.utimeout <- f;
-          UdpSocket u
-      | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
-      | [ v ] ->
-          error span "E3001"
-            (Printf.sprintf "`set_timeout` expects a Float, got %s"
-               (type_name v))
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc))
-  | String s, "length" ->
-      none_expected "length";
-      Int (String.length s)
-  | String s, "substring" -> (
-      match eval_args () with
-      | [ Int start; Int len ]
-        when start >= 0 && len >= 0 && start + len <= String.length s ->
-          String (String.sub s start len)
-      | [ Int start; Int len ] ->
-          error span "E3004"
-            (Printf.sprintf
-               "substring (%d, %d) is out of bounds for a length-%d String"
-               start len (String.length s))
-      | _ -> error span "E3007" "`substring` expects (start Int, length Int)")
-  | String s, "split" -> (
-      match eval_args () with
-      | [ String sep ] when sep <> "" ->
-          Array
-            (Array.of_list
-               (List.map (fun part -> String part) (split_on_string sep s)))
-      | [ String _ ] -> error span "E3007" "the separator must not be empty"
-      | _ -> error span "E3007" "`split` expects a String separator")
-  | String s, "trim" ->
-      none_expected "trim";
-      String (String.trim s)
-  | String s, "lower" ->
-      none_expected "lower";
-      String (String.lowercase_ascii s)
-  | String s, "index_of" -> (
-      match eval_args () with
-      | [ String needle ] ->
-          let rec find i =
-            if i + String.length needle > String.length s then None
-            else if String.sub s i (String.length needle) = needle then Some i
-            else find (i + 1)
-          in
-          Int (match find 0 with Some i -> i | None -> -1)
-      | _ -> error span "E3007" "`index_of` expects a String needle")
-  | String s, "starts_with" -> (
-      match eval_args () with
-      | [ String prefix ] -> Bool (String.starts_with ~prefix s)
-      | _ -> error span "E3007" "`starts_with` expects a String prefix")
-  | String s, "to_int" -> (
-      match parse_decimal s with
-      | Some n -> Int n
-      | None ->
-          error span "E3007" (Printf.sprintf "cannot parse `%s` as an Int" s))
-  | Array xs, "append" -> (
-      match eval_args () with
-      | [ v ] -> Array (Array.append xs [| v |])
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`append` expects 1 argument, got %d" argc))
-  | Instance i, "is" -> (
-      let args = eval_args () in
-      match args with
-      | [ t ] -> Bool (runtime_is span (Instance i) t)
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
-  | (EnumMember _ as v), "is" -> (
-      let args = eval_args () in
-      match args with
-      | [ t ] -> Bool (runtime_is span v t)
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
-  | Instance i, mname ->
-      error span "E3007"
-        (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i.iclass.cname
-           mname)
-  | Obj o, "is" -> (
-      let args = eval_args () in
-      match args with
-      | [ t ] -> Bool (runtime_is span (Obj o) t)
-      | _ ->
-          error span "E3007"
-            (Printf.sprintf "`is` expects 1 argument, got %d" argc))
-  | Obj o, mname -> (
-      match Hashtbl.find_opt o.omethods mname with
-      | Some (_arity, f) ->
+            (Printf.sprintf "class `%s` has no member `%s`" c.cname m)
+      | TypeValue "Box", "new" -> (
           let args = eval_args () in
-          f args
-      | None ->
+          match args with
+          | [ v ] -> Box (ref v)
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
+      | TypeValue t, m ->
+          error span "E3009"
+            (Printf.sprintf "type `%s` has no member `%s` yet" t m)
+      | v, "to_string" ->
+          none_expected "to_string";
+          String (to_string v)
+      | Array xs, "length" ->
+          none_expected "length";
+          Int (Array.length xs)
+      | Tuple xs, "length" ->
+          none_expected "length";
+          Int (List.length xs)
+      | Box r, "read" ->
+          none_expected "read";
+          !r
+      | Box r, "replace" -> (
+          let args = eval_args () in
+          match args with
+          | [ v ] ->
+              r := v;
+              v
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+      | TcpConn c, "read_line" ->
+          none_expected "read_line";
+          String (Effect.perform (Net_read_line (c, span)))
+      | TcpConn c, "read_exactly" -> (
+          match eval_args () with
+          | [ Int n ] -> String (Effect.perform (Net_read_exactly (c, n, span)))
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`read_exactly` expects an Int, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`read_exactly` expects 1 argument, got %d" argc)
+          )
+      | TcpConn c, "read_all" ->
+          none_expected "read_all";
+          String (Effect.perform (Net_read_all (c, span)))
+      | TcpConn c, "write" -> (
+          match eval_args () with
+          | [ String s ] ->
+              Effect.perform (Net_write (c, s, span));
+              TcpConn c
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`write` expects a String, got %s" (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`write` expects 1 argument, got %d" argc))
+      | TcpConn c, "close" ->
+          none_expected "close";
+          TcpConn (Effect.perform (Net_close_conn (c, span)))
+      | TcpConn c, "set_timeout" -> (
+          match eval_args () with
+          | [ Float f ] when f >= 0.0 ->
+              c.ctimeout <- f;
+              TcpConn c
+          | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`set_timeout` expects a Float, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc)
+          )
+      | TcpListener l, "accept" ->
+          none_expected "accept";
+          TcpConn (Effect.perform (Net_accept (l, span)))
+      | TcpListener { lunix = true; ldesc; _ }, "port" ->
           error span "E3007"
-            (Printf.sprintf "NoMethodError: `%s` has no method `%s`" o.ocname
-               mname))
-  | v, m ->
-      error span "E3007"
-        (Printf.sprintf "%s has no method `%s`" (type_name v) m)
+            (Printf.sprintf "a unix-domain listener (%s) has no port" ldesc)
+      | TcpListener l, "port" ->
+          none_expected "port";
+          Int l.lport
+      | TcpListener l, "close" ->
+          none_expected "close";
+          TcpListener (Effect.perform (Net_close_listener (l, span)))
+      | TcpListener l, "set_timeout" -> (
+          match eval_args () with
+          | [ Float f ] when f >= 0.0 ->
+              l.ltimeout <- f;
+              TcpListener l
+          | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`set_timeout` expects a Float, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc)
+          )
+      | UdpSocket u, "send_to" -> (
+          match eval_args () with
+          | [ String host; Int port; String data ] -> (
+              let addrs = Effect.perform (Net_resolve (host, span)) in
+              match addrs with
+              | addr :: _ ->
+                  Effect.perform (Net_udp_send_to (u, addr, port, data, span));
+                  UdpSocket u
+              | [] ->
+                  raise
+                    (net_raise span
+                       (Printf.sprintf "cannot resolve host `%s`" host)))
+          | _ ->
+              error span "E3007"
+                "`send_to` expects (host String, port Int, data String)")
+      | UdpSocket u, "recv_from" ->
+          none_expected "recv_from";
+          let received = Effect.perform (Net_udp_recv_from (u, span)) in
+          received
+      | UdpSocket u, "port" ->
+          none_expected "port";
+          Int u.uport
+      | UdpSocket u, "close" ->
+          none_expected "close";
+          UdpSocket (Effect.perform (Net_udp_close (u, span)))
+      | UdpSocket u, "set_timeout" -> (
+          match eval_args () with
+          | [ Float f ] when f >= 0.0 ->
+              u.utimeout <- f;
+              UdpSocket u
+          | [ Float _ ] -> error span "E3007" "the timeout must not be negative"
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`set_timeout` expects a Float, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`set_timeout` expects 1 argument, got %d" argc)
+          )
+      | String s, "length" ->
+          none_expected "length";
+          Int (String.length s)
+      | String s, "substring" -> (
+          match eval_args () with
+          | [ Int start; Int len ]
+            when start >= 0 && len >= 0 && start + len <= String.length s ->
+              String (String.sub s start len)
+          | [ Int start; Int len ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "substring (%d, %d) is out of bounds for a length-%d String"
+                   start len (String.length s))
+          | _ ->
+              error span "E3007" "`substring` expects (start Int, length Int)")
+      | String s, "split" -> (
+          match eval_args () with
+          | [ String sep ] when sep <> "" ->
+              Array
+                (Array.of_list
+                   (List.map (fun part -> String part) (split_on_string sep s)))
+          | [ String _ ] -> error span "E3007" "the separator must not be empty"
+          | _ -> error span "E3007" "`split` expects a String separator")
+      | String s, "trim" ->
+          none_expected "trim";
+          String (String.trim s)
+      | String s, "lower" ->
+          none_expected "lower";
+          String (String.lowercase_ascii s)
+      | String s, "index_of" -> (
+          match eval_args () with
+          | [ String needle ] ->
+              let rec find i =
+                if i + String.length needle > String.length s then None
+                else if String.sub s i (String.length needle) = needle then
+                  Some i
+                else find (i + 1)
+              in
+              Int (match find 0 with Some i -> i | None -> -1)
+          | _ -> error span "E3007" "`index_of` expects a String needle")
+      | String s, "starts_with" -> (
+          match eval_args () with
+          | [ String prefix ] -> Bool (String.starts_with ~prefix s)
+          | _ -> error span "E3007" "`starts_with` expects a String prefix")
+      | String s, "to_int" -> (
+          match parse_decimal s with
+          | Some n -> Int n
+          | None ->
+              error span "E3007"
+                (Printf.sprintf "cannot parse `%s` as an Int" s))
+      | Array xs, "append" -> (
+          match eval_args () with
+          | [ v ] -> Array (Array.append xs [| v |])
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`append` expects 1 argument, got %d" argc))
+      | Instance i, "is" -> (
+          let args = eval_args () in
+          match args with
+          | [ t ] -> Bool (runtime_is span (Instance i) t)
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`is` expects 1 argument, got %d" argc))
+      | (EnumMember _ as v), "is" -> (
+          let args = eval_args () in
+          match args with
+          | [ t ] -> Bool (runtime_is span v t)
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`is` expects 1 argument, got %d" argc))
+      | Instance i, mname ->
+          error span "E3007"
+            (Printf.sprintf "NoMethodError: `%s` has no method `%s`"
+               i.iclass.cname mname)
+      | Obj o, "is" -> (
+          let args = eval_args () in
+          match args with
+          | [ t ] -> Bool (runtime_is span (Obj o) t)
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`is` expects 1 argument, got %d" argc))
+      | Obj o, mname -> (
+          match Hashtbl.find_opt o.omethods mname with
+          | Some (_arity, f) ->
+              let args = eval_args () in
+              f args
+          | None ->
+              error span "E3007"
+                (Printf.sprintf "NoMethodError: `%s` has no method `%s`"
+                   o.ocname mname))
+      | v, m ->
+          error span "E3007"
+            (Printf.sprintf "%s has no method `%s`" (type_name v) m))
 
 and apply f span args =
   match f with
@@ -1858,7 +1889,8 @@ let eval_item env item =
                 | None -> assert false ))
             g.Ast.group_consts
       in
-      define env g.Ast.group_name ~mutable_:false (EmoGroup member_values)
+      define env g.Ast.group_name ~mutable_:false (EmoGroup member_values);
+      Hashtbl.replace !group_registry g.Ast.group_name member_values
   | Ast.Item_foreign f ->
       (* The compiled backend emits the external declaration; the
          interpreter has no C linkage. *)
@@ -1971,6 +2003,7 @@ let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
 
 let run_items items =
   Hashtbl.reset interface_registry;
+  Hashtbl.reset !group_registry;
   call_trace := [];
   let env = global_env () in
   (* Unscheduled runs refuse the process operations with E3009. *)

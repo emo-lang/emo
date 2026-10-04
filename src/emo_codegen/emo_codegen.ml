@@ -36,6 +36,7 @@ type env = {
       (* immutable bindings shadowing a ref (block params) *)
   specialize : bool; (* Stage B on/off for the whole build *)
   mutable native : bool; (* emitting a specialized body right now *)
+  mutable fname : string; (* the function being emitted *)
 }
 
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -543,6 +544,27 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
    remaining statements are in tail position inside the arms. *)
 (* [arm_unit] marks emission inside an if-arm: an empty arm is a plain
    fall-through, while an empty function body is the E3008 error. *)
+(* A case pattern over a native scrutinee: integer literals, bindings,
+   and wildcards only — the shapes the checker admits for annotated
+   integer scrutinees on this target. *)
+let rec emit_native_pattern env (p : Emo_ast.pattern) : string =
+  match p.Emo_ast.pattern_desc with
+  | Emo_ast.Wildcard -> "_"
+  | Emo_ast.Pattern_binding name ->
+      let v = "v_" ^ Emo_ir.sanitize_ident name in
+      env.refs <- v :: env.refs;
+      v
+  | Emo_ast.Pattern_literal (L_int n) -> string_of_int n
+  | Emo_ast.Pattern_literal (L_bool b) -> if b then "true" else "false"
+  | Emo_ast.Enum_member (t, m) ->
+      Printf.sprintf "(Emo_eval.EnumMember (%S, %S))" t m
+  | Emo_ast.Tuple_pattern ps ->
+      let parts = List.map (emit_native_pattern env) ps in
+      Printf.sprintf "(%s)" (String.concat ", " parts)
+  | Emo_ast.Pattern_literal (L_string str) -> Printf.sprintf "%S" str
+  | Emo_ast.Pattern_literal (L_float f) -> Printf.sprintf "%F" f
+  | _ -> failwith "native: unsupported case pattern"
+
 and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
     ~(arm_unit : bool) : string =
   (* Inside an if-arm, an explicit [return] leaves the function through
@@ -558,6 +580,67 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
       match stmts with
       | [] -> if arm_unit then "()" else "Emo_runtime.no_return ()"
       | [ Emo_ir.Return_stmt e ] -> emit_native_expr env e
+      | [ Emo_ir.Effect { desc = Emo_ir.Do_spawn { func; args } } ] ->
+          let spawn =
+            Printf.sprintf
+              "(Emo_runtime.spawn_args [%s] (fun args -> ignore (%s args)))"
+              (String.concat "; " (List.map (emit_expr env) args))
+              func
+          in
+          if arm_unit then Printf.sprintf "(let _ = %s in ())" spawn
+          else Printf.sprintf "(let _ = %s in\nEmo_runtime.no_return ())" spawn
+      | [ Emo_ir.Send { target; message } ] ->
+          let send_code =
+            Printf.sprintf "(Emo_runtime.send (%s) (%s))" (emit_expr env target)
+              (emit_expr env message)
+          in
+          if arm_unit then Printf.sprintf "(let _ = %s in ())" send_code
+          else
+            Printf.sprintf "(let _ = %s in\nEmo_runtime.no_return ())" send_code
+      | [ Emo_ir.Receive { branches } ] ->
+          let recv = emit_receive env branches ~tail:false in
+          if arm_unit then Printf.sprintf "(let _ = %s in ())" recv
+          else Printf.sprintf "(let _ = %s in\nEmo_runtime.no_return ())" recv
+      | [ Emo_ir.Case { scrutinee; branches } ] ->
+          (* a native case: integer/binding/wildcard patterns with
+             optional guards, as OCaml match arms; bindings enter
+             env.refs so body reads stay consistent *)
+          let saved_refs = env.refs in
+          let sv = "v_case_scrutinee" in
+          let arms =
+            branches
+            |> List.map (fun (b : Emo_ir.branch) ->
+                let saved = env.refs in
+                env.refs <- saved;
+                let pat = emit_native_pattern env b.Emo_ir.pattern in
+                let guard =
+                  match b.Emo_ir.guard with
+                  | Some g -> Printf.sprintf " when %s" (emit_native_expr env g)
+                  | None -> ""
+                in
+                let body =
+                  emit_native_stmts env b.Emo_ir.body ~tail:false
+                    ~arm_unit:false
+                in
+                env.refs <- saved;
+                Printf.sprintf "| %s%s ->\n(%s)\n" pat guard body)
+            |> String.concat ""
+          in
+          let fallback =
+            if
+              List.exists
+                (fun (b : Emo_ir.branch) ->
+                  match b.Emo_ir.pattern.Emo_ast.pattern_desc with
+                  | Emo_ast.Wildcard | Emo_ast.Pattern_binding _ -> true
+                  | _ -> false)
+                branches
+            then ""
+            else "\n| _ -> Emo_runtime.no_return ()"
+          in
+          env.refs <- saved_refs;
+          Printf.sprintf "(let %s = %s in\nmatch %s with\n%s%s)" sv
+            (emit_native_expr env scrutinee)
+            sv arms fallback
       | [ Emo_ir.Effect e ] ->
           if arm_unit then
             Printf.sprintf "(let _ = %s in ())" (emit_native_expr env e)
@@ -609,7 +692,19 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
               let code = emit_native_expr env e in
               if tail then code
               else Printf.sprintf "(raise (Native_return %s))" code
-          | _ ->
+          | other ->
+              Printf.eprintf "NONNATIVE STMT in %s: %s\n%!" env.fname
+                (match other with
+                | Emo_ir.Effect _ -> "Effect"
+                | Emo_ir.Let _ -> "Let"
+                | Emo_ir.Assign_var _ -> "Assign"
+                | Emo_ir.Set_field _ -> "Set_field"
+                | Emo_ir.If _ -> "If"
+                | Emo_ir.Case _ -> "Case"
+                | Emo_ir.Receive _ -> "Receive"
+                | Emo_ir.Send _ -> "Send"
+                | Emo_ir.Return_stmt _ -> "Return"
+                | Emo_ir.Raise _ -> "Raise");
               raise
                 (Emo_ir.Lower_error "non-native statement in specialized body"))
       )
@@ -659,6 +754,7 @@ and emit_specialized_func (f : Emo_ir.func) : string =
       immutables = [];
       specialize = true;
       native = true;
+      fname = f.Emo_ir.fname;
     }
   in
   env.refs <- List.map (fun (p, _) -> local p) f.Emo_ir.fparams;
@@ -780,6 +876,7 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
       immutables = [];
       specialize;
       native = false;
+      fname = "<pinit>";
     }
   in
   put env "(* generated by emo build — do not edit *)\n";
