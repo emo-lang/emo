@@ -35,6 +35,7 @@ type value =
   | EnumMember of string * string (* type name, member name *)
   | TypeValue of string
   | Module of module_handle
+  | EmoGroup of (string * value) list (* a function group's members *)
 
 and class_def_value = {
   cname : string;
@@ -161,6 +162,7 @@ let type_name = function
   | EnumMember _ -> "an enum member"
   | TypeValue _ -> "a type"
   | Module _ -> "a module"
+  | EmoGroup _ -> "a function group"
 
 let rec equal_value a b =
   match (a, b) with
@@ -350,6 +352,7 @@ let rec to_string v =
   | EnumMember (_, m) -> m
   | TypeValue t -> t
   | Module m -> "<module " ^ String.concat "." m.mpath ^ ">"
+  | EmoGroup _ -> "<group>"
 
 (* Inside an instance's default rendering, strings show quoted. *)
 and debug_value v =
@@ -993,6 +996,23 @@ and eval_method env span recv mname arg_exprs =
   in
   let base = eval_expr env recv in
   match (base, mname) with
+  | EmoGroup members, _ -> (
+      (* a group member: defs apply, consts produce their value. A bare
+         def reference (`Foo.hello` without a call) is the block itself. *)
+      if not (List.mem_assoc mname members) then
+        error span "E4001"
+          (Printf.sprintf "this group has no member `%s`" mname);
+      let v = List.assoc mname members in
+      match v with
+      | ArrowBlock closure ->
+          let args = eval_args_named () in
+          let frame = bind_params closure span args in
+          eval_frame closure frame span
+      | const_value ->
+          if argc > 0 then
+            error span "E3007"
+              (Printf.sprintf "`%s` is a constant and takes no arguments" mname);
+          const_value)
   | Module h, _ ->
       let v = module_member span h mname in
       let args = eval_args_named () in
@@ -1705,6 +1725,12 @@ and eval_expr env e =
               error span "E3007"
                 (Printf.sprintf "enum `%s` has no member `%s`" e.ename name))
       | Module h -> module_member span h name
+      | EmoGroup members -> (
+          match List.assoc_opt name members with
+          | Some v -> v
+          | None ->
+              error span "E3007"
+                (Printf.sprintf "this group has no member `%s`" name))
       | _ ->
           error span "E3007" "a member access must be a call, like `x.read()`")
   | Ast.Index (base, index) -> eval_index env span base index
@@ -1798,6 +1824,41 @@ let eval_item env item =
       in
       define env e.Ast.enum_name ~mutable_:false
         (EnumType { ename = e.Ast.enum_name; emembers = members })
+  | Ast.Item_emo_group g ->
+      (* members are defined into the frame first so bodies read them
+         bare, then collected into the group value *)
+      List.iter
+        (fun (d : Ast.fun_def) ->
+          define env d.Ast.def_name ~mutable_:false
+            (ArrowBlock
+               {
+                 def_name = g.Ast.group_name ^ "__" ^ d.Ast.def_name;
+                 params = d.Ast.def_params;
+                 body = d.Ast.def_body;
+                 env;
+               }))
+        g.Ast.group_defs;
+      List.iter
+        (fun (_, cname, cexpr) ->
+          define env cname ~mutable_:false (eval_expr env cexpr))
+        g.Ast.group_consts;
+      let member_values =
+        List.map
+          (fun (d : Ast.fun_def) ->
+            ( d.Ast.def_name,
+              match lookup_opt env d.Ast.def_name with
+              | Some v -> v
+              | None -> assert false ))
+          g.Ast.group_defs
+        @ List.map
+            (fun (_, cname, _) ->
+              ( cname,
+                match lookup_opt env cname with
+                | Some v -> v
+                | None -> assert false ))
+            g.Ast.group_consts
+      in
+      define env g.Ast.group_name ~mutable_:false (EmoGroup member_values)
   | Ast.Item_foreign f ->
       (* The compiled backend emits the external declaration; the
          interpreter has no C linkage. *)

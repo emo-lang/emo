@@ -281,3 +281,11 @@
 - [x] **T17.2** — 值模型与算术:掩码 i64 回绕 Int、binary 字符串与插值、元组、数组、枚举、深内容相等。金测:fib。
 - [x] **T17.3** — 类/实例(带标签 map)、Box 持有进程、闭包即 fun、case 模式与守卫。金测:objects、language_tour。
 - [x] **T17.4** — 进程(`do` / `<-` / `receive` 走编译器同款 receive primop)、shop 多模块、pipeline 金测;CI `beam_examples` 组与 `"beam"` 解析门测试。
+
+### Step 18 — 函数组(`emo` 关键字)· `plan/step-18-function-group.md`
+
+**前置:** Steps 01–17。
+**完成标准:** `emo Foo { def ... const ... }` 声明函数组,`Foo.hello()` / `Config.version` 在解释器与四个后端上解析并运行(金测进 CI),README 记录该语法。
+
+- [ ] **T18.1** — 解析器(`emo` 关键字 + 组成员)、检查器(组符号、命名与参数规则)、IR 降级为带前缀的函数;`examples/function_group/` 金测走 `emo run`。
+- [ ] **T18.2** — 该示例的 TypeScript、wasm、beam 金测;README(英文 + 中文)记录该语法。

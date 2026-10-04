@@ -176,7 +176,15 @@ let examples_tests =
    Skips when Node is absent — the runtime is the only WasmGC
    validator in the toolchain (T16.1, T16.2). *)
 let wasm_goldens =
-  [ "hello_world"; "fib"; "objects"; "language_tour"; "shop"; "pipeline" ]
+  [
+    "hello_world";
+    "fib";
+    "objects";
+    "language_tour";
+    "shop";
+    "pipeline";
+    "function_group";
+  ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
 

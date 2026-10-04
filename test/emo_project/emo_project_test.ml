@@ -1181,7 +1181,10 @@ let ts_golden_tests =
             (name ^ ": typescript matches golden")
             golden compiled))
     [
-      ("hello_world", "main.emo"); ("fib", "main.emo"); ("objects", "main.emo");
+      ("hello_world", "main.emo");
+      ("fib", "main.emo");
+      ("objects", "main.emo");
+      ("function_group", "main.emo");
     ]
 
 let () =
