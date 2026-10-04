@@ -54,12 +54,15 @@ type instr =
   | I32_sub
   | I32_mul
   | I32_div_s
+  | I32_rem_s
+  | I32_lt_s
   | I32_ge
   | I32_gt
   | I32_wrap_i64
   | I64_eq
   | I64_eqz
   | I64_extend_i32_s
+  | I64_extend_i32_u
   | I64_add
   | I64_sub
   | I64_mul
@@ -69,6 +72,7 @@ type instr =
   | I64_or
   | I64_xor
   | I64_shl
+  | I64_shr_u
   | I64_shr_s
   | F64_eq
   | F64_add
@@ -179,11 +183,14 @@ let rec instr_text indent (i : instr) : string =
   | I32_gt -> Printf.sprintf "%si32.gt\n" pad
   | I32_sub -> Printf.sprintf "%si32.sub\n" pad
   | I32_div_s -> Printf.sprintf "%si32.div_s\n" pad
+  | I32_rem_s -> Printf.sprintf "%si32.rem_s\n" pad
+  | I32_lt_s -> Printf.sprintf "%si32.lt_s\n" pad
   | I32_ge -> Printf.sprintf "%si32.ge\n" pad
   | I32_wrap_i64 -> Printf.sprintf "%si32.wrap_i64\n" pad
   | I64_eq -> Printf.sprintf "%si64.eq\n" pad
   | I64_eqz -> Printf.sprintf "%si64.eqz\n" pad
   | I64_extend_i32_s -> Printf.sprintf "%si64.extend_i32_s\n" pad
+  | I64_extend_i32_u -> Printf.sprintf "%si64.extend_i32_u\n" pad
   | I64_add -> Printf.sprintf "%si64.add\n" pad
   | I64_sub -> Printf.sprintf "%si64.sub\n" pad
   | I64_mul -> Printf.sprintf "%si64.mul\n" pad
@@ -193,6 +200,7 @@ let rec instr_text indent (i : instr) : string =
   | I64_or -> Printf.sprintf "%si64.or\n" pad
   | I64_xor -> Printf.sprintf "%si64.xor\n" pad
   | I64_shl -> Printf.sprintf "%si64.shl\n" pad
+  | I64_shr_u -> Printf.sprintf "%si64.shr_u\n" pad
   | I64_shr_s -> Printf.sprintf "%si64.shr_s\n" pad
   | F64_eq -> Printf.sprintf "%sf64.eq\n" pad
   | F64_add -> Printf.sprintf "%sf64.add\n" pad
@@ -429,12 +437,15 @@ let rec encode_instr buf (i : instr) =
   | I32_sub -> Buffer.add_char buf '\x6b'
   | I32_mul -> Buffer.add_char buf '\x6c'
   | I32_div_s -> Buffer.add_char buf '\x6d'
+  | I32_rem_s -> Buffer.add_char buf '\x6f'
+  | I32_lt_s -> Buffer.add_char buf '\x48'
   | I32_ge -> Buffer.add_char buf '\x4e'
   | I32_gt -> Buffer.add_char buf '\x4a'
   | I32_wrap_i64 -> Buffer.add_char buf '\xa7'
   | I64_eq -> Buffer.add_char buf '\x51'
   | I64_eqz -> Buffer.add_char buf '\x50'
   | I64_extend_i32_s -> Buffer.add_char buf '\xac'
+  | I64_extend_i32_u -> Buffer.add_char buf '\xad'
   | I64_add -> Buffer.add_char buf '\x7c'
   | I64_sub -> Buffer.add_char buf '\x7d'
   | I64_mul -> Buffer.add_char buf '\x7e'
@@ -444,6 +455,7 @@ let rec encode_instr buf (i : instr) =
   | I64_or -> Buffer.add_char buf '\x84'
   | I64_xor -> Buffer.add_char buf '\x85'
   | I64_shl -> Buffer.add_char buf '\x86'
+  | I64_shr_u -> Buffer.add_char buf '\x88'
   | I64_shr_s -> Buffer.add_char buf '\x87'
   | I64_lt_s -> Buffer.add_char buf '\x53'
   | I64_le_s -> Buffer.add_char buf '\x57'
@@ -591,7 +603,8 @@ let to_text (m : module_) : string =
          the imports, so the position plus the import count is what
          `call` instructions elsewhere refer to *)
       Buffer.add_string buf
-        (Printf.sprintf "  (func $f%d %s\n%s  )\n" (i + List.length m.imports)
+        (Printf.sprintf "  (func $f%d %s\n%s  )\n"
+           (i + List.length m.imports)
            (if params = "" then "" else "(param " ^ params ^ ")")
            (String.concat "" (List.map (instr_text 4) f.fbody))))
     m.funcs;
@@ -638,7 +651,8 @@ let to_text (m : module_) : string =
          the imports, so the position plus the import count is what
          `call` instructions elsewhere refer to *)
       Buffer.add_string buf
-        (Printf.sprintf "  (func $f%d %s\n%s  )\n" (i + List.length m.imports)
+        (Printf.sprintf "  (func $f%d %s\n%s  )\n"
+           (i + List.length m.imports)
            (if params = "" then "" else "(param " ^ params ^ ")")
            (String.concat "" (List.map (instr_text 4) f.fbody))))
     m.funcs;

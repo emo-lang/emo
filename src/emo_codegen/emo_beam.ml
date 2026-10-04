@@ -237,6 +237,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env "do call 'erlang':'put'(_boxref, ";
       expr env v;
       put env ") _boxref"
+  | Bytes_new v ->
+      put env "apply 'emo_bytes_new'/1 ";
+      args_list env [ v ]
   | Method { self_; name; args } -> method_call env self_ name args
   | Do_spawn { func; args } -> (
       (* the arguments evaluate in the spawner; the fun closes over
@@ -288,107 +291,140 @@ let rec expr env (x : Emo_ir.expr) : unit =
 
 and method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
+  (* the Bytes method names are unambiguous, so dispatch goes by name;
+     length and to_string serve several types and split at runtime on
+     the {'emo_bytes', Key} tag *)
+  let bytes_only arity fname =
+    put env (Printf.sprintf "apply '%s'/%d " fname arity);
+    args_list env (self_ :: args)
+  in
   match (name, args) with
-  | "to_string", [] ->
-      put env "apply 'emo_to_str'/1 ";
-      args_list env [ self_ ]
+  | "get", [ _ ] -> bytes_only 2 "emo_bytes_get"
+  | "set", [ _; _ ] -> bytes_only 3 "emo_bytes_set"
+  | "get_u16_le", [ _ ] -> bytes_only 2 "emo_bytes_u16_get"
+  | "get_u32_le", [ _ ] -> bytes_only 2 "emo_bytes_u32_get"
+  | "set_u16_le", [ _; _ ] -> bytes_only 3 "emo_bytes_u16_set"
+  | "set_u32_le", [ _; _ ] -> bytes_only 3 "emo_bytes_u32_set"
+  | "to_bytes", [] -> bytes_only 1 "emo_str_to_bytes"
   | "length", [] ->
-      put env "call 'erlang':'length'(";
+      put env "case ";
       expr env self_;
-      put env ")"
-  | "append", [ v ] ->
-      put env "apply 'emo_array_append'/2 ";
-      args_list env [ self_; v ]
-  | "read", [] ->
-      put env "call 'erlang':'get'(";
+      put env
+        " of\n\
+        \  <{'emo_bytes', _k}> when 'true' ->\n\
+        \    apply 'emo_bytes_len'/1 ";
+      args_list env [ self_ ];
+      put env "\n  <_> when 'true' ->\n    call 'erlang':'length'(";
       expr env self_;
-      put env ")"
-  | "replace", [ v ] ->
-      put env "apply 'emo_box_replace'/2 ";
-      args_list env [ self_; v ]
-  | "is", [ target ] -> (
-      let tname =
-        match target.Emo_ir.desc with
-        | Emo_ir.Type_ref n -> n
-        | _ -> failwith "beam: `is` expects a type name"
-      in
-      let impls =
-        match List.assoc_opt tname env.iface_classes with
-        | Some cs -> cs
-        | None -> (
-            match
-              List.find_opt
-                (fun c -> String.equal c.Emo_ir.cdisplay tname)
-                env.classes
-            with
-            | Some c -> [ c.Emo_ir.cname ]
-            | None -> [])
-      in
-      match impls with
-      | [] ->
-          raise (Emo_ir.Lower_error ("beam: unknown type in `is`: " ^ tname))
-      | _ ->
-          put env "case ";
-          expr env self_;
-          put env " of\n";
-          List.iter
-            (fun cname ->
-              put env
-                (Printf.sprintf "  <%s> when 'true' ->\n    'true'\n"
-                   (instance_pattern env.classes cname)))
-            impls;
-          put env "  <_> when 'true' ->\n    'false'\nend")
+      put env ")\nend"
+  | "to_string", [] ->
+      put env "case ";
+      expr env self_;
+      put env
+        " of\n\
+        \  <{'emo_bytes', _k}> when 'true' ->\n\
+        \    apply 'emo_bytes_to_str'/1 ";
+      args_list env [ self_ ];
+      put env "\n  <_> when 'true' ->\n    apply 'emo_to_str'/1 ";
+      args_list env [ self_ ];
+      put env "\nend"
   | _ -> (
-      (* dispatch: statically on a class-typed receiver, otherwise one
+      match (name, args) with
+      | "append", [ v ] ->
+          put env "apply 'emo_array_append'/2 ";
+          args_list env [ self_; v ]
+      | "read", [] ->
+          put env "call 'erlang':'get'(";
+          expr env self_;
+          put env ")"
+      | "replace", [ v ] ->
+          put env "apply 'emo_box_replace'/2 ";
+          args_list env [ self_; v ]
+      | "is", [ target ] -> (
+          let tname =
+            match target.Emo_ir.desc with
+            | Emo_ir.Type_ref n -> n
+            | _ -> failwith "beam: `is` expects a type name"
+          in
+          let impls =
+            match List.assoc_opt tname env.iface_classes with
+            | Some cs -> cs
+            | None -> (
+                match
+                  List.find_opt
+                    (fun c -> String.equal c.Emo_ir.cdisplay tname)
+                    env.classes
+                with
+                | Some c -> [ c.Emo_ir.cname ]
+                | None -> [])
+          in
+          match impls with
+          | [] ->
+              raise
+                (Emo_ir.Lower_error ("beam: unknown type in `is`: " ^ tname))
+          | _ ->
+              put env "case ";
+              expr env self_;
+              put env " of\n";
+              List.iter
+                (fun cname ->
+                  put env
+                    (Printf.sprintf "  <%s> when 'true' ->\n    'true'\n"
+                       (instance_pattern env.classes cname)))
+                impls;
+              put env "  <_> when 'true' ->\n    'false'\nend")
+      | _ -> (
+          (* dispatch: statically on a class-typed receiver, otherwise one
          arm per class defining the method (the runtime value is one of
          them — the checker admitted the call) *)
-      let candidates =
-        match self_.Emo_ir.ety with
-        | Emo_check.ClassType c -> [ c ]
-        | _ ->
-            List.filter_map
-              (fun (c : Emo_ir.class_) ->
-                if
-                  List.exists
-                    (fun (m : Emo_ir.func) ->
-                      String.equal (member_name c m) mangled
-                      && List.length m.Emo_ir.fparams - 1 = List.length args)
-                    c.Emo_ir.cmethods
-                then Some c.Emo_ir.cname
-                else None)
-              env.classes
-      in
-      match candidates with
-      | [] ->
-          raise
-            (Emo_ir.Lower_error
-               (Printf.sprintf "beam: method `%s` has no dispatch (in %s)" name
-                  env.fname))
-      | _ ->
-          put env "case ";
-          expr env self_;
-          put env " of\n";
-          List.iter
-            (fun cname ->
-              let full = cname ^ "__" ^ mangled in
-              let arity = List.length args + 1 in
-              put env
-                (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/%d ("
-                   (instance_pattern env.classes cname)
-                   (Emo_ir.sanitize_ident full)
-                   arity);
+          let candidates =
+            match self_.Emo_ir.ety with
+            | Emo_check.ClassType c -> [ c ]
+            | _ ->
+                List.filter_map
+                  (fun (c : Emo_ir.class_) ->
+                    if
+                      List.exists
+                        (fun (m : Emo_ir.func) ->
+                          String.equal (member_name c m) mangled
+                          && List.length m.Emo_ir.fparams - 1 = List.length args)
+                        c.Emo_ir.cmethods
+                    then Some c.Emo_ir.cname
+                    else None)
+                  env.classes
+          in
+          match candidates with
+          | [] ->
+              raise
+                (Emo_ir.Lower_error
+                   (Printf.sprintf "beam: method `%s` has no dispatch (in %s)"
+                      name env.fname))
+          | _ ->
+              put env "case ";
               expr env self_;
+              put env " of\n";
               List.iter
-                (fun a ->
-                  put env ", ";
-                  expr env a)
-                args;
-              put env ")\n")
-            candidates;
-          put env
-            "  <_> when 'true' ->\n    call 'erlang':'error'({'emo_no_method', ";
-          put env (atom name);
-          put env "})\nend")
+                (fun cname ->
+                  let full = cname ^ "__" ^ mangled in
+                  let arity = List.length args + 1 in
+                  put env
+                    (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/%d ("
+                       (instance_pattern env.classes cname)
+                       (Emo_ir.sanitize_ident full)
+                       arity);
+                  expr env self_;
+                  List.iter
+                    (fun a ->
+                      put env ", ";
+                      expr env a)
+                    args;
+                  put env ")\n")
+                candidates;
+              put env
+                "  <_> when 'true' ->\n\
+                \    call 'erlang':'error'({'emo_no_method', ";
+              put env (atom name);
+              put env "})\nend"))
 
 and args_list env args =
   put env "(";
@@ -775,6 +811,8 @@ let rt_source =
 		#<108>(8,1,'integer',['unsigned'|['big']]),
 		#<115>(8,1,'integer',['unsigned'|['big']]),
 		#<101>(8,1,'integer',['unsigned'|['big']])}#
+	  <{'emo_bytes', _k}> when 'true' ->
+	      apply 'emo_bytes_label'/1 ({'emo_bytes', _k})
 	  <_s> when call 'erlang':'is_binary'(_s) -> _s
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_to_str', _other})
@@ -1013,8 +1051,126 @@ let rt_source =
 	    call 'erlang':'put'(_k, _v)
 	    _v
 
+'emo_bytes_new'/1 =
+    fun (_n) ->
+	let <_k> = call 'erlang':'make_ref'()
+	in do call 'erlang':'put'(_k, call 'binary':'copy'(#{#<0>(8,1,'integer',['unsigned'|['big']])}#, _n))
+	   {'emo_bytes', _k}
+
+'emo_bytes_len'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      call 'erlang':'byte_size'(call 'erlang':'get'(_k))
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+'emo_bytes_get'/2 =
+    fun (_a, _i) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      call 'binary':'at'(call 'erlang':'get'(_k), _i)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+'emo_bytes_set'/3 =
+    fun (_a, _i, _v) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      let <_b> = call 'erlang':'get'(_k)
+	      in do call 'erlang':'put'(_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
+		#<apply 'emo_mask'/1 (_v)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 1), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 1)))>('all',8,'binary',['unsigned'|['big']])}#)
+		 _v
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+'emo_bytes_u16_get'/2 =
+    fun (_a, _i) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      call 'binary':'decode_unsigned'(call 'binary':'part'(call 'erlang':'get'(_k), _i, 2), 'little')
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+'emo_bytes_u32_get'/2 =
+    fun (_a, _i) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      call 'binary':'decode_unsigned'(call 'binary':'part'(call 'erlang':'get'(_k), _i, 4), 'little')
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+'emo_bytes_u16_set'/3 =
+    fun (_a, _i, _v) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      let <_b> = call 'erlang':'get'(_k)
+	      in do call 'erlang':'put'(_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
+		#<call 'erlang':'band'(_v, 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 2), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 2)))>('all',8,'binary',['unsigned'|['big']])}#)
+		 apply 'emo_mask'/1 (_v)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+'emo_bytes_u32_set'/3 =
+    fun (_a, _i, _v) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      let <_b> = call 'erlang':'get'(_k)
+	      in do call 'erlang':'put'(_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
+		#<call 'erlang':'band'(_v, 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 24), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 4), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 4)))>('all',8,'binary',['unsigned'|['big']])}#)
+		 apply 'emo_mask'/1 (_v)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+'emo_str_to_bytes'/1 =
+    fun (_s) ->
+	let <_k> = call 'erlang':'make_ref'()
+	in do call 'erlang':'put'(_k, _s)
+	   {'emo_bytes', _k}
+
+'emo_bytes_to_str'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      call 'erlang':'get'(_k)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+'emo_bytes_label'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      call 'erlang':'iolist_to_binary'([66, 121, 116, 101, 115, 91, call 'erlang':'integer_to_list'(call 'erlang':'byte_size'(call 'erlang':'get'(_k))), 93])
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
 'emo_eq'/2 =
-    fun (_a, _b) -> call 'erlang':'=:='(_a, _b)
+    fun (_a, _b) ->
+	case _a of
+	  <{'emo_bytes', _ka}> when 'true' ->
+	      case _b of
+		<{'emo_bytes', _kb}> when 'true' ->
+		    call 'erlang':'=:='(call 'erlang':'get'(_ka), call 'erlang':'get'(_kb))
+		<_other> when 'true' -> 'false'
+	      end
+	  <_other> when 'true' -> call 'erlang':'=:='(_a, _b)
+	end
 
 'emo_ne'/2 =
     fun (_a, _b) -> call 'erlang':'=/='(_a, _b)

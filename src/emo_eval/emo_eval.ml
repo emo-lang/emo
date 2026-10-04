@@ -19,6 +19,7 @@ type value =
   | Void
   | Char of char
   | String of string
+  | Bytes of Bytes.t
   | Tuple of value list
   | Array of value array
   | Box of value ref
@@ -151,6 +152,7 @@ let type_name = function
   | Void -> "Void"
   | Char _ -> "Char"
   | String _ -> "String"
+  | Bytes _ -> "Bytes"
   | Tuple _ -> "Tuple"
   | Array _ -> "Array"
   | Box _ -> "Box"
@@ -178,6 +180,7 @@ let rec equal_value a b =
   | Void, Void -> true
   | Char x, Char y -> Char.equal x y
   | String x, String y -> String.equal x y
+  | Bytes x, Bytes y -> Bytes.equal x y
   | Tuple xs, Tuple ys ->
       List.length xs = List.length ys && List.for_all2 equal_value xs ys
   | Array xs, Array ys ->
@@ -241,6 +244,8 @@ let global_env () =
   Hashtbl.replace env.frame "net_listen_tls"
     { bound = BuiltinFn "net_listen_tls"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
+  Hashtbl.replace env.frame "Bytes"
+    { bound = TypeValue "Bytes"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
     {
@@ -328,6 +333,7 @@ let rec to_string v =
   | Array vs ->
       "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
   | Box _ -> "<box>"
+  | Bytes b -> Printf.sprintf "Bytes[%d]" (Bytes.length b)
   | Pid n -> Printf.sprintf "<pid %d>" n
   | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
   | TcpListener l -> Printf.sprintf "<listener %s>" l.ldesc
@@ -658,6 +664,7 @@ let find_process span pid =
 let rec snapshot (v : value) : value =
   match v with
   | Box r -> Box (ref (snapshot !r))
+  | Bytes b -> Bytes (Bytes.copy b)
   | Tuple vs -> Tuple (List.map snapshot vs)
   | Array xs -> Array (Array.map snapshot xs)
   | Instance i ->
@@ -1110,9 +1117,27 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
+      | TypeValue "Bytes", "new" -> (
+          let args = eval_args () in
+          match args with
+          | [ Int n ] when n >= 0 -> Bytes (Bytes.make n '\000')
+          | [ Int n ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "`Bytes.new` needs a non-negative length, got %d" n)
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`Bytes.new` expects an Int length, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Bytes.new` expects 1 argument, got %d" argc))
       | TypeValue t, m ->
           error span "E3009"
             (Printf.sprintf "type `%s` has no member `%s` yet" t m)
+      | Bytes b, "to_string" ->
+          none_expected "to_string";
+          String (Bytes.to_string b)
       | v, "to_string" ->
           none_expected "to_string";
           String (to_string v)
@@ -1134,6 +1159,106 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+      | Bytes b, "length" ->
+          none_expected "length";
+          Int (Bytes.length b)
+      | Bytes b, "get" -> (
+          match eval_args () with
+          | [ Int i ] when i >= 0 && i < Bytes.length b ->
+              Int (Char.code (Bytes.get b i))
+          | [ Int i ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a length-%d Bytes" i
+                   (Bytes.length b))
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`get` expects an Int index, got %s"
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`get` expects 1 argument, got %d"
+                   (List.length args)))
+      | Bytes b, "set" -> (
+          match eval_args () with
+          | [ Int i; Int v ]
+            when i >= 0 && i < Bytes.length b && v >= 0 && v <= 255 ->
+              Bytes.set b i (Char.chr v);
+              Int v
+          | [ Int i; Int v ] when i < 0 || i >= Bytes.length b ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a length-%d Bytes" i
+                   (Bytes.length b))
+          | [ Int _; Int v ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "byte value %d is out of range for a byte (0-255)" v)
+          | [ Int _; v ] ->
+              error span "E3001"
+                (Printf.sprintf "`set` expects an Int byte value, got %s"
+                   (type_name v))
+          | [ v; _ ] ->
+              error span "E3001"
+                (Printf.sprintf "`set` expects an Int index, got %s"
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`set` expects 2 arguments, got %d"
+                   (List.length args)))
+      | Bytes b, (("get_u16_le" | "get_u32_le") as mname) -> (
+          let width = if mname = "get_u16_le" then 2 else 4 in
+          match eval_args () with
+          | [ Int i ] when i >= 0 && i + width <= Bytes.length b ->
+              let acc = ref 0 in
+              for k = width - 1 downto 0 do
+                acc := (!acc lsl 8) lor Char.code (Bytes.get b (i + k))
+              done;
+              Int !acc
+          | [ Int i ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a %s read on a length-%d \
+                    Bytes"
+                   i mname (Bytes.length b))
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects an Int index, got %s" mname
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                   (List.length args)))
+      | Bytes b, (("set_u16_le" | "set_u32_le") as mname) -> (
+          let width = if mname = "set_u16_le" then 2 else 4 in
+          match eval_args () with
+          | [ Int i; Int v ] when i >= 0 && i + width <= Bytes.length b ->
+              let v = v land if width = 2 then 0xFFFF else 0xFFFFFFFF in
+              for k = 0 to width - 1 do
+                Bytes.set b (i + k) (Char.chr ((v lsr (8 * k)) land 0xFF))
+              done;
+              Int v
+          | [ Int i; Int _ ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a %s write on a length-%d \
+                    Bytes"
+                   i mname (Bytes.length b))
+          | [ Int _; v ] ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects an Int value, got %s" mname
+                   (type_name v))
+          | [ v; _ ] ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects an Int index, got %s" mname
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`%s` expects 2 arguments, got %d" mname
+                   (List.length args)))
+      | String s, "to_bytes" ->
+          none_expected "to_bytes";
+          Bytes (Bytes.of_string s)
       | TcpConn c, "read_line" ->
           none_expected "read_line";
           String (Effect.perform (Net_read_line (c, span)))

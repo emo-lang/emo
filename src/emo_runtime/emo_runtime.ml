@@ -57,6 +57,14 @@ let box_bool b = Emo_eval.Bool b
 let box_string s = Emo_eval.String s
 let box_char c = Emo_eval.Char c
 
+let bytes_new (v : Emo_eval.value) : Emo_eval.value =
+  match v with
+  | Emo_eval.Int n when n >= 0 -> Emo_eval.Bytes (Bytes.make n '\000')
+  | Emo_eval.Int n ->
+      failwith
+        (Printf.sprintf "`Bytes.new` needs a non-negative length, got %d" n)
+  | v -> failwith (type_error v "Int")
+
 (* ---- Operators (tag-checked, mirroring the evaluator) ---- *)
 
 let add a b =
@@ -257,6 +265,76 @@ let method_call self name args =
       failwith (Printf.sprintf "`%s` expects 1 argument, got %d" name argc)
   in
   match (self, name) with
+  | Emo_eval.Bytes b, "to_string" ->
+      none_expected ();
+      Emo_eval.String (Bytes.to_string b)
+  | Emo_eval.Bytes b, "length" ->
+      none_expected ();
+      Emo_eval.Int (Bytes.length b)
+  | Emo_eval.Bytes b, "get" -> (
+      one_expected ();
+      match args with
+      | [ Emo_eval.Int i ] when i >= 0 && i < Bytes.length b ->
+          Emo_eval.Int (Char.code (Bytes.get b i))
+      | [ Emo_eval.Int i ] ->
+          failwith
+            (Printf.sprintf "index %d is out of bounds for a length-%d Bytes" i
+               (Bytes.length b))
+      | [ v ] -> failwith (type_error v "Int")
+      | _ -> failwith "`get` expects 1 argument")
+  | Emo_eval.Bytes b, "set" -> (
+      if argc <> 2 then failwith "`set` expects 2 arguments";
+      match args with
+      | [ Emo_eval.Int i; Emo_eval.Int v ] when i >= 0 && i < Bytes.length b ->
+          if v < 0 || v > 255 then
+            failwith
+              (Printf.sprintf "byte value %d is out of range for a byte (0-255)"
+                 v);
+          Bytes.set b i (Char.chr v);
+          Emo_eval.Int v
+      | [ Emo_eval.Int i; Emo_eval.Int _ ] ->
+          failwith
+            (Printf.sprintf "index %d is out of bounds for a length-%d Bytes" i
+               (Bytes.length b))
+      | _ -> failwith "`set` expects (i Int, v Int)")
+  | Emo_eval.Bytes b, (("get_u16_le" | "get_u32_le") as mname) -> (
+      one_expected ();
+      let width = if mname = "get_u16_le" then 2 else 4 in
+      match args with
+      | [ Emo_eval.Int i ] when i >= 0 && i + width <= Bytes.length b ->
+          let acc = ref 0 in
+          for k = width - 1 downto 0 do
+            acc := (!acc lsl 8) lor Char.code (Bytes.get b (i + k))
+          done;
+          Emo_eval.Int !acc
+      | [ Emo_eval.Int i ] ->
+          failwith
+            (Printf.sprintf
+               "index %d is out of bounds for a %s read on a length-%d Bytes" i
+               mname (Bytes.length b))
+      | [ v ] -> failwith (type_error v "Int")
+      | _ -> failwith "`get_u16_le`/`get_u32_le` expects 1 argument")
+  | Emo_eval.Bytes b, (("set_u16_le" | "set_u32_le") as mname) -> (
+      if argc <> 2 then failwith "`set_u16_le`/`set_u32_le` expects 2 arguments";
+      let width = if mname = "set_u16_le" then 2 else 4 in
+      let max = if width = 2 then 0xFFFF else 0xFFFFFFFF in
+      match args with
+      | [ Emo_eval.Int i; Emo_eval.Int v ]
+        when i >= 0 && i + width <= Bytes.length b ->
+          let v = v land max in
+          for k = 0 to width - 1 do
+            Bytes.set b (i + k) (Char.chr ((v lsr (8 * k)) land 0xFF))
+          done;
+          Emo_eval.Int v
+      | [ Emo_eval.Int i; Emo_eval.Int _ ] ->
+          failwith
+            (Printf.sprintf
+               "index %d is out of bounds for a %s write on a length-%d Bytes" i
+               mname (Bytes.length b))
+      | _ -> failwith "`set_u16_le`/`set_u32_le` expects (i Int, v Int)")
+  | Emo_eval.String s, "to_bytes" ->
+      none_expected ();
+      Emo_eval.Bytes (Bytes.of_string s)
   | _, "to_string" ->
       none_expected ();
       Emo_eval.String (Emo_eval.to_string self)

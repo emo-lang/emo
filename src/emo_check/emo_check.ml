@@ -13,6 +13,7 @@ type t =
   | Bool
   | Char
   | String
+  | Bytes
   | Pid
   | TcpConn
   | TcpListener
@@ -33,6 +34,7 @@ let rec to_string = function
   | Bool -> "Bool"
   | Char -> "Char"
   | String -> "String"
+  | Bytes -> "Bytes"
   | Pid -> "Pid"
   | TcpConn -> "TcpConn"
   | TcpListener -> "TcpListener"
@@ -101,6 +103,7 @@ let rec ann_to_type ?(lenient = false) ctx
   | Ast.Named_type "Bool" -> Bool
   | Ast.Named_type "Char" -> Char
   | Ast.Named_type "String" -> String
+  | Ast.Named_type "Bytes" -> Bytes
   | Ast.Named_type "Pid" -> Pid
   | Ast.Named_type "TcpConn" -> TcpConn
   | Ast.Named_type "TcpListener" -> TcpListener
@@ -379,6 +382,7 @@ let empty_env =
             depth = 0;
           } );
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
       ];
@@ -1095,6 +1099,45 @@ and check_method_call ctx env span recv mname args : t =
               (Printf.sprintf "`replace` expects 1 argument, got %d"
                  (List.length args));
             elem)
+    | Bytes, "length" -> builtin0 Int
+    | Bytes, "get" -> (
+        match arg_values with
+        | [ (None, Int) ] | [ (Some "i", Int) ] -> Int
+        | [ _ ] ->
+            report ctx span "E4004" "`get` expects an Int index";
+            Int
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`get` expects 1 argument, got %d"
+                 (List.length arg_values));
+            Int)
+    | Bytes, (("set" | "set_u16_le" | "set_u32_le") as mname) -> (
+        match arg_values with
+        | [ (None, Int); (None, Int) ]
+        | [ (Some "i", Int); ((Some "v" | None), Int) ] ->
+            Int
+        | [ _; _ ] ->
+            report ctx span "E4004"
+              (Printf.sprintf "`%s` expects (i Int, v Int)" mname);
+            Int
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`%s` expects 2 arguments, got %d" mname
+                 (List.length arg_values));
+            Int)
+    | Bytes, (("get_u16_le" | "get_u32_le") as mname) -> (
+        match arg_values with
+        | [ (None, Int) ] | [ (Some "i", Int) ] -> Int
+        | [ _ ] ->
+            report ctx span "E4004"
+              (Printf.sprintf "`%s` expects an Int index" mname);
+            Int
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                 (List.length arg_values));
+            Int)
+    | String, "to_bytes" -> builtin0 Bytes
     | _, "is" ->
         let (_ : t list) = List.map snd arg_values in
         one_expected Bool
