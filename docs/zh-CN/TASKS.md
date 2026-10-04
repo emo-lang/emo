@@ -22,6 +22,9 @@
 | M2 — 编译期体验 | 08–10 | 渐进类型检查器、结构化模块系统、基于 MVS 的包解析;多包项目可构建、可运行。 |
 | M3 — 并发与网络 | 11–12 | 基于效果(effect)调度器的进程与消息传递;直风格(direct style)网络 API。 |
 | M4 — 编译目标 | 13–14 | 通过 `emo build` 生成原生代码;随后是 wasm / TypeScript / BEAM / riscv64。 |
+| M5 — BEAM 与函数组 | 17–18 | BEAM 目标带上金测梯队;`emo Foo { ... }` 函数组在四个目标上解析并运行。 |
+| M6 — 系统级编程 | 19–21 | 用 Emo 编写的 WebAssembly 运行时:共享系统层,随后是二进制解码器/验证器,再是解释器与 spec 套件金测。 |
+| M7 — EmoOS | 22+ | 同一系统层之上的内核路径:近期是 unikernel 构建路径,远期是裸机代码生成(与引擎分层共用投入)。 |
 
 ## 设计闸门
 
@@ -272,6 +275,8 @@
 - [x] **T16.4** — 并发:模块内协作式驱动实现 `do` / `<-` / `receive`,宿主定时器抢占点。金测:pipeline。(以 T16.2 为前置。)
 - [ ] **T16.5** — WASI 与 IO 审计:标准库 `"wasm"` 元数据,以及宿主支持范围内的 io 金测。
 
+## M5 — BEAM 目标与函数组
+
 ### Step 17 — BEAM 目标(Core Erlang)· `plan/step-17-beam.md`
 
 **前置:** Steps 01–16。
@@ -287,5 +292,29 @@
 **前置:** Steps 01–17。
 **完成标准:** `emo Foo { def ... const ... }` 声明函数组,`Foo.hello()` / `Config.version` 在解释器与四个后端上解析并运行(金测进 CI),README 记录该语法。
 
-- [ ] **T18.1** — 解析器(`emo` 关键字 + 组成员)、检查器(组符号、命名与参数规则)、IR 降级为带前缀的函数;`examples/function_group/` 金测走 `emo run`。
-- [ ] **T18.2** — 该示例的 TypeScript、wasm、beam 金测;README(英文 + 中文)记录该语法。
+- [x] **T18.1** — 解析器(`emo` 关键字 + 组成员)、检查器(组符号、命名与参数规则)、IR 降级为带前缀的函数;`examples/function_group/` 金测走 `emo run`。
+- [x] **T18.2** — 该示例的 TypeScript、wasm、beam 金测;README(英文 + 中文)记录该语法。
+
+收尾:两个任务随同一提交(`bd2f4c7`)落地:组成员降级为带前缀的函数,符号双键注册(组限定键 `Foo.hello` 与组内裸引用键),四个后端无需任何组相关代码。展示用例(`examples/showcase/`,连带其拉出的 TypeScript 进程支持)在四个目标上演练跨文件组调用。它还暴露并修复了 `emo_project` 的一个缺陷:以相对路径启动的 manifest 项目注册的是相对文件串,绝对路径的入口查找落空,入口被降级两次——一次作为根模块,一次以自身模块名。决策见 `plan/step-18-function-group.md`(Close-out)。**Step 18 验收达成。**
+
+## M6 — 系统级编程
+
+两个消费者拉动同一层:用 Emo 编写的 WebAssembly 解码器、验证器与解释器,以及 EmoOS 内核路径。该层在统一闸门下一次设计成型——原语必须在两个消费者处都能点名(或一个消费者加一个具体的近期需求)才准入;`plan/step-19-wasm-runtime.md` 记录项目决策、机制矩阵与阶梯。
+
+### Step 19 — 系统层(wasm 运行时 + EmoOS 原语)· `plan/step-19-wasm-runtime.md`
+
+**前置:** Steps 01–18。
+**完成标准:** `& | ^ << >> ~` 在整数类型上于解释器与四个后端工作;带小端访问器的 `Bytes` 核心类型可用;`file.read` 在调度器下从磁盘读入文件;`Int64` 与 `Byte` 算术在各目标上回绕(金测进 CI);`runtime/wasm/` 成为真实存在的包。
+
+- [ ] **T19.1** — 整数类型上的位运算符(`& | ^ << >> ~`):词法、语法、检查器、解释器与四个后端;`examples/bit_ops/` 金测走 `emo run` 与各目标 CI 组。
+- [ ] **T19.2** — `Bytes` 核心类型:构造、越界检查的 get/set、小端访问器、String 互转;四个后端;金测示例。
+- [ ] **T19.3** — `file.read` 标准库包(native,调度器直风格);从磁盘读文件的金测示例。
+- [ ] **T19.4** — `Int64` 与 `Byte`:字面量、回绕算术、比较、显式转换;四个后端;金测示例。`runtime/wasm/` 包骨架在此任务创建。
+
+### Step 20 — wasm 运行时:解码器与验证器(开工时撰写计划)
+
+### Step 21 — wasm 运行时:解释器内核与 spec 套件金测(开工时撰写计划)
+
+## M7 — EmoOS
+
+M6 系统层之上的内核路径。近期:unikernel 构建路径——native 后端已输出 OCaml,MirageOS/solo5 一脉证明该栈可引导——以 `foreign def` FFI 作为机器逃生舱(端口 io、asm 垫片),并真正落地 step 14 笔记中的 `core` 库分层。远期:裸机代码生成,与 wasm 引擎分层化是同一笔投入。内核工作开工时撰写各 step 计划。

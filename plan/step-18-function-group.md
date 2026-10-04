@@ -1,6 +1,6 @@
 # Step 18 — Function groups (`emo` keyword)
 
-**Milestone:** M5 · **Prereq:** steps 01–17 · **Status:** in progress
+**Milestone:** M5 · **Prereq:** steps 01–17 · **Status:** complete
 
 ## Goal
 
@@ -60,7 +60,20 @@ emits functions and qualified calls gets groups for free.
 
 ## Tasks
 
-- [ ] **T18.1** — Parser, checker, IR lowering, native pipeline;
+- [x] **T18.1** — Parser, checker, IR lowering, native pipeline;
       `examples/function_group/` golden through `emo run`.
-- [ ] **T18.2** — The typescript, wasm, and beam goldens for the
+- [x] **T18.2** — The typescript, wasm, and beam goldens for the
       example; README (en + zh-CN).
+
+## Close-out
+
+Both tasks shipped in one commit (`bd2f4c7`): groups lower to mangled
+functions with double-keyed symbols — group-qualified (`Foo.hello`
+from any module) and module-bare (inside the group) — so the four
+backends needed no group-specific code. The showcase example
+(`examples/showcase/`, with the TypeScript process support it pulled
+in) exercises a cross-file group call on all four targets. It also
+exposed a project bug, fixed in `emo_project`: a manifest project
+started from a relative entry path registered relative file strings,
+the absolute entry lookup missed, and the entry was lowered twice —
+once as the root module and once under its own name.
