@@ -113,6 +113,16 @@ and item_desc =
   | Item_class of class_def
   | Item_interface of interface_def
   | Item_enum of enum_def
+  | Item_emo_group of emo_group
+
+and emo_group = {
+  group_span : Emo_support.Span.t;
+  group_name : string;
+  group_defs : fun_def list;
+  group_consts : (Emo_support.Span.t * string * expr) list;
+}
+(** An `emo` function group: a named, stateless namespace of defs and consts,
+    referenced as `Foo.hello()` / `Foo.version`. *)
 
 and fun_def = {
   def_span : Emo_support.Span.t;

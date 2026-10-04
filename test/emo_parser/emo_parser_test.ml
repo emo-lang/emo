@@ -145,6 +145,8 @@ and pp_item fmt (i : Emo_ast.item) =
   | Emo_ast.Item_class c -> pp_class_def fmt c
   | Emo_ast.Item_interface i -> pp_interface_def fmt i
   | Emo_ast.Item_enum e -> pp_enum_def fmt e
+  | Emo_ast.Item_emo_group g ->
+      Format.fprintf fmt "(emo group %s)" g.Emo_ast.group_name
   | Emo_ast.Item_require name -> Format.fprintf fmt "(require %s)" name
 
 and pp_params fmt = function

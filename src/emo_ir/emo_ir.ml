@@ -699,6 +699,35 @@ let lower (input : input) : program =
                    })
           | Ast.Item_enum e ->
               Hashtbl.replace symbols (m.mpath, e.Ast.enum_name) S_enum
+          | Ast.Item_emo_group g ->
+              (* a function group's members: registered under both the
+                 group-qualified key (`Foo.hello` resolves here) and the
+                 current module's key (bare refs inside the group) *)
+              List.iter
+                (fun d ->
+                  let mangled =
+                    mangle m.mpath (g.Ast.group_name ^ "__" ^ d.Ast.def_name)
+                  in
+                  let params =
+                    List.map (fun p -> p.Ast.param_name) d.Ast.def_params
+                  in
+                  Hashtbl.replace symbols
+                    ([ g.Ast.group_name ], d.Ast.def_name)
+                    (S_func { mangled; params });
+                  Hashtbl.replace symbols (m.mpath, d.Ast.def_name)
+                    (S_func { mangled; params }))
+                g.Ast.group_defs;
+              List.iter
+                (fun (_, cname, _) ->
+                  let mangled =
+                    mangle m.mpath (g.Ast.group_name ^ "__" ^ cname)
+                  in
+                  Hashtbl.replace symbols
+                    ([ g.Ast.group_name ], cname)
+                    (S_func { mangled; params = [] });
+                  Hashtbl.replace symbols (m.mpath, cname)
+                    (S_func { mangled; params = [] }))
+                g.Ast.group_consts
           | Ast.Item_foreign f ->
               Hashtbl.replace symbols
                 (m.mpath, f.Ast.foreign_name)
@@ -828,6 +857,43 @@ let lower (input : input) : program =
                   cmethods = methods;
                 }
                 :: !classes
+          | Ast.Item_emo_group g ->
+              (* the group's defs and const thunks lower like any other
+                 function; symbols were registered in pass 1 *)
+              List.iter
+                (fun d ->
+                  funcs :=
+                    lower_func env ~module_path:m.mpath
+                      ~mangled:
+                        (mangle m.mpath
+                           (g.Ast.group_name ^ "__" ^ d.Ast.def_name))
+                      ~self:false d
+                    :: !funcs)
+                g.Ast.group_defs;
+              List.iter
+                (fun (_, cname, cexpr) ->
+                  let body : Ast.stmt =
+                    {
+                      stmt_span = item.Ast.item_span;
+                      stmt_desc = Ast.Return (Some cexpr);
+                    }
+                  in
+                  let thunk_def : Ast.fun_def =
+                    {
+                      def_span = item.Ast.item_span;
+                      def_name = g.Ast.group_name ^ "__" ^ cname;
+                      def_params = [];
+                      def_return = None;
+                      def_body = [ body ];
+                    }
+                  in
+                  funcs :=
+                    lower_func env ~module_path:m.mpath
+                      ~mangled:
+                        (mangle m.mpath (g.Ast.group_name ^ "__" ^ cname))
+                      ~self:false thunk_def
+                    :: !funcs)
+                g.Ast.group_consts
           | Ast.Item_foreign f ->
               funcs :=
                 {

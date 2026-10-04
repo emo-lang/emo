@@ -3,6 +3,7 @@ module Token = struct
     | Def
     | Const
     | Var
+    | Emo
     | Class
     | Interface
     | Enum
@@ -122,6 +123,7 @@ let keyword_of_string = function
   | "const" -> Some Token.Const
   | "var" -> Some Token.Var
   | "class" -> Some Token.Class
+  | "emo" -> Some Token.Emo
   | "interface" -> Some Token.Interface
   | "enum" -> Some Token.Enum
   | "if" -> Some Token.If
