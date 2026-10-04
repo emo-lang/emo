@@ -65,6 +65,11 @@ type instr =
   | I64_mul
   | I64_div_s
   | I64_rem_s
+  | I64_and
+  | I64_or
+  | I64_xor
+  | I64_shl
+  | I64_shr_s
   | F64_eq
   | F64_add
   | F64_sub
@@ -184,6 +189,11 @@ let rec instr_text indent (i : instr) : string =
   | I64_mul -> Printf.sprintf "%si64.mul\n" pad
   | I64_div_s -> Printf.sprintf "%si64.div_s\n" pad
   | I64_rem_s -> Printf.sprintf "%si64.rem_s\n" pad
+  | I64_and -> Printf.sprintf "%si64.and\n" pad
+  | I64_or -> Printf.sprintf "%si64.or\n" pad
+  | I64_xor -> Printf.sprintf "%si64.xor\n" pad
+  | I64_shl -> Printf.sprintf "%si64.shl\n" pad
+  | I64_shr_s -> Printf.sprintf "%si64.shr_s\n" pad
   | F64_eq -> Printf.sprintf "%sf64.eq\n" pad
   | F64_add -> Printf.sprintf "%sf64.add\n" pad
   | F64_sub -> Printf.sprintf "%sf64.sub\n" pad
@@ -301,7 +311,9 @@ let leb_s (buf : Buffer.t) (n : int) =
 let leb_s64 (buf : Buffer.t) (n : int64) =
   let rec go n =
     let byte = Int64.to_int (Int64.logand n 0x7fL) in
-    let n = Int64.shift_right_logical n 7 in
+    (* arithmetic shift: the sign bit must keep flowing into the
+       terminator check, or negative values never end correctly *)
+    let n = Int64.shift_right n 7 in
     let more =
       (Int64.compare n 0L = 0 && byte land 0x40 = 0)
       || (Int64.compare n (-1L) = 0 && byte land 0x40 <> 0)
@@ -428,6 +440,11 @@ let rec encode_instr buf (i : instr) =
   | I64_mul -> Buffer.add_char buf '\x7e'
   | I64_div_s -> Buffer.add_char buf '\x7f'
   | I64_rem_s -> Buffer.add_char buf '\x81'
+  | I64_and -> Buffer.add_char buf '\x83'
+  | I64_or -> Buffer.add_char buf '\x84'
+  | I64_xor -> Buffer.add_char buf '\x85'
+  | I64_shl -> Buffer.add_char buf '\x86'
+  | I64_shr_s -> Buffer.add_char buf '\x87'
   | I64_lt_s -> Buffer.add_char buf '\x53'
   | I64_le_s -> Buffer.add_char buf '\x57'
   | I64_gt_s -> Buffer.add_char buf '\x55'
@@ -570,8 +587,11 @@ let to_text (m : module_) : string =
              (fun j p -> Printf.sprintf "$p%d %s" j (valtype_name p))
              ptypes)
       in
+      (* the label carries the real function index: m.funcs sits after
+         the imports, so the position plus the import count is what
+         `call` instructions elsewhere refer to *)
       Buffer.add_string buf
-        (Printf.sprintf "  (func $f%d %s\n%s  )\n" i
+        (Printf.sprintf "  (func $f%d %s\n%s  )\n" (i + List.length m.imports)
            (if params = "" then "" else "(param " ^ params ^ ")")
            (String.concat "" (List.map (instr_text 4) f.fbody))))
     m.funcs;
@@ -614,8 +634,11 @@ let to_text (m : module_) : string =
              (fun j p -> Printf.sprintf "$p%d %s" j (valtype_name p))
              ptypes)
       in
+      (* the label carries the real function index: m.funcs sits after
+         the imports, so the position plus the import count is what
+         `call` instructions elsewhere refer to *)
       Buffer.add_string buf
-        (Printf.sprintf "  (func $f%d %s\n%s  )\n" i
+        (Printf.sprintf "  (func $f%d %s\n%s  )\n" (i + List.length m.imports)
            (if params = "" then "" else "(param " ^ params ^ ")")
            (String.concat "" (List.map (instr_text 4) f.fbody))))
     m.funcs;

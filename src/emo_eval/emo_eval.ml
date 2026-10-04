@@ -836,6 +836,10 @@ let rec eval_unary env span op x =
   | Ast.Neg, v ->
       error span "E3001"
         (Printf.sprintf "operator `-` expects a number, got %s" (type_name v))
+  | Ast.Bit_not, Int n -> Int (lnot n)
+  | Ast.Bit_not, v ->
+      error span "E3001"
+        (Printf.sprintf "operator `~` expects an Int, got %s" (type_name v))
 
 and eval_binary env span op left_expr right_expr =
   let op_name = function
@@ -850,6 +854,11 @@ and eval_binary env span op left_expr right_expr =
     | Ast.Mul -> "*"
     | Ast.Div -> "/"
     | Ast.Mod -> "%"
+    | Ast.Bit_and -> "&"
+    | Ast.Bit_or -> "|"
+    | Ast.Bit_xor -> "^"
+    | Ast.Shl -> "<<"
+    | Ast.Shr -> ">>"
     | Ast.And -> "&&"
     | Ast.Or -> "||"
   in
@@ -868,6 +877,7 @@ and eval_binary env span op left_expr right_expr =
   let check_bool v =
     match v with Bool b -> b | v -> type_mismatch "two Bools"
   in
+  let as_int = function Int x -> x | v -> type_mismatch "two Ints" in
   match op with
   | Ast.And -> Bool (if check_bool left then check_bool right else false)
   | Ast.Or -> Bool (if check_bool left then true else check_bool right)
@@ -922,6 +932,17 @@ and eval_binary env span op left_expr right_expr =
           if op = Ast.Div then Float (x /. float_of_int y)
           else Float (Float.rem x (float_of_int y))
       | _ -> type_mismatch "two numbers")
+  | Ast.Bit_and -> Int (as_int left land as_int right)
+  | Ast.Bit_or -> Int (as_int left lor as_int right)
+  | Ast.Bit_xor -> Int (as_int left lxor as_int right)
+  | Ast.Shl | Ast.Shr ->
+      let x = as_int left in
+      let count = as_int right in
+      if count < 0 then error span "E3005" "shift count must be non-negative"
+      else if op = Ast.Shl then
+        (* OCaml leaves `lsl` by a full word unspecified — saturate. *)
+        Int (if count >= 63 then 0 else x lsl count)
+      else Int (if count >= 63 then if x < 0 then -1 else 0 else x asr count)
 
 and eval_index env span base index =
   let b = eval_expr env base in

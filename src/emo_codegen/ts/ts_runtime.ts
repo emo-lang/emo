@@ -256,6 +256,35 @@ const E: any = {
     if (bothInt(a, b)) return (a as number) % (b as number);
     return new EFloat(unfloat(a) % unfloat(b));
   },
+  // Bitwise work is integer work. JS bitwise ops run on int32, so
+  // results past 2^31 follow the platform's word — the width family
+  // (Int64/Byte) carries the exact contract later.
+  requireInt(v: any, op: string): number {
+    if (!isInt(v)) throw new EEmoException(`operator \`${op}\` expects an Int, got ${tag(v)}`);
+    return v as number;
+  },
+  bitAnd(a: any, b: any) {
+    return this.requireInt(a, "&") & this.requireInt(b, "&");
+  },
+  bitOr(a: any, b: any) {
+    return this.requireInt(a, "|") | this.requireInt(b, "|");
+  },
+  bitXor(a: any, b: any) {
+    return this.requireInt(a, "^") ^ this.requireInt(b, "^");
+  },
+  shl(a: any, b: any) {
+    const n = this.requireInt(b, "<<");
+    if (n < 0) throw new EEmoException("shift count must be non-negative");
+    return this.requireInt(a, "<<") << n;
+  },
+  shr(a: any, b: any) {
+    const n = this.requireInt(b, ">>");
+    if (n < 0) throw new EEmoException("shift count must be non-negative");
+    return this.requireInt(a, ">>") >> n;
+  },
+  bitNot(a: any) {
+    return ~this.requireInt(a, "~");
+  },
   neg(a: any) {
     if (isInt(a)) return -(a as number);
     return new EFloat(-unfloat(a));

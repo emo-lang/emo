@@ -44,6 +44,12 @@ module Token = struct
     | Percent
     | AndAnd
     | OrOr
+    | Amp
+    | Pipe
+    | Caret
+    | LtLt
+    | GtGt
+    | Tilde
     | Not
 
   type kind =
@@ -353,6 +359,7 @@ let lex ~file ~source =
                   "the send operator `<-` needs a space on each side"
                   ~hint:"write `a <- b`, never `a<-b`";
               double (Token.Op Token.Send))
+            else if char_at 1 = Some '<' then double (Token.Op Token.LtLt)
             else if char_at 1 = Some '=' then double (Token.Op Token.Le)
             else single (Token.Op Token.Lt)
         | '=' ->
@@ -362,18 +369,17 @@ let lex ~file ~source =
             if char_at 1 = Some '=' then double (Token.Op Token.Ne)
             else single (Token.Op Token.Not)
         | '>' ->
-            if char_at 1 = Some '=' then double (Token.Op Token.Ge)
+            if char_at 1 = Some '>' then double (Token.Op Token.GtGt)
+            else if char_at 1 = Some '=' then double (Token.Op Token.Ge)
             else single (Token.Op Token.Gt)
         | '&' ->
             if char_at 1 = Some '&' then double (Token.Op Token.AndAnd)
-            else
-              error "E1001" (here ()) "unexpected character `&`"
-                ~hint:"Emo uses `&&` for logical and"
+            else single (Token.Op Token.Amp)
         | '|' ->
             if char_at 1 = Some '|' then double (Token.Op Token.OrOr)
-            else
-              error "E1001" (here ()) "unexpected character `|`"
-                ~hint:"Emo uses `||` for logical or"
+            else single (Token.Op Token.Pipe)
+        | '^' -> single (Token.Op Token.Caret)
+        | '~' -> single (Token.Op Token.Tilde)
         | '+' -> single (Token.Op Token.Plus)
         | '*' -> single (Token.Op Token.Star)
         | '/' -> single (Token.Op Token.Slash)

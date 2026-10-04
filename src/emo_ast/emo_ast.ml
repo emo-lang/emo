@@ -34,7 +34,7 @@ and type_ann_desc =
   | Applied_type of string * type_ann list (* Array[User], Box[Int] *)
   | Tuple_type of type_ann list (* (Int, String) *)
 
-and unop = Not | Neg
+and unop = Not | Neg | Bit_not
 
 and binop =
   | Eq
@@ -48,6 +48,11 @@ and binop =
   | Mul
   | Div
   | Mod
+  | Bit_and
+  | Bit_or
+  | Bit_xor
+  | Shl
+  | Shr
   | And
   | Or
 

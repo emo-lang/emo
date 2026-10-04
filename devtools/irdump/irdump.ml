@@ -16,7 +16,7 @@ let lit = function
   | Emo_ast.L_char c -> Printf.sprintf "char %C" c
   | Emo_ast.L_string s -> Printf.sprintf "string %S" s
 
-let unop = function Emo_ast.Not -> "not" | Neg -> "neg"
+let unop = function Emo_ast.Not -> "not" | Neg -> "neg" | Bit_not -> "bit_not"
 
 let binop = function
   | Emo_ast.Add -> "+"
@@ -24,6 +24,11 @@ let binop = function
   | Mul -> "*"
   | Div -> "/"
   | Mod -> "%"
+  | Bit_and -> "&"
+  | Bit_or -> "|"
+  | Bit_xor -> "^"
+  | Shl -> "<<"
+  | Shr -> ">>"
   | Lt -> "<"
   | Le -> "<="
   | Gt -> ">"

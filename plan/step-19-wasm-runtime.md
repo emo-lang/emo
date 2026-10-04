@@ -1,6 +1,6 @@
 # Step 19 — The systems layer (wasm runtime + EmoOS primitives)
 
-**Milestone:** M6 · **Prereq:** steps 01–18 · **Status:** not started
+**Milestone:** M6 · **Prereq:** steps 01–18 · **Status:** in progress
 
 ## The project
 
@@ -136,7 +136,7 @@ already answered by existing mechanisms:
 
 ## Tasks
 
-- [ ] **T19.1** — Bitwise operators (`& | ^ << >> ~`) on integer
+- [x] **T19.1** — Bitwise operators (`& | ^ << >> ~`) on integer
       types: lexer, parser, checker, interpreter, and all four
       backends; `examples/bit_ops/` golden through `emo run` and
       every target's CI group.

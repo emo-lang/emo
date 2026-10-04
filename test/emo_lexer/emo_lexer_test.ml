@@ -67,6 +67,12 @@ let pp_kind fmt (k : Token.kind) =
         | Percent -> "%"
         | AndAnd -> "&&"
         | OrOr -> "||"
+        | Amp -> "&"
+        | Pipe -> "|"
+        | Caret -> "^"
+        | LtLt -> "<<"
+        | GtGt -> ">>"
+        | Tilde -> "~"
         | Not -> "!")
     | Token.Eof -> "Eof"
   in
@@ -237,22 +243,31 @@ let operator_tests =
           "kinds"
           [ Lower_ident "a"; Op Lt; Op Minus; Lower_ident "b"; Eof ]
           (kinds (lex_all "a < -b")));
-    tc "a single ampersand is rejected toward &&" (fun () ->
-        let diagnostic = lex_err "&" in
-        Alcotest.(check string)
-          "code" "E1001"
-          (match diagnostic.Diagnostic.code with Some c -> c | None -> "");
-        Alcotest.(check string)
-          "span" "test.emo:1:1"
-          (Span.to_string diagnostic.Diagnostic.span));
-    tc "a single bar is rejected toward ||" (fun () ->
-        let diagnostic = lex_err "|" in
-        Alcotest.(check string)
-          "code" "E1001"
-          (match diagnostic.Diagnostic.code with Some c -> c | None -> "");
-        Alcotest.(check string)
-          "span" "test.emo:1:1"
-          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a lone ampersand and bar lex as bitwise operators" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Lower_ident "a";
+            Op Amp;
+            Lower_ident "b";
+            Op Pipe;
+            Lower_ident "c";
+            Eof;
+          ]
+          (kinds (lex_all "a & b | c")));
+    tc "shifts lex as double characters" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Lower_ident "a";
+            Op LtLt;
+            Lower_ident "b";
+            Op GtGt;
+            Op Tilde;
+            Lower_ident "c";
+            Eof;
+          ]
+          (kinds (lex_all "a << b >> ~c")));
   ]
 
 let literal_tests =

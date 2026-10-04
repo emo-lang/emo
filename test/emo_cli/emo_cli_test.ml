@@ -185,6 +185,7 @@ let wasm_goldens =
     "pipeline";
     "function_group";
     "showcase";
+    "bit_ops";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -201,6 +202,7 @@ let beam_goldens =
     "pipeline";
     "function_group";
     "showcase";
+    "bit_ops";
   ]
 
 let erl_available =

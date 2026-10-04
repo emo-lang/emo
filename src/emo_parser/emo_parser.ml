@@ -35,6 +35,12 @@ let op_spelling = function
   | Tok.Percent -> "%"
   | Tok.AndAnd -> "&&"
   | Tok.OrOr -> "||"
+  | Tok.Amp -> "&"
+  | Tok.Pipe -> "|"
+  | Tok.Caret -> "^"
+  | Tok.LtLt -> "<<"
+  | Tok.GtGt -> ">>"
+  | Tok.Tilde -> "~"
   | Tok.Not -> "!"
 
 let keyword_spelling = function
@@ -164,6 +170,9 @@ and parse_additive st =
       match kind st with
       | Tok.Op Tok.Plus -> (Ast.Add, (advance st).Tok.span)
       | Tok.Op Tok.Minus -> (Ast.Sub, (advance st).Tok.span)
+      | Tok.Op Tok.Amp -> (Ast.Bit_and, (advance st).Tok.span)
+      | Tok.Op Tok.Pipe -> (Ast.Bit_or, (advance st).Tok.span)
+      | Tok.Op Tok.Caret -> (Ast.Bit_xor, (advance st).Tok.span)
       | _ -> assert false
     in
     let right = parse_multiplicative st in
@@ -172,7 +181,10 @@ and parse_additive st =
         (merge_span (merge_span !left.Ast.span op_span) right.Ast.span)
         (Ast.Binary (op, !left, right))
   in
-  while at_op st Tok.Plus || at_op st Tok.Minus do
+  while
+    at_op st Tok.Plus || at_op st Tok.Minus || at_op st Tok.Amp
+    || at_op st Tok.Pipe || at_op st Tok.Caret
+  do
     step ()
   done;
   !left
@@ -185,6 +197,8 @@ and parse_multiplicative st =
       | Tok.Op Tok.Star -> (Ast.Mul, (advance st).Tok.span)
       | Tok.Op Tok.Slash -> (Ast.Div, (advance st).Tok.span)
       | Tok.Op Tok.Percent -> (Ast.Mod, (advance st).Tok.span)
+      | Tok.Op Tok.LtLt -> (Ast.Shl, (advance st).Tok.span)
+      | Tok.Op Tok.GtGt -> (Ast.Shr, (advance st).Tok.span)
       | _ -> assert false
     in
     let right = parse_unary st in
@@ -193,7 +207,10 @@ and parse_multiplicative st =
         (merge_span (merge_span !left.Ast.span op_span) right.Ast.span)
         (Ast.Binary (op, !left, right))
   in
-  while at_op st Tok.Star || at_op st Tok.Slash || at_op st Tok.Percent do
+  while
+    at_op st Tok.Star || at_op st Tok.Slash || at_op st Tok.Percent
+    || at_op st Tok.LtLt || at_op st Tok.GtGt
+  do
     step ()
   done;
   !left
@@ -208,6 +225,12 @@ and parse_unary st =
       let op_span = (advance st).Tok.span in
       let operand = parse_unary st in
       node (merge_span op_span operand.Ast.span) (Ast.Unary (Ast.Neg, operand))
+  | Tok.Op Tok.Tilde ->
+      let op_span = (advance st).Tok.span in
+      let operand = parse_unary st in
+      node
+        (merge_span op_span operand.Ast.span)
+        (Ast.Unary (Ast.Bit_not, operand))
   | _ -> parse_postfix st
 
 and parse_postfix st =
