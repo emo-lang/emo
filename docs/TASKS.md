@@ -29,6 +29,9 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M2 — Compile-time experience | 08–10 | Gradual type checker, structural module system, and packages with MVS resolution; multi-package projects build and run. |
 | M3 — Concurrency & networking | 11–12 | Processes and message passing on an effects-based scheduler; direct-style networking. |
 | M4 — Compilation targets | 13–14 | Native code generation via `emo build`; then wasm / TypeScript / BEAM / riscv64. |
+| M5 — BEAM & function groups | 17–18 | The BEAM target ships its golden tier; `emo Foo { ... }` function groups resolve and run on all four targets. |
+| M6 — Systems programming | 19–21 | A WebAssembly runtime written in Emo: the shared systems layer, then the binary decoder/validator, then the interpreter with spec-suite goldens. |
+| M7 — EmoOS | 22+ | The kernel path on the same systems layer: a unikernel build path (near term), then freestanding codegen (shared with the engine tiering). |
 
 ## Design gates
 
@@ -278,6 +281,8 @@ Promotion trail: **TypeScript → `plan/step-15-typescript.md`** (2026-10-02, fi
 - [x] **T16.4** — Concurrency: a cooperative driver for `do` / `<-` / `receive`, host-timer preemption points. Golden: pipeline. (Gated on T16.2.)
 - [ ] **T16.5** — The WASI and IO audit: stdlib metadata for `"wasm"`, and the io goldens where the host supports it.
 
+## M5 — BEAM target & function groups
+
 ### Step 17 — BEAM target (Core Erlang) · `plan/step-17-beam.md`
 
 **Prereq:** Steps 01–16.
@@ -293,5 +298,40 @@ Promotion trail: **TypeScript → `plan/step-15-typescript.md`** (2026-10-02, fi
 **Prereq:** Steps 01–17.
 **Done when:** `emo Foo { def ... const ... }` declares a function group, `Foo.hello()` / `Config.version` resolve and run on the interpreter and all four backends (goldens in CI), and the README documents the syntax.
 
-- [ ] **T18.1** — Parser (`emo` keyword + group items), checker (group symbols, name/arity rules), IR lowering to mangled functions; `examples/function_group/` golden through `emo run`.
-- [ ] **T18.2** — TypeScript, wasm, and beam goldens for the example; README (English + zh-CN) documents the syntax.
+- [x] **T18.1** — Parser (`emo` keyword + group items), checker (group symbols, name/arity rules), IR lowering to mangled functions; `examples/function_group/` golden through `emo run`.
+- [x] **T18.2** — TypeScript, wasm, and beam goldens for the example; README (English + zh-CN) documents the syntax.
+
+Close-out: groups lower to mangled functions with double-keyed symbols (group-qualified and module-bare), so every backend got them without backend code. The showcase example (processes across files on all four targets) landed with the TS process support; the manifest-path bug it exposed (an entry lowered twice under a relative path) is fixed in `emo_project`. Decisions are in `plan/step-18-function-group.md` (Close-out). **Step 18 acceptance met.**
+
+## M6 — Systems programming
+
+Two consumers pull one layer: a WebAssembly decoder, validator, and
+interpreter written in Emo, and the EmoOS kernel path. The layer is
+designed once under a unification gate — a primitive lands only when
+it names both consumers (or one plus a concrete near-term need);
+`plan/step-19-wasm-runtime.md` holds the project decisions, the
+mechanism matrix, and the ladder.
+
+### Step 19 — The systems layer (wasm runtime + EmoOS primitives) · `plan/step-19-wasm-runtime.md`
+
+**Prereq:** Steps 01–18.
+**Done when:** `& | ^ << >> ~` work on integer types across the interpreter and all four backends; the `Bytes` core type with little-endian accessors exists; `file.read` loads a file from disk under the scheduler; `Int64` and `Byte` arithmetic wraps on all targets (goldens in CI); `runtime/wasm/` exists as a real package.
+
+- [ ] **T19.1** — Bitwise operators (`& | ^ << >> ~`) on integer types: lexer, parser, checker, interpreter, and all four backends; `examples/bit_ops/` golden through `emo run` and every target's CI group.
+- [ ] **T19.2** — The `Bytes` core type: construction, bounds-checked get/set, little-endian accessors, String interop; all four backends; golden example.
+- [ ] **T19.3** — `file.read` stdlib package (native, scheduler-direct); a golden example reading a file from disk.
+- [ ] **T19.4** — `Int64` and `Byte`: literals, wrap-around arithmetic, comparisons, explicit conversions; all four backends; golden example. `runtime/wasm/` package skeleton created here.
+
+### Step 20 — Wasm runtime: decoder & validator (plan written at start)
+
+### Step 21 — Wasm runtime: interpreter core & spec-suite goldens (plan written at start)
+
+## M7 — EmoOS
+
+The kernel path, on the systems layer M6 lands. Near term: a unikernel
+build path — the native backend already emits OCaml, and the
+MirageOS/solo5 lineage proves that stack boots — with the `foreign
+def` FFI as the machine escape hatch (ports, asm shims) and the
+`core` library split from step 14's notes pulled for real. Far term:
+freestanding codegen, the same investment a tiered wasm engine needs.
+Step plans are written when the kernel work starts.
