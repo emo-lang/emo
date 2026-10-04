@@ -287,3 +287,11 @@ Promotion trail: **TypeScript → `plan/step-15-typescript.md`** (2026-10-02, fi
 - [x] **T17.2** — The value model and arithmetic: masked i64 wrap-around Int, binary Strings with interpolation, tuples, arrays, enums, deep content equality. Golden: fib.
 - [x] **T17.3** — Classes/instances (tagged maps), Box holding processes, closures as funs, case patterns with guards. Golden: objects, language_tour.
 - [x] **T17.4** — Processes (`do` / `<-` / `receive` via the compiler's receive primops), shop multi-module, pipeline golden; the CI `beam_examples` group and the resolution-gate test for `"beam"`.
+
+### Step 18 — Function groups (`emo` keyword) · `plan/step-18-function-group.md`
+
+**Prereq:** Steps 01–17.
+**Done when:** `emo Foo { def ... const ... }` declares a function group, `Foo.hello()` / `Config.version` resolve and run on the interpreter and all four backends (goldens in CI), and the README documents the syntax.
+
+- [ ] **T18.1** — Parser (`emo` keyword + group items), checker (group symbols, name/arity rules), IR lowering to mangled functions; `examples/function_group/` golden through `emo run`.
+- [ ] **T18.2** — TypeScript, wasm, and beam goldens for the example; README (English + zh-CN) documents the syntax.

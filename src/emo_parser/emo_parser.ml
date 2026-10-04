@@ -42,6 +42,7 @@ let keyword_spelling = function
   | Tok.Const -> "const"
   | Tok.Var -> "var"
   | Tok.Class -> "class"
+  | Tok.Emo -> "emo"
   | Tok.Interface -> "interface"
   | Tok.Enum -> "enum"
   | Tok.If -> "if"
@@ -634,6 +635,9 @@ and parse_item st =
   | Tok.Keyword Tok.Class ->
       let c = parse_class st in
       { Ast.item_span = c.Ast.class_span; item_desc = Ast.Item_class c }
+  | Tok.Keyword Tok.Emo ->
+      let g = parse_emo_group st in
+      { Ast.item_span = g.Ast.group_span; item_desc = Ast.Item_emo_group g }
   | Tok.Keyword Tok.Interface ->
       let i = parse_interface st in
       { Ast.item_span = i.Ast.interface_span; item_desc = Ast.Item_interface i }
@@ -818,6 +822,61 @@ and collect_fields stmts =
   in
   walk stmts;
   List.rev !fields
+
+(* An `emo` function group: `emo Name { def ... const ... }` — a named,
+   stateless namespace of defs and consts. Members are separated by
+   newlines; `var` is rejected (groups are pure). *)
+and parse_emo_group st =
+  let group_tok = peek st in
+  advance st |> ignore;
+  let group_name, _ = parse_type_name st "group" in
+  if at_op st Tok.LBrace && newline_before st then
+    error "E2001" (span st) "the group body must open on the group's line";
+  expect_op st Tok.LBrace "`{`" |> ignore;
+  let defs = ref [] in
+  let consts = ref [] in
+  let rec members first =
+    if at_op st Tok.RBrace || at_eof st then ()
+    else (
+      if (not first) && not (newline_before st) then
+        error "E2001" (span st) "group members are separated by newlines";
+      match kind st with
+      | Tok.Keyword Tok.Def ->
+          let d = parse_def st ~in_class:false in
+          defs := d :: !defs;
+          members false
+      | Tok.Keyword Tok.Const ->
+          let const_tok = span st in
+          (match parse_stmt st with
+          | { Ast.stmt_desc = Ast.Binding { mutable_ = true; _ }; _ } ->
+              error "E2001" const_tok
+                "a group cannot declare `var` (groups are stateless)"
+          | {
+           Ast.stmt_desc = Ast.Binding { mutable_ = false; name; init; _ };
+           _;
+          } ->
+              consts := (const_tok, name, init) :: !consts
+          | _ ->
+              error "E2001" const_tok
+                "expected a `const` binding in the group body");
+          members false
+      | t ->
+          error "E2001" (span st)
+            (Printf.sprintf
+               "expected a `def` or `const` in the group body, found %s"
+               (describe_kind t)))
+  in
+  members true;
+  if at_eof st then error "E2001" (span st) "expected `}`, found end of input";
+  let close_span = span st in
+  expect_op st Tok.RBrace "`}`" |> ignore;
+  let group_span = merge_span group_tok.Tok.span close_span in
+  {
+    Ast.group_span;
+    group_name;
+    group_defs = List.rev !defs;
+    group_consts = List.rev !consts;
+  }
 
 and parse_interface st =
   let kw_tok = peek st in
@@ -1197,8 +1256,8 @@ let parse_expr_source ~file ~source =
 let resync st =
   let is_item_start = function
     | Tok.Keyword
-        (Tok.Def | Tok.Class | Tok.Interface | Tok.Enum | Tok.Const | Tok.Var)
-      ->
+        ( Tok.Def | Tok.Class | Tok.Interface | Tok.Enum | Tok.Emo | Tok.Const
+        | Tok.Var ) ->
         true
     | _ -> false
   in

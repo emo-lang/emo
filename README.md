@@ -82,6 +82,30 @@ def welcome(g Greeter) String {
 - Interfaces are compile-time contracts: the checker verifies shapes at annotated positions, while runtime dispatch stays duck-typed with zero overhead.
 - Narrowing applies uniformly: `if g.is(Greeter) { ... }` works for interfaces as it does for classes.
 
+### Function Groups
+
+`emo` declares a **function group**: a named, stateless set of functions and constants. There are no instances, no `init`, and no fields — the members are the point, called through the group's name:
+
+```emo
+emo Math {
+  const tau = 6
+
+  def abs(x Int) Int {
+    if x < 0 {
+      return 0 - x
+    }
+    return x
+  }
+}
+
+Math.abs(0 - 7)   // 6
+Math.tau          // 6
+```
+
+- **A group is not a class.** There is nothing to instantiate and nothing to pass around — it is a namespace of functions. The keyword appears at the declaration and disappears at the use site: `Math.abs(7)` never mentions it.
+- **Members are referenced through the group** — `Math.abs(7)`, `Config.version` — and inside the group they are visible bare, the way static methods read in their own class.
+- **Groups are stateless by design**: no `var`, no fields, no `init`. State wants a class and a `Box`.
+
 ### Enums
 
 An enum is a closed, nominal set of named values — nothing more. Carrying data on members is deliberately excluded as an anti-pattern: when a value must be one of a known set with data attached, the idiomatic shape is an enum tag carried in a tuple — `(Outcome.ok, value)` — destructured directly in `case` and `receive`. Polymorphic data heavier than that is classes organized by an interface, and failure paths are exceptions.
@@ -308,7 +332,7 @@ Emo interoperates with C through OCaml's first-class C FFI: on the native backen
 
 ## Documentation
 
-Documentation lives under `docs/`. Chinese translations are maintained under `docs/zh-CN/`.
+Documentation lives under `docs/`. The Chinese translation of this README is [`docs/zh-CN/README.zh-CN.md`](docs/zh-CN/README.zh-CN.md).
 
 ## License
 
