@@ -12,6 +12,7 @@ type env = {
   buf : Buffer.t;
   mutable refs : string list; (* mutable local bindings, innermost first *)
   mutable fresh : int; (* unique scrutinee names *)
+  mutable in_receive : bool; (* lowering a receive's branch bodies *)
   mutable fname : string; (* the function being emitted, for trampolining *)
   mutable fparams : string list; (* its parameters, in order *)
 }
@@ -202,14 +203,54 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Builtin { name; args } ->
       let args_code = String.concat ", " (List.map (expr env) args) in
       if name = "print" then Printf.sprintf "E.print(%s)" args_code
+      else if name = "self_pid" then "E.self()"
+      else if name = "halt" then "E.halt()"
       else Printf.sprintf "E.builtin(%S, [%s])" name args_code
   | Box_new e -> Printf.sprintf "E.box(%s)" (expr env e)
   | Make_exception { message } ->
       Printf.sprintf "E.throwException(%s)" (expr env message)
-  | Do_spawn _ | Spawn_value _ ->
-      raise
-        (Emo_ir.Lower_error
-           "processes are not supported on the typescript target yet")
+  | Do_spawn { func; args } ->
+      (* the arguments evaluate in the spawner (matching the other
+         targets), so they are hoisted above the E.spawn call *)
+      let arg_locals = List.map (fun _ -> fresh env) args in
+      let pre =
+        String.concat "\n"
+          (List.mapi
+             (fun i arg ->
+               Printf.sprintf "const %s = await %s;" (List.nth arg_locals i)
+                 (expr env arg))
+             args)
+      in
+      Printf.sprintf
+        "(await (async () => {\n\
+         %s\n\
+        \  return E.spawn(async () => {\n\
+        \    return await %s(%s);\n\
+        \  });\n\
+         })())"
+        pre
+        (Emo_ir.sanitize_ident func)
+        (String.concat ", " arg_locals)
+  | Spawn_value { f; args } ->
+      let arg_locals = List.map (fun _ -> fresh env) args in
+      let pre =
+        String.concat "\n"
+          (List.mapi
+             (fun i arg ->
+               Printf.sprintf "const %s = await %s;" (List.nth arg_locals i)
+                 (expr env arg))
+             args)
+      in
+      let f_code = expr env f in
+      Printf.sprintf
+        "(await (async () => {\n\
+         %s\n\
+        \  return E.spawn(async () => {\n\
+        \    return await (%s)(%s);\n\
+        \  });\n\
+         })())"
+        pre f_code
+        (String.concat ", " arg_locals)
   | Closure { cparams; cbody } ->
       let params = String.concat ", " (List.map fst cparams) in
       let saved = env.refs in
@@ -257,55 +298,109 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       Printf.sprintf "if (E.truthy(%s)) {\n%s\n} else {\n%s\n}" (expr env cond)
         (block env then_) (block env else_)
   | Case { scrutinee; branches } -> case env scrutinee branches ~tail
-  | Receive _ | Send _ ->
-      raise
-        (Emo_ir.Lower_error
-           "processes are not supported on the typescript target yet")
+  | Send { target; message } ->
+      Printf.sprintf "E.send(%s, %s)" (expr env target) (expr env message)
+  | Receive { branches } ->
+      let saved = env.in_receive in
+      env.in_receive <- true;
+      let scratch = fresh env in
+      (* Same shape as `case`: guards nest inside the bindings' scope. *)
+      let rec chain bs =
+        match bs with
+        | [] -> "return false;"
+        | b :: rest -> (
+            let test = pattern_test scratch b.Emo_ir.pattern in
+            let bindings =
+              String.concat "\n" (pattern_bindings scratch b.Emo_ir.pattern)
+            in
+            let body = stmts env b.Emo_ir.body ~tail:false in
+            let next = chain rest in
+            match b.Emo_ir.guard with
+            | Some g ->
+                Printf.sprintf
+                  "if (%s) {\n\
+                   %s\n\
+                   if (E.truthy(%s)) {\n\
+                   %s\n\
+                   return true;\n\
+                   } else {\n\
+                   %s\n\
+                   }\n\
+                   } else {\n\
+                   %s\n\
+                   }"
+                  test bindings (expr env g) body next next
+            | None ->
+                Printf.sprintf
+                  "if (%s) {\n%s\n%s\nreturn true;\n} else {\n%s\n}" test
+                  bindings body next)
+      in
+      let dispatch = chain branches in
+      env.in_receive <- saved;
+      Printf.sprintf "await E.receive(async (%s) => {\n%s\n})" scratch dispatch
   | Raise e -> Printf.sprintf "E.throwException(%s);" (expr env e)
   | Return_stmt e -> (
-      match e.Emo_ir.desc with
-      | Emo_ir.Call { func = g; args } when g = env.fname ->
-          (* Self tail call: reassign the parameters and continue the
-             driver loop. *)
-          let assigns =
-            String.concat ""
-              (List.map2
-                 (fun p a -> Printf.sprintf "%s = %s; " p (expr env a))
-                 env.fparams args)
-          in
-          Printf.sprintf "{ %scontinue; }" assigns
-      | _ -> Printf.sprintf "return %s;" (expr env e))
+      if env.in_receive then
+        match e.Emo_ir.desc with
+        | Emo_ir.Call { func = g; args } when g = env.fname ->
+            (* a receive branch's tail call continues the loop as a
+               plain await-recursion *)
+            let args_code = String.concat ", " (List.map (expr env) args) in
+            Printf.sprintf "return await %s(%s);" (Emo_ir.sanitize_ident g)
+              args_code
+        | _ -> Printf.sprintf "throw new EReturn(%s);" (expr env e)
+      else
+        match e.Emo_ir.desc with
+        | Emo_ir.Call { func = g; args } when g = env.fname ->
+            (* Self tail call: reassign the parameters and continue the
+               driver loop. *)
+            let assigns =
+              String.concat ""
+                (List.map2
+                   (fun p a -> Printf.sprintf "%s = %s; " p (expr env a))
+                   env.fparams args)
+            in
+            Printf.sprintf "{ %scontinue; }" assigns
+        | _ -> Printf.sprintf "return %s;" (expr env e))
 
 and block env (xs : Emo_ir.stmt list) : string =
   match xs with [] -> "" | xs -> stmts env xs ~tail:false
 
 and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) : string =
   let s = fresh env in
-  let arms =
-    List.map
-      (fun (b : Emo_ir.branch) ->
+  (* Guards may reference pattern bindings, so a guarded arm nests its
+     guard inside the bindings' scope; the fall-through is duplicated
+     into both escapes (arm chains are short). *)
+  let rec chain bs =
+    match bs with
+    | [] -> Printf.sprintf "E.caseError(%s);" s
+    | b :: rest -> (
         let test = pattern_test s b.Emo_ir.pattern in
         let bindings =
           String.concat "\n" (pattern_bindings s b.Emo_ir.pattern)
         in
-        let saved = env.refs in
-        env.refs <- branch_binding_names b @ env.refs;
-        let guard =
-          match b.Emo_ir.guard with
-          | Some g ->
-              (* The guard sits inside the bindings' scope. *)
-              Printf.sprintf " && E.truthy(%s)" (expr env g)
-          | None -> ""
-        in
         let body = stmts env b.Emo_ir.body ~tail in
-        env.refs <- saved;
-        Printf.sprintf "if (%s%s) {\n%s\n%s\n}" test guard bindings body)
-      branches
+        let next = chain rest in
+        match b.Emo_ir.guard with
+        | Some g ->
+            Printf.sprintf
+              "if (%s) {\n\
+               %s\n\
+               if (E.truthy(%s)) {\n\
+               %s\n\
+               } else {\n\
+               %s\n\
+               }\n\
+               } else {\n\
+               %s\n\
+               }"
+              test bindings (expr env g) body next next
+        | None ->
+            Printf.sprintf "if (%s) {\n%s\n%s\n} else {\n%s\n}" test bindings
+              body next)
   in
-  let chain = String.concat "\nelse " arms in
-  Printf.sprintf
-    "{\n  const %s = %s;\n  %s\n  else {\n    E.caseError(%s);\n  }\n}" s
-    (expr env scrutinee) chain s
+  Printf.sprintf "{\n  const %s = %s;\n  %s\n}" s (expr env scrutinee)
+    (chain branches)
 
 (* ---- Declarations ---- *)
 
@@ -424,7 +519,9 @@ let emit_ts ~(runtime : string) (program : Emo_ir.program) : string =
       (Emo_ir.Lower_error
          "foreign definitions are not supported on the typescript target yet");
   let buf = Buffer.create (16 * 1024) in
-  let env = { buf; refs = []; fresh = 0; fname = ""; fparams = [] } in
+  let env =
+    { buf; refs = []; fresh = 0; fname = ""; fparams = []; in_receive = false }
+  in
   Buffer.add_string buf runtime;
   Buffer.add_string buf "\n// ---- program ----\n";
   List.iter
@@ -443,10 +540,11 @@ let emit_ts ~(runtime : string) (program : Emo_ir.program) : string =
   List.iter (fun f -> put env "%s\n" (emit_func env f)) program.Emo_ir.pfuncs;
   put env
     "\n\
-     (async () => {\n\
+     E.runMain(async () => {\n\
      %s\n\
-     })().catch((e: any) => {\n\
-    \  console.error(E.renderError(e));\n\
+     }).catch((e: any) => {\n\
+     if (e instanceof EHalt || e instanceof EReturn) return;\n\
+    \      console.error(E.renderError(e));\n\
     \  process.exitCode = 70;\n\
      });\n"
     (stmts env program.Emo_ir.pinit ~tail:false);

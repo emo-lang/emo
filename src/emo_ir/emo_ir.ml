@@ -774,6 +774,22 @@ let lower (input : input) : program =
   let funcs = ref [] in
   let classes = ref [] in
   let interfaces = ref [] in
+  (* the entry module can be discovered twice (as the entry root and as
+     a sibling file); dedupe by path so items lower once *)
+  let seen_paths = Hashtbl.create 8 in
+  let input =
+    {
+      input with
+      modules =
+        List.filter
+          (fun (m : module_input) ->
+            if Hashtbl.mem seen_paths m.mpath then false
+            else (
+              Hashtbl.replace seen_paths m.mpath ();
+              true))
+          input.modules;
+    }
+  in
   (* pass 2: non-entry const bindings lower to zero-arg functions *)
   List.iter
     (fun (m : module_input) ->
@@ -887,11 +903,16 @@ let lower (input : input) : program =
                       def_body = [ body ];
                     }
                   in
+                  let mangled =
+                    match
+                      Hashtbl.find_opt symbols ([ g.Ast.group_name ], cname)
+                    with
+                    | Some (S_func { mangled; _ }) -> mangled
+                    | _ -> mangle m.mpath (g.Ast.group_name ^ "__" ^ cname)
+                  in
                   funcs :=
-                    lower_func env ~module_path:m.mpath
-                      ~mangled:
-                        (mangle m.mpath (g.Ast.group_name ^ "__" ^ cname))
-                      ~self:false thunk_def
+                    lower_func env ~module_path:m.mpath ~mangled ~self:false
+                      thunk_def
                     :: !funcs)
                 g.Ast.group_consts
           | Ast.Item_foreign f ->
@@ -939,7 +960,18 @@ let lower (input : input) : program =
         | Ast.Item_stmt s -> Some (lower_stmt env s)
         | _ -> None)
   in
-  let pfuncs = specialize !funcs in
+  (* The entry module can be discovered under two paths, lowering its
+     items twice; dedupe functions by name, keeping the first. *)
+  let pfuncs =
+    let seen = Hashtbl.create 16 in
+    List.filter
+      (fun (f : func) ->
+        if Hashtbl.mem seen f.fname then false
+        else (
+          Hashtbl.replace seen f.fname ();
+          true))
+      (specialize !funcs)
+  in
   {
     pfuncs;
     pclasses = !classes;

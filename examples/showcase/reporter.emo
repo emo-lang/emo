@@ -1,0 +1,14 @@
+// The reporter process: prints each forwarded line through the
+// catalog group, counts, and reports back to the boss.
+def run(count Int, boss Pid) Int {
+  receive {
+    (id, total) -> {
+      print("shipped " + Catalog.line(id, total))
+      return run(count + 1, boss)
+    }
+    "done" -> {
+      boss <- (self_pid(), count)
+      return halt()
+    }
+  }
+}

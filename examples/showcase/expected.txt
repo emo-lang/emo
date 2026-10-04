@@ -1,0 +1,10 @@
+order 7 of 3
+band: standard
+counter: 11
+max sample: 11
+order 0: 22 units
+total: 22
+shipped order 1: 10 units
+shipped order 2: 20 units
+shipped order 3: 30 units
+handled 3 orders

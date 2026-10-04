@@ -1,0 +1,88 @@
+// The showcase — every Emo capability in one program: multi-file
+// modules, a class, an enum, a function group, case with guards,
+// arrays, Box, and processes (do / <- / receive).
+//
+//   emo run main.emo
+
+// ---- the class + enum ----
+enum Status { ok, bulk }
+
+class Order {
+  def init(id Int, qty Int) {
+    self.id = id
+    self.qty = qty
+  }
+
+  def describe() String {
+    return "order ${self.id} of ${self.qty}"
+  }
+
+  def band() (Status, String) {
+    if self.qty > 5 {
+      return (Status.bulk, "bulk")
+    }
+    return (Status.ok, "standard")
+  }
+}
+
+// ---- a value: the class ----
+const order = Order.new(id: 7, qty: 3)
+print(order.describe())
+
+case order.band() {
+  (Status.bulk, label) -> { print("band: ${label}") }
+  (Status.ok, label) -> { print("band: ${label}") }
+}
+
+// ---- state: a Box ----
+const counter = Box.new(0)
+counter.replace(counter.read() + 1)
+counter.replace(counter.read() + 10)
+print("counter: " + counter.read().to_string())
+
+// ---- pure helpers: the function group ----
+emo Catalog {
+  const units_word = "units"
+
+  def line(id Int, qty Int) String {
+    return "order ${id}: ${qty} ${units_word}"
+  }
+
+  def max_of(xs Array[Int]) Int {
+    return max_at(xs, 0, 0)
+  }
+
+  def max_at(xs Array[Int], i Int, best Int) Int {
+    if i == xs.length() {
+      return best
+    }
+    if xs[i] > best {
+      return max_at(xs, i + 1, xs[i])
+    }
+    return max_at(xs, i + 1, best)
+  }
+}
+
+const samples = [4, 11, 7]
+print("max sample: " + Catalog.max_of(samples).to_string())
+print(Catalog.line(0, 22))
+print("total: " + catalog.total(samples).to_string())
+
+// ---- the pipeline: three processes, one message chain ----
+def feed(wh Pid, i Int) Int {
+  if i > 3 {
+    wh <- "done"
+    return 0
+  }
+  wh <- (i, i)
+  return feed(wh, i + 1)
+}
+
+const rep = do reporter.run(0, self_pid())
+const wh = do warehouse.run(rep)
+feed(wh, 1)
+
+receive {
+  (who, handled) -> { print("handled ${handled} orders") }
+}
+
