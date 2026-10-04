@@ -60,6 +60,11 @@ type ctx = {
   classes : (string, class_info) Hashtbl.t;
   interfaces : (string, (string * (string * t) list * t) list) Hashtbl.t;
   enums : (string, string list) Hashtbl.t;
+  groups :
+    ( string,
+      (string * (string * t) list * t) list * (string * t) list )
+    Hashtbl.t;
+  (* function groups: name -> (defs: name/params/ret, consts: name/type) *)
   funcs : (string, Ast.fun_def) Hashtbl.t;
   diagnostics : Emo_support.Diagnostic.t list ref;
   mutable ret_sink : t list ref;
@@ -183,6 +188,20 @@ let collect ctx (items : Ast.item list) : unit =
       | Ast.Item_enum e ->
           Hashtbl.replace ctx.enums e.Ast.enum_name
             (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
+      | Ast.Item_emo_group g ->
+          (* the group name must not collide with a module path; the
+             members register in check_items once expressions can be
+             checked *)
+          if
+            List.exists
+              (fun m ->
+                match m with seg :: _ -> seg = g.Ast.group_name | [] -> false)
+              ctx.modules
+          then
+            report ctx g.Ast.group_span "E4010"
+              (Printf.sprintf
+                 "the group name `%s` is already a module in this project"
+                 g.Ast.group_name)
       | Ast.Item_foreign f ->
           (* The C FFI surface: Float/String/Bool marshal directly as
              C doubles/char*/int; Int (tagged) would need C stubs. *)
@@ -229,6 +248,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       file;
       classes = Hashtbl.create 8;
       interfaces = Hashtbl.create 8;
+      groups = Hashtbl.create 8;
       enums = Hashtbl.create 8;
       funcs = Hashtbl.create 8;
       diagnostics = ref [];
@@ -527,6 +547,23 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
           report ctx span "E4003" "`self` is not defined here";
           Unknown)
   | Ast.Member (recv, name) -> (
+      let group_head =
+        match recv.Ast.desc with Ast.Type_ident g -> Some g | _ -> None
+      in
+      (match group_head with
+      | Some gname -> (
+          match Hashtbl.find_opt ctx.groups gname with
+          | Some (defs, consts) ->
+              (* a group member: consts carry their type, defs are
+                 referenceable only as calls *)
+              if List.mem_assoc name consts then ignore (List.assoc name consts)
+              else if
+                not (List.exists (fun (n, _, _) -> String.equal n name) defs)
+              then
+                report ctx span "E4001"
+                  (Printf.sprintf "the group `%s` has no member `%s`" gname name)
+          | None -> ())
+      | None -> ());
       if module_prefix_known ctx (Option.value (dotted_path e) ~default:[]) then (
         (* A qualified module reference: record the longest known module
            prefix; cross-module types stay unchecked this step. *)
@@ -749,258 +786,299 @@ and check_apply ctx env span what ft args : t =
    declarations; the builtin method set is typed inline. Unknown receivers
    stay unchecked. *)
 and check_method_call ctx env span recv mname args : t =
-  let base = check_expr ctx env recv in
-  let arg_values =
-    List.map
-      (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
-      args
-  in
-  let none_expected result =
-    if List.length args = 0 then result
-    else (
-      report ctx span "E4009"
-        (Printf.sprintf "`%s` expects no arguments, got %d" mname
-           (List.length args));
-      result)
-  in
-  let builtin0 = none_expected in
-  let one_expected result =
-    if List.length args = 1 then result
-    else (
-      report ctx span "E4009"
-        (Printf.sprintf "`%s` expects 1 argument, got %d" mname
-           (List.length args));
-      result)
-  in
-  match (base, mname) with
-  | ClassType c, "new" when String.equal c "Exception" -> (
-      match arg_values with
-      | [ (Some "message", _) ] | [ (None, _) ] -> ClassType "Exception"
-      | _ ->
-          report ctx span "E4009" "`Exception.new` expects `message`";
-          ClassType "Exception")
-  | ClassType c, "new" -> (
-      match Hashtbl.find_opt ctx.classes c with
-      | Some info -> (
-          match info.cinit_params with
-          | Some params ->
-              check_apply ctx env span (c ^ ".new")
-                (FuncType (params, ClassType c))
-                args
-          | None ->
+  (match recv.Ast.desc with
+    | Ast.Type_ident gname when Hashtbl.mem ctx.groups gname -> (
+        match Hashtbl.find_opt ctx.groups gname with
+        | Some (defs, consts) -> (
+            if List.mem_assoc mname consts then (
               if List.length args > 0 then
                 report ctx span "E4009"
-                  (Printf.sprintf
-                     "class `%s` declares no `init`; `new` takes no arguments" c);
-              ClassType c)
-      | None -> Unknown)
-  | ClassType _, "to_string" -> builtin0 String
-  | ClassType _, "is" -> one_expected Bool
-  | ClassType c, _ -> (
-      match Hashtbl.find_opt ctx.classes c with
-      | Some info -> (
-          match List.assoc_opt mname info.cmethods with
-          | Some mi ->
-              check_apply ctx env span
-                (c ^ "." ^ mname)
-                (FuncType (mi.mparams, mi.mret))
-                args
-          | None ->
-              report ctx span "E4001"
-                (Printf.sprintf "NoMethodError: `%s` has no method `%s`" c mname);
-              Unknown)
-      | None -> Unknown)
-  | InterfaceType _, "to_string" -> builtin0 String
-  | InterfaceType _, "is" -> one_expected Bool
-  | InterfaceType i, _ -> (
-      match Hashtbl.find_opt ctx.interfaces i with
-      | Some sigs -> (
-          match List.find_opt (fun (n, _, _) -> String.equal n mname) sigs with
-          | Some (_, iptypes, iret) ->
-              check_apply ctx env span
-                (i ^ "." ^ mname)
-                (FuncType (iptypes, iret))
-                args
-          | None ->
-              report ctx span "E4001"
-                (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i mname);
-              Unknown)
-      | None -> Unknown)
-  | v, "to_string" -> builtin0 String
-  | TcpConn, "read_line" -> builtin0 String
-  | TcpConn, "read_exactly" -> (
-      match arg_values with
-      | [ (None, Int) ] | [ (Some "n", Int) ] -> String
-      | [ (_, other) ] ->
-          report ctx span "E4004"
-            (Printf.sprintf "`read_exactly` expects Int, got %s"
-               (to_string other));
-          String
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`read_exactly` expects 1 argument, got %d"
-               (List.length arg_values));
-          String)
-  | TcpConn, "read_all" -> builtin0 String
-  | TcpConn, "write" -> (
-      match arg_values with
-      | [ (None, String) ] | [ (Some "data", String) ] -> TcpConn
-      | [ (_, other) ] ->
-          report ctx span "E4004"
-            (Printf.sprintf "`write` expects String, got %s" (to_string other));
-          TcpConn
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`write` expects 1 argument, got %d"
-               (List.length arg_values));
-          TcpConn)
-  | TcpConn, "close" -> builtin0 TcpConn
-  | TcpConn, "set_timeout" -> (
-      match arg_values with
-      | [ (None, Float) ] | [ (Some "seconds", Float) ] -> TcpConn
-      | [ (_, other) ] ->
-          report ctx span "E4004"
-            (Printf.sprintf "`set_timeout` expects Float, got %s"
-               (to_string other));
-          TcpConn
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
-               (List.length arg_values));
-          TcpConn)
-  | TcpListener, "accept" -> builtin0 TcpConn
-  | TcpListener, "port" -> builtin0 Int
-  | TcpListener, "close" -> builtin0 TcpListener
-  | TcpListener, "set_timeout" -> (
-      match arg_values with
-      | [ (None, Float) ] | [ (Some "seconds", Float) ] -> TcpListener
-      | [ (_, other) ] ->
-          report ctx span "E4004"
-            (Printf.sprintf "`set_timeout` expects Float, got %s"
-               (to_string other));
-          TcpListener
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
-               (List.length arg_values));
-          TcpListener)
-  | UdpSocket, "send_to" -> (
-      match arg_values with
-      | [ (None, String); (None, Int); (None, String) ] -> UdpSocket
-      | [ _; _; _ ] ->
-          report ctx span "E4004"
-            "`send_to` expects (host String, port Int, data String)";
-          UdpSocket
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`send_to` expects 3 arguments, got %d"
-               (List.length arg_values));
-          UdpSocket)
-  | UdpSocket, "recv_from" -> builtin0 (TupleType [ String; String; Int ])
-  | UdpSocket, "port" -> builtin0 Int
-  | UdpSocket, "close" -> builtin0 UdpSocket
-  | UdpSocket, "set_timeout" -> (
-      match arg_values with
-      | [ (None, Float) ] | [ (Some "seconds", Float) ] -> UdpSocket
-      | [ (_, other) ] ->
-          report ctx span "E4004"
-            (Printf.sprintf "`set_timeout` expects Float, got %s"
-               (to_string other));
-          UdpSocket
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
-               (List.length arg_values));
-          UdpSocket)
-  | String, "length" -> builtin0 Int
-  | String, "substring" -> (
-      match arg_values with
-      | [ (None, Int); (None, Int) ] -> String
-      | [ _; _ ] ->
-          report ctx span "E4004" "`substring` expects (start Int, length Int)";
-          String
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`substring` expects 2 arguments, got %d"
-               (List.length arg_values));
-          String)
-  | String, "split" -> (
-      match arg_values with
-      | [ (None, String) ] | [ (Some "sep", String) ] -> ArrayType String
-      | [ _ ] ->
-          report ctx span "E4004" "`split` expects a String separator";
-          ArrayType String
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`split` expects 1 argument, got %d"
-               (List.length arg_values));
-          ArrayType String)
-  | String, "trim" -> builtin0 String
-  | String, "lower" -> builtin0 String
-  | String, "index_of" -> (
-      match arg_values with
-      | [ (None, String) ] | [ (Some "needle", String) ] -> Int
-      | [ _ ] ->
-          report ctx span "E4004" "`index_of` expects a String needle";
-          Int
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`index_of` expects 1 argument, got %d"
-               (List.length arg_values));
-          Int)
-  | String, "starts_with" -> (
-      match arg_values with
-      | [ (None, String) ] | [ (Some "prefix", String) ] -> Bool
-      | [ _ ] ->
-          report ctx span "E4004" "`starts_with` expects a String prefix";
-          Bool
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`starts_with` expects 1 argument, got %d"
-               (List.length arg_values));
-          Bool)
-  | String, "to_int" -> builtin0 Int
-  | ArrayType elem, "append" -> (
-      match arg_values with
-      | [ (_, vt) ] ->
-          if not (conforms ctx vt elem) then
+                  (Printf.sprintf "the constant `%s.%s` takes no arguments"
+                     gname mname);
+              List.assoc mname consts)
+            else
+              match
+                List.find_opt (fun (n, _, _) -> String.equal n mname) defs
+              with
+              | Some (_, params, ret) ->
+                  check_apply ctx env span
+                    (gname ^ "." ^ mname)
+                    (FuncType (params, ret))
+                    args
+              | None ->
+                  report ctx span "E4001"
+                    (Printf.sprintf "the group `%s` has no member `%s`" gname
+                       mname);
+                  Unknown)
+        | None -> Unknown)
+    | _ -> Unknown)
+  |> fun fallback ->
+  if fallback <> Unknown then fallback
+  else if
+    match recv.Ast.desc with
+    | Ast.Type_ident g when Hashtbl.mem ctx.groups g -> true
+    | _ -> false
+  then fallback
+  else
+    let base = check_expr ctx env recv in
+    let arg_values =
+      List.map
+        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+        args
+    in
+    let none_expected result =
+      if List.length args = 0 then result
+      else (
+        report ctx span "E4009"
+          (Printf.sprintf "`%s` expects no arguments, got %d" mname
+             (List.length args));
+        result)
+    in
+    let builtin0 = none_expected in
+    let one_expected result =
+      if List.length args = 1 then result
+      else (
+        report ctx span "E4009"
+          (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+             (List.length args));
+        result)
+    in
+    match (base, mname) with
+    | ClassType c, "new" when String.equal c "Exception" -> (
+        match arg_values with
+        | [ (Some "message", _) ] | [ (None, _) ] -> ClassType "Exception"
+        | _ ->
+            report ctx span "E4009" "`Exception.new` expects `message`";
+            ClassType "Exception")
+    | ClassType c, "new" -> (
+        match Hashtbl.find_opt ctx.classes c with
+        | Some info -> (
+            match info.cinit_params with
+            | Some params ->
+                check_apply ctx env span (c ^ ".new")
+                  (FuncType (params, ClassType c))
+                  args
+            | None ->
+                if List.length args > 0 then
+                  report ctx span "E4009"
+                    (Printf.sprintf
+                       "class `%s` declares no `init`; `new` takes no arguments"
+                       c);
+                ClassType c)
+        | None -> Unknown)
+    | ClassType _, "to_string" -> builtin0 String
+    | ClassType _, "is" -> one_expected Bool
+    | ClassType c, _ -> (
+        match Hashtbl.find_opt ctx.classes c with
+        | Some info -> (
+            match List.assoc_opt mname info.cmethods with
+            | Some mi ->
+                check_apply ctx env span
+                  (c ^ "." ^ mname)
+                  (FuncType (mi.mparams, mi.mret))
+                  args
+            | None ->
+                report ctx span "E4001"
+                  (Printf.sprintf "NoMethodError: `%s` has no method `%s`" c
+                     mname);
+                Unknown)
+        | None -> Unknown)
+    | InterfaceType _, "to_string" -> builtin0 String
+    | InterfaceType _, "is" -> one_expected Bool
+    | InterfaceType i, _ -> (
+        match Hashtbl.find_opt ctx.interfaces i with
+        | Some sigs -> (
+            match
+              List.find_opt (fun (n, _, _) -> String.equal n mname) sigs
+            with
+            | Some (_, iptypes, iret) ->
+                check_apply ctx env span
+                  (i ^ "." ^ mname)
+                  (FuncType (iptypes, iret))
+                  args
+            | None ->
+                report ctx span "E4001"
+                  (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i
+                     mname);
+                Unknown)
+        | None -> Unknown)
+    | v, "to_string" -> builtin0 String
+    | TcpConn, "read_line" -> builtin0 String
+    | TcpConn, "read_exactly" -> (
+        match arg_values with
+        | [ (None, Int) ] | [ (Some "n", Int) ] -> String
+        | [ (_, other) ] ->
             report ctx span "E4004"
-              (Printf.sprintf "`append` expects %s, got %s" (to_string elem)
-                 (to_string vt));
-          ArrayType elem
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`append` expects 1 argument, got %d"
-               (List.length arg_values));
-          ArrayType elem)
-  | ArrayType elem, "length" ->
-      builtin0
-        (ignore elem;
-         Int)
-  | TupleType _, "length" -> builtin0 Int
-  | BoxType elem, "read" -> builtin0 elem
-  | BoxType elem, "replace" -> (
-      let args = List.map snd arg_values in
-      match args with
-      | [ v ] ->
-          if not (conforms ctx v elem) then
+              (Printf.sprintf "`read_exactly` expects Int, got %s"
+                 (to_string other));
+            String
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`read_exactly` expects 1 argument, got %d"
+                 (List.length arg_values));
+            String)
+    | TcpConn, "read_all" -> builtin0 String
+    | TcpConn, "write" -> (
+        match arg_values with
+        | [ (None, String) ] | [ (Some "data", String) ] -> TcpConn
+        | [ (_, other) ] ->
             report ctx span "E4004"
-              (Printf.sprintf "`replace` expects %s, got %s" (to_string elem)
-                 (to_string v));
-          elem
-      | _ ->
-          report ctx span "E4009"
-            (Printf.sprintf "`replace` expects 1 argument, got %d"
-               (List.length args));
-          elem)
-  | _, "is" ->
-      let (_ : t list) = List.map snd arg_values in
-      one_expected Bool
-  | Unknown, _ -> Unknown
-  | v, m ->
-      report ctx span "E4001"
-        (Printf.sprintf "NoMethodError: `%s` has no method `%s`" (to_string v) m);
-      Unknown
+              (Printf.sprintf "`write` expects String, got %s" (to_string other));
+            TcpConn
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`write` expects 1 argument, got %d"
+                 (List.length arg_values));
+            TcpConn)
+    | TcpConn, "close" -> builtin0 TcpConn
+    | TcpConn, "set_timeout" -> (
+        match arg_values with
+        | [ (None, Float) ] | [ (Some "seconds", Float) ] -> TcpConn
+        | [ (_, other) ] ->
+            report ctx span "E4004"
+              (Printf.sprintf "`set_timeout` expects Float, got %s"
+                 (to_string other));
+            TcpConn
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
+                 (List.length arg_values));
+            TcpConn)
+    | TcpListener, "accept" -> builtin0 TcpConn
+    | TcpListener, "port" -> builtin0 Int
+    | TcpListener, "close" -> builtin0 TcpListener
+    | TcpListener, "set_timeout" -> (
+        match arg_values with
+        | [ (None, Float) ] | [ (Some "seconds", Float) ] -> TcpListener
+        | [ (_, other) ] ->
+            report ctx span "E4004"
+              (Printf.sprintf "`set_timeout` expects Float, got %s"
+                 (to_string other));
+            TcpListener
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
+                 (List.length arg_values));
+            TcpListener)
+    | UdpSocket, "send_to" -> (
+        match arg_values with
+        | [ (None, String); (None, Int); (None, String) ] -> UdpSocket
+        | [ _; _; _ ] ->
+            report ctx span "E4004"
+              "`send_to` expects (host String, port Int, data String)";
+            UdpSocket
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`send_to` expects 3 arguments, got %d"
+                 (List.length arg_values));
+            UdpSocket)
+    | UdpSocket, "recv_from" -> builtin0 (TupleType [ String; String; Int ])
+    | UdpSocket, "port" -> builtin0 Int
+    | UdpSocket, "close" -> builtin0 UdpSocket
+    | UdpSocket, "set_timeout" -> (
+        match arg_values with
+        | [ (None, Float) ] | [ (Some "seconds", Float) ] -> UdpSocket
+        | [ (_, other) ] ->
+            report ctx span "E4004"
+              (Printf.sprintf "`set_timeout` expects Float, got %s"
+                 (to_string other));
+            UdpSocket
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
+                 (List.length arg_values));
+            UdpSocket)
+    | String, "length" -> builtin0 Int
+    | String, "substring" -> (
+        match arg_values with
+        | [ (None, Int); (None, Int) ] -> String
+        | [ _; _ ] ->
+            report ctx span "E4004"
+              "`substring` expects (start Int, length Int)";
+            String
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`substring` expects 2 arguments, got %d"
+                 (List.length arg_values));
+            String)
+    | String, "split" -> (
+        match arg_values with
+        | [ (None, String) ] | [ (Some "sep", String) ] -> ArrayType String
+        | [ _ ] ->
+            report ctx span "E4004" "`split` expects a String separator";
+            ArrayType String
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`split` expects 1 argument, got %d"
+                 (List.length arg_values));
+            ArrayType String)
+    | String, "trim" -> builtin0 String
+    | String, "lower" -> builtin0 String
+    | String, "index_of" -> (
+        match arg_values with
+        | [ (None, String) ] | [ (Some "needle", String) ] -> Int
+        | [ _ ] ->
+            report ctx span "E4004" "`index_of` expects a String needle";
+            Int
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`index_of` expects 1 argument, got %d"
+                 (List.length arg_values));
+            Int)
+    | String, "starts_with" -> (
+        match arg_values with
+        | [ (None, String) ] | [ (Some "prefix", String) ] -> Bool
+        | [ _ ] ->
+            report ctx span "E4004" "`starts_with` expects a String prefix";
+            Bool
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`starts_with` expects 1 argument, got %d"
+                 (List.length arg_values));
+            Bool)
+    | String, "to_int" -> builtin0 Int
+    | ArrayType elem, "append" -> (
+        match arg_values with
+        | [ (_, vt) ] ->
+            if not (conforms ctx vt elem) then
+              report ctx span "E4004"
+                (Printf.sprintf "`append` expects %s, got %s" (to_string elem)
+                   (to_string vt));
+            ArrayType elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`append` expects 1 argument, got %d"
+                 (List.length arg_values));
+            ArrayType elem)
+    | ArrayType elem, "length" ->
+        builtin0
+          (ignore elem;
+           Int)
+    | TupleType _, "length" -> builtin0 Int
+    | BoxType elem, "read" -> builtin0 elem
+    | BoxType elem, "replace" -> (
+        let args = List.map snd arg_values in
+        match args with
+        | [ v ] ->
+            if not (conforms ctx v elem) then
+              report ctx span "E4004"
+                (Printf.sprintf "`replace` expects %s, got %s" (to_string elem)
+                   (to_string v));
+            elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`replace` expects 1 argument, got %d"
+                 (List.length args));
+            elem)
+    | _, "is" ->
+        let (_ : t list) = List.map snd arg_values in
+        one_expected Bool
+    | Unknown, _ -> Unknown
+    | v, m ->
+        report ctx span "E4001"
+          (Printf.sprintf "NoMethodError: `%s` has no method `%s`" (to_string v)
+             m);
+        Unknown
 
 and check_part ctx env = function
   | Ast.Literal_text _ -> ()
@@ -1467,6 +1545,50 @@ let check_items ctx (items : Ast.item list) : unit =
          | Ast.Item_class c ->
              check_class ctx env c;
              env
+         | Ast.Item_emo_group g ->
+             (* register the members, then check the bodies with the
+                members visible bare inside the group (Java's statics
+                read bare); the members do not leak to the outer scope *)
+             let defs =
+               List.map
+                 (fun d ->
+                   ( d.Ast.def_name,
+                     List.map
+                       (fun p ->
+                         (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+                       d.Ast.def_params,
+                     match d.Ast.def_return with
+                     | Some r -> ann_to_type ctx r
+                     | None -> Unknown ))
+                 g.Ast.group_defs
+             in
+             Hashtbl.replace ctx.groups g.Ast.group_name (defs, []);
+             let env =
+               List.fold_left
+                 (fun env (n, params, ret) ->
+                   bind env n
+                     {
+                       vtype = FuncType (params, ret);
+                       is_var = false;
+                       depth = env.depth;
+                     })
+                 env defs
+             in
+             let consts, env =
+               List.fold_left
+                 (fun (acc, env) (_, cname, cexpr) ->
+                   let t = check_expr ctx env cexpr in
+                   let env =
+                     bind env cname
+                       { vtype = t; is_var = false; depth = env.depth }
+                   in
+                   ((cname, t) :: acc, env))
+                 ([], env) g.Ast.group_consts
+             in
+             let consts = List.rev consts in
+             List.iter (fun d -> check_fun_def ctx env d) g.Ast.group_defs;
+             Hashtbl.replace ctx.groups g.Ast.group_name (defs, consts);
+             env
          | _ -> env)
        env items)
 
@@ -1496,6 +1618,7 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
       file = String.concat "." current;
       classes = Hashtbl.create 8;
       interfaces = Hashtbl.create 8;
+      groups = Hashtbl.create 8;
       enums = Hashtbl.create 8;
       funcs = Hashtbl.create 8;
       diagnostics = ref [];

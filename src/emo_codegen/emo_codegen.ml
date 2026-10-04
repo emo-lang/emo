@@ -482,6 +482,29 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Call { func; args } ->
       Printf.sprintf "%s %s" (sp_name func)
         (String.concat " " (List.map (emit_native_expr env) args))
+  | Emo_ir.Interpolate es ->
+      (* parts render through the shared runtime; the result is a
+         native string *)
+      Printf.sprintf
+        "(match Emo_runtime.interpolate [ %s ] with Emo_eval.String s -> s | _ \
+         -> assert false)"
+        (String.concat "; "
+           (List.map
+              (fun part ->
+                Printf.sprintf "Emo_eval.%s"
+                  (match part.Emo_ir.ety with
+                  | Emo_check.Int ->
+                      Printf.sprintf "Int (%s)" (emit_native_expr env part)
+                  | Emo_check.Float ->
+                      Printf.sprintf "Float (%s)" (emit_native_expr env part)
+                  | Emo_check.String ->
+                      Printf.sprintf "String (%s)" (emit_native_expr env part)
+                  | Emo_check.Bool ->
+                      Printf.sprintf "Bool (%s)" (emit_native_expr env part)
+                  | _ ->
+                      Printf.sprintf "String (Emo_runtime.to_string %s)"
+                        (emit_native_expr env part)))
+              es))
   | other ->
       let kind =
         match other with

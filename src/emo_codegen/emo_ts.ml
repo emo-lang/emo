@@ -99,11 +99,58 @@ let branch_binding_names (b : Emo_ir.branch) : string list =
 
 (* ---- Expressions ---- *)
 
+(* OCaml's %S escapes non-ASCII bytes as decimal byte escapes, which
+   JavaScript reads as legacy octal — corrupting every multi-byte
+   character. Emit ASCII directly and non-ASCII codepoints as
+   unicode escapes. *)
+let js_string (s : string) : string =
+  let buf = Buffer.create (String.length s + 2) in
+  Buffer.add_char buf '"';
+  let n = String.length s in
+  let push_ascii c =
+    match c with
+    | '"' -> Buffer.add_string buf "\""
+    | '\\' -> Buffer.add_string buf "\\\\"
+    | '\n' -> Buffer.add_string buf "\n"
+    | c -> Buffer.add_char buf c
+  in
+  let rec go i =
+    if i >= n then ()
+    else
+      let b = Char.code s.[i] in
+      if b < 0x80 then (
+        push_ascii (Char.chr b);
+        go (i + 1))
+      else
+        let cp =
+          if b land 0xE0 = 0xC0 then
+            ((b land 0x1F) lsl 6) lor (Char.code s.[i + 1] land 0x3F)
+          else if b land 0xF0 = 0xE0 then
+            ((b land 0x0F) lsl 12)
+            lor ((Char.code s.[i + 1] land 0x3F) lsl 6)
+            lor (Char.code s.[i + 2] land 0x3F)
+          else
+            ((b land 0x07) lsl 18)
+            lor ((Char.code s.[i + 1] land 0x3F) lsl 12)
+            lor ((Char.code s.[i + 2] land 0x3F) lsl 6)
+            lor (Char.code s.[i + 3] land 0x3F)
+        in
+        Buffer.add_string buf (Printf.sprintf "\\u{%x}" cp);
+        go
+          (i
+          +
+          if b land 0xE0 = 0xC0 then 2 else if b land 0xF0 = 0xE0 then 3 else 4
+          )
+  in
+  go 0;
+  Buffer.add_char buf '"';
+  Buffer.contents buf
+
 let rec expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
   | Const (L_int n) -> string_of_int n
   | Const (L_float f) -> Printf.sprintf "E.float(%s)" (string_of_float f)
-  | Const (L_string s) -> Printf.sprintf "%S" s
+  | Const (L_string s) -> js_string s
   | Const (L_bool b) -> if b then "true" else "false"
   | Const (L_char c) -> Printf.sprintf "E.char(%C)" c
   | Type_ref name -> Printf.sprintf "%S" name

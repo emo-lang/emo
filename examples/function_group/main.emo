@@ -1,0 +1,44 @@
+// The function group — `emo` declares a named, stateless set of
+// functions and constants. No instances, no init, no fields: the
+// group's members are called directly, `Math.abs(-7)`.
+//
+//   emo run main.emo
+
+emo Math {
+  const tau = 6
+
+  def abs(x Int) Int {
+    if x < 0 {
+      return 0 - x
+    }
+    return x
+  }
+
+  def clamp(x Int, lo Int, hi Int) Int {
+    if x < lo {
+      return lo
+    }
+    if x > hi {
+      return hi
+    }
+    return x
+  }
+}
+
+emo Format {
+  const separator = " · "
+
+  def money(cents Int) String {
+    return "${cents / 100} yuan"
+  }
+
+  def tagged(label String, value Int) String {
+    return "${label}${separator}${value}"
+  }
+}
+
+print(Math.abs(0 - 7))
+print(Math.tau)
+print(Math.clamp(15, 0, 10))
+print(Format.money(1250))
+print(Format.tagged("order", Math.clamp(99, 0, 50)))

@@ -25,6 +25,7 @@ let pp_kind fmt (k : Token.kind) =
         | Const -> "const"
         | Var -> "var"
         | Class -> "class"
+        | Emo -> "emo"
         | Interface -> "interface"
         | Enum -> "enum"
         | If -> "if"
