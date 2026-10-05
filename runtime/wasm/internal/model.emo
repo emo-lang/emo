@@ -1,0 +1,97 @@
+// The module model, as far as it exists (T20.7: the type section).
+//
+// Representation, settled here with the type-fixture: sequences are
+// Array[T] and values are the spec's own byte codes (a valtype is
+// 0x7f..0x6f — no enum naming layer sits between decoder and
+// validator). The plan's earlier cons-list sketch is superseded: a
+// recursive tuple type has no name and qualified class names do not
+// parse, so a cons cell could never cross a def signature; Array[T]
+// can. The cost is .append's copy — fine at corpus sizes, recorded as
+// the no-growable-buffer pressure.
+
+class FuncType {
+  def init(params Array[Int], results Array[Int]) {
+    self.params = params
+    self.results = results
+  }
+}
+
+// Decode one valtype byte: (ok, code, new_pos). v128 (0x7b) is out of
+// scope for step 20 and rejects here.
+def valtype(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+  if pos >= limit {
+    return (false, 0, pos)
+  }
+  const b = data.get(pos)
+  if b == 127 || b == 126 || b == 125 || b == 124 || b == 112 || b == 111 {
+    return (true, b, pos + 1)
+  }
+  return (false, b, pos)
+}
+
+// Decode a valtype vector of known length: (ok, codes, new_pos).
+def valtype_vec(data Bytes, pos Int, limit Int, n Int) (Bool, Array[Int], Int) {
+  return valtype_rest(data, pos, limit, n, [])
+}
+
+def valtype_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) (Bool, Array[Int], Int) {
+  if n == 0 {
+    return (true, acc, pos)
+  }
+  const v = valtype(data, pos, limit)
+  if !v[0] {
+    return (false, acc, pos)
+  }
+  return valtype_rest(data, v[2], limit, n - 1, acc.append(v[1]))
+}
+
+// Decode one function type (tag 0x60, then param and result vectors):
+// (ok, func_type, new_pos). On failure the func type is an empty
+// sentinel; the reader state of the caller decides nothing — the ok
+// flag is the contract.
+def func_type(data Bytes, pos Int, limit Int) (Bool, FuncType, Int) {
+  if pos >= limit {
+    return (false, FuncType.new([], []), pos)
+  }
+  if data.get(pos) != 96 {
+    return (false, FuncType.new([], []), pos)
+  }
+  const pn = internal.reader.u32(internal.reader.new(data, pos + 1, limit))
+  if pn[0].failed {
+    return (false, FuncType.new([], []), pos)
+  }
+  const pv = valtype_vec(data, pn[0].pos, limit, pn[1])
+  if !pv[0] {
+    return (false, FuncType.new([], []), pos)
+  }
+  const rn = internal.reader.u32(internal.reader.new(data, pv[2], limit))
+  if rn[0].failed {
+    return (false, FuncType.new([], []), pos)
+  }
+  const rv = valtype_vec(data, rn[0].pos, limit, rn[1])
+  if !rv[0] {
+    return (false, FuncType.new([], []), pos)
+  }
+  return (true, FuncType.new(pv[1], rv[1]), rv[2])
+}
+
+// The type section's content: a vector of function types.
+// (ok, types, new_pos) — ok is false on any malformed byte.
+def type_section(data Bytes, pos Int, limit Int) (Bool, Array[FuncType], Int) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, [], pos)
+  }
+  return type_rest(data, cn[0].pos, limit, cn[1], [])
+}
+
+def type_rest(data Bytes, pos Int, limit Int, n Int, acc Array[FuncType]) (Bool, Array[FuncType], Int) {
+  if n == 0 {
+    return (true, acc, pos)
+  }
+  const ft = func_type(data, pos, limit)
+  if !ft[0] {
+    return (false, acc, pos)
+  }
+  return type_rest(data, ft[2], limit, n - 1, acc.append(ft[1]))
+}

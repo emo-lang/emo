@@ -41,4 +41,13 @@ binary.wast:103 ok ok
 binary.wast:110 ok ok
 binary.wast:117 ok ok
 binary.wast:125 ok ok
-claimed 43, pending 3413, failed 0
+binary.wast:134 ok ok
+binary.wast:144 ok ok
+binary.wast:152 ok ok
+binary.wast:161 ok ok
+binary.wast:172 ok ok
+binary.wast:180 ok ok
+binary.wast:189 ok ok
+binary.wast:198 ok ok
+binary.wast:210 malformed malformed
+claimed 52, pending 3404, failed 0

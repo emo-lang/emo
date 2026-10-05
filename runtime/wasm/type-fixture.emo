@@ -1,0 +1,29 @@
+// The type-section fixture (T20.7): the representation decision's
+// proof — a hand-written type section decodes to the Array[FuncType]
+// model, and the malformed shapes reject.
+
+const good = internal.model.type_section(
+  internal.corpus.decode_hex("0260017f0060027f7e00"), 0, 10)
+println("types = " + good[1].length().to_string())
+println("types_ok = " + good[0].to_string())
+println("t0_params = " + good[1][0].params.length().to_string())
+println("t0_p0 = " + good[1][0].params[0].to_string())
+println("t0_results = " + good[1][0].results.length().to_string())
+println("t1_params = " + good[1][1].params.length().to_string())
+println("t1_p1 = " + good[1][1].params[1].to_string())
+println("consumed = " + good[2].to_string())
+
+// v128 is out of scope for step 20 and rejects as a valtype.
+const simd = internal.model.type_section(
+  internal.corpus.decode_hex("0160017b00"), 0, 5)
+println("simd_ok = " + simd[0].to_string())
+
+// A wrong function-type tag rejects.
+const tag = internal.model.type_section(
+  internal.corpus.decode_hex("0161017f00"), 0, 5)
+println("tag_ok = " + tag[0].to_string())
+
+// Two function types claimed in the count, one present: unexpected end.
+const short = internal.model.type_section(
+  internal.corpus.decode_hex("0260017f00"), 0, 5)
+println("short_ok = " + short[0].to_string())

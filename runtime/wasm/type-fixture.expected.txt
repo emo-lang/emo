@@ -1,0 +1,11 @@
+types = 2
+types_ok = true
+t0_params = 1
+t0_p0 = 127
+t0_results = 0
+t1_params = 2
+t1_p1 = 126
+consumed = 10
+simd_ok = false
+tag_ok = false
+short_ok = false
