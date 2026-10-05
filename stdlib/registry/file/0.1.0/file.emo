@@ -1,0 +1,12 @@
+// Direct-style file io, running on the scheduler. Paths are taken as
+// given (relative paths resolve against the process's working
+// directory); every failure raises an ordinary Emo exception whose
+// message states exactly what failed — no error codes, no nil.
+
+def read(path String) String {
+  return file_read(path)
+}
+
+def write(path String, contents String) Int {
+  return file_write(path, contents)
+}

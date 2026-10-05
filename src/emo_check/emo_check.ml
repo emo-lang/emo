@@ -383,6 +383,18 @@ let empty_env =
           } );
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
         ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
+        ( "file_read",
+          {
+            vtype = FuncType ([ ("path", String) ], String);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "file_write",
+          {
+            vtype = FuncType ([ ("path", String); ("contents", String) ], Int);
+            is_var = false;
+            depth = 0;
+          } );
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
       ];
