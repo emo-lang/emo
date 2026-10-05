@@ -152,6 +152,109 @@ def const_expr(r Reader) Reader {
   return bail(r1, r1.pos, "illegal opcode")
 }
 
+// ---- the instruction stream (T20.10) ----
+//
+// Dispatch on the first byte; the numeric instructions' immediates
+// decode here, and the structured instructions recurse (the matching
+// end terminates this level, so nesting mirrors the recursion).
+// Opcodes outside the implemented families bail as "illegal opcode" —
+// their families claim as they land (T20.11: parametric, variable,
+// memory; T20.12: the branch and call families).
+
+def expr(r Reader) Reader {
+  return instrs(r)
+}
+
+// Decode instructions until the matching end (0x0b). An else (0x05)
+// switches arms at this level; the arm discipline is the validator's.
+def instrs(r Reader) Reader {
+  if r.failed {
+    return r
+  }
+  const p = u8(r)
+  const r1 = p[0]
+  if r1.failed {
+    return r1
+  }
+  const op = p[1]
+  if op == 11 {
+    return r1
+  }
+  if op == 5 {
+    return instrs(r1)
+  }
+  if op == 2 || op == 3 || op == 4 {
+    return instrs(blocktype_then(r1))
+  }
+  if op == 0 || op == 1 || op == 15 {
+    return instrs(r1)
+  }
+  if op == 65 {
+    return instrs(s32(r1)[0])
+  }
+  if op == 66 {
+    return instrs(s64(r1)[0])
+  }
+  if op == 67 {
+    return instrs(take(r1, 4)[0])
+  }
+  if op == 68 {
+    return instrs(take(r1, 8)[0])
+  }
+  // The plain numeric instructions, 0x45..0xc4, carry no immediates.
+  if op >= 69 && op <= 196 {
+    return instrs(r1)
+  }
+  return bail(r1, r1.pos, "illegal opcode")
+}
+
+// A block type: 0x40 (empty), a valtype byte, or an s33 type index.
+def blocktype_then(r Reader) Reader {
+  const b = peek(r)
+  if b == 64 || b == 127 || b == 126 || b == 125 || b == 124 || b == 112 || b == 111 {
+    return skip(r, 1)
+  }
+  const s = s33(r)
+  return s[0]
+}
+
+// Signed 33-bit LEB128 (block type indices): five bytes, the final
+// byte's top three bits all clear or all set.
+def s33(r Reader) (Reader, Int64) {
+  return s33_acc(r, 0, 0L)
+}
+
+def s33_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
+  if r.failed {
+    return (r, 0L)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0L)
+  }
+  const bits = b & 127
+  const acc2 = acc | (Int64.from_int(bits) * (1L << Int64.from_int(7 * count)))
+  if b < 128 {
+    if count == 4 {
+      const top = bits >> 4
+      if top != 0 && top != 7 {
+        return (bail(rr, rr.pos, "integer too large"), 0L)
+      }
+      if bits >= 64 {
+        return (rr, acc2 - (1L << Int64.from_int(7 * (count + 1))))
+      }
+      return (rr, acc2)
+    }
+    return (rr, acc2)
+  }
+  if count == 4 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0L)
+  }
+  return s33_acc(rr, count + 1, acc2)
+}
+
 // ---- LEB128 ----
 //
 // The unsigned/signed encodings with the spec's length caps: an
