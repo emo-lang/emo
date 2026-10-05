@@ -1,0 +1,24 @@
+; The smoke rule makes the wasm package non-inert: `dune test` runs
+; `emo run main.emo` and diffs its stdout against expected.txt, so a
+; red line here means the runtime's own golden broke. The decoder and
+; validator (step 20) grow this rule into the corpus harness.
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  main.emo
+  wasm.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   smoke.actual
+   (run %{emo} run main.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  smoke.actual
+  expected.txt)
+ (action
+  (diff expected.txt smoke.actual)))
