@@ -27,18 +27,18 @@ class Order {
 
 // ---- a value: the class ----
 const order = Order.new(id: 7, qty: 3)
-print(order.describe())
+println(order.describe())
 
 case order.band() {
-  (Status.bulk, label) -> { print("band: ${label}") }
-  (Status.ok, label) -> { print("band: ${label}") }
+  (Status.bulk, label) -> { println("band: ${label}") }
+  (Status.ok, label) -> { println("band: ${label}") }
 }
 
 // ---- state: a Box ----
 const counter = Box.new(0)
 counter.replace(counter.read() + 1)
 counter.replace(counter.read() + 10)
-print("counter: " + counter.read().to_string())
+println("counter: " + counter.read().to_string())
 
 // ---- pure helpers: the function group ----
 emo Catalog {
@@ -64,9 +64,9 @@ emo Catalog {
 }
 
 const samples = [4, 11, 7]
-print("max sample: " + Catalog.max_of(samples).to_string())
-print(Catalog.line(0, 22))
-print("total: " + catalog.total(samples).to_string())
+println("max sample: " + Catalog.max_of(samples).to_string())
+println(Catalog.line(0, 22))
+println("total: " + catalog.total(samples).to_string())
 
 // ---- the pipeline: three processes, one message chain ----
 def feed(wh Pid, i Int) Int {
@@ -83,6 +83,6 @@ const wh = do warehouse.run(rep)
 feed(wh, 1)
 
 receive {
-  (who, handled) -> { print("handled ${handled} orders") }
+  (who, handled) -> { println("handled ${handled} orders") }
 }
 

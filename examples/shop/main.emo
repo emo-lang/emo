@@ -8,5 +8,5 @@
 // root, and every sibling `.emo` file is a module at its path.
 
 // Sibling modules are referenced by their path — no import statement.
-print(checkout.checkout(21))
-print(pricing.price(3))
+println(checkout.checkout(21))
+println(pricing.price(3))

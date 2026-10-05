@@ -12,5 +12,5 @@ do http.serve_requests(listener) -> (req HttpRequest) {
 }
 
 const resp = http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello")
-print(resp.body)
-print(resp.status)
+println(resp.body)
+println(resp.status)

@@ -216,8 +216,8 @@ let rec equal_value a b =
 
 let global_env () =
   let env = { frame = Hashtbl.create 16; parent = None } in
-  Hashtbl.replace env.frame "print"
-    { bound = BuiltinFn "print"; mutable_ = false };
+  Hashtbl.replace env.frame "println"
+    { bound = BuiltinFn "println"; mutable_ = false };
   Hashtbl.replace env.frame "self_pid"
     { bound = BuiltinFn "self_pid"; mutable_ = false };
   Hashtbl.replace env.frame "halt"
@@ -1390,12 +1390,12 @@ and apply_closure closure span args = eval_body closure span args
 
 and apply_builtin span name args =
   match (name, args) with
-  | "print", [ v ] ->
+  | "println", [ v ] ->
       !output (to_string v ^ "\n");
       v
-  | "print", vs ->
+  | "println", vs ->
       error span "E3007"
-        (Printf.sprintf "`print` expects 1 argument, got %d" (List.length vs))
+        (Printf.sprintf "`println` expects 1 argument, got %d" (List.length vs))
   | "self_pid", [] -> Pid (Effect.perform Self_pid)
   | "self_pid", vs ->
       error span "E3007"
@@ -2034,7 +2034,7 @@ let run_items items =
   with Emo_raise (v, span, trace) ->
     raise (Error (uncaught_diagnostic (v, span, trace)))
 
-(* Bridges compiled code into the builtin surface (print, the net_*
+(* Bridges compiled code into the builtin surface (println, the net_*
    family, halt, ...): the same argument shapes and runtime errors as
    interpreted calls. *)
 let call_builtin (name : string) (args : value list) : value =

@@ -120,7 +120,7 @@ type env = {
 }
 
 let is_builtin = function
-  | "print" | "self_pid" | "halt" -> true
+  | "println" | "self_pid" | "halt" -> true
   | name -> String.length name >= 4 && String.sub name 0 4 = "net_"
 
 let type_of env (span : Emo_support.Span.t) : Emo_check.t =

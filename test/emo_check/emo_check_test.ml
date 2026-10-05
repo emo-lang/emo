@@ -74,7 +74,7 @@ def add(a Int, b Int) Int {
 }
 
 const sum = 1 + 2
-print(sum)|})));
+println(sum)|})));
     tc "an annotation naming an undeclared type is an error" (fun () ->
         let diagnostics = check "def f(x Widget) Int {\n  return 1\n}" in
         Alcotest.(check bool) "E4005" true (has_code diagnostics "E4005");
@@ -98,9 +98,9 @@ print(sum)|})));
 let expression_tests =
   [
     tc "an undefined name is a certain error" (fun () ->
-        let diagnostics = check "print(nope)" in
+        let diagnostics = check "println(nope)" in
         Alcotest.(check bool) "E4003" true (has_code diagnostics "E4003");
-        Alcotest.(check string) "span" "test.emo:1:7" (span_of diagnostics));
+        Alcotest.(check string) "span" "test.emo:1:9" (span_of diagnostics));
     tc "operator mismatches on known operands are errors" (fun () ->
         let diagnostics = check {|const bad = 1 + "a"|} in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
@@ -115,7 +115,7 @@ let expression_tests =
           check
             {|const mixed = [1, "a"]
 const first = mixed[0]
-print(first + "!")|}
+println(first + "!")|}
         in
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
@@ -136,16 +136,16 @@ print(first + "!")|}
     tc "var rebinding with a conforming value is silent" (fun () ->
         Alcotest.(check int) "count" 0 (List.length (check "var x = 1\nx = 2")));
     tc "an if condition must be a Bool" (fun () ->
-        let diagnostics = check "if 1 {\n  print(2)\n}" in
+        let diagnostics = check "if 1 {\n  println(2)\n}" in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004");
         Alcotest.(check string) "span" "test.emo:1:4" (span_of diagnostics));
     tc "tuple indexing is bounds-checked on literals" (fun () ->
-        let diagnostics = check "const p = (1, \"a\")\nprint(p[5])" in
+        let diagnostics = check "const p = (1, \"a\")\nprintln(p[5])" in
         if not (has_code diagnostics "E4006") then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check bool) "E4006" true (has_code diagnostics "E4006"));
     tc "in-bounds tuple indexing is silent" (fun () ->
-        let diagnostics = check "const p = (1, \"a\")\nprint(p[1])" in
+        let diagnostics = check "const p = (1, \"a\")\nprintln(p[1])" in
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check int) "count" 0 (List.length diagnostics));
@@ -195,7 +195,7 @@ let signature_tests =
     tc "a block with no returns infers Void and stays silent as a value"
       (fun () ->
         let diagnostics = check {|const h = -> (n Int) {
-  print(n)
+  println(n)
 }|} in
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
@@ -247,7 +247,7 @@ if first.is(User) {
 
 var first = [1, "a"][0]
 if first.is(User) {
-  print(1)
+  println(1)
 } else {
   first = 1
 }|}
@@ -264,7 +264,7 @@ if first.is(User) {
 
 const s = "hi"
 if s.is(User) {
-  print(1)
+  println(1)
 }|}
         in
         Alcotest.(check bool) "E4011" true (has_code diagnostics "E4011"));
@@ -279,7 +279,7 @@ if s.is(User) {
 
 var first = [1, "a"][0]
 if first.is(User) {
-  print(1)
+  println(1)
 }
 first = 1|}
         in
@@ -300,7 +300,7 @@ let () =
 
 const s = "hi"
 if s.is(User) {
-  print(1)
+  println(1)
 }|})
     ^ "\n");
   close_out out
@@ -360,7 +360,7 @@ def probe(s Silent) String {
 }
 
 const anything = [1, "a"][0]
-print(anything.greet())|}
+println(anything.greet())|}
         in
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
@@ -398,7 +398,7 @@ class Silent {
 
 var anything = Silent.new()
 if anything.is(Greeter) {
-  print(1)
+  println(1)
 }|})
     ^ "\n");
   output_string out
@@ -410,7 +410,7 @@ if anything.is(Greeter) {
 }
 var x = S2.new()
 if x.is(S2) {
-  print(1)
+  println(1)
 }|})
     ^ "\n");
   close_out out
@@ -461,7 +461,7 @@ let var_escape_tests =
 const g = -> {
   return x
 }
-print(g())|})));
+println(g())|})));
     tc "a Box is the legal way to hold mutable state in a block" (fun () ->
         let diagnostics =
           check
@@ -629,7 +629,7 @@ def go() String {
              (check
                 {|const anything = [1, "a"][0]
 case anything {
-  1 -> { print(1) }
+  1 -> { println(1) }
 }|})));
   ]
 
@@ -682,18 +682,18 @@ let void_tests =
   [
     tc "a def with no return annotation is a Void function" (fun () ->
         if List.length (check {|def log(msg String) {
-  print(msg)
+  println(msg)
 }|}) > 0 then
           Alcotest.fail "expected a clean check");
     tc "an explicit Void annotation behaves like the omitted form" (fun () ->
         if List.length (check {|def log(msg String) Void {
-  print(msg)
+  println(msg)
 }|}) > 0
         then Alcotest.fail "expected a clean check");
     tc "a `return` in a Void function is E4016" (fun () ->
         let diagnostics =
           check {|def log(msg String) {
-  print(msg)
+  println(msg)
   return
 }|}
         in
@@ -741,13 +741,13 @@ def f(c Color) Int {
           List.length
             (check
                {|def page(title String, content Block) Block {
-  print(title)
+  println(title)
   content()
   return content
 }
 
 page(title: "Home") {
-  print("inside")
+  println("inside")
 }|})
           > 0
         then Alcotest.fail "expected a clean check");

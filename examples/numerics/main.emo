@@ -27,7 +27,7 @@ def growth(principal Float, rate Float, years Float) Float {
 // One table row per year; recursion is the loop.
 def table(principal Float, rate Float, years Float) Float {
   const value = growth(principal, rate, years)
-  print("year ${years.to_string()}: ${value}")
+  println("year ${years.to_string()}: ${value}")
   if years == 10.0 {
     return value
   }
@@ -42,10 +42,10 @@ def roots(a Float, b Float, c Float) (Float, Float) {
   return (x1, x2)
 }
 
-print("== compound growth: 1000 at 5% ==")
+println("== compound growth: 1000 at 5% ==")
 table(1000.0, 0.05, 0.0)
 
-print("== roots of x^2 - 3x + 2 ==")
+println("== roots of x^2 - 3x + 2 ==")
 const r = roots(1.0, -3.0, 2.0)
-print("x1 = ${r[0]}")
-print("x2 = ${r[1]}")
+println("x1 = ${r[0]}")
+println("x2 = ${r[1]}")

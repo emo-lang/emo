@@ -18,4 +18,4 @@ def driver(n Int, pong Pid) Int {
 }
 
 const p = do ponger(20000, self_pid())
-print(driver(20000, p))
+println(driver(20000, p))

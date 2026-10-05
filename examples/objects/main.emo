@@ -14,12 +14,12 @@ class User {
 }
 
 const u = User.new(name: "Ada", age: 36)
-print(u.full_name())
-print(u.is_older?())
-print(u == User.new(name: "Ada", age: 36))
+println(u.full_name())
+println(u.is_older?())
+println(u == User.new(name: "Ada", age: 36))
 
 enum Color { red, green, blue }
-print(Color.red == Color.red)
+println(Color.red == Color.red)
 
 interface Greeter {
   def greet() String
@@ -35,5 +35,5 @@ def welcome(g Greeter) String {
   return g.greet()
 }
 
-print(welcome(English.new()))
-print(English.new().is(Greeter))
+println(welcome(English.new()))
+println(English.new().is(Greeter))

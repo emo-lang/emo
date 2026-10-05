@@ -202,7 +202,7 @@ let rec expr env (e : Emo_ir.expr) : string =
         (String.concat ", " (List.map (expr env) args))
   | Builtin { name; args } ->
       let args_code = String.concat ", " (List.map (expr env) args) in
-      if name = "print" then Printf.sprintf "E.print(%s)" args_code
+      if name = "println" then Printf.sprintf "E.println(%s)" args_code
       else if name = "self_pid" then "E.self()"
       else if name = "halt" then "E.halt()"
       else Printf.sprintf "E.builtin(%S, [%s])" name args_code

@@ -221,8 +221,8 @@ def pick() Color {
         Alcotest.(check bool) "make_enum" true (is_make_enum f.Emo_ir.fbody);
         ignore program);
     tc "the entry's top-level statements lower to pinit" (fun () ->
-        let program = lower_program [ ([], {|print(1)
-print(2)|}) ] ~entry:[] in
+        let program = lower_program [ ([], {|println(1)
+println(2)|}) ] ~entry:[] in
         Alcotest.(check int) "pinit length" 2 (List.length program.Emo_ir.pinit));
   ]
 

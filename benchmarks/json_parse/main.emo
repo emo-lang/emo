@@ -24,4 +24,4 @@ def skip_value(s String, from Int) Int {
 
 const doc = "{\"n\": 123456789}"
 const end_i = skip_value(doc, 6)
-print(doc.substring(6, end_i - 6).to_int())
+println(doc.substring(6, end_i - 6).to_int())

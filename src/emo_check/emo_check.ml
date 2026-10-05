@@ -299,7 +299,7 @@ let empty_env =
   {
     bindings =
       [
-        ( "print",
+        ( "println",
           {
             vtype = FuncType ([ ("value", Unknown) ], Unknown);
             is_var = false;

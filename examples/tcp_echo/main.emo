@@ -36,12 +36,12 @@ def echo_loop(conn TcpConn, boss Pid) Int {
 def chat(conn TcpConn, lines Array[String], i Int) Int {
   if i == lines.length() {
     conn.write("bye\n")
-    print(conn.read_line())
+    println(conn.read_line())
     conn.close()
     return 0
   }
   conn.write("${lines[i]}\n")
-  print(conn.read_line())
+  println(conn.read_line())
   return chat(conn, lines, i + 1)
 }
 
@@ -56,6 +56,6 @@ chat(conn, [ "你好, socket", "direct style", "no callbacks" ], 0)
 
 receive {
   "served" -> {
-    print("server closed cleanly")
+    println("server closed cleanly")
   }
 }

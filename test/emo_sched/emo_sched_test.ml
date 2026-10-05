@@ -43,10 +43,10 @@ def worker() Int {
 const pid = do worker()
 pid <- (self_pid(), 21)
 receive {
-  (_who, result) -> { print(result) }
-  _ -> { print("unmatched") }
+  (_who, result) -> { println(result) }
+  _ -> { println("unmatched") }
 }
-print("done")
+println("done")
 |}
         in
         Alcotest.(check string) "output" "42\ndone\n" output);
@@ -67,9 +67,9 @@ const pid = do echo()
 pid <- self_pid()
 receive {
   theirs -> {
-    print(pid)
-    print(theirs == pid)
-    print(pid == self_pid())
+    println(pid)
+    println(theirs == pid)
+    println(pid == self_pid())
   }
 }
 |}
@@ -82,10 +82,10 @@ receive {
 self_pid() <- "later"
 self_pid() <- ("now", 7)
 receive {
-  ("now", n) -> { print(n) }
+  ("now", n) -> { println(n) }
 }
 receive {
-  msg -> { print(msg) }
+  msg -> { println(msg) }
 }
 |}
         in
@@ -104,9 +104,9 @@ def slow(reply_to Pid) Int {
 
 const pid = do slow(self_pid())
 receive {
-  n -> { print(n) }
+  n -> { println(n) }
 }
-print("after")
+println("after")
 |}
         in
         Alcotest.(check string) "output" "3\nafter\n" output);
@@ -122,7 +122,7 @@ def quitter() Int {
 
 const q = do quitter()
 q <- "bye"
-print("main continues")
+println("main continues")
 |}
         in
         Alcotest.(check bool)
@@ -178,7 +178,7 @@ def bomber() Int {
 
 const b = do bomber()
 b <- "light the fuse"
-print("still here")
+println("still here")
 |}
         in
         Alcotest.(check string) "output" "still here\n" output);
@@ -195,7 +195,7 @@ def divider() Int {
 
 const d = do divider()
 d <- (self_pid(), 0)
-print("main survives")
+println("main survives")
 |}
         in
         Alcotest.(check string) "output" "main survives\n" output);
@@ -257,9 +257,9 @@ const r = do reader(self_pid())
 r <- box
 box.replace(99)
 receive {
-  v -> { print(v) }
+  v -> { println(v) }
 }
-print(box.read())
+println(box.read())
 |}
         in
         (* The receiver saw the snapshot taken at send time; the sender's
@@ -283,7 +283,7 @@ const box = Box.new(1)
 const m = do mutator(self_pid())
 m <- box
 receive {
-  _ -> { print(box.read()) }
+  _ -> { println(box.read()) }
 }
 |}
         in
@@ -305,8 +305,8 @@ const r = do reader(self_pid())
 r <- (Box.new(5), "deep")
 receive {
   (v, tag) -> {
-    print(tag)
-    print(v)
+    println(tag)
+    println(v)
   }
 }
 |}
@@ -357,10 +357,10 @@ const b = do echo("b")
 a <- self_pid()
 b <- self_pid()
 receive {
-  m1 -> { print(m1) }
+  m1 -> { println(m1) }
 }
 receive {
-  m2 -> { print(m2) }
+  m2 -> { println(m2) }
 }
 |}
 
@@ -434,7 +434,7 @@ let determinism_tests =
           "result set" (sorted_out eio_out) (sorted_out own_out));
     tc "a system-wide deadlock is an error" (fun () ->
         match run_det {|receive {
-  _ -> { print("never") }
+  _ -> { println("never") }
 }
 |} with
         | _ -> Alcotest.fail "expected E3012"
@@ -480,7 +480,7 @@ def round(i Int) Int {
 
 round(500000)
 receive {
-  n -> { print(n) }
+  n -> { println(n) }
 }
 |}
 
@@ -519,7 +519,7 @@ def collect(n Int, sum Int) Int {
   }
 }
 
-print(collect(1000, 0))
+println(collect(1000, 0))
 |}
 
 (* A receive loop recursing a million times — the native stack stays flat. *)
@@ -551,7 +551,7 @@ def feed(i Int) Int {
 
 feed(1000000)
 receive {
-  n -> { print(n) }
+  n -> { println(n) }
 }
 |}
 
@@ -608,7 +608,7 @@ def feed(i Int, who Pid) Int {
 
 feed(100000, l)
 receive {
-  n -> { print(n) }
+  n -> { println(n) }
 }
 |}
         in
@@ -676,8 +676,8 @@ const listener = net_listen("127.0.0.1", 0)
 do serve(listener)
 const conn = net_connect("127.0.0.1", listener.port(), 0.0)
 conn.write("ping\n")
-print(conn.read_line())
-print("done")
+println(conn.read_line())
+println("done")
 |}
         in
         Alcotest.(check string) "output" "ping\ndone\n" output);
@@ -686,8 +686,8 @@ print("done")
           run_det
             {|
 const listener = net_listen("127.0.0.1", 0)
-print(listener.port() > 0)
-print(listener.port() < 65536)
+println(listener.port() > 0)
+println(listener.port() < 65536)
 |}
         in
         Alcotest.(check string) "output" "true\ntrue\n" output);
@@ -704,9 +704,9 @@ def once(listener TcpListener) Int {
 const listener = net_listen("127.0.0.1", 0)
 do once(listener)
 const conn = net_connect("127.0.0.1", listener.port(), 0.0)
-print(conn.read_all())
-print(conn.read_all())
-print("after")
+println(conn.read_all())
+println(conn.read_all())
+println("after")
 |}
         in
         Alcotest.(check string) "output" "bye\n\nafter\n" output);
@@ -717,7 +717,7 @@ print("after")
             (Printf.sprintf
                {|
 net_connect("127.0.0.1", %d, 0.0)
-print("unreachable")
+println("unreachable")
 |} port)
         in
         Alcotest.(check string)
@@ -737,7 +737,7 @@ const listener = net_listen("127.0.0.1", 0)
 do silent(listener)
 const conn = net_connect("127.0.0.1", listener.port(), 0.0)
 conn.set_timeout(0.2)
-print(conn.read_line())
+println(conn.read_line())
 |}
         in
         let expected_prefix = "timed out reading a line from 127.0.0.1:" in
@@ -821,9 +821,9 @@ const b = net_udp_bind("127.0.0.1", 0)
 a.send_to("127.0.0.1", b.port(), "datagram")
 case b.recv_from() {
   (data, host, port) -> {
-    print(data)
-    print(host == "127.0.0.1")
-    print(port == a.port())
+    println(data)
+    println(host == "127.0.0.1")
+    println(port == a.port())
   }
 }
 |}
@@ -836,9 +836,9 @@ case b.recv_from() {
 const a = net_udp_bind("127.0.0.1", 0)
 a.set_timeout(0.1)
 case a.recv_from() {
-  _ -> { print("received") }
+  _ -> { println("received") }
 }
-print("unreachable")
+println("unreachable")
 |}
         in
         let expected_prefix = "timed out waiting to receive on 127.0.0.1:" in
@@ -864,8 +864,8 @@ const listener = net_listen_unix("%s")
 do serve(listener)
 const conn = net_connect_unix("%s", 0.0)
 conn.write("hello unix\n")
-print(conn.read_line())
-print("done")
+println(conn.read_line())
+println("done")
 |}
                path path)
         in
@@ -891,7 +891,7 @@ listener.port()
           run_det_raised
             (Printf.sprintf
                {|net_connect_unix("%s", 0.0)
-print("unreachable")
+println("unreachable")
 |} path)
         in
         let expected_prefix = "cannot connect to unix socket " in
@@ -906,7 +906,7 @@ print("unreachable")
           run_det
             {|
 const addrs = net_resolve("localhost")
-print(addrs.length() > 0)
+println(addrs.length() > 0)
 |}
         in
         Alcotest.(check string) "output" "true\n" output);
@@ -924,8 +924,8 @@ const listener = net_listen("127.0.0.1", 0)
 do serve(listener)
 const conn = net_connect("localhost", listener.port(), 0.0)
 conn.write("by name\n")
-print(conn.read_line())
-print("done")
+println(conn.read_line())
+println("done")
 |}
         in
         Alcotest.(check string) "output" "by name\ndone\n" output);
@@ -934,7 +934,7 @@ print("done")
           run_det_raised
             {|
 net_resolve("definitely not a host")
-print("unreachable")
+println("unreachable")
 |}
         in
         Alcotest.(check string)
@@ -949,7 +949,7 @@ const a = net_udp_bind("localhost", 0)
 const b = net_udp_bind("localhost", 0)
 a.send_to("localhost", b.port(), "named")
 case b.recv_from() {
-  (data, _host, _port) -> { print(data) }
+  (data, _host, _port) -> { println(data) }
 }
 |}
         in
@@ -968,7 +968,7 @@ const listener = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtur
 do serve(listener)
 const conn = net_tls_connect("localhost", listener.port(), 0.0)
 conn.write("no\n")
-print("unreachable")
+println("unreachable")
 |}
         in
         let expected_prefix = "the TLS handshake with localhost:" in
@@ -993,8 +993,8 @@ const listener = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtur
 do serve(listener)
 const conn = net_tls_connect_insecure("localhost", listener.port(), 0.0)
 conn.write("secret over tls\n")
-print(conn.read_line())
-print("done")
+println(conn.read_line())
+println("done")
 |}
         in
         Alcotest.(check string) "output" "secret over tls\ndone\n" output);
@@ -1004,7 +1004,7 @@ print("done")
           run_det_raised
             {|
 net_listen_tls("127.0.0.1", 0, "fixtures/absent-cert.pem", "fixtures/absent-key.pem")
-print("unreachable")
+println("unreachable")
 |}
         in
         let expected_prefix =

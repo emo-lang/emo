@@ -393,8 +393,8 @@ and args_list env args =
 
 and builtin env name args =
   match (name, args) with
-  | "print", [ v ] ->
-      (* the interpreter's print appends a newline: the argument's
+  | "println", [ v ] ->
+      (* the interpreter's println appends a newline: the argument's
          bytes, then 10 *)
       put env "call 'io':'put_chars'(#{#<apply 'emo_to_str'/1 (";
       expr env v;
@@ -672,7 +672,7 @@ and emit_pattern env (p : Emo_ast.pattern) : unit =
    Fixed Core Erlang defs prepended to every module: arithmetic with
    the interpreter's masked i64 wrap-around, numeric/string add,
    comparisons via structural equality on tagged values, and to_str/
-   strcat for print and interpolation. Raw text — this code never
+   strcat for println and interpolation. Raw text — this code never
    varies per program. *)
 
 and guard_expr env (x : Emo_ir.expr) : unit =

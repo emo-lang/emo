@@ -176,7 +176,7 @@ let load_tests =
                  ("shop/order.emo", {|def total(n Int) Int {
   return n * 2
 }|});
-                 ("shop/checkout.emo", {|print(shop.order.total(21))|});
+                 ("shop/checkout.emo", {|println(shop.order.total(21))|});
                ]
                "shop/checkout.emo")
         in
@@ -191,7 +191,7 @@ let load_tests =
 }|});
                  ( "shop/checkout.emo",
                    {|const order = shop.order
-print(order.total(4))|} );
+println(order.total(4))|} );
                ]
                "shop/checkout.emo")
         in
@@ -202,14 +202,14 @@ print(order.total(4))|} );
             (with_project
                [
                  ( "shop/order.emo",
-                   {|print("loading order")
+                   {|println("loading order")
 def total(n Int) Int {
   return n
 }|}
                  );
                  ( "shop/checkout.emo",
-                   {|print(shop.order.total(1))
-print(shop.order.total(2))|} );
+                   {|println(shop.order.total(1))
+println(shop.order.total(2))|} );
                ]
                "shop/checkout.emo")
         in
@@ -220,7 +220,7 @@ print(shop.order.total(2))|} );
             (with_project
                [
                  ("shop/order.emo", "");
-                 ("shop/checkout.emo", {|print(shop.order.nope)|});
+                 ("shop/checkout.emo", {|println(shop.order.nope)|});
                ]
                "shop/checkout.emo")
         in
@@ -230,7 +230,7 @@ print(shop.order.total(2))|} );
           run_entry
             (with_project
                [
-                 ("shop/order.emo", ""); ("shop/checkout.emo", {|print(nope)|});
+                 ("shop/order.emo", ""); ("shop/checkout.emo", {|println(nope)|});
                ]
                "shop/checkout.emo")
         in
@@ -301,7 +301,7 @@ const once = 1|});
         let p =
           discover
             [
-              ("main.emo", {|print(helper.run())|});
+              ("main.emo", {|println(helper.run())|});
               ("helper.emo", {|def run() Int {
   return 1
 }|});
@@ -321,7 +321,7 @@ let cache_tests =
               ("shop/order.emo", {|def total(n Int) Int {
   return n * 2
 }|});
-              ("shop/checkout.emo", {|print(shop.order.total(21))|});
+              ("shop/checkout.emo", {|println(shop.order.total(21))|});
             ]
             "shop/checkout.emo"
         in
@@ -450,7 +450,7 @@ let app_manifest =
 |}
 
 let app_main = {|require "acme/json_tools"
-print(json_tools.parse("hello"))
+println(json_tools.parse("hello"))
 |}
 
 let with_registry f =
@@ -594,7 +594,7 @@ let deps_tests =
 }
 |}
               );
-              ("main.emo", {|print("plain")|});
+              ("main.emo", {|println("plain")|});
             ]
             "main.emo"
         in
@@ -630,7 +630,7 @@ let deps_tests =
               );
               ( "main.emo",
                 {|require "acme/json_tools"
-print(json_tools.parse("hello"))
+println(json_tools.parse("hello"))
 |}
               );
             ]
@@ -670,7 +670,7 @@ print(json_tools.parse("hello"))
               );
               ( "main.emo",
                 {|require "acme/wasm_tools"
-print(wasm_tools.shrink(4))
+println(wasm_tools.shrink(4))
 |} );
             ]
             "main.emo"
@@ -703,7 +703,7 @@ let sched_tests =
 const pid = do worker(self_pid())
 pid <- 21
 receive {
-  v -> { print(v) }
+  v -> { println(v) }
 }
 |}
               );
@@ -721,7 +721,7 @@ receive {
         let entry =
           with_project
             [ ("main.emo", {|receive {
-  _ -> { print("never") }
+  _ -> { println("never") }
 }
 |}) ]
             "main.emo"
@@ -838,8 +838,8 @@ do http.serve_requests(listener) -> (req HttpRequest) {
 }
 
 const resp = http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello")
-print(resp.body)
-print(resp.status)
+println(resp.body)
+println(resp.status)
 |}
               );
             ]
@@ -902,7 +902,7 @@ print(resp.status)
         use_workspace_registry () |> ignore;
         let emo_exe = emo_exe_path () in
         let entry =
-          with_project [ ("main.emo", {|print(40 + 2)|}) ] "main.emo"
+          with_project [ ("main.emo", {|println(40 + 2)|}) ] "main.emo"
         in
         let bin = Filename.concat (Filename.dirname entry) "cached-prog" in
         let build () =
@@ -972,8 +972,8 @@ let ffi_tests =
         let build_out, status, bin =
           build_binary
             {|foreign def sqrt(x Float) Float = "sqrt"
-print(sqrt(4.0))
-print(sqrt(2.0))|}
+println(sqrt(4.0))
+println(sqrt(2.0))|}
             "ffi-prog" ~cclib:[ "m" ]
         in
         (match status with
@@ -994,7 +994,7 @@ print(sqrt(2.0))|}
             [
               ( "main.emo",
                 {|foreign def sqrt(x Float) Float = "sqrt"
-print(sqrt(4.0))|} );
+println(sqrt(4.0))|} );
             ]
             "main.emo"
         in

@@ -272,7 +272,7 @@ let io_tests =
           "\"a ${1 + 2} b ${true}\"");
     tc "to_string is callable on values" (fun () ->
         check_value "int" (Emo_eval.String "42") "42.to_string()");
-    tc "print writes through the output hook" (fun () ->
+    tc "println writes through the output hook" (fun () ->
         let buf = Buffer.create 16 in
         Emo_eval.set_output (Buffer.add_string buf);
         Fun.protect
@@ -280,7 +280,7 @@ let io_tests =
             Emo_eval.set_output (fun s ->
                 print_string s;
                 flush stdout))
-          (fun () -> ignore (run_stmts "print(1 + 1)\nprint(1.0)"));
+          (fun () -> ignore (run_stmts "println(1 + 1)\nprintln(1.0)"));
         Alcotest.(check string) "output" "2\n1.0\n" (Buffer.contents buf));
     tc "length works on arrays and tuples" (fun () ->
         check_value "array" (Emo_eval.Int 3) "[1, 2, 3].length()";
@@ -312,7 +312,7 @@ let closure_tests =
   }
   return fib(n - 1) + fib(n - 2)
 }
-print(fib(10))|}));
+println(fib(10))|}));
     tc "a def may call a def defined after it" (fun () ->
         Alcotest.(check string)
           "forward reference" "true\nfalse\n"
@@ -330,8 +330,8 @@ def is_odd(n Int) Bool {
   }
   return is_even(n - 1)
 }
-print(is_even(4))
-print(is_even(5))|}));
+println(is_even(4))
+println(is_even(5))|}));
     tc "closures see bindings that appear after their definition" (fun () ->
         Alcotest.(check string)
           "by reference" "42\n"
@@ -340,7 +340,7 @@ print(is_even(5))|}));
   return x + 1
 }
 const x = 41
-print(later())|}));
+println(later())|}));
     tc "closures share the enclosing frame across calls" (fun () ->
         Alcotest.(check string)
           "counter" "1\n2\n"
@@ -353,10 +353,10 @@ print(later())|}));
   }
 }
 const tick = make_counter()
-print(tick())
-print(tick())|}));
+println(tick())
+println(tick())|}));
     tc "an unbound name fails at call time" (fun () ->
-        let diagnostic = program_err "print(nope)" in
+        let diagnostic = program_err "println(nope)" in
         Alcotest.(check string) "code" "E3002" (code_of diagnostic));
     tc "receive outside a scheduler is refused" (fun () ->
         let diagnostic =
@@ -377,7 +377,7 @@ let tail_call_tests =
   }
   return count_down(n - 1)
 }
-print(count_down(1000000))|}));
+println(count_down(1000000))|}));
     tc "tail calls work through if branches inside arrow blocks" (fun () ->
         Alcotest.(check string)
           "loop via blocks" "0\n"
@@ -388,7 +388,7 @@ print(count_down(1000000))|}));
   }
   return loop(n - 1)
 }
-print(loop(500000))|}));
+println(loop(500000))|}));
     tc "mutual recursion stays flat" (fun () ->
         Alcotest.(check string)
           "ping-pong" "true\n"
@@ -406,12 +406,12 @@ def odd(n Int) Bool {
   }
   return even(n - 1)
 }
-print(even(500000))|}));
+println(even(500000))|}));
     tc "a return of a builtin call still yields its value" (fun () ->
         Alcotest.(check string)
           "builtin in return" "[1, 2]\n"
           (run_program
-             "def arr() String {\n  return [1, 2].to_string()\n}\nprint(arr())"));
+             "def arr() String {\n  return [1, 2].to_string()\n}\nprintln(arr())"));
   ]
 
 let control_flow_tests =
@@ -421,12 +421,12 @@ let control_flow_tests =
           "void def" "log: start\n2\n1\n"
           (run_program
              {|def log(msg String) {
-  print("log: " + msg)
+  println("log: " + msg)
 }
 
 def tick(n Int) {
   if n > 0 {
-    print(n)
+    println(n)
     tick(n - 1)
   }
 }
@@ -438,13 +438,13 @@ tick(2)|}));
           "void block" "title\ninside block\n"
           (run_program
              {|def page(title String, content Block) Block {
-  print(title)
+  println(title)
   content()
   return content
 }
 
 page(title: "title") {
-  print("inside block")
+  println("inside block")
 }|}));
     tc "case matches literals first-match, top to bottom" (fun () ->
         Alcotest.(check string)
@@ -457,9 +457,9 @@ page(title: "title") {
     _ -> { return "many" }
   }
 }
-print(name(1))
-print(name(2))
-print(name(3))|}));
+println(name(1))
+println(name(2))
+println(name(3))|}));
     tc "binding patterns bind in the branch body" (fun () ->
         Alcotest.(check string)
           "binding" "5\n"
@@ -469,7 +469,7 @@ print(name(3))|}));
     m -> { return m }
   }
 }
-print(identity(5))|}));
+println(identity(5))|}));
     tc "tuple patterns destructure by position" (fun () ->
         Alcotest.(check string)
           "tuple" "3\n"
@@ -480,7 +480,7 @@ print(identity(5))|}));
   }
 }
 const pair = (1, 2)
-print(sum(pair))|}));
+println(sum(pair))|}));
     tc "guards filter branches and fall through" (fun () ->
         Alcotest.(check string)
           "guards" "big\nsmall\n"
@@ -491,8 +491,8 @@ print(sum(pair))|}));
     x -> { return "small" }
   }
 }
-print(size(42))
-print(size(1))|}));
+println(size(42))
+println(size(1))|}));
     tc "guards must be Bools" (fun () ->
         let diagnostic =
           program_err "case 1 {\n  x when x + 1 -> { return 1 }\n}"
@@ -514,9 +514,9 @@ print(size(1))|}));
     _ -> { return "w" }
   }
 }
-print(check(1))|}));
+println(check(1))|}));
     tc "if conditions must be Bools, with a span" (fun () ->
-        let diagnostic = program_err "if 1 {\n  print(2)\n}" in
+        let diagnostic = program_err "if 1 {\n  println(2)\n}" in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic);
         Alcotest.(check string)
           "message" "the `if` condition must be a Bool, got Int"
@@ -534,7 +534,7 @@ print(check(1))|}));
           (Span.to_string diagnostic.Diagnostic.span));
     tc "raise inside a def escapes the function" (fun () ->
         let diagnostic =
-          program_err "def f() Int {\n  raise 7\n}\nprint(f())"
+          program_err "def f() Int {\n  raise 7\n}\nprintln(f())"
         in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
@@ -544,7 +544,7 @@ print(check(1))|}));
           "field" "boom\n"
           (run_program
              {|const e = Exception.new(message: "boom")
-print(e.message)|}));
+println(e.message)|}));
     tc "Exception.new is strict about its argument" (fun () ->
         let diagnostic = program_err "Exception.new()" in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic);
@@ -629,8 +629,8 @@ const greeting = -> (name String) {
   return "hello, ${name}"
 }
 
-print(fib(20))                 // 6765
-print(greeting("emo"))         // hello, emo
+println(fib(20))                 // 6765
+println(greeting("emo"))         // hello, emo
 
 def count_down(n Int) Int {
   if n == 0 {
@@ -638,7 +638,7 @@ def count_down(n Int) Int {
   }
   return count_down(n - 1)
 }
-print(count_down(1000000))     // stack stays flat — tail calls work|}));
+println(count_down(1000000))     // stack stays flat — tail calls work|}));
     tc "values compose across the whole surface" (fun () ->
         Alcotest.(check string)
           "output" "len=3 first=9\n(2, b)\n"
@@ -651,8 +651,8 @@ const first = (1, "a")
 const box = Box.new(first)
 const second = (2, "b")
 box.replace(second)
-print(describe([9, 8, 7]))
-print(box.read().to_string())|}));
+println(describe([9, 8, 7]))
+println(box.read().to_string())|}));
     tc "runtime errors carry the offending span" (fun () ->
         let diagnostic =
           program_err "def f(n Int) Int {\n  return n + \"s\"\n}\nf(1)"
@@ -681,7 +681,7 @@ let class_tests =
   }
 }
 const u = User.new(name: "Ada", age: 36)
-print("${u.name} ${u.age}")|}));
+println("${u.name} ${u.age}")|}));
     tc "constructors take positional arguments too" (fun () ->
         Alcotest.(check string)
           "positional" "Ada\n"
@@ -692,7 +692,7 @@ print("${u.name} ${u.age}")|}));
     self.age = age
   }
 }
-print(User.new("Ada", 36).name)|}));
+println(User.new("Ada", 36).name)|}));
     tc "a stateless class constructs without arguments" (fun () ->
         Alcotest.(check string)
           "stateless" "true\n"
@@ -703,7 +703,7 @@ print(User.new("Ada", 36).name)|}));
   }
 }
 const e = English.new()
-print(e == e)|}));
+println(e == e)|}));
     tc "constructor argument errors name the class" (fun () ->
         let diagnostic =
           program_err
@@ -725,13 +725,13 @@ print(e == e)|}));
             \    self.name = name\n\
             \  }\n\
              }\n\
-             print(U.new(\"a\").missing)"
+             println(U.new(\"a\").missing)"
         in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic);
         Alcotest.(check string)
           "message" "`U` has no field `missing`" diagnostic.Diagnostic.message);
     tc "self outside a class is unbound" (fun () ->
-        let diagnostic = program_err "print(self)" in
+        let diagnostic = program_err "println(self)" in
         Alcotest.(check string) "code" "E3002" (code_of diagnostic));
     tc "instances compare by content, not identity" (fun () ->
         Alcotest.(check string)
@@ -744,11 +744,11 @@ print(e == e)|}));
   }
 }
 const u = User.new(name: "Ada", age: 36)
-print(u == User.new(name: "Ada", age: 36))
+println(u == User.new(name: "Ada", age: 36))
 const alias = u
-print(alias == u)
-print(u == User.new(name: "Ada", age: 37))
-print(u == User.new(name: "Grace", age: 36))|}));
+println(alias == u)
+println(u == User.new(name: "Ada", age: 37))
+println(u == User.new(name: "Grace", age: 36))|}));
     tc "same-shaped instances of different classes are unequal" (fun () ->
         Alcotest.(check string)
           "class names differ" "false\n"
@@ -764,7 +764,7 @@ class B {
     self.x = 1
   }
 }
-print(A.new() == B.new())|}));
+println(A.new() == B.new())|}));
     tc "shared structure stays observably immutable" (fun () ->
         Alcotest.(check string)
           "aliasing and boxes" "true\ntrue\nfalse\n"
@@ -779,11 +779,11 @@ const shared = [1, 2]
 const cell = Box.new(7)
 const h1 = Holder.new(shared, cell)
 const h2 = Holder.new([1, 2], Box.new(7))
-print(h1 == h2)
+println(h1 == h2)
 const h3 = h1
-print(h3 == h1)
+println(h3 == h1)
 cell.replace(8)
-print(h1 == h2)|}));
+println(h1 == h2)|}));
   ]
 
 let enum_tests =
@@ -793,11 +793,11 @@ let enum_tests =
           "README Color" "true\ntrue\n"
           (run_program
              {|enum Color { red, green, blue }
-print(Color.red == Color.red)
+println(Color.red == Color.red)
 const painted = Color.green
-print(painted == Color.green)|}));
+println(painted == Color.green)|}));
     tc "unknown members are errors" (fun () ->
-        let diagnostic = program_err "enum Color { red }\nprint(Color.pink)" in
+        let diagnostic = program_err "enum Color { red }\nprintln(Color.pink)" in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic);
         Alcotest.(check string)
           "message" "enum `Color` has no member `pink`"
@@ -826,14 +826,14 @@ enum Color { red }
 def welcome(g Greeter) String {
   return g.greet()
 }
-print(welcome(English.new()))
-print(English.new().is(Greeter))
-print(English.new().is(English))
-print(Color.red.is(Color))
-print(Silent.new().is(Greeter))
-print(Color.red.is(Greeter))|}));
+println(welcome(English.new()))
+println(English.new().is(Greeter))
+println(English.new().is(English))
+println(Color.red.is(Color))
+println(Silent.new().is(Greeter))
+println(Color.red.is(Greeter))|}));
     tc "is() on primitives is a type error" (fun () ->
-        let diagnostic = program_err "print(1.is(Int))" in
+        let diagnostic = program_err "println(1.is(Int))" in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic));
   ]
 
@@ -858,8 +858,8 @@ let method_tests =
   }
 }
 const u = User.new(name: "Ada", age: 36)
-print(u.full_name())
-print(u.is_older?())|}));
+println(u.full_name())
+println(u.is_older?())|}));
     tc "methods bind arguments by name" (fun () ->
         Alcotest.(check string)
           "named args" "7\n"
@@ -873,7 +873,7 @@ print(u.is_older?())|}));
     return self.base + a + b
   }
 }
-print(Calc.new().plus(b: 2, a: 4))|}));
+println(Calc.new().plus(b: 2, a: 4))|}));
     tc "a missing method names receiver and method" (fun () ->
         let diagnostic =
           program_err
@@ -882,7 +882,7 @@ print(Calc.new().plus(b: 2, a: 4))|}));
             \    self.x = 1\n\
             \  }\n\
              }\n\
-             print(English.new().greet())"
+             println(English.new().greet())"
         in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic);
         Alcotest.(check string)
@@ -905,7 +905,7 @@ print(Calc.new().plus(b: 2, a: 4))|}));
     return self.double() + self.double()
   }
 }
-print(N.new(5).quadruple())|}));
+println(N.new(5).quadruple())|}));
     tc "method tail recursion keeps the stack flat" (fun () ->
         Alcotest.(check string)
           "flat recursion" "0\n"
@@ -920,7 +920,7 @@ print(N.new(5).quadruple())|}));
     return self.walk(n - 1)
   }
 }
-print(Walker.new().walk(200000))|}));
+println(Walker.new().walk(200000))|}));
   ]
 
 let to_string_tests =
@@ -935,21 +935,21 @@ let to_string_tests =
     self.age = age
   }
 }
-print(User.new(name: "Ada", age: 36).to_string())|}));
+println(User.new(name: "Ada", age: 36).to_string())|}));
     tc "enum members render as their member name" (fun () ->
         Alcotest.(check string)
           "enum" "red\nred\n"
           (run_program
              {|enum Color { red, green }
-print(Color.red.to_string())
-print("${Color.red}")|}));
+println(Color.red.to_string())
+println("${Color.red}")|}));
     tc "exceptions render as their message" (fun () ->
         Alcotest.(check string)
           "exception" "boom\nboom\n"
           (run_program
              {|const e = Exception.new(message: "boom")
-print(e.to_string())
-print("${e}")|}));
+println(e.to_string())
+println("${e}")|}));
   ]
 
 let object_acceptance_tests =
@@ -974,12 +974,12 @@ let object_acceptance_tests =
 }
 
 const u = User.new(name: "Ada", age: 36)
-print(u.full_name())            // Ada (36)
-print(u.is_older?())            // true
-print(u == User.new(name: "Ada", age: 36))   // true — value semantics
+println(u.full_name())            // Ada (36)
+println(u.is_older?())            // true
+println(u == User.new(name: "Ada", age: 36))   // true — value semantics
 
 enum Color { red, green, blue }
-print(Color.red == Color.red)   // true
+println(Color.red == Color.red)   // true
 
 interface Greeter {
   def greet() String
@@ -995,8 +995,8 @@ def welcome(g Greeter) String {
   return g.greet()
 }
 
-print(welcome(English.new()))   // Hello — duck dispatch, no registration
-print(English.new().is(Greeter))  // true — structural interface check|}));
+println(welcome(English.new()))   // Hello — duck dispatch, no registration
+println(English.new().is(Greeter))  // true — structural interface check|}));
     tc "self.x outside init is a parse-time error" (fun () ->
         match
           run_program
