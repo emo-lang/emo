@@ -66,6 +66,13 @@ recommended priority.
   earlier if EmoOS work starts — flagged in `plan/README.md` reviews.
 - **Explicit memory primitives** (`peek` / `poke` and friends) as
   visibly-named core-library functions — dangerous reads dangerous.
+- **Int width is target-independent:** `Int64` is 64-bit two's
+  complement with wrap-around on every target, and integer types are
+  width-explicit (`docs/int-width.md`), so a future `riscv32` is a
+  pure codegen problem — register-pair arithmetic, the same technique
+  as the native backend's 64-bit route; there `Int32` is the
+  register-width fast path and `Int64` the emulated one. Narrowing
+  `Int64` on RV32 is off the table.
 - **Prereq:** step 13 Stage B (specialized, lean codegen); a custom or
   minimal GC story; linker scripts.
 - **Risk:** highest of the four; also the most speculative until an EmoOS
