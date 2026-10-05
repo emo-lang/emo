@@ -1,2 +1,0 @@
-internal.model.debug_global(
-  "content", internal.corpus.decode_hex("017f004180000b"), 7)
