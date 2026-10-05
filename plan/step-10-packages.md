@@ -49,7 +49,7 @@ configurable central registry into a global content-addressed cache.
   version named wins (MVS over exact pins). Target compatibility is checked
   at resolution time: a dependency lacking the current build target in its
   `targets` list fails resolution with a clear error, before compilation.
-- **Lockfile** (name pending, `CHECK.md`; provisional `emo.lock`) — records
+- **Lockfile** — `package.lock` records
   the full resolution: package, version, source checksum; belongs in
   version control; regeneration is an explicit command. A mismatch between
   lockfile and manifest requirements is an error prompting explicit
@@ -73,8 +73,9 @@ configurable central registry into a global content-addressed cache.
 
 ### Out
 
-- Publishing tooling, registry server implementation, auth (separate
-  infrastructure work).
+- ~~Publishing tooling~~ — **done**: `emo publish` validates, packs the
+  deterministic `.emoji` archive, and uploads to the registry (registry
+  server implementation and auth live in the emoji-registry repo).
 - Version-range expressions beyond exact pins (pending, `CHECK.md`).
 - Private registry authentication beyond endpoint configuration.
 
@@ -106,5 +107,5 @@ configurable central registry into a global content-addressed cache.
 ## Open design items
 
 None — the provisional names settled during this step (`package.emo`,
-`emo.lock`, `owner/name` scopes, exact pins, `emo deps *`) now live in the
+`package.lock`, `owner/name` scopes, exact pins, `emo deps *`) now live in the
 README; `CHECK.md` keeps only what is still pending.

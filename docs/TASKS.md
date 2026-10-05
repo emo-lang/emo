@@ -41,7 +41,7 @@ before starting the gated work:
 | String escape rules | T2.3, T2.4 | Minimal set `\n \t \\ \' \"` |
 | Self-pid mechanism | T11.1 | settled — `self_pid()` builtin, `Pid` type rendering as `<pid N>`, `halt()`; no user-facing kill/wait |
 | Exception catch syntax | T12.5, Step 12 acceptance | Catch form absent; uncaught reporting only |
-| Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T10.2, T10.5–T10.6, T10.8 | `package.emo`, `emo.lock`, `owner/name`, exact pins only, `emo deps *` |
+| Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T10.2, T10.5–T10.6, T10.8 | `package.emo`, `package.lock`, `owner/name`, exact pins only, `emo deps *` |
 | C FFI binding-surface syntax | T13.6 | settled — `foreign def name(params) Ret = "c_symbol"`, `Float`/`String`/`Bool` only, through generated C wrappers |
 
 ---
