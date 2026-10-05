@@ -184,6 +184,7 @@ function deepEq(a: any, b: any): boolean {
 // it, exactly like the interpreter.
 function toStr(v: any): string {
   if (typeof v === "number") return String(v);
+  if (typeof v === "bigint") return v.toString();
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "true" : "false";
   if (v === null || v === undefined) return "nil";
@@ -207,6 +208,7 @@ function println(v: any): void {
 
 function tag(v: any): string {
   if (typeof v === "number") return Number.isInteger(v) ? "Int" : "Float";
+  if (typeof v === "bigint") return "Int64";
   if (typeof v === "string") return "String";
   if (typeof v === "boolean") return "Bool";
   if (isFloat(v)) return "Float";
@@ -321,6 +323,53 @@ const E: any = {
     return unfloat(a) >= unfloat(b);
   },
 
+  // The fixed-width family. Int64 values are BigInts — arithmetic wraps
+  // in two's complement at 64 bits; Byte values are numbers that wrap
+  // modulo 256. Comparisons reuse lt/le/gt/ge: JS reads BigInts and
+  // numbers natively, so only the producing operators need a path.
+  i64Add: (a: bigint, b: bigint) => BigInt.asIntN(64, a + b),
+  i64Sub: (a: bigint, b: bigint) => BigInt.asIntN(64, a - b),
+  i64Mul: (a: bigint, b: bigint) => BigInt.asIntN(64, a * b),
+  i64Div: (a: bigint, b: bigint) => {
+    if (b === 0n) throw new EEmoException("division by zero");
+    return BigInt.asIntN(64, a / b);
+  },
+  i64Mod: (a: bigint, b: bigint) => {
+    if (b === 0n) throw new EEmoException("division by zero");
+    return BigInt.asIntN(64, a % b);
+  },
+  i64BitAnd: (a: bigint, b: bigint) => BigInt.asIntN(64, a & b),
+  i64BitOr: (a: bigint, b: bigint) => BigInt.asIntN(64, a | b),
+  i64BitXor: (a: bigint, b: bigint) => BigInt.asIntN(64, a ^ b),
+  i64Shl: (a: bigint, b: bigint) => {
+    if (b < 0n) throw new EEmoException("shift count must be non-negative");
+    return b >= 64n ? 0n : BigInt.asIntN(64, a << b);
+  },
+  i64Shr: (a: bigint, b: bigint) => {
+    if (b < 0n) throw new EEmoException("shift count must be non-negative");
+    return b >= 64n ? (a < 0n ? -1n : 0n) : a >> b;
+  },
+  i64BitNot: (a: bigint) => BigInt.asIntN(64, ~a),
+  i64Neg: (a: bigint) => BigInt.asIntN(64, -a),
+
+  byteAdd: (a: number, b: number) => (a + b) & 0xff,
+  byteSub: (a: number, b: number) => (a - b) & 0xff,
+  byteMul: (a: number, b: number) => (a * b) & 0xff,
+  byteDiv: (a: number, b: number) => {
+    if (b === 0) throw new EEmoException("division by zero");
+    return (a / b) | 0;
+  },
+  byteMod: (a: number, b: number) => {
+    if (b === 0) throw new EEmoException("division by zero");
+    return a % b;
+  },
+  byteBitAnd: (a: number, b: number) => a & b,
+  byteBitOr: (a: number, b: number) => a | b,
+  byteBitXor: (a: number, b: number) => a ^ b,
+  byteShl: (a: number, b: number) => (b >= 8 ? 0 : (a << b) & 0xff),
+  byteShr: (a: number, b: number) => (b >= 8 ? 0 : a >> b),
+  byteBitNot: (a: number) => ~a & 0xff,
+
   index(coll: any, i: any): any {
     const items: any[] =
       coll instanceof EArray ? coll.items : (coll as ETuple).items;
@@ -399,11 +448,38 @@ const E: any = {
           for (let k = 0; k < w; k++) d[i + k] = (v >>> (8 * k)) & 0xff;
           return w === 2 ? v & 0xffff : v >>> 0;
         }
+        if (name === "get_u64_le" || name === "set_u64_le") {
+          const i = args[0] as number;
+          if (typeof i !== "number" || i < 0 || i + 8 > d.length)
+            throw new Error(
+              "index " + args[0] + " is out of bounds for a " + name + " " +
+                (name === "get_u64_le" ? "read" : "write")
+            );
+          if (name === "get_u64_le") {
+            let acc = 0n;
+            for (let k = 7; k >= 0; k--)
+              acc = (acc << 8n) | BigInt(d[i + k]);
+            return BigInt.asIntN(64, acc);
+          }
+          const v = args[1];
+          if (typeof v !== "bigint")
+            throw new Error("`set_u64_le` expects an Int64 value");
+          const w = BigInt.asUintN(64, v);
+          for (let k = 0; k < 8; k++)
+            d[i + k] = Number((w >> BigInt(8 * k)) & 0xffn);
+          return BigInt.asIntN(64, v);
+        }
         if (name === "to_string") {
           let s = "";
           for (let i = 0; i < d.length; i++) s += String.fromCharCode(d[i]);
           return s;
         }
+      }
+      if (isFloat(recv) && name === "to_bits") {
+        const buf = new ArrayBuffer(8);
+        const dv = new DataView(buf);
+        dv.setFloat64(0, recv.v, true);
+        return dv.getBigInt64(0, true);
       }
       if (name === "length" && recv instanceof EArray)
         return recv.items.length;
@@ -413,6 +489,14 @@ const E: any = {
     }
     if (typeof recv === "number") {
       if (name === "to_string") return String(recv);
+      // A Byte receiver is a plain number, so `to_int` is the identity.
+      if (name === "to_int") return recv;
+      if (name === "is") return isType(recv, args[0] as string);
+    }
+    if (typeof recv === "bigint") {
+      if (name === "to_string") return recv.toString();
+      if (name === "to_int") return Number(recv);
+      if (name === "to_byte") return Number(BigInt.asUintN(8, recv));
       if (name === "is") return isType(recv, args[0] as string);
     }
     if (typeof recv === "boolean") {
@@ -455,6 +539,25 @@ const E: any = {
         for (let i = 0; i < recv.length; i++)
           out.data[i] = recv.charCodeAt(i) & 0xff;
         return out;
+      }
+      // Static constructors: a type name is a bare string in value
+      // position, told apart from a String by the method asked for.
+      if (name === "from_int") {
+        if (recv === "Int64") return BigInt(args[0] as number);
+        if (recv === "Byte") {
+          const n = args[0] as number;
+          if (!Number.isInteger(n) || n < 0 || n > 255)
+            throw new EEmoException(
+              "`Byte.from_int` needs a value in 0-255, got " + n
+            );
+          return n;
+        }
+      }
+      if (name === "from_bits" && recv === "Float") {
+        const buf = new ArrayBuffer(8);
+        const dv = new DataView(buf);
+        dv.setBigInt64(0, args[0] as bigint, true);
+        return new EFloat(dv.getFloat64(0, true));
       }
     }
     throw new Error(

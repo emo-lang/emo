@@ -38,6 +38,8 @@ let binop_spelling = function
 let rec pp_expr fmt (e : Emo_ast.expr) =
   match e.Emo_ast.desc with
   | Int n -> Format.pp_print_int fmt n
+  | Int64 n -> Format.fprintf fmt "%LdL" n
+  | Byte n -> Format.fprintf fmt "%dB" n
   | Float f -> Format.fprintf fmt "%g" f
   | Char c -> Format.fprintf fmt "%C" c
   | Bool b -> Format.fprintf fmt "%b" b
@@ -140,6 +142,8 @@ and pp_pattern fmt (p : Emo_ast.pattern) =
 
 and pp_literal fmt = function
   | Emo_ast.L_int n -> Format.pp_print_int fmt n
+  | Emo_ast.L_int64 n -> Format.fprintf fmt "%LdL" n
+  | Emo_ast.L_byte n -> Format.fprintf fmt "%dB" n
   | Emo_ast.L_float f -> Format.fprintf fmt "%g" f
   | Emo_ast.L_char c -> Format.fprintf fmt "%C" c
   | Emo_ast.L_string s -> Format.fprintf fmt "%S" s
@@ -267,6 +271,13 @@ let expression_tests =
           (render pp_expr (parse_expr "(a)")));
     tc "operator parens are groupings" (fun () ->
         Alcotest.check expr "shape" (parse_expr "(a + b)") (parse_expr "a + b"));
+    tc "fixed-width literals parse with their width" (fun () ->
+        Alcotest.(check string)
+          "int64" "1L" (render pp_expr (parse_expr "1L"));
+        Alcotest.(check string)
+          "byte" "255B" (render pp_expr (parse_expr "255B"));
+        Alcotest.(check string)
+          "in arithmetic" "(+ 1L 2L)" (render pp_expr (parse_expr "1L + 2L")));
     tc "array literals parse with elements" (fun () ->
         Alcotest.(check string)
           "shape" "(array 1 2 3)"
@@ -491,6 +502,18 @@ let stmt_tests =
             Alcotest.(check string)
               "shape"
               "(case p (branch (tuple Color.red count) |(return count)))"
+              (render pp_item case_stmt)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "fixed-width literals are patterns" (fun () ->
+        match
+          parse_program "case n {\n  10B -> { return 1 }\n  2L -> { return 2 }\n}"
+        with
+        | [ case_stmt ] ->
+            Alcotest.(check string)
+              "shape"
+              "(case n (branch 10B |(return 1)) (branch 2L |(return 2)))"
               (render pp_item case_stmt)
         | stmts ->
             Alcotest.fail

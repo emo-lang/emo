@@ -180,18 +180,20 @@ let rt = function
   | "bytes_set" -> 49
   | "bytes_u16_get" -> 50
   | "bytes_u32_get" -> 51
-  | "bytes_u16_set" -> 52
-  | "bytes_u32_set" -> 53
-  | "bytes_from_str" -> 54
-  | "bytes_to_str" -> 55
-  | "bytes_label" -> 56
-  | "init" -> 57
+  | "bytes_u64_get" -> 52
+  | "bytes_u16_set" -> 53
+  | "bytes_u32_set" -> 54
+  | "bytes_u64_set" -> 55
+  | "bytes_from_str" -> 56
+  | "bytes_to_str" -> 57
+  | "bytes_label" -> 58
+  | "init" -> 59
   | _ -> failwith "wasm: bad runtime function"
 
-(* imports 3 + runtime funcs 3..46 + bytes ops 47..56 + init + main;
+(* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
    program funcs follow. *)
 let runtime_count =
-  59 (* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 10 *)
+  61 (* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 12 *)
 
 (* ---- Lowering state ---- *)
 
@@ -272,9 +274,23 @@ let member_name (c : Emo_ir.class_) (m : Emo_ir.func) : string =
 
 (* ---- Expression lowering ---- *)
 
+(* Wrap the $vint on top of the stack back into a Byte's 0-255 range. *)
+let mask_byte env =
+  e env (W.Ref_cast t_vint);
+  e env (W.Struct_get (t_vint, 0));
+  e env (W.I64_const 255L);
+  e env W.I64_and;
+  e env (W.Struct_new t_vint)
+
 let rec expr env (x : Emo_ir.expr) : unit =
   match x.Emo_ir.desc with
   | Const (L_int n) ->
+      e env (W.I64_const (Int64.of_int n));
+      e env (W.Struct_new t_vint)
+  | Const (L_int64 n) ->
+      e env (W.I64_const n);
+      e env (W.Struct_new t_vint)
+  | Const (L_byte n) ->
       e env (W.I64_const (Int64.of_int n));
       e env (W.Struct_new t_vint)
   | Const (L_float f) ->
@@ -347,7 +363,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Struct_new t_vbool)
   | Unary (Ast.Bit_not, operand) ->
       expr env operand;
-      e env (W.Call (rt "bnot"))
+      e env (W.Call (rt "bnot"));
+      if x.Emo_ir.ety = Emo_check.Byte then mask_byte env
   | Binary (Ast.And, l, r) ->
       expr env l;
       e env (W.Struct_get (t_vbool, 0));
@@ -383,7 +400,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
         | Ast.Shr -> "shr"
         | Ast.And | Ast.Or -> "add"
       in
-      e env (W.Call (rt fn))
+      e env (W.Call (rt fn));
+      (* A Byte stays inside 0-255, so only the operations that can
+         leave the range wrap back into it. *)
+      if x.Emo_ir.ety = Emo_check.Byte then (
+        match op with
+        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Shl -> mask_byte env
+        | _ -> ())
   | Index (b, i) ->
       (* a tuple wraps its element array; an array is bare. Both the
          collection and the index go through locals: the arms of the
@@ -630,25 +653,79 @@ and method_call env self_ name args =
       expr env i;
       expr env v;
       e env (W.Call (rt "bytes_set"))
-  | (("get_u16_le" | "get_u32_le") as mname), [ i ] ->
+  | (("get_u16_le" | "get_u32_le" | "get_u64_le") as mname), [ i ] ->
       expr env self_;
       expr env i;
       e env
         (W.Call
            (rt
-              (if mname = "get_u16_le" then "bytes_u16_get" else "bytes_u32_get")))
-  | (("set_u16_le" | "set_u32_le") as mname), [ i; v ] ->
+              (match mname with
+              | "get_u16_le" -> "bytes_u16_get"
+              | "get_u32_le" -> "bytes_u32_get"
+              | _ -> "bytes_u64_get")))
+  | (("set_u16_le" | "set_u32_le" | "set_u64_le") as mname), [ i; v ] ->
       expr env self_;
       expr env i;
       expr env v;
       e env
         (W.Call
            (rt
-              (if mname = "set_u16_le" then "bytes_u16_set" else "bytes_u32_set")))
+              (match mname with
+              | "set_u16_le" -> "bytes_u16_set"
+              | "set_u32_le" -> "bytes_u32_set"
+              | _ -> "bytes_u64_set")))
   | "to_bytes", [] ->
       (* the receiver is a String; the copy keeps the two independent *)
       expr env self_;
       e env (W.Call (rt "bytes_from_str"))
+  (* The fixed-width conversions. Int64 and Byte are both a $vint around
+     an i64, the same shape Int has, so only the narrowing back to Byte
+     masks anything. *)
+  | "to_int", [] ->
+      (* Int64 and Byte already have Int's shape, so this is the identity.
+         A String receiver would parse, which this target does not do yet;
+         the shape test keeps it from passing the string through. *)
+      let recv = fresh_local env "__to_int_recv" W.Anyref in
+      expr env self_;
+      e env (W.Local_set recv);
+      e env (W.Local_get recv);
+      e env (W.Ref_test t_vint);
+      e env (W.If (W.Void, [], [ W.Unreachable ]));
+      e env (W.Local_get recv)
+  | "to_byte", [] ->
+      expr env self_;
+      mask_byte env
+  | "to_bits", [] ->
+      expr env self_;
+      e env (W.Ref_cast t_vfloat);
+      e env (W.Struct_get (t_vfloat, 0));
+      e env W.I64_reinterpret_f64;
+      e env (W.Struct_new t_vint)
+  | "from_int", [ v ] -> (
+      match self_.Emo_ir.desc with
+      | Emo_ir.Type_ref "Int64" -> expr env v
+      | _ ->
+          (* `Byte.from_int` is the one conversion the checker leaves to
+             run time: nothing outside 0-255 has a Byte to narrow to. *)
+          let n = fresh_local env "__byte_from_int" W.I64 in
+          expr env v;
+          e env (W.Ref_cast t_vint);
+          e env (W.Struct_get (t_vint, 0));
+          e env (W.Local_tee n);
+          e env (W.I64_const 255L);
+          e env W.I64_and;
+          e env (W.Local_get n);
+          e env W.I64_eq;
+          e env W.I32_eqz;
+          e env (W.If (W.Void, [ W.Unreachable ], []));
+          e env (W.Local_get n);
+          e env (W.Struct_new t_vint))
+  | "from_bits", [ v ] ->
+      expr env v;
+      e env (W.Ref_cast t_vint);
+      e env (W.Struct_get (t_vint, 0));
+      e env W.F64_reinterpret_i64;
+      e env (W.Struct_new t_vfloat)
   | "is", [ target ] -> (
       let tname =
         match target.Emo_ir.desc with
@@ -1083,6 +1160,34 @@ and pattern_test env (s : W.instr list) (p : Emo_ast.pattern) : W.instr list =
               ],
             [ W.I32_const 0 ] );
       ]
+  | Ast.Pattern_literal (L_int64 n) ->
+      [
+        W.If_else
+          ( W.Result W.I32,
+            s @ [ W.Ref_test t_vint ],
+            s
+            @ [
+                W.Ref_cast t_vint;
+                W.Struct_get (t_vint, 0);
+                W.I64_const n;
+                W.I64_eq;
+              ],
+            [ W.I32_const 0 ] );
+      ]
+  | Ast.Pattern_literal (L_byte n) ->
+      [
+        W.If_else
+          ( W.Result W.I32,
+            s @ [ W.Ref_test t_vint ],
+            s
+            @ [
+                W.Ref_cast t_vint;
+                W.Struct_get (t_vint, 0);
+                W.I64_const (Int64.of_int n);
+                W.I64_eq;
+              ],
+            [ W.I32_const 0 ] );
+      ]
   | Ast.Pattern_literal (L_string str) ->
       [
         W.If_else
@@ -1415,7 +1520,12 @@ let rt_to_str : W.func_type =
 
 (* int_str(n i64) -> (ref null $bytes): digits LSB-first into the
    scratch area at 60000, then reversed. Locals: 1 array, 2 len, 3
-   neg, 4 digit/i. *)
+   neg, 4 digit/i.
+
+   The digits come off with the unsigned operators: INT64_MIN negated
+   is still INT64_MIN as a bit pattern, which as an unsigned value is
+   exactly its magnitude 2^63, so the signed forms would divide by a
+   negative and only yield one digit. *)
 let rt_int_str : W.func_type =
   let scratch = 60000 in
   {
@@ -1443,7 +1553,7 @@ let rt_int_str : W.func_type =
                   [
                     W.Local_get 0;
                     W.I64_const 10L;
-                    W.I64_rem_s;
+                    W.I64_rem_u;
                     W.I32_wrap_i64;
                     W.I32_const 48;
                     W.I32_add;
@@ -1455,7 +1565,7 @@ let rt_int_str : W.func_type =
                     W.I32_store8;
                     W.Local_get 0;
                     W.I64_const 10L;
-                    W.I64_div_s;
+                    W.I64_div_u;
                     W.Local_set 0;
                     W.Local_get 2;
                     W.I32_const 1;
@@ -1602,11 +1712,16 @@ let rt_bytes_from_mem : W.func_type =
               W.Loop
                 ( W.Void,
                   [
+                    W.Local_get 3;
+                    W.Local_get 1;
+                    W.I32_ge;
+                    W.Br_if 1;
                     (* the byte lands in local 4 first: array.set reads
                        its three operands from the stack, so the value
                        cannot be computed between index and array *)
                     W.Local_get 0;
                     W.Local_get 3;
+                    W.I32_add;
                     W.I32_load8_u;
                     W.Local_set 4;
                     W.Local_get 2;
@@ -3405,8 +3520,10 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_bytes_set;
         rt_bytes_le_get 2;
         rt_bytes_le_get 4;
+        rt_bytes_le_get 8;
         rt_bytes_le_set 2;
         rt_bytes_le_set 4;
+        rt_bytes_le_set 8;
         rt_bytes_from_str;
         rt_bytes_to_str;
         rt_bytes_label;

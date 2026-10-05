@@ -11,6 +11,8 @@ let ( @@@ ) indent text = Printf.printf "%s%s\n" (String.make indent ' ') text
 
 let lit = function
   | Emo_ast.L_int n -> Printf.sprintf "int %d" n
+  | Emo_ast.L_int64 n -> Printf.sprintf "int64 %Ld" n
+  | Emo_ast.L_byte n -> Printf.sprintf "byte %d" n
   | Emo_ast.L_float f -> Printf.sprintf "float %g" f
   | Emo_ast.L_bool b -> Printf.sprintf "bool %b" b
   | Emo_ast.L_char c -> Printf.sprintf "char %C" c

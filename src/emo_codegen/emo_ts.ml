@@ -53,6 +53,9 @@ let rec pattern_test s (p : Emo_ast.pattern) : string =
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_binding _ -> "true"
   | Ast.Pattern_literal (L_int n) -> Printf.sprintf "(%s === %d)" s n
+  | Ast.Pattern_literal (L_int64 n) ->
+      Printf.sprintf "(%s === %Ldn)" s n
+  | Ast.Pattern_literal (L_byte n) -> Printf.sprintf "(%s === %d)" s n
   | Ast.Pattern_literal (L_float f) ->
       Printf.sprintf "(%s instanceof EFloat && %s.v === %s)" s s
         (string_of_float f)
@@ -150,6 +153,8 @@ let js_string (s : string) : string =
 let rec expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
   | Const (L_int n) -> string_of_int n
+  | Const (L_int64 n) -> Printf.sprintf "%Ldn" n
+  | Const (L_byte n) -> string_of_int n
   | Const (L_float f) -> Printf.sprintf "E.float(%s)" (string_of_float f)
   | Const (L_string s) -> js_string s
   | Const (L_bool b) -> if b then "true" else "false"
@@ -168,13 +173,33 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Interpolate es ->
       Printf.sprintf "E.interpolate([%s])"
         (String.concat ", " (List.map (expr env) es))
-  | Unary (Ast.Neg, x) -> Printf.sprintf "E.neg(%s)" (expr env x)
+  | Unary (Ast.Neg, x) -> (
+      match e.Emo_ir.ety with
+      | Emo_check.Int64 -> Printf.sprintf "E.i64Neg(%s)" (expr env x)
+      | _ -> Printf.sprintf "E.neg(%s)" (expr env x))
   | Unary (Ast.Not, x) -> Printf.sprintf "(!E.truthy(%s))" (expr env x)
-  | Unary (Ast.Bit_not, x) -> Printf.sprintf "E.bitNot(%s)" (expr env x)
+  | Unary (Ast.Bit_not, x) -> (
+      match e.Emo_ir.ety with
+      | Emo_check.Int64 -> Printf.sprintf "E.i64BitNot(%s)" (expr env x)
+      | Emo_check.Byte -> Printf.sprintf "E.byteBitNot(%s)" (expr env x)
+      | _ -> Printf.sprintf "E.bitNot(%s)" (expr env x))
   | Binary (op, l, r) -> (
       let lcode = expr env l in
       let rcode = expr env r in
-      let call fn = Printf.sprintf "E.%s(%s, %s)" fn lcode rcode in
+      (* Fixed-width arithmetic takes its own runtime path: Int64 is a
+         BigInt wrapping at 64 bits, Byte a number wrapping at 256.
+         Comparisons and equality read either operand shape directly. *)
+      let fixed =
+        match e.Emo_ir.ety with
+        | Emo_check.Int64 -> "i64"
+        | Emo_check.Byte -> "byte"
+        | _ -> ""
+      in
+      let call fn =
+        Printf.sprintf "E.%s%s(%s, %s)" fixed
+          (if fixed = "" then fn else String.capitalize_ascii fn)
+          lcode rcode
+      in
       match op with
       | Ast.And -> Printf.sprintf "(E.truthy(%s) && E.truthy(%s))" lcode rcode
       | Ast.Or -> Printf.sprintf "(E.truthy(%s) || E.truthy(%s))" lcode rcode

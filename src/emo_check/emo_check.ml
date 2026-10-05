@@ -9,6 +9,8 @@ type t =
   | Unknown
   | Void
   | Int
+  | Int64
+  | Byte
   | Float
   | Bool
   | Char
@@ -30,6 +32,8 @@ let rec to_string = function
   | Unknown -> "Unknown"
   | Void -> "Void"
   | Int -> "Int"
+  | Int64 -> "Int64"
+  | Byte -> "Byte"
   | Float -> "Float"
   | Bool -> "Bool"
   | Char -> "Char"
@@ -99,6 +103,8 @@ let rec ann_to_type ?(lenient = false) ctx
     ({ Ast.type_span = span; type_desc; _ } : Ast.type_ann) =
   match type_desc with
   | Ast.Named_type "Int" -> Int
+  | Ast.Named_type "Int64" -> Int64
+  | Ast.Named_type "Byte" -> Byte
   | Ast.Named_type "Float" -> Float
   | Ast.Named_type "Bool" -> Bool
   | Ast.Named_type "Char" -> Char
@@ -383,6 +389,9 @@ let empty_env =
           } );
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
         ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Int64", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Byte", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Float", { vtype = Unknown; is_var = false; depth = 0 });
         ( "file_read",
           {
             vtype = FuncType ([ ("path", String) ], String);
@@ -502,6 +511,8 @@ type coverage = All | Members of string list
 
 let literal_type = function
   | Ast.L_int _ -> Int
+  | Ast.L_int64 _ -> Int64
+  | Ast.L_byte _ -> Byte
   | Ast.L_float _ -> Float
   | Ast.L_char _ -> Char
   | Ast.L_string _ -> String
@@ -529,6 +540,8 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
   let e = { Ast.span; desc } in
   match desc with
   | Ast.Int _ -> Int
+  | Ast.Int64 _ -> Int64
+  | Ast.Byte _ -> Byte
   | Ast.Float _ -> Float
   | Ast.Bool _ -> Bool
   | Ast.Char _ -> Char
@@ -714,6 +727,11 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                (to_string other));
           Bool
       | Ast.Neg, (Int | Unknown) -> Int
+      | Ast.Neg, Int64 -> Int64
+      | Ast.Neg, Byte ->
+          report ctx span "E4004"
+            "operator `-` does not apply to the unsigned Byte";
+          Unknown
       | Ast.Neg, Float -> Float
       | Ast.Neg, other ->
           report ctx span "E4004"
@@ -721,6 +739,7 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                (to_string other));
           Unknown
       | Ast.Bit_not, (Int | Unknown) -> Int
+      | Ast.Bit_not, ((Int64 | Byte) as t) -> t
       | Ast.Bit_not, other ->
           report ctx span "E4004"
             (Printf.sprintf "operator `~` expects an Int, got %s"
@@ -1111,6 +1130,10 @@ and check_method_call ctx env span recv mname args : t =
               (Printf.sprintf "`replace` expects 1 argument, got %d"
                  (List.length args));
             elem)
+    | Int64, "to_int" -> builtin0 Int
+    | Int64, "to_byte" -> builtin0 Byte
+    | Byte, "to_int" -> builtin0 Int
+    | Float, "to_bits" -> builtin0 Int64
     | Bytes, "length" -> builtin0 Int
     | Bytes, "get" -> (
         match arg_values with
@@ -1149,6 +1172,30 @@ and check_method_call ctx env span recv mname args : t =
               (Printf.sprintf "`%s` expects 1 argument, got %d" mname
                  (List.length arg_values));
             Int)
+    | Bytes, "get_u64_le" -> (
+        match arg_values with
+        | [ (None, Int) ] | [ (Some "i", Int) ] -> Int64
+        | [ _ ] ->
+            report ctx span "E4004" "`get_u64_le` expects an Int index";
+            Int64
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`get_u64_le` expects 1 argument, got %d"
+                 (List.length arg_values));
+            Int64)
+    | Bytes, "set_u64_le" -> (
+        match arg_values with
+        | [ (None, Int); (None, Int64) ]
+        | [ (Some "i", Int); ((Some "v" | None), Int64) ] ->
+            Int64
+        | [ _; _ ] ->
+            report ctx span "E4004" "`set_u64_le` expects (i Int, v Int64)";
+            Int64
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`set_u64_le` expects 2 arguments, got %d"
+                 (List.length arg_values));
+            Int64)
     | String, "to_bytes" -> builtin0 Bytes
     | _, "is" ->
         let (_ : t list) = List.map snd arg_values in
@@ -1182,6 +1229,46 @@ and check_binary ctx env span op l r =
          (to_string lt) (to_string rt))
   in
   match op with
+  | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod
+    when lt = Int64 || rt = Int64 || lt = Byte || rt = Byte ->
+      (* Fixed-width arithmetic never mixes with other numbers: the
+         same type on both sides, wrapping per the family's rule. An
+         Unknown side stays silent until it provably breaks the pair. *)
+      let width_ok =
+        match (lt, rt) with
+        | (Int64, Int64) | (Byte, Byte) | (Int64, Unknown) | (Unknown, Int64)
+        | (Byte, Unknown) | (Unknown, Byte) | (Unknown, Unknown) ->
+            true
+        | _ -> false
+      in
+      if not width_ok then mismatch "two values of the same fixed-width type";
+      if lt = Int64 || rt = Int64 then Int64
+      else if lt = Byte || rt = Byte then Byte
+      else Unknown
+  | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge
+    when lt = Int64 || rt = Int64 || lt = Byte || rt = Byte ->
+      let width_ok =
+        match (lt, rt) with
+        | (Int64, Int64) | (Byte, Byte) | (Int64, Unknown) | (Unknown, Int64)
+        | (Byte, Unknown) | (Unknown, Byte) | (Unknown, Unknown) ->
+            true
+        | _ -> false
+      in
+      if not width_ok then mismatch "two values of the same fixed-width type";
+      Bool
+  | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr
+    when lt = Int64 || rt = Int64 || lt = Byte || rt = Byte ->
+      let width_ok =
+        match (lt, rt) with
+        | (Int64, Int64) | (Byte, Byte) | (Int64, Unknown) | (Unknown, Int64)
+        | (Byte, Unknown) | (Unknown, Byte) | (Unknown, Unknown) ->
+            true
+        | _ -> false
+      in
+      if not width_ok then mismatch "two values of the same fixed-width type";
+      if lt = Int64 || rt = Int64 then Int64
+      else if lt = Byte || rt = Byte then Byte
+      else Unknown
   | Ast.Add ->
       (* Numbers add as numbers, strings concatenate, and an Unknown side
          stays silent unless the known side could never work. *)

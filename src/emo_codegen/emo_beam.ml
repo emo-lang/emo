@@ -56,6 +56,36 @@ let binary_lit (s : string) : string =
 
 let atom s = "'" ^ s ^ "'"
 
+(* A float literal, normalized: `%F` writes 65535.0 as `65535.`, which
+   Core Erlang reads as an integer followed by a stray dot, and `%.17g`
+   writes 3.14159 as 3.1415899999999999. The shortest decimal that reads
+   back as the same double always carries a fraction and an exponent the
+   grammar accepts. *)
+let float_lit (f : float) : string =
+  let rec shortest p =
+    if p >= 17 then Printf.sprintf "%.17g" f
+    else
+      let s = Printf.sprintf "%.*g" p f in
+      if float_of_string s = f then s else shortest (p + 1)
+  in
+  let s = shortest 1 in
+  let n = String.length s in
+  let rec find i =
+    if i >= n then None
+    else match s.[i] with 'e' | 'E' -> Some i | _ -> find (i + 1)
+  in
+  let mantissa, exponent =
+    match find 0 with
+    | Some i -> (String.sub s 0 i, Some (String.sub s (i + 1) (n - i - 1)))
+    | None -> (s, None)
+  in
+  let mantissa =
+    if String.contains mantissa '.' then mantissa else mantissa ^ ".0"
+  in
+  match exponent with
+  | None -> mantissa
+  | Some e -> mantissa ^ "E" ^ e
+
 (* the instance pattern for a class: the tag, the class atom, then one
    wildcard per field (fields live inline in the tuple) *)
 let instance_pattern (classes : Emo_ir.class_ list) (cname : string) : string =
@@ -82,7 +112,9 @@ let put env s = Buffer.add_string env.buf s
 let rec expr env (x : Emo_ir.expr) : unit =
   match x.Emo_ir.desc with
   | Const (L_int n) -> put env (string_of_int n)
-  | Const (L_float f) -> put env (Printf.sprintf "%F" f)
+  | Const (L_int64 n) -> put env (Int64.to_string n)
+  | Const (L_byte n) -> put env (string_of_int n)
+  | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
   | Const (L_char c) -> put env (Printf.sprintf "$\\x%02x" (Char.code c))
   | Const (L_string s) -> put env (binary_lit s)
@@ -148,26 +180,36 @@ let rec expr env (x : Emo_ir.expr) : unit =
       in
       chain items
   | Binary (op, l, r) ->
-      put env
-        (Printf.sprintf "apply 'emo_%s'/2 "
-           (match op with
-           | Emo_ast.Add -> "add"
-           | Emo_ast.Sub -> "sub"
-           | Emo_ast.Mul -> "mul"
-           | Emo_ast.Div -> "div"
-           | Emo_ast.Mod -> "mod"
-           | Emo_ast.Lt -> "lt"
-           | Emo_ast.Le -> "le"
-           | Emo_ast.Gt -> "gt"
-           | Emo_ast.Ge -> "ge"
-           | Emo_ast.Eq -> "eq"
-           | Emo_ast.Ne -> "ne"
-           | Emo_ast.Bit_and -> "band"
-           | Emo_ast.Bit_or -> "bor"
-           | Emo_ast.Bit_xor -> "bxor"
-           | Emo_ast.Shl -> "shl"
-           | Emo_ast.Shr -> "shr"
-           | Emo_ast.And | Emo_ast.Or -> "add"));
+      (* Int64 is the target's own 64-bit wrapping integer — every
+         integer operator already masks at 64 bits — so only Byte needs
+         its own path, wrapping at 256. *)
+      let name =
+        match (op, x.Emo_ir.ety) with
+        | Emo_ast.Add, Emo_check.Byte -> "byte_add"
+        | Emo_ast.Sub, Emo_check.Byte -> "byte_sub"
+        | Emo_ast.Mul, Emo_check.Byte -> "byte_mul"
+        | Emo_ast.Shl, Emo_check.Byte -> "byte_shl"
+        | _ -> (
+            match op with
+            | Emo_ast.Add -> "add"
+            | Emo_ast.Sub -> "sub"
+            | Emo_ast.Mul -> "mul"
+            | Emo_ast.Div -> "div"
+            | Emo_ast.Mod -> "mod"
+            | Emo_ast.Lt -> "lt"
+            | Emo_ast.Le -> "le"
+            | Emo_ast.Gt -> "gt"
+            | Emo_ast.Ge -> "ge"
+            | Emo_ast.Eq -> "eq"
+            | Emo_ast.Ne -> "ne"
+            | Emo_ast.Bit_and -> "band"
+            | Emo_ast.Bit_or -> "bor"
+            | Emo_ast.Bit_xor -> "bxor"
+            | Emo_ast.Shl -> "shl"
+            | Emo_ast.Shr -> "shr"
+            | Emo_ast.And | Emo_ast.Or -> "add")
+      in
+      put env (Printf.sprintf "apply 'emo_%s'/2 " name);
       args_list env [ l; r ]
   | Unary (Emo_ast.Neg, x) ->
       put env "apply 'emo_neg'/1 ";
@@ -176,7 +218,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env "apply 'emo_not'/1 ";
       args_list env [ x ]
   | Unary (Emo_ast.Bit_not, x) ->
-      put env "apply 'emo_bnot'/1 ";
+      put env
+        (if x.Emo_ir.ety = Emo_check.Byte then "apply 'emo_byte_bnot'/1 "
+         else "apply 'emo_bnot'/1 ");
       args_list env [ x ]
   | Tuple es ->
       put env "{";
@@ -303,8 +347,10 @@ and method_call env self_ name args =
   | "set", [ _; _ ] -> bytes_only 3 "emo_bytes_set"
   | "get_u16_le", [ _ ] -> bytes_only 2 "emo_bytes_u16_get"
   | "get_u32_le", [ _ ] -> bytes_only 2 "emo_bytes_u32_get"
+  | "get_u64_le", [ _ ] -> bytes_only 2 "emo_bytes_u64_get"
   | "set_u16_le", [ _; _ ] -> bytes_only 3 "emo_bytes_u16_set"
   | "set_u32_le", [ _; _ ] -> bytes_only 3 "emo_bytes_u32_set"
+  | "set_u64_le", [ _; _ ] -> bytes_only 3 "emo_bytes_u64_set"
   | "to_bytes", [] -> bytes_only 1 "emo_str_to_bytes"
   | "length", [] ->
       put env "case ";
@@ -328,6 +374,27 @@ and method_call env self_ name args =
       put env "\n  <_> when 'true' ->\n    apply 'emo_to_str'/1 ";
       args_list env [ self_ ];
       put env "\nend"
+  (* The fixed-width conversions. Int64 and Byte are both plain Erlang
+     integers here, so `to_int` is the identity and the static constructors
+     differ only in Byte's range check. *)
+  | "from_int", [ v ] -> (
+      match self_.Emo_ir.desc with
+      | Emo_ir.Type_ref "Int64" ->
+          put env "apply 'emo_i64_from_int'/1 ";
+          args_list env [ v ]
+      | _ ->
+          put env "apply 'emo_byte_from_int'/1 ";
+          args_list env [ v ])
+  | "from_bits", [ v ] ->
+      put env "apply 'emo_from_bits'/1 ";
+      args_list env [ v ]
+  | "to_int", [] -> expr env self_
+  | "to_byte", [] ->
+      put env "apply 'emo_to_byte'/1 ";
+      args_list env [ self_ ]
+  | "to_bits", [] ->
+      put env "apply 'emo_to_bits'/1 ";
+      args_list env [ self_ ]
   | _ -> (
       match (name, args) with
       | "append", [ v ] ->
@@ -613,13 +680,26 @@ and stmt env (s : Emo_ir.stmt) : unit =
       put env "\nin case ";
       put env scratch;
       put env " of\n";
+      (* a trailing wildcard or binding already covers every value, so
+         the catch-all after it would be a clause erlc rejects *)
+      let exhaustive =
+        match List.rev branches with
+        | last :: _ -> (
+            last.Emo_ir.guard = None
+            &&
+            match last.Emo_ir.pattern.Emo_ast.pattern_desc with
+            | Emo_ast.Wildcard | Emo_ast.Pattern_binding _ -> true
+            | _ -> false)
+        | [] -> false
+      in
       let rec emit_branches bs =
         match bs with
         | [] ->
-            put env "  <_> when 'true' ->\n";
-            put env "    call 'erlang':'error'({'emo_no_match', ";
-            put env scratch;
-            put env "})\n"
+            if not exhaustive then (
+              put env "  <_> when 'true' ->\n";
+              put env "    call 'erlang':'error'({'emo_no_match', ";
+              put env scratch;
+              put env "})\n")
         | b :: rest ->
             let saved = env.local_map in
             put env "  <";
@@ -694,12 +774,14 @@ and emit_pattern env (p : Emo_ast.pattern) : unit =
       let v = fresh_var env name in
       put env v
   | Emo_ast.Pattern_literal (L_int n) -> put env (string_of_int n)
+  | Emo_ast.Pattern_literal (L_int64 n) -> put env (Int64.to_string n)
+  | Emo_ast.Pattern_literal (L_byte n) -> put env (string_of_int n)
   | Emo_ast.Pattern_literal (L_bool b) ->
       put env (if b then "'true'" else "'false'")
   | Emo_ast.Pattern_literal (L_char c) ->
       put env (Printf.sprintf "$\\x%02x" (Char.code c))
   | Emo_ast.Pattern_literal (L_string str) -> put env (binary_lit str)
-  | Emo_ast.Pattern_literal (L_float f) -> put env (Printf.sprintf "%F" f)
+  | Emo_ast.Pattern_literal (L_float f) -> put env (float_lit f)
   | Emo_ast.Enum_member (t, m) ->
       put env (Printf.sprintf "{'emo_enum', %s, %s}" (atom t) (atom m))
   | Emo_ast.Tuple_pattern ps ->
@@ -726,7 +808,7 @@ and guard_expr env (x : Emo_ir.expr) : unit =
       | Some v -> put env v
       | None -> failwith ("beam: unbound guard local " ^ name))
   | Const (L_int n) -> put env (string_of_int n)
-  | Const (L_float f) -> put env (Printf.sprintf "%F" f)
+  | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
   | Const (L_char c) -> put env (Printf.sprintf "$\\x%02x" (Char.code c))
   | Const (L_string s) -> put env (binary_lit s)
@@ -799,7 +881,7 @@ let rt_source =
 	  <_i> when call 'erlang':'is_integer'(_i) ->
 	      call 'erlang':'integer_to_binary'(_i)
 	  <_f> when call 'erlang':'is_float'(_f) ->
-	      call 'erlang':'float_to_binary'(_f, ['short'])
+	      apply 'emo_float_to_str'/1 (_f)
 	  <'true'> when 'true' ->
 	      #{#<116>(8,1,'integer',['unsigned'|['big']]),
 		#<114>(8,1,'integer',['unsigned'|['big']]),
@@ -817,6 +899,67 @@ let rt_source =
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_to_str', _other})
 	end
+
+%% Emo prints a float the way OCaml's `%g` does — six significant digits,
+%% exponent form below 1e-4 and at 1e6 and above — except that an integral
+%% float within 1e16 keeps one decimal. `float_to_binary/2` decides the
+%% exponent itself, so the rounded scientific form is what picks the branch.
+'emo_float_to_str'/1 =
+    fun (_f) ->
+	case call 'erlang':'=='(call 'erlang':'trunc'(_f), _f) of
+	  <'true'> when 'true' ->
+	      case call 'erlang':'<'(call 'erlang':'abs'(_f), 10000000000000000.0) of
+		<'true'> when 'true' ->
+		    call 'erlang':'float_to_binary'(_f, [{'decimals',1}, 'compact'])
+		<'false'> when 'true' -> apply 'emo_g6'/1 (_f)
+	      end
+	  <'false'> when 'true' -> apply 'emo_g6'/1 (_f)
+	end
+
+'emo_g6'/1 =
+    fun (_x) ->
+	let <_s> = call 'erlang':'float_to_binary'(_x, [{'scientific',5}])
+	in let <_parts> = call 'binary':'split'(_s, #{#<101>(8,1,'integer',['unsigned'|['big']])}#)
+	   in let <_m> = call 'erlang':'hd'(_parts)
+	      in let <_e> = call 'erlang':'binary_to_integer'(call 'erlang':'hd'(call 'erlang':'tl'(_parts)))
+		 in case call 'erlang':'<'(_e, -4) of
+		      <'true'> when 'true' -> apply 'emo_g6_sci'/2 (_m, _e)
+		      <'false'> when 'true' ->
+			  case call 'erlang':'<'(_e, 6) of
+			    <'true'> when 'true' ->
+				call 'erlang':'float_to_binary'(_x, [{'decimals', call 'erlang':'-'(5, _e)}, 'compact'])
+			    <'false'> when 'true' -> apply 'emo_g6_sci'/2 (_m, _e)
+			  end
+		    end
+
+'emo_g6_sci'/2 =
+    fun (_m, _e) ->
+	let <_t> = call 'string':'trim'(_m, 'trailing', #{#<48>(8,1,'integer',['unsigned'|['big']])}#)
+	in let <_mt> =
+	       case call 'binary':'last'(_t) of
+		 <_c> when call 'erlang':'=='(_c, 46) ->
+		     call 'binary':'part'(_t, 0, call 'erlang':'-'(call 'erlang':'byte_size'(_t), 1))
+		 <_c> when 'true' -> _t
+	       end
+	   in let <_sign> =
+		  case call 'erlang':'<'(_e, 0) of
+		    <'true'> when 'true' -> #{#<45>(8,1,'integer',['unsigned'|['big']])}#
+		    <'false'> when 'true' -> #{#<43>(8,1,'integer',['unsigned'|['big']])}#
+		  end
+	      in #{#<_mt>('all',8,'binary',['unsigned'|['big']]),
+		   #<101>(8,1,'integer',['unsigned'|['big']]),
+		   #<_sign>('all',8,'binary',['unsigned'|['big']]),
+		   #<apply 'emo_g6_exp'/1 (call 'erlang':'abs'(_e))>('all',8,'binary',['unsigned'|['big']])}#
+
+'emo_g6_exp'/1 =
+    fun (_e) ->
+	let <_d> = call 'erlang':'integer_to_binary'(_e)
+	in case call 'erlang':'<'(call 'erlang':'byte_size'(_d), 2) of
+	     <'true'> when 'true' ->
+		 #{#<48>(8,1,'integer',['unsigned'|['big']]),
+		   #<_d>('all',8,'binary',['unsigned'|['big']])}#
+	     <'false'> when 'true' -> _d
+	   end
 
 'emo_add'/2 =
     fun (_a, _b) ->
@@ -992,6 +1135,128 @@ let rt_source =
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_other, _other)
 	end
 
+'emo_byte_add'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_integer'(_y) ->
+		    call 'erlang':'band'(call 'erlang':'+'(_x, _y), 255)
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_byte_sub'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_integer'(_y) ->
+		    call 'erlang':'band'(call 'erlang':'-'(_x, _y), 255)
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_byte_mul'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_integer'(_y) ->
+		    call 'erlang':'band'(call 'erlang':'*'(_x, _y), 255)
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_byte_shl'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_integer'(_y) ->
+		    call 'erlang':'band'(call 'erlang':'bsl'(_x, _y), 255)
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	end
+
+'emo_byte_bnot'/1 =
+    fun (_a) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      call 'erlang':'band'(call 'erlang':'bnot'(_x), 255)
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
+	end
+
+'emo_i64_from_int'/1 =
+    fun (_a) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      apply 'emo_mask'/1 (_x)
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
+	end
+
+'emo_byte_from_int'/1 =
+    fun (_a) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      case call 'erlang':'<'(_x, 0) of
+		<'true'> when 'true' -> call 'erlang':'error'({'emo_bad_byte', _x})
+		<'false'> when 'true' ->
+		    case call 'erlang':'>'(_x, 255) of
+		      <'true'> when 'true' -> call 'erlang':'error'({'emo_bad_byte', _x})
+		      <'false'> when 'true' -> _x
+		    end
+	      end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
+	end
+
+'emo_to_byte'/1 =
+    fun (_a) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      call 'erlang':'band'(_x, 255)
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
+	end
+
+'emo_to_bits'/1 =
+    fun (_a) ->
+	case _a of
+	  <_x> when call 'erlang':'is_float'(_x) ->
+	      let <_u> =
+		  call 'binary':'decode_unsigned'(#{#<_x>(64,1,'float',['big'])}#, 'big')
+	      in case call 'erlang':'<'(_u, 9223372036854775808) of
+		   <'true'> when 'true' -> _u
+		   <'false'> when 'true' -> call 'erlang':'-'(_u, 18446744073709551616)
+		 end
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
+	end
+
+%% erlc miscompiles a float bit-string *pattern* written as Core Erlang
+%% text (OTP 29 aborts with an internal consistency check), so the bits go
+%% back to a float through the external term format instead.
+'emo_from_bits'/1 =
+    fun (_a) ->
+	case _a of
+	  <_x> when call 'erlang':'is_integer'(_x) ->
+	      let <_u> = call 'erlang':'band'(_x, 18446744073709551615)
+	      in call 'erlang':'binary_to_term'(
+		   #{#<131>(8,1,'integer',['unsigned'|['big']]),
+		     #<70>(8,1,'integer',['unsigned'|['big']]),
+		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 56), 255)>(8,1,'integer',['unsigned'|['big']]),
+		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 48), 255)>(8,1,'integer',['unsigned'|['big']]),
+		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 40), 255)>(8,1,'integer',['unsigned'|['big']]),
+		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 32), 255)>(8,1,'integer',['unsigned'|['big']]),
+		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 24), 255)>(8,1,'integer',['unsigned'|['big']]),
+		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
+		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
+		     #<call 'erlang':'band'(_u, 255)>(8,1,'integer',['unsigned'|['big']])}#)
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
+	end
+
 'emo_not'/1 =
     fun (_a) ->
 	case _a of
@@ -1106,6 +1371,15 @@ let rt_source =
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
 
+'emo_bytes_u64_get'/2 =
+    fun (_a, _i) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      apply 'emo_mask'/1 (call 'binary':'decode_unsigned'(call 'binary':'part'(call 'erlang':'get'(_k), _i, 8), 'little'))
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
 'emo_bytes_u16_set'/3 =
     fun (_a, _i, _v) ->
 	case _a of
@@ -1131,6 +1405,26 @@ let rt_source =
 		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
 		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 24), 255)>(8,1,'integer',['unsigned'|['big']]),
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 4), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 4)))>('all',8,'binary',['unsigned'|['big']])}#)
+		 apply 'emo_mask'/1 (_v)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+'emo_bytes_u64_set'/3 =
+    fun (_a, _i, _v) ->
+	case _a of
+	  <{'emo_bytes', _k}> when 'true' ->
+	      let <_b> = call 'erlang':'get'(_k)
+	      in do call 'erlang':'put'(_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
+		#<call 'erlang':'band'(_v, 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 24), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 32), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 40), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 48), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 56), 255)>(8,1,'integer',['unsigned'|['big']]),
+		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 8), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 8)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 apply 'emo_mask'/1 (_v)
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_bytes', _other})

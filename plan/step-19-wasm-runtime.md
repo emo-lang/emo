@@ -1,6 +1,6 @@
 # Step 19 — The systems layer (wasm runtime + EmoOS primitives)
 
-**Milestone:** M6 · **Prereq:** steps 01–18 · **Status:** in progress
+**Milestone:** M6 · **Prereq:** steps 01–18 · **Status:** complete
 
 ## The project
 
@@ -23,6 +23,11 @@ Ladder (each rung gets its own step plan when it starts):
    model, LEB128, sections, type-stack checking).
 3. **Step 21** — the interpreter core, host imports, and conformance
    goldens from the official spec test suite.
+
+The package boundary, the spec-data split, and the condition for leaving
+this repository are recorded in `plan/step-20-wasm-decoder.md`; they
+bind the whole ladder, and they are what keeps an in-repo runtime from
+growing into an in-repo language.
 4. **M7 (EmoOS)** — the kernel path, on the same layer (below).
 
 Decided now, applies to the whole project:
@@ -144,11 +149,11 @@ already answered by existing mechanisms:
       checked get/set, little-endian accessors, String interop; all
       four backends; golden example. The u64 accessors wait for
       `Int64` (T19.4) — 63-bit host Int cannot carry them. Known wasm
-      gap: printing a raw `Bytes` value (its labeled display) traps —
-      the `to_str` bytes branch interacts with something subtle in the
-      chain and is backed out; `to_string()` (raw) and every other
-      method work. Revisit with the label as a `to_str` caller-side
-      wrapper.
+      gap: printing a raw `Bytes` value writes the buffer's bytes
+      instead of the `Bytes[n]` label — the `to_str` bytes branch
+      interacts with something subtle in the chain and is backed out;
+      `to_string()` (raw) and every other method work. Revisit with the
+      label as a `to_str` caller-side wrapper.
 - [x] **T19.3** — `file.read` stdlib package (native, scheduler-
       direct); a golden example reading a file from disk. Ships
       `file.write` too — the demo writes its own data file, which
@@ -157,7 +162,37 @@ already answered by existing mechanisms:
       the resumption runs synchronously, and read-your-own-write
       beats descriptor hygiene. Tests resolve the registry through
       EMO_REGISTRY pointed at the sandbox's stdlib copy.
-- [ ] **T19.4** — `Int64` and `Byte`: literals, wrap-around
+- [x] **T19.4** — `Int64` and `Byte`: literals, wrap-around
       arithmetic, comparisons, explicit conversions; all four
       backends; golden example. `runtime/wasm/` package skeleton
       created here.
+
+## Close-out
+
+The layer's primitives are in: bitwise operators, `Bytes`,
+`Int64`/`Byte` with float bit reinterpretation, and `file.read` /
+`file.write`. Int64 and Byte ride the existing integer
+representations on every target — OCaml `int64`/`int`, Erlang
+integers masked to signed 64 bits, wasm's `$vint` struct, TS
+`BigInt`/`number` — so no backend grew a new value model; what each
+one added was the wrap rule (Byte's results mask to 256 after add,
+sub, mul, shl, bnot) and the explicit conversions.
+
+Two backend notes worth keeping. Erlang has no way to write a float
+bit-string *pattern* in Core Erlang text — OTP 29's `erlc` aborts with
+an internal consistency check on any float segment, so `from_bits`
+goes back through `binary_to_term` on an ETF float header. And Emo
+prints floats by OCaml's `%g` rule, which Erlang's own format has
+neither the thresholds nor the zero-stripping for; both the BEAM
+runtime and the wasm host implement that rule themselves.
+
+The wasm golden flushed out two runtime bugs the earlier examples never
+reached: `bytes_from_mem` read linear memory at `i` instead of
+`ptr + i`, and `int_str` took its digits with signed division, which
+mangles `INT64_MIN`. Both are fixed.
+
+The checker has one caveat for backend authors: `emo_check` records an
+expression's type by its start offset, so when a call and its receiver
+begin at the same offset the outer type wins. A method's receiver
+cannot be dispatched on `ety` — dispatch on the structural type or on
+a runtime test instead.
