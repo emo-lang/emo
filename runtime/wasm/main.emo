@@ -1,1 +1,4 @@
-println(wasm.smoke())
+// The default-test driver: the smoke case list through the corpus
+// runner. The full list runs under the wasm_spec alias (spec.emo).
+
+cli.run("testdata/cases.smoke.txt")

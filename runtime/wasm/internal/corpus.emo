@@ -1,0 +1,44 @@
+// The case-list format and its hex codec.
+//
+// One case line: `<name> <ok|malformed|invalid|pending> <hex bytes>` —
+// single-space separated, one case per line, no comments. Empty lines
+// are skipped. The lists are generated (see testdata/README.md); a line
+// that does not parse is a corpus bug and shows up as a failed verdict
+// in the summary, never as a silent skip.
+
+// The value of one hex digit, or -1 when the byte is not a hex character.
+def nibble(c Int) Int {
+  if c >= 48 && c <= 57 { return c - 48 }   // 0-9
+  if c >= 97 && c <= 102 { return c - 87 }  // a-f
+  if c >= 65 && c <= 70 { return c - 55 }   // A-F
+  return -1
+}
+
+// Whether `hex` is an even-length string of hex characters — the only
+// input decode_hex accepts.
+def hex_ok(hex String) Bool {
+  if hex.length() % 2 == 1 { return false }
+  return hex_ok_from(hex.to_bytes(), 0, hex.length())
+}
+
+def hex_ok_from(src Bytes, i Int, n Int) Bool {
+  if i == n { return true }
+  if nibble(src.get(i)) < 0 { return false }
+  return hex_ok_from(src, i + 1, n)
+}
+
+// Decode hex into a fresh Bytes buffer. Only call this after hex_ok
+// held: the codec trusts what it validated, nothing else.
+def decode_hex(hex String) Bytes {
+  const src = hex.to_bytes()
+  const half = hex.length() / 2
+  const out = Bytes.new(half)
+  fill(out, src, 0, half)
+  return out
+}
+
+def fill(out Bytes, src Bytes, i Int, n Int) Int {
+  if i == n { return 0 }
+  out.set(i, nibble(src.get(i * 2)) * 16 + nibble(src.get(i * 2 + 1)))
+  return fill(out, src, i + 1, n)
+}

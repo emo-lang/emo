@@ -1,0 +1,56 @@
+// The corpus runner: read a case list, walk it, print one verdict line
+// per claimed case, and close with the summary. A pending case prints
+// nothing and only counts. All the logic lives here; the drivers
+// (main.emo, spec.emo) are one-liners because the language has no argv.
+//
+// Verdict phases: a claimed case's actual verdict comes from the
+// decoder and validator (T20.4 onward). Until the decoder lands, a
+// claimed case reports `undecided` and counts as failed — visible in
+// the golden, never silent.
+
+def run(list_path String) Int {
+  return walk_lines(file_read(list_path).split("\n"), 0, 0, 0, 0)
+}
+
+// Walk lines[i..), then print `claimed N, pending M, failed K` and
+// return the failed count.
+def walk_lines(lines Array[String], i Int, claimed Int, pending Int, failed Int) Int {
+  if i == lines.length() {
+    println(
+      "claimed " + claimed.to_string() + ", pending " + pending.to_string()
+        + ", failed " + failed.to_string())
+    return failed
+  }
+  const line = lines[i]
+  if line.trim().length() == 0 {
+    return walk_lines(lines, i + 1, claimed, pending, failed)
+  }
+  return walk_case(lines, i, claimed, pending, failed)
+}
+
+def walk_case(lines Array[String], i Int, claimed Int, pending Int, failed Int) Int {
+  const parts = lines[i].split(" ")
+  if parts.length() != 3 {
+    return corpus_bug(lines, i, claimed, pending, failed)
+  }
+  const name = parts[0]
+  const verdict = parts[1]
+  if verdict != "ok" && verdict != "malformed" && verdict != "invalid"
+    && verdict != "pending" {
+    return corpus_bug(lines, i, claimed, pending, failed)
+  }
+  if !internal.corpus.hex_ok(parts[2]) {
+    return corpus_bug(lines, i, claimed, pending, failed)
+  }
+  if verdict == "pending" {
+    return walk_lines(lines, i + 1, claimed, pending + 1, failed)
+  }
+  // A claimed case: `undecided` until the decoder is wired in.
+  println(name + " " + verdict + " undecided")
+  return walk_lines(lines, i + 1, claimed + 1, pending, failed + 1)
+}
+
+def corpus_bug(lines Array[String], i Int, claimed Int, pending Int, failed Int) Int {
+  println(lines[i] + " malformed-case-line")
+  return walk_lines(lines, i + 1, claimed, pending, failed + 1)
+}
