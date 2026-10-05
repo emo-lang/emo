@@ -29,7 +29,16 @@ def module_from(data Bytes) (Bool, String, Int, String) {  const r = internal.re
   if h.get(4) != 1 || h.get(5) != 0 || h.get(6) != 0 || h.get(7) != 0 {
     return internal.error.malformed(4, "unknown binary version")
   }
-  return walk(data, rr.pos, 0)
+  const w = walk(data, rr.pos, 0)
+  if w[0] {
+    // The shape is sound: the validator checks the semantics that
+    // make the module valid (T20.14 onward).
+    const v = internal.model.validate(data)
+    if !v[0] {
+      return internal.error.invalid(v[2], v[1])
+    }
+  }
+  return w
 }
 
 // A non-custom section's rank in the fixed order; the data-count
