@@ -1,9 +1,14 @@
-// The decode pipeline. The stages land task by task: T20.4 reads the
-// 8 raw header bytes (magic + version) through the reader so the
-// truncated-input family is decided by the reader's bounds checks;
-// T20.6 adds the header and section-walk semantics; the module model
-// and instruction stream follow. The final outcome reports the first
-// failure with its phase and byte offset — never an exception.
+// The decode pipeline. T20.4 added the reader bounds (the 8 raw header
+// bytes); T20.6 adds the header semantics (magic, version) and the
+// section walk: ids and sizes, the fixed section order, custom
+// sections skipped, unknown ids rejected, sizes that overrun the
+// module. The sections' contents decode from T20.7 onward — the walk
+// skips them for now, so only header/id/order/size families claim.
+//
+// The walk threads the cursor as (data, pos) primitives rather than a
+// Reader value: def signatures cannot spell another module's class
+// (qualified type annotations do not parse — step 20 pressure), so any
+// cross-def cursor travel goes through unannotated locals.
 
 def module_from(data Bytes) (Bool, String, Int, String) {
   const r = internal.reader.over(data)
@@ -12,5 +17,68 @@ def module_from(data Bytes) (Bool, String, Int, String) {
   if rr.failed {
     return internal.error.malformed(rr.fail_offset, rr.fail_msg)
   }
-  return internal.error.good()
+  const h = head[1]
+  if h.get(0) != 0 || h.get(1) != 97 || h.get(2) != 115 || h.get(3) != 109 {
+    return internal.error.malformed(0, "magic header not detected")
+  }
+  if h.get(4) != 1 || h.get(5) != 0 || h.get(6) != 0 || h.get(7) != 0 {
+    return internal.error.malformed(4, "unknown binary version")
+  }
+  return walk(data, rr.pos, 0)
+}
+
+// A non-custom section's rank in the fixed order; the data-count
+// section (id 12) sits between element (9) and code (10).
+def rank(id Int) Int {
+  if id == 12 {
+    return 10
+  }
+  return id
+}
+
+// Walk sections from `pos`; `last_rank` is the rank of the last
+// non-custom section seen (0 before any).
+def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
+  if pos >= data.length() {
+    return internal.error.good()
+  }
+  const p = internal.reader.u8(internal.reader.new(data, pos, data.length()))
+  const r1 = p[0]
+  const id = p[1]
+  if r1.failed {
+    return internal.error.malformed(r1.fail_offset, r1.fail_msg)
+  }
+  if id > 12 {
+    return internal.error.malformed(r1.pos, "malformed section id")
+  }
+  const ps = internal.reader.u32(r1)
+  const r2 = ps[0]
+  if r2.failed {
+    return internal.error.malformed(r2.fail_offset, r2.fail_msg)
+  }
+  const size = ps[1]
+  if size > internal.reader.remaining(r2) {
+    return internal.error.malformed(r2.pos, "unexpected end")
+  }
+  if id == 0 {
+    // A custom section: its name must fit inside its own content; the
+    // whole content is then skipped.
+    const sub = internal.reader.new(r2.data, r2.pos, r2.pos + size)
+    const pn = internal.reader.u32(sub)
+    const s1 = pn[0]
+    if s1.failed {
+      return internal.error.malformed(s1.fail_offset, s1.fail_msg)
+    }
+    if pn[1] > internal.reader.remaining(s1) {
+      return internal.error.malformed(s1.pos, "unexpected end")
+    }
+    const r3 = internal.reader.skip(r2, size)
+    return walk(data, r3.pos, last_rank)
+  }
+  if rank(id) <= last_rank {
+    return internal.error.malformed(r1.pos, "unexpected section")
+  }
+  // The content decodes in T20.7 onward; skip it for now.
+  const r3 = internal.reader.skip(r2, size)
+  return walk(data, r3.pos, rank(id))
 }
