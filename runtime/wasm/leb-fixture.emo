@@ -1,0 +1,35 @@
+// Hand-written LEB128 boundary vectors: the spec's length caps and the
+// arithmetic edges, run directly against the reader's decoders.
+// binary-leb128.wast's cases ride the corpus once the section walk can
+// reach them (T20.6 onward).
+
+internal.reader.print_u32("u32_zero", internal.corpus.decode_hex("00"))
+internal.reader.print_u32("u32_127", internal.corpus.decode_hex("7f"))
+internal.reader.print_u32("u32_128", internal.corpus.decode_hex("8001"))
+internal.reader.print_u32("u32_max", internal.corpus.decode_hex("ffffffff0f"))
+internal.reader.print_u32("u32_too_long", internal.corpus.decode_hex("808080808000"))
+internal.reader.print_u32("u32_too_large", internal.corpus.decode_hex("ffffffff1f"))
+internal.reader.print_u32("u32_end", internal.corpus.decode_hex("808080"))
+
+internal.reader.print_u64("u64_zero", internal.corpus.decode_hex("00"))
+internal.reader.print_u64("u64_max", internal.corpus.decode_hex("ffffffffffffffffff01"))
+internal.reader.print_u64("u64_bit63", internal.corpus.decode_hex("80808080808080808001"))
+internal.reader.print_u64("u64_too_large", internal.corpus.decode_hex("ffffffffffffffffff1f"))
+internal.reader.print_u64("u64_too_long", internal.corpus.decode_hex("8080808080808080808000"))
+
+internal.reader.print_s32("s32_neg1", internal.corpus.decode_hex("7f"))
+internal.reader.print_s32("s32_zero", internal.corpus.decode_hex("00"))
+internal.reader.print_s32("s32_64", internal.corpus.decode_hex("c000"))
+internal.reader.print_s32("s32_max", internal.corpus.decode_hex("ffffffff07"))
+internal.reader.print_s32("s32_min", internal.corpus.decode_hex("8080808078"))
+internal.reader.print_s32("s32_ext", internal.corpus.decode_hex("ffffffff7f"))
+internal.reader.print_s32("s32_too_large", internal.corpus.decode_hex("8080808040"))
+internal.reader.print_s32("s32_too_long", internal.corpus.decode_hex("ffffffffff00"))
+
+internal.reader.print_s64("s64_neg1", internal.corpus.decode_hex("7f"))
+internal.reader.print_s64("s64_min", internal.corpus.decode_hex("8080808080808080807f"))
+internal.reader.print_s64("s64_max", internal.corpus.decode_hex("ffffffffffffffffff00"))
+internal.reader.print_s64("s64_pattern", internal.corpus.decode_hex("ffffffffffffffffff01"))
+internal.reader.print_s64("s64_too_large", internal.corpus.decode_hex("80808080808080808002"))
+internal.reader.print_s64("s64_too_long", internal.corpus.decode_hex("808080808080808080807f"))
+internal.reader.print_s64("s64_end", internal.corpus.decode_hex("8080"))

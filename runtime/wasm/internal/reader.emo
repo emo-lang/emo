@@ -100,3 +100,197 @@ def copy_into(out Bytes, src Bytes, dst_at Int, src_at Int, n Int) Int {
   out.set(dst_at, src.get(src_at))
   return copy_into(out, src, dst_at + 1, src_at + 1, n - 1)
 }
+
+// ---- LEB128 ----
+//
+// The unsigned/signed encodings with the spec's length caps: an
+// over-long encoding (continuation on the last allowed byte) is
+// "integer representation too long", an over-wide one (value bits
+// beyond the width on the final byte) is "integer too large" — both
+// malformed, never a wrapped value. u64/s64 accumulate the raw bit
+// pattern in Int64 (wrap is exactly what the pattern needs); s32
+// returns the unsigned 32-bit pattern of the signed value, per the
+// module-model decision.
+//
+// LEB128 lives in this module rather than a sibling because qualified
+// type annotations do not parse (step 20 pressure): a def in leb.emo
+// could not spell this module's Reader in its signature.
+
+// Print one decoded vector as `<label> = <value>` (fixture output).
+def print_u32(label String, data Bytes) Int {
+  const p = u32(over(data))
+  if p[0].failed {
+    println(label + " = " + p[0].fail_msg)
+    return 0
+  }
+  println(label + " = " + p[1].to_string())
+  return p[1]
+}
+
+def print_u64(label String, data Bytes) Int64 {
+  const p = u64(over(data))
+  if p[0].failed {
+    println(label + " = " + p[0].fail_msg)
+    return 0L
+  }
+  println(label + " = " + p[1].to_string())
+  return p[1]
+}
+
+def print_s32(label String, data Bytes) Int {
+  const p = s32(over(data))
+  if p[0].failed {
+    println(label + " = " + p[0].fail_msg)
+    return 0
+  }
+  println(label + " = " + p[1].to_string())
+  return p[1]
+}
+
+def print_s64(label String, data Bytes) Int64 {
+  const p = s64(over(data))
+  if p[0].failed {
+    println(label + " = " + p[0].fail_msg)
+    return 0L
+  }
+  println(label + " = " + p[1].to_string())
+  return p[1]
+}
+
+def u32(r Reader) (Reader, Int) {
+  return u32_acc(r, 0, 0)
+}
+
+def u32_acc(r Reader, count Int, acc Int) (Reader, Int) {
+  if r.failed {
+    return (r, 0)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0)
+  }
+  const bits = b & 127
+  const acc2 = acc | (bits << (7 * count))
+  if b < 128 {
+    if count == 4 && bits > 15 {
+      return (bail(rr, rr.pos, "integer too large"), 0)
+    }
+    return (rr, acc2)
+  }
+  if count == 4 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0)
+  }
+  return u32_acc(rr, count + 1, acc2)
+}
+
+def u64(r Reader) (Reader, Int64) {
+  return u64_acc(r, 0, 0L)
+}
+
+def u64_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
+  if r.failed {
+    return (r, 0L)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0L)
+  }
+  const bits = b & 127
+  // from_int types Unknown through the checker (step 20 pressure), so
+  // the shift's width is pinned by the Int64 literal on the left of the
+  // pair; multiply-by-power-of-two is the same bit pattern as the shift.
+  const acc2 = acc | (Int64.from_int(bits) * (1L << Int64.from_int(7 * count)))
+  if b < 128 {
+    if count == 9 && bits > 1 {
+      return (bail(rr, rr.pos, "integer too large"), 0L)
+    }
+    return (rr, acc2)
+  }
+  if count == 9 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0L)
+  }
+  return u64_acc(rr, count + 1, acc2)
+}
+
+// Signed 32-bit LEB128; the result is the value's unsigned 32-bit
+// pattern held in Int.
+def s32(r Reader) (Reader, Int) {
+  return s32_acc(r, 0, 0)
+}
+
+def s32_acc(r Reader, count Int, acc Int) (Reader, Int) {
+  if r.failed {
+    return (r, 0)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0)
+  }
+  const bits = b & 127
+  const acc2 = acc | (bits << (7 * count))
+  if b < 128 {
+    if count == 4 {
+      const top = bits >> 4
+      if top != 0 && top != 7 {
+        return (bail(rr, rr.pos, "integer too large"), 0)
+      }
+    }
+    var v = acc2
+    if bits >= 64 {
+      v = acc2 - (1 << (7 * (count + 1)))
+    }
+    if v < 0 {
+      v = v + 4294967296
+    }
+    return (rr, v)
+  }
+  if count == 4 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0)
+  }
+  return s32_acc(rr, count + 1, acc2)
+}
+
+// Signed 64-bit LEB128; the result is the Int64 bit pattern itself.
+// A value signed-extended across all ten bytes (the negative case at
+// the cap) already sits in the accumulator with the right pattern —
+// wrap-around does the extension — so no arithmetic runs for it.
+def s64(r Reader) (Reader, Int64) {
+  return s64_acc(r, 0, 0L)
+}
+
+def s64_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
+  if r.failed {
+    return (r, 0L)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0L)
+  }
+  const bits = b & 127
+  // Same width-pinning as u64_acc (see the note there).
+  const acc2 = acc | (Int64.from_int(bits) * (1L << Int64.from_int(7 * count)))
+  if b < 128 {
+    if count == 9 {
+      if bits == 0 || bits == 1 || bits == 127 {
+        return (rr, acc2)
+      }
+      return (bail(rr, rr.pos, "integer too large"), 0L)
+    }
+    if bits >= 64 {
+      return (rr, acc2 - (1L << Int64.from_int(7 * (count + 1))))
+    }
+    return (rr, acc2)
+  }
+  if count == 9 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0L)
+  }
+  return s64_acc(rr, count + 1, acc2)
+}
