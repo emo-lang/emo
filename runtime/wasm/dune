@@ -12,6 +12,9 @@
   wasm.emo
   cli.emo
   internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
   testdata/cases.smoke.txt
   package.emo)
  (action
@@ -35,6 +38,9 @@
   wasm.emo
   cli.emo
   internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
   testdata/cases.all.txt
   package.emo)
  (action

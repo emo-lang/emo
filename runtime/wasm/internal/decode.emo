@@ -1,0 +1,16 @@
+// The decode pipeline. The stages land task by task: T20.4 reads the
+// 8 raw header bytes (magic + version) through the reader so the
+// truncated-input family is decided by the reader's bounds checks;
+// T20.6 adds the header and section-walk semantics; the module model
+// and instruction stream follow. The final outcome reports the first
+// failure with its phase and byte offset — never an exception.
+
+def module_from(data Bytes) (Bool, String, Int, String) {
+  const r = internal.reader.over(data)
+  const head = internal.reader.take(r, 8)
+  const rr = head[0]
+  if rr.failed {
+    return internal.error.malformed(rr.fail_offset, rr.fail_msg)
+  }
+  return internal.error.good()
+}

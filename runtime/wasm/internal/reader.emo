@@ -1,0 +1,102 @@
+// The byte reader: a `Bytes` cursor with an offset and a limit, as a
+// frozen value — every read returns a new cursor plus what it read,
+// and every access is bounds-checked BEFORE it happens, because the
+// `Bytes.get` raise it prevents cannot be caught (CHECK.md: no catch
+// form yet).
+//
+// A failed read leaves the failure recorded on the cursor (first
+// failure sticks) and returns a zero value; the decode pipeline checks
+// `r.failed` after each step. All reader failures are the same shape:
+// the input ended early, phase malformed, at the position attempted.
+
+class Reader {
+  def init(data Bytes, pos Int, limit Int, failed Bool, fail_offset Int, fail_msg String) {
+    self.data = data
+    self.pos = pos
+    self.limit = limit
+    self.failed = failed
+    self.fail_offset = fail_offset
+    self.fail_msg = fail_msg
+  }
+}
+
+// The cursor over `data`, reading positions in [pos, limit).
+def new(data Bytes, pos Int, limit Int) Reader {
+  return Reader.new(data, pos, limit, false, -1, "")
+}
+
+// A cursor over the whole buffer.
+def over(data Bytes) Reader {
+  return Reader.new(data, 0, data.length(), false, -1, "")
+}
+
+// Record the first failure; later failures never overwrite it.
+def bail(r Reader, at Int, msg String) Reader {
+  if r.failed {
+    return r
+  }
+  return Reader.new(r.data, r.pos, r.limit, true, at, msg)
+}
+
+// Move forward without recording anything (the caller has already
+// bounds-checked).
+def stepped(r Reader, pos Int) Reader {
+  return Reader.new(r.data, pos, r.limit, r.failed, r.fail_offset, r.fail_msg)
+}
+
+// How many bytes remain before the limit.
+def remaining(r Reader) Int {
+  return r.limit - r.pos
+}
+
+// Look at the next byte without consuming it. -1 when nothing remains
+// (peek never records a failure — callers decide whether that is one).
+def peek(r Reader) Int {
+  if r.failed || r.pos >= r.limit {
+    return -1
+  }
+  return r.data.get(r.pos)
+}
+
+// Read one byte.
+def u8(r Reader) (Reader, Int) {
+  if r.failed {
+    return (r, 0)
+  }
+  if r.pos + 1 > r.limit {
+    return (bail(r, r.pos, "unexpected end"), 0)
+  }
+  return (stepped(r, r.pos + 1), r.data.get(r.pos))
+}
+
+// Consume `n` bytes, returning them as a fresh buffer.
+def take(r Reader, n Int) (Reader, Bytes) {
+  if r.failed {
+    return (r, Bytes.new(0))
+  }
+  if r.pos + n > r.limit {
+    return (bail(r, r.pos, "unexpected end"), Bytes.new(0))
+  }
+  const out = Bytes.new(n)
+  copy_into(out, r.data, 0, r.pos, n)
+  return (stepped(r, r.pos + n), out)
+}
+
+// Skip past `n` bytes.
+def skip(r Reader, n Int) Reader {
+  if r.failed {
+    return r
+  }
+  if r.pos + n > r.limit {
+    return bail(r, r.pos, "unexpected end")
+  }
+  return stepped(r, r.pos + n)
+}
+
+def copy_into(out Bytes, src Bytes, dst_at Int, src_at Int, n Int) Int {
+  if n == 0 {
+    return 0
+  }
+  out.set(dst_at, src.get(src_at))
+  return copy_into(out, src, dst_at + 1, src_at + 1, n - 1)
+}
