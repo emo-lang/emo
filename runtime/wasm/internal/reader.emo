@@ -184,7 +184,14 @@ def instrs(r Reader) Reader {
     return instrs(r1)
   }
   if op == 2 || op == 3 || op == 4 {
-    return instrs(blocktype_then(r1))
+    // The nested body decodes through its own matching end; this
+    // level then resumes with the instructions after it (the outer
+    // end is still this level's to consume).
+    const after_body = instrs(blocktype_then(r1))
+    if after_body.failed {
+      return after_body
+    }
+    return instrs(after_body)
   }
   if op == 0 || op == 1 || op == 15 {
     return instrs(r1)
@@ -460,6 +467,15 @@ def s33_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
 // LEB128 lives in this module rather than a sibling because qualified
 // type annotations do not parse (step 20 pressure): a def in leb.emo
 // could not spell this module's Reader in its signature.
+
+def print_dbg(label String, data Bytes) Int {
+  const r0 = over(data)
+  const lc = u8(r0)
+  const e = expr(lc[0])
+  println(label + ": locals_byte=" + lc[1].to_string() + " failed=" + e.failed.to_string()
+    + " pos=" + e.pos.to_string() + " limit=" + e.limit.to_string() + " msg=" + e.fail_msg)
+  return 0
+}
 
 // Print one decoded vector as `<label> = <value>` (fixture output).
 def print_u32(label String, data Bytes) Int {
