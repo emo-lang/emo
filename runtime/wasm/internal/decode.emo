@@ -29,7 +29,7 @@ def module_from(data Bytes) (Bool, String, Int, String) {  const r = internal.re
   if h.get(4) != 1 || h.get(5) != 0 || h.get(6) != 0 || h.get(7) != 0 {
     return internal.error.malformed(4, "unknown binary version")
   }
-  const w = walk(data, rr.pos, 0)
+  const w = walk(data, rr.pos, 0, -1, -1)
   if w[0] {
     // The shape is sound: the validator checks the semantics that
     // make the module valid (T20.14 onward).
@@ -41,18 +41,21 @@ def module_from(data Bytes) (Bool, String, Int, String) {  const r = internal.re
   return w
 }
 
-// A non-custom section's rank in the fixed order; the data-count
-// section (id 12) sits between element (9) and code (10).
+// A non-custom section's rank in the fixed order, doubled so the
+// data-count section (id 12) fits strictly between element (9) and
+// code (10).
 def rank(id Int) Int {
   if id == 12 {
-    return 10
+    return 19
   }
-  return id
+  return id * 2
 }
 
 // Walk sections from `pos`; `last_rank` is the rank of the last
-// non-custom section seen (0 before any).
-def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
+// non-custom section seen (0 before any). `dc` is the data-count
+// section's value (-1 before it is seen); `n_funcs` the function
+// section's declared count (-1 before it is seen).
+def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int) (Bool, String, Int, String) {
   if pos >= data.length() {
     return internal.error.good()
   }
@@ -75,8 +78,8 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
     return internal.error.malformed(r2.pos, "unexpected end")
   }
   if id == 0 {
-    // A custom section: its name must fit inside its own content; the
-    // whole content is then skipped.
+    // A custom section: its name must fit inside its own content and
+    // be valid UTF-8; the whole content is then skipped.
     const sub = internal.reader.new(r2.data, r2.pos, r2.pos + size)
     const pn = internal.reader.u32(sub)
     const s1 = pn[0]
@@ -86,8 +89,11 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
     if pn[1] > internal.reader.remaining(s1) {
       return internal.error.malformed(s1.pos, "unexpected end")
     }
+    if !internal.reader.utf8_ok(data, s1.pos, s1.pos + pn[1]) {
+      return internal.error.malformed(s1.pos, "malformed UTF-8 encoding")
+    }
     const r3 = internal.reader.skip(r2, size)
-    return walk(data, r3.pos, last_rank)
+    return walk(data, r3.pos, last_rank, dc, n_funcs)
   }
   if rank(id) <= last_rank {
     return internal.error.malformed(r1.pos, "unexpected section")
@@ -102,6 +108,23 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
     if t[2] != r2.pos + size {
       return internal.error.malformed(t[2], "section size mismatch")
     }
+  }
+  if id == 3 {
+    // The function section's declared count threads to the code
+    // section: a mismatch is malformed, not invalid.
+    const cn = internal.reader.u32(internal.reader.new(data, r2.pos, r2.pos + size))
+    if cn[0].failed {
+      return internal.error.malformed(cn[0].fail_offset, "malformed function section")
+    }
+    const s = internal.model.func_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+    const r3 = internal.reader.skip(r2, size)
+    return walk(data, r3.pos, rank(id), dc, cn[1])
   }
   if id == 2 {
     const s = internal.model.import_section(r2.data, r2.pos, r2.pos + size)
@@ -176,8 +199,20 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
       return internal.error.malformed(s[2], "section size mismatch")
     }
   }
+  if id == 12 {
+    // The data-count section: one u32, exactly consumed. Its value
+    // threads to the instruction decoder (memory.init / data.drop are
+    // only decodable with one present) and to the data section's
+    // consistency check.
+    const s = internal.model.datacount_section(data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], "data count section size mismatch")
+    }
+    const r3 = internal.reader.skip(r2, size)
+    return walk(data, r3.pos, rank(id), s[1], n_funcs)
+  }
   if id == 11 {
-    const s = internal.model.data_section(r2.data, r2.pos, r2.pos + size)
+    const s = internal.model.data_section(r2.data, r2.pos, r2.pos + size, dc)
     if !s[0] {
       return internal.error.malformed(s[2], s[1])
     }
@@ -186,7 +221,7 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
     }
   }
   if id == 10 {
-    const s = internal.model.code_section(r2.data, r2.pos, r2.pos + size)
+    const s = internal.model.code_section(r2.data, r2.pos, r2.pos + size, dc, n_funcs)
     if !s[0] {
       return internal.error.malformed(s[2], s[1])
     }
@@ -194,7 +229,6 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
       return internal.error.malformed(s[2], "section size mismatch")
     }
   }
-  // The remaining immediates decode in T20.11 and T20.12.
   const r3 = internal.reader.skip(r2, size)
-  return walk(data, r3.pos, rank(id))
+  return walk(data, r3.pos, rank(id), dc, n_funcs)
 }
