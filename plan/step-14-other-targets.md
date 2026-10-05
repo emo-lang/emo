@@ -129,6 +129,43 @@ of re-deriving it.
   needs on bare metal (`int64_t`/`int32_t`/`double`/`float`); today
   only `Float`/`String`/`Bool` cross (E4200 otherwise).
 
+### Dynamic value representation (study, 2026-10-05)
+
+- The freestanding target is the first that must lay the dynamic value
+  out itself — every shipped target delegates it (OCaml variant,
+  WasmGC structs, BEAM tuples, JS objects). The scheme, settled in
+  `plan/step-22-riscv64.md`: one tagged machine word per value; heap
+  blocks 8-byte aligned with the 3 free pointer bits as the kind tag;
+  Bool and Char immediate.
+- **`Int64`/`Float64` are boxed two-word cells in the dynamic world** —
+  the decided wrap-around semantics need all 2⁶⁴ bit patterns, so a
+  tagged immediate cannot exist and the OCaml 63-bit shortcut is
+  unavailable here. The CHECK.md open decision (boxed `Int64` vs hi/lo
+  emulation) is scoped to the OCaml-hosted native backend and
+  unaffected.
+- NaN-boxing rejected: `Float64` must round-trip bit patterns (the
+  `Bytes`/`Float` bit-casts), and a 64-bit integer payload cannot share
+  the word with a tag.
+- GC-readiness is free under tagging — an immediate is never a valid
+  pointer, so a future precise collector scans stacks and heap without
+  a layout change; the bump allocator stays until then.
+
+### Boot profiles (probed, 2026-10-05)
+
+Two ways to run under QEMU `virt`; the milestones table below had
+conflated them before this split, settled in `plan/step-22-riscv64.md`:
+
+- **Profile A — OpenSBI-hosted (the M1 profile).** The default
+  `-kernel` chain: OpenSBI at 0x80000000 enters the payload at
+  **0x80200000** in S-mode (`a0` hart id, `a1` DTB pointer). Console =
+  the legacy SBI ecall (`a7=1` putchar), clean exit = `a7=8`; probed
+  end to end against binutils 2.45 / QEMU 11.1.1 / OpenSBI v1.8.1. No
+  UART driver needed.
+- **Profile B — `-bios none` true bare metal.** The image itself at
+  0x80000000, M-mode, every hart entering there: own 16550A UART driver
+  (MMIO at 0x10000000 on `virt`), own timer access. For when the kernel
+  owns the machine — not an M1 need.
+
 ### Process scheduler on QEMU riscv64 (assessment)
 
 Question assessed: how hard is an Emo process scheduler on RISC-V under
@@ -168,7 +205,7 @@ Milestones:
 
 | Milestone | Content | Difficulty |
 | --- | --- | --- |
-| M1 | riscv64 backend (emit assembly text for cross-binutils, mirroring step 13's emit-and-delegate pattern), boot stub at `0x80000000` (set stack, clear BSS), SBI console for `println`, "Hello, world" under `qemu-system-riscv64` | high — the dominant cost of the whole effort |
+| M1 | riscv64 backend (emit assembly text for cross-binutils, mirroring step 13's emit-and-delegate pattern), boot stub under profile A (OpenSBI-hosted S-mode at 0x80200000: set stack, clear BSS, park non-boot harts), SBI console for `println`, "Hello, world" under `qemu-system-riscv64` | high — the dominant cost of the whole effort |
 | M2 | cooperative scheduler: ≥2 processes, send/receive, round-robin, no preemption | moderate-low |
 | M3 | timer preemption: `stvec` trap handler, SBI `set_timer`, time slices | moderate — optional; semantics do not require it |
 | M4 | multi-hart SMP (per-hart run queues, IPIs, LR/SC atomics) | high — defer indefinitely |
@@ -234,7 +271,8 @@ what already exists (firmware, driver code, legacy libraries).
 
 - [x] When a target is scheduled, split it into `step-NN-<target>.md` with
       the full standard format (goal / scope / tasks / acceptance) and
-      update `plan/README.md`'s status table.
+      update `plan/README.md`'s status table. (riscv64 →
+      `plan/step-22-riscv64.md`, 2026-10-05.)
 - [ ] Record here which key decision each target settled and where
       (README / CHECK.md / docs) — keep the trail.
 
