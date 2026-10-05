@@ -232,22 +232,17 @@ The concurrency semantics are shaped by the following decisions:
 
 ## Networking
 
-Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API, implemented on each backend by its native facilities:
-
-- **Native (OCaml)**: an effects-based scheduler on top of io_uring (Linux), kqueue (macOS), and IOCP (Windows), with libuv as the portable fallback — the same foundation as the concurrency runtime.
-- **BEAM**: `gen_tcp` / `gen_udp` / `ssl`, one process per connection.
-- **Wasm**: WASI sockets, or fetch/WebSocket in the browser.
-- **TypeScript**: the target runtime's net/HTTP modules.
+Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API. On the native backend it runs on the same effects-based scheduler as the concurrency runtime — non-blocking sockets parked and woken by the scheduler, with TLS provided by OpenSSL bindings. Networking is native-only: the `net` and `http` packages declare `targets = ["native"]`, and dependency resolution refuses them on every other target.
 
 The API is **direct style**: network calls look like ordinary blocking calls, and the scheduler switches processes under the hood. There is no `async`/`await` and therefore no function coloring — any function can perform IO, and the API ecosystem stays single-tracked. Timeouts are seconds, and every failure — refused connection, unresolvable name, exceeded deadline, closed socket — raises an ordinary Emo exception whose message states the peer, the operation, and the reason.
 
-The core library's socket surface is the `net` module; the standard library's HTTP lives in `http`:
+The socket surface is the standard library's `net` package; HTTP lives in the `http` package:
 
 - **Sockets.** `net.connect(host, port, timeout)`, `net.connect_unix(path, timeout)`, `net.tls_connect(host, port, timeout)`, and `net.tls_connect_insecure(host, port, timeout)` — certificate verification is on by default, and the insecure variant is the explicit, visibly dangerous opt-out — return a `TcpConn`. `net.listen(host, port)`, `net.listen_unix(path)`, and `net.listen_tls(host, port, cert_path, key_path)` return a `TcpListener`; `net.udp_bind(host, port)` returns a `UdpSocket`; `net.resolve(host)` resolves a name to its addresses.
 - **Connections.** `read_line()`, `read_exactly(n)`, `read_all()`, `write(data)`, and `close()` — a graceful close delivers pending writes first. `set_timeout(seconds)` bounds the operations that follow (the default is no timeout; `0.0` waits indefinitely). A listener serves `accept()` and reports `port()`; a datagram socket `send_to(host, port, data)`s and `recv_from()`s, and reports `port()`.
-- **HTTP.** `http.get(url)`, `http.post(url, body)`, `http.put(url, body)`, `http.delete(url)`, and the general `http.request(method, url, headers, body, timeout)` return an `HttpResponse` carrying `status`, `headers`, and `body`. Redirects are never followed: a 3xx is a response like any other, and following it is the caller's explicit move. On the server, `http.serve(listener) -> (conn TcpConn) { ... }` is the process-per-connection helper, and `http.serve_requests(listener) -> (req HttpRequest) { ... }` parses each request and writes the handler's `HttpResponse` back — the handler is an ordinary Emo function.
+- **HTTP.** `http.get(url)`, `http.post(url, body)`, `http.put(url, body)`, `http.delete(url)`, and the general `http.request(method, url, headers, body, timeout)` return an `HttpResponse` carrying `status`, `headers`, and `body`. Redirects are never followed: a 3xx is a response like any other, and following it is the caller's explicit move. On the server, `http.serve(listener) -> (conn TcpConn) { ... }` is the process-per-connection helper, and `http.serve_requests(listener) -> (req HttpRequest) { ... }` parses each request and writes the handler's `HttpResponse` back — the handler is an ordinary Emo function. The full API reference lives in [docs/stdlib/http.md](docs/stdlib/http.md).
 
-Layering is conventional: sockets (TCP/UDP/Unix domain, plus TLS) live in the core library, and HTTP (client and server) is part of the standard library. TLS starts as an OpenSSL binding on the native backend, with a pure-OCaml TLS stack as an optional alternative.
+Layering is conventional: sockets (TCP/UDP/Unix domain, plus TLS) live in the `net` package, and HTTP (client and server) in the `http` package built on top of it. TLS is an OpenSSL binding on the native backend.
 
 ## Native Builds
 
