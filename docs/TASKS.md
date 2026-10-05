@@ -360,4 +360,35 @@ MirageOS/solo5 lineage proves that stack boots — with the `foreign
 def` FFI as the machine escape hatch (ports, asm shims) and the
 `core` library split from step 14's notes pulled for real. Far term:
 freestanding codegen, the same investment a tiered wasm engine needs.
-Step plans are written when the kernel work starts.
+Step plans are written when the kernel work starts; the
+freestanding-codegen step is already split out — step 22 below.
+
+### Step 22 — RISC-V target (freestanding RV64) · `plan/step-22-riscv64.md`
+
+**Prereq:** Steps 01–13 (the specialization pass); the step-14 RISC-V
+reference note is the design record.
+**Done when:** `emo build --target riscv64` produces a freestanding ELF
+that boots under `qemu-system-riscv64 -machine virt`; every example in
+the core subset prints exactly what `emo run` prints (goldens in CI);
+`spawn`/`send`/`receive` and `foreign def` refuse with clear
+diagnostics; packages without `"riscv64"` fail resolution; `dune test`
+green.
+
+- [ ] **T22.1** — The backend skeleton: `--target riscv64` plumbing
+      (emitter module; the CLI arm writing `main.s`, invoking
+      `as`/`ld` with the generated linker script; `emo run` booting the
+      ELF under QEMU); the entry stub, BSS clear, SBI console.
+      Golden: hello_world (serial output byte-for-byte vs `emo run`).
+- [ ] **T22.2** — The value model and arithmetic: the tagged-word
+      dynamic representation (`Int64`/`Float64` boxed cells, Bool/Char
+      immediates) and the bump allocator; wrap-around arithmetic,
+      comparisons, `if`, integer formatting (`INT64_MIN` correct);
+      guaranteed tail calls as `tail`. Golden: fib.
+- [ ] **T22.3** — Dynamic-world data structures: tuples, arrays, Box,
+      enums, instances with vtable dispatch, closures and first-class
+      functions; patterns with guards; interpolation with the `%g`
+      float rule. Golden: objects, language_tour.
+- [ ] **T22.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
+      cross-binutils on the runner), the resolution-gate refusal test
+      for packages lacking `"riscv64"`, the emission-time refusal
+      diagnostics, close-out.
