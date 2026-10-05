@@ -47,7 +47,7 @@ def walk_case(lines Array[String], i Int, claimed Int, pending Int, failed Int) 
   }
   // A claimed case: decode it and compare the phase.
   const mod = internal.corpus.decode_hex(parts[2])
-  const outcome = internal.decode.module_from(mod)
+  const outcome = wasm.decode(mod)
   var actual_verdict = "ok"
   if !outcome[0] {
     actual_verdict = outcome[1]
