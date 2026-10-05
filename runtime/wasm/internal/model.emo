@@ -95,3 +95,247 @@ def type_rest(data Bytes, pos Int, limit Int, n Int, acc Array[FuncType]) (Bool,
   }
   return type_rest(data, ft[2], limit, n - 1, acc.append(ft[1]))
 }
+
+// ---- declaration sections (T20.8) ----
+//
+// The content decoders check byte-level shape (kinds, limits, mut,
+// name bounds) and exact consumption; the decoded values are dropped
+// until the module threading lands (T20.13). Global sections decode
+// with their initializer expressions in T20.9.
+
+// Limits: a flags byte (0 = min, 1 = min+max), then u32s.
+// (ok, min, max, has_max, new_pos)
+def limits(data Bytes, pos Int, limit Int) (Bool, Int, Int, Bool, Int) {
+  if pos >= limit {
+    return (false, 0, 0, false, pos)
+  }
+  const flags = data.get(pos)
+  if flags == 0 {
+    const p = internal.reader.u32(internal.reader.new(data, pos + 1, limit))
+    if p[0].failed {
+      return (false, 0, 0, false, p[0].fail_offset)
+    }
+    return (true, p[1], 0, false, p[0].pos)
+  }
+  if flags == 1 {
+    const p = internal.reader.u32(internal.reader.new(data, pos + 1, limit))
+    if p[0].failed {
+      return (false, 0, 0, false, p[0].fail_offset)
+    }
+    const q = internal.reader.u32(p[0])
+    if q[0].failed {
+      return (false, 0, 0, false, q[0].fail_offset)
+    }
+    return (true, p[1], q[1], true, q[0].pos)
+  }
+  return (false, 0, 0, false, pos)
+}
+
+// A reference type byte for tables: funcref (0x70) or externref (0x6f).
+def reftype(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+  if pos >= limit {
+    return (false, 0, pos)
+  }
+  const b = data.get(pos)
+  if b == 112 || b == 111 {
+    return (true, b, pos + 1)
+  }
+  return (false, b, pos)
+}
+
+// tabletype = reftype limits: (ok, reftype, min, max, has_max, new_pos)
+def tabletype(data Bytes, pos Int, limit Int) (Bool, Int, Int, Int, Bool, Int) {
+  const rt = reftype(data, pos, limit)
+  if !rt[0] {
+    return (false, 0, 0, 0, false, pos)
+  }
+  const l = limits(data, rt[2], limit)
+  if !l[0] {
+    return (false, 0, 0, 0, false, pos)
+  }
+  return (true, rt[1], l[1], l[2], l[3], l[4])
+}
+
+// memtype = limits.
+def memtype(data Bytes, pos Int, limit Int) (Bool, Int, Int, Bool, Int) {
+  return limits(data, pos, limit)
+}
+
+// globaltype = valtype + mutability byte (0 or 1).
+def globaltype(data Bytes, pos Int, limit Int) (Bool, Int, Bool, Int) {
+  const v = valtype(data, pos, limit)
+  if !v[0] {
+    return (false, 0, false, pos)
+  }
+  if v[2] >= limit {
+    return (false, 0, false, v[2])
+  }
+  const m = data.get(v[2])
+  if m != 0 && m != 1 {
+    return (false, 0, false, v[2])
+  }
+  return (true, v[1], m == 1, v[2] + 1)
+}
+
+// A name: u32 length, then that many bytes (the bytes are skipped —
+// UTF-8 validation is a later task).
+def name(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+  const p = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if p[0].failed {
+    return (false, 0, p[0].fail_offset)
+  }
+  if p[1] > internal.reader.remaining(p[0]) {
+    return (false, 0, p[0].pos)
+  }
+  const r = internal.reader.skip(p[0], p[1])
+  return (true, p[1], r.pos)
+}
+
+// The import section: vec of (module name, name, importdesc).
+def import_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, "malformed import section", cn[0].fail_offset, "")
+  }
+  return import_rest(data, cn[0].pos, limit, cn[1])
+}
+
+def import_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+  if n == 0 {
+    return (true, "", -1, "")
+  }
+  const m = name(data, pos, limit)
+  if !m[0] {
+    return (false, "malformed import section", m[2], "")
+  }
+  const nm = name(data, m[2], limit)
+  if !nm[0] {
+    return (false, "malformed import section", nm[2], "")
+  }
+  const d = import_desc(data, nm[2], limit)
+  if !d[0] {
+    return (false, "malformed import section", d[2], "")
+  }
+  return import_rest(data, d[2], limit, n - 1)
+}
+
+// importdesc: one kind byte (0 func / 1 table / 2 memory / 3 global)
+// followed by the type.
+def import_desc(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+  if pos >= limit {
+    return (false, 0, pos)
+  }
+  const kind = data.get(pos)
+  if kind == 0 {
+    const t = internal.reader.u32(internal.reader.new(data, pos + 1, limit))
+    if t[0].failed {
+      return (false, 0, t[0].fail_offset)
+    }
+    return (true, kind, t[0].pos)
+  }
+  if kind == 1 {
+    const t = tabletype(data, pos + 1, limit)
+    return (t[0], kind, t[5])
+  }
+  if kind == 2 {
+    const t = memtype(data, pos + 1, limit)
+    return (t[0], kind, t[4])
+  }
+  if kind == 3 {
+    const t = globaltype(data, pos + 1, limit)
+    return (t[0], kind, t[3])
+  }
+  return (false, 0, pos)
+}
+
+// The function section: vec of type indices.
+def func_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, "malformed function section", cn[0].fail_offset, "")
+  }
+  return u32_vec_rest(data, cn[0].pos, limit, cn[1])
+}
+
+// The table section: vec of tabletypes.
+def table_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, "malformed table section", cn[0].fail_offset, "")
+  }
+  return table_rest(data, cn[0].pos, limit, cn[1])
+}
+
+def table_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+  if n == 0 {
+    return (true, "", -1, "")
+  }
+  const t = tabletype(data, pos, limit)
+  if !t[0] {
+    return (false, "malformed table section", pos, "")
+  }
+  return table_rest(data, t[5], limit, n - 1)
+}
+
+// The memory section: vec of memtypes.
+def memory_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, "malformed memory section", cn[0].fail_offset, "")
+  }
+  return memory_rest(data, cn[0].pos, limit, cn[1])
+}
+
+def memory_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+  if n == 0 {
+    return (true, "", -1, "")
+  }
+  const t = memtype(data, pos, limit)
+  if !t[0] {
+    return (false, "malformed memory section", pos, "")
+  }
+  return memory_rest(data, t[4], limit, n - 1)
+}
+
+// The export section: vec of (name, kind byte, index).
+def export_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, "malformed export section", cn[0].fail_offset, "")
+  }
+  return export_rest(data, cn[0].pos, limit, cn[1])
+}
+
+def export_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+  if n == 0 {
+    return (true, "", -1, "")
+  }
+  const nm = name(data, pos, limit)
+  if !nm[0] {
+    return (false, "malformed export section", nm[2], "")
+  }
+  if nm[2] >= limit {
+    return (false, "malformed export section", nm[2], "")
+  }
+  const kind = data.get(nm[2])
+  if kind > 3 {
+    return (false, "malformed export section", nm[2], "")
+  }
+  const t = internal.reader.u32(internal.reader.new(data, nm[2] + 1, limit))
+  if t[0].failed {
+    return (false, "malformed export section", t[0].fail_offset, "")
+  }
+  return export_rest(data, t[0].pos, limit, n - 1)
+}
+
+// A shared vec-of-u32 walker (the function section's shape).
+def u32_vec_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+  if n == 0 {
+    return (true, "", -1, "")
+  }
+  const p = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if p[0].failed {
+    return (false, "malformed function section", p[0].fail_offset, "")
+  }
+  return u32_vec_rest(data, p[0].pos, limit, n - 1)
+}
