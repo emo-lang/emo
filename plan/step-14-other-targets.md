@@ -1,4 +1,4 @@
-# Step 14 — Other Targets: Wasm, TypeScript, BEAM, Qemu
+# Step 14 — Other Targets: Wasm, TypeScript, BEAM, RISC-V Bare Metal
 
 **Milestone:** M4 roadmap · **Prereq:** steps 01–13 (per target, below) ·
 **Status:** not started
@@ -51,11 +51,14 @@ recommended priority.
 - **Risk:** low semantically, moderate in tooling (rebar/OTP integration,
   releases).
 
-## Qemu / bare metal (last)
+## Bare metal — `riscv64` (last)
 
-- **Strategy:** RISC-V freestanding images bootable in QEMU, per the
-  EmoOS ambition: no OS, no libc, pluggable runtime (allocator, GC,
-  scheduler as replaceable components).
+- **Strategy:** freestanding RISC-V images, per the EmoOS ambition: no
+  OS, no libc, pluggable runtime (allocator, GC, scheduler as
+  replaceable components). The target is named for the ISA —
+  `riscv64` — and QEMU is its default runner (the no-hardware dev
+  loop), not part of the target; the same image runs on real hardware
+  (decided 2026-10-05, replacing the earlier `qemu` target name).
 - **Layering:** the `core` library layer (integers, strings, tuples,
   control flow — zero runtime dependencies) is the only surface available
   to kernel code; the standard library requires the full runtime. This
@@ -87,7 +90,7 @@ recommended priority.
   target). The GC question is settled: **WasmGC** — structs and arrays
   with RTT dispatch, no custom heap. The i31-vs-i64 and unboxing
   details are that file's recorded follow-ups. BEAM is next in the
-  recommended order; qemu stays last.
+  recommended order; the bare-metal `riscv64` target stays last.
 
 ## Acceptance
 

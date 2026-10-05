@@ -15,7 +15,7 @@ incrementally shippable steps — one file per step, executed in order.
 - **M3 — Concurrency & networking (steps 11–12):** processes and message
   passing on an effects-based scheduler, plus the direct-style networking API.
 - **M4 — Compilation targets (steps 13–14):** native code generation, then
-  wasm / TypeScript / BEAM / qemu.
+  wasm / TypeScript / BEAM / riscv64.
 
 ## Ground rules
 
@@ -58,6 +58,6 @@ incrementally shippable steps — one file per step, executed in order.
 | 11 | Processes & message passing | done |
 | 12 | Networking library | done |
 | 13 | Native backend | done |
-| 14 | Other targets (wasm / TS / BEAM / qemu) | in progress (TS, Wasm promoted) |
+| 14 | Other targets (wasm / TS / BEAM / riscv64) | in progress (TS, Wasm promoted) |
 | 15 | TypeScript target | in progress |
 | 16 | Wasm target (WasmGC) | in progress |

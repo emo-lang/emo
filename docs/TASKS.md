@@ -28,7 +28,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M1 — MVP interpreter | 01–07 | Single-file Emo programs (functions, classes, enums, exceptions) run via `emo run` / `emo repl` with readable errors. |
 | M2 — Compile-time experience | 08–10 | Gradual type checker, structural module system, and packages with MVS resolution; multi-package projects build and run. |
 | M3 — Concurrency & networking | 11–12 | Processes and message passing on an effects-based scheduler; direct-style networking. |
-| M4 — Compilation targets | 13–14 | Native code generation via `emo build`; then wasm / TypeScript / BEAM / qemu. |
+| M4 — Compilation targets | 13–14 | Native code generation via `emo build`; then wasm / TypeScript / BEAM / riscv64. |
 
 ## Design gates
 
@@ -245,14 +245,14 @@ Close-out: the exact `net.*` / `http.*` names are in the README (Networking); th
 
 Close-out: Stage A emits OCaml source (tradeoff documented in `docs/native-backend.md`); the IR lives in `src/emo_ir` with the Stage B `specialize` fixed point, and T13.5's specialization landed with the T13.1/T13.2 commits. `foreign def` settled as above, marshaling through generated C wrappers (`emo build` compiles them with `cc`); `Float`/`String`/`Bool` cross the boundary, everything else refuses with E4200. Benchmarks: `benchmarks/results.md` records fib(30) 345ms unspecialized vs 212ms specialized (~1.6x), ping-pong, JSON scan, and an HTTP echo load test at 112 req/s. Bootstrap: all five examples build to binaries matching `emo run` byte-for-byte (the `bootstrap` suite in `test/emo_project`). Decisions are in `plan/step-13-native-backend.md` (Close-out). **Step 13 acceptance met.**
 
-### Step 14 — Other targets: wasm, TypeScript, BEAM, qemu · `plan/step-14-other-targets.md`
+### Step 14 — Other targets: wasm, TypeScript, BEAM, riscv64 bare metal · `plan/step-14-other-targets.md`
 
-**Prereq:** Steps 01–13 (per target). These are roadmap entries, not execution-ready plans — each target gets its own step file when scheduled. Recommended order: Wasm → TypeScript → BEAM → qemu.
+**Prereq:** Steps 01–13 (per target). These are roadmap entries, not execution-ready plans — each target gets its own step file when scheduled. Recommended order: Wasm → TypeScript → BEAM → riscv64.
 
 - [x] **T14.1** — When a target is scheduled, split it into `step-NN-<target>.md` with the full standard format (goal / scope / tasks / acceptance) and update `plan/README.md`'s status table; its tasks continue the numbering (`T15.*`, …).
 - [ ] **T14.2** — Record which key decision each target settled and where (README / `CHECK.md` / docs) — keep the trail.
 
-Key decisions to settle per target: Wasm — WasmGC vs custom GC (prototype both); TypeScript — direct-style mapping onto the event loop, process mapping; BEAM — class value semantics vs Erlang maps; qemu — pluggable runtime, linker scripts (highest risk; pull the `core`-library layering earlier if EmoOS work starts).
+Key decisions to settle per target: Wasm — WasmGC vs custom GC (prototype both); TypeScript — direct-style mapping onto the event loop, process mapping; BEAM — class value semantics vs Erlang maps; riscv64 — pluggable runtime, linker scripts (highest risk; pull the `core`-library layering earlier if EmoOS work starts).
 
 Promotion trail: **TypeScript → `plan/step-15-typescript.md`** (2026-10-02, first target; its key decisions — IR lowering, uniform async, cooperative tasks — are settled in that file). **Wasm → `plan/step-16-wasm.md`** (2026-10-02, second target; the GC question is settled — WasmGC, structs and arrays with RTT dispatch, no custom heap). BEAM is next in the recommended order.
 

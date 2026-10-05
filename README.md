@@ -10,7 +10,7 @@ Emo is **clean, explicit, and intuitive**. It draws on three decades of open-sou
 
 - **Highly expressive syntax.** Code should read naturally and say what it means.
 - **Principle of least surprise.** The language rules should match programmer intuition; things should work the way you expect them to.
-- **Multiple compilation targets.** Emo compiles to native executables, to WebAssembly, to other languages such as TypeScript, to the BEAM virtual machine, and to bare metal (the `qemu` target — see EmoOS).
+- **Multiple compilation targets.** Emo compiles to native executables, to WebAssembly, to other languages such as TypeScript, to the BEAM virtual machine, and to bare metal (the `riscv64` target — see EmoOS).
 
 ## Syntax
 
@@ -315,14 +315,14 @@ These decisions interlock with the core design: props are checked by the built-i
 
 Emo's reach extends down to the operating system layer: the language is capable of writing a kernel, so that an Emo kernel plus an Emo shell — with EmoUI on top — forms a complete OS, EmoOS.
 
-The `qemu` compilation target is the bare-metal target. It assumes no OS, no libc, and no default runtime; it supports RISC-V and builds images bootable by QEMU — the kernel development loop is compile, boot, debug, with no hardware required.
+The `riscv64` compilation target is the bare-metal target. It assumes no OS, no libc, and no default runtime; it builds freestanding RISC-V images — the kernel development loop is compile, boot, debug, with no hardware required. QEMU is the target's default runner for that loop, not part of the target itself; the same image runs on real RISC-V hardware.
 
 Writing a kernel shapes the language in four ways:
 
 - **Layered core library.** `core` (integers, strings, tuples, control flow) has zero runtime dependencies and is the only layer available to kernel code; the standard library requires the runtime.
 - **Explicit memory primitives.** Raw memory access (`peek`/`poke` and friends) is provided as explicitly named library functions — dangerous operations are visibly dangerous.
 - **Pluggable runtime.** The GC, allocator, and scheduler are replaceable components on the bare-metal target, not injected defaults — a kernel may choose a minimal GC, arenas, or static allocation.
-- **Single-language closure.** The kernel builds with the `qemu` target while the shell and user programs build as ordinary native binaries — one language spanning both sides of the system.
+- **Single-language closure.** The kernel builds with the `riscv64` target while the shell and user programs build as ordinary native binaries — one language spanning both sides of the system.
 
 ## Implementation
 
