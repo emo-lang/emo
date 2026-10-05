@@ -523,7 +523,7 @@ let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
    writes nothing. *)
 let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) : Emo_pkg.Lockfile.entry list =
-  let lock_path = Filename.concat manifest_dir "emo.lock" in
+  let lock_path = Filename.concat manifest_dir Emo_pkg.Lockfile.filename in
   match Emo_pkg.Lockfile.read lock_path with
   | Ok entries -> (
       match Emo_pkg.Lockfile.verify ~roots:manifest.Emo_pkg.deps entries with

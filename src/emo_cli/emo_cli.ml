@@ -626,7 +626,9 @@ let deps_resolve ~(name : string option) : int =
     let entries =
       Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"native"
     in
-    Emo_pkg.Lockfile.write ~path:(Filename.concat dir "emo.lock") entries;
+    Emo_pkg.Lockfile.write
+      ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
+      entries;
     List.iter
       (fun e ->
         Printf.printf "%s %s %s\n" e.Emo_pkg.Lockfile.dep
@@ -639,7 +641,7 @@ let deps_resolve ~(name : string option) : int =
     65
 
 let deps_list () : int =
-  let lock = Filename.concat (Sys.getcwd ()) "emo.lock" in
+  let lock = Filename.concat (Sys.getcwd ()) Emo_pkg.Lockfile.filename in
   match Emo_pkg.Lockfile.read lock with
   | Ok entries ->
       List.iter
@@ -655,13 +657,13 @@ let deps_list () : int =
 
 let deps_resolve_cmd =
   Cmd.v
-    (Cmd.info "resolve" ~doc:"Resolve the manifest and write emo.lock.")
+    (Cmd.info "resolve" ~doc:"Resolve the manifest and write package.lock.")
     Term.(const (fun () -> deps_resolve ~name:None) $ const ())
 
 let deps_update_cmd =
   let name = Arg.(required & pos 0 (some string) None & info [] ~docv:"NAME") in
   Cmd.v
-    (Cmd.info "update" ~doc:"Regenerate emo.lock after changing a pin.")
+    (Cmd.info "update" ~doc:"Regenerate package.lock after changing a pin.")
     Term.(const (fun n -> deps_resolve ~name:(Some n)) $ name)
 
 let deps_list_cmd =
@@ -674,6 +676,215 @@ let deps =
     (Cmd.info "deps" ~doc:"Manage dependencies.")
     [ deps_resolve_cmd; deps_update_cmd; deps_list_cmd ]
 
+(* `emo publish`: pack the package rooted at the working directory and POST
+   it to the registry. The upload goes through curl — the toolchain keeps
+   no HTTP client dependency, and curl is on every platform Emo targets. *)
+
+(* Extracts a string field from a flat JSON object (the registry's frozen
+   error shape); None when the field is absent or the body is not JSON. *)
+let json_string_field (key : string) (json : string) : string option =
+  let pat = "\"" ^ key ^ "\"" in
+  let n = String.length json and p = String.length pat in
+  let rec find i =
+    if i + p > n then None
+    else if String.sub json i p = pat then Some (i + p)
+    else find (i + 1)
+  in
+  match find 0 with
+  | None -> None
+  | Some i ->
+      let rec skip i =
+        if i < n && (json.[i] = ' ' || json.[i] = ':' || json.[i] = '\t') then
+          skip (i + 1)
+        else i
+      in
+      let i = skip i in
+      if i >= n || json.[i] <> '"' then None
+      else
+        let buf = Buffer.create 16 in
+        let rec read i =
+          if i >= n then None
+          else
+            match json.[i] with
+            | '\\' when i + 1 < n ->
+                Buffer.add_char buf json.[i + 1];
+                read (i + 2)
+            | '"' -> Some (Buffer.contents buf)
+            | c ->
+                Buffer.add_char buf c;
+                read (i + 1)
+        in
+        read (i + 1)
+
+let which_curl () : bool = Sys.command "command -v curl >/dev/null 2>&1" = 0
+
+(* POSTs [archive] to {registry}/api/v1/packages and returns the HTTP status
+   and response body. *)
+let upload ~(registry : string) ~(token : string) ~(archive : string) :
+    (int * string, string) result =
+  let base =
+    let n = String.length registry in
+    if n > 0 && registry.[n - 1] = '/' then String.sub registry 0 (n - 1)
+    else registry
+  in
+  let tmp = Filename.temp_file "emo-publish-" ".emoji" in
+  let body_file = tmp ^ ".body" and code_file = tmp ^ ".code" in
+  let err_file = tmp ^ ".err" in
+  let cleanup () =
+    List.iter
+      (fun f -> if Sys.file_exists f then Sys.remove f)
+      [ tmp; body_file; code_file; err_file ]
+  in
+  let oc = open_out_bin tmp in
+  output_string oc archive;
+  close_out oc;
+  let cmd =
+    Printf.sprintf
+      "curl -sS --max-time 120 -o %s -w %%{http_code} -X POST -H %s -H %s \
+       --data-binary @%s %s > %s 2> %s"
+      (Filename.quote body_file)
+      (Filename.quote ("Authorization: Bearer " ^ token))
+      (Filename.quote "Content-Type: application/octet-stream")
+      (Filename.quote tmp)
+      (Filename.quote (base ^ "/api/v1/packages"))
+      (Filename.quote code_file) (Filename.quote err_file)
+  in
+  let rc = Sys.command cmd in
+  let read f = if Sys.file_exists f then read_file f else "" in
+  let result =
+    if rc <> 0 then
+      Error
+        (let e = String.trim (read err_file) in
+         if e = "" then Printf.sprintf "curl failed (exit %d)" rc else e)
+    else
+      match int_of_string_opt (String.trim (read code_file)) with
+      | Some status -> Ok (status, read body_file)
+      | None -> Error "curl returned no HTTP status"
+  in
+  cleanup ();
+  result
+
+let publish ~(registry_opt : string option) ~(token_opt : string option)
+    ~(dry_run : bool) : int =
+  let dir = Sys.getcwd () in
+  if not (Sys.file_exists (Filename.concat dir "package.emo")) then begin
+    prerr_endline "no package.emo in the current directory";
+    66
+  end
+  else
+    match Emo_pkg.Publish.prepare ~dir with
+    | Error message ->
+        prerr_endline ("emo publish: " ^ message);
+        65
+    | Ok p -> (
+        let m = p.Emo_pkg.Publish.p_manifest in
+        let version = Emo_pkg.Version.to_string m.Emo_pkg.version in
+        if dry_run then begin
+          Printf.printf "archive: %s (%d bytes)\n" p.p_archive_name
+            (String.length p.p_archive);
+          Printf.printf "package: %s %s\n" m.Emo_pkg.name version;
+          Printf.printf "checksum: %s\n" p.p_checksum;
+          print_endline "files:";
+          List.iter
+            (fun (path, content) ->
+              Printf.printf "  %s (%d bytes)\n" path (String.length content))
+            p.p_files;
+          0
+        end
+        else
+          let registry =
+            match (registry_opt, Sys.getenv_opt "EMO_REGISTRY") with
+            | Some r, _ -> Some r
+            | None, Some r when r <> "" -> Some r
+            | _ -> None
+          in
+          let token =
+            match (token_opt, Sys.getenv_opt "EMO_TOKEN") with
+            | Some t, _ -> Some t
+            | None, Some t when t <> "" -> Some t
+            | _ -> None
+          in
+          match (registry, token) with
+          | None, _ ->
+              prerr_endline
+                "emo publish: no registry configured — pass --registry or set \
+                 EMO_REGISTRY";
+              65
+          | _, None ->
+              prerr_endline
+                "emo publish: no API token — pass --token or set EMO_TOKEN";
+              65
+          | Some registry, Some token -> (
+              if not (which_curl ()) then begin
+                prerr_endline
+                  "emo publish: curl is not installed or not on PATH";
+                70
+              end
+              else
+                match upload ~registry ~token ~archive:p.p_archive with
+                | Error message ->
+                    prerr_endline ("emo publish: upload failed: " ^ message);
+                    70
+                | Ok (201, _) ->
+                    Printf.printf "published %s %s\n" m.Emo_pkg.name version;
+                    let base =
+                      let n = String.length registry in
+                      if n > 0 && registry.[n - 1] = '/' then
+                        String.sub registry 0 (n - 1)
+                      else registry
+                    in
+                    Printf.printf "  %s/p/%s\n" base m.Emo_pkg.name;
+                    0
+                | Ok (status, body) -> (
+                    let code = json_string_field "code" body in
+                    let message = json_string_field "message" body in
+                    match (code, message) with
+                    | Some code, Some message ->
+                        prerr_endline
+                          (Printf.sprintf "emo publish: %s: %s" code message);
+                        if code = "version_exists" then
+                          prerr_endline
+                            "hint: versions are immutable — bump `version` in \
+                             package.emo";
+                        1
+                    | _ ->
+                        prerr_endline
+                          (Printf.sprintf "emo publish: HTTP %d: %s" status
+                             (String.trim body));
+                        1)))
+
+let publish_cmd =
+  let registry =
+    Arg.(
+      value
+      & opt (some string) None
+      & info [ "registry" ] ~docv:"URL"
+          ~doc:
+            "Registry endpoint (default: the EMO_REGISTRY environment \
+             variable).")
+  in
+  let token =
+    Arg.(
+      value
+      & opt (some string) None
+      & info [ "token" ] ~docv:"TOKEN"
+          ~doc:"API token (default: the EMO_TOKEN environment variable).")
+  in
+  let dry_run =
+    Arg.(
+      value & flag
+      & info [ "dry-run" ]
+          ~doc:"Validate and pack locally; print the archive without uploading.")
+  in
+  Cmd.v
+    (Cmd.info "publish" ~doc:"Publish the package to the registry.")
+    Term.(
+      const (fun r t d ->
+          match publish ~registry_opt:r ~token_opt:t ~dry_run:d with
+          | 0 -> Cmd.Exit.ok
+          | code -> exit code)
+      $ registry $ token $ dry_run)
+
 let version_cmd =
   Cmd.v
     (Cmd.info "version" ~doc:"Print the version.")
@@ -682,6 +893,6 @@ let version_cmd =
 let cmd =
   Cmd.group
     (Cmd.info "emo" ~version ~doc:"The Emo programming language toolchain.")
-    [ run; repl; check; build; deps; version_cmd ]
+    [ run; repl; check; build; deps; publish_cmd; version_cmd ]
 
 let main () = exit (Cmd.eval' cmd)
