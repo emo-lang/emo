@@ -176,8 +176,16 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
       return internal.error.malformed(s[2], "section size mismatch")
     }
   }
-  // The code section (10) decodes with the instruction stream
-  // (T20.10-T20.12); the start section (8) is a lone index.
+  if id == 10 {
+    const s = internal.model.code_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  // The remaining immediates decode in T20.11 and T20.12.
   const r3 = internal.reader.skip(r2, size)
   return walk(data, r3.pos, rank(id))
 }

@@ -359,6 +359,68 @@ def debug_global(label String, data Bytes, limit Int) Int {
   return 0
 }
 
+// The code section (T20.10): vec of code entries — a declared size, a
+// locals vector, and the body expression, exactly consumed.
+def code_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, "malformed code section", cn[0].fail_offset, -1)
+  }
+  return code_rest(data, cn[0].pos, limit, cn[1])
+}
+
+def code_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+  if n == 0 {
+    return (true, "", -1, pos)
+  }
+  const sz = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if sz[0].failed {
+    return (false, "malformed code section", sz[0].fail_offset, -1)
+  }
+  const size = sz[1]
+  if size > internal.reader.remaining(sz[0]) {
+    return (false, "malformed code section", sz[0].pos, -1)
+  }
+  const body = internal.reader.new(data, sz[0].pos, sz[0].pos + size)
+  const lv = locals_walk(data, sz[0].pos, body.limit, 0)
+  if !lv[0] {
+    return (false, "malformed code section", sz[0].pos, -1)
+  }
+  const e = internal.reader.expr(internal.reader.new(data, lv[1], body.limit))
+  if e.failed {
+    return (false, "malformed code section", e.fail_offset, -1)
+  }
+  if e.pos != body.limit {
+    return (false, "malformed code section", e.pos, -1)
+  }
+  const r3 = internal.reader.skip(sz[0], size)
+  return code_rest(data, r3.pos, limit, n - 1)
+}
+
+// The locals vector: repeated (count, valtype) pairs, terminated by a
+// zero count; the total local count must stay under 2^32. The walk
+// threads (data, pos) primitives — the Reader class cannot cross a
+// def signature (step 20 pressure).
+// (ok, pos_after_locals, total)
+def locals_walk(data Bytes, pos Int, limit Int, total Int) (Bool, Int, Int) {
+  const c = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if c[0].failed {
+    return (false, pos, total)
+  }
+  if c[1] == 0 {
+    return (true, c[0].pos, total)
+  }
+  const v = valtype(data, c[0].pos, limit)
+  if !v[0] {
+    return (false, pos, total)
+  }
+  const total2 = total + c[1]
+  if total2 > 4294967295 {
+    return (false, pos, total2)
+  }
+  return locals_walk(data, v[2], limit, total2)
+}
+
 // The global section: vec of (globaltype, init expression).
 def global_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
