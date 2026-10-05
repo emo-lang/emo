@@ -31,6 +31,31 @@
   (diff expected.txt smoke.actual)))
 
 (rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  leb-fixture.emo
+  wasm.emo
+  cli.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   leb-fixture.actual
+   (run %{emo} run leb-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  leb-fixture.actual
+  leb-fixture.expected.txt)
+ (action
+  (diff leb-fixture.expected.txt leb-fixture.actual)))
+
+(rule
  (alias wasm_spec)
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
