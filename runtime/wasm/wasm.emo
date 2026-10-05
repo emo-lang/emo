@@ -1,0 +1,9 @@
+// The WebAssembly runtime, written in Emo the way wasmtime is written
+// in Rust. Step 20 grows the binary decoder and validator here, step
+// 21 the interpreter and the host imports; the package is real from
+// now on so both steps have a home and the build has something to
+// check.
+
+def smoke() String {
+  return "emo wasm runtime"
+}

@@ -67,9 +67,13 @@ let bytes_new (v : Emo_eval.value) : Emo_eval.value =
 
 (* ---- Operators (tag-checked, mirroring the evaluator) ---- *)
 
+(* Fixed-width arithmetic wraps in two's complement; Byte, being
+   unsigned, wraps modulo 256 — the evaluator's rule, mirrored here. *)
 let add a b =
   match (a, b) with
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x + y)
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.add x y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x + y) land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x +. y)
   | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Float (float_of_int x +. y)
   | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Float (x +. float_of_int y)
@@ -79,6 +83,8 @@ let add a b =
 let sub a b =
   match (a, b) with
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x - y)
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.sub x y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x - y) land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x -. y)
   | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Float (float_of_int x -. y)
   | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Float (x -. float_of_int y)
@@ -87,6 +93,8 @@ let sub a b =
 let mul a b =
   match (a, b) with
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x * y)
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.mul x y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x * y) land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x *. y)
   | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Float (float_of_int x *. y)
   | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Float (x *. float_of_int y)
@@ -95,8 +103,12 @@ let mul a b =
 let div a b =
   match (a, b) with
   | Emo_eval.Int _, Emo_eval.Int 0 -> failwith "division by zero"
+  | Emo_eval.Int64 _, Emo_eval.Int64 0L -> failwith "division by zero"
+  | Emo_eval.Byte _, Emo_eval.Byte 0 -> failwith "division by zero"
   | Emo_eval.Float _, Emo_eval.Float 0.0 -> failwith "division by zero"
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x / y)
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.div x y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x / y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x /. y)
   | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Float (float_of_int x /. y)
   | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Float (x /. float_of_int y)
@@ -104,7 +116,11 @@ let div a b =
 
 let modulo a b =
   match (a, b) with
+  | Emo_eval.Int64 _, Emo_eval.Int64 0L -> failwith "division by zero"
+  | Emo_eval.Byte _, Emo_eval.Byte 0 -> failwith "division by zero"
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x mod y)
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.rem x y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x mod y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (Float.rem x y)
   | _ -> failwith "operator `%` expects two numbers"
 
@@ -114,22 +130,57 @@ let shift_count = function
   | Emo_eval.Int y when y >= 0 -> y
   | v -> failwith (type_error v "non-negative shift count")
 
-let bit_and a b = Emo_eval.Int (unbox_int a land unbox_int b)
-let bit_or a b = Emo_eval.Int (unbox_int a lor unbox_int b)
-let bit_xor a b = Emo_eval.Int (unbox_int a lxor unbox_int b)
+let bit_and a b =
+  match (a, b) with
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.logand x y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x land y)
+  | _ -> Emo_eval.Int (unbox_int a land unbox_int b)
 
+let bit_or a b =
+  match (a, b) with
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.logor x y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x lor y)
+  | _ -> Emo_eval.Int (unbox_int a lor unbox_int b)
+
+let bit_xor a b =
+  match (a, b) with
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.logxor x y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x lxor y)
+  | _ -> Emo_eval.Int (unbox_int a lxor unbox_int b)
+
+(* Fixed-width shift counts are their own width; the count saturates at
+   the width, matching the evaluator. *)
 let shl a b =
-  let x = unbox_int a in
-  let count = shift_count b in
-  Emo_eval.Int (if count >= 63 then 0 else x lsl count)
+  match (a, b) with
+  | Emo_eval.Int64 x, Emo_eval.Int64 c ->
+      if c < 0L then failwith "shift count must be non-negative"
+      else if c >= 64L then Emo_eval.Int64 0L
+      else Emo_eval.Int64 (Int64.shift_left x (Int64.to_int c))
+  | Emo_eval.Byte x, Emo_eval.Byte c ->
+      if c >= 8 then Emo_eval.Byte 0
+      else Emo_eval.Byte ((x lsl c) land 255)
+  | _ ->
+      let x = unbox_int a in
+      let count = shift_count b in
+      Emo_eval.Int (if count >= 63 then 0 else x lsl count)
 
 let shr a b =
-  let x = unbox_int a in
-  let count = shift_count b in
-  Emo_eval.Int (if count >= 63 then if x < 0 then -1 else 0 else x asr count)
+  match (a, b) with
+  | Emo_eval.Int64 x, Emo_eval.Int64 c ->
+      if c < 0L then failwith "shift count must be non-negative"
+      else if c >= 64L then Emo_eval.Int64 (if x < 0L then -1L else 0L)
+      else Emo_eval.Int64 (Int64.shift_right x (Int64.to_int c))
+  | Emo_eval.Byte x, Emo_eval.Byte c ->
+      if c >= 8 then Emo_eval.Byte 0 else Emo_eval.Byte (x lsr c)
+  | _ ->
+      let x = unbox_int a in
+      let count = shift_count b in
+      Emo_eval.Int (if count >= 63 then if x < 0 then -1 else 0 else x asr count)
 
 let bit_not = function
   | Emo_eval.Int x -> Emo_eval.Int (lnot x)
+  | Emo_eval.Int64 x -> Emo_eval.Int64 (Int64.lognot x)
+  | Emo_eval.Byte x -> Emo_eval.Byte (lnot x land 255)
   | v -> failwith (type_error v "Int")
 
 (* Native-int shifts for the specialized path: the operands are already
@@ -147,6 +198,8 @@ let shr_int (x : int) (count : int) : int =
 let lt a b =
   match (a, b) with
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Bool (x < y)
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x < y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x < y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x < y)
   | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Bool (float_of_int x < y)
   | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Bool (x < float_of_int y)
@@ -155,6 +208,8 @@ let lt a b =
 let le a b =
   match (a, b) with
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Bool (x <= y)
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x <= y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x <= y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x <= y)
   | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Bool (float_of_int x <= y)
   | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Bool (x <= float_of_int y)
@@ -163,6 +218,8 @@ let le a b =
 let gt a b =
   match (a, b) with
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Bool (x > y)
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x > y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x > y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x > y)
   | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Bool (float_of_int x > y)
   | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Bool (x > float_of_int y)
@@ -171,6 +228,8 @@ let gt a b =
 let ge a b =
   match (a, b) with
   | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Bool (x >= y)
+  | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x >= y)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x >= y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x >= y)
   | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Bool (float_of_int x >= y)
   | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Bool (x >= float_of_int y)
@@ -194,6 +253,7 @@ let negf v =
   match v with
   | Emo_eval.Float f -> Emo_eval.Float (-.f)
   | Emo_eval.Int n -> Emo_eval.Int (-n)
+  | Emo_eval.Int64 n -> Emo_eval.Int64 (Int64.neg n)
   | other -> failwith (type_error other "number")
 
 (* ---- Objects and values ---- *)
@@ -332,9 +392,79 @@ let method_call self name args =
                "index %d is out of bounds for a %s write on a length-%d Bytes" i
                mname (Bytes.length b))
       | _ -> failwith "`set_u16_le`/`set_u32_le` expects (i Int, v Int)")
+  | Emo_eval.Bytes b, "get_u64_le" -> (
+      one_expected ();
+      match args with
+      | [ Emo_eval.Int i ] when i >= 0 && i + 8 <= Bytes.length b ->
+          let acc = ref 0L in
+          for k = 7 downto 0 do
+            acc :=
+              Int64.logor
+                (Int64.shift_left !acc 8)
+                (Int64.of_int (Char.code (Bytes.get b (i + k))))
+          done;
+          Emo_eval.Int64 !acc
+      | [ Emo_eval.Int i ] ->
+          failwith
+            (Printf.sprintf
+               "index %d is out of bounds for a get_u64_le read on a length-%d \
+                Bytes"
+               i (Bytes.length b))
+      | [ v ] -> failwith (type_error v "Int")
+      | _ -> failwith "`get_u64_le` expects 1 argument")
+  | Emo_eval.Bytes b, "set_u64_le" -> (
+      if argc <> 2 then failwith "`set_u64_le` expects 2 arguments";
+      match args with
+      | [ Emo_eval.Int i; Emo_eval.Int64 v ]
+        when i >= 0 && i + 8 <= Bytes.length b ->
+          for k = 0 to 7 do
+            Bytes.set b (i + k)
+              (Char.chr
+                 (Int64.to_int
+                    (Int64.logand (Int64.shift_right_logical v (8 * k)) 0xFFL)))
+          done;
+          Emo_eval.Int64 v
+      | [ Emo_eval.Int i; Emo_eval.Int64 _ ] ->
+          failwith
+            (Printf.sprintf
+               "index %d is out of bounds for a set_u64_le write on a length-%d \
+                Bytes"
+               i (Bytes.length b))
+      | [ _; v ] -> failwith (type_error v "Int64")
+      | _ -> failwith "`set_u64_le` expects (i Int, v Int64)")
   | Emo_eval.String s, "to_bytes" ->
       none_expected ();
       Emo_eval.Bytes (Bytes.of_string s)
+  | Emo_eval.TypeValue "Int64", "from_int" -> (
+      one_expected ();
+      match List.hd args with
+      | Emo_eval.Int n -> Emo_eval.Int64 (Int64.of_int n)
+      | v -> failwith (type_error v "Int"))
+  | Emo_eval.TypeValue "Byte", "from_int" -> (
+      one_expected ();
+      match List.hd args with
+      | Emo_eval.Int n when n >= 0 && n <= 255 -> Emo_eval.Byte n
+      | Emo_eval.Int n ->
+          failwith
+            (Printf.sprintf "`Byte.from_int` needs a value in 0-255, got %d" n)
+      | v -> failwith (type_error v "Int"))
+  | Emo_eval.TypeValue "Float", "from_bits" -> (
+      one_expected ();
+      match List.hd args with
+      | Emo_eval.Int64 b -> Emo_eval.Float (Int64.float_of_bits b)
+      | v -> failwith (type_error v "Int64"))
+  | Emo_eval.Int64 x, "to_int" ->
+      none_expected ();
+      Emo_eval.Int (Int64.to_int x)
+  | Emo_eval.Int64 x, "to_byte" ->
+      none_expected ();
+      Emo_eval.Byte (Int64.to_int (Int64.logand x 255L))
+  | Emo_eval.Byte n, "to_int" ->
+      none_expected ();
+      Emo_eval.Int n
+  | Emo_eval.Float f, "to_bits" ->
+      none_expected ();
+      Emo_eval.Int64 (Int64.bits_of_float f)
   | _, "to_string" ->
       none_expected ();
       Emo_eval.String (Emo_eval.to_string self)

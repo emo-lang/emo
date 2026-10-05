@@ -68,6 +68,8 @@ type instr =
   | I64_mul
   | I64_div_s
   | I64_rem_s
+  | I64_div_u
+  | I64_rem_u
   | I64_and
   | I64_or
   | I64_xor
@@ -82,6 +84,8 @@ type instr =
   | F64_convert_i64_s
   | F64_rem_s
   | F64_neg
+  | I64_reinterpret_f64
+  | F64_reinterpret_i64
   | I64_lt_s
   | I64_le_s
   | I64_gt_s
@@ -196,6 +200,8 @@ let rec instr_text indent (i : instr) : string =
   | I64_mul -> Printf.sprintf "%si64.mul\n" pad
   | I64_div_s -> Printf.sprintf "%si64.div_s\n" pad
   | I64_rem_s -> Printf.sprintf "%si64.rem_s\n" pad
+  | I64_div_u -> Printf.sprintf "%si64.div_u\n" pad
+  | I64_rem_u -> Printf.sprintf "%si64.rem_u\n" pad
   | I64_and -> Printf.sprintf "%si64.and\n" pad
   | I64_or -> Printf.sprintf "%si64.or\n" pad
   | I64_xor -> Printf.sprintf "%si64.xor\n" pad
@@ -210,6 +216,8 @@ let rec instr_text indent (i : instr) : string =
   | F64_convert_i64_s -> Printf.sprintf "%sf64.convert_i64_s\n" pad
   | F64_rem_s -> Printf.sprintf "%sf64.rem_s\n" pad
   | F64_neg -> Printf.sprintf "%sf64.neg\n" pad
+  | I64_reinterpret_f64 -> Printf.sprintf "%si64.reinterpret_f64\n" pad
+  | F64_reinterpret_i64 -> Printf.sprintf "%sf64.reinterpret_i64\n" pad
   | I64_lt_s -> Printf.sprintf "%si64.lt_s\n" pad
   | I64_le_s -> Printf.sprintf "%si64.le_s\n" pad
   | I64_gt_s -> Printf.sprintf "%si64.gt_s\n" pad
@@ -451,6 +459,8 @@ let rec encode_instr buf (i : instr) =
   | I64_mul -> Buffer.add_char buf '\x7e'
   | I64_div_s -> Buffer.add_char buf '\x7f'
   | I64_rem_s -> Buffer.add_char buf '\x81'
+  | I64_div_u -> Buffer.add_char buf '\x80'
+  | I64_rem_u -> Buffer.add_char buf '\x82'
   | I64_and -> Buffer.add_char buf '\x83'
   | I64_or -> Buffer.add_char buf '\x84'
   | I64_xor -> Buffer.add_char buf '\x85'
@@ -468,6 +478,8 @@ let rec encode_instr buf (i : instr) =
   | F64_div -> Buffer.add_char buf '\xa3'
   | F64_rem_s -> Buffer.add_char buf '\xa5'
   | F64_neg -> Buffer.add_char buf '\x9a'
+  | I64_reinterpret_f64 -> Buffer.add_char buf '\xbd'
+  | F64_reinterpret_i64 -> Buffer.add_char buf '\xbf'
   | F64_convert_i64_s -> Buffer.add_char buf '\xb9'
   | F64_lt -> Buffer.add_char buf '\x63'
   | F64_le -> Buffer.add_char buf '\x65'

@@ -5,6 +5,8 @@ type expr = { span : Emo_support.Span.t; desc : expr_desc }
 
 and expr_desc =
   | Int of int
+  | Int64 of int64
+  | Byte of int
   | Float of float
   | Char of char
   | Bool of bool
@@ -93,6 +95,8 @@ and pattern_desc =
 
 and literal =
   | L_int of int
+  | L_int64 of int64
+  | L_byte of int
   | L_float of float
   | L_char of char
   | L_string of string

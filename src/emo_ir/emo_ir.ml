@@ -211,6 +211,8 @@ and lower_expr env (e : Ast.expr) : expr =
   let expr desc = mk env e.Ast.span desc in
   match e.Ast.desc with
   | Ast.Int n -> expr (Const (L_int n))
+  | Ast.Int64 n -> expr (Const (L_int64 n))
+  | Ast.Byte n -> expr (Const (L_byte n))
   | Ast.Float f -> expr (Const (L_float f))
   | Ast.Bool b -> expr (Const (L_bool b))
   | Ast.Char c -> expr (Const (L_char c))

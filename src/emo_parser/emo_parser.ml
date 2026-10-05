@@ -65,6 +65,8 @@ let keyword_spelling = function
 let describe_kind (k : Tok.kind) =
   match k with
   | Int n -> Printf.sprintf "integer `%d`" n
+  | Int64 n -> Printf.sprintf "integer `%Ld`" n
+  | Byte n -> Printf.sprintf "byte `%d`" n
   | Float f -> Printf.sprintf "float `%g`" f
   | Char c -> Printf.sprintf "character %C" c
   | String_chunk _ | String_end | Interp_open | Interp_close -> "a string"
@@ -318,6 +320,12 @@ and parse_primary st =
   | Tok.Int n ->
       advance st |> ignore;
       node tok.Tok.span (Ast.Int n)
+  | Tok.Int64 n ->
+      advance st |> ignore;
+      node tok.Tok.span (Ast.Int64 n)
+  | Tok.Byte n ->
+      advance st |> ignore;
+      node tok.Tok.span (Ast.Byte n)
   | Tok.Float f ->
       advance st |> ignore;
       node tok.Tok.span (Ast.Float f)
@@ -1172,6 +1180,18 @@ and parse_pattern st =
       {
         Ast.pattern_span = tok.Tok.span;
         pattern_desc = Ast.Pattern_literal (Ast.L_int n);
+      }
+  | Tok.Int64 n ->
+      advance st |> ignore;
+      {
+        Ast.pattern_span = tok.Tok.span;
+        pattern_desc = Ast.Pattern_literal (Ast.L_int64 n);
+      }
+  | Tok.Byte n ->
+      advance st |> ignore;
+      {
+        Ast.pattern_span = tok.Tok.span;
+        pattern_desc = Ast.Pattern_literal (Ast.L_byte n);
       }
   | Tok.Float f ->
       advance st |> ignore;

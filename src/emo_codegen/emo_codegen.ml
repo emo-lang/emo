@@ -196,6 +196,8 @@ and emit_pattern (p : Emo_ast.pattern) : string =
      bodies), so the capture itself stays anonymous. *)
   | Ast.Pattern_binding _ -> "_"
   | Ast.Pattern_literal (L_int n) -> Printf.sprintf "Emo_eval.Int %d" n
+  | Ast.Pattern_literal (L_int64 n) -> Printf.sprintf "Emo_eval.Int64 %LdL" n
+  | Ast.Pattern_literal (L_byte n) -> Printf.sprintf "Emo_eval.Byte %d" n
   | Ast.Pattern_literal (L_float f) -> Printf.sprintf "Emo_eval.Float %g" f
   | Ast.Pattern_literal (L_string s) -> Printf.sprintf "Emo_eval.String %S" s
   | Ast.Pattern_literal (L_bool b) -> Printf.sprintf "Emo_eval.Bool %b" b
@@ -301,6 +303,8 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Const (L_int n) ->
       if env.native && e.Emo_ir.ety = Emo_check.Int then string_of_int n
       else Printf.sprintf "Emo_eval.Int %d" n
+  | Emo_ir.Const (L_int64 n) -> Printf.sprintf "Emo_eval.Int64 %LdL" n
+  | Emo_ir.Const (L_byte n) -> Printf.sprintf "Emo_eval.Byte %d" n
   | Emo_ir.Const (L_float f) ->
       if env.native && e.Emo_ir.ety = Emo_check.Float then
         Printf.sprintf "(%s)" (string_of_float f)

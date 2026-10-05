@@ -14,6 +14,8 @@ let error span ?hint code message =
 
 type value =
   | Int of int
+  | Int64 of int64
+  | Byte of int
   | Float of float
   | Bool of bool
   | Void
@@ -147,6 +149,8 @@ let parse_decimal s =
 
 let type_name = function
   | Int _ -> "Int"
+  | Int64 _ -> "Int64"
+  | Byte _ -> "Byte"
   | Float _ -> "Float"
   | Bool _ -> "Bool"
   | Void -> "Void"
@@ -175,6 +179,8 @@ let type_name = function
 let rec equal_value a b =
   match (a, b) with
   | Int x, Int y -> Int.equal x y
+  | Int64 x, Int64 y -> Int64.equal x y
+  | Byte x, Byte y -> Int.equal x y
   | Float x, Float y -> Float.equal x y
   | Bool x, Bool y -> Bool.equal x y
   | Void, Void -> true
@@ -233,6 +239,11 @@ let global_env () =
     { bound = BuiltinFn "net_resolve"; mutable_ = false };
   Hashtbl.replace env.frame "file_read"
     { bound = BuiltinFn "file_read"; mutable_ = false };
+  Hashtbl.replace env.frame "Int64"
+    { bound = TypeValue "Int64"; mutable_ = false };
+  Hashtbl.replace env.frame "Byte" { bound = TypeValue "Byte"; mutable_ = false };
+  Hashtbl.replace env.frame "Float"
+    { bound = TypeValue "Float"; mutable_ = false };
   Hashtbl.replace env.frame "file_write"
     { bound = BuiltinFn "file_write"; mutable_ = false };
   Hashtbl.replace env.frame "net_udp_bind"
@@ -326,6 +337,8 @@ let set_output f = output := f
 let rec to_string v =
   match v with
   | Int n -> string_of_int n
+  | Int64 n -> Int64.to_string n
+  | Byte n -> string_of_int n
   | Float f ->
       if Float.is_integer f && Float.abs f < 1e16 then Printf.sprintf "%.1f" f
       else Printf.sprintf "%g" f
@@ -510,6 +523,8 @@ let uncaught_diagnostic (v, span, trace) =
 
 let literal_value = function
   | Ast.L_int n -> Int n
+  | Ast.L_int64 n -> Int64 n
+  | Ast.L_byte n -> Byte n
   | Ast.L_float f -> Float f
   | Ast.L_char c -> Char c
   | Ast.L_string s -> String s
@@ -851,11 +866,14 @@ let rec eval_unary env span op x =
       error span "E3001"
         (Printf.sprintf "operator `!` expects a Bool, got %s" (type_name v))
   | Ast.Neg, Int n -> Int (-n)
+  | Ast.Neg, Int64 n -> Int64 (Int64.neg n)
   | Ast.Neg, Float f -> Float (-.f)
   | Ast.Neg, v ->
       error span "E3001"
         (Printf.sprintf "operator `-` expects a number, got %s" (type_name v))
   | Ast.Bit_not, Int n -> Int (lnot n)
+  | Ast.Bit_not, Int64 n -> Int64 (Int64.lognot n)
+  | Ast.Bit_not, Byte n -> Byte (lnot n land 255)
   | Ast.Bit_not, v ->
       error span "E3001"
         (Printf.sprintf "operator `~` expects an Int, got %s" (type_name v))
@@ -897,15 +915,90 @@ and eval_binary env span op left_expr right_expr =
     match v with Bool b -> b | v -> type_mismatch "two Bools"
   in
   let as_int = function Int x -> x | v -> type_mismatch "two Ints" in
+  let is_pair64 x y = match (x, y) with Int64 _, Int64 _ -> true | _ -> false in
+  let is_pair_byte x y = match (x, y) with Byte _, Byte _ -> true | _ -> false in
+  let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
+  let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
+  (* Fixed-width arithmetic wraps in two's complement; Byte, being
+     unsigned, wraps modulo 256. Shift counts are non-negative and
+     saturate at the width, matching the Int rule. *)
+  let i64_bin f = Int64 (f (i64_of left) (i64_of right)) in
+  let byte_bin f = Byte (f (byte_of left) (byte_of right) land 255) in
+  let i64_div f =
+    if i64_of right = 0L then error span "E3005" "division by zero";
+    i64_bin f
+  in
+  let byte_div f =
+    if byte_of right = 0 then error span "E3005" "division by zero";
+    byte_bin f
+  in
+  let i64_shift_count () =
+    let c = i64_of right in
+    if c < 0L then error span "E3005" "shift count must be non-negative";
+    c
+  in
+  let i64_shl () =
+    let c = i64_shift_count () in
+    if c >= 64L then Int64 0L
+    else Int64 (Int64.shift_left (i64_of left) (Int64.to_int c))
+  in
+  let i64_shr () =
+    let c = i64_shift_count () in
+    if c >= 64L then Int64 (if i64_of left < 0L then -1L else 0L)
+    else Int64 (Int64.shift_right (i64_of left) (Int64.to_int c))
+  in
+  let byte_shl () =
+    let c = byte_of right in
+    if c >= 8 then Byte 0 else Byte ((byte_of left lsl c) land 255)
+  in
+  let byte_shr () =
+    let c = byte_of right in
+    if c >= 8 then Byte 0 else Byte (byte_of left lsr c)
+  in
   match op with
   | Ast.And -> Bool (if check_bool left then check_bool right else false)
   | Ast.Or -> Bool (if check_bool left then true else check_bool right)
   | Ast.Eq -> Bool (equal_value left right)
   | Ast.Ne -> Bool (not (equal_value left right))
+  | Ast.Lt when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) < 0)
+  | Ast.Lt when is_pair_byte left right -> Bool (byte_of left < byte_of right)
+  | Ast.Le when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) <= 0)
+  | Ast.Le when is_pair_byte left right -> Bool (byte_of left <= byte_of right)
+  | Ast.Gt when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) > 0)
+  | Ast.Gt when is_pair_byte left right -> Bool (byte_of left > byte_of right)
+  | Ast.Ge when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) >= 0)
+  | Ast.Ge when is_pair_byte left right -> Bool (byte_of left >= byte_of right)
   | Ast.Lt -> Bool (as_float left < as_float right)
   | Ast.Le -> Bool (as_float left <= as_float right)
   | Ast.Gt -> Bool (as_float left > as_float right)
   | Ast.Ge -> Bool (as_float left >= as_float right)
+  | Ast.Add when is_pair64 left right -> i64_bin Int64.add
+  | Ast.Sub when is_pair64 left right -> i64_bin Int64.sub
+  | Ast.Mul when is_pair64 left right -> i64_bin Int64.mul
+  | Ast.Div when is_pair64 left right -> i64_div Int64.div
+  | Ast.Mod when is_pair64 left right -> i64_div Int64.rem
+  | Ast.Add when is_pair_byte left right -> byte_bin ( + )
+  | Ast.Sub when is_pair_byte left right -> byte_bin ( - )
+  | Ast.Mul when is_pair_byte left right -> byte_bin ( * )
+  | Ast.Div when is_pair_byte left right -> byte_div ( / )
+  | Ast.Mod when is_pair_byte left right -> byte_div ( mod )
+  | Ast.Bit_and when is_pair64 left right -> i64_bin Int64.logand
+  | Ast.Bit_or when is_pair64 left right -> i64_bin Int64.logor
+  | Ast.Bit_xor when is_pair64 left right -> i64_bin Int64.logxor
+  | Ast.Shl when is_pair64 left right -> i64_shl ()
+  | Ast.Shr when is_pair64 left right -> i64_shr ()
+  | Ast.Bit_and when is_pair_byte left right ->
+      Byte (byte_of left land byte_of right)
+  | Ast.Bit_or when is_pair_byte left right ->
+      Byte (byte_of left lor byte_of right)
+  | Ast.Bit_xor when is_pair_byte left right ->
+      Byte (byte_of left lxor byte_of right)
+  | Ast.Shl when is_pair_byte left right -> byte_shl ()
+  | Ast.Shr when is_pair_byte left right -> byte_shr ()
   | Ast.Add -> (
       match (left, right) with
       | Int x, Int y -> Int (x + y)
@@ -1129,6 +1222,58 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
+      | TypeValue "Int64", "from_int" -> (
+          let args = eval_args () in
+          match args with
+          | [ Int n ] -> Int64 (Int64.of_int n)
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`Int64.from_int` expects an Int, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Int64.from_int` expects 1 argument, got %d"
+                   argc))
+      | TypeValue "Byte", "from_int" -> (
+          let args = eval_args () in
+          match args with
+          | [ Int n ] when n >= 0 && n <= 255 -> Byte n
+          | [ Int n ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "`Byte.from_int` needs a value in 0-255, got %d" n)
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`Byte.from_int` expects an Int, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Byte.from_int` expects 1 argument, got %d"
+                   argc))
+      | TypeValue "Float", "from_bits" -> (
+          let args = eval_args () in
+          match args with
+          | [ Int64 b ] -> Float (Int64.float_of_bits b)
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`Float.from_bits` expects an Int64, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Float.from_bits` expects 1 argument, got %d"
+                   argc))
+      | Int64 x, "to_int" ->
+          none_expected "to_int";
+          Int (Int64.to_int x)
+      | Int64 x, "to_byte" ->
+          none_expected "to_byte";
+          Byte (Int64.to_int (Int64.logand x 255L))
+      | Byte n, "to_int" ->
+          none_expected "to_int";
+          Int n
+      | Float f, "to_bits" ->
+          none_expected "to_bits";
+          Int64 (Int64.bits_of_float f)
       | TypeValue "Bytes", "new" -> (
           let args = eval_args () in
           match args with
@@ -1267,6 +1412,61 @@ and eval_method env span recv mname arg_exprs =
           | args ->
               error span "E3007"
                 (Printf.sprintf "`%s` expects 2 arguments, got %d" mname
+                   (List.length args)))
+      | Bytes b, "get_u64_le" -> (
+          match eval_args () with
+          | [ Int i ] when i >= 0 && i + 8 <= Bytes.length b ->
+              let acc = ref 0L in
+              for k = 7 downto 0 do
+                acc :=
+                  Int64.logor
+                    (Int64.shift_left !acc 8)
+                    (Int64.of_int (Char.code (Bytes.get b (i + k))))
+              done;
+              Int64 !acc
+          | [ Int i ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a get_u64_le read on a \
+                    length-%d Bytes"
+                   i (Bytes.length b))
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`get_u64_le` expects an Int index, got %s"
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`get_u64_le` expects 1 argument, got %d"
+                   (List.length args)))
+      | Bytes b, "set_u64_le" -> (
+          match eval_args () with
+          | [ Int i; Int64 v ] when i >= 0 && i + 8 <= Bytes.length b ->
+              for k = 0 to 7 do
+                Bytes.set b (i + k)
+                  (Char.chr
+                     (Int64.to_int
+                        (Int64.logand
+                           (Int64.shift_right_logical v (8 * k))
+                           0xFFL)))
+              done;
+              Int64 v
+          | [ Int i; Int64 _ ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a set_u64_le write on a \
+                    length-%d Bytes"
+                   i (Bytes.length b))
+          | [ Int _; v ] ->
+              error span "E3001"
+                (Printf.sprintf "`set_u64_le` expects an Int64 value, got %s"
+                   (type_name v))
+          | [ v; _ ] ->
+              error span "E3001"
+                (Printf.sprintf "`set_u64_le` expects an Int index, got %s"
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`set_u64_le` expects 2 arguments, got %d"
                    (List.length args)))
       | String s, "to_bytes" ->
           none_expected "to_bytes";
@@ -1900,6 +2100,8 @@ and eval_expr env e =
   let span = e.Ast.span in
   match e.Ast.desc with
   | Ast.Int n -> Int n
+  | Ast.Int64 n -> Int64 n
+  | Ast.Byte n -> Byte n
   | Ast.Float f -> Float f
   | Ast.Bool b -> Bool b
   | Ast.Char c -> Char c
