@@ -21,7 +21,7 @@
 | M1 — MVP 解释器 | 01–07 | 单文件 Emo 程序(函数、类、枚举、异常)可通过 `emo run` / `emo repl` 运行,错误信息可读。 |
 | M2 — 编译期体验 | 08–10 | 渐进类型检查器、结构化模块系统、基于 MVS 的包解析;多包项目可构建、可运行。 |
 | M3 — 并发与网络 | 11–12 | 基于效果(effect)调度器的进程与消息传递;直风格(direct style)网络 API。 |
-| M4 — 编译目标 | 13–14 | 通过 `emo build` 生成原生代码;随后是 wasm / TypeScript / BEAM / qemu。 |
+| M4 — 编译目标 | 13–14 | 通过 `emo build` 生成原生代码;随后是 wasm / TypeScript / BEAM / riscv64。 |
 
 ## 设计闸门
 
@@ -239,14 +239,14 @@
 
 收尾:阶段 A 发射 OCaml 源码(权衡记录在 `docs/zh-CN/native-backend.md`);IR 位于 `src/emo_ir`,含阶段 B 的 `specialize` 不动点,T13.5 的特化随 T13.1/T13.2 提交交付。`foreign def` 按上表落定,经生成的 C 包装器编组(`emo build` 用 `cc` 编译它们);`Float`/`String`/`Bool` 可跨边界,其余类型以 E4200 拒绝。基准:`benchmarks/results.md` 记录 fib(30) 未特化 345ms 对特化 212ms(约 1.6 倍)、ping-pong、JSON 扫描,以及 HTTP echo 负载测试 112 req/s。引导:全部五个示例构建的二进制与 `emo run` 逐字节一致(`test/emo_project` 的 `bootstrap` 套件)。决策见 `plan/step-13-native-backend.md`(收尾)。**步骤 13 验收达成。**
 
-### 步骤 14 — 其余目标:wasm、TypeScript、BEAM、qemu · `plan/step-14-other-targets.md`
+### 步骤 14 — 其余目标:wasm、TypeScript、BEAM、riscv64 裸机 · `plan/step-14-other-targets.md`
 
-**前置:** 步骤 01–13(按目标)。这些是路线条目,不是可直接执行的计划——每个目标排期时独立成步骤文件。推荐顺序:Wasm → TypeScript → BEAM → qemu。
+**前置:** 步骤 01–13(按目标)。这些是路线条目,不是可直接执行的计划——每个目标排期时独立成步骤文件。推荐顺序:Wasm → TypeScript → BEAM → riscv64。
 
 - [x] **T14.1** — 某目标排期时,把它拆成完整标准格式(目标 / 范围 / 任务 / 验收)的 `step-NN-<target>.md`,并更新 `plan/README.md` 的状态表;其任务延续编号(`T15.*`,……)。
 - [ ] **T14.2** — 记录每个目标落定了哪些关键决策、落定在哪(README / `CHECK.md` / docs)——保留轨迹。
 
-各目标需落定的关键决策:Wasm —— WasmGC vs 自定义 GC(两者都先做原型);TypeScript —— 直风格到事件循环的映射、进程映射;BEAM —— 类的值语义 vs Erlang maps;qemu —— 可插拔运行时、链接脚本(风险最高;若 EmoOS 工作启动,`core` 库分层应提前)。
+各目标需落定的关键决策:Wasm —— WasmGC vs 自定义 GC(两者都先做原型);TypeScript —— 直风格到事件循环的映射、进程映射;BEAM —— 类的值语义 vs Erlang maps;riscv64 —— 可插拔运行时、链接脚本(风险最高;若 EmoOS 工作启动,`core` 库分层应提前)。
 
 晋升轨迹:**TypeScript → `plan/step-15-typescript.md`**(2026-10-02,首个目标;其关键决策——IR 降级、统一 async、协作式任务——已在那个文件落定)。**Wasm → `plan/step-16-wasm.md`**(2026-10-02,第二个目标;GC 问题已落定——WasmGC,结构体与数组 + RTT 分派,无自定义堆)。推荐顺序中下一个是 BEAM。
 

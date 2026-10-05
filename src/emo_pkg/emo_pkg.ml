@@ -36,7 +36,7 @@ type manifest = {
   deps : (string * Version.t) list; (* exact versions *)
 }
 
-let known_targets = [ "native"; "wasm"; "typescript"; "beam"; "qemu" ]
+let known_targets = [ "native"; "wasm"; "typescript"; "beam"; "riscv64" ]
 
 (* Token-level strict reader: accepts exactly the README shape.
      package {
