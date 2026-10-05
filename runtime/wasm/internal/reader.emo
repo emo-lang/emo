@@ -189,6 +189,27 @@ def instrs(r Reader) Reader {
   if op == 0 || op == 1 || op == 15 {
     return instrs(r1)
   }
+  // ---- structured branches and calls (T20.12) ----
+  if op == 12 || op == 13 {
+    // br, br_if: one label index
+    return instrs(u32(r1)[0])
+  }
+  if op == 14 {
+    // br_table: a vector of label indices plus the default
+    return instrs(br_table_then(r1))
+  }
+  if op == 16 {
+    // call: one function index
+    return instrs(u32(r1)[0])
+  }
+  if op == 17 {
+    // call_indirect: type index, then table index
+    const t = u32(r1)
+    if t[0].failed {
+      return t[0]
+    }
+    return instrs(u32(t[0])[0])
+  }
   // ---- parametric (T20.11) ----
   if op == 26 || op == 27 {
     // drop, select
@@ -240,6 +261,27 @@ def instrs(r Reader) Reader {
     return instrs(r1)
   }
   return bail(r1, r1.pos, "illegal opcode")
+}
+
+// br_table's immediate: a vector of label indices, then the default.
+def br_table_then(r Reader) Reader {
+  const cn = u32(r)
+  if cn[0].failed {
+    return cn[0]
+  }
+  return u32_vec_end(cn[0], cn[1])
+}
+
+// A vector of u32s (positions only; the values drop).
+def u32_vec_end(r Reader, n Int) Reader {
+  if n == 0 {
+    return r
+  }
+  const p = u32(r)
+  if p[0].failed {
+    return p[0]
+  }
+  return u32_vec_end(p[0], n - 1)
 }
 
 // A valtype vector immediate (select t): count, then that many
