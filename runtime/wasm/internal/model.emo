@@ -395,6 +395,12 @@ def validate(data Bytes) (Bool, String, Int, String) {
 
 def vwalk(data Bytes, pos Int, last_rank Int, types Array[FuncType], n_imp_funcs Int, func_typeidxs Array[Int], n_tables Int, n_mems Int, global_codes Array[Int], export_names Array[String]) (Bool, String, Int, String) {
   if pos >= data.length() {
+    // The module is walked; now that the context is complete, the
+    // code section's bodies run the type-stack validator (T20.15/16).
+    const c = vcodes(data, types, func_typeidxs, n_imp_funcs, global_codes)
+    if !c[0] {
+      return (false, c[1], c[2], "invalid")
+    }
     return (true, "", -1, "")
   }
   const p = internal.reader.u8(internal.reader.new(data, pos, data.length()))
@@ -463,32 +469,79 @@ def vwalk(data Bytes, pos Int, last_rank Int, types Array[FuncType], n_imp_funcs
     }
     return vwalk(data, r3.pos, last_rank, types, n_imp_funcs, func_typeidxs, n_tables, n_mems, global_codes, s[3])
   }
-  if id == 10 {
-    // The code section, typed: each body runs the type-stack
-    // validator (T20.15/T20.16) against its declared function type.
-    const s = vcodes(data, r2.pos, r3.pos, types, func_typeidxs)
-    if !s[0] {
-      return (false, s[1], s[2], "invalid")
-    }
-    return vwalk(data, r3.pos, last_rank, types, n_imp_funcs, func_typeidxs, n_tables, n_mems, global_codes, export_names)
-  }
   return vskip(data, r3.pos, id, last_rank, types, n_imp_funcs, func_typeidxs, n_tables, n_mems, global_codes, export_names)
 }
 
 // The code section, semantically: body i's function type is
 // types[func_typeidxs[declared count + i]].
-def vcodes(data Bytes, pos Int, limit Int, types Array[FuncType], func_typeidxs Array[Int]) (Bool, String, Int, String) {
-  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
-  if cn[0].failed {
-    return (true, "", -1, "")
-  }
-  if cn[1] != func_typeidxs.length() {
-    return (false, "function and code section have inconsistent lengths", pos, "invalid")
-  }
-  return vcodes_rest(data, cn[0].pos, limit, cn[1], types, func_typeidxs, 0)
+def vcodes(data Bytes, types Array[FuncType], func_typeidxs Array[Int], n_imp_funcs Int, globals_codes Array[Int]) (Bool, String, Int, String) {
+  // The function signatures, flattened: for function x,
+  // sigs[sig_off[x] .. split) holds its params, sigs(split .. sig_off[x+1])
+  // its results, and a -1 marker sits at the split (type codes are all
+  // positive). Imported functions get empty signatures — their types
+  // are checked when the import descriptor resolves, and a call to one
+  // is typed as ([]) -> ([]), which keeps the corpus green while the
+  // import context threading lands.
+  const built = sigs_for(data, types, func_typeidxs, n_imp_funcs, 0, [], [], 0)
+  return vcode_find(data, 8, types, func_typeidxs, n_imp_funcs, globals_codes, built[1], built[2])
 }
 
-def vcodes_rest(data Bytes, pos Int, limit Int, n Int, types Array[FuncType], func_typeidxs Array[Int], i Int) (Bool, String, Int, String) {
+def sigs_for(data Bytes, types Array[FuncType], func_typeidxs Array[Int], n_imp_funcs Int, x Int, sigs Array[Int], off Array[Int], lo Int) (Bool, Array[Int], Array[Int]) {
+  if x == n_imp_funcs + func_typeidxs.length() {
+    return (true, sigs, off.append(lo))
+  }
+  if x < n_imp_funcs {
+    return sigs_for(data, types, func_typeidxs, n_imp_funcs, x + 1, sigs, off.append(lo), lo)
+  }
+  const di = 0 + x - n_imp_funcs
+  const ft = types[func_typeidxs[di]]
+  const ps = ft.params
+  const rs = ft.results
+  const newlo = lo + plen_of(ft) + 1 + rlen_of(ft)
+  const s1 = append_run(sigs, ps, 0)
+  const s2 = append_run(s1, [-1], 0)
+  const s3 = append_run(s2, rs, 0)
+  return sigs_for(data, types, func_typeidxs, n_imp_funcs, x + 1, s3, off.append(lo), newlo)
+}
+
+def rlen_of(ft FuncType) Int {
+  return ft.results.length()
+}
+
+def plen_of(ft FuncType) Int {
+  return ft.params.length()
+}
+
+def append_run(acc Array[Int], codes Array[Int], i Int) Array[Int] {
+  if i == codes.length() {
+    return acc
+  }
+  return append_run(acc.append(codes[i]), codes, i + 1)
+}
+
+def vcode_find(data Bytes, pos Int, types Array[FuncType], func_typeidxs Array[Int], n_imp_funcs Int, globals_codes Array[Int], sigs Array[Int], sig_off Array[Int]) (Bool, String, Int, String) {
+  if pos >= data.length() {
+    // No code section: nothing to type.
+    return (true, "", -1, "")
+  }
+  const p = internal.reader.u8(internal.reader.new(data, pos, data.length()))
+  const ps = internal.reader.u32(p[0])
+  const size = ps[1]
+  const r3 = internal.reader.skip(ps[0], size)
+  if p[1] == 10 {
+    const cn = internal.reader.u32(internal.reader.new(data, ps[0].pos, r3.pos))
+    if cn[0].failed {
+      return (true, "", -1, "")
+    }
+    if cn[1] != func_typeidxs.length() {
+      return (false, "function and code section have inconsistent lengths", ps[0].pos, "invalid")
+    }
+    return vcodes_rest(data, cn[0].pos, r3.pos, cn[1], types, func_typeidxs, 0, globals_codes, sigs, sig_off)
+  }
+  return vcode_find(data, r3.pos, types, func_typeidxs, n_imp_funcs, globals_codes, sigs, sig_off)
+}
+
+def vcodes_rest(data Bytes, pos Int, limit Int, n Int, types Array[FuncType], func_typeidxs Array[Int], i Int, globals_codes Array[Int], sigs Array[Int], sig_off Array[Int]) (Bool, String, Int, String) {
   if n == 0 {
     return (true, "", -1, "")
   }
@@ -508,12 +561,12 @@ def vcodes_rest(data Bytes, pos Int, limit Int, n Int, types Array[FuncType], fu
   const r2 = sz[0]
   const bpos = r2.pos
   const bend = bpos + size
-  const b = internal.reader.vbody(data, bpos, bend, ft.params, ft.results)
+  const b = internal.reader.vbody(data, bpos, bend, ft.params, ft.results, globals_codes, [], sigs, sig_off)
   if !b[0] {
     return (false, "type mismatch", bpos, "invalid")
   }
   const r3 = internal.reader.skip(r2, size)
-  return vcodes_rest(data, r3.pos, limit, n - 1, types, func_typeidxs, i + 1)
+  return vcodes_rest(data, r3.pos, limit, n - 1, types, func_typeidxs, i + 1, globals_codes, sigs, sig_off)
 }
 
 // The import section, semantically: each descriptor's indices must
@@ -675,10 +728,13 @@ def vglobals_rest(data Bytes, pos Int, limit Int, n Int, global_codes Array[Int]
     return (true, "", -1, global_codes)
   }
   const e = internal.reader.const_expr(internal.reader.new(data, gt[3], limit))
-  if e.failed {
-    return (true, "", -1, global_codes)
+  if e[0].failed {
+    return (false, "type mismatch", gt[3], global_codes)
   }
-  return vglobals_rest(data, e.pos, limit, n - 1, global_codes.append(gt[1]))
+  if e[1] != gt[1] {
+    return (false, "type mismatch", gt[3], global_codes)
+  }
+  return vglobals_rest(data, e[0].pos, limit, n - 1, global_codes.append(gt[1]))
 }
 
 // The export section: indices must resolve in their spaces; names must
@@ -767,10 +823,10 @@ def global_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) 
   }
   const e = internal.reader.const_expr(
     internal.reader.new(data, gt[3], limit))
-  if e.failed {
-    return (false, "malformed global section", e.fail_offset, -1)
+  if e[0].failed {
+    return (false, "malformed global section", e[0].fail_offset, -1)
   }
-  return global_rest(data, e.pos, limit, n - 1)
+  return global_rest(data, e[0].pos, limit, n - 1)
 }
 
 // An element kind byte must be exactly 0x00 (a funcref element kind).
@@ -819,10 +875,10 @@ def u32_vec_end(data Bytes, pos Int, limit Int, n Int) (Bool, Int) {
 // One constant expression (active segment offsets, global initializers).
 def one_expr(data Bytes, pos Int, limit Int) (Bool, Int) {
   const e = internal.reader.const_expr(internal.reader.new(data, pos, limit))
-  if e.failed {
-    return (false, e.fail_offset)
+  if e[0].failed {
+    return (false, e[0].fail_offset)
   }
-  return (true, e.pos)
+  return (true, e[0].pos)
 }
 
 // A vector of constant expressions.
@@ -839,10 +895,10 @@ def expr_vec_rest(data Bytes, pos Int, limit Int, n Int) (Bool, Int) {
     return (true, pos)
   }
   const e = internal.reader.const_expr(internal.reader.new(data, pos, limit))
-  if e.failed {
-    return (false, e.fail_offset)
+  if e[0].failed {
+    return (false, e[0].fail_offset)
   }
-  return expr_vec_rest(data, e.pos, limit, n - 1)
+  return expr_vec_rest(data, e[0].pos, limit, n - 1)
 }
 
 // A vector of raw bytes (a data payload).

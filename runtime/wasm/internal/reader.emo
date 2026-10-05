@@ -109,47 +109,63 @@ def copy_into(out Bytes, src Bytes, dst_at Int, src_at Int, n Int) Int {
 // opcode table (T20.10) is what separates that malformed family from
 // the invalid-phase non-constant instructions.
 
-def const_expr(r Reader) Reader {
+// The constant-expression subset returns the produced valtype code
+// alongside the cursor (the validator types global initializers with
+// it); the terminating 0x0b yields -1 (no value — only legal for a
+// func-typed block, which constant expressions never are, so callers
+// treat it as they need).
+def const_expr(r Reader) (Reader, Int) {
   if r.failed {
-    return r
+    return (r, 0)
   }
   const p = u8(r)
   const r1 = p[0]
   const op = p[1]
   if r1.failed {
-    return r1
+    return (r1, 0)
   }
   if op == 11 {
-    return r1
+    return (r1, -1)
   }
   if op == 65 {
-    return const_expr(s32(r1)[0])
+    return const_expr_t(s32(r1)[0], 127)
   }
   if op == 66 {
-    return const_expr(s64(r1)[0])
+    return const_expr_t(s64(r1)[0], 126)
   }
   if op == 67 {
-    return const_expr(take(r1, 4)[0])
+    return const_expr_t(take(r1, 4)[0], 125)
   }
   if op == 68 {
-    return const_expr(take(r1, 8)[0])
+    return const_expr_t(take(r1, 8)[0], 124)
   }
   if op == 208 {
     // ref.null: one reftype byte (0x70 funcref, 0x6f externref)
     const t = u8(r1)
     const b = t[1]
     if t[0].failed {
-      return t[0]
+      return (t[0], 0)
     }
     if b == 112 || b == 111 {
-      return const_expr(t[0])
+      return const_expr_t(t[0], b)
     }
-    return bail(t[0], t[0].pos, "malformed reference type")
+    return (bail(t[0], t[0].pos, "malformed reference type"), 0)
   }
   if op == 210 || op == 35 {
-    return const_expr(u32(r1)[0])
+    return const_expr_t(u32(r1)[0], 112)
   }
-  return bail(r1, r1.pos, "illegal opcode")
+  return (bail(r1, r1.pos, "illegal opcode"), 0)
+}
+
+def const_expr_t(r Reader, code Int) (Reader, Int) {
+  const e = const_expr(r)
+  if e[0].failed {
+    return (e[0], code)
+  }
+  if e[1] == -1 {
+    return (e[0], code)
+  }
+  return (e[0], code)
 }
 
 // ---- the instruction stream (T20.10) ----
@@ -749,34 +765,63 @@ def vpush(stack Array[Int], height Int, code Int) (Array[Int], Int) {
 
 // Validate one function body: (ok, msg). The body bytes span
 // [pos, limit) and begin with the locals vector; param_codes and
-// result_codes are the function type's vectors (passed as arrays so
-// this module need not name model.FuncType — the cross-module class
-// wall again).
-def vbody(data Bytes, pos Int, limit Int, param_codes Array[Int], result_codes Array[Int]) (Bool, String) {
-  // The locals walk already ran in the decoder; the body's
-  // instructions start after it. Re-walk it to find the position.
-  const c = u32(new(data, pos, limit))
-  if c[0].failed {
-    return (false, "malformed locals")
-  }
-  const lv = locals_walk(data, c[0].pos, limit, 0)
-  if !lv[0] {
+// result_codes are the function type's vectors (arrays, not
+// model.FuncType — the cross-module class wall); the rest is the
+// module context the typing rules need (globals, tables, functions).
+def vbody(data Bytes, pos Int, limit Int, param_codes Array[Int], result_codes Array[Int], globals_codes Array[Int], tables_codes Array[Int], sigs Array[Int], sig_off Array[Int]) (Bool, String) {
+  // The locals vector: runs of (count, valtype), expanded for typing.
+  const lr = locals_types(data, pos, limit, param_codes)
+  if lr[0].failed {
     return (false, "malformed locals")
   }
   const f0 = Frame.new(2, [], result_codes, 0, false)
   const r = vinstrs(
-    new(data, lv[1], limit), [], 0, [f0], result_codes)
+    new(data, lr[0].pos, limit), [], 0, [f0], result_codes, lr[1], globals_codes, tables_codes, sigs, sig_off)
   if r.failed {
     return (false, "type mismatch")
   }
   return (true, "")
 }
 
+// The locals runs, expanded to one type code per local. A body
+// declaring more than a million locals is rejected here — the
+// spec's own 2^32 malformed cap is the decoder's business; typing
+// does not need to materialize that much.
+def locals_types(data Bytes, pos Int, limit Int, params Array[Int]) (Reader, Array[Int]) {
+  return locals_runs(data, pos, limit, params, 0)
+}
+
+def locals_runs(data Bytes, pos Int, limit Int, acc Array[Int], runs Int) (Reader, Array[Int]) {
+  if acc.length() > 1000000 {
+    return (bail(new(data, pos, limit), pos, "too many locals"), acc)
+  }
+  const c = u32(new(data, pos, limit))
+  if c[0].failed {
+    return (c[0], acc)
+  }
+  if c[1] == 0 {
+    return (c[0], acc)
+  }
+  const v = valtype_at(data, c[0].pos, limit)
+  if !v[0] {
+    return (bail(c[0], c[0].pos, "malformed value type"), acc)
+  }
+  return locals_runs(data, v[2], limit, expand(acc, v[1], c[1]), runs + 1)
+}
+
+def expand(acc Array[Int], code Int, n Int) Array[Int] {
+  if n == 0 {
+    return acc
+  }
+  return expand(acc.append(code), code, n - 1)
+}
+
 // The instruction walk: decode the next opcode (through the same
 // dispatch the decoder uses), type it against the stack, recurse.
-// The frames array's last element is the current frame. The error
-// path is the reader's failed flag ("type mismatch" at the position).
-def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_codes Array[Int]) Reader {
+// The frames array's last element is the current frame; ctx carries
+// (locals types, globals codes, tables codes, func params, func
+// results) as one boxed tuple.
+def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_codes Array[Int], lcs Array[Int], gcs Array[Int], tcs Array[Int], sigs Array[Int], sig_off Array[Int]) Reader {
   if r.failed {
     return r
   }
@@ -789,7 +834,7 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_
   const f = frames[frames.length() - 1]
   // end: pop the frame's end types, require the frame's floor.
   if op == 11 {
-    const e = pops_of(r1, stack, height, f, f.end_types)
+    const e = pops_of(r1, stack, height, f, f.end_types, f.end_types.length())
     if !e[0] {
       return bail(r1, r1.pos, "type mismatch")
     }
@@ -804,14 +849,14 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_
     }
     const nf = frames2[frames2.length() - 1]
     const pu = push_all(e[2], e[3], nf.unreachable, f.end_types)
-    return vinstrs(r1, pu[0], pu[1], frames2, result_codes)
+    return vinstrs(r1, pu[0], pu[1], frames2, result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   if op == 5 {
     // else: only inside an if-frame; the label types restart.
     if f.kind != 4 {
       return bail(r1, r1.pos, "type mismatch")
     }
-    const e = pops_of(r1, stack, height, f, f.end_types)
+    const e = pops_of(r1, stack, height, f, f.end_types, f.end_types.length())
     if !e[0] {
       return bail(r1, r1.pos, "type mismatch")
     }
@@ -820,20 +865,20 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_
     }
     const f2 = Frame.new(1, f.start_types, f.start_types, f.height, false)
     const frames2 = drop_last(frames, 1)
-    return vinstrs(r1, e[2], e[3], frames2.append(f2), result_codes)
+    return vinstrs(r1, e[2], e[3], frames2.append(f2), result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   if op == 2 || op == 3 || op == 4 {
-    return vblock(r1, op, stack, height, frames, result_codes)
+    return vblock(r1, op, stack, height, frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // unreachable
   if op == 0 {
     const f2 = Frame.new(f.kind, f.start_types, f.end_types, f.height, true)
     const frames2 = drop_last(frames, 1)
-    return vinstrs(r1, stack, f.height, frames2.append(f2), result_codes)
+    return vinstrs(r1, stack, f.height, frames2.append(f2), result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // nop
   if op == 1 {
-    return vinstrs(r1, stack, height, frames, result_codes)
+    return vinstrs(r1, stack, height, frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // br l
   if op == 12 {
@@ -843,13 +888,13 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_
     }
     const target = frames[frames.length() - 1 - l[1]]
     const want = label_types(target)
-    const e = pops_of(r1, stack, height, f, want)
+    const e = pops_of(r1, stack, height, f, want, want.length())
     if !e[0] {
       return bail(r1, r1.pos, "type mismatch")
     }
     const f2 = Frame.new(f.kind, f.start_types, f.end_types, f.height, true)
     const frames2 = drop_last(frames, 1)
-    return vinstrs(r1, e[2], f.height, frames2.append(f2), result_codes)
+    return vinstrs(r1, e[2], f.height, frames2.append(f2), result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // br_if l
   if op == 13 {
@@ -863,12 +908,12 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_
     }
     const target = frames[frames.length() - 1 - l[1]]
     const want = label_types(target)
-    const e = pops_of(r1, p1[2], p1[3], f, want)
+    const e = pops_of(r1, p1[2], p1[3], f, want, want.length())
     if !e[0] {
       return bail(r1, r1.pos, "type mismatch")
     }
     const pu = push_all(e[2], e[3], f.unreachable, want)
-    return vinstrs(r1, pu[0], pu[1], frames, result_codes)
+    return vinstrs(r1, pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // br_table
   if op == 14 {
@@ -891,19 +936,17 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_
     if d[1] >= frames.length() {
       return bail(d[0], d[0].pos, "unknown label")
     }
-    const deft = frames[frames.length() - 1 - d[1]]
-    const arity = label_types(deft).length()
-    return vinstrs(d[0], p1[2], p1[3], frames, result_codes)
+    return vinstrs(d[0], p1[2], p1[3], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // return
   if op == 15 {
-    const e = pops_of(r1, stack, height, f, result_codes)
+    const e = pops_of(r1, stack, height, f, result_codes, result_codes.length())
     if !e[0] {
       return bail(r1, r1.pos, "type mismatch")
     }
     const f2 = Frame.new(f.kind, f.start_types, f.end_types, f.height, true)
     const frames2 = drop_last(frames, 1)
-    return vinstrs(r1, e[2], f.height, frames2.append(f2), result_codes)
+    return vinstrs(r1, e[2], f.height, frames2.append(f2), result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // call x
   if op == 16 {
@@ -911,10 +954,175 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_
     if cx[0].failed {
       return cx[0]
     }
-    if cx[1] >= ftype_results_len() {
+    if cx[1] + 1 >= sig_off.length() {
       return bail(cx[0], cx[0].pos, "unknown function")
     }
-    return vinstrs(cx[0], stack, height, frames, result_codes)
+    const lo = sig_off[0 + cx[1]]
+    const hi = sig_off[1 + cx[1]]
+    const plen = sig_off[1 + cx[1]] - lo - (hi - lo - (sig_off[1 + cx[1]] - lo))
+    // params occupy [lo, lo+plen); results [lo+plen, hi)
+    const mi = 0 + cx[1]
+    const pmid = sig_off[mi] + sig_param_len(sigs, lo, hi)
+    const e = pops_flat(cx[0], stack, height, f, sigs, lo, pmid)
+    if !e[0] {
+      return bail(cx[0], cx[0].pos, "type mismatch")
+    }
+    const pu = push_flat(e[2], e[3], f.unreachable, sigs, pmid + 1, hi)
+    return vinstrs(cx[0], pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  // call_indirect x (type index, then table index)
+  if op == 17 {
+    const ti = u32(r1)
+    if ti[0].failed {
+      return ti[0]
+    }
+    // call_indirect's full typing needs a type-indexed signature
+    // table (the function-indexed one above does not serve it); its
+    // cases stay pending until that lands.
+    return r1
+  }
+  // drop
+  if op == 26 {
+    const e = vpop(stack, height, f)
+    if !e[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    return vinstrs(r1, e[2], e[3], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  // select (untyped)
+  if op == 27 {
+    const p1 = vpop_expect(stack, height, f, 127)
+    if !p1[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const p2 = vpop(stack, p1[3], f)
+    if !p2[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const p3 = vpop(stack, p2[3], f)
+    if !p3[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    if p2[1] != p3[1] && p2[1] != 0 && p3[1] != 0 {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    var picked = p3[1]
+    if p2[1] != 0 {
+      picked = p2[1]
+    }
+    const pu = push_all(stack, p3[3], f.unreachable, [picked])
+    return vinstrs(r1, pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  // ---- variable instructions ----
+  if op == 32 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const tc = local_code(lcs, gcs, 0 + x[1])
+    if tc < 0 {
+      return bail(x[0], x[0].pos, "unknown local")
+    }
+    const pu = push_all(stack, height, f.unreachable, [tc])
+    return vinstrs(x[0], pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  if op == 33 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const tc = local_code(lcs, gcs, 0 + x[1])
+    if tc < 0 {
+      return bail(x[0], x[0].pos, "unknown local")
+    }
+    const e = vpop_expect(stack, height, f, tc)
+    if !e[0] {
+      return bail(x[0], x[0].pos, "type mismatch")
+    }
+    return vinstrs(x[0], e[2], e[3], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  if op == 34 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const tc = local_code(lcs, gcs, 0 + x[1])
+    if tc < 0 {
+      return bail(x[0], x[0].pos, "unknown local")
+    }
+    const e = vpop_expect(stack, height, f, tc)
+    if !e[0] {
+      return bail(x[0], x[0].pos, "type mismatch")
+    }
+    const pu = push_all(e[2], e[3], f.unreachable, [tc])
+    return vinstrs(x[0], pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  if op == 35 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const gi = 0 + x[1]
+    if gi >= gcs.length() {
+      return bail(x[0], x[0].pos, "unknown global")
+    }
+    const pu = push_all(stack, height, f.unreachable, [gcs[gi]])
+    return vinstrs(x[0], pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  if op == 36 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const gi2 = 0 + x[1]
+    if gi2 >= gcs.length() {
+      return bail(x[0], x[0].pos, "unknown global")
+    }
+    const e = vpop_expect(stack, height, f, gcs[gi2])
+    if !e[0] {
+      return bail(x[0], x[0].pos, "type mismatch")
+    }
+    return vinstrs(x[0], e[2], e[3], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  // ---- memory instructions (0x28..0x3e): memarg immediate ----
+  if op >= 40 && op <= 62 {
+    const ma = memarg_then(r1)
+    if ma.failed {
+      return ma
+    }
+    const e = mem_pops(ma, stack, height, f, op)
+    if !e[0] {
+      return bail(ma, ma.pos, "type mismatch")
+    }
+    const res = mem_result(op)
+    const pu = push_all(e[2], e[3], f.unreachable, res)
+    return vinstrs(ma, pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  if op == 63 {
+    const z = u8(r1)
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    const pu = push_all(stack, height, f.unreachable, [127])
+    return vinstrs(z[0], pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
+  }
+  if op == 64 {
+    const z = u8(r1)
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    const p1 = vpop_expect(stack, height, f, 127)
+    if !p1[0] {
+      return bail(z[0], z[0].pos, "type mismatch")
+    }
+    const pu = push_all(p1[2], p1[3], f.unreachable, [127])
+    return vinstrs(z[0], pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // ---- t.const: decode the immediate, then push the type ----
   if op == 65 || op == 66 || op == 67 || op == 68 {
@@ -945,24 +1153,116 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], result_
       code = 124
     }
     const pu = push_all(stack, height, f.unreachable, [code])
-    return vinstrs(r2, pu[0], pu[1], frames, result_codes)
+    return vinstrs(r2, pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // ---- numeric: the plain family 0x45..0xc4, typed by table ----
   if op >= 69 && op <= 196 {
     const s = num_opcode(op)
-    const e = pops_of(r1, stack, height, f, s[0])
+    const e = pops_of(r1, stack, height, f, s[0], s[0].length())
     if !e[0] {
       return bail(r1, r1.pos, "type mismatch")
     }
     const pu = push_all(e[2], e[3], f.unreachable, s[1])
-    return vinstrs(r1, pu[0], pu[1], frames, result_codes)
+    return vinstrs(r1, pu[0], pu[1], frames, result_codes, lcs, gcs, tcs, sigs, sig_off)
   }
   // The remaining families type in a later pass; accept the cursor.
   return r1
 }
 
-// The numeric family's typing table: (pops, pushes) per opcode.
-// i32=127, i64=126, f32=125, f64=124.
+// Pop sigs[lo..hi) in reverse: (ok, code, stack, height)
+def pops_flat(r Reader, stack Array[Int], height Int, f Frame, sigs Array[Int], lo Int, hi Int) (Bool, Int, Array[Int], Int) {
+  return pops_flat_rev(stack, height, f, sigs, lo, hi, hi - 1)
+}
+
+def pops_flat_rev(stack Array[Int], height Int, f Frame, sigs Array[Int], lo Int, hi Int, k Int) (Bool, Int, Array[Int], Int) {
+  if k < lo {
+    return (true, 0, stack, height)
+  }
+  const p = vpop_expect(stack, height, f, sigs[k])
+  if !p[0] {
+    return p
+  }
+  return pops_flat_rev(p[2], p[3], f, sigs, lo, hi, k - 1)
+}
+
+// Push sigs[lo..hi) unless the frame is unreachable.
+def push_flat(stack Array[Int], height Int, unreachable Bool, sigs Array[Int], lo Int, hi Int) (Array[Int], Int) {
+  if unreachable {
+    return (stack, height)
+  }
+  return push_flat_rest(stack, height, sigs, lo, hi)
+}
+
+def push_flat_rest(stack Array[Int], height Int, sigs Array[Int], i Int, hi Int) (Array[Int], Int) {
+  if i >= hi {
+    return (stack, height)
+  }
+  return push_flat_rest(stack.append(sigs[i]), height + 1, sigs, i + 1, hi)
+}
+
+// The param count of the signature at sigs[lo..hi): the model writes
+// a -1 split marker between params and results (type codes are all
+// positive, so -1 is unambiguous).
+def sig_param_len(sigs Array[Int], lo Int, hi Int) Int {
+  return split_scan(sigs, lo, hi, lo)
+}
+
+def split_scan(sigs Array[Int], lo Int, hi Int, i Int) Int {
+  if i >= hi {
+    return hi - lo
+  }
+  if sigs[i] == -1 {
+    return i - lo
+  }
+  return split_scan(sigs, lo, hi, i + 1)
+}
+
+// The type of local index `x`, or -1 when out of range.
+def local_code(codes Array[Int], globals_codes Array[Int], x Int) Int {
+  if x >= codes.length() {
+    return -1
+  }
+  return codes[x]
+}
+
+// Loads push their result after popping the address; stores pop the
+// value then the address. (ok, code, stack, height)
+def mem_pops(r Reader, stack Array[Int], height Int, f Frame, op Int) (Bool, Int, Array[Int], Int) {
+  if op >= 54 {
+    // store: value, then address
+    const v = mem_value(op)
+    const p1 = vpop_expect(stack, height, f, v)
+    if !p1[0] {
+      return p1
+    }
+    return vpop_expect(p1[2], p1[3], f, 127)
+  }
+  // load: address only
+  return vpop_expect(stack, height, f, 127)
+}
+
+// The value code a store consumes, or a load produces.
+def mem_value(op Int) Int {
+  if op == 54 { return 127 }
+  if op == 55 { return 126 }
+  if op == 56 { return 125 }
+  if op == 57 { return 124 }
+  if op == 58 { return 127 }
+  if op == 59 { return 126 }
+  if op == 60 { return 126 }
+  if op == 61 { return 126 }
+  return 126
+}
+
+def mem_result(op Int) Array[Int] {
+  if op == 40 { return [127] }
+  if op == 41 { return [126] }
+  if op == 42 { return [125] }
+  if op == 43 { return [124] }
+  if op >= 44 && op <= 53 { return [127] }
+  if op >= 44 && op <= 45 { return [127] }
+  return []
+}
 def num_opcode(op Int) (Array[Int], Array[Int]) {
   const i32 = 127
   const i64 = 126
@@ -1022,8 +1322,8 @@ def ftype_results_len() Int {
 
 // Pop each of `wants` in reverse order.
 // (ok, last_code, stack, height)
-def pops_of(r Reader, stack Array[Int], height Int, f Frame, wants Array[Int]) (Bool, Int, Array[Int], Int) {
-  return pops_rev(stack, height, f, wants, wants.length())
+def pops_of(r Reader, stack Array[Int], height Int, f Frame, wants Array[Int], wn Int) (Bool, Int, Array[Int], Int) {
+  return pops_rev(stack, height, f, wants, wn)
 }
 
 def pops_rev(stack Array[Int], height Int, f Frame, wants Array[Int], i Int) (Bool, Int, Array[Int], Int) {
@@ -1055,17 +1355,17 @@ def push_rest(stack Array[Int], height Int, codes Array[Int], i Int) (Array[Int]
 }
 
 // block / loop / if: block type, then a nested frame.
-def vblock(r Reader, kind Int, stack Array[Int], height Int, frames Array[Frame], result_codes Array[Int]) Reader {
+def vblock(r Reader, kind Int, stack Array[Int], height Int, frames Array[Frame], result_codes Array[Int], lcs Array[Int], gcs Array[Int], tcs Array[Int], sigs Array[Int], sig_off Array[Int]) Reader {
   const bt = block_type(r)
   if bt[0].failed {
     return bt[0]
   }
-  const e = pops_of(bt[0], stack, height, frames[frames.length() - 1], bt[1])
+  const e = pops_of(bt[0], stack, height, frames[frames.length() - 1], bt[1], bt[1].length())
   if !e[0] {
     return bail(bt[0], bt[0].pos, "type mismatch")
   }
   const nf = Frame.new(kind, bt[1], bt[2], e[3], false)
-  return vinstrs(bt[0], e[2], e[3], frames.append(nf), result_codes)
+  return vinstrs(bt[0], e[2], e[3], frames.append(nf), result_codes, lcs, gcs, tcs, sigs, sig_off)
 }
 
 // A block type: (reader, param codes, result codes). Errors travel on
