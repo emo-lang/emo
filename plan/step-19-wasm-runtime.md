@@ -149,8 +149,14 @@ already answered by existing mechanisms:
       chain and is backed out; `to_string()` (raw) and every other
       method work. Revisit with the label as a `to_str` caller-side
       wrapper.
-- [ ] **T19.3** — `file.read` stdlib package (native, scheduler-
-      direct); a golden example reading a file from disk.
+- [x] **T19.3** — `file.read` stdlib package (native, scheduler-
+      direct); a golden example reading a file from disk. Ships
+      `file.write` too — the demo writes its own data file, which
+      keeps the golden independent of the working directory. The
+      write handler closes the channel before resuming the process:
+      the resumption runs synchronously, and read-your-own-write
+      beats descriptor hygiene. Tests resolve the registry through
+      EMO_REGISTRY pointed at the sandbox's stdlib copy.
 - [ ] **T19.4** — `Int64` and `Byte`: literals, wrap-around
       arithmetic, comparisons, explicit conversions; all four
       backends; golden example. `runtime/wasm/` package skeleton

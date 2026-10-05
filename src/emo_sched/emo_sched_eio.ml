@@ -77,7 +77,9 @@ let rec run_process ~sw ~conditions ~root (proc : Emo_eval.process)
              | Emo_eval.Net_connect_unix (_, _, span)
              | Emo_eval.Net_listen_unix (_, span)
              | Emo_eval.Net_tls_connect (_, _, _, _, _, span)
-             | Emo_eval.Net_tls_listen (_, _, _, _, span) ->
+             | Emo_eval.Net_tls_listen (_, _, _, _, span)
+             | Emo_eval.File_read (_, span)
+             | Emo_eval.File_write (_, _, span) ->
                  Some
                    (fun (k : (a, _) continuation) ->
                      Effect.Deep.discontinue k

@@ -231,6 +231,10 @@ let global_env () =
     { bound = BuiltinFn "net_listen"; mutable_ = false };
   Hashtbl.replace env.frame "net_resolve"
     { bound = BuiltinFn "net_resolve"; mutable_ = false };
+  Hashtbl.replace env.frame "file_read"
+    { bound = BuiltinFn "file_read"; mutable_ = false };
+  Hashtbl.replace env.frame "file_write"
+    { bound = BuiltinFn "file_write"; mutable_ = false };
   Hashtbl.replace env.frame "net_udp_bind"
     { bound = BuiltinFn "net_udp_bind"; mutable_ = false };
   Hashtbl.replace env.frame "net_connect_unix"
@@ -601,6 +605,8 @@ type _ Effect.t +=
   | Net_udp_close : udp * Emo_support.Span.t -> udp Effect.t
   | Net_connect_unix : string * float * Emo_support.Span.t -> conn Effect.t
   | Net_listen_unix : string * Emo_support.Span.t -> listener Effect.t
+  | File_read : string * Emo_support.Span.t -> string Effect.t
+  | File_write : string * string * Emo_support.Span.t -> int Effect.t
   | Net_tls_connect :
       (string * int * float * bool * string list * Emo_support.Span.t)
       -> conn Effect.t
@@ -795,6 +801,12 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_listen_unix`")
+            | File_read (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`file.read`")
+            | File_write (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`file.write`")
             | Compiled_receive _ ->
                 Some
                   (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
@@ -1593,6 +1605,32 @@ and apply_builtin span name args =
       UdpSocket (Effect.perform (Net_udp_bind (host, port, span)))
   | "net_udp_bind", _ ->
       error span "E3001" "`net_udp_bind` expects (host String, port Int)"
+  | "file_read", args when List.length args <> 1 ->
+      error span "E3007"
+        (Printf.sprintf "`file_read` expects (path String), got %d arguments"
+           (List.length args))
+  | "file_read", [ String path ] ->
+      String (Effect.perform (File_read (path, span)))
+  | "file_read", [ v ] ->
+      error span "E3001"
+        (Printf.sprintf "`file_read` expects a String path, got %s"
+           (type_name v))
+  | "file_write", args when List.length args <> 2 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`file_write` expects (path String, contents String), got \
+            %d             arguments"
+           (List.length args))
+  | "file_write", [ String path; String contents ] ->
+      Int (Effect.perform (File_write (path, contents, span)))
+  | "file_write", [ String _; v ] ->
+      error span "E3001"
+        (Printf.sprintf "`file_write` expects String contents, got %s"
+           (type_name v))
+  | "file_write", [ v; _ ] ->
+      error span "E3001"
+        (Printf.sprintf "`file_write` expects a String path, got %s"
+           (type_name v))
   | "net_connect_unix", args when List.length args <> 2 ->
       error span "E3007"
         (Printf.sprintf

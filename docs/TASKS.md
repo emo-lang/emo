@@ -319,7 +319,7 @@ mechanism matrix, and the ladder.
 
 - [x] **T19.1** — Bitwise operators (`& | ^ << >> ~`) on integer types: lexer, parser, checker, interpreter, and all four backends; `examples/bit_ops/` golden through `emo run` and every target's CI group.
 - [x] **T19.2** — The `Bytes` core type: construction, bounds-checked get/set, little-endian accessors, String interop; all four backends; golden example. (u64 accessors land with Int64 in T19.4; printing a raw `Bytes` value traps on wasm — known gap.)
-- [ ] **T19.3** — `file.read` stdlib package (native, scheduler-direct); a golden example reading a file from disk.
+- [x] **T19.3** — `file.read` stdlib package (native, scheduler-direct); a golden example reading a file from disk. Ships `file.write` too (the demo writes its own data file, keeping the golden CWD-independent); the write closes before resuming so read-your-own-write holds; tests resolve the registry via EMO_REGISTRY.
 - [ ] **T19.4** — `Int64` and `Byte`: literals, wrap-around arithmetic, comparisons, explicit conversions; all four backends; golden example. `runtime/wasm/` package skeleton created here.
 
 ### Step 20 — Wasm runtime: decoder & validator (plan written at start)
