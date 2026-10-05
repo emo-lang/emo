@@ -61,3 +61,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 14 | Other targets (wasm / TS / BEAM / riscv64) | in progress (TS, Wasm promoted) |
 | 15 | TypeScript target | in progress |
 | 16 | Wasm target (WasmGC) | in progress |
+| 17 | BEAM target (Core Erlang) | done |
+| 18 | Function groups (`emo` keyword) | done |
+| 19 | The systems layer (wasm runtime + EmoOS primitives) | done |
+| 20 | Wasm runtime: decoder & validator | not started (tasks written) |

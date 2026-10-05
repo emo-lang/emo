@@ -326,10 +326,29 @@ Close-out: `Int64` and `Byte` ride the integer representations each target alrea
 
 ### Step 20 — Wasm runtime: decoder & validator · `plan/step-20-wasm-decoder.md`
 
-**Prereq:** Step 19. The task list is written at the start; the boundaries
-that keep the in-repo runtime from becoming an in-repo language — the
-package edge, the spec data off the default test path, and the condition
-for the runtime leaving this repository — are already decided there.
+**Prereq:** Step 19.
+**Done when:** `runtime/wasm/` decodes and validates the vendored spec suite's binary-form cases — every valid module accepted, every `assert_malformed` case rejected in the decode phase, every `assert_invalid` case in the validation phase; the default `dune test` runs a smoke subset through the Emo-written runtime, and the `wasm_spec` alias runs the full list with nothing pending.
+
+- [ ] **T20.1** — The smoke rule: `runtime/wasm/main.emo`, its golden, and a `runtest` rule that runs `emo run main.emo` in the sandbox. The package stops being inert; no registry and no native toolchain (deps are `{}`).
+- [ ] **T20.2** — The case-list format and its hex codec, the corpus runner, the `main.emo` / `spec.emo` drivers, and the `wasm_spec` alias. Both lists start empty; the summary reports `pending 0`.
+- [ ] **T20.3** — `devtools/vendor-wasm-spec` (a pinned wasm-spec checkout through `wast2json --no-check`) and the first corpus: `binary.wast`'s binary-form cases, vendored as `pending`. Independent of every decoder task.
+- [ ] **T20.4** — The diagnosed-failure value and the `Bytes` reader, bounds-checked before every access; the truncated-read fixtures.
+- [ ] **T20.5** — LEB128 (`u32`/`u64`/`s32`/`s64`) with the spec's length caps; `binary-leb128.wast` plus hand-written boundary vectors.
+- [ ] **T20.6** — The header and the section walk: magic, version, section id and size, ordering, custom sections, unknown ids, trailing bytes.
+- [ ] **T20.7** — The type section, and the tag-tuple / cons-list shape the rest of the module model copies.
+- [ ] **T20.8** — The declaration sections: function, table, memory, global, import, export.
+- [ ] **T20.9** — Element, data, and constant expressions.
+- [ ] **T20.10** — The opcode table and the numeric instructions.
+- [ ] **T20.11** — The parametric, variable, and memory instructions.
+- [ ] **T20.12** — The structured instructions: block/loop/if/else/end, br/br_if/br_table, and the matching-`end` bookkeeping.
+- [ ] **T20.13** — `decode(bytes)` on the package's surface, and the valid-module corpus.
+- [ ] **T20.14** — The validation context, the index spaces, and function typing.
+- [ ] **T20.15** — The operand type stack for the plain instructions.
+- [ ] **T20.16** — Control frames: label depths, branch operand types, and the polymorphic stack after a branch.
+- [ ] **T20.17** — Cross-section rules: start function, element/data offsets, limits, global initializers.
+- [ ] **T20.18** — The corpus sweep with nothing pending, the smoke subset, `runtime/wasm/README.md`, close-out.
+
+The boundaries that keep the in-repo runtime from becoming an in-repo language — the package edge, the spec data off the default test path, and the condition for the runtime leaving this repository — are in the plan file, with the surface pressure the runtime runs into and the sizes that make the list workable in spare sittings.
 
 ### Step 21 — Wasm runtime: interpreter core & spec-suite goldens (plan written at start)
 
