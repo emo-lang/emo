@@ -15,6 +15,7 @@
   internal/error.emo
   internal/reader.emo
   internal/decode.emo
+  internal/model.emo
   testdata/cases.smoke.txt
   package.emo)
  (action
@@ -56,6 +57,32 @@
   (diff leb-fixture.expected.txt leb-fixture.actual)))
 
 (rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  type-fixture.emo
+  wasm.emo
+  cli.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  internal/model.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   type-fixture.actual
+   (run %{emo} run type-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  type-fixture.actual
+  type-fixture.expected.txt)
+ (action
+  (diff type-fixture.expected.txt type-fixture.actual)))
+
+(rule
  (alias wasm_spec)
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
@@ -66,6 +93,7 @@
   internal/error.emo
   internal/reader.emo
   internal/decode.emo
+  internal/model.emo
   testdata/cases.all.txt
   package.emo)
  (action

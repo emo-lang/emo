@@ -78,7 +78,18 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
   if rank(id) <= last_rank {
     return internal.error.malformed(r1.pos, "unexpected section")
   }
-  // The content decodes in T20.7 onward; skip it for now.
+  if id == 1 {
+    // The type section decodes its content (T20.7) and must consume it
+    // exactly: leftover bytes are a "section size mismatch".
+    const t = internal.model.type_section(r2.data, r2.pos, r2.pos + size)
+    if !t[0] {
+      return internal.error.malformed(t[2], "malformed type section")
+    }
+    if t[2] != r2.pos + size {
+      return internal.error.malformed(t[2], "section size mismatch")
+    }
+  }
+  // The other sections' contents decode in T20.8 onward; skip for now.
   const r3 = internal.reader.skip(r2, size)
   return walk(data, r3.pos, rank(id))
 }
