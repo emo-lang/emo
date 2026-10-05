@@ -1,0 +1,133 @@
+# Emo and industrial software — an assessment
+
+Written 2026-10-06. This is a market-positioning assessment, not decided
+design; project-state claims reflect the repository as of the date above.
+
+The question: does Emo fit the software category China's 15th Five-Year
+Plan (2026–2030) calls *industrial software* (工业软件)?
+
+## The conclusion
+
+**Not today, and the bottleneck is ecosystem and timing, not language
+direction.** Several parts of Emo's design genuinely rhyme with the
+domain — the BEAM target's supervision story, the freestanding `riscv64`
+target, strict compile-time checking — but the category the plan targets
+competes against decades of accumulated C++, and Emo's FFI currently
+admits three types across the boundary. The segments are not equally
+distant: some are unreachable on any near horizon, and a couple of
+openings are real.
+
+## What the plan means by "industrial software"
+
+The Central Committee's plan *Recommendations* (October 2025) name
+*basic software* (基础软件) in the decisive-breakthrough sentence —
+integrated circuits, industrial machine tools, high-end instruments,
+basic software, advanced materials, biomanufacturing; *industrial
+software* is spelled out in the outline-draft readings and local plans.
+The most concrete is Shanghai's software-sector plan, which names the
+core technologies outright: geometric modeling, constraint solving,
+mesh generation, physical simulation.
+
+The implied market map:
+
+- **Design and simulation** — CAD, CAE, EDA, CAM: the chokepoint
+  (卡脖子) software the plan actually wants replaced.
+- **Plant control** — DCS, PLC, SCADA, and their engineering tools.
+- **Business layer** — ERP and MES management modules: amply supplied
+  by existing stacks, not the breakthrough target.
+
+The competition is CATIA-class products carrying decades of accumulated
+domain knowledge — kernels, solvers, process know-how — not merely other
+languages.
+
+## Fit by segment
+
+### Design and simulation (CAD/CAE/EDA) — furthest away
+
+The core of this software is geometry kernels and numerical solvers,
+written in C and C++, requiring tight interop. Emo's `foreign def`
+currently lets `Float64`, `String`, and `Bool` cross the boundary — no
+pointers, structs, arrays, or callbacks — so wrapping an OCCT-class
+kernel is not possible today. That is a hard gate, not a tuning
+problem.
+
+Performance runs the same direction. The native backend's
+specialization ("types feed performance") is directionally right, but
+the benchmarks only show specialized beating unspecialized; no
+industrial-scale workload has been measured against C or Fortran.
+Under gradual typing, every value carries a runtime type tag and
+under-annotated regions fall back to dynamic semantics — fatal for
+mesh-generation inner loops. And the value semantics — immutable
+arrays, classes copied on assignment — favor safety, but at
+gigabyte-scale mesh data they either force a performance disaster or
+push the code into process-style `Box` programming.
+
+### Plant control and supervision — a real opening, with limits
+
+Emo's concurrency (processes, message passing, library-level
+supervision) plus the BEAM target is exactly the Erlang-proven shape
+for high-availability supervision planes: SCADA hosts, MES alerting,
+work orders, dashboards — many concurrent connections, per-process
+crash isolation, no whole-system downtime.
+
+Hard real-time is out of reach, though: GC, value copying, no
+scheduling guarantees. The freestanding `riscv64` target with pluggable
+GC and arenas (step 22, not started as of this writing) is the
+theoretical path, far from product — and functional-safety
+certification (IEC 61508 and friends) demands toolchain maturity and
+traceability that a new language has none of.
+
+### The business layer — closest technically, least policy value
+
+The type checker, structural modules, packages, and direct-style HTTP
+were all shaped for exactly this kind of system. But the segment is
+well supplied by existing stacks, and it is not what the plan is trying
+to break through.
+
+## What stands between Emo and this market
+
+In priority order:
+
+1. **A frozen language — 1.0 and LTS.** As of October 2026, global
+   renames and additions are still landing; industrial software lives
+   15–30 years, and nobody builds on a language without a stability
+   promise.
+2. **A real FFI.** Pointers, structs, arrays, callbacks — the only
+   entrance into the C world that industrial software actually
+   inhabits. Nothing on the roadmap matters more for this market.
+3. **A numerical benchmark against C**, to find what specialization's
+   real ceiling is.
+4. **One real BEAM-target supervision case** in a monitoring or control
+   setting.
+
+Beyond the list: the ecosystem is empty (linear algebra, geometry,
+serialization, database drivers), and there is no debugger or profiler —
+while industrial software feeds on exactly those.
+
+## Where the design does line up
+
+- **Wasm + EmoUI** — browser-side lightweight CAD viewers and
+  configuration/SCADA screens: a real, commercially valuable niche the
+  existing targets already point at.
+- **BEAM** — high-availability supervision planes, the telecom-proven
+  territory.
+- **`riscv64`, long-term** — soft-real-time industrial control on bare
+  metal, once the target and its memory story exist.
+
+## Positioning
+
+The chokepoint in industrial software is kernels, solvers, and decades
+of process knowledge — not the programming language. Switching
+languages does not address it, so "Emo answers the plan" is not a
+defensible pitch and should stay out of Emo's positioning. Until the
+FFI matures and a 1.0 exists, the defensible formulation remains the
+current one — *a general-purpose language that reaches down to bare
+metal* — with industrial software kept as a possibility, not a promise.
+
+## References
+
+- National Development and Reform Commission, press reading of the 15th
+  Five-Year Plan outline (draft), March 2026:
+  <https://www.ndrc.gov.cn>
+- The Central Committee's *Recommendations* for the 15th Five-Year Plan
+  (October 2025, reprinted by MOFCOM): <https://www.mofcom.gov.cn>
