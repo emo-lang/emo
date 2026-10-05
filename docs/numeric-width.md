@@ -1,23 +1,25 @@
-# Int width — one integer semantics on every target
+# Numeric width — width-explicit types on every target
 
 ## The decision
 
-Integer types are width-explicit. The default integer type is
-**`Int64`**: 64-bit two's complement with wrap-around on every target
-— arithmetic is performed modulo 2⁶⁴, and overflow behaves identically
+Numeric types are width-explicit. **`Int64`** is the default integer
+type: 64-bit two's complement with wrap-around on every target —
+arithmetic is performed modulo 2⁶⁴, and overflow behaves identically
 whether a program runs natively, on Wasm, on the BEAM, or on bare
-metal (decided 2026-10-05).
+metal. **`Float64`** is the default float type: IEEE 754 binary64 on
+every target (decided 2026-10-05).
 
-There is no width-less `Int` spelling and none will be added as an
-alias; unannotated integer literals are `Int64` (decided 2026-10-05,
-superseding an earlier same-day decision that kept the `Int` spelling
-without an `Int64` name).
+There are no width-less `Int` or `Float` spellings and none will be
+added as aliases; unannotated integer literals are `Int64` and
+unannotated float literals are `Float64` (the `Int64` part supersedes
+an earlier same-day decision that kept the `Int` spelling without an
+`Int64` name).
 
-The implementation still spells the type `Int` (checker, stdlib,
-examples); the mechanical rename to `Int64` rides the same step as the
-native fix below.
+The implementation still spells the types `Int` and `Float` (checker,
+stdlib, examples); the mechanical rename to `Int64`/`Float64` rides
+the same step as the native fix below.
 
-## Why the type is named `Int64`
+## Why the types are named by width
 
 The 63-bit defect below and the bare `Int` spelling share a root: a
 name that does not say its width invites the C question — "how wide is
@@ -25,14 +27,14 @@ name that does not say its width invites the C question — "how wide is
 removes. Width-suffixed names:
 
 - say what they are — everything is visibly what it is;
-- leave no natural-width integer for FFI code to misproject (C's `int`
-  is 32-bit on mainstream ABIs; a width-less `Int` beside it is a
-  standing trap);
-- follow the systems-language lineage (Rust and Zig spell `i32`/`i64`)
-  — the implementation-defined-width `int` is the C outlier, and the
-  cautionary tale.
+- leave no natural-width type for FFI code to misproject (C's `int`
+  is 32-bit on mainstream ABIs; its `float` and `double` differ in
+  width too, and a width-less `Float` beside them is a standing trap);
+- follow the systems-language lineage (Rust and Zig spell `i32`/`i64`
+  and `f32`/`f64`) — the implementation-defined-width `int` is the C
+  outlier, and the cautionary tale.
 
-## Why: three targets, three integers
+## Int64: three targets, three integers
 
 The decision replaces a status quo where each target answered "what is
 an integer?" for itself:
@@ -72,6 +74,14 @@ real tradeoff, to be settled before that work starts (tracked in
   expands roughly 2–4×. The same technique the future RV32 codegen
   needs (below), so the work is shared.
 
+## Float64: already uniform
+
+Unlike the integer, the float needs no fix: it is IEEE 754 binary64 on
+every target today — OCaml `float`, Wasm `f64`, Erlang floats, and JS
+`number` in the TypeScript backend. Every target already conforms, so
+the decision here is the name alone; display and parsing rules stay
+target-independent by construction.
+
 ## RISC-V 32-bit is a codegen problem, not a semantics one
 
 The bare-metal target is named for the ISA (`riscv64`, step 14). A
@@ -88,9 +98,9 @@ it is off the table. `riscv32` is not scheduled — it follows
 
 ## Int32 (agreed direction; its own step when scheduled)
 
-`Int32` will join as the second, explicitly-named integer type. It
-does not exist to fix the default integer — the decision above does
-that. Its motivation:
+`Int32` will join as the second, explicitly-named integer type: 32-bit
+two's complement, wrapping at 2³². It does not exist to fix the
+default integer — the decision above does that. Its motivation:
 
 - **FFI.** C `int32_t` parameters need a landing type (`foreign def`
   currently admits `Float`/`String`/`Bool` only).
@@ -106,3 +116,25 @@ Constraints, per strictness-first:
 - No implicit conversions in either direction; mixed arithmetic
   (`Int64 + Int32`) is rejected; conversions are explicit calls.
 - `Int32` wraps at 32 bits, by the same modulo rule.
+
+## Float32 (agreed direction; its own step when scheduled)
+
+`Float32` will join as the second, explicitly-named float type: IEEE
+754 binary32. Its motivation:
+
+- **FFI.** C `float` parameters need a landing type distinct from
+  `double`.
+- **Bare metal.** Device registers and firmware structures use
+  binary32.
+- **Memory bandwidth.** Half the bytes of `Float64` for numeric arrays
+  where precision is already bounded.
+
+Constraints, per strictness-first (same shape as `Int32`):
+
+- The default float is `Float64`; unannotated float literals are
+  `Float64`; no type-guided literal typing.
+- No implicit conversions in either direction; mixed arithmetic
+  (`Float64 + Float32`) is rejected; conversions are explicit calls.
+- `Float32` rounds to binary32 per operation (correctly rounded via a
+  binary64 ALU — 53 bits cover 2×24+2); display uses binary32
+  shortest round-trip.

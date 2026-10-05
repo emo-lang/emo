@@ -28,7 +28,7 @@ Emo's syntax favors explicitness: everything is visibly what it is — a call lo
 - **`if` has exactly one shape.** `if <cond> { ... }` with an optional `else { ... }` — there is no `else if`, `elif`, or any chaining form; a further test is an `if` visibly nested inside the `else` block. Like all control flow, `if` is a statement.
 - **`case` matches a value against patterns.** Branches are `pattern -> { ... }`, first match wins, and a branch may carry a guard: `Color.red when signal.is_bright?()`. Patterns are enum members by qualified name (`Color.red` — a bare lowercase name is a binding pattern, since members and variables share the lowercase space), literals matching by value, and `_` matching anything. Like all control flow, `case` is a statement: results leave a branch through explicit `return` or binding. A scrutinee that matches no branch is a runtime error — never a silent skip.
 - **Tuples are `(a, b, c)`.** Fixed-length, heterogeneous, immutable values that compare element-wise; the annotation form mirrors the literal — `(Int64, String)`. The paren rule resolves by content, with no trailing-comma forms: a comma makes a tuple (`()`, `(a, b)`); a single operator-free value in parentheses is a one-element tuple (`(a)` — grouping a lone value is meaningless); an expression containing operators is a group (`(sum * 3)`, `x && (y || z)`). `(a,)` is a syntax error — the one-element tuple is written `(a)` — and so is a `(` directly opening onto a `(`: `((x))` and `f((a, b))` never parse; an inline tuple argument is bound to a name first. Nesting after a comma is legal and never adjacent: `(a, (b, c))`. In `case` patterns, parentheses are always tuple patterns, destructuring by position: `(Color.red, count) -> { ... }`.
-- **Naming follows a strict case convention, enforced by the compiler.** All types start with an uppercase letter — built-in ones (`String`, `Int64`, `Bool`, `Float`, `Char`) and user-defined ones alike (`class Foo`, `interface Bar`, exceptions as in `class Exception`). Everything else — variables, keywords, function names — is lowercase, and function names use snake_case only; camelCase is not allowed.
+- **Naming follows a strict case convention, enforced by the compiler.** All types start with an uppercase letter — built-in ones (`String`, `Int64`, `Bool`, `Float64`, `Char`) and user-defined ones alike (`class Foo`, `interface Bar`, exceptions as in `class Exception`). Everything else — variables, keywords, function names — is lowercase, and function names use snake_case only; camelCase is not allowed.
 - **Strings are always double-quoted, with a single interpolation form.** `"hello, ${name}"` — the braces hold any expression. Escapes are the minimal set `\n \r \t \\ \' \"`. Single quotes denote the `char` type: `'a'` is a character, `"a"` is a String of length one.
 - **`print(value)` writes one line of output** — the value's `.to_string()` rendering plus a newline. Every primitive implements `.to_string()`, and interpolation uses the same rendering.
 - **Comments are `//` to end of line; there are no block comments.**
@@ -142,7 +142,8 @@ Mutability is layered, and every layer is explicit:
 Emo is gradually typed: **types are dynamic at runtime, but statically checked at compile time**.
 
 - Runtime semantics are dynamically typed — every value carries a type tag. This aligns natively with BEAM and keeps everyday code free of type ceremony.
-- **Integer types are width-explicit: the default integer type is `Int64`.** It is 64-bit two's complement with wrap-around — arithmetic is performed modulo 2⁶⁴, so overflow behaves identically whether a program runs natively, on Wasm, on the BEAM, or on bare metal. Unannotated integer literals are `Int64`; there is no width-less `Int` spelling (see `docs/int-width.md`).
+- **Integer types are width-explicit: the default integer type is `Int64`.** It is 64-bit two's complement with wrap-around — arithmetic is performed modulo 2⁶⁴, so overflow behaves identically whether a program runs natively, on Wasm, on the BEAM, or on bare metal. Unannotated integer literals are `Int64`; there is no width-less `Int` spelling (see `docs/numeric-width.md`).
+- **Float types are width-explicit: the default float type is `Float64`.** It is IEEE 754 binary64 on every target, so floating-point behavior is identical everywhere. Unannotated float literals are `Float64`; there is no width-less `Float` spelling.
 - The compiler has a built-in type-checking pass. Annotations are optional across the language — except on function signatures, where parameter types are explicit and an omitted return type declares Void — and unannotated code is still inferred and checked, reporting only errors that are certain; annotated code is checked strictly.
 - Typing is structural and flow-sensitive — after `if user.is(Admin)`, `user` is narrowed to `Admin` — matching duck-typing intuition.
 - There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as annotation vocabulary (e.g. `Array[User]`, `Box[Int64]`) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all. A parameter that receives a block is annotated `Block`.
@@ -263,10 +264,10 @@ built myapp
 - **C interop is a `foreign def`.** The declaration names the C symbol and marshals through generated C wrappers:
 
   ```emo
-  foreign def sqrt(x Float) Float = "sqrt"
+  foreign def sqrt(x Float64) Float64 = "sqrt"
   ```
 
-  `Float`, `String`, and `Bool` cross the boundary today; other types are refused by the checker. Link additional C libraries with `--cclib` (`emo build main.emo --cclib m`). Foreign definitions run only in compiled programs — `emo run` refuses them.
+  `Float64`, `String`, and `Bool` cross the boundary today; other types are refused by the checker. Link additional C libraries with `--cclib` (`emo build main.emo --cclib m`). Foreign definitions run only in compiled programs — `emo run` refuses them.
 - **The build requires the OCaml toolchain** — the same one that builds Emo itself; there is no second compiler to install.
 
 ## Configuration
