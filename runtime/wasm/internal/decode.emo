@@ -10,8 +10,13 @@
 // (qualified type annotations do not parse — step 20 pressure), so any
 // cross-def cursor travel goes through unannotated locals.
 
-def module_from(data Bytes) (Bool, String, Int, String) {
-  const r = internal.reader.over(data)
+def debug_print_outcome(label String, o (Bool, String, Int, String)) Int {
+  println(label + ": ok=" + o[0].to_string() + " phase=" + o[1]
+    + " offset=" + o[2].to_string() + " msg=" + o[3])
+  return 0
+}
+
+def module_from(data Bytes) (Bool, String, Int, String) {  const r = internal.reader.over(data)
   const head = internal.reader.take(r, 8)
   const rr = head[0]
   if rr.failed {
@@ -94,7 +99,7 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
     if !s[0] {
       return internal.error.malformed(s[2], s[1])
     }
-    if s[2] != r2.pos + size {
+    if s[3] != r2.pos + size {
       return internal.error.malformed(s[2], "section size mismatch")
     }
   }
@@ -103,7 +108,7 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
     if !s[0] {
       return internal.error.malformed(s[2], s[1])
     }
-    if s[2] != r2.pos + size {
+    if s[3] != r2.pos + size {
       return internal.error.malformed(s[2], "section size mismatch")
     }
   }
@@ -112,7 +117,7 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
     if !s[0] {
       return internal.error.malformed(s[2], s[1])
     }
-    if s[2] != r2.pos + size {
+    if s[3] != r2.pos + size {
       return internal.error.malformed(s[2], "section size mismatch")
     }
   }
@@ -121,7 +126,7 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
     if !s[0] {
       return internal.error.malformed(s[2], s[1])
     }
-    if s[2] != r2.pos + size {
+    if s[3] != r2.pos + size {
       return internal.error.malformed(s[2], "section size mismatch")
     }
   }
@@ -130,12 +135,49 @@ def walk(data Bytes, pos Int, last_rank Int) (Bool, String, Int, String) {
     if !s[0] {
       return internal.error.malformed(s[2], s[1])
     }
-    if s[2] != r2.pos + size {
+    if s[3] != r2.pos + size {
       return internal.error.malformed(s[2], "section size mismatch")
     }
   }
-  // Global sections carry initializer expressions (T20.9); the other
-  // sections' contents land in T20.9 onward.
+  if id == 6 {
+    const s = internal.model.global_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 8 {
+    // The start section: one function index, exactly consumed.
+    const s = internal.reader.u32(internal.reader.new(data, r2.pos, r2.pos + size))
+    if s[0].failed {
+      return internal.error.malformed(s[0].fail_offset, s[0].fail_msg)
+    }
+    if s[0].pos != r2.pos + size {
+      return internal.error.malformed(s[0].pos, "section size mismatch")
+    }
+  }
+  if id == 9 {
+    const s = internal.model.elem_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 11 {
+    const s = internal.model.data_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  // The code section (10) decodes with the instruction stream
+  // (T20.10-T20.12); the start section (8) is a lone index.
   const r3 = internal.reader.skip(r2, size)
   return walk(data, r3.pos, rank(id))
 }
