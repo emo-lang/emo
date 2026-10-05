@@ -718,7 +718,7 @@ and emit_closure env p cbody : int =
   env.binders <- [];
   env.fname <- "";
   env.fparams <- [];
-  let body = stmts env cbody ~tail:true in
+  let body = stmts_value env cbody ~tail:true in
   env.hidden <-
     ( fidx,
       { W.ftype_idx = t_sig1; fparams = [ "x" ]; flocals = []; fbody = body } )
@@ -733,13 +733,37 @@ and emit_closure env p cbody : int =
 
 and stmts env (xs : Emo_ir.stmt list) ~(tail : bool) : W.instr list =
   match xs with
-  | [] -> if tail then [ W.Unreachable ] else []
+  | [] ->
+      (* A Void function or arrow block ends without `return` and yields
+         the Void value (an empty tuple struct); the checker rejects a
+         fall-off in any other body. *)
+      if tail then [ W.Array_new_fixed (t_anyarray, 0); W.Struct_new t_vtuple ]
+      else []
   | [ s ] -> stmt env s ~tail
   | s :: rest ->
       (* Left-to-right: each statement's instructions (and any local
          declarations it performs) must precede the rest. *)
       let code = stmt env s ~tail:false in
       code @ stmts env rest ~tail
+
+(* Whether a statement in tail position yields the block's result value
+   by itself. [if] never does — its arms are emitted valueless — and
+   effects and bindings end in a drop or a local set. *)
+and yields_value (s : Emo_ir.stmt) =
+  match s with
+  | Emo_ir.Return_stmt _ | Emo_ir.Case _ | Emo_ir.Receive _ -> true
+  | _ -> false
+
+(* A statement list whose enclosing block expects a value. The checker
+   guarantees a value-returning body always ends in `return`, so the
+   appended Void value only fires for Void bodies whose last statement
+   cannot yield (a trailing `if`, say). *)
+and stmts_value env (xs : Emo_ir.stmt list) ~(tail : bool) : W.instr list =
+  let base = stmts env xs ~tail in
+  match List.rev xs with
+  | [] -> base
+  | last :: _ when yields_value last -> base
+  | _ -> base @ [ W.Array_new_fixed (t_anyarray, 0); W.Struct_new t_vtuple ]
 
 and expr_block env (x : Emo_ir.expr) : W.instr list =
   let before = env.rev in
@@ -832,7 +856,10 @@ and dispatch_branches env (s : W.instr list) (branches : Emo_ir.branch list)
         let cond =
           match guard with [] -> test | _ -> test @ guard @ [ W.I32_and ]
         in
-        let body = stmts env b.Emo_ir.body ~tail in
+        let body =
+          if tail then stmts_value env b.Emo_ir.body ~tail
+          else stmts env b.Emo_ir.body ~tail
+        in
         env.binders <- saved;
         let no_match = build rest in
         [ W.If_else (blocktype, cond, body, no_match) ]
@@ -1141,7 +1168,7 @@ let emit_func env (f : Emo_ir.func) : W.func_type =
     | None -> None
   in
   env.current_class <- owner;
-  let body = stmts env f.Emo_ir.fbody ~tail:true in
+  let body = stmts_value env f.Emo_ir.fbody ~tail:true in
   let param_types = List.map (fun _ -> W.Anyref) f.Emo_ir.fparams in
   (* local_decls opens with one entry per parameter; only the rest are
      declared locals *)

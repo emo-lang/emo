@@ -154,14 +154,18 @@ and pp_params fmt = function
   | ps -> pp_list pp_param fmt ps
 
 and pp_fun_def fmt (d : Emo_ast.fun_def) =
-  match d.Emo_ast.def_return with
-  | None ->
-      Format.fprintf fmt "(init %a|@[<hov>%a@])" pp_params d.Emo_ast.def_params
-        (pp_list pp_stmt) d.Emo_ast.def_body
-  | Some ret ->
-      Format.fprintf fmt "(def %s %a %a |@[<hov>%a@])" d.Emo_ast.def_name
-        pp_params d.Emo_ast.def_params pp_type_ann ret (pp_list pp_stmt)
-        d.Emo_ast.def_body
+  if d.Emo_ast.def_name = "init" && Option.is_none d.Emo_ast.def_return then
+    Format.fprintf fmt "(init %a|@[<hov>%a@])" pp_params d.Emo_ast.def_params
+      (pp_list pp_stmt) d.Emo_ast.def_body
+  else
+    match d.Emo_ast.def_return with
+    | None ->
+        Format.fprintf fmt "(def %s %a Void |@[<hov>%a@])" d.Emo_ast.def_name
+          pp_params d.Emo_ast.def_params (pp_list pp_stmt) d.Emo_ast.def_body
+    | Some ret ->
+        Format.fprintf fmt "(def %s %a %a |@[<hov>%a@])" d.Emo_ast.def_name
+          pp_params d.Emo_ast.def_params pp_type_ann ret (pp_list pp_stmt)
+          d.Emo_ast.def_body
 
 and pp_method_sig fmt (s : Emo_ast.method_sig) =
   Format.fprintf fmt "(sig %s @[<hov>%a@] %a)" s.Emo_ast.sig_name pp_params
@@ -831,18 +835,21 @@ let def_tests =
         Alcotest.(check string)
           "span" "test.emo:1:5"
           (Span.to_string diagnostic.Diagnostic.span));
-    tc "a def must declare its return type" (fun () ->
-        let diagnostic = def_err "def f(a Int) {\n  return a\n}" in
-        Alcotest.(check string) "code" "E2012" (code_of diagnostic);
-        Alcotest.(check string)
-          "span" "test.emo:1:14"
-          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a def without a return annotation returns Void" (fun () ->
+        match parse_program "def log(msg String) {\n  print(msg)\n}" with
+        | [ def_item ] -> (
+            match def_item.Emo_ast.item_desc with
+            | Emo_ast.Item_def d ->
+                Alcotest.(check bool)
+                  "no return annotation" false
+                  (Option.is_some d.Emo_ast.def_return)
+            | _ -> Alcotest.fail "expected a def")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "the return type stays on the signature's line" (fun () ->
         let diagnostic = def_err "def f()\nInt {\n  return 1\n}" in
-        Alcotest.(check string) "code" "E2012" (code_of diagnostic);
-        Alcotest.(check string)
-          "span" "test.emo:2:1"
-          (Span.to_string diagnostic.Diagnostic.span));
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
     tc "the def body opens on the signature's line" (fun () ->
         let diagnostic = def_err "def f() Int\n{\n  return 1\n}" in
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
