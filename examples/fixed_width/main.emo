@@ -9,48 +9,48 @@
 const max = 9223372036854775807L
 const bytes8 = Bytes.new(8)
 
-print(max)
-print(max + 1L)
-print(-max - 1L)
-print(2L * 4611686018427387904L)
+println(max)
+println(max + 1L)
+println(-max - 1L)
+println(2L * 4611686018427387904L)
 
-print(-8L / 3L)
-print(-8L % 3L)
-print(~0L)
-print(-8L >> 1L)
-print(1L << 62L)
+println(-8L / 3L)
+println(-8L % 3L)
+println(~0L)
+println(-8L >> 1L)
+println(1L << 62L)
 
-print(255B)
-print(255B + 1B)
-print(0B - 1B)
-print(200B * 2B)
-print(~0B)
-print(255B >> 4B)
-print(1B << 7B)
-print(7B / 2B)
+println(255B)
+println(255B + 1B)
+println(0B - 1B)
+println(200B * 2B)
+println(~0B)
+println(255B >> 4B)
+println(1B << 7B)
+println(7B / 2B)
 
-print(10L > 9L)
-print(0B < 255B)
-print(1L == 1L)
-print(2B != 3B)
+println(10L > 9L)
+println(0B < 255B)
+println(1L == 1L)
+println(2B != 3B)
 
-print(Int64.from_int(42) + 1L)
-print(Int64.from_int(-1).to_byte())
-print(255B.to_int())
-print(Byte.from_int(200))
+println(Int64.from_int(42) + 1L)
+println(Int64.from_int(-1).to_byte())
+println(255B.to_int())
+println(Byte.from_int(200))
 
-print(65535.0.to_bits())
-print(Float.from_bits(4614256656552045848L))
+println(65535.0.to_bits())
+println(Float.from_bits(4614256656552045848L))
 
 // The Bytes u64 accessors carry an Int64 through eight little-endian
 // bytes — the pair that needs Int64 to exist.
-print(bytes8.set_u64_le(0, 1234605616436508552L))
-print(bytes8.get(0))
-print(bytes8.get(7))
-print(bytes8.get_u64_le(0))
-print(bytes8.set_u64_le(0, -1L))
-print(bytes8.get(0))
-print(bytes8.get_u64_le(0))
+println(bytes8.set_u64_le(0, 1234605616436508552L))
+println(bytes8.get(0))
+println(bytes8.get(7))
+println(bytes8.get_u64_le(0))
+println(bytes8.set_u64_le(0, -1L))
+println(bytes8.get(0))
+println(bytes8.get_u64_le(0))
 
 // The width rides along through parameters and returns.
 def double(x Int64) Int64 {
@@ -61,11 +61,11 @@ def step(b Byte) Byte {
   return b + 1B
 }
 
-print(double(max))
-print(step(255B))
+println(double(max))
+println(step(255B))
 
 // ... and through case patterns.
 case step(9B) {
-  10B -> { print("byte ten") }
-  _ -> { print("other") }
+  10B -> { println("byte ten") }
+  _ -> { println("other") }
 }
