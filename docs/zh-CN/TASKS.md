@@ -315,7 +315,29 @@
 
 ### Step 20 — wasm 运行时:解码器与验证器 · `plan/step-20-wasm-decoder.md`
 
-**前置:** 步骤 19。任务清单开工时撰写;而防止"仓内运行时"演变成"仓内语言"的三条边界——包边界、spec 数据不占默认测试路径、运行时离开本仓的条件——已在其中定下。
+**前置:** 步骤 19。
+**完成标准:** `runtime/wasm/` 能解码并验证 vendored spec 套件的二进制形式用例——每个合法模块被接受,每个 `assert_malformed` 用例在解码阶段被拒,每个 `assert_invalid` 用例在验证阶段被拒;默认 `dune test` 用 Emo 写的运行时跑一个冒烟子集,`wasm_spec` alias 跑全量清单且无 pending。
+
+- [ ] **T20.1** — 冒烟规则:`runtime/wasm/main.emo`、其金测文件,以及一条在沙箱里跑 `emo run main.emo` 的 `runtest` 规则。包不再空转;无需注册表也无需 native 工具链(deps 为 `{}`)。
+- [ ] **T20.2** — 用例清单格式与其十六进制编解码、语料运行器、`main.emo` / `spec.emo` 两个驱动,以及 `wasm_spec` alias。两个清单起始为空;汇总行报 `pending 0`。
+- [ ] **T20.3** — `devtools/vendor-wasm-spec`(把固定版本的 wasm spec 检出过一遍 `wast2json --no-check`)与首批语料:`binary.wast` 的二进制形式用例,以 `pending` 入库。与后续所有解码任务相互独立。
+- [ ] **T20.4** — 带诊断的失败值与 `Bytes` 读取器,每次访问前先做边界检查;截断读取类用例。
+- [ ] **T20.5** — LEB128(`u32`/`u64`/`s32`/`s64`)与 spec 的长度上限;`binary-leb128.wast` 加手写边界向量。
+- [ ] **T20.6** — 文件头与 section 遍历:magic、version、section id 与长度、顺序、自定义 section、未知 id、尾部多余字节。
+- [ ] **T20.7** — 类型 section,以及模块模型其余部分照抄的标签元组 / cons 链形状。
+- [ ] **T20.8** — 声明类 section:function、table、memory、global、import、export。
+- [ ] **T20.9** — element、data 与常量表达式。
+- [ ] **T20.10** — 操作码表与数值指令。
+- [ ] **T20.11** — 参数指令、变量指令与内存指令。
+- [ ] **T20.12** — 结构化指令:block/loop/if/else/end、br/br_if/br_table,以及 `end` 配对记账。
+- [ ] **T20.13** — 包表面的 `decode(bytes)`,以及合法模块语料。
+- [ ] **T20.14** — 验证上下文、各索引空间与函数签名检查。
+- [ ] **T20.15** — 普通指令的操作数类型栈。
+- [ ] **T20.16** — 控制帧:标签深度、分支操作数类型,以及分支之后的多态栈。
+- [ ] **T20.17** — 跨 section 规则:start 函数、element/data 偏移、limits、全局初始化器。
+- [ ] **T20.18** — 全量语料跑通且无 pending、冒烟子集、`runtime/wasm/README.md`、收尾。
+
+防止"仓内运行时"演变成"仓内语言"的三条边界——包边界、spec 数据不占默认测试路径、运行时离开本仓的条件——记录在计划文件中,连同运行时撞上的语言表面压力,以及让这份清单能在零散时间推进的任务粒度。
 
 ### Step 21 — wasm 运行时:解释器内核与 spec 套件金测(开工时撰写计划)
 
