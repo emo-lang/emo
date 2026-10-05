@@ -717,12 +717,13 @@ and parse_def st ~in_class =
     })
   else
     let def_params = parse_params st in
+    (* A def without a return annotation returns Void: no `return` may
+       appear in its body. Interface methods stay explicit — a signature
+       is a contract. *)
     let def_return =
       if (not (newline_before st)) && starts_type st then
         Some (parse_type_ann st)
-      else
-        error "E2012" (span st) "a def must declare its return type"
-          ~hint:"function signatures always carry explicit types"
+      else None
     in
     let def_body, close_span = parse_def_body st in
     {

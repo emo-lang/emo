@@ -416,6 +416,36 @@ print(even(500000))|}));
 
 let control_flow_tests =
   [
+    tc "a Void function ends without `return`" (fun () ->
+        Alcotest.(check string)
+          "void def" "log: start\n2\n1\n"
+          (run_program
+             {|def log(msg String) {
+  print("log: " + msg)
+}
+
+def tick(n Int) {
+  if n > 0 {
+    print(n)
+    tick(n - 1)
+  }
+}
+
+log("start")
+tick(2)|}));
+    tc "a Void trailing block runs without a `return`" (fun () ->
+        Alcotest.(check string)
+          "void block" "title\ninside block\n"
+          (run_program
+             {|def page(title String, content Block) Block {
+  print(title)
+  content()
+  return content
+}
+
+page(title: "title") {
+  print("inside block")
+}|}));
     tc "case matches literals first-match, top to bottom" (fun () ->
         Alcotest.(check string)
           "case" "one\ntwo\nmany\n"

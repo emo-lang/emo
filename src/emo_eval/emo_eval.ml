@@ -16,6 +16,7 @@ type value =
   | Int of int
   | Float of float
   | Bool of bool
+  | Void
   | Char of char
   | String of string
   | Tuple of value list
@@ -99,6 +100,10 @@ and closure = {
   params : Ast.param list;
   body : Ast.stmt list;
   env : env;
+  void_ok : bool;
+      (* the body may end without `return` — a def with no return type
+         (Void) and any arrow block; the checker rejects stray returns in
+         these, so falling off the end yields Void instead of an error *)
 }
 
 and module_handle = {
@@ -143,6 +148,7 @@ let type_name = function
   | Int _ -> "Int"
   | Float _ -> "Float"
   | Bool _ -> "Bool"
+  | Void -> "Void"
   | Char _ -> "Char"
   | String _ -> "String"
   | Tuple _ -> "Tuple"
@@ -169,6 +175,7 @@ let rec equal_value a b =
   | Int x, Int y -> Int.equal x y
   | Float x, Float y -> Float.equal x y
   | Bool x, Bool y -> Bool.equal x y
+  | Void, Void -> true
   | Char x, Char y -> Char.equal x y
   | String x, String y -> String.equal x y
   | Tuple xs, Tuple ys ->
@@ -314,6 +321,7 @@ let rec to_string v =
       if Float.is_integer f && Float.abs f < 1e16 then Printf.sprintf "%.1f" f
       else Printf.sprintf "%g" f
   | Bool b -> string_of_bool b
+  | Void -> "void"
   | Char c -> String.make 1 c
   | String s -> s
   | Tuple vs -> "(" ^ String.concat ", " (List.map to_string vs) ^ ")"
@@ -1520,9 +1528,11 @@ and eval_frame closure frame span =
         try
           let rec run = function
             | [] ->
-                error span "E3008"
-                  (Printf.sprintf "reached the end of %s without `return`"
-                     closure.def_name)
+                if closure.void_ok then Void
+                else
+                  error span "E3008"
+                    (Printf.sprintf "reached the end of %s without `return`"
+                       closure.def_name)
             | stmt :: rest ->
                 let () = eval_stmt frame stmt in
                 run rest
@@ -1768,7 +1778,8 @@ and eval_expr env e =
   | Ast.Tuple es -> Tuple (List.map (eval_expr env) es)
   | Ast.Array_literal es -> Array (Array.of_list (List.map (eval_expr env) es))
   | Ast.Arrow_block (params, body) ->
-      ArrowBlock { def_name = "<arrow block>"; params; body; env }
+      ArrowBlock
+        { def_name = "<arrow block>"; params; body; env; void_ok = true }
   | Ast.Unary (op, x) -> eval_unary env span op x
   | Ast.Binary (op, l, r) -> eval_binary env span op l r
   | Ast.Call (callee, args) -> eval_call env span callee args
@@ -1793,6 +1804,15 @@ and eval_expr env e =
           error span "E3007"
             "`do` starts a process from a call, like `do work()`")
 
+(* A def whose signature declares no return type — or declares Void —
+   ends without `return`; the checker rejects any `return` in such a
+   body, so falling off the end is the normal exit. *)
+let may_end_without_return (d : Ast.fun_def) =
+  match d.Ast.def_return with
+  | None -> true
+  | Some { Ast.type_desc = Ast.Named_type "Void"; _ } -> true
+  | Some _ -> false
+
 (* Top-level items: defs register closures in the environment, statements
    run in order. Closures capture [env] by reference, so a def resolves
    names against the frame as it stands when the call happens — recursion
@@ -1803,6 +1823,7 @@ let method_closure class_name env d =
     params = d.Ast.def_params;
     body = d.Ast.def_body;
     env;
+    void_ok = may_end_without_return d;
   }
 
 let eval_item env item =
@@ -1820,6 +1841,7 @@ let eval_item env item =
              params = d.Ast.def_params;
              body = d.Ast.def_body;
              env;
+             void_ok = may_end_without_return d;
            })
   | Ast.Item_class c ->
       define env c.Ast.class_name ~mutable_:false
@@ -1867,6 +1889,7 @@ let eval_item env item =
                  params = d.Ast.def_params;
                  body = d.Ast.def_body;
                  env;
+                 void_ok = may_end_without_return d;
                }))
         g.Ast.group_defs;
       List.iter

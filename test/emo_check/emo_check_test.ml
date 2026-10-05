@@ -192,7 +192,7 @@ let signature_tests =
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check int) "count" 0 (List.length diagnostics));
-    tc "a block with no returns infers Unknown and stays silent as a value"
+    tc "a block with no returns infers Void and stays silent as a value"
       (fun () ->
         let diagnostics = check {|const h = -> (n Int) {
   print(n)
@@ -535,7 +535,13 @@ def f(c Color) Int {
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check bool) "E4014" true (has_code diagnostics "E4014");
         let message =
-          match diagnostics with d :: _ -> d.Diagnostic.message | [] -> ""
+          match
+            List.find_opt
+              (fun d -> d.Diagnostic.code = Some "E4014")
+              diagnostics
+          with
+          | Some d -> d.Diagnostic.message
+          | None -> ""
         in
         Alcotest.(check bool)
           "names the missing members" true
@@ -672,6 +678,90 @@ page(titel: "Home")|}
         Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
   ]
 
+let void_tests =
+  [
+    tc "a def with no return annotation is a Void function" (fun () ->
+        if List.length (check {|def log(msg String) {
+  print(msg)
+}|}) > 0 then
+          Alcotest.fail "expected a clean check");
+    tc "an explicit Void annotation behaves like the omitted form" (fun () ->
+        if List.length (check {|def log(msg String) Void {
+  print(msg)
+}|}) > 0
+        then Alcotest.fail "expected a clean check");
+    tc "a `return` in a Void function is E4016" (fun () ->
+        let diagnostics =
+          check {|def log(msg String) {
+  print(msg)
+  return
+}|}
+        in
+        Alcotest.(check bool) "E4016" true (has_code diagnostics "E4016"));
+    tc "a `return` carrying a value is E4016 too" (fun () ->
+        let diagnostics = check {|def f() Void {
+  return Void
+}|} in
+        Alcotest.(check bool) "E4016" true (has_code diagnostics "E4016"));
+    tc "a def with a declared return type must return on every path" (fun () ->
+        let diagnostics =
+          check {|def f(x Int) Int {
+  if x > 0 {
+    return 1
+  }
+}|}
+        in
+        Alcotest.(check bool) "E4017" true (has_code diagnostics "E4017"));
+    tc "an exhaustive case satisfies the return requirement" (fun () ->
+        if
+          List.length
+            (check
+               {|enum Color { red, green }
+
+def f(c Color) Int {
+  case c {
+    Color.red -> { return 1 }
+    Color.green -> { return 2 }
+  }
+}|})
+          > 0
+        then Alcotest.fail "expected a clean check");
+    tc "a valueless `return` in a typed function is E4018" (fun () ->
+        let diagnostics =
+          check {|def f(x Int) Int {
+  if x > 0 {
+    return
+  }
+  return 2
+}|}
+        in
+        Alcotest.(check bool) "E4018" true (has_code diagnostics "E4018"));
+    tc "a Void block passed to a Block parameter checks clean" (fun () ->
+        if
+          List.length
+            (check
+               {|def page(title String, content Block) Block {
+  print(title)
+  content()
+  return content
+}
+
+page(title: "Home") {
+  print("inside")
+}|})
+          > 0
+        then Alcotest.fail "expected a clean check");
+    tc "a block returning a value must return on every path" (fun () ->
+        let diagnostics =
+          check {|const f = -> (n Int) {
+  if n > 0 {
+    return 1
+  }
+}|}
+        in
+        Alcotest.(check bool) "E4017" true (has_code diagnostics "E4017"));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -683,5 +773,6 @@ let () =
       ("interface", interface_tests);
       ("var_escape", var_escape_tests);
       ("case", case_tests);
+      ("void", void_tests);
       ("corpus", corpus_tests);
     ]

@@ -549,7 +549,7 @@ and lower_func env ~(module_path : string list) ~(mangled : string)
     fresult =
       (match d.Ast.def_return with
       | Some r -> ann_type r
-      | None -> Emo_check.Unknown);
+      | None -> Emo_check.Void);
     fbody;
     fspecializable = false;
     fforeign = None;
@@ -563,6 +563,7 @@ and ann_type (a : Ast.type_ann) : Emo_check.t =
   | Ast.Named_type "Char" -> Emo_check.Char
   | Ast.Named_type "String" -> Emo_check.String
   | Ast.Named_type "Pid" -> Emo_check.Pid
+  | Ast.Named_type "Void" -> Emo_check.Void
   | _ -> Emo_check.Unknown
 
 (* ---- Stage B completeness ----

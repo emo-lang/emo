@@ -37,6 +37,9 @@ type env = {
   specialize : bool; (* Stage B on/off for the whole build *)
   mutable native : bool; (* emitting a specialized body right now *)
   mutable fname : string; (* the function being emitted *)
+  mutable fresult : Emo_check.t;
+      (* the current function's declared result type; the specialized
+         emitter keys its fall-off on it (Void ends without `return`) *)
 }
 
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -46,7 +49,10 @@ let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
 
 let rec emit_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool) : string =
   match stmts with
-  | [] -> if tail then "Emo_runtime.no_return ()" else "()"
+  | [] ->
+      (* A Void function or arrow block ends without `return` and yields
+         Void; the checker rejects a fall-off in any other body. *)
+      if tail then "Emo_eval.Void" else "()"
   | [ stmt ] -> emit_stmt env stmt ~tail
   | stmt :: rest -> (
       match stmt with
@@ -567,6 +573,13 @@ let rec emit_native_pattern env (p : Emo_ast.pattern) : string =
 
 and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
     ~(arm_unit : bool) : string =
+  (* A specialized body never contains an arrow block, so the function's
+     own result type decides the fall-off: Void ends and yields Void;
+     anything else is checker-impossible and traps. *)
+  let fall () =
+    if env.fresult = Emo_check.Void then "Emo_eval.Void"
+    else "Emo_runtime.no_return ()"
+  in
   (* Inside an if-arm, an explicit [return] leaves the function through
      the [Native_return] exception — its value is never dropped. *)
   (match stmts with
@@ -578,7 +591,7 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
   | Some code -> code
   | None -> (
       match stmts with
-      | [] -> if arm_unit then "()" else "Emo_runtime.no_return ()"
+      | [] -> if arm_unit then "()" else fall ()
       | [ Emo_ir.Return_stmt e ] -> emit_native_expr env e
       | [ Emo_ir.Effect { desc = Emo_ir.Do_spawn { func; args } } ] ->
           let spawn =
@@ -588,19 +601,18 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
               func
           in
           if arm_unit then Printf.sprintf "(let _ = %s in ())" spawn
-          else Printf.sprintf "(let _ = %s in\nEmo_runtime.no_return ())" spawn
+          else Printf.sprintf "(let _ = %s in\n%s)" spawn (fall ())
       | [ Emo_ir.Send { target; message } ] ->
           let send_code =
             Printf.sprintf "(Emo_runtime.send (%s) (%s))" (emit_expr env target)
               (emit_expr env message)
           in
           if arm_unit then Printf.sprintf "(let _ = %s in ())" send_code
-          else
-            Printf.sprintf "(let _ = %s in\nEmo_runtime.no_return ())" send_code
+          else Printf.sprintf "(let _ = %s in\n%s)" send_code (fall ())
       | [ Emo_ir.Receive { branches } ] ->
           let recv = emit_receive env branches ~tail:false in
           if arm_unit then Printf.sprintf "(let _ = %s in ())" recv
-          else Printf.sprintf "(let _ = %s in\nEmo_runtime.no_return ())" recv
+          else Printf.sprintf "(let _ = %s in\n%s)" recv (fall ())
       | [ Emo_ir.Case { scrutinee; branches } ] ->
           (* a native case: integer/binding/wildcard patterns with
              optional guards, as OCaml match arms; bindings enter
@@ -635,7 +647,7 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
                   | _ -> false)
                 branches
             then ""
-            else "\n| _ -> Emo_runtime.no_return ()"
+            else Printf.sprintf "\n| _ -> %s" (fall ())
           in
           env.refs <- saved_refs;
           Printf.sprintf "(let %s = %s in\nmatch %s with\n%s%s)" sv
@@ -645,17 +657,17 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
           if arm_unit then
             Printf.sprintf "(let _ = %s in ())" (emit_native_expr env e)
           else
-            Printf.sprintf "(let _ = %s in Emo_runtime.no_return ())"
-              (emit_native_expr env e)
+            Printf.sprintf "(let _ = %s in\n%s)" (emit_native_expr env e)
+              (fall ())
       | [ Emo_ir.Let { mutable_ = false; name; init } ] ->
           env.refs <- local name :: env.refs;
           if arm_unit then
             Printf.sprintf "(let %s = %s in ())" (local name)
               (emit_native_expr env init)
           else
-            Printf.sprintf "let %s = %s in\nEmo_runtime.no_return ()"
-              (local name)
+            Printf.sprintf "let %s = %s in\n%s" (local name)
               (emit_native_expr env init)
+              (fall ())
       | [ Emo_ir.If { cond; then_; else_ } ] ->
           Printf.sprintf "(if %s then\n(%s)\nelse\n(%s))"
             (emit_native_expr env cond)
@@ -755,6 +767,7 @@ and emit_specialized_func (f : Emo_ir.func) : string =
       specialize = true;
       native = true;
       fname = f.Emo_ir.fname;
+      fresult = f.Emo_ir.fresult;
     }
   in
   env.refs <- List.map (fun (p, _) -> local p) f.Emo_ir.fparams;
@@ -877,6 +890,7 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
       specialize;
       native = false;
       fname = "<pinit>";
+      fresult = Emo_check.Unknown;
     }
   in
   put env "(* generated by emo build — do not edit *)\n";

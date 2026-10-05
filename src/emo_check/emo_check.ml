@@ -7,6 +7,7 @@ module Ast = Emo_ast
 (* The checker's type language. *)
 type t =
   | Unknown
+  | Void
   | Int
   | Float
   | Bool
@@ -26,6 +27,7 @@ type t =
 
 let rec to_string = function
   | Unknown -> "Unknown"
+  | Void -> "Void"
   | Int -> "Int"
   | Float -> "Float"
   | Bool -> "Bool"
@@ -103,6 +105,7 @@ let rec ann_to_type ?(lenient = false) ctx
   | Ast.Named_type "TcpConn" -> TcpConn
   | Ast.Named_type "TcpListener" -> TcpListener
   | Ast.Named_type "UdpSocket" -> UdpSocket
+  | Ast.Named_type "Void" -> Void
   | Ast.Named_type "Block" -> Unknown
   | Ast.Named_type "Box" -> BoxType Unknown
   | Ast.Named_type name ->
@@ -153,7 +156,9 @@ let collect ctx (items : Ast.item list) : unit =
                     mret =
                       (match d.Ast.def_return with
                       | Some r -> ann_to_type ctx r
-                      | None -> Unknown (* init *));
+                      | None ->
+                          if String.equal d.Ast.def_name "init" then Unknown
+                          else Void (* a method with no annotation *));
                     mdef = d;
                   } ))
               c.Ast.class_methods
@@ -284,6 +289,9 @@ type env = {
   block_depth : int;
       (* definition depth of the innermost enclosing arrow block, -1 when
          none; a `var` from a shallower scope cannot be captured *)
+  in_void : bool;
+      (* true while checking a function whose return type is Void; any
+         `return` inside is E4016 *)
 }
 
 (* The built-in surface every program sees. *)
@@ -377,6 +385,7 @@ let empty_env =
     depth = 0;
     ret = None;
     block_depth = -1;
+    in_void = false;
   }
 
 let lookup_env env name = List.assoc_opt name env.bindings
@@ -650,7 +659,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                 is_var = false;
                 depth = env.depth;
               })
-          { (child_scope env) with block_depth = env.depth; ret = None }
+          {
+            (child_scope env) with
+            block_depth = env.depth;
+            ret = None;
+            in_void = false;
+          }
           params
       in
       let sink = ref [] in
@@ -663,10 +677,15 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
       let rets = List.rev !sink in
       let inferred =
         match rets with
-        | [] -> Unknown
+        | [] -> Void
         | first :: rest ->
             if List.for_all (conforms ctx first) rest then first else Unknown
       in
+      (* A block that returns a value must return on every path; a block
+         with no return is a Void block and may simply end. *)
+      if rets <> [] && not (definitely_returns ctx body) then
+        report ctx span "E4017"
+          "this block returns a value, so every path must end in `return`";
       FuncType (param_types, inferred)
   | Ast.Unary (op, x) -> (
       let xt = check_expr ctx env x in
@@ -1180,17 +1199,31 @@ and check_stmt ctx env (s : Ast.stmt) : env =
                 (Printf.sprintf "`%s` is not defined" name);
               env)
       | _ -> env (* field assignment: constructor-only, parser-checked *))
-  | Ast.Return None -> env
+  | Ast.Return None ->
+      if env.in_void then
+        report ctx span "E4016"
+          "a function returning Void takes no `return`; let the body end \
+           instead"
+      else
+        report ctx span "E4018"
+          "`return` must carry a value; a function with nothing to return \
+           omits the return type and ends without `return`";
+      env
   | Ast.Return (Some e) ->
       let t = check_expr ctx env e in
-      ctx.ret_sink := t :: !(ctx.ret_sink);
-      (match env.ret with
-      | Some expected when t <> Unknown && expected <> Unknown ->
-          if not (conforms ctx t expected) then
-            report ctx e.Ast.span "E4008"
-              (Printf.sprintf "return type mismatch: expected %s, got %s"
-                 (to_string expected) (to_string t))
-      | _ -> ());
+      if env.in_void then
+        report ctx span "E4016"
+          "a function returning Void takes no `return`; let the body end \
+           instead"
+      else (
+        ctx.ret_sink := t :: !(ctx.ret_sink);
+        match env.ret with
+        | Some expected when t <> Unknown && expected <> Unknown ->
+            if not (conforms ctx t expected) then
+              report ctx e.Ast.span "E4008"
+                (Printf.sprintf "return type mismatch: expected %s, got %s"
+                   (to_string expected) (to_string t))
+        | _ -> ());
       env
   | Ast.If { cond; then_body; else_body } ->
       let ct = check_expr ctx env cond in
@@ -1392,6 +1425,10 @@ and pattern_coverage scrutinee_t (p : Ast.pattern) : coverage =
   in
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_binding _ -> All
+  | Ast.Enum_member (t, m) -> (
+      match scrutinee_t with
+      | EnumType e when String.equal t e -> Members [ m ]
+      | _ -> Members [])
   | Ast.Tuple_pattern (first :: _) ->
       (* The first element's coverage is checked against the element's
          own type, not the whole tuple scrutinee. *)
@@ -1401,57 +1438,96 @@ and pattern_coverage scrutinee_t (p : Ast.pattern) : coverage =
       first_members elem_t first.Ast.pattern_desc
   | _ -> Members []
 
+(* The members of a decidable enum scrutinee (bare or tuple-first) that no
+   unguarded branch covers; [None] when coverage cannot be decided. A `_`
+   or binding pattern covers any scrutinee, decidable or not. *)
+and case_missing_members ctx scrutinee_t (branches : Ast.branch list) :
+    string list option =
+  let unguarded = List.filter (fun b -> b.Ast.guard = None) branches in
+  let coverings =
+    List.map (fun b -> pattern_coverage scrutinee_t b.Ast.pattern) unguarded
+  in
+  let covered =
+    List.concat_map (function All -> [] | Members ms -> ms) coverings
+  in
+  let missing members =
+    Some (List.filter (fun m -> not (List.mem m covered)) members)
+  in
+  if List.exists (fun c -> c = All) coverings then Some []
+  else
+    match scrutinee_t with
+    | EnumType e -> Option.bind (Hashtbl.find_opt ctx.enums e) missing
+    | TupleType (EnumType e :: _) ->
+        Option.bind (Hashtbl.find_opt ctx.enums e) missing
+    | _ -> None
+
 (* Exhaustiveness: a decidable enum scrutinee needs every member covered by
    an unguarded branch (or `_`); a decidable `(SomeEnum, ...)` tuple is
    checked through its first-element patterns. Guarded branches never
    count — their `when` may be false. *)
 and check_exhaustive ctx span scrutinee_t (branches : Ast.branch list) : unit =
-  let unguarded = List.filter (fun b -> b.Ast.guard = None) branches in
-  let coverings =
-    List.map (fun b -> pattern_coverage scrutinee_t b.Ast.pattern) unguarded
-  in
-  let covers_all = List.exists (fun c -> c = All) coverings in
-  let covered =
-    List.concat_map (function All -> [] | Members ms -> ms) coverings
-  in
-  let check_enum members =
-    if not covers_all then
-      match List.filter (fun m -> not (List.mem m covered)) members with
-      | [] -> ()
-      | missing ->
-          report ctx span "E4014"
-            (Printf.sprintf "this `case` is missing %s"
-               (String.concat ", " missing))
-  in
-  match scrutinee_t with
-  | EnumType e -> (
-      match Hashtbl.find_opt ctx.enums e with
-      | Some members -> check_enum members
-      | None -> ())
-  | TupleType (EnumType e :: _) -> (
-      match Hashtbl.find_opt ctx.enums e with
-      | Some members -> check_enum members
-      | None -> ())
-  | _ -> ()
+  match case_missing_members ctx scrutinee_t branches with
+  | None | Some [] -> ()
+  | Some missing ->
+      report ctx span "E4014"
+        (Printf.sprintf "this `case` is missing %s"
+           (String.concat ", " missing))
+
+(* Definite return: every execution path through the statements ends in
+   `return` — or diverges through `raise`, an exhaustive `case` whose
+   branches all return, or a `receive` whose branches all return. A
+   function with a declared return type must satisfy this; a Void function
+   is the opposite and must contain no `return` at all. *)
+and definitely_returns ctx (stmts : Ast.stmt list) : bool =
+  match List.rev stmts with last :: _ -> always_returns ctx last | [] -> false
+
+and always_returns ctx (s : Ast.stmt) : bool =
+  match s.Ast.stmt_desc with
+  | Ast.Return (Some _) -> true
+  | Ast.Return None -> false
+  | Ast.Raise _ -> true
+  | Ast.If { then_body; else_body = Some else_body; _ } ->
+      definitely_returns ctx then_body && definitely_returns ctx else_body
+  | Ast.Case { scrutinee; branches } -> (
+      let scrutinee_t =
+        match
+          Hashtbl.find_opt ctx.types scrutinee.Ast.span.Emo_support.Span.start
+        with
+        | Some t -> t
+        | None -> Unknown
+      in
+      match case_missing_members ctx scrutinee_t branches with
+      | Some [] ->
+          List.for_all (fun b -> definitely_returns ctx b.Ast.body) branches
+      | _ -> false)
+  | Ast.Receive branches ->
+      List.for_all (fun b -> definitely_returns ctx b.Ast.body) branches
+  | _ -> false
 
 let signature_of_def ctx (d : Ast.fun_def) : t =
   FuncType
     ( List.map
         (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
         d.Ast.def_params,
-      match d.Ast.def_return with
-      | Some r -> ann_to_type ctx r
-      | None -> Unknown )
+      match d.Ast.def_return with Some r -> ann_to_type ctx r | None -> Void )
 
 (* Signature checks: the body runs under the declared parameter types with
-   the declared return type as the target; `init` is exempt (it returns the
-   class it constructs). *)
+   the declared return type as the target; `init` is exempt (it returns
+   the class it constructs). A def with no return annotation returns Void:
+   its body must contain no `return`, and it may simply end. *)
 let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
+  let is_init = String.equal d.Ast.def_name "init" in
+  let effective =
+    match d.Ast.def_return with
+    | Some r -> ann_to_type ctx r
+    | None -> if is_init then Unknown else Void
+  in
   let frame =
     {
       (child_scope env) with
-      ret = Option.map (ann_to_type ctx) d.Ast.def_return;
+      ret = (if is_init then None else Some effective);
       block_depth = -1;
+      in_void = (not is_init) && effective = Void;
     }
   in
   let frame =
@@ -1478,7 +1554,17 @@ let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
       frame d.Ast.def_params
   in
   ignore
-    (List.fold_left (fun env s -> check_stmt ctx env s) frame d.Ast.def_body)
+    (List.fold_left (fun env s -> check_stmt ctx env s) frame d.Ast.def_body);
+  (* A def with a declared return type must return on every path; a Void
+     def simply ends. *)
+  if
+    (not is_init) && effective <> Void
+    && not (definitely_returns ctx d.Ast.def_body)
+  then
+    report ctx d.Ast.def_span "E4017"
+      (Printf.sprintf
+         "`%s` declares the return type %s, so every path must end in `return`"
+         d.Ast.def_name (to_string effective))
 
 (* Class bodies: every method is checked under its signature with self
    bound to the class. *)
@@ -1559,7 +1645,7 @@ let check_items ctx (items : Ast.item list) : unit =
                        d.Ast.def_params,
                      match d.Ast.def_return with
                      | Some r -> ann_to_type ctx r
-                     | None -> Unknown ))
+                     | None -> Void ))
                  g.Ast.group_defs
              in
              Hashtbl.replace ctx.groups g.Ast.group_name (defs, []);
