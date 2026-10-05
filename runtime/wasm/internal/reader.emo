@@ -101,6 +101,57 @@ def copy_into(out Bytes, src Bytes, dst_at Int, src_at Int, n Int) Int {
   return copy_into(out, src, dst_at + 1, src_at + 1, n - 1)
 }
 
+// ---- constant expressions (T20.9) ----
+//
+// The initializer-expression subset (global initializers, element and
+// data offsets): instructions until the terminating 0x0b. A byte
+// outside the subset bails as "illegal opcode" for now — the full
+// opcode table (T20.10) is what separates that malformed family from
+// the invalid-phase non-constant instructions.
+
+def const_expr(r Reader) Reader {
+  if r.failed {
+    return r
+  }
+  const p = u8(r)
+  const r1 = p[0]
+  const op = p[1]
+  if r1.failed {
+    return r1
+  }
+  if op == 11 {
+    return r1
+  }
+  if op == 65 {
+    return const_expr(s32(r1)[0])
+  }
+  if op == 66 {
+    return const_expr(s64(r1)[0])
+  }
+  if op == 67 {
+    return const_expr(take(r1, 4)[0])
+  }
+  if op == 68 {
+    return const_expr(take(r1, 8)[0])
+  }
+  if op == 208 {
+    // ref.null: one reftype byte (0x70 funcref, 0x6f externref)
+    const t = u8(r1)
+    const b = t[1]
+    if t[0].failed {
+      return t[0]
+    }
+    if b == 112 || b == 111 {
+      return const_expr(t[0])
+    }
+    return bail(t[0], t[0].pos, "malformed reference type")
+  }
+  if op == 210 || op == 35 {
+    return const_expr(u32(r1)[0])
+  }
+  return bail(r1, r1.pos, "illegal opcode")
+}
+
 // ---- LEB128 ----
 //
 // The unsigned/signed encodings with the spec's length caps: an

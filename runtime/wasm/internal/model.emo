@@ -191,30 +191,35 @@ def name(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
   return (true, p[1], r.pos)
 }
 
+// Section content decoders return (ok, msg, fail_offset, end_pos):
+// on success msg is empty, fail_offset -1, and end_pos the position
+// the content ended at (the caller compares it with the section end —
+// a difference is a "section size mismatch").
+
 // The import section: vec of (module name, name, importdesc).
-def import_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+def import_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
-    return (false, "malformed import section", cn[0].fail_offset, "")
+    return (false, "malformed import section", cn[0].fail_offset, -1)
   }
   return import_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def import_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+def import_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
   if n == 0 {
-    return (true, "", -1, "")
+    return (true, "", -1, pos)
   }
   const m = name(data, pos, limit)
   if !m[0] {
-    return (false, "malformed import section", m[2], "")
+    return (false, "malformed import section", m[2], -1)
   }
   const nm = name(data, m[2], limit)
   if !nm[0] {
-    return (false, "malformed import section", nm[2], "")
+    return (false, "malformed import section", nm[2], -1)
   }
   const d = import_desc(data, nm[2], limit)
   if !d[0] {
-    return (false, "malformed import section", d[2], "")
+    return (false, "malformed import section", d[2], -1)
   }
   return import_rest(data, d[2], limit, n - 1)
 }
@@ -249,93 +254,343 @@ def import_desc(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
 }
 
 // The function section: vec of type indices.
-def func_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+def func_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
-    return (false, "malformed function section", cn[0].fail_offset, "")
+    return (false, "malformed function section", cn[0].fail_offset, -1)
   }
   return u32_vec_rest(data, cn[0].pos, limit, cn[1])
 }
 
 // The table section: vec of tabletypes.
-def table_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+def table_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
-    return (false, "malformed table section", cn[0].fail_offset, "")
+    return (false, "malformed table section", cn[0].fail_offset, -1)
   }
   return table_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def table_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+def table_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
   if n == 0 {
-    return (true, "", -1, "")
+    return (true, "", -1, pos)
   }
   const t = tabletype(data, pos, limit)
   if !t[0] {
-    return (false, "malformed table section", pos, "")
+    return (false, "malformed table section", pos, -1)
   }
   return table_rest(data, t[5], limit, n - 1)
 }
 
 // The memory section: vec of memtypes.
-def memory_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+def memory_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
-    return (false, "malformed memory section", cn[0].fail_offset, "")
+    return (false, "malformed memory section", cn[0].fail_offset, -1)
   }
   return memory_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def memory_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+def memory_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
   if n == 0 {
-    return (true, "", -1, "")
+    return (true, "", -1, pos)
   }
   const t = memtype(data, pos, limit)
   if !t[0] {
-    return (false, "malformed memory section", pos, "")
+    return (false, "malformed memory section", pos, -1)
   }
   return memory_rest(data, t[4], limit, n - 1)
 }
 
 // The export section: vec of (name, kind byte, index).
-def export_section(data Bytes, pos Int, limit Int) (Bool, String, Int, String) {
+def export_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
-    return (false, "malformed export section", cn[0].fail_offset, "")
+    return (false, "malformed export section", cn[0].fail_offset, -1)
   }
   return export_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def export_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+def export_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
   if n == 0 {
-    return (true, "", -1, "")
+    return (true, "", -1, pos)
   }
   const nm = name(data, pos, limit)
   if !nm[0] {
-    return (false, "malformed export section", nm[2], "")
+    return (false, "malformed export section", nm[2], -1)
   }
   if nm[2] >= limit {
-    return (false, "malformed export section", nm[2], "")
+    return (false, "malformed export section", nm[2], -1)
   }
   const kind = data.get(nm[2])
   if kind > 3 {
-    return (false, "malformed export section", nm[2], "")
+    return (false, "malformed export section", nm[2], -1)
   }
   const t = internal.reader.u32(internal.reader.new(data, nm[2] + 1, limit))
   if t[0].failed {
-    return (false, "malformed export section", t[0].fail_offset, "")
+    return (false, "malformed export section", t[0].fail_offset, -1)
   }
   return export_rest(data, t[0].pos, limit, n - 1)
 }
 
 // A shared vec-of-u32 walker (the function section's shape).
-def u32_vec_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, String) {
+def u32_vec_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
   if n == 0 {
-    return (true, "", -1, "")
+    return (true, "", -1, pos)
   }
   const p = internal.reader.u32(internal.reader.new(data, pos, limit))
   if p[0].failed {
-    return (false, "malformed function section", p[0].fail_offset, "")
+    return (false, "malformed function section", p[0].fail_offset, -1)
   }
   return u32_vec_rest(data, p[0].pos, limit, n - 1)
+}
+
+// ---- element, data, and global sections (T20.9) ----
+//
+// The initializer expressions decode through the reader's
+// constant-expression subset; everything else in these sections is
+// byte-level shape checking. Decoded values drop until the module
+// threading lands (T20.13).
+
+def debug_global(label String, data Bytes, limit Int) Int {
+  const s = global_section(data, 0, limit)
+  println(label + ": ok=" + s[0].to_string() + " end=" + s[3].to_string()
+    + " msg=" + s[1])
+  return 0
+}
+
+// The global section: vec of (globaltype, init expression).
+def global_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, "malformed global section", cn[0].fail_offset, -1)
+  }
+  return global_rest(data, cn[0].pos, limit, cn[1])
+}
+
+def global_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+  if n == 0 {
+    return (true, "", -1, pos)
+  }
+  const gt = globaltype(data, pos, limit)
+  if !gt[0] {
+    return (false, "malformed global section", pos, -1)
+  }
+  const e = internal.reader.const_expr(
+    internal.reader.new(data, gt[3], limit))
+  if e.failed {
+    return (false, "malformed global section", e.fail_offset, -1)
+  }
+  return global_rest(data, e.pos, limit, n - 1)
+}
+
+// An element kind byte must be exactly 0x00 (a funcref element kind).
+def elemkind(data Bytes, pos Int, limit Int) (Bool, Int) {
+  if pos >= limit {
+    return (false, pos)
+  }
+  if data.get(pos) != 0 {
+    return (false, pos)
+  }
+  return (true, pos + 1)
+}
+
+// A reference type byte for element segments (0x70 / 0x6f).
+def elem_reftype(data Bytes, pos Int, limit Int) (Bool, Int) {
+  if pos >= limit {
+    return (false, pos)
+  }
+  const b = data.get(pos)
+  if b == 112 || b == 111 {
+    return (true, pos + 1)
+  }
+  return (false, pos)
+}
+
+// A vector of function indices.
+def funcidx_vec(data Bytes, pos Int, limit Int) (Bool, Int) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, cn[0].fail_offset)
+  }
+  return u32_vec_end(data, cn[0].pos, limit, cn[1])
+}
+
+def u32_vec_end(data Bytes, pos Int, limit Int, n Int) (Bool, Int) {
+  if n == 0 {
+    return (true, pos)
+  }
+  const p = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if p[0].failed {
+    return (false, p[0].fail_offset)
+  }
+  return u32_vec_end(data, p[0].pos, limit, n - 1)
+}
+
+// A vector of constant expressions.
+def expr_vec(data Bytes, pos Int, limit Int) (Bool, Int) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, cn[0].fail_offset)
+  }
+  return expr_vec_rest(data, cn[0].pos, limit, cn[1])
+}
+
+def expr_vec_rest(data Bytes, pos Int, limit Int, n Int) (Bool, Int) {
+  if n == 0 {
+    return (true, pos)
+  }
+  const e = internal.reader.const_expr(internal.reader.new(data, pos, limit))
+  if e.failed {
+    return (false, e.fail_offset)
+  }
+  return expr_vec_rest(data, e.pos, limit, n - 1)
+}
+
+// A vector of raw bytes (a data payload).
+def byte_vec(data Bytes, pos Int, limit Int) (Bool, Int) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, cn[0].fail_offset)
+  }
+  if cn[1] > internal.reader.remaining(cn[0]) {
+    return (false, cn[0].pos)
+  }
+  const r = internal.reader.skip(cn[0], cn[1])
+  return (true, r.pos)
+}
+
+// The element section: one flag byte per segment selects the shape
+// (active/passive/declarative, funcidx or expression vectors).
+def elem_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, "malformed element section", cn[0].fail_offset, -1)
+  }
+  return elem_rest(data, cn[0].pos, limit, cn[1])
+}
+
+def elem_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+  if n == 0 {
+    return (true, "", -1, pos)
+  }
+  if pos >= limit {
+    return (false, "malformed element section", pos, -1)
+  }
+  const flag = data.get(pos)
+  var r = pos + 1
+  if flag == 0 {
+    const o = expr_vec(data, r, limit)
+    if !o[0] { return (false, "malformed element section", o[1], -1) }
+    const f = funcidx_vec(data, o[1], limit)
+    if !f[0] { return (false, "malformed element section", f[1], -1) }
+    r = f[1]
+  }
+  if flag == 1 {
+    const k = elemkind(data, r, limit)
+    if !k[0] { return (false, "malformed element section", k[1], -1) }
+    const f = funcidx_vec(data, k[1], limit)
+    if !f[0] { return (false, "malformed element section", f[1], -1) }
+    r = f[1]
+  }
+  if flag == 2 {
+    const t = internal.reader.u32(internal.reader.new(data, r, limit))
+    if t[0].failed { return (false, "malformed element section", t[0].fail_offset, -1) }
+    const o = expr_vec(data, t[0].pos, limit)
+    if !o[0] { return (false, "malformed element section", o[1], -1) }
+    const k = elemkind(data, o[1], limit)
+    if !k[0] { return (false, "malformed element section", k[1], -1) }
+    const f = funcidx_vec(data, k[1], limit)
+    if !f[0] { return (false, "malformed element section", f[1], -1) }
+    r = f[1]
+  }
+  if flag == 3 {
+    const k = elemkind(data, r, limit)
+    if !k[0] { return (false, "malformed element section", k[1], -1) }
+    const f = funcidx_vec(data, k[1], limit)
+    if !f[0] { return (false, "malformed element section", f[1], -1) }
+    r = f[1]
+  }
+  if flag == 4 {
+    const o = expr_vec(data, r, limit)
+    if !o[0] { return (false, "malformed element section", o[1], -1) }
+    const ev = expr_vec(data, o[1], limit)
+    if !ev[0] { return (false, "malformed element section", ev[1], -1) }
+    r = ev[1]
+  }
+  if flag == 5 {
+    const rt = elem_reftype(data, r, limit)
+    if !rt[0] { return (false, "malformed element section", rt[1], -1) }
+    const ev = expr_vec(data, rt[1], limit)
+    if !ev[0] { return (false, "malformed element section", ev[1], -1) }
+    r = ev[1]
+  }
+  if flag == 6 {
+    const t = internal.reader.u32(internal.reader.new(data, r, limit))
+    if t[0].failed { return (false, "malformed element section", t[0].fail_offset, -1) }
+    const o = expr_vec(data, t[0].pos, limit)
+    if !o[0] { return (false, "malformed element section", o[1], -1) }
+    const rt = elem_reftype(data, o[1], limit)
+    if !rt[0] { return (false, "malformed element section", rt[1], -1) }
+    const ev = expr_vec(data, rt[1], limit)
+    if !ev[0] { return (false, "malformed element section", ev[1], -1) }
+    r = ev[1]
+  }
+  if flag == 7 {
+    const rt = elem_reftype(data, r, limit)
+    if !rt[0] { return (false, "malformed element section", rt[1], -1) }
+    const ev = expr_vec(data, rt[1], limit)
+    if !ev[0] { return (false, "malformed element section", ev[1], -1) }
+    r = ev[1]
+  }
+  if flag > 7 {
+    return (false, "malformed element section", pos, -1)
+  }
+  return elem_rest(data, r, limit, n - 1)
+}
+
+// The data section: one flag byte per segment (0 active memory 0,
+// 1 passive, 2 active with explicit memory index).
+def data_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return (false, "malformed data section", cn[0].fail_offset, -1)
+  }
+  return data_rest(data, cn[0].pos, limit, cn[1])
+}
+
+def data_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+  if n == 0 {
+    return (true, "", -1, pos)
+  }
+  if pos >= limit {
+    return (false, "malformed data section", pos, -1)
+  }
+  const flag = data.get(pos)
+  var r = pos + 1
+  if flag == 0 {
+    const o = expr_vec(data, r, limit)
+    if !o[0] { return (false, "malformed data section", o[1], -1) }
+    const b = byte_vec(data, o[1], limit)
+    if !b[0] { return (false, "malformed data section", b[1], -1) }
+    r = b[1]
+  }
+  if flag == 1 {
+    const b = byte_vec(data, r, limit)
+    if !b[0] { return (false, "malformed data section", b[1], -1) }
+    r = b[1]
+  }
+  if flag == 2 {
+    const t = internal.reader.u32(internal.reader.new(data, r, limit))
+    if t[0].failed { return (false, "malformed data section", t[0].fail_offset, -1) }
+    const o = expr_vec(data, t[0].pos, limit)
+    if !o[0] { return (false, "malformed data section", o[1], -1) }
+    const b = byte_vec(data, o[1], limit)
+    if !b[0] { return (false, "malformed data section", b[1], -1) }
+    r = b[1]
+  }
+  if flag > 2 {
+    return (false, "malformed data section", pos, -1)
+  }
+  return data_rest(data, r, limit, n - 1)
 }
