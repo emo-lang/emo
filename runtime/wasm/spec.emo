@@ -1,0 +1,3 @@
+// The full-corpus driver, run by the wasm_spec alias.
+
+cli.run("testdata/cases.all.txt")
