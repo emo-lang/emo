@@ -176,6 +176,7 @@ binary.wast:1852 malformed malformed
 bulk.wast:2 ok ok
 bulk.wast:6 ok ok
 bulk.wast:13 ok ok
+bulk.wast:199 ok ok
 bulk.wast:274 ok ok
 bulk.wast:297 ok ok
 comments.wast:10 ok ok
@@ -595,6 +596,7 @@ custom.wast:93 malformed malformed
 custom.wast:115 malformed malformed
 custom.wast:123 malformed malformed
 elem.wast:352 ok ok
+endianness.wast:1 ok ok
 exports.wast:3 ok ok
 exports.wast:4 ok ok
 exports.wast:5 ok ok
@@ -651,6 +653,7 @@ exports.wast:199 ok ok
 exports.wast:200 ok ok
 exports.wast:201 ok ok
 exports.wast:202 ok ok
+func.wast:422 ok ok
 global.wast:283 ok ok
 global.wast:284 ok ok
 global.wast:375 ok ok
@@ -660,6 +663,7 @@ global.wast:405 ok ok
 global.wast:409 malformed malformed
 global.wast:421 malformed malformed
 imports.wast:3 ok ok
+imports.wast:97 ok ok
 imports.wast:107 ok ok
 imports.wast:116 ok ok
 imports.wast:117 ok ok
@@ -778,6 +782,8 @@ imports.wast:581 ok ok
 imports.wast:588 ok ok
 imports.wast:669 ok ok
 imports.wast:672 ok ok
+linking.wast:3 ok ok
+linking.wast:9 ok ok
 linking.wast:22 ok ok
 linking.wast:28 ok ok
 linking.wast:32 ok ok
@@ -798,6 +804,7 @@ linking.wast:297 ok ok
 linking.wast:303 ok ok
 linking.wast:307 ok ok
 linking.wast:367 ok ok
+linking.wast:422 ok ok
 memory.wast:3 ok ok
 memory.wast:4 ok ok
 memory.wast:5 ok ok
@@ -807,6 +814,10 @@ memory.wast:8 ok ok
 names.wast:4 ok ok
 names.wast:12 ok ok
 names.wast:19 ok ok
+names.wast:1095 ok ok
+select.wast:518 ok ok
+start.wast:80 ok ok
+start.wast:86 ok ok
 start.wast:92 ok ok
 start.wast:98 ok ok
 table.wast:3 ok ok
@@ -823,11 +834,13 @@ tokens.wast:6 ok ok
 tokens.wast:9 ok ok
 tokens.wast:12 ok ok
 tokens.wast:15 ok ok
+tokens.wast:18 ok ok
 tokens.wast:35 ok ok
 tokens.wast:42 ok ok
 tokens.wast:46 ok ok
 tokens.wast:50 ok ok
 tokens.wast:54 ok ok
+tokens.wast:58 ok ok
 tokens.wast:62 ok ok
 tokens.wast:110 ok ok
 tokens.wast:120 ok ok
@@ -848,4 +861,4 @@ traps.wast:23 ok ok
 traps.wast:39 ok ok
 traps.wast:59 ok ok
 type.wast:3 ok ok
-claimed 850, pending 2606, failed 0
+claimed 863, pending 2593, failed 0
