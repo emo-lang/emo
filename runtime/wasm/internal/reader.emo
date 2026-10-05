@@ -189,6 +189,40 @@ def instrs(r Reader) Reader {
   if op == 0 || op == 1 || op == 15 {
     return instrs(r1)
   }
+  // ---- parametric (T20.11) ----
+  if op == 26 || op == 27 {
+    // drop, select
+    return instrs(r1)
+  }
+  if op == 28 {
+    // select with an explicit type vector
+    return instrs(valtype_bytes(r1))
+  }
+  // ---- variable (T20.11) ----
+  if op >= 32 && op <= 36 {
+    // local.get/set/tee, global.get/set: one u32 index
+    return instrs(u32(r1)[0])
+  }
+  // ---- memory (T20.11) ----
+  if op >= 40 && op <= 62 {
+    // the memory instructions: a memarg (align, offset) immediate
+    return instrs(memarg_then(r1))
+  }
+  if op == 63 || op == 64 {
+    // memory.size / memory.grow: one reserved zero byte
+    const z = u8(r1)
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    return instrs(z[0])
+  }
+  if op == 252 {
+    // the 0xfc prefix: bulk-memory and table operations
+    return instrs(prefix_fc(r1))
+  }
   if op == 65 {
     return instrs(s32(r1)[0])
   }
@@ -206,6 +240,121 @@ def instrs(r Reader) Reader {
     return instrs(r1)
   }
   return bail(r1, r1.pos, "illegal opcode")
+}
+
+// A valtype vector immediate (select t): count, then that many
+// valtype bytes.
+def valtype_bytes(r Reader) Reader {
+  const cn = u32(r)
+  if cn[0].failed {
+    return cn[0]
+  }
+  return valtype_bytes_rest(cn[0], cn[1])
+}
+
+def valtype_bytes_rest(r Reader, n Int) Reader {
+  if n == 0 {
+    return r
+  }
+  const t = u8(r)
+  const b = t[1]
+  if t[0].failed {
+    return t[0]
+  }
+  if b != 127 && b != 126 && b != 125 && b != 124 && b != 112 && b != 111 {
+    return bail(t[0], t[0].pos, "malformed value type")
+  }
+  return valtype_bytes_rest(t[0], n - 1)
+}
+
+// A memarg immediate: align then offset as u32s; the multi-memory
+// flag bit in align is out of scope and rejects.
+def memarg_then(r Reader) Reader {
+  const a = u32(r)
+  if a[0].failed {
+    return a[0]
+  }
+  if a[1] >= 64 {
+    return bail(a[0], a[0].pos, "malformed memop flags")
+  }
+  return u32(a[0])[0]
+}
+
+// The 0xfc-prefixed operations: a u32 sub-opcode selects the shape.
+def prefix_fc(r Reader) Reader {
+  const s = u32(r)
+  if s[0].failed {
+    return s[0]
+  }
+  const sub = s[1]
+  if sub == 0 {
+    // memory.init: data index, then a reserved zero byte
+    const d = u32(s[0])
+    if d[0].failed {
+      return d[0]
+    }
+    const z = u8(d[0])
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    return z[0]
+  }
+  if sub == 1 {
+    return u32(s[0])[0]
+  }
+  if sub == 2 {
+    // memory.copy: two reserved zero bytes
+    const z1 = u8(s[0])
+    if z1[0].failed {
+      return z1[0]
+    }
+    if z1[1] != 0 {
+      return bail(z1[0], z1[0].pos, "zero byte expected")
+    }
+    const z2 = u8(z1[0])
+    if z2[0].failed {
+      return z2[0]
+    }
+    if z2[1] != 0 {
+      return bail(z2[0], z2[0].pos, "zero byte expected")
+    }
+    return z2[0]
+  }
+  if sub == 3 {
+    const z = u8(s[0])
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    return z[0]
+  }
+  if sub == 8 {
+    // table.init: element index, then table index
+    const e = u32(s[0])
+    if e[0].failed {
+      return e[0]
+    }
+    return u32(e[0])[0]
+  }
+  if sub == 9 {
+    return u32(s[0])[0]
+  }
+  if sub == 10 {
+    const t1 = u32(s[0])
+    if t1[0].failed {
+      return t1[0]
+    }
+    return u32(t1[0])[0]
+  }
+  if sub == 11 || sub == 12 || sub == 13 {
+    return u32(s[0])[0]
+  }
+  return bail(s[0], s[0].pos, "illegal opcode")
 }
 
 // A block type: 0x40 (empty), a valtype byte, or an s33 type index.
