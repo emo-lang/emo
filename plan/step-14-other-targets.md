@@ -78,6 +78,158 @@ recommended priority.
 - **Risk:** highest of the four; also the most speculative until an EmoOS
   effort exists.
 
+## RISC-V reference note (recorded 2026-10-05)
+
+Everything decided or assessed about the `riscv64` target so far, kept
+in one place so the future implementation step starts from here instead
+of re-deriving it.
+
+### Target identity and current state
+
+- Named for the ISA (`riscv64`); QEMU is the default runner (the
+  no-hardware dev loop), not part of the target — the same image runs
+  on real RISC-V hardware (decided 2026-10-05, replacing the earlier
+  `qemu` name).
+- Declaration-only today: `known_targets` in `emo_pkg.ml` admits
+  `"riscv64"` for manifest resolution; no backend exists. `riscv32`
+  does not exist and is not scheduled — it follows `riscv64` only when
+  real hardware demands it.
+- Freestanding contract: no OS, no libc, no default runtime; allocator,
+  GC, and scheduler are replaceable components; `core` is the only
+  library layer available to kernel code; `peek`/`poke` are the
+  explicitly dangerous memory primitives.
+
+### Numeric width (full rationale in `docs/numeric-width.md`)
+
+- Numeric types are width-explicit: `Int64`/`Int32`, `Float64`/
+  `Float32`; the defaults are `Int64` and `Float64`; there are no
+  width-less `Int`/`Float` spellings and no aliases; unannotated
+  integer/float literals default to the 64-bit type (decided
+  2026-10-05).
+- `Int64` semantics are target-independent: 64-bit two's complement,
+  wrap-around modulo 2⁶⁴. On RV64 an `Int64` is one register. A future
+  RV32 implements the same semantics with register pairs (carry-chain
+  add/sub, hi/lo mul/div — the textbook `long long` technique, ~2–4×
+  arithmetic cost, 8 bytes per value). Narrowing `Int` on RV32 is off
+  the table — that would be a different language.
+- On RV32 the roles invert: `Int32` is the register-width fast path
+  and `Int64` the emulated one — semantics unchanged, performance
+  characteristics differ by target. This is why `Int32` is the RV32
+  hot-loop escape hatch.
+- `Float64` needs no fix: IEEE 754 binary64 on every target today
+  (OCaml `float`, Wasm `f64`, Erlang float, JS `number`). `Float32`
+  (binary32, per-operation rounding — correctly rounded via a binary64
+  ALU) joins later for C `float` FFI, device registers, and memory
+  bandwidth.
+- Open decision (tracked in `CHECK.md`): the native backend's route to
+  64-bit integer arithmetic on OCaml's 63-bit `int` — emit OCaml's
+  boxed `Int64` vs unboxed two-word hi/lo emulation. The RV32 codegen
+  shares the hi/lo technique, so the work compounds.
+- FFI relevance: the width types are the landing types `foreign def`
+  needs on bare metal (`int64_t`/`int32_t`/`double`/`float`); today
+  only `Float`/`String`/`Bool` cross (E4200 otherwise).
+
+### Process scheduler on QEMU riscv64 (assessment)
+
+Question assessed: how hard is an Emo process scheduler on RISC-V under
+QEMU? The split: **the scheduler itself is the easy ~15–20%** — the
+semantics were settled in step 11 and already implemented three times
+(interpreter runtime, Wasm driver loop, BEAM processes) with golden
+tests; the hard part is the substrate beneath it (the codegen backend
+plus the freestanding runtime).
+
+Favorable factors, specific to Emo:
+
+- The deterministic scheduler (`emo_sched_det`) lets the bare-metal
+  scheduler be validated by comparing execution traces against the
+  deterministic model on the host — before anything runs under QEMU.
+- Emo does not promise preemption: cooperative-first scheduling
+  (switching only at send/receive) skips trap handlers and timer
+  plumbing entirely at first.
+- Message passing copies (snapshot semantics) — processes share no
+  mutable state, so the scheduler loop is single-hart, single-threaded,
+  lock-free, no atomics.
+- The RISC-V context switch is textbook: swap `sp`, `ra`, and the
+  callee-saved `s0–s11` — roughly 30 instructions of assembly.
+
+Mechanism/policy split — the key architecture decision:
+
+- The context-switch thunk (stack swap) is below Emo's abstraction
+  level (`peek`/`poke` cannot reach register sets): hand-written
+  assembly, kept minimal.
+- Scheduling policy (run queues, round-robin, priorities,
+  wake-on-send, mailbox queues) is plain Emo code running on the
+  substrate — the first customer of the "scheduler as a replaceable
+  component" promise. Develop the policy in Emo on hosted targets
+  against the deterministic scheduler, then deploy the same policy
+  onto bare metal.
+
+Milestones:
+
+| Milestone | Content | Difficulty |
+| --- | --- | --- |
+| M1 | riscv64 backend (emit assembly text for cross-binutils, mirroring step 13's emit-and-delegate pattern), boot stub at `0x80000000` (set stack, clear BSS), SBI console for `println`, "Hello, world" under `qemu-system-riscv64` | high — the dominant cost of the whole effort |
+| M2 | cooperative scheduler: ≥2 processes, send/receive, round-robin, no preemption | moderate-low |
+| M3 | timer preemption: `stvec` trap handler, SBI `set_timer`, time slices | moderate — optional; semantics do not require it |
+| M4 | multi-hart SMP (per-hart run queues, IPIs, LR/SC atomics) | high — defer indefinitely |
+
+QEMU specifics that lower the bar: the `virt` board's memory layout is
+fixed (no device-tree parsing needed for the first cut); OpenSBI
+firmware provides the console ecall, so no UART driver is required to
+get `println`; `-bios none` is available for true bare metal later;
+`-s -S` plus remote gdb (riscv64-elf-gdb) gives a real debugger from
+day one; start with `-smp 1`.
+
+De-risking shortcut — a hosted intermediate milestone: cross-compile
+the existing native-backend product (OCaml 5 supports riscv64 native
+code) with a riscv64 Linux toolchain and run Emo processes on QEMU
+riscv64 **Linux userland** first. The scheduler runs unchanged on
+RISC-V at a fraction of the bare-metal cost, and it separates "is the
+codegen right" from "is the freestanding substrate complete".
+
+Substrate checklist (what M2's scheduler sits on): entry stub; SBI
+console ecall for `println`; bump allocator (GC deferred — the no-GC
+pluggable-runtime configuration also removes the scan-process-stacks
+problem); per-process fixed-size stacks with canaries (no guard pages
+in the first cut); the context-switch thunk; run queue, mailbox queues,
+pid allocation, halt/exit handling. Order-of-magnitude estimate: the
+scheduler policy in Emo is a few hundred lines; the asm mechanism ~100
+lines; the backend + substrate is the multi-week dominant cost.
+
+### C interop on bare metal (assessment)
+
+How deep can the C FFI go — a ladder, each rung its own decision:
+
+1. Scalar leaf calls — today's surface (`foreign def name(params) Ret =
+   "c_symbol"`, generated C wrappers, `Float`/`String`/`Bool` only,
+   E4200 otherwise). Enough for libm-level calls.
+2. Width types crossing — `Int64`/`Int32`/`Float64`/`Float32` land on
+   `int64_t`/`int32_t`/`double`/`float`; the C-stub wrapper mechanism
+   already exists; blocked only on the width rename landing.
+3. Opaque handles + copied buffers — externally-owned pointers as
+   opaque, explicitly-closed values outside the GC; structured data by
+   explicit copy. Covers most real C libraries without struct-layout
+   knowledge.
+4. Structs and callbacks — struct-by-value needs platform-ABI layout
+   knowledge (or generated `offsetof` accessor thunks so the C compiler
+   owns the layout); callbacks need the Emo calling convention exposed
+   as C function pointers with a re-entrant runtime. Expensive.
+5. Header ingestion (libclang bindgen) — tooling investment; only when
+   a concrete library demands it.
+
+On bare metal the shape changes: no hosted libc, no dlopen — C interop
+becomes freestanding C sources compiled into the image and linked by
+Emo's linker script, with the RISC-V psABI calling convention as the
+contract. The firmware/driver boundary is mostly not C calls at all:
+SBI via `ecall`, MMIO via `peek`/`poke`. The no-GC kernel runtime
+configuration makes the ownership boundary tractable. Zeroth fix before
+any deepening: non-native targets must not silently miscompile
+`foreign def` (tracked in `CHECK.md`).
+
+Strategic framing: in the single-language-closure philosophy, C interop
+is a bridge, not a foundation — the kernel is Emo; C is the door to
+what already exists (firmware, driver code, legacy libraries).
+
 ## Tasks (this file's scope)
 
 - [x] When a target is scheduled, split it into `step-NN-<target>.md` with
