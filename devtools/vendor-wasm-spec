@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Vendor the WebAssembly spec suite's binary-form module cases.
+
+Reads a local checkout of github.com/WebAssembly/spec (fetched by hand,
+once — the pinned revision lives in runtime/wasm/testdata/README.md),
+runs `wast2json --no-check` over its core test files, and writes the
+text case list: one case per line,
+
+    <file>.wast:<line> pending <hex module bytes>
+
+Every case lands as `pending`; the decoder and validator tasks flip
+cases to their claimed verdict as the runtime grows the matching
+capability, and the runner skips pending cases while printing their
+count. Command-to-verdict mapping at flip time: module → ok,
+assert_malformed → malformed, assert_invalid → invalid,
+assert_uninstantiable / assert_unlinkable → ok (the module decodes and
+validates; instantiation is step 21).
+
+Usage:
+    vendor-wasm-spec <spec-checkout-dir> <output-list> [<name>.wast ...]
+
+With no wast names, every test/core/*.wast in the checkout is vendored.
+"""
+
+import json
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+WAST2JSON = "wast2json"
+
+# Commands whose binary module must decode+validate, mapped to the
+# verdict the runner claims for it once the capability lands.
+VERDICTS = {
+    "module": "ok",
+    "assert_malformed": "malformed",
+    "assert_invalid": "invalid",
+    "assert_uninstantiable": "ok",
+    "assert_unlinkable": "ok",
+}
+
+
+def binary_cases(checkout: pathlib.Path, wast: str, tmp: pathlib.Path):
+    """Yield (case-name, expected-verdict, hex-bytes) for one wast file."""
+    src = checkout / "test" / "core" / wast
+    out_json = tmp / (wast + ".json")
+    subprocess.run(
+        [WAST2JSON, "--no-check", str(src), "-o", str(out_json)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    commands = json.loads(out_json.read_text())["commands"]
+    for cmd in commands:
+        if cmd["type"] not in VERDICTS:
+            continue
+        if cmd.get("module_type", "binary") != "binary":
+            continue  # text-form modules are out of scope for step 20
+        wasm = tmp / cmd["filename"]
+        hex_bytes = wasm.read_bytes().hex()
+        yield f"{wast}:{cmd['line']}", VERDICTS[cmd["type"]], hex_bytes
+
+
+def main(argv):
+    if len(argv) < 3:
+        print(__doc__, file=sys.stderr)
+        return 2
+    checkout = pathlib.Path(argv[1])
+    out_list = pathlib.Path(argv[2])
+    wasts = argv[3:] or sorted(
+        p.name for p in (checkout / "test" / "core").glob("*.wast")
+    )
+
+    lines = []
+    skipped = []
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = pathlib.Path(tmp)
+        for wast in wasts:
+            try:
+                cases = list(binary_cases(checkout, wast, tmp))
+            except subprocess.CalledProcessError:
+                # The installed wabt may not know every proposal the
+                # checkout exercises; skip the file visibly, never silently.
+                skipped.append(wast)
+                continue
+            for name, verdict, hex_bytes in cases:
+                # Vendoring lands everything as pending; flip tasks claim
+                # verdicts later. The expected verdict is recoverable from
+                # the pinned checkout at flip time.
+                lines.append(f"{name} pending {hex_bytes}")
+
+    out_list.write_text("\n".join(lines) + ("\n" if lines else ""))
+    print(f"{out_list}: {len(lines)} cases, all pending")
+    if skipped:
+        print(f"skipped {len(skipped)} files (wast2json failures):")
+        for wast in skipped:
+            print(f"  {wast}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
