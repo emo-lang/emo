@@ -1,0 +1,27 @@
+// The diagnosed-failure value. Nothing in the runtime raises for bad
+// input — the catch form is unsettled (CHECK.md), and a runtime that
+// dies on the first bad byte cannot run a corpus — so every phase of
+// the pipeline reports through one of these: a four-tuple
+//
+//     (ok Bool, phase String, offset Int, message String)
+//
+// `ok` when the module decoded and validated; otherwise `phase` is
+// "malformed" or "invalid", `offset` is the byte position the failure
+// was detected at, and `message` is a human hint (the spec's message
+// texts are not a contract — the phase is).
+//
+// The value is a tuple, not a class, because qualified type
+// annotations (`error.Outcome`) do not parse as of step 20 — recorded
+// pressure on the language; the tuple crosses module edges.
+
+def good() (Bool, String, Int, String) {
+  return (true, "", -1, "")
+}
+
+def malformed(at Int, msg String) (Bool, String, Int, String) {
+  return (false, "malformed", at, msg)
+}
+
+def invalid(at Int, msg String) (Bool, String, Int, String) {
+  return (false, "invalid", at, msg)
+}

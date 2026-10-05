@@ -1,1 +1,9 @@
-claimed 0, pending 3456, failed 0
+binary.wast:6 malformed malformed
+binary.wast:7 malformed malformed
+binary.wast:8 malformed malformed
+binary.wast:9 malformed malformed
+binary.wast:10 malformed malformed
+binary.wast:37 malformed malformed
+binary.wast:38 malformed malformed
+binary.wast:39 malformed malformed
+claimed 8, pending 3448, failed 0

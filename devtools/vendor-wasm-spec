@@ -62,7 +62,60 @@ def binary_cases(checkout: pathlib.Path, wast: str, tmp: pathlib.Path):
         yield f"{wast}:{cmd['line']}", VERDICTS[cmd["type"]], hex_bytes
 
 
+def expected_verdicts(checkout: pathlib.Path, wasts, tmp: pathlib.Path):
+    """Map case name -> expected verdict, straight from the checkout."""
+    expected = {}
+    for wast in wasts:
+        for name, verdict, _hex_bytes in binary_cases(checkout, wast, tmp):
+            expected[name] = verdict
+    return expected
+
+
+def flip(checkout: pathlib.Path, out_list: pathlib.Path, names):
+    """Flip listed pending cases to their expected verdicts.
+
+    A name that is not in the list, or already claimed, is an error —
+    corpus bookkeeping must never be silent.
+    """
+    wasts = sorted(
+        p.name for p in (checkout / "test" / "core").glob("*.wast")
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        expected = expected_verdicts(checkout, wasts, pathlib.Path(tmp))
+
+    lines = out_list.read_text().splitlines()
+    flipped = []
+    out = []
+    for line in lines:
+        parts = line.split(" ")
+        if len(parts) >= 2 and parts[0] in names:
+            if parts[1] != "pending":
+                print(f"{parts[0]}: already claimed as {parts[1]}", file=sys.stderr)
+                return 1
+            verdict = expected.get(parts[0])
+            if verdict is None:
+                print(f"{parts[0]}: not in the pinned checkout", file=sys.stderr)
+                return 1
+            parts[1] = verdict
+            flipped.append(f"{parts[0]} -> {verdict}")
+            out.append(" ".join(parts))
+        else:
+            out.append(line)
+    out_list.write_text("\n".join(out) + ("\n" if out else ""))
+    for f in flipped:
+        print(f)
+    print(f"{len(flipped)} flipped, {len(names) - len(flipped)} not matched")
+    if len(flipped) != len(names):
+        return 1
+    return 0
+
+
 def main(argv):
+    if len(argv) >= 2 and argv[1] == "flip":
+        if len(argv) < 5:
+            print(__doc__, file=sys.stderr)
+            return 2
+        return flip(pathlib.Path(argv[2]), pathlib.Path(argv[3]), set(argv[4:]))
     if len(argv) < 3:
         print(__doc__, file=sys.stderr)
         return 2
