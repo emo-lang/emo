@@ -21,7 +21,7 @@ What to notice:
 - **`internal/` is subtree-private, enforced by the compiler.** Every
   module in this tree may use `internal.discounts`; a reference from
   any other project is a compile error. Try it: add
-  `print(internal.discounts.seasonal(3))` to another example's program
+  `println(internal.discounts.seasonal(3))` to another example's program
   and run `emo check` on it.
 - **The dependency graph is the references.** `main.emo` depends on
   `checkout` and `pricing`; `pricing` depends on `internal.discounts` —

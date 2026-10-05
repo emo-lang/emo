@@ -9,8 +9,8 @@ const greeting = -> (name String) {
   return "hello, ${name}"
 }
 
-print(fib(20))
-print(greeting("emo"))
+println(fib(20))
+println(greeting("emo"))
 
 def count_down(n Int) Int {
   if n == 0 {
@@ -18,4 +18,4 @@ def count_down(n Int) Int {
   }
   return count_down(n - 1)
 }
-print(count_down(1000000))
+println(count_down(1000000))

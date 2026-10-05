@@ -188,7 +188,7 @@ function toStr(v: any): string {
   return String(v);
 }
 
-function print(v: any): void {
+function println(v: any): void {
   process.stdout.write(toStr(v) + "\n");
 }
 
@@ -231,7 +231,7 @@ const E: any = {
   eq: deepEq,
   ne: (a: any, b: any) => !deepEq(a, b),
   truthy: (b: any) => b === true,
-  print,
+  println,
   interpolate: (items: any[]) => items.map(toStr).join(""),
   toStr,
 

@@ -37,8 +37,8 @@ emo Format {
   }
 }
 
-print(Math.abs(0 - 7))
-print(Math.tau)
-print(Math.clamp(15, 0, 10))
-print(Format.money(1250))
-print(Format.tagged("order", Math.clamp(99, 0, 50)))
+println(Math.abs(0 - 7))
+println(Math.tau)
+println(Math.clamp(15, 0, 10))
+println(Format.money(1250))
+println(Format.tagged("order", Math.clamp(99, 0, 50)))

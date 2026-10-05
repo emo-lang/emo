@@ -5,7 +5,7 @@ require "http"
 require "net"
 
 const listener = net.listen("127.0.0.1", 0)
-print(listener.port())
+println(listener.port())
 
 do http.serve_requests(listener) -> (req HttpRequest) {
   return http.response(200, [], "ok")

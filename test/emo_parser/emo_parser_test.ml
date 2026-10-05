@@ -836,7 +836,7 @@ let def_tests =
           "span" "test.emo:1:5"
           (Span.to_string diagnostic.Diagnostic.span));
     tc "a def without a return annotation returns Void" (fun () ->
-        match parse_program "def log(msg String) {\n  print(msg)\n}" with
+        match parse_program "def log(msg String) {\n  println(msg)\n}" with
         | [ def_item ] -> (
             match def_item.Emo_ast.item_desc with
             | Emo_ast.Item_def d ->
@@ -1275,13 +1275,13 @@ let require_tests =
         match
           parse_program
             {|require "acme/json_tools"
-print(json_tools.parse("{}"))|}
+println(json_tools.parse("{}"))|}
         with
         | [ req; call ] ->
             Alcotest.(check string)
               "require" "(require acme/json_tools)" (render pp_item req);
             Alcotest.(check string)
-              "call" "(print call ((json_tools.parse) call \"{}\"))"
+              "call" "(println call ((json_tools.parse) call \"{}\"))"
               (render pp_item call)
         | items ->
             Alcotest.fail

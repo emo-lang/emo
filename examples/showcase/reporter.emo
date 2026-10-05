@@ -3,7 +3,7 @@
 def run(count Int, boss Pid) Int {
   receive {
     (id, total) -> {
-      print("shipped " + Catalog.line(id, total))
+      println("shipped " + Catalog.line(id, total))
       return run(count + 1, boss)
     }
     "done" -> {

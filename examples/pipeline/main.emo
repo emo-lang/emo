@@ -30,7 +30,7 @@ def doubler(next Pid) Int {
 def labeler(count Int, boss Pid) Int {
   receive {
     (id, n) -> {
-      print("order ${id}: ${n} units")
+      println("order ${id}: ${n} units")
       return labeler(count + 1, boss)
     }
     "done" -> {
@@ -57,6 +57,6 @@ feed(line, 1)
 
 receive {
   (who, handled) -> {
-    print("the line handled ${handled} orders")
+    println("the line handled ${handled} orders")
   }
 }

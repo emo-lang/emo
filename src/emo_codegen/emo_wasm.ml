@@ -8,8 +8,8 @@
    order. The runtime type is the tag: tests compile to
    ref.test/ref.cast.
 
-   Host boundary: print renders into linear memory and calls an
-   imported (ptr, len) print; raise calls an imported abort that
+   Host boundary: println renders into linear memory and calls an
+   imported (ptr, len) println; raise calls an imported abort that
    throws in the host. $heap is the bump cursor for that exchange,
    starting at 1024. *)
 
@@ -18,7 +18,7 @@ module W = Emo_wat
 
 (* ---- Fixed type table ---- *)
 
-let t_print = 0
+let t_println = 0
 let t_abort = 1
 let t_float_str = 2
 let t_main = 3
@@ -46,12 +46,12 @@ let t_bool_str = 18
 let t_char_str = 19
 let t_bytes_from_mem = 20
 let t_write_bytes = 21
-let t_print_v = 22
+let t_println_v = 22
 
 let runtime_types : W.typ list =
   [
     W.FuncT ([ W.I32; W.I32 ], []);
-    (* print *)
+    (* println *)
     W.FuncT ([ W.I32; W.I32 ], []);
     (* abort *)
     W.FuncT ([ W.F64 ], [ W.I32; W.I32 ]);
@@ -138,7 +138,7 @@ let rt = function
   | "eq" -> 13
   | "ne" -> 14
   | "to_str" -> 15
-  | "print" -> 16
+  | "println" -> 16
   | "strcat" -> 17
   | "box" -> 18
   | "throw" -> 19
@@ -441,9 +441,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Method { self_; name; args } -> method_call env self_ name args
   | Builtin { name; args } -> (
       match (name, args) with
-      | "print", [ v ] ->
+      | "println", [ v ] ->
           expr env v;
-          e env (W.Call (rt "print"))
+          e env (W.Call (rt "println"))
       | "self_pid", [] -> e env (W.Call (rt "self_pid"))
       | "halt", [] -> e env (W.Call (rt "halt"))
       | _ ->
@@ -777,7 +777,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
   | Emo_ir.Effect x -> (
       let code = expr_block env x in
       match x.Emo_ir.desc with
-      | Emo_ir.Builtin { name = "print"; _ } -> code
+      | Emo_ir.Builtin { name = "println"; _ } -> code
       | _ -> code @ [ W.Drop ])
   | Emo_ir.Let { mutable_ = _; name; init } ->
       (* a closure value is a $vfun struct — funcref is not under any *)
@@ -1617,10 +1617,10 @@ let rt_write_bytes : W.func_type =
       ];
   }
 
-(* print(v): render, bump-write, call the host. Local: 1 bytes. *)
-let rt_print : W.func_type =
+(* println(v): render, bump-write, call the host. Local: 1 bytes. *)
+let rt_println : W.func_type =
   {
-    W.ftype_idx = t_print_v;
+    W.ftype_idx = t_println_v;
     fparams = [ "v" ];
     flocals = [ (1, W.RefNull t_bytes) ];
     fbody =
@@ -2694,7 +2694,7 @@ let rt_driver_run ~(t_i32_void : int) : W.func_type =
 (* ---- Module assembly ---- *)
 
 (* The exported main runs the entry statements, then the driver loop;
-   exported memory backs the print/abort exchange. *)
+   exported memory backs the println/abort exchange. *)
 let assemble (program : Emo_ir.program) : W.module_ =
   let env =
     {
@@ -2823,7 +2823,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
       rt_eq;
       rt_ne;
       rt_to_str;
-      rt_print;
+      rt_println;
       rt_strcat;
       rt_box;
       rt_throw;
@@ -2912,7 +2912,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
     W.types = all_types;
     imports =
       [
-        { W.imodule = "emo"; W.iname = "print"; W.itype_idx = t_print };
+        { W.imodule = "emo"; W.iname = "println"; W.itype_idx = t_println };
         { W.imodule = "emo"; W.iname = "abort"; W.itype_idx = t_abort };
         { W.imodule = "emo"; W.iname = "float_str"; W.itype_idx = t_float_str };
       ];

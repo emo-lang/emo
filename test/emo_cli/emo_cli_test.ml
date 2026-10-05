@@ -15,7 +15,7 @@ let fixture name source =
 let run_tests =
   [
     tc "a successful program exits 0" (fun () ->
-        let file = fixture "ok.emo" "const x = 1\nprint(x + 1)\n" in
+        let file = fixture "ok.emo" "const x = 1\nprintln(x + 1)\n" in
         Alcotest.(check int)
           "exit" 0
           (Emo_cli.run_file ~file ~color:false ~error_limit:20));
@@ -26,12 +26,12 @@ let run_tests =
           (Emo_cli.run_file ~file ~color:false ~error_limit:20));
     tc "a runtime type error exits 70" (fun () ->
         (* The element type is Unknown to the checker; the runtime hits it. *)
-        let file = fixture "runtime.emo" {|print([1, "a"][1] + 1)|} in
+        let file = fixture "runtime.emo" {|println([1, "a"][1] + 1)|} in
         Alcotest.(check int)
           "exit" 70
           (Emo_cli.run_file ~file ~color:false ~error_limit:20));
     tc "a certain type error exits 65 before running" (fun () ->
-        let file = fixture "checked.emo" {|print(1 + "a")|} in
+        let file = fixture "checked.emo" {|println(1 + "a")|} in
         Alcotest.(check int)
           "exit" 65
           (Emo_cli.run_file ~file ~color:false ~error_limit:20));
@@ -91,7 +91,7 @@ let repl_tests =
     tc "runtime errors print and the environment survives" (fun () ->
         let out = Buffer.create 128 in
         Emo_cli.repl_loop ~prompt:false
-          ~input:(queue_input [ "print(nope)"; "40 + 2"; "exit" ])
+          ~input:(queue_input [ "println(nope)"; "40 + 2"; "exit" ])
           ~output:(Buffer.add_string out);
         let text = Buffer.contents out in
         Alcotest.(check bool) "error reported" true (contains text "E3002");
@@ -258,7 +258,7 @@ let beam_examples_tests =
                    (Buffer.contents err))))
     beam_goldens
 
-(* The host boundary: print forwards to stdout, abort exits nonzero
+(* The host boundary: println forwards to stdout, abort exits nonzero
    with the message, float_str renders into the scratch area at
    60000 (matching the runtime's convention). *)
 let wasm_runner_source =
@@ -269,7 +269,7 @@ let mem = null;
 const dec = new TextDecoder();
 const module = await WebAssembly.compile(bytes);
 const instance = await WebAssembly.instantiate(module, { emo: {
-  print: (ptr, len) => {
+  println: (ptr, len) => {
     process.stdout.write(dec.decode(new Uint8Array(mem.buffer, ptr, len)) + "\n");
   },
   abort: (ptr, len) => {

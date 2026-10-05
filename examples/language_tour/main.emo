@@ -12,12 +12,12 @@
 const who = "世界"
 var visits = 6
 visits = visits * 7
-print("hello, ${who} — six sevens are ${visits}")
+println("hello, ${who} — six sevens are ${visits}")
 
 // Interpolation holds any expression, and Chinese text is ordinary
 // string data — print it, interpolate it, pass it around.
 const item = "伞"
-print("one ${item} costs ${19 + 9} yuan")
+println("one ${item} costs ${19 + 9} yuan")
 
 // ---- 2 · Classes: immutable value types ----
 class User {
@@ -36,11 +36,11 @@ class User {
 }
 
 const ming = User.new(name: "王晓明", age: 28)
-print(ming.describe())
+println(ming.describe())
 const adult = ming.adult?()
-print("adult? ${adult}")
+println("adult? ${adult}")
 // Fields freeze after init, and equality compares content:
-print(ming == User.new(name: "王晓明", age: 28))
+println(ming == User.new(name: "王晓明", age: 28))
 
 // ---- 3 · Interfaces: contracts by shape ----
 // No `implements` anywhere: a class satisfies an interface when its
@@ -68,8 +68,8 @@ def welcome(g Greeter) String {
   return "a friend says: ${g.greet()}"
 }
 
-print(welcome(Machine.new()))
-print(welcome(Friend.new()))
+println(welcome(Machine.new()))
+println(welcome(Friend.new()))
 
 // ---- 4 · Enums and the tag idiom ----
 // An enum is a closed set of named values — no data on members. When
@@ -85,30 +85,30 @@ def classify(age Int) (Outcome, String) {
 }
 
 case classify(28) {
-  (Outcome.ok, label) -> { print("28 -> ${label}") }
-  (Outcome.err, label) -> { print("28 -> ${label}") }
+  (Outcome.ok, label) -> { println("28 -> ${label}") }
+  (Outcome.err, label) -> { println("28 -> ${label}") }
 }
 
 case classify(12) {
-  (Outcome.ok, label) -> { print("12 -> ${label}") }
-  (Outcome.err, label) -> { print("12 -> ${label}") }
+  (Outcome.ok, label) -> { println("12 -> ${label}") }
+  (Outcome.err, label) -> { println("12 -> ${label}") }
 }
 
 // A branch may carry a guard:
 case (Outcome.ok, 42) {
-  (Outcome.ok, v) when v > 40 -> { print("a big answer: ${v}") }
-  (Outcome.ok, v) -> { print("a small answer: ${v}") }
-  (Outcome.err, label) -> { print("no answer: ${label}") }
+  (Outcome.ok, v) when v > 40 -> { println("a big answer: ${v}") }
+  (Outcome.ok, v) -> { println("a small answer: ${v}") }
+  (Outcome.err, label) -> { println("no answer: ${label}") }
 }
 
 // ---- 5 · Arrays: fixed, transformed, never mutated ----
 const nums = [3, 1, 2]
-print(nums[0] + nums.length())
+println(nums[0] + nums.length())
 // Transforming returns a new array; the original is untouched:
 const more = nums.append(9)
-print(more.length())
-print(nums.length())
-print([1, 2] == [1, 2])
+println(more.length())
+println(nums.length())
+println([1, 2] == [1, 2])
 
 // ---- 6 · Mutability, layer by layer ----
 // `var` is explicit and block-scoped; a Box is the one long-lived
@@ -117,18 +117,18 @@ print([1, 2] == [1, 2])
 var tally = 0
 tally = tally + 1
 tally = tally + 10
-print(tally)
+println(tally)
 
 const total = Box.new(0)
 total.replace(total.read() + 5)
 total.replace(total.read() + 6)
-print(total.read())
+println(total.read())
 
 // ---- 7 · Blocks: the one function notation ----
 // An arrow block is an anonymous function; a call may take a trailing
 // block, which is how callbacks and iteration stay single-noted.
 const twice = -> (n Int) { return n * 2 }
-print(twice(21))
+println(twice(21))
 
 def walk(xs Array[Int], i Int, f Block) Int {
   if i == xs.length() {
@@ -139,6 +139,6 @@ def walk(xs Array[Int], i Int, f Block) Int {
 }
 
 walk([10, 20, 30], 0) -> (v Int) {
-  print(v)
+  println(v)
   return v
 }
