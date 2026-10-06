@@ -410,6 +410,9 @@ end
    the manifest's requirements is an error prompting explicit
    regeneration; it is never silently re-resolved. *)
 module Lockfile = struct
+  (* The lockfile's on-disk name, beside package.emo. *)
+  let filename = "package.lock"
+
   type entry = { dep : string; version : Version.t; checksum : string }
   type t = entry list
 
@@ -507,12 +510,15 @@ module Registry = struct
     f_files : (string * string) list; (* relative path → content *)
   }
 
+  (* SHA-256 over the sorted (path, content) pairs, each fed as
+     `path \0 content \0` — the digest the registry service recomputes and
+     the checksum package.lock records. *)
   let digest (files : (string * string) list) : string =
     let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) files in
-    Digest.string
+    Digestif.SHA256.digest_string
       (String.concat ""
          (List.map (fun (p, c) -> p ^ "\000" ^ c ^ "\000") sorted))
-    |> Digest.to_hex
+    |> Digestif.SHA256.to_hex
 
   (* Collects every .emo file under [dir], relative paths as keys. *)
   let collect_files (dir : string) : (string * string) list =
@@ -647,4 +653,204 @@ module Registry = struct
           (Printf.sprintf "checksum mismatch for %s@%s" f.f_name
              (Version.to_string f.f_version))
     with Sys_error message -> Error message
+end
+
+(* The .emoji archive: a deterministic gzip-compressed tar. The same file
+   set always packs to the same bytes — paths sorted, every metadata field
+   zeroed, and the gzip stream carries no timestamp. The deflate payload
+   uses stored (uncompressed) blocks: publishing favors a byte-stable,
+   dependency-free encoding over compression ratio, and every gzip reader
+   accepts stored blocks. *)
+module Archive = struct
+  let crc32_table =
+    Array.init 256 (fun i ->
+        let rec step n crc =
+          if n = 0 then crc
+          else
+            let crc =
+              if Int32.logand crc 1l <> 0l then
+                Int32.logxor (Int32.shift_right_logical crc 1) 0xEDB88320l
+              else Int32.shift_right_logical crc 1
+            in
+            step (n - 1) crc
+        in
+        step 8 (Int32.of_int i))
+
+  let crc32 (data : string) : int32 =
+    let crc = ref 0xFFFFFFFFl in
+    String.iter
+      (fun c ->
+        let idx = Int32.to_int (Int32.logand !crc 0xFFl) lxor Char.code c in
+        crc := Int32.logxor crc32_table.(idx) (Int32.shift_right_logical !crc 8))
+      data;
+    Int32.logxor !crc 0xFFFFFFFFl
+
+  let gzip (data : string) : string =
+    let buf = Buffer.create (String.length data + 64) in
+    Buffer.add_string buf "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff";
+    let len = String.length data in
+    let pos = ref 0 in
+    let block last off n =
+      Buffer.add_char buf (if last then '\x01' else '\x00');
+      Buffer.add_char buf (Char.chr (n land 0xFF));
+      Buffer.add_char buf (Char.chr ((n lsr 8) land 0xFF));
+      Buffer.add_char buf (Char.chr (lnot n land 0xFF));
+      Buffer.add_char buf (Char.chr ((lnot n lsr 8) land 0xFF));
+      Buffer.add_substring buf data off n
+    in
+    if len = 0 then block true 0 0
+    else
+      while !pos < len do
+        let n = min 0xFFFF (len - !pos) in
+        block (!pos + n = len) !pos n;
+        pos := !pos + n
+      done;
+    let le32 v =
+      for i = 0 to 3 do
+        Buffer.add_char buf
+          (Char.chr
+             (Int32.to_int
+                (Int32.logand (Int32.shift_right_logical v (i * 8)) 0xFFl)))
+      done
+    in
+    le32 (crc32 data);
+    le32 (Int32.of_int (len land 0xFFFFFFFF));
+    Buffer.contents buf
+
+  (* One ustar header (512 bytes) for a regular file: mode 0644, uid/gid 0,
+     mtime 0. Long names split across the prefix field at a `/`. *)
+  let tar_header ~(name : string) ~(size : int) : string =
+    let name, prefix =
+      if String.length name <= 100 then (name, "")
+      else
+        let rec split_at i =
+          if i < 0 then None
+          else if name.[i] = '/' then
+            let prefix = String.sub name 0 i in
+            let rest = String.sub name (i + 1) (String.length name - i - 1) in
+            if String.length prefix <= 155 && String.length rest <= 100 then
+              Some (rest, prefix)
+            else split_at (i - 1)
+          else split_at (i - 1)
+        in
+        match split_at (String.length name - 1) with
+        | Some parts -> parts
+        | None ->
+            invalid_arg
+              (Printf.sprintf "archive: path too long for ustar: %s" name)
+    in
+    let header = Bytes.make 512 '\000' in
+    let set off len s =
+      Bytes.blit_string s 0 header off (min len (String.length s))
+    in
+    let octal off len v =
+      let s = Printf.sprintf "%0*o" (len - 1) v in
+      set off len s
+    in
+    set 0 100 name;
+    octal 100 8 0o644;
+    octal 108 8 0;
+    octal 116 8 0;
+    octal 124 12 size;
+    octal 136 12 0;
+    (* checksum field: spaces while summing *)
+    Bytes.fill header 148 8 ' ';
+    Bytes.set header 156 '0';
+    set 257 6 "ustar";
+    set 263 2 "00";
+    set 345 155 prefix;
+    let sum = Bytes.fold_left (fun acc c -> acc + Char.code c) 0 header in
+    let s = Printf.sprintf "%06o" sum in
+    Bytes.blit_string s 0 header 148 6;
+    Bytes.set header 154 '\000';
+    Bytes.set header 155 ' ';
+    Bytes.unsafe_to_string header
+
+  let tar (files : (string * string) list) : string =
+    let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) files in
+    let buf = Buffer.create 4096 in
+    List.iter
+      (fun (name, content) ->
+        Buffer.add_string buf (tar_header ~name ~size:(String.length content));
+        Buffer.add_string buf content;
+        let pad = (512 - (String.length content mod 512)) mod 512 in
+        Buffer.add_string buf (String.make pad '\000'))
+      sorted;
+    Buffer.add_string buf (String.make 1024 '\000');
+    Buffer.contents buf
+
+  (* The published artifact: sorted tar inside a timestamp-free gzip. *)
+  let build (files : (string * string) list) : string = gzip (tar files)
+end
+
+(* Publishing: the client side of the registry's publish protocol.
+   [prepare] validates the package rooted at [dir] and builds the .emoji
+   archive — the CLI ships the bytes over HTTP. The content digest is the
+   Registry digest over the .emo sources; a root README.md rides along but
+   is never digested, matching the server. *)
+module Publish = struct
+  type prepared = {
+    p_manifest : manifest;
+    p_files : (string * string) list; (* archive members, sorted by path *)
+    p_checksum : string;
+    p_archive : string; (* the .emoji bytes *)
+    p_archive_name : string; (* owner--name--version.emoji *)
+  }
+
+  (* The registry's name rule: owner/name, each segment 1–64 chars of
+     [a-z0-9_-]. Plain (stdlib-style) names are not publishable. *)
+  let valid_name_part (s : string) : bool =
+    let ok c =
+      (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '_' || c = '-'
+    in
+    String.length s >= 1 && String.length s <= 64 && String.for_all ok s
+
+  let validate_name (name : string) : (string * string, string) result =
+    match String.split_on_char '/' name with
+    | [ owner; short ] when valid_name_part owner && valid_name_part short ->
+        Ok (owner, short)
+    | _ ->
+        Error
+          (Printf.sprintf
+             "package name `%s` is not publishable: expected owner/name, each \
+              part 1-64 lowercase letters, digits, `_` or `-`"
+             name)
+
+  let read_file path =
+    let ic = open_in_bin path in
+    Fun.protect
+      ~finally:(fun () -> close_in_noerr ic)
+      (fun () -> really_input_string ic (in_channel_length ic))
+
+  let prepare ~(dir : string) : (prepared, string) result =
+    let manifest_path = Filename.concat dir "package.emo" in
+    if not (Sys.file_exists manifest_path) then
+      Error (dir ^ ": no package.emo manifest")
+    else
+      match
+        parse_manifest ~file:manifest_path ~source:(read_file manifest_path)
+      with
+      | exception Manifest_error d -> Error d.Emo_support.Diagnostic.message
+      | m -> (
+          match validate_name m.name with
+          | Error _ as error -> error
+          | Ok (owner, short) ->
+              let emo_files = Registry.collect_files dir in
+              let readme = Filename.concat dir "README.md" in
+              let files =
+                if Sys.file_exists readme then
+                  ("README.md", read_file readme) :: emo_files
+                else emo_files
+              in
+              let version = Version.to_string m.version in
+              Ok
+                {
+                  p_manifest = m;
+                  p_files =
+                    List.sort (fun (a, _) (b, _) -> String.compare a b) files;
+                  p_checksum = Registry.digest emo_files;
+                  p_archive = Archive.build files;
+                  p_archive_name =
+                    Printf.sprintf "%s--%s--%s.emoji" owner short version;
+                })
 end

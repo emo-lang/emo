@@ -1,6 +1,6 @@
 (executable
  (name emo_pkg_test)
- (libraries alcotest emo_pkg emo_support))
+ (libraries alcotest unix emo_pkg emo_support))
 
 (rule
  (alias runtest)
