@@ -67,3 +67,4 @@ incrementally shippable steps — one file per step, executed in order.
 | 20 | Wasm runtime: decoder & validator | done |
 | 21 | Wasm runtime: interpreter core & spec goldens | in progress (tasks written) |
 | 22 | RISC-V target (freestanding RV64) | not started (tasks written) |
+| 23 | Self-contained hosted native backend (no OCaml runtime) & deep C FFI | assessment (not scheduled) |
