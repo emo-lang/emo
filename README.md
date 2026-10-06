@@ -339,7 +339,7 @@ Documentation lives under `docs/`. The Chinese translation of this README is [`d
 - [`docs/var-escape.md`](docs/var-escape.md) — the `var`-escape rule.
 - [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`net`, `http`).
 - [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
-- [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md) — feasibility and market assessments.
+- [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md), [`docs/rtos-assessment.md`](docs/rtos-assessment.md) — feasibility and market assessments.
 - [`docs/TASKS.md`](docs/TASKS.md) — the implementation task checklist.
 
 ## License

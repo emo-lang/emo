@@ -339,7 +339,7 @@ Emo 通过 OCaml 的一等 C FFI 与 C 互操作：在原生后端，Emo 二进�
 - [`docs/var-escape.md`](docs/var-escape.md) —— `var` 逃逸规则(暂无中文)。
 - [`docs/zh-CN/stdlib/`](docs/zh-CN/stdlib/) —— 标准库 API 文档(`net`、`http`)。
 - [`docs/zh-CN/lsp.md`](docs/zh-CN/lsp.md) —— 语言服务器与 VS Code 扩展。
-- [`docs/zh-CN/industrial-software.md`](docs/zh-CN/industrial-software.md)、[`docs/zh-CN/sql-database.md`](docs/zh-CN/sql-database.md) —— 可行性与市场评估。
+- [`docs/zh-CN/industrial-software.md`](docs/zh-CN/industrial-software.md)、[`docs/zh-CN/sql-database.md`](docs/zh-CN/sql-database.md)、[`docs/zh-CN/rtos-assessment.md`](docs/zh-CN/rtos-assessment.md) —— 可行性与市场评估。
 - [`docs/zh-CN/TASKS.md`](docs/zh-CN/TASKS.md) —— 实现任务清单。
 
 ## 许可
