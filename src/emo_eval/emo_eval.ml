@@ -1236,6 +1236,24 @@ and eval_method env span recv mname arg_exprs =
       | Float f, "to_bits" ->
           none_expected "to_bits";
           Int64 (Int64.bits_of_float f)
+      | Float f, "sqrt" ->
+          none_expected "sqrt";
+          Float (Float.sqrt f)
+      | Float f, "floor" ->
+          none_expected "floor";
+          Float (Float.floor f)
+      | Float f, "ceil" ->
+          none_expected "ceil";
+          Float (Float.ceil f)
+      | Float f, "trunc" ->
+          none_expected "trunc";
+          Float (Float.trunc f)
+      | Float f, "to_int64" ->
+          none_expected "to_int64";
+          Int64 (Int64.of_float f)
+      | Int64 n, "to_float64" ->
+          none_expected "to_float64";
+          Float (Int64.to_float n)
       | TypeValue "Bytes", "new" -> (
           let args = eval_args () in
           match args with
