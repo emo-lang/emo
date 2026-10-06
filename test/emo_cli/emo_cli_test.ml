@@ -380,10 +380,11 @@ let wasm_examples_tests =
 (* The C goldens: build with --target c through the system cc and run
    the standalone binary, byte-for-byte against expected.txt. Skips
    when cc is absent. The list names the backend's current support
-   set; it grows task by task (T24.1: hello_world). The full fib
-   example joins when closures land (T24.5) — its greeting needs them. *)
-let c_goldens = [ "hello_world" ]
-
+   set; it grows task by task (T24.1: hello_world, T24.3: if_expr).
+   The full fib and numerics examples join when closures (T24.5),
+   tuples (T24.4), and foreign defs (T24.8) land — their c_scalar /
+   c_integer fixtures cover the same semantics. *)
+let c_goldens = [ "hello_world"; "if_expr" ]
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
 
 (* T24.2's integer core: fib's plain recursion, the 1M-deep tail
@@ -447,13 +448,20 @@ println(sums(5))
 |}
 
 let c_integer_core_expected =
-  "6765\n0\n1\n-9223372036854775808\n-9223372036854775808\n0\n\
-   -9223372036854775808\n-9223372036854775808\n20\n6\n"
+  "6765\n\
+   0\n\
+   1\n\
+   -9223372036854775808\n\
+   -9223372036854775808\n\
+   0\n\
+   -9223372036854775808\n\
+   -9223372036854775808\n\
+   20\n\
+   6\n"
 
 let c_integer_tests =
   [
-    tc "the c integer core: fib, flat 1M tails, wrap-around Int64"
-      (fun () ->
+    tc "the c integer core: fib, flat 1M tails, wrap-around Int64" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
         (* its own directory: a build compiles every sibling .emo *)
         let dir = Filename.concat scratch "c-int-core" in
@@ -464,8 +472,8 @@ let c_integer_tests =
         close_out oc;
         let out_bin = Filename.concat dir "main-c-bin" in
         let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
-            ~cclibs:[] ~target:"c"
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
+            ~target:"c"
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         let cmd =
@@ -490,8 +498,118 @@ let c_integer_tests =
         let proc_status =
           Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
         in
-        Alcotest.(check string) "output" c_integer_core_expected
-          (Buffer.contents out);
+        Alcotest.(check string)
+          "output" c_integer_core_expected (Buffer.contents out);
+        match proc_status with
+        | Unix.WEXITED 0 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "the binary exited %s: %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                 | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                 (Buffer.contents err)));
+  ]
+
+(* T24.3's scalar runtime: Float64 rendering across the %g boundary
+   (integral magnitudes below 1e16 keep one decimal, 1e-4 and 1e+06
+   flip to exponent form), Bool/Char printing, string concatenation
+   and content equality, interpolation, and to_string. The expected
+   output is the interpreter's own rendering of the same program —
+   the printing rules are cross-checked, not hand-copied. *)
+let c_scalar_core_source =
+  {|def half(x Float64) Float64 {
+  return x / 2.0
+}
+
+def label(ok Bool) String {
+  if ok {
+    return "yes"
+  }
+  return "no"
+}
+
+println(2.0)
+println(1000000.0)
+println(999999.5)
+println(0.0001)
+println(0.00001)
+println(1000000000000000.0)
+println(10000000000000000.0)
+println(0.1 + 0.2)
+println(1.0 / 3.0)
+println(-2.5)
+println(half(7.0))
+println(-0.5)
+println(3.14159265358979)
+println(true)
+println(false)
+println(label(true))
+println(label(false))
+println('a')
+println('~')
+println(1 == 1)
+println('a' == 'a')
+println('a' == 'b')
+println("foo" == "foo")
+println("foo" == "bar")
+println("foo" != "bar")
+const s = "ab" + "cd"
+println(s)
+println("n=${42}")
+println("f=${2.0} b=${true} c=${'x'} s=${"in"}")
+println("".to_string())
+|}
+
+let c_scalar_tests =
+  [
+    tc "the c scalar runtime matches the interpreter's rendering" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let expected =
+          let out = Buffer.create 512 in
+          Emo_eval.set_output (Buffer.add_string out);
+          Fun.protect
+            ~finally:(fun () ->
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout))
+            (fun () ->
+              Emo_eval.run_program ~file:"c-scalar/main.emo"
+                ~source:c_scalar_core_source);
+          Buffer.contents out
+        in
+        let dir = Filename.concat scratch "c-scalar" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc c_scalar_core_source;
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code =
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
+            ~target:"c"
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let cmd_stdout, _cmd_stdin, cmd_stderr =
+          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
+        in
+        let out = Buffer.create 512 in
+        (try
+           while true do
+             Buffer.add_channel out cmd_stdout 4096
+           done
+         with End_of_file -> ());
+        let err = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel err cmd_stderr 4096
+           done
+         with End_of_file -> ());
+        let proc_status =
+          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+        in
+        Alcotest.(check string) "output" expected (Buffer.contents out);
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -519,8 +637,7 @@ let c_examples_tests =
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd_stdout, _cmd_stdin, cmd_stderr =
-            Unix.open_process_full
-              (Filename.quote out_bin)
+            Unix.open_process_full (Filename.quote out_bin)
               (Unix.environment ())
           in
           let out = Buffer.create 256 in
@@ -711,5 +828,6 @@ let () =
       ("beam_examples", beam_examples_tests);
       ("c_examples", c_examples_tests);
       ("c_integer", c_integer_tests);
+      ("c_scalar", c_scalar_tests);
       ("publish", publish_tests);
     ]
