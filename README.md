@@ -58,7 +58,7 @@ class User {
 
 - **`init` is the only window where fields are assigned.** Fields come into existence through `self.x = ...` inside `init`; assigning to `self.x` anywhere else is a compile error. Classes are therefore immutable value types: instances are copied on assignment (copy-on-write under the hood), and two instances with equal content are `==`.
 - **`self` is passed implicitly and used explicitly** — no `self` in signatures, but always spelled out in bodies (`self.name`), so fields never blur with local variables.
-- **No inheritance — neither single nor multiple.** Reuse is served by duck-typed functions, composition, and interfaces instead of class hierarchies.
+- **No inheritance — neither single nor multiple.** Reuse is served by duck-typed functions, composition, and interfaces instead of class hierarchies. There is no mixin or `include` either: splicing another type's methods into a class is inheritance under another spelling, with the same method-resolution and collision problems.
 
 ### Interfaces
 
