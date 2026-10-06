@@ -677,8 +677,11 @@ let deps =
     [ deps_resolve_cmd; deps_update_cmd; deps_list_cmd ]
 
 (* `emo publish`: pack the package rooted at the working directory and POST
-   it to the registry. The upload goes through curl — the toolchain keeps
-   no HTTP client dependency, and curl is on every platform Emo targets. *)
+   it to the registry. The upload is dogfooded: the request is made by the
+   standard library's own http client, running as an embedded Emo program
+   under the toolchain's scheduler. The endpoint, token, and archive bytes
+   ride in as host-injected bindings — Emo has no file-reading builtin, and
+   the gzip body is binary. *)
 
 (* Extracts a string field from a flat JSON object (the registry's frozen
    error shape); None when the field is absent or the body is not JSON. *)
@@ -716,10 +719,31 @@ let json_string_field (key : string) (json : string) : string option =
         in
         read (i + 1)
 
-let which_curl () : bool = Sys.command "command -v curl >/dev/null 2>&1" = 0
+(* The uploader program: `__url`, `__token`, and `__body` (the raw .emoji
+   bytes) are bound by the host before it runs. It prints the HTTP status on
+   the first line and the response body after it — that is the whole channel
+   back. A transport failure raises inside the program and surfaces as an
+   uncaught Emo exception, which the host maps to a plain error. *)
+let upload_program =
+  {|require "http"
+
+const resp = http.request("POST", __url, [("Authorization", "Bearer " + __token), ("Content-Type", "application/octet-stream")], __body, 120.0)
+println(resp.status)
+println(resp.body)
+|}
+
+let rec remove_tree path =
+  if Sys.file_exists path && Sys.is_directory path then begin
+    Sys.readdir path
+    |> Array.iter (fun e -> remove_tree (Filename.concat path e));
+    Unix.rmdir path
+  end
+  else if Sys.file_exists path then Sys.remove path
 
 (* POSTs [archive] to {registry}/api/v1/packages and returns the HTTP status
-   and response body. *)
+   and response body. The embedded uploader resolves `http` against the
+   standard library shipped with the binary — never the user's EMO_REGISTRY,
+   which may point at a remote endpoint the filesystem client cannot read. *)
 let upload ~(registry : string) ~(token : string) ~(archive : string) :
     (int * string, string) result =
   let base =
@@ -727,42 +751,108 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
     if n > 0 && registry.[n - 1] = '/' then String.sub registry 0 (n - 1)
     else registry
   in
-  let tmp = Filename.temp_file "emo-publish-" ".emoji" in
-  let body_file = tmp ^ ".body" and code_file = tmp ^ ".code" in
-  let err_file = tmp ^ ".err" in
-  let cleanup () =
-    List.iter
-      (fun f -> if Sys.file_exists f then Sys.remove f)
-      [ tmp; body_file; code_file; err_file ]
-  in
-  let oc = open_out_bin tmp in
-  output_string oc archive;
-  close_out oc;
-  let cmd =
-    Printf.sprintf
-      "curl -sS --max-time 120 -o %s -w %%{http_code} -X POST -H %s -H %s \
-       --data-binary @%s %s > %s 2> %s"
-      (Filename.quote body_file)
-      (Filename.quote ("Authorization: Bearer " ^ token))
-      (Filename.quote "Content-Type: application/octet-stream")
-      (Filename.quote tmp)
-      (Filename.quote (base ^ "/api/v1/packages"))
-      (Filename.quote code_file) (Filename.quote err_file)
-  in
-  let rc = Sys.command cmd in
-  let read f = if Sys.file_exists f then read_file f else "" in
-  let result =
-    if rc <> 0 then
-      Error
-        (let e = String.trim (read err_file) in
-         if e = "" then Printf.sprintf "curl failed (exit %d)" rc else e)
-    else
-      match int_of_string_opt (String.trim (read code_file)) with
-      | Some status -> Ok (status, read body_file)
-      | None -> Error "curl returned no HTTP status"
-  in
-  cleanup ();
-  result
+  match Emo_project.bundled_registry () with
+  | None ->
+      Error "the bundled standard library is missing from the installation"
+  | Some stdlib -> (
+      let reg = { Emo_pkg.Registry.endpoint = stdlib } in
+      match List.rev (Emo_pkg.Registry.versions reg ~name:"http") with
+      | [] -> Error "the bundled standard library has no http package"
+      | http_version :: _ -> (
+          match List.rev (Emo_pkg.Registry.versions reg ~name:"net") with
+          | [] -> Error "the bundled standard library has no net package"
+          | net_version :: _ ->
+              (* The resolver indexes manifest roots only, so both packages are
+             pinned explicitly — same as a user project. *)
+              let dir =
+                Filename.concat
+                  (Filename.get_temp_dir_name ())
+                  (Printf.sprintf "emo-publish-%d-%d" (Unix.getpid ())
+                     (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF))
+              in
+              Unix.mkdir dir 0o755;
+              let write name content =
+                let oc = open_out_bin (Filename.concat dir name) in
+                output_string oc content;
+                close_out oc
+              in
+              write "package.emo"
+                (Printf.sprintf
+                   {|package {
+  name = "internal/publish"
+  version = "0.1.0"
+  targets = ["native"]
+
+  deps {
+    http = "%s"
+    net = "%s"
+  }
+}
+|}
+                   (Emo_pkg.Version.to_string http_version)
+                   (Emo_pkg.Version.to_string net_version));
+              write "main.emo" upload_program;
+              let out = Buffer.create 256 in
+              let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
+              let old_cwd = Sys.getcwd () in
+              Unix.putenv "EMO_REGISTRY" stdlib;
+              Emo_eval.set_output (Buffer.add_string out);
+              Sys.chdir dir;
+              Fun.protect
+                ~finally:(fun () ->
+                  Sys.chdir old_cwd;
+                  (match old_registry with
+                  | Some v -> Unix.putenv "EMO_REGISTRY" v
+                  | None -> ());
+                  Emo_eval.set_output (fun s ->
+                      print_string s;
+                      flush stdout);
+                  remove_tree dir)
+                (fun () ->
+                  match
+                    Emo_project.run_entry ~entry_file:"main.emo" ~check:false
+                      ~sched:Emo_project.Own
+                      ~globals:
+                        [
+                          ("__url", Emo_eval.String (base ^ "/api/v1/packages"));
+                          ("__token", Emo_eval.String token);
+                          ("__body", Emo_eval.String archive);
+                        ]
+                      ()
+                  with
+                  | exception Emo_project.Static_errors ds ->
+                      Error
+                        (String.concat "; "
+                           (List.map
+                              (fun d -> d.Emo_support.Diagnostic.message)
+                              ds))
+                  | exception Emo_eval.Error d ->
+                      Error d.Emo_support.Diagnostic.message
+                  | _ -> (
+                      let text = Buffer.contents out in
+                      match String.index_opt text '\n' with
+                      | None -> Error ("the uploader printed no status: " ^ text)
+                      | Some i -> (
+                          match
+                            int_of_string_opt
+                              (String.trim (String.sub text 0 i))
+                          with
+                          | None ->
+                              Error ("the uploader printed no status: " ^ text)
+                          | Some status ->
+                              let body =
+                                String.sub text (i + 1)
+                                  (String.length text - i - 1)
+                              in
+                              let body =
+                                (* println's trailing newline is not the body's. *)
+                                if
+                                  String.length body > 0
+                                  && body.[String.length body - 1] = '\n'
+                                then String.sub body 0 (String.length body - 1)
+                                else body
+                              in
+                              Ok (status, body))))))
 
 let publish ~(registry_opt : string option) ~(token_opt : string option)
     ~(dry_run : bool) : int =
@@ -815,43 +905,37 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
                 "emo publish: no API token — pass --token or set EMO_TOKEN";
               65
           | Some registry, Some token -> (
-              if not (which_curl ()) then begin
-                prerr_endline
-                  "emo publish: curl is not installed or not on PATH";
-                70
-              end
-              else
-                match upload ~registry ~token ~archive:p.p_archive with
-                | Error message ->
-                    prerr_endline ("emo publish: upload failed: " ^ message);
-                    70
-                | Ok (201, _) ->
-                    Printf.printf "published %s %s\n" m.Emo_pkg.name version;
-                    let base =
-                      let n = String.length registry in
-                      if n > 0 && registry.[n - 1] = '/' then
-                        String.sub registry 0 (n - 1)
-                      else registry
-                    in
-                    Printf.printf "  %s/p/%s\n" base m.Emo_pkg.name;
-                    0
-                | Ok (status, body) -> (
-                    let code = json_string_field "code" body in
-                    let message = json_string_field "message" body in
-                    match (code, message) with
-                    | Some code, Some message ->
+              match upload ~registry ~token ~archive:p.p_archive with
+              | Error message ->
+                  prerr_endline ("emo publish: upload failed: " ^ message);
+                  70
+              | Ok (201, _) ->
+                  Printf.printf "published %s %s\n" m.Emo_pkg.name version;
+                  let base =
+                    let n = String.length registry in
+                    if n > 0 && registry.[n - 1] = '/' then
+                      String.sub registry 0 (n - 1)
+                    else registry
+                  in
+                  Printf.printf "  %s/p/%s\n" base m.Emo_pkg.name;
+                  0
+              | Ok (status, body) -> (
+                  let code = json_string_field "code" body in
+                  let message = json_string_field "message" body in
+                  match (code, message) with
+                  | Some code, Some message ->
+                      prerr_endline
+                        (Printf.sprintf "emo publish: %s: %s" code message);
+                      if code = "version_exists" then
                         prerr_endline
-                          (Printf.sprintf "emo publish: %s: %s" code message);
-                        if code = "version_exists" then
-                          prerr_endline
-                            "hint: versions are immutable — bump `version` in \
-                             package.emo";
-                        1
-                    | _ ->
-                        prerr_endline
-                          (Printf.sprintf "emo publish: HTTP %d: %s" status
-                             (String.trim body));
-                        1)))
+                          "hint: versions are immutable — bump `version` in \
+                           package.emo";
+                      1
+                  | _ ->
+                      prerr_endline
+                        (Printf.sprintf "emo publish: HTTP %d: %s" status
+                           (String.trim body));
+                      1)))
 
 let publish_cmd =
   let registry =

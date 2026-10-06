@@ -687,7 +687,8 @@ let check_entry ~entry_file : Emo_support.Diagnostic.t list =
    `emo run`. *)
 type sched = Sequential | Eio | Own
 
-let run_entry ~entry_file ?(check = false) ?(sched = Sequential) () : project =
+let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
+    ?(globals : (string * Emo_eval.value) list = []) () : project =
   let p, prepared = prepare ~entry_file in
   Option.iter
     (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"native" p)
@@ -705,6 +706,11 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential) () : project =
      in
      match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
+  (* Host-injected bindings: the CLI's internal tooling (publish's uploader)
+     passes data in without a language-level channel. *)
+  List.iter
+    (fun (name, value) -> Emo_eval.define env name ~mutable_:false value)
+    globals;
   let evaluate () = List.iter (Emo_eval.eval_item env) items in
   (try
      match sched with
