@@ -46,7 +46,7 @@ outcome: `ok`, `return`, `trap`, `uninstantiable`, or `unlinkable`.
 `<command>` is one of:
 
 ```
-module <hex>                       instantiate binary module bytes
+module <hex> <name-hex>            instantiate a binary module (its wast name, or `.`)
 register <name-hex> <as-hex>       register a named instance under an import name
 invoke <ref> <export-hex> [args]   call an exported function
 get <ref> <export-hex>             read an exported global

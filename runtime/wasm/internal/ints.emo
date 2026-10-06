@@ -162,16 +162,16 @@ def mask_bits(kind Int64, x Int64) Int64 {
 // ---- shifts and rotates (counts are masked) ----
 
 def shl(kind Int64, a Int64, count Int64) Int64 {
-  return fit(kind, a << (count % width_of(kind)))
+  return fit(kind, a << (count & (width_of(kind) - 1)))
 }
 
 def shr_s(kind Int64, a Int64, count Int64) Int64 {
-  const c = count % width_of(kind)
+  const c = count & (width_of(kind) - 1)
   return fit(kind, signed(kind, a) >> c)
 }
 
 def shr_u(kind Int64, a Int64, count Int64) Int64 {
-  const c = count % width_of(kind)
+  const c = count & (width_of(kind) - 1)
   if is32(kind) {
     return mask32(a) >> c
   }
@@ -183,7 +183,7 @@ def shr_u(kind Int64, a Int64, count Int64) Int64 {
 }
 
 def rotl(kind Int64, a Int64, count Int64) Int64 {
-  const c = count % width_of(kind)
+  const c = count & (width_of(kind) - 1)
   if c == 0 {
     return fit(kind, a)
   }
@@ -191,7 +191,7 @@ def rotl(kind Int64, a Int64, count Int64) Int64 {
 }
 
 def rotr(kind Int64, a Int64, count Int64) Int64 {
-  const c = count % width_of(kind)
+  const c = count & (width_of(kind) - 1)
   if c == 0 {
     return fit(kind, a)
   }
@@ -280,7 +280,7 @@ def cmp(op Int64, kind Int64, a Int64, b Int64) Int64 {
     return bool_bit(sa <= sb)
   }
   if op == 77 || op == 88 {
-    return bool_bit(!uge(ua, ub))
+    return bool_bit(uge(ub, ua))
   }
   if op == 78 || op == 89 {
     return bool_bit(sa >= sb)

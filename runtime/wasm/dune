@@ -126,6 +126,11 @@
   internal/reader.emo
   internal/decode.emo
   internal/model.emo
+  internal/instance.emo
+  internal/store.emo
+  internal/value.emo
+  internal/ints.emo
+  internal/floats.emo
   testdata/runs.smoke.txt
   package.emo)
  (action
@@ -154,6 +159,11 @@
   internal/reader.emo
   internal/decode.emo
   internal/model.emo
+  internal/instance.emo
+  internal/store.emo
+  internal/value.emo
+  internal/ints.emo
+  internal/floats.emo
   testdata/runs.all.txt
   package.emo)
  (action

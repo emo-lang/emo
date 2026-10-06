@@ -821,12 +821,39 @@ def write_tmp(base Int64, tmp Array[(Int64, Int64)], i Int64, k Int64) Int64 {
   return write_tmp(base, tmp, i + 1, k)
 }
 
-def init_locals(n Int64) Int64 {
-  if n <= 0 {
+// Push each declared local as a zero of its own kind (the locals vector
+// is a run-length list of valtype bytes).
+def local_types(data Bytes, pos Int64, limit Int64) (Array[Int64], Int64) {
+  const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
+  if cn[0].failed {
+    return ([], pos)
+  }
+  return local_runs(data, cn[0].pos, limit, cn[1], [])
+}
+
+def local_runs(data Bytes, pos Int64, limit Int64, n Int64, acc Array[Int64]) (Array[Int64], Int64) {
+  if n == 0 {
+    return (acc, pos)
+  }
+  const c = internal.reader.u32(internal.reader.new(data, pos, limit))
+  const v = internal.reader.valtype_at(data, c[0].pos, limit)
+  const acc2 = expand_zeros(acc, v[1], c[1])
+  return local_runs(data, v[2], limit, n - 1, acc2)
+}
+
+def expand_zeros(acc Array[Int64], kind Int64, n Int64) Array[Int64] {
+  if n == 0 {
+    return acc
+  }
+  return expand_zeros(acc.append(kind), kind, n - 1)
+}
+
+def init_locals(types Array[Int64], i Int64, n Int64) Int64 {
+  if i >= n {
     return 0
   }
-  push(mkv(127, 0))
-  return init_locals(n - 1)
+  push(mkv(types[i], 0))
+  return init_locals(types, i + 1, n)
 }
 
 // ---- block types ----
@@ -879,8 +906,8 @@ def call_func(m Module, fidx Int64) (Bool, String) {
   const nparams = ft.params.length()
   const nresults = ft.results.length()
   const base = sp - nparams
-  const lv = internal.reader.locals_walk(m.data, local.locals_start, local.locals_end)
-  init_locals(lv[2])
+  const lt = local_types(m.data, local.locals_start, local.locals_end)
+  init_locals(lt[0], 0, lt[0].length())
   const saved_base = frame_base
   frame_base = base
   const r = exec_seq(m, local.body_start, local.body_end)
@@ -908,7 +935,11 @@ def exec_seq(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
   if op == 5 {
     return (4, 0, pos + 1, "")
   }
-  if op == 1 || op == 26 {
+  if op == 1 {
+    return exec_seq(m, pos + 1, limit)
+  }
+  if op == 26 {
+    sp = sp - 1
     return exec_seq(m, pos + 1, limit)
   }
   if op == 0 {
@@ -1766,8 +1797,53 @@ def mem_replace_loop(ms Array[(Bytes, Int64, Bool)], i Int64, mm (Bytes, Int64, 
 def run_bulk(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
   const x = internal.reader.u32(internal.reader.new(m.data, pos, limit))
   const s = x[1]
-  if s == 9 || s == 13 {
-    return exec_seq(m, x[0].pos, limit)
+  if s <= 7 {
+    return run_trunc_sat(m, s, x[0].pos, limit)
+  }
+  if s == 8 {
+    const di = internal.reader.u32(x[0])
+    const mi = internal.reader.u32(di[0])
+    const n = internal.value.mask32(pop()[1])
+    const src = internal.value.mask32(pop()[1])
+    const dst = internal.value.mask32(pop()[1])
+    if di[1] >= datalist.length() {
+      return (3, 0, mi[0].pos, "out of bounds memory access")
+    }
+    const r = mem_init(mems[0], dst, datalist[di[1]], src, n)
+    if !r[0] {
+      return (3, 0, mi[0].pos, r[1])
+    }
+    return exec_seq(m, mi[0].pos, limit)
+  }
+  if s == 12 {
+    const ei = internal.reader.u32(x[0])
+    const ti = internal.reader.u32(ei[0])
+    const n = internal.value.mask32(pop()[1])
+    const src = internal.value.mask32(pop()[1])
+    const dst = internal.value.mask32(pop()[1])
+    if ei[1] >= elemlist.length() {
+      return (3, 0, ti[0].pos, "out of bounds table access")
+    }
+    const r = internal.store.tbl_init(tables[ti[1]], dst, elemlist[ei[1]], src, n)
+    if !r[0] {
+      return (3, 0, ti[0].pos, r[2])
+    }
+    tables = table_replace(tables, ti[1], r[1])
+    return exec_seq(m, ti[0].pos, limit)
+  }
+  if s == 9 {
+    const di = internal.reader.u32(x[0])
+    if di[1] < datalist.length() {
+      datalist = replace_bytes(datalist, di[1], Bytes.new(0))
+    }
+    return exec_seq(m, di[0].pos, limit)
+  }
+  if s == 13 {
+    const ei = internal.reader.u32(x[0])
+    if ei[1] < elemlist.length() {
+      elemlist = replace_elems(elemlist, ei[1], [])
+    }
+    return exec_seq(m, ei[0].pos, limit)
   }
   if s == 10 {
     const d = internal.reader.u32(x[0])
@@ -1838,6 +1914,63 @@ def run_bulk(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
   return (3, 0, x[0].pos, "uninitialized element")
 }
 
+// The 0xfc trunc_sat sub-opcodes 0..7: (width, source kind, signedness).
+def run_trunc_sat(m Module, s Int64, after Int64, limit Int64) (Int64, Int64, Int64, String) {
+  const a = pop()
+  const src_kind = if_eq(s % 4, 0, 125, if_eq(s % 4, 1, 125, 124))
+  const w = internal.floats.to_f64_bits(src_kind, a[1])
+  if s < 4 {
+    if s % 2 == 0 {
+      push(mkv(127, internal.floats.trunc_sat_i32_s(w)))
+    } else {
+      push(mkv(127, internal.floats.trunc_sat_i32_u(w)))
+    }
+  } else {
+    if s % 2 == 0 {
+      push(mkv(126, internal.floats.trunc_sat_i64_s(w)))
+    } else {
+      push(mkv(126, internal.floats.trunc_sat_i64_u(w)))
+    }
+  }
+  return exec_seq(m, after, limit)
+}
+
+def replace_bytes(xs Array[Bytes], i Int64, v Bytes) Array[Bytes] {
+  return replace_bytes_loop(xs, i, v, 0, [])
+}
+
+def replace_bytes_loop(xs Array[Bytes], i Int64, v Bytes, j Int64, acc Array[Bytes]) Array[Bytes] {
+  if j == xs.length() {
+    return acc
+  }
+  if j == i {
+    return replace_bytes_loop(xs, i, v, j + 1, acc.append(v))
+  }
+  return replace_bytes_loop(xs, i, v, j + 1, acc.append(xs[j]))
+}
+
+def replace_elems(xs Array[Array[(Int64, Int64)]], i Int64, v Array[(Int64, Int64)]) Array[Array[(Int64, Int64)]] {
+  return replace_elems_loop(xs, i, v, 0, [])
+}
+
+def replace_elems_loop(xs Array[Array[(Int64, Int64)]], i Int64, v Array[(Int64, Int64)], j Int64, acc Array[Array[(Int64, Int64)]]) Array[Array[(Int64, Int64)]] {
+  if j == xs.length() {
+    return acc
+  }
+  if j == i {
+    return replace_elems_loop(xs, i, v, j + 1, acc.append(v))
+  }
+  return replace_elems_loop(xs, i, v, j + 1, acc.append(xs[j]))
+}
+
+def mem_init(mem (Bytes, Int64, Bool), dst Int64, src Bytes, src_i Int64, n Int64) (Bool, String) {
+  if dst + n > mem[0].length() || src_i + n > src.length() {
+    return (false, "out of bounds memory access")
+  }
+  copy_n(mem[0], src, src_i, dst, n)
+  return (true, "")
+}
+
 def mem_copy(mem (Bytes, Int64, Bool), dst Int64, src Int64, n Int64) (Bool, String) {
   if dst + n > mem[0].length() || src + n > mem[0].length() {
     return (false, "out of bounds memory access")
@@ -1872,7 +2005,7 @@ def fill_n(data Bytes, at Int64, val Int64, i Int64, n Int64) Int64 {
   if i == n {
     return 0
   }
-  data.set(at + i, val)
+  data.set(at + i, val & 255)
   return fill_n(data, at, val, i + 1, n)
 }
 
@@ -1915,9 +2048,11 @@ def call(handle Int64, name String, args Array[(Int64, Int64)]) (Bool, Array[(In
   mems = inst.mems
   tables = inst.tables
   globals_store = inst.globals
+  datalist = inst.datalist
+  elemlist = inst.elemlist
   push_args(args, 0, args.length())
   const r = call_func(m, fidx)
-  instances = inst_replace(instances, handle, Instance.new(inst.module, mems, tables, globals_store, inst.targets, inst.start))
+  instances = inst_replace(instances, handle, Instance.new(inst.module, mems, tables, globals_store, inst.targets, inst.start, datalist, elemlist))
   if !r[0] {
     return (false, [], r[1])
   }
@@ -1942,16 +2077,27 @@ def push_args(args Array[(Int64, Int64)], i Int64, n Int64) Int64 {
 // (kind, handle, index): kind 0 = a function of instance `handle`,
 // kind 1 = a host function (T21.9).
 class Instance {
-  def init(module Module, mems Array[(Bytes, Int64, Bool)], tables Array[(Array[(Int64, Int64)], Int64, Bool)], globals Array[(Bool, (Int64, Int64))], targets Array[(Int64, Int64, Int64)], start Int64) {
+  def init(module Module, mems Array[(Bytes, Int64, Bool)], tables Array[(Array[(Int64, Int64)], Int64, Bool)], globals Array[(Bool, (Int64, Int64))], targets Array[(Int64, Int64, Int64)], start Int64, datalist Array[Bytes], elemlist Array[Array[(Int64, Int64)]]) {
     self.module = module
     self.mems = mems
     self.tables = tables
     self.globals = globals
     self.targets = targets
     self.start = start
+    self.datalist = datalist
+    self.elemlist = elemlist
   }
 }
 
+
+// Forget every loaded module, instance, and registration (a fresh run).
+def reset_all() Int64 {
+  loaded = []
+  instances = []
+  reg_names = []
+  reg_handles = []
+  return 0
+}
 
 def inst_replace(is Array[Instance], i Int64, v Instance) Array[Instance] {
   return inst_replace_loop(is, i, v, 0, [])
@@ -2175,16 +2321,22 @@ def call_other(h Int64, fidx Int64) (Bool, String) {
   const save_tables = tables
   const save_globals = globals_store
   const save_inst = cur_inst
+  const save_data = datalist
+  const save_elem = elemlist
   const st = instances[h]
   mems = st.mems
   tables = st.tables
   globals_store = st.globals
+  datalist = st.datalist
+  elemlist = st.elemlist
   cur_inst = h
   const r = call_func(st.module, fidx)
-  instances = inst_replace(instances, h, Instance.new(st.module, mems, tables, globals_store, st.targets, st.start))
+  instances = inst_replace(instances, h, Instance.new(st.module, mems, tables, globals_store, st.targets, st.start, datalist, elemlist))
   mems = save_mems
   tables = save_tables
   globals_store = save_globals
+  datalist = save_data
+  elemlist = save_elem
   cur_inst = save_inst
   return r
 }
@@ -2205,7 +2357,7 @@ def instantiate(handle Int64) (Bool, String, Int64) {
   }
   const mems0 = init_mems(m, 0, r[2])
   const tables0 = init_tables(m, 0, r[3])
-  const inst = Instance.new(m, mems0, tables0, g[2], r[5], m.start)
+  const inst = Instance.new(m, mems0, tables0, g[2], r[5], m.start, [], [])
   instances = instances.append(inst)
   const e = layout_elems(m, h, 0, tables0, g[2], [])
   if !e[0] {
@@ -2215,7 +2367,7 @@ def instantiate(handle Int64) (Bool, String, Int64) {
   if !d[0] {
     return (false, d[1], -1)
   }
-  instances = inst_replace(instances, h, Instance.new(m, mems0, e[2], g[2], r[5], m.start))
+  instances = inst_replace(instances, h, Instance.new(m, mems0, e[2], g[2], r[5], m.start, d[3], e[3]))
   datalist = d[3]
   elemlist = e[3]
   // the start function
@@ -2229,7 +2381,7 @@ def instantiate(handle Int64) (Bool, String, Int64) {
     if !sr[0] {
       return (false, sr[1], -1)
     }
-    instances = inst_replace(instances, h, Instance.new(m, mems, tables, globals_store, r[5], m.start))
+    instances = inst_replace(instances, h, Instance.new(m, mems, tables, globals_store, r[5], m.start, d[3], e[3]))
   }
   return (true, "", h)
 }

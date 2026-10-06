@@ -87,7 +87,7 @@ def expected_verdicts(checkout: pathlib.Path, wasts, tmp: pathlib.Path):
 # expected outcome: `ok`, `return`, `trap`, `uninstantiable`, or
 # `unlinkable`. <command> is one of:
 #
-#   module <hex>                       instantiate a binary module
+#   module <hex> <name-hex>            instantiate a binary module (wasm name, or `.`)
 #   register <name-hex> <as-hex>       register the named module
 #   invoke <ref> <export-hex> [args]   call an exported function
 #   get <ref> <export-hex>             read an exported global
@@ -169,7 +169,8 @@ def run_commands(checkout: pathlib.Path, wast: str, tmp: pathlib.Path):
         name = f"{wast}:{cmd['line']}"
         verdict = RUN_VERDICTS[kind]
         if kind in ("module", "assert_uninstantiable", "assert_unlinkable"):
-            body = f"module {binary_hex(tmp, cmd['filename'])}"
+            who = hx(cmd["name"]) if "name" in cmd else "."
+            body = f"module {binary_hex(tmp, cmd['filename'])} {who}"
         elif kind == "register":
             who = hx(cmd["name"]) if "name" in cmd else "."
             body = f"register {who} {hx(cmd['as'])}"
