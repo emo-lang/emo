@@ -170,6 +170,9 @@ let drop_io state fd kind =
 let add_timer state seconds wake =
   state.timers <- (Unix.gettimeofday () +. seconds, wake) :: state.timers
 
+(* Wraps a socket fd as a connection. The caller must have put [fd] in
+   nonblocking mode: Linux does not inherit O_NONBLOCK across accept, so a
+   blocking accepted socket would stall the whole scheduler. *)
 let make_conn state fd desc =
   let c =
     {
