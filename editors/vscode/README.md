@@ -87,4 +87,4 @@ Press <kbd>F5</kbd> in VS Code to launch an Extension Development Host.
 
 ## License
 
-MIT — see the repository's [LICENSE](../../LICENSE).
+MIT — see the repository's [LICENSE](https://github.com/emo-lang/emo/blob/main/LICENSE)
