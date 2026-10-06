@@ -333,6 +333,15 @@ Emo interoperates with C through OCaml's first-class C FFI: on the native backen
 
 Documentation lives under `docs/`. The Chinese translation of this README is [`docs/zh-CN/README.zh-CN.md`](docs/zh-CN/README.zh-CN.md).
 
+- [`docs/native-backend.md`](docs/native-backend.md) — how `emo build` produces a native binary, and the C FFI.
+- [`docs/runtime-and-freestanding.md`](docs/runtime-and-freestanding.md) — what "runtime" and "freestanding" mean, and how they map to Emo's targets.
+- [`docs/numeric-width.md`](docs/numeric-width.md) — width-explicit numeric types on every target.
+- [`docs/var-escape.md`](docs/var-escape.md) — the `var`-escape rule.
+- [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`net`, `http`).
+- [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
+- [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md) — feasibility and market assessments.
+- [`docs/TASKS.md`](docs/TASKS.md) — the implementation task checklist.
+
 ## License
 
 Emo is released under the [MIT License](LICENSE).
