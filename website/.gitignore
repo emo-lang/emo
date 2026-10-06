@@ -1,8 +1,9 @@
 # build output
 dist/
 
-# generated from the repository-root README.md
+# generated from the repository-root README.md and docs/
 src/content/page.md
+src/content/docs/
 
 # astro generated local state
 .astro/

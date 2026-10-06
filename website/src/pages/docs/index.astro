@@ -1,0 +1,48 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import SiteNav from "../../components/SiteNav.astro";
+
+const base = import.meta.env.BASE_URL;
+const mods = import.meta.glob("../../content/docs/**/*.md", { eager: true });
+
+const titleOf = (m, fallback) =>
+  m.getHeadings().find((h) => h.depth === 1)?.text ?? fallback;
+
+const entries = Object.entries(mods)
+  .map(([path, m]) => {
+    const slug = path.replace("../../content/docs/", "").replace(/\.md$/, "");
+    return { slug, title: titleOf(m, slug) };
+  })
+  .sort((a, b) => a.slug.localeCompare(b.slug));
+---
+
+<Layout title="Documentation — Emo" description="The Emo documentation.">
+  <SiteNav />
+  <main>
+    <div class="content-grid">
+      <aside class="toc">
+        <nav aria-label="Documentation">
+          <p class="toc-title">Documentation</p>
+          <ul>
+            {entries.map((e) => (
+              <li><a href={`${base}/docs/${e.slug}/`}>{e.title}</a></li>
+            ))}
+          </ul>
+        </nav>
+      </aside>
+
+      <article class="md-body">
+        <h1>Documentation</h1>
+        <p>
+          Every reference note, assessment, and guide that lives under
+          <code>docs/</code> in the repository, rendered here. Pick one from
+          the list.
+        </p>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p><a href={`${base}/`}>Emo</a> — clean, explicit, intuitive.</p>
+  </footer>
+</Layout>

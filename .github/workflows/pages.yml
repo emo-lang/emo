@@ -1,28 +1,33 @@
 name: Deploy website
 
-# Builds website/ and publishes it to the gh-pages branch, which GitHub
-# Pages serves (Settings > Pages: deploy from the gh-pages branch). The
-# build copies the repository-root README.md into the site, so a README
-# change redeploys too.
+# Builds website/ and publishes it through GitHub Pages (Settings > Pages:
+# Source = GitHub Actions — no gh-pages branch). The build copies the
+# repository-root README.md and the docs/ tree into the site, so a README
+# or docs change redeploys too.
 
 on:
   push:
     branches: [develop]
     paths:
       - "website/**"
+      - "docs/**"
       - "README.md"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
+# Allow one concurrent deployment; a queued run waits rather than cancels,
+# so a release is never left half-published.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,15 +48,27 @@ jobs:
           cache: pnpm
           cache-dependency-path: website/pnpm-lock.yaml
 
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
       - name: Build site
         working-directory: website
         run: |
           pnpm install --frozen-lockfile
           pnpm build
 
-      - name: Publish to gh-pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: website/dist
-          publish_branch: gh-pages
+          path: website/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
