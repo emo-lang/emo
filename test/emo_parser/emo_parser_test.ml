@@ -64,6 +64,9 @@ let rec pp_expr fmt (e : Emo_ast.expr) =
         pp_expr e
   | Binary (op, l, r) ->
       Format.fprintf fmt "(%s %a %a)" (binop_spelling op) pp_expr l pp_expr r
+  | If_expr { cond; then_expr; else_expr } ->
+      Format.fprintf fmt "(if %a %a %a)" pp_expr cond pp_expr then_expr
+        pp_expr else_expr
   | Do e -> Format.fprintf fmt "(do %a)" pp_expr e
 
 and pp_part fmt = function
@@ -229,6 +232,28 @@ let code_of diagnostic =
 
 let expression_tests =
   [
+    tc "the if expression parses with one-expression branches" (fun () ->
+        Alcotest.check expr "shape"
+          (parse_expr "if a { 1 } else { 2 }")
+          (parse_expr "if a { 1 } else { 2 }");
+        Alcotest.(check string)
+          "shape" "(if a 1 2)"
+          (render pp_expr (parse_expr "if a { 1 } else { 2 }")));
+    tc "a parenthesized if expression stays unwrapped" (fun () ->
+        Alcotest.(check string)
+          "shape" "(if a 1 2)"
+          (render pp_expr (parse_expr "(if a { 1 } else { 2 })")));
+    tc "an if expression must fit on one line" (fun () ->
+        let diagnostic =
+          parse_err "if a {\n  1\n} else { 2 }"
+        in
+        Alcotest.(check string) "code" "E2024" (code_of diagnostic));
+    tc "an if expression requires an else branch" (fun () ->
+        let diagnostic = parse_err "if a { 1 }" in
+        Alcotest.(check string) "code" "E2024" (code_of diagnostic));
+    tc "an if expression branch holds exactly one expression" (fun () ->
+        let diagnostic = parse_err "if a { 1 2 } else { 3 }" in
+        Alcotest.(check string) "code" "E2024" (code_of diagnostic));
     tc "multiplication binds tighter than addition" (fun () ->
         Alcotest.check expr "shape" (parse_expr "1 + 2 * 3")
           (parse_expr "1 + (2 * 3)"));

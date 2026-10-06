@@ -1782,6 +1782,14 @@ and eval_expr env e =
         { def_name = "<arrow block>"; params; body; env; void_ok = true }
   | Ast.Unary (op, x) -> eval_unary env span op x
   | Ast.Binary (op, l, r) -> eval_binary env span op l r
+  | Ast.If_expr { cond; then_expr; else_expr } -> (
+      match eval_expr env cond with
+      | Bool true -> eval_expr env then_expr
+      | Bool false -> eval_expr env else_expr
+      | v ->
+          error span "E3001"
+            (Printf.sprintf "the if expression's condition must be a Bool, got %s"
+               (type_name v)))
   | Ast.Call (callee, args) -> eval_call env span callee args
   | Ast.Do operand -> (
       (* `do work(args)` runs the call in a new process: the caller gets the
