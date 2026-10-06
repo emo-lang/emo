@@ -28,12 +28,9 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         ocaml-compiler: ["5.5.0"]
     runs-on: ${{ matrix.os }}
-    # io_uring is unavailable on the hosted runners, so Eio's Linux backend
-    # hangs; force the portable posix backend for the scheduler tests. The
-    # timeout turns any future hang into a fast failure.
+    # A hung test suite should fail the job quickly, not run to the
+    # 6-hour default.
     timeout-minutes: 30
-    env:
-      EIO_BACKEND: posix
     steps:
       - name: Checkout
         uses: actions/checkout@v5
