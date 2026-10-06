@@ -356,6 +356,7 @@ Emo 通过 OCaml 的一等 C FFI 与 C 互操作：在原生后端，Emo 二进�
 文档在 `docs/` 之下。本 README 的中文翻译是 [`docs/zh-CN/README.zh-CN.md`](docs/zh-CN/README.zh-CN.md)。
 
 - [`docs/zh-CN/native-backend.md`](docs/zh-CN/native-backend.md) —— `emo build` 如何产出原生二进制,以及 C FFI。
+- [`docs/zh-CN/toolchain-distribution.md`](docs/zh-CN/toolchain-distribution.md) —— 工具链如何分发：OCaml 依赖、`emo doctor`、以及推迟 `c` 后端。
 - [`docs/zh-CN/runtime-and-freestanding.md`](docs/zh-CN/runtime-and-freestanding.md) —— "runtime" 与 "freestanding" 各指什么,以及它们如何对应 Emo 的各目标。
 - [`docs/zh-CN/numeric-width.md`](docs/zh-CN/numeric-width.md) —— 所有目标上显式位宽的数值类型。
 - [`docs/var-escape.md`](docs/var-escape.md) —— `var` 逃逸规则(暂无中文)。
