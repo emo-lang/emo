@@ -31,7 +31,10 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # Match the version the lockfile and website/pnpm-workspace.yaml
+          # (allowBuilds) are written for; pnpm 9 rejects that config with
+          # "packages field missing or empty".
+          version: 12.4.2
 
       - name: Set up Node
         uses: actions/setup-node@v4
