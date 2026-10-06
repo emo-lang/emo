@@ -626,7 +626,8 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
   (match stmts with
     | [ Emo_ir.Return_stmt e ] when arm_unit ->
         Some
-          (Printf.sprintf "(raise (Native_return %s))" (emit_native_expr env e))
+          (Printf.sprintf "(raise (Native_return (%s)))"
+             (emit_native_expr env e))
     | _ -> None)
   |> function
   | Some code -> code
@@ -744,7 +745,7 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
           | Emo_ir.Return_stmt e ->
               let code = emit_native_expr env e in
               if tail then code
-              else Printf.sprintf "(raise (Native_return %s))" code
+              else Printf.sprintf "(raise (Native_return (%s)))" code
           | other ->
               Printf.eprintf "NONNATIVE STMT in %s: %s\n%!" env.fname
                 (match other with

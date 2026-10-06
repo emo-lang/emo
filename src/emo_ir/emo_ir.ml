@@ -87,8 +87,13 @@ exception Lower_error of string
 
 (* ---- Mangling: module path × name → one program-unique identifier. ---- *)
 
+(* A module's file name may carry a hyphen (`instance-fixture`), which no
+   backend identifier can; module-path components go through this. *)
+let sanitize_component (s : string) : string =
+  String.map (fun c -> if c = '-' then '_' else c) s
+
 let mangle (module_path : string list) (name : string) : string =
-  String.concat "__" (module_path @ [ name ])
+  String.concat "__" (List.map sanitize_component module_path @ [ name ])
 
 (* Predicate methods end in `?`, which backend identifiers cannot
    carry; the mangled function name normalizes it. *)
@@ -205,7 +210,13 @@ and order_args env params args =
     (fun param ->
       match List.assoc_opt param named with
       | Some arg -> lower_expr env arg
-      | None -> lower_expr env (Queue.pop positional))
+      | None ->
+          if Queue.is_empty positional then
+            failwith
+              (Printf.sprintf
+                 "order_args: no positional for parameter `%s` (params: %s)"
+                 param (String.concat ", " params));
+          lower_expr env (Queue.pop positional))
     params
 
 and lower_expr env (e : Ast.expr) : expr =

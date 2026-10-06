@@ -1,4 +1,4 @@
 const m = internal.model.memtype(internal.corpus.decode_hex("0000"), 0, 2)
 println("m_ok = " + m[0].to_string() + " min=" + m[1].to_string() + " max=" + m[2].to_string() + " has=" + m[3].to_string())
-const v = internal.model.vmems(internal.corpus.decode_hex("010000"), 0, 3)
+const v = internal.model.vmems(internal.corpus.decode_hex("010000"), 0, 3, [])
 println("v_ok = " + v[0].to_string() + " msg=" + v[1] + " off=" + v[2].to_string())
