@@ -1,0 +1,39 @@
+// The instance-model fixture (T21.2): hand-built modules load with the
+// right counts and body ranges. The bytes are the hex of a module
+// compiled from wat by hand; the summary is the golden.
+
+// (module (type (func (param i32) (result i32))) (table 1 funcref)
+//   (memory 1) (global (mut i32) (i32.const 7))
+//   (func (export "id") (param i32) (result i32) local.get 0)
+//   (data (i32.const 0) "hi"))
+const basic = "0061736d0100000001060160017f017f0302010004040170000105030100010606017f0141070b07060102696400000a0601040020000b0b08010041000b026869"
+
+// (module (type (func (result i32))) (func $f (result i32) i32.const 3)
+//   (table 2 funcref) (elem (i32.const 1) $f))
+const with_elem = "0061736d010000000105016000017f030201000404017000020907010041010b01000a0601040041030b"
+
+def show(label String, hex String) Int64 {
+  const r = wasm.load(internal.corpus.decode_hex(hex))
+  if !r[0] {
+    println(label + ": " + r[1] + " " + r[3])
+    return 1
+  }
+  println(label + ": " + internal.instance.describe(r[4]))
+  return 0
+}
+
+def run() Int64 {
+  var failed = 0
+  failed = failed + show("basic", basic)
+  failed = failed + show("with_elem", with_elem)
+  // A malformed module never reaches the registry.
+  const bad = wasm.load(internal.corpus.decode_hex("0061736d"))
+  println("bad: ok=" + bad[0].to_string() + " phase=" + bad[1] + " handle=" + bad[4].to_string())
+  if bad[0] {
+    failed = failed + 1
+  }
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()
