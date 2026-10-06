@@ -341,3 +341,36 @@
   fac-fixture.expected.txt)
  (action
   (diff fac-fixture.expected.txt fac-fixture.actual)))
+
+; The linking fixture (T21.8).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  link-fixture.emo
+  wasm.emo
+  cli.emo
+  internal/instance.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  internal/model.emo
+  internal/store.emo
+  internal/value.emo
+  internal/ints.emo
+  internal/floats.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   link-fixture.actual
+   (run %{emo} run link-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  link-fixture.actual
+  link-fixture.expected.txt)
+ (action
+  (diff link-fixture.expected.txt link-fixture.actual)))

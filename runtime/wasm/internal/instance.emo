@@ -737,11 +737,15 @@ def describe(handle Int64) String {
 var arena = Bytes.new(0)
 var sp = 0
 var frame_base = 0
+var cur_inst = -1
 var mems = []
 var tables = []
 var globals_store = []
 var datalist = []
 var elemlist = []
+var instances = []
+var reg_names = []
+var reg_handles = []
 
 def reset_machine() Int64 {
   if arena.length() == 0 {
@@ -855,7 +859,11 @@ def end_of(m Module, pos Int64, limit Int64) Int64 {
 
 def call_func(m Module, fidx Int64) (Bool, String) {
   if fidx < m.n_imp_funcs {
-    return (false, "uninitialized element")
+    const t = instances[cur_inst].targets[fidx]
+    if t[0] == 1 {
+      return (false, "host imports are not wired yet")
+    }
+    return call_other(t[1], t[2])
   }
   const li = fidx - m.n_imp_funcs
   if li < 0 || li >= m.funcs.length() {
@@ -997,7 +1005,7 @@ def exec_seq(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
   }
   if op == 210 {
     const x = internal.reader.u32(internal.reader.new(m.data, pos + 1, limit))
-    push(mkv(112, x[1]))
+    push(mkv(112, pack_func(cur_inst, x[1])))
     return exec_seq(m, x[0].pos, limit)
   }
   if op == 252 {
@@ -1542,15 +1550,32 @@ def types_eq(a Array[Int64], b Array[Int64], i Int64) Bool {
   return types_eq(a, b, i + 1)
 }
 
-def types_match(m Module, fidx Int64, ti Int64) Bool {
+def func_type_idx(m Module, fidx Int64) Int64 {
   if fidx < m.n_imp_funcs {
+    return nth_func_import_typeidx(m.imports, 0, fidx, 0)
+  }
+  return m.funcs[fidx - m.n_imp_funcs].type_idx
+}
+
+def nth_func_import_typeidx(imports Array[Import], i Int64, want Int64, seen Int64) Int64 {
+  if i >= imports.length() {
+    return -1
+  }
+  if imports[i].kind == 0 {
+    if seen == want {
+      return imports[i].type_idx
+    }
+    return nth_func_import_typeidx(imports, i + 1, want, seen + 1)
+  }
+  return nth_func_import_typeidx(imports, i + 1, want, seen)
+}
+
+def types_match(m Module, fidx Int64, ti Int64) Bool {
+  const a = func_type_idx(m, fidx)
+  if a < 0 {
     return false
   }
-  const li = fidx - m.n_imp_funcs
-  if li >= m.funcs.length() {
-    return false
-  }
-  const fa = m.types[m.funcs[li].type_idx]
+  const fa = m.types[a]
   const fb = m.types[ti]
   return types_eq(fa.params, fb.params, 0) && types_eq(fa.results, fb.results, 0)
 }
@@ -1570,11 +1595,16 @@ def run_call_indirect(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, St
   if e[1][1] < 0 {
     return (3, 0, after, "uninitialized element")
   }
-  const fidx = e[1][1]
-  if !types_match(m, fidx, t[1]) {
+  const bits = e[1][1]
+  const h2 = pack_handle(bits)
+  const fidx = pack_index(bits)
+  if h2 < 0 || h2 >= instances.length() {
+    return (3, 0, after, "uninitialized element")
+  }
+  if !types_match(instances[h2].module, fidx, t[1]) {
     return (3, 0, after, "indirect call type mismatch")
   }
-  const r = call_func(m, fidx)
+  const r = call_other(h2, fidx)
   if !r[0] {
     return (3, 0, after, r[1])
   }
@@ -1861,10 +1891,11 @@ def collect_results(from Int64, n Int64, acc Array[(Int64, Int64)]) Array[(Int64
 }
 
 def call(handle Int64, name String, args Array[(Int64, Int64)]) (Bool, Array[(Int64, Int64)], String) {
-  if handle < 0 || handle >= loaded.length() {
-    return (false, [], "no module")
+  if handle < 0 || handle >= instances.length() {
+    return (false, [], "no instance")
   }
-  const m = loaded[handle]
+  const inst = instances[handle]
+  const m = inst.module
   const ei = find_export(m, name, 0)
   if ei < 0 {
     return (false, [], "unknown export")
@@ -1872,14 +1903,16 @@ def call(handle Int64, name String, args Array[(Int64, Int64)]) (Bool, Array[(In
   if m.exports[ei].kind != 0 {
     return (false, [], "not a function")
   }
-  reset_machine()
   const fidx = m.exports[ei].idx
-  if fidx < m.n_imp_funcs {
-    return (false, [], "imports are not wired yet")
-  }
-  const ft = m.types[m.funcs[fidx - m.n_imp_funcs].type_idx]
+  const ft = m.types[func_type_idx(m, fidx)]
+  reset_machine()
+  cur_inst = handle
+  mems = inst.mems
+  tables = inst.tables
+  globals_store = inst.globals
   push_args(args, 0, args.length())
   const r = call_func(m, fidx)
+  instances = inst_replace(instances, handle, Instance.new(inst.module, mems, tables, globals_store, inst.targets, inst.start))
   if !r[0] {
     return (false, [], r[1])
   }
@@ -1893,4 +1926,302 @@ def push_args(args Array[(Int64, Int64)], i Int64, n Int64) Int64 {
   }
   push(args[i])
   return push_args(args, i + 1, n)
+}
+
+// ============================================================================
+// Instantiation and linking (T21.8)
+// ============================================================================
+
+// A live module: its code plus the store (memories, tables, globals)
+// and the resolved targets of its imported functions. `targets[i]` is
+// (kind, handle, index): kind 0 = a function of instance `handle`,
+// kind 1 = a host function (T21.9).
+class Instance {
+  def init(module Module, mems Array[(Bytes, Int64, Bool)], tables Array[(Array[(Int64, Int64)], Int64, Bool)], globals Array[(Bool, (Int64, Int64))], targets Array[(Int64, Int64, Int64)], start Int64) {
+    self.module = module
+    self.mems = mems
+    self.tables = tables
+    self.globals = globals
+    self.targets = targets
+    self.start = start
+  }
+}
+
+
+def inst_replace(is Array[Instance], i Int64, v Instance) Array[Instance] {
+  return inst_replace_loop(is, i, v, 0, [])
+}
+
+def inst_replace_loop(is Array[Instance], i Int64, v Instance, j Int64, acc Array[Instance]) Array[Instance] {
+  if j == is.length() {
+    return acc
+  }
+  if j == i {
+    return inst_replace_loop(is, i, v, j + 1, acc.append(v))
+  }
+  return inst_replace_loop(is, i, v, j + 1, acc.append(is[j]))
+}
+
+def find_reg(name String, i Int64) Int64 {
+  if i >= reg_names.length() {
+    return -1
+  }
+  if reg_names[i] == name {
+    return reg_handles[i]
+  }
+  return find_reg(name, i + 1)
+}
+
+def register_instance(h Int64, name String) Int64 {
+  reg_names = reg_names.append(name)
+  reg_handles = reg_handles.append(h)
+  return 0
+}
+
+def tgt(k Int64, h Int64, idx Int64) (Int64, Int64, Int64) {
+  return (k, h, idx)
+}
+
+// A funcref packs the owning instance and the function index.
+def pack_func(h Int64, idx Int64) Int64 {
+  return h * 4294967296 + idx
+}
+
+def pack_handle(bits Int64) Int64 {
+  return bits / 4294967296
+}
+
+def pack_index(bits Int64) Int64 {
+  return bits % 4294967296
+}
+
+// ---- constant expressions ----
+
+// (ok, value, position after the `end`, message).
+def eval_const(m Module, h Int64, pos Int64, limit Int64, globals Array[(Bool, (Int64, Int64))]) (Bool, (Int64, Int64), Int64, String) {
+  if pos >= limit {
+    return (false, (127, 0), pos, "constant expression required")
+  }
+  const op = m.data.get(pos)
+  if op == 65 {
+    const x = internal.reader.s32(internal.reader.new(m.data, pos + 1, limit))
+    return (true, (127, internal.value.mask32(x[1])), x[0].pos, "")
+  }
+  if op == 66 {
+    const x = internal.reader.s64(internal.reader.new(m.data, pos + 1, limit))
+    return (true, (126, x[1]), x[0].pos, "")
+  }
+  if op == 67 {
+    const x = internal.reader.take(internal.reader.new(m.data, pos + 1, limit), 4)
+    return (true, (125, internal.store.le_load(x[1], 0, 4)), x[0].pos, "")
+  }
+  if op == 68 {
+    const x = internal.reader.take(internal.reader.new(m.data, pos + 1, limit), 8)
+    return (true, (124, internal.store.le_load(x[1], 0, 8)), x[0].pos, "")
+  }
+  if op == 208 {
+    const t = m.data.get(pos + 1)
+    return (true, (t, -1), pos + 2, "")
+  }
+  if op == 210 {
+    const x = internal.reader.u32(internal.reader.new(m.data, pos + 1, limit))
+    return (true, (112, pack_func(h, x[1])), x[0].pos, "")
+  }
+  if op == 35 {
+    const x = internal.reader.u32(internal.reader.new(m.data, pos + 1, limit))
+    if x[1] >= globals.length() {
+      return (false, (127, 0), pos, "unknown global")
+    }
+    return (true, internal.store.global_get(globals[x[1]]), x[0].pos, "")
+  }
+  return (false, (127, 0), pos, "constant expression required")
+}
+
+// ---- imports ----
+
+def resolve_imports(m Module, i Int64, imems Array[(Bytes, Int64, Bool)], itables Array[(Array[(Int64, Int64)], Int64, Bool)], iglobals Array[(Bool, (Int64, Int64))], targets Array[(Int64, Int64, Int64)]) (Bool, String, Array[(Bytes, Int64, Bool)], Array[(Array[(Int64, Int64)], Int64, Bool)], Array[(Bool, (Int64, Int64))], Array[(Int64, Int64, Int64)]) {
+  if i >= m.imports.length() {
+    return (true, "", imems, itables, iglobals, targets)
+  }
+  const imp = m.imports[i]
+  const h = find_reg(imp.module, 0)
+  if h < 0 {
+    return (false, "unknown import `" + imp.module + "`", imems, itables, iglobals, targets)
+  }
+  const src = instances[h]
+  const e = find_export(src.module, imp.field, 0)
+  if e < 0 {
+    return (false, "unknown import `" + imp.field + "`", imems, itables, iglobals, targets)
+  }
+  const ex = src.module.exports[e]
+  if ex.kind != imp.kind {
+    return (false, "incompatible import type", imems, itables, iglobals, targets)
+  }
+  if imp.kind == 0 {
+    return resolve_imports(m, i + 1, imems, itables, iglobals, targets.append(tgt(0, h, ex.idx)))
+  }
+  if imp.kind == 1 {
+    return resolve_imports(m, i + 1, imems, itables.append(src.tables[ex.idx]), iglobals, targets)
+  }
+  if imp.kind == 2 {
+    return resolve_imports(m, i + 1, imems.append(src.mems[ex.idx]), itables, iglobals, targets)
+  }
+  return resolve_imports(m, i + 1, imems, itables, iglobals.append(src.globals[ex.idx]), targets)
+}
+
+def init_globals(m Module, h Int64, i Int64, acc Array[(Bool, (Int64, Int64))]) (Bool, String, Array[(Bool, (Int64, Int64))]) {
+  if i >= m.globals.length() {
+    return (true, "", acc)
+  }
+  const gd = m.globals[i]
+  const v = eval_const(m, h, gd.init_start, gd.init_end, acc)
+  if !v[0] {
+    return (false, v[3], acc)
+  }
+  const g = (gd.mut, v[1])
+  return init_globals(m, h, i + 1, acc.append(g))
+}
+
+def init_mems(m Module, i Int64, acc Array[(Bytes, Int64, Bool)]) Array[(Bytes, Int64, Bool)] {
+  if i >= m.mems.length() {
+    return acc
+  }
+  const md = m.mems[i]
+  return init_mems(m, i + 1, acc.append(internal.store.mem_new(md.min, md.max, md.has_max)))
+}
+
+def init_tables(m Module, i Int64, acc Array[(Array[(Int64, Int64)], Int64, Bool)]) Array[(Array[(Int64, Int64)], Int64, Bool)] {
+  if i >= m.tables.length() {
+    return acc
+  }
+  const td = m.tables[i]
+  return init_tables(m, i + 1, acc.append(internal.store.tbl_new(td.min, td.max, td.has_max, (112, -1))))
+}
+
+// ---- segments ----
+
+def elem_values(h Int64, items Array[Int64], i Int64, acc Array[(Int64, Int64)]) Array[(Int64, Int64)] {
+  if i >= items.length() {
+    return acc
+  }
+  if items[i] < 0 {
+    return elem_values(h, items, i + 1, acc.append(mkv(112, -1)))
+  }
+  return elem_values(h, items, i + 1, acc.append(mkv(112, pack_func(h, items[i]))))
+}
+
+def layout_elems(m Module, h Int64, i Int64, tables Array[(Array[(Int64, Int64)], Int64, Bool)], globals Array[(Bool, (Int64, Int64))], elemlist Array[Array[(Int64, Int64)]]) (Bool, String, Array[(Array[(Int64, Int64)], Int64, Bool)], Array[Array[(Int64, Int64)]]) {
+  if i >= m.elems.length() {
+    return (true, "", tables, elemlist)
+  }
+  const ed = m.elems[i]
+  const vals = elem_values(h, ed.items, 0, [])
+  if ed.flag == 1 || ed.flag == 3 || ed.flag == 5 || ed.flag == 7 {
+    return layout_elems(m, h, i + 1, tables, globals, elemlist.append(vals))
+  }
+  const off = eval_const(m, h, ed.offset_start, ed.offset_end, globals)
+  if !off[0] {
+    return (false, off[3], tables, elemlist)
+  }
+  const at = internal.value.mask32(off[1][1])
+  const r = internal.store.tbl_init(tables[ed.table_idx], at, vals, 0, vals.length())
+  if !r[0] {
+    return (false, r[2], tables, elemlist)
+  }
+  return layout_elems(m, h, i + 1, table_replace(tables, ed.table_idx, r[1]), globals, elemlist.append(vals))
+}
+
+def layout_datas(m Module, h Int64, i Int64, mems Array[(Bytes, Int64, Bool)], globals Array[(Bool, (Int64, Int64))], datalist Array[Bytes]) (Bool, String, Array[(Bytes, Int64, Bool)], Array[Bytes]) {
+  if i >= m.datas.length() {
+    return (true, "", mems, datalist)
+  }
+  const dd = m.datas[i]
+  if dd.flag == 1 {
+    return layout_datas(m, h, i + 1, mems, globals, datalist.append(dd.bytes))
+  }
+  const off = eval_const(m, h, dd.offset_start, dd.offset_end, globals)
+  if !off[0] {
+    return (false, off[3], mems, datalist)
+  }
+  const at = internal.value.mask32(off[1][1])
+  const ok = mem_write(mems[dd.mem_idx], at, dd.bytes)
+  if !ok {
+    return (false, "out of bounds memory access", mems, datalist)
+  }
+  return layout_datas(m, h, i + 1, mems, globals, datalist.append(dd.bytes))
+}
+
+def mem_write(mem (Bytes, Int64, Bool), at Int64, bytes Bytes) Bool {
+  if at + bytes.length() > mem[0].length() {
+    return false
+  }
+  copy_n(mem[0], bytes, 0, at, bytes.length())
+  return true
+}
+
+// ---- instantiate ----
+
+// The instance's store, switched in around a cross-instance call.
+def call_other(h Int64, fidx Int64) (Bool, String) {
+  const save_mems = mems
+  const save_tables = tables
+  const save_globals = globals_store
+  const save_inst = cur_inst
+  const st = instances[h]
+  mems = st.mems
+  tables = st.tables
+  globals_store = st.globals
+  cur_inst = h
+  const r = call_func(st.module, fidx)
+  instances = inst_replace(instances, h, Instance.new(st.module, mems, tables, globals_store, st.targets, st.start))
+  mems = save_mems
+  tables = save_tables
+  globals_store = save_globals
+  cur_inst = save_inst
+  return r
+}
+
+def instantiate(handle Int64) (Bool, String, Int64) {
+  if handle < 0 || handle >= loaded.length() {
+    return (false, "no module", -1)
+  }
+  const m = loaded[handle]
+  const h = instances.length()
+  const r = resolve_imports(m, 0, [], [], [], [])
+  if !r[0] {
+    return (false, r[1], -1)
+  }
+  const g = init_globals(m, h, 0, r[4])
+  if !g[0] {
+    return (false, g[1], -1)
+  }
+  const mems0 = init_mems(m, 0, r[2])
+  const tables0 = init_tables(m, 0, r[3])
+  const inst = Instance.new(m, mems0, tables0, g[2], r[5], m.start)
+  instances = instances.append(inst)
+  const e = layout_elems(m, h, 0, tables0, g[2], [])
+  if !e[0] {
+    return (false, e[1], -1)
+  }
+  const d = layout_datas(m, h, 0, mems0, g[2], [])
+  if !d[0] {
+    return (false, d[1], -1)
+  }
+  instances = inst_replace(instances, h, Instance.new(m, mems0, e[2], g[2], r[5], m.start))
+  datalist = d[3]
+  elemlist = e[3]
+  // the start function
+  if m.start >= 0 {
+    reset_machine()
+    cur_inst = h
+    mems = mems0
+    tables = e[2]
+    globals_store = g[2]
+    const sr = call_func(m, m.start)
+    if !sr[0] {
+      return (false, sr[1], -1)
+    }
+    instances = inst_replace(instances, h, Instance.new(m, mems, tables, globals_store, r[5], m.start))
+  }
+  return (true, "", h)
 }

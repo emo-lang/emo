@@ -1,0 +1,6 @@
+A true 
+B true 
+direct 7
+indirect1 8
+missing false unknown import `Missing`
+failed 0

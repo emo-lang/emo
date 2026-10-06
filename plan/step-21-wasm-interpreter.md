@@ -238,7 +238,7 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### Then the world around the machine
 
-- [ ] **T21.8** — *Instantiation and linking.* **(M)** Resolve imports
+- [x] **T21.8** — *Instantiation and linking.* **(M)** Resolve imports
       through the register namespace and the host; evaluate global
       initializers; lay out element and data segments with the spec's
       trap-on-overflow (an `assert_uninstantiable` module fails here,
