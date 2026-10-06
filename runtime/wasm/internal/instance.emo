@@ -749,7 +749,7 @@ var reg_handles = []
 
 // The `spectest` host module state (T21.9): one table and one memory,
 // allocated once and shared by every importer.
-var spectest_table = internal.store.tbl_new(10, 20, true, (112, -1))
+var spectest_table = internal.store.tbl_new(10, 20, true, 112, (112, -1))
 var spectest_memory = internal.store.mem_new(1, 2, true)
 
 def reset_machine() Int64 {
@@ -1201,28 +1201,9 @@ def run_var(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64, Int64, St
     push(internal.store.global_get(globals_store[i]))
   }
   if op == 36 {
-    const v = pop()
-    const r = internal.store.global_set(globals_store[i], v)
-    if r[0] {
-      globals_store = global_replace(globals_store, i, r[1])
-    }
+    internal.store.global_set(globals_store[i], pop())
   }
   return exec_seq(m, x[0].pos, limit)
-}
-
-def global_replace(gs Array[(Bool, (Int64, Int64))], i Int64, v (Int64, Int64)) Array[(Bool, (Int64, Int64))] {
-  return global_replace_loop(gs, i, v, 0, [])
-}
-
-def global_replace_loop(gs Array[(Bool, (Int64, Int64))], i Int64, v (Int64, Int64), j Int64, acc Array[(Bool, (Int64, Int64))]) Array[(Bool, (Int64, Int64))] {
-  if j == gs.length() {
-    return acc
-  }
-  if j == i {
-    const nv = (gs[j][0], v)
-    return global_replace_loop(gs, i, v, j + 1, acc.append(nv))
-  }
-  return global_replace_loop(gs, i, v, j + 1, acc.append(gs[j]))
 }
 
 // ---- numeric dispatch ----
@@ -1647,11 +1628,11 @@ def run_call_indirect(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, St
   return exec_seq(m, after, limit)
 }
 
-def table_replace(ts Array[(Array[(Int64, Int64)], Int64, Bool)], i Int64, t (Array[(Int64, Int64)], Int64, Bool)) Array[(Array[(Int64, Int64)], Int64, Bool)] {
+def table_replace(ts Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], i Int64, t (Box[Array[(Int64, Int64)]], Int64, Bool, Int64)) Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)] {
   return table_replace_loop(ts, i, t, 0, [])
 }
 
-def table_replace_loop(ts Array[(Array[(Int64, Int64)], Int64, Bool)], i Int64, t (Array[(Int64, Int64)], Int64, Bool), j Int64, acc Array[(Array[(Int64, Int64)], Int64, Bool)]) Array[(Array[(Int64, Int64)], Int64, Bool)] {
+def table_replace_loop(ts Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], i Int64, t (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), j Int64, acc Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)]) Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)] {
   if j == ts.length() {
     return acc
   }
@@ -1663,8 +1644,8 @@ def table_replace_loop(ts Array[(Array[(Int64, Int64)], Int64, Bool)], i Int64, 
 
 def run_table_getset(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
   const x = internal.reader.u32(internal.reader.new(m.data, pos, limit))
-  const i = internal.value.mask32(pop()[1])
   if op == 37 {
+    const i = internal.value.mask32(pop()[1])
     if x[1] >= tables.length() {
       return (3, 0, x[0].pos, "undefined element")
     }
@@ -1676,6 +1657,7 @@ def run_table_getset(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64, 
     return exec_seq(m, x[0].pos, limit)
   }
   const v = pop()
+  const i = internal.value.mask32(pop()[1])
   if x[1] >= tables.length() {
     return (3, 0, x[0].pos, "undefined element")
   }
@@ -1683,7 +1665,6 @@ def run_table_getset(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64, 
   if !r[0] {
     return (3, 0, x[0].pos, r[2])
   }
-  tables = table_replace(tables, x[1], r[1])
   return exec_seq(m, x[0].pos, limit)
 }
 
@@ -1778,11 +1759,11 @@ def run_mem_size_grow(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64,
   return exec_seq(m, pos, limit)
 }
 
-def mem_replace(ms Array[(Bytes, Int64, Bool)], i Int64, mm (Bytes, Int64, Bool)) Array[(Bytes, Int64, Bool)] {
+def mem_replace(ms Array[(Box[Bytes], Int64, Bool)], i Int64, mm (Box[Bytes], Int64, Bool)) Array[(Box[Bytes], Int64, Bool)] {
   return mem_replace_loop(ms, i, mm, 0, [])
 }
 
-def mem_replace_loop(ms Array[(Bytes, Int64, Bool)], i Int64, mm (Bytes, Int64, Bool), j Int64, acc Array[(Bytes, Int64, Bool)]) Array[(Bytes, Int64, Bool)] {
+def mem_replace_loop(ms Array[(Box[Bytes], Int64, Bool)], i Int64, mm (Box[Bytes], Int64, Bool), j Int64, acc Array[(Box[Bytes], Int64, Bool)]) Array[(Box[Bytes], Int64, Bool)] {
   if j == ms.length() {
     return acc
   }
@@ -1963,29 +1944,29 @@ def replace_elems_loop(xs Array[Array[(Int64, Int64)]], i Int64, v Array[(Int64,
   return replace_elems_loop(xs, i, v, j + 1, acc.append(xs[j]))
 }
 
-def mem_init(mem (Bytes, Int64, Bool), dst Int64, src Bytes, src_i Int64, n Int64) (Bool, String) {
-  if dst + n > mem[0].length() || src_i + n > src.length() {
+def mem_init(mem (Box[Bytes], Int64, Bool), dst Int64, src Bytes, src_i Int64, n Int64) (Bool, String) {
+  if dst + n > mem[0].read().length() || src_i + n > src.length() {
     return (false, "out of bounds memory access")
   }
-  copy_n(mem[0], src, src_i, dst, n)
+  copy_n(mem[0].read(), src, src_i, dst, n)
   return (true, "")
 }
 
-def mem_copy(mem (Bytes, Int64, Bool), dst Int64, src Int64, n Int64) (Bool, String) {
-  if dst + n > mem[0].length() || src + n > mem[0].length() {
+def mem_copy(mem (Box[Bytes], Int64, Bool), dst Int64, src Int64, n Int64) (Bool, String) {
+  if dst + n > mem[0].read().length() || src + n > mem[0].read().length() {
     return (false, "out of bounds memory access")
   }
   const tmp = Bytes.new(n)
-  copy_n(tmp, mem[0], src, 0, n)
-  write_n(mem[0], dst, tmp, 0, n)
+  copy_n(tmp, mem[0].read(), src, 0, n)
+  write_n(mem[0].read(), dst, tmp, 0, n)
   return (true, "")
 }
 
-def mem_fill(mem (Bytes, Int64, Bool), dst Int64, val Int64, n Int64) (Bool, String) {
-  if dst + n > mem[0].length() {
+def mem_fill(mem (Box[Bytes], Int64, Bool), dst Int64, val Int64, n Int64) (Bool, String) {
+  if dst + n > mem[0].read().length() {
     return (false, "out of bounds memory access")
   }
-  fill_n(mem[0], dst, val, 0, n)
+  fill_n(mem[0].read(), dst, val, 0, n)
   return (true, "")
 }
 
@@ -2092,7 +2073,7 @@ def push_args(args Array[(Int64, Int64)], i Int64, n Int64) Int64 {
 // (kind, handle, index): kind 0 = a function of instance `handle`,
 // kind 1 = a host function (T21.9).
 class Instance {
-  def init(module Module, mems Array[(Bytes, Int64, Bool)], tables Array[(Array[(Int64, Int64)], Int64, Bool)], globals Array[(Bool, (Int64, Int64))], targets Array[(Int64, Int64, Int64)], start Int64, datalist Array[Bytes], elemlist Array[Array[(Int64, Int64)]]) {
+  def init(module Module, mems Array[(Box[Bytes], Int64, Bool)], tables Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], globals Array[(Box[(Int64, Int64)], Bool)], targets Array[(Int64, Int64, Int64)], start Int64, datalist Array[Bytes], elemlist Array[Array[(Int64, Int64)]]) {
     self.module = module
     self.mems = mems
     self.tables = tables
@@ -2111,6 +2092,8 @@ def reset_all() Int64 {
   instances = []
   reg_names = []
   reg_handles = []
+  spectest_table = internal.store.tbl_new(10, 20, true, 112, (112, -1))
+  spectest_memory = internal.store.mem_new(1, 2, true)
   return 0
 }
 
@@ -2164,7 +2147,7 @@ def pack_index(bits Int64) Int64 {
 // ---- constant expressions ----
 
 // (ok, value, position after the `end`, message).
-def eval_const(m Module, h Int64, pos Int64, limit Int64, globals Array[(Bool, (Int64, Int64))]) (Bool, (Int64, Int64), Int64, String) {
+def eval_const(m Module, h Int64, pos Int64, limit Int64, globals Array[(Box[(Int64, Int64)], Bool)]) (Bool, (Int64, Int64), Int64, String) {
   if pos >= limit {
     return (false, (127, 0), pos, "constant expression required")
   }
@@ -2205,7 +2188,7 @@ def eval_const(m Module, h Int64, pos Int64, limit Int64, globals Array[(Bool, (
 
 // ---- imports ----
 
-def resolve_imports(m Module, i Int64, imems Array[(Bytes, Int64, Bool)], itables Array[(Array[(Int64, Int64)], Int64, Bool)], iglobals Array[(Bool, (Int64, Int64))], targets Array[(Int64, Int64, Int64)]) (Bool, String, Array[(Bytes, Int64, Bool)], Array[(Array[(Int64, Int64)], Int64, Bool)], Array[(Bool, (Int64, Int64))], Array[(Int64, Int64, Int64)]) {
+def resolve_imports(m Module, i Int64, imems Array[(Box[Bytes], Int64, Bool)], itables Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], iglobals Array[(Box[(Int64, Int64)], Bool)], targets Array[(Int64, Int64, Int64)]) (Bool, String, Array[(Box[Bytes], Int64, Bool)], Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], Array[(Box[(Int64, Int64)], Bool)], Array[(Int64, Int64, Int64)]) {
   if i >= m.imports.length() {
     return (true, "", imems, itables, iglobals, targets)
   }
@@ -2234,21 +2217,21 @@ def resolve_imports(m Module, i Int64, imems Array[(Bytes, Int64, Bool)], itable
   }
   if imp.kind == 1 {
     const tt = src.tables[ex.idx]
-    if !limits_ok(imp.min, imp.max, imp.has_max, tt[0].length(), tt[1], tt[2]) {
+    if tt[3] != imp.reftype || !limits_ok(imp.min, imp.max, imp.has_max, internal.store.tbl_size(tt), tt[1], tt[2]) {
       return (false, "incompatible import type", imems, itables, iglobals, targets)
     }
     return resolve_imports(m, i + 1, imems, itables.append(tt), iglobals, targets)
   }
   if imp.kind == 2 {
     const mm = src.mems[ex.idx]
-    if !limits_ok(imp.min, imp.max, imp.has_max, mm[0].length() / 65536, mm[1], mm[2]) {
+    if !limits_ok(imp.min, imp.max, imp.has_max, internal.store.mem_size(mm), mm[1], mm[2]) {
       return (false, "incompatible import type", imems, itables, iglobals, targets)
     }
     return resolve_imports(m, i + 1, imems.append(mm), itables, iglobals, targets)
   }
   const gg = src.globals[ex.idx]
-  const gv = gg[1]
-  if gg[0] != imp.mut || gv[0] != imp.reftype {
+  const gk = internal.store.global_get(gg)
+  if gg[1] != imp.mut || gk[0] != imp.reftype {
     return (false, "incompatible import type", imems, itables, iglobals, targets)
   }
   return resolve_imports(m, i + 1, imems, itables, iglobals.append(gg), targets)
@@ -2275,7 +2258,7 @@ def func_types_match(ma Module, fa_idx Int64, mb Module, ti Int64) Bool {
   return types_eq(fa.params, fb.params, 0) && types_eq(fa.results, fb.results, 0)
 }
 
-def init_globals(m Module, h Int64, i Int64, acc Array[(Bool, (Int64, Int64))]) (Bool, String, Array[(Bool, (Int64, Int64))]) {
+def init_globals(m Module, h Int64, i Int64, acc Array[(Box[(Int64, Int64)], Bool)]) (Bool, String, Array[(Box[(Int64, Int64)], Bool)]) {
   if i >= m.globals.length() {
     return (true, "", acc)
   }
@@ -2284,11 +2267,11 @@ def init_globals(m Module, h Int64, i Int64, acc Array[(Bool, (Int64, Int64))]) 
   if !v[0] {
     return (false, v[3], acc)
   }
-  const g = (gd.mut, v[1])
+  const g = (Box.new(v[1]), gd.mut)
   return init_globals(m, h, i + 1, acc.append(g))
 }
 
-def init_mems(m Module, i Int64, acc Array[(Bytes, Int64, Bool)]) Array[(Bytes, Int64, Bool)] {
+def init_mems(m Module, i Int64, acc Array[(Box[Bytes], Int64, Bool)]) Array[(Box[Bytes], Int64, Bool)] {
   if i >= m.mems.length() {
     return acc
   }
@@ -2296,12 +2279,12 @@ def init_mems(m Module, i Int64, acc Array[(Bytes, Int64, Bool)]) Array[(Bytes, 
   return init_mems(m, i + 1, acc.append(internal.store.mem_new(md.min, md.max, md.has_max)))
 }
 
-def init_tables(m Module, i Int64, acc Array[(Array[(Int64, Int64)], Int64, Bool)]) Array[(Array[(Int64, Int64)], Int64, Bool)] {
+def init_tables(m Module, i Int64, acc Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)]) Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)] {
   if i >= m.tables.length() {
     return acc
   }
   const td = m.tables[i]
-  return init_tables(m, i + 1, acc.append(internal.store.tbl_new(td.min, td.max, td.has_max, (112, -1))))
+  return init_tables(m, i + 1, acc.append(internal.store.tbl_new(td.min, td.max, td.has_max, td.reftype, (112, -1))))
 }
 
 // ---- segments ----
@@ -2316,7 +2299,7 @@ def elem_values(h Int64, items Array[Int64], i Int64, acc Array[(Int64, Int64)])
   return elem_values(h, items, i + 1, acc.append(mkv(112, pack_func(h, items[i]))))
 }
 
-def layout_elems(m Module, h Int64, i Int64, tables Array[(Array[(Int64, Int64)], Int64, Bool)], globals Array[(Bool, (Int64, Int64))], elemlist Array[Array[(Int64, Int64)]]) (Bool, String, Array[(Array[(Int64, Int64)], Int64, Bool)], Array[Array[(Int64, Int64)]]) {
+def layout_elems(m Module, h Int64, i Int64, tables Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], globals Array[(Box[(Int64, Int64)], Bool)], elemlist Array[Array[(Int64, Int64)]]) (Bool, String, Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], Array[Array[(Int64, Int64)]]) {
   if i >= m.elems.length() {
     return (true, "", tables, elemlist)
   }
@@ -2340,7 +2323,7 @@ def layout_elems(m Module, h Int64, i Int64, tables Array[(Array[(Int64, Int64)]
   return layout_elems(m, h, i + 1, table_replace(tables, ed.table_idx, r[1]), globals, elemlist.append([]))
 }
 
-def layout_datas(m Module, h Int64, i Int64, mems Array[(Bytes, Int64, Bool)], globals Array[(Bool, (Int64, Int64))], datalist Array[Bytes]) (Bool, String, Array[(Bytes, Int64, Bool)], Array[Bytes]) {
+def layout_datas(m Module, h Int64, i Int64, mems Array[(Box[Bytes], Int64, Bool)], globals Array[(Box[(Int64, Int64)], Bool)], datalist Array[Bytes]) (Bool, String, Array[(Box[Bytes], Int64, Bool)], Array[Bytes]) {
   if i >= m.datas.length() {
     return (true, "", mems, datalist)
   }
@@ -2360,11 +2343,11 @@ def layout_datas(m Module, h Int64, i Int64, mems Array[(Bytes, Int64, Bool)], g
   return layout_datas(m, h, i + 1, mems, globals, datalist.append(Bytes.new(0)))
 }
 
-def mem_write(mem (Bytes, Int64, Bool), at Int64, bytes Bytes) Bool {
-  if at + bytes.length() > mem[0].length() {
+def mem_write(mem (Box[Bytes], Int64, Bool), at Int64, bytes Bytes) Bool {
+  if at + bytes.length() > mem[0].read().length() {
     return false
   }
-  copy_n(mem[0], bytes, 0, at, bytes.length())
+  copy_n(mem[0].read(), bytes, 0, at, bytes.length())
   return true
 }
 
@@ -2484,7 +2467,7 @@ def host_global(name String) (Bool, (Int64, Int64)) {
   return (false, mkv(127, 0))
 }
 
-def resolve_host(m Module, i Int64, imems Array[(Bytes, Int64, Bool)], itables Array[(Array[(Int64, Int64)], Int64, Bool)], iglobals Array[(Bool, (Int64, Int64))], targets Array[(Int64, Int64, Int64)]) (Bool, String, Array[(Bytes, Int64, Bool)], Array[(Array[(Int64, Int64)], Int64, Bool)], Array[(Bool, (Int64, Int64))], Array[(Int64, Int64, Int64)]) {
+def resolve_host(m Module, i Int64, imems Array[(Box[Bytes], Int64, Bool)], itables Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], iglobals Array[(Box[(Int64, Int64)], Bool)], targets Array[(Int64, Int64, Int64)]) (Bool, String, Array[(Box[Bytes], Int64, Bool)], Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], Array[(Box[(Int64, Int64)], Bool)], Array[(Int64, Int64, Int64)]) {
   const imp = m.imports[i]
   if imp.kind == 0 {
     const id = host_func_id(imp.field)
@@ -2494,16 +2477,31 @@ def resolve_host(m Module, i Int64, imems Array[(Bytes, Int64, Bool)], itables A
     return resolve_imports(m, i + 1, imems, itables, iglobals, targets.append(tgt(1, id, 0)))
   }
   if imp.kind == 1 {
+    if imp.field != "table" {
+      return (false, "unknown import `" + imp.field + "`", imems, itables, iglobals, targets)
+    }
+    if spectest_table[3] != imp.reftype || !limits_ok(imp.min, imp.max, imp.has_max, internal.store.tbl_size(spectest_table), spectest_table[1], spectest_table[2]) {
+      return (false, "incompatible import type", imems, itables, iglobals, targets)
+    }
     return resolve_imports(m, i + 1, imems, itables.append(spectest_table), iglobals, targets)
   }
   if imp.kind == 2 {
+    if imp.field != "memory" {
+      return (false, "unknown import `" + imp.field + "`", imems, itables, iglobals, targets)
+    }
+    if !limits_ok(imp.min, imp.max, imp.has_max, internal.store.mem_size(spectest_memory), spectest_memory[1], spectest_memory[2]) {
+      return (false, "incompatible import type", imems, itables, iglobals, targets)
+    }
     return resolve_imports(m, i + 1, imems.append(spectest_memory), itables, iglobals, targets)
   }
   const hg = host_global(imp.field)
   if !hg[0] {
     return (false, "unknown import `" + imp.field + "`", imems, itables, iglobals, targets)
   }
-  const gv = (false, hg[1])
+  if imp.mut || hg[1][0] != imp.reftype {
+    return (false, "incompatible import type", imems, itables, iglobals, targets)
+  }
+  const gv = (Box.new(hg[1]), false)
   return resolve_imports(m, i + 1, imems, itables, iglobals.append(gv), targets)
 }
 

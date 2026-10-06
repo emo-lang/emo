@@ -23,8 +23,8 @@ def run() Int64 {
   failed = failed + show("pages", internal.store.mem_size(mem).to_string())
   // A 32-bit store lands little-endian: 0x04030201 -> 01 02 03 04.
   internal.store.mem_store(mem, 0, 0, 4, 67305985)
-  failed = failed + show("byte0", mem[0].get(0).to_string())
-  failed = failed + show("byte3", mem[0].get(3).to_string())
+  failed = failed + show("byte0", internal.store.mem_bytes(mem).get(0).to_string())
+  failed = failed + show("byte3", internal.store.mem_bytes(mem).get(3).to_string())
   failed = failed + show("load32", internal.store.mem_load(mem, 0, 0, 4, false)[1].to_string())
   // Narrow signed and unsigned reads of the same byte.
   internal.store.mem_store(mem, 8, 0, 1, 255)
@@ -49,7 +49,7 @@ def run() Int64 {
 
   // Tables.
   const nullv = internal.value.nullref(112)
-  const tbl = internal.store.tbl_new(2, 5, true, nullv)
+  const tbl = internal.store.tbl_new(2, 5, true, 112, nullv)
   failed = failed + show("tbl.size", internal.store.tbl_size(tbl).to_string())
   const set0 = internal.store.tbl_set(tbl, 0, internal.value.funcref(3))
   failed = failed + showv("tbl.get", internal.store.tbl_get(set0[1], 0)[1])
@@ -68,7 +68,7 @@ def run() Int64 {
   const g = internal.store.global_new(internal.value.i32(5), true)
   failed = failed + showv("global.get", internal.store.global_get(g))
   const gs = internal.store.global_set(g, internal.value.i32(9))
-  failed = failed + showv("global.set", gs[1])
+  failed = failed + showv("global.set", internal.store.global_get(g))
   const gi = internal.store.global_new(internal.value.i32(5), false)
   failed = failed + show("global.immutable", internal.store.global_set(gi, internal.value.i32(9))[0].to_string())
   println("failed " + failed.to_string())

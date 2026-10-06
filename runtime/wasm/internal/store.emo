@@ -1,18 +1,16 @@
-// The store (T21.6).
+// The store (T21.6, shared cells T21.11).
 //
-// Linear memory on a mutable `Bytes` buffer (page-granular grow,
-// little-endian access, bounds checked before every touch), tables as
-// arrays of values (grow / size / get / set / fill / copy / init), and
-// mutable globals. Traps are values — `(ok, result, message)` — never
-// raises. `Bytes` is the one mutable cell in the language, so memory
-// contents change in place; tables thread as new arrays, and every
-// operation that changes one returns the new record.
+// Linear memory, tables, and globals each live behind a `Box` — the
+// language's one mutable cell — so an imported memory/table/global is
+// *shared*: an edit through the import is visible to the exporter. The
+// records are plain tuples so they cross module edges:
 //
-// The records are plain tuples so they cross module edges:
+//   memory  (Box[Bytes], max_pages Int64, has_max Bool)
+//   table   (Box[Array[(kind, bits)]], max Int64, has_max Bool)
+//   global  (Box[(kind, bits)], mutable Bool)
 //
-//   memory  (Bytes, max_pages Int64, has_max Bool)
-//   table   (Array[(kind, bits)], max Int64, has_max Bool)
-//   global  (mutable Bool, (kind, bits))
+// Little-endian access is bounds-checked before every touch, and traps
+// are values — `(ok, result, message)` — never raises.
 
 const page_bytes = 65536
 const max_pages = 65536
@@ -64,21 +62,20 @@ def extend_word(raw Int64, width Int64, signed Bool) Int64 {
 
 // ---- memory ----
 
-def mem_new(min Int64, max Int64, has_max Bool) (Bytes, Int64, Bool) {
-  return (Bytes.new(min * page_bytes), max, has_max)
+def mem_new(min Int64, max Int64, has_max Bool) (Box[Bytes], Int64, Bool) {
+  return (Box.new(Bytes.new(min * page_bytes)), max, has_max)
 }
 
-def mem_bytes(mem (Bytes, Int64, Bool)) Bytes {
-  return mem[0]
+def mem_bytes(mem (Box[Bytes], Int64, Bool)) Bytes {
+  return mem[0].read()
 }
 
-def mem_size(mem (Bytes, Int64, Bool)) Int64 {
-  return mem[0].length() / page_bytes
+def mem_size(mem (Box[Bytes], Int64, Bool)) Int64 {
+  return mem[0].read().length() / page_bytes
 }
 
-// Grow by `delta` pages. (ok, previous_size, new_memory); on failure the
-// memory is returned unchanged and the size is -1.
-def mem_grow(mem (Bytes, Int64, Bool), delta Int64) (Bool, Int64, (Bytes, Int64, Bool)) {
+// Grow by `delta` pages, in place. (ok, previous_size, memory).
+def mem_grow(mem (Box[Bytes], Int64, Bool), delta Int64) (Bool, Int64, (Box[Bytes], Int64, Bool)) {
   const cur = mem_size(mem)
   const next = cur + delta
   if delta < 0 || next > max_pages {
@@ -87,9 +84,14 @@ def mem_grow(mem (Bytes, Int64, Bool), delta Int64) (Bool, Int64, (Bytes, Int64,
   if mem[2] && next > mem[1] {
     return (false, -1, mem)
   }
-  const grown = Bytes.new(next * page_bytes)
-  copy_bytes(grown, mem[0], 0, mem[0].length())
-  return (true, cur, (grown, mem[1], mem[2]))
+  // Grow with the language's native string concatenation: a zero-filled
+  // buffer plus the old bytes, not a per-byte recursion (which the
+  // evaluator's stack cannot carry past a few million).
+  const old = mem[0].read()
+  const zeros = Bytes.new(next * page_bytes - old.length()).to_string()
+  const grown = (old.to_string() + zeros).to_bytes()
+  mem[0].replace(grown)
+  return (true, cur, mem)
 }
 
 def copy_bytes(dst Bytes, src Bytes, at Int64, n Int64) Int64 {
@@ -104,29 +106,29 @@ def copy_bytes_loop(dst Bytes, src Bytes, at Int64, i Int64, n Int64) Int64 {
   return copy_bytes_loop(dst, src, at, i + 1, n)
 }
 
-// Load `width` bytes at `addr + offset` (addr is an i32). Sign or zero
-// extend; a trap is a value.
-def mem_load(mem (Bytes, Int64, Bool), addr Int64, offset Int64, width Int64, signed Bool) (Bool, Int64, String) {
+def mem_load(mem (Box[Bytes], Int64, Bool), addr Int64, offset Int64, width Int64, signed Bool) (Bool, Int64, String) {
+  const b = mem[0].read()
   const a = mask32(addr) + offset
-  if a + width > mem[0].length() {
+  if a + width > b.length() {
     return (false, 0, "out of bounds memory access")
   }
-  return (true, extend_word(le_load(mem[0], a, width), width, signed), "")
+  return (true, extend_word(le_load(b, a, width), width, signed), "")
 }
 
-def mem_store(mem (Bytes, Int64, Bool), addr Int64, offset Int64, width Int64, bits Int64) (Bool, String) {
+def mem_store(mem (Box[Bytes], Int64, Bool), addr Int64, offset Int64, width Int64, bits Int64) (Bool, String) {
+  const b = mem[0].read()
   const a = mask32(addr) + offset
-  if a + width > mem[0].length() {
+  if a + width > b.length() {
     return (false, "out of bounds memory access")
   }
-  le_store(mem[0], a, width, bits)
+  le_store(b, a, width, bits)
   return (true, "")
 }
 
 // ---- tables ----
 
-def tbl_new(min Int64, max Int64, has_max Bool, init (Int64, Int64)) (Array[(Int64, Int64)], Int64, Bool) {
-  return (tbl_repeat(init, min, []), max, has_max)
+def tbl_new(min Int64, max Int64, has_max Bool, reftype Int64, init (Int64, Int64)) (Box[Array[(Int64, Int64)]], Int64, Bool, Int64) {
+  return (Box.new(tbl_repeat(init, min, [])), max, has_max, reftype)
 }
 
 def tbl_repeat(v (Int64, Int64), n Int64, acc Array[(Int64, Int64)]) Array[(Int64, Int64)] {
@@ -136,25 +138,27 @@ def tbl_repeat(v (Int64, Int64), n Int64, acc Array[(Int64, Int64)]) Array[(Int6
   return tbl_repeat(v, n - 1, acc.append(v))
 }
 
-def tbl_size(tbl (Array[(Int64, Int64)], Int64, Bool)) Int64 {
-  return tbl[0].length()
+def tbl_size(tbl (Box[Array[(Int64, Int64)]], Int64, Bool, Int64)) Int64 {
+  return tbl[0].read().length()
 }
 
-def tbl_get(tbl (Array[(Int64, Int64)], Int64, Bool), i Int64) (Bool, (Int64, Int64), String) {
-  if i < 0 || i >= tbl[0].length() {
+def tbl_get(tbl (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), i Int64) (Bool, (Int64, Int64), String) {
+  const a = tbl[0].read()
+  if i < 0 || i >= a.length() {
     return (false, (112, -1), "out of bounds table access")
   }
-  return (true, tbl[0][i], "")
+  return (true, a[i], "")
 }
 
-def tbl_set(tbl (Array[(Int64, Int64)], Int64, Bool), i Int64, v (Int64, Int64)) (Bool, (Array[(Int64, Int64)], Int64, Bool), String) {
-  if i < 0 || i >= tbl[0].length() {
+def tbl_set(tbl (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), i Int64, v (Int64, Int64)) (Bool, (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), String) {
+  const a = tbl[0].read()
+  if i < 0 || i >= a.length() {
     return (false, tbl, "out of bounds table access")
   }
-  return (true, (arr_set(tbl[0], i, v), tbl[1], tbl[2]), "")
+  tbl[0].replace(arr_set(a, i, v))
+  return (true, tbl, "")
 }
 
-// Replace element `i` with a fresh array (arrays are immutable).
 def arr_set(a Array[(Int64, Int64)], i Int64, v (Int64, Int64)) Array[(Int64, Int64)] {
   return arr_set_loop(a, i, v, 0, [])
 }
@@ -169,8 +173,8 @@ def arr_set_loop(a Array[(Int64, Int64)], i Int64, v (Int64, Int64), j Int64, ac
   return arr_set_loop(a, i, v, j + 1, acc.append(a[j]))
 }
 
-def tbl_grow(tbl (Array[(Int64, Int64)], Int64, Bool), delta Int64, init (Int64, Int64)) (Bool, Int64, (Array[(Int64, Int64)], Int64, Bool)) {
-  const cur = tbl[0].length()
+def tbl_grow(tbl (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), delta Int64, init (Int64, Int64)) (Bool, Int64, (Box[Array[(Int64, Int64)]], Int64, Bool, Int64)) {
+  const cur = tbl[0].read().length()
   const next = cur + delta
   if delta < 0 || next > 4294967295 {
     return (false, -1, tbl)
@@ -178,16 +182,17 @@ def tbl_grow(tbl (Array[(Int64, Int64)], Int64, Bool), delta Int64, init (Int64,
   if tbl[2] && next > tbl[1] {
     return (false, -1, tbl)
   }
-  const grown = tbl_repeat(init, delta, tbl[0])
-  return (true, cur, (grown, tbl[1], tbl[2]))
+  tbl[0].replace(tbl_repeat(init, delta, tbl[0].read()))
+  return (true, cur, tbl)
 }
 
-// Fill n slots from i with v.
-def tbl_fill(tbl (Array[(Int64, Int64)], Int64, Bool), i Int64, n Int64, v (Int64, Int64)) (Bool, (Array[(Int64, Int64)], Int64, Bool), String) {
-  if i < 0 || n < 0 || i + n > tbl[0].length() {
+def tbl_fill(tbl (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), i Int64, n Int64, v (Int64, Int64)) (Bool, (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), String) {
+  const a = tbl[0].read()
+  if i < 0 || n < 0 || i + n > a.length() {
     return (false, tbl, "out of bounds table access")
   }
-  return (true, (arr_fill(tbl[0], i, i + n, v), tbl[1], tbl[2]), "")
+  tbl[0].replace(arr_fill(a, i, i + n, v))
+  return (true, tbl, "")
 }
 
 def arr_fill(a Array[(Int64, Int64)], i Int64, end Int64, v (Int64, Int64)) Array[(Int64, Int64)] {
@@ -204,13 +209,14 @@ def arr_fill_loop(a Array[(Int64, Int64)], i Int64, end Int64, v (Int64, Int64),
   return arr_fill_loop(a, i, end, v, acc.append(a[j]), j + 1)
 }
 
-// Copy n slots from src[src_i] into dst[dst_i]. The source table is
-// already read, so an overlap copies the original bytes.
-def tbl_copy(dst (Array[(Int64, Int64)], Int64, Bool), dst_i Int64, src (Array[(Int64, Int64)], Int64, Bool), src_i Int64, n Int64) (Bool, (Array[(Int64, Int64)], Int64, Bool), String) {
-  if dst_i < 0 || src_i < 0 || n < 0 || dst_i + n > dst[0].length() || src_i + n > src[0].length() {
+def tbl_copy(dst (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), dst_i Int64, src (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), src_i Int64, n Int64) (Bool, (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), String) {
+  const da = dst[0].read()
+  const sa = src[0].read()
+  if dst_i < 0 || src_i < 0 || n < 0 || dst_i + n > da.length() || src_i + n > sa.length() {
     return (false, dst, "out of bounds table access")
   }
-  return (true, (arr_copy(dst[0], dst_i, src[0], src_i, n, 0), dst[1], dst[2]), "")
+  dst[0].replace(arr_copy(da, dst_i, sa, src_i, n, 0))
+  return (true, dst, "")
 }
 
 def arr_copy(dst_arr Array[(Int64, Int64)], dst_i Int64, src_arr Array[(Int64, Int64)], src_i Int64, n Int64, k Int64) Array[(Int64, Int64)] {
@@ -221,27 +227,29 @@ def arr_copy(dst_arr Array[(Int64, Int64)], dst_i Int64, src_arr Array[(Int64, I
   return arr_copy(next, dst_i, src_arr, src_i, n, k + 1)
 }
 
-// Initialize dst[dst_i..] from an element vector.
-def tbl_init(dst (Array[(Int64, Int64)], Int64, Bool), dst_i Int64, elems Array[(Int64, Int64)], src_i Int64, n Int64) (Bool, (Array[(Int64, Int64)], Int64, Bool), String) {
-  if dst_i < 0 || src_i < 0 || n < 0 || dst_i + n > dst[0].length() || src_i + n > elems.length() {
+def tbl_init(dst (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), dst_i Int64, elems Array[(Int64, Int64)], src_i Int64, n Int64) (Bool, (Box[Array[(Int64, Int64)]], Int64, Bool, Int64), String) {
+  const da = dst[0].read()
+  if dst_i < 0 || src_i < 0 || n < 0 || dst_i + n > da.length() || src_i + n > elems.length() {
     return (false, dst, "out of bounds table access")
   }
-  return (true, (arr_copy(dst[0], dst_i, elems, src_i, n, 0), dst[1], dst[2]), "")
+  dst[0].replace(arr_copy(da, dst_i, elems, src_i, n, 0))
+  return (true, dst, "")
 }
 
 // ---- globals ----
 
-def global_new(v (Int64, Int64), mutable Bool) (Bool, (Int64, Int64)) {
-  return (mutable, v)
+def global_new(v (Int64, Int64), mutable Bool) (Box[(Int64, Int64)], Bool) {
+  return (Box.new(v), mutable)
 }
 
-def global_get(g (Bool, (Int64, Int64))) (Int64, Int64) {
-  return g[1]
+def global_get(g (Box[(Int64, Int64)], Bool)) (Int64, Int64) {
+  return g[0].read()
 }
 
-def global_set(g (Bool, (Int64, Int64)), v (Int64, Int64)) (Bool, (Int64, Int64)) {
-  if !g[0] {
-    return (false, g[1])
+def global_set(g (Box[(Int64, Int64)], Bool), v (Int64, Int64)) (Bool, (Box[(Int64, Int64)], Bool)) {
+  if !g[1] {
+    return (false, g)
   }
-  return (true, v)
+  g[0].replace(v)
+  return (true, g)
 }
