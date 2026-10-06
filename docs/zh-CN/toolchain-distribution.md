@@ -48,6 +48,32 @@ parse → check → lower → specialize → emit OCaml → ocamlfind ocamlopt �
   `emo_runtime.cmxa` 一致；`emo doctor` 要把"版本不匹配"变成一句清楚的话，
   而不是原始的、工具链报错。
 
+## 平台：原生 Windows 与 WSL2
+
+emit-OCaml 流水线是 POSIX 绑死的，所以**原生 Windows 不是受支持目标** —— 原因不只是
+OCaml，而是运行时链接了什么：
+
+- 产物的链接行写死了 `eio_posix`（`src/emo_cli/emo_cli.ml`），所以构建出的
+  程序是 POSIX-only；
+- 运行时链接 `unix` 与 `ssl`（OpenSSL bindings），调度器是 Eio 上的 OCaml 5
+effects（`src/emo_sched/dune`）。
+
+有一点值得直说：即使有一个 Windows 版 `emo`，它能跑解释器和
+`wasm`/`beam`/`typescript` 目标，但 `emo build` 的 native 目标在 Windows 上
+不通 —— 因为 OCaml 不便于交叉编译。OCaml 本身支持 Windows，但这是最少被压测的
+配置：`Unix` 是子集、包生态偏 POSIX、OCaml 5 的 effects/multicore 运行时在
+Windows 上最少被验证。
+
+**WSL2 是受支持的 Windows 路径。** WSL2 是轻量 VM 里的真 Linux 内核，所以 Emo
+看到的是普通 Linux：`eio_posix`、`unix`、`ssl`（`libssl-dev`）都能用，
+OCaml/opam 按常规安装，Linux 预编译渠道也适用。注意：OCaml/opam 装在 WSL 里，
+不要用 Windows 侧的 OCaml；项目放在 Linux 文件系统（`~/…`），不要放
+`/mnt/c/…`（跨边界 I/O 慢，会拖垮增量构建）；用 WSL2 而非 WSL1 —— 后者的
+syscall 翻译层不适合 OCaml 5 effects 运行时。
+
+原生 Windows 二进制是更晚的事；解除 POSIX 绑定，是可移植运行时（`c` 后端，或
+专门的移植）必须处理的一部分。
+
 ## 已否决：自助下载工具链
 
 曾考虑一个 `emo toolchain download` 命令去抓取并安装 OCaml，已否决：

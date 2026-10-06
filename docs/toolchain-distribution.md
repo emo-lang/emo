@@ -53,6 +53,35 @@ a bigger binary buys nothing here. The `c` backend is what replaces
   `emo_runtime.cmxa` the tool ships; `emo doctor` turns a mismatch into one
   clear message rather than a raw toolchain error.
 
+## Platforms: native Windows and WSL2
+
+The emit-OCaml pipeline is POSIX-wired, so **native Windows is not a supported
+target** — and the cause is not OCaml alone, but what the runtime links:
+
+- the emitted program's link line hardcodes `eio_posix` (`src/emo_cli/emo_cli.ml`),
+  so a built program is POSIX-only;
+- the runtime links `unix` and `ssl` (OpenSSL bindings), and the scheduler is
+  OCaml 5 effects on Eio (`src/emo_sched/dune`).
+
+One consequence worth stating plainly: even a prebuilt Windows `emo` could run
+the interpreter and the `wasm`/`beam`/`typescript` targets, but `emo build`'s
+native target would not work on Windows, because OCaml does not cross-compile
+readily. OCaml itself supports Windows, but it is the least-exercised
+configuration — the `Unix` module is a subset, the package ecosystem is
+POSIX-heavy, and the OCaml 5 effects/multicore runtime is least tested there.
+
+**WSL2 is the supported Windows path.** WSL2 is a real Linux kernel in a
+lightweight VM, so Emo sees an ordinary Linux environment: `eio_posix`,
+`unix`, and `ssl` (`libssl-dev`) all work, the OCaml/opam toolchain installs as
+usual, and the Linux prebuilt channel applies. Notes: install OCaml/opam inside
+WSL, not a Windows OCaml; keep the project on the Linux filesystem (`~/…`), not
+`/mnt/c/…`, where cross-boundary I/O is slow and defeats incremental builds;
+use WSL2, not WSL1, whose syscall-translation layer is a poor fit for the OCaml
+5 effects runtime.
+
+Native Windows binaries are a later effort; lifting the POSIX wiring is part of
+what a portable runtime — the `c` backend, or a dedicated port — must address.
+
 ## Rejected: a self-service toolchain downloader
 
 An `emo toolchain download` command that fetches and installs OCaml was
