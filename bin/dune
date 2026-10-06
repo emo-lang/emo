@@ -1,0 +1,4 @@
+(executable
+ (name emo_lsp_bin)
+ (public_name emo-lsp)
+ (libraries emo_lsp))

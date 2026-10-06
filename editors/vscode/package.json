@@ -1,0 +1,122 @@
+{
+  "name": "emo-lsp",
+  "displayName": "Emo",
+  "description": "Emo language support: syntax highlighting, completion, diagnostics, and package management.",
+  "version": "0.1.0",
+  "publisher": "emo-lang",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/emo-lang/emo"
+  },
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": ["Programming Languages", "Linters", "Snippets"],
+  "keywords": ["emo", "language-server", "lsp"],
+  "icon": "icon.png",
+  "activationEvents": ["onLanguage:emo"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "emo",
+        "aliases": ["Emo", "emo"],
+        "extensions": [".emo"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "emo",
+        "scopeName": "source.emo",
+        "path": "./syntaxes/emo.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "emo",
+        "path": "./snippets/emo.json"
+      }
+    ],
+    "configuration": {
+      "title": "Emo",
+      "properties": {
+        "emo.serverPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `emo-lsp` server executable. Leave empty to use the bundled server or one found on `PATH`."
+        },
+        "emo.emoPath": {
+          "type": "string",
+          "default": "emo",
+          "markdownDescription": "Path to the `emo` CLI, used by package-management commands (deps resolve/update/list, check, build, run)."
+        },
+        "emo.registry": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Registry endpoint used for package completion and dependency resolution. Defaults to the `EMO_REGISTRY` environment variable."
+        },
+        "emo.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the Emo language server."
+        }
+      }
+    },
+    "commands": [
+      { "command": "emo.restartServer", "title": "Emo: Restart Language Server", "category": "Emo" },
+      { "command": "emo.deps.resolve", "title": "Emo: Resolve Dependencies", "category": "Emo", "icon": "$(sync)" },
+      { "command": "emo.deps.update", "title": "Emo: Update Dependency", "category": "Emo", "icon": "$(arrow-up)" },
+      { "command": "emo.deps.list", "title": "Emo: List Dependencies", "category": "Emo" },
+      { "command": "emo.package.init", "title": "Emo: Initialize Package Manifest", "category": "Emo", "icon": "$(new-file)" },
+      { "command": "emo.check", "title": "Emo: Check File", "category": "Emo", "icon": "$(check)" },
+      { "command": "emo.build", "title": "Emo: Build", "category": "Emo", "icon": "$(gear)" },
+      { "command": "emo.run", "title": "Emo: Run", "category": "Emo", "icon": "$(play)" },
+      { "command": "emo.packages.refresh", "title": "Emo: Refresh Packages", "category": "Emo", "icon": "$(refresh)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "emo.packages.refresh", "when": "view == emoPackages", "group": "navigation" },
+        { "command": "emo.package.init", "when": "view == emoPackages", "group": "navigation" },
+        { "command": "emo.deps.resolve", "when": "view == emoPackages", "group": "navigation" }
+      ],
+      "editor/context": [
+        { "command": "emo.check", "when": "resourceExtname == .emo", "group": "emo@1" },
+        { "command": "emo.build", "when": "resourceExtname == .emo", "group": "emo@2" },
+        { "command": "emo.run", "when": "resourceExtname == .emo", "group": "emo@3" }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "emoPackages",
+          "name": "Emo Packages",
+          "when": "workspaceFolderCount > 0"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "emoPackages",
+        "contents": "No package.emo manifest found.\n[Initialize Package](command:emo.package.init)"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --target=node18 --format=cjs",
+    "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --target=node18 --format=cjs --watch",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.82.0",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.4.5"
+  }
+}
