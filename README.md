@@ -167,6 +167,7 @@ Emo is gradually typed: **types are dynamic at runtime, but statically checked a
 - Runtime semantics are dynamically typed — every value carries a type tag. This aligns natively with BEAM and keeps everyday code free of type ceremony.
 - **Integer types are width-explicit: the default integer type is `Int64`.** It is 64-bit two's complement with wrap-around — arithmetic is performed modulo 2⁶⁴, so overflow behaves identically whether a program runs natively, on Wasm, on the BEAM, or on bare metal. Unannotated integer literals are `Int64`; there is no width-less `Int` spelling (see `docs/numeric-width.md`).
 - **Float types are width-explicit: the default float type is `Float64`.** It is IEEE 754 binary64 on every target, so floating-point behavior is identical everywhere. Unannotated float literals are `Float64`; there is no width-less `Float` spelling.
+- **Numeric literals** are decimal, hexadecimal (`0xFF`), binary (`0b1010_1010`), or octal (`0o755`), with `_` as a digit separator (`1_000_000`). There is no leading-zero octal and no width suffix — bare literals stay `Int64`/`Float64`.
 - The compiler has a built-in type-checking pass. Annotations are optional across the language — except on function signatures, where parameter types are explicit and an omitted return type declares Void — and unannotated code is still inferred and checked, reporting only errors that are certain; annotated code is checked strictly.
 - Typing is structural and flow-sensitive — after `if user.is(Admin)`, `user` is narrowed to `Admin` — matching duck-typing intuition.
 - There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as annotation vocabulary (e.g. `Array[User]`, `Box[Int64]`) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all. A parameter that receives a block is annotated `Block`.
@@ -286,7 +287,7 @@ built myapp
   foreign def sqrt(x Float64) Float64 = "sqrt"
   ```
 
-  `Float64`, `String`, and `Bool` cross the boundary today; other types are refused by the checker. Link additional C libraries with `--cclib` (`emo build main.emo --cclib m`). Foreign definitions run only in compiled programs — `emo run` refuses them.
+  `Float64`, `String`, and `Bool` cross the boundary today; other types are refused by the checker. Link additional C libraries with `--cclib` (`emo build main.emo --cclib m`). Foreign definitions run only in compiled programs — `emo run` refuses them. A target that cannot honor a `foreign def` refuses it at check time: today only the native backend can, while `wasm`, `typescript`, `beam`, and the freestanding `riscv64` refuse.
 - **The build requires the OCaml toolchain** — the same one that builds Emo itself; there is no second compiler to install.
 
 ## Configuration
