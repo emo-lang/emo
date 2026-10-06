@@ -203,20 +203,67 @@ boundaries:
   reclamation to reference counting or bounded arenas.
 - Exceptions, processes, and closures all escape and therefore allocate.
 
+## HPC is more than a backend: Go as a reference sample
+
+Go is the closest real-world control for this file's premises: a
+garbage-collected language with its own native backend (the default
+`cmd/compile` does not use LLVM), a concurrent non-generational
+non-moving collector, and a C FFI (`cgo`). It is not an HPC language. The
+reason is instructive, because it is not the collector.
+
+- **GC is not the decisive factor.** HPC hot loops do not allocate, so the
+  collector does not run there; numeric writes are not pointer writes, so
+  the write barrier is not paid. What remains is memory headroom (~2x by
+  default), mark work that scales with the heap, and pause jitter —
+  matters of latency and predictability, not throughput. No-GC is a good
+  argument for a control plane or bare metal, not for a fast kernel.
+- **The decisive factors are four, in priority order:**
+  1. **Vectorization / SIMD.** Go does not autovectorize; SIMD exists
+     only via hand-written assembly or `cgo`. This is the bulk of the gap
+     to C/Fortran — roughly 1.5–3x on plain loops, far more where SIMD
+     dominates. A backend that does not vectorize leaves HPC performance
+     on the table however clean its scalar code is.
+  2. **Data-parallel primitives.** An OpenMP-style parallel loop with
+     reductions, plus thread affinity and NUMA control, has no
+     language-level equivalent in Go (`goroutine` plus `WaitGroup` is not
+     a substitute). Emo has none today either.
+  3. **Zero-copy FFI buffer passing.** `cgo` can lend a slice pointer to C
+     for the duration of a call, provided C does not retain it and the
+     memory holds no Go pointers — enough for `cblas_dgemm(&a[0], …)`,
+     amortizing the call cost over a whole kernel.
+  4. **Ecosystem.** BLAS/LAPACK/FFTW/MPI/CUDA bindings; thin in Go, empty
+     in Emo.
+- **Consequence for the codegen route.** The four factors argue for
+  emitting C or LLVM IR over hand-written assembly: the vectorizer is the
+  point. Assembly stays the right choice only for the freestanding
+  `riscv64` target, where SIMD throughput is not the goal.
+- **A lesson for the FFI ladder.** The `cgo` model adds a rung between
+  step 14's "copied buffers" and "opaque handles": **borrow for the
+  call** — C receives a pointer valid only until it returns. It is
+  zero-copy, safe under a non-moving layout, and the natural default for
+  a `Buffer[Float64]` handed to BLAS.
+- **Recalibration.** A self-contained backend removes three ceilings
+  (boxing, the wrapper FFI, and the OCaml backend's lack of
+  vectorization) but is necessary and not sufficient. No GC is a
+  predictability and bare-metal argument, not an HPC entry ticket.
+
 ## What HPC still needs beyond the backend
 
 The backend removes three ceilings — no boxing or tags for specialized
-code, a direct C ABI for BLAS/LAPACK/FFTW, and (if C or LLVM is the route)
-auto-vectorization that the OCaml backend never had. Two language-surface
-pieces remain and are prerequisites for the full story:
+code, a direct C ABI for BLAS/LAPACK/FFTW, and (if C or LLVM is the
+route) auto-vectorization that the OCaml backend never had. Against the
+four gates above it is necessary but not sufficient. Two language-surface
+pieces remain, both prerequisites for a BLAS-shaped workload:
 
 1. **A mutable, address-stable, typed buffer** (`Buffer[Float64]` or
-   equivalent) that can be handed to C without copying.
-2. **A parallel construct** for shared-memory compute; today concurrency is
-   actor/message-passing over effects, with no parallel loop.
+   equivalent), handed to C under the borrow-for-the-call lifetime above.
+2. **A parallel construct** for shared-memory compute, with reductions;
+   today concurrency is actor/message-passing over effects, with no
+   parallel loop.
 
 Without these, the backend alone gets scalar leaf calls and single-threaded
-kernels, not a BLAS-shaped workload.
+kernels. No-GC is a latency and bare-metal argument, not a substitute for
+either.
 
 ## A recommended sequencing (if scheduled)
 
@@ -244,9 +291,10 @@ Registered in `CHECK.md`:
    bounded arenas with explicit leakage, and whether either implies a
    language-surface addition. This is the decision that keeps "no GC" from
    becoming "leaks on long-running programs".
-3. **HPC buffer and parallelism surface** — the mutable typed buffer type
-   and whether a parallel construct is needed. Backend work without these
-   cannot reach library-scale numerics.
+3. **HPC surface** — the mutable typed buffer (zero-copy, borrow for the
+   call), the parallel construct, and the vectorization the codegen route
+   must deliver. These are the HPC gates in priority order, ecosystem
+   aside; backend work without them cannot reach library-scale numerics.
 
 ## Open design items
 
