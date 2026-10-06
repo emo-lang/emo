@@ -1,4 +1,4 @@
-import { cpSync, copyFileSync, rmSync } from "node:fs";
+import { cpSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -7,6 +7,9 @@ const repo = join(here, "../..");
 const content = join(here, "../src/content");
 
 // The repository-root README.md is the landing page's markdown.
+// src/content/ has no tracked files, so it may not exist yet on a fresh
+// checkout — create it before writing into it.
+mkdirSync(content, { recursive: true });
 copyFileSync(join(repo, "README.md"), join(content, "page.md"));
 
 // The docs/ tree becomes the documentation pages, structure preserved.
