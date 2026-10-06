@@ -385,6 +385,13 @@ def expr(r Reader, dc Int64) Reader {
 // Decode instructions until the matching end (0x0b). An else (0x05)
 // switches arms at this level; the arm discipline is the validator's.
 def instrs(r Reader, dc Int64) Reader {
+  return instrs2(r, dc, false)
+}
+
+// `instrs2` is `instrs` with an explicit stop-at-`else`, so the
+// interpreter can find an `if`'s arm boundary (the plain walk skips
+// over it). A nested body always runs with stop_else false.
+def instrs2(r Reader, dc Int64, stop_else Bool) Reader {
   if r.failed {
     return r
   }
@@ -398,68 +405,55 @@ def instrs(r Reader, dc Int64) Reader {
     return r1
   }
   if op == 5 {
-    return instrs(r1, dc)
+    if stop_else {
+      return r1
+    }
+    return instrs2(r1, dc, stop_else)
   }
   if op == 2 || op == 3 || op == 4 {
     // The nested body decodes through its own matching end; this
-    // level then resumes with the instructions after it (the outer
-    // end is still this level's to consume).
+    // level then resumes with the instructions after it.
     const after_body = instrs(blocktype_then(r1), dc)
     if after_body.failed {
       return after_body
     }
-    return instrs(after_body, dc)
+    return instrs2(after_body, dc, stop_else)
   }
   if op == 0 || op == 1 || op == 15 {
-    return instrs(r1, dc)
+    return instrs2(r1, dc, stop_else)
   }
-  // ---- structured branches and calls (T20.12) ----
   if op == 12 || op == 13 {
-    // br, br_if: one label index
-    return instrs(u32(r1)[0], dc)
+    return instrs2(u32(r1)[0], dc, stop_else)
   }
   if op == 14 {
-    // br_table: a vector of label indices plus the default
-    return instrs(br_table_then(r1), dc)
+    return instrs2(br_table_then(r1), dc, stop_else)
   }
   if op == 16 {
-    // call: one function index
-    return instrs(u32(r1)[0], dc)
+    return instrs2(u32(r1)[0], dc, stop_else)
   }
   if op == 17 {
-    // call_indirect: type index, then table index
     const t = u32(r1)
     if t[0].failed {
       return t[0]
     }
-    return instrs(u32(t[0])[0], dc)
+    return instrs2(u32(t[0])[0], dc, stop_else)
   }
-  // ---- parametric (T20.11) ----
   if op == 26 || op == 27 {
-    // drop, select
-    return instrs(r1, dc)
+    return instrs2(r1, dc, stop_else)
   }
   if op == 28 {
-    // select with an explicit type vector
-    return instrs(valtype_bytes(r1), dc)
+    return instrs2(valtype_bytes(r1), dc, stop_else)
   }
-  // ---- variable (T20.11) ----
   if op >= 32 && op <= 36 {
-    // local.get/set/tee, global.get/set: one u32 index
-    return instrs(u32(r1)[0], dc)
+    return instrs2(u32(r1)[0], dc, stop_else)
   }
-  // ---- table.get / table.set ----
   if op == 37 || op == 38 {
-    // one table index
-    return instrs(u32(r1)[0], dc)
+    return instrs2(u32(r1)[0], dc, stop_else)
   }
-  // ---- memory (T20.11) ----
   if op >= 40 && op <= 62 {
-    // the memory instructions: a memarg (align, offset) immediate
-    return instrs(memarg_then(r1), dc)
+    return instrs2(memarg_then(r1), dc, stop_else)
   }
   if op == 63 || op == 64 {
-    // memory.size / memory.grow: one reserved zero byte
     const z = u8(r1)
     if z[0].failed {
       return z[0]
@@ -467,11 +461,9 @@ def instrs(r Reader, dc Int64) Reader {
     if z[1] != 0 {
       return bail(z[0], z[0].pos, "zero byte expected")
     }
-    return instrs(z[0], dc)
+    return instrs2(z[0], dc, stop_else)
   }
-  // ---- reference instructions ----
   if op == 208 {
-    // ref.null: one reftype byte
     const t = u8(r1)
     if t[0].failed {
       return t[0]
@@ -479,35 +471,31 @@ def instrs(r Reader, dc Int64) Reader {
     if t[1] != 112 && t[1] != 111 {
       return bail(t[0], t[0].pos, "malformed reference type")
     }
-    return instrs(t[0], dc)
+    return instrs2(t[0], dc, stop_else)
   }
   if op == 209 {
-    // ref.is_null: no immediate
-    return instrs(r1, dc)
+    return instrs2(r1, dc, stop_else)
   }
   if op == 210 {
-    // ref.func: one function index
-    return instrs(u32(r1)[0], dc)
+    return instrs2(u32(r1)[0], dc, stop_else)
   }
   if op == 252 {
-    // the 0xfc prefix: bulk-memory and table operations
-    return instrs(prefix_fc(r1, dc), dc)
+    return instrs2(prefix_fc(r1, dc), dc, stop_else)
   }
   if op == 65 {
-    return instrs(s32(r1)[0], dc)
+    return instrs2(s32(r1)[0], dc, stop_else)
   }
   if op == 66 {
-    return instrs(s64(r1)[0], dc)
+    return instrs2(s64(r1)[0], dc, stop_else)
   }
   if op == 67 {
-    return instrs(take(r1, 4)[0], dc)
+    return instrs2(take(r1, 4)[0], dc, stop_else)
   }
   if op == 68 {
-    return instrs(take(r1, 8)[0], dc)
+    return instrs2(take(r1, 8)[0], dc, stop_else)
   }
-  // The plain numeric instructions, 0x45..0xc4, carry no immediates.
   if op >= 69 && op <= 196 {
-    return instrs(r1, dc)
+    return instrs2(r1, dc, stop_else)
   }
   return bail(r1, r1.pos, "illegal opcode")
 }
