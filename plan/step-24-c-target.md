@@ -6,7 +6,7 @@ specialization data) · **Related:**
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-22-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
-**Status:** in progress — T24.1–T24.3 done
+**Status:** in progress — T24.1–T24.4 done
 
 ## Why this step exists
 
@@ -97,12 +97,17 @@ and enters `known_targets` only once its first golden lands
       (T24.8) and tuples (T24.4) — the c_scalar fixture cross-checks
       the printing rules against the interpreter's rendering. The
       string-layout and runtime-in-C decisions are in CHECK.md.)
-- [ ] **T24.4** — The dynamic value model: step 22's tagged word —
+- [x] **T24.4** — The dynamic value model: step 22's tagged word —
       8-byte-aligned heap cells, 3 low tag bits, `Int64`/
       `Float64` as boxed two-word cells (no NaN-boxing), `Bool`/
       `Char` immediates; the bump/arena allocator (provisional
       profile); tuples, value-semantic arrays, `Box`. Golden:
-      objects.
+      objects. (Done 2026-10-06: one `emo_value` word — low bits
+      000/001/011 for pointer/Bool/Char, kinds in the cell header —
+      bump allocation, regime conversion bridging native and dynamic
+      code, runtime dispatch for dynamic `+`/comparisons/equality.
+      The objects golden waits on classes — T24.5; the c_dynamic
+      fixture cross-checks against the interpreter's rendering.)
 - [ ] **T24.5** — Classes, enums, interfaces, closures: instances
       with compile-time vtables, enum singletons, structural
       `is()`, first-class functions, patterns with guards. The

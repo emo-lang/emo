@@ -622,6 +622,130 @@ let c_scalar_tests =
                  (Buffer.contents err)));
   ]
 
+(* T24.4's dynamic value model: the tagged word crossing native and
+   dynamic code — a heterogeneous array (elements Unknown), tuples,
+   Box identity and replacement, structural equality, dynamic
+   arithmetic and to_string over runtime kinds, and indexing with
+   regime conversions at every boundary. The expected output is the
+   interpreter's own rendering of the same program. *)
+let c_dynamic_core_source =
+  {|
+def first(xs Array[Int64]) Int64 {
+  return xs[0]
+}
+
+def len_of(xs Array[Int64]) Int64 {
+  return xs.length()
+}
+
+def picksecond(xs Array[Int64], use_first Bool) Int64 {
+  if use_first {
+    return xs[0]
+  }
+  return xs[1]
+}
+
+const vals = [1, "a", 2.5, true]
+const arr = [10, 20, 30]
+const b = Box.new(41)
+const t = (1, "a")
+const t2 = ("x", 3)
+const nested = (t, t2)
+
+println(vals[0])
+println(vals[1])
+println(vals[2])
+println(vals[3])
+println(vals[0] + 5)
+println(vals[2] + 1.0)
+println(first(arr))
+println(len_of(arr))
+println(picksecond(arr, true))
+println(picksecond(arr, false))
+b.replace(b.read() + 1)
+println(b.read())
+println(b)
+println(vals[1].to_string())
+println(vals.to_string())
+println(t[1])
+println(t.length())
+println(nested[0][1])
+println(nested[1][0])
+println(t == (1, "a"))
+println(t == ("x", 3))
+println(arr == [10, 20, 30])
+println(arr == [10, 20, 31])
+println(vals == [1, "a", 2.5, true])
+println(Box.new(5) == Box.new(5))
+println(b == Box.new(41))
+var total = 0
+total = arr[1] + arr[2]
+println(total)
+const dyn_sum = vals[0] + 5
+println(dyn_sum)
+println("n=" + vals[0].to_string())
+|}
+
+let c_dynamic_tests =
+  [
+    tc "the c dynamic world matches the interpreter" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let expected =
+          let out = Buffer.create 512 in
+          Emo_eval.set_output (Buffer.add_string out);
+          Fun.protect
+            ~finally:(fun () ->
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout))
+            (fun () ->
+              Emo_eval.run_program ~file:"c-dynamic/main.emo"
+                ~source:c_dynamic_core_source);
+          Buffer.contents out
+        in
+        let dir = Filename.concat scratch "c-dynamic" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc c_dynamic_core_source;
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code =
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
+            ~target:"c"
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let cmd_stdout, _cmd_stdin, cmd_stderr =
+          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
+        in
+        let out = Buffer.create 512 in
+        (try
+           while true do
+             Buffer.add_channel out cmd_stdout 4096
+           done
+         with End_of_file -> ());
+        let err = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel err cmd_stderr 4096
+           done
+         with End_of_file -> ());
+        let proc_status =
+          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+        in
+        Alcotest.(check string) "output" expected (Buffer.contents out);
+        match proc_status with
+        | Unix.WEXITED 0 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "the binary exited %s: %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                 | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                 (Buffer.contents err)));
+  ]
+
 let c_examples_tests =
   List.map
     (fun name ->
@@ -829,5 +953,6 @@ let () =
       ("c_examples", c_examples_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
+      ("c_dynamic", c_dynamic_tests);
       ("publish", publish_tests);
     ]
