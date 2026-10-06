@@ -307,6 +307,19 @@ def exec_action(parts Array[String], last Int64, names Array[String], insts Arra
   const eq = find_eq(parts, 5)
   const words = words_from(parts, eq)
   const verdict = parts[1]
+  if parts[2] == "get" {
+    const g = internal.instance.get_global(inst, export_name)
+    if !g[0] {
+      return (false, last, names, insts)
+    }
+    if verdict == "ok" {
+      return (true, last, names, insts)
+    }
+    if words.length() != 1 {
+      return (false, last, names, insts)
+    }
+    return (internal.value.matches(g[1], words[0]), last, names, insts)
+  }
   const r = internal.instance.call(inst, export_name, args)
   if verdict == "trap" {
     return (!r[0], last, names, insts)
