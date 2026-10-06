@@ -380,10 +380,129 @@ let wasm_examples_tests =
 (* The C goldens: build with --target c through the system cc and run
    the standalone binary, byte-for-byte against expected.txt. Skips
    when cc is absent. The list names the backend's current support
-   set; it grows task by task (T24.1: hello_world). *)
+   set; it grows task by task (T24.1: hello_world). The full fib
+   example joins when closures land (T24.5) — its greeting needs them. *)
 let c_goldens = [ "hello_world" ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
+
+(* T24.2's integer core: fib's plain recursion, the 1M-deep tail
+   count_down, a mutual-tail ping/pong cluster, wrap-around Int64
+   (INT64_MIN formatting, division and remainder by -1, overflow on
+   plus and times), and var assignment under if/else — all run under
+   a 1MB C stack, so a missing trampoline would segfault rather than
+   pass. *)
+let c_integer_core_source =
+  {|def fib(n Int64) Int64 {
+  if n < 2 {
+    return n
+  }
+  return fib(n - 1) + fib(n - 2)
+}
+
+def count_down(n Int64) Int64 {
+  if n == 0 {
+    return 0
+  }
+  return count_down(n - 1)
+}
+
+def ping(n Int64) Int64 {
+  if n == 0 {
+    return 0
+  }
+  return pong(n - 1)
+}
+
+def pong(n Int64) Int64 {
+  if n == 0 {
+    return 1
+  }
+  return ping(n - 1)
+}
+
+def min_i64() Int64 {
+  return (0 - 9223372036854775807) - 1
+}
+
+def sums(n Int64) Int64 {
+  var total = 0
+  total = n + 1
+  if total > 10 {
+    return total - 1
+  }
+  return total
+}
+
+println(fib(20))
+println(count_down(1000000))
+println(ping(1000001))
+println(min_i64())
+println(min_i64() / (0 - 1))
+println(min_i64() % (0 - 1))
+println(9223372036854775807 + 1)
+println(4611686018427387904 * 2)
+println(sums(20))
+println(sums(5))
+|}
+
+let c_integer_core_expected =
+  "6765\n0\n1\n-9223372036854775808\n-9223372036854775808\n0\n\
+   -9223372036854775808\n-9223372036854775808\n20\n6\n"
+
+let c_integer_tests =
+  [
+    tc "the c integer core: fib, flat 1M tails, wrap-around Int64"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        (* its own directory: a build compiles every sibling .emo *)
+        let dir = Filename.concat scratch "c-int-core" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc c_integer_core_source;
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code =
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
+            ~cclibs:[] ~target:"c"
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let cmd =
+          Printf.sprintf "sh -c 'ulimit -s 1024; exec %s'"
+            (Filename.quote out_bin)
+        in
+        let cmd_stdout, _cmd_stdin, cmd_stderr =
+          Unix.open_process_full cmd (Unix.environment ())
+        in
+        let out = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel out cmd_stdout 4096
+           done
+         with End_of_file -> ());
+        let err = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel err cmd_stderr 4096
+           done
+         with End_of_file -> ());
+        let proc_status =
+          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+        in
+        Alcotest.(check string) "output" c_integer_core_expected
+          (Buffer.contents out);
+        match proc_status with
+        | Unix.WEXITED 0 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "the binary exited %s: %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                 | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                 (Buffer.contents err)));
+  ]
 
 let c_examples_tests =
   List.map
@@ -591,5 +710,6 @@ let () =
       ("wasm_examples", wasm_examples_tests);
       ("beam_examples", beam_examples_tests);
       ("c_examples", c_examples_tests);
+      ("c_integer", c_integer_tests);
       ("publish", publish_tests);
     ]

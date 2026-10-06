@@ -80,9 +80,12 @@ type ctx = {
   refs : string list list ref; (* module paths referenced by this module *)
   requires : (string * Emo_support.Span.t) list ref;
       (* packages required by this module, with the require's span *)
-  types : (int, t) Hashtbl.t;
-      (* every checked expression's type, keyed by its span's start offset
-         — step 08's completeness data, consumed by the backend *)
+  types : (int * int, t) Hashtbl.t;
+      (* every checked expression's type, keyed by its span's
+         start/stop offset pair — a bare start collides whenever
+         expressions nest at the same position (a comparison and its
+         left operand), and the later check would overwrite the
+         earlier type *)
 }
 
 let report ctx span code message =
@@ -530,7 +533,9 @@ let provably_excluded ctx rt target =
 let rec check_expr ctx env (e : Ast.expr) : t =
   let span = e.Ast.span in
   let result = check_expr_desc ctx env span e.Ast.desc in
-  Hashtbl.replace ctx.types span.Emo_support.Span.start result;
+  Hashtbl.replace ctx.types
+    (span.Emo_support.Span.start, span.Emo_support.Span.stop)
+    result;
   result
 
 and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
@@ -1680,7 +1685,9 @@ and always_returns ctx (s : Ast.stmt) : bool =
   | Ast.Case { scrutinee; branches } -> (
       let scrutinee_t =
         match
-          Hashtbl.find_opt ctx.types scrutinee.Ast.span.Emo_support.Span.start
+          Hashtbl.find_opt ctx.types
+            (scrutinee.Ast.span.Emo_support.Span.start,
+             scrutinee.Ast.span.Emo_support.Span.stop)
         with
         | Some t -> t
         | None -> Unknown
@@ -1887,7 +1894,7 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list
-    * (int, t) Hashtbl.t =
+    * (int * int, t) Hashtbl.t =
   let ctx =
     {
       file = String.concat "." current;

@@ -27,6 +27,15 @@ let member_name (c : Emo_ir.class_) (m : Emo_ir.func) : string =
     String.sub n (String.length prefix) (String.length n - String.length prefix)
   else n
 
+(* The checker's ClassType carries the display name; every emitted
+   table keys on the mangled one. *)
+let mangled_of_display (classes : Emo_ir.class_ list) (display : string) :
+    string option =
+  List.find_opt
+    (fun (c : Emo_ir.class_) -> String.equal c.Emo_ir.cdisplay display)
+    classes
+  |> Option.map (fun c -> c.Emo_ir.cname)
+
 (* A class's content fields, in init-assignment order (the IR's only
    field order). *)
 let class_fields (c : Emo_ir.class_) : string list =
@@ -264,7 +273,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | _ -> (
           let class_name =
             match obj.Emo_ir.ety with
-            | Emo_check.ClassType c -> c
+            | Emo_check.ClassType c -> (
+                match mangled_of_display env.classes c with
+                | Some cname -> cname
+                | None -> (
+                    match env.current_class with
+                    | Some c -> c
+                    | None -> failwith "beam: field read without a known class"))
             | _ -> (
                 match env.current_class with
                 | Some c -> c
@@ -454,7 +469,10 @@ and method_call env self_ name args =
          them — the checker admitted the call) *)
           let candidates =
             match self_.Emo_ir.ety with
-            | Emo_check.ClassType c -> [ c ]
+            | Emo_check.ClassType c -> (
+                match mangled_of_display env.classes c with
+                | Some cname -> [ cname ]
+                | None -> [])
             | _ ->
                 List.filter_map
                   (fun (c : Emo_ir.class_) ->
@@ -590,7 +608,13 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
          over the rest of the block *)
       let class_name =
         match self_.Emo_ir.ety with
-        | Emo_check.ClassType c -> c
+        | Emo_check.ClassType c -> (
+            match mangled_of_display env.classes c with
+            | Some cname -> cname
+            | None -> (
+                match env.current_class with
+                | Some c -> c
+                | None -> failwith "beam: field set without a known class"))
         | _ -> (
             match env.current_class with
             | Some c -> c
@@ -643,7 +667,13 @@ and stmt env (s : Emo_ir.stmt) : unit =
   | Emo_ir.Set_field { self_; name; value } ->
       let class_name =
         match self_.Emo_ir.ety with
-        | Emo_check.ClassType c -> c
+        | Emo_check.ClassType c -> (
+            match mangled_of_display env.classes c with
+            | Some cname -> cname
+            | None -> (
+                match env.current_class with
+                | Some c -> c
+                | None -> failwith "beam: field set without a known class"))
         | _ -> (
             match env.current_class with
             | Some c -> c

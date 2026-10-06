@@ -5,10 +5,19 @@
 
    The two-world structure starts at the signature: native types cross
    as C scalars, and the dynamic world's tagged word arrives with its
-   task (T24.4). The skeleton emits the entry stub, hosted startup,
-   and println over stdio; every construct beyond that support set
-   refuses loudly rather than miscompiling, growing task by task
-   (T24.2 fills the trampoline and the integer core). *)
+   task (T24.4).
+
+   Tail calls lower explicitly (CHECK.md): a self-tail call is a
+   parameter rebind and a jump to the function head; a mutual-tail
+   cluster — a cycle in the tail-call graph — merges into one C
+   function, so every edge on the cycle is a rebind and a jump, giving
+   constant stack without betting on cc's TCO. A cross-function tail
+   call that is not on a cycle returns the callee's value through the
+   epilogue; such chains are acyclic, so the stack stays bounded.
+   `return` is always a branch to the epilogue, never a raised signal.
+   Int64 arithmetic wraps: +, -, *, and unary minus go through
+   uint64_t; division and remainder guard INT64_MIN / -1 in the
+   runtime. *)
 
 module Ast = Emo_ast
 
@@ -18,7 +27,18 @@ module Ast = Emo_ast
 let runtime_c = Emo_c_runtime_data.runtime_c
 let runtime_h = Emo_c_runtime_data.runtime_h
 
-type env = { buf : Buffer.t }
+type env = {
+  buf : Buffer.t;
+  mutable fresh : int; (* unique temporaries, for tail-call rebinds *)
+  mutable scope : (string * string) list;
+      (* Emo name → C name, innermost first: parameters and lets *)
+  fname : string; (* the function whose body is being emitted *)
+  fresult : Emo_check.t;
+  tail_rebinds : (string * (string * Emo_check.t) list) list;
+      (* callee name → its parameter C names/types, for the rebind;
+         the self entry and every cluster sibling are here *)
+  in_main : bool; (* the entry module's top level: no `return` *)
+}
 
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
 
@@ -73,57 +93,297 @@ let param_type (t : Emo_check.t) : string =
   | Some t -> t
   | None -> refuse (Printf.sprintf "`%s` parameters" (Emo_check.to_string t))
 
-(* ---- Expressions ----
+let dummy_value (t : Emo_check.t) : string =
+  match t with
+  | Emo_check.Float64 -> "0.0"
+  | Emo_check.Bool -> "false"
+  | _ -> "0"
 
-   T24.1 emits string literals only — println's argument. The integer
-   core arrives in T24.2; every other form refuses. *)
+(* The zero of a result type: initializes the epilogue's result slot
+   against -Wall; the value is never observed (a non-Void body returns
+   on every path). *)
+let zero_value (c_ty : string) : string =
+  match c_ty with "double" -> "0.0" | "bool" -> "false" | _ -> "0"
 
-let emit_expr env (e : Emo_ir.expr) : string =
+(* ---- Expressions ---- *)
+
+let compare_text (op : Ast.binop) : string =
+  match op with
+  | Ast.Eq -> "=="
+  | Ast.Ne -> "!="
+  | Ast.Lt -> "<"
+  | Ast.Le -> "<="
+  | Ast.Gt -> ">"
+  | Ast.Ge -> ">="
+  | _ -> assert false
+
+let rec emit_expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
+  | Const (Ast.L_int n) ->
+      if n = Int64.min_int then "INT64_MIN"
+      else if n < 0L then Printf.sprintf "(-(INT64_C(%Ld)))" (Int64.abs n)
+      else Printf.sprintf "INT64_C(%Ld)" n
+  | Const (Ast.L_bool b) -> if b then "true" else "false"
   | Const (Ast.L_string s) -> c_string s
-  | Const _ -> refuse "non-string literals"
+  | Const _ -> refuse "non-integer, non-string literals"
+  | Var name -> (
+      match List.assoc_opt name env.scope with
+      | Some c_name -> c_name
+      | None -> refuse (Printf.sprintf "the variable `%s` here" name))
+  | Unary (op, x) -> emit_unary env op x
+  | Binary (op, l, r) -> emit_binary env op l r
+  | Call { func; args } ->
+      let args = String.concat ", " (List.map (emit_expr env) args) in
+      Printf.sprintf "%s(%s)" (Emo_ir.sanitize_ident func) args
   | _ -> refuse "this expression form"
 
-(* ---- Statements ----
+and emit_unary env (op : Ast.unop) (x : Emo_ir.expr) : string =
+  let v = emit_expr env x in
+  match (op, x.Emo_ir.ety) with
+  | Ast.Neg, Emo_check.Int64 ->
+      Printf.sprintf "(int64_t)(0ULL - (uint64_t)(%s))" v
+  | Ast.Neg, Emo_check.Float64 -> refuse "Float64 arithmetic"
+  | Ast.Not, Emo_check.Bool -> Printf.sprintf "(!(%s))" v
+  | Ast.Neg, _ | Ast.Not, _ -> refuse "this unary operation"
+  | Ast.Bit_not, _ -> refuse "the bitwise operators"
 
-   The one statement in the support set: println of a string literal
-   over stdio. Everything else — bindings, control flow, returns — is
-   T24.2 and later. *)
+and emit_binary env (op : Ast.binop) (l : Emo_ir.expr) (r : Emo_ir.expr) :
+    string =
+  let a = emit_expr env l and b = emit_expr env r in
+  let plain text = Printf.sprintf "(%s %s %s)" a text b in
+  let wrap text =
+    Printf.sprintf "(int64_t)((uint64_t)(%s) %s (uint64_t)(%s))" a text b
+  in
+  match (l.Emo_ir.ety, op) with
+  | Emo_check.Int64, Add -> wrap "+"
+  | Emo_check.Int64, Sub -> wrap "-"
+  | Emo_check.Int64, Mul -> wrap "*"
+  | Emo_check.Int64, Div -> Printf.sprintf "emo_div_i64(%s, %s)" a b
+  | Emo_check.Int64, Mod -> Printf.sprintf "emo_mod_i64(%s, %s)" a b
+  | Emo_check.Int64, (Eq | Ne | Lt | Le | Gt | Ge) -> plain (compare_text op)
+  | Emo_check.Int64, (Bit_and | Bit_or | Bit_xor | Shl | Shr) ->
+      refuse "the bitwise operators"
+  | Emo_check.Int64, _ -> refuse "this integer operation"
+  | Emo_check.Bool, (Eq | Ne) -> plain (compare_text op)
+  | Emo_check.Bool, And -> plain "&&"
+  | Emo_check.Bool, Or -> plain "||"
+  | Emo_check.Bool, _ ->
+      refuse
+        (Printf.sprintf "this Boolean operation (left=%s)"
+           (Emo_check.to_string l.Emo_ir.ety))
+  | Emo_check.Float64, _ -> refuse "Float64 arithmetic"
+  | ty, _ ->
+      refuse
+        (Printf.sprintf "this expression form (left=%s)"
+           (Emo_check.to_string ty))
+
+(* Drop a redundant outermost parenthesis pair — a comparison at an
+   if-condition's top level keeps clang's -Wparentheses-equality
+   quiet. Only when the first `(` really matches the last `)`. *)
+let unwrap (s : string) : string =
+  let n = String.length s in
+  if n >= 2 && s.[0] = '(' && s.[n - 1] = ')' then begin
+    let depth = ref 0 in
+    let outer = ref true in
+    String.iteri
+      (fun i c ->
+        if c = '(' then incr depth
+        else if c = ')' then begin
+          decr depth;
+          if !depth = 0 && i <> n - 1 then outer := false
+        end)
+      s;
+    if !outer then String.sub s 1 (n - 2) else s
+  end
+  else s
+
+(* ---- Statements ---- *)
 
 let emit_builtin env (name : string) (args : Emo_ir.expr list) : unit =
   match (name, args) with
   | "println", [ e ] ->
       let arg = emit_expr env e in
-      put env "  emo_println_str(%s);\n" arg
+      (match e.Emo_ir.ety with
+       | Emo_check.Int64 -> put env "  emo_println_i64(%s);\n" arg
+       | Emo_check.String -> put env "  emo_println_str(%s);\n" arg
+       | t ->
+           refuse
+             (Printf.sprintf "println of `%s` values"
+                (Emo_check.to_string t)))
   | "println", _ -> refuse "println with more than one argument"
   | _ -> refuse (Printf.sprintf "the builtin `%s`" name)
+
+(* A tail call becomes a parameter rebind and a jump: the arguments
+   land in fresh temporaries first, so one rebind cannot observe
+   another. *)
+let emit_tail_rebind env (callee : string) (args : Emo_ir.expr list) : unit =
+  match List.assoc_opt callee env.tail_rebinds with
+  | None -> assert false (* only called with a rebindable callee *)
+  | Some slots -> (
+      let values = List.map (emit_expr env) args in
+      put env "  {\n";
+      (match List.combine slots values with
+      | pairs ->
+          List.iteri
+            (fun i ((_, ty), value) ->
+              put env "    %s __t%d = %s;\n" (param_type ty) i value)
+            pairs;
+          List.iteri
+            (fun i (c_name, _) -> put env "    %s = __t%d;\n" c_name i)
+            slots);
+      put env "    goto emo_head_%s;\n  }\n" (Emo_ir.sanitize_ident callee))
 
 let rec emit_stmt env (s : Emo_ir.stmt) : unit =
   match s with
   | Effect { desc = Builtin { name; args }; _ } -> emit_builtin env name args
+  | Effect { desc = Call { func; args }; _ } ->
+      let args = String.concat ", " (List.map (emit_expr env) args) in
+      put env "  %s(%s);\n" (Emo_ir.sanitize_ident func) args
   | Effect _ -> refuse "this expression statement"
-  | Let _ -> refuse "bindings"
-  | Assign_var _ -> refuse "variable assignment"
+  | Let { name; init; _ } -> (
+      let value = emit_expr env init in
+      match c_type init.Emo_ir.ety with
+      | Some "void" -> refuse "Void bindings"
+      | Some t ->
+          let c_name = Emo_ir.sanitize_ident name in
+          env.scope <- (name, c_name) :: env.scope;
+          put env "  %s %s = %s;\n" t c_name value
+      | None ->
+          refuse
+            (Printf.sprintf "`%s` bindings"
+               (Emo_check.to_string init.Emo_ir.ety)))
+  | Assign_var { name; value } -> (
+      let value = emit_expr env value in
+      match List.assoc_opt name env.scope with
+      | Some c_name -> put env "  %s = %s;\n" c_name value
+      | None -> refuse (Printf.sprintf "assignment to `%s` here" name))
   | Set_global_var _ -> refuse "module-level variable assignment"
   | Set_field _ -> refuse "field assignment"
-  | If _ -> refuse "`if` statements"
+  | If { cond; then_; else_ } ->
+      let c = unwrap (emit_expr env cond) in
+      put env "  if (%s) {\n" c;
+      emit_stmts env then_;
+      if else_ = [] then put env "  }\n"
+      else (
+        put env "  } else {\n";
+        emit_stmts env else_;
+        put env "  }\n")
   | Case _ -> refuse "`case` statements"
   | Receive _ -> refuse "`receive` statements"
   | Send _ -> refuse "message sends"
   | Raise _ -> refuse "`raise`"
-  | Return_stmt _ -> refuse "`return`"
+  | Return_stmt e ->
+      if env.in_main then refuse "`return` at the top level";
+      let tail_callee =
+        match e.Emo_ir.desc with
+        | Call { func; _ } when List.mem_assoc func env.tail_rebinds ->
+            Some func
+        | _ -> None
+      in
+      (match tail_callee with
+      | Some callee -> (
+          match e.Emo_ir.desc with
+          | Call { args; _ } -> emit_tail_rebind env callee args
+          | _ -> assert false)
+      | None ->
+          if env.fresult = Emo_check.Void then put env "  goto emo_return;\n"
+          else
+            let value = emit_expr env e in
+            put env "  __result = %s;\n  goto emo_return;\n" value)
 
-let emit_stmts env (stmts : Emo_ir.stmt list) : unit =
+and emit_stmts env (stmts : Emo_ir.stmt list) : unit =
   List.iter (emit_stmt env) stmts
 
-(* ---- Functions ----
+(* ---- The tail-call graph ----
 
-   The tail-call lowering (parameter rebind + jump to the function
-   head, `return` as a branch to the epilogue) shapes this emission in
-   T24.2; today a function body only carries the statement support set
-   above, and anything beyond it refuses. *)
+   A → B when A's body returns a direct call to B. A cycle of two or
+   more functions is a mutual-tail cluster: it merges into one C
+   function so every edge on the cycle is a jump. *)
 
-let emit_func env (f : Emo_ir.func) : unit =
+let rec tail_callees (stmts : Emo_ir.stmt list) : string list =
+  List.concat_map
+    (fun s ->
+      match s with
+    | Emo_ir.Return_stmt { desc = Call { func; _ }; _ } -> [ func ]
+    | Emo_ir.If { then_; else_; _ } -> tail_callees then_ @ tail_callees else_
+    | Emo_ir.Case { branches; _ } ->
+        List.concat_map (fun b -> tail_callees b.Emo_ir.body) branches
+    | _ -> [])
+    stmts
+
+(* The clusters, in program order; each is the member list (size ≥ 2).
+   A function is in a cluster with another when each tail-reaches the
+   other. *)
+let tail_clusters (funcs : Emo_ir.func list) : string list list =
+  let module M = Map.Make (String) in
+  let module S = Set.Make (String) in
+  let edges =
+    List.fold_left
+      (fun acc (f : Emo_ir.func) ->
+        M.add f.Emo_ir.fname
+          (List.fold_left
+             (fun a callee -> S.add callee a)
+             S.empty
+             (tail_callees f.Emo_ir.fbody))
+          acc)
+      M.empty funcs
+  in
+  let fixed = ref edges in
+  let changed = ref true in
+  while !changed do
+    changed := false;
+    fixed :=
+      M.map
+        (fun direct ->
+          let closure =
+            S.fold
+              (fun next acc ->
+                S.union acc
+                  (Option.value ~default:S.empty (M.find_opt next !fixed)))
+              direct direct
+          in
+          if not (S.equal closure direct) then (
+            changed := true;
+            closure)
+          else direct)
+        !fixed
+  done;
+  let reaches from to_ = S.mem to_ (M.find from !fixed) in
+  let rec collect remaining acc =
+    match remaining with
+    | [] -> List.rev acc
+    | head :: rest -> (
+        let siblings =
+          List.filter
+            (fun other ->
+              other <> head && reaches head other && reaches other head)
+            rest
+        in
+        match siblings with
+        | [] -> collect rest acc
+        | _ ->
+            collect
+              (List.filter (fun n -> not (List.mem n siblings)) rest)
+              ((head :: siblings) :: acc))
+  in
+  collect (List.map (fun f -> f.Emo_ir.fname) funcs) []
+
+(* Whether a body has a `return` on any path — it is the only user of
+   the epilogue label. *)
+let rec has_return (stmts : Emo_ir.stmt list) : bool =
+  List.exists
+    (fun s ->
+      match s with
+    | Emo_ir.Return_stmt _ -> true
+    | Emo_ir.If { then_; else_; _ } -> has_return then_ || has_return else_
+    | Emo_ir.Case { branches; _ } ->
+        List.exists (fun b -> has_return b.Emo_ir.body) branches
+    | _ -> false)
+    stmts
+
+(* ---- Functions ---- *)
+
+let signature (f : Emo_ir.func) : string * string =
   let params =
     match f.Emo_ir.fparams with
     | [] -> "void"
@@ -135,14 +395,128 @@ let emit_func env (f : Emo_ir.func) : unit =
                  (Emo_ir.sanitize_ident name))
              ps)
   in
-  put env "%s %s(%s) {\n" (result_type f)
-    (Emo_ir.sanitize_ident f.Emo_ir.fname)
-    params;
+  (result_type f, params)
+
+(* A standalone function: the head label carries the tail-call
+   rebind, the epilogue label receives every `return`. *)
+let emit_single env0 (f : Emo_ir.func) : unit =
+  let ret, params = signature f in
+  let env =
+    {
+      env0 with
+      fresh = 0;
+      fname = f.Emo_ir.fname;
+      fresult = f.Emo_ir.fresult;
+      scope =
+        List.map (fun (n, _) -> (n, Emo_ir.sanitize_ident n)) f.Emo_ir.fparams;
+      tail_rebinds =
+        [
+          ( f.Emo_ir.fname,
+            List.map
+              (fun (n, ty) -> (Emo_ir.sanitize_ident n, ty))
+              f.Emo_ir.fparams );
+        ];
+      in_main = false;
+    }
+  in
+  put env "%s %s(%s) {\n" ret (Emo_ir.sanitize_ident f.Emo_ir.fname) params;
+  if ret <> "void" then put env "  %s __result = %s;\n" ret (zero_value ret);
+  (* The head label exists only when a self-tail call jumps to it. *)
+  if List.mem f.Emo_ir.fname (tail_callees f.Emo_ir.fbody) then
+    put env "emo_head_%s:;\n" (Emo_ir.sanitize_ident f.Emo_ir.fname);
   emit_stmts env f.Emo_ir.fbody;
-  (* Unreachable in practice — the checker requires a non-Void body to
-     return, and `return` is not in the support set yet. *)
-  if f.Emo_ir.fresult <> Emo_check.Void then put env "  return 0;\n";
+  if has_return f.Emo_ir.fbody then put env "emo_return:;\n";
+  if ret = "void" then put env "  return;\n"
+  else put env "  return __result;\n";
   put env "}\n\n"
+
+(* A cluster slot: the member's parameter, prefixed to stay unique
+   across the merged signature. *)
+let slot_name member param =
+  Printf.sprintf "%s__p_%s" member (Emo_ir.sanitize_ident param)
+
+(* The merged shape of a cluster: one return type (mixed result types
+   refuse), the member bodies, and the slot list of every member
+   parameter in member order. *)
+let cluster_layout (index : int) (members : Emo_ir.func list) :
+    string * string * string * (string * string * Emo_check.t) list =
+  let rets = List.map result_type members in
+  let ret = List.hd rets in
+  if List.exists (fun r -> r <> ret) rets then
+    refuse "a mutual-tail cluster with mixed result types";
+  let slots =
+    List.concat_map
+      (fun (m : Emo_ir.func) ->
+        List.map (fun (n, ty) -> (m.Emo_ir.fname, n, ty)) m.Emo_ir.fparams)
+      members
+  in
+  let params =
+    match slots with
+    | [] -> "void"
+    | _ ->
+        String.concat ", "
+          (List.map
+             (fun (m, n, ty) ->
+               Printf.sprintf "%s %s" (param_type ty) (slot_name m n))
+             slots)
+  in
+  (Printf.sprintf "emo__scc%d" index, ret, params, slots)
+
+(* A mutual-tail cluster: one C function holding every member body.
+   Each member keeps its mangled name as a thin wrapper so call sites
+   need not know about the merge. *)
+let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
+  let cluster, ret, cluster_params, slots = cluster_layout index members in
+  List.iter
+    (fun (m : Emo_ir.func) ->
+      let m_ret, m_params = signature m in
+      let args =
+        List.map
+          (fun (other, n, ty) ->
+            if other = m.Emo_ir.fname then Emo_ir.sanitize_ident n
+            else dummy_value ty)
+          slots
+      in
+      put env0 "%s %s(%s) {\n  return %s(%s);\n}\n\n" m_ret
+        (Emo_ir.sanitize_ident m.Emo_ir.fname)
+        m_params cluster
+        (String.concat ", " args))
+    members;
+  put env0 "%s %s(%s) {\n" ret cluster cluster_params;
+  if ret <> "void" then put env0 "  %s __result = %s;\n" ret (zero_value ret);
+  List.iter
+    (fun (m : Emo_ir.func) ->
+      let env =
+        {
+          env0 with
+          fresh = 0;
+          fname = m.Emo_ir.fname;
+          fresult = m.Emo_ir.fresult;
+          scope =
+            List.map
+              (fun (n, _) -> (n, slot_name m.Emo_ir.fname n))
+              m.Emo_ir.fparams;
+          tail_rebinds =
+            List.map
+              (fun (o : Emo_ir.func) ->
+                ( o.Emo_ir.fname,
+                  List.map
+                    (fun (n, ty) -> (slot_name o.Emo_ir.fname n, ty))
+                    o.Emo_ir.fparams ))
+              members;
+          in_main = false;
+        }
+      in
+      (* Every member is on the cluster's cycle, so its head label
+         always has an incoming jump. *)
+      put env "emo_head_%s:;\n" (Emo_ir.sanitize_ident m.Emo_ir.fname);
+      emit_stmts env m.Emo_ir.fbody)
+    members;
+  if List.exists (fun (m : Emo_ir.func) -> has_return m.Emo_ir.fbody) members
+  then put env0 "emo_return:;\n";
+  if ret = "void" then put env0 "  return;\n"
+  else put env0 "  return __result;\n";
+  put env0 "}\n\n"
 
 (* ---- The program ---- *)
 
@@ -154,11 +528,59 @@ let emit (program : Emo_ir.program) : string =
   if program.pclasses <> [] then refuse "classes";
   if program.pinterfaces <> [] then refuse "interfaces";
   if program.pglobals <> [] then refuse "module-level variables";
+  let clusters = tail_clusters program.pfuncs in
+  let cluster_members name =
+    List.find_opt (List.mem name) clusters
+    |> Option.value ~default:[ name ]
+  in
+  let in_cluster name =
+    let members = cluster_members name in List.length members > 1
+  in
+  let member_funcs (members : string list) : Emo_ir.func list =
+    List.filter_map
+      (fun f ->
+        if List.mem f.Emo_ir.fname members then Some f else None)
+      program.pfuncs
+  in
   let buf = Buffer.create (16 * 1024) in
-  let env = { buf } in
-  put env "/* Generated by the Emo compiler (target: c) — do not edit. */\n\n";
-  put env "#include \"emo_c_runtime.h\"\n\n";
-  List.iter (fun f -> emit_func env f) program.pfuncs;
+  let env0 =
+    {
+      buf;
+      fresh = 0;
+      scope = [];
+      fname = "";
+      fresult = Emo_check.Void;
+      tail_rebinds = [];
+      in_main = true;
+    }
+  in
+  put env0 "/* Generated by the Emo compiler (target: c) — do not edit. */\n\n";
+  put env0 "#include \"emo_c_runtime.h\"\n\n";
+  (* Forward declarations: every function keeps its mangled name, and
+     each cluster contributes its merged function. *)
+  List.iter
+    (fun f ->
+      let ret, params = signature f in
+      put env0 "%s %s(%s);\n" ret (Emo_ir.sanitize_ident f.Emo_ir.fname)
+        params)
+    program.pfuncs;
+  List.iteri
+    (fun i members ->
+      let cluster, ret, cluster_params, _ =
+        cluster_layout i (member_funcs members)
+      in
+      put env0 "%s %s(%s);\n" ret cluster cluster_params)
+    clusters;
+  put env0 "\n";
+  (* Definitions. *)
+  List.iter
+    (fun f -> if not (in_cluster f.Emo_ir.fname) then emit_single env0 f)
+    program.pfuncs;
+  List.iteri
+    (fun i members -> emit_cluster env0 i (member_funcs members))
+    clusters;
+  (* The entry module's top level. *)
+  let env = { env0 with fresh = 0; scope = [] } in
   put env "int main(void) {\n";
   put env "  emo_startup();\n";
   emit_stmts env program.pinit;
