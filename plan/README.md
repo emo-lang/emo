@@ -31,8 +31,8 @@ incrementally shippable steps — one file per step, executed in order.
 - Strictness first: when in doubt, reject early with a clear diagnostic. No
   auto-fixing, no implicit additions, no silent fallbacks.
 - Loop forms are being added: the decided direction (2026-10-06) is to keep
-  guaranteed tail calls *and* add C-style `for`/`while`; the surface is open
-  in `CHECK.md` and implementation is unscheduled. The Go pre-1.22
+  guaranteed tail calls *and* add C-style `for`/`while`; the surface is settled
+  (README, Syntax and `CHECK.md`) and implementation is unscheduled. The Go pre-1.22
   loop-capture trap is already prevented — a `var` cannot escape its block,
   and capturing one in a closure that outlives the block is a compile error
   (README, Syntax) — so the earlier fresh-binding caution is subsumed.
