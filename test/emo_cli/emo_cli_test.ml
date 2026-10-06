@@ -377,6 +377,61 @@ let wasm_examples_tests =
                    (Buffer.contents err))))
     wasm_goldens
 
+(* The C goldens: build with --target c through the system cc and run
+   the standalone binary, byte-for-byte against expected.txt. Skips
+   when cc is absent. The list names the backend's current support
+   set; it grows task by task (T24.1: hello_world). *)
+let c_goldens = [ "hello_world" ]
+
+let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
+
+let c_examples_tests =
+  List.map
+    (fun name ->
+      tc (Printf.sprintf "%s compiles to c and runs standalone" name) (fun () ->
+          if not (Lazy.force cc_available) then Alcotest.skip ();
+          let dir = Filename.concat examples_dir name in
+          let expected = read_file (Filename.concat dir "expected.txt") in
+          let out_bin = Filename.concat scratch (name ^ "-c-bin") in
+          let exit_code =
+            Emo_cli.build_file
+              ~entry:(Filename.concat dir "main.emo")
+              ~output:out_bin ~specialize:false ~cclibs:[] ~target:"c"
+          in
+          Alcotest.(check int) "build exit" 0 exit_code;
+          let cmd_stdout, _cmd_stdin, cmd_stderr =
+            Unix.open_process_full
+              (Filename.quote out_bin)
+              (Unix.environment ())
+          in
+          let out = Buffer.create 256 in
+          (try
+             while true do
+               Buffer.add_channel out cmd_stdout 4096
+             done
+           with End_of_file -> ());
+          let err = Buffer.create 256 in
+          (try
+             while true do
+               Buffer.add_channel err cmd_stderr 4096
+             done
+           with End_of_file -> ());
+          let proc_status =
+            Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+          in
+          Alcotest.(check string) "output" expected (Buffer.contents out);
+          match proc_status with
+          | Unix.WEXITED 0 -> ()
+          | s ->
+              Alcotest.fail
+                (Printf.sprintf "the binary exited %s: %s"
+                   (match s with
+                   | Unix.WEXITED n -> string_of_int n
+                   | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                   | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                   (Buffer.contents err))))
+    c_goldens
+
 (* ---- publish: the upload is dogfooded through the stdlib http client ----
 
    A captive HTTP server on loopback (a raw socket in a helper thread)
@@ -535,5 +590,6 @@ let () =
       ("examples", examples_tests);
       ("wasm_examples", wasm_examples_tests);
       ("beam_examples", beam_examples_tests);
+      ("c_examples", c_examples_tests);
       ("publish", publish_tests);
     ]

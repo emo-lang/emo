@@ -135,6 +135,7 @@ let find_ocamlfind () : string =
 (* The build command: entry file → artifact at [-o] (default: the
    entry's stem in the current directory). The target picks the
    backend: native (default) compiles through the OCaml toolchain;
+   c emits C compiled by the system cc into a standalone binary;
    typescript emits one self-contained .ts file that runs on Node. *)
 let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
     ~(cclibs : string list) ~(target : string) : int =
@@ -248,6 +249,37 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                   Printf.printf "built %s\n" out;
                   0
                 end)
+        | "c" ->
+            (* Emit one main.c plus the Emo runtime sources, compile
+               with the system cc: a standalone binary with no OCaml
+               runtime (step 24). *)
+            let write path contents =
+              let oc = open_out_bin path in
+              output_string oc contents;
+              close_out oc
+            in
+            let main_c = Filename.concat build_dir "main.c" in
+            write main_c (Emo_codegen.C.emit program);
+            let runtime_c = Filename.concat build_dir "emo_c_runtime.c" in
+            write runtime_c Emo_codegen.C.runtime_c;
+            let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
+            write runtime_h Emo_codegen.C.runtime_h;
+            let cmd =
+              Printf.sprintf "cc -O2 -std=c11 -Wall -I %s %s %s -o %s"
+                (Filename.quote build_dir)
+                (Filename.quote main_c) (Filename.quote runtime_c)
+                (Filename.quote output)
+            in
+            let exit_code = Sys.command cmd in
+            if exit_code <> 0 then begin
+              prerr_endline
+                (Printf.sprintf
+                   "emo build: the C compiler failed (exit %d)" exit_code);
+              70
+            end
+            else (
+              Printf.printf "built %s\n" output;
+              0)
         | "native" ->
             let source = Emo_codegen.emit ~specialize program in
             (* Incremental: the digest of the emitted source plus the
@@ -399,8 +431,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         | other ->
             prerr_endline
               (Printf.sprintf
-                 "emo build: unknown target `%s` (native, typescript, wasm, \
-                  beam)"
+                 "emo build: unknown target `%s` (native, c, typescript, \
+                  wasm, beam)"
                  other);
             65
       with
@@ -442,7 +474,7 @@ let build =
     Arg.(
       value & opt string "native"
       & info [ "target" ] ~docv:"TARGET"
-          ~doc:"The compilation target: native, typescript, wasm, or beam.")
+          ~doc:"The compilation target: native, c, typescript, wasm, or beam.")
   in
   let build entry output no_specialize cclibs target =
     let out =

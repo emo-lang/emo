@@ -435,6 +435,25 @@ let registry_dir =
   return n - 1
 }
 |};
+  let c_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "c_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat c_dir "package.emo")
+    {|package {
+  name = "acme/c_tools"
+  version = "1.0.0"
+  targets = ["native", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat c_dir "c_tools.emo")
+    {|def halve(n Int64) Int64 {
+  return n / 2
+}
+|};
   dir
 
 let app_manifest =
@@ -678,6 +697,76 @@ println(wasm_tools.shrink(4))
         with_registry (fun () ->
             match
               Emo_project.compile_inputs ~entry_file:entry ~target:"wasm"
+            with
+            | _ -> ()
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.fail ("codes: " ^ codes_dump ds)));
+    tc "a c build refuses a package without a c build" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["native", "c"]
+
+  deps {
+    acme/json_tools = "2.3.1"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/json_tools"
+println(json_tools.parse("hello"))
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            with
+            | _ -> Alcotest.fail "expected the c gate to refuse"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "names the dep and the target" true
+                      (contains_substring d.Diagnostic.message "acme/json_tools"
+                      && contains_substring d.Diagnostic.message "`c`")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+    tc "a c build accepts a package that declares the target" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["native", "c"]
+
+  deps {
+    acme/c_tools = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/c_tools"
+println(c_tools.halve(8))
+|} );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
             with
             | _ -> ()
             | exception Emo_project.Static_errors ds ->

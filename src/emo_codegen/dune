@@ -2,10 +2,24 @@
  (name emo_codegen)
  (libraries emo_support emo_ast emo_check emo_ir emo_runtime))
 
-(data_only_dirs ts)
+(data_only_dirs ts c)
 
 (rule
  (target ts_prelude.ts)
  (deps ts/ts_runtime.ts)
  (action
   (copy ts/ts_runtime.ts ts_prelude.ts)))
+
+; The C runtime sources ride the compiler as generated data — the CLI
+; writes them next to the emitted main.c, so the backend works from
+; the build tree and from an installation alike (the ts_prelude.ts
+; file-lookup route does not survive dune test).
+
+(rule
+ (target emo_c_runtime_data.ml)
+ (deps c/emo_c_runtime.c c/emo_c_runtime.h)
+ (action
+  (with-stdout-to
+   emo_c_runtime_data.ml
+   (bash
+    "printf '(* Generated from src/emo_codegen/c — edit there, not here. *)\\n\\nlet runtime_c = {img|\\n' && cat c/emo_c_runtime.c && printf '\\n|img}\\n\\nlet runtime_h = {img|\\n' && cat c/emo_c_runtime.h && printf '\\n|img}\\n'"))))
