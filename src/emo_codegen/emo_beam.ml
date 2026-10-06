@@ -118,6 +118,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Const (L_char c) -> put env (Printf.sprintf "$\\x%02x" (Char.code c))
   | Const (L_string s) -> put env (binary_lit s)
   | Type_ref a -> put env ("'" ^ a ^ "'")
+  | Emo_ir.Global_var _ ->
+      failwith "beam: module-level `var` is not supported"
   | Var name -> (
       match List.assoc_opt name env.local_map with
       | Some v -> put env v
@@ -636,6 +638,8 @@ and stmt env (s : Emo_ir.stmt) : unit =
       expr env value;
       put env "\nin ";
       put env v
+  | Emo_ir.Set_global_var _ ->
+      failwith "beam: module-level `var` is not supported"
   | Emo_ir.Set_field { self_; name; value } ->
       let class_name =
         match self_.Emo_ir.ety with

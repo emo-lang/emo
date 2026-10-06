@@ -293,6 +293,8 @@ let rec expr env (e : Emo_ir.expr) : string =
       env.fname <- saved_name;
       env.refs <- saved;
       Printf.sprintf "(async (%s) => {\n%s\n})" params body
+  | Emo_ir.Global_var _ ->
+      failwith "ts: module-level `var` is not supported"
 
 (* Sequenced statements: every line ends with `;`; a tail position
    returns. *)
@@ -325,6 +327,8 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       if List.mem name env.refs then
         Printf.sprintf "%s.v = %s;" name (expr env value)
       else Printf.sprintf "const %s = %s;" name (expr env value)
+  | Set_global_var _ ->
+      failwith "ts: module-level `var` is not supported"
   | Set_field { self_; name; value } ->
       Printf.sprintf "(%s).%s = %s;" (expr env self_) name (expr env value)
   | If { cond; then_; else_ } ->

@@ -6,6 +6,11 @@ module Ts = Emo_ts
 module Wasm = Emo_wasm
 module Beam = Emo_beam
 
+(* A float literal as its exact bit pattern, so no decimal rendering
+   loses precision near the extremes. *)
+let float_lit (f : float) : string =
+  Printf.sprintf "(Int64.float_of_bits %LdL)" (Int64.bits_of_float f)
+
 (* Stage A/B backend: emits OCaml source from the IR, compiled by the
    OCaml toolchain into a single binary linked against emo_runtime (the
    scheduler and builtins ride along).
@@ -95,6 +100,8 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
         (* An assign to a non-ref can only be a rebinding the checker
            rejected; unreachable in checked programs. *)
         Printf.sprintf "let %s = %s in ()" (local name) v
+  | Emo_ir.Set_global_var { name; value } ->
+      Printf.sprintf "%s := %s" name (emit_expr env value)
   | Emo_ir.Set_field { self_; name; value } ->
       if tail then
         Printf.sprintf
@@ -302,13 +309,13 @@ and emit_receive env branches ~tail =
 and emit_expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
   | Emo_ir.Const (L_int n) ->
-      if env.native && e.Emo_ir.ety = Emo_check.Int64 then Int64.to_string n
+      if env.native && e.Emo_ir.ety = Emo_check.Int64 then
+        Printf.sprintf "%LdL" n
       else Printf.sprintf "Emo_eval.Int64 %LdL" n
   | Emo_ir.Const (L_byte n) -> Printf.sprintf "Emo_eval.Byte %d" n
   | Emo_ir.Const (L_float f) ->
-      if env.native && e.Emo_ir.ety = Emo_check.Float64 then
-        Printf.sprintf "(%s)" (string_of_float f)
-      else Printf.sprintf "Emo_eval.Float %s" (string_of_float f)
+      if env.native && e.Emo_ir.ety = Emo_check.Float64 then float_lit f
+      else Printf.sprintf "Emo_eval.Float %s" (float_lit f)
   | Emo_ir.Const (L_bool b) ->
       if env.native && e.Emo_ir.ety = Emo_check.Bool then
         if b then "true" else "false"
@@ -331,6 +338,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
         "(Emo_eval.CompiledFn { Emo_eval.fdesc = %S; farity = -1; fapply = %s \
          })"
         g g
+  | Emo_ir.Global_var g -> "(!" ^ g ^ ")"
   | Emo_ir.Tuple es ->
       Printf.sprintf "Emo_eval.Tuple [%s]"
         (String.concat "; " (List.map (emit_expr env) es))
@@ -474,58 +482,68 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
       Printf.sprintf "(if %s then (%s) else (%s))"
         (emit_native_expr env c)
         (emit_native_expr env t) (emit_native_expr env else_)
-  | Emo_ir.Const (L_int n) -> Int64.to_string n
-  | Emo_ir.Const (L_float f) -> Printf.sprintf "(%s)" (string_of_float f)
+  | Emo_ir.Const (L_int n) -> Printf.sprintf "%LdL" n
+  | Emo_ir.Const (L_float f) -> float_lit f
   | Emo_ir.Const (L_bool b) -> if b then "true" else "false"
   | Emo_ir.Const (L_char c) -> Printf.sprintf "%C" c
   | Emo_ir.Const (L_string s) -> Printf.sprintf "%S" s
   | Emo_ir.Var name -> local name
   | Emo_ir.Binary (op, l, r) ->
-      (* OCaml spells float arithmetic with a dot — the expression's
-         own type picks the operator family. Comparisons are
-         polymorphic and serve both. *)
-      let float = e.Emo_ir.ety = Emo_check.Float64 in
-      let op_str =
-        match op with
-        | Ast.Add -> if float then "+." else "+"
-        | Ast.Sub -> if float then "-." else "-"
-        | Ast.Mul -> if float then "*." else "*"
-        | Ast.Div -> if float then "/." else "/"
-        | Ast.Mod -> if float then "Float.rem" else "mod"
-        | Ast.Lt -> "<"
-        | Ast.Le -> "<="
-        | Ast.Gt -> ">"
-        | Ast.Ge -> ">="
-        | Ast.Eq -> "="
-        | Ast.Ne -> "<>"
-        | Ast.And -> "&&"
-        | Ast.Or -> "||"
-        | Ast.Bit_and -> "land"
-        | Ast.Bit_or -> "lor"
-        | Ast.Bit_xor -> "lxor"
-        | Ast.Shl -> ""
-        | Ast.Shr -> ""
+      (* Comparisons and `&&`/`||` are polymorphic; arithmetic and bit
+         operations are Int64 unless an operand is Float64. *)
+      let le = "(" ^ emit_native_expr env l ^ ")" in
+      let re = "(" ^ emit_native_expr env r ^ ")" in
+      let float =
+        e.Emo_ir.ety = Emo_check.Float64
+        || l.Emo_ir.ety = Emo_check.Float64
+        || r.Emo_ir.ety = Emo_check.Float64
       in
-      if op = Ast.Shl then
-        Printf.sprintf "(Emo_runtime.shl_int %s %s)" (emit_native_expr env l)
-          (emit_native_expr env r)
-      else if op = Ast.Shr then
-        Printf.sprintf "(Emo_runtime.shr_int %s %s)" (emit_native_expr env l)
-          (emit_native_expr env r)
-      else
-        Printf.sprintf "(%s %s %s)" (emit_native_expr env l) op_str
-          (emit_native_expr env r)
+      (match op with
+      | Ast.Lt -> Printf.sprintf "(%s < %s)" le re
+      | Ast.Le -> Printf.sprintf "(%s <= %s)" le re
+      | Ast.Gt -> Printf.sprintf "(%s > %s)" le re
+      | Ast.Ge -> Printf.sprintf "(%s >= %s)" le re
+      | Ast.Eq -> Printf.sprintf "(%s = %s)" le re
+      | Ast.Ne -> Printf.sprintf "(%s <> %s)" le re
+      | Ast.And -> Printf.sprintf "(%s && %s)" le re
+      | Ast.Or -> Printf.sprintf "(%s || %s)" le re
+      | Ast.Add ->
+          if float then Printf.sprintf "(%s +. %s)" le re
+          else Printf.sprintf "(Int64.add %s %s)" le re
+      | Ast.Sub ->
+          if float then Printf.sprintf "(%s -. %s)" le re
+          else Printf.sprintf "(Int64.sub %s %s)" le re
+      | Ast.Mul ->
+          if float then Printf.sprintf "(%s *. %s)" le re
+          else Printf.sprintf "(Int64.mul %s %s)" le re
+      | Ast.Div ->
+          if float then Printf.sprintf "(%s /. %s)" le re
+          else Printf.sprintf "(Int64.div %s %s)" le re
+      | Ast.Mod ->
+          if float then Printf.sprintf "(Float.rem %s %s)" le re
+          else Printf.sprintf "(Int64.rem %s %s)" le re
+      | Ast.Bit_and -> Printf.sprintf "(Int64.logand %s %s)" le re
+      | Ast.Bit_or -> Printf.sprintf "(Int64.logor %s %s)" le re
+      | Ast.Bit_xor -> Printf.sprintf "(Int64.logxor %s %s)" le re
+      | Ast.Shl -> Printf.sprintf "(Emo_runtime.shl_i64 %s %s)" le re
+      | Ast.Shr -> Printf.sprintf "(Emo_runtime.shr_i64 %s %s)" le re)
   | Emo_ir.Unary (Ast.Neg, x) ->
-      if e.Emo_ir.ety = Emo_check.Float64 then
-        Printf.sprintf "(-. %s)" (emit_native_expr env x)
-      else Printf.sprintf "(- %s)" (emit_native_expr env x)
+      let xe = "(" ^ emit_native_expr env x ^ ")" in
+      if e.Emo_ir.ety = Emo_check.Float64 then Printf.sprintf "(-. %s)" xe
+      else if e.Emo_ir.ety = Emo_check.Int64 then
+        Printf.sprintf "(Int64.neg %s)" xe
+      else Printf.sprintf "(- %s)" xe
   | Emo_ir.Unary (Ast.Bit_not, x) ->
-      Printf.sprintf "(lnot %s)" (emit_native_expr env x)
+      let xe = "(" ^ emit_native_expr env x ^ ")" in
+      if e.Emo_ir.ety = Emo_check.Int64 then
+        Printf.sprintf "(Int64.lognot %s)" xe
+      else Printf.sprintf "(lnot %s)" xe
   | Emo_ir.Unary (Ast.Not, x) ->
-      Printf.sprintf "(not %s)" (emit_native_expr env x)
+      Printf.sprintf "(not (%s))" (emit_native_expr env x)
   | Emo_ir.Call { func; args } ->
-      Printf.sprintf "%s %s" (sp_name func)
-        (String.concat " " (List.map (emit_native_expr env) args))
+      Printf.sprintf "(%s %s)" (sp_name func)
+        (String.concat " "
+           (List.map (fun a -> "(" ^ emit_native_expr env a ^ ")") args))
   | Emo_ir.Interpolate es ->
       (* parts render through the shared runtime; the result is a
          native string *)
@@ -538,9 +556,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
                 Printf.sprintf "Emo_eval.%s"
                   (match part.Emo_ir.ety with
                   | Emo_check.Int64 ->
-                      Printf.sprintf
-                        "Int64 (Int64.of_int (%s))"
-                        (emit_native_expr env part)
+                      Printf.sprintf "Int64 (%s)" (emit_native_expr env part)
                   | Emo_check.Float64 ->
                       Printf.sprintf "Float (%s)" (emit_native_expr env part)
                   | Emo_check.String ->
@@ -577,6 +593,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
         | Emo_ir.Do_spawn _ -> "Do_spawn"
         | Emo_ir.Spawn_value _ -> "Spawn_value"
         | Emo_ir.Closure _ -> "Closure"
+        | Emo_ir.Global_var _ -> "Global_var"
       in
       Printf.eprintf "NONNATIVE %s\n%!" (kind : string);
       raise (Emo_ir.Lower_error "non-native expression in specialized body")
@@ -601,7 +618,7 @@ let rec emit_native_pattern env (p : Emo_ast.pattern) : string =
       let v = "v_" ^ Emo_ir.sanitize_ident name in
       env.refs <- v :: env.refs;
       v
-  | Emo_ast.Pattern_literal (L_int n) -> Int64.to_string n
+  | Emo_ast.Pattern_literal (L_int n) -> Printf.sprintf "%LdL" n
   | Emo_ast.Pattern_literal (L_bool b) -> if b then "true" else "false"
   | Emo_ast.Enum_member (t, m) ->
       Printf.sprintf "(Emo_eval.EnumMember (%S, %S))" t m
@@ -752,6 +769,7 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
                 | Emo_ir.Effect _ -> "Effect"
                 | Emo_ir.Let _ -> "Let"
                 | Emo_ir.Assign_var _ -> "Assign"
+                | Emo_ir.Set_global_var _ -> "Set_global_var"
                 | Emo_ir.Set_field _ -> "Set_field"
                 | Emo_ir.If _ -> "If"
                 | Emo_ir.Case _ -> "Case"
@@ -831,7 +849,7 @@ and emit_specialized_func (f : Emo_ir.func) : string =
 
 and ocaml_type (t : Emo_check.t) : string =
   match t with
-  | Emo_check.Int64 -> "int"
+  | Emo_check.Int64 -> "int64"
   | Emo_check.Float64 -> "float"
   | Emo_check.Bool -> "bool"
   | Emo_check.Char -> "char"
@@ -980,7 +998,7 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
           let v = local p in
           match t with
           | Emo_check.Int64 ->
-              Printf.sprintf "(Int64.to_int (Emo_runtime.unbox_int64 %s))" v
+              Printf.sprintf "(Emo_runtime.unbox_int64 %s)" v
           | _ ->
               Printf.sprintf "(Emo_runtime.unbox_%s %s)"
                   (String.lowercase_ascii (Emo_check.to_string t)) v
@@ -992,7 +1010,7 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
         let box_out =
           match f.Emo_ir.fresult with
           | Emo_check.Int64 ->
-              Printf.sprintf "(Emo_runtime.box_int64 (Int64.of_int (%s)))" call
+              Printf.sprintf "(Emo_runtime.box_int64 (%s))" call
           | _ ->
               Printf.sprintf "(Emo_runtime.box_%s (%s))"
                   (String.lowercase_ascii (Emo_check.to_string f.Emo_ir.fresult))
@@ -1050,6 +1068,11 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
             (List.length f.Emo_ir.fparams)
       | None -> ())
     (ffi_wrapper_map program);
+  (* Module-level `var`s: a ref cell each, declared before the functions
+     that reference them and initialized in the entry. *)
+  List.iter
+    (fun (g, _) -> put env "let %s = ref (Emo_eval.Void)\n" g)
+    program.Emo_ir.pglobals;
   (* Dynamic functions: one rec group. *)
   put env "\n";
   let dynamic =
@@ -1177,5 +1200,12 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
      )\n\
     \  in\n\
     \  if exit_code <> 0 then exit exit_code\n"
-    (indented (emit_stmts env program.Emo_ir.pinit ~tail:false));
+    (indented
+       (String.concat ""
+          (List.map
+             (fun (g, init) ->
+               Printf.sprintf "%s := %s;\n" g (emit_expr env init))
+             program.Emo_ir.pglobals)
+        ^ "\n"
+        ^ emit_stmts env program.Emo_ir.pinit ~tail:false));
   Buffer.contents env.buf
