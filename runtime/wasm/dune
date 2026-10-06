@@ -241,3 +241,25 @@
   int-fixture.expected.txt)
  (action
   (diff int-fixture.expected.txt int-fixture.actual)))
+
+; The float-family fixture (T21.5, bridge and moves).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  float-fixture.emo
+  internal/floats.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   float-fixture.actual
+   (run %{emo} run float-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  float-fixture.actual
+  float-fixture.expected.txt)
+ (action
+  (diff float-fixture.expected.txt float-fixture.actual)))

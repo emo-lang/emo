@@ -1,0 +1,308 @@
+// The float families (T21.5), part one: the bridge and the moves.
+//
+// f64 arithmetic rides the host `Float64`; f32 arithmetic promotes to
+// `Float64`, operates, and demotes with round-to-nearest-even bit
+// surgery. f64 -> f32 has more than enough headroom that a single f32
+// operation computed in f64 and rounded once is correctly rounded, so
+// the bridge is exact for add/sub/mul/div. Moves (`reinterpret`,
+// `abs`, `neg`, `copysign`) are bit operations and preserve payloads;
+// min/max and comparisons are NaN-aware by bits, never by `=`.
+//
+// The language has no float math primitives (sqrt/floor/ceil/trunc/
+// nearest) and no float <-> int conversion; those are recorded as gate
+// pressure and land with their own task, not here.
+
+// ---- constants ----
+
+def sign64() Int64 {
+  return -9223372036854775807 - 1
+}
+
+def inf64() Int64 {
+  return 9218868437227405312
+}
+
+def canon64() Int64 {
+  return 9221120237041090560
+}
+
+def inf32() Int64 {
+  return 2139095040
+}
+
+def canon32() Int64 {
+  return 2143289344
+}
+
+def mask32(x Int64) Int64 {
+  return x & 4294967295
+}
+
+// ---- NaN / zero tests by bits ----
+
+def f64_is_nan(bits Int64) Bool {
+  const exp = (bits >> 52) & 2047
+  const mant = bits & 4503599627370495
+  return exp == 2047 && mant != 0
+}
+
+def f64_is_zero(bits Int64) Bool {
+  return (bits & 9223372036854775807) == 0
+}
+
+def f32_is_nan(bits Int64) Bool {
+  const b = mask32(bits)
+  const exp = (b >> 23) & 255
+  const mant = b & 8388607
+  return exp == 255 && mant != 0
+}
+
+def f32_is_zero(bits Int64) Bool {
+  return (mask32(bits) & 2147483647) == 0
+}
+
+// ---- promote / demote ----
+
+// f32 bits -> f64 bits, exact.
+def promote_f32(bits Int64) Int64 {
+  const b = mask32(bits)
+  const sign = (b >> 31) & 1
+  const exp = (b >> 23) & 255
+  const mant = b & 8388607
+  const sbit = sign << 63
+  if exp == 255 {
+    return sbit | (2047 << 52) | (mant << 29)
+  }
+  if exp == 0 {
+    if mant == 0 {
+      return sbit
+    }
+    const p = high_bit(mant, 22)
+    const e = p - 149
+    const fm = (mant << (23 - p)) & 8388607
+    const fexp = (e + 1023) << 52
+    return sbit | fexp | (fm << 29)
+  }
+  const fexp = (exp + 896) << 52
+  return sbit | fexp | (mant << 29)
+}
+
+// The index of the highest set bit of x (x > 0).
+def high_bit(x Int64, i Int64) Int64 {
+  const bit = (x >> i) & 1
+  if bit != 0 {
+    return i
+  }
+  return high_bit(x, i - 1)
+}
+
+// f64 bits -> f32 bits, round-to-nearest-even.
+def demote_f64(bits Int64) Int64 {
+  const sign = (bits >> 63) & 1
+  const sbit = sign << 31
+  const exp = (bits >> 52) & 2047
+  const mant = bits & 4503599627370495
+  if exp == 2047 {
+    if mant == 0 {
+      return sbit | inf32()
+    }
+    const fm = (mant >> 29) & 8388607 | 4194304
+    return sbit | inf32() | fm
+  }
+  if exp == 0 {
+    return sbit
+  }
+  const e = exp - 1023
+  if e > 127 {
+    return sbit | inf32()
+  }
+  if e >= -126 {
+    return sbit | round_normal(e, mant)
+  }
+  return sbit | round_subnormal(e, mant)
+}
+
+// A normal f32 from a normal f64: drop 29 mantissa bits with ties to even.
+def round_normal(e Int64, mant Int64) Int64 {
+  var m = mant >> 29
+  const rem = mant & 536870911
+  const half = 268435456
+  var e2 = e
+  if rem > half || (rem == half && (m & 1) == 1) {
+    m = m + 1
+    if m == 8388608 {
+      m = 0
+      e2 = e2 + 1
+      if e2 > 127 {
+        return inf32()
+      }
+    }
+  }
+  const fb = (e2 + 127) << 23
+  return fb | (m & 8388607)
+}
+
+// A subnormal (or zero) f32 from a value below 2^-126.
+def round_subnormal(e Int64, mant Int64) Int64 {
+  const sig = 4503599627370496 + mant
+  const rshift = -97 - e
+  if rshift > 53 {
+    return 0
+  }
+  var m = sig >> rshift
+  const lowmask = (1 << rshift) - 1
+  const rem = sig & lowmask
+  const half = 1 << (rshift - 1)
+  if rem > half || (rem == half && (m & 1) == 1) {
+    m = m + 1
+  }
+  if m >= 8388608 {
+    return 8388608
+  }
+  return m
+}
+
+// ---- the bridge ----
+
+def as_f64(kind Int64, bits Int64) Float64 {
+  if kind == 125 {
+    return Float64.from_bits(promote_f32(bits))
+  }
+  return Float64.from_bits(bits)
+}
+
+def of_f64(kind Int64, x Float64) Int64 {
+  if kind == 125 {
+    return demote_f64(x.to_bits())
+  }
+  return x.to_bits()
+}
+
+// Float division where the host would raise on a zero divisor.
+def fdiv(x Float64, y Float64) Float64 {
+  if y.to_bits() == 0 || y.to_bits() == (-9223372036854775807 - 1) {
+    if f64_is_nan(x.to_bits()) || x.to_bits() == 0 || x.to_bits() == (-9223372036854775807 - 1) {
+      return Float64.from_bits(canon64())
+    }
+    const s = (x.to_bits() ^ y.to_bits()) & (-9223372036854775807 - 1)
+    return Float64.from_bits(s | inf64())
+  }
+  return x / y
+}
+
+// ---- arithmetic ----
+
+def add(kind Int64, a Int64, b Int64) Int64 {
+  return of_f64(kind, as_f64(kind, a) + as_f64(kind, b))
+}
+
+def sub(kind Int64, a Int64, b Int64) Int64 {
+  return of_f64(kind, as_f64(kind, a) - as_f64(kind, b))
+}
+
+def mul(kind Int64, a Int64, b Int64) Int64 {
+  return of_f64(kind, as_f64(kind, a) * as_f64(kind, b))
+}
+
+def div(kind Int64, a Int64, b Int64) Int64 {
+  return of_f64(kind, fdiv(as_f64(kind, a), as_f64(kind, b)))
+}
+
+// ---- moves ----
+
+def abs(kind Int64, a Int64) Int64 {
+  if kind == 125 {
+    return mask32(a) & 2147483647
+  }
+  return a & 9223372036854775807
+}
+
+def neg(kind Int64, a Int64) Int64 {
+  if kind == 125 {
+    return mask32(a) ^ 2147483648
+  }
+  return a ^ (-9223372036854775807 - 1)
+}
+
+def copysign(kind Int64, a Int64, b Int64) Int64 {
+  if kind == 125 {
+    return (mask32(a) & 2147483647) | (mask32(b) & 2147483648)
+  }
+  return (a & 9223372036854775807) | (b & (-9223372036854775807 - 1))
+}
+
+// ---- min / max (NaN-aware, -0 honored) ----
+
+def min(kind Int64, a Int64, b Int64) Int64 {
+  if kind == 125 {
+    return demote_f64(f64_min(promote_f32(a), promote_f32(b)))
+  }
+  return f64_min(a, b)
+}
+
+def max(kind Int64, a Int64, b Int64) Int64 {
+  if kind == 125 {
+    return demote_f64(f64_max(promote_f32(a), promote_f32(b)))
+  }
+  return f64_max(a, b)
+}
+
+def f64_min(a Int64, b Int64) Int64 {
+  if f64_is_nan(a) || f64_is_nan(b) {
+    return canon64()
+  }
+  if f64_is_zero(a) && f64_is_zero(b) {
+    return a | b
+  }
+  if Float64.from_bits(a) < Float64.from_bits(b) {
+    return a
+  }
+  return b
+}
+
+def f64_max(a Int64, b Int64) Int64 {
+  if f64_is_nan(a) || f64_is_nan(b) {
+    return canon64()
+  }
+  if f64_is_zero(a) && f64_is_zero(b) {
+    return a & b
+  }
+  if Float64.from_bits(a) > Float64.from_bits(b) {
+    return a
+  }
+  return b
+}
+
+// ---- comparisons (i32 0/1; every ordered comparison is false on NaN) ----
+
+// op is a float comparison opcode: 91..96 (f32) and 97..102 (f64),
+// six in a row, so the relation is (op - 91) % 6: eq, ne, lt, gt, le,
+// ge. Equality is spelled `x <= y && y <= x` so a NaN is never equal.
+def cmp(op Int64, kind Int64, a Int64, b Int64) Int64 {
+  const x = as_f64(kind, a)
+  const y = as_f64(kind, b)
+  const rel = (op - 91) % 6
+  if rel == 0 {
+    return bool_bit(x <= y && y <= x)
+  }
+  if rel == 1 {
+    return bool_bit(!(x <= y) || !(y <= x))
+  }
+  if rel == 2 {
+    return bool_bit(x < y)
+  }
+  if rel == 3 {
+    return bool_bit(y < x)
+  }
+  if rel == 4 {
+    return bool_bit(x <= y)
+  }
+  return bool_bit(y <= x)
+}
+
+def bool_bit(b Bool) Int64 {
+  if b {
+    return 1
+  }
+  return 0
+}
