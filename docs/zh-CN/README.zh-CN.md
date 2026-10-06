@@ -127,6 +127,26 @@ enum Color { red, green, blue }
 raise Exception.new(message: "something went wrong")
 ```
 
+异常用 `begin` / `catch` / `ensure` 处理：
+
+```emo
+begin {
+  const body = file.read(path)
+  println(body)
+} catch {
+  e -> { println("failed: ${e.message}") }
+} ensure {
+  println("done")
+}
+```
+
+`catch` 复用 `case`、`receive` 的 `pattern -> { ... }` 分支，对抛出的异常做
+匹配；首个匹配的分支生效，没有分支匹配时异常继续向外传播。因为异常是
+普通的类实例，分支可以用 `is` 对其类别做窄化（`e when e.is(Timeout) ->
+{ ... }`），`catch` 里的 `raise` 即重新抛出。三个子句**共享同一个作用域**，
+所以 `ensure` 能释放 `begin` 中获取的资源；`ensure` 在任何退出路径上都会
+执行——正常结束、抛出、或 `return`。整个构造是**语句**，不是表达式。
+
 未捕获的异常只杀死出错的进程，监督是库层面的事（见并发）。没有受检异常。
 
 ### 可变性（Mutability）

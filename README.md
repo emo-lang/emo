@@ -127,6 +127,28 @@ Errors are exceptions. An exception is an ordinary class instance, raised like t
 raise Exception.new(message: "something went wrong")
 ```
 
+A raise is handled with `begin` / `catch` / `ensure`:
+
+```emo
+begin {
+  const body = file.read(path)
+  println(body)
+} catch {
+  e -> { println("failed: ${e.message}") }
+} ensure {
+  println("done")
+}
+```
+
+`catch` takes the same `pattern -> { ... }` branches as `case` and
+`receive`, matched against the raised exception; the first match wins, and a
+raise that matches no branch keeps propagating. Because an exception is an
+ordinary class instance, a branch can narrow on its class (`e when
+e.is(Timeout) -> { ... }`), and `raise` inside `catch` re-raises. The three
+clauses share one scope, so `ensure` can release what `begin` acquired, and
+`ensure` runs on every exit — normal completion, a raise, or a `return`.
+The construct is a statement, not an expression.
+
 Uncaught exceptions kill only the offending process, and supervision is library-level (see Concurrency). There are no checked exceptions.
 
 ### Mutability
