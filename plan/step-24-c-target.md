@@ -6,7 +6,7 @@ specialization data) · **Related:**
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-22-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
-**Status:** in progress — T24.1 done
+**Status:** in progress — T24.1–T24.2 done
 
 ## Why this step exists
 
@@ -78,13 +78,17 @@ and enters `known_targets` only once its first golden lands
       `"c"` enters `known_targets` here, with the resolution-gate
       refusal test for packages lacking it. Golden: hello_world,
       byte-for-byte vs `emo run`.
-- [ ] **T24.2** — Tail calls and the integer core: the trampoline
+- [x] **T24.2** — Tail calls and the integer core: the trampoline
       (self- and mutual-tail calls; `return` as
       branch-to-epilogue); wrap-around `Int64` on `uint64_t`;
       comparisons, `if`, integer formatting with `INT64_MIN`
       correct. Goldens: fib; the 1M-deep `count_down` stays flat
       on the C stack; the `loops_tail` number lands in
-      `benchmarks/results.md`.
+      `benchmarks/results.md`. (Done 2026-10-06: 4 ms against the
+      OCaml backend's 1910 ms specialized build; examples/fib's own
+      golden waits on closures — T24.5 — the c_integer fixture covers
+      the core; the span-type-table fix this needed is recorded in
+      docs/TASKS.md.)
 - [ ] **T24.3** — The scalar runtime: length-prefixed strings
       (NUL-terminated only at the FFI boundary), the `%g` float
       printing rule, `Bool`/`Char`, interpolation, scalar content

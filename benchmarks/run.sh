@@ -31,6 +31,15 @@ build_nospec() {
         -o "$ROOT/benchmarks/$dir/main.emo-bin-nospec" > /dev/null)
 }
 
+# build_c <dir> — the c target: emit C, compiled by the system cc into
+# a standalone binary with no OCaml runtime.
+build_c() {
+    dir=$1
+    (cd "benchmarks/$dir" && EMO_REGISTRY="$REGISTRY" \
+        "$EMO" build main.emo --target c -o "$ROOT/benchmarks/$dir/main.c-bin" \
+        > /dev/null)
+}
+
 # time_ms <command...> — milliseconds per run over 3 timed runs (one
 # warmup, excluded). A single python process does the timing, so python's
 # own startup is not charged to short benchmarks.
@@ -101,6 +110,8 @@ build loops_tail
 build_nospec loops_tail
 row "tail loop 10M" "ms per run, specialized build" "$(time_ms "$ROOT/benchmarks/loops_tail/main.emo-bin")"
 row "tail loop 10M" "ms per run, unspecialized build" "$(time_ms "$ROOT/benchmarks/loops_tail/main.emo-bin-nospec")"
+build_c loops_tail
+row "tail loop 10M" "ms per run, c target (emo build --target c)" "$(time_ms "$ROOT/benchmarks/loops_tail/main.c-bin")"
 row "tail loop 10M" "ms per run, interpreter (emo run)" "$(interp_ms loops_tail)"
 row "tail loop 10M" "ms per run, plain OCaml baseline" "$(time_ms "$BLD/tail_loop_ml")"
 row "tail loop 10M" "ms per run, C baseline" "$(time_ms "$BLD/tail_loop_c")"

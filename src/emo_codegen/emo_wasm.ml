@@ -773,8 +773,18 @@ and method_call env self_ name args =
           e env (W.Struct_new t_vbool))
   | _ -> (
       let recv_class =
+        (* The checker's ClassType carries the display name; the
+           function table keys on the mangled one. *)
         match self_.Emo_ir.ety with
-        | Emo_check.ClassType c -> Some c
+        | Emo_check.ClassType c -> (
+            match
+              List.find_opt
+                (fun (cl : Emo_ir.class_) ->
+                  String.equal cl.Emo_ir.cdisplay c)
+                env.classes
+            with
+            | Some cl -> Some cl.Emo_ir.cname
+            | None -> None)
         | _ -> None
       in
       match recv_class with

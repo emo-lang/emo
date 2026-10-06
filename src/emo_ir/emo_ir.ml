@@ -110,7 +110,8 @@ let sanitize_ident (name : string) : string =
 type module_input = {
   mpath : string list;
   mitems : Emo_ast.item list;
-  mtypes : (int, Emo_check.t) Hashtbl.t; (* span start → checked type *)
+  mtypes : (int * int, Emo_check.t) Hashtbl.t;
+      (* span start/stop → checked type *)
 }
 
 (* One program-wide symbol: a def, a class, or an enum. *)
@@ -124,7 +125,7 @@ type env = {
   symbols : (string list * string, symbol) Hashtbl.t; (* module path × name *)
   current : string list;
   mutable locals : string list; (* innermost first *)
-  types : (int, Emo_check.t) Hashtbl.t;
+  types : (int * int, Emo_check.t) Hashtbl.t;
   module_paths : string list list; (* every module in the program *)
   mutable aliases : (string * string list) list;
       (* `const order = shop.order` — a name bound to a module path *)
@@ -137,7 +138,10 @@ let is_builtin = function
       || (String.length name >= 5 && String.sub name 0 5 = "file_")
 
 let type_of env (span : Emo_support.Span.t) : Emo_check.t =
-  match Hashtbl.find_opt env.types span.Emo_support.Span.start with
+  match
+    Hashtbl.find_opt env.types
+      (span.Emo_support.Span.start, span.Emo_support.Span.stop)
+  with
   | Some t -> t
   | None -> Emo_check.Unknown
 
