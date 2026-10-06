@@ -44,10 +44,18 @@ module Token = struct
     | Percent
     | AndAnd
     | OrOr
+    | Amp
+    | Pipe
+    | Caret
+    | LtLt
+    | GtGt
+    | Tilde
     | Not
 
   type kind =
     | Int of int
+    | Int64 of int64
+    | Byte of int
     | Float of float
     | Char of char
     | String_chunk of string
@@ -353,6 +361,7 @@ let lex ~file ~source =
                   "the send operator `<-` needs a space on each side"
                   ~hint:"write `a <- b`, never `a<-b`";
               double (Token.Op Token.Send))
+            else if char_at 1 = Some '<' then double (Token.Op Token.LtLt)
             else if char_at 1 = Some '=' then double (Token.Op Token.Le)
             else single (Token.Op Token.Lt)
         | '=' ->
@@ -362,18 +371,17 @@ let lex ~file ~source =
             if char_at 1 = Some '=' then double (Token.Op Token.Ne)
             else single (Token.Op Token.Not)
         | '>' ->
-            if char_at 1 = Some '=' then double (Token.Op Token.Ge)
+            if char_at 1 = Some '>' then double (Token.Op Token.GtGt)
+            else if char_at 1 = Some '=' then double (Token.Op Token.Ge)
             else single (Token.Op Token.Gt)
         | '&' ->
             if char_at 1 = Some '&' then double (Token.Op Token.AndAnd)
-            else
-              error "E1001" (here ()) "unexpected character `&`"
-                ~hint:"Emo uses `&&` for logical and"
+            else single (Token.Op Token.Amp)
         | '|' ->
             if char_at 1 = Some '|' then double (Token.Op Token.OrOr)
-            else
-              error "E1001" (here ()) "unexpected character `|`"
-                ~hint:"Emo uses `||` for logical or"
+            else single (Token.Op Token.Pipe)
+        | '^' -> single (Token.Op Token.Caret)
+        | '~' -> single (Token.Op Token.Tilde)
         | '+' -> single (Token.Op Token.Plus)
         | '*' -> single (Token.Op Token.Star)
         | '/' -> single (Token.Op Token.Slash)
@@ -399,11 +407,31 @@ let lex ~file ~source =
                   error "E1006" (here ())
                     "a number cannot be directly followed by `_`"
                     ~hint:"digit separators are not supported";
-                match int_of_string_opt (String.sub source o (!offset - o)) with
-                | Some n -> emit (Token.Int n) l c o
-                | None ->
-                    error "E1006" (span_from l c o)
-                      "integer literal out of range"))
+                match char_at 0 with
+                | Some 'L' ->
+                    let digits = String.sub source o (!offset - o) in
+                    (match Int64.of_string_opt digits with
+                    | Some n ->
+                        bump ();
+                        emit (Token.Int64 n) l c o
+                    | None ->
+                        error "E1006" (span_from l c o)
+                          "integer literal out of range for Int64")
+                | Some 'B' ->
+                    let digits = String.sub source o (!offset - o) in
+                    (match int_of_string_opt digits with
+                    | Some n when n >= 0 && n <= 255 ->
+                        bump ();
+                        emit (Token.Byte n) l c o
+                    | _ ->
+                        error "E1006" (span_from l c o)
+                          "byte literal out of range (0-255)")
+                | _ ->
+                    match int_of_string_opt (String.sub source o (!offset - o)) with
+                    | Some n -> emit (Token.Int n) l c o
+                    | None ->
+                      error "E1006" (span_from l c o)
+                        "integer literal out of range"))
         | '\'' ->
             let qline, qcol, qoff = (l, c, o) in
             let quoted_span =

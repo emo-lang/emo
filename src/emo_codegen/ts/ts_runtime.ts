@@ -57,6 +57,13 @@ class EBox {
   }
 }
 
+class EBytes {
+  data: Uint8Array;
+  constructor(n: number) {
+    this.data = new Uint8Array(n);
+  }
+}
+
 class ETuple {
   items: any[];
   constructor(items: any[]) {
@@ -157,6 +164,11 @@ function deepEq(a: any, b: any): boolean {
     );
   if (a instanceof EEnum && b instanceof EEnum)
     return a.type === b.type && a.member === b.member;
+  if (a instanceof EBytes && b instanceof EBytes)
+    return (
+      a.data.length === b.data.length &&
+      a.data.every((x: number, i: number) => x === b.data[i])
+    );
   if (
     a &&
     b &&
@@ -172,12 +184,14 @@ function deepEq(a: any, b: any): boolean {
 // it, exactly like the interpreter.
 function toStr(v: any): string {
   if (typeof v === "number") return String(v);
+  if (typeof v === "bigint") return v.toString();
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "true" : "false";
   if (v === null || v === undefined) return "nil";
   if (isFloat(v)) return floatStr(v.v);
   if (isChar(v)) return v.c;
   if (v instanceof EBox) return toStr(v.v);
+  if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
   if (v instanceof ETuple) return "(" + v.items.map(toStr).join(", ") + ")";
   if (v instanceof EArray) return "[" + v.items.map(toStr).join(", ") + "]";
   if (v instanceof EEnum) return v.type + "." + v.member;
@@ -194,6 +208,7 @@ function println(v: any): void {
 
 function tag(v: any): string {
   if (typeof v === "number") return Number.isInteger(v) ? "Int" : "Float";
+  if (typeof v === "bigint") return "Int64";
   if (typeof v === "string") return "String";
   if (typeof v === "boolean") return "Bool";
   if (isFloat(v)) return "Float";
@@ -202,6 +217,7 @@ function tag(v: any): string {
   if (v instanceof EArray) return "Array";
   if (v instanceof EEnum) return "Enum";
   if (v instanceof EBox) return "Box";
+  if (v instanceof EBytes) return "Bytes";
   return "an instance";
 }
 
@@ -226,6 +242,11 @@ const E: any = {
   tuple: (...items: any[]) => new ETuple(items),
   array: (items: any[]) => new EArray(items),
   box: (v: any) => new EBox(v),
+  bytesNew: (n: any) => {
+    if (!isInt(n) || (n as number) < 0)
+      throw new Error("`Bytes.new` needs a non-negative Int length");
+    return new EBytes(n as number);
+  },
   enum_: (type: string, member: string) => new EEnum(type, member),
 
   eq: deepEq,
@@ -256,6 +277,35 @@ const E: any = {
     if (bothInt(a, b)) return (a as number) % (b as number);
     return new EFloat(unfloat(a) % unfloat(b));
   },
+  // Bitwise work is integer work. JS bitwise ops run on int32, so
+  // results past 2^31 follow the platform's word — the width family
+  // (Int64/Byte) carries the exact contract later.
+  requireInt(v: any, op: string): number {
+    if (!isInt(v)) throw new EEmoException(`operator \`${op}\` expects an Int, got ${tag(v)}`);
+    return v as number;
+  },
+  bitAnd(a: any, b: any) {
+    return this.requireInt(a, "&") & this.requireInt(b, "&");
+  },
+  bitOr(a: any, b: any) {
+    return this.requireInt(a, "|") | this.requireInt(b, "|");
+  },
+  bitXor(a: any, b: any) {
+    return this.requireInt(a, "^") ^ this.requireInt(b, "^");
+  },
+  shl(a: any, b: any) {
+    const n = this.requireInt(b, "<<");
+    if (n < 0) throw new EEmoException("shift count must be non-negative");
+    return this.requireInt(a, "<<") << n;
+  },
+  shr(a: any, b: any) {
+    const n = this.requireInt(b, ">>");
+    if (n < 0) throw new EEmoException("shift count must be non-negative");
+    return this.requireInt(a, ">>") >> n;
+  },
+  bitNot(a: any) {
+    return ~this.requireInt(a, "~");
+  },
   neg(a: any) {
     if (isInt(a)) return -(a as number);
     return new EFloat(-unfloat(a));
@@ -272,6 +322,53 @@ const E: any = {
   ge(a: any, b: any) {
     return unfloat(a) >= unfloat(b);
   },
+
+  // The fixed-width family. Int64 values are BigInts — arithmetic wraps
+  // in two's complement at 64 bits; Byte values are numbers that wrap
+  // modulo 256. Comparisons reuse lt/le/gt/ge: JS reads BigInts and
+  // numbers natively, so only the producing operators need a path.
+  i64Add: (a: bigint, b: bigint) => BigInt.asIntN(64, a + b),
+  i64Sub: (a: bigint, b: bigint) => BigInt.asIntN(64, a - b),
+  i64Mul: (a: bigint, b: bigint) => BigInt.asIntN(64, a * b),
+  i64Div: (a: bigint, b: bigint) => {
+    if (b === 0n) throw new EEmoException("division by zero");
+    return BigInt.asIntN(64, a / b);
+  },
+  i64Mod: (a: bigint, b: bigint) => {
+    if (b === 0n) throw new EEmoException("division by zero");
+    return BigInt.asIntN(64, a % b);
+  },
+  i64BitAnd: (a: bigint, b: bigint) => BigInt.asIntN(64, a & b),
+  i64BitOr: (a: bigint, b: bigint) => BigInt.asIntN(64, a | b),
+  i64BitXor: (a: bigint, b: bigint) => BigInt.asIntN(64, a ^ b),
+  i64Shl: (a: bigint, b: bigint) => {
+    if (b < 0n) throw new EEmoException("shift count must be non-negative");
+    return b >= 64n ? 0n : BigInt.asIntN(64, a << b);
+  },
+  i64Shr: (a: bigint, b: bigint) => {
+    if (b < 0n) throw new EEmoException("shift count must be non-negative");
+    return b >= 64n ? (a < 0n ? -1n : 0n) : a >> b;
+  },
+  i64BitNot: (a: bigint) => BigInt.asIntN(64, ~a),
+  i64Neg: (a: bigint) => BigInt.asIntN(64, -a),
+
+  byteAdd: (a: number, b: number) => (a + b) & 0xff,
+  byteSub: (a: number, b: number) => (a - b) & 0xff,
+  byteMul: (a: number, b: number) => (a * b) & 0xff,
+  byteDiv: (a: number, b: number) => {
+    if (b === 0) throw new EEmoException("division by zero");
+    return (a / b) | 0;
+  },
+  byteMod: (a: number, b: number) => {
+    if (b === 0) throw new EEmoException("division by zero");
+    return a % b;
+  },
+  byteBitAnd: (a: number, b: number) => a & b,
+  byteBitOr: (a: number, b: number) => a | b,
+  byteBitXor: (a: number, b: number) => a ^ b,
+  byteShl: (a: number, b: number) => (b >= 8 ? 0 : (a << b) & 0xff),
+  byteShr: (a: number, b: number) => (b >= 8 ? 0 : a >> b),
+  byteBitNot: (a: number) => ~a & 0xff,
 
   index(coll: any, i: any): any {
     const items: any[] =
@@ -297,6 +394,93 @@ const E: any = {
         recv.v = args[0];
         return args[0];
       }
+      if (recv instanceof EBytes) {
+        const d = recv.data;
+        const idx = (mname2: string) => {
+          if (typeof args[0] !== "number" || !Number.isInteger(args[0]))
+            throw new Error("`" + mname2 + "` expects an Int index");
+          if (args[0] < 0 || args[0] >= d.length)
+            throw new Error(
+              "index " + args[0] + " is out of bounds for a length-" + d.length + " Bytes"
+            );
+          return args[0] as number;
+        };
+        if (name === "length") return d.length;
+        if (name === "get") return d[idx(name)];
+        if (name === "set") {
+          const i = idx(name);
+          const v = args[1] as number;
+          if (!Number.isInteger(v) || v < 0 || v > 255)
+            throw new Error("`set` expects a byte value in 0-255");
+          d[i] = v;
+          return v;
+        }
+        if (name === "get_u16_le" || name === "get_u32_le") {
+          const w = name === "get_u16_le" ? 2 : 4;
+          const i = args[0] as number;
+          if (
+            typeof i !== "number" ||
+            i < 0 ||
+            i + w > d.length
+          )
+            throw new Error(
+              "index " + args[0] + " is out of bounds for a " + name + " read"
+            );
+          let acc = 0;
+          for (let k = w - 1; k >= 0; k--) acc = (acc << 8) | d[i + k];
+          return acc;
+        }
+        if (name === "set_u16_le" || name === "set_u32_le") {
+          const w = name === "set_u16_le" ? 2 : 4;
+          const i = args[0] as number;
+          let v = args[1] as number;
+          if (
+            typeof i !== "number" ||
+            i < 0 ||
+            i + w > d.length
+          )
+            throw new Error(
+              "index " + args[0] + " is out of bounds for a " + name + " write"
+            );
+          if (!Number.isInteger(v))
+            throw new Error("`" + name + "` expects an Int value");
+          v = v >>> 0;
+          for (let k = 0; k < w; k++) d[i + k] = (v >>> (8 * k)) & 0xff;
+          return w === 2 ? v & 0xffff : v >>> 0;
+        }
+        if (name === "get_u64_le" || name === "set_u64_le") {
+          const i = args[0] as number;
+          if (typeof i !== "number" || i < 0 || i + 8 > d.length)
+            throw new Error(
+              "index " + args[0] + " is out of bounds for a " + name + " " +
+                (name === "get_u64_le" ? "read" : "write")
+            );
+          if (name === "get_u64_le") {
+            let acc = 0n;
+            for (let k = 7; k >= 0; k--)
+              acc = (acc << 8n) | BigInt(d[i + k]);
+            return BigInt.asIntN(64, acc);
+          }
+          const v = args[1];
+          if (typeof v !== "bigint")
+            throw new Error("`set_u64_le` expects an Int64 value");
+          const w = BigInt.asUintN(64, v);
+          for (let k = 0; k < 8; k++)
+            d[i + k] = Number((w >> BigInt(8 * k)) & 0xffn);
+          return BigInt.asIntN(64, v);
+        }
+        if (name === "to_string") {
+          let s = "";
+          for (let i = 0; i < d.length; i++) s += String.fromCharCode(d[i]);
+          return s;
+        }
+      }
+      if (isFloat(recv) && name === "to_bits") {
+        const buf = new ArrayBuffer(8);
+        const dv = new DataView(buf);
+        dv.setFloat64(0, recv.v, true);
+        return dv.getBigInt64(0, true);
+      }
       if (name === "length" && recv instanceof EArray)
         return recv.items.length;
       if (name === "append" && recv instanceof EArray)
@@ -305,6 +489,14 @@ const E: any = {
     }
     if (typeof recv === "number") {
       if (name === "to_string") return String(recv);
+      // A Byte receiver is a plain number, so `to_int` is the identity.
+      if (name === "to_int") return recv;
+      if (name === "is") return isType(recv, args[0] as string);
+    }
+    if (typeof recv === "bigint") {
+      if (name === "to_string") return recv.toString();
+      if (name === "to_int") return Number(recv);
+      if (name === "to_byte") return Number(BigInt.asUintN(8, recv));
       if (name === "is") return isType(recv, args[0] as string);
     }
     if (typeof recv === "boolean") {
@@ -341,6 +533,31 @@ const E: any = {
         if (body === "" || !/^[0-9]+$/.test(body))
           throw new Error("cannot parse `" + recv + "` as an Int");
         return parseInt(recv, 10);
+      }
+      if (name === "to_bytes") {
+        const out = new EBytes(recv.length);
+        for (let i = 0; i < recv.length; i++)
+          out.data[i] = recv.charCodeAt(i) & 0xff;
+        return out;
+      }
+      // Static constructors: a type name is a bare string in value
+      // position, told apart from a String by the method asked for.
+      if (name === "from_int") {
+        if (recv === "Int64") return BigInt(args[0] as number);
+        if (recv === "Byte") {
+          const n = args[0] as number;
+          if (!Number.isInteger(n) || n < 0 || n > 255)
+            throw new EEmoException(
+              "`Byte.from_int` needs a value in 0-255, got " + n
+            );
+          return n;
+        }
+      }
+      if (name === "from_bits" && recv === "Float") {
+        const buf = new ArrayBuffer(8);
+        const dv = new DataView(buf);
+        dv.setBigInt64(0, args[0] as bigint, true);
+        return new EFloat(dv.getFloat64(0, true));
       }
     }
     throw new Error(

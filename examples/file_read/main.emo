@@ -1,0 +1,19 @@
+// file.read / file.write: direct-style file io on the scheduler.
+// The demo writes a small file into the working directory, reads it
+// back, and prints what it saw — write, read, compare.
+//
+//   emo run main.emo
+
+const path = "emo-file-demo.txt"
+
+const written = file.write(path, "hello from disk\nline two\n")
+println(written)
+
+const text = file.read(path)
+println(text.length())
+println(text.substring(0, 5))
+
+file.write(path, "overwritten\n")
+const second = file.read(path)
+println(second.length())
+println(second == text)

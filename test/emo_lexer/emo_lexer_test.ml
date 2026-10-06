@@ -7,6 +7,8 @@ let pp_kind fmt (k : Token.kind) =
   let text =
     match k with
     | Token.Int n -> Printf.sprintf "Int %d" n
+    | Token.Int64 n -> Printf.sprintf "Int64 %Ld" n
+    | Token.Byte n -> Printf.sprintf "Byte %d" n
     | Token.Float f -> Printf.sprintf "Float %g" f
     | Token.Char c -> Printf.sprintf "Char %C" c
     | Token.String_chunk s -> Printf.sprintf "String_chunk %S" s
@@ -67,6 +69,12 @@ let pp_kind fmt (k : Token.kind) =
         | Percent -> "%"
         | AndAnd -> "&&"
         | OrOr -> "||"
+        | Amp -> "&"
+        | Pipe -> "|"
+        | Caret -> "^"
+        | LtLt -> "<<"
+        | GtGt -> ">>"
+        | Tilde -> "~"
         | Not -> "!")
     | Token.Eof -> "Eof"
   in
@@ -237,22 +245,31 @@ let operator_tests =
           "kinds"
           [ Lower_ident "a"; Op Lt; Op Minus; Lower_ident "b"; Eof ]
           (kinds (lex_all "a < -b")));
-    tc "a single ampersand is rejected toward &&" (fun () ->
-        let diagnostic = lex_err "&" in
-        Alcotest.(check string)
-          "code" "E1001"
-          (match diagnostic.Diagnostic.code with Some c -> c | None -> "");
-        Alcotest.(check string)
-          "span" "test.emo:1:1"
-          (Span.to_string diagnostic.Diagnostic.span));
-    tc "a single bar is rejected toward ||" (fun () ->
-        let diagnostic = lex_err "|" in
-        Alcotest.(check string)
-          "code" "E1001"
-          (match diagnostic.Diagnostic.code with Some c -> c | None -> "");
-        Alcotest.(check string)
-          "span" "test.emo:1:1"
-          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a lone ampersand and bar lex as bitwise operators" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Lower_ident "a";
+            Op Amp;
+            Lower_ident "b";
+            Op Pipe;
+            Lower_ident "c";
+            Eof;
+          ]
+          (kinds (lex_all "a & b | c")));
+    tc "shifts lex as double characters" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Lower_ident "a";
+            Op LtLt;
+            Lower_ident "b";
+            Op GtGt;
+            Op Tilde;
+            Lower_ident "c";
+            Eof;
+          ]
+          (kinds (lex_all "a << b >> ~c")));
   ]
 
 let literal_tests =
@@ -261,6 +278,23 @@ let literal_tests =
         Alcotest.(check (list kind))
           "kinds" [ Int 0; Int 42; Eof ]
           (kinds (lex_all "0 42")));
+    tc "the L and B suffixes lex as Int64 and Byte" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Int64 1L; Byte 255; Int64 9223372036854775807L; Byte 0; Eof ]
+          (kinds (lex_all "1L 255B 9223372036854775807L 0B")));
+    tc "an Int64 literal beyond 64 bits is rejected" (fun () ->
+        let diagnostic = lex_err "9223372036854775808L" in
+        Alcotest.(check string) "code" "E1006" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "a byte literal above the 0-255 range is rejected" (fun () ->
+        let diagnostic = lex_err "256B" in
+        Alcotest.(check string) "code" "E1006" (code_of diagnostic);
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
     tc "floats require digits around the dot" (fun () ->
         Alcotest.(check (list kind))
           "kinds"

@@ -1,0 +1,2269 @@
+// The byte reader: a `Bytes` cursor with an offset and a limit, as a
+// frozen value — every read returns a new cursor plus what it read,
+// and every access is bounds-checked BEFORE it happens, because the
+// `Bytes.get` raise it prevents cannot be caught (CHECK.md: no catch
+// form yet).
+//
+// A failed read leaves the failure recorded on the cursor (first
+// failure sticks) and returns a zero value; the decode pipeline checks
+// `r.failed` after each step. All reader failures are the same shape:
+// the input ended early, phase malformed, at the position attempted.
+
+class Reader {
+  def init(data Bytes, pos Int, limit Int, failed Bool, fail_offset Int, fail_msg String) {
+    self.data = data
+    self.pos = pos
+    self.limit = limit
+    self.failed = failed
+    self.fail_offset = fail_offset
+    self.fail_msg = fail_msg
+  }
+}
+
+// The cursor over `data`, reading positions in [pos, limit).
+def new(data Bytes, pos Int, limit Int) Reader {
+  return Reader.new(data, pos, limit, false, -1, "")
+}
+
+// A cursor over the whole buffer.
+def over(data Bytes) Reader {
+  return Reader.new(data, 0, data.length(), false, -1, "")
+}
+
+// Record the first failure; later failures never overwrite it.
+def bail(r Reader, at Int, msg String) Reader {
+  if r.failed {
+    return r
+  }
+  return Reader.new(r.data, r.pos, r.limit, true, at, msg)
+}
+
+// Move forward without recording anything (the caller has already
+// bounds-checked).
+def stepped(r Reader, pos Int) Reader {
+  return Reader.new(r.data, pos, r.limit, r.failed, r.fail_offset, r.fail_msg)
+}
+
+// How many bytes remain before the limit.
+def remaining(r Reader) Int {
+  return r.limit - r.pos
+}
+
+// Look at the next byte without consuming it. -1 when nothing remains
+// (peek never records a failure — callers decide whether that is one).
+def peek(r Reader) Int {
+  if r.failed || r.pos >= r.limit {
+    return -1
+  }
+  return r.data.get(r.pos)
+}
+
+// Read one byte.
+def u8(r Reader) (Reader, Int) {
+  if r.failed {
+    return (r, 0)
+  }
+  if r.pos + 1 > r.limit {
+    return (bail(r, r.pos, "unexpected end"), 0)
+  }
+  return (stepped(r, r.pos + 1), r.data.get(r.pos))
+}
+
+// Consume `n` bytes, returning them as a fresh buffer.
+def take(r Reader, n Int) (Reader, Bytes) {
+  if r.failed {
+    return (r, Bytes.new(0))
+  }
+  if r.pos + n > r.limit {
+    return (bail(r, r.pos, "unexpected end"), Bytes.new(0))
+  }
+  const out = Bytes.new(n)
+  copy_into(out, r.data, 0, r.pos, n)
+  return (stepped(r, r.pos + n), out)
+}
+
+// Skip past `n` bytes.
+def skip(r Reader, n Int) Reader {
+  if r.failed {
+    return r
+  }
+  if r.pos + n > r.limit {
+    return bail(r, r.pos, "unexpected end")
+  }
+  return stepped(r, r.pos + n)
+}
+
+def copy_into(out Bytes, src Bytes, dst_at Int, src_at Int, n Int) Int {
+  if n == 0 {
+    return 0
+  }
+  out.set(dst_at, src.get(src_at))
+  return copy_into(out, src, dst_at + 1, src_at + 1, n - 1)
+}
+
+// ---- UTF-8 (the name rule) ----
+//
+// The spec adopts the Unicode definition of valid UTF-8: no surrogates,
+// no overlong forms, nothing above U+10FFFF. Encoded as the standard
+// byte-range table; every branch consumes its continuations then
+// continues the walk.
+
+def utf8_ok(data Bytes, pos Int, end Int) Bool {
+  if pos >= end {
+    return true
+  }
+  const b = data.get(pos)
+  if b < 128 {
+    return utf8_ok(data, pos + 1, end)
+  }
+  if b >= 194 && b <= 223 {
+    return utf8_cont1(data, pos + 1, end)
+  }
+  if b == 224 {
+    return utf8_cont_range(data, pos + 1, end, 160, 191)
+  }
+  if b >= 225 && b <= 236 {
+    return utf8_cont2(data, pos + 1, end)
+  }
+  if b == 237 {
+    // the surrogate range D800-DFFF is the excluded half of ED
+    return utf8_cont_range(data, pos + 1, end, 128, 159)
+  }
+  if b == 238 || b == 239 {
+    return utf8_cont2(data, pos + 1, end)
+  }
+  if b == 240 {
+    // overlong four-byte forms live below 90
+    return utf8_cont_two(data, pos + 1, end, 144, 191)
+  }
+  if b >= 241 && b <= 243 {
+    return utf8_cont3(data, pos + 1, end)
+  }
+  if b == 244 {
+    // anything above the last continuation 8F would exceed U+10FFFF
+    return utf8_cont_two(data, pos + 1, end, 128, 143)
+  }
+  return false
+}
+
+def utf8_cont1(data Bytes, pos Int, end Int) Bool {
+  if pos >= end {
+    return false
+  }
+  const b = data.get(pos)
+  if b < 128 || b > 191 {
+    return false
+  }
+  return utf8_ok(data, pos + 1, end)
+}
+
+// A constrained continuation, then one free one — the 3-byte heads
+// (e0, ed) always take two continuations total.
+def utf8_cont_range(data Bytes, pos Int, end Int, lo Int, hi Int) Bool {
+  if pos >= end {
+    return false
+  }
+  const b = data.get(pos)
+  if b < lo || b > hi {
+    return false
+  }
+  return utf8_cont1(data, pos + 1, end)
+}
+
+def utf8_cont2(data Bytes, pos Int, end Int) Bool {
+  if pos >= end {
+    return false
+  }
+  const b = data.get(pos)
+  if b < 128 || b > 191 {
+    return false
+  }
+  return utf8_cont1(data, pos + 1, end)
+}
+
+def utf8_cont3(data Bytes, pos Int, end Int) Bool {
+  if pos >= end {
+    return false
+  }
+  const b = data.get(pos)
+  if b < 128 || b > 191 {
+    return false
+  }
+  return utf8_cont2(data, pos + 1, end)
+}
+
+// One constrained continuation, then two free ones (the 4-byte heads).
+def utf8_cont_two(data Bytes, pos Int, end Int, lo Int, hi Int) Bool {
+  if pos >= end {
+    return false
+  }
+  const b = data.get(pos)
+  if b < lo || b > hi {
+    return false
+  }
+  return utf8_cont2(data, pos + 1, end)
+}
+
+// ---- constant expressions (T20.9) ----
+//
+// The initializer-expression subset (global initializers, element and
+// data offsets): instructions until the terminating 0x0b. Decode-level,
+// this is a SHAPE pass: the constant instructions return their valtype
+// code, a well-formed instruction outside the subset decodes through
+// the full instruction decoder and yields 0 (not a value — the
+// validator turns that into "constant expression required"), and only
+// undecodable bytes are malformed.
+
+def const_expr(r Reader) (Reader, Int) {
+  if r.failed {
+    return (r, 0)
+  }
+  const p = u8(r)
+  const r1 = p[0]
+  const op = p[1]
+  if r1.failed {
+    return (r1, 0)
+  }
+  if op == 11 {
+    return (r1, -1)
+  }
+  if op == 65 {
+    return const_expr_t(s32(r1)[0], 127)
+  }
+  if op == 66 {
+    return const_expr_t(s64(r1)[0], 126)
+  }
+  if op == 67 {
+    return const_expr_t(take(r1, 4)[0], 125)
+  }
+  if op == 68 {
+    return const_expr_t(take(r1, 8)[0], 124)
+  }
+  if op == 208 {
+    // ref.null: one reftype byte (0x70 funcref, 0x6f externref)
+    const t = u8(r1)
+    const b = t[1]
+    if t[0].failed {
+      return (t[0], 0)
+    }
+    if b == 112 || b == 111 {
+      return const_expr_t(t[0], b)
+    }
+    return (bail(t[0], t[0].pos, "malformed reference type"), 0)
+  }
+  if op == 210 {
+    // ref.func: funcref by construction
+    return const_expr_t(u32(r1)[0], 112)
+  }
+  if op == 35 {
+    // global.get: the type lives in the module context, which decode
+    // does not thread — the validator re-types the expression with
+    // vconst_expr; here the code is a non-value marker.
+    return const_expr_t(u32(r1)[0], 200)
+  }
+  // A well-formed instruction outside the constant subset: decode its
+  // shape to the terminating 0x0b and report a non-value. The reader
+  // still sits AT the opcode — instrs must consume it too, or the
+  // byte after a truly illegal opcode re-syncs by accident.
+  return const_expr_rest(instrs(r, -1))
+}
+
+// The rest of a non-constant initializer: shape-decoded to the
+// terminating 0x0b, reported as producing no value.
+def const_expr_rest(r Reader) (Reader, Int) {
+  return (r, 0)
+}
+
+// The validator's re-typing of a constant expression: `globals_codes`
+// resolves global.get against the IMPORTED prefix only (`n_gi`),
+// ref.func requires the function to exist (total_funcs), and any
+// non-constant instruction yields 0. The terminating 0x0b is consumed
+// like the decode-level const_expr does — each value-producing branch
+// recurses through vconst_expr_t. (reader, code)
+def vconst_expr(r Reader, globals_codes Array[Int], global_mut Array[Int], n_gi Int, total_funcs Int) (Reader, Int) {
+  if r.failed {
+    return (r, 0)
+  }
+  const p = u8(r)
+  const r1 = p[0]
+  const op = p[1]
+  if r1.failed {
+    return (r1, 0)
+  }
+  if op == 11 {
+    return (r1, -1)
+  }
+  if op == 65 {
+    return vconst_expr_t(s32(r1)[0], 127, globals_codes, global_mut, n_gi, total_funcs)
+  }
+  if op == 66 {
+    return vconst_expr_t(s64(r1)[0], 126, globals_codes, global_mut, n_gi, total_funcs)
+  }
+  if op == 67 {
+    return vconst_expr_t(take(r1, 4)[0], 125, globals_codes, global_mut, n_gi, total_funcs)
+  }
+  if op == 68 {
+    return vconst_expr_t(take(r1, 8)[0], 124, globals_codes, global_mut, n_gi, total_funcs)
+  }
+  if op == 208 {
+    const t = u8(r1)
+    if t[0].failed {
+      return (t[0], 0)
+    }
+    if t[1] == 112 || t[1] == 111 {
+      return vconst_expr_t(t[0], t[1], globals_codes, global_mut, n_gi, total_funcs)
+    }
+    return (bail(t[0], t[0].pos, "malformed reference type"), 0)
+  }
+  if op == 210 {
+    const x = u32(r1)
+    if x[0].failed {
+      return (x[0], 0)
+    }
+    if x[1] >= total_funcs {
+      return (bail(x[0], x[0].pos, "unknown function"), 0)
+    }
+    return vconst_expr_t(x[0], 112, globals_codes, global_mut, n_gi, total_funcs)
+  }
+  if op == 35 {
+    const x = u32(r1)
+    if x[0].failed {
+      return (x[0], 0)
+    }
+    if x[1] >= globals_codes.length() {
+      return (bail(x[0], x[0].pos, "unknown global"), 0)
+    }
+    if x[1] >= n_gi {
+      return (bail(x[0], x[0].pos, "unknown global"), 0)
+    }
+    if global_mut[x[1]] == 1 {
+      return (bail(x[0], x[0].pos, "constant expression required"), 0)
+    }
+    return vconst_expr_t(x[0], globals_codes[x[1]], globals_codes, global_mut, n_gi, total_funcs)
+  }
+  return (instrs(r, -1), 0)
+}
+
+// Consume the rest of the expression after a value-producing
+// instruction; the reported code stays that instruction's, unless the
+// tail produced a further value — the expression is then multi-value
+// (-2), which every constant-expression context rejects.
+def vconst_expr_t(r Reader, code Int, globals_codes Array[Int], global_mut Array[Int], n_gi Int, total_funcs Int) (Reader, Int) {
+  const e = vconst_expr(r, globals_codes, global_mut, n_gi, total_funcs)
+  if e[0].failed {
+    return (e[0], code)
+  }
+  if e[1] != -1 {
+    return (e[0], -2)
+  }
+  return (e[0], code)
+}
+
+def const_expr_t(r Reader, code Int) (Reader, Int) {
+  const e = const_expr(r)
+  if e[0].failed {
+    return (e[0], code)
+  }
+  return (e[0], code)
+}
+
+// ---- the instruction stream (T20.10) ----
+//
+// Dispatch on the first byte; the numeric instructions' immediates
+// decode here, and the structured instructions recurse (the matching
+// end terminates this level, so nesting mirrors the recursion).
+// Opcodes outside the implemented families bail as "illegal opcode".
+//
+// `dc` is the module's data-count section value (-1 when absent):
+// memory.init and data.drop are only decodable in a module that
+// declares one.
+
+def expr(r Reader, dc Int) Reader {
+  return instrs(r, dc)
+}
+
+// Decode instructions until the matching end (0x0b). An else (0x05)
+// switches arms at this level; the arm discipline is the validator's.
+def instrs(r Reader, dc Int) Reader {
+  if r.failed {
+    return r
+  }
+  const p = u8(r)
+  const r1 = p[0]
+  if r1.failed {
+    return r1
+  }
+  const op = p[1]
+  if op == 11 {
+    return r1
+  }
+  if op == 5 {
+    return instrs(r1, dc)
+  }
+  if op == 2 || op == 3 || op == 4 {
+    // The nested body decodes through its own matching end; this
+    // level then resumes with the instructions after it (the outer
+    // end is still this level's to consume).
+    const after_body = instrs(blocktype_then(r1), dc)
+    if after_body.failed {
+      return after_body
+    }
+    return instrs(after_body, dc)
+  }
+  if op == 0 || op == 1 || op == 15 {
+    return instrs(r1, dc)
+  }
+  // ---- structured branches and calls (T20.12) ----
+  if op == 12 || op == 13 {
+    // br, br_if: one label index
+    return instrs(u32(r1)[0], dc)
+  }
+  if op == 14 {
+    // br_table: a vector of label indices plus the default
+    return instrs(br_table_then(r1), dc)
+  }
+  if op == 16 {
+    // call: one function index
+    return instrs(u32(r1)[0], dc)
+  }
+  if op == 17 {
+    // call_indirect: type index, then table index
+    const t = u32(r1)
+    if t[0].failed {
+      return t[0]
+    }
+    return instrs(u32(t[0])[0], dc)
+  }
+  // ---- parametric (T20.11) ----
+  if op == 26 || op == 27 {
+    // drop, select
+    return instrs(r1, dc)
+  }
+  if op == 28 {
+    // select with an explicit type vector
+    return instrs(valtype_bytes(r1), dc)
+  }
+  // ---- variable (T20.11) ----
+  if op >= 32 && op <= 36 {
+    // local.get/set/tee, global.get/set: one u32 index
+    return instrs(u32(r1)[0], dc)
+  }
+  // ---- table.get / table.set ----
+  if op == 37 || op == 38 {
+    // one table index
+    return instrs(u32(r1)[0], dc)
+  }
+  // ---- memory (T20.11) ----
+  if op >= 40 && op <= 62 {
+    // the memory instructions: a memarg (align, offset) immediate
+    return instrs(memarg_then(r1), dc)
+  }
+  if op == 63 || op == 64 {
+    // memory.size / memory.grow: one reserved zero byte
+    const z = u8(r1)
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    return instrs(z[0], dc)
+  }
+  // ---- reference instructions ----
+  if op == 208 {
+    // ref.null: one reftype byte
+    const t = u8(r1)
+    if t[0].failed {
+      return t[0]
+    }
+    if t[1] != 112 && t[1] != 111 {
+      return bail(t[0], t[0].pos, "malformed reference type")
+    }
+    return instrs(t[0], dc)
+  }
+  if op == 209 {
+    // ref.is_null: no immediate
+    return instrs(r1, dc)
+  }
+  if op == 210 {
+    // ref.func: one function index
+    return instrs(u32(r1)[0], dc)
+  }
+  if op == 252 {
+    // the 0xfc prefix: bulk-memory and table operations
+    return instrs(prefix_fc(r1, dc), dc)
+  }
+  if op == 65 {
+    return instrs(s32(r1)[0], dc)
+  }
+  if op == 66 {
+    return instrs(s64(r1)[0], dc)
+  }
+  if op == 67 {
+    return instrs(take(r1, 4)[0], dc)
+  }
+  if op == 68 {
+    return instrs(take(r1, 8)[0], dc)
+  }
+  // The plain numeric instructions, 0x45..0xc4, carry no immediates.
+  if op >= 69 && op <= 196 {
+    return instrs(r1, dc)
+  }
+  return bail(r1, r1.pos, "illegal opcode")
+}
+
+// br_table's immediate: a vector of label indices, then the default
+// index — both must be consumed here (the default used to leak into
+// the instruction stream, desyncing whole bodies).
+def br_table_then(r Reader) Reader {
+  const cn = u32(r)
+  if cn[0].failed {
+    return cn[0]
+  }
+  const lv = u32_vec_end(cn[0], cn[1])
+  if lv.failed {
+    return lv
+  }
+  return u32(lv)[0]
+}
+
+// A vector of u32s (positions only; the values drop).
+def u32_vec_end(r Reader, n Int) Reader {
+  if n == 0 {
+    return r
+  }
+  const p = u32(r)
+  if p[0].failed {
+    return p[0]
+  }
+  return u32_vec_end(p[0], n - 1)
+}
+
+// A valtype vector immediate (select t): count, then that many
+// valtype bytes.
+def valtype_bytes(r Reader) Reader {
+  const cn = u32(r)
+  if cn[0].failed {
+    return cn[0]
+  }
+  return valtype_bytes_rest(cn[0], cn[1])
+}
+
+def valtype_bytes_rest(r Reader, n Int) Reader {
+  if n == 0 {
+    return r
+  }
+  const t = u8(r)
+  const b = t[1]
+  if t[0].failed {
+    return t[0]
+  }
+  if b != 127 && b != 126 && b != 125 && b != 124 && b != 112 && b != 111 {
+    return bail(t[0], t[0].pos, "malformed value type")
+  }
+  return valtype_bytes_rest(t[0], n - 1)
+}
+
+// A memarg immediate: align then offset as u32s; the multi-memory
+// flag bit in align is out of scope and rejects.
+def memarg_then(r Reader) Reader {
+  return memarg_val(r)[0]
+}
+
+// The memarg with its alignment exposed (the validator's
+// natural-alignment rule needs it): (reader, align, offset).
+def memarg_val(r Reader) (Reader, Int, Int) {
+  const a = u32(r)
+  if a[0].failed {
+    return (a[0], 0, 0)
+  }
+  if a[1] >= 64 {
+    return (bail(a[0], a[0].pos, "malformed memop flags"), 0, 0)
+  }
+  const o = u32(a[0])
+  if o[0].failed {
+    return (o[0], 0, 0)
+  }
+  return (o[0], a[1], o[1])
+}
+
+// The 0xfc-prefixed operations: a u32 sub-opcode selects the shape.
+// The final opcode map: 0x00-0x07 the trunc_sat family (no
+// immediates), 0x08-0x0b the bulk-memory operations, 0x0c-0x11 the
+// table operations — NOT the pre-merge proposal numbering.
+def prefix_fc(r Reader, dc Int) Reader {
+  const s = u32(r)
+  if s[0].failed {
+    return s[0]
+  }
+  const sub = s[1]
+  if sub <= 7 {
+    // the trunc_sat family: no immediates
+    return s[0]
+  }
+  if sub == 8 {
+    // memory.init: data index, then a reserved zero byte
+    if dc == -2 {
+      return bail(s[0], s[0].pos, "bulk memory used")
+    }
+    const d = u32(s[0])
+    if d[0].failed {
+      return d[0]
+    }
+    const z = u8(d[0])
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    return z[0]
+  }
+  if sub == 9 {
+    // data.drop
+    if dc == -2 {
+      return bail(s[0], s[0].pos, "bulk memory used")
+    }
+    return u32(s[0])[0]
+  }
+  if sub == 10 {
+    // memory.copy: two reserved zero bytes
+    const z1 = u8(s[0])
+    if z1[0].failed {
+      return z1[0]
+    }
+    if z1[1] != 0 {
+      return bail(z1[0], z1[0].pos, "zero byte expected")
+    }
+    const z2 = u8(z1[0])
+    if z2[0].failed {
+      return z2[0]
+    }
+    if z2[1] != 0 {
+      return bail(z2[0], z2[0].pos, "zero byte expected")
+    }
+    return z2[0]
+  }
+  if sub == 11 {
+    const z = u8(s[0])
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    return z[0]
+  }
+  if sub == 12 {
+    // table.init: element index, then table index
+    const e = u32(s[0])
+    if e[0].failed {
+      return e[0]
+    }
+    return u32(e[0])[0]
+  }
+  if sub == 13 || sub == 15 || sub == 16 || sub == 17 {
+    return u32(s[0])[0]
+  }
+  if sub == 14 {
+    // table.copy: destination table index, then source
+    const t1 = u32(s[0])
+    if t1[0].failed {
+      return t1[0]
+    }
+    return u32(t1[0])[0]
+  }
+  return bail(s[0], s[0].pos, "illegal opcode")
+}
+
+// A block type: 0x40 (empty), a valtype byte, or an s33 type index.
+def blocktype_then(r Reader) Reader {
+  const b = peek(r)
+  if b == 64 || b == 127 || b == 126 || b == 125 || b == 124 || b == 112 || b == 111 {
+    return skip(r, 1)
+  }
+  const s = s33(r)
+  return s[0]
+}
+
+// Signed 33-bit LEB128 (block type indices): five bytes, the final
+// byte's top three bits all clear or all set.
+def s33(r Reader) (Reader, Int64) {
+  return s33_acc(r, 0, 0L)
+}
+
+def s33_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
+  if r.failed {
+    return (r, 0L)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0L)
+  }
+  const bits = b & 127
+  const acc2 = acc | (Int64.from_int(bits) * (1L << Int64.from_int(7 * count)))
+  if b < 128 {
+    if count == 4 {
+      const top = bits >> 4
+      if top != 0 && top != 7 {
+        return (bail(rr, rr.pos, "integer too large"), 0L)
+      }
+      if bits >= 64 {
+        return (rr, acc2 - (1L << Int64.from_int(7 * (count + 1))))
+      }
+      return (rr, acc2)
+    }
+    return (rr, acc2)
+  }
+  if count == 4 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0L)
+  }
+  return s33_acc(rr, count + 1, acc2)
+}
+
+// ---- LEB128 ----
+//
+// The unsigned/signed encodings with the spec's length caps: an
+// over-long encoding (continuation on the last allowed byte) is
+// "integer representation too long", an over-wide one (value bits
+// beyond the width on the final byte) is "integer too large" — both
+// malformed, never a wrapped value. u64/s64 accumulate the raw bit
+// pattern in Int64 (wrap is exactly what the pattern needs); s32
+// returns the unsigned 32-bit pattern of the signed value, per the
+// module-model decision.
+//
+// LEB128 lives in this module rather than a sibling because qualified
+// type annotations do not parse (step 20 pressure): a def in leb.emo
+// could not spell this module's Reader in its signature.
+
+def print_dbg(label String, data Bytes) Int {
+  const r0 = over(data)
+  const lc = u8(r0)
+  const e = expr(lc[0], -1)
+  println(label + ": locals_byte=" + lc[1].to_string() + " failed=" + e.failed.to_string()
+    + " pos=" + e.pos.to_string() + " limit=" + e.limit.to_string() + " msg=" + e.fail_msg)
+  return 0
+}
+
+// Print one decoded vector as `<label> = <value>` (fixture output).
+def print_u32(label String, data Bytes) Int {
+  const p = u32(over(data))
+  if p[0].failed {
+    println(label + " = " + p[0].fail_msg)
+    return 0
+  }
+  println(label + " = " + p[1].to_string())
+  return p[1]
+}
+
+def print_u64(label String, data Bytes) Int64 {
+  const p = u64(over(data))
+  if p[0].failed {
+    println(label + " = " + p[0].fail_msg)
+    return 0L
+  }
+  println(label + " = " + p[1].to_string())
+  return p[1]
+}
+
+def print_s32(label String, data Bytes) Int {
+  const p = s32(over(data))
+  if p[0].failed {
+    println(label + " = " + p[0].fail_msg)
+    return 0
+  }
+  println(label + " = " + p[1].to_string())
+  return p[1]
+}
+
+def print_s64(label String, data Bytes) Int64 {
+  const p = s64(over(data))
+  if p[0].failed {
+    println(label + " = " + p[0].fail_msg)
+    return 0L
+  }
+  println(label + " = " + p[1].to_string())
+  return p[1]
+}
+
+def u32(r Reader) (Reader, Int) {
+  return u32_acc(r, 0, 0)
+}
+
+def u32_acc(r Reader, count Int, acc Int) (Reader, Int) {
+  if r.failed {
+    return (r, 0)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0)
+  }
+  const bits = b & 127
+  const acc2 = acc | (bits << (7 * count))
+  if b < 128 {
+    if count == 4 && bits > 15 {
+      return (bail(rr, rr.pos, "integer too large"), 0)
+    }
+    return (rr, acc2)
+  }
+  if count == 4 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0)
+  }
+  return u32_acc(rr, count + 1, acc2)
+}
+
+def u64(r Reader) (Reader, Int64) {
+  return u64_acc(r, 0, 0L)
+}
+
+def u64_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
+  if r.failed {
+    return (r, 0L)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0L)
+  }
+  const bits = b & 127
+  // from_int types Unknown through the checker (step 20 pressure), so
+  // the shift's width is pinned by the Int64 literal on the left of the
+  // pair; multiply-by-power-of-two is the same bit pattern as the shift.
+  const acc2 = acc | (Int64.from_int(bits) * (1L << Int64.from_int(7 * count)))
+  if b < 128 {
+    if count == 9 && bits > 1 {
+      return (bail(rr, rr.pos, "integer too large"), 0L)
+    }
+    return (rr, acc2)
+  }
+  if count == 9 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0L)
+  }
+  return u64_acc(rr, count + 1, acc2)
+}
+
+// Signed 32-bit LEB128; the result is the value's unsigned 32-bit
+// pattern held in Int.
+def s32(r Reader) (Reader, Int) {
+  return s32_acc(r, 0, 0)
+}
+
+def s32_acc(r Reader, count Int, acc Int) (Reader, Int) {
+  if r.failed {
+    return (r, 0)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0)
+  }
+  const bits = b & 127
+  const acc2 = acc | (bits << (7 * count))
+  if b < 128 {
+    if count == 4 {
+      // bits 4-6 must be a clean sign extension of bit 3
+      const ext = bits >> 3
+      if ext != 0 && ext != 15 {
+        return (bail(rr, rr.pos, "integer too large"), 0)
+      }
+    }
+    var v = acc2
+    if bits >= 64 {
+      v = acc2 - (1 << (7 * (count + 1)))
+    }
+    if v < 0 {
+      v = v + 4294967296
+    }
+    return (rr, v)
+  }
+  if count == 4 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0)
+  }
+  return s32_acc(rr, count + 1, acc2)
+}
+
+// Signed 64-bit LEB128; the result is the Int64 bit pattern itself.
+// A value signed-extended across all ten bytes (the negative case at
+// the cap) already sits in the accumulator with the right pattern —
+// wrap-around does the extension — so no arithmetic runs for it.
+def s64(r Reader) (Reader, Int64) {
+  return s64_acc(r, 0, 0L)
+}
+
+def s64_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
+  if r.failed {
+    return (r, 0L)
+  }
+  const p = u8(r)
+  const rr = p[0]
+  const b = p[1]
+  if rr.failed {
+    return (rr, 0L)
+  }
+  const bits = b & 127
+  // Same width-pinning as u64_acc (see the note there).
+  const acc2 = acc | (Int64.from_int(bits) * (1L << Int64.from_int(7 * count)))
+  if b < 128 {
+    if count == 9 {
+      // the top six bits must be a clean sign extension of bit 63
+      if bits == 0 || bits == 127 {
+        return (rr, acc2)
+      }
+      return (bail(rr, rr.pos, "integer too large"), 0L)
+    }
+    if bits >= 64 {
+      return (rr, acc2 - (1L << Int64.from_int(7 * (count + 1))))
+    }
+    return (rr, acc2)
+  }
+  if count == 9 {
+    return (bail(rr, rr.pos, "integer representation too long"), 0L)
+  }
+  return s64_acc(rr, count + 1, acc2)
+}
+
+
+// ---- valtype + locals walk (moved from the model so the
+// type-stack validator can live here: model already depends on this
+// module, and the reverse edge would cycle) ----
+
+// Decode one valtype byte: (ok, code, new_pos).
+def valtype_at(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+  if pos >= limit {
+    return (false, 0, pos)
+  }
+  const b = data.get(pos)
+  if b == 127 || b == 126 || b == 125 || b == 124 || b == 112 || b == 111 {
+    return (true, b, pos + 1)
+  }
+  return (false, b, pos)
+}
+
+// The locals vector of a code entry: a count-terminated vector of
+// (count, valtype) runs — the vector's own length ends it, and a zero
+// run count is a legal no-op entry that still consumes its valtype.
+// (ok, pos_after_locals, total)
+def locals_walk(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+  const cn = u32(new(data, pos, limit))
+  if cn[0].failed {
+    return (false, pos, 0)
+  }
+  return locals_pairs(cn[0], limit, cn[1], 0)
+}
+
+def locals_pairs(r Reader, limit Int, n Int, total Int) (Bool, Int, Int) {
+  if n == 0 {
+    return (true, r.pos, total)
+  }
+  const c = u32(r)
+  if c[0].failed {
+    return (false, r.pos, total)
+  }
+  const v = valtype_at(r.data, c[0].pos, limit)
+  if !v[0] {
+    return (false, r.pos, total)
+  }
+  const total2 = total + c[1]
+  if total2 > 4294967295 {
+    return (false, r.pos, total2)
+  }
+  return locals_pairs(stepped(c[0], v[2]), limit, n - 1, total2)
+}
+
+// ---- the type-stack validator (T20.15-T20.17) ----
+//
+// The spec's validation algorithm, in its functionally-threaded shape:
+// the value stack is an Array[Int] of codes with Unknown = 0 as the
+// polymorphic placeholder — pops TRUNCATE the array to the new height,
+// because an append-push into a popped region would leave stale slots
+// that stack[height - 1] then misreads (found the hard way via
+// float_exprs). Control frames are frozen Frame instances. A body
+// validates from its implicit outer frame — (block, [], results, 0) —
+// through its final 0x0b, which must empty the stack back to that
+// frame's height exactly.
+//
+// The module context travels as one tuple (structural tuples cross
+// module edges; qualified class names do not parse):
+//
+//   ctx = (globals_codes, globals_mut, table_codes, counts,
+//          sigs, sig_off, tsigs, tsig_off)
+//
+//   globals_codes: valtype code per global
+//   globals_mut:   1 per mutable global
+//   table_codes:   reftype per table (funcref 112 / externref 111)
+//   counts:        [n_mems, n_datas, n_elems]
+//   sigs/sig_off:  flat signatures per FUNCTION index (params, -1
+//                  split, results; imports included)
+//   tsigs/tsig_off: the same per TYPE index (call_indirect, block
+//                  type indices)
+
+class Frame {
+  def init(kind Int, start_types Array[Int], end_types Array[Int], height Int, unreachable Bool) {
+    self.kind = kind
+    self.start_types = start_types
+    self.end_types = end_types
+    self.height = height
+    self.unreachable = unreachable
+  }
+}
+
+// Pop one value: the real code, or Unknown when the current frame is
+// unreachable and the stack is at its floor. The array comes back
+// truncated to the new height.
+// (ok, code, stack, height)
+def vpop(stack Array[Int], height Int, f Frame) (Bool, Int, Array[Int], Int) {
+  if height == f.height {
+    if f.unreachable {
+      return (true, 0, stack, height)
+    }
+    return (false, 0, stack, height)
+  }
+  return (true, stack[height - 1], trunc_to(stack, height - 1), height - 1)
+}
+
+// Tail-accumulator form: a method call on a recursive result
+// (`f(n-1).append(x)`) sends the interpreter into a spin past ~25
+// nesting levels (step 20 pressure, reproduced in isolation) — the
+// append rides in argument position instead.
+def trunc_to(items Array[Int], n Int) Array[Int] {
+  return trunc_to_rest(items, n, 0, [])
+}
+
+def trunc_to_rest(items Array[Int], n Int, i Int, acc Array[Int]) Array[Int] {
+  if i >= n {
+    return acc
+  }
+  return trunc_to_rest(items, n, i + 1, acc.append(items[i]))
+}
+
+// Pop a value and require it to match `want` (Unknown matches all).
+def vpop_expect(stack Array[Int], height Int, f Frame, want Int) (Bool, Int, Array[Int], Int) {
+  const p = vpop(stack, height, f)
+  if !p[0] {
+    return p
+  }
+  if p[1] != want && p[1] != 0 && want != 0 {
+    return (false, p[1], stack, height)
+  }
+  return p
+}
+
+// Push a value.
+def vpush(stack Array[Int], height Int, code Int) (Array[Int], Int) {
+  return (stack.append(code), height + 1)
+}
+
+// Validate one function body: (ok, msg). The body bytes span
+// [pos, limit) and begin with the locals vector; param_codes and
+// result_codes are the function type's vectors; ctx is the module
+// context (see the validator block comment).
+def vbody(data Bytes, pos Int, limit Int, param_codes Array[Int], result_codes Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) (Bool, String, Int) {
+  const lr = locals_types(data, pos, limit, param_codes)
+  if lr[0].failed {
+    return (false, "malformed locals", lr[0].fail_offset)
+  }
+  const f0 = Frame.new(2, [], result_codes, 0, false)
+  const r = vinstrs(
+    new(data, lr[0].pos, limit), [], 0, [f0], 0, result_codes, lr[1], ctx)
+  if r.failed {
+    return (false, "type mismatch", r.fail_offset)
+  }
+  return (true, "", -1)
+}
+
+// The locals runs, expanded to one type code per local (the vector's
+// length precedes the runs; a zero run count is legal). A body
+// declaring more than a million locals is rejected here — the
+// spec's own 2^32 malformed cap is the decoder's business; typing
+// does not need to materialize that much.
+def locals_types(data Bytes, pos Int, limit Int, params Array[Int]) (Reader, Array[Int]) {
+  const cn = u32(new(data, pos, limit))
+  if cn[0].failed {
+    return (cn[0], params)
+  }
+  return locals_runs(cn[0], limit, cn[1], params, 0)
+}
+
+def locals_runs(r Reader, limit Int, n Int, acc Array[Int], runs Int) (Reader, Array[Int]) {
+  if acc.length() > 1000000 {
+    return (bail(r, r.pos, "too many locals"), acc)
+  }
+  if n == 0 {
+    return (r, acc)
+  }
+  const c = u32(r)
+  if c[0].failed {
+    return (c[0], acc)
+  }
+  const v = valtype_at(r.data, c[0].pos, limit)
+  if !v[0] {
+    return (bail(c[0], c[0].pos, "malformed value type"), acc)
+  }
+  return locals_runs(stepped(c[0], v[2]), limit, n - 1, expand(acc, v[1], c[1]), runs + 1)
+}
+
+def expand(acc Array[Int], code Int, n Int) Array[Int] {
+  if n == 0 {
+    return acc
+  }
+  return expand(acc.append(code), code, n - 1)
+}
+
+// The instruction walk: decode the next opcode (through the same
+// dispatch the decoder uses), type it against the stack, recurse.
+// The frames array's last element is the current frame.
+def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+  if r.failed {
+    return r
+  }
+  const p = u8(r)
+  const r1 = p[0]
+  const op = p[1]
+  if r1.failed {
+    return r1
+  }
+  // end: pop the frame's end types, require the frame's floor.
+  const f = frames[ftop]
+  if op == 11 {
+    if f.kind == 4 {
+      // An else-less if carries an implicit empty arm: it can only
+      // type when the block's parameters equal its results.
+      if f.start_types.length() != f.end_types.length() || !codes_eq(f.start_types, f.end_types, 0) {
+        return bail(r1, r1.pos, "type mismatch")
+      }
+    }
+    const e = pops_of(r1, stack, height, f, f.end_types, f.end_types.length())
+    if !e[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    if e[3] != f.height {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    if ftop == 0 {
+      // The body's final end: the stack must be exactly empty — it is,
+      // the frame check passed.
+      return r1
+    }
+    const nf = frames[ftop - 1]
+    const pu = push_all(e[2], e[3], nf.unreachable, f.end_types)
+    return vinstrs(r1, pu[0], pu[1], frames, ftop - 1, result_codes, lcs, ctx)
+  }
+  if op == 5 {
+    // else: only inside an if-frame; the label types restart.
+    if f.kind != 4 {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const e = pops_of(r1, stack, height, f, f.end_types, f.end_types.length())
+    if !e[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    if e[3] != f.height {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const f2 = Frame.new(1, f.start_types, f.end_types, f.height, false)
+    const pu = push_all(e[2], e[3], false, f.start_types)
+    return vinstrs(r1, pu[0], pu[1], trunc_frames(frames, ftop).append(f2), ftop, result_codes, lcs, ctx)
+  }
+  if op == 2 || op == 3 || op == 4 {
+    return vblock(r1, op, stack, height, frames, ftop, result_codes, lcs, ctx)
+  }
+  // unreachable
+  if op == 0 {
+    const f2 = Frame.new(f.kind, f.start_types, f.end_types, f.height, true)
+    return vinstrs(r1, trunc_to(stack, f.height), f.height, trunc_frames(frames, ftop).append(f2), ftop, result_codes, lcs, ctx)
+  }
+  // nop
+  if op == 1 {
+    return vinstrs(r1, stack, height, frames, ftop, result_codes, lcs, ctx)
+  }
+  // br l
+  if op == 12 {
+    const l = label_depth(r1, ftop)
+    if l[0].failed {
+      return l[0]
+    }
+    const target = frames[ftop - l[1]]
+    const want = label_types(target)
+    const e = pops_of(r1, stack, height, f, want, want.length())
+    if !e[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const f2 = Frame.new(f.kind, f.start_types, f.end_types, f.height, true)
+    return vinstrs(l[0], trunc_to(e[2], f.height), f.height, trunc_frames(frames, ftop).append(f2), ftop, result_codes, lcs, ctx)
+  }
+  // br_if l
+  if op == 13 {
+    const p1 = vpop_expect(stack, height, f, 127)
+    if !p1[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const l = label_depth(r1, ftop)
+    if l[0].failed {
+      return l[0]
+    }
+    const target = frames[ftop - l[1]]
+    const want = label_types(target)
+    const e = pops_of(r1, p1[2], p1[3], f, want, want.length())
+    if !e[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const pu = push_all(e[2], e[3], f.unreachable, want)
+    return vinstrs(l[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  // br_table: the vec's labels first, then the default; every label's
+  // types must equal the default's, and the default's values pop once.
+  if op == 14 {
+    const p1 = vpop_expect(stack, height, f, 127)
+    if !p1[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const cn = u32(r1)
+    if cn[0].failed {
+      return cn[0]
+    }
+    const dv = u32_vec_end(cn[0], cn[1])
+    if dv.failed {
+      return dv
+    }
+    const d = u32(dv)
+    if d[0].failed {
+      return d[0]
+    }
+    if d[1] > ftop {
+      return bail(d[0], d[0].pos, "unknown label")
+    }
+    const want = label_types(frames[ftop - d[1]])
+    // Each label's values pop against the stack then push back — the
+    // spec checks arity equality across labels, not type equality.
+    const t = br_table_labels(cn[0], cn[1], frames, ftop, want, p1[2], p1[3], f)
+    if t[0].failed {
+      return t[0]
+    }
+    // Continue past the whole immediate (labels + default): d[0] is
+    // the reader after the default index; t sits before it.
+    const e = pops_of(d[0], t[1], t[2], f, want, want.length())
+    if !e[0] {
+      return bail(d[0], d[0].pos, "type mismatch")
+    }
+    const f2 = Frame.new(f.kind, f.start_types, f.end_types, f.height, true)
+    return vinstrs(d[0], trunc_to(e[2], f.height), f.height, trunc_frames(frames, ftop).append(f2), ftop, result_codes, lcs, ctx)
+  }
+  // return
+  if op == 15 {
+    const e = pops_of(r1, stack, height, f, result_codes, result_codes.length())
+    if !e[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const f2 = Frame.new(f.kind, f.start_types, f.end_types, f.height, true)
+    return vinstrs(r1, trunc_to(e[2], f.height), f.height, trunc_frames(frames, ftop).append(f2), ftop, result_codes, lcs, ctx)
+  }
+  // call x
+  if op == 16 {
+    const cx = u32(r1)
+    if cx[0].failed {
+      return cx[0]
+    }
+    const so = ctx[5]
+    if cx[1] + 1 >= so.length() {
+      return bail(cx[0], cx[0].pos, "unknown function")
+    }
+    const sg = ctx[4]
+    const lo = so[cx[1]]
+    const hi = so[cx[1] + 1]
+    const pmid = lo + split_scan(sg, lo, hi, lo) + 1
+    const e = pops_flat(cx[0], stack, height, f, sg, lo, pmid - 1)
+    if !e[0] {
+      return bail(cx[0], cx[0].pos, "type mismatch")
+    }
+    const pu = push_flat(e[2], e[3], f.unreachable, sg, pmid, hi)
+    return vinstrs(cx[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  // call_indirect (type index, then table index)
+  if op == 17 {
+    const ti = u32(r1)
+    if ti[0].failed {
+      return ti[0]
+    }
+    const tb = u32(ti[0])
+    if tb[0].failed {
+      return tb[0]
+    }
+    const tcs = ctx[2]
+    if tb[1] >= tcs.length() {
+      return bail(tb[0], tb[0].pos, "unknown table")
+    }
+    if tcs[tb[1]] != 112 {
+      return bail(tb[0], tb[0].pos, "type mismatch")
+    }
+    const tso = ctx[7]
+    if ti[1] + 1 >= tso.length() {
+      return bail(ti[0], ti[0].pos, "unknown type")
+    }
+    const tsg = ctx[6]
+    const lo = tso[ti[1]]
+    const hi = tso[ti[1] + 1]
+    const pmid = lo + split_scan(tsg, lo, hi, lo) + 1
+    // the table index operand, then the call's parameters
+    const p1 = vpop_expect(stack, height, f, 127)
+    if !p1[0] {
+      return bail(tb[0], tb[0].pos, "type mismatch")
+    }
+    const e = pops_flat(tb[0], p1[2], p1[3], f, tsg, lo, pmid - 1)
+    if !e[0] {
+      return bail(tb[0], tb[0].pos, "type mismatch")
+    }
+    const pu = push_flat(e[2], e[3], f.unreachable, tsg, pmid, hi)
+    return vinstrs(tb[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  // select t (a type-indexed select): one valtype, [t, t, i32] -> [t]
+  if op == 28 {
+    const cn = u32(r1)
+    if cn[0].failed {
+      return cn[0]
+    }
+    if cn[1] != 1 {
+      return bail(cn[0], cn[0].pos, "invalid result arity")
+    }
+    const tv = u8(cn[0])
+    if tv[0].failed {
+      return tv[0]
+    }
+    const t = tv[1]
+    if t != 127 && t != 126 && t != 125 && t != 124 && t != 112 && t != 111 {
+      return bail(tv[0], tv[0].pos, "malformed value type")
+    }
+    const p1 = vpop_expect(stack, height, f, 127)
+    if !p1[0] {
+      return bail(tv[0], tv[0].pos, "type mismatch")
+    }
+    const p2 = vpop_expect(p1[2], p1[3], f, t)
+    if !p2[0] {
+      return bail(tv[0], tv[0].pos, "type mismatch")
+    }
+    const p3 = vpop_expect(p2[2], p2[3], f, t)
+    if !p3[0] {
+      return bail(tv[0], tv[0].pos, "type mismatch")
+    }
+    const pu = push_all(p3[2], p3[3], f.unreachable, [t])
+    return vinstrs(tv[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  // drop
+  if op == 26 {
+    const e = vpop(stack, height, f)
+    if !e[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    return vinstrs(r1, e[2], e[3], frames, ftop, result_codes, lcs, ctx)
+  }
+  // select (untyped)
+  if op == 27 {
+    const p1 = vpop_expect(stack, height, f, 127)
+    if !p1[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const p2 = vpop(p1[2], p1[3], f)
+    if !p2[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const p3 = vpop(p2[2], p2[3], f)
+    if !p3[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    if p2[1] != p3[1] && p2[1] != 0 && p3[1] != 0 {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    var picked = p3[1]
+    if p2[1] != 0 {
+      picked = p2[1]
+    }
+    if picked == 111 || picked == 112 {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const pu = push_all(p3[2], p3[3], f.unreachable, [picked])
+    return vinstrs(r1, pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  // ---- variable instructions ----
+  if op == 32 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const tc = local_code(lcs, x[1])
+    if tc < 0 {
+      return bail(x[0], x[0].pos, "unknown local")
+    }
+    const pu = push_all(stack, height, f.unreachable, [tc])
+    return vinstrs(x[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if op == 33 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const tc = local_code(lcs, x[1])
+    if tc < 0 {
+      return bail(x[0], x[0].pos, "unknown local")
+    }
+    const e = vpop_expect(stack, height, f, tc)
+    if !e[0] {
+      return bail(x[0], x[0].pos, "type mismatch")
+    }
+    return vinstrs(x[0], e[2], e[3], frames, ftop, result_codes, lcs, ctx)
+  }
+  if op == 34 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const tc = local_code(lcs, x[1])
+    if tc < 0 {
+      return bail(x[0], x[0].pos, "unknown local")
+    }
+    const e = vpop_expect(stack, height, f, tc)
+    if !e[0] {
+      return bail(x[0], x[0].pos, "type mismatch")
+    }
+    const pu = push_all(e[2], e[3], f.unreachable, [tc])
+    return vinstrs(x[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if op == 35 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const gcs = ctx[0]
+    if x[1] >= gcs.length() {
+      return bail(x[0], x[0].pos, "unknown global")
+    }
+    const pu = push_all(stack, height, f.unreachable, [gcs[x[1]]])
+    return vinstrs(x[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if op == 36 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const gcs = ctx[0]
+    if x[1] >= gcs.length() {
+      return bail(x[0], x[0].pos, "unknown global")
+    }
+    const gm = ctx[1]
+    if gm[x[1]] != 1 {
+      return bail(x[0], x[0].pos, "global is immutable")
+    }
+    const e = vpop_expect(stack, height, f, gcs[x[1]])
+    if !e[0] {
+      return bail(x[0], x[0].pos, "type mismatch")
+    }
+    return vinstrs(x[0], e[2], e[3], frames, ftop, result_codes, lcs, ctx)
+  }
+  // ---- table.get / table.set ----
+  if op == 37 || op == 38 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const tcs = ctx[2]
+    if x[1] >= tcs.length() {
+      return bail(x[0], x[0].pos, "unknown table")
+    }
+    if op == 37 {
+      const pa = vpop_expect(stack, height, f, 127)
+      if !pa[0] {
+        return bail(x[0], x[0].pos, "type mismatch")
+      }
+      const pu = push_all(pa[2], pa[3], f.unreachable, [tcs[x[1]]])
+      return vinstrs(x[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+    }
+    const pv = vpop_expect(stack, height, f, tcs[x[1]])
+    if !pv[0] {
+      return bail(x[0], x[0].pos, "type mismatch")
+    }
+    const pi = vpop_expect(pv[2], pv[3], f, 127)
+    if !pi[0] {
+      return bail(x[0], x[0].pos, "type mismatch")
+    }
+    return vinstrs(x[0], pi[2], pi[3], frames, ftop, result_codes, lcs, ctx)
+  }
+  // ---- memory instructions (0x28..0x3e): memarg immediate ----
+  if op >= 40 && op <= 62 {
+    const ma = memarg_val(r1)
+    if ma[0].failed {
+      return ma[0]
+    }
+    const cts = ctx[3]
+    if cts[0] < 1 {
+      return bail(ma[0], ma[0].pos, "unknown memory")
+    }
+    if ma[1] > mem_max_align(op) {
+      return bail(ma[0], ma[0].pos, "alignment must not be larger than natural")
+    }
+    const e = mem_pops(ma[0], stack, height, f, op)
+    if !e[0] {
+      return bail(ma[0], ma[0].pos, "type mismatch")
+    }
+    const res = mem_result(op)
+    const pu = push_all(e[2], e[3], f.unreachable, res)
+    return vinstrs(ma[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if op == 63 {
+    const z = u8(r1)
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    const cts = ctx[3]
+    if cts[0] < 1 {
+      return bail(z[0], z[0].pos, "unknown memory")
+    }
+    const pu = push_all(stack, height, f.unreachable, [127])
+    return vinstrs(z[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if op == 64 {
+    const z = u8(r1)
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    const cts = ctx[3]
+    if cts[0] < 1 {
+      return bail(z[0], z[0].pos, "unknown memory")
+    }
+    const p1 = vpop_expect(stack, height, f, 127)
+    if !p1[0] {
+      return bail(z[0], z[0].pos, "type mismatch")
+    }
+    const pu = push_all(p1[2], p1[3], f.unreachable, [127])
+    return vinstrs(z[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  // ---- reference instructions ----
+  if op == 208 {
+    const t = u8(r1)
+    if t[0].failed {
+      return t[0]
+    }
+    if t[1] != 112 && t[1] != 111 {
+      return bail(t[0], t[0].pos, "malformed reference type")
+    }
+    const pu = push_all(stack, height, f.unreachable, [t[1]])
+    return vinstrs(t[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if op == 209 {
+    // ref.is_null: any reference in, i32 out
+    const p1 = vpop(stack, height, f)
+    if !p1[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    if p1[1] != 111 && p1[1] != 112 && p1[1] != 0 {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const pu = push_all(p1[2], p1[3], f.unreachable, [127])
+    return vinstrs(r1, pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if op == 210 {
+    const x = u32(r1)
+    if x[0].failed {
+      return x[0]
+    }
+    const so = ctx[5]
+    if x[1] + 1 >= so.length() {
+      return bail(x[0], x[0].pos, "unknown function")
+    }
+    // ref.func requires the function to be declared: exported,
+    // referenced by an element segment, or the start function.
+    if !mem_int(ctx[8], x[1], 0) {
+      return bail(x[0], x[0].pos, "undeclared function reference")
+    }
+    const pu = push_all(stack, height, f.unreachable, [112])
+    return vinstrs(x[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  // ---- the 0xfc family: bulk memory and table operations ----
+  if op == 252 {
+    return vprefix_fc(r1, stack, height, frames, ftop, f, result_codes, lcs, ctx)
+  }
+  // ---- t.const: decode the immediate, then push the type ----
+  if op == 65 || op == 66 || op == 67 || op == 68 {
+    var r2 = r1
+    if op == 65 {
+      r2 = s32(r1)[0]
+    }
+    if op == 66 {
+      r2 = s64(r1)[0]
+    }
+    if op == 67 {
+      r2 = take(r1, 4)[0]
+    }
+    if op == 68 {
+      r2 = take(r1, 8)[0]
+    }
+    if r2.failed {
+      return r2
+    }
+    var code = 127
+    if op == 66 {
+      code = 126
+    }
+    if op == 67 {
+      code = 125
+    }
+    if op == 68 {
+      code = 124
+    }
+    const pu = push_all(stack, height, f.unreachable, [code])
+    return vinstrs(r2, pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  // ---- numeric: the plain family 0x45..0xc4, typed by table ----
+  if op >= 69 && op <= 196 {
+    const s = num_opcode(op)
+    const e = pops_of(r1, stack, height, f, s[0], s[0].length())
+    if !e[0] {
+      return bail(r1, r1.pos, "type mismatch")
+    }
+    const pu = push_all(e[2], e[3], f.unreachable, s[1])
+    return vinstrs(r1, pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  // The remaining opcodes are not decodable instructions — decode
+  // never let them through.
+  return bail(r1, r1.pos, "illegal opcode")
+}
+
+// The 0xfc family's validation: index spaces and stack shapes, on
+// the final opcode map (0x00-0x07 trunc_sat, 0x08-0x0b bulk memory,
+// 0x0c-0x11 table operations).
+def vprefix_fc(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop Int, f Frame, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+  const s = u32(r)
+  if s[0].failed {
+    return s[0]
+  }
+  const sub = s[1]
+  const cts = ctx[3]
+  if sub <= 7 {
+    // trunc_sat: one float in, one integer out
+    const t = num_opcode_trunc_sat(sub)
+    const e = pops_of(s[0], stack, height, f, t[0], t[0].length())
+    if !e[0] {
+      return bail(s[0], s[0].pos, "type mismatch")
+    }
+    const pu = push_all(e[2], e[3], f.unreachable, t[1])
+    return vinstrs(s[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 8 {
+    // memory.init x: data segment x, a memory, (i32 i32 i32) -> ()
+    const d = u32(s[0])
+    if d[0].failed {
+      return d[0]
+    }
+    const z = u8(d[0])
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    if d[1] >= cts[1] {
+      return bail(d[0], d[0].pos, "unknown data segment")
+    }
+    if cts[0] < 1 {
+      return bail(z[0], z[0].pos, "unknown memory")
+    }
+    return vpop3_push0(z[0], stack, height, f, frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 9 {
+    // data.drop x
+    const d = u32(s[0])
+    if d[0].failed {
+      return d[0]
+    }
+    if d[1] >= cts[1] {
+      return bail(d[0], d[0].pos, "unknown data segment")
+    }
+    return vinstrs(d[0], stack, height, frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 10 {
+    // memory.copy: two reserved zero bytes, (i32 i32 i32) -> ()
+    const z1 = u8(s[0])
+    if z1[0].failed {
+      return z1[0]
+    }
+    if z1[1] != 0 {
+      return bail(z1[0], z1[0].pos, "zero byte expected")
+    }
+    const z2 = u8(z1[0])
+    if z2[0].failed {
+      return z2[0]
+    }
+    if z2[1] != 0 {
+      return bail(z2[0], z2[0].pos, "zero byte expected")
+    }
+    if cts[0] < 1 {
+      return bail(z2[0], z2[0].pos, "unknown memory")
+    }
+    return vpop3_push0(z2[0], stack, height, f, frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 11 {
+    // memory.fill: one reserved zero byte, (i32 i32 i32) -> ()
+    const z = u8(s[0])
+    if z[0].failed {
+      return z[0]
+    }
+    if z[1] != 0 {
+      return bail(z[0], z[0].pos, "zero byte expected")
+    }
+    if cts[0] < 1 {
+      return bail(z[0], z[0].pos, "unknown memory")
+    }
+    return vpop3_push0(z[0], stack, height, f, frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 12 {
+    // table.init y x: element segment y, table x
+    const ey = u32(s[0])
+    if ey[0].failed {
+      return ey[0]
+    }
+    const tx = u32(ey[0])
+    if tx[0].failed {
+      return tx[0]
+    }
+    if ey[1] >= cts[2] {
+      return bail(ey[0], ey[0].pos, "unknown elem segment")
+    }
+    const tcs = ctx[2]
+    if tx[1] >= tcs.length() {
+      return bail(tx[0], tx[0].pos, "unknown table")
+    }
+    // elem segment y's type must match table x's; the segment types
+    // ride behind the three counts in the counts array.
+    if cts[3 + ey[1]] != tcs[tx[1]] {
+      return bail(tx[0], tx[0].pos, "type mismatch")
+    }
+    return vpop3_push0(tx[0], stack, height, f, frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 13 {
+    // elem.drop y
+    const ey = u32(s[0])
+    if ey[0].failed {
+      return ey[0]
+    }
+    if ey[1] >= cts[2] {
+      return bail(ey[0], ey[0].pos, "unknown elem segment")
+    }
+    return vinstrs(ey[0], stack, height, frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 14 {
+    // table.copy x y: destination table, source table
+    const tx = u32(s[0])
+    if tx[0].failed {
+      return tx[0]
+    }
+    const ty = u32(tx[0])
+    if ty[0].failed {
+      return ty[0]
+    }
+    const tcs = ctx[2]
+    if tx[1] >= tcs.length() {
+      return bail(tx[0], tx[0].pos, "unknown table")
+    }
+    if ty[1] >= tcs.length() {
+      return bail(ty[0], ty[0].pos, "unknown table")
+    }
+    if tcs[tx[1]] != tcs[ty[1]] {
+      return bail(ty[0], ty[0].pos, "type mismatch")
+    }
+    return vpop3_push0(ty[0], stack, height, f, frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 15 {
+    // table.grow x: [t, i32] -> [i32]
+    const tx = u32(s[0])
+    if tx[0].failed {
+      return tx[0]
+    }
+    const tcs = ctx[2]
+    if tx[1] >= tcs.length() {
+      return bail(tx[0], tx[0].pos, "unknown table")
+    }
+    const pn = vpop_expect(stack, height, f, 127)
+    if !pn[0] {
+      return bail(tx[0], tx[0].pos, "type mismatch")
+    }
+    const pv = vpop_expect(pn[2], pn[3], f, tcs[tx[1]])
+    if !pv[0] {
+      return bail(tx[0], tx[0].pos, "type mismatch")
+    }
+    const pu = push_all(pv[2], pv[3], f.unreachable, [127])
+    return vinstrs(tx[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 16 {
+    // table.size x: [] -> [i32]
+    const tx = u32(s[0])
+    if tx[0].failed {
+      return tx[0]
+    }
+    const tcs = ctx[2]
+    if tx[1] >= tcs.length() {
+      return bail(tx[0], tx[0].pos, "unknown table")
+    }
+    const pu = push_all(stack, height, f.unreachable, [127])
+    return vinstrs(tx[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
+  if sub == 17 {
+    // table.fill x: [i32, t, i32] -> []
+    const tx = u32(s[0])
+    if tx[0].failed {
+      return tx[0]
+    }
+    const tcs = ctx[2]
+    if tx[1] >= tcs.length() {
+      return bail(tx[0], tx[0].pos, "unknown table")
+    }
+    const pn = vpop_expect(stack, height, f, 127)
+    if !pn[0] {
+      return bail(tx[0], tx[0].pos, "type mismatch")
+    }
+    const pv = vpop_expect(pn[2], pn[3], f, tcs[tx[1]])
+    if !pv[0] {
+      return bail(tx[0], tx[0].pos, "type mismatch")
+    }
+    const pi = vpop_expect(pv[2], pv[3], f, 127)
+    if !pi[0] {
+      return bail(tx[0], tx[0].pos, "type mismatch")
+    }
+    return vinstrs(tx[0], pi[2], pi[3], frames, ftop, result_codes, lcs, ctx)
+  }
+  return bail(s[0], s[0].pos, "illegal opcode")
+}
+
+// The trunc_sat family's typing: sub 0-3 produce i32, 4-7 i64.
+def num_opcode_trunc_sat(sub Int) (Array[Int], Array[Int]) {
+  if sub <= 3 {
+    if sub <= 1 {
+      return ([125], [127])
+    }
+    return ([124], [127])
+  }
+  if sub <= 5 {
+    return ([125], [126])
+  }
+  return ([124], [126])
+}
+
+// (i32 i32 i32) -> (): the bulk operation stack shape.
+def vpop3_push0(r Reader, stack Array[Int], height Int, f Frame, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+  const p1 = vpop_expect(stack, height, f, 127)
+  if !p1[0] {
+    return bail(r, r.pos, "type mismatch")
+  }
+  const p2 = vpop_expect(p1[2], p1[3], f, 127)
+  if !p2[0] {
+    return bail(r, r.pos, "type mismatch")
+  }
+  const p3 = vpop_expect(p2[2], p2[3], f, 127)
+  if !p3[0] {
+    return bail(r, r.pos, "type mismatch")
+  }
+  return vinstrs(r, p3[2], p3[3], frames, ftop, result_codes, lcs, ctx)
+}
+
+// The natural-alignment cap per memory opcode: the log2 of the access
+// width (0: one byte, 1: two, 2: four, 3: eight).
+def mem_max_align(op Int) Int {
+  if op == 40 || op == 54 {
+    return 2
+  }
+  if op == 41 || op == 55 {
+    return 3
+  }
+  if op == 42 || op == 56 {
+    return 2
+  }
+  if op == 43 || op == 57 {
+    return 3
+  }
+  if op == 44 || op == 45 || op == 58 {
+    return 0
+  }
+  if op == 46 || op == 47 || op == 59 {
+    return 1
+  }
+  if op == 48 || op == 49 || op == 60 {
+    return 0
+  }
+  if op == 50 || op == 51 || op == 61 {
+    return 1
+  }
+  if op == 52 || op == 53 || op == 62 {
+    return 2
+  }
+  return 0
+}
+
+// Pop sigs[lo..hi) in reverse: (ok, code, stack, height)
+def pops_flat(r Reader, stack Array[Int], height Int, f Frame, sigs Array[Int], lo Int, hi Int) (Bool, Int, Array[Int], Int) {
+  return pops_flat_rev(stack, height, f, sigs, lo, hi, hi)
+}
+
+def pops_flat_rev(stack Array[Int], height Int, f Frame, sigs Array[Int], lo Int, hi Int, k Int) (Bool, Int, Array[Int], Int) {
+  if k <= lo {
+    return (true, 0, stack, height)
+  }
+  const p = vpop_expect(stack, height, f, sigs[k - 1])
+  if !p[0] {
+    return p
+  }
+  return pops_flat_rev(p[2], p[3], f, sigs, lo, hi, k - 1)
+}
+
+// Push sigs[lo..hi) — unconditional, like push_all.
+def push_flat(stack Array[Int], height Int, unreachable Bool, sigs Array[Int], lo Int, hi Int) (Array[Int], Int) {
+  return push_flat_rest(stack, height, sigs, lo, hi)
+}
+
+def push_flat_rest(stack Array[Int], height Int, sigs Array[Int], i Int, hi Int) (Array[Int], Int) {
+  if i >= hi {
+    return (stack, height)
+  }
+  return push_flat_rest(stack.append(sigs[i]), height + 1, sigs, i + 1, hi)
+}
+
+// The param count of the signature at sigs[lo..hi): the model writes
+// a -1 split marker between params and results (type codes are all
+// positive, so -1 is unambiguous).
+def sig_param_len(sigs Array[Int], lo Int, hi Int) Int {
+  return split_scan(sigs, lo, hi, lo)
+}
+
+def split_scan(sigs Array[Int], lo Int, hi Int, i Int) Int {
+  if i >= hi {
+    return hi - lo
+  }
+  if sigs[i] == -1 {
+    return i - lo
+  }
+  return split_scan(sigs, lo, hi, i + 1)
+}
+
+// The type of local index `x`, or -1 when out of range.
+def local_code(codes Array[Int], x Int) Int {
+  if x >= codes.length() {
+    return -1
+  }
+  return codes[x]
+}
+
+// Loads push their result after popping the address; stores pop the
+// value then the address. (ok, code, stack, height)
+def mem_pops(r Reader, stack Array[Int], height Int, f Frame, op Int) (Bool, Int, Array[Int], Int) {
+  if op >= 54 {
+    // store: value, then address
+    const v = mem_value(op)
+    const p1 = vpop_expect(stack, height, f, v)
+    if !p1[0] {
+      return p1
+    }
+    return vpop_expect(p1[2], p1[3], f, 127)
+  }
+  // load: address only
+  return vpop_expect(stack, height, f, 127)
+}
+
+// The value code a store consumes, or a load produces.
+def mem_value(op Int) Int {
+  if op == 54 { return 127 }
+  if op == 55 { return 126 }
+  if op == 56 { return 125 }
+  if op == 57 { return 124 }
+  if op == 58 { return 127 }
+  if op == 59 { return 127 }
+  if op == 60 { return 126 }
+  if op == 61 { return 126 }
+  return 126
+}
+
+def mem_result(op Int) Array[Int] {
+  if op == 40 { return [127] }
+  if op == 41 { return [126] }
+  if op == 42 { return [125] }
+  if op == 43 { return [124] }
+  if op >= 44 && op <= 47 { return [127] }
+  if op >= 48 && op <= 53 { return [126] }
+  return []
+}
+
+def num_opcode(op Int) (Array[Int], Array[Int]) {
+  const i32 = 127
+  const i64 = 126
+  const f32 = 125
+  const f64 = 124
+  // i32 tests and comparisons → i32
+  if op == 69 { return ([i32], [i32]) }               // eqz
+  if op >= 70 && op <= 79 { return ([i32, i32], [i32]) } // eq..le_u
+  // i64.eqz / i64 comparisons → i32
+  if op == 80 { return ([i64], [i32]) }
+  if op >= 81 && op <= 90 { return ([i64, i64], [i32]) }
+  if op >= 91 && op <= 96 { return ([f32, f32], [i32]) }  // f32 eq..le
+  if op >= 97 && op <= 102 { return ([f64, f64], [i32]) } // f64 eq..le
+  // i32 unary / binary
+  if op == 103 || op == 104 || op == 105 { return ([i32], [i32]) } // clz ctz popcnt
+  if op >= 106 && op <= 120 { return ([i32, i32], [i32]) } // add..rotr
+  // i64 unary / binary
+  if op == 121 || op == 122 || op == 123 { return ([i64], [i64]) }
+  if op >= 124 && op <= 138 { return ([i64, i64], [i64]) }
+  // f32 unary / binary
+  if op >= 139 && op <= 145 { return ([f32], [f32]) } // abs..sqrt
+  if op >= 146 && op <= 152 { return ([f32, f32], [f32]) }
+  // f64 unary / binary
+  if op >= 153 && op <= 159 { return ([f64], [f64]) }
+  if op >= 160 && op <= 166 { return ([f64, f64], [f64]) }
+  // conversions (spec table, 0xa7..0xc4)
+  if op == 167 { return ([i64], [i32]) }   // i32.wrap_i64
+  if op == 168 || op == 169 { return ([f32], [i32]) } // i32.trunc_f32_s/u
+  if op == 170 || op == 171 { return ([f64], [i32]) } // i32.trunc_f64_s/u
+  if op == 172 || op == 173 { return ([i32], [i64]) } // i64.extend_i32_s/u
+  if op == 174 || op == 175 { return ([f32], [i64]) } // i64.trunc_f32_s/u
+  if op == 176 || op == 177 { return ([f64], [i64]) } // i64.trunc_f64_s/u
+  if op == 178 || op == 179 { return ([i32], [f32]) } // f32.convert_i32_s/u
+  if op == 180 || op == 181 { return ([i64], [f32]) } // f32.convert_i64_s/u
+  if op == 182 { return ([f64], [f32]) }   // f32.demote_f64
+  if op == 183 || op == 184 { return ([i32], [f64]) } // f64.convert_i32_s/u
+  if op == 185 || op == 186 { return ([i64], [f64]) } // f64.convert_i64_s/u
+  if op == 187 { return ([f32], [f64]) }   // f64.promote_f32
+  if op == 188 { return ([f32], [i32]) }   // i32.reinterpret_f32
+  if op == 189 { return ([f64], [i64]) }   // i64.reinterpret_f64
+  if op == 190 { return ([i32], [f32]) }   // f32.reinterpret_i32
+  if op == 191 { return ([i64], [f64]) }   // f64.reinterpret_i64
+  // sign extensions (0xc0..0xc4): i32.extend8/16_s, i64.extend8/16/32_s
+  if op >= 192 && op <= 193 { return ([i32], [i32]) }
+  if op >= 194 && op <= 196 { return ([i64], [i64]) }
+  return ([], [])
+}
+
+// Pop each of `wants` in reverse order, collecting the popped codes
+// (br_table pushes the popped values back).
+// (ok, popped, stack, height)
+def pops_collect(r Reader, stack Array[Int], height Int, f Frame, wants Array[Int], wn Int) (Bool, Array[Int], Array[Int], Int) {
+  return pops_collect_rev(stack, height, f, wants, wn, [])
+}
+
+def pops_collect_rev(stack Array[Int], height Int, f Frame, wants Array[Int], i Int, got Array[Int]) (Bool, Array[Int], Array[Int], Int) {
+  if i == 0 {
+    return (true, got, stack, height)
+  }
+  const p = vpop_expect(stack, height, f, wants[i - 1])
+  if !p[0] {
+    return (false, got, stack, height)
+  }
+  return pops_collect_rev(p[2], p[3], f, wants, i - 1, got.append(p[1]))
+}
+
+// Pop each of `wants` in reverse order.
+// (ok, last_code, stack, height)
+def pops_of(r Reader, stack Array[Int], height Int, f Frame, wants Array[Int], wn Int) (Bool, Int, Array[Int], Int) {
+  return pops_rev(stack, height, f, wants, wn)
+}
+
+def pops_rev(stack Array[Int], height Int, f Frame, wants Array[Int], i Int) (Bool, Int, Array[Int], Int) {
+  if i == 0 {
+    return (true, 0, stack, height)
+  }
+  const p = vpop_expect(stack, height, f, wants[i - 1])
+  if !p[0] {
+    return p
+  }
+  return pops_rev(p[2], p[3], f, wants, i - 1)
+}
+
+// Push each of `codes`. Pushes are unconditional even in unreachable
+// frames — the spec's algorithm keeps pushed values concrete; only
+// pops at an unreachable frame's floor yield Unknown (the corpus's
+// select-unreached vs type-num-vs-num cases pin both sides).
+def push_all(stack Array[Int], height Int, unreachable Bool, codes Array[Int]) (Array[Int], Int) {
+  return push_rest(stack, height, codes, 0)
+}
+
+def push_rest(stack Array[Int], height Int, codes Array[Int], i Int) (Array[Int], Int) {
+  if i == codes.length() {
+    return (stack, height)
+  }
+  return push_rest(stack.append(codes[i]), height + 1, codes, i + 1)
+}
+
+// block / loop / if: block type, then a nested frame.
+def vblock(r Reader, kind Int, stack Array[Int], height Int, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+  const bt = block_type(r, ctx)
+  if bt[0].failed {
+    return bt[0]
+  }
+  const fcur = frames[ftop]
+  var rs = stack
+  var rh = height
+  if kind == 4 {
+    // if consumes its i32 condition before the block's parameters
+    const pc = vpop_expect(stack, height, fcur, 127)
+    if !pc[0] {
+      return bail(bt[0], bt[0].pos, "type mismatch")
+    }
+    rs = pc[2]
+    rh = pc[3]
+  }
+  const e = pops_of(bt[0], rs, rh, fcur, bt[1], bt[1].length())
+  if !e[0] {
+    return bail(bt[0], bt[0].pos, "type mismatch")
+  }
+  // push_ctrl semantics: the popped parameters live INSIDE the frame.
+  const pu = push_all(e[2], e[3], false, bt[1])
+  const nf = Frame.new(kind, bt[1], bt[2], e[3], false)
+  // Truncate to the live prefix first: a bare append lands after
+  // stale popped frames, and frames[ftop + 1] would read the stale
+  // one (found via block.wast's singular body).
+  return vinstrs(bt[0], pu[0], pu[1], trunc_frames(frames, ftop + 1).append(nf), ftop + 1, result_codes, lcs, ctx)
+}
+
+// A block type: (reader, param codes, result codes). 0x40 and the
+// valtype bytes are their own shapes; an s33 index resolves through
+// the module's types (tsigs/tsig_off in the context). Errors travel
+// on the reader's failed flag, like every decode step.
+def block_type(r Reader, ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) (Reader, Array[Int], Array[Int]) {
+  const b = peek(r)
+  if b == 64 {
+    return (skip(r, 1), [], [])
+  }
+  if b == 127 || b == 126 || b == 125 || b == 124 || b == 112 || b == 111 {
+    return (skip(r, 1), [], [b])
+  }
+  const s = s33(r)
+  if s[0].failed {
+    return (s[0], [], [])
+  }
+  const tso = ctx[7]
+  const t = s[1].to_int()
+  if t < 0 || t + 1 >= tso.length() {
+    return (bail(s[0], s[0].pos, "unknown type"), [], [])
+  }
+  const tsg = ctx[6]
+  const lo = tso[t]
+  const hi = tso[t + 1]
+  const pmid = lo + split_scan(tsg, lo, hi, lo)
+  return (s[0], slice_codes(tsg, lo, pmid), slice_codes(tsg, pmid + 1, hi))
+}
+
+def slice_codes(sigs Array[Int], lo Int, hi Int) Array[Int] {
+  return slice_codes_rest(sigs, lo, hi, lo, [])
+}
+
+def slice_codes_rest(sigs Array[Int], lo Int, hi Int, i Int, acc Array[Int]) Array[Int] {
+  if i >= hi {
+    return acc
+  }
+  return slice_codes_rest(sigs, lo, hi, i + 1, acc.append(sigs[i]))
+}
+
+def rev_ints(items Array[Int]) Array[Int] {
+  return rev_rest(items, [], 0)
+}
+
+def rev_rest(items Array[Int], acc Array[Int], i Int) Array[Int] {
+  if i == items.length() {
+    return acc
+  }
+  return rev_rest(items, acc.append(items[items.length() - 1 - i]), i + 1)
+}
+
+def mem_int(items Array[Int], v Int, i Int) Bool {
+  if i == items.length() {
+    return false
+  }
+  if items[i] == v {
+    return true
+  }
+  return mem_int(items, v, i + 1)
+}
+
+def codes_eq(a Array[Int], b Array[Int], i Int) Bool {
+  if i == a.length() {
+    return true
+  }
+  if a[i] != b[i] {
+    return false
+  }
+  return codes_eq(a, b, i + 1)
+}
+
+// The label types a branch to this frame expects: a loop's label is
+// its parameter types; every other frame's is its result types.
+def label_types(f Frame) Array[Int] {
+  if f.kind == 3 {
+    return f.start_types
+  }
+  return f.end_types
+}
+
+// The label depth check: (reader, depth) — depth counts from the top.
+def label_depth(r Reader, ftop Int) (Reader, Int) {
+  const d = u32(r)
+  if d[0].failed {
+    return (d[0], 0)
+  }
+  if d[1] > ftop {
+    return (bail(d[0], d[0].pos, "unknown label"), d[1])
+  }
+  return (d[0], d[1])
+}
+
+// br_table's labels: each must be in range; their arities must agree
+// with the default's (checked against the first).
+// (reader-after-labels, stack, height) — each label pops its own
+// types against the stack and pushes them back; arity must equal the
+// default's.
+def br_table_labels(r Reader, n Int, frames Array[Frame], ftop Int, want Array[Int], stack Array[Int], height Int, f Frame) (Reader, Array[Int], Int) {
+  return bt_rest(r, n, frames, ftop, want, stack, height, f, 0)
+}
+
+def bt_rest(r Reader, n Int, frames Array[Frame], ftop Int, want Array[Int], stack Array[Int], height Int, f Frame, seen Int) (Reader, Array[Int], Int) {
+  if n == 0 {
+    return (r, stack, height)
+  }
+  const d = u32(r)
+  if d[0].failed {
+    return (d[0], stack, height)
+  }
+  if d[1] > ftop {
+    return (bail(d[0], d[0].pos, "unknown label"), stack, height)
+  }
+  const lt = label_types(frames[ftop - d[1]])
+  if lt.length() != want.length() {
+    return (bail(d[0], d[0].pos, "type mismatch"), stack, height)
+  }
+  const e = pops_collect(d[0], stack, height, f, lt, lt.length())
+  if !e[0] {
+    return (bail(d[0], d[0].pos, "type mismatch"), stack, height)
+  }
+  // push_vals(pop_vals(...)): the POPPED values go back in their
+  // original order (collection is pop order, so reverse it) — Unknown
+  // stays polymorphic, so differently-typed labels can coexist.
+  const pu = push_all(e[2], e[3], f.unreachable, rev_ints(e[1]))
+  return bt_rest(d[0], n - 1, frames, ftop, want, pu[0], pu[1], f, seen + 1)
+}
+
+// The frame stack is an Array with a logical top index: pushes append
+// (the copy is the price of persistent arrays), pops just move the
+// top — a rebuild-per-pop made deep nesting quadratic-to-worse in the
+// interpreter (found via block.wast's kitchen-sink module).
+def trunc_frames(items Array[Frame], n Int) Array[Frame] {
+  return trunc_frames_rest(items, n, 0, [])
+}
+
+def trunc_frames_rest(items Array[Frame], n Int, i Int, acc Array[Frame]) Array[Frame] {
+  if i >= n {
+    return acc
+  }
+  return trunc_frames_rest(items, n, i + 1, acc.append(items[i]))
+}
