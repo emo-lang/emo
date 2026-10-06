@@ -197,14 +197,14 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### First, the package stops being inert
 
-- [ ] **T20.1** — *The smoke rule.* **(S)** `runtime/wasm/main.emo`
+- [x] **T20.1** — *The smoke rule.* **(S)** `runtime/wasm/main.emo`
       calls `wasm.smoke()` and prints it; `expected.txt` holds the line;
       `runtime/wasm/dune` adds a `(alias runtest)` rule that runs
       `emo run main.emo` in the sandbox and `diff`s stdout against the
       golden. Deps are `{}`, so this needs no registry, no lockfile and
       no native toolchain. Red when `wasm.emo` stops printing its line,
       which is the point.
-- [ ] **T20.2** — *The runner and the two drivers.* **(S)** The case-list
+- [x] **T20.2** — *The runner and the two drivers.* **(S)** The case-list
       format and its hex codec, `runtime/wasm/internal/corpus.emo`,
       `runtime/wasm/cli.emo` (read a list, walk it, print verdicts and a
       summary), `main.emo` → `testdata/cases.smoke.txt`, `spec.emo` →
@@ -212,7 +212,7 @@ prefix of this list leaves the repo building and `dune test` green.
       rule on the `wasm_spec` alias. Both lists start empty: the
       acceptance is that both aliases run, `dune test` stays green, and
       the summary reports `pending 0`.
-- [ ] **T20.3** — *The vendoring tool and the first corpus.* **(S)**
+- [x] **T20.3** — *The vendoring tool and the first corpus.* **(S)**
       `devtools/vendor-wasm-spec` reads a local wasm-spec checkout
       (revision pinned in `testdata/README.md`), runs
       `wast2json --no-check`, and writes the text case lists; the
@@ -223,71 +223,71 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### Then the decoder, bottom-up
 
-- [ ] **T20.4** — *Failures and the reader.* **(S)** `internal/error.emo`
+- [x] **T20.4** — *Failures and the reader.* **(S)** `internal/error.emo`
       — the diagnosed-failure value (`ok`, `phase`, `offset`, `message`);
       `internal/reader.emo` — a `Bytes` cursor with an offset, `u8` /
       `peek` / `skip` / `remaining`, and a bounds check before every
       access, since the raise it prevents cannot be caught. Fixtures: the
       truncated-read family, claimed from this task on.
-- [ ] **T20.5** — *LEB128.* **(S)** `u32` / `u64` / `s32` / `s64`,
+- [x] **T20.5** — *LEB128.* **(S)** `u32` / `u64` / `s32` / `s64`,
       including the spec's length caps: an over-long or over-wide
       encoding is `malformed`, not a wrapped value. `u64` needs `Int64`
       and its explicit conversions; `u32` stays in `Int`. Fixtures:
       `binary-leb128.wast` plus hand-written boundary vectors (2³²−1,
       the sign-extension forms, the too-long forms). Self-contained —
       the best candidate for a short sitting.
-- [ ] **T20.6** — *The header and the section walk.* **(M)** Magic,
+- [x] **T20.6** — *The header and the section walk.* **(M)** Magic,
       version, section id and size, the ordering and uniqueness rules,
       custom sections skipped, unknown ids rejected, trailing bytes
       after the last section, sizes that overrun the module.
-- [ ] **T20.7** — *The type section, and the model's shape.* **(M)**
+- [x] **T20.7** — *The type section, and the model's shape.* **(M)**
       Value and reference types, function types, limits — and the tag
       tuples and cons lists the rest of the model copies. The
       representation decision in "Provisional decisions" is settled here,
       with the fixture that proves it decodes to what it should.
-- [ ] **T20.8** — *The declaration sections.* **(M)** Function, table,
+- [x] **T20.8** — *The declaration sections.* **(M)** Function, table,
       memory, global, import, and export, with their index spaces and
       the export-name uniqueness rule.
-- [ ] **T20.9** — *Element, data, and constant expressions.* **(M)**
+- [x] **T20.9** — *Element, data, and constant expressions.* **(M)**
       The constant-expression subset as a decoded expression stream, the
       element type, the data segments, and their bounds.
-- [ ] **T20.10** — *The opcode table and the numeric instructions.*
+- [x] **T20.10** — *The opcode table and the numeric instructions.*
       **(M)** The dispatch on the first byte, and the immediates of the
       numeric instructions (`i32.const`, `f64.const`, the reinterpret
       family). Kept to one sitting by taking the table family by family.
-- [ ] **T20.11** — *Parametric, variable, and memory instructions.*
+- [x] **T20.11** — *Parametric, variable, and memory instructions.*
       **(M)** `drop` / `select`, `local.*` / `global.*`, and the memory
       instructions with their alignment and offset immediates.
-- [ ] **T20.12** — *The structured instructions.* **(M)** `block`,
+- [x] **T20.12** — *The structured instructions.* **(M)** `block`,
       `loop`, `if` / `else` / `end` with their block types, `br`,
       `br_if`, `br_table`, and the matching-`end` bookkeeping that makes
       a function body one well-formed expression. Recursion follows the
       nesting, so the tail-call guarantee carries it.
-- [ ] **T20.13** — *The public entry and the valid corpus.* **(S)**
+- [x] **T20.13** — *The public entry and the valid corpus.* **(S)**
       `decode(bytes)` on the package's surface, the decoded module as
       the thing the validator consumes, and the `ok` cases: minimal
       valid modules, including empty and custom-section-only ones.
 
 ### Then the validator
 
-- [ ] **T20.14** — *The context and function typing.* **(M)** The
+- [x] **T20.14** — *The context and function typing.* **(M)** The
       validation context (types, functions, tables, memories, globals),
       index-space checks, and function signature agreement.
-- [ ] **T20.15** — *The type stack.* **(L)** Operand typing for the
+- [x] **T20.15** — *The type stack.* **(L)** Operand typing for the
       plain instructions, including the numeric rules the spec states
       per opcode.
-- [ ] **T20.16** — *Control frames.* **(L)** Block/loop/if typing, label
+- [x] **T20.16** — *Control frames.* **(L)** Block/loop/if typing, label
       depths, branch operand types, and the polymorphic stack after an
       unconditional branch — the part of the spec that is easy to get
       subtly wrong, so its fixtures come first.
-- [ ] **T20.17** — *Cross-section rules.* **(M)** Start function,
+- [x] **T20.17** — *Cross-section rules.* **(M)** Start function,
       element/data offsets against declared limits, table and memory
       limits, global initializer typing, and the last `assert_invalid`
       families.
 
 ### Close-out
 
-- [ ] **T20.18** — *Corpus sweep and close-out.* **(S)** The `wasm_spec`
+- [x] **T20.18** — *Corpus sweep and close-out.* **(S)** The `wasm_spec`
       alias runs the full list with nothing pending; the smoke list
       carries a representative subset; `runtime/wasm/README.md` states
       what the package offers and what it refuses; step 20's acceptance
@@ -304,3 +304,17 @@ prefix of this list leaves the repo building and `dune test` green.
 - No file under `src/` reads anything under `runtime/`, and no file
   under `runtime/` names a compiler module or library — the boundary
   holds in both directions.
+
+## Close-out
+
+All eighteen tasks are done. The full corpus runs green under the
+`wasm_spec` alias (3456 claimed, nothing pending, nothing failed); the
+smoke subset carries forty representative cases through the default
+`dune test`; the package README states the surface, the scope, and the
+boundary. The findings that mattered: the br_table default-index bug
+and the final 0xfc numbering (decode), the logical-top frame stack and
+push_ctrl parameter placement (validation), the tail-accumulator
+workaround for the interpreter's method-on-recursive-result limit
+(language pressure, recorded), and the phase split of the datacount
+rule. `runtime/wasm/README.md` says what the package offers and what
+it refuses.
