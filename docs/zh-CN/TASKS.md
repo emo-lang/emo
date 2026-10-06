@@ -2,7 +2,7 @@
 
 > 中文版,与英文版 [docs/TASKS.md](../TASKS.md) 内容一一对应;更新英文版时请同步更新本文件。
 
-从 `plan/step-01-project-scaffold.md` 到 `plan/step-14-other-targets.md` 汇总而成的编号任务清单。plan 文件仍是规格说明——下面每个任务所属的步骤文件里有完整的目标、范围与验收标准。本文件是进度追踪表。
+从 `plan/step-01-project-scaffold.md` 到 `plan/step-24-c-target.md` 汇总而成的编号任务清单。plan 文件仍是规格说明——下面每个任务所属的步骤文件里有完整的目标、范围与验收标准。本文件是进度追踪表。
 
 ## 使用说明
 
@@ -25,6 +25,7 @@
 | M5 — BEAM 与函数组 | 17–18 | BEAM 目标带上金测梯队;`emo Foo { ... }` 函数组在四个目标上解析并运行。 |
 | M6 — 系统级编程 | 19–21 | 用 Emo 编写的 WebAssembly 运行时:共享系统层,随后是二进制解码器/验证器,再是解释器与 spec 套件金测。 |
 | M7 — EmoOS | 22+ | 同一系统层之上的内核路径:近期是 unikernel 构建路径,远期是裸机代码生成(与引擎分层共用投入)。 |
+| M8 — 自包含托管后端 | 24 | `emo build --target c` 发射 C、自带运行时、直接 C ABI——步骤 23 的评估已排期;解锁自包含工具分发(CHECK.md)。 |
 
 ## 设计闸门
 
@@ -38,6 +39,7 @@
 | 异常捕获语法 | T12.5、步骤 12 验收 | 暂无 catch 形式;仅有未捕获异常报告 |
 | 清单/锁文件文件名、scope 前缀格式、版本区间、deps CLI 命令名 | T10.2、T10.5–T10.6、T10.8 | `package.emo`、`package.lock`、`owner/name`、仅精确版本、`emo deps *` |
 | C FFI 绑定表面语法 | T13.6 | 已落定——`foreign def name(params) Ret = "c_symbol"`,仅 `Float`/`String`/`Bool`,经生成的 C 包装器编组 |
+| 动态世界的回收模型(无追踪 GC) | T24.5 | 临时方案:带显式泄漏说明的 bump/arena(步骤 22 的 M1 画像);在交付长跑程序前于 `CHECK.md` 落定引用计数 vs 有界 arena |
 
 ---
 
@@ -367,3 +369,34 @@
 ## M7 — EmoOS
 
 M6 系统层之上的内核路径。近期:unikernel 构建路径——native 后端已输出 OCaml,MirageOS/solo5 一脉证明该栈可引导——以 `foreign def` FFI 作为机器逃生舱(端口 io、asm 垫片),并真正落地 step 14 笔记中的 `core` 库分层。远期:裸机代码生成,与 wasm 引擎分层化是同一笔投入。内核工作开工时撰写各 step 计划。
+
+### Step 22 — RISC-V 目标(裸机 RV64)· `plan/step-22-riscv64.md`
+
+**前置:** 步骤 01–13(特化 pass);step-14 的 RISC-V 参考笔记是设计记录。
+**完成标准:** `emo build --target riscv64` 产出可在 `qemu-system-riscv64 -machine virt` 下引导的裸机 ELF;核心子集中每个示例的输出与 `emo run` 完全一致(CI 金测);`spawn`/`send`/`receive` 与 `foreign def` 以清晰诊断拒绝;缺 `"riscv64"` 的包在解析门被拒;`dune test` 全绿。
+
+- [ ] **T22.1** — 后端骨架:`--target riscv64` 管线(发射器模块;CLI 分支写出 `main.s`、调 `as`/`ld` 并附生成的链接脚本;`emo run` 在 QEMU 下引导该 ELF);入口桩、BSS 清零、SBI 控制台。金测:hello_world(串口输出与 `emo run` 逐字节一致)。
+- [ ] **T22.2** — 值模型与算术:带标签字的动态表示(`Int64`/`Float64` 装箱单元,Bool/Char 立即数)与 bump 分配器;回绕算术、比较、`if`、整数格式化(`INT64_MIN` 正确);有保证的尾调用编译为 `tail`。金测:fib。
+- [ ] **T22.3** — 动态世界数据结构:元组、数组、Box、枚举、实例 + vtable 分派、闭包与一等函数;带守卫的模式;按 `%g` 浮点规则的插值。金测:objects、language_tour。
+- [ ] **T22.4** — 引导:CI `riscv64_examples` 组(运行器装 QEMU + cross-binutils)、缺 `"riscv64"` 包的解析门拒绝测试、发射期拒绝诊断、收尾。
+
+## M8 — 自包含托管后端
+
+自包含故事的托管半边:Emo 自己的运行时、以 C ABI 作为 FFI 表面、产物二进制不依赖 OCaml 工具链——本里程碑交付后,构建 Emo 程序也不再需要 OCaml 工具链(CHECK.md,工具分发)。步骤 23(`plan/step-23-hosted-native-ffi.md`)是本里程碑的设计记录评估——它是评估而非承载任务的步骤,因此本文件没有步骤 23 段落。上面的 Step 22 仍是 EmoOS 内核路径;两者共享 Step 22 研究中的标签字值模型。
+
+### Step 24 — C 目标(发射 C 代码)· `plan/step-24-c-target.md`
+
+**前置:** 步骤 01–13(IR);设计记录为 `plan/step-23-hosted-native-ffi.md`,本步骤将其排期。
+**完成标准:** `emo build --target c` 发射 C 代码、经系统 `cc` 编译链接为不依赖 OCaml 运行时的独立二进制;金测子集(hello_world、fib、objects、language_tour、shop、pipeline、function_group、bit_ops、bytes、fixed_width、file_read)的输出与 `emo run` 逐字节一致(CI 金测);`foreign def` 经直接 C ABI 跨界;缺 `"c"` 的包在解析门被拒;`dune test` 全绿。
+
+- [x] **T24.1** — 设计闸门关闭(CHECK.md:路线确认发射 C、蹦床方案落定、arena 临时化)与后端骨架:`src/emo_codegen` 中的发射器模块 + 调 `cc` 的 `--target c` CLI 分支;入口桩、托管启动、`println`;`"c"` 进入 `known_targets`,附缺 target 解析门拒绝测试。金测:hello_world。
+- [ ] **T24.2** — 尾调用与整数核心:蹦床(自/互尾调用,`return` 编译为跳往 epilogue 的分支——顺带修复现有后端循环基准慢约 4 倍的缺陷);`uint64_t` 上的回绕 `Int64`;比较、`if`、`INT64_MIN` 格式化正确。金测:fib;100 万层 `count_down` 在 C 栈上保持平坦;`loops_tail` 数字记入 `benchmarks/results.md`。
+- [ ] **T24.3** — 标量运行时:长度前缀字符串(仅在 FFI 边界 NUL 结尾)、`%g` 浮点规则、`Bool`/`Char`、插值、标量相等。金测:numerics、if_expr。
+- [ ] **T24.4** — 动态值模型:Step 22 的标签字(8 字节对齐堆块、3 个低位标签位;`Int64`/`Float64` 装箱双字单元;不做 NaN-boxing);bump/arena 分配器(临时画像);元组、值语义数组、`Box`。金测:objects。
+- [ ] **T24.5** — 类、枚举、接口、闭包:编译期 vtable 的实例、枚举单例、结构化 `is()`、带守卫的模式;合并前回收模型决策须已落在 CHECK.md。金测:language_tour。
+- [ ] **T24.6** — 模块与异常:跨文件模块引用、`raise`、未捕获异常退出码(`begin`/`catch`/`ensure` 仍未排期——不在范围内)。金测:shop、function_group(经 IR 降级免费获得——认领金测)。
+- [ ] **T24.7** — 系统层表面:带小端访问器的 `Bytes`、位运算符、`Byte`、`Int64`/`Float64` 位转换。金测:bit_ops、bytes、fixed_width。
+- [ ] **T24.8** — 直接 C ABI 上的 C FFI 第 1–3 级(不再需要包装器生成器):标量、随语言落地的宽度类型、不透明句柄 + 拷贝缓冲区;能力表中 `c` 翻转为支持 `foreign def`。金测:libm `sqrt` fixture 与一个小型 C 不透明句柄 fixture。
+- [ ] **T24.9** — 进程与协作式调度器:`do` / `<-` / `receive`、邮箱、选择性 receive、`self_pid`、`halt`;单线程协作循环;执行轨迹与 `emo_sched_det` 做 diff。金测:pipeline、showcase。
+- [ ] **T24.10** — 托管 IO 与标准库元数据:`file.read`/`file.write`、TCP/UDP socket、HTTP 客户端/服务器;标准库 `targets` 加 `"c"`。金测:file_read、tcp_echo、http_roundtrip。
+- [ ] **T24.11** — 引导、基准、收尾:CI `c_examples` 组;特化(去装箱、直接分派),热循环加 `restrict`;`benchmarks/results.md` 增加 `c` 列;`native` → `ocaml` 改名在此或紧随其后的独立步骤;收尾记录决策。

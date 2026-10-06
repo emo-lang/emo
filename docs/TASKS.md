@@ -1,7 +1,7 @@
 # Development Tasks
 
 A numbered checklist of every implementation task, consolidated from
-`plan/step-01-project-scaffold.md` through `plan/step-14-other-targets.md`.
+`plan/step-01-project-scaffold.md` through `plan/step-24-c-target.md`.
 The plan files remain the specs — each task below belongs to a step that
 holds its full goal, scope, and acceptance details. This file is the tracker.
 
@@ -32,6 +32,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M5 — BEAM & function groups | 17–18 | The BEAM target ships its golden tier; `emo Foo { ... }` function groups resolve and run on all four targets. |
 | M6 — Systems programming | 19–21 | A WebAssembly runtime written in Emo: the shared systems layer, then the binary decoder/validator, then the interpreter with spec-suite goldens. |
 | M7 — EmoOS | 22+ | The kernel path on the same systems layer: a unikernel build path (near term), then freestanding codegen (shared with the engine tiering). |
+| M8 — Self-contained hosted backend | 24 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — step 23's assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
 
 ## Design gates
 
@@ -46,6 +47,7 @@ before starting the gated work:
 | Exception catch syntax | T12.5, Step 12 acceptance | Catch form absent; uncaught reporting only |
 | Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T10.2, T10.5–T10.6, T10.8 | `package.emo`, `package.lock`, `owner/name`, exact pins only, `emo deps *` |
 | C FFI binding-surface syntax | T13.6 | settled — `foreign def name(params) Ret = "c_symbol"`, `Float`/`String`/`Bool` only, through generated C wrappers |
+| Reclamation model for the dynamic world (no tracing GC) | T24.5 | provisional: bump/arena with documented leakage (step 22's M1 profile); settle reference counting vs bounded arenas in `CHECK.md` before long-running programs ship |
 
 ---
 
@@ -415,3 +417,32 @@ green.
       cross-binutils on the runner), the resolution-gate refusal test
       for packages lacking `"riscv64"`, the emission-time refusal
       diagnostics, close-out.
+
+## M8 — Self-contained hosted backend
+
+The hosted half of the self-contained story: Emo's own runtime, the
+C ABI as the FFI surface, and no OCaml toolchain in the produced
+binary — once this ships, building Emo programs no longer requires an
+OCaml toolchain either (CHECK.md, tool distribution). Step 23
+(`plan/step-23-hosted-native-ffi.md`) is this milestone's
+design-record assessment — an assessment, not a task-bearing step,
+which is why no Step 23 section appears in this file. Step 22 above
+stays the EmoOS kernel path; the two share the tagged-word value
+model from step 22's study.
+
+### Step 24 — C target (emit C) · `plan/step-24-c-target.md`
+
+**Prereq:** Steps 01–13 (the IR); `plan/step-23-hosted-native-ffi.md` is the design record this step schedules.
+**Done when:** `emo build --target c` emits C, compiles with the system `cc`, and links a standalone binary with no OCaml runtime; the golden subset (hello_world, fib, objects, language_tour, shop, pipeline, function_group, bit_ops, bytes, fixed_width, file_read) prints byte-for-byte what `emo run` prints (golden in CI); `foreign def` crosses the direct C ABI; a package lacking `"c"` fails resolution; `dune test` green.
+
+- [x] **T24.1** — Design-gate closure (CHECK.md: route confirmed emit-C, trampoline settled, arena provisional) and the backend skeleton: the emitter module in `src/emo_codegen` + the `--target c` CLI arm invoking `cc`; entry stub, hosted startup, `println`; `"c"` enters `known_targets` with the resolution-gate refusal test. Golden: hello_world.
+- [ ] **T24.2** — Tail calls and the integer core: the trampoline (self/mutual tail calls, `return` as branch-to-epilogue — the fix for the current backend's ~4x loop regression); wrap-around `Int64` on `uint64_t`; comparisons, `if`, `INT64_MIN`-correct formatting. Goldens: fib; the 1M-deep `count_down` stays flat on the C stack; `loops_tail` recorded in `benchmarks/results.md`.
+- [ ] **T24.3** — The scalar runtime: length-prefixed strings (NUL-terminated only at the FFI boundary), the `%g` float rule, `Bool`/`Char`, interpolation, scalar equality. Goldens: numerics, if_expr.
+- [ ] **T24.4** — The dynamic value model: step 22's tagged word (8-byte-aligned cells, 3 tag bits; `Int64`/`Float64` boxed two-word cells; no NaN-boxing), bump/arena allocator (provisional), tuples, value-semantic arrays, `Box`. Golden: objects.
+- [ ] **T24.5** — Classes, enums, interfaces, closures: instances with compile-time vtables, enum singletons, structural `is()`, patterns with guards; the reclamation decision lands in CHECK.md before this merges. Golden: language_tour.
+- [ ] **T24.6** — Modules and exceptions: multi-file module references, `raise`, uncaught-exception exit codes (`begin`/`catch`/`ensure` stays unscheduled — out of scope). Goldens: shop, function_group (free via IR lowering — claim the golden).
+- [ ] **T24.7** — The systems-layer surface: `Bytes` with little-endian accessors, the bitwise operators, `Byte`, `Int64`/`Float64` bit-casts. Goldens: bit_ops, bytes, fixed_width.
+- [ ] **T24.8** — C FFI rungs 1–3 on the direct C ABI (no wrapper generator): scalars, width types as they land, opaque handles + copied buffers; the capability table flips `c` to honoring `foreign def`. Goldens: a libm `sqrt` fixture and a tiny C opaque-handle fixture under `test/`.
+- [ ] **T24.9** — Processes and the cooperative scheduler: `do` / `<-` / `receive`, mailboxes, selective receive, `self_pid`, `halt`; single-threaded cooperative loop; traces diffed against `emo_sched_det`. Goldens: pipeline, showcase.
+- [ ] **T24.10** — Hosted IO and stdlib metadata: `file.read`/`file.write`, TCP/UDP sockets, the HTTP client/server over the hosted OS; stdlib gains `"c"` in `targets`. Goldens: file_read, tcp_echo, http_roundtrip.
+- [ ] **T24.11** — Bootstrap, benchmarks, close-out: the `c_examples` CI group; specialization (unboxing, direct dispatch) with `restrict` on hot loops; `benchmarks/results.md` gains the `c` column; the `native` → `ocaml` rename lands here or in its own step; close-out records the decisions.
