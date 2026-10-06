@@ -82,7 +82,7 @@ def welcome(g Greeter) String {
 
 - Interfaces belong to the consumer: an implementation does not need to know the interface exists.
 - Interfaces are compile-time contracts: the checker verifies shapes at annotated positions, while runtime dispatch stays duck-typed with zero overhead.
-- Narrowing applies uniformly: `if g.is(Greeter) { ... }` works for interfaces as it does for classes.
+- Narrowing goes to a class target: `if g.is(English)` gives `g` the class `English` inside the branch. An interface target (`g.is(Greeter)`) is a runtime shape test — it narrows an `Unknown` value to the interface, and leaves a value that already has a type unchanged, since Emo has no intersection types.
 
 ### Function Groups
 
@@ -170,7 +170,7 @@ Emo is gradually typed: **types are dynamic at runtime, but statically checked a
 - **Float types are width-explicit: the default float type is `Float64`.** It is IEEE 754 binary64 on every target, so floating-point behavior is identical everywhere. Unannotated float literals are `Float64`; there is no width-less `Float` spelling.
 - **Numeric literals** are decimal, hexadecimal (`0xFF`), binary (`0b1010_1010`), or octal (`0o755`), with `_` as a digit separator (`1_000_000`). There is no leading-zero octal and no width suffix — bare literals stay `Int64`/`Float64`.
 - The compiler has a built-in type-checking pass. Annotations are optional across the language — except on function signatures, where parameter types are explicit and an omitted return type declares Void — and unannotated code is still inferred and checked, reporting only errors that are certain; annotated code is checked strictly.
-- Typing is structural and flow-sensitive — after `if user.is(Admin)`, `user` is narrowed to `Admin` — matching duck-typing intuition.
+- Typing is structural, and an `is` test narrows — after `if user.is(Admin)`, `user` is an `Admin` inside the branch, and never past it — matching duck-typing intuition.
 - There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as annotation vocabulary (e.g. `Array[User]`, `Box[Int64]`) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all. A parameter that receives a block is annotated `Block`.
 - Strictness defaults high and can be relaxed explicitly.
 - Type information feeds back into performance: modules with sufficiently complete type knowledge can be specialized (unboxed representations, direct dispatch) on the native backend.

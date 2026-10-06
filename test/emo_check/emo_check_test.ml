@@ -313,6 +313,93 @@ if first.is(User) {
 first = 1|}
         in
         Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "an interface narrows to a conforming class" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|interface Greeter {
+  def greet() String
+}
+
+class Machine {
+  def greet() String {
+    return "beep"
+  }
+
+  def beep() String {
+    return "b"
+  }
+}
+
+def welcome(g Greeter) String {
+  if g.is(Machine) {
+    return g.beep()
+  }
+  return g.greet()
+}|})));
+    tc "an interface cannot narrow to a class it does not fit" (fun () ->
+        let diagnostics =
+          check
+            {|interface Greeter {
+  def greet() String
+}
+
+class Silent {
+  def init() {}
+}
+
+def probe(g Greeter) String {
+  if g.is(Silent) {
+    return "yes"
+  }
+  return "no"
+}|}
+        in
+        if not (has_code diagnostics "E4011") then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check bool) "E4011" true (has_code diagnostics "E4011"));
+    tc "a conforming class keeps its own type through an interface test"
+      (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|interface Greeter {
+  def greet() String
+}
+
+class English {
+  def greet() String {
+    return "hello"
+  }
+
+  def shout() String {
+    return "HELLO"
+  }
+}
+
+def probe(e English) String {
+  if e.is(Greeter) {
+    return e.shout()
+  }
+  return e.greet()
+}|})));
+    tc "an unknown value narrows to an interface" (fun () ->
+        let diagnostics =
+          check
+            {|interface Greeter {
+  def greet() String
+}
+
+var anything = [1, "a"][0]
+if anything.is(Greeter) {
+  anything = 1
+}|}
+        in
+        Alcotest.(check bool)
+          "E4004 proves the narrowing" true
+          (has_code diagnostics "E4004"));
   ]
 
 let () =
@@ -360,7 +447,8 @@ def welcome(g Greeter) String {
 welcome(English.new())|})));
     (* Missing-method and wrong-shape call-site rejections land with the
        call-site checks (T8.7). *)
-    tc "narrowing to an interface checks structurally" (fun () ->
+    tc "a class that does not conform cannot narrow to an interface"
+      (fun () ->
         let diagnostics =
           check
             {|interface Greeter {

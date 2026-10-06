@@ -156,7 +156,7 @@ Close-out note: promote the provisional decisions that M1 proved (`print`, trail
 - [x] **T8.1** — Type representation + annotation collection pass.
 - [x] **T8.2** — Statement/expression checking with `Unknown` discipline.
 - [x] **T8.3** — Signature checks; arrow-block inference.
-- [x] **T8.4** — Flow environments with narrowing on `is()`.
+- [x] **T8.4** — Branch-scoped environments with narrowing on `is()`.
 - [x] **T8.5** — Structural interface conformance.
 - [x] **T8.6** — `var`-escape detection.
 - [x] **T8.7** — Call-site checking; named-argument validation.
