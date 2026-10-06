@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Published under the `MindWork` publisher.
+- Extension display name changed to "Emo Lsp".
+
 ## 0.1.0
 
 - Initial release.
