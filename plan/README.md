@@ -65,5 +65,5 @@ incrementally shippable steps — one file per step, executed in order.
 | 18 | Function groups (`emo` keyword) | done |
 | 19 | The systems layer (wasm runtime + EmoOS primitives) | done |
 | 20 | Wasm runtime: decoder & validator | done |
-| 21 | Wasm runtime: interpreter core & spec goldens | not started (plan written at start) |
+| 21 | Wasm runtime: interpreter core & spec goldens | in progress (tasks written) |
 | 22 | RISC-V target (freestanding RV64) | not started (tasks written) |
