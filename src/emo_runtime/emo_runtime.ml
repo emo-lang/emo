@@ -454,6 +454,24 @@ let method_call self name args =
   | Emo_eval.Float f, "to_bits" ->
       none_expected ();
       Emo_eval.Int64 (Int64.bits_of_float f)
+  | Emo_eval.Float f, "sqrt" ->
+      none_expected ();
+      Emo_eval.Float (Float.sqrt f)
+  | Emo_eval.Float f, "floor" ->
+      none_expected ();
+      Emo_eval.Float (Float.floor f)
+  | Emo_eval.Float f, "ceil" ->
+      none_expected ();
+      Emo_eval.Float (Float.ceil f)
+  | Emo_eval.Float f, "trunc" ->
+      none_expected ();
+      Emo_eval.Float (Float.trunc f)
+  | Emo_eval.Float f, "to_int64" ->
+      none_expected ();
+      Emo_eval.Int64 (Int64.of_float f)
+  | Emo_eval.Int64 n, "to_float64" ->
+      none_expected ();
+      Emo_eval.Float (Int64.to_float n)
   | _, "to_string" ->
       none_expected ();
       Emo_eval.String (Emo_eval.to_string self)

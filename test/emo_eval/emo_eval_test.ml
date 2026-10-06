@@ -198,6 +198,13 @@ let expression_tests =
         check_value "float div" (Emo_eval.Float 3.5) "7.0 / 2";
         let diagnostic = eval_err "1 / 0" in
         Alcotest.(check string) "code" "E3005" (code_of diagnostic));
+    tc "float math and conversion methods" (fun () ->
+        check_value "sqrt" (Emo_eval.Float 1.5) "2.25.sqrt()";
+        check_value "floor" (Emo_eval.Float (-2.0)) "(0.0 - 1.5).floor()";
+        check_value "ceil" (Emo_eval.Float (-1.0)) "(0.0 - 1.5).ceil()";
+        check_value "trunc" (Emo_eval.Float (-1.0)) "(0.0 - 1.5).trunc()";
+        check_value "to_int64" (Emo_eval.Int64 2L) "2.9.to_int64()";
+        check_value "to_float64" (Emo_eval.Float 3.0) "3.to_float64()");
     tc "string concatenation is +" (fun () ->
         check_value "concat" (Emo_eval.String "ab") "\"a\" + \"b\"";
         let diagnostic = eval_err "\"a\" + 1" in

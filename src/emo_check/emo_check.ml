@@ -1151,6 +1151,12 @@ and check_method_call ctx env span recv mname args : t =
     | Int64, "to_byte" -> builtin0 Byte
     | Byte, "to_int64" -> builtin0 Int64
     | Float64, "to_bits" -> builtin0 Int64
+    | Float64, "sqrt" -> builtin0 Float64
+    | Float64, "floor" -> builtin0 Float64
+    | Float64, "ceil" -> builtin0 Float64
+    | Float64, "trunc" -> builtin0 Float64
+    | Float64, "to_int64" -> builtin0 Int64
+    | Int64, "to_float64" -> builtin0 Float64
     | Bytes, "length" -> builtin0 Int64
     | Bytes, "get" -> (
         match arg_values with

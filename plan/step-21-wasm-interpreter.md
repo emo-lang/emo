@@ -138,12 +138,12 @@ of these is a task here; they are the gate's raw material.
   and correct, and the corpus is small — but the interpreter is the
   first in-repo consumer with a hot inner loop that allocates per
   step. If the sweeps run slow, the evidence lands here.
-- **Float math and conversion primitives.** The float families need
-  `sqrt`, `floor`, `ceil`, `trunc`, `nearest`, and float ↔ int
-  conversion; the language has none (only `foreign def`, native-only
-  and unavailable under `emo run`), so T21.5 landed the bridge, moves,
-  and comparisons and left the conversions/rounding as a residual. The
-  gate record is in `CHECK.md`.
+- **Float math and conversion primitives.** The float families needed
+  `sqrt`, `floor`, `ceil`, `trunc`, and float ↔ int conversion; the
+  language had none. The gate settled them into the core surface
+  (`Float64.sqrt`/`floor`/`ceil`/`trunc`, `Float64.to_int64`,
+  `Int64.to_float64`; `nearest` built in Emo), so T21.5's conversion
+  half can land. `CHECK.md` carries the record.
 - **`Int32` / `Float32`.** The interpreter is a second consumer for
   both (the backends were the first — they mask and convert too), but
   "two consumers doing the same workaround" is an argument the gate
