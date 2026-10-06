@@ -109,11 +109,14 @@ def shape_error(parts Array[String]) String {
     return "unknown-command"
   }
   if cmd == "module" {
-    if parts.length() != 4 {
+    if parts.length() != 5 {
       return "module-arity"
     }
     if !internal.corpus.hex_ok(parts[3]) {
       return "module-hex"
+    }
+    if parts[4] != "." && !internal.corpus.hex_ok(parts[4]) {
+      return "module-name"
     }
     return ""
   }
@@ -176,17 +179,18 @@ def expected_ok(parts Array[String], i Int64) String {
 
 // ---- the runner ----
 //
-// Walks a list and reports the same claimed/pending/failed summary as
-// step 20's case runner. Every line is shape-checked (a bad line is a
-// corpus bug, counted failed); a pending line is skipped. A claimed
-// command is where execution will land: the interpreter replaces the
-// `undecided` line from T21.7 onward.
+// Walk a run list and execute the claimed commands: `module`
+// instantiates, `register` binds an instance name, and `invoke`/`get`
+// runs an export and compares the result (or the trap) with the
+// expected words. Pending commands are skipped but counted, and only a
+// failure prints a line, so a passing run's output is the summary.
 
 def run(list_path String) Int64 {
-  return walk(file_read(list_path).split("\n"), 0, 0, 0, 0)
+  internal.instance.reset_all()
+  return walk(file_read(list_path).split("\n"), 0, 0, 0, 0, -1, [], [])
 }
 
-def walk(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64) Int64 {
+def walk(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64, last Int64, names Array[String], insts Array[Int64]) Int64 {
   if i == lines.length() {
     println(
       "claimed " + claimed.to_string() + ", pending " + pending.to_string()
@@ -194,22 +198,208 @@ def walk(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int6
     return failed
   }
   if lines[i].trim().length() == 0 {
-    return walk(lines, i + 1, claimed, pending, failed)
+    return walk(lines, i + 1, claimed, pending, failed, last, names, insts)
   }
-  return walk_line(lines, i, claimed, pending, failed)
+  return walk_line(lines, i, claimed, pending, failed, last, names, insts)
 }
 
-def walk_line(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64) Int64 {
+def walk_line(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64, last Int64, names Array[String], insts Array[Int64]) Int64 {
   const parts = lines[i].split(" ")
   const problem = shape_error(parts)
   if problem != "" {
     println(parts[0] + " " + problem)
-    return walk(lines, i + 1, claimed, pending + 1, failed + 1)
+    return walk(lines, i + 1, claimed, pending + 1, failed + 1, last, names, insts)
   }
   if parts[1] == "pending" {
-    return walk(lines, i + 1, claimed, pending + 1, failed)
+    return walk(lines, i + 1, claimed, pending + 1, failed, last, names, insts)
   }
-  // A claimed command. Execution lands with the interpreter (T21.7+).
-  println(parts[0] + " " + parts[1] + " undecided")
-  return walk(lines, i + 1, claimed + 1, pending, failed + 1)
+  const r = execute(parts, last, names, insts)
+  var failed_now = failed
+  if !r[0] {
+    println(parts[0] + " " + parts[1] + " FAILED")
+    failed_now = failed + 1
+  }
+  return walk(lines, i + 1, claimed + 1, pending, failed_now, r[1], r[2], r[3])
+}
+
+def execute(parts Array[String], last Int64, names Array[String], insts Array[Int64]) (Bool, Int64, Array[String], Array[Int64]) {
+  const cmd = parts[2]
+  if cmd == "module" {
+    return exec_module(parts, last, names, insts)
+  }
+  if cmd == "register" {
+    return exec_register(parts, last, names, insts)
+  }
+  return exec_action(parts, last, names, insts)
+}
+
+def is_link_error(msg String) Bool {
+  return msg.starts_with("unknown import") || msg == "incompatible import type"
+}
+
+def exec_module(parts Array[String], last Int64, names Array[String], insts Array[Int64]) (Bool, Int64, Array[String], Array[Int64]) {
+  const lr = wasm.load(internal.corpus.decode_hex(parts[3]))
+  var actual = "ok"
+  var inst = -1
+  if !lr[0] {
+    actual = lr[1]
+  } else {
+    const ir = internal.instance.instantiate(lr[4])
+    if !ir[0] {
+      if is_link_error(ir[1]) {
+        actual = "unlinkable"
+      } else {
+        actual = "uninstantiable"
+      }
+    } else {
+      inst = ir[2]
+    }
+  }
+  if actual != parts[1] {
+    return (false, last, names, insts)
+  }
+  if inst >= 0 && parts[4] != "." {
+    return (true, inst, names.append(hex_str(parts[4])), insts.append(inst))
+  }
+  var last2 = last
+  if inst >= 0 {
+    last2 = inst
+  }
+  return (true, last2, names, insts)
+}
+
+def exec_register(parts Array[String], last Int64, names Array[String], insts Array[Int64]) (Bool, Int64, Array[String], Array[Int64]) {
+  const inst = resolve_inst(parts[3], last, names, insts)
+  if inst < 0 {
+    return (false, last, names, insts)
+  }
+  internal.instance.register_instance(inst, hex_str(parts[4]))
+  return (true, last, names, insts)
+}
+
+def resolve_inst(ref String, last Int64, names Array[String], insts Array[Int64]) Int64 {
+  if ref == "." {
+    return last
+  }
+  if ref.starts_with("@") {
+    return find_name(hex_str(tail(ref, 1)), names, insts, 0)
+  }
+  return find_name(hex_str(ref), names, insts, 0)
+}
+
+def find_name(name String, names Array[String], insts Array[Int64], i Int64) Int64 {
+  if i >= names.length() {
+    return -1
+  }
+  if names[i] == name {
+    return insts[i]
+  }
+  return find_name(name, names, insts, i + 1)
+}
+
+def exec_action(parts Array[String], last Int64, names Array[String], insts Array[Int64]) (Bool, Int64, Array[String], Array[Int64]) {
+  const inst = resolve_inst(parts[3], last, names, insts)
+  if inst < 0 {
+    return (false, last, names, insts)
+  }
+  const export_name = hex_str(parts[4])
+  const args = parse_args(parts, 5, [])
+  const eq = find_eq(parts, 5)
+  const words = words_from(parts, eq)
+  const verdict = parts[1]
+  const r = internal.instance.call(inst, export_name, args)
+  if verdict == "trap" {
+    return (!r[0], last, names, insts)
+  }
+  if !r[0] {
+    return (false, last, names, insts)
+  }
+  if verdict == "ok" {
+    return (true, last, names, insts)
+  }
+  if r[1].length() != words.length() {
+    return (false, last, names, insts)
+  }
+  return (match_all(r[1], words, 0), last, names, insts)
+}
+
+def match_all(results Array[(Int64, Int64)], words Array[String], i Int64) Bool {
+  if i >= results.length() {
+    return true
+  }
+  if !internal.value.matches(results[i], words[i]) {
+    return false
+  }
+  return match_all(results, words, i + 1)
+}
+
+def find_eq(parts Array[String], i Int64) Int64 {
+  if i >= parts.length() {
+    return -1
+  }
+  if parts[i] == "=" {
+    return i
+  }
+  return find_eq(parts, i + 1)
+}
+
+def words_from(parts Array[String], eq Int64) Array[String] {
+  if eq < 0 {
+    return []
+  }
+  return collect_words(parts, eq + 1, [])
+}
+
+def parse_args(parts Array[String], i Int64, acc Array[(Int64, Int64)]) Array[(Int64, Int64)] {
+  if i >= parts.length() {
+    return acc
+  }
+  if parts[i] == "=" {
+    return acc
+  }
+  return parse_args(parts, i + 1, acc.append(parse_value(parts[i])))
+}
+
+def collect_words(parts Array[String], i Int64, acc Array[String]) Array[String] {
+  if i >= parts.length() {
+    return acc
+  }
+  return collect_words(parts, i + 1, acc.append(parts[i]))
+}
+
+def parse_value(word String) (Int64, Int64) {
+  if word.starts_with("i:") {
+    return (127, mask32(internal.value.parse_dec(tail(word, 2))))
+  }
+  if word.starts_with("I:") {
+    return (126, internal.value.parse_dec(tail(word, 2)))
+  }
+  if word.starts_with("f:") {
+    return (125, mask32(internal.value.parse_dec(tail(word, 2))))
+  }
+  if word.starts_with("F:") {
+    return (124, internal.value.parse_dec(tail(word, 2)))
+  }
+  if word == "ref.null" {
+    return (112, -1)
+  }
+  if word.starts_with("ref.extern:") {
+    return (111, internal.value.parse_dec(tail(word, 11)))
+  }
+  if word.starts_with("ref.func:") {
+    return (112, internal.value.parse_dec(tail(word, 9)))
+  }
+  return (127, 0)
+}
+
+def tail(word String, n Int64) String {
+  return word.substring(n, word.length() - n)
+}
+
+def hex_str(hex String) String {
+  return internal.corpus.decode_hex(hex).to_string()
+}
+
+def mask32(x Int64) Int64 {
+  return x & 4294967295
 }

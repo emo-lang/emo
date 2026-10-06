@@ -1,1 +1,1 @@
-claimed 0, pending 58, failed 0
+claimed 40, pending 18, failed 0

@@ -367,7 +367,7 @@ The boundaries that keep the in-repo runtime from becoming an in-repo language �
 - [x] **T21.7** — The frame machine: the operand arena of u64 slots, locals and the variable instructions, structured control by recursion with branches as unwind signals, `call`/`call_indirect` with their traps, `return`, `unreachable`. A `fac` fixture proves the tail-call chain.
 - [x] **T21.8** — Instantiation and linking: import resolution through the register namespace and host, global initializers, segment layout with trap-on-overflow (`assert_uninstantiable` fails here, store discarded), the start function, `register`. Link failures for missing or mismatched imports.
 - [x] **T21.9** — The `spectest` host module: the print functions, typed globals, table, and memory behind the same import interface.
-- [ ] **T21.10** — Sweep I: the run families claimed in order — integers, floats, conversions, control flow, calls — each flip its own sitting; residuals stay pending.
+- [x] **T21.10** — Sweep I: the run families claimed in order — integers, floats, conversions, control flow, calls — each flip its own sitting; residuals stay pending.
 - [ ] **T21.11** — Sweep II: addressing and endianness, memory and table operations, segment initialization, linking through the register namespace, imports through spectest, the trap cases, and the leftovers — the run list ends at zero pending and zero failed.
 - [ ] **T21.12** — Close-out: the run-list smoke slice rides `dune test`, `runtime/wasm/README.md` grows the execution surface, acceptance recorded here and in `docs/TASKS.md` (both languages).
 

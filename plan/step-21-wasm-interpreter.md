@@ -254,7 +254,7 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### Then the sweeps
 
-- [ ] **T21.10** — *Sweep I: numbers, control, calls.* **(L)** Claim
+- [x] **T21.10** — *Sweep I: numbers, control, calls.* **(L)** Claim
       the run-list families in order — the integer and float suites,
       conversions, `if` / `br` / `br_table` / `loop`, `call` /
       `call_indirect`, `fac`, `forward`, `stack`. Each family's flip
