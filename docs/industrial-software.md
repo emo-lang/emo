@@ -135,6 +135,45 @@ solver, or any kernel over an array is not expressible today, and the
 specialized numeric path that would carry an in-language kernel is
 presently slower than its own fallback.
 
+## A terminology note: what "no GC" means
+
+"GC" is used two ways, and the difference matters for this assessment.
+In the academic sense, garbage collection is any automatic reclamation,
+and **reference counting is one of its two families**. Swift and
+Objective-C ship automatic reference counting and advertise "no GC" in
+the industrial sense, which means *no tracing collector*. The industrial
+sense is the one that carries guarantees:
+
+- no stop-the-world pauses, and reclamation at the last release
+  (deterministic destruction);
+- no root scanning, stack maps, or safepoints — the runtime never has to
+  walk the call stack;
+- no heap headroom needed for a collector to make progress;
+- addresses stay stable.
+
+Reference counting delivers those, but it is neither free nor a tracing
+collector: it cannot reclaim reference cycles (weak references or a
+cycle collector are owed), it debits every pointer write, and a large
+object graph can still fall in one cascading release.
+
+Why it matters here:
+
+- **FFI.** A tracing collector must enumerate every root, and roots held
+  on the C side of an FFI boundary are nearly impossible to enumerate;
+  reference counting and arenas do not have that problem. This is the
+  real reason "no GC" helps a language that wants to sit next to C.
+- **Bare metal.** No root scanning means no precise stack maps — a far
+  smaller runtime for the `riscv64` target.
+- **Emo's semantics.** Immutable arrays and value-type instances make
+  reference cycles rare, which is the weakness reference counting would
+  otherwise inherit; `Box`, mutually referencing instances, and mailbox
+  queues are where a policy is still owed.
+
+The positioning conclusion is the one already stated: no-GC is a
+**latency, predictability, and bare-metal** argument. It is not an HPC
+entry ticket — the probe above shows the HPC gaps are the FFI data
+channel, vectorization, and parallelism, not the collector.
+
 ## What stands between Emo and this market
 
 In priority order:
