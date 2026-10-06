@@ -187,10 +187,20 @@ def expected_ok(parts Array[String], i Int64) String {
 
 def run(list_path String) Int64 {
   internal.instance.reset_all()
-  return walk(file_read(list_path).split("\n"), 0, 0, 0, 0, -1, [], [])
+  return walk(file_read(list_path).split("\n"), 0, 0, 0, 0, -1, [], [], "")
 }
 
-def walk(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64, last Int64, names Array[String], insts Array[Int64]) Int64 {
+// A fresh file gets a fresh register namespace and host, as the spec
+// runs each `.wast` independently.
+def file_of(name String) String {
+  const c = name.index_of(":")
+  if c < 0 {
+    return name
+  }
+  return name.substring(0, c)
+}
+
+def walk(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64, last Int64, names Array[String], insts Array[Int64], cur_file String) Int64 {
   if i == lines.length() {
     println(
       "claimed " + claimed.to_string() + ", pending " + pending.to_string()
@@ -198,20 +208,25 @@ def walk(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int6
     return failed
   }
   if lines[i].trim().length() == 0 {
-    return walk(lines, i + 1, claimed, pending, failed, last, names, insts)
+    return walk(lines, i + 1, claimed, pending, failed, last, names, insts, cur_file)
   }
-  return walk_line(lines, i, claimed, pending, failed, last, names, insts)
+  const file = file_of(lines[i].split(" ")[0])
+  if file != cur_file {
+    internal.instance.reset_all()
+    return walk(lines, i, claimed, pending, failed, -1, [], [], file)
+  }
+  return walk_line(lines, i, claimed, pending, failed, last, names, insts, cur_file)
 }
 
-def walk_line(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64, last Int64, names Array[String], insts Array[Int64]) Int64 {
+def walk_line(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64, last Int64, names Array[String], insts Array[Int64], cur_file String) Int64 {
   const parts = lines[i].split(" ")
   const problem = shape_error(parts)
   if problem != "" {
     println(parts[0] + " " + problem)
-    return walk(lines, i + 1, claimed, pending + 1, failed + 1, last, names, insts)
+    return walk(lines, i + 1, claimed, pending + 1, failed + 1, last, names, insts, cur_file)
   }
   if parts[1] == "pending" {
-    return walk(lines, i + 1, claimed, pending + 1, failed, last, names, insts)
+    return walk(lines, i + 1, claimed, pending + 1, failed, last, names, insts, cur_file)
   }
   const r = execute(parts, last, names, insts)
   var failed_now = failed
@@ -219,7 +234,7 @@ def walk_line(lines Array[String], i Int64, claimed Int64, pending Int64, failed
     println(parts[0] + " " + parts[1] + " FAILED")
     failed_now = failed + 1
   }
-  return walk(lines, i + 1, claimed + 1, pending, failed_now, r[1], r[2], r[3])
+  return walk(lines, i + 1, claimed + 1, pending, failed_now, r[1], r[2], r[3], cur_file)
 }
 
 def execute(parts Array[String], last Int64, names Array[String], insts Array[Int64]) (Bool, Int64, Array[String], Array[Int64]) {

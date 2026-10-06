@@ -17,7 +17,7 @@ tbl.oob trap:out of bounds table access
 tbl.grow 4
 tbl.grow.cap false
 tbl.fill 112:7
-tbl.copy 112:-1
+tbl.copy 112:7
 global.get 127:5
 global.set 127:9
 global.immutable false
