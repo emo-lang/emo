@@ -1,12 +1,18 @@
 # The Emo-written WebAssembly runtime
 
-This package is a WebAssembly binary decoder and validator written in
-Emo, the way wasmtime is written in Rust. Step 20 of the language plan
-grew it; the interpreter core is the next rung.
+This package is a WebAssembly runtime — decoder, validator, and
+interpreter — written in Emo, the way wasmtime is written in Rust.
+Step 20 of the language plan grew the decoder and validator; step 21
+the interpreter, the linking layer, and the `spectest` host.
 
 ## What it offers
 
-One entry point on the package surface:
+Two entry points on the package surface:
+
+- `wasm.load(bytes)` — validate and materialize a module: the step-20
+  verdict, plus a handle to the loaded module on success. The module
+  records stay inside the package, so a caller never sees an
+  unvalidated module.
 
 - `wasm.decode(bytes)` — decode and validate a binary module. It
   reports `(ok, phase, offset, message)`: `ok` is true when the module
@@ -21,9 +27,25 @@ One entry point on the package surface:
 
 The module model itself stays behind the package boundary, under
 `internal/` — `decode.emo` walks the sections, `reader.emo` holds the
-byte cursor, LEB128, and the type-stack validator, and `model.emo`
-carries the module model and the semantic passes. What the runtimes of
-other packages can see is only what the root module re-exports.
+byte cursor, LEB128, and the type-stack validator, `model.emo` carries
+the module model and the semantic passes, `instance.emo` the instance
+model, the interpreter, linking, and the `spectest` host, and the
+`value`/`ints`/`floats`/`store` modules the runtime values and their
+operations. What the runtimes of other packages can see is only what
+the root module re-exports.
+
+## The execution surface
+
+`internal.instance` carries the live-module layer the run corpus
+drives: `instantiate(handle)` resolves imports through the register
+namespace and `spectest`, evaluates global initializers, lays out the
+element and data segments with the spec's trap-on-overflow, and runs
+the start function; `register_instance` binds an instance to an import
+name; `call(inst, export, args)` invokes an export and returns its
+values or the first trap; `get_global` reads a global export. Traps are
+values — a trap never raises. Funcrefs pack their owning instance and
+function index, so a table shared by import carries a call back to its
+defining instance.
 
 ## What it refuses
 
@@ -56,6 +78,25 @@ per claimed case and a summary; any disagreement fails.
 To re-claim cases after a capability lands, use
 `devtools/vendor-wasm-spec` (flip/unflip); the tool refuses to operate
 silently, so a claim is always deliberate.
+
+## The run corpus and how it runs
+
+`testdata/runs.all.txt` vendors the spec suite's *commands* — the
+interpreter's corpus (25135 commands; the format and its provenance are
+in `testdata/README.md`). Each command is a module instantiation, a
+registration, or an invocation with its expected values or trap.
+
+- `dune test` runs the smoke slice — 58 commands in
+  `testdata/runs.smoke.txt`, diffed against `runs.expected.txt`.
+- `dune build @wasm_runs` builds the driver natively and runs the full
+  list against `runs.all.expected.txt` in about a minute. It is step
+  21's acceptance gate: every `assert_return` matches bit-exactly, every
+  `assert_trap` traps, and nothing is pending.
+
+The run driver is compiled rather than interpreted: the evaluator is
+correct but cannot carry the loop-heavy memory tests (its own recursion
+limit), while the native backend emits boxed `Int64`. The two share the
+same source.
 
 ## Why a wasm runtime lives in a language repository
 

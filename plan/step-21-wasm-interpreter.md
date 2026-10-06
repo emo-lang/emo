@@ -1,6 +1,6 @@
 # Step 21 — Wasm runtime: the interpreter and the golden runs
 
-**Milestone:** M6 · **Prereq:** step 20 · **Status:** in progress
+**Milestone:** M6 · **Prereq:** step 20 · **Status:** done
 
 The rung step 20 pointed at: the modules the decoder accepts start
 *running*. The bar moves from "is this module well-formed?" to "does it
@@ -265,7 +265,7 @@ prefix of this list leaves the repo building and `dune test` green.
       the register namespace, `imports` through spectest, the trap
       cases, and the leftovers — the run list ends at zero pending
       and zero failed.
-- [ ] **T21.12** — *Close-out.* **(S)** The run-list smoke slice rides
+- [x] **T21.12** — *Close-out.* **(S)** The run-list smoke slice rides
       `dune test`; `runtime/wasm/README.md` grows the execution
       surface and the run-corpus section; step 21's acceptance is
       recorded here and in `docs/TASKS.md` (both languages).
@@ -284,3 +284,24 @@ prefix of this list leaves the repo building and `dune test` green.
   `runtime/`, nothing under `runtime/` names a compiler module, and
   the language's surface is unchanged — the pressure notes carry the
   gate evidence, nothing more.
+
+## Close-out
+
+**Step 21 acceptance met.** The `wasm_runs` alias reports **25135
+claimed, 0 pending, 0 failed** — every `assert_return` bit-exact (NaN
+classes for the NaN tokens), every `assert_trap` and instantiation
+failure where the spec says, and `register`/linking behaving. The
+default `dune test` runs a smoke slice of both corpora.
+
+The gate produced one language addition: the float primitives the
+interpreter needed (`Float64.sqrt`/`floor`/`ceil`/`trunc`,
+`Float64.to_int64`, `Int64.to_float64`), recorded in `CHECK.md`. The
+sweeps also flushed out native-backend defects — 64-bit constants,
+module-level `var`, lossy float literals, nested-call parenthesisation —
+which the boxed-`Int64` route and the new `Global_var`/`Set_global_var`
+IR nodes fix; the run driver is compiled because the evaluator cannot
+carry the loop-heavy memory tests past its own recursion limit. The
+remaining pressure notes (no cross-module class types, field
+immutability, cross-module `.pos` inference, the `file_`/`net_` builtin
+prefixes, argv) stay recorded for the unification gate.
+
