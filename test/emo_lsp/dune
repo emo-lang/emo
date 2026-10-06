@@ -1,0 +1,8 @@
+(executable
+ (name emo_lsp_test)
+ (libraries alcotest unix yojson emo_lsp emo_parser))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{exe:emo_lsp_test.exe})))
