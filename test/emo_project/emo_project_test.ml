@@ -494,7 +494,7 @@ let deps_tests =
                lockfile is `emo deps resolve`'s explicit job. *)
             Alcotest.(check bool)
               "no lockfile written by a run" false
-              (Sys.file_exists (Filename.concat dir "emo.lock"))));
+              (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename))));
     tc "the lockfile pins the resolution and a run verifies it" (fun () ->
         let entry =
           with_project
@@ -521,7 +521,7 @@ let deps_tests =
                   (String.length e.Emo_pkg.Lockfile.checksum > 0)
             | _ -> ());
             Emo_pkg.Lockfile.write
-              ~path:(Filename.concat dir "emo.lock")
+              ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
               entries;
             let output =
               capture_output (fun () ->
@@ -532,7 +532,7 @@ let deps_tests =
             (* A lockfile drifting from the manifest is an error prompting
                explicit regeneration — never a silent re-resolve. *)
             Emo_pkg.Lockfile.write
-              ~path:(Filename.concat dir "emo.lock")
+              ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
               [
                 {
                   Emo_pkg.Lockfile.dep = "acme/json_tools";

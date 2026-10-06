@@ -215,7 +215,9 @@ let lockfile_tests =
   [
     tc "write then read round-trips" (fun () ->
         let path =
-          Filename.concat (Filename.get_temp_dir_name ()) "emo-lock-test.lock"
+          Filename.concat
+            (Filename.get_temp_dir_name ())
+            "package-lock-test.lock"
         in
         let entries =
           [
@@ -470,6 +472,172 @@ let registry_tests =
         | Error _ -> ());
   ]
 
+let digest_tests =
+  [
+    tc "the digest is SHA-256 over sorted path\\0content\\0 pairs" (fun () ->
+        (* Cross-checked with the registry service's reference construction:
+           sha256("a.emo\x00first\x00b.emo\x00second\x00"). *)
+        let d =
+          Emo_pkg.Registry.digest [ ("b.emo", "second"); ("a.emo", "first") ]
+        in
+        Alcotest.(check string)
+          "matches the registry"
+          "a530354d1082c1dd90e11ee82c378bf98aa051b55f4c061416c9cf39b1d1c55e" d);
+    tc "the digest is 64 lowercase hex chars" (fun () ->
+        let d = Emo_pkg.Registry.digest [ ("x.emo", "x") ] in
+        Alcotest.(check int) "length" 64 (String.length d);
+        Alcotest.(check bool)
+          "hex" true
+          (String.for_all
+             (fun c -> (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+             d));
+  ]
+
+let run_capture cmd =
+  let ic = Unix.open_process_in cmd in
+  let out = Buffer.create 256 in
+  (try
+     while true do
+       Buffer.add_channel out ic 1
+     done
+   with End_of_file -> ());
+  let status = Unix.close_process_in ic in
+  (Buffer.contents out, status)
+
+let archive_files =
+  [
+    ("package.emo", "package {\n  name = \"acme/hello\"\n}\n");
+    ("hello.emo", "def greet() String {\n  return \"hi\"\n}\n");
+    ("internal/util.emo", "def twice(n Int) Int {\n  return n * 2\n}\n");
+    ("README.md", "# hello\n");
+  ]
+
+let archive_tests =
+  [
+    tc "crc32 matches the check value" (fun () ->
+        Alcotest.(check int32)
+          "crc32(123456789)" 0xCBF43926l
+          (Emo_pkg.Archive.crc32 "123456789"));
+    tc "packing is deterministic" (fun () ->
+        let a = Emo_pkg.Archive.build archive_files in
+        let b =
+          Emo_pkg.Archive.build
+            (List.map (fun (p, c) -> (p, c ^ "")) archive_files)
+        in
+        Alcotest.(check string) "same bytes" a b);
+    tc "the gzip stream decodes to the tar stream" (fun () ->
+        let archive = Emo_pkg.Archive.build archive_files in
+        let tmp = Filename.temp_file "emo-archive-" ".emoji" in
+        let oc = open_out_bin tmp in
+        output_string oc archive;
+        close_out oc;
+        let decoded, status =
+          run_capture (Printf.sprintf "gzip -dc %s" (Filename.quote tmp))
+        in
+        Alcotest.(check bool) "gzip decodes" true (status = Unix.WEXITED 0);
+        Alcotest.(check string)
+          "payload is the tar"
+          (Emo_pkg.Archive.tar archive_files)
+          decoded);
+    tc "system tar lists every member" (fun () ->
+        let archive = Emo_pkg.Archive.build archive_files in
+        let tmp = Filename.temp_file "emo-archive-" ".emoji" in
+        let oc = open_out_bin tmp in
+        output_string oc archive;
+        close_out oc;
+        let listing, status =
+          run_capture (Printf.sprintf "tar tzf %s" (Filename.quote tmp))
+        in
+        Alcotest.(check bool) "tar reads it" true (status = Unix.WEXITED 0);
+        let expect =
+          archive_files |> List.map fst |> List.sort String.compare
+          |> String.concat "\n"
+        in
+        Alcotest.(check string) "members" (expect ^ "\n") listing);
+    tc "long paths split across the ustar prefix field" (fun () ->
+        let dir =
+          String.concat "/"
+            (List.init 10 (fun i -> Printf.sprintf "directory_%02d" i))
+        in
+        let path = dir ^ "/mod.emo" in
+        Alcotest.(check bool) "long" true (String.length path > 100);
+        let archive = Emo_pkg.Archive.build [ (path, "x") ] in
+        let tmp = Filename.temp_file "emo-archive-" ".emoji" in
+        let oc = open_out_bin tmp in
+        output_string oc archive;
+        close_out oc;
+        let listing, status =
+          run_capture (Printf.sprintf "tar tzf %s" (Filename.quote tmp))
+        in
+        Alcotest.(check bool) "tar reads it" true (status = Unix.WEXITED 0);
+        Alcotest.(check string) "path round-trips" (path ^ "\n") listing);
+  ]
+
+let publish_tests =
+  [
+    tc "prepare packs sources, the manifest and a root README" (fun () ->
+        let dir =
+          Filename.concat (Filename.get_temp_dir_name ()) "emo-publish-test"
+        in
+        ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+        let write rel content =
+          let oc = open_out_bin (Filename.concat dir rel) in
+          output_string oc content;
+          close_out oc
+        in
+        write "package.emo"
+          {|package {
+  name = "acme/hello"
+  version = "0.1.0"
+  targets = ["native"]
+  deps {}
+}|};
+        write "hello.emo" {|def greet() String {
+  return "hi"
+}|};
+        write "README.md" "# hello\n";
+        match Emo_pkg.Publish.prepare ~dir with
+        | Error m -> Alcotest.fail m
+        | Ok p ->
+            Alcotest.(check string)
+              "archive name" "acme--hello--0.1.0.emoji"
+              p.Emo_pkg.Publish.p_archive_name;
+            Alcotest.(check int) "files" 3 (List.length p.p_files);
+            (* the README rides along but never feeds the digest *)
+            Alcotest.(check string)
+              "digest ignores the README"
+              (Emo_pkg.Registry.digest (Emo_pkg.Registry.collect_files dir))
+              p.p_checksum;
+            Alcotest.(check bool)
+              "archive is gzip" true
+              (String.length p.p_archive > 2
+              && String.sub p.p_archive 0 2 = "\x1f\x8b"));
+    tc "a plain (unscoped) name is not publishable" (fun () ->
+        let dir =
+          Filename.concat (Filename.get_temp_dir_name ()) "emo-publish-badname"
+        in
+        ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+        let oc = open_out_bin (Filename.concat dir "package.emo") in
+        output_string oc
+          {|package {
+  name = "hello"
+  version = "0.1.0"
+  targets = ["native"]
+  deps {}
+}|};
+        close_out oc;
+        match Emo_pkg.Publish.prepare ~dir with
+        | Ok _ -> Alcotest.fail "expected a name error"
+        | Error m ->
+            Alcotest.(check bool)
+              "mentions owner/name" true
+              (contains_substring m "owner/name"));
+    tc "a directory without a manifest fails" (fun () ->
+        match Emo_pkg.Publish.prepare ~dir:(Filename.get_temp_dir_name ()) with
+        | Ok _ -> Alcotest.fail "expected a manifest error"
+        | Error _ -> ());
+  ]
+
 let () =
   Alcotest.run "emo_pkg"
     [
@@ -479,4 +647,7 @@ let () =
       ("resolve", resolve_tests);
       ("lockfile", lockfile_tests);
       ("registry", registry_tests);
+      ("digest", digest_tests);
+      ("archive", archive_tests);
+      ("publish", publish_tests);
     ]
