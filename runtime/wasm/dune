@@ -219,3 +219,25 @@
   value-fixture.expected.txt)
  (action
   (diff value-fixture.expected.txt value-fixture.actual)))
+
+; The integer-family fixture (T21.4).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  int-fixture.emo
+  internal/ints.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   int-fixture.actual
+   (run %{emo} run int-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  int-fixture.actual
+  int-fixture.expected.txt)
+ (action
+  (diff int-fixture.expected.txt int-fixture.actual)))

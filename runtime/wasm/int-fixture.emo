@@ -1,0 +1,64 @@
+// The integer-family fixture (T21.4): the spec's boundary cases —
+// wrap-around, division traps and the MIN / -1 exception, masked shift
+// counts, rotates, bit counting, and the wrap / extend conversions.
+
+def show(label String, bits Int64) Int64 {
+  println(label + " " + bits.to_string())
+  return 0
+}
+
+def show_trap(label String, r (Bool, Int64, String)) Int64 {
+  if r[0] {
+    return show(label, r[1])
+  }
+  println(label + " trap:" + r[2])
+  return 0
+}
+
+def run() Int64 {
+  var failed = 0
+  // i32 arithmetic wraps at 32 bits.
+  failed = failed + show("i32.add.wrap", internal.ints.add(127, 2147483647, 1))
+  failed = failed + show("i32.sub.wrap", internal.ints.sub(127, 0, 1))
+  failed = failed + show("i32.mul.wrap", internal.ints.mul(127, 65536, 65536))
+  // Division and remainder, signed and unsigned.
+  failed = failed + show_trap("i32.div_u", internal.ints.div_u(127, 4294967295, 2))
+  failed = failed + show_trap("i32.div_s.min", internal.ints.div_s(127, -2147483648, -1))
+  failed = failed + show_trap("i32.div_s.zero", internal.ints.div_s(127, 1, 0))
+  failed = failed + show_trap("i32.rem_s.neg", internal.ints.rem_s(127, -1, 3))
+  failed = failed + show_trap("i32.rem_s.min", internal.ints.rem_s(127, -2147483648, -1))
+  // Shifts and rotates mask their counts.
+  failed = failed + show("i32.shr_s", internal.ints.shr_s(127, -1, 1))
+  failed = failed + show("i32.shr_u", internal.ints.shr_u(127, -1, 1))
+  failed = failed + show("i32.shl", internal.ints.shl(127, 1, 31))
+  failed = failed + show("i32.shl.masked", internal.ints.shl(127, 1, 63))
+  failed = failed + show("i32.rotl", internal.ints.rotl(127, 2147483648, 1))
+  failed = failed + show("i32.rotr", internal.ints.rotr(127, 1, 1))
+  // Bit counting.
+  failed = failed + show("i32.clz", internal.ints.clz(127, 1))
+  failed = failed + show("i32.ctz", internal.ints.ctz(127, 2147483648))
+  failed = failed + show("i32.popcnt", internal.ints.popcnt(127, 61680))
+  // Comparisons, unsigned included.
+  failed = failed + show("i32.eq", internal.ints.cmp(70, 127, 3, 3))
+  failed = failed + show("i32.lt_u.neg", internal.ints.cmp(73, 127, -1, 1))
+  failed = failed + show("i32.gt_u.neg", internal.ints.cmp(75, 127, -1, 1))
+  // i64: wrap, u64 division, logical shift, bit counting.
+  failed = failed + show("i64.add.wrap", internal.ints.add(126, 9223372036854775807, 1))
+  failed = failed + show_trap("i64.div_u", internal.ints.div_u(126, 9223372036854775807, 2))
+  failed = failed + show_trap("i64.div_s.min", internal.ints.div_s(126, -9223372036854775807 - 1, -1))
+  failed = failed + show("i64.shr_u", internal.ints.shr_u(126, -1, 1))
+  failed = failed + show("i64.clz0", internal.ints.clz(126, 0))
+  failed = failed + show("i64.ctz0", internal.ints.ctz(126, 0))
+  failed = failed + show("i64.popcnt", internal.ints.popcnt(126, -1))
+  // Conversions.
+  failed = failed + show("wrap_i64", internal.ints.wrap_i64(4294967296))
+  failed = failed + show("extend_i32_s", internal.ints.extend_i32_s(4294967295))
+  failed = failed + show("extend_i32_u", internal.ints.extend_i32_u(4294967295))
+  failed = failed + show("i32.extend8_s", internal.ints.extend8_s(127, 255))
+  failed = failed + show("i32.extend16_s", internal.ints.extend16_s(127, 65535))
+  failed = failed + show("i64.extend32_s", internal.ints.extend32_s(4294967295))
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()

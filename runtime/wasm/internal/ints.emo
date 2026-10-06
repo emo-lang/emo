@@ -1,0 +1,331 @@
+// The integer families (T21.4).
+//
+// Pure functions over the value model: i32 and i64 arithmetic,
+// comparisons, shifts and rotates, bit counting, division and
+// remainder with their traps, sign extension, and the wrap / extend
+// conversions. `kind` is a value-model kind (127 i32, 126 i64); the
+// width follows from it, and every result is masked back into its
+// width. An operation that can trap returns `(ok, bits, message)`:
+// traps are values, never raises.
+
+// ---- width helpers ----
+
+def is32(kind Int64) Bool {
+  return kind == 127
+}
+
+def width_of(kind Int64) Int64 {
+  if is32(kind) {
+    return 32
+  }
+  return 64
+}
+
+def fit(kind Int64, bits Int64) Int64 {
+  if is32(kind) {
+    return mask32(bits)
+  }
+  return bits
+}
+
+// The signed reading of a value's pattern.
+def signed(kind Int64, bits Int64) Int64 {
+  if is32(kind) {
+    return sign32(bits)
+  }
+  return bits
+}
+
+def mask32(x Int64) Int64 {
+  return x & 4294967295
+}
+
+def sign32(x Int64) Int64 {
+  const b = mask32(x)
+  if b >= 2147483648 {
+    return b - 4294967296
+  }
+  return b
+}
+
+// ---- arithmetic (wrapping) ----
+
+def add(kind Int64, a Int64, b Int64) Int64 {
+  return fit(kind, a + b)
+}
+
+def sub(kind Int64, a Int64, b Int64) Int64 {
+  return fit(kind, a - b)
+}
+
+def mul(kind Int64, a Int64, b Int64) Int64 {
+  return fit(kind, a * b)
+}
+
+def band(kind Int64, a Int64, b Int64) Int64 {
+  return fit(kind, a & b)
+}
+
+def bor(kind Int64, a Int64, b Int64) Int64 {
+  return fit(kind, a | b)
+}
+
+def bxor(kind Int64, a Int64, b Int64) Int64 {
+  return fit(kind, a ^ b)
+}
+
+// ---- division and remainder ----
+
+// Signed division / remainder. `rem` never traps on MIN / -1 (its
+// result is 0); `div` does, with the spec's "integer overflow".
+def div_s(kind Int64, a Int64, b Int64) (Bool, Int64, String) {
+  const sa = signed(kind, a)
+  const sb = signed(kind, b)
+  if sb == 0 {
+    return (false, 0, "integer divide by zero")
+  }
+  if kind == 127 && sa == -2147483648 && sb == -1 {
+    return (false, 0, "integer overflow")
+  }
+  if kind == 126 && sa == -9223372036854775807 - 1 && sb == -1 {
+    return (false, 0, "integer overflow")
+  }
+  return (true, fit(kind, sa / sb), "")
+}
+
+def rem_s(kind Int64, a Int64, b Int64) (Bool, Int64, String) {
+  const sa = signed(kind, a)
+  const sb = signed(kind, b)
+  if sb == 0 {
+    return (false, 0, "integer divide by zero")
+  }
+  return (true, fit(kind, sa % sb), "")
+}
+
+// Unsigned comparison of two 64-bit patterns.
+def uge(x Int64, y Int64) Bool {
+  if (x < 0) == (y < 0) {
+    return x >= y
+  }
+  return x < 0
+}
+
+// Unsigned division and remainder by shift-and-subtract: Int64 cannot
+// hold a u64, so the bits are the operands.
+def udivmod(u Int64, v Int64) (Int64, Int64) {
+  return udiv_loop(u, v, 63, 0, 0)
+}
+
+def udiv_loop(u Int64, v Int64, i Int64, q Int64, r Int64) (Int64, Int64) {
+  if i < 0 {
+    return (q, r)
+  }
+  const bit = (u >> i) & 1
+  const r2 = (r << 1) | bit
+  var q2 = q
+  var r3 = r2
+  if uge(r2, v) {
+    q2 = q | (1 << i)
+    r3 = r2 - v
+  }
+  return udiv_loop(u, v, i - 1, q2, r3)
+}
+
+def div_u(kind Int64, a Int64, b Int64) (Bool, Int64, String) {
+  const ua = mask_bits(kind, a)
+  const ub = mask_bits(kind, b)
+  if ub == 0 {
+    return (false, 0, "integer divide by zero")
+  }
+  const d = udivmod(ua, ub)
+  return (true, fit(kind, d[0]), "")
+}
+
+def rem_u(kind Int64, a Int64, b Int64) (Bool, Int64, String) {
+  const ua = mask_bits(kind, a)
+  const ub = mask_bits(kind, b)
+  if ub == 0 {
+    return (false, 0, "integer divide by zero")
+  }
+  const d = udivmod(ua, ub)
+  return (true, fit(kind, d[1]), "")
+}
+
+// The unsigned reading of a pattern at its width.
+def mask_bits(kind Int64, x Int64) Int64 {
+  if is32(kind) {
+    return mask32(x)
+  }
+  return x
+}
+
+// ---- shifts and rotates (counts are masked) ----
+
+def shl(kind Int64, a Int64, count Int64) Int64 {
+  return fit(kind, a << (count % width_of(kind)))
+}
+
+def shr_s(kind Int64, a Int64, count Int64) Int64 {
+  const c = count % width_of(kind)
+  return fit(kind, signed(kind, a) >> c)
+}
+
+def shr_u(kind Int64, a Int64, count Int64) Int64 {
+  const c = count % width_of(kind)
+  if is32(kind) {
+    return mask32(a) >> c
+  }
+  if c == 0 {
+    return a
+  }
+  const low = (1 << (64 - c)) - 1
+  return (a >> c) & low
+}
+
+def rotl(kind Int64, a Int64, count Int64) Int64 {
+  const c = count % width_of(kind)
+  if c == 0 {
+    return fit(kind, a)
+  }
+  return fit(kind, (a << c) | shr_u(kind, a, width_of(kind) - c))
+}
+
+def rotr(kind Int64, a Int64, count Int64) Int64 {
+  const c = count % width_of(kind)
+  if c == 0 {
+    return fit(kind, a)
+  }
+  return fit(kind, shr_u(kind, a, c) | (a << (width_of(kind) - c)))
+}
+
+// ---- bit counting ----
+
+def clz(kind Int64, a Int64) Int64 {
+  return clz_loop(width_of(kind), mask_bits(kind, a), 0)
+}
+
+def clz_loop(width Int64, x Int64, i Int64) Int64 {
+  if i == width {
+    return width
+  }
+  const bit = (x >> (width - 1 - i)) & 1
+  if bit != 0 {
+    return i
+  }
+  return clz_loop(width, x, i + 1)
+}
+
+def ctz(kind Int64, a Int64) Int64 {
+  const x = mask_bits(kind, a)
+  if x == 0 {
+    return width_of(kind)
+  }
+  return ctz_loop(x, 0)
+}
+
+def ctz_loop(x Int64, i Int64) Int64 {
+  const bit = (x >> i) & 1
+  if bit != 0 {
+    return i
+  }
+  return ctz_loop(x, i + 1)
+}
+
+def popcnt(kind Int64, a Int64) Int64 {
+  return popcnt_loop(mask_bits(kind, a), 0, 0)
+}
+
+def popcnt_loop(x Int64, i Int64, acc Int64) Int64 {
+  if i == 64 {
+    return acc
+  }
+  var next = acc
+  const bit = (x >> i) & 1
+  if bit != 0 {
+    next = acc + 1
+  }
+  return popcnt_loop(x, i + 1, next)
+}
+
+// ---- comparisons (each yields an i32 0/1) ----
+
+def ult(x Int64, y Int64) Bool {
+  return !uge(x, y)
+}
+
+def cmp(op Int64, kind Int64, a Int64, b Int64) Int64 {
+  const sa = signed(kind, a)
+  const sb = signed(kind, b)
+  const ua = mask_bits(kind, a)
+  const ub = mask_bits(kind, b)
+  if op == 70 || op == 81 {
+    return bool_bit(ua == ub)
+  }
+  if op == 71 || op == 82 {
+    return bool_bit(ua != ub)
+  }
+  if op == 72 || op == 83 {
+    return bool_bit(sa < sb)
+  }
+  if op == 73 || op == 84 {
+    return bool_bit(ult(ua, ub))
+  }
+  if op == 74 || op == 85 {
+    return bool_bit(sa > sb)
+  }
+  if op == 75 || op == 86 {
+    return bool_bit(uge(ua, ub) && ua != ub)
+  }
+  if op == 76 || op == 87 {
+    return bool_bit(sa <= sb)
+  }
+  if op == 77 || op == 88 {
+    return bool_bit(!uge(ua, ub))
+  }
+  if op == 78 || op == 89 {
+    return bool_bit(sa >= sb)
+  }
+  return bool_bit(uge(ua, ub))
+}
+
+def bool_bit(b Bool) Int64 {
+  if b {
+    return 1
+  }
+  return 0
+}
+
+// ---- conversions ----
+
+def wrap_i64(a Int64) Int64 {
+  return mask32(a)
+}
+
+def extend_i32_s(a Int64) Int64 {
+  return sign32(a)
+}
+
+def extend_i32_u(a Int64) Int64 {
+  return mask32(a)
+}
+
+// Sign-extend the low byte / half / word, at the given width.
+def extend8_s(kind Int64, a Int64) Int64 {
+  const b = a & 255
+  if b >= 128 {
+    return fit(kind, b - 256)
+  }
+  return fit(kind, b)
+}
+
+def extend16_s(kind Int64, a Int64) Int64 {
+  const b = a & 65535
+  if b >= 32768 {
+    return fit(kind, b - 65536)
+  }
+  return fit(kind, b)
+}
+
+def extend32_s(a Int64) Int64 {
+  return sign32(a)
+}
