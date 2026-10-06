@@ -10,4 +10,10 @@
   (file ../../VERSION)
   emo_cli_test.exe)
  (action
-  (run %{exe:emo_cli_test.exe})))
+  (setenv
+   EMO_REGISTRY
+   ../../stdlib/registry
+   (run %{exe:emo_cli_test.exe}))))
+
+; The bundled registry lives beside the compiler in an install; tests
+; resolve it from the sandbox's stdlib copy instead.

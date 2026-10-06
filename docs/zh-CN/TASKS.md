@@ -22,6 +22,9 @@
 | M2 — 编译期体验 | 08–10 | 渐进类型检查器、结构化模块系统、基于 MVS 的包解析;多包项目可构建、可运行。 |
 | M3 — 并发与网络 | 11–12 | 基于效果(effect)调度器的进程与消息传递;直风格(direct style)网络 API。 |
 | M4 — 编译目标 | 13–14 | 通过 `emo build` 生成原生代码;随后是 wasm / TypeScript / BEAM / riscv64。 |
+| M5 — BEAM 与函数组 | 17–18 | BEAM 目标带上金测梯队;`emo Foo { ... }` 函数组在四个目标上解析并运行。 |
+| M6 — 系统级编程 | 19–21 | 用 Emo 编写的 WebAssembly 运行时:共享系统层,随后是二进制解码器/验证器,再是解释器与 spec 套件金测。 |
+| M7 — EmoOS | 22+ | 同一系统层之上的内核路径:近期是 unikernel 构建路径,远期是裸机代码生成(与引擎分层共用投入)。 |
 
 ## 设计闸门
 
@@ -255,9 +258,9 @@
 **前置:** 步骤 01–13。
 **完成标准:** `emo build --target typescript` 发射的 TypeScript 在 Node 上运行,示例子集(hello_world、fib、objects、language_tour、shop、pipeline、tcp_echo、http_roundtrip)的输出与 `emo run` 逐字节一致(CI 金测),且依赖缺少该 target 的包在发射前就被解析门拒绝。
 
-- [ ] **T15.1** — 目标管线与核心发射器:`--target` 贯穿 CLI、项目与解析门;IR → TypeScript 核心子集发射器;带标签值的运行时。金测:hello_world、fib、objects。
+- [x] **T15.1** — 目标管线与核心发射器:`--target` 贯穿 CLI、项目与解析门;IR → TypeScript 核心子集发射器;带标签值的运行时。金测:hello_world、fib、objects。
 - [ ] **T15.2** — 完整核心语义:模式与守卫、元组、数组、Box、插值、内容相等、跨文件模块引用。金测:language_tour、shop。
-- [ ] **T15.3** — 并发:协作式任务、邮箱、选择性 receive、`self_pid`、`halt`。金测:pipeline。
+- [x] **T15.3** — 并发:协作式任务、邮箱、选择性 receive、`self_pid`、`halt`。金测:pipeline。
 - [ ] **T15.4** — 直风格 IO:socket 与 HTTP 经 Node API 包装为 await 的 promise;标准库 target 元数据加 `"typescript"`。金测:tcp_echo、http_roundtrip。
 - [ ] **T15.5** — 引导:CI 中的按 target 金测套件,以及缺 target 包的解析门测试。
 
@@ -272,12 +275,14 @@
 - [x] **T16.4** — 并发:模块内协作式驱动实现 `do` / `<-` / `receive`,宿主定时器抢占点。金测:pipeline。(以 T16.2 为前置。)
 - [ ] **T16.5** — WASI 与 IO 审计:标准库 `"wasm"` 元数据,以及宿主支持范围内的 io 金测。
 
+## M5 — BEAM 目标与函数组
+
 ### Step 17 — BEAM 目标(Core Erlang)· `plan/step-17-beam.md`
 
 **前置:** Steps 01–16。
 **完成标准:** `emo build --target beam` 发射 Core Erlang 文本并由 `erlc` 汇编为 `.beam`,核心子集(hello_world、fib、objects、language_tour、shop、pipeline)与 `emo run` 输出逐字节一致(CI 金测),解析门读取 `"beam"`。
 
-- [ ] **T17.1** — 后端骨架:`--target beam` 管线;Core Erlang 发射器(模块、定义、字面量、call/apply、序列化),对照已探明的 OTP 29 文法。金测:hello_world。
+- [x] **T17.1** — 后端骨架:`--target beam` 管线;Core Erlang 发射器(模块、定义、字面量、call/apply、序列化),对照已探明的 OTP 29 文法。金测:hello_world。
 - [x] **T17.2** — 值模型与算术:掩码 i64 回绕 Int、binary 字符串与插值、元组、数组、枚举、深内容相等。金测:fib。
 - [x] **T17.3** — 类/实例(带标签 map)、Box 持有进程、闭包即 fun、case 模式与守卫。金测:objects、language_tour。
 - [x] **T17.4** — 进程(`do` / `<-` / `receive` 走编译器同款 receive primop)、shop 多模块、pipeline 金测;CI `beam_examples` 组与 `"beam"` 解析门测试。
@@ -287,5 +292,76 @@
 **前置:** Steps 01–17。
 **完成标准:** `emo Foo { def ... const ... }` 声明函数组,`Foo.hello()` / `Config.version` 在解释器与四个后端上解析并运行(金测进 CI),README 记录该语法。
 
-- [ ] **T18.1** — 解析器(`emo` 关键字 + 组成员)、检查器(组符号、命名与参数规则)、IR 降级为带前缀的函数;`examples/function_group/` 金测走 `emo run`。
-- [ ] **T18.2** — 该示例的 TypeScript、wasm、beam 金测;README(英文 + 中文)记录该语法。
+- [x] **T18.1** — 解析器(`emo` 关键字 + 组成员)、检查器(组符号、命名与参数规则)、IR 降级为带前缀的函数;`examples/function_group/` 金测走 `emo run`。
+- [x] **T18.2** — 该示例的 TypeScript、wasm、beam 金测;README(英文 + 中文)记录该语法。
+
+收尾:两个任务随同一提交(`bd2f4c7`)落地:组成员降级为带前缀的函数,符号双键注册(组限定键 `Foo.hello` 与组内裸引用键),四个后端无需任何组相关代码。展示用例(`examples/showcase/`,连带其拉出的 TypeScript 进程支持)在四个目标上演练跨文件组调用。它还暴露并修复了 `emo_project` 的一个缺陷:以相对路径启动的 manifest 项目注册的是相对文件串,绝对路径的入口查找落空,入口被降级两次——一次作为根模块,一次以自身模块名。决策见 `plan/step-18-function-group.md`(Close-out)。**Step 18 验收达成。**
+
+## M6 — 系统级编程
+
+两个消费者拉动同一层:用 Emo 编写的 WebAssembly 解码器、验证器与解释器,以及 EmoOS 内核路径。该层在统一闸门下一次设计成型——原语必须在两个消费者处都能点名(或一个消费者加一个具体的近期需求)才准入;`plan/step-19-wasm-runtime.md` 记录项目决策、机制矩阵与阶梯。
+
+### Step 19 — 系统层(wasm 运行时 + EmoOS 原语)· `plan/step-19-wasm-runtime.md`
+
+**前置:** Steps 01–18。
+**完成标准:** `& | ^ << >> ~` 在整数类型上于解释器与四个后端工作;带小端访问器的 `Bytes` 核心类型可用;`file.read` 在调度器下从磁盘读入文件;`Int64` 与 `Byte` 算术在各目标上回绕(金测进 CI);`runtime/wasm/` 成为真实存在的包。
+
+- [x] **T19.1** — 整数类型上的位运算符(`& | ^ << >> ~`):词法、语法、检查器、解释器与四个后端;`examples/bit_ops/` 金测走 `emo run` 与各目标 CI 组。
+- [x] **T19.2** — `Bytes` 核心类型:构造、越界检查的 get/set、小端访问器、String 互转;四个后端;金测示例。(u64 访问器已随 T19.4 的 Int64 落地;wasm 上打印裸 `Bytes` 值输出的是缓冲区字节而非 `Bytes[n]` 标签——已知缺口。)
+- [x] **T19.3** — `file.read` 标准库包(native,调度器直风格);从磁盘读文件的金测示例。附带 `file.write`(示例自行写入数据文件,金测与工作目录无关);写句柄在恢复进程前关闭,保证读己之写;测试经 EMO_REGISTRY 解析注册表。
+- [x] **T19.4** — `Int64` 与 `Byte`:字面量、回绕算术、比较、显式转换;四个后端;金测示例。`runtime/wasm/` 包骨架在此任务创建。
+
+小结:`Int64` 与 `Byte` 直接复用各目标已有的整数表示——OCaml 的 `int64`/`int`、Erlang 按 64 位有符号掩码的整数、wasm 的 `$vint`、TS 的 `BigInt`/`number`——没有哪个后端新增第二套值模型;各自补的是回绕规则(Byte 在 add、sub、mul、shl、bnot 之后掩到 256)与显式转换,`examples/fixed_width/` 在四个目标上全部跑通。T19.2 缓办的 `Bytes` u64 访问器在本任务落地,因为它等的载体正是 `Int64`,金测在每个目标上都覆盖了它们。两条后端备注:OTP 29 的 `erlc` 无法编译浮点位串模式,`Float.from_bits` 只能走 ETF 浮点头的 `binary_to_term`;Emo 按 OCaml 的 `%g` 规则打印浮点,Erlang 与 JavaScript 的原生格式化都不匹配,BEAM 运行时与 wasm 宿主各自实现了这条规则。wasm 金测还冲出两个此前示例够不到的运行时缺陷:`bytes_from_mem` 在线性内存里读的是 `i` 而不是 `ptr + i`,`int_str` 用有符号除法取位,把 `INT64_MIN` 弄花了。决策记录在 `plan/step-19-wasm-runtime.md`(Close-out)。**步骤 19 验收达成。**
+
+### Step 20 — wasm 运行时:解码器与验证器 · `plan/step-20-wasm-decoder.md`
+
+**前置:** 步骤 19。
+**完成标准:** `runtime/wasm/` 能解码并验证 vendored spec 套件的二进制形式用例——每个合法模块被接受,每个 `assert_malformed` 用例在解码阶段被拒,每个 `assert_invalid` 用例在验证阶段被拒;默认 `dune test` 用 Emo 写的运行时跑一个冒烟子集,`wasm_spec` alias 跑全量清单且无 pending。
+
+- [x] **T20.1** — 冒烟规则:`runtime/wasm/main.emo`、其金测文件,以及一条在沙箱里跑 `emo run main.emo` 的 `runtest` 规则。包不再空转;无需注册表也无需 native 工具链(deps 为 `{}`)。
+- [x] **T20.2** — 用例清单格式与其十六进制编解码、语料运行器、`main.emo` / `spec.emo` 两个驱动,以及 `wasm_spec` alias。两个清单起始为空;汇总行报 `pending 0`。
+- [x] **T20.3** — `devtools/vendor-wasm-spec`(把固定版本的 wasm spec 检出过一遍 `wast2json --no-check`)与首批语料:`binary.wast` 的二进制形式用例,以 `pending` 入库。与后续所有解码任务相互独立。
+- [x] **T20.4** — 带诊断的失败值与 `Bytes` 读取器,每次访问前先做边界检查;截断读取类用例。
+- [x] **T20.5** — LEB128(`u32`/`u64`/`s32`/`s64`)与 spec 的长度上限;`binary-leb128.wast` 加手写边界向量。
+- [x] **T20.6** — 文件头与 section 遍历:magic、version、section id 与长度、顺序、自定义 section、未知 id、尾部多余字节。
+- [x] **T20.7** — 类型 section,以及模块模型其余部分照抄的标签元组 / cons 链形状。
+- [x] **T20.8** — 声明类 section:function、table、memory、global、import、export。
+- [x] **T20.9** — element、data 与常量表达式。
+- [x] **T20.10** — 操作码表与数值指令。
+- [x] **T20.11** — 参数指令、变量指令与内存指令。
+- [x] **T20.12** — 结构化指令:block/loop/if/else/end、br/br_if/br_table,以及 `end` 配对记账。
+- [x] **T20.13** — 包表面的 `decode(bytes)`,以及合法模块语料。
+- [x] **T20.14** — 验证上下文、各索引空间与函数签名检查。
+- [x] **T20.15** — 普通指令的操作数类型栈。
+- [x] **T20.16** — 控制帧:标签深度、分支操作数类型,以及分支之后的多态栈。
+- [x] **T20.17** — 跨 section 规则:start 函数、element/data 偏移、limits、全局初始化器。
+- [x] **T20.18** — 全量语料跑通且无 pending、冒烟子集、`runtime/wasm/README.md`、收尾。
+
+小结:清仓收官——`wasm_spec` 报 3456 认领、0 pending、0 失败,冒烟子集(四十例,覆盖每个解码器与验证器族)随默认 `dune test` 运行。过程中冲出的缺陷比验证器本身更老:br_table 的立即数从未消费过 default 索引(T20.12 起就存在——漏出的字节被当作指令,整段函数体错位),0xfc 批量内存/表操作的编号也换成了最终规范版(而非合并前的提案编号)。验证器的帧栈改为带逻辑栈顶(逐弹重建在深层嵌套下是指数级),压栈前先截断到活跃前缀;块参数按 push_ctrl 语义活在帧内;unreachable 帧内压栈仍是具体类型,`type-num-vs-num` 一族照旧被拒。解释器的一条限制塑造了代码形状:对递归结果调用方法(`f(n-1).append(x)`)在约 25 层嵌套后会卡死,所有返回数组的递归都改成了尾累加——已记为语言压力。datacount 规则按相位拆分:有 data 段时,缺 datacount 的 bulk-memory 使用是 malformed;没有 data 段时,验证器的未知段检查使其为 invalid——两种都被语料钉住。声明引用集(全局、导出、elem 段——不含 start 函数)为 `ref.func` 定型。**步骤 20 验收达成。**
+
+
+防止"仓内运行时"演变成"仓内语言"的三条边界——包边界、spec 数据不占默认测试路径、运行时离开本仓的条件——记录在计划文件中,连同运行时撞上的语言表面压力,以及让这份清单能在零散时间推进的任务粒度。
+
+### Step 21 — wasm 运行时:解释器内核与 spec 套件金测 · `plan/step-21-wasm-interpreter.md`
+
+**前置:** 步骤 20。
+**完成标准:** `runtime/wasm/` 执行一个通过验证的模块——实例化(导入经注册命名空间与 `spectest` 宿主模块解析、各段按规范的越界即陷阱规则布局、运行 start 函数),调用导出函数,报告结果值或首个陷阱。`wasm_runs` alias 运行 vendored 运行语料(每条 `assert_return` 按位精确匹配、含 NaN 载荷类别;每条 `assert_trap` 与实例化失败都落在规范指定处)且无 pending;默认 `dune test` 跑双语料冒烟切片。
+
+- [ ] **T21.1** — 运行清单格式与其编解码(带类型标签的位模式字、NaN 记号、判定前缀)、步骤 20 旁的运行运行器、`runs.emo` 驱动、`wasm_runs` dune 规则,以及 `vendor-wasm-spec runs` 把命令语料整表落为 `pending`。独立于所有执行类任务。
+- [ ] **T21.2** — 实例模型:通过验证的模块固化为冻结记录——函数为签名加函数体字节区间、各索引空间、各段、导入、导出、start、声明引用集——包表面提供 `wasm.load(bytes)` 返回"模块或判定"。
+- [ ] **T21.3** — 值模型:i32/i64 为掩码位模式,f32/f64 为位模式、仅在运算点转换到 `Float64`,引用为带标签的对;NaN 载荷纪律与比较编解码。夹具先行——尚无执行。
+- [ ] **T21.4** — 整数族(纯函数):回绕算术、移位与旋转、clz/ctz/popcnt、带陷阱的除法与余数、符号扩展、饱和截断、wrap 与 extend。取自规范边界案例的夹具。
+- [ ] **T21.5** — 浮点族:经桥接的算术与比较;含截断陷阱的类型转换、promote/demote 用位手术实现正确舍入(语言无 `Float32`)、reinterpret 视为位模式搬运。类型转换边界夹具,含 NaN 类别。
+- [ ] **T21.6** — 存储:`Bytes` 上的线性内存(按页增长、访问前查界、小端各宽度),带 grow/size/fill/copy/init 的表,可变全局;陷阱皆为值。OOB 边缘夹具。
+- [ ] **T21.7** — 帧机器:u64 槽的操作数竞技场、局部与变量指令、以递归实现结构化控制且分支为解栈信号、带陷阱的 `call`/`call_indirect`、`return`、`unreachable`。`fac` 夹具证明尾调用链。
+- [ ] **T21.8** — 实例化与链接:经注册命名空间与宿主解析导入、全局初始化器、按越界即陷阱布局各段(`assert_uninstantiable` 在此失败,存储丢弃)、start 函数、`register`。缺失或失配的导入为链接失败。
+- [ ] **T21.9** — `spectest` 宿主模块:print 函数族、带类型的全局、表与内存,躲在同一个导入接口后面。
+- [ ] **T21.10** — 清仓 I:按序认领运行语料各族——整数、浮点、类型转换、控制流、调用——每族一次独立提交,残余保持 pending。
+- [ ] **T21.11** — 清仓 II:寻址与端序、内存与表操作、段初始化、经注册命名空间的链接、经 spectest 的导入、陷阱案例与收尾残余——运行清单终态零 pending 零失败。
+- [ ] **T21.12** — 收官:运行清单冒烟切片随 `dune test`,`runtime/wasm/README.md` 补执行表面,验收记录于此与 `docs/TASKS.md`(双语)。
+
+步骤 20 记录的三条边界原样生效(包边界、spec 数据不进默认测试路径、拆分条件),清仓中发现并立为成规的"不得对递归结果调用方法"在计划中正式化。压力记录(`Int32`/`Float32` 掩码、可增长缓冲的竞技场、递归上限、argv)是统一闸门的原始素材,不是任务。
+
+## M7 — EmoOS
+
+M6 系统层之上的内核路径。近期:unikernel 构建路径——native 后端已输出 OCaml,MirageOS/solo5 一脉证明该栈可引导——以 `foreign def` FFI 作为机器逃生舱(端口 io、asm 垫片),并真正落地 step 14 笔记中的 `core` 库分层。远期:裸机代码生成,与 wasm 引擎分层化是同一笔投入。内核工作开工时撰写各 step 计划。

@@ -479,6 +479,34 @@ let rec handler state (proc : Emo_eval.process) () :
                     let deadline = conn_deadline c in
                     write_loop state proc k finished c span live deadline
                       (Bytes.of_string data) 0))
+        | Emo_eval.File_read (path, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                try
+                  let ic = open_in_bin path in
+                  let text = really_input_string ic (in_channel_length ic) in
+                  close_in_noerr ic;
+                  Effect.Shallow.continue_with k text (handler state proc ())
+                with Sys_error message ->
+                  raise
+                    (Emo_eval.net_raise span
+                       (Printf.sprintf "cannot read %s: %s" path message)))
+        | Emo_eval.File_write (path, contents, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                (* Close before resuming: the resumption runs the rest
+                   of the process, and a read-your-own-write race beats
+                   descriptor hygiene. *)
+                try
+                  let oc = open_out_bin path in
+                  output_string oc contents;
+                  let n = String.length contents in
+                  close_out_noerr oc;
+                  Effect.Shallow.continue_with k n (handler state proc ())
+                with Sys_error message ->
+                  raise
+                    (Emo_eval.net_raise span
+                       (Printf.sprintf "cannot write %s: %s" path message)))
         | Emo_eval.Net_close_conn (c, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->

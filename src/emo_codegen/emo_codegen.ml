@@ -196,6 +196,8 @@ and emit_pattern (p : Emo_ast.pattern) : string =
      bodies), so the capture itself stays anonymous. *)
   | Ast.Pattern_binding _ -> "_"
   | Ast.Pattern_literal (L_int n) -> Printf.sprintf "Emo_eval.Int %d" n
+  | Ast.Pattern_literal (L_int64 n) -> Printf.sprintf "Emo_eval.Int64 %LdL" n
+  | Ast.Pattern_literal (L_byte n) -> Printf.sprintf "Emo_eval.Byte %d" n
   | Ast.Pattern_literal (L_float f) -> Printf.sprintf "Emo_eval.Float %g" f
   | Ast.Pattern_literal (L_string s) -> Printf.sprintf "Emo_eval.String %S" s
   | Ast.Pattern_literal (L_bool b) -> Printf.sprintf "Emo_eval.Bool %b" b
@@ -301,6 +303,8 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Const (L_int n) ->
       if env.native && e.Emo_ir.ety = Emo_check.Int then string_of_int n
       else Printf.sprintf "Emo_eval.Int %d" n
+  | Emo_ir.Const (L_int64 n) -> Printf.sprintf "Emo_eval.Int64 %LdL" n
+  | Emo_ir.Const (L_byte n) -> Printf.sprintf "Emo_eval.Byte %d" n
   | Emo_ir.Const (L_float f) ->
       if env.native && e.Emo_ir.ety = Emo_check.Float then
         Printf.sprintf "(%s)" (string_of_float f)
@@ -340,6 +344,8 @@ and emit_expr env (e : Emo_ir.expr) : string =
         (String.concat "; " (List.map (emit_expr env) es))
   | Emo_ir.Unary (Ast.Not, x) ->
       Printf.sprintf "(Emo_runtime.not_ (%s))" (emit_expr env x)
+  | Emo_ir.Unary (Ast.Bit_not, x) ->
+      Printf.sprintf "(Emo_runtime.bit_not (%s))" (emit_expr env x)
   | Emo_ir.Unary (Ast.Neg, x) ->
       if env.native && e.Emo_ir.ety = Emo_check.Int then
         Printf.sprintf "(- %s)" (emit_expr env x)
@@ -379,6 +385,11 @@ and emit_expr env (e : Emo_ir.expr) : string =
           | Ast.Mul -> "mul"
           | Ast.Div -> "div"
           | Ast.Mod -> "modulo"
+          | Ast.Bit_and -> "bit_and"
+          | Ast.Bit_or -> "bit_or"
+          | Ast.Bit_xor -> "bit_xor"
+          | Ast.Shl -> "shl"
+          | Ast.Shr -> "shr"
           | Ast.And -> "and_"
           | Ast.Or -> "or_"
         in
@@ -412,6 +423,8 @@ and emit_expr env (e : Emo_ir.expr) : string =
         (String.concat "; " (List.map (emit_expr env) args))
   | Emo_ir.Box_new e ->
       Printf.sprintf "(Emo_runtime.box_new (%s))" (emit_expr env e)
+  | Emo_ir.Bytes_new e ->
+      Printf.sprintf "(Emo_runtime.bytes_new (%s))" (emit_expr env e)
   | Emo_ir.Make_exception { message } ->
       Printf.sprintf "(Emo_runtime.exception_new (%s))" (emit_expr env message)
   | Emo_ir.Do_spawn { func; args } ->
@@ -477,13 +490,27 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
         | Ast.Ne -> "<>"
         | Ast.And -> "&&"
         | Ast.Or -> "||"
+        | Ast.Bit_and -> "land"
+        | Ast.Bit_or -> "lor"
+        | Ast.Bit_xor -> "lxor"
+        | Ast.Shl -> ""
+        | Ast.Shr -> ""
       in
-      Printf.sprintf "(%s %s %s)" (emit_native_expr env l) op_str
-        (emit_native_expr env r)
+      if op = Ast.Shl then
+        Printf.sprintf "(Emo_runtime.shl_int %s %s)" (emit_native_expr env l)
+          (emit_native_expr env r)
+      else if op = Ast.Shr then
+        Printf.sprintf "(Emo_runtime.shr_int %s %s)" (emit_native_expr env l)
+          (emit_native_expr env r)
+      else
+        Printf.sprintf "(%s %s %s)" (emit_native_expr env l) op_str
+          (emit_native_expr env r)
   | Emo_ir.Unary (Ast.Neg, x) ->
       if e.Emo_ir.ety = Emo_check.Float then
         Printf.sprintf "(-. %s)" (emit_native_expr env x)
       else Printf.sprintf "(- %s)" (emit_native_expr env x)
+  | Emo_ir.Unary (Ast.Bit_not, x) ->
+      Printf.sprintf "(lnot %s)" (emit_native_expr env x)
   | Emo_ir.Unary (Ast.Not, x) ->
       Printf.sprintf "(not %s)" (emit_native_expr env x)
   | Emo_ir.Call { func; args } ->
@@ -532,6 +559,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
         | Emo_ir.Method { name; _ } -> "Method " ^ name
         | Emo_ir.Builtin { name; _ } -> "Builtin " ^ name
         | Emo_ir.Box_new _ -> "Box_new"
+        | Emo_ir.Bytes_new _ -> "Bytes_new"
         | Emo_ir.Make_exception _ -> "Make_exception"
         | Emo_ir.Do_spawn _ -> "Do_spawn"
         | Emo_ir.Spawn_value _ -> "Spawn_value"

@@ -185,6 +185,8 @@ let wasm_goldens =
     "pipeline";
     "function_group";
     "showcase";
+    "bit_ops";
+    "fixed_width";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -201,6 +203,8 @@ let beam_goldens =
     "pipeline";
     "function_group";
     "showcase";
+    "bit_ops";
+    "fixed_width";
   ]
 
 let erl_available =
@@ -264,6 +268,30 @@ let beam_examples_tests =
 let wasm_runner_source =
   {|
 import { readFile } from "node:fs/promises";
+
+// OCaml's %g — the rule the interpreter's `emo_to_string` follows, and
+// the same one the TS runtime's `g6` implements: six significant
+// digits, exponent form below 1e-4 or at 1e6 and above, exponent
+// spelled with a sign and two digits.
+const g6 = (x) => {
+  const exp = Math.floor(Math.log10(Math.abs(x)));
+  if (exp < -4 || exp >= 6) {
+    let r = Number((x / Math.pow(10, exp)).toFixed(5));
+    let e = exp;
+    if (Math.abs(r) >= 10) {
+      r = Number((r / 10).toFixed(5));
+      e += 1;
+    }
+    let ms = r.toFixed(5);
+    if (ms.includes(".")) ms = ms.replace(/0+$/, "").replace(/\.$/, "");
+    return ms + "e" + (e < 0 ? "-" : "+") + String(Math.abs(e)).padStart(2, "0");
+  }
+  const decimals = Math.max(0, 5 - exp);
+  let s = x.toFixed(decimals);
+  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return s;
+};
+const floatStr = (f) => (Number.isInteger(f) && Math.abs(f) < 1e16 ? f.toFixed(1) : g6(f));
 const bytes = await readFile(process.argv[2]);
 let mem = null;
 const dec = new TextDecoder();
@@ -278,7 +306,7 @@ const instance = await WebAssembly.instantiate(module, { emo: {
     process.exit(1);
   },
   float_str: (f) => {
-    const encoded = new TextEncoder().encode(String(f));
+    const encoded = new TextEncoder().encode(floatStr(f));
     const view = new Uint8Array(mem.buffer, 60000, encoded.length);
     view.set(encoded);
     return [60000, encoded.length];

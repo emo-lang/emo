@@ -1,0 +1,110 @@
+; The smoke rule makes the wasm package non-inert: `dune test` runs
+; `emo run main.emo` and diffs its stdout against expected.txt, so a
+; red line here means the runtime's own golden broke. The second pair
+; runs the full list under the wasm_spec alias (step 20's acceptance
+; gate).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  main.emo
+  wasm.emo
+  cli.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  internal/model.emo
+  testdata/cases.smoke.txt
+  package.emo)
+ (action
+  (with-stdout-to
+   smoke.actual
+   (run %{emo} run main.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  smoke.actual
+  expected.txt)
+ (action
+  (diff expected.txt smoke.actual)))
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  leb-fixture.emo
+  wasm.emo
+  cli.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   leb-fixture.actual
+   (run %{emo} run leb-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  leb-fixture.actual
+  leb-fixture.expected.txt)
+ (action
+  (diff leb-fixture.expected.txt leb-fixture.actual)))
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  type-fixture.emo
+  wasm.emo
+  cli.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  internal/model.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   type-fixture.actual
+   (run %{emo} run type-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  type-fixture.actual
+  type-fixture.expected.txt)
+ (action
+  (diff type-fixture.expected.txt type-fixture.actual)))
+
+(rule
+ (alias wasm_spec)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  spec.emo
+  wasm.emo
+  cli.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  internal/model.emo
+  testdata/cases.all.txt
+  package.emo)
+ (action
+  (with-stdout-to
+   spec.actual
+   (run %{emo} run spec.emo))))
+
+(rule
+ (alias wasm_spec)
+ (deps
+  spec.actual
+  spec.expected.txt)
+ (action
+  (diff spec.expected.txt spec.actual)))

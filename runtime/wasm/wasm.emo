@@ -1,0 +1,16 @@
+// The WebAssembly runtime, written in Emo the way wasmtime is written
+// in Rust. Step 20 grew the binary decoder and validator here, step
+// 21 the interpreter and the host imports.
+//
+// The package surface: `smoke()` identifies the package; `decode(bytes)`
+// is the binary-format entry — it reports (ok, phase, offset, message),
+// never raising for bad input. The decoded module itself stays inside
+// the package boundary (its model lives under internal/).
+
+def smoke() String {
+  return "emo wasm runtime"
+}
+
+def decode(data Bytes) (Bool, String, Int, String) {
+  return internal.decode.module_from(data)
+}

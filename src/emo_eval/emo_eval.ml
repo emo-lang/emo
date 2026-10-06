@@ -14,11 +14,14 @@ let error span ?hint code message =
 
 type value =
   | Int of int
+  | Int64 of int64
+  | Byte of int
   | Float of float
   | Bool of bool
   | Void
   | Char of char
   | String of string
+  | Bytes of Bytes.t
   | Tuple of value list
   | Array of value array
   | Box of value ref
@@ -146,11 +149,14 @@ let parse_decimal s =
 
 let type_name = function
   | Int _ -> "Int"
+  | Int64 _ -> "Int64"
+  | Byte _ -> "Byte"
   | Float _ -> "Float"
   | Bool _ -> "Bool"
   | Void -> "Void"
   | Char _ -> "Char"
   | String _ -> "String"
+  | Bytes _ -> "Bytes"
   | Tuple _ -> "Tuple"
   | Array _ -> "Array"
   | Box _ -> "Box"
@@ -173,11 +179,14 @@ let type_name = function
 let rec equal_value a b =
   match (a, b) with
   | Int x, Int y -> Int.equal x y
+  | Int64 x, Int64 y -> Int64.equal x y
+  | Byte x, Byte y -> Int.equal x y
   | Float x, Float y -> Float.equal x y
   | Bool x, Bool y -> Bool.equal x y
   | Void, Void -> true
   | Char x, Char y -> Char.equal x y
   | String x, String y -> String.equal x y
+  | Bytes x, Bytes y -> Bytes.equal x y
   | Tuple xs, Tuple ys ->
       List.length xs = List.length ys && List.for_all2 equal_value xs ys
   | Array xs, Array ys ->
@@ -228,6 +237,15 @@ let global_env () =
     { bound = BuiltinFn "net_listen"; mutable_ = false };
   Hashtbl.replace env.frame "net_resolve"
     { bound = BuiltinFn "net_resolve"; mutable_ = false };
+  Hashtbl.replace env.frame "file_read"
+    { bound = BuiltinFn "file_read"; mutable_ = false };
+  Hashtbl.replace env.frame "Int64"
+    { bound = TypeValue "Int64"; mutable_ = false };
+  Hashtbl.replace env.frame "Byte" { bound = TypeValue "Byte"; mutable_ = false };
+  Hashtbl.replace env.frame "Float"
+    { bound = TypeValue "Float"; mutable_ = false };
+  Hashtbl.replace env.frame "file_write"
+    { bound = BuiltinFn "file_write"; mutable_ = false };
   Hashtbl.replace env.frame "net_udp_bind"
     { bound = BuiltinFn "net_udp_bind"; mutable_ = false };
   Hashtbl.replace env.frame "net_connect_unix"
@@ -241,6 +259,8 @@ let global_env () =
   Hashtbl.replace env.frame "net_listen_tls"
     { bound = BuiltinFn "net_listen_tls"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
+  Hashtbl.replace env.frame "Bytes"
+    { bound = TypeValue "Bytes"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
     {
@@ -317,6 +337,8 @@ let set_output f = output := f
 let rec to_string v =
   match v with
   | Int n -> string_of_int n
+  | Int64 n -> Int64.to_string n
+  | Byte n -> string_of_int n
   | Float f ->
       if Float.is_integer f && Float.abs f < 1e16 then Printf.sprintf "%.1f" f
       else Printf.sprintf "%g" f
@@ -328,6 +350,7 @@ let rec to_string v =
   | Array vs ->
       "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
   | Box _ -> "<box>"
+  | Bytes b -> Printf.sprintf "Bytes[%d]" (Bytes.length b)
   | Pid n -> Printf.sprintf "<pid %d>" n
   | TcpConn c -> Printf.sprintf "<conn %s>" c.cdesc
   | TcpListener l -> Printf.sprintf "<listener %s>" l.ldesc
@@ -500,6 +523,8 @@ let uncaught_diagnostic (v, span, trace) =
 
 let literal_value = function
   | Ast.L_int n -> Int n
+  | Ast.L_int64 n -> Int64 n
+  | Ast.L_byte n -> Byte n
   | Ast.L_float f -> Float f
   | Ast.L_char c -> Char c
   | Ast.L_string s -> String s
@@ -595,6 +620,8 @@ type _ Effect.t +=
   | Net_udp_close : udp * Emo_support.Span.t -> udp Effect.t
   | Net_connect_unix : string * float * Emo_support.Span.t -> conn Effect.t
   | Net_listen_unix : string * Emo_support.Span.t -> listener Effect.t
+  | File_read : string * Emo_support.Span.t -> string Effect.t
+  | File_write : string * string * Emo_support.Span.t -> int Effect.t
   | Net_tls_connect :
       (string * int * float * bool * string list * Emo_support.Span.t)
       -> conn Effect.t
@@ -658,6 +685,7 @@ let find_process span pid =
 let rec snapshot (v : value) : value =
   match v with
   | Box r -> Box (ref (snapshot !r))
+  | Bytes b -> Bytes (Bytes.copy b)
   | Tuple vs -> Tuple (List.map snapshot vs)
   | Array xs -> Array (Array.map snapshot xs)
   | Instance i ->
@@ -788,6 +816,12 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_listen_unix`")
+            | File_read (_, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`file.read`")
+            | File_write (_, _, span) ->
+                Some
+                  (fun (_ : (a, _) continuation) -> refused span "`file.write`")
             | Compiled_receive _ ->
                 Some
                   (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
@@ -832,10 +866,17 @@ let rec eval_unary env span op x =
       error span "E3001"
         (Printf.sprintf "operator `!` expects a Bool, got %s" (type_name v))
   | Ast.Neg, Int n -> Int (-n)
+  | Ast.Neg, Int64 n -> Int64 (Int64.neg n)
   | Ast.Neg, Float f -> Float (-.f)
   | Ast.Neg, v ->
       error span "E3001"
         (Printf.sprintf "operator `-` expects a number, got %s" (type_name v))
+  | Ast.Bit_not, Int n -> Int (lnot n)
+  | Ast.Bit_not, Int64 n -> Int64 (Int64.lognot n)
+  | Ast.Bit_not, Byte n -> Byte (lnot n land 255)
+  | Ast.Bit_not, v ->
+      error span "E3001"
+        (Printf.sprintf "operator `~` expects an Int, got %s" (type_name v))
 
 and eval_binary env span op left_expr right_expr =
   let op_name = function
@@ -850,6 +891,11 @@ and eval_binary env span op left_expr right_expr =
     | Ast.Mul -> "*"
     | Ast.Div -> "/"
     | Ast.Mod -> "%"
+    | Ast.Bit_and -> "&"
+    | Ast.Bit_or -> "|"
+    | Ast.Bit_xor -> "^"
+    | Ast.Shl -> "<<"
+    | Ast.Shr -> ">>"
     | Ast.And -> "&&"
     | Ast.Or -> "||"
   in
@@ -868,15 +914,91 @@ and eval_binary env span op left_expr right_expr =
   let check_bool v =
     match v with Bool b -> b | v -> type_mismatch "two Bools"
   in
+  let as_int = function Int x -> x | v -> type_mismatch "two Ints" in
+  let is_pair64 x y = match (x, y) with Int64 _, Int64 _ -> true | _ -> false in
+  let is_pair_byte x y = match (x, y) with Byte _, Byte _ -> true | _ -> false in
+  let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
+  let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
+  (* Fixed-width arithmetic wraps in two's complement; Byte, being
+     unsigned, wraps modulo 256. Shift counts are non-negative and
+     saturate at the width, matching the Int rule. *)
+  let i64_bin f = Int64 (f (i64_of left) (i64_of right)) in
+  let byte_bin f = Byte (f (byte_of left) (byte_of right) land 255) in
+  let i64_div f =
+    if i64_of right = 0L then error span "E3005" "division by zero";
+    i64_bin f
+  in
+  let byte_div f =
+    if byte_of right = 0 then error span "E3005" "division by zero";
+    byte_bin f
+  in
+  let i64_shift_count () =
+    let c = i64_of right in
+    if c < 0L then error span "E3005" "shift count must be non-negative";
+    c
+  in
+  let i64_shl () =
+    let c = i64_shift_count () in
+    if c >= 64L then Int64 0L
+    else Int64 (Int64.shift_left (i64_of left) (Int64.to_int c))
+  in
+  let i64_shr () =
+    let c = i64_shift_count () in
+    if c >= 64L then Int64 (if i64_of left < 0L then -1L else 0L)
+    else Int64 (Int64.shift_right (i64_of left) (Int64.to_int c))
+  in
+  let byte_shl () =
+    let c = byte_of right in
+    if c >= 8 then Byte 0 else Byte ((byte_of left lsl c) land 255)
+  in
+  let byte_shr () =
+    let c = byte_of right in
+    if c >= 8 then Byte 0 else Byte (byte_of left lsr c)
+  in
   match op with
   | Ast.And -> Bool (if check_bool left then check_bool right else false)
   | Ast.Or -> Bool (if check_bool left then true else check_bool right)
   | Ast.Eq -> Bool (equal_value left right)
   | Ast.Ne -> Bool (not (equal_value left right))
+  | Ast.Lt when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) < 0)
+  | Ast.Lt when is_pair_byte left right -> Bool (byte_of left < byte_of right)
+  | Ast.Le when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) <= 0)
+  | Ast.Le when is_pair_byte left right -> Bool (byte_of left <= byte_of right)
+  | Ast.Gt when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) > 0)
+  | Ast.Gt when is_pair_byte left right -> Bool (byte_of left > byte_of right)
+  | Ast.Ge when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) >= 0)
+  | Ast.Ge when is_pair_byte left right -> Bool (byte_of left >= byte_of right)
   | Ast.Lt -> Bool (as_float left < as_float right)
   | Ast.Le -> Bool (as_float left <= as_float right)
   | Ast.Gt -> Bool (as_float left > as_float right)
   | Ast.Ge -> Bool (as_float left >= as_float right)
+  | Ast.Add when is_pair64 left right -> i64_bin Int64.add
+  | Ast.Sub when is_pair64 left right -> i64_bin Int64.sub
+  | Ast.Mul when is_pair64 left right -> i64_bin Int64.mul
+  | Ast.Div when is_pair64 left right -> i64_div Int64.div
+  | Ast.Mod when is_pair64 left right -> i64_div Int64.rem
+  | Ast.Add when is_pair_byte left right -> byte_bin ( + )
+  | Ast.Sub when is_pair_byte left right -> byte_bin ( - )
+  | Ast.Mul when is_pair_byte left right -> byte_bin ( * )
+  | Ast.Div when is_pair_byte left right -> byte_div ( / )
+  | Ast.Mod when is_pair_byte left right -> byte_div ( mod )
+  | Ast.Bit_and when is_pair64 left right -> i64_bin Int64.logand
+  | Ast.Bit_or when is_pair64 left right -> i64_bin Int64.logor
+  | Ast.Bit_xor when is_pair64 left right -> i64_bin Int64.logxor
+  | Ast.Shl when is_pair64 left right -> i64_shl ()
+  | Ast.Shr when is_pair64 left right -> i64_shr ()
+  | Ast.Bit_and when is_pair_byte left right ->
+      Byte (byte_of left land byte_of right)
+  | Ast.Bit_or when is_pair_byte left right ->
+      Byte (byte_of left lor byte_of right)
+  | Ast.Bit_xor when is_pair_byte left right ->
+      Byte (byte_of left lxor byte_of right)
+  | Ast.Shl when is_pair_byte left right -> byte_shl ()
+  | Ast.Shr when is_pair_byte left right -> byte_shr ()
   | Ast.Add -> (
       match (left, right) with
       | Int x, Int y -> Int (x + y)
@@ -922,6 +1044,17 @@ and eval_binary env span op left_expr right_expr =
           if op = Ast.Div then Float (x /. float_of_int y)
           else Float (Float.rem x (float_of_int y))
       | _ -> type_mismatch "two numbers")
+  | Ast.Bit_and -> Int (as_int left land as_int right)
+  | Ast.Bit_or -> Int (as_int left lor as_int right)
+  | Ast.Bit_xor -> Int (as_int left lxor as_int right)
+  | Ast.Shl | Ast.Shr ->
+      let x = as_int left in
+      let count = as_int right in
+      if count < 0 then error span "E3005" "shift count must be non-negative"
+      else if op = Ast.Shl then
+        (* OCaml leaves `lsl` by a full word unspecified — saturate. *)
+        Int (if count >= 63 then 0 else x lsl count)
+      else Int (if count >= 63 then if x < 0 then -1 else 0 else x asr count)
 
 and eval_index env span base index =
   let b = eval_expr env base in
@@ -1089,9 +1222,79 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`Box.new` expects 1 argument, got %d" argc))
+      | TypeValue "Int64", "from_int" -> (
+          let args = eval_args () in
+          match args with
+          | [ Int n ] -> Int64 (Int64.of_int n)
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`Int64.from_int` expects an Int, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Int64.from_int` expects 1 argument, got %d"
+                   argc))
+      | TypeValue "Byte", "from_int" -> (
+          let args = eval_args () in
+          match args with
+          | [ Int n ] when n >= 0 && n <= 255 -> Byte n
+          | [ Int n ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "`Byte.from_int` needs a value in 0-255, got %d" n)
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`Byte.from_int` expects an Int, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Byte.from_int` expects 1 argument, got %d"
+                   argc))
+      | TypeValue "Float", "from_bits" -> (
+          let args = eval_args () in
+          match args with
+          | [ Int64 b ] -> Float (Int64.float_of_bits b)
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`Float.from_bits` expects an Int64, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Float.from_bits` expects 1 argument, got %d"
+                   argc))
+      | Int64 x, "to_int" ->
+          none_expected "to_int";
+          Int (Int64.to_int x)
+      | Int64 x, "to_byte" ->
+          none_expected "to_byte";
+          Byte (Int64.to_int (Int64.logand x 255L))
+      | Byte n, "to_int" ->
+          none_expected "to_int";
+          Int n
+      | Float f, "to_bits" ->
+          none_expected "to_bits";
+          Int64 (Int64.bits_of_float f)
+      | TypeValue "Bytes", "new" -> (
+          let args = eval_args () in
+          match args with
+          | [ Int n ] when n >= 0 -> Bytes (Bytes.make n '\000')
+          | [ Int n ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "`Bytes.new` needs a non-negative length, got %d" n)
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`Bytes.new` expects an Int length, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`Bytes.new` expects 1 argument, got %d" argc))
       | TypeValue t, m ->
           error span "E3009"
             (Printf.sprintf "type `%s` has no member `%s` yet" t m)
+      | Bytes b, "to_string" ->
+          none_expected "to_string";
+          String (Bytes.to_string b)
       | v, "to_string" ->
           none_expected "to_string";
           String (to_string v)
@@ -1113,6 +1316,161 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+      | Bytes b, "length" ->
+          none_expected "length";
+          Int (Bytes.length b)
+      | Bytes b, "get" -> (
+          match eval_args () with
+          | [ Int i ] when i >= 0 && i < Bytes.length b ->
+              Int (Char.code (Bytes.get b i))
+          | [ Int i ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a length-%d Bytes" i
+                   (Bytes.length b))
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`get` expects an Int index, got %s"
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`get` expects 1 argument, got %d"
+                   (List.length args)))
+      | Bytes b, "set" -> (
+          match eval_args () with
+          | [ Int i; Int v ]
+            when i >= 0 && i < Bytes.length b && v >= 0 && v <= 255 ->
+              Bytes.set b i (Char.chr v);
+              Int v
+          | [ Int i; Int v ] when i < 0 || i >= Bytes.length b ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a length-%d Bytes" i
+                   (Bytes.length b))
+          | [ Int _; Int v ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "byte value %d is out of range for a byte (0-255)" v)
+          | [ Int _; v ] ->
+              error span "E3001"
+                (Printf.sprintf "`set` expects an Int byte value, got %s"
+                   (type_name v))
+          | [ v; _ ] ->
+              error span "E3001"
+                (Printf.sprintf "`set` expects an Int index, got %s"
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`set` expects 2 arguments, got %d"
+                   (List.length args)))
+      | Bytes b, (("get_u16_le" | "get_u32_le") as mname) -> (
+          let width = if mname = "get_u16_le" then 2 else 4 in
+          match eval_args () with
+          | [ Int i ] when i >= 0 && i + width <= Bytes.length b ->
+              let acc = ref 0 in
+              for k = width - 1 downto 0 do
+                acc := (!acc lsl 8) lor Char.code (Bytes.get b (i + k))
+              done;
+              Int !acc
+          | [ Int i ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a %s read on a length-%d \
+                    Bytes"
+                   i mname (Bytes.length b))
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects an Int index, got %s" mname
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                   (List.length args)))
+      | Bytes b, (("set_u16_le" | "set_u32_le") as mname) -> (
+          let width = if mname = "set_u16_le" then 2 else 4 in
+          match eval_args () with
+          | [ Int i; Int v ] when i >= 0 && i + width <= Bytes.length b ->
+              let v = v land if width = 2 then 0xFFFF else 0xFFFFFFFF in
+              for k = 0 to width - 1 do
+                Bytes.set b (i + k) (Char.chr ((v lsr (8 * k)) land 0xFF))
+              done;
+              Int v
+          | [ Int i; Int _ ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a %s write on a length-%d \
+                    Bytes"
+                   i mname (Bytes.length b))
+          | [ Int _; v ] ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects an Int value, got %s" mname
+                   (type_name v))
+          | [ v; _ ] ->
+              error span "E3001"
+                (Printf.sprintf "`%s` expects an Int index, got %s" mname
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`%s` expects 2 arguments, got %d" mname
+                   (List.length args)))
+      | Bytes b, "get_u64_le" -> (
+          match eval_args () with
+          | [ Int i ] when i >= 0 && i + 8 <= Bytes.length b ->
+              let acc = ref 0L in
+              for k = 7 downto 0 do
+                acc :=
+                  Int64.logor
+                    (Int64.shift_left !acc 8)
+                    (Int64.of_int (Char.code (Bytes.get b (i + k))))
+              done;
+              Int64 !acc
+          | [ Int i ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a get_u64_le read on a \
+                    length-%d Bytes"
+                   i (Bytes.length b))
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`get_u64_le` expects an Int index, got %s"
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`get_u64_le` expects 1 argument, got %d"
+                   (List.length args)))
+      | Bytes b, "set_u64_le" -> (
+          match eval_args () with
+          | [ Int i; Int64 v ] when i >= 0 && i + 8 <= Bytes.length b ->
+              for k = 0 to 7 do
+                Bytes.set b (i + k)
+                  (Char.chr
+                     (Int64.to_int
+                        (Int64.logand
+                           (Int64.shift_right_logical v (8 * k))
+                           0xFFL)))
+              done;
+              Int64 v
+          | [ Int i; Int64 _ ] ->
+              error span "E3004"
+                (Printf.sprintf
+                   "index %d is out of bounds for a set_u64_le write on a \
+                    length-%d Bytes"
+                   i (Bytes.length b))
+          | [ Int _; v ] ->
+              error span "E3001"
+                (Printf.sprintf "`set_u64_le` expects an Int64 value, got %s"
+                   (type_name v))
+          | [ v; _ ] ->
+              error span "E3001"
+                (Printf.sprintf "`set_u64_le` expects an Int index, got %s"
+                   (type_name v))
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`set_u64_le` expects 2 arguments, got %d"
+                   (List.length args)))
+      | String s, "to_bytes" ->
+          none_expected "to_bytes";
+          Bytes (Bytes.of_string s)
       | TcpConn c, "read_line" ->
           none_expected "read_line";
           String (Effect.perform (Net_read_line (c, span)))
@@ -1447,6 +1805,32 @@ and apply_builtin span name args =
       UdpSocket (Effect.perform (Net_udp_bind (host, port, span)))
   | "net_udp_bind", _ ->
       error span "E3001" "`net_udp_bind` expects (host String, port Int)"
+  | "file_read", args when List.length args <> 1 ->
+      error span "E3007"
+        (Printf.sprintf "`file_read` expects (path String), got %d arguments"
+           (List.length args))
+  | "file_read", [ String path ] ->
+      String (Effect.perform (File_read (path, span)))
+  | "file_read", [ v ] ->
+      error span "E3001"
+        (Printf.sprintf "`file_read` expects a String path, got %s"
+           (type_name v))
+  | "file_write", args when List.length args <> 2 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`file_write` expects (path String, contents String), got \
+            %d             arguments"
+           (List.length args))
+  | "file_write", [ String path; String contents ] ->
+      Int (Effect.perform (File_write (path, contents, span)))
+  | "file_write", [ String _; v ] ->
+      error span "E3001"
+        (Printf.sprintf "`file_write` expects String contents, got %s"
+           (type_name v))
+  | "file_write", [ v; _ ] ->
+      error span "E3001"
+        (Printf.sprintf "`file_write` expects a String path, got %s"
+           (type_name v))
   | "net_connect_unix", args when List.length args <> 2 ->
       error span "E3007"
         (Printf.sprintf
@@ -1716,6 +2100,8 @@ and eval_expr env e =
   let span = e.Ast.span in
   match e.Ast.desc with
   | Ast.Int n -> Int n
+  | Ast.Int64 n -> Int64 n
+  | Ast.Byte n -> Byte n
   | Ast.Float f -> Float f
   | Ast.Bool b -> Bool b
   | Ast.Char c -> Char c

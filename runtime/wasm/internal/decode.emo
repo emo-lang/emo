@@ -1,0 +1,290 @@
+// The decode pipeline. T20.4 added the reader bounds (the 8 raw header
+// bytes); T20.6 adds the header semantics (magic, version) and the
+// section walk: ids and sizes, the fixed section order, custom
+// sections skipped, unknown ids rejected, sizes that overrun the
+// module. The sections' contents decode from T20.7 onward — the walk
+// skips them for now, so only header/id/order/size families claim.
+//
+// The walk threads the cursor as (data, pos) primitives rather than a
+// Reader value: def signatures cannot spell another module's class
+// (qualified type annotations do not parse — step 20 pressure), so any
+// cross-def cursor travel goes through unannotated locals.
+
+def debug_print_outcome(label String, o (Bool, String, Int, String)) Int {
+  println(label + ": ok=" + o[0].to_string() + " phase=" + o[1]
+    + " offset=" + o[2].to_string() + " msg=" + o[3])
+  return 0
+}
+
+def module_from(data Bytes) (Bool, String, Int, String) {  const r = internal.reader.over(data)
+  const head = internal.reader.take(r, 8)
+  const rr = head[0]
+  if rr.failed {
+    return internal.error.malformed(rr.fail_offset, rr.fail_msg)
+  }
+  const h = head[1]
+  if h.get(0) != 0 || h.get(1) != 97 || h.get(2) != 115 || h.get(3) != 109 {
+    return internal.error.malformed(0, "magic header not detected")
+  }
+  if h.get(4) != 1 || h.get(5) != 0 || h.get(6) != 0 || h.get(7) != 0 {
+    return internal.error.malformed(4, "unknown binary version")
+  }
+  const w = walk(data, rr.pos, 0, -1, -1, false)
+  if w[0] {
+    // Bulk-memory rule: with a data section present but no data
+    // count section, any memory.init / data.drop use is malformed
+    // (without a data section the validator's unknown-segment check
+    // makes it invalid instead — the corpus pins both phases).
+    const scan = bulk_scan(data)
+    if scan[0] {
+      const det = internal.model.code_section(data, scan[1], scan[2], -2, -2)
+      if !det[0] {
+        return internal.error.malformed(det[2], "data count section required")
+      }
+    }
+    // The shape is sound: the validator checks the semantics that
+    // make the module valid (T20.14 onward).
+    const v = internal.model.validate(data)
+    if !v[0] {
+      return internal.error.invalid(v[2], v[1])
+    }
+  }
+  return w
+}
+
+// A non-custom section's rank in the fixed order, doubled so the
+// data-count section (id 12) fits strictly between element (9) and
+// code (10).
+def rank(id Int) Int {
+  if id == 12 {
+    return 19
+  }
+  return id * 2
+}
+
+// Walk sections from `pos`; `last_rank` is the rank of the last
+// non-custom section seen (0 before any). `dc` is the data-count
+// section's value (-1 before it is seen); `n_funcs` the function
+// section's declared count (-1 before it is seen); `saw_code` whether
+// the code section has been walked.
+def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int, saw_code Bool) (Bool, String, Int, String) {
+  if pos >= data.length() {
+    if n_funcs > 0 && !saw_code {
+      // A declared function needs its body: no code section at all
+      // is an inconsistent-length module.
+      return internal.error.malformed(data.length(), "function and code section have inconsistent lengths")
+    }
+    return internal.error.good()
+  }
+  const p = internal.reader.u8(internal.reader.new(data, pos, data.length()))
+  const r1 = p[0]
+  const id = p[1]
+  if r1.failed {
+    return internal.error.malformed(r1.fail_offset, r1.fail_msg)
+  }
+  if id > 12 {
+    return internal.error.malformed(r1.pos, "malformed section id")
+  }
+  const ps = internal.reader.u32(r1)
+  const r2 = ps[0]
+  if r2.failed {
+    return internal.error.malformed(r2.fail_offset, r2.fail_msg)
+  }
+  const size = ps[1]
+  if size > internal.reader.remaining(r2) {
+    return internal.error.malformed(r2.pos, "unexpected end")
+  }
+  if id == 0 {
+    // A custom section: its name must fit inside its own content and
+    // be valid UTF-8; the whole content is then skipped.
+    const sub = internal.reader.new(r2.data, r2.pos, r2.pos + size)
+    const pn = internal.reader.u32(sub)
+    const s1 = pn[0]
+    if s1.failed {
+      return internal.error.malformed(s1.fail_offset, s1.fail_msg)
+    }
+    if pn[1] > internal.reader.remaining(s1) {
+      return internal.error.malformed(s1.pos, "unexpected end")
+    }
+    if !internal.reader.utf8_ok(data, s1.pos, s1.pos + pn[1]) {
+      return internal.error.malformed(s1.pos, "malformed UTF-8 encoding")
+    }
+    const r3 = internal.reader.skip(r2, size)
+    return walk(data, r3.pos, last_rank, dc, n_funcs, saw_code)
+  }
+  if rank(id) <= last_rank {
+    return internal.error.malformed(r1.pos, "unexpected section")
+  }
+  if id == 1 {
+    // The type section decodes its content (T20.7) and must consume it
+    // exactly: leftover bytes are a "section size mismatch".
+    const t = internal.model.type_section(r2.data, r2.pos, r2.pos + size)
+    if !t[0] {
+      return internal.error.malformed(t[2], "malformed type section")
+    }
+    if t[2] != r2.pos + size {
+      return internal.error.malformed(t[2], "section size mismatch")
+    }
+  }
+  if id == 3 {
+    // The function section's declared count threads to the code
+    // section: a mismatch is malformed, not invalid.
+    const cn = internal.reader.u32(internal.reader.new(data, r2.pos, r2.pos + size))
+    if cn[0].failed {
+      return internal.error.malformed(cn[0].fail_offset, "malformed function section")
+    }
+    const s = internal.model.func_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+    const r3 = internal.reader.skip(r2, size)
+    return walk(data, r3.pos, rank(id), dc, cn[1], saw_code)
+  }
+  if id == 2 {
+    const s = internal.model.import_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 3 {
+    const s = internal.model.func_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 4 {
+    const s = internal.model.table_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 5 {
+    const s = internal.model.memory_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 7 {
+    const s = internal.model.export_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 6 {
+    const s = internal.model.global_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 8 {
+    // The start section: one function index, exactly consumed.
+    const s = internal.reader.u32(internal.reader.new(data, r2.pos, r2.pos + size))
+    if s[0].failed {
+      return internal.error.malformed(s[0].fail_offset, s[0].fail_msg)
+    }
+    if s[0].pos != r2.pos + size {
+      return internal.error.malformed(s[0].pos, "section size mismatch")
+    }
+  }
+  if id == 9 {
+    const s = internal.model.elem_section(r2.data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 12 {
+    // The data-count section: one u32, exactly consumed. Its value
+    // threads to the instruction decoder (memory.init / data.drop are
+    // only decodable with one present) and to the data section's
+    // consistency check.
+    const s = internal.model.datacount_section(data, r2.pos, r2.pos + size)
+    if !s[0] {
+      return internal.error.malformed(s[2], "data count section size mismatch")
+    }
+    const r3 = internal.reader.skip(r2, size)
+    return walk(data, r3.pos, rank(id), s[1], n_funcs, saw_code)
+  }
+  if id == 11 {
+    const s = internal.model.data_section(r2.data, r2.pos, r2.pos + size, dc)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+  }
+  if id == 10 {
+    const s = internal.model.code_section(r2.data, r2.pos, r2.pos + size, dc, n_funcs)
+    if !s[0] {
+      return internal.error.malformed(s[2], s[1])
+    }
+    if s[3] != r2.pos + size {
+      return internal.error.malformed(s[2], "section size mismatch")
+    }
+    const rc = internal.reader.skip(r2, size)
+    return walk(data, rc.pos, rank(id), dc, n_funcs, true)
+  }
+  const r3 = internal.reader.skip(r2, size)
+  return walk(data, r3.pos, rank(id), dc, n_funcs, saw_code)
+}
+
+// (data-present-and-datacount-absent, code_lo, code_hi) — the code
+// range is -1..-1 when absent.
+def bulk_scan(data Bytes) (Bool, Int, Int) {
+  return bulk_rest(data, 8, false, false, false, -1, -1)
+}
+
+def bulk_rest(data Bytes, pos Int, saw_dc Bool, saw_data Bool, saw_code Bool, clo Int, chi Int) (Bool, Int, Int) {
+  if pos >= data.length() {
+    return (saw_data && !saw_dc && saw_code, clo, chi)
+  }
+  const p = internal.reader.u8(internal.reader.new(data, pos, data.length()))
+  const r1 = p[0]
+  if r1.failed {
+    return (false, clo, chi)
+  }
+  const ps = internal.reader.u32(r1)
+  const r2 = ps[0]
+  if r2.failed {
+    return (false, clo, chi)
+  }
+  const size = ps[1]
+  if size > internal.reader.remaining(r2) {
+    return (false, clo, chi)
+  }
+  const r3 = internal.reader.skip(r2, size)
+  if p[1] == 12 {
+    return bulk_rest(data, r3.pos, true, saw_data, saw_code, clo, chi)
+  }
+  if p[1] == 11 {
+    return bulk_rest(data, r3.pos, saw_dc, true, saw_code, clo, chi)
+  }
+  if p[1] == 10 {
+    return bulk_rest(data, r3.pos, saw_dc, saw_data, true, r2.pos, r3.pos)
+  }
+  return bulk_rest(data, r3.pos, saw_dc, saw_data, saw_code, clo, chi)
+}

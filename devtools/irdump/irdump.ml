@@ -11,12 +11,14 @@ let ( @@@ ) indent text = Printf.printf "%s%s\n" (String.make indent ' ') text
 
 let lit = function
   | Emo_ast.L_int n -> Printf.sprintf "int %d" n
+  | Emo_ast.L_int64 n -> Printf.sprintf "int64 %Ld" n
+  | Emo_ast.L_byte n -> Printf.sprintf "byte %d" n
   | Emo_ast.L_float f -> Printf.sprintf "float %g" f
   | Emo_ast.L_bool b -> Printf.sprintf "bool %b" b
   | Emo_ast.L_char c -> Printf.sprintf "char %C" c
   | Emo_ast.L_string s -> Printf.sprintf "string %S" s
 
-let unop = function Emo_ast.Not -> "not" | Neg -> "neg"
+let unop = function Emo_ast.Not -> "not" | Neg -> "neg" | Bit_not -> "bit_not"
 
 let binop = function
   | Emo_ast.Add -> "+"
@@ -24,6 +26,11 @@ let binop = function
   | Mul -> "*"
   | Div -> "/"
   | Mod -> "%"
+  | Bit_and -> "&"
+  | Bit_or -> "|"
+  | Bit_xor -> "^"
+  | Shl -> "<<"
+  | Shr -> ">>"
   | Lt -> "<"
   | Le -> "<="
   | Gt -> ">"
@@ -92,6 +99,9 @@ let rec dump_e indent e =
       List.iter (dump_e (indent + 2)) args
   | Box_new v ->
       indent @@@ "Box_new";
+      dump_e (indent + 2) v
+  | Bytes_new v ->
+      indent @@@ "Bytes_new";
       dump_e (indent + 2) v
   | Make_exception { message } ->
       indent @@@ "Raise_value";

@@ -1186,6 +1186,8 @@ let ts_golden_tests =
       ("objects", "main.emo");
       ("function_group", "main.emo");
       ("showcase", "main.emo");
+      ("bit_ops", "main.emo");
+      ("fixed_width", "main.emo");
     ]
 
 let () =

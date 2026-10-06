@@ -5,6 +5,8 @@ type expr = { span : Emo_support.Span.t; desc : expr_desc }
 
 and expr_desc =
   | Int of int
+  | Int64 of int64
+  | Byte of int
   | Float of float
   | Char of char
   | Bool of bool
@@ -34,7 +36,7 @@ and type_ann_desc =
   | Applied_type of string * type_ann list (* Array[User], Box[Int] *)
   | Tuple_type of type_ann list (* (Int, String) *)
 
-and unop = Not | Neg
+and unop = Not | Neg | Bit_not
 
 and binop =
   | Eq
@@ -48,6 +50,11 @@ and binop =
   | Mul
   | Div
   | Mod
+  | Bit_and
+  | Bit_or
+  | Bit_xor
+  | Shl
+  | Shr
   | And
   | Or
 
@@ -88,6 +95,8 @@ and pattern_desc =
 
 and literal =
   | L_int of int
+  | L_int64 of int64
+  | L_byte of int
   | L_float of float
   | L_char of char
   | L_string of string
