@@ -80,3 +80,10 @@ Only `Float64`, `String`, and `Bool` marshal today; other types are
 refused at check time (E4200). Link additional C libraries with
 `--cclib` (`emo build main.emo --cclib m`). `foreign def` runs only in
 compiled programs — the interpreter refuses it with E3009.
+
+A target that cannot honor a `foreign def` refuses it at check time
+rather than compiling a broken call: today only the OCaml-emitting
+native backend can, while `wasm`, `typescript`, `beam`, and the
+freestanding `riscv64` (until C interop lands) refuse. Per-target
+availability is also declared through the manifest's `targets`
+mechanism, so a package is rejected at resolution.

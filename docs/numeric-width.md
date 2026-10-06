@@ -96,7 +96,7 @@ narrowing `Int64` to 32 bits on RV32 would be a different language, so
 it is off the table. `riscv32` is not scheduled — it follows
 `riscv64` only when real hardware demands it.
 
-## Int32 (agreed direction; its own step when scheduled)
+## Int32 (surface settled; its own step when scheduled)
 
 `Int32` will join as the second, explicitly-named integer type: 32-bit
 two's complement, wrapping at 2³². It does not exist to fix the
@@ -114,10 +114,11 @@ Constraints, per strictness-first:
 - The default integer is `Int64`; unannotated literals are `Int64`;
   no type-guided literal typing.
 - No implicit conversions in either direction; mixed arithmetic
-  (`Int64 + Int32`) is rejected; conversions are explicit calls.
+  (`Int64 + Int32`) is rejected; conversions are explicit calls named
+  with the existing pattern (`Int32.from_int64(x)` / `x.to_int32()`).
 - `Int32` wraps at 32 bits, by the same modulo rule.
 
-## Float32 (agreed direction; its own step when scheduled)
+## Float32 (surface settled; its own step when scheduled)
 
 `Float32` will join as the second, explicitly-named float type: IEEE
 754 binary32. Its motivation:
@@ -134,7 +135,8 @@ Constraints, per strictness-first (same shape as `Int32`):
 - The default float is `Float64`; unannotated float literals are
   `Float64`; no type-guided literal typing.
 - No implicit conversions in either direction; mixed arithmetic
-  (`Float64 + Float32`) is rejected; conversions are explicit calls.
+  (`Float64 + Float32`) is rejected; conversions are explicit calls
+  (`Float32.from_float64(x)` / `x.to_float32()`).
 - `Float32` rounds to binary32 per operation (correctly rounded via a
   binary64 ALU — 53 bits cover 2×24+2); display uses binary32
   shortest round-trip.
