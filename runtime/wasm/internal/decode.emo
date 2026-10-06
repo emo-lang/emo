@@ -29,8 +29,19 @@ def module_from(data Bytes) (Bool, String, Int, String) {  const r = internal.re
   if h.get(4) != 1 || h.get(5) != 0 || h.get(6) != 0 || h.get(7) != 0 {
     return internal.error.malformed(4, "unknown binary version")
   }
-  const w = walk(data, rr.pos, 0, -1, -1)
+  const w = walk(data, rr.pos, 0, -1, -1, false)
   if w[0] {
+    // Bulk-memory rule: with a data section present but no data
+    // count section, any memory.init / data.drop use is malformed
+    // (without a data section the validator's unknown-segment check
+    // makes it invalid instead — the corpus pins both phases).
+    const scan = bulk_scan(data)
+    if scan[0] {
+      const det = internal.model.code_section(data, scan[1], scan[2], -2, -2)
+      if !det[0] {
+        return internal.error.malformed(det[2], "data count section required")
+      }
+    }
     // The shape is sound: the validator checks the semantics that
     // make the module valid (T20.14 onward).
     const v = internal.model.validate(data)
@@ -54,9 +65,15 @@ def rank(id Int) Int {
 // Walk sections from `pos`; `last_rank` is the rank of the last
 // non-custom section seen (0 before any). `dc` is the data-count
 // section's value (-1 before it is seen); `n_funcs` the function
-// section's declared count (-1 before it is seen).
-def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int) (Bool, String, Int, String) {
+// section's declared count (-1 before it is seen); `saw_code` whether
+// the code section has been walked.
+def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int, saw_code Bool) (Bool, String, Int, String) {
   if pos >= data.length() {
+    if n_funcs > 0 && !saw_code {
+      // A declared function needs its body: no code section at all
+      // is an inconsistent-length module.
+      return internal.error.malformed(data.length(), "function and code section have inconsistent lengths")
+    }
     return internal.error.good()
   }
   const p = internal.reader.u8(internal.reader.new(data, pos, data.length()))
@@ -93,7 +110,7 @@ def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int) (Bool, String,
       return internal.error.malformed(s1.pos, "malformed UTF-8 encoding")
     }
     const r3 = internal.reader.skip(r2, size)
-    return walk(data, r3.pos, last_rank, dc, n_funcs)
+    return walk(data, r3.pos, last_rank, dc, n_funcs, saw_code)
   }
   if rank(id) <= last_rank {
     return internal.error.malformed(r1.pos, "unexpected section")
@@ -124,7 +141,7 @@ def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int) (Bool, String,
       return internal.error.malformed(s[2], "section size mismatch")
     }
     const r3 = internal.reader.skip(r2, size)
-    return walk(data, r3.pos, rank(id), dc, cn[1])
+    return walk(data, r3.pos, rank(id), dc, cn[1], saw_code)
   }
   if id == 2 {
     const s = internal.model.import_section(r2.data, r2.pos, r2.pos + size)
@@ -209,7 +226,7 @@ def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int) (Bool, String,
       return internal.error.malformed(s[2], "data count section size mismatch")
     }
     const r3 = internal.reader.skip(r2, size)
-    return walk(data, r3.pos, rank(id), s[1], n_funcs)
+    return walk(data, r3.pos, rank(id), s[1], n_funcs, saw_code)
   }
   if id == 11 {
     const s = internal.model.data_section(r2.data, r2.pos, r2.pos + size, dc)
@@ -228,7 +245,46 @@ def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int) (Bool, String,
     if s[3] != r2.pos + size {
       return internal.error.malformed(s[2], "section size mismatch")
     }
+    const rc = internal.reader.skip(r2, size)
+    return walk(data, rc.pos, rank(id), dc, n_funcs, true)
   }
   const r3 = internal.reader.skip(r2, size)
-  return walk(data, r3.pos, rank(id), dc, n_funcs)
+  return walk(data, r3.pos, rank(id), dc, n_funcs, saw_code)
+}
+
+// (data-present-and-datacount-absent, code_lo, code_hi) — the code
+// range is -1..-1 when absent.
+def bulk_scan(data Bytes) (Bool, Int, Int) {
+  return bulk_rest(data, 8, false, false, false, -1, -1)
+}
+
+def bulk_rest(data Bytes, pos Int, saw_dc Bool, saw_data Bool, saw_code Bool, clo Int, chi Int) (Bool, Int, Int) {
+  if pos >= data.length() {
+    return (saw_data && !saw_dc && saw_code, clo, chi)
+  }
+  const p = internal.reader.u8(internal.reader.new(data, pos, data.length()))
+  const r1 = p[0]
+  if r1.failed {
+    return (false, clo, chi)
+  }
+  const ps = internal.reader.u32(r1)
+  const r2 = ps[0]
+  if r2.failed {
+    return (false, clo, chi)
+  }
+  const size = ps[1]
+  if size > internal.reader.remaining(r2) {
+    return (false, clo, chi)
+  }
+  const r3 = internal.reader.skip(r2, size)
+  if p[1] == 12 {
+    return bulk_rest(data, r3.pos, true, saw_data, saw_code, clo, chi)
+  }
+  if p[1] == 11 {
+    return bulk_rest(data, r3.pos, saw_dc, true, saw_code, clo, chi)
+  }
+  if p[1] == 10 {
+    return bulk_rest(data, r3.pos, saw_dc, saw_data, true, r2.pos, r3.pos)
+  }
+  return bulk_rest(data, r3.pos, saw_dc, saw_data, saw_code, clo, chi)
 }

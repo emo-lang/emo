@@ -262,10 +262,10 @@ def const_expr(r Reader) (Reader, Int) {
     return const_expr_t(u32(r1)[0], 200)
   }
   // A well-formed instruction outside the constant subset: decode its
-  // shape to the terminating 0x0b and report a non-value. The
-  // datacount gate is -1 — decode already enforced it, and this path
-  // only re-decodes shapes.
-  return const_expr_rest(instrs(r1, -1))
+  // shape to the terminating 0x0b and report a non-value. The reader
+  // still sits AT the opcode — instrs must consume it too, or the
+  // byte after a truly illegal opcode re-syncs by accident.
+  return const_expr_rest(instrs(r, -1))
 }
 
 // The rest of a non-constant initializer: shape-decoded to the
@@ -280,7 +280,7 @@ def const_expr_rest(r Reader) (Reader, Int) {
 // non-constant instruction yields 0. The terminating 0x0b is consumed
 // like the decode-level const_expr does — each value-producing branch
 // recurses through vconst_expr_t. (reader, code)
-def vconst_expr(r Reader, globals_codes Array[Int], n_gi Int, total_funcs Int) (Reader, Int) {
+def vconst_expr(r Reader, globals_codes Array[Int], global_mut Array[Int], n_gi Int, total_funcs Int) (Reader, Int) {
   if r.failed {
     return (r, 0)
   }
@@ -294,16 +294,16 @@ def vconst_expr(r Reader, globals_codes Array[Int], n_gi Int, total_funcs Int) (
     return (r1, -1)
   }
   if op == 65 {
-    return vconst_expr_t(s32(r1)[0], 127, globals_codes, n_gi, total_funcs)
+    return vconst_expr_t(s32(r1)[0], 127, globals_codes, global_mut, n_gi, total_funcs)
   }
   if op == 66 {
-    return vconst_expr_t(s64(r1)[0], 126, globals_codes, n_gi, total_funcs)
+    return vconst_expr_t(s64(r1)[0], 126, globals_codes, global_mut, n_gi, total_funcs)
   }
   if op == 67 {
-    return vconst_expr_t(take(r1, 4)[0], 125, globals_codes, n_gi, total_funcs)
+    return vconst_expr_t(take(r1, 4)[0], 125, globals_codes, global_mut, n_gi, total_funcs)
   }
   if op == 68 {
-    return vconst_expr_t(take(r1, 8)[0], 124, globals_codes, n_gi, total_funcs)
+    return vconst_expr_t(take(r1, 8)[0], 124, globals_codes, global_mut, n_gi, total_funcs)
   }
   if op == 208 {
     const t = u8(r1)
@@ -311,7 +311,7 @@ def vconst_expr(r Reader, globals_codes Array[Int], n_gi Int, total_funcs Int) (
       return (t[0], 0)
     }
     if t[1] == 112 || t[1] == 111 {
-      return vconst_expr_t(t[0], t[1], globals_codes, n_gi, total_funcs)
+      return vconst_expr_t(t[0], t[1], globals_codes, global_mut, n_gi, total_funcs)
     }
     return (bail(t[0], t[0].pos, "malformed reference type"), 0)
   }
@@ -323,7 +323,7 @@ def vconst_expr(r Reader, globals_codes Array[Int], n_gi Int, total_funcs Int) (
     if x[1] >= total_funcs {
       return (bail(x[0], x[0].pos, "unknown function"), 0)
     }
-    return vconst_expr_t(x[0], 112, globals_codes, n_gi, total_funcs)
+    return vconst_expr_t(x[0], 112, globals_codes, global_mut, n_gi, total_funcs)
   }
   if op == 35 {
     const x = u32(r1)
@@ -336,17 +336,20 @@ def vconst_expr(r Reader, globals_codes Array[Int], n_gi Int, total_funcs Int) (
     if x[1] >= n_gi {
       return (bail(x[0], x[0].pos, "unknown global"), 0)
     }
-    return vconst_expr_t(x[0], globals_codes[x[1]], globals_codes, n_gi, total_funcs)
+    if global_mut[x[1]] == 1 {
+      return (bail(x[0], x[0].pos, "constant expression required"), 0)
+    }
+    return vconst_expr_t(x[0], globals_codes[x[1]], globals_codes, global_mut, n_gi, total_funcs)
   }
-  return (instrs(r1, -1), 0)
+  return (instrs(r, -1), 0)
 }
 
 // Consume the rest of the expression after a value-producing
 // instruction; the reported code stays that instruction's, unless the
 // tail produced a further value — the expression is then multi-value
 // (-2), which every constant-expression context rejects.
-def vconst_expr_t(r Reader, code Int, globals_codes Array[Int], n_gi Int, total_funcs Int) (Reader, Int) {
-  const e = vconst_expr(r, globals_codes, n_gi, total_funcs)
+def vconst_expr_t(r Reader, code Int, globals_codes Array[Int], global_mut Array[Int], n_gi Int, total_funcs Int) (Reader, Int) {
+  const e = vconst_expr(r, globals_codes, global_mut, n_gi, total_funcs)
   if e[0].failed {
     return (e[0], code)
   }
@@ -509,13 +512,19 @@ def instrs(r Reader, dc Int) Reader {
   return bail(r1, r1.pos, "illegal opcode")
 }
 
-// br_table's immediate: a vector of label indices, then the default.
+// br_table's immediate: a vector of label indices, then the default
+// index — both must be consumed here (the default used to leak into
+// the instruction stream, desyncing whole bodies).
 def br_table_then(r Reader) Reader {
   const cn = u32(r)
   if cn[0].failed {
     return cn[0]
   }
-  return u32_vec_end(cn[0], cn[1])
+  const lv = u32_vec_end(cn[0], cn[1])
+  if lv.failed {
+    return lv
+  }
+  return u32(lv)[0]
 }
 
 // A vector of u32s (positions only; the values drop).
@@ -594,8 +603,8 @@ def prefix_fc(r Reader, dc Int) Reader {
   }
   if sub == 8 {
     // memory.init: data index, then a reserved zero byte
-    if dc < 0 {
-      return bail(s[0], s[0].pos, "data count section required")
+    if dc == -2 {
+      return bail(s[0], s[0].pos, "bulk memory used")
     }
     const d = u32(s[0])
     if d[0].failed {
@@ -612,8 +621,8 @@ def prefix_fc(r Reader, dc Int) Reader {
   }
   if sub == 9 {
     // data.drop
-    if dc < 0 {
-      return bail(s[0], s[0].pos, "data count section required")
+    if dc == -2 {
+      return bail(s[0], s[0].pos, "bulk memory used")
     }
     return u32(s[0])[0]
   }
@@ -1018,11 +1027,19 @@ def vpop(stack Array[Int], height Int, f Frame) (Bool, Int, Array[Int], Int) {
   return (true, stack[height - 1], trunc_to(stack, height - 1), height - 1)
 }
 
+// Tail-accumulator form: a method call on a recursive result
+// (`f(n-1).append(x)`) sends the interpreter into a spin past ~25
+// nesting levels (step 20 pressure, reproduced in isolation) — the
+// append rides in argument position instead.
 def trunc_to(items Array[Int], n Int) Array[Int] {
-  if n == 0 {
-    return []
+  return trunc_to_rest(items, n, 0, [])
+}
+
+def trunc_to_rest(items Array[Int], n Int, i Int, acc Array[Int]) Array[Int] {
+  if i >= n {
+    return acc
   }
-  return trunc_to(items, n - 1).append(items[n - 1])
+  return trunc_to_rest(items, n, i + 1, acc.append(items[i]))
 }
 
 // Pop a value and require it to match `want` (Unknown matches all).
@@ -1046,18 +1063,18 @@ def vpush(stack Array[Int], height Int, code Int) (Array[Int], Int) {
 // [pos, limit) and begin with the locals vector; param_codes and
 // result_codes are the function type's vectors; ctx is the module
 // context (see the validator block comment).
-def vbody(data Bytes, pos Int, limit Int, param_codes Array[Int], result_codes Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) (Bool, String) {
+def vbody(data Bytes, pos Int, limit Int, param_codes Array[Int], result_codes Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) (Bool, String, Int) {
   const lr = locals_types(data, pos, limit, param_codes)
   if lr[0].failed {
-    return (false, "malformed locals")
+    return (false, "malformed locals", lr[0].fail_offset)
   }
   const f0 = Frame.new(2, [], result_codes, 0, false)
   const r = vinstrs(
     new(data, lr[0].pos, limit), [], 0, [f0], 0, result_codes, lr[1], ctx)
   if r.failed {
-    return (false, "type mismatch")
+    return (false, "type mismatch", r.fail_offset)
   }
-  return (true, "")
+  return (true, "", -1)
 }
 
 // The locals runs, expanded to one type code per local (the vector's
@@ -1101,7 +1118,7 @@ def expand(acc Array[Int], code Int, n Int) Array[Int] {
 // The instruction walk: decode the next opcode (through the same
 // dispatch the decoder uses), type it against the stack, recurse.
 // The frames array's last element is the current frame.
-def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
   if r.failed {
     return r
   }
@@ -1114,6 +1131,13 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop In
   // end: pop the frame's end types, require the frame's floor.
   const f = frames[ftop]
   if op == 11 {
+    if f.kind == 4 {
+      // An else-less if carries an implicit empty arm: it can only
+      // type when the block's parameters equal its results.
+      if f.start_types.length() != f.end_types.length() || !codes_eq(f.start_types, f.end_types, 0) {
+        return bail(r1, r1.pos, "type mismatch")
+      }
+    }
     const e = pops_of(r1, stack, height, f, f.end_types, f.end_types.length())
     if !e[0] {
       return bail(r1, r1.pos, "type mismatch")
@@ -1143,7 +1167,8 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop In
       return bail(r1, r1.pos, "type mismatch")
     }
     const f2 = Frame.new(1, f.start_types, f.end_types, f.height, false)
-    return vinstrs(r1, e[2], e[3], trunc_frames(frames, ftop).append(f2), ftop, result_codes, lcs, ctx)
+    const pu = push_all(e[2], e[3], false, f.start_types)
+    return vinstrs(r1, pu[0], pu[1], trunc_frames(frames, ftop).append(f2), ftop, result_codes, lcs, ctx)
   }
   if op == 2 || op == 3 || op == 4 {
     return vblock(r1, op, stack, height, frames, ftop, result_codes, lcs, ctx)
@@ -1214,13 +1239,15 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop In
       return bail(d[0], d[0].pos, "unknown label")
     }
     const want = label_types(frames[ftop - d[1]])
-    const t = br_table_labels(cn[0], cn[1], frames, ftop, want)
-    if t.failed {
-      return t
+    // Each label's values pop against the stack then push back — the
+    // spec checks arity equality across labels, not type equality.
+    const t = br_table_labels(cn[0], cn[1], frames, ftop, want, p1[2], p1[3], f)
+    if t[0].failed {
+      return t[0]
     }
     // Continue past the whole immediate (labels + default): d[0] is
     // the reader after the default index; t sits before it.
-    const e = pops_of(d[0], p1[2], p1[3], f, want, want.length())
+    const e = pops_of(d[0], t[1], t[2], f, want, want.length())
     if !e[0] {
       return bail(d[0], d[0].pos, "type mismatch")
     }
@@ -1294,6 +1321,38 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop In
     const pu = push_flat(e[2], e[3], f.unreachable, tsg, pmid, hi)
     return vinstrs(tb[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
   }
+  // select t (a type-indexed select): one valtype, [t, t, i32] -> [t]
+  if op == 28 {
+    const cn = u32(r1)
+    if cn[0].failed {
+      return cn[0]
+    }
+    if cn[1] != 1 {
+      return bail(cn[0], cn[0].pos, "invalid result arity")
+    }
+    const tv = u8(cn[0])
+    if tv[0].failed {
+      return tv[0]
+    }
+    const t = tv[1]
+    if t != 127 && t != 126 && t != 125 && t != 124 && t != 112 && t != 111 {
+      return bail(tv[0], tv[0].pos, "malformed value type")
+    }
+    const p1 = vpop_expect(stack, height, f, 127)
+    if !p1[0] {
+      return bail(tv[0], tv[0].pos, "type mismatch")
+    }
+    const p2 = vpop_expect(p1[2], p1[3], f, t)
+    if !p2[0] {
+      return bail(tv[0], tv[0].pos, "type mismatch")
+    }
+    const p3 = vpop_expect(p2[2], p2[3], f, t)
+    if !p3[0] {
+      return bail(tv[0], tv[0].pos, "type mismatch")
+    }
+    const pu = push_all(p3[2], p3[3], f.unreachable, [t])
+    return vinstrs(tv[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
+  }
   // drop
   if op == 26 {
     const e = vpop(stack, height, f)
@@ -1322,6 +1381,9 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop In
     var picked = p3[1]
     if p2[1] != 0 {
       picked = p2[1]
+    }
+    if picked == 111 || picked == 112 {
+      return bail(r1, r1.pos, "type mismatch")
     }
     const pu = push_all(p3[2], p3[3], f.unreachable, [picked])
     return vinstrs(r1, pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
@@ -1412,7 +1474,11 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop In
       return bail(x[0], x[0].pos, "unknown table")
     }
     if op == 37 {
-      const pu = push_all(stack, height, f.unreachable, [tcs[x[1]]])
+      const pa = vpop_expect(stack, height, f, 127)
+      if !pa[0] {
+        return bail(x[0], x[0].pos, "type mismatch")
+      }
+      const pu = push_all(pa[2], pa[3], f.unreachable, [tcs[x[1]]])
       return vinstrs(x[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
     }
     const pv = vpop_expect(stack, height, f, tcs[x[1]])
@@ -1513,6 +1579,11 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop In
     if x[1] + 1 >= so.length() {
       return bail(x[0], x[0].pos, "unknown function")
     }
+    // ref.func requires the function to be declared: exported,
+    // referenced by an element segment, or the start function.
+    if !mem_int(ctx[8], x[1], 0) {
+      return bail(x[0], x[0].pos, "undeclared function reference")
+    }
     const pu = push_all(stack, height, f.unreachable, [112])
     return vinstrs(x[0], pu[0], pu[1], frames, ftop, result_codes, lcs, ctx)
   }
@@ -1569,7 +1640,7 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop In
 // The 0xfc family's validation: index spaces and stack shapes, on
 // the final opcode map (0x00-0x07 trunc_sat, 0x08-0x0b bulk memory,
 // 0x0c-0x11 table operations).
-def vprefix_fc(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop Int, f Frame, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+def vprefix_fc(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop Int, f Frame, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
   const s = u32(r)
   if s[0].failed {
     return s[0]
@@ -1786,7 +1857,7 @@ def num_opcode_trunc_sat(sub Int) (Array[Int], Array[Int]) {
 }
 
 // (i32 i32 i32) -> (): the bulk operation stack shape.
-def vpop3_push0(r Reader, stack Array[Int], height Int, f Frame, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+def vpop3_push0(r Reader, stack Array[Int], height Int, f Frame, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
   const p1 = vpop_expect(stack, height, f, 127)
   if !p1[0] {
     return bail(r, r.pos, "type mismatch")
@@ -1911,7 +1982,7 @@ def mem_value(op Int) Int {
   if op == 56 { return 125 }
   if op == 57 { return 124 }
   if op == 58 { return 127 }
-  if op == 59 { return 126 }
+  if op == 59 { return 127 }
   if op == 60 { return 126 }
   if op == 61 { return 126 }
   return 126
@@ -1922,7 +1993,8 @@ def mem_result(op Int) Array[Int] {
   if op == 41 { return [126] }
   if op == 42 { return [125] }
   if op == 43 { return [124] }
-  if op >= 44 && op <= 53 { return [127] }
+  if op >= 44 && op <= 47 { return [127] }
+  if op >= 48 && op <= 53 { return [126] }
   return []
 }
 
@@ -1965,14 +2037,31 @@ def num_opcode(op Int) (Array[Int], Array[Int]) {
   if op == 185 || op == 186 { return ([i64], [f64]) } // f64.convert_i64_s/u
   if op == 187 { return ([f32], [f64]) }   // f64.promote_f32
   if op == 188 { return ([f32], [i32]) }   // i32.reinterpret_f32
-  if op == 189 { return ([i64], [i64]) }   // i64.reinterpret_f64
+  if op == 189 { return ([f64], [i64]) }   // i64.reinterpret_f64
   if op == 190 { return ([i32], [f32]) }   // f32.reinterpret_i32
   if op == 191 { return ([i64], [f64]) }   // f64.reinterpret_i64
-  // sign extensions
-  if op == 194 { return ([i32], [i32]) }   // 0xc2 i32.extend8_s
-  if op == 195 { return ([i32], [i32]) }   // 0xc3 i32.extend16_s
-  if op == 196 { return ([i64], [i64]) }   // 0xc4 i64.extend32_s
+  // sign extensions (0xc0..0xc4): i32.extend8/16_s, i64.extend8/16/32_s
+  if op >= 192 && op <= 193 { return ([i32], [i32]) }
+  if op >= 194 && op <= 196 { return ([i64], [i64]) }
   return ([], [])
+}
+
+// Pop each of `wants` in reverse order, collecting the popped codes
+// (br_table pushes the popped values back).
+// (ok, popped, stack, height)
+def pops_collect(r Reader, stack Array[Int], height Int, f Frame, wants Array[Int], wn Int) (Bool, Array[Int], Array[Int], Int) {
+  return pops_collect_rev(stack, height, f, wants, wn, [])
+}
+
+def pops_collect_rev(stack Array[Int], height Int, f Frame, wants Array[Int], i Int, got Array[Int]) (Bool, Array[Int], Array[Int], Int) {
+  if i == 0 {
+    return (true, got, stack, height)
+  }
+  const p = vpop_expect(stack, height, f, wants[i - 1])
+  if !p[0] {
+    return (false, got, stack, height)
+  }
+  return pops_collect_rev(p[2], p[3], f, wants, i - 1, got.append(p[1]))
 }
 
 // Pop each of `wants` in reverse order.
@@ -2008,7 +2097,7 @@ def push_rest(stack Array[Int], height Int, codes Array[Int], i Int) (Array[Int]
 }
 
 // block / loop / if: block type, then a nested frame.
-def vblock(r Reader, kind Int, stack Array[Int], height Int, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+def vblock(r Reader, kind Int, stack Array[Int], height Int, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
   const bt = block_type(r, ctx)
   if bt[0].failed {
     return bt[0]
@@ -2029,15 +2118,20 @@ def vblock(r Reader, kind Int, stack Array[Int], height Int, frames Array[Frame]
   if !e[0] {
     return bail(bt[0], bt[0].pos, "type mismatch")
   }
+  // push_ctrl semantics: the popped parameters live INSIDE the frame.
+  const pu = push_all(e[2], e[3], false, bt[1])
   const nf = Frame.new(kind, bt[1], bt[2], e[3], false)
-  return vinstrs(bt[0], e[2], e[3], frames.append(nf), ftop + 1, result_codes, lcs, ctx)
+  // Truncate to the live prefix first: a bare append lands after
+  // stale popped frames, and frames[ftop + 1] would read the stale
+  // one (found via block.wast's singular body).
+  return vinstrs(bt[0], pu[0], pu[1], trunc_frames(frames, ftop + 1).append(nf), ftop + 1, result_codes, lcs, ctx)
 }
 
 // A block type: (reader, param codes, result codes). 0x40 and the
 // valtype bytes are their own shapes; an s33 index resolves through
 // the module's types (tsigs/tsig_off in the context). Errors travel
 // on the reader's failed flag, like every decode step.
-def block_type(r Reader, ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) (Reader, Array[Int], Array[Int]) {
+def block_type(r Reader, ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) (Reader, Array[Int], Array[Int]) {
   const b = peek(r)
   if b == 64 {
     return (skip(r, 1), [], [])
@@ -2062,10 +2156,45 @@ def block_type(r Reader, ctx (Array[Int], Array[Int], Array[Int], Array[Int], Ar
 }
 
 def slice_codes(sigs Array[Int], lo Int, hi Int) Array[Int] {
-  if lo >= hi {
-    return []
+  return slice_codes_rest(sigs, lo, hi, lo, [])
+}
+
+def slice_codes_rest(sigs Array[Int], lo Int, hi Int, i Int, acc Array[Int]) Array[Int] {
+  if i >= hi {
+    return acc
   }
-  return slice_codes(sigs, lo, hi - 1).append(sigs[hi - 1])
+  return slice_codes_rest(sigs, lo, hi, i + 1, acc.append(sigs[i]))
+}
+
+def rev_ints(items Array[Int]) Array[Int] {
+  return rev_rest(items, [], 0)
+}
+
+def rev_rest(items Array[Int], acc Array[Int], i Int) Array[Int] {
+  if i == items.length() {
+    return acc
+  }
+  return rev_rest(items, acc.append(items[items.length() - 1 - i]), i + 1)
+}
+
+def mem_int(items Array[Int], v Int, i Int) Bool {
+  if i == items.length() {
+    return false
+  }
+  if items[i] == v {
+    return true
+  }
+  return mem_int(items, v, i + 1)
+}
+
+def codes_eq(a Array[Int], b Array[Int], i Int) Bool {
+  if i == a.length() {
+    return true
+  }
+  if a[i] != b[i] {
+    return false
+  }
+  return codes_eq(a, b, i + 1)
 }
 
 // The label types a branch to this frame expects: a loop's label is
@@ -2091,39 +2220,37 @@ def label_depth(r Reader, ftop Int) (Reader, Int) {
 
 // br_table's labels: each must be in range; their arities must agree
 // with the default's (checked against the first).
-def br_table_labels(r Reader, n Int, frames Array[Frame], ftop Int, want Array[Int]) Reader {
-  return bt_rest(r, n, frames, ftop, want, 0)
+// (reader-after-labels, stack, height) — each label pops its own
+// types against the stack and pushes them back; arity must equal the
+// default's.
+def br_table_labels(r Reader, n Int, frames Array[Frame], ftop Int, want Array[Int], stack Array[Int], height Int, f Frame) (Reader, Array[Int], Int) {
+  return bt_rest(r, n, frames, ftop, want, stack, height, f, 0)
 }
 
-def bt_rest(r Reader, n Int, frames Array[Frame], ftop Int, want Array[Int], seen Int) Reader {
+def bt_rest(r Reader, n Int, frames Array[Frame], ftop Int, want Array[Int], stack Array[Int], height Int, f Frame, seen Int) (Reader, Array[Int], Int) {
   if n == 0 {
-    return r
+    return (r, stack, height)
   }
   const d = u32(r)
   if d[0].failed {
-    return d[0]
+    return (d[0], stack, height)
   }
   if d[1] > ftop {
-    return bail(d[0], d[0].pos, "unknown label")
+    return (bail(d[0], d[0].pos, "unknown label"), stack, height)
   }
   const lt = label_types(frames[ftop - d[1]])
   if lt.length() != want.length() {
-    return bail(d[0], d[0].pos, "type mismatch")
+    return (bail(d[0], d[0].pos, "type mismatch"), stack, height)
   }
-  if !codes_eq(lt, want, 0) {
-    return bail(d[0], d[0].pos, "type mismatch")
+  const e = pops_collect(d[0], stack, height, f, lt, lt.length())
+  if !e[0] {
+    return (bail(d[0], d[0].pos, "type mismatch"), stack, height)
   }
-  return bt_rest(d[0], n - 1, frames, ftop, want, seen + 1)
-}
-
-def codes_eq(a Array[Int], b Array[Int], i Int) Bool {
-  if i == a.length() {
-    return true
-  }
-  if a[i] != b[i] {
-    return false
-  }
-  return codes_eq(a, b, i + 1)
+  // push_vals(pop_vals(...)): the POPPED values go back in their
+  // original order (collection is pop order, so reverse it) — Unknown
+  // stays polymorphic, so differently-typed labels can coexist.
+  const pu = push_all(e[2], e[3], f.unreachable, rev_ints(e[1]))
+  return bt_rest(d[0], n - 1, frames, ftop, want, pu[0], pu[1], f, seen + 1)
 }
 
 // The frame stack is an Array with a logical top index: pushes append
@@ -2131,8 +2258,12 @@ def codes_eq(a Array[Int], b Array[Int], i Int) Bool {
 // top — a rebuild-per-pop made deep nesting quadratic-to-worse in the
 // interpreter (found via block.wast's kitchen-sink module).
 def trunc_frames(items Array[Frame], n Int) Array[Frame] {
-  if n == 0 {
-    return []
+  return trunc_frames_rest(items, n, 0, [])
+}
+
+def trunc_frames_rest(items Array[Frame], n Int, i Int, acc Array[Frame]) Array[Frame] {
+  if i >= n {
+    return acc
   }
-  return trunc_frames(items, n - 1).append(items[n - 1])
+  return trunc_frames_rest(items, n, i + 1, acc.append(items[i]))
 }
