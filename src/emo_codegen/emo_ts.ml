@@ -170,6 +170,9 @@ let rec expr env (e : Emo_ir.expr) : string =
         (String.concat ", " (List.map (expr env) es))
   | Unary (Ast.Neg, x) -> Printf.sprintf "E.neg(%s)" (expr env x)
   | Unary (Ast.Not, x) -> Printf.sprintf "(!E.truthy(%s))" (expr env x)
+  | Cond { c; t; e = else_ } ->
+      Printf.sprintf "(E.truthy(%s) ? (%s) : (%s))"
+        (expr env c) (expr env t) (expr env else_)
   | Binary (op, l, r) -> (
       let lcode = expr env l in
       let rcode = expr env r in

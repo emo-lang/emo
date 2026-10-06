@@ -178,6 +178,7 @@ let examples_tests =
 let wasm_goldens =
   [
     "hello_world";
+    "if_expr";
     "fib";
     "objects";
     "language_tour";
@@ -194,6 +195,7 @@ let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
 let beam_goldens =
   [
     "hello_world";
+    "if_expr";
     "fib";
     "objects";
     "language_tour";

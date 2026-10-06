@@ -22,6 +22,7 @@ and expr_desc =
   | Array_literal of expr list (* [a, b, c] — fixed length, immutable *)
   | Unary of unop * expr
   | Binary of binop * expr * expr
+  | If_expr of { cond : expr; then_expr : expr; else_expr : expr }
   | Do of expr (* do <call> — the operand is always a Call node *)
 
 and string_part = Literal_text of string | Part_expr of expr

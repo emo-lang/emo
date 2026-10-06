@@ -29,5 +29,6 @@
 
 (executable
  (name emo)
+ (public_name emo)
  (libraries emo_cli)
  (modules emo))

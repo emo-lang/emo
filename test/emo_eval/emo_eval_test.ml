@@ -178,6 +178,16 @@ let program_err source =
 
 let expression_tests =
   [
+    tc "the if expression evaluates the taken branch" (fun () ->
+        check_value "true arm" (Emo_eval.Int 1) "if true { 1 } else { 2 }";
+        check_value "false arm" (Emo_eval.Int 2) "if false { 1 } else { 2 }";
+        check_value "nested" (Emo_eval.String "b")
+          "if false { \"a\" } else { if true { \"b\" } else { \"c\" } }";
+        check_value "as operand" (Emo_eval.Int 30)
+          "10 * (if 1 < 2 { 3 } else { 4 })");
+    tc "the if expression's condition must be a Bool at runtime" (fun () ->
+        let diagnostic = eval_err "if 1 { 2 } else { 3 }" in
+        Alcotest.(check string) "code" "E3001" (code_of diagnostic));
     tc "arithmetic respects precedence and promotion" (fun () ->
         check_value "ints" (Emo_eval.Int 7) "1 + 2 * 3";
         check_value "promoted" (Emo_eval.Float 3.5) "1 + 2.5";
