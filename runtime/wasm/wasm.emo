@@ -14,3 +14,10 @@ def smoke() String {
 def decode(data Bytes) (Bool, String, Int64, String) {
   return internal.decode.module_from(data)
 }
+
+// Validate and materialize: the step-20 verdict, plus a handle to the
+// loaded module on success (-1 on failure). The module records stay
+// inside the package; a caller never sees an unvalidated module.
+def load(data Bytes) (Bool, String, Int64, String, Int64) {
+  return internal.instance.load(data)
+}

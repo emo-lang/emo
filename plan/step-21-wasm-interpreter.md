@@ -181,7 +181,7 @@ prefix of this list leaves the repo building and `dune test` green.
       reports `pending N` for the vendored commands, `dune test`
       stays green. *(Independent of every execution task — the
       break-sitting of this step, like T20.3 was.)*
-- [ ] **T21.2** — *The instance model.* **(M)** Materialize a validated
+- [x] **T21.2** — *The instance model.* **(M)** Materialize a validated
       module: functions as (signature, body byte range) pairs in index
       order, the table / memory / global declarations, the element and
       data segments, imports, exports, start, and the declared

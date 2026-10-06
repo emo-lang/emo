@@ -1,0 +1,4 @@
+basic: types=1 imports=0 funcs=1 tables=1 mems=1 globals=1 exports=1 elems=0 datas=1 start=-1 imp_funcs=0 body0=52-55
+with_elem: types=1 imports=0 funcs=1 tables=1 mems=0 globals=0 exports=0 elems=1 datas=0 start=-1 imp_funcs=0 body0=39-42
+bad: ok=false phase=malformed handle=-1
+failed 0

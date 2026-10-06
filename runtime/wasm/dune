@@ -168,3 +168,32 @@
   runs.all.expected.txt)
  (action
   (diff runs.all.expected.txt runs.actual)))
+
+; The instance-model fixture (T21.2).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  instance-fixture.emo
+  wasm.emo
+  cli.emo
+  internal/instance.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  internal/model.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   instance-fixture.actual
+   (run %{emo} run instance-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  instance-fixture.actual
+  instance-fixture.expected.txt)
+ (action
+  (diff instance-fixture.expected.txt instance-fixture.actual)))
