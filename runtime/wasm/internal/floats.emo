@@ -306,3 +306,286 @@ def bool_bit(b Bool) Int64 {
   }
   return 0
 }
+
+// ---- rounding ----
+
+def sqrt(kind Int64, a Int64) Int64 {
+  return of_f64(kind, as_f64(kind, a).sqrt())
+}
+
+def floor(kind Int64, a Int64) Int64 {
+  return of_f64(kind, as_f64(kind, a).floor())
+}
+
+def ceil(kind Int64, a Int64) Int64 {
+  return of_f64(kind, as_f64(kind, a).ceil())
+}
+
+def trunc(kind Int64, a Int64) Int64 {
+  return of_f64(kind, as_f64(kind, a).trunc())
+}
+
+// Round half to even, the spec's `nearest`.
+def nearest(kind Int64, a Int64) Int64 {
+  if is_nan(kind, a) {
+    return a
+  }
+  const x = as_f64(kind, a)
+  const f = x.floor()
+  const d = x - f
+  if d > 0.5 {
+    return of_f64(kind, f + 1.0)
+  }
+  if d < 0.5 {
+    return of_f64(kind, f)
+  }
+  const half = f * 0.5
+  const hf = half.floor()
+  if half <= hf && hf <= half {
+    return of_f64(kind, f)
+  }
+  return of_f64(kind, f + 1.0)
+}
+
+def is_nan(kind Int64, a Int64) Bool {
+  if kind == 125 {
+    return f32_is_nan(a)
+  }
+  return f64_is_nan(a)
+}
+
+// A pattern move: the bits are the value.
+def reinterpret(a Int64) Int64 {
+  return a
+}
+
+// The f64 bit pattern of a value of either float width (f32 promotes).
+def to_f64_bits(kind Int64, a Int64) Int64 {
+  if kind == 125 {
+    return promote_f32(a)
+  }
+  return a
+}
+
+def sign32(x Int64) Int64 {
+  const b = mask32(x)
+  if b >= 2147483648 {
+    return b - 4294967296
+  }
+  return b
+}
+
+def logical_shr(x Int64, n Int64) Int64 {
+  if n == 0 {
+    return x
+  }
+  const lowmask = (1 << (64 - n)) - 1
+  return (x >> n) & lowmask
+}
+
+def clz64(x Int64) Int64 {
+  return clz64_loop(x, 0)
+}
+
+def clz64_loop(x Int64, i Int64) Int64 {
+  if i == 64 {
+    return 64
+  }
+  const bit = (x >> (63 - i)) & 1
+  if bit != 0 {
+    return i
+  }
+  return clz64_loop(x, i + 1)
+}
+
+// ---- int -> float ----
+
+def f64_of_i32_s(bits Int64) Int64 {
+  return sign32(bits).to_float64().to_bits()
+}
+
+def f64_of_i32_u(bits Int64) Int64 {
+  return mask32(bits).to_float64().to_bits()
+}
+
+def f64_of_i64_s(bits Int64) Int64 {
+  return bits.to_float64().to_bits()
+}
+
+// u64 -> f64 without a u64 type: high and low halves are each exact, and
+// the one f64 addition rounds exactly once.
+def f64_of_i64_u(bits Int64) Int64 {
+  if bits >= 0 {
+    return bits.to_float64().to_bits()
+  }
+  const hi = logical_shr(bits, 32)
+  const lo = bits & 4294967295
+  const x = hi.to_float64() * 4294967296.0
+  return (x + lo.to_float64()).to_bits()
+}
+
+// Round an unsigned 64-bit magnitude to the nearest f32, ties to even.
+def int_to_f32(sign Int64, m Int64) Int64 {
+  const sbit = sign << 31
+  if m == 0 {
+    return sbit
+  }
+  const k = 63 - clz64(m)
+  if k <= 23 {
+    const fsmall = (k + 127) << 23
+    const mant0 = (m << (23 - k)) & 8388607
+    return sbit | fsmall | mant0
+  }
+  const shift = k - 23
+  var top = logical_shr(m, shift)
+  const lowmask = (1 << shift) - 1
+  const rem = m & lowmask
+  const half = 1 << (shift - 1)
+  var e = k
+  if rem > half || (rem == half && (top & 1) == 1) {
+    top = top + 1
+    if top == 16777216 {
+      top = 8388608
+      e = e + 1
+    }
+  }
+  const fexp = (e + 127) << 23
+  return sbit | fexp | (top & 8388607)
+}
+
+def f32_of_i32_s(bits Int64) Int64 {
+  const v = sign32(bits)
+  if v >= 0 {
+    return int_to_f32(0, v)
+  }
+  return int_to_f32(1, 0 - v)
+}
+
+def f32_of_i32_u(bits Int64) Int64 {
+  return int_to_f32(0, mask32(bits))
+}
+
+def f32_of_i64_s(bits Int64) Int64 {
+  if bits >= 0 {
+    return int_to_f32(0, bits)
+  }
+  return int_to_f32(1, 0 - bits)
+}
+
+def f32_of_i64_u(bits Int64) Int64 {
+  return int_to_f32(0, bits)
+}
+
+// ---- float -> int (truncating toward zero, with the spec's traps) ----
+//
+// `bits` is an f64 pattern; f32 callers promote first (exact).
+
+def trunc_i64_s(bits Int64) (Bool, Int64, String) {
+  if f64_is_nan(bits) {
+    return (false, 0, "invalid conversion to integer")
+  }
+  const t = Float64.from_bits(bits).trunc()
+  if t < -9223372036854775808.0 || t >= 9223372036854775808.0 {
+    return (false, 0, "integer overflow")
+  }
+  return (true, t.to_int64(), "")
+}
+
+def trunc_i64_u(bits Int64) (Bool, Int64, String) {
+  if f64_is_nan(bits) {
+    return (false, 0, "invalid conversion to integer")
+  }
+  const t = Float64.from_bits(bits).trunc()
+  if t < 0.0 || t >= 18446744073709551616.0 {
+    return (false, 0, "integer overflow")
+  }
+  if t < 9223372036854775808.0 {
+    return (true, t.to_int64(), "")
+  }
+  const low = (t - 9223372036854775808.0).to_int64()
+  return (true, low | (-9223372036854775807 - 1), "")
+}
+
+def trunc_i32_s(bits Int64) (Bool, Int64, String) {
+  if f64_is_nan(bits) {
+    return (false, 0, "invalid conversion to integer")
+  }
+  const t = Float64.from_bits(bits).trunc()
+  if t < -2147483648.0 || t > 2147483647.0 {
+    return (false, 0, "integer overflow")
+  }
+  return (true, mask32(t.to_int64()), "")
+}
+
+def trunc_i32_u(bits Int64) (Bool, Int64, String) {
+  if f64_is_nan(bits) {
+    return (false, 0, "invalid conversion to integer")
+  }
+  const t = Float64.from_bits(bits).trunc()
+  if t < 0.0 || t > 4294967295.0 {
+    return (false, 0, "integer overflow")
+  }
+  return (true, mask32(t.to_int64()), "")
+}
+
+// Saturating variants: no trap, clamp (NaN to zero).
+
+def trunc_sat_i64_s(bits Int64) Int64 {
+  if f64_is_nan(bits) {
+    return 0
+  }
+  const t = Float64.from_bits(bits).trunc()
+  if t < -9223372036854775808.0 {
+    return -9223372036854775807 - 1
+  }
+  if t >= 9223372036854775808.0 {
+    return 9223372036854775807
+  }
+  return t.to_int64()
+}
+
+def trunc_sat_i64_u(bits Int64) Int64 {
+  if f64_is_nan(bits) {
+    return 0
+  }
+  const t = Float64.from_bits(bits).trunc()
+  if t <= 0.0 {
+    return 0
+  }
+  if t >= 18446744073709551616.0 {
+    return -1
+  }
+  if t < 9223372036854775808.0 {
+    return t.to_int64()
+  }
+  const low = (t - 9223372036854775808.0).to_int64()
+  return low | (-9223372036854775807 - 1)
+}
+
+def trunc_sat_i32_s(bits Int64) Int64 {
+  if f64_is_nan(bits) {
+    return 0
+  }
+  const t = Float64.from_bits(bits).trunc()
+  if t <= -2147483648.0 {
+    return 2147483648
+  }
+  if t >= 2147483648.0 {
+    return 2147483647
+  }
+  return mask32(t.to_int64())
+}
+
+def trunc_sat_i32_u(bits Int64) Int64 {
+  if f64_is_nan(bits) {
+    return 0
+  }
+  const t = Float64.from_bits(bits).trunc()
+  if t <= 0.0 {
+    return 0
+  }
+  if t >= 4294967296.0 {
+    return 4294967295
+  }
+  return mask32(t.to_int64())
+}

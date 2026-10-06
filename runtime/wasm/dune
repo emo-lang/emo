@@ -263,3 +263,25 @@
   float-fixture.expected.txt)
  (action
   (diff float-fixture.expected.txt float-fixture.actual)))
+
+; The float conversion/rounding fixture (T21.5, part 2).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  float-convert-fixture.emo
+  internal/floats.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   float-convert-fixture.actual
+   (run %{emo} run float-convert-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  float-convert-fixture.actual
+  float-convert-fixture.expected.txt)
+ (action
+  (diff float-convert-fixture.expected.txt float-convert-fixture.actual)))

@@ -211,7 +211,7 @@ prefix of this list leaves the repo building and `dune test` green.
       sign extension and saturating truncation, the i64↔i32 wrap and
       extends. Pure functions over the value model, proven by
       hand-written fixtures lifted from the spec's boundary cases.
-- [ ] **T21.5** — *The float families.* **(L)** f32/f64 arithmetic and
+- [x] **T21.5** — *The float families.* **(L)** f32/f64 arithmetic and
       comparisons through the `Float64` bridge; the conversions —
       including truncation with its overflow / NaN traps, promote /
       demote with the bit-surgery round-to-nearest-even, and
