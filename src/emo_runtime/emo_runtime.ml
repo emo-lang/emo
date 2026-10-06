@@ -177,6 +177,19 @@ let shl_int (x : int) (count : int) : int =
   else if count >= 63 then 0
   else x lsl count
 
+(* 64-bit shifts for the specialized path's boxed Int64.t. *)
+let shl_i64 (x : int64) (count : int64) : int64 =
+  let c = Int64.to_int count in
+  if c < 0 then failwith "shift count must be non-negative"
+  else if c >= 64 then 0L
+  else Int64.shift_left x c
+
+let shr_i64 (x : int64) (count : int64) : int64 =
+  let c = Int64.to_int count in
+  if c < 0 then failwith "shift count must be non-negative"
+  else if c >= 64 then (if x < 0L then -1L else 0L)
+  else Int64.shift_right x c
+
 let shr_int (x : int) (count : int) : int =
   if count < 0 then failwith "shift count must be non-negative"
   else if count >= 63 then if x < 0 then -1 else 0

@@ -55,6 +55,7 @@ let rec dump_e indent e =
   | Type_ref name -> indent @@@ "Type_ref " ^ name
   | Var v -> indent @@@ "Var " ^ v
   | Global g -> indent @@@ "Global " ^ g
+  | Global_var g -> indent @@@ "Global_var " ^ g
   | Tuple es ->
       indent @@@ "Tuple";
       List.iter (dump_e (indent + 2)) es
@@ -142,6 +143,7 @@ and dump_s indent s =
   | Assign_var { name; value } ->
       indent @@@ "Assign " ^ name;
       dump_e (indent + 2) value
+  | Set_global_var { name; _ } -> indent @@@ "Set_global_var " ^ name
   | Set_field { self_; name; value } ->
       indent @@@ "Set_field " ^ name;
       dump_e (indent + 2) self_;

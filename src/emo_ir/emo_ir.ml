@@ -31,6 +31,7 @@ and expr_desc =
   | Method of { self_ : expr; name : string; args : expr list }
   | Builtin of { name : string; args : expr list }
   | Box_new of expr
+  | Global_var of string (* a module-level `var`, read *)
   | Bytes_new of expr (* Bytes.new(n) — a zero-filled byte buffer *)
   | Make_exception of { message : expr }
   | Do_spawn of { func : string; args : expr list }
@@ -41,6 +42,7 @@ and stmt =
   | Effect of expr (* an expression run for its effect *)
   | Let of { mutable_ : bool; name : string; init : expr }
   | Assign_var of { name : string; value : expr } (* a `var`, in scope *)
+  | Set_global_var of { name : string; value : expr } (* a module-level `var` *)
   | Set_field of { self_ : expr; name : string; value : expr }
   | If of { cond : expr; then_ : stmt list; else_ : stmt list }
   | Case of { scrutinee : expr; branches : branch list }
@@ -78,6 +80,7 @@ type program = {
   pinterfaces : (string * (string * int) list) list;
       (* interface name → method name/arity, for the runtime's is() *)
   pinit : stmt list; (* the entry module's top-level statements *)
+  pglobals : (string * expr) list; (* module-level `var` ref cells *)
   pentry : string list; (* the entry module's path *)
 }
 
@@ -114,6 +117,7 @@ type module_input = {
 type symbol =
   | S_func of { mangled : string; params : string list }
   | S_class of { mangled : string; params : string list } (* init's params *)
+  | S_global of { gname : string } (* a module-level `var` *)
   | S_enum
 
 type env = {
@@ -250,6 +254,7 @@ and lower_expr env (e : Ast.expr) : expr =
             }
         | Some (S_func { mangled; _ }) | Some (S_class { mangled; _ }) ->
             expr (Global mangled)
+        | Some (S_global { gname }) -> expr (Global_var gname)
         | Some S_enum -> { ety = Emo_check.EnumType name; desc = Type_ref name }
         | None when is_builtin name -> expr (Builtin { name; args = [] })
         | None -> { ety = Emo_check.Unknown; desc = Type_ref name })
@@ -455,7 +460,7 @@ and resolve_callee env (callee : Ast.expr) : (string * string list) option =
       match Hashtbl.find_opt env.symbols (module_path, name) with
       | Some (S_func { mangled; params }) -> Some (mangled, params)
       | Some (S_class { mangled; params }) -> Some (mangled, params)
-      | Some S_enum | None -> None)
+      | Some S_enum | Some (S_global _) | None -> None)
   | None -> (
       match callee.Ast.desc with
       | Ast.Ident name when not (List.mem name env.locals) -> (
@@ -506,7 +511,11 @@ and lower_stmt env (s : Ast.stmt) : stmt =
           Let { mutable_; name; init = lower_expr env init })
   | Ast.Assign { target; value } -> (
       match target.Ast.desc with
-      | Ast.Ident name -> Assign_var { name; value = lower_expr env value }
+      | Ast.Ident name -> (
+          match lookup_symbol env env.current name with
+          | Some (S_global { gname }) ->
+              Set_global_var { name = gname; value = lower_expr env value }
+          | _ -> Assign_var { name; value = lower_expr env value })
       | Ast.Member ({ Ast.desc = Ast.Self; _ }, field) ->
           Set_field
             {
@@ -627,7 +636,7 @@ let rec expr_native (special : string list) (e : expr) : bool =
   | Call { func; args } ->
       List.mem func special && List.for_all (expr_native special) args
   | Call_value _ | Method _ | Builtin _ | Box_new _ | Bytes_new _
-  | Make_exception _ | Do_spawn _ | Spawn_value _ | Closure _ ->
+  | Make_exception _ | Do_spawn _ | Spawn_value _ | Closure _ | Global_var _ ->
       false (* dynamic operations keep the function dynamic *)
 
 and stmts_native special (stmts : stmt list) : bool =
@@ -638,6 +647,7 @@ and stmt_native special (s : stmt) : bool =
   | Effect e -> expr_native special e
   | Let { init; _ } -> expr_native special init
   | Assign_var { value; _ } -> expr_native special value
+  | Set_global_var _ -> false
   | Set_field _ -> false
   | If { cond; then_; else_ } ->
       expr_native special cond && stmts_native special then_
@@ -772,6 +782,11 @@ let lower (input : input) : program =
                        List.map (fun p -> p.Ast.param_name) f.Ast.foreign_params;
                    })
           | Ast.Item_stmt
+              { stmt_desc = Ast.Binding { mutable_ = true; name; _ }; _ }
+            when m.mpath <> input.entry ->
+              Hashtbl.replace symbols (m.mpath, name)
+                (S_global { gname = mangle m.mpath name })
+          | Ast.Item_stmt
               { stmt_desc = Ast.Binding { mutable_ = false; name; _ }; _ }
             when m.mpath <> input.entry ->
               (* A const binding in a non-entry module becomes a zero-arg
@@ -808,6 +823,7 @@ let lower (input : input) : program =
   let funcs = ref [] in
   let classes = ref [] in
   let interfaces = ref [] in
+  let globals = ref [] in
   (* the entry module can be discovered twice (as the entry root and as
      a sibling file); dedupe by path so items lower once *)
   let seen_paths = Hashtbl.create 8 in
@@ -854,6 +870,10 @@ let lower (input : input) : program =
                   fforeign = None;
                 }
                 :: !funcs
+          | Ast.Item_stmt
+              { stmt_desc = Ast.Binding { mutable_ = true; name; init }; _ }
+            when m.mpath <> input.entry ->
+              globals := (mangle m.mpath name, lower_expr const_env init) :: !globals
           | _ -> ())
         m.mitems)
     input.modules;
@@ -1011,5 +1031,6 @@ let lower (input : input) : program =
     pclasses = !classes;
     pinterfaces = !interfaces;
     pinit;
+    pglobals = List.rev !globals;
     pentry = input.entry;
   }
