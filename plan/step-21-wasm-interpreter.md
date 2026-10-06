@@ -199,7 +199,7 @@ prefix of this list leaves the repo building and `dune test` green.
       hex-word codec the runner compares with. Fixtures: wrap-around,
       payload round-trips, null references. No execution yet — every
       later task leans on these functions directly.
-- [ ] **T21.4** — *The integer families.* **(L)** i32/i64 arithmetic,
+- [x] **T21.4** — *The integer families.* **(L)** i32/i64 arithmetic,
       comparisons, shifts and rotates (mask counts), clz / ctz /
       popcnt, division and remainder with their traps (zero, MIN / −1),
       sign extension and saturating truncation, the i64↔i32 wrap and

@@ -1,0 +1,34 @@
+i32.add.wrap 2147483648
+i32.sub.wrap 4294967295
+i32.mul.wrap 0
+i32.div_u 2147483647
+i32.div_s.min trap:integer overflow
+i32.div_s.zero trap:integer divide by zero
+i32.rem_s.neg 4294967295
+i32.rem_s.min 0
+i32.shr_s 4294967295
+i32.shr_u 2147483647
+i32.shl 2147483648
+i32.shl.masked 2147483648
+i32.rotl 1
+i32.rotr 2147483648
+i32.clz 31
+i32.ctz 31
+i32.popcnt 8
+i32.eq 1
+i32.lt_u.neg 0
+i32.gt_u.neg 1
+i64.add.wrap -9223372036854775808
+i64.div_u 4611686018427387903
+i64.div_s.min trap:integer overflow
+i64.shr_u 9223372036854775807
+i64.clz0 64
+i64.ctz0 64
+i64.popcnt 64
+wrap_i64 0
+extend_i32_s -1
+extend_i32_u 4294967295
+i32.extend8_s 4294967295
+i32.extend16_s 4294967295
+i64.extend32_s -1
+failed 0
