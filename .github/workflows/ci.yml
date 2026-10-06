@@ -38,7 +38,7 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
 
       - name: Install dependencies
-        run: opam install -y dune cmdliner alcotest
+        run: opam install -y dune cmdliner alcotest eio_main ssl yojson digestif
 
       - name: Build
         run: opam exec -- dune build
