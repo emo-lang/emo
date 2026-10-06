@@ -54,7 +54,8 @@ problem.
 Performance runs the same direction. The native backend's
 specialization ("types feed performance") is directionally right, but
 the benchmarks only show specialized beating unspecialized; no
-industrial-scale workload has been measured against C or Fortran.
+industrial-scale workload has been measured against C or Fortran, and
+the probe below is a microbenchmark rather than one.
 Under gradual typing, every value carries a runtime type tag and
 under-annotated regions fall back to dynamic semantics — fatal for
 mesh-generation inner loops. And the value semantics — immutable
@@ -84,6 +85,56 @@ were all shaped for exactly this kind of system. But the segment is
 well supplied by existing stacks, and it is not what the plan is trying
 to break through.
 
+## A performance probe (2026-10-06)
+
+The fit-by-segment argument is directional; this section records the
+first numbers behind it. The cases are committed under `benchmarks/` —
+`loops_tail`, `ffi_call`, `bytes_scan`, and the existing `fib` — with C
+and plain-OCaml references in `benchmarks/baselines/`; `benchmarks/run.sh`
+regenerates them into `benchmarks/results.md`. The figures below are that
+run on macOS arm64, with the OCaml 5.5.1-hosted native backend
+(milliseconds per run, best-of-three with one warmup).
+
+| workload | specialized | unspecialized | interpreter | baseline |
+| --- | --- | --- | --- | --- |
+| tail loop, 10M iterations | 1670 ms (stack overflow at 100M) | 392 ms | 5774 ms | 14 ms (OCaml) / 3 ms (C) |
+| fib(30) | 17 ms | 35 ms | 910 ms | 6 ms (OCaml) |
+| foreign `sqrt`, 10M calls | — (forces dynamic) | 428 ms (~43 ns/call) | — (refused) | 45 ms (~4.5 ns/call) |
+| `Bytes.get`, 20M reads | — (dynamic builtin) | 1012 ms (~51 ns/byte) | — | 30 ms (OCaml) / 15 ms (C) |
+
+Three findings bear on the FFI question:
+
+1. **The FFI round trip is cheap; the calling convention around it is
+   not.** A foreign call runs about 43 ns all-in (10M calls in 428 ms)
+   versus ~4.5 ns for the same `sqrt` loop in C. The cost is that the
+   caller is boxed and allocates an argument list per call — and every
+   function that calls a `foreign def` is excluded from specialization,
+   dragging its own callers into the dynamic world with it.
+2. **No data can cross the boundary.** `Float64`/`String`/`Bool` are
+   the only types (E4200); `Int64` — the default integer — is refused.
+   There are no pointers, arrays, structs, or callbacks, and `String`
+   marshals as a NUL-terminated `char *`, so it cannot carry a binary
+   payload either. A C kernel that needs a buffer, or that must keep
+   state between calls, cannot be reached. "Pack doubles through a
+   `String`" fails by construction at the first zero byte, and would
+   cost ~51 ns per element in accessors before any compute.
+3. **The specialization path is currently slower than the dynamic path
+   for the language's only loop idiom.** Emo has no `while`/`for`;
+   iteration is tail recursion. The specialized emitter wraps each body
+   in `try ... with Native_return`, raising a local exception on every
+   `return` — which defeats OCaml's tail-call optimization and
+   allocates per call. Hence the ~4x gap and the stack overflow at 100M
+   depth (the loop completes at 10M). `plan/step-22-riscv64.md` already
+   calls the exception an "emission convenience" and plans a
+   branch-to-epilogue with guaranteed tail calls on RV64; the
+   OCaml-hosted backend has not been fixed.
+
+Taken together: through the FFI, Emo reaches scalar leaf functions at
+roughly 40 ns per call, and nothing else. A matrix multiply, FFT,
+solver, or any kernel over an array is not expressible today, and the
+specialized numeric path that would carry an in-language kernel is
+presently slower than its own fallback.
+
 ## What stands between Emo and this market
 
 In priority order:
@@ -96,7 +147,8 @@ In priority order:
    entrance into the C world that industrial software actually
    inhabits. Nothing on the roadmap matters more for this market.
 3. **A numerical benchmark against C**, to find what specialization's
-   real ceiling is.
+   real ceiling is. The probe above is a first microbenchmark; an
+   industrial-scale kernel is still missing.
 4. **One real BEAM-target supervision case** in a monitoring or control
    setting.
 
