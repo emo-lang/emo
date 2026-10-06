@@ -365,6 +365,10 @@ let rec expr env (x : Emo_ir.expr) : unit =
       expr env operand;
       e env (W.Call (rt "bnot"));
       if x.Emo_ir.ety = Emo_check.Byte then mask_byte env
+  | Cond { c; t; e = else_ } ->
+      es env
+        (truthy (expr_block env c)
+        @ [ W.If (W.Result W.Anyref, expr_block env t, expr_block env else_) ])
   | Binary (Ast.And, l, r) ->
       expr env l;
       e env (W.Struct_get (t_vbool, 0));
@@ -922,7 +926,11 @@ and stmts_value env (xs : Emo_ir.stmt list) ~(tail : bool) : W.instr list =
 and expr_block env (x : Emo_ir.expr) : W.instr list =
   let before = env.rev in
   expr env x;
-  let code = List.rev (List.drop (List.length before) env.rev) in
+  (* Emission prepends, so the new instructions are the FIRST k entries
+     of the reversed accumulator — the old `drop (length before)` slice
+     read the wrong end whenever anything was already pending. *)
+  let k = List.length env.rev - List.length before in
+  let code = List.rev (List.filteri (fun i _ -> i < k) env.rev) in
   env.rev <- before;
   code
 

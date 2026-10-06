@@ -24,6 +24,8 @@ language's design, not just its features.
 
 - **[`fib/`](fib/)** — recursion, tail calls, and an arrow function.
 - **[`hello_world/`](hello_world/)** — the smallest program.
+- **[`if_expr/`](if_expr/)** — the one-line `if` expression picking
+  values, nested and as an operand.
 - **[`objects/`](objects/)** — classes, enums, interfaces, equality.
 - **[`shop/`](shop/)** — the module system: the directory tree is the
   module tree, with an `internal/` private subtree.

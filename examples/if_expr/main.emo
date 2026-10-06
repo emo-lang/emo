@@ -1,0 +1,19 @@
+def grade(n Int) String {
+  const label = if n >= 90 { "high" } else { "low" }
+  return label
+}
+
+println(grade(95))
+println(grade(50))
+
+const parity = if 7 % 2 == 0 { "even" } else { "odd" }
+println(parity)
+
+const clamp = if 120 > 100 { 100 } else { 120 }
+println(clamp.to_string())
+
+const sign = if clamp < 0 { -1 } else { if clamp == 0 { 0 } else { 1 } }
+println(sign.to_string())
+
+const greeting = "status: " + (if sign > 0 { "positive" } else { "other" })
+println(greeting)

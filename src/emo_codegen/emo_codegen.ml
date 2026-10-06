@@ -124,7 +124,9 @@ and unbox env (e : Emo_ir.expr) kind =
   if env.native && e.Emo_ir.ety = Emo_check.Bool then
     Printf.sprintf "(%s)" (emit_expr env e)
   else
-    Printf.sprintf "(Emo_runtime.unbox_%s %s)"
+    (* The subexpression needs its own parens: a dynamic constructor
+       application like `Emo_eval.Bool false` would split in two. *)
+    Printf.sprintf "(Emo_runtime.unbox_%s (%s))"
       (String.lowercase_ascii kind)
       (emit_expr env e)
 
@@ -350,6 +352,10 @@ and emit_expr env (e : Emo_ir.expr) : string =
       if env.native && e.Emo_ir.ety = Emo_check.Int then
         Printf.sprintf "(- %s)" (emit_expr env x)
       else Printf.sprintf "(Emo_runtime.negf (%s))" (emit_expr env x)
+  | Emo_ir.Cond { c; t; e = else_ } ->
+      Printf.sprintf "(if %s then (%s) else (%s))"
+        (unbox env c "Bool")
+        (emit_expr env t) (emit_expr env else_)
   | Emo_ir.Binary (op, l, r) ->
       let lname = emit_expr env l in
       let rname = emit_expr env r in
@@ -464,6 +470,12 @@ and sp_name func = "sp_" ^ func
 
 and emit_native_expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
+  | Emo_ir.Cond { c; t; e = else_ } ->
+      (* Specialized conditions are raw OCaml bools (the checker pinned
+         the condition to Bool). *)
+      Printf.sprintf "(if %s then (%s) else (%s))"
+        (emit_native_expr env c)
+        (emit_native_expr env t) (emit_native_expr env else_)
   | Emo_ir.Const (L_int n) -> string_of_int n
   | Emo_ir.Const (L_float f) -> Printf.sprintf "(%s)" (string_of_float f)
   | Emo_ir.Const (L_bool b) -> if b then "true" else "false"
@@ -552,6 +564,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
         | Emo_ir.Interpolate _ -> "Interpolate"
         | Emo_ir.Unary _ -> "Unary"
         | Emo_ir.Binary _ -> "Binary"
+        | Emo_ir.Cond _ -> "Cond"
         | Emo_ir.Index _ -> "Index"
         | Emo_ir.Field_read { name; _ } -> "Field " ^ name
         | Emo_ir.Call { func; _ } -> "Call " ^ func

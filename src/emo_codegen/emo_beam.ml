@@ -179,6 +179,15 @@ let rec expr env (x : Emo_ir.expr) : unit =
             put env ")"
       in
       chain items
+  | Cond { c; t; e = else_ } ->
+      (* Emo conditions are Bool values: the atoms 'true'/'false' *)
+      put env "case ";
+      expr env c;
+      put env " of\n  <'true'> when 'true' ->\n";
+      expr env t;
+      put env "\n  <'false'> when 'true' ->\n";
+      expr env else_;
+      put env "\nend"
   | Binary (op, l, r) ->
       (* Int64 is the target's own 64-bit wrapping integer — every
          integer operator already masks at 64 bits — so only Byte needs
