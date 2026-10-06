@@ -1,0 +1,72 @@
+{
+  "Def": {
+    "prefix": "def",
+    "body": ["def ${1:name}(${2:arg} ${3:Type}) ${4:Ret} {", "\t${0:return ${5:value}}", "}"],
+    "description": "A function definition"
+  },
+  "Void def": {
+    "prefix": "defv",
+    "body": ["def ${1:name}(${2:arg} ${3:Type}) {", "\t$0", "}"],
+    "description": "A Void function definition"
+  },
+  "Class": {
+    "prefix": "class",
+    "body": ["class ${1:Name} {", "\tdef init(${2:arg} ${3:Type}) {", "\t\tself.${4:field} = ${2:arg}", "\t}", "", "\tdef ${5:method}() ${6:Ret} {", "\t\treturn ${0}", "\t}", "}"],
+    "description": "A class with a constructor"
+  },
+  "Interface": {
+    "prefix": "interface",
+    "body": ["interface ${1:Name} {", "\tdef ${2:method}() ${3:Ret}", "}"],
+    "description": "A structural interface"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": ["enum ${1:Name} { ${2:member} }"],
+    "description": "An enum"
+  },
+  "Function group": {
+    "prefix": "emo",
+    "body": ["emo ${1:Name} {", "\tdef ${2:fn}(${3:arg} ${4:Type}) ${5:Ret} {", "\t\treturn ${0}", "\t}", "}"],
+    "description": "A `emo` function group"
+  },
+  "Const": {
+    "prefix": "const",
+    "body": ["const ${1:name} = ${0:value}"],
+    "description": "An immutable binding"
+  },
+  "Var": {
+    "prefix": "var",
+    "body": ["var ${1:name} = ${0:value}"],
+    "description": "A mutable binding"
+  },
+  "If": {
+    "prefix": "if",
+    "body": ["if ${1:cond} {", "\t$0", "}"],
+    "description": "An if statement"
+  },
+  "Case": {
+    "prefix": "case",
+    "body": ["case ${1:value} {", "\t${2:pattern} -> {", "\t\t$0", "\t}", "}"],
+    "description": "A case expression"
+  },
+  "Receive": {
+    "prefix": "receive",
+    "body": ["receive {", "\t${1:pattern} -> {", "\t\t$0", "\t}", "}"],
+    "description": "A selective receive"
+  },
+  "Arrow block": {
+    "prefix": "->",
+    "body": ["-> (${1:arg} ${2:Type}) {", "\t$0", "}"],
+    "description": "An anonymous block"
+  },
+  "Require": {
+    "prefix": "require",
+    "body": ["require \"${1:owner/name}\""],
+    "description": "Bring a package into scope"
+  },
+  "Println": {
+    "prefix": "println",
+    "body": ["println(${1:value})"],
+    "description": "Print a line"
+  }
+}

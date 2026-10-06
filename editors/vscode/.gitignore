@@ -1,0 +1,6 @@
+node_modules/
+out/
+server/emo-lsp
+server/emo-lsp.exe
+server/registry/
+*.vsix
