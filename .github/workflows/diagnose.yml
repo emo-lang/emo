@@ -1,0 +1,54 @@
+name: Diagnose scheduler stall
+
+# TEMPORARY diagnostic: the Linux CI run stalls in the scheduler suites
+# (emo_sched_test / emo_project_test). This runs each of them directly —
+# not via dune — under a timeout, with Alcotest's --verbose so the last
+# test reached is printed. Delete this workflow once the stall is fixed.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [develop]
+    paths:
+      - ".github/workflows/diagnose.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.5.0"
+
+      - name: Install dependencies
+        run: opam install -y dune cmdliner alcotest eio_main ssl yojson digestif
+
+      - name: Build the scheduler suites
+        run: |
+          opam exec -- dune build \
+            test/emo_sched/emo_sched_test.exe \
+            test/emo_project/emo_project_test.exe
+
+      - name: emo_sched_test (streaming)
+        continue-on-error: true
+        run: |
+          cd _build/default/test/emo_sched
+          timeout 240 stdbuf -oL -eL ./emo_sched_test.exe --verbose \
+            || echo "emo_sched stopped (exit $?)"
+
+      - name: emo_project_test (streaming)
+        continue-on-error: true
+        run: |
+          cd _build/default/test/emo_project
+          EMO_EXAMPLES_DIR="$GITHUB_WORKSPACE/examples" \
+          EMO_EXE="$GITHUB_WORKSPACE/_build/default/src/emo_cli/emo.exe" \
+          timeout 240 stdbuf -oL -eL ./emo_project_test.exe --verbose \
+            || echo "emo_project stopped (exit $?)"
