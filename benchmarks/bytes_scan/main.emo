@@ -1,0 +1,17 @@
+// Bytes read throughput: 20M bounds-checked reads.
+//
+//   emo build main.emo -o main.emo-bin
+//
+// `Bytes` is the language's only mutable buffer, and reads go through the
+// dynamic builtin dispatcher — no specialization. `Array` is an immutable
+// value; there is no mutable numeric array. See
+// docs/industrial-software.md.
+def scan(buf Bytes, n Int64, acc Int64) Int64 {
+  if n == 0 {
+    return acc
+  }
+  return scan(buf, n - 1, acc + buf.get(n % 256))
+}
+
+const buf = Bytes.new(256)
+println(scan(buf, 20000000, 0))

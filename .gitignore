@@ -2,6 +2,9 @@
 *.emo-bin
 *.emo-bin-nospec
 
+# Benchmark baselines
+benchmarks/baselines/build/
+
 # macOS
 .DS_Store
 

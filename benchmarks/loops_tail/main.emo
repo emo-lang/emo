@@ -1,0 +1,19 @@
+// Tail-recursive integer loop — the language's only iteration idiom.
+//
+//   emo build main.emo -o main.emo-bin
+//   emo build main.emo --no-specialize -o main.emo-bin-nospec
+//
+// Fully annotated, so the default build specializes it. Caution: the
+// specialized emitter wraps each body in `try ... with Native_return`,
+// raising a local exception on every `return` — which defeats tail-call
+// optimization. The specialized build is therefore slower than the
+// unspecialized one for this shape, and overflows the stack at ~100M
+// depth (10M completes). See docs/industrial-software.md.
+def spin(n Int64, acc Int64) Int64 {
+  if n == 0 {
+    return acc
+  }
+  return spin(n - 1, acc + 1)
+}
+
+println(spin(10000000, 0))

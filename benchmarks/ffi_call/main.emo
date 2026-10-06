@@ -1,0 +1,19 @@
+// Foreign call overhead: 10M calls to a C leaf function.
+//
+//   emo build main.emo -o main.emo-bin --cclib m
+//
+// A function that calls a `foreign def` is excluded from specialization,
+// so the caller stays in the dynamic (boxed) world: each call allocates
+// an argument list and boxes the result. The C round trip itself is
+// cheap; the calling convention around it is the cost, and no bulk data
+// can cross the boundary. See docs/industrial-software.md.
+foreign def c_sqrt(x Float64) Float64 = "sqrt"
+
+def spin(n Int64, acc Float64) Float64 {
+  if n == 0 {
+    return acc
+  }
+  return spin(n - 1, c_sqrt(acc))
+}
+
+println(spin(10000000, 4.0))
