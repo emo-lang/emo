@@ -85,6 +85,8 @@ let rec expr_to_text (e : Ast.expr) : string =
   | Ast.Type_ident s -> s
   | Ast.Self -> "self"
   | Ast.Int n -> string_of_int n
+  | Ast.Int64 n -> Int64.to_string n
+  | Ast.Byte n -> string_of_int n
   | Ast.Float f -> string_of_float f
   | Ast.Bool b -> string_of_bool b
   | Ast.Char c -> Printf.sprintf "'%c'" c
