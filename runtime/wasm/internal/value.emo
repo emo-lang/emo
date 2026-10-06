@@ -1,0 +1,218 @@
+// The value model (T21.3).
+//
+// A runtime value is a tagged pair `(kind, bits)`, where `kind` is the
+// spec's value-type byte and `bits` carries the payload:
+//
+//   kind 127 (i32)      the unsigned 32-bit pattern in Int64
+//   kind 126 (i64)      the full 64-bit pattern in Int64
+//   kind 125 (f32)      the unsigned 32-bit pattern in Int64
+//   kind 124 (f64)      the full 64-bit pattern in Int64
+//   kind 112 (funcref)  the function index, or -1 for null
+//   kind 111 (externref) the host value, or -1 for null
+//
+// Bit patterns, not numbers: this is the only way NaN payloads survive
+// loads, stores, and `reinterpret` exactly. A float converts to
+// `Float64` only at an operation (T21.5) and re-encodes after. Null is
+// its own encoding — a negative payload in a reference kind, which no
+// real index or host value is.
+//
+// The module is pure and primitive-typed, so both the runner and the
+// interpreter can use it across module edges.
+
+const v_i32 = 127
+const v_i64 = 126
+const v_f32 = 125
+const v_f64 = 124
+const v_funcref = 112
+const v_externref = 111
+
+// ---- constructors ----
+
+def mask32(x Int64) Int64 {
+  return x & 4294967295
+}
+
+// The signed reading of a 32-bit pattern (i32 arithmetic works here).
+def sign32(x Int64) Int64 {
+  const b = mask32(x)
+  if b >= 2147483648 {
+    return b - 4294967296
+  }
+  return b
+}
+
+def i32(bits Int64) (Int64, Int64) {
+  return (v_i32, mask32(bits))
+}
+
+def i64(bits Int64) (Int64, Int64) {
+  return (v_i64, bits)
+}
+
+def f32(bits Int64) (Int64, Int64) {
+  return (v_f32, mask32(bits))
+}
+
+def f64(bits Int64) (Int64, Int64) {
+  return (v_f64, bits)
+}
+
+def funcref(idx Int64) (Int64, Int64) {
+  return (v_funcref, idx)
+}
+
+def externref(v Int64) (Int64, Int64) {
+  return (v_externref, v)
+}
+
+// A null of the given reference kind.
+def nullref(kind Int64) (Int64, Int64) {
+  return (kind, -1)
+}
+
+def kind_of(v (Int64, Int64)) Int64 {
+  return v[0]
+}
+
+def bits_of(v (Int64, Int64)) Int64 {
+  return v[1]
+}
+
+def is_ref(v (Int64, Int64)) Bool {
+  return v[0] == v_funcref || v[0] == v_externref
+}
+
+def is_null(v (Int64, Int64)) Bool {
+  return is_ref(v) && v[1] < 0
+}
+
+// ---- float bits <-> Float64 (the operation point) ----
+
+def f64_value(bits Int64) Float64 {
+  return Float64.from_bits(bits)
+}
+
+def f64_bits(x Float64) Int64 {
+  return x.to_bits()
+}
+
+// ---- NaN payload discipline ----
+//
+// An f32/f64 is a NaN when its exponent is all ones and its mantissa is
+// non-zero. The canonical NaN has the mantissa's top bit set and
+// nothing else; an arithmetic NaN is any with the top bit set. Moves
+// preserve the payload; only the arithmetic operations that the spec
+// leaves unspecified are allowed to canonicalize.
+
+def f32_is_nan(bits Int64) Bool {
+  const b = mask32(bits)
+  const exp = (b >> 23) & 255
+  const mant = b & 8388607
+  return exp == 255 && mant != 0
+}
+
+// sign 0, exponent all ones, and the top mantissa bit alone.
+def f32_canonical(bits Int64) Bool {
+  const b = mask32(bits)
+  return f32_is_nan(b) && (b & 2147483647) == 2143289344
+}
+
+def f32_arithmetic(bits Int64) Bool {
+  const b = mask32(bits)
+  return f32_is_nan(b) && (b & 4194304) != 0
+}
+
+def f64_is_nan(bits Int64) Bool {
+  const exp = (bits >> 52) & 2047
+  const mant = bits & 4503599627370495
+  return exp == 2047 && mant != 0
+}
+
+// sign 0, exponent all ones, and the top mantissa bit alone.
+def f64_canonical(bits Int64) Bool {
+  return f64_is_nan(bits)
+    && (bits & 9223372036854775807) == 9221120237041090560
+}
+
+def f64_arithmetic(bits Int64) Bool {
+  return f64_is_nan(bits) && (bits & 2251799813685248) != 0
+}
+
+// ---- the expected-value codec ----
+//
+// The run list carries each argument and expectation as a word; this
+// decodes and compares it. Numeric words match bit-exactly; the NaN
+// words match by payload class (`math.is_nan`-style equality is what
+// the suite's `nan:canonical` / `nan:arithmetic` mean).
+
+def parse_dec(s String) Int64 {
+  if s.starts_with("-") {
+    return -parse_digits(s.to_bytes(), 1, s.length(), 0)
+  }
+  return parse_digits(s.to_bytes(), 0, s.length(), 0)
+}
+
+def parse_digits(src Bytes, i Int64, n Int64, acc Int64) Int64 {
+  if i == n {
+    return acc
+  }
+  const c = src.get(i)
+  if c < 48 || c > 57 {
+    return acc
+  }
+  return parse_digits(src, i + 1, n, acc * 10 + (c - 48))
+}
+
+def matches(v (Int64, Int64), word String) Bool {
+  if word == "ref.null" {
+    return is_null(v)
+  }
+  if word == "nan:canonical" {
+    return is_nan_class(v, true)
+  }
+  if word == "nan:arithmetic" {
+    return is_nan_class(v, false)
+  }
+  if word.starts_with("i:") {
+    return v[0] == v_i32
+      && mask32(v[1]) == mask32(parse_dec(rest(word, 2)))
+  }
+  if word.starts_with("I:") {
+    return v[0] == v_i64 && v[1] == parse_dec(rest(word, 2))
+  }
+  if word.starts_with("f:") {
+    return v[0] == v_f32
+      && mask32(v[1]) == mask32(parse_dec(rest(word, 2)))
+  }
+  if word.starts_with("F:") {
+    return v[0] == v_f64 && v[1] == parse_dec(rest(word, 2))
+  }
+  if word.starts_with("ref.extern:") {
+    return v[0] == v_externref && v[1] == parse_dec(rest(word, 11))
+  }
+  if word.starts_with("ref.func:") {
+    return v[0] == v_funcref && v[1] == parse_dec(rest(word, 9))
+  }
+  return false
+}
+
+// A tail word after a known prefix.
+def rest(word String, prefix_len Int64) String {
+  return word.substring(prefix_len, word.length() - prefix_len)
+}
+
+def is_nan_class(v (Int64, Int64), canonical Bool) Bool {
+  if v[0] == v_f32 {
+    if canonical {
+      return f32_canonical(v[1])
+    }
+    return f32_arithmetic(v[1])
+  }
+  if v[0] == v_f64 {
+    if canonical {
+      return f64_canonical(v[1])
+    }
+    return f64_arithmetic(v[1])
+  }
+  return false
+}
