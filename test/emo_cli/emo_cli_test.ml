@@ -347,6 +347,155 @@ let wasm_examples_tests =
                    (Buffer.contents err))))
     wasm_goldens
 
+(* ---- publish: the upload is dogfooded through the stdlib http client ----
+
+   A captive HTTP server on loopback (a raw socket in a helper thread)
+   records exactly what the embedded uploader sends and answers with a
+   canned response. *)
+
+let find_sub hay needle =
+  let n = String.length needle in
+  let rec go i =
+    if i + n > String.length hay then None
+    else if String.equal (String.sub hay i n) needle then Some i
+    else go (i + 1)
+  in
+  go 0
+
+(* Reads one HTTP/1.1 request: the head up to the blank line, then the
+   Content-Length body — the client's exact bytes, captured raw. *)
+let read_request conn =
+  let buf = Buffer.create 512 in
+  let chunk = Bytes.create 4096 in
+  let complete text =
+    match find_sub text "\r\n\r\n" with
+    | None -> false
+    | Some header_end -> (
+        match find_sub text "Content-Length: " with
+        | None -> true
+        | Some rel_start -> (
+            let start = rel_start + String.length "Content-Length: " in
+            let rest = String.sub text start (String.length text - start) in
+            match find_sub rest "\r\n" with
+            | None -> false
+            | Some rel ->
+                let len = int_of_string (String.sub rest 0 rel) in
+                String.length text >= header_end + 4 + len))
+  in
+  let rec loop () =
+    let text = Buffer.contents buf in
+    if complete text then text
+    else
+      match Unix.select [ conn ] [] [] 10.0 with
+      | [], _, _ -> failwith "captive server: timed out reading the request"
+      | _ -> (
+          match Unix.read conn chunk 0 (Bytes.length chunk) with
+          | 0 -> text
+          | n ->
+              Buffer.add_subbytes buf chunk 0 n;
+              loop ())
+  in
+  loop ()
+
+(* Runs [f port] against a one-shot server that captures the request and
+   replies with [status]/[body]; returns the raw captured request. *)
+let with_captive_server ~status ~body f =
+  let srv = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.setsockopt srv Unix.SO_REUSEADDR true;
+  Unix.bind srv (Unix.ADDR_INET (Unix.inet_addr_of_string "127.0.0.1", 0));
+  Unix.listen srv 1;
+  let port =
+    match Unix.getsockname srv with
+    | Unix.ADDR_INET (_, p) -> p
+    | _ -> assert false
+  in
+  let captured = ref "" in
+  let serve () =
+    match Unix.select [ srv ] [] [] 10.0 with
+    | [], _, _ -> () (* the client never connected; the test failed earlier *)
+    | _ ->
+        let conn, _ = Unix.accept srv in
+        captured := read_request conn;
+        let head =
+          Printf.sprintf "HTTP/1.1 %d X\r\nContent-Length: %d\r\n\r\n" status
+            (String.length body)
+        in
+        let bytes = Bytes.of_string (head ^ body) in
+        ignore (Unix.write conn bytes 0 (Bytes.length bytes));
+        Unix.close conn
+  in
+  let th = Thread.create serve () in
+  Fun.protect
+    ~finally:(fun () ->
+      Thread.join th;
+      Unix.close srv)
+    (fun () -> f port);
+  !captured
+
+let publish_tests =
+  [
+    tc "the upload posts the raw archive through the stdlib http client"
+      (fun () ->
+        let archive = "\x1f\x8b\x08\x00emo \x00\xff binary" in
+        let body = {|{"version":"0.1.0"}|} in
+        let captured =
+          with_captive_server ~status:201 ~body (fun port ->
+              match
+                Emo_cli.upload
+                  ~registry:(Printf.sprintf "http://127.0.0.1:%d" port)
+                  ~token:"emo_test_token" ~archive
+              with
+              | Error m -> Alcotest.fail m
+              | Ok (status, response_body) ->
+                  Alcotest.(check int) "status" 201 status;
+                  Alcotest.(check string) "body" body response_body)
+        in
+        Alcotest.(check bool)
+          "posts to the publish endpoint" true
+          (contains captured "POST /api/v1/packages HTTP/1.1\r\n");
+        Alcotest.(check bool)
+          "bearer token" true
+          (contains captured "Authorization: Bearer emo_test_token");
+        Alcotest.(check bool)
+          "octet stream" true
+          (contains captured "Content-Type: application/octet-stream");
+        (* the gzip body arrives byte-for-byte, NULs and all *)
+        match find_sub captured "\r\n\r\n" with
+        | None -> Alcotest.fail "no header terminator"
+        | Some i ->
+            Alcotest.(check string)
+              "binary body intact" archive
+              (String.sub captured (i + 4) (String.length captured - i - 4)));
+    tc "a refused connection is an upload error" (fun () ->
+        match
+          Emo_cli.upload ~registry:"http://127.0.0.1:1" ~token:"emo_test_token"
+            ~archive:"x"
+        with
+        | Ok _ -> Alcotest.fail "expected a transport error"
+        | Error m ->
+            Alcotest.(check bool)
+              "the failure is named" true
+              (String.length m > 0));
+    tc "an error response keeps its status and body" (fun () ->
+        let body =
+          {|{"error":{"code":"version_exists","message":"acme/hello 0.1.0 already published"}}|}
+        in
+        ignore
+          (with_captive_server ~status:409 ~body (fun port ->
+               match
+                 Emo_cli.upload
+                   ~registry:(Printf.sprintf "http://127.0.0.1:%d" port)
+                   ~token:"emo_test_token" ~archive:"x"
+               with
+               | Error m -> Alcotest.fail m
+               | Ok (status, response_body) ->
+                   Alcotest.(check int) "status" 409 status;
+                   Alcotest.(check string) "body" body response_body;
+                   Alcotest.(check (option string))
+                     "error code" (Some "version_exists")
+                     (Emo_cli.json_string_field "code" response_body))));
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -356,4 +505,5 @@ let () =
       ("examples", examples_tests);
       ("wasm_examples", wasm_examples_tests);
       ("beam_examples", beam_examples_tests);
+      ("publish", publish_tests);
     ]
