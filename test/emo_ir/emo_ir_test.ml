@@ -40,14 +40,14 @@ let find_func program name =
 (* A Block parameter is Unknown — the dynamic region keeps the function
    out of Stage B's specialization, exactly the gradual story. *)
 let higher_order_source = {|
-def call_it(f Block, n Int) Int {
+def call_it(f Block, n Int64) Int64 {
   return n
 }
 |}
 
 let fib_source =
   {|
-def fib(n Int) Int {
+def fib(n Int64) Int64 {
   if n < 2 {
     return n
   }
@@ -57,7 +57,7 @@ def fib(n Int) Int {
 
 let typed_fib_source =
   {|
-def fib(n Int) Int {
+def fib(n Int64) Int64 {
   if n < 2 {
     return n
   }
@@ -84,10 +84,10 @@ let ir_tests =
         let program =
           lower_program
             [
-              ([ "helper" ], {|def double(n Int) Int {
+              ([ "helper" ], {|def double(n Int64) Int64 {
   return n * 2
 }|});
-              ([ "app" ], {|def run() Int {
+              ([ "app" ], {|def run() Int64 {
   return helper.double(21)
 }|});
             ]
@@ -116,11 +116,11 @@ let ir_tests =
             [
               ( [ "app" ],
                 {|
-def sub(a Int, b Int) Int {
+def sub(a Int64, b Int64) Int64 {
   return a - b
 }
 
-def run() Int {
+def run() Int64 {
   return sub(b: 1, a: 5)
 }
 |}
@@ -143,7 +143,7 @@ def run() Int {
         (match first_call_args f.Emo_ir.fbody with
         | [ args ] -> (
             match List.map (fun a -> a.Emo_ir.desc) args with
-            | [ Emo_ir.Const (L_int 5); Emo_ir.Const (L_int 1) ] -> ()
+            | [ Emo_ir.Const (L_int 5L); Emo_ir.Const (L_int 1L) ] -> ()
             | other ->
                 Alcotest.fail
                   (Printf.sprintf "wrong order %s"

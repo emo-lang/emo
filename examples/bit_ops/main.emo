@@ -1,4 +1,4 @@
-// Bitwise operators on Int: & | ^ << >> ~
+// Bitwise operators on Int64: & | ^ << >> ~
 //
 //   emo run main.emo
 
@@ -22,7 +22,7 @@ if (12 & 10) == 8 {
 const low = (1 << 5) + (1 << 2)
 println(low)
 
-def pow2(n Int) Int {
+def pow2(n Int64) Int64 {
   return 1 << n
 }
 

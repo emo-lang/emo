@@ -24,6 +24,6 @@ What to notice:
 - **Chinese text is ordinary string data** — printed, interpolated, and
   compared without ceremony.
 - **A trailing block is the one callback notation.** `walk(xs, 0) ->
-  (v Int) { ... }` passes a parameterized block to an ordinary function.
+  (v Int64) { ... }` passes a parameterized block to an ordinary function.
 
 The golden output is in `expected.txt`.

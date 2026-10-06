@@ -1,5 +1,5 @@
 // Checkout bills a cart through the order module — a plain qualified
 // reference to a sibling module, no import, no registration.
-def checkout(cart Int) Int {
+def checkout(cart Int64) Int64 {
   return order.total(cart)
 }

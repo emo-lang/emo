@@ -285,9 +285,6 @@ let mask_byte env =
 let rec expr env (x : Emo_ir.expr) : unit =
   match x.Emo_ir.desc with
   | Const (L_int n) ->
-      e env (W.I64_const (Int64.of_int n));
-      e env (W.Struct_new t_vint)
-  | Const (L_int64 n) ->
       e env (W.I64_const n);
       e env (W.Struct_new t_vint)
   | Const (L_byte n) ->
@@ -683,13 +680,12 @@ and method_call env self_ name args =
       expr env self_;
       e env (W.Call (rt "bytes_from_str"))
   (* The fixed-width conversions. Int64 and Byte are both a $vint around
-     an i64, the same shape Int has, so only the narrowing back to Byte
-     masks anything. *)
-  | "to_int", [] ->
-      (* Int64 and Byte already have Int's shape, so this is the identity.
-         A String receiver would parse, which this target does not do yet;
-         the shape test keeps it from passing the string through. *)
-      let recv = fresh_local env "__to_int_recv" W.Anyref in
+     an i64, so only the narrowing back to Byte masks anything. *)
+  | "to_int64", [] ->
+      (* identity for Int64 and Byte; a String receiver would parse, which
+         this target does not do yet — the shape test keeps it from
+         passing the string through. *)
+      let recv = fresh_local env "__to_int64_recv" W.Anyref in
       expr env self_;
       e env (W.Local_set recv);
       e env (W.Local_get recv);
@@ -705,13 +701,13 @@ and method_call env self_ name args =
       e env (W.Struct_get (t_vfloat, 0));
       e env W.I64_reinterpret_f64;
       e env (W.Struct_new t_vint)
-  | "from_int", [ v ] -> (
+  | "from_int64", [ v ] -> (
       match self_.Emo_ir.desc with
       | Emo_ir.Type_ref "Int64" -> expr env v
       | _ ->
-          (* `Byte.from_int` is the one conversion the checker leaves to
+          (* `Byte.from_int64` is the one conversion the checker leaves to
              run time: nothing outside 0-255 has a Byte to narrow to. *)
-          let n = fresh_local env "__byte_from_int" W.I64 in
+          let n = fresh_local env "__byte_from_int64" W.I64 in
           expr env v;
           e env (W.Ref_cast t_vint);
           e env (W.Struct_get (t_vint, 0));
@@ -1155,20 +1151,6 @@ and pattern_test env (s : W.instr list) (p : Emo_ast.pattern) : W.instr list =
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_binding _ -> [ W.I32_const 1 ]
   | Ast.Pattern_literal (L_int n) ->
-      [
-        W.If_else
-          ( W.Result W.I32,
-            s @ [ W.Ref_test t_vint ],
-            s
-            @ [
-                W.Ref_cast t_vint;
-                W.Struct_get (t_vint, 0);
-                W.I64_const (Int64.of_int n);
-                W.I64_eq;
-              ],
-            [ W.I32_const 0 ] );
-      ]
-  | Ast.Pattern_literal (L_int64 n) ->
       [
         W.If_else
           ( W.Result W.I32,
@@ -2068,7 +2050,7 @@ let rt_neg : W.func_type =
       ];
   }
 
-(* Bitwise ops are integer-only: the checker guarantees Int, and any
+(* Bitwise ops are integer-only: the checker guarantees Int64, and any
    other shape traps rather than silently coercing. *)
 let rt_bit (op : W.instr) : W.func_type =
   {

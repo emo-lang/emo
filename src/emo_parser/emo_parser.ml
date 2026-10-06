@@ -64,7 +64,6 @@ let keyword_spelling = function
 
 let describe_kind (k : Tok.kind) =
   match k with
-  | Int n -> Printf.sprintf "integer `%d`" n
   | Int64 n -> Printf.sprintf "integer `%Ld`" n
   | Byte n -> Printf.sprintf "byte `%d`" n
   | Float f -> Printf.sprintf "float `%g`" f
@@ -317,9 +316,6 @@ and parse_postfix st =
 and parse_primary st =
   let tok = peek st in
   match tok.Tok.kind with
-  | Tok.Int n ->
-      advance st |> ignore;
-      node tok.Tok.span (Ast.Int n)
   | Tok.Int64 n ->
       advance st |> ignore;
       node tok.Tok.span (Ast.Int64 n)
@@ -1224,17 +1220,11 @@ and parse_pattern st =
           error "E2007" (span st)
             (Printf.sprintf "expected an enum member after `%s.`, found %s"
                tname (describe_kind t)))
-  | Tok.Int n ->
-      advance st |> ignore;
-      {
-        Ast.pattern_span = tok.Tok.span;
-        pattern_desc = Ast.Pattern_literal (Ast.L_int n);
-      }
   | Tok.Int64 n ->
       advance st |> ignore;
       {
         Ast.pattern_span = tok.Tok.span;
-        pattern_desc = Ast.Pattern_literal (Ast.L_int64 n);
+        pattern_desc = Ast.Pattern_literal (Ast.L_int n);
       }
   | Tok.Byte n ->
       advance st |> ignore;

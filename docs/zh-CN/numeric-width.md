@@ -12,8 +12,8 @@
 （`Int64` 部分取代同日早先"保留 `Int` 拼写、不引入 `Int64` 名字"
 的决定）。
 
-实现里目前仍拼写为 `Int` 和 `Float`（检查器、stdlib、examples）；
-到 `Int64`/`Float64` 的机械重命名与下文的 native 修复搭同一步。
+实现现在拼写为 `Int64` 和 `Float64`（检查器、stdlib、examples、
+runtime）；机械重命名单独落地，先于下文的 native 修复。
 
 ## 为什么类型按位宽命名
 
@@ -87,7 +87,7 @@ hi/lo——教科书式的 `long long` 技术，与上面 native 的 hi/lo
 它的动机：
 
 - **FFI。** C 的 `int32_t` 参数需要落点类型（`foreign def` 目前
-  只放行 `Float`/`String`/`Bool`）。
+  只放行 `Float64`/`String`/`Bool`）。
 - **裸金属。** RV32 的 MMIO 与设备寄存器是 32 位的；`peek`/
   `poke` 需要精确位宽。
 - **RV32 性能。** 寄存器宽度的逃生通道：热循环里本机宽度的算术

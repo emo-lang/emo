@@ -1,8 +1,8 @@
 (* The TypeScript backend: lowers the IR to a single self-contained
    TypeScript file — the runtime prelude followed by the program's
    classes, functions, and entry. Values keep the interpreter's tagged
-   dynamic shape (primitives for Int/Bool/String, small wrappers for
-   Float/Char/compounds), every function is async, and every call is
+   dynamic shape (primitives for Int64/Bool/String, small wrappers for
+   Float64/Char/compounds), every function is async, and every call is
    awaited: the Emo surface stays direct-style while the event loop
    lives in the emitted code and the runtime. *)
 
@@ -52,9 +52,8 @@ let trampoline env (f : Emo_ir.func) : bool =
 let rec pattern_test s (p : Emo_ast.pattern) : string =
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_binding _ -> "true"
-  | Ast.Pattern_literal (L_int n) -> Printf.sprintf "(%s === %d)" s n
-  | Ast.Pattern_literal (L_int64 n) ->
-      Printf.sprintf "(%s === %Ldn)" s n
+  | Ast.Pattern_literal (L_int n) ->
+      Printf.sprintf "(%s === %s)" s (Int64.to_string n)
   | Ast.Pattern_literal (L_byte n) -> Printf.sprintf "(%s === %d)" s n
   | Ast.Pattern_literal (L_float f) ->
       Printf.sprintf "(%s instanceof EFloat && %s.v === %s)" s s
@@ -152,8 +151,7 @@ let js_string (s : string) : string =
 
 let rec expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
-  | Const (L_int n) -> string_of_int n
-  | Const (L_int64 n) -> Printf.sprintf "%Ldn" n
+  | Const (L_int n) -> Printf.sprintf "%Ldn" n
   | Const (L_byte n) -> string_of_int n
   | Const (L_float f) -> Printf.sprintf "E.float(%s)" (string_of_float f)
   | Const (L_string s) -> js_string s

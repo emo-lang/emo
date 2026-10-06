@@ -18,7 +18,7 @@ class HttpRequest {
 }
 
 class HttpResponse {
-  def init(status Int, headers Array[(String, String)], body String) {
+  def init(status Int64, headers Array[(String, String)], body String) {
     self.status = status
     self.headers = headers
     self.body = body
@@ -32,7 +32,7 @@ class HttpResponse {
 // Constructors for the two message types: classes are constructed
 // through lowercase factories, so callers never reach into `.new` from
 // another module.
-def response(status Int, headers Array[(String, String)], body String) HttpResponse {
+def response(status Int64, headers Array[(String, String)], body String) HttpResponse {
   return HttpResponse.new(status: status, headers: headers, body: body)
 }
 
@@ -43,7 +43,7 @@ def request_value(method String, path String, headers Array[(String, String)], b
 // ---- Client ----
 
 // The general form: every verb and every knob, all explicit.
-def request(method String, url String, headers Array[(String, String)], body String, timeout Float) HttpResponse {
+def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) HttpResponse {
   const parts = parse_url(url)
   case parts {
     ("http", host, port, path) -> {
@@ -86,7 +86,7 @@ def exchange(conn TcpConn, method String, host String, path String, headers Arra
 // Splits "scheme://authority/path" into (scheme, host, port, path).
 // Redirects are never followed: a 3xx response is the caller's to read
 // and act on, visibly.
-def parse_url(url String) (String, String, Int, String) {
+def parse_url(url String) (String, String, Int64, String) {
   if url.starts_with("https://") {
     return parse_authority(url.substring(8, url.length() - 8), "https")
   }
@@ -96,7 +96,7 @@ def parse_url(url String) (String, String, Int, String) {
   raise Exception.new(message: "unsupported url scheme in `" + url + "`")
 }
 
-def parse_authority(rest String, scheme String) (String, String, Int, String) {
+def parse_authority(rest String, scheme String) (String, String, Int64, String) {
   const slash = rest.index_of("/")
   const authority = authority_before(rest, slash)
   const path = path_from(rest, slash)
@@ -104,24 +104,24 @@ def parse_authority(rest String, scheme String) (String, String, Int, String) {
   if colon < 0 {
     return (scheme, authority, default_port(scheme), path)
   }
-  return (scheme, authority.substring(0, colon), authority.substring(colon + 1, authority.length() - colon - 1).to_int(), path)
+  return (scheme, authority.substring(0, colon), authority.substring(colon + 1, authority.length() - colon - 1).to_int64(), path)
 }
 
-def authority_before(rest String, slash Int) String {
+def authority_before(rest String, slash Int64) String {
   if slash < 0 {
     return rest
   }
   return rest.substring(0, slash)
 }
 
-def path_from(rest String, slash Int) String {
+def path_from(rest String, slash Int64) String {
   if slash < 0 {
     return "/"
   }
   return rest.substring(slash, rest.length() - slash)
 }
 
-def default_port(scheme String) Int {
+def default_port(scheme String) Int64 {
   if scheme == "https" {
     return 443
   }
@@ -134,7 +134,7 @@ def request_head(method String, host String, path String, headers Array[(String,
   return join_lines(add_all(lines, headers, 0)) + "\r\n\r\n"
 }
 
-def add_all(lines Array[String], extra Array[(String, String)], i Int) Array[String] {
+def add_all(lines Array[String], extra Array[(String, String)], i Int64) Array[String] {
   if i >= extra.length() {
     return lines
   }
@@ -146,7 +146,7 @@ def join_lines(lines Array[String]) String {
   return join(lines, "\r\n", 0, "")
 }
 
-def join(lines Array[String], sep String, i Int, acc String) String {
+def join(lines Array[String], sep String, i Int64, acc String) String {
   if i >= lines.length() {
     return acc
   }
@@ -163,12 +163,12 @@ def read_response(conn TcpConn) HttpResponse {
   if length == "" {
     return response(status, headers, conn.read_all())
   }
-  return response(status, headers, conn.read_exactly(length.to_int()))
+  return response(status, headers, conn.read_exactly(length.to_int64()))
 }
 
-def read_status(conn TcpConn) Int {
+def read_status(conn TcpConn) Int64 {
   const parts = conn.read_line().split(" ")
-  return parts[1].to_int()
+  return parts[1].to_int64()
 }
 
 def read_headers(conn TcpConn, acc Array[(String, String)]) Array[(String, String)] {
@@ -193,7 +193,7 @@ def header_value(headers Array[(String, String)], name String) String {
   return find_header(headers, name.lower(), 0)
 }
 
-def find_header(headers Array[(String, String)], name String, i Int) String {
+def find_header(headers Array[(String, String)], name String, i Int64) String {
   if i >= headers.length() {
     return ""
   }
@@ -208,7 +208,7 @@ def find_header(headers Array[(String, String)], name String, i Int) String {
 
 // The process-per-connection helper: every accepted connection runs its
 // own process, so one slow client never blocks the next.
-def serve(listener TcpListener, handler Block) Int {
+def serve(listener TcpListener, handler Block) Int64 {
   const conn = listener.accept()
   do handle_connection(conn, handler)
   return serve(listener, handler)
@@ -216,7 +216,7 @@ def serve(listener TcpListener, handler Block) Int {
 
 // The request-level server: reads the request, hands it to the handler,
 // writes the handler's response back, and closes.
-def serve_requests(listener TcpListener, handler Block) Int {
+def serve_requests(listener TcpListener, handler Block) Int64 {
   return serve(listener) -> (conn TcpConn) {
     const req = read_request(conn)
     const resp = handler(req)
@@ -237,7 +237,7 @@ def read_request(conn TcpConn) HttpRequest {
   if length == "" {
     return request_value(parts[0], parts[1], headers, "")
   }
-  return request_value(parts[0], parts[1], headers, conn.read_exactly(length.to_int()))
+  return request_value(parts[0], parts[1], headers, conn.read_exactly(length.to_int64()))
 }
 
 def write_response(conn TcpConn, resp HttpResponse) TcpConn {
@@ -245,7 +245,7 @@ def write_response(conn TcpConn, resp HttpResponse) TcpConn {
   return conn.write(head + resp.body)
 }
 
-def reason_phrase(status Int) String {
+def reason_phrase(status Int64) String {
   if status == 200 {
     return "OK"
   }

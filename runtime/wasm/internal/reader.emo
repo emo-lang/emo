@@ -10,7 +10,7 @@
 // the input ended early, phase malformed, at the position attempted.
 
 class Reader {
-  def init(data Bytes, pos Int, limit Int, failed Bool, fail_offset Int, fail_msg String) {
+  def init(data Bytes, pos Int64, limit Int64, failed Bool, fail_offset Int64, fail_msg String) {
     self.data = data
     self.pos = pos
     self.limit = limit
@@ -21,7 +21,7 @@ class Reader {
 }
 
 // The cursor over `data`, reading positions in [pos, limit).
-def new(data Bytes, pos Int, limit Int) Reader {
+def new(data Bytes, pos Int64, limit Int64) Reader {
   return Reader.new(data, pos, limit, false, -1, "")
 }
 
@@ -31,7 +31,7 @@ def over(data Bytes) Reader {
 }
 
 // Record the first failure; later failures never overwrite it.
-def bail(r Reader, at Int, msg String) Reader {
+def bail(r Reader, at Int64, msg String) Reader {
   if r.failed {
     return r
   }
@@ -40,18 +40,18 @@ def bail(r Reader, at Int, msg String) Reader {
 
 // Move forward without recording anything (the caller has already
 // bounds-checked).
-def stepped(r Reader, pos Int) Reader {
+def stepped(r Reader, pos Int64) Reader {
   return Reader.new(r.data, pos, r.limit, r.failed, r.fail_offset, r.fail_msg)
 }
 
 // How many bytes remain before the limit.
-def remaining(r Reader) Int {
+def remaining(r Reader) Int64 {
   return r.limit - r.pos
 }
 
 // Look at the next byte without consuming it. -1 when nothing remains
 // (peek never records a failure — callers decide whether that is one).
-def peek(r Reader) Int {
+def peek(r Reader) Int64 {
   if r.failed || r.pos >= r.limit {
     return -1
   }
@@ -59,7 +59,7 @@ def peek(r Reader) Int {
 }
 
 // Read one byte.
-def u8(r Reader) (Reader, Int) {
+def u8(r Reader) (Reader, Int64) {
   if r.failed {
     return (r, 0)
   }
@@ -70,7 +70,7 @@ def u8(r Reader) (Reader, Int) {
 }
 
 // Consume `n` bytes, returning them as a fresh buffer.
-def take(r Reader, n Int) (Reader, Bytes) {
+def take(r Reader, n Int64) (Reader, Bytes) {
   if r.failed {
     return (r, Bytes.new(0))
   }
@@ -83,7 +83,7 @@ def take(r Reader, n Int) (Reader, Bytes) {
 }
 
 // Skip past `n` bytes.
-def skip(r Reader, n Int) Reader {
+def skip(r Reader, n Int64) Reader {
   if r.failed {
     return r
   }
@@ -93,7 +93,7 @@ def skip(r Reader, n Int) Reader {
   return stepped(r, r.pos + n)
 }
 
-def copy_into(out Bytes, src Bytes, dst_at Int, src_at Int, n Int) Int {
+def copy_into(out Bytes, src Bytes, dst_at Int64, src_at Int64, n Int64) Int64 {
   if n == 0 {
     return 0
   }
@@ -108,7 +108,7 @@ def copy_into(out Bytes, src Bytes, dst_at Int, src_at Int, n Int) Int {
 // byte-range table; every branch consumes its continuations then
 // continues the walk.
 
-def utf8_ok(data Bytes, pos Int, end Int) Bool {
+def utf8_ok(data Bytes, pos Int64, end Int64) Bool {
   if pos >= end {
     return true
   }
@@ -146,7 +146,7 @@ def utf8_ok(data Bytes, pos Int, end Int) Bool {
   return false
 }
 
-def utf8_cont1(data Bytes, pos Int, end Int) Bool {
+def utf8_cont1(data Bytes, pos Int64, end Int64) Bool {
   if pos >= end {
     return false
   }
@@ -159,7 +159,7 @@ def utf8_cont1(data Bytes, pos Int, end Int) Bool {
 
 // A constrained continuation, then one free one — the 3-byte heads
 // (e0, ed) always take two continuations total.
-def utf8_cont_range(data Bytes, pos Int, end Int, lo Int, hi Int) Bool {
+def utf8_cont_range(data Bytes, pos Int64, end Int64, lo Int64, hi Int64) Bool {
   if pos >= end {
     return false
   }
@@ -170,7 +170,7 @@ def utf8_cont_range(data Bytes, pos Int, end Int, lo Int, hi Int) Bool {
   return utf8_cont1(data, pos + 1, end)
 }
 
-def utf8_cont2(data Bytes, pos Int, end Int) Bool {
+def utf8_cont2(data Bytes, pos Int64, end Int64) Bool {
   if pos >= end {
     return false
   }
@@ -181,7 +181,7 @@ def utf8_cont2(data Bytes, pos Int, end Int) Bool {
   return utf8_cont1(data, pos + 1, end)
 }
 
-def utf8_cont3(data Bytes, pos Int, end Int) Bool {
+def utf8_cont3(data Bytes, pos Int64, end Int64) Bool {
   if pos >= end {
     return false
   }
@@ -193,7 +193,7 @@ def utf8_cont3(data Bytes, pos Int, end Int) Bool {
 }
 
 // One constrained continuation, then two free ones (the 4-byte heads).
-def utf8_cont_two(data Bytes, pos Int, end Int, lo Int, hi Int) Bool {
+def utf8_cont_two(data Bytes, pos Int64, end Int64, lo Int64, hi Int64) Bool {
   if pos >= end {
     return false
   }
@@ -214,7 +214,7 @@ def utf8_cont_two(data Bytes, pos Int, end Int, lo Int, hi Int) Bool {
 // validator turns that into "constant expression required"), and only
 // undecodable bytes are malformed.
 
-def const_expr(r Reader) (Reader, Int) {
+def const_expr(r Reader) (Reader, Int64) {
   if r.failed {
     return (r, 0)
   }
@@ -270,7 +270,7 @@ def const_expr(r Reader) (Reader, Int) {
 
 // The rest of a non-constant initializer: shape-decoded to the
 // terminating 0x0b, reported as producing no value.
-def const_expr_rest(r Reader) (Reader, Int) {
+def const_expr_rest(r Reader) (Reader, Int64) {
   return (r, 0)
 }
 
@@ -280,7 +280,7 @@ def const_expr_rest(r Reader) (Reader, Int) {
 // non-constant instruction yields 0. The terminating 0x0b is consumed
 // like the decode-level const_expr does — each value-producing branch
 // recurses through vconst_expr_t. (reader, code)
-def vconst_expr(r Reader, globals_codes Array[Int], global_mut Array[Int], n_gi Int, total_funcs Int) (Reader, Int) {
+def vconst_expr(r Reader, globals_codes Array[Int64], global_mut Array[Int64], n_gi Int64, total_funcs Int64) (Reader, Int64) {
   if r.failed {
     return (r, 0)
   }
@@ -348,7 +348,7 @@ def vconst_expr(r Reader, globals_codes Array[Int], global_mut Array[Int], n_gi 
 // instruction; the reported code stays that instruction's, unless the
 // tail produced a further value — the expression is then multi-value
 // (-2), which every constant-expression context rejects.
-def vconst_expr_t(r Reader, code Int, globals_codes Array[Int], global_mut Array[Int], n_gi Int, total_funcs Int) (Reader, Int) {
+def vconst_expr_t(r Reader, code Int64, globals_codes Array[Int64], global_mut Array[Int64], n_gi Int64, total_funcs Int64) (Reader, Int64) {
   const e = vconst_expr(r, globals_codes, global_mut, n_gi, total_funcs)
   if e[0].failed {
     return (e[0], code)
@@ -359,7 +359,7 @@ def vconst_expr_t(r Reader, code Int, globals_codes Array[Int], global_mut Array
   return (e[0], code)
 }
 
-def const_expr_t(r Reader, code Int) (Reader, Int) {
+def const_expr_t(r Reader, code Int64) (Reader, Int64) {
   const e = const_expr(r)
   if e[0].failed {
     return (e[0], code)
@@ -378,13 +378,13 @@ def const_expr_t(r Reader, code Int) (Reader, Int) {
 // memory.init and data.drop are only decodable in a module that
 // declares one.
 
-def expr(r Reader, dc Int) Reader {
+def expr(r Reader, dc Int64) Reader {
   return instrs(r, dc)
 }
 
 // Decode instructions until the matching end (0x0b). An else (0x05)
 // switches arms at this level; the arm discipline is the validator's.
-def instrs(r Reader, dc Int) Reader {
+def instrs(r Reader, dc Int64) Reader {
   if r.failed {
     return r
   }
@@ -528,7 +528,7 @@ def br_table_then(r Reader) Reader {
 }
 
 // A vector of u32s (positions only; the values drop).
-def u32_vec_end(r Reader, n Int) Reader {
+def u32_vec_end(r Reader, n Int64) Reader {
   if n == 0 {
     return r
   }
@@ -549,7 +549,7 @@ def valtype_bytes(r Reader) Reader {
   return valtype_bytes_rest(cn[0], cn[1])
 }
 
-def valtype_bytes_rest(r Reader, n Int) Reader {
+def valtype_bytes_rest(r Reader, n Int64) Reader {
   if n == 0 {
     return r
   }
@@ -572,7 +572,7 @@ def memarg_then(r Reader) Reader {
 
 // The memarg with its alignment exposed (the validator's
 // natural-alignment rule needs it): (reader, align, offset).
-def memarg_val(r Reader) (Reader, Int, Int) {
+def memarg_val(r Reader) (Reader, Int64, Int64) {
   const a = u32(r)
   if a[0].failed {
     return (a[0], 0, 0)
@@ -591,7 +591,7 @@ def memarg_val(r Reader) (Reader, Int, Int) {
 // The final opcode map: 0x00-0x07 the trunc_sat family (no
 // immediates), 0x08-0x0b the bulk-memory operations, 0x0c-0x11 the
 // table operations — NOT the pre-merge proposal numbering.
-def prefix_fc(r Reader, dc Int) Reader {
+def prefix_fc(r Reader, dc Int64) Reader {
   const s = u32(r)
   if s[0].failed {
     return s[0]
@@ -689,36 +689,36 @@ def blocktype_then(r Reader) Reader {
 // Signed 33-bit LEB128 (block type indices): five bytes, the final
 // byte's top three bits all clear or all set.
 def s33(r Reader) (Reader, Int64) {
-  return s33_acc(r, 0, 0L)
+  return s33_acc(r, 0, 0)
 }
 
-def s33_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
+def s33_acc(r Reader, count Int64, acc Int64) (Reader, Int64) {
   if r.failed {
-    return (r, 0L)
+    return (r, 0)
   }
   const p = u8(r)
   const rr = p[0]
   const b = p[1]
   if rr.failed {
-    return (rr, 0L)
+    return (rr, 0)
   }
   const bits = b & 127
-  const acc2 = acc | (Int64.from_int(bits) * (1L << Int64.from_int(7 * count)))
+  const acc2 = acc | bits * (1 << (7 * count))
   if b < 128 {
     if count == 4 {
       const top = bits >> 4
       if top != 0 && top != 7 {
-        return (bail(rr, rr.pos, "integer too large"), 0L)
+        return (bail(rr, rr.pos, "integer too large"), 0)
       }
       if bits >= 64 {
-        return (rr, acc2 - (1L << Int64.from_int(7 * (count + 1))))
+        return (rr, acc2 - (1 << (7 * (count + 1))))
       }
       return (rr, acc2)
     }
     return (rr, acc2)
   }
   if count == 4 {
-    return (bail(rr, rr.pos, "integer representation too long"), 0L)
+    return (bail(rr, rr.pos, "integer representation too long"), 0)
   }
   return s33_acc(rr, count + 1, acc2)
 }
@@ -738,7 +738,7 @@ def s33_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
 // type annotations do not parse (step 20 pressure): a def in leb.emo
 // could not spell this module's Reader in its signature.
 
-def print_dbg(label String, data Bytes) Int {
+def print_dbg(label String, data Bytes) Int64 {
   const r0 = over(data)
   const lc = u8(r0)
   const e = expr(lc[0], -1)
@@ -748,7 +748,7 @@ def print_dbg(label String, data Bytes) Int {
 }
 
 // Print one decoded vector as `<label> = <value>` (fixture output).
-def print_u32(label String, data Bytes) Int {
+def print_u32(label String, data Bytes) Int64 {
   const p = u32(over(data))
   if p[0].failed {
     println(label + " = " + p[0].fail_msg)
@@ -762,13 +762,13 @@ def print_u64(label String, data Bytes) Int64 {
   const p = u64(over(data))
   if p[0].failed {
     println(label + " = " + p[0].fail_msg)
-    return 0L
+    return 0
   }
   println(label + " = " + p[1].to_string())
   return p[1]
 }
 
-def print_s32(label String, data Bytes) Int {
+def print_s32(label String, data Bytes) Int64 {
   const p = s32(over(data))
   if p[0].failed {
     println(label + " = " + p[0].fail_msg)
@@ -782,17 +782,17 @@ def print_s64(label String, data Bytes) Int64 {
   const p = s64(over(data))
   if p[0].failed {
     println(label + " = " + p[0].fail_msg)
-    return 0L
+    return 0
   }
   println(label + " = " + p[1].to_string())
   return p[1]
 }
 
-def u32(r Reader) (Reader, Int) {
+def u32(r Reader) (Reader, Int64) {
   return u32_acc(r, 0, 0)
 }
 
-def u32_acc(r Reader, count Int, acc Int) (Reader, Int) {
+def u32_acc(r Reader, count Int64, acc Int64) (Reader, Int64) {
   if r.failed {
     return (r, 0)
   }
@@ -817,43 +817,43 @@ def u32_acc(r Reader, count Int, acc Int) (Reader, Int) {
 }
 
 def u64(r Reader) (Reader, Int64) {
-  return u64_acc(r, 0, 0L)
+  return u64_acc(r, 0, 0)
 }
 
-def u64_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
+def u64_acc(r Reader, count Int64, acc Int64) (Reader, Int64) {
   if r.failed {
-    return (r, 0L)
+    return (r, 0)
   }
   const p = u8(r)
   const rr = p[0]
   const b = p[1]
   if rr.failed {
-    return (rr, 0L)
+    return (rr, 0)
   }
   const bits = b & 127
-  // from_int types Unknown through the checker (step 20 pressure), so
-  // the shift's width is pinned by the Int64 literal on the left of the
-  // pair; multiply-by-power-of-two is the same bit pattern as the shift.
-  const acc2 = acc | (Int64.from_int(bits) * (1L << Int64.from_int(7 * count)))
+  // Integer literals are Int64, so the shift and the multiply are
+  // Int64 all the way; multiply-by-power-of-two matches the shift bit
+  // for bit.
+  const acc2 = acc | bits * (1 << (7 * count))
   if b < 128 {
     if count == 9 && bits > 1 {
-      return (bail(rr, rr.pos, "integer too large"), 0L)
+      return (bail(rr, rr.pos, "integer too large"), 0)
     }
     return (rr, acc2)
   }
   if count == 9 {
-    return (bail(rr, rr.pos, "integer representation too long"), 0L)
+    return (bail(rr, rr.pos, "integer representation too long"), 0)
   }
   return u64_acc(rr, count + 1, acc2)
 }
 
 // Signed 32-bit LEB128; the result is the value's unsigned 32-bit
-// pattern held in Int.
-def s32(r Reader) (Reader, Int) {
+// pattern held in Int64.
+def s32(r Reader) (Reader, Int64) {
   return s32_acc(r, 0, 0)
 }
 
-def s32_acc(r Reader, count Int, acc Int) (Reader, Int) {
+def s32_acc(r Reader, count Int64, acc Int64) (Reader, Int64) {
   if r.failed {
     return (r, 0)
   }
@@ -893,37 +893,37 @@ def s32_acc(r Reader, count Int, acc Int) (Reader, Int) {
 // the cap) already sits in the accumulator with the right pattern —
 // wrap-around does the extension — so no arithmetic runs for it.
 def s64(r Reader) (Reader, Int64) {
-  return s64_acc(r, 0, 0L)
+  return s64_acc(r, 0, 0)
 }
 
-def s64_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
+def s64_acc(r Reader, count Int64, acc Int64) (Reader, Int64) {
   if r.failed {
-    return (r, 0L)
+    return (r, 0)
   }
   const p = u8(r)
   const rr = p[0]
   const b = p[1]
   if rr.failed {
-    return (rr, 0L)
+    return (rr, 0)
   }
   const bits = b & 127
   // Same width-pinning as u64_acc (see the note there).
-  const acc2 = acc | (Int64.from_int(bits) * (1L << Int64.from_int(7 * count)))
+  const acc2 = acc | bits * (1 << (7 * count))
   if b < 128 {
     if count == 9 {
       // the top six bits must be a clean sign extension of bit 63
       if bits == 0 || bits == 127 {
         return (rr, acc2)
       }
-      return (bail(rr, rr.pos, "integer too large"), 0L)
+      return (bail(rr, rr.pos, "integer too large"), 0)
     }
     if bits >= 64 {
-      return (rr, acc2 - (1L << Int64.from_int(7 * (count + 1))))
+      return (rr, acc2 - (1 << (7 * (count + 1))))
     }
     return (rr, acc2)
   }
   if count == 9 {
-    return (bail(rr, rr.pos, "integer representation too long"), 0L)
+    return (bail(rr, rr.pos, "integer representation too long"), 0)
   }
   return s64_acc(rr, count + 1, acc2)
 }
@@ -934,7 +934,7 @@ def s64_acc(r Reader, count Int, acc Int64) (Reader, Int64) {
 // module, and the reverse edge would cycle) ----
 
 // Decode one valtype byte: (ok, code, new_pos).
-def valtype_at(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+def valtype_at(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64) {
   if pos >= limit {
     return (false, 0, pos)
   }
@@ -949,7 +949,7 @@ def valtype_at(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
 // (count, valtype) runs — the vector's own length ends it, and a zero
 // run count is a legal no-op entry that still consumes its valtype.
 // (ok, pos_after_locals, total)
-def locals_walk(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+def locals_walk(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64) {
   const cn = u32(new(data, pos, limit))
   if cn[0].failed {
     return (false, pos, 0)
@@ -957,7 +957,7 @@ def locals_walk(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
   return locals_pairs(cn[0], limit, cn[1], 0)
 }
 
-def locals_pairs(r Reader, limit Int, n Int, total Int) (Bool, Int, Int) {
+def locals_pairs(r Reader, limit Int64, n Int64, total Int64) (Bool, Int64, Int64) {
   if n == 0 {
     return (true, r.pos, total)
   }
@@ -979,7 +979,7 @@ def locals_pairs(r Reader, limit Int, n Int, total Int) (Bool, Int, Int) {
 // ---- the type-stack validator (T20.15-T20.17) ----
 //
 // The spec's validation algorithm, in its functionally-threaded shape:
-// the value stack is an Array[Int] of codes with Unknown = 0 as the
+// the value stack is an Array[Int64] of codes with Unknown = 0 as the
 // polymorphic placeholder — pops TRUNCATE the array to the new height,
 // because an append-push into a popped region would leave stale slots
 // that stack[height - 1] then misreads (found the hard way via
@@ -1004,7 +1004,7 @@ def locals_pairs(r Reader, limit Int, n Int, total Int) (Bool, Int, Int) {
 //                  type indices)
 
 class Frame {
-  def init(kind Int, start_types Array[Int], end_types Array[Int], height Int, unreachable Bool) {
+  def init(kind Int64, start_types Array[Int64], end_types Array[Int64], height Int64, unreachable Bool) {
     self.kind = kind
     self.start_types = start_types
     self.end_types = end_types
@@ -1017,7 +1017,7 @@ class Frame {
 // unreachable and the stack is at its floor. The array comes back
 // truncated to the new height.
 // (ok, code, stack, height)
-def vpop(stack Array[Int], height Int, f Frame) (Bool, Int, Array[Int], Int) {
+def vpop(stack Array[Int64], height Int64, f Frame) (Bool, Int64, Array[Int64], Int64) {
   if height == f.height {
     if f.unreachable {
       return (true, 0, stack, height)
@@ -1031,11 +1031,11 @@ def vpop(stack Array[Int], height Int, f Frame) (Bool, Int, Array[Int], Int) {
 // (`f(n-1).append(x)`) sends the interpreter into a spin past ~25
 // nesting levels (step 20 pressure, reproduced in isolation) — the
 // append rides in argument position instead.
-def trunc_to(items Array[Int], n Int) Array[Int] {
+def trunc_to(items Array[Int64], n Int64) Array[Int64] {
   return trunc_to_rest(items, n, 0, [])
 }
 
-def trunc_to_rest(items Array[Int], n Int, i Int, acc Array[Int]) Array[Int] {
+def trunc_to_rest(items Array[Int64], n Int64, i Int64, acc Array[Int64]) Array[Int64] {
   if i >= n {
     return acc
   }
@@ -1043,7 +1043,7 @@ def trunc_to_rest(items Array[Int], n Int, i Int, acc Array[Int]) Array[Int] {
 }
 
 // Pop a value and require it to match `want` (Unknown matches all).
-def vpop_expect(stack Array[Int], height Int, f Frame, want Int) (Bool, Int, Array[Int], Int) {
+def vpop_expect(stack Array[Int64], height Int64, f Frame, want Int64) (Bool, Int64, Array[Int64], Int64) {
   const p = vpop(stack, height, f)
   if !p[0] {
     return p
@@ -1055,7 +1055,7 @@ def vpop_expect(stack Array[Int], height Int, f Frame, want Int) (Bool, Int, Arr
 }
 
 // Push a value.
-def vpush(stack Array[Int], height Int, code Int) (Array[Int], Int) {
+def vpush(stack Array[Int64], height Int64, code Int64) (Array[Int64], Int64) {
   return (stack.append(code), height + 1)
 }
 
@@ -1063,7 +1063,7 @@ def vpush(stack Array[Int], height Int, code Int) (Array[Int], Int) {
 // [pos, limit) and begin with the locals vector; param_codes and
 // result_codes are the function type's vectors; ctx is the module
 // context (see the validator block comment).
-def vbody(data Bytes, pos Int, limit Int, param_codes Array[Int], result_codes Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) (Bool, String, Int) {
+def vbody(data Bytes, pos Int64, limit Int64, param_codes Array[Int64], result_codes Array[Int64], ctx (Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64])) (Bool, String, Int64) {
   const lr = locals_types(data, pos, limit, param_codes)
   if lr[0].failed {
     return (false, "malformed locals", lr[0].fail_offset)
@@ -1082,7 +1082,7 @@ def vbody(data Bytes, pos Int, limit Int, param_codes Array[Int], result_codes A
 // declaring more than a million locals is rejected here — the
 // spec's own 2^32 malformed cap is the decoder's business; typing
 // does not need to materialize that much.
-def locals_types(data Bytes, pos Int, limit Int, params Array[Int]) (Reader, Array[Int]) {
+def locals_types(data Bytes, pos Int64, limit Int64, params Array[Int64]) (Reader, Array[Int64]) {
   const cn = u32(new(data, pos, limit))
   if cn[0].failed {
     return (cn[0], params)
@@ -1090,7 +1090,7 @@ def locals_types(data Bytes, pos Int, limit Int, params Array[Int]) (Reader, Arr
   return locals_runs(cn[0], limit, cn[1], params, 0)
 }
 
-def locals_runs(r Reader, limit Int, n Int, acc Array[Int], runs Int) (Reader, Array[Int]) {
+def locals_runs(r Reader, limit Int64, n Int64, acc Array[Int64], runs Int64) (Reader, Array[Int64]) {
   if acc.length() > 1000000 {
     return (bail(r, r.pos, "too many locals"), acc)
   }
@@ -1108,7 +1108,7 @@ def locals_runs(r Reader, limit Int, n Int, acc Array[Int], runs Int) (Reader, A
   return locals_runs(stepped(c[0], v[2]), limit, n - 1, expand(acc, v[1], c[1]), runs + 1)
 }
 
-def expand(acc Array[Int], code Int, n Int) Array[Int] {
+def expand(acc Array[Int64], code Int64, n Int64) Array[Int64] {
   if n == 0 {
     return acc
   }
@@ -1118,7 +1118,7 @@ def expand(acc Array[Int], code Int, n Int) Array[Int] {
 // The instruction walk: decode the next opcode (through the same
 // dispatch the decoder uses), type it against the stack, recurse.
 // The frames array's last element is the current frame.
-def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+def vinstrs(r Reader, stack Array[Int64], height Int64, frames Array[Frame], ftop Int64, result_codes Array[Int64], lcs Array[Int64], ctx (Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64])) Reader {
   if r.failed {
     return r
   }
@@ -1640,7 +1640,7 @@ def vinstrs(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop In
 // The 0xfc family's validation: index spaces and stack shapes, on
 // the final opcode map (0x00-0x07 trunc_sat, 0x08-0x0b bulk memory,
 // 0x0c-0x11 table operations).
-def vprefix_fc(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop Int, f Frame, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+def vprefix_fc(r Reader, stack Array[Int64], height Int64, frames Array[Frame], ftop Int64, f Frame, result_codes Array[Int64], lcs Array[Int64], ctx (Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64])) Reader {
   const s = u32(r)
   if s[0].failed {
     return s[0]
@@ -1843,7 +1843,7 @@ def vprefix_fc(r Reader, stack Array[Int], height Int, frames Array[Frame], ftop
 }
 
 // The trunc_sat family's typing: sub 0-3 produce i32, 4-7 i64.
-def num_opcode_trunc_sat(sub Int) (Array[Int], Array[Int]) {
+def num_opcode_trunc_sat(sub Int64) (Array[Int64], Array[Int64]) {
   if sub <= 3 {
     if sub <= 1 {
       return ([125], [127])
@@ -1857,7 +1857,7 @@ def num_opcode_trunc_sat(sub Int) (Array[Int], Array[Int]) {
 }
 
 // (i32 i32 i32) -> (): the bulk operation stack shape.
-def vpop3_push0(r Reader, stack Array[Int], height Int, f Frame, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+def vpop3_push0(r Reader, stack Array[Int64], height Int64, f Frame, frames Array[Frame], ftop Int64, result_codes Array[Int64], lcs Array[Int64], ctx (Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64])) Reader {
   const p1 = vpop_expect(stack, height, f, 127)
   if !p1[0] {
     return bail(r, r.pos, "type mismatch")
@@ -1875,7 +1875,7 @@ def vpop3_push0(r Reader, stack Array[Int], height Int, f Frame, frames Array[Fr
 
 // The natural-alignment cap per memory opcode: the log2 of the access
 // width (0: one byte, 1: two, 2: four, 3: eight).
-def mem_max_align(op Int) Int {
+def mem_max_align(op Int64) Int64 {
   if op == 40 || op == 54 {
     return 2
   }
@@ -1907,11 +1907,11 @@ def mem_max_align(op Int) Int {
 }
 
 // Pop sigs[lo..hi) in reverse: (ok, code, stack, height)
-def pops_flat(r Reader, stack Array[Int], height Int, f Frame, sigs Array[Int], lo Int, hi Int) (Bool, Int, Array[Int], Int) {
+def pops_flat(r Reader, stack Array[Int64], height Int64, f Frame, sigs Array[Int64], lo Int64, hi Int64) (Bool, Int64, Array[Int64], Int64) {
   return pops_flat_rev(stack, height, f, sigs, lo, hi, hi)
 }
 
-def pops_flat_rev(stack Array[Int], height Int, f Frame, sigs Array[Int], lo Int, hi Int, k Int) (Bool, Int, Array[Int], Int) {
+def pops_flat_rev(stack Array[Int64], height Int64, f Frame, sigs Array[Int64], lo Int64, hi Int64, k Int64) (Bool, Int64, Array[Int64], Int64) {
   if k <= lo {
     return (true, 0, stack, height)
   }
@@ -1923,11 +1923,11 @@ def pops_flat_rev(stack Array[Int], height Int, f Frame, sigs Array[Int], lo Int
 }
 
 // Push sigs[lo..hi) — unconditional, like push_all.
-def push_flat(stack Array[Int], height Int, unreachable Bool, sigs Array[Int], lo Int, hi Int) (Array[Int], Int) {
+def push_flat(stack Array[Int64], height Int64, unreachable Bool, sigs Array[Int64], lo Int64, hi Int64) (Array[Int64], Int64) {
   return push_flat_rest(stack, height, sigs, lo, hi)
 }
 
-def push_flat_rest(stack Array[Int], height Int, sigs Array[Int], i Int, hi Int) (Array[Int], Int) {
+def push_flat_rest(stack Array[Int64], height Int64, sigs Array[Int64], i Int64, hi Int64) (Array[Int64], Int64) {
   if i >= hi {
     return (stack, height)
   }
@@ -1937,11 +1937,11 @@ def push_flat_rest(stack Array[Int], height Int, sigs Array[Int], i Int, hi Int)
 // The param count of the signature at sigs[lo..hi): the model writes
 // a -1 split marker between params and results (type codes are all
 // positive, so -1 is unambiguous).
-def sig_param_len(sigs Array[Int], lo Int, hi Int) Int {
+def sig_param_len(sigs Array[Int64], lo Int64, hi Int64) Int64 {
   return split_scan(sigs, lo, hi, lo)
 }
 
-def split_scan(sigs Array[Int], lo Int, hi Int, i Int) Int {
+def split_scan(sigs Array[Int64], lo Int64, hi Int64, i Int64) Int64 {
   if i >= hi {
     return hi - lo
   }
@@ -1952,7 +1952,7 @@ def split_scan(sigs Array[Int], lo Int, hi Int, i Int) Int {
 }
 
 // The type of local index `x`, or -1 when out of range.
-def local_code(codes Array[Int], x Int) Int {
+def local_code(codes Array[Int64], x Int64) Int64 {
   if x >= codes.length() {
     return -1
   }
@@ -1961,7 +1961,7 @@ def local_code(codes Array[Int], x Int) Int {
 
 // Loads push their result after popping the address; stores pop the
 // value then the address. (ok, code, stack, height)
-def mem_pops(r Reader, stack Array[Int], height Int, f Frame, op Int) (Bool, Int, Array[Int], Int) {
+def mem_pops(r Reader, stack Array[Int64], height Int64, f Frame, op Int64) (Bool, Int64, Array[Int64], Int64) {
   if op >= 54 {
     // store: value, then address
     const v = mem_value(op)
@@ -1976,7 +1976,7 @@ def mem_pops(r Reader, stack Array[Int], height Int, f Frame, op Int) (Bool, Int
 }
 
 // The value code a store consumes, or a load produces.
-def mem_value(op Int) Int {
+def mem_value(op Int64) Int64 {
   if op == 54 { return 127 }
   if op == 55 { return 126 }
   if op == 56 { return 125 }
@@ -1988,7 +1988,7 @@ def mem_value(op Int) Int {
   return 126
 }
 
-def mem_result(op Int) Array[Int] {
+def mem_result(op Int64) Array[Int64] {
   if op == 40 { return [127] }
   if op == 41 { return [126] }
   if op == 42 { return [125] }
@@ -1998,7 +1998,7 @@ def mem_result(op Int) Array[Int] {
   return []
 }
 
-def num_opcode(op Int) (Array[Int], Array[Int]) {
+def num_opcode(op Int64) (Array[Int64], Array[Int64]) {
   const i32 = 127
   const i64 = 126
   const f32 = 125
@@ -2049,11 +2049,11 @@ def num_opcode(op Int) (Array[Int], Array[Int]) {
 // Pop each of `wants` in reverse order, collecting the popped codes
 // (br_table pushes the popped values back).
 // (ok, popped, stack, height)
-def pops_collect(r Reader, stack Array[Int], height Int, f Frame, wants Array[Int], wn Int) (Bool, Array[Int], Array[Int], Int) {
+def pops_collect(r Reader, stack Array[Int64], height Int64, f Frame, wants Array[Int64], wn Int64) (Bool, Array[Int64], Array[Int64], Int64) {
   return pops_collect_rev(stack, height, f, wants, wn, [])
 }
 
-def pops_collect_rev(stack Array[Int], height Int, f Frame, wants Array[Int], i Int, got Array[Int]) (Bool, Array[Int], Array[Int], Int) {
+def pops_collect_rev(stack Array[Int64], height Int64, f Frame, wants Array[Int64], i Int64, got Array[Int64]) (Bool, Array[Int64], Array[Int64], Int64) {
   if i == 0 {
     return (true, got, stack, height)
   }
@@ -2066,11 +2066,11 @@ def pops_collect_rev(stack Array[Int], height Int, f Frame, wants Array[Int], i 
 
 // Pop each of `wants` in reverse order.
 // (ok, last_code, stack, height)
-def pops_of(r Reader, stack Array[Int], height Int, f Frame, wants Array[Int], wn Int) (Bool, Int, Array[Int], Int) {
+def pops_of(r Reader, stack Array[Int64], height Int64, f Frame, wants Array[Int64], wn Int64) (Bool, Int64, Array[Int64], Int64) {
   return pops_rev(stack, height, f, wants, wn)
 }
 
-def pops_rev(stack Array[Int], height Int, f Frame, wants Array[Int], i Int) (Bool, Int, Array[Int], Int) {
+def pops_rev(stack Array[Int64], height Int64, f Frame, wants Array[Int64], i Int64) (Bool, Int64, Array[Int64], Int64) {
   if i == 0 {
     return (true, 0, stack, height)
   }
@@ -2085,11 +2085,11 @@ def pops_rev(stack Array[Int], height Int, f Frame, wants Array[Int], i Int) (Bo
 // frames — the spec's algorithm keeps pushed values concrete; only
 // pops at an unreachable frame's floor yield Unknown (the corpus's
 // select-unreached vs type-num-vs-num cases pin both sides).
-def push_all(stack Array[Int], height Int, unreachable Bool, codes Array[Int]) (Array[Int], Int) {
+def push_all(stack Array[Int64], height Int64, unreachable Bool, codes Array[Int64]) (Array[Int64], Int64) {
   return push_rest(stack, height, codes, 0)
 }
 
-def push_rest(stack Array[Int], height Int, codes Array[Int], i Int) (Array[Int], Int) {
+def push_rest(stack Array[Int64], height Int64, codes Array[Int64], i Int64) (Array[Int64], Int64) {
   if i == codes.length() {
     return (stack, height)
   }
@@ -2097,7 +2097,7 @@ def push_rest(stack Array[Int], height Int, codes Array[Int], i Int) (Array[Int]
 }
 
 // block / loop / if: block type, then a nested frame.
-def vblock(r Reader, kind Int, stack Array[Int], height Int, frames Array[Frame], ftop Int, result_codes Array[Int], lcs Array[Int], ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) Reader {
+def vblock(r Reader, kind Int64, stack Array[Int64], height Int64, frames Array[Frame], ftop Int64, result_codes Array[Int64], lcs Array[Int64], ctx (Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64])) Reader {
   const bt = block_type(r, ctx)
   if bt[0].failed {
     return bt[0]
@@ -2131,7 +2131,7 @@ def vblock(r Reader, kind Int, stack Array[Int], height Int, frames Array[Frame]
 // valtype bytes are their own shapes; an s33 index resolves through
 // the module's types (tsigs/tsig_off in the context). Errors travel
 // on the reader's failed flag, like every decode step.
-def block_type(r Reader, ctx (Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int], Array[Int])) (Reader, Array[Int], Array[Int]) {
+def block_type(r Reader, ctx (Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64])) (Reader, Array[Int64], Array[Int64]) {
   const b = peek(r)
   if b == 64 {
     return (skip(r, 1), [], [])
@@ -2144,7 +2144,7 @@ def block_type(r Reader, ctx (Array[Int], Array[Int], Array[Int], Array[Int], Ar
     return (s[0], [], [])
   }
   const tso = ctx[7]
-  const t = s[1].to_int()
+  const t = s[1]
   if t < 0 || t + 1 >= tso.length() {
     return (bail(s[0], s[0].pos, "unknown type"), [], [])
   }
@@ -2155,29 +2155,29 @@ def block_type(r Reader, ctx (Array[Int], Array[Int], Array[Int], Array[Int], Ar
   return (s[0], slice_codes(tsg, lo, pmid), slice_codes(tsg, pmid + 1, hi))
 }
 
-def slice_codes(sigs Array[Int], lo Int, hi Int) Array[Int] {
+def slice_codes(sigs Array[Int64], lo Int64, hi Int64) Array[Int64] {
   return slice_codes_rest(sigs, lo, hi, lo, [])
 }
 
-def slice_codes_rest(sigs Array[Int], lo Int, hi Int, i Int, acc Array[Int]) Array[Int] {
+def slice_codes_rest(sigs Array[Int64], lo Int64, hi Int64, i Int64, acc Array[Int64]) Array[Int64] {
   if i >= hi {
     return acc
   }
   return slice_codes_rest(sigs, lo, hi, i + 1, acc.append(sigs[i]))
 }
 
-def rev_ints(items Array[Int]) Array[Int] {
+def rev_ints(items Array[Int64]) Array[Int64] {
   return rev_rest(items, [], 0)
 }
 
-def rev_rest(items Array[Int], acc Array[Int], i Int) Array[Int] {
+def rev_rest(items Array[Int64], acc Array[Int64], i Int64) Array[Int64] {
   if i == items.length() {
     return acc
   }
   return rev_rest(items, acc.append(items[items.length() - 1 - i]), i + 1)
 }
 
-def mem_int(items Array[Int], v Int, i Int) Bool {
+def mem_int(items Array[Int64], v Int64, i Int64) Bool {
   if i == items.length() {
     return false
   }
@@ -2187,7 +2187,7 @@ def mem_int(items Array[Int], v Int, i Int) Bool {
   return mem_int(items, v, i + 1)
 }
 
-def codes_eq(a Array[Int], b Array[Int], i Int) Bool {
+def codes_eq(a Array[Int64], b Array[Int64], i Int64) Bool {
   if i == a.length() {
     return true
   }
@@ -2199,7 +2199,7 @@ def codes_eq(a Array[Int], b Array[Int], i Int) Bool {
 
 // The label types a branch to this frame expects: a loop's label is
 // its parameter types; every other frame's is its result types.
-def label_types(f Frame) Array[Int] {
+def label_types(f Frame) Array[Int64] {
   if f.kind == 3 {
     return f.start_types
   }
@@ -2207,7 +2207,7 @@ def label_types(f Frame) Array[Int] {
 }
 
 // The label depth check: (reader, depth) — depth counts from the top.
-def label_depth(r Reader, ftop Int) (Reader, Int) {
+def label_depth(r Reader, ftop Int64) (Reader, Int64) {
   const d = u32(r)
   if d[0].failed {
     return (d[0], 0)
@@ -2223,11 +2223,11 @@ def label_depth(r Reader, ftop Int) (Reader, Int) {
 // (reader-after-labels, stack, height) — each label pops its own
 // types against the stack and pushes them back; arity must equal the
 // default's.
-def br_table_labels(r Reader, n Int, frames Array[Frame], ftop Int, want Array[Int], stack Array[Int], height Int, f Frame) (Reader, Array[Int], Int) {
+def br_table_labels(r Reader, n Int64, frames Array[Frame], ftop Int64, want Array[Int64], stack Array[Int64], height Int64, f Frame) (Reader, Array[Int64], Int64) {
   return bt_rest(r, n, frames, ftop, want, stack, height, f, 0)
 }
 
-def bt_rest(r Reader, n Int, frames Array[Frame], ftop Int, want Array[Int], stack Array[Int], height Int, f Frame, seen Int) (Reader, Array[Int], Int) {
+def bt_rest(r Reader, n Int64, frames Array[Frame], ftop Int64, want Array[Int64], stack Array[Int64], height Int64, f Frame, seen Int64) (Reader, Array[Int64], Int64) {
   if n == 0 {
     return (r, stack, height)
   }
@@ -2257,11 +2257,11 @@ def bt_rest(r Reader, n Int, frames Array[Frame], ftop Int, want Array[Int], sta
 // (the copy is the price of persistent arrays), pops just move the
 // top — a rebuild-per-pop made deep nesting quadratic-to-worse in the
 // interpreter (found via block.wast's kitchen-sink module).
-def trunc_frames(items Array[Frame], n Int) Array[Frame] {
+def trunc_frames(items Array[Frame], n Int64) Array[Frame] {
   return trunc_frames_rest(items, n, 0, [])
 }
 
-def trunc_frames_rest(items Array[Frame], n Int, i Int, acc Array[Frame]) Array[Frame] {
+def trunc_frames_rest(items Array[Frame], n Int64, i Int64, acc Array[Frame]) Array[Frame] {
   if i >= n {
     return acc
   }

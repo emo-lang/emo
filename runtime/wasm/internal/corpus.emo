@@ -7,7 +7,7 @@
 // in the summary, never as a silent skip.
 
 // The value of one hex digit, or -1 when the byte is not a hex character.
-def nibble(c Int) Int {
+def nibble(c Int64) Int64 {
   if c >= 48 && c <= 57 { return c - 48 }   // 0-9
   if c >= 97 && c <= 102 { return c - 87 }  // a-f
   if c >= 65 && c <= 70 { return c - 55 }   // A-F
@@ -21,7 +21,7 @@ def hex_ok(hex String) Bool {
   return hex_ok_from(hex.to_bytes(), 0, hex.length())
 }
 
-def hex_ok_from(src Bytes, i Int, n Int) Bool {
+def hex_ok_from(src Bytes, i Int64, n Int64) Bool {
   if i == n { return true }
   if nibble(src.get(i)) < 0 { return false }
   return hex_ok_from(src, i + 1, n)
@@ -37,7 +37,7 @@ def decode_hex(hex String) Bytes {
   return out
 }
 
-def fill(out Bytes, src Bytes, i Int, n Int) Int {
+def fill(out Bytes, src Bytes, i Int64, n Int64) Int64 {
   if i == n { return 0 }
   out.set(i, nibble(src.get(i * 2)) * 16 + nibble(src.get(i * 2 + 1)))
   return fill(out, src, i + 1, n)

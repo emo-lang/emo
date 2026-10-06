@@ -15,9 +15,9 @@ unannotated float literals are `Float64` (the `Int64` part supersedes
 an earlier same-day decision that kept the `Int` spelling without an
 `Int64` name).
 
-The implementation still spells the types `Int` and `Float` (checker,
-stdlib, examples); the mechanical rename to `Int64`/`Float64` rides
-the same step as the native fix below.
+The implementation now spells the types `Int64` and `Float64`
+(checker, stdlib, examples, runtime); the mechanical rename landed on
+its own, ahead of the native fix below.
 
 ## Why the types are named by width
 
@@ -103,7 +103,7 @@ two's complement, wrapping at 2³². It does not exist to fix the
 default integer — the decision above does that. Its motivation:
 
 - **FFI.** C `int32_t` parameters need a landing type (`foreign def`
-  currently admits `Float`/`String`/`Bool` only).
+  currently admits `Float64`/`String`/`Bool` only).
 - **Bare metal.** MMIO and device registers are 32-bit on RV32;
   `peek`/`poke` need exact widths.
 - **RV32 performance.** The register-width escape hatch where

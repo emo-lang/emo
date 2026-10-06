@@ -201,7 +201,7 @@ let manifest_tests =
   deps {}
 }
 
-def loop() Int { return loop() }
+def loop() Int64 { return loop() }
 loop()|}
         with
         | Error d ->
@@ -508,7 +508,7 @@ let archive_files =
   [
     ("package.emo", "package {\n  name = \"acme/hello\"\n}\n");
     ("hello.emo", "def greet() String {\n  return \"hi\"\n}\n");
-    ("internal/util.emo", "def twice(n Int) Int {\n  return n * 2\n}\n");
+    ("internal/util.emo", "def twice(n Int64) Int64 {\n  return n * 2\n}\n");
     ("README.md", "# hello\n");
   ]
 

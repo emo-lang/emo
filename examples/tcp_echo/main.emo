@@ -15,12 +15,12 @@ require "net"
 
 // The echo server: accept one connection, echo every line with a
 // prefix, and close politely when the client says goodbye.
-def echo_server(listener TcpListener, boss Pid) Int {
+def echo_server(listener TcpListener, boss Pid) Int64 {
   const conn = listener.accept()
   return echo_loop(conn, boss)
 }
 
-def echo_loop(conn TcpConn, boss Pid) Int {
+def echo_loop(conn TcpConn, boss Pid) Int64 {
   const line = conn.read_line()
   if line == "bye" {
     conn.write("goodbye\n")
@@ -33,7 +33,7 @@ def echo_loop(conn TcpConn, boss Pid) Int {
 }
 
 // The client: one line over the wire, one echo back each.
-def chat(conn TcpConn, lines Array[String], i Int) Int {
+def chat(conn TcpConn, lines Array[String], i Int64) Int64 {
   if i == lines.length() {
     conn.write("bye\n")
     println(conn.read_line())

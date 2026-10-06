@@ -6,7 +6,6 @@ let tc name f = Alcotest.test_case name `Quick f
 let pp_kind fmt (k : Token.kind) =
   let text =
     match k with
-    | Token.Int n -> Printf.sprintf "Int %d" n
     | Token.Int64 n -> Printf.sprintf "Int64 %Ld" n
     | Token.Byte n -> Printf.sprintf "Byte %d" n
     | Token.Float f -> Printf.sprintf "Float %g" f
@@ -276,16 +275,26 @@ let literal_tests =
   [
     tc "integers lex with their values" (fun () ->
         Alcotest.(check (list kind))
-          "kinds" [ Int 0; Int 42; Eof ]
+          "kinds" [ Int64 0L; Int64 42L; Eof ]
           (kinds (lex_all "0 42")));
-    tc "the L and B suffixes lex as Int64 and Byte" (fun () ->
+    tc "bare digits lex as Int64 and B suffixes as Byte" (fun () ->
         Alcotest.(check (list kind))
           "kinds"
           [ Int64 1L; Byte 255; Int64 9223372036854775807L; Byte 0; Eof ]
-          (kinds (lex_all "1L 255B 9223372036854775807L 0B")));
-    tc "an Int64 literal beyond 64 bits is rejected" (fun () ->
-        let diagnostic = lex_err "9223372036854775808L" in
+          (kinds (lex_all "1 255B 9223372036854775807 0B")));
+    tc "the L suffix is a lexical error now that bare digits are Int64" (
+      fun () ->
+        let diagnostic = lex_err "1L" in
         Alcotest.(check string) "code" "E1006" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "Int64 literals need no suffix"
+          diagnostic.Diagnostic.message);
+    tc "an Int64 literal beyond 64 bits is rejected" (fun () ->
+        let diagnostic = lex_err "9223372036854775808" in
+        Alcotest.(check string) "code" "E1006" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "integer literal out of range for Int64"
+          diagnostic.Diagnostic.message;
         Alcotest.(check string)
           "span" "test.emo:1:1"
           (Span.to_string diagnostic.Diagnostic.span));
@@ -303,7 +312,7 @@ let literal_tests =
     tc "a trailing dot is member access on an integer" (fun () ->
         Alcotest.(check (list kind))
           "kinds"
-          [ Int 1; Op Dot; Lower_ident "to_string"; Op LParen; Op RParen; Eof ]
+          [ Int64 1L; Op Dot; Lower_ident "to_string"; Op LParen; Op RParen; Eof ]
           (kinds (lex_all "1.to_string()")));
     tc "an underscore directly after a number is a lexical error" (fun () ->
         let diagnostic = lex_err "1_a" in
@@ -529,7 +538,7 @@ let errors_tests =
     tc "a number followed by a name is two tokens for the parser" (fun () ->
         Alcotest.(check (list kind))
           "kinds"
-          [ Int 9; Lower_ident "x"; Eof ]
+          [ Int64 9L; Lower_ident "x"; Eof ]
           (kinds (lex_all "9x")));
     tc "adjacent parentheses are a lexical error" (fun () ->
         let diagnostic = lex_err "((x))" in

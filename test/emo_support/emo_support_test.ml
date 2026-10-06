@@ -24,14 +24,14 @@ let source =
   String.concat "\n"
     [
       "class User {";
-      "  def init(name String, age Int) {";
+      "  def init(name String, age Int64) {";
       "    self.name = name";
       "    self.age = age";
       "  }";
       "";
       "  // years pass";
       "";
-      "  def birthday() Int {";
+      "  def birthday() Int64 {";
       "    return age + 1";
       "  }";
       "";
@@ -58,7 +58,7 @@ let renderer_tests =
                "error[E2003]: assigning to `self.age` outside `init`";
                "  --> examples/user.emo:9:5";
                "  |";
-               "9 |   def birthday() Int {";
+               "9 |   def birthday() Int64 {";
                "  |     ^^^^^^^^^^^^^ fields freeze after `init`";
              ])
           (Render.render ~source d));
@@ -97,7 +97,7 @@ let renderer_tests =
                "error: something went wrong";
                "  --> examples/user.emo:9:5";
                "  |";
-               "9 |   def birthday() Int {";
+               "9 |   def birthday() Int64 {";
                "  |     ^^^^^^^^^^^^^";
              ])
           (Render.render ~source d));
@@ -110,7 +110,7 @@ let renderer_tests =
                "warning[E1001]: unused value";
                "  --> examples/user.emo:9:5";
                "  |";
-               "9 |   def birthday() Int {";
+               "9 |   def birthday() Int64 {";
                "  |     ^^^^^^^^^^^^^";
              ])
           (Render.render ~source d));

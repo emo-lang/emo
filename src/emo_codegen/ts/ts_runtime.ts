@@ -114,6 +114,16 @@ function isInt(x: any): boolean {
   return typeof x === "number" && Number.isInteger(x);
 }
 
+// The integer value is an Int64 (BigInt) everywhere; JS-native
+// collections and APIs take numbers — this is the boundary.
+function num(x: any): number {
+  return typeof x === "bigint" ? Number(x) : (x as number);
+}
+
+function isI64(x: any): boolean {
+  return typeof x === "bigint";
+}
+
 // OCaml's %g: six significant digits, exponent form below 1e-4 or at
 // 1e6 and above, exponent spelled with a sign and two digits.
 function g6(x: number): string {
@@ -207,11 +217,11 @@ function println(v: any): void {
 }
 
 function tag(v: any): string {
-  if (typeof v === "number") return Number.isInteger(v) ? "Int" : "Float";
+  if (typeof v === "number") return Number.isInteger(v) ? "Byte" : "Float64";
   if (typeof v === "bigint") return "Int64";
   if (typeof v === "string") return "String";
   if (typeof v === "boolean") return "Bool";
-  if (isFloat(v)) return "Float";
+  if (isFloat(v)) return "Float64";
   if (isChar(v)) return "Char";
   if (v instanceof ETuple) return "Tuple";
   if (v instanceof EArray) return "Array";
@@ -233,7 +243,12 @@ function unfloat(x: any): number {
 }
 
 function bothInt(a: any, b: any): boolean {
+  if (isI64(a) && isI64(b)) return true;
   return isInt(a) && isInt(b);
+}
+
+function wrap64(x: bigint): bigint {
+  return BigInt.asIntN(64, x);
 }
 
 const E: any = {
@@ -243,9 +258,10 @@ const E: any = {
   array: (items: any[]) => new EArray(items),
   box: (v: any) => new EBox(v),
   bytesNew: (n: any) => {
-    if (!isInt(n) || (n as number) < 0)
-      throw new Error("`Bytes.new` needs a non-negative Int length");
-    return new EBytes(n as number);
+    const len = num(n);
+    if (!Number.isInteger(len) || len < 0)
+      throw new Error("`Bytes.new` needs a non-negative Int64 length");
+    return new EBytes(len);
   },
   enum_: (type: string, member: string) => new EEnum(type, member),
 
@@ -258,22 +274,27 @@ const E: any = {
 
   add(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string") return a + b;
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) + (b as bigint));
     if (bothInt(a, b)) return (a as number) + (b as number);
     return new EFloat(unfloat(a) + unfloat(b));
   },
   sub(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) - (b as bigint));
     if (bothInt(a, b)) return (a as number) - (b as number);
     return new EFloat(unfloat(a) - unfloat(b));
   },
   mul(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) * (b as bigint));
     if (bothInt(a, b)) return (a as number) * (b as number);
     return new EFloat(unfloat(a) * unfloat(b));
   },
   div(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return E.i64Div(a as bigint, b as bigint);
     if (bothInt(a, b)) return Math.trunc((a as number) / (b as number));
     return new EFloat(unfloat(a) / unfloat(b));
   },
   mod(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return E.i64Mod(a as bigint, b as bigint);
     if (bothInt(a, b)) return (a as number) % (b as number);
     return new EFloat(unfloat(a) % unfloat(b));
   },
@@ -281,29 +302,35 @@ const E: any = {
   // results past 2^31 follow the platform's word — the width family
   // (Int64/Byte) carries the exact contract later.
   requireInt(v: any, op: string): number {
-    if (!isInt(v)) throw new EEmoException(`operator \`${op}\` expects an Int, got ${tag(v)}`);
+    if (!isInt(v)) throw new EEmoException(`operator \`${op}\` expects an Int64, got ${tag(v)}`);
     return v as number;
   },
   bitAnd(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) & (b as bigint));
     return this.requireInt(a, "&") & this.requireInt(b, "&");
   },
   bitOr(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) | (b as bigint));
     return this.requireInt(a, "|") | this.requireInt(b, "|");
   },
   bitXor(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return wrap64((a as bigint) ^ (b as bigint));
     return this.requireInt(a, "^") ^ this.requireInt(b, "^");
   },
   shl(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return E.i64Shl(a as bigint, b as bigint);
     const n = this.requireInt(b, "<<");
     if (n < 0) throw new EEmoException("shift count must be non-negative");
     return this.requireInt(a, "<<") << n;
   },
   shr(a: any, b: any) {
+    if (isI64(a) && isI64(b)) return E.i64Shr(a as bigint, b as bigint);
     const n = this.requireInt(b, ">>");
     if (n < 0) throw new EEmoException("shift count must be non-negative");
     return this.requireInt(a, ">>") >> n;
   },
   bitNot(a: any) {
+    if (isI64(a)) return wrap64(~(a as bigint));
     return ~this.requireInt(a, "~");
   },
   neg(a: any) {
@@ -373,9 +400,10 @@ const E: any = {
   index(coll: any, i: any): any {
     const items: any[] =
       coll instanceof EArray ? coll.items : (coll as ETuple).items;
-    const n = i as number;
+    // The index is an Int64 (BigInt); the collection is JS-native.
+    const n = typeof i === "bigint" ? Number(i) : (i as number);
     if (n < 0 || n >= items.length)
-      throw new Error("index " + n + " is out of bounds");
+      throw new Error("index " + i + " is out of bounds");
     return items[n];
   },
 
@@ -397,59 +425,44 @@ const E: any = {
       if (recv instanceof EBytes) {
         const d = recv.data;
         const idx = (mname2: string) => {
-          if (typeof args[0] !== "number" || !Number.isInteger(args[0]))
-            throw new Error("`" + mname2 + "` expects an Int index");
-          if (args[0] < 0 || args[0] >= d.length)
+          const i = num(args[0]);
+          if (!Number.isInteger(i))
+            throw new Error("`" + mname2 + "` expects an Int64 index");
+          if (i < 0 || i >= d.length)
             throw new Error(
-              "index " + args[0] + " is out of bounds for a length-" + d.length + " Bytes"
+              "index " + i + " is out of bounds for a length-" + d.length + " Bytes"
             );
-          return args[0] as number;
+          return i;
         };
-        if (name === "length") return d.length;
-        if (name === "get") return d[idx(name)];
+        if (name === "length") return BigInt(d.length);
+        if (name === "get") return BigInt(d[idx(name)]);
         if (name === "set") {
           const i = idx(name);
-          const v = args[1] as number;
+          const v = num(args[1]);
           if (!Number.isInteger(v) || v < 0 || v > 255)
             throw new Error("`set` expects a byte value in 0-255");
           d[i] = v;
-          return v;
+          return BigInt(v);
         }
         if (name === "get_u16_le" || name === "get_u32_le") {
           const w = name === "get_u16_le" ? 2 : 4;
-          const i = args[0] as number;
-          if (
-            typeof i !== "number" ||
-            i < 0 ||
-            i + w > d.length
-          )
-            throw new Error(
-              "index " + args[0] + " is out of bounds for a " + name + " read"
-            );
+          const i = idx(name);
           let acc = 0;
           for (let k = w - 1; k >= 0; k--) acc = (acc << 8) | d[i + k];
-          return acc;
+          return BigInt(acc);
         }
         if (name === "set_u16_le" || name === "set_u32_le") {
           const w = name === "set_u16_le" ? 2 : 4;
-          const i = args[0] as number;
-          let v = args[1] as number;
-          if (
-            typeof i !== "number" ||
-            i < 0 ||
-            i + w > d.length
-          )
-            throw new Error(
-              "index " + args[0] + " is out of bounds for a " + name + " write"
-            );
+          const i = idx(name);
+          let v = num(args[1]);
           if (!Number.isInteger(v))
-            throw new Error("`" + name + "` expects an Int value");
+            throw new Error("`" + name + "` expects an Int64 value");
           v = v >>> 0;
           for (let k = 0; k < w; k++) d[i + k] = (v >>> (8 * k)) & 0xff;
-          return w === 2 ? v & 0xffff : v >>> 0;
+          return BigInt(w === 2 ? v & 0xffff : v >>> 0);
         }
         if (name === "get_u64_le" || name === "set_u64_le") {
-          const i = args[0] as number;
+          const i = num(args[0]);
           if (typeof i !== "number" || i < 0 || i + 8 > d.length)
             throw new Error(
               "index " + args[0] + " is out of bounds for a " + name + " " +
@@ -482,20 +495,19 @@ const E: any = {
         return dv.getBigInt64(0, true);
       }
       if (name === "length" && recv instanceof EArray)
-        return recv.items.length;
+        return BigInt(recv.items.length);
       if (name === "append" && recv instanceof EArray)
         return new EArray(recv.items.concat([args[0]]));
       if (name === "is") return isType(recv, args[0] as string);
     }
     if (typeof recv === "number") {
       if (name === "to_string") return String(recv);
-      // A Byte receiver is a plain number, so `to_int` is the identity.
-      if (name === "to_int") return recv;
+      // A Byte receiver is a plain number; to_int64 widens to Int64.
+      if (name === "to_int64") return BigInt(recv);
       if (name === "is") return isType(recv, args[0] as string);
     }
     if (typeof recv === "bigint") {
       if (name === "to_string") return recv.toString();
-      if (name === "to_int") return Number(recv);
       if (name === "to_byte") return Number(BigInt.asUintN(8, recv));
       if (name === "is") return isType(recv, args[0] as string);
     }
@@ -504,18 +516,14 @@ const E: any = {
       if (name === "is") return isType(recv, args[0] as string);
     }
     if (typeof recv === "string") {
-      if (name === "length") return recv.length;
+      if (name === "length") return BigInt(recv.length);
       if (name === "to_string") return recv;
       if (name === "is") return isType(recv, args[0] as string);
       if (name === "substring") {
-        const start = args[0] as number;
-        const len = args[1] as number;
-        if (
-          start < 0 ||
-          len < 0 ||
-          start + len > recv.length
-        )
-          throw new Error("`substring` expects (start Int, length Int) in bounds");
+        const start = num(args[0]);
+        const len = num(args[1]);
+        if (start < 0 || len < 0 || start + len > recv.length)
+          throw new Error("`substring` expects (start Int64, length Int64) in bounds");
         return recv.substr(start, len);
       }
       if (name === "split") {
@@ -526,13 +534,16 @@ const E: any = {
       }
       if (name === "trim") return recv.trim();
       if (name === "lower") return recv.toLowerCase();
-      if (name === "index_of") return recv.indexOf(args[0] as string);
+      if (name === "index_of") return BigInt(recv.indexOf(args[0] as string));
       if (name === "starts_with") return recv.startsWith(args[0] as string);
-      if (name === "to_int") {
+      if (name === "to_int64") {
         const body = recv.startsWith("-") ? recv.slice(1) : recv;
         if (body === "" || !/^[0-9]+$/.test(body))
-          throw new Error("cannot parse `" + recv + "` as an Int");
-        return parseInt(recv, 10);
+          throw new Error("cannot parse `" + recv + "` as an Int64");
+        const v = BigInt(recv);
+        if (BigInt.asIntN(64, v) !== v)
+          throw new Error("cannot parse `" + recv + "` as an Int64");
+        return v;
       }
       if (name === "to_bytes") {
         const out = new EBytes(recv.length);
@@ -542,18 +553,18 @@ const E: any = {
       }
       // Static constructors: a type name is a bare string in value
       // position, told apart from a String by the method asked for.
-      if (name === "from_int") {
-        if (recv === "Int64") return BigInt(args[0] as number);
+      if (name === "from_int64") {
+        if (recv === "Int64") return args[0];
         if (recv === "Byte") {
-          const n = args[0] as number;
-          if (!Number.isInteger(n) || n < 0 || n > 255)
+          const n = args[0] as bigint;
+          if (n < 0n || n > 255n)
             throw new EEmoException(
-              "`Byte.from_int` needs a value in 0-255, got " + n
+              "`Byte.from_int64` needs a value in 0-255, got " + n
             );
-          return n;
+          return Number(n);
         }
       }
-      if (name === "from_bits" && recv === "Float") {
+      if (name === "from_bits" && recv === "Float64") {
         const buf = new ArrayBuffer(8);
         const dv = new DataView(buf);
         dv.setBigInt64(0, args[0] as bigint, true);

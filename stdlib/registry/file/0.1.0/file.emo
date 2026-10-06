@@ -7,6 +7,6 @@ def read(path String) String {
   return file_read(path)
 }
 
-def write(path String, contents String) Int {
+def write(path String, contents String) Int64 {
   return file_write(path, contents)
 }

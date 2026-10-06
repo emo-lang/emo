@@ -21,7 +21,7 @@ println("one ${item} costs ${19 + 9} yuan")
 
 // ---- 2 · Classes: immutable value types ----
 class User {
-  def init(name String, age Int) {
+  def init(name String, age Int64) {
     self.name = name
     self.age = age
   }
@@ -77,7 +77,7 @@ println(welcome(Friend.new()))
 // apart by position.
 enum Outcome { ok, err }
 
-def classify(age Int) (Outcome, String) {
+def classify(age Int64) (Outcome, String) {
   if age >= 18 {
     return (Outcome.ok, "adult")
   }
@@ -127,10 +127,10 @@ println(total.read())
 // ---- 7 · Blocks: the one function notation ----
 // An arrow block is an anonymous function; a call may take a trailing
 // block, which is how callbacks and iteration stay single-noted.
-const twice = -> (n Int) { return n * 2 }
+const twice = -> (n Int64) { return n * 2 }
 println(twice(21))
 
-def walk(xs Array[Int], i Int, f Block) Int {
+def walk(xs Array[Int64], i Int64, f Block) Int64 {
   if i == xs.length() {
     return 0
   }
@@ -138,7 +138,7 @@ def walk(xs Array[Int], i Int, f Block) Int {
   return walk(xs, i + 1, f)
 }
 
-walk([10, 20, 30], 0) -> (v Int) {
+walk([10, 20, 30], 0) -> (v Int64) {
   println(v)
   return v
 }

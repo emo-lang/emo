@@ -118,7 +118,7 @@
         },
         {
           "name": "constant.numeric.integer.emo",
-          "match": "\\b\\d+(?:L|B)?\\b"
+          "match": "\\b\\d+(?:B)?\\b"
         }
       ]
     },
@@ -126,7 +126,7 @@
       "patterns": [
         {
           "name": "support.type.primitive.emo",
-          "match": "\\b(Int64|Int32|Int|Byte|Float64|Float32|Float|Bool|Char|String|Bytes|Pid|Void|Block|Box|Array|TcpConn|TcpListener|UdpSocket|Exception)\\b"
+          "match": "\\b(Int64|Int32|Byte|Float64|Float32|Bool|Char|String|Bytes|Pid|Void|Block|Box|Array|TcpConn|TcpListener|UdpSocket|Exception)\\b"
         }
       ]
     },

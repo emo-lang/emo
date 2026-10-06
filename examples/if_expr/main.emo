@@ -1,4 +1,4 @@
-def grade(n Int) String {
+def grade(n Int64) String {
   const label = if n >= 90 { "high" } else { "low" }
   return label
 }

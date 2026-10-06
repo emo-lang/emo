@@ -1,6 +1,6 @@
 // The warehouse process: prices each incoming order — calling the
 // pricing module across files — and forwards the result.
-def run(reporter Pid) Int {
+def run(reporter Pid) Int64 {
   receive {
     (id, qty) -> {
       const total = pricing.price(qty)

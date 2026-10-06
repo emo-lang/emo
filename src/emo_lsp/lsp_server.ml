@@ -229,7 +229,7 @@ let token_type_of ~(ix : Ix.t) ~(file : string)
   in
   match tok.kind with
   | Keyword _ | True | False -> Some (15, 0)
-  | Int _ | Int64 _ | Byte _ | Float _ -> Some (19, 0)
+  | Int64 _ | Byte _ | Float _ -> Some (19, 0)
   | Char _ | String_chunk _ | String_end | Interp_open | Interp_close ->
       Some (18, 0)
   | Upper_ident name -> (

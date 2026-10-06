@@ -1078,13 +1078,13 @@ and udp_recv_entry state proc
                  [
                    Emo_eval.String data;
                    Emo_eval.String (Unix.string_of_inet_addr addr);
-                   Emo_eval.Int port;
+                   Emo_eval.Int64 (Int64.of_int port);
                  ])
               (handler state proc ())
         | Unix.ADDR_UNIX _ ->
             Effect.Shallow.continue_with k
               (Emo_eval.Tuple
-                 [ Emo_eval.String data; Emo_eval.String ""; Emo_eval.Int 0 ])
+                 [ Emo_eval.String data; Emo_eval.String ""; Emo_eval.Int64 0L ])
               (handler state proc ()))
     | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
         let finished = ref false in

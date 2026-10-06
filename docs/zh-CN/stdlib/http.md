@@ -38,7 +38,7 @@ http.request(method, url, headers, body, timeout)
 `http.request` 的完整签名:
 
 ```emo
-def request(method String, url String, headers Array[(String, String)], body String, timeout Float) HttpResponse
+def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) HttpResponse
 ```
 
 - `headers` 是 `(name, value)` 元组的数组,追加在内置的 `Host`、`Content-Length`、`Connection: close` 几行之后。
@@ -49,7 +49,7 @@ def request(method String, url String, headers Array[(String, String)], body Str
 
 ```emo
 class HttpResponse {
-  // 字段:status Int, headers Array[(String, String)], body String
+  // 字段:status Int64, headers Array[(String, String)], body String
   def header(name String) String   // 大小写不敏感查找;不存在时返回 ""
 }
 ```
@@ -88,7 +88,7 @@ class HttpRequest {
 响应用 `http.response` 工厂构造:
 
 ```emo
-def response(status Int, headers Array[(String, String)], body String) HttpResponse
+def response(status Int64, headers Array[(String, String)], body String) HttpResponse
 ```
 
 服务器会根据 body 写出 `Content-Length`,并为常见状态码(200、201、204、400、404、500)写出 reason phrase。

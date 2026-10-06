@@ -8,7 +8,7 @@
 enum Status { ok, bulk }
 
 class Order {
-  def init(id Int, qty Int) {
+  def init(id Int64, qty Int64) {
     self.id = id
     self.qty = qty
   }
@@ -44,15 +44,15 @@ println("counter: " + counter.read().to_string())
 emo Catalog {
   const units_word = "units"
 
-  def line(id Int, qty Int) String {
+  def line(id Int64, qty Int64) String {
     return "order ${id}: ${qty} ${units_word}"
   }
 
-  def max_of(xs Array[Int]) Int {
+  def max_of(xs Array[Int64]) Int64 {
     return max_at(xs, 0, 0)
   }
 
-  def max_at(xs Array[Int], i Int, best Int) Int {
+  def max_at(xs Array[Int64], i Int64, best Int64) Int64 {
     if i == xs.length() {
       return best
     }
@@ -69,7 +69,7 @@ println(Catalog.line(0, 22))
 println("total: " + catalog.total(samples).to_string())
 
 // ---- the pipeline: three processes, one message chain ----
-def feed(wh Pid, i Int) Int {
+def feed(wh Pid, i Int64) Int64 {
   if i > 3 {
     wh <- "done"
     return 0

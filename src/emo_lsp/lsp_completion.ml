@@ -61,8 +61,8 @@ let builtin_type_items : item list =
     make ~label:name ~kind:7 (* Class *) ~detail ~sort_text:("1" ^ name) ()
   in
   [
-    ty "Int" "integer";
-    ty "Float" "floating-point number";
+    ty "Int64" "64-bit integer";
+    ty "Float64" "floating-point number";
     ty "Bool" "true or false";
     ty "Char" "a single character";
     ty "String" "UTF-8 text";
@@ -85,18 +85,18 @@ let builtin_function_items : item list =
     fn "println" "println(value) — write one line";
     fn "self_pid" "self_pid() -> Pid";
     fn "halt" "halt() — stop the current process";
-    fn "net_connect" "net_connect(host String, port Int, timeout Float) TcpConn";
-    fn "net_listen" "net_listen(host String, port Int) TcpListener";
+    fn "net_connect" "net_connect(host String, port Int64, timeout Float64) TcpConn";
+    fn "net_listen" "net_listen(host String, port Int64) TcpListener";
     fn "net_resolve" "net_resolve(host String) Array[String]";
-    fn "net_udp_bind" "net_udp_bind(host String, port Int) UdpSocket";
-    fn "net_connect_unix" "net_connect_unix(path String, timeout Float) TcpConn";
+    fn "net_udp_bind" "net_udp_bind(host String, port Int64) UdpSocket";
+    fn "net_connect_unix" "net_connect_unix(path String, timeout Float64) TcpConn";
     fn "net_listen_unix" "net_listen_unix(path String) TcpListener";
     fn "net_tls_connect"
-      "net_tls_connect(host String, port Int, timeout Float) TcpConn";
+      "net_tls_connect(host String, port Int64, timeout Float64) TcpConn";
     fn "net_tls_connect_insecure"
-      "net_tls_connect_insecure(host String, port Int, timeout Float) TcpConn";
+      "net_tls_connect_insecure(host String, port Int64, timeout Float64) TcpConn";
     fn "net_listen_tls"
-      "net_listen_tls(host String, port Int, cert_path String, key_path \
+      "net_listen_tls(host String, port Int64, cert_path String, key_path \
        String) TcpListener";
   ]
 

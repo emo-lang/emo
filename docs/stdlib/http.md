@@ -46,7 +46,7 @@ http.request(method, url, headers, body, timeout)
 `http.request`'s full signature:
 
 ```emo
-def request(method String, url String, headers Array[(String, String)], body String, timeout Float) HttpResponse
+def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) HttpResponse
 ```
 
 - `headers` is an array of `(name, value)` tuples, appended after the
@@ -62,7 +62,7 @@ Every call returns an `HttpResponse`:
 
 ```emo
 class HttpResponse {
-  // fields: status Int, headers Array[(String, String)], body String
+  // fields: status Int64, headers Array[(String, String)], body String
   def header(name String) String   // case-insensitive lookup; "" when absent
 }
 ```
@@ -113,7 +113,7 @@ without one gets `""`.
 Responses are built with the `http.response` factory:
 
 ```emo
-def response(status Int, headers Array[(String, String)], body String) HttpResponse
+def response(status Int64, headers Array[(String, String)], body String) HttpResponse
 ```
 
 The server writes `Content-Length` from the body and a reason phrase for
