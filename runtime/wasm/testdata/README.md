@@ -30,3 +30,48 @@ suite; `cases.smoke.txt` is the representative subset the default
   grows the matching capability. The runner skips pending cases and
   prints their count, so the gap is visible on every run. Step 20 is
   done when nothing is pending.
+
+## The run list (step 21)
+
+`runs.all.txt` vendors the spec suite's *commands* — the interpreter's
+corpus; `runs.smoke.txt` is the representative subset the default
+`dune test` runs. A run line is
+
+```
+<file>.wast:<line> <verdict> <command> <payload...>
+```
+
+`<verdict>` is `pending` until a sweep claims it, then the expected
+outcome: `ok`, `return`, `trap`, `uninstantiable`, or `unlinkable`.
+`<command>` is one of:
+
+```
+module <hex>                       instantiate binary module bytes
+register <name-hex> <as-hex>       register a named instance under an import name
+invoke <ref> <export-hex> [args]   call an exported function
+get <ref> <export-hex>             read an exported global
+```
+
+Names are UTF-8 hex (export names in the suite contain spaces and
+control bytes). `<ref>` is `.` for the last instantiated module or
+`@<name-hex>` for a named one. An `invoke`/`get` carries its expected
+values after `=`; a bare action or a trap has none. Value words are
+`i:<u32>`, `I:<i64>`, `f:<u32 bits>`, `F:<i64 bits>` (all decimal, the
+64-bit ones two's complement), `ref.null`, `ref.extern:<n>`,
+`ref.func:<n>`, and the NaN classes `nan:canonical` / `nan:arithmetic`.
+
+The `assert_malformed` / `assert_invalid` commands belong to the case
+list, not this one; `assert_exhaustion` is out of scope (no host stack
+limit is modelled).
+
+- **Regeneration:** the same pinned checkout, then
+
+  ```
+  devtools/vendor-wasm-spec runs /path/to/spec runtime/wasm/testdata/runs.all.txt
+  ```
+
+- **Pending commands:** as with the case list, everything lands
+  `pending`; the sweeps flip families to their verdicts
+  (`devtools/vendor-wasm-spec runs-flip`). The runner skips pending
+  commands and prints their count. Step 21 is done when nothing is
+  pending and nothing fails.

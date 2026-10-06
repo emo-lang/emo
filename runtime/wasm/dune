@@ -108,3 +108,63 @@
   spec.expected.txt)
  (action
   (diff spec.expected.txt spec.actual)))
+
+; The run corpus (step 21). The smoke slice rides the default test;
+; the full list is the wasm_runs alias. The drivers only walk the
+; list — execution lands with the interpreter tasks.
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  runs-smoke.emo
+  wasm.emo
+  cli.emo
+  internal/runlist.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  internal/model.emo
+  testdata/runs.smoke.txt
+  package.emo)
+ (action
+  (with-stdout-to
+   runs-smoke.actual
+   (run %{emo} run runs-smoke.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  runs-smoke.actual
+  runs.expected.txt)
+ (action
+  (diff runs.expected.txt runs-smoke.actual)))
+
+(rule
+ (alias wasm_runs)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  runs.emo
+  wasm.emo
+  cli.emo
+  internal/runlist.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  internal/model.emo
+  testdata/runs.all.txt
+  package.emo)
+ (action
+  (with-stdout-to
+   runs.actual
+   (run %{emo} run runs.emo))))
+
+(rule
+ (alias wasm_runs)
+ (deps
+  runs.actual
+  runs.all.expected.txt)
+ (action
+  (diff runs.all.expected.txt runs.actual)))

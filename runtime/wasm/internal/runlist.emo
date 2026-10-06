@@ -1,0 +1,215 @@
+// The run-list format and its codec (T21.1).
+//
+// The interpreter's corpus is a command list, one command per line,
+// written by `devtools/vendor-wasm-spec runs` (see
+// testdata/README.md for the generator and the licence). The shape is
+//
+//     <name> <verdict> <command> <payload...>
+//
+// `<name>` is the provenance `<wast>:<line>`; `<verdict>` is `pending`
+// until a sweep claims it, then the expected outcome (`ok`, `return`,
+// `trap`, `uninstantiable`, `unlinkable`); `<command>` is one of
+//
+//     module <hex>                       instantiate binary module bytes
+//     register <name-hex> <as-hex>       register a named instance
+//     invoke <ref> <export-hex> [args]   call an export
+//     get <ref> <export-hex>             read a global export
+//
+// Names are UTF-8 hex (export names in the suite include spaces and
+// control bytes). `<ref>` is `.` for the last instantiated module or
+// `@<name-hex>` for a named one. An `invoke`/`get` carries its
+// expected values after `=`; a bare action or a trap has none. Value
+// words are `i:<u32>`, `I:<i64>`, `f:<u32 bits>`, `F:<i64 bits>`,
+// `ref.null`, `ref.extern:<n>`, `ref.func:<n>`, and the NaN classes
+// `nan:canonical` / `nan:arithmetic`.
+//
+// The codec is pure shape-checking here: a line that does not parse is
+// a corpus bug and fails visibly. Decoding words into values, and
+// running the claimed commands, land with the interpreter tasks.
+
+def digit(c Int64) Bool {
+  return c >= 48 && c <= 57
+}
+
+// Whether `s` is a non-empty decimal with an optional leading '-'.
+def decimal_ok(s String) Bool {
+  if s.length() == 0 {
+    return false
+  }
+  var start = 0
+  if s.starts_with("-") {
+    start = 1
+  }
+  if start == s.length() {
+    return false
+  }
+  return digits_ok(s.to_bytes(), start, s.length())
+}
+
+def digits_ok(src Bytes, i Int64, n Int64) Bool {
+  if i == n {
+    return true
+  }
+  if !digit(src.get(i)) {
+    return false
+  }
+  return digits_ok(src, i + 1, n)
+}
+
+// Whether a value word is well-formed.
+def value_ok(w String) Bool {
+  if w == "ref.null" || w == "nan:canonical" || w == "nan:arithmetic" {
+    return true
+  }
+  if w.starts_with("i:") || w.starts_with("I:") || w.starts_with("f:")
+    || w.starts_with("F:") {
+    return decimal_ok(w.substring(2, w.length() - 2))
+  }
+  if w.starts_with("ref.extern:") {
+    return decimal_ok(w.substring(11, w.length() - 11))
+  }
+  if w.starts_with("ref.func:") {
+    return decimal_ok(w.substring(9, w.length() - 9))
+  }
+  return false
+}
+
+// The known verdict and command tokens.
+def verdict_ok(v String) Bool {
+  return v == "pending" || v == "ok" || v == "return" || v == "trap"
+    || v == "uninstantiable" || v == "unlinkable"
+}
+
+def command_ok(c String) Bool {
+  return c == "module" || c == "register" || c == "invoke" || c == "get"
+}
+
+// A module reference: `.` or `@<hex>`.
+def ref_ok(w String) Bool {
+  if w == "." {
+    return true
+  }
+  if w.starts_with("@") {
+    return internal.corpus.hex_ok(w.substring(1, w.length() - 1))
+  }
+  return false
+}
+
+// Empty when `parts` is well-formed, else a short reason. The reason
+// names the first offending field, never a silently accepted line.
+def shape_error(parts Array[String]) String {
+  if parts.length() < 3 {
+    return "too-few-fields"
+  }
+  if !verdict_ok(parts[1]) {
+    return "unknown-verdict"
+  }
+  const cmd = parts[2]
+  if !command_ok(cmd) {
+    return "unknown-command"
+  }
+  if cmd == "module" {
+    if parts.length() != 4 {
+      return "module-arity"
+    }
+    if !internal.corpus.hex_ok(parts[3]) {
+      return "module-hex"
+    }
+    return ""
+  }
+  if cmd == "register" {
+    if parts.length() != 5 {
+      return "register-arity"
+    }
+    if parts[3] != "." && !internal.corpus.hex_ok(parts[3]) {
+      return "register-name"
+    }
+    if !internal.corpus.hex_ok(parts[4]) {
+      return "register-as"
+    }
+    return ""
+  }
+  if parts.length() < 5 {
+    return cmd + "-arity"
+  }
+  if !ref_ok(parts[3]) {
+    return "action-ref"
+  }
+  if !internal.corpus.hex_ok(parts[4]) {
+    return "export-hex"
+  }
+  if cmd == "get" {
+    if parts.length() == 5 {
+      return ""
+    }
+    if parts[5] == "=" {
+      return expected_ok(parts, 6)
+    }
+    return "get-tail"
+  }
+  return action_tail(parts, 5)
+}
+
+// Arguments, then an optional `=` and its expected words.
+def action_tail(parts Array[String], i Int64) String {
+  if i == parts.length() {
+    return ""
+  }
+  if parts[i] == "=" {
+    return expected_ok(parts, i + 1)
+  }
+  if !value_ok(parts[i]) {
+    return "argument-word"
+  }
+  return action_tail(parts, i + 1)
+}
+
+def expected_ok(parts Array[String], i Int64) String {
+  if i == parts.length() {
+    return ""
+  }
+  if !value_ok(parts[i]) {
+    return "expected-word"
+  }
+  return expected_ok(parts, i + 1)
+}
+
+// ---- the runner ----
+//
+// Walks a list and reports the same claimed/pending/failed summary as
+// step 20's case runner. Every line is shape-checked (a bad line is a
+// corpus bug, counted failed); a pending line is skipped. A claimed
+// command is where execution will land: the interpreter replaces the
+// `undecided` line from T21.7 onward.
+
+def run(list_path String) Int64 {
+  return walk(file_read(list_path).split("\n"), 0, 0, 0, 0)
+}
+
+def walk(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64) Int64 {
+  if i == lines.length() {
+    println(
+      "claimed " + claimed.to_string() + ", pending " + pending.to_string()
+        + ", failed " + failed.to_string())
+    return failed
+  }
+  if lines[i].trim().length() == 0 {
+    return walk(lines, i + 1, claimed, pending, failed)
+  }
+  return walk_line(lines, i, claimed, pending, failed)
+}
+
+def walk_line(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64) Int64 {
+  const parts = lines[i].split(" ")
+  const problem = shape_error(parts)
+  if problem != "" {
+    println(parts[0] + " " + problem)
+    return walk(lines, i + 1, claimed, pending + 1, failed + 1)
+  }
+  if parts[1] == "pending" {
+    return walk(lines, i + 1, claimed, pending + 1, failed)
+  }
+  // A claimed command. Execution lands with the interpreter (T21.7+).
+  println(parts[0] + " " + parts[1] + " undecided")
+  return walk(lines, i + 1, claimed + 1, pending, failed + 1)
+}

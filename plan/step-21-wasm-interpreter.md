@@ -1,6 +1,6 @@
 # Step 21 — Wasm runtime: the interpreter and the golden runs
 
-**Milestone:** M6 · **Prereq:** step 20 · **Status:** not started
+**Milestone:** M6 · **Prereq:** step 20 · **Status:** in progress
 
 The rung step 20 pointed at: the modules the decoder accepts start
 *running*. The bar moves from "is this module well-formed?" to "does it
@@ -172,7 +172,7 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### First, the harness
 
-- [ ] **T21.1** — *The run-list format and the vendoring mode.* **(S)**
+- [x] **T21.1** — *The run-list format and the vendoring mode.* **(S)**
       The command-line grammar and its codec (`i:` / `I:` / `f:` /
       `F:` / `ref:` words, NaN tokens, the verdict prefixes), the
       runner module beside step 20's, the `runs.emo` driver, the
