@@ -1,0 +1,166 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Emo",
+  "scopeName": "source.emo",
+  "fileTypes": ["emo"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#keywords" },
+    { "include": "#declarations" },
+    { "include": "#strings" },
+    { "include": "#characters" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#primitive-types" },
+    { "include": "#types" },
+    { "include": "#calls" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.emo",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.flow.emo",
+          "match": "\\b(if|else|case|when|receive|return|raise|do)\\b"
+        },
+        {
+          "name": "keyword.declaration.emo",
+          "match": "\\b(def|const|var|class|interface|enum|emo|require|foreign)\\b"
+        },
+        {
+          "name": "constant.language.boolean.emo",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "variable.language.self.emo",
+          "match": "\\bself\\b"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "meta.class.emo",
+          "match": "\\b(class|interface|enum)\\s+([A-Z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.emo" },
+            "2": { "name": "entity.name.type.emo" }
+          }
+        },
+        {
+          "name": "meta.namespace.emo",
+          "match": "\\b(emo)\\s+([A-Z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.emo" },
+            "2": { "name": "entity.name.namespace.emo" }
+          }
+        },
+        {
+          "name": "meta.function.emo",
+          "match": "\\b(def)\\s+([a-z_][A-Za-z0-9_]*\\??)",
+          "captures": {
+            "1": { "name": "keyword.declaration.emo" },
+            "2": { "name": "entity.name.function.emo" }
+          }
+        },
+        {
+          "name": "meta.require.emo",
+          "match": "\\b(require)\\s+(\"(?:[^\"\\\\]|\\\\.)*\")",
+          "captures": {
+            "1": { "name": "keyword.declaration.emo" },
+            "2": { "name": "string.quoted.double.package.emo" }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.emo",
+          "patterns": [
+            {
+              "name": "constant.character.escape.emo",
+              "match": "\\\\(?:[nrt\\\\'\"])"
+            },
+            {
+              "begin": "\\$\\{",
+              "end": "\\}",
+              "name": "meta.interpolation.emo",
+              "patterns": [{ "include": "$self" }]
+            }
+          ]
+        }
+      ]
+    },
+    "characters": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.emo",
+          "match": "'(?:\\\\.|[^'\\\\])'"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.emo",
+          "match": "\\b\\d+\\.\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.emo",
+          "match": "\\b\\d+(?:L|B)?\\b"
+        }
+      ]
+    },
+    "primitive-types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.emo",
+          "match": "\\b(Int64|Int32|Int|Byte|Float64|Float32|Float|Bool|Char|String|Bytes|Pid|Void|Block|Box|Array|TcpConn|TcpListener|UdpSocket|Exception)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.emo",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "name": "entity.name.function.call.emo",
+          "match": "\\b[a-z_][A-Za-z0-9_]*\\??(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.emo",
+          "match": "<-|->|==|!=|<=|>=|<<|>>|&&|\\|\\||[+\\-*/%&|^~!=<>]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.emo",
+          "match": "[(){}\\[\\],.:]"
+        }
+      ]
+    }
+  }
+}

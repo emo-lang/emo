@@ -1,0 +1,4 @@
+(library
+ (name emo_lsp)
+ (libraries yojson unix emo_support emo_lexer emo_parser emo_ast emo_check
+   emo_pkg))
