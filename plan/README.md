@@ -30,13 +30,12 @@ incrementally shippable steps — one file per step, executed in order.
   `README.md` *before* implementing that task.
 - Strictness first: when in doubt, reject early with a clear diagnostic. No
   auto-fixing, no implicit additions, no silent fallbacks.
-- No loop keyword is planned: iteration is recursion plus collection methods,
-  which is why tail calls are guaranteed (README, Concurrency). If a loop form
-  ever becomes necessary, it goes through `CHECK.md` first — and it must bind
-  fresh per-iteration variables: the Go pre-1.22 for-loop closure capture
-  trap is the cautionary tale. Emo today is structurally immune to it — every
-  recursion/method-call iteration is a fresh frame, and capturing a `var` in
-  a closure is a compile error (README, Syntax).
+- Loop forms are being added: the decided direction (2026-10-06) is to keep
+  guaranteed tail calls *and* add C-style `for`/`while`; the surface is open
+  in `CHECK.md` and implementation is unscheduled. The Go pre-1.22
+  loop-capture trap is already prevented — a `var` cannot escape its block,
+  and capturing one in a closure that outlives the block is a compile error
+  (README, Syntax) — so the earlier fresh-binding caution is subsumed.
 - Compiler sources live under `src/` as dune libraries; `website/` is the
   docs site and unrelated to the compiler. Acceptance example programs live
   under `examples/` once step 07 creates it.
