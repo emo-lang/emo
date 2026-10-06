@@ -1,0 +1,3 @@
+// The full run-corpus driver, run by the wasm_runs alias.
+
+internal.runlist.run("testdata/runs.all.txt")

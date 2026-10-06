@@ -1,0 +1,3 @@
+// The default-test driver for the run corpus: the smoke subset.
+
+internal.runlist.run("testdata/runs.smoke.txt")

@@ -18,8 +18,14 @@ validates; instantiation is step 21).
 
 Usage:
     vendor-wasm-spec <spec-checkout-dir> <output-list> [<name>.wast ...]
+    vendor-wasm-spec runs <spec-checkout-dir> <output-list> [<name>.wast ...]
+    vendor-wasm-spec flip <spec-checkout-dir> <output-list> <case>...
+    vendor-wasm-spec runs-flip <spec-checkout-dir> <output-list> <case>...
+    vendor-wasm-spec unflip <output-list> <case>...
 
 With no wast names, every test/core/*.wast in the checkout is vendored.
+The `runs` mode writes the interpreter's command list instead (see the
+comment above RUN_VERDICTS); the `flip` pair claims vendored entries.
 """
 
 import json
@@ -69,6 +75,162 @@ def expected_verdicts(checkout: pathlib.Path, wasts, tmp: pathlib.Path):
         for name, verdict, _hex_bytes in binary_cases(checkout, wast, tmp):
             expected[name] = verdict
     return expected
+
+
+# ---- the run list (step 21) ----
+#
+# The command list the interpreter runs. One command per line:
+#
+#   <file>.wast:<line> <verdict> <command> <payload...>
+#
+# <verdict> is `pending` until a sweep claims it, then the command's
+# expected outcome: `ok`, `return`, `trap`, `uninstantiable`, or
+# `unlinkable`. <command> is one of:
+#
+#   module <hex>                       instantiate a binary module
+#   register <name-hex> <as-hex>       register the named module
+#   invoke <ref> <export-hex> [args]   call an exported function
+#   get <ref> <export-hex>             read an exported global
+#
+# Names are UTF-8 hex so a field with spaces or control bytes survives
+# the round trip. <ref> is `.` for the last instantiated module or
+# `@<name-hex>` for a named one. `invoke`/`get` carry their expected
+# values after `=`; a bare action or a trap has none. Value words:
+# `i:<u32>` `I:<i64>` `f:<u32bits>` `F:<i64bits>` `ref.null`
+# `ref.extern:<n>` `ref.func:<n>` `nan:canonical` `nan:arithmetic`.
+
+RUN_VERDICTS = {
+    "module": "ok",
+    "register": "ok",
+    "action": "ok",
+    "assert_return": "return",
+    "assert_trap": "trap",
+    "assert_uninstantiable": "uninstantiable",
+    "assert_unlinkable": "unlinkable",
+}
+
+
+def hx(s: str) -> str:
+    """UTF-8 bytes of `s` as lowercase hex."""
+    return s.encode("utf-8").hex()
+
+
+def signed64(u: str) -> str:
+    """The unsigned decimal `u` as its signed two's-complement decimal."""
+    n = int(u)
+    return str(n - (1 << 64) if n >= (1 << 63) else n)
+
+
+def value_word(v: dict) -> str:
+    """One value as a type-tagged bit-pattern word."""
+    t = v["type"]
+    s = str(v.get("value", ""))
+    if t == "i32":
+        return f"i:{s}"
+    if t == "i64":
+        return f"I:{signed64(s)}"
+    if t == "f32":
+        return s if s.startswith("nan:") else f"f:{s}"
+    if t == "f64":
+        return s if s.startswith("nan:") else f"F:{signed64(s)}"
+    if t == "funcref":
+        return "ref.null" if s == "null" else f"ref.func:{s}"
+    if t == "externref":
+        return "ref.null" if s == "null" else f"ref.extern:{s}"
+    raise ValueError(f"unknown value type {t!r}")
+
+
+def action_words(action: dict):
+    """(command, ref, payload-words) for an invoke/get action."""
+    verb = action["type"]
+    ref = f"@{hx(action['module'])}" if "module" in action else "."
+    words = [verb, ref, hx(action["field"])]
+    words += [value_word(a) for a in action.get("args", [])]
+    return words
+
+
+def run_commands(checkout: pathlib.Path, wast: str, tmp: pathlib.Path):
+    """Yield (name, expected-verdict, body) for one wast file's run commands."""
+    src = checkout / "test" / "core" / wast
+    out_json = tmp / (wast + ".json")
+    subprocess.run(
+        [WAST2JSON, "--no-check", str(src), "-o", str(out_json)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    commands = json.loads(out_json.read_text())["commands"]
+    for cmd in commands:
+        kind = cmd["type"]
+        if kind not in RUN_VERDICTS:
+            continue
+        if cmd.get("module_type", "binary") != "binary":
+            continue
+        name = f"{wast}:{cmd['line']}"
+        verdict = RUN_VERDICTS[kind]
+        if kind in ("module", "assert_uninstantiable", "assert_unlinkable"):
+            body = f"module {binary_hex(tmp, cmd['filename'])}"
+        elif kind == "register":
+            who = hx(cmd["name"]) if "name" in cmd else "."
+            body = f"register {who} {hx(cmd['as'])}"
+        elif kind in ("action", "assert_return", "assert_trap"):
+            words = action_words(cmd["action"])
+            if kind == "assert_return":
+                expected = [value_word(v) for v in cmd.get("expected", [])]
+                words += ["="] + expected
+            body = " ".join(words)
+        else:  # pragma: no cover - every RUN_VERDICTS member is handled
+            raise ValueError(kind)
+        yield name, verdict, body
+
+
+def binary_hex(tmp: pathlib.Path, filename: str) -> str:
+    """Hex of a binary module beside the wast2json output."""
+    return (tmp / filename).read_bytes().hex()
+
+
+def runs_expected(checkout: pathlib.Path, wasts, tmp: pathlib.Path):
+    """Map run-command name -> expected verdict, from the checkout."""
+    expected = {}
+    for wast in wasts:
+        for name, verdict, _body in run_commands(checkout, wast, tmp):
+            expected[name] = verdict
+    return expected
+
+
+def runs_corpus(checkout: pathlib.Path, wasts, tmp: pathlib.Path):
+    """Yield (name, expected-verdict, body) for every vendorable run command."""
+    for wast in wasts:
+        yield from run_commands(checkout, wast, tmp)
+
+
+def runs_flip(checkout: pathlib.Path, out_list: pathlib.Path, names):
+    """Flip listed pending run commands to their expected verdicts."""
+    wasts = sorted(p.name for p in (checkout / "test" / "core").glob("*.wast"))
+    with tempfile.TemporaryDirectory() as tmp:
+        expected = runs_expected(checkout, wasts, pathlib.Path(tmp))
+    lines = out_list.read_text().splitlines()
+    flipped, out = [], []
+    for line in lines:
+        parts = line.split(" ")
+        if len(parts) >= 2 and parts[0] in names:
+            if parts[1] != "pending":
+                print(f"{parts[0]}: already claimed as {parts[1]}", file=sys.stderr)
+                return 1
+            verdict = expected.get(parts[0])
+            if verdict is None:
+                print(f"{parts[0]}: not in the pinned checkout", file=sys.stderr)
+                return 1
+            parts[1] = verdict
+            flipped.append(f"{parts[0]} -> {verdict}")
+            out.append(" ".join(parts))
+        else:
+            out.append(line)
+    out_list.write_text("\n".join(out) + ("\n" if out else ""))
+    for f in flipped:
+        print(f)
+    print(f"{len(flipped)} flipped, {len(names) - len(flipped)} not matched")
+    return 0 if len(flipped) == len(names) else 1
 
 
 def flip(checkout: pathlib.Path, out_list: pathlib.Path, names):
@@ -126,7 +288,42 @@ def unflip(out_list: pathlib.Path, names):
     return 0
 
 
+def runs(checkout: pathlib.Path, out_list: pathlib.Path, wasts):
+    """Write the run-command list, every command pending until flipped."""
+    wasts = wasts or sorted(
+        p.name for p in (checkout / "test" / "core").glob("*.wast")
+    )
+    lines, skipped = [], []
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = pathlib.Path(tmp)
+        for wast in wasts:
+            try:
+                commands = list(run_commands(checkout, wast, tmp))
+            except subprocess.CalledProcessError:
+                skipped.append(wast)
+                continue
+            for name, _verdict, body in commands:
+                lines.append(f"{name} pending {body}")
+    out_list.write_text("\n".join(lines) + ("\n" if lines else ""))
+    print(f"{out_list}: {len(lines)} run commands, all pending")
+    if skipped:
+        print(f"skipped {len(skipped)} files (wast2json failures):")
+        for wast in skipped:
+            print(f"  {wast}")
+    return 0
+
+
 def main(argv):
+    if len(argv) >= 2 and argv[1] == "runs":
+        if len(argv) < 4:
+            print(__doc__, file=sys.stderr)
+            return 2
+        return runs(pathlib.Path(argv[2]), pathlib.Path(argv[3]), argv[4:])
+    if len(argv) >= 2 and argv[1] == "runs-flip":
+        if len(argv) < 5:
+            print(__doc__, file=sys.stderr)
+            return 2
+        return runs_flip(pathlib.Path(argv[2]), pathlib.Path(argv[3]), set(argv[4:]))
     if len(argv) >= 2 and argv[1] == "flip":
         if len(argv) < 5:
             print(__doc__, file=sys.stderr)
