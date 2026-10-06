@@ -1,0 +1,54 @@
+// The float conversion/rounding fixture (T21.5, part 2): sqrt, the
+// rounding directions, int <-> float, and the truncation traps at the
+// spec's boundaries.
+
+def show(label String, bits Int64) Int64 {
+  println(label + " " + bits.to_string())
+  return 0
+}
+
+def show_trap(label String, r (Bool, Int64, String)) Int64 {
+  if r[0] {
+    return show(label, r[1])
+  }
+  println(label + " trap:" + r[2])
+  return 0
+}
+
+def run() Int64 {
+  var failed = 0
+  // sqrt (f32 through the bridge), and the rounding directions.
+  failed = failed + show("sqrt.f64", internal.floats.sqrt(124, 4611686018427387904))
+  failed = failed + show("sqrt.f32", internal.floats.sqrt(125, 1073741824))
+  failed = failed + show("floor", internal.floats.floor(124, -4613937818241073152))
+  failed = failed + show("ceil", internal.floats.ceil(124, -4613937818241073152))
+  failed = failed + show("trunc", internal.floats.trunc(124, -4613937818241073152))
+  failed = failed + show("nearest.2.5", internal.floats.nearest(124, 4612811918334230528))
+  failed = failed + show("nearest.3.5", internal.floats.nearest(124, 4615063718147915776))
+  failed = failed + show("nearest.-2.5", internal.floats.nearest(124, -4610560118520545280))
+  // int -> float.
+  failed = failed + show("f64.i32s", internal.floats.f64_of_i32_s(4294967295))
+  failed = failed + show("f32.i32u", internal.floats.f32_of_i32_u(4294967295))
+  failed = failed + show("f32.i64s", internal.floats.f32_of_i64_s(16777217))
+  failed = failed + show("f64.i64u", internal.floats.f64_of_i64_u(-1))
+  // float -> int, with the traps.
+  failed = failed + show_trap("trunc.i32s.2p31", internal.floats.trunc_i32_s(4746794007248502784))
+  failed = failed + show_trap("trunc.i32s.1e30", internal.floats.trunc_i32_s(5055640609639927018))
+  failed = failed + show_trap("trunc.i32s.nan", internal.floats.trunc_i32_s(9221120237041090560))
+  failed = failed + show_trap("trunc.i32s.1", internal.floats.trunc_i32_s(4607182418800017408))
+  failed = failed + show_trap("trunc.i32s.-1", internal.floats.trunc_i32_s(-4616189618054758400))
+  failed = failed + show_trap("trunc.i32u.max", internal.floats.trunc_i32_u(4751297606875663565))
+  failed = failed + show_trap("trunc.i32u.-0.9", internal.floats.trunc_i32_u(-4617090337980232499))
+  failed = failed + show_trap("trunc.i64s.min", internal.floats.trunc_i64_s(-4332462841530417152))
+  failed = failed + show_trap("trunc.i64u.rep", internal.floats.trunc_i64_u(4895412794951729151))
+  // Saturating conversions clamp instead of trapping.
+  failed = failed + show("sat.i32s.1e30", internal.floats.trunc_sat_i32_s(5055640609639927018))
+  failed = failed + show("sat.i32s.nan", internal.floats.trunc_sat_i32_s(9221120237041090560))
+  failed = failed + show("sat.i64s.1e30", internal.floats.trunc_sat_i64_s(5055640609639927018))
+  failed = failed + show("sat.i64u.1e30", internal.floats.trunc_sat_i64_u(5055640609639927018))
+  failed = failed + show("sat.i64u.-1e30", internal.floats.trunc_sat_i64_u(-4167731427214848790))
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()
