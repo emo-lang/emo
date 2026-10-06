@@ -12,7 +12,7 @@
 // leaving.
 
 // The doubler forwards every order, doubled, to the next stage.
-def doubler(next Pid) Int {
+def doubler(next Pid) Int64 {
   receive {
     (id, n) -> {
       next <- (id, n * 2)
@@ -27,7 +27,7 @@ def doubler(next Pid) Int {
 
 // The labeler prints each finished order, counts them, and reports
 // back to the entry process when the line closes.
-def labeler(count Int, boss Pid) Int {
+def labeler(count Int64, boss Pid) Int64 {
   receive {
     (id, n) -> {
       println("order ${id}: ${n} units")
@@ -42,7 +42,7 @@ def labeler(count Int, boss Pid) Int {
 
 // The entry process feeds the line, closes it, and waits for the
 // report — the tuple is destructured right in the receive branch.
-def feed(line Pid, i Int) Int {
+def feed(line Pid, i Int64) Int64 {
   if i > 5 {
     line <- "done"
     return 0

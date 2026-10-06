@@ -11,6 +11,6 @@ def smoke() String {
   return "emo wasm runtime"
 }
 
-def decode(data Bytes) (Bool, String, Int, String) {
+def decode(data Bytes) (Bool, String, Int64, String) {
   return internal.decode.module_from(data)
 }

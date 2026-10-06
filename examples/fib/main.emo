@@ -1,4 +1,4 @@
-def fib(n Int) Int {
+def fib(n Int64) Int64 {
   if n < 2 {
     return n
   }
@@ -12,7 +12,7 @@ const greeting = -> (name String) {
 println(fib(20))
 println(greeting("emo"))
 
-def count_down(n Int) Int {
+def count_down(n Int64) Int64 {
   if n == 0 {
     return 0
   }

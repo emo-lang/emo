@@ -103,7 +103,7 @@ conn.set_timeout(seconds) // TcpConn — bounds the operations that follow
 
 ```emo
 listener.accept()           // TcpConn — the next connection
-listener.port()             // Int — the bound port
+listener.port()             // Int64 — the bound port
 listener.close()            // TcpListener
 listener.set_timeout(seconds)
 ```
@@ -117,8 +117,8 @@ connection timeouts bound reads.
 
 ```emo
 socket.send_to(host, port, data)  // UdpSocket — returns itself
-socket.recv_from()                // (String, String, Int) — data, host, port
-socket.port()                     // Int
+socket.recv_from()                // (String, String, Int64) — data, host, port
+socket.port()                     // Int64
 socket.close()                    // UdpSocket
 socket.set_timeout(seconds)
 ```
@@ -135,7 +135,7 @@ A TCP echo round-trip in one program — the server runs in its own process
 ```emo
 require "net"
 
-def echo_once(listener TcpListener) Int {
+def echo_once(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write("echo: " + conn.read_line() + "\n")
   conn.close()
@@ -176,7 +176,7 @@ clients use `net.tls_connect`, which verifies):
 ```emo
 require "net"
 
-def serve(listener TcpListener) Int {
+def serve(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write("secure: " + conn.read_line() + "\n")
   conn.close()

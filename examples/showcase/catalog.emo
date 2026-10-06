@@ -1,10 +1,10 @@
 // A plain module: reductions over arrays, called from other files by
 // qualified path (`catalog.total(xs)`).
-def total(xs Array[Int]) Int {
+def total(xs Array[Int64]) Int64 {
   return total_at(xs, 0)
 }
 
-def total_at(xs Array[Int], i Int) Int {
+def total_at(xs Array[Int64], i Int64) Int64 {
   if i == xs.length() {
     return 0
   }

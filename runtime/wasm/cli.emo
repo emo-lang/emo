@@ -8,13 +8,13 @@
 // claimed case reports `undecided` and counts as failed — visible in
 // the golden, never silent.
 
-def run(list_path String) Int {
+def run(list_path String) Int64 {
   return walk_lines(file_read(list_path).split("\n"), 0, 0, 0, 0)
 }
 
 // Walk lines[i..), then print `claimed N, pending M, failed K` and
 // return the failed count.
-def walk_lines(lines Array[String], i Int, claimed Int, pending Int, failed Int) Int {
+def walk_lines(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64) Int64 {
   if i == lines.length() {
     println(
       "claimed " + claimed.to_string() + ", pending " + pending.to_string()
@@ -28,7 +28,7 @@ def walk_lines(lines Array[String], i Int, claimed Int, pending Int, failed Int)
   return walk_case(lines, i, claimed, pending, failed)
 }
 
-def walk_case(lines Array[String], i Int, claimed Int, pending Int, failed Int) Int {
+def walk_case(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64) Int64 {
   const parts = lines[i].split(" ")
   if parts.length() != 3 {
     return corpus_bug(lines, i, claimed, pending, failed)
@@ -60,7 +60,7 @@ def walk_case(lines Array[String], i Int, claimed Int, pending Int, failed Int) 
   return walk_lines(lines, i + 1, claimed + 1, pending, failed_now)
 }
 
-def corpus_bug(lines Array[String], i Int, claimed Int, pending Int, failed Int) Int {
+def corpus_bug(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int64) Int64 {
   println(lines[i] + " malformed-case-line")
   return walk_lines(lines, i + 1, claimed, pending, failed + 1)
 }

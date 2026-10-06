@@ -7,15 +7,15 @@ def resolve(host String) Array[String] {
   return net_resolve(host)
 }
 
-def connect(host String, port Int, timeout Float) TcpConn {
+def connect(host String, port Int64, timeout Float64) TcpConn {
   return net_connect(host, port, timeout)
 }
 
-def listen(host String, port Int) TcpListener {
+def listen(host String, port Int64) TcpListener {
   return net_listen(host, port)
 }
 
-def connect_unix(path String, timeout Float) TcpConn {
+def connect_unix(path String, timeout Float64) TcpConn {
   return net_connect_unix(path, timeout)
 }
 
@@ -23,18 +23,18 @@ def listen_unix(path String) TcpListener {
   return net_listen_unix(path)
 }
 
-def tls_connect(host String, port Int, timeout Float) TcpConn {
+def tls_connect(host String, port Int64, timeout Float64) TcpConn {
   return net_tls_connect(host, port, timeout)
 }
 
-def tls_connect_insecure(host String, port Int, timeout Float) TcpConn {
+def tls_connect_insecure(host String, port Int64, timeout Float64) TcpConn {
   return net_tls_connect_insecure(host, port, timeout)
 }
 
-def listen_tls(host String, port Int, cert_path String, key_path String) TcpListener {
+def listen_tls(host String, port Int64, cert_path String, key_path String) TcpListener {
   return net_listen_tls(host, port, cert_path, key_path)
 }
 
-def udp_bind(host String, port Int) UdpSocket {
+def udp_bind(host String, port Int64) UdpSocket {
   return net_udp_bind(host, port)
 }

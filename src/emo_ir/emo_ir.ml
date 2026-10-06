@@ -211,8 +211,7 @@ and order_args env params args =
 and lower_expr env (e : Ast.expr) : expr =
   let expr desc = mk env e.Ast.span desc in
   match e.Ast.desc with
-  | Ast.Int n -> expr (Const (L_int n))
-  | Ast.Int64 n -> expr (Const (L_int64 n))
+  | Ast.Int64 n -> expr (Const (L_int n))
   | Ast.Byte n -> expr (Const (L_byte n))
   | Ast.Float f -> expr (Const (L_float f))
   | Ast.Bool b -> expr (Const (L_bool b))
@@ -578,8 +577,8 @@ and lower_func env ~(module_path : string list) ~(mangled : string)
 
 and ann_type (a : Ast.type_ann) : Emo_check.t =
   match a.Ast.type_desc with
-  | Ast.Named_type "Int" -> Emo_check.Int
-  | Ast.Named_type "Float" -> Emo_check.Float
+  | Ast.Named_type "Int64" -> Emo_check.Int64
+  | Ast.Named_type "Float64" -> Emo_check.Float64
   | Ast.Named_type "Bool" -> Emo_check.Bool
   | Ast.Named_type "Char" -> Emo_check.Char
   | Ast.Named_type "String" -> Emo_check.String
@@ -591,12 +590,12 @@ and ann_type (a : Ast.type_ann) : Emo_check.t =
 
    A function specializes when every value in it is native — parameters,
    result, and every expression in the body — and the only calls it makes
-   are to other specialized functions. Native: Int, Float, Bool, Char,
+   are to other specialized functions. Native: Int64, Float64, Bool, Char,
    String. Everything dynamic (Unknown, objects, sockets, closures)
    disqualifies. Computed to a fixed point over the call graph. *)
 
 let is_native = function
-  | Emo_check.Int | Emo_check.Float | Emo_check.Bool | Emo_check.Char
+  | Emo_check.Int64 | Emo_check.Float64 | Emo_check.Bool | Emo_check.Char
   | Emo_check.String ->
       true
   | _ -> false

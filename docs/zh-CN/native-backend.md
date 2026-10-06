@@ -29,9 +29,9 @@ parse → check → lower(Emo_ir)→ specialize → 发射 OCaml → ocamlopt �
 绑定表面是 `foreign def`:
 
 ```emo
-foreign def sqrt(x Float) Float = "sqrt"
+foreign def sqrt(x Float64) Float64 = "sqrt"
 ```
 
 发射出的 OCaml **不**直接声明 C 符号。裸 external 收到的是装箱的 `value` 实参(对 C 的 `double` 是错的),而且 `sqrt` 这类符号名会与 OCaml 编译器内联的原语冲突(在 macOS ARM64 上生成坏编码)。因此 `emo build` 为每个绑定生成一个 C 包装器——`.emo-build/ffi_stubs.c`——在边界处拆箱(`Double_val` / `String_val` / `Bool_val` 进,`caml_copy_double` / `caml_copy_string` / `Val_bool` 出),用 `cc` 编译并链接。
 
-目前只有 `Float`、`String`、`Bool` 能跨边界编组;其他类型在检查期拒绝(E4200)。用 `--cclib` 链接额外的 C 库(`emo build main.emo --cclib m`)。`foreign def` 只能在编译产物里运行——解释器以 E3009 拒绝。
+目前只有 `Float64`、`String`、`Bool` 能跨边界编组;其他类型在检查期拒绝(E4200)。用 `--cclib` 链接额外的 C 库(`emo build main.emo --cclib m`)。`foreign def` 只能在编译产物里运行——解释器以 E3009 拒绝。

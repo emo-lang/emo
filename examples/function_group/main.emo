@@ -7,14 +7,14 @@
 emo Math {
   const tau = 6
 
-  def abs(x Int) Int {
+  def abs(x Int64) Int64 {
     if x < 0 {
       return 0 - x
     }
     return x
   }
 
-  def clamp(x Int, lo Int, hi Int) Int {
+  def clamp(x Int64, lo Int64, hi Int64) Int64 {
     if x < lo {
       return lo
     }
@@ -28,11 +28,11 @@ emo Math {
 emo Format {
   const separator = " · "
 
-  def money(cents Int) String {
+  def money(cents Int64) String {
     return "${cents / 100} yuan"
   }
 
-  def tagged(label String, value Int) String {
+  def tagged(label String, value Int64) String {
     return "${label}${separator}${value}"
   }
 }

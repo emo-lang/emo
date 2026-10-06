@@ -37,8 +37,7 @@ let binop_spelling = function
 
 let rec pp_expr fmt (e : Emo_ast.expr) =
   match e.Emo_ast.desc with
-  | Int n -> Format.pp_print_int fmt n
-  | Int64 n -> Format.fprintf fmt "%LdL" n
+  | Int64 n -> Format.fprintf fmt "%Ld" n
   | Byte n -> Format.fprintf fmt "%dB" n
   | Float f -> Format.fprintf fmt "%g" f
   | Char c -> Format.fprintf fmt "%C" c
@@ -144,8 +143,7 @@ and pp_pattern fmt (p : Emo_ast.pattern) =
       Format.fprintf fmt "(tuple @[<hov>%a@])" (pp_list pp_pattern) ps
 
 and pp_literal fmt = function
-  | Emo_ast.L_int n -> Format.pp_print_int fmt n
-  | Emo_ast.L_int64 n -> Format.fprintf fmt "%LdL" n
+  | Emo_ast.L_int n -> Format.fprintf fmt "%Ld" n
   | Emo_ast.L_byte n -> Format.fprintf fmt "%dB" n
   | Emo_ast.L_float f -> Format.fprintf fmt "%g" f
   | Emo_ast.L_char c -> Format.fprintf fmt "%C" c
@@ -298,11 +296,11 @@ let expression_tests =
         Alcotest.check expr "shape" (parse_expr "(a + b)") (parse_expr "a + b"));
     tc "fixed-width literals parse with their width" (fun () ->
         Alcotest.(check string)
-          "int64" "1L" (render pp_expr (parse_expr "1L"));
+          "int64" "1" (render pp_expr (parse_expr "1"));
         Alcotest.(check string)
           "byte" "255B" (render pp_expr (parse_expr "255B"));
         Alcotest.(check string)
-          "in arithmetic" "(+ 1L 2L)" (render pp_expr (parse_expr "1L + 2L")));
+          "in arithmetic" "(+ 1 2)" (render pp_expr (parse_expr "1 + 2")));
     tc "array literals parse with elements" (fun () ->
         Alcotest.(check string)
           "shape" "(array 1 2 3)"
@@ -390,8 +388,8 @@ let control_tests =
   [
     tc "an arrow block takes annotated parameters" (fun () ->
         Alcotest.(check string)
-          "shape" "(block (param x Int) (param y Float)|(return x))"
-          (render pp_expr (parse_expr "-> (x Int, y Float) {\n  return x\n}")));
+          "shape" "(block (param x Int64) (param y Float64)|(return x))"
+          (render pp_expr (parse_expr "-> (x Int64, y Float64) {\n  return x\n}")));
     tc "an arrow block may omit its parameters" (fun () ->
         Alcotest.(check string)
           "shape" "(block |(return 1))"
@@ -533,12 +531,12 @@ let stmt_tests =
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
     tc "fixed-width literals are patterns" (fun () ->
         match
-          parse_program "case n {\n  10B -> { return 1 }\n  2L -> { return 2 }\n}"
+          parse_program "case n {\n  10B -> { return 1 }\n  2 -> { return 2 }\n}"
         with
         | [ case_stmt ] ->
             Alcotest.(check string)
               "shape"
-              "(case n (branch 10B |(return 1)) (branch 2L |(return 2)))"
+              "(case n (branch 10B |(return 1)) (branch 2 |(return 2)))"
               (render pp_item case_stmt)
         | stmts ->
             Alcotest.fail
@@ -585,21 +583,21 @@ let stmt_tests =
     tc "raise works inside a def body" (fun () ->
         match
           parse_program
-            {|def fail() Int {
+            {|def fail() Int64 {
   raise Exception.new(message: "boom")
 }|}
         with
         | [ fail ] ->
             Alcotest.(check string)
               "shape"
-              "(def fail () Int |(raise (((type Exception).new) call message: \
+              "(def fail () Int64 |(raise (((type Exception).new) call message: \
                \"boom\")))"
               (render pp_item fail)
         | items ->
             Alcotest.fail
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "bare raise is rejected" (fun () ->
-        let diagnostic = program_err "def f() Int {\n  raise\n}" in
+        let diagnostic = program_err "def f() Int64 {\n  raise\n}" in
         Alcotest.(check string) "code" "E2023" (code_of diagnostic);
         Alcotest.(check string)
           "span" "test.emo:3:1"
@@ -849,12 +847,12 @@ let def_tests =
   [
     tc "a def parses with params and return type" (fun () ->
         match
-          parse_program "def add(a Int, b Int) Int {\n  return a + b\n}"
+          parse_program "def add(a Int64, b Int64) Int64 {\n  return a + b\n}"
         with
         | [ def_item ] ->
             Alcotest.(check string)
               "shape"
-              "(def add (param a Int) (param b Int) Int |(return (+ a b)))"
+              "(def add (param a Int64) (param b Int64) Int64 |(return (+ a b)))"
               (render pp_item def_item)
         | items ->
             Alcotest.fail
@@ -878,15 +876,15 @@ let def_tests =
             Alcotest.fail
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "a def's span covers the whole declaration" (fun () ->
-        match parse_program "def f() Int {\n  return 1\n}" with
+        match parse_program "def f() Int64 {\n  return 1\n}" with
         | [ def_item ] ->
             Alcotest.(check int) "start" 0 def_item.Emo_ast.item_span.Span.start;
-            Alcotest.(check int) "stop" 26 def_item.Emo_ast.item_span.Span.stop
+            Alcotest.(check int) "stop" 28 def_item.Emo_ast.item_span.Span.stop
         | items ->
             Alcotest.fail
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "init cannot be defined at top level" (fun () ->
-        let diagnostic = def_err "def init(x Int) {\n  self.x = x\n}" in
+        let diagnostic = def_err "def init(x Int64) {\n  self.x = x\n}" in
         Alcotest.(check string) "code" "E2010" (code_of diagnostic);
         Alcotest.(check string)
           "span" "test.emo:1:5"
@@ -907,10 +905,10 @@ let def_tests =
         let diagnostic = def_err "def f()\nInt {\n  return 1\n}" in
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
     tc "the def body opens on the signature's line" (fun () ->
-        let diagnostic = def_err "def f() Int\n{\n  return 1\n}" in
+        let diagnostic = def_err "def f() Int64\n{\n  return 1\n}" in
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
     tc "a def needs a name" (fun () ->
-        let diagnostic = def_err "def () Int {\n  return 1\n}" in
+        let diagnostic = def_err "def () Int64 {\n  return 1\n}" in
         Alcotest.(check string) "code" "E2009" (code_of diagnostic));
   ]
 
@@ -920,7 +918,7 @@ let class_tests =
         match
           parse_program
             {|class User {
-  def init(name String, age Int) {
+  def init(name String, age Int64) {
     self.name = name
     self.age = age
   }
@@ -938,7 +936,7 @@ let class_tests =
             Alcotest.(check string)
               "shape"
               "(class User (fields (field name) (field age)) (init (param name \
-               String) (param age Int)|(= (self.name) name) (= (self.age) \
+               String) (param age Int64)|(= (self.name) name) (= (self.age) \
                age)) (def full_name () String |(return (+ (+ (self.name) \" \
                \") (((self.age).to_string) call)))) (def is_older? () Bool \
                |(return (> (self.age) 35))))"
@@ -990,7 +988,7 @@ let class_tests =
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "duplicate init is rejected at the second one" (fun () ->
         let diagnostic =
-          program_err "class D {\n  def init() {}\n  def init(x Int) {}\n}"
+          program_err "class D {\n  def init() {}\n  def init(x Int64) {}\n}"
         in
         Alcotest.(check string) "code" "E2014" (code_of diagnostic);
         Alcotest.(check string)
@@ -1029,7 +1027,7 @@ let class_tests =
             \  def init() {\n\
             \    self.x = 1\n\
             \  }\n\
-            \  def bump() Int {\n\
+            \  def bump() Int64 {\n\
             \    self.x = 2\n\
             \    return self.x\n\
             \  }\n\
@@ -1059,7 +1057,7 @@ let class_tests =
           (Span.to_string diagnostic.Diagnostic.span));
     tc "class members are separated by newlines" (fun () ->
         let diagnostic =
-          program_err "class C { def init() {} def m() Int { return 1 } }"
+          program_err "class C { def init() {} def m() Int64 { return 1 } }"
         in
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
     tc "the class body opens on the class's line" (fun () ->
@@ -1080,11 +1078,11 @@ let interface_tests =
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "signatures carry annotated parameters" (fun () ->
         match
-          parse_program "interface Teller {\n  def total(cart Cart) Int\n}"
+          parse_program "interface Teller {\n  def total(cart Cart) Int64\n}"
         with
         | [ teller ] ->
             Alcotest.(check string)
-              "shape" "(interface Teller (sig total (param cart Cart) Int))"
+              "shape" "(interface Teller (sig total (param cart Cart) Int64))"
               (render pp_item teller)
         | items ->
             Alcotest.fail
@@ -1123,7 +1121,7 @@ let interface_tests =
           (Span.to_string diagnostic.Diagnostic.span));
     tc "interface members are separated by newlines" (fun () ->
         let diagnostic =
-          program_err "interface B { def a() Int def b() Int }"
+          program_err "interface B { def a() Int64 def b() Int64 }"
         in
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
   ]
@@ -1173,7 +1171,7 @@ let enum_tests =
             Alcotest.fail
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "enums do not take payloads" (fun () ->
-        let diagnostic = program_err "enum Color(String, Int) { red }" in
+        let diagnostic = program_err "enum Color(String, Int64) { red }" in
         Alcotest.(check string) "code" "E2020" (code_of diagnostic);
         Alcotest.(check string)
           "span" "test.emo:1:11"
@@ -1210,7 +1208,7 @@ let parse_program_with_diagnostics source =
 let naming_tests =
   [
     tc "camelCase def names are rejected" (fun () ->
-        let diagnostic = program_err "def getUser() Int {\n  return 1\n}" in
+        let diagnostic = program_err "def getUser() Int64 {\n  return 1\n}" in
         Alcotest.(check string) "code" "E2022" (code_of diagnostic);
         Alcotest.(check string)
           "span" "test.emo:1:5"
@@ -1245,7 +1243,7 @@ let naming_tests =
           | None -> Alcotest.fail "expected a hint"));
     tc "camelCase parameters are rejected" (fun () ->
         let diagnostic =
-          program_err "def f(cartItem Int) Int {\n  return cartItem\n}"
+          program_err "def f(cartItem Int64) Int64 {\n  return cartItem\n}"
         in
         Alcotest.(check string) "code" "E2022" (code_of diagnostic));
     tc "camelCase pattern bindings are rejected" (fun () ->
@@ -1257,7 +1255,7 @@ let naming_tests =
         let diagnostic = program_err "const ready? = true" in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic);
         let diagnostic =
-          program_err "def f(ready? Int) Int {\n  return ready?\n}"
+          program_err "def f(ready? Int64) Int64 {\n  return ready?\n}"
         in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic);
         let diagnostic = program_err "case c {\n  ready? -> { return 1 }\n}" in
@@ -1282,7 +1280,7 @@ let recovery_tests =
     tc "recovery reports every top-level error in one pass" (fun () ->
         let _, diagnostics =
           parse_program_with_diagnostics
-            {|def getUser() Int {
+            {|def getUser() Int64 {
   return 1
 }
 
@@ -1290,7 +1288,7 @@ const Total = 2
 
 enum Bad(String) { red }
 
-def ok() Int {
+def ok() Int64 {
   return 3
 }|}
         in
@@ -1317,7 +1315,7 @@ def ok() Int {
     tc "resync lands on the next line-start keyword" (fun () ->
         let _, diagnostics =
           parse_program_with_diagnostics
-            "enum C { red, redGreen, blue }\ndef ok() Int {\n  return 1\n}"
+            "enum C { red, redGreen, blue }\ndef ok() Int64 {\n  return 1\n}"
         in
         Alcotest.(check int) "error count" 1 (List.length diagnostics);
         Alcotest.(check string)
@@ -1374,7 +1372,7 @@ require "a/b"|});
           Alcotest.(check string) "code" "E2010" (code_of d));
     tc "require is file-level only" (fun () ->
         let diagnostic =
-          program_err {|def f() Int {
+          program_err {|def f() Int64 {
   require "a/b"
   return 1
 }|}

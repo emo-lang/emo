@@ -31,7 +31,7 @@ let scheduler_tests =
         let output =
           run_source
             {|
-def worker() Int {
+def worker() Int64 {
   receive {
     (sender, n) -> {
       sender <- (self_pid(), n * 2)
@@ -54,7 +54,7 @@ println("done")
         let output =
           run_source
             {|
-def echo() Int {
+def echo() Int64 {
   receive {
     reply_to -> {
       reply_to <- self_pid()
@@ -94,7 +94,7 @@ receive {
         let output =
           run_source
             {|
-def slow(reply_to Pid) Int {
+def slow(reply_to Pid) Int64 {
   const a = 1
   const b = 2
   const c = a + b
@@ -114,7 +114,7 @@ println("after")
         let output =
           run_source
             {|
-def quitter() Int {
+def quitter() Int64 {
   receive {
     _ -> { return halt() }
   }
@@ -170,7 +170,7 @@ let isolation_tests =
         let output =
           run_source
             {|
-def bomber() Int {
+def bomber() Int64 {
   receive {
     _ -> { raise Exception.new("boom") }
   }
@@ -186,7 +186,7 @@ println("still here")
         let output =
           run_source
             {|
-def divider() Int {
+def divider() Int64 {
   receive {
     (_, 0) -> { return 1 / 0 }
     (_, n) -> { return 100 / n }
@@ -210,7 +210,7 @@ println("main survives")
             List.iter (Emo_eval.eval_item env)
               (Emo_parser.parse_program ~file:"<test>"
                  ~source:
-                   {|def quitter() Int {
+                   {|def quitter() Int64 {
   receive {
     _ -> { return halt() }
   }
@@ -243,7 +243,7 @@ let box_tests =
         let output =
           run_source
             {|
-def reader(reply_to Pid) Int {
+def reader(reply_to Pid) Int64 {
   receive {
     b -> {
       reply_to <- b.read()
@@ -269,7 +269,7 @@ println(box.read())
         let output =
           run_source
             {|
-def mutator(reply_to Pid) Int {
+def mutator(reply_to Pid) Int64 {
   receive {
     b -> {
       b.replace(7)
@@ -292,7 +292,7 @@ receive {
         let output =
           run_source
             {|
-def reader(reply_to Pid) Int {
+def reader(reply_to Pid) Int64 {
   receive {
     (b, tag) -> {
       reply_to <- (b.read(), tag)
@@ -343,7 +343,7 @@ let run_det ?seed source =
    the classic race the deterministic scheduler pins down. *)
 let racy =
   {|
-def echo(name String) Int {
+def echo(name String) Int64 {
   receive {
     reply_to -> {
       reply_to <- name
@@ -451,7 +451,7 @@ let determinism_tests =
 (* 500k round trips = 1M messages between two processes. *)
 let ping_pong =
   {|
-def pong(n Int) Int {
+def pong(n Int64) Int64 {
   receive {
     ("ping", reply_to) -> {
       reply_to <- "pong"
@@ -466,7 +466,7 @@ def pong(n Int) Int {
 
 const p = do pong(0)
 const me = self_pid()
-def round(i Int) Int {
+def round(i Int64) Int64 {
   if i == 0 {
     p <- ("done", me)
     return 0
@@ -487,7 +487,7 @@ receive {
 (* 1000 workers, each answering once; the main process folds the answers. *)
 let fan_out =
   {|
-def worker(reply_to Pid) Int {
+def worker(reply_to Pid) Int64 {
   receive {
     n -> {
       reply_to <- n * 2
@@ -497,7 +497,7 @@ def worker(reply_to Pid) Int {
 }
 
 const me = self_pid()
-def launch(i Int) Int {
+def launch(i Int64) Int64 {
   if i == 0 {
     return 0
   } else {
@@ -509,7 +509,7 @@ def launch(i Int) Int {
 
 launch(1000)
 
-def collect(n Int, sum Int) Int {
+def collect(n Int64, sum Int64) Int64 {
   if n == 0 {
     return sum
   } else {
@@ -525,7 +525,7 @@ println(collect(1000, 0))
 (* A receive loop recursing a million times — the native stack stays flat. *)
 let deep_loop =
   {|
-def looper(n Int) Int {
+def looper(n Int64) Int64 {
   receive {
     ("stop", report_to) -> {
       report_to <- n
@@ -539,7 +539,7 @@ def looper(n Int) Int {
 
 const l = do looper(0)
 const me = self_pid()
-def feed(i Int) Int {
+def feed(i Int64) Int64 {
   if i == 0 {
     l <- ("stop", me)
     return 0
@@ -579,7 +579,7 @@ let stress_tests =
         let output =
           run_source
             {|
-def looper(n Int) Int {
+def looper(n Int64) Int64 {
   receive {
     ("stop", report_to) -> {
       report_to <- n
@@ -594,7 +594,7 @@ def looper(n Int) Int {
 
 const l = do looper(0)
 const me = self_pid()
-def feed(i Int, who Pid) Int {
+def feed(i Int64, who Pid) Int64 {
   if i == 0 {
     who <- ("stop", me)
     return 0
@@ -666,7 +666,7 @@ let net_tests =
         let output, _events =
           run_det
             {|
-def serve(listener TcpListener) Int {
+def serve(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write(conn.read_line() + "\n")
   return serve(listener)
@@ -695,7 +695,7 @@ println(listener.port() < 65536)
         let output, _events =
           run_det
             {|
-def once(listener TcpListener) Int {
+def once(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write("bye")
   return conn.close()
@@ -728,7 +728,7 @@ println("unreachable")
         let message =
           run_det_raised
             {|
-def silent(listener TcpListener) Int {
+def silent(listener TcpListener) Int64 {
   const conn = listener.accept()
   return halt()
 }
@@ -785,7 +785,7 @@ conn.close()
         let message =
           run_det_raised
             {|
-def cut(listener TcpListener) Int {
+def cut(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write("half")
   return conn.close()
@@ -854,7 +854,7 @@ println("unreachable")
           run_det
             (Printf.sprintf
                {|
-def serve(listener TcpListener) Int {
+def serve(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write(conn.read_line() + "\n")
   return serve(listener)
@@ -914,7 +914,7 @@ println(addrs.length() > 0)
         let output, _events =
           run_det
             {|
-def serve(listener TcpListener) Int {
+def serve(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write(conn.read_line() + "\n")
   return serve(listener)
@@ -958,7 +958,7 @@ case b.recv_from() {
         let message =
           run_det_raised
             {|
-def serve(listener TcpListener) Int {
+def serve(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write(conn.read_line() + "\n")
   return serve(listener)
@@ -983,7 +983,7 @@ println("unreachable")
         let output, _events =
           run_det
             {|
-def serve(listener TcpListener) Int {
+def serve(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write(conn.read_line() + "\n")
   return serve(listener)

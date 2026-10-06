@@ -1,6 +1,6 @@
 // The reporter process: prints each forwarded line through the
 // catalog group, counts, and reports back to the boss.
-def run(count Int, boss Pid) Int {
+def run(count Int64, boss Pid) Int64 {
   receive {
     (id, total) -> {
       println("shipped " + Catalog.line(id, total))

@@ -109,8 +109,8 @@ validation — at a tenth to a fiftieth of the scale.
    cap throughput. Latency versus throughput is a backend choice to
    make deliberately and early.
 5. **The churn tax.** Global renames are still landing — the
-   implementation still spells `Int` and `Float` where the decided
-   surface says `Int64` and `Float64` — and group syntax is undecided.
+   implementation used to spell `Int` and `Float` where the decided
+   surface says `Int64` and `Float64`, and group syntax is undecided.
    A hundred thousand lines on a pre-1.0 language means moving house
    whenever the language does.
 

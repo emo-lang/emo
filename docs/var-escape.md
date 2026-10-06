@@ -21,7 +21,7 @@ inside an arrow block whose definition depth is greater than the
 depth of the block that introduced the `var`:
 
 ```emo
-def probe(flag Bool) Int {
+def probe(flag Bool) Int64 {
   if flag {
     var x = 1
     if flag {

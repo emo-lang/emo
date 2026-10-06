@@ -15,17 +15,17 @@
 // program with `emo build --no-specialize` keeps tagged values — the
 // benchmarks/ tree records what that difference is worth.
 
-foreign def sqrt(x Float) Float = "sqrt"
-foreign def pow(x Float, y Float) Float = "pow"
+foreign def sqrt(x Float64) Float64 = "sqrt"
+foreign def pow(x Float64, y Float64) Float64 = "pow"
 
 // Compound growth: principal * (1 + rate) ** years, straight into
 // unboxed doubles and the C library.
-def growth(principal Float, rate Float, years Float) Float {
+def growth(principal Float64, rate Float64, years Float64) Float64 {
   return principal * pow(1.0 + rate, years)
 }
 
 // One table row per year; recursion is the loop.
-def table(principal Float, rate Float, years Float) Float {
+def table(principal Float64, rate Float64, years Float64) Float64 {
   const value = growth(principal, rate, years)
   println("year ${years.to_string()}: ${value}")
   if years == 10.0 {
@@ -35,7 +35,7 @@ def table(principal Float, rate Float, years Float) Float {
 }
 
 // The two roots of a*x^2 + b*x + c = 0.
-def roots(a Float, b Float, c Float) (Float, Float) {
+def roots(a Float64, b Float64, c Float64) (Float64, Float64) {
   const disc = sqrt(b * b - 4.0 * a * c)
   const x1 = (0.0 - b + disc) / (2.0 * a)
   const x2 = (0.0 - b - disc) / (2.0 * a)

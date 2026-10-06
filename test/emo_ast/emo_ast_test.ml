@@ -7,7 +7,7 @@ let smoke_tests =
         let module M = Emo_ast in
         ());
     tc "nodes carry their spans" (fun () ->
-        let e = Emo_ast.{ span; desc = Int 1 } in
+        let e = Emo_ast.{ span; desc = Int64 1L } in
         Alcotest.(check int) "start" 0 e.Emo_ast.span.Emo_support.Span.start;
         let call =
           Emo_ast.

@@ -1,7 +1,7 @@
 // The specialization benchmark: one program, two builds. The default
 // build specializes fib (fully annotated → unboxed native arithmetic,
 // direct calls); `emo build --no-specialize` keeps every value tagged.
-def fib(n Int) Int {
+def fib(n Int64) Int64 {
   if n < 2 {
     return n
   }

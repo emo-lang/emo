@@ -26,15 +26,15 @@ let unbox_bool v =
   | Emo_eval.Bool b -> b
   | other -> failwith (type_error other "Bool")
 
-let unbox_int v =
+let unbox_int64 v =
   match v with
-  | Emo_eval.Int n -> n
-  | other -> failwith (type_error other "Int")
+  | Emo_eval.Int64 n -> n
+  | other -> failwith (type_error other "Int64")
 
-let unbox_float v =
+let unbox_float64 v =
   match v with
   | Emo_eval.Float f -> f
-  | other -> failwith (type_error other "Float")
+  | other -> failwith (type_error other "Float64")
 
 let unbox_string v =
   match v with
@@ -51,19 +51,19 @@ let unbox_conn v =
   | Emo_eval.TcpConn c -> c
   | other -> failwith (type_error other "TcpConn")
 
-let box_int n = Emo_eval.Int n
-let box_float f = Emo_eval.Float f
+let box_int64 n = Emo_eval.Int64 n
+let box_float64 f = Emo_eval.Float f
 let box_bool b = Emo_eval.Bool b
 let box_string s = Emo_eval.String s
 let box_char c = Emo_eval.Char c
 
 let bytes_new (v : Emo_eval.value) : Emo_eval.value =
   match v with
-  | Emo_eval.Int n when n >= 0 -> Emo_eval.Bytes (Bytes.make n '\000')
-  | Emo_eval.Int n ->
+  | Emo_eval.Int64 n when n >= 0L -> Emo_eval.Bytes (Bytes.make (Int64.to_int n) '\000')
+  | Emo_eval.Int64 n ->
       failwith
-        (Printf.sprintf "`Bytes.new` needs a non-negative length, got %d" n)
-  | v -> failwith (type_error v "Int")
+        (Printf.sprintf "`Bytes.new` needs a non-negative length, got %Ld" n)
+  | v -> failwith (type_error v "Int64")
 
 (* ---- Operators (tag-checked, mirroring the evaluator) ---- *)
 
@@ -71,54 +71,48 @@ let bytes_new (v : Emo_eval.value) : Emo_eval.value =
    unsigned, wraps modulo 256 — the evaluator's rule, mirrored here. *)
 let add a b =
   match (a, b) with
-  | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x + y)
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.add x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x + y) land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x +. y)
-  | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Float (float_of_int x +. y)
-  | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Float (x +. float_of_int y)
+  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x +. y)
+  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x +. Int64.to_float y)
   | Emo_eval.String x, Emo_eval.String y -> Emo_eval.String (x ^ y)
   | _ -> failwith "operator `+` expects two numbers or two strings"
 
 let sub a b =
   match (a, b) with
-  | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x - y)
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.sub x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x - y) land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x -. y)
-  | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Float (float_of_int x -. y)
-  | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Float (x -. float_of_int y)
+  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x -. y)
+  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x -. Int64.to_float y)
   | _ -> failwith "operator `-` expects two numbers"
 
 let mul a b =
   match (a, b) with
-  | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x * y)
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.mul x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x * y) land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x *. y)
-  | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Float (float_of_int x *. y)
-  | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Float (x *. float_of_int y)
+  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x *. y)
+  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x *. Int64.to_float y)
   | _ -> failwith "operator `*` expects two numbers"
 
 let div a b =
   match (a, b) with
-  | Emo_eval.Int _, Emo_eval.Int 0 -> failwith "division by zero"
   | Emo_eval.Int64 _, Emo_eval.Int64 0L -> failwith "division by zero"
   | Emo_eval.Byte _, Emo_eval.Byte 0 -> failwith "division by zero"
   | Emo_eval.Float _, Emo_eval.Float 0.0 -> failwith "division by zero"
-  | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x / y)
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.div x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x / y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x /. y)
-  | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Float (float_of_int x /. y)
-  | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Float (x /. float_of_int y)
+  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x /. y)
+  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x /. Int64.to_float y)
   | _ -> failwith "operator `/` expects two numbers"
 
 let modulo a b =
   match (a, b) with
   | Emo_eval.Int64 _, Emo_eval.Int64 0L -> failwith "division by zero"
   | Emo_eval.Byte _, Emo_eval.Byte 0 -> failwith "division by zero"
-  | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Int (x mod y)
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.rem x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x mod y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (Float.rem x y)
@@ -127,26 +121,26 @@ let modulo a b =
 (* Bitwise work is integer work: no float coercion, and out-of-range
    shift counts are an error, never a silent platform wrap. *)
 let shift_count = function
-  | Emo_eval.Int y when y >= 0 -> y
+  | Emo_eval.Int64 y when y >= 0L -> Int64.to_int y
   | v -> failwith (type_error v "non-negative shift count")
 
 let bit_and a b =
   match (a, b) with
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.logand x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x land y)
-  | _ -> Emo_eval.Int (unbox_int a land unbox_int b)
+  | _ -> failwith (type_error a "two Int64s or two Bytes")
 
 let bit_or a b =
   match (a, b) with
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.logor x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x lor y)
-  | _ -> Emo_eval.Int (unbox_int a lor unbox_int b)
+  | _ -> failwith (type_error a "two Int64s or two Bytes")
 
 let bit_xor a b =
   match (a, b) with
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.logxor x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x lxor y)
-  | _ -> Emo_eval.Int (unbox_int a lxor unbox_int b)
+  | _ -> failwith (type_error a "two Int64s or two Bytes")
 
 (* Fixed-width shift counts are their own width; the count saturates at
    the width, matching the evaluator. *)
@@ -159,10 +153,7 @@ let shl a b =
   | Emo_eval.Byte x, Emo_eval.Byte c ->
       if c >= 8 then Emo_eval.Byte 0
       else Emo_eval.Byte ((x lsl c) land 255)
-  | _ ->
-      let x = unbox_int a in
-      let count = shift_count b in
-      Emo_eval.Int (if count >= 63 then 0 else x lsl count)
+  | _ -> failwith (type_error a "two Int64s or two Bytes")
 
 let shr a b =
   match (a, b) with
@@ -172,16 +163,12 @@ let shr a b =
       else Emo_eval.Int64 (Int64.shift_right x (Int64.to_int c))
   | Emo_eval.Byte x, Emo_eval.Byte c ->
       if c >= 8 then Emo_eval.Byte 0 else Emo_eval.Byte (x lsr c)
-  | _ ->
-      let x = unbox_int a in
-      let count = shift_count b in
-      Emo_eval.Int (if count >= 63 then if x < 0 then -1 else 0 else x asr count)
+  | _ -> failwith (type_error a "two Int64s or two Bytes")
 
 let bit_not = function
-  | Emo_eval.Int x -> Emo_eval.Int (lnot x)
   | Emo_eval.Int64 x -> Emo_eval.Int64 (Int64.lognot x)
   | Emo_eval.Byte x -> Emo_eval.Byte (lnot x land 255)
-  | v -> failwith (type_error v "Int")
+  | v -> failwith (type_error v "Int64")
 
 (* Native-int shifts for the specialized path: the operands are already
    unboxed, so the guard must live here rather than in emitted code. *)
@@ -197,42 +184,38 @@ let shr_int (x : int) (count : int) : int =
 
 let lt a b =
   match (a, b) with
-  | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Bool (x < y)
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x < y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x < y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x < y)
-  | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Bool (float_of_int x < y)
-  | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Bool (x < float_of_int y)
+  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Bool (Int64.to_float x < y)
+  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Bool (x < Int64.to_float y)
   | _ -> failwith "operator `<` expects two numbers"
 
 let le a b =
   match (a, b) with
-  | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Bool (x <= y)
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x <= y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x <= y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x <= y)
-  | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Bool (float_of_int x <= y)
-  | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Bool (x <= float_of_int y)
+  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Bool (Int64.to_float x <= y)
+  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Bool (x <= Int64.to_float y)
   | _ -> failwith "operator `<=` expects two numbers"
 
 let gt a b =
   match (a, b) with
-  | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Bool (x > y)
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x > y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x > y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x > y)
-  | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Bool (float_of_int x > y)
-  | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Bool (x > float_of_int y)
+  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Bool (Int64.to_float x > y)
+  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Bool (x > Int64.to_float y)
   | _ -> failwith "operator `>` expects two numbers"
 
 let ge a b =
   match (a, b) with
-  | Emo_eval.Int x, Emo_eval.Int y -> Emo_eval.Bool (x >= y)
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x >= y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x >= y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x >= y)
-  | Emo_eval.Int x, Emo_eval.Float y -> Emo_eval.Bool (float_of_int x >= y)
-  | Emo_eval.Float x, Emo_eval.Int y -> Emo_eval.Bool (x >= float_of_int y)
+  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Bool (Int64.to_float x >= y)
+  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Bool (x >= Int64.to_float y)
   | _ -> failwith "operator `>=` expects two numbers"
 
 let eq a b = Emo_eval.Bool (Emo_eval.equal_value a b)
@@ -247,12 +230,11 @@ let case_error v =
     (Printf.sprintf "no `case` branch matched this %s value"
        (Emo_eval.type_name v))
 
-let neg v = Emo_eval.Int (-unbox_int v)
+let neg v = Emo_eval.Int64 (Int64.neg (unbox_int64 v))
 
 let negf v =
   match v with
   | Emo_eval.Float f -> Emo_eval.Float (-.f)
-  | Emo_eval.Int n -> Emo_eval.Int (-n)
   | Emo_eval.Int64 n -> Emo_eval.Int64 (Int64.neg n)
   | other -> failwith (type_error other "number")
 
@@ -300,13 +282,15 @@ let box_new v = Emo_eval.Box (ref v)
 
 let index collection i =
   match (collection, i) with
-  | Emo_eval.Array xs, Emo_eval.Int n ->
-      if n >= 0 && n < Array.length xs then xs.(n)
-      else failwith (Printf.sprintf "index %d is out of bounds" n)
-  | Emo_eval.Tuple xs, Emo_eval.Int n ->
-      if n >= 0 && n < List.length xs then List.nth xs n
-      else failwith (Printf.sprintf "index %d is out of bounds" n)
-  | _ -> failwith "indexing expects an Array or Tuple and an Int"
+  | Emo_eval.Array xs, Emo_eval.Int64 n ->
+      if n >= 0L && n < Int64.of_int (Array.length xs) then
+        xs.(Int64.to_int n)
+      else failwith (Printf.sprintf "index %Ld is out of bounds" n)
+  | Emo_eval.Tuple xs, Emo_eval.Int64 n ->
+      if n >= 0L && n < Int64.of_int (List.length xs) then
+        List.nth xs (Int64.to_int n)
+      else failwith (Printf.sprintf "index %Ld is out of bounds" n)
+  | _ -> failwith "indexing expects an Array or Tuple and an Int64"
 
 let interpolate parts =
   Emo_eval.String
@@ -330,72 +314,84 @@ let method_call self name args =
       Emo_eval.String (Bytes.to_string b)
   | Emo_eval.Bytes b, "length" ->
       none_expected ();
-      Emo_eval.Int (Bytes.length b)
+      Emo_eval.Int64 (Int64.of_int (Bytes.length b))
   | Emo_eval.Bytes b, "get" -> (
       one_expected ();
       match args with
-      | [ Emo_eval.Int i ] when i >= 0 && i < Bytes.length b ->
-          Emo_eval.Int (Char.code (Bytes.get b i))
-      | [ Emo_eval.Int i ] ->
+      | [ Emo_eval.Int64 i ]
+        when i >= 0L && i < Int64.of_int (Bytes.length b) ->
+          Emo_eval.Int64
+            (Int64.of_int (Char.code (Bytes.get b (Int64.to_int i))))
+      | [ Emo_eval.Int64 i ] ->
           failwith
-            (Printf.sprintf "index %d is out of bounds for a length-%d Bytes" i
+            (Printf.sprintf "index %Ld is out of bounds for a length-%d Bytes" i
                (Bytes.length b))
-      | [ v ] -> failwith (type_error v "Int")
+      | [ v ] -> failwith (type_error v "Int64")
       | _ -> failwith "`get` expects 1 argument")
   | Emo_eval.Bytes b, "set" -> (
       if argc <> 2 then failwith "`set` expects 2 arguments";
       match args with
-      | [ Emo_eval.Int i; Emo_eval.Int v ] when i >= 0 && i < Bytes.length b ->
-          if v < 0 || v > 255 then
+      | [ Emo_eval.Int64 i; Emo_eval.Int64 v ]
+        when i >= 0L && i < Int64.of_int (Bytes.length b) ->
+          if v < 0L || v > 255L then
             failwith
-              (Printf.sprintf "byte value %d is out of range for a byte (0-255)"
-                 v);
-          Bytes.set b i (Char.chr v);
-          Emo_eval.Int v
-      | [ Emo_eval.Int i; Emo_eval.Int _ ] ->
+              (Printf.sprintf
+                 "byte value %Ld is out of range for a byte (0-255)" v);
+          Bytes.set b (Int64.to_int i) (Char.chr (Int64.to_int v));
+          Emo_eval.Int64 v
+      | [ Emo_eval.Int64 i; Emo_eval.Int64 _ ] ->
           failwith
-            (Printf.sprintf "index %d is out of bounds for a length-%d Bytes" i
+            (Printf.sprintf "index %Ld is out of bounds for a length-%d Bytes" i
                (Bytes.length b))
-      | _ -> failwith "`set` expects (i Int, v Int)")
+      | _ -> failwith "`set` expects (i Int64, v Int64)")
   | Emo_eval.Bytes b, (("get_u16_le" | "get_u32_le") as mname) -> (
       one_expected ();
       let width = if mname = "get_u16_le" then 2 else 4 in
       match args with
-      | [ Emo_eval.Int i ] when i >= 0 && i + width <= Bytes.length b ->
+      | [ Emo_eval.Int64 i ]
+        when i >= 0L
+             && Int64.add i (Int64.of_int width)
+                <= Int64.of_int (Bytes.length b) ->
+          let i = Int64.to_int i in
           let acc = ref 0 in
           for k = width - 1 downto 0 do
             acc := (!acc lsl 8) lor Char.code (Bytes.get b (i + k))
           done;
-          Emo_eval.Int !acc
-      | [ Emo_eval.Int i ] ->
+          Emo_eval.Int64 (Int64.of_int !acc)
+      | [ Emo_eval.Int64 i ] ->
           failwith
             (Printf.sprintf
-               "index %d is out of bounds for a %s read on a length-%d Bytes" i
+               "index %Ld is out of bounds for a %s read on a length-%d Bytes" i
                mname (Bytes.length b))
-      | [ v ] -> failwith (type_error v "Int")
+      | [ v ] -> failwith (type_error v "Int64")
       | _ -> failwith "`get_u16_le`/`get_u32_le` expects 1 argument")
   | Emo_eval.Bytes b, (("set_u16_le" | "set_u32_le") as mname) -> (
       if argc <> 2 then failwith "`set_u16_le`/`set_u32_le` expects 2 arguments";
       let width = if mname = "set_u16_le" then 2 else 4 in
       let max = if width = 2 then 0xFFFF else 0xFFFFFFFF in
       match args with
-      | [ Emo_eval.Int i; Emo_eval.Int v ]
-        when i >= 0 && i + width <= Bytes.length b ->
-          let v = v land max in
+      | [ Emo_eval.Int64 i; Emo_eval.Int64 v ]
+        when i >= 0L
+             && Int64.add i (Int64.of_int width)
+                <= Int64.of_int (Bytes.length b) ->
+          let i = Int64.to_int i in
+          let v = Int64.to_int v land max in
           for k = 0 to width - 1 do
             Bytes.set b (i + k) (Char.chr ((v lsr (8 * k)) land 0xFF))
           done;
-          Emo_eval.Int v
-      | [ Emo_eval.Int i; Emo_eval.Int _ ] ->
+          Emo_eval.Int64 (Int64.of_int v)
+      | [ Emo_eval.Int64 i; Emo_eval.Int64 _ ] ->
           failwith
             (Printf.sprintf
-               "index %d is out of bounds for a %s write on a length-%d Bytes" i
+               "index %Ld is out of bounds for a %s write on a length-%d Bytes" i
                mname (Bytes.length b))
-      | _ -> failwith "`set_u16_le`/`set_u32_le` expects (i Int, v Int)")
+      | _ -> failwith "`set_u16_le`/`set_u32_le` expects (i Int64, v Int64)")
   | Emo_eval.Bytes b, "get_u64_le" -> (
       one_expected ();
       match args with
-      | [ Emo_eval.Int i ] when i >= 0 && i + 8 <= Bytes.length b ->
+      | [ Emo_eval.Int64 i ]
+        when i >= 0L && Int64.add i 8L <= Int64.of_int (Bytes.length b) ->
+          let i = Int64.to_int i in
           let acc = ref 0L in
           for k = 7 downto 0 do
             acc :=
@@ -404,19 +400,20 @@ let method_call self name args =
                 (Int64.of_int (Char.code (Bytes.get b (i + k))))
           done;
           Emo_eval.Int64 !acc
-      | [ Emo_eval.Int i ] ->
+      | [ Emo_eval.Int64 i ] ->
           failwith
             (Printf.sprintf
-               "index %d is out of bounds for a get_u64_le read on a length-%d \
+               "index %Ld is out of bounds for a get_u64_le read on a length-%d \
                 Bytes"
                i (Bytes.length b))
-      | [ v ] -> failwith (type_error v "Int")
+      | [ v ] -> failwith (type_error v "Int64")
       | _ -> failwith "`get_u64_le` expects 1 argument")
   | Emo_eval.Bytes b, "set_u64_le" -> (
       if argc <> 2 then failwith "`set_u64_le` expects 2 arguments";
       match args with
-      | [ Emo_eval.Int i; Emo_eval.Int64 v ]
-        when i >= 0 && i + 8 <= Bytes.length b ->
+      | [ Emo_eval.Int64 i; Emo_eval.Int64 v ]
+        when i >= 0L && Int64.add i 8L <= Int64.of_int (Bytes.length b) ->
+          let i = Int64.to_int i in
           for k = 0 to 7 do
             Bytes.set b (i + k)
               (Char.chr
@@ -424,44 +421,36 @@ let method_call self name args =
                     (Int64.logand (Int64.shift_right_logical v (8 * k)) 0xFFL)))
           done;
           Emo_eval.Int64 v
-      | [ Emo_eval.Int i; Emo_eval.Int64 _ ] ->
+      | [ Emo_eval.Int64 i; Emo_eval.Int64 _ ] ->
           failwith
             (Printf.sprintf
-               "index %d is out of bounds for a set_u64_le write on a length-%d \
+               "index %Ld is out of bounds for a set_u64_le write on a length-%d \
                 Bytes"
                i (Bytes.length b))
       | [ _; v ] -> failwith (type_error v "Int64")
-      | _ -> failwith "`set_u64_le` expects (i Int, v Int64)")
+      | _ -> failwith "`set_u64_le` expects (i Int64, v Int64)")
   | Emo_eval.String s, "to_bytes" ->
       none_expected ();
       Emo_eval.Bytes (Bytes.of_string s)
-  | Emo_eval.TypeValue "Int64", "from_int" -> (
+  | Emo_eval.TypeValue "Byte", "from_int64" -> (
       one_expected ();
       match List.hd args with
-      | Emo_eval.Int n -> Emo_eval.Int64 (Int64.of_int n)
-      | v -> failwith (type_error v "Int"))
-  | Emo_eval.TypeValue "Byte", "from_int" -> (
-      one_expected ();
-      match List.hd args with
-      | Emo_eval.Int n when n >= 0 && n <= 255 -> Emo_eval.Byte n
-      | Emo_eval.Int n ->
+      | Emo_eval.Int64 n when n >= 0L && n <= 255L -> Emo_eval.Byte (Int64.to_int n)
+      | Emo_eval.Int64 n ->
           failwith
-            (Printf.sprintf "`Byte.from_int` needs a value in 0-255, got %d" n)
-      | v -> failwith (type_error v "Int"))
-  | Emo_eval.TypeValue "Float", "from_bits" -> (
+            (Printf.sprintf "`Byte.from_int64` needs a value in 0-255, got %Ld" n)
+      | v -> failwith (type_error v "Int64"))
+  | Emo_eval.TypeValue "Float64", "from_bits" -> (
       one_expected ();
       match List.hd args with
       | Emo_eval.Int64 b -> Emo_eval.Float (Int64.float_of_bits b)
       | v -> failwith (type_error v "Int64"))
-  | Emo_eval.Int64 x, "to_int" ->
-      none_expected ();
-      Emo_eval.Int (Int64.to_int x)
   | Emo_eval.Int64 x, "to_byte" ->
       none_expected ();
       Emo_eval.Byte (Int64.to_int (Int64.logand x 255L))
-  | Emo_eval.Byte n, "to_int" ->
+  | Emo_eval.Byte n, "to_int64" ->
       none_expected ();
-      Emo_eval.Int n
+      Emo_eval.Int64 (Int64.of_int n)
   | Emo_eval.Float f, "to_bits" ->
       none_expected ();
       Emo_eval.Int64 (Int64.bits_of_float f)
@@ -477,19 +466,20 @@ let method_call self name args =
            failwith "`is` checks instances and enum members, not this value")
   | Emo_eval.Array xs, "length" ->
       none_expected ();
-      Emo_eval.Int (Array.length xs)
+      Emo_eval.Int64 (Int64.of_int (Array.length xs))
   | Emo_eval.Tuple xs, "length" ->
       none_expected ();
-      Emo_eval.Int (List.length xs)
+      Emo_eval.Int64 (Int64.of_int (List.length xs))
   | Emo_eval.String s, "length" ->
       none_expected ();
-      Emo_eval.Int (String.length s)
+      Emo_eval.Int64 (Int64.of_int (String.length s))
   | Emo_eval.String s, "substring" -> (
       match args with
-      | [ Emo_eval.Int start; Emo_eval.Int len ]
-        when start >= 0 && len >= 0 && start + len <= String.length s ->
-          Emo_eval.String (String.sub s start len)
-      | _ -> failwith "`substring` expects (start Int, length Int) in bounds")
+      | [ Emo_eval.Int64 start; Emo_eval.Int64 len ]
+        when start >= 0L && len >= 0L
+             && Int64.add start len <= Int64.of_int (String.length s) ->
+          Emo_eval.String (String.sub s (Int64.to_int start) (Int64.to_int len))
+      | _ -> failwith "`substring` expects (start Int64, length Int64) in bounds")
   | Emo_eval.String s, "split" -> (
       one_expected ();
       match List.hd args with
@@ -529,14 +519,15 @@ let method_call self name args =
             else if String.sub s i (String.length needle) = needle then Some i
             else find (i + 1)
           in
-          Emo_eval.Int (match find 0 with Some i -> i | None -> -1)
+          Emo_eval.Int64
+            (Int64.of_int (match find 0 with Some i -> i | None -> -1))
       | _ -> failwith "`index_of` expects a String")
   | Emo_eval.String s, "starts_with" -> (
       one_expected ();
       match List.hd args with
       | Emo_eval.String prefix -> Emo_eval.Bool (String.starts_with ~prefix s)
       | _ -> failwith "`starts_with` expects a String")
-  | Emo_eval.String s, "to_int" ->
+  | Emo_eval.String s, "to_int64" ->
       none_expected ();
       let body =
         if String.length s > 0 && s.[0] = '-' then
@@ -544,8 +535,11 @@ let method_call self name args =
         else s
       in
       if body = "" || not (String.for_all (fun c -> c >= '0' && c <= '9') body)
-      then failwith (Printf.sprintf "cannot parse `%s` as an Int" s)
-      else Emo_eval.Int (int_of_string s)
+      then failwith (Printf.sprintf "cannot parse `%s` as an Int64" s)
+      else (
+        match Int64.of_string_opt s with
+        | Some n -> Emo_eval.Int64 n
+        | None -> failwith (Printf.sprintf "cannot parse `%s` as an Int64" s))
   | Emo_eval.Array xs, "append" ->
       one_expected ();
       Emo_eval.Array (Array.append xs [| List.hd args |])
@@ -563,8 +557,9 @@ let method_call self name args =
   | Emo_eval.TcpConn c, "read_exactly" -> (
       one_expected ();
       match List.hd args with
-      | Emo_eval.Int n -> Emo_eval.String (Emo_eval.read_exactly_sync c n)
-      | _ -> failwith "`read_exactly` expects an Int")
+      | Emo_eval.Int64 n ->
+          Emo_eval.String (Emo_eval.read_exactly_sync c (Int64.to_int n))
+      | _ -> failwith "`read_exactly` expects an Int64")
   | Emo_eval.TcpConn c, "read_all" ->
       none_expected ();
       Emo_eval.String (Emo_eval.read_all_sync c)
@@ -584,20 +579,20 @@ let method_call self name args =
       | Emo_eval.Float f ->
           c.Emo_eval.ctimeout <- f;
           self
-      | _ -> failwith "`set_timeout` expects a Float")
+      | _ -> failwith "`set_timeout` expects a Float64")
   | Emo_eval.TcpListener l, "accept" ->
       none_expected ();
       Emo_eval.TcpConn (Emo_eval.accept_sync l)
   | Emo_eval.TcpListener l, "port" ->
       none_expected ();
-      Emo_eval.Int l.Emo_eval.lport
+      Emo_eval.Int64 (Int64.of_int l.Emo_eval.lport)
   | Emo_eval.TcpListener l, "close" ->
       none_expected ();
       Emo_eval.TcpListener (Emo_eval.close_listener_sync l)
   | Emo_eval.UdpSocket u, "send_to" -> (
       match args with
-      | [ Emo_eval.String host; Emo_eval.Int port; Emo_eval.String data ] ->
-          Emo_eval.udp_send_sync u host port data;
+      | [ Emo_eval.String host; Emo_eval.Int64 port; Emo_eval.String data ] ->
+          Emo_eval.udp_send_sync u host (Int64.to_int port) data;
           self
       | _ -> failwith "`send_to` expects (host, port, data)")
   | Emo_eval.UdpSocket u, "recv_from" ->
@@ -605,7 +600,7 @@ let method_call self name args =
       Emo_eval.udp_recv_sync u
   | Emo_eval.UdpSocket u, "port" ->
       none_expected ();
-      Emo_eval.Int u.Emo_eval.uport
+      Emo_eval.Int64 (Int64.of_int u.Emo_eval.uport)
   | Emo_eval.UdpSocket u, "close" ->
       none_expected ();
       Emo_eval.UdpSocket (Emo_eval.udp_close_sync u)
@@ -635,7 +630,8 @@ let apply_value f args =
 
 (* ---- Process operations ---- *)
 
-let self_pid () = Emo_eval.Int (Effect.perform Emo_eval.Self_pid)
+let self_pid () =
+  Emo_eval.Int64 (Int64.of_int (Effect.perform Emo_eval.Self_pid))
 
 (* Spawns a process whose arguments were evaluated eagerly in the
    spawning process — `do f(x)` reads x where the spawn appears, like

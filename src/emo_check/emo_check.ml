@@ -8,10 +8,9 @@ module Ast = Emo_ast
 type t =
   | Unknown
   | Void
-  | Int
   | Int64
   | Byte
-  | Float
+  | Float64
   | Bool
   | Char
   | String
@@ -31,10 +30,9 @@ type t =
 let rec to_string = function
   | Unknown -> "Unknown"
   | Void -> "Void"
-  | Int -> "Int"
   | Int64 -> "Int64"
   | Byte -> "Byte"
-  | Float -> "Float"
+  | Float64 -> "Float64"
   | Bool -> "Bool"
   | Char -> "Char"
   | String -> "String"
@@ -102,10 +100,9 @@ let report ctx span code message =
 let rec ann_to_type ?(lenient = false) ctx
     ({ Ast.type_span = span; type_desc; _ } : Ast.type_ann) =
   match type_desc with
-  | Ast.Named_type "Int" -> Int
   | Ast.Named_type "Int64" -> Int64
   | Ast.Named_type "Byte" -> Byte
-  | Ast.Named_type "Float" -> Float
+  | Ast.Named_type "Float64" -> Float64
   | Ast.Named_type "Bool" -> Bool
   | Ast.Named_type "Char" -> Char
   | Ast.Named_type "String" -> String
@@ -217,10 +214,10 @@ let collect ctx (items : Ast.item list) : unit =
                  "the group name `%s` is already a module in this project"
                  g.Ast.group_name)
       | Ast.Item_foreign f ->
-          (* The C FFI surface: Float/String/Bool marshal directly as
-             C doubles/char*/int; Int (tagged) would need C stubs. *)
+          (* The C FFI surface: Float64/String/Bool marshal directly as
+             C doubles/char*/int; Int64 (tagged) would need C stubs. *)
           let ffi_ok = function
-            | Ast.Named_type "Float"
+            | Ast.Named_type "Float64"
             | Ast.Named_type "String"
             | Ast.Named_type "Bool" ->
                 true
@@ -232,14 +229,14 @@ let collect ctx (items : Ast.item list) : unit =
               if not (ffi_ok p.Ast.param_type.Ast.type_desc) then
                 report ctx p.Ast.param_type.Ast.type_span "E4200"
                   (Printf.sprintf
-                     "foreign parameter `%s` must be Float, String, or Bool \
-                      (Int needs C stubs, not supported yet)"
+                     "foreign parameter `%s` must be Float64, String, or Bool \
+                      (Int64 needs C stubs, not supported yet)"
                      p.Ast.param_name))
             f.Ast.foreign_params;
           ignore (ann_to_type ctx f.Ast.foreign_return);
           if not (ffi_ok f.Ast.foreign_return.Ast.type_desc) then
             report ctx f.Ast.foreign_return.Ast.type_span "E4200"
-              "foreign return must be Float, String, or Bool (Int needs C \
+              "foreign return must be Float64, String, or Bool (Int64 needs C \
                stubs, not supported yet)";
           (* Call-site checking reuses the def signature. *)
           Hashtbl.replace ctx.funcs f.Ast.foreign_name
@@ -320,14 +317,14 @@ let empty_env =
           {
             vtype =
               FuncType
-                ( [ ("host", String); ("port", Int); ("timeout", Float) ],
+                ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
                   TcpConn );
             is_var = false;
             depth = 0;
           } );
         ( "net_listen",
           {
-            vtype = FuncType ([ ("host", String); ("port", Int) ], TcpListener);
+            vtype = FuncType ([ ("host", String); ("port", Int64) ], TcpListener);
             is_var = false;
             depth = 0;
           } );
@@ -339,13 +336,13 @@ let empty_env =
           } );
         ( "net_udp_bind",
           {
-            vtype = FuncType ([ ("host", String); ("port", Int) ], UdpSocket);
+            vtype = FuncType ([ ("host", String); ("port", Int64) ], UdpSocket);
             is_var = false;
             depth = 0;
           } );
         ( "net_connect_unix",
           {
-            vtype = FuncType ([ ("path", String); ("timeout", Float) ], TcpConn);
+            vtype = FuncType ([ ("path", String); ("timeout", Float64) ], TcpConn);
             is_var = false;
             depth = 0;
           } );
@@ -359,7 +356,7 @@ let empty_env =
           {
             vtype =
               FuncType
-                ( [ ("host", String); ("port", Int); ("timeout", Float) ],
+                ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
                   TcpConn );
             is_var = false;
             depth = 0;
@@ -368,7 +365,7 @@ let empty_env =
           {
             vtype =
               FuncType
-                ( [ ("host", String); ("port", Int); ("timeout", Float) ],
+                ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
                   TcpConn );
             is_var = false;
             depth = 0;
@@ -379,7 +376,7 @@ let empty_env =
               FuncType
                 ( [
                     ("host", String);
-                    ("port", Int);
+                    ("port", Int64);
                     ("cert_path", String);
                     ("key_path", String);
                   ],
@@ -391,7 +388,7 @@ let empty_env =
         ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
         ("Int64", { vtype = Unknown; is_var = false; depth = 0 });
         ("Byte", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Float", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
         ( "file_read",
           {
             vtype = FuncType ([ ("path", String) ], String);
@@ -400,7 +397,7 @@ let empty_env =
           } );
         ( "file_write",
           {
-            vtype = FuncType ([ ("path", String); ("contents", String) ], Int);
+            vtype = FuncType ([ ("path", String); ("contents", String) ], Int64);
             is_var = false;
             depth = 0;
           } );
@@ -444,7 +441,7 @@ let rec structurally_conforms ctx cname iname =
 and conforms ctx actual expected =
   match (actual, expected) with
   | _, Unknown | Unknown, _ -> true
-  | Int, Float -> true
+  | Int64, Float64 -> true
   | ClassType a, ClassType b -> String.equal a b
   | EnumType a, EnumType b -> String.equal a b
   | ArrayType a, ArrayType b -> conforms ctx a b
@@ -510,10 +507,9 @@ let resolve_type_name ctx span name =
 type coverage = All | Members of string list
 
 let literal_type = function
-  | Ast.L_int _ -> Int
-  | Ast.L_int64 _ -> Int64
+  | Ast.L_int _ -> Int64
   | Ast.L_byte _ -> Byte
-  | Ast.L_float _ -> Float
+  | Ast.L_float _ -> Float64
   | Ast.L_char _ -> Char
   | Ast.L_string _ -> String
   | Ast.L_bool _ -> Bool
@@ -522,7 +518,7 @@ let literal_type = function
 let provably_excluded ctx rt target =
   match (rt, target) with
   | Unknown, _ | _, Unknown -> false
-  | Int, _ | Float, _ | Bool, _ | Char, _ | String, _ -> true
+  | Int64, _ | Float64, _ | Bool, _ | Char, _ | String, _ -> true
   | ClassType a, ClassType b -> not (String.equal a b)
   | ClassType c, InterfaceType i -> not (structurally_conforms ctx c i)
   | ClassType _, EnumType _ -> true
@@ -539,10 +535,9 @@ let rec check_expr ctx env (e : Ast.expr) : t =
 and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
   let e = { Ast.span; desc } in
   match desc with
-  | Ast.Int _ -> Int
   | Ast.Int64 _ -> Int64
   | Ast.Byte _ -> Byte
-  | Ast.Float _ -> Float
+  | Ast.Float _ -> Float64
   | Ast.Bool _ -> Bool
   | Ast.Char _ -> Char
   | Ast.String _ -> String
@@ -637,24 +632,27 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
       let it = check_expr ctx env index in
       match bt with
       | ArrayType elem ->
-          if it = Unknown || it = Int then elem
+          if it = Unknown || it = Int64 then elem
           else (
             report ctx span "E4004"
-              (Printf.sprintf "the index must be an Int, got %s" (to_string it));
+              (Printf.sprintf "the index must be an Int64, got %s" (to_string it));
             elem)
       | TupleType ts -> (
           match (index.Ast.desc, it) with
-          | Ast.Int n, _ when n >= 0 && n < List.length ts -> (
-              match List.nth_opt ts n with Some t -> t | None -> Unknown)
-          | Ast.Int n, _ ->
+          | Ast.Int64 n, _
+            when n >= 0L && n < Int64.of_int (List.length ts) -> (
+              match List.nth_opt ts (Int64.to_int n) with
+              | Some t -> t
+              | None -> Unknown)
+          | Ast.Int64 n, _ ->
               report ctx span "E4006"
-                (Printf.sprintf "tuple index %d is out of bounds for %s" n
+                (Printf.sprintf "tuple index %Ld is out of bounds for %s" n
                    (to_string bt));
               Unknown
-          | _, Int -> Unknown
+          | _, Int64 -> Unknown
           | _, other ->
               report ctx span "E4004"
-                (Printf.sprintf "the index must be an Int, got %s"
+                (Printf.sprintf "the index must be an Int64, got %s"
                    (to_string other));
               Unknown)
       | Unknown -> Unknown
@@ -726,23 +724,22 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
             (Printf.sprintf "operator `!` expects a Bool, got %s"
                (to_string other));
           Bool
-      | Ast.Neg, (Int | Unknown) -> Int
-      | Ast.Neg, Int64 -> Int64
+      | Ast.Neg, (Int64 | Unknown) -> Int64
       | Ast.Neg, Byte ->
           report ctx span "E4004"
             "operator `-` does not apply to the unsigned Byte";
           Unknown
-      | Ast.Neg, Float -> Float
+      | Ast.Neg, Float64 -> Float64
       | Ast.Neg, other ->
           report ctx span "E4004"
             (Printf.sprintf "operator `-` expects a number, got %s"
                (to_string other));
           Unknown
-      | Ast.Bit_not, (Int | Unknown) -> Int
-      | Ast.Bit_not, ((Int64 | Byte) as t) -> t
+      | Ast.Bit_not, (Int64 | Unknown) -> Int64
+      | Ast.Bit_not, Byte -> Byte
       | Ast.Bit_not, other ->
           report ctx span "E4004"
-            (Printf.sprintf "operator `~` expects an Int, got %s"
+            (Printf.sprintf "operator `~` expects an Int64, got %s"
                (to_string other));
           Unknown)
   | Ast.Binary (op, l, r) -> check_binary ctx env span op l r
@@ -986,10 +983,10 @@ and check_method_call ctx env span recv mname args : t =
     | TcpConn, "read_line" -> builtin0 String
     | TcpConn, "read_exactly" -> (
         match arg_values with
-        | [ (None, Int) ] | [ (Some "n", Int) ] -> String
+        | [ (None, Int64) ] | [ (Some "n", Int64) ] -> String
         | [ (_, other) ] ->
             report ctx span "E4004"
-              (Printf.sprintf "`read_exactly` expects Int, got %s"
+              (Printf.sprintf "`read_exactly` expects Int64, got %s"
                  (to_string other));
             String
         | _ ->
@@ -1013,10 +1010,10 @@ and check_method_call ctx env span recv mname args : t =
     | TcpConn, "close" -> builtin0 TcpConn
     | TcpConn, "set_timeout" -> (
         match arg_values with
-        | [ (None, Float) ] | [ (Some "seconds", Float) ] -> TcpConn
+        | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpConn
         | [ (_, other) ] ->
             report ctx span "E4004"
-              (Printf.sprintf "`set_timeout` expects Float, got %s"
+              (Printf.sprintf "`set_timeout` expects Float64, got %s"
                  (to_string other));
             TcpConn
         | _ ->
@@ -1025,14 +1022,14 @@ and check_method_call ctx env span recv mname args : t =
                  (List.length arg_values));
             TcpConn)
     | TcpListener, "accept" -> builtin0 TcpConn
-    | TcpListener, "port" -> builtin0 Int
+    | TcpListener, "port" -> builtin0 Int64
     | TcpListener, "close" -> builtin0 TcpListener
     | TcpListener, "set_timeout" -> (
         match arg_values with
-        | [ (None, Float) ] | [ (Some "seconds", Float) ] -> TcpListener
+        | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpListener
         | [ (_, other) ] ->
             report ctx span "E4004"
-              (Printf.sprintf "`set_timeout` expects Float, got %s"
+              (Printf.sprintf "`set_timeout` expects Float64, got %s"
                  (to_string other));
             TcpListener
         | _ ->
@@ -1042,25 +1039,25 @@ and check_method_call ctx env span recv mname args : t =
             TcpListener)
     | UdpSocket, "send_to" -> (
         match arg_values with
-        | [ (None, String); (None, Int); (None, String) ] -> UdpSocket
+        | [ (None, String); (None, Int64); (None, String) ] -> UdpSocket
         | [ _; _; _ ] ->
             report ctx span "E4004"
-              "`send_to` expects (host String, port Int, data String)";
+              "`send_to` expects (host String, port Int64, data String)";
             UdpSocket
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`send_to` expects 3 arguments, got %d"
                  (List.length arg_values));
             UdpSocket)
-    | UdpSocket, "recv_from" -> builtin0 (TupleType [ String; String; Int ])
-    | UdpSocket, "port" -> builtin0 Int
+    | UdpSocket, "recv_from" -> builtin0 (TupleType [ String; String; Int64 ])
+    | UdpSocket, "port" -> builtin0 Int64
     | UdpSocket, "close" -> builtin0 UdpSocket
     | UdpSocket, "set_timeout" -> (
         match arg_values with
-        | [ (None, Float) ] | [ (Some "seconds", Float) ] -> UdpSocket
+        | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> UdpSocket
         | [ (_, other) ] ->
             report ctx span "E4004"
-              (Printf.sprintf "`set_timeout` expects Float, got %s"
+              (Printf.sprintf "`set_timeout` expects Float64, got %s"
                  (to_string other));
             UdpSocket
         | _ ->
@@ -1068,13 +1065,13 @@ and check_method_call ctx env span recv mname args : t =
               (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
                  (List.length arg_values));
             UdpSocket)
-    | String, "length" -> builtin0 Int
+    | String, "length" -> builtin0 Int64
     | String, "substring" -> (
         match arg_values with
-        | [ (None, Int); (None, Int) ] -> String
+        | [ (None, Int64); (None, Int64) ] -> String
         | [ _; _ ] ->
             report ctx span "E4004"
-              "`substring` expects (start Int, length Int)";
+              "`substring` expects (start Int64, length Int64)";
             String
         | _ ->
             report ctx span "E4009"
@@ -1096,15 +1093,15 @@ and check_method_call ctx env span recv mname args : t =
     | String, "lower" -> builtin0 String
     | String, "index_of" -> (
         match arg_values with
-        | [ (None, String) ] | [ (Some "needle", String) ] -> Int
+        | [ (None, String) ] | [ (Some "needle", String) ] -> Int64
         | [ _ ] ->
             report ctx span "E4004" "`index_of` expects a String needle";
-            Int
+            Int64
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`index_of` expects 1 argument, got %d"
                  (List.length arg_values));
-            Int)
+            Int64)
     | String, "starts_with" -> (
         match arg_values with
         | [ (None, String) ] | [ (Some "prefix", String) ] -> Bool
@@ -1116,7 +1113,7 @@ and check_method_call ctx env span recv mname args : t =
               (Printf.sprintf "`starts_with` expects 1 argument, got %d"
                  (List.length arg_values));
             Bool)
-    | String, "to_int" -> builtin0 Int
+    | String, "to_int64" -> builtin0 Int64
     | ArrayType elem, "append" -> (
         match arg_values with
         | [ (_, vt) ] ->
@@ -1133,8 +1130,8 @@ and check_method_call ctx env span recv mname args : t =
     | ArrayType elem, "length" ->
         builtin0
           (ignore elem;
-           Int)
-    | TupleType _, "length" -> builtin0 Int
+           Int64)
+    | TupleType _, "length" -> builtin0 Int64
     | BoxType elem, "read" -> builtin0 elem
     | BoxType elem, "replace" -> (
         let args = List.map snd arg_values in
@@ -1150,53 +1147,52 @@ and check_method_call ctx env span recv mname args : t =
               (Printf.sprintf "`replace` expects 1 argument, got %d"
                  (List.length args));
             elem)
-    | Int64, "to_int" -> builtin0 Int
     | Int64, "to_byte" -> builtin0 Byte
-    | Byte, "to_int" -> builtin0 Int
-    | Float, "to_bits" -> builtin0 Int64
-    | Bytes, "length" -> builtin0 Int
+    | Byte, "to_int64" -> builtin0 Int64
+    | Float64, "to_bits" -> builtin0 Int64
+    | Bytes, "length" -> builtin0 Int64
     | Bytes, "get" -> (
         match arg_values with
-        | [ (None, Int) ] | [ (Some "i", Int) ] -> Int
+        | [ (None, Int64) ] | [ (Some "i", Int64) ] -> Int64
         | [ _ ] ->
-            report ctx span "E4004" "`get` expects an Int index";
-            Int
+            report ctx span "E4004" "`get` expects an Int64 index";
+            Int64
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`get` expects 1 argument, got %d"
                  (List.length arg_values));
-            Int)
+            Int64)
     | Bytes, (("set" | "set_u16_le" | "set_u32_le") as mname) -> (
         match arg_values with
-        | [ (None, Int); (None, Int) ]
-        | [ (Some "i", Int); ((Some "v" | None), Int) ] ->
-            Int
+        | [ (None, Int64); (None, Int64) ]
+        | [ (Some "i", Int64); ((Some "v" | None), Int64) ] ->
+            Int64
         | [ _; _ ] ->
             report ctx span "E4004"
-              (Printf.sprintf "`%s` expects (i Int, v Int)" mname);
-            Int
+              (Printf.sprintf "`%s` expects (i Int64, v Int64)" mname);
+            Int64
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`%s` expects 2 arguments, got %d" mname
                  (List.length arg_values));
-            Int)
+            Int64)
     | Bytes, (("get_u16_le" | "get_u32_le") as mname) -> (
         match arg_values with
-        | [ (None, Int) ] | [ (Some "i", Int) ] -> Int
+        | [ (None, Int64) ] | [ (Some "i", Int64) ] -> Int64
         | [ _ ] ->
             report ctx span "E4004"
-              (Printf.sprintf "`%s` expects an Int index" mname);
-            Int
+              (Printf.sprintf "`%s` expects an Int64 index" mname);
+            Int64
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`%s` expects 1 argument, got %d" mname
                  (List.length arg_values));
-            Int)
+            Int64)
     | Bytes, "get_u64_le" -> (
         match arg_values with
-        | [ (None, Int) ] | [ (Some "i", Int) ] -> Int64
+        | [ (None, Int64) ] | [ (Some "i", Int64) ] -> Int64
         | [ _ ] ->
-            report ctx span "E4004" "`get_u64_le` expects an Int index";
+            report ctx span "E4004" "`get_u64_le` expects an Int64 index";
             Int64
         | _ ->
             report ctx span "E4009"
@@ -1205,11 +1201,11 @@ and check_method_call ctx env span recv mname args : t =
             Int64)
     | Bytes, "set_u64_le" -> (
         match arg_values with
-        | [ (None, Int); (None, Int64) ]
-        | [ (Some "i", Int); ((Some "v" | None), Int64) ] ->
+        | [ (None, Int64); (None, Int64) ]
+        | [ (Some "i", Int64); ((Some "v" | None), Int64) ] ->
             Int64
         | [ _; _ ] ->
-            report ctx span "E4004" "`set_u64_le` expects (i Int, v Int64)";
+            report ctx span "E4004" "`set_u64_le` expects (i Int64, v Int64)";
             Int64
         | _ ->
             report ctx span "E4009"
@@ -1235,13 +1231,13 @@ and check_binary ctx env span op l r =
   let lt = check_expr ctx env l in
   let rt = check_expr ctx env r in
   let numeric_pair_ok () =
-    let is_num = function Int | Float | Unknown -> true | _ -> false in
+    let is_num = function Int64 | Float64 | Unknown -> true | _ -> false in
     is_num lt && is_num rt
   in
   let result_number =
-    if lt = Float || rt = Float then Float
+    if lt = Float64 || rt = Float64 then Float64
     else if lt = Unknown || rt = Unknown then Unknown
-    else Int
+    else Int64
   in
   let mismatch expects =
     report ctx span "E4004"
@@ -1307,9 +1303,9 @@ and check_binary ctx env span op l r =
       result_number
   | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr ->
       (* Bitwise work is integer work: no float coercion, ever. *)
-      let int_side_ok t = t = Int || t = Unknown in
-      if not (int_side_ok lt && int_side_ok rt) then mismatch "two Ints";
-      Int
+      let int_side_ok t = t = Int64 || t = Unknown in
+      if not (int_side_ok lt && int_side_ok rt) then mismatch "two Int64s";
+      Int64
   | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge ->
       if not (numeric_pair_ok ()) then mismatch "two numbers";
       Bool
@@ -1339,7 +1335,7 @@ and narrowed_then_env ctx env cond =
         let target_type = resolve_type_name ctx recv.Ast.span tname in
         let rt = check_expr ctx env recv in
         (match rt with
-        | (ClassType _ | EnumType _ | Int | Float | Bool | Char | String)
+        | (ClassType _ | EnumType _ | Int64 | Float64 | Bool | Char | String)
           when provably_excluded ctx rt target_type ->
             report ctx recv.Ast.span "E4011"
               (Printf.sprintf "`%s` can never narrow to %s" (to_string rt)

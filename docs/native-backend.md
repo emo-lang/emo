@@ -64,7 +64,7 @@ path — the IR, not the emitter, is the layer backends have in common.
 The binding surface is `foreign def`:
 
 ```emo
-foreign def sqrt(x Float) Float = "sqrt"
+foreign def sqrt(x Float64) Float64 = "sqrt"
 ```
 
 The emitted OCaml does **not** declare the C symbol directly. Raw
@@ -76,7 +76,7 @@ unboxes at the boundary (`Double_val` / `String_val` / `Bool_val` in,
 `caml_copy_double` / `caml_copy_string` / `Val_bool` out), compiles it
 with `cc`, and links it.
 
-Only `Float`, `String`, and `Bool` marshal today; other types are
+Only `Float64`, `String`, and `Bool` marshal today; other types are
 refused at check time (E4200). Link additional C libraries with
 `--cclib` (`emo build main.emo --cclib m`). `foreign def` runs only in
 compiled programs — the interpreter refuses it with E3009.

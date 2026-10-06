@@ -173,7 +173,7 @@ let load_tests =
           run_entry
             (with_project
                [
-                 ("shop/order.emo", {|def total(n Int) Int {
+                 ("shop/order.emo", {|def total(n Int64) Int64 {
   return n * 2
 }|});
                  ("shop/checkout.emo", {|println(shop.order.total(21))|});
@@ -186,7 +186,7 @@ let load_tests =
           run_entry
             (with_project
                [
-                 ("shop/order.emo", {|def total(n Int) Int {
+                 ("shop/order.emo", {|def total(n Int64) Int64 {
   return n * 2
 }|});
                  ( "shop/checkout.emo",
@@ -203,7 +203,7 @@ println(order.total(4))|} );
                [
                  ( "shop/order.emo",
                    {|println("loading order")
-def total(n Int) Int {
+def total(n Int64) Int64 {
   return n
 }|}
                  );
@@ -302,7 +302,7 @@ const once = 1|});
           discover
             [
               ("main.emo", {|println(helper.run())|});
-              ("helper.emo", {|def run() Int {
+              ("helper.emo", {|def run() Int64 {
   return 1
 }|});
             ]
@@ -318,7 +318,7 @@ let cache_tests =
         let entry =
           with_project
             [
-              ("shop/order.emo", {|def total(n Int) Int {
+              ("shop/order.emo", {|def total(n Int64) Int64 {
   return n * 2
 }|});
               ("shop/checkout.emo", {|println(shop.order.total(21))|});
@@ -431,7 +431,7 @@ let registry_dir =
 |};
   write_file
     (Filename.concat wasm_dir "wasm_tools.emo")
-    {|def shrink(n Int) Int {
+    {|def shrink(n Int64) Int64 {
   return n - 1
 }
 |};
@@ -691,7 +691,7 @@ let sched_tests =
           with_project
             [
               ( "main.emo",
-                {|def worker(reply_to Pid) Int {
+                {|def worker(reply_to Pid) Int64 {
   receive {
     n -> {
       reply_to <- n * 2
@@ -971,7 +971,7 @@ let ffi_tests =
       (fun () ->
         let build_out, status, bin =
           build_binary
-            {|foreign def sqrt(x Float) Float = "sqrt"
+            {|foreign def sqrt(x Float64) Float64 = "sqrt"
 println(sqrt(4.0))
 println(sqrt(2.0))|}
             "ffi-prog" ~cclib:[ "m" ]
@@ -993,7 +993,7 @@ println(sqrt(2.0))|}
           with_project
             [
               ( "main.emo",
-                {|foreign def sqrt(x Float) Float = "sqrt"
+                {|foreign def sqrt(x Float64) Float64 = "sqrt"
 println(sqrt(4.0))|} );
             ]
             "main.emo"

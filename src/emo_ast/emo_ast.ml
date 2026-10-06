@@ -4,7 +4,6 @@
 type expr = { span : Emo_support.Span.t; desc : expr_desc }
 
 and expr_desc =
-  | Int of int
   | Int64 of int64
   | Byte of int
   | Float of float
@@ -19,7 +18,7 @@ and expr_desc =
   | Index of expr * expr (* a[i] *)
   | Call of expr * arg list
   | Arrow_block of
-      param list * stmt list (* -> (x Int) { ... } and -> { ... } *)
+      param list * stmt list (* -> (x Int64) { ... } and -> { ... } *)
   | Tuple of expr list
   | Array_literal of expr list (* [a, b, c] — fixed length, immutable *)
   | Unary of unop * expr
@@ -33,9 +32,9 @@ and param = { param_name : string; param_type : type_ann }
 and type_ann = { type_span : Emo_support.Span.t; type_desc : type_ann_desc }
 
 and type_ann_desc =
-  | Named_type of string (* Int, User *)
-  | Applied_type of string * type_ann list (* Array[User], Box[Int] *)
-  | Tuple_type of type_ann list (* (Int, String) *)
+  | Named_type of string (* Int64, User *)
+  | Applied_type of string * type_ann list (* Array[User], Box[Int64] *)
+  | Tuple_type of type_ann list (* (Int64, String) *)
 
 and unop = Not | Neg | Bit_not
 
@@ -95,8 +94,7 @@ and pattern_desc =
   | Tuple_pattern of pattern list
 
 and literal =
-  | L_int of int
-  | L_int64 of int64
+  | L_int of int64
   | L_byte of int
   | L_float of float
   | L_char of char

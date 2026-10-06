@@ -69,20 +69,20 @@ interface Greeter {
   def greet() String
 }
 
-def add(a Int, b Int) Int {
+def add(a Int64, b Int64) Int64 {
   return a + b
 }
 
 const sum = 1 + 2
 println(sum)|})));
     tc "an annotation naming an undeclared type is an error" (fun () ->
-        let diagnostics = check "def f(x Widget) Int {\n  return 1\n}" in
+        let diagnostics = check "def f(x Widget) Int64 {\n  return 1\n}" in
         Alcotest.(check bool) "E4005" true (has_code diagnostics "E4005");
         Alcotest.(check string) "span" "test.emo:1:9" (span_of diagnostics));
     tc "parameterized annotation vocabulary resolves" (fun () ->
         let diagnostics =
           check
-            "def first(xs Array[Int]) Int {\n\
+            "def first(xs Array[Int64]) Int64 {\n\
             \  return xs[0]\n\
              }\n\
              const b = Box.new(1)"
@@ -91,7 +91,7 @@ println(sum)|})));
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check int) "count" 0 (List.length diagnostics));
     tc "a bad parameterized annotation is an error" (fun () ->
-        let diagnostics = check "def f(xs Widget[Int]) Int {\n  return 0\n}" in
+        let diagnostics = check "def f(xs Widget[Int64]) Int64 {\n  return 0\n}" in
         Alcotest.(check bool) "E4005" true (has_code diagnostics "E4005"));
   ]
 
@@ -183,20 +183,20 @@ println(first + "!")|}
 let signature_tests =
   [
     tc "a wrong return type against the signature is an error" (fun () ->
-        let diagnostics = check {|def f() Int {
+        let diagnostics = check {|def f() Int64 {
   return "s"
 }|} in
         Alcotest.(check bool) "E4008" true (has_code diagnostics "E4008");
         Alcotest.(check string) "span" "test.emo:2:11" (span_of diagnostics));
     tc "parameter uses carry the declared types" (fun () ->
-        let diagnostics = check {|def f(a Int) Int {
+        let diagnostics = check {|def f(a Int64) Int64 {
   return a + ""
 }|} in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
     tc "top-level defs are callable from later items" (fun () ->
         Alcotest.(check int)
           "count" 0
-          (List.length (check "def f() Int {\n  return 1\n}\nconst x = f()")));
+          (List.length (check "def f() Int64 {\n  return 1\n}\nconst x = f()")));
     tc "init is exempt from return checks" (fun () ->
         Alcotest.(check int)
           "count" 0
@@ -209,13 +209,13 @@ let signature_tests =
 }|})));
     tc "arrow block bodies are checked under their param types" (fun () ->
         let diagnostics =
-          check {|const bad = -> (n Int) {
+          check {|const bad = -> (n Int64) {
   return n + "s"
 }|}
         in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
     tc "an inferrable block used as a value is silent" (fun () ->
-        let diagnostics = check {|const g = -> (n Int) {
+        let diagnostics = check {|const g = -> (n Int64) {
   return n + 1
 }|} in
         if List.length diagnostics > 0 then
@@ -223,7 +223,7 @@ let signature_tests =
         Alcotest.(check int) "count" 0 (List.length diagnostics));
     tc "a block with no returns infers Void and stays silent as a value"
       (fun () ->
-        let diagnostics = check {|const h = -> (n Int) {
+        let diagnostics = check {|const h = -> (n Int64) {
   println(n)
 }|} in
         if List.length diagnostics > 0 then
@@ -449,7 +449,7 @@ let var_escape_tests =
     tc "a var captured by a nested block is an error" (fun () ->
         let diagnostics =
           check
-            {|def probe(flag Bool) Int {
+            {|def probe(flag Bool) Int64 {
   if flag {
     var x = 1
     if flag {
@@ -470,7 +470,7 @@ let var_escape_tests =
           "count" 0
           (List.length
              (check
-                {|def probe(flag Bool) Int {
+                {|def probe(flag Bool) Int64 {
   if flag {
     const x = 1
     if flag {
@@ -494,7 +494,7 @@ println(g())|})));
     tc "a Box is the legal way to hold mutable state in a block" (fun () ->
         let diagnostics =
           check
-            {|def probe(flag Bool) Int {
+            {|def probe(flag Bool) Int64 {
   if flag {
     const cell = Box.new(1)
     if flag {
@@ -517,7 +517,7 @@ let case_tests =
     tc "guards must be Bools" (fun () ->
         let diagnostics =
           check
-            {|def f(n Int) Int {
+            {|def f(n Int64) Int64 {
   case n {
     x when x -> { return 1 }
     _ -> { return 2 }
@@ -531,7 +531,7 @@ let case_tests =
             {|enum Color { red }
 enum Mood { happy }
 
-def f(c Color) Int {
+def f(c Color) Int64 {
   case c {
     Mood.happy -> { return 1 }
   }
@@ -541,7 +541,7 @@ def f(c Color) Int {
     tc "a literal pattern must match the scrutinee" (fun () ->
         let diagnostics =
           check
-            {|def f(n Int) Int {
+            {|def f(n Int64) Int64 {
   case n {
     "one" -> { return 1 }
     _ -> { return 2 }
@@ -554,7 +554,7 @@ def f(c Color) Int {
           check
             {|enum Color { red, green, blue }
 
-def f(c Color) Int {
+def f(c Color) Int64 {
   case c {
     Color.red -> { return 1 }
   }
@@ -583,7 +583,7 @@ def f(c Color) Int {
              (check
                 {|enum Color { red, green }
 
-def f(c Color) Int {
+def f(c Color) Int64 {
   case c {
     Color.red -> { return 1 }
     _ -> { return 2 }
@@ -594,7 +594,7 @@ def f(c Color) Int {
           check
             {|enum Color { red, green }
 
-def f(c Color) Int {
+def f(c Color) Int64 {
   case c {
     Color.red when c == Color.red -> { return 1 }
   }
@@ -606,7 +606,7 @@ def f(c Color) Int {
           check
             {|enum Outcome { ok, failed }
 
-def show(p (Outcome, Int)) String {
+def show(p (Outcome, Int64)) String {
   case p {
     (Outcome.ok, v) -> { return v.to_string() }
   }
@@ -620,7 +620,7 @@ def show(p (Outcome, Int)) String {
           check
             {|enum Outcome { ok, failed }
 
-def show(p (Outcome, Int)) String {
+def show(p (Outcome, Int64)) String {
   case p {
     (Outcome.ok, v) -> { return v.to_string() }
     (Outcome.failed, _) -> { return "no" }
@@ -640,7 +640,7 @@ def show(p (Outcome, Int)) String {
              (check
                 {|enum Outcome { ok, failed }
 
-def grade(p (Outcome, Int)) String {
+def grade(p (Outcome, Int64)) String {
   case p {
     (Outcome.ok, v) -> { return v.to_string() }
     (Outcome.failed, _) -> { return "no" }
@@ -734,7 +734,7 @@ let void_tests =
         Alcotest.(check bool) "E4016" true (has_code diagnostics "E4016"));
     tc "a def with a declared return type must return on every path" (fun () ->
         let diagnostics =
-          check {|def f(x Int) Int {
+          check {|def f(x Int64) Int64 {
   if x > 0 {
     return 1
   }
@@ -747,7 +747,7 @@ let void_tests =
             (check
                {|enum Color { red, green }
 
-def f(c Color) Int {
+def f(c Color) Int64 {
   case c {
     Color.red -> { return 1 }
     Color.green -> { return 2 }
@@ -757,7 +757,7 @@ def f(c Color) Int {
         then Alcotest.fail "expected a clean check");
     tc "a valueless `return` in a typed function is E4018" (fun () ->
         let diagnostics =
-          check {|def f(x Int) Int {
+          check {|def f(x Int64) Int64 {
   if x > 0 {
     return
   }
@@ -782,7 +782,7 @@ page(title: "Home") {
         then Alcotest.fail "expected a clean check");
     tc "a block returning a value must return on every path" (fun () ->
         let diagnostics =
-          check {|const f = -> (n Int) {
+          check {|const f = -> (n Int64) {
   if n > 0 {
     return 1
   }

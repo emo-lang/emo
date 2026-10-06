@@ -80,7 +80,7 @@ let repl_tests =
           ~input:
             (queue_input
                [
-                 "def double(n Int) Int {";
+                 "def double(n Int64) Int64 {";
                  "  return n * 2";
                  "}";
                  "double(21)";

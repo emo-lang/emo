@@ -10,13 +10,13 @@
 // (qualified type annotations do not parse — step 20 pressure), so any
 // cross-def cursor travel goes through unannotated locals.
 
-def debug_print_outcome(label String, o (Bool, String, Int, String)) Int {
+def debug_print_outcome(label String, o (Bool, String, Int64, String)) Int64 {
   println(label + ": ok=" + o[0].to_string() + " phase=" + o[1]
     + " offset=" + o[2].to_string() + " msg=" + o[3])
   return 0
 }
 
-def module_from(data Bytes) (Bool, String, Int, String) {  const r = internal.reader.over(data)
+def module_from(data Bytes) (Bool, String, Int64, String) {  const r = internal.reader.over(data)
   const head = internal.reader.take(r, 8)
   const rr = head[0]
   if rr.failed {
@@ -55,7 +55,7 @@ def module_from(data Bytes) (Bool, String, Int, String) {  const r = internal.re
 // A non-custom section's rank in the fixed order, doubled so the
 // data-count section (id 12) fits strictly between element (9) and
 // code (10).
-def rank(id Int) Int {
+def rank(id Int64) Int64 {
   if id == 12 {
     return 19
   }
@@ -67,7 +67,7 @@ def rank(id Int) Int {
 // section's value (-1 before it is seen); `n_funcs` the function
 // section's declared count (-1 before it is seen); `saw_code` whether
 // the code section has been walked.
-def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int, saw_code Bool) (Bool, String, Int, String) {
+def walk(data Bytes, pos Int64, last_rank Int64, dc Int64, n_funcs Int64, saw_code Bool) (Bool, String, Int64, String) {
   if pos >= data.length() {
     if n_funcs > 0 && !saw_code {
       // A declared function needs its body: no code section at all
@@ -254,11 +254,11 @@ def walk(data Bytes, pos Int, last_rank Int, dc Int, n_funcs Int, saw_code Bool)
 
 // (data-present-and-datacount-absent, code_lo, code_hi) — the code
 // range is -1..-1 when absent.
-def bulk_scan(data Bytes) (Bool, Int, Int) {
+def bulk_scan(data Bytes) (Bool, Int64, Int64) {
   return bulk_rest(data, 8, false, false, false, -1, -1)
 }
 
-def bulk_rest(data Bytes, pos Int, saw_dc Bool, saw_data Bool, saw_code Bool, clo Int, chi Int) (Bool, Int, Int) {
+def bulk_rest(data Bytes, pos Int64, saw_dc Bool, saw_data Bool, saw_code Bool, clo Int64, chi Int64) (Bool, Int64, Int64) {
   if pos >= data.length() {
     return (saw_data && !saw_dc && saw_code, clo, chi)
   }

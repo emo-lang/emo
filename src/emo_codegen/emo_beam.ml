@@ -111,8 +111,7 @@ let put env s = Buffer.add_string env.buf s
 
 let rec expr env (x : Emo_ir.expr) : unit =
   match x.Emo_ir.desc with
-  | Const (L_int n) -> put env (string_of_int n)
-  | Const (L_int64 n) -> put env (Int64.to_string n)
+  | Const (L_int n) -> put env (Int64.to_string n)
   | Const (L_byte n) -> put env (string_of_int n)
   | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
@@ -384,20 +383,18 @@ and method_call env self_ name args =
       args_list env [ self_ ];
       put env "\nend"
   (* The fixed-width conversions. Int64 and Byte are both plain Erlang
-     integers here, so `to_int` is the identity and the static constructors
+     integers here, so `to_int64` is the identity and the static constructors
      differ only in Byte's range check. *)
-  | "from_int", [ v ] -> (
+  | "from_int64", [ v ] -> (
       match self_.Emo_ir.desc with
-      | Emo_ir.Type_ref "Int64" ->
-          put env "apply 'emo_i64_from_int'/1 ";
-          args_list env [ v ]
+      | Emo_ir.Type_ref "Int64" -> expr env v
       | _ ->
-          put env "apply 'emo_byte_from_int'/1 ";
+          put env "apply 'emo_byte_from_int64'/1 ";
           args_list env [ v ])
   | "from_bits", [ v ] ->
       put env "apply 'emo_from_bits'/1 ";
       args_list env [ v ]
-  | "to_int", [] -> expr env self_
+  | "to_int64", [] -> expr env self_
   | "to_byte", [] ->
       put env "apply 'emo_to_byte'/1 ";
       args_list env [ self_ ]
@@ -782,8 +779,7 @@ and emit_pattern env (p : Emo_ast.pattern) : unit =
   | Emo_ast.Pattern_binding name ->
       let v = fresh_var env name in
       put env v
-  | Emo_ast.Pattern_literal (L_int n) -> put env (string_of_int n)
-  | Emo_ast.Pattern_literal (L_int64 n) -> put env (Int64.to_string n)
+  | Emo_ast.Pattern_literal (L_int n) -> put env (Int64.to_string n)
   | Emo_ast.Pattern_literal (L_byte n) -> put env (string_of_int n)
   | Emo_ast.Pattern_literal (L_bool b) ->
       put env (if b then "'true'" else "'false'")
@@ -816,7 +812,7 @@ and guard_expr env (x : Emo_ir.expr) : unit =
       match List.assoc_opt name env.local_map with
       | Some v -> put env v
       | None -> failwith ("beam: unbound guard local " ^ name))
-  | Const (L_int n) -> put env (string_of_int n)
+  | Const (L_int n) -> put env (Int64.to_string n)
   | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
   | Const (L_char c) -> put env (Printf.sprintf "$\\x%02x" (Char.code c))
@@ -1200,7 +1196,7 @@ let rt_source =
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
 	end
 
-'emo_i64_from_int'/1 =
+'emo_i64_from_int64'/1 =
     fun (_a) ->
 	case _a of
 	  <_x> when call 'erlang':'is_integer'(_x) ->
@@ -1208,7 +1204,7 @@ let rt_source =
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
 	end
 
-'emo_byte_from_int'/1 =
+'emo_byte_from_int64'/1 =
     fun (_a) ->
 	case _a of
 	  <_x> when call 'erlang':'is_integer'(_x) ->

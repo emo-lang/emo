@@ -53,7 +53,6 @@ module Token = struct
     | Not
 
   type kind =
-    | Int of int
     | Int64 of int64
     | Byte of int
     | Float of float
@@ -409,14 +408,9 @@ let lex ~file ~source =
                     ~hint:"digit separators are not supported";
                 match char_at 0 with
                 | Some 'L' ->
-                    let digits = String.sub source o (!offset - o) in
-                    (match Int64.of_string_opt digits with
-                    | Some n ->
-                        bump ();
-                        emit (Token.Int64 n) l c o
-                    | None ->
-                        error "E1006" (span_from l c o)
-                          "integer literal out of range for Int64")
+                    error "E1006" (span_from l c o)
+                      "Int64 literals need no suffix"
+                      ~hint:"write the digits bare; the default is Int64"
                 | Some 'B' ->
                     let digits = String.sub source o (!offset - o) in
                     (match int_of_string_opt digits with
@@ -427,11 +421,12 @@ let lex ~file ~source =
                         error "E1006" (span_from l c o)
                           "byte literal out of range (0-255)")
                 | _ ->
-                    match int_of_string_opt (String.sub source o (!offset - o)) with
-                    | Some n -> emit (Token.Int n) l c o
+                    let digits = String.sub source o (!offset - o) in
+                    match Int64.of_string_opt digits with
+                    | Some n -> emit (Token.Int64 n) l c o
                     | None ->
-                      error "E1006" (span_from l c o)
-                        "integer literal out of range"))
+                        error "E1006" (span_from l c o)
+                          "integer literal out of range for Int64"))
         | '\'' ->
             let qline, qcol, qoff = (l, c, o) in
             let quoted_span =

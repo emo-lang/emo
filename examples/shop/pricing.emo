@@ -3,6 +3,6 @@
 // alias assignment.
 const discounts = internal.discounts
 
-def price(n Int) Int {
+def price(n Int64) Int64 {
   return (n * 10) - discounts.seasonal(n)
 }

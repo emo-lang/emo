@@ -3,7 +3,7 @@ require "emo"
 require "emo-ui"
 
 class User {
-  def init(name String, age Int) {
+  def init(name String, age Int64) {
     self.name = name
     self.age = age
   }

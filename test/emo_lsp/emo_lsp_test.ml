@@ -8,7 +8,7 @@ let tc name f = Alcotest.test_case name `Quick f
 (* ---- Positions ------------------------------------------------------ *)
 
 let test_ascii_positions () =
-  let text = "def add(a Int) Int {\n  return a + 1\n}\n" in
+  let text = "def add(a Int64) Int64 {\n  return a + 1\n}\n" in
   let starts = Lsp_util.line_starts text in
   Alcotest.(check (pair int int))
     "line 0 col 0" (0, 0)
@@ -18,10 +18,10 @@ let test_ascii_positions () =
     (Lsp_util.offset_to_position text starts 3);
   Alcotest.(check (pair int int))
     "line 1 start" (1, 0)
-    (Lsp_util.offset_to_position text starts 21);
+    (Lsp_util.offset_to_position text starts 25);
   Alcotest.(check (pair int int))
     "line 1 return" (1, 2)
-    (Lsp_util.offset_to_position text starts 23)
+    (Lsp_util.offset_to_position text starts 27)
 
 let test_utf16_positions () =
   (* The six Chinese characters are 3 bytes each in UTF-8 and one UTF-16
@@ -93,7 +93,7 @@ let source =
 
 emo Math {
   const tau = 6
-  def abs(x Int) Int {
+  def abs(x Int64) Int64 {
     return x
   }
 }
@@ -227,7 +227,7 @@ let test_dependency_modules () =
         \  targets = [\"native\"]\n\
         \  deps {}\n\
          }\n";
-      write (Filename.concat pkg "foo.emo") "def bar() Int {\n  return 1\n}\n";
+      write (Filename.concat pkg "foo.emo") "def bar() Int64 {\n  return 1\n}\n";
       let modules = Lsp_index.dependency_modules ~root ~registry:(Some reg) in
       let paths = List.map fst modules in
       Alcotest.(check bool)

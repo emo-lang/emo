@@ -10,7 +10,7 @@
 // the no-growable-buffer pressure.
 
 class FuncType {
-  def init(params Array[Int], results Array[Int]) {
+  def init(params Array[Int64], results Array[Int64]) {
     self.params = params
     self.results = results
   }
@@ -20,11 +20,11 @@ class FuncType {
 // scope for step 20 and rejects here.
 
 // Decode a valtype vector of known length: (ok, codes, new_pos).
-def valtype_vec(data Bytes, pos Int, limit Int, n Int) (Bool, Array[Int], Int) {
+def valtype_vec(data Bytes, pos Int64, limit Int64, n Int64) (Bool, Array[Int64], Int64) {
   return valtype_rest(data, pos, limit, n, [])
 }
 
-def valtype_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) (Bool, Array[Int], Int) {
+def valtype_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[Int64]) (Bool, Array[Int64], Int64) {
   if n == 0 {
     return (true, acc, pos)
   }
@@ -39,7 +39,7 @@ def valtype_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) (Bool, A
 // (ok, func_type, new_pos). On failure the func type is an empty
 // sentinel; the reader state of the caller decides nothing — the ok
 // flag is the contract.
-def func_type(data Bytes, pos Int, limit Int) (Bool, FuncType, Int) {
+def func_type(data Bytes, pos Int64, limit Int64) (Bool, FuncType, Int64) {
   if pos >= limit {
     return (false, FuncType.new([], []), pos)
   }
@@ -67,7 +67,7 @@ def func_type(data Bytes, pos Int, limit Int) (Bool, FuncType, Int) {
 
 // The type section's content: a vector of function types.
 // (ok, types, new_pos) — ok is false on any malformed byte.
-def type_section(data Bytes, pos Int, limit Int) (Bool, Array[FuncType], Int) {
+def type_section(data Bytes, pos Int64, limit Int64) (Bool, Array[FuncType], Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, [], pos)
@@ -75,7 +75,7 @@ def type_section(data Bytes, pos Int, limit Int) (Bool, Array[FuncType], Int) {
   return type_rest(data, cn[0].pos, limit, cn[1], [])
 }
 
-def type_rest(data Bytes, pos Int, limit Int, n Int, acc Array[FuncType]) (Bool, Array[FuncType], Int) {
+def type_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[FuncType]) (Bool, Array[FuncType], Int64) {
   if n == 0 {
     return (true, acc, pos)
   }
@@ -95,7 +95,7 @@ def type_rest(data Bytes, pos Int, limit Int, n Int, acc Array[FuncType]) (Bool,
 
 // Limits: a flags byte (0 = min, 1 = min+max), then u32s.
 // (ok, min, max, has_max, new_pos)
-def limits(data Bytes, pos Int, limit Int) (Bool, Int, Int, Bool, Int) {
+def limits(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64, Bool, Int64) {
   if pos >= limit {
     return (false, 0, 0, false, pos)
   }
@@ -122,7 +122,7 @@ def limits(data Bytes, pos Int, limit Int) (Bool, Int, Int, Bool, Int) {
 }
 
 // A reference type byte for tables: funcref (0x70) or externref (0x6f).
-def reftype(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+def reftype(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64) {
   if pos >= limit {
     return (false, 0, pos)
   }
@@ -134,7 +134,7 @@ def reftype(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
 }
 
 // tabletype = reftype limits: (ok, reftype, min, max, has_max, new_pos)
-def tabletype(data Bytes, pos Int, limit Int) (Bool, Int, Int, Int, Bool, Int) {
+def tabletype(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64, Int64, Bool, Int64) {
   const rt = reftype(data, pos, limit)
   if !rt[0] {
     return (false, 0, 0, 0, false, pos)
@@ -147,12 +147,12 @@ def tabletype(data Bytes, pos Int, limit Int) (Bool, Int, Int, Int, Bool, Int) {
 }
 
 // memtype = limits.
-def memtype(data Bytes, pos Int, limit Int) (Bool, Int, Int, Bool, Int) {
+def memtype(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64, Bool, Int64) {
   return limits(data, pos, limit)
 }
 
 // globaltype = valtype + mutability byte (0 or 1).
-def globaltype(data Bytes, pos Int, limit Int) (Bool, Int, Bool, Int) {
+def globaltype(data Bytes, pos Int64, limit Int64) (Bool, Int64, Bool, Int64) {
   const v = internal.reader.valtype_at(data, pos, limit)
   if !v[0] {
     return (false, 0, false, pos)
@@ -172,7 +172,7 @@ def globaltype(data Bytes, pos Int, limit Int) (Bool, Int, Bool, Int) {
 // A name: u32 length, then that many bytes, which must be valid UTF-8
 // (the spec adopts the Unicode definition — surrogates, overlong
 // forms, and anything above U+10FFFF reject).
-def name(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+def name(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64) {
   const p = internal.reader.u32(internal.reader.new(data, pos, limit))
   if p[0].failed {
     return (false, 0, p[0].fail_offset)
@@ -193,7 +193,7 @@ def name(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
 // a difference is a "section size mismatch").
 
 // The import section: vec of (module name, name, importdesc).
-def import_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+def import_section(data Bytes, pos Int64, limit Int64) (Bool, String, Int64, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, "malformed import section", cn[0].fail_offset, -1)
@@ -201,7 +201,7 @@ def import_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   return import_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def import_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+def import_rest(data Bytes, pos Int64, limit Int64, n Int64) (Bool, String, Int64, Int64) {
   if n == 0 {
     return (true, "", -1, pos)
   }
@@ -222,7 +222,7 @@ def import_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) 
 
 // importdesc: one kind byte (0 func / 1 table / 2 memory / 3 global)
 // followed by the type.
-def import_desc(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+def import_desc(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64) {
   if pos >= limit {
     return (false, 0, pos)
   }
@@ -250,7 +250,7 @@ def import_desc(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
 }
 
 // The function section: vec of type indices.
-def func_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+def func_section(data Bytes, pos Int64, limit Int64) (Bool, String, Int64, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, "malformed function section", cn[0].fail_offset, -1)
@@ -259,7 +259,7 @@ def func_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
 }
 
 // The table section: vec of tabletypes.
-def table_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+def table_section(data Bytes, pos Int64, limit Int64) (Bool, String, Int64, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, "malformed table section", cn[0].fail_offset, -1)
@@ -267,7 +267,7 @@ def table_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   return table_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def table_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+def table_rest(data Bytes, pos Int64, limit Int64, n Int64) (Bool, String, Int64, Int64) {
   if n == 0 {
     return (true, "", -1, pos)
   }
@@ -279,7 +279,7 @@ def table_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
 }
 
 // The memory section: vec of memtypes.
-def memory_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+def memory_section(data Bytes, pos Int64, limit Int64) (Bool, String, Int64, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, "malformed memory section", cn[0].fail_offset, -1)
@@ -287,7 +287,7 @@ def memory_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   return memory_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def memory_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+def memory_rest(data Bytes, pos Int64, limit Int64, n Int64) (Bool, String, Int64, Int64) {
   if n == 0 {
     return (true, "", -1, pos)
   }
@@ -299,7 +299,7 @@ def memory_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) 
 }
 
 // The export section: vec of (name, kind byte, index).
-def export_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+def export_section(data Bytes, pos Int64, limit Int64) (Bool, String, Int64, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, "malformed export section", cn[0].fail_offset, -1)
@@ -307,7 +307,7 @@ def export_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   return export_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def export_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+def export_rest(data Bytes, pos Int64, limit Int64, n Int64) (Bool, String, Int64, Int64) {
   if n == 0 {
     return (true, "", -1, pos)
   }
@@ -330,7 +330,7 @@ def export_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) 
 }
 
 // A shared vec-of-u32 walker (the function section's shape).
-def u32_vec_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+def u32_vec_rest(data Bytes, pos Int64, limit Int64, n Int64) (Bool, String, Int64, Int64) {
   if n == 0 {
     return (true, "", -1, pos)
   }
@@ -345,7 +345,7 @@ def u32_vec_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int)
 // expression must consume the entry exactly. `dc` is the module's
 // data-count value (-1 absent), which the instruction decoder needs
 // for memory.init / data.drop.
-def code_section(data Bytes, pos Int, limit Int, dc Int, n_funcs Int) (Bool, String, Int, Int) {
+def code_section(data Bytes, pos Int64, limit Int64, dc Int64, n_funcs Int64) (Bool, String, Int64, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, "malformed code section", cn[0].fail_offset, -1)
@@ -359,7 +359,7 @@ def code_section(data Bytes, pos Int, limit Int, dc Int, n_funcs Int) (Bool, Str
   return code_rest(data, cn[0].pos, limit, cn[1], dc)
 }
 
-def code_rest(data Bytes, pos Int, limit Int, n Int, dc Int) (Bool, String, Int, Int) {
+def code_rest(data Bytes, pos Int64, limit Int64, n Int64, dc Int64) (Bool, String, Int64, Int64) {
   if n == 0 {
     return (true, "", -1, pos)
   }
@@ -388,7 +388,7 @@ def code_rest(data Bytes, pos Int, limit Int, n Int, dc Int) (Bool, String, Int,
 }
 
 // The data-count section: one u32, exactly consumed.
-def datacount_section(data Bytes, pos Int, limit Int) (Bool, Int, Int, Int) {
+def datacount_section(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64, Int64) {
   const p = internal.reader.u32(internal.reader.new(data, pos, limit))
   if p[0].failed {
     return (false, 0, p[0].fail_offset, -1)
@@ -400,7 +400,7 @@ def datacount_section(data Bytes, pos Int, limit Int) (Bool, Int, Int, Int) {
 }
 
 // The global section: vec of (globaltype, init expression).
-def global_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+def global_section(data Bytes, pos Int64, limit Int64) (Bool, String, Int64, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, "malformed global section", cn[0].fail_offset, -1)
@@ -408,7 +408,7 @@ def global_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   return global_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def global_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+def global_rest(data Bytes, pos Int64, limit Int64, n Int64) (Bool, String, Int64, Int64) {
   if n == 0 {
     return (true, "", -1, pos)
   }
@@ -425,7 +425,7 @@ def global_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) 
 }
 
 // An element kind byte must be exactly 0x00 (a funcref element kind).
-def elemkind(data Bytes, pos Int, limit Int) (Bool, Int) {
+def elemkind(data Bytes, pos Int64, limit Int64) (Bool, Int64) {
   if pos >= limit {
     return (false, pos)
   }
@@ -436,7 +436,7 @@ def elemkind(data Bytes, pos Int, limit Int) (Bool, Int) {
 }
 
 // A reference type byte for element segments: (ok, byte, new_pos).
-def elem_reftype(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
+def elem_reftype(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64) {
   if pos >= limit {
     return (false, 0, pos)
   }
@@ -448,7 +448,7 @@ def elem_reftype(data Bytes, pos Int, limit Int) (Bool, Int, Int) {
 }
 
 // A vector of function indices.
-def funcidx_vec(data Bytes, pos Int, limit Int) (Bool, Int) {
+def funcidx_vec(data Bytes, pos Int64, limit Int64) (Bool, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, cn[0].fail_offset)
@@ -456,7 +456,7 @@ def funcidx_vec(data Bytes, pos Int, limit Int) (Bool, Int) {
   return u32_vec_end(data, cn[0].pos, limit, cn[1])
 }
 
-def u32_vec_end(data Bytes, pos Int, limit Int, n Int) (Bool, Int) {
+def u32_vec_end(data Bytes, pos Int64, limit Int64, n Int64) (Bool, Int64) {
   if n == 0 {
     return (true, pos)
   }
@@ -468,7 +468,7 @@ def u32_vec_end(data Bytes, pos Int, limit Int, n Int) (Bool, Int) {
 }
 
 // One constant expression (active segment offsets, global initializers).
-def one_expr(data Bytes, pos Int, limit Int) (Bool, Int) {
+def one_expr(data Bytes, pos Int64, limit Int64) (Bool, Int64) {
   const e = internal.reader.const_expr(internal.reader.new(data, pos, limit))
   if e[0].failed {
     return (false, e[0].fail_offset)
@@ -477,7 +477,7 @@ def one_expr(data Bytes, pos Int, limit Int) (Bool, Int) {
 }
 
 // A vector of constant expressions.
-def expr_vec(data Bytes, pos Int, limit Int) (Bool, Int) {
+def expr_vec(data Bytes, pos Int64, limit Int64) (Bool, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, cn[0].fail_offset)
@@ -485,7 +485,7 @@ def expr_vec(data Bytes, pos Int, limit Int) (Bool, Int) {
   return expr_vec_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def expr_vec_rest(data Bytes, pos Int, limit Int, n Int) (Bool, Int) {
+def expr_vec_rest(data Bytes, pos Int64, limit Int64, n Int64) (Bool, Int64) {
   if n == 0 {
     return (true, pos)
   }
@@ -497,7 +497,7 @@ def expr_vec_rest(data Bytes, pos Int, limit Int, n Int) (Bool, Int) {
 }
 
 // A vector of raw bytes (a data payload).
-def byte_vec(data Bytes, pos Int, limit Int) (Bool, Int) {
+def byte_vec(data Bytes, pos Int64, limit Int64) (Bool, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, cn[0].fail_offset)
@@ -511,7 +511,7 @@ def byte_vec(data Bytes, pos Int, limit Int) (Bool, Int) {
 
 // The element section: one flag byte per segment selects the shape
 // (active/passive/declarative, funcidx or expression vectors).
-def elem_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
+def elem_section(data Bytes, pos Int64, limit Int64) (Bool, String, Int64, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, "malformed element section", cn[0].fail_offset, -1)
@@ -519,7 +519,7 @@ def elem_section(data Bytes, pos Int, limit Int) (Bool, String, Int, Int) {
   return elem_rest(data, cn[0].pos, limit, cn[1])
 }
 
-def elem_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
+def elem_rest(data Bytes, pos Int64, limit Int64, n Int64) (Bool, String, Int64, Int64) {
   if n == 0 {
     return (true, "", -1, pos)
   }
@@ -609,7 +609,7 @@ def elem_rest(data Bytes, pos Int, limit Int, n Int) (Bool, String, Int, Int) {
 // 1 passive, 2 active with explicit memory index). `dc` is the
 // data-count section's value (-1 absent) — when present, the segment
 // count must agree with it.
-def data_section(data Bytes, pos Int, limit Int, dc Int) (Bool, String, Int, Int) {
+def data_section(data Bytes, pos Int64, limit Int64, dc Int64) (Bool, String, Int64, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, "malformed data section", cn[0].fail_offset, -1)
@@ -617,7 +617,7 @@ def data_section(data Bytes, pos Int, limit Int, dc Int) (Bool, String, Int, Int
   return data_rest(data, cn[0].pos, limit, cn[1], dc, 0)
 }
 
-def data_rest(data Bytes, pos Int, limit Int, n Int, dc Int, seen Int) (Bool, String, Int, Int) {
+def data_rest(data Bytes, pos Int64, limit Int64, n Int64, dc Int64, seen Int64) (Bool, String, Int64, Int64) {
   if n == 0 {
     if dc >= 0 && seen != dc {
       return (false, "data count and data section have inconsistent lengths", pos, -1)
@@ -678,14 +678,14 @@ def data_rest(data Bytes, pos Int, limit Int, n Int, dc Int, seen Int) (Bool, St
 //   dc             the data-count section's value (-1 absent)
 //   elem_types     element segment reftypes, appended as segments pass
 
-def validate(data Bytes) (Bool, String, Int, String) {
+def validate(data Bytes) (Bool, String, Int64, String) {
   return vwalk(data, 8, 0, [], 0, [], 0, [], [], [], [], [], -1, [])
 }
 
 // The index-space sizes derive from the arrays that carry them —
 // vimports/vtables/vmems return the extended arrays, so imports and
 // declarations count alike.
-def vwalk(data Bytes, pos Int, last_rank Int, types Array[FuncType], n_imp_funcs Int, func_typeidxs Array[Int], n_imp_globals Int, table_codes Array[Int], mems Array[Int], global_codes Array[Int], global_mut Array[Int], export_names Array[String], dc Int, elem_types Array[Int]) (Bool, String, Int, String) {
+def vwalk(data Bytes, pos Int64, last_rank Int64, types Array[FuncType], n_imp_funcs Int64, func_typeidxs Array[Int64], n_imp_globals Int64, table_codes Array[Int64], mems Array[Int64], global_codes Array[Int64], global_mut Array[Int64], export_names Array[String], dc Int64, elem_types Array[Int64]) (Bool, String, Int64, String) {
   if pos >= data.length() {
     // The module is walked; now that the context is complete, the
     // code section's bodies run the type-stack validator (T20.15-17).
@@ -793,7 +793,7 @@ def vwalk(data Bytes, pos Int, last_rank Int, types Array[FuncType], n_imp_funcs
 
 // The start section: one function index, which must resolve to a
 // function of type [] -> [].
-def vstart(data Bytes, pos Int, limit Int, func_typeidxs Array[Int], types Array[FuncType]) (Bool, String, Int, String) {
+def vstart(data Bytes, pos Int64, limit Int64, func_typeidxs Array[Int64], types Array[FuncType]) (Bool, String, Int64, String) {
   const p = internal.reader.u32(internal.reader.new(data, pos, limit))
   if p[0].failed {
     return (true, "", -1, "")
@@ -813,11 +813,11 @@ def vstart(data Bytes, pos Int, limit Int, func_typeidxs Array[Int], types Array
 // The declared functions: exported, element-referenced, or start.
 // ref.func requires membership (the corpus's undeclared-reference
 // cases).
-def declared_for(data Bytes) Array[Int] {
+def declared_for(data Bytes) Array[Int64] {
   return declared_rest(data, 8, [])
 }
 
-def declared_rest(data Bytes, pos Int, acc Array[Int]) Array[Int] {
+def declared_rest(data Bytes, pos Int64, acc Array[Int64]) Array[Int64] {
   if pos >= data.length() {
     return acc
   }
@@ -849,7 +849,7 @@ def declared_rest(data Bytes, pos Int, acc Array[Int]) Array[Int] {
 }
 
 // Global initializers declare the functions their ref.func mentions.
-def declared_globals(data Bytes, pos Int, limit Int, acc Array[Int]) Array[Int] {
+def declared_globals(data Bytes, pos Int64, limit Int64, acc Array[Int64]) Array[Int64] {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return acc
@@ -857,7 +857,7 @@ def declared_globals(data Bytes, pos Int, limit Int, acc Array[Int]) Array[Int] 
   return declared_globals_rest(data, cn[0].pos, limit, cn[1], acc)
 }
 
-def declared_globals_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) Array[Int] {
+def declared_globals_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[Int64]) Array[Int64] {
   if n == 0 {
     return acc
   }
@@ -879,7 +879,7 @@ def declared_globals_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int])
   return declared_globals_rest(data, e[0].pos, limit, n - 1, acc)
 }
 
-def declared_exports(data Bytes, pos Int, limit Int, acc Array[Int]) Array[Int] {
+def declared_exports(data Bytes, pos Int64, limit Int64, acc Array[Int64]) Array[Int64] {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return acc
@@ -887,7 +887,7 @@ def declared_exports(data Bytes, pos Int, limit Int, acc Array[Int]) Array[Int] 
   return declared_exports_rest(data, cn[0].pos, limit, cn[1], acc)
 }
 
-def declared_exports_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) Array[Int] {
+def declared_exports_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[Int64]) Array[Int64] {
   if n == 0 {
     return acc
   }
@@ -911,7 +911,7 @@ def declared_exports_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int])
 
 // Element segments contribute their funcidx vectors (flags 0-3) and
 // the ref.func immediates inside expression vectors (flags 4-7).
-def declared_elems(data Bytes, pos Int, limit Int, acc Array[Int]) Array[Int] {
+def declared_elems(data Bytes, pos Int64, limit Int64, acc Array[Int64]) Array[Int64] {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return acc
@@ -919,7 +919,7 @@ def declared_elems(data Bytes, pos Int, limit Int, acc Array[Int]) Array[Int] {
   return declared_elems_rest(data, cn[0].pos, limit, cn[1], acc)
 }
 
-def declared_elems_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) Array[Int] {
+def declared_elems_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[Int64]) Array[Int64] {
   if n == 0 {
     return acc
   }
@@ -984,7 +984,7 @@ def declared_elems_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) A
 // The ref.func indices of an expression vector, plus the vector end.
 // Constant expressions are tiny; scanning the leading byte for 0xd2
 // is exact here. (ok, end, acc)
-def ref_funcs_of(data Bytes, pos Int, limit Int, acc Array[Int]) (Bool, Int, Array[Int]) {
+def ref_funcs_of(data Bytes, pos Int64, limit Int64, acc Array[Int64]) (Bool, Int64, Array[Int64]) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, pos, acc)
@@ -992,7 +992,7 @@ def ref_funcs_of(data Bytes, pos Int, limit Int, acc Array[Int]) (Bool, Int, Arr
   return ref_funcs_rest(data, cn[0].pos, limit, cn[1], acc)
 }
 
-def ref_funcs_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) (Bool, Int, Array[Int]) {
+def ref_funcs_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[Int64]) (Bool, Int64, Array[Int64]) {
   if n == 0 {
     return (true, pos, acc)
   }
@@ -1011,7 +1011,7 @@ def ref_funcs_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) (Bool,
 }
 
 // A funcidx vector, collected. (ok, end, acc)
-def collect_funcidxs(data Bytes, pos Int, limit Int, acc Array[Int]) (Bool, Int, Array[Int]) {
+def collect_funcidxs(data Bytes, pos Int64, limit Int64, acc Array[Int64]) (Bool, Int64, Array[Int64]) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, pos, acc)
@@ -1019,7 +1019,7 @@ def collect_funcidxs(data Bytes, pos Int, limit Int, acc Array[Int]) (Bool, Int,
   return collect_funcidxs_rest(data, cn[0].pos, limit, cn[1], acc)
 }
 
-def collect_funcidxs_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int]) (Bool, Int, Array[Int]) {
+def collect_funcidxs_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[Int64]) (Bool, Int64, Array[Int64]) {
   if n == 0 {
     return (true, pos, acc)
   }
@@ -1030,7 +1030,7 @@ def collect_funcidxs_rest(data Bytes, pos Int, limit Int, n Int, acc Array[Int])
   return collect_funcidxs_rest(data, p[0].pos, limit, n - 1, acc.append(p[1]))
 }
 
-def vcodes(data Bytes, types Array[FuncType], func_typeidxs Array[Int], n_imp_funcs Int, global_codes Array[Int], global_mut Array[Int], table_codes Array[Int], n_mems Int, dc Int, elem_types Array[Int]) (Bool, String, Int, String) {
+def vcodes(data Bytes, types Array[FuncType], func_typeidxs Array[Int64], n_imp_funcs Int64, global_codes Array[Int64], global_mut Array[Int64], table_codes Array[Int64], n_mems Int64, dc Int64, elem_types Array[Int64]) (Bool, String, Int64, String) {
   // The function signatures, flattened: for function x,
   // sigs[sig_off[x] .. split) holds its params, sigs(split .. sig_off[x+1])
   // its results, and a -1 marker sits at the split (type codes are all
@@ -1047,7 +1047,7 @@ def vcodes(data Bytes, types Array[FuncType], func_typeidxs Array[Int], n_imp_fu
   return vcode_find(data, 8, types, func_typeidxs, n_imp_funcs, global_codes, global_mut, table_codes, counts, built[1], built[2], tbuilt[1], tbuilt[2], declared)
 }
 
-def counts_with(acc Array[Int], elem_types Array[Int], i Int) Array[Int] {
+def counts_with(acc Array[Int64], elem_types Array[Int64], i Int64) Array[Int64] {
   if i == elem_types.length() {
     return acc
   }
@@ -1058,7 +1058,7 @@ def counts_with(acc Array[Int], elem_types Array[Int], i Int) Array[Int] {
 // type indices sit at the front of func_typeidxs). plen_of/rlen_of
 // keep the field.method() chains out of inline arithmetic — the
 // checker mis-types those (step 20 pressure).
-def sigs_for(types Array[FuncType], func_typeidxs Array[Int], x Int, sigs Array[Int], off Array[Int], lo Int) (Bool, Array[Int], Array[Int]) {
+def sigs_for(types Array[FuncType], func_typeidxs Array[Int64], x Int64, sigs Array[Int64], off Array[Int64], lo Int64) (Bool, Array[Int64], Array[Int64]) {
   if x == func_typeidxs.length() {
     return (true, sigs, off.append(lo))
   }
@@ -1070,16 +1070,16 @@ def sigs_for(types Array[FuncType], func_typeidxs Array[Int], x Int, sigs Array[
   return sigs_for(types, func_typeidxs, x + 1, s3, off.append(lo), newlo)
 }
 
-def plen_of(ft FuncType) Int {
+def plen_of(ft FuncType) Int64 {
   return ft.params.length()
 }
 
-def rlen_of(ft FuncType) Int {
+def rlen_of(ft FuncType) Int64 {
   return ft.results.length()
 }
 
 // The same flat signatures, indexed by TYPE index.
-def tsigs_for(types Array[FuncType], t Int, sigs Array[Int], off Array[Int], lo Int) (Bool, Array[Int], Array[Int]) {
+def tsigs_for(types Array[FuncType], t Int64, sigs Array[Int64], off Array[Int64], lo Int64) (Bool, Array[Int64], Array[Int64]) {
   if t == types.length() {
     return (true, sigs, off.append(lo))
   }
@@ -1091,14 +1091,14 @@ def tsigs_for(types Array[FuncType], t Int, sigs Array[Int], off Array[Int], lo 
   return tsigs_for(types, t + 1, s3, off.append(lo), newlo)
 }
 
-def append_run(acc Array[Int], codes Array[Int], i Int) Array[Int] {
+def append_run(acc Array[Int64], codes Array[Int64], i Int64) Array[Int64] {
   if i == codes.length() {
     return acc
   }
   return append_run(acc.append(codes[i]), codes, i + 1)
 }
 
-def vcode_find(data Bytes, pos Int, types Array[FuncType], func_typeidxs Array[Int], n_imp_funcs Int, global_codes Array[Int], global_mut Array[Int], table_codes Array[Int], counts Array[Int], sigs Array[Int], sig_off Array[Int], tsigs Array[Int], tsig_off Array[Int], declared Array[Int]) (Bool, String, Int, String) {
+def vcode_find(data Bytes, pos Int64, types Array[FuncType], func_typeidxs Array[Int64], n_imp_funcs Int64, global_codes Array[Int64], global_mut Array[Int64], table_codes Array[Int64], counts Array[Int64], sigs Array[Int64], sig_off Array[Int64], tsigs Array[Int64], tsig_off Array[Int64], declared Array[Int64]) (Bool, String, Int64, String) {
   if pos >= data.length() {
     // No code section: nothing to type.
     return (true, "", -1, "")
@@ -1120,7 +1120,7 @@ def vcode_find(data Bytes, pos Int, types Array[FuncType], func_typeidxs Array[I
   return vcode_find(data, r3.pos, types, func_typeidxs, n_imp_funcs, global_codes, global_mut, table_codes, counts, sigs, sig_off, tsigs, tsig_off, declared)
 }
 
-def vcodes_rest(data Bytes, pos Int, limit Int, n Int, types Array[FuncType], func_typeidxs Array[Int], n_imp_funcs Int, i Int, global_codes Array[Int], global_mut Array[Int], table_codes Array[Int], counts Array[Int], sigs Array[Int], sig_off Array[Int], tsigs Array[Int], tsig_off Array[Int], declared Array[Int]) (Bool, String, Int, String) {
+def vcodes_rest(data Bytes, pos Int64, limit Int64, n Int64, types Array[FuncType], func_typeidxs Array[Int64], n_imp_funcs Int64, i Int64, global_codes Array[Int64], global_mut Array[Int64], table_codes Array[Int64], counts Array[Int64], sigs Array[Int64], sig_off Array[Int64], tsigs Array[Int64], tsig_off Array[Int64], declared Array[Int64]) (Bool, String, Int64, String) {
   if n == 0 {
     return (true, "", -1, "")
   }
@@ -1152,7 +1152,7 @@ def vcodes_rest(data Bytes, pos Int, limit Int, n Int, types Array[FuncType], fu
 // The import section, semantically: each descriptor's indices must
 // resolve, limits must be well ordered and inside the page caps. The
 // descriptors feed the index spaces (functions, tables, globals).
-def vimports(data Bytes, pos Int, limit Int, types Array[FuncType], n_imp_funcs Int, func_typeidxs Array[Int], n_imp_globals Int, table_codes Array[Int], mems Array[Int], global_codes Array[Int], global_mut Array[Int]) (Bool, String, Int, Int, Int, Array[Int], Array[Int], Array[Int], Array[Int], Array[Int]) {
+def vimports(data Bytes, pos Int64, limit Int64, types Array[FuncType], n_imp_funcs Int64, func_typeidxs Array[Int64], n_imp_globals Int64, table_codes Array[Int64], mems Array[Int64], global_codes Array[Int64], global_mut Array[Int64]) (Bool, String, Int64, Int64, Int64, Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64]) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (true, "", -1, n_imp_funcs, n_imp_globals, func_typeidxs, table_codes, mems, global_codes, global_mut)
@@ -1160,7 +1160,7 @@ def vimports(data Bytes, pos Int, limit Int, types Array[FuncType], n_imp_funcs 
   return vimports_rest(data, cn[0].pos, limit, cn[1], types, n_imp_funcs, func_typeidxs, n_imp_globals, table_codes, mems, global_codes, global_mut)
 }
 
-def vimports_rest(data Bytes, pos Int, limit Int, n Int, types Array[FuncType], n_imp_funcs Int, func_typeidxs Array[Int], n_imp_globals Int, table_codes Array[Int], mems Array[Int], global_codes Array[Int], global_mut Array[Int]) (Bool, String, Int, Int, Int, Array[Int], Array[Int], Array[Int], Array[Int], Array[Int]) {
+def vimports_rest(data Bytes, pos Int64, limit Int64, n Int64, types Array[FuncType], n_imp_funcs Int64, func_typeidxs Array[Int64], n_imp_globals Int64, table_codes Array[Int64], mems Array[Int64], global_codes Array[Int64], global_mut Array[Int64]) (Bool, String, Int64, Int64, Int64, Array[Int64], Array[Int64], Array[Int64], Array[Int64], Array[Int64]) {
   if n == 0 {
     return (true, "", -1, n_imp_funcs, n_imp_globals, func_typeidxs, table_codes, mems, global_codes, global_mut)
   }
@@ -1227,7 +1227,7 @@ def vimports_rest(data Bytes, pos Int, limit Int, n Int, types Array[FuncType], 
 }
 
 // The function section: every type index must resolve.
-def vfuncs(data Bytes, pos Int, limit Int, last_rank Int, types Array[FuncType], n_imp_funcs Int, func_typeidxs Array[Int], n_imp_globals Int, table_codes Array[Int], mems Array[Int], global_codes Array[Int], global_mut Array[Int], export_names Array[String], dc Int, elem_types Array[Int]) (Bool, String, Int, String) {
+def vfuncs(data Bytes, pos Int64, limit Int64, last_rank Int64, types Array[FuncType], n_imp_funcs Int64, func_typeidxs Array[Int64], n_imp_globals Int64, table_codes Array[Int64], mems Array[Int64], global_codes Array[Int64], global_mut Array[Int64], export_names Array[String], dc Int64, elem_types Array[Int64]) (Bool, String, Int64, String) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (true, "", -1, "")
@@ -1235,7 +1235,7 @@ def vfuncs(data Bytes, pos Int, limit Int, last_rank Int, types Array[FuncType],
   return vfuncs_rest(data, cn[0].pos, limit, last_rank, cn[1], types, n_imp_funcs, func_typeidxs, n_imp_globals, table_codes, mems, global_codes, global_mut, export_names, dc, elem_types)
 }
 
-def vfuncs_rest(data Bytes, pos Int, limit Int, last_rank Int, n Int, types Array[FuncType], n_imp_funcs Int, func_typeidxs Array[Int], n_imp_globals Int, table_codes Array[Int], mems Array[Int], global_codes Array[Int], global_mut Array[Int], export_names Array[String], dc Int, elem_types Array[Int]) (Bool, String, Int, String) {
+def vfuncs_rest(data Bytes, pos Int64, limit Int64, last_rank Int64, n Int64, types Array[FuncType], n_imp_funcs Int64, func_typeidxs Array[Int64], n_imp_globals Int64, table_codes Array[Int64], mems Array[Int64], global_codes Array[Int64], global_mut Array[Int64], export_names Array[String], dc Int64, elem_types Array[Int64]) (Bool, String, Int64, String) {
   if n == 0 {
     return vwalk(data, pos, last_rank, types, n_imp_funcs, func_typeidxs, n_imp_globals, table_codes, mems, global_codes, global_mut, export_names, dc, elem_types)
   }
@@ -1250,7 +1250,7 @@ def vfuncs_rest(data Bytes, pos Int, limit Int, last_rank Int, n Int, types Arra
 }
 
 // Table and memory sections: limits well ordered and in range.
-def vtables(data Bytes, pos Int, limit Int, table_codes Array[Int]) (Bool, String, Int, Array[Int]) {
+def vtables(data Bytes, pos Int64, limit Int64, table_codes Array[Int64]) (Bool, String, Int64, Array[Int64]) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (true, "", -1, table_codes)
@@ -1258,7 +1258,7 @@ def vtables(data Bytes, pos Int, limit Int, table_codes Array[Int]) (Bool, Strin
   return vtables_rest(data, cn[0].pos, limit, cn[1], table_codes)
 }
 
-def vtables_rest(data Bytes, pos Int, limit Int, n Int, table_codes Array[Int]) (Bool, String, Int, Array[Int]) {
+def vtables_rest(data Bytes, pos Int64, limit Int64, n Int64, table_codes Array[Int64]) (Bool, String, Int64, Array[Int64]) {
   if n == 0 {
     return (true, "", -1, table_codes)
   }
@@ -1272,7 +1272,7 @@ def vtables_rest(data Bytes, pos Int, limit Int, n Int, table_codes Array[Int]) 
   return vtables_rest(data, t[5], limit, n - 1, table_codes.append(t[1]))
 }
 
-def vmems(data Bytes, pos Int, limit Int, mems Array[Int]) (Bool, String, Int, Array[Int]) {
+def vmems(data Bytes, pos Int64, limit Int64, mems Array[Int64]) (Bool, String, Int64, Array[Int64]) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (true, "", -1, mems)
@@ -1280,7 +1280,7 @@ def vmems(data Bytes, pos Int, limit Int, mems Array[Int]) (Bool, String, Int, A
   return vmems_rest(data, cn[0].pos, limit, cn[1], mems)
 }
 
-def vmems_rest(data Bytes, pos Int, limit Int, n Int, mems Array[Int]) (Bool, String, Int, Array[Int]) {
+def vmems_rest(data Bytes, pos Int64, limit Int64, n Int64, mems Array[Int64]) (Bool, String, Int64, Array[Int64]) {
   if n == 0 {
     return (true, "", -1, mems)
   }
@@ -1303,7 +1303,7 @@ def vmems_rest(data Bytes, pos Int, limit Int, n Int, mems Array[Int]) (Bool, St
 // The global section: the initializer must be a constant expression
 // of the declared type. Only imported globals are in scope for
 // constant expressions, and ref.func needs the function to exist.
-def vglobals(data Bytes, pos Int, limit Int, n_imp_globals Int, total_funcs Int, global_codes Array[Int], global_mut Array[Int]) (Bool, String, Int, Array[Int], Array[Int]) {
+def vglobals(data Bytes, pos Int64, limit Int64, n_imp_globals Int64, total_funcs Int64, global_codes Array[Int64], global_mut Array[Int64]) (Bool, String, Int64, Array[Int64], Array[Int64]) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (true, "", -1, global_codes, global_mut)
@@ -1311,7 +1311,7 @@ def vglobals(data Bytes, pos Int, limit Int, n_imp_globals Int, total_funcs Int,
   return vglobals_rest(data, cn[0].pos, limit, cn[1], n_imp_globals, total_funcs, global_codes, global_mut)
 }
 
-def vglobals_rest(data Bytes, pos Int, limit Int, n Int, n_imp_globals Int, total_funcs Int, global_codes Array[Int], global_mut Array[Int]) (Bool, String, Int, Array[Int], Array[Int]) {
+def vglobals_rest(data Bytes, pos Int64, limit Int64, n Int64, n_imp_globals Int64, total_funcs Int64, global_codes Array[Int64], global_mut Array[Int64]) (Bool, String, Int64, Array[Int64], Array[Int64]) {
   if n == 0 {
     return (true, "", -1, global_codes, global_mut)
   }
@@ -1335,7 +1335,7 @@ def vglobals_rest(data Bytes, pos Int, limit Int, n Int, n_imp_globals Int, tota
 
 // The export section: indices must resolve in their spaces; names must
 // be pairwise unique.
-def vexports(data Bytes, pos Int, limit Int, total_funcs Int, n_tables Int, n_mems Int, n_globals Int, export_names Array[String]) (Bool, String, Int, Array[String]) {
+def vexports(data Bytes, pos Int64, limit Int64, total_funcs Int64, n_tables Int64, n_mems Int64, n_globals Int64, export_names Array[String]) (Bool, String, Int64, Array[String]) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (true, "", -1, export_names)
@@ -1343,7 +1343,7 @@ def vexports(data Bytes, pos Int, limit Int, total_funcs Int, n_tables Int, n_me
   return vexports_rest(data, cn[0].pos, limit, cn[1], total_funcs, n_tables, n_mems, n_globals, export_names)
 }
 
-def vexports_rest(data Bytes, pos Int, limit Int, n Int, total_funcs Int, n_tables Int, n_mems Int, n_globals Int, export_names Array[String]) (Bool, String, Int, Array[String]) {
+def vexports_rest(data Bytes, pos Int64, limit Int64, n Int64, total_funcs Int64, n_tables Int64, n_mems Int64, n_globals Int64, export_names Array[String]) (Bool, String, Int64, Array[String]) {
   if n == 0 {
     return (true, "", -1, export_names)
   }
@@ -1385,7 +1385,7 @@ def vexports_rest(data Bytes, pos Int, limit Int, n Int, total_funcs Int, n_tabl
   return vexports_rest(data, t[0].pos, limit, n - 1, total_funcs, n_tables, n_mems, n_globals, export_names.append(nb[1].to_string()))
 }
 
-def name_known(names Array[String], candidate Bytes, i Int) Bool {
+def name_known(names Array[String], candidate Bytes, i Int64) Bool {
   if i == names.length() {
     return false
   }
@@ -1400,7 +1400,7 @@ def name_known(names Array[String], candidate Bytes, i Int) Bool {
 // must resolve; every initializer expression must be constant and of
 // the segment's reference type. Returns the segment types collected
 // for the body validator's table.init checks.
-def velem(data Bytes, pos Int, limit Int, total_funcs Int, n_imp_globals Int, table_codes Array[Int], global_codes Array[Int], global_mut Array[Int], elem_types Array[Int]) (Bool, String, Int, Array[Int]) {
+def velem(data Bytes, pos Int64, limit Int64, total_funcs Int64, n_imp_globals Int64, table_codes Array[Int64], global_codes Array[Int64], global_mut Array[Int64], elem_types Array[Int64]) (Bool, String, Int64, Array[Int64]) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (true, "", -1, elem_types)
@@ -1408,7 +1408,7 @@ def velem(data Bytes, pos Int, limit Int, total_funcs Int, n_imp_globals Int, ta
   return velem_rest(data, cn[0].pos, limit, cn[1], total_funcs, n_imp_globals, table_codes, global_codes, global_mut, elem_types)
 }
 
-def velem_rest(data Bytes, pos Int, limit Int, n Int, total_funcs Int, n_imp_globals Int, table_codes Array[Int], global_codes Array[Int], global_mut Array[Int], elem_types Array[Int]) (Bool, String, Int, Array[Int]) {
+def velem_rest(data Bytes, pos Int64, limit Int64, n Int64, total_funcs Int64, n_imp_globals Int64, table_codes Array[Int64], global_codes Array[Int64], global_mut Array[Int64], elem_types Array[Int64]) (Bool, String, Int64, Array[Int64]) {
   if n == 0 {
     return (true, "", -1, elem_types)
   }
@@ -1501,7 +1501,7 @@ def velem_rest(data Bytes, pos Int, limit Int, n Int, total_funcs Int, n_imp_glo
 }
 
 // n constant expressions, each producing exactly `rt`: (ok, end pos).
-def elem_exprs(data Bytes, pos Int, limit Int, n Int, rt Int, global_codes Array[Int], global_mut Array[Int], n_imp_globals Int, total_funcs Int) (Bool, Int) {
+def elem_exprs(data Bytes, pos Int64, limit Int64, n Int64, rt Int64, global_codes Array[Int64], global_mut Array[Int64], n_imp_globals Int64, total_funcs Int64) (Bool, Int64) {
   if n == 0 {
     return (true, pos)
   }
@@ -1514,7 +1514,7 @@ def elem_exprs(data Bytes, pos Int, limit Int, n Int, rt Int, global_codes Array
 
 // The funcidx vector's indices, resolved against the function space;
 // returns (ok, pos after the vector).
-def funcidxs_ok(data Bytes, pos Int, limit Int, total_funcs Int) (Bool, Int) {
+def funcidxs_ok(data Bytes, pos Int64, limit Int64, total_funcs Int64) (Bool, Int64) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (false, cn[0].pos)
@@ -1522,7 +1522,7 @@ def funcidxs_ok(data Bytes, pos Int, limit Int, total_funcs Int) (Bool, Int) {
   return funcidx_rest(data, cn[0].pos, limit, cn[1], total_funcs)
 }
 
-def funcidx_rest(data Bytes, pos Int, limit Int, n Int, total_funcs Int) (Bool, Int) {
+def funcidx_rest(data Bytes, pos Int64, limit Int64, n Int64, total_funcs Int64) (Bool, Int64) {
   if n == 0 {
     return (true, pos)
   }
@@ -1538,7 +1538,7 @@ def funcidx_rest(data Bytes, pos Int, limit Int, n Int, total_funcs Int) (Bool, 
 
 // The data section, semantically: active segments need their memory
 // to exist and an i32 offset.
-def vdata(data Bytes, pos Int, limit Int, n_imp_globals Int, n_mems Int, global_codes Array[Int], global_mut Array[Int]) (Bool, String, Int, String) {
+def vdata(data Bytes, pos Int64, limit Int64, n_imp_globals Int64, n_mems Int64, global_codes Array[Int64], global_mut Array[Int64]) (Bool, String, Int64, String) {
   const cn = internal.reader.u32(internal.reader.new(data, pos, limit))
   if cn[0].failed {
     return (true, "", -1, "")
@@ -1546,7 +1546,7 @@ def vdata(data Bytes, pos Int, limit Int, n_imp_globals Int, n_mems Int, global_
   return vdata_rest(data, cn[0].pos, limit, cn[1], n_imp_globals, n_mems, global_codes, global_mut)
 }
 
-def vdata_rest(data Bytes, pos Int, limit Int, n Int, n_imp_globals Int, n_mems Int, global_codes Array[Int], global_mut Array[Int]) (Bool, String, Int, String) {
+def vdata_rest(data Bytes, pos Int64, limit Int64, n Int64, n_imp_globals Int64, n_mems Int64, global_codes Array[Int64], global_mut Array[Int64]) (Bool, String, Int64, String) {
   if n == 0 {
     return (true, "", -1, "")
   }

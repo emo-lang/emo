@@ -65,7 +65,7 @@ conn.set_timeout(seconds) // TcpConn —— 约束其后的操作
 
 ```emo
 listener.accept()           // TcpConn —— 下一个连接
-listener.port()             // Int —— 绑定的端口
+listener.port()             // Int64 —— 绑定的端口
 listener.close()            // TcpListener
 listener.set_timeout(seconds)
 ```
@@ -76,8 +76,8 @@ listener.set_timeout(seconds)
 
 ```emo
 socket.send_to(host, port, data)  // UdpSocket —— 返回自身
-socket.recv_from()                // (String, String, Int) —— 数据、主机、端口
-socket.port()                     // Int
+socket.recv_from()                // (String, String, Int64) —— 数据、主机、端口
+socket.port()                     // Int64
 socket.close()                    // UdpSocket
 socket.set_timeout(seconds)
 ```
@@ -91,7 +91,7 @@ socket.set_timeout(seconds)
 ```emo
 require "net"
 
-def echo_once(listener TcpListener) Int {
+def echo_once(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write("echo: " + conn.read_line() + "\n")
   conn.close()
@@ -131,7 +131,7 @@ a.close()
 ```emo
 require "net"
 
-def serve(listener TcpListener) Int {
+def serve(listener TcpListener) Int64 {
   const conn = listener.accept()
   conn.write("secure: " + conn.read_line() + "\n")
   conn.close()

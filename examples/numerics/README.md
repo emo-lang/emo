@@ -15,7 +15,7 @@ What to notice:
 
 - **`foreign def` binds a C symbol.** `sqrt` and `pow` come straight
   from the C math library; the build generates the marshaling wrappers
-  and links them in. Only `Float`, `String`, and `Bool` cross the
+  and links them in. Only `Float64`, `String`, and `Bool` cross the
   boundary today.
 - **This program is compiled-only by design.** The interpreter has no C
   linkage and refuses foreign definitions with a precise error — one
