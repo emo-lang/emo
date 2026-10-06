@@ -1,0 +1,54 @@
+name: Deploy website
+
+# Builds website/ and publishes it to the gh-pages branch, which GitHub
+# Pages serves (Settings > Pages: deploy from the gh-pages branch). The
+# build copies the repository-root README.md into the site, so a README
+# change redeploys too.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "website/**"
+      - "README.md"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+
+      - name: Build site
+        working-directory: website
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: website/dist
+          publish_branch: gh-pages
