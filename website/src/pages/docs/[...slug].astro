@@ -1,0 +1,63 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import SiteNav from "../../components/SiteNav.astro";
+
+const base = import.meta.env.BASE_URL;
+
+const titleOf = (m, fallback) =>
+  m.getHeadings().find((h) => h.depth === 1)?.text ?? fallback;
+
+export async function getStaticPaths() {
+  const mods = import.meta.glob("../../content/docs/**/*.md", { eager: true });
+  return Object.entries(mods).map(([path, m]) => ({
+    params: { slug: path.replace("../../content/docs/", "").replace(/\.md$/, "") },
+    props: { m },
+  }));
+}
+
+const { m } = Astro.props;
+const Content = m.Content;
+const title = titleOf(m, String(Astro.params.slug));
+
+const nav = Object.entries(
+  import.meta.glob("../../content/docs/**/*.md", { eager: true }),
+)
+  .map(([path, entry]) => {
+    const slug = path.replace("../../content/docs/", "").replace(/\.md$/, "");
+    return { slug, title: titleOf(entry, slug) };
+  })
+  .sort((a, b) => a.slug.localeCompare(b.slug));
+---
+
+<Layout title={`${title} — Emo`} description={`Emo documentation: ${title}.`}>
+  <SiteNav />
+  <main>
+    <div class="content-grid">
+      <aside class="toc">
+        <nav aria-label="Documentation">
+          <p class="toc-title">Documentation</p>
+          <ul>
+            {nav.map((e) => (
+              <li>
+                <a
+                  class={e.slug === Astro.params.slug ? "active" : undefined}
+                  href={`${base}/docs/${e.slug}/`}
+                >
+                  {e.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </aside>
+
+      <article class="md-body">
+        <Content />
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p><a href={`${base}/`}>Emo</a> — clean, explicit, intuitive.</p>
+  </footer>
+</Layout>

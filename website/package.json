@@ -4,10 +4,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/copy-readme.mjs && astro dev",
-    "build": "node scripts/copy-readme.mjs && astro build",
-    "preview": "astro preview",
-    "deploy": "pnpm build && node scripts/deploy-gh-pages.mjs"
+    "dev": "node scripts/copy-content.mjs && astro dev",
+    "build": "node scripts/copy-content.mjs && astro build",
+    "preview": "astro preview"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
