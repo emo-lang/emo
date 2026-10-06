@@ -1,0 +1,49 @@
+// The float-family fixture (T21.5): promote/demote round-to-nearest-even
+// at the conversion boundaries, the f32 bridge, the NaN-aware moves and
+// comparisons, and min/max with signed zero.
+
+def show(label String, bits Int64) Int64 {
+  println(label + " " + bits.to_string())
+  return 0
+}
+
+def run() Int64 {
+  var failed = 0
+  // promote f32 -> f64 is exact.
+  failed = failed + show("promote.1", internal.floats.promote_f32(1065353216))
+  failed = failed + show("promote.-1", internal.floats.promote_f32(3212836864))
+  // demote f64 -> f32, ties to even.
+  failed = failed + show("demote.1", internal.floats.demote_f64(4607182418800017408))
+  failed = failed + show("demote.tie-down", internal.floats.demote_f64(4607182418800017409))
+  failed = failed + show("demote.round-up", internal.floats.demote_f64(4607182419336888320))
+  failed = failed + show("demote.subnormal", internal.floats.demote_f64(3936146074321813504))
+  failed = failed + show("demote.underflow", internal.floats.demote_f64(3931642474694443008))
+  failed = failed + show("demote.overflow", internal.floats.demote_f64(9094988921128908188))
+  // f32 arithmetic through the bridge.
+  failed = failed + show("f32.add", internal.floats.add(125, 1065353216, 1065353216))
+  failed = failed + show("f32.div.zero", internal.floats.div(125, 1065353216, 0))
+  // Moves.
+  failed = failed + show("f32.abs", internal.floats.abs(125, 3212836864))
+  failed = failed + show("f32.neg", internal.floats.neg(125, 1065353216))
+  failed = failed + show("f32.copysign", internal.floats.copysign(125, 1065353216, 3212836864))
+  // min / max honor the NaN class and signed zero.
+  failed = failed + show("f32.min.zero", internal.floats.min(125, 2147483648, 0))
+  failed = failed + show("f32.max.zero", internal.floats.max(125, 2147483648, 0))
+  failed = failed + show("f32.min.nan", internal.floats.min(125, 2143289344, 1065353216))
+  // Comparisons: NaN is unordered.
+  failed = failed + show("f32.cmp.eq.nan", internal.floats.cmp(91, 125, 2143289344, 1065353216))
+  failed = failed + show("f32.cmp.ne.nan", internal.floats.cmp(92, 125, 2143289344, 1065353216))
+  failed = failed + show("f32.cmp.lt.nan", internal.floats.cmp(93, 125, 2143289344, 1065353216))
+  failed = failed + show("f64.cmp.eq", internal.floats.cmp(97, 124, 4607182418800017408, 4607182418800017408))
+  failed = failed + show("f64.cmp.ge", internal.floats.cmp(102, 124, 4607182418800017408, 4607182418800017408))
+  // f64 division by a signed zero (the host raises; the model does not).
+  failed = failed + show("f64.div.pos-zero", internal.floats.div(124, 4607182418800017408, 0))
+  failed = failed + show("f64.div.neg-zero", internal.floats.div(124, 4607182418800017408, -9223372036854775807 - 1))
+  failed = failed + show("f64.div.zero-zero", internal.floats.div(124, 0, 0))
+  // f64 add.
+  failed = failed + show("f64.add", internal.floats.add(124, 4607182418800017408, 4607182418800017408))
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()
