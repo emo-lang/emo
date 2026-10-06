@@ -308,3 +308,36 @@
   store-fixture.expected.txt)
  (action
   (diff store-fixture.expected.txt store-fixture.actual)))
+
+; The frame-machine fixture (T21.7).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  fac-fixture.emo
+  wasm.emo
+  cli.emo
+  internal/instance.emo
+  internal/corpus.emo
+  internal/error.emo
+  internal/reader.emo
+  internal/decode.emo
+  internal/model.emo
+  internal/store.emo
+  internal/value.emo
+  internal/ints.emo
+  internal/floats.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   fac-fixture.actual
+   (run %{emo} run fac-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  fac-fixture.actual
+  fac-fixture.expected.txt)
+ (action
+  (diff fac-fixture.expected.txt fac-fixture.actual)))

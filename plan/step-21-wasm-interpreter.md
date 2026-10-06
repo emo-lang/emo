@@ -226,7 +226,7 @@ prefix of this list leaves the repo building and `dune test` green.
       arrays with grow / size / fill / copy / init; globals with
       mutation. Traps are values here too. Fixtures: the OOB edges,
       grow's wrap behavior, fill / copy overlaps.
-- [ ] **T21.7** — *The frame machine.* **(L)** The operand arena and
+- [x] **T21.7** — *The frame machine.* **(L)** The operand arena and
       the walker: locals and parameters, the parametric and variable
       instructions, structured control by recursion with branches as
       unwind signals, `call` and `call_indirect` (null and type

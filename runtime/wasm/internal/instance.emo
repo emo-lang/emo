@@ -106,7 +106,7 @@ class DataDef {
 }
 
 class Module {
-  def init(types Array[FuncType], imports Array[Import], funcs Array[FuncDef], tables Array[TableDef], mems Array[MemDef], globals Array[GlobalDef], exports Array[ExportDef], start Int64, elems Array[ElemDef], datas Array[DataDef], func_typeidxs Array[Int64], n_imp_funcs Int64, n_imp_globals Int64) {
+  def init(types Array[FuncType], imports Array[Import], funcs Array[FuncDef], tables Array[TableDef], mems Array[MemDef], globals Array[GlobalDef], exports Array[ExportDef], start Int64, elems Array[ElemDef], datas Array[DataDef], func_typeidxs Array[Int64], n_imp_funcs Int64, n_imp_globals Int64, data Bytes, dc Int64) {
     self.types = types
     self.imports = imports
     self.funcs = funcs
@@ -120,6 +120,8 @@ class Module {
     self.func_typeidxs = func_typeidxs
     self.n_imp_funcs = n_imp_funcs
     self.n_imp_globals = n_imp_globals
+    self.data = data
+    self.dc = dc
   }
 }
 
@@ -592,6 +594,19 @@ def datas_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[DataDef]) 
   return datas_rest(data, taken[0].pos, limit, n - 1, acc.append(DataDef.new(flag, mem_idx, offset_start, offset_end, taken[1])))
 }
 
+// The data-count section's value (-1 when absent).
+def parse_datacount(data Bytes) Int64 {
+  const s = find_section(data, 12)
+  if !s[0] {
+    return -1
+  }
+  const x = internal.reader.u32(internal.reader.new(data, s[1], s[2]))
+  if x[0].failed {
+    return -1
+  }
+  return x[1]
+}
+
 def typeidx_at(typeidxs Array[Int64], i Int64) Int64 {
   if i < typeidxs.length() {
     return typeidxs[i]
@@ -646,7 +661,8 @@ def parse(data Bytes) Module {
   const datas = parse_datas(data)
   const imp_funcs = count_imports(imports, 0)
   const imp_globals = count_imports(imports, 3)
-  return Module.new(types, imports, funcs, tables, mems, globals, exports, start, elems, datas, fn_typeidxs, imp_funcs, imp_globals)
+  const dc = parse_datacount(data)
+  return Module.new(types, imports, funcs, tables, mems, globals, exports, start, elems, datas, fn_typeidxs, imp_funcs, imp_globals, data, dc)
 }
 
 def count_imports(imports Array[Import], kind Int64) Int64 {
@@ -701,4 +717,1180 @@ def describe(handle Int64) String {
     + " start=" + m.start.to_string()
     + " imp_funcs=" + m.n_imp_funcs.to_string()
     + " body0=" + bodies
+}
+
+// ============================================================================
+// The frame machine (T21.7)
+// ============================================================================
+//
+// The operand stack and locals live in one shared byte arena of 16-byte
+// slots (bits at +0, kind at +8, little-endian). `sp` is the operand
+// top; each call claims a frame [base, ...) where the parameters and
+// declared locals sit below the operand stack. Execution threads the
+// instruction position and reports a signal — normal end, branch
+// (with the label depth), return, trap, or an `if`'s arm boundary —
+// which the enclosing structured handler either consumes or re-raises.
+//
+// The store (memory/tables/globals) is module state, like the arena, so
+// the walker stays spelled with primitives.
+
+var arena = Bytes.new(0)
+var sp = 0
+var frame_base = 0
+var mems = []
+var tables = []
+var globals_store = []
+var datalist = []
+var elemlist = []
+
+def reset_machine() Int64 {
+  if arena.length() == 0 {
+    arena = Bytes.new(4194304)
+  }
+  sp = 0
+  mems = []
+  tables = []
+  globals_store = []
+  datalist = []
+  elemlist = []
+  return 0
+}
+
+def slot_bits_at(i Int64) Int64 {
+  return internal.store.le_load(arena, i * 16, 8)
+}
+
+def slot_kind_at(i Int64) Int64 {
+  return internal.store.le_load(arena, i * 16 + 8, 8)
+}
+
+def get_slot(i Int64) (Int64, Int64) {
+  return (slot_kind_at(i), slot_bits_at(i))
+}
+
+def set_slot(i Int64, v (Int64, Int64)) Int64 {
+  internal.store.le_store(arena, i * 16, 8, v[1])
+  internal.store.le_store(arena, i * 16 + 8, 8, v[0])
+  return 0
+}
+
+def push(v (Int64, Int64)) Int64 {
+  set_slot(sp, v)
+  sp = sp + 1
+  return 0
+}
+
+def mkv(k Int64, b Int64) (Int64, Int64) {
+  return (k, b)
+}
+
+def pop() (Int64, Int64) {
+  sp = sp - 1
+  return get_slot(sp)
+}
+
+// Move the top `k` values down to `base` and set `sp = base + k`.
+def adjust(base Int64, k Int64) Int64 {
+  const tmp = copy_top(k, [])
+  write_tmp(base, tmp, 0, k)
+  sp = base + k
+  return 0
+}
+
+def copy_top(k Int64, acc Array[(Int64, Int64)]) Array[(Int64, Int64)] {
+  if k == 0 {
+    return acc
+  }
+  return copy_top(k - 1, acc.append(get_slot(sp - k)))
+}
+
+def write_tmp(base Int64, tmp Array[(Int64, Int64)], i Int64, k Int64) Int64 {
+  if i == k {
+    return 0
+  }
+  set_slot(base + i, tmp[i])
+  return write_tmp(base, tmp, i + 1, k)
+}
+
+def init_locals(n Int64) Int64 {
+  if n <= 0 {
+    return 0
+  }
+  push(mkv(127, 0))
+  return init_locals(n - 1)
+}
+
+// ---- block types ----
+
+// (nparams, nresults, position after the block type).
+def block_arity(m Module, pos Int64, limit Int64) (Int64, Int64, Int64) {
+  if pos >= limit {
+    return (0, 0, pos)
+  }
+  const b = m.data.get(pos)
+  if b == 64 {
+    return (0, 0, pos + 1)
+  }
+  if b == 127 || b == 126 || b == 125 || b == 124 || b == 112 || b == 111 {
+    return (0, 1, pos + 1)
+  }
+  const x = internal.reader.s33(internal.reader.new(m.data, pos, limit))
+  if x[0].failed {
+    return (0, 0, pos)
+  }
+  const ti = x[1]
+  if ti < 0 || ti >= m.types.length() {
+    return (0, 0, x[0].pos)
+  }
+  const ft = m.types[ti]
+  return (ft.params.length(), ft.results.length(), x[0].pos)
+}
+
+// The position after the matching `end` of a body starting at `pos`.
+def end_of(m Module, pos Int64, limit Int64) Int64 {
+  return internal.reader.instrs(internal.reader.new(m.data, pos, limit), m.dc).pos
+}
+
+// ---- frames ----
+
+def call_func(m Module, fidx Int64) (Bool, String) {
+  if fidx < m.n_imp_funcs {
+    return (false, "uninitialized element")
+  }
+  const li = fidx - m.n_imp_funcs
+  if li < 0 || li >= m.funcs.length() {
+    return (false, "unknown function")
+  }
+  const local = m.funcs[li]
+  const ft = m.types[local.type_idx]
+  const nparams = ft.params.length()
+  const nresults = ft.results.length()
+  const base = sp - nparams
+  const lv = internal.reader.locals_walk(m.data, local.locals_start, local.locals_end)
+  init_locals(lv[2])
+  const saved_base = frame_base
+  frame_base = base
+  const r = exec_seq(m, local.body_start, local.body_end)
+  frame_base = saved_base
+  if r[0] == 3 {
+    return (false, r[3])
+  }
+  adjust(base, nresults)
+  return (true, "")
+}
+
+// ---- the walker ----
+//
+// signal: 0 = reached the matching end, 1 = branch (arg = label depth),
+// 2 = return, 3 = trap, 4 = an `if`'s else boundary.
+
+def exec_seq(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  if pos >= limit {
+    return (0, 0, pos, "")
+  }
+  const op = m.data.get(pos)
+  if op == 11 {
+    return (0, 0, pos + 1, "")
+  }
+  if op == 5 {
+    return (4, 0, pos + 1, "")
+  }
+  if op == 1 || op == 26 {
+    return exec_seq(m, pos + 1, limit)
+  }
+  if op == 0 {
+    return (3, 0, pos + 1, "unreachable")
+  }
+  if op == 2 {
+    const r = run_block(m, pos + 1, limit, false)
+    if r[0] == 0 {
+      return exec_seq(m, r[2], limit)
+    }
+    return r
+  }
+  if op == 3 {
+    const r = run_loop(m, pos + 1, limit)
+    if r[0] == 0 {
+      return exec_seq(m, r[2], limit)
+    }
+    return r
+  }
+  if op == 4 {
+    const r = run_if(m, pos + 1, limit)
+    if r[0] == 0 {
+      return exec_seq(m, r[2], limit)
+    }
+    return r
+  }
+  if op == 12 || op == 13 || op == 14 || op == 15 {
+    return run_control(m, op, pos, limit)
+  }
+  if op == 16 {
+    const x = internal.reader.u32(internal.reader.new(m.data, pos + 1, limit))
+    if x[0].failed {
+      return (3, 0, pos + 1, "malformed call")
+    }
+    const r = call_func(m, x[1])
+    if !r[0] {
+      return (3, 0, x[0].pos, r[1])
+    }
+    return exec_seq(m, x[0].pos, limit)
+  }
+  if op == 17 {
+    return run_call_indirect(m, pos + 1, limit)
+  }
+  if op == 27 {
+    return run_select(m, pos + 1, limit)
+  }
+  if op == 28 {
+    const after = internal.reader.valtype_bytes(internal.reader.new(m.data, pos + 1, limit)).pos
+    return run_select(m, after, limit)
+  }
+  if op >= 32 && op <= 36 {
+    return run_var(m, op, pos + 1, limit)
+  }
+  if op == 37 || op == 38 {
+    return run_table_getset(m, op, pos + 1, limit)
+  }
+  if op >= 40 && op <= 62 {
+    return run_mem(m, op, pos + 1, limit)
+  }
+  if op == 63 || op == 64 {
+    return run_mem_size_grow(m, op, pos + 2, limit)
+  }
+  if op == 65 {
+    const x = internal.reader.s32(internal.reader.new(m.data, pos + 1, limit))
+    push(mkv(127, internal.value.mask32(x[1])))
+    return exec_seq(m, x[0].pos, limit)
+  }
+  if op == 66 {
+    const x = internal.reader.s64(internal.reader.new(m.data, pos + 1, limit))
+    push(mkv(126, x[1]))
+    return exec_seq(m, x[0].pos, limit)
+  }
+  if op == 67 {
+    const x = internal.reader.take(internal.reader.new(m.data, pos + 1, limit), 4)
+    push(mkv(125, internal.store.le_load(x[1], 0, 4)))
+    return exec_seq(m, x[0].pos, limit)
+  }
+  if op == 68 {
+    const x = internal.reader.take(internal.reader.new(m.data, pos + 1, limit), 8)
+    push(mkv(124, internal.store.le_load(x[1], 0, 8)))
+    return exec_seq(m, x[0].pos, limit)
+  }
+  if op >= 69 && op <= 196 {
+    const r = num_step(m, op)
+    if !r[0] {
+      return (3, 0, pos + 1, r[1])
+    }
+    return exec_seq(m, pos + 1, limit)
+  }
+  if op == 208 {
+    const t = m.data.get(pos + 1)
+    push(mkv(t, -1))
+    return exec_seq(m, pos + 2, limit)
+  }
+  if op == 209 {
+    const v = pop()
+    push(mkv(127, bool_bit(v[1] < 0)))
+    return exec_seq(m, pos + 1, limit)
+  }
+  if op == 210 {
+    const x = internal.reader.u32(internal.reader.new(m.data, pos + 1, limit))
+    push(mkv(112, x[1]))
+    return exec_seq(m, x[0].pos, limit)
+  }
+  if op == 252 {
+    return run_bulk(m, pos + 1, limit)
+  }
+  return (3, 0, pos + 1, "illegal opcode")
+}
+
+def bool_bit(b Bool) Int64 {
+  if b {
+    return 1
+  }
+  return 0
+}
+
+// ---- structured control ----
+
+def finish_block(r (Int64, Int64, Int64, String), base Int64, nresults Int64, end_after Int64) (Int64, Int64, Int64, String) {
+  if r[0] == 2 || r[0] == 3 {
+    return r
+  }
+  if r[0] == 0 || r[0] == 4 {
+    adjust(base, nresults)
+    return (0, 0, end_after, "")
+  }
+  if r[1] == 0 {
+    adjust(base, nresults)
+    return (0, 0, end_after, "")
+  }
+  return (1, r[1] - 1, r[2], "")
+}
+
+def run_block(m Module, pos Int64, limit Int64, is_loop Bool) (Int64, Int64, Int64, String) {
+  const ar = block_arity(m, pos, limit)
+  const base = sp - ar[0]
+  const end_after = end_of(m, ar[2], limit)
+  const r = exec_seq(m, ar[2], limit)
+  return finish_block(r, base, ar[1], end_after)
+}
+
+def run_loop(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  const ar = block_arity(m, pos, limit)
+  const base = sp - ar[0]
+  const end_after = end_of(m, ar[2], limit)
+  return loop_iter(m, ar[2], limit, base, ar[0], ar[1], end_after)
+}
+
+def loop_iter(m Module, body Int64, limit Int64, base Int64, nparams Int64, nresults Int64, end_after Int64) (Int64, Int64, Int64, String) {
+  const r = exec_seq(m, body, limit)
+  if r[0] == 2 || r[0] == 3 {
+    return r
+  }
+  if r[0] == 0 {
+    adjust(base, nresults)
+    return (0, 0, end_after, "")
+  }
+  if r[1] == 0 {
+    adjust(base, nparams)
+    return loop_iter(m, body, limit, base, nparams, nresults, end_after)
+  }
+  return (1, r[1] - 1, r[2], "")
+}
+
+def run_if(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  const cond = pop()
+  const ar = block_arity(m, pos, limit)
+  const base = sp - ar[0]
+  const body = ar[2]
+  const arm = internal.reader.instrs2(internal.reader.new(m.data, body, limit), m.dc, true)
+  const has_else = m.data.get(arm.pos - 1) == 5
+  const else_start = arm.pos
+  const end_after = if_expr(has_else, m, else_start, arm.pos, limit)
+  if cond[1] != 0 {
+    const r = exec_seq(m, body, limit)
+    return finish_block(r, base, ar[1], end_after)
+  }
+  if has_else {
+    const r = exec_seq(m, else_start, limit)
+    return finish_block(r, base, ar[1], end_after)
+  }
+  return (0, 0, end_after, "")
+}
+
+def if_expr(has_else Bool, m Module, else_start Int64, arm_pos Int64, limit Int64) Int64 {
+  if has_else {
+    return end_of(m, else_start, limit)
+  }
+  return arm_pos
+}
+
+def run_control(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  if op == 15 {
+    return (2, 0, pos + 1, "")
+  }
+  if op == 12 {
+    const x = internal.reader.u32(internal.reader.new(m.data, pos + 1, limit))
+    return (1, x[1], x[0].pos, "")
+  }
+  if op == 13 {
+    const x = internal.reader.u32(internal.reader.new(m.data, pos + 1, limit))
+    const c = pop()
+    if c[1] != 0 {
+      return (1, x[1], x[0].pos, "")
+    }
+    return exec_seq(m, x[0].pos, limit)
+  }
+  // br_table: a vector of labels then the default.
+  const cn = internal.reader.u32(internal.reader.new(m.data, pos + 1, limit))
+  const labels = internal.reader.u32_vec_end(cn[0], cn[1])
+  if labels.failed {
+    return (3, 0, pos + 1, "malformed br_table")
+  }
+  const dflt = internal.reader.u32(labels)
+  const idx = internal.value.mask32(pop()[1])
+  if idx >= cn[1] {
+    return (1, dflt[1], dflt[0].pos, "")
+  }
+  const arr = read_labels(m.data, cn[0].pos, cn[1], [])
+  return (1, arr[idx], dflt[0].pos, "")
+}
+
+def read_labels(data Bytes, pos Int64, n Int64, acc Array[Int64]) Array[Int64] {
+  if n == 0 {
+    return acc
+  }
+  const x = internal.reader.u32(internal.reader.new(data, pos, data.length()))
+  return read_labels(data, x[0].pos, n - 1, acc.append(x[1]))
+}
+
+def run_select(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  const c = pop()
+  const b = pop()
+  const a = pop()
+  if c[1] != 0 {
+    push(a)
+  } else {
+    push(b)
+  }
+  return exec_seq(m, pos, limit)
+}
+
+def run_var(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  const x = internal.reader.u32(internal.reader.new(m.data, pos, limit))
+  const i = x[1]
+  if op == 32 {
+    push(get_slot(frame_base + i))
+  }
+  if op == 33 {
+    set_slot(frame_base + i, pop())
+  }
+  if op == 34 {
+    const v = pop()
+    set_slot(frame_base + i, v)
+    push(v)
+  }
+  if op == 35 {
+    push(internal.store.global_get(globals_store[i]))
+  }
+  if op == 36 {
+    const v = pop()
+    const r = internal.store.global_set(globals_store[i], v)
+    if r[0] {
+      globals_store = global_replace(globals_store, i, r[1])
+    }
+  }
+  return exec_seq(m, x[0].pos, limit)
+}
+
+def global_replace(gs Array[(Bool, (Int64, Int64))], i Int64, v (Int64, Int64)) Array[(Bool, (Int64, Int64))] {
+  return global_replace_loop(gs, i, v, 0, [])
+}
+
+def global_replace_loop(gs Array[(Bool, (Int64, Int64))], i Int64, v (Int64, Int64), j Int64, acc Array[(Bool, (Int64, Int64))]) Array[(Bool, (Int64, Int64))] {
+  if j == gs.length() {
+    return acc
+  }
+  if j == i {
+    const nv = (gs[j][0], v)
+    return global_replace_loop(gs, i, v, j + 1, acc.append(nv))
+  }
+  return global_replace_loop(gs, i, v, j + 1, acc.append(gs[j]))
+}
+
+// ---- numeric dispatch ----
+
+def int_bin(op Int64, kind Int64, a Int64, b Int64) (Bool, Int64, String) {
+  const base = if_eq(kind, 127, 106, 124)
+  const sub = op - base
+  if sub == 0 {
+    return (true, internal.ints.add(kind, a, b), "")
+  }
+  if sub == 1 {
+    return (true, internal.ints.sub(kind, a, b), "")
+  }
+  if sub == 2 {
+    return (true, internal.ints.mul(kind, a, b), "")
+  }
+  if sub == 3 {
+    return internal.ints.div_s(kind, a, b)
+  }
+  if sub == 4 {
+    return internal.ints.div_u(kind, a, b)
+  }
+  if sub == 5 {
+    return internal.ints.rem_s(kind, a, b)
+  }
+  if sub == 6 {
+    return internal.ints.rem_u(kind, a, b)
+  }
+  if sub == 7 {
+    return (true, internal.ints.band(kind, a, b), "")
+  }
+  if sub == 8 {
+    return (true, internal.ints.bor(kind, a, b), "")
+  }
+  if sub == 9 {
+    return (true, internal.ints.bxor(kind, a, b), "")
+  }
+  if sub == 10 {
+    return (true, internal.ints.shl(kind, a, b), "")
+  }
+  if sub == 11 {
+    return (true, internal.ints.shr_s(kind, a, b), "")
+  }
+  if sub == 12 {
+    return (true, internal.ints.shr_u(kind, a, b), "")
+  }
+  if sub == 13 {
+    return (true, internal.ints.rotl(kind, a, b), "")
+  }
+  return (true, internal.ints.rotr(kind, a, b), "")
+}
+
+def if_eq(a Int64, b Int64, x Int64, y Int64) Int64 {
+  if a == b {
+    return x
+  }
+  return y
+}
+
+def float_un(op Int64, kind Int64, a Int64) Int64 {
+  const base = if_eq(kind, 125, 139, 153)
+  const sub = op - base
+  if sub == 0 {
+    return internal.floats.abs(kind, a)
+  }
+  if sub == 1 {
+    return internal.floats.neg(kind, a)
+  }
+  if sub == 2 {
+    return internal.floats.ceil(kind, a)
+  }
+  if sub == 3 {
+    return internal.floats.floor(kind, a)
+  }
+  if sub == 4 {
+    return internal.floats.trunc(kind, a)
+  }
+  if sub == 5 {
+    return internal.floats.nearest(kind, a)
+  }
+  return internal.floats.sqrt(kind, a)
+}
+
+def float_bin(op Int64, kind Int64, a Int64, b Int64) Int64 {
+  const base = if_eq(kind, 125, 146, 160)
+  const sub = op - base
+  if sub == 0 {
+    return internal.floats.add(kind, a, b)
+  }
+  if sub == 1 {
+    return internal.floats.sub(kind, a, b)
+  }
+  if sub == 2 {
+    return internal.floats.mul(kind, a, b)
+  }
+  if sub == 3 {
+    return internal.floats.div(kind, a, b)
+  }
+  if sub == 4 {
+    return internal.floats.min(kind, a, b)
+  }
+  if sub == 5 {
+    return internal.floats.max(kind, a, b)
+  }
+  return internal.floats.copysign(kind, a, b)
+}
+
+def num_step(m Module, op Int64) (Bool, String) {
+  if op == 69 || op == 80 {
+    const a = pop()
+    push(mkv(127, bool_bit(a[1] == 0)))
+    return (true, "")
+  }
+  if op >= 70 && op <= 79 {
+    const b = pop()
+    const a = pop()
+    push(mkv(127, internal.ints.cmp(op, 127, a[1], b[1])))
+    return (true, "")
+  }
+  if op >= 81 && op <= 90 {
+    const b = pop()
+    const a = pop()
+    push(mkv(127, internal.ints.cmp(op, 126, a[1], b[1])))
+    return (true, "")
+  }
+  if op >= 91 && op <= 96 {
+    const b = pop()
+    const a = pop()
+    push(mkv(127, internal.floats.cmp(op, 125, a[1], b[1])))
+    return (true, "")
+  }
+  if op >= 97 && op <= 102 {
+    const b = pop()
+    const a = pop()
+    push(mkv(127, internal.floats.cmp(op, 124, a[1], b[1])))
+    return (true, "")
+  }
+  if op >= 103 && op <= 105 {
+    const a = pop()
+    if op == 103 {
+      push(mkv(127, internal.ints.clz(127, a[1])))
+    }
+    if op == 104 {
+      push(mkv(127, internal.ints.ctz(127, a[1])))
+    }
+    if op == 105 {
+      push(mkv(127, internal.ints.popcnt(127, a[1])))
+    }
+    return (true, "")
+  }
+  if op >= 106 && op <= 120 {
+    const b = pop()
+    const a = pop()
+    const r = int_bin(op, 127, a[1], b[1])
+    if !r[0] {
+      return (false, r[2])
+    }
+    push(mkv(127, r[1]))
+    return (true, "")
+  }
+  if op >= 121 && op <= 123 {
+    const a = pop()
+    if op == 121 {
+      push(mkv(126, internal.ints.clz(126, a[1])))
+    }
+    if op == 122 {
+      push(mkv(126, internal.ints.ctz(126, a[1])))
+    }
+    if op == 123 {
+      push(mkv(126, internal.ints.popcnt(126, a[1])))
+    }
+    return (true, "")
+  }
+  if op >= 124 && op <= 138 {
+    const b = pop()
+    const a = pop()
+    const r = int_bin(op, 126, a[1], b[1])
+    if !r[0] {
+      return (false, r[2])
+    }
+    push(mkv(126, r[1]))
+    return (true, "")
+  }
+  if op >= 139 && op <= 145 {
+    const a = pop()
+    push(mkv(125, float_un(op, 125, a[1])))
+    return (true, "")
+  }
+  if op >= 146 && op <= 152 {
+    const b = pop()
+    const a = pop()
+    push(mkv(125, float_bin(op, 125, a[1], b[1])))
+    return (true, "")
+  }
+  if op >= 153 && op <= 159 {
+    const a = pop()
+    push(mkv(124, float_un(op, 124, a[1])))
+    return (true, "")
+  }
+  if op >= 160 && op <= 166 {
+    const b = pop()
+    const a = pop()
+    push(mkv(124, float_bin(op, 124, a[1], b[1])))
+    return (true, "")
+  }
+  return conv_step(op)
+}
+
+def conv_step(op Int64) (Bool, String) {
+  if op == 167 {
+    const a = pop()
+    push(mkv(127, internal.value.mask32(a[1])))
+    return (true, "")
+  }
+  if op >= 168 && op <= 171 {
+    const src = if_eq(op, 168, 125, if_eq(op, 169, 125, 124))
+    const a = pop()
+    return conv_push_i32(op, a[1], src)
+  }
+  return conv_step2(op)
+}
+
+def conv_push_i32(op Int64, bits Int64, src Int64) (Bool, String) {
+  const w = internal.floats.to_f64_bits(src, bits)
+  if op == 168 || op == 170 {
+    const r = internal.floats.trunc_i32_s(w)
+    if !r[0] {
+      return (false, r[2])
+    }
+    push(mkv(127, r[1]))
+    return (true, "")
+  }
+  const r = internal.floats.trunc_i32_u(w)
+  if !r[0] {
+    return (false, r[2])
+  }
+  push(mkv(127, r[1]))
+  return (true, "")
+}
+
+def conv_step2(op Int64) (Bool, String) {
+  if op == 172 || op == 173 {
+    const a = pop()
+    if op == 172 {
+      push(mkv(126, internal.ints.extend_i32_s(a[1])))
+    } else {
+      push(mkv(126, internal.ints.extend_i32_u(a[1])))
+    }
+    return (true, "")
+  }
+  if op >= 174 && op <= 177 {
+    const src = if_eq(op, 174, 125, if_eq(op, 175, 125, 124))
+    const a = pop()
+    const w = internal.floats.to_f64_bits(src, a[1])
+    if op == 174 || op == 176 {
+      const r = internal.floats.trunc_i64_s(w)
+      if !r[0] {
+        return (false, r[2])
+      }
+      push(mkv(126, r[1]))
+      return (true, "")
+    }
+    const r = internal.floats.trunc_i64_u(w)
+    if !r[0] {
+      return (false, r[2])
+    }
+    push(mkv(126, r[1]))
+    return (true, "")
+  }
+  if op >= 178 && op <= 181 {
+    const a = pop()
+    if op == 178 {
+      push(mkv(125, internal.floats.f32_of_i32_s(a[1])))
+    }
+    if op == 179 {
+      push(mkv(125, internal.floats.f32_of_i32_u(a[1])))
+    }
+    if op == 180 {
+      push(mkv(125, internal.floats.f32_of_i64_s(a[1])))
+    }
+    if op == 181 {
+      push(mkv(125, internal.floats.f32_of_i64_u(a[1])))
+    }
+    return (true, "")
+  }
+  if op == 182 {
+    const a = pop()
+    push(mkv(125, internal.floats.demote_f64(a[1])))
+    return (true, "")
+  }
+  if op >= 183 && op <= 186 {
+    const a = pop()
+    if op == 183 {
+      push(mkv(124, internal.floats.f64_of_i32_s(a[1])))
+    }
+    if op == 184 {
+      push(mkv(124, internal.floats.f64_of_i32_u(a[1])))
+    }
+    if op == 185 {
+      push(mkv(124, internal.floats.f64_of_i64_s(a[1])))
+    }
+    if op == 186 {
+      push(mkv(124, internal.floats.f64_of_i64_u(a[1])))
+    }
+    return (true, "")
+  }
+  if op == 187 {
+    const a = pop()
+    push(mkv(124, internal.floats.promote_f32(a[1])))
+    return (true, "")
+  }
+  if op == 188 {
+    const a = pop()
+    push(mkv(127, internal.value.mask32(a[1])))
+    return (true, "")
+  }
+  if op == 190 {
+    const a = pop()
+    push(mkv(125, internal.value.mask32(a[1])))
+    return (true, "")
+  }
+  if op == 189 || op == 191 {
+    const a = pop()
+    push(mkv(if_eq(op, 189, 126, 124), a[1]))
+    return (true, "")
+  }
+  if op == 192 || op == 193 {
+    const a = pop()
+    if op == 192 {
+      push(mkv(127, internal.ints.extend8_s(127, a[1])))
+    } else {
+      push(mkv(127, internal.ints.extend16_s(127, a[1])))
+    }
+    return (true, "")
+  }
+  if op >= 194 && op <= 196 {
+    const a = pop()
+    if op == 194 {
+      push(mkv(126, internal.ints.extend8_s(126, a[1])))
+    }
+    if op == 195 {
+      push(mkv(126, internal.ints.extend16_s(126, a[1])))
+    }
+    if op == 196 {
+      push(mkv(126, internal.ints.extend32_s(a[1])))
+    }
+    return (true, "")
+  }
+  return (false, "illegal numeric opcode")
+}
+
+// ---- call_indirect, table access, memory ----
+
+def types_eq(a Array[Int64], b Array[Int64], i Int64) Bool {
+  if i == a.length() || i == b.length() {
+    return a.length() == b.length()
+  }
+  if a[i] != b[i] {
+    return false
+  }
+  return types_eq(a, b, i + 1)
+}
+
+def types_match(m Module, fidx Int64, ti Int64) Bool {
+  if fidx < m.n_imp_funcs {
+    return false
+  }
+  const li = fidx - m.n_imp_funcs
+  if li >= m.funcs.length() {
+    return false
+  }
+  const fa = m.types[m.funcs[li].type_idx]
+  const fb = m.types[ti]
+  return types_eq(fa.params, fb.params, 0) && types_eq(fa.results, fb.results, 0)
+}
+
+def run_call_indirect(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  const t = internal.reader.u32(internal.reader.new(m.data, pos, limit))
+  const tb = internal.reader.u32(t[0])
+  const after = tb[0].pos
+  const elem = internal.value.mask32(pop()[1])
+  if tb[1] >= tables.length() {
+    return (3, 0, after, "undefined element")
+  }
+  const e = internal.store.tbl_get(tables[tb[1]], elem)
+  if !e[0] {
+    return (3, 0, after, e[2])
+  }
+  if e[1][1] < 0 {
+    return (3, 0, after, "uninitialized element")
+  }
+  const fidx = e[1][1]
+  if !types_match(m, fidx, t[1]) {
+    return (3, 0, after, "indirect call type mismatch")
+  }
+  const r = call_func(m, fidx)
+  if !r[0] {
+    return (3, 0, after, r[1])
+  }
+  return exec_seq(m, after, limit)
+}
+
+def table_replace(ts Array[(Array[(Int64, Int64)], Int64, Bool)], i Int64, t (Array[(Int64, Int64)], Int64, Bool)) Array[(Array[(Int64, Int64)], Int64, Bool)] {
+  return table_replace_loop(ts, i, t, 0, [])
+}
+
+def table_replace_loop(ts Array[(Array[(Int64, Int64)], Int64, Bool)], i Int64, t (Array[(Int64, Int64)], Int64, Bool), j Int64, acc Array[(Array[(Int64, Int64)], Int64, Bool)]) Array[(Array[(Int64, Int64)], Int64, Bool)] {
+  if j == ts.length() {
+    return acc
+  }
+  if j == i {
+    return table_replace_loop(ts, i, t, j + 1, acc.append(t))
+  }
+  return table_replace_loop(ts, i, t, j + 1, acc.append(ts[j]))
+}
+
+def run_table_getset(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  const x = internal.reader.u32(internal.reader.new(m.data, pos, limit))
+  const i = internal.value.mask32(pop()[1])
+  if op == 37 {
+    if x[1] >= tables.length() {
+      return (3, 0, x[0].pos, "undefined element")
+    }
+    const e = internal.store.tbl_get(tables[x[1]], i)
+    if !e[0] {
+      return (3, 0, x[0].pos, e[2])
+    }
+    push(e[1])
+    return exec_seq(m, x[0].pos, limit)
+  }
+  const v = pop()
+  if x[1] >= tables.length() {
+    return (3, 0, x[0].pos, "undefined element")
+  }
+  const r = internal.store.tbl_set(tables[x[1]], i, v)
+  if !r[0] {
+    return (3, 0, x[0].pos, r[2])
+  }
+  tables = table_replace(tables, x[1], r[1])
+  return exec_seq(m, x[0].pos, limit)
+}
+
+def load_width(op Int64) Int64 {
+  if op == 40 || op == 42 || op == 52 || op == 53 {
+    return 4
+  }
+  if op == 41 || op == 43 {
+    return 8
+  }
+  if op == 44 || op == 45 || op == 48 || op == 49 {
+    return 1
+  }
+  return 2
+}
+
+def load_kind(op Int64) Int64 {
+  if op == 42 {
+    return 125
+  }
+  if op == 43 {
+    return 124
+  }
+  if op == 41 || (op >= 48 && op <= 53) {
+    return 126
+  }
+  return 127
+}
+
+def run_mem(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  const a = internal.reader.u32(internal.reader.new(m.data, pos, limit))
+  const o = internal.reader.u32(a[0])
+  const after = o[0].pos
+  if mems.length() == 0 {
+    return (3, 0, after, "out of bounds memory access")
+  }
+  if op <= 53 {
+    const width = load_width(op)
+    const signed = op == 44 || op == 46 || op == 48 || op == 50 || op == 52
+    const addr = pop()[1]
+    const r = internal.store.mem_load(mems[0], addr, o[1], width, signed)
+    if !r[0] {
+      return (3, 0, after, r[2])
+    }
+    const kind = load_kind(op)
+    if kind == 127 || kind == 125 {
+      push(mkv(kind, internal.value.mask32(r[1])))
+    } else {
+      push(mkv(kind, r[1]))
+    }
+    return exec_seq(m, after, limit)
+  }
+  const width = store_width(op)
+  const v = pop()
+  const addr = pop()[1]
+  const r = internal.store.mem_store(mems[0], addr, o[1], width, v[1])
+  if !r[0] {
+    return (3, 0, after, r[1])
+  }
+  return exec_seq(m, after, limit)
+}
+
+def store_width(op Int64) Int64 {
+  if op == 54 || op == 56 || op == 62 {
+    return 4
+  }
+  if op == 55 || op == 57 {
+    return 8
+  }
+  if op == 58 || op == 60 {
+    return 1
+  }
+  return 2
+}
+
+def run_mem_size_grow(m Module, op Int64, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  if mems.length() == 0 {
+    return (3, 0, pos, "out of bounds memory access")
+  }
+  if op == 63 {
+    push(mkv(127, internal.store.mem_size(mems[0])))
+    return exec_seq(m, pos, limit)
+  }
+  const delta = internal.value.mask32(pop()[1])
+  const r = internal.store.mem_grow(mems[0], delta)
+  if r[0] {
+    mems = mem_replace(mems, 0, r[2])
+    push(mkv(127, r[1]))
+  } else {
+    push(mkv(127, 4294967295))
+  }
+  return exec_seq(m, pos, limit)
+}
+
+def mem_replace(ms Array[(Bytes, Int64, Bool)], i Int64, mm (Bytes, Int64, Bool)) Array[(Bytes, Int64, Bool)] {
+  return mem_replace_loop(ms, i, mm, 0, [])
+}
+
+def mem_replace_loop(ms Array[(Bytes, Int64, Bool)], i Int64, mm (Bytes, Int64, Bool), j Int64, acc Array[(Bytes, Int64, Bool)]) Array[(Bytes, Int64, Bool)] {
+  if j == ms.length() {
+    return acc
+  }
+  if j == i {
+    return mem_replace_loop(ms, i, mm, j + 1, acc.append(mm))
+  }
+  return mem_replace_loop(ms, i, mm, j + 1, acc.append(ms[j]))
+}
+
+// ---- the 0xfc prefix (bulk memory and tables) ----
+
+def run_bulk(m Module, pos Int64, limit Int64) (Int64, Int64, Int64, String) {
+  const x = internal.reader.u32(internal.reader.new(m.data, pos, limit))
+  const s = x[1]
+  if s == 9 || s == 13 {
+    return exec_seq(m, x[0].pos, limit)
+  }
+  if s == 10 {
+    const d = internal.reader.u32(x[0])
+    const e = internal.reader.u32(d[0])
+    const n = internal.value.mask32(pop()[1])
+    const src = internal.value.mask32(pop()[1])
+    const dst = internal.value.mask32(pop()[1])
+    const r = mem_copy(mems[0], dst, src, n)
+    if !r[0] {
+      return (3, 0, e[0].pos, r[1])
+    }
+    return exec_seq(m, e[0].pos, limit)
+  }
+  if s == 11 {
+    const d = internal.reader.u32(x[0])
+    const n = internal.value.mask32(pop()[1])
+    const val = internal.value.mask32(pop()[1])
+    const dst = internal.value.mask32(pop()[1])
+    const r = mem_fill(mems[0], dst, val, n)
+    if !r[0] {
+      return (3, 0, d[0].pos, r[1])
+    }
+    return exec_seq(m, d[0].pos, limit)
+  }
+  if s == 15 {
+    const ti = internal.reader.u32(x[0])
+    const n = internal.value.mask32(pop()[1])
+    const init = pop()
+    const r = internal.store.tbl_grow(tables[ti[1]], n, init)
+    if r[0] {
+      tables = table_replace(tables, ti[1], r[2])
+      push(mkv(127, r[1]))
+    } else {
+      push(mkv(127, 4294967295))
+    }
+    return exec_seq(m, ti[0].pos, limit)
+  }
+  if s == 16 {
+    const ti = internal.reader.u32(x[0])
+    push(mkv(127, internal.store.tbl_size(tables[ti[1]])))
+    return exec_seq(m, ti[0].pos, limit)
+  }
+  if s == 17 {
+    const ti = internal.reader.u32(x[0])
+    const n = internal.value.mask32(pop()[1])
+    const v = pop()
+    const i = internal.value.mask32(pop()[1])
+    const r = internal.store.tbl_fill(tables[ti[1]], i, n, v)
+    if !r[0] {
+      return (3, 0, ti[0].pos, r[2])
+    }
+    tables = table_replace(tables, ti[1], r[1])
+    return exec_seq(m, ti[0].pos, limit)
+  }
+  if s == 14 {
+    const d = internal.reader.u32(x[0])
+    const e = internal.reader.u32(d[0])
+    const n = internal.value.mask32(pop()[1])
+    const src = internal.value.mask32(pop()[1])
+    const dst = internal.value.mask32(pop()[1])
+    const r = internal.store.tbl_copy(tables[d[1]], dst, tables[e[1]], src, n)
+    if !r[0] {
+      return (3, 0, e[0].pos, r[2])
+    }
+    tables = table_replace(tables, d[1], r[1])
+    return exec_seq(m, e[0].pos, limit)
+  }
+  return (3, 0, x[0].pos, "uninitialized element")
+}
+
+def mem_copy(mem (Bytes, Int64, Bool), dst Int64, src Int64, n Int64) (Bool, String) {
+  if dst + n > mem[0].length() || src + n > mem[0].length() {
+    return (false, "out of bounds memory access")
+  }
+  const tmp = Bytes.new(n)
+  copy_n(tmp, mem[0], src, 0, n)
+  write_n(mem[0], dst, tmp, 0, n)
+  return (true, "")
+}
+
+def mem_fill(mem (Bytes, Int64, Bool), dst Int64, val Int64, n Int64) (Bool, String) {
+  if dst + n > mem[0].length() {
+    return (false, "out of bounds memory access")
+  }
+  fill_n(mem[0], dst, val, 0, n)
+  return (true, "")
+}
+
+def copy_n(dst Bytes, src Bytes, src_at Int64, dst_at Int64, n Int64) Int64 {
+  if n == 0 {
+    return 0
+  }
+  dst.set(dst_at, src.get(src_at))
+  return copy_n(dst, src, src_at + 1, dst_at + 1, n - 1)
+}
+
+def write_n(dst Bytes, dst_at Int64, src Bytes, src_at Int64, n Int64) Int64 {
+  return copy_n(dst, src, src_at, dst_at, n)
+}
+
+def fill_n(data Bytes, at Int64, val Int64, i Int64, n Int64) Int64 {
+  if i == n {
+    return 0
+  }
+  data.set(at + i, val)
+  return fill_n(data, at, val, i + 1, n)
+}
+
+// ---- the package entry: call an export ----
+
+def find_export(m Module, name String, i Int64) Int64 {
+  if i == m.exports.length() {
+    return -1
+  }
+  if m.exports[i].name == name {
+    return i
+  }
+  return find_export(m, name, i + 1)
+}
+
+def collect_results(from Int64, n Int64, acc Array[(Int64, Int64)]) Array[(Int64, Int64)] {
+  if n == 0 {
+    return acc
+  }
+  return collect_results(from + 1, n - 1, acc.append(get_slot(from)))
+}
+
+def call(handle Int64, name String, args Array[(Int64, Int64)]) (Bool, Array[(Int64, Int64)], String) {
+  if handle < 0 || handle >= loaded.length() {
+    return (false, [], "no module")
+  }
+  const m = loaded[handle]
+  const ei = find_export(m, name, 0)
+  if ei < 0 {
+    return (false, [], "unknown export")
+  }
+  if m.exports[ei].kind != 0 {
+    return (false, [], "not a function")
+  }
+  reset_machine()
+  const fidx = m.exports[ei].idx
+  if fidx < m.n_imp_funcs {
+    return (false, [], "imports are not wired yet")
+  }
+  const ft = m.types[m.funcs[fidx - m.n_imp_funcs].type_idx]
+  push_args(args, 0, args.length())
+  const r = call_func(m, fidx)
+  if !r[0] {
+    return (false, [], r[1])
+  }
+  const out = collect_results(sp - ft.results.length(), ft.results.length(), [])
+  return (true, out, "")
+}
+
+def push_args(args Array[(Int64, Int64)], i Int64, n Int64) Int64 {
+  if i == n {
+    return 0
+  }
+  push(args[i])
+  return push_args(args, i + 1, n)
 }
