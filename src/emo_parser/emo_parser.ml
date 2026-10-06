@@ -362,6 +362,7 @@ and parse_primary st =
       let params = parse_params st in
       let body, close_span = parse_block st in
       node (merge_span tok.Tok.span close_span) (Ast.Arrow_block (params, body))
+  | Tok.Keyword Tok.If -> parse_if_expr st
   | Tok.Op Tok.LBracket ->
       let open_span = (advance st).Tok.span in
       if at_op st Tok.RBracket then
@@ -385,12 +386,60 @@ and parse_primary st =
       error "E2001" (span st)
         (Printf.sprintf "expected an expression, found %s" (describe_kind t))
 
+and parse_if_expr st =
+  (* `if <cond> { <exp> } else { <exp> }` in expression position. The
+     whole construct must stay on one line — token lines are monotonic,
+     so comparing the `if` line with the else branch's closing brace
+     catches every break. *)
+  let if_span = span st in
+  let if_line = if_span.Emo_support.Span.line in
+  advance st |> ignore;
+  st.suppress_block_sugar <- true;
+  let cond = parse_expr st in
+  st.suppress_block_sugar <- false;
+  let then_expr, _ = parse_if_expr_branch st if_line "the `if`" in
+  (match kind st with
+  | Tok.Keyword Tok.Else -> ()
+  | _ ->
+      error "E2024" (span st) "an if expression requires an `else` branch"
+        ~hint:"write `if cond { a } else { b }`");
+  if newline_before st then
+    error "E2024" (span st) "an if expression must fit on one line"
+      ~hint:"write `} else {`";
+  advance st |> ignore;
+  let else_expr, close_span = parse_if_expr_branch st if_line "the `else`" in
+  node
+    (merge_span if_span close_span)
+    (Ast.If_expr { cond; then_expr; else_expr })
+
+and parse_if_expr_branch st if_line which =
+  if not (at_op st Tok.LBrace) then
+    error "E2024" (span st)
+      (Printf.sprintf "%s branch of an if expression must open with `{`"
+         which);
+  let open_span = (advance st).Tok.span in
+  if at_op st Tok.RBrace then
+    error "E2024" (span st)
+      "a branch of an if expression holds exactly one expression";
+  let e = parse_expr st in
+  if not (at_op st Tok.RBrace) then
+    error "E2024" (span st)
+      "a branch of an if expression holds exactly one expression"
+      ~hint:"for multiple statements, use the `if` statement form";
+  let close_span = (advance st).Tok.span in
+  ignore open_span;
+  if close_span.Emo_support.Span.line <> if_line then
+    error "E2024" close_span "an if expression must fit on one line"
+      ~hint:"bind the value to a const on one line, or use an `if` statement";
+  (e, close_span)
+
 and parse_paren st =
   let open_span = (advance st).Tok.span in
   if at_op st Tok.RParen then
     let close_span = (advance st).Tok.span in
     node (merge_span open_span close_span) (Ast.Tuple [])
   else
+
     let first = parse_expr st in
     if at_op st Tok.Comma then (
       let elems = ref [ first ] in
@@ -408,7 +457,7 @@ and parse_paren st =
       let close_span = span st in
       expect_op st Tok.RParen "`)`" |> ignore;
       match first.Ast.desc with
-      | Binary _ | Unary _ -> first
+      | Binary _ | Unary _ | If_expr _ -> first
       | _ -> node (merge_span open_span close_span) (Ast.Tuple [ first ])
 
 and parse_args st =

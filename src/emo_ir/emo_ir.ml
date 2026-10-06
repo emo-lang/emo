@@ -23,6 +23,7 @@ and expr_desc =
   | Interpolate of expr list
   | Unary of Emo_ast.unop * expr
   | Binary of Emo_ast.binop * expr * expr
+  | Cond of { c : expr; t : expr; e : expr } (* the one-line if expression *)
   | Index of expr * expr
   | Field_read of { obj : expr; name : string }
   | Call of { func : string; args : expr list } (* resolved static call *)
@@ -309,6 +310,13 @@ and lower_expr env (e : Ast.expr) : expr =
   | Ast.Unary (op, x) -> expr (Unary (op, lower_expr env x))
   | Ast.Binary (op, l, r) ->
       expr (Binary (op, lower_expr env l, lower_expr env r))
+  | Ast.If_expr { cond; then_expr; else_expr } ->
+      expr
+        (Cond
+           { c = lower_expr env cond;
+             t = lower_expr env then_expr;
+             e = lower_expr env else_expr
+           })
   | Ast.Tuple es -> expr (Tuple (List.map (lower_expr env) es))
   | Ast.Array_literal es -> expr (Array_lit (List.map (lower_expr env) es))
   | Ast.Do operand -> (
@@ -602,6 +610,8 @@ let rec expr_native (special : string list) (e : expr) : bool =
   | Make_enum _ -> true
   | Unary (_, x) -> expr_native special x
   | Binary (_, l, r) -> expr_native special l && expr_native special r
+  | Cond { c; t; e } ->
+      expr_native special c && expr_native special t && expr_native special e
   | Index (b, i) -> expr_native special b && expr_native special i
   | Field_read { obj; _ } -> expr_native special obj
   | Call { func; args } ->

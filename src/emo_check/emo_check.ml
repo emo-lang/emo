@@ -746,6 +746,26 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                (to_string other));
           Unknown)
   | Ast.Binary (op, l, r) -> check_binary ctx env span op l r
+  | Ast.If_expr { cond; then_expr; else_expr } ->
+      let ct = check_expr ctx env cond in
+      (match ct with
+      | Bool | Unknown -> ()
+      | other ->
+          report ctx cond.Ast.span "E4004"
+            (Printf.sprintf "the if expression's condition must be a Bool, got %s"
+               (to_string other)));
+      let tt = check_expr ctx (narrowed_then_env ctx env cond) then_expr in
+      let et = check_expr ctx (child_scope env) else_expr in
+      if tt = et then tt
+      else
+        (match tt, et with
+        | Unknown, t | t, Unknown -> t
+        | _ ->
+            report ctx span "E4019"
+              (Printf.sprintf
+                 "the if expression's branches have different types: %s vs %s"
+                 (to_string tt) (to_string et));
+            Unknown)
   | Ast.Do operand ->
       ignore (check_expr ctx env operand);
       Pid
@@ -1306,6 +1326,43 @@ and check_binary ctx env span op l r =
       check_bool_side rt;
       Bool
 
+(* Flow narrowing: `if x.is(T)` gives x the type T inside the then branch;
+   the else branch keeps the pre-test type, and neither leaks past the if.
+   Shared by the `if` statement and the if expression. *)
+and narrowed_then_env ctx env cond =
+  let narrowed =
+    match cond.Ast.desc with
+    | Ast.Call
+        ( { Ast.desc = Ast.Member (recv, "is"); _ },
+          [ { Ast.arg_value = { Ast.desc = Ast.Type_ident tname; _ }; _ } ] )
+      when match recv.Ast.desc with Ast.Ident _ -> true | _ -> false ->
+        let target_type = resolve_type_name ctx recv.Ast.span tname in
+        let rt = check_expr ctx env recv in
+        (match rt with
+        | (ClassType _ | EnumType _ | Int | Float | Bool | Char | String)
+          when provably_excluded ctx rt target_type ->
+            report ctx recv.Ast.span "E4011"
+              (Printf.sprintf "`%s` can never narrow to %s" (to_string rt)
+                 (to_string target_type))
+        | _ -> ());
+        Some
+          ( (match recv.Ast.desc with Ast.Ident n -> n | _ -> ""),
+            target_type )
+    | Ast.Call ({ Ast.desc = Ast.Member (recv, "is"); _ }, target :: _) ->
+        ignore (check_expr ctx env target.Ast.arg_value);
+        None
+    | _ -> None
+  in
+  match narrowed with
+  | Some (name, t) ->
+      let is_var =
+        match lookup_env env name with
+        | Some info -> info.is_var
+        | None -> false
+      in
+      bind (child_scope env) name { vtype = t; is_var; depth = env.depth + 1 }
+  | None -> child_scope env
+
 and check_stmt ctx env (s : Ast.stmt) : env =
   let span = s.Ast.stmt_span in
   match s.Ast.stmt_desc with
@@ -1386,45 +1443,7 @@ and check_stmt ctx env (s : Ast.stmt) : env =
           report ctx cond.Ast.span "E4004"
             (Printf.sprintf "the `if` condition must be a Bool, got %s"
                (to_string other)));
-      (* Flow narrowing: `if x.is(T)` gives x the type T inside the then
-         branch; the else branch keeps the pre-test type, and neither leaks
-         past the if. *)
-      let narrowed =
-        match cond.Ast.desc with
-        | Ast.Call
-            ( { Ast.desc = Ast.Member (recv, "is"); _ },
-              [ { Ast.arg_value = { Ast.desc = Ast.Type_ident tname; _ }; _ } ]
-            )
-          when match recv.Ast.desc with Ast.Ident _ -> true | _ -> false ->
-            let target_type = resolve_type_name ctx recv.Ast.span tname in
-            let rt = check_expr ctx env recv in
-            (match rt with
-            | (ClassType _ | EnumType _ | Int | Float | Bool | Char | String)
-              when provably_excluded ctx rt target_type ->
-                report ctx recv.Ast.span "E4011"
-                  (Printf.sprintf "`%s` can never narrow to %s" (to_string rt)
-                     (to_string target_type))
-            | _ -> ());
-            Some
-              ( (match recv.Ast.desc with Ast.Ident n -> n | _ -> ""),
-                target_type )
-        | Ast.Call ({ Ast.desc = Ast.Member (recv, "is"); _ }, target :: _) ->
-            ignore (check_expr ctx env target.Ast.arg_value);
-            None
-        | _ -> None
-      in
-      let then_env =
-        match narrowed with
-        | Some (name, t) ->
-            let is_var =
-              match lookup_env env name with
-              | Some info -> info.is_var
-              | None -> false
-            in
-            bind (child_scope env) name
-              { vtype = t; is_var; depth = env.depth + 1 }
-        | None -> child_scope env
-      in
+      let then_env = narrowed_then_env ctx env cond in
       let (_ : env) =
         List.fold_left (fun env s -> check_stmt ctx env s) then_env then_body
       in

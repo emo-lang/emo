@@ -183,6 +183,9 @@ let rec expr env (e : Emo_ir.expr) : string =
       | Emo_check.Int64 -> Printf.sprintf "E.i64BitNot(%s)" (expr env x)
       | Emo_check.Byte -> Printf.sprintf "E.byteBitNot(%s)" (expr env x)
       | _ -> Printf.sprintf "E.bitNot(%s)" (expr env x))
+  | Cond { c; t; e = else_ } ->
+      Printf.sprintf "(E.truthy(%s) ? (%s) : (%s))"
+        (expr env c) (expr env t) (expr env else_)
   | Binary (op, l, r) -> (
       let lcode = expr env l in
       let rcode = expr env r in

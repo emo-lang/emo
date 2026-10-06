@@ -76,6 +76,11 @@ let rec dump_e indent e =
       (indent + 2) @@@ binop op;
       dump_e (indent + 2) l;
       dump_e (indent + 2) r
+  | Cond { c; t; e } ->
+      indent @@@ "Cond";
+      dump_e (indent + 2) c;
+      dump_e (indent + 2) t;
+      dump_e (indent + 2) e
   | Index (b, i) ->
       indent @@@ "Index";
       dump_e (indent + 2) b;

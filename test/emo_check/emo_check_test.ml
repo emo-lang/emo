@@ -97,6 +97,35 @@ println(sum)|})));
 
 let expression_tests =
   [
+    tc "an if expression types as its branches' shared type" (fun () ->
+        let diagnostics =
+          check
+            {|const grade = if 90 > 80 { "high" } else { "low" }
+println(grade)|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "an if expression's condition must be a Bool" (fun () ->
+        let diagnostics =
+          check {|const bad = if 1 { 2 } else { 3 }|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "an if expression's branches must agree" (fun () ->
+        let diagnostics =
+          check {|const bad = if true { 1 } else { "s" }|}
+        in
+        Alcotest.(check bool) "E4019" true (has_code diagnostics "E4019"));
+    tc "Unknown branches join silently" (fun () ->
+        let diagnostics =
+          check
+            {|const box = Box.new(1)
+const v = if true { box.get() } else { 2 }
+println(v.to_string())|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
     tc "an undefined name is a certain error" (fun () ->
         let diagnostics = check "println(nope)" in
         Alcotest.(check bool) "E4003" true (has_code diagnostics "E4003");

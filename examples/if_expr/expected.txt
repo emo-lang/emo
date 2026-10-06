@@ -1,0 +1,6 @@
+high
+low
+odd
+100
+1
+status: positive

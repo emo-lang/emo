@@ -100,6 +100,7 @@ let rec expr_to_text (e : Ast.expr) : string =
   | Ast.Array_literal _ -> "[...]"
   | Ast.Unary (_, r) -> expr_to_text r
   | Ast.Binary (_, l, _) -> expr_to_text l
+  | Ast.If_expr _ -> "if ... { ... } else { ... }"
   | Ast.Do e -> "do " ^ expr_to_text e
 
 let collect_items ~(file : string) ~(module_path : string list)
