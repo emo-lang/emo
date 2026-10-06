@@ -1,4 +1,5 @@
 load true 
+inst true 
 fac5 120
 fac25 7034535277573963776
 sum5 15

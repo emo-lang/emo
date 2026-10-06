@@ -1,0 +1,33 @@
+// The linking fixture (T21.8): module B imports a table and a function
+// from module A (registered by name), calls A's function directly, and
+// calls through the shared table indirectly. A missing import is a
+// link failure.
+
+const a_hex = "0061736d010000000105016000017f030403000000040401700002070f0203746162010005736576656e00020908010041000b0200010a1003040041070b040041080b040010000b"
+const b_hex = "0061736d010000000105016000017f02150201410374616201700002014105736576656e0000030302000007160206646972656374000109696e6469726563743100020a0e02040010000b070041011100000b"
+const c_hex = "0061736d010000000105016000017f020d01074d697373696e6701780000"
+
+def run() Int64 {
+  var failed = 0
+  const ra = wasm.load(internal.corpus.decode_hex(a_hex))
+  const ia = internal.instance.instantiate(ra[4])
+  println("A " + ia[0].to_string() + " " + ia[1])
+  internal.instance.register_instance(ia[2], "A")
+  const rb = wasm.load(internal.corpus.decode_hex(b_hex))
+  const ib = internal.instance.instantiate(rb[4])
+  println("B " + ib[0].to_string() + " " + ib[1])
+  if !ib[0] {
+    return 1
+  }
+  const d = internal.instance.call(ib[2], "direct", [])
+  println("direct " + d[1][0][1].to_string())
+  const i1 = internal.instance.call(ib[2], "indirect1", [])
+  println("indirect1 " + i1[1][0][1].to_string())
+  const rc = wasm.load(internal.corpus.decode_hex(c_hex))
+  const ic = internal.instance.instantiate(rc[4])
+  println("missing " + ic[0].to_string() + " " + ic[1])
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()

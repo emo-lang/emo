@@ -11,13 +11,15 @@ def run() Int64 {
   if !r[0] {
     return 1
   }
-  const c5 = internal.instance.call(r[4], "fac", [internal.value.i64(5)])
+  const ir = internal.instance.instantiate(r[4])
+  println("inst " + ir[0].to_string() + " " + ir[1])
+  const c5 = internal.instance.call(ir[2], "fac", [internal.value.i64(5)])
   println("fac5 " + c5[1][0][1].to_string())
-  const c25 = internal.instance.call(r[4], "fac", [internal.value.i64(25)])
+  const c25 = internal.instance.call(ir[2], "fac", [internal.value.i64(25)])
   println("fac25 " + c25[1][0][1].to_string())
-  const s5 = internal.instance.call(r[4], "sum_to", [internal.value.i64(5)])
+  const s5 = internal.instance.call(ir[2], "sum_to", [internal.value.i64(5)])
   println("sum5 " + s5[1][0][1].to_string())
-  const s100 = internal.instance.call(r[4], "sum_to", [internal.value.i64(100)])
+  const s100 = internal.instance.call(ir[2], "sum_to", [internal.value.i64(100)])
   println("sum100 " + s100[1][0][1].to_string())
   println("failed " + failed.to_string())
   return failed
