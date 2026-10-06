@@ -457,7 +457,7 @@ def import_at(data Bytes, pos Int64, limit Int64) (Bool, Int64, Int64, Int64, In
   }
   if kind == 3 {
     const gt = internal.model.globaltype(data, pos + 1, limit)
-    return (true, 3, 0, 0, 0, 0, false, gt[2], gt[3])
+    return (true, 3, 0, gt[1], 0, 0, false, gt[2], gt[3])
   }
   return (false, 0, 0, 0, 0, 0, false, false, pos)
 }
@@ -2028,6 +2028,21 @@ def collect_results(from Int64, n Int64, acc Array[(Int64, Int64)]) Array[(Int64
   return collect_results(from + 1, n - 1, acc.append(get_slot(from)))
 }
 
+def get_global(handle Int64, name String) (Bool, (Int64, Int64), String) {
+  if handle < 0 || handle >= instances.length() {
+    return (false, mkv(127, 0), "no instance")
+  }
+  const inst = instances[handle]
+  const ei = find_export(inst.module, name, 0)
+  if ei < 0 {
+    return (false, mkv(127, 0), "unknown export")
+  }
+  if inst.module.exports[ei].kind != 3 {
+    return (false, mkv(127, 0), "not a global")
+  }
+  return (true, internal.store.global_get(inst.globals[inst.module.exports[ei].idx]), "")
+}
+
 def call(handle Int64, name String, args Array[(Int64, Int64)]) (Bool, Array[(Int64, Int64)], String) {
   if handle < 0 || handle >= instances.length() {
     return (false, [], "no instance")
@@ -2212,15 +2227,52 @@ def resolve_imports(m Module, i Int64, imems Array[(Bytes, Int64, Bool)], itable
     return (false, "incompatible import type", imems, itables, iglobals, targets)
   }
   if imp.kind == 0 {
+    if !func_types_match(src.module, ex.idx, m, imp.type_idx) {
+      return (false, "incompatible import type", imems, itables, iglobals, targets)
+    }
     return resolve_imports(m, i + 1, imems, itables, iglobals, targets.append(tgt(0, h, ex.idx)))
   }
   if imp.kind == 1 {
-    return resolve_imports(m, i + 1, imems, itables.append(src.tables[ex.idx]), iglobals, targets)
+    const tt = src.tables[ex.idx]
+    if !limits_ok(imp.min, imp.max, imp.has_max, tt[0].length(), tt[1], tt[2]) {
+      return (false, "incompatible import type", imems, itables, iglobals, targets)
+    }
+    return resolve_imports(m, i + 1, imems, itables.append(tt), iglobals, targets)
   }
   if imp.kind == 2 {
-    return resolve_imports(m, i + 1, imems.append(src.mems[ex.idx]), itables, iglobals, targets)
+    const mm = src.mems[ex.idx]
+    if !limits_ok(imp.min, imp.max, imp.has_max, mm[0].length() / 65536, mm[1], mm[2]) {
+      return (false, "incompatible import type", imems, itables, iglobals, targets)
+    }
+    return resolve_imports(m, i + 1, imems.append(mm), itables, iglobals, targets)
   }
-  return resolve_imports(m, i + 1, imems, itables, iglobals.append(src.globals[ex.idx]), targets)
+  const gg = src.globals[ex.idx]
+  const gv = gg[1]
+  if gg[0] != imp.mut || gv[0] != imp.reftype {
+    return (false, "incompatible import type", imems, itables, iglobals, targets)
+  }
+  return resolve_imports(m, i + 1, imems, itables, iglobals.append(gg), targets)
+}
+
+// The actual limits must sit inside the import's declared limits.
+def limits_ok(imp_min Int64, imp_max Int64, imp_has_max Bool, act_min Int64, act_max Int64, act_has_max Bool) Bool {
+  if imp_min > act_min {
+    return false
+  }
+  if !imp_has_max {
+    return true
+  }
+  return act_has_max && act_max <= imp_max
+}
+
+def func_types_match(ma Module, fa_idx Int64, mb Module, ti Int64) Bool {
+  const a = func_type_idx(ma, fa_idx)
+  if a < 0 {
+    return false
+  }
+  const fa = ma.types[a]
+  const fb = mb.types[ti]
+  return types_eq(fa.params, fb.params, 0) && types_eq(fa.results, fb.results, 0)
 }
 
 def init_globals(m Module, h Int64, i Int64, acc Array[(Bool, (Int64, Int64))]) (Bool, String, Array[(Bool, (Int64, Int64))]) {
@@ -2270,7 +2322,10 @@ def layout_elems(m Module, h Int64, i Int64, tables Array[(Array[(Int64, Int64)]
   }
   const ed = m.elems[i]
   const vals = elem_values(h, ed.items, 0, [])
-  if ed.flag == 1 || ed.flag == 3 || ed.flag == 5 || ed.flag == 7 {
+  if ed.flag == 3 || ed.flag == 7 {
+    return layout_elems(m, h, i + 1, tables, globals, elemlist.append([]))
+  }
+  if ed.flag == 1 || ed.flag == 5 {
     return layout_elems(m, h, i + 1, tables, globals, elemlist.append(vals))
   }
   const off = eval_const(m, h, ed.offset_start, ed.offset_end, globals)
@@ -2282,7 +2337,7 @@ def layout_elems(m Module, h Int64, i Int64, tables Array[(Array[(Int64, Int64)]
   if !r[0] {
     return (false, r[2], tables, elemlist)
   }
-  return layout_elems(m, h, i + 1, table_replace(tables, ed.table_idx, r[1]), globals, elemlist.append(vals))
+  return layout_elems(m, h, i + 1, table_replace(tables, ed.table_idx, r[1]), globals, elemlist.append([]))
 }
 
 def layout_datas(m Module, h Int64, i Int64, mems Array[(Bytes, Int64, Bool)], globals Array[(Bool, (Int64, Int64))], datalist Array[Bytes]) (Bool, String, Array[(Bytes, Int64, Bool)], Array[Bytes]) {
@@ -2302,7 +2357,7 @@ def layout_datas(m Module, h Int64, i Int64, mems Array[(Bytes, Int64, Bool)], g
   if !ok {
     return (false, "out of bounds memory access", mems, datalist)
   }
-  return layout_datas(m, h, i + 1, mems, globals, datalist.append(dd.bytes))
+  return layout_datas(m, h, i + 1, mems, globals, datalist.append(Bytes.new(0)))
 }
 
 def mem_write(mem (Bytes, Int64, Bool), at Int64, bytes Bytes) Bool {
