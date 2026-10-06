@@ -70,13 +70,36 @@ let c_string (s : string) : string =
   Buffer.add_char buf '"';
   Buffer.contents buf
 
+(* A String literal as an emo_str value. *)
+let c_str_literal (s : string) : string =
+  Printf.sprintf "((emo_str){INT64_C(%d), %s})" (String.length s) (c_string s)
+
+(* A Float64 literal with exact round-trip: %.17g carries every IEEE
+   bit pattern back. A rendering that is all digits (1.0 prints as
+   "1") would be an int literal in C — integer division semantics —
+   so it gains a ".0"; the infinities and NaN spell their C names. *)
+let c_float (f : float) : string =
+  if f = infinity then "INFINITY"
+  else if f = neg_infinity then "(-INFINITY)"
+  else if f <> f then "NAN"
+  else
+    let s = Printf.sprintf "%.17g" f in
+    let digits =
+      String.for_all (fun c -> (c >= '0' && c <= '9') || c = '-') s
+    in
+    if s <> "" && digits then s ^ ".0" else s
+
 (* Native Emo types cross as C scalars; everything dynamic waits for
-   the tagged word (T24.4). [Void] is a result type only. *)
+   the tagged word (T24.4). A String crosses as the runtime's
+   length-prefixed [emo_str], passed by value. [Void] is a result
+   type only. *)
 let c_type (t : Emo_check.t) : string option =
   match t with
   | Emo_check.Int64 -> Some "int64_t"
   | Emo_check.Float64 -> Some "double"
   | Emo_check.Bool -> Some "bool"
+  | Emo_check.Char -> Some "int32_t"
+  | Emo_check.String -> Some "emo_str"
   | Emo_check.Void -> Some "void"
   | _ -> None
 
@@ -97,13 +120,18 @@ let dummy_value (t : Emo_check.t) : string =
   match t with
   | Emo_check.Float64 -> "0.0"
   | Emo_check.Bool -> "false"
+  | Emo_check.String -> "(emo_str){INT64_C(0), \"\"}"
   | _ -> "0"
 
 (* The zero of a result type: initializes the epilogue's result slot
    against -Wall; the value is never observed (a non-Void body returns
    on every path). *)
 let zero_value (c_ty : string) : string =
-  match c_ty with "double" -> "0.0" | "bool" -> "false" | _ -> "0"
+  match c_ty with
+  | "double" -> "0.0"
+  | "bool" -> "false"
+  | "emo_str" -> "(emo_str){INT64_C(0), \"\"}"
+  | _ -> "0"
 
 (* ---- Expressions ---- *)
 
@@ -117,6 +145,14 @@ let compare_text (op : Ast.binop) : string =
   | Ast.Ge -> ">="
   | _ -> assert false
 
+let arith_text (op : Ast.binop) : string =
+  match op with
+  | Ast.Add -> "+"
+  | Ast.Sub -> "-"
+  | Ast.Mul -> "*"
+  | Ast.Div -> "/"
+  | _ -> assert false
+
 let rec emit_expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
   | Const (Ast.L_int n) ->
@@ -124,25 +160,61 @@ let rec emit_expr env (e : Emo_ir.expr) : string =
       else if n < 0L then Printf.sprintf "(-(INT64_C(%Ld)))" (Int64.abs n)
       else Printf.sprintf "INT64_C(%Ld)" n
   | Const (Ast.L_bool b) -> if b then "true" else "false"
-  | Const (Ast.L_string s) -> c_string s
-  | Const _ -> refuse "non-integer, non-string literals"
+  | Const (Ast.L_float f) -> c_float f
+  | Const (Ast.L_char c) -> Printf.sprintf "INT32_C(%d)" (Char.code c)
+  | Const (Ast.L_string s) -> c_str_literal s
+  | Const _ -> refuse "Byte literals"
   | Var name -> (
       match List.assoc_opt name env.scope with
       | Some c_name -> c_name
       | None -> refuse (Printf.sprintf "the variable `%s` here" name))
   | Unary (op, x) -> emit_unary env op x
   | Binary (op, l, r) -> emit_binary env op l r
+  | Cond { c; t; e = else_ } ->
+      let cond = emit_expr env c in
+      let a = emit_expr env t and b = emit_expr env else_ in
+      Printf.sprintf "(%s ? %s : %s)" cond a b
+  | Interpolate parts -> (
+      let rendered =
+        List.map
+          (fun (part : Emo_ir.expr) ->
+            match part.Emo_ir.desc with
+            | Const (Ast.L_string s) -> c_str_literal s
+            | _ -> to_str env part)
+          parts
+      in
+      match rendered with
+      | [] -> c_str_literal ""
+      | x :: rest ->
+          List.fold_left
+            (fun acc part -> Printf.sprintf "emo_str_concat(%s, %s)" acc part)
+            x rest)
+  | Method { self_; name = "to_string"; args = [] } -> to_str env self_
+  | Method _ -> refuse "method calls"
   | Call { func; args } ->
       let args = String.concat ", " (List.map (emit_expr env) args) in
       Printf.sprintf "%s(%s)" (Emo_ir.sanitize_ident func) args
   | _ -> refuse "this expression form"
+
+(* One value as an emo_str expression — what an interpolation part
+   and a scalar to_string() lower to. *)
+and to_str env (e : Emo_ir.expr) : string =
+  let v = emit_expr env e in
+  match e.Emo_ir.ety with
+  | Emo_check.String -> v
+  | Emo_check.Int64 -> Printf.sprintf "emo_str_from_i64(%s)" v
+  | Emo_check.Float64 -> Printf.sprintf "emo_str_from_f64(%s)" v
+  | Emo_check.Bool -> Printf.sprintf "emo_str_from_bool(%s)" v
+  | Emo_check.Char -> Printf.sprintf "emo_str_from_char(%s)" v
+  | t ->
+      refuse (Printf.sprintf "`%s` values in a string" (Emo_check.to_string t))
 
 and emit_unary env (op : Ast.unop) (x : Emo_ir.expr) : string =
   let v = emit_expr env x in
   match (op, x.Emo_ir.ety) with
   | Ast.Neg, Emo_check.Int64 ->
       Printf.sprintf "(int64_t)(0ULL - (uint64_t)(%s))" v
-  | Ast.Neg, Emo_check.Float64 -> refuse "Float64 arithmetic"
+  | Ast.Neg, Emo_check.Float64 -> Printf.sprintf "(-(%s))" v
   | Ast.Not, Emo_check.Bool -> Printf.sprintf "(!(%s))" v
   | Ast.Neg, _ | Ast.Not, _ -> refuse "this unary operation"
   | Ast.Bit_not, _ -> refuse "the bitwise operators"
@@ -155,6 +227,8 @@ and emit_binary env (op : Ast.binop) (l : Emo_ir.expr) (r : Emo_ir.expr) :
     Printf.sprintf "(int64_t)((uint64_t)(%s) %s (uint64_t)(%s))" a text b
   in
   match (l.Emo_ir.ety, op) with
+  (* Int64: +, -, * wrap through uint64_t; div and remainder guard
+     INT64_MIN / -1 in the runtime. *)
   | Emo_check.Int64, Add -> wrap "+"
   | Emo_check.Int64, Sub -> wrap "-"
   | Emo_check.Int64, Mul -> wrap "*"
@@ -164,18 +238,24 @@ and emit_binary env (op : Ast.binop) (l : Emo_ir.expr) (r : Emo_ir.expr) :
   | Emo_check.Int64, (Bit_and | Bit_or | Bit_xor | Shl | Shr) ->
       refuse "the bitwise operators"
   | Emo_check.Int64, _ -> refuse "this integer operation"
+  (* Float64: plain IEEE arithmetic and comparison. *)
+  | Emo_check.Float64, (Add | Sub | Mul | Div) -> plain (arith_text op)
+  | Emo_check.Float64, (Eq | Ne | Lt | Le | Gt | Ge) -> plain (compare_text op)
+  | Emo_check.Float64, _ -> refuse "this Float64 operation"
+  (* Bool *)
   | Emo_check.Bool, (Eq | Ne) -> plain (compare_text op)
   | Emo_check.Bool, And -> plain "&&"
   | Emo_check.Bool, Or -> plain "||"
-  | Emo_check.Bool, _ ->
-      refuse
-        (Printf.sprintf "this Boolean operation (left=%s)"
-           (Emo_check.to_string l.Emo_ir.ety))
-  | Emo_check.Float64, _ -> refuse "Float64 arithmetic"
-  | ty, _ ->
-      refuse
-        (Printf.sprintf "this expression form (left=%s)"
-           (Emo_check.to_string ty))
+  | Emo_check.Bool, _ -> refuse "this Boolean operation"
+  (* String: concatenation and content equality. *)
+  | Emo_check.String, Add -> Printf.sprintf "emo_str_concat(%s, %s)" a b
+  | Emo_check.String, Eq -> Printf.sprintf "emo_str_eq(%s, %s)" a b
+  | Emo_check.String, Ne -> Printf.sprintf "(!emo_str_eq(%s, %s))" a b
+  | Emo_check.String, _ -> refuse "this String operation"
+  (* Char *)
+  | Emo_check.Char, (Eq | Ne) -> plain (compare_text op)
+  | Emo_check.Char, _ -> refuse "this Char operation"
+  | _ -> refuse "this expression form"
 
 (* Drop a redundant outermost parenthesis pair — a comparison at an
    if-condition's top level keeps clang's -Wparentheses-equality
@@ -201,15 +281,17 @@ let unwrap (s : string) : string =
 
 let emit_builtin env (name : string) (args : Emo_ir.expr list) : unit =
   match (name, args) with
-  | "println", [ e ] ->
+  | "println", [ e ] -> (
       let arg = emit_expr env e in
-      (match e.Emo_ir.ety with
-       | Emo_check.Int64 -> put env "  emo_println_i64(%s);\n" arg
-       | Emo_check.String -> put env "  emo_println_str(%s);\n" arg
-       | t ->
-           refuse
-             (Printf.sprintf "println of `%s` values"
-                (Emo_check.to_string t)))
+      match e.Emo_ir.ety with
+      | Emo_check.Int64 -> put env "  emo_println_i64(%s);\n" arg
+      | Emo_check.String -> put env "  emo_println_str(%s);\n" arg
+      | Emo_check.Float64 -> put env "  emo_println_f64(%s);\n" arg
+      | Emo_check.Bool -> put env "  emo_println_bool(%s);\n" arg
+      | Emo_check.Char -> put env "  emo_println_char(%s);\n" arg
+      | t ->
+          refuse
+            (Printf.sprintf "println of `%s` values" (Emo_check.to_string t)))
   | "println", _ -> refuse "println with more than one argument"
   | _ -> refuse (Printf.sprintf "the builtin `%s`" name)
 
@@ -219,7 +301,7 @@ let emit_builtin env (name : string) (args : Emo_ir.expr list) : unit =
 let emit_tail_rebind env (callee : string) (args : Emo_ir.expr list) : unit =
   match List.assoc_opt callee env.tail_rebinds with
   | None -> assert false (* only called with a rebindable callee *)
-  | Some slots -> (
+  | Some slots ->
       let values = List.map (emit_expr env) args in
       put env "  {\n";
       (match List.combine slots values with
@@ -231,7 +313,7 @@ let emit_tail_rebind env (callee : string) (args : Emo_ir.expr list) : unit =
           List.iteri
             (fun i (c_name, _) -> put env "    %s = __t%d;\n" c_name i)
             slots);
-      put env "    goto emo_head_%s;\n  }\n" (Emo_ir.sanitize_ident callee))
+      put env "    goto emo_head_%s;\n  }\n" (Emo_ir.sanitize_ident callee)
 
 let rec emit_stmt env (s : Emo_ir.stmt) : unit =
   match s with
@@ -272,7 +354,7 @@ let rec emit_stmt env (s : Emo_ir.stmt) : unit =
   | Receive _ -> refuse "`receive` statements"
   | Send _ -> refuse "message sends"
   | Raise _ -> refuse "`raise`"
-  | Return_stmt e ->
+  | Return_stmt e -> (
       if env.in_main then refuse "`return` at the top level";
       let tail_callee =
         match e.Emo_ir.desc with
@@ -280,7 +362,7 @@ let rec emit_stmt env (s : Emo_ir.stmt) : unit =
             Some func
         | _ -> None
       in
-      (match tail_callee with
+      match tail_callee with
       | Some callee -> (
           match e.Emo_ir.desc with
           | Call { args; _ } -> emit_tail_rebind env callee args
@@ -304,11 +386,11 @@ let rec tail_callees (stmts : Emo_ir.stmt list) : string list =
   List.concat_map
     (fun s ->
       match s with
-    | Emo_ir.Return_stmt { desc = Call { func; _ }; _ } -> [ func ]
-    | Emo_ir.If { then_; else_; _ } -> tail_callees then_ @ tail_callees else_
-    | Emo_ir.Case { branches; _ } ->
-        List.concat_map (fun b -> tail_callees b.Emo_ir.body) branches
-    | _ -> [])
+      | Emo_ir.Return_stmt { desc = Call { func; _ }; _ } -> [ func ]
+      | Emo_ir.If { then_; else_; _ } -> tail_callees then_ @ tail_callees else_
+      | Emo_ir.Case { branches; _ } ->
+          List.concat_map (fun b -> tail_callees b.Emo_ir.body) branches
+      | _ -> [])
     stmts
 
 (* The clusters, in program order; each is the member list (size ≥ 2).
@@ -374,11 +456,11 @@ let rec has_return (stmts : Emo_ir.stmt list) : bool =
   List.exists
     (fun s ->
       match s with
-    | Emo_ir.Return_stmt _ -> true
-    | Emo_ir.If { then_; else_; _ } -> has_return then_ || has_return else_
-    | Emo_ir.Case { branches; _ } ->
-        List.exists (fun b -> has_return b.Emo_ir.body) branches
-    | _ -> false)
+      | Emo_ir.Return_stmt _ -> true
+      | Emo_ir.If { then_; else_; _ } -> has_return then_ || has_return else_
+      | Emo_ir.Case { branches; _ } ->
+          List.exists (fun b -> has_return b.Emo_ir.body) branches
+      | _ -> false)
     stmts
 
 (* ---- Functions ---- *)
@@ -426,8 +508,7 @@ let emit_single env0 (f : Emo_ir.func) : unit =
     put env "emo_head_%s:;\n" (Emo_ir.sanitize_ident f.Emo_ir.fname);
   emit_stmts env f.Emo_ir.fbody;
   if has_return f.Emo_ir.fbody then put env "emo_return:;\n";
-  if ret = "void" then put env "  return;\n"
-  else put env "  return __result;\n";
+  if ret = "void" then put env "  return;\n" else put env "  return __result;\n";
   put env "}\n\n"
 
 (* A cluster slot: the member's parameter, prefixed to stay unique
@@ -479,8 +560,7 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
       in
       put env0 "%s %s(%s) {\n  return %s(%s);\n}\n\n" m_ret
         (Emo_ir.sanitize_ident m.Emo_ir.fname)
-        m_params cluster
-        (String.concat ", " args))
+        m_params cluster (String.concat ", " args))
     members;
   put env0 "%s %s(%s) {\n" ret cluster cluster_params;
   if ret <> "void" then put env0 "  %s __result = %s;\n" ret (zero_value ret);
@@ -530,16 +610,15 @@ let emit (program : Emo_ir.program) : string =
   if program.pglobals <> [] then refuse "module-level variables";
   let clusters = tail_clusters program.pfuncs in
   let cluster_members name =
-    List.find_opt (List.mem name) clusters
-    |> Option.value ~default:[ name ]
+    List.find_opt (List.mem name) clusters |> Option.value ~default:[ name ]
   in
   let in_cluster name =
-    let members = cluster_members name in List.length members > 1
+    let members = cluster_members name in
+    List.length members > 1
   in
   let member_funcs (members : string list) : Emo_ir.func list =
     List.filter_map
-      (fun f ->
-        if List.mem f.Emo_ir.fname members then Some f else None)
+      (fun f -> if List.mem f.Emo_ir.fname members then Some f else None)
       program.pfuncs
   in
   let buf = Buffer.create (16 * 1024) in
@@ -561,8 +640,7 @@ let emit (program : Emo_ir.program) : string =
   List.iter
     (fun f ->
       let ret, params = signature f in
-      put env0 "%s %s(%s);\n" ret (Emo_ir.sanitize_ident f.Emo_ir.fname)
-        params)
+      put env0 "%s %s(%s);\n" ret (Emo_ir.sanitize_ident f.Emo_ir.fname) params)
     program.pfuncs;
   List.iteri
     (fun i members ->

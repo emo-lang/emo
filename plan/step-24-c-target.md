@@ -6,7 +6,7 @@ specialization data) · **Related:**
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-22-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
-**Status:** in progress — T24.1–T24.2 done
+**Status:** in progress — T24.1–T24.3 done
 
 ## Why this step exists
 
@@ -89,10 +89,14 @@ and enters `known_targets` only once its first golden lands
       golden waits on closures — T24.5 — the c_integer fixture covers
       the core; the span-type-table fix this needed is recorded in
       docs/TASKS.md.)
-- [ ] **T24.3** — The scalar runtime: length-prefixed strings
+- [x] **T24.3** — The scalar runtime: length-prefixed strings
       (NUL-terminated only at the FFI boundary), the `%g` float
       printing rule, `Bool`/`Char`, interpolation, scalar content
-      equality. Goldens: numerics, if_expr.
+      equality. Goldens: numerics, if_expr. (Done 2026-10-06: if_expr
+      is the first full-example golden; numerics waits on foreign defs
+      (T24.8) and tuples (T24.4) — the c_scalar fixture cross-checks
+      the printing rules against the interpreter's rendering. The
+      string-layout and runtime-in-C decisions are in CHECK.md.)
 - [ ] **T24.4** — The dynamic value model: step 22's tagged word —
       8-byte-aligned heap cells, 3 low tag bits, `Int64`/
       `Float64` as boxed two-word cells (no NaN-boxing), `Bool`/
@@ -156,11 +160,10 @@ and enters `known_targets` only once its first golden lands
 
 ## Open design items
 
-- String layout at the FFI boundary (length-prefixed internally;
-  NUL-terminated only when crossing) — settle at T24.3.
-- The runtime written in C vs Emo's specialized subset (step 23
-  leans C: interop is a bridge, not a foundation) — settle at
-  T24.3.
+- ~~String layout at the FFI boundary~~ — settled at T24.3 (CHECK.md):
+  `emo_str {len, bytes}`, NUL only when crossing.
+- ~~The runtime written in C vs Emo's specialized subset~~ — settled
+  at T24.3 (CHECK.md): C.
 - Whether `Int32`/`Float32` have landed in the language by T24.8;
   rung 2 rides their schedule.
 - Whether the `native` → `ocaml` rename rides T24.11 or splits
