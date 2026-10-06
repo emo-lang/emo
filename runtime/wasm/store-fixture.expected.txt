@@ -1,0 +1,24 @@
+pages 1
+byte0 1
+byte3 4
+load32 67305985
+load8_u 255
+load8_s -1
+offset 4660
+oob trap:out of bounds memory access
+grow.ok true
+grow.old 1
+grow.new 2
+grow.cap false
+grow.big 101
+tbl.size 2
+tbl.get 112:3
+tbl.oob trap:out of bounds table access
+tbl.grow 4
+tbl.grow.cap false
+tbl.fill 112:7
+tbl.copy 112:-1
+global.get 127:5
+global.set 127:9
+global.immutable false
+failed 0
