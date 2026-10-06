@@ -93,7 +93,7 @@ Order-of-magnitude only; the anchors are the shipped backends' sizes.
 | Layer | Difficulty | Notes |
 | --- | --- | --- |
 | IR → target emitter | moderate | Mechanical but verbose: the dynamic world is tag checks and boxed runtime calls; the specialized world needs unboxed paths. `emo_wasm.ml` is the precedent. |
-| Target choice (C / LLVM IR / assembly) | decision | Determines the tail-call strategy, the SIMD ceiling, and the toolchain dependency. See below. |
+| Target choice (C / LLVM IR / assembly) — recommended: emit C | decision | Determines the tail-call strategy, the SIMD ceiling, and the toolchain dependency. See "The codegen route" below. |
 | C runtime (string, Bytes, tuple, instance + vtable, enum, exceptions, printing) | moderate–high | Must match existing semantics exactly; large but well-specified by the goldens. |
 | Reclamation without a tracing GC | **high** | The crux; see below. |
 | C FFI rungs 1–3 | low | Owning the ABI makes scalars, width types, and opaque handles + copied buffers nearly direct. |
@@ -234,9 +234,10 @@ reason is instructive, because it is not the collector.
   4. **Ecosystem.** BLAS/LAPACK/FFTW/MPI/CUDA bindings; thin in Go, empty
      in Emo.
 - **Consequence for the codegen route.** The four factors argue for
-  emitting C or LLVM IR over hand-written assembly: the vectorizer is the
-  point. Assembly stays the right choice only for the freestanding
-  `riscv64` target, where SIMD throughput is not the goal.
+  emitting C over hand-written assembly: the vectorizer is the point.
+  Assembly stays the right choice only for the freestanding `riscv64`
+  target, where SIMD throughput is not the goal. The route is settled in
+  the next section: emit C, not LLVM.
 - **A lesson for the FFI ladder.** The `cgo` model adds a rung between
   step 14's "copied buffers" and "opaque handles": **borrow for the
   call** — C receives a pointer valid only until it returns. It is
@@ -247,11 +248,82 @@ reason is instructive, because it is not the collector.
   vectorization) but is necessary and not sufficient. No GC is a
   predictability and bare-metal argument, not an HPC entry ticket.
 
+## The codegen route: emit C, not LLVM
+
+The route is the decision everything else hangs on, and the
+recommendation is **emit C** — with LLVM ruled out and assembly confined
+to the freestanding target.
+
+The reasoning is partly the project's own. `docs/native-backend.md` chose
+to emit OCaml *source* rather than construct compiler-libs trees because
+source text is one stable contract, the generated file is readable and
+debuggable, and the host optimizer still applies. The same argument holds
+verbatim with "C" in place of "OCaml". LLVM inverts it:
+
+- **A C++ dependency with an unstable API.** LLVM's C++ interface changes
+  between releases; binding it turns every upgrade into a backend
+  migration — the exact cost emitting source was chosen to avoid.
+- **Opaque generated code.** The semantics disappear into a toolchain no
+  one on the project can read, against the "code a user can open"
+  standard.
+- **Heavy, and its headline features are unneeded here.** GC statepoints
+  (the plan is no tracing GC), a JIT (the plan is ahead-of-time), and many
+  targets (Emo has a handful) are all moot.
+- **No new dependency.** `emo build` already invokes `cc` for the FFI
+  stubs; emitting C reuses it. LLVM would be the new dependency.
+
+What emitting C buys:
+
+- **The vectorizer.** GCC/Clang autovectorization is the SIMD engine the
+  OCaml backend never had — a small team inherits it instead of owning
+  one.
+- **Parallelism for free.** `#pragma omp simd` and `#pragma omp parallel
+  for` can be emitted directly, at the cost of an optional OpenMP runtime.
+- **A trivial FFI surface.** The output is already C: `foreign def` is a
+  declaration and a call, and a `Buffer[Float64]` is a `double *`, so the
+  FFI data channel closes as a side effect.
+- **Debuggability.** Readable C, gdb, and perf.
+- **A second life as the portable backend.** The same C compiles to wasm
+  (`clang --target=wasm32`) or bare metal (`riscv64-elf-gcc -ffreestanding
+  -nostdlib` plus a startup stub), which may cut into how much of step
+  22's assembly backend must be hand-written.
+
+The cost is four things the emitter must own:
+
+1. **Tail calls.** C does not guarantee TCO; the emitter lowers self- and
+   mutual-tail calls to a parameter rebind and a jump to the function head
+   (a trampoline / block loop).
+2. **Wrap-around `Int64`.** Signed overflow is undefined in C; emit
+   `uint64_t` arithmetic with casts back, or compile with `-fwrapv`.
+3. **Aliasing for the vectorizer.** Copy-on-write and immutable arrays
+   make aliasing hard for the compiler to disprove; the emitter marks
+   `restrict`, keeps inner loops simple, and uses `omp simd` where it
+   matters.
+4. **The dynamic layer.** Tagged unions and `retain`/`release` reference
+   counting in C; exceptions via `setjmp`/`longjmp` or a branch to the
+   epilogue.
+
+Alternatives considered, and why not:
+
+| Route | Optimization / SIMD | New dependency | Readability | Tail calls | wasm / bare-metal reuse | HPC fit |
+| --- | --- | --- | --- | --- | --- | --- |
+| **emit C** | GCC/Clang optimizer + autovectorization; OpenMP available | none (`cc` already needed) | high | emitter trampoline | high | **good** |
+| LLVM IR | strongest | LLVM (C++, heavy, unstable API) | low | `musttail` | medium | good |
+| direct assembly | whatever is written; no vectorizer by default | binutils | medium | native | target-specific | poor |
+| QBE | basic; no vectorization | QBE (small, C) | high | basic | medium | poor |
+| libgccjit | GCC optimizer + vectorization | libgccjit (heavy, ties GCC) | medium | — | low | good but heavy |
+| Cranelift | moderate | Rust ecosystem | medium | — | medium | moderate |
+
+QBE is simple but does not vectorize, which removes the point; libgccjit
+vectorizes but makes GCC a heavy runtime dependency; direct assembly owns
+register allocation and still has no vectorizer. None beats emitting C for
+this design.
+
 ## What HPC still needs beyond the backend
 
 The backend removes three ceilings — no boxing or tags for specialized
-code, a direct C ABI for BLAS/LAPACK/FFTW, and (if C or LLVM is the
-route) auto-vectorization that the OCaml backend never had. Against the
+code, a direct C ABI for BLAS/LAPACK/FFTW, and (via the C route)
+auto-vectorization that the OCaml backend never had. Against the
 four gates above it is necessary but not sufficient. Two language-surface
 pieces remain, both prerequisites for a BLAS-shaped workload:
 
@@ -280,13 +352,12 @@ either.
 
 Registered in `CHECK.md`:
 
-1. **Codegen route** for a self-contained backend — emit C, emit
-   LLVM IR, or emit assembly. The choice fixes the tail-call strategy, the
-   vectorization ceiling, and the toolchain dependency. Emitting C also
-   makes the C ABI the FFI surface and reuses the existing `cc` dependency;
-   LLVM raises the optimization ceiling at the cost of a heavy dependency;
-   assembly is highest-effort and only clearly justified for the
-   freestanding target.
+1. **Codegen route** — recommended: emit C, with LLVM ruled out and
+   assembly confined to the freestanding target (see "The codegen route"
+   above). Emitting C makes the C ABI the FFI surface, reuses the existing
+   `cc` dependency, and yields the GCC/Clang vectorizer and OpenMP pragmas.
+   The emitter must own tail-call lowering, wrap-around `Int64`, aliasing
+   for the vectorizer, and the dynamic layer.
 2. **Reclamation model** for the dynamic world — reference counting versus
    bounded arenas with explicit leakage, and whether either implies a
    language-surface addition. This is the decision that keeps "no GC" from
