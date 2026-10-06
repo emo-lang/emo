@@ -1,0 +1,78 @@
+// The store fixture (T21.6): little-endian widths, bounds traps, grow
+// and its cap, the table operations, and mutable globals.
+
+def show(label String, text String) Int64 {
+  println(label + " " + text)
+  return 0
+}
+
+def showv(label String, v (Int64, Int64)) Int64 {
+  return show(label, v[0].to_string() + ":" + v[1].to_string())
+}
+
+def show_trap(label String, ok Bool, msg String) Int64 {
+  if ok {
+    return show(label, "ok")
+  }
+  return show(label, "trap:" + msg)
+}
+
+def run() Int64 {
+  var failed = 0
+  const mem = internal.store.mem_new(1, 2, true)
+  failed = failed + show("pages", internal.store.mem_size(mem).to_string())
+  // A 32-bit store lands little-endian: 0x04030201 -> 01 02 03 04.
+  internal.store.mem_store(mem, 0, 0, 4, 67305985)
+  failed = failed + show("byte0", mem[0].get(0).to_string())
+  failed = failed + show("byte3", mem[0].get(3).to_string())
+  failed = failed + show("load32", internal.store.mem_load(mem, 0, 0, 4, false)[1].to_string())
+  // Narrow signed and unsigned reads of the same byte.
+  internal.store.mem_store(mem, 8, 0, 1, 255)
+  failed = failed + show("load8_u", internal.store.mem_load(mem, 8, 0, 1, false)[1].to_string())
+  failed = failed + show("load8_s", internal.store.mem_load(mem, 8, 0, 1, true)[1].to_string())
+  // The offset adds to the address.
+  internal.store.mem_store(mem, 16, 0, 2, 4660)
+  failed = failed + show("offset", internal.store.mem_load(mem, 8, 8, 2, false)[1].to_string())
+  // Out of bounds is a trap value.
+  const oob = internal.store.mem_load(mem, 65536, 0, 4, false)
+  failed = failed + show_trap("oob", oob[0], oob[2])
+  // Grow: previous size, the new page count, and the cap.
+  const g1 = internal.store.mem_grow(mem, 1)
+  failed = failed + show("grow.ok", g1[0].to_string())
+  failed = failed + show("grow.old", g1[1].to_string())
+  failed = failed + show("grow.new", internal.store.mem_size(g1[2]).to_string())
+  const g2 = internal.store.mem_grow(g1[2], 2)
+  failed = failed + show("grow.cap", g2[0].to_string())
+  const m2 = internal.store.mem_new(1, 0, false)
+  const g3 = internal.store.mem_grow(m2, 100)
+  failed = failed + show("grow.big", internal.store.mem_size(g3[2]).to_string())
+
+  // Tables.
+  const nullv = internal.value.nullref(112)
+  const tbl = internal.store.tbl_new(2, 5, true, nullv)
+  failed = failed + show("tbl.size", internal.store.tbl_size(tbl).to_string())
+  const set0 = internal.store.tbl_set(tbl, 0, internal.value.funcref(3))
+  failed = failed + showv("tbl.get", internal.store.tbl_get(set0[1], 0)[1])
+  const toob = internal.store.tbl_get(tbl, 5)
+  failed = failed + show_trap("tbl.oob", toob[0], toob[2])
+  const tg = internal.store.tbl_grow(tbl, 2, nullv)
+  failed = failed + show("tbl.grow", internal.store.tbl_size(tg[2]).to_string())
+  failed = failed + show("tbl.grow.cap", internal.store.tbl_grow(tbl, 5, nullv)[0].to_string())
+  const tf = internal.store.tbl_fill(tbl, 0, 2, internal.value.funcref(7))
+  failed = failed + showv("tbl.fill", internal.store.tbl_get(tf[1], 1)[1])
+  // Copy into a grown table, overlapping is fine.
+  const tc = internal.store.tbl_copy(tg[2], 1, tg[2], 0, 2)
+  failed = failed + showv("tbl.copy", internal.store.tbl_get(tc[1], 1)[1])
+
+  // Globals.
+  const g = internal.store.global_new(internal.value.i32(5), true)
+  failed = failed + showv("global.get", internal.store.global_get(g))
+  const gs = internal.store.global_set(g, internal.value.i32(9))
+  failed = failed + showv("global.set", gs[1])
+  const gi = internal.store.global_new(internal.value.i32(5), false)
+  failed = failed + show("global.immutable", internal.store.global_set(gi, internal.value.i32(9))[0].to_string())
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()

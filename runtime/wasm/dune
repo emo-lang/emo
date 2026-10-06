@@ -285,3 +285,26 @@
   float-convert-fixture.expected.txt)
  (action
   (diff float-convert-fixture.expected.txt float-convert-fixture.actual)))
+
+; The store fixture (T21.6).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  store-fixture.emo
+  internal/store.emo
+  internal/value.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   store-fixture.actual
+   (run %{emo} run store-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  store-fixture.actual
+  store-fixture.expected.txt)
+ (action
+  (diff store-fixture.expected.txt store-fixture.actual)))

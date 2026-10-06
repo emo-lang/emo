@@ -220,7 +220,7 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### Then the store and the machine
 
-- [ ] **T21.6** — *The store.* **(M)** Linear memory as `Bytes` with
+- [x] **T21.6** — *The store.* **(M)** Linear memory as `Bytes` with
       page-granular grow (cap 2¹⁶ pages), little-endian loads / stores
       of every width, bounds-checked before access; tables as value
       arrays with grow / size / fill / copy / init; globals with
