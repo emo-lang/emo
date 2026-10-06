@@ -259,7 +259,7 @@ prefix of this list leaves the repo building and `dune test` green.
       conversions, `if` / `br` / `br_table` / `loop`, `call` /
       `call_indirect`, `fac`, `forward`, `stack`. Each family's flip
       is its own sitting; the residuals stay `pending`.
-- [ ] **T21.11** — *Sweep II: memory, tables, linking, traps.* **(L)**
+- [x] **T21.11** — *Sweep II: memory, tables, linking, traps.* **(L)**
       The addressing and endianness suites, `memory_*` / `table_*`
       operations, `elem` / `data` initialization, `linking` through
       the register namespace, `imports` through spectest, the trap

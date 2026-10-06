@@ -147,7 +147,7 @@
   (diff runs.expected.txt runs-smoke.actual)))
 
 (rule
- (alias wasm_runs)
+ (target runs_bin)
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
   runs.emo
@@ -167,9 +167,18 @@
   testdata/runs.all.txt
   package.emo)
  (action
+  (run %{emo} build runs.emo -o %{target})))
+
+(rule
+ (alias wasm_runs)
+ (deps
+  runs_bin
+  testdata/runs.all.txt
+  package.emo)
+ (action
   (with-stdout-to
    runs.actual
-   (run %{emo} run runs.emo))))
+   (run %{dep:runs_bin}))))
 
 (rule
  (alias wasm_runs)

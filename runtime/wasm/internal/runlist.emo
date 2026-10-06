@@ -192,7 +192,7 @@ def run(list_path String) Int64 {
 
 // A fresh file gets a fresh register namespace and host, as the spec
 // runs each `.wast` independently.
-def file_of(name String) String {
+def provenance_of(name String) String {
   const c = name.index_of(":")
   if c < 0 {
     return name
@@ -210,7 +210,7 @@ def walk(lines Array[String], i Int64, claimed Int64, pending Int64, failed Int6
   if lines[i].trim().length() == 0 {
     return walk(lines, i + 1, claimed, pending, failed, last, names, insts, cur_file)
   }
-  const file = file_of(lines[i].split(" ")[0])
+  const file = provenance_of(lines[i].split(" ")[0])
   if file != cur_file {
     internal.instance.reset_all()
     return walk(lines, i, claimed, pending, failed, -1, [], [], file)
