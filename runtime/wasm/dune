@@ -197,3 +197,25 @@
   instance-fixture.expected.txt)
  (action
   (diff instance-fixture.expected.txt instance-fixture.actual)))
+
+; The value-model fixture (T21.3).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  value-fixture.emo
+  internal/value.emo
+  package.emo)
+ (action
+  (with-stdout-to
+   value-fixture.actual
+   (run %{emo} run value-fixture.emo))))
+
+(rule
+ (alias runtest)
+ (deps
+  value-fixture.actual
+  value-fixture.expected.txt)
+ (action
+  (diff value-fixture.expected.txt value-fixture.actual)))

@@ -193,7 +193,7 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### Then the values, fixture-first
 
-- [ ] **T21.3** — *The value model.* **(M)** The tagged scalars of the
+- [x] **T21.3** — *The value model.* **(M)** The tagged scalars of the
       provisional decision, the NaN payload discipline (arithmetic
       canonicalizes only when the spec says; moves preserve), and the
       hex-word codec the runner compares with. Fixtures: wrap-around,

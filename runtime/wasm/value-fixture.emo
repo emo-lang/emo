@@ -1,0 +1,41 @@
+// The value-model fixture (T21.3): wrap-around, payload round-trips,
+// null references, the NaN classes, and the expected-value codec.
+
+def show(label String, text String) Int64 {
+  println(label + " " + text)
+  return 0
+}
+
+def run() Int64 {
+  var failed = 0
+  // i32 is the low 32 bits, read signed or unsigned.
+  const wrapped = internal.value.i32(4294967297)
+  failed = failed + show("i32.wrap", wrapped[1].to_string())
+  failed = failed + show("i32.neg", internal.value.i32(-1)[1].to_string())
+  failed = failed + show("sign32.max", internal.value.sign32(4294967295).to_string())
+  failed = failed + show("sign32.min", internal.value.sign32(2147483648).to_string())
+  // A payload survives a round trip (the bits are not normalized).
+  failed = failed + show("f32.bits", internal.value.f32(2143289344)[1].to_string())
+  failed = failed + show("f64.bits", internal.value.f64(-1)[1].to_string())
+  // References: null is its own encoding.
+  failed = failed + show("null.funcref", internal.value.is_null(internal.value.nullref(112)).to_string())
+  failed = failed + show("null.extern", internal.value.is_null(internal.value.nullref(111)).to_string())
+  failed = failed + show("ref.func", internal.value.is_null(internal.value.funcref(3)).to_string())
+  // NaN classes.
+  failed = failed + show("f32.canonical", internal.value.f32_canonical(2143289344).to_string())
+  failed = failed + show("f32.arithmetic", internal.value.f32_arithmetic(2143289344).to_string())
+  failed = failed + show("f32.not-canonical", internal.value.f32_canonical(2141192192).to_string())
+  failed = failed + show("f64.canonical", internal.value.f64_canonical(9221120237041090560).to_string())
+  // The codec.
+  failed = failed + show("match.i32", internal.value.matches(internal.value.i32(4294967295), "i:4294967295").to_string())
+  failed = failed + show("match.i64", internal.value.matches(internal.value.i64(-1), "I:-1").to_string())
+  failed = failed + show("match.f64", internal.value.matches(internal.value.f64(0), "F:0").to_string())
+  failed = failed + show("match.nan", internal.value.matches(internal.value.f32(2143289344), "nan:canonical").to_string())
+  failed = failed + show("match.null", internal.value.matches(internal.value.nullref(111), "ref.null").to_string())
+  failed = failed + show("match.extern", internal.value.matches(internal.value.externref(42), "ref.extern:42").to_string())
+  failed = failed + show("match.mismatch", internal.value.matches(internal.value.i32(1), "i:2").to_string())
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()
