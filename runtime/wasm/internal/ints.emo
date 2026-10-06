@@ -122,13 +122,10 @@ def udiv_loop(u Int64, v Int64, i Int64, q Int64, r Int64) (Int64, Int64) {
   }
   const bit = (u >> i) & 1
   const r2 = (r << 1) | bit
-  var q2 = q
-  var r3 = r2
   if uge(r2, v) {
-    q2 = q | (1 << i)
-    r3 = r2 - v
+    return udiv_loop(u, v, i - 1, q | (1 << i), r2 - v)
   }
-  return udiv_loop(u, v, i - 1, q2, r3)
+  return udiv_loop(u, v, i - 1, q, r2)
 }
 
 def div_u(kind Int64, a Int64, b Int64) (Bool, Int64, String) {
@@ -239,12 +236,11 @@ def popcnt_loop(x Int64, i Int64, acc Int64) Int64 {
   if i == 64 {
     return acc
   }
-  var next = acc
   const bit = (x >> i) & 1
   if bit != 0 {
-    next = acc + 1
+    return popcnt_loop(x, i + 1, acc + 1)
   }
-  return popcnt_loop(x, i + 1, next)
+  return popcnt_loop(x, i + 1, acc)
 }
 
 // ---- comparisons (each yields an i32 0/1) ----
