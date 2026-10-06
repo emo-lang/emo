@@ -29,7 +29,7 @@ internal.reader.print_s32("s32_too_long", internal.corpus.decode_hex("ffffffffff
 internal.reader.print_s64("s64_neg1", internal.corpus.decode_hex("7f"))
 internal.reader.print_s64("s64_min", internal.corpus.decode_hex("8080808080808080807f"))
 internal.reader.print_s64("s64_max", internal.corpus.decode_hex("ffffffffffffffffff00"))
-internal.reader.print_s64("s64_pattern", internal.corpus.decode_hex("ffffffffffffffffff01"))
+internal.reader.print_s64("s64_pattern", internal.corpus.decode_hex("ffffffffffffffffff7f"))
 internal.reader.print_s64("s64_too_large", internal.corpus.decode_hex("80808080808080808002"))
 internal.reader.print_s64("s64_too_long", internal.corpus.decode_hex("808080808080808080807f"))
 internal.reader.print_s64("s64_end", internal.corpus.decode_hex("8080"))
