@@ -521,6 +521,7 @@ let provably_excluded ctx rt target =
   | Int64, _ | Float64, _ | Bool, _ | Char, _ | String, _ -> true
   | ClassType a, ClassType b -> not (String.equal a b)
   | ClassType c, InterfaceType i -> not (structurally_conforms ctx c i)
+  | InterfaceType i, ClassType c -> not (structurally_conforms ctx c i)
   | ClassType _, EnumType _ -> true
   | EnumType a, EnumType b -> not (String.equal a b)
   | EnumType _, _ -> true
@@ -1322,9 +1323,13 @@ and check_binary ctx env span op l r =
       check_bool_side rt;
       Bool
 
-(* Flow narrowing: `if x.is(T)` gives x the type T inside the then branch;
-   the else branch keeps the pre-test type, and neither leaks past the if.
-   Shared by the `if` statement and the if expression. *)
+(* Narrowing: `if x.is(T)` refines x inside the then branch and never past
+   it; the else branch keeps the pre-test type. A class target pins the
+   concrete class, so it narrows from `Unknown` or an interface. An
+   interface target is a structural shape test, so it narrows from
+   `Unknown` alone — a value that already has a type keeps it, because
+   there is no intersection type to refine it to. Shared by the `if`
+   statement and the if expression. *)
 and narrowed_then_env ctx env cond =
   let narrowed =
     match cond.Ast.desc with
@@ -1335,15 +1340,25 @@ and narrowed_then_env ctx env cond =
         let target_type = resolve_type_name ctx recv.Ast.span tname in
         let rt = check_expr ctx env recv in
         (match rt with
-        | (ClassType _ | EnumType _ | Int64 | Float64 | Bool | Char | String)
+        | ( ClassType _ | InterfaceType _ | EnumType _ | Int64 | Float64 | Bool
+          | Char | String )
           when provably_excluded ctx rt target_type ->
             report ctx recv.Ast.span "E4011"
               (Printf.sprintf "`%s` can never narrow to %s" (to_string rt)
                  (to_string target_type))
         | _ -> ());
-        Some
-          ( (match recv.Ast.desc with Ast.Ident n -> n | _ -> ""),
-            target_type )
+        let narrows =
+          match (rt, target_type) with
+          | Unknown, (ClassType _ | InterfaceType _) -> true
+          | InterfaceType _, ClassType _ -> true
+          | ClassType a, ClassType b -> String.equal a b
+          | _ -> false
+        in
+        if narrows then
+          Some
+            ( (match recv.Ast.desc with Ast.Ident n -> n | _ -> ""),
+              target_type )
+        else None
     | Ast.Call ({ Ast.desc = Ast.Member (recv, "is"); _ }, target :: _) ->
         ignore (check_expr ctx env target.Ast.arg_value);
         None
