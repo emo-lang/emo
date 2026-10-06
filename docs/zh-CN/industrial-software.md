@@ -56,7 +56,8 @@ Erlang 在电信业验证过的高可用监控面形态:SCADA 上位机、MES �
 但硬实时够不着:GC、值拷贝、没有调度保证。freestanding 的 `riscv64`
 目标配可插拔 GC 与 arena(step 22,写作时未开始)是理论出路,离产品
 很远——而功能安全认证(IEC 61508 等)要求的工具链成熟度与可追溯性,
-新语言一样都没有。
+新语言一样都没有。freestanding 目标的实时前景另见
+`docs/zh-CN/rtos-assessment.md`。
 
 ### 经营管理类——技术上最近,政策价值最低
 

@@ -76,7 +76,8 @@ scheduling guarantees. The freestanding `riscv64` target with pluggable
 GC and arenas (step 22, not started as of this writing) is the
 theoretical path, far from product — and functional-safety
 certification (IEC 61508 and friends) demands toolchain maturity and
-traceability that a new language has none of.
+traceability that a new language has none of. The real-time prospects of
+the freestanding target are scoped in `docs/rtos-assessment.md`.
 
 ### The business layer — closest technically, least policy value
 
