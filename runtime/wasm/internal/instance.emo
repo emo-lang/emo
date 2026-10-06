@@ -747,6 +747,11 @@ var instances = []
 var reg_names = []
 var reg_handles = []
 
+// The `spectest` host module state (T21.9): one table and one memory,
+// allocated once and shared by every importer.
+var spectest_table = internal.store.tbl_new(10, 20, true, (112, -1))
+var spectest_memory = internal.store.mem_new(1, 2, true)
+
 def reset_machine() Int64 {
   if arena.length() == 0 {
     arena = Bytes.new(4194304)
@@ -861,7 +866,7 @@ def call_func(m Module, fidx Int64) (Bool, String) {
   if fidx < m.n_imp_funcs {
     const t = instances[cur_inst].targets[fidx]
     if t[0] == 1 {
-      return (false, "host imports are not wired yet")
+      return call_host(m, fidx, t[1])
     }
     return call_other(t[1], t[2])
   }
@@ -2044,6 +2049,9 @@ def resolve_imports(m Module, i Int64, imems Array[(Bytes, Int64, Bool)], itable
     return (true, "", imems, itables, iglobals, targets)
   }
   const imp = m.imports[i]
+  if imp.module == "spectest" {
+    return resolve_host(m, i, imems, itables, iglobals, targets)
+  }
   const h = find_reg(imp.module, 0)
   if h < 0 {
     return (false, "unknown import `" + imp.module + "`", imems, itables, iglobals, targets)
@@ -2224,4 +2232,102 @@ def instantiate(handle Int64) (Bool, String, Int64) {
     instances = inst_replace(instances, h, Instance.new(m, mems, tables, globals_store, r[5], m.start))
   }
   return (true, "", h)
+}
+
+// ---- the spectest host module (T21.9) ----
+
+def host_func_id(name String) Int64 {
+  if name == "print" {
+    return 0
+  }
+  if name == "print_i32" {
+    return 1
+  }
+  if name == "print_i64" {
+    return 2
+  }
+  if name == "print_f32" {
+    return 3
+  }
+  if name == "print_f64" {
+    return 4
+  }
+  if name == "print_i32_f32" {
+    return 5
+  }
+  if name == "print_f64_f64" {
+    return 6
+  }
+  return -1
+}
+
+def host_global(name String) (Bool, (Int64, Int64)) {
+  if name == "global_i32" {
+    return (true, mkv(127, 666))
+  }
+  if name == "global_i64" {
+    return (true, mkv(126, 666))
+  }
+  if name == "global_f32" {
+    return (true, mkv(125, 1143383654))
+  }
+  if name == "global_f64" {
+    return (true, mkv(124, 4649074691427585229))
+  }
+  return (false, mkv(127, 0))
+}
+
+def resolve_host(m Module, i Int64, imems Array[(Bytes, Int64, Bool)], itables Array[(Array[(Int64, Int64)], Int64, Bool)], iglobals Array[(Bool, (Int64, Int64))], targets Array[(Int64, Int64, Int64)]) (Bool, String, Array[(Bytes, Int64, Bool)], Array[(Array[(Int64, Int64)], Int64, Bool)], Array[(Bool, (Int64, Int64))], Array[(Int64, Int64, Int64)]) {
+  const imp = m.imports[i]
+  if imp.kind == 0 {
+    const id = host_func_id(imp.field)
+    if id < 0 {
+      return (false, "unknown import `" + imp.field + "`", imems, itables, iglobals, targets)
+    }
+    return resolve_imports(m, i + 1, imems, itables, iglobals, targets.append(tgt(1, id, 0)))
+  }
+  if imp.kind == 1 {
+    return resolve_imports(m, i + 1, imems, itables.append(spectest_table), iglobals, targets)
+  }
+  if imp.kind == 2 {
+    return resolve_imports(m, i + 1, imems.append(spectest_memory), itables, iglobals, targets)
+  }
+  const hg = host_global(imp.field)
+  if !hg[0] {
+    return (false, "unknown import `" + imp.field + "`", imems, itables, iglobals, targets)
+  }
+  const gv = (false, hg[1])
+  return resolve_imports(m, i + 1, imems, itables, iglobals.append(gv), targets)
+}
+
+// Pop the arguments, print them the way the reference host does
+// (`value : type`, one per line), and leave no results.
+def call_host(m Module, fidx Int64, id Int64) (Bool, String) {
+  const ft = m.types[func_type_idx(m, fidx)]
+  const nparams = ft.params.length()
+  const args = collect_results(sp - nparams, nparams, [])
+  sp = sp - nparams
+  host_print(id, args, 0)
+  return (true, "")
+}
+
+def host_print(id Int64, args Array[(Int64, Int64)], i Int64) Int64 {
+  if i >= args.length() {
+    return 0
+  }
+  println(host_value(args[i]))
+  return host_print(id, args, i + 1)
+}
+
+def host_value(v (Int64, Int64)) String {
+  if v[0] == 127 {
+    return internal.floats.sign32(v[1]).to_string() + " : i32"
+  }
+  if v[0] == 126 {
+    return v[1].to_string() + " : i64"
+  }
+  if v[0] == 125 {
+    return Float64.from_bits(internal.floats.promote_f32(v[1])).to_string() + " : f32"
+  }
+  return Float64.from_bits(v[1]).to_string() + " : f64"
 }

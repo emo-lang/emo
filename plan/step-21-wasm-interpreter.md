@@ -245,7 +245,7 @@ prefix of this list leaves the repo building and `dune test` green.
       partially-initialized store discarded); run the start function;
       `register` a named instance. Missing and mismatched imports are
       link failures. Fixture: two modules linking through a table.
-- [ ] **T21.9** — *The spectest host module.* **(S)** The `spectest`
+- [x] **T21.9** — *The spectest host module.* **(S)** The `spectest`
       imports the suite references — the print functions (output to
       the runner's log), the typed globals, the table, the memory —
       as host-side values behind the same import interface. *(A short

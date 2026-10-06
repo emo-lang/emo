@@ -1,0 +1,7 @@
+inst true 
+42 : i32
+1.5 : f64
+use 666
+mem 1
+tab 10
+failed 0
