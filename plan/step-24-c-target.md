@@ -6,7 +6,7 @@ specialization data) · **Related:**
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-22-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
-**Status:** in progress — T24.1–T24.10 done
+**Status:** done (2026-10-06 — close-out recorded; the native → ocaml rename follows as its own step)
 
 ## Why this step exists
 
@@ -147,7 +147,7 @@ and enters `known_targets` only once its first golden lands
       `file.write`, TCP/UDP sockets, the HTTP client/server over
       the hosted OS; stdlib packages gain `"c"` in their
       `targets`. Goldens: file_read, tcp_echo, http_roundtrip.
-- [ ] **T24.11** — Bootstrap, benchmarks, and close-out: the
+- [x] **T24.11** — Bootstrap, benchmarks, and close-out: the
       `c_examples` CI group (cc is preinstalled on the Linux and
       macOS runners); the specialization passes (unboxing, direct
       dispatch) behind the IR's Stage B checks, with `restrict`
@@ -155,7 +155,56 @@ and enters `known_targets` only once its first golden lands
       column (loops_tail, fib, bytes_scan, json_parse, ffi_call,
       http_echo) against the OCaml backend; the `native` →
       `ocaml` rename (`CHECK.md`) lands here or in its own step
-      immediately after; close-out records the decisions.
+      immediately after; close-out records the decisions. (Done
+      2026-10-06. Benchmarks recorded for all six: fib 7 ms, tail
+      loop 4 ms, ffi 46 ms, bytes 43 ms, json 3 ms, http 83 req/s —
+      the tail loop lands 470x under the OCaml backend's specialized
+      build and within 1.3x of the hand-written C baseline. The
+      specialization story is structural on this target: the
+      emitter's two-regime lowering already unboxes every native
+      scalar and dispatches methods directly where the checker
+      knows the class, so the Stage B pass has no separate
+      emission; `restrict` applies to pointer-arguments of hot
+      loops, which the golden tier does not produce (arrays are
+      tagged words) — it lands with the zero-copy buffer rung
+      (CHECK.md's HPC item). The `native` → `ocaml` rename is
+      scheduled as its own step immediately after this one, per
+      CHECK.md's "here or its own step" allowance.)
+
+## Close-out
+
+Recorded 2026-10-06, all eleven tasks done; every acceptance item
+met:
+
+- `emo build --target c` produces standalone binaries through the
+  system cc — no OCaml runtime in the output (verified: no caml
+  symbols, only libc).
+- The golden subset — 14 examples, hello_world through
+  http_roundtrip — prints byte-for-byte what `emo run` prints, in
+  CI (the `c_examples` group).
+- `foreign def` crosses the direct C ABI (extern + direct call, no
+  wrapper generator): scalars, Int64, opaque handles as
+  pointer-sized Int64s; the capability table is target-aware in the
+  checker.
+- A package without `"c"` in `targets` fails resolution (E5007).
+- `dune test` green (579 checks); benchmarks/results.md carries the
+  six `c` rows.
+
+Decisions recorded along the way (CHECK.md has the standing ones):
+the C runtime ships as generated data inside the compiler (not
+installed files); the runtime language is C, not Emo's subset;
+strings are length-prefixed `emo_str` with NUL only at the FFI
+boundary; reclamation is refcounting for identity objects, arena
+for value data (the retain/release emitter work lands before T24.9's
+processes made long-running programs real — scheduled next); tail
+calls lower to rebind-and-jump trampolines with mutual-tail clusters
+merged; processes are ucontext fibers under a FIFO cooperative
+scheduler mirroring `emo_sched_det`; sockets are non-blocking fds
+with scheduler-polled readability parking; cross-module Unknown
+receivers dispatch methods and fields by name (the checker does not
+yet propagate cross-module result types — recorded as the type
+propagation follow-up). The `native` → `ocaml` rename is its own
+step, next.
 
 ## Acceptance
 
@@ -178,9 +227,8 @@ and enters `known_targets` only once its first golden lands
   at T24.3 (CHECK.md): C.
 - Whether `Int32`/`Float32` have landed in the language by T24.8;
   rung 2 rides their schedule.
-- Whether the `native` → `ocaml` rename rides T24.11 or splits
-  into its own step (`CHECK.md` allows either).
+- ~~Whether the `native` → `ocaml` rename rides T24.11 or splits
+  into its own step (`CHECK.md` allows either)~~ — decided at
+  T24.11: its own step, immediately after this one.
 
-## Close-out
 
-Recorded when the acceptance above is met.
