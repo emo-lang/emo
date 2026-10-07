@@ -264,11 +264,21 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             write runtime_c Emo_codegen.C.runtime_c;
             let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
             write runtime_h Emo_codegen.C.runtime_h;
+            (* cclib entries pass to cc: bare names become -l flags,
+               anything already flag- or path-shaped passes verbatim. *)
+            let cclib_flags =
+              String.concat " "
+                (List.map
+                   (fun lib ->
+                     if lib <> "" && (lib.[0] = '-' || lib.[0] = '/') then lib
+                     else "-l" ^ lib)
+                   cclibs)
+            in
             let cmd =
-              Printf.sprintf "cc -O2 -std=c11 -Wall -I %s %s %s -o %s"
+              Printf.sprintf "cc -O2 -std=c11 -Wall -I %s %s %s %s -o %s"
                 (Filename.quote build_dir)
                 (Filename.quote main_c) (Filename.quote runtime_c)
-                (Filename.quote output)
+                cclib_flags (Filename.quote output)
             in
             let exit_code = Sys.command cmd in
             if exit_code <> 0 then begin

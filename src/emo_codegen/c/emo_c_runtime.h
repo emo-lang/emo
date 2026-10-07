@@ -124,6 +124,12 @@ emo_str emo_str_from_char(int32_t v);
 emo_str emo_str_concat(emo_str a, emo_str b);
 bool emo_str_eq(emo_str a, emo_str b);
 
+/* The FFI boundary (T24.8): a String crossing OUT gets a
+   NUL-terminated copy (the length prefix does not survive the C
+   ABI); a char * coming IN is copied into a cell. */
+const char *emo_str_cstr(emo_str s);
+emo_str emo_str_from_cstr(const char *cs);
+
 /* ---- The dynamic world (T24.4) ---- */
 
 /* Boxing: a native scalar into the dynamic world. String copies its

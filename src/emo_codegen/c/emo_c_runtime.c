@@ -184,6 +184,21 @@ bool emo_str_eq(emo_str a, emo_str b) {
   return a.len == b.len && memcmp(a.bytes, b.bytes, (size_t)a.len) == 0;
 }
 
+const char *emo_str_cstr(emo_str s) {
+  char *p = emo_alloc(s.len + 1);
+  memcpy(p, s.bytes, (size_t)s.len);
+  p[s.len] = '\0';
+  return p;
+}
+
+emo_str emo_str_from_cstr(const char *cs) {
+  size_t n = strlen(cs);
+  char *p = emo_alloc((int64_t)n);
+  memcpy(p, cs, n);
+  emo_str s = {(int64_t)n, p};
+  return s;
+}
+
 /* ---- The dynamic world ---- */
 
 static const char *emo_wrong_type =

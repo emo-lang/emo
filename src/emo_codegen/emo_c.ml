@@ -54,6 +54,9 @@ type env = {
       (* mangled class name → field names, init-assignment order *)
   closures : Buffer.t; (* closure function definitions, hoisted *)
   mutable closure_decls : string list; (* their forward declarations *)
+  forfuncs : (string, Emo_ir.func) Hashtbl.t;
+      (* foreign def's mangled name -> its IR: calls go straight to
+         the C symbol, no wrapper (T24.8) *)
 }
 
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -66,14 +69,53 @@ let c_ident (name : string) : string =
   let n = Emo_ir.sanitize_ident name in
   let reserved =
     List.mem n
-      [ "auto"; "break"; "case"; "char"; "const"; "continue"; "default";
-        "do"; "double"; "else"; "enum"; "extern"; "float"; "for"; "goto";
-        "if"; "inline"; "int"; "long"; "register"; "restrict"; "return";
-        "short"; "signed"; "sizeof"; "static"; "struct"; "switch";
-        "typedef"; "union"; "unsigned"; "void"; "volatile"; "while";
-        "_Alignas"; "_Alignof"; "_Atomic"; "_Bool"; "_Complex";
-        "_Generic"; "_Imaginary"; "_Noreturn"; "_Static_assert";
-        "_Thread_local"; "main" ]
+      [
+        "auto";
+        "break";
+        "case";
+        "char";
+        "const";
+        "continue";
+        "default";
+        "do";
+        "double";
+        "else";
+        "enum";
+        "extern";
+        "float";
+        "for";
+        "goto";
+        "if";
+        "inline";
+        "int";
+        "long";
+        "register";
+        "restrict";
+        "return";
+        "short";
+        "signed";
+        "sizeof";
+        "static";
+        "struct";
+        "switch";
+        "typedef";
+        "union";
+        "unsigned";
+        "void";
+        "volatile";
+        "while";
+        "_Alignas";
+        "_Alignof";
+        "_Atomic";
+        "_Bool";
+        "_Complex";
+        "_Generic";
+        "_Imaginary";
+        "_Noreturn";
+        "_Static_assert";
+        "_Thread_local";
+        "main";
+      ]
   in
   if reserved then n ^ "_c" else n
 
@@ -252,6 +294,25 @@ and c_name env name =
   | Some (_, c, _) -> c
   | None -> refuse (Printf.sprintf "the variable `%s` here" name)
 
+and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
+    (args : Emo_ir.expr list) : string =
+  let symbol = Option.get f.Emo_ir.fforeign in
+  let arg_code =
+    List.map2
+      (fun (arg : Emo_ir.expr) (_, ty) ->
+        let v = as_native env arg ty in
+        if ty = Emo_check.String then Printf.sprintf "emo_str_cstr(%s)" v else v)
+      args f.Emo_ir.fparams
+  in
+  let call = Printf.sprintf "%s(%s)" symbol (String.concat ", " arg_code) in
+  if f.Emo_ir.fresult = Emo_check.String then
+    (* the C result is a char *: copy into a cell first — every Emo
+       String representation is an emo_str from here on *)
+    let v = Printf.sprintf "emo_str_from_cstr(%s)" call in
+    if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+  else if is_dyn use_ty then box_code call f.Emo_ir.fresult
+  else call
+
 and emit_expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
   | Const (Ast.L_int n) ->
@@ -303,39 +364,41 @@ and emit_expr env (e : Emo_ir.expr) : string =
             x rest)
   | Method { self_; name; args } -> emit_method env e.Emo_ir.ety self_ name args
   | Call { func; args } -> (
-      (* The callee's declared regime governs: a cross-module call the
+      (* A foreign def calls its C symbol directly (T24.8). *)
+      match Hashtbl.find_opt env.forfuncs func with
+      | Some f -> foreign_call env e.Emo_ir.ety f args
+      | None -> (
+          (* The callee's declared regime governs: a cross-module call the
          checker types Unknown still returns the callee's native
          result, and the use site converts either way. *)
-      match Hashtbl.find_opt env.funsigs func with
-      | Some (param_types, fres) -> (
-          match List.combine args param_types with
-          | pairs ->
-              let arg_code =
-                List.map
-                  (fun (arg, (_, pty)) ->
-                    if is_dyn pty then as_dyn env arg else as_native env arg pty)
-                  pairs
-              in
-              let call =
-                Printf.sprintf "%s(%s)"
-                  (c_ident func)
-                  (String.concat ", " arg_code)
-              in
-              if fres = e.Emo_ir.ety then call
-              else if is_dyn fres && is_dyn e.Emo_ir.ety then call
-              else if is_dyn e.Emo_ir.ety then box_code call fres
-              else unbox_code call e.Emo_ir.ety
-          | exception Invalid_argument _ ->
-              (* arity mismatches are the checker's to refuse *)
+          match Hashtbl.find_opt env.funsigs func with
+          | Some (param_types, fres) -> (
+              match List.combine args param_types with
+              | pairs ->
+                  let arg_code =
+                    List.map
+                      (fun (arg, (_, pty)) ->
+                        if is_dyn pty then as_dyn env arg
+                        else as_native env arg pty)
+                      pairs
+                  in
+                  let call =
+                    Printf.sprintf "%s(%s)" (c_ident func)
+                      (String.concat ", " arg_code)
+                  in
+                  if fres = e.Emo_ir.ety then call
+                  else if is_dyn fres && is_dyn e.Emo_ir.ety then call
+                  else if is_dyn e.Emo_ir.ety then box_code call fres
+                  else unbox_code call e.Emo_ir.ety
+              | exception Invalid_argument _ ->
+                  (* arity mismatches are the checker's to refuse *)
+                  let arg_code = List.map (emit_expr env) args in
+                  Printf.sprintf "%s(%s)" (c_ident func)
+                    (String.concat ", " arg_code))
+          | None ->
               let arg_code = List.map (emit_expr env) args in
-              Printf.sprintf "%s(%s)"
-                (c_ident func)
-                (String.concat ", " arg_code))
-      | None ->
-          let arg_code = List.map (emit_expr env) args in
-          Printf.sprintf "%s(%s)"
-            (c_ident func)
-            (String.concat ", " arg_code))
+              Printf.sprintf "%s(%s)" (c_ident func)
+                (String.concat ", " arg_code)))
   | Tuple es ->
       let elems = String.concat ", " (List.map (as_dyn env) es) in
       Printf.sprintf "emo_tuple_new(INT64_C(%d), (emo_value[]){%s})"
@@ -536,8 +599,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
               match Hashtbl.find_opt env.ifaces target with
               | Some _ ->
                   Printf.sprintf "emo_is_iface(%s, &iface_%s)"
-                    (as_dyn env self_)
-                    (c_ident target)
+                    (as_dyn env self_) (c_ident target)
               | None -> refuse (Printf.sprintf "`is(%s)`" target)))
       | _ when is_dyn self_.Emo_ir.ety -> (
           (* an instance method: direct on a class-typed receiver, through
@@ -546,9 +608,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           | Emo_check.ClassType display -> (
               match Hashtbl.find_opt env.classes display with
               | Some c -> (
-                  let mangled =
-                    c.Emo_ir.cname ^ "__" ^ c_ident name
-                  in
+                  let mangled = c.Emo_ir.cname ^ "__" ^ c_ident name in
                   match
                     List.find_opt
                       (fun (m : Emo_ir.func) ->
@@ -566,9 +626,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                           args (List.tl m.Emo_ir.fparams)
                       in
                       let v =
-                        Printf.sprintf "%s(%s%s)"
-                          (c_ident mangled)
-                          self_code
+                        Printf.sprintf "%s(%s%s)" (c_ident mangled) self_code
                           (if arg_code = [] then ""
                            else ", " ^ String.concat ", " arg_code)
                       in
@@ -735,9 +793,7 @@ and emit_closure env (cparams : (string * Emo_check.t) list)
     :: env.closure_decls;
   let caps = closure_free env cparams body in
   let param_scope =
-    List.mapi
-      (fun i (n, _) -> (n, c_ident n, Emo_check.Unknown))
-      cparams
+    List.mapi (fun i (n, _) -> (n, c_ident n, Emo_check.Unknown)) cparams
   in
   let cap_scope = List.map (fun (n, c, ty) -> (n, c, ty)) caps in
   let env =
@@ -1065,28 +1121,33 @@ and emit_tail_rebind env (callee : string) (args : Emo_ir.expr list) : unit =
 and emit_stmt env (s : Emo_ir.stmt) : unit =
   match s with
   | Effect { desc = Builtin { name; args }; _ } -> emit_builtin env name args
-  | Effect { desc = Call { func; args }; _ } -> (
-      match Hashtbl.find_opt env.funsigs func with
-      | Some (param_types, _fres) -> (
-          match List.combine args param_types with
-          | pairs ->
-              let arg_code =
-                List.map
-                  (fun (arg, (_, pty)) ->
-                    if is_dyn pty then as_dyn env arg else as_native env arg pty)
-                  pairs
-              in
-              put env "  %s(%s);\n"
-                (c_ident func)
-                (String.concat ", " arg_code)
-          | exception Invalid_argument _ ->
+  | Effect { ety; desc = Call { func; args }; _ } -> (
+      match Hashtbl.find_opt env.forfuncs func with
+      | Some f -> put env "  (void)(%s);\n" (foreign_call env ety f args)
+      | None -> (
+          match Hashtbl.find_opt env.funsigs func with
+          | Some (param_types, _fres) -> (
+              match List.combine args param_types with
+              | pairs ->
+                  let arg_code =
+                    List.map
+                      (fun (arg, (_, pty)) ->
+                        if is_dyn pty then as_dyn env arg
+                        else as_native env arg pty)
+                      pairs
+                  in
+                  put env "  %s(%s);\n" (c_ident func)
+                    (String.concat ", " arg_code)
+              | exception Invalid_argument _ ->
+                  let arg_code =
+                    String.concat ", " (List.map (emit_expr env) args)
+                  in
+                  put env "  %s(%s);\n" (c_ident func) arg_code)
+          | None ->
               let arg_code =
                 String.concat ", " (List.map (emit_expr env) args)
               in
-              put env "  %s(%s);\n" (c_ident func) arg_code)
-      | None ->
-          let arg_code = String.concat ", " (List.map (emit_expr env) args) in
-          put env "  %s(%s);\n" (c_ident func) arg_code)
+              put env "  %s(%s);\n" (c_ident func) arg_code))
   | Effect { ety; desc = Method { self_; name; args; _ }; _ } ->
       let code = emit_method env ety self_ name args in
       put env "  (void)(%s);\n" code
@@ -1220,6 +1281,21 @@ and has_return (stmts : Emo_ir.stmt list) : bool =
       | _ -> false)
     stmts
 
+(* ---- Foreign defs (T24.8) ----
+
+   The direct C ABI: a `foreign def` declares the C symbol and calls
+   it with native types — no wrapper generator. A String crossing OUT
+   gets a NUL-terminated copy; a char * coming IN is copied into a
+   cell. Opaque handles ride pointer-sized Int64s. *)
+
+let foreign_c_type (t : Emo_check.t) : string =
+  match t with
+  | Emo_check.Int64 -> "int64_t"
+  | Emo_check.Float64 -> "double"
+  | Emo_check.Bool -> "bool"
+  | Emo_check.String -> "const char *"
+  | _ -> refuse (Printf.sprintf "`%s` across the C ABI" (Emo_check.to_string t))
+
 (* ---- The tail-call graph ----
 
    A → B when A's body returns a direct call to B. A cycle of two or
@@ -1306,8 +1382,7 @@ let signature (f : Emo_ir.func) : string * string =
         String.concat ", "
           (List.map
              (fun (name, ty) ->
-               Printf.sprintf "%s %s" (param_type ty)
-                 (c_ident name))
+               Printf.sprintf "%s %s" (param_type ty) (c_ident name))
              ps)
   in
   (result_type f, params)
@@ -1324,16 +1399,11 @@ let emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
       fname = f.Emo_ir.fname;
       fresult = f.Emo_ir.fresult;
       fclass;
-      scope =
-        List.map
-          (fun (n, ty) -> (n, c_ident n, ty))
-          f.Emo_ir.fparams;
+      scope = List.map (fun (n, ty) -> (n, c_ident n, ty)) f.Emo_ir.fparams;
       tail_rebinds =
         [
           ( f.Emo_ir.fname,
-            List.map
-              (fun (n, ty) -> (c_ident n, ty))
-              f.Emo_ir.fparams );
+            List.map (fun (n, ty) -> (c_ident n, ty)) f.Emo_ir.fparams );
         ];
       in_main = false;
     }
@@ -1356,8 +1426,7 @@ let emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
 
 (* A cluster slot: the member's parameter, prefixed to stay unique
    across the merged signature. *)
-let slot_name member param =
-  Printf.sprintf "%s__p_%s" member (c_ident param)
+let slot_name member param = Printf.sprintf "%s__p_%s" member (c_ident param)
 
 (* The merged shape of a cluster: one return type (mixed result types
    refuse), the member bodies, and the slot list of every member
@@ -1397,13 +1466,11 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
       let args =
         List.map
           (fun (other, n, ty) ->
-            if other = m.Emo_ir.fname then c_ident n
-            else dummy_value ty)
+            if other = m.Emo_ir.fname then c_ident n else dummy_value ty)
           slots
       in
       put env0 "%s %s(%s) {\n  return %s(%s);\n}\n\n" m_ret
-        (c_ident m.Emo_ir.fname)
-        m_params cluster (String.concat ", " args))
+        (c_ident m.Emo_ir.fname) m_params cluster (String.concat ", " args))
     members;
   put env0 "%s %s(%s) {\n" ret cluster cluster_params;
   let dyn_ret =
@@ -1473,9 +1540,7 @@ let emit_ctor env0 (c : Emo_ir.class_) : unit =
           in_main = false;
           scope =
             ("self", "self", Emo_check.Unknown)
-            :: List.map
-                 (fun (n, ty) -> (n, c_ident n, ty))
-                 real_params;
+            :: List.map (fun (n, ty) -> (n, c_ident n, ty)) real_params;
         }
       in
       put env "emo_value %s(%s) {\n" ctor
@@ -1484,8 +1549,7 @@ let emit_ctor env0 (c : Emo_ir.class_) : unit =
            String.concat ", "
              (List.map
                 (fun (n, ty) ->
-                  Printf.sprintf "%s %s" (param_type ty)
-                    (c_ident n))
+                  Printf.sprintf "%s %s" (param_type ty) (c_ident n))
                 real_params));
       put env "  emo_value self = emo_instance_new(&vt_%s, %d);\n"
         c.Emo_ir.cname (List.length fields);
@@ -1517,8 +1581,7 @@ let emit_thunk env0 (c : Emo_ir.class_) (m : Emo_ir.func) : unit =
          params
   in
   let call =
-    Printf.sprintf "%s(%s)"
-      (c_ident m.Emo_ir.fname)
+    Printf.sprintf "%s(%s)" (c_ident m.Emo_ir.fname)
       (String.concat ", " arg_code)
   in
   let result =
@@ -1532,10 +1595,6 @@ let emit_thunk env0 (c : Emo_ir.class_) (m : Emo_ir.func) : unit =
 (* ---- The program ---- *)
 
 let emit (program : Emo_ir.program) : string =
-  if List.exists (fun f -> f.Emo_ir.fforeign <> None) program.pfuncs then
-    raise
-      (Emo_ir.Lower_error
-         "foreign definitions are not supported on the c target yet");
   let clusters = tail_clusters program.pfuncs in
   let cluster_members name =
     List.find_opt (List.mem name) clusters |> Option.value ~default:[ name ]
@@ -1589,6 +1648,13 @@ let emit (program : Emo_ir.program) : string =
       in
       Hashtbl.replace funsigs ctor (params, Emo_check.Unknown))
     program.pclasses;
+  let forfuncs = Hashtbl.create 8 in
+  List.iter
+    (fun (f : Emo_ir.func) ->
+      match f.Emo_ir.fforeign with
+      | Some _ -> Hashtbl.replace forfuncs f.Emo_ir.fname f
+      | None -> ())
+    program.pfuncs;
   let env0 =
     {
       buf;
@@ -1605,6 +1671,7 @@ let emit (program : Emo_ir.program) : string =
       fields = fields_tbl;
       closures = Buffer.create (16 * 1024);
       closure_decls = [];
+      forfuncs;
     }
   in
   let head = Buffer.create 256 in
@@ -1616,8 +1683,11 @@ let emit (program : Emo_ir.program) : string =
      contributes its constructor and methods. *)
   List.iter
     (fun f ->
-      let ret, params = signature f in
-      put env0 "%s %s(%s);\n" ret (c_ident f.Emo_ir.fname) params)
+      match f.Emo_ir.fforeign with
+      | Some _ -> () (* the extern declaration below covers it *)
+      | None ->
+          let ret, params = signature f in
+          put env0 "%s %s(%s);\n" ret (c_ident f.Emo_ir.fname) params)
     program.pfuncs;
   List.iteri
     (fun i members ->
@@ -1635,8 +1705,7 @@ let emit (program : Emo_ir.program) : string =
               String.concat ", "
                 (List.map
                    (fun (n, ty) ->
-                     Printf.sprintf "%s %s" (param_type ty)
-                       (c_ident n))
+                     Printf.sprintf "%s %s" (param_type ty) (c_ident n))
                    (List.tl init.Emo_ir.fparams)) )
         | None -> ("emo_value", "void")
       in
@@ -1644,9 +1713,7 @@ let emit (program : Emo_ir.program) : string =
       List.iter
         (fun (m : Emo_ir.func) ->
           let m_ret, m_params = signature m in
-          put env0 "%s %s(%s);\n" m_ret
-            (c_ident m.Emo_ir.fname)
-            m_params)
+          put env0 "%s %s(%s);\n" m_ret (c_ident m.Emo_ir.fname) m_params)
         c.Emo_ir.cmethods;
       (* the dynamic-convention thunks runtime dispatch goes through *)
       List.iter
@@ -1655,6 +1722,23 @@ let emit (program : Emo_ir.program) : string =
             (c_ident m.Emo_ir.fname))
         c.Emo_ir.cmethods)
     program.pclasses;
+  (* Foreign defs: the C symbol declarations — the direct ABI. *)
+  List.iter
+    (fun (f : Emo_ir.func) ->
+      match f.Emo_ir.fforeign with
+      | None -> ()
+      | Some symbol ->
+          let params =
+            match f.Emo_ir.fparams with
+            | [] -> "void"
+            | ps ->
+                String.concat ", "
+                  (List.map (fun (_, t) -> foreign_c_type t) ps)
+          in
+          put env0 "extern %s %s(%s);\n"
+            (foreign_c_type f.Emo_ir.fresult)
+            symbol params)
+    program.pfuncs;
   put env0 "\n";
   (* Interface contracts and class vtables. *)
   List.iter
@@ -1668,8 +1752,7 @@ let emit (program : Emo_ir.program) : string =
               sigs));
       put env0
         "EMO_META_UNUSED static const emo_iface iface_%s = { %s, %d, %s };\n\n"
-        (c_ident name)
-        (c_string name) (List.length sigs) table)
+        (c_ident name) (c_string name) (List.length sigs) table)
     program.pinterfaces;
   List.iter
     (fun (c : Emo_ir.class_) ->
@@ -1711,7 +1794,9 @@ let emit (program : Emo_ir.program) : string =
     program.pclasses;
   (* Definitions. *)
   List.iter
-    (fun f -> if not (in_cluster f.Emo_ir.fname) then emit_single env0 f)
+    (fun f ->
+      if f.Emo_ir.fforeign = None && not (in_cluster f.Emo_ir.fname) then
+        emit_single env0 f)
     program.pfuncs;
   List.iteri
     (fun i members -> emit_cluster env0 i (member_funcs members))
