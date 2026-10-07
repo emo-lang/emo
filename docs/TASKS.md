@@ -614,7 +614,7 @@ release layout; all goldens byte-for-byte; `dune test` green.
       contract; the skeleton compiles with plain `ocamlopt`, zero
       `emo_*` dependencies, proven by a fixture from the build
       directory alone.
-- [ ] **T26.3** — The value and scalar core: the value ADT, strings,
+- [x] **T26.3** — The value and scalar core: the value ADT, strings,
       print/interpolation rendering, arithmetic/comparison dispatch,
       and the case/error paths the inventory names, standalone. Each
       piece covered by a fixture compiled against the runtime alone.
