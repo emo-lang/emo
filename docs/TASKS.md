@@ -607,7 +607,7 @@ release layout; all goldens byte-for-byte; `dune test` green.
       pattern), the typescript arm stopped from reading the
       filesystem. Verification: a lone release-layout binary compiles
       a typescript program; the ts goldens byte-for-byte.
-- [ ] **T26.2** — The emitted-code inventory and the standalone
+- [x] **T26.2** — The emitted-code inventory and the standalone
       skeleton: emit the golden subset through the ocaml emitter,
       collect mechanically every host symbol the emitted code
       references, and record the inventory as the standalone runtime's
