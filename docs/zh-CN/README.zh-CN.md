@@ -224,7 +224,7 @@ def parse_config(text String) Json {
   package {
     name = "acme/json_tools"
     version = "0.1.0"
-    targets = ["native", "wasm"]
+    targets = ["ocaml", "wasm"]
 
     deps {
       json = "2.3.1"
@@ -255,7 +255,7 @@ Emo 自带围绕**进程与消息传递**的原生并发模型，精神上属于
 
 ## 网络
 
-网络是一等公民：几乎所有现代程序都要联网。Emo 提供统一的异步网络 API。在原生后端上，它运行在与并发运行时同一个 effects 调度器之上——非阻塞 socket 由调度器挂起与唤醒，TLS 由 OpenSSL 绑定提供。网络能力仅限原生后端：`net` 与 `http` 包声明 `targets = ["native"]`，依赖解析在其他一切目标上拒绝它们。
+网络是一等公民：几乎所有现代程序都要联网。Emo 提供统一的异步网络 API。在原生后端上，它运行在与并发运行时同一个 effects 调度器之上——非阻塞 socket 由调度器挂起与唤醒，TLS 由 OpenSSL 绑定提供。网络能力仅限 ocaml 与 c 后端：`net` 与 `http` 包声明 `targets = ["ocaml", "c"]`，依赖解析在其他一切目标上拒绝它们。
 
 API 是**直接风格**：网络调用看起来像普通的阻塞调用，调度器在底层切换进程。没有 `async`/`await`，因此没有函数着色——任何函数都能做 IO，API 生态保持单轨。超时以秒计，每个失败——连接被拒、名字无法解析、超期、socket 关闭——抛出普通的 Emo 异常，其消息写明对端、操作与原因。
 

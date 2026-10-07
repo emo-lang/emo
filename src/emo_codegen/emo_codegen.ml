@@ -5,6 +5,7 @@ module Ast = Emo_ast
 module Ts = Emo_ts
 module Wasm = Emo_wasm
 module Beam = Emo_beam
+module C = Emo_c
 
 (* A float literal as its exact bit pattern, so no decimal rendering
    loses precision near the extremes. *)

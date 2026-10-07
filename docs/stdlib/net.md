@@ -4,7 +4,7 @@ The standard library's socket package: TCP, UDP, Unix-domain sockets, DNS,
 and TLS. It is a thin, readable layer of Emo source over the runtime's
 network builtins — every function here is one call to a builtin, and the
 semantics (timeouts, EOF, errors) are the runtime's. The package is
-**native-only**: its manifest declares `targets = ["native"]`, and
+**ocaml- and c-only**: its manifest declares `targets = ["ocaml", "c"]`, and
 dependency resolution refuses it on every other target.
 
 Networking is **direct style**: a blocking call reads like any other
@@ -27,7 +27,7 @@ The `require` pairs strictly with the manifest — `net` must be pinned in
 package {
   name = "acme/myapp"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml", "c"]
 
   deps {
     net = "0.1.0"
@@ -194,7 +194,7 @@ conn.close()
 
 ## Limitations
 
-- **Native target only** — `targets = ["native"]`; wasm, TypeScript, and
+- **OCaml and c targets only** — `targets = ["ocaml", "c"]`; wasm, TypeScript, and
   BEAM builds are refused at resolution time.
 - **DNS is forward-only and runs inline in the scheduler loop** —
   `getaddrinfo` blocks the loop for its duration; there is no reverse

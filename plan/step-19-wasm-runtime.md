@@ -106,7 +106,7 @@ already answered by existing mechanisms:
   bit reinterpretation for the interpreter's float stage.
 - **`file` stdlib package** — `file.read(path String) String` returns
   the raw bytes as a `String`; scheduler-direct like `net`;
-  `targets = ["native"]` until other targets grow io. (The kernel
+  `targets = ["native"]` (today `["ocaml", "c"]`) until other targets grow io. (The kernel
   side does not need it; it stays in this layer because the runtime
   names it.)
 

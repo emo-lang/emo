@@ -110,7 +110,8 @@ let sanitize_ident (name : string) : string =
 type module_input = {
   mpath : string list;
   mitems : Emo_ast.item list;
-  mtypes : (int, Emo_check.t) Hashtbl.t; (* span start → checked type *)
+  mtypes : (int * int, Emo_check.t) Hashtbl.t;
+      (* span start/stop → checked type *)
 }
 
 (* One program-wide symbol: a def, a class, or an enum. *)
@@ -124,7 +125,7 @@ type env = {
   symbols : (string list * string, symbol) Hashtbl.t; (* module path × name *)
   current : string list;
   mutable locals : string list; (* innermost first *)
-  types : (int, Emo_check.t) Hashtbl.t;
+  types : (int * int, Emo_check.t) Hashtbl.t;
   module_paths : string list list; (* every module in the program *)
   mutable aliases : (string * string list) list;
       (* `const order = shop.order` — a name bound to a module path *)
@@ -137,7 +138,10 @@ let is_builtin = function
       || (String.length name >= 5 && String.sub name 0 5 = "file_")
 
 let type_of env (span : Emo_support.Span.t) : Emo_check.t =
-  match Hashtbl.find_opt env.types span.Emo_support.Span.start with
+  match
+    Hashtbl.find_opt env.types
+      (span.Emo_support.Span.start, span.Emo_support.Span.stop)
+  with
   | Some t -> t
   | None -> Emo_check.Unknown
 
@@ -219,7 +223,8 @@ and order_args env params args =
             failwith
               (Printf.sprintf
                  "order_args: no positional for parameter `%s` (params: %s)"
-                 param (String.concat ", " params));
+                 param
+                 (String.concat ", " params));
           lower_expr env (Queue.pop positional))
     params
 
@@ -328,9 +333,10 @@ and lower_expr env (e : Ast.expr) : expr =
   | Ast.If_expr { cond; then_expr; else_expr } ->
       expr
         (Cond
-           { c = lower_expr env cond;
+           {
+             c = lower_expr env cond;
              t = lower_expr env then_expr;
-             e = lower_expr env else_expr
+             e = lower_expr env else_expr;
            })
   | Ast.Tuple es -> expr (Tuple (List.map (lower_expr env) es))
   | Ast.Array_literal es -> expr (Array_lit (List.map (lower_expr env) es))
@@ -824,9 +830,14 @@ let lower (input : input) : program =
   let classes = ref [] in
   let interfaces = ref [] in
   let globals = ref [] in
-  (* the entry module can be discovered twice (as the entry root and as
-     a sibling file); dedupe by path so items lower once *)
+  (* The entry module can be discovered twice (as the entry root and as
+     a sibling file): two paths, one parsed item list. Dedupe by path
+     and by the items' physical identity — path alone misses the pair,
+     and lowering both copies mangles every symbol twice (the group
+     tables' last-wins registration then leaves one copy's calls
+     dangling). *)
   let seen_paths = Hashtbl.create 8 in
+  let seen_items : Ast.item list list ref = ref [] in
   let input =
     {
       input with
@@ -834,8 +845,11 @@ let lower (input : input) : program =
         List.filter
           (fun (m : module_input) ->
             if Hashtbl.mem seen_paths m.mpath then false
+            else if List.exists (fun kept -> kept == m.mitems) !seen_items then
+              false
             else (
               Hashtbl.replace seen_paths m.mpath ();
+              seen_items := m.mitems :: !seen_items;
               true))
           input.modules;
     }
@@ -859,21 +873,36 @@ let lower (input : input) : program =
           | Ast.Item_stmt
               { stmt_desc = Ast.Binding { mutable_ = false; name; init }; _ }
             when m.mpath <> input.entry ->
-              funcs :=
-                {
-                  fname = mangle m.mpath name;
-                  fmodule = m.mpath;
-                  fparams = [];
-                  fresult = Emo_check.Unknown;
-                  fbody = [ Return_stmt (lower_expr const_env init) ];
-                  fspecializable = false;
-                  fforeign = None;
-                }
-                :: !funcs
+              (* A module alias (`const d = internal.discounts`) binds a
+                 path, not a value: uses resolve through the alias, so
+                 no thunk lowers (lowering would hit the Type_ref the
+                 module reference is). *)
+              if
+                match
+                  Option.bind (full_chain init) (fun chain ->
+                      if is_module_path const_env chain then Some chain
+                      else None)
+                with
+                | Some _ -> true
+                | None -> false
+              then ()
+              else
+                funcs :=
+                  {
+                    fname = mangle m.mpath name;
+                    fmodule = m.mpath;
+                    fparams = [];
+                    fresult = Emo_check.Unknown;
+                    fbody = [ Return_stmt (lower_expr const_env init) ];
+                    fspecializable = false;
+                    fforeign = None;
+                  }
+                  :: !funcs
           | Ast.Item_stmt
               { stmt_desc = Ast.Binding { mutable_ = true; name; init }; _ }
             when m.mpath <> input.entry ->
-              globals := (mangle m.mpath name, lower_expr const_env init) :: !globals
+              globals :=
+                (mangle m.mpath name, lower_expr const_env init) :: !globals
           | _ -> ())
         m.mitems)
     input.modules;
@@ -964,10 +993,13 @@ let lower (input : input) : program =
                     | Some (S_func { mangled; _ }) -> mangled
                     | _ -> mangle m.mpath (g.Ast.group_name ^ "__" ^ cname)
                   in
-                  funcs :=
+                  (* the thunk returns the const's value: Unknown, like
+                     every other const binding (Void would lose it) *)
+                  let thunk =
                     lower_func env ~module_path:m.mpath ~mangled ~self:false
                       thunk_def
-                    :: !funcs)
+                  in
+                  funcs := { thunk with fresult = Emo_check.Unknown } :: !funcs)
                 g.Ast.group_consts
           | Ast.Item_foreign f ->
               funcs :=

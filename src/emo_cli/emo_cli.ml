@@ -134,8 +134,10 @@ let find_ocamlfind () : string =
 
 (* The build command: entry file → artifact at [-o] (default: the
    entry's stem in the current directory). The target picks the
-   backend: native (default) compiles through the OCaml toolchain;
-   typescript emits one self-contained .ts file that runs on Node. *)
+   backend: ocaml (default) emits OCaml compiled by the OCaml
+   toolchain; c emits C compiled by the system cc into a standalone
+   binary; typescript emits one self-contained .ts file that runs on
+   Node. *)
 let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
     ~(cclibs : string list) ~(target : string) : int =
   match Sys.file_exists entry with
@@ -248,7 +250,49 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                   Printf.printf "built %s\n" out;
                   0
                 end)
-        | "native" ->
+        | "c" ->
+            (* Emit one main.c plus the Emo runtime sources, compile
+               with the system cc: a standalone binary with no OCaml
+               runtime (step 24). *)
+            let write path contents =
+              let oc = open_out_bin path in
+              output_string oc contents;
+              close_out oc
+            in
+            let main_c = Filename.concat build_dir "main.c" in
+            write main_c (Emo_codegen.C.emit program);
+            let runtime_c = Filename.concat build_dir "emo_c_runtime.c" in
+            write runtime_c Emo_codegen.C.runtime_c;
+            let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
+            write runtime_h Emo_codegen.C.runtime_h;
+            (* cclib entries pass to cc: bare names become -l flags,
+               anything already flag- or path-shaped passes verbatim. *)
+            let cclib_flags =
+              String.concat " "
+                (List.map
+                   (fun lib ->
+                     if lib <> "" && (lib.[0] = '-' || lib.[0] = '/') then lib
+                     else "-l" ^ lib)
+                   cclibs)
+            in
+            let cmd =
+              Printf.sprintf
+                "cc -O2 -std=c11 -Wall -Wno-deprecated-declarations -I %s %s \
+                 %s                  %s -o %s"
+                (Filename.quote build_dir) (Filename.quote main_c)
+                (Filename.quote runtime_c) cclib_flags (Filename.quote output)
+            in
+            let exit_code = Sys.command cmd in
+            if exit_code <> 0 then begin
+              prerr_endline
+                (Printf.sprintf "emo build: the C compiler failed (exit %d)"
+                   exit_code);
+              70
+            end
+            else (
+              Printf.printf "built %s\n" output;
+              0)
+        | "ocaml" ->
             let source = Emo_codegen.emit ~specialize program in
             (* Incremental: the digest of the emitted source plus the
                digests of the runtime libraries names the cached binary —
@@ -399,7 +443,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         | other ->
             prerr_endline
               (Printf.sprintf
-                 "emo build: unknown target `%s` (native, typescript, wasm, \
+                 "emo build: unknown target `%s` (ocaml, c, typescript, wasm, \
                   beam)"
                  other);
             65
@@ -440,9 +484,9 @@ let build =
   in
   let target =
     Arg.(
-      value & opt string "native"
+      value & opt string "ocaml"
       & info [ "target" ] ~docv:"TARGET"
-          ~doc:"The compilation target: native, typescript, wasm, or beam.")
+          ~doc:"The compilation target: ocaml, c, typescript, wasm, or beam.")
   in
   let build entry output no_specialize cclibs target =
     let out =
@@ -624,7 +668,7 @@ let deps_resolve ~(name : string option) : int =
           exit 65)
     | None -> ());
     let entries =
-      Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"native"
+      Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"ocaml"
     in
     Emo_pkg.Lockfile.write
       ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
@@ -781,7 +825,7 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
                    {|package {
   name = "internal/publish"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
 
   deps {
     http = "%s"
