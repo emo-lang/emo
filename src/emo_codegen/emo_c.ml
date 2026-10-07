@@ -183,13 +183,14 @@ let c_type (t : Emo_check.t) : string option =
   | Emo_check.Char -> Some "int32_t"
   | Emo_check.Byte -> Some "uint8_t"
   | Emo_check.Pid -> Some "int64_t"
+  | Emo_check.TcpConn | Emo_check.TcpListener | Emo_check.UdpSocket ->
+      Some "int64_t"
   | Emo_check.String -> Some "emo_str"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
   | Emo_check.BoxType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
   | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
       Some "emo_value"
   | Emo_check.Void -> Some "void"
-  | _ -> None
 
 (* Whether a type lives in the dynamic world (the tagged word) or the
    native one (a C scalar). *)
@@ -268,6 +269,8 @@ let rec box_code (v : string) (ty : Emo_check.t) : string =
   (* a Byte in the dynamic world is an Int64 cell carrying 0-255 *)
   | Emo_check.Byte -> Printf.sprintf "emo_box_i64((int64_t)(%s))" v
   | Emo_check.Pid -> Printf.sprintf "emo_box_pid(%s)" v
+  | Emo_check.TcpConn | Emo_check.TcpListener | Emo_check.UdpSocket ->
+      Printf.sprintf "emo_box_i64(%s)" v
   | t ->
       refuse
         (Printf.sprintf "`%s` values in the dynamic world"
@@ -282,6 +285,8 @@ and unbox_code (v : string) (ty : Emo_check.t) : string =
   | Emo_check.String -> Printf.sprintf "emo_str_of(%s)" v
   | Emo_check.Byte -> Printf.sprintf "(uint8_t)emo_unbox_i64(%s)" v
   | Emo_check.Pid -> Printf.sprintf "emo_unbox_pid(%s)" v
+  | Emo_check.TcpConn | Emo_check.TcpListener | Emo_check.UdpSocket ->
+      Printf.sprintf "emo_unbox_i64(%s)" v
   | t ->
       refuse
         (Printf.sprintf "`%s` out of the dynamic world" (Emo_check.to_string t))
@@ -338,6 +343,40 @@ and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
       in
       if is_dyn use_ty then Printf.sprintf "emo_box_pid(%s)" pid_expr
       else pid_expr
+
+(* The IO builtins (T24.10): files and TCP over the hosted OS. The
+   net surface beyond this tier — TLS, unix sockets, UDP, DNS —
+   compiles and fails at runtime, honestly. *)
+and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
+    (args : Emo_ir.expr list) : string =
+  let arg n (ty : Emo_check.t) =
+    match List.nth_opt args n with
+    | Some a -> as_native env a ty
+    | None -> refuse (Printf.sprintf "the builtin `%s`" name)
+  in
+  match name with
+  | "file_read" ->
+      let v = Printf.sprintf "emo_file_read(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+  | "file_write" ->
+      let v =
+        Printf.sprintf "emo_file_write(%s, %s)" (arg 0 Emo_check.String)
+          (arg 1 Emo_check.String)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "net_listen" ->
+      let v =
+        Printf.sprintf "emo_net_listen(%s, %s)" (arg 0 Emo_check.String)
+          (arg 1 Emo_check.Int64)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "net_connect" ->
+      let v =
+        Printf.sprintf "emo_net_connect(%s, %s, %s)" (arg 0 Emo_check.String)
+          (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | other -> Printf.sprintf "emo_unsupported(\"%s\")" other
 
 and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
     (args : Emo_ir.expr list) : string =
@@ -417,6 +456,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
          the statement forms emit the call; an expression position
          (this arm) only arises through a value use, which refuses *)
       refuse "halt in a value position"
+  | Builtin { name; args } -> emit_io_builtin env e.Emo_ir.ety name args
   | Call { func; args } -> (
       (* A foreign def calls its C symbol directly (T24.8). *)
       match Hashtbl.find_opt env.forfuncs func with
@@ -477,13 +517,50 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Make_enum { enum_name; member } ->
       Printf.sprintf "emo_enum_new(%s, %s)" (c_string enum_name)
         (c_string member)
+  | Field_read { obj; name } when is_dyn obj.Emo_ir.ety ->
+      (* cross-module field access: the checker lost the class, but the
+         instance's vtable carries the field names *)
+      let v =
+        Printf.sprintf "emo_field_by_name(%s, %s)" (as_dyn env obj)
+          (c_string name)
+      in
+      if is_dyn e.Emo_ir.ety then v else v (* fields are dynamic words *)
   | Field_read { obj; name } -> emit_field_read env e.Emo_ir.ety obj name
   | Call_value { f; args } ->
       let v = closure_call env f args in
       if is_dyn e.Emo_ir.ety then v else unbox_code v e.Emo_ir.ety
   | Closure { cparams; cbody } -> emit_closure env cparams cbody
   | Spawn_value _ -> refuse "spawning a first-class block yet"
-  | _ -> refuse "this expression form"
+  | Make_exception { message } ->
+      Printf.sprintf "emo_make_exception(%s)" (to_str env message)
+  | other ->
+      refuse
+        (Printf.sprintf "this expression form (%s)"
+           (match other with
+           | Emo_ir.Const _ -> "Const"
+           | Emo_ir.Type_ref _ -> "Type_ref"
+           | Emo_ir.Var _ -> "Var"
+           | Emo_ir.Global _ -> "Global"
+           | Emo_ir.Tuple _ -> "Tuple"
+           | Emo_ir.Array_lit _ -> "Array_lit"
+           | Emo_ir.Make_enum _ -> "Make_enum"
+           | Emo_ir.Interpolate _ -> "Interpolate"
+           | Emo_ir.Unary _ -> "Unary"
+           | Emo_ir.Binary _ -> "Binary"
+           | Emo_ir.Cond _ -> "Cond"
+           | Emo_ir.Index _ -> "Index"
+           | Emo_ir.Field_read _ -> "Field_read"
+           | Emo_ir.Call _ -> "Call"
+           | Emo_ir.Call_value _ -> "Call_value"
+           | Emo_ir.Method _ -> "Method"
+           | Emo_ir.Builtin _ -> "Builtin"
+           | Emo_ir.Box_new _ -> "Box_new"
+           | Emo_ir.Global_var _ -> "Global_var"
+           | Emo_ir.Bytes_new _ -> "Bytes_new"
+           | Emo_ir.Make_exception _ -> "Make_exception"
+           | Emo_ir.Do_spawn _ -> "Do_spawn"
+           | Emo_ir.Spawn_value _ -> "Spawn_value"
+           | Emo_ir.Closure _ -> "Closure"))
 
 (* One value as an emo_str expression — what an interpolation part
    and a scalar to_string() lower to. Dynamic values render through
@@ -554,19 +631,16 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           finish
             (Printf.sprintf "emo_box_replace(%s, %s)" (as_dyn env self_)
                (as_dyn env v))
-      | "length", []
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
-          box_int env result_ty
-            (Printf.sprintf "emo_bytes_length(%s)" (as_dyn env self_))
+      | "length", [] when self_.Emo_ir.ety = Emo_check.Bytes ->
+          Printf.sprintf "emo_bytes_length(%s)" (as_dyn env self_)
       | "length", []
         when match self_.Emo_ir.ety with
              | Emo_check.ArrayType _ | Emo_check.TupleType _ | Emo_check.Unknown
                ->
                  true
              | _ -> false ->
-          Printf.sprintf "emo_length(%s)" (as_dyn env self_)
+          box_int env result_ty
+            (Printf.sprintf "emo_length(%s)" (as_dyn env self_))
       | "append", [ v ]
         when match self_.Emo_ir.ety with
              | Emo_check.ArrayType _ -> true
@@ -659,7 +733,140 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
               | Some _ ->
                   Printf.sprintf "emo_is_iface(%s, &iface_%s)"
                     (as_dyn env self_) (c_ident target)
-              | None -> refuse (Printf.sprintf "`is(%s)`" target)))
+              | None ->
+                  refuse (Printf.sprintf "`is(%s)`" target)
+                  (* Native handles: TCP endpoints and listeners are fds; the methods
+     translate 1:1 onto the runtime's calls. *)
+              ))
+      | _, _
+        when match self_.Emo_ir.ety with
+             | Emo_check.TcpConn | Emo_check.TcpListener | Emo_check.UdpSocket
+               ->
+                 true
+             | _ -> false -> (
+          let recv = emit_expr env self_ in
+          (* The helpers return native values; each case states its return
+         so a dynamic use site takes the boxed form. *)
+          let ret (t : Emo_check.t) (v : string) : string =
+            if is_dyn result_ty then box_code v t else v
+          in
+          match (name, args) with
+          | "accept", [] ->
+              ret Emo_check.Int64 (Printf.sprintf "emo_net_accept(%s)" recv)
+          | "port", [] ->
+              ret Emo_check.Int64 (Printf.sprintf "emo_net_port(%s)" recv)
+          | "read_line", [] ->
+              ret Emo_check.String (Printf.sprintf "emo_net_read_line(%s)" recv)
+          | "read_exactly", [ n ] ->
+              ret Emo_check.String
+                (Printf.sprintf "emo_net_read_exactly(%s, %s)" recv
+                   (as_native env n Emo_check.Int64))
+          | "read_all", [] ->
+              ret Emo_check.String (Printf.sprintf "emo_net_read_all(%s)" recv)
+          | "write", [ data ] ->
+              ret Emo_check.Int64
+                (Printf.sprintf "emo_net_write(%s, %s)" recv
+                   (as_native env data Emo_check.String))
+          | "close", [] ->
+              ret Emo_check.Int64 (Printf.sprintf "emo_net_close(%s)" recv)
+          | "set_timeout", [ t ] ->
+              ret Emo_check.Int64
+                (Printf.sprintf "emo_net_set_timeout(%s, %s)" recv
+                   (as_native env t Emo_check.Float64))
+          | _ -> refuse (Printf.sprintf "this method on a socket handle"))
+      | _, _ when self_.Emo_ir.ety = Emo_check.String -> (
+          (* The interpreter's String method set. *)
+          match (name, args) with
+          | "substring", [ start; len ] ->
+              Printf.sprintf "emo_str_substring(%s, %s, %s)"
+                (emit_expr env self_)
+                (as_native env start Emo_check.Int64)
+                (as_native env len Emo_check.Int64)
+          | "index_of", [ needle ] ->
+              Printf.sprintf "emo_str_index_of(%s, %s)" (emit_expr env self_)
+                (as_native env needle Emo_check.String)
+          | "starts_with", [ prefix ] ->
+              Printf.sprintf "emo_str_starts_with(%s, %s)" (emit_expr env self_)
+                (as_native env prefix Emo_check.String)
+          | "lower", [] ->
+              Printf.sprintf "emo_str_lower(%s)" (emit_expr env self_)
+          | "trim", [] ->
+              Printf.sprintf "emo_str_trim(%s)" (emit_expr env self_)
+          | "to_int64", [] ->
+              Printf.sprintf "emo_str_to_int64(%s)" (emit_expr env self_)
+          | "length", [] ->
+              Printf.sprintf "emo_str_length(%s)" (emit_expr env self_)
+          | "split", [ sep ] ->
+              Printf.sprintf "emo_str_split(%s, %s)" (emit_expr env self_)
+                (as_native env sep Emo_check.String)
+          | _ -> refuse (Printf.sprintf "the String method `%s`" name))
+      | _, _
+        when match self_.Emo_ir.ety with
+             | Emo_check.Unknown when is_dyn result_ty || true -> true
+             | _ -> false -> (
+          (* An Unknown receiver whose method name is owned by exactly one
+         builtin type (strings, sockets): the checker lost the type at
+         the cross-module call, and these names are not instance
+         methods, so the runtime helper is the dispatch. *)
+          let recv_dyn = as_dyn env self_ in
+          let as_str () = Printf.sprintf "emo_str_of(%s)" recv_dyn in
+          let as_fd () = Printf.sprintf "emo_unbox_i64(%s)" recv_dyn in
+          (* The helpers return native values; a dynamic use site takes the
+         boxed form. [ret] states each helper's native return so the
+         conversion picks the right box. *)
+          let ret (t : Emo_check.t) (v : string) : string =
+            if is_dyn result_ty then box_code v t else v
+          in
+          let str v =
+            if is_dyn result_ty then Printf.sprintf "emo_box_str(%s)" v else v
+          in
+          match (name, args) with
+          | "substring", [ a; b ] ->
+              str
+                (Printf.sprintf "emo_str_substring(%s, %s, %s)" (as_str ())
+                   (as_native env a Emo_check.Int64)
+                   (as_native env b Emo_check.Int64))
+          | "index_of", [ a ] ->
+              ret Emo_check.Int64
+                (Printf.sprintf "emo_str_index_of(%s, %s)" (as_str ())
+                   (as_native env a Emo_check.String))
+          | "starts_with", [ a ] ->
+              ret Emo_check.Bool
+                (Printf.sprintf "emo_str_starts_with(%s, %s)" (as_str ())
+                   (as_native env a Emo_check.String))
+          | "lower", [] -> str (Printf.sprintf "emo_str_lower(%s)" (as_str ()))
+          | "trim", [] -> str (Printf.sprintf "emo_str_trim(%s)" (as_str ()))
+          | "to_int64", [] ->
+              ret Emo_check.Int64
+                (Printf.sprintf "emo_str_to_int64(%s)" (as_str ()))
+          | "split", [ a ] ->
+              Printf.sprintf "emo_str_split(%s, %s)" (as_str ())
+                (as_native env a Emo_check.String)
+          | "read_line", [] ->
+              str (Printf.sprintf "emo_net_read_line(%s)" (as_fd ()))
+          | "read_exactly", [ n ] ->
+              str
+                (Printf.sprintf "emo_net_read_exactly(%s, %s)" (as_fd ())
+                   (as_native env n Emo_check.Int64))
+          | "read_all", [] ->
+              str (Printf.sprintf "emo_net_read_all(%s)" (as_fd ()))
+          | "write", [ d ] ->
+              ret Emo_check.Int64
+                (Printf.sprintf "emo_net_write(%s, %s)" (as_fd ())
+                   (as_native env d Emo_check.String))
+          | "close", [] ->
+              ret Emo_check.Int64
+                (Printf.sprintf "emo_net_close(%s)" (as_fd ()))
+          | "set_timeout", [ t ] ->
+              ret Emo_check.Int64
+                (Printf.sprintf "emo_net_set_timeout(%s, %s)" (as_fd ())
+                   (as_native env t Emo_check.Float64))
+          | "accept", [] ->
+              ret Emo_check.Int64
+                (Printf.sprintf "emo_net_accept(%s)" (as_fd ()))
+          | "port", [] ->
+              ret Emo_check.Int64 (Printf.sprintf "emo_net_port(%s)" (as_fd ()))
+          | _ -> refuse "this method on an unknown receiver")
       | _ when is_dyn self_.Emo_ir.ety -> (
           (* an instance method: direct on a class-typed receiver, through
          the vtable's thunk otherwise (interfaces, Unknown) *)
@@ -1155,11 +1362,9 @@ and emit_builtin env (name : string) (args : Emo_ir.expr list) : unit =
               (Printf.sprintf "println of `%s` values" (Emo_check.to_string t)))
   | "println", _ -> refuse "println with more than one argument"
   | "halt", [] -> put env "  emo_process_halt_current();\n"
-  | "self_pid", [] ->
-      put env "  (void)(%s);\n"
-        (if is_dyn Emo_check.Unknown then "emo_box_pid(emo_process_self_pid())"
-         else "emo_process_self_pid()")
-  | _ -> refuse (Printf.sprintf "the builtin `%s`" name)
+  | "self_pid", [] -> put env "  (void)(emo_box_pid(emo_process_self_pid()));\n"
+  | name, args ->
+      put env "  (void)(%s);\n" (emit_io_builtin env Emo_check.Void name args)
 
 (* A tail call becomes a parameter rebind and a jump: the arguments
    land in fresh temporaries first, so one rebind cannot observe
@@ -1188,7 +1393,18 @@ and emit_tail_rebind env (callee : string) (args : Emo_ir.expr list) : unit =
 
 and emit_stmt env (s : Emo_ir.stmt) : unit =
   match s with
-  | Effect { desc = Builtin { name; args }; _ } -> emit_builtin env name args
+  | Effect { desc = Builtin { name = "println"; args }; _ } ->
+      emit_builtin env "println" args
+  | Effect { desc = Builtin { name = "halt"; args = [] }; _ } ->
+      emit_builtin env "halt" []
+  | Effect { desc = Builtin { name = "self_pid"; args = [] }; _ } ->
+      put env "  (void)(emo_box_pid(emo_process_self_pid()));\n"
+  | Effect { ety; desc = Builtin { name; args; _ }; _ } ->
+      let code = emit_io_builtin env ety name args in
+      put env "  (void)(%s);\n" code
+  | Effect { ety; desc = Do_spawn { func; args }; _ } ->
+      let code = emit_spawn_site env func args ety in
+      put env "  (void)(%s);\n" code
   | Effect { ety; desc = Call { func; args }; _ } -> (
       match Hashtbl.find_opt env.forfuncs func with
       | Some f -> put env "  (void)(%s);\n" (foreign_call env ety f args)

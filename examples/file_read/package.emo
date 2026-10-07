@@ -1,7 +1,7 @@
 package {
   name = "emo/file_read"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["native", "c"]
 
   deps {
     file = "0.1.0"

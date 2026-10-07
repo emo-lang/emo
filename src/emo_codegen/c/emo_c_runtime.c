@@ -7,6 +7,14 @@
 #endif
 #include <ucontext.h>
 
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -357,6 +365,16 @@ bool emo_is_class(emo_value instance, const emo_vtable *vt) {
   return (const emo_vtable *)*emo_payload(instance) == vt;
 }
 
+emo_value emo_field_by_name(emo_value instance, const char *name) {
+  const emo_vtable *vt = emo_vtable_of(instance);
+  for (int64_t i = 0; i < vt->field_count; i++)
+    if (strcmp(vt->field_names[i], name) == 0)
+      return (emo_value)emo_payload(instance)[i + 1];
+  fprintf(stderr, "runtime error: no field `%s` on #%s\n", name,
+          vt->class_name);
+  exit(70);
+}
+
 bool emo_is_iface(emo_value instance, const emo_iface *ifc) {
   if (emo_cell_kind(instance) != EMO_INSTANCE) return false;
   const emo_vtable *vt = (const emo_vtable *)*emo_payload(instance);
@@ -480,7 +498,9 @@ emo_value emo_index(emo_value v, int64_t i) {
 }
 
 int64_t emo_length(emo_value v) {
-  if (!emo_is_sequence(v)) emo_fatal("only tuples and arrays have a length");
+  uintptr_t k = emo_cell_kind(v);
+  if (k != EMO_TUPLE && k != EMO_ARRAY && k != EMO_BYTES && k != EMO_STRING)
+    emo_fatal("only strings, Bytes, tuples, and arrays have a length");
   return (int64_t)*emo_payload(v);
 }
 
@@ -811,8 +831,9 @@ typedef struct emo_process {
   struct emo_process *next_run;   /* the run queue's linkage */
   struct emo_process *next_table; /* the live-process table's linkage */
   emo_msg *inbox_head, *inbox_tail;
-  int blocked;  /* parked on receive */
-  int finished; /* body returned or halted */
+  int blocked;     /* parked on receive or io */
+  int finished;    /* body returned or halted */
+  int64_t wait_fd; /* -1: parked on a mailbox; >= 0: parked on readability */
   emo_value *spawn_args;
   void (*entry)(void);
   void *stack; /* the fiber's malloc'd stack — ctx.uc_stack is clobbered
@@ -824,6 +845,8 @@ static emo_process *emo_process_table = NULL;
 static emo_process **emo_process_table_tail = &emo_process_table;
 static emo_process *emo_current = NULL;
 static int64_t emo_next_pid = 1;
+static int64_t emo_root_pid = -1; /* the entry process: its finish ends
+                                     the program */
 static ucontext_t emo_sched_ctx;
 
 static void *emo_proc_stack_alloc(size_t n) {
@@ -872,6 +895,7 @@ int64_t emo_spawn_process(void (*entry)(void), int64_t nargs,
   emo_process *p = calloc(1, sizeof(emo_process));
   if (p == NULL) abort();
   p->pid = emo_next_pid++;
+  p->wait_fd = -1;
   p->entry = entry;
   if (nargs > 0) {
     p->spawn_args = malloc((size_t)nargs * sizeof(emo_value));
@@ -885,6 +909,7 @@ int64_t emo_spawn_process(void (*entry)(void), int64_t nargs,
   p->ctx.uc_stack.ss_size = stack_size;
   p->ctx.uc_link = &emo_sched_ctx;
   makecontext(&p->ctx, emo_process_trampoline, 0);
+  if (emo_current == NULL && emo_root_pid == -1) emo_root_pid = p->pid;
   *emo_process_table_tail = p;
   emo_process_table_tail = &p->next_table;
   emo_runq_push(p);
@@ -948,6 +973,7 @@ void emo_process_send(int64_t pid, emo_value message) {
 void emo_process_park_current(void) {
   if (getenv("EMO_TRACE"))
     fprintf(stderr, "[trace] park %lld\n", (long long)emo_current->pid);
+  emo_current->wait_fd = -1;
   emo_current->blocked = 1;
   swapcontext(&emo_current->ctx, &emo_sched_ctx);
 }
@@ -981,17 +1007,36 @@ void emo_scheduler_run(void) {
   for (;;) {
     emo_process *p = emo_runq_pop();
     if (p == NULL) {
-      /* No runnable work: parked fibers can never be woken again
-         (sends come from running fibers), so any that remain are
-         deadlocked. */
-      int waiting = 0;
+      /* No runnable work: poll the io-waiters; mailbox-parked fibers
+         can only be woken by a send, so with no io-waiter ready and
+         nothing runnable, any remainder is deadlocked. */
+      struct pollfd fds[64];
+      emo_process *waiters[64];
+      int n = 0;
+      for (emo_process *q = emo_process_table; q && n < 64; q = q->next_table)
+        if (!q->finished && q->blocked && q->wait_fd >= 0) {
+          fds[n].fd = (int)q->wait_fd;
+          fds[n].events = POLLIN;
+          fds[n].revents = 0;
+          waiters[n] = q;
+          n++;
+        }
+      if (n > 0) {
+        int ready = poll(fds, (nfds_t)n, 100);
+        for (int i = 0; i < n; i++)
+          if (fds[i].revents & (POLLIN | POLLERR | POLLHUP)) {
+            waiters[i]->blocked = 0;
+            waiters[i]->wait_fd = -1;
+            emo_runq_push(waiters[i]);
+          }
+        if (ready > 0) continue;
+      }
+      int deadlocked = 0;
       for (emo_process *q = emo_process_table; q; q = q->next_table)
-        if (!q->finished) waiting++;
-      if (waiting > 0) {
-        fprintf(stderr,
-                "runtime error: deadlock: %d process(es) waiting on empty "
-                "mailboxes\n",
-                waiting);
+        if (!q->finished) deadlocked++;
+      if (deadlocked > 0) {
+        fprintf(stderr, "runtime error: deadlock: %d process(es) waiting\n",
+                deadlocked);
         exit(70);
       }
       return;
@@ -1001,6 +1046,11 @@ void emo_scheduler_run(void) {
       fprintf(stderr, "[trace] dispatch %lld\n", (long long)p->pid);
     swapcontext(&emo_sched_ctx, &p->ctx);
     emo_current = NULL;
+    if (p->finished && p->pid == emo_root_pid) {
+      /* the entry process ended: the program is over (a long-running
+         server spawned from it does not keep it alive) */
+      return;
+    }
     if (p->finished && p->stack != NULL) {
       if (getenv("EMO_TRACE"))
         fprintf(stderr, "[trace] reap %lld\n", (long long)p->pid);
@@ -1022,7 +1072,318 @@ int64_t emo_unbox_pid(emo_value v) {
   return (int64_t)*emo_payload(v);
 }
 
-/* ---- The integer core ---- *//* ---- The integer core ---- */
+/* ---- Hosted IO ---- */
+
+static void emo_io_fatal(emo_str what, const char *detail) {
+  fprintf(stderr, "uncaught exception: %.*s (%s)\n", (int)what.len,
+          what.bytes, detail);
+  exit(70);
+}
+
+static emo_str emo_str_from_parts(const char *p, int64_t n) {
+  char *buf = emo_alloc(n);
+  memcpy(buf, p, (size_t)n);
+  emo_str s = {n, buf};
+  return s;
+}
+
+emo_str emo_file_read(emo_str path) {
+  char *clean = (char *)emo_str_cstr(path);
+  FILE *f = fopen(clean, "rb");
+  if (f == NULL)
+    emo_io_fatal(emo_str_concat((emo_str){13, "read failed: "}, path),
+                 strerror(errno));
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  emo_str out = emo_str_from_parts("", n);
+  size_t got = fread((char *)out.bytes, 1, (size_t)n, f);
+  fclose(f);
+  if ((long)got != n)
+    emo_io_fatal(emo_str_concat((emo_str){13, "read failed: "}, path),
+                 "short read");
+  return out;
+}
+
+int64_t emo_file_write(emo_str path, emo_str contents) {
+  char *clean = (char *)emo_str_cstr(path);
+  FILE *f = fopen(clean, "wb");
+  if (f == NULL)
+    emo_io_fatal(emo_str_concat((emo_str){13, "write failed: "}, path),
+                 strerror(errno));
+  size_t put = fwrite(contents.bytes, 1, (size_t)contents.len, f);
+  fclose(f);
+  if ((int64_t)put != contents.len)
+    emo_io_fatal(emo_str_concat((emo_str){13, "write failed: "}, path),
+                 "short write");
+  return contents.len;
+}
+
+/* ---- TCP ---- */
+
+static void emo_net_fatal(const char *what, const char *detail) {
+  fprintf(stderr, "uncaught exception: %s (%s)\n", what, detail);
+  exit(70);
+}
+
+/* The cooperative scheduler needs EAGAIN on would-block reads, so
+   every socket is non-blocking; fibers park on readability and the
+   scheduler polls. */
+static void emo_net_nonblock(int fd) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+/* Wait until fd is readable: park the current fiber; the scheduler
+   polls parked descriptors while the run queue is empty. */
+void emo_net_wait_readable(int64_t fd) {
+  emo_current->wait_fd = fd;
+  emo_current->blocked = 1;
+  swapcontext(&emo_current->ctx, &emo_sched_ctx);
+}
+
+int64_t emo_net_listen(emo_str host, int64_t port) {
+  char *h = (char *)emo_str_cstr(host);
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) emo_net_fatal("listen failed", strerror(errno));
+  int one = 1;
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof addr);
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons((uint16_t)port);
+  if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
+    close(fd);
+    emo_net_fatal("listen failed", "invalid host");
+  }
+  if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0 ||
+      listen(fd, 16) < 0) {
+    close(fd);
+    emo_net_fatal("listen failed", strerror(errno));
+  }
+  emo_net_nonblock(fd);
+  return fd;
+}
+
+int64_t emo_net_port(int64_t listener) {
+  struct sockaddr_in addr;
+  socklen_t len = sizeof addr;
+  if (getsockname((int)listener, (struct sockaddr *)&addr, &len) < 0)
+    emo_net_fatal("port failed", strerror(errno));
+  return ntohs(addr.sin_port);
+}
+
+int64_t emo_net_accept(int64_t listener) {
+  for (;;) {
+    int fd = accept((int)listener, NULL, NULL);
+    if (fd >= 0) {
+      emo_net_nonblock(fd);
+      return fd;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      emo_net_wait_readable(listener);
+      continue;
+    }
+    emo_net_fatal("accept failed", strerror(errno));
+  }
+}
+
+int64_t emo_net_connect(emo_str host, int64_t port, double timeout) {
+  char *h = (char *)emo_str_cstr(host);
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) emo_net_fatal("connect failed", strerror(errno));
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof addr);
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons((uint16_t)port);
+  if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
+    close(fd);
+    emo_net_fatal("connect failed", "invalid host");
+  }
+  if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0)
+    emo_net_fatal("connect failed", strerror(errno));
+  emo_net_set_timeout(fd, timeout);
+  emo_net_nonblock(fd);
+  return fd;
+}
+
+int64_t emo_net_set_timeout(int64_t fd, double seconds) {
+  struct timeval tv = {
+      (time_t)seconds,
+      (suseconds_t)((seconds - (double)(time_t)seconds) * 1000000.0)};
+  setsockopt((int)fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+  return fd;
+}
+
+/* One byte at a time is slow but exact; the arena absorbs the growth. */
+emo_str emo_net_read_line(int64_t fd) {
+  emo_str out = emo_str_from_parts("", 0);
+  for (;;) {
+    char c;
+    ssize_t got = recv((int)fd, &c, 1, 0);
+    if (got == 0) return out; /* EOF ends the line */
+    if (got < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        emo_net_wait_readable(fd);
+        continue;
+      }
+      emo_net_fatal("read failed", strerror(errno));
+    }
+    if (c == '\n') return out;
+    if (c == '\r') continue;
+    char *bigger = emo_alloc(out.len + 1);
+    memcpy(bigger, out.bytes, (size_t)out.len);
+    bigger[out.len] = c;
+    out.bytes = bigger;
+    out.len += 1;
+  }
+}
+
+emo_str emo_net_read_exactly(int64_t fd, int64_t n) {
+  emo_str out = emo_str_from_parts("", n);
+  int64_t got_total = 0;
+  while (got_total < n) {
+    ssize_t got = recv((int)fd, (char *)out.bytes + got_total,
+                       (size_t)(n - got_total), 0);
+    if (got == 0) emo_net_fatal("read failed", "the connection closed early");
+    if (got < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        emo_net_wait_readable(fd);
+        continue;
+      }
+      emo_net_fatal("read failed", strerror(errno));
+    }
+    got_total += got;
+  }
+  return out;
+}
+
+emo_str emo_net_read_all(int64_t fd) {
+  emo_str out = emo_str_from_parts("", 0);
+  for (;;) {
+    char chunk[4096];
+    ssize_t got = recv((int)fd, chunk, sizeof chunk, 0);
+    if (got == 0) return out;
+    if (got < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        emo_net_wait_readable(fd);
+        continue;
+      }
+      emo_net_fatal("read failed", strerror(errno));
+    }
+    char *bigger = emo_alloc(out.len + got);
+    memcpy(bigger, out.bytes, (size_t)out.len);
+    memcpy(bigger + out.len, chunk, (size_t)got);
+    out.bytes = bigger;
+    out.len += got;
+  }
+}
+
+int64_t emo_net_write(int64_t fd, emo_str data) {
+  int64_t sent_total = 0;
+  while (sent_total < data.len) {
+    ssize_t sent =
+        send((int)fd, data.bytes + sent_total, (size_t)(data.len - sent_total), 0);
+    if (sent < 0) emo_net_fatal("write failed", strerror(errno));
+    sent_total += sent;
+  }
+  return data.len;
+}
+
+int64_t emo_net_close(int64_t fd) {
+  close((int)fd);
+  return fd;
+}
+
+/* ---- String methods ---- */
+
+emo_str emo_str_substring(emo_str s, int64_t start, int64_t len) {
+  if (start < 0 || len < 0 || start + len > s.len)
+    emo_fatal("substring is out of bounds for the string");
+  return emo_str_from_parts(s.bytes + start, len);
+}
+
+int64_t emo_str_index_of(emo_str s, emo_str needle) {
+  if (needle.len == 0) return 0;
+  for (int64_t i = 0; i + needle.len <= s.len; i++)
+    if (memcmp(s.bytes + i, needle.bytes, (size_t)needle.len) == 0) return i;
+  return -1;
+}
+
+bool emo_str_starts_with(emo_str s, emo_str prefix) {
+  return s.len >= prefix.len &&
+         memcmp(s.bytes, prefix.bytes, (size_t)prefix.len) == 0;
+}
+
+emo_str emo_str_lower(emo_str s) {
+  char *p = emo_alloc(s.len);
+  for (int64_t i = 0; i < s.len; i++) {
+    char c = s.bytes[i];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    p[i] = c;
+  }
+  emo_str out = {s.len, p};
+  return out;
+}
+
+emo_str emo_str_trim(emo_str s) {
+  int64_t lo = 0, hi = s.len;
+  while (lo < hi && (unsigned char)s.bytes[lo] <= ' ') lo++;
+  while (hi > lo && (unsigned char)s.bytes[hi - 1] <= ' ') hi--;
+  return emo_str_from_parts(s.bytes + lo, hi - lo);
+}
+
+int64_t emo_str_length(emo_str s) { return s.len; }
+
+int64_t emo_str_to_int64(emo_str s) {
+  char *clean = (char *)emo_str_cstr(emo_str_trim(s));
+  char *end = NULL;
+  long long v = strtoll(clean, &end, 10);
+  if (end == clean || *end != '\0') {
+    fprintf(stderr, "uncaught exception: cannot parse `%.*s` as an Int64\n",
+            (int)s.len, s.bytes);
+    exit(70);
+  }
+  return (int64_t)v;
+}
+
+emo_value emo_str_split(emo_str s, emo_str sep) {
+  if (sep.len == 0) emo_fatal("the separator must not be empty");
+  int64_t parts = 1;
+  for (int64_t i = 0; i + sep.len <= s.len;)
+    if (memcmp(s.bytes + i, sep.bytes, (size_t)sep.len) == 0) {
+      parts++;
+      i += sep.len;
+    } else
+      i++;
+  emo_value *elems = emo_alloc((size_t)parts * sizeof(emo_value));
+  int64_t count = 0, start = 0;
+  for (int64_t i = 0; i + sep.len <= s.len;) {
+    if (memcmp(s.bytes + i, sep.bytes, (size_t)sep.len) == 0) {
+      elems[count++] =
+          (uintptr_t)emo_box_str(emo_str_from_parts(s.bytes + start, i - start));
+      i += sep.len;
+      start = i;
+    } else
+      i++;
+  }
+  elems[count++] =
+      (uintptr_t)emo_box_str(emo_str_from_parts(s.bytes + start, s.len - start));
+  return emo_array_new(count, elems);
+}
+
+EMO_NORETURN int64_t emo_unsupported(const char *what) {
+  fprintf(stderr,
+          "uncaught exception: %s is not supported on this target yet\n",
+          what);
+  exit(70);
+}
+
+emo_value emo_make_exception(emo_str message) {
+  return emo_box_str(message);
+}
+
+/* ---- The integer core ---- */
 
 int64_t emo_div_i64(int64_t a, int64_t b) {
   if (b == 0) emo_fatal("division by zero");
