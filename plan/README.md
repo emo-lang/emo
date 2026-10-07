@@ -68,3 +68,4 @@ incrementally shippable steps — one file per step, executed in order.
 | 22 | RISC-V target (freestanding RV64) | not started (tasks written) |
 | 23 | Self-contained hosted native backend (no OCaml runtime) & deep C FFI | assessment (not scheduled) |
 | 24 | C target (emit C) | done (close-out recorded; the native → ocaml rename landed) |
+| 25 | Toolchain distribution & release (v1.0.0) | not started (tasks written) |
