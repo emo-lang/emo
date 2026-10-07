@@ -1,0 +1,9 @@
+(executable
+ (name emo_ocaml_runtime_test)
+ (libraries alcotest unix emo_codegen))
+
+(rule
+ (alias runtest)
+ (deps emo_ocaml_runtime_test.exe)
+ (action
+  (run %{exe:emo_ocaml_runtime_test.exe})))

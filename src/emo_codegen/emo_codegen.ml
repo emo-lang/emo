@@ -7,6 +7,11 @@ module Wasm = Emo_wasm
 module Beam = Emo_beam
 module C = Emo_c
 
+(* The ocaml target's standalone runtime, embedded as generated data
+   (src/emo_codegen/ocaml — step 26): compiled by the user's ocamlopt,
+   never linked from the host build tree. *)
+let ocaml_runtime_ml = Emo_ocaml_runtime_data.runtime_ml
+
 (* A float literal as its exact bit pattern, so no decimal rendering
    loses precision near the extremes. *)
 let float_lit (f : float) : string =

@@ -81,7 +81,7 @@ works from the release layout.
       stops reading the filesystem. Verification: a lone release-layout
       binary compiles a typescript program; the ts goldens stay
       byte-for-byte.
-- [ ] **T26.2** — The emitted-code inventory and the standalone
+- [x] **T26.2** — The emitted-code inventory and the standalone
       skeleton: emit the golden subset through the ocaml emitter and
       collect mechanically every host symbol the emitted code
       references; the inventory is the standalone runtime's contract,
@@ -116,6 +116,53 @@ works from the release layout.
       replaces "a source install brings the ocaml target");
       `benchmarks/results.md`'s ocaml column re-run against the
       standalone runtime to confirm no regression; close-out.
+
+## The emitted-code inventory (T26.2 — the standalone runtime's contract)
+
+Collected mechanically by `devtools/ocaml-runtime-inventory.sh` (2026-10-07):
+the golden corpus — every `examples/` entry with an `expected.txt`, sixteen
+programs spanning objects, function groups, bytes, fixed-width math,
+processes, file IO, TCP/UDP/TLS networking — emitted through the ocaml
+emitter; the script greps every host-module reference out of the emitted
+sources and fails on any module outside the two below. The reference counts
+(across the corpus) stand behind each name. The standalone runtime
+(`src/emo_codegen/ocaml/emo_ocaml_runtime.ml`) must carry every symbol with
+the same arity and behavior; the two module names are load-bearing — the
+emitter's qualified paths resolve through them.
+
+- **Emo_eval** — the values and the builtin bridge. The `value` type;
+  constructors the emitted code names: `Int64` (232), `String` (147),
+  `Tuple` (49), `Float` (21), `Byte` (23), `Obj` (16), `EnumMember` (16),
+  `Array` (14), `Bool`, `Void`, `Char`, `CompiledFn` (5), `TypeValue` (4)
+  — the remaining constructors (`Bytes`, `Box`, `Pid`, the socket handles,
+  `ClassDef`, `Instance`, `EnumType`, `EmoGroup`) are constructed only
+  inside the runtime; the `CompiledFn.fdesc` field (5); `call_builtin`
+  (161), behind which stands the whole builtin table (`println`, `halt`,
+  `self_pid`, `file_read`/`file_write`, the `net_*` family — the corpus
+  exercises fourteen names; the table ports whole, not just the corpus
+  subset).
+- **Emo_runtime** — operators, dispatch, process operations, scheduler
+  hookup. `Return_signal` (120) and `Arity_error`; errors `arity_error`
+  (111), `no_return`, `case_error`; unboxing `unbox_bool` (34),
+  `unbox_int64` (16), `unbox_float64`, `unbox_string`, and the boxes
+  `box_int64` (12), `box_float64`, `box_string`, `box_new`; arithmetic
+  `add` (65), `sub` (14), `mul` (12), `div`, `modulo`, `negf` (9);
+  bitwise `bit_and`, `bit_or`, `bit_xor`, `bit_not`, `shl` (6), `shr`,
+  `shl_i64`, `shr_i64`; comparison `lt` (6), `gt` (9), `ge` (5), `eq`
+  (21), `ne`, `not_` (`le`, `and_`, `or_` complete the ported surface);
+  rendering `interpolate` (28), `to_string`; collections and objects
+  `index` (21), `field` (17), `obj_set_field` (13), `new_obj` (16),
+  `method_call` (132), `apply_value` (5), `exception_new`, `bytes_new`;
+  processes `spawn_args` (7), `send` (11), `receive` (7), `payload_items`
+  (12) (+ `bind_items`, `self_pid`, `spawn`, `raise_`, `halt`); the
+  scheduler `run` (16) and `register_interface`.
+
+Reshapes the standalone runtime is allowed (and records here): spans and
+diagnostics stay compiler-side, so `Emo_raise` carries the value only, the
+effect constructors drop their span fields, and the interpreter-only
+AST-carrying variants (`ArrowBlock`, `BuiltinFn`, `Module`, closure-backed
+class definitions) drop out of the ADT — compiled functions are always
+`CompiledFn`.
 
 ## Acceptance
 

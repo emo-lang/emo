@@ -2,7 +2,7 @@
  (name emo_codegen)
  (libraries emo_support emo_ast emo_check emo_ir emo_runtime))
 
-(data_only_dirs ts c)
+(data_only_dirs ts c ocaml)
 
 ; The target runtimes ride the compiler as generated data — the C
 ; sources are written next to the emitted main.c, the TypeScript
@@ -28,3 +28,12 @@
    emo_c_runtime_data.ml
    (bash
     "printf '(* Generated from src/emo_codegen/c — edit there, not here. *)\\n\\nlet runtime_c = {img|\\n' && cat c/emo_c_runtime.c && printf '\\n|img}\\n\\nlet runtime_h = {img|\\n' && cat c/emo_c_runtime.h && printf '\\n|img}\\n'"))))
+
+(rule
+ (target emo_ocaml_runtime_data.ml)
+ (deps ocaml/emo_ocaml_runtime.ml)
+ (action
+  (with-stdout-to
+   emo_ocaml_runtime_data.ml
+   (bash
+    "printf '(* Generated from src/emo_codegen/ocaml — edit there, not here. *)\\n\\nlet runtime_ml = {ml|' && cat ocaml/emo_ocaml_runtime.ml && printf '|ml}\\n'"))))
