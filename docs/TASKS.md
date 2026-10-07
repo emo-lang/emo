@@ -1,7 +1,7 @@
 # Development Tasks
 
 A numbered checklist of every implementation task, consolidated from
-`plan/step-01-project-scaffold.md` through `plan/step-24-c-target.md`.
+`plan/step-01-project-scaffold.md` through `plan/step-25-toolchain.md`.
 The plan files remain the specs — each task below belongs to a step that
 holds its full goal, scope, and acceptance details. This file is the tracker.
 
@@ -33,6 +33,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M6 — Systems programming | 19–21 | A WebAssembly runtime written in Emo: the shared systems layer, then the binary decoder/validator, then the interpreter with spec-suite goldens. |
 | M7 — EmoOS | 22+ | The kernel path on the same systems layer: a unikernel build path (near term), then freestanding codegen (shared with the engine tiering). |
 | M8 — Self-contained hosted backend | 24 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — step 23's assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
+| M9 — Toolchain | 25 | The toolchain release (cut as v0.25.9): signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
 
 ## Design gates
 
@@ -47,7 +48,10 @@ before starting the gated work:
 | Exception catch syntax | T12.5, Step 12 acceptance | Catch form absent; uncaught reporting only |
 | Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T10.2, T10.5–T10.6, T10.8 | `package.emo`, `package.lock`, `owner/name`, exact pins only, `emo deps *` |
 | C FFI binding-surface syntax | T13.6 | settled — `foreign def name(params) Ret = "c_symbol"`, `Float`/`String`/`Bool` only, through generated C wrappers |
-| Reclamation model for the dynamic world (no tracing GC) | T24.5 | provisional: bump/arena with documented leakage (step 22's M1 profile); settle reference counting vs bounded arenas in `CHECK.md` before long-running programs ship |
+| Reclamation model for the dynamic world (no tracing GC) | T24.5 | settled — reference counting for identity objects, arena for value-semantic data (`CHECK.md`, at T24.5) |
+| `emo build` default target | T25.1 | flip `ocaml` → `c`: a distributed binary carries no OCaml toolchain; the `ocaml` target stays for source installs |
+| Stdlib: embed vs sidecar tree | T25.2 | embed as generated data inside the compiler (the C runtime's mechanism); `EMO_REGISTRY` override stays |
+| `emo install` semantics | T25.4 | the project-dependencies front end over resolve/fetch/lock; global executable installation out of scope for 1.0 |
 
 ---
 
@@ -446,3 +450,117 @@ model from step 22's study.
 - [x] **T24.9** — Processes and the cooperative scheduler: `do` / `<-` / `receive`, mailboxes, selective receive, `self_pid`, `halt`; single-threaded cooperative loop; traces diffed against `emo_sched_det`. Goldens: pipeline, showcase. (Done 2026-10-06: both full-example goldens byte-for-byte. Each Emo process is a ucontext fiber with its own stack; the scheduler keeps emo_sched_det's policy — FIFO run queue, spawn enqueues the child without suspending the spawner, send delivers + wakes + re-queues the sender at the tail, receive scans the mailbox in generated code for the first message a branch accepts (a failed guard leaves the message queued) and parks the fiber when nothing matches; an empty run queue with parked fibers is a reported deadlock. Pids are an EMO_PID cell (rendered `<pid N>`); `EMO_TRACE=1` prints spawn/send/park/dispatch/exit/reap events for diffing. Also fixed en route: the entry file discovered twice (root + tree copies, keyed by a `/.`-carrying path) lowered every symbol under two manglings — the walk now normalizes file paths and the IR dedupes module copies by the parsed items' physical identity.)
 - [x] **T24.10** — Hosted IO and stdlib metadata: `file.read`/`file.write`, TCP/UDP sockets, the HTTP client/server over the hosted OS; stdlib gains `"c"` in `targets`. Goldens: file_read, tcp_echo, http_roundtrip. (Done 2026-10-06: all three full-example goldens byte-for-byte, including the stdlib http/net packages compiling on the c target. Sockets are non-blocking fds whose would-block reads park the fiber — the scheduler polls parked descriptors while the run queue is empty; the root process finishing ends the program. Cross-module Unknown receivers dispatch by method/field NAME (globally builtin-owned names, runtime helpers; instance fields by vtable name). Unix sockets, TLS, DNS resolve, and UDP compile as honest runtime refusals. The stdlib file/net/http packages and the three examples declare `"c"`, lockfiles regenerated.)
 - [x] **T24.11** — Bootstrap, benchmarks, close-out: the `c_examples` CI group; specialization (unboxing, direct dispatch) with `restrict` on hot loops; `benchmarks/results.md` gains the `c` column; the `native` → `ocaml` rename lands here or in its own step; close-out records the decisions. (Done 2026-10-06: all six benchmarks recorded on the c target — fib 7 ms, tail loop 4 ms (470x under the OCaml backend's specialized build, 1.3x from the C baseline), ffi 46 ms, bytes 43 ms, json 3 ms, http 83 req/s. Specialization is structural: the two-regime emitter already unboxes natives and dispatches directly where types are known; `restrict` waits for pointer-parameter loops (the buffer rung). The rename is its own step, next.)
+
+## M9 — Toolchain
+
+The last mile of the self-contained story, and the toolchain
+release — cut as v0.25.9, with the official 1.0 following.
+M8 removed the OCaml toolchain from the *programs*; M9 removes the
+installation burden from the *tool* — the release engineering
+`CHECK.md` left unscheduled, on the decided direction
+(`docs/toolchain-distribution.md` is the design record): prebuilt
+binaries per platform on GitHub Releases as the primary channel,
+`opam` and a Homebrew formula as the source-building alternatives,
+and the command set a product needs — `emo new`, `emo install`,
+`emo doctor` join `run`/`repl`/`check`/`build`/`deps`/`publish` — so
+a machine with nothing but the binary runs, checks, builds (through
+the `c` target), installs dependencies, and publishes.
+
+Boundaries, stated plainly: the public registry *service* is a
+separate milestone — the tool ships speaking the filesystem registry
+plus the bundled stdlib (`publish` already speaks HTTP; fetching
+over HTTP lands with the service it talks to); native Windows is not
+this release — WSL2 is the supported Windows path, and the
+ucontext/socket port of the C runtime is the recorded blocker
+(Microsoft Trusted Signing stays the recorded signing route for when
+it lands); the c backend's recorded follow-ups (retain/release
+emission, the zero-copy buffer rung, cross-module type propagation)
+are backend work and stay with the backend line.
+
+### Step 25 — Toolchain distribution & release · `plan/step-25-toolchain.md`
+
+**Prereq:** Step 24 (the `c` target; the `native` → `ocaml` rename landed with it).
+**Done when:** the release workflow, run on a version tag, produces
+signed per-platform archives (Linux x86_64/aarch64, macOS
+x86_64/arm64) whose binaries pass the end-to-end acceptance on every
+platform; a machine with only the installed binary — no OCaml, no
+opam, no repository — runs, checks, and builds Emo programs through
+the `c` target, scaffolds with `emo new`, installs dependencies with
+`emo install`, and diagnoses its environment with `emo doctor`;
+`dune test` green.
+
+- [x] **T25.1** — Design-gate closure and the default target: the
+      four settlements recorded in `CHECK.md` — the build default
+      flips `ocaml` → `c`; the stdlib embeds as generated data (the
+      C runtime's mechanism) over a sidecar tree; `emo install` is
+      the project-dependencies front end (global executable
+      installation out of scope for 1.0); the dependency cache
+      leaves the temp directory for a durable user location. The
+      flip lands here, with the resolution-gate tests and the CI
+      groups re-pointed — the c goldens already cover the target;
+      only the default moves. (Done 2026-10-07: all four settled in CHECK.md; the flip moved every default path to c and exposed that the content-hash cache lived only in the ocaml arm — the c arm gained it; ocaml-backend harnesses and benchmarks pinned --target ocaml; tree-wide @fmt drift promoted.)
+- [x] **T25.2** — The self-contained binary: the bundled stdlib as
+      generated data inside the compiler; the registry endpoint
+      becomes a filesystem directory or the embedded stdlib;
+      `EMO_REGISTRY` still overrides. Verification: a lone `emo`
+      copied into an empty directory runs, checks, and builds a
+      stdlib-importing program — and `publish`'s embedded uploader
+      works from it. (Done 2026-10-07: generated data via devtools/gen-stdlib-data.sh; the macOS sandbox materializes the source_tree dep as symlinks — the generator walks -type f -o -type l, found by probe; endpoint is Fs_dir or Embedded; lone-binary verification passed (run/check/build/publish); embedded-vs-filesystem checksum parity pinned by a test.)
+- [x] **T25.3** — `emo new <name>`: the scaffold — `package.emo`
+      (name, version, targets) and a hello-world `main.emo`, plus
+      `.gitignore`. Strictness holds: an existing directory or
+      clashing files refuse with clear errors, no `--force`. The
+      scaffold is green the moment it exists — CI creates, checks,
+      runs, and builds one. (Done 2026-10-07: CI scaffolds/checks/builds/runs one; owner/name taken as given on relative single-slash args; refusals exit 65.)
+- [x] **T25.4** — `emo install`: read the manifest, resolve against
+      the registry, fetch into the user cache, write
+      `package.lock`; idempotent re-runs change nothing; each
+      failure mode — no registry configured, unsatisfiable pin, a
+      dependency lacking the requested target — gets its own clear
+      message. `emo deps` keeps resolve/update/list as the explicit
+      paths. (Done 2026-10-07: idempotent; lockfile written only when it would change; cache default moved to ~/.cache/emo (XDG honored, EMO_CACHE_DIR overrides).)
+- [x] **T25.5** — `emo doctor`: the target-aware environment check,
+      replacing the interim ocaml-only shape in `CHECK.md`. Per
+      target: `c` — a cc compile-and-run smoke; `ocaml` — the
+      runtime `.cmxa` found in the switch, or the honest "prebuilt
+      installation: the ocaml target needs a source install
+      (`opam install emo`)"; `typescript` — node; `beam` — erlc;
+      `wasm` — nothing. Plus the installation shape (prebuilt vs
+      source), stdlib presence, and version. Exit non-zero only on
+      what is actually broken. (Done 2026-10-07: source-vs-prebuilt via the runtime .cmxa set; the c smoke decides the exit code; ocaml unavailable reports the opam install fix.)
+- [x] **T25.6** — Release packaging and CI: the tag-triggered
+      workflow beside the existing CI — per-platform matrix builds
+      (Linux x86_64/aarch64, macOS x86_64/arm64), release binaries
+      through dune, the archive layout T25.1 settled, `SHA256SUMS`,
+      a drafted GitHub Release. The Linux binary is portable —
+      static or the oldest viable glibc — verified in clean
+      containers, not on the builder. (Done 2026-10-07: package-release.sh verified end to end locally; matrix = linux x86_64/aarch64 (ubuntu-22.04, glibc 2.35) + macOS x86_64/arm64, suite run before packaging, Linux verified in a clean ubuntu:22.04 container.)
+- [x] **T25.7** — Signing and the platform gates: macOS codesign
+      (hardened runtime) → notarytool → staple, credentials in CI
+      secrets — the solved-not-a-blocker from `CHECK.md`, now
+      scheduled. Windows: WSL2 documented as the supported path,
+      the native prebuilt recorded as deferred with the
+      ucontext/socket port named as the blocker;
+      `docs/toolchain-distribution.md` updated (both languages). (Done 2026-10-07: four secrets gate codesign → notarytool → staple; absent secrets ship unsigned with a notice; distribution docs updated both languages.)
+- [x] **T25.8** — Provisioning channels and install docs: the
+      Homebrew formula (own tap; core when the project qualifies)
+      and the opam package — the source channel that brings the
+      `ocaml` target. README install sections in both languages:
+      prebuilt archives first, then brew, opam, WSL2. (Done 2026-10-07: formula at devtools/homebrew/emo.rb for the own tap, checksums filled at release; dune-project generates emo.opam (no dev_repo field in the stanza — dropped); README install sections in both languages.)
+- [x] **T25.9** — Release acceptance and the release cut: on every shipped
+      artifact, end to end — download, unpack, `emo doctor`,
+      `emo new`, `emo run`, `emo install`, `emo build` (the `c`
+      target) — including a stdlib-importing program and the golden
+      subset executed from the installed binary. the release commit
+      carries the released VERSION; annotated tag, release notes,
+      close-out. (Done 2026-10-07: acceptance ran against the packaged-and-unpacked archive (built while
+VERSION read v1.0.0; re-cut v0.25.9 before tagging) — doctor healthy in the prebuilt shape; new → run → build green; install resolves through the embedded stdlib; goldens 14/14 from the installed binary (13 via emo run byte-for-byte, numerics via its designed compiled path — it crosses foreign def, which emo run refuses; http_roundtrip/tcp_echo ride the in-tree suite). VERSION shipped as v0.25.9.)
+
+Close-out: recorded 2026-10-07 in `plan/step-25-toolchain.md` — the
+acceptance ran against the packaged artifact, not the build tree; the
+default-target flip moved every default path to `c` (and flushed out
+that the content-hash cache had only ever lived in the ocaml arm),
+the embed's dune rule needs `-type f -o -type l` because the macOS
+sandbox materializes `source_tree` deps as symlinks, and the archives
+ship without an install script. **Step 25 acceptance met.** M9 is
+done: the toolchain release is v0.25.9 — the official 1.0 follows.

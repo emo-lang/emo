@@ -275,15 +275,16 @@ let literal_tests =
   [
     tc "integers lex with their values" (fun () ->
         Alcotest.(check (list kind))
-          "kinds" [ Int64 0L; Int64 42L; Eof ]
+          "kinds"
+          [ Int64 0L; Int64 42L; Eof ]
           (kinds (lex_all "0 42")));
     tc "bare digits lex as Int64 and B suffixes as Byte" (fun () ->
         Alcotest.(check (list kind))
           "kinds"
           [ Int64 1L; Byte 255; Int64 9223372036854775807L; Byte 0; Eof ]
           (kinds (lex_all "1 255B 9223372036854775807 0B")));
-    tc "the L suffix is a lexical error now that bare digits are Int64" (
-      fun () ->
+    tc "the L suffix is a lexical error now that bare digits are Int64"
+      (fun () ->
         let diagnostic = lex_err "1L" in
         Alcotest.(check string) "code" "E1006" (code_of diagnostic);
         Alcotest.(check string)
@@ -312,7 +313,9 @@ let literal_tests =
     tc "a trailing dot is member access on an integer" (fun () ->
         Alcotest.(check (list kind))
           "kinds"
-          [ Int64 1L; Op Dot; Lower_ident "to_string"; Op LParen; Op RParen; Eof ]
+          [
+            Int64 1L; Op Dot; Lower_ident "to_string"; Op LParen; Op RParen; Eof;
+          ]
           (kinds (lex_all "1.to_string()")));
     tc "an underscore directly after a number is a lexical error" (fun () ->
         let diagnostic = lex_err "1_a" in

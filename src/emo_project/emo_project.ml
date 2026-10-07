@@ -483,32 +483,15 @@ let dep_error ~(manifest_dir : string) (message : string) =
       };
     ]
 
-(* With EMO_REGISTRY unset, the standard library's registry ships with
-   the compiler — the bundled default, resolved next to the running
-   binary (through symlinks, like the runtime libraries). *)
-let bundled_registry () =
-  let exe_dir =
-    Filename.dirname
-      (try Unix.realpath Sys.executable_name with _ -> Sys.executable_name)
-  in
-  let candidate =
-    Filename.concat
-      (Filename.concat (Filename.concat exe_dir "..") "..")
-      "stdlib/registry"
-  in
-  if Sys.file_exists candidate then Some candidate else None
+(* With EMO_REGISTRY unset, the standard library rides the compiler
+   binary itself (T25.2) — EMO_REGISTRY names a filesystem registry and
+   overrides the bundled default. *)
+let bundled_registry () : Emo_pkg.Registry.t = Emo_pkg.Registry.Embedded
 
 let registry () =
   match Sys.getenv_opt "EMO_REGISTRY" with
-  | Some endpoint when endpoint <> "" -> { Emo_pkg.Registry.endpoint }
-  | _ -> (
-      match bundled_registry () with
-      | Some dir -> { Emo_pkg.Registry.endpoint = dir }
-      | None ->
-          raise
-            (dep_error ~manifest_dir:"."
-               "this project has dependencies but no registry is configured — \
-                set EMO_REGISTRY"))
+  | Some endpoint when endpoint <> "" -> Emo_pkg.Registry.Fs_dir endpoint
+  | _ -> bundled_registry ()
 
 (* Resolves the manifest's exact pins against the registry, fresh — the
    explicit regeneration path (`emo deps resolve`). The target filters
@@ -557,6 +540,51 @@ let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
       | [] -> entries
       | message :: _ -> raise (dep_error ~manifest_dir message))
   | Error _ -> resolve_deps ~manifest ~manifest_dir ~target
+
+(* `emo install`: resolve the manifest, fetch every package into the
+   user cache, and write the lockfile — the project is then ready for
+   `emo run` / `emo build`. Idempotent: a second run re-verifies and
+   reports, changing nothing. Raises [Static_errors] on resolution or
+   fetch failure. *)
+let install_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
+    ~(target : string) : string list =
+  if manifest.Emo_pkg.deps = [] then
+    [ "nothing to install — the manifest declares no dependencies" ]
+  else
+    let reg = registry () in
+    let entries = resolve_deps ~manifest ~manifest_dir ~target in
+    let cache_dir = Emo_pkg.Registry.default_cache_dir () in
+    let fetched =
+      List.map
+        (fun (entry : Emo_pkg.Lockfile.entry) ->
+          match
+            Emo_pkg.Registry.fetch reg ~name:entry.Emo_pkg.Lockfile.dep
+              ~version:entry.Emo_pkg.Lockfile.version
+          with
+          | Error m -> raise (dep_error ~manifest_dir m)
+          | Ok f -> (
+              let cached = Emo_pkg.Registry.is_cached ~cache_dir f in
+              match Emo_pkg.Registry.materialize ~cache_dir f with
+              | Error m -> raise (dep_error ~manifest_dir m)
+              | Ok _ ->
+                  Printf.sprintf "fetched %s %s%s" entry.Emo_pkg.Lockfile.dep
+                    (Emo_pkg.Version.to_string entry.Emo_pkg.Lockfile.version)
+                    (if cached then " (already cached)"
+                     else
+                       Printf.sprintf " (%s)"
+                         (String.sub f.Emo_pkg.Registry.f_checksum 0 12))))
+        entries
+    in
+    let lock_path = Filename.concat manifest_dir Emo_pkg.Lockfile.filename in
+    let lock_line =
+      match Emo_pkg.Lockfile.read lock_path with
+      | Ok existing when existing = entries -> "package.lock is up to date"
+      | _ ->
+          Emo_pkg.Lockfile.write ~path:lock_path entries;
+          "wrote package.lock"
+    in
+    Printf.sprintf "resolved %d dependencies" (List.length entries)
+    :: (fetched @ [ lock_line ])
 
 (* Registers a fetched package's module tree at the top level — a package's
    directory tree is its public module tree, so `json_tools.emo` at the
@@ -698,7 +726,7 @@ let manifest_here () : string option =
 let check_entry ~entry_file : Emo_support.Diagnostic.t list =
   let p, prepared = prepare ~entry_file in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"ocaml" p)
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p)
     prepared;
   let manifest = Option.map fst prepared in
   let items = parse_cached p (entry_path entry_file) in
@@ -719,7 +747,7 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
     ?(globals : (string * Emo_eval.value) list = []) () : project =
   let p, prepared = prepare ~entry_file in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"ocaml" p)
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p)
     prepared;
   let manifest = Option.map fst prepared in
   install_hooks p;

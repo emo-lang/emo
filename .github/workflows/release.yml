@@ -1,0 +1,111 @@
+name: Release
+
+# Tag-triggered release builds (T25.6): a `v*` tag produces per-platform
+# archives — Linux x86_64/aarch64 and macOS x86_64/arm64 — drafted as a
+# GitHub Release with SHA256SUMS. The Linux binary is built on the
+# oldest supported glibc (Ubuntu 22.04, glibc 2.35) and verified in a
+# clean container, not on the builder; macOS archives are zips because
+# notarization staples a zip, never a tar.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, platform: linux, arch: x86_64 }
+          - { os: ubuntu-22.04-arm, platform: linux, arch: aarch64 }
+          - { os: macos-15-intel, platform: macos, arch: x86_64 }
+          - { os: macos-14, platform: macos, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.5.0"
+
+      - name: Install dependencies
+        run: opam install -y dune cmdliner alcotest eio_main ssl yojson digestif
+
+      - name: Build the release binary
+        run: opam exec -- dune build --profile release src/emo_cli/emo.exe
+
+      - name: Test the release build
+        run: opam exec -- dune test
+
+      - name: Package
+        env:
+          # Signing/notarization hooks (T25.7): the four secrets
+          # together turn them on; absent secrets ship unsigned.
+          EMO_CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          EMO_NOTARY_APPLE_ID: ${{ secrets.MACOS_APPLE_ID }}
+          EMO_NOTARY_APP_PASSWORD: ${{ secrets.MACOS_APP_PASSWORD }}
+          EMO_NOTARY_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+        run: |
+          if [ "${{ runner.os }}" = macOS ] && [ -z "$EMO_CODESIGN_IDENTITY" ]; then
+            echo "::notice::macOS signing skipped — MACOS_SIGNING_IDENTITY and the notary secrets are not configured"
+          fi
+          version=$(cat VERSION)
+          devtools/package-release.sh _build/default/src/emo_cli/emo.exe \
+            "$version" ${{ matrix.platform }} ${{ matrix.arch }} dist
+
+      # The clean-container check proves the binary runs without the
+      # builder's toolchain — the interpreter, the embedded stdlib, and
+      # the dynamic links are all a download needs. doctor is not run
+      # here on purpose: the container has no cc, and the default c
+      # target being honestly broken there is the doctor's job to say.
+      - name: Verify in a clean container (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          version=$(cat VERSION)
+          name="emo-$version-${{ matrix.platform }}-${{ matrix.arch }}"
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:22.04 /bin/sh -c "
+            set -e
+            mkdir -p /verify && cd /verify
+            tar xzf /dist/$name.tar.gz
+            ./$name/bin/emo version
+            printf 'println(6 * 7)\n' > smoke.emo
+            ./$name/bin/emo run smoke.emo | grep 42
+          "
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: emo-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/emo-*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Summarize checksums
+        run: (cd dist && sha256sum *.zip *.tar.gz > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Draft the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft \
+            --title "emo $GITHUB_REF_NAME" --generate-notes dist/*

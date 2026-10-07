@@ -2,7 +2,7 @@
 
 > 中文版,与英文版 [docs/TASKS.md](../TASKS.md) 内容一一对应;更新英文版时请同步更新本文件。
 
-从 `plan/step-01-project-scaffold.md` 到 `plan/step-24-c-target.md` 汇总而成的编号任务清单。plan 文件仍是规格说明——下面每个任务所属的步骤文件里有完整的目标、范围与验收标准。本文件是进度追踪表。
+从 `plan/step-01-project-scaffold.md` 到 `plan/step-25-toolchain.md` 汇总而成的编号任务清单。plan 文件仍是规格说明——下面每个任务所属的步骤文件里有完整的目标、范围与验收标准。本文件是进度追踪表。
 
 ## 使用说明
 
@@ -26,6 +26,7 @@
 | M6 — 系统级编程 | 19–21 | 用 Emo 编写的 WebAssembly 运行时:共享系统层,随后是二进制解码器/验证器,再是解释器与 spec 套件金测。 |
 | M7 — EmoOS | 22+ | 同一系统层之上的内核路径:近期是 unikernel 构建路径,远期是裸机代码生成(与引擎分层共用投入)。 |
 | M8 — 自包含托管后端 | 24 | `emo build --target c` 发射 C、自带运行时、直接 C ABI——步骤 23 的评估已排期;解锁自包含工具分发(CHECK.md)。 |
+| M9 — 工具链 | 25 | 工具链发布(以 v0.25.9 剪出):GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
 
 ## 设计闸门
 
@@ -39,7 +40,10 @@
 | 异常捕获语法 | T12.5、步骤 12 验收 | 暂无 catch 形式;仅有未捕获异常报告 |
 | 清单/锁文件文件名、scope 前缀格式、版本区间、deps CLI 命令名 | T10.2、T10.5–T10.6、T10.8 | `package.emo`、`package.lock`、`owner/name`、仅精确版本、`emo deps *` |
 | C FFI 绑定表面语法 | T13.6 | 已落定——`foreign def name(params) Ret = "c_symbol"`,仅 `Float`/`String`/`Bool`,经生成的 C 包装器编组 |
-| 动态世界的回收模型(无追踪 GC) | T24.5 | 临时方案:带显式泄漏说明的 bump/arena(步骤 22 的 M1 画像);在交付长跑程序前于 `CHECK.md` 落定引用计数 vs 有界 arena |
+| 动态世界的回收模型(无追踪 GC) | T24.5 | 已落定——身份对象用引用计数、值语义数据走 arena(`CHECK.md`,T24.5 落定) |
+| `emo build` 默认 target | T25.1 | 由 `ocaml` 翻转为 `c`:分发的二进制不携带 OCaml 工具链;`ocaml` target 保留给源码构建安装 |
+| 标准库:内嵌 vs 旁挂目录 | T25.2 | 内嵌为编译器内的生成数据(C 运行时的同一机制);`EMO_REGISTRY` 覆盖保留 |
+| `emo install` 语义 | T25.4 | resolve/fetch/lock 之上的项目依赖前端;全局可执行文件安装不进 1.0 范围 |
 
 ---
 
@@ -400,3 +404,26 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 - [x] **T24.9** — 进程与协作式调度器:`do` / `<-` / `receive`、邮箱、选择性 receive、`self_pid`、`halt`;单线程协作循环;执行轨迹与 `emo_sched_det` 做 diff。金测:pipeline、showcase。(2026-10-06 完成:两个完整例子金测逐字节通过。每个 Emo 进程是一个 ucontext 纤维,拥有独立栈;调度器沿用 emo_sched_det 的策略——FIFO 运行队列,spawn 入队子进程而不挂起父进程,send 投递 + 唤醒 + 把发送者重新排在队尾,receive 在生成代码中扫描邮箱取第一条被某分支接受的消息(守卫失败的消息留在队中),无匹配时停靠纤维;运行队列空而有纤维停靠即报告死锁。Pid 是 EMO_PID 单元(渲染 `<pid N>`);`EMO_TRACE=1` 打印 spawn/send/park/dispatch/exit/reap 事件供 diff。顺带修复:入口文件被双发现(根副本 + 树副本,键上带 `/.` 路径)导致每个符号按两种 mangling 降级——walk 现规范化文件路径,IR 按 parsed items 的物理同一性去重模块副本。)
 - [x] **T24.10** — 托管 IO 与标准库元数据:`file.read`/`file.write`、TCP/UDP socket、HTTP 客户端/服务器;标准库 `targets` 加 `"c"`。金测:file_read、tcp_echo、http_roundtrip。(2026-10-06 完成:三个完整例子金测逐字节通过,包括 stdlib 的 http/net 包在 c 目标上编译。socket 是非阻塞 fd,would-block 读取停靠纤维——运行队列空时调度器轮询停靠的描述符;根进程结束即程序结束。跨模块 Unknown 接收者按方法/字段名分派(全局内建独有的名称,运行时助手;实例字段按 vtable 名)。Unix socket、TLS、DNS 解析、UDP 编译为诚实的运行时拒绝。stdlib 的 file/net/http 包与三个示例已声明 `"c"`,lockfile 重新生成。)
 - [x] **T24.11** — 引导、基准、收尾:CI `c_examples` 组;特化(去装箱、直接分派),热循环加 `restrict`;`benchmarks/results.md` 增加 `c` 列;`native` → `ocaml` 改名在此或紧随其后的独立步骤落地;收尾记录决策。(2026-10-06 完成:六个基准的 c 目标数字全部落档——fib 7 ms、tail loop 4 ms(比 OCaml 后端的特化构建快 470 倍,距 C 基线 1.3 倍)、ffi 46 ms、bytes 43 ms、json 3 ms、http 83 req/s。特化在本目标上是结构性的:双 regime 发射器已对已知类型去装箱并直接分派;`restrict` 等待指针参数的热循环(缓冲区 rung)。改名作为紧随其后的独立步骤。)
+
+## M9 — 工具链
+
+自包含故事的最后一公里,也是工具链发布——以 v0.25.9 剪出,正式的 1.0 随后。M8 把 OCaml 工具链从*程序*里移除了;M9 把安装负担从*工具*身上移除——`CHECK.md` 中"发布工具链本身未排期"的部分就此排期,按已定的方向(`docs/toolchain-distribution.md` 是设计记录):GitHub Releases 上的按平台预编译二进制为主渠道,`opam` 与 Homebrew formula 作为源码构建渠道,并补齐产品所需的命令集——`emo new`、`emo install`、`emo doctor` 加入 `run`/`repl`/`check`/`build`/`deps`/`publish`——让一台只有二进制的机器就能运行、检查、构建(经 `c` target)、安装依赖、发布包。
+
+边界,明说:公共 registry *服务*是另一个里程碑——工具随包发布时只讲文件系统 registry 加内置标准库(`publish` 已经讲 HTTP;HTTP 拉取与它对话的服务一起落地);原生 Windows 不在本次发布内——WSL2 是受支持的 Windows 路径,C 运行时的 ucontext/socket 移植是记录在案的阻塞点(Microsoft Trusted Signing 仍是它落地时的既定签名路线);c 后端的记录在案的后续工作(retain/release 发射、零拷贝缓冲区 rung、跨模块类型传播)属于后端线,不随本里程碑。
+
+### Step 25 — 工具链分发与发布 · `plan/step-25-toolchain.md`
+
+**前置:** 步骤 24(`c` target;`native` → `ocaml` 改名已随其落地)。
+**完成标准:** 发布工作流在版本 tag 上运行,产出经签名的按平台归档(Linux x86_64/aarch64、macOS x86_64/arm64),其制品在每个平台都通过端到端验收;一台只有安装好的二进制的机器——无 OCaml、无 opam、无仓库——就能经 `c` target 运行、检查、构建 Emo 程序,用 `emo new` 脚手架、`emo install` 装依赖、`emo doctor` 诊断环境;`dune test` 全绿。
+
+- [x] **T25.1** — 设计闸门关闭与默认 target:四项落定记入 `CHECK.md`——构建默认由 `ocaml` 翻转为 `c`;标准库内嵌为生成数据(C 运行时的机制),不做旁挂目录;`emo install` 是项目依赖前端(全局可执行文件安装不进 1.0);依赖缓存离开临时目录,换持久的用户缓存。翻转在此落地,解析门测试与 CI 组随之改指——c 金测已覆盖该 target,移动的只是默认值。 (2026-10-07 完成:四项全部落定 CHECK.md;翻转把每条默认路径移到 c,并暴露出内容哈希缓存原本只在 ocaml 分支实现——c 分支补齐;ocaml 后端测试夹具与基准脚本钉住 --target ocaml;树级 @fmt 漂移一并晋升。)
+- [x] **T25.2** — 自包含二进制:内置标准库作为编译器内的生成数据;registry endpoint 成为文件系统目录或内嵌标准库二者之一;`EMO_REGISTRY` 仍可覆盖。验证:一个孤零零的 `emo` 拷进空目录,即可运行、检查、构建带标准库导入的程序——`publish` 的内嵌上传器也能从它工作。 (2026-10-07 完成:经 devtools/gen-stdlib-data.sh 生成数据;macOS 沙箱把 source_tree 依赖物化为符号链接——生成器以 -type f -o -type l 遍历,靠探针发现而非猜测;endpoint 为 Fs_dir 或 Embedded;孤二进制验证通过(run/check/build/publish);内嵌与文件系统的校验和对拍由测试钉住。)
+- [x] **T25.3** — `emo new <name>`:脚手架——`package.emo`(名称、版本、targets)与 hello-world `main.emo`,外加 `.gitignore`。严格性保持:目录已存在或文件冲突一律以清晰错误拒绝,不设 `--force`。脚手架生成的瞬间就是绿的——CI 创建、检查、运行并构建一个。 (2026-10-07 完成:CI 脚手架、检查、构建并运行一个;owner/name 在相对单斜杠参数下按原样采用;拒绝以 65 退出。)
+- [x] **T25.4** — `emo install`:读 manifest,对 registry 解析,取入用户缓存,写 `package.lock`;重复执行幂等不变;每种失败形态——未配置 registry、无法满足的 pin、依赖缺所请求的 target——各有清晰报错。`emo deps` 保留 resolve/update/list 作为显式路径。 (2026-10-07 完成:幂等;lockfile 仅在会变化时写入;缓存默认迁往 ~/.cache/emo(尊重 XDG,EMO_CACHE_DIR 覆盖)。)
+- [x] **T25.5** — `emo doctor`:target 感知的环境检查,取代 `CHECK.md` 中过渡期的仅 ocaml 形态。按 target:`c`——cc 编译并运行的冒烟;`ocaml`——运行时 `.cmxa` 在 switch 中找到,或诚实的"预编译安装:ocaml target 需要源码构建安装(`opam install emo`)";`typescript`——node;`beam`——erlc;`wasm`——无需任何。外加安装形态(预编译 vs 源码)、标准库在位、版本号。只在真正损坏处才以非零退出。 (2026-10-07 完成:源码 vs 预编译以二进制旁的运行时 .cmxa 集探测;c 冒烟决定退出码;ocaml 不可用时报告 opam 安装修复。)
+- [x] **T25.6** — 发布打包与 CI:现有 CI 旁的 tag 触发工作流——按平台矩阵构建(Linux x86_64/aarch64、macOS x86_64/arm64),经 dune 产出发布二进制,T25.1 落定的归档布局、`SHA256SUMS`、GitHub Release 草稿。Linux 二进制可移植——静态或最旧的可用 glibc——在干净容器中验证,而非构建机上。 (2026-10-07 完成:package-release.sh 本机端到端验证;矩阵 = linux x86_64/aarch64(ubuntu-22.04,glibc 2.35)+ macOS x86_64/arm64,打包前先跑测试套件,Linux 在干净 ubuntu:22.04 容器中验证。)
+- [x] **T25.7** — 签名与平台闸门:macOS codesign(hardened runtime)→ notarytool → staple,凭据在 CI secrets——`CHECK.md` 中"已解决、非阻塞"的一项就此排期。Windows:WSL2 记录为受支持路径,原生预编译记录为推迟,ucontext/socket 移植点名为阻塞;`docs/toolchain-distribution.md` 同步更新(双语)。 (2026-10-07 完成:四个密钥把 codesign → notarytool → staple 设为条件路径;密钥缺席以未签名发布并出 notice;分发文档双语更新。)
+- [x] **T25.8** — 供给渠道与安装文档:Homebrew formula(先自有 tap;项目够格后进 core)与 opam 包——带来 `ocaml` target 的源码渠道。README 安装章节双语更新:预编译归档优先,其后 brew、opam、WSL2。 (2026-10-07 完成:公式在 devtools/homebrew/emo.rb 供自有 tap 使用,校验和发布时填写;dune-project 生成 emo.opam(stanza 无 dev_repo 字段——弃之);README 安装章节双语落地。)
+- [x] **T25.9** — 发布验收与剪出:对每个已发布制品端到端——下载、解包、`emo doctor`、`emo new`、`emo run`、`emo install`、`emo build`(`c` target)——包括一个带标准库导入的程序与从安装后的二进制执行的金测子集。发布 commit 携带发布的 VERSION;annotated tag、发布说明、收尾。 (2026-10-07 完成:验收对着打包并解压的归档执行(构建时 VERSION 读作 v1.0.0;打 tag 前重剪为 v0.25.9)——doctor 以预编译形态全绿;new → run → build 全通;install 经内嵌标准库解析;金测 14/14 出自安装后的二进制(13 个经 emo run 逐字节,numerics 走其设计的编译路径——它跨 foreign def,emo run 按设计拒绝;http_roundtrip/tcp_echo 依托树内套件)。VERSION 以 v0.25.9 发布。)
+
+收尾:2026-10-07 记于 `plan/step-25-toolchain.md`——验收对着打包制品而非构建树执行;默认 target 翻转把每条默认路径移到 `c`(并暴露出内容哈希缓存原本只在 ocaml 分支实现),内嵌的 dune 规则需要 `-type f -o -type l`(macOS 沙箱把 source_tree 依赖物化为符号链接),归档不带安装脚本发布。**步骤 25 验收达成。** M9 完成:工具链发布是 v0.25.9——正式的 1.0 随后。

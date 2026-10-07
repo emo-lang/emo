@@ -12,6 +12,31 @@ Emo is **clean, explicit, and intuitive**. It draws on three decades of open-sou
 - **Principle of least surprise.** The language rules should match programmer intuition; things should work the way you expect them to.
 - **Multiple compilation targets.** Emo compiles to native executables, to WebAssembly, to other languages such as TypeScript, to the BEAM virtual machine, and to bare metal (the `riscv64` target — see EmoOS).
 
+## Install
+
+Prebuilt binaries are the fastest way to start. The binary carries the standard library inside it — nothing else to install (a C compiler joins the picture when you build with `emo build`, the default target). Grab the archive for your platform from [GitHub Releases](https://github.com/emo-lang/emo/releases), then:
+
+```console
+$ unzip emo-v0.25.9-macos-arm64.zip
+$ ./emo-v0.25.9-macos-arm64/bin/emo run hello.emo
+```
+
+Homebrew, from the project's own tap:
+
+```console
+$ brew install emo-lang/tap/emo
+```
+
+opam builds from source and additionally brings the `ocaml` compilation target:
+
+```console
+$ opam install emo
+```
+
+Windows: WSL2 is the supported path — install inside WSL as you would on Linux; a native Windows build is pending the runtime port (see `docs/toolchain-distribution.md`).
+
+Wherever you installed from, `emo doctor` checks the environment per target and names what is missing.
+
 ## Syntax
 
 Emo's syntax favors explicitness: everything is visibly what it is — a call looks like a call, a return is written out, a block has one shape.
@@ -267,11 +292,11 @@ The socket surface is the standard library's `net` package; HTTP lives in the `h
 - **Connections.** `read_line()`, `read_exactly(n)`, `read_all()`, `write(data)`, and `close()` — a graceful close delivers pending writes first. `set_timeout(seconds)` bounds the operations that follow (the default is no timeout; `0.0` waits indefinitely). A listener serves `accept()` and reports `port()`; a datagram socket `send_to(host, port, data)`s and `recv_from()`s, and reports `port()`.
 - **HTTP.** `http.get(url)`, `http.post(url, body)`, `http.put(url, body)`, `http.delete(url)`, and the general `http.request(method, url, headers, body, timeout)` return an `HttpResponse` carrying `status`, `headers`, and `body`. Redirects are never followed: a 3xx is a response like any other, and following it is the caller's explicit move. On the server, `http.serve(listener) -> (conn TcpConn) { ... }` is the process-per-connection helper, and `http.serve_requests(listener) -> (req HttpRequest) { ... }` parses each request and writes the handler's `HttpResponse` back — the handler is an ordinary Emo function. The full API reference lives in [docs/stdlib/http.md](docs/stdlib/http.md).
 
-Layering is conventional: sockets (TCP/UDP/Unix domain, plus TLS) live in the `net` package, and HTTP (client and server) in the `http` package built on top of it. TLS is an OpenSSL binding on the native backend.
+Layering is conventional: sockets (TCP/UDP/Unix domain, plus TLS) live in the `net` package, and HTTP (client and server) in the `http` package built on top of it. TLS is an OpenSSL binding on the `ocaml` target.
 
 ## Native Builds
 
-`emo build` compiles a program to a standalone native binary — one command, one executable, no separate install step for applications:
+`emo build` compiles a program to a standalone native binary — one command, one executable, no separate install step for applications. The default target is `c`: the emitted C compiles with the system `cc`, so a build needs no OCaml toolchain; `--target ocaml` emits OCaml for the backend that builds Emo itself:
 
 ```console
 $ emo build main.emo -o myapp
@@ -282,14 +307,14 @@ built myapp
 - **The compiled output is held to the interpreter's standard.** Every example compiles to a binary whose output matches `emo run` byte-for-byte — asserted in CI, not assumed.
 - **Types feed performance.** Functions whose types are fully known compile to specialized native code — unboxed numbers, direct calls — while regions the checker cannot pin down keep dynamic semantics. `benchmarks/` records the numbers (the same fully annotated program runs measurably faster specialized than with `--no-specialize`).
 - **Builds are incremental.** The build caches by content hash: an unchanged program (and unchanged runtime) rebuilds without invoking the toolchain, and the build reports `(cached)`.
-- **C interop is a `foreign def`.** The declaration names the C symbol and marshals through generated C wrappers:
+- **C interop is a `foreign def`.** The declaration names the C symbol — the `c` target calls it directly through the C ABI; the `ocaml` target marshals through a generated C wrapper:
 
   ```emo
   foreign def sqrt(x Float64) Float64 = "sqrt"
   ```
 
-  `Float64`, `String`, and `Bool` cross the boundary today; other types are refused by the checker. Link additional C libraries with `--cclib` (`emo build main.emo --cclib m`). Foreign definitions run only in compiled programs — `emo run` refuses them. A target that cannot honor a `foreign def` refuses it at check time: today only the native backend can, while `wasm`, `typescript`, `beam`, and the freestanding `riscv64` refuse.
-- **The build requires the OCaml toolchain** — the same one that builds Emo itself; there is no second compiler to install.
+  `Float64`, `String`, and `Bool` cross the boundary today; other types are refused by the checker. Link additional C libraries with `--cclib` (`emo build main.emo --cclib m`). Foreign definitions run only in compiled programs — `emo run` refuses them. A target that cannot honor a `foreign def` refuses it at check time: `c` and `ocaml` honor it, while `wasm`, `typescript`, `beam`, and the freestanding `riscv64` refuse.
+- **The default build needs only a C compiler.** The `c` target invokes the system `cc`; `--target ocaml` requires the OCaml toolchain — the same one that builds Emo itself.
 
 ## Configuration
 
