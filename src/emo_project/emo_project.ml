@@ -541,6 +541,51 @@ let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
       | message :: _ -> raise (dep_error ~manifest_dir message))
   | Error _ -> resolve_deps ~manifest ~manifest_dir ~target
 
+(* `emo install`: resolve the manifest, fetch every package into the
+   user cache, and write the lockfile — the project is then ready for
+   `emo run` / `emo build`. Idempotent: a second run re-verifies and
+   reports, changing nothing. Raises [Static_errors] on resolution or
+   fetch failure. *)
+let install_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
+    ~(target : string) : string list =
+  if manifest.Emo_pkg.deps = [] then
+    [ "nothing to install — the manifest declares no dependencies" ]
+  else
+    let reg = registry () in
+    let entries = resolve_deps ~manifest ~manifest_dir ~target in
+    let cache_dir = Emo_pkg.Registry.default_cache_dir () in
+    let fetched =
+      List.map
+        (fun (entry : Emo_pkg.Lockfile.entry) ->
+          match
+            Emo_pkg.Registry.fetch reg ~name:entry.Emo_pkg.Lockfile.dep
+              ~version:entry.Emo_pkg.Lockfile.version
+          with
+          | Error m -> raise (dep_error ~manifest_dir m)
+          | Ok f -> (
+              let cached = Emo_pkg.Registry.is_cached ~cache_dir f in
+              match Emo_pkg.Registry.materialize ~cache_dir f with
+              | Error m -> raise (dep_error ~manifest_dir m)
+              | Ok _ ->
+                  Printf.sprintf "fetched %s %s%s" entry.Emo_pkg.Lockfile.dep
+                    (Emo_pkg.Version.to_string entry.Emo_pkg.Lockfile.version)
+                    (if cached then " (already cached)"
+                     else
+                       Printf.sprintf " (%s)"
+                         (String.sub f.Emo_pkg.Registry.f_checksum 0 12))))
+        entries
+    in
+    let lock_path = Filename.concat manifest_dir Emo_pkg.Lockfile.filename in
+    let lock_line =
+      match Emo_pkg.Lockfile.read lock_path with
+      | Ok existing when existing = entries -> "package.lock is up to date"
+      | _ ->
+          Emo_pkg.Lockfile.write ~path:lock_path entries;
+          "wrote package.lock"
+    in
+    (Printf.sprintf "resolved %d dependencies" (List.length entries))
+    :: (fetched @ [ lock_line ])
+
 (* Registers a fetched package's module tree at the top level — a package's
    directory tree is its public module tree, so `json_tools.emo` at the
    package root is the module `json_tools` that a require binds. The
