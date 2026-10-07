@@ -781,13 +781,11 @@ let install_cmd =
   Cmd.v
     (Cmd.info "install"
        ~doc:
-         "Install the project's dependencies — resolve, fetch into the \
-          user cache, and write package.lock.")
+         "Install the project's dependencies — resolve, fetch into the user \
+          cache, and write package.lock.")
     Term.(
       const (fun () ->
-          match install () with
-          | 0 -> Cmd.Exit.ok
-          | code -> exit code)
+          match install () with 0 -> Cmd.Exit.ok | code -> exit code)
       $ const ())
 
 (* `emo publish`: pack the package rooted at the working directory and POST
@@ -1077,6 +1075,133 @@ let publish_cmd =
           | code -> exit code)
       $ registry $ token $ dry_run)
 
+(* ---- `emo doctor`: the target-aware environment check (T25.5) ----
+
+   One line per target: what it needs, what was found. The default
+   target's health decides the exit code — the other targets are
+   informational, and an unavailable one gets the honest fix named
+   rather than a raw toolchain error. *)
+
+let tool_exists (name : string) : bool =
+  let cmd = Printf.sprintf "command -v %s" (Filename.quote name) in
+  let ic = Unix.open_process_in cmd in
+  let line = try input_line ic with End_of_file -> "" in
+  ignore (Unix.close_process_in ic);
+  line <> ""
+
+let tool_version (name : string) : string =
+  let ic = Unix.open_process_in (name ^ " --version 2>/dev/null") in
+  let line = try input_line ic with End_of_file -> "" in
+  let status = Unix.close_process_in ic in
+  match status with
+  | WEXITED 0 when line <> "" -> " (" ^ String.trim line ^ ")"
+  | _ -> ""
+
+(* The c target's check: cc exists, compiles, and the result runs. *)
+let cc_smoke () : (unit, string) result =
+  if not (tool_exists "cc") then Error "cc not found on PATH"
+  else
+    let dir =
+      Filename.concat
+        (Filename.get_temp_dir_name ())
+        (Printf.sprintf "emo-doctor-%d" (Unix.getpid ()))
+    in
+    if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+    let c = Filename.concat dir "smoke.c" in
+    let bin = Filename.concat dir "smoke" in
+    let oc = open_out_bin c in
+    output_string oc
+      "#include <stdio.h>\nint main(void) { puts(\"emo\"); return 0; }\n";
+    close_out oc;
+    let compile =
+      Sys.command
+        (Printf.sprintf "cc -o %s %s" (Filename.quote bin) (Filename.quote c))
+    in
+    if compile <> 0 then begin
+      remove_tree dir;
+      Error "cc failed to compile a smoke program"
+    end
+    else begin
+      let ic = Unix.open_process_in (Filename.quote bin) in
+      let out = try input_line ic with End_of_file -> "" in
+      let status = Unix.close_process_in ic in
+      remove_tree dir;
+      match status with
+      | WEXITED 0 when out = "emo" -> Ok ()
+      | _ -> Error "the cc smoke binary did not run"
+    end
+
+(* The ocaml target's check: its runtime libraries must stand beside the
+   emo binary (a source or dune-tree install) and ocamlfind must exist. *)
+let ocaml_target_ok () : bool =
+  let libs =
+    [
+      "emo_support";
+      "emo_lexer";
+      "emo_parser";
+      "emo_ast";
+      "emo_check";
+      "emo_eval";
+      "emo_sched";
+      "emo_runtime";
+    ]
+  in
+  let exe_dir =
+    Filename.dirname
+      (try Unix.realpath Sys.executable_name with _ -> Sys.executable_name)
+  in
+  let src_dir = Filename.concat exe_dir ".." in
+  let cmxa_found =
+    List.for_all
+      (fun lib ->
+        Sys.file_exists
+          (Filename.concat (Filename.concat src_dir lib) (lib ^ ".cmxa")))
+      libs
+  in
+  cmxa_found
+  &&
+  let found = find_ocamlfind () in
+  if found = "ocamlfind" then tool_exists "ocamlfind" else true
+
+let doctor ~(emit : string -> unit) : int =
+  let ocaml_ok = ocaml_target_ok () in
+  emit (Printf.sprintf "emo %s" version);
+  emit
+    (if ocaml_ok then "installation: source (runtime libraries found)"
+     else "installation: prebuilt");
+  emit "stdlib: embedded in the binary";
+  let broken = ref false in
+  let line name report = emit (Printf.sprintf "%-11s %s" name report) in
+  (match cc_smoke () with
+  | Ok () -> line "c:" ("ok" ^ tool_version "cc" ^ " — compiles and runs")
+  | Error why ->
+      broken := true;
+      line "c:" ("BROKEN — " ^ why ^ " (the default target needs a C compiler)"));
+  if ocaml_ok then
+    line "ocaml:" "ok — ocamlfind and the runtime libraries are present"
+  else
+    line "ocaml:"
+      "unavailable — a prebuilt installation; the ocaml target needs a source \
+       install (opam install emo)";
+  if tool_exists "node" then line "typescript:" ("ok" ^ tool_version "node")
+  else line "typescript:" "unavailable — node not found";
+  if tool_exists "erlc" then line "beam:" "ok"
+  else line "beam:" "unavailable — erlc not found";
+  line "wasm:" "ok — no external tools needed";
+  if !broken then 1 else 0
+
+let doctor_cmd =
+  Cmd.v
+    (Cmd.info "doctor" ~doc:"Check the toolchain environment, per target.")
+    Term.(
+      const (fun () ->
+          let flushed s =
+            print_string s;
+            print_newline ()
+          in
+          match doctor ~emit:flushed with 0 -> Cmd.Exit.ok | code -> exit code)
+      $ const ())
+
 (* `emo new <name>`: the project scaffold — package.emo, a hello-world
    main.emo, and .gitignore (T25.3). Strictness holds: an existing
    directory or clashing files refuse; nothing is ever overwritten. The
@@ -1180,7 +1305,17 @@ let version_cmd =
 let cmd =
   Cmd.group
     (Cmd.info "emo" ~version ~doc:"The Emo programming language toolchain.")
-    [ run; repl; check; build; deps; install_cmd; publish_cmd; new_cmd;
-      version_cmd ]
+    [
+      run;
+      repl;
+      check;
+      build;
+      deps;
+      install_cmd;
+      publish_cmd;
+      new_cmd;
+      doctor_cmd;
+      version_cmd;
+    ]
 
 let main () = exit (Cmd.eval' cmd)

@@ -1227,6 +1227,30 @@ let new_tests =
         Alcotest.(check int) "exit" 65 (Emo_cli.scaffold ~path:dir));
   ]
 
+(* ---- doctor: the target-aware environment check (T25.5) ---- *)
+
+let doctor_tests =
+  [
+    tc "doctor reports every target and exits healthy" (fun () ->
+        let buf = Buffer.create 512 in
+        let code = Emo_cli.doctor ~emit:(Buffer.add_string buf) in
+        let text = Buffer.contents buf in
+        Alcotest.(check int) "exit" 0 code;
+        Alcotest.(check bool)
+          "installation shape" true
+          (contains text "installation:");
+        Alcotest.(check bool)
+          "embedded stdlib" true
+          (contains text "stdlib: embedded");
+        List.iter
+          (fun name ->
+            Alcotest.(check bool) ("reports " ^ name) true (contains text name))
+          [ "c:"; "ocaml:"; "typescript:"; "beam:"; "wasm:" ];
+        Alcotest.(check bool)
+          "wasm needs nothing" true
+          (contains text "no external tools"));
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -1243,4 +1267,5 @@ let () =
       ("c_foreign", c_foreign_tests);
       ("publish", publish_tests);
       ("new", new_tests);
+      ("doctor", doctor_tests);
     ]

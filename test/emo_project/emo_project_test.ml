@@ -523,11 +523,10 @@ let install_tests =
             Alcotest.(check bool)
               "fetched line carries the checksum" true
               (contains_substring (List.nth first 1)
-                   "fetched acme/c_tools 1.0.0");
+                 "fetched acme/c_tools 1.0.0");
             Alcotest.(check bool)
               "lock written" true
-              (Sys.file_exists
-                 (Filename.concat dir Emo_pkg.Lockfile.filename));
+              (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename));
             let second =
               Emo_project.install_deps ~manifest ~manifest_dir:dir ~target:"c"
             in
@@ -537,7 +536,7 @@ let install_tests =
             Alcotest.(check bool)
               "second run leaves the lock" true
               (contains_substring (List.nth second 2)
-                   "package.lock is up to date")));
+                 "package.lock is up to date")));
     tc "an unsatisfiable pin fails at resolution" (fun () ->
         let bad =
           String.concat "\n"
@@ -554,7 +553,8 @@ let install_tests =
             ]
         in
         let entry =
-          with_project [ ("package.emo", bad); ("main.emo", app_main) ]
+          with_project
+            [ ("package.emo", bad); ("main.emo", app_main) ]
             "main.emo"
         in
         let dir = Filename.dirname entry in
@@ -573,16 +573,19 @@ let install_tests =
                       (match d.Diagnostic.code with Some c -> c | None -> "?")
                 | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
     tc "an empty manifest reports nothing to install" (fun () ->
-        let bare = {|package {
+        let bare =
+          {|package {
   name = "local/bare"
   version = "0.1.0"
   targets = ["ocaml", "c"]
 
   deps {}
 }
-|} in
+|}
+        in
         let entry =
-          with_project [ ("package.emo", bare); ("main.emo", "println(1)\n") ]
+          with_project
+            [ ("package.emo", bare); ("main.emo", "println(1)\n") ]
             "main.emo"
         in
         let dir = Filename.dirname entry in
@@ -599,7 +602,6 @@ let install_tests =
             | exception Emo_project.Static_errors ds ->
                 Alcotest.fail ("codes: " ^ codes_dump ds)));
   ]
-
 
 let deps_tests =
   [
