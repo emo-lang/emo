@@ -91,9 +91,7 @@ let float_lit (f : float) : string =
   let mantissa =
     if String.contains mantissa '.' then mantissa else mantissa ^ ".0"
   in
-  match exponent with
-  | None -> mantissa
-  | Some e -> mantissa ^ "E" ^ e
+  match exponent with None -> mantissa | Some e -> mantissa ^ "E" ^ e
 
 (* the instance pattern for a class: the tag, the class atom, then one
    wildcard per field (fields live inline in the tuple) *)
@@ -127,8 +125,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Const (L_char c) -> put env (Printf.sprintf "$\\x%02x" (Char.code c))
   | Const (L_string s) -> put env (binary_lit s)
   | Type_ref a -> put env ("'" ^ a ^ "'")
-  | Emo_ir.Global_var _ ->
-      failwith "beam: module-level `var` is not supported"
+  | Emo_ir.Global_var _ -> failwith "beam: module-level `var` is not supported"
   | Var name -> (
       match List.assoc_opt name env.local_map with
       | Some v -> put env v
@@ -279,7 +276,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
                 | None -> (
                     match env.current_class with
                     | Some c -> c
-                    | None -> failwith "beam: field read without a known class"))
+                    | None -> failwith "beam: field read without a known class")
+                )
             | _ -> (
                 match env.current_class with
                 | Some c -> c

@@ -259,39 +259,67 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               output_string oc contents;
               close_out oc
             in
-            let main_c = Filename.concat build_dir "main.c" in
-            write main_c (Emo_codegen.C.emit program);
-            let runtime_c = Filename.concat build_dir "emo_c_runtime.c" in
-            write runtime_c Emo_codegen.C.runtime_c;
-            let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
-            write runtime_h Emo_codegen.C.runtime_h;
-            (* cclib entries pass to cc: bare names become -l flags,
-               anything already flag- or path-shaped passes verbatim. *)
-            let cclib_flags =
-              String.concat " "
-                (List.map
-                   (fun lib ->
-                     if lib <> "" && (lib.[0] = '-' || lib.[0] = '/') then lib
-                     else "-l" ^ lib)
-                   cclibs)
+            let main_c_contents = Emo_codegen.C.emit program in
+            (* Incremental, same scheme as the ocaml arm: the digest of
+               the emitted C, the runtime sources, and the link flags
+               names the cached binary — an unchanged program skips cc. *)
+            let digest =
+              Digest.to_hex
+                (Digest.string
+                   (Printf.sprintf "%s|%s|%s|%s" main_c_contents
+                      Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h
+                      (String.concat "," cclibs)))
             in
-            let cmd =
-              Printf.sprintf
-                "cc -O2 -std=c11 -Wall -Wno-deprecated-declarations -I %s %s \
-                 %s                  %s -o %s"
-                (Filename.quote build_dir) (Filename.quote main_c)
-                (Filename.quote runtime_c) cclib_flags (Filename.quote output)
-            in
-            let exit_code = Sys.command cmd in
-            if exit_code <> 0 then begin
-              prerr_endline
-                (Printf.sprintf "emo build: the C compiler failed (exit %d)"
-                   exit_code);
-              70
+            let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
+            if Sys.file_exists cache_binary then begin
+              ignore
+                (Sys.command
+                   (Printf.sprintf "cp %s %s"
+                      (Filename.quote cache_binary)
+                      (Filename.quote output)));
+              Printf.printf "built %s (cached)\n" output;
+              0
             end
-            else (
-              Printf.printf "built %s\n" output;
-              0)
+            else begin
+              let main_c = Filename.concat build_dir "main.c" in
+              write main_c main_c_contents;
+              let runtime_c = Filename.concat build_dir "emo_c_runtime.c" in
+              write runtime_c Emo_codegen.C.runtime_c;
+              let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
+              write runtime_h Emo_codegen.C.runtime_h;
+              (* cclib entries pass to cc: bare names become -l flags,
+                 anything already flag- or path-shaped passes verbatim. *)
+              let cclib_flags =
+                String.concat " "
+                  (List.map
+                     (fun lib ->
+                       if lib <> "" && (lib.[0] = '-' || lib.[0] = '/') then lib
+                       else "-l" ^ lib)
+                     cclibs)
+              in
+              let cmd =
+                Printf.sprintf
+                  "cc -O2 -std=c11 -Wall -Wno-deprecated-declarations -I %s %s \
+                   %s                  %s -o %s"
+                  (Filename.quote build_dir) (Filename.quote main_c)
+                  (Filename.quote runtime_c) cclib_flags (Filename.quote output)
+              in
+              let exit_code = Sys.command cmd in
+              if exit_code <> 0 then begin
+                prerr_endline
+                  (Printf.sprintf "emo build: the C compiler failed (exit %d)"
+                     exit_code);
+                70
+              end
+              else begin
+                ignore
+                  (Sys.command
+                     (Printf.sprintf "cp %s %s" (Filename.quote output)
+                        (Filename.quote cache_binary)));
+                Printf.printf "built %s\n" output;
+                0
+              end
+            end
         | "ocaml" ->
             let source = Emo_codegen.emit ~specialize program in
             (* Incremental: the digest of the emitted source plus the
@@ -484,9 +512,9 @@ let build =
   in
   let target =
     Arg.(
-      value & opt string "ocaml"
+      value & opt string "c"
       & info [ "target" ] ~docv:"TARGET"
-          ~doc:"The compilation target: ocaml, c, typescript, wasm, or beam.")
+          ~doc:"The compilation target: c, ocaml, typescript, wasm, or beam.")
   in
   let build entry output no_specialize cclibs target =
     let out =
@@ -668,7 +696,7 @@ let deps_resolve ~(name : string option) : int =
           exit 65)
     | None -> ());
     let entries =
-      Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"ocaml"
+      Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"c"
     in
     Emo_pkg.Lockfile.write
       ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
@@ -825,7 +853,7 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
                    {|package {
   name = "internal/publish"
   version = "0.1.0"
-  targets = ["ocaml"]
+  targets = ["ocaml", "c"]
 
   deps {
     http = "%s"

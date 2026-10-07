@@ -411,22 +411,22 @@ let lex ~file ~source =
                     error "E1006" (span_from l c o)
                       "Int64 literals need no suffix"
                       ~hint:"write the digits bare; the default is Int64"
-                | Some 'B' ->
+                | Some 'B' -> (
                     let digits = String.sub source o (!offset - o) in
-                    (match int_of_string_opt digits with
+                    match int_of_string_opt digits with
                     | Some n when n >= 0 && n <= 255 ->
                         bump ();
                         emit (Token.Byte n) l c o
                     | _ ->
                         error "E1006" (span_from l c o)
                           "byte literal out of range (0-255)")
-                | _ ->
+                | _ -> (
                     let digits = String.sub source o (!offset - o) in
                     match Int64.of_string_opt digits with
                     | Some n -> emit (Token.Int64 n) l c o
                     | None ->
                         error "E1006" (span_from l c o)
-                          "integer literal out of range for Int64"))
+                          "integer literal out of range for Int64")))
         | '\'' ->
             let qline, qcol, qoff = (l, c, o) in
             let quoted_span =

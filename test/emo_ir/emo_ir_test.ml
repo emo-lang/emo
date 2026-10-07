@@ -39,7 +39,8 @@ let find_func program name =
 
 (* A Block parameter is Unknown — the dynamic region keeps the function
    out of Stage B's specialization, exactly the gradual story. *)
-let higher_order_source = {|
+let higher_order_source =
+  {|
 def call_it(f Block, n Int64) Int64 {
   return n
 }
@@ -221,8 +222,10 @@ def pick() Color {
         Alcotest.(check bool) "make_enum" true (is_make_enum f.Emo_ir.fbody);
         ignore program);
     tc "the entry's top-level statements lower to pinit" (fun () ->
-        let program = lower_program [ ([], {|println(1)
-println(2)|}) ] ~entry:[] in
+        let program =
+          lower_program [ ([], {|println(1)
+println(2)|}) ] ~entry:[]
+        in
         Alcotest.(check int) "pinit length" 2 (List.length program.Emo_ir.pinit));
   ]
 

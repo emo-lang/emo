@@ -238,7 +238,8 @@ let global_env () =
     { bound = BuiltinFn "file_read"; mutable_ = false };
   Hashtbl.replace env.frame "Int64"
     { bound = TypeValue "Int64"; mutable_ = false };
-  Hashtbl.replace env.frame "Byte" { bound = TypeValue "Byte"; mutable_ = false };
+  Hashtbl.replace env.frame "Byte"
+    { bound = TypeValue "Byte"; mutable_ = false };
   Hashtbl.replace env.frame "Float64"
     { bound = TypeValue "Float64"; mutable_ = false };
   Hashtbl.replace env.frame "file_write"
@@ -907,8 +908,12 @@ and eval_binary env span op left_expr right_expr =
   let check_bool v =
     match v with Bool b -> b | v -> type_mismatch "two Bools"
   in
-  let is_pair64 x y = match (x, y) with Int64 _, Int64 _ -> true | _ -> false in
-  let is_pair_byte x y = match (x, y) with Byte _, Byte _ -> true | _ -> false in
+  let is_pair64 x y =
+    match (x, y) with Int64 _, Int64 _ -> true | _ -> false
+  in
+  let is_pair_byte x y =
+    match (x, y) with Byte _, Byte _ -> true | _ -> false
+  in
   let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
   let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
   (* Fixed-width arithmetic wraps in two's complement; Byte, being
@@ -1320,8 +1325,9 @@ and eval_method env span recv mname arg_exprs =
       | Bytes b, "set" -> (
           match eval_args () with
           | [ Int64 i; Int64 v ]
-            when i >= 0L && i < Int64.of_int (Bytes.length b)
-               && v >= 0L && v <= 255L ->
+            when i >= 0L
+                 && i < Int64.of_int (Bytes.length b)
+                 && v >= 0L && v <= 255L ->
               Bytes.set b (Int64.to_int i) (Char.chr (Int64.to_int v));
               Int64 v
           | [ Int64 i; Int64 v ]
@@ -1382,8 +1388,7 @@ and eval_method env span recv mname arg_exprs =
                     <= Int64.of_int (Bytes.length b) ->
               let i = Int64.to_int i in
               let v =
-                Int64.to_int v
-                land if width = 2 then 0xFFFF else 0xFFFFFFFF
+                Int64.to_int v land if width = 2 then 0xFFFF else 0xFFFFFFFF
               in
               for k = 0 to width - 1 do
                 Bytes.set b (i + k) (Char.chr ((v lsr (8 * k)) land 0xFF))
@@ -1415,8 +1420,7 @@ and eval_method env span recv mname arg_exprs =
               let acc = ref 0L in
               for k = 7 downto 0 do
                 acc :=
-                  Int64.logor
-                    (Int64.shift_left !acc 8)
+                  Int64.logor (Int64.shift_left !acc 8)
                     (Int64.of_int (Char.code (Bytes.get b (i + k))))
               done;
               Int64 !acc
@@ -1475,7 +1479,8 @@ and eval_method env span recv mname arg_exprs =
       | TcpConn c, "read_exactly" -> (
           match eval_args () with
           | [ Int64 n ] ->
-              String (Effect.perform (Net_read_exactly (c, Int64.to_int n, span)))
+              String
+                (Effect.perform (Net_read_exactly (c, Int64.to_int n, span)))
           | [ v ] ->
               error span "E3001"
                 (Printf.sprintf "`read_exactly` expects an Int64, got %s"
@@ -1593,10 +1598,12 @@ and eval_method env span recv mname arg_exprs =
           | [ Int64 start; Int64 len ] ->
               error span "E3004"
                 (Printf.sprintf
-                   "substring (%Ld, %Ld) is out of bounds for a length-%d String"
+                   "substring (%Ld, %Ld) is out of bounds for a length-%d \
+                    String"
                    start len (String.length s))
           | _ ->
-              error span "E3007" "`substring` expects (start Int64, length Int64)")
+              error span "E3007"
+                "`substring` expects (start Int64, length Int64)")
       | String s, "split" -> (
           match eval_args () with
           | [ String sep ] when sep <> "" ->
@@ -1770,8 +1777,8 @@ and apply_builtin span name args =
   | "net_connect", args when List.length args <> 3 ->
       error span "E3007"
         (Printf.sprintf
-           "`net_connect` expects (host String, port Int64, timeout Float), got \
-            %d arguments"
+           "`net_connect` expects (host String, port Int64, timeout Float), \
+            got %d arguments"
            (List.length args))
   | "net_connect", [ String host; Int64 port; Float timeout ] ->
       let addrs = Effect.perform (Net_resolve (host, span)) in
@@ -1865,7 +1872,8 @@ and apply_builtin span name args =
       let addrs = Effect.perform (Net_resolve (host, span)) in
       TcpConn
         (Effect.perform
-           (Net_tls_connect (host, Int64.to_int port, timeout, false, addrs, span)))
+           (Net_tls_connect
+              (host, Int64.to_int port, timeout, false, addrs, span)))
   | "net_tls_connect", _ ->
       error span "E3001"
         "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
@@ -1892,7 +1900,8 @@ and apply_builtin span name args =
            (List.length args))
   | "net_listen_tls", [ String host; Int64 port; String cert; String key ] ->
       TcpListener
-        (Effect.perform (Net_tls_listen (host, Int64.to_int port, cert, key, span)))
+        (Effect.perform
+           (Net_tls_listen (host, Int64.to_int port, cert, key, span)))
   | "net_listen_tls", _ ->
       error span "E3001"
         "`net_listen_tls` expects (host String, port Int64, cert_path \
@@ -2177,7 +2186,8 @@ and eval_expr env e =
       | Bool false -> eval_expr env else_expr
       | v ->
           error span "E3001"
-            (Printf.sprintf "the if expression's condition must be a Bool, got %s"
+            (Printf.sprintf
+               "the if expression's condition must be a Bool, got %s"
                (type_name v)))
   | Ast.Call (callee, args) -> eval_call env span callee args
   | Ast.Do operand -> (

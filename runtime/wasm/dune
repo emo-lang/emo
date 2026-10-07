@@ -25,9 +25,7 @@
 
 (rule
  (alias runtest)
- (deps
-  smoke.actual
-  expected.txt)
+ (deps smoke.actual expected.txt)
  (action
   (diff expected.txt smoke.actual)))
 
@@ -50,9 +48,7 @@
 
 (rule
  (alias runtest)
- (deps
-  leb-fixture.actual
-  leb-fixture.expected.txt)
+ (deps leb-fixture.actual leb-fixture.expected.txt)
  (action
   (diff leb-fixture.expected.txt leb-fixture.actual)))
 
@@ -76,9 +72,7 @@
 
 (rule
  (alias runtest)
- (deps
-  type-fixture.actual
-  type-fixture.expected.txt)
+ (deps type-fixture.actual type-fixture.expected.txt)
  (action
   (diff type-fixture.expected.txt type-fixture.actual)))
 
@@ -103,9 +97,7 @@
 
 (rule
  (alias wasm_spec)
- (deps
-  spec.actual
-  spec.expected.txt)
+ (deps spec.actual spec.expected.txt)
  (action
   (diff spec.expected.txt spec.actual)))
 
@@ -140,9 +132,7 @@
 
 (rule
  (alias runtest)
- (deps
-  runs-smoke.actual
-  runs.expected.txt)
+ (deps runs-smoke.actual runs.expected.txt)
  (action
   (diff runs.expected.txt runs-smoke.actual)))
 
@@ -167,14 +157,11 @@
   testdata/runs.all.txt
   package.emo)
  (action
-  (run %{emo} build runs.emo -o %{target})))
+  (run %{emo} build runs.emo --target ocaml -o %{target})))
 
 (rule
  (alias wasm_runs)
- (deps
-  runs_bin
-  testdata/runs.all.txt
-  package.emo)
+ (deps runs_bin testdata/runs.all.txt package.emo)
  (action
   (with-stdout-to
    runs.actual
@@ -182,9 +169,7 @@
 
 (rule
  (alias wasm_runs)
- (deps
-  runs.actual
-  runs.all.expected.txt)
+ (deps runs.actual runs.all.expected.txt)
  (action
   (diff runs.all.expected.txt runs.actual)))
 
@@ -215,9 +200,7 @@
 
 (rule
  (alias runtest)
- (deps
-  instance-fixture.actual
-  instance-fixture.expected.txt)
+ (deps instance-fixture.actual instance-fixture.expected.txt)
  (action
   (diff instance-fixture.expected.txt instance-fixture.actual)))
 
@@ -237,9 +220,7 @@
 
 (rule
  (alias runtest)
- (deps
-  value-fixture.actual
-  value-fixture.expected.txt)
+ (deps value-fixture.actual value-fixture.expected.txt)
  (action
   (diff value-fixture.expected.txt value-fixture.actual)))
 
@@ -259,9 +240,7 @@
 
 (rule
  (alias runtest)
- (deps
-  int-fixture.actual
-  int-fixture.expected.txt)
+ (deps int-fixture.actual int-fixture.expected.txt)
  (action
   (diff int-fixture.expected.txt int-fixture.actual)))
 
@@ -281,9 +260,7 @@
 
 (rule
  (alias runtest)
- (deps
-  float-fixture.actual
-  float-fixture.expected.txt)
+ (deps float-fixture.actual float-fixture.expected.txt)
  (action
   (diff float-fixture.expected.txt float-fixture.actual)))
 
@@ -303,9 +280,7 @@
 
 (rule
  (alias runtest)
- (deps
-  float-convert-fixture.actual
-  float-convert-fixture.expected.txt)
+ (deps float-convert-fixture.actual float-convert-fixture.expected.txt)
  (action
   (diff float-convert-fixture.expected.txt float-convert-fixture.actual)))
 
@@ -326,9 +301,7 @@
 
 (rule
  (alias runtest)
- (deps
-  store-fixture.actual
-  store-fixture.expected.txt)
+ (deps store-fixture.actual store-fixture.expected.txt)
  (action
   (diff store-fixture.expected.txt store-fixture.actual)))
 
@@ -359,9 +332,7 @@
 
 (rule
  (alias runtest)
- (deps
-  fac-fixture.actual
-  fac-fixture.expected.txt)
+ (deps fac-fixture.actual fac-fixture.expected.txt)
  (action
   (diff fac-fixture.expected.txt fac-fixture.actual)))
 
@@ -392,9 +363,7 @@
 
 (rule
  (alias runtest)
- (deps
-  link-fixture.actual
-  link-fixture.expected.txt)
+ (deps link-fixture.actual link-fixture.expected.txt)
  (action
   (diff link-fixture.expected.txt link-fixture.actual)))
 
@@ -425,8 +394,6 @@
 
 (rule
  (alias runtest)
- (deps
-  host-fixture.actual
-  host-fixture.expected.txt)
+ (deps host-fixture.actual host-fixture.expected.txt)
  (action
   (diff host-fixture.expected.txt host-fixture.actual)))

@@ -59,7 +59,8 @@ let box_char c = Emo_eval.Char c
 
 let bytes_new (v : Emo_eval.value) : Emo_eval.value =
   match v with
-  | Emo_eval.Int64 n when n >= 0L -> Emo_eval.Bytes (Bytes.make (Int64.to_int n) '\000')
+  | Emo_eval.Int64 n when n >= 0L ->
+      Emo_eval.Bytes (Bytes.make (Int64.to_int n) '\000')
   | Emo_eval.Int64 n ->
       failwith
         (Printf.sprintf "`Bytes.new` needs a non-negative length, got %Ld" n)
@@ -91,7 +92,7 @@ let sub a b =
 let mul a b =
   match (a, b) with
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.mul x y)
-  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x * y) land 255)
+  | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x * y land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x *. y)
   | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x *. y)
   | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x *. Int64.to_float y)
@@ -151,8 +152,7 @@ let shl a b =
       else if c >= 64L then Emo_eval.Int64 0L
       else Emo_eval.Int64 (Int64.shift_left x (Int64.to_int c))
   | Emo_eval.Byte x, Emo_eval.Byte c ->
-      if c >= 8 then Emo_eval.Byte 0
-      else Emo_eval.Byte ((x lsl c) land 255)
+      if c >= 8 then Emo_eval.Byte 0 else Emo_eval.Byte ((x lsl c) land 255)
   | _ -> failwith (type_error a "two Int64s or two Bytes")
 
 let shr a b =
@@ -187,7 +187,7 @@ let shl_i64 (x : int64) (count : int64) : int64 =
 let shr_i64 (x : int64) (count : int64) : int64 =
   let c = Int64.to_int count in
   if c < 0 then failwith "shift count must be non-negative"
-  else if c >= 64 then (if x < 0L then -1L else 0L)
+  else if c >= 64 then if x < 0L then -1L else 0L
   else Int64.shift_right x c
 
 let shr_int (x : int) (count : int) : int =
@@ -296,8 +296,7 @@ let box_new v = Emo_eval.Box (ref v)
 let index collection i =
   match (collection, i) with
   | Emo_eval.Array xs, Emo_eval.Int64 n ->
-      if n >= 0L && n < Int64.of_int (Array.length xs) then
-        xs.(Int64.to_int n)
+      if n >= 0L && n < Int64.of_int (Array.length xs) then xs.(Int64.to_int n)
       else failwith (Printf.sprintf "index %Ld is out of bounds" n)
   | Emo_eval.Tuple xs, Emo_eval.Int64 n ->
       if n >= 0L && n < Int64.of_int (List.length xs) then
@@ -331,8 +330,8 @@ let method_call self name args =
   | Emo_eval.Bytes b, "get" -> (
       one_expected ();
       match args with
-      | [ Emo_eval.Int64 i ]
-        when i >= 0L && i < Int64.of_int (Bytes.length b) ->
+      | [ Emo_eval.Int64 i ] when i >= 0L && i < Int64.of_int (Bytes.length b)
+        ->
           Emo_eval.Int64
             (Int64.of_int (Char.code (Bytes.get b (Int64.to_int i))))
       | [ Emo_eval.Int64 i ] ->
@@ -396,8 +395,8 @@ let method_call self name args =
       | [ Emo_eval.Int64 i; Emo_eval.Int64 _ ] ->
           failwith
             (Printf.sprintf
-               "index %Ld is out of bounds for a %s write on a length-%d Bytes" i
-               mname (Bytes.length b))
+               "index %Ld is out of bounds for a %s write on a length-%d Bytes"
+               i mname (Bytes.length b))
       | _ -> failwith "`set_u16_le`/`set_u32_le` expects (i Int64, v Int64)")
   | Emo_eval.Bytes b, "get_u64_le" -> (
       one_expected ();
@@ -408,16 +407,15 @@ let method_call self name args =
           let acc = ref 0L in
           for k = 7 downto 0 do
             acc :=
-              Int64.logor
-                (Int64.shift_left !acc 8)
+              Int64.logor (Int64.shift_left !acc 8)
                 (Int64.of_int (Char.code (Bytes.get b (i + k))))
           done;
           Emo_eval.Int64 !acc
       | [ Emo_eval.Int64 i ] ->
           failwith
             (Printf.sprintf
-               "index %Ld is out of bounds for a get_u64_le read on a length-%d \
-                Bytes"
+               "index %Ld is out of bounds for a get_u64_le read on a \
+                length-%d Bytes"
                i (Bytes.length b))
       | [ v ] -> failwith (type_error v "Int64")
       | _ -> failwith "`get_u64_le` expects 1 argument")
@@ -437,8 +435,8 @@ let method_call self name args =
       | [ Emo_eval.Int64 i; Emo_eval.Int64 _ ] ->
           failwith
             (Printf.sprintf
-               "index %Ld is out of bounds for a set_u64_le write on a length-%d \
-                Bytes"
+               "index %Ld is out of bounds for a set_u64_le write on a \
+                length-%d Bytes"
                i (Bytes.length b))
       | [ _; v ] -> failwith (type_error v "Int64")
       | _ -> failwith "`set_u64_le` expects (i Int64, v Int64)")
@@ -448,10 +446,12 @@ let method_call self name args =
   | Emo_eval.TypeValue "Byte", "from_int64" -> (
       one_expected ();
       match List.hd args with
-      | Emo_eval.Int64 n when n >= 0L && n <= 255L -> Emo_eval.Byte (Int64.to_int n)
+      | Emo_eval.Int64 n when n >= 0L && n <= 255L ->
+          Emo_eval.Byte (Int64.to_int n)
       | Emo_eval.Int64 n ->
           failwith
-            (Printf.sprintf "`Byte.from_int64` needs a value in 0-255, got %Ld" n)
+            (Printf.sprintf "`Byte.from_int64` needs a value in 0-255, got %Ld"
+               n)
       | v -> failwith (type_error v "Int64"))
   | Emo_eval.TypeValue "Float64", "from_bits" -> (
       one_expected ();
@@ -510,7 +510,8 @@ let method_call self name args =
         when start >= 0L && len >= 0L
              && Int64.add start len <= Int64.of_int (String.length s) ->
           Emo_eval.String (String.sub s (Int64.to_int start) (Int64.to_int len))
-      | _ -> failwith "`substring` expects (start Int64, length Int64) in bounds")
+      | _ ->
+          failwith "`substring` expects (start Int64, length Int64) in bounds")
   | Emo_eval.String s, "split" -> (
       one_expected ();
       match List.hd args with
@@ -558,7 +559,7 @@ let method_call self name args =
       match List.hd args with
       | Emo_eval.String prefix -> Emo_eval.Bool (String.starts_with ~prefix s)
       | _ -> failwith "`starts_with` expects a String")
-  | Emo_eval.String s, "to_int64" ->
+  | Emo_eval.String s, "to_int64" -> (
       none_expected ();
       let body =
         if String.length s > 0 && s.[0] = '-' then
@@ -567,7 +568,7 @@ let method_call self name args =
       in
       if body = "" || not (String.for_all (fun c -> c >= '0' && c <= '9') body)
       then failwith (Printf.sprintf "cannot parse `%s` as an Int64" s)
-      else (
+      else
         match Int64.of_string_opt s with
         | Some n -> Emo_eval.Int64 n
         | None -> failwith (Printf.sprintf "cannot parse `%s` as an Int64" s))

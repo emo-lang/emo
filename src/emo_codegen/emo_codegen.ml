@@ -360,8 +360,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
         Printf.sprintf "(- %s)" (emit_expr env x)
       else Printf.sprintf "(Emo_runtime.negf (%s))" (emit_expr env x)
   | Emo_ir.Cond { c; t; e = else_ } ->
-      Printf.sprintf "(if %s then (%s) else (%s))"
-        (unbox env c "Bool")
+      Printf.sprintf "(if %s then (%s) else (%s))" (unbox env c "Bool")
         (emit_expr env t) (emit_expr env else_)
   | Emo_ir.Binary (op, l, r) ->
       let lname = emit_expr env l in
@@ -480,16 +479,16 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Cond { c; t; e = else_ } ->
       (* Specialized conditions are raw OCaml bools (the checker pinned
          the condition to Bool). *)
-      Printf.sprintf "(if %s then (%s) else (%s))"
-        (emit_native_expr env c)
-        (emit_native_expr env t) (emit_native_expr env else_)
+      Printf.sprintf "(if %s then (%s) else (%s))" (emit_native_expr env c)
+        (emit_native_expr env t)
+        (emit_native_expr env else_)
   | Emo_ir.Const (L_int n) -> Printf.sprintf "%LdL" n
   | Emo_ir.Const (L_float f) -> float_lit f
   | Emo_ir.Const (L_bool b) -> if b then "true" else "false"
   | Emo_ir.Const (L_char c) -> Printf.sprintf "%C" c
   | Emo_ir.Const (L_string s) -> Printf.sprintf "%S" s
   | Emo_ir.Var name -> local name
-  | Emo_ir.Binary (op, l, r) ->
+  | Emo_ir.Binary (op, l, r) -> (
       (* Comparisons and `&&`/`||` are polymorphic; arithmetic and bit
          operations are Int64 unless an operand is Float64. *)
       let le = "(" ^ emit_native_expr env l ^ ")" in
@@ -499,7 +498,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
         || l.Emo_ir.ety = Emo_check.Float64
         || r.Emo_ir.ety = Emo_check.Float64
       in
-      (match op with
+      match op with
       | Ast.Lt -> Printf.sprintf "(%s < %s)" le re
       | Ast.Le -> Printf.sprintf "(%s <= %s)" le re
       | Ast.Gt -> Printf.sprintf "(%s > %s)" le re
@@ -998,15 +997,13 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
         let bridge_in (p, t) =
           let v = local p in
           match t with
-          | Emo_check.Int64 ->
-              Printf.sprintf "(Emo_runtime.unbox_int64 %s)" v
+          | Emo_check.Int64 -> Printf.sprintf "(Emo_runtime.unbox_int64 %s)" v
           | _ ->
               Printf.sprintf "(Emo_runtime.unbox_%s %s)"
-                  (String.lowercase_ascii (Emo_check.to_string t)) v
+                (String.lowercase_ascii (Emo_check.to_string t))
+                v
         in
-        let unboxes =
-          String.concat " " (List.map bridge_in f.Emo_ir.fparams)
-        in
+        let unboxes = String.concat " " (List.map bridge_in f.Emo_ir.fparams) in
         let call = Printf.sprintf "%s %s" (sp_name f.Emo_ir.fname) unboxes in
         let box_out =
           match f.Emo_ir.fresult with
@@ -1014,8 +1011,8 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
               Printf.sprintf "(Emo_runtime.box_int64 (%s))" call
           | _ ->
               Printf.sprintf "(Emo_runtime.box_%s (%s))"
-                  (String.lowercase_ascii (Emo_check.to_string f.Emo_ir.fresult))
-                  call
+                (String.lowercase_ascii (Emo_check.to_string f.Emo_ir.fresult))
+                call
         in
         put env
           "let %s (args : Emo_eval.value list) : Emo_eval.value =\n\
@@ -1207,6 +1204,6 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
              (fun (g, init) ->
                Printf.sprintf "%s := %s;\n" g (emit_expr env init))
              program.Emo_ir.pglobals)
-        ^ "\n"
-        ^ emit_stmts env program.Emo_ir.pinit ~tail:false));
+       ^ "\n"
+       ^ emit_stmts env program.Emo_ir.pinit ~tail:false));
   Buffer.contents env.buf

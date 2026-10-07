@@ -460,19 +460,23 @@ let registry_dir =
   dir
 
 let app_manifest =
+  (* The run path resolves dependencies for the default target (`c`,
+     the T25.1 flip), so the mechanism fixture deps a package that
+     declares it; the gate-refusal tests below use the ocaml-only
+     json_tools. *)
   {|package {
   name = "local/app"
   version = "0.1.0"
   targets = ["ocaml"]
 
   deps {
-    acme/json_tools = "2.3.1"
+    acme/c_tools = "1.0.0"
   }
 }
 |}
 
-let app_main = {|require "acme/json_tools"
-println(json_tools.parse("hello"))
+let app_main = {|require "acme/c_tools"
+println(c_tools.halve(84))
 |}
 
 let with_registry f =
@@ -511,7 +515,7 @@ let deps_tests =
                   ignore
                     (Emo_project.run_entry ~entry_file:entry ~check:true ()))
             in
-            Alcotest.(check string) "output" "hello\n" output;
+            Alcotest.(check string) "output" "42\n" output;
             (* A run resolves in memory when no lockfile exists; writing the
                lockfile is `emo deps resolve`'s explicit job. *)
             Alcotest.(check bool)
@@ -534,9 +538,9 @@ let deps_tests =
             (match entries with
             | [ e ] ->
                 Alcotest.(check string)
-                  "dep" "acme/json_tools" e.Emo_pkg.Lockfile.dep;
+                  "dep" "acme/c_tools" e.Emo_pkg.Lockfile.dep;
                 Alcotest.(check string)
-                  "version" "2.3.1"
+                  "version" "1.0.0"
                   (Emo_pkg.Version.to_string e.Emo_pkg.Lockfile.version);
                 Alcotest.(check bool)
                   "checksum present" true
@@ -550,14 +554,14 @@ let deps_tests =
                   ignore
                     (Emo_project.run_entry ~entry_file:entry ~check:true ()))
             in
-            Alcotest.(check string) "output" "hello\n" output;
+            Alcotest.(check string) "output" "42\n" output;
             (* A lockfile drifting from the manifest is an error prompting
                explicit regeneration — never a silent re-resolve. *)
             Emo_pkg.Lockfile.write
               ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
               [
                 {
-                  Emo_pkg.Lockfile.dep = "acme/json_tools";
+                  Emo_pkg.Lockfile.dep = "acme/c_tools";
                   version =
                     (match Emo_pkg.Version.parse "9.9.9" with
                     | Ok v -> v
@@ -873,7 +877,9 @@ let emo_exe_path () =
   | None -> Alcotest.fail "EMO_EXE is not set"
 
 (* Builds [source] with `emo build` and returns (build output, exit
-   status, binary path). *)
+   status, binary path). Pinned to the ocaml target — the tests here
+   cover that backend's wrapper FFI and goldens; the c backend has its
+   own CI group. *)
 let build_binary ?(cclib = []) source name =
   let emo_exe = emo_exe_path () in
   let entry = with_project [ ("main.emo", source) ] "main.emo" in
@@ -884,8 +890,9 @@ let build_binary ?(cclib = []) source name =
   let out = Buffer.create 256 in
   let ic =
     Unix.open_process_in
-      (Printf.sprintf "exec 2>&1; %s build %s -o %s%s" (Filename.quote emo_exe)
-         (Filename.quote entry) (Filename.quote bin) cclib_args)
+      (Printf.sprintf "exec 2>&1; %s build %s --target ocaml -o %s%s"
+         (Filename.quote emo_exe) (Filename.quote entry) (Filename.quote bin)
+         cclib_args)
   in
   (try
      while true do
@@ -1009,8 +1016,14 @@ println(resp.status)
           Buffer.contents out
         in
         (* The first build compiles; the second hits the content-hash
-           cache and skips the toolchain. *)
-        ignore (build ());
+           cache and skips the toolchain. The first build's output is
+           asserted, so a failed compile surfaces here instead of as a
+           confusing cache miss below. *)
+        let first = build () in
+        Alcotest.(check bool)
+          "first build compiles" true
+          (contains_substring first "built"
+          && not (contains_substring first "(cached)"));
         let second = build () in
         Alcotest.(check bool)
           "second build is cached" true
@@ -1136,7 +1149,7 @@ let build_example root entry name =
   let out = Buffer.create 256 in
   let ic =
     Unix.open_process_in
-      (Printf.sprintf "exec 2>&1; cd %s && %s build %s -o %s"
+      (Printf.sprintf "exec 2>&1; cd %s && %s build %s --target ocaml -o %s"
          (Filename.quote root) (Filename.quote emo_exe) (Filename.quote entry)
          (Filename.quote bin))
   in

@@ -698,7 +698,7 @@ let manifest_here () : string option =
 let check_entry ~entry_file : Emo_support.Diagnostic.t list =
   let p, prepared = prepare ~entry_file in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"ocaml" p)
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p)
     prepared;
   let manifest = Option.map fst prepared in
   let items = parse_cached p (entry_path entry_file) in
@@ -719,7 +719,7 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
     ?(globals : (string * Emo_eval.value) list = []) () : project =
   let p, prepared = prepare ~entry_file in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"ocaml" p)
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p)
     prepared;
   let manifest = Option.map fst prepared in
   install_hooks p;

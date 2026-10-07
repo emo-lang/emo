@@ -301,8 +301,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Struct_new t_vchar)
   | Const (L_string s) -> string_const env s
   | Type_ref name -> string_const env name
-  | Emo_ir.Global_var _ ->
-      failwith "wasm: module-level `var` is not supported"
+  | Emo_ir.Global_var _ -> failwith "wasm: module-level `var` is not supported"
   | Var name -> (
       match List.assoc_opt name env.binders with
       | Some instrs -> es env instrs
@@ -380,7 +379,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       let rcode = expr_block env r in
       e env (W.If (W.Result W.I32, [ W.I32_const 1 ], truthy rcode));
       e env (W.Struct_new t_vbool)
-  | Binary (op, l, r) ->
+  | Binary (op, l, r) -> (
       expr env l;
       expr env r;
       let fn =
@@ -406,7 +405,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Call (rt fn));
       (* A Byte stays inside 0-255, so only the operations that can
          leave the range wrap back into it. *)
-      if x.Emo_ir.ety = Emo_check.Byte then (
+      if x.Emo_ir.ety = Emo_check.Byte then
         match op with
         | Ast.Add | Ast.Sub | Ast.Mul | Ast.Shl -> mask_byte env
         | _ -> ())
@@ -779,8 +778,7 @@ and method_call env self_ name args =
         | Emo_check.ClassType c -> (
             match
               List.find_opt
-                (fun (cl : Emo_ir.class_) ->
-                  String.equal cl.Emo_ir.cdisplay c)
+                (fun (cl : Emo_ir.class_) -> String.equal cl.Emo_ir.cdisplay c)
                 env.classes
             with
             | Some cl -> Some cl.Emo_ir.cname

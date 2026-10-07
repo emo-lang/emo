@@ -265,11 +265,11 @@ socket 面是标准库的 `net` 包；HTTP 在 `http` 包：
 - **连接。** `read_line()`、`read_exactly(n)`、`read_all()`、`write(data)`、`close()`——优雅关闭先投递待写数据。`set_timeout(seconds)` 约束其后的操作（默认无超时；`0.0` 无限等待）。监听者服务 `accept()` 并报告 `port()`；数据报 socket `send_to(host, port, data)` 与 `recv_from()`，并报告 `port()`。
 - **HTTP。** `http.get(url)`、`http.post(url, body)`、`http.put(url, body)`、`http.delete(url)` 与通用的 `http.request(method, url, headers, body, timeout)` 返回携带 `status`、`headers`、`body` 的 `HttpResponse`。重定向从不自动跟随：3xx 是和其他一样的响应，跟随它是调用者的显式动作。服务器侧，`http.serve(listener) -> (conn TcpConn) { ... }` 是每连接一进程的助手，`http.serve_requests(listener) -> (req HttpRequest) { ... }` 解析每个请求并写回处理者的 `HttpResponse`——处理者是普通的 Emo 函数。完整 API 文档见 [docs/zh-CN/stdlib/http.md](docs/zh-CN/stdlib/http.md)。
 
-分层是常规的：socket（TCP/UDP/Unix 域，加 TLS）住在 `net` 包，HTTP（客户端与服务器）住在建立于其上的 `http` 包。TLS 在原生后端是 OpenSSL 绑定。
+分层是常规的：socket（TCP/UDP/Unix 域，加 TLS）住在 `net` 包，HTTP（客户端与服务器）住在建立于其上的 `http` 包。TLS 在 `ocaml` 目标上是 OpenSSL 绑定。
 
 ## 原生构建
 
-`emo build` 把程序编译为独立的原生二进制——一条命令、一个可执行文件，应用无需单独的安装步骤：
+`emo build` 把程序编译为独立的原生二进制——一条命令、一个可执行文件，应用无需单独的安装步骤。默认 target 是 `c`：发射的 C 由系统 `cc` 编译，构建不需要 OCaml 工具链；`--target ocaml` 发射 OCaml，走构建 Emo 自身的那个后端：
 
 ```console
 $ emo build main.emo -o myapp
@@ -280,14 +280,14 @@ built myapp
 - **编译产物以解释器为标准。** 每个示例编译为二进制后，其输出与 `emo run` 逐字节一致——在 CI 中断言，而非假设。
 - **类型反哺性能。** 类型完全已知的函数编译为特化的原生代码——去箱数字、直接调用——检查器无法钉住的区域保持动态语义。`benchmarks/` 记录数字（同一全注解程序，特化后明显快于 `--no-specialize`）。
 - **构建是增量的。** 构建按内容哈希缓存：未变化的程序（与运行时）重建时不调用工具链，构建报告 `(cached)`。
-- **C 互操作是一条 `foreign def`。** 声明给出 C 符号名，通过生成的 C 包装封送：
+- **C 互操作是一条 `foreign def`。** 声明给出 C 符号名——`c` 目标经 C ABI 直调；`ocaml` 目标通过生成的 C 包装封送：
 
   ```emo
   foreign def sqrt(x Float64) Float64 = "sqrt"
   ```
 
-  `Float64`、`String` 与 `Bool` 现在可跨界；其他类型被检查器拒绝。用 `--cclib` 链接额外的 C 库（`emo build main.emo --cclib m`）。外部定义只在编译程序中运行——`emo run` 拒绝它们。无法兑现 `foreign def` 的目标会在检查期拒绝它：今天只有 native 后端能兑现，而 `wasm`、`typescript`、`beam` 与 freestanding 的 `riscv64` 都会拒绝。
-- **构建需要 OCaml 工具链**——与构建 Emo 本身相同的那个；没有第二个编译器要装。
+  `Float64`、`String` 与 `Bool` 现在可跨界；其他类型被检查器拒绝。用 `--cclib` 链接额外的 C 库（`emo build main.emo --cclib m`）。外部定义只在编译程序中运行——`emo run` 拒绝它们。无法兑现 `foreign def` 的目标会在检查期拒绝它：`c` 与 `ocaml` 能兑现，而 `wasm`、`typescript`、`beam` 与 freestanding 的 `riscv64` 都会拒绝。
+- **默认构建只需要一个 C 编译器。** `c` 目标调用系统 `cc`；`--target ocaml` 需要 OCaml 工具链——与构建 Emo 本身相同的那个。
 
 ## 配置
 
