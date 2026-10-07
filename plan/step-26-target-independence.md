@@ -94,7 +94,7 @@ works from the release layout.
       arithmetic/comparison dispatch, and the case/error paths the
       inventory names, in the standalone runtime. Each piece covered
       by a fixture compiled against the runtime alone.
-- [ ] **T26.4** — The scheduler and IO: the effects-based scheduler,
+- [x] **T26.4** — The scheduler and IO: the effects-based scheduler,
       file IO, and the networking surface, per the dependency policy
       above. Fixtures: a process program and an HTTP roundtrip
       compiled against the standalone runtime alone.
@@ -185,9 +185,15 @@ class definitions) drop out of the ADT — compiled functions are always
 - ~~The runtime-independence principle~~ — settled before T26.1
   (CHECK.md): the host contributes only the emitter; runtimes live in
   the target's language as generated data.
-- ~~The ocaml runtime's dependency policy~~ — settled before T26.4:
-  zero-dep core; `eio_main`/`ssl` as target-ecosystem opam
-  dependencies, refused with a clear message when absent.
-- Whether the standalone ocaml runtime later drops eio for a
-  hand-rolled poll loop — open, driven by the same pressure that may
-  one day drop the host's eio dependency; not this step's scope.
+- ~~The ocaml runtime's dependency policy~~ — settled at the T26.4
+  port (CHECK.md): the core stands on the OCaml standard library plus
+  `unix`, which ships with the compiler; `ssl` is the one opam-package
+  dependency, declared by the build invocation and refused with a
+  clear message when absent. eio drops out entirely — the standalone
+  scheduler is the deterministic poll loop the compiled path already
+  ran on, so the open item below closes with it.
+- ~~Whether the standalone ocaml runtime later drops eio for a
+  hand-rolled poll loop~~ — settled by the same port: there never was
+  an eio dependency to drop. The det scheduler (Unix poll, no eio)
+  is what compiled programs ran on; the standalone runtime carries it
+  as-is.
