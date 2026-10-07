@@ -26,6 +26,9 @@ if [ ! -x "$bin" ]; then
 fi
 
 mkdir -p "$out"
+# Resolve the output directory now — the script changes into the staging
+# directory below, and a relative $out would resolve from there.
+out=$(CDPATH= cd -- "$out" && pwd)
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 

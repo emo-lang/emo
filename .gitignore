@@ -22,6 +22,9 @@ benchmarks/baselines/build/
 # Logs
 *.log
 
+# Release packaging output
+/dist/
+
 # OCaml / dune (Emo compiler)
 _build/
 .merlin
