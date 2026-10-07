@@ -59,7 +59,8 @@ enum emo_kind {
   EMO_INSTANCE,
   EMO_ENUM,
   EMO_CLOSURE,
-  EMO_BYTES
+  EMO_BYTES,
+  EMO_PID
 };
 
 /* A class's compile-time vtable: every generated program defines one
@@ -264,6 +265,37 @@ int64_t emo_shr_i64(int64_t a, int64_t c);
 /* Bit-casts. */
 int64_t emo_f64_bits(double d);
 double emo_f64_from_bits(int64_t bits);
+
+/* ---- Processes and the cooperative scheduler (T24.9) ----
+
+   One OS thread; every Emo process is a ucontext fiber with its own
+   stack. `do` spawns a fiber; `send` delivers to a FIFO mailbox, wakes
+   the target and yields the sender's slice; `receive` scans the
+   mailbox for the first message matching a branch (generated code owns
+   the matching), parking the fiber when nothing matches. The policy
+   mirrors emo_sched_det: a FIFO run queue, spawn enqueues the child
+   without suspending the spawner, send re-queues the sender at the
+   tail. */
+
+int64_t emo_spawn_process(void (*entry)(void), int64_t nargs,
+                          const emo_value *args);
+int64_t emo_process_self_pid(void);
+void emo_process_halt_current(void);
+emo_value *emo_process_spawn_args(void); /* the current fiber's boxed args */
+void emo_process_send(int64_t pid, emo_value message);
+void emo_process_park_current(void); /* block on receive; rescans on wake */
+void emo_scheduler_run(void); /* the loop; every generated main ends here */
+
+/* Mailbox access for the generated selective receive. */
+bool emo_mailbox_empty(void);
+void *emo_mailbox_first(void);
+void *emo_mailbox_next(void *m);
+emo_value emo_msg_value(void *m);
+void emo_mailbox_take_current(void *m);
+
+/* Pids in the dynamic world: an EMO_PID cell. */
+emo_value emo_box_pid(int64_t pid);
+int64_t emo_unbox_pid(emo_value v);
 
 /* ---- The integer core (T24.2) ---- */
 

@@ -275,7 +275,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                    cclibs)
             in
             let cmd =
-              Printf.sprintf "cc -O2 -std=c11 -Wall -I %s %s %s %s -o %s"
+              Printf.sprintf
+                "cc -O2 -std=c11 -Wall -Wno-deprecated-declarations -I %s %s %s                  %s -o %s"
                 (Filename.quote build_dir)
                 (Filename.quote main_c) (Filename.quote runtime_c)
                 cclib_flags (Filename.quote output)

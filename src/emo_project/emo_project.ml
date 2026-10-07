@@ -58,6 +58,32 @@ let entries dir =
    collision — two modules claiming one path. A directory holding its own
    package.emo is a project of its own: the walk leaves it out entirely —
    a nested package never leaks its requires into the outer tree. *)
+(* The entry's dirname can carry a trailing "/." (from resolution);
+   the file keys must match the entry's own clean absolute form or the
+   entry lookup misses and the module lowers twice. *)
+let normalize_path (path : string) : string =
+  let n = String.length path in
+  let buf = Buffer.create n in
+  let i = ref 0 in
+  while !i < n do
+    if
+      !i + 2 < n
+      && path.[!i] = '/'
+      && path.[!i + 1] = '.'
+      && path.[!i + 2] = '/'
+    then i := !i + 2
+    else (
+      Buffer.add_char buf path.[!i];
+      incr i)
+  done;
+  let s = Buffer.contents buf in
+  let s =
+    if String.length s > 2 && String.ends_with ~suffix:"/." s then
+      String.sub s 0 (String.length s - 2)
+    else s
+  in
+  s
+
 let rec walk p rel fs_dir =
   List.iter
     (fun (name, kind) ->
@@ -76,6 +102,7 @@ let rec walk p rel fs_dir =
             Hashtbl.replace p.dirs path fs_path;
             walk p path fs_path)
       | `File fs_path ->
+          let fs_path = normalize_path fs_path in
           if Hashtbl.mem p.dirs path then
             report p "E5005"
               (Printf.sprintf "module path `%s` is claimed by both %s and %s"

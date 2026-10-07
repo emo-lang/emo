@@ -393,9 +393,10 @@ let wasm_examples_tests =
    — multi-file modules, the internal/ subtree, const aliases, and
    `emo` groups; T24.7: bit_ops, bytes, fixed_width — the bitwise
    operators, Bytes with little-endian accessors, and Byte with
-   explicit conversions). The full fib and numerics examples join when
-   foreign defs land (T24.8) — their c_scalar / c_integer fixtures
-   cover the same semantics. *)
+   explicit conversions; T24.9: pipeline, showcase — processes
+   (do / <- / receive) on the cooperative fiber scheduler). The full
+   fib and numerics examples join when foreign defs land (T24.8) —
+   their c_scalar / c_integer fixtures cover the same semantics. *)
 let c_goldens =
   [
     "hello_world";
@@ -407,6 +408,8 @@ let c_goldens =
     "bit_ops";
     "bytes";
     "fixed_width";
+    "pipeline";
+    "showcase";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
