@@ -748,6 +748,48 @@ let deps =
     (Cmd.info "deps" ~doc:"Manage dependencies.")
     [ deps_resolve_cmd; deps_update_cmd; deps_list_cmd ]
 
+(* `emo install`: the project-dependencies front end — resolve, fetch
+   into the user cache, lock; the project is then ready for run/build
+   (T25.4). `emo deps` keeps the explicit paths. *)
+let install () : int =
+  let dir = Sys.getcwd () in
+  let color = Unix.isatty Unix.stderr in
+  try
+    let manifest =
+      match Emo_project.manifest_here () with
+      | Some path -> (
+          match
+            Emo_pkg.parse_manifest ~file:path
+              ~source:(Emo_project.read_file path)
+          with
+          | m -> m
+          | exception Emo_pkg.Manifest_error d ->
+              render_errors ~color ~error_limit:20 [ d ];
+              exit 65)
+      | None ->
+          prerr_endline "no package.emo in the current directory";
+          exit 66
+    in
+    List.iter print_endline
+      (Emo_project.install_deps ~manifest ~manifest_dir:dir ~target:"c");
+    Cmd.Exit.ok
+  with Emo_project.Static_errors diagnostics ->
+    render_errors ~color ~error_limit:20 diagnostics;
+    65
+
+let install_cmd =
+  Cmd.v
+    (Cmd.info "install"
+       ~doc:
+         "Install the project's dependencies — resolve, fetch into the \
+          user cache, and write package.lock.")
+    Term.(
+      const (fun () ->
+          match install () with
+          | 0 -> Cmd.Exit.ok
+          | code -> exit code)
+      $ const ())
+
 (* `emo publish`: pack the package rooted at the working directory and POST
    it to the registry. The upload is dogfooded: the request is made by the
    standard library's own http client, running as an embedded Emo program
@@ -1138,6 +1180,7 @@ let version_cmd =
 let cmd =
   Cmd.group
     (Cmd.info "emo" ~version ~doc:"The Emo programming language toolchain.")
-    [ run; repl; check; build; deps; publish_cmd; new_cmd; version_cmd ]
+    [ run; repl; check; build; deps; install_cmd; publish_cmd; new_cmd;
+      version_cmd ]
 
 let main () = exit (Cmd.eval' cmd)

@@ -500,6 +500,107 @@ let parsed_app_manifest dir =
   | m -> m
   | exception Emo_pkg.Manifest_error d -> Alcotest.fail d.Diagnostic.message
 
+(* ---- install: the project-dependencies front end (T25.4) ---- *)
+
+let install_tests =
+  [
+    tc "install resolves, fetches, and locks idempotently" (fun () ->
+        let entry =
+          with_project
+            [ ("package.emo", app_manifest); ("main.emo", app_main) ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            let manifest = parsed_app_manifest dir in
+            let first =
+              Emo_project.install_deps ~manifest ~manifest_dir:dir ~target:"c"
+            in
+            Alcotest.(check bool)
+              "resolved line" true
+              (contains_substring (List.nth first 0) "resolved 1 dependencies");
+            Alcotest.(check bool)
+              "fetched line carries the checksum" true
+              (contains_substring (List.nth first 1)
+                   "fetched acme/c_tools 1.0.0");
+            Alcotest.(check bool)
+              "lock written" true
+              (Sys.file_exists
+                 (Filename.concat dir Emo_pkg.Lockfile.filename));
+            let second =
+              Emo_project.install_deps ~manifest ~manifest_dir:dir ~target:"c"
+            in
+            Alcotest.(check bool)
+              "second run hits the cache" true
+              (contains_substring (List.nth second 1) "(already cached)");
+            Alcotest.(check bool)
+              "second run leaves the lock" true
+              (contains_substring (List.nth second 2)
+                   "package.lock is up to date")));
+    tc "an unsatisfiable pin fails at resolution" (fun () ->
+        let bad =
+          String.concat "\n"
+            [
+              "package {";
+              "  name = \"local/app\"";
+              "  version = \"0.1.0\"";
+              "  targets = [\"ocaml\"]";
+              "";
+              "  deps {";
+              "    acme/c_tools = \"9.9.9\"";
+              "  }";
+              "}";
+            ]
+        in
+        let entry =
+          with_project [ ("package.emo", bad); ("main.emo", app_main) ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            match
+              Emo_project.install_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            with
+            | _ -> Alcotest.fail "expected the pin to fail"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+    tc "an empty manifest reports nothing to install" (fun () ->
+        let bare = {|package {
+  name = "local/bare"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}
+|} in
+        let entry =
+          with_project [ ("package.emo", bare); ("main.emo", "println(1)\n") ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            match
+              Emo_project.install_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            with
+            | lines ->
+                Alcotest.(check bool)
+                  "nothing to install" true
+                  (contains_substring (List.hd lines) "nothing to install")
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.fail ("codes: " ^ codes_dump ds)));
+  ]
+
+
 let deps_tests =
   [
     tc "the README require scenario runs against a fixture registry" (fun () ->
@@ -1300,6 +1401,7 @@ let () =
       ("cycle", cycle_tests);
       ("cache", cache_tests);
       ("deps", deps_tests);
+      ("install", install_tests);
       ("sched", sched_tests);
       ("shop_golden", shop_golden_tests);
       ("stdlib_http", stdlib_http_tests);

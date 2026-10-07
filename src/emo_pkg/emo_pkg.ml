@@ -665,17 +665,37 @@ module Registry = struct
 
   (* The global cache: shared across projects, content-addressed — the
      directory name embeds the checksum, so equal content is stored once. *)
+  (* A durable user cache — the OS wipes the temp directory, and a
+     product cannot re-fetch on every build (T25.4). EMO_CACHE_DIR
+     overrides; XDG_CACHE_HOME is honored. *)
   let default_cache_dir () =
     match Sys.getenv_opt "EMO_CACHE_DIR" with
-    | Some dir -> dir
-    | None -> Filename.concat (Filename.get_temp_dir_name ()) "emo-cache"
+    | Some dir when dir <> "" -> dir
+    | _ ->
+        let cache_home =
+          match Sys.getenv_opt "XDG_CACHE_HOME" with
+          | Some dir when dir <> "" -> dir
+          | _ -> (
+              match Sys.getenv_opt "HOME" with
+              | Some home -> Filename.concat home ".cache"
+              | None ->
+                  Filename.concat (Filename.get_temp_dir_name ()) "emo-cache")
+        in
+        Filename.concat cache_home "emo"
+
+  (* The content-addressed directory a fetched package materializes
+     into — the checksum is in the name, so equal content is stored
+     once. *)
+  let cache_path ~(cache_dir : string) (f : fetched) : string =
+    Filename.concat cache_dir
+      (f.f_name ^ "-" ^ Version.to_string f.f_version ^ "-" ^ f.f_checksum)
+
+  let is_cached ~(cache_dir : string) (f : fetched) : bool =
+    Sys.file_exists (cache_path ~cache_dir f)
 
   let materialize ~(cache_dir : string) (f : fetched) :
       (string, string) result (* the package sources directory *) =
-    let pkg_dir =
-      Filename.concat cache_dir
-        (f.f_name ^ "-" ^ Version.to_string f.f_version ^ "-" ^ f.f_checksum)
-    in
+    let pkg_dir = cache_path ~cache_dir f in
     let materialize_file (rel, content) =
       let path = Filename.concat pkg_dir rel in
       let dir = Filename.dirname path in
