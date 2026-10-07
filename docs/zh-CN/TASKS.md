@@ -26,7 +26,7 @@
 | M6 — 系统级编程 | 19–21 | 用 Emo 编写的 WebAssembly 运行时:共享系统层,随后是二进制解码器/验证器,再是解释器与 spec 套件金测。 |
 | M7 — EmoOS | 22+ | 同一系统层之上的内核路径:近期是 unikernel 构建路径,远期是裸机代码生成(与引擎分层共用投入)。 |
 | M8 — 自包含托管后端 | 24 | `emo build --target c` 发射 C、自带运行时、直接 C ABI——步骤 23 的评估已排期;解锁自包含工具分发(CHECK.md)。 |
-| M9 — 工具链 | 25 | v1.0.0:GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
+| M9 — 工具链 | 25 | 工具链发布(以 v0.25.9 剪出):GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
 
 ## 设计闸门
 
@@ -407,9 +407,9 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 
 ## M9 — 工具链
 
-自包含故事的最后一公里,也是 v1.0.0 发布。M8 把 OCaml 工具链从*程序*里移除了;M9 把安装负担从*工具*身上移除——`CHECK.md` 中"发布工具链本身未排期"的部分就此排期,按已定的方向(`docs/toolchain-distribution.md` 是设计记录):GitHub Releases 上的按平台预编译二进制为主渠道,`opam` 与 Homebrew formula 作为源码构建渠道,并补齐产品所需的命令集——`emo new`、`emo install`、`emo doctor` 加入 `run`/`repl`/`check`/`build`/`deps`/`publish`——让一台只有二进制的机器就能运行、检查、构建(经 `c` target)、安装依赖、发布包。
+自包含故事的最后一公里,也是工具链发布——以 v0.25.9 剪出,正式的 1.0 随后。M8 把 OCaml 工具链从*程序*里移除了;M9 把安装负担从*工具*身上移除——`CHECK.md` 中"发布工具链本身未排期"的部分就此排期,按已定的方向(`docs/toolchain-distribution.md` 是设计记录):GitHub Releases 上的按平台预编译二进制为主渠道,`opam` 与 Homebrew formula 作为源码构建渠道,并补齐产品所需的命令集——`emo new`、`emo install`、`emo doctor` 加入 `run`/`repl`/`check`/`build`/`deps`/`publish`——让一台只有二进制的机器就能运行、检查、构建(经 `c` target)、安装依赖、发布包。
 
-边界,明说:公共 registry *服务*是另一个里程碑——工具随包发布时只讲文件系统 registry 加内置标准库(`publish` 已经讲 HTTP;HTTP 拉取与它对话的服务一起落地);原生 Windows 不是 v1.0.0 平台——WSL2 是受支持的 Windows 路径,C 运行时的 ucontext/socket 移植是记录在案的阻塞点(Microsoft Trusted Signing 仍是它落地时的既定签名路线);c 后端的记录在案的后续工作(retain/release 发射、零拷贝缓冲区 rung、跨模块类型传播)属于后端线,不随本里程碑。
+边界,明说:公共 registry *服务*是另一个里程碑——工具随包发布时只讲文件系统 registry 加内置标准库(`publish` 已经讲 HTTP;HTTP 拉取与它对话的服务一起落地);原生 Windows 不在本次发布内——WSL2 是受支持的 Windows 路径,C 运行时的 ucontext/socket 移植是记录在案的阻塞点(Microsoft Trusted Signing 仍是它落地时的既定签名路线);c 后端的记录在案的后续工作(retain/release 发射、零拷贝缓冲区 rung、跨模块类型传播)属于后端线,不随本里程碑。
 
 ### Step 25 — 工具链分发与发布 · `plan/step-25-toolchain.md`
 
@@ -424,6 +424,6 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 - [x] **T25.6** — 发布打包与 CI:现有 CI 旁的 tag 触发工作流——按平台矩阵构建(Linux x86_64/aarch64、macOS x86_64/arm64),经 dune 产出发布二进制,T25.1 落定的归档布局、`SHA256SUMS`、GitHub Release 草稿。Linux 二进制可移植——静态或最旧的可用 glibc——在干净容器中验证,而非构建机上。 (2026-10-07 完成:package-release.sh 本机端到端验证;矩阵 = linux x86_64/aarch64(ubuntu-22.04,glibc 2.35)+ macOS x86_64/arm64,打包前先跑测试套件,Linux 在干净 ubuntu:22.04 容器中验证。)
 - [x] **T25.7** — 签名与平台闸门:macOS codesign(hardened runtime)→ notarytool → staple,凭据在 CI secrets——`CHECK.md` 中"已解决、非阻塞"的一项就此排期。Windows:WSL2 记录为受支持路径,原生预编译记录为推迟,ucontext/socket 移植点名为阻塞;`docs/toolchain-distribution.md` 同步更新(双语)。 (2026-10-07 完成:四个密钥把 codesign → notarytool → staple 设为条件路径;密钥缺席以未签名发布并出 notice;分发文档双语更新。)
 - [x] **T25.8** — 供给渠道与安装文档:Homebrew formula(先自有 tap;项目够格后进 core)与 opam 包——带来 `ocaml` target 的源码渠道。README 安装章节双语更新:预编译归档优先,其后 brew、opam、WSL2。 (2026-10-07 完成:公式在 devtools/homebrew/emo.rb 供自有 tap 使用,校验和发布时填写;dune-project 生成 emo.opam(stanza 无 dev_repo 字段——弃之);README 安装章节双语落地。)
-- [x] **T25.9** — 发布验收与 v1.0.0:对每个已发布制品端到端——下载、解包、`emo doctor`、`emo new`、`emo run`、`emo install`、`emo build`(`c` target)——包括一个带标准库导入的程序与从安装后的二进制执行的金测子集。VERSION 在发布 commit 中变为 1.0.0;annotated tag、发布说明、收尾。 (2026-10-07 完成:验收对着打包并解压的 v1.0.0 归档执行——doctor 以预编译形态全绿;new → run → build 全通;install 经内嵌标准库解析;金测 14/14 出自安装后的二进制(13 个经 emo run 逐字节,numerics 走其设计的编译路径——它跨 foreign def,emo run 按设计拒绝;http_roundtrip/tcp_echo 依托树内套件)。VERSION 在发布 commit 中变为 v1.0.0。)
+- [x] **T25.9** — 发布验收与剪出:对每个已发布制品端到端——下载、解包、`emo doctor`、`emo new`、`emo run`、`emo install`、`emo build`(`c` target)——包括一个带标准库导入的程序与从安装后的二进制执行的金测子集。发布 commit 携带发布的 VERSION;annotated tag、发布说明、收尾。 (2026-10-07 完成:验收对着打包并解压的归档执行(构建时 VERSION 读作 v1.0.0;打 tag 前重剪为 v0.25.9)——doctor 以预编译形态全绿;new → run → build 全通;install 经内嵌标准库解析;金测 14/14 出自安装后的二进制(13 个经 emo run 逐字节,numerics 走其设计的编译路径——它跨 foreign def,emo run 按设计拒绝;http_roundtrip/tcp_echo 依托树内套件)。VERSION 以 v0.25.9 发布。)
 
-收尾:2026-10-07 记于 `plan/step-25-toolchain.md`——验收对着打包制品而非构建树执行;默认 target 翻转把每条默认路径移到 `c`(并暴露出内容哈希缓存原本只在 ocaml 分支实现),内嵌的 dune 规则需要 `-type f -o -type l`(macOS 沙箱把 source_tree 依赖物化为符号链接),归档不带安装脚本发布。**步骤 25 验收达成。** M9 完成:v1.0.0 是工具链发布。
+收尾:2026-10-07 记于 `plan/step-25-toolchain.md`——验收对着打包制品而非构建树执行;默认 target 翻转把每条默认路径移到 `c`(并暴露出内容哈希缓存原本只在 ocaml 分支实现),内嵌的 dune 规则需要 `-type f -o -type l`(macOS 沙箱把 source_tree 依赖物化为符号链接),归档不带安装脚本发布。**步骤 25 验收达成。** M9 完成:工具链发布是 v0.25.9——正式的 1.0 随后。

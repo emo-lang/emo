@@ -6,7 +6,9 @@
 schedules), `CHECK.md` ("Binary / CLI tool distribution mechanism" —
 the direction is settled there; "release tooling itself is
 unscheduled" is what this step changes), `plan/step-24-c-target.md`
-(the backend being distributed) · **Status:** done (2026-10-07 — close-out recorded below)
+(the backend being distributed) · **Status:** done (2026-10-07 — close-out recorded below; the
+milestone was written against v1.0.0, and the toolchain release was
+cut as v0.25.9 before tagging — the official 1.0 follows)
 
 ## Why this step exists
 
@@ -143,7 +145,8 @@ All four close in `CHECK.md` at T25.1:
       subset executed from the installed binary. VERSION becomes
       1.0.0 in the release commit; annotated tag, release notes,
       close-out.
- (Done 2026-10-07: from the packaged-and-unpacked v1.0.0 archive — doctor healthy in the prebuilt shape, `emo new` → run → build green, `emo install` resolving through the embedded stdlib, and the golden subset 14/14 from the installed binary: 13 via `emo run` byte-for-byte, numerics through its designed compiled path (it crosses `foreign def`, which `emo run` refuses by design); http_roundtrip and tcp_echo ride the in-tree suite, needing live network clients. VERSION became v1.0.0 in this commit.)
+ (Done 2026-10-07: from the packaged-and-unpacked v1.0.0 archive — doctor healthy in the prebuilt shape, `emo new` → run → build green, `emo install` resolving through the embedded stdlib, and the golden subset 14/14 from the installed binary: 13 via `emo run` byte-for-byte, numerics through its designed compiled path (it crosses `foreign def`, which `emo run` refuses by design); http_roundtrip and tcp_echo ride the in-tree suite, needing live network clients. the release first carried VERSION v1.0.0 and was re-cut v0.25.9
+before tagging.)
 ## Acceptance
 
 Met 2026-10-07, with the signing path wired but unsigned until the

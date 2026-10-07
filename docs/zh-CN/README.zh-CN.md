@@ -17,8 +17,8 @@ Emo 是**简洁、显式、直观**的。它汲取了三十年开源编程语言
 预编译二进制是最快的起步方式。二进制内嵌标准库——无需安装其他东西（用 `emo build` 构建时才需要 C 编译器，那是默认 target）。从 [GitHub Releases](https://github.com/emo-lang/emo/releases) 下载你平台的归档，然后：
 
 ```console
-$ unzip emo-v1.0.0-macos-arm64.zip
-$ ./emo-v1.0.0-macos-arm64/bin/emo run hello.emo
+$ unzip emo-v0.25.9-macos-arm64.zip
+$ ./emo-v0.25.9-macos-arm64/bin/emo run hello.emo
 ```
 
 Homebrew，来自项目自有 tap：
