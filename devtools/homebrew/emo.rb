@@ -8,7 +8,7 @@
 class Emo < Formula
   desc "The Emo programming language toolchain"
   homepage "https://github.com/emo-lang/emo"
-  version "1.0.0"
+  version "0.25.9"
   license "MIT"
 
   on_arm do

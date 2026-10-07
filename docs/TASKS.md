@@ -33,7 +33,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M6 — Systems programming | 19–21 | A WebAssembly runtime written in Emo: the shared systems layer, then the binary decoder/validator, then the interpreter with spec-suite goldens. |
 | M7 — EmoOS | 22+ | The kernel path on the same systems layer: a unikernel build path (near term), then freestanding codegen (shared with the engine tiering). |
 | M8 — Self-contained hosted backend | 24 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — step 23's assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
-| M9 — Toolchain | 25 | v1.0.0: signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
+| M9 — Toolchain | 25 | The toolchain release (cut as v0.25.9): signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
 
 ## Design gates
 
@@ -453,7 +453,8 @@ model from step 22's study.
 
 ## M9 — Toolchain
 
-The last mile of the self-contained story, and the v1.0.0 release.
+The last mile of the self-contained story, and the toolchain
+release — cut as v0.25.9, with the official 1.0 following.
 M8 removed the OCaml toolchain from the *programs*; M9 removes the
 installation burden from the *tool* — the release engineering
 `CHECK.md` left unscheduled, on the decided direction
@@ -469,7 +470,7 @@ Boundaries, stated plainly: the public registry *service* is a
 separate milestone — the tool ships speaking the filesystem registry
 plus the bundled stdlib (`publish` already speaks HTTP; fetching
 over HTTP lands with the service it talks to); native Windows is not
-a v1.0.0 platform — WSL2 is the supported Windows path, and the
+this release — WSL2 is the supported Windows path, and the
 ucontext/socket port of the C runtime is the recorded blocker
 (Microsoft Trusted Signing stays the recorded signing route for when
 it lands); the c backend's recorded follow-ups (retain/release
@@ -546,13 +547,14 @@ the `c` target, scaffolds with `emo new`, installs dependencies with
       and the opam package — the source channel that brings the
       `ocaml` target. README install sections in both languages:
       prebuilt archives first, then brew, opam, WSL2. (Done 2026-10-07: formula at devtools/homebrew/emo.rb for the own tap, checksums filled at release; dune-project generates emo.opam (no dev_repo field in the stanza — dropped); README install sections in both languages.)
-- [x] **T25.9** — Release acceptance and v1.0.0: on every shipped
+- [x] **T25.9** — Release acceptance and the release cut: on every shipped
       artifact, end to end — download, unpack, `emo doctor`,
       `emo new`, `emo run`, `emo install`, `emo build` (the `c`
       target) — including a stdlib-importing program and the golden
-      subset executed from the installed binary. VERSION becomes
-      1.0.0 in the release commit; annotated tag, release notes,
-      close-out. (Done 2026-10-07: acceptance ran against the packaged-and-unpacked v1.0.0 archive — doctor healthy in the prebuilt shape; new → run → build green; install resolves through the embedded stdlib; goldens 14/14 from the installed binary (13 via emo run byte-for-byte, numerics via its designed compiled path — it crosses foreign def, which emo run refuses; http_roundtrip/tcp_echo ride the in-tree suite). VERSION became v1.0.0 in the release commit.)
+      subset executed from the installed binary. the release commit
+      carries the released VERSION; annotated tag, release notes,
+      close-out. (Done 2026-10-07: acceptance ran against the packaged-and-unpacked archive (built while
+VERSION read v1.0.0; re-cut v0.25.9 before tagging) — doctor healthy in the prebuilt shape; new → run → build green; install resolves through the embedded stdlib; goldens 14/14 from the installed binary (13 via emo run byte-for-byte, numerics via its designed compiled path — it crosses foreign def, which emo run refuses; http_roundtrip/tcp_echo ride the in-tree suite). VERSION shipped as v0.25.9.)
 
 Close-out: recorded 2026-10-07 in `plan/step-25-toolchain.md` — the
 acceptance ran against the packaged artifact, not the build tree; the
@@ -561,4 +563,4 @@ that the content-hash cache had only ever lived in the ocaml arm),
 the embed's dune rule needs `-type f -o -type l` because the macOS
 sandbox materializes `source_tree` deps as symlinks, and the archives
 ship without an install script. **Step 25 acceptance met.** M9 is
-done: v1.0.0 is the toolchain release.
+done: the toolchain release is v0.25.9 — the official 1.0 follows.

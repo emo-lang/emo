@@ -17,8 +17,8 @@ Emo is **clean, explicit, and intuitive**. It draws on three decades of open-sou
 Prebuilt binaries are the fastest way to start. The binary carries the standard library inside it — nothing else to install (a C compiler joins the picture when you build with `emo build`, the default target). Grab the archive for your platform from [GitHub Releases](https://github.com/emo-lang/emo/releases), then:
 
 ```console
-$ unzip emo-v1.0.0-macos-arm64.zip
-$ ./emo-v1.0.0-macos-arm64/bin/emo run hello.emo
+$ unzip emo-v0.25.9-macos-arm64.zip
+$ ./emo-v0.25.9-macos-arm64/bin/emo run hello.emo
 ```
 
 Homebrew, from the project's own tap:
