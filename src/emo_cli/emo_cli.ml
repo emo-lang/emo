@@ -132,6 +132,48 @@ let find_ocamlfind () : string =
       | sw :: _ -> switch_bin (Filename.concat opam_dir sw)
       | [] -> "ocamlfind")
 
+(* Whether the ocaml target can run at all: its runtime libraries
+   must stand beside the emo binary (a source or dune-tree install)
+   and ocamlfind must exist — a prebuilt installation has neither.
+   `emo build --target ocaml` refuses on this with the fix named, and
+   `emo doctor` reports it per target. *)
+let tool_exists (name : string) : bool =
+  let cmd = Printf.sprintf "command -v %s" (Filename.quote name) in
+  let ic = Unix.open_process_in cmd in
+  let line = try input_line ic with End_of_file -> "" in
+  ignore (Unix.close_process_in ic);
+  line <> ""
+
+let ocaml_target_ok () : bool =
+  let libs =
+    [
+      "emo_support";
+      "emo_lexer";
+      "emo_parser";
+      "emo_ast";
+      "emo_check";
+      "emo_eval";
+      "emo_sched";
+      "emo_runtime";
+    ]
+  in
+  let exe_dir =
+    Filename.dirname
+      (try Unix.realpath Sys.executable_name with _ -> Sys.executable_name)
+  in
+  let src_dir = Filename.concat exe_dir ".." in
+  let cmxa_found =
+    List.for_all
+      (fun lib ->
+        Sys.file_exists
+          (Filename.concat (Filename.concat src_dir lib) (lib ^ ".cmxa")))
+      libs
+  in
+  cmxa_found
+  &&
+  let found = find_ocamlfind () in
+  if found = "ocamlfind" then tool_exists "ocamlfind" else true
+
 (* The build command: entry file → artifact at [-o] (default: the
    entry's stem in the current directory). The target picks the
    backend: ocaml (default) emits OCaml compiled by the OCaml
@@ -321,58 +363,25 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               end
             end
         | "ocaml" ->
-            let source = Emo_codegen.emit ~specialize program in
-            (* Incremental: the digest of the emitted source plus the
+            (* The settled refusal (CHECK.md, T25.1): a prebuilt
+               installation lacks the toolchain and the runtime — say
+               so and name the fix, never raw ocamlfind output. Exit
+               69 (unavailable), the sysexits family of 65/66/70. *)
+            if not (ocaml_target_ok ()) then begin
+              prerr_endline
+                "emo build: the ocaml target needs the OCaml toolchain and the \
+                 emo runtime libraries, which this installation does not carry \
+                 — install the source package with `opam install emo` (the c \
+                 target, the default, needs only the system cc)";
+              69
+            end
+            else
+              let source = Emo_codegen.emit ~specialize program in
+              (* Incremental: the digest of the emitted source plus the
                digests of the runtime libraries names the cached binary —
                an unchanged program (and unchanged runtime) skips the
                toolchain entirely, and any runtime change invalidates the
                cache. *)
-            let libs =
-              [
-                "emo_support";
-                "emo_lexer";
-                "emo_parser";
-                "emo_ast";
-                "emo_check";
-                "emo_eval";
-                "emo_sched";
-                "emo_runtime";
-              ]
-            in
-            let runtime_digest =
-              List.fold_left
-                (fun acc lib ->
-                  let path =
-                    Filename.concat (Filename.concat src_dir lib) (lib ^ ".cmxa")
-                  in
-                  if Sys.file_exists path then
-                    acc ^ Digest.to_hex (Digest.file path)
-                  else acc)
-                "" libs
-            in
-            let digest =
-              Digest.to_hex
-                (Digest.string
-                   (Printf.sprintf "%s|%s|%b|%s" source runtime_digest
-                      specialize (String.concat "," cclibs)))
-            in
-            let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
-            if Sys.file_exists cache_binary then begin
-              ignore
-                (Sys.command
-                   (Printf.sprintf "cp %s %s"
-                      (Filename.quote cache_binary)
-                      (Filename.quote output)));
-              Printf.printf "built %s (cached)\n" output;
-              0
-            end
-            else begin
-              let ml_path = Filename.concat build_dir "main.ml" in
-              let oc = open_out_bin ml_path in
-              output_string oc source;
-              close_out oc;
-              (* locate the runtime libraries relative to the emo binary
-             (exe_dir/src_dir were resolved at the top of this build) *)
               let libs =
                 [
                   "emo_support";
@@ -385,88 +394,141 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                   "emo_runtime";
                 ]
               in
-              let includes =
-                String.concat " "
-                  (List.concat_map
-                     (fun lib ->
-                       let dir = Filename.concat src_dir lib in
-                       [
-                         Printf.sprintf "-I %s"
-                           (Filename.concat dir
-                              (Printf.sprintf ".%s.objs/native" lib));
-                         Printf.sprintf "-I %s"
-                           (Filename.concat dir
-                              (Printf.sprintf ".%s.objs/byte" lib));
-                       ])
-                     libs)
+              let runtime_digest =
+                List.fold_left
+                  (fun acc lib ->
+                    let path =
+                      Filename.concat
+                        (Filename.concat src_dir lib)
+                        (lib ^ ".cmxa")
+                    in
+                    if Sys.file_exists path then
+                      acc ^ Digest.to_hex (Digest.file path)
+                    else acc)
+                  "" libs
               in
-              let cmxas =
-                String.concat " "
-                  (List.map
-                     (fun lib ->
-                       Filename.concat
-                         (Filename.concat src_dir lib)
-                         (lib ^ ".cmxa"))
-                     libs)
+              let digest =
+                Digest.to_hex
+                  (Digest.string
+                     (Printf.sprintf "%s|%s|%b|%s" source runtime_digest
+                        specialize (String.concat "," cclibs)))
               in
-              (* ocamlfind invokes its switch's compiler; the switch's bin dir
-             must be on PATH for ocamlopt.opt to resolve. *)
-              let ocamlfind = find_ocamlfind () in
-              let switch_bin = Filename.dirname ocamlfind in
-              (* Foreign bindings get a compiled C wrapper (ffi_stubs):
-             ocaml's stdlib headers live in the switch, so cc can find
-             caml/mlvalues.h there. *)
-              let stub_obj =
-                let stubs = Emo_codegen.ffi_stubs program in
-                if stubs = "" then ""
-                else begin
-                  let c_path = Filename.concat build_dir "ffi_stubs.c" in
-                  let oc = open_out_bin c_path in
-                  output_string oc stubs;
-                  close_out oc;
-                  let obj_path = Filename.concat build_dir "ffi_stubs.o" in
-                  let stdlib_dir =
-                    Filename.concat
-                      (Filename.concat switch_bin "..")
-                      "lib/ocaml"
-                  in
-                  let cc_cmd =
-                    Printf.sprintf "cc -O2 -I %s -c %s -o %s"
-                      (Filename.quote stdlib_dir)
-                      (Filename.quote c_path) (Filename.quote obj_path)
-                  in
-                  if Sys.command cc_cmd <> 0 then raise Stub_cc_failed;
-                  Printf.sprintf " %s" (Filename.quote obj_path)
-                end
+              let cache_binary =
+                Filename.concat build_dir ("cache-" ^ digest)
               in
-              let cclib_flags =
-                String.concat " "
-                  (List.concat_map (fun lib -> [ "-cclib"; "-l" ^ lib ]) cclibs)
-              in
-              let cmd =
-                Printf.sprintf
-                  "PATH=%s:$PATH %s ocamlopt -package \
-                   unix,ssl,eio_main,eio_posix -linkpkg %s %s %s %s %s -o %s"
-                  (Filename.quote switch_bin)
-                  (Filename.quote ocamlfind) includes cclib_flags cmxas stub_obj
-                  (Filename.quote ml_path) (Filename.quote output)
-              in
-              let exit_code = Sys.command cmd in
-              if exit_code <> 0 then begin
-                prerr_endline
-                  (Printf.sprintf
-                     "emo build: the OCaml toolchain failed (exit %d)" exit_code);
-                70
-              end
-              else begin
+              if Sys.file_exists cache_binary then begin
                 ignore
                   (Sys.command
-                     (Printf.sprintf "cp %s %s" (Filename.quote output)
-                        (Filename.quote cache_binary)));
-                Printf.printf "built %s\n" output;
+                     (Printf.sprintf "cp %s %s"
+                        (Filename.quote cache_binary)
+                        (Filename.quote output)));
+                Printf.printf "built %s (cached)\n" output;
                 0
               end
-            end
+              else begin
+                let ml_path = Filename.concat build_dir "main.ml" in
+                let oc = open_out_bin ml_path in
+                output_string oc source;
+                close_out oc;
+                (* locate the runtime libraries relative to the emo binary
+             (exe_dir/src_dir were resolved at the top of this build) *)
+                let libs =
+                  [
+                    "emo_support";
+                    "emo_lexer";
+                    "emo_parser";
+                    "emo_ast";
+                    "emo_check";
+                    "emo_eval";
+                    "emo_sched";
+                    "emo_runtime";
+                  ]
+                in
+                let includes =
+                  String.concat " "
+                    (List.concat_map
+                       (fun lib ->
+                         let dir = Filename.concat src_dir lib in
+                         [
+                           Printf.sprintf "-I %s"
+                             (Filename.concat dir
+                                (Printf.sprintf ".%s.objs/native" lib));
+                           Printf.sprintf "-I %s"
+                             (Filename.concat dir
+                                (Printf.sprintf ".%s.objs/byte" lib));
+                         ])
+                       libs)
+                in
+                let cmxas =
+                  String.concat " "
+                    (List.map
+                       (fun lib ->
+                         Filename.concat
+                           (Filename.concat src_dir lib)
+                           (lib ^ ".cmxa"))
+                       libs)
+                in
+                (* ocamlfind invokes its switch's compiler; the switch's bin dir
+             must be on PATH for ocamlopt.opt to resolve. *)
+                let ocamlfind = find_ocamlfind () in
+                let switch_bin = Filename.dirname ocamlfind in
+                (* Foreign bindings get a compiled C wrapper (ffi_stubs):
+             ocaml's stdlib headers live in the switch, so cc can find
+             caml/mlvalues.h there. *)
+                let stub_obj =
+                  let stubs = Emo_codegen.ffi_stubs program in
+                  if stubs = "" then ""
+                  else begin
+                    let c_path = Filename.concat build_dir "ffi_stubs.c" in
+                    let oc = open_out_bin c_path in
+                    output_string oc stubs;
+                    close_out oc;
+                    let obj_path = Filename.concat build_dir "ffi_stubs.o" in
+                    let stdlib_dir =
+                      Filename.concat
+                        (Filename.concat switch_bin "..")
+                        "lib/ocaml"
+                    in
+                    let cc_cmd =
+                      Printf.sprintf "cc -O2 -I %s -c %s -o %s"
+                        (Filename.quote stdlib_dir)
+                        (Filename.quote c_path) (Filename.quote obj_path)
+                    in
+                    if Sys.command cc_cmd <> 0 then raise Stub_cc_failed;
+                    Printf.sprintf " %s" (Filename.quote obj_path)
+                  end
+                in
+                let cclib_flags =
+                  String.concat " "
+                    (List.concat_map
+                       (fun lib -> [ "-cclib"; "-l" ^ lib ])
+                       cclibs)
+                in
+                let cmd =
+                  Printf.sprintf
+                    "PATH=%s:$PATH %s ocamlopt -package \
+                     unix,ssl,eio_main,eio_posix -linkpkg %s %s %s %s %s -o %s"
+                    (Filename.quote switch_bin)
+                    (Filename.quote ocamlfind) includes cclib_flags cmxas
+                    stub_obj (Filename.quote ml_path) (Filename.quote output)
+                in
+                let exit_code = Sys.command cmd in
+                if exit_code <> 0 then begin
+                  prerr_endline
+                    (Printf.sprintf
+                       "emo build: the OCaml toolchain failed (exit %d)"
+                       exit_code);
+                  70
+                end
+                else begin
+                  ignore
+                    (Sys.command
+                       (Printf.sprintf "cp %s %s" (Filename.quote output)
+                          (Filename.quote cache_binary)));
+                  Printf.printf "built %s\n" output;
+                  0
+                end
+              end
         (* cache miss *)
         | other ->
             prerr_endline
@@ -1082,13 +1144,6 @@ let publish_cmd =
    informational, and an unavailable one gets the honest fix named
    rather than a raw toolchain error. *)
 
-let tool_exists (name : string) : bool =
-  let cmd = Printf.sprintf "command -v %s" (Filename.quote name) in
-  let ic = Unix.open_process_in cmd in
-  let line = try input_line ic with End_of_file -> "" in
-  ignore (Unix.close_process_in ic);
-  line <> ""
-
 let tool_version (name : string) : string =
   let ic = Unix.open_process_in (name ^ " --version 2>/dev/null") in
   let line = try input_line ic with End_of_file -> "" in
@@ -1133,36 +1188,6 @@ let cc_smoke () : (unit, string) result =
 
 (* The ocaml target's check: its runtime libraries must stand beside the
    emo binary (a source or dune-tree install) and ocamlfind must exist. *)
-let ocaml_target_ok () : bool =
-  let libs =
-    [
-      "emo_support";
-      "emo_lexer";
-      "emo_parser";
-      "emo_ast";
-      "emo_check";
-      "emo_eval";
-      "emo_sched";
-      "emo_runtime";
-    ]
-  in
-  let exe_dir =
-    Filename.dirname
-      (try Unix.realpath Sys.executable_name with _ -> Sys.executable_name)
-  in
-  let src_dir = Filename.concat exe_dir ".." in
-  let cmxa_found =
-    List.for_all
-      (fun lib ->
-        Sys.file_exists
-          (Filename.concat (Filename.concat src_dir lib) (lib ^ ".cmxa")))
-      libs
-  in
-  cmxa_found
-  &&
-  let found = find_ocamlfind () in
-  if found = "ocamlfind" then tool_exists "ocamlfind" else true
-
 let doctor ~(emit : string -> unit) : int =
   let ocaml_ok = ocaml_target_ok () in
   emit (Printf.sprintf "emo %s" version);
