@@ -167,6 +167,7 @@ const emo_vtable *emo_vtable_of(emo_value instance);
 emo_value emo_instance_field(emo_value instance, int64_t i);
 void emo_set_field(emo_value instance, int64_t i, emo_value v);
 bool emo_is_class(emo_value instance, const emo_vtable *vt);
+emo_value emo_field_by_name(emo_value instance, const char *name);
 bool emo_is_iface(emo_value instance, const emo_iface *ifc);
 
 /* Dynamic method dispatch: look the (name, arity) up in the
@@ -296,6 +297,49 @@ void emo_mailbox_take_current(void *m);
 /* Pids in the dynamic world: an EMO_PID cell. */
 emo_value emo_box_pid(int64_t pid);
 int64_t emo_unbox_pid(emo_value v);
+
+/* ---- Hosted IO (T24.10) ---- */
+
+/* Files: the whole file in one call; failures print the interpreter's
+   exception shape and exit 70. */
+emo_str emo_file_read(emo_str path);
+int64_t emo_file_write(emo_str path, emo_str contents);
+
+/* TCP: handles are file descriptors. Blocking reads park the fiber on
+   readability — the scheduler polls the parked descriptors. */
+int64_t emo_net_listen(emo_str host, int64_t port);
+int64_t emo_net_port(int64_t listener);
+int64_t emo_net_accept(int64_t listener);
+int64_t emo_net_connect(emo_str host, int64_t port, double timeout);
+emo_str emo_net_read_line(int64_t fd);
+emo_str emo_net_read_exactly(int64_t fd, int64_t n);
+emo_str emo_net_read_all(int64_t fd);
+int64_t emo_net_write(int64_t fd, emo_str data);
+int64_t emo_net_close(int64_t fd); /* returns fd */
+int64_t emo_net_set_timeout(int64_t fd, double seconds); /* returns fd */
+
+/* The scheduler hook: park the current fiber until its fd is
+   readable. */
+void emo_net_wait_readable(int64_t fd);
+
+/* Strings: the interpreter's method set over length-prefixed bytes. */
+emo_str emo_str_substring(emo_str s, int64_t start, int64_t len);
+int64_t emo_str_index_of(emo_str s, emo_str needle);
+bool emo_str_starts_with(emo_str s, emo_str prefix);
+emo_str emo_str_lower(emo_str s);
+emo_str emo_str_trim(emo_str s);
+int64_t emo_str_length(emo_str s);
+int64_t emo_str_to_int64(emo_str s);
+emo_value emo_str_split(emo_str s, emo_str sep); /* array of Strings */
+
+/* An unimplemented surface (unix sockets, TLS, resolve, UDP on this
+   tier): the call compiles in any value position (noreturn) and fails
+   at runtime, honestly. */
+int64_t emo_unsupported(const char *what);
+
+/* `Exception.new(message: ...)`: the value carries the message;
+   emo_raise prints it. */
+emo_value emo_make_exception(emo_str message);
 
 /* ---- The integer core (T24.2) ---- */
 
