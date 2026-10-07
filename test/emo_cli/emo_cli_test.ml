@@ -1162,6 +1162,71 @@ let publish_tests =
                      (Emo_cli.json_string_field "code" response_body))));
   ]
 
+(* ---- new: the project scaffold (T25.3) ---- *)
+
+let read_file path =
+  let ic = open_in_bin path in
+  let n = in_channel_length ic in
+  let s = really_input_string ic n in
+  close_in ic;
+  s
+
+let new_tests =
+  [
+    tc "the scaffold is green the moment it exists" (fun () ->
+        let dir = Filename.concat scratch "scaffold-hello" in
+        if Sys.file_exists dir then Emo_cli.remove_tree dir
+        else if Sys.file_exists scratch then ()
+        else Unix.mkdir scratch 0o755;
+        Alcotest.(check int) "exit" 0 (Emo_cli.scaffold ~path:dir);
+        let manifest = read_file (Filename.concat dir "package.emo") in
+        Alcotest.(check bool)
+          "manifest names the package" true
+          (contains manifest {|name = "scaffold-hello"|});
+        Alcotest.(check bool)
+          "manifest declares the default targets" true
+          (contains manifest {|targets = ["ocaml", "c"]|});
+        let main_src = read_file (Filename.concat dir "main.emo") in
+        Alcotest.(check bool) "main greets" true (contains main_src "greet");
+        Alcotest.(check bool)
+          "gitignore ignores the build dir" true
+          (contains
+             (read_file (Filename.concat dir ".gitignore"))
+             ".emo-build/");
+        (* checked, built, and run the moment it exists *)
+        let entry = Filename.concat dir "main.emo" in
+        Alcotest.(check int)
+          "check exit" 0
+          (Emo_cli.check_file ~file:entry ~color:false ~error_limit:20);
+        let bin = Filename.concat dir "scaffold-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (Emo_cli.build_file ~entry ~output:bin ~specialize:true ~cclibs:[]
+             ~target:"c");
+        let cmd_stdout, _cmd_stdin, _cmd_stderr =
+          Unix.open_process_full (Filename.quote bin) (Unix.environment ())
+        in
+        let out = input_line cmd_stdout in
+        ignore (Unix.close_process_full (cmd_stdout, _cmd_stdin, _cmd_stderr));
+        Alcotest.(check string) "binary output" "Hello, world!" out);
+    tc "an owner/name argument names the package fully" (fun () ->
+        let old_cwd = Sys.getcwd () in
+        Sys.chdir scratch;
+        Fun.protect
+          ~finally:(fun () -> Sys.chdir old_cwd)
+          (fun () ->
+            Alcotest.(check int) "exit" 0 (Emo_cli.scaffold ~path:"acme/owned");
+            let manifest = read_file "acme/owned/package.emo" in
+            Alcotest.(check bool)
+              "owner/name manifest" true
+              (contains manifest {|name = "acme/owned"|});
+            Emo_cli.remove_tree "acme"));
+    tc "an existing directory refuses" (fun () ->
+        let dir = Filename.concat scratch "scaffold-clash" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        Alcotest.(check int) "exit" 65 (Emo_cli.scaffold ~path:dir));
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -1177,4 +1242,5 @@ let () =
       ("c_dynamic", c_dynamic_tests);
       ("c_foreign", c_foreign_tests);
       ("publish", publish_tests);
+      ("new", new_tests);
     ]
