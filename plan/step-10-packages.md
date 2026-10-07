@@ -24,7 +24,7 @@ configurable central registry into a global content-addressed cache.
   package {
     name = "acme/json_tools"
     version = "0.1.0"
-    targets = ["native", "wasm"]
+    targets = ["native", "wasm"] (the native target later renamed `ocaml`)
 
     deps {
       json = "2.3.1"

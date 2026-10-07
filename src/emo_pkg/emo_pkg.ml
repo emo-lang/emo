@@ -36,13 +36,13 @@ type manifest = {
   deps : (string * Version.t) list; (* exact versions *)
 }
 
-let known_targets = [ "native"; "wasm"; "typescript"; "beam"; "riscv64" ]
+let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
 
 (* Token-level strict reader: accepts exactly the README shape.
      package {
        name = "acme/json_tools"
        version = "0.1.0"
-       targets = ["native", "wasm"]
+       targets = ["ocaml", "wasm"]
        deps { json = "2.3.1" }
      }
    Unknown fields, missing fields, and non-literal values are errors. *)
@@ -120,7 +120,7 @@ end
      package {
        name = "acme/json_tools"
        version = "0.1.0"
-       targets = ["native", "wasm"]
+       targets = ["ocaml", "wasm"]
        deps { json = "2.3.1" }
      }
    Unknown fields, missing fields, and non-literal values are errors — the

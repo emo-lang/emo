@@ -1,0 +1,2 @@
+# Generated files — their shape comes from the dune rule, not ocamlformat.
+emo_c_runtime_data.ml

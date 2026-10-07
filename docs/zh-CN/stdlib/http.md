@@ -1,6 +1,6 @@
 # `http` 包
 
-标准库的 HTTP 客户端与服务器,用纯 Emo 写在 `net` 包之上。通篇直接风格:一次请求读起来就是普通函数调用,socket 忙碌时调度器在底层挂起进程。本包**仅限原生(native)目标**——它的 manifest 声明了 `targets = ["native"]`,依赖解析在其他一切目标上拒绝它。
+标准库的 HTTP 客户端与服务器,用纯 Emo 写在 `net` 包之上。通篇直接风格:一次请求读起来就是普通函数调用,socket 忙碌时调度器在底层挂起进程。本包**仅限 ocaml 与 c 目标**——它的 manifest 声明了 `targets = ["ocaml", "c"]`,依赖解析在其他一切目标上拒绝它。
 
 ## 引入
 
@@ -14,7 +14,7 @@ require "http"
 package {
   name = "acme/myapp"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml", "c"]
 
   deps {
     http = "0.1.0"
@@ -127,7 +127,7 @@ println(resp.body)   // POST /items payload
 
 ## 限制
 
-- **仅限原生目标。** 包声明了 `targets = ["native"]`;wasm、TypeScript、BEAM 构建在解析期就会被拒绝。
+- **仅限 ocaml 与 c 目标。** 包声明了 `targets = ["ocaml", "c"]`;wasm、TypeScript、BEAM 构建在解析期就会被拒绝。
 - **无连接池。** 每个请求一条 TCP 连接,交换完即关。
 - **不跟随重定向。** 3xx 响应原样返回。
 - **HTTP/1.1,`Content-Length`  body。** 没有 `Content-Length` 头的请求与响应,body 按连接剩余字节读取(客户端)或视为空(服务端);不支持 chunked 传输编码。
