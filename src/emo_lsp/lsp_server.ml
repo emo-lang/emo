@@ -487,7 +487,7 @@ let package_info (state : state) (root : string) : Yojson.Safe.t =
     | Error _ -> []
   in
   let registry =
-    Option.map (fun r -> { Emo_pkg.Registry.endpoint = r }) state.registry
+    Option.map (fun r -> Emo_pkg.Registry.Fs_dir r) state.registry
   in
   let deps =
     match manifest with
@@ -591,7 +591,7 @@ let dep_edit (state : state) (root : string) (name : string) :
       let version =
         match state.registry with
         | Some endpoint -> (
-            let reg = { Emo_pkg.Registry.endpoint } in
+            let reg = Emo_pkg.Registry.Fs_dir endpoint in
             match List.rev (Emo_pkg.Registry.versions reg ~name) with
             | v :: _ -> Some (Emo_pkg.Version.to_string v)
             | [] -> None)

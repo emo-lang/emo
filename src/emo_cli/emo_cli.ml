@@ -823,34 +823,30 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
     if n > 0 && registry.[n - 1] = '/' then String.sub registry 0 (n - 1)
     else registry
   in
-  match Emo_project.bundled_registry () with
-  | None ->
-      Error "the bundled standard library is missing from the installation"
-  | Some stdlib -> (
-      let reg = { Emo_pkg.Registry.endpoint = stdlib } in
-      match List.rev (Emo_pkg.Registry.versions reg ~name:"http") with
-      | [] -> Error "the bundled standard library has no http package"
-      | http_version :: _ -> (
-          match List.rev (Emo_pkg.Registry.versions reg ~name:"net") with
-          | [] -> Error "the bundled standard library has no net package"
-          | net_version :: _ ->
-              (* The resolver indexes manifest roots only, so both packages are
+  let reg = Emo_project.bundled_registry () in
+  match List.rev (Emo_pkg.Registry.versions reg ~name:"http") with
+  | [] -> Error "the bundled standard library has no http package"
+  | http_version :: _ -> (
+      match List.rev (Emo_pkg.Registry.versions reg ~name:"net") with
+      | [] -> Error "the bundled standard library has no net package"
+      | net_version :: _ ->
+          (* The resolver indexes manifest roots only, so both packages are
              pinned explicitly — same as a user project. *)
-              let dir =
-                Filename.concat
-                  (Filename.get_temp_dir_name ())
-                  (Printf.sprintf "emo-publish-%d-%d" (Unix.getpid ())
-                     (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF))
-              in
-              Unix.mkdir dir 0o755;
-              let write name content =
-                let oc = open_out_bin (Filename.concat dir name) in
-                output_string oc content;
-                close_out oc
-              in
-              write "package.emo"
-                (Printf.sprintf
-                   {|package {
+          let dir =
+            Filename.concat
+              (Filename.get_temp_dir_name ())
+              (Printf.sprintf "emo-publish-%d-%d" (Unix.getpid ())
+                 (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF))
+          in
+          Unix.mkdir dir 0o755;
+          let write name content =
+            let oc = open_out_bin (Filename.concat dir name) in
+            output_string oc content;
+            close_out oc
+          in
+          write "package.emo"
+            (Printf.sprintf
+               {|package {
   name = "internal/publish"
   version = "0.1.0"
   targets = ["ocaml", "c"]
@@ -861,70 +857,68 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
   }
 }
 |}
-                   (Emo_pkg.Version.to_string http_version)
-                   (Emo_pkg.Version.to_string net_version));
-              write "main.emo" upload_program;
-              let out = Buffer.create 256 in
-              let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
-              let old_cwd = Sys.getcwd () in
-              Unix.putenv "EMO_REGISTRY" stdlib;
-              Emo_eval.set_output (Buffer.add_string out);
-              Sys.chdir dir;
-              Fun.protect
-                ~finally:(fun () ->
-                  Sys.chdir old_cwd;
-                  (match old_registry with
-                  | Some v -> Unix.putenv "EMO_REGISTRY" v
-                  | None -> ());
-                  Emo_eval.set_output (fun s ->
-                      print_string s;
-                      flush stdout);
-                  remove_tree dir)
-                (fun () ->
-                  match
-                    Emo_project.run_entry ~entry_file:"main.emo" ~check:false
-                      ~sched:Emo_project.Own
-                      ~globals:
-                        [
-                          ("__url", Emo_eval.String (base ^ "/api/v1/packages"));
-                          ("__token", Emo_eval.String token);
-                          ("__body", Emo_eval.String archive);
-                        ]
-                      ()
-                  with
-                  | exception Emo_project.Static_errors ds ->
-                      Error
-                        (String.concat "; "
-                           (List.map
-                              (fun d -> d.Emo_support.Diagnostic.message)
-                              ds))
-                  | exception Emo_eval.Error d ->
-                      Error d.Emo_support.Diagnostic.message
-                  | _ -> (
-                      let text = Buffer.contents out in
-                      match String.index_opt text '\n' with
+               (Emo_pkg.Version.to_string http_version)
+               (Emo_pkg.Version.to_string net_version));
+          write "main.emo" upload_program;
+          let out = Buffer.create 256 in
+          let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
+          let old_cwd = Sys.getcwd () in
+          (* The uploader's resolution must see the bundled stdlib, never
+             the user's EMO_REGISTRY — blank the variable for the run
+             (an empty value means unset to the registry lookup). *)
+          Unix.putenv "EMO_REGISTRY" "";
+          Emo_eval.set_output (Buffer.add_string out);
+          Sys.chdir dir;
+          Fun.protect
+            ~finally:(fun () ->
+              Sys.chdir old_cwd;
+              (match old_registry with
+              | Some v -> Unix.putenv "EMO_REGISTRY" v
+              | None -> ());
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout);
+              remove_tree dir)
+            (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:"main.emo" ~check:false
+                  ~sched:Emo_project.Own
+                  ~globals:
+                    [
+                      ("__url", Emo_eval.String (base ^ "/api/v1/packages"));
+                      ("__token", Emo_eval.String token);
+                      ("__body", Emo_eval.String archive);
+                    ]
+                  ()
+              with
+              | exception Emo_project.Static_errors ds ->
+                  Error
+                    (String.concat "; "
+                       (List.map (fun d -> d.Emo_support.Diagnostic.message) ds))
+              | exception Emo_eval.Error d ->
+                  Error d.Emo_support.Diagnostic.message
+              | _ -> (
+                  let text = Buffer.contents out in
+                  match String.index_opt text '\n' with
+                  | None -> Error ("the uploader printed no status: " ^ text)
+                  | Some i -> (
+                      match
+                        int_of_string_opt (String.trim (String.sub text 0 i))
+                      with
                       | None -> Error ("the uploader printed no status: " ^ text)
-                      | Some i -> (
-                          match
-                            int_of_string_opt
-                              (String.trim (String.sub text 0 i))
-                          with
-                          | None ->
-                              Error ("the uploader printed no status: " ^ text)
-                          | Some status ->
-                              let body =
-                                String.sub text (i + 1)
-                                  (String.length text - i - 1)
-                              in
-                              let body =
-                                (* println's trailing newline is not the body's. *)
-                                if
-                                  String.length body > 0
-                                  && body.[String.length body - 1] = '\n'
-                                then String.sub body 0 (String.length body - 1)
-                                else body
-                              in
-                              Ok (status, body))))))
+                      | Some status ->
+                          let body =
+                            String.sub text (i + 1) (String.length text - i - 1)
+                          in
+                          let body =
+                            (* println's trailing newline is not the body's. *)
+                            if
+                              String.length body > 0
+                              && body.[String.length body - 1] = '\n'
+                            then String.sub body 0 (String.length body - 1)
+                            else body
+                          in
+                          Ok (status, body)))))
 
 let publish ~(registry_opt : string option) ~(token_opt : string option)
     ~(dry_run : bool) : int =

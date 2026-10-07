@@ -500,7 +500,15 @@ end
    future HTTPS client will use: <endpoint>/<owner>/<name>/<version>/
    holding the package's manifest (package.emo) and source files. *)
 module Registry = struct
-  type t = { endpoint : string } (* a filesystem directory *)
+  (* A registry endpoint: a filesystem directory, or the standard
+     library carried in the compiler binary itself (T25.2) — a lone emo
+     binary resolves stdlib packages with nothing beside it. *)
+  type t = Fs_dir of string | Embedded
+
+  (* The name the diagnostics show for the endpoint. *)
+  let describe = function
+    | Fs_dir dir -> dir
+    | Embedded -> "the bundled standard library"
 
   type fetched = {
     f_name : string;
@@ -551,16 +559,30 @@ module Registry = struct
 
   let fetch (t : t) ~(name : string) ~(version : Version.t) :
       (fetched, string) result =
-    let dir =
-      Filename.concat t.endpoint
-        (Filename.concat name (Version.to_string version))
+    let files =
+      match t with
+      | Fs_dir dir ->
+          let dir =
+            Filename.concat dir
+              (Filename.concat name (Version.to_string version))
+          in
+          if Sys.file_exists dir then collect_files dir else []
+      | Embedded ->
+          let prefix = Filename.concat name (Version.to_string version) ^ "/" in
+          let plen = String.length prefix in
+          List.filter_map
+            (fun (path, content) ->
+              if String.length path >= plen && String.sub path 0 plen = prefix
+              then
+                Some (String.sub path plen (String.length path - plen), content)
+              else None)
+            Emo_stdlib_data.files
     in
-    if not (Sys.file_exists dir) then
+    if files = [] then
       Error
-        (Printf.sprintf "registry `%s` has no package %s@%s" t.endpoint name
+        (Printf.sprintf "registry `%s` has no package %s@%s" (describe t) name
            (Version.to_string version))
     else
-      let files = collect_files dir in
       let has_manifest =
         List.exists (fun (p, _) -> Filename.basename p = "package.emo") files
       in
@@ -580,14 +602,35 @@ module Registry = struct
 
   (* Every version of [name] the registry publishes, in ascending order. *)
   let versions (t : t) ~(name : string) : Version.t list =
-    let dir = Filename.concat t.endpoint name in
-    match Sys.readdir dir with
-    | exception Sys_error _ -> []
-    | raw ->
-        raw |> Array.to_list
-        |> List.filter_map (fun entry ->
-            match Version.parse entry with Ok v -> Some v | Error _ -> None)
-        |> List.sort Version.compare
+    match t with
+    | Fs_dir dir -> (
+        let dir = Filename.concat dir name in
+        match Sys.readdir dir with
+        | exception Sys_error _ -> []
+        | raw ->
+            raw |> Array.to_list
+            |> List.filter_map (fun entry ->
+                match Version.parse entry with
+                | Ok v -> Some v
+                | Error _ -> None)
+            |> List.sort Version.compare)
+    | Embedded ->
+        let prefix = name ^ "/" in
+        let plen = String.length prefix in
+        List.filter_map
+          (fun (path, _) ->
+            if String.length path >= plen && String.sub path 0 plen = prefix
+            then
+              let rest = String.sub path plen (String.length path - plen) in
+              match String.index_opt rest '/' with
+              | Some i -> (
+                  match Version.parse (String.sub rest 0 i) with
+                  | Ok v -> Some v
+                  | Error _ -> None)
+              | None -> None
+            else None)
+          Emo_stdlib_data.files
+        |> List.sort_uniq Version.compare
 
   (* Builds a resolver index for [names] by reading each published version's
      manifest. Versions with unreadable manifests are skipped — resolution
