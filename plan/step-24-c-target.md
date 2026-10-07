@@ -6,7 +6,7 @@ specialization data) · **Related:**
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-22-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
-**Status:** in progress — T24.1–T24.8 done
+**Status:** in progress — T24.1–T24.9 done
 
 ## Why this step exists
 
@@ -138,7 +138,7 @@ and enters `known_targets` only once its first golden lands
       check-time capability table flips `c` to honoring
       `foreign def`. Goldens: a libm `sqrt` fixture and a tiny
       C-library opaque-handle fixture under `test/`.
-- [ ] **T24.9** — Processes and the cooperative scheduler:
+- [x] **T24.9** — Processes and the cooperative scheduler:
       `do` / `<-` / `receive`, mailboxes, selective receive,
       `self_pid`, `halt`; single-threaded cooperative loop;
       execution traces diffed against `emo_sched_det`. Goldens:

@@ -1,5 +1,12 @@
 #include "emo_c_runtime.h"
 
+/* The cooperative scheduler rides the POSIX ucontext fibers; macOS
+   headers gate them behind feature macros. */
+#if defined(__APPLE__)
+#define _XOPEN_SOURCE 600
+#endif
+#include <ucontext.h>
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -623,6 +630,7 @@ bool emo_eq_dyn(emo_value a, emo_value b) {
     emo_str sa = emo_str_of_bytes(a), sb = emo_str_of_bytes(b);
     return sa.len == sb.len && memcmp(sa.bytes, sb.bytes, (size_t)sa.len) == 0;
   }
+  case EMO_PID: return emo_unbox_pid(a) == emo_unbox_pid(b);
   case EMO_CLOSURE: return false; /* identity: distinct creations differ */
   default: return false;
   }
@@ -723,6 +731,9 @@ static void emo_render_dyn(emo_value v, FILE *out) {
   case EMO_BYTES:
     fprintf(out, "Bytes[%lld]", (long long)emo_length_bytes(v));
     return;
+  case EMO_PID:
+    fprintf(out, "<pid %lld>", (long long)emo_unbox_pid(v));
+    return;
   default:
     fputs("<value>", out);
     return;
@@ -787,7 +798,231 @@ emo_str emo_to_string_method(emo_value v) {
   return emo_to_string_dyn(v);
 }
 
-/* ---- The integer core ---- */
+/* ---- Processes and the cooperative scheduler ---- */
+
+typedef struct emo_msg {
+  struct emo_msg *next;
+  emo_value v;
+} emo_msg;
+
+typedef struct emo_process {
+  int64_t pid;
+  ucontext_t ctx;
+  struct emo_process *next_run;   /* the run queue's linkage */
+  struct emo_process *next_table; /* the live-process table's linkage */
+  emo_msg *inbox_head, *inbox_tail;
+  int blocked;  /* parked on receive */
+  int finished; /* body returned or halted */
+  emo_value *spawn_args;
+  void (*entry)(void);
+  void *stack; /* the fiber's malloc'd stack — ctx.uc_stack is clobbered
+                  by swapcontext on save */
+} emo_process;
+
+static emo_process *emo_runq_head = NULL, *emo_runq_tail = NULL;
+static emo_process *emo_process_table = NULL;
+static emo_process **emo_process_table_tail = &emo_process_table;
+static emo_process *emo_current = NULL;
+static int64_t emo_next_pid = 1;
+static ucontext_t emo_sched_ctx;
+
+static void *emo_proc_stack_alloc(size_t n) {
+  void *p = malloc(n);
+  if (p == NULL) {
+    fputs("emo: out of memory for a process stack\n", stderr);
+    abort();
+  }
+  return p;
+}
+
+static void emo_runq_push(emo_process *p) {
+  p->next_run = NULL;
+  if (emo_runq_tail == NULL) {
+    emo_runq_head = emo_runq_tail = p;
+  } else {
+    emo_runq_tail->next_run = p;
+    emo_runq_tail = p;
+  }
+}
+
+static emo_process *emo_runq_pop(void) {
+  emo_process *p = emo_runq_head;
+  if (p == NULL) return NULL;
+  emo_runq_head = p->next_run;
+  if (emo_runq_head == NULL) emo_runq_tail = NULL;
+  p->next_run = NULL;
+  return p;
+}
+
+/* Every fiber enters here: the site wrapper, then the finish
+   transition. (Table registration happens at spawn time — a message
+   may arrive before the fiber's first dispatch.) */
+static void emo_process_trampoline(void) {
+  emo_process *self = emo_current;
+  self->entry();
+  if (getenv("EMO_TRACE"))
+    fprintf(stderr, "[trace] exit %lld\n", (long long)self->pid);
+  self->finished = 1;
+  swapcontext(&self->ctx, &emo_sched_ctx);
+  abort(); /* unreachable */
+}
+
+int64_t emo_spawn_process(void (*entry)(void), int64_t nargs,
+                          const emo_value *args) {
+  emo_process *p = calloc(1, sizeof(emo_process));
+  if (p == NULL) abort();
+  p->pid = emo_next_pid++;
+  p->entry = entry;
+  if (nargs > 0) {
+    p->spawn_args = malloc((size_t)nargs * sizeof(emo_value));
+    if (p->spawn_args == NULL) abort();
+    memcpy(p->spawn_args, args, (size_t)nargs * sizeof(emo_value));
+  }
+  const size_t stack_size = 256 * 1024;
+  p->stack = emo_proc_stack_alloc(stack_size);
+  getcontext(&p->ctx);
+  p->ctx.uc_stack.ss_sp = p->stack;
+  p->ctx.uc_stack.ss_size = stack_size;
+  p->ctx.uc_link = &emo_sched_ctx;
+  makecontext(&p->ctx, emo_process_trampoline, 0);
+  *emo_process_table_tail = p;
+  emo_process_table_tail = &p->next_table;
+  emo_runq_push(p);
+  if (getenv("EMO_TRACE"))
+    fprintf(stderr, "[trace] spawn %lld (from %lld)\n", (long long)p->pid,
+            (long long)(emo_current ? emo_current->pid : 0));
+  return p->pid;
+}
+
+emo_value *emo_process_spawn_args(void) { return emo_current->spawn_args; }
+
+int64_t emo_process_self_pid(void) { return emo_current->pid; }
+
+/* The current fiber leaves the CPU for the scheduler. */
+static void emo_yield_to_sched(void) {
+  emo_process *self = emo_current;
+  swapcontext(&self->ctx, &emo_sched_ctx);
+}
+
+void emo_process_halt_current(void) {
+  emo_current->finished = 1;
+  swapcontext(&emo_current->ctx, &emo_sched_ctx);
+  abort(); /* unreachable */
+}
+
+void emo_process_send(int64_t pid, emo_value message) {
+  emo_process *target = NULL;
+  for (emo_process *p = emo_process_table; p; p = p->next_table) {
+    if (p->pid == pid) {
+      target = p;
+      break;
+    }
+  }
+  if (target == NULL || target->finished) {
+    fprintf(stderr,
+            "runtime error: <- to a pid that has exited (%lld, from %lld)\n",
+            (long long)pid, (long long)emo_current->pid);
+    exit(70);
+  }
+  emo_msg *m = malloc(sizeof(emo_msg));
+  if (m == NULL) abort();
+  m->next = NULL;
+  m->v = message;
+  if (target->inbox_tail == NULL) target->inbox_head = m;
+  else target->inbox_tail->next = m;
+  target->inbox_tail = m;
+  if (getenv("EMO_TRACE"))
+    fprintf(stderr, "[trace] send %lld -> %lld\n",
+            (long long)emo_current->pid, (long long)pid);
+  if (target->blocked) {
+    target->blocked = 0;
+    emo_runq_push(target);
+  }
+  /* Sending yields the sender's slice: the sender re-joins the run
+     queue at the tail (emo_sched_det's Continue policy), so a
+     process firing a million sends never starves its peers. */
+  emo_runq_push(emo_current);
+  emo_yield_to_sched();
+}
+
+void emo_process_park_current(void) {
+  if (getenv("EMO_TRACE"))
+    fprintf(stderr, "[trace] park %lld\n", (long long)emo_current->pid);
+  emo_current->blocked = 1;
+  swapcontext(&emo_current->ctx, &emo_sched_ctx);
+}
+
+bool emo_mailbox_empty(void) { return emo_current->inbox_head == NULL; }
+
+void *emo_mailbox_first(void) { return emo_current->inbox_head; }
+
+void *emo_mailbox_next(void *m) { return ((emo_msg *)m)->next; }
+
+emo_value emo_msg_value(void *m) { return ((emo_msg *)m)->v; }
+
+void emo_mailbox_take_current(void *m) {
+  emo_msg *dead = (emo_msg *)m;
+  emo_msg **p = &emo_current->inbox_head;
+  while (*p != NULL && *p != dead) p = &(*p)->next;
+  if (*p == NULL) return;
+  *p = dead->next;
+  if (emo_current->inbox_tail == dead) {
+    emo_msg *n = emo_current->inbox_head;
+    if (n == NULL) emo_current->inbox_tail = NULL;
+    else {
+      while (n->next != NULL) n = n->next;
+      emo_current->inbox_tail = n;
+    }
+  }
+  free(dead);
+}
+
+void emo_scheduler_run(void) {
+  for (;;) {
+    emo_process *p = emo_runq_pop();
+    if (p == NULL) {
+      /* No runnable work: parked fibers can never be woken again
+         (sends come from running fibers), so any that remain are
+         deadlocked. */
+      int waiting = 0;
+      for (emo_process *q = emo_process_table; q; q = q->next_table)
+        if (!q->finished) waiting++;
+      if (waiting > 0) {
+        fprintf(stderr,
+                "runtime error: deadlock: %d process(es) waiting on empty "
+                "mailboxes\n",
+                waiting);
+        exit(70);
+      }
+      return;
+    }
+    emo_current = p;
+    if (getenv("EMO_TRACE"))
+      fprintf(stderr, "[trace] dispatch %lld\n", (long long)p->pid);
+    swapcontext(&emo_sched_ctx, &p->ctx);
+    emo_current = NULL;
+    if (p->finished && p->stack != NULL) {
+      if (getenv("EMO_TRACE"))
+        fprintf(stderr, "[trace] reap %lld\n", (long long)p->pid);
+      free(p->stack);
+      p->stack = NULL;
+    }
+  }
+}
+
+/* Pids in the dynamic world. */
+emo_value emo_box_pid(int64_t pid) {
+  emo_value v = emo_cell_new(EMO_PID, 1);
+  *emo_payload(v) = (uintptr_t)pid;
+  return v;
+}
+
+int64_t emo_unbox_pid(emo_value v) {
+  v = emo_expect_kind(v, EMO_PID);
+  return (int64_t)*emo_payload(v);
+}
+
+/* ---- The integer core ---- *//* ---- The integer core ---- */
 
 int64_t emo_div_i64(int64_t a, int64_t b) {
   if (b == 0) emo_fatal("division by zero");

@@ -28,7 +28,7 @@ let runtime_c = Emo_c_runtime_data.runtime_c
 let runtime_h = Emo_c_runtime_data.runtime_h
 
 type env = {
-  buf : Buffer.t;
+  mutable buf : Buffer.t;
   mutable fresh : int; (* unique temporaries, for tail-call rebinds *)
   mutable scope : (string * string * Emo_check.t) list;
       (* Emo name → (C name, bound type), innermost first: parameters
@@ -60,6 +60,11 @@ type env = {
 }
 
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
+
+(* Fiber-wrapper numbering across the whole program: per-function env
+   copies would give every function's sites the same names. *)
+let spawn_counter = ref 0
+let closure_counter = ref 0
 
 (* C reserved words (C11) and the emitted entry: an Emo def named
    `double` would otherwise emit an illegal C declaration. The guard
@@ -177,6 +182,7 @@ let c_type (t : Emo_check.t) : string option =
   | Emo_check.Bool -> Some "bool"
   | Emo_check.Char -> Some "int32_t"
   | Emo_check.Byte -> Some "uint8_t"
+  | Emo_check.Pid -> Some "int64_t"
   | Emo_check.String -> Some "emo_str"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
   | Emo_check.BoxType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
@@ -261,6 +267,7 @@ let rec box_code (v : string) (ty : Emo_check.t) : string =
   | Emo_check.String -> Printf.sprintf "emo_box_str(%s)" v
   (* a Byte in the dynamic world is an Int64 cell carrying 0-255 *)
   | Emo_check.Byte -> Printf.sprintf "emo_box_i64((int64_t)(%s))" v
+  | Emo_check.Pid -> Printf.sprintf "emo_box_pid(%s)" v
   | t ->
       refuse
         (Printf.sprintf "`%s` values in the dynamic world"
@@ -274,6 +281,7 @@ and unbox_code (v : string) (ty : Emo_check.t) : string =
   | Emo_check.Char -> Printf.sprintf "emo_char_of(%s)" v
   | Emo_check.String -> Printf.sprintf "emo_str_of(%s)" v
   | Emo_check.Byte -> Printf.sprintf "(uint8_t)emo_unbox_i64(%s)" v
+  | Emo_check.Pid -> Printf.sprintf "emo_unbox_pid(%s)" v
   | t ->
       refuse
         (Printf.sprintf "`%s` out of the dynamic world" (Emo_check.to_string t))
@@ -293,6 +301,43 @@ and c_name env name =
   match List.find_opt (fun (n, _, _) -> String.equal n name) env.scope with
   | Some (_, c, _) -> c
   | None -> refuse (Printf.sprintf "the variable `%s` here" name)
+
+(* One `do f(a1, ..)` site: a static fiber wrapper converts the boxed
+   arguments to f's parameters and calls it; the site spawns the fiber
+   and yields the pid. *)
+and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
+    (use_ty : Emo_check.t) : string =
+  match Hashtbl.find_opt env.funsigs func with
+  | None -> refuse (Printf.sprintf "the spawn target `%s`" func)
+  | Some (fparams, _fres) ->
+      incr spawn_counter;
+      let wrapper = Printf.sprintf "emo_spawn%d" !spawn_counter in
+      let words = List.map (as_dyn env) args in
+      let wenv = { env with buf = env.closures; fresh = 0 } in
+      put wenv "static void %s(void) {\n" wrapper;
+      put wenv "  emo_value *__args = emo_process_spawn_args();\n";
+      List.iteri
+        (fun i (_, ty) ->
+          if not (is_dyn ty) then
+            put wenv "  %s __a%d = %s;\n" (param_type ty) i
+              (unbox_code (Printf.sprintf "__args[%d]" i) ty))
+        fparams;
+      let call_args =
+        List.mapi
+          (fun i (_, ty) ->
+            if is_dyn ty then Printf.sprintf "__args[%d]" i
+            else Printf.sprintf "__a%d" i)
+          fparams
+      in
+      put wenv "  (void)(%s(%s));\n" (c_ident func)
+        (String.concat ", " call_args);
+      put wenv "}\n\n";
+      let pid_expr =
+        Printf.sprintf "emo_spawn_process(%s, INT64_C(%d), (emo_value[]){%s})"
+          wrapper (List.length words) (String.concat ", " words)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_pid(%s)" pid_expr
+      else pid_expr
 
 and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
     (args : Emo_ir.expr list) : string =
@@ -363,6 +408,15 @@ and emit_expr env (e : Emo_ir.expr) : string =
             (fun acc part -> Printf.sprintf "emo_str_concat(%s, %s)" acc part)
             x rest)
   | Method { self_; name; args } -> emit_method env e.Emo_ir.ety self_ name args
+  | Builtin { name = "self_pid"; args = [] } ->
+      let v = "emo_process_self_pid()" in
+      if is_dyn e.Emo_ir.ety then Printf.sprintf "emo_box_pid(%s)" v else v
+  | Builtin { name = "self_pid"; _ } -> refuse "self_pid with arguments"
+  | Builtin { name = "halt"; _ } ->
+      (* `return halt()` / `do halt()`: the process never resumes —
+         the statement forms emit the call; an expression position
+         (this arm) only arises through a value use, which refuses *)
+      refuse "halt in a value position"
   | Call { func; args } -> (
       (* A foreign def calls its C symbol directly (T24.8). *)
       match Hashtbl.find_opt env.forfuncs func with
@@ -413,6 +467,10 @@ and emit_expr env (e : Emo_ir.expr) : string =
           (as_native env idx Emo_check.Int64)
       in
       if is_dyn e.Emo_ir.ety then v else unbox_code v e.Emo_ir.ety
+  | Do_spawn { func; args } ->
+      let use_ty = e.Emo_ir.ety in
+      let pid_expr = emit_spawn_site env func args use_ty in
+      pid_expr
   | Box_new arg -> Printf.sprintf "emo_box_new(%s)" (as_dyn env arg)
   | Bytes_new n ->
       Printf.sprintf "emo_bytes_new(%s)" (as_native env n Emo_check.Int64)
@@ -424,6 +482,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
       let v = closure_call env f args in
       if is_dyn e.Emo_ir.ety then v else unbox_code v e.Emo_ir.ety
   | Closure { cparams; cbody } -> emit_closure env cparams cbody
+  | Spawn_value _ -> refuse "spawning a first-class block yet"
   | _ -> refuse "this expression form"
 
 (* One value as an emo_str expression — what an interpolation part
@@ -787,10 +846,8 @@ and pattern_bound_names (p : Ast.pattern) (bound : string list ref) : unit =
    creation expression. *)
 and emit_closure env (cparams : (string * Emo_check.t) list)
     (body : Emo_ir.stmt list) : string =
-  let name = Printf.sprintf "emo__closure%d" (List.length env.closure_decls) in
-  env.closure_decls <-
-    Printf.sprintf "static emo_value %s(emo_value, const emo_value *);" name
-    :: env.closure_decls;
+  incr closure_counter;
+  let name = Printf.sprintf "emo__closure%d" !closure_counter in
   let caps = closure_free env cparams body in
   let param_scope =
     List.mapi (fun i (n, _) -> (n, c_ident n, Emo_check.Unknown)) cparams
@@ -1035,21 +1092,27 @@ and pattern_test env (s : string) (p : Ast.pattern) : string =
         (List.length ps)
         (if subs = [] then "" else " && " ^ String.concat " && " subs)
 
-(* The binding statements that recover a pattern's variables. *)
-and pattern_bind env (get : string) (p : Ast.pattern) : unit =
+(* The binding statements that recover a pattern's variables. [sfx]
+   keeps same-named bindings of sibling branches distinct (receive's
+   branches share one scope level). *)
+and pattern_bind_sfx env (get : string) (p : Ast.pattern) (sfx : string) : unit
+    =
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_literal _ | Ast.Enum_member _ -> ()
   | Ast.Pattern_binding name ->
-      let c = c_ident name in
+      let c = c_ident name ^ sfx in
       put env "  emo_value %s = %s;\n" c get;
       env.scope <- (name, c, Emo_check.Unknown) :: env.scope
   | Ast.Tuple_pattern ps ->
       List.iteri
         (fun i sub ->
-          pattern_bind env
+          pattern_bind_sfx env
             (Printf.sprintf "emo_index(%s, INT64_C(%d))" get i)
-            sub)
+            sub sfx)
         ps
+
+and pattern_bind env (get : string) (p : Ast.pattern) : unit =
+  pattern_bind_sfx env get p ""
 
 (* Drop a redundant outermost parenthesis pair — a comparison at an
    if-condition's top level keeps clang's -Wparentheses-equality
@@ -1091,6 +1154,11 @@ and emit_builtin env (name : string) (args : Emo_ir.expr list) : unit =
             refuse
               (Printf.sprintf "println of `%s` values" (Emo_check.to_string t)))
   | "println", _ -> refuse "println with more than one argument"
+  | "halt", [] -> put env "  emo_process_halt_current();\n"
+  | "self_pid", [] ->
+      put env "  (void)(%s);\n"
+        (if is_dyn Emo_check.Unknown then "emo_box_pid(emo_process_self_pid())"
+         else "emo_process_self_pid()")
   | _ -> refuse (Printf.sprintf "the builtin `%s`" name)
 
 (* A tail call becomes a parameter rebind and a jump: the arguments
@@ -1176,6 +1244,13 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
           in
           put env "  %s = %s;\n" c_name v
       | None -> refuse (Printf.sprintf "assignment to `%s` here" name))
+  | Send { target; message } ->
+      let pid =
+        if is_dyn target.Emo_ir.ety then
+          Printf.sprintf "emo_unbox_pid(%s)" (as_dyn env target)
+        else emit_expr env target
+      in
+      put env "  emo_process_send(%s, %s);\n" pid (as_dyn env message)
   | Set_global_var _ -> refuse "module-level variable assignment"
   | Set_field { self_; name; value } ->
       let idx = field_index env self_ name in
@@ -1242,8 +1317,59 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
               put env "  }\n")
         branches;
       put env "  emo_no_match();\n%s: ;\n" end_label
-  | Receive _ -> refuse "`receive` statements"
-  | Send _ -> refuse "message sends"
+  | Receive { branches; _ } ->
+      (* Selective receive: the generated code owns the matching — it
+         scans the mailbox in order for the first message any branch
+         accepts (a failed guard leaves the message queued), and parks
+         the fiber when nothing matches, rescanning on wake. Branch
+         bindings carry the branch index so same-named variables do
+         not collide at C scope. *)
+      let uniq = env.fresh + 1 in
+      env.fresh <- uniq;
+      let s = Printf.sprintf "__msg%d" uniq in
+      let retry = Printf.sprintf "__recv_retry_%d" uniq in
+      let end_label = Printf.sprintf "__recv_end_%d" uniq in
+      put env "  emo_value %s = (emo_value)0;\n" s;
+      put env "%s: ;\n" retry;
+      put env "  if (emo_mailbox_empty()) {\n";
+      put env "    emo_process_park_current();\n";
+      put env "    goto %s;\n  }\n" retry;
+      put env "  {\n    void *__m = emo_mailbox_first();\n";
+      put env "    while (__m != NULL) {\n";
+      put env "      %s = emo_msg_value(__m);\n" s;
+      List.iteri
+        (fun i (b : Emo_ir.branch) ->
+          let test = pattern_test env s b.Emo_ir.pattern in
+          let lbl = Printf.sprintf "__recv_b%d_%d" i uniq in
+          put env "      if (%s) {\n" test;
+          match b.Emo_ir.guard with
+          | Some g ->
+              let g_code = emit_expr env g in
+              let g_code =
+                if is_dyn g.Emo_ir.ety then unbox_code g_code Emo_check.Bool
+                else g_code
+              in
+              put env "        if (%s) {\n" g_code;
+              put env "          emo_mailbox_take_current(__m);\n";
+              put env "          goto %s;\n        }\n" lbl;
+              put env "      }\n"
+          | None ->
+              put env "        emo_mailbox_take_current(__m);\n";
+              put env "        goto %s;\n" lbl;
+              put env "      }\n")
+        branches;
+      put env "      __m = emo_mailbox_next(__m);\n";
+      put env "    }\n  }\n";
+      put env "  emo_process_park_current();\n";
+      put env "  goto %s;\n" retry;
+      List.iteri
+        (fun i (b : Emo_ir.branch) ->
+          put env "%s: ;\n" (Printf.sprintf "__recv_b%d_%d" i uniq);
+          pattern_bind_sfx env s b.Emo_ir.pattern (Printf.sprintf "__r%d" uniq);
+          emit_stmts env b.Emo_ir.body;
+          put env "  goto %s;\n" end_label)
+        branches;
+      put env "%s: ;\n" end_label
   | Raise e -> put env "  emo_raise(%s);\n" (as_dyn env e)
   | Return_stmt e -> (
       if env.in_main then refuse "`return` at the top level";
@@ -1253,19 +1379,26 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
             Some func
         | _ -> None
       in
-      match tail_callee with
-      | Some callee -> (
-          match e.Emo_ir.desc with
-          | Call { args; _ } -> emit_tail_rebind env callee args
-          | _ -> assert false)
-      | None ->
-          if env.fresult = Emo_check.Void then put env "  goto emo_return;\n"
-          else if is_dyn env.fresult then
-            (* the closure convention: a direct dynamic return *)
-            put env "  return %s;\n" (as_dyn env e)
-          else
-            let value = as_native env e env.fresult in
-            put env "  __result = %s;\n  goto emo_return;\n" value)
+      match e.Emo_ir.desc with
+      | Builtin { name = "halt"; _ } ->
+          (* `return halt()`: the process never resumes *)
+          put env "  emo_process_halt_current();\n";
+          ()
+      | _ -> (
+          match tail_callee with
+          | Some callee -> (
+              match e.Emo_ir.desc with
+              | Call { args; _ } -> emit_tail_rebind env callee args
+              | _ -> assert false)
+          | None ->
+              if env.fresult = Emo_check.Void then
+                put env "  goto emo_return;\n"
+              else if is_dyn env.fresult then
+                (* the closure convention: a direct dynamic return *)
+                put env "  return %s;\n" (as_dyn env e)
+              else
+                let value = as_native env e env.fresult in
+                put env "  __result = %s;\n  goto emo_return;\n" value))
 
 and emit_stmts env (stmts : Emo_ir.stmt list) : unit =
   List.iter (emit_stmt env) stmts
@@ -1277,6 +1410,8 @@ and has_return (stmts : Emo_ir.stmt list) : bool =
       | Emo_ir.Return_stmt _ -> true
       | Emo_ir.If { then_; else_; _ } -> has_return then_ || has_return else_
       | Emo_ir.Case { branches; _ } ->
+          List.exists (fun b -> has_return b.Emo_ir.body) branches
+      | Emo_ir.Receive { branches; _ } ->
           List.exists (fun b -> has_return b.Emo_ir.body) branches
       | _ -> false)
     stmts
@@ -1309,6 +1444,8 @@ let rec tail_callees (stmts : Emo_ir.stmt list) : string list =
       | Emo_ir.Return_stmt { desc = Call { func; _ }; _ } -> [ func ]
       | Emo_ir.If { then_; else_; _ } -> tail_callees then_ @ tail_callees else_
       | Emo_ir.Case { branches; _ } ->
+          List.concat_map (fun b -> tail_callees b.Emo_ir.body) branches
+      | Emo_ir.Receive { branches; _ } ->
           List.concat_map (fun b -> tail_callees b.Emo_ir.body) branches
       | _ -> [])
     stmts
@@ -1595,6 +1732,8 @@ let emit_thunk env0 (c : Emo_ir.class_) (m : Emo_ir.func) : unit =
 (* ---- The program ---- *)
 
 let emit (program : Emo_ir.program) : string =
+  spawn_counter := 0;
+  closure_counter := 0;
   let clusters = tail_clusters program.pfuncs in
   let cluster_members name =
     List.find_opt (List.mem name) clusters |> Option.value ~default:[ name ]
@@ -1678,6 +1817,10 @@ let emit (program : Emo_ir.program) : string =
   Buffer.add_string head
     "/* Generated by the Emo compiler (target: c) — do not edit. */\n\n";
   Buffer.add_string head "#include \"emo_c_runtime.h\"\n\n";
+  (* Forward declarations land in their own buffer: the fiber wrappers
+     (spawn/closures) assemble before them and call declared targets. *)
+  let forward = Buffer.create (16 * 1024) in
+  env0.buf <- forward;
   (* Forward declarations: every function keeps its mangled name, each
      cluster contributes its merged function, and every class
      contributes its constructor and methods. *)
@@ -1722,6 +1865,9 @@ let emit (program : Emo_ir.program) : string =
             (c_ident m.Emo_ir.fname))
         c.Emo_ir.cmethods)
     program.pclasses;
+  (* The forward declarations move ahead of the wrappers in the final
+     assembly; the rest of the emission continues in the main buffer. *)
+  env0.buf <- buf;
   (* Foreign defs: the C symbol declarations — the direct ABI. *)
   List.iter
     (fun (f : Emo_ir.func) ->
@@ -1809,15 +1955,29 @@ let emit (program : Emo_ir.program) : string =
         c.Emo_ir.cmethods;
       List.iter (emit_thunk env0 c) c.Emo_ir.cmethods)
     program.pclasses;
-  (* The entry module's top level. *)
-  let env = { env0 with fresh = 0; scope = [] } in
+  (* The entry module's top level runs in the root process's fiber;
+     every generated main ends in the scheduler loop. *)
+  let env =
+    {
+      env0 with
+      fresh = 0;
+      scope = [];
+      in_main = false;
+      fresult = Emo_check.Void;
+    }
+  in
+  put env "static void emo_root_entry(void) {\n";
+  emit_stmts env program.pinit;
+  put env "}\n\n";
   put env "int main(void) {\n";
   put env "  emo_startup();\n";
-  emit_stmts env program.pinit;
+  put env "  (void)emo_spawn_process(emo_root_entry, INT64_C(0), NULL);\n";
+  put env "  emo_scheduler_run();\n";
   put env "  return 0;\n}\n";
   (* Assembly: the header, then the closure declarations and
      definitions, then the bodies that take their addresses. *)
   let decls = String.concat "\n" (List.rev env0.closure_decls) in
-  Printf.sprintf "%s%s\n%s\n%s" (Buffer.contents head) decls
+  Printf.sprintf "%s%s\n%s%s\n%s" (Buffer.contents head)
+    (Buffer.contents forward) decls
     (Buffer.contents env0.closures)
     (Buffer.contents buf)
