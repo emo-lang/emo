@@ -216,7 +216,7 @@ let test_dependency_modules () =
         "package {\n\
         \  name = \"local/demo\"\n\
         \  version = \"0.1.0\"\n\
-        \  targets = [\"native\"]\n\
+        \  targets = [\"ocaml\"]\n\
         \  deps { foo = \"0.1.0\" }\n\
          }\n";
       write
@@ -224,7 +224,7 @@ let test_dependency_modules () =
         "package {\n\
         \  name = \"foo\"\n\
         \  version = \"0.1.0\"\n\
-        \  targets = [\"native\"]\n\
+        \  targets = [\"ocaml\"]\n\
         \  deps {}\n\
          }\n";
       write (Filename.concat pkg "foo.emo") "def bar() Int64 {\n  return 1\n}\n";

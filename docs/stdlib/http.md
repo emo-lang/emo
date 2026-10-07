@@ -4,7 +4,7 @@ The standard library's HTTP client and server, written in pure Emo on top of
 the `net` package. Direct style throughout: a request reads like any other
 function call, and the scheduler parks the process underneath while the
 socket is busy. The package is **native-only** — its manifest declares
-`targets = ["native"]`, and dependency resolution refuses it on every other
+`targets = ["ocaml", "c"]`, and dependency resolution refuses it on every other
 target.
 
 ## Using the package
@@ -21,7 +21,7 @@ connections directly:
 package {
   name = "acme/myapp"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml", "c"]
 
   deps {
     http = "0.1.0"
@@ -155,7 +155,7 @@ println(resp.body)   // POST /items payload
 
 ## Limitations
 
-- **Native target only.** The package declares `targets = ["native"]`;
+- **OCaml and c targets only.** The package declares `targets = ["ocaml", "c"]`;
   resolution refuses it for wasm, TypeScript, and BEAM builds.
 - **No connection pooling.** One TCP connection per request, closed after
   the exchange.

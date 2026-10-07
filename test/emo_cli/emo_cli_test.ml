@@ -1008,7 +1008,7 @@ println(ident(1))
         let out_bin = Filename.concat dir "native-bin" in
         let exit_code =
           Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
-            ~target:"native"
+            ~target:"ocaml"
         in
         Alcotest.(check int) "refused" 65 exit_code);
   ]
