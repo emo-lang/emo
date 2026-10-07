@@ -173,6 +173,11 @@ bool emo_is_tuple(emo_value v);
 /* A case expression with no matching branch. */
 void emo_no_match(void);
 
+/* An uncaught raise (T24.6): render the value like the interpreter's
+   E3010 and exit 1. `begin`/`catch`/`ensure` is unscheduled — until
+   then every raise terminates the process, so no unwinder exists. */
+void emo_raise(emo_value v);
+
 /* Enums (T24.5): a member is (enum name, member name), compared and
    rendered by name — no data on members (a carrying tag rides in a
    tuple). */

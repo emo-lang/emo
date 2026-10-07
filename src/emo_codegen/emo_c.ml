@@ -43,9 +43,10 @@ type env = {
       (* the mangled class name when emitting a
                              method or constructor: `self` resolves
                              fields against it *)
-  funsigs : (string, (string * Emo_check.t) list) Hashtbl.t;
-      (* every function's parameter types, for regime conversion at
-         call sites *)
+  funsigs : (string, (string * Emo_check.t) list * Emo_check.t) Hashtbl.t;
+      (* every function's parameter types and result: call sites
+         convert arguments and the result between the callee's
+         declared regime and the use site's *)
   classes : (string, Emo_ir.class_) Hashtbl.t; (* mangled class name → its IR *)
   ifaces : (string, (string * int) list) Hashtbl.t;
       (* interface name → its method name/arity contract *)
@@ -279,24 +280,35 @@ and emit_expr env (e : Emo_ir.expr) : string =
             x rest)
   | Method { self_; name; args } -> emit_method env e.Emo_ir.ety self_ name args
   | Call { func; args } -> (
-      let param_types =
-        match Hashtbl.find_opt env.funsigs func with
-        | Some ps -> ps
-        | None -> []
-      in
-      match List.combine args param_types with
-      | pairs ->
-          let arg_code =
-            List.map
-              (fun (arg, (_, pty)) ->
-                if is_dyn pty then as_dyn env arg else as_native env arg pty)
-              pairs
-          in
-          Printf.sprintf "%s(%s)"
-            (Emo_ir.sanitize_ident func)
-            (String.concat ", " arg_code)
-      | exception Invalid_argument _ ->
-          (* arity mismatches are the checker's to refuse *)
+      (* The callee's declared regime governs: a cross-module call the
+         checker types Unknown still returns the callee's native
+         result, and the use site converts either way. *)
+      match Hashtbl.find_opt env.funsigs func with
+      | Some (param_types, fres) -> (
+          match List.combine args param_types with
+          | pairs ->
+              let arg_code =
+                List.map
+                  (fun (arg, (_, pty)) ->
+                    if is_dyn pty then as_dyn env arg else as_native env arg pty)
+                  pairs
+              in
+              let call =
+                Printf.sprintf "%s(%s)"
+                  (Emo_ir.sanitize_ident func)
+                  (String.concat ", " arg_code)
+              in
+              if fres = e.Emo_ir.ety then call
+              else if is_dyn fres && is_dyn e.Emo_ir.ety then call
+              else if is_dyn e.Emo_ir.ety then box_code call fres
+              else unbox_code call e.Emo_ir.ety
+          | exception Invalid_argument _ ->
+              (* arity mismatches are the checker's to refuse *)
+              let arg_code = List.map (emit_expr env) args in
+              Printf.sprintf "%s(%s)"
+                (Emo_ir.sanitize_ident func)
+                (String.concat ", " arg_code))
+      | None ->
           let arg_code = List.map (emit_expr env) args in
           Printf.sprintf "%s(%s)"
             (Emo_ir.sanitize_ident func)
@@ -833,23 +845,25 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
   match s with
   | Effect { desc = Builtin { name; args }; _ } -> emit_builtin env name args
   | Effect { desc = Call { func; args }; _ } -> (
-      let param_types =
-        match Hashtbl.find_opt env.funsigs func with
-        | Some ps -> ps
-        | None -> []
-      in
-      match List.combine args param_types with
-      | pairs ->
-          let arg_code =
-            List.map
-              (fun (arg, (_, pty)) ->
-                if is_dyn pty then as_dyn env arg else as_native env arg pty)
-              pairs
-          in
-          put env "  %s(%s);\n"
-            (Emo_ir.sanitize_ident func)
-            (String.concat ", " arg_code)
-      | exception Invalid_argument _ ->
+      match Hashtbl.find_opt env.funsigs func with
+      | Some (param_types, _fres) -> (
+          match List.combine args param_types with
+          | pairs ->
+              let arg_code =
+                List.map
+                  (fun (arg, (_, pty)) ->
+                    if is_dyn pty then as_dyn env arg else as_native env arg pty)
+                  pairs
+              in
+              put env "  %s(%s);\n"
+                (Emo_ir.sanitize_ident func)
+                (String.concat ", " arg_code)
+          | exception Invalid_argument _ ->
+              let arg_code =
+                String.concat ", " (List.map (emit_expr env) args)
+              in
+              put env "  %s(%s);\n" (Emo_ir.sanitize_ident func) arg_code)
+      | None ->
           let arg_code = String.concat ", " (List.map (emit_expr env) args) in
           put env "  %s(%s);\n" (Emo_ir.sanitize_ident func) arg_code)
   | Effect { ety; desc = Method { self_; name; args; _ }; _ } ->
@@ -932,7 +946,7 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       put env "  emo_no_match();\n%s: ;\n" end_label
   | Receive _ -> refuse "`receive` statements"
   | Send _ -> refuse "message sends"
-  | Raise _ -> refuse "`raise`"
+  | Raise e -> put env "  emo_raise(%s);\n" (as_dyn env e)
   | Return_stmt e -> (
       if env.in_main then refuse "`return` at the top level";
       let tail_callee =
@@ -1326,7 +1340,7 @@ let emit (program : Emo_ir.program) : string =
   let funsigs = Hashtbl.create 32 in
   List.iter
     (fun (f : Emo_ir.func) ->
-      Hashtbl.replace funsigs f.Emo_ir.fname f.Emo_ir.fparams)
+      Hashtbl.replace funsigs f.Emo_ir.fname (f.Emo_ir.fparams, f.Emo_ir.fresult))
     program.pfuncs;
   List.iter
     (fun (c : Emo_ir.class_) ->
@@ -1336,7 +1350,7 @@ let emit (program : Emo_ir.program) : string =
         | Some init -> List.tl init.Emo_ir.fparams
         | None -> []
       in
-      Hashtbl.replace funsigs ctor params)
+      Hashtbl.replace funsigs ctor (params, Emo_check.Unknown))
     program.pclasses;
   let env0 =
     {

@@ -863,17 +863,33 @@ let lower (input : input) : program =
           | Ast.Item_stmt
               { stmt_desc = Ast.Binding { mutable_ = false; name; init }; _ }
             when m.mpath <> input.entry ->
-              funcs :=
-                {
-                  fname = mangle m.mpath name;
-                  fmodule = m.mpath;
-                  fparams = [];
-                  fresult = Emo_check.Unknown;
-                  fbody = [ Return_stmt (lower_expr const_env init) ];
-                  fspecializable = false;
-                  fforeign = None;
-                }
-                :: !funcs
+              (* A module alias (`const d = internal.discounts`) binds a
+                 path, not a value: uses resolve through the alias, so
+                 no thunk lowers (lowering would hit the Type_ref the
+                 module reference is). *)
+              if
+                match
+                  Option.bind
+                    (full_chain init)
+                    (fun chain ->
+                      if is_module_path const_env chain then Some chain
+                      else None)
+                with
+                | Some _ -> true
+                | None -> false
+              then ()
+              else
+                funcs :=
+                  {
+                    fname = mangle m.mpath name;
+                    fmodule = m.mpath;
+                    fparams = [];
+                    fresult = Emo_check.Unknown;
+                    fbody = [ Return_stmt (lower_expr const_env init) ];
+                    fspecializable = false;
+                    fforeign = None;
+                  }
+                  :: !funcs
           | Ast.Item_stmt
               { stmt_desc = Ast.Binding { mutable_ = true; name; init }; _ }
             when m.mpath <> input.entry ->
@@ -968,10 +984,10 @@ let lower (input : input) : program =
                     | Some (S_func { mangled; _ }) -> mangled
                     | _ -> mangle m.mpath (g.Ast.group_name ^ "__" ^ cname)
                   in
-                  funcs :=
-                    lower_func env ~module_path:m.mpath ~mangled ~self:false
-                      thunk_def
-                    :: !funcs)
+                  (* the thunk returns the const's value: Unknown, like
+                     every other const binding (Void would lose it) *)
+                  let thunk = lower_func env ~module_path:m.mpath ~mangled ~self:false thunk_def in
+                  funcs := { thunk with fresult = Emo_check.Unknown } :: !funcs)
                 g.Ast.group_consts
           | Ast.Item_foreign f ->
               funcs :=

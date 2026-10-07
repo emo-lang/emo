@@ -460,6 +460,12 @@ int64_t emo_length(emo_value v) {
 
 bool emo_is_tuple(emo_value v) { return emo_cell_kind(v) == EMO_TUPLE; }
 
+void emo_raise(emo_value v) {
+  emo_str s = emo_to_string_dyn(v);
+  fprintf(stderr, "uncaught exception: %.*s\n", (int)s.len, s.bytes);
+  exit(1);
+}
+
 void emo_no_match(void) {
   emo_fatal("no pattern matched the case scrutinee");
 }
