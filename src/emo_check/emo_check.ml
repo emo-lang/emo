@@ -345,7 +345,8 @@ let empty_env =
           } );
         ( "net_connect_unix",
           {
-            vtype = FuncType ([ ("path", String); ("timeout", Float64) ], TcpConn);
+            vtype =
+              FuncType ([ ("path", String); ("timeout", Float64) ], TcpConn);
             is_var = false;
             depth = 0;
           } );
@@ -641,12 +642,13 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
           if it = Unknown || it = Int64 then elem
           else (
             report ctx span "E4004"
-              (Printf.sprintf "the index must be an Int64, got %s" (to_string it));
+              (Printf.sprintf "the index must be an Int64, got %s"
+                 (to_string it));
             elem)
       | TupleType ts -> (
           match (index.Ast.desc, it) with
-          | Ast.Int64 n, _
-            when n >= 0L && n < Int64.of_int (List.length ts) -> (
+          | Ast.Int64 n, _ when n >= 0L && n < Int64.of_int (List.length ts)
+            -> (
               match List.nth_opt ts (Int64.to_int n) with
               | Some t -> t
               | None -> Unknown)
@@ -749,19 +751,20 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                (to_string other));
           Unknown)
   | Ast.Binary (op, l, r) -> check_binary ctx env span op l r
-  | Ast.If_expr { cond; then_expr; else_expr } ->
+  | Ast.If_expr { cond; then_expr; else_expr } -> (
       let ct = check_expr ctx env cond in
       (match ct with
       | Bool | Unknown -> ()
       | other ->
           report ctx cond.Ast.span "E4004"
-            (Printf.sprintf "the if expression's condition must be a Bool, got %s"
+            (Printf.sprintf
+               "the if expression's condition must be a Bool, got %s"
                (to_string other)));
       let tt = check_expr ctx (narrowed_then_env ctx env cond) then_expr in
       let et = check_expr ctx (child_scope env) else_expr in
       if tt = et then tt
       else
-        (match tt, et with
+        match (tt, et) with
         | Unknown, t | t, Unknown -> t
         | _ ->
             report ctx span "E4019"
@@ -1257,15 +1260,20 @@ and check_binary ctx env span op l r =
          (to_string lt) (to_string rt))
   in
   match op with
-  | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod
+  | (Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod)
     when lt = Int64 || rt = Int64 || lt = Byte || rt = Byte ->
       (* Fixed-width arithmetic never mixes with other numbers: the
          same type on both sides, wrapping per the family's rule. An
          Unknown side stays silent until it provably breaks the pair. *)
       let width_ok =
         match (lt, rt) with
-        | (Int64, Int64) | (Byte, Byte) | (Int64, Unknown) | (Unknown, Int64)
-        | (Byte, Unknown) | (Unknown, Byte) | (Unknown, Unknown) ->
+        | Int64, Int64
+        | Byte, Byte
+        | Int64, Unknown
+        | Unknown, Int64
+        | Byte, Unknown
+        | Unknown, Byte
+        | Unknown, Unknown ->
             true
         | _ -> false
       in
@@ -1273,23 +1281,33 @@ and check_binary ctx env span op l r =
       if lt = Int64 || rt = Int64 then Int64
       else if lt = Byte || rt = Byte then Byte
       else Unknown
-  | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge
+  | (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge)
     when lt = Int64 || rt = Int64 || lt = Byte || rt = Byte ->
       let width_ok =
         match (lt, rt) with
-        | (Int64, Int64) | (Byte, Byte) | (Int64, Unknown) | (Unknown, Int64)
-        | (Byte, Unknown) | (Unknown, Byte) | (Unknown, Unknown) ->
+        | Int64, Int64
+        | Byte, Byte
+        | Int64, Unknown
+        | Unknown, Int64
+        | Byte, Unknown
+        | Unknown, Byte
+        | Unknown, Unknown ->
             true
         | _ -> false
       in
       if not width_ok then mismatch "two values of the same fixed-width type";
       Bool
-  | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr
+  | (Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr)
     when lt = Int64 || rt = Int64 || lt = Byte || rt = Byte ->
       let width_ok =
         match (lt, rt) with
-        | (Int64, Int64) | (Byte, Byte) | (Int64, Unknown) | (Unknown, Int64)
-        | (Byte, Unknown) | (Unknown, Byte) | (Unknown, Unknown) ->
+        | Int64, Int64
+        | Byte, Byte
+        | Int64, Unknown
+        | Unknown, Int64
+        | Byte, Unknown
+        | Unknown, Byte
+        | Unknown, Unknown ->
             true
         | _ -> false
       in
@@ -1307,9 +1325,14 @@ and check_binary ctx env span op l r =
           (concatenating
           || (numeric_pair_ok () && not (lt = String || rt = String)))
       then mismatch "two numbers or two strings";
-      (* Concatenation stays a String even when one side is Unknown —
-         the known side already proves the operation is `+` on strings. *)
-      if concatenating then String else result_number
+      (* Two Unknown sides stay Unknown — the runtime dispatches `+`
+         per the values (numbers add, strings concatenate), so neither
+         result is provable at compile time. One known String side
+         proves concatenation; the result is a String even when the
+         other side is Unknown. *)
+      if lt = Unknown && rt = Unknown then Unknown
+      else if concatenating then String
+      else result_number
   | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod ->
       if not (numeric_pair_ok ()) then mismatch "two numbers";
       result_number
@@ -1351,8 +1374,8 @@ and narrowed_then_env ctx env cond =
         let target_type = resolve_type_name ctx recv.Ast.span tname in
         let rt = check_expr ctx env recv in
         (match rt with
-        | ( ClassType _ | InterfaceType _ | EnumType _ | Int64 | Float64 | Bool
-          | Char | String )
+        | ClassType _ | InterfaceType _ | EnumType _ | Int64 | Float64 | Bool
+        | Char | String
           when provably_excluded ctx rt target_type ->
             report ctx recv.Ast.span "E4011"
               (Printf.sprintf "`%s` can never narrow to %s" (to_string rt)
@@ -1686,8 +1709,8 @@ and always_returns ctx (s : Ast.stmt) : bool =
       let scrutinee_t =
         match
           Hashtbl.find_opt ctx.types
-            (scrutinee.Ast.span.Emo_support.Span.start,
-             scrutinee.Ast.span.Emo_support.Span.stop)
+            ( scrutinee.Ast.span.Emo_support.Span.start,
+              scrutinee.Ast.span.Emo_support.Span.stop )
         with
         | Some t -> t
         | None -> Unknown
