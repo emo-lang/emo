@@ -91,8 +91,7 @@ let program ~(main : string) ~(expect_exit : int) ~(expect_out : string)
   require_ok (compile dir [ "main.ml" ]) "ocamlfind ocamlopt";
   let status, out =
     run
-      (Printf.sprintf "cd %s && ./a.out %s"
-         (Filename.quote dir)
+      (Printf.sprintf "cd %s && ./a.out %s" (Filename.quote dir)
          (String.concat " " (List.map Filename.quote args)))
   in
   match status with
