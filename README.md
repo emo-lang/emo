@@ -12,6 +12,31 @@ Emo is **clean, explicit, and intuitive**. It draws on three decades of open-sou
 - **Principle of least surprise.** The language rules should match programmer intuition; things should work the way you expect them to.
 - **Multiple compilation targets.** Emo compiles to native executables, to WebAssembly, to other languages such as TypeScript, to the BEAM virtual machine, and to bare metal (the `riscv64` target — see EmoOS).
 
+## Install
+
+Prebuilt binaries are the fastest way to start. The binary carries the standard library inside it — nothing else to install (a C compiler joins the picture when you build with `emo build`, the default target). Grab the archive for your platform from [GitHub Releases](https://github.com/emo-lang/emo/releases), then:
+
+```console
+$ unzip emo-v1.0.0-macos-arm64.zip
+$ ./emo-v1.0.0-macos-arm64/bin/emo run hello.emo
+```
+
+Homebrew, from the project's own tap:
+
+```console
+$ brew install emo-lang/tap/emo
+```
+
+opam builds from source and additionally brings the `ocaml` compilation target:
+
+```console
+$ opam install emo
+```
+
+Windows: WSL2 is the supported path — install inside WSL as you would on Linux; a native Windows build is pending the runtime port (see `docs/toolchain-distribution.md`).
+
+Wherever you installed from, `emo doctor` checks the environment per target and names what is missing.
+
 ## Syntax
 
 Emo's syntax favors explicitness: everything is visibly what it is — a call looks like a call, a return is written out, a block has one shape.

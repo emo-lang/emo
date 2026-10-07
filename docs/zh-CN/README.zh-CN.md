@@ -12,6 +12,31 @@ Emo 是**简洁、显式、直观**的。它汲取了三十年开源编程语言
 - **最小惊讶原则。** 语言规则应当符合程序员直觉；事物应当按你期望的方式工作。
 - **多编译目标。** Emo 编译为原生可执行文件、WebAssembly、其他语言（如 TypeScript）、BEAM 虚拟机，以及裸机（`riscv64` 目标——见 EmoOS）。
 
+## 安装
+
+预编译二进制是最快的起步方式。二进制内嵌标准库——无需安装其他东西（用 `emo build` 构建时才需要 C 编译器，那是默认 target）。从 [GitHub Releases](https://github.com/emo-lang/emo/releases) 下载你平台的归档，然后：
+
+```console
+$ unzip emo-v1.0.0-macos-arm64.zip
+$ ./emo-v1.0.0-macos-arm64/bin/emo run hello.emo
+```
+
+Homebrew，来自项目自有 tap：
+
+```console
+$ brew install emo-lang/tap/emo
+```
+
+opam 从源码构建，并额外带来 `ocaml` 编译目标：
+
+```console
+$ opam install emo
+```
+
+Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；原生 Windows 构建在等待运行时移植（见 `docs/toolchain-distribution.md`）。
+
+无论从哪个渠道安装，`emo doctor` 都会按 target 检查环境并说出缺什么。
+
 ## 语法
 
 Emo 的语法推崇显式：一切皆可见其本来面目——调用长得像调用，return 写在明处，块只有一种形状。
