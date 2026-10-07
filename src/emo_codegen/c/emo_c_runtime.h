@@ -58,7 +58,8 @@ enum emo_kind {
   EMO_BOX,
   EMO_INSTANCE,
   EMO_ENUM,
-  EMO_CLOSURE
+  EMO_CLOSURE,
+  EMO_BYTES
 };
 
 /* A class's compile-time vtable: every generated program defines one
@@ -107,6 +108,7 @@ void emo_println_i64(int64_t v);
 void emo_println_f64(double v);
 void emo_println_bool(bool v);
 void emo_println_char(int32_t v);
+void emo_println_byte(uint8_t v);
 
 /* The scalar renderings a string interpolation and to_string() lower
    to. The Float64 rule matches the interpreter's emo_to_string:
@@ -220,6 +222,42 @@ bool emo_le_dyn(emo_value a, emo_value b);
    closures as "<block>" — matching the interpreter's emo_to_string. */
 emo_str emo_to_string_dyn(emo_value v);
 void emo_println_dyn(emo_value v);
+
+/* The to_string METHOD over a dynamic receiver: a Bytes cell yields
+   its content, every other kind renders (the interpreter dispatches
+   the same way at runtime). */
+emo_str emo_to_string_method(emo_value v);
+
+/* ---- The systems layer (T24.7) ---- */
+
+/* Bytes: a fixed-length mutable byte buffer — [header][len][bytes...].
+   All indices and values are Int64 at the surface; get zero-extends,
+   set rejects values outside 0-255, the little-endian accessors bound
+   the whole field, and the u16/u32 setters mask the value like the
+   interpreter. */
+emo_value emo_bytes_new(int64_t len);
+int64_t emo_bytes_length(emo_value b);
+int64_t emo_bytes_get(emo_value b, int64_t i);
+int64_t emo_bytes_set(emo_value b, int64_t i, int64_t v); /* returns v */
+emo_value emo_bytes_of_str(emo_str s); /* copies into a cell */
+emo_str emo_str_of_bytes(emo_value b); /* borrows the cell's bytes */
+
+int64_t emo_bytes_get_u16_le(emo_value b, int64_t i);
+int64_t emo_bytes_get_u32_le(emo_value b, int64_t i);
+int64_t emo_bytes_get_u64_le(emo_value b, int64_t i);
+int64_t emo_bytes_set_u16_le(emo_value b, int64_t i, int64_t v);
+int64_t emo_bytes_set_u32_le(emo_value b, int64_t i, int64_t v);
+int64_t emo_bytes_set_u64_le(emo_value b, int64_t i, int64_t v);
+
+/* Shifts with the interpreter's rules: a negative count is a runtime
+   error, a count at or past the width gives 0 (arithmetic `>>` gives
+   the sign fill). */
+int64_t emo_shl_i64(int64_t a, int64_t c);
+int64_t emo_shr_i64(int64_t a, int64_t c);
+
+/* Bit-casts. */
+int64_t emo_f64_bits(double d);
+double emo_f64_from_bits(int64_t bits);
 
 /* ---- The integer core (T24.2) ---- */
 

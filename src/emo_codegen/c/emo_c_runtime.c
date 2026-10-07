@@ -137,6 +137,10 @@ void emo_println_char(int32_t v) {
   fputc('\n', stdout);
 }
 
+void emo_println_byte(uint8_t v) {
+  printf("%u\n", (unsigned)v);
+}
+
 /* ---- The scalar renderings ---- */
 
 emo_str emo_str_from_i64(int64_t v) {
@@ -460,6 +464,10 @@ int64_t emo_length(emo_value v) {
 
 bool emo_is_tuple(emo_value v) { return emo_cell_kind(v) == EMO_TUPLE; }
 
+static int64_t emo_length_bytes(emo_value v) {
+  return (int64_t)*emo_payload(v);
+}
+
 void emo_raise(emo_value v) {
   emo_str s = emo_to_string_dyn(v);
   fprintf(stderr, "uncaught exception: %.*s\n", (int)s.len, s.bytes);
@@ -596,6 +604,10 @@ bool emo_eq_dyn(emo_value a, emo_value b) {
     if (memcmp(pa + skip + 1, pb + skip + 1, mlen) != 0) return false;
     return true;
   }
+  case EMO_BYTES: {
+    emo_str sa = emo_str_of_bytes(a), sb = emo_str_of_bytes(b);
+    return sa.len == sb.len && memcmp(sa.bytes, sb.bytes, (size_t)sa.len) == 0;
+  }
   case EMO_CLOSURE: return false; /* identity: distinct creations differ */
   default: return false;
   }
@@ -693,6 +705,9 @@ static void emo_render_dyn(emo_value v, FILE *out) {
   case EMO_CLOSURE:
     fputs("<block>", out);
     return;
+  case EMO_BYTES:
+    fprintf(out, "Bytes[%lld]", (long long)emo_length_bytes(v));
+    return;
   default:
     fputs("<value>", out);
     return;
@@ -752,14 +767,147 @@ void emo_println_dyn(emo_value v) {
   fputc('\n', stdout);
 }
 
+emo_str emo_to_string_method(emo_value v) {
+  if (emo_cell_kind(v) == EMO_BYTES) return emo_str_of_bytes(v);
+  return emo_to_string_dyn(v);
+}
+
 /* ---- The integer core ---- */
 
 int64_t emo_div_i64(int64_t a, int64_t b) {
+  if (b == 0) emo_fatal("division by zero");
   if (a == INT64_MIN && b == -1) return INT64_MIN;
   return a / b;
 }
 
 int64_t emo_mod_i64(int64_t a, int64_t b) {
+  if (b == 0) emo_fatal("division by zero");
   if (a == INT64_MIN && b == -1) return 0;
   return a % b;
+}
+
+/* ---- The systems layer ---- */
+
+emo_value emo_bytes_new(int64_t len) {
+  /* [header][len][bytes...] — zero-filled by the bump allocator's
+     fresh malloc? malloc does not zero: clear explicitly. */
+  emo_value v = emo_cell_new(EMO_BYTES, 1 + (len + 7) / 8);
+  uintptr_t *p = emo_payload(v);
+  p[0] = (uintptr_t)len;
+  memset(p + 1, 0, (size_t)len);
+  return v;
+}
+
+int64_t emo_bytes_length(emo_value b) {
+  b = emo_expect_kind(b, EMO_BYTES);
+  return (int64_t)*emo_payload(b);
+}
+
+static unsigned char *emo_bytes_ptr(emo_value b, int64_t i, int64_t width,
+                                    const char *op) {
+  b = emo_expect_kind(b, EMO_BYTES);
+  int64_t n = (int64_t)*emo_payload(b);
+  if (i < 0 || i + width > n) {
+    fprintf(stderr,
+            "runtime error: index %lld is out of bounds for a %s on a "
+            "length-%lld Bytes\n",
+            (long long)i, op, (long long)n);
+    exit(70);
+  }
+  return (unsigned char *)(emo_payload(b) + 1) + i;
+}
+
+int64_t emo_bytes_get(emo_value b, int64_t i) {
+  return (int64_t)*emo_bytes_ptr(b, i, 1, "get");
+}
+
+int64_t emo_bytes_set(emo_value b, int64_t i, int64_t v) {
+  if (v < 0 || v > 255) {
+    fprintf(stderr,
+            "runtime error: byte value %lld is out of range for a byte "
+            "(0-255)\n",
+            (long long)v);
+    exit(70);
+  }
+  *emo_bytes_ptr(b, i, 1, "set") = (unsigned char)v;
+  return v;
+}
+
+emo_value emo_bytes_of_str(emo_str s) {
+  emo_value v = emo_cell_new(EMO_BYTES, 1 + (s.len + 7) / 8);
+  uintptr_t *p = emo_payload(v);
+  p[0] = (uintptr_t)s.len;
+  memcpy(p + 1, s.bytes, (size_t)s.len);
+  return v;
+}
+
+emo_str emo_str_of_bytes(emo_value b) {
+  b = emo_expect_kind(b, EMO_BYTES);
+  uintptr_t *p = emo_payload(b);
+  emo_str s = {(int64_t)p[0], (const char *)(p + 1)};
+  return s;
+}
+
+int64_t emo_bytes_get_u16_le(emo_value b, int64_t i) {
+  unsigned char *p = emo_bytes_ptr(b, i, 2, "get_u16_le");
+  return (int64_t)(p[0] | (p[1] << 8));
+}
+
+int64_t emo_bytes_get_u32_le(emo_value b, int64_t i) {
+  unsigned char *p = emo_bytes_ptr(b, i, 4, "get_u32_le");
+  uint32_t u = 0;
+  for (int k = 3; k >= 0; k--) u = (u << 8) | p[k];
+  return (int64_t)u;
+}
+
+int64_t emo_bytes_get_u64_le(emo_value b, int64_t i) {
+  unsigned char *p = emo_bytes_ptr(b, i, 8, "get_u64_le");
+  uint64_t u = 0;
+  for (int k = 7; k >= 0; k--) u = (u << 8) | p[k];
+  return (int64_t)u;
+}
+
+int64_t emo_bytes_set_u16_le(emo_value b, int64_t i, int64_t v) {
+  unsigned char *p = emo_bytes_ptr(b, i, 2, "set_u16_le");
+  uint16_t u = (uint16_t)v;
+  for (int k = 0; k < 2; k++) p[k] = (unsigned char)((u >> (8 * k)) & 0xFF);
+  return (int64_t)u;
+}
+
+int64_t emo_bytes_set_u32_le(emo_value b, int64_t i, int64_t v) {
+  unsigned char *p = emo_bytes_ptr(b, i, 4, "set_u32_le");
+  uint32_t u = (uint32_t)v;
+  for (int k = 0; k < 4; k++) p[k] = (unsigned char)((u >> (8 * k)) & 0xFF);
+  return (int64_t)u;
+}
+
+int64_t emo_bytes_set_u64_le(emo_value b, int64_t i, int64_t v) {
+  unsigned char *p = emo_bytes_ptr(b, i, 8, "set_u64_le");
+  uint64_t u = (uint64_t)v;
+  for (int k = 0; k < 8; k++) p[k] = (unsigned char)((u >> (8 * k)) & 0xFF);
+  return v;
+}
+
+int64_t emo_shl_i64(int64_t a, int64_t c) {
+  if (c < 0) emo_fatal("shift count must be non-negative");
+  if (c >= 64) return 0;
+  return (int64_t)((uint64_t)a << c);
+}
+
+int64_t emo_shr_i64(int64_t a, int64_t c) {
+  if (c < 0) emo_fatal("shift count must be non-negative");
+  if (c >= 64) return a < 0 ? -1 : 0;
+  return a >> c; /* arithmetic on gcc/clang */
+}
+
+int64_t emo_f64_bits(double d) {
+  int64_t bits;
+  memcpy(&bits, &d, sizeof bits);
+  return bits;
+}
+
+double emo_f64_from_bits(int64_t bits) {
+  double d;
+  memcpy(&d, &bits, sizeof d);
+  return d;
 }

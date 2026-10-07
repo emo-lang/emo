@@ -391,9 +391,11 @@ let wasm_examples_tests =
    T24.5: objects, language_tour — classes, interfaces, enums, case
    with guards, closures, and array append; T24.6: shop, function_group
    — multi-file modules, the internal/ subtree, const aliases, and
-   `emo` groups). The full fib and numerics examples join when foreign
-   defs land (T24.8) — their c_scalar / c_integer fixtures cover the
-   same semantics. *)
+   `emo` groups; T24.7: bit_ops, bytes, fixed_width — the bitwise
+   operators, Bytes with little-endian accessors, and Byte with
+   explicit conversions). The full fib and numerics examples join when
+   foreign defs land (T24.8) — their c_scalar / c_integer fixtures
+   cover the same semantics. *)
 let c_goldens =
   [
     "hello_world";
@@ -402,6 +404,9 @@ let c_goldens =
     "language_tour";
     "shop";
     "function_group";
+    "bit_ops";
+    "bytes";
+    "fixed_width";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
