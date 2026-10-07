@@ -97,6 +97,31 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
 门）、以及 HPC 代码生成（vectorization、OpenMP pragma）。这些时间线与分发
 相互独立。
 
+## 更新（2026-10-07）：发布工具链已排期并落地（步骤 25）
+
+上文的推迟维持到 `c` 后端交付（步骤 24）为止；M9 — 工具链
+（`plan/step-25-toolchain.md`）现在把本文档留白未排期的部分排上了：
+
+- **tag 触发的发布工作流**（`.github/workflows/release.yml`）在四个
+  平台构建发布二进制——Linux x86_64/aarch64（Ubuntu 22.04，受支持的
+  最旧 glibc：2.35）与 macOS x86_64/arm64——对发布构建跑测试套件，
+  并经 `devtools/package-release.sh` 打包：二进制加许可文件，仅此
+  而已，因为标准库已随二进制内嵌。Linux 归档在干净的 `ubuntu:22.04`
+  容器中验证，而非构建机上。GitHub Release 草稿附带 `SHA256SUMS`。
+- **macOS 签名与公证已接线，以密钥为闸。** 打包脚本以 hardened
+  runtime 签名（`codesign --options runtime --timestamp`）、经
+  notarytool 提交、对 zip staple——当 `MACOS_SIGNING_IDENTITY`、
+  `MACOS_APPLE_ID`、`MACOS_APP_PASSWORD` 与 `MACOS_TEAM_ID` 四个仓库
+  密钥齐备时；密钥缺席时归档以未签名状态发布，工作流以 notice 明说。
+- **原生 Windows 推迟，阻塞点如实记录。** C 运行时的进程是 POSIX
+  `ucontext` 纤维、socket 是非阻塞 fd（T24.9/T24.10）；原生 Windows
+  移植是把这层调度器与 IO 重建在 Windows 原语之上，预编译渠道等它。
+  WSL2 仍是受支持的 Windows 路径，Microsoft Trusted Signing 仍是
+  移植落地时的既定签名路线。
+- **`emo doctor` 取代了上文的过渡形态**：它是 target 感知的环境
+  检查——默认 `c` 目标做 cc 编译并运行的冒烟、ocaml 目标在预编译
+  机器上报出需要源码构建安装——退出码只反映真正损坏的部分。
+
 ## 参考
 
 - `CHECK.md` —— "Binary / CLI tool distribution mechanism"。

@@ -111,6 +111,41 @@ real C FFI (pointers, structs, arrays, callbacks — the hard gate in
 `docs/industrial-software.md`), and HPC codegen (vectorization, OpenMP
 pragmas). Those timelines are independent of distribution.
 
+## Update 2026-10-07: the release tooling is scheduled and landed (step 25)
+
+The deferral above held until the `c` backend shipped (step 24); M9 —
+Toolchain (`plan/step-25-toolchain.md`) now schedules what this
+document left unscheduled:
+
+- **The tag-triggered release workflow**
+  (`.github/workflows/release.yml`) builds the release binary on four
+  platforms — Linux x86_64/aarch64 (Ubuntu 22.04, the oldest
+  supported glibc: 2.35) and macOS x86_64/arm64 — runs the test suite
+  against the release build, and packages through
+  `devtools/package-release.sh`: the binary, the license, and nothing
+  else, since the standard library rides inside the binary. Linux
+  archives are verified in a clean `ubuntu:22.04` container, not on
+  the builder. The draft GitHub Release carries `SHA256SUMS`.
+- **macOS signing and notarization are wired, gated on secrets.** The
+  packaging script signs with the hardened runtime
+  (`codesign --options runtime --timestamp`), submits through
+  notarytool, and staples the zip when `MACOS_SIGNING_IDENTITY`,
+  `MACOS_APPLE_ID`, `MACOS_APP_PASSWORD`, and `MACOS_TEAM_ID` are
+  configured as repository secrets; with the secrets absent the
+  archives ship unsigned and the workflow says so in a notice.
+- **Native Windows is deferred, recorded as the blocker it is.** The
+  C runtime's processes are POSIX `ucontext` fibers and its sockets
+  are non-blocking fds (T24.9/T24.10); a native Windows port is that
+  scheduler and IO layer re-based on Windows primitives, and the
+  prebuilt channel waits for it. WSL2 remains the supported Windows
+  path, and Microsoft Trusted Signing stays the recorded signing
+  route for when the port lands.
+- **`emo doctor` replaced the interim shape above**: it is the
+  target-aware environment check — a cc compile-and-run smoke for the
+  default `c` target, the ocaml target reported as needing a source
+  install on a prebuilt machine — and its exit code reflects only
+  what is actually broken.
+
 ## References
 
 - `CHECK.md` — "Binary / CLI tool distribution mechanism".

@@ -34,6 +34,17 @@ cp "$bin" "$stage/$name/bin/emo"
 chmod 755 "$stage/$name/bin/emo"
 cp "$root/LICENSE" "$stage/$name/LICENSE"
 
+# macOS signing (T25.7): the four EMO_ variables together turn the
+# hooks on — the identity signs the binary with the hardened runtime,
+# notarytool submits the zip, stapler attaches the ticket. With any of
+# them unset the hooks stay off and the archive ships unsigned (CI
+# passes the secrets through verbatim; absent secrets mean absent
+# values).
+if [ "$os" = macos ] && [ -n "$EMO_CODESIGN_IDENTITY" ]; then
+  codesign --force --options runtime --timestamp \
+    -s "$EMO_CODESIGN_IDENTITY" "$stage/$name/bin/emo"
+fi
+
 cd "$stage"
 case "$os" in
 macos)
@@ -46,6 +57,16 @@ macos)
   ;;
 esac
 cd "$out"
+
+if [ "$os" = macos ] && [ -n "$EMO_CODESIGN_IDENTITY" ] &&
+  [ -n "$EMO_NOTARY_APPLE_ID" ] && [ -n "$EMO_NOTARY_APP_PASSWORD" ] &&
+  [ -n "$EMO_NOTARY_TEAM_ID" ]; then
+  xcrun notarytool submit "$out/$archive" \
+    --apple-id "$EMO_NOTARY_APPLE_ID" \
+    --password "$EMO_NOTARY_APP_PASSWORD" \
+    --team-id "$EMO_NOTARY_TEAM_ID" --wait
+  xcrun stapler staple "$out/$archive"
+fi
 
 # shasum ships with macOS, sha256sum with Linux; the output shape is
 # the same "hash  name" line either way.
