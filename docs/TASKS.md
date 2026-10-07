@@ -606,23 +606,36 @@ release layout; all goldens byte-for-byte; `dune test` green.
       prelude embedded as generated data (the C runtime's dune rule
       pattern), the typescript arm stopped from reading the
       filesystem. Verification: a lone release-layout binary compiles
-      a typescript program; the ts goldens byte-for-byte.
+      a typescript program; the ts goldens byte-for-byte. (Done
+      2026-10-07: the prelude rides `emo_codegen/ts` as generated data
+      and the CLI never touches the filesystem for it; a lone binary
+      compiles and runs a ts program; the seven ts goldens green.)
 - [x] **T26.2** — The emitted-code inventory and the standalone
       skeleton: emit the golden subset through the ocaml emitter,
       collect mechanically every host symbol the emitted code
       references, and record the inventory as the standalone runtime's
       contract; the skeleton compiles with plain `ocamlopt`, zero
       `emo_*` dependencies, proven by a fixture from the build
-      directory alone.
+      directory alone. (Done 2026-10-07: two modules and 70-odd
+      symbols recorded in the plan as the contract, collected by
+      `devtools/ocaml-runtime-inventory.sh` over the sixteen-example
+      golden corpus with a stray-module alarm; the skeleton lands with
+      the ADT, signals, and effects final.)
 - [x] **T26.3** — The value and scalar core: the value ADT, strings,
       print/interpolation rendering, arithmetic/comparison dispatch,
       and the case/error paths the inventory names, standalone. Each
       piece covered by a fixture compiled against the runtime alone.
+      (Done 2026-10-07: five fixture programs in the emitter's call
+      shape, compiled with `ocamlopt -open Emo_ocaml_runtime` against
+      the extracted runtime alone.)
 - [x] **T26.4** — The scheduler and IO: the effects-based scheduler,
       file IO, and networking, per the dependency policy (the OCaml
       standard library plus `unix`; `ssl` as the one opam dep; no eio).
       Fixtures: a process program and an HTTP roundtrip compiled
-      against the standalone runtime alone.
+      against the standalone runtime alone. (Done 2026-10-07: the det
+      scheduler ports whole — spawn/send/receive, fd and timer parking,
+      TLS, UDP, file IO; eio drops out, the policy settles on unix plus
+      ssl; four more fixtures ride the scheduler.)
 - [x] **T26.5** — The cutover: the ocaml emitter's references flip to
       the standalone runtime; the arm emits runtime + `main.ml` and
       invokes `ocamlopt` (ocamlfind only for the runtime's own
@@ -630,11 +643,29 @@ release layout; all goldens byte-for-byte; `dune test` green.
       beside-binary lookup are deleted; refusal and doctor wording
       become installation-independent. All ocaml goldens and tests
       byte-for-byte; an installed binary with an OCaml toolchain
-      builds the golden subset.
+      builds the golden subset. (Done 2026-10-07: the arm writes
+      runtime + main.ml and compiles them with the target's own
+      ocamlopt; the cmxa machinery, the library scan, and the
+      beside-binary lookup are deleted; all sixteen goldens match
+      byte-for-byte and the emitted main.ml is unchanged; a lone
+      release-layout binary builds the golden subset.)
 - [ ] **T26.6** — The independence audit and close-out: wasm and beam
       recorded as verified-independent (no tasks — evidence noted);
       the docs corrected (`docs/toolchain.md`,
       `docs/toolchain-distribution.md` — the true ocaml-target story
       replaces "a source install brings the ocaml target");
       `benchmarks/results.md`'s ocaml column re-run against the
-      standalone runtime; close-out.
+      standalone runtime; close-out. (Done 2026-10-07: wasm and beam
+      recorded verified-independent in the plan; both toolchain docs
+      corrected bilingually — the true ocaml-target story replaces the
+      source-install story, and doctor lost its installation line; the
+      benchmark suite re-ran on the standalone runtime with the ocaml
+      rows within the machine's observed run-to-run noise; plan status
+      done.)
+
+Step 26 complete 2026-10-07 (T26.1–T26.6 on
+`feat/target-independence`): no target reads its runtime from beside
+the binary or the host build tree; the ocaml target works from a lone
+release-layout binary wherever the OCaml toolchain is on PATH; the
+typescript target likewise; all goldens byte-for-byte and `dune test`
+green.

@@ -69,4 +69,4 @@ incrementally shippable steps — one file per step, executed in order.
 | 23 | Self-contained hosted native backend (no OCaml runtime) & deep C FFI | assessment (not scheduled) |
 | 24 | C target (emit C) | done (close-out recorded; the native → ocaml rename landed) |
 | 25 | Toolchain distribution & release | done (v0.25.9; M9 complete) |
-| 26 | Target independence (runtimes decoupled from the host) | not started (tasks written) |
+| 26 | Target independence (runtimes decoupled from the host) | done (M10 complete; every runtime embedded, the ocaml target installation-independent) |
