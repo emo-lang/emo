@@ -6,7 +6,7 @@ specialization data) · **Related:**
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-22-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
-**Status:** in progress — T24.1–T24.9 done
+**Status:** in progress — T24.1–T24.10 done
 
 ## Why this step exists
 
@@ -143,7 +143,7 @@ and enters `known_targets` only once its first golden lands
       `self_pid`, `halt`; single-threaded cooperative loop;
       execution traces diffed against `emo_sched_det`. Goldens:
       pipeline, showcase.
-- [ ] **T24.10** — Hosted IO and stdlib metadata: `file.read` /
+- [x] **T24.10** — Hosted IO and stdlib metadata: `file.read` /
       `file.write`, TCP/UDP sockets, the HTTP client/server over
       the hosted OS; stdlib packages gain `"c"` in their
       `targets`. Goldens: file_read, tcp_echo, http_roundtrip.
