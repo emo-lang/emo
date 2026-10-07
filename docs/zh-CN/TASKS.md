@@ -2,7 +2,7 @@
 
 > 中文版,与英文版 [docs/TASKS.md](../TASKS.md) 内容一一对应;更新英文版时请同步更新本文件。
 
-从 `plan/step-01-project-scaffold.md` 到 `plan/step-25-toolchain.md` 汇总而成的编号任务清单。plan 文件仍是规格说明——下面每个任务所属的步骤文件里有完整的目标、范围与验收标准。本文件是进度追踪表。
+从 `plan/step-01-project-scaffold.md` 到 `plan/step-26-target-independence.md` 汇总而成的编号任务清单。plan 文件仍是规格说明——下面每个任务所属的步骤文件里有完整的目标、范围与验收标准。本文件是进度追踪表。
 
 ## 使用说明
 
@@ -27,6 +27,7 @@
 | M7 — EmoOS | 22+ | 同一系统层之上的内核路径:近期是 unikernel 构建路径,远期是裸机代码生成(与引擎分层共用投入)。 |
 | M8 — 自包含托管后端 | 24 | `emo build --target c` 发射 C、自带运行时、直接 C ABI——步骤 23 的评估已排期;解锁自包含工具分发(CHECK.md)。 |
 | M9 — 工具链 | 25 | 工具链发布(以 v0.25.9 剪出):GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
+| M10 — Target 独立 | 26 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |
 
 ## 设计闸门
 
@@ -44,6 +45,8 @@
 | `emo build` 默认 target | T25.1 | 由 `ocaml` 翻转为 `c`:分发的二进制不携带 OCaml 工具链;`ocaml` target 保留给源码构建安装 |
 | 标准库:内嵌 vs 旁挂目录 | T25.2 | 内嵌为编译器内的生成数据(C 运行时的同一机制);`EMO_REGISTRY` 覆盖保留 |
 | `emo install` 语义 | T25.4 | resolve/fetch/lock 之上的项目依赖前端;全局可执行文件安装不进 1.0 范围 |
+| 运行时独立原则 | T26.1 | target 的运行时用 target 的语言写,以生成数据随编译器内嵌;宿主只贡献发射器 |
+| ocaml 运行时的依赖策略 | T26.4 | 核心零依赖(OCaml 标准库除外);`eio_main`/`ssl` 作为 target 生态的 opam 依赖保留,缺失时以清晰消息拒绝 |
 
 ---
 
@@ -427,3 +430,21 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 - [x] **T25.9** — 发布验收与剪出:对每个已发布制品端到端——下载、解包、`emo doctor`、`emo new`、`emo run`、`emo install`、`emo build`(`c` target)——包括一个带标准库导入的程序与从安装后的二进制执行的金测子集。发布 commit 携带发布的 VERSION;annotated tag、发布说明、收尾。 (2026-10-07 完成:验收对着打包并解压的归档执行(构建时 VERSION 读作 v1.0.0;打 tag 前重剪为 v0.25.9)——doctor 以预编译形态全绿;new → run → build 全通;install 经内嵌标准库解析;金测 14/14 出自安装后的二进制(13 个经 emo run 逐字节,numerics 走其设计的编译路径——它跨 foreign def,emo run 按设计拒绝;http_roundtrip/tcp_echo 依托树内套件)。VERSION 以 v0.25.9 发布。)
 
 收尾:2026-10-07 记于 `plan/step-25-toolchain.md`——验收对着打包制品而非构建树执行;默认 target 翻转把每条默认路径移到 `c`(并暴露出内容哈希缓存原本只在 ocaml 分支实现),内嵌的 dune 规则需要 `-type f -o -type l`(macOS 沙箱把 source_tree 依赖物化为符号链接),归档不带安装脚本发布。**步骤 25 验收达成。** M9 完成:工具链发布是 v0.25.9——正式的 1.0 随后。
+
+## M10 — Target 独立
+
+让宿主/目标的区分真正落地。宿主语言(emo 是怎么造出来的——今天是 OCaml)回答一个问题;target(emo 把你的程序变成什么)回答另一个。完整兑现这个区分,意味着宿主只贡献发射器:每个 target 的运行时都活在 target 自己的生态里,绝不在二进制旁、也绝不在宿主构建树里——将来宿主重写(Go、Rust)只动发射器。
+
+审计发现五个 target 已有三个达标——**c**(独立 C 运行时,以内嵌生成数据分发,待推广的模式)、**wasm**(运行时编译进模块;那 3 个导入是对 wasm 引擎的 ABI,与编译器宿主分属两个轴)、**beam**(单个自包含 Core Erlang 模块,站在 OTP 上)。两个没有:**typescript** 的运行时前奏是旁挂文件,因此在每个安装好的二进制上都是坏的(发布布局只带 `bin/emo`);**ocaml** 链接宿主自己的八个库、从宿主构建树里找,这就是它只在树内可用的原因——也是 `opam install emo` 带不来它的原因(已验证:opam 安装集为七个文件,零个 `.cmxa`)。
+
+### Step 26 — Target 独立 · `plan/step-26-target-independence.md`
+
+**前置:** 步骤 25(本步骤要修正其表述的工具链)。
+**完成标准:** 没有任何 target 从二进制旁或宿主构建树读取运行时——c、ocaml、typescript 的运行时以生成数据随编译器内嵌,wasm 与 beam 的在发射模块内;`emo build --target ocaml` 在任何 OCaml 工具链在 PATH 上的安装形态下可用,无 `.cmxa` 查找、无安装形态条件分支;typescript target 在发布布局下可用;全部金测逐字节;`dune test` 全绿。
+
+- [ ] **T26.1** — 原则与 ts 内嵌:运行时独立原则记入 `CHECK.md`;ts 前奏以内嵌生成数据(C runtime 的 dune 规则模式)分发,typescript 分支停止读文件系统。验证:孤零零的发布布局二进制能编译 typescript 程序;ts 金测逐字节。
+- [ ] **T26.2** — 发射代码清单与独立骨架:经 ocaml 发射器发射金测子集,机械收集发射代码引用的每个宿主符号,把清单记为独立运行时的契约;骨架以纯 `ocamlopt` 编译——零 `emo_*` 依赖——由仅从构建目录出发的 fixture 证明。
+- [ ] **T26.3** — 值与标量核心:值 ADT、字符串、print/插值渲染、算术/比较分派,以及清单点名的 case/错误路径,全部独立化。每片由仅对独立运行时编译的 fixture 覆盖。
+- [ ] **T26.4** — 调度器与 IO:基于 effects 的调度器、文件 IO 与网络面,按依赖策略执行(核心零依赖;`eio_main`/`ssl` 作为 target 生态 opam 依赖)。Fixture:进程程序与 HTTP 往返,均仅对独立运行时编译。
+- [ ] **T26.5** — 切换:ocaml 发射器的引用翻转到独立运行时;分支发射运行时 + `main.ml` 并调用 `ocamlopt`(ocamlfind 只为运行时自己的包);`.cmxa` 机制、库扫描与二进制旁查找删除;拒绝与 doctor 措辞改为与安装形态无关。全部 ocaml 金测与测试逐字节;带 OCaml 工具链的安装二进制构建金测子集。
+- [ ] **T26.6** — 独立性审计与收尾:wasm 与 beam 记录为验证独立(无任务——证据在案);文档修正(`docs/toolchain.md`、`docs/toolchain-distribution.md`——用真实的 ocaml target 故事取代"源码安装带来 ocaml target");`benchmarks/results.md` 的 ocaml 列对独立运行时复测;收尾。

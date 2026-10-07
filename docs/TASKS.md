@@ -1,7 +1,7 @@
 # Development Tasks
 
 A numbered checklist of every implementation task, consolidated from
-`plan/step-01-project-scaffold.md` through `plan/step-25-toolchain.md`.
+`plan/step-01-project-scaffold.md` through `plan/step-26-target-independence.md`.
 The plan files remain the specs — each task below belongs to a step that
 holds its full goal, scope, and acceptance details. This file is the tracker.
 
@@ -34,6 +34,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M7 — EmoOS | 22+ | The kernel path on the same systems layer: a unikernel build path (near term), then freestanding codegen (shared with the engine tiering). |
 | M8 — Self-contained hosted backend | 24 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — step 23's assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
 | M9 — Toolchain | 25 | The toolchain release (cut as v0.25.9): signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
+| M10 — Target independence | 26 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
 
 ## Design gates
 
@@ -52,6 +53,8 @@ before starting the gated work:
 | `emo build` default target | T25.1 | flip `ocaml` → `c`: a distributed binary carries no OCaml toolchain; the `ocaml` target stays for source installs |
 | Stdlib: embed vs sidecar tree | T25.2 | embed as generated data inside the compiler (the C runtime's mechanism); `EMO_REGISTRY` override stays |
 | `emo install` semantics | T25.4 | the project-dependencies front end over resolve/fetch/lock; global executable installation out of scope for 1.0 |
+| The runtime-independence principle | T26.1 | a target's runtime is written in the target's language, carried as generated data inside the compiler; the host contributes only the emitter |
+| The ocaml runtime's dependency policy | T26.4 | zero-dep core beyond the OCaml stdlib; `eio_main`/`ssl` stay as target-ecosystem opam deps, refused with a clear message when absent |
 
 ---
 
@@ -564,3 +567,74 @@ the embed's dune rule needs `-type f -o -type l` because the macOS
 sandbox materializes `source_tree` deps as symlinks, and the archives
 ship without an install script. **Step 25 acceptance met.** M9 is
 done: the toolchain release is v0.25.9 — the official 1.0 follows.
+
+## M10 — Target independence
+
+The host/target distinction made load-bearing. The host language (how
+emo was built — today OCaml) answers one question; the targets (what
+emo turns your program into) answer another. Fully honoring the split
+means the host contributes only the emitters: every target's runtime
+lives in the target's own ecosystem, never beside the binary and never
+in the host build tree — so a future host rewrite (Go, Rust) touches
+only the emitters.
+
+The audit found three of five targets already there — **c** (standalone
+C runtime embedded as generated data, the pattern to generalize),
+**wasm** (runtime compiled into the module; the 3 imports are the ABI
+with the wasm engine, a different axis), **beam** (one self-contained
+Core Erlang module standing on OTP). Two are not: **typescript** ships
+its runtime prelude as a side file and is therefore broken on every
+installed binary (the release layout carries only `bin/emo`), and
+**ocaml** links the host's own eight libraries out of the host build
+tree, which is why it works only in-tree — and why `opam install emo`
+does not bring it (verified: the opam install set is seven files, zero
+`.cmxa`).
+
+### Step 26 — Target independence · `plan/step-26-target-independence.md`
+
+**Prereq:** Step 25 (the toolchain whose claims this step corrects).
+**Done when:** no target reads its runtime from beside the binary or
+the host build tree — c, ocaml, and typescript runtimes ride inside
+the compiler as generated data, wasm and beam inside the emitted
+module; `emo build --target ocaml` works on any installation where
+the OCaml toolchain is on PATH, with no `.cmxa` lookup and no
+installation-shape conditionals; the typescript target works from the
+release layout; all goldens byte-for-byte; `dune test` green.
+
+- [ ] **T26.1** — The principle and the ts embed: the
+      runtime-independence principle recorded in `CHECK.md`; the ts
+      prelude embedded as generated data (the C runtime's dune rule
+      pattern), the typescript arm stopped from reading the
+      filesystem. Verification: a lone release-layout binary compiles
+      a typescript program; the ts goldens byte-for-byte.
+- [ ] **T26.2** — The emitted-code inventory and the standalone
+      skeleton: emit the golden subset through the ocaml emitter,
+      collect mechanically every host symbol the emitted code
+      references, and record the inventory as the standalone runtime's
+      contract; the skeleton compiles with plain `ocamlopt`, zero
+      `emo_*` dependencies, proven by a fixture from the build
+      directory alone.
+- [ ] **T26.3** — The value and scalar core: the value ADT, strings,
+      print/interpolation rendering, arithmetic/comparison dispatch,
+      and the case/error paths the inventory names, standalone. Each
+      piece covered by a fixture compiled against the runtime alone.
+- [ ] **T26.4** — The scheduler and IO: the effects-based scheduler,
+      file IO, and networking, per the dependency policy (zero-dep
+      core; `eio_main`/`ssl` as target-ecosystem opam deps). Fixtures:
+      a process program and an HTTP roundtrip compiled against the
+      standalone runtime alone.
+- [ ] **T26.5** — The cutover: the ocaml emitter's references flip to
+      the standalone runtime; the arm emits runtime + `main.ml` and
+      invokes `ocamlopt` (ocamlfind only for the runtime's own
+      packages); the `.cmxa` machinery, the library scan, and the
+      beside-binary lookup are deleted; refusal and doctor wording
+      become installation-independent. All ocaml goldens and tests
+      byte-for-byte; an installed binary with an OCaml toolchain
+      builds the golden subset.
+- [ ] **T26.6** — The independence audit and close-out: wasm and beam
+      recorded as verified-independent (no tasks — evidence noted);
+      the docs corrected (`docs/toolchain.md`,
+      `docs/toolchain-distribution.md` — the true ocaml-target story
+      replaces "a source install brings the ocaml target");
+      `benchmarks/results.md`'s ocaml column re-run against the
+      standalone runtime; close-out.
