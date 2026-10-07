@@ -623,7 +623,7 @@ release layout; all goldens byte-for-byte; `dune test` green.
       standard library plus `unix`; `ssl` as the one opam dep; no eio).
       Fixtures: a process program and an HTTP roundtrip compiled
       against the standalone runtime alone.
-- [ ] **T26.5** — The cutover: the ocaml emitter's references flip to
+- [x] **T26.5** — The cutover: the ocaml emitter's references flip to
       the standalone runtime; the arm emits runtime + `main.ml` and
       invokes `ocamlopt` (ocamlfind only for the runtime's own
       packages); the `.cmxa` machinery, the library scan, and the

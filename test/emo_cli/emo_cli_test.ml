@@ -1237,15 +1237,15 @@ let doctor_tests =
         let text = Buffer.contents buf in
         Alcotest.(check int) "exit" 0 code;
         Alcotest.(check bool)
-          "installation shape" true
-          (contains text "installation:");
-        Alcotest.(check bool)
           "embedded stdlib" true
           (contains text "stdlib: embedded");
         List.iter
           (fun name ->
             Alcotest.(check bool) ("reports " ^ name) true (contains text name))
           [ "c:"; "ocaml:"; "typescript:"; "beam:"; "wasm:" ];
+        Alcotest.(check bool)
+          "the ocaml line names the toolchain, not the installation shape" true
+          (contains text "ok — ocamlfind" || contains text "unavailable");
         Alcotest.(check bool)
           "wasm needs nothing" true
           (contains text "no external tools"));

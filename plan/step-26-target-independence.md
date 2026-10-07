@@ -98,7 +98,7 @@ works from the release layout.
       file IO, and the networking surface, per the dependency policy
       above. Fixtures: a process program and an HTTP roundtrip
       compiled against the standalone runtime alone.
-- [ ] **T26.5** — The cutover: the ocaml emitter's references flip to
+- [x] **T26.5** — The cutover: the ocaml emitter's references flip to
       the standalone runtime; the arm emits runtime + `main.ml` and
       invokes `ocamlopt` (ocamlfind only for the packages the runtime
       itself uses); the `.cmxa` machinery, the library scan in
