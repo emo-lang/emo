@@ -89,7 +89,7 @@ works from the release layout.
       (`emo_ocaml_runtime.ml`) compiles with plain `ocamlopt` — zero
       `emo_*` dependencies — and a fixture proves it from the build
       directory alone.
-- [ ] **T26.3** — The value and scalar core: the value ADT, strings
+- [x] **T26.3** — The value and scalar core: the value ADT, strings
       and their operations, print/interpolation rendering,
       arithmetic/comparison dispatch, and the case/error paths the
       inventory names, in the standalone runtime. Each piece covered
