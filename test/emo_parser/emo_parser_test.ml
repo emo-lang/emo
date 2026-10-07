@@ -74,8 +74,8 @@ let rec pp_expr fmt (e : Emo_ast.expr) =
   | Binary (op, l, r) ->
       Format.fprintf fmt "(%s %a %a)" (binop_spelling op) pp_expr l pp_expr r
   | If_expr { cond; then_expr; else_expr } ->
-      Format.fprintf fmt "(if %a %a %a)" pp_expr cond pp_expr then_expr
-        pp_expr else_expr
+      Format.fprintf fmt "(if %a %a %a)" pp_expr cond pp_expr then_expr pp_expr
+        else_expr
   | Do e -> Format.fprintf fmt "(do %a)" pp_expr e
 
 and pp_part fmt = function
@@ -254,9 +254,7 @@ let expression_tests =
           "shape" "(if a 1 2)"
           (render pp_expr (parse_expr "(if a { 1 } else { 2 })")));
     tc "an if expression must fit on one line" (fun () ->
-        let diagnostic =
-          parse_err "if a {\n  1\n} else { 2 }"
-        in
+        let diagnostic = parse_err "if a {\n  1\n} else { 2 }" in
         Alcotest.(check string) "code" "E2024" (code_of diagnostic));
     tc "an if expression requires an else branch" (fun () ->
         let diagnostic = parse_err "if a { 1 }" in
@@ -295,12 +293,13 @@ let expression_tests =
     tc "operator parens are groupings" (fun () ->
         Alcotest.check expr "shape" (parse_expr "(a + b)") (parse_expr "a + b"));
     tc "fixed-width literals parse with their width" (fun () ->
+        Alcotest.(check string) "int64" "1" (render pp_expr (parse_expr "1"));
         Alcotest.(check string)
-          "int64" "1" (render pp_expr (parse_expr "1"));
+          "byte" "255B"
+          (render pp_expr (parse_expr "255B"));
         Alcotest.(check string)
-          "byte" "255B" (render pp_expr (parse_expr "255B"));
-        Alcotest.(check string)
-          "in arithmetic" "(+ 1 2)" (render pp_expr (parse_expr "1 + 2")));
+          "in arithmetic" "(+ 1 2)"
+          (render pp_expr (parse_expr "1 + 2")));
     tc "array literals parse with elements" (fun () ->
         Alcotest.(check string)
           "shape" "(array 1 2 3)"
@@ -389,7 +388,8 @@ let control_tests =
     tc "an arrow block takes annotated parameters" (fun () ->
         Alcotest.(check string)
           "shape" "(block (param x Int64) (param y Float64)|(return x))"
-          (render pp_expr (parse_expr "-> (x Int64, y Float64) {\n  return x\n}")));
+          (render pp_expr
+             (parse_expr "-> (x Int64, y Float64) {\n  return x\n}")));
     tc "an arrow block may omit its parameters" (fun () ->
         Alcotest.(check string)
           "shape" "(block |(return 1))"
@@ -531,12 +531,12 @@ let stmt_tests =
               (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
     tc "fixed-width literals are patterns" (fun () ->
         match
-          parse_program "case n {\n  10B -> { return 1 }\n  2 -> { return 2 }\n}"
+          parse_program
+            "case n {\n  10B -> { return 1 }\n  2 -> { return 2 }\n}"
         with
         | [ case_stmt ] ->
             Alcotest.(check string)
-              "shape"
-              "(case n (branch 10B |(return 1)) (branch 2 |(return 2)))"
+              "shape" "(case n (branch 10B |(return 1)) (branch 2 |(return 2)))"
               (render pp_item case_stmt)
         | stmts ->
             Alcotest.fail
@@ -590,8 +590,8 @@ let stmt_tests =
         | [ fail ] ->
             Alcotest.(check string)
               "shape"
-              "(def fail () Int64 |(raise (((type Exception).new) call message: \
-               \"boom\")))"
+              "(def fail () Int64 |(raise (((type Exception).new) call \
+               message: \"boom\")))"
               (render pp_item fail)
         | items ->
             Alcotest.fail
@@ -852,7 +852,8 @@ let def_tests =
         | [ def_item ] ->
             Alcotest.(check string)
               "shape"
-              "(def add (param a Int64) (param b Int64) Int64 |(return (+ a b)))"
+              "(def add (param a Int64) (param b Int64) Int64 |(return (+ a \
+               b)))"
               (render pp_item def_item)
         | items ->
             Alcotest.fail

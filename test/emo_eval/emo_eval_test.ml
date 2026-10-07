@@ -211,7 +211,8 @@ let expression_tests =
         Alcotest.(check string) "code" "E3001" (code_of diagnostic);
         Alcotest.(check string)
           "names the tags"
-          "operator `+` expects two numbers or two strings, got String and Int64"
+          "operator `+` expects two numbers or two strings, got String and \
+           Int64"
           diagnostic.Diagnostic.message);
     tc "comparisons work on numbers" (fun () ->
         check_value "less" (Emo_eval.Bool true) "1 < 2";
@@ -238,7 +239,8 @@ let expression_tests =
         let diagnostic = eval_err "[1][\"a\"]" in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic));
     tc "arrow blocks are callable" (fun () ->
-        check_value "call" (Emo_eval.Int64 3L) "-> (x Int64) { return x + 1 }(2)";
+        check_value "call" (Emo_eval.Int64 3L)
+          "-> (x Int64) { return x + 1 }(2)";
         check_value "named args" (Emo_eval.Int64 12L)
           "-> (x Int64, y Int64) { return x * 10 + y }(x: 1, y: 2)");
     tc "call errors name the problem" (fun () ->
@@ -427,7 +429,10 @@ println(even(500000))|}));
         Alcotest.(check string)
           "builtin in return" "[1, 2]\n"
           (run_program
-             "def arr() String {\n  return [1, 2].to_string()\n}\nprintln(arr())"));
+             "def arr() String {\n\
+             \  return [1, 2].to_string()\n\
+              }\n\
+              println(arr())"));
   ]
 
 let control_flow_tests =
@@ -813,7 +818,9 @@ println(Color.red == Color.red)
 const painted = Color.green
 println(painted == Color.green)|}));
     tc "unknown members are errors" (fun () ->
-        let diagnostic = program_err "enum Color { red }\nprintln(Color.pink)" in
+        let diagnostic =
+          program_err "enum Color { red }\nprintln(Color.pink)"
+        in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic);
         Alcotest.(check string)
           "message" "enum `Color` has no member `pink`"

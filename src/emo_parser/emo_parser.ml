@@ -411,8 +411,7 @@ and parse_if_expr st =
 and parse_if_expr_branch st if_line which =
   if not (at_op st Tok.LBrace) then
     error "E2024" (span st)
-      (Printf.sprintf "%s branch of an if expression must open with `{`"
-         which);
+      (Printf.sprintf "%s branch of an if expression must open with `{`" which);
   let open_span = (advance st).Tok.span in
   if at_op st Tok.RBrace then
     error "E2024" (span st)
@@ -435,7 +434,6 @@ and parse_paren st =
     let close_span = (advance st).Tok.span in
     node (merge_span open_span close_span) (Ast.Tuple [])
   else
-
     let first = parse_expr st in
     if at_op st Tok.Comma then (
       let elems = ref [ first ] in
