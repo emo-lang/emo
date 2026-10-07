@@ -86,6 +86,11 @@ type ctx = {
          expressions nest at the same position (a comparison and its
          left operand), and the later check would overwrite the
          earlier type *)
+  target : string;
+      (* the compilation target: the capability table gates `foreign
+         def` per target (CHECK.md) — `c` honors Int64 directly on
+         the C ABI, the OCaml-emitting backend marshals
+         Float64/String/Bool through generated stubs *)
 }
 
 let report ctx span code message =
@@ -217,14 +222,20 @@ let collect ctx (items : Ast.item list) : unit =
                  "the group name `%s` is already a module in this project"
                  g.Ast.group_name)
       | Ast.Item_foreign f ->
-          (* The C FFI surface: Float64/String/Bool marshal directly as
-             C doubles/char*/int; Int64 (tagged) would need C stubs. *)
+          (* The capability table (CHECK.md): the c target honors Int64
+             directly on the C ABI alongside the marshaled scalars;
+             every other backend takes Float64/String/Bool only. *)
           let ffi_ok = function
             | Ast.Named_type "Float64"
             | Ast.Named_type "String"
             | Ast.Named_type "Bool" ->
                 true
+            | Ast.Named_type "Int64" -> ctx.target = "c"
             | _ -> false
+          in
+          let allowed =
+            if ctx.target = "c" then "Float64, String, Bool, or Int64"
+            else "Float64, String, or Bool"
           in
           List.iter
             (fun p ->
@@ -232,15 +243,13 @@ let collect ctx (items : Ast.item list) : unit =
               if not (ffi_ok p.Ast.param_type.Ast.type_desc) then
                 report ctx p.Ast.param_type.Ast.type_span "E4200"
                   (Printf.sprintf
-                     "foreign parameter `%s` must be Float64, String, or Bool \
-                      (Int64 needs C stubs, not supported yet)"
-                     p.Ast.param_name))
+                     "foreign parameter `%s` must be %s on this target"
+                     p.Ast.param_name allowed))
             f.Ast.foreign_params;
           ignore (ann_to_type ctx f.Ast.foreign_return);
           if not (ffi_ok f.Ast.foreign_return.Ast.type_desc) then
             report ctx f.Ast.foreign_return.Ast.type_span "E4200"
-              "foreign return must be Float64, String, or Bool (Int64 needs C \
-               stubs, not supported yet)";
+              (Printf.sprintf "foreign return must be %s on this target" allowed);
           (* Call-site checking reuses the def signature. *)
           Hashtbl.replace ctx.funcs f.Ast.foreign_name
             {
@@ -272,6 +281,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       refs = ref [];
       requires = ref [];
       types = Hashtbl.create 64;
+      target = "native";
     }
   in
   let parsed = Emo_parser.parse_program_with_diagnostics ~file ~source in
@@ -1913,7 +1923,7 @@ let sort_diagnostics diagnostics =
 (* The backend entry: checking that also hands back the span→type table —
    the completeness data specialization lowers from. *)
 let check_module_typed ~(modules : string list list) ~(current : string list)
-    (items : Ast.item list) :
+    ?(target = "native") (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list
@@ -1933,6 +1943,7 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
       refs = ref [];
       requires = ref [];
       types = Hashtbl.create 64;
+      target;
     }
   in
   collect ctx items;

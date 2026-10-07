@@ -615,6 +615,7 @@ let c_scalar_tests =
             ~target:"c"
         in
         Alcotest.(check int) "build exit" 0 exit_code;
+        Unix.putenv "EMO_FFI_PROBE" "hello ffi";
         let cmd_stdout, _cmd_stdin, cmd_stderr =
           Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
         in
@@ -856,6 +857,154 @@ let c_examples_tests =
                    (Buffer.contents err))))
     c_goldens
 
+(* T24.8: the c target's direct C ABI. A foreign def declares the C
+   symbol and calls it — no wrapper generator. Strings cross with a
+   NUL terminator; opaque handles ride pointer-sized Int64s behind a
+   tiny library compiled into the scratch dir. Skips without cc. *)
+let c_foreign_tests =
+  [
+    tc "the c target links foreign defs through the direct C ABI" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let dir = Filename.concat scratch "c-ffi" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc
+          {|
+foreign def sqrt(x Float64) Float64 = "sqrt"
+foreign def llabs(x Int64) Int64 = "llabs"
+foreign def getenv(name String) String = "getenv"
+foreign def strspn(s String, accept String) Int64 = "strspn"
+
+println(sqrt(4.0))
+println(llabs(0 - 42))
+const probed = getenv("EMO_FFI_PROBE")
+println(probed)
+println(strspn(probed, "hello"))
+|};
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code =
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
+            ~cclibs:[ "m" ] ~target:"c"
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let cmd_stdout, _cmd_stdin, cmd_stderr =
+          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
+        in
+        let out = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel out cmd_stdout 4096
+           done
+         with End_of_file -> ());
+        let proc_status =
+          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+        in
+        Alcotest.(check string)
+          "output" "2.0\n42\nhello ffi\n5\n" (Buffer.contents out);
+        match proc_status with
+        | Unix.WEXITED 0 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "exited %d"
+                 (match s with Unix.WEXITED n -> n | _ -> -1)));
+    tc "the c target passes an opaque handle across the C ABI" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let dir = Filename.concat scratch "c-ffi-handle" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let c_src = Filename.concat dir "emo_handle.c" in
+        let oc = open_out_bin c_src in
+        output_string oc
+          {|
+/* A tiny C library for the opaque-handle FFI fixture: an externally
+   owned counter behind a pointer, explicitly closed. */
+#include <stdlib.h>
+typedef struct { long long v; } emo_counter;
+emo_counter *counter_new(long long start) {
+  emo_counter *c = malloc(sizeof(emo_counter));
+  if (c == NULL) return 0;
+  c->v = start;
+  return c;
+}
+long long counter_bump(emo_counter *c, long long by) {
+  if (c == 0) return -1;
+  c->v += by;
+  return c->v;
+}
+long long counter_close(emo_counter *c) {
+  if (c == 0) return -1;
+  long long last = c->v;
+  free(c);
+  return last;
+}
+|};
+        close_out oc;
+        let lib_a = Filename.concat dir "libemo_handle.a" in
+        let obj = Filename.concat dir "emo_handle.o" in
+        let cc =
+          Printf.sprintf "cc -O2 -std=c11 -Wall -c %s -o %s && ar rcs %s %s"
+            (Filename.quote c_src) (Filename.quote obj) (Filename.quote lib_a)
+            (Filename.quote obj)
+        in
+        if Sys.command cc <> 0 then
+          Alcotest.fail "the handle library did not compile";
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc
+          {|
+foreign def counter_new(start Int64) Int64 = "counter_new"
+foreign def counter_bump(c Int64, by Int64) Int64 = "counter_bump"
+foreign def counter_close(c Int64) Int64 = "counter_close"
+
+const c = counter_new(40)
+println(counter_bump(c, 2))
+println(counter_close(c))
+|};
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code =
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
+            ~cclibs:[ lib_a ] ~target:"c"
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let cmd_stdout, _cmd_stdin, cmd_stderr =
+          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
+        in
+        let out = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel out cmd_stdout 4096
+           done
+         with End_of_file -> ());
+        let proc_status =
+          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+        in
+        Alcotest.(check string) "output" "42\n42\n" (Buffer.contents out);
+        match proc_status with
+        | Unix.WEXITED 0 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "exited %d"
+                 (match s with Unix.WEXITED n -> n | _ -> -1)));
+    tc "the native target still refuses Int64 foreign defs" (fun () ->
+        let dir = Filename.concat scratch "c-ffi-refuse" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc
+          {|foreign def ident(x Int64) Int64 = "ident"
+println(ident(1))
+|};
+        close_out oc;
+        let out_bin = Filename.concat dir "native-bin" in
+        let exit_code =
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
+            ~target:"native"
+        in
+        Alcotest.(check int) "refused" 65 exit_code);
+  ]
+
 (* ---- publish: the upload is dogfooded through the stdlib http client ----
 
    A captive HTTP server on loopback (a raw socket in a helper thread)
@@ -1018,5 +1167,6 @@ let () =
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
+      ("c_foreign", c_foreign_tests);
       ("publish", publish_tests);
     ]

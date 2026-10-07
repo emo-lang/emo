@@ -618,7 +618,7 @@ let compile_inputs ~entry_file ~target :
               let items = parse_cached p file in
               let diags, _refs, _requires, types =
                 Emo_check.check_module_typed ~modules:module_paths ~current:path
-                  items
+                  ~target items
               in
               diagnostics := !diagnostics @ diags;
               match kept with
@@ -651,7 +651,8 @@ let compile_inputs ~entry_file ~target :
            root module, like the interpreter's root environment. *)
         let items = parse_cached p entry_abs in
         let diags, _refs, _requires, types =
-          Emo_check.check_module_typed ~modules:module_paths ~current:[] items
+          Emo_check.check_module_typed ~modules:module_paths ~current:[] ~target
+            items
         in
         diagnostics := !diagnostics @ diags;
         ({ Emo_ir.mpath = []; mitems = items; mtypes = types } :: inputs, [])
