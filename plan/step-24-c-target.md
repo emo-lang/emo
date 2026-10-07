@@ -6,7 +6,7 @@ specialization data) · **Related:**
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-22-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
-**Status:** in progress — T24.1–T24.4 done
+**Status:** in progress — T24.1–T24.5 done
 
 ## Why this step exists
 
@@ -108,11 +108,15 @@ and enters `known_targets` only once its first golden lands
       code, runtime dispatch for dynamic `+`/comparisons/equality.
       The objects golden waits on classes — T24.5; the c_dynamic
       fixture cross-checks against the interpreter's rendering.)
-- [ ] **T24.5** — Classes, enums, interfaces, closures: instances
+- [x] **T24.5** — Classes, enums, interfaces, closures: instances
       with compile-time vtables, enum singletons, structural
       `is()`, first-class functions, patterns with guards. The
       reclamation decision lands in `CHECK.md` before this task
-      merges. Golden: language_tour.
+      merges. Golden: language_tour. (Done 2026-10-06: language_tour
+      and objects both full-example goldens; the reclamation
+      decision — refcounting for identity objects, arena for
+      value-semantic data — is recorded in CHECK.md, with the
+      retain/release emitter work scheduled before T24.9.)
 - [ ] **T24.6** — Modules and exceptions: multi-file module
       references, `raise`, uncaught-exception exit codes.
       `begin`/`catch`/`ensure` is settled surface but
