@@ -27,7 +27,7 @@
 | --- | --- |
 | `just build` | 以 release profile 编译二进制——其余 recipe 共用的唯一制品。 |
 | `just install [PREFIX]` | c target 安装:独立二进制装入 `~/.local/bin`(默认),原子替换并 strip。可重复执行;用 `emo doctor` 验证。 |
-| `just install-dev` | 经 opam switch 的源码安装——同时带来 `ocaml` 编译目标的路线。 |
+| `just install-dev` | 经 opam switch 的源码安装。 |
 | `just uninstall [PREFIX]` | 移除独立二进制。 |
 | `just package` | 把本平台的分发归档装配到 `dist/`——即 `release.yml` 据以起草 GitHub Release 的制品。 |
 | `just test` | 全量测试套件。 |
@@ -39,11 +39,27 @@
 目录解析为绝对路径——否则相对的 `dist` 参数会从暂存目录内解析,
 必然失败。
 
+## ocaml target 只需要 OCaml 工具链
+
+自步骤 26(target independence)起,每个 target 的 runtime 都以
+生成数据的形式随 `emo` 二进制携带——C runtime、TypeScript prelude、
+以及 ocaml target 的 standalone runtime(`emo_ocaml_runtime.ml`)都是
+如此。`emo build --target ocaml` 把 runtime 与 emitted 程序并排写出,
+一起交给 target 自己的 `ocamlopt`;不在二进制旁边、也不在宿主构建树
+里查找任何东西。因此该 target 在任何安装形态下都可用——包括孤立的
+release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`,带 runtime
+自用的 `unix` 与 `ssl` 包(opam 两者都提供)。缺席时,`emo build` 与
+`emo doctor` 会点名工具链;没有源码安装的条件分支,也没有对随包
+库的版本核对——因为根本不随包携带任何库。
+
 ## 参考
 
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) ——
   分发为何是这个形状(设计记录)。
 - [`plan/step-25-toolchain.md`](../../plan/step-25-toolchain.md) ——
   构建它的步骤(M9 — 工具链,以 v0.25.9 发布)。
+- [`plan/step-26-target-independence.md`](../../plan/step-26-target-independence.md)
+  —— 把各 target 从安装形态中解放出来的步骤(M10 — Target
+  independence)。
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml)
   —— 按平台的发布自动化。

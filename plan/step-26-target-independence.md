@@ -5,7 +5,8 @@ toolchain whose claims this step corrects) · **Related:**
 `docs/toolchain.md` (the host/target distinction this step completes),
 `CHECK.md` (the backend-naming and runtime-language decisions this
 step generalizes), `src/emo_codegen/c/` (the runtime-as-generated-data
-pattern being generalized) · **Status:** not started (tasks written)
+pattern being generalized) · **Status:** done (2026-10-07 — close-out
+recorded below)
 
 ## Why this step exists
 
@@ -108,7 +109,7 @@ works from the release layout.
       source-install conditional. All ocaml goldens and tests
       byte-for-byte; the lone-binary verification: an installed binary
       with an OCaml toolchain builds the golden subset.
-- [ ] **T26.6** — The independence audit and close-out: wasm and beam
+- [x] **T26.6** — The independence audit and close-out: wasm and beam
       recorded as verified-independent (runtime inside the module /
       one OTP-standing module — no tasks, evidence noted here); the
       docs corrected (`docs/toolchain.md`,
@@ -116,6 +117,47 @@ works from the release layout.
       replaces "a source install brings the ocaml target");
       `benchmarks/results.md`'s ocaml column re-run against the
       standalone runtime to confirm no regression; close-out.
+
+## The independence audit (T26.6)
+
+- **wasm — verified independent.** The runtime compiles into the
+  module: 3 imports (the engine ABI — a `(ptr, len)` println and an
+  abort), then the runtime's 38 functions plus the bit and bytes
+  operations, init, and main are emitted as module sections
+  (`emo_codegen/emo_wasm.ml`, `runtime_count = 61`). Nothing is read
+  from disk at program-build time and nothing rides the compiler's
+  host language.
+- **beam — verified independent.** One self-contained Core Erlang
+  text module (`emo_codegen/emo_beam.ml`) handed to the user's
+  `erlc`; OTP is the target ecosystem's standard library, as libc is
+  to `c`. No side files, no host lookups.
+- **c, typescript, ocaml — embedded as generated data** (T26.1,
+  T26.5): `emo_codegen/{c,ts,ocaml}` ride the compiler via the dune
+  rule; the CLI never reads a runtime from beside the binary or the
+  host build tree. Verified from the release layout: a lone binary in
+  an empty directory builds typescript (T26.1) and the ocaml golden
+  subset (T26.5).
+
+## Close-out
+
+Completed 2026-10-07, tasks T26.1–T26.6 on `feat/target-independence`.
+Acceptance against the goal: no target reads its runtime from beside
+the binary or the host build tree (c, ocaml, ts embedded; wasm, beam
+inside the emitted artifact); `emo build --target ocaml` works from a
+lone release-layout binary wherever the OCaml toolchain is on PATH —
+ocamlfind with `unix` and `ssl` — and refuses elsewhere with the
+toolchain named, no installation-shape conditionals (the doctor
+installation line is deleted); the typescript target works from the
+release layout; all sixteen golden examples build through the cut-over
+target and match byte-for-byte, the emitted `main.ml` is unchanged,
+and `dune test` is green. `benchmarks/results.md` re-recorded on the
+standalone runtime: the ocaml rows sit within the machine's observed
+run-to-run noise of the pre-cutover recording (fib 18 ms, unspec 29,
+tail loop 2087/406 against 1969–2161/406–417 re-measured on the same
+binary, ffi 422, bytes 1218–1267 re-measured, ping-pong 2665, json 6,
+http 75 req/s). The docs carry the corrected story bilingually
+(`docs/toolchain.md`, `docs/toolchain-distribution.md`, and their
+`docs/zh-CN/` mirrors).
 
 ## The emitted-code inventory (T26.2 — the standalone runtime's contract)
 
