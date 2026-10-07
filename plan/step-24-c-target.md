@@ -6,7 +6,7 @@ specialization data) · **Related:**
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-22-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
-**Status:** in progress — T24.1–T24.7 done
+**Status:** in progress — T24.1–T24.8 done
 
 ## Why this step exists
 
@@ -129,7 +129,7 @@ and enters `known_targets` only once its first golden lands
       (bounds-checked, little-endian accessors), the bitwise
       operators, `Byte`, `Int64`/`Float64` bit-casts. Goldens:
       bit_ops, bytes, fixed_width.
-- [ ] **T24.8** — C FFI rungs 1–3 on the direct C ABI — no wrapper
+- [x] **T24.8** — C FFI rungs 1–3 on the direct C ABI — no wrapper
       generator. Scalars (`Float64`/`String`/`Bool`), width types
       as they land (`Int64`/`Int32`/`Float64`/`Float32` →
       `int64_t`/`int32_t`/`double`/`float`), opaque handles with
