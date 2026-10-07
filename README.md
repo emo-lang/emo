@@ -383,6 +383,7 @@ Emo interoperates with C through OCaml's first-class C FFI: on the native backen
 Documentation lives under `docs/`. The Chinese translation of this README is [`docs/zh-CN/README.zh-CN.md`](docs/zh-CN/README.zh-CN.md).
 
 - [`docs/native-backend.md`](docs/native-backend.md) — how `emo build` produces a native binary, and the C FFI.
+- [`docs/toolchain.md`](docs/toolchain.md) — building and installing the `emo` CLI: why dune is the one OCaml step, and the justfile automation.
 - [`docs/toolchain-distribution.md`](docs/toolchain-distribution.md) — how the toolchain is distributed: the OCaml requirement, `emo doctor`, and deferring the `c` backend.
 - [`docs/runtime-and-freestanding.md`](docs/runtime-and-freestanding.md) — what "runtime" and "freestanding" mean, and how they map to Emo's targets.
 - [`docs/numeric-width.md`](docs/numeric-width.md) — width-explicit numeric types on every target.
