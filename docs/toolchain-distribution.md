@@ -20,8 +20,8 @@ parse → check → lower → specialize → emit OCaml → ocamlfind ocamlopt �
 | Goal | Requirement today | Removed by |
 | --- | --- | --- |
 | Run the tool (`emo run`/`repl`, `wasm`/`beam`/`typescript` builds) | a self-contained `emo` executable | already met — `ocamlopt` links the OCaml runtime into a native executable |
-| Build a native program with `emo build` | `ocamlfind` + `ocamlopt`, the Emo runtime `.cmxa`, and the OCaml stdlib headers on the user's machine | only the `c` backend (or a direct machine-code backend) |
-| A self-contained output binary | the OCaml and Emo runtimes already ride inside the output | static linking of the remaining C dependencies (libc, OpenSSL), per platform |
+| Build a native program with `emo build` | the target's own toolchain on PATH — `cc` for the default `c` target; `ocamlfind` (with `unix`, `ssl`) for the `ocaml` target (corrected 2026-10-07, see the step-26 update below) | only a direct machine-code backend would remove `cc` |
+| A self-contained output binary | the runtime already rides inside the output on every target | static linking of the remaining C dependencies (libc, OpenSSL), per platform |
 
 The distribution decision in `CHECK.md` targets the **second** row: dropping
 the OCaml-toolchain dependency *from the tool*. Static-linking the emit-OCaml
@@ -38,12 +38,13 @@ a bigger binary buys nothing here. The `c` backend is what replaces
   runtime, so distribution for `emo run`/`repl` and the wasm/beam/typescript
   targets needs no external toolchain today.
 - **A check and a guide, not a downloader.** A toolchain check (`emo doctor`)
-  detects `ocamlfind`/`ocamlopt`, verifies the version against the
-  `emo_runtime.cmxa` shipped beside the binary, and, when they are missing or
-  mismatched, prints the platform's install command — `brew install ocaml opam
-  && opam install ocamlfind`, `apt install ocaml ocaml-findlib`, or the
-  project's own setup script. With the user's consent it may run the system
-  package manager. It does not download OCaml itself.
+  detects the target toolchains and, when one is missing, prints the
+  platform's install command — `brew install ocaml opam
+  && opam install ocamlfind ssl`, `apt install ocaml ocaml-findlib
+  libssl-dev`, or the project's own setup script. With the user's consent it
+  may run the system package manager. It does not download OCaml itself.
+  (The `emo_runtime.cmxa` version check below is obsolete — no `.cmxa` ships,
+  see the step-26 update.)
 - **Provision through the ecosystem.** Publish Emo as an opam package and a
   Homebrew formula; `opam install emo` then brings a matching OCaml,
   `ocamlfind`, and runtime, with the version relationship enforced by the
@@ -51,7 +52,8 @@ a bigger binary buys nothing here. The `c` backend is what replaces
   source-building channels.
 - **Version matching is mandatory.** The user's `ocamlopt` must match the
   `emo_runtime.cmxa` the tool ships; `emo doctor` turns a mismatch into one
-  clear message rather than a raw toolchain error.
+  clear message rather than a raw toolchain error. *(Obsolete since
+  2026-10-07: no `.cmxa` ships — see the step-26 update below.)*
 
 ## Platforms: native Windows and WSL2
 
@@ -144,7 +146,43 @@ document left unscheduled:
   target-aware environment check — a cc compile-and-run smoke for the
   default `c` target, the ocaml target reported as needing a source
   install on a prebuilt machine — and its exit code reflects only
-  what is actually broken.
+  what is actually broken. *(Corrected 2026-10-07: the ocaml line
+  reports the toolchain, never the installation shape — see the
+  step-26 update below.)*
+
+## Update 2026-10-07: target independence (step 26)
+
+Step 26 (`plan/step-26-target-independence.md`) removed the
+installation-shape question this document kept answering. The
+runtime-independence principle: a target's runtime is written in the
+target's language, carried as generated data inside the compiler, and
+compiled by the target's own toolchain on the user's machine — the
+host contributes only the emitter. Concretely:
+
+- **The `emo_runtime.cmxa` story is gone.** The ocaml target's runtime
+  is now `emo_ocaml_runtime.ml` — one standalone file (values, the
+  deterministic scheduler, file and socket IO, TLS) riding the compiler
+  as generated data, the C runtime's mechanism. `emo build --target
+  ocaml` writes it next to the emitted `main.ml` and invokes the
+  target's `ocamlopt`; no `.cmxa` is looked up beside the binary or in
+  the host build tree, none ships, and the version-matching rule above
+  has nothing left to match.
+- **The ocaml target works on any installation shape.** Verified from
+  the release layout: a lone `emo` binary in an empty directory builds
+  the golden subset wherever the OCaml toolchain is on PATH —
+  `ocamlfind` with the `unix` and `ssl` packages the runtime itself
+  uses. "A source install brings the ocaml target" is no longer the
+  story; the toolchain is.
+- **eio leaves the link line.** The provisional plan kept `eio_main` as
+  a target-side dependency; the port settled otherwise — the standalone
+  scheduler is the deterministic poll loop compiled programs already
+  ran on (Unix, no eio), so the runtime declares `unix` (ships with the
+  compiler) and `ssl` (the one opam dependency), refused with a clear
+  message when absent.
+- **`emo doctor` lost its installation line.** The
+  "installation: source/prebuilt" report is gone — every target's line
+  names its own toolchain, and the exit code reflects only what is
+  actually broken.
 
 ## References
 

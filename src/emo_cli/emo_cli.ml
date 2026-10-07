@@ -94,27 +94,25 @@ let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
 
    Pipeline: resolve + check the project (the same static stages as
    `emo run`), lower every module to the IR, emit OCaml, and hand the
-   file to the OCaml toolchain with the runtime libraries. The runtime's
-   compiled interfaces are located relative to the emo executable —
-   building requires the emo source tree today. *)
+   files to the OCaml toolchain. The runtime rides the compiler as
+   generated data (step 26), so the toolchain alone decides whether the
+   target can build, on any installation shape. *)
 
 (* The OCaml toolchain comes from the opam switch: PATH first, then the
    switch prefixes under ~/.opam (dune test actions run without the opam
-   environment). *)
+   environment). The switch scan checks the tool only — whether the
+   runtime's own packages are present is [ocaml_target_ok]'s question,
+   answered the same way on every installation shape (step 26). *)
 let find_ocamlfind () : string =
-  (* A switch qualifies when it has the tool AND the ssl library the
-     runtime links; the running switch is preferred, then the newest
-     qualifying switch under ~/.opam, then PATH. *)
-  let qualifies sw =
+  let has_tool sw =
     Sys.file_exists (Filename.concat (Filename.concat sw "bin") "ocamlfind")
-    && Sys.file_exists (Filename.concat (Filename.concat sw "lib") "ssl")
   in
   let switch_bin sw = Filename.concat (Filename.concat sw "bin") "ocamlfind" in
   let home = Sys.getenv_opt "HOME" |> Option.value ~default:"" in
   let opam_dir = Filename.concat home ".opam" in
   let from_prefix =
     match Sys.getenv_opt "OPAM_SWITCH_PREFIX" with
-    | Some prefix when qualifies prefix -> Some (switch_bin prefix)
+    | Some prefix when has_tool prefix -> Some (switch_bin prefix)
     | _ -> None
   in
   match from_prefix with
@@ -124,7 +122,7 @@ let find_ocamlfind () : string =
         if Sys.file_exists opam_dir then
           Array.to_list (Sys.readdir opam_dir)
           |> List.filter (fun e -> e <> "config" && e <> "config.lock")
-          |> List.filter (fun sw -> qualifies (Filename.concat opam_dir sw))
+          |> List.filter (fun sw -> has_tool (Filename.concat opam_dir sw))
           |> List.sort (fun a b -> compare b a)
         else []
       in
@@ -132,11 +130,12 @@ let find_ocamlfind () : string =
       | sw :: _ -> switch_bin (Filename.concat opam_dir sw)
       | [] -> "ocamlfind")
 
-(* Whether the ocaml target can run at all: its runtime libraries
-   must stand beside the emo binary (a source or dune-tree install)
-   and ocamlfind must exist — a prebuilt installation has neither.
-   `emo build --target ocaml` refuses on this with the fix named, and
-   `emo doctor` reports it per target. *)
+(* Whether the ocaml target can run at all: ocamlfind with the unix and
+   ssl packages the runtime itself uses. The runtime rides the compiler
+   as generated data, so nothing about the emo installation matters —
+   only the target's toolchain (step 26). `emo build --target ocaml`
+   refuses on this with the fix named, and `emo doctor` reports it per
+   target. *)
 let tool_exists (name : string) : bool =
   let cmd = Printf.sprintf "command -v %s" (Filename.quote name) in
   let ic = Unix.open_process_in cmd in
@@ -145,34 +144,12 @@ let tool_exists (name : string) : bool =
   line <> ""
 
 let ocaml_target_ok () : bool =
-  let libs =
-    [
-      "emo_support";
-      "emo_lexer";
-      "emo_parser";
-      "emo_ast";
-      "emo_check";
-      "emo_eval";
-      "emo_sched";
-      "emo_runtime";
-    ]
-  in
-  let exe_dir =
-    Filename.dirname
-      (try Unix.realpath Sys.executable_name with _ -> Sys.executable_name)
-  in
-  let src_dir = Filename.concat exe_dir ".." in
-  let cmxa_found =
-    List.for_all
-      (fun lib ->
-        Sys.file_exists
-          (Filename.concat (Filename.concat src_dir lib) (lib ^ ".cmxa")))
-      libs
-  in
-  cmxa_found
-  &&
   let found = find_ocamlfind () in
-  if found = "ocamlfind" then tool_exists "ocamlfind" else true
+  (if found = "ocamlfind" then tool_exists "ocamlfind" else true)
+  && Sys.command
+       (Printf.sprintf "%s query unix ssl >/dev/null 2>&1"
+          (Filename.quote found))
+     = 0
 
 (* The build command: entry file → artifact at [-o] (default: the
    entry's stem in the current directory). The target picks the
@@ -199,15 +176,6 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
           ignore
             (Sys.command
                (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir)));
-        (* The runtime artifacts ride the build tree next to the emo
-           binary; the path is resolved through symlinks so an
-           installed alias still finds them. *)
-        let exe_dir =
-          Filename.dirname
-            (try Unix.realpath Sys.executable_name
-             with _ -> Sys.executable_name)
-        in
-        let src_dir = Filename.concat exe_dir ".." in
         match target with
         | "wasm" ->
             let module_ = Emo_codegen.Wasm.assemble program in
@@ -245,53 +213,41 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             else (
               Printf.printf "built %s\n" beam;
               0)
-        | "typescript" -> (
-            let runtime_path =
-              Filename.concat
-                (Filename.concat src_dir "emo_codegen")
-                "ts_prelude.ts"
+        | "typescript" ->
+            (* The prelude rides the compiler as generated data; the
+               arm never touches the filesystem for it (step 26). *)
+            let source = Emo_codegen.Ts.emit_ts program in
+            let digest =
+              Digest.to_hex
+                (Digest.string
+                   (Printf.sprintf "ts|%s|%s" source Emo_codegen.Ts.ts_prelude))
             in
-            match Sys.file_exists runtime_path with
-            | false ->
-                prerr_endline
-                  "emo build: the TypeScript runtime prelude is missing from \
-                   the installation";
-                70
-            | true ->
-                let ic = open_in_bin runtime_path in
-                let runtime = really_input_string ic (in_channel_length ic) in
-                close_in ic;
-                let source = Emo_codegen.Ts.emit_ts ~runtime program in
-                let digest =
-                  Digest.to_hex
-                    (Digest.string (Printf.sprintf "ts|%s|%s" source runtime))
-                in
-                let cache_file = Filename.concat build_dir ("ts-" ^ digest) in
-                let out =
-                  if Filename.check_suffix output ".ts" then output
-                  else output ^ ".ts"
-                in
-                if Sys.file_exists cache_file then begin
-                  ignore
-                    (Sys.command
-                       (Printf.sprintf "cp %s %s"
-                          (Filename.quote cache_file)
-                          (Filename.quote out)));
-                  Printf.printf "built %s (cached)\n" out;
-                  0
-                end
-                else begin
-                  let oc = open_out_bin cache_file in
-                  output_string oc source;
-                  close_out oc;
-                  ignore
-                    (Sys.command
-                       (Printf.sprintf "cp %s %s"
-                          (Filename.quote cache_file)
-                          (Filename.quote out)));
-                  Printf.printf "built %s\n" out;
-                  0
-                end)
+            let cache_file = Filename.concat build_dir ("ts-" ^ digest) in
+            let out =
+              if Filename.check_suffix output ".ts" then output
+              else output ^ ".ts"
+            in
+            if Sys.file_exists cache_file then begin
+              ignore
+                (Sys.command
+                   (Printf.sprintf "cp %s %s"
+                      (Filename.quote cache_file)
+                      (Filename.quote out)));
+              Printf.printf "built %s (cached)\n" out;
+              0
+            end
+            else begin
+              let oc = open_out_bin cache_file in
+              output_string oc source;
+              close_out oc;
+              ignore
+                (Sys.command
+                   (Printf.sprintf "cp %s %s"
+                      (Filename.quote cache_file)
+                      (Filename.quote out)));
+              Printf.printf "built %s\n" out;
+              0
+            end
         | "c" ->
             (* Emit one main.c plus the Emo runtime sources, compile
                with the system cc: a standalone binary with no OCaml
@@ -363,55 +319,31 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               end
             end
         | "ocaml" ->
-            (* The settled refusal (CHECK.md, T25.1): a prebuilt
-               installation lacks the toolchain and the runtime — say
-               so and name the fix, never raw ocamlfind output. Exit
-               69 (unavailable), the sysexits family of 65/66/70. *)
+            (* The refusal is installation-independent (step 26): the
+               runtime rides the compiler, so the only question is
+               whether the target's own toolchain — ocamlfind with the
+               unix and ssl packages — is on PATH. Name the fix, never
+               raw ocamlfind output. Exit 69 (unavailable), the sysexits
+               family of 65/66/70. *)
             if not (ocaml_target_ok ()) then begin
               prerr_endline
-                "emo build: the ocaml target needs the OCaml toolchain and the \
-                 emo runtime libraries, which this installation does not carry \
-                 — install the source package with `opam install emo` (the c \
-                 target, the default, needs only the system cc)";
+                "emo build: the ocaml target needs the OCaml toolchain on PATH \
+                 — ocamlfind with the unix and ssl packages (opam brings both; \
+                 the c target, the default, needs only the system cc)";
               69
             end
             else
               let source = Emo_codegen.emit ~specialize program in
               (* Incremental: the digest of the emitted source plus the
-               digests of the runtime libraries names the cached binary —
-               an unchanged program (and unchanged runtime) skips the
-               toolchain entirely, and any runtime change invalidates the
-               cache. *)
-              let libs =
-                [
-                  "emo_support";
-                  "emo_lexer";
-                  "emo_parser";
-                  "emo_ast";
-                  "emo_check";
-                  "emo_eval";
-                  "emo_sched";
-                  "emo_runtime";
-                ]
-              in
-              let runtime_digest =
-                List.fold_left
-                  (fun acc lib ->
-                    let path =
-                      Filename.concat
-                        (Filename.concat src_dir lib)
-                        (lib ^ ".cmxa")
-                    in
-                    if Sys.file_exists path then
-                      acc ^ Digest.to_hex (Digest.file path)
-                    else acc)
-                  "" libs
-              in
+               runtime source names the cached binary — an unchanged
+               program (and unchanged runtime) skips the toolchain
+               entirely, and any runtime change invalidates the cache. *)
               let digest =
                 Digest.to_hex
                   (Digest.string
-                     (Printf.sprintf "%s|%s|%b|%s" source runtime_digest
-                        specialize (String.concat "," cclibs)))
+                     (Printf.sprintf "%s|%s|%b|%s" source
+                        Emo_codegen.ocaml_runtime_ml specialize
+                        (String.concat "," cclibs)))
               in
               let cache_binary =
                 Filename.concat build_dir ("cache-" ^ digest)
@@ -426,55 +358,27 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                 0
               end
               else begin
+                (* The runtime and the program are written side by side
+                   and compiled by the target's own toolchain — nothing
+                   is looked up beside the emo binary or in the host
+                   build tree. *)
                 let ml_path = Filename.concat build_dir "main.ml" in
                 let oc = open_out_bin ml_path in
                 output_string oc source;
                 close_out oc;
-                (* locate the runtime libraries relative to the emo binary
-             (exe_dir/src_dir were resolved at the top of this build) *)
-                let libs =
-                  [
-                    "emo_support";
-                    "emo_lexer";
-                    "emo_parser";
-                    "emo_ast";
-                    "emo_check";
-                    "emo_eval";
-                    "emo_sched";
-                    "emo_runtime";
-                  ]
+                let rt_path =
+                  Filename.concat build_dir "emo_ocaml_runtime.ml"
                 in
-                let includes =
-                  String.concat " "
-                    (List.concat_map
-                       (fun lib ->
-                         let dir = Filename.concat src_dir lib in
-                         [
-                           Printf.sprintf "-I %s"
-                             (Filename.concat dir
-                                (Printf.sprintf ".%s.objs/native" lib));
-                           Printf.sprintf "-I %s"
-                             (Filename.concat dir
-                                (Printf.sprintf ".%s.objs/byte" lib));
-                         ])
-                       libs)
-                in
-                let cmxas =
-                  String.concat " "
-                    (List.map
-                       (fun lib ->
-                         Filename.concat
-                           (Filename.concat src_dir lib)
-                           (lib ^ ".cmxa"))
-                       libs)
-                in
-                (* ocamlfind invokes its switch's compiler; the switch's bin dir
-             must be on PATH for ocamlopt.opt to resolve. *)
+                let oc = open_out_bin rt_path in
+                output_string oc Emo_codegen.ocaml_runtime_ml;
+                close_out oc;
+                (* ocamlfind invokes its switch's compiler; the switch's
+                   bin dir must be on PATH for ocamlopt.opt to resolve. *)
                 let ocamlfind = find_ocamlfind () in
                 let switch_bin = Filename.dirname ocamlfind in
-                (* Foreign bindings get a compiled C wrapper (ffi_stubs):
-             ocaml's stdlib headers live in the switch, so cc can find
-             caml/mlvalues.h there. *)
+                (* Foreign bindings get a compiled C wrapper
+                   (ffi_stubs): ocaml's stdlib headers live in the
+                   switch, so cc can find caml/mlvalues.h there. *)
                 let stub_obj =
                   let stubs = Emo_codegen.ffi_stubs program in
                   if stubs = "" then ""
@@ -504,15 +408,33 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                        (fun lib -> [ "-cclib"; "-l" ^ lib ])
                        cclibs)
                 in
-                let cmd =
+                (* Two invocations: the runtime compiles alone (it never
+                   opens itself), then the program links against it with
+                   -open, so the emitter's qualified paths resolve
+                   without touching the emitted source. ocamlfind brings
+                   only the runtime's own packages (unix, ssl). *)
+                let compile_runtime =
                   Printf.sprintf
-                    "PATH=%s:$PATH %s ocamlopt -package \
-                     unix,ssl,eio_main,eio_posix -linkpkg %s %s %s %s %s -o %s"
+                    "cd %s && PATH=%s:$PATH %s ocamlopt -package unix,ssl -c %s"
+                    (Filename.quote build_dir)
                     (Filename.quote switch_bin)
-                    (Filename.quote ocamlfind) includes cclib_flags cmxas
-                    stub_obj (Filename.quote ml_path) (Filename.quote output)
+                    (Filename.quote ocamlfind) (Filename.quote rt_path)
                 in
-                let exit_code = Sys.command cmd in
+                let link_cmd =
+                  Printf.sprintf
+                    "PATH=%s:$PATH %s ocamlopt -package unix,ssl -linkpkg -I \
+                     %s -open Emo_ocaml_runtime %s %s %s %s -o %s"
+                    (Filename.quote switch_bin)
+                    (Filename.quote ocamlfind) (Filename.quote build_dir)
+                    (Filename.quote
+                       (Filename.concat build_dir "emo_ocaml_runtime.cmx"))
+                    (Filename.quote ml_path) cclib_flags stub_obj
+                    (Filename.quote output)
+                in
+                let exit_code = Sys.command compile_runtime in
+                let exit_code =
+                  if exit_code <> 0 then exit_code else Sys.command link_cmd
+                in
                 if exit_code <> 0 then begin
                   prerr_endline
                     (Printf.sprintf
@@ -1186,14 +1108,12 @@ let cc_smoke () : (unit, string) result =
       | _ -> Error "the cc smoke binary did not run"
     end
 
-(* The ocaml target's check: its runtime libraries must stand beside the
-   emo binary (a source or dune-tree install) and ocamlfind must exist. *)
+(* The ocaml target's check: ocamlfind with the unix and ssl packages
+   the runtime itself uses — the same question on every installation
+   shape, since the runtime rides the compiler (step 26). *)
 let doctor ~(emit : string -> unit) : int =
   let ocaml_ok = ocaml_target_ok () in
   emit (Printf.sprintf "emo %s" version);
-  emit
-    (if ocaml_ok then "installation: source (runtime libraries found)"
-     else "installation: prebuilt");
   emit "stdlib: embedded in the binary";
   let broken = ref false in
   let line name report = emit (Printf.sprintf "%-11s %s" name report) in
@@ -1203,11 +1123,11 @@ let doctor ~(emit : string -> unit) : int =
       broken := true;
       line "c:" ("BROKEN — " ^ why ^ " (the default target needs a C compiler)"));
   if ocaml_ok then
-    line "ocaml:" "ok — ocamlfind and the runtime libraries are present"
+    line "ocaml:" "ok — ocamlfind with the unix and ssl packages found"
   else
     line "ocaml:"
-      "unavailable — a prebuilt installation; the ocaml target needs a source \
-       install (opam install emo)";
+      "unavailable — the ocaml target needs the OCaml toolchain on PATH \
+       (ocamlfind with the unix and ssl packages)";
   if tool_exists "node" then line "typescript:" ("ok" ^ tool_version "node")
   else line "typescript:" "unavailable — node not found";
   if tool_exists "erlc" then line "beam:" "ok"

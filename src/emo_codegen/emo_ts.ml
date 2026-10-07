@@ -548,7 +548,12 @@ let emit_class env (c : Emo_ir.class_) : string =
 
 (* ---- The program ---- *)
 
-let emit_ts ~(runtime : string) (program : Emo_ir.program) : string =
+(* The prelude rides the compiler as generated data
+   (src/emo_codegen/ts, the C runtime's mechanism); nothing is read
+   from beside the binary or the host build tree. *)
+let ts_prelude = Emo_ts_runtime_data.ts_prelude
+
+let emit_ts (program : Emo_ir.program) : string =
   if List.exists (fun f -> f.Emo_ir.fforeign <> None) program.Emo_ir.pfuncs then
     raise
       (Emo_ir.Lower_error
@@ -557,7 +562,7 @@ let emit_ts ~(runtime : string) (program : Emo_ir.program) : string =
   let env =
     { buf; refs = []; fresh = 0; fname = ""; fparams = []; in_receive = false }
   in
-  Buffer.add_string buf runtime;
+  Buffer.add_string buf ts_prelude;
   Buffer.add_string buf "\n// ---- program ----\n";
   List.iter
     (fun (name, sigs) ->
