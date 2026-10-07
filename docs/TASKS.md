@@ -649,7 +649,7 @@ release layout; all goldens byte-for-byte; `dune test` green.
       beside-binary lookup are deleted; all sixteen goldens match
       byte-for-byte and the emitted main.ml is unchanged; a lone
       release-layout binary builds the golden subset.)
-- [ ] **T26.6** — The independence audit and close-out: wasm and beam
+- [x] **T26.6** — The independence audit and close-out: wasm and beam
       recorded as verified-independent (no tasks — evidence noted);
       the docs corrected (`docs/toolchain.md`,
       `docs/toolchain-distribution.md` — the true ocaml-target story
