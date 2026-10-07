@@ -221,7 +221,7 @@
 - [x] **T12.5** — HTTP 客户端;带每连接一进程辅助器的 HTTP 服务器。
 - [x] **T12.6** — 带目标元数据的标准库打包;fixture 式集成测试(回环监听、顺序确定)。
 
-收尾说明:`net.*` / `http.*` 的确切名称已写入 README(Networking 一节);标准库以 `stdlib/registry` 下的目录注册表包形式发布,`targets = ["native"]`;验收示例为 `examples/http_roundtrip`。步骤决策见 `plan/step-12-networking.md`(Close-out)。**M3 退出标准已达成。**
+收尾说明:`net.*` / `http.*` 的确切名称已写入 README(Networking 一节);标准库以 `stdlib/registry` 下的目录注册表包形式发布,当时为 `targets = ["native"]`(现为 `["ocaml", "c"]`);验收示例为 `examples/http_roundtrip`。步骤决策见 `plan/step-12-networking.md`(Close-out)。**M3 退出标准已达成。**
 
 后续:本步骤落定后,把标准库的准确模块/方法名(`net.*`、`http.*`)写进 README。
 

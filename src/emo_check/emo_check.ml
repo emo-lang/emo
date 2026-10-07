@@ -281,7 +281,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       refs = ref [];
       requires = ref [];
       types = Hashtbl.create 64;
-      target = "native";
+      target = "ocaml";
     }
   in
   let parsed = Emo_parser.parse_program_with_diagnostics ~file ~source in
@@ -1923,7 +1923,7 @@ let sort_diagnostics diagnostics =
 (* The backend entry: checking that also hands back the span→type table —
    the completeness data specialization lowers from. *)
 let check_module_typed ~(modules : string list list) ~(current : string list)
-    ?(target = "native") (items : Ast.item list) :
+    ?(target = "ocaml") (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list

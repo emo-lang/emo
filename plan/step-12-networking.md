@@ -35,7 +35,7 @@ coloring is structurally impossible.
   error codes, no nil returns.
 - **Standard-library packaging** — these modules live as the official
   top-level stdlib packages (`http`, `net`), exercising the step 10 package
-  machinery for real; they declare `targets = ["native"]` and fail
+  machinery for real; they declare `targets = ["native"]` (today `["ocaml", "c"]`) and fail
   resolution elsewhere until their backends exist (honest target metadata).
 
 ### Out
@@ -85,7 +85,7 @@ coloring is structurally impossible.
   trust paths and fails closed; `net_tls_connect_insecure` is the
   explicit opt-out.
 - **Stdlib delivery** — `net` and `http` ship as directory-registry
-  packages under `stdlib/registry` (targets = ["native"]); a project
+  packages under `stdlib/registry` (targets = ["native"] at the time; today `["ocaml", "c"]`); a project
   points `EMO_REGISTRY` at it and requires them like any package. The
   acceptance example is `examples/http_roundtrip` with its lockfile.
 - **Language surface that landed with the library** — the `\r` escape,

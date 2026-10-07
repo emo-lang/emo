@@ -229,7 +229,7 @@ Also here: swap step 09's transitional root rule for manifest-based roots — do
 - [x] **T12.5** — HTTP client; HTTP server with process-per-connection helper.
 - [x] **T12.6** — Stdlib packaging with target metadata; fixture-based integration tests (loopback listeners, deterministic order).
 
-Close-out: the exact `net.*` / `http.*` names are in the README (Networking); the stdlib ships as directory-registry packages under `stdlib/registry` with `targets = ["native"]`; the acceptance example is `examples/http_roundtrip`. Step decisions are in `plan/step-12-networking.md` (Close-out). **M3 exit criteria met.**
+Close-out: the exact `net.*` / `http.*` names are in the README (Networking); the stdlib ships as directory-registry packages under `stdlib/registry` with `targets = ["ocaml"]` at the time; the acceptance example is `examples/http_roundtrip`. Step decisions are in `plan/step-12-networking.md` (Close-out). **M3 exit criteria met.**
 
 ---
 

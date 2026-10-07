@@ -173,9 +173,10 @@ let load_tests =
           run_entry
             (with_project
                [
-                 ("shop/order.emo", {|def total(n Int64) Int64 {
+                 ( "shop/order.emo",
+                   {|def total(n Int64) Int64 {
   return n * 2
-}|});
+}|} );
                  ("shop/checkout.emo", {|println(shop.order.total(21))|});
                ]
                "shop/checkout.emo")
@@ -186,9 +187,10 @@ let load_tests =
           run_entry
             (with_project
                [
-                 ("shop/order.emo", {|def total(n Int64) Int64 {
+                 ( "shop/order.emo",
+                   {|def total(n Int64) Int64 {
   return n * 2
-}|});
+}|} );
                  ( "shop/checkout.emo",
                    {|const order = shop.order
 println(order.total(4))|} );
@@ -209,7 +211,8 @@ def total(n Int64) Int64 {
                  );
                  ( "shop/checkout.emo",
                    {|println(shop.order.total(1))
-println(shop.order.total(2))|} );
+println(shop.order.total(2))|}
+                 );
                ]
                "shop/checkout.emo")
         in
@@ -406,7 +409,7 @@ let registry_dir =
     {|package {
   name = "acme/json_tools"
   version = "2.3.1"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }
 |};
@@ -425,7 +428,7 @@ let registry_dir =
     {|package {
   name = "acme/wasm_tools"
   version = "1.0.0"
-  targets = ["native", "wasm"]
+  targets = ["ocaml", "wasm"]
   deps {}
 }
 |};
@@ -444,7 +447,7 @@ let registry_dir =
     {|package {
   name = "acme/c_tools"
   version = "1.0.0"
-  targets = ["native", "c"]
+  targets = ["ocaml", "c"]
   deps {}
 }
 |};
@@ -460,7 +463,7 @@ let app_manifest =
   {|package {
   name = "local/app"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
 
   deps {
     acme/json_tools = "2.3.1"
@@ -525,7 +528,7 @@ let deps_tests =
         with_registry (fun () ->
             let entries =
               Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
-                ~manifest_dir:dir ~target:"native"
+                ~manifest_dir:dir ~target:"ocaml"
             in
             Alcotest.(check int) "count" 1 (List.length entries);
             (match entries with
@@ -582,7 +585,7 @@ let deps_tests =
                 {|package {
   name = "local/app"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }
 |}
@@ -605,7 +608,7 @@ let deps_tests =
                 {|package {
   name = "local/app"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
 
   deps {
     acme/json_tools = "9.8.7"
@@ -639,7 +642,7 @@ let deps_tests =
                 {|package {
   name = "local/app"
   version = "0.1.0"
-  targets = ["native", "wasm"]
+  targets = ["ocaml", "wasm"]
 
   deps {
     acme/json_tools = "2.3.1"
@@ -679,7 +682,7 @@ println(json_tools.parse("hello"))
                 {|package {
   name = "local/app"
   version = "0.1.0"
-  targets = ["native", "wasm"]
+  targets = ["ocaml", "wasm"]
 
   deps {
     acme/wasm_tools = "1.0.0"
@@ -709,7 +712,7 @@ println(wasm_tools.shrink(4))
                 {|package {
   name = "local/app"
   version = "0.1.0"
-  targets = ["native", "c"]
+  targets = ["ocaml", "c"]
 
   deps {
     acme/json_tools = "2.3.1"
@@ -726,9 +729,7 @@ println(json_tools.parse("hello"))
             "main.emo"
         in
         with_registry (fun () ->
-            match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
-            with
+            match Emo_project.compile_inputs ~entry_file:entry ~target:"c" with
             | _ -> Alcotest.fail "expected the c gate to refuse"
             | exception Emo_project.Static_errors ds -> (
                 match ds with
@@ -749,7 +750,7 @@ println(json_tools.parse("hello"))
                 {|package {
   name = "local/app"
   version = "0.1.0"
-  targets = ["native", "c"]
+  targets = ["ocaml", "c"]
 
   deps {
     acme/c_tools = "1.0.0"
@@ -757,17 +758,14 @@ println(json_tools.parse("hello"))
 }
 |}
               );
-              ( "main.emo",
-                {|require "acme/c_tools"
+              ("main.emo", {|require "acme/c_tools"
 println(c_tools.halve(8))
-|} );
+|});
             ]
             "main.emo"
         in
         with_registry (fun () ->
-            match
-              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
-            with
+            match Emo_project.compile_inputs ~entry_file:entry ~target:"c" with
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
                 Alcotest.fail ("codes: " ^ codes_dump ds)));
@@ -908,7 +906,7 @@ let stdlib_http_tests =
                 {|package {
   name = "roundtrip"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
 
   deps {
     http = "0.1.0"
@@ -1033,7 +1031,7 @@ println(resp.status)
           | Ok v -> [ ("http", v) ]
           | Error _ -> Alcotest.fail "bad fixture version"
         in
-        (match Emo_pkg.Resolve.solve ~target:"native" ~roots ~index with
+        (match Emo_pkg.Resolve.solve ~target:"ocaml" ~roots ~index with
         | Ok _ -> ()
         | Error errors ->
             Alcotest.fail
@@ -1083,7 +1081,8 @@ println(sqrt(2.0))|}
             [
               ( "main.emo",
                 {|foreign def sqrt(x Float64) Float64 = "sqrt"
-println(sqrt(4.0))|} );
+println(sqrt(4.0))|}
+              );
             ]
             "main.emo"
         in

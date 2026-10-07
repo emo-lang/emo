@@ -57,7 +57,7 @@ let manifest_tests =
             {|package {
   name = "acme/json_tools"
   version = "0.1.0"
-  targets = ["native", "wasm"]
+  targets = ["ocaml", "wasm"]
 
   deps {
     json = "2.3.1"
@@ -81,7 +81,7 @@ let manifest_tests =
             {|package {
   name = "acme/json_tools"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }|}
         with
@@ -95,7 +95,7 @@ let manifest_tests =
             {|package {
   name = "x/y"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
   authors = ["someone"]
   deps {}
 }|}
@@ -108,7 +108,7 @@ let manifest_tests =
     tc "missing fields are rejected" (fun () ->
         match check {|package {
   name = "x/y"
-  targets = ["native"]
+  targets = ["ocaml"]
 }|} with
         | Error d ->
             Alcotest.(check string)
@@ -121,7 +121,7 @@ let manifest_tests =
             {|package {
   name = "x/y"
   version = version
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }|}
         with
@@ -136,7 +136,7 @@ let manifest_tests =
             {|package {
   name = "x/${"y"}"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }|}
         with
@@ -152,7 +152,7 @@ let manifest_tests =
   name = "x/y"
   name = "a/b"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }|}
         with
@@ -167,7 +167,7 @@ let manifest_tests =
             {|package {
   name = "x/y"
   version = "0.1"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }|}
         with
@@ -197,7 +197,7 @@ let manifest_tests =
             {|package {
   name = "x/y"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }
 
@@ -286,14 +286,14 @@ let resolve_tests =
                     ( Emo_pkg.Version.parse "2.3.1" |> function
                       | Ok v -> v
                       | _ -> assert false );
-                  R.pv_targets = [ "native" ];
+                  R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [];
                 };
               ] );
           ]
         in
         match
-          Emo_pkg.Resolve.solve ~target:"native"
+          Emo_pkg.Resolve.solve ~target:"ocaml"
             ~roots:
               [
                 ( "json",
@@ -321,19 +321,19 @@ let resolve_tests =
               [
                 {
                   R.pv_version = v "1.0.0";
-                  R.pv_targets = [ "native" ];
+                  R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [];
                 };
                 {
                   R.pv_version = v "1.2.0";
-                  R.pv_targets = [ "native" ];
+                  R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [];
                 };
               ] );
           ]
         in
         match
-          Emo_pkg.Resolve.solve ~target:"native"
+          Emo_pkg.Resolve.solve ~target:"ocaml"
             ~roots:[ ("shared", v "1.0.0"); ("shared", v "1.2.0") ]
             ~index
         with
@@ -362,7 +362,7 @@ let resolve_tests =
           ]
         in
         match
-          Emo_pkg.Resolve.solve ~target:"native"
+          Emo_pkg.Resolve.solve ~target:"ocaml"
             ~roots:[ ("web", v "3.0.0") ]
             ~index
         with
@@ -382,7 +382,7 @@ let resolve_tests =
               [
                 {
                   R.pv_version = v "1.0.0";
-                  R.pv_targets = [ "native" ];
+                  R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [ ("lib", v "2.0.0") ];
                 };
               ] );
@@ -390,14 +390,14 @@ let resolve_tests =
               [
                 {
                   R.pv_version = v "2.0.0";
-                  R.pv_targets = [ "native" ];
+                  R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [];
                 };
               ] );
           ]
         in
         match
-          Emo_pkg.Resolve.solve ~target:"native"
+          Emo_pkg.Resolve.solve ~target:"ocaml"
             ~roots:[ ("app", v "1.0.0") ]
             ~index
         with
@@ -430,7 +430,7 @@ let registry_tests =
           {|package {
   name = "acme/json_tools"
   version = "2.3.1"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }|};
         write [ "json_tools.emo" ] {|def parse(s String) String {
@@ -589,7 +589,7 @@ let publish_tests =
           {|package {
   name = "acme/hello"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }|};
         write "hello.emo" {|def greet() String {
@@ -622,7 +622,7 @@ let publish_tests =
           {|package {
   name = "hello"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
   deps {}
 }|};
         close_out oc;

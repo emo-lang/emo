@@ -2184,6 +2184,7 @@ let emit (program : Emo_ir.program) : string =
   in
   put env "static void emo_root_entry(void) {\n";
   emit_stmts env program.pinit;
+  if has_return program.pinit then put env "emo_return:;\n";
   put env "}\n\n";
   put env "int main(void) {\n";
   put env "  emo_startup();\n";

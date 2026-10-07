@@ -226,7 +226,7 @@ def parse_config(text String) Json {
   package {
     name = "acme/json_tools"
     version = "0.1.0"
-    targets = ["native", "wasm"]
+    targets = ["ocaml", "wasm"]
 
     deps {
       json = "2.3.1"
@@ -257,7 +257,7 @@ The concurrency semantics are shaped by the following decisions:
 
 ## Networking
 
-Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API. On the native backend it runs on the same effects-based scheduler as the concurrency runtime — non-blocking sockets parked and woken by the scheduler, with TLS provided by OpenSSL bindings. Networking is native-only: the `net` and `http` packages declare `targets = ["native"]`, and dependency resolution refuses them on every other target.
+Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API. On the native backend it runs on the same effects-based scheduler as the concurrency runtime — non-blocking sockets parked and woken by the scheduler, with TLS provided by OpenSSL bindings. Networking is ocaml/c-only: the `net` and `http` packages declare `targets = ["ocaml", "c"]`, and dependency resolution refuses them on every other target.
 
 The API is **direct style**: network calls look like ordinary blocking calls, and the scheduler switches processes under the hood. There is no `async`/`await` and therefore no function coloring — any function can perform IO, and the API ecosystem stays single-tracked. Timeouts are seconds, and every failure — refused connection, unresolvable name, exceeded deadline, closed socket — raises an ordinary Emo exception whose message states the peer, the operation, and the reason.
 

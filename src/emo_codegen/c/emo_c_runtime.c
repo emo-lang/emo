@@ -1022,14 +1022,19 @@ void emo_scheduler_run(void) {
           n++;
         }
       if (n > 0) {
-        int ready = poll(fds, (nfds_t)n, 100);
+        poll(fds, (nfds_t)n, 100);
+        int woke = 0;
         for (int i = 0; i < n; i++)
           if (fds[i].revents & (POLLIN | POLLERR | POLLHUP)) {
             waiters[i]->blocked = 0;
             waiters[i]->wait_fd = -1;
             emo_runq_push(waiters[i]);
+            woke = 1;
           }
-        if (ready > 0) continue;
+        if (woke) continue;
+        /* io-waiters exist: keep polling (their readiness can still
+           arrive from outside the process) */
+        continue;
       }
       int deadlocked = 0;
       for (emo_process *q = emo_process_table; q; q = q->next_table)

@@ -1,5 +1,5 @@
 package {
   name = "emo/demo_numerics"
   version = "0.1.0"
-  targets = ["native"]
+  targets = ["ocaml"]
 }
