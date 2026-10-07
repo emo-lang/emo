@@ -1037,7 +1037,7 @@ println(resp.status)
         Alcotest.(check string) "output" "42" run_out);
     tc "the stdlib targets are honest: native resolves, wasm refuses" (fun () ->
         let registry = use_workspace_registry () in
-        let reg = { Emo_pkg.Registry.endpoint = registry } in
+        let reg = Emo_pkg.Registry.Fs_dir registry in
         let index = Emo_pkg.Registry.index reg [ "http"; "net" ] in
         let roots =
           match Emo_pkg.Version.parse "0.1.0" with

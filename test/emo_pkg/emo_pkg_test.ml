@@ -436,7 +436,7 @@ let registry_tests =
         write [ "json_tools.emo" ] {|def parse(s String) String {
   return s
 }|};
-        let reg = { Emo_pkg.Registry.endpoint = root } in
+        let reg = Emo_pkg.Registry.Fs_dir root in
         match
           Emo_pkg.Registry.fetch reg ~name:"acme/json_tools"
             ~version:(v "2.3.1")
@@ -464,7 +464,7 @@ let registry_tests =
         let root =
           Filename.concat (Filename.get_temp_dir_name ()) "emo-reg-test"
         in
-        let reg = { Emo_pkg.Registry.endpoint = root } in
+        let reg = Emo_pkg.Registry.Fs_dir root in
         match
           Emo_pkg.Registry.fetch reg ~name:"json_tools" ~version:(v "9.9.9")
         with
@@ -638,6 +638,59 @@ let publish_tests =
         | Error _ -> ());
   ]
 
+(* T25.2: the standard library rides the compiler binary as generated
+   data — the embedded registry must match the filesystem one it was
+   generated from, or a published stdlib and the binary drift apart. *)
+let original_cwd = Sys.getcwd ()
+
+let from_original_cwd dir =
+  if Filename.is_relative dir then Filename.concat original_cwd dir else dir
+
+let embedded_stdlib_tests =
+  [
+    tc "the embedded stdlib matches the filesystem registry" (fun () ->
+        let root = from_original_cwd "../../stdlib/registry" in
+        let embedded = Emo_pkg.Registry.Embedded in
+        let fs = Emo_pkg.Registry.Fs_dir root in
+        let compare_registry name =
+          let v_of = List.map Emo_pkg.Version.to_string in
+          Alcotest.(check (list string))
+            ("versions of " ^ name)
+            (v_of (Emo_pkg.Registry.versions fs ~name))
+            (v_of (Emo_pkg.Registry.versions embedded ~name));
+          List.iter
+            (fun v ->
+              match
+                ( Emo_pkg.Registry.fetch fs ~name ~version:v,
+                  Emo_pkg.Registry.fetch embedded ~name ~version:v )
+              with
+              | Ok a, Ok b ->
+                  Alcotest.(check string)
+                    (Printf.sprintf "checksum of %s@%s" name
+                       (Emo_pkg.Version.to_string v))
+                    a.Emo_pkg.Registry.f_checksum b.Emo_pkg.Registry.f_checksum
+              | _ -> Alcotest.fail (Printf.sprintf "fetch failed for %s" name))
+            (Emo_pkg.Registry.versions embedded ~name)
+        in
+        List.iter compare_registry [ "file"; "http"; "net" ];
+        (* the embedded endpoint serves a stdlib-importing project with
+           no filesystem registry at all *)
+        match
+          Emo_pkg.Registry.fetch embedded ~name:"http"
+            ~version:
+              (match Emo_pkg.Version.parse "0.1.0" with
+              | Ok v -> v
+              | Error _ -> Alcotest.fail "bad version")
+        with
+        | Ok f ->
+            Alcotest.(check bool)
+              "manifest rides along" true
+              (List.exists
+                 (fun (p, _) -> Filename.basename p = "package.emo")
+                 f.Emo_pkg.Registry.f_files)
+        | Error m -> Alcotest.fail m);
+  ]
+
 let () =
   Alcotest.run "emo_pkg"
     [
@@ -650,4 +703,5 @@ let () =
       ("digest", digest_tests);
       ("archive", archive_tests);
       ("publish", publish_tests);
+      ("embedded_stdlib", embedded_stdlib_tests);
     ]
