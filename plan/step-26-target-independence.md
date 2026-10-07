@@ -5,7 +5,8 @@ toolchain whose claims this step corrects) · **Related:**
 `docs/toolchain.md` (the host/target distinction this step completes),
 `CHECK.md` (the backend-naming and runtime-language decisions this
 step generalizes), `src/emo_codegen/c/` (the runtime-as-generated-data
-pattern being generalized) · **Status:** not started (tasks written)
+pattern being generalized) · **Status:** done (2026-10-07 — close-out
+recorded below)
 
 ## Why this step exists
 
@@ -75,13 +76,13 @@ works from the release layout.
 
 ## Tasks
 
-- [ ] **T26.1** — The principle and the ts embed: the principle above
+- [x] **T26.1** — The principle and the ts embed: the principle above
       recorded in `CHECK.md`; `ts_prelude.ts` embedded as generated
       data (the C runtime's dune rule pattern) and the typescript arm
       stops reading the filesystem. Verification: a lone release-layout
       binary compiles a typescript program; the ts goldens stay
       byte-for-byte.
-- [ ] **T26.2** — The emitted-code inventory and the standalone
+- [x] **T26.2** — The emitted-code inventory and the standalone
       skeleton: emit the golden subset through the ocaml emitter and
       collect mechanically every host symbol the emitted code
       references; the inventory is the standalone runtime's contract,
@@ -89,16 +90,16 @@ works from the release layout.
       (`emo_ocaml_runtime.ml`) compiles with plain `ocamlopt` — zero
       `emo_*` dependencies — and a fixture proves it from the build
       directory alone.
-- [ ] **T26.3** — The value and scalar core: the value ADT, strings
+- [x] **T26.3** — The value and scalar core: the value ADT, strings
       and their operations, print/interpolation rendering,
       arithmetic/comparison dispatch, and the case/error paths the
       inventory names, in the standalone runtime. Each piece covered
       by a fixture compiled against the runtime alone.
-- [ ] **T26.4** — The scheduler and IO: the effects-based scheduler,
+- [x] **T26.4** — The scheduler and IO: the effects-based scheduler,
       file IO, and the networking surface, per the dependency policy
       above. Fixtures: a process program and an HTTP roundtrip
       compiled against the standalone runtime alone.
-- [ ] **T26.5** — The cutover: the ocaml emitter's references flip to
+- [x] **T26.5** — The cutover: the ocaml emitter's references flip to
       the standalone runtime; the arm emits runtime + `main.ml` and
       invokes `ocamlopt` (ocamlfind only for the packages the runtime
       itself uses); the `.cmxa` machinery, the library scan in
@@ -108,7 +109,7 @@ works from the release layout.
       source-install conditional. All ocaml goldens and tests
       byte-for-byte; the lone-binary verification: an installed binary
       with an OCaml toolchain builds the golden subset.
-- [ ] **T26.6** — The independence audit and close-out: wasm and beam
+- [x] **T26.6** — The independence audit and close-out: wasm and beam
       recorded as verified-independent (runtime inside the module /
       one OTP-standing module — no tasks, evidence noted here); the
       docs corrected (`docs/toolchain.md`,
@@ -116,6 +117,94 @@ works from the release layout.
       replaces "a source install brings the ocaml target");
       `benchmarks/results.md`'s ocaml column re-run against the
       standalone runtime to confirm no regression; close-out.
+
+## The independence audit (T26.6)
+
+- **wasm — verified independent.** The runtime compiles into the
+  module: 3 imports (the engine ABI — a `(ptr, len)` println and an
+  abort), then the runtime's 38 functions plus the bit and bytes
+  operations, init, and main are emitted as module sections
+  (`emo_codegen/emo_wasm.ml`, `runtime_count = 61`). Nothing is read
+  from disk at program-build time and nothing rides the compiler's
+  host language.
+- **beam — verified independent.** One self-contained Core Erlang
+  text module (`emo_codegen/emo_beam.ml`) handed to the user's
+  `erlc`; OTP is the target ecosystem's standard library, as libc is
+  to `c`. No side files, no host lookups.
+- **c, typescript, ocaml — embedded as generated data** (T26.1,
+  T26.5): `emo_codegen/{c,ts,ocaml}` ride the compiler via the dune
+  rule; the CLI never reads a runtime from beside the binary or the
+  host build tree. Verified from the release layout: a lone binary in
+  an empty directory builds typescript (T26.1) and the ocaml golden
+  subset (T26.5).
+
+## Close-out
+
+Completed 2026-10-07, tasks T26.1–T26.6 on `feat/target-independence`.
+Acceptance against the goal: no target reads its runtime from beside
+the binary or the host build tree (c, ocaml, ts embedded; wasm, beam
+inside the emitted artifact); `emo build --target ocaml` works from a
+lone release-layout binary wherever the OCaml toolchain is on PATH —
+ocamlfind with `unix` and `ssl` — and refuses elsewhere with the
+toolchain named, no installation-shape conditionals (the doctor
+installation line is deleted); the typescript target works from the
+release layout; all sixteen golden examples build through the cut-over
+target and match byte-for-byte, the emitted `main.ml` is unchanged,
+and `dune test` is green. `benchmarks/results.md` re-recorded on the
+standalone runtime: the ocaml rows sit within the machine's observed
+run-to-run noise of the pre-cutover recording (fib 18 ms, unspec 29,
+tail loop 2087/406 against 1969–2161/406–417 re-measured on the same
+binary, ffi 422, bytes 1218–1267 re-measured, ping-pong 2665, json 6,
+http 75 req/s). The docs carry the corrected story bilingually
+(`docs/toolchain.md`, `docs/toolchain-distribution.md`, and their
+`docs/zh-CN/` mirrors).
+
+## The emitted-code inventory (T26.2 — the standalone runtime's contract)
+
+Collected mechanically by `devtools/ocaml-runtime-inventory.sh` (2026-10-07):
+the golden corpus — every `examples/` entry with an `expected.txt`, sixteen
+programs spanning objects, function groups, bytes, fixed-width math,
+processes, file IO, TCP/UDP/TLS networking — emitted through the ocaml
+emitter; the script greps every host-module reference out of the emitted
+sources and fails on any module outside the two below. The reference counts
+(across the corpus) stand behind each name. The standalone runtime
+(`src/emo_codegen/ocaml/emo_ocaml_runtime.ml`) must carry every symbol with
+the same arity and behavior; the two module names are load-bearing — the
+emitter's qualified paths resolve through them.
+
+- **Emo_eval** — the values and the builtin bridge. The `value` type;
+  constructors the emitted code names: `Int64` (232), `String` (147),
+  `Tuple` (49), `Float` (21), `Byte` (23), `Obj` (16), `EnumMember` (16),
+  `Array` (14), `Bool`, `Void`, `Char`, `CompiledFn` (5), `TypeValue` (4)
+  — the remaining constructors (`Bytes`, `Box`, `Pid`, the socket handles,
+  `ClassDef`, `Instance`, `EnumType`, `EmoGroup`) are constructed only
+  inside the runtime; the `CompiledFn.fdesc` field (5); `call_builtin`
+  (161), behind which stands the whole builtin table (`println`, `halt`,
+  `self_pid`, `file_read`/`file_write`, the `net_*` family — the corpus
+  exercises fourteen names; the table ports whole, not just the corpus
+  subset).
+- **Emo_runtime** — operators, dispatch, process operations, scheduler
+  hookup. `Return_signal` (120) and `Arity_error`; errors `arity_error`
+  (111), `no_return`, `case_error`; unboxing `unbox_bool` (34),
+  `unbox_int64` (16), `unbox_float64`, `unbox_string`, and the boxes
+  `box_int64` (12), `box_float64`, `box_string`, `box_new`; arithmetic
+  `add` (65), `sub` (14), `mul` (12), `div`, `modulo`, `negf` (9);
+  bitwise `bit_and`, `bit_or`, `bit_xor`, `bit_not`, `shl` (6), `shr`,
+  `shl_i64`, `shr_i64`; comparison `lt` (6), `gt` (9), `ge` (5), `eq`
+  (21), `ne`, `not_` (`le`, `and_`, `or_` complete the ported surface);
+  rendering `interpolate` (28), `to_string`; collections and objects
+  `index` (21), `field` (17), `obj_set_field` (13), `new_obj` (16),
+  `method_call` (132), `apply_value` (5), `exception_new`, `bytes_new`;
+  processes `spawn_args` (7), `send` (11), `receive` (7), `payload_items`
+  (12) (+ `bind_items`, `self_pid`, `spawn`, `raise_`, `halt`); the
+  scheduler `run` (16) and `register_interface`.
+
+Reshapes the standalone runtime is allowed (and records here): spans and
+diagnostics stay compiler-side, so `Emo_raise` carries the value only, the
+effect constructors drop their span fields, and the interpreter-only
+AST-carrying variants (`ArrowBlock`, `BuiltinFn`, `Module`, closure-backed
+class definitions) drop out of the ADT — compiled functions are always
+`CompiledFn`.
 
 ## Acceptance
 
@@ -138,9 +227,15 @@ works from the release layout.
 - ~~The runtime-independence principle~~ — settled before T26.1
   (CHECK.md): the host contributes only the emitter; runtimes live in
   the target's language as generated data.
-- ~~The ocaml runtime's dependency policy~~ — settled before T26.4:
-  zero-dep core; `eio_main`/`ssl` as target-ecosystem opam
-  dependencies, refused with a clear message when absent.
-- Whether the standalone ocaml runtime later drops eio for a
-  hand-rolled poll loop — open, driven by the same pressure that may
-  one day drop the host's eio dependency; not this step's scope.
+- ~~The ocaml runtime's dependency policy~~ — settled at the T26.4
+  port (CHECK.md): the core stands on the OCaml standard library plus
+  `unix`, which ships with the compiler; `ssl` is the one opam-package
+  dependency, declared by the build invocation and refused with a
+  clear message when absent. eio drops out entirely — the standalone
+  scheduler is the deterministic poll loop the compiled path already
+  ran on, so the open item below closes with it.
+- ~~Whether the standalone ocaml runtime later drops eio for a
+  hand-rolled poll loop~~ — settled by the same port: there never was
+  an eio dependency to drop. The det scheduler (Unix poll, no eio)
+  is what compiled programs ran on; the standalone runtime carries it
+  as-is.

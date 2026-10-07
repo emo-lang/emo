@@ -46,7 +46,7 @@
 | 标准库:内嵌 vs 旁挂目录 | T25.2 | 内嵌为编译器内的生成数据(C 运行时的同一机制);`EMO_REGISTRY` 覆盖保留 |
 | `emo install` 语义 | T25.4 | resolve/fetch/lock 之上的项目依赖前端;全局可执行文件安装不进 1.0 范围 |
 | 运行时独立原则 | T26.1 | target 的运行时用 target 的语言写,以生成数据随编译器内嵌;宿主只贡献发射器 |
-| ocaml 运行时的依赖策略 | T26.4 | 核心零依赖(OCaml 标准库除外);`eio_main`/`ssl` 作为 target 生态的 opam 依赖保留,缺失时以清晰消息拒绝 |
+| ocaml 运行时的依赖策略 | T26.4 | 核心用 OCaml 标准库加 `unix`;`ssl` 是唯一的 opam 依赖,缺失时以清晰消息拒绝;不用 eio |
 
 ---
 
@@ -442,9 +442,9 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 **前置:** 步骤 25(本步骤要修正其表述的工具链)。
 **完成标准:** 没有任何 target 从二进制旁或宿主构建树读取运行时——c、ocaml、typescript 的运行时以生成数据随编译器内嵌,wasm 与 beam 的在发射模块内;`emo build --target ocaml` 在任何 OCaml 工具链在 PATH 上的安装形态下可用,无 `.cmxa` 查找、无安装形态条件分支;typescript target 在发布布局下可用;全部金测逐字节;`dune test` 全绿。
 
-- [ ] **T26.1** — 原则与 ts 内嵌:运行时独立原则记入 `CHECK.md`;ts 前奏以内嵌生成数据(C runtime 的 dune 规则模式)分发,typescript 分支停止读文件系统。验证:孤零零的发布布局二进制能编译 typescript 程序;ts 金测逐字节。
-- [ ] **T26.2** — 发射代码清单与独立骨架:经 ocaml 发射器发射金测子集,机械收集发射代码引用的每个宿主符号,把清单记为独立运行时的契约;骨架以纯 `ocamlopt` 编译——零 `emo_*` 依赖——由仅从构建目录出发的 fixture 证明。
-- [ ] **T26.3** — 值与标量核心:值 ADT、字符串、print/插值渲染、算术/比较分派,以及清单点名的 case/错误路径,全部独立化。每片由仅对独立运行时编译的 fixture 覆盖。
-- [ ] **T26.4** — 调度器与 IO:基于 effects 的调度器、文件 IO 与网络面,按依赖策略执行(核心零依赖;`eio_main`/`ssl` 作为 target 生态 opam 依赖)。Fixture:进程程序与 HTTP 往返,均仅对独立运行时编译。
-- [ ] **T26.5** — 切换:ocaml 发射器的引用翻转到独立运行时;分支发射运行时 + `main.ml` 并调用 `ocamlopt`(ocamlfind 只为运行时自己的包);`.cmxa` 机制、库扫描与二进制旁查找删除;拒绝与 doctor 措辞改为与安装形态无关。全部 ocaml 金测与测试逐字节;带 OCaml 工具链的安装二进制构建金测子集。
-- [ ] **T26.6** — 独立性审计与收尾:wasm 与 beam 记录为验证独立(无任务——证据在案);文档修正(`docs/toolchain.md`、`docs/toolchain-distribution.md`——用真实的 ocaml target 故事取代"源码安装带来 ocaml target");`benchmarks/results.md` 的 ocaml 列对独立运行时复测;收尾。
+- [x] **T26.1** — 原则与 ts 内嵌:运行时独立原则记入 `CHECK.md`;ts 前奏以内嵌生成数据(C runtime 的 dune 规则模式)分发,typescript 分支停止读文件系统。验证:孤零零的发布布局二进制能编译 typescript 程序;ts 金测逐字节。
+- [x] **T26.2** — 发射代码清单与独立骨架:经 ocaml 发射器发射金测子集,机械收集发射代码引用的每个宿主符号,把清单记为独立运行时的契约;骨架以纯 `ocamlopt` 编译——零 `emo_*` 依赖——由仅从构建目录出发的 fixture 证明。
+- [x] **T26.3** — 值与标量核心:值 ADT、字符串、print/插值渲染、算术/比较分派,以及清单点名的 case/错误路径,全部独立化。每片由仅对独立运行时编译的 fixture 覆盖。
+- [x] **T26.4** — 调度器与 IO:基于 effects 的调度器、文件 IO 与网络面,按依赖策略执行(核心用 OCaml 标准库加 `unix`;`ssl` 为唯一 opam 依赖;不用 eio)。Fixture:进程程序与 HTTP 往返,均仅对独立运行时编译。
+- [x] **T26.5** — 切换:ocaml 发射器的引用翻转到独立运行时;分支发射运行时 + `main.ml` 并调用 `ocamlopt`(ocamlfind 只为运行时自己的包);`.cmxa` 机制、库扫描与二进制旁查找删除;拒绝与 doctor 措辞改为与安装形态无关。全部 ocaml 金测与测试逐字节;带 OCaml 工具链的安装二进制构建金测子集。
+- [x] **T26.6** — 独立性审计与收尾:wasm 与 beam 记录为验证独立(无任务——证据在案);文档修正(`docs/toolchain.md`、`docs/toolchain-distribution.md`——用真实的 ocaml target 故事取代"源码安装带来 ocaml target");`benchmarks/results.md` 的 ocaml 列对独立运行时复测;收尾。 (2026-10-07 完成:wasm 与 beam 的证据记入 plan;两份工具链文档双语更正,doctor 删除 installation 行;基准套件在独立运行时上复测,ocaml 行落在机器观测噪声带内;plan 状态记为 done。步骤 26 于 2026-10-07 完成——任何 target 都不从二进制旁或宿主构建树读取运行时,ocaml target 在 OCaml 工具链在 PATH 的任何安装形态下可用,全部金测逐字节,`dune test` 全绿。)

@@ -121,6 +121,35 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
 - **`emo doctor` 取代了上文的过渡形态**：它是 target 感知的环境
   检查——默认 `c` 目标做 cc 编译并运行的冒烟、ocaml 目标在预编译
   机器上报出需要源码构建安装——退出码只反映真正损坏的部分。
+  （2026-10-07 更正：ocaml 行报告的是工具链，从不报告安装形态——
+  见下文步骤 26 的更新。）
+
+## 更新（2026-10-07）：target 独立（步骤 26）
+
+步骤 26（`plan/step-26-target-independence.md`）移除了本文档反复
+回答的安装形态问题。runtime 独立原则：target 的 runtime 以 target
+自己的语言编写、以生成数据的形式随编译器携带、由 target 自己的
+工具链在用户机器上编译——宿主只贡献 emitter。具体而言：
+
+- **`emo_runtime.cmxa` 的故事结束了。** ocaml target 的 runtime 如今
+  是 `emo_ocaml_runtime.ml`——一个 standalone 文件（值、确定性
+  调度器、文件与 socket IO、TLS），以 C runtime 的机制随编译器
+  携带。`emo build --target ocaml` 把它与 emitted 的 `main.ml`
+  并排写出，调用 target 自己的 `ocamlopt`；不在二进制旁边、也不在
+  宿主构建树里查找任何 `.cmxa`，不随包携带任何 `.cmxa`，上文的
+  版本核对规则已无对象可核对。
+- **ocaml target 在任何安装形态下可用。** 已从 release 布局验证：
+  空目录里的孤立 `emo` 二进制，只要 OCaml 工具链在 PATH 上——
+  `ocamlfind` 带 runtime 自用的 `unix` 与 `ssl` 包——就能构建
+  golden 子集。"源码安装带来 ocaml target"不再是故事；工具链才是。
+- **eio 离开链接行。** 过渡计划曾把 `eio_main` 保留为 target 侧
+  依赖；移植定型了另一种结果——standalone 调度器就是编译产物
+  一直在跑的确定性轮询循环（Unix,无 eio）,因此 runtime 只声明
+  `unix`（随编译器附带）与 `ssl`（唯一的 opam 依赖）,缺席时以
+  清晰的消息拒绝。
+- **`emo doctor` 失去了 installation 行。** "installation:
+  source/prebuilt" 的报告删除了——每个 target 的行只报自己的
+  工具链，退出码只反映真正损坏的部分。
 
 ## 参考
 

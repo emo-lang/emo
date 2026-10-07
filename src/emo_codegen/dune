@@ -2,18 +2,23 @@
  (name emo_codegen)
  (libraries emo_support emo_ast emo_check emo_ir emo_runtime))
 
-(data_only_dirs ts c)
+(data_only_dirs ts c ocaml)
+
+; The target runtimes ride the compiler as generated data — the C
+; sources are written next to the emitted main.c, the TypeScript
+; prelude is prepended to the emitted program — so every backend works
+; from the build tree and from an installation alike, with no
+; beside-the-binary file lookups (step 26's runtime-independence
+; principle: the host contributes only the emitters).
 
 (rule
- (target ts_prelude.ts)
+ (target emo_ts_runtime_data.ml)
  (deps ts/ts_runtime.ts)
  (action
-  (copy ts/ts_runtime.ts ts_prelude.ts)))
-
-; The C runtime sources ride the compiler as generated data — the CLI
-; writes them next to the emitted main.c, so the backend works from
-; the build tree and from an installation alike (the ts_prelude.ts
-; file-lookup route does not survive dune test).
+  (with-stdout-to
+   emo_ts_runtime_data.ml
+   (bash
+    "printf '(* Generated from src/emo_codegen/ts — edit there, not here. *)\\n\\nlet ts_prelude = {ts|' && cat ts/ts_runtime.ts && printf '|ts}\\n'"))))
 
 (rule
  (target emo_c_runtime_data.ml)
@@ -23,3 +28,12 @@
    emo_c_runtime_data.ml
    (bash
     "printf '(* Generated from src/emo_codegen/c — edit there, not here. *)\\n\\nlet runtime_c = {img|\\n' && cat c/emo_c_runtime.c && printf '\\n|img}\\n\\nlet runtime_h = {img|\\n' && cat c/emo_c_runtime.h && printf '\\n|img}\\n'"))))
+
+(rule
+ (target emo_ocaml_runtime_data.ml)
+ (deps ocaml/emo_ocaml_runtime.ml)
+ (action
+  (with-stdout-to
+   emo_ocaml_runtime_data.ml
+   (bash
+    "printf '(* Generated from src/emo_codegen/ocaml — edit there, not here. *)\\n\\nlet runtime_ml = {ml|' && cat ocaml/emo_ocaml_runtime.ml && printf '|ml}\\n'"))))
