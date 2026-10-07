@@ -583,7 +583,7 @@ let install_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
           Emo_pkg.Lockfile.write ~path:lock_path entries;
           "wrote package.lock"
     in
-    (Printf.sprintf "resolved %d dependencies" (List.length entries))
+    Printf.sprintf "resolved %d dependencies" (List.length entries)
     :: (fetched @ [ lock_line ])
 
 (* Registers a fetched package's module tree at the top level — a package's
