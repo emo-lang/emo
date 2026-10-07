@@ -6,7 +6,7 @@ specialization data) · **Related:**
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-22-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
-**Status:** in progress — T24.1–T24.5 done
+**Status:** in progress — T24.1–T24.6 done
 
 ## Why this step exists
 
@@ -117,11 +117,14 @@ and enters `known_targets` only once its first golden lands
       decision — refcounting for identity objects, arena for
       value-semantic data — is recorded in CHECK.md, with the
       retain/release emitter work scheduled before T24.9.)
-- [ ] **T24.6** — Modules and exceptions: multi-file module
+- [x] **T24.6** — Modules and exceptions: multi-file module
       references, `raise`, uncaught-exception exit codes.
       `begin`/`catch`/`ensure` is settled surface but
       unscheduled — out of scope here. Goldens: shop,
       function_group (free via IR lowering; claim the golden).
+      (Done 2026-10-06: both claimed; the cross-module call regime
+      and the IR's alias/thunk handling needed fixing, recorded in
+      docs/TASKS.md.)
 - [ ] **T24.7** — The systems-layer surface: `Bytes`
       (bounds-checked, little-endian accessors), the bitwise
       operators, `Byte`, `Int64`/`Float64` bit-casts. Goldens:

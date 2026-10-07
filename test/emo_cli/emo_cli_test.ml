@@ -1,5 +1,12 @@
 let tc name f = Alcotest.test_case name `Quick f
 
+let contains hay needle =
+  let n = String.length needle in
+  let rec go i =
+    i + n <= String.length hay && (String.sub hay i n = needle || go (i + 1))
+  in
+  go 0
+
 (* A scratch directory for fixture programs; files persist for the run. *)
 let scratch =
   Filename.concat (Filename.get_temp_dir_name ()) "emo-cli-test-fixtures"
@@ -382,10 +389,21 @@ let wasm_examples_tests =
    when cc is absent. The list names the backend's current support
    set; it grows task by task (T24.1: hello_world, T24.3: if_expr,
    T24.5: objects, language_tour — classes, interfaces, enums, case
-   with guards, closures, and array append). The full fib and
-   numerics examples join when foreign defs land (T24.8) — their
-   c_scalar / c_integer fixtures cover the same semantics. *)
-let c_goldens = [ "hello_world"; "if_expr"; "objects"; "language_tour" ]
+   with guards, closures, and array append; T24.6: shop, function_group
+   — multi-file modules, the internal/ subtree, const aliases, and
+   `emo` groups). The full fib and numerics examples join when foreign
+   defs land (T24.8) — their c_scalar / c_integer fixtures cover the
+   same semantics. *)
+let c_goldens =
+  [
+    "hello_world";
+    "if_expr";
+    "objects";
+    "language_tour";
+    "shop";
+    "function_group";
+  ]
+
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
 
 (* T24.2's integer core: fib's plain recursion, the 1M-deep tail
@@ -689,6 +707,46 @@ println("n=" + vals[0].to_string())
 
 let c_dynamic_tests =
   [
+    tc "an uncaught raise exits 1 with the interpreter's message" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let dir = Filename.concat scratch "c-raise" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc {|raise "boom"
+println("not reached")
+|};
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code =
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
+            ~target:"c"
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let cmd_stdout, _cmd_stdin, cmd_stderr =
+          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
+        in
+        let err = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel err cmd_stderr 4096
+           done
+         with End_of_file -> ());
+        let proc_status =
+          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+        in
+        Alcotest.(check bool)
+          "message" true
+          (contains (Buffer.contents err) "uncaught exception: boom");
+        match proc_status with
+        | Unix.WEXITED 1 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "the binary exited %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                 | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)));
     tc "the c dynamic world matches the interpreter" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let expected =
