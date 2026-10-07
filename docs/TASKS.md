@@ -601,7 +601,7 @@ the OCaml toolchain is on PATH, with no `.cmxa` lookup and no
 installation-shape conditionals; the typescript target works from the
 release layout; all goldens byte-for-byte; `dune test` green.
 
-- [ ] **T26.1** — The principle and the ts embed: the
+- [x] **T26.1** — The principle and the ts embed: the
       runtime-independence principle recorded in `CHECK.md`; the ts
       prelude embedded as generated data (the C runtime's dune rule
       pattern), the typescript arm stopped from reading the

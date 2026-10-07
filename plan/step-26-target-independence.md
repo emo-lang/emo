@@ -75,7 +75,7 @@ works from the release layout.
 
 ## Tasks
 
-- [ ] **T26.1** — The principle and the ts embed: the principle above
+- [x] **T26.1** — The principle and the ts embed: the principle above
       recorded in `CHECK.md`; `ts_prelude.ts` embedded as generated
       data (the C runtime's dune rule pattern) and the typescript arm
       stops reading the filesystem. Verification: a lone release-layout
