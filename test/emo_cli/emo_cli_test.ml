@@ -380,11 +380,12 @@ let wasm_examples_tests =
 (* The C goldens: build with --target c through the system cc and run
    the standalone binary, byte-for-byte against expected.txt. Skips
    when cc is absent. The list names the backend's current support
-   set; it grows task by task (T24.1: hello_world, T24.3: if_expr).
-   The full fib and numerics examples join when closures (T24.5),
-   tuples (T24.4), and foreign defs (T24.8) land — their c_scalar /
-   c_integer fixtures cover the same semantics. *)
-let c_goldens = [ "hello_world"; "if_expr" ]
+   set; it grows task by task (T24.1: hello_world, T24.3: if_expr,
+   T24.5: objects, language_tour — classes, interfaces, enums, case
+   with guards, closures, and array append). The full fib and
+   numerics examples join when foreign defs land (T24.8) — their
+   c_scalar / c_integer fixtures cover the same semantics. *)
+let c_goldens = [ "hello_world"; "if_expr"; "objects"; "language_tour" ]
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
 
 (* T24.2's integer core: fib's plain recursion, the 1M-deep tail

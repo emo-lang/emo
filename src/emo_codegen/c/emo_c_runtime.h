@@ -18,6 +18,13 @@
 #include <stdint.h>
 #include <stdio.h>
 
+/* Generated metadata tables an unused interface leaves unreferenced. */
+#if defined(__GNUC__)
+#define EMO_META_UNUSED __attribute__((unused))
+#else
+#define EMO_META_UNUSED
+#endif
+
 /* A String in native (typed) positions: length-prefixed bytes, no
    NUL terminator — one is added only when a string crosses the FFI
    boundary (T24.8). Passed by value; literals are (emo_str){len,
@@ -48,8 +55,44 @@ enum emo_kind {
   EMO_STRING,
   EMO_TUPLE,
   EMO_ARRAY,
-  EMO_BOX
+  EMO_BOX,
+  EMO_INSTANCE,
+  EMO_ENUM,
+  EMO_CLOSURE
 };
+
+/* A class's compile-time vtable: every generated program defines one
+   static vtable per class (T24.5), stored in the instance cell.
+   Identity is vtable-pointer equality; `is(Interface)` matches
+   structurally against the method name/arity list. */
+typedef struct {
+  const char *method_name;
+  int32_t method_arity; /* parameters, self excluded */
+  /* The dynamic-convention thunk for runtime dispatch (interface and
+     Unknown receivers): NULL on interface contract entries. */
+  emo_value (*thunk)(emo_value self, const emo_value *args);
+} emo_method_sig;
+
+typedef struct {
+  const char *class_name; /* the source-level display name */
+  int64_t method_count;
+  const emo_method_sig *methods;
+  int64_t field_count;
+  const char *const *field_names; /* init-assignment order */
+} emo_vtable;
+
+/* An interface's compile-time contract: the shape `is(Interface)`
+   matches against. */
+typedef struct {
+  const char *interface_name;
+  int64_t method_count;
+  const emo_method_sig *methods;
+} emo_iface;
+
+/* A closure's code: the canonical dynamic calling convention — the
+   closure word itself plus the arguments as dynamic words. The
+   emo_closure_callN helpers pack the arguments. */
+typedef emo_value (*emo_closure_fn)(emo_value closure, const emo_value *args);
 
 /* ---- Hosted startup and println ---- */
 
@@ -103,9 +146,50 @@ int32_t emo_char_of(emo_value v);
    structural. A Box is the one identity: replace writes through it. */
 emo_value emo_tuple_new(int64_t arity, emo_value *elems);
 emo_value emo_array_new(int64_t len, emo_value *elems);
+emo_value emo_array_append(emo_value arr, emo_value v); /* value semantics: a new array */
 emo_value emo_box_new(emo_value v);
 emo_value emo_box_read(emo_value box);
 emo_value emo_box_replace(emo_value box, emo_value v);
+
+/* Instances (T24.5): the vtable rides in the cell; fields are
+   dynamic words addressed by the compile-time field index. */
+emo_value emo_instance_new(const emo_vtable *vt, int64_t nfields);
+const emo_vtable *emo_vtable_of(emo_value instance);
+emo_value emo_instance_field(emo_value instance, int64_t i);
+void emo_set_field(emo_value instance, int64_t i, emo_value v);
+bool emo_is_class(emo_value instance, const emo_vtable *vt);
+bool emo_is_iface(emo_value instance, const emo_iface *ifc);
+
+/* Dynamic method dispatch: look the (name, arity) up in the
+   receiver's vtable and call its thunk. A missing method is a
+   runtime "message not understood" error. */
+emo_value emo_send(emo_value recv, const char *name, int64_t arity,
+                   const emo_value *args);
+
+/* Sequence kind tests for pattern matching (the accessors themselves
+   are fatal on the wrong kind; the tests short-circuit first). */
+bool emo_is_tuple(emo_value v);
+
+/* A case expression with no matching branch. */
+void emo_no_match(void);
+
+/* Enums (T24.5): a member is (enum name, member name), compared and
+   rendered by name — no data on members (a carrying tag rides in a
+   tuple). */
+emo_value emo_enum_new(const char *enum_name, const char *member);
+bool emo_enum_is(emo_value v, const char *enum_name, const char *member);
+
+/* Closures (T24.5): [header][fn][captured...]. Creation and the
+   call sites agree on the arity syntactically. */
+emo_value emo_closure_new(emo_closure_fn fn, int64_t ncaps, const emo_value *caps);
+emo_closure_fn emo_closure_fn_of(emo_value closure);
+emo_value emo_closure_get(emo_value closure, int64_t i);
+emo_value emo_closure_call0(emo_value f);
+emo_value emo_closure_call1(emo_value f, emo_value a);
+emo_value emo_closure_call2(emo_value f, emo_value a, emo_value b);
+emo_value emo_closure_call3(emo_value f, emo_value a, emo_value b, emo_value c);
+emo_value emo_closure_call4(emo_value f, emo_value a, emo_value b, emo_value c,
+                            emo_value d);
 
 /* Shared accessors: a tuple and an array index and measure alike. */
 emo_value emo_index(emo_value v, int64_t i); /* bounds-checked */
@@ -126,8 +210,9 @@ bool emo_lt_dyn(emo_value a, emo_value b);
 bool emo_le_dyn(emo_value a, emo_value b);
 
 /* The one stringification rule over dynamic values: the scalar
-   renderings, plus tuples "(a, b)", arrays "[a, b]", and Box as
-   "<box>" — matching the interpreter's emo_to_string. */
+   renderings, plus tuples "(a, b)", arrays "[a, b]", Box as "<box>",
+   enums by member name, instances as "#Name(field: value, ...)", and
+   closures as "<block>" — matching the interpreter's emo_to_string. */
 emo_str emo_to_string_dyn(emo_value v);
 void emo_println_dyn(emo_value v);
 
