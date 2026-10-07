@@ -100,8 +100,10 @@ echo "| --- | --- | --- |" >> "$RESULTS"
 # --- fib(30): specialization on vs off, plus the plain-OCaml baseline ---
 build fib
 build_nospec fib
+build_c fib
 row "fib(30)" "ms per run, specialized build" "$(time_ms "$ROOT/benchmarks/fib/main.emo-bin")"
 row "fib(30)" "ms per run, unspecialized build" "$(time_ms "$ROOT/benchmarks/fib/main.emo-bin-nospec")"
+row "fib(30)" "ms per run, c target (emo build --target c)" "$(time_ms "$ROOT/benchmarks/fib/main.c-bin")"
 row "fib(30)" "ms per run, interpreter (emo run)" "$(interp_ms fib)"
 row "fib(30)" "ms per run, plain OCaml baseline" "$(time_ms "$BLD/fib_ml")"
 
@@ -118,12 +120,16 @@ row "tail loop 10M" "ms per run, C baseline" "$(time_ms "$BLD/tail_loop_c")"
 
 # --- foreign call overhead: 10M C sqrt calls through `foreign def` ---
 build ffi_call --cclib m
+build_c ffi_call
 row "ffi sqrt 10M" "ms per run, dynamic foreign calls" "$(time_ms "$ROOT/benchmarks/ffi_call/main.emo-bin")"
+row "ffi sqrt 10M" "ms per run, c target (direct C ABI)" "$(time_ms "$ROOT/benchmarks/ffi_call/main.c-bin")"
 row "ffi sqrt 10M" "ms per run, C baseline" "$(time_ms "$BLD/sqrt_loop_c")"
 
 # --- Bytes read throughput: 20M bounds-checked reads ---
 build bytes_scan
+build_c bytes_scan
 row "bytes get 20M" "ms per run, dynamic Bytes.get" "$(time_ms "$ROOT/benchmarks/bytes_scan/main.emo-bin")"
+row "bytes get 20M" "ms per run, c target (emo build --target c)" "$(time_ms "$ROOT/benchmarks/bytes_scan/main.c-bin")"
 row "bytes get 20M" "ms per run, plain OCaml baseline" "$(time_ms "$BLD/bytes_scan_ml")"
 row "bytes get 20M" "ms per run, C baseline" "$(time_ms "$BLD/bytes_scan_c")"
 
@@ -133,10 +139,13 @@ row "ping-pong 40k msgs" "wall ms" "$(time_ms "$ROOT/benchmarks/ping_pong/main.e
 
 # --- json-ish scan ---
 build json_parse
+build_c json_parse
 row "json-ish scan" "wall ms" "$(time_ms "$ROOT/benchmarks/json_parse/main.emo-bin")"
+row "json-ish scan" "wall ms, c target" "$(time_ms "$ROOT/benchmarks/json_parse/main.c-bin")"
 
 # --- http echo: requests per second over loopback ---
 build http_echo
+build_c http_echo
 "$ROOT/benchmarks/http_echo/main.emo-bin" > /tmp/emo-bench-port &
 SERVER=$!
 sleep 1
@@ -153,6 +162,23 @@ http_ms=$(( (http_end - http_start) / 1000000 ))
 rps=$(( reqs * 1000 / (http_ms + 1) ))
 kill $SERVER 2>/dev/null || true
 row "http echo" "req/s ($reqs requests in ${http_ms}ms)" "$rps"
+
+# the same server on the c target
+"$ROOT/benchmarks/http_echo/main.c-bin" > /tmp/emo-bench-port &
+SERVER=$!
+sleep 1
+port=$(cat /tmp/emo-bench-port)
+http_start=$(python3 -c 'import time; print(time.time_ns())')
+i=0
+while [ $i -lt $reqs ]; do
+    curl -s "http://127.0.0.1:$port/" > /dev/null
+    i=$((i + 1))
+done
+http_end=$(python3 -c 'import time; print(time.time_ns())')
+http_ms=$(( (http_end - http_start) / 1000000 ))
+rps=$(( reqs * 1000 / (http_ms + 1) ))
+kill $SERVER 2>/dev/null || true
+row "http echo" "req/s, c target ($reqs requests in ${http_ms}ms)" "$rps"
 
 echo "" >> "$RESULTS"
 echo "Recorded into $RESULTS" >&2
