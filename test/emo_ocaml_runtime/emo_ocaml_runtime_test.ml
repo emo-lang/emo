@@ -1,7 +1,8 @@
 (* The ocaml target's standalone runtime (step 26): fixtures compile
    against emo_ocaml_runtime.ml alone — extracted from the compiler's
    generated data into a bare directory and compiled by the target's own
-   toolchain. Zero emo_* dependencies, nothing from the host build tree.
+   toolchain. Zero emo_* dependencies, nothing from the host build tree;
+   the packages are the runtime's own dependency policy (unix, ssl).
    Scratch directories are never deleted (the repo's test convention). *)
 
 let scratch_counter = ref 0
@@ -46,52 +47,54 @@ let extract_runtime dir =
     (Filename.concat dir "emo_ocaml_runtime.ml")
     Emo_codegen.ocaml_runtime_ml
 
-(* Compiles the extracted runtime, then [unit_names] against it with
-   plain ocamlopt — no findlib, no -I into the repository. The -open
-   makes the emitter's qualified paths (Emo_eval.value, Emo_runtime.run)
-   resolve against the runtime's submodules without touching the emitted
-   source. *)
+(* Compiles the extracted runtime, then [unit_names] against it —
+   ocamlfind brings only the runtime's own packages (unix, ssl), never
+   the repository. The -open makes the emitter's qualified paths
+   (Emo_eval.value, Emo_runtime.run) resolve against the runtime's
+   submodules without touching the emitted source. *)
 let compile dir unit_names =
   require_ok
     (run
-       (Printf.sprintf "cd %s && ocamlopt -c emo_ocaml_runtime.ml"
-          (Filename.quote dir)))
-    "ocamlopt -c";
+       (Printf.sprintf "cd %s && ocamlfind ocamlopt -package unix,ssl -c %s"
+          (Filename.quote dir) "emo_ocaml_runtime.ml"))
+    "ocamlfind ocamlopt -c";
   run
     (Printf.sprintf
-       "cd %s && ocamlopt -open Emo_ocaml_runtime emo_ocaml_runtime.cmx %s -o \
-        a.out"
+       "cd %s && ocamlfind ocamlopt -package unix,ssl -linkpkg -open \
+        Emo_ocaml_runtime emo_ocaml_runtime.cmx %s -o a.out"
        (Filename.quote dir)
        (String.concat " " (List.map Filename.quote unit_names)))
 
 let compile_tests =
   [
-    ( "the skeleton compiles with plain ocamlopt from the build directory alone",
+    ( "the runtime compiles from the build directory alone",
       fun () ->
         let dir = fresh_scratch () in
         ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote dir)));
         extract_runtime dir;
-        require_ok
-          (run
-             (Printf.sprintf "cd %s && ocamlopt emo_ocaml_runtime.ml"
-                (Filename.quote dir)))
-          "ocamlopt" );
+        require_ok (compile dir []) "ocamlfind ocamlopt" );
   ]
 
 (* ---- Program fixtures ----
 
    Each writes a main.ml in the emitter's call shape, compiles it
    against the standalone runtime alone, runs it, and checks stdout and
-   the exit code. *)
+   the exit code. [args] passes through to the program (the file
+   fixture's scratch path). *)
 
-let program ~(main : string) ~(expect_exit : int) ~(expect_out : string) : unit
-    =
+let program ~(main : string) ~(expect_exit : int) ~(expect_out : string)
+    ~(args : string list) : unit =
   let dir = fresh_scratch () in
   ignore (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote dir)));
   extract_runtime dir;
   write_file (Filename.concat dir "main.ml") main;
-  require_ok (compile dir [ "main.ml" ]) "ocamlopt";
-  let status, out = run (Filename.quote (Filename.concat dir "a.out")) in
+  require_ok (compile dir [ "main.ml" ]) "ocamlfind ocamlopt";
+  let status, out =
+    run
+      (Printf.sprintf "cd %s && ./a.out %s"
+         (Filename.quote dir)
+         (String.concat " " (List.map Filename.quote args)))
+  in
   match status with
   | Unix.WEXITED code ->
       Alcotest.(check int) "exit code" expect_exit code;
@@ -294,21 +297,151 @@ let errors_out =
    box: calling a non-function\n\
    arity: `f` expects 2 arguments, got 1\n"
 
+(* The process program: a spawned child echoes a message back through
+   the parent's receive, and halt unwinds the root. *)
+let processes_main =
+  {|let p v = ignore (Emo_eval.call_builtin "println" [ v ])
+
+let () =
+  let exit_code =
+    Emo_runtime.run (fun () ->
+        let child (args : Emo_eval.value list) : unit =
+          match args with
+          | [ parent ] ->
+              Emo_runtime.send parent
+                (Emo_eval.Tuple [ Emo_eval.String "pong"; Emo_eval.Int64 7L ])
+          | _ -> ()
+        in
+        let me = Emo_eval.call_builtin "self_pid" [] in
+        ignore (Emo_runtime.spawn_args [ me ] child);
+        let _i, items =
+          Emo_runtime.receive
+            [
+              (fun v ->
+                match v with
+                | Emo_eval.Tuple (Emo_eval.String "pong" :: rest) ->
+                    Some (0, rest)
+                | _ -> None);
+            ]
+        in
+        ignore items;
+        p (Emo_eval.Int64 7L);
+        (* halt unwinds this process; the line below never prints *)
+        ignore (Emo_eval.call_builtin "halt" []);
+        p (Emo_eval.String "unreachable"))
+  in
+  if exit_code <> 0 then exit exit_code
+|}
+
+let processes_out = "7\n"
+
+(* The HTTP roundtrip: a server process accepts, reads one request line,
+   and answers it; the client reads the response back. *)
+let http_main =
+  {|let p v = ignore (Emo_eval.call_builtin "println" [ v ])
+
+let () =
+  let exit_code =
+    Emo_runtime.run (fun () ->
+        let listener =
+          Emo_eval.call_builtin "net_listen"
+            [ Emo_eval.String "127.0.0.1"; Emo_eval.Int64 0L ]
+        in
+        let port = Emo_runtime.method_call listener "port" [] in
+        ignore
+          (Emo_runtime.spawn (fun () ->
+               let conn = Emo_runtime.method_call listener "accept" [] in
+               let request = Emo_runtime.method_call conn "read_line" [] in
+               let body =
+                 Emo_eval.String ("hello " ^ Emo_eval.to_string request ^ "\n")
+               in
+               ignore (Emo_runtime.method_call conn "write" [ body ]);
+               ignore (Emo_runtime.method_call conn "close" [])));
+        let conn =
+          Emo_eval.call_builtin "net_connect"
+            [ Emo_eval.String "127.0.0.1"; port; Emo_eval.Float 5.0 ]
+        in
+        ignore
+          (Emo_runtime.method_call conn "write" [ Emo_eval.String "emo\r\n" ]);
+        p (Emo_runtime.method_call conn "read_line" []);
+        ignore (Emo_runtime.method_call conn "close" []))
+  in
+  if exit_code <> 0 then exit exit_code
+|}
+
+let http_out = "hello emo\n"
+
+(* File IO: write through the effect, then read the same bytes back. *)
+let file_main =
+  {|let p v = ignore (Emo_eval.call_builtin "println" [ v ])
+
+let () =
+  let path = Sys.argv.(1) in
+  let exit_code =
+    Emo_runtime.run (fun () ->
+        p
+          (Emo_eval.call_builtin "file_write"
+             [ Emo_eval.String path; Emo_eval.String "emo file io\n" ]);
+        p (Emo_eval.call_builtin "file_read" [ Emo_eval.String path ]))
+  in
+  if exit_code <> 0 then exit exit_code
+|}
+
+let file_out = "12\nemo file io\n\n"
+
+(* UDP: one socket, one loopback datagram. *)
+let udp_main =
+  {|let p v = ignore (Emo_eval.call_builtin "println" [ v ])
+
+let () =
+  let exit_code =
+    Emo_runtime.run (fun () ->
+        let u =
+          Emo_eval.call_builtin "net_udp_bind"
+            [ Emo_eval.String "127.0.0.1"; Emo_eval.Int64 0L ]
+        in
+        let port = Emo_runtime.method_call u "port" [] in
+        ignore
+          (Emo_runtime.method_call u "send_to"
+             [ Emo_eval.String "127.0.0.1"; port; Emo_eval.String "datagram" ]);
+        match Emo_runtime.method_call u "recv_from" [] with
+        | Emo_eval.Tuple (data :: _) -> p data
+        | _ -> p (Emo_eval.String "unexpected"))
+  in
+  if exit_code <> 0 then exit exit_code
+|}
+
+let udp_out = "datagram\n"
+
 let program_tests =
   [
     Alcotest.test_case "values render by the one stringification rule" `Quick
       (fun () ->
-        program ~main:values_main ~expect_exit:0 ~expect_out:values_out);
+        program ~main:values_main ~expect_exit:0 ~expect_out:values_out ~args:[]);
     Alcotest.test_case "arithmetic and comparison dispatch by tag" `Quick
       (fun () ->
-        program ~main:arithmetic_main ~expect_exit:0 ~expect_out:arithmetic_out);
+        program ~main:arithmetic_main ~expect_exit:0 ~expect_out:arithmetic_out
+          ~args:[]);
     Alcotest.test_case "string and bytes methods dispatch" `Quick (fun () ->
-        program ~main:strings_main ~expect_exit:0 ~expect_out:strings_out);
+        program ~main:strings_main ~expect_exit:0 ~expect_out:strings_out
+          ~args:[]);
     Alcotest.test_case "objects, interfaces, and exceptions behave" `Quick
       (fun () ->
-        program ~main:objects_main ~expect_exit:1 ~expect_out:objects_out);
+        program ~main:objects_main ~expect_exit:1 ~expect_out:objects_out
+          ~args:[]);
     Alcotest.test_case "the error paths name what failed" `Quick (fun () ->
-        program ~main:errors_main ~expect_exit:0 ~expect_out:errors_out);
+        program ~main:errors_main ~expect_exit:0 ~expect_out:errors_out ~args:[]);
+    Alcotest.test_case "a spawned process echoes through receive, halt exits"
+      `Quick (fun () ->
+        program ~main:processes_main ~expect_exit:0 ~expect_out:processes_out
+          ~args:[]);
+    Alcotest.test_case "an http roundtrip rides the scheduler" `Quick (fun () ->
+        program ~main:http_main ~expect_exit:0 ~expect_out:http_out ~args:[]);
+    Alcotest.test_case "file io writes and reads back" `Quick (fun () ->
+        program ~main:file_main ~expect_exit:0 ~expect_out:file_out
+          ~args:[ "fixture.txt" ]);
+    Alcotest.test_case "a udp datagram loops back" `Quick (fun () ->
+        program ~main:udp_main ~expect_exit:0 ~expect_out:udp_out ~args:[]);
   ]
 
 let () =

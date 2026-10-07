@@ -54,7 +54,7 @@ before starting the gated work:
 | Stdlib: embed vs sidecar tree | T25.2 | embed as generated data inside the compiler (the C runtime's mechanism); `EMO_REGISTRY` override stays |
 | `emo install` semantics | T25.4 | the project-dependencies front end over resolve/fetch/lock; global executable installation out of scope for 1.0 |
 | The runtime-independence principle | T26.1 | a target's runtime is written in the target's language, carried as generated data inside the compiler; the host contributes only the emitter |
-| The ocaml runtime's dependency policy | T26.4 | zero-dep core beyond the OCaml stdlib; `eio_main`/`ssl` stay as target-ecosystem opam deps, refused with a clear message when absent |
+| The ocaml runtime's dependency policy | T26.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
 
 ---
 
@@ -618,11 +618,11 @@ release layout; all goldens byte-for-byte; `dune test` green.
       print/interpolation rendering, arithmetic/comparison dispatch,
       and the case/error paths the inventory names, standalone. Each
       piece covered by a fixture compiled against the runtime alone.
-- [ ] **T26.4** — The scheduler and IO: the effects-based scheduler,
-      file IO, and networking, per the dependency policy (zero-dep
-      core; `eio_main`/`ssl` as target-ecosystem opam deps). Fixtures:
-      a process program and an HTTP roundtrip compiled against the
-      standalone runtime alone.
+- [x] **T26.4** — The scheduler and IO: the effects-based scheduler,
+      file IO, and networking, per the dependency policy (the OCaml
+      standard library plus `unix`; `ssl` as the one opam dep; no eio).
+      Fixtures: a process program and an HTTP roundtrip compiled
+      against the standalone runtime alone.
 - [ ] **T26.5** — The cutover: the ocaml emitter's references flip to
       the standalone runtime; the arm emits runtime + `main.ml` and
       invokes `ocamlopt` (ocamlfind only for the runtime's own
