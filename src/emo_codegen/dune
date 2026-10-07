@@ -4,16 +4,21 @@
 
 (data_only_dirs ts c)
 
+; The target runtimes ride the compiler as generated data — the C
+; sources are written next to the emitted main.c, the TypeScript
+; prelude is prepended to the emitted program — so every backend works
+; from the build tree and from an installation alike, with no
+; beside-the-binary file lookups (step 26's runtime-independence
+; principle: the host contributes only the emitters).
+
 (rule
- (target ts_prelude.ts)
+ (target emo_ts_runtime_data.ml)
  (deps ts/ts_runtime.ts)
  (action
-  (copy ts/ts_runtime.ts ts_prelude.ts)))
-
-; The C runtime sources ride the compiler as generated data — the CLI
-; writes them next to the emitted main.c, so the backend works from
-; the build tree and from an installation alike (the ts_prelude.ts
-; file-lookup route does not survive dune test).
+  (with-stdout-to
+   emo_ts_runtime_data.ml
+   (bash
+    "printf '(* Generated from src/emo_codegen/ts — edit there, not here. *)\\n\\nlet ts_prelude = {ts|' && cat ts/ts_runtime.ts && printf '|ts}\\n'"))))
 
 (rule
  (target emo_c_runtime_data.ml)

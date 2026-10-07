@@ -245,53 +245,41 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             else (
               Printf.printf "built %s\n" beam;
               0)
-        | "typescript" -> (
-            let runtime_path =
-              Filename.concat
-                (Filename.concat src_dir "emo_codegen")
-                "ts_prelude.ts"
+        | "typescript" ->
+            (* The prelude rides the compiler as generated data; the
+               arm never touches the filesystem for it (step 26). *)
+            let source = Emo_codegen.Ts.emit_ts program in
+            let digest =
+              Digest.to_hex
+                (Digest.string
+                   (Printf.sprintf "ts|%s|%s" source Emo_codegen.Ts.ts_prelude))
             in
-            match Sys.file_exists runtime_path with
-            | false ->
-                prerr_endline
-                  "emo build: the TypeScript runtime prelude is missing from \
-                   the installation";
-                70
-            | true ->
-                let ic = open_in_bin runtime_path in
-                let runtime = really_input_string ic (in_channel_length ic) in
-                close_in ic;
-                let source = Emo_codegen.Ts.emit_ts ~runtime program in
-                let digest =
-                  Digest.to_hex
-                    (Digest.string (Printf.sprintf "ts|%s|%s" source runtime))
-                in
-                let cache_file = Filename.concat build_dir ("ts-" ^ digest) in
-                let out =
-                  if Filename.check_suffix output ".ts" then output
-                  else output ^ ".ts"
-                in
-                if Sys.file_exists cache_file then begin
-                  ignore
-                    (Sys.command
-                       (Printf.sprintf "cp %s %s"
-                          (Filename.quote cache_file)
-                          (Filename.quote out)));
-                  Printf.printf "built %s (cached)\n" out;
-                  0
-                end
-                else begin
-                  let oc = open_out_bin cache_file in
-                  output_string oc source;
-                  close_out oc;
-                  ignore
-                    (Sys.command
-                       (Printf.sprintf "cp %s %s"
-                          (Filename.quote cache_file)
-                          (Filename.quote out)));
-                  Printf.printf "built %s\n" out;
-                  0
-                end)
+            let cache_file = Filename.concat build_dir ("ts-" ^ digest) in
+            let out =
+              if Filename.check_suffix output ".ts" then output
+              else output ^ ".ts"
+            in
+            if Sys.file_exists cache_file then begin
+              ignore
+                (Sys.command
+                   (Printf.sprintf "cp %s %s"
+                      (Filename.quote cache_file)
+                      (Filename.quote out)));
+              Printf.printf "built %s (cached)\n" out;
+              0
+            end
+            else begin
+              let oc = open_out_bin cache_file in
+              output_string oc source;
+              close_out oc;
+              ignore
+                (Sys.command
+                   (Printf.sprintf "cp %s %s"
+                      (Filename.quote cache_file)
+                      (Filename.quote out)));
+              Printf.printf "built %s\n" out;
+              0
+            end
         | "c" ->
             (* Emit one main.c plus the Emo runtime sources, compile
                with the system cc: a standalone binary with no OCaml
