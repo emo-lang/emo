@@ -4,5 +4,8 @@
 
 (rule
  (alias runtest)
+ (deps
+  (source_tree ../../stdlib)
+  emo_pkg_test.exe)
  (action
   (run %{exe:emo_pkg_test.exe})))

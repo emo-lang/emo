@@ -91,7 +91,9 @@ println(sum)|})));
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check int) "count" 0 (List.length diagnostics));
     tc "a bad parameterized annotation is an error" (fun () ->
-        let diagnostics = check "def f(xs Widget[Int64]) Int64 {\n  return 0\n}" in
+        let diagnostics =
+          check "def f(xs Widget[Int64]) Int64 {\n  return 0\n}"
+        in
         Alcotest.(check bool) "E4005" true (has_code diagnostics "E4005"));
   ]
 
@@ -107,14 +109,10 @@ println(grade)|}
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check int) "count" 0 (List.length diagnostics));
     tc "an if expression's condition must be a Bool" (fun () ->
-        let diagnostics =
-          check {|const bad = if 1 { 2 } else { 3 }|}
-        in
+        let diagnostics = check {|const bad = if 1 { 2 } else { 3 }|} in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
     tc "an if expression's branches must agree" (fun () ->
-        let diagnostics =
-          check {|const bad = if true { 1 } else { "s" }|}
-        in
+        let diagnostics = check {|const bad = if true { 1 } else { "s" }|} in
         Alcotest.(check bool) "E4019" true (has_code diagnostics "E4019"));
     tc "Unknown branches join silently" (fun () ->
         let diagnostics =
@@ -447,8 +445,7 @@ def welcome(g Greeter) String {
 welcome(English.new())|})));
     (* Missing-method and wrong-shape call-site rejections land with the
        call-site checks (T8.7). *)
-    tc "a class that does not conform cannot narrow to an interface"
-      (fun () ->
+    tc "a class that does not conform cannot narrow to an interface" (fun () ->
         let diagnostics =
           check
             {|interface Greeter {
@@ -800,12 +797,14 @@ let void_tests =
     tc "a def with no return annotation is a Void function" (fun () ->
         if List.length (check {|def log(msg String) {
   println(msg)
-}|}) > 0 then
-          Alcotest.fail "expected a clean check");
-    tc "an explicit Void annotation behaves like the omitted form" (fun () ->
-        if List.length (check {|def log(msg String) Void {
-  println(msg)
 }|}) > 0
+        then Alcotest.fail "expected a clean check");
+    tc "an explicit Void annotation behaves like the omitted form" (fun () ->
+        if
+          List.length (check {|def log(msg String) Void {
+  println(msg)
+}|})
+          > 0
         then Alcotest.fail "expected a clean check");
     tc "a `return` in a Void function is E4016" (fun () ->
         let diagnostics =
@@ -845,7 +844,8 @@ def f(c Color) Int64 {
         then Alcotest.fail "expected a clean check");
     tc "a valueless `return` in a typed function is E4018" (fun () ->
         let diagnostics =
-          check {|def f(x Int64) Int64 {
+          check
+            {|def f(x Int64) Int64 {
   if x > 0 {
     return
   }

@@ -460,19 +460,23 @@ let registry_dir =
   dir
 
 let app_manifest =
+  (* The run path resolves dependencies for the default target (`c`,
+     the T25.1 flip), so the mechanism fixture deps a package that
+     declares it; the gate-refusal tests below use the ocaml-only
+     json_tools. *)
   {|package {
   name = "local/app"
   version = "0.1.0"
   targets = ["ocaml"]
 
   deps {
-    acme/json_tools = "2.3.1"
+    acme/c_tools = "1.0.0"
   }
 }
 |}
 
-let app_main = {|require "acme/json_tools"
-println(json_tools.parse("hello"))
+let app_main = {|require "acme/c_tools"
+println(c_tools.halve(84))
 |}
 
 let with_registry f =
@@ -496,6 +500,109 @@ let parsed_app_manifest dir =
   | m -> m
   | exception Emo_pkg.Manifest_error d -> Alcotest.fail d.Diagnostic.message
 
+(* ---- install: the project-dependencies front end (T25.4) ---- *)
+
+let install_tests =
+  [
+    tc "install resolves, fetches, and locks idempotently" (fun () ->
+        let entry =
+          with_project
+            [ ("package.emo", app_manifest); ("main.emo", app_main) ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            let manifest = parsed_app_manifest dir in
+            let first =
+              Emo_project.install_deps ~manifest ~manifest_dir:dir ~target:"c"
+            in
+            Alcotest.(check bool)
+              "resolved line" true
+              (contains_substring (List.nth first 0) "resolved 1 dependencies");
+            Alcotest.(check bool)
+              "fetched line carries the checksum" true
+              (contains_substring (List.nth first 1)
+                 "fetched acme/c_tools 1.0.0");
+            Alcotest.(check bool)
+              "lock written" true
+              (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename));
+            let second =
+              Emo_project.install_deps ~manifest ~manifest_dir:dir ~target:"c"
+            in
+            Alcotest.(check bool)
+              "second run hits the cache" true
+              (contains_substring (List.nth second 1) "(already cached)");
+            Alcotest.(check bool)
+              "second run leaves the lock" true
+              (contains_substring (List.nth second 2)
+                 "package.lock is up to date")));
+    tc "an unsatisfiable pin fails at resolution" (fun () ->
+        let bad =
+          String.concat "\n"
+            [
+              "package {";
+              "  name = \"local/app\"";
+              "  version = \"0.1.0\"";
+              "  targets = [\"ocaml\"]";
+              "";
+              "  deps {";
+              "    acme/c_tools = \"9.9.9\"";
+              "  }";
+              "}";
+            ]
+        in
+        let entry =
+          with_project
+            [ ("package.emo", bad); ("main.emo", app_main) ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            match
+              Emo_project.install_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            with
+            | _ -> Alcotest.fail "expected the pin to fail"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+    tc "an empty manifest reports nothing to install" (fun () ->
+        let bare =
+          {|package {
+  name = "local/bare"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}
+|}
+        in
+        let entry =
+          with_project
+            [ ("package.emo", bare); ("main.emo", "println(1)\n") ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            match
+              Emo_project.install_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            with
+            | lines ->
+                Alcotest.(check bool)
+                  "nothing to install" true
+                  (contains_substring (List.hd lines) "nothing to install")
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.fail ("codes: " ^ codes_dump ds)));
+  ]
+
 let deps_tests =
   [
     tc "the README require scenario runs against a fixture registry" (fun () ->
@@ -511,7 +618,7 @@ let deps_tests =
                   ignore
                     (Emo_project.run_entry ~entry_file:entry ~check:true ()))
             in
-            Alcotest.(check string) "output" "hello\n" output;
+            Alcotest.(check string) "output" "42\n" output;
             (* A run resolves in memory when no lockfile exists; writing the
                lockfile is `emo deps resolve`'s explicit job. *)
             Alcotest.(check bool)
@@ -534,9 +641,9 @@ let deps_tests =
             (match entries with
             | [ e ] ->
                 Alcotest.(check string)
-                  "dep" "acme/json_tools" e.Emo_pkg.Lockfile.dep;
+                  "dep" "acme/c_tools" e.Emo_pkg.Lockfile.dep;
                 Alcotest.(check string)
-                  "version" "2.3.1"
+                  "version" "1.0.0"
                   (Emo_pkg.Version.to_string e.Emo_pkg.Lockfile.version);
                 Alcotest.(check bool)
                   "checksum present" true
@@ -550,14 +657,14 @@ let deps_tests =
                   ignore
                     (Emo_project.run_entry ~entry_file:entry ~check:true ()))
             in
-            Alcotest.(check string) "output" "hello\n" output;
+            Alcotest.(check string) "output" "42\n" output;
             (* A lockfile drifting from the manifest is an error prompting
                explicit regeneration — never a silent re-resolve. *)
             Emo_pkg.Lockfile.write
               ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
               [
                 {
-                  Emo_pkg.Lockfile.dep = "acme/json_tools";
+                  Emo_pkg.Lockfile.dep = "acme/c_tools";
                   version =
                     (match Emo_pkg.Version.parse "9.9.9" with
                     | Ok v -> v
@@ -873,7 +980,9 @@ let emo_exe_path () =
   | None -> Alcotest.fail "EMO_EXE is not set"
 
 (* Builds [source] with `emo build` and returns (build output, exit
-   status, binary path). *)
+   status, binary path). Pinned to the ocaml target — the tests here
+   cover that backend's wrapper FFI and goldens; the c backend has its
+   own CI group. *)
 let build_binary ?(cclib = []) source name =
   let emo_exe = emo_exe_path () in
   let entry = with_project [ ("main.emo", source) ] "main.emo" in
@@ -884,8 +993,9 @@ let build_binary ?(cclib = []) source name =
   let out = Buffer.create 256 in
   let ic =
     Unix.open_process_in
-      (Printf.sprintf "exec 2>&1; %s build %s -o %s%s" (Filename.quote emo_exe)
-         (Filename.quote entry) (Filename.quote bin) cclib_args)
+      (Printf.sprintf "exec 2>&1; %s build %s --target ocaml -o %s%s"
+         (Filename.quote emo_exe) (Filename.quote entry) (Filename.quote bin)
+         cclib_args)
   in
   (try
      while true do
@@ -1009,8 +1119,14 @@ println(resp.status)
           Buffer.contents out
         in
         (* The first build compiles; the second hits the content-hash
-           cache and skips the toolchain. *)
-        ignore (build ());
+           cache and skips the toolchain. The first build's output is
+           asserted, so a failed compile surfaces here instead of as a
+           confusing cache miss below. *)
+        let first = build () in
+        Alcotest.(check bool)
+          "first build compiles" true
+          (contains_substring first "built"
+          && not (contains_substring first "(cached)"));
         let second = build () in
         Alcotest.(check bool)
           "second build is cached" true
@@ -1024,7 +1140,7 @@ println(resp.status)
         Alcotest.(check string) "output" "42" run_out);
     tc "the stdlib targets are honest: native resolves, wasm refuses" (fun () ->
         let registry = use_workspace_registry () in
-        let reg = { Emo_pkg.Registry.endpoint = registry } in
+        let reg = Emo_pkg.Registry.Fs_dir registry in
         let index = Emo_pkg.Registry.index reg [ "http"; "net" ] in
         let roots =
           match Emo_pkg.Version.parse "0.1.0" with
@@ -1136,7 +1252,7 @@ let build_example root entry name =
   let out = Buffer.create 256 in
   let ic =
     Unix.open_process_in
-      (Printf.sprintf "exec 2>&1; cd %s && %s build %s -o %s"
+      (Printf.sprintf "exec 2>&1; cd %s && %s build %s --target ocaml -o %s"
          (Filename.quote root) (Filename.quote emo_exe) (Filename.quote entry)
          (Filename.quote bin))
   in
@@ -1287,6 +1403,7 @@ let () =
       ("cycle", cycle_tests);
       ("cache", cache_tests);
       ("deps", deps_tests);
+      ("install", install_tests);
       ("sched", sched_tests);
       ("shop_golden", shop_golden_tests);
       ("stdlib_http", stdlib_http_tests);

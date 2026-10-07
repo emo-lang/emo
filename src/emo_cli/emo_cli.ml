@@ -259,39 +259,67 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               output_string oc contents;
               close_out oc
             in
-            let main_c = Filename.concat build_dir "main.c" in
-            write main_c (Emo_codegen.C.emit program);
-            let runtime_c = Filename.concat build_dir "emo_c_runtime.c" in
-            write runtime_c Emo_codegen.C.runtime_c;
-            let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
-            write runtime_h Emo_codegen.C.runtime_h;
-            (* cclib entries pass to cc: bare names become -l flags,
-               anything already flag- or path-shaped passes verbatim. *)
-            let cclib_flags =
-              String.concat " "
-                (List.map
-                   (fun lib ->
-                     if lib <> "" && (lib.[0] = '-' || lib.[0] = '/') then lib
-                     else "-l" ^ lib)
-                   cclibs)
+            let main_c_contents = Emo_codegen.C.emit program in
+            (* Incremental, same scheme as the ocaml arm: the digest of
+               the emitted C, the runtime sources, and the link flags
+               names the cached binary — an unchanged program skips cc. *)
+            let digest =
+              Digest.to_hex
+                (Digest.string
+                   (Printf.sprintf "%s|%s|%s|%s" main_c_contents
+                      Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h
+                      (String.concat "," cclibs)))
             in
-            let cmd =
-              Printf.sprintf
-                "cc -O2 -std=c11 -Wall -Wno-deprecated-declarations -I %s %s \
-                 %s                  %s -o %s"
-                (Filename.quote build_dir) (Filename.quote main_c)
-                (Filename.quote runtime_c) cclib_flags (Filename.quote output)
-            in
-            let exit_code = Sys.command cmd in
-            if exit_code <> 0 then begin
-              prerr_endline
-                (Printf.sprintf "emo build: the C compiler failed (exit %d)"
-                   exit_code);
-              70
+            let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
+            if Sys.file_exists cache_binary then begin
+              ignore
+                (Sys.command
+                   (Printf.sprintf "cp %s %s"
+                      (Filename.quote cache_binary)
+                      (Filename.quote output)));
+              Printf.printf "built %s (cached)\n" output;
+              0
             end
-            else (
-              Printf.printf "built %s\n" output;
-              0)
+            else begin
+              let main_c = Filename.concat build_dir "main.c" in
+              write main_c main_c_contents;
+              let runtime_c = Filename.concat build_dir "emo_c_runtime.c" in
+              write runtime_c Emo_codegen.C.runtime_c;
+              let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
+              write runtime_h Emo_codegen.C.runtime_h;
+              (* cclib entries pass to cc: bare names become -l flags,
+                 anything already flag- or path-shaped passes verbatim. *)
+              let cclib_flags =
+                String.concat " "
+                  (List.map
+                     (fun lib ->
+                       if lib <> "" && (lib.[0] = '-' || lib.[0] = '/') then lib
+                       else "-l" ^ lib)
+                     cclibs)
+              in
+              let cmd =
+                Printf.sprintf
+                  "cc -O2 -std=c11 -Wall -Wno-deprecated-declarations -I %s %s \
+                   %s                  %s -o %s"
+                  (Filename.quote build_dir) (Filename.quote main_c)
+                  (Filename.quote runtime_c) cclib_flags (Filename.quote output)
+              in
+              let exit_code = Sys.command cmd in
+              if exit_code <> 0 then begin
+                prerr_endline
+                  (Printf.sprintf "emo build: the C compiler failed (exit %d)"
+                     exit_code);
+                70
+              end
+              else begin
+                ignore
+                  (Sys.command
+                     (Printf.sprintf "cp %s %s" (Filename.quote output)
+                        (Filename.quote cache_binary)));
+                Printf.printf "built %s\n" output;
+                0
+              end
+            end
         | "ocaml" ->
             let source = Emo_codegen.emit ~specialize program in
             (* Incremental: the digest of the emitted source plus the
@@ -484,9 +512,9 @@ let build =
   in
   let target =
     Arg.(
-      value & opt string "ocaml"
+      value & opt string "c"
       & info [ "target" ] ~docv:"TARGET"
-          ~doc:"The compilation target: ocaml, c, typescript, wasm, or beam.")
+          ~doc:"The compilation target: c, ocaml, typescript, wasm, or beam.")
   in
   let build entry output no_specialize cclibs target =
     let out =
@@ -668,7 +696,7 @@ let deps_resolve ~(name : string option) : int =
           exit 65)
     | None -> ());
     let entries =
-      Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"ocaml"
+      Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"c"
     in
     Emo_pkg.Lockfile.write
       ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
@@ -719,6 +747,46 @@ let deps =
   Cmd.group
     (Cmd.info "deps" ~doc:"Manage dependencies.")
     [ deps_resolve_cmd; deps_update_cmd; deps_list_cmd ]
+
+(* `emo install`: the project-dependencies front end — resolve, fetch
+   into the user cache, lock; the project is then ready for run/build
+   (T25.4). `emo deps` keeps the explicit paths. *)
+let install () : int =
+  let dir = Sys.getcwd () in
+  let color = Unix.isatty Unix.stderr in
+  try
+    let manifest =
+      match Emo_project.manifest_here () with
+      | Some path -> (
+          match
+            Emo_pkg.parse_manifest ~file:path
+              ~source:(Emo_project.read_file path)
+          with
+          | m -> m
+          | exception Emo_pkg.Manifest_error d ->
+              render_errors ~color ~error_limit:20 [ d ];
+              exit 65)
+      | None ->
+          prerr_endline "no package.emo in the current directory";
+          exit 66
+    in
+    List.iter print_endline
+      (Emo_project.install_deps ~manifest ~manifest_dir:dir ~target:"c");
+    Cmd.Exit.ok
+  with Emo_project.Static_errors diagnostics ->
+    render_errors ~color ~error_limit:20 diagnostics;
+    65
+
+let install_cmd =
+  Cmd.v
+    (Cmd.info "install"
+       ~doc:
+         "Install the project's dependencies — resolve, fetch into the user \
+          cache, and write package.lock.")
+    Term.(
+      const (fun () ->
+          match install () with 0 -> Cmd.Exit.ok | code -> exit code)
+      $ const ())
 
 (* `emo publish`: pack the package rooted at the working directory and POST
    it to the registry. The upload is dogfooded: the request is made by the
@@ -795,37 +863,33 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
     if n > 0 && registry.[n - 1] = '/' then String.sub registry 0 (n - 1)
     else registry
   in
-  match Emo_project.bundled_registry () with
-  | None ->
-      Error "the bundled standard library is missing from the installation"
-  | Some stdlib -> (
-      let reg = { Emo_pkg.Registry.endpoint = stdlib } in
-      match List.rev (Emo_pkg.Registry.versions reg ~name:"http") with
-      | [] -> Error "the bundled standard library has no http package"
-      | http_version :: _ -> (
-          match List.rev (Emo_pkg.Registry.versions reg ~name:"net") with
-          | [] -> Error "the bundled standard library has no net package"
-          | net_version :: _ ->
-              (* The resolver indexes manifest roots only, so both packages are
+  let reg = Emo_project.bundled_registry () in
+  match List.rev (Emo_pkg.Registry.versions reg ~name:"http") with
+  | [] -> Error "the bundled standard library has no http package"
+  | http_version :: _ -> (
+      match List.rev (Emo_pkg.Registry.versions reg ~name:"net") with
+      | [] -> Error "the bundled standard library has no net package"
+      | net_version :: _ ->
+          (* The resolver indexes manifest roots only, so both packages are
              pinned explicitly — same as a user project. *)
-              let dir =
-                Filename.concat
-                  (Filename.get_temp_dir_name ())
-                  (Printf.sprintf "emo-publish-%d-%d" (Unix.getpid ())
-                     (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF))
-              in
-              Unix.mkdir dir 0o755;
-              let write name content =
-                let oc = open_out_bin (Filename.concat dir name) in
-                output_string oc content;
-                close_out oc
-              in
-              write "package.emo"
-                (Printf.sprintf
-                   {|package {
+          let dir =
+            Filename.concat
+              (Filename.get_temp_dir_name ())
+              (Printf.sprintf "emo-publish-%d-%d" (Unix.getpid ())
+                 (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF))
+          in
+          Unix.mkdir dir 0o755;
+          let write name content =
+            let oc = open_out_bin (Filename.concat dir name) in
+            output_string oc content;
+            close_out oc
+          in
+          write "package.emo"
+            (Printf.sprintf
+               {|package {
   name = "internal/publish"
   version = "0.1.0"
-  targets = ["ocaml"]
+  targets = ["ocaml", "c"]
 
   deps {
     http = "%s"
@@ -833,70 +897,68 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
   }
 }
 |}
-                   (Emo_pkg.Version.to_string http_version)
-                   (Emo_pkg.Version.to_string net_version));
-              write "main.emo" upload_program;
-              let out = Buffer.create 256 in
-              let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
-              let old_cwd = Sys.getcwd () in
-              Unix.putenv "EMO_REGISTRY" stdlib;
-              Emo_eval.set_output (Buffer.add_string out);
-              Sys.chdir dir;
-              Fun.protect
-                ~finally:(fun () ->
-                  Sys.chdir old_cwd;
-                  (match old_registry with
-                  | Some v -> Unix.putenv "EMO_REGISTRY" v
-                  | None -> ());
-                  Emo_eval.set_output (fun s ->
-                      print_string s;
-                      flush stdout);
-                  remove_tree dir)
-                (fun () ->
-                  match
-                    Emo_project.run_entry ~entry_file:"main.emo" ~check:false
-                      ~sched:Emo_project.Own
-                      ~globals:
-                        [
-                          ("__url", Emo_eval.String (base ^ "/api/v1/packages"));
-                          ("__token", Emo_eval.String token);
-                          ("__body", Emo_eval.String archive);
-                        ]
-                      ()
-                  with
-                  | exception Emo_project.Static_errors ds ->
-                      Error
-                        (String.concat "; "
-                           (List.map
-                              (fun d -> d.Emo_support.Diagnostic.message)
-                              ds))
-                  | exception Emo_eval.Error d ->
-                      Error d.Emo_support.Diagnostic.message
-                  | _ -> (
-                      let text = Buffer.contents out in
-                      match String.index_opt text '\n' with
+               (Emo_pkg.Version.to_string http_version)
+               (Emo_pkg.Version.to_string net_version));
+          write "main.emo" upload_program;
+          let out = Buffer.create 256 in
+          let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
+          let old_cwd = Sys.getcwd () in
+          (* The uploader's resolution must see the bundled stdlib, never
+             the user's EMO_REGISTRY — blank the variable for the run
+             (an empty value means unset to the registry lookup). *)
+          Unix.putenv "EMO_REGISTRY" "";
+          Emo_eval.set_output (Buffer.add_string out);
+          Sys.chdir dir;
+          Fun.protect
+            ~finally:(fun () ->
+              Sys.chdir old_cwd;
+              (match old_registry with
+              | Some v -> Unix.putenv "EMO_REGISTRY" v
+              | None -> ());
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout);
+              remove_tree dir)
+            (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:"main.emo" ~check:false
+                  ~sched:Emo_project.Own
+                  ~globals:
+                    [
+                      ("__url", Emo_eval.String (base ^ "/api/v1/packages"));
+                      ("__token", Emo_eval.String token);
+                      ("__body", Emo_eval.String archive);
+                    ]
+                  ()
+              with
+              | exception Emo_project.Static_errors ds ->
+                  Error
+                    (String.concat "; "
+                       (List.map (fun d -> d.Emo_support.Diagnostic.message) ds))
+              | exception Emo_eval.Error d ->
+                  Error d.Emo_support.Diagnostic.message
+              | _ -> (
+                  let text = Buffer.contents out in
+                  match String.index_opt text '\n' with
+                  | None -> Error ("the uploader printed no status: " ^ text)
+                  | Some i -> (
+                      match
+                        int_of_string_opt (String.trim (String.sub text 0 i))
+                      with
                       | None -> Error ("the uploader printed no status: " ^ text)
-                      | Some i -> (
-                          match
-                            int_of_string_opt
-                              (String.trim (String.sub text 0 i))
-                          with
-                          | None ->
-                              Error ("the uploader printed no status: " ^ text)
-                          | Some status ->
-                              let body =
-                                String.sub text (i + 1)
-                                  (String.length text - i - 1)
-                              in
-                              let body =
-                                (* println's trailing newline is not the body's. *)
-                                if
-                                  String.length body > 0
-                                  && body.[String.length body - 1] = '\n'
-                                then String.sub body 0 (String.length body - 1)
-                                else body
-                              in
-                              Ok (status, body))))))
+                      | Some status ->
+                          let body =
+                            String.sub text (i + 1) (String.length text - i - 1)
+                          in
+                          let body =
+                            (* println's trailing newline is not the body's. *)
+                            if
+                              String.length body > 0
+                              && body.[String.length body - 1] = '\n'
+                            then String.sub body 0 (String.length body - 1)
+                            else body
+                          in
+                          Ok (status, body)))))
 
 let publish ~(registry_opt : string option) ~(token_opt : string option)
     ~(dry_run : bool) : int =
@@ -1013,6 +1075,228 @@ let publish_cmd =
           | code -> exit code)
       $ registry $ token $ dry_run)
 
+(* ---- `emo doctor`: the target-aware environment check (T25.5) ----
+
+   One line per target: what it needs, what was found. The default
+   target's health decides the exit code — the other targets are
+   informational, and an unavailable one gets the honest fix named
+   rather than a raw toolchain error. *)
+
+let tool_exists (name : string) : bool =
+  let cmd = Printf.sprintf "command -v %s" (Filename.quote name) in
+  let ic = Unix.open_process_in cmd in
+  let line = try input_line ic with End_of_file -> "" in
+  ignore (Unix.close_process_in ic);
+  line <> ""
+
+let tool_version (name : string) : string =
+  let ic = Unix.open_process_in (name ^ " --version 2>/dev/null") in
+  let line = try input_line ic with End_of_file -> "" in
+  let status = Unix.close_process_in ic in
+  match status with
+  | WEXITED 0 when line <> "" -> " (" ^ String.trim line ^ ")"
+  | _ -> ""
+
+(* The c target's check: cc exists, compiles, and the result runs. *)
+let cc_smoke () : (unit, string) result =
+  if not (tool_exists "cc") then Error "cc not found on PATH"
+  else
+    let dir =
+      Filename.concat
+        (Filename.get_temp_dir_name ())
+        (Printf.sprintf "emo-doctor-%d" (Unix.getpid ()))
+    in
+    if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+    let c = Filename.concat dir "smoke.c" in
+    let bin = Filename.concat dir "smoke" in
+    let oc = open_out_bin c in
+    output_string oc
+      "#include <stdio.h>\nint main(void) { puts(\"emo\"); return 0; }\n";
+    close_out oc;
+    let compile =
+      Sys.command
+        (Printf.sprintf "cc -o %s %s" (Filename.quote bin) (Filename.quote c))
+    in
+    if compile <> 0 then begin
+      remove_tree dir;
+      Error "cc failed to compile a smoke program"
+    end
+    else begin
+      let ic = Unix.open_process_in (Filename.quote bin) in
+      let out = try input_line ic with End_of_file -> "" in
+      let status = Unix.close_process_in ic in
+      remove_tree dir;
+      match status with
+      | WEXITED 0 when out = "emo" -> Ok ()
+      | _ -> Error "the cc smoke binary did not run"
+    end
+
+(* The ocaml target's check: its runtime libraries must stand beside the
+   emo binary (a source or dune-tree install) and ocamlfind must exist. *)
+let ocaml_target_ok () : bool =
+  let libs =
+    [
+      "emo_support";
+      "emo_lexer";
+      "emo_parser";
+      "emo_ast";
+      "emo_check";
+      "emo_eval";
+      "emo_sched";
+      "emo_runtime";
+    ]
+  in
+  let exe_dir =
+    Filename.dirname
+      (try Unix.realpath Sys.executable_name with _ -> Sys.executable_name)
+  in
+  let src_dir = Filename.concat exe_dir ".." in
+  let cmxa_found =
+    List.for_all
+      (fun lib ->
+        Sys.file_exists
+          (Filename.concat (Filename.concat src_dir lib) (lib ^ ".cmxa")))
+      libs
+  in
+  cmxa_found
+  &&
+  let found = find_ocamlfind () in
+  if found = "ocamlfind" then tool_exists "ocamlfind" else true
+
+let doctor ~(emit : string -> unit) : int =
+  let ocaml_ok = ocaml_target_ok () in
+  emit (Printf.sprintf "emo %s" version);
+  emit
+    (if ocaml_ok then "installation: source (runtime libraries found)"
+     else "installation: prebuilt");
+  emit "stdlib: embedded in the binary";
+  let broken = ref false in
+  let line name report = emit (Printf.sprintf "%-11s %s" name report) in
+  (match cc_smoke () with
+  | Ok () -> line "c:" ("ok" ^ tool_version "cc" ^ " — compiles and runs")
+  | Error why ->
+      broken := true;
+      line "c:" ("BROKEN — " ^ why ^ " (the default target needs a C compiler)"));
+  if ocaml_ok then
+    line "ocaml:" "ok — ocamlfind and the runtime libraries are present"
+  else
+    line "ocaml:"
+      "unavailable — a prebuilt installation; the ocaml target needs a source \
+       install (opam install emo)";
+  if tool_exists "node" then line "typescript:" ("ok" ^ tool_version "node")
+  else line "typescript:" "unavailable — node not found";
+  if tool_exists "erlc" then line "beam:" "ok"
+  else line "beam:" "unavailable — erlc not found";
+  line "wasm:" "ok — no external tools needed";
+  if !broken then 1 else 0
+
+let doctor_cmd =
+  Cmd.v
+    (Cmd.info "doctor" ~doc:"Check the toolchain environment, per target.")
+    Term.(
+      const (fun () ->
+          let flushed s =
+            print_string s;
+            print_newline ()
+          in
+          match doctor ~emit:flushed with 0 -> Cmd.Exit.ok | code -> exit code)
+      $ const ())
+
+(* `emo new <name>`: the project scaffold — package.emo, a hello-world
+   main.emo, and .gitignore (T25.3). Strictness holds: an existing
+   directory or clashing files refuse; nothing is ever overwritten. The
+   manifest carries the plain name when no owner is given — running,
+   checking, and building work at once, and `emo publish` names the
+   owner/name rule when the package is published. *)
+let scaffold ~(path : string) : int =
+  let leaf = Filename.basename path in
+  if leaf = "." || leaf = ".." || leaf = "" || leaf = "/" then begin
+    prerr_endline (Printf.sprintf "emo new: `%s` is not a project name" path);
+    65
+  end
+  else if Sys.file_exists path then begin
+    prerr_endline
+      (Printf.sprintf "emo new: refusing to overwrite — `%s` already exists"
+         path);
+    65
+  end
+  else begin
+    (* The manifest name: an `owner/name` argument is taken as given;
+       anything else is the leaf name — running and building work at
+       once, and `emo publish` names the owner/name rule when it is
+       time to publish. *)
+    let stripped =
+      let n = String.length path in
+      if n > 1 && path.[n - 1] = '/' then String.sub path 0 (n - 1) else path
+    in
+    let slashes =
+      String.fold_left
+        (fun acc c -> if c = '/' then acc + 1 else acc)
+        0 stripped
+    in
+    let package_name =
+      if slashes = 1 && stripped.[0] <> '/' then stripped else leaf
+    in
+    let make_dirs dir =
+      let rec go d =
+        if not (Sys.file_exists d) then begin
+          go (Filename.dirname d);
+          Unix.mkdir d 0o755
+        end
+      in
+      go dir
+    in
+    let write name contents =
+      let oc = open_out_bin (Filename.concat path name) in
+      output_string oc contents;
+      close_out oc
+    in
+    make_dirs (Filename.dirname path);
+    Unix.mkdir path 0o755;
+    write "package.emo"
+      (Printf.sprintf
+         {|package {
+  name = "%s"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}
+|}
+         package_name);
+    write "main.emo"
+      (Printf.sprintf
+         {|// %s, scaffolded by `emo new` — run it with `emo run main.emo`.
+
+def greet(whom String) String {
+  return "Hello, ${whom}!"
+}
+
+println(greet("world"))
+|}
+         leaf);
+    write ".gitignore" ".emo-build/\n";
+    Printf.printf "created %s — next: cd %s && emo run main.emo\n" path path;
+    0
+  end
+
+let new_cmd =
+  let path =
+    Arg.(
+      required
+      & pos 0 (some string) None
+      & info [] ~docv:"NAME"
+          ~doc:
+            "The project directory, and the package name unless an owner/name \
+             form is given.")
+  in
+  Cmd.v
+    (Cmd.info "new" ~doc:"Scaffold a new Emo project.")
+    Term.(
+      const (fun path ->
+          match scaffold ~path with 0 -> Cmd.Exit.ok | code -> exit code)
+      $ path)
+
 let version_cmd =
   Cmd.v
     (Cmd.info "version" ~doc:"Print the version.")
@@ -1021,6 +1305,17 @@ let version_cmd =
 let cmd =
   Cmd.group
     (Cmd.info "emo" ~version ~doc:"The Emo programming language toolchain.")
-    [ run; repl; check; build; deps; publish_cmd; version_cmd ]
+    [
+      run;
+      repl;
+      check;
+      build;
+      deps;
+      install_cmd;
+      publish_cmd;
+      new_cmd;
+      doctor_cmd;
+      version_cmd;
+    ]
 
 let main () = exit (Cmd.eval' cmd)

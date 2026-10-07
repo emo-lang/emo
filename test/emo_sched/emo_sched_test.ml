@@ -718,7 +718,8 @@ println("after")
                {|
 net_connect("127.0.0.1", %d, 0.0)
 println("unreachable")
-|} port)
+|}
+               port)
         in
         Alcotest.(check string)
           "message"

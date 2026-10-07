@@ -1,3 +1,18 @@
 (library
  (name emo_pkg)
  (libraries digestif emo_support emo_lexer emo_ast emo_parser emo_eval))
+
+; The standard library rides the compiler as generated data (T25.2) —
+; the same route as the C runtime — so a lone emo binary resolves
+; stdlib packages with nothing beside it. EMO_REGISTRY still overrides
+; with a filesystem registry.
+
+(rule
+ (target emo_stdlib_data.ml)
+ (deps
+  (:gen ../../devtools/gen-stdlib-data.sh)
+  (source_tree ../../stdlib/registry))
+ (action
+  (with-stdout-to
+   emo_stdlib_data.ml
+   (run %{gen} ../../stdlib/registry))))

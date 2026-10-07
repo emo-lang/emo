@@ -15,11 +15,14 @@ BLD="$ROOT/benchmarks/baselines/build"
 DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # build <dir> [extra emo-build flags...] — the content cache skips recompiles.
+# The ocaml backend is pinned: results.md's emo-bin column is that backend's
+# number, and the c column comes from build_c.
 build() {
     dir=$1
     shift
     (cd "benchmarks/$dir" && EMO_REGISTRY="$REGISTRY" \
-        "$EMO" build main.emo -o "$ROOT/benchmarks/$dir/main.emo-bin" "$@" \
+        "$EMO" build main.emo --target ocaml \
+        -o "$ROOT/benchmarks/$dir/main.emo-bin" "$@" \
         > /dev/null)
 }
 
@@ -27,7 +30,7 @@ build() {
 build_nospec() {
     dir=$1
     (cd "benchmarks/$dir" && EMO_REGISTRY="$REGISTRY" \
-        "$EMO" build main.emo --no-specialize \
+        "$EMO" build main.emo --target ocaml --no-specialize \
         -o "$ROOT/benchmarks/$dir/main.emo-bin-nospec" > /dev/null)
 }
 
