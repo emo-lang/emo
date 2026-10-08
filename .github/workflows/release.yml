@@ -1,11 +1,12 @@
 name: Release
 
-# Tag-triggered release builds (T25.6): a `v*` tag produces per-platform
+# Tag-triggered releases (T25.6): a `v*` tag produces per-platform
 # archives — Linux x86_64/aarch64 and macOS x86_64/arm64 — drafted as a
 # GitHub Release with SHA256SUMS. The Linux binary is built on the
 # oldest supported glibc (Ubuntu 22.04, glibc 2.35) and verified in a
-# clean container, not on the builder; macOS archives are zips because
-# notarization staples a zip, never a tar.
+# clean container, not on the builder; macOS archives are zips, and
+# signing + notarization finish locally (`just notarize <tag>`) since
+# hosted runners hold no Developer ID private key.
 
 on:
   push:

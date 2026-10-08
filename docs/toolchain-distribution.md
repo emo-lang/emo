@@ -134,8 +134,10 @@ document left unscheduled:
   (`just notarize <tag>`) then signs them with the keychain's
   Developer ID Application identity — hardened runtime, timestamped —
   submits through notarytool (a keychain profile, an App Store Connect
-  API key trio, or Apple ID credentials), staples the tickets,
-  re-uploads the archives, and refreshes `SHA256SUMS`.
+  API key trio, or Apple ID credentials), re-uploads the archives,
+  and refreshes `SHA256SUMS`. A flat executable cannot carry a staple
+  (stapler embeds tickets only into .app/.dmg/.pkg), so Gatekeeper
+  validates the notarized binary's ticket online at first run.
 - **Native Windows is deferred, recorded as the blocker it is.** The
   C runtime's processes are POSIX `ucontext` fibers and its sockets
   are non-blocking fds (T24.9/T24.10); a native Windows port is that

@@ -64,7 +64,7 @@ package:
 # Notarize a draft release's macOS archives from this machine — the
 # local half of the signing story, since CI runners hold no Developer
 # ID private key. Signs with the keychain's Developer ID Application
-# identity, notarizes, staples, re-uploads, and refreshes SHA256SUMS.
+# identity, notarizes, re-uploads, and refreshes SHA256SUMS.
 # Needs a notary credential: EMO_NOTARY_PROFILE (see
 # devtools/notarize-release.sh), the ASC key trio, or the Apple ID
 # quartet.
