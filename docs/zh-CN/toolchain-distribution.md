@@ -113,8 +113,10 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
   `devtools/notarize-release.sh`（`just notarize <tag>`）用钥匙串里的
   Developer ID Application 身份签名——hardened runtime、带时间戳——
   经 notarytool 提交（钥匙串 profile、App Store Connect API 密钥
-  三件套或 Apple ID 凭据任选其一），staple 票据、回传归档并刷新
-  `SHA256SUMS`。
+  三件套或 Apple ID 凭据任选其一），回传归档并刷新 `SHA256SUMS`。
+  裸可执行文件无法承载 staple（stapler 只把票据嵌进
+  .app/.dmg/.pkg），因此 Gatekeeper 在首次运行时在线校验公证
+  票据。
 - **原生 Windows 推迟，阻塞点如实记录。** C 运行时的进程是 POSIX
   `ucontext` 纤维、socket 是非阻塞 fd（T24.9/T24.10）；原生 Windows
   移植是把这层调度器与 IO 重建在 Windows 原语之上，预编译渠道等它。

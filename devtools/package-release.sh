@@ -6,9 +6,11 @@
 # Usage: package-release.sh <emo-binary> <version> <os> <arch> <out-dir>
 #
 # Produces <out-dir>/emo-<version>-<os>-<arch>.{zip|tar.gz} plus a
-# .sha256 beside it. macOS zips: notarization staples a zip, never a
-# tar; the version argument carries its own v prefix (the VERSION file
-# reads v1.2.3).
+# .sha256 beside it. macOS zips because that is the platform's
+# convention — the notarized binary's ticket is validated online at
+# first run, since a flat executable cannot carry a staple; the
+# version argument carries its own v prefix (the VERSION file reads
+# v1.2.3).
 set -e
 
 bin=$1
@@ -36,6 +38,42 @@ mkdir -p "$stage/$name/bin"
 cp "$bin" "$stage/$name/bin/emo"
 chmod 755 "$stage/$name/bin/emo"
 cp "$root/LICENSE" "$stage/$name/LICENSE"
+
+# macOS archives must be self-contained: opam's ssl links the
+# builder's Homebrew openssl, and users without that exact install
+# cannot load the binary. Bundle every non-system dylib into lib/,
+# re-point the load commands at @executable_path, and repeat until
+# the set is stable (a bundled dylib may depend on another).
+# install_name_tool invalidates signatures, so re-sign ad-hoc to keep
+# everything launchable; distribution signing is notarize-release.sh's
+# job.
+if [ "$os" = macos ]; then
+  mkdir -p "$stage/$name/lib"
+  bundle_deps() {
+    for dep in $(otool -L "$1" | awk 'NR>1 {print $1}' |
+      grep '^/' | grep -v -e '^/usr/lib/' -e '^/System/'); do
+      base=${dep##*/}
+      [ -f "$stage/$name/lib/$base" ] || cp "$dep" "$stage/$name/lib/$base"
+      install_name_tool -change "$dep" \
+        "@executable_path/../lib/$base" "$1"
+    done
+  }
+  bundle_deps "$stage/$name/bin/emo"
+  while :; do
+    before=$(ls "$stage/$name/lib" | wc -l)
+    for lib in "$stage/$name/lib/"*.dylib; do
+      [ -e "$lib" ] || continue
+      install_name_tool -id "@executable_path/../lib/${lib##*/}" "$lib"
+      bundle_deps "$lib"
+    done
+    after=$(ls "$stage/$name/lib" | wc -l)
+    [ "$before" = "$after" ] && break
+  done
+  for target in "$stage/$name/lib/"*.dylib "$stage/$name/bin/emo"; do
+    [ -f "$target" ] || continue
+    codesign --force --sign - "$target"
+  done
+fi
 
 # macOS signing (T25.7): EMO_CODESIGN_IDENTITY turns the signing hook
 # on — the identity signs the binary with the hardened runtime. Notary
@@ -65,27 +103,23 @@ macos)
 esac
 cd "$out"
 
-notarized=0
+# Notarization is Accepted-or-bust: a bare executable cannot carry a
+# staple (stapler embeds tickets only into .app/.dmg/.pkg shapes), so
+# Gatekeeper validates this archive's ticket online at first run.
 if [ "$os" = macos ] && [ -n "$EMO_CODESIGN_IDENTITY" ]; then
   if [ -n "$EMO_NOTARY_PROFILE" ]; then
     xcrun notarytool submit "$out/$archive" -p "$EMO_NOTARY_PROFILE" --wait
-    notarized=1
   elif [ -n "$EMO_NOTARY_KEY" ] && [ -n "$EMO_NOTARY_KEY_ID" ] &&
     [ -n "$EMO_NOTARY_ISSUER" ]; then
     xcrun notarytool submit "$out/$archive" --key "$EMO_NOTARY_KEY" \
       --key-id "$EMO_NOTARY_KEY_ID" --issuer "$EMO_NOTARY_ISSUER" --wait
-    notarized=1
   elif [ -n "$EMO_NOTARY_APPLE_ID" ] && [ -n "$EMO_NOTARY_APP_PASSWORD" ] &&
     [ -n "$EMO_NOTARY_TEAM_ID" ]; then
     xcrun notarytool submit "$out/$archive" \
       --apple-id "$EMO_NOTARY_APPLE_ID" \
       --password "$EMO_NOTARY_APP_PASSWORD" \
       --team-id "$EMO_NOTARY_TEAM_ID" --wait
-    notarized=1
   fi
-fi
-if [ "$notarized" = 1 ]; then
-  xcrun stapler staple "$out/$archive"
 fi
 
 # shasum ships with macOS, sha256sum with Linux; the output shape is

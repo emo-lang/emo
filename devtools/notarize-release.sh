@@ -3,8 +3,8 @@
 # — the local half of T25.7. CI runners hold no Developer ID private
 # key, so release.yml drafts the release unsigned; this script signs
 # the binaries with the keychain's Developer ID Application identity,
-# submits the rebuilt zips to the notary service, staples the tickets,
-# re-uploads the archives, and refreshes SHA256SUMS.
+# submits the rebuilt zips to the notary service, re-uploads the
+# archives, and refreshes SHA256SUMS.
 #
 # Usage: notarize-release.sh <tag> [--dry-run]
 #
@@ -83,18 +83,45 @@ for zip in "$@"; do
     echo "notarize-release.sh: $zip has no $name/bin/emo" >&2
     exit 65
   fi
+
+  # The archive must be self-contained: every non-system dylib the
+  # binary or its bundled libraries reference rides in lib/, pointed
+  # at through @executable_path. Anything still pointing at an
+  # absolute path (a runner's Homebrew, say) breaks on users' Macs
+  # and dies under library validation — refuse rather than notarize
+  # a broken archive.
+  stray() {
+    otool -L "$1" | awk 'NR>1 {print $1}' |
+      grep '^/' | grep -v -e '^/usr/lib/' -e '^/System/'
+  }
+  for target in "$bin" "$stage/$name/lib/"*.dylib; do
+    [ -f "$target" ] || continue
+    if [ -n "$(stray "$target")" ]; then
+      echo "notarize-release.sh: $(basename "$target") still references:" >&2
+      stray "$target" >&2
+      exit 65
+    fi
+  done
+
+  # One identity across the binary and the bundled dylibs — library
+  # validation under the hardened runtime rejects mixed-team loads.
+  for lib in "$stage/$name/lib/"*.dylib; do
+    [ -f "$lib" ] || continue
+    codesign --force --options runtime --timestamp -s "$identity" "$lib"
+  done
   codesign --force --options runtime --timestamp -s "$identity" "$bin"
   codesign --verify --strict "$bin"
-  # Rebuild the zip from the same root so the layout the release
-  # shipped stays the layout it keeps; via a fresh file so no stale
+  # Rebuild the zip from the same root — via a fresh file so no stale
   # entry can survive from the download.
   (cd "$stage" && zip -q -r "$zip.new" "$name" && mv "$zip.new" "$zip")
   if [ "$dry_run" = true ]; then
-    echo "dry run: would notarize, staple, and re-upload $zip"
+    echo "dry run: would notarize and re-upload $zip"
     continue
   fi
+  # Accepted is all a bare executable gets: stapler embeds tickets
+  # only into .app/.dmg/.pkg shapes, never a flat binary, so
+  # Gatekeeper validates this archive's ticket online at first run.
   submit "$zip"
-  xcrun stapler staple "$zip"
 done
 
 if [ "$dry_run" = true ]; then
