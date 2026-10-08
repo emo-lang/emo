@@ -108,11 +108,13 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
   并经 `devtools/package-release.sh` 打包：二进制加许可文件，仅此
   而已，因为标准库已随二进制内嵌。Linux 归档在干净的 `ubuntu:22.04`
   容器中验证，而非构建机上。GitHub Release 草稿附带 `SHA256SUMS`。
-- **macOS 签名与公证已接线，以密钥为闸。** 打包脚本以 hardened
-  runtime 签名（`codesign --options runtime --timestamp`）、经
-  notarytool 提交、对 zip staple——当 `MACOS_SIGNING_IDENTITY`、
-  `MACOS_APPLE_ID`、`MACOS_APP_PASSWORD` 与 `MACOS_TEAM_ID` 四个仓库
-  密钥齐备时；密钥缺席时归档以未签名状态发布，工作流以 notice 明说。
+- **macOS 签名与公证在本地完成。** 托管 runner 上没有 Developer ID
+  私钥，因此 `release.yml` 按设计先产出未签名草稿；随后
+  `devtools/notarize-release.sh`（`just notarize <tag>`）用钥匙串里的
+  Developer ID Application 身份签名——hardened runtime、带时间戳——
+  经 notarytool 提交（钥匙串 profile、App Store Connect API 密钥
+  三件套或 Apple ID 凭据任选其一），staple 票据、回传归档并刷新
+  `SHA256SUMS`。
 - **原生 Windows 推迟，阻塞点如实记录。** C 运行时的进程是 POSIX
   `ucontext` 纤维、socket 是非阻塞 fd（T24.9/T24.10）；原生 Windows
   移植是把这层调度器与 IO 重建在 Windows 原语之上，预编译渠道等它。

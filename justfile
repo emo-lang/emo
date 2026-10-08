@@ -61,6 +61,26 @@ package:
     devtools/package-release.sh _build/default/src/emo_cli/emo.exe \
       "$(cat VERSION)" "$os" "$(uname -m)" dist
 
+# Notarize a draft release's macOS archives from this machine — the
+# local half of the signing story, since CI runners hold no Developer
+# ID private key. Signs with the keychain's Developer ID Application
+# identity, notarizes, staples, re-uploads, and refreshes SHA256SUMS.
+# Needs a notary credential: EMO_NOTARY_PROFILE (see
+# devtools/notarize-release.sh), the ASC key trio, or the Apple ID
+# quartet.
+#
+# notarize: notarize a draft release's macOS archives (TAG, e.g. v0.26.7)
+notarize TAG:
+    #!/bin/sh
+    set -e
+    if [ -z "$EMO_NOTARY_PROFILE" ] && [ -z "$EMO_NOTARY_KEY" ] && \
+      [ -z "$EMO_NOTARY_APPLE_ID" ]; then
+        echo "notarize: set EMO_NOTARY_PROFILE (xcrun notarytool store-credentials)," >&2
+        echo "the ASC key trio (EMO_NOTARY_KEY/_KEY_ID/_ISSUER), or the Apple ID quartet" >&2
+        exit 64
+    fi
+    devtools/notarize-release.sh {{TAG}}
+
 # test: run the full test suite
 test:
     dune test

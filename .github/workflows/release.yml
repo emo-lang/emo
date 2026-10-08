@@ -54,17 +54,12 @@ jobs:
         run: opam exec -- dune test --profile release
 
       - name: Package
-        env:
-          # Signing/notarization hooks (T25.7): the four secrets
-          # together turn them on; absent secrets ship unsigned.
-          EMO_CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          EMO_NOTARY_APPLE_ID: ${{ secrets.MACOS_APPLE_ID }}
-          EMO_NOTARY_APP_PASSWORD: ${{ secrets.MACOS_APP_PASSWORD }}
-          EMO_NOTARY_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+        # Unsigned by design: hosted runners hold no Developer ID
+        # private key, so signing there is impossible — the draft's
+        # macOS archives are signed + notarized from a machine that
+        # has the identity, with `just notarize <tag>`
+        # (devtools/notarize-release.sh, T25.7's local route).
         run: |
-          if [ "${{ runner.os }}" = macOS ] && [ -z "$EMO_CODESIGN_IDENTITY" ]; then
-            echo "::notice::macOS signing skipped — MACOS_SIGNING_IDENTITY and the notary secrets are not configured"
-          fi
           version=$(cat VERSION)
           devtools/package-release.sh _build/default/src/emo_cli/emo.exe \
             "$version" ${{ matrix.platform }} ${{ matrix.arch }} dist

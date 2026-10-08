@@ -128,13 +128,14 @@ document left unscheduled:
   else, since the standard library rides inside the binary. Linux
   archives are verified in a clean `ubuntu:22.04` container, not on
   the builder. The draft GitHub Release carries `SHA256SUMS`.
-- **macOS signing and notarization are wired, gated on secrets.** The
-  packaging script signs with the hardened runtime
-  (`codesign --options runtime --timestamp`), submits through
-  notarytool, and staples the zip when `MACOS_SIGNING_IDENTITY`,
-  `MACOS_APPLE_ID`, `MACOS_APP_PASSWORD`, and `MACOS_TEAM_ID` are
-  configured as repository secrets; with the secrets absent the
-  archives ship unsigned and the workflow says so in a notice.
+- **macOS signing and notarization complete locally.** Hosted runners
+  hold no Developer ID private key, so `release.yml` drafts the macOS
+  archives unsigned by design; `devtools/notarize-release.sh`
+  (`just notarize <tag>`) then signs them with the keychain's
+  Developer ID Application identity — hardened runtime, timestamped —
+  submits through notarytool (a keychain profile, an App Store Connect
+  API key trio, or Apple ID credentials), staples the tickets,
+  re-uploads the archives, and refreshes `SHA256SUMS`.
 - **Native Windows is deferred, recorded as the blocker it is.** The
   C runtime's processes are POSIX `ucontext` fibers and its sockets
   are non-blocking fds (T24.9/T24.10); a native Windows port is that
