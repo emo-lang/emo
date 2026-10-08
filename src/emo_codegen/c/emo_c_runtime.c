@@ -1,10 +1,17 @@
+/* Feature macros must stand before every include: strict -std=c11
+   defines __STRICT_ANSI__, and glibc then hides the POSIX surface
+   (open_memstream, struct timeval, suseconds_t) unless one of these
+   is set. macOS gates the same surface — and the ucontext fibers —
+   behind _XOPEN_SOURCE; 700 is the level that declares
+   open_memstream. */
+#if defined(__APPLE__)
+#define _XOPEN_SOURCE 700
+#else
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "emo_c_runtime.h"
 
-/* The cooperative scheduler rides the POSIX ucontext fibers; macOS
-   headers gate them behind feature macros. */
-#if defined(__APPLE__)
-#define _XOPEN_SOURCE 600
-#endif
 #include <ucontext.h>
 
 #include <arpa/inet.h>
@@ -13,6 +20,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <math.h>
