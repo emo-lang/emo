@@ -110,10 +110,29 @@ for lib in "$root/lib"/*; do
 done
 
 echo "installed $prefix/bin/emo ($("$prefix/bin/emo" version))"
+
+# PATH setup: with bash or zsh as the login shell, append the export
+# to its rc file — idempotently; other shells keep the printed hint.
+line="export PATH=\"$prefix/bin:\$PATH\""
+rc=
+case "${SHELL:-}" in
+*/zsh) rc=$HOME/.zshrc ;;
+*/bash) rc=$HOME/.bashrc ;;
+esac
 case :$PATH: in
 *:$prefix/bin:*) ;;
 *)
-  echo "add it to PATH (bash/zsh): export PATH=\"$prefix/bin:\$PATH\""
+  if [ -n "$rc" ]; then
+    if [ -f "$rc" ] && grep -qF "$prefix/bin" "$rc"; then
+      echo "install.sh: $rc already lists $prefix/bin"
+    else
+      printf '\n# added by the Emo installer\n%s\n' "$line" >>"$rc"
+      echo "install.sh: added $prefix/bin to PATH in $rc"
+      echo "install.sh: start a new shell, or run: source $rc"
+    fi
+  else
+    echo "add it to PATH: $line"
+  fi
   ;;
 esac
 echo "verify the environment with: emo doctor"
