@@ -46,7 +46,12 @@ jobs:
         run: opam exec -- dune build --profile release src/emo_cli/emo.exe
 
       - name: Test the release build
-        run: opam exec -- dune test
+        # One profile throughout: building the binary with --profile
+        # release and then testing under the default profile lets dune
+        # invalidate the tree between the two steps, and the test
+        # suite's emo.exe dependency then races the stale-target
+        # cleanup on slower runners — the binary vanishes mid-run.
+        run: opam exec -- dune test --profile release
 
       - name: Package
         env:

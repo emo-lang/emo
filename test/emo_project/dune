@@ -7,6 +7,7 @@
  (deps
   (source_tree ../../examples)
   (source_tree ../../stdlib)
+  ../../src/emo_cli/emo.exe
   emo_project_test.exe)
  (action
   (setenv
