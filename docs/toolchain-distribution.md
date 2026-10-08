@@ -131,7 +131,9 @@ document left unscheduled:
 - **macOS signing and notarization complete locally.** Hosted runners
   hold no Developer ID private key, so `release.yml` drafts the macOS
   archives unsigned by design; `devtools/notarize-release.sh`
-  (`just notarize <tag>`) then signs them with the keychain's
+  (`just notarize <tag>`, or the whole flow in one command —
+  `just release <tag>`: tag, wait for CI, notarize, publish) then
+  signs them with the keychain's
   Developer ID Application identity — hardened runtime, timestamped —
   submits through notarytool (a keychain profile, an App Store Connect
   API key trio, or Apple ID credentials), re-uploads the archives,

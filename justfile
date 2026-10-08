@@ -65,14 +65,16 @@ package:
 # local half of the signing story, since CI runners hold no Developer
 # ID private key. Signs with the keychain's Developer ID Application
 # identity, notarizes, re-uploads, and refreshes SHA256SUMS.
-# Needs a notary credential: EMO_NOTARY_PROFILE (see
-# devtools/notarize-release.sh), the ASC key trio, or the Apple ID
-# quartet.
+# Needs a notary credential: EMO_NOTARY_PROFILE (defaulting to
+# emo-notary; see devtools/notarize-release.sh), the ASC key trio, or
+# the Apple ID quartet.
 #
-# notarize: notarize a draft release's macOS archives (TAG, e.g. v0.26.7)
+# notarize: notarize a draft release's macOS archives (TAG, e.g. v0.26.8)
 notarize TAG:
     #!/bin/sh
     set -e
+    : "${EMO_NOTARY_PROFILE:=emo-notary}"
+    export EMO_NOTARY_PROFILE
     if [ -z "$EMO_NOTARY_PROFILE" ] && [ -z "$EMO_NOTARY_KEY" ] && \
       [ -z "$EMO_NOTARY_APPLE_ID" ]; then
         echo "notarize: set EMO_NOTARY_PROFILE (xcrun notarytool store-credentials)," >&2
@@ -80,6 +82,60 @@ notarize TAG:
         exit 64
     fi
     devtools/notarize-release.sh {{TAG}}
+
+# Ship a release end to end from the signing Mac: cut the annotated
+# tag at HEAD (must match the VERSION file), push it, wait for the
+# Release workflow to draft the archives, notarize the macOS zips
+# locally, then publish the draft. Run on the machine whose keychain
+# holds the Developer ID identity and the emo-notary profile.
+#
+# release: tag, wait for CI, notarize, and publish (TAG, e.g. v0.26.8)
+release TAG:
+    #!/bin/sh
+    set -e
+    [ "$(uname -s)" = Darwin ] || {
+        echo "release: run this on the signing Mac — notarization needs the keychain identity" >&2
+        exit 64
+    }
+    version=$(cat VERSION)
+    [ "$version" = "{{TAG}}" ] || {
+        echo "release: VERSION says $version, not {{TAG}}" >&2
+        exit 64
+    }
+    repo=${EMO_REPO:-emo-lang/emo}
+
+    if ! git rev-parse -q --verify "{{TAG}}^{tag}" >/dev/null 2>&1; then
+        git tag -a "{{TAG}}" -m "Emo {{TAG}}"
+        echo "release: cut {{TAG}} at $(git rev-parse --short HEAD)"
+    fi
+    if ! git ls-remote --exit-code --tags origin "refs/tags/{{TAG}}" >/dev/null 2>&1; then
+        git push origin "{{TAG}}"
+    fi
+
+    echo "release: waiting for the Release workflow"
+    run_id=
+    tries=0
+    while [ -z "$run_id" ] && [ "$tries" -lt 60 ]; do
+        run_id=$(gh run list --repo "$repo" --workflow release.yml \
+          --branch "{{TAG}}" --limit 1 --json databaseId \
+          --jq '.[0].databaseId' 2>/dev/null || true)
+        [ -z "$run_id" ] && { sleep 5; tries=$((tries + 1)); }
+    done
+    [ -n "$run_id" ] || {
+        echo "release: no Release run appeared for {{TAG}}" >&2
+        exit 65
+    }
+    gh run watch "$run_id" --repo "$repo" --exit-status --interval 60
+
+    if [ "$(gh release view "{{TAG}}" --repo "$repo" --json isDraft --jq .isDraft)" = true ]; then
+        echo "release: notarizing the macOS archives"
+        just notarize "{{TAG}}"
+        echo "release: publishing"
+        gh release edit "{{TAG}}" --repo "$repo" --draft=false
+    else
+        echo "release: {{TAG}} is already published — skipping notarize and publish"
+    fi
+    echo "release: {{TAG}} live at https://github.com/$repo/releases/tag/{{TAG}}"
 
 # test: run the full test suite
 test:

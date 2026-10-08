@@ -110,7 +110,8 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
   容器中验证，而非构建机上。GitHub Release 草稿附带 `SHA256SUMS`。
 - **macOS 签名与公证在本地完成。** 托管 runner 上没有 Developer ID
   私钥，因此 `release.yml` 按设计先产出未签名草稿；随后
-  `devtools/notarize-release.sh`（`just notarize <tag>`）用钥匙串里的
+  `devtools/notarize-release.sh`（`just notarize <tag>`，或一条命令走完
+  全流程 `just release <tag>`：打 tag、等 CI、公证、发布）用钥匙串里的
   Developer ID Application 身份签名——hardened runtime、带时间戳——
   经 notarytool 提交（钥匙串 profile、App Store Connect API 密钥
   三件套或 Apple ID 凭据任选其一），回传归档并刷新 `SHA256SUMS`。
