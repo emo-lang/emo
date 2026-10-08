@@ -100,13 +100,22 @@ if [ ! -f "$root/bin/emo" ]; then
   exit 1
 fi
 
+# Re-running upgrades in place. The archive's dylibs are read-only
+# (Homebrew's openssl ships them 444), and cp cannot open an existing
+# read-only destination for writing — so stage each file beside the
+# target and mv it into place, which replaces the directory entry and
+# works whatever the old file's mode.
 mkdir -p "$prefix/bin" "$prefix/lib"
+rm -f "$prefix/bin/emo.incoming"
 cp "$root/bin/emo" "$prefix/bin/emo.incoming"
 chmod 755 "$prefix/bin/emo.incoming"
 mv "$prefix/bin/emo.incoming" "$prefix/bin/emo"
 for lib in "$root/lib"/*; do
   [ -f "$lib" ] || continue
-  cp "$lib" "$prefix/lib/"
+  base=${lib##*/}
+  rm -f "$prefix/lib/$base.incoming"
+  cp "$lib" "$prefix/lib/$base.incoming"
+  mv "$prefix/lib/$base.incoming" "$prefix/lib/$base"
 done
 
 echo "installed $prefix/bin/emo ($("$prefix/bin/emo" version))"
