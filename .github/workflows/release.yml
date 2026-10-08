@@ -106,6 +106,9 @@ jobs:
       - name: Draft the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          # The job never checks out, so gh has no git context to
+          # resolve the repository from — name it instead.
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "$GITHUB_REF_NAME" --draft \
             --title "emo $GITHUB_REF_NAME" --generate-notes dist/*
