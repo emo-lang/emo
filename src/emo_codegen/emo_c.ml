@@ -967,7 +967,21 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
               finish (Printf.sprintf "emo_list_pop_back(%s)" recv_dyn)
           | "length", [] ->
               box_int env result_ty (Printf.sprintf "emo_length(%s)" recv_dyn)
-          | _ -> refuse "this method on an unknown receiver")
+          | _ ->
+              (* Anything else on an unknown receiver is most likely an
+                 instance method whose static type the checker lost at a
+                 cross-module call — the vtable send is the dispatch the
+                 interpreter would answer with. *)
+              if List.length args > 4 then
+                refuse "method calls with more than four arguments";
+              let dyn_args = String.concat ", " (List.map (as_dyn env) args) in
+              let send =
+                Printf.sprintf "emo_send(%s, %s, INT64_C(%d), %s)"
+                  (as_dyn env self_) (c_string name) (List.length args)
+                  (if args = [] then "NULL"
+                   else Printf.sprintf "(emo_value[]){%s}" dyn_args)
+              in
+              if is_dyn result_ty then send else unbox_code send result_ty)
       | _ when is_dyn self_.Emo_ir.ety -> (
           (* an instance method: direct on a class-typed receiver, through
          the vtable's thunk otherwise (interfaces, Unknown) *)
@@ -1017,7 +1031,8 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
               let v =
                 Printf.sprintf "emo_send(%s, %s, INT64_C(%d), %s)"
                   (as_dyn env self_) (c_string name) arity
-                  (if args = [] then "NULL" else arg_code)
+                  (if args = [] then "NULL"
+                   else Printf.sprintf "(emo_value[]){%s}" arg_code)
               in
               if is_dyn result_ty then v else unbox_code v result_ty)
       | _ -> refuse "method calls")
@@ -1916,19 +1931,37 @@ let cluster_layout (index : int) (members : Emo_ir.func list) :
    need not know about the merge. *)
 let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
   let cluster, ret, cluster_params, slots = cluster_layout index members in
+  let with_entry p = "int __entry" ^ if p = "void" then "" else ", " ^ p in
   List.iter
     (fun (m : Emo_ir.func) ->
       let m_ret, m_params = signature m in
+      let entry =
+        match
+          List.find_index
+            (fun (x : Emo_ir.func) -> x.Emo_ir.fname = m.Emo_ir.fname)
+            members
+        with
+        | Some i -> i
+        | None -> 0
+      in
       let args =
         List.map
           (fun (other, n, ty) ->
             if other = m.Emo_ir.fname then c_ident n else dummy_value ty)
           slots
       in
-      put env0 "%s %s(%s) {\n  return %s(%s);\n}\n\n" m_ret
-        (c_ident m.Emo_ir.fname) m_params cluster (String.concat ", " args))
+      put env0 "%s %s(%s) {\n  return %s(%d, %s);\n}\n\n" m_ret
+        (c_ident m.Emo_ir.fname) m_params cluster entry
+        (String.concat ", " args))
     members;
-  put env0 "%s %s(%s) {\n" ret cluster cluster_params;
+  put env0 "%s %s(%s) {\n" ret cluster (with_entry cluster_params);
+  (* An external call may target any member of the cluster: route to
+     that member's head before its body runs. *)
+  List.iteri
+    (fun i (m : Emo_ir.func) ->
+      put env0 "  if (__entry == %d) goto emo_head_%s;\n" i
+        (c_ident m.Emo_ir.fname))
+    members;
   let dyn_ret =
     List.exists (fun (m : Emo_ir.func) -> is_dyn m.Emo_ir.fresult) members
   in
@@ -2156,7 +2189,7 @@ let emit (program : Emo_ir.program) : string =
       let cluster, ret, cluster_params, _ =
         cluster_layout i (member_funcs members)
       in
-      put env0 "%s %s(%s);\n" ret cluster cluster_params)
+      put env0 "%s %s(int __entry, %s);\n" ret cluster cluster_params)
     clusters;
   List.iter
     (fun (c : Emo_ir.class_) ->
