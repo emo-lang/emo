@@ -1247,6 +1247,188 @@ let version_cmd =
     (Cmd.info "version" ~doc:"Print the version.")
     Term.(const print_version $ const ())
 
+(* ---- `emo emoji`: the shared-package lifecycle ----
+
+   The group gathers the authoring flow for packages meant for the
+   registry — new, build, publish — under the name of the archive
+   format itself. *)
+
+(* `emo emoji new <owner/name>`: the package scaffold — package.emo,
+   the public module named after the package, a README (packed on
+   publish), and .gitignore. Strictness holds: the name must be the
+   publishable owner/name form and an existing directory refuses;
+   nothing is ever overwritten. *)
+let scaffold_package ~(name : string) ~(path : string) : int =
+  match Emo_pkg.Publish.validate_name name with
+  | Error message ->
+      prerr_endline (Printf.sprintf "emo emoji new: %s" message);
+      65
+  | Ok (owner, short) ->
+      if Sys.file_exists path then begin
+        prerr_endline
+          (Printf.sprintf
+             "emo emoji new: refusing to overwrite — `%s` already exists" path);
+        65
+      end
+      else begin
+        let make_dirs dir =
+          let rec go d =
+            if not (Sys.file_exists d) then begin
+              go (Filename.dirname d);
+              Unix.mkdir d 0o755
+            end
+          in
+          go dir
+        in
+        let write file contents =
+          let oc = open_out_bin (Filename.concat path file) in
+          output_string oc contents;
+          close_out oc
+        in
+        make_dirs (Filename.dirname path);
+        Unix.mkdir path 0o755;
+        write "package.emo"
+          (Printf.sprintf
+             {|package {
+  name = "%s/%s"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}
+|}
+             owner short);
+        write (short ^ ".emo")
+          (Printf.sprintf
+             {|// %s, the public module of %s/%s — consumers require it as
+// "%s" once the package is in their deps.
+
+def hello(whom String) String {
+  return "Hello, ${whom}!"
+}
+|}
+             short owner short short);
+        write "README.md"
+          (Printf.sprintf "# %s/%s\n\nA shared Emo package.\n" owner short);
+        write ".gitignore" ".emo-build/\n";
+        Printf.printf "created %s — next: cd %s && emo emoji build\n" path path;
+        0
+      end
+
+let emoji_new_cmd =
+  let name =
+    Arg.(
+      required & pos 0 (some string) None & info [] ~docv:"OWNER/NAME"
+          ~doc:
+            "The publishable package name — owner/name, each part 1-64 \
+             lowercase letters, digits, `_` or `-`. The directory is named \
+             after the second part.")
+  in
+  Cmd.v
+    (Cmd.info "new" ~doc:"Scaffold a shareable package.")
+    Term.(
+      const (fun name ->
+          let path = match String.index_opt name '/' with
+            | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+            | None -> name
+          in
+          match scaffold_package ~name ~path with
+          | 0 -> Cmd.Exit.ok
+          | code -> exit code)
+      $ name)
+
+(* `emo emoji build`: the pre-publish gate — the package's entry module
+   must compile under every target the manifest declares. *)
+let emoji_build ~(dir : string) : int =
+  let manifest_path = Filename.concat dir "package.emo" in
+  if not (Sys.file_exists manifest_path) then begin
+    prerr_endline "no package.emo in the current directory";
+    66
+  end
+  else
+    match
+      Emo_pkg.parse_manifest ~file:manifest_path
+        ~source:(Emo_project.read_file manifest_path)
+    with
+    | exception Emo_pkg.Manifest_error d ->
+        render_errors ~color:false ~error_limit:20 [ d ];
+        65
+    | m -> (
+        let short =
+          match String.index_opt m.Emo_pkg.name '/' with
+          | Some i ->
+              String.sub m.Emo_pkg.name (i + 1)
+                (String.length m.Emo_pkg.name - i - 1)
+          | None -> m.Emo_pkg.name
+        in
+        let entry =
+          if Sys.file_exists (Filename.concat dir (short ^ ".emo")) then
+            Filename.concat dir (short ^ ".emo")
+          else if Sys.file_exists (Filename.concat dir "main.emo") then
+            Filename.concat dir "main.emo"
+          else begin
+            prerr_endline
+              (Printf.sprintf
+                 "emo emoji build: no entry module — expected `%s.emo` beside \
+                  the manifest"
+                 short);
+            exit 66
+          end
+        in
+        let results =
+          List.map
+            (fun target ->
+                let output =
+                  Filename.concat dir
+                    (Filename.concat ".emo-build" ("emoji-" ^ target))
+                in
+                let code =
+                  build_file ~entry ~output ~specialize:true ~cclibs:[]
+                    ~target
+                in
+                (target, code))
+            m.Emo_pkg.targets
+        in
+        let failed =
+          List.filter (fun (_, code) -> code <> 0) results
+        in
+        if failed = [] then begin
+          List.iter
+            (fun (target, _) ->
+                Printf.printf "%-11s ok\n" target)
+            results;
+          0
+        end
+        else begin
+          List.iter
+            (fun (target, _) ->
+                prerr_endline
+                  (Printf.sprintf "emo emoji build: the %s target failed"
+                     target))
+            failed;
+          (match List.find_opt (fun (_, code) -> code = 70) failed with
+          | Some (_, code) -> code
+          | None -> 65)
+        end)
+
+let emoji_build_cmd =
+  Cmd.v
+    (Cmd.info "build"
+       ~doc:
+         "Compile the package's entry module under every declared target.")
+    Term.(
+      const (fun () ->
+          match emoji_build ~dir:(Sys.getcwd ()) with
+          | 0 -> Cmd.Exit.ok
+          | code -> exit code)
+      $ const ())
+
+let emoji =
+  Cmd.group
+    (Cmd.info "emoji"
+       ~doc:"Manage shared packages — the lifecycle of a .emoji archive.")
+    [ emoji_new_cmd; emoji_build_cmd; publish_cmd ]
+
 let cmd =
   Cmd.group
     (Cmd.info "emo" ~version ~doc:"The Emo programming language toolchain.")
@@ -1258,6 +1440,7 @@ let cmd =
       deps;
       install_cmd;
       publish_cmd;
+      emoji;
       new_cmd;
       doctor_cmd;
       version_cmd;

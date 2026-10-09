@@ -1227,6 +1227,73 @@ let new_tests =
         Alcotest.(check int) "exit" 65 (Emo_cli.scaffold ~path:dir));
   ]
 
+(* ---- emoji: the shared-package lifecycle ---- *)
+
+let emoji_tests =
+  [
+    tc "emoji new scaffolds a publishable package" (fun () ->
+        let dir = Filename.concat scratch "emoji-hello" in
+        if Sys.file_exists dir then Emo_cli.remove_tree dir
+        else if Sys.file_exists scratch then ()
+        else Unix.mkdir scratch 0o755;
+        Alcotest.(check int)
+          "exit" 0 (Emo_cli.scaffold_package ~name:"acme/emoji-hello" ~path:dir);
+        let manifest = read_file (Filename.concat dir "package.emo") in
+        Alcotest.(check bool)
+          "manifest names the package owner/name" true
+          (contains manifest {|name = "acme/emoji-hello"|});
+        let module_src = read_file (Filename.concat dir "emoji-hello.emo") in
+        Alcotest.(check bool)
+          "the public module greets" true (contains module_src "hello");
+        Alcotest.(check bool)
+          "a README rides along" true
+          (Sys.file_exists (Filename.concat dir "README.md")));
+    tc "emoji new refuses a plain name" (fun () ->
+        let old_cwd = Sys.getcwd () in
+        Sys.chdir scratch;
+        Fun.protect
+          ~finally:(fun () -> Sys.chdir old_cwd)
+          (fun () ->
+            let exit_code =
+              try Emo_cli.scaffold_package ~name:"plainname" ~path:"plainname"
+              with _ -> 65
+            in
+            Alcotest.(check int) "exit" 65 exit_code));
+    tc "emoji new refuses an existing directory" (fun () ->
+        let dir = Filename.concat scratch "emoji-clash" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        Alcotest.(check int)
+          "exit" 65
+          (Emo_cli.scaffold_package ~name:"acme/emoji-clash" ~path:dir));
+    tc "emoji build passes the scaffolded package" (fun () ->
+        let old_cwd = Sys.getcwd () in
+        let dir = Filename.concat scratch "emoji-hello" in
+        Sys.chdir dir;
+        Fun.protect
+          ~finally:(fun () -> Sys.chdir old_cwd)
+          (fun () ->
+            Alcotest.(check int) "exit" 0
+              (Emo_cli.emoji_build ~dir:(Sys.getcwd ()))));
+    tc "emoji build fails on a broken module" (fun () ->
+        let old_cwd = Sys.getcwd () in
+        let dir = Filename.concat scratch "emoji-hello" in
+        let module_file = Filename.concat dir "emoji-hello.emo" in
+        let good = read_file module_file in
+        let oc = open_out_bin module_file in
+        output_string oc "def broken( {\n";
+        close_out oc;
+        Sys.chdir dir;
+        Fun.protect
+          ~finally:(fun () ->
+            let oc = open_out_bin module_file in
+            output_string oc good;
+            close_out oc;
+            Sys.chdir old_cwd)
+          (fun () ->
+            Alcotest.(check int) "exit" 65
+              (Emo_cli.emoji_build ~dir:(Sys.getcwd ()))));
+  ]
+
 (* ---- doctor: the target-aware environment check (T25.5) ---- *)
 
 let doctor_tests =
@@ -1267,5 +1334,6 @@ let () =
       ("c_foreign", c_foreign_tests);
       ("publish", publish_tests);
       ("new", new_tests);
+      ("emoji", emoji_tests);
       ("doctor", doctor_tests);
     ]
