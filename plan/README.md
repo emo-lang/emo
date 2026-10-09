@@ -72,3 +72,4 @@ incrementally shippable steps — one file per step, executed in order.
 | 26 | Target independence (runtimes decoupled from the host) | done (M10 complete; every runtime embedded, the ocaml target installation-independent) |
 | 27 | The standard library: `json` | done on interpreter/ocaml/typescript; c, wasm, beam wait on cross-module types (step-27 follow-up) |
 | 28 | The standard library: `yaml` | done on interpreter/ocaml/typescript; c, wasm, beam wait on cross-module types (step-27 follow-up) |
+| 29 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; wasm, beam wait on cross-module types (step-27 follow-up) |

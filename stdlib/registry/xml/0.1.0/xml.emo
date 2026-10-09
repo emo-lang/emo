@@ -1,0 +1,937 @@
+// The xml package: decode and encode well-formed XML into a Xml
+// value tree — one interface, an element class and a text class.
+// Pure Emo over the shared runtimes.
+//
+// XML is all text: elements carry a name, attributes (string to
+// string), and child nodes; text nodes carry their characters. No
+// type coercion happens anywhere — numbers stay whatever the caller
+// makes of them.
+//
+// Supported: elements, attributes (single or double quoted), text
+// with the five predefined entities plus `&#ddd;` / `&#xhh;`
+// character references, comments (skipped), processing instructions
+// (skipped), CDATA sections, an optional XML declaration, and a
+// DOCTYPE without an internal subset. Names are literal (a prefix
+// stays part of the name; no namespace resolution). All text
+// children are kept — including whitespace-only ones — so
+// encode(decode(x)) reproduces the tree exactly.
+//
+// Not supported (each raises): entity definitions beyond the five
+// predefined ones, DOCTYPE with an internal subset, documents with
+// more than one root element, and namespace resolution.
+
+enum XmlKind { xelement, xtext }
+
+// The scalar accessor is `as_text` (a text node answers with its
+// characters; an element refuses). The containers (name, attrs,
+// attr, children, get, text) live on the concrete element class — an
+// interface signature cannot name its own interface — read them
+// through `is()`.
+interface Xml {
+  def kind() XmlKind
+  def is_text?() Bool
+  def encode() String
+  def as_text() String
+}
+
+class XmlElement {
+  def init(name String, attrs Array[(String, String)], children Array[Xml]) {
+    self.name = name
+    self.attrs = attrs
+    self.children = children
+  }
+
+  def kind() XmlKind {
+    return XmlKind.xelement
+  }
+
+  def is_text?() Bool {
+    return false
+  }
+
+  def encode() String {
+    return emit_element(self)
+  }
+
+  def as_text() String {
+    raise Exception.new(message: "xml: expected text, got element `" + self.name + "`")
+  }
+
+  // The element's name (a prefix stays part of the name).
+  def name() String {
+    return self.name
+  }
+
+  // The attributes in document order.
+  def attrs() Array[(String, String)] {
+    return self.attrs
+  }
+
+  // The value of attribute `name`; a missing attribute is a mistake
+  // and raises (scan `attrs()` when presence varies).
+  def attr(name String) String {
+    return attr_lookup(self.attrs, name, self.attrs.length() - 1)
+  }
+
+  // All child nodes in document order — elements and text (including
+  // whitespace-only text).
+  def children() Array[Xml] {
+    return self.children
+  }
+
+  // The first child element named `name`; a missing one raises.
+  def get(name String) Xml {
+    return element_lookup(self.children, name, 0)
+  }
+
+  // All text in this subtree, in document order.
+  def text() String {
+    return element_text(self.children, 0, "")
+  }
+}
+
+class XmlText {
+  def init(text String) {
+    self.text = text
+  }
+
+  def kind() XmlKind {
+    return XmlKind.xtext
+  }
+
+  def is_text?() Bool {
+    return true
+  }
+
+  def encode() String {
+    return escape_text(self.text)
+  }
+
+  def as_text() String {
+    return self.text
+  }
+
+  def name() String {
+    raise Exception.new(message: "xml: expected an element, got text")
+  }
+
+  def attrs() Array[(String, String)] {
+    raise Exception.new(message: "xml: expected an element, got text")
+  }
+
+  def attr(name String) String {
+    raise Exception.new(message: "xml: expected an element, got text")
+  }
+
+  def children() Array[Xml] {
+    raise Exception.new(message: "xml: expected an element, got text")
+  }
+
+  def get(name String) Xml {
+    raise Exception.new(message: "xml: expected an element, got text")
+  }
+
+  def text() String {
+    raise Exception.new(message: "xml: expected an element, got text")
+  }
+}
+
+// ---- factories ----
+
+def element(name String, attrs Array[(String, String)], children Array[Xml]) Xml {
+  return XmlElement.new(name: name, attrs: attrs, children: children)
+}
+
+def text(s String) Xml {
+  return XmlText.new(text: s)
+}
+
+def attr_lookup(attrs Array[(String, String)], name String, i Int64) String {
+  if i < 0 {
+    raise Exception.new(message: "xml: no attribute `" + name + "`")
+  }
+  const pair = attrs[i]
+  if pair[0] == name {
+    return pair[1]
+  }
+  return attr_lookup(attrs, name, i - 1)
+}
+
+def element_lookup(children Array[Xml], name String, i Int64) Xml {
+  if i >= children.length() {
+    raise Exception.new(message: "xml: no element `" + name + "`")
+  }
+  const child = children[i]
+  if child.is(XmlElement) {
+    if child.name() == name {
+      return child
+    }
+  }
+  return element_lookup(children, name, i + 1)
+}
+
+// All text in the subtree, in document order.
+def element_text(children Array[Xml], i Int64, acc String) String {
+  if i >= children.length() {
+    return acc
+  }
+  const child = children[i]
+  if child.is(XmlText) {
+    return element_text(children, i + 1, acc + child.as_text())
+  }
+  if child.is(XmlElement) {
+    return element_text(children, i + 1, acc + child.text())
+  }
+  return acc
+}
+
+// ---- decode ----
+
+// Encodes the tree back to XML text (no declaration, self-closing
+// empty elements, entities for `&` `<` `>` and, in attributes, `"`).
+def encode(v Xml) String {
+  return v.encode()
+}
+
+// Decodes one XML document into the Xml tree. The declaration,
+// DOCTYPE (without an internal subset), comments, and processing
+// instructions before the root are skipped; anything after the root
+// element raises.
+def decode(text String) Xml {
+  const data = text.to_bytes()
+  const p0 = skip_prolog(data, 0)
+  const r = parse_node(data, p0, 0)
+  const after = skip_prolog(data, r[1])
+  if after < data.length() {
+    raise Exception.new(message: err(after, "content after the root element"))
+  }
+  return r[0]
+}
+
+def err(at Int64, what String) String {
+  return "xml: " + what + " at byte " + at.to_string()
+}
+
+// Skips whitespace, the declaration, comments, processing
+// instructions, and a DOCTYPE; returns the next markup position.
+def skip_prolog(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  const ws = skip_ws(data, i)
+  if ws >= data.length() {
+    return ws
+  }
+  if data.get(ws) != 60 {
+    return ws
+  }
+  if is_open(data, ws, 63) {
+    return skip_prolog(data, scan_stop2(data, ws + 2))
+  }
+  if is_open(data, ws, 33) {
+    if comment_at(data, ws) {
+      return skip_prolog(data, scan_stop3(data, ws + 4))
+    }
+    return skip_prolog(data, skip_doctype(data, ws + 2, 0))
+  }
+  return ws
+}
+
+// `<` followed by the given byte.
+def is_open(data Bytes, i Int64, which Int64) Bool {
+  if i + 1 < data.length() {
+    return data.get(i) == 60 && data.get(i + 1) == which
+  }
+  return false
+}
+
+// The position past the next two-byte stop `c1 c2` (a `?>`).
+def scan_stop2(data Bytes, i Int64) Int64 {
+  if i + 1 >= data.length() {
+    raise Exception.new(message: err(i, "unterminated construct"))
+  }
+  if data.get(i) == 63 && data.get(i + 1) == 62 {
+    return i + 2
+  }
+  return scan_stop2(data, i + 1)
+}
+
+// The position past the next three-byte stop `c1 c2 c3` (a `-->`).
+def scan_stop3(data Bytes, i Int64) Int64 {
+  if i + 2 >= data.length() {
+    raise Exception.new(message: err(i, "unterminated comment"))
+  }
+  if data.get(i) == 45 && data.get(i + 1) == 45 && data.get(i + 2) == 62 {
+    return i + 3
+  }
+  return scan_stop3(data, i + 1)
+}
+
+// Skips a DOCTYPE, tracking the internal subset's brackets.
+def skip_doctype(data Bytes, i Int64, depth Int64) Int64 {
+  if i >= data.length() {
+    raise Exception.new(message: err(i, "unterminated DOCTYPE"))
+  }
+  const c = data.get(i)
+  if c == 91 {
+    return skip_doctype(data, i + 1, depth + 1)
+  }
+  if c == 93 {
+    return skip_doctype(data, i + 1, depth - 1)
+  }
+  if depth == 0 && c == 62 {
+    return i + 1
+  }
+  return skip_doctype(data, i + 1, depth)
+}
+
+// ---- node parsing ----
+
+def parse_node(data Bytes, pos Int64, depth Int64) (Xml, Int64) {
+  if depth > 512 {
+    raise Exception.new(message: err(pos, "nesting deeper than 512"))
+  }
+  if data.get(pos) != 60 {
+    return parse_text(data, pos, depth)
+  }
+  if comment_at(data, pos) {
+    return parse_node(data, scan_stop3(data, pos + 4), depth)
+  }
+  if is_open(data, pos, 63) {
+    return parse_node(data, scan_stop2(data, pos + 2), depth)
+  }
+  if cdata_at(data, pos) {
+    return parse_cdata(data, pos, depth)
+  }
+  if is_close(data, pos) {
+    raise Exception.new(message: err(pos, "unexpected closing tag"))
+  }
+  return parse_element(data, pos, depth)
+}
+
+// Whether `</` starts at i.
+def is_close(data Bytes, i Int64) Bool {
+  if i + 1 < data.length() {
+    return data.get(i) == 60 && data.get(i + 1) == 47
+  }
+  return false
+}
+
+// Whether `<![CDATA[` starts at i.
+def cdata_at(data Bytes, i Int64) Bool {
+  const b = cdata_word().to_bytes()
+  return has_prefix(data, i, b, 0, b.length())
+}
+
+def cdata_word() String {
+  return "<![CDATA["
+}
+
+def has_prefix(data Bytes, i Int64, b Bytes, j Int64, n Int64) Bool {
+  if j >= n {
+    return true
+  }
+  if i >= data.length() {
+    return false
+  }
+  if data.get(i) != b.get(j) {
+    return false
+  }
+  return has_prefix(data, i + 1, b, j + 1, n)
+}
+
+// Whether `<!--` starts at i.
+def comment_at(data Bytes, i Int64) Bool {
+  if i + 3 < data.length() {
+    if data.get(i + 2) == 45 {
+      if data.get(i + 3) == 45 {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+// CDATA: the raw bytes become a text node (no entity decoding).
+def parse_cdata(data Bytes, pos Int64, depth Int64) (Xml, Int64) {
+  const start = pos + 9
+  const stop = cdata_end(data, start)
+  return (XmlText.new(text: slice_text(data, start, stop)), stop + 3)
+}
+
+def cdata_end(data Bytes, i Int64) Int64 {
+  if i + 2 >= data.length() {
+    raise Exception.new(message: err(i, "unterminated CDATA section"))
+  }
+  if data.get(i) == 93 {
+    if data.get(i + 1) == 93 {
+      if data.get(i + 2) == 62 {
+        return i
+      }
+    }
+  }
+  return cdata_end(data, i + 1)
+}
+
+// Text: runs to the next `<`, entities decoded.
+def parse_text(data Bytes, pos Int64, depth Int64) (Xml, Int64) {
+  const e = text_end(data, pos)
+  const len = text_len(data, pos, e, 0)
+  const out = Bytes.new(len)
+  const r = text_fill(data, pos, e, out, 0)
+  return (XmlText.new(text: out.to_string()), r[0])
+}
+
+def text_end(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  if data.get(i) == 60 {
+    return i
+  }
+  return text_end(data, i + 1)
+}
+
+// The decoded length of the text run [pos, e).
+def text_len(data Bytes, pos Int64, e Int64, n Int64) Int64 {
+  if pos >= e {
+    return n
+  }
+  if data.get(pos) == 38 {
+    const er = entity(data, pos + 1, e)
+    return text_len(data, er[1], e, n + utf8_len(er[0]))
+  }
+  return text_len(data, pos + 1, e, n + 1)
+}
+
+// Fills the decoded bytes of the text run; returns (end pos, written).
+def text_fill(data Bytes, pos Int64, e Int64, out Bytes, w Int64) (Int64, Int64) {
+  if pos >= e {
+    return (pos, w)
+  }
+  if data.get(pos) == 38 {
+    const er = entity(data, pos + 1, e)
+    const nw = utf8_put(out, w, er[0])
+    return text_fill(data, er[1], e, out, nw)
+  }
+  out.set(w, data.get(pos))
+  return text_fill(data, pos + 1, e, out, w + 1)
+}
+
+// The entity after `&`: (code point, position past the `;`).
+def entity(data Bytes, i Int64, e Int64) (Int64, Int64) {
+  if i >= e {
+    raise Exception.new(message: err(i, "unterminated entity"))
+  }
+  const c = data.get(i)
+  if c == 35 {
+    const h = hex_or_dec(data, i + 1, e)
+    if h[0] < 0 {
+      raise Exception.new(message: err(i, "unknown or malformed entity"))
+    }
+    if h[1] >= e || data.get(h[1]) != 59 {
+      raise Exception.new(message: err(i, "entity missing `;`"))
+    }
+    return (h[0], h[1] + 1)
+  }
+  return named_entity(data, i, e, 0)
+}
+
+// A character reference: (code point, position of the `;`).
+def hex_or_dec(data Bytes, i Int64, e Int64) (Int64, Int64) {
+  if i < e {
+    if data.get(i) == 120 || data.get(i) == 88 {
+      return hex_ref(data, i + 1, e, 0)
+    }
+    return dec_ref(data, i, e, 0)
+  }
+  return (-1, i)
+}
+
+def dec_ref(data Bytes, i Int64, e Int64, acc Int64) (Int64, Int64) {
+  if i >= e {
+    return (acc, i)
+  }
+  const c = b_at(data, i)
+  if c < 48 || c > 57 {
+    return (acc, i)
+  }
+  const v = acc * 10 + (c - 48)
+  if v < 0 {
+    raise Exception.new(message: "xml: character reference out of range")
+  }
+  return dec_ref(data, i + 1, e, v)
+}
+
+def hex_ref(data Bytes, i Int64, e Int64, acc Int64) (Int64, Int64) {
+  if i >= e {
+    return (acc, i)
+  }
+  const c = b_at(data, i)
+  if c == 59 {
+    return (acc, i)
+  }
+  const d = hex_digit(c)
+  if d < 0 {
+    return (acc, i)
+  }
+  const v = acc * 16 + d
+  if v < 0 {
+    raise Exception.new(message: "xml: character reference out of range")
+  }
+  return hex_ref(data, i + 1, e, v)
+}
+
+def b_at(data Bytes, i Int64) Int64 {
+  return data.get(i)
+}
+
+// The five predefined named entities: (code point, position past
+// the `;`).
+def named_entity(data Bytes, i Int64, e Int64, n Int64) (Int64, Int64) {
+  if i + n >= e {
+    raise Exception.new(message: err(i, "unknown or unterminated entity"))
+  }
+  if b_at(data, i + n) == 59 {
+    // `lt` and `gt` are two letters past the `&` (`;` at n == 2);
+    // `amp` is three (n == 3); `quot` and `apos` are four (n == 4).
+    if n == 2 {
+      if word_is(data, i, "lt") {
+        return (60, i + 3)
+      }
+      if word_is(data, i, "gt") {
+        return (62, i + 3)
+      }
+    }
+    if n == 3 {
+      if word_is(data, i, "amp") {
+        return (38, i + 4)
+      }
+    }
+    if n == 4 {
+      if word_is(data, i, "quot") {
+        return (34, i + 5)
+      }
+      if word_is(data, i, "apos") {
+        return (39, i + 5)
+      }
+    }
+    raise Exception.new(message: err(i, "unknown entity"))
+  }
+  return named_entity(data, i, e, n + 1)
+}
+
+def word_is(data Bytes, i Int64, word String) Bool {
+  const b = word.to_bytes()
+  return has_prefix(data, i, b, 0, b.length())
+}
+
+// ---- elements ----
+
+def parse_element(data Bytes, pos Int64, depth Int64) (Xml, Int64) {
+  const ne = scan_name(data, pos + 1)
+  const name = slice_text(data, pos + 1, ne)
+  if name == "" {
+    raise Exception.new(message: err(pos, "expected an element name"))
+  }
+  const ar = parse_attrs(data, ne, [])
+  const after = skip_ws(data, ar[1])
+  if after >= data.length() {
+    raise Exception.new(message: err(pos, "unterminated element"))
+  }
+  if data.get(after) == 47 {
+    if after + 1 >= data.length() {
+      raise Exception.new(message: err(after, "unterminated element"))
+    }
+    if data.get(after + 1) != 62 {
+      raise Exception.new(message: err(after, "expected `>`"))
+    }
+    return (XmlElement.new(name: name, attrs: ar[0], children: []), after + 2)
+  }
+  if data.get(after) != 62 {
+    raise Exception.new(message: err(after, "expected `>`"))
+  }
+  const cr = parse_children(data, after + 1, depth + 1, name, [])
+  return (XmlElement.new(name: name, attrs: ar[0], children: cr[0]), cr[1])
+}
+
+// Attributes until `>` or `/>`; duplicates raise.
+def parse_attrs(data Bytes, i Int64, acc Array[(String, String)]) (Array[(String, String)], Int64) {
+  const p = skip_ws(data, i)
+  if p >= data.length() {
+    raise Exception.new(message: err(i, "unterminated element"))
+  }
+  const c = data.get(p)
+  if c == 62 || c == 47 {
+    return (acc, p)
+  }
+  const ne = scan_name(data, p)
+  if ne == p {
+    raise Exception.new(message: err(p, "expected an attribute name"))
+  }
+  const aname = slice_text(data, p, ne)
+  if dup_attr(acc, aname, acc.length() - 1) {
+    raise Exception.new(message: err(p, "duplicate attribute `" + aname + "`"))
+  }
+  const w1 = skip_ws(data, ne)
+  if w1 >= data.length() {
+    raise Exception.new(message: err(w1, "unterminated element"))
+  }
+  if data.get(w1) != 61 {
+    raise Exception.new(message: err(w1, "expected `=`"))
+  }
+  const w2 = skip_ws(data, w1 + 1)
+  if w2 >= data.length() {
+    raise Exception.new(message: err(w2, "unterminated element"))
+  }
+  const q = data.get(w2)
+  if q != 34 && q != 39 {
+    raise Exception.new(message: err(w2, "expected a quoted attribute value"))
+  }
+  const vr = attr_value(data, w2 + 1, q)
+  return parse_attrs(data, vr[1], acc.append((aname, vr[0])))
+}
+
+def dup_attr(attrs Array[(String, String)], name String, i Int64) Bool {
+  if i < 0 {
+    return false
+  }
+  const pair = attrs[i]
+  if pair[0] == name {
+    return true
+  }
+  return dup_attr(attrs, name, i - 1)
+}
+
+// The attribute value: raw bytes until the closing quote, entities
+// decoded. A raw `<` inside raises.
+def attr_value(data Bytes, i Int64, q Int64) (String, Int64) {
+  const e = attr_value_end(data, i, q)
+  const len = attr_len(data, i, e, 0)
+  const out = Bytes.new(len)
+  const r = attr_fill(data, i, e, out, 0)
+  // r[0] sits on the closing quote; resume past it.
+  return (out.to_string(), r[0] + 1)
+}
+
+def attr_value_end(data Bytes, i Int64, q Int64) Int64 {
+  if i >= data.length() {
+    raise Exception.new(message: err(i, "unterminated attribute value"))
+  }
+  if data.get(i) == q {
+    return i
+  }
+  if data.get(i) == 60 {
+    raise Exception.new(message: err(i, "`<` inside an attribute value"))
+  }
+  return attr_value_end(data, i + 1, q)
+}
+
+def attr_len(data Bytes, pos Int64, e Int64, n Int64) Int64 {
+  if pos >= e {
+    return n
+  }
+  if data.get(pos) == 38 {
+    const er = entity(data, pos + 1, e)
+    return attr_len(data, er[1], e, n + utf8_len(er[0]))
+  }
+  return attr_len(data, pos + 1, e, n + 1)
+}
+
+def attr_fill(data Bytes, pos Int64, e Int64, out Bytes, w Int64) (Int64, Int64) {
+  if pos >= e {
+    return (pos, w)
+  }
+  if data.get(pos) == 38 {
+    const er = entity(data, pos + 1, e)
+    const nw = utf8_put(out, w, er[0])
+    return attr_fill(data, er[1], e, out, nw)
+  }
+  out.set(w, data.get(pos))
+  return attr_fill(data, pos + 1, e, out, w + 1)
+}
+
+// The element's children up to the matching close tag, in document
+// order.
+def parse_children(data Bytes, pos Int64, depth Int64, name String, acc Array[Xml]) (Array[Xml], Int64) {
+  if pos >= data.length() {
+    raise Exception.new(message: err(pos, "unterminated element `" + name + "`"))
+  }
+  if is_close(data, pos) {
+    return close_tag(data, pos, name, acc)
+  }
+  if data.get(pos) != 60 {
+    const tr = parse_text(data, pos, depth)
+    return parse_children(data, tr[1], depth, name, acc.append(tr[0]))
+  }
+  const r = parse_node(data, pos, depth)
+  return parse_children(data, r[1], depth, name, acc.append(r[0]))
+}
+
+// Consumes `</name ... >` and returns (acc, past `>`).
+def close_tag(data Bytes, pos Int64, name String, acc Array[Xml]) (Array[Xml], Int64) {
+  const i = pos + 2
+  const ne = scan_name(data, i)
+  const seen = slice_text(data, i, ne)
+  if seen != name {
+    raise Exception.new(message: err(i, "closing tag `" + seen + "` does not match `" + name + "`"))
+  }
+  const after = skip_ws(data, ne)
+  if after >= data.length() || data.get(after) != 62 {
+    raise Exception.new(message: err(after, "expected `>`"))
+  }
+  return (acc, after + 1)
+}
+
+// ---- names and misc ----
+
+def scan_name(data Bytes, i Int64) Int64 {
+  if !name_start(data, i) {
+    return i
+  }
+  return scan_name_rest(data, i + 1)
+}
+
+def name_start(data Bytes, i Int64) Bool {
+  if i >= data.length() {
+    return false
+  }
+  const c = data.get(i)
+  if c >= 65 && c <= 90 {
+    return true
+  }
+  if c >= 97 && c <= 122 {
+    return true
+  }
+  if c == 95 || c == 58 {
+    return true
+  }
+  if c >= 128 {
+    return true
+  }
+  return false
+}
+
+def name_char(c Int64) Bool {
+  if c >= 65 && c <= 90 {
+    return true
+  }
+  if c >= 97 && c <= 122 {
+    return true
+  }
+  if c >= 48 && c <= 57 {
+    return true
+  }
+  if c == 45 || c == 46 || c == 95 || c == 58 {
+    return true
+  }
+  if c >= 128 {
+    return true
+  }
+  return false
+}
+
+def scan_name_rest(data Bytes, i Int64) Int64 {
+  if i < data.length() {
+    if name_char(data.get(i)) {
+      return scan_name_rest(data, i + 1)
+    }
+  }
+  return i
+}
+
+def skip_ws(data Bytes, i Int64) Int64 {
+  if i < data.length() {
+    const c = data.get(i)
+    if c == 32 || c == 9 || c == 10 || c == 13 {
+      return skip_ws(data, i + 1)
+    }
+  }
+  return i
+}
+
+// ---- encode ----
+
+// An element: `<name a="v">children</name>`, self-closing when there
+// are no children. Text children are escaped; attribute values too.
+def emit_element(elt XmlElement) String {
+  const open = emit_open(elt.name(), elt.attrs(), elt.children().length())
+  if elt.children().length() == 0 {
+    return open
+  }
+  return open + emit_children_encoded(elt.children(), 0) + "</" + elt.name() + ">"
+}
+
+def emit_open(name String, attrs Array[(String, String)], n_children Int64) String {
+  if attrs.length() == 0 {
+    if n_children == 0 {
+      return "<" + name + "/>"
+    }
+    return "<" + name + ">"
+  }
+  const open = "<" + name + emit_attrs_encoded(attrs, 0)
+  if n_children == 0 {
+    return open + "/>"
+  }
+  return open + ">"
+}
+
+def emit_attrs_encoded(attrs Array[(String, String)], i Int64) String {
+  if i >= attrs.length() {
+    return ""
+  }
+  const pair = attrs[i]
+  const one = " " + pair[0] + "=\"" + escape_attr(pair[1]) + "\""
+  return one + emit_attrs_encoded(attrs, i + 1)
+}
+
+def emit_children_encoded(children Array[Xml], i Int64) String {
+  if i >= children.length() {
+    return ""
+  }
+  return children[i].encode() + emit_children_encoded(children, i + 1)
+}
+
+// ---- escaping ----
+
+// Text: `&`, `<`, `>` escaped; everything else rides through.
+def escape_text(s String) String {
+  return escape_with(s, false)
+}
+
+// Attribute values: `&`, `<`, `>`, and `"` escaped.
+def escape_attr(s String) String {
+  return escape_with(s, true)
+}
+
+def escape_with(s String, in_attr Bool) String {
+  const b = s.to_bytes()
+  const n = escaped_len(b, 0, in_attr)
+  const out = Bytes.new(n)
+  fill_escaped(b, out, 0, 0, in_attr)
+  return out.to_string()
+}
+
+def escaped_len(b Bytes, i Int64, in_attr Bool) Int64 {
+  if i >= b.length() {
+    return 0
+  }
+  const c = b.get(i)
+  if c == 38 {
+    return 5 + escaped_len(b, i + 1, in_attr)
+  }
+  if c == 60 || c == 62 {
+    return 4 + escaped_len(b, i + 1, in_attr)
+  }
+  if in_attr && c == 34 {
+    return 6 + escaped_len(b, i + 1, in_attr)
+  }
+  return 1 + escaped_len(b, i + 1, in_attr)
+}
+
+def fill_escaped(b Bytes, out Bytes, i Int64, w Int64, in_attr Bool) Int64 {
+  if i >= b.length() {
+    return w
+  }
+  const c = b.get(i)
+  if c == 38 {
+    return fill_word(b, out, i, w, "&amp;", in_attr)
+  }
+  if c == 60 {
+    return fill_word(b, out, i, w, "&lt;", in_attr)
+  }
+  if c == 62 {
+    return fill_word(b, out, i, w, "&gt;", in_attr)
+  }
+  if in_attr && c == 34 {
+    return fill_word(b, out, i, w, "&quot;", in_attr)
+  }
+  out.set(w, c)
+  return fill_escaped(b, out, i + 1, w + 1, in_attr)
+}
+
+// Writes the escape word's bytes; returns the next write position.
+def fill_word(b Bytes, out Bytes, i Int64, w Int64, word String, in_attr Bool) Int64 {
+  const wb = word.to_bytes()
+  fill_word_bytes(out, w, wb, 0, wb.length())
+  return fill_escaped(b, out, i + 1, w + wb.length(), in_attr)
+}
+
+def fill_word_bytes(out Bytes, w Int64, wb Bytes, i Int64, n Int64) {
+  if i < n {
+    out.set(w + i, wb.get(i))
+    fill_word_bytes(out, w, wb, i + 1, n)
+  }
+}
+
+def slice_text(data Bytes, start Int64, end Int64) String {
+  const buf = Bytes.new(end - start)
+  copy_range(data, buf, start, 0, end - start)
+  return buf.to_string()
+}
+
+def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
+  if n > 0 {
+    dst.set(di, src.get(si))
+    copy_range(src, dst, si + 1, di + 1, n - 1)
+  }
+}
+
+def utf8_len(cp Int64) Int64 {
+  if cp < 128 {
+    return 1
+  }
+  if cp < 2048 {
+    return 2
+  }
+  if cp < 65536 {
+    return 3
+  }
+  return 4
+}
+
+def utf8_put(out Bytes, w Int64, cp Int64) Int64 {
+  if cp < 128 {
+    out.set(w, cp)
+    return w + 1
+  }
+  if cp < 2048 {
+    const hi = cp / 64
+    const lo = cp % 64
+    out.set(w, 192 + hi)
+    out.set(w + 1, 128 + lo)
+    return w + 2
+  }
+  if cp < 65536 {
+    const top = cp / 4096
+    const mid = (cp / 64) % 64
+    const lo = cp % 64
+    out.set(w, 224 + top)
+    out.set(w + 1, 128 + mid)
+    out.set(w + 2, 128 + lo)
+    return w + 3
+  }
+  const top = cp / 262144
+  const hi = (cp / 4096) % 64
+  const mid = (cp / 64) % 64
+  const lo = cp % 64
+  out.set(w, 240 + top)
+  out.set(w + 1, 128 + hi)
+  out.set(w + 2, 128 + mid)
+  out.set(w + 3, 128 + lo)
+  return w + 4
+}
+
+// The hex digit's value, or -1.
+def hex_digit(c Int64) Int64 {
+  if c >= 48 && c <= 57 {
+    return c - 48
+  }
+  if c >= 97 && c <= 102 {
+    return c - 87
+  }
+  if c >= 65 && c <= 70 {
+    return c - 55
+  }
+  return -1
+}

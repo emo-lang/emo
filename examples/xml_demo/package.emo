@@ -1,0 +1,9 @@
+package {
+  name = "emo/xml_demo"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {
+    xml = "0.1.0"
+  }
+}

@@ -763,3 +763,33 @@ the cross-module-types checker step shared with step 27. The package
 also flushed out the typescript runtime's field-shadows-method
 dispatch bug (fixed in `ts_runtime.ts`: E.method now falls through to
 the prototype's method when the own property is not a function).
+
+### Step 29 — The standard library: `xml` · `plan/step-29-stdlib-xml.md`
+
+**Prereq:** Step 27 (the json package — the tree design and the
+byte-scanner patterns this package follows). **Done when:**
+`require "xml"` decodes and encodes well-formed XML byte-identically
+on the verified targets — elements with quoted attributes, self-
+closing form, the five entities plus character references, CDATA as
+raw text, comments / PIs / declaration / DOCTYPE skipped, mixed
+content, offset-bearing errors; goldens green on
+interpreter/ocaml/typescript/c; wasm and beam wait on the
+cross-module-types follow-up shared with steps 27–28.
+
+- [x] **T29.1** — The package, the value model, and the decoder.
+      (Done 2026-10-09.)
+- [x] **T29.2** — The encoder. (Done 2026-10-09.)
+- [x] **T29.3** — The goldens: `examples/xml_demo` (bootstrap + c +
+      typescript) and `examples/xml_edge` (bootstrap). (Done
+      2026-10-09.)
+- [x] **T29.4** — The docs: `docs/stdlib/xml.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 29 close-out (2026-10-09, on `feat/stdlib`): the xml package —
+the leanest of the three format packages (XML is all text, so no
+float machinery) — passes its goldens on the interpreter, ocaml,
+typescript, AND c (xml_demo rides the c_goldens list). The package
+also flushed out the exact-buffer `to_string().substring(byte_count)`
+out-of-bounds pattern across all three format packages (fixed:
+exact-fill buffers return `to_string()` directly). wasm and beam
+remain gated on the cross-module-types checker step.

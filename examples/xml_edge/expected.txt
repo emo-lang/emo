@@ -1,0 +1,16 @@
+12
+<r a="A">世&lt;&amp;&gt;"'😀</r>
+A
+<e one="1" two="2" three="333"/>
+3
+2
+1
+3
+123
+<p>plain <b>bold</b> after</p>
+3
+plain bold after
+<outer><inner><deepest x="y"/></inner></outer>
+y
+<r/>
+r

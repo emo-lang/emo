@@ -1,0 +1,41 @@
+require "xml"
+
+// The xml package end to end: decode a document, walk it through
+// narrowing and the element accessors, and encode it back. The tree
+// keeps every text child — including whitespace — so encode(decode)
+// reproduces the document.
+
+const text = "<?xml version=\"1.0\"?>\n<!-- a comment -->\n<feed version=\"1.0\" xmlns:yt=\"http://yt.example\">\n  <entry id=\"e1\">\n    <title>if a &lt; b &amp;&amp; b &gt; c</title>\n    <tags>\n      <tag>t1</tag><tag>t2</tag>\n    </tags>\n    <body><![CDATA[raw <b> & stuff]]></body>\n    <empty/>\n  </entry>\n  <entry id=\"e2\">\n    <title>第二个</title>\n  </entry>\n</feed>\n"
+
+const doc = xml.decode(text)
+if doc.is(XmlElement) {
+  println(doc.name())
+  println(doc.attr("version"))
+  println(doc.attr("xmlns:yt"))
+  println(doc.children().length().to_string())
+
+  const entry = doc.get("entry")
+  if entry.is(XmlElement) {
+    println(entry.attr("id"))
+    println(entry.get("title").text())
+    println(entry.get("title").children().length().to_string())
+    println(entry.get("tags").get("tag").text())
+    println(entry.get("body").text())
+    println(entry.get("body").text().to_bytes().length().to_string())
+    println(entry.get("empty").children().length().to_string())
+  }
+
+  // get returns the FIRST matching child element.
+  println(doc.get("entry").get("title").text().to_bytes().length().to_string())
+
+  // text() concatenates every text node in the subtree.
+  println(doc.text().to_bytes().length().to_string())
+}
+
+// Round trip: encode reproduces the document (comments and the
+// declaration are not represented in the tree).
+println(xml.encode(doc))
+
+// Factories build trees without parsing.
+const out = xml.element("note", [], [xml.text("hello"), xml.element("b", [("k", "v")], [])])
+println(xml.encode(out))

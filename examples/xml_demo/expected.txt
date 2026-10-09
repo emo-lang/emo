@@ -1,0 +1,27 @@
+feed
+1.0
+http://yt.example
+5
+e1
+if a < b && b > c
+1
+t1
+raw <b> & stuff
+15
+0
+17
+95
+<feed version="1.0" xmlns:yt="http://yt.example">
+  <entry id="e1">
+    <title>if a &lt; b &amp;&amp; b &gt; c</title>
+    <tags>
+      <tag>t1</tag><tag>t2</tag>
+    </tags>
+    <body>raw &lt;b&gt; &amp; stuff</body>
+    <empty/>
+  </entry>
+  <entry id="e2">
+    <title>第二个</title>
+  </entry>
+</feed>
+<note>hello<b k="v"/></note>
