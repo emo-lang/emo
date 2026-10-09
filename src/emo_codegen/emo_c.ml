@@ -379,6 +379,79 @@ and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
           (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
       in
       if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  (* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- *)
+  | "os_getpid" ->
+      let v = Printf.sprintf "emo_os_getpid()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_getppid" ->
+      let v = Printf.sprintf "emo_os_getppid()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_fork" ->
+      let v = Printf.sprintf "emo_os_fork()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_waitpid" ->
+      let v = Printf.sprintf "emo_os_waitpid(%s)" (arg 0 Emo_check.Int64) in
+      v
+  | "os_pipe" ->
+      let v = Printf.sprintf "emo_os_pipe()" in
+      v
+  | "os_execv" ->
+      let v =
+        Printf.sprintf "emo_os_execv(%s, %s)" (arg 0 Emo_check.String)
+          (as_dyn env (List.nth args 1))
+      in
+      v
+  | "os__exit" -> Printf.sprintf "emo_os__exit(%s)" (arg 0 Emo_check.Int64)
+  | "os_open_read" ->
+      let v = Printf.sprintf "emo_os_open_read(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_open_write" ->
+      let v = Printf.sprintf "emo_os_open_write(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_open_append" ->
+      let v =
+        Printf.sprintf "emo_os_open_append(%s)" (arg 0 Emo_check.String)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_read" ->
+      let v =
+        Printf.sprintf "emo_os_read(%s, %s)" (arg 0 Emo_check.Int64)
+          (arg 1 Emo_check.Int64)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+  | "os_write" ->
+      let v =
+        Printf.sprintf "emo_os_write(%s, %s)" (arg 0 Emo_check.Int64)
+          (arg 1 Emo_check.String)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_close" ->
+      let v = Printf.sprintf "emo_os_close(%s)" (arg 0 Emo_check.Int64) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_list_dir" ->
+      let v = Printf.sprintf "emo_os_list_dir(%s)" (arg 0 Emo_check.String) in
+      v
+  | "os_mkdir" ->
+      let v = Printf.sprintf "emo_os_mkdir(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_rmdir" ->
+      let v = Printf.sprintf "emo_os_rmdir(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_unlink" ->
+      let v = Printf.sprintf "emo_os_unlink(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_rename" ->
+      let v =
+        Printf.sprintf "emo_os_rename(%s, %s)" (arg 0 Emo_check.String)
+          (arg 1 Emo_check.String)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_getcwd" ->
+      let v = Printf.sprintf "emo_os_getcwd()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+  | "os_chdir" ->
+      let v = Printf.sprintf "emo_os_chdir(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
   | other -> Printf.sprintf "emo_unsupported(\"%s\")" other
 
 and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)

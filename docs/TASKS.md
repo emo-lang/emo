@@ -793,3 +793,38 @@ also flushed out the exact-buffer `to_string().substring(byte_count)`
 out-of-bounds pattern across all three format packages (fixed:
 exact-fill buffers return `to_string()` directly). wasm and beam
 remain gated on the cross-module-types checker step.
+
+### Step 30 — The standard library: `os` · `plan/step-30-stdlib-os.md`
+
+**Prereq:** Step 24 (the c target) and step 26 (target independence —
+the standalone ocaml runtime needs the dispatch too). **Done when:**
+`require "os"` gives a program process identity, fork / execv /
+waitpid / _exit, a pipe, raw unbuffered fd file IO, and the directory
+surface; every failing call raises naming the system call; waitpid
+answers the kernel's raw 16-bit status with pure-Emo decoders;
+list_dir answers byte-order-sorted names without `.` and `..`;
+goldens green on interpreter/ocaml/c; ts/wasm/beam refuse the package
+by declaration.
+
+- [x] **T30.1** — The checker signatures, the `os_` builtin prefix,
+      and the interpreter's Unix-backed dispatch. (Done 2026-10-09.)
+- [x] **T30.2** — The c runtime's `emo_os_*` POSIX implementations
+      and the c emitter's dispatch. (Done 2026-10-09.)
+- [x] **T30.3** — The standalone ocaml runtime's dispatch. (Done
+      2026-10-09.)
+- [x] **T30.4** — The package: thin wrappers, the wait-status
+      decoders, the fork/pipe discipline. (Done 2026-10-09.)
+- [x] **T30.5** — The golden: `examples/os_demo` on the bootstrap
+      and c_goldens lists. (Done 2026-10-09.)
+- [x] **T30.6** — The docs: `docs/stdlib/os.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 30 close-out (2026-10-09, on `feat/stdlib`): the os package —
+the second runtime-backed package after net, and the first reaching
+into process machinery — verified on the interpreter, ocaml, and c
+targets; the os_demo golden exercises fork+pipe+waitpid (child exits
+7 through _exit, the parent decodes the raw status) beside the raw IO
+and directory surfaces. Unlike the format packages, os crosses
+modules with native types only, so the c target takes it without the
+cross-module-types checker step; ts/wasm/beam are refused by the
+package's targets declaration.

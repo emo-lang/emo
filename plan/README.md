@@ -73,3 +73,4 @@ incrementally shippable steps — one file per step, executed in order.
 | 27 | The standard library: `json` | done on interpreter/ocaml/typescript; c, wasm, beam wait on cross-module types (step-27 follow-up) |
 | 28 | The standard library: `yaml` | done on interpreter/ocaml/typescript; c, wasm, beam wait on cross-module types (step-27 follow-up) |
 | 29 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; wasm, beam wait on cross-module types (step-27 follow-up) |
+| 30 | The standard library: `os` | done on interpreter/ocaml/c; the browser and bytecode targets refuse the package (no process to fork) |

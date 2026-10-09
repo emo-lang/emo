@@ -433,6 +433,112 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ( "os_getpid",
+          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+        ( "os_getppid",
+          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+        ("os_fork", { vtype = FuncType ([], Int64); is_var = false; depth = 0 });
+        ( "os_waitpid",
+          {
+            vtype = FuncType ([ ("pid", Int64) ], TupleType [ Int64; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_pipe",
+          {
+            vtype = FuncType ([], TupleType [ Int64; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_execv",
+          {
+            vtype =
+              FuncType
+                ([ ("path", String); ("argv", ArrayType String) ], Unknown);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os__exit",
+          {
+            vtype = FuncType ([ ("status", Int64) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_open_read",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_open_write",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_open_append",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_read",
+          {
+            vtype = FuncType ([ ("fd", Int64); ("n", Int64) ], String);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_write",
+          {
+            vtype = FuncType ([ ("fd", Int64); ("data", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_close",
+          {
+            vtype = FuncType ([ ("fd", Int64) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_list_dir",
+          {
+            vtype = FuncType ([ ("path", String) ], ArrayType String);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_mkdir",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_rmdir",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_unlink",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_rename",
+          {
+            vtype =
+              FuncType ([ ("old_path", String); ("new_path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_getcwd",
+          { vtype = FuncType ([], String); is_var = false; depth = 0 } );
+        ( "os_chdir",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
       ];

@@ -1381,6 +1381,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "xml_edge")
           "xml_edge" "main.emo" true);
+    tc "os_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "os_demo")
+          "os_demo" "main.emo" true);
   ]
 
 (* ---- The TypeScript target (step 15) ----
