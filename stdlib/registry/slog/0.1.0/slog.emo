@@ -1,0 +1,486 @@
+// The structured logger: one line per record, either logfmt or JSON,
+// filtered by a minimum level. Pure Emo over the shared runtimes, so
+// every target the package declares answers with the same bytes.
+//
+// A logger is an opaque handle: `new` answers one, `child` derives a
+// renamed copy, and the handle itself carries the name, the minimum
+// level, and the format — a logger is an ordinary value, with nothing
+// to configure or tear down behind the scenes. Records go to stdout
+// through one `println` each, and carry no timestamp: Emo has no
+// clock, and deterministic output is worth more than stamps the
+// caller would have to fake. A caller with a time in hand passes it
+// as an ordinary attribute.
+//
+// Levels are ordered, debug < info < warn < error. A record below the
+// logger's minimum prints nothing; `enabled` answers the same
+// question before the caller builds the record. Attrs are a
+// Map[String, String] — render numbers and booleans by interpolation
+// before the call ("${port}"). Keys are strict: ASCII letters,
+// digits, `_`, `.`, `-` only, so a key reads the same in both
+// formats. Every rejection raises an ordinary Emo exception saying
+// exactly what failed; filtering is the only silence.
+//
+// The wasm and beam runtimes do not implement Map yet, so the
+// manifest declares the targets that work today and widens when they
+// land.
+
+// ---- levels and formats ----
+
+def level_debug() Int64 {
+  return 0
+}
+
+def level_info() Int64 {
+  return 1
+}
+
+def level_warn() Int64 {
+  return 2
+}
+
+def level_error() Int64 {
+  return 3
+}
+
+def format_logfmt() Int64 {
+  return 0
+}
+
+def format_json() Int64 {
+  return 1
+}
+
+// ---- loggers ----
+
+// A handle packs its config in plain sight — percent-encoded name,
+// level, format, joined with `:` — so loggers stay values and the
+// package keeps no state at all.
+def new(name String, min Int64, format Int64) String {
+  if name == "" {
+    raise Exception.new(message: "slog: logger name must not be empty")
+  }
+  check_level(min)
+  check_format(format)
+  return "slog:" + pct_encode(name) + ":" + min.to_string() + ":" + format.to_string()
+}
+
+// A child nests its name under the parent's (`web` + `db` is
+// `web.db`) and inherits the level and the format.
+def child(handle String, name String) String {
+  const cfg = parse(handle)
+  if name == "" {
+    raise Exception.new(message: "slog: logger name must not be empty")
+  }
+  const full = cfg[0] + "." + name
+  return "slog:" + pct_encode(full) + ":" + cfg[1].to_string() + ":" + cfg[2].to_string()
+}
+
+// True when a record at this level would print — the cheap question
+// to ask before rendering one.
+def enabled(handle String, level Int64) Bool {
+  const cfg = parse(handle)
+  check_level(level)
+  if level >= cfg[1] {
+    return true
+  }
+  return false
+}
+
+def debug(handle String, msg String, attrs Map[String, String]) {
+  emit(handle, 0, msg, attrs)
+}
+
+def info(handle String, msg String, attrs Map[String, String]) {
+  emit(handle, 1, msg, attrs)
+}
+
+def warn(handle String, msg String, attrs Map[String, String]) {
+  emit(handle, 2, msg, attrs)
+}
+
+def error(handle String, msg String, attrs Map[String, String]) {
+  emit(handle, 3, msg, attrs)
+}
+
+// Every call validates the handle and the keys, then filters — a bad
+// key is a mistake even when the record would not have printed.
+def emit(handle String, level Int64, msg String, attrs Map[String, String]) {
+  const cfg = parse(handle)
+  const keys = attrs.keys()
+  check_keys(keys, 0)
+  if level >= cfg[1] {
+    if cfg[2] == 0 {
+      println(logfmt_line(cfg[0], level, msg, keys, attrs))
+    } else {
+      println(json_line(cfg[0], level, msg, keys, attrs))
+    }
+  }
+}
+
+def check_level(v Int64) {
+  if v < 0 || v > 3 {
+    raise Exception.new(message: "slog: unknown level " + v.to_string())
+  }
+}
+
+def check_format(v Int64) {
+  if v < 0 || v > 1 {
+    raise Exception.new(message: "slog: unknown format " + v.to_string())
+  }
+}
+
+// ---- the logfmt line ----
+
+// level=info logger=web msg=... key=value, attrs in map order.
+def logfmt_line(name String, level Int64, msg String, keys Array[String], attrs Map[String, String]) String {
+  const head = "level=" + level_name(level) + " logger=" + logfmt_value(name) + " msg=" + logfmt_value(msg)
+  return logfmt_attrs(keys, attrs, 0, head)
+}
+
+def logfmt_attrs(keys Array[String], attrs Map[String, String], i Int64, acc String) String {
+  if i < keys.length() {
+    const key = keys[i]
+    return logfmt_attrs(keys, attrs, i + 1, acc + " " + key + "=" + logfmt_value(attrs.get(key)))
+  }
+  return acc
+}
+
+// A value renders bare when every byte survives the line unquoted:
+// printable ASCII other than `"`, `=`, `\`, or a UTF-8 continuation
+// byte (text rides through). Empty, spaces, control bytes, and the
+// quote set render quoted with escapes.
+def logfmt_value(text String) String {
+  const src = text.to_bytes()
+  if src.length() > 0 && bare_run(src, 0) {
+    return text
+  }
+  const out = Bytes.new(quoted_len(src, 0, 0))
+  quoted_fill(src, 0, out, 0)
+  return "\"" + out.to_string() + "\""
+}
+
+def bare_run(src Bytes, i Int64) Bool {
+  if i < src.length() {
+    const c = src.get(i)
+    if c <= 32 || c == 127 || c == 34 || c == 61 || c == 92 {
+      return false
+    }
+    return bare_run(src, i + 1)
+  }
+  return true
+}
+
+// The quoted length: two anchor quotes plus one or two bytes per
+// source byte (escapes grow, plain bytes stay).
+def quoted_len(src Bytes, i Int64, n Int64) Int64 {
+  if i < src.length() {
+    const c = src.get(i)
+    if c == 34 || c == 92 || c < 32 || c == 127 {
+      return quoted_len(src, i + 1, n + 2)
+    }
+    return quoted_len(src, i + 1, n + 1)
+  }
+  return n
+}
+
+def quoted_fill(src Bytes, i Int64, out Bytes, di Int64) Int64 {
+  if i < src.length() {
+    const c = src.get(i)
+    if c == 34 {
+      out.set(di, 92)
+      out.set(di + 1, 34)
+      return quoted_fill(src, i + 1, out, di + 2)
+    }
+    if c == 92 {
+      out.set(di, 92)
+      out.set(di + 1, 92)
+      return quoted_fill(src, i + 1, out, di + 2)
+    }
+    if c == 10 {
+      out.set(di, 92)
+      out.set(di + 1, 110)
+      return quoted_fill(src, i + 1, out, di + 2)
+    }
+    if c == 13 {
+      out.set(di, 92)
+      out.set(di + 1, 114)
+      return quoted_fill(src, i + 1, out, di + 2)
+    }
+    if c == 9 {
+      out.set(di, 92)
+      out.set(di + 1, 116)
+      return quoted_fill(src, i + 1, out, di + 2)
+    }
+    if c < 32 || c == 127 {
+      out.set(di, 92)
+      out.set(di + 1, 120)
+      out.set(di + 2, hex_code(c / 16))
+      out.set(di + 3, hex_code(c % 16))
+      return quoted_fill(src, i + 1, out, di + 4)
+    }
+    out.set(di, c)
+    return quoted_fill(src, i + 1, out, di + 1)
+  }
+  return di
+}
+
+// ---- the json line ----
+
+// One object per record; string values only, escaped by RFC 8259,
+// UTF-8 unescaped.
+def json_line(name String, level Int64, msg String, keys Array[String], attrs Map[String, String]) String {
+  const head = "{" + json_field("level", level_name(level)) + "," + json_field("logger", name) + "," + json_field("msg", msg)
+  return json_attrs(keys, attrs, 0, head) + "}"
+}
+
+def json_attrs(keys Array[String], attrs Map[String, String], i Int64, acc String) String {
+  if i < keys.length() {
+    const key = keys[i]
+    return json_attrs(keys, attrs, i + 1, acc + "," + json_field(key, attrs.get(key)))
+  }
+  return acc
+}
+
+def json_field(key String, value String) String {
+  const k = key.to_bytes()
+  const v = value.to_bytes()
+  const kb = Bytes.new(json_len(k, 0, 0))
+  const vb = Bytes.new(json_len(v, 0, 0))
+  json_fill(k, 0, kb, 0)
+  json_fill(v, 0, vb, 0)
+  return "\"" + kb.to_string() + "\":\"" + vb.to_string() + "\""
+}
+
+def json_len(src Bytes, i Int64, n Int64) Int64 {
+  if i < src.length() {
+    const c = src.get(i)
+    if c == 34 || c == 92 || c == 8 || c == 12 || c == 10 || c == 13 || c == 9 {
+      return json_len(src, i + 1, n + 2)
+    }
+    if c < 32 {
+      return json_len(src, i + 1, n + 6)
+    }
+    return json_len(src, i + 1, n + 1)
+  }
+  return n
+}
+
+def json_fill(src Bytes, i Int64, out Bytes, di Int64) Int64 {
+  if i < src.length() {
+    const c = src.get(i)
+    if c == 34 {
+      out.set(di, 92)
+      out.set(di + 1, 34)
+      return json_fill(src, i + 1, out, di + 2)
+    }
+    if c == 92 {
+      out.set(di, 92)
+      out.set(di + 1, 92)
+      return json_fill(src, i + 1, out, di + 2)
+    }
+    if c == 8 {
+      out.set(di, 92)
+      out.set(di + 1, 98)
+      return json_fill(src, i + 1, out, di + 2)
+    }
+    if c == 12 {
+      out.set(di, 92)
+      out.set(di + 1, 102)
+      return json_fill(src, i + 1, out, di + 2)
+    }
+    if c == 10 {
+      out.set(di, 92)
+      out.set(di + 1, 110)
+      return json_fill(src, i + 1, out, di + 2)
+    }
+    if c == 13 {
+      out.set(di, 92)
+      out.set(di + 1, 114)
+      return json_fill(src, i + 1, out, di + 2)
+    }
+    if c == 9 {
+      out.set(di, 92)
+      out.set(di + 1, 116)
+      return json_fill(src, i + 1, out, di + 2)
+    }
+    if c < 32 {
+      out.set(di, 92)
+      out.set(di + 1, 117)
+      out.set(di + 2, 48)
+      out.set(di + 3, 48)
+      out.set(di + 4, hex_code(c / 16))
+      out.set(di + 5, hex_code(c % 16))
+      return json_fill(src, i + 1, out, di + 6)
+    }
+    out.set(di, c)
+    return json_fill(src, i + 1, out, di + 1)
+  }
+  return di
+}
+
+// ---- handles ----
+
+// The one strict alphabet: attribute keys are made of these bytes,
+// and handle encoding percent-escapes everything else — so a key
+// reads the same in both formats and no encoded name smuggles a `:`.
+def plain_byte(c Int64) Bool {
+  if c >= 97 && c <= 122 {
+    return true
+  }
+  if c >= 65 && c <= 90 {
+    return true
+  }
+  if c >= 48 && c <= 57 {
+    return true
+  }
+  if c == 95 || c == 46 || c == 45 {
+    return true
+  }
+  return false
+}
+
+def pct_encode(text String) String {
+  return pct_run(text.to_bytes(), 0, "")
+}
+
+def pct_run(src Bytes, i Int64, acc String) String {
+  if i < src.length() {
+    const c = src.get(i)
+    if plain_byte(c) {
+      return pct_run(src, i + 1, acc + chr(c))
+    }
+    return pct_run(src, i + 1, acc + "%" + hex_str(c / 16) + hex_str(c % 16))
+  }
+  return acc
+}
+
+// Decoding is strict: a `%` must open a two-hex-digit escape, and the
+// name must not come out empty.
+def pct_decode(text String) (String, Bool) {
+  return pct_dec_run(text.to_bytes(), 0, "")
+}
+
+def pct_dec_run(src Bytes, i Int64, acc String) (String, Bool) {
+  if i < src.length() {
+    const c = src.get(i)
+    if c == 37 {
+      if i + 2 < src.length() {
+        const hi = hex_value(src.get(i + 1))
+        if hi >= 0 {
+          const lo = hex_value(src.get(i + 2))
+          if lo >= 0 {
+            return pct_dec_run(src, i + 3, acc + chr(hi * 16 + lo))
+          }
+        }
+      }
+      return ("", false)
+    }
+    return pct_dec_run(src, i + 1, acc + chr(c))
+  }
+  return (acc, true)
+}
+
+// The single raising function: the helpers stay pure and the field
+// parsers answer -1, and parse speaks for the whole handle.
+def parse(handle String) (String, Int64, Int64) {
+  if handle.starts_with("slog:") {
+    const parts = handle.substring(5, handle.length() - 5).split(":")
+    if parts.length() == 3 {
+      const decoded = pct_decode(parts[0])
+      const name = decoded[0]
+      const min = small_of(parts[1], 3)
+      const format = small_of(parts[2], 1)
+      if decoded[1] && name.length() > 0 && min >= 0 && format >= 0 {
+        return (name, min, format)
+      }
+    }
+    raise Exception.new(message: "slog: malformed logger handle: " + handle)
+  }
+  raise Exception.new(message: "slog: not a logger handle: " + handle)
+}
+
+// One ASCII digit in 0..max, or -1.
+def small_of(text String, max Int64) Int64 {
+  if text.length() == 1 {
+    const c = text.to_bytes().get(0)
+    if c >= 48 && c <= 48 + max {
+      return c - 48
+    }
+  }
+  return -1
+}
+
+def check_keys(keys Array[String], i Int64) {
+  if i < keys.length() {
+    check_key(keys[i])
+    check_keys(keys, i + 1)
+  }
+}
+
+def check_key(key String) {
+  if key == "" {
+    raise Exception.new(message: "slog: attribute key must not be empty")
+  }
+  const src = key.to_bytes()
+  if !all_plain(src, 0) {
+    raise Exception.new(message: "slog: invalid attribute key " + logfmt_value(key) + ": keys are ASCII letters, digits, `_`, `.`, `-`")
+  }
+}
+
+def all_plain(src Bytes, i Int64) Bool {
+  if i < src.length() {
+    if plain_byte(src.get(i)) {
+      return all_plain(src, i + 1)
+    }
+    return false
+  }
+  return true
+}
+
+// ---- shared bits ----
+
+def level_name(level Int64) String {
+  if level == 0 {
+    return "debug"
+  }
+  if level == 1 {
+    return "info"
+  }
+  if level == 2 {
+    return "warn"
+  }
+  return "error"
+}
+
+// One byte back as a one-byte string.
+def chr(c Int64) String {
+  const b = Bytes.new(1)
+  b.set(0, c)
+  return b.to_string()
+}
+
+def hex_code(v Int64) Int64 {
+  if v < 10 {
+    return 48 + v
+  }
+  return 87 + v
+}
+
+def hex_str(v Int64) String {
+  return chr(hex_code(v))
+}
+
+// -1 for anything that is not a hex digit; case-insensitive, since
+// the encoder's lowercase is the only case it ever needs to meet.
+def hex_value(c Int64) Int64 {
+  if c >= 48 && c <= 57 {
+    return c - 48
+  }
+  if c >= 97 && c <= 102 {
+    return c - 87
+  }
+  if c >= 65 && c <= 70 {
+    return c - 55
+  }
+  return -1
+}

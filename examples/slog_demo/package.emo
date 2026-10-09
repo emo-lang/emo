@@ -1,0 +1,9 @@
+package {
+  name = "emo/slog_demo"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript"]
+
+  deps {
+    slog = "0.1.0"
+  }
+}

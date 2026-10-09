@@ -75,3 +75,4 @@ incrementally shippable steps — one file per step, executed in order.
 | 29 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; wasm, beam wait on cross-module types (step-27 follow-up) |
 | 30 | The standard library: `os` | done on interpreter/ocaml/c; the browser and bytecode targets refuse the package (no process to fork) |
 | 31 | The standard library: `base64` | done on every target — the first package on all five goldens; flushed out the wasm `&&` cast, the wasm zero-length copies, and the beam logical-op/tuple-index/Exception gaps |
+| 32 | The standard library: `slog` | done on interpreter/ocaml/c/typescript; wasm, beam wait on `Map` support (attrs are a Map); loggers are values, no state, no clock — the first package whose golden needed zero compiler changes |

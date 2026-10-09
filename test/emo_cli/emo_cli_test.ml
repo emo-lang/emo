@@ -423,6 +423,7 @@ let c_goldens =
     "list";
     "os_demo";
     "base64_demo";
+    "slog_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
