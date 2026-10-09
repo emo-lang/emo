@@ -187,8 +187,9 @@ let c_type (t : Emo_check.t) : string option =
       Some "int64_t"
   | Emo_check.String -> Some "emo_str"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.BoxType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
-  | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
+  | Emo_check.BoxType _ | Emo_check.ListType _ | Emo_check.ClassType _
+  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
+  | Emo_check.Bytes ->
       Some "emo_value"
   | Emo_check.Void -> Some "void"
 
@@ -197,8 +198,9 @@ let c_type (t : Emo_check.t) : string option =
 let is_dyn (t : Emo_check.t) : bool =
   match t with
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.BoxType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
-  | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
+  | Emo_check.BoxType _ | Emo_check.ListType _ | Emo_check.ClassType _
+  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
+  | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -221,8 +223,8 @@ let dummy_value (t : Emo_check.t) : string =
   | Emo_check.Bool -> "false"
   | Emo_check.String -> "(emo_str){INT64_C(0), \"\"}"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.BoxType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
-  | Emo_check.EnumType _ | Emo_check.FuncType _ ->
+  | Emo_check.BoxType _ | Emo_check.ListType _ | Emo_check.ClassType _
+  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _ ->
       "(emo_value)0"
   | _ -> "0"
 
@@ -514,6 +516,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Box_new arg -> Printf.sprintf "emo_box_new(%s)" (as_dyn env arg)
   | Bytes_new n ->
       Printf.sprintf "emo_bytes_new(%s)" (as_native env n Emo_check.Int64)
+  | List_new arg -> Printf.sprintf "emo_list_new(%s)" (as_dyn env arg)
   | Make_enum { enum_name; member } ->
       Printf.sprintf "emo_enum_new(%s, %s)" (c_string enum_name)
         (c_string member)
@@ -557,6 +560,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
            | Emo_ir.Box_new _ -> "Box_new"
            | Emo_ir.Global_var _ -> "Global_var"
            | Emo_ir.Bytes_new _ -> "Bytes_new"
+           | Emo_ir.List_new _ -> "List_new"
            | Emo_ir.Make_exception _ -> "Make_exception"
            | Emo_ir.Do_spawn _ -> "Do_spawn"
            | Emo_ir.Spawn_value _ -> "Spawn_value"
@@ -631,12 +635,37 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           finish
             (Printf.sprintf "emo_box_replace(%s, %s)" (as_dyn env self_)
                (as_dyn env v))
+      (* The List deque: O(1) push and pop at both ends. Push returns the
+         list itself; pop yields the element (a static element type
+         crosses the regime boundary through finish). *)
+      | "push_front", [ v ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.ListType _ -> true
+             | _ -> false ->
+          Printf.sprintf "emo_list_push_front(%s, %s)" (as_dyn env self_)
+            (as_dyn env v)
+      | "push_back", [ v ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.ListType _ -> true
+             | _ -> false ->
+          Printf.sprintf "emo_list_push_back(%s, %s)" (as_dyn env self_)
+            (as_dyn env v)
+      | "pop_front", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.ListType _ -> true
+             | _ -> false ->
+          finish (Printf.sprintf "emo_list_pop_front(%s)" (as_dyn env self_))
+      | "pop_back", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.ListType _ -> true
+             | _ -> false ->
+          finish (Printf.sprintf "emo_list_pop_back(%s)" (as_dyn env self_))
       | "length", [] when self_.Emo_ir.ety = Emo_check.Bytes ->
           Printf.sprintf "emo_bytes_length(%s)" (as_dyn env self_)
       | "length", []
         when match self_.Emo_ir.ety with
              | Emo_check.ArrayType _ | Emo_check.TupleType _ | Emo_check.Unknown
-               ->
+             | Emo_check.ListType _ ->
                  true
              | _ -> false ->
           box_int env result_ty
@@ -866,6 +895,21 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                 (Printf.sprintf "emo_net_accept(%s)" (as_fd ()))
           | "port", [] ->
               ret Emo_check.Int64 (Printf.sprintf "emo_net_port(%s)" (as_fd ()))
+          (* The List deque's method names are owned by no instance type,
+             so an Unknown receiver dispatches to the runtime helpers —
+             the wrong kind is the runtime type error. *)
+          | "push_front", [ v ] ->
+              Printf.sprintf "emo_list_push_front(%s, %s)" recv_dyn
+                (as_dyn env v)
+          | "push_back", [ v ] ->
+              Printf.sprintf "emo_list_push_back(%s, %s)" recv_dyn
+                (as_dyn env v)
+          | "pop_front", [] ->
+              finish (Printf.sprintf "emo_list_pop_front(%s)" recv_dyn)
+          | "pop_back", [] ->
+              finish (Printf.sprintf "emo_list_pop_back(%s)" recv_dyn)
+          | "length", [] ->
+              box_int env result_ty (Printf.sprintf "emo_length(%s)" recv_dyn)
           | _ -> refuse "this method on an unknown receiver")
       | _ when is_dyn self_.Emo_ir.ety -> (
           (* an instance method: direct on a class-typed receiver, through
@@ -977,6 +1021,7 @@ and closure_free env (cparams : (string * Emo_check.t) list)
     match e.Emo_ir.desc with
     | Var n -> add n
     | Unary (_, x) -> ex x
+    | List_new x -> ex x
     | Binary (_, l, r) ->
         ex l;
         ex r

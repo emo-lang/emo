@@ -1338,6 +1338,8 @@ let bootstrap_tests =
           "shop" "main.emo" true);
     tc "pipeline compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example (examples_dir ()) "pipeline" "pipeline/main.emo" true);
+    tc "list compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example (examples_dir ()) "list" "list/main.emo" true);
     tc "tcp_echo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
@@ -1392,6 +1394,7 @@ let ts_golden_tests =
       ("showcase", "main.emo");
       ("bit_ops", "main.emo");
       ("fixed_width", "main.emo");
+      ("list", "main.emo");
     ]
 
 let () =

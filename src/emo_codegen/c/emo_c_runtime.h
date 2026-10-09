@@ -60,6 +60,7 @@ enum emo_kind {
   EMO_ENUM,
   EMO_CLOSURE,
   EMO_BYTES,
+  EMO_LIST,
   EMO_PID
 };
 
@@ -159,6 +160,18 @@ emo_value emo_array_append(emo_value arr, emo_value v); /* value semantics: a ne
 emo_value emo_box_new(emo_value v);
 emo_value emo_box_read(emo_value box);
 emo_value emo_box_replace(emo_value box, emo_value v);
+
+/* The List deque: an identity, like a Box — mutation is visible through
+   every alias. A doubly-linked node chain gives O(1) push and pop at
+   both ends; List.new copies an Array's elements, push returns the
+   list, pop yields the element, and popping an empty List is the
+   E3004 domain error. */
+emo_value emo_list_new(emo_value arr);
+emo_value emo_list_push_front(emo_value l, emo_value v);
+emo_value emo_list_push_back(emo_value l, emo_value v);
+emo_value emo_list_pop_front(emo_value l);
+emo_value emo_list_pop_back(emo_value l);
+int64_t emo_list_length(emo_value l);
 
 /* Instances (T24.5): the vtable rides in the cell; fields are
    dynamic words addressed by the compile-time field index. */

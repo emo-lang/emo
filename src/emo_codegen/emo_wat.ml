@@ -50,6 +50,7 @@ type instr =
   | I32_ne
   | I32_and
   | I32_or
+  | I32_xor
   | I32_add
   | I32_sub
   | I32_mul
@@ -102,6 +103,7 @@ type instr =
   | Call_ref of int
   | Ref_func of int
   | Ref_null_any
+  | Ref_null of int (* ref.null $t — a typed null *)
   | Ref_is_null
   | Call of int
   | Return_call of int
@@ -182,6 +184,7 @@ let rec instr_text indent (i : instr) : string =
   | I32_ne -> Printf.sprintf "%si32.ne\n" pad
   | I32_and -> Printf.sprintf "%si32.and\n" pad
   | I32_or -> Printf.sprintf "%si32.or\n" pad
+  | I32_xor -> Printf.sprintf "%si32.xor\n" pad
   | I32_add -> Printf.sprintf "%si32.add\n" pad
   | I32_mul -> Printf.sprintf "%si32.mul\n" pad
   | I32_gt -> Printf.sprintf "%si32.gt\n" pad
@@ -235,6 +238,7 @@ let rec instr_text indent (i : instr) : string =
   | Ref_func f -> Printf.sprintf "%sref.func $f%d\n" pad f
   | Call f -> Printf.sprintf "%scall $f%d\n" pad f
   | Ref_null_any -> Printf.sprintf "%sref.null any\n" pad
+  | Ref_null t -> Printf.sprintf "%sref.null $t%d\n" pad t
   | Ref_is_null -> Printf.sprintf "%sref.is_null\n" pad
   | Return_call f -> Printf.sprintf "%sreturn_call $f%d\n" pad f
   | If (bt, then_, else_) ->
@@ -441,6 +445,7 @@ let rec encode_instr buf (i : instr) =
   | I32_ne -> Buffer.add_char buf '\x47'
   | I32_and -> Buffer.add_char buf '\x71'
   | I32_or -> Buffer.add_char buf '\x72'
+  | I32_xor -> Buffer.add_char buf '\x73'
   | I32_add -> Buffer.add_char buf '\x6a'
   | I32_sub -> Buffer.add_char buf '\x6b'
   | I32_mul -> Buffer.add_char buf '\x6c'
@@ -502,6 +507,9 @@ let rec encode_instr buf (i : instr) =
       Buffer.add_char buf '\x10';
       leb_u buf f
   | Ref_null_any -> Buffer.add_string buf "\xd0\x6e"
+  | Ref_null t ->
+      Buffer.add_char buf '\xd0';
+      heaptype buf t
   | Ref_is_null -> Buffer.add_char buf '\xd1'
   | Return_call f ->
       Buffer.add_char buf '\x12';

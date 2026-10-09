@@ -33,6 +33,7 @@ and expr_desc =
   | Box_new of expr
   | Global_var of string (* a module-level `var`, read *)
   | Bytes_new of expr (* Bytes.new(n) — a zero-filled byte buffer *)
+  | List_new of expr (* List.new(array) — a fresh deque over the elements *)
   | Make_exception of { message : expr }
   | Do_spawn of { func : string; args : expr list }
   | Spawn_value of { f : expr; args : expr list }
@@ -394,6 +395,14 @@ and lower_call env span callee args =
                         desc = Bytes_new (lower_expr env arg_value);
                       }
                   | _ -> raise (Lower_error "`Bytes.new` takes one argument"))
+              | Ast.Type_ident "List" when name = "new" -> (
+                  match args with
+                  | [ { Ast.arg_name = None; arg_value } ] ->
+                      {
+                        ety = type_of env span;
+                        desc = List_new (lower_expr env arg_value);
+                      }
+                  | _ -> raise (Lower_error "`List.new` takes one argument"))
               | Ast.Type_ident class_name when name = "new" -> (
                   match lookup_symbol env env.current class_name with
                   | Some (S_class { mangled; params }) ->
@@ -641,7 +650,7 @@ let rec expr_native (special : string list) (e : expr) : bool =
   | Field_read { obj; _ } -> expr_native special obj
   | Call { func; args } ->
       List.mem func special && List.for_all (expr_native special) args
-  | Call_value _ | Method _ | Builtin _ | Box_new _ | Bytes_new _
+  | Call_value _ | Method _ | Builtin _ | Box_new _ | Bytes_new _ | List_new _
   | Make_exception _ | Do_spawn _ | Spawn_value _ | Closure _ | Global_var _ ->
       false (* dynamic operations keep the function dynamic *)
 

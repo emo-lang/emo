@@ -64,6 +64,73 @@ class EBytes {
   }
 }
 
+// The List deque: a doubly-linked chain with O(1) push and pop at both
+// ends. The identity is the object, so mutation is visible through every
+// alias — the same shape a Box takes. Dispatch goes through E.method's
+// EList arms, so the class carries no methods of its own (an `is`
+// interface check stays false, like Box and Bytes).
+class EListNode {
+  v: any;
+  prev: EListNode | null;
+  next: EListNode | null;
+  constructor(v: any) {
+    this.v = v;
+    this.prev = null;
+    this.next = null;
+  }
+}
+
+class EList {
+  head: EListNode | null;
+  tail: EListNode | null;
+  size: number;
+  constructor() {
+    this.head = null;
+    this.tail = null;
+    this.size = 0;
+  }
+}
+
+function listPushFront(l: EList, v: any): EList {
+  const node = new EListNode(v);
+  node.next = l.head;
+  if (l.head) l.head.prev = node;
+  else l.tail = node;
+  l.head = node;
+  l.size++;
+  return l;
+}
+
+function listPushBack(l: EList, v: any): EList {
+  const node = new EListNode(v);
+  node.prev = l.tail;
+  if (l.tail) l.tail.next = node;
+  else l.head = node;
+  l.tail = node;
+  l.size++;
+  return l;
+}
+
+function listPopFront(l: EList): any {
+  if (!l.head) throw new Error("`pop_front` on an empty List");
+  const node = l.head;
+  l.head = node.next;
+  if (l.head) l.head.prev = null;
+  else l.tail = null;
+  l.size--;
+  return node.v;
+}
+
+function listPopBack(l: EList): any {
+  if (!l.tail) throw new Error("`pop_back` on an empty List");
+  const node = l.tail;
+  l.tail = node.prev;
+  if (l.tail) l.tail.next = null;
+  else l.head = null;
+  l.size--;
+  return node.v;
+}
+
 class ETuple {
   items: any[];
   constructor(items: any[]) {
@@ -179,6 +246,17 @@ function deepEq(a: any, b: any): boolean {
       a.data.length === b.data.length &&
       a.data.every((x: number, i: number) => x === b.data[i])
     );
+  if (a instanceof EList && b instanceof EList) {
+    if (a.size !== b.size) return false;
+    let na = a.head;
+    let nb = b.head;
+    while (na && nb) {
+      if (!deepEq(na.v, nb.v)) return false;
+      na = na.next;
+      nb = nb.next;
+    }
+    return true;
+  }
   if (
     a &&
     b &&
@@ -202,6 +280,11 @@ function toStr(v: any): string {
   if (isChar(v)) return v.c;
   if (v instanceof EBox) return toStr(v.v);
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
+  if (v instanceof EList) {
+    const items: string[] = [];
+    for (let n = v.head; n; n = n.next) items.push(toStr(n.v));
+    return "List[" + items.join(", ") + "]";
+  }
   if (v instanceof ETuple) return "(" + v.items.map(toStr).join(", ") + ")";
   if (v instanceof EArray) return "[" + v.items.map(toStr).join(", ") + "]";
   if (v instanceof EEnum) return v.type + "." + v.member;
@@ -228,6 +311,7 @@ function tag(v: any): string {
   if (v instanceof EEnum) return "Enum";
   if (v instanceof EBox) return "Box";
   if (v instanceof EBytes) return "Bytes";
+  if (v instanceof EList) return "List";
   return "an instance";
 }
 
@@ -262,6 +346,13 @@ const E: any = {
     if (!Number.isInteger(len) || len < 0)
       throw new Error("`Bytes.new` needs a non-negative Int64 length");
     return new EBytes(len);
+  },
+  listNew: (arr: any) => {
+    if (!(arr instanceof EArray))
+      throw new Error("`List.new` expects an Array, got " + tag(arr));
+    const l = new EList();
+    for (const item of arr.items) listPushBack(l, item);
+    return l;
   },
   enum_: (type: string, member: string) => new EEnum(type, member),
 
@@ -493,6 +584,14 @@ const E: any = {
         const dv = new DataView(buf);
         dv.setFloat64(0, recv.v, true);
         return dv.getBigInt64(0, true);
+      }
+      if (recv instanceof EList) {
+        if (name === "push_front") return listPushFront(recv, args[0]);
+        if (name === "push_back") return listPushBack(recv, args[0]);
+        if (name === "pop_front") return listPopFront(recv);
+        if (name === "pop_back") return listPopBack(recv);
+        if (name === "length") return BigInt(recv.size);
+        if (name === "to_string") return toStr(recv);
       }
       if (name === "length" && recv instanceof EArray)
         return BigInt(recv.items.length);

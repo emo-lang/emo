@@ -23,6 +23,7 @@ type value =
   | Bytes of Bytes.t
   | Tuple of value list
   | Array of value array
+  | List of emo_list
   | Box of value ref
   | Pid of int (* a process identity, from `do` or `self_pid()` *)
   | TcpConn of conn
@@ -115,6 +116,21 @@ and module_handle = {
   mutable loading : bool; (* cycle guard while items are running *)
 }
 
+(* The List deque: a doubly-linked chain with O(1) push and pop at both
+   ends. The identity is the record, so mutation is visible through every
+   alias — the same shape a Box takes. *)
+and emo_list = {
+  mutable lhead : emo_list_node option;
+  mutable ltail : emo_list_node option;
+  mutable lsize : int;
+}
+
+and emo_list_node = {
+  lval : value;
+  mutable lprev : emo_list_node option;
+  mutable lnext : emo_list_node option;
+}
+
 and env = { frame : (string, binding) Hashtbl.t; parent : env option }
 and binding = { mutable bound : value; mutable_ : bool }
 
@@ -157,6 +173,7 @@ let type_name = function
   | Bytes _ -> "Bytes"
   | Tuple _ -> "Tuple"
   | Array _ -> "Array"
+  | List _ -> "List"
   | Box _ -> "Box"
   | Pid _ -> "Pid"
   | TcpConn _ -> "TcpConn"
@@ -192,6 +209,15 @@ let rec equal_value a b =
       let ok = ref true in
       Array.iteri (fun i x -> if not (equal_value x ys.(i)) then ok := false) xs;
       !ok
+  | List x, List y ->
+      let rec go a b =
+        match (a, b) with
+        | None, None -> true
+        | Some na, Some nb ->
+            equal_value na.lval nb.lval && go na.lnext nb.lnext
+        | _ -> false
+      in
+      go x.lhead y.lhead
   | Box x, Box y -> equal_value !x !y
   | Pid x, Pid y -> Int.equal x y
   | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
@@ -259,6 +285,8 @@ let global_env () =
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
   Hashtbl.replace env.frame "Bytes"
     { bound = TypeValue "Bytes"; mutable_ = false };
+  Hashtbl.replace env.frame "List"
+    { bound = TypeValue "List"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
     {
@@ -331,6 +359,55 @@ let output : (string -> unit) ref =
 
 let set_output f = output := f
 
+(* The List deque's operations: O(1) push and pop at both ends, and the
+   elements front to back. Popping an empty List is a domain error, like
+   an out-of-bounds index. *)
+let fresh_list () : emo_list = { lhead = None; ltail = None; lsize = 0 }
+
+let list_values (l : emo_list) : value list =
+  let rec go node acc =
+    match node with None -> List.rev acc | Some n -> go n.lnext (n.lval :: acc)
+  in
+  go l.lhead []
+
+let list_push_front (l : emo_list) (v : value) : unit =
+  let node = { lval = v; lprev = None; lnext = l.lhead } in
+  (match l.lhead with
+  | Some h -> h.lprev <- Some node
+  | None -> l.ltail <- Some node);
+  l.lhead <- Some node;
+  l.lsize <- l.lsize + 1
+
+let list_push_back (l : emo_list) (v : value) : unit =
+  let node = { lval = v; lprev = l.ltail; lnext = None } in
+  (match l.ltail with
+  | Some t -> t.lnext <- Some node
+  | None -> l.lhead <- Some node);
+  l.ltail <- Some node;
+  l.lsize <- l.lsize + 1
+
+let list_pop_front span (l : emo_list) : value =
+  match l.lhead with
+  | None -> error span "E3004" "`pop_front` on an empty List"
+  | Some node ->
+      l.lhead <- node.lnext;
+      (match node.lnext with
+      | Some n -> n.lprev <- None
+      | None -> l.ltail <- None);
+      l.lsize <- l.lsize - 1;
+      node.lval
+
+let list_pop_back span (l : emo_list) : value =
+  match l.ltail with
+  | None -> error span "E3004" "`pop_back` on an empty List"
+  | Some node ->
+      l.ltail <- node.lprev;
+      (match node.lprev with
+      | Some p -> p.lnext <- None
+      | None -> l.lhead <- None);
+      l.lsize <- l.lsize - 1;
+      node.lval
+
 (* The one stringification rule: interpolation and `.to_string()` share it. *)
 let rec to_string v =
   match v with
@@ -346,6 +423,8 @@ let rec to_string v =
   | Tuple vs -> "(" ^ String.concat ", " (List.map to_string vs) ^ ")"
   | Array vs ->
       "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
+  | List l ->
+      "List[" ^ String.concat ", " (List.map to_string (list_values l)) ^ "]"
   | Box _ -> "<box>"
   | Bytes b -> Printf.sprintf "Bytes[%d]" (Bytes.length b)
   | Pid n -> Printf.sprintf "<pid %d>" n
@@ -389,6 +468,8 @@ and debug_value v =
   | Tuple vs -> "(" ^ String.concat ", " (List.map debug_value vs) ^ ")"
   | Array vs ->
       "[" ^ String.concat ", " (List.map debug_value (Array.to_list vs)) ^ "]"
+  | List l ->
+      "List[" ^ String.concat ", " (List.map debug_value (list_values l)) ^ "]"
   | v -> to_string v
 
 (* Interfaces have no runtime artifact beyond this registry: `x.is(T)`
@@ -673,10 +754,10 @@ let find_process span pid =
   | Some p -> p
   | None -> error span "E3011" (Printf.sprintf "no process has pid %d" pid)
 
-(* Snapshots a message at the process boundary: every Box in the message
-   (directly or inside a tuple, array, or instance) arrives as a fresh
-   copy, so mutability never crosses a process boundary — mutations on
-   either side stay unobservable to the other. Everything else is
+(* Snapshots a message at the process boundary: every Box and List in the
+   message (directly or inside a tuple, array, or instance) arrives as a
+   fresh copy, so mutability never crosses a process boundary — mutations
+   on either side stay unobservable to the other. Everything else is
    immutable data or identity and passes as-is. *)
 let rec snapshot (v : value) : value =
   match v with
@@ -684,6 +765,10 @@ let rec snapshot (v : value) : value =
   | Bytes b -> Bytes (Bytes.copy b)
   | Tuple vs -> Tuple (List.map snapshot vs)
   | Array xs -> Array (Array.map snapshot xs)
+  | List l ->
+      let copy = fresh_list () in
+      List.iter (fun v -> list_push_back copy (snapshot v)) (list_values l);
+      List copy
   | Instance i ->
       Instance
         {
@@ -1275,6 +1360,20 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`Bytes.new` expects 1 argument, got %d" argc))
+      | TypeValue "List", "new" -> (
+          (* Copies the array's elements into a fresh deque, front to back. *)
+          match eval_args () with
+          | [ Array xs ] ->
+              let l = fresh_list () in
+              Array.iter (list_push_back l) xs;
+              List l
+          | [ v ] ->
+              error span "E3001"
+                (Printf.sprintf "`List.new` expects an Array, got %s"
+                   (type_name v))
+          | _ ->
+              error span "E3007"
+                (Printf.sprintf "`List.new` expects 1 argument, got %d" argc))
       | TypeValue t, m ->
           error span "E3009"
             (Printf.sprintf "type `%s` has no member `%s` yet" t m)
@@ -1302,6 +1401,33 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`replace` expects 1 argument, got %d" argc))
+      | List l, "push_front" -> (
+          match eval_args () with
+          | [ v ] ->
+              list_push_front l v;
+              List l
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`push_front` expects 1 argument, got %d"
+                   (List.length args)))
+      | List l, "push_back" -> (
+          match eval_args () with
+          | [ v ] ->
+              list_push_back l v;
+              List l
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`push_back` expects 1 argument, got %d"
+                   (List.length args)))
+      | List l, "pop_front" ->
+          none_expected "pop_front";
+          list_pop_front span l
+      | List l, "pop_back" ->
+          none_expected "pop_back";
+          list_pop_back span l
+      | List l, "length" ->
+          none_expected "length";
+          Int64 (Int64.of_int l.lsize)
       | Bytes b, "length" ->
           none_expected "length";
           Int64 (Int64.of_int (Bytes.length b))

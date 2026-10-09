@@ -1318,7 +1318,9 @@ def hello(whom String) String {
 let emoji_new_cmd =
   let name =
     Arg.(
-      required & pos 0 (some string) None & info [] ~docv:"OWNER/NAME"
+      required
+      & pos 0 (some string) None
+      & info [] ~docv:"OWNER/NAME"
           ~doc:
             "The publishable package name — owner/name, each part 1-64 \
              lowercase letters, digits, `_` or `-`. The directory is named \
@@ -1328,7 +1330,8 @@ let emoji_new_cmd =
     (Cmd.info "new" ~doc:"Scaffold a shareable package.")
     Term.(
       const (fun name ->
-          let path = match String.index_opt name '/' with
+          let path =
+            match String.index_opt name '/' with
             | Some i -> String.sub name (i + 1) (String.length name - i - 1)
             | None -> name
           in
@@ -1353,7 +1356,7 @@ let emoji_build ~(dir : string) : int =
     | exception Emo_pkg.Manifest_error d ->
         render_errors ~color:false ~error_limit:20 [ d ];
         65
-    | m -> (
+    | m ->
         let short =
           match String.index_opt m.Emo_pkg.name '/' with
           | Some i ->
@@ -1378,44 +1381,38 @@ let emoji_build ~(dir : string) : int =
         let results =
           List.map
             (fun target ->
-                let output =
-                  Filename.concat dir
-                    (Filename.concat ".emo-build" ("emoji-" ^ target))
-                in
-                let code =
-                  build_file ~entry ~output ~specialize:true ~cclibs:[]
-                    ~target
-                in
-                (target, code))
+              let output =
+                Filename.concat dir
+                  (Filename.concat ".emo-build" ("emoji-" ^ target))
+              in
+              let code =
+                build_file ~entry ~output ~specialize:true ~cclibs:[] ~target
+              in
+              (target, code))
             m.Emo_pkg.targets
         in
-        let failed =
-          List.filter (fun (_, code) -> code <> 0) results
-        in
+        let failed = List.filter (fun (_, code) -> code <> 0) results in
         if failed = [] then begin
           List.iter
-            (fun (target, _) ->
-                Printf.printf "%-11s ok\n" target)
+            (fun (target, _) -> Printf.printf "%-11s ok\n" target)
             results;
           0
         end
         else begin
           List.iter
             (fun (target, _) ->
-                prerr_endline
-                  (Printf.sprintf "emo emoji build: the %s target failed"
-                     target))
+              prerr_endline
+                (Printf.sprintf "emo emoji build: the %s target failed" target))
             failed;
-          (match List.find_opt (fun (_, code) -> code = 70) failed with
+          match List.find_opt (fun (_, code) -> code = 70) failed with
           | Some (_, code) -> code
-          | None -> 65)
-        end)
+          | None -> 65
+        end
 
 let emoji_build_cmd =
   Cmd.v
     (Cmd.info "build"
-       ~doc:
-         "Compile the package's entry module under every declared target.")
+       ~doc:"Compile the package's entry module under every declared target.")
     Term.(
       const (fun () ->
           match emoji_build ~dir:(Sys.getcwd ()) with

@@ -108,6 +108,9 @@ let rec dump_e indent e =
   | Bytes_new v ->
       indent @@@ "Bytes_new";
       dump_e (indent + 2) v
+  | List_new v ->
+      indent @@@ "List_new";
+      dump_e (indent + 2) v
   | Make_exception { message } ->
       indent @@@ "Raise_value";
       dump_e (indent + 2) message
