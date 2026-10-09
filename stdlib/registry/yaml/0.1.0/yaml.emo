@@ -998,7 +998,9 @@ def block_chomp(s String, chomp Int64) String {
   if e == 0 {
     return ""
   }
-  const text = b.to_string().substring(0, e)
+  const out = Bytes.new(e)
+  copy_range(b, out, 0, 0, e)
+  const text = out.to_string()
   if chomp == -1 {
     return text
   }
@@ -1169,7 +1171,7 @@ def parse_single(data Bytes, pos Int64) (Yaml, Int64) {
   const e = line_end(data, pos)
   const buf = Bytes.new(e - pos)
   const r = scan_single(data, pos + 1, e, buf, 0)
-  return (YamlString.new(value: buf.to_string().substring(0, r[1])), r[0])
+  return (YamlString.new(value: bytes_head(buf, r[1])), r[0])
 }
 
 // Returns (next pos after the closing quote, bytes written).
@@ -1201,7 +1203,7 @@ def parse_double(data Bytes, pos Int64) (String, Int64) {
   const m = double_measure(data, pos + 1, e, 0)
   const out = Bytes.new(m[0])
   const r = double_fill(data, pos + 1, out, 0)
-  return (out.to_string().substring(0, r[1]), r[0])
+  return (out.to_string(), r[0])
 }
 
 // Pass one: validate escapes and measure the decoded length.
@@ -1425,7 +1427,7 @@ def utf8_put(out Bytes, w Int64, cp Int64) Int64 {
 def slice_text(data Bytes, start Int64, end Int64) String {
   const buf = Bytes.new(end - start)
   copy_range(data, buf, start, 0, end - start)
-  return buf.to_string().substring(0, end - start)
+  return buf.to_string()
 }
 
 def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
@@ -2105,4 +2107,11 @@ def hex_byte(n Int64) Int64 {
     return 48 + n
   }
   return 87 + n
+}
+
+// The first n bytes of b as a String (an exact copy).
+def bytes_head(b Bytes, n Int64) String {
+  const out = Bytes.new(n)
+  copy_range(b, out, 0, 0, n)
+  return out.to_string()
 }
