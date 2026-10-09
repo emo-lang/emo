@@ -196,6 +196,7 @@ let wasm_goldens =
     "bit_ops";
     "fixed_width";
     "list";
+    "base64_demo";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -216,6 +217,7 @@ let beam_goldens =
     "bit_ops";
     "fixed_width";
     "list";
+    "base64_demo";
   ]
 
 let erl_available =
@@ -420,6 +422,7 @@ let c_goldens =
     "http_roundtrip";
     "list";
     "os_demo";
+    "base64_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

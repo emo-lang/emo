@@ -828,3 +828,37 @@ and directory surfaces. Unlike the format packages, os crosses
 modules with native types only, so the c target takes it without the
 cross-module-types checker step; ts/wasm/beam are refused by the
 package's targets declaration.
+
+### Step 31 — The standard library: `base64` · `plan/step-31-stdlib-base64.md`
+
+**Prereq:** Step 27 (the json package — the byte-scanner discipline).
+**Done when:** `require "base64"` encodes with the standard alphabet
+and `=` padding and decodes strictly — alphabet-only, padding only in
+the final quantum, canonical zero padding bits — with the offending
+byte offset on every rejection; the golden rides ALL five lists
+(bootstrap, c, typescript, wasm, beam), byte-identical everywhere.
+
+- [x] **T31.1** — The package: the arithmetic alphabet both
+      directions, the strict decoder, offset-bearing errors. (Done
+      2026-10-09.)
+- [x] **T31.2** — The wasm fixes: the `&&`/`||` left-operand cast and
+      the zero-length byte-copy guard. (Done 2026-10-09.)
+- [x] **T31.3** — The beam fixes: the logical operators, the tuple
+      index, and `Make_exception`. (Done 2026-10-09.)
+- [x] **T31.4** — The golden: `examples/base64_demo` on all five
+      lists. (Done 2026-10-09.)
+- [x] **T31.5** — The docs: `docs/stdlib/base64.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 31 close-out (2026-10-09, on `feat/stdlib`): the base64 package
+is the first standard-library package on all five goldens — and the
+step flushed out four latent backend bugs no shipped example had ever
+reached: the wasm `&&`/`||` left operand skipped its `ref.cast` (this
+was the wall gating json/yaml/xml out of the wasm goldens), the wasm
+zero-length byte copies were do-whiles that trapped on
+`"".to_bytes()`, the beam logical operators called `emo_add` on two
+booleans, and the beam tuple index used `lists:nth` on an Erlang
+tuple; beam also gained `Make_exception` (the exception object is its
+message). The json/yaml/xml wasm gate should be re-examined against
+these fixes — the `&&` wall is gone, though their cross-module class
+types may still be gated by the step-27 follow-up.

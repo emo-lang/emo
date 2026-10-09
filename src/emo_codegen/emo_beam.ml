@@ -195,6 +195,32 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env "\n  <'false'> when 'true' ->\n";
       expr env else_;
       put env "\nend"
+  | Binary (((Emo_ast.And | Emo_ast.Or) as op), l, r) ->
+      (* the other targets short-circuit these, so beam does too —
+         Core Erlang has no `andalso` call, only the operator, and the
+         operator is not a Core form; a case gives the same shape *)
+      let lcode = expr_block env l in
+      let rcode = expr_block env r in
+      if op = Emo_ast.And then
+        put env
+          (Printf.sprintf
+             "case %s of\n\
+              \t  <'true'> when 'true' ->\n\
+             \    %s\n\
+              \t  <_other> when 'true' ->\n\
+             \    'false'\n\
+              \tend"
+             lcode rcode)
+      else
+        put env
+          (Printf.sprintf
+             "case %s of\n\
+              \t  <'true'> when 'true' ->\n\
+             \    'true'\n\
+              \t  <_other> when 'true' ->\n\
+             \    %s\n\
+              \tend"
+             lcode rcode)
   | Binary (op, l, r) ->
       (* Int64 is the target's own 64-bit wrapping integer — every
          integer operator already masks at 64 bits — so only Byte needs
@@ -223,7 +249,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
             | Emo_ast.Bit_xor -> "bxor"
             | Emo_ast.Shl -> "shl"
             | Emo_ast.Shr -> "shr"
-            | Emo_ast.And | Emo_ast.Or -> "add")
+            (* the logical operators lower through the case above *)
+            | Emo_ast.And | Emo_ast.Or -> assert false)
       in
       put env (Printf.sprintf "apply 'emo_%s'/2 " name);
       args_list env [ l; r ]
@@ -257,12 +284,21 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Map_lit _ ->
       raise (Emo_ir.Lower_error "the beam target does not support Map yet")
   | Index (b, i) ->
-      (* lists are 1-based *)
-      put env "call 'lists':'nth'(call 'erlang':'+'(1, ";
-      expr env i;
-      put env "), ";
-      expr env b;
-      put env ")"
+      (* a tuple is an Erlang tuple and answers element/2; a list (an
+         array literal) is 1-based and answers lists:nth *)
+      if match b.Emo_ir.ety with Emo_check.TupleType _ -> true | _ -> false
+      then (
+        put env "call 'erlang':'element'(call 'erlang':'+'(1, ";
+        expr env i;
+        put env "), ";
+        expr env b;
+        put env ")")
+      else (
+        put env "call 'lists':'nth'(call 'erlang':'+'(1, ";
+        expr env i;
+        put env "), ";
+        expr env b;
+        put env ")")
   | Field_read { obj; name } -> (
       (* a module reference: the alias's runtime value is never used —
          qualified calls resolve statically — so the qualified path as
@@ -357,9 +393,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
       env.local_map <- saved;
       put env ")"
   | Builtin { name; args } -> builtin env name args
-  | _ ->
-      raise
-        (Emo_ir.Lower_error "beam: this construct is not available yet (T17.4)")
+  | Make_exception { message } ->
+      (* Exception.new's object is its message, and the construction
+         never returns — the throw happens right here, so a Raise
+         wrapping this never reaches its own wrapper. *)
+      put env "call 'erlang':'throw'({'emo_raise', ";
+      expr env message;
+      put env "})"
 
 and method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
@@ -799,11 +839,19 @@ and stmt env (s : Emo_ir.stmt) : unit =
         branches;
       env.local_map <- saved;
       put env "after 'infinity' ->\n    primop 'recv_wait'()"
-  | Emo_ir.Raise x ->
-      (* an ordinary Emo exception: a throw the entry reports *)
-      put env "call 'erlang':'throw'({'emo_raise', ";
-      expr env x;
-      put env "})"
+  | Emo_ir.Raise x -> (
+      (* an ordinary Emo exception: a throw the entry reports. The
+         raised value is the exception object; Exception.new's object
+         is its message, so the wrapping is the throw itself. *)
+      match x.Emo_ir.desc with
+      | Emo_ir.Make_exception { message } ->
+          put env "call 'erlang':'throw'({'emo_raise', ";
+          expr env message;
+          put env "})"
+      | _ ->
+          put env "call 'erlang':'throw'({'emo_raise', ";
+          expr env x;
+          put env "})")
 
 (* ---- Guard expressions ----
 

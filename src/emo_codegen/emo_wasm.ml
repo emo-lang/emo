@@ -392,13 +392,17 @@ let rec expr env (x : Emo_ir.expr) : unit =
         (truthy (expr_block env c)
         @ [ W.If (W.Result W.Anyref, expr_block env t, expr_block env else_) ])
   | Binary (Ast.And, l, r) ->
+      (* The left value arrives as anyref, so it is narrowed to $vbool
+         before the field read — the same contract truthy follows. *)
       expr env l;
+      e env (W.Ref_cast t_vbool);
       e env (W.Struct_get (t_vbool, 0));
       let rcode = expr_block env r in
       e env (W.If (W.Result W.I32, truthy rcode, [ W.I32_const 0 ]));
       e env (W.Struct_new t_vbool)
   | Binary (Ast.Or, l, r) ->
       expr env l;
+      e env (W.Ref_cast t_vbool);
       e env (W.Struct_get (t_vbool, 0));
       let rcode = expr_block env r in
       e env (W.If (W.Result W.I32, [ W.I32_const 1 ], truthy rcode));
@@ -2774,24 +2778,36 @@ let rt_bytes_from_str : W.func_type =
         W.Local_set 2;
         W.I32_const 0;
         W.Local_set 3;
-        W.Loop
+        (* the copy loop is entered only when there is something to
+           copy — the loop's exit check is at its end, so a zero
+           length must not enter it at all *)
+        W.Local_get 3;
+        W.Local_get 1;
+        W.Array_len t_bytes;
+        W.I32_lt_s;
+        W.If
           ( W.Void,
             [
-              W.Local_get 1;
-              W.Local_get 3;
-              W.Local_get 2;
-              W.Local_get 3;
-              W.Array_get_u t_bytes;
-              W.Array_set t_bytes;
-              W.Local_get 3;
-              W.I32_const 1;
-              W.I32_add;
-              W.Local_tee 3;
-              W.Local_get 1;
-              W.Array_len t_bytes;
-              W.I32_lt_s;
-              W.Br_if 0;
-            ] );
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 1;
+                    W.Local_get 3;
+                    W.Local_get 2;
+                    W.Local_get 3;
+                    W.Array_get_u t_bytes;
+                    W.Array_set t_bytes;
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_tee 3;
+                    W.Local_get 1;
+                    W.Array_len t_bytes;
+                    W.I32_lt_s;
+                    W.Br_if 0;
+                  ] );
+            ],
+            [] );
         W.Local_get 1;
         W.Struct_new t_vbytes;
       ];
@@ -2814,24 +2830,36 @@ let rt_bytes_to_str : W.func_type =
       @ bytes_of_vbytes 0
       @ [ W.Local_set 2; W.I32_const 0; W.Local_set 3 ]
       @ [
-          W.Loop
+          (* entered only when there is something to copy — the loop's
+             exit check is at its end, so a zero length must not enter
+             it at all *)
+          W.Local_get 3;
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.I32_lt_s;
+          W.If
             ( W.Void,
               [
-                W.Local_get 1;
-                W.Local_get 3;
-                W.Local_get 2;
-                W.Local_get 3;
-                W.Array_get_u t_bytes;
-                W.Array_set t_bytes;
-                W.Local_get 3;
-                W.I32_const 1;
-                W.I32_add;
-                W.Local_tee 3;
-                W.Local_get 1;
-                W.Array_len t_bytes;
-                W.I32_lt_s;
-                W.Br_if 0;
-              ] );
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 1;
+                      W.Local_get 3;
+                      W.Local_get 2;
+                      W.Local_get 3;
+                      W.Array_get_u t_bytes;
+                      W.Array_set t_bytes;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_tee 3;
+                      W.Local_get 1;
+                      W.Array_len t_bytes;
+                      W.I32_lt_s;
+                      W.Br_if 0;
+                    ] );
+              ],
+              [] );
         ]
       @ [ W.Local_get 1; W.Struct_new t_vstring ];
   }
