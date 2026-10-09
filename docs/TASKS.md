@@ -669,3 +669,67 @@ the binary or the host build tree; the ocaml target works from a lone
 release-layout binary wherever the OCaml toolchain is on PATH; the
 typescript target likewise; all goldens byte-for-byte and `dune test`
 green.
+
+### Step 27 — The standard library: `json` · `plan/step-27-stdlib-json.md`
+
+**Prereq:** Step 10 (packages) + step 26 (target independence).
+**Done when:** `require "json"` decodes and encodes JSON on every
+target the compiler ships, byte-identically — strict offset-bearing
+errors, exactly round-tripping numbers, a value tree of ordinary Emo
+data over the shared runtimes, zero per-target runtime work beyond the
+typescript UTF-8 bytes fix; goldens on all six paths; `dune test`
+green.
+
+- [x] **T27.1** — The spec and the skeleton: the package
+      `stdlib/registry/json/0.1.0` (`package.emo` over the five tested
+      targets, `json.emo` with the value model — `JsonKind`, the
+      `Json` interface, seven payload classes, the factories — and
+      `internal/float.emo` for the numeric machinery) embedded by
+      rebuild. Verification: a factory-built value encodes,
+      interpreted. (Done 2026-10-09.)
+- [x] **T27.2** — The typescript bytes fix: `to_bytes` encodes UTF-8
+      and `Bytes.to_string` decodes UTF-8 in the ts prelude; all
+      existing ts goldens byte-for-byte. (Done 2026-10-09: the
+      interpreter, c, and typescript agree on a non-ASCII
+      round-trip.)
+- [x] **T27.3** — The decoder: the byte-level scanner and
+      recursive-descent parser over the RFC 8259 grammar — escapes
+      with surrogate pairs, exact `Int64`/`Float64` numbers, the depth
+      cap, offset-bearing errors. (Done 2026-10-09: decode rounds
+      decimals once, to nearest with ties to even — `strtod`'s
+      answer — via exact long division in `internal/float.emo`.)
+- [x] **T27.4** — The encoder: compact and pretty forms; string
+      escaping; integers through `Int64.to_string`; the
+      shortest-round-trip float formatter. (Done 2026-10-09: π prints
+      `3.141592653589793`, denormal-min prints `5.0e-324`, max prints
+      `1.7976931348623157e+308`; a float always stays visibly a
+      float.)
+- [x] **T27.5** — The golden example: `examples/json_demo` wired into
+      the interpreter-bootstrap and typescript golden lists (one
+      `expected.txt`); c, wasm, and beam wait on the cross-module
+      follow-up below. (Done 2026-10-09.)
+- [x] **T27.6** — The edge fixtures: `examples/json_edge` — escape
+      matrix, surrogate pairs, the 512-array cap round-tripped,
+      duplicate keys, number boundaries, round-trips, pretty form —
+      wired into the interpreter-bootstrap list. (Done 2026-10-09;
+      flushed out the missing empty-container guards in the compact
+      encoder.)
+- [x] **T27.7** — The docs and close-out: `docs/stdlib/json.md` and
+      its zh-CN mirror; `dune build @fmt` and `dune test` green.
+      (Done 2026-10-09.)
+
+Step 27 close-out (2026-10-09, on `feat/stdlib`): `require "json"`
+decodes and encodes byte-identically on the interpreter, the ocaml
+target, and the typescript target — goldens `json_demo` (bootstrap +
+ts) and `json_edge` (bootstrap) green, `dune build @fmt` and
+`dune test` green end to end. The package is ordinary pure Emo; the c,
+wasm, and beam targets stay blocked on one checker step — cross-module
+type names ("cross-module types stay unchecked this step", step 9) —
+with the minimal repros and the backend fixes this step already landed
+recorded in `plan/step-27-stdlib-json.md`. Compiler fixes riding this
+step: the span type table keyed by file (multi-module type
+corruption), the typescript tail-call rewrite's argument
+temporaries + string escapes + interface separators, the c `emo_send`
+argument array + unknown-receiver vtable fallback + mutual-tail
+cluster entry dispatch, and the wasm interface-dispatch `Ref_cast` +
+field display-name resolution.

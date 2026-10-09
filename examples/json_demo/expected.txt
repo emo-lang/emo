@@ -1,0 +1,31 @@
+王晓明
+29
+true
+91.5
+["a","b"]
+{"name":"上海"}
+null
+true
+33
+"line1\nline2\t\"quoted\"\\café世😀"
+9223372036854775807
+-9223372036854775808
+9007199254740993
+2.0
+0.1
+3.141592653589793
+5.0e-324
+2.2250738585072014e-308
+1.7976931348623157e+308
+2
+{"id":7,"ratio":0.125,"label":"quote \" backslash \\ end","flags":[true,null]}
+{
+  "id": 7,
+  "ratio": 0.125,
+  "label": "quote \" backslash \\ end",
+  "flags": [
+    true,
+    null
+  ]
+}
+"王晓明"

@@ -1351,6 +1351,16 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "http_roundtrip")
           "http_roundtrip" "main.emo" false);
+    tc "json_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "json_demo")
+          "json_demo" "main.emo" true);
+    tc "json_edge compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "json_edge")
+          "json_edge" "main.emo" true);
   ]
 
 (* ---- The TypeScript target (step 15) ----
@@ -1396,6 +1406,7 @@ let ts_golden_tests =
       ("fixed_width", "main.emo");
       ("list", "main.emo");
       ("map", "main.emo");
+      ("json_demo", "main.emo");
     ]
 
 let () =

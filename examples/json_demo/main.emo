@@ -1,0 +1,57 @@
+require "json"
+
+// The json package end to end: decode a document, read it through
+// narrowing, encode it back compact and pretty, and round-trip the
+// number formats. Every target must print this file's expected.txt
+// byte for byte — the package is pure Emo over the shared runtimes.
+
+// ---- decode and read ----
+const text = "{\"name\": \"王晓明\", \"age\": 28, \"active\": true, \"score\": 91.5, \"tags\": [\"a\", \"b\"], \"city\": {\"name\": \"上海\"}, \"note\": null}"
+const doc = json.decode(text)
+if doc.is(JsonObject) {
+  // containers read through `is()` into the concrete class; the scalar
+  // accessors then answer without further ceremony
+  println(doc.get("name").as_string())
+  println(doc.get("age").as_int() + 1)
+  println(doc.get("active").as_bool())
+  println(doc.get("score").as_float())
+  println(doc.get("tags").encode())
+  println(doc.get("city").encode())
+  println(doc.get("note").encode())
+  println(doc.get("note").is_null?())
+}
+
+// ---- escapes survive the round trip ----
+const esc = json.decode("\"line1\\nline2\\t\\\"quoted\\\"\\\\caf\\u00e9\\u4e16\\ud83d\\ude00\"")
+println(esc.as_string().to_bytes().length())
+println(esc.encode())
+
+// ---- the number formats ----
+println(json.decode("9223372036854775807").encode())
+println(json.decode("-9223372036854775808").encode())
+println(json.decode("9007199254740993").encode())
+println(json.decode("2.0").encode())
+println(json.decode("0.1").encode())
+println(json.decode("3.141592653589793").encode())
+println(json.decode("5e-324").encode())
+println(json.decode("2.2250738585072014e-308").encode())
+println(json.decode("1.7976931348623157e308").encode())
+
+// ---- duplicate keys: the last one wins in `get` ----
+println(json.decode("{\"k\": 1, \"k\": 2}").get("k").encode())
+
+// ---- building values with the factories ----
+const built = json.object([
+    ("id", json.int64(7)),
+    ("ratio", json.float64(0.125)),
+    ("label", json.string("quote \" backslash \\ end")),
+    ("flags", json.array([json.bool(true), json.null()]))
+  ])
+println(json.encode(built))
+println(json.encode_pretty(built))
+
+// ---- a full round trip: decode, re-encode, decode again ----
+const once = json.decode(json.encode(doc))
+if once.is(JsonObject) {
+  println(once.get("name").encode())
+}
