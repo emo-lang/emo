@@ -1,0 +1,9 @@
+package {
+  name = "emo/json_demo"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {
+    json = "0.1.0"
+  }
+}

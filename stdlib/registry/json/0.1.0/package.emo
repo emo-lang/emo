@@ -1,0 +1,7 @@
+package {
+  name = "json"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {}
+}
