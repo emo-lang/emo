@@ -1,0 +1,12 @@
+hell
+o fd
+0
+2
+a.txt
+b.txt
+r.txt
+greetings from the fork child
+true
+7
+true
+true

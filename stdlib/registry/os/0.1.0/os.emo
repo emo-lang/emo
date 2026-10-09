@@ -1,0 +1,131 @@
+// The os module: the process-level surface a systems program needs —
+// process ids, fork, exec, wait, pipes, the working directory, directory
+// listing, and raw (unbuffered, fd-based) file IO. Every failing call
+// raises an ordinary Emo exception whose message states exactly which
+// system call failed and why — no error codes, no nil.
+//
+// The module is POSIX: it runs on the ocaml and c targets, the targets
+// with a Unix-shaped host. fork/exec/wait/pipe have no meaning on the
+// browser and bytecode targets, so declaring this package for them is a
+// package error before any code runs.
+//
+// waitpid returns the kernel's raw 16-bit status word, decoded by the
+// wait_* helpers below — the same encoding every Unix kernel uses, so
+// the numbers survive unchanged across the ocaml and c targets.
+
+def getpid() Int64 {
+  return os_getpid()
+}
+
+def getppid() Int64 {
+  return os_getppid()
+}
+
+def fork() Int64 {
+  return os_fork()
+}
+
+def waitpid(pid Int64) (Int64, Int64) {
+  return os_waitpid(pid)
+}
+
+// The child process half of waitpid: true when the child exited through
+// exit or a return from main, false when it was signaled or stopped.
+def wait_exited(status Int64) Bool {
+  return (status & 127) == 0
+}
+
+// The exit status, valid only when wait_exited(status) is true.
+def wait_exit_code(status Int64) Int64 {
+  return (status >> 8) & 255
+}
+
+def wait_signaled(status Int64) Bool {
+  return (status & 127) != 0
+}
+
+// The terminating signal number, valid only when wait_signaled(status) is true.
+def wait_signal(status Int64) Int64 {
+  return status & 127
+}
+
+def wait_stopped(status Int64) Bool {
+  return (status & 127) == 127
+}
+
+// The stopping signal number, valid only when wait_stopped(status) is true.
+def wait_stop_signal(status Int64) Int64 {
+  return (status >> 8) & 255
+}
+
+def pipe() (Int64, Int64) {
+  return os_pipe()
+}
+
+// Replaces the calling process. argv[0] is conventionally the program
+// name again; the list must end where the arguments end. On success this
+// call never returns — the process is gone — and on failure it raises.
+def execv(path String, argv Array[String]) Void {
+  os_execv(path, argv)
+}
+
+// Exits immediately without unwinding — the fork child's way out. Ordinary
+// cleanup such as flush handlers does not run, which is exactly what makes
+// a forked child safe: it cannot run its parent's cleanup a second time.
+def _exit(status Int64) Void {
+  os__exit(status)
+}
+
+def open_read(path String) Int64 {
+  return os_open_read(path)
+}
+
+def open_write(path String) Int64 {
+  return os_open_write(path)
+}
+
+def open_append(path String) Int64 {
+  return os_open_append(path)
+}
+
+// Reads up to n bytes; the empty string means end of file.
+def read(fd Int64, n Int64) String {
+  return os_read(fd, n)
+}
+
+def write(fd Int64, data String) Int64 {
+  return os_write(fd, data)
+}
+
+def close(fd Int64) Int64 {
+  return os_close(fd)
+}
+
+// The entry names of a directory, byte-order sorted, excluding "." and "..".
+def list_dir(path String) Array[String] {
+  return os_list_dir(path)
+}
+
+def mkdir(path String) Int64 {
+  return os_mkdir(path)
+}
+
+def rmdir(path String) Int64 {
+  return os_rmdir(path)
+}
+
+def unlink(path String) Int64 {
+  return os_unlink(path)
+}
+
+def rename(old_path String, new_path String) Int64 {
+  return os_rename(old_path, new_path)
+}
+
+def getcwd() String {
+  return os_getcwd()
+}
+
+def chdir(path String) Int64 {
+  return os_chdir(path)
+}

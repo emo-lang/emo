@@ -419,6 +419,7 @@ let c_goldens =
     "tcp_echo";
     "http_roundtrip";
     "list";
+    "os_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

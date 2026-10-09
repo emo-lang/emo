@@ -20,6 +20,9 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <dirent.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -1945,4 +1948,189 @@ double emo_f64_from_bits(int64_t bits) {
   double d;
   memcpy(&d, &bits, sizeof d);
   return d;
+}
+
+/* ---- the os module: synchronous POSIX syscalls ---- */
+
+static int64_t emo_os_fail(const char *what, const char *arg) {
+  char buf[512];
+  if (arg[0] == 0)
+    snprintf(buf, sizeof buf, "os: %s: %s", what, strerror(errno));
+  else
+    snprintf(buf, sizeof buf, "os: %s %s: %s", what, arg, strerror(errno));
+  emo_raise(emo_make_exception(emo_str_from_cstr(buf)));
+  return 0; /* unreachable: emo_raise exits */
+}
+
+int64_t emo_os_getpid(void) { return (int64_t)getpid(); }
+
+int64_t emo_os_getppid(void) { return (int64_t)getppid(); }
+
+int64_t emo_os_fork(void) { return (int64_t)fork(); }
+
+int64_t emo_os_waitpid(int64_t pid) {
+  int st = 0;
+  if (waitpid((pid_t)pid, &st, 0) < 0)
+    return (int64_t)emo_os_fail("waitpid", "");
+  emo_value elems[2];
+  elems[0] = emo_box_i64(pid);
+  elems[1] = emo_box_i64((int64_t)st);
+  return emo_tuple_new(2, elems);
+}
+
+int64_t emo_os_pipe(void) {
+  int fds[2];
+  if (pipe(fds) != 0)
+    return (int64_t)emo_os_fail("pipe", "");
+  emo_value elems[2];
+  elems[0] = emo_box_i64(fds[0]);
+  elems[1] = emo_box_i64(fds[1]);
+  return emo_tuple_new(2, elems);
+}
+
+int64_t emo_os_execv(emo_str path, emo_value argv) {
+  char *p = (char *)emo_str_cstr(path);
+  int64_t count = emo_length(argv);
+  char **argv_c = (char **)emo_alloc(sizeof(char *) * (size_t)(count + 1));
+  for (int64_t i = 0; i < count; i++) {
+    emo_str item = emo_str_of(emo_index(argv, i));
+    char *copied = (char *)emo_alloc((size_t)item.len + 1);
+    memcpy(copied, item.bytes, (size_t)item.len);
+    copied[item.len] = 0;
+    argv_c[i] = copied;
+  }
+  argv_c[count] = NULL;
+  execv(p, argv_c);
+  char buf[512];
+  snprintf(buf, sizeof buf, "os: execv %s: %s", p, strerror(errno));
+  emo_raise(emo_make_exception(emo_str_from_cstr(buf)));
+  return (emo_value)0; /* unreachable */
+}
+
+void emo_os__exit(int64_t status) { _exit((int)status); }
+
+int64_t emo_os_open_read(emo_str path) {
+  char *p = (char *)emo_str_cstr(path);
+  int fd = open(p, O_RDONLY);
+  if (fd < 0)
+    return (int64_t)emo_os_fail("open", p);
+  return fd;
+}
+
+int64_t emo_os_open_write(emo_str path) {
+  char *p = (char *)emo_str_cstr(path);
+  int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0)
+    return (int64_t)emo_os_fail("open", p);
+  return fd;
+}
+
+int64_t emo_os_open_append(emo_str path) {
+  char *p = (char *)emo_str_cstr(path);
+  int fd = open(p, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd < 0)
+    return (int64_t)emo_os_fail("open", p);
+  return fd;
+}
+
+emo_str emo_os_read(int64_t fd, int64_t n) {
+  if (n <= 0)
+    return (emo_str){0, ""};
+  char *buf = (char *)emo_alloc((size_t)n);
+  ssize_t got = read((int)fd, buf, (size_t)n);
+  if (got < 0)
+    emo_os_fail("read", "");
+  emo_str out = {(int64_t)got, buf};
+  return out;
+}
+
+int64_t emo_os_write(int64_t fd, emo_str data) {
+  ssize_t put = write((int)fd, data.bytes, (size_t)data.len);
+  if (put < 0)
+    return (int64_t)emo_os_fail("write", "");
+  return (int64_t)put;
+}
+
+int64_t emo_os_close(int64_t fd) {
+  if (close((int)fd) != 0)
+    return (int64_t)emo_os_fail("close", "");
+  return 0;
+}
+
+static int emo_os_cmp_cstr(const void *a, const void *b) {
+  return strcmp(*(const char **)a, *(const char **)b);
+}
+
+emo_value emo_os_list_dir(emo_str path) {
+  char *p = (char *)emo_str_cstr(path);
+  DIR *d = opendir(p);
+  if (d == NULL)
+    return emo_os_fail("opendir", p);
+  size_t count = 0;
+  struct dirent *ent;
+  while ((ent = readdir(d)) != NULL) {
+    if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+      continue;
+    count++;
+  }
+  size_t slot = count > 0 ? count : 1;
+  char **names = (char **)emo_alloc(sizeof(char *) * slot);
+  rewinddir(d);
+  size_t i = 0;
+  while ((ent = readdir(d)) != NULL) {
+    if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+      continue;
+    names[i] = (char *)emo_alloc(strlen(ent->d_name) + 1);
+    strcpy(names[i], ent->d_name);
+    i++;
+  }
+  closedir(d);
+  qsort(names, count, sizeof(char *), emo_os_cmp_cstr);
+  emo_value *elems = (emo_value *)emo_alloc(sizeof(emo_value) * slot);
+  for (size_t k = 0; k < count; k++)
+    elems[k] = emo_box_str(emo_str_from_cstr(names[k]));
+  return emo_array_new((int64_t)count, elems);
+}
+
+int64_t emo_os_mkdir(emo_str path) {
+  char *p = (char *)emo_str_cstr(path);
+  if (mkdir(p, 0755) != 0)
+    return (int64_t)emo_os_fail("mkdir", p);
+  return 0;
+}
+
+int64_t emo_os_rmdir(emo_str path) {
+  char *p = (char *)emo_str_cstr(path);
+  if (rmdir(p) != 0)
+    return (int64_t)emo_os_fail("rmdir", p);
+  return 0;
+}
+
+int64_t emo_os_unlink(emo_str path) {
+  char *p = (char *)emo_str_cstr(path);
+  if (unlink(p) != 0)
+    return (int64_t)emo_os_fail("unlink", p);
+  return 0;
+}
+
+int64_t emo_os_rename(emo_str old_path, emo_str new_path) {
+  char *o = (char *)emo_str_cstr(old_path);
+  char *n = (char *)emo_str_cstr(new_path);
+  if (rename(o, n) != 0)
+    return (int64_t)emo_os_fail("rename", o);
+  return 0;
+}
+
+emo_str emo_os_getcwd(void) {
+  char buf[4096];
+  if (getcwd(buf, sizeof buf) == NULL)
+    emo_os_fail("getcwd", "");
+  return emo_str_from_cstr(buf);
+}
+
+int64_t emo_os_chdir(emo_str path) {
+  char *p = (char *)emo_str_cstr(path);
+  if (chdir(p) != 0)
+    return (int64_t)emo_os_fail("chdir", p);
+  return 0;
 }
