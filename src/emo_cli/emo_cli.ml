@@ -815,15 +815,35 @@ let json_string_field (key : string) (json : string) : string option =
         in
         read (i + 1)
 
-(* The uploader program: `__url`, `__token`, and `__body` (the raw .emoji
-   bytes) are bound by the host before it runs. It prints the HTTP status on
-   the first line and the response body after it — that is the whole channel
-   back. A transport failure raises inside the program and surfaces as an
-   uncaught Emo exception, which the host maps to a plain error. *)
+(* The registry conversation rides embedded Emo programs: `__url` and the
+   other `__`-prefixed names are bound by the host before the program runs.
+   Each program prints the HTTP status on the first line and the response
+   body after it — that is the whole channel back. A transport failure
+   raises inside the program and surfaces as an uncaught Emo exception,
+   which the host maps to a plain error. *)
 let upload_program =
   {|require "http"
 
 const resp = http.request("POST", __url, [("Authorization", "Bearer " + __token), ("Content-Type", "application/octet-stream")], __body, 120.0)
+println(resp.status)
+println(resp.body)
+|}
+
+(* The login step: email + password as JSON, no credentials header yet. *)
+let login_program =
+  {|require "http"
+
+const resp = http.request("POST", __url, [("Content-Type", "application/json")], __body, 60.0)
+println(resp.status)
+println(resp.body)
+|}
+
+(* The token-minting step: HTTP basic auth — the account API's documented
+   path for the CLI — in exchange for a fresh API token. *)
+let token_program =
+  {|require "http"
+
+const resp = http.request("POST", __url, [("Authorization", "Basic " + __basic), ("Content-Type", "application/json")], __body, 60.0)
 println(resp.status)
 println(resp.body)
 |}
@@ -836,17 +856,18 @@ let rec remove_tree path =
   end
   else if Sys.file_exists path then Sys.remove path
 
-(* POSTs [archive] to {registry}/api/v1/packages and returns the HTTP status
-   and response body. The embedded uploader resolves `http` against the
-   standard library shipped with the binary — never the user's EMO_REGISTRY,
-   which may point at a remote endpoint the filesystem client cannot read. *)
-let upload ~(registry : string) ~(token : string) ~(archive : string) :
-    (int * string, string) result =
-  let base =
-    let n = String.length registry in
-    if n > 0 && registry.[n - 1] = '/' then String.sub registry 0 (n - 1)
-    else registry
-  in
+(* Strips one trailing slash, so joining endpoint paths never doubles it. *)
+let registry_base (registry : string) : string =
+  let n = String.length registry in
+  if n > 0 && registry.[n - 1] = '/' then String.sub registry 0 (n - 1)
+  else registry
+
+(* Runs one embedded program against [registry] and returns everything it
+   printed. The program resolves `http` against the standard library shipped
+   with the binary — never the user's EMO_REGISTRY, which may point at a
+   remote endpoint the filesystem client cannot read. *)
+let run_embedded ~(registry : string) ~(tag : string) ~(program : string)
+    ~(globals : (string * Emo_eval.value) list) : (string, string) result =
   let reg = Emo_project.bundled_registry () in
   match List.rev (Emo_pkg.Registry.versions reg ~name:"http") with
   | [] -> Error "the bundled standard library has no http package"
@@ -859,7 +880,7 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
           let dir =
             Filename.concat
               (Filename.get_temp_dir_name ())
-              (Printf.sprintf "emo-publish-%d-%d" (Unix.getpid ())
+              (Printf.sprintf "emo-%s-%d-%d" tag (Unix.getpid ())
                  (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF))
           in
           Unix.mkdir dir 0o755;
@@ -871,7 +892,7 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
           write "package.emo"
             (Printf.sprintf
                {|package {
-  name = "internal/publish"
+  name = "internal/%s"
   version = "0.1.0"
   targets = ["ocaml", "c"]
 
@@ -881,9 +902,10 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
   }
 }
 |}
+               tag
                (Emo_pkg.Version.to_string http_version)
                (Emo_pkg.Version.to_string net_version));
-          write "main.emo" upload_program;
+          write "main.emo" program;
           let out = Buffer.create 256 in
           let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
           let old_cwd = Sys.getcwd () in
@@ -906,14 +928,7 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
             (fun () ->
               match
                 Emo_project.run_entry ~entry_file:"main.emo" ~check:false
-                  ~sched:Emo_project.Own
-                  ~globals:
-                    [
-                      ("__url", Emo_eval.String (base ^ "/api/v1/packages"));
-                      ("__token", Emo_eval.String token);
-                      ("__body", Emo_eval.String archive);
-                    ]
-                  ()
+                  ~sched:Emo_project.Own ~globals ()
               with
               | exception Emo_project.Static_errors ds ->
                   Error
@@ -921,28 +936,492 @@ let upload ~(registry : string) ~(token : string) ~(archive : string) :
                        (List.map (fun d -> d.Emo_support.Diagnostic.message) ds))
               | exception Emo_eval.Error d ->
                   Error d.Emo_support.Diagnostic.message
+              | _ -> Ok (Buffer.contents out)))
+
+(* Splits one exchange's printed output into the status line and the body
+   that follows it. *)
+let parse_exchange (text : string) : (int * string, string) result =
+  match String.index_opt text '\n' with
+  | None -> Error ("the request printed no status: " ^ text)
+  | Some i -> (
+      match int_of_string_opt (String.trim (String.sub text 0 i)) with
+      | None -> Error ("the request printed no status: " ^ text)
+      | Some status ->
+          let body = String.sub text (i + 1) (String.length text - i - 1) in
+          let body =
+            (* println's trailing newline is not the body's. *)
+            if String.length body > 0 && body.[String.length body - 1] = '\n'
+            then String.sub body 0 (String.length body - 1)
+            else body
+          in
+          Ok (status, body))
+
+(* POSTs [archive] to {registry}/api/v1/packages and returns the HTTP status
+   and response body. *)
+let upload ~(registry : string) ~(token : string) ~(archive : string) :
+    (int * string, string) result =
+  match
+    run_embedded ~registry ~tag:"publish" ~program:upload_program
+      ~globals:
+        [
+          ( "__url",
+            Emo_eval.String (registry_base registry ^ "/api/v1/packages") );
+          ("__token", Emo_eval.String token);
+          ("__body", Emo_eval.String archive);
+        ]
+  with
+  | Error e -> Error e
+  | Ok text -> parse_exchange text
+
+(* ---- registry credentials ----
+
+   `emo emoji login` stores one block per registry — registry, token,
+   username — in a key = "value" file under the user's config directory.
+   Entries never cross registries: publish matches the entry against the
+   resolved endpoint, so a token minted for one host is never sent to
+   another. The file holds API tokens in plaintext and is written 0600. *)
+
+type stored_login = {
+  c_registry : string;
+  c_token : string;
+  c_username : string;
+  c_expires_at : string; (* RFC 3339, or "" when the token never expires *)
+}
+
+(* Parses the credentials file: `key = "value"` lines with the keys
+   registry, token, username and the optional expires_at; blank lines and #
+   comments are layout only. A new block starts at each `registry` line.
+   Strict — any malformed or unknown line is an error naming the line
+   number, never a silent skip. *)
+let parse_credentials (content : string) : (stored_login list, string) result =
+  let error line message =
+    Error (Printf.sprintf "credentials: line %d: %s" line message)
+  in
+  let unquote line key rest =
+    let n = String.length rest in
+    if
+      n < 2
+      || rest.[0] <> '"'
+      || rest.[n - 1] <> '"'
+      ||
+        try String.index (String.sub rest 1 (n - 2)) '"' <> -1
+        with Not_found -> false
+    then
+      error line
+        (Printf.sprintf "`%s` must be a quoted value without quotes" key)
+    else Ok (String.sub rest 1 (n - 2))
+  in
+  let complete line entry =
+    match (entry.c_registry, entry.c_token, entry.c_username) with
+    | r, t, u when r <> "" && t <> "" && u <> "" -> Ok entry
+    | r, _, _ when r <> "" ->
+        error line
+          (Printf.sprintf "the `%s` block is missing a token or username" r)
+    | _ -> error line "a block must start with `registry`"
+  in
+  let parse_line line text entry entries =
+    let trimmed = String.trim text in
+    if trimmed = "" || trimmed.[0] = '#' then Ok (entry, entries)
+    else
+      match String.index_opt trimmed '=' with
+      | None -> error line "expected `key = \"value\"`"
+      | Some i -> (
+          let key = String.trim (String.sub trimmed 0 i) in
+          let rest =
+            String.trim
+              (String.sub trimmed (i + 1) (String.length trimmed - i - 1))
+          in
+          match key with
+          | "registry" -> (
+              match entry.c_registry with
+              | "" -> (
+                  match unquote line key rest with
+                  | Ok v -> Ok ({ entry with c_registry = v }, entries)
+                  | Error e -> Error e)
               | _ -> (
-                  let text = Buffer.contents out in
-                  match String.index_opt text '\n' with
-                  | None -> Error ("the uploader printed no status: " ^ text)
-                  | Some i -> (
-                      match
-                        int_of_string_opt (String.trim (String.sub text 0 i))
-                      with
-                      | None -> Error ("the uploader printed no status: " ^ text)
-                      | Some status ->
-                          let body =
-                            String.sub text (i + 1) (String.length text - i - 1)
-                          in
-                          let body =
-                            (* println's trailing newline is not the body's. *)
-                            if
-                              String.length body > 0
-                              && body.[String.length body - 1] = '\n'
-                            then String.sub body 0 (String.length body - 1)
-                            else body
-                          in
-                          Ok (status, body)))))
+                  (* A repeated `registry` opens the next block; the current
+                     one must be complete before it is set aside. *)
+                  match complete line entry with
+                  | Ok full -> (
+                      match unquote line key rest with
+                      | Ok v ->
+                          Ok
+                            ( {
+                                c_registry = v;
+                                c_token = "";
+                                c_username = "";
+                                c_expires_at = "";
+                              },
+                              full :: entries )
+                      | Error e -> Error e)
+                  | Error e -> Error e))
+          | "token" -> (
+              match unquote line key rest with
+              | Ok v -> Ok ({ entry with c_token = v }, entries)
+              | Error e -> Error e)
+          | "username" -> (
+              match unquote line key rest with
+              | Ok v -> Ok ({ entry with c_username = v }, entries)
+              | Error e -> Error e)
+          | "expires_at" -> (
+              match unquote line key rest with
+              | Ok v -> Ok ({ entry with c_expires_at = v }, entries)
+              | Error e -> Error e)
+          | other -> error line (Printf.sprintf "unknown key `%s`" other))
+  in
+  let rec go line entry entries lines =
+    match lines with
+    | [] -> (
+        if entry.c_registry = "" && entry.c_token = "" && entry.c_username = ""
+        then Ok (List.rev entries)
+        else
+          match complete line entry with
+          | Ok full -> Ok (List.rev (full :: entries))
+          | Error e -> Error e)
+    | text :: rest -> (
+        match parse_line line text entry entries with
+        | Ok (entry, entries) -> go (line + 1) entry entries rest
+        | Error e -> Error e)
+  in
+  (* A trailing empty element (the newline-terminated file's last line) is
+     just a blank line to skip; the final block flushes at the end either
+     way, and line numbers stay honest. *)
+  go 1
+    { c_registry = ""; c_token = ""; c_username = ""; c_expires_at = "" }
+    []
+    (String.split_on_char '\n' content)
+
+let load_credentials ~(file : string) : (stored_login list, string) result =
+  if not (Sys.file_exists file) then Ok []
+  else
+    let ic = open_in_bin file in
+    Fun.protect
+      ~finally:(fun () -> close_in_noerr ic)
+      (fun () ->
+        parse_credentials (really_input_string ic (in_channel_length ic)))
+
+(* Replaces the block for [registry] in place, or appends one, and rewrites
+   the file 0600. Values are checked before anything is written: the format
+   has no escapes, so a quote or newline cannot be smuggled in. *)
+let store_credentials ~(file : string) ~(registry : string) ~(token : string)
+    ~(username : string) ~(expires_at : string) : (unit, string) result =
+  let entry =
+    {
+      c_registry = registry_base registry;
+      c_token = token;
+      c_username = username;
+      c_expires_at = expires_at;
+    }
+  in
+  let plain (label : string) (v : string) =
+    if v = "" then Error (label ^ " is empty")
+    else if String.contains v '"' || String.contains v '\n' then
+      Error (label ^ " must not contain quotes or newlines")
+    else Ok ()
+  in
+  (* The expiry may be empty — a token that never expires. *)
+  let expiry =
+    if entry.c_expires_at = "" then Ok ()
+    else if
+      String.contains entry.c_expires_at '"'
+      || String.contains entry.c_expires_at '\n'
+    then Error "expires_at must not contain quotes or newlines"
+    else Ok ()
+  in
+  match
+    ( plain "registry" entry.c_registry,
+      plain "token" entry.c_token,
+      plain "username" entry.c_username,
+      expiry )
+  with
+  | Error e, _, _, _ | _, Error e, _, _ | _, _, Error e, _ | _, _, _, Error e ->
+      Error e
+  | Ok (), Ok (), Ok (), Ok () -> (
+      match load_credentials ~file with
+      | Error e -> Error e
+      | Ok stored -> (
+          let entries =
+            match
+              List.partition (fun e -> e.c_registry = entry.c_registry) stored
+            with
+            | _, kept -> entry :: kept
+          in
+          let buf = Buffer.create 256 in
+          Buffer.add_string buf
+            "# Emo registry credentials, written by `emo emoji login`.\n\
+             # One block per registry; publish only sends a token to its own \
+             registry.\n\
+             # Keep this file private — it holds API tokens in plaintext.\n";
+          List.iter
+            (fun e ->
+              Buffer.add_char buf '\n';
+              Buffer.add_string buf
+                (Printf.sprintf "registry = \"%s\"\n" e.c_registry);
+              Buffer.add_string buf
+                (Printf.sprintf "token = \"%s\"\n" e.c_token);
+              Buffer.add_string buf
+                (Printf.sprintf "username = \"%s\"\n" e.c_username);
+              Buffer.add_string buf
+                (Printf.sprintf "expires_at = \"%s\"\n" e.c_expires_at))
+            entries;
+          let dir = Filename.dirname file in
+          let rec ensure_dir d =
+            if not (Sys.file_exists d) then begin
+              ensure_dir (Filename.dirname d);
+              try Unix.mkdir d 0o755 with Sys_error _ -> ()
+            end
+          in
+          (try ensure_dir dir with Sys_error _ -> ());
+          match open_out_bin file with
+          | exception Sys_error m -> Error m
+          | oc ->
+              Fun.protect
+                ~finally:(fun () -> close_out_noerr oc)
+                (fun () ->
+                  output_string oc (Buffer.contents buf);
+                  close_out_noerr oc;
+                  match Unix.chmod file 0o600 with
+                  | () -> Ok ()
+                  | exception Unix.Unix_error (e, _, _) ->
+                      Error (Unix.error_message e))))
+
+(* The credentials file: $EMO_CONFIG_DIR, then the XDG config home, then the
+   user's .config — mirroring the cache directory's resolution. *)
+let credentials_file () : string =
+  let dir =
+    match Sys.getenv_opt "EMO_CONFIG_DIR" with
+    | Some d when d <> "" -> d
+    | _ ->
+        let config_home =
+          match Sys.getenv_opt "XDG_CONFIG_HOME" with
+          | Some d when d <> "" -> d
+          | _ -> (
+              match Sys.getenv_opt "HOME" with
+              | Some home -> Filename.concat home ".config"
+              | None -> Filename.get_temp_dir_name ())
+        in
+        Filename.concat config_home "emo"
+  in
+  Filename.concat dir "credentials"
+
+(* ---- `emo emoji login` ---- *)
+
+(* Base64 for the basic-auth header — RFC 4648, with padding. *)
+let base64 (s : string) : string =
+  let alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  in
+  let n = String.length s in
+  let buf = Buffer.create ((n + 2) / 3 * 4) in
+  let i = ref 0 in
+  while !i + 2 < n do
+    let v =
+      (Char.code s.[!i] lsl 16)
+      lor (Char.code s.[!i + 1] lsl 8)
+      lor Char.code s.[!i + 2]
+    in
+    Buffer.add_char buf alphabet.[(v lsr 18) land 0x3F];
+    Buffer.add_char buf alphabet.[(v lsr 12) land 0x3F];
+    Buffer.add_char buf alphabet.[(v lsr 6) land 0x3F];
+    Buffer.add_char buf alphabet.[v land 0x3F];
+    i := !i + 3
+  done;
+  let remaining = n - !i in
+  if remaining = 1 then begin
+    let v = Char.code s.[!i] lsl 16 in
+    Buffer.add_char buf alphabet.[(v lsr 18) land 0x3F];
+    Buffer.add_char buf alphabet.[(v lsr 12) land 0x3F];
+    Buffer.add_string buf "=="
+  end
+  else if remaining = 2 then begin
+    let v = (Char.code s.[!i] lsl 16) lor (Char.code s.[!i + 1] lsl 8) in
+    Buffer.add_char buf alphabet.[(v lsr 18) land 0x3F];
+    Buffer.add_char buf alphabet.[(v lsr 12) land 0x3F];
+    Buffer.add_char buf alphabet.[(v lsr 6) land 0x3F];
+    Buffer.add_char buf '='
+  end;
+  Buffer.contents buf
+
+(* Escapes a string for a JSON request body. *)
+let json_escape (s : string) : string =
+  let buf = Buffer.create (String.length s) in
+  String.iter
+    (fun c ->
+      match c with
+      | '"' -> Buffer.add_string buf "\\\""
+      | '\\' -> Buffer.add_string buf "\\\\"
+      | '\n' -> Buffer.add_string buf "\\n"
+      | '\r' -> Buffer.add_string buf "\\r"
+      | '\t' -> Buffer.add_string buf "\\t"
+      | c when Char.code c < 0x20 ->
+          Buffer.add_string buf (Printf.sprintf "\\u%04x" (Char.code c))
+      | c -> Buffer.add_char buf c)
+    s;
+  Buffer.contents buf
+
+(* Reads one line with the terminal echo disabled, so a password never
+   lands in the scrollback. Platforms without termios (Windows) read
+   visibly, and say so. *)
+let read_hidden_line ~(prompt : string) : string =
+  prerr_string prompt;
+  flush stderr;
+  let fd = Unix.descr_of_in_channel stdin in
+  match Unix.tcgetattr fd with
+  | exception _ ->
+      prerr_endline "(the input will be visible as you type)";
+      read_line ()
+  | tm ->
+      tm.Unix.c_echo <- false;
+      (try Unix.tcsetattr fd Unix.TCSANOW tm with _ -> ());
+      Fun.protect
+        ~finally:(fun () ->
+          tm.Unix.c_echo <- true;
+          (try Unix.tcsetattr fd Unix.TCSANOW tm with _ -> ());
+          (* The newline Enter sent without echoing. *)
+          prerr_newline ())
+        read_line
+
+(* The two-step login: verify the credentials against the account API, then
+   exchange them — HTTP basic auth, the account API's documented path for
+   the CLI — for a fresh push/yank/read API token. Returns each step's
+   status and body; the token step's status is 0 when the login step
+   already failed. *)
+let login ~(registry : string) ~(email : string) ~(password : string)
+    ~(token_name : string) ~(expires_in_days : int) :
+    (int * string * int * string, string) result =
+  let run program globals =
+    match run_embedded ~registry ~tag:"login" ~program ~globals with
+    | Error e -> Error e
+    | Ok text -> parse_exchange text
+  in
+  match
+    run login_program
+      [
+        ("__url", Emo_eval.String (registry_base registry ^ "/api/v1/login"));
+        ( "__body",
+          Emo_eval.String
+            (Printf.sprintf {|{"email":"%s","password":"%s"}|}
+               (json_escape email) (json_escape password)) );
+      ]
+  with
+  | Error e -> Error e
+  | Ok (200, login_body) -> (
+      match
+        run token_program
+          [
+            ( "__url",
+              Emo_eval.String (registry_base registry ^ "/api/v1/tokens") );
+            ("__basic", Emo_eval.String (base64 (email ^ ":" ^ password)));
+            ( "__body",
+              Emo_eval.String
+                (Printf.sprintf
+                   {|{"name":"%s","scopes":["push","yank","read"],"expires_in_days":%d}|}
+                   (json_escape token_name) expires_in_days) );
+          ]
+      with
+      | Error e -> Error e
+      | Ok (token_status, token_body) ->
+          Ok (200, login_body, token_status, token_body))
+  | Ok (status, body) -> Ok (status, body, 0, "")
+
+(* Flattens one refused exchange into a report line: the registry's stable
+   code and human message when present, the raw status and body otherwise. *)
+let describe_refusal (status : int) (body : string) : string =
+  match (json_string_field "code" body, json_string_field "message" body) with
+  | Some code, Some message -> code ^ ": " ^ message
+  | _ -> Printf.sprintf "HTTP %d: %s" status (String.trim body)
+
+type login_outcome =
+  | Logged_in of string * string * string
+    (* the username, the plaintext token, and the expiry — "" when none *)
+  | Rejected of string (* the registry answered, and said no *)
+  | Unreachable of string (* transport or protocol failure *)
+  | Not_stored of string (* the login worked; the local write did not *)
+
+(* The ledger name a CLI-minted token carries: which machine minted it. *)
+let cli_token_name () : string =
+  let host = try Unix.gethostname () with _ -> "" in
+  let name = if host = "" then "emo CLI" else "emo CLI on " ^ host in
+  if String.length name > 64 then String.sub name 0 64 else name
+
+(* Runs the whole login: the two registry steps, then the credentials
+   write. stdin supplies the email and password — prompted and hidden on a
+   terminal, two plain lines otherwise. *)
+let apply_login ~(file : string) ~(registry : string) ~(email : string)
+    ~(password : string) ~(expires_in_days : int) : login_outcome =
+  match
+    login ~registry ~email ~password ~token_name:(cli_token_name ())
+      ~expires_in_days
+  with
+  | Error m -> Unreachable m
+  | Ok (200, login_body, 201, token_body) -> (
+      match json_string_field "username" login_body with
+      | Some username -> (
+          match json_string_field "token" token_body with
+          | Some token -> (
+              if username = "" then
+                Rejected "the login response carried no username"
+              else if token = "" then
+                Rejected "the token response carried no token"
+              else
+                (* No expiry on the response — a token that never expires. *)
+                let expires_at =
+                  match json_string_field "expires_at" token_body with
+                  | Some at -> at
+                  | None -> ""
+                in
+                match
+                  store_credentials ~file ~registry:(registry_base registry)
+                    ~token ~username ~expires_at
+                with
+                | Ok () -> Logged_in (username, token, expires_at)
+                | Error m -> Not_stored m)
+          | None -> Rejected "the token response carried no token")
+      | None -> Rejected "the login response carried no username")
+  | Ok (status, body, 0, _) -> Rejected (describe_refusal status body)
+  | Ok (_, _, status, body) -> Rejected (describe_refusal status body)
+
+(* Resolves publish's endpoint and token: the flags win, then the
+   environment, then the stored `emo emoji login` entries — the registry
+   falls back to the most recent login, and a token is only ever taken
+   from the entry belonging to the resolved registry, never another
+   registry's. *)
+let resolve_publish_auth ~(registry_opt : string option)
+    ~(env_registry : string option) ~(token_opt : string option)
+    ~(env_token : string option) ~(stored : stored_login list) :
+    (string * string, string) result =
+  let registry =
+    match (registry_opt, env_registry) with
+    | Some r, _ -> Some r
+    | None, Some r when r <> "" -> Some r
+    | _ -> (
+        match List.rev stored with e :: _ -> Some e.c_registry | [] -> None)
+  in
+  let token =
+    match (token_opt, env_token) with
+    | Some t, _ -> Some t
+    | None, Some t when t <> "" -> Some t
+    | _ -> (
+        match registry with
+        | None -> None
+        | Some r -> (
+            match
+              List.find_opt
+                (fun e -> registry_base e.c_registry = registry_base r)
+                stored
+            with
+            | Some e -> Some e.c_token
+            | None -> None))
+  in
+  match (registry, token) with
+  | None, _ ->
+      Error
+        "no registry configured — pass --registry or set EMO_REGISTRY (or run \
+         `emo emoji login`)"
+  | _, None ->
+      Error
+        "no API token — pass --token, set EMO_TOKEN, or run `emo emoji login`"
+  | Some registry, Some token -> Ok (registry, token)
 
 let publish ~(registry_opt : string option) ~(token_opt : string option)
     ~(dry_run : bool) : int =
@@ -972,60 +1451,71 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
           0
         end
         else
-          let registry =
-            match (registry_opt, Sys.getenv_opt "EMO_REGISTRY") with
-            | Some r, _ -> Some r
-            | None, Some r when r <> "" -> Some r
+          let env_registry =
+            match Sys.getenv_opt "EMO_REGISTRY" with
+            | Some r when r <> "" -> Some r
             | _ -> None
           in
-          let token =
-            match (token_opt, Sys.getenv_opt "EMO_TOKEN") with
-            | Some t, _ -> Some t
-            | None, Some t when t <> "" -> Some t
+          let env_token =
+            match Sys.getenv_opt "EMO_TOKEN" with
+            | Some t when t <> "" -> Some t
             | _ -> None
           in
-          match (registry, token) with
-          | None, _ ->
-              prerr_endline
-                "emo publish: no registry configured — pass --registry or set \
-                 EMO_REGISTRY";
+          (* The stored logins are consulted only when a fallback is
+             actually needed; a damaged file then surfaces instead of
+             being silently ignored. *)
+          match
+            if
+              (registry_opt = None && env_registry = None)
+              || (token_opt = None && env_token = None)
+            then load_credentials ~file:(credentials_file ())
+            else Ok []
+          with
+          | Error m ->
+              prerr_endline ("emo publish: " ^ m);
               65
-          | _, None ->
-              prerr_endline
-                "emo publish: no API token — pass --token or set EMO_TOKEN";
-              65
-          | Some registry, Some token -> (
-              match upload ~registry ~token ~archive:p.p_archive with
+          | Ok stored -> (
+              match
+                resolve_publish_auth ~registry_opt ~env_registry ~token_opt
+                  ~env_token ~stored
+              with
               | Error message ->
-                  prerr_endline ("emo publish: upload failed: " ^ message);
-                  70
-              | Ok (201, _) ->
-                  Printf.printf "published %s %s\n" m.Emo_pkg.name version;
-                  let base =
-                    let n = String.length registry in
-                    if n > 0 && registry.[n - 1] = '/' then
-                      String.sub registry 0 (n - 1)
-                    else registry
-                  in
-                  Printf.printf "  %s/p/%s\n" base m.Emo_pkg.name;
-                  0
-              | Ok (status, body) -> (
-                  let code = json_string_field "code" body in
-                  let message = json_string_field "message" body in
-                  match (code, message) with
-                  | Some code, Some message ->
-                      prerr_endline
-                        (Printf.sprintf "emo publish: %s: %s" code message);
-                      if code = "version_exists" then
-                        prerr_endline
-                          "hint: versions are immutable — bump `version` in \
-                           package.emo";
-                      1
-                  | _ ->
-                      prerr_endline
-                        (Printf.sprintf "emo publish: HTTP %d: %s" status
-                           (String.trim body));
-                      1)))
+                  prerr_endline ("emo publish: " ^ message);
+                  65
+              | Ok (registry, token) -> (
+                  match upload ~registry ~token ~archive:p.p_archive with
+                  | Error message ->
+                      prerr_endline ("emo publish: upload failed: " ^ message);
+                      70
+                  | Ok (201, _) ->
+                      Printf.printf "published %s %s\n" m.Emo_pkg.name version;
+                      Printf.printf "  %s/p/%s\n" (registry_base registry)
+                        m.Emo_pkg.name;
+                      0
+                  | Ok (status, body) -> (
+                      let code = json_string_field "code" body in
+                      let message = json_string_field "message" body in
+                      match (code, message) with
+                      | Some code, Some message ->
+                          prerr_endline
+                            (Printf.sprintf "emo publish: %s: %s" code message);
+                          if code = "version_exists" then
+                            prerr_endline
+                              "hint: versions are immutable — bump `version` \
+                               in package.emo";
+                          if code = "token_expired" then
+                            prerr_endline
+                              (Printf.sprintf
+                                 "hint: the stored API token has expired — run \
+                                  `emo emoji login --registry %s` to mint a \
+                                  fresh one"
+                                 (registry_base registry));
+                          1
+                      | _ ->
+                          prerr_endline
+                            (Printf.sprintf "emo publish: HTTP %d: %s" status
+                               (String.trim body));
+                          1))))
 
 let publish_cmd =
   let registry =
@@ -1035,14 +1525,16 @@ let publish_cmd =
       & info [ "registry" ] ~docv:"URL"
           ~doc:
             "Registry endpoint (default: the EMO_REGISTRY environment \
-             variable).")
+             variable, then the most recent `emo emoji login`).")
   in
   let token =
     Arg.(
       value
       & opt (some string) None
       & info [ "token" ] ~docv:"TOKEN"
-          ~doc:"API token (default: the EMO_TOKEN environment variable).")
+          ~doc:
+            "API token (default: the EMO_TOKEN environment variable, then the \
+             stored `emo emoji login` token for this registry).")
   in
   let dry_run =
     Arg.(
@@ -1420,11 +1912,130 @@ let emoji_build_cmd =
           | code -> exit code)
       $ const ())
 
+(* `emo emoji login`: verify the account against the registry, mint a
+   push/yank/read API token, and store it — afterwards `emo publish` needs
+   neither --token nor EMO_TOKEN. The email and password come from the
+   terminal (the password read with the echo disabled) or, when stdin is
+   piped, as two plain lines. *)
+let emoji_login ~(registry_opt : string option) ~(expires_in_days : int) : int =
+  if expires_in_days < 0 then begin
+    prerr_endline
+      "emo emoji login: --expires-in-days must not be negative (0 = the token \
+       never expires)";
+    65
+  end
+  else
+    let registry =
+      match (registry_opt, Sys.getenv_opt "EMO_REGISTRY") with
+      | Some r, _ -> Some r
+      | None, Some r when r <> "" -> Some r
+      | _ -> None
+    in
+    match registry with
+    | None ->
+        prerr_endline
+          "emo emoji login: no registry configured — pass --registry or set \
+           EMO_REGISTRY";
+        65
+    | Some registry -> (
+        let interactive = Unix.isatty Unix.stdin in
+        let read_line_of prompt =
+          if interactive then begin
+            prerr_string prompt;
+            flush stderr;
+            read_line ()
+          end
+          else read_line ()
+        in
+        match
+          try
+            let email =
+              String.trim (read_line_of (if interactive then "Email: " else ""))
+            in
+            let password =
+              if interactive then read_hidden_line ~prompt:"Password: "
+              else read_line ()
+            in
+            Some (email, password)
+          with End_of_file -> None
+        with
+        | None ->
+            prerr_endline
+              "emo emoji login: expected an email and a password on stdin";
+            65
+        | Some (email, password) -> (
+            if email = "" then begin
+              prerr_endline "emo emoji login: an email is required";
+              65
+            end
+            else if password = "" then begin
+              prerr_endline "emo emoji login: a password is required";
+              65
+            end
+            else
+              let file = credentials_file () in
+              match
+                apply_login ~file ~registry ~email ~password ~expires_in_days
+              with
+              | Logged_in (username, _token, expires_at) ->
+                  Printf.printf "logged in as %s\n" username;
+                  let scope_note =
+                    if expires_at = "" then "push, yank, read"
+                    else
+                      Printf.sprintf "push, yank, read, expires %s" expires_at
+                  in
+                  Printf.printf "token \"%s\" (%s) for %s — stored in %s\n"
+                    (cli_token_name ()) scope_note (registry_base registry) file;
+                  0
+              | Rejected message ->
+                  prerr_endline ("emo emoji login: " ^ message);
+                  65
+              | Unreachable message ->
+                  prerr_endline ("emo emoji login: " ^ message);
+                  70
+              | Not_stored message ->
+                  prerr_endline ("emo emoji login: " ^ message);
+                  65))
+
+let emoji_login_cmd =
+  let registry =
+    Arg.(
+      value
+      & opt (some string) None
+      & info [ "registry" ] ~docv:"URL"
+          ~doc:
+            "Registry endpoint (default: the EMO_REGISTRY environment \
+             variable).")
+  in
+  let expires_in_days =
+    Arg.(
+      value & opt int 0
+      & info [ "expires-in-days" ] ~docv:"DAYS"
+          ~doc:
+            "Expire the minted token after this many days (default: 0, the \
+             token never expires). The expiry is recorded alongside the token; \
+             when it passes, the registry refuses the token and `emo publish` \
+             says to log in again.")
+  in
+  Cmd.v
+    (Cmd.info "login"
+       ~doc:
+         "Sign in to a registry: verifies the account and stores a \
+          push/yank/read API token, so `emo publish` needs neither --token nor \
+          EMO_TOKEN. With a terminal, asks for the email and password; \
+          otherwise reads them as two lines from stdin.")
+    Term.(
+      const (fun r days ->
+          match emoji_login ~registry_opt:r ~expires_in_days:days with
+          | 0 -> Cmd.Exit.ok
+          | code -> exit code)
+      $ registry $ expires_in_days)
+
 let emoji =
   Cmd.group
     (Cmd.info "emoji"
        ~doc:"Manage shared packages — the lifecycle of a .emoji archive.")
-    [ emoji_new_cmd; emoji_build_cmd; publish_cmd ]
+    [ emoji_new_cmd; emoji_build_cmd; emoji_login_cmd; publish_cmd ]
 
 let cmd =
   Cmd.group

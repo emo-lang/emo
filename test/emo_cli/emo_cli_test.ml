@@ -1166,6 +1166,429 @@ let publish_tests =
                      (Emo_cli.json_string_field "code" response_body))));
   ]
 
+(* ---- login: the account exchange behind `emo emoji login` ----
+
+   The same captive-server trick as publish, extended to a sequence: each
+   incoming connection is answered with the next canned response, because
+   the stdlib http client opens one connection per request. *)
+
+let with_captive_server_seq ~(responses : (int * string) list) (f : int -> unit)
+    : string list =
+  let srv = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.setsockopt srv Unix.SO_REUSEADDR true;
+  Unix.bind srv (Unix.ADDR_INET (Unix.inet_addr_of_string "127.0.0.1", 0));
+  Unix.listen srv 1;
+  let port =
+    match Unix.getsockname srv with
+    | Unix.ADDR_INET (_, p) -> p
+    | _ -> assert false
+  in
+  let captured = ref [] in
+  let serve () =
+    List.iter
+      (fun (status, body) ->
+        match Unix.select [ srv ] [] [] 10.0 with
+        | [], _, _ -> () (* the client never connected *)
+        | _ ->
+            let conn, _ = Unix.accept srv in
+            captured := read_request conn :: !captured;
+            let head =
+              Printf.sprintf "HTTP/1.1 %d X\r\nContent-Length: %d\r\n\r\n"
+                status (String.length body)
+            in
+            let bytes = Bytes.of_string (head ^ body) in
+            ignore (Unix.write conn bytes 0 (Bytes.length bytes));
+            Unix.close conn)
+      responses
+  in
+  let th = Thread.create serve () in
+  Fun.protect
+    ~finally:(fun () ->
+      Thread.join th;
+      Unix.close srv)
+    (fun () -> f port);
+  List.rev !captured
+
+(* A scratch filename unique to this run, so repeated test runs never
+   collide and nothing ever needs deleting. *)
+let unique (name : string) : string =
+  Printf.sprintf "%s-%d-%d" name (Unix.getpid ())
+    (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF)
+
+let login_body = {|{"username":"alice","email":"alice@example.com"}|}
+
+let token_body =
+  {|{"id":7,"name":"emo CLI","scopes":["push","yank","read"],"expires_at":"2026-10-19T00:00:00Z","last_used_at":null,"created_at":"2026-10-09T00:00:00Z","token":"emo_secret_token"}|}
+
+let token_body_no_expiry =
+  {|{"id":8,"name":"emo CLI","scopes":["push","yank","read"],"expires_at":null,"last_used_at":null,"created_at":"2026-10-09T00:00:00Z","token":"emo_eternal_token"}|}
+
+let unauthorized_body =
+  {|{"error":{"code":"unauthorized","message":"invalid email or password"}}|}
+
+let login_tests =
+  [
+    tc "base64 pads per RFC 4648" (fun () ->
+        List.iter
+          (fun (plain, encoded) ->
+            Alcotest.(check string)
+              (Printf.sprintf "%S" plain)
+              encoded (Emo_cli.base64 plain))
+          [
+            ("", "");
+            ("f", "Zg==");
+            ("fo", "Zm8=");
+            ("foo", "Zm9v");
+            ("foob", "Zm9vYg==");
+            ("fooba", "Zm9vYmE=");
+            ("foobar", "Zm9vYmFy");
+          ]);
+    tc "the exchange posts JSON, then basic auth for the token" (fun () ->
+        let captured =
+          with_captive_server_seq
+            ~responses:[ (200, login_body); (201, token_body) ]
+            (fun port ->
+              match
+                Emo_cli.login
+                  ~registry:(Printf.sprintf "http://127.0.0.1:%d" port)
+                  ~email:"alice@example.com" ~password:"pass word"
+                  ~token_name:"emo CLI" ~expires_in_days:30
+              with
+              | Error m -> Alcotest.fail m
+              | Ok (s1, b1, s2, b2) ->
+                  Alcotest.(check int) "login status" 200 s1;
+                  Alcotest.(check string) "login body" login_body b1;
+                  Alcotest.(check int) "token status" 201 s2;
+                  Alcotest.(check string) "token body" token_body b2)
+        in
+        (match captured with
+        | [ login_req; token_req ] ->
+            Alcotest.(check bool)
+              "posts to the login endpoint" true
+              (contains login_req "POST /api/v1/login HTTP/1.1\r\n");
+            Alcotest.(check bool)
+              "the login body is JSON" true
+              (contains login_req "Content-Type: application/json");
+            Alcotest.(check bool)
+              "the login body carries the credentials" true
+              (contains login_req
+                 {|{"email":"alice@example.com","password":"pass word"}|});
+            Alcotest.(check bool)
+              "the token step posts to the tokens endpoint" true
+              (contains token_req "POST /api/v1/tokens HTTP/1.1\r\n");
+            Alcotest.(check bool)
+              "the token step authenticates with basic auth" true
+              (contains token_req
+                 (Printf.sprintf "Authorization: Basic %s"
+                    (Emo_cli.base64 "alice@example.com:pass word")));
+            Alcotest.(check bool)
+              "the token request names the scopes" true
+              (contains token_req {|"scopes":["push","yank","read"]|});
+            Alcotest.(check bool)
+              "the token request carries the ledger name" true
+              (contains token_req {|"name":"emo CLI"|});
+            Alcotest.(check bool)
+              "the token request carries the expiry" true
+              (contains token_req {|"expires_in_days":30|})
+        | _ ->
+            Alcotest.fail
+              (Printf.sprintf "got %d requests" (List.length captured)));
+        ());
+    tc "a quote in the password is escaped in the JSON body" (fun () ->
+        let captured =
+          with_captive_server_seq
+            ~responses:[ (200, login_body); (201, token_body) ]
+            (fun port ->
+              ignore
+                (Emo_cli.login
+                   ~registry:(Printf.sprintf "http://127.0.0.1:%d" port)
+                   ~email:"alice@example.com" ~password:{|pa"ss\wrd|}
+                   ~token_name:"emo CLI" ~expires_in_days:0))
+        in
+        (match captured with
+        | [ login_req; _ ] ->
+            Alcotest.(check bool)
+              "the body stays one JSON string" true
+              (contains login_req {|"password":"pa\"ss\\wrd"|})
+        | _ -> Alcotest.fail "expected two captured requests");
+        ());
+    tc "a failed login stops before the token step" (fun () ->
+        let captured =
+          with_captive_server_seq
+            ~responses:[ (401, unauthorized_body) ]
+            (fun port ->
+              match
+                Emo_cli.login
+                  ~registry:(Printf.sprintf "http://127.0.0.1:%d" port)
+                  ~email:"alice@example.com" ~password:"wrong"
+                  ~token_name:"emo CLI" ~expires_in_days:0
+              with
+              | Error m -> Alcotest.fail m
+              | Ok (s1, b1, s2, b2) ->
+                  Alcotest.(check int) "login status" 401 s1;
+                  Alcotest.(check string) "login body" unauthorized_body b1;
+                  Alcotest.(check int) "token step skipped" 0 s2;
+                  Alcotest.(check string) "no token body" "" b2)
+        in
+        Alcotest.(check int) "one request only" 1 (List.length captured));
+    tc "a refused connection is a transport error" (fun () ->
+        match
+          Emo_cli.login ~registry:"http://127.0.0.1:1" ~email:"a@b.c"
+            ~password:"x" ~token_name:"emo CLI" ~expires_in_days:0
+        with
+        | Ok _ -> Alcotest.fail "expected a transport error"
+        | Error m ->
+            Alcotest.(check bool)
+              "the failure is named" true
+              (String.length m > 0));
+    tc "apply_login stores the token for its own registry" (fun () ->
+        let file = Filename.concat scratch (unique "credentials") in
+        let registry_ref = ref "" in
+        let outcome = ref (Emo_cli.Rejected "not run") in
+        ignore
+          (with_captive_server_seq
+             ~responses:[ (200, login_body); (201, token_body) ]
+             (fun port ->
+               (* a trailing slash on purpose: storage normalizes it *)
+               let registry = Printf.sprintf "http://127.0.0.1:%d/" port in
+               registry_ref := registry;
+               outcome :=
+                 Emo_cli.apply_login ~file ~registry ~email:"alice@example.com"
+                   ~password:"pass word" ~expires_in_days:30;
+               ()));
+        (match !outcome with
+        | Logged_in (username, token, expires_at) ->
+            Alcotest.(check string) "username" "alice" username;
+            Alcotest.(check string) "token" "emo_secret_token" token;
+            Alcotest.(check string) "expiry" "2026-10-19T00:00:00Z" expires_at
+        | _ -> Alcotest.fail "expected a successful login");
+        Alcotest.(check bool) "the file exists" true (Sys.file_exists file);
+        Alcotest.(check int)
+          "the file is 0600" 0o600 (Unix.stat file).Unix.st_perm;
+        match Emo_cli.load_credentials ~file with
+        | Error e -> Alcotest.fail e
+        | Ok
+            [
+              {
+                Emo_cli.c_registry;
+                Emo_cli.c_token;
+                Emo_cli.c_username;
+                Emo_cli.c_expires_at;
+              };
+            ] ->
+            Alcotest.(check string)
+              "the stored registry keeps no trailing slash" c_registry
+              (Emo_cli.registry_base !registry_ref);
+            Alcotest.(check string)
+              "the stored token" "emo_secret_token" c_token;
+            Alcotest.(check string) "the stored username" "alice" c_username;
+            Alcotest.(check string)
+              "the stored expiry" "2026-10-19T00:00:00Z" c_expires_at
+        | Ok _ -> Alcotest.fail "expected exactly one stored entry");
+    tc "apply_login records a never-expiring token as empty" (fun () ->
+        let file = Filename.concat scratch (unique "credentials-noexpiry") in
+        let outcome = ref (Emo_cli.Rejected "not run") in
+        ignore
+          (with_captive_server_seq
+             ~responses:[ (200, login_body); (201, token_body_no_expiry) ]
+             (fun port ->
+               outcome :=
+                 Emo_cli.apply_login ~file
+                   ~registry:(Printf.sprintf "http://127.0.0.1:%d" port)
+                   ~email:"alice@example.com" ~password:"pass word"
+                   ~expires_in_days:0;
+               ()));
+        (match !outcome with
+        | Logged_in (_, token, expires_at) ->
+            Alcotest.(check string) "token" "emo_eternal_token" token;
+            Alcotest.(check string) "no expiry" "" expires_at
+        | _ -> Alcotest.fail "expected a successful login");
+        match Emo_cli.load_credentials ~file with
+        | Error e -> Alcotest.fail e
+        | Ok [ { Emo_cli.c_expires_at; _ } ] ->
+            Alcotest.(check string)
+              "the stored expiry stays empty" "" c_expires_at
+        | Ok _ -> Alcotest.fail "expected exactly one stored entry");
+    tc "apply_login surfaces a refusal" (fun () ->
+        let file = Filename.concat scratch (unique "credentials-refused") in
+        let outcome = ref (Emo_cli.Logged_in ("", "", "")) in
+        ignore
+          (with_captive_server_seq
+             ~responses:[ (401, unauthorized_body) ]
+             (fun port ->
+               outcome :=
+                 Emo_cli.apply_login ~file
+                   ~registry:(Printf.sprintf "http://127.0.0.1:%d" port)
+                   ~email:"alice@example.com" ~password:"wrong"
+                   ~expires_in_days:0;
+               ()));
+        match !outcome with
+        | Rejected m ->
+            Alcotest.(check bool)
+              "the refusal names the cause" true
+              (contains m "invalid email or password");
+            Alcotest.(check bool)
+              "nothing was stored" true
+              (not (Sys.file_exists file))
+        | _ -> Alcotest.fail "expected a refusal");
+    tc "the credentials parser is strict" (fun () ->
+        match
+          Emo_cli.parse_credentials
+            {|
+registry = "http://a.example"
+# a comment line
+token = "emo_one"
+username = "alice"
+|}
+        with
+        | Error e -> Alcotest.fail e
+        | Ok entries -> (
+            (match entries with
+            | [ { Emo_cli.c_registry; Emo_cli.c_token; Emo_cli.c_username } ] ->
+                Alcotest.(check string) "registry" "http://a.example" c_registry;
+                Alcotest.(check string) "token" "emo_one" c_token;
+                Alcotest.(check string) "username" "alice" c_username
+            | _ -> Alcotest.fail "expected exactly one entry");
+            match
+              Emo_cli.parse_credentials
+                {|
+registry = "http://a.example"
+surprise = "x"
+|}
+            with
+            | Ok _ -> Alcotest.fail "expected an unknown-key error"
+            | Error e -> (
+                Alcotest.(check bool)
+                  "names the unknown key" true (contains e "surprise");
+                match
+                  Emo_cli.parse_credentials
+                    {|
+registry = "http://a.example"
+token = "emo_one"
+|}
+                with
+                | Ok _ -> Alcotest.fail "expected a missing-username error"
+                | Error e ->
+                    Alcotest.(check bool)
+                      "names the incomplete block" true (contains e "username"))
+            ));
+    tc "a file without a trailing newline parses completely" (fun () ->
+        match
+          Emo_cli.parse_credentials
+            {|registry = "http://n.example"
+token = "emo_n"
+username = "u"|}
+        with
+        | Error e -> Alcotest.fail e
+        | Ok entries -> (
+            match entries with
+            | [ { Emo_cli.c_registry; Emo_cli.c_token; Emo_cli.c_username } ] ->
+                Alcotest.(check string) "registry" "http://n.example" c_registry;
+                Alcotest.(check string) "token" "emo_n" c_token;
+                Alcotest.(check string) "username" "u" c_username
+            | _ -> Alcotest.fail "expected exactly one entry"));
+    tc "store replaces a registry's block in place" (fun () ->
+        let file = Filename.concat scratch (unique "credentials-order") in
+        let store r t u x =
+          match
+            Emo_cli.store_credentials ~file ~registry:r ~token:t ~username:u
+              ~expires_at:x
+          with
+          | Error e -> Alcotest.fail e
+          | Ok () -> ()
+        in
+        store "http://a.example" "emo_a" "alice" "2026-10-19T00:00:00Z";
+        store "http://b.example" "emo_b" "bob" "";
+        store "http://a.example" "emo_a2" "alice2" "";
+        match Emo_cli.load_credentials ~file with
+        | Error e -> Alcotest.fail e
+        | Ok entries -> (
+            Alcotest.(check int) "two blocks" 2 (List.length entries);
+            match entries with
+            | [ first; second ] ->
+                Alcotest.(check string)
+                  "first registry" "http://a.example" first.Emo_cli.c_registry;
+                Alcotest.(check string)
+                  "first token" "emo_a2" first.Emo_cli.c_token;
+                Alcotest.(check string)
+                  "first expiry replaced" "" first.Emo_cli.c_expires_at;
+                Alcotest.(check string)
+                  "second registry" "http://b.example" second.Emo_cli.c_registry;
+                Alcotest.(check string)
+                  "second token" "emo_b" second.Emo_cli.c_token
+            | _ -> Alcotest.fail "expected two entries"));
+    tc "publish resolves flags, then env, then stored logins" (fun () ->
+        let stored =
+          [
+            {
+              Emo_cli.c_registry = "http://a.example";
+              Emo_cli.c_token = "emo_a";
+              Emo_cli.c_username = "alice";
+              Emo_cli.c_expires_at = "2026-10-19T00:00:00Z";
+            };
+            {
+              Emo_cli.c_registry = "http://b.example/";
+              Emo_cli.c_token = "emo_b";
+              Emo_cli.c_username = "bob";
+              Emo_cli.c_expires_at = "";
+            };
+          ]
+        in
+        let resolve ~registry_opt ~env_registry ~token_opt ~env_token =
+          Emo_cli.resolve_publish_auth ~registry_opt ~env_registry ~token_opt
+            ~env_token ~stored
+        in
+        (match
+           resolve ~registry_opt:(Some "http://f.example")
+             ~env_registry:(Some "http://e.example") ~token_opt:(Some "emo_f")
+             ~env_token:(Some "emo_e")
+         with
+        | Ok got ->
+            Alcotest.(check (pair string string))
+              "flags win"
+              ("http://f.example", "emo_f")
+              got
+        | Error e -> Alcotest.fail e);
+        (match
+           resolve ~registry_opt:None ~env_registry:(Some "http://b.example")
+             ~token_opt:None ~env_token:None
+         with
+        | Ok got ->
+            Alcotest.(check (pair string string))
+              "the env registry picks its own stored token, slash-insensitively"
+              ("http://b.example", "emo_b")
+              got
+        | Error e -> Alcotest.fail e);
+        (match
+           resolve ~registry_opt:None ~env_registry:None ~token_opt:None
+             ~env_token:None
+         with
+        | Ok got ->
+            Alcotest.(check (pair string string))
+              "with nothing set, the most recent login answers"
+              ("http://b.example/", "emo_b")
+              got
+        | Error e -> Alcotest.fail e);
+        (match
+           resolve ~registry_opt:None ~env_registry:(Some "http://c.example")
+             ~token_opt:None ~env_token:None
+         with
+        | Ok _ -> Alcotest.fail "expected a missing-token error"
+        | Error e ->
+            Alcotest.(check bool)
+              "a registry with no stored token refuses" true
+              (contains e "no API token"));
+        match
+          Emo_cli.resolve_publish_auth ~registry_opt:None ~env_registry:None
+            ~token_opt:None ~env_token:None ~stored:[]
+        with
+        | Ok _ -> Alcotest.fail "expected a no-registry error"
+        | Error e ->
+            Alcotest.(check bool)
+              "nothing configured names the registry" true
+              (contains e "no registry"));
+  ]
+
 (* ---- new: the project scaffold (T25.3) ---- *)
 
 let read_file path =
@@ -1341,6 +1764,7 @@ let () =
       ("c_dynamic", c_dynamic_tests);
       ("c_foreign", c_foreign_tests);
       ("publish", publish_tests);
+      ("login", login_tests);
       ("new", new_tests);
       ("emoji", emoji_tests);
       ("doctor", doctor_tests);
