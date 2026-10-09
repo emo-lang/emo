@@ -347,6 +347,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Array_lit es ->
       List.iter (expr env) es;
       e env (W.Array_new_fixed (t_anyarray, List.length es))
+  | Map_lit _ ->
+      raise (Emo_ir.Lower_error "the wasm target does not support Map yet")
   | Make_enum { enum_name; member } ->
       string_const env enum_name;
       string_const env member;
@@ -814,6 +816,9 @@ and method_call env self_ name args =
               e env W.I32_or)
             rest;
           e env (W.Struct_new t_vbool))
+  | _, _
+    when match self_.Emo_ir.ety with Emo_check.MapType _ -> true | _ -> false ->
+      raise (Emo_ir.Lower_error "the wasm target does not support Map yet")
   | _ -> (
       let recv_class =
         (* The checker's ClassType carries the display name; the

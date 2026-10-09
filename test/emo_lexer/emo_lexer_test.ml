@@ -543,16 +543,12 @@ let errors_tests =
           "kinds"
           [ Int64 9L; Lower_ident "x"; Eof ]
           (kinds (lex_all "9x")));
-    tc "adjacent parentheses are a lexical error" (fun () ->
-        let diagnostic = lex_err "((x))" in
-        Alcotest.(check string) "code" "E1009" (code_of diagnostic);
-        Alcotest.(check string)
-          "span" "test.emo:1:2"
-          (Span.to_string diagnostic.Diagnostic.span);
-        let diagnostic = lex_err "f((a, b))" in
-        Alcotest.(check string)
-          "call-arg span" "test.emo:1:3"
-          (Span.to_string diagnostic.Diagnostic.span));
+    tc "adjacent parentheses lex as two tokens (the parser judges them)"
+      (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Op LParen; Op LParen; Lower_ident "x"; Op RParen; Op RParen; Eof ]
+          (kinds (lex_all "((x))")));
     tc "juxtaposed send forms are rejected with a hint" (fun () ->
         List.iter
           (fun source ->

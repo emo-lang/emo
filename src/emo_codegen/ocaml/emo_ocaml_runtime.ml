@@ -28,7 +28,6 @@
    errors are plain messages. *)
 
 module Emo_eval = struct
-
   (* ---- The value ADT ----
 
      The tagged dynamic representation, reshaped standalone: the
@@ -49,6 +48,7 @@ module Emo_eval = struct
     | Tuple of value list
     | Array of value array
     | List of emo_list
+    | Map of emo_map
     | Box of value ref
     | Pid of int (* a process identity, from `do` or `self_pid()` *)
     | TcpConn of conn
@@ -81,6 +81,15 @@ module Emo_eval = struct
   }
 
   and enum_type_value = { ename : string; emembers : (string * value) list }
+
+  (* The Map: a mutable, insertion-ordered hash table over the primitive
+     key types — validated at every insertion, so the backing table's
+     structural hashing never meets a closure. The order list stores the
+     keys reversed so insertion stays O(1). *)
+  and emo_map = {
+    entries : (value, value) Hashtbl.t;
+    mutable order : value list; (* REVERSED insertion order *)
+  }
 
   (* The networking handles: small records describing the endpoint, with
      the live socket state owned by the scheduler driver behind the id.
@@ -134,6 +143,13 @@ module Emo_eval = struct
     mutable lnext : emo_list_node option;
   }
 
+  (* The map's key rule and its insertion order. *)
+  let map_key_ok = function
+    | String _ | Int64 _ | Byte _ | Bool _ | Char _ | Float _ -> true
+    | _ -> false
+
+  let map_keys (m : emo_map) : value list = List.rev m.order
+
   (* ---- Errors and signals ----
 
      Runtime errors carry the E-code and the message the compiled
@@ -165,33 +181,36 @@ module Emo_eval = struct
     | Compiled_receive :
         (value -> (int * value list) option)
         -> (int * value list) Effect.t
-  (* the backend's selective receive: the matcher tries each compiled
+      (* the backend's selective receive: the matcher tries each compiled
      branch (pattern + guard) and returns the branch index with the
      payload's items *)
-
-  | Net_resolve : string -> string list Effect.t
-  | Net_connect : string * int * float * string list -> conn Effect.t
-  | Net_connect_unix : string * float -> conn Effect.t
-  | Net_listen : string * int -> listener Effect.t
-  | Net_listen_unix : string -> listener Effect.t
-  | Net_accept : listener -> conn Effect.t
-  | Net_read_line : conn -> string Effect.t
-  | Net_read_exactly : conn * int -> string Effect.t
-  | Net_read_all : conn -> string Effect.t
-  | Net_write : conn * string -> unit Effect.t
-  | Net_close_conn : conn -> conn Effect.t
-  | Net_close_listener : listener -> listener Effect.t
-  | Net_udp_bind : string * int -> udp Effect.t
-  | Net_udp_send_to : udp * string * int * string -> unit Effect.t
-  | Net_udp_recv_from : udp -> value Effect.t
-  | Net_udp_close : udp -> udp Effect.t
-  | Net_tls_connect :
-      string * int * float * bool * string list
-      (* host, port, timeout, insecure, resolved addresses *)
-      -> conn Effect.t
-  | Net_tls_listen : string * int * string * string -> listener Effect.t
-  | File_read : string -> string Effect.t
-  | File_write : string * string -> int Effect.t
+    | Net_resolve : string -> string list Effect.t
+    | Net_connect : string * int * float * string list -> conn Effect.t
+    | Net_connect_unix : string * float -> conn Effect.t
+    | Net_listen : string * int -> listener Effect.t
+    | Net_listen_unix : string -> listener Effect.t
+    | Net_accept : listener -> conn Effect.t
+    | Net_read_line : conn -> string Effect.t
+    | Net_read_exactly : conn * int -> string Effect.t
+    | Net_read_all : conn -> string Effect.t
+    | Net_write : conn * string -> unit Effect.t
+    | Net_close_conn : conn -> conn Effect.t
+    | Net_close_listener : listener -> listener Effect.t
+    | Net_udp_bind : string * int -> udp Effect.t
+    | Net_udp_send_to : udp * string * int * string -> unit Effect.t
+    | Net_udp_recv_from : udp -> value Effect.t
+    | Net_udp_close : udp -> udp Effect.t
+    | Net_tls_connect :
+        string
+        * int
+        * float
+        * bool
+        * string list
+        (* host, port, timeout, insecure, resolved addresses *)
+        -> conn Effect.t
+    | Net_tls_listen : string * int * string * string -> listener Effect.t
+    | File_read : string -> string Effect.t
+    | File_write : string * string -> int Effect.t
 
   (* The synchronous net operations compiled method dispatch performs;
      they only run under the scheduler, exactly like the interpreted
@@ -207,7 +226,6 @@ module Emo_eval = struct
     Effect.perform (Net_write (c, data))
 
   let close_sync (c : conn) : conn = Effect.perform (Net_close_conn c)
-
   let accept_sync (l : listener) : conn = Effect.perform (Net_accept l)
 
   let close_listener_sync (l : listener) : listener =
@@ -218,7 +236,6 @@ module Emo_eval = struct
     Effect.perform (Net_udp_send_to (u, host, port, data))
 
   let udp_recv_sync (u : udp) : value = Effect.perform (Net_udp_recv_from u)
-
   let udp_close_sync (u : udp) : udp = Effect.perform (Net_udp_close u)
 
   let net_resolve_sync (host : string) : string list =
@@ -268,7 +285,9 @@ module Emo_eval = struct
     next_resource_id := 0
 
   let spawn_record () =
-    let p = { pid = !next_pid; inbox = []; status = `Running; exit_hooks = [] } in
+    let p =
+      { pid = !next_pid; inbox = []; status = `Running; exit_hooks = [] }
+    in
     Hashtbl.replace processes p.pid p;
     next_pid := !next_pid + 1;
     p
@@ -336,6 +355,14 @@ module Emo_eval = struct
         let copy = fresh_list () in
         List.iter (fun v -> list_push_back copy (snapshot v)) (list_values l);
         List copy
+    | Map m ->
+        let copy = { entries = Hashtbl.create 8; order = [] } in
+        List.iter
+          (fun k ->
+            Hashtbl.replace copy.entries k (snapshot (Hashtbl.find m.entries k));
+            copy.order <- k :: copy.order)
+          (map_keys m);
+        Map copy
     | Instance i ->
         Instance
           {
@@ -402,6 +429,7 @@ module Emo_eval = struct
     | Tuple _ -> "Tuple"
     | Array _ -> "Array"
     | List _ -> "List"
+    | Map _ -> "Map"
     | Box _ -> "Box"
     | Pid _ -> "Pid"
     | TcpConn _ -> "TcpConn"
@@ -432,7 +460,9 @@ module Emo_eval = struct
         Array.length xs = Array.length ys
         &&
         let ok = ref true in
-        Array.iteri (fun i x -> if not (equal_value x ys.(i)) then ok := false) xs;
+        Array.iteri
+          (fun i x -> if not (equal_value x ys.(i)) then ok := false)
+          xs;
         !ok
     | List x, List y ->
         let rec go a b =
@@ -466,6 +496,14 @@ module Emo_eval = struct
         && List.for_all2
              (fun (nx, vx) (ny, vy) -> String.equal nx ny && equal_value vx vy)
              x.ifields y.ifields
+    | Map x, Map y ->
+        Hashtbl.length x.entries = Hashtbl.length y.entries
+        && List.for_all
+             (fun k ->
+               match Hashtbl.find_opt y.entries k with
+               | Some v -> equal_value (Hashtbl.find x.entries k) v
+               | None -> false)
+             (map_keys x)
     | _ -> false
 
   (* Program output goes to stdout; the driver redirects through
@@ -497,6 +535,14 @@ module Emo_eval = struct
         "List["
         ^ String.concat ", " (List.map to_string (list_values l))
         ^ "]"
+    | Map m ->
+        "{"
+        ^ String.concat ", "
+            (List.map
+               (fun k ->
+                 debug_value k ^ ": " ^ debug_value (Hashtbl.find m.entries k))
+               (map_keys m))
+        ^ "}"
     | Box _ -> "<box>"
     | Bytes b -> Printf.sprintf "Bytes[%d]" (Bytes.length b)
     | Pid n -> Printf.sprintf "<pid %d>" n
@@ -539,6 +585,7 @@ module Emo_eval = struct
         "[" ^ String.concat ", " (List.map debug_value (Array.to_list vs)) ^ "]"
     | List l ->
         "List[" ^ String.concat ", " (List.map debug_value (list_values l)) ^ "]"
+    | Map _ as v -> to_string v
     | v -> to_string v
 
   (* Interfaces have no runtime artifact beyond this registry: `x.is(T)`
@@ -584,8 +631,7 @@ module Emo_eval = struct
              (type_name v))
 
   let new_obj (name : string)
-      (methods : (string, int * (value list -> value)) Hashtbl.t) : obj_handle
-      =
+      (methods : (string, int * (value list -> value)) Hashtbl.t) : obj_handle =
     { ocname = name; ofields = []; omethods = methods }
 
   (* Sets a field on a compiled object inside the init window: replaces in
@@ -625,8 +671,7 @@ module Emo_eval = struct
         raise Halt_signal
     | "halt", vs ->
         error "E3007"
-          (Printf.sprintf "`halt` expects no arguments, got %d"
-             (List.length vs))
+          (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
     | "net_connect", args when List.length args <> 3 ->
         error "E3007"
           (Printf.sprintf
@@ -635,7 +680,9 @@ module Emo_eval = struct
              (List.length args))
     | "net_connect", [ String host; Int64 port; Float timeout ] ->
         let addrs = Effect.perform (Net_resolve host) in
-        TcpConn (Effect.perform (Net_connect (host, Int64.to_int port, timeout, addrs)))
+        TcpConn
+          (Effect.perform
+             (Net_connect (host, Int64.to_int port, timeout, addrs)))
     | "net_resolve", [ String host ] ->
         Array
           (Array.of_list
@@ -645,7 +692,8 @@ module Emo_eval = struct
           (Printf.sprintf "`net_resolve` expects 1 argument, got %d"
              (List.length vs))
     | "net_connect", _ ->
-        error "E3001" "`net_connect` expects (host String, port Int64, timeout Float)"
+        error "E3001"
+          "`net_connect` expects (host String, port Int64, timeout Float)"
     | "net_listen", args when List.length args <> 2 ->
         error "E3007"
           (Printf.sprintf
@@ -658,7 +706,8 @@ module Emo_eval = struct
     | "net_udp_bind", args when List.length args <> 2 ->
         error "E3007"
           (Printf.sprintf
-             "`net_udp_bind` expects (host String, port Int64), got %d arguments"
+             "`net_udp_bind` expects (host String, port Int64), got %d \
+              arguments"
              (List.length args))
     | "net_udp_bind", [ String host; Int64 port ] ->
         UdpSocket (Effect.perform (Net_udp_bind (host, Int64.to_int port)))
@@ -698,7 +747,8 @@ module Emo_eval = struct
     | "net_connect_unix", [ String path; Float timeout ] ->
         TcpConn (Effect.perform (Net_connect_unix (path, timeout)))
     | "net_connect_unix", _ ->
-        error "E3001" "`net_connect_unix` expects (path String, timeout Float64)"
+        error "E3001"
+          "`net_connect_unix` expects (path String, timeout Float64)"
     | "net_listen_unix", args when List.length args <> 1 ->
         error "E3007"
           (Printf.sprintf
@@ -717,7 +767,8 @@ module Emo_eval = struct
     | "net_tls_connect", [ String host; Int64 port; Float timeout ] ->
         let addrs = Effect.perform (Net_resolve host) in
         TcpConn
-          (Effect.perform (Net_tls_connect (host, Int64.to_int port, timeout, false, addrs)))
+          (Effect.perform
+             (Net_tls_connect (host, Int64.to_int port, timeout, false, addrs)))
     | "net_tls_connect", _ ->
         error "E3001"
           "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
@@ -734,7 +785,8 @@ module Emo_eval = struct
              (Net_tls_connect (host, Int64.to_int port, timeout, true, addrs)))
     | "net_tls_connect_insecure", _ ->
         error "E3001"
-          "`net_tls_connect_insecure` expects (host String, port Int64, timeout Float64)"
+          "`net_tls_connect_insecure` expects (host String, port Int64, \
+           timeout Float64)"
     | "net_listen_tls", args when List.length args <> 4 ->
         error "E3007"
           (Printf.sprintf
@@ -746,7 +798,8 @@ module Emo_eval = struct
           (Effect.perform (Net_tls_listen (host, Int64.to_int port, cert, key)))
     | "net_listen_tls", _ ->
         error "E3001"
-          "`net_listen_tls` expects (host String, port Int64, cert_path String, key_path String)"
+          "`net_listen_tls` expects (host String, port Int64, cert_path \
+           String, key_path String)"
     | _ -> error "E3007" (Printf.sprintf "unknown builtin `%s`" name)
 
   let call_builtin (name : string) (args : value list) : value =
@@ -754,7 +807,6 @@ module Emo_eval = struct
 end
 
 module Emo_runtime = struct
-
   exception Return_signal of Emo_eval.value
   (* a non-tail [return] unwinds its function through this *)
 
@@ -817,6 +869,35 @@ module Emo_runtime = struct
           (Printf.sprintf "`Bytes.new` needs a non-negative length, got %Ld" n)
     | v -> failwith (type_error v "Int64")
 
+  (* ---- The Map: a mutable, insertion-ordered hash table ---- *)
+
+  let map_key_ok = function
+    | Emo_eval.String _ | Emo_eval.Int64 _ | Emo_eval.Byte _ | Emo_eval.Bool _
+    | Emo_eval.Char _ | Emo_eval.Float _ ->
+        true
+    | _ -> false
+
+  let map_key_rule =
+    "a map key must be a String, Int64, Byte, Bool, Char, or Float64"
+
+  let map_insert (m : Emo_eval.emo_map) (k : Emo_eval.value)
+      (v : Emo_eval.value) : unit =
+    if not (map_key_ok k) then failwith map_key_rule;
+    if Hashtbl.mem m.entries k then Hashtbl.replace m.entries k v
+    else (
+      Hashtbl.add m.entries k v;
+      m.order <- k :: m.order)
+
+  let map_new (pairs : Emo_eval.value list) : Emo_eval.value =
+    let m = { Emo_eval.entries = Hashtbl.create 8; order = [] } in
+    List.iter
+      (fun p ->
+        match p with
+        | Emo_eval.Tuple [ k; v ] -> map_insert m k v
+        | _ -> failwith "`Map.new` takes (key, value) pairs of two elements")
+      pairs;
+    Emo_eval.Map m
+
   (* ---- Operators (tag-checked, mirroring the evaluator) ---- *)
 
   (* Fixed-width arithmetic wraps in two's complement; Byte, being
@@ -826,8 +907,10 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.add x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x + y) land 255)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x +. y)
-    | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x +. y)
-    | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x +. Int64.to_float y)
+    | Emo_eval.Int64 x, Emo_eval.Float y ->
+        Emo_eval.Float (Int64.to_float x +. y)
+    | Emo_eval.Float x, Emo_eval.Int64 y ->
+        Emo_eval.Float (x +. Int64.to_float y)
     | Emo_eval.String x, Emo_eval.String y -> Emo_eval.String (x ^ y)
     | _ -> failwith "operator `+` expects two numbers or two strings"
 
@@ -836,8 +919,10 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.sub x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x - y) land 255)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x -. y)
-    | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x -. y)
-    | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x -. Int64.to_float y)
+    | Emo_eval.Int64 x, Emo_eval.Float y ->
+        Emo_eval.Float (Int64.to_float x -. y)
+    | Emo_eval.Float x, Emo_eval.Int64 y ->
+        Emo_eval.Float (x -. Int64.to_float y)
     | _ -> failwith "operator `-` expects two numbers"
 
   let mul a b =
@@ -845,8 +930,10 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.mul x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x * y land 255)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x *. y)
-    | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x *. y)
-    | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x *. Int64.to_float y)
+    | Emo_eval.Int64 x, Emo_eval.Float y ->
+        Emo_eval.Float (Int64.to_float x *. y)
+    | Emo_eval.Float x, Emo_eval.Int64 y ->
+        Emo_eval.Float (x *. Int64.to_float y)
     | _ -> failwith "operator `*` expects two numbers"
 
   let div a b =
@@ -857,8 +944,10 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.div x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x / y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x /. y)
-    | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x /. y)
-    | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x /. Int64.to_float y)
+    | Emo_eval.Int64 x, Emo_eval.Float y ->
+        Emo_eval.Float (Int64.to_float x /. y)
+    | Emo_eval.Float x, Emo_eval.Int64 y ->
+        Emo_eval.Float (x /. Int64.to_float y)
     | _ -> failwith "operator `/` expects two numbers"
 
   let modulo a b =
@@ -1019,8 +1108,8 @@ module Emo_runtime = struct
     | Emo_eval.Obj o -> (
         match List.assoc_opt name o.Emo_eval.ofields with
         | Some v -> v
-        | None -> failwith (Printf.sprintf "`%s` has no field `%s`" o.ocname name)
-        )
+        | None ->
+            failwith (Printf.sprintf "`%s` has no field `%s`" o.ocname name))
     | Emo_eval.Instance i -> (
         match List.assoc_opt name i.Emo_eval.ifields with
         | Some v -> v
@@ -1032,11 +1121,7 @@ module Emo_runtime = struct
 
   let exception_new (message : Emo_eval.value) : Emo_eval.value =
     let exception_class =
-      {
-        Emo_eval.cname = "Exception";
-        cmethods = [];
-        builtin_exception = true;
-      }
+      { Emo_eval.cname = "Exception"; cmethods = []; builtin_exception = true }
     in
     Emo_eval.Instance
       { iclass = exception_class; ifields = [ ("message", message) ] }
@@ -1060,7 +1145,8 @@ module Emo_runtime = struct
   let index collection i =
     match (collection, i) with
     | Emo_eval.Array xs, Emo_eval.Int64 n ->
-        if n >= 0L && n < Int64.of_int (Array.length xs) then xs.(Int64.to_int n)
+        if n >= 0L && n < Int64.of_int (Array.length xs) then
+          xs.(Int64.to_int n)
         else failwith (Printf.sprintf "index %Ld is out of bounds" n)
     | Emo_eval.Tuple xs, Emo_eval.Int64 n ->
         if n >= 0L && n < Int64.of_int (List.length xs) then
@@ -1100,8 +1186,8 @@ module Emo_runtime = struct
               (Int64.of_int (Char.code (Bytes.get b (Int64.to_int i))))
         | [ Emo_eval.Int64 i ] ->
             failwith
-              (Printf.sprintf "index %Ld is out of bounds for a length-%d Bytes" i
-                 (Bytes.length b))
+              (Printf.sprintf "index %Ld is out of bounds for a length-%d Bytes"
+                 i (Bytes.length b))
         | [ v ] -> failwith (type_error v "Int64")
         | _ -> failwith "`get` expects 1 argument")
     | Emo_eval.Bytes b, "set" -> (
@@ -1117,8 +1203,8 @@ module Emo_runtime = struct
             Emo_eval.Int64 v
         | [ Emo_eval.Int64 i; Emo_eval.Int64 _ ] ->
             failwith
-              (Printf.sprintf "index %Ld is out of bounds for a length-%d Bytes" i
-                 (Bytes.length b))
+              (Printf.sprintf "index %Ld is out of bounds for a length-%d Bytes"
+                 i (Bytes.length b))
         | _ -> failwith "`set` expects (i Int64, v Int64)")
     | Emo_eval.Bytes b, (("get_u16_le" | "get_u32_le") as mname) -> (
         one_expected ();
@@ -1137,12 +1223,13 @@ module Emo_runtime = struct
         | [ Emo_eval.Int64 i ] ->
             failwith
               (Printf.sprintf
-                 "index %Ld is out of bounds for a %s read on a length-%d Bytes" i
-                 mname (Bytes.length b))
+                 "index %Ld is out of bounds for a %s read on a length-%d Bytes"
+                 i mname (Bytes.length b))
         | [ v ] -> failwith (type_error v "Int64")
         | _ -> failwith "`get_u16_le`/`get_u32_le` expects 1 argument")
     | Emo_eval.Bytes b, (("set_u16_le" | "set_u32_le") as mname) -> (
-        if argc <> 2 then failwith "`set_u16_le`/`set_u32_le` expects 2 arguments";
+        if argc <> 2 then
+          failwith "`set_u16_le`/`set_u32_le` expects 2 arguments";
         let width = if mname = "set_u16_le" then 2 else 4 in
         let max = if width = 2 then 0xFFFF else 0xFFFFFFFF in
         match args with
@@ -1159,7 +1246,8 @@ module Emo_runtime = struct
         | [ Emo_eval.Int64 i; Emo_eval.Int64 _ ] ->
             failwith
               (Printf.sprintf
-                 "index %Ld is out of bounds for a %s write on a length-%d Bytes"
+                 "index %Ld is out of bounds for a %s write on a length-%d \
+                  Bytes"
                  i mname (Bytes.length b))
         | _ -> failwith "`set_u16_le`/`set_u32_le` expects (i Int64, v Int64)")
     | Emo_eval.Bytes b, "get_u64_le" -> (
@@ -1214,8 +1302,8 @@ module Emo_runtime = struct
             Emo_eval.Byte (Int64.to_int n)
         | Emo_eval.Int64 n ->
             failwith
-              (Printf.sprintf "`Byte.from_int64` needs a value in 0-255, got %Ld"
-                 n)
+              (Printf.sprintf
+                 "`Byte.from_int64` needs a value in 0-255, got %Ld" n)
         | v -> failwith (type_error v "Int64"))
     | Emo_eval.TypeValue "Float64", "from_bits" -> (
         one_expected ();
@@ -1273,8 +1361,11 @@ module Emo_runtime = struct
         | [ Emo_eval.Int64 start; Emo_eval.Int64 len ]
           when start >= 0L && len >= 0L
                && Int64.add start len <= Int64.of_int (String.length s) ->
-            Emo_eval.String (String.sub s (Int64.to_int start) (Int64.to_int len))
-        | _ -> failwith "`substring` expects (start Int64, length Int64) in bounds")
+            Emo_eval.String
+              (String.sub s (Int64.to_int start) (Int64.to_int len))
+        | _ ->
+            failwith "`substring` expects (start Int64, length Int64) in bounds"
+        )
     | Emo_eval.String s, "split" -> (
         one_expected ();
         match List.hd args with
@@ -1330,7 +1421,8 @@ module Emo_runtime = struct
             String.sub s 1 (String.length s - 1)
           else s
         in
-        if body = "" || not (String.for_all (fun c -> c >= '0' && c <= '9') body)
+        if
+          body = "" || not (String.for_all (fun c -> c >= '0' && c <= '9') body)
         then failwith (Printf.sprintf "cannot parse `%s` as an Int64" s)
         else
           match Int64.of_string_opt s with
@@ -1339,6 +1431,46 @@ module Emo_runtime = struct
     | Emo_eval.Array xs, "append" ->
         one_expected ();
         Emo_eval.Array (Array.append xs [| List.hd args |])
+    | Emo_eval.Map m, "get" -> (
+        one_expected ();
+        match List.hd args with
+        | k when map_key_ok k -> (
+            match Hashtbl.find_opt m.entries k with
+            | Some v -> v
+            | None ->
+                failwith
+                  (Printf.sprintf "no key %s in this Map"
+                     (Emo_eval.debug_value k)))
+        | _ -> failwith map_key_rule)
+    | Emo_eval.Map m, "set" ->
+        if argc <> 2 then failwith "`set` expects (key, value)";
+        map_insert m (List.nth args 0) (List.nth args 1);
+        Emo_eval.Map m
+    | Emo_eval.Map m, "has" -> (
+        one_expected ();
+        match List.hd args with
+        | k when map_key_ok k -> Emo_eval.Bool (Hashtbl.mem m.entries k)
+        | _ -> Emo_eval.Bool false)
+    | Emo_eval.Map m, "remove" -> (
+        one_expected ();
+        match List.hd args with
+        | k when map_key_ok k && Hashtbl.mem m.entries k ->
+            Hashtbl.remove m.entries k;
+            m.order <-
+              List.filter (fun kk -> not (Emo_eval.equal_value kk k)) m.order;
+            Emo_eval.Map m
+        | _ -> Emo_eval.Map m)
+    | Emo_eval.Map m, "length" ->
+        none_expected ();
+        Emo_eval.Int64 (Int64.of_int (Hashtbl.length m.entries))
+    | Emo_eval.Map m, "keys" ->
+        none_expected ();
+        Emo_eval.Array (Array.of_list (List.rev m.order))
+    | Emo_eval.Map m, "values" ->
+        none_expected ();
+        Emo_eval.Array
+          (Array.of_list
+             (List.map (fun k -> Hashtbl.find m.entries k) (List.rev m.order)))
     | Emo_eval.Box r, "read" ->
         none_expected ();
         !r
@@ -1449,8 +1581,8 @@ module Emo_runtime = struct
   (* Spawns a process whose arguments were evaluated eagerly in the
      spawning process — `do f(x)` reads x where the spawn appears, like
      the interpreter. *)
-  let spawn_args (vals : Emo_eval.value list) (f : Emo_eval.value list -> unit) :
-      Emo_eval.value =
+  let spawn_args (vals : Emo_eval.value list) (f : Emo_eval.value list -> unit)
+      : Emo_eval.value =
     let thunk () = ignore (f vals) in
     Emo_eval.Pid (Effect.perform (Emo_eval.Spawn thunk))
 
@@ -1469,7 +1601,9 @@ module Emo_runtime = struct
       let rec try_branch = function
         | [] -> None
         | m :: rest -> (
-            match m v with Some picked -> Some picked | None -> try_branch rest)
+            match m v with
+            | Some picked -> Some picked
+            | None -> try_branch rest)
       in
       try_branch matchers
     in
@@ -1489,7 +1623,6 @@ module Emo_runtime = struct
     f (payload_items v)
 
   let raise_ v = raise (Emo_eval.Emo_raise v)
-
   let halt () = raise Emo_eval.Halt_signal
 
   (* ---- The scheduler ----
@@ -1584,7 +1717,9 @@ module Emo_runtime = struct
   (* ---- IO plumbing ---- *)
 
   let add_io state fd kind wake =
-    let l = match Hashtbl.find_opt state.io fd with Some l -> l | None -> [] in
+    let l =
+      match Hashtbl.find_opt state.io fd with Some l -> l | None -> []
+    in
     Hashtbl.replace state.io fd ({ iokind = kind; iowake = wake } :: l)
 
   let drop_io state fd kind =
@@ -1703,7 +1838,8 @@ module Emo_runtime = struct
         [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ]
     with
     | [] ->
-        raise (Emo_eval.net_raise (Printf.sprintf "cannot resolve host `%s`" host))
+        raise
+          (Emo_eval.net_raise (Printf.sprintf "cannot resolve host `%s`" host))
     | entries ->
         let rec try_all = function
           | [] ->
@@ -2086,7 +2222,7 @@ module Emo_runtime = struct
                      else
                        abort_w finished st proc k
                          (Emo_eval.net_raise timeout_message) ))
-            state.runq)
+              state.runq)
     | None -> ());
     None
 
@@ -2097,7 +2233,8 @@ module Emo_runtime = struct
       ('x, unit) Effect.Shallow.continuation ->
       'x ->
       Emo_eval.exit_info option =
-   fun state proc k v -> Effect.Shallow.continue_with k v (handler state proc ())
+   fun state proc k v ->
+    Effect.Shallow.continue_with k v (handler state proc ())
 
   and abort :
       'x.
@@ -2214,12 +2351,14 @@ module Emo_runtime = struct
         abort state proc k
           (match last_error with
           | Some Unix.ECONNREFUSED ->
-              Emo_eval.net_raise (Printf.sprintf "connection refused to %s" target)
+              Emo_eval.net_raise
+                (Printf.sprintf "connection refused to %s" target)
           | Some err ->
               Emo_eval.net_raise
                 (Printf.sprintf "cannot connect to %s: %s" target
                    (Unix.error_message err))
-          | None -> Emo_eval.net_raise (Printf.sprintf "cannot connect to %s" target))
+          | None ->
+              Emo_eval.net_raise (Printf.sprintf "cannot connect to %s" target))
     | addr :: rest -> (
         (* One completion flag per address attempt; moving to the next
            candidate starts a fresh attempt with its own flag. *)
@@ -2233,7 +2372,8 @@ module Emo_runtime = struct
         let refusal err =
           match err with
           | Unix.ECONNREFUSED ->
-              Emo_eval.net_raise (Printf.sprintf "connection refused to %s" target)
+              Emo_eval.net_raise
+                (Printf.sprintf "connection refused to %s" target)
           | _ ->
               Emo_eval.net_raise
                 (Printf.sprintf "cannot connect to %s: %s" target
@@ -2256,7 +2396,8 @@ module Emo_runtime = struct
         match Unix.connect fd addr.caddr with
         | () -> connect_tls_upgrade state proc k finished fd target tls
         | exception Unix.Unix_error (Unix.EINPROGRESS, _, _) ->
-            add_io state fd `W (fun () -> Queue.add (Io (proc, step)) state.runq);
+            add_io state fd `W (fun () ->
+                Queue.add (Io (proc, step)) state.runq);
             (match deadline with
             | Some dl ->
                 let remaining = max 0.001 (dl -. Unix.gettimeofday ()) in
@@ -2304,7 +2445,8 @@ module Emo_runtime = struct
   (* Drives a nonblocking TLS handshake to completion: want_read /
      want_write park the continuation on the fd, so both ends of a
      loopback handshake progress through the scheduler. *)
-  and handshake state proc (k : (Emo_eval.conn, unit) Effect.Shallow.continuation)
+  and handshake state proc
+      (k : (Emo_eval.conn, unit) Effect.Shallow.continuation)
       (finished : bool ref) (fd : Unix.file_descr) (ssl : Ssl.socket)
       (desc : string) (once : Ssl.socket -> unit) : Emo_eval.exit_info option =
     match once ssl with
@@ -2319,8 +2461,8 @@ module Emo_runtime = struct
         | Ssl.Accept_error (Ssl.Error_want_write as want) )
       when want = Ssl.Error_want_write ->
         park_and_handshake state proc k finished fd ssl desc `W once
-    | exception (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _)
-      ->
+    | exception
+        (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _) ->
         abort_w finished state proc k
           (Emo_eval.net_raise
              (Printf.sprintf "the TLS handshake with %s failed: %s" desc
@@ -2334,8 +2476,7 @@ module Emo_runtime = struct
   (* The setup half of a TLS listener: TCP listen plus a server context
      holding the certificate. *)
   and tls_listener ~(host : string) ~(port : int) ~(cert_path : string)
-      ~(key_path : string) :
-      (Unix.file_descr * int * Ssl.context, exn) result =
+      ~(key_path : string) : (Unix.file_descr * int * Ssl.context, exn) result =
     let[@alert "-deprecated"] ctx =
       Ssl.create_context Ssl.SSLv23 Ssl.Server_context
     in
@@ -2345,11 +2486,12 @@ module Emo_runtime = struct
           let fd, bound = listen_on host port in
           Ok (fd, bound, ctx)
         with Emo_eval.Emo_raise _ as exn -> Error exn)
-    | exception (Ssl.Certificate_error message | Ssl.Private_key_error message) ->
+    | exception (Ssl.Certificate_error message | Ssl.Private_key_error message)
+      ->
         Error
           (Emo_eval.net_raise
-             (Printf.sprintf "cannot load the TLS certificate for %s:%d: %s" host
-                port message))
+             (Printf.sprintf "cannot load the TLS certificate for %s:%d: %s"
+                host port message))
 
   and accept_loop state proc
       (k : (Emo_eval.conn, unit) Effect.Shallow.continuation)
@@ -2379,8 +2521,8 @@ module Emo_runtime = struct
           park_fd state proc k finished fd `R ~deadline
             ~timeout_message:
               (Printf.sprintf "timed out waiting to accept on %s"
-                 l.Emo_eval.ldesc)
-            (fun st -> accept_loop st proc k finished l deadline)
+                 l.Emo_eval.ldesc) (fun st ->
+              accept_loop st proc k finished l deadline)
       | exception Unix.Unix_error (err, _, _) ->
           abort_w finished state proc k (io_error "accept" l.Emo_eval.ldesc err)
 
@@ -2407,10 +2549,12 @@ module Emo_runtime = struct
       | entry :: _ -> Ok (entry.Unix.ai_family, entry.Unix.ai_addr)
       | [] ->
           Error
-            (Emo_eval.net_raise (Printf.sprintf "cannot resolve host `%s`" host))
+            (Emo_eval.net_raise
+               (Printf.sprintf "cannot resolve host `%s`" host))
       | exception Unix.Unix_error _ ->
           Error
-            (Emo_eval.net_raise (Printf.sprintf "cannot resolve host `%s`" host))
+            (Emo_eval.net_raise
+               (Printf.sprintf "cannot resolve host `%s`" host))
     with
     | Error exn -> Error exn
     | Ok (family, addr) -> (
@@ -2491,7 +2635,9 @@ module Emo_runtime = struct
           | Unix.ADDR_UNIX _ ->
               Effect.Shallow.continue_with k
                 (Emo_eval.Tuple
-                   [ Emo_eval.String data; Emo_eval.String ""; Emo_eval.Int64 0L ])
+                   [
+                     Emo_eval.String data; Emo_eval.String ""; Emo_eval.Int64 0L;
+                   ])
                 (handler state proc ()))
       | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
           let finished = ref false in
@@ -2503,8 +2649,7 @@ module Emo_runtime = struct
           park_fd state proc k finished fd `R ~deadline
             ~timeout_message:
               (Printf.sprintf "timed out waiting to receive on %s"
-                 u.Emo_eval.udesc)
-            (fun st -> udp_recv_entry st proc k u)
+                 u.Emo_eval.udesc) (fun st -> udp_recv_entry st proc k u)
       | exception Unix.Unix_error (err, _, _) ->
           Effect.Shallow.discontinue_with k
             (io_error "receive" u.Emo_eval.udesc err)
@@ -2555,11 +2700,13 @@ module Emo_runtime = struct
     if Buffer.length live.rbuf >= n then
       finish_w finished state proc k (buffer_take live n)
     else
-      read_more state proc k finished c live deadline ~timeout_what:"reading from"
+      read_more state proc k finished c live deadline
+        ~timeout_what:"reading from"
         ~at_eof:(fun st rest ->
           abort_w finished st proc k
             (Emo_eval.net_raise
-               (Printf.sprintf "the connection to %s closed after %d of %d bytes"
+               (Printf.sprintf
+                  "the connection to %s closed after %d of %d bytes"
                   c.Emo_eval.cdesc (String.length rest) n)))
         ~again:(fun st ->
           read_exactly_loop st proc k finished c live deadline n)
@@ -2633,8 +2780,8 @@ module Emo_runtime = struct
     let park kind =
       park_fd state proc k finished live.lfd kind ~deadline
         ~timeout_message:
-          (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc)
-        (fun st -> write_loop st proc k finished c live deadline bytes off)
+          (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc) (fun st ->
+          write_loop st proc k finished c live deadline bytes off)
     in
     match want with
     | Some (`Failed exn) -> abort_w finished state proc k exn

@@ -66,6 +66,41 @@ let bytes_new (v : Emo_eval.value) : Emo_eval.value =
         (Printf.sprintf "`Bytes.new` needs a non-negative length, got %Ld" n)
   | v -> failwith (type_error v "Int64")
 
+(* ---- The Map: a mutable, insertion-ordered hash table ----
+
+   Keys are the primitive types only — validated at every insertion,
+   so the backing table's structural hashing never meets a closure.
+   Setting an existing key replaces its value and keeps its position;
+   the order list stores the keys reversed so insertion stays O(1). *)
+
+let map_key_ok = function
+  | Emo_eval.String _ | Emo_eval.Int64 _ | Emo_eval.Byte _ | Emo_eval.Bool _
+  | Emo_eval.Char _ | Emo_eval.Float _ ->
+      true
+  | _ -> false
+
+let map_key_rule =
+  "a map key must be a String, Int64, Byte, Bool, Char, or Float64"
+
+let map_insert (m : Emo_eval.emo_map) (k : Emo_eval.value) (v : Emo_eval.value)
+    : unit =
+  if not (map_key_ok k) then failwith map_key_rule;
+  if Hashtbl.mem m.Emo_eval.entries k then
+    Hashtbl.replace m.Emo_eval.entries k v
+  else (
+    Hashtbl.add m.Emo_eval.entries k v;
+    m.Emo_eval.order <- k :: m.Emo_eval.order)
+
+let map_new (pairs : Emo_eval.value list) : Emo_eval.value =
+  let m = { Emo_eval.entries = Hashtbl.create 8; order = [] } in
+  List.iter
+    (fun p ->
+      match p with
+      | Emo_eval.Tuple [ k; v ] -> map_insert m k v
+      | _ -> failwith "`Map.new` takes (key, value) pairs of two elements")
+    pairs;
+  Emo_eval.Map m
+
 (* ---- Operators (tag-checked, mirroring the evaluator) ---- *)
 
 (* Fixed-width arithmetic wraps in two's complement; Byte, being
@@ -575,6 +610,50 @@ let method_call self name args =
   | Emo_eval.Array xs, "append" ->
       one_expected ();
       Emo_eval.Array (Array.append xs [| List.hd args |])
+  | Emo_eval.Map m, "get" -> (
+      one_expected ();
+      match List.hd args with
+      | k when map_key_ok k -> (
+          match Hashtbl.find_opt m.Emo_eval.entries k with
+          | Some v -> v
+          | None ->
+              failwith
+                (Printf.sprintf "no key %s in this Map" (Emo_eval.debug_value k))
+          )
+      | _ -> failwith map_key_rule)
+  | Emo_eval.Map m, "set" ->
+      if argc <> 2 then failwith "`set` expects (key, value)";
+      map_insert m (List.nth args 0) (List.nth args 1);
+      Emo_eval.Map m
+  | Emo_eval.Map m, "has" -> (
+      one_expected ();
+      match List.hd args with
+      | k when map_key_ok k -> Emo_eval.Bool (Hashtbl.mem m.Emo_eval.entries k)
+      | _ -> Emo_eval.Bool false)
+  | Emo_eval.Map m, "remove" -> (
+      one_expected ();
+      match List.hd args with
+      | k when map_key_ok k && Hashtbl.mem m.Emo_eval.entries k ->
+          Hashtbl.remove m.Emo_eval.entries k;
+          m.Emo_eval.order <-
+            List.filter
+              (fun kk -> not (Emo_eval.equal_value kk k))
+              m.Emo_eval.order;
+          Emo_eval.Map m
+      | _ -> Emo_eval.Map m)
+  | Emo_eval.Map m, "length" ->
+      none_expected ();
+      Emo_eval.Int64 (Int64.of_int (Hashtbl.length m.Emo_eval.entries))
+  | Emo_eval.Map m, "keys" ->
+      none_expected ();
+      Emo_eval.Array (Array.of_list (List.rev m.Emo_eval.order))
+  | Emo_eval.Map m, "values" ->
+      none_expected ();
+      Emo_eval.Array
+        (Array.of_list
+           (List.map
+              (fun k -> Hashtbl.find m.Emo_eval.entries k)
+              (List.rev m.Emo_eval.order)))
   | Emo_eval.Box r, "read" ->
       none_expected ();
       !r

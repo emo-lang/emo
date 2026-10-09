@@ -412,6 +412,7 @@ let c_goldens =
     "bit_ops";
     "bytes";
     "fixed_width";
+    "map";
     "pipeline";
     "showcase";
     "file_read";

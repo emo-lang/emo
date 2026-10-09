@@ -145,6 +145,40 @@ class EArray {
   }
 }
 
+// The Map: a mutable, insertion-ordered hash table. JS's own Map keeps
+// insertion order; the keys cross it normalized to tagged strings, so
+// the primitive Emo key types hash and compare per Emo's rule (Int64
+// 1n, Byte 1, and Float64 1.0 are three distinct keys).
+class EMap {
+  entries: Map<string, [any, any]>;
+  constructor() {
+    this.entries = new Map();
+  }
+}
+
+function isMapKey(k: any): boolean {
+  return (
+    typeof k === "string" ||
+    typeof k === "bigint" ||
+    typeof k === "number" ||
+    typeof k === "boolean" ||
+    isFloat(k) ||
+    isChar(k)
+  );
+}
+
+function emoMapKey(k: any): string {
+  if (typeof k === "string") return "s:" + k;
+  if (typeof k === "bigint") return "i:" + k.toString();
+  if (typeof k === "number") return "y:" + k;
+  if (typeof k === "boolean") return "b:" + k;
+  if (isFloat(k)) return "f:" + k.v;
+  if (isChar(k)) return "c:" + k.c;
+  throw new Error(
+    "a map key must be a String, Int64, Byte, Bool, Char, or Float64"
+  );
+}
+
 class EEnum {
   type: string;
   member: string;
@@ -239,6 +273,14 @@ function deepEq(a: any, b: any): boolean {
       a.items.length === b.items.length &&
       a.items.every((x: any, i: number) => deepEq(x, b.items[i]))
     );
+  if (a instanceof EMap && b instanceof EMap) {
+    if (a.entries.size !== b.entries.size) return false;
+    for (const [key, kv] of a.entries) {
+      const other = b.entries.get(key);
+      if (!other || !deepEq(kv[1], other[1])) return false;
+    }
+    return true;
+  }
   if (a instanceof EEnum && b instanceof EEnum)
     return a.type === b.type && a.member === b.member;
   if (a instanceof EBytes && b instanceof EBytes)
@@ -268,6 +310,12 @@ function deepEq(a: any, b: any): boolean {
   return false;
 }
 
+// Inside a map's rendering, strings show quoted — the debug form the
+// interpreter's Map rendering uses.
+function toStrDbg(v: any): string {
+  return typeof v === "string" ? JSON.stringify(v) : toStr(v);
+}
+
 // The one stringification rule: interpolation and `.to_string()` share
 // it, exactly like the interpreter.
 function toStr(v: any): string {
@@ -287,6 +335,14 @@ function toStr(v: any): string {
   }
   if (v instanceof ETuple) return "(" + v.items.map(toStr).join(", ") + ")";
   if (v instanceof EArray) return "[" + v.items.map(toStr).join(", ") + "]";
+  if (v instanceof EMap)
+    return (
+      "{" +
+      [...v.entries.values()]
+        .map((kv: [any, any]) => toStrDbg(kv[0]) + ": " + toStrDbg(kv[1]))
+        .join(", ") +
+      "}"
+    );
   if (v instanceof EEnum) return v.type + "." + v.member;
   if (v instanceof EPid) return "<pid " + v.id + ">";
   if (v instanceof EEmoException) return toStr(v.messageValue);
@@ -308,6 +364,7 @@ function tag(v: any): string {
   if (isChar(v)) return "Char";
   if (v instanceof ETuple) return "Tuple";
   if (v instanceof EArray) return "Array";
+  if (v instanceof EMap) return "Map";
   if (v instanceof EEnum) return "Enum";
   if (v instanceof EBox) return "Box";
   if (v instanceof EBytes) return "Bytes";
@@ -362,6 +419,18 @@ const E: any = {
   println,
   interpolate: (items: any[]) => items.map(toStr).join(""),
   toStr,
+
+  // The Map's constructor: (key, value) tuple pairs, in insertion
+  // order; a later pair overwrites an earlier one.
+  mapNew(pairs: any[]): EMap {
+    const m = new EMap();
+    for (const p of pairs) {
+      if (!(p instanceof ETuple) || p.items.length !== 2)
+        throw new Error("`Map.new` takes (key, value) pairs of two elements");
+      m.entries.set(emoMapKey(p.items[0]), [p.items[0], p.items[1]]);
+    }
+    return m;
+  },
 
   add(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string") return a + b;
@@ -597,6 +666,36 @@ const E: any = {
         return BigInt(recv.items.length);
       if (name === "append" && recv instanceof EArray)
         return new EArray(recv.items.concat([args[0]]));
+      if (recv instanceof EMap) {
+        if (name === "get") {
+          const hit = recv.entries.get(emoMapKey(args[0]));
+          if (!hit)
+            throw new Error("no key " + toStrDbg(args[0]) + " in this Map");
+          return hit[1];
+        }
+        if (name === "set") {
+          recv.entries.set(emoMapKey(args[0]), [args[0], args[1]]);
+          return recv;
+        }
+        if (name === "has") {
+          if (!isMapKey(args[0])) return false;
+          return recv.entries.has(emoMapKey(args[0]));
+        }
+        if (name === "remove") {
+          if (isMapKey(args[0])) recv.entries.delete(emoMapKey(args[0]));
+          return recv;
+        }
+        if (name === "length") return BigInt(recv.entries.size);
+        if (name === "keys")
+          return new EArray(
+            [...recv.entries.values()].map((kv: [any, any]) => kv[0])
+          );
+        if (name === "values")
+          return new EArray(
+            [...recv.entries.values()].map((kv: [any, any]) => kv[1])
+          );
+        if (name === "to_string") return toStr(recv);
+      }
       if (name === "is") return isType(recv, args[0] as string);
     }
     if (typeof recv === "number") {

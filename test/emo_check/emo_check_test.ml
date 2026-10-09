@@ -879,6 +879,98 @@ page(title: "Home") {
         Alcotest.(check bool) "E4017" true (has_code diagnostics "E4017"));
   ]
 
+(* The Map: literal inference, the annotation, Map.new, and the method
+   surface. *)
+let map_tests =
+  [
+    tc "a literal infers Map of its key and value types" (fun () ->
+        let diagnostics =
+          check {|
+const ages = { "alice": 30 }
+println(ages.get("alice"))|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "the empty map is Map of Unknowns" (fun () ->
+        let diagnostics = check {|const empty = {}
+println(empty.length())|} in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "the Map annotation type-checks and drives the method surface" (fun () ->
+        let diagnostics =
+          check
+            {|
+def size(m Map[String, Int64]) Int64 {
+  return m.length()
+}
+println(size({ "a": 1 }))|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "a wrong Map annotation arity is an unknown type" (fun () ->
+        let diagnostics = check "def f(m Map[String]) Int64 {\n  return 1\n}" in
+        Alcotest.(check bool) "E4005" true (has_code diagnostics "E4005"));
+    tc "a provably unhashable key is an error" (fun () ->
+        let diagnostics = check {|const bad = { [1]: "x" }|} in
+        Alcotest.(check bool) "E4020" true (has_code diagnostics "E4020"));
+    tc "Map.new builds from pairs" (fun () ->
+        let diagnostics =
+          check
+            {|
+const scores = Map.new(("a", 1), ("b", 2))
+println(scores.get("a"))|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "Map.new rejects a non-pair argument" (fun () ->
+        let diagnostics = check {|const bad = Map.new(("a", 1), 2)|} in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+    tc "get on a known key type checks the argument" (fun () ->
+        let diagnostics =
+          check {|const ages = { "a": 1 }
+println(ages.get(2))|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "set accepts a conforming value and returns the map" (fun () ->
+        let diagnostics =
+          check
+            {|
+const ages = { "a": 1 }
+println(ages.set("b", 2).set("c", 3).length())|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "set with a provably wrong value is an error" (fun () ->
+        let diagnostics =
+          check {|const ages = { "a": 1 }
+ages.set("b", "x")|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "keys and values return arrays of the map's types" (fun () ->
+        let diagnostics =
+          check
+            {|
+const ages = { "a": 1 }
+const ks = ages.keys()
+const first = ks[0]
+println(first + "!")|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "maps do not support indexing" (fun () ->
+        let diagnostics =
+          check {|const ages = { "a": 1 }
+println(ages["a"])|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -891,5 +983,6 @@ let () =
       ("var_escape", var_escape_tests);
       ("case", case_tests);
       ("void", void_tests);
+      ("map", map_tests);
       ("corpus", corpus_tests);
     ]

@@ -62,6 +62,9 @@ let rec dump_e indent e =
   | Array_lit es ->
       indent @@@ "Array";
       List.iter (dump_e (indent + 2)) es
+  | Map_lit pairs ->
+      indent @@@ "Map";
+      List.iter (dump_e (indent + 2)) pairs
   | Make_enum { enum_name; member } ->
       indent @@@ Printf.sprintf "Enum %s.%s" enum_name member
   | Interpolate es ->

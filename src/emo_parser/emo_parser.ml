@@ -96,11 +96,12 @@ let describe_here st = describe_kind (kind st)
 let at_op st op = kind st = Tok.Op op
 let at_keyword st k = kind st = Tok.Keyword k
 
-let expect_op st op what =
+let expect_op st op ?hint what =
   if at_op st op then advance st |> ignore
   else
     error "E2001" (span st)
       (Printf.sprintf "expected %s, found %s" what (describe_here st))
+      ?hint
 
 let merge_span a b = Emo_support.Span.merge a b
 let node span desc = { Ast.span; desc }
@@ -377,6 +378,35 @@ and parse_primary st =
         node
           (merge_span open_span close_span)
           (Ast.Array_literal (List.rev !elems))
+  | Tok.Op Tok.LBrace ->
+      (* A map literal. A `{` never starts a block in expression position —
+         blocks attach to calls and follow `if`/`case`/def bodies — so the
+         brace here is unambiguously a map. *)
+      let open_span = (advance st).Tok.span in
+      if at_op st Tok.RBrace then
+        let close_span = (advance st).Tok.span in
+        node (merge_span open_span close_span) (Ast.Map_literal [])
+      else
+        let entries = ref [] in
+        let rec loop () =
+          let key = parse_expr st in
+          expect_op st Tok.Colon "`:`"
+            ~hint:"a map entry is written `key: value`"
+          |> ignore;
+          let value = parse_expr st in
+          entries := (key, value) :: !entries;
+          if at_op st Tok.Comma then (
+            advance st |> ignore;
+            if at_op st Tok.RBrace then
+              error "E2004" (span st) "maps do not take a trailing comma";
+            loop ())
+        in
+        loop ();
+        let close_span = span st in
+        expect_op st Tok.RBrace "`}`" |> ignore;
+        node
+          (merge_span open_span close_span)
+          (Ast.Map_literal (List.rev !entries))
   | Tok.Op Tok.LParen -> parse_paren st
   | t ->
       error "E2001" (span st)
@@ -429,6 +459,7 @@ and parse_if_expr_branch st if_line which =
   (e, close_span)
 
 and parse_paren st =
+  let tok = peek st in
   let open_span = (advance st).Tok.span in
   if at_op st Tok.RParen then
     let close_span = (advance st).Tok.span in
@@ -452,6 +483,12 @@ and parse_paren st =
       expect_op st Tok.RParen "`)`" |> ignore;
       match first.Ast.desc with
       | Binary _ | Unary _ | If_expr _ -> first
+      | Tuple _ ->
+          (* A `(` directly opening onto a `(` wraps a tuple for no
+             readable reason — the pair argument to `Map.new` needs no
+             outer paren, and a lone value binds to a name first. *)
+          error "E1009" tok.Tok.span "a `(` cannot directly follow another `(`"
+            ~hint:"bind the inner value to a name first"
       | _ -> node (merge_span open_span close_span) (Ast.Tuple [ first ])
 
 and parse_args st =
