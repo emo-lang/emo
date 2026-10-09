@@ -477,7 +477,17 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | _ -> (
           let class_name =
             match obj.Emo_ir.ety with
-            | Emo_check.ClassType c -> c
+            | Emo_check.ClassType c -> (
+                (* The checker's ClassType carries the display name; the
+                   field tables key on the mangled cname. *)
+                match
+                  List.find_opt
+                    (fun (cl : Emo_ir.class_) ->
+                      String.equal cl.Emo_ir.cdisplay c)
+                    env.classes
+                with
+                | Some cl -> cl.Emo_ir.cname
+                | None -> c)
             | _ -> (
                 (* The span type table keys on span start, so `self.x`
                    and the chain it opens share a start and the
@@ -908,7 +918,10 @@ and method_call env self_ name args =
                       W.If_else
                         ( W.Result W.Anyref,
                           [ W.Local_get scratch; W.Ref_test tidx ],
-                          (W.Local_get scratch :: arm_args) @ [ W.Call fidx ],
+                          (* the Ref_test proves the type; the call still
+                             needs the cast for the validator *)
+                          (W.Local_get scratch :: W.Ref_cast tidx :: arm_args)
+                          @ [ W.Call fidx ],
                           chain rest );
                     ]
               in

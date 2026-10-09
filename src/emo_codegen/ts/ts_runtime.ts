@@ -257,6 +257,91 @@ function floatStr(f: number): string {
   return g6(f);
 }
 
+// Strings are UTF-8 on every target, so `to_bytes` and `Bytes.to_string`
+// are the UTF-8 codec, written out like `%g` above. Invalid sequences
+// become U+FFFD (a JS string cannot carry raw non-UTF-8 bytes; the byte
+// targets memcpy, so they keep them).
+
+function utf8Encode(s: string): Uint8Array {
+  const out: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    let cp = s.charCodeAt(i);
+    if (cp >= 0xd800 && cp <= 0xdbff && i + 1 < s.length) {
+      const lo = s.charCodeAt(i + 1);
+      if (lo >= 0xdc00 && lo <= 0xdfff) {
+        cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00);
+        i++;
+      } else {
+        cp = 0xfffd;
+      }
+    } else if (cp >= 0xdc00 && cp <= 0xdfff) {
+      cp = 0xfffd;
+    }
+    if (cp < 0x80) out.push(cp);
+    else if (cp < 0x800)
+      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 63));
+    else if (cp < 0x10000)
+      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+    else
+      out.push(
+        0xf0 | (cp >> 18),
+        0x80 | ((cp >> 12) & 63),
+        0x80 | ((cp >> 6) & 63),
+        0x80 | (cp & 63)
+      );
+  }
+  return Uint8Array.from(out);
+}
+
+function utf8Decode(d: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < d.length; ) {
+    const b = d[i];
+    if (b < 0x80) {
+      s += String.fromCharCode(b);
+      i++;
+      continue;
+    }
+    const len = b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
+    let cp = 0;
+    let ok = i + len <= d.length;
+    if (ok && len === 2) {
+      cp = b & 0x1f;
+      ok = b >= 0xc2;
+    } else if (ok && len === 3) {
+      cp = b & 0x0f;
+      ok = b >= 0xe0 && b < 0xe8;
+    } else if (ok) {
+      cp = b & 0x07;
+      ok = b >= 0xf0 && b < 0xf5;
+    }
+    for (let k = 1; ok && k < len; k++) {
+      const c = d[i + k];
+      if ((c & 0xc0) !== 0x80) ok = false;
+      else cp = (cp << 6) | (c & 0x3f);
+    }
+    if (
+      !ok ||
+      (len === 3 && cp < 0x800) ||
+      (len === 4 && cp < 0x10000) ||
+      (cp >= 0xd800 && cp <= 0xdfff) ||
+      cp > 0x10ffff
+    ) {
+      s += "\ufffd";
+      i++;
+      continue;
+    }
+    if (cp > 0xffff) {
+      cp -= 0x10000;
+      s += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+    } else {
+      s += String.fromCharCode(cp);
+    }
+    i += len;
+  }
+  return s;
+}
+
 // Deep equality: primitives by value, compounds element-wise,
 // instances through their class-declared content (__eq).
 function deepEq(a: any, b: any): boolean {
@@ -643,9 +728,7 @@ const E: any = {
           return BigInt.asIntN(64, v);
         }
         if (name === "to_string") {
-          let s = "";
-          for (let i = 0; i < d.length; i++) s += String.fromCharCode(d[i]);
-          return s;
+          return utf8Decode(d);
         }
       }
       if (isFloat(recv) && name === "to_bits") {
@@ -744,9 +827,9 @@ const E: any = {
         return v;
       }
       if (name === "to_bytes") {
-        const out = new EBytes(recv.length);
-        for (let i = 0; i < recv.length; i++)
-          out.data[i] = recv.charCodeAt(i) & 0xff;
+        const enc = utf8Encode(recv);
+        const out = new EBytes(enc.length);
+        out.data.set(enc);
         return out;
       }
       // Static constructors: a type name is a bare string in value
