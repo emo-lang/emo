@@ -1395,6 +1395,7 @@ let ts_golden_tests =
       ("bit_ops", "main.emo");
       ("fixed_width", "main.emo");
       ("list", "main.emo");
+      ("map", "main.emo");
     ]
 
 let () =

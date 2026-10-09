@@ -97,6 +97,7 @@ let rec expr_to_text (e : Ast.expr) : string =
   | Ast.Arrow_block _ -> "-> (...) { ... }"
   | Ast.Tuple _ -> "(...)"
   | Ast.Array_literal _ -> "[...]"
+  | Ast.Map_literal _ -> "{...}"
   | Ast.Unary (_, r) -> expr_to_text r
   | Ast.Binary (_, l, _) -> expr_to_text l
   | Ast.If_expr _ -> "if ... { ... } else { ... }"

@@ -351,6 +351,9 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Array_lit es ->
       Printf.sprintf "Emo_eval.Array (Array.of_list [%s])"
         (String.concat "; " (List.map (emit_expr env) es))
+  | Emo_ir.Map_lit pairs ->
+      Printf.sprintf "(Emo_runtime.map_new [%s])"
+        (String.concat "; " (List.map (emit_expr env) pairs))
   | Emo_ir.Make_enum { enum_name; member } ->
       Printf.sprintf "Emo_eval.EnumMember (%S, %S)" enum_name member
   | Emo_ir.Interpolate es ->
@@ -583,6 +586,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
         | Emo_ir.Global g -> "Global " ^ g
         | Emo_ir.Tuple _ -> "Tuple"
         | Emo_ir.Array_lit _ -> "Array"
+        | Emo_ir.Map_lit _ -> "Map"
         | Emo_ir.Make_enum _ -> "Make_enum"
         | Emo_ir.Interpolate _ -> "Interpolate"
         | Emo_ir.Unary _ -> "Unary"

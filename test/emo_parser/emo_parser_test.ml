@@ -64,6 +64,9 @@ let rec pp_expr fmt (e : Emo_ast.expr) =
       Format.fprintf fmt "(array%a)" (pp_list pp_expr) es
   | Array_literal es ->
       Format.fprintf fmt "(array @[<hov>%a@])" (pp_list pp_expr) es
+  | Map_literal ([] as es) -> Format.fprintf fmt "(map%a)" (pp_list pp_entry) es
+  | Map_literal es ->
+      Format.fprintf fmt "(map @[<hov>%a@])" (pp_list pp_entry) es
   | Unary (op, e) ->
       Format.fprintf fmt "(%s %a)"
         (match op with
@@ -86,6 +89,8 @@ and pp_arg fmt { Emo_ast.arg_name; arg_value } =
   match arg_name with
   | Some n -> Format.fprintf fmt "%s: %a" n pp_expr arg_value
   | None -> pp_expr fmt arg_value
+
+and pp_entry fmt (k, v) = Format.fprintf fmt "(%a %a)" pp_expr k pp_expr v
 
 and pp_param fmt { Emo_ast.param_name; param_type } =
   Format.fprintf fmt "(param %s %a)" param_name pp_type_ann param_type
@@ -314,6 +319,30 @@ let expression_tests =
     tc "arrays reject a trailing comma" (fun () ->
         let diagnostic = parse_err "[1,]" in
         Alcotest.(check string) "code" "E2004" (code_of diagnostic));
+    tc "map literals parse key-value entries" (fun () ->
+        Alcotest.(check string)
+          "shape" {|(map ("a" 1) ("b" 2))|}
+          (render pp_expr (parse_expr {|{ "a": 1, "b": 2 }|}));
+        Alcotest.(check string)
+          "non-string keys" {|(map (x 1) (2 "y"))|}
+          (render pp_expr (parse_expr {|{ x: 1, 2: "y" }|})));
+    tc "the empty map literal" (fun () ->
+        Alcotest.(check string)
+          "shape" "(map)"
+          (render pp_expr (parse_expr "{}")));
+    tc "maps reject a trailing comma" (fun () ->
+        let diagnostic = parse_err {|{ "a": 1, }|} in
+        Alcotest.(check string) "code" "E2004" (code_of diagnostic));
+    tc "a map entry requires the colon" (fun () ->
+        let diagnostic = parse_err {|{ "a" 1 }|} in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+    tc "a paren directly opening onto a paren is refused" (fun () ->
+        let diagnostic = parse_err "((a))" in
+        Alcotest.(check string) "code" "E1009" (code_of diagnostic));
+    tc "pair tuples parse as call arguments" (fun () ->
+        Alcotest.(check string)
+          "shape" {|(f call (tuple "a" 1))|}
+          (render pp_expr (parse_expr {|f(("a", 1))|})));
     tc "empty parens are the empty tuple" (fun () ->
         Alcotest.(check string)
           "shape" "(tuple)"

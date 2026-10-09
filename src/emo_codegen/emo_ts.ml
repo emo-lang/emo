@@ -166,6 +166,9 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Array_lit es ->
       Printf.sprintf "E.array([%s])"
         (String.concat ", " (List.map (expr env) es))
+  | Map_lit pairs ->
+      Printf.sprintf "E.mapNew([%s])"
+        (String.concat ", " (List.map (expr env) pairs))
   | Make_enum { enum_name; member } ->
       Printf.sprintf "E.enum_(%S, %S)" enum_name member
   | Interpolate es ->

@@ -61,7 +61,8 @@ enum emo_kind {
   EMO_CLOSURE,
   EMO_BYTES,
   EMO_LIST,
-  EMO_PID
+  EMO_PID,
+  EMO_MAP
 };
 
 /* A class's compile-time vtable: every generated program defines one
@@ -173,6 +174,23 @@ emo_value emo_list_pop_front(emo_value l);
 emo_value emo_list_pop_back(emo_value l);
 int64_t emo_list_length(emo_value l);
 
+/* The Map: a mutable, insertion-ordered hash table (chained buckets
+   over an append-only entry array, so entries never move and the
+   array order is the insertion order). Keys are the primitive types —
+   String, Int64, Byte, Bool, Char, Float64 — validated at every
+   insertion like the interpreter's. `set` inserts or replaces (a
+   replacement keeps the key's position) and returns the map;
+   `remove` unlinks when present and returns the map; `get` on a
+   missing key is a runtime error. */
+emo_value emo_map_new(int64_t npairs, emo_value *pairs);
+emo_value emo_map_get(emo_value map, emo_value key);
+emo_value emo_map_set(emo_value map, emo_value key, emo_value value);
+bool emo_map_has(emo_value map, emo_value key);
+emo_value emo_map_remove(emo_value map, emo_value key);
+int64_t emo_map_length(emo_value map);
+emo_value emo_map_keys(emo_value map);   /* an Array, insertion order */
+emo_value emo_map_values(emo_value map); /* an Array, insertion order */
+
 /* Instances (T24.5): the vtable rides in the cell; fields are
    dynamic words addressed by the compile-time field index. */
 emo_value emo_instance_new(const emo_vtable *vt, int64_t nfields);
@@ -238,9 +256,10 @@ bool emo_lt_dyn(emo_value a, emo_value b);
 bool emo_le_dyn(emo_value a, emo_value b);
 
 /* The one stringification rule over dynamic values: the scalar
-   renderings, plus tuples "(a, b)", arrays "[a, b]", Box as "<box>",
-   enums by member name, instances as "#Name(field: value, ...)", and
-   closures as "<block>" — matching the interpreter's emo_to_string. */
+   renderings, plus tuples "(a, b)", arrays "[a, b]", maps
+   "{"k": v}" in debug form, Box as "<box>", enums by member name,
+   instances as "#Name(field: value, ...)", and closures as "<block>"
+   — matching the interpreter's emo_to_string. */
 emo_str emo_to_string_dyn(emo_value v);
 void emo_println_dyn(emo_value v);
 

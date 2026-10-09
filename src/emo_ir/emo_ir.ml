@@ -19,6 +19,7 @@ and expr_desc =
   | Global of string (* a mangled program-wide def *)
   | Tuple of expr list
   | Array_lit of expr list
+  | Map_lit of expr list (* (key, value) tuple pairs, in insertion order *)
   | Make_enum of { enum_name : string; member : string }
   | Interpolate of expr list
   | Unary of Emo_ast.unop * expr
@@ -341,6 +342,8 @@ and lower_expr env (e : Ast.expr) : expr =
            })
   | Ast.Tuple es -> expr (Tuple (List.map (lower_expr env) es))
   | Ast.Array_literal es -> expr (Array_lit (List.map (lower_expr env) es))
+  | Ast.Map_literal entries ->
+      expr (Map_lit (List.map (lower_pair env) entries))
   | Ast.Do operand -> (
       match operand.Ast.desc with
       | Ast.Call (callee, args) -> (
@@ -352,6 +355,26 @@ and lower_expr env (e : Ast.expr) : expr =
               let f, arg_exprs = lower_apply env operand in
               expr (Spawn_value { f; args = arg_exprs }))
       | _ -> raise (Lower_error "`do` lowers from a call only"))
+
+(* One map entry lowers to a (key, value) pair. The parser's literal hands
+   over the pair directly; `Map.new`'s argument is a two-element tuple the
+   checker already admitted, and the lowering rebuilds it so both spellings
+   share one shape. *)
+and lower_pair env ((key, value) : Ast.expr * Ast.expr) : expr =
+  {
+    ety = Emo_check.Unknown;
+    desc = Tuple [ lower_expr env key; lower_expr env value ];
+  }
+
+and lower_map_arg env (entry : Ast.expr) : expr =
+  match entry.Ast.desc with
+  | Ast.Tuple [ key; value ] ->
+      {
+        ety = Emo_check.Unknown;
+        desc = Tuple [ lower_expr env key; lower_expr env value ];
+      }
+  | _ ->
+      raise (Lower_error "`Map.new` takes (key, value) pairs of two elements")
 
 and lower_call env span callee args =
   match callee.Ast.desc with
@@ -403,6 +426,16 @@ and lower_call env span callee args =
                         desc = List_new (lower_expr env arg_value);
                       }
                   | _ -> raise (Lower_error "`List.new` takes one argument"))
+              | Ast.Type_ident "Map" when name = "new" ->
+                  {
+                    ety = type_of env span;
+                    desc =
+                      Map_lit
+                        (List.map
+                           (fun { Ast.arg_value; _ } ->
+                             lower_map_arg env arg_value)
+                           args);
+                  }
               | Ast.Type_ident class_name when name = "new" -> (
                   match lookup_symbol env env.current class_name with
                   | Some (S_class { mangled; params }) ->
@@ -641,6 +674,7 @@ let rec expr_native (special : string list) (e : expr) : bool =
   | Var _ | Global _ -> true
   | Tuple es | Array_lit es | Interpolate es ->
       List.for_all (expr_native special) es
+  | Map_lit _ -> false (* dynamic: the hash table is an identity *)
   | Make_enum _ -> true
   | Unary (_, x) -> expr_native special x
   | Binary (_, l, r) -> expr_native special l && expr_native special r

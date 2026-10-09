@@ -444,6 +444,241 @@ emo_value emo_list_pop_back(emo_value l) {
 
 int64_t emo_list_length(emo_value l) { return emo_list_of(l)->size; }
 
+/* ---- The Map ----
+
+   A mutable, insertion-ordered hash table. The cell payload:
+   [count][cap][entries][bucket_mask][buckets]. Entries live in an
+   append-only array (indices never move, so array order is insertion
+   order; a removed entry's key becomes 0), chained through `next`
+   into an open bucket array rehashed at a 0.5 load factor. Keys are
+   the primitive kinds only — the same rule the checker enforces when
+   it can prove one — validated at every insertion. */
+
+typedef struct {
+  emo_value key; /* 0 marks a removed entry */
+  emo_value value;
+  int64_t next; /* the chain's next entry index, -1 ends */
+} emo_map_entry;
+
+static void emo_debug_dyn(emo_value v, FILE *out);
+
+static const char *emo_map_key_rule =
+    "a map key must be a String, Int64, Byte, Bool, Char, or Float64";
+
+static bool emo_map_key_ok(emo_value k) {
+  if ((k & 7) == 0b001 || (k & 7) == 0b011) return true; /* Bool, Char */
+  switch (emo_cell_kind(k)) {
+  case EMO_INT64:
+  case EMO_FLOAT64:
+  case EMO_STRING: return true;
+  default: return false;
+  }
+}
+
+static uint64_t emo_hash_mix(uint64_t x) {
+  x += 0x9E3779B97F4A7C15ULL;
+  x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+  x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+  return x ^ (x >> 31);
+}
+
+static uint64_t emo_hash_key(emo_value k) {
+  if ((k & 7) == 0b001) return emo_hash_mix(0x1000ULL + (k >> 3));
+  if ((k & 7) == 0b011)
+    return emo_hash_mix(0x2000ULL + (uint64_t)(uint32_t)(k >> 3));
+  switch (emo_cell_kind(k)) {
+  case EMO_INT64:
+    return emo_hash_mix((uint64_t)emo_unbox_i64(k) ^ 0x3000ULL);
+  case EMO_FLOAT64: {
+    double d = emo_unbox_f64(k);
+    uint64_t bits;
+    memcpy(&bits, &d, sizeof bits);
+    return emo_hash_mix(bits ^ 0x4000ULL);
+  }
+  case EMO_STRING: {
+    emo_str s = emo_str_of(k);
+    uint64_t h = 0xCBF29CE484222325ULL;
+    for (int64_t i = 0; i < s.len; i++) {
+      h ^= (uint64_t)(uint8_t)s.bytes[i];
+      h *= 0x100000001B3ULL;
+    }
+    return h;
+  }
+  default:
+    emo_fatal(emo_map_key_rule);
+  }
+}
+
+/* The entry index for the key, or -1. */
+static int64_t emo_map_find(emo_value m, emo_value key) {
+  uintptr_t *p = emo_payload(m);
+  if (p[4] == (uintptr_t)NULL) return -1;
+  emo_map_entry *entries = (emo_map_entry *)p[2];
+  int64_t *buckets = (int64_t *)p[4];
+  uintptr_t mask = p[3];
+  for (int64_t i = buckets[emo_hash_key(key) & mask]; i >= 0;
+       i = entries[i].next)
+    if (entries[i].key != 0 && emo_eq_dyn(entries[i].key, key)) return i;
+  return -1;
+}
+
+/* Rehashes every live entry into a bucket array sized for the load. */
+static void emo_map_rehash(emo_value m);
+
+emo_value emo_map_set(emo_value m, emo_value key, emo_value value);
+
+emo_value emo_map_new(int64_t npairs, emo_value *pairs) {
+  emo_value m = emo_cell_new(EMO_MAP, 5);
+  uintptr_t *p = emo_payload(m);
+  p[0] = 0;
+  p[1] = 0;
+  p[2] = (uintptr_t)NULL;
+  p[3] = 0;
+  p[4] = (uintptr_t)NULL;
+  for (int64_t i = 0; i < npairs; i++) {
+    emo_value pair = pairs[i];
+    if (emo_cell_kind(pair) != EMO_TUPLE || emo_length(pair) != 2)
+      emo_fatal("`Map.new` takes (key, value) pairs of two elements");
+    emo_map_set(m, (emo_value)emo_payload(pair)[1],
+                (emo_value)emo_payload(pair)[2]);
+  }
+  return m;
+}
+
+emo_value emo_map_get(emo_value m, emo_value key) {
+  emo_expect_kind(m, EMO_MAP);
+  if (!emo_map_key_ok(key)) emo_fatal(emo_map_key_rule);
+  int64_t i = emo_map_find(m, key);
+  if (i < 0) {
+    char *buf = NULL;
+    size_t len = 0;
+    FILE *f = open_memstream(&buf, &len);
+    if (f == NULL) abort();
+    emo_debug_dyn(key, f);
+    fclose(f);
+    fprintf(stderr, "runtime error: no key %.*s in this Map\n", (int)len, buf);
+    exit(70);
+  }
+  return ((emo_map_entry *)emo_payload(m)[2])[i].value;
+}
+
+emo_value emo_map_set(emo_value m, emo_value key, emo_value value) {
+  emo_expect_kind(m, EMO_MAP);
+  if (!emo_map_key_ok(key)) emo_fatal(emo_map_key_rule);
+  int64_t i = emo_map_find(m, key);
+  uintptr_t *p = emo_payload(m);
+  if (i >= 0) {
+    ((emo_map_entry *)p[2])[i].value = value;
+    return m;
+  }
+  int64_t cap = (int64_t)p[1];
+  int64_t count = (int64_t)p[0];
+  if (cap == count) {
+    int64_t ncap = cap < 8 ? 8 : cap * 2;
+    emo_map_entry *entries =
+        emo_alloc((size_t)ncap * sizeof(emo_map_entry));
+    if (cap > 0)
+      memcpy(entries, (void *)p[2], (size_t)cap * sizeof(emo_map_entry));
+    memset(entries + cap, 0, (size_t)(ncap - cap) * sizeof(emo_map_entry));
+    p[1] = (uintptr_t)ncap;
+    p[2] = (uintptr_t)entries;
+  }
+  emo_map_entry *entries = (emo_map_entry *)p[2];
+  entries[count].key = key;
+  entries[count].value = value;
+  entries[count].next = -1;
+  p[0] = (uintptr_t)(count + 1);
+  uintptr_t mask = p[3];
+  if (p[4] == (uintptr_t)NULL ||
+      (uint64_t)(count + 1) * 2 > (uint64_t)(mask + 1))
+    emo_map_rehash(m);
+  else {
+    int64_t *buckets = (int64_t *)p[4];
+    uint64_t h = emo_hash_key(key);
+    entries[count].next = buckets[h & mask];
+    buckets[h & mask] = count;
+  }
+  return m;
+}
+
+/* Rehashes every live entry into a bucket array sized for the load. */
+static void emo_map_rehash(emo_value m) {
+  uintptr_t *p = emo_payload(m);
+  int64_t cap = (int64_t)p[1];
+  int64_t nbuckets = 8;
+  while ((uint64_t)cap * 2 > (uint64_t)nbuckets) nbuckets <<= 1;
+  int64_t *buckets = emo_alloc((size_t)nbuckets * sizeof(int64_t));
+  for (int64_t i = 0; i < nbuckets; i++) buckets[i] = -1;
+  emo_map_entry *entries = (emo_map_entry *)p[2];
+  uintptr_t mask = (uintptr_t)(nbuckets - 1);
+  for (int64_t i = 0; i < cap; i++) {
+    if (entries[i].key == 0) continue;
+    uint64_t h = emo_hash_key(entries[i].key);
+    entries[i].next = buckets[h & mask];
+    buckets[h & mask] = i;
+  }
+  p[3] = mask;
+  p[4] = (uintptr_t)buckets;
+}
+
+bool emo_map_has(emo_value m, emo_value key) {
+  emo_expect_kind(m, EMO_MAP);
+  if (!emo_map_key_ok(key)) return false; /* never storable, so never present */
+  return emo_map_find(m, key) >= 0;
+}
+
+emo_value emo_map_remove(emo_value m, emo_value key) {
+  emo_expect_kind(m, EMO_MAP);
+  if (!emo_map_key_ok(key)) return m; /* never storable, so never present */
+  uintptr_t *p = emo_payload(m);
+  if (p[4] == (uintptr_t)NULL) return m;
+  emo_map_entry *entries = (emo_map_entry *)p[2];
+  int64_t *buckets = (int64_t *)p[4];
+  uintptr_t mask = p[3];
+  int64_t *link = &buckets[emo_hash_key(key) & mask];
+  while (*link >= 0) {
+    emo_map_entry *e = &entries[*link];
+    if (e->key != 0 && emo_eq_dyn(e->key, key)) {
+      e->key = 0;
+      *link = e->next;
+      p[0] = (uintptr_t)((int64_t)p[0] - 1);
+      return m;
+    }
+    link = &e->next;
+  }
+  return m;
+}
+
+int64_t emo_map_length(emo_value m) {
+  emo_expect_kind(m, EMO_MAP);
+  return (int64_t)emo_payload(m)[0];
+}
+
+/* The keys or values as an Array, in insertion order. */
+static emo_value emo_map_collect(emo_value m, bool values) {
+  uintptr_t *p = emo_payload(m);
+  int64_t count = (int64_t)p[0];
+  int64_t cap = (int64_t)p[1];
+  emo_map_entry *entries = (emo_map_entry *)p[2];
+  emo_value *out = emo_alloc((size_t)(count > 0 ? count : 1) * sizeof(emo_value));
+  int64_t n = 0;
+  for (int64_t i = 0; i < cap; i++) {
+    if (entries[i].key == 0) continue;
+    out[n++] = values ? entries[i].value : entries[i].key;
+  }
+  return emo_array_new(n, out);
+}
+
+emo_value emo_map_keys(emo_value m) {
+  emo_expect_kind(m, EMO_MAP);
+  return emo_map_collect(m, false);
+}
+
+emo_value emo_map_values(emo_value m) {
+  emo_expect_kind(m, EMO_MAP);
+  return emo_map_collect(m, true);
+}
+
 /* ---- Instances (T24.5) ---- */
 
 emo_value emo_instance_new(const emo_vtable *vt, int64_t nfields) {
@@ -777,6 +1012,21 @@ bool emo_eq_dyn(emo_value a, emo_value b) {
     return sa.len == sb.len && memcmp(sa.bytes, sb.bytes, (size_t)sa.len) == 0;
   }
   case EMO_PID: return emo_unbox_pid(a) == emo_unbox_pid(b);
+  case EMO_MAP: {
+    /* Same live keys with equal values — order is presentation. */
+    if (emo_payload(a)[0] != emo_payload(b)[0]) return false;
+    emo_map_entry *ea = (emo_map_entry *)emo_payload(a)[2];
+    int64_t cap = (int64_t)emo_payload(a)[1];
+    for (int64_t i = 0; i < cap; i++) {
+      if (ea[i].key == 0) continue;
+      int64_t j = emo_map_find(b, ea[i].key);
+      if (j < 0) return false;
+      if (!emo_eq_dyn(ea[i].value,
+                      ((emo_map_entry *)emo_payload(b)[2])[j].value))
+        return false;
+    }
+    return true;
+  }
   case EMO_CLOSURE: return false; /* identity: distinct creations differ */
   default: return false;
   }
@@ -889,6 +1139,25 @@ static void emo_render_dyn(emo_value v, FILE *out) {
   case EMO_BYTES:
     fprintf(out, "Bytes[%lld]", (long long)emo_length_bytes(v));
     return;
+  case EMO_MAP: {
+    /* The literal's shape, keys and values in debug form — the
+       interpreter's to_string for a Map. */
+    fputc('{', out);
+    uintptr_t *p = emo_payload(v);
+    emo_map_entry *entries = (emo_map_entry *)p[2];
+    int64_t cap = (int64_t)p[1];
+    bool first = true;
+    for (int64_t i = 0; i < cap; i++) {
+      if (entries[i].key == 0) continue;
+      if (!first) fputs(", ", out);
+      first = false;
+      emo_debug_dyn(entries[i].key, out);
+      fputs(": ", out);
+      emo_debug_dyn(entries[i].value, out);
+    }
+    fputc('}', out);
+    return;
+  }
   case EMO_PID:
     fprintf(out, "<pid %lld>", (long long)emo_unbox_pid(v));
     return;

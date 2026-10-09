@@ -23,6 +23,7 @@ type t =
   | InterfaceType of string
   | EnumType of string
   | ArrayType of t
+  | MapType of t * t
   | TupleType of t list
   | BoxType of t
   | ListType of t (* the List deque's element type *)
@@ -46,6 +47,7 @@ let rec to_string = function
   | InterfaceType i -> i
   | EnumType e -> e
   | ArrayType e -> "Array[" ^ to_string e ^ "]"
+  | MapType (k, v) -> "Map[" ^ to_string k ^ ", " ^ to_string v ^ "]"
   | BoxType e -> "Box[" ^ to_string e ^ "]"
   | ListType e -> "List[" ^ to_string e ^ "]"
   | TupleType ts -> "(" ^ String.concat ", " (List.map to_string ts) ^ ")"
@@ -135,6 +137,11 @@ let rec ann_to_type ?(lenient = false) ctx
         Unknown)
   | Ast.Applied_type ("Array", [ elem ]) ->
       ArrayType (ann_to_type ~lenient ctx elem)
+  | Ast.Applied_type ("Map", [ key; value ]) ->
+      MapType (ann_to_type ~lenient ctx key, ann_to_type ~lenient ctx value)
+  | Ast.Applied_type ("Map", _) ->
+      report ctx span "E4005" "`Map` takes two type arguments: Map[Key, Value]";
+      Unknown
   | Ast.Applied_type ("Box", [ elem ]) ->
       BoxType (ann_to_type ~lenient ctx elem)
   | Ast.Applied_type ("List", [ elem ]) ->
@@ -468,6 +475,8 @@ and conforms ctx actual expected =
   | ClassType a, ClassType b -> String.equal a b
   | EnumType a, EnumType b -> String.equal a b
   | ArrayType a, ArrayType b -> conforms ctx a b
+  | MapType (ka, va), MapType (kb, vb) ->
+      conforms ctx ka kb && conforms ctx va vb
   | BoxType a, BoxType b -> conforms ctx a b
   | ListType a, ListType b -> conforms ctx a b
   | TupleType as_, TupleType bs ->
@@ -537,6 +546,22 @@ let literal_type = function
   | Ast.L_char _ -> Char
   | Ast.L_string _ -> String
   | Ast.L_bool _ -> Bool
+
+(* The one rule array literals and map literals share: the first element's
+   type wins when every other element conforms to it; otherwise the literal's
+   element type is Unknown and stays unchecked (the gradual rule). *)
+let unify ctx (types : t list) : t =
+  match types with
+  | [] -> Unknown
+  | first :: rest ->
+      if List.for_all (conforms ctx first) rest then first else Unknown
+
+(* The hashable-key rule: a map key must be one of the primitive types whose
+   equality and hash every runtime agrees on. Unknown stays silent — the
+   gradual rule — and the runtime checks it. *)
+let hashable_key = function
+  | String | Int64 | Byte | Bool | Char | Float64 | Unknown -> true
+  | _ -> false
 
 (* True when a value of [rt] can provably never satisfy a check for [target]. *)
 let provably_excluded ctx rt target =
@@ -684,6 +709,9 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                    (to_string other));
               Unknown)
       | Unknown -> Unknown
+      | MapType _ ->
+          report ctx span "E4004" "a Map does not support indexing; use `get`";
+          Unknown
       | other ->
           report ctx span "E4004"
             (Printf.sprintf "%s does not support indexing" (to_string other));
@@ -691,13 +719,21 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
   | Ast.Tuple es -> TupleType (List.map (check_expr ctx env) es)
   | Ast.Array_literal es ->
       let elem_types = List.map (check_expr ctx env) es in
-      let unified =
-        match elem_types with
-        | [] -> Unknown
-        | first :: rest ->
-            if List.for_all (conforms ctx first) rest then first else Unknown
-      in
-      ArrayType unified
+      ArrayType (unify ctx elem_types)
+  | Ast.Map_literal entries ->
+      let key_types = List.map (fun (k, _) -> check_expr ctx env k) entries in
+      let value_types = List.map (fun (_, v) -> check_expr ctx env v) entries in
+      let kt = unify ctx key_types in
+      let vt = unify ctx value_types in
+      (match kt with
+      | t when hashable_key t -> ()
+      | other ->
+          report ctx span "E4020"
+            (Printf.sprintf
+               "map keys must be String, Int64, Byte, Bool, Char, or Float64; \
+                got %s"
+               (to_string other)));
+      MapType (kt, vt)
   | Ast.Arrow_block (params, body) ->
       let param_types =
         List.map
@@ -954,6 +990,47 @@ and check_method_call ctx env span recv mname args : t =
             (Printf.sprintf "`List.new` expects an Array, got %s"
                (to_string other));
           ListType Unknown)
+  else if
+    match (recv.Ast.desc, mname) with
+    | Ast.Type_ident "Map", "new" -> true
+    | _ -> false
+  then (
+    (* Map.new((k1, v1), (k2, v2), ...) — the hash map's constructor. Each
+       argument is a (key, value) pair; key and value types unify across the
+       pairs like a literal's entries, and keys must be hashable. *)
+    let pair_types =
+      List.map
+        (fun { Ast.arg_name; arg_value; _ } ->
+          (match arg_name with
+          | Some n ->
+              report ctx arg_value.Ast.span "E4009"
+                (Printf.sprintf "`Map.new` takes positional pairs, got `%s`" n)
+          | None -> ());
+          match check_expr ctx env arg_value with
+          | TupleType [ k; v ] -> Some (k, v)
+          | TupleType _ ->
+              report ctx arg_value.Ast.span "E4009"
+                "`Map.new` takes (key, value) pairs of two elements";
+              None
+          | Unknown -> None
+          | other ->
+              report ctx arg_value.Ast.span "E4009"
+                (Printf.sprintf "`Map.new` takes (key, value) pairs, got %s"
+                   (to_string other));
+              None)
+        args
+    in
+    let kt = unify ctx (List.filter_map (Option.map fst) pair_types) in
+    let vt = unify ctx (List.filter_map (Option.map snd) pair_types) in
+    (match kt with
+    | t when hashable_key t -> ()
+    | other ->
+        report ctx span "E4020"
+          (Printf.sprintf
+             "map keys must be String, Int64, Byte, Bool, Char, or Float64; \
+              got %s"
+             (to_string other)));
+    MapType (kt, vt))
   else
     let base = check_expr ctx env recv in
     let arg_values =
@@ -1220,6 +1297,65 @@ and check_method_call ctx env span recv mname args : t =
             ListType elem)
     | ListType elem, ("pop_front" | "pop_back") -> none_expected elem
     | ListType _, "length" -> builtin0 Int64
+    | MapType (kt, vt), "get" -> (
+        match arg_values with
+        | [ (_, key) ] ->
+            if not (conforms ctx key kt) then
+              report ctx span "E4004"
+                (Printf.sprintf "`get` expects %s, got %s" (to_string kt)
+                   (to_string key));
+            vt
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`get` expects 1 argument, got %d"
+                 (List.length arg_values));
+            vt)
+    | MapType (kt, vt), "set" -> (
+        match arg_values with
+        | [ (_, key); (_, value) ] ->
+            if not (conforms ctx key kt) then
+              report ctx span "E4004"
+                (Printf.sprintf "`set` expects %s, got %s" (to_string kt)
+                   (to_string key));
+            if not (conforms ctx value vt) then
+              report ctx span "E4004"
+                (Printf.sprintf "`set` expects %s, got %s" (to_string vt)
+                   (to_string value));
+            MapType (kt, vt)
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`set` expects 2 arguments, got %d"
+                 (List.length arg_values));
+            MapType (kt, vt))
+    | MapType (kt, _), "has" -> (
+        match arg_values with
+        | [ (_, key) ] ->
+            if not (conforms ctx key kt) then
+              report ctx span "E4004"
+                (Printf.sprintf "`has` expects %s, got %s" (to_string kt)
+                   (to_string key));
+            Bool
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`has` expects 1 argument, got %d"
+                 (List.length arg_values));
+            Bool)
+    | MapType (kt, vt), "remove" -> (
+        match arg_values with
+        | [ (_, key) ] ->
+            if not (conforms ctx key kt) then
+              report ctx span "E4004"
+                (Printf.sprintf "`remove` expects %s, got %s" (to_string kt)
+                   (to_string key));
+            MapType (kt, vt)
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`remove` expects 1 argument, got %d"
+                 (List.length arg_values));
+            MapType (kt, vt))
+    | MapType _, "length" -> builtin0 Int64
+    | MapType (kt, _), "keys" -> builtin0 (ArrayType kt)
+    | MapType (_, vt), "values" -> builtin0 (ArrayType vt)
     | Int64, "to_byte" -> builtin0 Byte
     | Byte, "to_int64" -> builtin0 Int64
     | Float64, "to_bits" -> builtin0 Int64

@@ -24,6 +24,7 @@ type value =
   | Tuple of value list
   | Array of value array
   | List of emo_list
+  | Map of emo_map
   | Box of value ref
   | Pid of int (* a process identity, from `do` or `self_pid()` *)
   | TcpConn of conn
@@ -131,6 +132,13 @@ and emo_list_node = {
   mutable lnext : emo_list_node option;
 }
 
+and emo_map = {
+  entries : (value, value) Hashtbl.t;
+      (* hash table over the primitive key types; keys are validated
+         before insertion, so structural hashing never meets a closure *)
+  mutable order : value list; (* the keys, REVERSED insertion order *)
+}
+
 and env = { frame : (string, binding) Hashtbl.t; parent : env option }
 and binding = { mutable bound : value; mutable_ : bool }
 
@@ -174,6 +182,7 @@ let type_name = function
   | Tuple _ -> "Tuple"
   | Array _ -> "Array"
   | List _ -> "List"
+  | Map _ -> "Map"
   | Box _ -> "Box"
   | Pid _ -> "Pid"
   | TcpConn _ -> "TcpConn"
@@ -218,6 +227,14 @@ let rec equal_value a b =
         | _ -> false
       in
       go x.lhead y.lhead
+  | Map x, Map y ->
+      Hashtbl.length x.entries = Hashtbl.length y.entries
+      && List.for_all
+           (fun k ->
+             match Hashtbl.find_opt y.entries k with
+             | Some v -> equal_value (Hashtbl.find x.entries k) v
+             | None -> false)
+           (map_keys x)
   | Box x, Box y -> equal_value !x !y
   | Pid x, Pid y -> Int.equal x y
   | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
@@ -245,6 +262,16 @@ let rec equal_value a b =
   | ArrowBlock x, ArrowBlock y -> x == y (* closures are identities *)
   | BuiltinFn x, BuiltinFn y -> String.equal x y
   | _ -> false
+
+(* The map's key rule and its insertion order live beside equality:
+   keys are the primitive types whose equality and hash every runtime
+   agrees on, and both relations read the same order list. *)
+and map_key_ok (k : value) : bool =
+  match k with
+  | String _ | Int64 _ | Byte _ | Bool _ | Char _ | Float _ -> true
+  | _ -> false
+
+and map_keys (m : emo_map) : value list = List.rev m.order
 
 let global_env () =
   let env = { frame = Hashtbl.create 16; parent = None } in
@@ -287,6 +314,7 @@ let global_env () =
     { bound = TypeValue "Bytes"; mutable_ = false };
   Hashtbl.replace env.frame "List"
     { bound = TypeValue "List"; mutable_ = false };
+  Hashtbl.replace env.frame "Map" { bound = TypeValue "Map"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
     {
@@ -425,6 +453,14 @@ let rec to_string v =
       "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
   | List l ->
       "List[" ^ String.concat ", " (List.map to_string (list_values l)) ^ "]"
+  | Map m ->
+      "{"
+      ^ String.concat ", "
+          (List.map
+             (fun k ->
+               debug_value k ^ ": " ^ debug_value (Hashtbl.find m.entries k))
+             (map_keys m))
+      ^ "}"
   | Box _ -> "<box>"
   | Bytes b -> Printf.sprintf "Bytes[%d]" (Bytes.length b)
   | Pid n -> Printf.sprintf "<pid %d>" n
@@ -470,7 +506,40 @@ and debug_value v =
       "[" ^ String.concat ", " (List.map debug_value (Array.to_list vs)) ^ "]"
   | List l ->
       "List[" ^ String.concat ", " (List.map debug_value (list_values l)) ^ "]"
+  | Map _ as v -> to_string v
   | v -> to_string v
+
+(* ---- Map: the mutable, insertion-ordered hash table ----
+
+   Keys are validated at every insertion (see [map_key_ok]), so the
+   backing table's structural hashing never meets a closure or an
+   instance. Setting an existing key replaces its value and keeps its
+   position; the order list stores the keys reversed so insertion stays
+   O(1). *)
+
+let map_key_type_error span k =
+  error span "E3001"
+    (Printf.sprintf
+       "a map key must be a String, Int64, Byte, Bool, Char, or Float64; got %s"
+       (type_name k))
+
+(* Inserts or replaces; a replacement keeps the key's position. *)
+let map_set span (m : emo_map) k v =
+  if not (map_key_ok k) then map_key_type_error span k;
+  if Hashtbl.mem m.entries k then Hashtbl.replace m.entries k v
+  else (
+    Hashtbl.add m.entries k v;
+    m.order <- k :: m.order)
+
+let map_get span (m : emo_map) k =
+  if not (map_key_ok k) then map_key_type_error span k;
+  match Hashtbl.find_opt m.entries k with
+  | Some v -> v
+  | None ->
+      error span "E3004"
+        (Printf.sprintf "no key %s in this Map" (debug_value k))
+
+let fresh_map () : emo_map = { entries = Hashtbl.create 8; order = [] }
 
 (* Interfaces have no runtime artifact beyond this registry: `x.is(T)`
    checks the receiver's class against the declared method shapes. *)
@@ -769,6 +838,14 @@ let rec snapshot (v : value) : value =
       let copy = fresh_list () in
       List.iter (fun v -> list_push_back copy (snapshot v)) (list_values l);
       List copy
+  | Map m ->
+      let copy = fresh_map () in
+      List.iter
+        (fun k ->
+          Hashtbl.replace copy.entries k (snapshot (Hashtbl.find m.entries k));
+          copy.order <- k :: copy.order)
+        (map_keys m);
+      Map copy
   | Instance i ->
       Instance
         {
@@ -1374,6 +1451,20 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`List.new` expects 1 argument, got %d" argc))
+      | TypeValue "Map", "new" ->
+          (* Each argument is a (key, value) pair; later pairs overwrite
+             earlier ones. *)
+          let m = fresh_map () in
+          List.iter
+            (fun a ->
+              match a with
+              | Tuple [ k; v ] -> map_set span m k v
+              | _ ->
+                  error span "E3007"
+                    (Printf.sprintf "`Map.new` takes (key, value) pairs, got %s"
+                       (type_name a)))
+            (eval_args ());
+          Map m
       | TypeValue t, m ->
           error span "E3009"
             (Printf.sprintf "type `%s` has no member `%s` yet" t m)
@@ -1772,6 +1863,49 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`append` expects 1 argument, got %d" argc))
+      | Map m, "get" -> (
+          match eval_args () with
+          | [ k ] -> map_get span m k
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`get` expects 1 argument, got %d"
+                   (List.length args)))
+      | Map m, "set" -> (
+          match eval_args () with
+          | [ k; v ] ->
+              map_set span m k v;
+              Map m
+          | _ -> error span "E3007" "`set` expects (key, value)")
+      | Map m, "has" -> (
+          match eval_args () with
+          | [ k ] -> Bool (map_key_ok k && Hashtbl.mem m.entries k)
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`has` expects 1 argument, got %d"
+                   (List.length args)))
+      | Map m, "remove" -> (
+          match eval_args () with
+          | [ k ] ->
+              if map_key_ok k && Hashtbl.mem m.entries k then (
+                Hashtbl.remove m.entries k;
+                m.order <-
+                  List.filter (fun kk -> not (equal_value kk k)) m.order);
+              Map m
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`remove` expects 1 argument, got %d"
+                   (List.length args)))
+      | Map m, "length" ->
+          none_expected "length";
+          Int64 (Int64.of_int (Hashtbl.length m.entries))
+      | Map m, "keys" ->
+          none_expected "keys";
+          Array (Array.of_list (map_keys m))
+      | Map m, "values" ->
+          none_expected "values";
+          Array
+            (Array.of_list
+               (List.map (fun k -> Hashtbl.find m.entries k) (map_keys m)))
       | Instance i, "is" -> (
           let args = eval_args () in
           match args with
@@ -2301,6 +2435,15 @@ and eval_expr env e =
   | Ast.Index (base, index) -> eval_index env span base index
   | Ast.Tuple es -> Tuple (List.map (eval_expr env) es)
   | Ast.Array_literal es -> Array (Array.of_list (List.map (eval_expr env) es))
+  | Ast.Map_literal entries ->
+      let m = fresh_map () in
+      List.iter
+        (fun (k, v) ->
+          let key = eval_expr env k in
+          let value = eval_expr env v in
+          map_set span m key value)
+        entries;
+      Map m
   | Ast.Arrow_block (params, body) ->
       ArrowBlock
         { def_name = "<arrow block>"; params; body; env; void_ok = true }

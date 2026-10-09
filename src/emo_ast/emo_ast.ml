@@ -21,6 +21,7 @@ and expr_desc =
       param list * stmt list (* -> (x Int64) { ... } and -> { ... } *)
   | Tuple of expr list
   | Array_literal of expr list (* [a, b, c] — fixed length, immutable *)
+  | Map_literal of (expr * expr) list (* { "a": 1 } — keyed, mutable *)
   | Unary of unop * expr
   | Binary of binop * expr * expr
   | If_expr of { cond : expr; then_expr : expr; else_expr : expr }

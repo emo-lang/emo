@@ -1,0 +1,27 @@
+// The Map: a mutable, insertion-ordered hash table.
+const ages = { "alice": 30, "bob": 25 }
+println(ages)
+println(ages.get("alice"))
+
+// set inserts or replaces and returns the map; a replacement keeps
+// the key's position.
+ages.set("bob", 26)
+println(ages.set("carl", 41))
+println(ages.has("bob"))
+println(ages.remove("alice"))
+println(ages.length())
+
+// Map.new builds from (key, value) pairs.
+const scores = Map.new(("verbal", 700), ("math", 780))
+println(scores)
+println(scores.keys())
+println(scores.values())
+
+// Equality compares entries, not order.
+println({ "a": 1, "b": 2 } == Map.new(("b", 2), ("a", 1)))
+
+// Maps annotate like any value.
+def size(m Map[String, Int64]) Int64 {
+  return m.length()
+}
+println(size({ "tea": 3, "coffee": 4 }))

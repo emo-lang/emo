@@ -254,6 +254,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
           expr env e)
         es;
       put env "]"
+  | Map_lit _ ->
+      raise (Emo_ir.Lower_error "the beam target does not support Map yet")
   | Index (b, i) ->
       (* lists are 1-based *)
       put env "call 'lists':'nth'(call 'erlang':'+'(1, ";

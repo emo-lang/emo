@@ -187,9 +187,9 @@ let c_type (t : Emo_check.t) : string option =
       Some "int64_t"
   | Emo_check.String -> Some "emo_str"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.BoxType _ | Emo_check.ListType _ | Emo_check.ClassType _
-  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
-  | Emo_check.Bytes ->
+  | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
+  | Emo_check.ClassType _ | Emo_check.InterfaceType _ | Emo_check.EnumType _
+  | Emo_check.FuncType _ | Emo_check.Bytes ->
       Some "emo_value"
   | Emo_check.Void -> Some "void"
 
@@ -198,9 +198,9 @@ let c_type (t : Emo_check.t) : string option =
 let is_dyn (t : Emo_check.t) : bool =
   match t with
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.BoxType _ | Emo_check.ListType _ | Emo_check.ClassType _
-  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
-  | Emo_check.Bytes ->
+  | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
+  | Emo_check.ClassType _ | Emo_check.InterfaceType _ | Emo_check.EnumType _
+  | Emo_check.FuncType _ | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -223,8 +223,9 @@ let dummy_value (t : Emo_check.t) : string =
   | Emo_check.Bool -> "false"
   | Emo_check.String -> "(emo_str){INT64_C(0), \"\"}"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.BoxType _ | Emo_check.ListType _ | Emo_check.ClassType _
-  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _ ->
+  | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
+  | Emo_check.ClassType _ | Emo_check.InterfaceType _ | Emo_check.EnumType _
+  | Emo_check.FuncType _ ->
       "(emo_value)0"
   | _ -> "0"
 
@@ -503,6 +504,10 @@ and emit_expr env (e : Emo_ir.expr) : string =
       let elems = String.concat ", " (List.map (as_dyn env) es) in
       Printf.sprintf "emo_array_new(INT64_C(%d), (emo_value[]){%s})"
         (List.length es) elems
+  | Map_lit pairs ->
+      let elems = String.concat ", " (List.map (as_dyn env) pairs) in
+      Printf.sprintf "emo_map_new(INT64_C(%d), (emo_value[]){%s})"
+        (List.length pairs) elems
   | Index (base, idx) ->
       let v =
         Printf.sprintf "emo_index(%s, %s)" (as_dyn env base)
@@ -546,6 +551,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
            | Emo_ir.Global _ -> "Global"
            | Emo_ir.Tuple _ -> "Tuple"
            | Emo_ir.Array_lit _ -> "Array_lit"
+           | Emo_ir.Map_lit _ -> "Map_lit"
            | Emo_ir.Make_enum _ -> "Make_enum"
            | Emo_ir.Interpolate _ -> "Interpolate"
            | Emo_ir.Unary _ -> "Unary"
@@ -676,6 +682,57 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
              | _ -> false ->
           Printf.sprintf "emo_array_append(%s, %s)" (as_dyn env self_)
             (as_dyn env v)
+      (* The map's methods: the receiver's MapType keys the arm, and the
+         runtime dispatches by kind — an Unknown receiver's `get` stays
+         the Bytes accessor. *)
+      | "get", [ k ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.MapType _ -> true
+             | _ -> false ->
+          finish
+            (Printf.sprintf "emo_map_get(%s, %s)" (as_dyn env self_)
+               (as_dyn env k))
+      | "set", [ k; v ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.MapType _ -> true
+             | _ -> false ->
+          finish
+            (Printf.sprintf "emo_map_set(%s, %s, %s)" (as_dyn env self_)
+               (as_dyn env k) (as_dyn env v))
+      | "has", [ k ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.MapType _ -> true
+             | _ -> false ->
+          (* emo_map_has answers a C bool: box it for a dynamic use
+             site, pass it through a native one *)
+          let v =
+            Printf.sprintf "emo_map_has(%s, %s)" (as_dyn env self_)
+              (as_dyn env k)
+          in
+          if is_dyn result_ty then Printf.sprintf "emo_vbool(%s)" v else v
+      | "remove", [ k ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.MapType _ -> true
+             | _ -> false ->
+          finish
+            (Printf.sprintf "emo_map_remove(%s, %s)" (as_dyn env self_)
+               (as_dyn env k))
+      | "length", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.MapType _ -> true
+             | _ -> false ->
+          box_int env result_ty
+            (Printf.sprintf "emo_map_length(%s)" (as_dyn env self_))
+      | "keys", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.MapType _ -> true
+             | _ -> false ->
+          finish (Printf.sprintf "emo_map_keys(%s)" (as_dyn env self_))
+      | "values", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.MapType _ -> true
+             | _ -> false ->
+          finish (Printf.sprintf "emo_map_values(%s)" (as_dyn env self_))
       (* The systems layer: Bytes accessors, conversions, and bit-casts.
      The type-level methods (`Byte.from_int64`, `Float64.from_bits`)
      arrive with a Type_ref receiver. *)
@@ -1031,6 +1088,7 @@ and closure_free env (cparams : (string * Emo_check.t) list)
         ex e
     | Interpolate es -> List.iter ex es
     | Tuple es | Array_lit es -> List.iter ex es
+    | Map_lit pairs -> List.iter ex pairs
     | Index (b, i) ->
         ex b;
         ex i

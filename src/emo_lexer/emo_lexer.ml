@@ -180,7 +180,6 @@ let lex ~file ~source =
   in
   let toks = ref [] in
   let newline_pending = ref false in
-  let prev_was_lparen = ref false in
   let emit kind start_line start_col start_off =
     toks :=
       {
@@ -189,8 +188,7 @@ let lex ~file ~source =
         newline_before = !newline_pending;
       }
       :: !toks;
-    newline_pending := false;
-    prev_was_lparen := kind = Token.Op Token.LParen
+    newline_pending := false
   in
   let frames = ref [] in
   let current_string_span () =
@@ -318,11 +316,7 @@ let lex ~file ~source =
           emit kind l c o
         in
         (match cur () with
-        | '(' ->
-            if !prev_was_lparen then
-              error "E1009" (here ()) "a `(` cannot directly follow another `(`"
-                ~hint:"bind the inner value to a name first";
-            single (Token.Op Token.LParen)
+        | '(' -> single (Token.Op Token.LParen)
         | ')' -> single (Token.Op Token.RParen)
         | '{' ->
             single (Token.Op Token.LBrace);
