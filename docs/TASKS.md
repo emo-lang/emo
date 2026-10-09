@@ -862,3 +862,35 @@ tuple; beam also gained `Make_exception` (the exception object is its
 message). The json/yaml/xml wasm gate should be re-examined against
 these fixes — the `&&` wall is gone, though their cross-module class
 types may still be gated by the step-27 follow-up.
+
+### Step 32 — The standard library: `slog` · `plan/step-32-stdlib-slog.md`
+
+**Prereq:** Step 31 (base64 — the native-types-only surface shape).
+**Done when:** `require "slog"` logs one line per record, logfmt or
+JSON, filtered by a minimum level; loggers are ordinary values — an
+opaque handle carrying name, level, and format — attrs are a
+`Map[String, String]` with keys strict to one alphabet, and the golden
+rides the bootstrap, c, and typescript lists byte-identical; wasm and
+beam refuse the package until their runtimes implement `Map`.
+
+- [x] **T32.1** — The package: the ordered levels and the two
+      formats, the handle pack/parse, the logfmt and JSON renderers,
+      strict keys and exact errors. (Done 2026-10-09.)
+- [x] **T32.2** — The golden: `examples/slog_demo` — both formats,
+      filtering, a child logger, quoting and escaping, UTF-8, and
+      `enabled` — on the bootstrap, c, and typescript lists. (Done
+      2026-10-09.)
+- [x] **T32.3** — The docs: `docs/stdlib/slog.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 32 close-out (2026-10-09, on `feat/slog`): the slog package is
+the first standard-library package whose golden needed zero compiler
+changes — the step-31 wasm/beam fixes held, and `Map` on
+interp/ocaml/c/typescript carried the whole surface. The design
+answers "a logger without a framework": the handle packs
+`name/level/format` in plain sight so the package holds no state at
+all, records carry no timestamp (no clock — deterministic output, a
+caller with a time passes it as an attribute), and attribute keys are
+strict to one alphabet shared with the handle's percent-escaping. The
+manifest declares the three targets that work today and widens when
+the wasm/beam `Map` gap closes.

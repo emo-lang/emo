@@ -1,0 +1,29 @@
+require "slog"
+
+// A logger is a value: name, minimum level, output format. Records
+// below the minimum print nothing, so the debug line here is silent.
+const app = slog.new("web", slog.level_info(), slog.format_logfmt())
+slog.debug(app, "starting up", Map.new())
+
+// Non-string values ride in as strings; interpolation renders them.
+const port = 8080
+slog.info(app, "listening", { "addr": "127.0.0.1:${port}" })
+slog.warn(app, "slow query", { "ms": "412", "table": "users" })
+slog.error(app, "connection refused", { "attempt": "2" })
+
+// The json format renders the same record as one object per line.
+const jobs = slog.new("worker", slog.level_debug(), slog.format_json())
+slog.info(jobs, "job done", { "job": "resize", "ms": "38" })
+slog.debug(jobs, "claimed", { "queue": "uploads" })
+
+// A child nests its name and inherits level and format.
+const db = slog.child(app, "db")
+slog.info(db, "migrated", { "steps": "3" })
+
+// Values that need it are quoted and escaped; UTF-8 rides through.
+slog.info(app, "multi word msg", { "note": "has \"quotes\" and=equals", "empty": "" })
+slog.info(app, "done", { "who": "世界" })
+
+// enabled answers before the record is built.
+println(slog.enabled(app, slog.level_debug()))
+println(slog.enabled(app, slog.level_error()))
