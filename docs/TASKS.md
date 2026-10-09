@@ -733,3 +733,33 @@ temporaries + string escapes + interface separators, the c `emo_send`
 argument array + unknown-receiver vtable fallback + mutual-tail
 cluster entry dispatch, and the wasm interface-dispatch `Ref_cast` +
 field display-name resolution.
+
+### Step 28 — The standard library: `yaml` · `plan/step-28-stdlib-yaml.md`
+
+**Prereq:** Step 27 (the json package — the tree design and the float
+machinery this package mirrors). **Done when:** `require "yaml"`
+decodes and encodes YAML 1.2 (core schema) byte-identically on the
+targets the checker carries — block/flow, quoted scalars with the
+YAML escape set, block scalars with chomping, duplicate keys
+last-win, numbers at their boundaries; goldens green on
+interpreter/ocaml/typescript; c, wasm, and beam wait on the
+cross-module-types follow-up shared with step 27.
+
+- [x] **T28.1** — The package and the parser: `stdlib/registry/yaml/
+      0.1.0` embedded by rebuild; the value model, the block/flow
+      parser. (Done 2026-10-09.)
+- [x] **T28.2** — The encoder: block style; plain-when-unambiguous
+      strings; empty-container flow forms. (Done 2026-10-09.)
+- [x] **T28.3** — The goldens: `examples/yaml_demo` (bootstrap +
+      typescript) and `examples/yaml_edge` (bootstrap). (Done
+      2026-10-09.)
+- [x] **T28.4** — The docs: `docs/stdlib/yaml.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 28 close-out (2026-10-09, on `feat/stdlib`): the yaml package
+mirrors the json package's tree design and passes its goldens on the
+interpreter, ocaml, and typescript; c, wasm, and beam remain gated on
+the cross-module-types checker step shared with step 27. The package
+also flushed out the typescript runtime's field-shadows-method
+dispatch bug (fixed in `ts_runtime.ts`: E.method now falls through to
+the prototype's method when the own property is not a function).
