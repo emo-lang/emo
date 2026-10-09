@@ -1,0 +1,84 @@
+require "os"
+require "bufio"
+
+// The bufio package end to end: in-memory streams first (every value
+// visible), then a file written through an 8-byte buffer that really
+// flushes, and read back through two stacked readers. The empty
+// string is end of stream everywhere — the same rule os.read set.
+
+// The one method dump needs, named here: any stream that answers
+// read_line — bufio.Reader among them, by shape — prints whole.
+interface LineSource {
+  def read_line() String
+}
+
+// Prints every line of the stream until end of stream — the shape
+// every line-by-line reader takes. The terminator is stripped only
+// when it is there: read_line keeps it, and an unterminated last line
+// must arrive whole.
+def dump(r LineSource) Void {
+  const line = r.read_line()
+  if line != "" {
+    var text = line
+    if bufio.window(line, line.length() - 1, 1) == "\n" {
+      text = bufio.window(line, 0, line.length() - 1)
+    }
+    println("got: [" + text + "]")
+    dump(r)
+  }
+}
+
+// ---- in-memory: read_string, read_line, end of stream ----
+const br = bufio.reader_size(bufio.bytes_reader("buffered,whole,words\nplain"), 8)
+println(br.read_string(","))
+println(br.read_string(","))
+const line = br.read_line()
+println("line: [" + line + "]")
+println("tail: [" + br.read_line() + "]")
+println("end: [" + br.read_line() + "]")
+
+// ---- peek, unread, discard ----
+const pe = bufio.reader_size(bufio.bytes_reader("abcdef"), 4)
+println(pe.peek(2))
+println(pe.buffered().to_string())
+println(pe.read_byte())
+pe.unread_byte()
+println(pe.read_byte())
+println(pe.read_byte())
+println(pe.discard(2).to_string())
+println("rest: [" + pe.read(8) + "]")
+println(pe.read(8) == "")
+
+// ---- a buffered writer over a file, 8 bytes at a time ----
+const path = "bufio-demo-" + os.getpid().to_string() + ".tmp"
+const fd = os.open_write(path)
+const bw = bufio.writer_size(bufio.fd_writer(fd), 8)
+bw.write("buffered ")
+bw.write("lines\n")
+bw.write("more\n")
+println(bw.buffered().to_string())
+bw.write("tail")
+println(bw.buffered().to_string())
+bw.flush()
+println(bw.buffered().to_string())
+println(bw.available().to_string())
+os.close(fd)
+
+// ---- read the file back through two stacked readers ----
+const rfd = os.open_read(path)
+const top = bufio.reader_size(bufio.reader_size(bufio.fd_reader(rfd), 8), 4)
+dump(top)
+os.close(rfd)
+
+// ---- the in-memory sink collects what a tiny writer sent it ----
+const sink = bufio.bytes_writer()
+const mw = bufio.writer_size(sink, 4)
+mw.write("memory")
+mw.write_byte("!")
+mw.flush()
+println(sink.to_string())
+
+// the buffer size reader and writer get when the caller names none
+println(bufio.default_size().to_string())
+
+os.unlink(path)

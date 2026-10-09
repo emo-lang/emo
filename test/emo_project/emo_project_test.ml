@@ -1397,6 +1397,12 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "slog_demo")
           "slog_demo" "main.emo" true);
+    tc "bufio_demo compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "bufio_demo")
+          "bufio_demo" "main.emo" true);
   ]
 
 (* ---- The TypeScript target (step 15) ----
