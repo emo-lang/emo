@@ -1,0 +1,23 @@
+buffered,
+whole,
+line: [words
+]
+tail: [plain]
+end: []
+ab
+4
+a
+a
+b
+2
+rest: [ef]
+true
+3
+7
+0
+8
+got: [buffered lines]
+got: [more]
+got: [tail]
+memory!
+4096

@@ -200,6 +200,13 @@ void emo_set_field(emo_value instance, int64_t i, emo_value v);
 bool emo_is_class(emo_value instance, const emo_vtable *vt);
 emo_value emo_field_by_name(emo_value instance, const char *name);
 bool emo_is_iface(emo_value instance, const emo_iface *ifc);
+int emo_is_instance(emo_value v);
+
+/* The dynamic builtin send: an untyped receiver answers through its
+   vtable when it is an instance, and through the builtin that owns the
+   method name otherwise. The receiver value is evaluated once. */
+emo_value emo_dynamic_builtin(emo_value recv, const char *name, int64_t arity,
+                              const emo_value *args);
 
 /* Dynamic method dispatch: look the (name, arity) up in the
    receiver's vtable and call its thunk. A missing method is a

@@ -894,3 +894,43 @@ caller with a time passes it as an attribute), and attribute keys are
 strict to one alphabet shared with the handle's percent-escaping. The
 manifest declares the three targets that work today and widens when
 the wasm/beam `Map` gap closes.
+
+### Step 33 — The standard library: `bufio` · `plan/step-33-stdlib-bufio.md`
+
+**Prereq:** Step 32 (slog — the zero-compiler-change golden shape).
+**Done when:** `require "bufio"` reads and writes through a
+fixed-size buffer over two one-method structural interfaces —
+`Reader` with line, delimiter, peek, discard, and one-level unread;
+`Writer` with coalescing writes, explicit flush, and never a silent
+discard — the fd and in-memory adapters cover the concrete streams,
+the golden rides the bootstrap and c lists byte-identical, and the
+c-backend cross-module dispatch is sound (an instance answers through
+its vtable, once, and Void method statements keep their calls).
+
+- [x] **T33.1** — The package: the two interfaces, the four
+      adapters, the `Reader` and `Writer` surfaces, strict sizes and
+      exact errors. (Done 2026-10-09.)
+- [x] **T33.2** — The golden: `examples/bufio_demo` — in-memory
+      streams, an 8-byte buffered file write that really flushes,
+      read back through two stacked readers — on the bootstrap and c
+      lists. (Done 2026-10-09.)
+- [x] **T33.3** — The c-backend fixes: the runtime dispatch for
+      untyped receivers (`emo_dynamic_builtin` + the builtin method
+      table), the single evaluation of the receiver, and the Void
+      statement-method emission. (Done 2026-10-09.)
+- [x] **T33.4** — The docs: `docs/stdlib/bufio.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 33 close-out (2026-10-09, on `feat/bufio`): the bufio package is
+the first standard-library package whose state isBoxes inside an
+ordinary class — the buffer, cursor, source, and last-read byte live
+in `Box`es, and the class stays immutable around them. The step
+flushed out three latent c-backend bugs in the cross-module
+method-call path: the name hijack that sent `read_line` on a user
+class to the socket builtin, the receiver expression evaluated up to
+three times by the dispatch, and Void method statements compiled to
+nothing. All three are fixed in the runtime dispatch
+(`emo_dynamic_builtin`), which evaluates the receiver once and hands
+instances to their vtable before any builtin. The package rides `os`,
+so its manifest declares the ocaml and c targets and widens when
+those surfaces reach the other runtimes.

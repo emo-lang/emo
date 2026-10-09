@@ -696,6 +696,10 @@ const emo_vtable *emo_vtable_of(emo_value instance) {
   return (const emo_vtable *)*emo_payload(instance);
 }
 
+/* The dynamic send's fork: an instance answers through its vtable, a
+   non-instance takes the builtin helper that owns the method name. */
+int emo_is_instance(emo_value v) { return emo_cell_kind(v) == EMO_INSTANCE; }
+
 emo_value emo_instance_field(emo_value instance, int64_t i) {
   instance = emo_expect_kind(instance, EMO_INSTANCE);
   if (i < 0 || i >= (int64_t)((const emo_vtable *)*emo_payload(instance))->field_count)
@@ -2133,4 +2137,159 @@ int64_t emo_os_chdir(emo_str path) {
   if (chdir(p) != 0)
     return (int64_t)emo_os_fail("chdir", p);
   return 0;
+}
+
+/* ---- The dynamic builtin send ----
+
+   A method call whose receiver the checker could not type (the value
+   crossed a module boundary) may name an instance method, a String
+   method, a socket method, or a List method. An instance answers
+   through its vtable — these names may be that very method — and only
+   a non-instance falls to the builtin that owns the name. The receiver
+   is evaluated once, here. */
+
+typedef struct {
+  const char *name;
+  int64_t arity;
+  emo_value (*fn)(emo_value recv, const emo_value *args);
+} emo_builtin_method;
+
+static emo_value emo_bm_substring(emo_value recv, const emo_value *args) {
+  return emo_box_str(emo_str_substring(emo_str_of(recv),
+                                       emo_unbox_i64(args[0]),
+                                       emo_unbox_i64(args[1])));
+}
+
+static emo_value emo_bm_index_of(emo_value recv, const emo_value *args) {
+  return emo_box_i64(emo_str_index_of(emo_str_of(recv), emo_str_of(args[0])));
+}
+
+static emo_value emo_bm_starts_with(emo_value recv, const emo_value *args) {
+  return emo_vbool(
+      emo_str_starts_with(emo_str_of(recv), emo_str_of(args[0])));
+}
+
+static emo_value emo_bm_lower(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_str(emo_str_lower(emo_str_of(recv)));
+}
+
+static emo_value emo_bm_trim(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_str(emo_str_trim(emo_str_of(recv)));
+}
+
+static emo_value emo_bm_to_int64(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_i64(emo_str_to_int64(emo_str_of(recv)));
+}
+
+static emo_value emo_bm_split(emo_value recv, const emo_value *args) {
+  return emo_str_split(emo_str_of(recv), emo_str_of(args[0]));
+}
+
+static emo_value emo_bm_read_line(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_str(emo_net_read_line(emo_unbox_i64(recv)));
+}
+
+static emo_value emo_bm_read_exactly(emo_value recv, const emo_value *args) {
+  return emo_box_str(
+      emo_net_read_exactly(emo_unbox_i64(recv), emo_unbox_i64(args[0])));
+}
+
+static emo_value emo_bm_read_all(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_str(emo_net_read_all(emo_unbox_i64(recv)));
+}
+
+static emo_value emo_bm_write(emo_value recv, const emo_value *args) {
+  return emo_box_i64(emo_net_write(emo_unbox_i64(recv), emo_str_of(args[0])));
+}
+
+static emo_value emo_bm_close(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_i64(emo_net_close(emo_unbox_i64(recv)));
+}
+
+static emo_value emo_bm_set_timeout(emo_value recv, const emo_value *args) {
+  return emo_box_i64(
+      emo_net_set_timeout(emo_unbox_i64(recv), emo_unbox_f64(args[0])));
+}
+
+static emo_value emo_bm_accept(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_i64(emo_net_accept(emo_unbox_i64(recv)));
+}
+
+static emo_value emo_bm_port(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_i64(emo_net_port(emo_unbox_i64(recv)));
+}
+
+static emo_value emo_bm_push_front(emo_value recv, const emo_value *args) {
+  return emo_list_push_front(recv, args[0]);
+}
+
+static emo_value emo_bm_push_back(emo_value recv, const emo_value *args) {
+  return emo_list_push_back(recv, args[0]);
+}
+
+static emo_value emo_bm_pop_front(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_list_pop_front(recv);
+}
+
+static emo_value emo_bm_pop_back(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_list_pop_back(recv);
+}
+
+static emo_value emo_bm_length(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_i64(emo_length(recv));
+}
+
+static emo_value emo_bm_to_string(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_str(emo_to_string_method(recv));
+}
+
+static const emo_builtin_method emo_builtin_methods[] = {
+    {"substring", 2, emo_bm_substring},
+    {"index_of", 1, emo_bm_index_of},
+    {"starts_with", 1, emo_bm_starts_with},
+    {"lower", 0, emo_bm_lower},
+    {"trim", 0, emo_bm_trim},
+    {"to_int64", 0, emo_bm_to_int64},
+    {"split", 1, emo_bm_split},
+    {"read_line", 0, emo_bm_read_line},
+    {"read_exactly", 1, emo_bm_read_exactly},
+    {"read_all", 0, emo_bm_read_all},
+    {"write", 1, emo_bm_write},
+    {"close", 0, emo_bm_close},
+    {"set_timeout", 1, emo_bm_set_timeout},
+    {"accept", 0, emo_bm_accept},
+    {"port", 0, emo_bm_port},
+    {"push_front", 1, emo_bm_push_front},
+    {"push_back", 1, emo_bm_push_back},
+    {"pop_front", 0, emo_bm_pop_front},
+    {"pop_back", 0, emo_bm_pop_back},
+    {"length", 0, emo_bm_length},
+    {"to_string", 0, emo_bm_to_string},
+};
+
+emo_value emo_dynamic_builtin(emo_value recv, const char *name, int64_t arity,
+                              const emo_value *args) {
+  if (emo_is_instance(recv))
+    return emo_send(recv, name, arity, args);
+  for (size_t i = 0; i < sizeof emo_builtin_methods / sizeof *emo_builtin_methods;
+       i++) {
+    const emo_builtin_method *m = &emo_builtin_methods[i];
+    if ((int64_t)m->arity == arity && strcmp(m->name, name) == 0)
+      return m->fn(recv, args);
+  }
+  fprintf(stderr, "runtime error: message not understood: %s/%lld\n", name,
+          (long long)arity);
+  exit(70);
 }

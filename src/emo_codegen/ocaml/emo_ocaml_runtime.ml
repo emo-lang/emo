@@ -1544,7 +1544,15 @@ module Emo_runtime = struct
         Emo_eval.Float (Int64.to_float n)
     | _, "to_string" ->
         none_expected ();
-        Emo_eval.String (Emo_eval.to_string self)
+        (* A compiled object's own to_string answers first — the catch-all
+           below renders the debug form, and the method may be that very
+           name. *)
+        (match self with
+        | Emo_eval.Obj o -> (
+            match Hashtbl.find_opt o.Emo_eval.omethods "to_string" with
+            | Some (_arity, f) -> f [ self ]
+            | None -> Emo_eval.String (Emo_eval.to_string self))
+        | _ -> Emo_eval.String (Emo_eval.to_string self))
     | _, "is" ->
         one_expected ();
         let target = List.hd args in
