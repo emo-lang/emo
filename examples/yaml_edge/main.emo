@@ -1,0 +1,48 @@
+require "yaml"
+
+// The yaml package's edges: quoted scalars and their escapes, the
+// number formats, block scalars with chomping, flow collections,
+// duplicate keys, empty containers, and decode/encode round-trips.
+
+// ---- quoted scalars and escapes ----
+const quoted = yaml.decode("q1: \"tab\\tnl\\nq\\\"bs\\\\\\u00e9\\u4e16\"\nq2: 'it''s'\nq3: \"\\u4e16\\ud83d\\ude00\"\n")
+println(quoted.get("q1").as_string().to_bytes().length().to_string())
+println(quoted.get("q1").encode())
+println(quoted.get("q2").as_string())
+println(quoted.get("q3").as_string().to_bytes().length().to_string())
+
+// ---- numbers at their boundaries ----
+println(yaml.decode("n0: 0").get("n0").as_int().to_string())
+println(yaml.decode("n1: -15").get("n1").as_int().to_string())
+println(yaml.decode("n2: 9223372036854775807").get("n2").as_int().to_string())
+println(yaml.decode("n3: -9223372036854775808").get("n3").as_int().to_string())
+println(yaml.decode("n4: 0x1f").get("n4").as_int().to_string())
+println(yaml.decode("n5: 0o17").get("n5").as_int().to_string())
+println(yaml.decode("f1: 0.5").get("f1").encode())
+println(yaml.decode("f2: -2.5e2").get("f2").encode())
+println(yaml.decode("f3: 1.0e16").get("f3").encode())
+
+// ---- block scalars with chomping ----
+println(yaml.decode("a: |\n  x\n  y\n").get("a").as_string().to_bytes().length().to_string())
+println(yaml.decode("b: |-\n  x\n  y\n").get("b").as_string().to_bytes().length().to_string())
+println(yaml.decode("c: |+\n  x\n\n").get("c").as_string().to_bytes().length().to_string())
+println(yaml.decode("d: >\n  fold\n  me\n").get("d").as_string())
+
+// ---- duplicate keys: entries keep both, `get` takes the last ----
+const dup = yaml.decode("k: 1\nk: 2\nk: 3\n")
+if dup.is(YamlObject) {
+  println(dup.get("k").as_int().to_string())
+  println(dup.entries().length().to_string())
+}
+
+// ---- empty containers and the round trip ----
+println(yaml.encode(yaml.decode("e1: {}\ne2: []\n")))
+const doc = yaml.decode("srv:\n  hosts:\n    - a.example\n    - b.example\n  port: 8443\n")
+const back = yaml.decode(yaml.encode(doc))
+if back.is(YamlObject) {
+  const srv = back.get("srv")
+  if srv.is(YamlObject) {
+    println(srv.get("hosts").encode())
+    println(srv.get("port").as_int().to_string())
+  }
+}

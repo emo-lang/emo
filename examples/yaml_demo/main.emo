@@ -1,0 +1,52 @@
+require "yaml"
+
+// The yaml package end to end: decode a configuration, read it
+// through narrowing and the scalar accessors, and encode it back to
+// block style. The tree mirrors the json package's, so both syntaxes
+// carry the same values.
+
+const text = "service: gateway\nreplicas: 3\nratio: 0.75\nlabels:\n  env: prod\n  tier: edge\nports:\n  - 8080\n  - 8443\ntls:\n  enabled: true\n  cert: /etc/cert.pem\nnote: |\n  multi line\n  block scalar\nempty: null\n"
+
+const doc = yaml.decode(text)
+if doc.is(YamlObject) {
+  println(doc.get("service").as_string())
+  println(doc.get("replicas").as_int() + 1)
+  println(doc.get("ratio").encode())
+  const labels = doc.get("labels")
+  if labels.is(YamlObject) {
+    println(labels.get("env").as_string())
+    println(labels.entries().length().to_string())
+  }
+  println(doc.get("ports").encode())
+  const tls = doc.get("tls")
+  if tls.is(YamlObject) {
+    println(tls.get("enabled").as_bool().to_string())
+    println(tls.get("cert").as_string())
+  }
+  println(doc.get("note").as_string())
+  println(doc.get("empty").is_null?().to_string())
+}
+
+// Round trip: encode to block style and decode again.
+const text2 = yaml.encode(doc)
+const doc2 = yaml.decode(text2)
+if doc2.is(YamlObject) {
+  println(doc2.get("service").as_string())
+  println(doc2.get("ratio").encode())
+  println(doc2.get("note").as_string().to_bytes().length().to_string())
+}
+
+// Flow collections decode like their block counterparts.
+const flow = yaml.decode("{a: 1, b: [x, y]}")
+if flow.is(YamlObject) {
+  println(flow.get("a").as_int().to_string())
+  println(flow.get("b").encode())
+}
+
+// Building values with the factories and encoding them.
+const built = yaml.object([
+  ("name", yaml.string("quote: it, hash # end")),
+  ("ids", yaml.array([yaml.int64(1), yaml.int64(2)])),
+  ("flag", yaml.bool(true))
+])
+println(yaml.encode(built))

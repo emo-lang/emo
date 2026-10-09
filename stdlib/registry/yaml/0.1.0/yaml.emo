@@ -1,0 +1,2108 @@
+// The yaml package: decode and encode YAML 1.2 (core schema) into a
+// Yaml value tree that mirrors the json package's design — one
+// interface, one class per kind, scalar accessors on the interface,
+// containers read through `is()` into the concrete class. Pure Emo
+// over the shared runtimes; the exact-decimal float machinery lives
+// in internal/float.emo.
+//
+// Supported: block mappings and sequences (nested, the compact
+// `- k: v` form, same-indent sequences under a key), flow collections,
+// single and double quoted scalars, plain scalars, comments, literal
+// `|` and folded `>` block scalars with clip/strip/keep chomping, and
+// an optional leading `---`.
+//
+// Not supported (each raises): anchors, aliases, tags, multi-document
+// input, multi-line plain/quoted scalars and multi-line flow, and
+// tabs in indentation. Double-quoted scalars accept the YAML escape
+// set (a superset of JSON's). Mapping keys are strings; integers
+// outside Int64 refuse.
+
+// The exact-decimal float machinery lives beside the module.
+const float = internal.float
+
+enum YamlKind { ynull, ybool, yint, yfloat, ystring, yarray, yobject }
+
+// The scalar accessors live on the interface; the containers (items,
+// entries, get) live on the concrete classes — an interface signature
+// cannot name its own interface — read them through `is()`.
+interface Yaml {
+  def kind() YamlKind
+  def is_null?() Bool
+  def encode() String
+  def as_bool() Bool
+  def as_int() Int64
+  def as_float() Float64
+  def as_string() String
+}
+
+class YamlNull {
+  def kind() YamlKind {
+    return YamlKind.ynull
+  }
+
+  def is_null?() Bool {
+    return true
+  }
+
+  def encode() String {
+    return "null"
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "yaml: expected true or false, got null")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "yaml: expected an integer, got null")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "yaml: expected a number, got null")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "yaml: expected a string, got null")
+  }
+
+  def items() Array[Yaml] {
+    raise Exception.new(message: "yaml: expected an array, got null")
+  }
+
+  def entries() Array[(String, Yaml)] {
+    raise Exception.new(message: "yaml: expected an object, got null")
+  }
+
+  def get(key String) Yaml {
+    raise Exception.new(message: "yaml: expected an object, got null")
+  }
+}
+
+class YamlBool {
+  def init(value Bool) {
+    self.value = value
+  }
+
+  def kind() YamlKind {
+    return YamlKind.ybool
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    if self.value {
+      return "true"
+    }
+    return "false"
+  }
+
+  def as_bool() Bool {
+    return self.value
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "yaml: expected an integer, got true or false")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "yaml: expected a number, got true or false")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "yaml: expected a string, got true or false")
+  }
+
+  def items() Array[Yaml] {
+    raise Exception.new(message: "yaml: expected an array, got true or false")
+  }
+
+  def entries() Array[(String, Yaml)] {
+    raise Exception.new(message: "yaml: expected an object, got true or false")
+  }
+
+  def get(key String) Yaml {
+    raise Exception.new(message: "yaml: expected an object, got true or false")
+  }
+}
+
+class YamlInt {
+  def init(value Int64) {
+    self.value = value
+  }
+
+  def kind() YamlKind {
+    return YamlKind.yint
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    return self.value.to_string()
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "yaml: expected true or false, got an integer")
+  }
+
+  def as_int() Int64 {
+    return self.value
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "yaml: expected a number, got an integer")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "yaml: expected a string, got an integer")
+  }
+
+  def items() Array[Yaml] {
+    raise Exception.new(message: "yaml: expected an array, got an integer")
+  }
+
+  def entries() Array[(String, Yaml)] {
+    raise Exception.new(message: "yaml: expected an object, got an integer")
+  }
+
+  def get(key String) Yaml {
+    raise Exception.new(message: "yaml: expected an object, got an integer")
+  }
+}
+
+class YamlFloat {
+  def init(value Float64) {
+    self.value = value
+  }
+
+  def kind() YamlKind {
+    return YamlKind.yfloat
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    return float.to_text(self.value)
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "yaml: expected true or false, got a number")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "yaml: expected an integer, got a number")
+  }
+
+  def as_float() Float64 {
+    return self.value
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "yaml: expected a string, got a number")
+  }
+
+  def items() Array[Yaml] {
+    raise Exception.new(message: "yaml: expected an array, got a number")
+  }
+
+  def entries() Array[(String, Yaml)] {
+    raise Exception.new(message: "yaml: expected an object, got a number")
+  }
+
+  def get(key String) Yaml {
+    raise Exception.new(message: "yaml: expected an object, got a number")
+  }
+}
+
+class YamlString {
+  def init(value String) {
+    self.value = value
+  }
+
+  def kind() YamlKind {
+    return YamlKind.ystring
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    return emit_text(self.value)
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "yaml: expected true or false, got a string")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "yaml: expected an integer, got a string")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "yaml: expected a number, got a string")
+  }
+
+  def as_string() String {
+    return self.value
+  }
+
+  def items() Array[Yaml] {
+    raise Exception.new(message: "yaml: expected an array, got a string")
+  }
+
+  def entries() Array[(String, Yaml)] {
+    raise Exception.new(message: "yaml: expected an object, got a string")
+  }
+
+  def get(key String) Yaml {
+    raise Exception.new(message: "yaml: expected an object, got a string")
+  }
+}
+
+class YamlArray {
+  def init(items Array[Yaml]) {
+    self.items = items
+  }
+
+  def kind() YamlKind {
+    return YamlKind.yarray
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    if self.items.length() == 0 {
+      return "[]"
+    }
+    return emit_array(self, 0)
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "yaml: expected true or false, got an array")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "yaml: expected an integer, got an array")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "yaml: expected a number, got an array")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "yaml: expected a string, got an array")
+  }
+
+  def items() Array[Yaml] {
+    return self.items
+  }
+
+  def entries() Array[(String, Yaml)] {
+    raise Exception.new(message: "yaml: expected an object, got an array")
+  }
+
+  def get(key String) Yaml {
+    raise Exception.new(message: "yaml: expected an object, got an array")
+  }
+}
+
+class YamlObject {
+  def init(entries Array[(String, Yaml)]) {
+    self.entries = entries
+  }
+
+  def kind() YamlKind {
+    return YamlKind.yobject
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    if self.entries.length() == 0 {
+      return "{}"
+    }
+    return emit_object(self, 0)
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "yaml: expected true or false, got an object")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "yaml: expected an integer, got an object")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "yaml: expected a number, got an object")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "yaml: expected a string, got an object")
+  }
+
+  def items() Array[Yaml] {
+    raise Exception.new(message: "yaml: expected an array, got an object")
+  }
+
+  def entries() Array[(String, Yaml)] {
+    return self.entries
+  }
+
+  // The value under `key`; when a key repeats, the last one wins.
+  // A missing key is a mistake and raises.
+  def get(key String) Yaml {
+    return lookup(self.entries, key, self.entries.length() - 1)
+  }
+}
+
+// ---- factories ----
+
+def null() Yaml {
+  return YamlNull.new()
+}
+
+def bool(b Bool) Yaml {
+  return YamlBool.new(value: b)
+}
+
+def int64(n Int64) Yaml {
+  return YamlInt.new(value: n)
+}
+
+def float64(x Float64) Yaml {
+  return YamlFloat.new(value: x)
+}
+
+def string(s String) Yaml {
+  return YamlString.new(value: s)
+}
+
+def array(items Array[Yaml]) Yaml {
+  return YamlArray.new(items: items)
+}
+
+def object(entries Array[(String, Yaml)]) Yaml {
+  return YamlObject.new(entries: entries)
+}
+
+def lookup(entries Array[(String, Yaml)], key String, i Int64) Yaml {
+  if i < 0 {
+    raise Exception.new(message: "yaml: no key `" + key + "` in object")
+  }
+  const pair = entries[i]
+  if pair[0] == key {
+    return pair[1]
+  }
+  return lookup(entries, key, i - 1)
+}
+
+// ---- decode ----
+
+// Decodes one YAML document into the Yaml tree. An optional leading
+// `---` opens the document; a second document, anchors, aliases,
+// tags, and multi-line plain/quoted scalars all raise with the byte
+// offset.
+def decode(text String) Yaml {
+  const data = text.to_bytes()
+  const p0 = doc_start(data, 0, 0)
+  const r = parse_node(data, p0, 0)
+  const after = doc_end(data, r[1])
+  if after >= 0 {
+    raise Exception.new(message: err(after, "multi-document YAML is not supported yet"))
+  }
+  return r[0]
+}
+
+def err(at Int64, what String) String {
+  return "yaml: " + what + " at byte " + at.to_string()
+}
+
+// Skips blank lines, comment lines, and `%` directives; consumes one
+// leading `---` (content after it on the same line is the document
+// root) and returns the document's first content position.
+def doc_start(data Bytes, i Int64, seen Int64) Int64 {
+  if i >= data.length() {
+    if seen > 0 {
+      return i
+    }
+    raise Exception.new(message: err(i, "empty document"))
+  }
+  const e = line_end(data, i)
+  const t = skip_spaces(data, i, e)
+  if t >= e {
+    return doc_start(data, next_line(data, e), seen)
+  }
+  if data.get(t) == 35 || data.get(t) == 37 {
+    return doc_start(data, next_line(data, e), seen)
+  }
+  if marker_len(data, t, e, 45) > 0 {
+    const after = skip_spaces(data, t + 3, e)
+    if after < e {
+      return after
+    }
+    return doc_start(data, next_line(data, e), 1)
+  }
+  return t
+}
+
+// After the root node: an optional `...` closes the document; any
+// further content means the input holds more than one document.
+// Returns the offending position, or -1 when the input is clean.
+def doc_end(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return -1
+  }
+  const e = line_end(data, i)
+  const t = skip_spaces(data, i, e)
+  if t >= e {
+    return doc_end(data, next_line(data, e))
+  }
+  if data.get(t) == 35 {
+    return doc_end(data, next_line(data, e))
+  }
+  if marker_len(data, t, e, 46) > 0 {
+    return doc_end(data, next_line(data, e))
+  }
+  return t
+}
+
+def line_end(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  if data.get(i) == 10 {
+    return i
+  }
+  return line_end(data, i + 1)
+}
+
+def next_line(data Bytes, e Int64) Int64 {
+  if e >= data.length() {
+    return e
+  }
+  return e + 1
+}
+
+// The first non-space byte at or after i within the line ending at e.
+def skip_spaces(data Bytes, i Int64, e Int64) Int64 {
+  if i < e {
+    if data.get(i) == 32 {
+      return skip_spaces(data, i + 1, e)
+    }
+    return i
+  }
+  return i
+}
+
+// The indentation column of the content position i; a tab inside the
+// indentation raises.
+def line_indent_at(data Bytes, i Int64) Int64 {
+  const s = line_start(data, i)
+  return count_indent(data, s, i, 0)
+}
+
+def line_start(data Bytes, i Int64) Int64 {
+  if i <= 0 {
+    return 0
+  }
+  if data.get(i - 1) == 10 {
+    return i
+  }
+  return line_start(data, i - 1)
+}
+
+def count_indent(data Bytes, s Int64, i Int64, n Int64) Int64 {
+  if s < i {
+    const c = data.get(s)
+    if c == 32 {
+      return count_indent(data, s + 1, i, n + 1)
+    }
+    if c == 9 {
+      raise Exception.new(message: err(s, "tabs are not allowed in indentation"))
+    }
+  }
+  return n
+}
+
+// The length of a `---` or `...` marker at t (0 when there is none).
+def marker_len(data Bytes, t Int64, e Int64, which Int64) Int64 {
+  if t + 3 <= e {
+    if data.get(t) == which {
+      if data.get(t + 1) == which {
+        if data.get(t + 2) == which {
+          return 3
+        }
+      }
+    }
+  }
+  return 0
+}
+
+// Skips blank and comment lines from a line start, then leading
+// spaces; returns the next content position (or EOF).
+def skip_prologue(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  const e = line_end(data, i)
+  const t = skip_spaces(data, i, e)
+  if t >= e {
+    return skip_prologue(data, next_line(data, e))
+  }
+  if data.get(t) == 35 {
+    return skip_prologue(data, next_line(data, e))
+  }
+  return t
+}
+
+// ---- block node parsing ----
+
+def parse_node(data Bytes, pos Int64, depth Int64) (Yaml, Int64) {
+  if depth > 512 {
+    raise Exception.new(message: err(pos, "nesting deeper than 512"))
+  }
+  const indent = line_indent_at(data, pos)
+  if is_dash(data, pos) {
+    return parse_sequence(data, pos, indent, depth, [])
+  }
+  const e = content_end(data, pos)
+  const colon = find_key_colon(data, pos, e)
+  if colon >= 0 {
+    return parse_mapping(data, pos, colon, indent, depth, [])
+  }
+  return parse_node_line(data, pos, e, indent, depth)
+}
+
+// A `-` that opens a sequence entry: followed by a space or the line
+// end.
+def is_dash(data Bytes, pos Int64) Bool {
+  if data.get(pos) != 45 {
+    return false
+  }
+  const e = line_end(data, pos)
+  if pos + 1 >= e {
+    return true
+  }
+  return data.get(pos + 1) == 32
+}
+
+// The end of meaningful content on the line: trailing spaces and a
+// trailing ` #comment` stripped.
+def content_end(data Bytes, pos Int64) Int64 {
+  const t = strip_comment(data, pos, line_end(data, pos))
+  return trim_end(data, t)
+}
+
+// A `#` preceded by a space opens a comment.
+def strip_comment(data Bytes, pos Int64, e Int64) Int64 {
+  if pos + 1 >= e {
+    return e
+  }
+  if data.get(pos) == 35 {
+    if data.get(pos + 1) == 32 || data.get(pos + 1) == 9 {
+      return pos
+    }
+  }
+  return strip_comment(data, pos + 1, e)
+}
+
+def trim_end(data Bytes, e Int64) Int64 {
+  if e > 0 {
+    const c = data.get(e - 1)
+    if c == 32 || c == 9 {
+      return trim_end(data, e - 1)
+    }
+  }
+  return e
+}
+
+// A node line that is neither a mapping entry nor a sequence entry:
+// a block scalar header, a flow collection, a quoted scalar, or a
+// plain scalar.
+def parse_node_line(data Bytes, pos Int64, e Int64, indent Int64, depth Int64) (Yaml, Int64) {
+  const c = data.get(pos)
+  if c == 124 || c == 62 {
+    return parse_block_scalar(data, pos, e, indent)
+  }
+  if c == 91 || c == 123 {
+    return parse_flow(data, pos, depth)
+  }
+  if c == 34 || c == 39 {
+    return parse_quoted_line(data, pos, indent)
+  }
+  const more = next_content_line(data, e)
+  if more >= 0 {
+    const mi = line_indent_at(data, more)
+    if mi > indent {
+      raise Exception.new(message: err(more, "multi-line plain scalars are not supported yet"))
+    }
+  }
+  const t = strip_comment(data, pos, e)
+  const end = trim_end(data, t)
+  return (resolve_plain(slice_text(data, pos, end)), next_line(data, e))
+}
+
+// The next content position after the line containing e (-1 at EOF or
+// when the document closes with `...`).
+def next_content_line(data Bytes, e Int64) Int64 {
+  const p = skip_prologue(data, next_line(data, e))
+  if p >= data.length() {
+    return -1
+  }
+  const le = line_end(data, p)
+  if marker_len(data, p, le, 46) > 0 {
+    return -1
+  }
+  if marker_len(data, p, le, 45) > 0 {
+    return -1
+  }
+  return p
+}
+
+// ---- mappings ----
+
+// pos sits on the first key; colon is the key's `:`; indent is the
+// mapping's column.
+def parse_mapping(data Bytes, pos Int64, colon Int64, indent Int64, depth Int64, entries Array[(String, Yaml)]) (Yaml, Int64) {
+  const key = key_scalar(data, pos, colon)
+  const vr = mapping_value(data, colon + 1, indent, depth)
+  return parse_mapping_loop(data, vr[1], indent, depth, entries.append((key, vr[0])))
+}
+
+def parse_mapping_loop(data Bytes, pos Int64, indent Int64, depth Int64, entries Array[(String, Yaml)]) (Yaml, Int64) {
+  const p = skip_prologue(data, pos)
+  if p >= data.length() {
+    return (YamlObject.new(entries: entries), p)
+  }
+  const le = line_end(data, p)
+  if marker_len(data, p, le, 45) > 0 {
+    return (YamlObject.new(entries: entries), p)
+  }
+  if marker_len(data, p, le, 46) > 0 {
+    return (YamlObject.new(entries: entries), p)
+  }
+  const ni = line_indent_at(data, p)
+  if ni < indent {
+    return (YamlObject.new(entries: entries), p)
+  }
+  if ni > indent {
+    raise Exception.new(message: err(p, "bad indentation in a mapping"))
+  }
+  if is_dash(data, p) {
+    return (YamlObject.new(entries: entries), p)
+  }
+  const e = content_end(data, p)
+  const colon = find_key_colon(data, p, e)
+  if colon < 0 {
+    return (YamlObject.new(entries: entries), p)
+  }
+  return parse_mapping(data, p, colon, indent, depth, entries)
+}
+
+// The value after `key:`: inline on the same line, a block scalar, or
+// a nested block on the following lines. Returns (value, next pos).
+def mapping_value(data Bytes, v Int64, indent Int64, depth Int64) (Yaml, Int64) {
+  const e = line_end(data, v)
+  const vs = skip_spaces(data, v, e)
+  if vs < e {
+    if data.get(vs) == 35 {
+      return mapping_value_nested(data, e, indent, depth)
+    }
+    const c = data.get(vs)
+    if c == 124 || c == 62 {
+      return parse_block_scalar(data, vs, e, indent)
+    }
+    if c == 91 || c == 123 {
+      const fr = parse_flow(data, vs, depth)
+      return (fr[0], next_line(data, line_end(data, fr[1])))
+    }
+    if c == 34 || c == 39 {
+      return parse_quoted_line(data, vs, indent)
+    }
+    const more = next_content_line(data, e)
+    if more >= 0 {
+      const mi = line_indent_at(data, more)
+      if mi > indent {
+        raise Exception.new(message: err(more, "multi-line plain scalars are not supported yet"))
+      }
+    }
+    const t = strip_comment(data, vs, e)
+    const end = trim_end(data, t)
+    return (resolve_plain(slice_text(data, vs, end)), next_line(data, e))
+  }
+  return mapping_value_nested(data, e, indent, depth)
+}
+
+// No inline value: the next content line either opens a nested block
+// (deeper), a same-indent sequence, or the value is null.
+def mapping_value_nested(data Bytes, e Int64, indent Int64, depth Int64) (Yaml, Int64) {
+  const p = skip_prologue(data, next_line(data, e))
+  if p >= data.length() {
+    return (YamlNull.new(), p)
+  }
+  const le = line_end(data, p)
+  if marker_len(data, p, le, 46) > 0 {
+    return (YamlNull.new(), p)
+  }
+  const ni = line_indent_at(data, p)
+  if ni > indent {
+    return parse_node(data, p, depth + 1)
+  }
+  if ni == indent {
+    if is_dash(data, p) {
+      return parse_sequence(data, p, indent, depth + 1, [])
+    }
+  }
+  return (YamlNull.new(), p)
+}
+
+// ---- sequences ----
+
+def parse_sequence(data Bytes, pos Int64, indent Int64, depth Int64, items Array[Yaml]) (Yaml, Int64) {
+  const e = line_end(data, pos)
+  const cs = skip_spaces(data, pos + 1, e)
+  if cs >= e {
+    return sequence_nested_or_null(data, pos, e, indent, depth, items)
+  }
+  if data.get(cs) == 35 {
+    return sequence_nested_or_null(data, pos, e, indent, depth, items)
+  }
+  const colon = find_key_colon(data, cs, e)
+  if colon >= 0 {
+    const col = cs - line_start(data, cs)
+    const m = parse_mapping(data, cs, colon, col, depth + 1, [])
+    return sequence_continue(data, m[1], indent, depth, items.append(m[0]))
+  }
+  const c = data.get(cs)
+  if c == 124 || c == 62 {
+    const r = parse_block_scalar(data, cs, e, indent)
+    return sequence_continue(data, r[1], indent, depth, items.append(r[0]))
+  }
+  if c == 91 || c == 123 {
+    const fr = parse_flow(data, cs, depth)
+    return sequence_continue(data, next_line(data, line_end(data, fr[1])), indent, depth, items.append(fr[0]))
+  }
+  if c == 34 || c == 39 {
+    const qr = parse_quoted_line(data, cs, indent)
+    return sequence_continue(data, qr[1], indent, depth, items.append(qr[0]))
+  }
+  const more = next_content_line(data, e)
+  if more >= 0 {
+    const mi = line_indent_at(data, more)
+    if mi > indent {
+      raise Exception.new(message: err(more, "multi-line plain scalars are not supported yet"))
+    }
+  }
+  const t = strip_comment(data, cs, e)
+  const end = trim_end(data, t)
+  const item = resolve_plain(slice_text(data, cs, end))
+  return sequence_continue(data, next_line(data, e), indent, depth, items.append(item))
+}
+
+// A dash with nothing after it: the item is a deeper block or null.
+def sequence_nested_or_null(data Bytes, pos Int64, e Int64, indent Int64, depth Int64, items Array[Yaml]) (Yaml, Int64) {
+  const p = skip_prologue(data, next_line(data, e))
+  const item = YamlNull.new()
+  if p >= data.length() {
+    return (YamlArray.new(items: items.append(item)), p)
+  }
+  const le = line_end(data, p)
+  if marker_len(data, p, le, 46) > 0 {
+    return (YamlArray.new(items: items.append(item)), p)
+  }
+  const ni = line_indent_at(data, p)
+  if ni > indent {
+    const r = parse_node(data, p, depth + 1)
+    return sequence_continue(data, r[1], indent, depth, items.append(r[0]))
+  }
+  return (YamlArray.new(items: items.append(item)), p)
+}
+
+def sequence_continue(data Bytes, pos Int64, indent Int64, depth Int64, items Array[Yaml]) (Yaml, Int64) {
+  const p = skip_prologue(data, pos)
+  if p >= data.length() {
+    return (YamlArray.new(items: items), p)
+  }
+  const le = line_end(data, p)
+  if marker_len(data, p, le, 45) > 0 {
+    return (YamlArray.new(items: items), p)
+  }
+  if marker_len(data, p, le, 46) > 0 {
+    return (YamlArray.new(items: items), p)
+  }
+  const ni = line_indent_at(data, p)
+  if ni < indent {
+    return (YamlArray.new(items: items), p)
+  }
+  if ni > indent {
+    raise Exception.new(message: err(p, "bad indentation in a sequence"))
+  }
+  if is_dash(data, p) {
+    return parse_sequence(data, p, indent, depth, items)
+  }
+  return (YamlArray.new(items: items), p)
+}
+
+// ---- block scalars (`|` literal, `>` folded) ----
+
+// pos sits on the `|` or `>`; indent is the parent's column.
+def parse_block_scalar(data Bytes, pos Int64, e Int64, indent Int64) (Yaml, Int64) {
+  const folded = data.get(pos) == 62
+  const hdr = block_header(data, pos + 1, e, 0, 0)
+  const raw = block_lines(data, next_line(data, e), indent, [])
+  const base = block_base(raw[0], 0, -1)
+  const text = block_assemble(raw[0], 0, base, folded, "")
+  return (YamlString.new(value: block_chomp(text, hdr[0])), raw[1])
+}
+
+// (chomp, pad, next pos): chomp 0 = clip, -1 = strip, 1 = keep; pad
+// is the explicit indentation indicator.
+def block_header(data Bytes, i Int64, e Int64, chomp Int64, pad Int64) (Int64, Int64, Int64) {
+  const j = skip_spaces(data, i, e)
+  if j >= e {
+    return (chomp, pad, j)
+  }
+  const c = data.get(j)
+  if c == 43 {
+    return block_header(data, j + 1, e, 1, pad)
+  }
+  if c == 45 {
+    return block_header(data, j + 1, e, -1, pad)
+  }
+  if c >= 49 && c <= 57 {
+    return block_header(data, j + 1, e, chomp, c - 48)
+  }
+  return (chomp, pad, j)
+}
+
+// Collects the scalar's raw lines until a non-blank line at or left
+// of the parent indent. Blank lines are kept as empty strings; deeper
+// lines are sliced from column indent + 1 (their extra indentation
+// stays as content).
+// Returns (lines, stop position): the position where the scalar's
+// dedented content ended (the line start the parent resumes from).
+def block_lines(data Bytes, i Int64, indent Int64, acc Array[String]) (Array[String], Int64) {
+  if i >= data.length() {
+    return (acc, i)
+  }
+  const e = line_end(data, i)
+  const t = skip_spaces(data, i, e)
+  if t < e {
+    const li = t - line_start(data, t)
+    if li <= indent {
+      return (acc, i)
+    }
+    const r = block_lines(data, next_line(data, e), indent, acc.append(slice_text(data, i + indent + 1, e)))
+    return (r[0], r[1])
+  }
+  return block_lines(data, next_line(data, e), indent, acc.append(""))
+}
+
+// The content indent: the first non-blank line's leading spaces.
+def block_base(lines Array[String], i Int64, base Int64) Int64 {
+  if i >= lines.length() {
+    return 0
+  }
+  if lines[i] == "" {
+    return block_base(lines, i + 1, base)
+  }
+  const b = lines[i].to_bytes()
+  return leading_spaces(b, 0)
+}
+
+def leading_spaces(b Bytes, i Int64) Int64 {
+  if i < b.length() {
+    if b.get(i) == 32 {
+      return 1 + leading_spaces(b, i + 1)
+    }
+  }
+  return 0
+}
+
+// Strips `base` leading spaces (or what the line has) and joins.
+def block_assemble(lines Array[String], i Int64, base Int64, folded Bool, acc String) String {
+  if i >= lines.length() {
+    return acc
+  }
+  if folded {
+    return block_assemble(lines, i + 1, base, folded, fold_line(acc, strip_base(lines[i], base)))
+  }
+  const sep = line_sep(acc)
+  return block_assemble(lines, i + 1, base, folded, acc + sep + strip_base(lines[i], base))
+}
+
+def line_sep(acc String) String {
+  if acc == "" {
+    return ""
+  }
+  return "\n"
+}
+
+def fold_line(acc String, line String) String {
+  if line == "" {
+    if acc == "" {
+      return ""
+    }
+    return acc + "\n"
+  }
+  if acc == "" {
+    return line
+  }
+  const tail = last_char(acc)
+  if tail == 10 {
+    return acc + line
+  }
+  return acc + " " + line
+}
+
+def last_char(s String) Int64 {
+  const b = s.to_bytes()
+  if b.length() == 0 {
+    return 0
+  }
+  return b.get(b.length() - 1)
+}
+
+// Strips up to `base` leading spaces from a non-blank line.
+def strip_base(line String, base Int64) String {
+  if base <= 0 {
+    return line
+  }
+  const b = line.to_bytes()
+  if b.length() == 0 {
+    return line
+  }
+  if b.get(0) != 32 {
+    return line
+  }
+  return strip_base(line.substring(1, b.length() - 1), base - 1)
+}
+
+// Chomping: 0 = clip (one trailing newline when non-empty), -1 =
+// strip all trailing newlines, 1 = keep.
+def block_chomp(s String, chomp Int64) String {
+  if chomp == 1 {
+    return s
+  }
+  const b = s.to_bytes()
+  const e = clip_end(b, b.length())
+  if e == 0 {
+    return ""
+  }
+  const text = b.to_string().substring(0, e)
+  if chomp == -1 {
+    return text
+  }
+  return text + "\n"
+}
+
+def clip_end(b Bytes, e Int64) Int64 {
+  if e > 0 {
+    if b.get(e - 1) == 10 {
+      return clip_end(b, e - 1)
+    }
+  }
+  return e
+}
+
+// ---- flow collections ----
+
+def parse_flow(data Bytes, pos Int64, depth Int64) (Yaml, Int64) {
+  if depth > 512 {
+    raise Exception.new(message: err(pos, "nesting deeper than 512"))
+  }
+  const p = flow_skip(data, pos)
+  const c = data.get(p)
+  if c == 91 {
+    return flow_sequence(data, p + 1, depth, [])
+  }
+  if c == 123 {
+    return flow_mapping(data, p + 1, depth, [])
+  }
+  raise Exception.new(message: err(p, "expected a flow collection"))
+}
+
+def flow_skip(data Bytes, i Int64) Int64 {
+  if data.get(i) == 32 || data.get(i) == 9 {
+    return flow_skip(data, i + 1)
+  }
+  return i
+}
+
+def flow_sequence(data Bytes, i Int64, depth Int64, items Array[Yaml]) (Yaml, Int64) {
+  const p = flow_skip(data, i)
+  if data.get(p) == 93 {
+    return (YamlArray.new(items: items), p + 1)
+  }
+  const r = flow_node(data, p, depth)
+  const q = flow_skip(data, r[1])
+  if data.get(q) == 44 {
+    return flow_sequence(data, q + 1, depth, items.append(r[0]))
+  }
+  if data.get(q) == 93 {
+    return (YamlArray.new(items: items.append(r[0])), q + 1)
+  }
+  raise Exception.new(message: err(q, "expected `,` or `]` in a flow sequence"))
+}
+
+def flow_mapping(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]) (Yaml, Int64) {
+  const p = flow_skip(data, i)
+  if data.get(p) == 125 {
+    return (YamlObject.new(entries: entries), p + 1)
+  }
+  const kr = flow_scalar(data, p)
+  const colon = flow_skip(data, kr[1])
+  if data.get(colon) == 44 || data.get(colon) == 125 {
+    const pair = (kr[0].as_string(), YamlNull.new())
+    return flow_mapping_more(data, colon, depth, entries.append(pair))
+  }
+  if data.get(colon) != 58 {
+    raise Exception.new(message: err(colon, "expected `:` in a flow mapping"))
+  }
+  const vr = flow_node(data, colon + 1, depth)
+  const pair = (kr[0].as_string(), vr[0])
+  return flow_mapping_more(data, vr[1], depth, entries.append(pair))
+}
+
+def flow_mapping_more(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]) (Yaml, Int64) {
+  const q = flow_skip(data, i)
+  if data.get(q) == 44 {
+    return flow_mapping(data, q + 1, depth, entries)
+  }
+  if data.get(q) == 125 {
+    return (YamlObject.new(entries: entries), q + 1)
+  }
+  raise Exception.new(message: err(q, "expected `,` or `}` in a flow mapping"))
+}
+
+def flow_node(data Bytes, i Int64, depth Int64) (Yaml, Int64) {
+  if depth > 512 {
+    raise Exception.new(message: err(i, "nesting deeper than 512"))
+  }
+  const p = flow_skip(data, i)
+  const c = data.get(p)
+  if c == 91 || c == 123 {
+    return parse_flow(data, p, depth)
+  }
+  if c == 34 || c == 39 {
+    return parse_quoted(data, p)
+  }
+  const e = flow_plain_end(data, p, p)
+  const end = trim_end_flow(data, p, e)
+  return (resolve_plain(slice_text(data, p, end)), end)
+}
+
+// A flow scalar: quoted or plain (plain runs to `,` `]` `}` or to a
+// `:` followed by a separator).
+def flow_scalar(data Bytes, i Int64) (Yaml, Int64) {
+  const c = data.get(i)
+  if c == 34 || c == 39 {
+    return parse_quoted(data, i)
+  }
+  const e = flow_plain_end(data, i, i)
+  const end = trim_end_flow(data, i, e)
+  return (resolve_plain(slice_text(data, i, end)), end)
+}
+
+def flow_plain_end(data Bytes, i Int64, last Int64) Int64 {
+  const c = data.get(i)
+  if c == 44 || c == 93 || c == 125 {
+    return last
+  }
+  if c == 58 {
+    const after = data.get(i + 1)
+    if after == 32 || after == 44 || after == 93 || after == 125 {
+      return last
+    }
+  }
+  if c == 32 || c == 9 {
+    return flow_plain_end(data, i + 1, last)
+  }
+  return flow_plain_end(data, i + 1, i + 1)
+}
+
+def trim_end_flow(data Bytes, i Int64, last Int64) Int64 {
+  if last > i {
+    const c = data.get(last - 1)
+    if c == 32 || c == 9 {
+      return trim_end_flow(data, i, last - 1)
+    }
+  }
+  return last
+}
+
+// ---- quoted scalars ----
+
+// Double-quoted: the YAML escape set (a superset of JSON's).
+// Returns (Yaml, next pos).
+def parse_quoted(data Bytes, pos Int64) (Yaml, Int64) {
+  if data.get(pos) == 34 {
+    const r = parse_double(data, pos)
+    return (YamlString.new(value: r[0]), r[1])
+  }
+  return parse_single(data, pos)
+}
+
+def parse_quoted_line(data Bytes, pos Int64, indent Int64) (Yaml, Int64) {
+  const r = parse_quoted(data, pos)
+  const more = next_content_line(data, line_end(data, r[1]))
+  if more >= 0 {
+    const mi = line_indent_at(data, more)
+    if mi > indent {
+      raise Exception.new(message: err(more, "multi-line quoted scalars are not supported yet"))
+    }
+  }
+  return (r[0], next_line(data, line_end(data, r[1])))
+}
+
+// Single-quoted: `''` escapes a quote. Returns (Yaml, next pos).
+def parse_single(data Bytes, pos Int64) (Yaml, Int64) {
+  const e = line_end(data, pos)
+  const buf = Bytes.new(e - pos)
+  const r = scan_single(data, pos + 1, e, buf, 0)
+  return (YamlString.new(value: buf.to_string().substring(0, r[1])), r[0])
+}
+
+// Returns (next pos after the closing quote, bytes written).
+def scan_single(data Bytes, i Int64, e Int64, buf Bytes, w Int64) (Int64, Int64) {
+  if i >= e {
+    raise Exception.new(message: err(e, "unterminated single-quoted scalar"))
+  }
+  const c = data.get(i)
+  if c == 39 {
+    if i + 1 < e {
+      if data.get(i + 1) == 39 {
+        buf.set(w, 39)
+        return scan_single(data, i + 2, e, buf, w + 1)
+      }
+    }
+    return (i + 1, w)
+  }
+  buf.set(w, c)
+  return scan_single(data, i + 1, e, buf, w + 1)
+}
+
+// ---- double-quoted scalars ----
+
+// The YAML escape set: \" \\ \/ \b \f \n \r \t \0 \a \v \e
+// \<space> \N \_ \L \P and \xXX \uXXXX \UXXXXXXXX (with surrogate
+// pairs). Returns (String, next pos). Single-line.
+def parse_double(data Bytes, pos Int64) (String, Int64) {
+  const e = line_end(data, pos)
+  const m = double_measure(data, pos + 1, e, 0)
+  const out = Bytes.new(m[0])
+  const r = double_fill(data, pos + 1, out, 0)
+  return (out.to_string().substring(0, r[1]), r[0])
+}
+
+// Pass one: validate escapes and measure the decoded length.
+def double_measure(data Bytes, i Int64, e Int64, len Int64) (Int64, Int64) {
+  if i >= e {
+    raise Exception.new(message: err(i, "unterminated double-quoted scalar"))
+  }
+  const c = data.get(i)
+  if c == 34 {
+    return (len, i + 1)
+  }
+  if c == 92 {
+    const er = double_escape(data, i + 1, e)
+    return double_measure(data, er[1], e, len + utf8_len(er[0]))
+  }
+  if c < 32 {
+    raise Exception.new(message: err(i, "unescaped control character in a double-quoted scalar"))
+  }
+  return double_measure(data, i + 1, e, len + 1)
+}
+
+// One escape after the backslash: (code point, next position).
+def double_escape(data Bytes, i Int64, e Int64) (Int64, Int64) {
+  if i >= e {
+    raise Exception.new(message: err(i, "unterminated double-quoted scalar"))
+  }
+  const c = data.get(i)
+  if c == 117 {
+    const cp = hex_run(data, i + 1, 4)
+    if cp >= 55296 && cp <= 56319 {
+      // a high surrogate must pair with a low one
+      if i + 10 >= e {
+        raise Exception.new(message: err(i, "unterminated double-quoted scalar"))
+      }
+      if data.get(i + 5) != 92 || data.get(i + 6) != 117 {
+        raise Exception.new(message: err(i, "lone surrogate escape"))
+      }
+      const lo = hex_run(data, i + 7, 4)
+      if lo < 56320 || lo > 57343 {
+        raise Exception.new(message: err(i, "lone surrogate escape"))
+      }
+      const full = 65536 + ((cp - 55296) * 1024) + (lo - 56320)
+      return (full, i + 11)
+    }
+    if cp >= 56320 && cp <= 57343 {
+      raise Exception.new(message: err(i, "lone surrogate escape"))
+    }
+    return (cp, i + 5)
+  }
+  if c == 120 {
+    return (hex_run(data, i + 1, 2), i + 3)
+  }
+  if c == 85 {
+    return (hex_run(data, i + 1, 8), i + 9)
+  }
+  const dec = double_simple(c)
+  if dec >= 0 {
+    return (dec, i + 1)
+  }
+  raise Exception.new(message: err(i, "invalid escape"))
+}
+
+// Pass two: write the decoded bytes; stops after the closing quote.
+def double_fill(data Bytes, i Int64, out Bytes, w Int64) (Int64, Int64) {
+  if i >= data.length() {
+    raise Exception.new(message: err(i, "unterminated double-quoted scalar"))
+  }
+  const c = data.get(i)
+  if c == 34 {
+    return (i + 1, w)
+  }
+  if c == 92 {
+    const le = line_end(data, i)
+    const er = double_escape(data, i + 1, le)
+    const nw = utf8_put(out, w, er[0])
+    return double_fill(data, er[1], out, nw)
+  }
+  if c < 32 {
+    raise Exception.new(message: err(i, "unescaped control character in a double-quoted scalar"))
+  }
+  out.set(w, c)
+  return double_fill(data, i + 1, out, w + 1)
+}
+
+// `count` hex digits starting at i, most significant first.
+def hex_run(data Bytes, i Int64, count Int64) Int64 {
+  if count <= 0 {
+    return 0
+  }
+  const d = hex_val(data, i)
+  const rest = hex_run(data, i + 1, count - 1)
+  const weight = hex_power(count)
+  return d * weight + rest
+}
+
+def hex_power(count Int64) Int64 {
+  if count == 1 {
+    return 1
+  }
+  return 16 * hex_power(count - 1)
+}
+
+def hex_val(data Bytes, i Int64) Int64 {
+  const b = data.get(i)
+  if b >= 48 && b <= 57 {
+    return b - 48
+  }
+  if b >= 97 && b <= 102 {
+    return b - 87
+  }
+  if b >= 65 && b <= 70 {
+    return b - 55
+  }
+  raise Exception.new(message: err(i, "invalid hex digit in an escape"))
+}
+
+// The letter after the backslash in a double-quoted scalar: the code
+// point it stands for, or -1.
+def double_simple(c Int64) Int64 {
+  if c == 34 {
+    return 34
+  }
+  if c == 92 {
+    return 92
+  }
+  if c == 47 {
+    return 47
+  }
+  if c == 98 {
+    return 8
+  }
+  if c == 102 {
+    return 12
+  }
+  if c == 110 {
+    return 10
+  }
+  if c == 114 {
+    return 13
+  }
+  if c == 116 {
+    return 9
+  }
+  if c == 48 {
+    return 0
+  }
+  if c == 97 {
+    return 7
+  }
+  if c == 118 {
+    return 11
+  }
+  if c == 101 {
+    return 27
+  }
+  if c == 32 {
+    return 32
+  }
+  if c == 78 {
+    return 133
+  }
+  if c == 95 {
+    return 160
+  }
+  if c == 76 {
+    return 8232
+  }
+  if c == 80 {
+    return 8233
+  }
+  return -1
+}
+
+def utf8_len(cp Int64) Int64 {
+  if cp < 128 {
+    return 1
+  }
+  if cp < 2048 {
+    return 2
+  }
+  if cp < 65536 {
+    return 3
+  }
+  return 4
+}
+
+def utf8_put(out Bytes, w Int64, cp Int64) Int64 {
+  if cp < 128 {
+    out.set(w, cp)
+    return w + 1
+  }
+  if cp < 2048 {
+    const hi = cp / 64
+    const lo = cp % 64
+    out.set(w, 192 + hi)
+    out.set(w + 1, 128 + lo)
+    return w + 2
+  }
+  if cp < 65536 {
+    const top = cp / 4096
+    const mid = (cp / 64) % 64
+    const lo = cp % 64
+    out.set(w, 224 + top)
+    out.set(w + 1, 128 + mid)
+    out.set(w + 2, 128 + lo)
+    return w + 3
+  }
+  const top = cp / 262144
+  const hi = (cp / 4096) % 64
+  const mid = (cp / 64) % 64
+  const lo = cp % 64
+  out.set(w, 240 + top)
+  out.set(w + 1, 128 + hi)
+  out.set(w + 2, 128 + mid)
+  out.set(w + 3, 128 + lo)
+  return w + 4
+}
+
+// ---- plain scalars ----
+
+def slice_text(data Bytes, start Int64, end Int64) String {
+  const buf = Bytes.new(end - start)
+  copy_range(data, buf, start, 0, end - start)
+  return buf.to_string().substring(0, end - start)
+}
+
+def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
+  if n > 0 {
+    dst.set(di, src.get(si))
+    copy_range(src, dst, si + 1, di + 1, n - 1)
+  }
+}
+
+// The mapping key: quoted scalars parse; plain keys keep their text
+// (trailing spaces and a trailing comment stripped).
+def key_scalar(data Bytes, pos Int64, colon Int64) String {
+  const c = data.get(pos)
+  if c == 34 {
+    const r = parse_double(data, pos)
+    return r[0]
+  }
+  if c == 39 {
+    const r = parse_single(data, pos)
+    return r[0].as_string()
+  }
+  const t = strip_comment(data, pos, colon)
+  const end = trim_end(data, t)
+  return slice_text(data, pos, end)
+}
+
+// The colon that separates a block mapping key from its value: an
+// unquoted `:` followed by a space or the line end, outside quotes and
+// flow brackets. Returns -1 when the line holds none.
+def find_key_colon(data Bytes, pos Int64, e Int64) Int64 {
+  return find_colon(data, pos, e, 0, 0, -1, 32)
+}
+
+// prev starts as a space so a leading `:` still counts.
+def find_colon(data Bytes, i Int64, e Int64, depth Int64, quote Int64, found Int64, prev Int64) Int64 {
+  if i >= e {
+    return found
+  }
+  const c = data.get(i)
+  if quote == 34 {
+    if c == 92 {
+      return find_colon(data, i + 2, e, depth, quote, found, c)
+    }
+    if c == 34 {
+      return find_colon(data, i + 1, e, depth, 0, found, c)
+    }
+    return find_colon(data, i + 1, e, depth, quote, found, c)
+  }
+  if quote == 39 {
+    if c == 39 {
+      return find_colon(data, i + 1, e, depth, 0, found, c)
+    }
+    return find_colon(data, i + 1, e, depth, quote, found, c)
+  }
+  if c == 34 {
+    return find_colon(data, i + 1, e, depth, 34, found, c)
+  }
+  if c == 39 {
+    return find_colon(data, i + 1, e, depth, 39, found, c)
+  }
+  if c == 91 || c == 123 {
+    return find_colon(data, i + 1, e, depth + 1, quote, found, c)
+  }
+  if c == 93 || c == 125 {
+    return find_colon(data, i + 1, e, depth - 1, quote, found, c)
+  }
+  if depth == 0 {
+    if c == 35 {
+      if prev == 32 || prev == 9 {
+        return found
+      }
+    }
+    if c == 58 {
+      if i + 1 >= e {
+        return i
+      }
+      if data.get(i + 1) == 32 {
+        return i
+      }
+    }
+  }
+  return find_colon(data, i + 1, e, depth, quote, found, c)
+}
+
+// ---- the plain scalar's type ----
+
+// YAML 1.2 core schema: null (~, null, Null, NULL, empty), booleans
+// (true/True/TRUE, false/False/FALSE), decimal/hex/octal integers,
+// floats (with .inf and .nan), everything else a string.
+def resolve_plain(text String) Yaml {
+  if text == "" || text == "~" || text == "null" || text == "Null" || text == "NULL" {
+    return YamlNull.new()
+  }
+  if text == "true" || text == "True" || text == "TRUE" {
+    return YamlBool.new(value: true)
+  }
+  if text == "false" || text == "False" || text == "FALSE" {
+    return YamlBool.new(value: false)
+  }
+  const num = plain_number(text)
+  if num.is(YamlInt) || num.is(YamlFloat) {
+    return num
+  }
+  return YamlString.new(value: text)
+}
+
+// Returns YamlInt or YamlFloat for a number, YamlNull when the text
+// is not a number.
+def plain_number(s String) Yaml {
+  const b = s.to_bytes()
+  const e = b.length()
+  if e == 0 {
+    return YamlNull.new()
+  }
+  if b.get(0) == 45 {
+    return plain_number_signed(b, 1, e, -1)
+  }
+  if b.get(0) == 43 {
+    return plain_number_signed(b, 1, e, 1)
+  }
+  return plain_number_signed(b, 0, e, 1)
+}
+
+def plain_number_signed(b Bytes, i Int64, e Int64, neg Int64) Yaml {
+  if i >= e {
+    return YamlNull.new()
+  }
+  const inf = special_inf(b, i, e, neg)
+  if inf.is(YamlFloat) {
+    return inf
+  }
+  const nan = special_nan(b, i, e)
+  if nan.is(YamlFloat) {
+    return nan
+  }
+  const c = b.get(i)
+  if c == 46 {
+    const fr = frac_exp(b, i + 1, e)
+    return float_from_parts(b, i, 0, i + 1, fr[0] - (i + 1), fr[1], neg)
+  }
+  if c < 48 || c > 57 {
+    return YamlNull.new()
+  }
+  return number_after_digits(b, i, e, neg)
+}
+
+// `.inf` with its sign.
+def special_inf(b Bytes, i Int64, e Int64, neg Int64) Yaml {
+  if e - i != 4 {
+    return YamlNull.new()
+  }
+  if b.get(i) != 46 {
+    return YamlNull.new()
+  }
+  const a = b.get(i + 1)
+  const mid = b.get(i + 2)
+  const c = b.get(i + 3)
+  if (a == 105 || a == 73) && (mid == 110 || mid == 78) && (c == 102 || c == 70) {
+    if neg < 0 {
+      return YamlFloat.new(value: Float64.from_bits(9218868437227405312 | ~9223372036854775807))
+    }
+    return YamlFloat.new(value: Float64.from_bits(9218868437227405312))
+  }
+  return YamlNull.new()
+}
+
+// `.nan` in its cased spellings.
+def special_nan(b Bytes, i Int64, e Int64) Yaml {
+  if e - i != 4 {
+    return YamlNull.new()
+  }
+  if b.get(i) != 46 {
+    return YamlNull.new()
+  }
+  const a = b.get(i + 1)
+  const mid = b.get(i + 2)
+  const c = b.get(i + 3)
+  if (a == 110 || a == 78) && (mid == 97 || mid == 65) && (c == 110 || c == 78) {
+    return YamlFloat.new(value: Float64.from_bits(9221120237041090560))
+  }
+  return YamlNull.new()
+}
+
+// One or more digits scanned; from there a `.`, an exponent, or the
+// end decides int vs float (hex and octal keep the `0x` / `0o`
+// forms; anything wider than Int64 refuses).
+def number_after_digits(b Bytes, i Int64, e Int64, neg Int64) Yaml {
+  const de = digits_end(b, i, e)
+  if de - i == 1 {
+    if b.get(i) == 48 {
+      if de < e {
+        const x = b.get(de)
+        if x == 120 || x == 88 {
+          return hex_int(b, de + 1, e, 0, neg)
+        }
+        if x == 111 || x == 79 {
+          return oct_int(b, de + 1, e, 0, neg)
+        }
+      }
+    }
+  }
+  if de >= e {
+    return int_finish(b, i, de, neg)
+  }
+  const d = b.get(de)
+  if d == 46 {
+    const fr = frac_exp(b, de + 1, e)
+    if fr[2] != e {
+      return YamlNull.new()
+    }
+    return float_from_parts(b, i, de - i, de + 1, fr[0] - (de + 1), fr[1], neg)
+  }
+  if d == 101 || d == 69 {
+    const er = exp_scan(b, de + 1, e)
+    if er[1] != e {
+      return YamlNull.new()
+    }
+    return float_from_parts(b, i, de - i, de, 0, er[0], neg)
+  }
+  return YamlNull.new()
+}
+
+// (exponent value, end position): the value clamps at 100000, far
+// past the range where the difference matters.
+def exp_scan(b Bytes, i Int64, e Int64) (Int64, Int64) {
+  if i < e {
+    const c = b.get(i)
+    if c == 43 {
+      return exp_value(b, i + 1, e, 1)
+    }
+    if c == 45 {
+      return exp_value(b, i + 1, e, -1)
+    }
+  }
+  return exp_value(b, i, e, 1)
+}
+
+def exp_value(b Bytes, i Int64, e Int64, sign Int64) (Int64, Int64) {
+  const de = digits_end(b, i, e)
+  if de == i {
+    return (0, i)
+  }
+  const v = decimal_abs(b, i, de, 0)
+  if v < 0 || v > 100000 {
+    return (100000, de)
+  }
+  return (sign * v, de)
+}
+
+// From the position after `.`: (fraction end, exponent value, end
+// position past the optional exponent).
+def frac_exp(b Bytes, i Int64, e Int64) (Int64, Int64, Int64) {
+  const fe = digits_end(b, i, e)
+  if fe < e {
+    const c = b.get(fe)
+    if c == 101 || c == 69 {
+      const er = exp_scan(b, fe + 1, e)
+      return (fe, er[0], er[1])
+    }
+  }
+  return (fe, 0, fe)
+}
+
+def decimal_abs(b Bytes, i Int64, e Int64, acc Int64) Int64 {
+  if i >= e {
+    return acc
+  }
+  const v = acc * 10 + (b.get(i) - 48)
+  if v < 0 {
+    return v
+  }
+  return decimal_abs(b, i + 1, e, v)
+}
+
+// Decimal digits [i, de): assemble with overflow refusal.
+def int_finish(b Bytes, i Int64, de Int64, neg Int64) Yaml {
+  if neg < 0 {
+    const v = int_neg(b, i, de, 0)
+    if v.is(YamlNull) {
+      raise Exception.new(message: "yaml: integer out of range")
+    }
+    return v
+  }
+  const v = int_pos(b, i, de, 0)
+  if v.is(YamlNull) {
+    raise Exception.new(message: "yaml: integer out of range")
+  }
+  return v
+}
+
+def int_pos(b Bytes, i Int64, de Int64, acc Int64) Yaml {
+  if i >= de {
+    return YamlInt.new(value: acc)
+  }
+  const d = b.get(i) - 48
+  if acc > 922337203685477580 {
+    return YamlNull.new()
+  }
+  if acc == 922337203685477580 && d > 7 {
+    return YamlNull.new()
+  }
+  return int_pos(b, i + 1, de, acc * 10 + d)
+}
+
+def int_neg(b Bytes, i Int64, de Int64, acc Int64) Yaml {
+  if i >= de {
+    return YamlInt.new(value: acc)
+  }
+  const d = b.get(i) - 48
+  if acc < -922337203685477580 {
+    return YamlNull.new()
+  }
+  if acc == -922337203685477580 && d > 8 {
+    return YamlNull.new()
+  }
+  return int_neg(b, i + 1, de, acc * 10 - d)
+}
+
+def digits_end(b Bytes, i Int64, e Int64) Int64 {
+  if i < e {
+    const c = b.get(i)
+    if c >= 48 && c <= 57 {
+      return digits_end(b, i + 1, e)
+    }
+  }
+  return i
+}
+
+def hex_int(b Bytes, i Int64, e Int64, acc Int64, neg Int64) Yaml {
+  if i >= e {
+    return YamlInt.new(value: acc * neg)
+  }
+  const d = hex_digit(b.get(i))
+  if d < 0 {
+    return YamlNull.new()
+  }
+  const v = acc * 16 + d
+  if v < 0 {
+    return YamlNull.new()
+  }
+  return hex_int(b, i + 1, e, v, neg)
+}
+
+def oct_int(b Bytes, i Int64, e Int64, acc Int64, neg Int64) Yaml {
+  if i >= e {
+    return YamlInt.new(value: acc * neg)
+  }
+  const c = b.get(i)
+  if c < 48 || c > 55 {
+    return YamlNull.new()
+  }
+  const v = acc * 8 + (c - 48)
+  if v < 0 {
+    return YamlNull.new()
+  }
+  return oct_int(b, i + 1, e, v, neg)
+}
+
+// The hex digit's value, or -1.
+def hex_digit(c Int64) Int64 {
+  if c >= 48 && c <= 57 {
+    return c - 48
+  }
+  if c >= 97 && c <= 102 {
+    return c - 87
+  }
+  if c >= 65 && c <= 70 {
+    return c - 55
+  }
+  return -1
+}
+
+// The float literal (sign, integer digits, fraction digits, exponent)
+// through the package's exact decimal converter: the digits are
+// contiguous in the source around the `.`, and the exponent shifts
+// the point from the integer part's digit count.
+def float_from_parts(b Bytes, di Int64, dl Int64, fi Int64, fl Int64, ev Int64, neg Int64) Yaml {
+  const digits = Bytes.new(dl + fl)
+  copy_range(b, digits, di, 0, dl)
+  copy_range(b, digits, fi, dl, fl)
+  const bits = float.parse_exact(neg < 0, digits, dl + fl, dl + ev)
+  return YamlFloat.new(value: Float64.from_bits(bits))
+}
+
+// ---- encode ----
+
+// Block style: mappings and sequences on their own lines with two
+// extra spaces per level, scalars inline. Strings print plain when no
+// reader could misread them; everything else goes out double-quoted.
+// The output carries no trailing newline. A non-finite float raises —
+// this module has no spelling for one.
+def encode(v Yaml) String {
+  return emit(v, 0)
+}
+
+def emit(v Yaml, indent Int64) String {
+  if v.is(YamlObject) {
+    return emit_object(v, indent)
+  }
+  if v.is(YamlArray) {
+    return emit_array(v, indent)
+  }
+  if v.is(YamlNull) {
+    return "null"
+  }
+  if v.is(YamlBool) {
+    return v.as_bool().to_string()
+  }
+  if v.is(YamlInt) {
+    return v.as_int().to_string()
+  }
+  if v.is(YamlFloat) {
+    return float.to_text(v.as_float())
+  }
+  if v.is(YamlString) {
+    return emit_text(v.as_string())
+  }
+  raise Exception.new(message: "yaml: unknown value kind")
+}
+
+// What comes after `key:`: inline for scalars and empty containers, a
+// newline plus the re-indented block otherwise.
+def after_colon(child Yaml, indent Int64) String {
+  if child.is(YamlObject) {
+    if child.entries().length() == 0 {
+      return " {}"
+    }
+    return "\n" + emit(child, indent + 2)
+  }
+  if child.is(YamlArray) {
+    if child.items().length() == 0 {
+      return " []"
+    }
+    return "\n" + emit(child, indent + 2)
+  }
+  return " " + emit(child, indent)
+}
+
+def emit_object(v YamlObject, indent Int64) String {
+  const entries = v.entries()
+  if entries.length() == 0 {
+    return "{}"
+  }
+  return emit_object_lines(entries, 0, indent, "")
+}
+
+def emit_object_lines(entries Array[(String, Yaml)], i Int64, indent Int64, acc String) String {
+  if i >= entries.length() {
+    return acc
+  }
+  const pair = entries[i]
+  const sep = line_sep(acc)
+  const line = sep + spaces(indent) + emit_key(string(pair[0])) + ":" + after_colon(pair[1], indent)
+  return emit_object_lines(entries, i + 1, indent, acc + line)
+}
+
+def line_sep(acc String) String {
+  if acc == "" {
+    return ""
+  }
+  return "\n"
+}
+
+def emit_array(v YamlArray, indent Int64) String {
+  const items = v.items()
+  if items.length() == 0 {
+    return "[]"
+  }
+  return emit_array_lines(items, 0, indent, "")
+}
+
+def emit_array_lines(items Array[Yaml], i Int64, indent Int64, acc String) String {
+  if i >= items.length() {
+    return acc
+  }
+  const sep = line_sep(acc)
+  const line = sep + spaces(indent) + "- " + emit(items[i], indent + 2)
+  return emit_array_lines(items, i + 1, indent, acc + line)
+}
+
+// The mapping key: scalars only.
+def emit_key(k Yaml) String {
+  if k.is(YamlString) {
+    return emit_text(k.as_string())
+  }
+  if k.is(YamlInt) {
+    return k.as_int().to_string()
+  }
+  if k.is(YamlFloat) {
+    return float.to_text(k.as_float())
+  }
+  if k.is(YamlBool) {
+    return k.as_bool().to_string()
+  }
+  if k.is(YamlNull) {
+    return "null"
+  }
+  raise Exception.new(message: "yaml: mapping keys must be scalars")
+}
+
+// A string prints plain when no reader could misread it; anything
+// else goes out double-quoted.
+def emit_text(s String) String {
+  if plain_safe(s) {
+    return s
+  }
+  return yaml_quote(s)
+}
+
+// The indent prefix as a string: n is the space count.
+def spaces(n Int64) String {
+  if n <= 0 {
+    return ""
+  }
+  const buf = Bytes.new(n)
+  fill_spaces(buf, 0, n)
+  return buf.to_string()
+}
+
+def fill_spaces(buf Bytes, i Int64, n Int64) {
+  if i < n {
+    buf.set(i, 32)
+    fill_spaces(buf, i + 1, n)
+  }
+}
+
+// Plain is safe when: non-empty, no leading or trailing space, no
+// control character or tab, no leading indicator character, no
+// `: ` or ` #` inside, no trailing `:`, and not resolvable as null,
+// a boolean, or a number.
+def plain_safe(s String) Bool {
+  const b = s.to_bytes()
+  if b.length() == 0 {
+    return false
+  }
+  if plain_unsafe(b, 0, b.length() - 1) {
+    return false
+  }
+  if plain_special(s) {
+    return false
+  }
+  return true
+}
+
+// i walks; last is the final index (trailing-space check uses it).
+def plain_unsafe(b Bytes, i Int64, last Int64) Bool {
+  if i > last {
+    return false
+  }
+  const c = b.get(i)
+  if c == 9 || c == 10 || c == 13 {
+    return true
+  }
+  if c < 32 {
+    return true
+  }
+  if i == 0 {
+    if c == 32 || c == 45 || c == 63 || c == 58 || c == 44 || c == 91 || c == 93 || c == 123 || c == 125 || c == 35 || c == 38 || c == 42 || c == 33 || c == 124 || c == 62 || c == 39 || c == 34 || c == 37 || c == 64 || c == 96 {
+      return true
+    }
+  }
+  if i == last {
+    if c == 32 || c == 58 {
+      return true
+    }
+  }
+  if c == 58 {
+    if i < last {
+      if b.get(i + 1) == 32 {
+        return true
+      }
+    }
+  }
+  if c == 35 {
+    if i > 0 {
+      if b.get(i - 1) == 32 {
+        return true
+      }
+    }
+  }
+  return plain_unsafe(b, i + 1, last)
+}
+
+// Whether the plain form would decode as something other than a
+// string.
+def plain_special(s String) Bool {
+  const v = resolve_plain(s)
+  return v.is(YamlNull) || v.is(YamlBool) || v.is(YamlInt) || v.is(YamlFloat)
+}
+
+// Double-quoted with the yaml module's escaping: `"`, `\`, and
+// control characters; everything else rides through as the UTF-8 it
+// already is.
+def yaml_quote(s String) String {
+  const b = s.to_bytes()
+  const out = Bytes.new(quoted_len(b, 0) + 2)
+  out.set(0, 34)
+  fill_quoted(b, out, 0, 1)
+  return out.to_string()
+}
+
+def quoted_len(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return 0
+  }
+  const c = data.get(i)
+  if c == 34 || c == 92 {
+    return 2 + quoted_len(data, i + 1)
+  }
+  if short_escape(c) > 0 {
+    return 2 + quoted_len(data, i + 1)
+  }
+  if c < 32 {
+    return 6 + quoted_len(data, i + 1)
+  }
+  return 1 + quoted_len(data, i + 1)
+}
+
+def fill_quoted(data Bytes, out Bytes, i Int64, w Int64) {
+  if i >= data.length() {
+    out.set(w, 34)
+  } else {
+    const c = data.get(i)
+    if c >= 32 && c != 34 && c != 92 {
+      out.set(w, c)
+      fill_quoted(data, out, i + 1, w + 1)
+    } else {
+      out.set(w, 92)
+      if c == 34 {
+        out.set(w + 1, 34)
+        fill_quoted(data, out, i + 1, w + 2)
+      } else {
+        if c == 92 {
+          out.set(w + 1, 92)
+          fill_quoted(data, out, i + 1, w + 2)
+        } else {
+          const se = short_escape(c)
+          if se > 0 {
+            out.set(w + 1, se)
+            fill_quoted(data, out, i + 1, w + 2)
+          } else {
+            out.set(w + 1, 117)
+            out.set(w + 2, 48)
+            out.set(w + 3, 48)
+            out.set(w + 4, hex_byte(c / 16))
+            out.set(w + 5, hex_byte(c % 16))
+            fill_quoted(data, out, i + 1, w + 6)
+          }
+        }
+      }
+    }
+  }
+}
+
+// The letter after `\` for the escapes with a short form, else 0.
+def short_escape(c Int64) Int64 {
+  if c == 8 {
+    return 98
+  }
+  if c == 9 {
+    return 116
+  }
+  if c == 10 {
+    return 110
+  }
+  if c == 12 {
+    return 102
+  }
+  if c == 13 {
+    return 114
+  }
+  return 0
+}
+
+def hex_byte(n Int64) Int64 {
+  if n < 10 {
+    return 48 + n
+  }
+  return 87 + n
+}

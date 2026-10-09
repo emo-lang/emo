@@ -662,6 +662,11 @@ const E: any = {
     if (recv && typeof recv === "object") {
       const direct = recv[name] ?? recv[sanitize(name)];
       if (typeof direct === "function") return direct.apply(recv, args);
+      // A field can shadow a prototype method (same name): when the
+      // own property is not a function, try the prototype's.
+      const proto = Object.getPrototypeOf(recv) as any;
+      const protoM = proto ? proto[name] ?? proto[sanitize(name)] : undefined;
+      if (typeof protoM === "function") return protoM.apply(recv, args);
       if (name === "read" && recv instanceof EBox) return recv.v;
       if (name === "replace" && recv instanceof EBox) {
         recv.v = args[0];
