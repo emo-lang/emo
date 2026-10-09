@@ -307,6 +307,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Bytes_new v ->
       put env "apply 'emo_bytes_new'/1 ";
       args_list env [ v ]
+  | List_new v ->
+      put env "apply 'emo_list_new'/1 ";
+      args_list env [ v ]
   | Method { self_; name; args } -> method_call env self_ name args
   | Do_spawn { func; args } -> (
       (* the arguments evaluate in the spawner; the fun closes over
@@ -375,6 +378,10 @@ and method_call env self_ name args =
   | "set_u32_le", [ _; _ ] -> bytes_only 3 "emo_bytes_u32_set"
   | "set_u64_le", [ _; _ ] -> bytes_only 3 "emo_bytes_u64_set"
   | "to_bytes", [] -> bytes_only 1 "emo_str_to_bytes"
+  | "push_front", [ _ ] -> bytes_only 2 "emo_list_push_front"
+  | "push_back", [ _ ] -> bytes_only 2 "emo_list_push_back"
+  | "pop_front", [] -> bytes_only 1 "emo_list_pop_front"
+  | "pop_back", [] -> bytes_only 1 "emo_list_pop_back"
   | "length", [] ->
       put env "case ";
       expr env self_;
@@ -382,6 +389,9 @@ and method_call env self_ name args =
         " of\n\
         \  <{'emo_bytes', _k}> when 'true' ->\n\
         \    apply 'emo_bytes_len'/1 ";
+      args_list env [ self_ ];
+      put env
+        "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_len'/1 ";
       args_list env [ self_ ];
       put env "\n  <_> when 'true' ->\n    call 'erlang':'length'(";
       expr env self_;
@@ -393,6 +403,9 @@ and method_call env self_ name args =
         " of\n\
         \  <{'emo_bytes', _k}> when 'true' ->\n\
         \    apply 'emo_bytes_to_str'/1 ";
+      args_list env [ self_ ];
+      put env
+        "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_to_str'/1 ";
       args_list env [ self_ ];
       put env "\n  <_> when 'true' ->\n    apply 'emo_to_str'/1 ";
       args_list env [ self_ ];
@@ -932,6 +945,8 @@ let rt_source =
 		#<101>(8,1,'integer',['unsigned'|['big']])}#
 	  <{'emo_bytes', _k}> when 'true' ->
 	      apply 'emo_bytes_label'/1 ({'emo_bytes', _k})
+	  <{'emo_list', _k}> when 'true' ->
+	      apply 'emo_list_to_str'/1 ({'emo_list', _k})
 	  <_s> when call 'erlang':'is_binary'(_s) -> _s
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_to_str', _other})
@@ -1491,6 +1506,142 @@ let rt_source =
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
 
+'emo_list_new'/1 =
+    fun (_arr) ->
+	let <_k> = call 'erlang':'make_ref'()
+	in do call 'erlang':'put'(_k, {_arr, []})
+	   {'emo_list', _k}
+
+'emo_list_elems'/1 =
+    fun (_l) ->
+	case _l of
+	  <{'emo_list', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_f, _r}> when 'true' ->
+		    call 'erlang':'++'(_f, call 'lists':'reverse'(_r))
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_list', _other})
+	end
+
+'emo_list_push_front'/2 =
+    fun (_l, _v) ->
+	case _l of
+	  <{'emo_list', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_f, _r}> when 'true' ->
+		    do call 'erlang':'put'(_k, {[_v | _f], _r})
+		       _l
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_list', _other})
+	end
+
+'emo_list_push_back'/2 =
+    fun (_l, _v) ->
+	case _l of
+	  <{'emo_list', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_f, _r}> when 'true' ->
+		    do call 'erlang':'put'(_k, {_f, [_v | _r]})
+		       _l
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_list', _other})
+	end
+
+'emo_list_pop_front'/1 =
+    fun (_l) ->
+	case _l of
+	  <{'emo_list', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_f, _r}> when 'true' ->
+		    case _f of
+		      <[_h | _t]> when 'true' ->
+			  do call 'erlang':'put'(_k, {_t, _r})
+			     _h
+		      <[]> when 'true' ->
+			  case call 'lists':'reverse'(_r) of
+			    <[_h | _t]> when 'true' ->
+				do call 'erlang':'put'(_k, {_t, []})
+				   _h
+			    <[]> when 'true' ->
+				call 'erlang':'error'({'emo_empty_list',
+						       'pop_front', _l})
+			  end
+		    end
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_list', _other})
+	end
+
+'emo_list_pop_back'/1 =
+    fun (_l) ->
+	case _l of
+	  <{'emo_list', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_f, _r}> when 'true' ->
+		    case _r of
+		      <[_h | _t]> when 'true' ->
+			  do call 'erlang':'put'(_k, {_f, _t})
+			     _h
+		      <[]> when 'true' ->
+			  case call 'lists':'reverse'(_f) of
+			    <[_h | _t]> when 'true' ->
+				do call 'erlang':'put'(_k, {[], _t})
+				   _h
+			    <[]> when 'true' ->
+				call 'erlang':'error'({'emo_empty_list',
+						       'pop_back', _l})
+			  end
+		    end
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_list', _other})
+	end
+
+'emo_list_len'/1 =
+    fun (_l) ->
+	case _l of
+	  <{'emo_list', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_f, _r}> when 'true' ->
+		    call 'erlang':'+'(call 'erlang':'length'(_f),
+				      call 'erlang':'length'(_r))
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_list', _other})
+	end
+
+'emo_list_to_str'/1 =
+    fun (_l) ->
+	case _l of
+	  <{'emo_list', _k}> when 'true' ->
+	      call 'erlang':'iolist_to_binary'
+		(apply 'emo_list_join'/2 (apply 'emo_list_elems'/1 (_l), 1))
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_list', _other})
+	end
+
+'emo_list_join'/2 =
+    fun (_elems, _first) ->
+	case _elems of
+	  <[_e | _rest]> when 'true' ->
+	      let <_piece> = apply 'emo_to_str'/1 (_e)
+	      in case _first of
+		   <1> when 'true' ->
+		       [[76, 105, 115, 116, 91], _piece
+			| apply 'emo_list_join'/2 (_rest, 0)]
+		   <_> when 'true' ->
+		       [[44, 32], _piece | apply 'emo_list_join'/2 (_rest, 0)]
+		 end
+	  <[]> when 'true' ->
+	      case _first of
+		<1> when 'true' -> [76, 105, 115, 116, 91, 93]
+		<_> when 'true' -> [93]
+	      end
+	end
+
 'emo_eq'/2 =
     fun (_a, _b) ->
 	case _a of
@@ -1498,6 +1649,12 @@ let rt_source =
 	      case _b of
 		<{'emo_bytes', _kb}> when 'true' ->
 		    call 'erlang':'=:='(call 'erlang':'get'(_ka), call 'erlang':'get'(_kb))
+		<_other> when 'true' -> 'false'
+	      end
+	  <{'emo_list', _ka}> when 'true' ->
+	      case _b of
+		<{'emo_list', _kb}> when 'true' ->
+		    call 'erlang':'=:='(apply 'emo_list_elems'/1 (_a), apply 'emo_list_elems'/1 (_b))
 		<_other> when 'true' -> 'false'
 	      end
 	  <_other> when 'true' -> call 'erlang':'=:='(_a, _b)

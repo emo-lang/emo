@@ -43,6 +43,9 @@ let t_proc = 27
 let t_cons = 28
 let t_vbytes = 29
 let t_bytes_set = 30
+let t_lnode = 31
+let t_vlist = 32
+let t_list2 = 33
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -123,6 +126,16 @@ let runtime_types : W.typ list =
     (* $vbytes — same payload shape as $vstring, mutable by convention *)
     W.FuncT ([ W.Anyref; W.Anyref; W.Anyref ], [ W.Anyref ]);
     (* bytes_set: recv, index, value -> value *)
+    W.StructT
+      [
+        (W.Anyref, false); (W.RefNull t_lnode, true); (W.RefNull t_lnode, true);
+      ];
+    (* $lnode: a List node — value, prev, next *)
+    W.StructT
+      [ (W.RefNull t_lnode, true); (W.RefNull t_lnode, true); (W.I32, true) ];
+    (* $vlist: head, tail, size *)
+    W.FuncT ([ W.Anyref; W.Anyref ], [ W.Anyref ]);
+    (* list push: list, value -> list *)
   ]
 
 let i_print = 0
@@ -188,12 +201,21 @@ let rt = function
   | "bytes_to_str" -> 57
   | "bytes_label" -> 58
   | "init" -> 59
+  | "list_new" -> 61
+  | "list_push_front" -> 62
+  | "list_push_back" -> 63
+  | "list_pop_front" -> 64
+  | "list_pop_back" -> 65
+  | "list_len" -> 66
+  | "list_str" -> 67
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
-   program funcs follow. *)
-let runtime_count =
-  61 (* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 12 *)
+   program funcs follow. The List ops (61..67) sit after main — main
+   stays at 60 so the exported entry keeps its index. *)
+let runtime_count = 68
+(* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 12
+     + list ops 7 *)
 
 (* ---- Lowering state ---- *)
 
@@ -512,6 +534,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Bytes_new v ->
       expr env v;
       e env (W.Call (rt "bytes_new"))
+  | List_new v ->
+      expr env v;
+      e env (W.Call (rt "list_new"))
   | Make_exception { message } ->
       expr env message;
       e env (W.Call (rt "throw"));
@@ -620,6 +645,11 @@ and method_call env self_ name args =
                    W.Struct_get (t_vbytes, 0);
                    W.Array_len t_bytes;
                  ] );
+             ( t_vlist,
+               fun l ->
+                 [
+                   W.Local_get l; W.Ref_cast t_vlist; W.Struct_get (t_vlist, 2);
+                 ] );
            ]);
       e env W.I64_extend_i32_s;
       e env (W.Struct_new t_vint)
@@ -646,6 +676,20 @@ and method_call env self_ name args =
       e env (W.Local_get val_local);
       e env (W.Struct_set (t_vbox, 0));
       e env (W.Local_get val_local)
+  | (("push_front" | "push_back") as mname), [ v ] ->
+      expr env self_;
+      expr env v;
+      e env
+        (W.Call
+           (rt
+              (if mname = "push_front" then "list_push_front"
+               else "list_push_back")))
+  | (("pop_front" | "pop_back") as mname), [] ->
+      expr env self_;
+      e env
+        (W.Call
+           (rt
+              (if mname = "pop_front" then "list_pop_front" else "list_pop_back")))
   | "get", [ i ] ->
       expr env self_;
       expr env i;
@@ -1513,11 +1557,16 @@ let rt_to_str : W.func_type =
       ]
       [ int_branch ]
   in
+  let list_branch =
+    branch (test_of t_vlist)
+      [ W.Local_get 0; W.Call (rt "list_str") ]
+      [ string_branch ]
+  in
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
     flocals = [];
-    fbody = [ string_branch ];
+    fbody = [ list_branch ];
   }
 
 (* int_str(n i64) -> (ref null $bytes): digits LSB-first into the
@@ -2106,6 +2155,371 @@ let rt_bnot : W.func_type =
 let bytes_of_vbytes (l : int) : W.instr list =
   [ W.Local_get l; W.Ref_cast t_vbytes; W.Struct_get (t_vbytes, 0) ]
 
+(* ---- The List deque ----
+
+   $vlist carries head/tail pointers into a doubly-linked $lnode chain:
+   push and pop are O(1) at both ends, rendering and equality walk
+   head-to-tail. Wrong-kind receivers and popping an empty List trap
+   (Unreachable), the same failure shape as the Bytes accessors. *)
+
+let bytes_const (s : string) : W.instr list =
+  let chars = List.init (String.length s) (String.get s) in
+  [ W.I32_const (String.length s); W.Array_new_default t_bytes; W.Local_set 4 ]
+  @ List.concat_map
+      (fun (i, c) ->
+        [
+          W.Local_get 4;
+          W.I32_const i;
+          W.I32_const (Char.code c);
+          W.Array_set t_bytes;
+        ])
+      (List.mapi (fun i c -> (i, c)) chars)
+  @ [ W.Local_get 4 ]
+
+let rt_list_new : W.func_type =
+  (* list_new(arr): the elements copy into fresh nodes, front to back.
+     Locals: 1 array, 2 i, 3 n, 4 head, 5 tail, 6 node. *)
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "arr" ];
+    flocals = [ (1, W.RefNull t_anyarray); (2, W.I32); (3, W.RefNull t_lnode) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_anyarray;
+        W.Local_set 1;
+        W.Local_get 1;
+        W.Array_len t_anyarray;
+        W.Local_set 3;
+        W.Ref_null t_lnode;
+        W.Local_set 4;
+        W.Ref_null t_lnode;
+        W.Local_set 5;
+        W.I32_const 0;
+        W.Local_set 2;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 2;
+                    W.Local_get 3;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 1;
+                    W.Local_get 2;
+                    W.Array_get t_anyarray;
+                    W.Local_get 5;
+                    W.Ref_null t_lnode;
+                    W.Struct_new t_lnode;
+                    W.Local_set 6;
+                    W.If_else
+                      ( W.Void,
+                        [ W.Local_get 5; W.Ref_is_null ],
+                        [ W.Local_get 6; W.Local_set 4 ],
+                        [
+                          W.Local_get 5;
+                          W.Ref_cast t_lnode;
+                          W.Local_get 6;
+                          W.Struct_set (t_lnode, 2);
+                        ] );
+                    W.Local_get 6;
+                    W.Local_set 5;
+                    W.Local_get 2;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 2;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 4;
+        W.Local_get 5;
+        W.Local_get 3;
+        W.Struct_new t_vlist;
+      ];
+  }
+
+let rt_list_push_front : W.func_type =
+  (* list_push_front(list, v) -> list. Locals: 2 list, 3 head, 4 node. *)
+  {
+    W.ftype_idx = t_list2;
+    fparams = [ "l"; "v" ];
+    flocals = [ (1, W.RefNull t_vlist); (2, W.RefNull t_lnode) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vlist;
+        W.Local_set 2;
+        W.Local_get 2;
+        W.Struct_get (t_vlist, 0);
+        W.Local_set 3;
+        W.Local_get 1;
+        W.Ref_null t_lnode;
+        W.Local_get 3;
+        W.Struct_new t_lnode;
+        W.Local_set 4;
+        W.If_else
+          ( W.Void,
+            [ W.Local_get 3; W.Ref_is_null ],
+            [ W.Local_get 2; W.Local_get 4; W.Struct_set (t_vlist, 0) ],
+            [
+              W.Local_get 3;
+              W.Ref_cast t_lnode;
+              W.Local_get 4;
+              W.Struct_set (t_lnode, 1);
+            ] );
+        W.Local_get 2;
+        W.Local_get 4;
+        W.Struct_set (t_vlist, 0);
+        W.Local_get 2;
+        W.Local_get 2;
+        W.Struct_get (t_vlist, 2);
+        W.I32_const 1;
+        W.I32_add;
+        W.Struct_set (t_vlist, 2);
+        W.Local_get 0;
+      ];
+  }
+
+let rt_list_push_back : W.func_type =
+  (* list_push_back(list, v) -> list. Locals: 2 list, 3 tail, 4 node. *)
+  {
+    W.ftype_idx = t_list2;
+    fparams = [ "l"; "v" ];
+    flocals = [ (1, W.RefNull t_vlist); (2, W.RefNull t_lnode) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vlist;
+        W.Local_set 2;
+        W.Local_get 2;
+        W.Struct_get (t_vlist, 1);
+        W.Local_set 3;
+        W.Local_get 1;
+        W.Local_get 3;
+        W.Ref_null t_lnode;
+        W.Struct_new t_lnode;
+        W.Local_set 4;
+        W.If_else
+          ( W.Void,
+            [ W.Local_get 3; W.Ref_is_null ],
+            [ W.Local_get 2; W.Local_get 4; W.Struct_set (t_vlist, 0) ],
+            [
+              W.Local_get 3;
+              W.Ref_cast t_lnode;
+              W.Local_get 4;
+              W.Struct_set (t_lnode, 2);
+            ] );
+        W.Local_get 2;
+        W.Local_get 4;
+        W.Struct_set (t_vlist, 1);
+        W.Local_get 2;
+        W.Local_get 2;
+        W.Struct_get (t_vlist, 2);
+        W.I32_const 1;
+        W.I32_add;
+        W.Struct_set (t_vlist, 2);
+        W.Local_get 0;
+      ];
+  }
+
+let rt_list_pop_front : W.func_type =
+  (* list_pop_front(list) -> v; an empty List traps. Locals: 1 list,
+     2 node. *)
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "l" ];
+    flocals = [ (1, W.RefNull t_vlist); (1, W.RefNull t_lnode) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vlist;
+        W.Local_set 1;
+        W.Block
+          ( W.Void,
+            [
+              (* an empty List leaves the block, into the trap *)
+              W.Local_get 1;
+              W.Struct_get (t_vlist, 2);
+              W.I32_eqz;
+              W.Br_if 0;
+              W.Local_get 1;
+              W.Struct_get (t_vlist, 0);
+              W.Local_set 2;
+              W.Local_get 1;
+              W.Local_get 2;
+              W.Ref_cast t_lnode;
+              W.Struct_get (t_lnode, 2);
+              W.Struct_set (t_vlist, 0);
+              W.If_else
+                ( W.Void,
+                  [ W.Local_get 1; W.Struct_get (t_vlist, 0); W.Ref_is_null ],
+                  [
+                    W.Local_get 1; W.Ref_null t_lnode; W.Struct_set (t_vlist, 1);
+                  ],
+                  [
+                    W.Local_get 1;
+                    W.Struct_get (t_vlist, 0);
+                    W.Ref_cast t_lnode;
+                    W.Ref_null t_lnode;
+                    W.Struct_set (t_lnode, 1);
+                  ] );
+              W.Local_get 1;
+              W.Local_get 1;
+              W.Struct_get (t_vlist, 2);
+              W.I32_const 1;
+              W.I32_sub;
+              W.Struct_set (t_vlist, 2);
+              W.Local_get 2;
+              W.Ref_cast t_lnode;
+              W.Struct_get (t_lnode, 0);
+              W.Return;
+            ] );
+        W.Unreachable;
+      ];
+  }
+
+let rt_list_pop_back : W.func_type =
+  (* list_pop_back(list) -> v; an empty List traps. Locals: 1 list,
+     2 node. *)
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "l" ];
+    flocals = [ (1, W.RefNull t_vlist); (2, W.RefNull t_lnode) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vlist;
+        W.Local_set 1;
+        W.Block
+          ( W.Void,
+            [
+              (* an empty List leaves the block, into the trap *)
+              W.Local_get 1;
+              W.Struct_get (t_vlist, 2);
+              W.I32_eqz;
+              W.Br_if 0;
+              W.Local_get 1;
+              W.Struct_get (t_vlist, 1);
+              W.Local_set 2;
+              W.Local_get 1;
+              W.Local_get 2;
+              W.Ref_cast t_lnode;
+              W.Struct_get (t_lnode, 1);
+              W.Struct_set (t_vlist, 1);
+              W.If_else
+                ( W.Void,
+                  [ W.Local_get 1; W.Struct_get (t_vlist, 1); W.Ref_is_null ],
+                  [
+                    W.Local_get 1; W.Ref_null t_lnode; W.Struct_set (t_vlist, 0);
+                  ],
+                  [
+                    W.Local_get 1;
+                    W.Struct_get (t_vlist, 1);
+                    W.Ref_cast t_lnode;
+                    W.Ref_null t_lnode;
+                    W.Struct_set (t_lnode, 2);
+                  ] );
+              W.Local_get 1;
+              W.Local_get 1;
+              W.Struct_get (t_vlist, 2);
+              W.I32_const 1;
+              W.I32_sub;
+              W.Struct_set (t_vlist, 2);
+              W.Local_get 2;
+              W.Ref_cast t_lnode;
+              W.Struct_get (t_lnode, 0);
+              W.Return;
+            ] );
+        W.Unreachable;
+      ];
+  }
+
+let rt_list_len : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "l" ];
+    flocals = [];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vlist;
+        W.Struct_get (t_vlist, 2);
+        W.I64_extend_i32_s;
+        W.Struct_new t_vint;
+      ];
+  }
+
+let rt_list_str : W.func_type =
+  (* list_str(l) -> $vstring: "List[" elements ", " ... "]". Every
+     element renders through to_str, so nested Lists recurse. Locals:
+     1 result, 2 node, 3 first, 4 scratch. *)
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "l" ];
+    flocals =
+      [
+        (1, W.RefNull t_bytes);
+        (1, W.RefNull t_lnode);
+        (1, W.I32);
+        (1, W.RefNull t_bytes);
+      ];
+    fbody =
+      bytes_const "List[" @ [ W.Local_set 1 ]
+      @ [
+          W.Local_get 0;
+          W.Ref_cast t_vlist;
+          W.Struct_get (t_vlist, 0);
+          W.Local_set 2;
+          W.I32_const 1;
+          W.Local_set 3;
+        ]
+      @ [
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 2;
+                      W.Ref_is_null;
+                      W.Br_if 1;
+                      W.Local_get 3;
+                      W.I32_eqz;
+                      W.If
+                        ( W.Void,
+                          (W.Local_get 1 :: bytes_const ", ")
+                          @ [ W.Call (rt "strcat"); W.Local_set 1 ],
+                          [] );
+                      W.I32_const 0;
+                      W.Local_set 3;
+                      W.Local_get 1;
+                      W.Local_get 2;
+                      W.Ref_cast t_lnode;
+                      W.Struct_get (t_lnode, 0);
+                      W.Call (rt "to_str");
+                      W.Ref_cast t_vstring;
+                      W.Struct_get (t_vstring, 0);
+                      W.Call (rt "strcat");
+                      W.Local_set 1;
+                      W.Local_get 2;
+                      W.Ref_cast t_lnode;
+                      W.Struct_get (t_lnode, 2);
+                      W.Local_set 2;
+                      W.Br 0;
+                    ] );
+              ] );
+        ]
+      @ (W.Local_get 1 :: bytes_const "]")
+      @ [
+          W.Call (rt "strcat");
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Struct_new t_vstring;
+        ];
+  }
+
 let rt_bytes_new : W.func_type =
   {
     W.ftype_idx = t_sig1;
@@ -2619,6 +3033,75 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
           ] );
     ]
   in
+  let list_arm =
+    (* both receivers are $vlist: sizes equal, then the node chains
+       walk in lockstep (locals 3/4 hold the cursors). *)
+    [
+      W.Block
+        ( W.Result W.I32,
+          [
+            W.Block
+              ( W.Void,
+                [
+                  W.Local_get 0;
+                  W.Ref_cast t_vlist;
+                  W.Struct_get (t_vlist, 2);
+                  W.Local_get 1;
+                  W.Ref_cast t_vlist;
+                  W.Struct_get (t_vlist, 2);
+                  W.I32_ne;
+                  W.Br_if 0;
+                  W.Local_get 0;
+                  W.Ref_cast t_vlist;
+                  W.Struct_get (t_vlist, 0);
+                  W.Local_set 4;
+                  W.Local_get 1;
+                  W.Ref_cast t_vlist;
+                  W.Struct_get (t_vlist, 0);
+                  W.Local_set 5;
+                  W.Loop
+                    ( W.Void,
+                      [
+                        (* both exhausted: equal — leave the outer block
+                           with 1 *)
+                        W.I32_const 1;
+                        W.Local_get 4;
+                        W.Ref_is_null;
+                        W.Local_get 5;
+                        W.Ref_is_null;
+                        W.I32_and;
+                        W.Br_if 2;
+                        (* one exhausted: lengths lied — differ *)
+                        W.Local_get 4;
+                        W.Ref_is_null;
+                        W.Local_get 5;
+                        W.Ref_is_null;
+                        W.I32_xor;
+                        W.Br_if 1;
+                        W.Local_get 4;
+                        W.Ref_cast t_lnode;
+                        W.Struct_get (t_lnode, 0);
+                        W.Local_get 5;
+                        W.Ref_cast t_lnode;
+                        W.Struct_get (t_lnode, 0);
+                        W.Call (rt "deep_eq");
+                        W.I32_eqz;
+                        W.Br_if 1;
+                        W.Local_get 4;
+                        W.Ref_cast t_lnode;
+                        W.Struct_get (t_lnode, 2);
+                        W.Local_set 4;
+                        W.Local_get 5;
+                        W.Ref_cast t_lnode;
+                        W.Struct_get (t_lnode, 2);
+                        W.Local_set 5;
+                        W.Br 0;
+                      ] );
+                ] );
+            W.I32_const 0;
+          ] );
+    ]
+  in
   let arms =
     [
       (both t_vint 0 1, i64_of 0 @ i64_of 1 @ [ W.I64_eq ]);
@@ -2633,6 +3116,7 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
         @ [ W.Call (rt "str_eq"); W.I32_and ] );
       (both t_anyarray 0 1, array_arm);
       (both t_vbytes 0 1, bytes_arm);
+      (both t_vlist 0 1, list_arm);
     ]
     @ class_arms
   in
@@ -2645,19 +3129,19 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
   ( {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [ (2, W.I32) ];
+      flocals = [ (2, W.I32); (2, W.RefNull t_lnode) ];
       fbody = body @ [ W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [ (2, W.I32) ];
+      flocals = [ (2, W.I32); (2, W.RefNull t_lnode) ];
       fbody = body @ [ W.I32_eqz; W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_sig2;
       fparams = [ "a"; "b" ];
-      flocals = [ (2, W.I32) ];
+      flocals = [ (2, W.I32); (2, W.RefNull t_lnode) ];
       fbody = body;
     } )
 
@@ -3531,10 +4015,19 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_bytes_label;
         init_func;
         main_func;
+        rt_list_new;
+        rt_list_push_front;
+        rt_list_push_back;
+        rt_list_pop_front;
+        rt_list_pop_back;
+        rt_list_len;
+        rt_list_str;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in
-  let main_idx = runtime_count - 1 in
+  (* main sits at 60; the List ops (61..67) follow it before the
+     program's functions start at runtime_count. *)
+  let main_idx = 60 in
   (* types: the fixed runtime head, then everything the lowering
      appended (env.types accumulates in reverse) — snapped last so the
      driver's own func types are included *)

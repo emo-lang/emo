@@ -48,6 +48,7 @@ module Emo_eval = struct
     | Bytes of Bytes.t
     | Tuple of value list
     | Array of value array
+    | List of emo_list
     | Box of value ref
     | Pid of int (* a process identity, from `do` or `self_pid()` *)
     | TcpConn of conn
@@ -116,6 +117,21 @@ module Emo_eval = struct
     ocname : string; (* the source class name *)
     mutable ofields : (string * value) list;
     omethods : (string, int * (value list -> value)) Hashtbl.t;
+  }
+
+  (* The List deque: a doubly-linked chain with O(1) push and pop at
+     both ends. The identity is the record, so mutation is visible
+     through every alias — the same shape a Box takes. *)
+  and emo_list = {
+    mutable lhead : emo_list_node option;
+    mutable ltail : emo_list_node option;
+    mutable lsize : int;
+  }
+
+  and emo_list_node = {
+    lval : value;
+    mutable lprev : emo_list_node option;
+    mutable lnext : emo_list_node option;
   }
 
   (* ---- Errors and signals ----
@@ -262,6 +278,49 @@ module Emo_eval = struct
     | Some p -> p
     | None -> error "E3011" (Printf.sprintf "no process has pid %d" pid)
 
+  (* The List deque's operations: O(1) push and pop at both ends, and the
+     elements front to back. Popping an empty List is a domain error, like
+     an out-of-bounds index. *)
+  let fresh_list () : emo_list = { lhead = None; ltail = None; lsize = 0 }
+
+  let list_values (l : emo_list) : value list =
+    let rec go node acc =
+      match node with
+      | None -> List.rev acc
+      | Some n -> go n.lnext (n.lval :: acc)
+    in
+    go l.lhead []
+
+  let list_push_front (l : emo_list) (v : value) : unit =
+    let node = { lval = v; lprev = None; lnext = l.lhead } in
+    (match l.lhead with Some h -> h.lprev <- Some node | None -> l.ltail <- Some node);
+    l.lhead <- Some node;
+    l.lsize <- l.lsize + 1
+
+  let list_push_back (l : emo_list) (v : value) : unit =
+    let node = { lval = v; lprev = l.ltail; lnext = None } in
+    (match l.ltail with Some t -> t.lnext <- Some node | None -> l.lhead <- Some node);
+    l.ltail <- Some node;
+    l.lsize <- l.lsize + 1
+
+  let list_pop_front (l : emo_list) : value =
+    match l.lhead with
+    | None -> error "E3004" "`pop_front` on an empty List"
+    | Some node ->
+        l.lhead <- node.lnext;
+        (match node.lnext with Some n -> n.lprev <- None | None -> l.ltail <- None);
+        l.lsize <- l.lsize - 1;
+        node.lval
+
+  let list_pop_back (l : emo_list) : value =
+    match l.ltail with
+    | None -> error "E3004" "`pop_back` on an empty List"
+    | Some node ->
+        l.ltail <- node.lprev;
+        (match node.lprev with Some p -> p.lnext <- None | None -> l.lhead <- None);
+        l.lsize <- l.lsize - 1;
+        node.lval
+
   (* Snapshots a message at the process boundary: every Box in the message
      (directly or inside a tuple, array, or instance) arrives as a fresh
      copy, so mutability never crosses a process boundary — mutations on
@@ -273,6 +332,10 @@ module Emo_eval = struct
     | Bytes b -> Bytes (Bytes.copy b)
     | Tuple vs -> Tuple (List.map snapshot vs)
     | Array xs -> Array (Array.map snapshot xs)
+    | List l ->
+        let copy = fresh_list () in
+        List.iter (fun v -> list_push_back copy (snapshot v)) (list_values l);
+        List copy
     | Instance i ->
         Instance
           {
@@ -338,6 +401,7 @@ module Emo_eval = struct
     | Bytes _ -> "Bytes"
     | Tuple _ -> "Tuple"
     | Array _ -> "Array"
+    | List _ -> "List"
     | Box _ -> "Box"
     | Pid _ -> "Pid"
     | TcpConn _ -> "TcpConn"
@@ -370,6 +434,15 @@ module Emo_eval = struct
         let ok = ref true in
         Array.iteri (fun i x -> if not (equal_value x ys.(i)) then ok := false) xs;
         !ok
+    | List x, List y ->
+        let rec go a b =
+          match (a, b) with
+          | None, None -> true
+          | Some na, Some nb ->
+              equal_value na.lval nb.lval && go na.lnext nb.lnext
+          | _ -> false
+        in
+        go x.lhead y.lhead
     | Box x, Box y -> equal_value !x !y
     | Pid x, Pid y -> Int.equal x y
     | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
@@ -420,6 +493,10 @@ module Emo_eval = struct
     | Tuple vs -> "(" ^ String.concat ", " (List.map to_string vs) ^ ")"
     | Array vs ->
         "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
+    | List l ->
+        "List["
+        ^ String.concat ", " (List.map to_string (list_values l))
+        ^ "]"
     | Box _ -> "<box>"
     | Bytes b -> Printf.sprintf "Bytes[%d]" (Bytes.length b)
     | Pid n -> Printf.sprintf "<pid %d>" n
@@ -460,6 +537,8 @@ module Emo_eval = struct
     | Tuple vs -> "(" ^ String.concat ", " (List.map debug_value vs) ^ ")"
     | Array vs ->
         "[" ^ String.concat ", " (List.map debug_value (Array.to_list vs)) ^ "]"
+    | List l ->
+        "List[" ^ String.concat ", " (List.map debug_value (list_values l)) ^ "]"
     | v -> to_string v
 
   (* Interfaces have no runtime artifact beyond this registry: `x.is(T)`
@@ -964,6 +1043,20 @@ module Emo_runtime = struct
 
   let box_new v = Emo_eval.Box (ref v)
 
+  (* List.new(array): copies the elements into a fresh deque, front to
+     back. The argument must be an Array — anything else is the E3001
+     type error. *)
+  let list_new (v : Emo_eval.value) : Emo_eval.value =
+    match v with
+    | Emo_eval.Array xs ->
+        let l = Emo_eval.fresh_list () in
+        Array.iter (Emo_eval.list_push_back l) xs;
+        Emo_eval.List l
+    | other ->
+        Emo_eval.error "E3001"
+          (Printf.sprintf "`List.new` expects an Array, got %s"
+             (Emo_eval.type_name other))
+
   let index collection i =
     match (collection, i) with
     | Emo_eval.Array xs, Emo_eval.Int64 n ->
@@ -1254,6 +1347,23 @@ module Emo_runtime = struct
         let v = List.hd args in
         r := v;
         v
+    | Emo_eval.List l, "push_front" ->
+        one_expected ();
+        Emo_eval.list_push_front l (List.hd args);
+        Emo_eval.List l
+    | Emo_eval.List l, "push_back" ->
+        one_expected ();
+        Emo_eval.list_push_back l (List.hd args);
+        Emo_eval.List l
+    | Emo_eval.List l, "pop_front" ->
+        none_expected ();
+        Emo_eval.list_pop_front l
+    | Emo_eval.List l, "pop_back" ->
+        none_expected ();
+        Emo_eval.list_pop_back l
+    | Emo_eval.List l, "length" ->
+        none_expected ();
+        Emo_eval.Int64 (Int64.of_int l.Emo_eval.lsize)
     | Emo_eval.TcpConn c, "read_line" ->
         none_expected ();
         Emo_eval.String (Emo_eval.read_line_sync c)

@@ -1,0 +1,19 @@
+List[1, 2, foo, true, 3.14158]
+5
+List[head, 1, 2, foo, true, 3.14158, tail]
+7
+head
+tail
+List[1, 2, foo, true, 3.14158]
+5
+a
+b
+List[c]
+true
+true
+false
+true
+List[seven, List[9, 8]]
+List[seven, List[9, 8]]
+0
+List[]

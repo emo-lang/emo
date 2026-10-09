@@ -340,6 +340,110 @@ emo_value emo_box_replace(emo_value box, emo_value v) {
   return old;
 }
 
+/* ---- The List deque ----
+
+   A List is an identity, like a Box: [header][emo_list *], the struct
+   owning a doubly-linked node chain — O(1) push and pop at both ends.
+   Nodes ride the bump allocator like every cell, under the same
+   provisional reclamation profile (CHECK.md frees nothing). */
+
+typedef struct emo_list_node {
+  emo_value v;
+  struct emo_list_node *prev;
+  struct emo_list_node *next;
+} emo_list_node;
+
+typedef struct {
+  emo_list_node *head;
+  emo_list_node *tail;
+  int64_t size;
+} emo_list;
+
+static emo_list *emo_list_of(emo_value l) {
+  return (emo_list *)*emo_payload(emo_expect_kind(l, EMO_LIST));
+}
+
+emo_value emo_list_new(emo_value arr) {
+  if (emo_cell_kind(arr) != EMO_ARRAY)
+    emo_fatal("`List.new` expects an Array");
+  emo_list *l = emo_alloc(sizeof(emo_list));
+  l->head = NULL;
+  l->tail = NULL;
+  l->size = 0;
+  int64_t n = (int64_t)emo_payload(arr)[0];
+  for (int64_t i = 0; i < n; i++) {
+    emo_list_node *node = emo_alloc(sizeof(emo_list_node));
+    node->v = (emo_value)emo_payload(arr)[i + 1];
+    node->prev = l->tail;
+    node->next = NULL;
+    if (l->tail != NULL)
+      l->tail->next = node;
+    else
+      l->head = node;
+    l->tail = node;
+    l->size++;
+  }
+  return emo_box_kind(EMO_LIST, (int64_t)(uintptr_t)l);
+}
+
+emo_value emo_list_push_front(emo_value l, emo_value v) {
+  emo_list *list = emo_list_of(l);
+  emo_list_node *node = emo_alloc(sizeof(emo_list_node));
+  node->v = v;
+  node->prev = NULL;
+  node->next = list->head;
+  if (list->head != NULL)
+    list->head->prev = node;
+  else
+    list->tail = node;
+  list->head = node;
+  list->size++;
+  return l;
+}
+
+emo_value emo_list_push_back(emo_value l, emo_value v) {
+  emo_list *list = emo_list_of(l);
+  emo_list_node *node = emo_alloc(sizeof(emo_list_node));
+  node->v = v;
+  node->prev = list->tail;
+  node->next = NULL;
+  if (list->tail != NULL)
+    list->tail->next = node;
+  else
+    list->head = node;
+  list->tail = node;
+  list->size++;
+  return l;
+}
+
+emo_value emo_list_pop_front(emo_value l) {
+  emo_list *list = emo_list_of(l);
+  if (list->size == 0) emo_fatal("`pop_front` on an empty List");
+  emo_list_node *node = list->head;
+  list->head = node->next;
+  if (list->head != NULL)
+    list->head->prev = NULL;
+  else
+    list->tail = NULL;
+  list->size--;
+  return node->v;
+}
+
+emo_value emo_list_pop_back(emo_value l) {
+  emo_list *list = emo_list_of(l);
+  if (list->size == 0) emo_fatal("`pop_back` on an empty List");
+  emo_list_node *node = list->tail;
+  list->tail = node->prev;
+  if (list->tail != NULL)
+    list->tail->next = NULL;
+  else
+    list->head = NULL;
+  list->size--;
+  return node->v;
+}
+
+int64_t emo_list_length(emo_value l) { return emo_list_of(l)->size; }
+
 /* ---- Instances (T24.5) ---- */
 
 emo_value emo_instance_new(const emo_vtable *vt, int64_t nfields) {
@@ -507,8 +611,9 @@ emo_value emo_index(emo_value v, int64_t i) {
 
 int64_t emo_length(emo_value v) {
   uintptr_t k = emo_cell_kind(v);
+  if (k == EMO_LIST) return emo_list_length(v);
   if (k != EMO_TUPLE && k != EMO_ARRAY && k != EMO_BYTES && k != EMO_STRING)
-    emo_fatal("only strings, Bytes, tuples, and arrays have a length");
+    emo_fatal("only strings, Bytes, tuples, arrays, and Lists have a length");
   return (int64_t)*emo_payload(v);
 }
 
@@ -632,6 +737,19 @@ bool emo_eq_dyn(emo_value a, emo_value b) {
     return true;
   }
   case EMO_BOX: return emo_eq_dyn(emo_box_read(a), emo_box_read(b));
+  case EMO_LIST: {
+    /* element-wise, front to back — the Box rule generalized */
+    emo_list *la = (emo_list *)*emo_payload(a);
+    emo_list *lb = (emo_list *)*emo_payload(b);
+    if (la->size != lb->size) return false;
+    emo_list_node *na = la->head, *nb = lb->head;
+    while (na != NULL && nb != NULL) {
+      if (!emo_eq_dyn(na->v, nb->v)) return false;
+      na = na->next;
+      nb = nb->next;
+    }
+    return true;
+  }
   case EMO_INSTANCE: {
     /* Same class (vtable identity) and equal fields. */
     if (*emo_payload(a) != *emo_payload(b)) return false;
@@ -735,6 +853,18 @@ static void emo_render_dyn(emo_value v, FILE *out) {
   case EMO_BOX:
     fputs("<box>", out);
     return;
+  case EMO_LIST: {
+    emo_list *list = (emo_list *)*emo_payload(v);
+    fputs("List[", out);
+    bool first = true;
+    for (emo_list_node *n = list->head; n != NULL; n = n->next) {
+      if (!first) fputs(", ", out);
+      first = false;
+      emo_render_dyn(n->v, out);
+    }
+    fputc(']', out);
+    return;
+  }
   case EMO_ENUM: {
     /* the member name only — the interpreter's EnumMember rendering */
     uintptr_t *p = emo_payload(v);
@@ -798,6 +928,18 @@ static void emo_debug_dyn(emo_value v, FILE *out) {
     for (int64_t i = 0; i < n; i++) {
       if (i > 0) fputs(", ", out);
       emo_debug_dyn((emo_value)emo_payload(v)[i + 1], out);
+    }
+    fputc(']', out);
+    return;
+  }
+  if ((v & 7) == 0 && emo_cell_kind(v) == EMO_LIST) {
+    emo_list *list = (emo_list *)*emo_payload(v);
+    fputs("List[", out);
+    bool first = true;
+    for (emo_list_node *n = list->head; n != NULL; n = n->next) {
+      if (!first) fputs(", ", out);
+      first = false;
+      emo_debug_dyn(n->v, out);
     }
     fputc(']', out);
     return;

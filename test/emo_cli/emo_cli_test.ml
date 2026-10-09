@@ -195,6 +195,7 @@ let wasm_goldens =
     "showcase";
     "bit_ops";
     "fixed_width";
+    "list";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -214,6 +215,7 @@ let beam_goldens =
     "showcase";
     "bit_ops";
     "fixed_width";
+    "list";
   ]
 
 let erl_available =
@@ -415,6 +417,7 @@ let c_goldens =
     "file_read";
     "tcp_echo";
     "http_roundtrip";
+    "list";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
@@ -1237,14 +1240,16 @@ let emoji_tests =
         else if Sys.file_exists scratch then ()
         else Unix.mkdir scratch 0o755;
         Alcotest.(check int)
-          "exit" 0 (Emo_cli.scaffold_package ~name:"acme/emoji-hello" ~path:dir);
+          "exit" 0
+          (Emo_cli.scaffold_package ~name:"acme/emoji-hello" ~path:dir);
         let manifest = read_file (Filename.concat dir "package.emo") in
         Alcotest.(check bool)
           "manifest names the package owner/name" true
           (contains manifest {|name = "acme/emoji-hello"|});
         let module_src = read_file (Filename.concat dir "emoji-hello.emo") in
         Alcotest.(check bool)
-          "the public module greets" true (contains module_src "hello");
+          "the public module greets" true
+          (contains module_src "hello");
         Alcotest.(check bool)
           "a README rides along" true
           (Sys.file_exists (Filename.concat dir "README.md")));
@@ -1272,7 +1277,8 @@ let emoji_tests =
         Fun.protect
           ~finally:(fun () -> Sys.chdir old_cwd)
           (fun () ->
-            Alcotest.(check int) "exit" 0
+            Alcotest.(check int)
+              "exit" 0
               (Emo_cli.emoji_build ~dir:(Sys.getcwd ()))));
     tc "emoji build fails on a broken module" (fun () ->
         let old_cwd = Sys.getcwd () in
@@ -1290,7 +1296,8 @@ let emoji_tests =
             close_out oc;
             Sys.chdir old_cwd)
           (fun () ->
-            Alcotest.(check int) "exit" 65
+            Alcotest.(check int)
+              "exit" 65
               (Emo_cli.emoji_build ~dir:(Sys.getcwd ()))));
   ]
 

@@ -25,6 +25,7 @@ type t =
   | ArrayType of t
   | TupleType of t list
   | BoxType of t
+  | ListType of t (* the List deque's element type *)
   | FuncType of (string * t) list * t
 
 let rec to_string = function
@@ -46,6 +47,7 @@ let rec to_string = function
   | EnumType e -> e
   | ArrayType e -> "Array[" ^ to_string e ^ "]"
   | BoxType e -> "Box[" ^ to_string e ^ "]"
+  | ListType e -> "List[" ^ to_string e ^ "]"
   | TupleType ts -> "(" ^ String.concat ", " (List.map to_string ts) ^ ")"
   | FuncType (ps, r) ->
       "("
@@ -122,6 +124,7 @@ let rec ann_to_type ?(lenient = false) ctx
   | Ast.Named_type "Void" -> Void
   | Ast.Named_type "Block" -> Unknown
   | Ast.Named_type "Box" -> BoxType Unknown
+  | Ast.Named_type "List" -> ListType Unknown
   | Ast.Named_type name ->
       if Hashtbl.mem ctx.classes name then ClassType name
       else if Hashtbl.mem ctx.interfaces name then InterfaceType name
@@ -134,6 +137,11 @@ let rec ann_to_type ?(lenient = false) ctx
       ArrayType (ann_to_type ~lenient ctx elem)
   | Ast.Applied_type ("Box", [ elem ]) ->
       BoxType (ann_to_type ~lenient ctx elem)
+  | Ast.Applied_type ("List", [ elem ]) ->
+      ListType (ann_to_type ~lenient ctx elem)
+  | Ast.Applied_type ("List", _) ->
+      report ctx span "E4005" "`List` takes one type argument: List[T]";
+      ListType Unknown
   | Ast.Applied_type (name, _) ->
       report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
       Unknown
@@ -400,6 +408,7 @@ let empty_env =
           } );
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
         ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
+        ("List", { vtype = Unknown; is_var = false; depth = 0 });
         ("Int64", { vtype = Unknown; is_var = false; depth = 0 });
         ("Byte", { vtype = Unknown; is_var = false; depth = 0 });
         ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
@@ -460,6 +469,7 @@ and conforms ctx actual expected =
   | EnumType a, EnumType b -> String.equal a b
   | ArrayType a, ArrayType b -> conforms ctx a b
   | BoxType a, BoxType b -> conforms ctx a b
+  | ListType a, ListType b -> conforms ctx a b
   | TupleType as_, TupleType bs ->
       List.length as_ = List.length bs && List.for_all2 (conforms ctx) as_ bs
   | FuncType (pa, ra), FuncType (pb, rb) ->
@@ -915,6 +925,35 @@ and check_method_call ctx env span recv mname args : t =
     | Ast.Type_ident g when Hashtbl.mem ctx.groups g -> true
     | _ -> false
   then fallback
+  else if
+    match (recv.Ast.desc, mname) with
+    | Ast.Type_ident "List", "new" -> true
+    | _ -> false
+  then (
+    if
+      (* List.new(array) — the deque's constructor. The one argument is an
+       Array; its element type becomes the List's element type. *)
+      List.length args <> 1
+    then (
+      report ctx span "E4009"
+        (Printf.sprintf "`List.new` expects 1 argument, got %d"
+           (List.length args));
+      ListType Unknown)
+    else
+      let { Ast.arg_name; arg_value; _ } = List.hd args in
+      (match arg_name with
+      | Some n ->
+          report ctx arg_value.Ast.span "E4009"
+            (Printf.sprintf "`List.new` takes a positional Array, got `%s`" n)
+      | None -> ());
+      match check_expr ctx env arg_value with
+      | ArrayType elem -> ListType elem
+      | Unknown -> ListType Unknown
+      | other ->
+          report ctx arg_value.Ast.span "E4004"
+            (Printf.sprintf "`List.new` expects an Array, got %s"
+               (to_string other));
+          ListType Unknown)
   else
     let base = check_expr ctx env recv in
     let arg_values =
@@ -1166,6 +1205,21 @@ and check_method_call ctx env span recv mname args : t =
               (Printf.sprintf "`replace` expects 1 argument, got %d"
                  (List.length args));
             elem)
+    | ListType elem, (("push_front" | "push_back") as mname) -> (
+        match List.map snd arg_values with
+        | [ v ] ->
+            if not (conforms ctx v elem) then
+              report ctx span "E4004"
+                (Printf.sprintf "`%s` expects %s, got %s" mname (to_string elem)
+                   (to_string v));
+            ListType elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                 (List.length args));
+            ListType elem)
+    | ListType elem, ("pop_front" | "pop_back") -> none_expected elem
+    | ListType _, "length" -> builtin0 Int64
     | Int64, "to_byte" -> builtin0 Byte
     | Byte, "to_int64" -> builtin0 Int64
     | Float64, "to_bits" -> builtin0 Int64

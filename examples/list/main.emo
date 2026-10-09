@@ -1,0 +1,46 @@
+// The List deque: construct from an array, push and pop at both ends,
+// length, equality, and the shared rendering rule.
+const list = List.new([1, 2, "foo", true, 3.1415826])
+println(list)
+println(list.length())
+
+list.push_front("head")
+list.push_back("tail")
+println(list)
+println(list.length())
+
+println(list.pop_front())
+println(list.pop_back())
+println(list)
+println(list.length())
+
+// Deque discipline: two stacks meet in the middle.
+const queue = List.new([])
+queue.push_back("a")
+queue.push_back("b")
+queue.push_back("c")
+println(queue.pop_front())
+println(queue.pop_front())
+println(queue)
+
+// Equality is element-wise; aliases see the same mutation.
+const twin = List.new([1, 2, "foo", true, 3.1415826])
+println(list == twin)
+const alias = list
+list.push_back("shared")
+println(alias.length() == list.length())
+println(list == twin)
+println(list != twin)
+
+// Heterogeneous and nested content renders recursively.
+const mixed = List.new([])
+mixed.push_front(List.new([9, 8]))
+mixed.push_front("seven")
+println(mixed)
+println(mixed.to_string())
+
+// Empty at both ends after draining.
+const drained = List.new([1])
+drained.pop_front()
+println(drained.length())
+println(drained)

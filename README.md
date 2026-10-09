@@ -191,6 +191,7 @@ Mutability is layered, and every layer is explicit:
 - Arrays are immutable values: length is fixed and contents are never changed in place — operations that transform an array return a new one, and `==` compares element-wise.
 - Class fields are assigned only inside `init` and freeze afterwards.
 - Long-lived mutable state — per process — lives in a `Box`: `Box.new(0)` constructs, `box.read()` reads, `box.replace(v)` replaces — deliberately nothing else. Sending a Box to another process delivers a snapshot copy, so mutability never crosses a process boundary.
+- A `List` is the deque beside the Box: a double-ended queue that mutates in place where a Box holds one cell. `List.new([1, 2, "foo"])` copies an array's elements in; `list.push_front(x)` and `list.push_back(x)` insert at either end and return the list; `list.pop_front()` and `list.pop_back()` remove and yield the element; `list.length()` measures. Popping an empty List is a runtime error, like an out-of-bounds index, and `==` compares element-wise. Sending a List to another process delivers a snapshot copy — mutability never crosses a process boundary.
 
 ## Type System
 

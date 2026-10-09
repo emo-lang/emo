@@ -240,6 +240,7 @@ let rec expr env (e : Emo_ir.expr) : string =
       else Printf.sprintf "E.builtin(%S, [%s])" name args_code
   | Box_new e -> Printf.sprintf "E.box(%s)" (expr env e)
   | Bytes_new e -> Printf.sprintf "E.bytesNew(%s)" (expr env e)
+  | List_new e -> Printf.sprintf "E.listNew(%s)" (expr env e)
   | Make_exception { message } ->
       Printf.sprintf "E.throwException(%s)" (expr env message)
   | Do_spawn { func; args } ->
