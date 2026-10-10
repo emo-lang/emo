@@ -22,16 +22,22 @@
 
 enum XmlKind { xelement, xtext }
 
-// The scalar accessor is `as_text` (a text node answers with its
-// characters; an element refuses). The containers (name, attrs,
-// attr, children, get, text) live on the concrete element class — an
-// interface signature cannot name its own interface — read them
-// through `is()`.
+// Every Xml answers the whole element face: an element with its real
+// data, a text node by raising. The signatures name `Xml` itself — a
+// self-reference, resolvable since type names register program-wide
+// before any module is checked (CHECK.md, cross-module types); read
+// the containers through `is()` when the concrete carrier matters.
 interface Xml {
   def kind() XmlKind
   def is_text?() Bool
   def encode() String
   def as_text() String
+  def name() String
+  def attrs() Array[(String, String)]
+  def attr(name String) String
+  def children() Array[Xml]
+  def get(name String) Xml
+  def text() String
 }
 
 class XmlElement {

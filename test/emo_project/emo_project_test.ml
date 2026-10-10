@@ -251,7 +251,7 @@ let privacy_tests =
             ]
             "shop/pricing.emo"
         in
-        let _, _, errors = Emo_project.check_project ~manifest:None p in
+        let _, _, _, errors = Emo_project.check_project ~manifest:None p in
         if List.length errors > 0 then
           Alcotest.fail ("codes: " ^ codes_dump errors);
         Alcotest.(check int) "count" 0 (List.length errors));
@@ -265,7 +265,7 @@ let privacy_tests =
             ]
             "other/thing.emo"
         in
-        let _, _, errors = Emo_project.check_project ~manifest:None p in
+        let _, _, _, errors = Emo_project.check_project ~manifest:None p in
         if not (has_code errors "E5001") then
           Alcotest.fail ("codes: " ^ codes_dump errors);
         let message =
@@ -291,7 +291,7 @@ const once = 1|});
             ]
             "a.emo"
         in
-        let _, _, errors = Emo_project.check_project ~manifest:None p in
+        let _, _, _, errors = Emo_project.check_project ~manifest:None p in
         if not (has_code errors "E5003") then
           Alcotest.fail ("codes: " ^ codes_dump errors);
         let message =
@@ -311,7 +311,7 @@ const once = 1|});
             ]
             "main.emo"
         in
-        let _, _, errors = Emo_project.check_project ~manifest:None p in
+        let _, _, _, errors = Emo_project.check_project ~manifest:None p in
         Alcotest.(check int) "count" 0 (List.length errors));
   ]
 
@@ -1413,8 +1413,7 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "printf_demo")
           "printf_demo" "main.emo" true);
-    tc "sync_demo compiles to a binary with the interpreter's output"
-      (fun () ->
+    tc "sync_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "sync_demo")
@@ -1473,6 +1472,111 @@ let ts_golden_tests =
       ("sync_demo", "main.emo");
     ]
 
+(* The cross-module type rule (CHECK.md, settled 2026-10-10): the
+   program's type tables pre-register before any module is checked, so
+   the ui/app split the GUI spikes proposed checks — the shape that
+   used to die on the E4005 ("unknown type `VNode`") / E4016 deadlock. *)
+let cross_module_tests =
+  let ui_source =
+    {|interface VNode {
+  def kind() String
+}
+
+class VControl {
+  def init() {
+    self.kind = "control"
+  }
+
+  def kind() String {
+    return self.kind
+  }
+}
+
+def make() VNode {
+  return VControl.new()
+}
+|}
+  in
+  let codes_of ds =
+    String.concat ","
+      (List.map
+         (fun d ->
+           match d.Emo_support.Diagnostic.code with Some c -> c | None -> "?")
+         ds)
+  in
+  [
+    tc "an annotation names another module's type" (fun () ->
+        let entry =
+          with_project
+            [
+              ("ui.emo", ui_source);
+              ( "app.emo",
+                {|def view() VNode {
+  return ui.make()
+}
+
+const v = view()
+println(v.kind())|}
+              );
+            ]
+            "app.emo"
+        in
+        match Emo_project.check_entry ~entry_file:entry with
+        | [] -> ()
+        | ds -> Alcotest.fail ("codes: " ^ codes_of ds));
+    tc "a type name claimed by two modules is a loud collision" (fun () ->
+        let entry =
+          with_project
+            [
+              ("a.emo", {|class Widget {
+  def init() {
+    self.w = 1
+  }
+}
+|});
+              ("b.emo", {|class Widget {
+  def init() {
+    self.w = 2
+  }
+}
+|});
+              ("main.emo", "const x = 1\nprintln(x)");
+            ]
+            "main.emo"
+        in
+        match Emo_project.check_entry ~entry_file:entry with
+        | ds
+          when List.exists
+                 (fun d -> d.Emo_support.Diagnostic.code = Some "E4021")
+                 ds ->
+            ()
+        | ds -> Alcotest.fail ("expected E4021, got: " ^ codes_of ds));
+    tc "the split runs end to end" (fun () ->
+        let entry =
+          with_project
+            [
+              ("ui.emo", ui_source);
+              ( "app.emo",
+                {|def view() VNode {
+  return ui.make()
+}
+
+println(view().kind())|}
+              );
+            ]
+            "app.emo"
+        in
+        let output =
+          capture_output (fun () ->
+              try
+                ignore (Emo_project.run_entry ~entry_file:entry ~check:true ())
+              with
+              | Emo_project.Static_errors ds -> Alcotest.fail (codes_of ds)
+              | e -> Alcotest.fail (Printexc.to_string e))
+        in
+        Alcotest.(check string) "output" "control\n" output);
+  ]
+
 let () =
   Alcotest.run "emo_project"
     [
@@ -1489,4 +1593,5 @@ let () =
       ("ffi", ffi_tests);
       ("bootstrap", bootstrap_tests);
       ("ts_golden", ts_golden_tests);
+      ("cross_module", cross_module_tests);
     ]

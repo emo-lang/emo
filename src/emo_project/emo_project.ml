@@ -300,6 +300,7 @@ let find_cycle (graph : (string list, string list list) Hashtbl.t) :
 let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
     string list list
     * (string list * string list list * (string * Emo_support.Span.t) list) list
+    * Emo_check.program_types
     * Emo_support.Diagnostic.t list =
   let module_paths = module_paths p in
   let graph : (string list, string list list) Hashtbl.t = Hashtbl.create 8 in
@@ -307,9 +308,12 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
       (string list, (string * Emo_support.Span.t) list) Hashtbl.t =
     Hashtbl.create 8
   in
-  let errors, entries =
+  (* Parse every module first: the program's type tables (CHECK.md,
+     cross-module types) need every declaration before any module is
+     checked. *)
+  let units =
     Hashtbl.fold
-      (fun path file ((errors, entries) as acc) ->
+      (fun path file acc ->
         let source = read_file file in
         let items =
           match Emo_parser.parse_program_with_diagnostics ~file ~source with
@@ -320,15 +324,23 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
               raise (Static_errors diagnostics)
           | items, [] -> items
         in
+        (path, items) :: acc)
+      p.files []
+  in
+  let program, preregister_errors = Emo_check.preregister_types ~units in
+  let errors, entries =
+    List.fold_left
+      (fun (errors, entries) (path, items) ->
         let diagnostics, refs, requires =
-          Emo_check.check_module ~modules:module_paths ~current:path items
+          Emo_check.check_module ~modules:module_paths ~current:path ~program
+            items
         in
         Hashtbl.replace graph path refs;
         Hashtbl.replace requires_table path requires;
         match diagnostics with
-        | [] -> acc
+        | [] -> (errors, entries)
         | ds -> (ds @ errors, (path, refs) :: entries))
-      p.files ([], [])
+      ([], []) units
   in
   let internal_errors = check_internal_privacy graph in
   let cycle_error =
@@ -414,7 +426,9 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
   in
   ( module_paths,
     entries,
-    errors @ internal_errors @ cycle_error @ pairing_errors )
+    program,
+    preregister_errors @ errors @ internal_errors @ cycle_error @ pairing_errors
+  )
 
 (* Runs the entry file: the graph is discovered up front (collisions report
    immediately), modules load lazily on first access with load-once
@@ -656,7 +670,7 @@ let compile_inputs ~entry_file ~target :
      its own name); keep one module_input per distinct file, preferring
      the shorter path so the entry module stays rooted. *)
   let seen_files = Hashtbl.create 8 in
-  let inputs =
+  let units =
     Hashtbl.fold
       (fun path file acc ->
         match Hashtbl.find_opt seen_files file with
@@ -669,25 +683,20 @@ let compile_inputs ~entry_file ~target :
             in
             if not keep then acc
             else begin
-              Hashtbl.replace seen_files file path;
-              let items = parse_cached p file in
-              let diags, _refs, _requires, types =
-                Emo_check.check_module_typed ~modules:module_paths ~current:path
-                  ~target items
+              let acc =
+                match kept with
+                | Some old_path ->
+                    List.filter
+                      (fun (unit_path, _) ->
+                        not
+                          (String.equal
+                             (String.concat "/" unit_path)
+                             (String.concat "/" old_path)))
+                      acc
+                | None -> acc
               in
-              diagnostics := !diagnostics @ diags;
-              match kept with
-              | Some old_path ->
-                  acc
-                  |> List.filter (fun (m : Emo_ir.module_input) ->
-                      not
-                        (String.equal
-                           (String.concat "/" m.Emo_ir.mpath)
-                           (String.concat "/" old_path)))
-                  |> List.cons
-                       { Emo_ir.mpath = path; mitems = items; mtypes = types }
-              | None ->
-                  { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc
+              Hashtbl.replace seen_files file path;
+              (path, parse_cached p file) :: acc
             end)
       p.files []
   in
@@ -698,19 +707,30 @@ let compile_inputs ~entry_file ~target :
         if String.equal file entry_abs then Some path else acc)
       p.files None
   in
-  let inputs, entry =
+  let units, entry =
     match entry_module with
-    | Some path -> (inputs, path)
+    | Some path -> (units, path)
     | None ->
         (* The entry lives outside the discovered tree: it becomes the
-           root module, like the interpreter's root environment. *)
-        let items = parse_cached p entry_abs in
+           root module, like the interpreter's root environment, and
+           its types pre-register with the rest. *)
+        (([], parse_cached p entry_abs) :: units, [])
+  in
+  (* The program's type tables (CHECK.md, cross-module types) come
+   * before any module is checked, so every module's annotations resolve
+   * against every declaration. *)
+  let program, preregister_errors = Emo_check.preregister_types ~units in
+  diagnostics := preregister_errors;
+  let inputs =
+    List.fold_left
+      (fun acc (path, items) ->
         let diags, _refs, _requires, types =
-          Emo_check.check_module_typed ~modules:module_paths ~current:[] ~target
-            items
+          Emo_check.check_module_typed ~modules:module_paths ~current:path
+            ~program ~target items
         in
         diagnostics := !diagnostics @ diags;
-        ({ Emo_ir.mpath = []; mitems = items; mtypes = types } :: inputs, [])
+        { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc)
+      [] units
   in
   (match !diagnostics with [] -> () | ds -> raise (Static_errors ds));
   (inputs, entry, Option.map fst prepared)
@@ -731,9 +751,9 @@ let check_entry ~entry_file : Emo_support.Diagnostic.t list =
   let manifest = Option.map fst prepared in
   let items = parse_cached p (entry_path entry_file) in
   let module_paths = module_paths p in
-  let _paths, _graph, errors = check_project ~manifest p in
+  let _paths, _graph, program, errors = check_project ~manifest p in
   let entry_diags, _refs, _requires =
-    Emo_check.check_module ~modules:module_paths ~current:[] items
+    Emo_check.check_module ~modules:module_paths ~current:[] ~program items
   in
   diagnostics p @ errors @ entry_diags
 
@@ -754,11 +774,11 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
   let items = parse_cached p (entry_path entry_file) in
   (if check then
      let module_paths = module_paths p in
-     let _paths, _graph, errors = check_project ~manifest p in
+     let _paths, _graph, program, errors = check_project ~manifest p in
      (* The entry file itself may live outside the discovered tree (an
         absolute path); it is always checked too. *)
      let entry_diags, _refs, _requires =
-       Emo_check.check_module ~modules:module_paths ~current:[] items
+       Emo_check.check_module ~modules:module_paths ~current:[] ~program items
      in
      match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in

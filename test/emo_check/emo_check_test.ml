@@ -1064,6 +1064,151 @@ printf(fmt(), ["anything"])|}
         Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
   ]
 
+(* The cross-module rule (CHECK.md, settled 2026-10-10): every module's
+   type declarations pre-register before any module is checked, and a
+   name's second declaration is a loud collision. *)
+let units_of (modules : (string * string) list) =
+  List.map
+    (fun (name, source) ->
+      ( [ name ],
+        match Emo_parser.parse_program ~file:(name ^ ".emo") ~source with
+        | items -> items
+        | exception Emo_lexer.Error d ->
+            Alcotest.fail (Printf.sprintf "lex: %s" d.Diagnostic.message)
+        | exception Emo_parser.Error d ->
+            Alcotest.fail (Printf.sprintf "parse: %s" d.Diagnostic.message) ))
+    modules
+
+(* Parses, pre-registers, and checks every module; every diagnostic. *)
+let check_program (modules : (string * string) list) :
+    Emo_support.Diagnostic.t list =
+  let units = units_of modules in
+  let program, pre_errors = Emo_check.preregister_types ~units in
+  let paths = List.map fst units in
+  List.concat_map
+    (fun (path, items) ->
+      let diags, _refs, _requires =
+        Emo_check.check_module ~modules:paths ~current:path ~program items
+      in
+      diags)
+    units
+  @ pre_errors
+
+let cross_module_tests =
+  [
+    tc "an annotation names another module's type" (fun () ->
+        let diagnostics =
+          check_program
+            [
+              ( "ui",
+                {|interface VNode {
+  def kind() String
+}
+
+class VControl {
+  def init() {
+    self.kind = "control"
+  }
+
+  def kind() String {
+    return self.kind
+  }
+}
+
+def make() VNode {
+  return VControl.new()
+}
+|}
+              );
+              ( "app",
+                {|def view() VNode {
+  return ui.make()
+}
+
+const v = view()
+println(v.kind())|}
+              );
+            ]
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a parameter carries another module's class" (fun () ->
+        let diagnostics =
+          check_program
+            [
+              ( "shapes",
+                {|class Crate {
+  def init() {
+    self.w = 1
+  }
+
+  def area() Int64 {
+    return self.w
+  }
+}
+|}
+              );
+              ( "use",
+                {|def show(c Crate) Int64 {
+  return c.area()
+}
+
+println(show(Crate.new()))|}
+              );
+            ]
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a type name declared twice is a loud collision" (fun () ->
+        let diagnostics =
+          check_program
+            [
+              ("a", {|class Widget {
+  def init() {
+    self.w = 1
+  }
+}
+|});
+              ("b", {|class Widget {
+  def init() {
+    self.w = 2
+  }
+}
+|});
+            ]
+        in
+        Alcotest.(check bool) "E4021" true (has_code diagnostics "E4021");
+        let collision =
+          List.find (fun d -> d.Diagnostic.code = Some "E4021") diagnostics
+        in
+        if
+          not
+            (contains_substring collision.Diagnostic.message "module `a`"
+            && contains_substring collision.Diagnostic.message "module `b`")
+        then
+          Alcotest.fail
+            ("collision does not name both modules: "
+           ^ collision.Diagnostic.message));
+    tc "a same-name declaration inside one module stays its own" (fun () ->
+        let diagnostics =
+          check_program
+            [
+              ( "solo",
+                {|class Widget {
+  def init() {
+    self.w = 1
+  }
+}
+
+const w = Widget.new()
+println(w)|}
+              );
+            ]
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -1079,4 +1224,5 @@ let () =
       ("map", map_tests);
       ("corpus", corpus_tests);
       ("printf", printf_tests);
+      ("cross_module", cross_module_tests);
     ]
