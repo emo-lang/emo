@@ -27,6 +27,7 @@ require "json"
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | `ocaml`、`c`、`typescript` |
+| [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
 
 所有包版本均为 0.1.0。每个包在 [`docs/stdlib/`](../stdlib/) 下有完整的 API 参考(中文翻译在 [`docs/zh-CN/stdlib/`](stdlib/)),`examples/` 下有可运行的示例。
 
@@ -358,3 +359,43 @@ slog.warn(cache, "slow query", {"ms": "412"})
 attrs 是 `Map[String, String]`;键只能是 ASCII 字母、数字、`_`、`.`、`-`,每次调用先校验句柄和键再过滤——即使记录本来不会打印,坏键也是错误。
 
 目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/slog.md`](stdlib/slog.md) · 示例:`examples/slog_demo`。
+
+## sync 包
+
+协调包:等待组——一个一次性的倒计数,让一个进程等待 N 份工作完
+成。纯 Emo 写在进程原语之上——等待组就是一个持有计数的进程,
+`done` 是一条消息,`wait` 是另一条——所以在所有目标上可观察行为
+完全一致。它什么也不守卫:Emo 没有可守卫的共享内存(消息是快照拷
+贝),这正是包里没有 mutex 的原因——等待组只计数。
+
+```emo
+def wait_group(n Int64) Pid
+def done(wg Pid) Void
+def wait(wg Pid) Void
+def stop(wg Pid) Void
+```
+
+`wait_group` 启动一个 `n` 份工作的倒计时并回答组的 pid;`done` 宣
+告一份工作完成;`wait` 阻塞到计数清零,若已清零则立即返回;`stop`
+结束计数进程。多个进程可以在同一个组上 `wait`,每个都会被唤醒。
+计数一次性设定、只减不增:等待组是一次性的。超出计数的 `done` 在
+调用方抛出而非无声消失;`stop` 落下时仍泊着的 `wait` 会抛出而非悬
+挂。
+
+```emo
+require "sync"
+
+const wg = sync.wait_group(3)  // 三份工作在前
+do worker(wg)                  // ……每个以 sync.done(wg) 收尾
+do worker(wg)
+do worker(wg)
+sync.wait(wg)                  // 第三次 done 时返回
+sync.stop(wg)
+```
+
+等待组线上的每条消息都是打上 `"sync"`——包名——标签的元组,所以
+组的流量永远不会撞上应用自己的消息。
+
+目标:`["ocaml", "c", "typescript", "wasm", "beam"]`。参考:
+[`docs/zh-CN/stdlib/sync.md`](stdlib/sync.md) · 示例:
+`examples/sync_demo`。

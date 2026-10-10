@@ -43,6 +43,7 @@ The packages:
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | `ocaml`, `c`, `typescript` |
+| [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
 
 All packages are version 0.1.0. Each has a full API reference under
 [`docs/stdlib/`](stdlib/) (Chinese translations under
@@ -493,3 +494,47 @@ not have printed.
 
 Targets: `["ocaml", "c", "typescript"]`. Reference:
 [`docs/stdlib/slog.md`](stdlib/slog.md) · Demo: `examples/slog_demo`.
+
+## The `sync` package
+
+The coordination package: a wait group — a one-shot countdown that
+lets a process wait for N units of work. Pure Emo over the process
+primitives — a wait group is a process holding a count, `done` is one
+message, `wait` is another — so it runs on every target with identical
+observable behavior. It guards nothing: Emo has no shared memory to
+guard (messages are snapshot copies), which is why the package has no
+mutex — a wait group only counts.
+
+```emo
+def wait_group(n Int64) Pid
+def done(wg Pid) Void
+def wait(wg Pid) Void
+def stop(wg Pid) Void
+```
+
+`wait_group` starts a countdown of `n` units and answers the group's
+pid; `done` announces one finished unit; `wait` blocks until the count
+drains and answers immediately once it has; `stop` ends the counter
+process. Several processes may `wait` on one group, and each is woken.
+The count is set once and only goes down: a wait group is single-use.
+A `done` past the count raises at its caller rather than vanishing; a
+`wait` parked when `stop` lands raises instead of hanging.
+
+```emo
+require "sync"
+
+const wg = sync.wait_group(3)  // three units of work ahead
+do worker(wg)                  // ... each ends with sync.done(wg)
+do worker(wg)
+do worker(wg)
+sync.wait(wg)                  // returns with the third done
+sync.stop(wg)
+```
+
+Every wait-group message on the wire is a tuple tagged `"sync"` — the
+package name — so the group's traffic never collides with an
+application's own messages.
+
+Targets: `["ocaml", "c", "typescript", "wasm", "beam"]`. Reference:
+[`docs/stdlib/sync.md`](stdlib/sync.md) · Demo:
+`examples/sync_demo`.
