@@ -10,10 +10,10 @@ metal. **`Float64`** is the default float type: IEEE 754 binary64 on
 every target (decided 2026-10-05).
 
 There are no width-less `Int` or `Float` spellings and none will be
-added as aliases; unannotated integer literals are `Int64` and
-unannotated float literals are `Float64` (the `Int64` part supersedes
-an earlier same-day decision that kept the `Int` spelling without an
-`Int64` name).
+added as aliases; integer literals without type declarations are
+`Int64` and float literals without type declarations are `Float64`
+(the `Int64` part supersedes an earlier same-day decision that kept the
+`Int` spelling without an `Int64` name).
 
 The implementation now spells the types `Int64` and `Float64`
 (checker, stdlib, examples, runtime); the mechanical rename landed on
@@ -111,8 +111,8 @@ default integer — the decision above does that. Its motivation:
 
 Constraints, per strictness-first:
 
-- The default integer is `Int64`; unannotated literals are `Int64`;
-  no type-guided literal typing.
+- The default integer is `Int64`; literals without type declarations
+  are `Int64`; no type-guided literal typing.
 - No implicit conversions in either direction; mixed arithmetic
   (`Int64 + Int32`) is rejected; conversions are explicit calls named
   with the existing pattern (`Int32.from_int64(x)` / `x.to_int32()`).
@@ -132,8 +132,8 @@ Constraints, per strictness-first:
 
 Constraints, per strictness-first (same shape as `Int32`):
 
-- The default float is `Float64`; unannotated float literals are
-  `Float64`; no type-guided literal typing.
+- The default float is `Float64`; float literals without type
+  declarations are `Float64`; no type-guided literal typing.
 - No implicit conversions in either direction; mixed arithmetic
   (`Float64 + Float32`) is rejected; conversions are explicit calls
   (`Float32.from_float64(x)` / `x.to_float32()`).

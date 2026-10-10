@@ -1,6 +1,6 @@
 # Numerics
 
-Foreign C bindings and a fully annotated numeric kernel, compiled to a
+Foreign C bindings and a fully type-declared numeric kernel, compiled to a
 standalone binary.
 
 ```console
@@ -20,7 +20,7 @@ What to notice:
 - **This program is compiled-only by design.** The interpreter has no C
   linkage and refuses foreign definitions with a precise error — one
   command, one executable, no runtime download.
-- **Types feed performance.** `growth` is fully annotated, so the
+- **Types feed performance.** `growth` is fully type-declared, so the
   compiler specializes it: unboxed float arithmetic and direct calls.
   Build the same program with `--no-specialize` and compare — the
   `benchmarks/` tree records what that difference is worth.

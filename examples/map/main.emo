@@ -20,7 +20,7 @@ println(scores.values())
 // Equality compares entries, not order.
 println({ "a": 1, "b": 2 } == Map.new(("b", 2), ("a", 1)))
 
-// Maps annotate like any value.
+// Maps declare their types like any value.
 def size(m Map[String, Int64]) Int64 {
   return m.length()
 }

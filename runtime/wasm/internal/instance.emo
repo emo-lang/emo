@@ -9,7 +9,7 @@
 // The walk is section-scoped: `find_section` locates a section's
 // content once, and each parser owns its bytes. Type names resolve
 // program-wide (CHECK.md, cross-module types), so the model module's
-// `FuncType` is referenced bare — its annotations and its
+// `FuncType` is referenced bare — its type declarations and its
 // constructions alike; a field is still assignable only inside `init`,
 // and nothing here crosses a module edge except the verdict tuple and
 // plain handles.

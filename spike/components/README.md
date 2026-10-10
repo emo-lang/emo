@@ -64,7 +64,7 @@ EMO_GUI_AUTOTEST=1 ./ui-app         # self-driving: +1, -1, +1, report,
    compiler fixes — all three target arms now mix the running
    executable's digest into the key. The multi-module split was then
    attempted for real, and it surfaced the NEXT gap: cross-module
-   type annotations are still refused (E4005 — the checker's type
+   type declarations are still refused (E4005 — the checker's type
    tables are per-module), so `def view(count Int64) VNode` cannot be
    spelled across modules and the spike stays one file. A
    general-purpose Emo UI package starts with cross-module types.

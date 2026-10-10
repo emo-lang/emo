@@ -25,7 +25,7 @@ let float_lit (f : float) : string =
    [Emo_eval.value] — with Stage B specialization: a function the IR
    marked [fspecializable] emits natively (unboxed parameters, direct
    arithmetic, direct calls) behind an auto-generated dynamic wrapper,
-   so unannotated call sites keep dynamic semantics. *)
+   so call sites without type declarations keep dynamic semantics. *)
 
 (* The current program's specialized functions; set by [emit]. *)
 let specializables : Emo_ir.func list ref = ref []
@@ -129,9 +129,8 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
          sequenced and the body still yields a value — a bare tail
          expression would type as unit. *)
       if tail then
-        Printf.sprintf
-          "(Emo_runtime.send (%s) (%s);\nEmo_eval.Void)" (emit_expr env target)
-          (emit_expr env message)
+        Printf.sprintf "(Emo_runtime.send (%s) (%s);\nEmo_eval.Void)"
+          (emit_expr env target) (emit_expr env message)
       else
         Printf.sprintf "(Emo_runtime.send (%s) (%s))" (emit_expr env target)
           (emit_expr env message)
@@ -298,7 +297,8 @@ and emit_receive env branches ~tail =
             Printf.sprintf
               "(match Emo_runtime.payload_items payload with\n\
                | __items ->\n\
-               Some (%d, [%s]))" i picked
+               Some (%d, [%s]))"
+              i picked
         in
         Printf.sprintf
           "(fun v ->\n\
@@ -448,8 +448,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
              !specializables
       then
         (* Native context: direct specialized call with native args. *)
-        sp_apply func
-          (String.concat " " (List.map (emit_native_expr env) args))
+        sp_apply func (String.concat " " (List.map (emit_native_expr env) args))
       else Printf.sprintf "%s [%s]" func args_code
   | Emo_ir.Call_value { f; args } ->
       Printf.sprintf "Emo_runtime.apply_value %s [%s]" (emit_expr env f)
@@ -515,8 +514,7 @@ and sp_name func = "sp_" ^ func
    the right-hand side of a let rec binding, which OCaml itself
    forbids. *)
 and sp_apply fname args_text =
-  if args_text = ""
-  then Printf.sprintf "%s ()" (sp_name fname)
+  if args_text = "" then Printf.sprintf "%s ()" (sp_name fname)
   else Printf.sprintf "%s %s" (sp_name fname) args_text
 
 and emit_native_expr env (e : Emo_ir.expr) : string =
@@ -657,7 +655,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
 (* [arm_unit] marks emission inside an if-arm: an empty arm is a plain
    fall-through, while an empty function body is the E3008 error. *)
 (* A case pattern over a native scrutinee: integer literals, bindings,
-   and wildcards only — the shapes the checker admits for annotated
+   and wildcards only — the shapes the checker admits for type-declared
    integer scrutinees on this target. *)
 let rec emit_native_pattern env (p : Emo_ast.pattern) : string =
   match p.Emo_ast.pattern_desc with
@@ -1034,8 +1032,9 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
         in
         put env "%s%s\n\n" (if i = 0 then "let rec " else "and ") code)
       specialized;
-    (* Every specialized function keeps its dynamic wrapper: unannotated
-       call sites and first-class references go through it. *)
+    (* Every specialized function keeps its dynamic wrapper: call sites
+       without type declarations and first-class references go through
+       it. *)
     List.iter
       (fun f ->
         env.refs <- [];
