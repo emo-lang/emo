@@ -206,6 +206,20 @@ yet propagate cross-module result types — recorded as the type
 propagation follow-up). The `native` → `ocaml` rename is its own
 step, next.
 
+**Aligned 2026-10-10** — the target's surface moved on after this
+close-out, per the GUI-spike work recorded in CHECK.md and
+`docs/emo-ui-check.md`: `foreign def` returns `Void` on this target
+(fire-and-forget calls, E4200-gated), every externally linkable
+declaration lands in `.emo-build/emo_defs.h` for shims to compile
+against, build caches key on the compiler's own content (stale cached
+binaries die with the compiler fix that flushes them), local
+cross-module **calls** work (an entry-module alias binding used to
+lower its value side into garbage C), and the type-propagation
+follow-up above is resolved — the checker pre-registers every
+module's type declarations program-wide (CHECK.md, cross-module
+types), so cross-module receivers, constructions, and `is()`
+narrowing carry real types on this target.
+
 ## Acceptance
 
 - `emo build --target c` produces a working binary through the

@@ -7,8 +7,8 @@
 //
 // The walk threads the cursor as (data, pos) primitives rather than a
 // Reader value: def signatures cannot spell another module's class
-// (qualified type annotations do not parse — step 20 pressure), so any
-// cross-def cursor travel goes through unannotated locals.
+// (qualified type declarations do not parse — step 20 pressure), so any
+// cross-def cursor travel goes through locals without type declarations.
 
 def debug_print_outcome(label String, o (Bool, String, Int64, String)) Int64 {
   println(label + ": ok=" + o[0].to_string() + " phase=" + o[1]

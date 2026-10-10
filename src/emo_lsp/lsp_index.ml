@@ -40,7 +40,7 @@ type symbol = {
   local : bool; (* a parameter or block binding, not a top-level decl *)
 }
 
-(* ---- Rendering type annotations and signatures ---------------------- *)
+(* ---- Rendering type declarations and signatures --------------------- *)
 
 let rec type_ann_to_string (t : Ast.type_ann) : string =
   match t.Ast.type_desc with

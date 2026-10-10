@@ -64,6 +64,9 @@ rule applied to bytes.
   also pass class/interface values across module boundaries — the
   cross-module-types checker step (step 27's follow-up) may still gate
   them. First step when picked up: build json_demo for wasm and see.
+  (The checker step landed 2026-10-10; on c the packages now fail at
+  emitted-C compile time instead — the codegen gap recorded in
+  step 27. wasm and beam remain unverified for them.)
 - The guard emitter's `'andalso'` lowering (Core Erlang has no
   `andalso` call) is the same bug family as the beam `&&` fix and is
   still dormant — no shipped example reaches it.

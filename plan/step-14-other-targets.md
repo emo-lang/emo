@@ -26,13 +26,13 @@ recommended priority.
 ## TypeScript
 
 - **Strategy:** transpile the checked AST to TypeScript; gradual types map
-  naturally (Emo annotations → TS types, `Unknown` → `any`-free escape
-  hatches to be defined). The runtime value tags become a thin TS runtime
-  library.
+  naturally (Emo type declarations → TS types, `Unknown` → `any`-free
+  escape hatches to be defined). The runtime value tags become a thin TS
+  runtime library.
 - **Key decisions:** the direct-style problem — step 12's blocking calls
   must map onto the event loop (Promise-returning internals with an
   ergonomic surface); how processes map to workers or cooperative tasks.
-- **Prereq:** step 08 (checker feeds annotations); no IR dependency — the
+- **Prereq:** step 08 (checker feeds type declarations); no IR dependency — the
   AST suffices, or reuse IR if it simplifies.
 - **Risk:** function coloring leaks backwards from TS's ecosystem; keep
   the Emo surface direct-style and absorb the mapping in the emitted code.
@@ -103,8 +103,8 @@ of re-deriving it.
 
 - Numeric types are width-explicit: `Int64`/`Int32`, `Float64`/
   `Float32`; the defaults are `Int64` and `Float64`; there are no
-  width-less `Int`/`Float` spellings and no aliases; unannotated
-  integer/float literals default to the 64-bit type (decided
+  width-less `Int`/`Float` spellings and no aliases; integer/float
+  literals without type declarations default to the 64-bit type (decided
   2026-10-05).
 - `Int64` semantics are target-independent: 64-bit two's complement,
   wrap-around modulo 2⁶⁴. On RV64 an `Int64` is one register. A future

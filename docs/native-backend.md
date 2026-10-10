@@ -20,7 +20,7 @@ parse → check → lower (Emo_ir) → specialize → emit OCaml → ocamlopt �
   the IR: a function specializes when every value in it is native
   (parameters, locals, intermediates) and its calls go only to other
   specialized functions. Specialized functions keep their dynamic
-  wrapper so unannotated call sites and first-class references still
+  wrapper so call sites without type declarations and first-class references still
   work.
 - **Emission** (`Emo_codegen`) prints one OCaml source file. Dynamic
   code compiles to `Emo_eval.value`-passing functions calling the

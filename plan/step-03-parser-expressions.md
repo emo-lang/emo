@@ -26,8 +26,8 @@ every runtime-level construct in the README parses.
   argument — the component-tree and structured-literal shape from the README
   falls out with no extra machinery (provisional decision: the block is the
   last positional argument).
-- **Arrow blocks** — `-> (x Int) { ... }` with annotated parameters (multiple
-  allowed) and the parameterless `-> { ... }`. Body is always a `{ }` block.
+- **Arrow blocks** — `-> (x Int) { ... }` with type-declared parameters
+  (multiple allowed) and the parameterless `-> { ... }`. Body is always a `{ }` block.
 - **`if` statements** — exactly one shape: `if cond { ... }` with an
   optional `else { ... }`. There is no `else if`, `elif`, or any chaining
   sugar — a further test is an `if` visibly nested inside the `else`
@@ -83,7 +83,7 @@ every runtime-level construct in the README parses.
   against calls is spacing, mirroring the `<-` rule: call parentheses
   must touch the callee — `f(a)` is a call, and `f (a)` on one line is
   an error (juxtaposed expressions are never implicitly a call). The
-  annotation form mirrors the literal — `(Int, String)`. In **pattern**
+  type-declaration form mirrors the literal — `(Int, String)`. In **pattern**
   position, parentheses are always tuple patterns (patterns have no
   precedence to override): `(Color.red, count) -> { ... }`, with element
   count checked against the pattern; the `((` law applies to patterns

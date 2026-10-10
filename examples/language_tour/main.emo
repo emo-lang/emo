@@ -20,7 +20,7 @@ const item = "伞"
 println("one ${item} costs ${19 + 9} yuan")
 
 // ---- 2 · Classes: immutable value types ----
-class User {
+class Person {
   def init(name String, age Int64) {
     self.name = name
     self.age = age
@@ -35,17 +35,17 @@ class User {
   }
 }
 
-const ming = User.new(name: "王晓明", age: 28)
+const ming = Person.new(name: "王晓明", age: 28)
 println(ming.describe())
 const adult = ming.adult?()
 println("adult? ${adult}")
 // Fields freeze after init, and equality compares content:
-println(ming == User.new(name: "王晓明", age: 28))
+println(ming == Person.new(name: "王晓明", age: 28))
 
 // ---- 3 · Interfaces: contracts by shape ----
 // No `implements` anywhere: a class satisfies an interface when its
 // shape matches. The consumer declares the contract it needs.
-interface Greeter {
+interface Speaker {
   def greet() String
 }
 
@@ -61,7 +61,7 @@ class Friend {
   }
 }
 
-def welcome(g Greeter) String {
+def welcome(g Speaker) String {
   if g.is(Machine) {
     return "a machine says: ${g.greet()}"
   }

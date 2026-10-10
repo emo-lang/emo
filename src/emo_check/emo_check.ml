@@ -1,6 +1,7 @@
-(* The gradual type checker. Annotations are optional except on signatures;
-   unannotated code stays [Unknown] and only certain errors are reported —
-   every diagnostic must be provable from known types. Codes are E4xxx. *)
+(* The gradual type checker. Type declarations are optional except on
+   signatures; code without them stays [Unknown] and only certain errors
+   are reported — every diagnostic must be provable from known types.
+   Codes are E4xxx. *)
 
 module Ast = Emo_ast
 
@@ -92,6 +93,10 @@ type ctx = {
          earlier type; the file keeps modules whose offsets overlap
          (every module starts near zero) from reading each other's
          types *)
+  type_owners : (string, string list) Hashtbl.t;
+      (* bare type name → its declaring module path (the program's
+         pre-registration); empty when checking a lone file, where no
+         cross-module resolution exists *)
   target : string;
       (* the compilation target: the capability table gates `foreign
          def` per target (CHECK.md) — `c` honors Int64 directly on
@@ -105,8 +110,40 @@ let report ctx span code message =
       { severity = Error; code = Some code; message; span; hint = None }
     :: !(ctx.diagnostics)
 
-(* Annotations resolve names through the collected declarations; an unknown
-   name is a certain error (the annotation can never hold). *)
+(* The internal rule reaches bare type names: a name resolves
+   program-wide, so a type declared in an `internal/`-private module is
+   refused outside its subtree — the same rule the reference graph
+   enforces for qualified paths (E5001). *)
+let internal_type_violation ctx (owner : string list) : bool =
+  let rec private_root before = function
+    | "internal" :: _ -> Some (List.rev before)
+    | seg :: rest -> private_root (seg :: before) rest
+    | [] -> None
+  in
+  match private_root [] owner with
+  | None -> false
+  | Some root ->
+      not
+        (List.length ctx.current >= List.length root
+        && List.for_all2 String.equal root
+             (List.take (List.length root) ctx.current))
+
+(* Reports a bare type name reaching across an internal boundary.
+   Resolution continues — the program is rejected either way — so the
+   narrowing and conformance machinery keeps its data. *)
+let check_internal_type ctx span name =
+  match Hashtbl.find_opt ctx.type_owners name with
+  | Some owner when internal_type_violation ctx owner ->
+      report ctx span "E5001"
+        (Printf.sprintf
+           "module `%s` cannot reference the type `%s` declared in `%s`: \
+            `internal` is subtree-private"
+           (String.concat "." ctx.current)
+           name (String.concat "." owner))
+  | _ -> ()
+
+(* Type declarations resolve names through the collected declarations; an
+   unknown name is a certain error (the declaration can never hold). *)
 (* [lenient] marks block-parameter positions: a name unknown in this
    module may name a type from the library consuming the block, and
    cross-module types stay unchecked this step — so it narrows to Unknown
@@ -131,9 +168,15 @@ let rec ann_to_type ?(lenient = false) ctx
   | Ast.Named_type "List" -> ListType Unknown
   | Ast.Named_type "Map" -> MapType (Unknown, Unknown)
   | Ast.Named_type name ->
-      if Hashtbl.mem ctx.classes name then ClassType name
-      else if Hashtbl.mem ctx.interfaces name then InterfaceType name
-      else if Hashtbl.mem ctx.enums name then EnumType name
+      if Hashtbl.mem ctx.classes name then (
+        check_internal_type ctx span name;
+        ClassType name)
+      else if Hashtbl.mem ctx.interfaces name then (
+        check_internal_type ctx span name;
+        InterfaceType name)
+      else if Hashtbl.mem ctx.enums name then (
+        check_internal_type ctx span name;
+        EnumType name)
       else if lenient then Unknown
       else (
         report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
@@ -153,9 +196,63 @@ let rec ann_to_type ?(lenient = false) ctx
       report ctx span "E4005" "`List` takes one type argument: List[T]";
       ListType Unknown
   | Ast.Applied_type (name, _) ->
+      if
+        Hashtbl.mem ctx.classes name
+        || Hashtbl.mem ctx.interfaces name
+        || Hashtbl.mem ctx.enums name
+      then check_internal_type ctx span name;
       report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
       Unknown
   | Ast.Tuple_type ts -> TupleType (List.map (ann_to_type ~lenient ctx) ts)
+
+(* The checker's view of one class declaration: init parameters, method
+   signatures, field names. Shared by module collection and the program's
+   type pre-registration. *)
+let class_info_of ctx (c : Ast.class_def) : class_info =
+  let methods =
+    List.map
+      (fun d ->
+        ( d.Ast.def_name,
+          {
+            mparams =
+              List.map
+                (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+                d.Ast.def_params;
+            mret =
+              (match d.Ast.def_return with
+              | Some r -> ann_to_type ctx r
+              | None ->
+                  if String.equal d.Ast.def_name "init" then Unknown
+                  else Void (* a method with no type declaration *));
+            mdef = d;
+          } ))
+      c.Ast.class_methods
+  in
+  {
+    cname = c.Ast.class_name;
+    cinit_params =
+      Option.map
+        (fun init ->
+          List.map
+            (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+            init.Ast.def_params)
+        c.Ast.class_init;
+    cmethods = methods;
+    cfields = List.map (fun f -> f.Ast.field_name) c.Ast.class_fields;
+  }
+
+(* The checker's view of one interface declaration: the required method
+   signatures. *)
+let interface_sigs_of ctx (i : Ast.interface_def) :
+    (string * (string * t) list * t) list =
+  List.map
+    (fun s ->
+      ( s.Ast.sig_name,
+        List.map
+          (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+          s.Ast.sig_params,
+        ann_to_type ctx s.Ast.sig_return ))
+    i.Ast.interface_methods
 
 (* Pass one: gather every declaration the checker reasons about. *)
 let collect ctx (items : Ast.item list) : unit =
@@ -169,59 +266,10 @@ let collect ctx (items : Ast.item list) : unit =
           Option.iter (fun r -> ignore (ann_to_type ctx r)) d.Ast.def_return;
           Hashtbl.replace ctx.funcs d.Ast.def_name d
       | Ast.Item_class c ->
-          Option.iter
-            (fun init ->
-              List.iter
-                (fun p -> ignore (ann_to_type ctx p.Ast.param_type))
-                init.Ast.def_params)
-            c.Ast.class_init;
-          let methods =
-            List.map
-              (fun d ->
-                ( d.Ast.def_name,
-                  {
-                    mparams =
-                      List.map
-                        (fun p ->
-                          (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
-                        d.Ast.def_params;
-                    mret =
-                      (match d.Ast.def_return with
-                      | Some r -> ann_to_type ctx r
-                      | None ->
-                          if String.equal d.Ast.def_name "init" then Unknown
-                          else Void (* a method with no annotation *));
-                    mdef = d;
-                  } ))
-              c.Ast.class_methods
-          in
-          Hashtbl.replace ctx.classes c.Ast.class_name
-            {
-              cname = c.Ast.class_name;
-              cinit_params =
-                Option.map
-                  (fun init ->
-                    List.map
-                      (fun p ->
-                        (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
-                      init.Ast.def_params)
-                  c.Ast.class_init;
-              cmethods = methods;
-              cfields = List.map (fun f -> f.Ast.field_name) c.Ast.class_fields;
-            }
+          Hashtbl.replace ctx.classes c.Ast.class_name (class_info_of ctx c)
       | Ast.Item_interface i ->
-          let sigs =
-            List.map
-              (fun s ->
-                ( s.Ast.sig_name,
-                  List.map
-                    (fun p ->
-                      (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
-                    s.Ast.sig_params,
-                  ann_to_type ctx s.Ast.sig_return ))
-              i.Ast.interface_methods
-          in
-          Hashtbl.replace ctx.interfaces i.Ast.interface_name sigs
+          Hashtbl.replace ctx.interfaces i.Ast.interface_name
+            (interface_sigs_of ctx i)
       | Ast.Item_enum e ->
           Hashtbl.replace ctx.enums e.Ast.enum_name
             (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
@@ -313,6 +361,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       refs = ref [];
       requires = ref [];
       types = Hashtbl.create 64;
+      type_owners = Hashtbl.create 0;
       target = "c";
     }
   in
@@ -847,9 +896,15 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
       if
         (* A declared type in value position: classes, enums, interfaces. *)
         Hashtbl.mem ctx.classes name
-      then ClassType name
-      else if Hashtbl.mem ctx.enums name then EnumType name
-      else if Hashtbl.mem ctx.interfaces name then InterfaceType name
+      then (
+        check_internal_type ctx span name;
+        ClassType name)
+      else if Hashtbl.mem ctx.enums name then (
+        check_internal_type ctx span name;
+        EnumType name)
+      else if Hashtbl.mem ctx.interfaces name then (
+        check_internal_type ctx span name;
+        InterfaceType name)
       else if name = "Box" || name = "Exception" then Unknown
       else Unknown
   | Ast.Interpolated parts ->
@@ -1837,6 +1892,7 @@ and narrowed_then_env ctx env cond =
         ( { Ast.desc = Ast.Member (recv, "is"); _ },
           [ { Ast.arg_value = { Ast.desc = Ast.Type_ident tname; _ }; _ } ] )
       when match recv.Ast.desc with Ast.Ident _ -> true | _ -> false ->
+        (* the target's own check ran with the condition's expression *)
         let target_type = resolve_type_name ctx recv.Ast.span tname in
         let rt = check_expr ctx env recv in
         (match rt with
@@ -2054,6 +2110,7 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
           mismatch (String.lowercase_ascii (to_string lt));
           env)
   | Ast.Enum_member (t, m) -> (
+      check_internal_type ctx p.Ast.pattern_span t;
       match scrutinee_t with
       | EnumType e ->
           (if not (String.equal t e) then
@@ -2199,7 +2256,8 @@ let signature_of_def ctx (d : Ast.fun_def) : t =
 
 (* Signature checks: the body runs under the declared parameter types with
    the declared return type as the target; `init` is exempt (it returns
-   the class it constructs). A def with no return annotation returns Void:
+   the class it constructs). A def with no return type declaration
+   returns Void:
    its body must contain no `return`, and it may simply end. *)
 let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
   let is_init = String.equal d.Ast.def_name "init" in
@@ -2374,13 +2432,151 @@ let sort_diagnostics diagnostics =
         (b.span.line, b.span.col, b.span.start))
     diagnostics
 
+(* ---- Program-wide type pre-registration (CHECK.md: cross-module types,
+   settled 2026-10-10) ---- *)
+
+(* Every module's type declarations, collected before any module is
+   checked. Names stay unqualified and are program-unique: the emitters
+   key class tables and `is()` vtables by the bare name, so a name
+   declared by two modules is a loud error (E4021), never a silent
+   resolution. *)
+type program_types = {
+  pclasses : (string, class_info) Hashtbl.t;
+  pinterfaces : (string, (string * (string * t) list * t) list) Hashtbl.t;
+  penums : (string, string list) Hashtbl.t;
+  popaths : (string, string list) Hashtbl.t;
+      (* type name → its declaring module path, for the internal rule
+         on bare names (E5001) *)
+}
+
+(* The resolution-only context the pass needs: its tables ARE the
+   program's tables, so members' type declarations resolve against every
+   module's declarations regardless of order. *)
+let preregister_ctx tables diagnostics =
+  {
+    file = "<program>";
+    classes = tables.pclasses;
+    interfaces = tables.pinterfaces;
+    groups = Hashtbl.create 0;
+    enums = tables.penums;
+    funcs = Hashtbl.create 0;
+    diagnostics;
+    ret_sink = ref [];
+    modules = [];
+    current = [];
+    refs = ref [];
+    requires = ref [];
+    types = Hashtbl.create 0;
+    (* Resolution only: the pass predates any module's check, so no
+       internal boundary can be judged here. *)
+    type_owners = Hashtbl.create 0;
+    target = "c";
+  }
+
+(* Collects every unit's classes, interfaces, and enums into one name
+   set, in two phases: names first — so a signature can name a type
+   declared in any module, in any order — then the full infos, whose
+   members' type declarations now resolve program-wide. A name's second
+   declaration reports E4021 and stays unregistered; the first wins and
+   the program is rejected anyway. *)
+let preregister_types ~(units : (string list * Ast.item list) list) :
+    program_types * Emo_support.Diagnostic.t list =
+  let tables =
+    {
+      pclasses = Hashtbl.create 16;
+      pinterfaces = Hashtbl.create 16;
+      penums = Hashtbl.create 16;
+      popaths = Hashtbl.create 16;
+    }
+  in
+  let diagnostics = ref [] in
+  let owners : (string, string) Hashtbl.t = Hashtbl.create 16 in
+  let module_name path = String.concat "." path in
+  List.iter
+    (fun (path, items) ->
+      let here = module_name path in
+      List.iter
+        (fun item ->
+          let claim name span kind register =
+            match Hashtbl.find_opt owners name with
+            | Some first when not (String.equal first here) ->
+                diagnostics :=
+                  Emo_support.Diagnostic.
+                    {
+                      severity = Error;
+                      code = Some "E4021";
+                      message =
+                        Printf.sprintf
+                          "the %s name `%s` is declared by both module `%s` \
+                           and module `%s`; type names are program-wide, so \
+                           rename one of the declarations"
+                          kind name first here;
+                      span;
+                      hint = None;
+                    }
+                  :: !diagnostics
+            | Some _ -> ()
+            | None ->
+                Hashtbl.replace owners name here;
+                Hashtbl.replace tables.popaths name path;
+                register ()
+          in
+          match item.Ast.item_desc with
+          | Ast.Item_class c ->
+              claim c.Ast.class_name c.Ast.class_span "class" (fun () ->
+                  Hashtbl.replace tables.pclasses c.Ast.class_name
+                    {
+                      cname = c.Ast.class_name;
+                      cinit_params = None;
+                      cmethods = [];
+                      cfields = [];
+                    })
+          | Ast.Item_interface i ->
+              claim i.Ast.interface_name i.Ast.interface_span "interface"
+                (fun () ->
+                  Hashtbl.replace tables.pinterfaces i.Ast.interface_name [])
+          | Ast.Item_enum e ->
+              claim e.Ast.enum_name e.Ast.enum_span "enum" (fun () ->
+                  Hashtbl.replace tables.penums e.Ast.enum_name [])
+          | _ -> ())
+        items)
+    units;
+  (* Member type declarations resolve against the whole program; a name that
+     resolves nowhere re-reports in its owning module's own check, so
+     this pass keeps resolution diagnostics to itself — only the
+     collisions above flow out. *)
+  let ctx = preregister_ctx tables (ref []) in
+  List.iter
+    (fun (path, items) ->
+      let here = module_name path in
+      List.iter
+        (fun item ->
+          let owned name = Hashtbl.find_opt owners name = Some here in
+          match item.Ast.item_desc with
+          | Ast.Item_class c when owned c.Ast.class_name ->
+              Hashtbl.replace tables.pclasses c.Ast.class_name
+                (class_info_of ctx c)
+          | Ast.Item_interface i when owned i.Ast.interface_name ->
+              Hashtbl.replace tables.pinterfaces i.Ast.interface_name
+                (interface_sigs_of ctx i)
+          | Ast.Item_enum e when owned e.Ast.enum_name ->
+              Hashtbl.replace tables.penums e.Ast.enum_name
+                (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
+          | _ -> ())
+        items)
+    units;
+  (tables, List.rev !diagnostics)
+
 (* Checks one module's items with the project's module table: unbound names
    that address modules resolve silently, qualified references are recorded.
    Returns the diagnostics and the referenced module paths. *)
 (* The backend entry: checking that also hands back the span→type table —
    the completeness data specialization lowers from. *)
+(* [program] carries the pre-registered type tables (preregister_types):
+   the module's own declarations overwrite its entries, every other
+   module's declarations stay resolvable. *)
 let check_module_typed ~(modules : string list list) ~(current : string list)
-    ?(target = "c") (items : Ast.item list) :
+    ?(program : program_types option) ?(target = "c") (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list
@@ -2388,10 +2584,19 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
   let ctx =
     {
       file = String.concat "." current;
-      classes = Hashtbl.create 8;
-      interfaces = Hashtbl.create 8;
+      classes =
+        (match program with
+        | Some p -> Hashtbl.copy p.pclasses
+        | None -> Hashtbl.create 8);
+      interfaces =
+        (match program with
+        | Some p -> Hashtbl.copy p.pinterfaces
+        | None -> Hashtbl.create 8);
       groups = Hashtbl.create 8;
-      enums = Hashtbl.create 8;
+      enums =
+        (match program with
+        | Some p -> Hashtbl.copy p.penums
+        | None -> Hashtbl.create 8);
       funcs = Hashtbl.create 8;
       diagnostics = ref [];
       ret_sink = ref [];
@@ -2400,6 +2605,10 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
       refs = ref [];
       requires = ref [];
       types = Hashtbl.create 64;
+      type_owners =
+        (match program with
+        | Some p -> Hashtbl.copy p.popaths
+        | None -> Hashtbl.create 0);
       target;
     }
   in
@@ -2412,12 +2621,12 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
 
 (* The plain entry: same checking, types discarded. *)
 let check_module ~(modules : string list list) ~(current : string list)
-    (items : Ast.item list) :
+    ?(program : program_types option) (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list =
   let diagnostics, refs, requires, _types =
-    check_module_typed ~modules ~current items
+    check_module_typed ~modules ~current ?program items
   in
   (diagnostics, refs, requires)
 

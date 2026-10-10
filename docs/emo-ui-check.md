@@ -1,11 +1,11 @@
 # The emo-ui decision check
 
-Status: **decision open** (recorded 2026-10-10). This document is the
-gate checklist for turning the GUI spikes into a real Emo UI package —
-what is already settled, what the one blocking decision is, and what
-comes after it. Evidence lives in the three spikes
-(`spike/macos-gui`, `spike/gtk`, `spike/components`) and in the
-compiler fixes they drove.
+Status: the blocking decision is **settled** (2026-10-10; the rule is
+recorded in CHECK.md). This document is the gate checklist for turning
+the GUI spikes into a real Emo UI package — what is already settled,
+what the one blocking decision was and how it resolved, and what comes
+after it. Evidence lives in the three spikes (`spike/macos-gui`,
+`spike/gtk`, `spike/components`) and in the compiler fixes they drove.
 
 ## What the spikes settled
 
@@ -25,65 +25,55 @@ compiler fixes they drove.
    cross-module **calls** on the c target (an entry-module alias
    binding lowered its value side into garbage C).
 
-## The blocking decision: cross-module types
+## The blocking decision: cross-module types — settled
 
 The component model wants to be two modules — a UI library (`ui.emo`:
 VNode, cascade, layout, paint) and an application (`app.emo`:
 components, update, view). The call legs work since the fix above;
-the type legs do not. The split was attempted for real and died at
+the type legs did not. The split was attempted for real and died at
 check time:
 
 - `def view(count Int64) VNode` in the application module → **E4005
   ("unknown type `VNode`")**: the checker's classes/interfaces/enums
   tables are built per module (`check_module_typed`, emo_check.ml) and
-  nothing pre-registers another module's type declarations.
-- Dropping the annotation is no escape: unannotated defs infer Void,
-  and a def returning a value then reports **E4016**. The two errors
-  deadlock; the split reverted.
+  nothing pre-registers another module's declared types.
+- Dropping the type declaration is no escape: defs without one infer
+  Void, and a def returning a value then reports **E4016**. The two
+  errors deadlock; the split reverted.
 
-Today the only typed surface is inside one module. Registry packages
-(`xml`) live with the same rule: consumers hold package types as
-gradual (unchecked) values.
+### The decision: Option A — program-wide type pre-registration
 
-### Option A — program-wide type pre-registration
+**Settled (2026-10-10).** Every module's classes, interfaces, and
+enums register before any module is checked
+(`Emo_check.preregister_types`); names stay unqualified and are
+program-unique — a name's second declaration is a loud E4021 naming
+both modules, because the emitters key class tables and `is()` vtables
+by the bare name, so the uniqueness rule makes an existing emitter
+assumption checkable rather than adding a new one. The rule is
+recorded in CHECK.md.
 
-Collect every module's classes/interfaces/enums before checking any
-module; names stay unqualified.
+The split now checks and runs: `def view(count Int64) VNode` resolves
+across the boundary, `is()` narrows to the library's carriers, and
+method dispatch on the results produces identical output through the
+interpreter and the `c` target. Direct construction joined them the
+same day: `Point.new(...)` builds another module's class and bare enum
+members answer, identically through the interpreter, `c`, `ocaml`, and
+`typescript`. Package types resolve for their consumers too (the `xml`
+package's element accessors moved onto its interface, whose signatures
+now name `Xml` itself), and an interface signature may name its own
+interface inside a checked program.
 
-- Costs: a collection pass before the per-module checks, plus a
-  program-unique-name rule (two modules declaring `Widget` must be a
-  loud error — silent resolution would betray strictness).
-- Unlocks: clean annotations everywhere (`def view(count Int64)
-  VNode`), `is()` narrowing across modules, the smallest possible
-  surface for library authors and consumers.
-
-### Option B — module-qualified type names
-
-Annotations spell the module path (`def view(count Int64)
-ui.VNode`), resolved through the same alias machinery calls already
-use.
-
-- Costs: parser and type-name-resolver work, and the qualified name
-  must normalize to the module-mangled class name through the IR,
-  `is()` vtables, and both emitters — more layers than A.
-- Unlocks: collision-free composition (two packages may both define
-  `Widget`), explicit grep-able types at every use.
-
-### Recommendation (proposal — not settled)
-
-Option A first, with the loud collision error. It is the smaller
-change, matches the strictness-first posture, and unblocks the emo-ui
-package for any ecosystem whose type names are unique — which, at
-package scale today, they are. Option B can layer later if real
-collisions appear. Whichever is chosen, the rule should be settled in
-CHECK.md before the emo-ui package starts.
+Option B (module-qualified names, collision-free composition) can
+layer later if real collisions appear.
 
 ## After the decision: the emo-ui package checklist
 
 In dependency order, each gate with its evidence:
 
-1. **Cross-module types** — the decision above. Unlocks: the ui/app
-   split, shared component libraries, the package itself.
+1. **Cross-module types — landed (2026-10-10).** The decision above:
+   program-wide pre-registration is in the checker, the rule is in
+   CHECK.md, and the ui/app split is its regression test. Unlocked:
+   the ui/app split, shared component libraries, the package itself.
 2. **Memory reclamation** — the c target's bump allocator never frees
    (self-documented in `emo_c_runtime.c`); a minutes-long demo cannot
    measure a days-long app. The reclamation decision is already

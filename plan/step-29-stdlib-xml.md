@@ -5,9 +5,9 @@ json package — the tree design, the byte-scanner discipline, and the
 exact-buffer patterns this package follows) · **Related:**
 `stdlib/registry/{json,yaml}` (the sibling format packages),
 `docs/stdlib/xml.md` · **Status:** done on the interpreter, ocaml,
-typescript, and c targets (2026-10-09); wasm and beam are blocked on
-the same cross-module-types checker step that gates json and yaml
-(see step 27's follow-ups)
+typescript, and c targets (2026-10-09); the cross-module-types checker
+step landed (2026-10-10), and wasm and beam wait on their own
+capability walls
 
 ## Why this step exists
 
@@ -39,9 +39,10 @@ entities, and missing elements all raise with the byte offset.
 
 ## Follow-ups
 
-- The cross-module-types checker step (step 27's follow-up) gates
-  wasm and beam here as it gates json and yaml. (The c target works:
-  the xml_demo golden rides the c_goldens list.)
+- The cross-module-types checker step (step 27's follow-up) gated
+  wasm and beam here as it gated json and yaml. (The c target works:
+  the xml_demo golden rides the c_goldens list. The step landed
+  2026-10-10; wasm and beam now wait on their own capability walls.)
 
 ## Tasks
 

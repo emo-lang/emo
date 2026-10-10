@@ -53,7 +53,8 @@ semantics, not the spellings.
     not runtime — this step provides the process-exit signal a supervisor
     needs, nothing more.
 - **`Box`** — the per-process long-lived mutable state primitive:
-  `Box.new(v)` / `box.read()` / `box.replace(v)` (annotation `Box[Int]`),
+  `Box.new(v)` / `box.read()` / `box.replace(v)` (type declaration
+  `Box[Int]`),
   in place since M1 (step 05). Sending a Box to another process delivers
   a snapshot copy — mutability never crosses a process boundary; this is
   tested as an observable rule.

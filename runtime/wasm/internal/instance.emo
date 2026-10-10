@@ -7,21 +7,16 @@
 // and data segments, exports, and the start function.
 //
 // The walk is section-scoped: `find_section` locates a section's
-// content once, and each parser owns its bytes. Classes stay inside
-// this module — a qualified type annotation (`model.FuncType`) does not
-// parse, and a field is assignable only inside `init` — so nothing here
-// crosses a module edge except the verdict tuple and plain handles.
+// content once, and each parser owns its bytes. Type names resolve
+// program-wide (CHECK.md, cross-module types), so the model module's
+// `FuncType` is referenced bare — its type declarations and its
+// constructions alike; a field is still assignable only inside `init`,
+// and nothing here crosses a module edge except the verdict tuple and
+// plain handles.
 //
 // `load` validates first (`internal.decode.module_from`), so a caller
 // never sees an unvalidated module; the loaded modules live in a
 // registry and the surface hands back an index.
-
-class FuncType {
-  def init(params Array[Int64], results Array[Int64]) {
-    self.params = params
-    self.results = results
-  }
-}
 
 class Import {
   def init(module String, field String, kind Int64, type_idx Int64, reftype Int64, min Int64, max Int64, has_max Bool, mut Bool) {

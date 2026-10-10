@@ -77,7 +77,7 @@ let ir_tests =
         let f = find_func program "fib" in
         Alcotest.(check bool) "specialized" true f.Emo_ir.fspecializable;
         Alcotest.(check int) "param count" 1 (List.length f.Emo_ir.fparams));
-    tc "a fully annotated def specializes (Stage B completeness)" (fun () ->
+    tc "a fully type-declared def specializes (Stage B completeness)" (fun () ->
         let program = lower_program [ ([], typed_fib_source) ] ~entry:[] in
         let f = find_func program "fib" in
         Alcotest.(check bool) "specialized" true f.Emo_ir.fspecializable);
