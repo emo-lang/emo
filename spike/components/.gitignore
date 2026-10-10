@@ -1,0 +1,5 @@
+ui-app
+ui-app-gtk
+shim_mac.o
+shim_gtk.o
+ui-mac-small.png

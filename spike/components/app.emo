@@ -1,0 +1,285 @@
+// The component-model spike: ONE Emo source, two platforms.
+//
+// The Elm architecture lives entirely in this file — model, update,
+// view are pure functions, components are plain defs that return
+// VNodes, and nesting defs builds the tree. Styling is a Map per
+// node: a map has no element order, so declarations never depend on
+// each other; precedence comes only from the hierarchy — a child's
+// key overrides the parent's, everything else flows down (the CSS
+// cascade, nothing more).
+//
+// The only per-platform code is the shim behind the ui_* vocabulary:
+// shim_mac.m paints AppKit, shim_gtk.c paints GTK 4, both implement
+// the same contract. Layout is computed here (vertical column,
+// padding + gap) so both platforms place pixels identically.
+//
+//   ./build-mac.sh      macOS, AppKit under the hood
+//   ./build-gtk.sh      Linux container, GTK 4 under the hood
+//   EMO_GUI_AUTOTEST=1  self-driving: clicks +1, -1, +1, reports,
+//                       quits
+
+// ---- The neutral UI vocabulary: the whole portable ABI ----
+foreign def ui_window_make(title String, w Float64, h Float64) Int64 = "ui_window_make"
+foreign def ui_label_make(text String) Int64 = "ui_label_make"
+foreign def ui_button_make(text String) Int64 = "ui_button_make"
+foreign def ui_place(child Int64, x Float64, y Float64, w Float64, h Float64) Void = "ui_place"
+foreign def ui_clear() Void = "ui_clear"
+foreign def ui_connect(child Int64, tag Int64) Void = "ui_connect"
+foreign def ui_root() Int64 = "ui_root"
+foreign def ui_run() Void = "ui_run"
+foreign def ui_autotest_arm() Void = "ui_autotest_arm"
+
+// ---- VNode: the declarative tree one component returns to another ----
+// The recursive type follows the xml package's shape: the interface
+// carries the uniform accessors (it cannot name itself, so children
+// live on the concrete container), and `is()` narrows to the concrete
+// class where the structure is read.
+interface VNode {
+  def kind() String
+  def text() String
+  def tag() Int64
+  def style() Map[String, Float64]
+}
+
+class VControl {
+  def init(kind String, text String, tag Int64, style Map[String, Float64]) {
+    self.kind = kind
+    self.text = text
+    self.tag = tag
+    self.style = style
+  }
+
+  def kind() String {
+    return self.kind
+  }
+
+  def text() String {
+    return self.text
+  }
+
+  def tag() Int64 {
+    return self.tag
+  }
+
+  def style() Map[String, Float64] {
+    return self.style
+  }
+}
+
+class VColumn {
+  def init(style Map[String, Float64], children Array[VNode]) {
+    self.style = style
+    self.children = children
+  }
+
+  def kind() String {
+    return "column"
+  }
+
+  def text() String {
+    return ""
+  }
+
+  def tag() Int64 {
+    return 0
+  }
+
+  def style() Map[String, Float64] {
+    return self.style
+  }
+
+  def children() Array[VNode] {
+    return self.children
+  }
+}
+
+// ---- Component constructors: what a UI library's users call ----
+def label(text String) VNode {
+  return VControl.new(kind: "label", text: text, tag: 0,
+    style: Map.new())
+}
+
+def button(text String, tag Int64) VNode {
+  return VControl.new(kind: "button", text: text, tag: tag,
+    style: Map.new())
+}
+
+def column(style Map[String, Float64], children Array[VNode]) VNode {
+  return VColumn.new(style: style, children: children)
+}
+
+// ---- Components: plain defs, nesting defs builds the hierarchy ----
+
+// A reused leaf component: the counter's readout.
+def counter_label(count Int64) VNode {
+  return label("clicked ${count} time(s) — the button says: Click me")
+}
+
+// A reused composite component with its OWN spacing opinion: the
+// tighter gap proves a child overrides the inherited cascade.
+def action_panel() VNode {
+  return column(Map.new(("gap", 8.0)), [
+    button("Click me", 1),
+    button("Decrement", 2)
+  ])
+}
+
+// The root component: pure function of the model.
+def view(count Int64) VNode {
+  return column(Map.new(("gap", 28.0), ("padding", 24.0)), [
+    counter_label(count),
+    action_panel()
+  ])
+}
+
+// ---- The cascade: resolved = parent overlaid by child ----
+def copy_keys(src Map[String, Float64], ks Array[String], i Int64,
+              into Map[String, Float64]) Map[String, Float64] {
+  if i == ks.length() {
+    return into
+  }
+  into.set(ks[i], src.get(ks[i]))
+  return copy_keys(src, ks, i + 1, into)
+}
+
+// One number out of a style map, with the cascade's default.
+def style_num(style Map[String, Float64], key String,
+              fallback Float64) Float64 {
+  if style.has(key) {
+    return style.get(key)
+  }
+  return fallback
+}
+
+// ---- Layout: vertical column, positions computed here in Emo ----
+// Every backend places pixels from these commands; none of them lays
+// anything out.
+class Draw {
+  def init(kind String, text String, tag Int64,
+           x Float64, y Float64, w Float64, h Float64) {
+    self.kind = kind
+    self.text = text
+    self.tag = tag
+    self.x = x
+    self.y = y
+    self.w = w
+    self.h = h
+  }
+}
+
+// Layout's result: the commands so far plus the column's running
+// cursor, bundled because a def returns one value.
+class Laid {
+  def init(cmds Array[Draw], cursor Float64) {
+    self.cmds = cmds
+    self.cursor = cursor
+  }
+}
+
+def append_all(dst Array[Draw], src Array[Draw], i Int64) Array[Draw] {
+  if i == src.length() {
+    return dst
+  }
+  return append_all(dst.append(src[i]), src, i + 1)
+}
+
+def default_height(kind String) Float64 {
+  if kind == "button" {
+    return 32.0
+  }
+  return 24.0
+}
+
+// Depth-first walk: children of a column stack downward inside the
+// padding; leaves become Draw commands.
+def layout_node(node VNode, inherited Map[String, Float64],
+                x Float64, y Float64, width Float64,
+                cmds Array[Draw]) Laid {
+  const style = copy_keys(node.style(), node.style().keys(), 0,
+    copy_keys(inherited, inherited.keys(), 0, Map.new()))
+  const pad = style_num(style, "padding", 0.0)
+  const gap = style_num(style, "gap", 12.0)
+
+  if node.is(VColumn) {
+    const kids = node.children()
+    const inner = width - pad * 2.0
+    if kids.length() == 0 {
+      return Laid.new(cmds: cmds, cursor: y + pad)
+    }
+    return layout_step(kids, style, x + pad, inner, y + pad, 0, gap, cmds)
+  }
+
+  const h = style_num(style, "height", default_height(node.kind()))
+  var w = width
+  if node.kind() == "button" {
+    w = style_num(style, "width", 160.0)
+  }
+  return Laid.new(
+    cmds: cmds.append(
+      Draw.new(kind: node.kind(), text: node.text(), tag: node.tag(),
+        x: x, y: y, w: w, h: h)),
+    cursor: y + h)
+}
+
+// The recursion that spaces a column's children by the gap.
+def layout_step(kids Array[VNode], style Map[String, Float64],
+                x Float64, inner Float64, cursor Float64, i Int64,
+                gap Float64, cmds Array[Draw]) Laid {
+  if i == kids.length() {
+    return Laid.new(cmds: cmds, cursor: cursor)
+  }
+  const r = layout_node(kids[i], style, x, cursor, inner, cmds)
+  return layout_step(kids, style, x, inner, r.cursor + gap, i + 1, gap,
+    r.cmds)
+}
+
+def paint_all(ds Array[Draw], i Int64) {
+  if ds.length() > i {
+    const d = ds[i]
+    if d.kind == "button" {
+      const w = ui_button_make(d.text)
+      ui_place(w, d.x, d.y, d.w, d.h)
+      if d.tag > 0 {
+        ui_connect(w, d.tag)
+      }
+    } else {
+      const w = ui_label_make(d.text)
+      ui_place(w, d.x, d.y, d.w, d.h)
+    }
+    paint_all(ds, i + 1)
+  }
+}
+
+// Full rebuild per event — view is a pure function, so paint is just
+// its projection. No reconciliation; that is a later milestone.
+def paint(view_root VNode, width Float64) {
+  const r = layout_node(view_root, Map.new(), 0.0, 0.0, width, [])
+  ui_clear()
+  paint_all(r.cmds, 0)
+}
+
+// ---- The Elm loop: update is pure, view is pure, C only fires ----
+
+def update(tag Int64, count Int64) Int64 {
+  if tag == 1 {
+    return count + 1
+  }
+  if tag == 2 {
+    return count - 1
+  }
+  return count
+}
+
+// The shim's entry: an event arrives with the model scalar it kept,
+// the new model comes back for it to keep.
+def on_event(tag Int64, count Int64) Int64 {
+  const next = update(tag, count)
+  paint(view(next), 480.0)
+  return next
+}
+
+// ---- Assembly ----
+ui_window_make("My Language UI", 480.0, 280.0)
+paint(view(0), 480.0)
+ui_autotest_arm()
+ui_run()
