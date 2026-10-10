@@ -129,6 +129,7 @@ let rec ann_to_type ?(lenient = false) ctx
   | Ast.Named_type "Block" -> Unknown
   | Ast.Named_type "Box" -> BoxType Unknown
   | Ast.Named_type "List" -> ListType Unknown
+  | Ast.Named_type "Map" -> MapType (Unknown, Unknown)
   | Ast.Named_type name ->
       if Hashtbl.mem ctx.classes name then ClassType name
       else if Hashtbl.mem ctx.interfaces name then InterfaceType name
@@ -1226,6 +1227,43 @@ and check_method_call ctx env span recv mname args : t =
           ListType Unknown)
   else if
     match (recv.Ast.desc, mname) with
+    | Ast.Type_ident "Exception", "new" -> true
+    | _ -> false
+  then (
+    (* The shipped exception class takes a message and an optional data
+       argument. The message is a String; the data is any Map, stored on
+       the instance and read back through `e.data`. Named arguments must
+       keep message-first order: the runtime binds the pair positionally. *)
+    let arg_values =
+      List.map
+        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+        args
+    in
+    let message_ok = function String | Unknown -> true | _ -> false in
+    let data_ok = function MapType _ | Unknown -> true | _ -> false in
+    let check_arg label ok v =
+      if not (ok v) then
+        report ctx span "E4004"
+          (Printf.sprintf "`Exception.new` expects %s, got %s" label
+             (to_string v))
+    in
+    match arg_values with
+    | [ (Some "message", mt) ] | [ (None, mt) ] ->
+        check_arg "`message` to be a String" message_ok mt;
+        ClassType "Exception"
+    | [ (Some "message", mt); (Some "data", dt) ]
+    | [ (Some "message", mt); (None, dt) ]
+    | [ (None, mt); (Some "data", dt) ]
+    | [ (None, mt); (None, dt) ] ->
+        check_arg "`message` to be a String" message_ok mt;
+        check_arg "`data` to be a Map" data_ok dt;
+        ClassType "Exception"
+    | _ ->
+        report ctx span "E4009"
+          "`Exception.new` expects `message` and an optional `data` Map";
+        ClassType "Exception")
+  else if
+    match (recv.Ast.desc, mname) with
     | Ast.Type_ident "Map", "new" -> true
     | _ -> false
   then (
@@ -1290,12 +1328,6 @@ and check_method_call ctx env span recv mname args : t =
         result)
     in
     match (base, mname) with
-    | ClassType c, "new" when String.equal c "Exception" -> (
-        match arg_values with
-        | [ (Some "message", _) ] | [ (None, _) ] -> ClassType "Exception"
-        | _ ->
-            report ctx span "E4009" "`Exception.new` expects `message`";
-            ClassType "Exception")
     | ClassType c, "new" -> (
         match Hashtbl.find_opt ctx.classes c with
         | Some info -> (

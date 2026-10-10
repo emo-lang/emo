@@ -324,7 +324,11 @@ let exception_new (message : Emo_eval.value) : Emo_eval.value =
     }
   in
   Emo_eval.Instance
-    { iclass = exception_class; ifields = [ ("message", message) ] }
+    {
+      iclass = exception_class;
+      ifields =
+        [ ("message", message); ("data", Emo_eval.Map (Emo_eval.fresh_map ())) ];
+    }
 
 let box_new v = Emo_eval.Box (ref v)
 

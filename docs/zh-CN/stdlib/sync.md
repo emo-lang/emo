@@ -80,10 +80,10 @@ wait 之后 stop 掉组。
 
 ## 错误
 
-- `sync.wait_group: the count must not be negative, got -2` ——
+- `sync: the count must not be negative, got -2` ——
   `wait_group` 的计数为负;
-- `sync.done: the countdown already drained` ——超出计数的 `done`;
-- `sync.wait: the wait group was stopped under the wait` ——`stop`
+- `sync: the countdown already drained` ——超出计数的 `done`;
+- `sync: the wait group was stopped under the wait` ——`stop`
   落下时仍泊着的 `wait`。
 
 ## 协议

@@ -19,10 +19,15 @@ host.
 Two conventions hold across every package:
 
 - **Errors are exceptions.** Every failing call raises an ordinary
-  Emo exception whose message states exactly what failed —
-  `json: expected array element at byte 3`,
-  `os: open_write notes.txt: Permission denied` — no error codes, no
-  nil. End of stream is not an error: the empty string ends a stream.
+  Emo exception whose message states exactly what failed — no error
+  codes, no nil. The message always begins with the name of the
+  package that raises it and a colon — `json: expected array element
+  at byte 3`, `os: open_write notes.txt: Permission denied` — so an
+  uncaught exception names its source (`file` errors surface as `os:`
+  because the shared os runtime performs the syscall); structured
+  context (offsets, paths, URLs) goes into the exception's optional
+  `data` Map rather than being concatenated into the message. End of
+  stream is not an error: the empty string ends a stream.
 - **Pure Emo where the language suffices.** The format packages and
   the codec are written in Emo over the shared runtimes, so every
   target they declare answers byte-for-byte identically. Only `os`

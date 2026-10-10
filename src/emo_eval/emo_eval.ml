@@ -1053,7 +1053,8 @@ let net_raise span message =
               cmethods = [];
               builtin_exception = true;
             };
-          ifields = [ ("message", String message) ];
+          ifields =
+            [ ("message", String message); ("data", Map (fresh_map ())) ];
         },
       span,
       !call_trace )
@@ -1387,10 +1388,24 @@ and eval_method env span recv mname arg_exprs =
               | Tail_call _ -> ());
               instance
           | None when c.builtin_exception -> (
+              let empty_data = Map (fresh_map ()) in
               match args with
               | [ (Some "message", v) ] | [ (None, v) ] ->
-                  Instance { iclass = c; ifields = [ ("message", v) ] }
-              | _ -> error span "E3007" "`Exception.new` expects `message`")
+                  Instance
+                    {
+                      iclass = c;
+                      ifields = [ ("message", v); ("data", empty_data) ];
+                    }
+              | [ (Some "message", mv); (Some "data", dv) ]
+              | [ (Some "message", mv); (None, dv) ]
+              | [ (None, mv); (Some "data", dv) ]
+              | [ (None, mv); (None, dv) ] ->
+                  Instance
+                    { iclass = c; ifields = [ ("message", mv); ("data", dv) ] }
+              | _ ->
+                  error span "E3007"
+                    "`Exception.new` expects `message` and an optional `data` \
+                     Map")
           | None ->
               if List.length args > 0 then
                 error span "E3007"
