@@ -1,0 +1,865 @@
+// Exact IEEE binary64 <-> decimal conversion for the json package.
+//
+// Both directions run on plain Int64 arithmetic so every target answers
+// identically — no host formatting primitive is involved. Decode rounds
+// the decimal literal once, to nearest with ties to even, the same
+// answer strtod gives. Encode prints the shortest decimal that reads
+// back to the same bits.
+//
+// Two number layouts appear here. The encode direction keeps decimal
+// digit buffers: one ASCII digit byte per digit, most significant
+// first. The decode direction keeps binary limbs: base 2^8, one byte
+// per limb inside a Bytes, least significant limb first. Every helper
+// is a pure tail recursion — no reassignment — so the specialized
+// backends take the package whole.
+
+// ---- decimal digit buffers (encode direction) ----
+
+// The largest power of ten not exceeding m (m > 0).
+def digit_divisor(m Int64) Int64 {
+  if m < 10 {
+    return 1
+  }
+  return 10 * digit_divisor(m / 10)
+}
+
+// Writes the decimal digits of m (m > 0) into buf starting at start;
+// div is digit_divisor(m). Returns the position past the last digit.
+def write_digits(m Int64, div Int64, buf Bytes, start Int64) Int64 {
+  const digit = (m / div) % 10
+  buf.set(start, 48 + digit)
+  if div == 1 {
+    return start + 1
+  }
+  return write_digits(m, div / 10, buf, start + 1)
+}
+
+// One multiply pass over digits buf[0..n) by factor (2 or 5); returns
+// the carry into a new most-significant digit.
+def mul_carry(buf Bytes, i Int64, n Int64, factor Int64) Int64 {
+  if i >= n {
+    return 0
+  }
+  const v = (buf.get(i) - 48) * factor + mul_carry(buf, i + 1, n, factor)
+  buf.set(i, 48 + (v % 10))
+  return v / 10
+}
+
+// Shifts digits buf[i..n) one position up, to buf[i+1..n+1). The
+// recursion bottoms out first so each source digit is read before the
+// position below it is overwritten.
+def shift_up(buf Bytes, i Int64, n Int64) {
+  if i < n {
+    shift_up(buf, i + 1, n)
+    buf.set(i + 1, buf.get(i))
+  }
+}
+
+// Multiplies digits buf[0..n) in place by factor (2 or 5); returns the
+// new digit count.
+def mul_digits(buf Bytes, n Int64, factor Int64) Int64 {
+  const carry = mul_carry(buf, 0, n, factor)
+  if carry == 0 {
+    return n
+  }
+  shift_up(buf, 0, n)
+  buf.set(0, 48 + carry)
+  return n + 1
+}
+
+// Drops trailing zero digits; a nonzero buffer keeps its last digit.
+def trim_zeros(buf Bytes, n Int64) Int64 {
+  if n > 1 {
+    if buf.get(n - 1) == 48 {
+      return trim_zeros(buf, n - 1)
+    }
+  }
+  return n
+}
+
+def double_times(buf Bytes, n Int64, times Int64) Int64 {
+  if times == 0 {
+    return n
+  }
+  return double_times(buf, mul_digits(buf, n, 2), times - 1)
+}
+
+def five_times(buf Bytes, n Int64, times Int64) Int64 {
+  if times == 0 {
+    return n
+  }
+  return five_times(buf, mul_digits(buf, n, 5), times - 1)
+}
+
+// The exact decimal expansion of m x 2^e2 (m > 0, m < 2^53): writes
+// digits into buf (capacity 800) and returns (count, E) with
+// value = 0.digits x 10^E exactly. For a non-negative e2 the product
+// is the integer now sitting in buf, so E is its full digit count; for
+// a negative one the product absorbed 5^(-e2) and the power of ten
+// shifts the point: E = full + e2.
+def expand(m Int64, e2 Int64, buf Bytes) (Int64, Int64) {
+  if e2 >= 0 {
+    const n = double_times(buf, write_digits(m, digit_divisor(m), buf, 0), e2)
+    return (trim_zeros(buf, n), n)
+  }
+  const full = five_times(buf, write_digits(m, digit_divisor(m), buf, 0), -e2)
+  const n = trim_zeros(buf, full)
+  return (n, full + e2)
+}
+
+// ---- rounding a candidate and shaping JSON text ----
+
+def lesser(a Int64, b Int64) Int64 {
+  if a < b {
+    return a
+  }
+  return b
+}
+
+def copy_digits(src Bytes, dst Bytes, i Int64, n Int64) {
+  if i < n {
+    dst.set(i, src.get(i))
+    copy_digits(src, dst, i + 1, n)
+  }
+}
+
+def pad_zeros(buf Bytes, at Int64, until Int64) {
+  if at < until {
+    buf.set(at, 48)
+    pad_zeros(buf, at + 1, until)
+  }
+}
+
+// Adds one to digits buf[0..i); returns true when the carry runs past
+// the top digit.
+def add_one(buf Bytes, i Int64) Bool {
+  if i == 0 {
+    return true
+  }
+  const last = buf.get(i - 1)
+  if last == 57 {
+    buf.set(i - 1, 48)
+    return add_one(buf, i - 1)
+  }
+  buf.set(i - 1, last + 1)
+  return false
+}
+
+// Whether digit d+1 of the expansion asks for a round-up.
+def needs_round_up(n Int64, d Int64, buf Bytes) Bool {
+  if n > d {
+    if buf.get(d) >= 53 {
+      return true
+    }
+  }
+  return false
+}
+
+// Copies buf[0..n) rounded to d significant digits into out; returns
+// (count, E) where 0.out x 10^E is the rounded value.
+def rounded(n Int64, e10 Int64, d Int64, buf Bytes, out Bytes) (Int64, Int64) {
+  const take = lesser(n, d)
+  copy_digits(buf, out, 0, take)
+  pad_zeros(out, take, d)
+  if needs_round_up(n, d, buf) {
+    if add_one(out, d) {
+      // 999.. rolled over to 1000..: shift, keep d digits, bump E
+      shift_up(out, 0, d)
+      out.set(0, 49)
+      return (trim_zeros(out, d), e10 + 1)
+    }
+  }
+  return (trim_zeros(out, d), e10)
+}
+
+def put_byte(dst Bytes, w Int64, b Int64) Int64 {
+  dst.set(w, b)
+  return w + 1
+}
+
+def put_repeat(dst Bytes, w Int64, b Int64, count Int64) Int64 {
+  if count <= 0 {
+    return w
+  }
+  dst.set(w, b)
+  return put_repeat(dst, w + 1, b, count - 1)
+}
+
+def put_digits(dst Bytes, w Int64, src Bytes, i Int64, n Int64) Int64 {
+  if i >= n {
+    return w
+  }
+  dst.set(w, src.get(i))
+  return put_digits(dst, w + 1, src, i + 1, n)
+}
+
+// Writes the decimal digits of v (v >= 0), unpadded.
+def put_u64(dst Bytes, w Int64, v Int64) Int64 {
+  const scratch = Bytes.new(20)
+  const n = write_digits(v, digit_divisor(v), scratch, 0)
+  return put_digits(dst, w, scratch, 0, n)
+}
+
+// The digit count of v (v >= 0).
+def decimal_len(v Int64) Int64 {
+  if v < 10 {
+    return 1
+  }
+  return 1 + decimal_len(v / 10)
+}
+
+def absolute(v Int64) Int64 {
+  if v < 0 {
+    return -v
+  }
+  return v
+}
+
+// The digits after the leading one; a lone digit writes 0.
+def put_fraction(out Bytes, w Int64, buf Bytes, n Int64) Int64 {
+  if n == 1 {
+    return put_byte(out, w, 48)
+  }
+  return put_digits(out, w, buf, 1, n)
+}
+
+// The `e`-suffix and its signed exponent.
+def put_signed_exponent(out Bytes, w Int64, exp Int64) Int64 {
+  if exp < 0 {
+    const w1 = put_byte(out, w, 45)
+    return put_u64(out, w1, -exp)
+  }
+  const w1 = put_byte(out, w, 43)
+  return put_u64(out, w1, exp)
+}
+
+// The exact character count of the shaped number, so the buffer is
+// allocated once and `to_string` needs no trimming.
+def number_text_len(neg Bool, n Int64, e10 Int64) Int64 {
+  if e10 < -4 || e10 > 16 {
+    // d + . + frac + e + exponent sign + digits (the leading sign is
+    // added by the caller)
+    const base = 4 + put_fraction_len(n) + decimal_len(absolute(e10 - 1))
+    if neg {
+      return base + 1
+    }
+    return base
+  }
+  if e10 >= n {
+    // sign? + digits + zeros + ".0"
+    const base = n + (e10 - n) + 2
+    if neg {
+      return base + 1
+    }
+    return base
+  }
+  if e10 > 0 {
+    // sign? + digits + "."
+    if neg {
+      return n + 2
+    }
+    return n + 1
+  }
+  // sign? + "0." + zeros + digits
+  const base = 2 + (-e10) + n
+  if neg {
+    return base + 1
+  }
+  return base
+}
+
+def put_fraction_len(n Int64) Int64 {
+  if n == 1 {
+    return 1
+  }
+  return n - 1
+}
+
+// Shapes digits buf[0..n) with exponent e10 (value = 0.digits x 10^E)
+// into JSON number text. A float always stays visibly a float: the
+// fixed form carries a fractional part, the exponent form carries an
+// exponent.
+def format_digits(neg Bool, buf Bytes, n Int64, e10 Int64) String {
+  const out = Bytes.new(number_text_len(neg, n, e10))
+  if neg {
+    const w = put_byte(out, 0, 45)
+    shape_number(out, w, buf, n, e10)
+    return out.to_string()
+  }
+  shape_number(out, 0, buf, n, e10)
+  return out.to_string()
+}
+
+def shape_number(out Bytes, w0 Int64, buf Bytes, n Int64, e10 Int64) {
+  if e10 < -4 || e10 > 16 {
+    // exponent form: d.rest e+XX  (value = d.rest x 10^(E-1))
+    const w1 = put_byte(out, w0, buf.get(0))
+    const w2 = put_byte(out, w1, 46)
+    const w3 = put_fraction(out, w2, buf, n)
+    const w4 = put_byte(out, w3, 101)
+    put_signed_exponent(out, w4, e10 - 1)
+  } else {
+    if e10 >= n {
+      // integer-valued: digits, zeros, ".0"
+      const w1 = put_digits(out, w0, buf, 0, n)
+      const w2 = put_repeat(out, w1, 48, e10 - n)
+      const w3 = put_byte(out, w2, 46)
+      put_byte(out, w3, 48)
+    } else {
+      if e10 > 0 {
+        // digits before and after the point
+        const w1 = put_digits(out, w0, buf, 0, e10)
+        const w2 = put_byte(out, w1, 46)
+        put_digits(out, w2, buf, e10, n)
+      } else {
+        // 0.000digits
+        const w1 = put_byte(out, w0, 48)
+        const w2 = put_byte(out, w1, 46)
+        const w3 = put_repeat(out, w2, 48, -e10)
+        put_digits(out, w3, buf, 0, n)
+      }
+    }
+  }
+}
+
+// ---- public: encode ----
+
+def finite(x Float64) Bool {
+  const eb = (x.to_bits() >> 52) & 2047
+  return eb != 2047
+}
+
+def zero_bits(neg Bool) Int64 {
+  if neg {
+    // the sign bit alone: ~max = min
+    return ~9223372036854775807
+  }
+  return 0
+}
+
+// The significand with the implicit bit restored (a zero exponent
+// denormal keeps its raw fraction).
+def expanded_significand(m0 Int64, eb Int64) Int64 {
+  if eb == 0 {
+    return m0
+  }
+  return m0 + 4503599627370496
+}
+
+def significand_e2(eb Int64) Int64 {
+  if eb == 0 {
+    return -1074
+  }
+  return eb - 1075
+}
+
+// The shortest decimal text that reads back to exactly x. Raises on a
+// non-finite value — JSON has no spelling for one.
+def to_text(x Float64) String {
+  const bits = x.to_bits()
+  const eb = (bits >> 52) & 2047
+  if eb == 2047 {
+    raise Exception.new(message: "json: cannot encode a non-finite number")
+  }
+  const neg = bits < 0
+  const m0 = bits & 4503599627370495
+  if eb == 0 {
+    if m0 == 0 {
+      // a zero exponent and an empty fraction is the one true zero —
+      // powers of two have empty fractions but live in the normal range
+      if neg {
+        return "-0.0"
+      }
+      return "0.0"
+    }
+  }
+  const buf = Bytes.new(800)
+  const parts = expand(expanded_significand(m0, eb), significand_e2(eb), buf)
+  const cand = Bytes.new(24)
+  return search_shortest(buf, parts[0], parts[1], neg, bits, cand, 1)
+}
+
+// Tries increasing significant-digit counts until a candidate reads
+// back to the same bits; 17 digits always do.
+def search_shortest(buf Bytes, n Int64, e10 Int64, neg Bool, bits Int64, cand Bytes, d Int64) String {
+  const r = rounded(n, e10, d, buf, cand)
+  if parse_exact(neg, cand, r[0], r[1]) == bits {
+    return format_digits(neg, cand, r[0], r[1])
+  }
+  return search_shortest(buf, n, e10, neg, bits, cand, d + 1)
+}
+
+// ---- base-2^8 limbs (decode direction) ----
+
+def write_u64(limbs Bytes, m Int64, i Int64) {
+  if i < 8 {
+    limbs.set(i, (m >> (8 * i)) & 255)
+    write_u64(limbs, m, i + 1)
+  }
+}
+
+// Writes m (m > 0) as little-endian base-256 limbs; returns the count.
+def set_u64(limbs Bytes, m Int64) Int64 {
+  write_u64(limbs, m, 0)
+  return count_limbs(limbs, 8)
+}
+
+// The index of the highest nonzero limb, plus one; at least 1.
+def count_limbs(limbs Bytes, i Int64) Int64 {
+  if i <= 1 {
+    return 1
+  }
+  if limbs.get(i - 1) != 0 {
+    return i
+  }
+  return count_limbs(limbs, i - 1)
+}
+
+// Limbs are little-endian, so the multiply walks up from limb zero
+// carrying into the next limb.
+def mul5_range(limbs Bytes, i Int64, nl Int64, carry Int64) Int64 {
+  if i >= nl {
+    return carry
+  }
+  const v = limbs.get(i) * 5 + carry
+  limbs.set(i, v % 256)
+  return mul5_range(limbs, i + 1, nl, v / 256)
+}
+
+def mul5_once(limbs Bytes, nl Int64) Int64 {
+  const c = mul5_range(limbs, 0, nl, 0)
+  if c == 0 {
+    return nl
+  }
+  limbs.set(nl, c)
+  return nl + 1
+}
+
+def mul5_times(limbs Bytes, nl Int64, times Int64) Int64 {
+  if times == 0 {
+    return nl
+  }
+  return mul5_times(limbs, mul5_once(limbs, nl), times - 1)
+}
+
+// Bit length of a value in 1..255.
+def bits8(v Int64) Int64 {
+  if v <= 1 {
+    return 1
+  }
+  return 1 + bits8(v / 2)
+}
+
+def bits64(v Int64) Int64 {
+  if v <= 1 {
+    return 1
+  }
+  return 1 + bits64(v / 2)
+}
+
+// Bit length of the limb array (top limb nonzero).
+def bit_len8(limbs Bytes, nl Int64) Int64 {
+  return 8 * (nl - 1) + bits8(limbs.get(nl - 1))
+}
+
+// MSB-first collection of `need` bits starting at limb t, whose
+// top_bits (1..8) are significant.
+def collect(limbs Bytes, t Int64, top_bits Int64, need Int64, acc Int64) Int64 {
+  if need <= 0 || t < 0 {
+    return acc
+  }
+  const take = lesser(need, top_bits)
+  const limb = limbs.get(t)
+  return collect(limbs, t - 1, 8, need - take, (acc << take) | (limb >> (top_bits - take)))
+}
+
+def any_below(limbs Bytes, i Int64) Bool {
+  if i < 0 {
+    return false
+  }
+  if limbs.get(i) != 0 {
+    return true
+  }
+  return any_below(limbs, i - 1)
+}
+
+// Whether the `lo` low bits of limb bl are set.
+def cut_low_bits(limbs Bytes, bl Int64, lo Int64) Bool {
+  if lo > 0 {
+    const mask = (1 << lo) - 1
+    if (limbs.get(bl) & mask) != 0 {
+      return true
+    }
+  }
+  return false
+}
+
+// The top 54 bits of the limb array (bit length nbits) as h in
+// [2^53, 2^54), plus whether any bit below the cut is set.
+def window54(limbs Bytes, nl Int64, nbits Int64) (Int64, Bool) {
+  if nbits <= 54 {
+    const top_limb = (nbits - 1) / 8
+    const v = collect(limbs, nl - 1, nbits - 8 * top_limb, 54, 0)
+    return (v << (54 - nbits), false)
+  }
+  const cut = nbits - 54
+  const top_limb = (nbits - 1) / 8
+  const top_bits = nbits - 8 * top_limb
+  const h = collect(limbs, top_limb, top_bits, 54, 0)
+  const bl = cut / 8
+  const lo = cut % 8
+  return (h, cut_low_bits(limbs, bl, lo) || any_below(limbs, bl - 1))
+}
+
+// ---- shared tail: round 54 bits into a double's bit pattern ----
+
+def bits_with(neg Bool, field Int64, mant Int64) Int64 {
+  if neg {
+    return (field | mant) | ~9223372036854775807
+  }
+  return field | mant
+}
+
+// The guard-and-sticky round of the 53-bit candidate.
+def round_to_even(guard Int64, sticky Bool, stored Int64) Int64 {
+  if guard == 1 {
+    if sticky || (stored & 1) == 1 {
+      return stored + 1
+    }
+  }
+  return stored
+}
+
+// Whether the bits of h below position jd are set.
+def low_bits_set(h Int64, jd Int64) Bool {
+  if jd > 0 {
+    const mask = (1 << jd) - 1
+    return (h & mask) != 0
+  }
+  return false
+}
+
+// The denormal re-cut at the 2^-1074 grid, single rounding.
+def assemble_denormal(neg Bool, h Int64, sticky Bool, e Int64) Int64 {
+  const jd = -(e + 1074)
+  if jd >= 55 {
+    return bits_with(neg, 0, 0)
+  }
+  const mg = h >> jd
+  const mant = round_to_even(mg & 1, sticky || low_bits_set(h, jd), mg >> 1)
+  if mant == 4503599627370496 {
+    // rounded up to the smallest normal
+    return bits_with(neg, 4503599627370496, 0)
+  }
+  return bits_with(neg, 0, mant)
+}
+
+// The normal-range tail: overflow lands on the infinity pattern —
+// callers that verify candidates read it as a miss, and the decoder
+// turns it into the out-of-range error.
+def assemble_normal(neg Bool, stored Int64, e Int64, h Int64, sticky Bool) Int64 {
+  if e + 52 > 1023 {
+    return 9218868437227405312
+  }
+  if e + 52 >= -1022 {
+    return bits_with(neg, (e + 1075) << 52, stored - 4503599627370496)
+  }
+  return assemble_denormal(neg, h, sticky, e)
+}
+
+// Rounds h (54 bits, [2^53, 2^54)), its guard bit, and the sticky
+// knowledge into a double's bit pattern; value ~ h x 2^(e2 - 1). Ties
+// go to even.
+def assemble(neg Bool, h Int64, guard Int64, sticky Bool, e2 Int64) Int64 {
+  const first = round_to_even(guard, sticky, h >> 1)
+  if first == 9007199254740992 {
+    // the round-up carried into a new power of two
+    return assemble_normal(neg, 4503599627370496, e2 + 1, h, sticky)
+  }
+  return assemble_normal(neg, first, e2, h, sticky)
+}
+
+// ---- long division, base 2^8 (the f < 0 decode path) ----
+
+def part_at(parts Array[Int64], i Int64) Int64 {
+  if i < 0 || i > 7 {
+    return 0
+  }
+  return parts[i]
+}
+
+// Writes m << t as little-endian limbs; returns the limb count.
+def set_shifted(dst Bytes, m Int64, t Int64) Int64 {
+  const parts = [m & 255, (m >> 8) & 255, (m >> 16) & 255, (m >> 24) & 255, (m >> 32) & 255, (m >> 40) & 255, (m >> 48) & 255, (m >> 56) & 255]
+  const limbshift = t / 8
+  const bitshift = t % 8
+  fill_shifted(dst, parts, 0, limbshift, bitshift, limbshift + 9)
+  return count_limbs(dst, limbshift + 9)
+}
+
+def fill_shifted(dst Bytes, parts Array[Int64], i Int64, limbshift Int64, bitshift Int64, total Int64) {
+  if i < total {
+    const cur = part_at(parts, i - limbshift)
+    const prev = part_at(parts, i - limbshift - 1)
+    const combined = (cur << bitshift) | (prev >> (8 - bitshift))
+    dst.set(i, combined % 256)
+    fill_shifted(dst, parts, i + 1, limbshift, bitshift, total)
+  }
+}
+
+// The byte shl_into writes at position i.
+def shl_byte(src Bytes, i Int64, sh Int64) Int64 {
+  if i > 0 {
+    const low = (src.get(i) << sh) % 256
+    return low | (src.get(i - 1) >> (8 - sh))
+  }
+  return (src.get(i) << sh) % 256
+}
+
+// Shifts src[0..n) left by sh (0..7) bits into dst, which needs one
+// limb of headroom; returns the shifted limb count.
+def shl_into(src Bytes, dst Bytes, i Int64, n Int64, sh Int64) Int64 {
+  if i < n {
+    dst.set(i, shl_byte(src, i, sh))
+    const rest = shl_into(src, dst, i + 1, n, sh)
+    if rest > i + 1 {
+      return rest
+    }
+    if i + 1 == n {
+      const top = src.get(n - 1) >> (8 - sh)
+      if top != 0 {
+        dst.set(n, top)
+        return n + 1
+      }
+    }
+    return i + 1
+  }
+  return 0
+}
+
+// The byte shr_range writes at position i.
+def shr_byte(dst Bytes, i Int64, n Int64, sh Int64) Int64 {
+  const v = dst.get(i) >> sh
+  if i + 1 < n {
+    const high = (dst.get(i + 1) << (8 - sh)) % 256
+    return v | high
+  }
+  return v
+}
+
+// Shifts dst[0..n) right by sh (0..7) bits in place.
+def shr_range(dst Bytes, i Int64, n Int64, sh Int64) {
+  if i < n {
+    dst.set(i, shr_byte(dst, i, n, sh))
+    shr_range(dst, i + 1, n, sh)
+  }
+}
+
+// qhat correction: at most two steps.
+def q_correct(u Bytes, v Bytes, j Int64, dl Int64, qhat Int64, rhat Int64) Int64 {
+  if rhat >= 256 {
+    return qhat
+  }
+  const prod = qhat * v.get(dl - 2)
+  const test = rhat * 256 + u.get(j + dl - 2)
+  if prod > test {
+    return q_correct(u, v, j, dl, qhat - 1, rhat + v.get(dl - 1))
+  }
+  return qhat
+}
+
+def q_corrected(u Bytes, v Bytes, j Int64, dl Int64, qhat Int64, rhat Int64) Int64 {
+  if dl > 1 {
+    return q_correct(u, v, j, dl, qhat, rhat)
+  }
+  return qhat
+}
+
+def q_estimate(u Bytes, v Bytes, j Int64, dl Int64) Int64 {
+  const top = v.get(dl - 1)
+  const num = u.get(j + dl) * 256 + u.get(j + dl - 1)
+  const qhat = num / top
+  if qhat > 255 {
+    return q_corrected(u, v, j, dl, 255, num - 255 * top)
+  }
+  return q_corrected(u, v, j, dl, qhat, num - qhat * top)
+}
+
+// Adds V back into U at offset j after an overshooting qhat.
+def add_back_range(u Bytes, v Bytes, j Int64, dl Int64, i Int64, carry Int64) {
+  if i < dl {
+    const sum = u.get(j + i) + v.get(i) + carry
+    u.set(j + i, sum % 256)
+    add_back_range(u, v, j, dl, i + 1, sum / 256)
+  }
+}
+
+def add_back(u Bytes, v Bytes, j Int64, dl Int64) {
+  add_back_range(u, v, j, dl, 0, 0)
+  u.set(j + dl, 0)
+}
+
+// Subtracts qhat x V from U at offset j; returns 1 when qhat was one
+// too large (V has been added back).
+def mul_sub(u Bytes, v Bytes, j Int64, dl Int64, qhat Int64, i Int64, carry Int64) Int64 {
+  if i == dl {
+    const top = u.get(j + dl) - carry
+    if top < 0 {
+      add_back(u, v, j, dl)
+      return 1
+    }
+    u.set(j + dl, top)
+    return 0
+  }
+  const p = qhat * v.get(i) + carry
+  const sub = p % 256
+  const ncarry = p / 256
+  const t = u.get(j + i) - sub
+  if t < 0 {
+    u.set(j + i, t + 256)
+    return mul_sub(u, v, j, dl, qhat, i + 1, ncarry + 1)
+  }
+  u.set(j + i, t)
+  return mul_sub(u, v, j, dl, qhat, i + 1, ncarry)
+}
+
+def div_loop(u Bytes, v Bytes, q Bytes, j Int64, dl Int64) {
+  if j >= 0 {
+    const qhat = q_estimate(u, v, j, dl)
+    const borrow = mul_sub(u, v, j, dl, qhat, 0, 0)
+    q.set(j, qhat - borrow)
+    div_loop(u, v, q, j - 1, dl)
+  }
+}
+
+// Single-limb divisor: quotients into q, remainder returned.
+def div_small(u Bytes, q Bytes, i Int64, v0 Int64, rem Int64) Int64 {
+  if i < 0 {
+    return rem
+  }
+  const cur = rem * 256 + u.get(i)
+  q.set(i, cur / v0)
+  return div_small(u, q, i - 1, v0, cur - (cur / v0) * v0)
+}
+
+def skip_zeros(digits Bytes, i Int64, n Int64) Int64 {
+  if i < n {
+    if digits.get(i) == 48 {
+      return skip_zeros(digits, i + 1, n)
+    }
+  }
+  return i
+}
+
+// The end of the significant digits: trailing zeros dropped, never past
+// one digit beyond start.
+def trim_tail(digits Bytes, s Int64, n Int64) Int64 {
+  if n > s + 1 {
+    if digits.get(n - 1) == 48 {
+      return trim_tail(digits, s, n - 1)
+    }
+  }
+  return n
+}
+
+// Takes the first 18 significant digits into m; everything past them
+// only sets the sticky flag. Returns (m, used, tail_sticky).
+def take_mantissa(digits Bytes, i Int64, t Int64, m Int64, used Int64, sticky Bool) (Int64, Int64, Bool) {
+  if i >= t {
+    return (m, used, sticky)
+  }
+  const d = digits.get(i) - 48
+  if used < 18 {
+    return take_mantissa(digits, i + 1, t, m * 10 + d, used + 1, sticky)
+  }
+  if d != 0 {
+    return take_mantissa(digits, i + 1, t, m, used, true)
+  }
+  return take_mantissa(digits, i + 1, t, m, used, sticky)
+}
+
+// Assembles up to `nl` limbs into an Int64, most significant first.
+def gather(limbs Bytes, top Int64, acc Int64) Int64 {
+  if top < 0 {
+    return acc
+  }
+  return gather(limbs, top - 1, (acc << 8) | limbs.get(top))
+}
+
+// The 54-bit window of the quotient: Q itself when it has 54 bits, Q
+// shifted when it has 55.
+def quotient_window(q Int64) Int64 {
+  if bits64(q) > 54 {
+    return q >> 1
+  }
+  return q
+}
+
+def quotient_e2(f Int64, shift Int64, q Int64) Int64 {
+  if bits64(q) > 54 {
+    return f - shift + 2
+  }
+  return f - shift + 1
+}
+
+// Everything under the window — the dropped 55th bit, the
+// long-division remainder, the unread digits — is sticky.
+def quotient_sticky(q Int64, r_nonzero Bool, tail Bool) Bool {
+  if bits64(q) > 54 {
+    if (q & 1) == 1 {
+      return true
+    }
+  }
+  return r_nonzero || tail
+}
+
+// The bit pattern of (-1)^neg x 0.digits x 10^e10, correctly rounded —
+// the same answer strtod gives. digits holds ASCII digit bytes; leading
+// zeros shift the exponent, trailing zeros after the point change
+// nothing, and digits past the eighteenth only steer sticky rounding.
+// An out-of-range value lands on the infinity pattern; the decoder's
+// finiteness check turns that into the error.
+def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64 {
+  const s = skip_zeros(digits, 0, n)
+  if s == n {
+    return zero_bits(neg)
+  }
+  const e = e10 - s
+  const t = trim_tail(digits, s, n)
+  const taken = take_mantissa(digits, s, t, 0, 0, false)
+  const f = e - taken[1]
+  if f > 320 {
+    return 9218868437227405312
+  }
+  if f < -345 {
+    return zero_bits(neg)
+  }
+  if f >= 0 {
+    const limbs = Bytes.new(120)
+    const nl = mul5_times(limbs, set_u64(limbs, taken[0]), f)
+    const nbits = bit_len8(limbs, nl)
+    const w = window54(limbs, nl, nbits)
+    return assemble(neg, w[0], w[0] & 1, w[1] || taken[2], nbits + f - 53)
+  }
+  const dlimbs = Bytes.new(120)
+  const dl = mul5_times(dlimbs, set_u64(dlimbs, 1), -f)
+  const shift = 54 + bit_len8(dlimbs, dl) - bits64(taken[0])
+  const ulimbs = Bytes.new(160)
+  const un = set_shifted(ulimbs, taken[0], shift)
+  const qlimbs = Bytes.new(120)
+  if dl == 1 {
+    const rem = div_small(ulimbs, qlimbs, un - 1, dlimbs.get(0), 0)
+    const q = gather(qlimbs, un - 1, 0)
+    return assemble(neg, quotient_window(q), quotient_window(q) & 1, quotient_sticky(q, rem != 0, taken[2]), quotient_e2(f, shift, q))
+  }
+  const sh = 8 - bits8(dlimbs.get(dl - 1))
+  const vnorm = Bytes.new(120)
+  shl_into(dlimbs, vnorm, 0, dl, sh)
+  const work = Bytes.new(160)
+  const wn = shl_into(ulimbs, work, 0, un, sh)
+  const qraw = Bytes.new(120)
+  div_loop(work, vnorm, qraw, wn - dl, dl)
+  const q = gather(qraw, wn - dl, 0)
+  shr_range(work, 0, dl, sh)
+  return assemble(neg, quotient_window(q), quotient_window(q) & 1, quotient_sticky(q, any_below(work, dl - 1), taken[2]), quotient_e2(f, shift, q))
+}

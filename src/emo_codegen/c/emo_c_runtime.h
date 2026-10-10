@@ -200,6 +200,13 @@ void emo_set_field(emo_value instance, int64_t i, emo_value v);
 bool emo_is_class(emo_value instance, const emo_vtable *vt);
 emo_value emo_field_by_name(emo_value instance, const char *name);
 bool emo_is_iface(emo_value instance, const emo_iface *ifc);
+int emo_is_instance(emo_value v);
+
+/* The dynamic builtin send: an untyped receiver answers through its
+   vtable when it is an instance, and through the builtin that owns the
+   method name otherwise. The receiver value is evaluated once. */
+emo_value emo_dynamic_builtin(emo_value recv, const char *name, int64_t arity,
+                              const emo_value *args);
 
 /* Dynamic method dispatch: look the (name, arity) up in the
    receiver's vtable and call its thunk. A missing method is a
@@ -372,6 +379,28 @@ int64_t emo_unsupported(const char *what);
 /* `Exception.new(message: ...)`: the value carries the message;
    emo_raise prints it. */
 emo_value emo_make_exception(emo_str message);
+
+/* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- */
+int64_t emo_os_getpid(void);
+int64_t emo_os_getppid(void);
+int64_t emo_os_fork(void);
+int64_t emo_os_waitpid(int64_t pid);
+int64_t emo_os_pipe(void);
+int64_t emo_os_execv(emo_str path, emo_value argv);
+void emo_os__exit(int64_t status);
+int64_t emo_os_open_read(emo_str path);
+int64_t emo_os_open_write(emo_str path);
+int64_t emo_os_open_append(emo_str path);
+emo_str emo_os_read(int64_t fd, int64_t n);
+int64_t emo_os_write(int64_t fd, emo_str data);
+int64_t emo_os_close(int64_t fd);
+emo_value emo_os_list_dir(emo_str path);
+int64_t emo_os_mkdir(emo_str path);
+int64_t emo_os_rmdir(emo_str path);
+int64_t emo_os_unlink(emo_str path);
+int64_t emo_os_rename(emo_str old_path, emo_str new_path);
+emo_str emo_os_getcwd(void);
+int64_t emo_os_chdir(emo_str path);
 
 /* ---- The integer core (T24.2) ---- */
 

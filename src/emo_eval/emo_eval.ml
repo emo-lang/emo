@@ -297,6 +297,46 @@ let global_env () =
     { bound = TypeValue "Float64"; mutable_ = false };
   Hashtbl.replace env.frame "file_write"
     { bound = BuiltinFn "file_write"; mutable_ = false };
+  Hashtbl.replace env.frame "os_getpid"
+    { bound = BuiltinFn "os_getpid"; mutable_ = false };
+  Hashtbl.replace env.frame "os_getppid"
+    { bound = BuiltinFn "os_getppid"; mutable_ = false };
+  Hashtbl.replace env.frame "os_fork"
+    { bound = BuiltinFn "os_fork"; mutable_ = false };
+  Hashtbl.replace env.frame "os_waitpid"
+    { bound = BuiltinFn "os_waitpid"; mutable_ = false };
+  Hashtbl.replace env.frame "os_pipe"
+    { bound = BuiltinFn "os_pipe"; mutable_ = false };
+  Hashtbl.replace env.frame "os_execv"
+    { bound = BuiltinFn "os_execv"; mutable_ = false };
+  Hashtbl.replace env.frame "os__exit"
+    { bound = BuiltinFn "os__exit"; mutable_ = false };
+  Hashtbl.replace env.frame "os_open_read"
+    { bound = BuiltinFn "os_open_read"; mutable_ = false };
+  Hashtbl.replace env.frame "os_open_write"
+    { bound = BuiltinFn "os_open_write"; mutable_ = false };
+  Hashtbl.replace env.frame "os_open_append"
+    { bound = BuiltinFn "os_open_append"; mutable_ = false };
+  Hashtbl.replace env.frame "os_read"
+    { bound = BuiltinFn "os_read"; mutable_ = false };
+  Hashtbl.replace env.frame "os_write"
+    { bound = BuiltinFn "os_write"; mutable_ = false };
+  Hashtbl.replace env.frame "os_close"
+    { bound = BuiltinFn "os_close"; mutable_ = false };
+  Hashtbl.replace env.frame "os_list_dir"
+    { bound = BuiltinFn "os_list_dir"; mutable_ = false };
+  Hashtbl.replace env.frame "os_mkdir"
+    { bound = BuiltinFn "os_mkdir"; mutable_ = false };
+  Hashtbl.replace env.frame "os_rmdir"
+    { bound = BuiltinFn "os_rmdir"; mutable_ = false };
+  Hashtbl.replace env.frame "os_unlink"
+    { bound = BuiltinFn "os_unlink"; mutable_ = false };
+  Hashtbl.replace env.frame "os_rename"
+    { bound = BuiltinFn "os_rename"; mutable_ = false };
+  Hashtbl.replace env.frame "os_getcwd"
+    { bound = BuiltinFn "os_getcwd"; mutable_ = false };
+  Hashtbl.replace env.frame "os_chdir"
+    { bound = BuiltinFn "os_chdir"; mutable_ = false };
   Hashtbl.replace env.frame "net_udp_bind"
     { bound = BuiltinFn "net_udp_bind"; mutable_ = false };
   Hashtbl.replace env.frame "net_connect_unix"
@@ -2015,6 +2055,24 @@ and bind_params closure span args =
 
 and apply_closure closure span args = eval_body closure span args
 
+(* The os module's syscalls run synchronously; OS failures surface as
+   ordinary Emo exceptions with the OS reason attached. *)
+(* Unix.file_descr is int-represented in this runtime and the module
+   exposes no converters; the interop goes through representation. *)
+and fd_int (fd : Unix.file_descr) : int = Obj.magic fd
+and fd_of_int (n : int) : Unix.file_descr = Obj.magic n
+
+and os_try span (f : unit -> value) : value =
+  match f () with
+  | v -> v
+  | exception Unix.Unix_error (e, fn, arg) ->
+      raise
+        (net_raise span
+           (Printf.sprintf "os: %s%s: %s" fn
+              (if arg = "" then "" else " " ^ arg)
+              (Unix.error_message e)))
+  | exception Sys_error message -> raise (net_raise span ("os: " ^ message))
+
 and apply_builtin span name args =
   match (name, args) with
   | "println", [ v ] ->
@@ -2102,6 +2160,182 @@ and apply_builtin span name args =
       error span "E3001"
         (Printf.sprintf "`file_write` expects a String path, got %s"
            (type_name v))
+  (* ---- the os module: synchronous POSIX syscalls (fork, unbuffered
+     file descriptors, directories, pipes). Every failure raises an
+     ordinary Emo exception carrying the OS reason. ---- *)
+  | "os_getpid", [] -> Int64 (Int64.of_int (Unix.getpid ()))
+  | "os_getpid", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_getpid` expects no arguments, got %d"
+           (List.length vs))
+  | "os_getppid", [] -> Int64 (Int64.of_int (Unix.getppid ()))
+  | "os_getppid", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_getppid` expects no arguments, got %d"
+           (List.length vs))
+  | "os_fork", [] -> os_try span (fun () -> Int64 (Int64.of_int (Unix.fork ())))
+  | "os_fork", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_fork` expects no arguments, got %d"
+           (List.length vs))
+  | "os_waitpid", [ Int64 pid ] ->
+      os_try span (fun () ->
+          let wpid, status = Unix.waitpid [] (Int64.to_int pid) in
+          (* The kernel's raw 16-bit wait encoding, so the Emo-level
+             decoders (exited / exit code / signal) are portable. *)
+          let raw =
+            match status with
+            | WEXITED code -> Int64.shift_left (Int64.of_int code) 8
+            | WSIGNALED sgn -> Int64.of_int sgn
+            | WSTOPPED sgn ->
+                Int64.logor (Int64.shift_left (Int64.of_int sgn) 8) 127L
+          in
+          Tuple [ Int64 (Int64.of_int wpid); Int64 raw ])
+  | "os_waitpid", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
+           (List.length vs))
+  | "os_pipe", [] ->
+      os_try span (fun () ->
+          let r, w = Unix.pipe () in
+          Tuple
+            [ Int64 (Int64.of_int (fd_int r)); Int64 (Int64.of_int (fd_int w)) ])
+  | "os_pipe", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_pipe` expects no arguments, got %d"
+           (List.length vs))
+  | "os_execv", [ String path; Array items ] ->
+      os_try span (fun () ->
+          let argv = Array.of_list (List.map to_string (Array.to_list items)) in
+          Unix.execv path argv)
+  | "os_execv", vs ->
+      error span "E3007"
+        (Printf.sprintf
+           "`os_execv` expects (path String, argv Array String), got %d \
+            arguments"
+           (List.length vs))
+  | "os__exit", [ Int64 status ] ->
+      (* Never returns: the fork child leaves without at_exit flushes. *)
+      let (_ : unit) = Unix._exit (Int64.to_int status) in
+      raise Halt_signal
+  | "os__exit", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os__exit` expects (status Int64), got %d"
+           (List.length vs))
+  | "os_open_read", [ String path ] ->
+      os_try span (fun () ->
+          Int64 (Int64.of_int (fd_int (Unix.openfile path [ O_RDONLY ] 0))))
+  | "os_open_read", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_open_read` expects (path String), got %d"
+           (List.length vs))
+  | "os_open_write", [ String path ] ->
+      os_try span (fun () ->
+          Int64
+            (Int64.of_int
+               (fd_int
+                  (Unix.openfile path [ O_WRONLY; O_CREAT; O_TRUNC ] 0o644))))
+  | "os_open_write", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_open_write` expects (path String), got %d"
+           (List.length vs))
+  | "os_open_append", [ String path ] ->
+      os_try span (fun () ->
+          Int64
+            (Int64.of_int
+               (fd_int
+                  (Unix.openfile path [ O_WRONLY; O_CREAT; O_APPEND ] 0o644))))
+  | "os_open_append", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_open_append` expects (path String), got %d"
+           (List.length vs))
+  | "os_read", [ Int64 fd; Int64 n ] ->
+      if n < 0L then error span "E3007" "`os_read` expects a non-negative count"
+      else
+        os_try span (fun () ->
+            let buf = Bytes.create (Int64.to_int n) in
+            let got =
+              Unix.read (fd_of_int (Int64.to_int fd)) buf 0 (Int64.to_int n)
+            in
+            String (Bytes.sub_string buf 0 got))
+  | "os_read", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_read` expects (fd Int64, n Int64), got %d"
+           (List.length vs))
+  | "os_write", [ Int64 fd; String data ] ->
+      os_try span (fun () ->
+          let bytes = Bytes.of_string data in
+          Int64
+            (Int64.of_int
+               (Unix.write
+                  (fd_of_int (Int64.to_int fd))
+                  bytes 0 (Bytes.length bytes))))
+  | "os_write", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_write` expects (fd Int64, data String), got %d"
+           (List.length vs))
+  | "os_close", [ Int64 fd ] ->
+      os_try span (fun () ->
+          Unix.close (fd_of_int (Int64.to_int fd));
+          Int64 0L)
+  | "os_close", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_close` expects (fd Int64), got %d" (List.length vs))
+  | "os_list_dir", [ String path ] ->
+      os_try span (fun () ->
+          let names = Sys.readdir path in
+          Array.sort compare names;
+          Array (Array.map (fun s -> String s) names))
+  | "os_list_dir", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_list_dir` expects (path String), got %d"
+           (List.length vs))
+  | "os_mkdir", [ String path ] ->
+      os_try span (fun () ->
+          Unix.mkdir path 0o755;
+          Int64 0L)
+  | "os_mkdir", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_mkdir` expects (path String), got %d"
+           (List.length vs))
+  | "os_rmdir", [ String path ] ->
+      os_try span (fun () ->
+          Unix.rmdir path;
+          Int64 0L)
+  | "os_rmdir", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_rmdir` expects (path String), got %d"
+           (List.length vs))
+  | "os_unlink", [ String path ] ->
+      os_try span (fun () ->
+          Unix.unlink path;
+          Int64 0L)
+  | "os_unlink", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_unlink` expects (path String), got %d"
+           (List.length vs))
+  | "os_rename", [ String old_path; String new_path ] ->
+      os_try span (fun () ->
+          Unix.rename old_path new_path;
+          Int64 0L)
+  | "os_rename", vs ->
+      error span "E3007"
+        (Printf.sprintf
+           "`os_rename` expects (old_path String, new_path String), got %d"
+           (List.length vs))
+  | "os_getcwd", [] -> String (Sys.getcwd ())
+  | "os_getcwd", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_getcwd` expects no arguments, got %d"
+           (List.length vs))
+  | "os_chdir", [ String path ] ->
+      os_try span (fun () ->
+          Sys.chdir path;
+          Int64 0L)
+  | "os_chdir", vs ->
+      error span "E3007"
+        (Printf.sprintf "`os_chdir` expects (path String), got %d"
+           (List.length vs))
   | "net_connect_unix", args when List.length args <> 2 ->
       error span "E3007"
         (Printf.sprintf

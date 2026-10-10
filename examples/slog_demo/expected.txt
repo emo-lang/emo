@@ -1,0 +1,10 @@
+level=info logger=web msg=listening addr=127.0.0.1:8080
+level=warn logger=web msg="slow query" ms=412 table=users
+level=error logger=web msg="connection refused" attempt=2
+{"level":"info","logger":"worker","msg":"job done","job":"resize","ms":"38"}
+{"level":"debug","logger":"worker","msg":"claimed","queue":"uploads"}
+level=info logger=web.db msg=migrated steps=3
+level=info logger=web msg="multi word msg" note="has \"quotes\" and=equals" empty=""
+level=info logger=web msg=done who=世界
+false
+true

@@ -1,0 +1,10 @@
+package {
+  name = "emo/bufio_demo"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    bufio = "0.1.0"
+    os = "0.1.0"
+  }
+}

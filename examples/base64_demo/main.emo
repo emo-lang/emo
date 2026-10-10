@@ -1,0 +1,21 @@
+require "base64"
+
+// The RFC 4648 section 10 test vectors, encoded and decoded back —
+// every padding remainder (0, 1, 2 bytes) rides through.
+println(base64.encode(""))
+println(base64.encode("f"))
+println(base64.encode("fo"))
+println(base64.encode("foo"))
+println(base64.encode("foob"))
+println(base64.encode("fooba"))
+println(base64.decode("Zg=="))
+println(base64.decode("Zm8="))
+println(base64.decode("Zm9v"))
+println(base64.decode("Zm9vYg=="))
+println(base64.decode("Zm9vYmE="))
+println(base64.decode("Zm9vYmFy"))
+
+// Bytes are the payload: multi-byte UTF-8 round-trips untouched.
+const text = "emo — plain text,中文 mixed"
+println(base64.encode(text))
+println(base64.decode(base64.encode(text)))

@@ -1,0 +1,55 @@
+require "os"
+
+// The os package end to end: raw unbuffered file IO through fds, a
+// directory listing with create/list/rename/remove, and a fork child
+// passing bytes through a pipe before exiting with a status the parent
+// decodes. Paths carry the process id so repeated and concurrent runs
+// never collide; every path the demo creates is removed before exit.
+
+// ---- raw file IO ----
+const path = "os-demo-" + os.getpid().to_string() + ".tmp"
+const fd = os.open_write(path)
+os.write(fd, "hello fd")
+os.close(fd)
+const rfd = os.open_read(path)
+println(os.read(rfd, 4))
+println(os.read(rfd, 64))
+const tail = os.read(rfd, 64)
+println(tail.length().to_string())
+os.close(rfd)
+os.unlink(path)
+
+// ---- directory create, list, rename, remove ----
+const dir = "os-demo-" + os.getpid().to_string() + ".d"
+os.mkdir(dir)
+os.close(os.open_write(dir + "/b.txt"))
+os.close(os.open_write(dir + "/a.txt"))
+const names = os.list_dir(dir)
+println(names.length().to_string())
+println(names[0])
+println(names[1])
+os.unlink(dir + "/b.txt")
+os.rename(dir + "/a.txt", dir + "/r.txt")
+println(os.list_dir(dir)[0])
+os.unlink(dir + "/r.txt")
+os.rmdir(dir)
+
+// ---- fork, pipe, wait ----
+const p = os.pipe()
+const pid = os.fork()
+if pid == 0 {
+  os.close(p[0])
+  os.write(p[1], "greetings from the fork child")
+  os.close(p[1])
+  os._exit(7)
+}
+os.close(p[1])
+println(os.read(p[0], 64))
+os.close(p[0])
+const w = os.waitpid(pid)
+println(os.wait_exited(w[1]))
+println(os.wait_exit_code(w[1]).to_string())
+
+// ---- process identity ----
+println(os.getpid() != os.getppid())
+println(os.getcwd().length() > 0)

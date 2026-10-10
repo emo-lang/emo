@@ -651,6 +651,19 @@ module Emo_eval = struct
      interpreted calls. The net/file arms perform their effects; the
      scheduler driver handles them (T26.4). *)
 
+  (* The os module's syscalls run synchronously; OS failures surface
+     as ordinary Emo exceptions with the OS reason attached. *)
+  let os_try (f : unit -> value) : value =
+    match f () with
+    | v -> v
+    | exception Unix.Unix_error (e, fn, arg) ->
+        raise
+          (net_raise
+             (Printf.sprintf "os: %s%s: %s" fn
+                (if arg = "" then "" else " " ^ arg)
+                (Unix.error_message e)))
+    | exception Sys_error message -> raise (net_raise ("os: " ^ message))
+
   let apply_builtin name args =
     match (name, args) with
     | "println", [ v ] ->
@@ -738,6 +751,198 @@ module Emo_eval = struct
         error "E3001"
           (Printf.sprintf "`file_write` expects a String path, got %s"
              (type_name v))
+    (* ---- the os module: synchronous POSIX syscalls. OS failures
+       raise ordinary Emo exceptions with the OS reason. ---- *)
+    | "os_getpid", [] -> Int64 (Int64.of_int (Unix.getpid ()))
+    | "os_getpid", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_getpid` expects no arguments, got %d"
+             (List.length vs))
+    | "os_getppid", [] -> Int64 (Int64.of_int (Unix.getppid ()))
+    | "os_getppid", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_getppid` expects no arguments, got %d"
+             (List.length vs))
+    | "os_fork", [] ->
+        os_try (fun () -> Int64 (Int64.of_int (Unix.fork ())))
+    | "os_fork", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_fork` expects no arguments, got %d"
+             (List.length vs))
+    | "os_waitpid", [ Int64 pid ] ->
+        os_try
+          (fun () ->
+            let wpid, status = Unix.waitpid [] (Int64.to_int pid) in
+            let raw =
+              match status with
+              | WEXITED code ->
+                  Int64.shift_left (Int64.of_int (code land 255)) 8
+              | WSIGNALED sgn -> Int64.of_int sgn
+              | WSTOPPED sgn ->
+                  Int64.logor (Int64.shift_left (Int64.of_int sgn) 8) 127L
+            in
+            Tuple [ Int64 (Int64.of_int wpid); Int64 raw ])
+    | "os_waitpid", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
+             (List.length vs))
+    | "os_pipe", [] ->
+        os_try
+          (fun () ->
+            let r, w = Unix.pipe () in
+            Tuple
+              [
+                Int64 (Int64.of_int (Obj.magic r : int));
+                Int64 (Int64.of_int (Obj.magic w : int));
+              ])
+    | "os_pipe", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_pipe` expects no arguments, got %d"
+             (List.length vs))
+    | "os_execv", [ String path; Array items ] ->
+        os_try
+          (fun () ->
+            let argv =
+              Array.of_list (List.map to_string (Array.to_list items))
+            in
+            Unix.execv path argv)
+    | "os_execv", vs ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_execv` expects (path String, argv Array String), got %d arguments"
+             (List.length vs))
+    | "os__exit", [ Int64 status ] ->
+        let (_ : unit) = Unix._exit (Int64.to_int status) in
+        raise Halt_signal
+    | "os__exit", vs ->
+        error "E3007"
+          (Printf.sprintf "`os__exit` expects (status Int64), got %d"
+             (List.length vs))
+    | "os_open_read", [ String path ] ->
+        os_try
+          (fun () ->
+            Int64
+              (Int64.of_int
+                 (Obj.magic (Unix.openfile path [ Unix.O_RDONLY ] 0) : int)))
+    | "os_open_read", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_open_read` expects (path String), got %d"
+             (List.length vs))
+    | "os_open_write", [ String path ] ->
+        os_try
+          (fun () ->
+            Int64
+              (Int64.of_int
+                 (Obj.magic
+                    (Unix.openfile path
+                       [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ]
+                       0o644) : int)))
+    | "os_open_write", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_open_write` expects (path String), got %d"
+             (List.length vs))
+    | "os_open_append", [ String path ] ->
+        os_try
+          (fun () ->
+            Int64
+              (Int64.of_int
+                 (Obj.magic
+                    (Unix.openfile path
+                       [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_APPEND ]
+                       0o644) : int)))
+    | "os_open_append", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_open_append` expects (path String), got %d"
+             (List.length vs))
+    | "os_read", [ Int64 fd; Int64 n ] ->
+        if n < 0L then
+          error "E3007" "`os_read` expects a non-negative count"
+        else
+          os_try
+            (fun () ->
+              let buf = Bytes.create (Int64.to_int n) in
+              let got =
+                Unix.read (Obj.magic (Int64.to_int fd) : Unix.file_descr) buf 0
+                  (Int64.to_int n)
+              in
+              String (Bytes.sub_string buf 0 got))
+    | "os_read", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_read` expects (fd Int64, n Int64), got %d"
+             (List.length vs))
+    | "os_write", [ Int64 fd; String data ] ->
+        os_try
+          (fun () ->
+            Int64
+              (Int64.of_int
+                 (Unix.write
+                    (Obj.magic (Int64.to_int fd) : Unix.file_descr)
+                    (Bytes.of_string data) 0
+                    (String.length data))))
+    | "os_write", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_write` expects (fd Int64, data String), got %d"
+             (List.length vs))
+    | "os_close", [ Int64 fd ] ->
+        os_try
+          (fun () ->
+            Unix.close (Obj.magic (Int64.to_int fd) : Unix.file_descr);
+            Int64 0L)
+    | "os_close", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_close` expects (fd Int64), got %d"
+             (List.length vs))
+    | "os_list_dir", [ String path ] ->
+        os_try
+          (fun () ->
+            let names = Sys.readdir path in
+            Array.sort compare names;
+            Array (Array.map (fun s -> String s) names))
+    | "os_list_dir", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_list_dir` expects (path String), got %d"
+             (List.length vs))
+    | "os_mkdir", [ String path ] ->
+        os_try (fun () ->
+            Unix.mkdir path 0o755;
+            Int64 0L)
+    | "os_mkdir", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_mkdir` expects (path String), got %d"
+             (List.length vs))
+    | "os_rmdir", [ String path ] ->
+        os_try (fun () -> Unix.rmdir path; Int64 0L)
+    | "os_rmdir", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_rmdir` expects (path String), got %d"
+             (List.length vs))
+    | "os_unlink", [ String path ] ->
+        os_try (fun () -> Unix.unlink path; Int64 0L)
+    | "os_unlink", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_unlink` expects (path String), got %d"
+             (List.length vs))
+    | "os_rename", [ String old_path; String new_path ] ->
+        os_try
+          (fun () ->
+            Unix.rename old_path new_path;
+            Int64 0L)
+    | "os_rename", vs ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_rename` expects (old_path String, new_path String), got %d"
+             (List.length vs))
+    | "os_getcwd", [] -> String (Sys.getcwd ())
+    | "os_getcwd", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_getcwd` expects no arguments, got %d"
+             (List.length vs))
+    | "os_chdir", [ String path ] ->
+        os_try (fun () -> Sys.chdir path; Int64 0L)
+    | "os_chdir", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_chdir` expects (path String), got %d"
+             (List.length vs))
     | "net_connect_unix", args when List.length args <> 2 ->
         error "E3007"
           (Printf.sprintf
@@ -1339,7 +1544,15 @@ module Emo_runtime = struct
         Emo_eval.Float (Int64.to_float n)
     | _, "to_string" ->
         none_expected ();
-        Emo_eval.String (Emo_eval.to_string self)
+        (* A compiled object's own to_string answers first — the catch-all
+           below renders the debug form, and the method may be that very
+           name. *)
+        (match self with
+        | Emo_eval.Obj o -> (
+            match Hashtbl.find_opt o.Emo_eval.omethods "to_string" with
+            | Some (_arity, f) -> f [ self ]
+            | None -> Emo_eval.String (Emo_eval.to_string self))
+        | _ -> Emo_eval.String (Emo_eval.to_string self))
     | _, "is" ->
         one_expected ();
         let target = List.hd args in

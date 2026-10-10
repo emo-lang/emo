@@ -1,0 +1,81 @@
+require "json"
+
+// The json package's edges: the escape matrix, the number formats at
+// their boundaries, deep nesting at the cap, duplicate keys, and
+// decode/encode round-trips of the whole thing.
+
+// ---- the escape matrix, decoded and re-encoded ----
+const escapes = json.decode("\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u00e9\\u4e16\\ud83d\\ude00\"")
+println(escapes.as_string().to_bytes().length())
+println(escapes.encode())
+
+// ---- numbers at their boundaries ----
+println(json.decode("0").encode())
+println(json.decode("-0").encode())
+println(json.decode("9223372036854775807").encode())
+println(json.decode("-9223372036854775808").encode())
+println(json.decode("9007199254740993").encode())
+println(json.decode("0.5").encode())
+println(json.decode("-0.5").encode())
+println(json.decode("2.2250738585072014e-308").encode())
+println(json.decode("1.7976931348623157e308").encode())
+println(json.decode("5e-324").encode())
+println(json.decode("1e-6").encode())
+println(json.decode("1e16").encode())
+
+// ---- deep nesting: 512 arrays is the cap and it round-trips ----
+// Written through byte buffers: a Bytes parameter keeps the helpers
+// off the all-native specialization path, where concatenation is not
+// available.
+def open_array(n Int64) String {
+  const buf = Bytes.new(n)
+  fill_bracket(buf, 0, n)
+  return buf.to_string()
+}
+
+def fill_bracket(buf Bytes, i Int64, n Int64) {
+  if i < n {
+    buf.set(i, 91)
+    fill_bracket(buf, i + 1, n)
+  }
+}
+
+def close_array(n Int64) String {
+  const buf = Bytes.new(n)
+  fill_close(buf, 0, n)
+  return buf.to_string()
+}
+
+def fill_close(buf Bytes, i Int64, n Int64) {
+  if i < n {
+    buf.set(i, 93)
+    fill_close(buf, i + 1, n)
+  }
+}
+
+const deep = json.decode(open_array(512) + close_array(512))
+const deep_text = deep.encode()
+println(deep_text.length())
+println(json.decode(deep_text).encode().length())
+
+// ---- duplicate keys: entries keep both, `get` takes the last ----
+const dup = json.decode("{\"k\": 1, \"k\": 2, \"k\": 3}")
+if dup.is(JsonObject) {
+  println(dup.get("k").encode())
+  println(dup.entries().length())
+}
+
+// ---- empty containers and the pretty form ----
+println(json.encode(json.decode("{}")))
+println(json.encode(json.decode("[]")))
+println(json.encode_pretty(json.decode("{\"a\": [1, 2], \"b\": {\"c\": null}}")))
+
+// ---- a full round trip of everything above ----
+const doc = json.decode("{\"esc\": \"\\u4e16\\ud83d\\ude00\", \"nums\": [0, -0.5, 5e-324, 1.7976931348623157e308], \"nest\": {\"deep\": [true, null, {\"x\": 1}]}}")
+const back = json.decode(json.encode(doc))
+if back.is(JsonObject) {
+  const esc = back.get("esc").as_string()
+  println(esc.to_bytes().length())
+  println(back.get("nums").encode())
+  println(back.get("nest").encode())
+}

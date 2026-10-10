@@ -379,6 +379,79 @@ and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
           (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
       in
       if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  (* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- *)
+  | "os_getpid" ->
+      let v = Printf.sprintf "emo_os_getpid()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_getppid" ->
+      let v = Printf.sprintf "emo_os_getppid()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_fork" ->
+      let v = Printf.sprintf "emo_os_fork()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_waitpid" ->
+      let v = Printf.sprintf "emo_os_waitpid(%s)" (arg 0 Emo_check.Int64) in
+      v
+  | "os_pipe" ->
+      let v = Printf.sprintf "emo_os_pipe()" in
+      v
+  | "os_execv" ->
+      let v =
+        Printf.sprintf "emo_os_execv(%s, %s)" (arg 0 Emo_check.String)
+          (as_dyn env (List.nth args 1))
+      in
+      v
+  | "os__exit" -> Printf.sprintf "emo_os__exit(%s)" (arg 0 Emo_check.Int64)
+  | "os_open_read" ->
+      let v = Printf.sprintf "emo_os_open_read(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_open_write" ->
+      let v = Printf.sprintf "emo_os_open_write(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_open_append" ->
+      let v =
+        Printf.sprintf "emo_os_open_append(%s)" (arg 0 Emo_check.String)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_read" ->
+      let v =
+        Printf.sprintf "emo_os_read(%s, %s)" (arg 0 Emo_check.Int64)
+          (arg 1 Emo_check.Int64)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+  | "os_write" ->
+      let v =
+        Printf.sprintf "emo_os_write(%s, %s)" (arg 0 Emo_check.Int64)
+          (arg 1 Emo_check.String)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_close" ->
+      let v = Printf.sprintf "emo_os_close(%s)" (arg 0 Emo_check.Int64) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_list_dir" ->
+      let v = Printf.sprintf "emo_os_list_dir(%s)" (arg 0 Emo_check.String) in
+      v
+  | "os_mkdir" ->
+      let v = Printf.sprintf "emo_os_mkdir(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_rmdir" ->
+      let v = Printf.sprintf "emo_os_rmdir(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_unlink" ->
+      let v = Printf.sprintf "emo_os_unlink(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_rename" ->
+      let v =
+        Printf.sprintf "emo_os_rename(%s, %s)" (arg 0 Emo_check.String)
+          (arg 1 Emo_check.String)
+      in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_getcwd" ->
+      let v = Printf.sprintf "emo_os_getcwd()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+  | "os_chdir" ->
+      let v = Printf.sprintf "emo_os_chdir(%s)" (arg 0 Emo_check.String) in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
   | other -> Printf.sprintf "emo_unsupported(\"%s\")" other
 
 and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
@@ -626,12 +699,9 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
       | _ -> refuse (Printf.sprintf "the type-level method `%s.%s`" t name))
   | _ -> (
       match (name, args) with
-      | "to_string", []
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
+      | "to_string", [] when self_.Emo_ir.ety = Emo_check.Bytes ->
           Printf.sprintf "emo_to_string_method(%s)" (as_dyn env self_)
-      | "to_string", [] ->
+      | "to_string", [] when self_.Emo_ir.ety <> Emo_check.Unknown ->
           if is_dyn self_.Emo_ir.ety then
             Printf.sprintf "emo_to_string_dyn(%s)" (emit_expr env self_)
           else to_str env self_
@@ -889,85 +959,25 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
       | _, _
         when match self_.Emo_ir.ety with
              | Emo_check.Unknown when is_dyn result_ty || true -> true
-             | _ -> false -> (
-          (* An Unknown receiver whose method name is owned by exactly one
-         builtin type (strings, sockets): the checker lost the type at
-         the cross-module call, and these names are not instance
-         methods, so the runtime helper is the dispatch. *)
+             | _ -> false ->
+          (* An Unknown receiver: the checker loses the static type at
+             cross-module calls, so the value could be an instance of
+             any class, a String, a socket fd, or a List. The runtime
+             dispatches once — an instance answers through its vtable
+             (these names may be that very method), a non-instance
+             through the builtin that owns the name — so the receiver
+             expression is emitted exactly once and the result arrives
+             boxed for [finish] to unbox. *)
           let recv_dyn = as_dyn env self_ in
-          let as_str () = Printf.sprintf "emo_str_of(%s)" recv_dyn in
-          let as_fd () = Printf.sprintf "emo_unbox_i64(%s)" recv_dyn in
-          (* The helpers return native values; a dynamic use site takes the
-         boxed form. [ret] states each helper's native return so the
-         conversion picks the right box. *)
-          let ret (t : Emo_check.t) (v : string) : string =
-            if is_dyn result_ty then box_code v t else v
+          let dyn_args =
+            if args = [] then "NULL"
+            else
+              Printf.sprintf "(emo_value[]){%s}"
+                (String.concat ", " (List.map (as_dyn env) args))
           in
-          let str v =
-            if is_dyn result_ty then Printf.sprintf "emo_box_str(%s)" v else v
-          in
-          match (name, args) with
-          | "substring", [ a; b ] ->
-              str
-                (Printf.sprintf "emo_str_substring(%s, %s, %s)" (as_str ())
-                   (as_native env a Emo_check.Int64)
-                   (as_native env b Emo_check.Int64))
-          | "index_of", [ a ] ->
-              ret Emo_check.Int64
-                (Printf.sprintf "emo_str_index_of(%s, %s)" (as_str ())
-                   (as_native env a Emo_check.String))
-          | "starts_with", [ a ] ->
-              ret Emo_check.Bool
-                (Printf.sprintf "emo_str_starts_with(%s, %s)" (as_str ())
-                   (as_native env a Emo_check.String))
-          | "lower", [] -> str (Printf.sprintf "emo_str_lower(%s)" (as_str ()))
-          | "trim", [] -> str (Printf.sprintf "emo_str_trim(%s)" (as_str ()))
-          | "to_int64", [] ->
-              ret Emo_check.Int64
-                (Printf.sprintf "emo_str_to_int64(%s)" (as_str ()))
-          | "split", [ a ] ->
-              Printf.sprintf "emo_str_split(%s, %s)" (as_str ())
-                (as_native env a Emo_check.String)
-          | "read_line", [] ->
-              str (Printf.sprintf "emo_net_read_line(%s)" (as_fd ()))
-          | "read_exactly", [ n ] ->
-              str
-                (Printf.sprintf "emo_net_read_exactly(%s, %s)" (as_fd ())
-                   (as_native env n Emo_check.Int64))
-          | "read_all", [] ->
-              str (Printf.sprintf "emo_net_read_all(%s)" (as_fd ()))
-          | "write", [ d ] ->
-              ret Emo_check.Int64
-                (Printf.sprintf "emo_net_write(%s, %s)" (as_fd ())
-                   (as_native env d Emo_check.String))
-          | "close", [] ->
-              ret Emo_check.Int64
-                (Printf.sprintf "emo_net_close(%s)" (as_fd ()))
-          | "set_timeout", [ t ] ->
-              ret Emo_check.Int64
-                (Printf.sprintf "emo_net_set_timeout(%s, %s)" (as_fd ())
-                   (as_native env t Emo_check.Float64))
-          | "accept", [] ->
-              ret Emo_check.Int64
-                (Printf.sprintf "emo_net_accept(%s)" (as_fd ()))
-          | "port", [] ->
-              ret Emo_check.Int64 (Printf.sprintf "emo_net_port(%s)" (as_fd ()))
-          (* The List deque's method names are owned by no instance type,
-             so an Unknown receiver dispatches to the runtime helpers —
-             the wrong kind is the runtime type error. *)
-          | "push_front", [ v ] ->
-              Printf.sprintf "emo_list_push_front(%s, %s)" recv_dyn
-                (as_dyn env v)
-          | "push_back", [ v ] ->
-              Printf.sprintf "emo_list_push_back(%s, %s)" recv_dyn
-                (as_dyn env v)
-          | "pop_front", [] ->
-              finish (Printf.sprintf "emo_list_pop_front(%s)" recv_dyn)
-          | "pop_back", [] ->
-              finish (Printf.sprintf "emo_list_pop_back(%s)" recv_dyn)
-          | "length", [] ->
-              box_int env result_ty (Printf.sprintf "emo_length(%s)" recv_dyn)
-          | _ -> refuse "this method on an unknown receiver")
+          finish
+            (Printf.sprintf "emo_dynamic_builtin(%s, %s, INT64_C(%d), %s)"
+               recv_dyn (c_string name) (List.length args) dyn_args)
       | _ when is_dyn self_.Emo_ir.ety -> (
           (* an instance method: direct on a class-typed receiver, through
          the vtable's thunk otherwise (interfaces, Unknown) *)
@@ -997,15 +1007,14 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                           (if arg_code = [] then ""
                            else ", " ^ String.concat ", " arg_code)
                       in
-                      let v =
-                        if m.Emo_ir.fresult = Emo_check.Void then "(void)(0)"
-                        else if is_dyn result_ty = is_dyn m.Emo_ir.fresult then
-                          v
-                        else if is_dyn result_ty then
-                          box_code v m.Emo_ir.fresult
-                        else unbox_code v m.Emo_ir.fresult
-                      in
-                      v
+                      (* A Void method keeps its call: in statement
+                         position the discard is the wrapper's job, and
+                         dropping the call here would drop the side
+                         effect. *)
+                      if m.Emo_ir.fresult = Emo_check.Void then v
+                      else if is_dyn result_ty = is_dyn m.Emo_ir.fresult then v
+                      else if is_dyn result_ty then box_code v m.Emo_ir.fresult
+                      else unbox_code v m.Emo_ir.fresult
                   | None ->
                       refuse
                         (Printf.sprintf "the method `%s` on `%s`" name display))
@@ -1017,7 +1026,8 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
               let v =
                 Printf.sprintf "emo_send(%s, %s, INT64_C(%d), %s)"
                   (as_dyn env self_) (c_string name) arity
-                  (if args = [] then "NULL" else arg_code)
+                  (if args = [] then "NULL"
+                   else Printf.sprintf "(emo_value[]){%s}" arg_code)
               in
               if is_dyn result_ty then v else unbox_code v result_ty)
       | _ -> refuse "method calls")
@@ -1916,19 +1926,37 @@ let cluster_layout (index : int) (members : Emo_ir.func list) :
    need not know about the merge. *)
 let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
   let cluster, ret, cluster_params, slots = cluster_layout index members in
+  let with_entry p = "int __entry" ^ if p = "void" then "" else ", " ^ p in
   List.iter
     (fun (m : Emo_ir.func) ->
       let m_ret, m_params = signature m in
+      let entry =
+        match
+          List.find_index
+            (fun (x : Emo_ir.func) -> x.Emo_ir.fname = m.Emo_ir.fname)
+            members
+        with
+        | Some i -> i
+        | None -> 0
+      in
       let args =
         List.map
           (fun (other, n, ty) ->
             if other = m.Emo_ir.fname then c_ident n else dummy_value ty)
           slots
       in
-      put env0 "%s %s(%s) {\n  return %s(%s);\n}\n\n" m_ret
-        (c_ident m.Emo_ir.fname) m_params cluster (String.concat ", " args))
+      put env0 "%s %s(%s) {\n  return %s(%d, %s);\n}\n\n" m_ret
+        (c_ident m.Emo_ir.fname) m_params cluster entry
+        (String.concat ", " args))
     members;
-  put env0 "%s %s(%s) {\n" ret cluster cluster_params;
+  put env0 "%s %s(%s) {\n" ret cluster (with_entry cluster_params);
+  (* An external call may target any member of the cluster: route to
+     that member's head before its body runs. *)
+  List.iteri
+    (fun i (m : Emo_ir.func) ->
+      put env0 "  if (__entry == %d) goto emo_head_%s;\n" i
+        (c_ident m.Emo_ir.fname))
+    members;
   let dyn_ret =
     List.exists (fun (m : Emo_ir.func) -> is_dyn m.Emo_ir.fresult) members
   in
@@ -2156,7 +2184,7 @@ let emit (program : Emo_ir.program) : string =
       let cluster, ret, cluster_params, _ =
         cluster_layout i (member_funcs members)
       in
-      put env0 "%s %s(%s);\n" ret cluster cluster_params)
+      put env0 "%s %s(int __entry, %s);\n" ret cluster cluster_params)
     clusters;
   List.iter
     (fun (c : Emo_ir.class_) ->

@@ -1351,6 +1351,58 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "http_roundtrip")
           "http_roundtrip" "main.emo" false);
+    tc "json_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "json_demo")
+          "json_demo" "main.emo" true);
+    tc "json_edge compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "json_edge")
+          "json_edge" "main.emo" true);
+    tc "yaml_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "yaml_demo")
+          "yaml_demo" "main.emo" true);
+    tc "yaml_edge compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "yaml_edge")
+          "yaml_edge" "main.emo" true);
+    tc "xml_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "xml_demo")
+          "xml_demo" "main.emo" true);
+    tc "xml_edge compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "xml_edge")
+          "xml_edge" "main.emo" true);
+    tc "os_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "os_demo")
+          "os_demo" "main.emo" true);
+    tc "base64_demo compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "base64_demo")
+          "base64_demo" "main.emo" true);
+    tc "slog_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "slog_demo")
+          "slog_demo" "main.emo" true);
+    tc "bufio_demo compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "bufio_demo")
+          "bufio_demo" "main.emo" true);
   ]
 
 (* ---- The TypeScript target (step 15) ----
@@ -1396,6 +1448,11 @@ let ts_golden_tests =
       ("fixed_width", "main.emo");
       ("list", "main.emo");
       ("map", "main.emo");
+      ("json_demo", "main.emo");
+      ("yaml_demo", "main.emo");
+      ("xml_demo", "main.emo");
+      ("base64_demo", "main.emo");
+      ("slog_demo", "main.emo");
     ]
 
 let () =

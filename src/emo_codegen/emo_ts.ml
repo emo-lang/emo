@@ -112,9 +112,11 @@ let js_string (s : string) : string =
   let n = String.length s in
   let push_ascii c =
     match c with
-    | '"' -> Buffer.add_string buf "\""
+    | '"' -> Buffer.add_string buf "\\\""
     | '\\' -> Buffer.add_string buf "\\\\"
-    | '\n' -> Buffer.add_string buf "\n"
+    | '\n' -> Buffer.add_string buf "\\n"
+    | '\r' -> Buffer.add_string buf "\\r"
+    | '\t' -> Buffer.add_string buf "\\t"
     | c -> Buffer.add_char buf c
   in
   let rec go i =
@@ -391,15 +393,27 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       else
         match e.Emo_ir.desc with
         | Emo_ir.Call { func = g; args } when g = env.fname ->
-            (* Self tail call: reassign the parameters and continue the
-               driver loop. *)
+            (* Self tail call: evaluate every argument into a fresh
+               temporary first — the expressions may still read the old
+               parameter values (`loop(n - 1, f(n))` reads the old n) —
+               then reassign the parameters and continue the driver
+               loop. *)
+            let temps =
+              List.mapi (fun i _ -> Printf.sprintf "__tail%d" i) args
+            in
+            let evals =
+              String.concat ""
+                (List.map2
+                   (fun t a -> Printf.sprintf "const %s = %s; " t (expr env a))
+                   temps args)
+            in
             let assigns =
               String.concat ""
                 (List.map2
-                   (fun p a -> Printf.sprintf "%s = %s; " p (expr env a))
-                   env.fparams args)
+                   (fun p t -> Printf.sprintf "%s = %s; " p t)
+                   env.fparams temps)
             in
-            Printf.sprintf "{ %scontinue; }" assigns
+            Printf.sprintf "{ %s%scontinue; }" evals assigns
         | _ -> Printf.sprintf "return %s;" (expr env e))
 
 and block env (xs : Emo_ir.stmt list) : string =
@@ -571,7 +585,7 @@ let emit_ts (program : Emo_ir.program) : string =
   List.iter
     (fun (name, sigs) ->
       let entries =
-        String.concat "; "
+        String.concat ", "
           (List.map (fun (m, a) -> Printf.sprintf "[%S, %d]" m a) sigs)
       in
       put env "E.interfaces[%S] = [%s];\n" name entries)

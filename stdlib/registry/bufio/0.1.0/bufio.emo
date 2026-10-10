@@ -1,0 +1,450 @@
+require "os"
+
+// The buffered IO library: a fixed-size memory buffer in front of any
+// byte stream, so readers issue few large reads instead of many small
+// ones, writers coalesce small writes into few large ones, and both
+// sides gain whole-line and up-to-a-delimiter reads on top of raw
+// chunks. The shape follows Go's bufio: a Reader and a Writer over
+// tiny structural interfaces, adapters for the concrete streams, and
+// buffers the caller sizes explicitly.
+//
+// Emo has no error channel, so end of stream is a value, not an
+// exception: read, read_byte, read_line, and read_string all return
+// the empty string when the stream is exhausted, exactly like
+// os.read. A raise is reserved for the caller's own mistakes — a
+// negative count, a peek wider than the buffer, a delimiter that is
+// not one byte — and for failures the underlying stream raises
+// through. read_line keeps the terminator, because an empty line and
+// the end of the stream must never be the same answer.
+//
+// The module is POSIX through os: it runs on the ocaml and c targets,
+// the targets with a Unix-shaped host. Declaring it for the browser
+// or bytecode targets is a package error before any code runs.
+
+// ---- the two stream shapes ----
+
+// A byte source: read(n) returns up to n bytes, fewer only at end of
+// stream, and the empty string once the stream is exhausted. (The
+// empty string is also the answer to a read of zero bytes — the
+// caller asked for nothing.)
+interface ByteReader {
+  def read(n Int64) String
+}
+
+// A byte sink: write(data) takes every byte or raises; the return is
+// the number of bytes taken, always data's full length.
+interface ByteWriter {
+  def write(data String) Int64
+}
+
+// ---- the two in-memory streams ----
+
+// Reads from a string held in memory.
+class BytesReader {
+  def init(data String) {
+    self.data = data
+    self.pos = Box.new(0)
+  }
+
+  def read(n Int64) String {
+    if n < 0 {
+      raise Exception.new(message: "bufio: negative read of ${n} bytes")
+    }
+    const out = window(self.data, self.pos.read(), n)
+    self.pos.replace(self.pos.read() + out.length())
+    return out
+  }
+}
+
+// The in-memory sink bytes_writer hands out: write appends, to_string
+// hands back everything accumulated so far, without draining it.
+class BytesSink {
+  def init() {
+    self.acc = Box.new("")
+  }
+
+  def write(data String) Int64 {
+    self.acc.replace(self.acc.read() + data)
+    return data.length()
+  }
+
+  def to_string() String {
+    return self.acc.read()
+  }
+}
+
+// ---- adapters ----
+
+// Reads from an open os file descriptor.
+class FdReader {
+  def init(fd Int64) {
+    self.fd = fd
+  }
+
+  def read(n Int64) String {
+    return os.read(self.fd, n)
+  }
+}
+
+// Writes to an open os file descriptor.
+class FdWriter {
+  def init(fd Int64) {
+    self.fd = fd
+  }
+
+  def write(data String) Int64 {
+    return os.write(self.fd, data)
+  }
+}
+
+// The four adapters, returning their concrete types: a stream keeps
+// its full surface (a BytesSink answers to_string, for one), and it
+// still satisfies the interface above it by shape, so it hands to
+// reader and writer unchanged.
+def bytes_reader(data String) BytesReader {
+  return BytesReader.new(data: data)
+}
+
+def bytes_writer() BytesSink {
+  return BytesSink.new()
+}
+
+def fd_reader(fd Int64) FdReader {
+  return FdReader.new(fd: fd)
+}
+
+def fd_writer(fd Int64) FdWriter {
+  return FdWriter.new(fd: fd)
+}
+
+// The buffer size reader and writer get when the caller does not name
+// one — Go's defaultBufferSize.
+def default_size() Int64 {
+  return 4096
+}
+
+// ---- shared arithmetic ----
+
+def smaller(a Int64, b Int64) Int64 {
+  if a < b {
+    return a
+  }
+  return b
+}
+
+// The clamped substring: buffer arithmetic near end of stream
+// constantly produces empty or shortened windows, and substring
+// raises on any out-of-bounds window, so every buffer slice goes
+// through here.
+def window(s String, start Int64, len Int64) String {
+  if start >= s.length() {
+    return ""
+  }
+  var take = len
+  if take < 0 {
+    take = 0
+  }
+  if start + take > s.length() {
+    take = s.length() - start
+  }
+  return s.substring(start, take)
+}
+
+// ---- Reader ----
+
+class Reader {
+  def init(src ByteReader, size Int64) {
+    if size < 1 {
+      raise Exception.new(message: "bufio: the buffer size must be positive, got ${size}")
+    }
+    self.src = Box.new(src)
+    self.data = Box.new("")
+    self.r = Box.new(0)
+    self.size = size
+    self.last = Box.new("")
+  }
+
+  // The bytes ready in the buffer, unread by the caller.
+  def buffered() Int64 {
+    return self.data.read().length() - self.r.read()
+  }
+
+  // Starts over: the buffer is emptied and reading continues from src.
+  // Unflushed bytes do not exist on this side — a Reader never holds
+  // bytes back — so the reset is silent by nature.
+  def reset(src ByteReader) Void {
+    self.src.replace(src)
+    self.data.replace("")
+    self.r.replace(0)
+    self.last.replace("")
+  }
+
+  // Brings in at most one buffer's worth of new bytes. Returns true
+  // when any byte arrived and false at end of stream. A buffer that
+  // emptied is refilled from the front; a full buffer with a consumed
+  // prefix is compacted first; a full buffer nothing was read from
+  // cannot take more and reports end of stream.
+  def fill_once() Bool {
+    const data = self.data.read()
+    const r = self.r.read()
+    if r == data.length() {
+      self.data.replace("")
+      self.r.replace(0)
+      self.last.replace("")
+    } else {
+      if data.length() == self.size {
+        if r == 0 {
+          return false
+        }
+        self.data.replace(window(data, r, data.length() - r))
+        self.r.replace(0)
+        self.last.replace("")
+      }
+    }
+    const room = self.size - self.data.read().length()
+    const chunk = self.src.read().read(room)
+    if chunk == "" {
+      return false
+    }
+    self.data.replace(self.data.read() + chunk)
+    return true
+  }
+
+  // Fills until at least need bytes are buffered or the stream ends.
+  def fill_until(need Int64) Void {
+    if self.buffered() < need {
+      if self.fill_once() {
+        self.fill_until(need)
+      }
+    }
+  }
+
+  // Reads up to n bytes — the buffer first, then the stream once if
+  // the buffer is empty. Fewer than n bytes means the stream gave all
+  // it had; the empty string means end of stream.
+  def read(n Int64) String {
+    if n < 0 {
+      raise Exception.new(message: "bufio: negative read of ${n} bytes")
+    }
+    if n == 0 {
+      return ""
+    }
+    if self.buffered() == 0 {
+      self.fill_once()
+    }
+    const take = smaller(n, self.buffered())
+    const out = window(self.data.read(), self.r.read(), take)
+    self.r.replace(self.r.read() + take)
+    if out != "" {
+      self.last.replace(window(out, out.length() - 1, 1))
+    }
+    return out
+  }
+
+  // Reads one byte as a one-byte string; the empty string at end of
+  // stream.
+  def read_byte() String {
+    return self.read(1)
+  }
+
+  // Reads through the next occurrence of delim, terminator included.
+  // The empty string means the stream ended before any byte arrived;
+  // an unterminated final tail is returned as is, so the caller can
+  // tell the two apart. The delimiter must be exactly one byte.
+  def read_string(delim String) String {
+    if delim.length() != 1 {
+      raise Exception.new(message: "bufio: the delimiter must be exactly one byte, got ${delim.length()}")
+    }
+    const out = self.consume_through(delim, "")
+    // The un-read byte must still sit in the buffer; when the whole
+    // result was consumed, a refill has happened and last is already
+    // empty — re-marking it here would aim unread_byte below zero.
+    if self.buffered() > 0 {
+      self.last.replace(window(out, out.length() - 1, 1))
+    }
+    return out
+  }
+
+  // The next line, terminator included — read_string("\n"). The last
+  // line may be unterminated; the empty string ends the stream.
+  def read_line() String {
+    return self.read_string("\n")
+  }
+
+  // Reads the stream forward until at least n bytes are buffered,
+  // then hands back exactly those next n bytes without consuming
+  // them. Shorter than n means the stream ended inside the peek; the
+  // empty string at end of stream. A peek wider than the buffer can
+  // never be satisfied and raises.
+  def peek(n Int64) String {
+    if n < 0 {
+      raise Exception.new(message: "bufio: negative peek of ${n} bytes")
+    }
+    if n > self.size {
+      raise Exception.new(message: "bufio: peek of ${n} bytes exceeds the buffer size of ${self.size}")
+    }
+    self.fill_until(n)
+    return window(self.data.read(), self.r.read(), n)
+  }
+
+  // Skips up to n bytes without handing them back, returning how many
+  // were actually skipped — fewer only at end of stream.
+  def discard(n Int64) Int64 {
+    if n < 0 {
+      raise Exception.new(message: "bufio: negative discard of ${n} bytes")
+    }
+    return self.discard_more(n, 0)
+  }
+
+  def discard_more(n Int64, done Int64) Int64 {
+    if done == n {
+      return done
+    }
+    if self.buffered() > 0 {
+      const take = smaller(n - done, self.buffered())
+      self.r.replace(self.r.read() + take)
+      self.last.replace("")
+      return self.discard_more(n, done + take)
+    }
+    if self.fill_once() {
+      return self.discard_more(n, done)
+    }
+    return done
+  }
+
+  // Pushes the byte read most recently back into the stream, once —
+  // the next read hands it back. A refill between the read and the
+  // un-read loses the byte and makes this raise.
+  def unread_byte() Void {
+    const b = self.last.read()
+    if b == "" {
+      raise Exception.new(message: "bufio: unread_byte with no byte to un-read")
+    }
+    self.last.replace("")
+    self.r.replace(self.r.read() - 1)
+  }
+
+  // Reads through the next delim, accumulating across refills. The
+  // buffer has no room limit here: a delimiter beyond one buffer's
+  // worth still arrives whole.
+  def consume_through(delim String, acc String) String {
+    const data = self.data.read()
+    const r = self.r.read()
+    const tail = window(data, r, data.length() - r)
+    const idx = tail.index_of(delim)
+    if idx >= 0 {
+      self.r.replace(r + idx + 1)
+      return acc + window(tail, 0, idx + 1)
+    }
+    self.r.replace(data.length())
+    if self.fill_once() {
+      return self.consume_through(delim, acc + tail)
+    }
+    return acc + tail
+  }
+}
+
+// ---- Writer ----
+
+class Writer {
+  def init(sink ByteWriter, size Int64) {
+    if size < 1 {
+      raise Exception.new(message: "bufio: the buffer size must be positive, got ${size}")
+    }
+    self.sink = Box.new(sink)
+    self.pending = Box.new("")
+    self.size = size
+  }
+
+  // The bytes waiting in the buffer for the next flush.
+  def buffered() Int64 {
+    return self.pending.read().length()
+  }
+
+  // The room left before the buffer flushes on its own.
+  def available() Int64 {
+    return self.size - self.pending.read().length()
+  }
+
+  // Buffers data, flushing as the buffer fills. A write at least as
+  // large as the whole empty buffer passes straight through to the
+  // sink instead of taking a detour through it. Returns the number of
+  // bytes taken — always all of them, or the failure raises.
+  def write(data String) Int64 {
+    self.write_rest(data)
+    return data.length()
+  }
+
+  def write_rest(data String) Void {
+    if data != "" {
+      const pending = self.pending.read()
+      if pending == "" {
+        if data.length() >= self.size {
+          self.push(data)
+        } else {
+          self.pending.replace(data)
+        }
+      } else {
+        const room = self.size - pending.length()
+        if data.length() <= room {
+          self.pending.replace(pending + data)
+        } else {
+          self.pending.replace(pending + window(data, 0, room))
+          self.flush()
+          self.write_rest(window(data, room, data.length() - room))
+        }
+      }
+    }
+  }
+
+  // Buffers one byte, given as a one-byte string.
+  def write_byte(b String) Void {
+    if b.length() != 1 {
+      raise Exception.new(message: "bufio: write_byte takes exactly one byte, got ${b.length()}")
+    }
+    self.write(b)
+  }
+
+  // Hands every buffered byte to the sink. The sink's own failure
+  // raises through unchanged; a sink that takes fewer bytes than it
+  // was handed is a broken sink and raises here.
+  def flush() Void {
+    const pending = self.pending.read()
+    if pending != "" {
+      self.push(pending)
+      self.pending.replace("")
+    }
+  }
+
+  // Flushes what is pending, then starts over on sink.
+  def reset(sink ByteWriter) Void {
+    self.flush()
+    self.sink.replace(sink)
+  }
+
+  def push(data String) Int64 {
+    const n = self.sink.read().write(data)
+    if n != data.length() {
+      raise Exception.new(message: "bufio: short write — the sink took ${n} of ${data.length()} bytes")
+    }
+    return n
+  }
+}
+
+// ---- construction ----
+
+def reader(src ByteReader) Reader {
+  return Reader.new(src: src, size: default_size())
+}
+
+def reader_size(src ByteReader, size Int64) Reader {
+  return Reader.new(src: src, size: size)
+}
+
+def writer(sink ByteWriter) Writer {
+  return Writer.new(sink: sink, size: default_size())
+}
+
+def writer_size(sink ByteWriter, size Int64) Writer {
+  return Writer.new(sink: sink, size: size)
+}
