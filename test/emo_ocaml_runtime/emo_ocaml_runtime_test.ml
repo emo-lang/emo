@@ -253,7 +253,7 @@ let () =
   Emo_runtime.register_interface "Greeter" [ ("greet", 0) ];
   p (Emo_runtime.method_call obj "is" [ Emo_eval.TypeValue "Greeter" ]);
   p (Emo_runtime.method_call obj "is" [ Emo_eval.TypeValue "Person" ]);
-  let e = Emo_runtime.exception_new (Emo_eval.String "boom") in
+  let e = Emo_runtime.exception_new (Emo_eval.String "boom") None in
   p e;
   (try raise (Emo_eval.Emo_raise e) with
   | Emo_eval.Emo_raise v ->

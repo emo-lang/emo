@@ -161,6 +161,13 @@ Errors are exceptions. An exception is an ordinary class instance, raised like t
 raise Exception.new(message: "something went wrong")
 ```
 
+An exception may carry structured data — an optional second argument, any
+`Map`, read back through `e.data`:
+
+```emo
+raise Exception.new("disk blew up", { "fd": 3 })
+```
+
 A raise is handled with `begin` / `catch` / `ensure`:
 
 ```emo
@@ -214,6 +221,7 @@ Emo is gradually typed: **types are dynamic at runtime, but statically checked a
 - The compiler has a built-in type-checking pass. Annotations are optional across the language — except on function signatures, where parameter types are explicit and an omitted return type declares Void — and unannotated code is still inferred and checked, reporting only errors that are certain; annotated code is checked strictly.
 - Typing is structural, and an `is` test narrows — after `if user.is(Admin)`, `user` is an `Admin` inside the branch, and never past it — matching duck-typing intuition.
 - There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as annotation vocabulary (e.g. `Array[User]`, `Map[String, Int64]`, `Box[Int64]`) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all. A parameter that receives a block is annotated `Block`.
+- The container types also take a bare spelling — `List`, `Box`, `Map` — meaning "any elements": a `Map` parameter accepts a `Map[String, Int64]` as readily as a `Map[Int64, User]`, and values read back from it are checked progressively.
 - Strictness defaults high and can be relaxed explicitly.
 - Type information feeds back into performance: modules with sufficiently complete type knowledge can be specialized (unboxed representations, direct dispatch) on the native backend.
 

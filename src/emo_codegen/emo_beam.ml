@@ -393,12 +393,19 @@ let rec expr env (x : Emo_ir.expr) : unit =
       env.local_map <- saved;
       put env ")"
   | Builtin { name; args } -> builtin env name args
-  | Make_exception { message } ->
+  | Make_exception { message; data } ->
       (* Exception.new's object is its message, and the construction
          never returns — the throw happens right here, so a Raise
-         wrapping this never reaches its own wrapper. *)
+         wrapping this never reaches its own wrapper. The data element
+         lowers only to refuse: the beam target does not support Map
+         yet, so any data expression errors before this tuple closes. *)
       put env "call 'erlang':'throw'({'emo_raise', ";
       expr env message;
+      Option.iter
+        (fun d ->
+          put env ", ";
+          expr env d)
+        data;
       put env "})"
 
 and method_call env self_ name args =
@@ -856,9 +863,14 @@ and stmt env (s : Emo_ir.stmt) : unit =
          raised value is the exception object; Exception.new's object
          is its message, so the wrapping is the throw itself. *)
       match x.Emo_ir.desc with
-      | Emo_ir.Make_exception { message } ->
+      | Emo_ir.Make_exception { message; data } ->
           put env "call 'erlang':'throw'({'emo_raise', ";
           expr env message;
+          Option.iter
+            (fun d ->
+              put env ", ";
+              expr env d)
+            data;
           put env "})"
       | _ ->
           put env "call 'erlang':'throw'({'emo_raise', ";
