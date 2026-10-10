@@ -38,7 +38,7 @@
 // handle every other call takes. The count must not be negative.
 def wait_group(n Int64) Pid {
   if n < 0 {
-    raise Exception.new(message: "sync.wait_group: the count must not be negative, got ${n}")
+    raise Exception.new(message: "sync: the count must not be negative, got ${n}")
   }
   return do counter_start(n)
 }
@@ -57,7 +57,7 @@ def done(wg Pid) Void {
   wg <- ("sync", "dec", self_pid())
   receive {
     ("sync", "underflow") -> {
-      raise Exception.new(message: "sync.done: the countdown already drained")
+      raise Exception.new(message: "sync: the countdown already drained")
     }
     ("sync", "ok") -> { }
   }
@@ -71,7 +71,7 @@ def wait(wg Pid) Void {
   receive {
     ("sync", "drained") -> { }
     ("sync", "stopped") -> {
-      raise Exception.new(message: "sync.wait: the wait group was stopped under the wait")
+      raise Exception.new(message: "sync: the wait group was stopped under the wait")
     }
   }
 }
