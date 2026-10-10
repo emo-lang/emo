@@ -406,7 +406,8 @@ Documentation lives under `docs/`. The Chinese translation of this README is [`d
 - [`docs/runtime-and-freestanding.md`](docs/runtime-and-freestanding.md) — what "runtime" and "freestanding" mean, and how they map to Emo's targets.
 - [`docs/numeric-width.md`](docs/numeric-width.md) — width-explicit numeric types on every target.
 - [`docs/var-escape.md`](docs/var-escape.md) — the `var`-escape rule.
-- [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`net`, `http`, `json`, `yaml`, `xml`, `os`, `base64`, `slog`).
+- [`docs/stdlib.md`](docs/stdlib.md) — a tour of the standard library: every package, what it is for, and the surface it exposes.
+- [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`file`, `os`, `bufio`, `net`, `http`, `json`, `yaml`, `xml`, `base64`, `slog`).
 - [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
 - [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md), [`docs/rtos-assessment.md`](docs/rtos-assessment.md), [`docs/xv6.md`](docs/xv6.md) — feasibility and market assessments.
 - [`docs/TASKS.md`](docs/TASKS.md) — the implementation task checklist.
