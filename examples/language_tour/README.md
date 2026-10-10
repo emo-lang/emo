@@ -16,7 +16,7 @@ What to notice:
   `==`. Named arguments (`User.new(name: "王晓明", age: 28)`) read at the
   call site.
 - **Interfaces are contracts by shape.** Neither `Machine` nor `Friend`
-  declares `implements` — the consumer's `Greeter` annotation is the
+  declares `implements` — the consumer's `Greeter` type declaration is the
   whole contract, and `g.is(Machine)` narrows the same value in place.
 - **Enums are closed sets; data rides in tuples.** `(Outcome.ok, value)`
   is destructured directly in `case`, with guards where a branch needs

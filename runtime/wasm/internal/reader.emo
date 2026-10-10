@@ -723,7 +723,7 @@ def s33_acc(r Reader, count Int64, acc Int64) (Reader, Int64) {
 // module-model decision.
 //
 // LEB128 lives in this module rather than a sibling because qualified
-// type annotations do not parse (step 20 pressure): a def in leb.emo
+// type declarations do not parse (step 20 pressure): a def in leb.emo
 // could not spell this module's Reader in its signature.
 
 def print_dbg(label String, data Bytes) Int64 {

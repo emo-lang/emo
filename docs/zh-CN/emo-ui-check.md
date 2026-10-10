@@ -13,7 +13,7 @@
 组件模型想成为两个模块——UI 库(`ui.emo`:VNode、层叠、布局、paint)和应用(`app.emo`:组件、update、view)。上面的修复之后,调用这条腿通了;类型这条腿当时不通。拆分真实试过,死在检查期:
 
 - 应用模块里的 `def view(count Int64) VNode` → **E4005("unknown type `VNode`")**:checker 的类/接口/枚举表按模块构建(`check_module_typed`,emo_check.ml),没有任何机制预注册其他模块的类型声明。
-- 去掉注解也无路可退:无注解的 def 推断为 Void,返回值的 def 随即报 **E4016**。两个错误互相锁死;拆分已回退。
+- 去掉类型声明也无路可退:无类型声明的 def 推断为 Void,返回值的 def 随即报 **E4016**。两个错误互相锁死;拆分已回退。
 
 ### 定案:方案 A —— 程序级类型预注册
 

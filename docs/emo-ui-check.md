@@ -36,10 +36,10 @@ check time:
 - `def view(count Int64) VNode` in the application module → **E4005
   ("unknown type `VNode`")**: the checker's classes/interfaces/enums
   tables are built per module (`check_module_typed`, emo_check.ml) and
-  nothing pre-registers another module's type declarations.
-- Dropping the annotation is no escape: unannotated defs infer Void,
-  and a def returning a value then reports **E4016**. The two errors
-  deadlock; the split reverted.
+  nothing pre-registers another module's declared types.
+- Dropping the type declaration is no escape: defs without one infer
+  Void, and a def returning a value then reports **E4016**. The two
+  errors deadlock; the split reverted.
 
 ### The decision: Option A — program-wide type pre-registration
 

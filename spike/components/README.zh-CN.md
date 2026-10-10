@@ -21,7 +21,7 @@ EMO_GUI_AUTOTEST=1 ./ui-app         # 自驱:+1、-1、+1、报告、退出—�
 
 ## 顺带的语言发现
 
-1. **本地跨模块调用曾在 c 目标被拒绝——现已修复。** 顺手 innocen 的架构——共享模块加薄入口——死在 codegen:经模块别名的 `ui.show(n)` 降级成类型级方法("the c target does not support the type-level method ... yet")。两个根因,均已修复(2026-10-10):入口模块的别名绑定(`const ui = internal.vnode`)把值一侧降成了垃圾 C——别名绑定现在在入口不降任何语句、在 def 体内降为无害的 Int 局部;另外缓存 key 从不包含编译器自身内容,陈旧的缓存二进制在编译器修复后依然存活——三个目标臂现在都把运行中可执行文件的摘要混入键值。多模块拆分随后真的试了一次,并暴露出**下一个缺口:跨模块类型注解仍然被拒**(E4005——checker 的类型表按模块隔离),`def view(count Int64) VNode` 无法跨模块书写,spike 保持单文件。拆分实验留在 git 历史里;通用的 Emo UI 包从跨模块类型起步。
+1. **本地跨模块调用曾在 c 目标被拒绝——现已修复。** 顺手 innocen 的架构——共享模块加薄入口——死在 codegen:经模块别名的 `ui.show(n)` 降级成类型级方法("the c target does not support the type-level method ... yet")。两个根因,均已修复(2026-10-10):入口模块的别名绑定(`const ui = internal.vnode`)把值一侧降成了垃圾 C——别名绑定现在在入口不降任何语句、在 def 体内降为无害的 Int 局部;另外缓存 key 从不包含编译器自身内容,陈旧的缓存二进制在编译器修复后依然存活——三个目标臂现在都把运行中可执行文件的摘要混入键值。多模块拆分随后真的试了一次,并暴露出**下一个缺口:跨模块类型声明仍然被拒**(E4005——checker 的类型表按模块隔离),`def view(count Int64) VNode` 无法跨模块书写,spike 保持单文件。拆分实验留在 git 历史里;通用的 Emo UI 包从跨模块类型起步。
 2. **递归类型必须用 xml 包的形状。** 类不能在自己的 `init` 里提名(E4005),接口不能在签名里自指。可行形状:接口 `VNode`(统一访问器)+ `VControl`/`VColumn` 两个具体类,`children Array[VNode]` 放在容器上,遍历时 `is()` 收窄。
 3. **递归是唯一的循环。** 没有 `while`/`for`——布局遍历用递归;累积结果靠 `Array[Draw]` 随返回值穿线(`Laid` 结果类捆住指令和游标),因为 def 只返回一个值,而 `Box.new([])` 装的是动态数组、其 `.append` 在动态世界没有接线(运行时 "message not understood: append/1")。
 4. **`Map.new` 收变长 pairs**,空表用 `Map.new()`——元组数组在检查期被拒(E4009)。
