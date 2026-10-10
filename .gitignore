@@ -45,3 +45,5 @@ node_modules/
 gh-pages-worktree/
 
 __pycache__
+
+.zcode
