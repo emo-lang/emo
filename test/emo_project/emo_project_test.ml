@@ -1575,6 +1575,78 @@ println(view().kind())|}
               | e -> Alcotest.fail (Printexc.to_string e))
         in
         Alcotest.(check string) "output" "control\n" output);
+    tc "another module's class constructs, its enum answers" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "geo.emo",
+                {|enum Color { red, green }
+
+class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+
+  def show() String {
+    return "(${self.x}, ${self.y})"
+  }
+}
+
+class Swatch {
+  def init(c Color) {
+    self.c = c
+  }
+
+  def kind() Color {
+    return self.c
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|const p = Point.new(x: 3, y: 4)
+println(p.show())
+println(p.is(Point))
+const s = Swatch.new(Color.green)
+if s.kind() == Color.green {
+  println("green it is")
+}|}
+              );
+            ]
+            "main.emo"
+        in
+        let interpreted =
+          capture_output (fun () ->
+              try
+                ignore (Emo_project.run_entry ~entry_file:entry ~check:true ())
+              with
+              | Emo_project.Static_errors ds -> Alcotest.fail (codes_of ds)
+              | e -> Alcotest.fail (Printexc.to_string e))
+        in
+        Alcotest.(check string)
+          "interpreter" "(3, 4)\ntrue\ngreen it is\n" interpreted;
+        (* The same program compiles on the c target: the bare
+           constructor lowers to the declaring module's mangled
+           wrapper. *)
+        let bin = Filename.concat (Filename.dirname entry) "xmod-c" in
+        let ic =
+          Unix.open_process_in
+            (Printf.sprintf
+               "exec 2>&1; cd %s && %s build main.emo --target c -o %s"
+               (Filename.quote (Filename.dirname entry))
+               (Filename.quote (emo_exe_path ()))
+               (Filename.quote bin))
+        in
+        let build_out = read_all ic in
+        let status = Unix.close_process_in ic in
+        (match status with
+        | Unix.WEXITED 0 -> ()
+        | _ -> Alcotest.fail ("c build failed: " ^ build_out));
+        let run = Unix.open_process_in (Filename.quote bin) in
+        let compiled = read_all run in
+        ignore (Unix.close_process_in run);
+        Alcotest.(check string) "c target" interpreted compiled);
   ]
 
 let () =

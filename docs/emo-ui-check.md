@@ -55,10 +55,13 @@ recorded in CHECK.md.
 The split now checks and runs: `def view(count Int64) VNode` resolves
 across the boundary, `is()` narrows to the library's carriers, and
 method dispatch on the results produces identical output through the
-interpreter and the `c` target. Package types resolve for their
-consumers too (the `xml` package's element accessors moved onto its
-interface, whose signatures now name `Xml` itself), and an interface
-signature may name its own interface inside a checked program.
+interpreter and the `c` target. Direct construction joined them the
+same day: `Point.new(...)` builds another module's class and bare enum
+members answer, identically through the interpreter, `c`, `ocaml`, and
+`typescript`. Package types resolve for their consumers too (the `xml`
+package's element accessors moved onto its interface, whose signatures
+now name `Xml` itself), and an interface signature may name its own
+interface inside a checked program.
 
 Option B (module-qualified names, collision-free composition) can
 layer later if real collisions appear.

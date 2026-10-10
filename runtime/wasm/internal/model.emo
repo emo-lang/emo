@@ -16,13 +16,6 @@ class FuncType {
   }
 }
 
-// The constructor face for the instance module's post-validation
-// decode: it builds types the validator already proved sound, and a
-// bare `FuncType.new` there would reach across the module edge.
-def func_type_make(params Array[Int64], results Array[Int64]) FuncType {
-  return FuncType.new(params, results)
-}
-
 // Decode one valtype byte: (ok, code, new_pos). v128 (0x7b) is out of
 // scope for step 20 and rejects here.
 
