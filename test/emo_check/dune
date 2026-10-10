@@ -1,6 +1,6 @@
 (executable
  (name emo_check_test)
- (libraries alcotest emo_check emo_support))
+ (libraries alcotest emo_check emo_parser emo_support))
 
 (rule
  (alias runtest)
