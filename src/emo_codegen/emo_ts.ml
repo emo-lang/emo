@@ -341,7 +341,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
         (block env then_) (block env else_)
   | Case { scrutinee; branches } -> case env scrutinee branches ~tail
   | Send { target; message } ->
-      Printf.sprintf "E.send(%s, %s)" (expr env target) (expr env message)
+      Printf.sprintf "E.send(%s, %s);" (expr env target) (expr env message)
   | Receive { branches } ->
       let saved = env.in_receive in
       env.in_receive <- true;

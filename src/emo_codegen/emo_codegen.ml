@@ -125,8 +125,16 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
       emit_case env scrutinee branches ~tail
   | Emo_ir.Receive { branches } -> emit_receive env branches ~tail
   | Emo_ir.Send { target; message } ->
-      Printf.sprintf "(Emo_runtime.send (%s) (%s))" (emit_expr env target)
-        (emit_expr env message)
+      (* `send` is unit in the runtime, so a send that ends a body is
+         sequenced and the body still yields a value — a bare tail
+         expression would type as unit. *)
+      if tail then
+        Printf.sprintf
+          "(Emo_runtime.send (%s) (%s);\nEmo_eval.Void)" (emit_expr env target)
+          (emit_expr env message)
+      else
+        Printf.sprintf "(Emo_runtime.send (%s) (%s))" (emit_expr env target)
+          (emit_expr env message)
   | Emo_ir.Raise e -> Printf.sprintf "Emo_runtime.raise_ %s" (emit_expr env e)
   | Emo_ir.Return_stmt e ->
       let code = emit_expr env e in
@@ -253,12 +261,16 @@ and emit_receive env branches ~tail =
         env.refs <- fst saved;
         env.immutables <- snd saved;
         (* Guards and bindings read the payload's items by position —
-           no partial list patterns in generated code. *)
+           no partial list patterns in generated code. The position is
+           the binding's own index in the tuple, not its order among
+           the bindings: a literal-prefixed tuple like ("latch", "dec",
+           from) binds from at position 2. *)
         let items_at =
           String.concat "\n"
-            (List.mapi
-               (fun pos (n, _) ->
-                 Printf.sprintf "let %s = List.nth __items %d in" (local n) pos)
+            (List.map
+               (fun (n, index) ->
+                 Printf.sprintf "let %s = List.nth __items %d in" (local n)
+                   index)
                bindings)
         in
         let payload_unpack =
@@ -274,11 +286,19 @@ and emit_receive env branches ~tail =
         let payload_return =
           if bindings = [] then Printf.sprintf "Some (%d, [])" i
           else
+            (* The dispatch side destructures exactly the bound values,
+               in binding order — not the whole payload. *)
+            let picked =
+              String.concat "; "
+                (List.map
+                   (fun (_, index) ->
+                     Printf.sprintf "List.nth __items %d" index)
+                   bindings)
+            in
             Printf.sprintf
               "(match Emo_runtime.payload_items payload with\n\
                | __items ->\n\
-               Some (%d, __items))"
-              i
+               Some (%d, [%s]))" i picked
         in
         Printf.sprintf
           "(fun v ->\n\
