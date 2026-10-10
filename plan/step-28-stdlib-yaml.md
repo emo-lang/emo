@@ -5,9 +5,11 @@ json package — the yaml package shares its tree design, its block
 parser discipline, and its exact-decimal float machinery) ·
 **Related:** `stdlib/registry/json` (the sibling format package),
 `docs/stdlib/yaml.md` (the doc format) · **Status:** done on the
-interpreter, ocaml, and typescript targets (2026-10-09); c, wasm, and
-beam are blocked on the same cross-module-types checker step that
-gates the json package (see step 27's follow-ups)
+interpreter, ocaml, and typescript targets (2026-10-09); the
+cross-module-types checker step landed (2026-10-10), so the checker
+no longer gates c — yaml_demo passes it and fails compiling the
+emitted C (the json package's codegen gap); wasm and beam keep their
+own capability walls
 
 ## Why this step exists
 
@@ -39,8 +41,10 @@ last-win, and the number formats at their boundaries.
 
 ## Follow-ups
 
-- The cross-module-types checker step (step 27's follow-up) gates c,
-  wasm, and beam here exactly as it gates the json package.
+- The cross-module-types checker step (step 27's follow-up) gated c,
+  wasm, and beam here exactly as it gated the json package. (Landed
+  2026-10-10; c now fails at emitted-C compile time instead — the json
+  package's codegen gap.)
 
 ## Tasks
 
