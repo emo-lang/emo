@@ -1,0 +1,42 @@
+// The macOS GUI spike: every visible behavior is this file. shim.m is
+// a fixed C vocabulary — generic message sends plus three composite
+// creators — and holds the only state that survives between events,
+// because the C target gives defs no reachable global storage.
+//
+//   ./build.sh                        from this directory
+//   ./gui-spike                       click the button
+//   EMO_GUI_AUTOTEST=1 ./gui-spike    self-driving: clicks once,
+//                                     prints the label, quits
+//
+// Runs only on the C target (the interpreter refuses foreign defs,
+// E3009) and only on macOS.
+
+// The vocabulary. Object handles are pointer-sized Int64s; the
+// fire-and-forget calls return Void, the way they do in C.
+foreign def gui_window_make(title String, w Float64, h Float64) Int64 = "gui_window_make"
+foreign def gui_label_make(x Float64, y Float64, w Float64, h Float64) Int64 = "gui_label_make"
+foreign def gui_button_make(x Float64, y Float64, w Float64, h Float64, title String, tag Int64) Int64 = "gui_button_make"
+foreign def gui_label_handle() Int64 = "gui_label_handle"
+foreign def gui_void(recv Int64, sel String) Void = "gui_void"
+foreign def gui_set_str(recv Int64, sel String, text String) Void = "gui_set_str"
+foreign def gui_app_run() Void = "gui_app_run"
+
+// The bridge. The shim's delegate externs `main__on_click`: the C
+// backend qualifies entry-module defs with the module name. State
+// travels through the signature — current count in, new count out —
+// and the button title comes in as a String, so the string legs cross
+// in both directions.
+def on_click(tag Int64, title String, count Int64) Int64 {
+  const next = count + 1
+  gui_set_str(gui_label_handle(), "setStringValue:",
+    "clicked ${next} time(s) — the button says: ${title}")
+  return next
+}
+
+// ---- Assembly: every number and every behavior is Emo's ----
+const win = gui_window_make("My Language GUI Spike", 480.0, 280.0)
+const lbl = gui_label_make(20.0, 120.0, 440.0, 60.0)
+const btn = gui_button_make(20.0, 200.0, 160.0, 32.0, "Click me", 7)
+gui_set_str(lbl, "setStringValue:", "no clicks yet")
+gui_void(win, "center")
+gui_app_run()

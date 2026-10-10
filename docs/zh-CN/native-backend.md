@@ -32,8 +32,10 @@ parse → check → lower(Emo_ir)→ specialize → 发射 OCaml → ocamlopt �
 foreign def sqrt(x Float64) Float64 = "sqrt"
 ```
 
-发射出的 OCaml **不**直接声明 C 符号。裸 external 收到的是装箱的 `value` 实参(对 C 的 `double` 是错的),而且 `sqrt` 这类符号名会与 OCaml 编译器内联的原语冲突(在 macOS ARM64 上生成坏编码)。因此 `emo build` 为每个绑定生成一个 C 包装器——`.emo-build/ffi_stubs.c`——在边界处拆箱(`Double_val` / `String_val` / `Bool_val` 进,`caml_copy_double` / `caml_copy_string` / `Val_bool` 出),用 `cc` 编译并链接。
+能力表(CHECK.md)按目标区分。**c 目标**直接调用 C 符号——没有包装器生成器。参数可以是 `Int64`、`Float64`、`Bool` 或 `String`,返回类型还可以是 `Void`——"只管发不管回"调用的形状(2026-10-10 定案);不透明句柄走指针长度的 Int64。**发射 OCaml 的后端**经生成的包装器编译:裸 external 收到的是装箱的 `value` 实参(对 C 的 `double` 是错的),而且 `sqrt` 这类符号名会与 OCaml 编译器内联的原语冲突(在 macOS ARM64 上生成坏编码),因此 `emo build` 为每个绑定生成一个 C 包装器——`.emo-build/ffi_stubs.c`——在边界处拆箱(`Double_val` / `String_val` / `Bool_val` 进,`caml_copy_double` / `caml_copy_string` / `Val_bool` 出),且只接受 `Float64`、`String`、`Bool`。
 
-目前只有 `Float64`、`String`、`Bool` 能跨边界编组;其他类型在检查期拒绝(E4200)。用 `--cclib` 链接额外的 C 库(`emo build main.emo --cclib m`)。`foreign def` 只能在编译产物里运行——解释器以 E3009 拒绝。
+程序导出的每一份外部可达声明——def、foreign 符号、尾调用簇、类构造器与方法——还会写入 `.emo-build/emo_defs.h`,FFI shim 以此对着编译器自己的声明编译:任何一侧漂移的签名都会在 cc 时报错,而不是在运行时静默出错(2026-10-10)。
 
-无法兑现 `foreign def` 的目标会在检查期拒绝它,而不是编出坏调用:今天只有发射 OCaml 的 native 后端能兑现,而 `wasm`、`typescript`、`beam` 与 freestanding 的 `riscv64`(在 C 互操作落地之前)都会拒绝。目标可用性也通过 manifest 的 `targets` 机制声明,因此包在解析期即被拒绝。
+其余类型在检查期拒绝(E4200)。用 `--cclib` 链接额外的 C 库(`emo build main.emo --cclib m`):裸名字变成 `-l` 旗标,以 `-`/`/` 开头的值原样透传,指向真实文件的 cclib(如 shim 目标文件)按内容进入构建缓存键——编辑它即可让缓存的二进制失效。`foreign def` 只能在编译产物里运行——解释器以 E3009 拒绝。
+
+无法兑现 `foreign def` 的目标会在检查期拒绝它,而不是编出坏调用:今天 c 目标与发射 OCaml 的 native 后端可以兑现,而 `wasm`、`typescript`、`beam` 与 freestanding 的 `riscv64`(在 C 互操作落地之前)都会拒绝。目标可用性也通过 manifest 的 `targets` 机制声明,因此包在解析期即被拒绝。
