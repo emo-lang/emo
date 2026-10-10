@@ -1,0 +1,128 @@
+// The wait group: a one-shot countdown that lets a process wait for N
+// units of work. Pure Emo over the process primitives — a wait group
+// is a process holding a count, `done` is one message, `wait` is
+// another — so every target the package declares answers with the same
+// observable behavior, and nothing here needed a compiler change.
+//
+//   const wg = sync.wait_group(3)  // three units of work ahead
+//   do worker(wg)                  // ... each ends with sync.done(wg)
+//   do worker(wg)
+//   do worker(wg)
+//   sync.wait(wg)                  // blocks until the third done
+//   sync.stop(wg)                  // ends the counter process
+//
+// The count is set once at `wait_group` and only ever goes down: a
+// wait group is single-use, and there is no `add`. A `done` past the
+// count does not silently vanish — the call round-trips through the
+// counter and raises, naming the caller's mistake. `wait` blocks until
+// the count drains and answers immediately once it has; several
+// processes may wait on one group, and each is woken. Every rejection
+// raises an ordinary Emo exception saying exactly what failed.
+//
+// A wait group is a process, and a process that parked forever would
+// hold the whole program open, so the lifecycle ends explicitly:
+// `stop` halts the counter, and a `wait` still parked at that moment
+// raises instead of hanging. A call raced by a `stop` — a `done` whose
+// counter is already gone — drops like any send to a dead pid, so the
+// discipline is the plain one: stop the group after your last wait.
+//
+// The counter owns the count and the waiting pids, and one process
+// handles one message at a time — so the state needs no lock of any
+// kind. That is the point: Emo has no shared memory for a mutex to
+// guard (messages are snapshot copies), and coordination is what a
+// counter process is for. Every message on the wire, in either
+// direction, is a tuple tagged `"sync"` — the package name — so the
+// group's traffic never collides with an application's own messages.
+
+// Starts a countdown of `n` units and answers the group's pid — the
+// handle every other call takes. The count must not be negative.
+def wait_group(n Int64) Pid {
+  if n < 0 {
+    raise Exception.new(message: "sync.wait_group: the count must not be negative, got ${n}")
+  }
+  return do counter_start(n)
+}
+
+// The counter's entry: the waiter row is built here, inside the
+// counter's own process, rather than passed across the spawn.
+def counter_start(n Int64) Int64 {
+  return counter(n, List.new([]))
+}
+
+// Announces one finished unit. Raises when the countdown has already
+// drained: a done beyond the count is a bug in the caller, and the
+// round trip is what makes it surface at the caller instead of
+// vanishing into the counter's mailbox.
+def done(wg Pid) Void {
+  wg <- ("sync", "dec", self_pid())
+  receive {
+    ("sync", "underflow") -> {
+      raise Exception.new(message: "sync.done: the countdown already drained")
+    }
+    ("sync", "ok") -> { }
+  }
+}
+
+// Blocks until the countdown drains; answers immediately once it has.
+// Any number of processes may wait, and each is woken. Raises when the
+// group is stopped under the wait.
+def wait(wg Pid) Void {
+  wg <- ("sync", "wait", self_pid())
+  receive {
+    ("sync", "drained") -> { }
+    ("sync", "stopped") -> {
+      raise Exception.new(message: "sync.wait: the wait group was stopped under the wait")
+    }
+  }
+}
+
+// Ends the counter process. A wait still parked on the group wakes and
+// raises at its caller. Fire-and-forget, so stopping twice is a
+// harmless dropped send.
+def stop(wg Pid) Void {
+  wg <- ("sync", "stop")
+}
+
+// The counter process: the group's whole state is the count and the
+// waiting pids, and this loop is the only code that touches them.
+def counter(count Int64, waiters List) Int64 {
+  receive {
+    ("sync", "dec", from) -> {
+      if count == 0 {
+        from <- ("sync", "underflow")
+        return counter(count, waiters)
+      }
+      from <- ("sync", "ok")
+      const left = count - 1
+      if left == 0 {
+        release(waiters, "drained")
+        return counter(0, waiters)
+      }
+      return counter(left, waiters)
+    }
+    ("sync", "wait", from) -> {
+      if count == 0 {
+        from <- ("sync", "drained")
+        return counter(count, waiters)
+      }
+      waiters.push_back(from)
+      return counter(count, waiters)
+    }
+    ("sync", "stop") -> {
+      release(waiters, "stopped")
+      return halt()
+    }
+  }
+}
+
+// Wakes every waiter with the given verdict — `"drained"` when the
+// countdown finished, `"stopped"` when the group was torn down under
+// them. The caller decides what the counter does next: keep serving a
+// drained group, or halt a stopped one.
+def release(waiters List, verdict String) Void {
+  if waiters.length() > 0 {
+    const waiter = waiters.pop_front()
+    waiter <- ("sync", verdict)
+    release(waiters, verdict)
+  }
+}

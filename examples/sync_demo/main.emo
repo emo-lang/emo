@@ -1,0 +1,86 @@
+require "sync"
+
+// The wait group in three acts: fan-out/fan-in, several waiters, and
+// the zero case. Every process owns exactly one message protocol —
+// workers trade wait-group acknowledgements, joiners report one act
+// token, the collector counts awake reports — so no mailbox ever mixes
+// shapes and the run below is deterministic on every target no matter
+// how the scheduler interleaves the processes.
+//
+//   emo run main.emo
+
+// A worker counts itself down when its unit of work is finished.
+def worker(wg Pid) {
+  sync.done(wg)
+}
+
+// A joiner parks on the wait group in its own process, so the entry
+// process never waits on a group with report traffic still in flight.
+def joiner(wg Pid, boss Pid, token String) {
+  sync.wait(wg)
+  boss <- token
+}
+
+// A waiter blocks until the group drains, then reports to the
+// collector.
+def waiter(wg Pid, collector Pid) {
+  sync.wait(wg)
+  collector <- "awake"
+}
+
+// Counts n awake reports, then tells the boss the act is over.
+def collector(n Int64, boss Pid, token String) Int64 {
+  receive {
+    "awake" -> {
+      if n > 1 {
+        return collector(n - 1, boss, token)
+      }
+      boss <- token
+      return halt()
+    }
+  }
+}
+
+// The entry process hears only the three act tokens, in any arrival
+// order, and prints the report once all three are in.
+def tally(a Int64, b Int64, c Int64) Int64 {
+  if a + b + c == 3 {
+    println("1: three workers done")
+    println("2: both waiters woke")
+    println("3: a zero wait group drains immediately")
+    return 0
+  }
+  receive {
+    "act1" -> { return tally(1, b, c) }
+    "act2" -> { return tally(a, 1, c) }
+    "act3" -> { return tally(a, b, 1) }
+  }
+}
+
+// Three workers, one countdown: the joiner's wait returns with the
+// third done.
+const l = sync.wait_group(3)
+do worker(l)
+do worker(l)
+do worker(l)
+do joiner(l, self_pid(), "act1")
+
+// Any number of processes may wait on one group, and each is woken:
+// two waiters plus the collector's own wait.
+const m = sync.wait_group(2)
+const c = do collector(2, self_pid(), "act2")
+do waiter(m, c)
+do waiter(m, c)
+do worker(m)
+do worker(m)
+
+// A zero-count group is born drained: the wait answers at once.
+const z = sync.wait_group(0)
+do joiner(z, self_pid(), "act3")
+
+tally(0, 0, 0)
+
+// The counters park once drained, so each group ends explicitly.
+sync.stop(l)
+sync.stop(m)
+sync.stop(z)
