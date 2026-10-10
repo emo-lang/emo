@@ -251,7 +251,7 @@ shop/
   ```
 
 - **Visibility is structural.** Definitions inside functions and blocks are private by scoping; module-level definitions are public (addressable by their qualified paths); and an `internal/` directory is subtree-private, enforced by the compiler — everything under `shop/internal/` is usable within `shop` and its descendants, and a compile error anywhere else.
-- **Type names are program-wide.** A type annotation resolves against every module's declarations, so a library's types are used by bare name — `def view(count Int64) VNode` in the app names `ui.emo`'s `VNode`, and `is()` narrows across the boundary. Names must be unique across the program: declaring the same type name in two modules is a compile error naming both.
+- **Type names are program-wide.** A type annotation resolves against every module's declarations, so a library's types are used by bare name — `def view(count Int64) VNode` in the app names `ui.emo`'s `VNode`, `is()` narrows across the boundary, and construction follows the same rule: `Point.new(...)` builds the library's class, its module loading on first use. Names must be unique across the program: declaring the same type name in two modules is a compile error naming both.
 - **The dependency graph is explicit.** Path references are the dependency declarations, giving automatic module discovery, incremental compilation, and compile-time cycle detection.
 
 ## Package Management

@@ -8,10 +8,11 @@
 //
 // The walk is section-scoped: `find_section` locates a section's
 // content once, and each parser owns its bytes. Type names resolve
-// program-wide (CHECK.md, cross-module types), so the function type is
-// the model module's `FuncType`, referenced bare; a field is still
-// assignable only inside `init`, and nothing here crosses a module
-// edge except the verdict tuple and plain handles.
+// program-wide (CHECK.md, cross-module types), so the model module's
+// `FuncType` is referenced bare — its annotations and its
+// constructions alike; a field is still assignable only inside `init`,
+// and nothing here crosses a module edge except the verdict tuple and
+// plain handles.
 //
 // `load` validates first (`internal.decode.module_from`), so a caller
 // never sees an unvalidated module; the loaded modules live in a
@@ -195,19 +196,19 @@ def valtype_acc(data Bytes, pos Int64, limit Int64, n Int64, acc Array[Int64]) (
 // A functype: tag 0x60, param vector, result vector.
 def functype_at(data Bytes, pos Int64, limit Int64) (Bool, FuncType, Int64) {
   if pos >= limit || data.get(pos) != 96 {
-    return (false, internal.model.func_type_make([], []), pos)
+    return (false, FuncType.new([], []), pos)
   }
   const pn = internal.reader.u32(internal.reader.new(data, pos + 1, limit))
   if pn[0].failed {
-    return (false, internal.model.func_type_make([], []), pos)
+    return (false, FuncType.new([], []), pos)
   }
   const pv = valtype_vec(data, pn[0].pos, limit, pn[1])
   const rn = internal.reader.u32(internal.reader.new(data, pv[1], limit))
   if rn[0].failed {
-    return (false, internal.model.func_type_make([], []), pos)
+    return (false, FuncType.new([], []), pos)
   }
   const rv = valtype_vec(data, rn[0].pos, limit, rn[1])
-  return (true, internal.model.func_type_make(pv[0], rv[0]), rv[1])
+  return (true, FuncType.new(pv[0], rv[0]), rv[1])
 }
 
 // A u32 vector of known length, in order.

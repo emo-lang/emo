@@ -125,6 +125,10 @@ type symbol =
 
 type env = {
   symbols : (string list * string, symbol) Hashtbl.t; (* module path × name *)
+  type_owners : (string, string list) Hashtbl.t;
+      (* bare type name → its declaring module: type names are
+         program-unique (CHECK.md, cross-module types), so the bare name
+         resolves to one owner *)
   current : string list;
   mutable locals : string list; (* innermost first *)
   types : (string * int * int, Emo_check.t) Hashtbl.t;
@@ -289,7 +293,16 @@ and lower_expr env (e : Ast.expr) : expr =
              current module. *)
           let enum_candidates =
             match path with
-            | [ type_name ] -> [ ([], type_name); (env.current, type_name) ]
+            | [ type_name ] ->
+                (* An unqualified type lives in the root module, in the
+                   current module, or at its declaring module — the bare
+                   name is program-wide (CHECK.md, cross-module types). *)
+                let owned =
+                  match Hashtbl.find_opt env.type_owners type_name with
+                  | Some p -> [ (p, type_name) ]
+                  | None -> []
+                in
+                [ ([], type_name); (env.current, type_name) ] @ owned
             | _ ->
                 let type_name = List.hd (List.rev path) in
                 [ (List.rev (List.tl (List.rev path)), type_name) ]
@@ -440,7 +453,19 @@ and lower_call env span callee args =
                            args);
                   }
               | Ast.Type_ident class_name when name = "new" -> (
-                  match lookup_symbol env env.current class_name with
+                  (* The class resolves in the current module first, then
+                     anywhere in the program: type names are program-wide
+                     (CHECK.md, cross-module types), and the checker's
+                     uniqueness rule makes the bare name unambiguous. *)
+                  let owner =
+                    match lookup_symbol env env.current class_name with
+                    | Some (S_class _ as s) -> Some s
+                    | _ ->
+                        Option.bind
+                          (Hashtbl.find_opt env.type_owners class_name)
+                          (fun path -> lookup_symbol env path class_name)
+                  in
+                  match owner with
                   | Some (S_class { mangled; params }) ->
                       {
                         ety = type_of env span;
@@ -772,6 +797,7 @@ type input = {
    entry's top-level statements. *)
 let lower (input : input) : program =
   let symbols : (string list * string, symbol) Hashtbl.t = Hashtbl.create 16 in
+  let type_owners : (string, string list) Hashtbl.t = Hashtbl.create 16 in
   (* pass 1: every program-wide symbol *)
   List.iter
     (fun (m : module_input) ->
@@ -801,9 +827,11 @@ let lower (input : input) : program =
                    {
                      mangled = mangle m.mpath (c.Ast.class_name ^ "__new");
                      params = init_params;
-                   })
+                   });
+              Hashtbl.replace type_owners c.Ast.class_name m.mpath
           | Ast.Item_enum e ->
-              Hashtbl.replace symbols (m.mpath, e.Ast.enum_name) S_enum
+              Hashtbl.replace symbols (m.mpath, e.Ast.enum_name) S_enum;
+              Hashtbl.replace type_owners e.Ast.enum_name m.mpath
           | Ast.Item_emo_group g ->
               (* a function group's members: registered under both the
                  group-qualified key (`Foo.hello` resolves here) and the
@@ -915,6 +943,7 @@ let lower (input : input) : program =
       let const_env =
         {
           symbols;
+          type_owners;
           current = m.mpath;
           locals = [];
           types = m.mtypes;
@@ -967,6 +996,7 @@ let lower (input : input) : program =
       let env =
         {
           symbols;
+          type_owners;
           current = m.mpath;
           locals = [];
           types = m.mtypes;
@@ -1087,6 +1117,7 @@ let lower (input : input) : program =
   let env =
     {
       symbols;
+      type_owners;
       current = input.entry;
       locals = [];
       types = entry_module.mtypes;

@@ -193,6 +193,9 @@ let load_module p (path : string list) : Emo_eval.env =
 (* Installs the evaluator's module hooks for this project: discovery
    (normalized path → handle with children) and loading. *)
 let install_hooks p =
+  (* One run, one set of program-wide registries: stale entries from a
+     previous run in the same process must not serve this one. *)
+  Emo_eval.reset_program_registries ();
   (* Handles are memoized per module path: every reference to `shop.order`
      shares one namespace and one load. *)
   let handles : (string list, Emo_eval.module_handle) Hashtbl.t =
@@ -217,7 +220,56 @@ let install_hooks p =
             Some h)
   in
   Emo_eval.module_handle_of := handle_of;
-  Emo_eval.module_loader := fun path -> load_module p path
+  (Emo_eval.module_loader := fun path -> load_module p path);
+  (* The program's bare-type owner index: type names are program-wide
+     (CHECK.md, cross-module types), but a bare reference carries no
+     module path to load through. Resolved on demand — the first lookup
+     scans the project's files (through the parse cache), the declaring
+     module loads like any module reference, and the answer memoizes,
+     including the negative ones the builtins produce. *)
+  let resolved_types : (string, Emo_eval.value option) Hashtbl.t =
+    Hashtbl.create 16
+  in
+  Emo_eval.type_owner_of :=
+    fun name ->
+      match Hashtbl.find_opt resolved_types name with
+      | Some v -> v
+      | None ->
+          let answer =
+            Hashtbl.fold
+              (fun path file acc ->
+                match acc with
+                | Some _ -> acc
+                | None -> (
+                    let items =
+                      try Some (parse_cached p file) with _ -> None
+                    in
+                    match items with
+                    | None -> None
+                    | Some items -> (
+                        let declares =
+                          List.exists
+                            (fun item ->
+                              match item.Ast.item_desc with
+                              | Ast.Item_class c ->
+                                  String.equal c.Ast.class_name name
+                              | Ast.Item_enum e ->
+                                  String.equal e.Ast.enum_name name
+                              | _ -> false)
+                            items
+                        in
+                        if not declares then None
+                        else
+                          match handle_of path with
+                          | None -> None
+                          | Some h ->
+                              Emo_eval.ensure_module_loaded h;
+                              let menv = Option.get h.Emo_eval.menv in
+                              Emo_eval.lookup_opt menv name)))
+              p.files None
+          in
+          Hashtbl.replace resolved_types name answer;
+          answer
 
 (* `internal` is subtree-private: a module whose path contains an internal
    segment may only be referenced from modules under that segment's parent.
