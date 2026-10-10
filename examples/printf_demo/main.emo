@@ -1,0 +1,42 @@
+// printf: C-style formatting over (format String, data Array). The
+// numeric conversions round the way C's printf does — the golden is
+// byte-identical across the interpreter, C, OCaml, TypeScript, and
+// BEAM.
+
+printf("hello: %s\n", ["world"])
+printf("%d %i %u\n", [42, -7, -1])
+printf("%o %x %X\n", [255, 255, 255])
+printf("%c%c!\n", ['E', 'm'])
+printf("[%10s] [%-10s] [%.2s]\n", ["left", "right", "truncated"])
+printf("%f | %.3f | %e | %E\n", [3.14159, 2.5, 12345.6789, 12345.6789])
+printf("%g %G %.10g\n", [0.00001234, 0.00001234, 3.14159265358979])
+printf("%+d %+d % d\n", [5, -5, 5])
+printf("%08.3f [%-8d] [%#x]\n", [3.14159, 42, 255])
+printf("%*d|%.*f|\n", [8, 42, 2, 3.14159])
+printf("100%% done\n", [])
+printf("%d\n", [9223372036854775807])
+
+// Rounding follows C: halfway cases go to even, %g switches style on
+// the rounded exponent.
+printf("%.1f %.1f %.1f %.1f\n", [0.25, 0.35, 0.125, 0.375])
+printf("%.2f %.2f %.2f\n", [0.125, 2.675, 8.835])
+printf("%.0f %.0f %.0f %.0f\n", [0.5, 1.5, 2.5, 3.5])
+printf("%.17g\n", [0.1])
+printf("%g %g %g\n", [999999.0, 999999.5, 999999.9])
+printf("%g %g\n", [0.0001, 0.00001])
+printf("%.3e %.3E\n", [123456.0, 0.000123456])
+printf("%.0e %.0e\n", [9.5, 0.95])
+printf("%15.8f|%-15.8f|\n", [123.456, 123.456])
+printf("%+.3f % .3f\n", [1.25, 1.25])
+printf("%#g %#.0f %#.0e\n", [1.0, 5.0, 5.0])
+printf("%.4g %.4g %.4g\n", [123456.0, 0.000123456, 123450000.0])
+printf("%5c|%-5c|%3c\n", ['a', 'b', 'c'])
+printf("%s|%8s|%-8s|%.3s\n", ["ab", "ab", "ab", "abcdef"])
+printf("%05d|%-05d|%05.1f\n", [42, 42, 9.99])
+printf("%x %X %o\n", [-1, -1, -1])
+printf("neg: %d %u %x\n", [-128, -128, -128])
+
+// The format and data may ride in variables; mismatches are then
+// runtime errors.
+const line = "%s x %d = %d\n"
+printf(line, ["area", 6, 42])

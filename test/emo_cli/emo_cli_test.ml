@@ -218,6 +218,7 @@ let beam_goldens =
     "fixed_width";
     "list";
     "base64_demo";
+    "printf_demo";
   ]
 
 let erl_available =
@@ -425,6 +426,7 @@ let c_goldens =
     "base64_demo";
     "slog_demo";
     "bufio_demo";
+    "printf_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

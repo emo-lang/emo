@@ -122,7 +122,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Const (L_byte n) -> put env (string_of_int n)
   | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
-  | Const (L_char c) -> put env (Printf.sprintf "$\\x%02x" (Char.code c))
+  | Const (L_char c) -> put env (one_byte_lit (Char.code c))
   | Const (L_string s) -> put env (binary_lit s)
   | Type_ref a -> put env ("'" ^ a ^ "'")
   | Emo_ir.Global_var _ -> failwith "beam: module-level `var` is not supported"
@@ -591,6 +591,14 @@ and builtin env name args =
       put env ")>('all',8,'binary',['unsigned'|['big']]),";
       put env binary_lit_newline;
       put env "}#)"
+  | "printf", [ fmt; data ] ->
+      (* the emitted emo_printf walks the format bytes against the
+         argument list and puts the rendering itself *)
+      put env "apply 'emo_printf'/2 (";
+      expr env fmt;
+      put env ", ";
+      expr env data;
+      put env ")"
   | "self_pid", [] -> put env "call 'erlang':'self'()"
   | "halt", [] -> put env "call 'erlang':'throw'('emo_halt')"
   | _ ->
@@ -599,6 +607,10 @@ and builtin env name args =
            ("beam: builtin `" ^ name ^ "` is not available yet (T17.1)"))
 
 and binary_lit_newline = "#<10>(8,1,'integer',['unsigned'|['big']])"
+
+(* A Char value is a one-byte binary. *)
+and one_byte_lit (code : int) : string =
+  Printf.sprintf "#{#<%d>(8,1,'integer',['unsigned'|['big']])}#" code
 
 (* an expression's code as a string, without disturbing the buffer *)
 and expr_block env (x : Emo_ir.expr) : string =
@@ -878,8 +890,7 @@ and emit_pattern env (p : Emo_ast.pattern) : unit =
   | Emo_ast.Pattern_literal (L_byte n) -> put env (string_of_int n)
   | Emo_ast.Pattern_literal (L_bool b) ->
       put env (if b then "'true'" else "'false'")
-  | Emo_ast.Pattern_literal (L_char c) ->
-      put env (Printf.sprintf "$\\x%02x" (Char.code c))
+  | Emo_ast.Pattern_literal (L_char c) -> put env (one_byte_lit (Char.code c))
   | Emo_ast.Pattern_literal (L_string str) -> put env (binary_lit str)
   | Emo_ast.Pattern_literal (L_float f) -> put env (float_lit f)
   | Emo_ast.Enum_member (t, m) ->
@@ -910,7 +921,7 @@ and guard_expr env (x : Emo_ir.expr) : unit =
   | Const (L_int n) -> put env (Int64.to_string n)
   | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
-  | Const (L_char c) -> put env (Printf.sprintf "$\\x%02x" (Char.code c))
+  | Const (L_char c) -> put env (one_byte_lit (Char.code c))
   | Const (L_string s) -> put env (binary_lit s)
   | Binary (op, l, r) ->
       let raw =
@@ -1712,6 +1723,679 @@ let rt_source =
 
 'emo_ne'/2 =
     fun (_a, _b) -> call 'erlang':'=/='(_a, _b)
+
+%% ---- printf ----
+%% 
+%%   The beam's own formatter: the format walks as a byte list, integers
+%%   render through the bignum-native integer_to_binary (two's
+%%   complement via a 2^64 band for the unsigned forms), and floats
+%%   destructure into their IEEE-754 words for a BigInt-exact decimal
+%%   expansion — correctly rounded, half to even, matching the C
+%%   targets' snprintf.
+
+'emo_printf'/2 =
+    fun (_fmt, _args) ->
+	call 'io':'put_chars'(apply 'emo_printf_walk'/3 (call 'binary':'bin_to_list'(_fmt), _args, []))
+
+'emo_printf_walk'/3 =
+    fun (_b, _a, _acc) ->
+	case _b of
+	  <[]> when 'true' ->
+	      case _a of
+		<[]> when 'true' -> call 'lists':'reverse'(_acc)
+		<_other> when 'true' ->
+		    call 'erlang':'error'({'emo_printf_count', call 'erlang':'length'(_other)})
+	      end
+	  <[37 | _rest]> when 'true' ->
+	      apply 'emo_printf_conv'/3 (_rest, _a, _acc)
+	  <[_c | _rest]> when 'true' ->
+	      apply 'emo_printf_walk'/3 (_rest, _a, [_c | _acc])
+	end
+
+'emo_printf_conv'/3 =
+    fun (_b0, _a0, _acc) ->
+	case _b0 of
+	  <[]> when 'true' ->
+	      call 'erlang':'error'({'emo_printf', #{#<112>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<58>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<109>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<119>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<37>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']])}#})
+	  <[37 | _rest]> when 'true' ->
+	      apply 'emo_printf_walk'/3 (_rest, _a0, [37 | _acc])
+	  <_other> when 'true' ->
+	      case apply 'emo_flags'/3 (_other, _a0, {'false', 'false', 'false', 'false', 'false'}) of
+		<{_f, _b1, _a1}> when 'true' ->
+		    case apply 'emo_width'/2 (_b1, _a1) of
+		      <{_w, _b2, _a2}> when 'true' ->
+			  case apply 'emo_prec'/2 (_b2, _a2) of
+			    <{_p, _b3, _a3}> when 'true' ->
+				case _b3 of
+		   <[]> when 'true' ->
+		       call 'erlang':'error'({'emo_printf', #{#<112>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<58>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<109>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<119>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<98>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<37>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']])}#})
+			   <[37 | _ignore]> when 'true' ->
+			       call 'erlang':'error'({'emo_printf', #{#<112>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<58>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<37>(8,1,'integer',['unsigned'|['big']]),#<37>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<121>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<44>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<119>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<44>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']])}#})
+			   <[_c | _b4]> when 'true' ->
+			       apply 'emo_emit'/7 (_c, _f, _w, _p, _b4, _a3, _acc)
+			 end
+		      end
+		  end
+	    end
+	end
+
+'emo_flags'/3 =
+    fun (_b, _a, _f) ->
+	case _b of
+	  <[45 | _t]> when 'true' ->
+	      apply 'emo_flags'/3 (_t, _a, call 'erlang':'setelement'(1, _f, 'true'))
+	  <[43 | _t]> when 'true' ->
+	      apply 'emo_flags'/3 (_t, _a, call 'erlang':'setelement'(2, _f, 'true'))
+	  <[32 | _t]> when 'true' ->
+	      apply 'emo_flags'/3 (_t, _a, call 'erlang':'setelement'(3, _f, 'true'))
+	  <[35 | _t]> when 'true' ->
+	      apply 'emo_flags'/3 (_t, _a, call 'erlang':'setelement'(4, _f, 'true'))
+	  <[48 | _t]> when 'true' ->
+	      apply 'emo_flags'/3 (_t, _a, call 'erlang':'setelement'(5, _f, 'true'))
+	  <_other> when 'true' -> {_f, _other, _a}
+	end
+
+'emo_width'/2 =
+    fun (_b, _a) ->
+	case _b of
+	  <[42 | _t]> when 'true' ->
+	      case apply 'emo_pop_int'/2 (_a, 42) of
+		<{_v, _a2}> when 'true' -> {{'value', _v}, _t, _a2}
+	      end
+	  <[_c | _t]> when call 'erlang':'=<'(48, _c) ->
+	      case call 'erlang':'=<'(_c, 57) of
+		<'true'> when 'true' ->
+		    case apply 'emo_digits'/2 (_b, 0) of
+		      <{_n, _rest}> when 'true' -> {{'value', _n}, _rest, _a}
+		    end
+		<'false'> when 'true' -> {{'none'}, _b, _a}
+	      end
+	  <_other> when 'true' -> {{'none'}, _b, _a}
+	end
+
+'emo_prec'/2 =
+    fun (_b, _a) ->
+	case _b of
+	  <[46 | _t]> when 'true' ->
+	      case _t of
+		<[42 | _t2]> when 'true' ->
+		    case apply 'emo_pop_int'/2 (_a, 42) of
+		      <{_v, _a2}> when 'true' ->
+			  case call 'erlang':'<'(_v, 0) of
+			    <'true'> when 'true' -> {{'omit'}, _t2, _a2}
+			    <'false'> when 'true' -> {{'value', _v}, _t2, _a2}
+			  end
+		    end
+		<_other> when 'true' ->
+		    case apply 'emo_digits'/2 (_t, 0) of
+		      <{_n, _rest}> when 'true' -> {{'value', _n}, _rest, _a}
+		    end
+	      end
+	  <_other> when 'true' -> {{'none'}, _b, _a}
+	end
+
+'emo_digits'/2 =
+    fun (_b, _n) ->
+	case _b of
+	  <[_c | _t]> when call 'erlang':'=<'(48, _c) ->
+	      case call 'erlang':'=<'(_c, 57) of
+		<'true'> when 'true' ->
+		    apply 'emo_digits'/2 (_t, call 'erlang':'min'(call 'erlang':'+'(call 'erlang':'*'(_n, 10), call 'erlang':'-'(_c, 48)), 999999999))
+		<'false'> when 'true' -> {_n, _b}
+	      end
+	  <_other> when 'true' -> {_n, _b}
+	end
+
+'emo_pop_int'/2 =
+    fun (_a, _c) ->
+	case _a of
+	  <[_v | _t]> when call 'erlang':'is_integer'(_v) -> {_v, _t}
+	  <[_v | _t]> when 'true' ->
+	      call 'erlang':'error'({'emo_printf_wrong', _c, apply 'emo_printf_kind'/1 (_v)})
+	  <[]> when 'true' ->
+	      call 'erlang':'error'({'emo_printf_count', 0})
+	end
+
+'emo_printf_kind'/1 =
+    fun (_v) ->
+	case _v of
+	  <_x> when call 'erlang':'is_atom'(_x) -> #{#<66>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']])}#
+	  <_x> when call 'erlang':'is_integer'(_x) -> #{#<73>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<52>(8,1,'integer',['unsigned'|['big']])}#
+	  <_x> when call 'erlang':'is_float'(_x) -> #{#<70>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<52>(8,1,'integer',['unsigned'|['big']])}#
+	  <_x> when call 'erlang':'is_binary'(_x) ->
+	      case call 'erlang':'=:='(call 'erlang':'byte_size'(_x), 1) of
+		<'true'> when 'true' -> #{#<67>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']])}#
+		<'false'> when 'true' -> #{#<83>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']])}#
+	      end
+	  <_x> when call 'erlang':'is_list'(_x) -> #{#<65>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<121>(8,1,'integer',['unsigned'|['big']])}#
+	  <_other> when 'true' -> #{#<118>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#
+	end
+
+'emo_emit'/7 =
+    fun (_c, _f, _w, _p, _rest, _args, _acc) ->
+	case _c of
+	  <100> when 'true' -> apply 'emo_emit_int'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <105> when 'true' -> apply 'emo_emit_int'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <117> when 'true' -> apply 'emo_emit_uint'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <111> when 'true' -> apply 'emo_emit_uint'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <120> when 'true' -> apply 'emo_emit_uint'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <88> when 'true' -> apply 'emo_emit_uint'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <99> when 'true' -> apply 'emo_emit_char'/6 (_f, _w, _p, _rest, _args, _acc)
+	  <115> when 'true' -> apply 'emo_emit_str'/6 (_f, _w, _p, _rest, _args, _acc)
+	  <102> when 'true' -> apply 'emo_emit_float'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <70> when 'true' -> apply 'emo_emit_float'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <101> when 'true' -> apply 'emo_emit_float'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <69> when 'true' -> apply 'emo_emit_float'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <103> when 'true' -> apply 'emo_emit_float'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <71> when 'true' -> apply 'emo_emit_float'/7 (_c, _f, _w, _p, _rest, _args, _acc)
+	  <97> when 'true' ->
+	      call 'erlang':'error'({'emo_printf', #{#<112>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<58>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<120>(8,1,'integer',['unsigned'|['big']]),#<45>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<118>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<37>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']])}#})
+	  <65> when 'true' ->
+	      call 'erlang':'error'({'emo_printf', #{#<112>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<58>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<120>(8,1,'integer',['unsigned'|['big']]),#<45>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<118>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<37>(8,1,'integer',['unsigned'|['big']]),#<65>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']])}#})
+	  <110> when 'true' ->
+	      call 'erlang':'error'({'emo_printf', #{#<112>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<58>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<37>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<40>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<119>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<41>(8,1,'integer',['unsigned'|['big']])}#})
+	  <112> when 'true' ->
+	      call 'erlang':'error'({'emo_printf', #{#<112>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<58>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<37>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<96>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<40>(8,1,'integer',['unsigned'|['big']]),#<69>(8,1,'integer',['unsigned'|['big']]),#<109>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<32>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<41>(8,1,'integer',['unsigned'|['big']])}#})
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_printf_bad_conversion', _other})
+	end
+
+%% The signed decimal forms: %d and %i.
+'emo_emit_int'/7 =
+    fun (_c, _f, _w, _p, _rest, _args, _acc) ->
+	case apply 'emo_pop_int'/2 (_args, _c) of
+	  <{_v, _a2}> when 'true' ->
+	      case apply 'emo_int_parts'/3 (_v, _f, 'true') of
+		<{_body, _sign}> when 'true' ->
+		    let <_out> = apply 'emo_pad'/4 (_f, _w, _sign, _body)
+		    in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])
+	      end
+	end
+
+%% The unsigned forms: %u, %o, %x, %X read the 64-bit pattern.
+'emo_emit_uint'/7 =
+    fun (_c, _f, _w, _p, _rest, _args, _acc) ->
+	case apply 'emo_pop_int'/2 (_args, _c) of
+	  <{_v, _a2}> when 'true' ->
+	      let <_u> = call 'erlang':'band'(_v, 18446744073709551615)
+	      in let <_body> =
+	       case _c of
+		 <117> when 'true' -> call 'erlang':'integer_to_binary'(_u)
+		 <111> when 'true' ->
+		     let <_o> = call 'erlang':'integer_to_binary'(_u, 8)
+		     in case call 'erlang':'and'(call 'erlang':'element'(4, _f), call 'erlang':'/='(_u, 0)) of
+			  <'true'> when 'true' ->
+			      call 'erlang':'iolist_to_binary'([48, _o])
+			  <'false'> when 'true' -> _o
+			end
+		 <120> when 'true' ->
+		     let <_h> = call 'erlang':'integer_to_binary'(_u, 16)
+		     in case call 'erlang':'and'(call 'erlang':'element'(4, _f), call 'erlang':'/='(_u, 0)) of
+			  <'true'> when 'true' ->
+			      call 'erlang':'iolist_to_binary'([#{#<48>(8,1,'integer',['unsigned'|['big']]),#<120>(8,1,'integer',['unsigned'|['big']])}#, call 'string':'lowercase'(_h)])
+			  <'false'> when 'true' -> call 'string':'lowercase'(_h)
+			end
+		 <88> when 'true' ->
+		     let <_h> = call 'erlang':'integer_to_binary'(_u, 16)
+		     in case call 'erlang':'and'(call 'erlang':'element'(4, _f), call 'erlang':'/='(_u, 0)) of
+			  <'true'> when 'true' ->
+			      call 'erlang':'iolist_to_binary'([#{#<48>(8,1,'integer',['unsigned'|['big']]),#<88>(8,1,'integer',['unsigned'|['big']])}#, _h])
+			  <'false'> when 'true' -> _h
+			end
+	       end
+	      in let <_out> = apply 'emo_pad'/4 (_f, _w, #{}#, _body)
+	      in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])
+	end
+
+%% %d/%i sign split: the value carries '-', '+' and ' ' come from the
+%%   flags.
+'emo_int_parts'/3 =
+    fun (_v, _f, _signed) ->
+	case call 'erlang':'<'(_v, 0) of
+	  <'true'> when 'true' ->
+	      {call 'erlang':'integer_to_binary'(call 'erlang':'abs'(_v)), #{#<45>(8,1,'integer',['unsigned'|['big']])}#}
+	  <'false'> when 'true' ->
+	      case _signed of
+		<'true'> when 'true' ->
+		    case call 'erlang':'element'(2, _f) of
+		      <'true'> when 'true' -> {call 'erlang':'integer_to_binary'(_v), #{#<43>(8,1,'integer',['unsigned'|['big']])}#}
+		      <'false'> when 'true' ->
+			  case call 'erlang':'element'(3, _f) of
+			    <'true'> when 'true' -> {call 'erlang':'integer_to_binary'(_v), #{#<32>(8,1,'integer',['unsigned'|['big']])}#}
+			    <'false'> when 'true' -> {call 'erlang':'integer_to_binary'(_v), #{}#}
+			  end
+		    end
+		<'false'> when 'true' -> {call 'erlang':'integer_to_binary'(_v), #{}#}
+	      end
+	end
+
+%% One conversion's padding: '-' wins over '0', the sign stays ahead of
+%%   a zero fill, and inf/nan never zero-fill (ZeroOk).
+'emo_pad'/4 =
+    fun (_f, _w, _sign, _body) ->
+	let <_minus> =
+		case _w of
+		  <{'value', _n}> when 'true' ->
+		      call 'erlang':'or'(call 'erlang':'element'(1, _f), call 'erlang':'<'(_n, 0))
+		  <{'none'}> when 'true' -> call 'erlang':'element'(1, _f)
+		end
+	   in let <_zero> =
+		  call 'erlang':'and'(call 'erlang':'element'(5, _f), call 'erlang':'not'(_minus))
+	   in let <_width> =
+	       case _w of
+		 <{'value', _n}> when 'true' -> call 'erlang':'abs'(_n)
+		 <{'none'}> when 'true' -> 0
+	       end
+	   in let <_total> = call 'erlang':'+'(call 'erlang':'byte_size'(_sign), call 'erlang':'byte_size'(_body))
+	   in case call 'erlang':'<'(_width, _total) of
+		<'true'> when 'true' ->
+		    call 'erlang':'iolist_to_binary'([_sign, _body])
+		<'false'> when 'true' ->
+		    let <_fill> = call 'erlang':'-'(_width, _total)
+		    in case _minus of
+			 <'true'> when 'true' ->
+			     call 'erlang':'iolist_to_binary'([_sign, _body, call 'binary':'copy'(#{#<32>(8,1,'integer',['unsigned'|['big']])}#, _fill)])
+			 <'false'> when 'true' ->
+			     case call 'erlang':'and'(_zero, call 'erlang':'not'(_minus)) of
+			       <'true'> when 'true' ->
+				   call 'erlang':'iolist_to_binary'([_sign, call 'binary':'copy'(#{#<48>(8,1,'integer',['unsigned'|['big']])}#, _fill), _body])
+			       <'false'> when 'true' ->
+				   call 'erlang':'iolist_to_binary'([call 'binary':'copy'(#{#<32>(8,1,'integer',['unsigned'|['big']])}#, _fill), _sign, _body])
+			     end
+		       end
+	      end
+
+%% %c: a one-byte binary rides as-is; an integer truncates to a byte,
+%%   exactly C's unsigned-char conversion. Space padding only.
+'emo_emit_char'/6 =
+    fun (_f, _w, _p, _rest, _args, _acc) ->
+	case _args of
+	  <[_v | _a2]> when call 'erlang':'is_binary'(_v) ->
+	      let <_out> = apply 'emo_pad'/4 (call 'erlang':'setelement'(5, _f, 'false'), _w, #{}#, _v)
+	      in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])
+	  <[_v | _a2]> when call 'erlang':'is_integer'(_v) ->
+	      let <_byte> = call 'erlang':'band'(_v, 255)
+	      in case _byte of
+		   <_b> when 'true' ->
+		       let <_lit> = #{#<_b>(8,1,'integer',['unsigned'|['big']])}#
+		       in let <_out> = apply 'emo_pad'/4 (call 'erlang':'setelement'(5, _f, 'false'), _w, #{}#, _lit)
+		       in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])
+		 end
+	  <[_v | _a2]> when 'true' ->
+	      call 'erlang':'error'({'emo_printf_wrong', 99, apply 'emo_printf_kind'/1 (_v)})
+	end
+
+%% %s: bytes only, precision truncates, width pads with spaces — the
+%%   `0` flag is undefined for strings in C and ignored here.
+'emo_emit_str'/6 =
+    fun (_f, _w, _p, _rest, _args, _acc) ->
+	case _args of
+	  <[_v | _a2]> when call 'erlang':'is_binary'(_v) ->
+	      let <_body> =
+		      case _p of
+			<{'value', _n}> when 'true' ->
+			    case call 'erlang':'<'(_n, call 'erlang':'byte_size'(_v)) of
+			      <'true'> when 'true' ->
+				  call 'binary':'part'(_v, 0, _n)
+			      <'false'> when 'true' -> _v
+			    end
+			<{'omit'}> when 'true' -> _v
+			<{'none'}> when 'true' -> _v
+		      end
+	      in let <_out> = apply 'emo_pad'/4 (call 'erlang':'setelement'(5, _f, 'false'), _w, #{}#, _body)
+	      in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])
+	  <[_v | _a2]> when 'true' ->
+	      call 'erlang':'error'({'emo_printf_wrong', 115, apply 'emo_printf_kind'/1 (_v)})
+	end
+
+%% The float family: the IEEE words decide the sign, inf and nan; the
+%%   digits come from an exact expansion, rounded half to even.
+'emo_emit_float'/7 =
+    fun (_c, _f, _w, _p, _rest, _args, _acc) ->
+	case _args of
+	  <[_v | _a2]> when call 'erlang':'is_float'(_v) ->
+	      case apply 'emo_float_parts'/1 (_v) of
+		<{_s, _e11, _m}> when 'true' ->
+	      let <_sign> =
+		     case _s of
+		       <1> when 'true' -> #{#<45>(8,1,'integer',['unsigned'|['big']])}#
+		       <0> when 'true' ->
+			   case call 'erlang':'element'(2, _f) of
+			     <'true'> when 'true' -> #{#<43>(8,1,'integer',['unsigned'|['big']])}#
+			     <'false'> when 'true' ->
+				 case call 'erlang':'element'(3, _f) of
+				   <'true'> when 'true' -> #{#<32>(8,1,'integer',['unsigned'|['big']])}#
+				   <'false'> when 'true' -> #{}#
+				 end
+			   end
+		     end
+	      in let <_upper> = call 'erlang':'or'(call 'erlang':'=:='(_c, 70), call 'erlang':'or'(call 'erlang':'=:='(_c, 69), call 'erlang':'=:='(_c, 71)))
+	      in let <_body> =
+		     case _e11 of
+		       <2047> when 'true' ->
+			   let <_word> = case _m of
+					  <0> when 'true' -> #{#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']])}#
+					  <_other> when 'true' -> #{#<110>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']])}#
+					end
+			   in case _upper of
+				<'true'> when 'true' -> call 'string':'uppercase'(_word)
+				<'false'> when 'true' -> _word
+			      end
+		       <_e> when 'true' ->
+			   let <_pe> = case _e of
+					<0> when 'true' -> 1074
+					<_other> when 'true' -> call 'erlang':'-'(1075, _e)
+				      end
+			   in apply 'emo_float_conv'/5 (_c, _f, _m, _pe, _p)
+		     end
+	      in let <_out> = apply 'emo_pad'/4 (_f, _w, _sign, _body)
+	      in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])
+		end
+	  <[_v | _a2]> when 'true' ->
+	      call 'erlang':'error'({'emo_printf_wrong', _c, apply 'emo_printf_kind'/1 (_v)})
+	end
+
+%% %f and %g keep six digits as C's defaults do; %e keeps six after the
+%%   point. A negative `*` precision reads as omitted.
+'emo_float_conv'/5 =
+    fun (_c, _f, _m, _pe, _p) ->
+	let <_prec> =
+		case _p of
+		  <{'value', _n}> when 'true' -> _n
+		  <{'omit'}> when 'true' -> 'default'
+		  <{'none'}> when 'true' -> 'default'
+		end
+	in case _c of
+	     <102> when 'true' ->
+		 apply 'emo_float_fixed'/4 (_m, _pe, apply 'emo_f_prec'/1 (_prec), call 'erlang':'element'(4, _f))
+	     <70> when 'true' ->
+		 apply 'emo_float_fixed'/4 (_m, _pe, apply 'emo_f_prec'/1 (_prec), call 'erlang':'element'(4, _f))
+	     <101> when 'true' ->
+		 let <_d> = apply 'emo_e_digits'/1 (_prec)
+		 in case apply 'emo_float_sig'/3 (_m, _pe, _d) of
+		      <{_q, _x}> when 'true' ->
+			  apply 'emo_float_sci'/6 (_q, call 'erlang':'-'(_d, 1), _x, 'false', call 'erlang':'element'(4, _f), 'false')
+		    end
+	     <69> when 'true' ->
+		 let <_d> = apply 'emo_e_digits'/1 (_prec)
+		 in case apply 'emo_float_sig'/3 (_m, _pe, _d) of
+		      <{_q, _x}> when 'true' ->
+			  apply 'emo_float_sci'/6 (_q, call 'erlang':'-'(_d, 1), _x, 'true', call 'erlang':'element'(4, _f), 'false')
+		    end
+	     <103> when 'true' ->
+		 apply 'emo_float_g'/5 (_m, _pe, apply 'emo_g_prec'/1 (_prec), 'false', call 'erlang':'element'(4, _f))
+	     <71> when 'true' ->
+		 apply 'emo_float_g'/5 (_m, _pe, apply 'emo_g_prec'/1 (_prec), 'true', call 'erlang':'element'(4, _f))
+	   end
+
+'emo_f_prec'/1 =
+    fun (_prec) ->
+	case _prec of
+	  <'default'> when 'true' -> 6
+	  <_n> when 'true' -> _n
+	end
+
+'emo_e_digits'/1 =
+    fun (_prec) ->
+	case _prec of
+	  <'default'> when 'true' -> 7
+	  <_n> when 'true' -> call 'erlang':'+'(_n, 1)
+	end
+
+'emo_g_prec'/1 =
+    fun (_prec) ->
+	case _prec of
+	  <'default'> when 'true' -> 6
+	  <0> when 'true' -> 1
+	  <_n> when 'true' -> _n
+	end
+
+%% %f: value × 10^prec rounded to an integer, then the point goes back
+%%   in `prec` digits from the right.
+'emo_float_fixed'/4 =
+    fun (_m, _pe, _prec, _hash) ->
+	let <_num> = call 'erlang':'*'(_m, apply 'emo_pow10'/1 (_prec))
+	in let <_den> = apply 'emo_pow2'/1 (_pe)
+	in let <_q> = case _pe of
+			<0> when 'true' -> _num
+			<_other> when 'true' ->
+			    apply 'emo_round'/3 (call 'erlang':'div'(_num, _den), call 'erlang':'rem'(_num, _den), _den)
+		      end
+	   in let <_s> = apply 'emo_zeropad'/2 (call 'erlang':'integer_to_binary'(_q), call 'erlang':'+'(_prec, 1))
+	   in case call 'erlang':'<'(_prec, 1) of
+		<'true'> when 'true' ->
+		    case _hash of
+		      <'true'> when 'true' -> call 'erlang':'iolist_to_binary'([_s, #{#<46>(8,1,'integer',['unsigned'|['big']])}#])
+		      <'false'> when 'true' -> _s
+		    end
+		<'false'> when 'true' ->
+		    let <_cut> = call 'erlang':'-'(call 'erlang':'byte_size'(_s), _prec)
+		    in call 'erlang':'iolist_to_binary'([call 'binary':'part'(_s, 0, _cut), #{#<46>(8,1,'integer',['unsigned'|['big']])}#, call 'binary':'part'(_s, _cut, _prec)])
+	      end
+
+%% The (Q, X) significant-digit form: value ≈ Q × 10^(X − D + 1), Q
+%%   carrying D digits, correctly rounded; the exponent adjusts up when
+%%   the rounding bumps the leading digit.
+'emo_float_sig'/3 =
+    fun (_m, _pe, _d) ->
+	case _m of
+	  <0> when 'true' -> {0, 0}
+	  <_other> when 'true' ->
+	      let <_est> = call 'erlang':'trunc'(call 'erlang':'-'(call 'math':'log10'(call 'erlang':'float'(_m)), call 'erlang':'*'(0.3010299956639812, call 'erlang':'float'(_pe))))
+	      in let <_x1> = apply 'emo_x_down'/3 (_m, _pe, _est)
+	      in let <_x> = apply 'emo_x_up'/3 (_m, _pe, _x1)
+	      in let <_shift> = call 'erlang':'-'(call 'erlang':'-'(_d, 1), _x)
+	      in case call 'erlang':'=<'(0, _shift) of
+		   <'true'> when 'true' ->
+		       apply 'emo_sig_round'/4 (call 'erlang':'*'(_m, apply 'emo_pow10'/1 (_shift)), apply 'emo_pow2'/1 (_pe), _d, _x)
+		   <'false'> when 'true' ->
+		       apply 'emo_sig_round'/4 (_m, call 'erlang':'*' (apply 'emo_pow2'/1 (_pe), apply 'emo_pow10'/1 (call 'erlang':'abs'(_shift))), _d, _x)
+		 end
+	end
+
+%% The rounding tail of 'emo_float_sig': Q from Num/Den, then the
+%%   leading-digit bump.
+'emo_sig_round'/4 =
+    fun (_num, _den, _d, _x) ->
+	let <_q> = apply 'emo_round'/3 (call 'erlang':'div'(_num, _den), call 'erlang':'rem'(_num, _den), _den)
+	in case call 'erlang':'=<'(apply 'emo_pow10'/1 (_d), _q) of
+	     <'true'> when 'true' -> {apply 'emo_pow10'/1 (call 'erlang':'-'(_d, 1)), call 'erlang':'+'(_x, 1)}
+	     <'false'> when 'true' -> {_q, _x}
+	   end
+
+'emo_x_down'/3 =
+    fun (_m, _pe, _x) ->
+	case apply 'emo_cmp_pow10'/3 (_m, _pe, _x) of
+	  <_r> when call 'erlang':'<'(_r, 0) -> apply 'emo_x_down'/3 (_m, _pe, call 'erlang':'-'(_x, 1))
+	  <_r> when 'true' -> _x
+	end
+
+'emo_x_up'/3 =
+    fun (_m, _pe, _x) ->
+	case apply 'emo_cmp_pow10'/3 (_m, _pe, call 'erlang':'+'(_x, 1)) of
+	  <_r> when call 'erlang':'=<'(0, _r) -> apply 'emo_x_up'/3 (_m, _pe, call 'erlang':'+'(_x, 1))
+	  <_r> when 'true' -> _x
+	end
+
+%% sign(M / 2^pe − 10^x), exact: cross-multiplied into integers.
+'emo_cmp_pow10'/3 =
+    fun (_m, _pe, _x) ->
+	let <_lnum> = _m
+	in let <_lden> = apply 'emo_pow2'/1 (_pe)
+	in case call 'erlang':'=<'(0, _x) of
+	     <'true'> when 'true' ->
+		 apply 'emo_cmp_tail'/4 (_lnum, _lden, apply 'emo_pow10'/1 (_x), 1)
+	     <'false'> when 'true' ->
+		 apply 'emo_cmp_tail'/4 (_lnum, _lden, 1, apply 'emo_pow10'/1 (call 'erlang':'abs'(_x)))
+	   end
+
+'emo_cmp_tail'/4 =
+    fun (_lnum, _lden, _rnum, _rden) ->
+	let <_l> = call 'erlang':'*'(_lnum, _rden)
+	in let <_r> = call 'erlang':'*'(_rnum, _lden)
+	in case call 'erlang':'<'(_l, _r) of
+	     <'true'> when 'true' -> -1
+	     <'false'> when 'true' ->
+		 case call 'erlang':'=:='(_l, _r) of
+		   <'true'> when 'true' -> 0
+		   <'false'> when 'true' -> 1
+		 end
+	   end
+
+%% %g: P significant digits, style f when the rounded exponent sits in
+%%   [-4, P), style e otherwise; trailing zeros go unless '#'.
+'emo_float_g'/5 =
+    fun (_m, _pe, _p, _upper, _hash) ->
+	case _m of
+	  <0> when 'true' ->
+	      case _hash of
+		<'true'> when 'true' ->
+		    case call 'erlang':'>'(_p, 1) of
+		      <'true'> when 'true' ->
+			  call 'erlang':'iolist_to_binary'([#{#<48>(8,1,'integer',['unsigned'|['big']]),#<46>(8,1,'integer',['unsigned'|['big']])}#, call 'binary':'copy'(#{#<48>(8,1,'integer',['unsigned'|['big']])}#, call 'erlang':'-'(_p, 1))])
+		      <'false'> when 'true' -> #{#<48>(8,1,'integer',['unsigned'|['big']]),#<46>(8,1,'integer',['unsigned'|['big']])}#
+		    end
+		<'false'> when 'true' -> #{#<48>(8,1,'integer',['unsigned'|['big']])}#
+	      end
+	  <_other> when 'true' ->
+	      case apply 'emo_float_sig'/3 (_m, _pe, _p) of
+		<{_q, _x}> when 'true' ->
+		    case call 'erlang':'and'(call 'erlang':'=<'(-4, _x), call 'erlang':'<'(_x, _p)) of
+		      <'true'> when 'true' ->
+			  apply 'emo_g_fixed'/4 (_q, _p, _x, _hash)
+		      <'false'> when 'true' ->
+			  apply 'emo_float_sci'/6 (_q, call 'erlang':'-'(_p, 1), _x, _upper, _hash, call 'erlang':'not'(_hash))
+		    end
+	      end
+	end
+
+%% The f style of %g, built straight from the (Q, X) digits.
+'emo_g_fixed'/4 =
+    fun (_q, _p, _x, _hash) ->
+	let <_s> = apply 'emo_zeropad'/2 (call 'erlang':'integer_to_binary'(_q), _p)
+	in let <_body> =
+	       case call 'erlang':'<'(_x, 0) of
+		 <'true'> when 'true' ->
+		     call 'erlang':'iolist_to_binary'([#{#<48>(8,1,'integer',['unsigned'|['big']]),#<46>(8,1,'integer',['unsigned'|['big']])}#, call 'binary':'copy'(#{#<48>(8,1,'integer',['unsigned'|['big']])}#, call 'erlang':'abs'(call 'erlang':'+'(_x, 1))), _s])
+		 <'false'> when 'true' ->
+		     case call 'erlang':'=<'(_p, call 'erlang':'+'(_x, 1)) of
+		       <'true'> when 'true' ->
+			   call 'erlang':'iolist_to_binary'([_s, call 'binary':'copy'(#{#<48>(8,1,'integer',['unsigned'|['big']])}#, call 'erlang':'-'(call 'erlang':'+'(_x, 1), _p))])
+		       <'false'> when 'true' ->
+			   let <_cut> = call 'erlang':'+'(_x, 1)
+			   in call 'erlang':'iolist_to_binary'([call 'binary':'part'(_s, 0, _cut), #{#<46>(8,1,'integer',['unsigned'|['big']])}#, call 'binary':'part'(_s, _cut, call 'erlang':'-'(_p, _cut))])
+		     end
+	       end
+	in case _hash of
+	     <'true'> when 'true' -> _body
+	     <'false'> when 'true' ->
+		 let <_t> = call 'string':'trim'(_body, 'trailing', [48])
+		 in case call 'binary':'last'(_t) of
+		      <46> when 'true' ->
+			  call 'binary':'part'(_t, 0, call 'erlang':'-'(call 'erlang':'byte_size'(_t), 1))
+		      <_c> when 'true' -> _t
+		    end
+	   end
+
+%% d.ddd…e±XX from a (Q, X) rendering with Frac fraction digits;
+%%   Strip removes trailing zeros (the %g rule), '#' keeps a bare point
+%%   when no fraction digits remain.
+'emo_float_sci'/6 =
+    fun (_q, _frac, _x, _upper, _hash, _strip) ->
+	let <_s> = apply 'emo_zeropad'/2 (call 'erlang':'integer_to_binary'(_q), call 'erlang':'+'(_frac, 1))
+	in let <_raw> = case call 'erlang':'<'(0, _frac) of
+			  <'true'> when 'true' ->
+			      call 'binary':'part'(_s, 1, _frac)
+			  <'false'> when 'true' -> #{}#
+			end
+	in let <_t> = case _strip of
+			<'true'> when 'true' -> call 'string':'trim'(_raw, 'trailing', [48])
+			<'false'> when 'true' -> _raw
+		      end
+	in let <_fracb> =
+	       case call 'erlang':'byte_size'(_t) of
+		 <0> when 'true' ->
+		     case _hash of
+		       <'true'> when 'true' -> #{#<46>(8,1,'integer',['unsigned'|['big']])}#
+		       <'false'> when 'true' -> #{}#
+		     end
+		 <_n> when 'true' -> call 'erlang':'iolist_to_binary'([#{#<46>(8,1,'integer',['unsigned'|['big']])}#, _t])
+	       end
+	in let <_e> = case _upper of
+			<'true'> when 'true' -> #{#<69>(8,1,'integer',['unsigned'|['big']])}#
+			<'false'> when 'true' -> #{#<101>(8,1,'integer',['unsigned'|['big']])}#
+		      end
+	in let <_esign> = case call 'erlang':'<'(_x, 0) of
+			    <'true'> when 'true' -> #{#<45>(8,1,'integer',['unsigned'|['big']])}#
+			    <'false'> when 'true' -> #{#<43>(8,1,'integer',['unsigned'|['big']])}#
+			  end
+	in let <_abs> = call 'erlang':'abs'(_x)
+	in let <_expb> =
+	       case call 'erlang':'<'(_abs, 10) of
+		 <'true'> when 'true' ->
+		     call 'erlang':'iolist_to_binary'([_esign, 48, call 'erlang':'integer_to_binary'(_abs)])
+		 <'false'> when 'true' ->
+		     call 'erlang':'iolist_to_binary'([_esign, call 'erlang':'integer_to_binary'(_abs)])
+	       end
+	in call 'erlang':'iolist_to_binary'([call 'binary':'part'(_s, 0, 1), _fracb, _e, _expb])
+
+%% The IEEE words: (S, E11, M52) of one double, big-endian bytes folded
+%%   into an integer — no binary pattern matching in the emitted core.
+'emo_float_parts'/1 =
+    fun (_f) ->
+	let <_b> = #{#<_f>(64,1,'float',['unsigned'|['big']])}#
+	in apply 'emo_float_bits'/3 (_b, 0, 0)
+
+'emo_float_bits'/3 =
+    fun (_b, _i, _acc) ->
+	case _i of
+	  <8> when 'true' ->
+	      let <_s> = call 'erlang':'div'(_acc, 9223372036854775808)
+	      in let <_e> = call 'erlang':'band'(call 'erlang':'div'(_acc, 4503599627370496), 2047)
+	      in case _e of
+		   <0> when 'true' -> {_s, 0, call 'erlang':'band'(_acc, 4503599627370495)}
+		   <_e> when 'true' ->
+		       {_s, _e, call 'erlang':'+'(call 'erlang':'band'(_acc, 4503599627370495), 4503599627370496)}
+		 end
+	  <_i> when 'true' ->
+	      apply 'emo_float_bits'/3 (_b, call 'erlang':'+'(_i, 1), call 'erlang':'+'(call 'erlang':'*'(_acc, 256), call 'binary':'at'(_b, _i)))
+	end
+
+%% Round Q + R/Den to nearest, ties to even.
+'emo_round'/3 =
+    fun (_q, _r, _den) ->
+	let <_t> = call 'erlang':'*'(_r, 2)
+	in case call 'erlang':'<'(_den, _t) of
+	     <'true'> when 'true' -> call 'erlang':'+'(_q, 1)
+	     <'false'> when 'true' ->
+		 case call 'erlang':'=:='(_t, _den) of
+		   <'true'> when 'true' -> call 'erlang':'+'(_q, call 'erlang':'band'(_q, 1))
+		   <'false'> when 'true' -> _q
+		 end
+	   end
+
+'emo_pow10'/1 =
+    fun (_n) ->
+	case _n of
+	  <0> when 'true' -> 1
+	  <_n> when 'true' -> call 'erlang':'*' (10, apply 'emo_pow10'/1 (call 'erlang':'-'(_n, 1)))
+	end
+
+'emo_pow2'/1 =
+    fun (_n) ->
+	case _n of
+	  <0> when 'true' -> 1
+	  <_n> when 'true' -> call 'erlang':'*' (2, apply 'emo_pow2'/1 (call 'erlang':'-'(_n, 1)))
+	end
+
+%% Left-pad a digit binary to at least Len digits with zeros.
+'emo_zeropad'/2 =
+    fun (_s, _len) ->
+	case call 'erlang':'=<'(_len, call 'erlang':'byte_size'(_s)) of
+	  <'true'> when 'true' -> _s
+	  <'false'> when 'true' ->
+	      call 'erlang':'iolist_to_binary'([call 'binary':'copy'(#{#<48>(8,1,'integer',['unsigned'|['big']])}#, call 'erlang':'-'(_len, call 'erlang':'byte_size'(_s))), _s])
+	end
 
 |}
 

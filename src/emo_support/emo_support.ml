@@ -134,3 +134,203 @@ module Render = struct
             ])
     | _ -> String.concat "\n" rendered
 end
+
+(* The printf format grammar, parsed once and shared by the checker's
+   static validation and the interpreter's renderer. The semantics anchor
+   on C17 §7.21.6.1; the pieces of C that have no Emo meaning (length
+   modifiers, %n, %p, hex floats) are parse errors, not silent drops. *)
+module Printf_format = struct
+  type size = Fixed of int | Star
+
+  type spec = {
+    minus : bool; (* '-' : left-align *)
+    plus : bool; (* '+' : always show the sign *)
+    space : bool; (* ' ' : sign position for non-negative values *)
+    hash : bool; (* '#' : alternate form *)
+    zero : bool; (* '0' : zero-fill *)
+    width : size option;
+    prec : size option; (* None = conversion default; Some (Fixed 0) = `.0` *)
+    conv : char;
+  }
+
+  type part = Text of string | Spec of spec
+
+  exception Bad of string
+
+  let width_limit = 999_999_999
+  let is_digit c = c >= '0' && c <= '9'
+
+  let saturate digits =
+    let n = String.length digits in
+    if n > 10 then width_limit
+    else
+      let v = ref 0 in
+      String.iter
+        (fun d -> v := (!v * 10) + (Char.code d - Char.code '0'))
+        digits;
+      Int.min !v width_limit
+
+  let parse (fmt : string) : part list =
+    let parts = ref [] in
+    let text_start = ref 0 in
+    let flush_text stop =
+      if !text_start < stop then
+        parts :=
+          Text (String.sub fmt !text_start (stop - !text_start)) :: !parts
+    in
+    let len = String.length fmt in
+    let i = ref 0 in
+    while !i < len do
+      if fmt.[!i] <> '%' then incr i
+      else begin
+        flush_text !i;
+        incr i;
+        if !i >= len then raise (Bad "printf: the format ends with a lone `%`");
+        if fmt.[!i] = '%' then begin
+          parts :=
+            Spec
+              {
+                minus = false;
+                plus = false;
+                space = false;
+                hash = false;
+                zero = false;
+                width = None;
+                prec = None;
+                conv = '%';
+              }
+            :: !parts;
+          incr i;
+          text_start := !i
+        end
+        else begin
+          let minus = ref false and plus = ref false and space = ref false in
+          let hash = ref false and zero = ref false in
+          let rec read_flags () =
+            if !i < len then
+              match fmt.[!i] with
+              | '-' ->
+                  minus := true;
+                  incr i;
+                  read_flags ()
+              | '+' ->
+                  plus := true;
+                  incr i;
+                  read_flags ()
+              | ' ' ->
+                  space := true;
+                  incr i;
+                  read_flags ()
+              | '#' ->
+                  hash := true;
+                  incr i;
+                  read_flags ()
+              | '0' ->
+                  zero := true;
+                  incr i;
+                  read_flags ()
+              | _ -> ()
+          in
+          read_flags ();
+          let width =
+            if !i < len && fmt.[!i] = '*' then begin
+              incr i;
+              Some Star
+            end
+            else if !i < len && is_digit fmt.[!i] then begin
+              let start = !i in
+              while !i < len && is_digit fmt.[!i] do
+                incr i
+              done;
+              Some (Fixed (saturate (String.sub fmt start (!i - start))))
+            end
+            else None
+          in
+          let prec =
+            if !i < len && fmt.[!i] = '.' then begin
+              incr i;
+              if !i < len && fmt.[!i] = '*' then begin
+                incr i;
+                Some Star
+              end
+              else begin
+                let start = !i in
+                while !i < len && is_digit fmt.[!i] do
+                  incr i
+                done;
+                (* `%.f` spells an explicit precision of zero in C. *)
+                Some (Fixed (saturate (String.sub fmt start (!i - start))))
+              end
+            end
+            else None
+          in
+          (* Length modifiers have no Emo reading: the numeric argument
+             types are fixed-width already. Parse to reject, not to guess. *)
+          if
+            !i < len
+            &&
+            match fmt.[!i] with
+            | 'h' | 'l' | 'L' | 'z' | 'j' | 't' -> true
+            | _ -> false
+          then
+            raise
+              (Bad
+                 "printf: length modifiers (`h`, `l`, `ll`, `z`, ...) have no \
+                  meaning in Emo");
+          if !i < len && fmt.[!i] = '%' then
+            raise (Bad "printf: `%%` cannot carry flags, width, or precision");
+          if !i >= len then
+            raise (Bad "printf: the format ends with a bare `%`");
+          let conv = fmt.[!i] in
+          incr i;
+          (match conv with
+          | 'd' | 'i' | 'u' | 'o' | 'x' | 'X' | 'c' | 's' | 'f' | 'F' | 'e'
+          | 'E' | 'g' | 'G' ->
+              parts :=
+                Spec
+                  {
+                    minus = !minus;
+                    plus = !plus;
+                    space = !space;
+                    hash = !hash;
+                    zero = !zero;
+                    width;
+                    prec;
+                    conv;
+                  }
+                :: !parts
+          | 'a' | 'A' ->
+              raise
+                (Bad
+                   (Printf.sprintf
+                      "printf: hex-float conversion `%%%c` is not supported"
+                      conv))
+          | 'n' ->
+              raise
+                (Bad
+                   "printf: `%n` is not supported (it writes through pointers)")
+          | 'p' ->
+              raise (Bad "printf: `%p` is not supported (Emo has no pointers)")
+          | other ->
+              raise
+                (Bad (Printf.sprintf "printf: unknown conversion `%%%c`" other)));
+          text_start := !i
+        end
+      end
+    done;
+    flush_text len;
+    List.rev !parts
+
+  (* How many array elements one format consumes: each conversion but
+     `%%`, plus one per `*` width or precision. *)
+  let rec consumed_slots (parts : part list) : int =
+    match parts with
+    | [] -> 0
+    | Text _ :: rest -> consumed_slots rest
+    | Spec s :: rest ->
+        let star = function Some Star -> 1 | _ -> 0 in
+        let own =
+          (if s.conv = '%' then 0 else 1) + star s.width + star s.prec
+        in
+        own + consumed_slots rest
+end

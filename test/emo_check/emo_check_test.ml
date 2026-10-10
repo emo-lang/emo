@@ -971,6 +971,65 @@ println(ages["a"])|}
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
   ]
 
+(* ---- printf ---- *)
+
+let printf_tests =
+  [
+    tc "a literal format with matching literal data checks clean" (fun () ->
+        let diagnostics =
+          check
+            {|
+printf("hello %s %d\n", ["world", 42])
+printf("%*d|%.*f|%%\n", [8, 42, 2, 1.5])|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a conversion type mismatch is E4004" (fun () ->
+        let diagnostics = check {|printf("%d\n", ["str"])|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a count mismatch is E4004" (fun () ->
+        let diagnostics = check {|printf("%d %d\n", [1])|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004");
+        Alcotest.(check bool)
+          "message" true
+          (List.exists
+             (fun d -> contains_substring d.Diagnostic.message "consumes 2")
+             diagnostics));
+    tc "unknown conversions are E4004" (fun () ->
+        let diagnostics = check {|printf("%y\n", [])|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "hex-float, %n, and %p are refused" (fun () ->
+        let a = check {|printf("%a\n", [1.0])|} in
+        Alcotest.(check bool) "%a" true (has_code a "E4004");
+        let n = check {|printf("%n", [])|} in
+        Alcotest.(check bool) "%n" true (has_code n "E4004");
+        let p = check {|printf("%p", [])|} in
+        Alcotest.(check bool) "%p" true (has_code p "E4004"));
+    tc "length modifiers are refused" (fun () ->
+        let diagnostics = check {|printf("%lld\n", [1])|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a lone percent is E4004" (fun () ->
+        let diagnostics = check {|printf("100 %\n", [])|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "element types come from a typed array variable" (fun () ->
+        let diagnostics = check {|
+const xs = ["a", "b"]
+printf("%d\n", xs)|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a dynamic format stays unchecked" (fun () ->
+        let diagnostics =
+          check
+            {|
+def fmt() String { return "%d\n" }
+printf(fmt(), ["anything"])|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "printf arity is two" (fun () ->
+        let diagnostics = check {|printf("hi\n")|} in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -985,4 +1044,5 @@ let () =
       ("void", void_tests);
       ("map", map_tests);
       ("corpus", corpus_tests);
+      ("printf", printf_tests);
     ]

@@ -379,6 +379,11 @@ and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
           (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
       in
       if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "printf" ->
+      (* The format rides as a String, the data as its dynamic array —
+         the runtime walks the elements against the conversions. *)
+      Printf.sprintf "emo_printf(%s, %s)" (arg 0 Emo_check.String)
+        (as_dyn env (List.nth args 1))
   (* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- *)
   | "os_getpid" ->
       let v = Printf.sprintf "emo_os_getpid()" in

@@ -1403,6 +1403,12 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "bufio_demo")
           "bufio_demo" "main.emo" true);
+    tc "printf_demo compiles to a binary with the interpreter's output"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "printf_demo")
+          "printf_demo" "main.emo" true);
   ]
 
 (* ---- The TypeScript target (step 15) ----
@@ -1453,6 +1459,7 @@ let ts_golden_tests =
       ("xml_demo", "main.emo");
       ("base64_demo", "main.emo");
       ("slog_demo", "main.emo");
+      ("printf_demo", "main.emo");
     ]
 
 let () =

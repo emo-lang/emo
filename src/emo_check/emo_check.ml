@@ -341,6 +341,14 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ( "printf",
+          {
+            vtype =
+              FuncType
+                ([ ("format", String); ("data", ArrayType Unknown) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
         ("self_pid", { vtype = FuncType ([], Pid); is_var = false; depth = 0 });
         ("halt", { vtype = FuncType ([], Unknown); is_var = false; depth = 0 });
         ( "net_connect",
@@ -684,6 +692,103 @@ let provably_excluded ctx rt target =
   | EnumType _, _ -> true
   | _ -> false
 
+(* The conversion families printf admits, as the checker states them.
+   [Unknown] stays silent — the gradual rule — and the runtime checks. *)
+let printf_slot_ok conv (ty : t) =
+  match conv with
+  | '*' | 'd' | 'i' | 'u' | 'o' | 'x' | 'X' -> (
+      match ty with Int64 | Byte | Unknown -> true | _ -> false)
+  | 'c' -> ( match ty with Char | Byte | Int64 | Unknown -> true | _ -> false)
+  | 's' -> ( match ty with String | Unknown -> true | _ -> false)
+  | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' -> (
+      match ty with Float64 | Unknown -> true | _ -> false)
+  | _ -> false
+
+let printf_slot_expects conv =
+  match conv with
+  | 'd' | 'i' | 'u' | 'o' | 'x' | 'X' -> "an Int64"
+  | 'c' -> "a Char, Byte, or Int64"
+  | 's' -> "a String"
+  | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' -> "a Float64"
+  | _ -> "an Int64"
+
+(* One consumed slot (a conversion or a `*`) against one element type. *)
+let check_printf_slot ctx span conv (ty : t) =
+  if not (printf_slot_ok conv ty) then
+    report ctx span "E4004"
+      (Printf.sprintf "printf: `%%%c` expects %s, got %s" conv
+         (printf_slot_expects conv) (to_string ty))
+
+(* When the format is a literal, the checker reads it: the conversion
+   grammar is validated here, and a literal (or homogeneously typed) data
+   array has every element's type and count on the table — the mistakes C
+   compilers only warn about are errors in Emo. Dynamic formats and
+   dynamic arrays stay runtime matters. *)
+let check_printf ctx (args : Ast.arg list) =
+  let fmt_arg = List.hd args and data_arg = List.nth args 1 in
+  match fmt_arg.Ast.arg_value.Ast.desc with
+  | Ast.String fmt -> (
+      let parts =
+        try Emo_support.Printf_format.parse fmt
+        with Emo_support.Printf_format.Bad message ->
+          report ctx fmt_arg.Ast.arg_value.Ast.span "E4004" message;
+          []
+      in
+      let slots = Emo_support.Printf_format.consumed_slots parts in
+      let check_elems (elem_tys : t list) =
+        if List.length elem_tys <> slots then
+          report ctx data_arg.Ast.arg_value.Ast.span "E4004"
+            (Printf.sprintf
+               "printf: the format consumes %d argument(s), the array has %d \
+                element(s)"
+               slots (List.length elem_tys))
+        else
+          (* Walk conversions and elements in lockstep; `*` slots and `%%`
+             share the iteration. *)
+          let elems = Array.of_list elem_tys in
+          let idx = ref 0 in
+          List.iter
+            (fun part ->
+              match part with
+              | Emo_support.Printf_format.Text _ -> ()
+              | Emo_support.Printf_format.Spec s ->
+                  let data_span = data_arg.Ast.arg_value.Ast.span in
+                  (match s.width with
+                  | Some Star ->
+                      check_printf_slot ctx data_span '*' elems.(!idx);
+                      incr idx
+                  | _ -> ());
+                  (match s.prec with
+                  | Some Star ->
+                      check_printf_slot ctx data_span '*' elems.(!idx);
+                      incr idx
+                  | _ -> ());
+                  if s.conv <> '%' then begin
+                    check_printf_slot ctx data_span s.conv elems.(!idx);
+                    incr idx
+                  end)
+            parts
+      in
+      let recorded (e : Ast.expr) =
+        match
+          Hashtbl.find_opt ctx.types
+            ( e.Ast.span.Emo_support.Span.file,
+              e.Ast.span.Emo_support.Span.start,
+              e.Ast.span.Emo_support.Span.stop )
+        with
+        | Some t -> t
+        | None -> Unknown
+      in
+      match data_arg.Ast.arg_value.Ast.desc with
+      | Ast.Array_literal es -> check_elems (List.map recorded es)
+      | _ -> (
+          (* The data argument was already checked by `check_apply`; read
+             its recorded type rather than checking twice. *)
+          match recorded data_arg.Ast.arg_value with
+          | ArrayType elem -> check_elems (List.init slots (fun _ -> elem))
+          | _ -> ()))
+  | _ -> ()
+
 let rec check_expr ctx env (e : Ast.expr) : t =
   let span = e.Ast.span in
   let result = check_expr_desc ctx env span e.Ast.desc in
@@ -947,7 +1052,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
           check_method_call ctx env span recv mname args
       | _ ->
           let ft = check_expr ctx env callee in
-          check_apply ctx env span "this call" ft args)
+          let t = check_apply ctx env span "this call" ft args in
+          (match callee.Ast.desc with
+          | Ast.Ident "printf" when List.length args = 2 ->
+              check_printf ctx args
+          | _ -> ());
+          t)
 
 (* Validates the arguments of a call against a known signature: arity,
    unknown or duplicate named arguments, and provable type mismatches.

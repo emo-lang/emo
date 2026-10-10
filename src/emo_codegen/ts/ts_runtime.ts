@@ -440,6 +440,481 @@ function println(v: any): void {
   process.stdout.write(toStr(v) + "\n");
 }
 
+// ---- printf ----
+
+// C17 §7.21.6.1 on the JS primitives. bigint Int64s format through
+// two's-complement masking; floats take a BigInt-exact decimal
+// expansion with round-half-to-even, matching the C targets' snprintf
+// where `toFixed` (half away from zero) would not. `%s` measures width
+// and precision in UTF-8 bytes; a cut landing mid-codepoint decodes to
+// U+FFFD, since a JS string cannot carry a partial byte.
+
+class PFSpec {
+  minus: boolean = false;
+  plus: boolean = false;
+  space: boolean = false;
+  hash: boolean = false;
+  zero: boolean = false;
+  width: number | "*" | null = null;
+  prec: number | "*" | null = null;
+  conv: string = "d";
+}
+
+function pfParse(fmt: string): any[] {
+  const parts: any[] = [];
+  let text = "";
+  const flush = () => {
+    if (text) {
+      parts.push(text);
+      text = "";
+    }
+  };
+  let i = 0;
+  while (i < fmt.length) {
+    if (fmt[i] !== "%") {
+      text += fmt[i];
+      i++;
+      continue;
+    }
+    flush();
+    i++;
+    if (i >= fmt.length)
+      throw new Error("printf: the format ends with a lone `%`");
+    if (fmt[i] === "%") {
+      parts.push("%");
+      i++;
+      continue;
+    }
+    const s = new PFSpec();
+    while (i < fmt.length && "-+ #0".includes(fmt[i])) {
+      const f = fmt[i];
+      if (f === "-") s.minus = true;
+      else if (f === "+") s.plus = true;
+      else if (f === " ") s.space = true;
+      else if (f === "#") s.hash = true;
+      else s.zero = true;
+      i++;
+    }
+    if (i < fmt.length && fmt[i] === "*") {
+      s.width = "*";
+      i++;
+    } else if (i < fmt.length && fmt[i] >= "0" && fmt[i] <= "9") {
+      let digits = "";
+      while (i < fmt.length && fmt[i] >= "0" && fmt[i] <= "9") {
+        digits += fmt[i];
+        i++;
+      }
+      s.width = Math.min(Number(digits), 999999999);
+    }
+    if (i < fmt.length && fmt[i] === ".") {
+      i++;
+      if (i < fmt.length && fmt[i] === "*") {
+        s.prec = "*";
+        i++;
+      } else {
+        let digits = "";
+        while (i < fmt.length && fmt[i] >= "0" && fmt[i] <= "9") {
+          digits += fmt[i];
+          i++;
+        }
+        // `%.f` spells an explicit precision of zero in C.
+        s.prec = Math.min(Number(digits || "0"), 999999999);
+      }
+    }
+    if (i < fmt.length && "hlLzjt".includes(fmt[i]))
+      throw new Error(
+        "printf: length modifiers (`h`, `l`, `ll`, `z`, ...) have no meaning in Emo"
+      );
+    if (i >= fmt.length)
+      throw new Error("printf: the format ends with a bare `%`");
+    s.conv = fmt[i];
+    i++;
+    if ("diuoxXcsfFeEgG".includes(s.conv)) parts.push(s);
+    else if (s.conv === "a" || s.conv === "A")
+      throw new Error(
+        "printf: hex-float conversion `%" + s.conv + "` is not supported"
+      );
+    else if (s.conv === "n")
+      throw new Error("printf: `%n` is not supported (it writes through pointers)");
+    else if (s.conv === "p")
+      throw new Error("printf: `%p` is not supported (Emo has no pointers)");
+    else throw new Error("printf: unknown conversion `%" + s.conv + "`");
+  }
+  flush();
+  return parts;
+}
+
+function pfSlots(parts: any[]): number {
+  let n = 0;
+  for (const p of parts) {
+    if (typeof p === "string") continue;
+    const s = p as PFSpec;
+    n += (s.width === "*" ? 1 : 0) + (s.prec === "*" ? 1 : 0) + 1;
+  }
+  return n;
+}
+
+function pfDecompose(x: number): { neg: boolean; mant: bigint; exp: number } {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  const hi = view.getUint32(0);
+  const lo = view.getUint32(4);
+  const neg = (hi >>> 31) === 1;
+  const rawExp = (hi >>> 20) & 0x7ff;
+  const frac = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo);
+  if (rawExp === 0) return { neg, mant: frac, exp: -1074 };
+  return { neg, mant: frac | (1n << 52n), exp: rawExp - 1075 };
+}
+
+// Round q+r/d to nearest, ties to even.
+function pfRound(q: bigint, r: bigint, d: bigint): bigint {
+  const twice = r * 2n;
+  if (twice > d) return q + 1n;
+  if (twice === d) return q + (q & 1n);
+  return q;
+}
+
+// sign(mant × 2^exp − 10^x), exact, over positive integers.
+function pfCmpPow10(mant: bigint, exp: number, x: number): number {
+  let lnum = mant;
+  let lden = 1n;
+  let rnum = 1n;
+  let rden = 1n;
+  if (exp >= 0) lnum <<= BigInt(exp);
+  else lden <<= BigInt(-exp);
+  if (x >= 0) {
+    rnum = pfPow10(x);
+  } else {
+    rden = pfPow10(-x);
+  }
+  const l = lnum * rden;
+  const r = rnum * lden;
+  return l < r ? -1 : l > r ? 1 : 0;
+}
+
+function pfPow10(n: number): bigint {
+  let r = 1n;
+  const fives = 5n ** BigInt(n);
+  // 10^n = 2^n × 5^n; the shift is cheap, the power is the work.
+  return fives << BigInt(n);
+}
+
+function pfTwoDigit(n: number): string {
+  return (n < 10 ? "0" : "") + n;
+}
+
+// The (Q, X) rendering of a positive value with exactly `digits`
+// significant figures: value ≈ Q × 10^(X − digits + 1), Q carrying
+// `digits` digits, correctly rounded (half to even). X adjusts up when
+// the rounding bumps the leading digit (9.99… → 1.0…).
+function pfSignificant(
+  mant: bigint,
+  exp: number,
+  digits: number
+): { q: bigint; x: number } {
+  let x = Math.floor(Math.log10(Number(mant) * Math.pow(2, exp)));
+  while (pfCmpPow10(mant, exp, x) < 0) x--;
+  while (pfCmpPow10(mant, exp, x + 1) >= 0) x++;
+  const shift = digits - 1 - x;
+  let num = mant;
+  let den = 1n;
+  if (exp >= 0) num <<= BigInt(exp);
+  else den <<= BigInt(-exp);
+  if (shift >= 0) num *= pfPow10(shift);
+  else den *= pfPow10(-shift);
+  let q = pfRound(num / den, num % den, den);
+  if (q >= pfPow10(digits)) {
+    q = pfPow10(digits - 1);
+    x += 1;
+  }
+  return { q, x };
+}
+
+// Fixed notation from a (Q, X) significant rendering.
+function pfFixedFromSig(q: bigint, digits: number, x: number): string {
+  const d = String(q).padStart(digits, "0");
+  const point = x + 1; // digits before the decimal point
+  if (point <= 0) return "0." + "0".repeat(-point) + d;
+  if (point >= digits) return d + "0".repeat(point - digits);
+  return d.slice(0, point) + "." + d.slice(point);
+}
+
+// Scientific notation: d.ddd…e±XX, `digits` − 1 fraction digits.
+function pfSciFromSig(
+  q: bigint,
+  digits: number,
+  x: number,
+  upper: boolean,
+  hash: boolean
+): string {
+  const d = String(q).padStart(digits, "0");
+  let frac = digits > 1 ? d.slice(1) : "";
+  let point = "";
+  if (frac !== "") point = ".";
+  else if (hash) point = ".";
+  return (
+    d[0] +
+    point +
+    frac +
+    (upper ? "E" : "e") +
+    (x < 0 ? "-" : "+") +
+    pfTwoDigit(Math.abs(x))
+  );
+}
+
+// Fixed notation for the value |x| with `prec` digits after the point,
+// correctly rounded; the integer part never loses a digit.
+function pfFixedPrec(mant: bigint, exp: number, prec: number): string {
+  if (mant === 0n) return prec > 0 ? "0." + "0".repeat(prec) : "0";
+  if (exp >= 0) {
+    const int = String(mant << BigInt(exp));
+    return prec > 0 ? int + "." + "0".repeat(prec) : int;
+  }
+  let num = mant * pfPow10(prec);
+  const den = 1n << BigInt(-exp);
+  const q = pfRound(num / den, num % den, den);
+  const s = String(q).padStart(prec + 1, "0");
+  return prec > 0
+    ? s.slice(0, s.length - prec) + "." + s.slice(s.length - prec)
+    : s.slice(0, s.length - prec);
+}
+
+// The padded rendering of one float conversion (f/F/e/E/g/G).
+function pfFloat(
+  x: number,
+  s: PFSpec,
+  minus: boolean,
+  zero: boolean,
+  width: number,
+  prec: number | null
+): string {
+  const upper = s.conv === "F" || s.conv === "E" || s.conv === "G";
+  const neg = pfDecompose(x).neg;
+  let sign = neg ? "-" : s.plus ? "+" : s.space ? " " : "";
+  let body: string;
+  if (!Number.isFinite(x)) {
+    body = Number.isNaN(x) ? "nan" : "inf";
+    if (upper) body = body.toUpperCase();
+    // The 0 flag has no effect on inf and nan.
+    const total = sign + body;
+    if (width > total.length) {
+      if (minus) return total + " ".repeat(width - total.length);
+      return " ".repeat(width - total.length) + total;
+    }
+    return total;
+  }
+  const { mant, exp } = pfDecompose(x);
+  if (s.conv === "f" || s.conv === "F") {
+    const p = prec === null ? 6 : prec;
+    body = pfFixedPrec(mant, exp, p);
+    // '#' keeps the decimal point even with an explicit precision of
+    // zero.
+    if (s.hash && p === 0 && !body.includes(".")) body += ".";
+  } else if (s.conv === "e" || s.conv === "E") {
+    const p = prec === null ? 6 : prec;
+    const sig = pfSignificant(mant, exp, p + 1);
+    body = pfSciFromSig(sig.q, p + 1, sig.x, upper, s.hash);
+  } else {
+    let p = prec === null ? 6 : prec;
+    if (p === 0) p = 1; // C: a %g precision of zero is taken as one.
+    if (mant === 0n) {
+      // %g of zero: style f, all fraction digits stripped unless #.
+      body = s.hash ? "0." + "0".repeat(p - 1) : "0";
+    } else {
+      const sig = pfSignificant(mant, exp, p);
+      if (sig.x >= -4 && sig.x < p) {
+        body = pfFixedFromSig(sig.q, p, sig.x);
+        if (!s.hash) {
+          const dot = body.indexOf(".");
+          if (dot >= 0) {
+            body = body.replace(/0+$/, "");
+            if (body.endsWith(".")) body = body.slice(0, -1);
+          }
+        }
+      } else {
+        body = pfSciFromSig(sig.q, p, sig.x, upper, s.hash);
+        if (!s.hash) {
+          const eAt = body.indexOf(upper ? "E" : "e");
+          let mantissa = body.slice(0, eAt);
+          const expPart = body.slice(eAt);
+          if (mantissa.includes(".")) {
+            mantissa = mantissa.replace(/0+$/, "");
+            if (mantissa.endsWith(".")) mantissa = mantissa.slice(0, -1);
+          }
+          body = mantissa + expPart;
+        }
+      }
+    }
+  }
+  const total = sign + body;
+  if (width > total.length) {
+    if (minus) return total + " ".repeat(width - total.length);
+    if (zero) return sign + "0".repeat(width - total.length) + body;
+    return " ".repeat(width - total.length) + total;
+  }
+  return total;
+}
+
+function printf(fmt: any, data: any): void {
+  if (typeof fmt !== "string")
+    throw new Error("`printf` expects (format String, data Array)");
+  if (!(data instanceof EArray))
+    throw new Error(
+      "`printf` expects (format String, data Array), got " + tag(data) + " as data"
+    );
+  const parts = pfParse(fmt);
+  const items = data.items;
+  if (pfSlots(parts) !== items.length)
+    throw new Error(
+      "printf: the format consumes " +
+        pfSlots(parts) +
+        " argument(s), the array has " +
+        items.length +
+        " element(s)"
+    );
+  let idx = 0;
+  const pull = (): any => items[idx++];
+  const pullI64 = (conv: string): any => {
+    const v = pull();
+    if (typeof v === "bigint") return v;
+    if (typeof v === "number" && Number.isInteger(v)) return BigInt(v);
+    throw new Error(
+      "printf: `%" +
+        conv +
+        "` expects " +
+        (conv === "c"
+          ? "a Char, Byte, or Int64"
+          : conv === "s"
+          ? "a String"
+          : "fFeEgG".includes(conv)
+          ? "a Float64"
+          : "an Int64") +
+        ", got " +
+        tag(v)
+    );
+  };
+  let out = "";
+  for (const p of parts) {
+    if (typeof p === "string") {
+      out += p;
+      continue;
+    }
+    const s = p as PFSpec;
+    let minus = s.minus;
+    let width: number;
+    if (s.width === "*") {
+      width = pfStarWidth(pull());
+      // C: a negative width via `*` means left-align with the absolute
+      // value.
+      if (width < 0) {
+        minus = true;
+        width = -width;
+      }
+    } else width = s.width === null ? 0 : (s.width as number);
+    let prec: number | null =
+      s.prec === "*" ? pfStarPrec(pull()) : (s.prec as number | null);
+    if (s.conv === "%") {
+      out += "%";
+      continue;
+    }
+    const v = pull();
+    if ("diuoxX".includes(s.conv)) {
+      if (typeof v !== "bigint" && !(typeof v === "number" && Number.isInteger(v)))
+        throw new Error(
+          "printf: `%" + s.conv + "` expects an Int64, got " + tag(v)
+        );
+      const n: bigint = typeof v === "bigint" ? v : BigInt(v);
+      let body: string;
+      if (s.conv === "d" || s.conv === "i") {
+        body = BigInt.asIntN(64, n).toString();
+      } else if (s.conv === "u") {
+        body = BigInt.asUintN(64, n).toString();
+      } else if (s.conv === "o") {
+        body = BigInt.asUintN(64, n).toString(8);
+      } else if (s.conv === "x") {
+        body = BigInt.asUintN(64, n).toString(16);
+      } else {
+        body = BigInt.asUintN(64, n).toString(16).toUpperCase();
+      }
+      // '#' prefixes 0, 0x, 0X on o/x/X when the value is nonzero.
+      if (s.hash && n !== 0n) {
+        if (s.conv === "o") body = "0" + body;
+        else if (s.conv === "x") body = "0x" + body;
+        else if (s.conv === "X") body = "0X" + body;
+      }
+      let sign = "";
+      if (s.conv === "d" || s.conv === "i") {
+        const neg = body.startsWith("-");
+        if (neg) {
+          sign = "-";
+          body = body.slice(1);
+        } else if (s.plus) sign = "+";
+        else if (s.space) sign = " ";
+      }
+      out += pfPad(sign, body, minus, s.zero, width);
+    } else if (s.conv === "c") {
+      let byte: number;
+      if (v instanceof EChar) byte = v.c.charCodeAt(0);
+      else if (typeof v === "number" && Number.isInteger(v)) byte = v & 0xff;
+      else if (typeof v === "bigint") byte = Number(v & 0xffn);
+      else
+        throw new Error(
+          "printf: `%c` expects a Char, Byte, or Int64, got " + tag(v)
+        );
+      const ch = String.fromCharCode(byte);
+      if (width > ch.length) {
+        if (minus) out += ch + " ".repeat(width - 1);
+        else out += " ".repeat(width - 1) + ch;
+      } else out += ch;
+    } else if (s.conv === "s") {
+      if (typeof v !== "string")
+        throw new Error("printf: `%s` expects a String, got " + tag(v));
+      let bytes = utf8Encode(v);
+      if (prec !== null && prec < bytes.length) bytes = bytes.slice(0, prec);
+      const missing = width - bytes.length;
+      if (missing > 0 && !minus) out += " ".repeat(missing);
+      out += utf8Decode(bytes);
+      if (missing > 0 && minus) out += " ".repeat(missing);
+    } else {
+      if (!(v instanceof EFloat))
+        throw new Error(
+          "printf: `%" + s.conv + "` expects a Float64, got " + tag(v)
+        );
+      out += pfFloat(v.v, s, minus, s.zero, width, prec);
+    }
+  }
+  process.stdout.write(out);
+}
+
+function pfStarWidth(v: any): number {
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v === "number" && Number.isInteger(v)) return v;
+  throw new Error("printf: `%*` expects an Int64, got " + tag(v));
+}
+
+function pfStarPrec(v: any): number | null {
+  const n = pfStarWidth(v);
+  // C17: a negative precision through `*` is treated as omitted.
+  return n < 0 ? null : n;
+}
+
+// Numeric padding with sign and zero-fill (integers and floats).
+function pfPad(
+  sign: string,
+  body: string,
+  minus: boolean,
+  zero: boolean,
+  width: number
+): string {
+  const total = sign + body;
+  if (width <= total.length) return total;
+  const fill = width - total.length;
+  if (minus) return total + " ".repeat(fill);
+  if (zero) return sign + "0".repeat(fill) + body;
+  return " ".repeat(fill) + total;
+}
+
+
 function tag(v: any): string {
   if (typeof v === "number") return Number.isInteger(v) ? "Byte" : "Float64";
   if (typeof v === "bigint") return "Int64";
@@ -502,6 +977,7 @@ const E: any = {
   ne: (a: any, b: any) => !deepEq(a, b),
   truthy: (b: any) => b === true,
   println,
+  printf,
   interpolate: (items: any[]) => items.map(toStr).join(""),
   toStr,
 

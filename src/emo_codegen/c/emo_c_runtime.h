@@ -270,6 +270,12 @@ bool emo_le_dyn(emo_value a, emo_value b);
 emo_str emo_to_string_dyn(emo_value v);
 void emo_println_dyn(emo_value v);
 
+/* printf: the C anchor of the format contract. Numeric conversions go
+   through snprintf with a constructed C format; `%s` and `%c` render
+   by hand over (len, bytes) strings. Wrong-kind or wrong-count
+   arguments are fatal runtime errors. */
+void emo_printf(emo_str fmt, emo_value args);
+
 /* The to_string METHOD over a dynamic receiver: a Bytes cell yields
    its content, every other kind renders (the interpreter dispatches
    the same way at runtime). */

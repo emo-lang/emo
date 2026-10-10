@@ -134,7 +134,7 @@ type env = {
 }
 
 let is_builtin = function
-  | "println" | "self_pid" | "halt" -> true
+  | "println" | "printf" | "self_pid" | "halt" -> true
   | name ->
       (String.length name >= 4 && String.sub name 0 4 = "net_")
       || (String.length name >= 5 && String.sub name 0 5 = "file_")

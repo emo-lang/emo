@@ -1043,6 +1043,65 @@ println(English.new().is(Greeter))  // true — structural interface check|}));
           "message" "uncaught exception:  kaboom " diagnostic.Diagnostic.message);
   ]
 
+(* ---- printf ---- *)
+
+let printf_tests =
+  [
+    tc "printf renders the C conversions" (fun () ->
+        Alcotest.(check string)
+          "mixed" "42 -7 18446744073709551615\n"
+          (run_program {|
+printf("%d %i %u\n", [42, -7, -1])|}));
+    tc "printf rounds halfway cases to even" (fun () ->
+        Alcotest.(check string)
+          "ties" "0.12 0.38 2.67\n"
+          (run_program {|
+printf("%.2f %.2f %.2f\n", [0.125, 0.375, 2.675])|}));
+    tc "printf pads strings by bytes" (fun () ->
+        Alcotest.(check string)
+          "strings" "[      left] [right     ] [tr]\n"
+          (run_program
+             {|
+printf("[%10s] [%-10s] [%.2s]\n", ["left", "right", "truncated"])|}));
+    tc "printf honors the star width and precision" (fun () ->
+        Alcotest.(check string)
+          "stars" "      42|3.14|\n"
+          (run_program {|
+printf("%*d|%.*f|\n", [8, 42, 2, 3.14159])|}));
+    tc "printf rejects a wrong-kind argument at runtime" (fun () ->
+        let diagnostic =
+          program_err {|
+const m = { "s": "x" }
+printf("%d\n", [m.get("s")])|}
+        in
+        Alcotest.(check bool)
+          "code" true
+          (match diagnostic.Diagnostic.code with
+          | Some c -> String.equal c "E3001"
+          | None -> false));
+    tc "printf rejects an element-count mismatch at runtime" (fun () ->
+        let diagnostic =
+          program_err
+            {|
+def n() Int64 { return 7 }
+const fmt = "%d %d\n"
+printf(fmt, [n()])|}
+        in
+        Alcotest.(check bool)
+          "message" true
+          (contains_substring diagnostic.Diagnostic.message
+             "the format consumes 2 argument(s)"));
+    tc "printf rejects unknown conversions at runtime" (fun () ->
+        let diagnostic =
+          program_err {|
+def fmt() String { return "%y\n" }
+printf(fmt(), [])|}
+        in
+        Alcotest.(check bool)
+          "message" true
+          (contains_substring diagnostic.Diagnostic.message "unknown conversion"));
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -1060,4 +1119,5 @@ let () =
       ("enum", enum_tests);
       ("to_string", to_string_tests);
       ("object_acceptance", object_acceptance_tests);
+      ("printf", printf_tests);
     ]
