@@ -26,6 +26,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <stdarg.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -860,6 +861,374 @@ int64_t emo_length(emo_value v) {
 }
 
 bool emo_is_tuple(emo_value v) { return emo_cell_kind(v) == EMO_TUPLE; }
+
+/* ---- printf ----
+
+   The C target anchors on libc: every numeric conversion builds its C
+   format string and goes through snprintf, so flags, width, precision,
+   and rounding are the platform printf's own — which is the contract.
+   `%s` and `%c` render by hand (Emo strings are (len, bytes) and may
+   hold NULs), with byte-measured width and precision; the `0` flag is
+   ignored there, space padding applies. Argument mismatches are the
+   interpreter's E3001 as a fatal runtime error. */
+
+typedef struct {
+  char *bytes;
+  size_t len;
+  size_t cap;
+} emo_printf_buf;
+
+static void emo_printf_reserve(emo_printf_buf *b, size_t extra) {
+  if (b->len + extra <= b->cap) return;
+  size_t cap = b->cap ? b->cap : 128;
+  while (cap < b->len + extra) cap *= 2;
+  char *nb = emo_alloc(cap);
+  if (b->bytes != NULL) memcpy(nb, b->bytes, b->len);
+  b->bytes = nb;
+  b->cap = cap;
+}
+
+static void emo_printf_addn(emo_printf_buf *b, const char *bytes, size_t n) {
+  emo_printf_reserve(b, n);
+  memcpy(b->bytes + b->len, bytes, n);
+  b->len += n;
+}
+
+static void emo_printf_addc(emo_printf_buf *b, char c) {
+  emo_printf_reserve(b, 1);
+  b->bytes[b->len++] = c;
+}
+
+static void emo_printf_addspaces(emo_printf_buf *b, int64_t n) {
+  while (n-- > 0) emo_printf_addc(b, ' ');
+}
+
+/* One snprintf conversion into the buffer, growing as snprintf
+   reports the needed size. */
+static void emo_printf_addf(emo_printf_buf *b, const char *spec, ...) {
+  va_list ap, ap2;
+  va_start(ap, spec);
+  va_copy(ap2, ap);
+  int n = vsnprintf(NULL, 0, spec, ap);
+  va_end(ap);
+  if (n >= 0) {
+    emo_printf_reserve(b, (size_t)n + 1);
+    vsnprintf(b->bytes + b->len, (size_t)n + 1, spec, ap2);
+    b->len += (size_t)n;
+  }
+  va_end(ap2);
+}
+
+/* C's %F is %f with INF and NAN spelled uppercase. */
+static void emo_printf_addf_upper(emo_printf_buf *b, const char *spec,
+                                  double v) {
+  size_t start = b->len;
+  emo_printf_addf(b, spec, v);
+  size_t i = start;
+  while (i + 3 <= b->len) {
+    if ((b->bytes[i] == 'i' && b->bytes[i + 1] == 'n' &&
+         b->bytes[i + 2] == 'f') ||
+        (b->bytes[i] == 'n' && b->bytes[i + 1] == 'a' &&
+         b->bytes[i + 2] == 'n')) {
+      b->bytes[i] = (char)(b->bytes[i] - 'a' + 'A');
+      b->bytes[i + 1] = (char)(b->bytes[i + 1] - 'a' + 'A');
+      b->bytes[i + 2] = (char)(b->bytes[i + 2] - 'a' + 'A');
+      i += 3;
+    } else {
+      i++;
+    }
+  }
+}
+
+/* Assemble "%" flags width ".prec" conv into out. */
+static void emo_printf_spec(char *out, const char *flags, const char *width,
+                            const char *prec, const char *conv) {
+  size_t n = 0;
+  out[n++] = '%';
+  for (const char *p = flags; *p != 0;) out[n++] = *p++;
+  for (const char *p = width; *p != 0;) out[n++] = *p++;
+  for (const char *p = prec; *p != 0;) out[n++] = *p++;
+  for (const char *p = conv; *p != 0;) out[n++] = *p++;
+  out[n] = 0;
+}
+
+static const char *emo_printf_kind_name(emo_value v) {
+  if ((v & 7) == 0b001) return "Bool";
+  if ((v & 7) == 0b011) return "Char";
+  switch (emo_cell_kind(v)) {
+    case EMO_INT64: return "Int64";
+    case EMO_FLOAT64: return "Float64";
+    case EMO_STRING: return "String";
+    case EMO_TUPLE: return "Tuple";
+    case EMO_ARRAY: return "Array";
+    case EMO_BOX: return "Box";
+    case EMO_BYTES: return "Bytes";
+    case EMO_LIST: return "List";
+    case EMO_PID: return "Pid";
+    case EMO_MAP: return "Map";
+    default: return "value";
+  }
+}
+
+static const char *emo_printf_slot_expects(char conv) {
+  switch (conv) {
+    case 'c': return "a Char, Byte, or Int64";
+    case 's': return "a String";
+    case 'f':
+    case 'F':
+    case 'e':
+    case 'E':
+    case 'g':
+    case 'G': return "a Float64";
+    default: return "an Int64";
+  }
+}
+
+static void emo_printf_wrong(char conv, emo_value v) {
+  char message[128];
+  snprintf(message, sizeof message, "printf: `%%%c` expects %s, got %s", conv,
+           emo_printf_slot_expects(conv), emo_printf_kind_name(v));
+  emo_fatal(message);
+}
+
+static emo_value emo_printf_next(emo_value args, int64_t *next, int64_t nargs) {
+  if (*next >= nargs)
+    emo_fatal("printf: the format consumes more arguments than the array "
+              "has elements");
+  return emo_index(args, (*next)++);
+}
+
+static int64_t emo_printf_pull_i64(emo_value args, int64_t *next,
+                                   int64_t nargs, char conv) {
+  emo_value v = emo_printf_next(args, next, nargs);
+  if (emo_cell_kind(v) != EMO_INT64) emo_printf_wrong(conv, v);
+  return emo_unbox_i64(v);
+}
+
+void emo_printf(emo_str fmt, emo_value args) {
+  if (emo_cell_kind(args) != EMO_ARRAY)
+    emo_fatal("printf: data must be an Array");
+  int64_t nargs = emo_length(args);
+  /* Count the consumed slots before rendering anything: the
+     interpreter fails upfront, so a mismatched format never emits a
+     partial line there — match that here. */
+  int64_t slots = 0;
+  for (size_t k = 0; k < (size_t)fmt.len; k++) {
+    if (fmt.bytes[k] != '%') continue;
+    k++;
+    if (k >= (size_t)fmt.len) break;
+    if (fmt.bytes[k] == '%') continue;
+    while (k < (size_t)fmt.len && (fmt.bytes[k] == '-' || fmt.bytes[k] == '+' ||
+                                   fmt.bytes[k] == ' ' || fmt.bytes[k] == '#' ||
+                                   fmt.bytes[k] == '0'))
+      k++;
+    if (k < (size_t)fmt.len && fmt.bytes[k] == '*') {
+      slots++;
+      k++;
+    } else {
+      while (k < (size_t)fmt.len && fmt.bytes[k] >= '0' && fmt.bytes[k] <= '9')
+        k++;
+    }
+    if (k < (size_t)fmt.len && fmt.bytes[k] == '.') {
+      k++;
+      if (k < (size_t)fmt.len && fmt.bytes[k] == '*') {
+        slots++;
+        k++;
+      } else {
+        while (k < (size_t)fmt.len && fmt.bytes[k] >= '0' &&
+               fmt.bytes[k] <= '9')
+          k++;
+      }
+    }
+    if (k >= (size_t)fmt.len) break;
+    if (fmt.bytes[k] != '%') slots++;
+  }
+  if (slots != nargs) {
+    char message[128];
+    snprintf(message, sizeof message,
+             "printf: the format consumes %lld argument(s), the array has %lld "
+             "element(s)",
+             (long long)slots, (long long)nargs);
+    emo_fatal(message);
+  }
+  int64_t next = 0;
+  emo_printf_buf b = {NULL, 0, 0};
+  char flags[8], wbuf[24], pbuf[24], spec[72], message[128];
+  size_t i = 0;
+  const size_t len = (size_t)fmt.len;
+  while (i < len) {
+    char c = fmt.bytes[i];
+    if (c != '%') {
+      emo_printf_addc(&b, c);
+      i++;
+      continue;
+    }
+    i++;
+    if (i >= len) emo_fatal("printf: the format ends with a lone `%`");
+    if (fmt.bytes[i] == '%') {
+      emo_printf_addc(&b, '%');
+      i++;
+      continue;
+    }
+    int minus = 0, plus = 0, space = 0, hash = 0, zero = 0;
+    for (;;) {
+      if (i >= len) break;
+      char f = fmt.bytes[i];
+      if (f == '-') {
+        minus = 1;
+        i++;
+      } else if (f == '+') {
+        plus = 1;
+        i++;
+      } else if (f == ' ') {
+        space = 1;
+        i++;
+      } else if (f == '#') {
+        hash = 1;
+        i++;
+      } else if (f == '0') {
+        zero = 1;
+        i++;
+      } else {
+        break;
+      }
+    }
+    int has_width = 0;
+    int64_t width = 0;
+    if (i < len && fmt.bytes[i] == '*') {
+      has_width = 1;
+      i++;
+      width = emo_printf_pull_i64(args, &next, nargs, '*');
+      if (width < 0) {
+        minus = 1;
+        width = -width;
+      }
+    } else if (i < len && fmt.bytes[i] >= '0' && fmt.bytes[i] <= '9') {
+      has_width = 1;
+      while (i < len && fmt.bytes[i] >= '0' && fmt.bytes[i] <= '9') {
+        width = width * 10 + (fmt.bytes[i] - '0');
+        if (width > 999999999) width = 999999999;
+        i++;
+      }
+    }
+    int has_prec = 0;
+    int64_t prec = 0;
+    if (i < len && fmt.bytes[i] == '.') {
+      i++;
+      has_prec = 1;
+      if (i < len && fmt.bytes[i] == '*') {
+        i++;
+        prec = emo_printf_pull_i64(args, &next, nargs, '*');
+        if (prec < 0) has_prec = 0; /* C17: negative precision is omitted */
+      } else {
+        while (i < len && fmt.bytes[i] >= '0' && fmt.bytes[i] <= '9') {
+          prec = prec * 10 + (fmt.bytes[i] - '0');
+          if (prec > 999999999) prec = 999999999;
+          i++;
+        }
+      }
+    }
+    if (i < len && (fmt.bytes[i] == 'h' || fmt.bytes[i] == 'l' ||
+                    fmt.bytes[i] == 'L' || fmt.bytes[i] == 'z' ||
+                    fmt.bytes[i] == 'j' || fmt.bytes[i] == 't'))
+      emo_fatal("printf: length modifiers (`h`, `l`, `ll`, `z`, ...) have no "
+                "meaning in Emo");
+    if (i >= len) emo_fatal("printf: the format ends with a bare `%`");
+    char conv = fmt.bytes[i++];
+    int nflags = 0;
+    if (minus) flags[nflags++] = '-';
+    if (plus) flags[nflags++] = '+';
+    if (space) flags[nflags++] = ' ';
+    if (hash) flags[nflags++] = '#';
+    if (zero && !minus) flags[nflags++] = '0';
+    flags[nflags] = 0;
+    wbuf[0] = 0;
+    if (has_width) snprintf(wbuf, sizeof wbuf, "%lld", (long long)width);
+    pbuf[0] = 0;
+    if (has_prec) snprintf(pbuf, sizeof pbuf, ".%lld", (long long)prec);
+    switch (conv) {
+      case 'd':
+      case 'i':
+      case 'u':
+      case 'o':
+      case 'x':
+      case 'X': {
+        emo_value v = emo_printf_next(args, &next, nargs);
+        if (emo_cell_kind(v) != EMO_INT64) emo_printf_wrong(conv, v);
+        int64_t n = emo_unbox_i64(v);
+        char convstr[4] = {'l', 'l',
+                           (char)((conv == 'd' || conv == 'i') ? 'd' : conv), 0};
+        emo_printf_spec(spec, flags, wbuf, pbuf, convstr);
+        emo_printf_addf(&b, spec, n);
+        break;
+      }
+      case 'c': {
+        emo_value v = emo_printf_next(args, &next, nargs);
+        unsigned char byte;
+        if ((v & 7) == 0b011) {
+          byte = (unsigned char)(emo_char_of(v) & 0xFF);
+        } else if (emo_cell_kind(v) == EMO_INT64) {
+          byte = (unsigned char)(emo_unbox_i64(v) & 0xFF);
+        } else {
+          emo_printf_wrong(conv, v);
+          byte = 0;
+        }
+        if (width > 1 && !minus) emo_printf_addspaces(&b, width - 1);
+        emo_printf_addc(&b, (char)byte);
+        if (width > 1 && minus) emo_printf_addspaces(&b, width - 1);
+        break;
+      }
+      case 's': {
+        emo_value v = emo_printf_next(args, &next, nargs);
+        if (emo_cell_kind(v) != EMO_STRING) emo_printf_wrong(conv, v);
+        emo_str s = emo_str_of(v);
+        int64_t n = s.len;
+        if (has_prec && prec < n) n = prec;
+        int64_t missing = width - n;
+        if (missing > 0 && !minus) emo_printf_addspaces(&b, missing);
+        emo_printf_addn(&b, s.bytes, (size_t)n);
+        if (missing > 0 && minus) emo_printf_addspaces(&b, missing);
+        break;
+      }
+      case 'f':
+      case 'F':
+      case 'e':
+      case 'E':
+      case 'g':
+      case 'G': {
+        emo_value v = emo_printf_next(args, &next, nargs);
+        if (emo_cell_kind(v) != EMO_FLOAT64) emo_printf_wrong(conv, v);
+        double d = emo_unbox_f64(v);
+        char convstr[2] = {(char)(conv == 'F' ? 'f' : conv), 0};
+        emo_printf_spec(spec, flags, wbuf, pbuf, convstr);
+        if (conv == 'F') emo_printf_addf_upper(&b, spec, d);
+        else emo_printf_addf(&b, spec, d);
+        break;
+      }
+      case 'a':
+      case 'A':
+        snprintf(message, sizeof message,
+                 "printf: hex-float conversion `%%%c` is not supported", conv);
+        emo_fatal(message);
+      case 'n':
+        emo_fatal("printf: `%n` is not supported (it writes through pointers)");
+      case 'p':
+        emo_fatal("printf: `%p` is not supported (Emo has no pointers)");
+      default:
+        snprintf(message, sizeof message, "printf: unknown conversion `%%%c`",
+                 conv);
+        emo_fatal(message);
+    }
+  }
+  if (next != nargs) {
+    snprintf(message, sizeof message,
+             "printf: the format consumes %lld argument(s), the array has %lld "
+             "element(s)",
+             (long long)next, (long long)nargs);
+    emo_fatal(message);
+  }
+  fwrite(b.bytes, 1, b.len, stdout);
+}
 
 static int64_t emo_length_bytes(emo_value v) {
   return (int64_t)*emo_payload(v);

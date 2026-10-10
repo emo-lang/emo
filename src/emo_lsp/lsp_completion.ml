@@ -84,6 +84,7 @@ let builtin_function_items : item list =
   in
   [
     fn "println" "println(value) — write one line";
+    fn "printf" "printf(format String, data Array) — C-style formatting";
     fn "self_pid" "self_pid() -> Pid";
     fn "halt" "halt() — stop the current process";
     fn "net_connect"

@@ -664,6 +664,469 @@ module Emo_eval = struct
                 (Unix.error_message e)))
     | exception Sys_error message -> raise (net_raise ("os: " ^ message))
 
+  (* ---- printf ----
+
+     The standalone copy of the interpreter's renderer (this file takes
+     no emo_* dependencies): the format grammar anchors on C17
+     §7.21.6.1, and the numeric conversions go through the platform's
+     snprintf via Printf, matching the C target byte for byte. *)
+
+  exception Printf_bad of string
+
+  type pf_size = Fixed of int | Star
+
+  type pf_spec = {
+    pf_minus : bool;
+    pf_plus : bool;
+    pf_space : bool;
+    pf_hash : bool;
+    pf_zero : bool;
+    pf_width : pf_size option;
+    pf_prec : pf_size option;
+    pf_conv : char;
+  }
+
+  type pf_part = Text of string | Spec of pf_spec
+
+  let pf_is_digit c = c >= '0' && c <= '9'
+
+  let pf_saturate digits =
+    let n = String.length digits in
+    if n > 10 then 999_999_999
+    else
+      let v = ref 0 in
+      String.iter (fun d -> v := (!v * 10) + (Char.code d - Char.code '0')) digits;
+      Int.min !v 999_999_999
+
+  let pf_parse (fmt : string) : pf_part list =
+    let parts = ref [] in
+    let text_start = ref 0 in
+    let flush_text stop =
+      if !text_start < stop then
+        parts := Text (String.sub fmt !text_start (stop - !text_start)) :: !parts
+    in
+    let len = String.length fmt in
+    let i = ref 0 in
+    while !i < len do
+      if fmt.[!i] <> '%' then incr i
+      else begin
+        flush_text !i;
+        incr i;
+        if !i >= len then raise (Printf_bad "printf: the format ends with a lone `%`");
+        if fmt.[!i] = '%' then begin
+          parts :=
+            Spec
+              {
+                pf_minus = false;
+                pf_plus = false;
+                pf_space = false;
+                pf_hash = false;
+                pf_zero = false;
+                pf_width = None;
+                pf_prec = None;
+                pf_conv = '%';
+              }
+            :: !parts;
+          incr i;
+          text_start := !i
+        end
+        else begin
+          let minus = ref false and plus = ref false and space = ref false in
+          let hash = ref false and zero = ref false in
+          let rec read_flags () =
+            if !i < len then
+              match fmt.[!i] with
+              | '-' ->
+                  minus := true;
+                  incr i;
+                  read_flags ()
+              | '+' ->
+                  plus := true;
+                  incr i;
+                  read_flags ()
+              | ' ' ->
+                  space := true;
+                  incr i;
+                  read_flags ()
+              | '#' ->
+                  hash := true;
+                  incr i;
+                  read_flags ()
+              | '0' ->
+                  zero := true;
+                  incr i;
+                  read_flags ()
+              | _ -> ()
+          in
+          read_flags ();
+          let width =
+            if !i < len && fmt.[!i] = '*' then begin
+              incr i;
+              Some Star
+            end
+            else if !i < len && pf_is_digit fmt.[!i] then begin
+              let start = !i in
+              while !i < len && pf_is_digit fmt.[!i] do incr i done;
+              Some (Fixed (pf_saturate (String.sub fmt start (!i - start))))
+            end
+            else None
+          in
+          let prec =
+            if !i < len && fmt.[!i] = '.' then begin
+              incr i;
+              if !i < len && fmt.[!i] = '*' then begin
+                incr i;
+                Some Star
+              end
+              else begin
+                let start = !i in
+                while !i < len && pf_is_digit fmt.[!i] do incr i done;
+                (* `%.f` spells an explicit precision of zero in C. *)
+                Some (Fixed (pf_saturate (String.sub fmt start (!i - start))))
+              end
+            end
+            else None
+          in
+          if
+            !i < len
+            && (match fmt.[!i] with
+                | 'h' | 'l' | 'L' | 'z' | 'j' | 't' -> true
+                | _ -> false)
+          then
+            raise
+              (Printf_bad
+                 "printf: length modifiers (`h`, `l`, `ll`, `z`, ...) have no \
+                  meaning in Emo");
+          if !i < len && fmt.[!i] = '%' then
+            raise (Printf_bad "printf: `%%` cannot carry flags, width, or precision");
+          if !i >= len then
+            raise (Printf_bad "printf: the format ends with a bare `%`");
+          let conv = fmt.[!i] in
+          incr i;
+          (match conv with
+          | 'd' | 'i' | 'u' | 'o' | 'x' | 'X' | 'c' | 's' | 'f' | 'F' | 'e'
+          | 'E' | 'g' | 'G' ->
+              parts :=
+                Spec
+                  {
+                    pf_minus = !minus;
+                    pf_plus = !plus;
+                    pf_space = !space;
+                    pf_hash = !hash;
+                    pf_zero = !zero;
+                    pf_width = width;
+                    pf_prec = prec;
+                    pf_conv = conv;
+                  }
+                :: !parts
+          | 'a' | 'A' ->
+              raise
+                (Printf_bad
+                   (Printf.sprintf
+                      "printf: hex-float conversion `%%%c` is not supported" conv))
+          | 'n' ->
+              raise
+                (Printf_bad
+                   "printf: `%n` is not supported (it writes through pointers)")
+          | 'p' ->
+              raise
+                (Printf_bad "printf: `%p` is not supported (Emo has no pointers)")
+          | other ->
+              raise
+                (Printf_bad
+                   (Printf.sprintf "printf: unknown conversion `%%%c`" other)));
+          text_start := !i
+        end
+      end
+    done;
+    flush_text len;
+    List.rev !parts
+
+  let rec pf_consumed_slots (parts : pf_part list) : int =
+    match parts with
+    | [] -> 0
+    | Text _ :: rest -> pf_consumed_slots rest
+    | Spec s :: rest ->
+        let star = function Some Star -> 1 | _ -> 0 in
+        let own = (if s.pf_conv = '%' then 0 else 1) + star s.pf_width + star s.pf_prec in
+        own + pf_consumed_slots rest
+
+  let pf_type_name (v : value) : string =
+    match v with
+    | Int64 _ -> "Int64"
+    | Byte _ -> "Byte"
+    | Float _ -> "Float64"
+    | Bool _ -> "Bool"
+    | Char _ -> "Char"
+    | String _ -> "String"
+    | Array _ -> "Array"
+    | _ -> "value"
+
+  let pf_pull items idx conv =
+    if !idx >= Array.length items then failwith "printf: internal slot count";
+    let v = items.(!idx) in
+    incr idx;
+    match (conv, v) with
+    | ('*' | 'd' | 'i' | 'u' | 'o' | 'x' | 'X'), Int64 n -> `I64 n
+    | ('*' | 'd' | 'i' | 'u' | 'o' | 'x' | 'X'), Byte n -> `I n
+    | 'c', Char c -> `C c
+    | 'c', Byte n -> `C (Char.chr (n land 255))
+    | 'c', Int64 n -> `C (Char.chr (Int64.to_int n land 255))
+    | 's', String str -> `S str
+    | ('f' | 'F' | 'e' | 'E' | 'g' | 'G'), Float f -> `F f
+    | _, v ->
+        error "E3001"
+          (Printf.sprintf "printf: `%%%c` expects %s, got %s" conv
+             (match conv with
+             | 'c' -> "a Char, Byte, or Int64"
+             | 's' -> "a String"
+             | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' -> "a Float64"
+             | _ -> "an Int64")
+             (pf_type_name v))
+
+  (* C's %F is %f with INF and NAN spelled uppercase. *)
+  let pf_upper_special (s : string) : string =
+    let b = Buffer.create (String.length s) in
+    let len = String.length s in
+    let i = ref 0 in
+    while !i < len do
+      if
+        !i + 3 <= len
+        && (String.sub s !i 3 = "inf" || String.sub s !i 3 = "nan")
+      then begin
+        Buffer.add_string b (String.uppercase_ascii (String.sub s !i 3));
+        i := !i + 3
+      end
+      else begin
+        Buffer.add_char b s.[!i];
+        incr i
+      end
+    done;
+    Buffer.contents b
+
+(* '#' on the float conversions: OCaml's Printf drops the flag, so
+   these paths build C's '#'' semantics by hand. *)
+let pf_num_pad sign body width minus zero =
+  let total = String.length sign + String.length body in
+  if width <= total then sign ^ body
+  else begin
+    let fill = width - total in
+    if minus then sign ^ body ^ String.make fill ' '
+    else if zero then sign ^ String.make fill '0' ^ body
+    else String.make fill ' ' ^ sign ^ body
+  end
+
+let pf_hash_float conv minus plus space width prec f =
+  let zero = false in
+  match conv with
+  | 'f' | 'F' ->
+      let rendered = Printf.sprintf "%.*f" (match prec with Some (Fixed p) -> p | _ -> 6) f in
+      let body =
+        match prec with
+        | Some (Fixed 0) when not (String.contains rendered '.') -> rendered ^ "."
+        | _ -> rendered
+      in
+      let sign =
+        if body <> "" && body.[0] = '-' then "-"
+        else if plus then "+"
+        else if space then " "
+        else ""
+      in
+      let body = if sign = "-" then String.sub body 1 (String.length body - 1) else body in
+      pf_num_pad sign body width minus zero
+  | 'e' | 'E' ->
+      let rendered = Printf.sprintf "%.*e" (match prec with Some (Fixed p) -> p | _ -> 6) f in
+      let body =
+        match prec with
+        | Some (Fixed 0) when not (String.contains rendered '.') ->
+            let epos = String.index rendered 'e' in
+            String.sub rendered 0 epos ^ "."
+            ^ String.sub rendered epos (String.length rendered - epos)
+        | _ -> rendered
+      in
+      let sign =
+        if body <> "" && body.[0] = '-' then "-"
+        else if plus then "+"
+        else if space then " "
+        else ""
+      in
+      let body = if sign = "-" then String.sub body 1 (String.length body - 1) else body in
+      pf_num_pad sign body width minus zero
+  | _ ->
+      let p = match prec with Some (Fixed q) -> if q = 0 then 1 else q | _ -> 6 in
+      let sci = Printf.sprintf "%.*e" (p - 1) f in
+      let epos = String.index sci 'e' in
+      let mantissa = String.sub sci 0 epos in
+      let x = int_of_string (String.sub sci (epos + 1) (String.length sci - epos - 1)) in
+      let digits = String.concat "" (String.split_on_char '.' mantissa) in
+      let negative = digits <> "" && digits.[0] = '-' in
+      let digits = if negative then String.sub digits 1 (String.length digits - 1) else digits in
+      let count = String.length digits in
+      let body =
+        if x >= -4 && x < p then begin
+          let point = x + 1 in
+          if point <= 0 then
+            "0." ^ String.make (-point) '0' ^ digits
+          else if point >= count then
+            digits ^ String.make (point - count) '0'
+          else
+            String.sub digits 0 point ^ "."
+            ^ String.sub digits point (count - point)
+        end
+        else begin
+          let frac =
+            if count > 1 then String.sub digits 1 (count - 1) else ""
+          in
+          let e = if conv = 'G' then "E" else "e" in
+          let a = abs x in
+          let xstr =
+            (if x < 0 then "-" else "+")
+            ^ (if a < 10 then "0" else "")
+            ^ string_of_int a
+          in
+          if count > 1 then
+            String.make 1 digits.[0] ^ "." ^ frac ^ e ^ xstr
+          else String.make 1 digits.[0] ^ e ^ xstr
+        end
+      in
+      let sign =
+        if negative then "-"
+        else if plus then "+"
+        else if space then " "
+        else ""
+      in
+      pf_num_pad sign body width minus zero
+
+  let pf_render (fmt : string) (items : value array) : string =
+    let parts =
+      try pf_parse fmt
+      with Printf_bad message -> error "E3001" message
+    in
+    let slots = pf_consumed_slots parts in
+    if slots <> Array.length items then
+      error "E3001"
+        (Printf.sprintf
+           "printf: the format consumes %d argument(s), the array has %d \
+            element(s)"
+           slots (Array.length items));
+    let buf = Buffer.create (String.length fmt * 2) in
+    let idx = ref 0 in
+    let via_snprintf template flags width prec (letter : string) value =
+      let b = Buffer.create 16 in
+      Buffer.add_char b '%';
+      Buffer.add_string b flags;
+      if width > 0 then Buffer.add_string b (string_of_int width);
+      (match prec with
+      | Some (Fixed p) ->
+          Buffer.add_char b '.';
+          Buffer.add_string b (string_of_int p)
+      | _ -> ());
+      Buffer.add_string b letter;
+      Printf.sprintf (Scanf.format_from_string (Buffer.contents b) template)
+        value
+    in
+    let pad body width minus =
+      let missing = width - String.length body in
+      if missing <= 0 then Buffer.add_string buf body
+      else if minus then begin
+        Buffer.add_string buf body;
+        Buffer.add_string buf (String.make missing ' ')
+      end
+      else begin
+        Buffer.add_string buf (String.make missing ' ');
+        Buffer.add_string buf body
+      end
+    in
+    List.iter
+      (fun part ->
+        match part with
+        | Text text -> Buffer.add_string buf text
+        | Spec s when s.pf_conv = '%' -> Buffer.add_char buf '%'
+        | Spec s -> (
+            let minus = ref s.pf_minus in
+            let width =
+              match s.pf_width with
+              | Some Star -> (
+                  match pf_pull items idx '*' with
+                  | `I64 n ->
+                      let w = Int64.to_int n in
+                      if w < 0 then begin
+                        minus := true;
+                        -w
+                      end
+                      else w
+                  | `I n -> if n < 0 then (minus := true; -n) else n
+                  | _ -> failwith "printf: internal slot count")
+              | Some (Fixed n) -> n
+              | None -> 0
+            in
+            let prec =
+              match s.pf_prec with
+              | Some Star -> (
+                  match pf_pull items idx '*' with
+                  | `I64 n ->
+                      let p = Int64.to_int n in
+                      if p < 0 then None else Some (Fixed p)
+                  | `I n -> if n < 0 then None else Some (Fixed n)
+                  | _ -> failwith "printf: internal slot count")
+              | some -> some
+            in
+            let flags =
+              let b = Buffer.create 8 in
+              if !minus then Buffer.add_char b '-';
+              if s.pf_plus then Buffer.add_char b '+';
+              if s.pf_space then Buffer.add_char b ' ';
+              if s.pf_hash then Buffer.add_char b '#';
+              (* '-' wins over '0', per C. *)
+              if s.pf_zero && not !minus then Buffer.add_char b '0';
+              Buffer.contents b
+            in
+            match pf_pull items idx s.pf_conv with
+            | `I64 n ->
+                let letter =
+                  match s.pf_conv with
+                  | 'd' | 'i' -> "d"
+                  | 'u' -> "u"
+                  | 'o' -> "o"
+                  | 'x' -> "x"
+                  | c -> String.make 1 c
+                in
+                pad (via_snprintf "%Ld" flags width prec ("L" ^ letter) n)
+                  width !minus
+            | `I n ->
+                let letter =
+                  match s.pf_conv with
+                  | 'd' | 'i' -> "d"
+                  | c -> String.make 1 c
+                in
+                pad (via_snprintf "%d" flags width prec letter n) width !minus
+            | `C c -> pad (String.make 1 c) width !minus
+            | `S str ->
+                let body =
+                  match prec with
+                  | Some (Fixed p) when p < String.length str ->
+                      String.sub str 0 p
+                  | _ -> str
+                in
+                pad body width !minus
+            | `F f ->
+                let letter =
+                  if s.pf_conv = 'F' then "f" else String.make 1 s.pf_conv
+                in
+                let rendered =
+                  if s.pf_hash then
+                    pf_hash_float s.pf_conv !minus s.pf_plus s.pf_space width
+                      prec f
+                  else via_snprintf "%f" flags width prec letter f
+                in
+                let rendered =
+                  if s.pf_conv = 'F' then pf_upper_special rendered
+                  else rendered
+                in
+                pad rendered width !minus))
+      parts;
+    Buffer.contents buf
+
   let apply_builtin name args =
     match (name, args) with
     | "println", [ v ] ->
@@ -672,6 +1135,15 @@ module Emo_eval = struct
     | "println", vs ->
         error "E3007"
           (Printf.sprintf "`println` expects 1 argument, got %d"
+             (List.length vs))
+    | "printf", [ String fmt; Array items ] ->
+        !output (pf_render fmt items);
+        Void
+    | "printf", [ _; _ ] ->
+        error "E3001" "`printf` expects (format String, data Array)"
+    | "printf", vs ->
+        error "E3007"
+          (Printf.sprintf "`printf` expects 2 arguments, got %d"
              (List.length vs))
     | "self_pid", [] -> Pid (Effect.perform Self_pid)
     | "self_pid", vs ->
