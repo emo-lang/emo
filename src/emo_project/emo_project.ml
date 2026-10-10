@@ -193,6 +193,9 @@ let load_module p (path : string list) : Emo_eval.env =
 (* Installs the evaluator's module hooks for this project: discovery
    (normalized path → handle with children) and loading. *)
 let install_hooks p =
+  (* One run, one set of program-wide registries: stale entries from a
+     previous run in the same process must not serve this one. *)
+  Emo_eval.reset_program_registries ();
   (* Handles are memoized per module path: every reference to `shop.order`
      shares one namespace and one load. *)
   let handles : (string list, Emo_eval.module_handle) Hashtbl.t =
@@ -217,7 +220,56 @@ let install_hooks p =
             Some h)
   in
   Emo_eval.module_handle_of := handle_of;
-  Emo_eval.module_loader := fun path -> load_module p path
+  (Emo_eval.module_loader := fun path -> load_module p path);
+  (* The program's bare-type owner index: type names are program-wide
+     (CHECK.md, cross-module types), but a bare reference carries no
+     module path to load through. Resolved on demand — the first lookup
+     scans the project's files (through the parse cache), the declaring
+     module loads like any module reference, and the answer memoizes,
+     including the negative ones the builtins produce. *)
+  let resolved_types : (string, Emo_eval.value option) Hashtbl.t =
+    Hashtbl.create 16
+  in
+  Emo_eval.type_owner_of :=
+    fun name ->
+      match Hashtbl.find_opt resolved_types name with
+      | Some v -> v
+      | None ->
+          let answer =
+            Hashtbl.fold
+              (fun path file acc ->
+                match acc with
+                | Some _ -> acc
+                | None -> (
+                    let items =
+                      try Some (parse_cached p file) with _ -> None
+                    in
+                    match items with
+                    | None -> None
+                    | Some items -> (
+                        let declares =
+                          List.exists
+                            (fun item ->
+                              match item.Ast.item_desc with
+                              | Ast.Item_class c ->
+                                  String.equal c.Ast.class_name name
+                              | Ast.Item_enum e ->
+                                  String.equal e.Ast.enum_name name
+                              | _ -> false)
+                            items
+                        in
+                        if not declares then None
+                        else
+                          match handle_of path with
+                          | None -> None
+                          | Some h ->
+                              Emo_eval.ensure_module_loaded h;
+                              let menv = Option.get h.Emo_eval.menv in
+                              Emo_eval.lookup_opt menv name)))
+              p.files None
+          in
+          Hashtbl.replace resolved_types name answer;
+          answer
 
 (* `internal` is subtree-private: a module whose path contains an internal
    segment may only be referenced from modules under that segment's parent.
@@ -300,6 +352,7 @@ let find_cycle (graph : (string list, string list list) Hashtbl.t) :
 let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
     string list list
     * (string list * string list list * (string * Emo_support.Span.t) list) list
+    * Emo_check.program_types
     * Emo_support.Diagnostic.t list =
   let module_paths = module_paths p in
   let graph : (string list, string list list) Hashtbl.t = Hashtbl.create 8 in
@@ -307,9 +360,12 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
       (string list, (string * Emo_support.Span.t) list) Hashtbl.t =
     Hashtbl.create 8
   in
-  let errors, entries =
+  (* Parse every module first: the program's type tables (CHECK.md,
+     cross-module types) need every declaration before any module is
+     checked. *)
+  let units =
     Hashtbl.fold
-      (fun path file ((errors, entries) as acc) ->
+      (fun path file acc ->
         let source = read_file file in
         let items =
           match Emo_parser.parse_program_with_diagnostics ~file ~source with
@@ -320,15 +376,23 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
               raise (Static_errors diagnostics)
           | items, [] -> items
         in
+        (path, items) :: acc)
+      p.files []
+  in
+  let program, preregister_errors = Emo_check.preregister_types ~units in
+  let errors, entries =
+    List.fold_left
+      (fun (errors, entries) (path, items) ->
         let diagnostics, refs, requires =
-          Emo_check.check_module ~modules:module_paths ~current:path items
+          Emo_check.check_module ~modules:module_paths ~current:path ~program
+            items
         in
         Hashtbl.replace graph path refs;
         Hashtbl.replace requires_table path requires;
         match diagnostics with
-        | [] -> acc
+        | [] -> (errors, entries)
         | ds -> (ds @ errors, (path, refs) :: entries))
-      p.files ([], [])
+      ([], []) units
   in
   let internal_errors = check_internal_privacy graph in
   let cycle_error =
@@ -414,7 +478,9 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
   in
   ( module_paths,
     entries,
-    errors @ internal_errors @ cycle_error @ pairing_errors )
+    program,
+    preregister_errors @ errors @ internal_errors @ cycle_error @ pairing_errors
+  )
 
 (* Runs the entry file: the graph is discovered up front (collisions report
    immediately), modules load lazily on first access with load-once
@@ -641,6 +707,23 @@ let entry_path (entry_file : string) : string =
     Filename.concat (Sys.getcwd ()) entry_file
   else entry_file
 
+(* The entry's file identity: the walk registers physical keys (getcwd
+   is physical), but the entry can arrive through a symlinked directory
+   — `/tmp/x` naming what the walk stored as `/private/tmp/x` — so
+   membership compares device and inode, not the strings. *)
+let entry_file_id (entry_file : string) : (int * int) option =
+  match try Some (Unix.stat (entry_path entry_file)) with _ -> None with
+  | Some st -> Some (st.Unix.st_dev, st.Unix.st_ino)
+  | None -> None
+
+let same_file (id : (int * int) option) (file : string) : bool =
+  match id with
+  | None -> false
+  | Some (dev, ino) -> (
+      match try Some (Unix.stat file) with _ -> None with
+      | Some st -> st.Unix.st_dev = dev && st.Unix.st_ino = ino
+      | None -> false)
+
 (* The backend's lowering input: every module in the project, parsed and
    checked (the backend runs the full check), plus the entry module's
    path. Raises [Static_errors] on any diagnostic. *)
@@ -656,7 +739,7 @@ let compile_inputs ~entry_file ~target :
      its own name); keep one module_input per distinct file, preferring
      the shorter path so the entry module stays rooted. *)
   let seen_files = Hashtbl.create 8 in
-  let inputs =
+  let units =
     Hashtbl.fold
       (fun path file acc ->
         match Hashtbl.find_opt seen_files file with
@@ -669,48 +752,53 @@ let compile_inputs ~entry_file ~target :
             in
             if not keep then acc
             else begin
-              Hashtbl.replace seen_files file path;
-              let items = parse_cached p file in
-              let diags, _refs, _requires, types =
-                Emo_check.check_module_typed ~modules:module_paths ~current:path
-                  ~target items
+              let acc =
+                match kept with
+                | Some old_path ->
+                    List.filter
+                      (fun (unit_path, _) ->
+                        not
+                          (String.equal
+                             (String.concat "/" unit_path)
+                             (String.concat "/" old_path)))
+                      acc
+                | None -> acc
               in
-              diagnostics := !diagnostics @ diags;
-              match kept with
-              | Some old_path ->
-                  acc
-                  |> List.filter (fun (m : Emo_ir.module_input) ->
-                      not
-                        (String.equal
-                           (String.concat "/" m.Emo_ir.mpath)
-                           (String.concat "/" old_path)))
-                  |> List.cons
-                       { Emo_ir.mpath = path; mitems = items; mtypes = types }
-              | None ->
-                  { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc
+              Hashtbl.replace seen_files file path;
+              (path, parse_cached p file) :: acc
             end)
       p.files []
   in
-  let entry_abs = entry_path entry_file in
+  let entry_id = entry_file_id entry_file in
   let entry_module =
     Hashtbl.fold
-      (fun path file acc ->
-        if String.equal file entry_abs then Some path else acc)
+      (fun path file acc -> if same_file entry_id file then Some path else acc)
       p.files None
   in
-  let inputs, entry =
+  let units, entry =
     match entry_module with
-    | Some path -> (inputs, path)
+    | Some path -> (units, path)
     | None ->
         (* The entry lives outside the discovered tree: it becomes the
-           root module, like the interpreter's root environment. *)
-        let items = parse_cached p entry_abs in
+           root module, like the interpreter's root environment, and
+           its types pre-register with the rest. *)
+        (([], parse_cached p (entry_path entry_file)) :: units, [])
+  in
+  (* The program's type tables (CHECK.md, cross-module types) come
+   * before any module is checked, so every module's type declarations
+   * resolve against every declaration. *)
+  let program, preregister_errors = Emo_check.preregister_types ~units in
+  diagnostics := preregister_errors;
+  let inputs =
+    List.fold_left
+      (fun acc (path, items) ->
         let diags, _refs, _requires, types =
-          Emo_check.check_module_typed ~modules:module_paths ~current:[] ~target
-            items
+          Emo_check.check_module_typed ~modules:module_paths ~current:path
+            ~program ~target items
         in
         diagnostics := !diagnostics @ diags;
-        ({ Emo_ir.mpath = []; mitems = items; mtypes = types } :: inputs, [])
+        { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc)
+      [] units
   in
   (match !diagnostics with [] -> () | ds -> raise (Static_errors ds));
   (inputs, entry, Option.map fst prepared)
@@ -731,9 +819,25 @@ let check_entry ~entry_file : Emo_support.Diagnostic.t list =
   let manifest = Option.map fst prepared in
   let items = parse_cached p (entry_path entry_file) in
   let module_paths = module_paths p in
-  let _paths, _graph, errors = check_project ~manifest p in
-  let entry_diags, _refs, _requires =
-    Emo_check.check_module ~modules:module_paths ~current:[] items
+  let _paths, _graph, program, errors = check_project ~manifest p in
+  (* A tree-rooted entry is already among check_project's modules; only
+     an entry outside the discovered tree (an absolute path, the root
+     module) needs its own check. *)
+  let entry_id = entry_file_id entry_file in
+  let entry_in_tree =
+    Hashtbl.fold
+      (fun path file acc -> if same_file entry_id file then Some path else acc)
+      p.files None
+  in
+  let entry_diags =
+    match entry_in_tree with
+    | Some _ -> []
+    | None ->
+        let diags, _refs, _requires =
+          Emo_check.check_module ~modules:module_paths ~current:[] ~program
+            items
+        in
+        diags
   in
   diagnostics p @ errors @ entry_diags
 
@@ -754,11 +858,26 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
   let items = parse_cached p (entry_path entry_file) in
   (if check then
      let module_paths = module_paths p in
-     let _paths, _graph, errors = check_project ~manifest p in
+     let _paths, _graph, program, errors = check_project ~manifest p in
      (* The entry file itself may live outside the discovered tree (an
-        absolute path); it is always checked too. *)
-     let entry_diags, _refs, _requires =
-       Emo_check.check_module ~modules:module_paths ~current:[] items
+        absolute path); it is checked too — a tree-rooted entry was
+        already among check_project's modules. *)
+     let entry_id = entry_file_id entry_file in
+     let entry_in_tree =
+       Hashtbl.fold
+         (fun path file acc ->
+           if same_file entry_id file then Some path else acc)
+         p.files None
+     in
+     let entry_diags =
+       match entry_in_tree with
+       | Some _ -> []
+       | None ->
+           let diags, _refs, _requires =
+             Emo_check.check_module ~modules:module_paths ~current:[] ~program
+               items
+           in
+           diags
      in
      match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in

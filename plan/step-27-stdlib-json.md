@@ -103,6 +103,18 @@ tripping over latent backend bugs. Fixed in this step:
   field/method. **Unblocking this one checker step is what carries the
   package onto c, wasm, and beam** — the package itself is ordinary
   pure Emo.
+  **Done 2026-10-10:** the checker pre-registers every module's type
+  declarations program-wide (`Emo_check.preregister_types`; CHECK.md,
+  cross-module types), so `is()` narrows and interface-typed results
+  dispatch across modules on the interpreter, ocaml, typescript, and
+  c. json_demo runs byte-identically through the interpreter and the
+  c binary; the landing flushed two c-codegen defects — the Bytes
+  method arms guessed an Unknown receiver was Bytes (cross-module
+  `.get` lowered to byte indexing; gradual receivers now dispatch
+  dynamically, with the runtime's builtin table carrying the
+  bytes/map/box/array families), and the class vtables spelled
+  predicate methods with the symbol-safe `_q` instead of the source
+  `?` (dynamic dispatch and `is()` matching missed them).
 
 ## Tasks
 

@@ -101,7 +101,7 @@ Scope note: tuple literals under the content rule, tuple patterns, `case` / `rec
 ### Step 04 — Parser: declarations · `plan/step-04-parser-declarations.md`
 
 **Prereq:** Step 03.
-**Done when:** the README's `User`, `Greeter` / `English`, `welcome`, and `Color` snippets parse to golden ASTs; negative tests (camelCase `def`, `UPPER` variable, enum payloads, duplicate `init`, annotated `init` return) rejected with the right message and span; `dune test` green.
+**Done when:** the README's `User`, `Greeter` / `English`, `welcome`, and `Color` snippets parse to golden ASTs; negative tests (camelCase `def`, `UPPER` variable, enum payloads, duplicate `init`, a declared `init` return type) rejected with the right message and span; `dune test` green.
 
 - [x] **T4.1** — Declaration AST nodes; top-level item sequence.
 - [x] **T4.2** — `def` parsing with the `init` exemption and `?`-name rules.
@@ -160,9 +160,9 @@ Close-out note: promote the provisional decisions that M1 proved (`print`, trail
 ### Step 08 — Gradual type checker · `plan/step-08-type-checker.md`
 
 **Prereq:** Steps 01–07.
-**Done when:** every README example type-checks clean; the annotated-error corpus (wrong return type, bad named arg, `var` escape, narrowing misuse) is rejected with correct spans; the zero-false-positive corpus passes with no diagnostics; `emo check` works and `emo run` runs the pass first.
+**Done when:** every README example type-checks clean; the wrong-type-declaration corpus (wrong return type), bad named arg, `var` escape, narrowing misuse) is rejected with correct spans; the zero-false-positive corpus passes with no diagnostics; `emo check` works and `emo run` runs the pass first.
 
-- [x] **T8.1** — Type representation + annotation collection pass.
+- [x] **T8.1** — Type representation + type declaration collection pass.
 - [x] **T8.2** — Statement/expression checking with `Unknown` discipline.
 - [x] **T8.3** — Signature checks; arrow-block inference.
 - [x] **T8.4** — Branch-scoped environments with narrowing on `is()`.
@@ -171,7 +171,7 @@ Close-out note: promote the provisional decisions that M1 proved (`print`, trail
 - [x] **T8.7** — Call-site checking; named-argument validation.
 - [x] **T8.8** — `case` checking: pattern typing, `when` guards as `Bool`, exhaustiveness on decidable enums and on the first tuple element of decidable `(Enum, ...)` scrutinees (guarded branches don't count).
 - [x] **T8.9** — `emo check` command; wire into `emo run`.
-- [x] **T8.10** — Test categories: strict-annotated rejections, inference successes, zero-false-positive corpus.
+- [x] **T8.10** — Test categories: strict type-declaration rejections, inference successes, zero-false-positive corpus.
 
 Follow-up: the chosen `var`-escape approximation is documented in `docs/var-escape.md`.
 

@@ -57,7 +57,7 @@ the benchmarks only show specialized beating unspecialized; no
 industrial-scale workload has been measured against C or Fortran, and
 the probe below is a microbenchmark rather than one.
 Under gradual typing, every value carries a runtime type tag and
-under-annotated regions fall back to dynamic semantics — fatal for
+regions with too few type declarations fall back to dynamic semantics — fatal for
 mesh-generation inner loops. And the value semantics — immutable
 arrays, classes copied on assignment — favor safety, but at
 gigabyte-scale mesh data they either force a performance disaster or

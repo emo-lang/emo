@@ -89,8 +89,11 @@ coloring is structurally impossible.
   points `EMO_REGISTRY` at it and requires them like any package. The
   acceptance example is `examples/http_roundtrip` with its lockfile.
 - **Language surface that landed with the library** — the `\r` escape,
-  `Block` annotation vocabulary, lenient block-parameter annotations
-  (cross-module types narrow to Unknown), forward-reference checking in
+  `Block` type-declaration vocabulary, lenient block-parameter type
+  declarations
+  (cross-module types narrowed to Unknown then; type names resolve
+  program-wide since 2026-10-10 — CHECK.md, cross-module types),
+  forward-reference checking in
   the checker, `String` methods (`length`, `substring`, `split`,
   `trim`, `lower`, `index_of`, `starts_with`, `to_int`), and
   `Array.append`.

@@ -814,63 +814,47 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
      The type-level methods (`Byte.from_int64`, `Float64.from_bits`)
      arrive with a Type_ref receiver. *)
       | "get", [ i ]
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
+        when match self_.Emo_ir.ety with Emo_check.Bytes -> true | _ -> false ->
           box_int env result_ty
             (Printf.sprintf "emo_bytes_get(%s, %s)" (as_dyn env self_)
                (as_native env i Emo_check.Int64))
       | "set", [ i; v ]
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
+        when match self_.Emo_ir.ety with Emo_check.Bytes -> true | _ -> false ->
           box_int env result_ty
             (Printf.sprintf "emo_bytes_set(%s, %s, %s)" (as_dyn env self_)
                (as_native env i Emo_check.Int64)
                (as_native env v Emo_check.Int64))
       | "get_u16_le", [ i ]
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
+        when match self_.Emo_ir.ety with Emo_check.Bytes -> true | _ -> false ->
           box_int env result_ty
             (Printf.sprintf "emo_bytes_get_u16_le(%s, %s)" (as_dyn env self_)
                (as_native env i Emo_check.Int64))
       | "get_u32_le", [ i ]
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
+        when match self_.Emo_ir.ety with Emo_check.Bytes -> true | _ -> false ->
           box_int env result_ty
             (Printf.sprintf "emo_bytes_get_u32_le(%s, %s)" (as_dyn env self_)
                (as_native env i Emo_check.Int64))
       | "get_u64_le", [ i ]
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
+        when match self_.Emo_ir.ety with Emo_check.Bytes -> true | _ -> false ->
           box_int env result_ty
             (Printf.sprintf "emo_bytes_get_u64_le(%s, %s)" (as_dyn env self_)
                (as_native env i Emo_check.Int64))
       | "set_u16_le", [ i; v ]
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
+        when match self_.Emo_ir.ety with Emo_check.Bytes -> true | _ -> false ->
           box_int env result_ty
             (Printf.sprintf "emo_bytes_set_u16_le(%s, %s, %s)"
                (as_dyn env self_)
                (as_native env i Emo_check.Int64)
                (as_native env v Emo_check.Int64))
       | "set_u32_le", [ i; v ]
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
+        when match self_.Emo_ir.ety with Emo_check.Bytes -> true | _ -> false ->
           box_int env result_ty
             (Printf.sprintf "emo_bytes_set_u32_le(%s, %s, %s)"
                (as_dyn env self_)
                (as_native env i Emo_check.Int64)
                (as_native env v Emo_check.Int64))
       | "set_u64_le", [ i; v ]
-        when match self_.Emo_ir.ety with
-             | Emo_check.Bytes | Emo_check.Unknown -> true
-             | _ -> false ->
+        when match self_.Emo_ir.ety with Emo_check.Bytes -> true | _ -> false ->
           box_int env result_ty
             (Printf.sprintf "emo_bytes_set_u64_le(%s, %s, %s)"
                (as_dyn env self_)
@@ -1998,9 +1982,12 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
         }
       in
       (* Every member is on the cluster's cycle, so its head label
-         always has an incoming jump. *)
-      put env "emo_head_%s:;\n" (c_ident m.Emo_ir.fname);
-      emit_stmts env m.Emo_ir.fbody)
+         always has an incoming jump. The body lives in its own block:
+         C labels open no scope, and sibling members' locals would
+         collide in the shared function scope. *)
+      put env "emo_head_%s: {\n" (c_ident m.Emo_ir.fname);
+      emit_stmts env m.Emo_ir.fbody;
+      put env "}\n")
     members;
   if List.exists (fun (m : Emo_ir.func) -> has_return m.Emo_ir.fbody) members
   then put env0 "emo_return:;\n";
@@ -2301,12 +2288,21 @@ let emit (program : Emo_ir.program) : string * string =
         List.map
           (fun (m : Emo_ir.func) ->
             let n = String.length c.Emo_ir.cname + 2 in
-            let display =
+            let stripped =
               if
                 String.starts_with ~prefix:(c.Emo_ir.cname ^ "__")
                   m.Emo_ir.fname
               then String.sub m.Emo_ir.fname n (String.length m.Emo_ir.fname - n)
               else m.Emo_ir.fname
+            in
+            (* The IR spells a predicate's `?` as `_q` for symbol safety;
+               the vtable's method name is the source spelling that the
+               dynamic dispatch and the interface contracts compare. *)
+            let n = String.length stripped in
+            let display =
+              if n >= 2 && String.sub stripped (n - 2) 2 = "_q" then
+                String.sub stripped 0 (n - 2) ^ "?"
+              else stripped
             in
             (display, List.length m.Emo_ir.fparams - 1, m))
           c.Emo_ir.cmethods

@@ -414,7 +414,7 @@ let call_tests =
 
 let control_tests =
   [
-    tc "an arrow block takes annotated parameters" (fun () ->
+    tc "an arrow block takes type-declared parameters" (fun () ->
         Alcotest.(check string)
           "shape" "(block (param x Int64) (param y Float64)|(return x))"
           (render pp_expr
@@ -423,7 +423,7 @@ let control_tests =
         Alcotest.(check string)
           "shape" "(block |(return 1))"
           (render pp_expr (parse_expr "-> {\n  return 1\n}")));
-    tc "arrow block parameters need annotations" (fun () ->
+    tc "arrow block parameters need type declarations" (fun () ->
         let diagnostic = parse_err "-> (x) { x }" in
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
     tc "if without else" (fun () ->
@@ -919,13 +919,13 @@ let def_tests =
         Alcotest.(check string)
           "span" "test.emo:1:5"
           (Span.to_string diagnostic.Diagnostic.span));
-    tc "a def without a return annotation returns Void" (fun () ->
+    tc "a def without a return type declaration returns Void" (fun () ->
         match parse_program "def log(msg String) {\n  println(msg)\n}" with
         | [ def_item ] -> (
             match def_item.Emo_ast.item_desc with
             | Emo_ast.Item_def d ->
                 Alcotest.(check bool)
-                  "no return annotation" false
+                  "no return type declaration" false
                   (Option.is_some d.Emo_ast.def_return)
             | _ -> Alcotest.fail "expected a def")
         | items ->
@@ -1042,7 +1042,7 @@ let class_tests =
         | items ->
             Alcotest.fail
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
-    tc "init takes no return annotation" (fun () ->
+    tc "init takes no return type declaration" (fun () ->
         let diagnostic = program_err "class A {\n  def init() A {}\n}" in
         Alcotest.(check string) "code" "E2011" (code_of diagnostic);
         Alcotest.(check string)
@@ -1106,7 +1106,7 @@ let interface_tests =
         | items ->
             Alcotest.fail
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
-    tc "signatures carry annotated parameters" (fun () ->
+    tc "signatures carry type-declared parameters" (fun () ->
         match
           parse_program "interface Teller {\n  def total(cart Cart) Int64\n}"
         with

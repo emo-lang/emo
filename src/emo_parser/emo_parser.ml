@@ -716,7 +716,8 @@ and parse_item st =
         if (not (newline_before st)) && starts_type st then
           Some (parse_type_ann st)
         else
-          error "E2011" (span st) "`foreign def` requires a return annotation"
+          error "E2011" (span st)
+            "`foreign def` requires a return type declaration"
       in
       if newline_before st || kind st <> Tok.Op Assign then
         error "E2010" (span st)
@@ -757,7 +758,7 @@ and parse_item st =
       { Ast.item_span = e.Ast.enum_span; item_desc = Ast.Item_enum e }
   | _ -> { Ast.item_span; item_desc = Ast.Item_stmt (parse_stmt st) }
 
-(* `true` when the current token can begin a type annotation. *)
+(* `true` when the current token can begin a type declaration. *)
 and starts_type st =
   match kind st with
   | Tok.Upper_ident _ | Tok.Op Tok.LParen -> true
@@ -813,7 +814,7 @@ and parse_def st ~in_class =
         "`init` is a constructor; it can only be defined in a class body";
     let def_params = parse_params st in
     if (not (newline_before st)) && starts_type st then
-      error "E2011" (span st) "`init` takes no return annotation"
+      error "E2011" (span st) "`init` takes no return type declaration"
         ~hint:"`init` returns the class it constructs";
     let saved_in_init = st.in_init in
     st.in_init <- true;
@@ -828,7 +829,7 @@ and parse_def st ~in_class =
     })
   else
     let def_params = parse_params st in
-    (* A def without a return annotation returns Void: no `return` may
+    (* A def without a return type declaration returns Void: no `return` may
        appear in its body. Interface methods stay explicit — a signature
        is a contract. *)
     let def_return =
@@ -1023,7 +1024,7 @@ and parse_interface st =
     interface_methods = List.rev !methods;
   }
 
-(* A method signature inside an interface: name, annotated parameters, and a
+(* A method signature inside an interface: name, type-declared parameters, and a
    required return type — never a body. *)
 and parse_method_sig st =
   let def_tok = peek st in
@@ -1195,7 +1196,8 @@ and parse_type_ann st =
       }
   | t ->
       error "E2001" (span st)
-        (Printf.sprintf "expected a type annotation, found %s" (describe_kind t))
+        (Printf.sprintf "expected a type declaration, found %s"
+           (describe_kind t))
 
 and parse_string st =
   let start_span = span st in

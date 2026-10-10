@@ -11,7 +11,7 @@
 // texts are not a contract — the phase is).
 //
 // The value is a tuple, not a class, because qualified type
-// annotations (`error.Outcome`) do not parse as of step 20 — recorded
+// declarations (`error.Outcome`) do not parse as of step 20 — recorded
 // pressure on the language; the tuple crosses module edges.
 
 def good() (Bool, String, Int64, String) {

@@ -9,7 +9,7 @@
 // and refuses foreign definitions, so this program runs only
 // compiled: one command, one standalone executable.
 //
-// The kernels below are fully annotated, so the compiler specializes
+// The kernels below are fully type-declared, so the compiler specializes
 // them: unboxed float arithmetic and direct calls, with the tagged
 // dynamic semantics kept only where types are unknown. The same
 // program with `emo build --no-specialize` keeps tagged values — the

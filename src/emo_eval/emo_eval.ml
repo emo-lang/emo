@@ -396,6 +396,15 @@ let module_loader : (string list -> env) ref =
       failwith
         (Printf.sprintf "no module loader for `%s`" (String.concat "." path)))
 
+(* Resolves a bare cross-module type name to its declared value (a
+   ClassDef or an EnumType): the name binds only in its own module's
+   environment, and a bare reference carries no module path to load
+   through, so the project layer installs the program's owner index —
+   the runtime mirror of the checker's program-wide pre-registration
+   (CHECK.md, cross-module types). The declaring module loads on first
+   need, like any module reference. *)
+let type_owner_of : (string -> value option) ref = ref (fun _ -> None)
+
 (* Ensures a module's items have run exactly once. *)
 let ensure_module_loaded h =
   match h.menv with
@@ -592,6 +601,14 @@ let interface_registry : (string, (string * int) list) Hashtbl.t =
    one module is callable from another module's processes. *)
 let group_registry : (string, (string * value) list) Hashtbl.t ref =
   ref (Hashtbl.create 8)
+
+(* A program run starts with fresh program-wide registries: the project
+   layer calls this before installing its module hooks, and single-file
+   runs reset inline. *)
+let reset_program_registries () =
+  Hashtbl.reset interface_registry;
+  Hashtbl.reset !group_registry;
+  type_owner_of := fun _ -> None
 
 (* `x.is(T)` — the runtime half of narrowing: exact class for classes, the
    declaring enum for members, and a structural method-shape check for
@@ -1345,6 +1362,17 @@ and eval_method env span recv mname arg_exprs =
       apply v span args
   | _ -> (
       let base = eval_expr env recv in
+      (* A cross-module class name arrives as a bare TypeValue — the
+         declaration binds only in its own module's environment — so
+         construction resolves through the program's owner index. *)
+      let base =
+        match (base, mname) with
+        | TypeValue t, "new" -> (
+            match !type_owner_of t with
+            | Some (ClassDef _ as v) -> v
+            | _ -> base)
+        | _ -> base
+      in
       match (base, mname) with
       | EmoGroup members, _ -> (
           (* a group member: defs apply, consts produce their value. A bare
@@ -2989,6 +3017,21 @@ and eval_expr env e =
           | None ->
               error span "E3007"
                 (Printf.sprintf "this group has no member `%s`" name))
+      | TypeValue t -> (
+          (* A cross-module enum: the bare name binds only in its own
+             module's environment, so member access resolves through the
+             program's owner index (CHECK.md, cross-module types). *)
+          match !type_owner_of t with
+          | Some (EnumType e) -> (
+              match List.assoc_opt name e.emembers with
+              | Some v -> v
+              | None ->
+                  error span "E3007"
+                    (Printf.sprintf "enum `%s` has no member `%s`" e.ename name)
+              )
+          | _ ->
+              error span "E3007"
+                "a member access must be a call, like `x.read()`")
       | _ ->
           error span "E3007" "a member access must be a call, like `x.read()`")
   | Ast.Index (base, index) -> eval_index env span base index
@@ -3260,8 +3303,7 @@ let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
   (env, !deps)
 
 let run_items items =
-  Hashtbl.reset interface_registry;
-  Hashtbl.reset !group_registry;
+  reset_program_registries ();
   call_trace := [];
   let env = global_env () in
   (* Unscheduled runs refuse the process operations with E3009. *)
