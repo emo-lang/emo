@@ -707,6 +707,23 @@ let entry_path (entry_file : string) : string =
     Filename.concat (Sys.getcwd ()) entry_file
   else entry_file
 
+(* The entry's file identity: the walk registers physical keys (getcwd
+   is physical), but the entry can arrive through a symlinked directory
+   — `/tmp/x` naming what the walk stored as `/private/tmp/x` — so
+   membership compares device and inode, not the strings. *)
+let entry_file_id (entry_file : string) : (int * int) option =
+  match try Some (Unix.stat (entry_path entry_file)) with _ -> None with
+  | Some st -> Some (st.Unix.st_dev, st.Unix.st_ino)
+  | None -> None
+
+let same_file (id : (int * int) option) (file : string) : bool =
+  match id with
+  | None -> false
+  | Some (dev, ino) -> (
+      match try Some (Unix.stat file) with _ -> None with
+      | Some st -> st.Unix.st_dev = dev && st.Unix.st_ino = ino
+      | None -> false)
+
 (* The backend's lowering input: every module in the project, parsed and
    checked (the backend runs the full check), plus the entry module's
    path. Raises [Static_errors] on any diagnostic. *)
@@ -752,11 +769,10 @@ let compile_inputs ~entry_file ~target :
             end)
       p.files []
   in
-  let entry_abs = entry_path entry_file in
+  let entry_id = entry_file_id entry_file in
   let entry_module =
     Hashtbl.fold
-      (fun path file acc ->
-        if String.equal file entry_abs then Some path else acc)
+      (fun path file acc -> if same_file entry_id file then Some path else acc)
       p.files None
   in
   let units, entry =
@@ -766,11 +782,11 @@ let compile_inputs ~entry_file ~target :
         (* The entry lives outside the discovered tree: it becomes the
            root module, like the interpreter's root environment, and
            its types pre-register with the rest. *)
-        (([], parse_cached p entry_abs) :: units, [])
+        (([], parse_cached p (entry_path entry_file)) :: units, [])
   in
   (* The program's type tables (CHECK.md, cross-module types) come
-   * before any module is checked, so every module's annotations resolve
-   * against every declaration. *)
+   * before any module is checked, so every module's type declarations
+   * resolve against every declaration. *)
   let program, preregister_errors = Emo_check.preregister_types ~units in
   diagnostics := preregister_errors;
   let inputs =
@@ -804,8 +820,24 @@ let check_entry ~entry_file : Emo_support.Diagnostic.t list =
   let items = parse_cached p (entry_path entry_file) in
   let module_paths = module_paths p in
   let _paths, _graph, program, errors = check_project ~manifest p in
-  let entry_diags, _refs, _requires =
-    Emo_check.check_module ~modules:module_paths ~current:[] ~program items
+  (* A tree-rooted entry is already among check_project's modules; only
+     an entry outside the discovered tree (an absolute path, the root
+     module) needs its own check. *)
+  let entry_id = entry_file_id entry_file in
+  let entry_in_tree =
+    Hashtbl.fold
+      (fun path file acc -> if same_file entry_id file then Some path else acc)
+      p.files None
+  in
+  let entry_diags =
+    match entry_in_tree with
+    | Some _ -> []
+    | None ->
+        let diags, _refs, _requires =
+          Emo_check.check_module ~modules:module_paths ~current:[] ~program
+            items
+        in
+        diags
   in
   diagnostics p @ errors @ entry_diags
 
@@ -828,9 +860,24 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
      let module_paths = module_paths p in
      let _paths, _graph, program, errors = check_project ~manifest p in
      (* The entry file itself may live outside the discovered tree (an
-        absolute path); it is always checked too. *)
-     let entry_diags, _refs, _requires =
-       Emo_check.check_module ~modules:module_paths ~current:[] ~program items
+        absolute path); it is checked too — a tree-rooted entry was
+        already among check_project's modules. *)
+     let entry_id = entry_file_id entry_file in
+     let entry_in_tree =
+       Hashtbl.fold
+         (fun path file acc ->
+           if same_file entry_id file then Some path else acc)
+         p.files None
+     in
+     let entry_diags =
+       match entry_in_tree with
+       | Some _ -> []
+       | None ->
+           let diags, _refs, _requires =
+             Emo_check.check_module ~modules:module_paths ~current:[] ~program
+               items
+           in
+           diags
      in
      match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in

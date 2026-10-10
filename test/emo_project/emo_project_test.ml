@@ -277,6 +277,100 @@ let privacy_tests =
         Alcotest.(check bool)
           "names the internal module" true
           (contains_substring message "shop.internal.discounts"));
+    tc "a bare type from an internal module is refused outside its subtree"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "shop/internal/coupons.emo",
+                {|class Coupon {
+  def init(id Int64) {
+    self.id = id
+  }
+}
+|}
+              );
+              ("shop/pricing.emo", {|def price(c Coupon) Int64 {
+  return 7
+}|});
+              ("app/main.emo", {|def total(c Coupon) Int64 {
+  return 0
+}|});
+            ]
+            "app/main.emo"
+        in
+        match Emo_project.check_entry ~entry_file:entry with
+        | ds when has_code ds "E5001" ->
+            let hits =
+              List.filter (fun d -> d.Diagnostic.code = Some "E5001") ds
+            in
+            Alcotest.(check int) "single report" 1 (List.length hits);
+            let message =
+              match hits with d :: _ -> d.Diagnostic.message | [] -> ""
+            in
+            Alcotest.(check bool)
+              "names the use site" true
+              (contains_substring message "app.main");
+            Alcotest.(check bool)
+              "names the declaring module" true
+              (contains_substring message "shop.internal.coupons")
+        | ds -> Alcotest.fail ("codes: " ^ codes_dump ds));
+    tc "an is() target from an internal module is refused outside its subtree"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "shop/internal/coupons.emo",
+                {|class Coupon {
+  def init(id Int64) {
+    self.id = id
+  }
+}
+|}
+              );
+              ( "app/main.emo",
+                {|def total(c Int64) Int64 {
+  if c.is(Coupon) {
+    return 1
+  }
+  return 0
+}|}
+              );
+            ]
+            "app/main.emo"
+        in
+        match Emo_project.check_entry ~entry_file:entry with
+        | ds when has_code ds "E5001" -> ()
+        | ds -> Alcotest.fail ("codes: " ^ codes_dump ds));
+    tc "a bare type inside its own subtree checks" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "shop/internal/coupons.emo",
+                {|class Coupon {
+  def init(id Int64) {
+    self.id = id
+  }
+}
+|}
+              );
+              ( "shop/pricing.emo",
+                {|def price(c Coupon) Int64 {
+  if c.is(Coupon) {
+    return 7
+  }
+  return 0
+}
+
+const made = Coupon.new(id: 7)
+|}
+              );
+            ]
+            "shop/pricing.emo"
+        in
+        match Emo_project.check_entry ~entry_file:entry with
+        | [] -> ()
+        | ds -> Alcotest.fail ("codes: " ^ codes_dump ds));
   ]
 
 let cycle_tests =
@@ -1505,7 +1599,7 @@ def make() VNode {
          ds)
   in
   [
-    tc "an annotation names another module's type" (fun () ->
+    tc "a type declaration names another module's type" (fun () ->
         let entry =
           with_project
             [
