@@ -197,6 +197,7 @@ let wasm_goldens =
     "fixed_width";
     "list";
     "base64_demo";
+    "sync_demo";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -218,6 +219,7 @@ let beam_goldens =
     "fixed_width";
     "list";
     "base64_demo";
+    "sync_demo";
     "printf_demo";
   ]
 
@@ -424,6 +426,7 @@ let c_goldens =
     "list";
     "os_demo";
     "base64_demo";
+    "sync_demo";
     "slog_demo";
     "bufio_demo";
     "printf_demo";
