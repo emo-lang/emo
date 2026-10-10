@@ -1230,10 +1230,10 @@ and check_method_call ctx env span recv mname args : t =
     | Ast.Type_ident "Exception", "new" -> true
     | _ -> false
   then (
-    (* Exception.new(message, data?) — the shipped exception class. The
-       message is a String; the optional data is any Map, stored on the
-       instance and read back through `e.data`. Named arguments must keep
-       message-first order: the runtime binds the pair positionally. *)
+    (* The shipped exception class takes a message and an optional data
+       argument. The message is a String; the data is any Map, stored on
+       the instance and read back through `e.data`. Named arguments must
+       keep message-first order: the runtime binds the pair positionally. *)
     let arg_values =
       List.map
         (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
