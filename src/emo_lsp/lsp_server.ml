@@ -389,7 +389,7 @@ let document_symbols_of_items (text : string) (starts : int array)
                   ~detail:
                     (Printf.sprintf "def %s(%s) %s" m.Ast.sig_name
                        (Ix.params_to_string m.Ast.sig_params)
-                       (Ix.type_ann_to_string m.Ast.sig_return))
+                       (Ix.type_decl_to_string m.Ast.sig_return))
                   ~kind:Ix.Kind.method_ ~span:m.Ast.sig_span ~children:[])
               i.Ast.interface_methods
           in
