@@ -1699,7 +1699,8 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       List.iteri
         (fun i (b : Emo_ir.branch) ->
           put env "%s: ;\n" (Printf.sprintf "__recv_b%d_%d" i uniq);
-          pattern_bind_sfx env s b.Emo_ir.pattern (Printf.sprintf "__r%d" uniq);
+          pattern_bind_sfx env s b.Emo_ir.pattern
+            (Printf.sprintf "__r%d_%d" uniq i);
           emit_stmts env b.Emo_ir.body;
           put env "  goto %s;\n" end_label)
         branches;
