@@ -67,23 +67,38 @@ The binding surface is `foreign def`:
 foreign def sqrt(x Float64) Float64 = "sqrt"
 ```
 
-The emitted OCaml does **not** declare the C symbol directly. Raw
-externals receive boxed `value` arguments (wrong for a C `double`), and
-symbol names like `sqrt` collide with primitives the OCaml compiler
-inlines (with a broken encoder on ARM64 macOS). Instead, `emo build`
-generates a C wrapper per binding — `.emo-build/ffi_stubs.c` — that
-unboxes at the boundary (`Double_val` / `String_val` / `Bool_val` in,
-`caml_copy_double` / `caml_copy_string` / `Val_bool` out), compiles it
-with `cc`, and links it.
+The capability table (CHECK.md) is per target. The **c target** calls
+the C symbol directly — no wrapper generator. Its parameters may be
+`Int64`, `Float64`, `Bool`, or `String`, and its return may also be
+`Void` — the shape of a fire-and-forget call (decided 2026-10-10);
+opaque handles ride pointer-sized Int64s. The **OCaml-emitting
+backend** compiles through generated wrappers: raw externals receive
+boxed `value` arguments (wrong for a C `double`), and symbol names
+like `sqrt` collide with primitives the OCaml compiler inlines (with a
+broken encoder on ARM64 macOS), so `emo build` generates a C wrapper
+per binding — `.emo-build/ffi_stubs.c` — that unboxes at the boundary
+(`Double_val` / `String_val` / `Bool_val` in, `caml_copy_double` /
+`caml_copy_string` / `Val_bool` out), and takes `Float64`, `String`,
+and `Bool` only.
 
-Only `Float64`, `String`, and `Bool` marshal today; other types are
-refused at check time (E4200). Link additional C libraries with
-`--cclib` (`emo build main.emo --cclib m`). `foreign def` runs only in
-compiled programs — the interpreter refuses it with E3009.
+Every externally linkable declaration of the program — its defs,
+foreign symbols, tail-call clusters, and class constructors and
+methods — is also written to `.emo-build/emo_defs.h`, so an FFI shim
+compiles against the compiler's own declarations: a signature that
+drifts breaks at cc time in both directions instead of silently at
+run time (2026-10-10).
+
+Anything else is refused at check time (E4200). Link additional C
+libraries with `--cclib` (`emo build main.emo --cclib m`): bare names
+become `-l` flags, `-`/`/`-prefixed values pass verbatim, and a cclib
+naming an existing file (a shim object) enters the build's cache key
+by content, so editing it invalidates the cached binary. `foreign
+def` runs only in compiled programs — the interpreter refuses it with
+E3009.
 
 A target that cannot honor a `foreign def` refuses it at check time
-rather than compiling a broken call: today only the OCaml-emitting
-native backend can, while `wasm`, `typescript`, `beam`, and the
-freestanding `riscv64` (until C interop lands) refuse. Per-target
-availability is also declared through the manifest's `targets`
-mechanism, so a package is rejected at resolution.
+rather than compiling a broken call: today the c target and the
+OCaml-emitting native backend can, while `wasm`, `typescript`, `beam`,
+and the freestanding `riscv64` (until C interop lands) refuse.
+Per-target availability is also declared through the manifest's
+`targets` mechanism, so a package is rejected at resolution.

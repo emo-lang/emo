@@ -887,6 +887,10 @@ let c_foreign_tests =
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let dir = Filename.concat scratch "c-ffi" in
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        (* A stale defs header would survive a broken build, so the
+           assertion below starts from nothing. *)
+        let defs_h = Filename.concat (Sys.getcwd ()) ".emo-build/emo_defs.h" in
+        (try Sys.remove defs_h with Sys_error _ -> ());
         let entry = Filename.concat dir "main.emo" in
         let oc = open_out_bin entry in
         output_string oc
@@ -895,12 +899,19 @@ foreign def sqrt(x Float64) Float64 = "sqrt"
 foreign def llabs(x Int64) Int64 = "llabs"
 foreign def getenv(name String) String = "getenv"
 foreign def strspn(s String, accept String) Int64 = "strspn"
+foreign def srand(seed Int64) Void = "srand"
+
+def triple(x Int64) Int64 {
+  return x * 3
+}
 
 println(sqrt(4.0))
 println(llabs(0 - 42))
 const probed = getenv("EMO_FFI_PROBE")
 println(probed)
 println(strspn(probed, "hello"))
+srand(42)
+println(triple(14))
 |};
         close_out oc;
         let out_bin = Filename.concat dir "main-c-bin" in
@@ -909,6 +920,27 @@ println(strspn(probed, "hello"))
             ~cclibs:[ "m" ] ~target:"c"
         in
         Alcotest.(check int) "build exit" 0 exit_code;
+        (* The defs header declares the program's def and the foreign
+           symbols — the contract an FFI shim compiles against. *)
+        let lines =
+          let ic = open_in_bin defs_h in
+          let rec go acc =
+            match input_line ic with
+            | line -> go (line :: acc)
+            | exception End_of_file ->
+                close_in ic;
+                List.rev acc
+          in
+          go []
+        in
+        Alcotest.(check bool)
+          "defs header has the def"
+          (List.exists (String.equal "int64_t triple(int64_t x);") lines)
+          true;
+        Alcotest.(check bool)
+          "defs header has the void foreign"
+          (List.exists (String.equal "extern void srand(int64_t);") lines)
+          true;
         let cmd_stdout, _cmd_stdin, cmd_stderr =
           Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
         in
@@ -922,7 +954,7 @@ println(strspn(probed, "hello"))
           Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
         in
         Alcotest.(check string)
-          "output" "2.0\n42\nhello ffi\n5\n" (Buffer.contents out);
+          "output" "2.0\n42\nhello ffi\n5\n42\n" (Buffer.contents out);
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->

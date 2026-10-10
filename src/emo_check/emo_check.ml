@@ -240,8 +240,10 @@ let collect ctx (items : Ast.item list) : unit =
                  g.Ast.group_name)
       | Ast.Item_foreign f ->
           (* The capability table (CHECK.md): the c target honors Int64
-             directly on the C ABI alongside the marshaled scalars;
-             every other backend takes Float64/String/Bool only. *)
+             directly on the C ABI alongside the marshaled scalars, and
+             takes Void as a foreign RETURN — the shape of a
+             fire-and-forget C call; a Void parameter stays meaningless.
+             Every other backend takes Float64/String/Bool only. *)
           let ffi_ok = function
             | Ast.Named_type "Float64"
             | Ast.Named_type "String"
@@ -250,8 +252,19 @@ let collect ctx (items : Ast.item list) : unit =
             | Ast.Named_type "Int64" -> ctx.target = "c"
             | _ -> false
           in
+          let ffi_return_ok desc =
+            ffi_ok desc
+            ||
+            match desc with
+            | Ast.Named_type "Void" -> ctx.target = "c"
+            | _ -> false
+          in
           let allowed =
             if ctx.target = "c" then "Float64, String, Bool, or Int64"
+            else "Float64, String, or Bool"
+          in
+          let allowed_return =
+            if ctx.target = "c" then "Float64, String, Bool, Int64, or Void"
             else "Float64, String, or Bool"
           in
           List.iter
@@ -264,9 +277,10 @@ let collect ctx (items : Ast.item list) : unit =
                      p.Ast.param_name allowed))
             f.Ast.foreign_params;
           ignore (ann_to_type ctx f.Ast.foreign_return);
-          if not (ffi_ok f.Ast.foreign_return.Ast.type_desc) then
+          if not (ffi_return_ok f.Ast.foreign_return.Ast.type_desc) then
             report ctx f.Ast.foreign_return.Ast.type_span "E4200"
-              (Printf.sprintf "foreign return must be %s on this target" allowed);
+              (Printf.sprintf "foreign return must be %s on this target"
+                 allowed_return);
           (* Call-site checking reuses the def signature. *)
           Hashtbl.replace ctx.funcs f.Ast.foreign_name
             {

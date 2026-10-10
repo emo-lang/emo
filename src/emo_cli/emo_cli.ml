@@ -257,16 +257,32 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               output_string oc contents;
               close_out oc
             in
-            let main_c_contents = Emo_codegen.C.emit program in
+            let main_c_contents, defs_h_contents = Emo_codegen.C.emit program in
             (* Incremental, same scheme as the ocaml arm: the digest of
-               the emitted C, the runtime sources, and the link flags
-               names the cached binary — an unchanged program skips cc. *)
+               the emitted C, the runtime sources, and the link inputs
+               names the cached binary — an unchanged program skips cc.
+               A cclib that names an existing file (a shim object)
+               enters by content, so editing the shim invalidates the
+               cached binary instead of silently relinking it. *)
+            let cclib_key =
+              String.concat ","
+                (List.map
+                   (fun lib ->
+                     match lib.[0] with
+                     | '/' when Sys.file_exists lib ->
+                         let ic = open_in_bin lib in
+                         let n = in_channel_length ic in
+                         let s = really_input_string ic n in
+                         close_in ic;
+                         lib ^ "=" ^ Digest.to_hex (Digest.string s)
+                     | _ -> lib)
+                   cclibs)
+            in
             let digest =
               Digest.to_hex
                 (Digest.string
                    (Printf.sprintf "%s|%s|%s|%s" main_c_contents
-                      Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h
-                      (String.concat "," cclibs)))
+                      Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h cclib_key))
             in
             let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
             if Sys.file_exists cache_binary then begin
@@ -285,6 +301,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               write runtime_c Emo_codegen.C.runtime_c;
               let runtime_h = Filename.concat build_dir "emo_c_runtime.h" in
               write runtime_h Emo_codegen.C.runtime_h;
+              let defs_h = Filename.concat build_dir "emo_defs.h" in
+              write defs_h defs_h_contents;
               (* cclib entries pass to cc: bare names become -l flags,
                  anything already flag- or path-shaped passes verbatim. *)
               let cclib_flags =
