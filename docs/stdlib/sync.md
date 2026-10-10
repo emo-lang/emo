@@ -87,11 +87,11 @@ like any send to a dead pid.) `wait_group` refuses a negative count.
 
 ## Errors
 
-- `sync.wait_group: the count must not be negative, got -2` — a
+- `sync: the count must not be negative, got -2` — a
   negative count at `wait_group`;
-- `sync.done: the countdown already drained` — a `done` beyond the
+- `sync: the countdown already drained` — a `done` beyond the
   count;
-- `sync.wait: the wait group was stopped under the wait` — a `wait`
+- `sync: the wait group was stopped under the wait` — a `wait`
   still parked when `stop` landed.
 
 ## The protocol

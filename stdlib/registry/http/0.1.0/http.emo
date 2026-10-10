@@ -54,7 +54,7 @@ def request(method String, url String, headers Array[(String, String)], body Str
       const conn = net.tls_connect(host, port, timeout)
       return exchange(conn, method, host, path, headers, body)
     }
-    _ -> { raise Exception.new(message: "unsupported url: `" + url + "`") }
+    _ -> { raise Exception.new(message: "http: unsupported url `" + url + "`") }
   }
 }
 
@@ -93,7 +93,7 @@ def parse_url(url String) (String, String, Int64, String) {
   if url.starts_with("http://") {
     return parse_authority(url.substring(7, url.length() - 7), "http")
   }
-  raise Exception.new(message: "unsupported url scheme in `" + url + "`")
+  raise Exception.new(message: "http: unsupported url scheme in `" + url + "`")
 }
 
 def parse_authority(rest String, scheme String) (String, String, Int64, String) {
