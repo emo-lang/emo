@@ -714,7 +714,7 @@ and parse_item st =
       let foreign_params = parse_params st in
       let foreign_return =
         if (not (newline_before st)) && starts_type st then
-          Some (parse_type_ann st)
+          Some (parse_type_decl st)
         else
           error "E2011" (span st)
             "`foreign def` requires a return type declaration"
@@ -834,7 +834,7 @@ and parse_def st ~in_class =
        is a contract. *)
     let def_return =
       if (not (newline_before st)) && starts_type st then
-        Some (parse_type_ann st)
+        Some (parse_type_decl st)
       else None
     in
     let def_body, close_span = parse_def_body st in
@@ -1044,7 +1044,7 @@ and parse_method_sig st =
       ~hint:"interfaces describe shapes, not construction";
   let sig_params = parse_params st in
   let sig_return =
-    if (not (newline_before st)) && starts_type st then parse_type_ann st
+    if (not (newline_before st)) && starts_type st then parse_type_decl st
     else if at_op st Tok.LBrace && not (newline_before st) then
       error "E2018" (span st) "an interface method is a signature only"
         ~hint:"drop the body — a method's shape is its whole contract"
@@ -1133,7 +1133,7 @@ and parse_params st =
                 (Printf.sprintf "expected a parameter name, found %s"
                    (describe_kind t))
         in
-        let param_type = parse_type_ann st in
+        let param_type = parse_type_decl st in
         params := { Ast.param_name = name; param_type } :: !params;
         if at_op st Tok.Comma then (
           advance st |> ignore;
@@ -1147,7 +1147,7 @@ and parse_params st =
       List.rev !params)
   else []
 
-and parse_type_ann st =
+and parse_type_decl st =
   let tok = peek st in
   match tok.Tok.kind with
   | Tok.Upper_ident name ->
@@ -1158,7 +1158,7 @@ and parse_type_ann st =
           error "E2001" (span st) "a type application needs type arguments";
         let args = ref [] in
         let rec loop () =
-          args := parse_type_ann st :: !args;
+          args := parse_type_decl st :: !args;
           if at_op st Tok.Comma then (
             advance st |> ignore;
             if at_op st Tok.RBracket then
@@ -1180,7 +1180,7 @@ and parse_type_ann st =
       let rec loop () =
         if at_op st Tok.RParen then ()
         else (
-          types := parse_type_ann st :: !types;
+          types := parse_type_decl st :: !types;
           if at_op st Tok.Comma then (
             advance st |> ignore;
             if at_op st Tok.RParen then

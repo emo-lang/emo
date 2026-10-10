@@ -148,8 +148,8 @@ let check_internal_type ctx span name =
    module may name a type from the library consuming the block, and
    cross-module types stay unchecked this step — so it narrows to Unknown
    instead of reporting E4005. Definitions stay strict. *)
-let rec ann_to_type ?(lenient = false) ctx
-    ({ Ast.type_span = span; type_desc; _ } : Ast.type_ann) =
+let rec decl_to_type ?(lenient = false) ctx
+    ({ Ast.type_span = span; type_desc; _ } : Ast.type_decl) =
   match type_desc with
   | Ast.Named_type "Int64" -> Int64
   | Ast.Named_type "Byte" -> Byte
@@ -182,16 +182,16 @@ let rec ann_to_type ?(lenient = false) ctx
         report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
         Unknown)
   | Ast.Applied_type ("Array", [ elem ]) ->
-      ArrayType (ann_to_type ~lenient ctx elem)
+      ArrayType (decl_to_type ~lenient ctx elem)
   | Ast.Applied_type ("Map", [ key; value ]) ->
-      MapType (ann_to_type ~lenient ctx key, ann_to_type ~lenient ctx value)
+      MapType (decl_to_type ~lenient ctx key, decl_to_type ~lenient ctx value)
   | Ast.Applied_type ("Map", _) ->
       report ctx span "E4005" "`Map` takes two type arguments: Map[Key, Value]";
       Unknown
   | Ast.Applied_type ("Box", [ elem ]) ->
-      BoxType (ann_to_type ~lenient ctx elem)
+      BoxType (decl_to_type ~lenient ctx elem)
   | Ast.Applied_type ("List", [ elem ]) ->
-      ListType (ann_to_type ~lenient ctx elem)
+      ListType (decl_to_type ~lenient ctx elem)
   | Ast.Applied_type ("List", _) ->
       report ctx span "E4005" "`List` takes one type argument: List[T]";
       ListType Unknown
@@ -203,7 +203,7 @@ let rec ann_to_type ?(lenient = false) ctx
       then check_internal_type ctx span name;
       report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
       Unknown
-  | Ast.Tuple_type ts -> TupleType (List.map (ann_to_type ~lenient ctx) ts)
+  | Ast.Tuple_type ts -> TupleType (List.map (decl_to_type ~lenient ctx) ts)
 
 (* The checker's view of one class declaration: init parameters, method
    signatures, field names. Shared by module collection and the program's
@@ -216,11 +216,11 @@ let class_info_of ctx (c : Ast.class_def) : class_info =
           {
             mparams =
               List.map
-                (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+                (fun p -> (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
                 d.Ast.def_params;
             mret =
               (match d.Ast.def_return with
-              | Some r -> ann_to_type ctx r
+              | Some r -> decl_to_type ctx r
               | None ->
                   if String.equal d.Ast.def_name "init" then Unknown
                   else Void (* a method with no type declaration *));
@@ -234,7 +234,7 @@ let class_info_of ctx (c : Ast.class_def) : class_info =
       Option.map
         (fun init ->
           List.map
-            (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+            (fun p -> (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
             init.Ast.def_params)
         c.Ast.class_init;
     cmethods = methods;
@@ -249,9 +249,9 @@ let interface_sigs_of ctx (i : Ast.interface_def) :
     (fun s ->
       ( s.Ast.sig_name,
         List.map
-          (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+          (fun p -> (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
           s.Ast.sig_params,
-        ann_to_type ctx s.Ast.sig_return ))
+        decl_to_type ctx s.Ast.sig_return ))
     i.Ast.interface_methods
 
 (* Pass one: gather every declaration the checker reasons about. *)
@@ -261,9 +261,9 @@ let collect ctx (items : Ast.item list) : unit =
       match item.Ast.item_desc with
       | Ast.Item_def d ->
           List.iter
-            (fun p -> ignore (ann_to_type ctx p.Ast.param_type))
+            (fun p -> ignore (decl_to_type ctx p.Ast.param_type))
             d.Ast.def_params;
-          Option.iter (fun r -> ignore (ann_to_type ctx r)) d.Ast.def_return;
+          Option.iter (fun r -> ignore (decl_to_type ctx r)) d.Ast.def_return;
           Hashtbl.replace ctx.funcs d.Ast.def_name d
       | Ast.Item_class c ->
           Hashtbl.replace ctx.classes c.Ast.class_name (class_info_of ctx c)
@@ -318,14 +318,14 @@ let collect ctx (items : Ast.item list) : unit =
           in
           List.iter
             (fun p ->
-              ignore (ann_to_type ctx p.Ast.param_type);
+              ignore (decl_to_type ctx p.Ast.param_type);
               if not (ffi_ok p.Ast.param_type.Ast.type_desc) then
                 report ctx p.Ast.param_type.Ast.type_span "E4200"
                   (Printf.sprintf
                      "foreign parameter `%s` must be %s on this target"
                      p.Ast.param_name allowed))
             f.Ast.foreign_params;
-          ignore (ann_to_type ctx f.Ast.foreign_return);
+          ignore (decl_to_type ctx f.Ast.foreign_return);
           if not (ffi_return_ok f.Ast.foreign_return.Ast.type_desc) then
             report ctx f.Ast.foreign_return.Ast.type_span "E4200"
               (Printf.sprintf "foreign return must be %s on this target"
@@ -1023,7 +1023,7 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
       let param_types =
         List.map
           (fun p ->
-            (p.Ast.param_name, ann_to_type ~lenient:true ctx p.Ast.param_type))
+            (p.Ast.param_name, decl_to_type ~lenient:true ctx p.Ast.param_type))
           params
       in
       let inner =
@@ -1031,7 +1031,7 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
           (fun env p ->
             bind env p.Ast.param_name
               {
-                vtype = ann_to_type ~lenient:true ctx p.Ast.param_type;
+                vtype = decl_to_type ~lenient:true ctx p.Ast.param_type;
                 is_var = false;
                 depth = env.depth;
               })
@@ -2250,9 +2250,9 @@ and always_returns ctx (s : Ast.stmt) : bool =
 let signature_of_def ctx (d : Ast.fun_def) : t =
   FuncType
     ( List.map
-        (fun p -> (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+        (fun p -> (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
         d.Ast.def_params,
-      match d.Ast.def_return with Some r -> ann_to_type ctx r | None -> Void )
+      match d.Ast.def_return with Some r -> decl_to_type ctx r | None -> Void )
 
 (* Signature checks: the body runs under the declared parameter types with
    the declared return type as the target; `init` is exempt (it returns
@@ -2263,7 +2263,7 @@ let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
   let is_init = String.equal d.Ast.def_name "init" in
   let effective =
     match d.Ast.def_return with
-    | Some r -> ann_to_type ctx r
+    | Some r -> decl_to_type ctx r
     | None -> if is_init then Unknown else Void
   in
   let frame =
@@ -2291,7 +2291,7 @@ let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
       (fun env p ->
         bind env p.Ast.param_name
           {
-            vtype = ann_to_type ctx p.Ast.param_type;
+            vtype = decl_to_type ctx p.Ast.param_type;
             is_var = false;
             depth = frame.depth;
           })
@@ -2385,10 +2385,10 @@ let check_items ctx (items : Ast.item list) : unit =
                    ( d.Ast.def_name,
                      List.map
                        (fun p ->
-                         (p.Ast.param_name, ann_to_type ctx p.Ast.param_type))
+                         (p.Ast.param_name, decl_to_type ctx p.Ast.param_type))
                        d.Ast.def_params,
                      match d.Ast.def_return with
-                     | Some r -> ann_to_type ctx r
+                     | Some r -> decl_to_type ctx r
                      | None -> Void ))
                  g.Ast.group_defs
              in

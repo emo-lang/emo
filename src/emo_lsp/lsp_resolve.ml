@@ -70,7 +70,7 @@ let rec find_binding (items : Ast.item list) (name : string) : Ast.expr option =
   !found
 
 let find_param_type (items : Ast.item list) (name : string) :
-    Ast.type_ann option =
+    Ast.type_decl option =
   let found = ref None in
   let params (ps : Ast.param list) =
     List.iter
@@ -104,7 +104,7 @@ let find_param_type (items : Ast.item list) (name : string) :
     items;
   !found
 
-let base_type_name (t : Ast.type_ann) : string option =
+let base_type_name (t : Ast.type_decl) : string option =
   match t.Ast.type_desc with
   | Ast.Named_type n -> Some n
   | Ast.Applied_type (n, _) -> Some n
