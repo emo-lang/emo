@@ -66,7 +66,7 @@ step 14's other targets will share.
 
 - Every `examples/*.emo` compiles to a native binary producing identical
   output to `emo run` (golden comparison in CI).
-- Specialized numeric code (fully annotated) shows measurably better
+- Specialized numeric code (fully type-declared) shows measurably better
   benchmark numbers than the unspecialized build — the README's
   type-feeds-performance claim demonstrated, not asserted.
 - A process-per-connection HTTP server built with `emo build` sustains a

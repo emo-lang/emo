@@ -103,6 +103,14 @@ tripping over latent backend bugs. Fixed in this step:
   field/method. **Unblocking this one checker step is what carries the
   package onto c, wasm, and beam** — the package itself is ordinary
   pure Emo.
+  **Done 2026-10-10:** the checker pre-registers every module's type
+  declarations program-wide (`Emo_check.preregister_types`; CHECK.md,
+  cross-module types), so `is()` narrows and interface-typed results
+  dispatch across modules on the interpreter, ocaml, typescript, and
+  c. json_demo now passes the checker on c and fails compiling the
+  *emitted C* instead (an `emo_str`/`int64_t` parameter mismatch in
+  the specialized lowering) — a different, codegen-level gap; wasm and
+  beam keep their own capability walls.
 
 ## Tasks
 

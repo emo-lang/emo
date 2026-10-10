@@ -58,7 +58,8 @@ targets.
 - The cross-module-types checker step (step 27's follow-up) does not
   gate this package — os.emo crosses modules with native types only —
   but the ts/wasm/beam refusal is by `targets`, not by capability
-  detection.
+  detection. (The checker step landed 2026-10-10; os.emo's bare
+  cross-module names resolve program-wide like any type now.)
 
 ## Tasks
 

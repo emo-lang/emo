@@ -304,4 +304,9 @@ carry the loop-heavy memory tests past its own recursion limit. The
 remaining pressure notes (no cross-module class types, field
 immutability, cross-module `.pos` inference, the `file_`/`net_` builtin
 prefixes, argv) stay recorded for the unification gate.
+(Aligned 2026-10-10: the first note is resolved on the checker side —
+type names pre-register program-wide (CHECK.md, cross-module types),
+so the wasm target now lowers against real cross-module types; whether
+the wasm emitter honors them is unverified — json/yaml/xml have no
+wasm goldens yet.)
 

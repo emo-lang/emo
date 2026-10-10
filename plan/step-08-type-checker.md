@@ -4,9 +4,10 @@
 
 ## Goal
 
-The built-in type-checking pass from the README: annotations optional except
-on signatures, unannotated code inferred with **only certain errors reported**,
-annotated code checked strictly, typing structural and flow-sensitive. Runs
+The built-in type-checking pass from the README: type declarations optional
+except on signatures, code without them inferred with **only certain errors
+reported**, code with them checked strictly, typing structural and
+flow-sensitive. Runs
 before evaluation (`emo run` refuses to run a program with certain errors);
 `emo check` becomes functional.
 
@@ -18,22 +19,23 @@ before evaluation (`emo run` refuses to run a program with certain errors);
   (`Int`, `Float`, `Bool`, `Char`, `String`), `ClassType(name, fields)`,
   `InterfaceType(name, methods)`, `EnumType(name)`, `ArrayType(elem)`,
   `TupleType(elems)`, `BoxType(elem)`, `FuncType(params, ret)` — the
-  tuple annotation mirrors the literal, `(Int, String)`. Parameterized
-  spellings exist as annotation vocabulary only (`Array[User]`,
+  tuple type declaration mirrors the literal, `(Int, String)`. Parameterized
+  spellings exist as type-declaration vocabulary only (`Array[User]`,
   `Box[Int]`) — no generics machinery, per the README; a
-  `Box[T]`-annotated receiver gets its method checks from the parameter:
+  `Box[T]`-declared receiver gets its method checks from the parameter:
   `read` yields `T`, `replace` takes `T`.
-- **Signature enforcement** (parser already rejects missing annotations;
-  the checker verifies the consequences):
+- **Signature enforcement** (parser already rejects missing type
+  declarations; the checker verifies the consequences):
   - `def` bodies checked against their declared signatures — `return`
     expressions must conform, parameter uses carry the declared types.
   - `init` exempt: its return type is the class.
-  - Arrow blocks: parameters are annotated (parse-enforced), return types
-    are **inferred**; inference failure on an arrow block used in an
-    annotated position is an error asking for an explicit annotation.
+  - Arrow blocks: parameters are type-declared (parse-enforced), return
+    types are **inferred**; inference failure on an arrow block used in a
+    declared position is an error asking for an explicit type declaration.
 - **Local inference** — `const` / `var` bindings get their type from the
   initializer; assignments to a `var` must conform; rebinding type drift is
-  an error when the binding is annotated, tolerated as `Unknown`-widening
+  an error when the binding carries a type declaration, tolerated as
+  `Unknown`-widening
   when it is not (a certain-error-only report: never a false positive).
 - **Flow-sensitive narrowing** — `if x.is(T) { ... }` narrows `x` to `T`
     within the branch; the else branch keeps the pre-test type merged; on
@@ -82,7 +84,7 @@ before evaluation (`emo run` refuses to run a program with certain errors);
 
 ## Tasks
 
-- [x] Type representation + annotation collection pass.
+- [x] Type representation + type declaration collection pass.
 - [x] Statement/expression checking with `Unknown` discipline.
 - [x] Signature checks; arrow-block inference.
 - [x] Flow environments with narrowing on `is()`.
@@ -93,8 +95,8 @@ before evaluation (`emo run` refuses to run a program with certain errors);
       exhaustiveness on decidable enums and on the first tuple element of
       decidable `(Enum, ...)` scrutinees (guarded branches don't count).
 - [x] `emo check` command; wire into `emo run`.
-- [x] Test categories: strict-annotated rejections, inference successes,
-      zero-false-positive corpus.
+- [x] Test categories: strict type-declaration rejections, inference
+      successes, zero-false-positive corpus.
 
 ## Acceptance
 
@@ -120,8 +122,8 @@ def ok(u) String {       # Unknown receiver — no error reported
 ```
 
 - Every README example type-checks clean.
-- Annotated-error corpus (wrong return type, bad named arg, `var` escape,
-  narrowing misuse) all rejected with correct spans.
+- Wrong-type-declaration corpus (wrong return type, bad named arg,
+  `var` escape, narrowing misuse) all rejected with correct spans.
 - Zero-false-positive corpus passes with no diagnostics.
 - `dune test` green.
 

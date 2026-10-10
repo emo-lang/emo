@@ -66,13 +66,13 @@ incrementally shippable steps — one file per step, executed in order.
 | 20 | Wasm runtime: decoder & validator | done |
 | 21 | Wasm runtime: interpreter core & spec goldens | in progress (tasks written) |
 | 22 | RISC-V target (freestanding RV64) | not started (tasks written) |
-| 23 | Self-contained hosted native backend (no OCaml runtime) & deep C FFI | assessment (not scheduled) |
-| 24 | C target (emit C) | done (close-out recorded; the native → ocaml rename landed) |
+| 23 | Self-contained hosted native backend (no OCaml runtime) & deep C FFI | assessment delivered — executed as step 24 (emit C) |
+| 24 | C target (emit C) | done (close-out recorded; the native → ocaml rename landed; aligned 2026-10-10 — Void foreign returns, `emo_defs.h`, content-keyed caches, cross-module calls and types) |
 | 25 | Toolchain distribution & release | done (v0.25.9; M9 complete) |
 | 26 | Target independence (runtimes decoupled from the host) | done (M10 complete; every runtime embedded, the ocaml target installation-independent) |
-| 27 | The standard library: `json` | done on interpreter/ocaml/typescript; c, wasm, beam wait on cross-module types (step-27 follow-up) |
-| 28 | The standard library: `yaml` | done on interpreter/ocaml/typescript; c, wasm, beam wait on cross-module types (step-27 follow-up) |
-| 29 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; wasm, beam wait on cross-module types (step-27 follow-up) |
+| 27 | The standard library: `json` | done on interpreter/ocaml/typescript; cross-module types landed (2026-10-10) — c passes the checker and fails compiling the emitted C (codegen gap, step-27 follow-up); wasm, beam wait on their own capability walls |
+| 28 | The standard library: `yaml` | done on interpreter/ocaml/typescript; cross-module types landed (2026-10-10) — c passes the checker and fails compiling the emitted C (same codegen gap); wasm, beam wait on their own capability walls |
+| 29 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; the cross-module-types gate resolved (2026-10-10); wasm, beam wait on their own capability walls |
 | 30 | The standard library: `os` | done on interpreter/ocaml/c; the browser and bytecode targets refuse the package (no process to fork) |
 | 31 | The standard library: `base64` | done on every target — the first package on all five goldens; flushed out the wasm `&&` cast, the wasm zero-length copies, and the beam logical-op/tuple-index/Exception gaps |
 | 32 | The standard library: `slog` | done on interpreter/ocaml/c/typescript; wasm, beam wait on `Map` support (attrs are a Map); loggers are values, no state, no clock — the first package whose golden needed zero compiler changes |

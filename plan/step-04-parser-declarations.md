@@ -19,10 +19,10 @@ this step the README's code examples all parse completely.
   - Names: `snake_case`, optionally ending in `?` (predicate methods);
     camelCase is a parse error.
   - Return type is **required** on `def` and **forbidden-but-defaulted** on
-    `init` (`init` returns the class it constructs — no annotation allowed,
-    per the README exemption).
-  - Parameters: annotated, positional; `def` parameters do not have defaults
-    (undecided feature — not built).
+    `init` (`init` returns the class it constructs — no type declaration
+    allowed, per the README exemption).
+  - Parameters: type-declared, positional; `def` parameters do not have
+    defaults (undecided feature — not built).
 - **`class`** — body contains exactly one `init` and any number of `def`s
   (provisional: a missing or duplicated `init` is an error — strictness
   first). Fields are *not declared*: the field set is whatever `init`
@@ -36,7 +36,7 @@ this step the README's code examples all parse completely.
 - **`raise`** — statement `raise <expression>`; the catch form is undecided
   (`CHECK.md`) and intentionally absent.
 - **Naming conventions enforced here** (they are syntactic in Emo): type
-  positions (`class` / `interface` / `enum` names, annotation types) must be
+  positions (`class` / `interface` / `enum` names, types in declarations) must be
   `UPPER_IDENT`; function/variable/parameter names and enum members must be
   lower_snake; method names may end in `?` only on `def`s, and `?` names are
   not valid as variables. Violations are errors with precise spans.
@@ -69,8 +69,8 @@ this step the README's code examples all parse completely.
 - The README's `User`, `Greeter`, `English`, `welcome`, and `Color` snippets
   parse to golden ASTs.
 - Negative tests: camelCase `def`, `UPPER` variable, `enum Color(String, Int)`,
-  duplicate `init`, annotated `init` return — each rejected with the right
-  message and span.
+  duplicate `init`, a declared `init` return type — each rejected with the
+  right message and span.
 - `dune test` green.
 
 ## Open design items
@@ -85,4 +85,4 @@ this step the README's code examples all parse completely.
   duplicate `init` remains an error. The `class_init` node is optional.
 - **Parameterized trailing blocks** — a call may take a block argument after
   `->` on the same line (`list(users) -> (user User) { ... }`), mirroring the
-  empty-parens sugar; parameters still require annotations.
+  empty-parens sugar; parameters still require type declarations.
