@@ -1,0 +1,1081 @@
+// The standard JSON library: decode and encode between JSON text and
+// ordinary Emo values. Pure Emo over the shared runtimes — bytes,
+// interfaces, and the exact-decimal float machinery in
+// internal/float.emo — so every target answers identically.
+//
+// A decoded document is a `Json`: an interface over one class per JSON
+// kind. The `as_*` accessors answer with the payload and raise when the
+// kind does not match (`doc.get("age").as_int()`); `kind()` and
+// `is_null?()` discriminate without guessing. Every failure raises an
+// ordinary Emo exception whose message states exactly what failed, at
+// what byte offset — no error codes, no nil.
+
+enum JsonKind { jnull, jbool, jint, jfloat, jstring, jarray, jobject }
+
+// The scalar accessors live on the interface, so a payload is one
+// call away without asking what it is. Arrays and objects carry their
+// containers on the concrete classes — read them through `is()`
+// (`if v.is(JsonObject) { ... v.get("k") ... }`), since an interface
+// signature cannot name its own interface.
+interface Json {
+  def kind() JsonKind
+  def is_null?() Bool
+  def encode() String
+  def pretty(depth Int64) String
+  def as_bool() Bool
+  def as_int() Int64
+  def as_float() Float64
+  def as_string() String
+}
+
+class JsonNull {
+  def kind() JsonKind {
+    return JsonKind.jnull
+  }
+
+  def is_null?() Bool {
+    return true
+  }
+
+  def encode() String {
+    return "null"
+  }
+
+  def pretty(depth Int64) String {
+    return "null"
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "json: expected true or false, got null")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "json: expected an integer, got null")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "json: expected a number, got null")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "json: expected a string, got null")
+  }
+
+  def items() Array[Json] {
+    raise Exception.new(message: "json: expected an array, got null")
+  }
+
+  def entries() Array[(String, Json)] {
+    raise Exception.new(message: "json: expected an object, got null")
+  }
+
+  def get(key String) Json {
+    raise Exception.new(message: "json: expected an object, got null")
+  }
+}
+
+class JsonBool {
+  def init(value Bool) {
+    self.value = value
+  }
+
+  def kind() JsonKind {
+    return JsonKind.jbool
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    if self.value {
+      return "true"
+    }
+    return "false"
+  }
+
+  def pretty(depth Int64) String {
+    return self.encode()
+  }
+
+
+
+  def as_bool() Bool {
+    return self.value
+  }
+  def as_int() Int64 {
+    raise Exception.new(message: "json: expected an integer, got true or false")
+  }
+  def as_float() Float64 {
+    raise Exception.new(message: "json: expected a number, got true or false")
+  }
+  def as_string() String {
+    raise Exception.new(message: "json: expected a string, got true or false")
+  }
+  def items() Array[Json] {
+    raise Exception.new(message: "json: expected an array, got true or false")
+  }
+  def entries() Array[(String, Json)] {
+    raise Exception.new(message: "json: expected an object, got true or false")
+  }
+}
+
+class JsonInt {
+  def init(value Int64) {
+    self.value = value
+  }
+
+  def kind() JsonKind {
+    return JsonKind.jint
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    return self.value.to_string()
+  }
+
+  def pretty(depth Int64) String {
+    return self.encode()
+  }
+
+
+
+  def as_bool() Bool {
+    raise Exception.new(message: "json: expected true or false, got an integer")
+  }
+  def as_int() Int64 {
+    return self.value
+  }
+  def as_float() Float64 {
+    raise Exception.new(message: "json: expected a number, got an integer")
+  }
+  def as_string() String {
+    raise Exception.new(message: "json: expected a string, got an integer")
+  }
+  def items() Array[Json] {
+    raise Exception.new(message: "json: expected an array, got an integer")
+  }
+  def entries() Array[(String, Json)] {
+    raise Exception.new(message: "json: expected an object, got an integer")
+  }
+}
+
+class JsonFloat {
+  def init(value Float64) {
+    self.value = value
+  }
+
+  def kind() JsonKind {
+    return JsonKind.jfloat
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    return float_text(self.value)
+  }
+
+  def pretty(depth Int64) String {
+    return self.encode()
+  }
+
+
+
+  def as_bool() Bool {
+    raise Exception.new(message: "json: expected true or false, got a number")
+  }
+  def as_int() Int64 {
+    raise Exception.new(message: "json: expected an integer, got a number")
+  }
+  def as_float() Float64 {
+    return self.value
+  }
+  def as_string() String {
+    raise Exception.new(message: "json: expected a string, got a number")
+  }
+  def items() Array[Json] {
+    raise Exception.new(message: "json: expected an array, got a number")
+  }
+  def entries() Array[(String, Json)] {
+    raise Exception.new(message: "json: expected an object, got a number")
+  }
+}
+
+class JsonString {
+  def init(value String) {
+    self.value = value
+  }
+
+  def kind() JsonKind {
+    return JsonKind.jstring
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    return quote(self.value)
+  }
+
+  def pretty(depth Int64) String {
+    return self.encode()
+  }
+
+
+
+  def as_bool() Bool {
+    raise Exception.new(message: "json: expected true or false, got a string")
+  }
+  def as_int() Int64 {
+    raise Exception.new(message: "json: expected an integer, got a string")
+  }
+  def as_float() Float64 {
+    raise Exception.new(message: "json: expected a number, got a string")
+  }
+  def as_string() String {
+    return self.value
+  }
+  def items() Array[Json] {
+    raise Exception.new(message: "json: expected an array, got a string")
+  }
+  def entries() Array[(String, Json)] {
+    raise Exception.new(message: "json: expected an object, got a string")
+  }
+}
+
+class JsonArray {
+  def init(items Array[Json]) {
+    self.items = items
+  }
+
+  def kind() JsonKind {
+    return JsonKind.jarray
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    if self.items.length() == 0 {
+      return "[]"
+    }
+    return encode_items(self.items, 0, "")
+  }
+
+  def pretty(depth Int64) String {
+    if self.items.length() == 0 {
+      return "[]"
+    }
+    return "[" + pretty_items(self.items, depth + 1, 0, "") + "\n" + spaces(depth) + "]"
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "json: expected true or false, got an array")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "json: expected an integer, got an array")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "json: expected a number, got an array")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "json: expected a string, got an array")
+  }
+
+  def items() Array[Json] {
+    return self.items
+  }
+
+  def entries() Array[(String, Json)] {
+    raise Exception.new(message: "json: expected an object, got an array")
+  }
+
+  def get(key String) Json {
+    raise Exception.new(message: "json: expected an object, got an array")
+  }
+}
+
+class JsonObject {
+  def init(entries Array[(String, Json)]) {
+    self.entries = entries
+  }
+
+  def kind() JsonKind {
+    return JsonKind.jobject
+  }
+
+  def is_null?() Bool {
+    return false
+  }
+
+  def encode() String {
+    if self.entries.length() == 0 {
+      return "{}"
+    }
+    return encode_entries(self.entries, 0, "")
+  }
+
+  def pretty(depth Int64) String {
+    if self.entries.length() == 0 {
+      return "{}"
+    }
+    return "{" + pretty_entries(self.entries, depth + 1, 0, "") + "\n" + spaces(depth) + "}"
+  }
+
+  def as_bool() Bool {
+    raise Exception.new(message: "json: expected true or false, got an object")
+  }
+
+  def as_int() Int64 {
+    raise Exception.new(message: "json: expected an integer, got an object")
+  }
+
+  def as_float() Float64 {
+    raise Exception.new(message: "json: expected a number, got an object")
+  }
+
+  def as_string() String {
+    raise Exception.new(message: "json: expected a string, got an object")
+  }
+
+  def items() Array[Json] {
+    raise Exception.new(message: "json: expected an array, got an object")
+  }
+
+  def entries() Array[(String, Json)] {
+    return self.entries
+  }
+
+  // The value under `key`; when a key repeats, the last one wins.
+  // A missing key is a mistake and raises.
+  def get(key String) Json {
+    return lookup(self.entries, key, self.entries.length() - 1)
+  }
+}
+
+const fpmath = internal.float
+
+def float_text(x Float64) String {
+  return fpmath.to_text(x)
+}
+
+// ---- constructors ----
+
+def null() Json {
+  return JsonNull.new()
+}
+
+def bool(b Bool) Json {
+  return JsonBool.new(value: b)
+}
+
+def int64(n Int64) Json {
+  return JsonInt.new(value: n)
+}
+
+def float64(x Float64) Json {
+  return JsonFloat.new(value: x)
+}
+
+def string(s String) Json {
+  return JsonString.new(value: s)
+}
+
+def array(items Array[Json]) Json {
+  return JsonArray.new(items: items)
+}
+
+def object(entries Array[(String, Json)]) Json {
+  return JsonObject.new(entries: entries)
+}
+
+// ---- decode ----
+
+// Parses one JSON document; trailing data after the value is a
+// mistake. Malformed input raises with the byte offset.
+def decode(text String) Json {
+  const data = text.to_bytes()
+  const r = parse_value(data, skip_ws(data, 0), 0)
+  const after = skip_ws(data, r[1])
+  if after != data.length() {
+    raise Exception.new(message: err(after, "trailing data"))
+  }
+  return r[0]
+}
+
+def err(at Int64, what String) String {
+  return "json: " + what + " at byte " + at.to_string()
+}
+
+def skip_ws(data Bytes, i Int64) Int64 {
+  if i < data.length() {
+    const b = data.get(i)
+    if b == 32 || b == 9 || b == 10 || b == 13 {
+      return skip_ws(data, i + 1)
+    }
+  }
+  return i
+}
+
+def parse_value(data Bytes, pos Int64, depth Int64) (Json, Int64) {
+  if depth > 512 {
+    raise Exception.new(message: err(pos, "nesting deeper than 512"))
+  }
+  if pos >= data.length() {
+    raise Exception.new(message: err(pos, "unexpected end of input"))
+  }
+  const b = data.get(pos)
+  if b == 123 {
+    return parse_object(data, pos, depth)
+  }
+  if b == 91 {
+    return parse_array(data, pos, depth)
+  }
+  if b == 34 {
+    const sr = parse_string(data, pos)
+    return (JsonString.new(value: sr[0]), sr[1])
+  }
+  if b == 116 {
+    return parse_literal(data, pos, "true", JsonBool.new(value: true))
+  }
+  if b == 102 {
+    return parse_literal(data, pos, "false", JsonBool.new(value: false))
+  }
+  if b == 110 {
+    return parse_literal(data, pos, "null", JsonNull.new())
+  }
+  if b == 45 || (b >= 48 && b <= 57) {
+    return parse_number(data, pos)
+  }
+  raise Exception.new(message: err(pos, "unexpected byte " + b.to_string()))
+}
+
+def match_at(data Bytes, pos Int64, w Bytes, i Int64) Bool {
+  if i >= w.length() {
+    return true
+  }
+  if pos + i >= data.length() {
+    return false
+  }
+  if data.get(pos + i) != w.get(i) {
+    return false
+  }
+  return match_at(data, pos, w, i + 1)
+}
+
+def parse_literal(data Bytes, pos Int64, word String, value Json) (Json, Int64) {
+  const w = word.to_bytes()
+  if match_at(data, pos, w, 0) == false {
+    raise Exception.new(message: err(pos, "invalid literal"))
+  }
+  return (value, pos + w.length())
+}
+
+// ---- arrays ----
+
+def parse_array(data Bytes, pos Int64, depth Int64) (Json, Int64) {
+  const r = parse_items(data, pos + 1, depth + 1, [], true)
+  return (JsonArray.new(items: r[0]), r[1])
+}
+
+def parse_items(data Bytes, pos Int64, depth Int64, acc Array[Json], first Bool) (Array[Json], Int64) {
+  const ip = skip_ws(data, pos)
+  if ip >= data.length() {
+    raise Exception.new(message: err(ip, "unterminated array"))
+  }
+  if data.get(ip) == 93 {
+    if first {
+      return (acc, ip + 1)
+    }
+    raise Exception.new(message: err(ip, "expected array element"))
+  }
+  const ir = parse_value(data, ip, depth)
+  return parse_more_items(data, ir[1], depth, acc.append(ir[0]))
+}
+
+def parse_more_items(data Bytes, pos Int64, depth Int64, acc Array[Json]) (Array[Json], Int64) {
+  const mp = skip_ws(data, pos)
+  if mp >= data.length() {
+    raise Exception.new(message: err(mp, "unterminated array"))
+  }
+  if data.get(mp) == 44 {
+    return parse_items(data, mp + 1, depth, acc, false)
+  }
+  if data.get(mp) == 93 {
+    return (acc, mp + 1)
+  }
+  raise Exception.new(message: err(mp, "expected `,` or `]`"))
+}
+
+// ---- objects ----
+
+def parse_object(data Bytes, pos Int64, depth Int64) (Json, Int64) {
+  const r = parse_entries(data, pos + 1, depth + 1, [], true)
+  return (JsonObject.new(entries: r[0]), r[1])
+}
+
+def parse_entries(data Bytes, pos Int64, depth Int64, acc Array[(String, Json)], first Bool) (Array[(String, Json)], Int64) {
+  const ep = skip_ws(data, pos)
+  if ep >= data.length() {
+    raise Exception.new(message: err(ep, "unterminated object"))
+  }
+  if data.get(ep) == 125 {
+    if first {
+      return (acc, ep + 1)
+    }
+    raise Exception.new(message: err(ep, "expected object member"))
+  }
+  if data.get(ep) != 34 {
+    raise Exception.new(message: err(ep, "expected object key"))
+  }
+  const ekr = parse_string(data, ep)
+  const ekp = skip_ws(data, ekr[1])
+  if ekp >= data.length() || data.get(ekp) != 58 {
+    raise Exception.new(message: err(ekp, "expected `:`"))
+  }
+  const evr = parse_value(data, skip_ws(data, ekp + 1), depth)
+  const eentry = (ekr[0], evr[0])
+  return parse_more_entries(data, evr[1], depth, acc.append(eentry))
+}
+
+def parse_more_entries(data Bytes, pos Int64, depth Int64, acc Array[(String, Json)]) (Array[(String, Json)], Int64) {
+  const gp = skip_ws(data, pos)
+  if gp >= data.length() {
+    raise Exception.new(message: err(gp, "unterminated object"))
+  }
+  if data.get(gp) == 44 {
+    return parse_entries(data, gp + 1, depth, acc, false)
+  }
+  if data.get(gp) == 125 {
+    return (acc, gp + 1)
+  }
+  raise Exception.new(message: err(gp, "expected `,` or `}`"))
+}
+
+def lookup(entries Array[(String, Json)], key String, i Int64) Json {
+  if i < 0 {
+    raise Exception.new(message: "json: no key `" + key + "` in object")
+  }
+  const pair = entries[i]
+  if pair[0] == key {
+    return pair[1]
+  }
+  return lookup(entries, key, i - 1)
+}
+
+// ---- strings ----
+
+// Pass one: scan from the opening quote, validate every escape, and
+// measure the decoded length. Pass two: fill. Working on bytes keeps
+// every target on the same UTF-8 path.
+def parse_string(data Bytes, pos Int64) (String, Int64) {
+  const len = scan_string(data, pos + 1, 0)
+  const out = Bytes.new(len)
+  const r = fill_string(data, pos + 1, out, 0)
+  return (out.to_string(), r[1])
+}
+
+def scan_string(data Bytes, i Int64, len Int64) Int64 {
+  if i >= data.length() {
+    raise Exception.new(message: err(i, "unterminated string"))
+  }
+  const sb = data.get(i)
+  if sb == 34 {
+    return len
+  }
+  if sb == 92 {
+    return scan_escape(data, i + 1, len)
+  }
+  if sb < 32 {
+    raise Exception.new(message: err(i, "unescaped control character in string"))
+  }
+  return scan_string(data, i + 1, len + 1)
+}
+
+def scan_escape(data Bytes, i Int64, len Int64) Int64 {
+  if i >= data.length() {
+    raise Exception.new(message: err(i, "unterminated string"))
+  }
+  const eb = data.get(i)
+  if eb == 117 {
+    const cp1 = read_hex4(data, i + 1)
+    if cp1 >= 55296 && cp1 <= 56319 {
+      // a high surrogate must be followed by \uDC00-\uDFFF
+      if i + 6 >= data.length() {
+        raise Exception.new(message: err(i, "unterminated string"))
+      }
+      if data.get(i + 5) != 92 || data.get(i + 6) != 117 {
+        raise Exception.new(message: err(i, "lone surrogate escape"))
+      }
+      const cp2 = read_hex4(data, i + 7)
+      if cp2 < 56320 || cp2 > 57343 {
+        raise Exception.new(message: err(i, "lone surrogate escape"))
+      }
+      const high = (cp1 - 55296) << 10
+      const cp = 65536 + high + (cp2 - 56320)
+      return scan_string(data, i + 11, len + utf8_len(cp))
+    }
+    if cp1 >= 56320 && cp1 <= 57343 {
+      raise Exception.new(message: err(i, "lone surrogate escape"))
+    }
+    return scan_string(data, i + 5, len + utf8_len(cp1))
+  }
+  if simple_escape(eb) > 0 {
+    return scan_string(data, i + 1, len + 1)
+  }
+  raise Exception.new(message: err(i, "invalid escape"))
+}
+
+// The byte an escape stands for, or 0 when there is no simple form.
+def simple_escape(b Int64) Int64 {
+  if b == 34 {
+    return 34
+  }
+  if b == 92 {
+    return 92
+  }
+  if b == 47 {
+    return 47
+  }
+  if b == 98 {
+    return 8
+  }
+  if b == 102 {
+    return 12
+  }
+  if b == 110 {
+    return 10
+  }
+  if b == 114 {
+    return 13
+  }
+  if b == 116 {
+    return 9
+  }
+  return 0
+}
+
+def utf8_len(cp Int64) Int64 {
+  if cp < 128 {
+    return 1
+  }
+  if cp < 2048 {
+    return 2
+  }
+  if cp < 65536 {
+    return 3
+  }
+  return 4
+}
+
+def read_hex4(data Bytes, i Int64) Int64 {
+  return (hex_val(data, i) << 12) | (hex_val(data, i + 1) << 8) | (hex_val(data, i + 2) << 4) | hex_val(data, i + 3)
+}
+
+def hex_val(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    raise Exception.new(message: err(i, "unterminated string"))
+  }
+  const b = data.get(i)
+  if b >= 48 && b <= 57 {
+    return b - 48
+  }
+  if b >= 97 && b <= 102 {
+    return b - 87
+  }
+  if b >= 65 && b <= 70 {
+    return b - 55
+  }
+  raise Exception.new(message: err(i, "invalid \\u escape"))
+}
+
+def fill_string(data Bytes, i Int64, out Bytes, w Int64) (Int64, Int64) {
+  if i >= data.length() {
+    raise Exception.new(message: err(i, "unterminated string"))
+  }
+  const fb = data.get(i)
+  if fb == 34 {
+    return (w, i + 1)
+  }
+  if fb == 92 {
+    return fill_escape(data, i + 1, out, w)
+  }
+  out.set(w, fb)
+  return fill_string(data, i + 1, out, w + 1)
+}
+
+def fill_escape(data Bytes, i Int64, out Bytes, w Int64) (Int64, Int64) {
+  const xb = data.get(i)
+  if xb == 117 {
+    const cp1 = read_hex4(data, i + 1)
+    if cp1 >= 55296 && cp1 <= 56319 {
+      const cp2 = read_hex4(data, i + 7)
+      const high = (cp1 - 55296) << 10
+      const xnw = put_utf8(out, w, 65536 + high + (cp2 - 56320))
+      return fill_string(data, i + 11, out, xnw)
+    }
+    const xnw = put_utf8(out, w, cp1)
+    return fill_string(data, i + 5, out, xnw)
+  }
+  const xdec = simple_escape(xb)
+  if xdec == 0 {
+    raise Exception.new(message: err(i, "invalid escape"))
+  }
+  out.set(w, xdec)
+  return fill_string(data, i + 1, out, w + 1)
+}
+
+def put_utf8(out Bytes, w Int64, cp Int64) Int64 {
+  if cp < 128 {
+    out.set(w, cp)
+    return w + 1
+  }
+  if cp < 2048 {
+    out.set(w, 192 + (cp / 64))
+    out.set(w + 1, 128 + (cp % 64))
+    return w + 2
+  }
+  if cp < 65536 {
+    const mid = (cp / 64) % 64
+    out.set(w, 224 + (cp / 4096))
+    out.set(w + 1, 128 + mid)
+    out.set(w + 2, 128 + (cp % 64))
+    return w + 3
+  }
+  const mid = (cp / 4096) % 64
+  const low = (cp / 64) % 64
+  out.set(w, 240 + (cp / 262144))
+  out.set(w + 1, 128 + mid)
+  out.set(w + 2, 128 + low)
+  out.set(w + 3, 128 + (cp % 64))
+  return w + 4
+}
+
+// ---- numbers ----
+
+def is_digit(b Int64) Bool {
+  return b >= 48 && b <= 57
+}
+
+def skip_digits(data Bytes, i Int64) Int64 {
+  if i < data.length() {
+    if is_digit(data.get(i)) {
+      return skip_digits(data, i + 1)
+    }
+  }
+  return i
+}
+
+// Accumulates the digits in [i, end) into an Int64, honoring neg so
+// the exact minimum is reachable; overflow raises.
+def acc_digits(data Bytes, i Int64, end Int64, acc Int64, neg Bool) Int64 {
+  if i >= end {
+    return acc
+  }
+  const d = data.get(i) - 48
+  if neg {
+    if acc < -922337203685477580 {
+      raise Exception.new(message: err(i, "integer out of range"))
+    }
+    if acc == -922337203685477580 && d > 8 {
+      raise Exception.new(message: err(i, "integer out of range"))
+    }
+    return acc_digits(data, i + 1, end, acc * 10 - d, neg)
+  }
+  if acc > 922337203685477580 {
+    raise Exception.new(message: err(i, "integer out of range"))
+  }
+  if acc == 922337203685477580 && d > 7 {
+    raise Exception.new(message: err(i, "integer out of range"))
+  }
+  return acc_digits(data, i + 1, end, acc * 10 + d, neg)
+}
+
+// Past an optional minus: (neg, first digit index).
+def scan_sign(data Bytes, pos Int64) (Bool, Int64) {
+  if data.get(pos) == 45 {
+    return (true, pos + 1)
+  }
+  return (false, pos)
+}
+
+// The index past the integer part, RFC 8259 strict on leading zeros.
+def scan_int(data Bytes, i Int64) Int64 {
+  if i >= data.length() || is_digit(data.get(i)) == false {
+    raise Exception.new(message: err(i, "invalid number"))
+  }
+  if data.get(i) == 48 {
+    if i + 1 < data.length() {
+      if is_digit(data.get(i + 1)) {
+        raise Exception.new(message: err(i + 1, "leading zero in number"))
+      }
+    }
+    return i + 1
+  }
+  return skip_digits(data, i)
+}
+
+// The fraction length and the index past it.
+def scan_frac(data Bytes, i Int64) (Int64, Int64) {
+  if i < data.length() {
+    if data.get(i) == 46 {
+      if i + 1 >= data.length() || is_digit(data.get(i + 1)) == false {
+        raise Exception.new(message: err(i + 1, "digit expected after decimal point"))
+      }
+      const fs = i + 1
+      const fe = skip_digits(data, fs)
+      return (fe - fs, fe)
+    }
+  }
+  return (0, i)
+}
+
+// The exponent's sign and the index past it.
+def scan_exp_sign(data Bytes, i Int64) (Int64, Int64) {
+  if i < data.length() {
+    if data.get(i) == 43 {
+      return (1, i + 1)
+    }
+    if data.get(i) == 45 {
+      return (-1, i + 1)
+    }
+  }
+  return (1, i)
+}
+
+// The exponent value (clamped) and the index past it.
+def scan_exp(data Bytes, i Int64) (Int64, Int64) {
+  if i < data.length() {
+    const b = data.get(i)
+    if b == 101 || b == 69 {
+      const sr = scan_exp_sign(data, i + 1)
+      if sr[1] >= data.length() || is_digit(data.get(sr[1])) == false {
+        raise Exception.new(message: err(sr[1], "digit expected in exponent"))
+      }
+      const ea = take_exp(data, sr[1], 0)
+      return (sr[0] * ea[0], ea[1])
+    }
+  }
+  return (0, i)
+}
+
+def clamp_exp(a Int64) Int64 {
+  if a > 100000 {
+    return 100000
+  }
+  return a
+}
+
+def take_exp(data Bytes, i Int64, acc Int64) (Int64, Int64) {
+  if i >= data.length() {
+    return (acc, i)
+  }
+  const b = data.get(i)
+  if b < 48 || b > 57 {
+    return (acc, i)
+  }
+  return take_exp(data, i + 1, clamp_exp(acc * 10 + (b - 48)))
+}
+
+def parse_number(data Bytes, pos Int64) (Json, Int64) {
+  const sr = scan_sign(data, pos)
+  const neg = sr[0]
+  const int_start = sr[1]
+  const ie = scan_int(data, int_start)
+  const int_len = ie - int_start
+  const fr = scan_frac(data, ie)
+  const ex = scan_exp(data, fr[1])
+  const frac_len = fr[0]
+  const exp_val = ex[0]
+  if frac_len == 0 && exp_val == 0 {
+    return (JsonInt.new(value: acc_digits(data, int_start, ie, 0, neg)), ex[1])
+  }
+  const nd = int_len + frac_len
+  const digits = Bytes.new(nd)
+  copy_range(data, digits, int_start, 0, int_len)
+  // the `.` sits between the two digit runs and never enters the buffer
+  copy_range(data, digits, int_start + int_len + 1, int_len, frac_len)
+  const fv = Float64.from_bits(fpmath.parse_exact(neg, digits, nd, int_len + exp_val))
+  if fpmath.finite(fv) == false {
+    raise Exception.new(message: err(pos, "number out of range"))
+  }
+  return (JsonFloat.new(value: fv), ex[1])
+}
+
+def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
+  if n > 0 {
+    dst.set(di, src.get(si))
+    copy_range(src, dst, si + 1, di + 1, n - 1)
+  }
+}
+
+// ---- encode ----
+
+def encode(v Json) String {
+  return v.encode()
+}
+
+def encode_pretty(v Json) String {
+  return v.pretty(0)
+}
+
+def encode_items(items Array[Json], i Int64, acc String) String {
+  if i >= items.length() {
+    return acc + "]"
+  }
+  if i == 0 {
+    return encode_items(items, i + 1, "[" + items[0].encode())
+  }
+  return encode_items(items, i + 1, acc + "," + items[i].encode())
+}
+
+def encode_entries(entries Array[(String, Json)], i Int64, acc String) String {
+  if i >= entries.length() {
+    return acc + "}"
+  }
+  const pair = entries[i]
+  const part = quote(pair[0]) + ":" + pair[1].encode()
+  if i == 0 {
+    return encode_entries(entries, i + 1, "{" + part)
+  }
+  return encode_entries(entries, i + 1, acc + "," + part)
+}
+
+def pretty_items(items Array[Json], pad Int64, i Int64, acc String) String {
+  if i >= items.length() {
+    return acc
+  }
+  if i == 0 {
+    return pretty_items(items, pad, i + 1, "\n" + spaces(pad) + items[0].pretty(pad))
+  }
+  return pretty_items(items, pad, i + 1, acc + ",\n" + spaces(pad) + items[i].pretty(pad))
+}
+
+def pretty_entries(entries Array[(String, Json)], pad Int64, i Int64, acc String) String {
+  if i >= entries.length() {
+    return acc
+  }
+  const pair = entries[i]
+  const part = quote(pair[0]) + ": " + pair[1].pretty(pad)
+  if i == 0 {
+    return pretty_entries(entries, pad, i + 1, "\n" + spaces(pad) + part)
+  }
+  return pretty_entries(entries, pad, i + 1, acc + ",\n" + spaces(pad) + part)
+}
+
+// Written through a byte buffer: a Bytes parameter keeps the helper
+// off the all-native specialization path, where string concatenation
+// is not available.
+def spaces(n Int64) String {
+  const buf = Bytes.new(n * 2)
+  fill_spaces(buf, 0, n)
+  return buf.to_string()
+}
+
+def fill_spaces(buf Bytes, i Int64, n Int64) {
+  if i < n * 2 {
+    buf.set(i, 32)
+    fill_spaces(buf, i + 1, n)
+  }
+}
+
+// The JSON text of `s` between quotes: control characters, the quote,
+// and the backslash escaped; everything else rides through as the
+// UTF-8 it already is.
+def quote(s String) String {
+  const data = s.to_bytes()
+  const out = Bytes.new(quoted_len(data, 0) + 2)
+  out.set(0, 34)
+  fill_quoted(data, out, 0, 1)
+  return out.to_string()
+}
+
+def quoted_len(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return 0
+  }
+  const b = data.get(i)
+  if b >= 32 && b != 34 && b != 92 {
+    return 1 + quoted_len(data, i + 1)
+  }
+  if b == 34 || b == 92 {
+    return 2 + quoted_len(data, i + 1)
+  }
+  if short_escape(b) > 0 {
+    return 2 + quoted_len(data, i + 1)
+  }
+  return 6 + quoted_len(data, i + 1)
+}
+
+def fill_quoted(data Bytes, out Bytes, i Int64, w Int64) {
+  if i >= data.length() {
+    out.set(w, 34)
+  } else {
+    const b = data.get(i)
+    if b >= 32 && b != 34 && b != 92 {
+      out.set(w, b)
+      fill_quoted(data, out, i + 1, w + 1)
+    } else {
+      out.set(w, 92)
+      if b == 34 {
+        out.set(w + 1, 34)
+        fill_quoted(data, out, i + 1, w + 2)
+      } else {
+        if b == 92 {
+          out.set(w + 1, 92)
+          fill_quoted(data, out, i + 1, w + 2)
+        } else {
+          const se = short_escape(b)
+          if se > 0 {
+            out.set(w + 1, se)
+            fill_quoted(data, out, i + 1, w + 2)
+          } else {
+            out.set(w + 1, 117)
+            out.set(w + 2, 48)
+            out.set(w + 3, 48)
+            out.set(w + 4, hex_byte(b / 16))
+            out.set(w + 5, hex_byte(b % 16))
+            fill_quoted(data, out, i + 1, w + 6)
+          }
+        }
+      }
+    }
+  }
+}
+
+// The letter after `\` for the escapes with a short form, else 0.
+def short_escape(b Int64) Int64 {
+  if b == 8 {
+    return 98
+  }
+  if b == 9 {
+    return 116
+  }
+  if b == 10 {
+    return 110
+  }
+  if b == 12 {
+    return 102
+  }
+  if b == 13 {
+    return 114
+  }
+  return 0
+}
+
+def hex_byte(n Int64) Int64 {
+  if n < 10 {
+    return 48 + n
+  }
+  return 87 + n
+}

@@ -1,0 +1,24 @@
+gateway
+4
+0.75
+prod
+2
+- 8080
+- 8443
+true
+/etc/cert.pem
+multi line
+block scalar
+
+true
+gateway
+0.75
+24
+1
+- x
+- y
+name: "quote: it, hash # end"
+ids:
+  - 1
+  - 2
+flag: true

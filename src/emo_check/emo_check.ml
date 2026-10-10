@@ -84,12 +84,14 @@ type ctx = {
   refs : string list list ref; (* module paths referenced by this module *)
   requires : (string * Emo_support.Span.t) list ref;
       (* packages required by this module, with the require's span *)
-  types : (int * int, t) Hashtbl.t;
-      (* every checked expression's type, keyed by its span's
+  types : (string * int * int, t) Hashtbl.t;
+      (* every checked expression's type, keyed by its span's file and
          start/stop offset pair — a bare start collides whenever
          expressions nest at the same position (a comparison and its
          left operand), and the later check would overwrite the
-         earlier type *)
+         earlier type; the file keeps modules whose offsets overlap
+         (every module starts near zero) from reading each other's
+         types *)
   target : string;
       (* the compilation target: the capability table gates `foreign
          def` per target (CHECK.md) — `c` honors Int64 directly on
@@ -431,6 +433,112 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ( "os_getpid",
+          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+        ( "os_getppid",
+          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+        ("os_fork", { vtype = FuncType ([], Int64); is_var = false; depth = 0 });
+        ( "os_waitpid",
+          {
+            vtype = FuncType ([ ("pid", Int64) ], TupleType [ Int64; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_pipe",
+          {
+            vtype = FuncType ([], TupleType [ Int64; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_execv",
+          {
+            vtype =
+              FuncType
+                ([ ("path", String); ("argv", ArrayType String) ], Unknown);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os__exit",
+          {
+            vtype = FuncType ([ ("status", Int64) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_open_read",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_open_write",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_open_append",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_read",
+          {
+            vtype = FuncType ([ ("fd", Int64); ("n", Int64) ], String);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_write",
+          {
+            vtype = FuncType ([ ("fd", Int64); ("data", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_close",
+          {
+            vtype = FuncType ([ ("fd", Int64) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_list_dir",
+          {
+            vtype = FuncType ([ ("path", String) ], ArrayType String);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_mkdir",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_rmdir",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_unlink",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_rename",
+          {
+            vtype =
+              FuncType ([ ("old_path", String); ("new_path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "os_getcwd",
+          { vtype = FuncType ([], String); is_var = false; depth = 0 } );
+        ( "os_chdir",
+          {
+            vtype = FuncType ([ ("path", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
       ];
@@ -580,7 +688,9 @@ let rec check_expr ctx env (e : Ast.expr) : t =
   let span = e.Ast.span in
   let result = check_expr_desc ctx env span e.Ast.desc in
   Hashtbl.replace ctx.types
-    (span.Emo_support.Span.start, span.Emo_support.Span.stop)
+    ( span.Emo_support.Span.file,
+      span.Emo_support.Span.start,
+      span.Emo_support.Span.stop )
     result;
   result
 
@@ -1909,7 +2019,8 @@ and always_returns ctx (s : Ast.stmt) : bool =
       let scrutinee_t =
         match
           Hashtbl.find_opt ctx.types
-            ( scrutinee.Ast.span.Emo_support.Span.start,
+            ( scrutinee.Ast.span.Emo_support.Span.file,
+              scrutinee.Ast.span.Emo_support.Span.start,
               scrutinee.Ast.span.Emo_support.Span.stop )
         with
         | Some t -> t
@@ -2117,7 +2228,7 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list
-    * (int * int, t) Hashtbl.t =
+    * (string * int * int, t) Hashtbl.t =
   let ctx =
     {
       file = String.concat "." current;

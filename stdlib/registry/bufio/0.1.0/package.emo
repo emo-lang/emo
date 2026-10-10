@@ -1,0 +1,9 @@
+package {
+  name = "bufio"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    os = "0.1.0"
+  }
+}

@@ -1,0 +1,243 @@
+// The RFC 4648 base64 codec: bytes in, padded base64 text out, and
+// back. Pure Emo over the shared runtimes, so every target answers
+// with the same bytes.
+//
+// Encoding always emits the standard alphabet with `=` padding. The
+// decoder is strict: the standard alphabet only, `=` padding only as
+// the final quantum's completion, no whitespace or line wrapping (a
+// wrapped message must be joined by the caller), and the padding bits
+// the RFC requires to be zero really must be zero — a non-canonical
+// tail such as `QR==` is a mistake, not a synonym of `QQ==`. Every
+// rejection raises an ordinary Emo exception with the offending byte
+// offset.
+
+// ---- encode ----
+
+def encode(data String) String {
+  const src = data.to_bytes()
+  const n = src.length()
+  const out = Bytes.new(((n + 2) / 3) * 4)
+  fill_encode(src, n, out, 0, 0)
+  return out.to_string()
+}
+
+// One 3-byte group makes 4 characters; a 1-byte remainder pads to
+// `==`, a 2-byte remainder to `=`. Past-the-end bytes read as zero,
+// which is exactly the RFC's zero padding bits.
+def fill_encode(src Bytes, n Int64, out Bytes, si Int64, di Int64) {
+  if si < n {
+    const b0 = src.get(si)
+    const b1 = byte_or_zero(src, si + 1, n)
+    const b2 = byte_or_zero(src, si + 2, n)
+    out.set(di, char_of(b0 >> 2))
+    const hi0 = b0 & 3
+    const lo1 = b1 & 240
+    out.set(di + 1, char_of(hi0 * 16 + (lo1 >> 4)))
+    if si + 1 < n {
+      const lo2 = b1 & 15
+      const hi2 = b2 & 192
+      out.set(di + 2, char_of(lo2 * 4 + (hi2 >> 6)))
+    } else {
+      out.set(di + 2, 61)
+    }
+    if si + 2 < n {
+      out.set(di + 3, char_of(b2 & 63))
+    } else {
+      out.set(di + 3, 61)
+    }
+    fill_encode(src, n, out, si + 3, di + 4)
+  }
+}
+
+def byte_or_zero(src Bytes, i Int64, n Int64) Int64 {
+  if i < n {
+    return src.get(i)
+  }
+  return 0
+}
+
+// The RFC 4648 alphabet by arithmetic: 0-25 are A-Z, 26-51 are a-z,
+// 52-61 are 0-9, then `+` and `/`.
+def char_of(v Int64) Int64 {
+  if v < 26 {
+    return 65 + v
+  }
+  if v < 52 {
+    return 71 + v
+  }
+  if v < 62 {
+    return v - 4
+  }
+  if v == 62 {
+    return 43
+  }
+  return 47
+}
+
+// ---- decode ----
+
+// The single raising function: the scanning and filling helpers below
+// stay pure and report (kind, offset) pairs, and decode — which knows
+// the whole input — speaks for them with the exact mistake and byte
+// offset.
+def decode(text String) String {
+  const data = text.to_bytes()
+  const n = data.length()
+  const found = padding_start(data, 0, n)
+  if found < 0 {
+    raise Exception.new(message: err(data, -(found + 1), "padding only at the end"))
+  }
+  const np = found
+  const pads = n - np
+  const qt = np % 4
+  if pads > 2 {
+    raise Exception.new(message: err(data, np, "too much padding"))
+  }
+  if pads == 0 {
+    if qt != 0 {
+      raise Exception.new(message: err(data, np, "the final quantum is short"))
+    }
+  }
+  if pads == 1 {
+    if qt != 3 {
+      raise Exception.new(message: err(data, np, "one pad character needs three data characters before it"))
+    }
+  }
+  if pads == 2 {
+    if qt != 2 {
+      raise Exception.new(message: err(data, np, "two pad characters need two data characters before it"))
+    }
+  }
+  const out = Bytes.new(decoded_len(qt, np))
+  const r = fill_decode(data, np, out, 0, 0)
+  if r[0] == 1 {
+    raise Exception.new(message: err(data, r[1], "not a base64 character"))
+  }
+  if r[0] == 2 {
+    raise Exception.new(message: err(data, r[1], "non-zero padding bits"))
+  }
+  return out.to_string()
+}
+
+// The first `=` (or the length when unpadded); everything from there
+// must be padding. A non-`=` after the first `=` answers the
+// negated offset one-past (a negative number no offset can be).
+def padding_start(data Bytes, i Int64, n Int64) Int64 {
+  if i < n {
+    if data.get(i) == 61 {
+      const rest = all_padding(data, i + 1, n)
+      if rest < 0 {
+        return rest
+      }
+      return i
+    }
+    return padding_start(data, i + 1, n)
+  }
+  return n
+}
+
+def all_padding(data Bytes, i Int64, n Int64) Int64 {
+  if i < n {
+    if data.get(i) != 61 {
+      return -(i + 1)
+    }
+    return all_padding(data, i + 1, n)
+  }
+  return 0
+}
+
+// The final quantum holds 0, 2, or 3 data characters: 2 make one byte,
+// 3 make two.
+def decoded_len(qt Int64, np Int64) Int64 {
+  const groups = np / 4 * 3
+  if qt == 2 {
+    return groups + 1
+  }
+  if qt == 3 {
+    return groups + 2
+  }
+  return groups
+}
+
+// Fills `out`; on a mistake answers (kind, offset) — kind 1 is a
+// character outside the alphabet, kind 2 is non-zero padding bits —
+// and (0, 0) when the input is clean.
+def fill_decode(data Bytes, np Int64, out Bytes, si Int64, di Int64) (Int64, Int64) {
+  if si < np {
+    if si + 4 <= np {
+      const v0 = alphabet_value(data.get(si))
+      if v0 < 0 {
+        return (1, si)
+      }
+      const v1 = alphabet_value(data.get(si + 1))
+      if v1 < 0 {
+        return (1, si + 1)
+      }
+      const v2 = alphabet_value(data.get(si + 2))
+      if v2 < 0 {
+        return (1, si + 2)
+      }
+      const v3 = alphabet_value(data.get(si + 3))
+      if v3 < 0 {
+        return (1, si + 3)
+      }
+      const lo1 = v1 & 15
+      const lo2 = v2 & 3
+      out.set(di, v0 * 4 + (v1 >> 4))
+      out.set(di + 1, lo1 * 16 + (v2 >> 2))
+      out.set(di + 2, lo2 * 64 + v3)
+      return fill_decode(data, np, out, si + 4, di + 3)
+    }
+    const v0 = alphabet_value(data.get(si))
+    if v0 < 0 {
+      return (1, si)
+    }
+    const v1 = alphabet_value(data.get(si + 1))
+    if v1 < 0 {
+      return (1, si + 1)
+    }
+    const tail1 = v1 & 15
+    out.set(di, v0 * 4 + (v1 >> 4))
+    if si + 3 == np {
+      const v2 = alphabet_value(data.get(si + 2))
+      if v2 < 0 {
+        return (1, si + 2)
+      }
+      const tail2 = v2 & 3
+      if tail2 != 0 {
+        return (2, si + 2)
+      }
+      const hi1 = v1 & 15
+      out.set(di + 1, hi1 * 16 + (v2 >> 2))
+    } else {
+      if tail1 != 0 {
+        return (2, si + 1)
+      }
+    }
+  }
+  return (0, 0)
+}
+
+// The alphabet by arithmetic, mirrored; -1 for anything outside it.
+def alphabet_value(c Int64) Int64 {
+  if c >= 65 && c <= 90 {
+    return c - 65
+  }
+  if c >= 97 && c <= 122 {
+    return c - 71
+  }
+  if c >= 48 && c <= 57 {
+    return c + 4
+  }
+  if c == 43 {
+    return 62
+  }
+  if c == 47 {
+    return 63
+  }
+  return -1
+}
+
+def err(data Bytes, at Int64, what String) String {
+  return "base64: " + what + " at byte " + at.to_string()
+}
