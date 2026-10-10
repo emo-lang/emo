@@ -35,7 +35,7 @@ and expr_desc =
   | Global_var of string (* a module-level `var`, read *)
   | Bytes_new of expr (* Bytes.new(n) — a zero-filled byte buffer *)
   | List_new of expr (* List.new(array) — a fresh deque over the elements *)
-  | Make_exception of { message : expr }
+  | Make_exception of { message : expr; data : expr option }
   | Do_spawn of { func : string; args : expr list }
   | Spawn_value of { f : expr; args : expr list }
   | Closure of { cparams : (string * Emo_check.t) list; cbody : stmt list }
@@ -454,22 +454,27 @@ and lower_call env span callee args =
                   | _ ->
                       (* The built-in exception, or an unsupported
                          constructor: the checker admitted only these. *)
+                      let args =
+                        List.map
+                          (fun { Ast.arg_name; arg_value } ->
+                            (arg_name, arg_value))
+                          args
+                      in
                       {
                         ety = type_of env span;
                         desc =
                           Make_exception
                             {
                               message =
-                                (match
-                                   List.map
-                                     (fun { Ast.arg_name; arg_value } ->
-                                       (arg_name, arg_value))
-                                     args
-                                 with
-                                | [ (Some "message", v) ] | [ (None, v) ] ->
+                                (match args with
+                                | (Some "message", v) :: _ | (None, v) :: _ ->
                                     lower_expr env v
                                 | _ ->
                                     { ety = String; desc = Const (L_string "") });
+                              data =
+                                (match args with
+                                | [ _; (_, dv) ] -> Some (lower_expr env dv)
+                                | _ -> None);
                             };
                       })
               | _ ->

@@ -566,7 +566,20 @@ println(check(1))|}));
           (run_program
              {|const e = Exception.new(message: "boom")
 println(e.message)|}));
-    tc "Exception.new is strict about its argument" (fun () ->
+    tc "the builtin Exception constructs with data" (fun () ->
+        Alcotest.(check string)
+          "fields" "rich\n2\nnet\n7\n"
+          (run_program
+             {|const e = Exception.new("rich", { "kind": "net", "code": 7 })
+println(e.message)
+println(e.data.length())
+println(e.data.get("kind"))
+println(e.data.get("code"))|}));
+    tc "a message-only exception carries an empty data Map" (fun () ->
+        Alcotest.(check string)
+          "field" "0\n"
+          (run_program {|println(Exception.new("boom").data.length())|}));
+    tc "Exception.new is strict about its arguments" (fun () ->
         let diagnostic = program_err "Exception.new()" in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic);
         let diagnostic =
@@ -581,6 +594,14 @@ println(e.message)|}));
         Alcotest.(check string)
           "span" "test.emo:1:1"
           (Span.to_string diagnostic.Diagnostic.span));
+    tc "uncaught data-carrying exceptions still report the message" (fun () ->
+        let diagnostic =
+          program_err {|raise Exception.new("disk blew up", { "fd": 3 })|}
+        in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "uncaught exception: disk blew up"
+          diagnostic.Diagnostic.message);
     tc "uncaught raises carry the Emo call chain" (fun () ->
         let diagnostic =
           program_err

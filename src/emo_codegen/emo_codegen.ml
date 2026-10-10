@@ -467,8 +467,14 @@ and emit_expr env (e : Emo_ir.expr) : string =
       Printf.sprintf "(Emo_runtime.bytes_new (%s))" (emit_expr env e)
   | Emo_ir.List_new e ->
       Printf.sprintf "(Emo_runtime.list_new (%s))" (emit_expr env e)
-  | Emo_ir.Make_exception { message } ->
-      Printf.sprintf "(Emo_runtime.exception_new (%s))" (emit_expr env message)
+  | Emo_ir.Make_exception { message; data } -> (
+      match data with
+      | None ->
+          Printf.sprintf "(Emo_runtime.exception_new (%s) None)"
+            (emit_expr env message)
+      | Some d ->
+          Printf.sprintf "(Emo_runtime.exception_new (%s) (Some (%s)))"
+            (emit_expr env message) (emit_expr env d))
   | Emo_ir.Do_spawn { func; args } ->
       (* Arguments evaluate eagerly in the spawning process; the spawned
          process only runs the call. *)
