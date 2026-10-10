@@ -247,8 +247,12 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Box_new e -> Printf.sprintf "E.box(%s)" (expr env e)
   | Bytes_new e -> Printf.sprintf "E.bytesNew(%s)" (expr env e)
   | List_new e -> Printf.sprintf "E.listNew(%s)" (expr env e)
-  | Make_exception { message } ->
-      Printf.sprintf "E.throwException(%s)" (expr env message)
+  | Make_exception { message; data } -> (
+      match data with
+      | None -> Printf.sprintf "E.throwException(%s)" (expr env message)
+      | Some d ->
+          Printf.sprintf "E.throwException(%s, %s)" (expr env message)
+            (expr env d))
   | Do_spawn { func; args } ->
       (* the arguments evaluate in the spawner (matching the other
          targets), so they are hoisted above the E.spawn call *)

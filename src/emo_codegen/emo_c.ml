@@ -617,8 +617,10 @@ and emit_expr env (e : Emo_ir.expr) : string =
       if is_dyn e.Emo_ir.ety then v else unbox_code v e.Emo_ir.ety
   | Closure { cparams; cbody } -> emit_closure env cparams cbody
   | Spawn_value _ -> refuse "spawning a first-class block yet"
-  | Make_exception { message } ->
+  | Make_exception { message; data = None } ->
       Printf.sprintf "emo_make_exception(%s)" (to_str env message)
+  | Make_exception _ ->
+      refuse "the c target does not support exception data yet"
   | other ->
       refuse
         (Printf.sprintf "this expression form (%s)"
@@ -1117,7 +1119,9 @@ and closure_free env (cparams : (string * Emo_check.t) list)
         List.iter ex args
     | Builtin { args; _ } -> List.iter ex args
     | Box_new x | Bytes_new x -> ex x
-    | Make_exception { message } -> ex message
+    | Make_exception { message; data } ->
+        ex message;
+        Option.iter ex data
     | Do_spawn { args; _ } -> List.iter ex args
     | Spawn_value { f; args } ->
         ex f;

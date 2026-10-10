@@ -197,9 +197,11 @@ class EPid {
 
 class EEmoException extends Error {
   messageValue: any;
-  constructor(messageValue: any) {
+  dataValue: any;
+  constructor(messageValue: any, dataValue: any = null) {
     super("uncaught exception");
     this.messageValue = messageValue;
+    this.dataValue = dataValue;
   }
 }
 
@@ -1342,8 +1344,8 @@ const E: any = {
     throw new Error("no `case` branch matched this " + tag(v) + " value");
   },
 
-  throwException(msg: any): never {
-    throw new EEmoException(msg);
+  throwException(msg: any, data: any = E.mapNew([])): never {
+    throw new EEmoException(msg, data);
   },
 
   renderError(e: any): string {

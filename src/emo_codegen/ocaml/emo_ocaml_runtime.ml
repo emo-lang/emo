@@ -412,7 +412,10 @@ module Emo_eval = struct
          {
            iclass =
              { cname = "Exception"; cmethods = []; builtin_exception = true };
-           ifields = [ ("message", String message) ];
+           ifields =
+             [ ("message", String message);
+               ("data", Map { entries = Hashtbl.create 8; order = [] });
+             ];
          })
 
   (* ---- Values ---- *)
@@ -1796,12 +1799,21 @@ module Emo_runtime = struct
                  name))
     | other -> failwith (type_error other "an instance")
 
-  let exception_new (message : Emo_eval.value) : Emo_eval.value =
+  let exception_new (message : Emo_eval.value)
+      (data : Emo_eval.value option) : Emo_eval.value =
     let exception_class =
       { Emo_eval.cname = "Exception"; cmethods = []; builtin_exception = true }
     in
+    let data =
+      match data with
+      | Some v -> v
+      | None -> Emo_eval.Map { Emo_eval.entries = Hashtbl.create 8; order = [] }
+    in
     Emo_eval.Instance
-      { iclass = exception_class; ifields = [ ("message", message) ] }
+      {
+        iclass = exception_class;
+        ifields = [ ("message", message); ("data", data) ];
+      }
 
   let box_new v = Emo_eval.Box (ref v)
 

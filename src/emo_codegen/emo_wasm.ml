@@ -553,8 +553,15 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | List_new v ->
       expr env v;
       e env (W.Call (rt "list_new"))
-  | Make_exception { message } ->
+  | Make_exception { message; data } ->
       expr env message;
+      (* The data lowers only to refuse: the wasm target does not support
+         Map yet, so any data expression errors before this drop. *)
+      Option.iter
+        (fun d ->
+          expr env d;
+          e env W.Drop)
+        data;
       e env (W.Call (rt "throw"));
       e env W.Unreachable
   | Do_spawn { func; args } -> (

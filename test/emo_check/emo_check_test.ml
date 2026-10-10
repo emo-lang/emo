@@ -913,6 +913,40 @@ println(size({ "a": 1 }))|}
     tc "a wrong Map annotation arity is an unknown type" (fun () ->
         let diagnostics = check "def f(m Map[String]) Int64 {\n  return 1\n}" in
         Alcotest.(check bool) "E4005" true (has_code diagnostics "E4005"));
+    tc "a bare Map annotation is the map of anything" (fun () ->
+        let diagnostics =
+          check
+            {|
+def size(m Map) Int64 {
+  return m.length()
+}
+println(size({ "a": 1 }))
+println(size({ 1: "x", 2: "y" }))|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "Exception.new checks its message and optional data" (fun () ->
+        let diagnostics =
+          check {|raise Exception.new("boom", { "kind": "io" })|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "Exception.new is strict about the argument shapes" (fun () ->
+        let diagnostics = check "Exception.new()" in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009");
+        let diagnostics = check {|Exception.new("a", "b", "c")|} in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009");
+        let diagnostics =
+          check {|Exception.new(data: { "k": 1 }, message: "x")|}
+        in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+    tc "Exception.new is strict about the argument types" (fun () ->
+        let diagnostics = check "Exception.new(123)" in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004");
+        let diagnostics = check {|Exception.new("x", 42)|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
     tc "a provably unhashable key is an error" (fun () ->
         let diagnostics = check {|const bad = { [1]: "x" }|} in
         Alcotest.(check bool) "E4020" true (has_code diagnostics "E4020"));
