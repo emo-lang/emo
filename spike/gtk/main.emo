@@ -1,0 +1,86 @@
+// The Linux GTK spike: how far does plain `foreign def` go against a
+// GUI library that is already C? Almost the whole way — window,
+// container, button, label, and the main loop below are direct calls
+// into GTK4, no shim. The shim (shim.c) exists only for what FFI
+// cannot name: the signal handler's function pointer, C `int`
+// returns (their 32-bit ABI does not fill an Int64), and the
+// self-driving autotest.
+//
+//   ./build.sh            on a machine with GTK 4 installed
+//   ./docker-e2e.sh       from anywhere: compile and run inside a
+//                         Linux container under Xvfb
+//   EMO_GUI_AUTOTEST=1    self-driving: one synthetic click, prints
+//                         the label, quits
+//
+// Runs only on the C target (the interpreter refuses foreign defs,
+// E3009). GTK4 on Linux; GDK's macOS backend also renders it after
+// `brew install gtk4`.
+
+// ---- Direct calls: GTK4's common path needs no shim at all ----
+// GtkWidget pointers ride pointer-sized Int64s; strings cross both
+// directions as `const char *`. C `int` parameters are safe with
+// Int64 arguments (the callee reads the low half of the register);
+// the trap is C `int` RETURNS (upper half undefined — shim-wrapped)
+// and double parameters that an Int64 declaration sends in the wrong
+// register class (gtk_fixed_put, declared honestly as Float64).
+foreign def gtk_init() Void = "gtk_init"
+foreign def gtk_window_new() Int64 = "gtk_window_new"
+foreign def gtk_window_set_title(w Int64, title String) Void = "gtk_window_set_title"
+foreign def gtk_window_set_default_size(w Int64, width Int64, height Int64) Void = "gtk_window_set_default_size"
+foreign def gtk_window_set_child(w Int64, child Int64) Void = "gtk_window_set_child"
+foreign def gtk_window_present(w Int64) Void = "gtk_window_present"
+foreign def gtk_fixed_new() Int64 = "gtk_fixed_new"
+// GtkFixed's coordinates are C doubles since GTK 4.12: declared here
+// as Float64, because an Int64 declaration puts the values in integer
+// registers while the callee reads the floating-point ones — the
+// widgets land at garbage positions (verified the hard way).
+foreign def gtk_fixed_put(f Int64, child Int64, x Float64, y Float64) Void = "gtk_fixed_put"
+foreign def gtk_button_new_with_label(label String) Int64 = "gtk_button_new_with_label"
+foreign def gtk_label_new(text String) Int64 = "gtk_label_new"
+foreign def gtk_label_set_text(l Int64, text String) Void = "gtk_label_set_text"
+foreign def gtk_button_get_label(b Int64) String = "gtk_button_get_label"
+// GTK 4 removed gtk_main from the library itself (verified in 4.14:
+// neither declared nor exported) — the loop is GLib's, direct-called.
+foreign def g_main_loop_new(context Int64, running Int64) Int64 = "g_main_loop_new"
+foreign def g_main_loop_run(loop Int64) Void = "g_main_loop_run"
+
+// ---- The shim: only what FFI cannot name ----
+// The count flows through the callback's signature (current in, new
+// count out — the shim holds the slot); the label handle rides
+// GObject's own user_data, the per-connection context slot that the
+// interface-and-userdata callback design anticipates.
+foreign def gui_connect_clicked(w Int64, label Int64) Int64 = "gui_connect_clicked"
+foreign def gui_widget_width(w Int64) Int64 = "gui_widget_width"
+foreign def gui_autotest_arm(button Int64, label Int64, loop Int64) Void = "gui_autotest_arm"
+
+// The bridge. The shim's handler externs `main__on_click` — the
+// declaration comes from the compiler's own emo_defs.h. The button
+// label crosses in as a String, so the string legs cross in both
+// directions.
+def on_click(tag Int64, title String, label Int64, count Int64) Int64 {
+  const next = count + 1
+  gtk_label_set_text(label,
+    "clicked ${next} time(s) — the button says: ${title}")
+  return next
+}
+
+// ---- Assembly: every number and every behavior is Emo's ----
+gtk_init()
+const win = gtk_window_new()
+gtk_window_set_title(win, "My Language GTK4 Spike")
+gtk_window_set_default_size(win, 480, 200)
+const fixed = gtk_fixed_new()
+gtk_window_set_child(win, fixed)
+const lbl = gtk_label_new("no clicks yet")
+gtk_fixed_put(fixed, lbl, 20.0, 80.0)
+const btn = gtk_button_new_with_label("Click me")
+gtk_fixed_put(fixed, btn, 20.0, 140.0)
+// The direct String-return leg, exercised: the label announces the
+// button's own label, read straight from GTK.
+gtk_label_set_text(lbl,
+  "no clicks yet — the button says: ${gtk_button_get_label(btn)}")
+gui_connect_clicked(btn, lbl)
+const loop = g_main_loop_new(0, 0)
+gui_autotest_arm(btn, lbl, loop)
+gtk_window_present(win)
+g_main_loop_run(loop)
