@@ -556,11 +556,15 @@ and lower_stmt env (s : Ast.stmt) : stmt =
       with
       | false, Some target ->
           env.aliases <- (name, target) :: env.aliases;
+          (* The alias itself is a namespace, not a value: calls resolve
+             through it, nothing reads it. The dead local carries an
+             Int literal because a String literal would emit native
+             emo_str into a value-typed slot — invalid C. *)
           Let
             {
               mutable_ = false;
               name;
-              init = { ety = Unknown; desc = Const (L_string "") };
+              init = { ety = Unknown; desc = Const (L_int 0L) };
             }
       | _ ->
           env.locals <- name :: env.locals;
@@ -1094,7 +1098,16 @@ let lower (input : input) : program =
     entry_module.mitems
     |> List.filter_map (fun (item : Ast.item) ->
         match item.Ast.item_desc with
-        | Ast.Item_stmt s -> Some (lower_stmt env s)
+        | Ast.Item_stmt s -> (
+            (* A module alias (`const ui = internal.vnode`) binds a
+                path, not a value: the alias is recorded at scan time,
+                uses resolve through it, so the entry lowers no binding
+                for it — a value slot here would emit garbage C. *)
+            match s.Ast.stmt_desc with
+            | Ast.Binding { mutable_ = false; name; _ }
+              when List.mem_assoc name pre_aliases ->
+                None
+            | _ -> Some (lower_stmt env s))
         | _ -> None)
   in
   (* The entry module can be discovered under two paths, lowering its

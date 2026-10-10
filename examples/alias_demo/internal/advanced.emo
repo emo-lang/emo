@@ -1,0 +1,4 @@
+// A subdirectory module: the two-segment path.
+def g(x Int64) Int64 {
+  return x + 2
+}

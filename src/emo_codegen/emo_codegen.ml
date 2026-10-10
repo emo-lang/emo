@@ -448,7 +448,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
              !specializables
       then
         (* Native context: direct specialized call with native args. *)
-        Printf.sprintf "%s %s" (sp_name func)
+        sp_apply func
           (String.concat " " (List.map (emit_native_expr env) args))
       else Printf.sprintf "%s [%s]" func args_code
   | Emo_ir.Call_value { f; args } ->
@@ -509,6 +509,15 @@ and emit_expr env (e : Emo_ir.expr) : string =
 (* ---- Specialized (Stage B) emission ---- *)
 
 and sp_name func = "sp_" ^ func
+
+(* A zero-parameter specialized function still takes a unit argument on
+   the OCaml side: with no parameter its `let exception` body would be
+   the right-hand side of a let rec binding, which OCaml itself
+   forbids. *)
+and sp_apply fname args_text =
+  if args_text = ""
+  then Printf.sprintf "%s ()" (sp_name fname)
+  else Printf.sprintf "%s %s" (sp_name fname) args_text
 
 and emit_native_expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
@@ -577,9 +586,10 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Unary (Ast.Not, x) ->
       Printf.sprintf "(not (%s))" (emit_native_expr env x)
   | Emo_ir.Call { func; args } ->
-      Printf.sprintf "(%s %s)" (sp_name func)
-        (String.concat " "
-           (List.map (fun a -> "(" ^ emit_native_expr env a ^ ")") args))
+      Printf.sprintf "(%s)"
+        (sp_apply func
+           (String.concat " "
+              (List.map (fun a -> "(" ^ emit_native_expr env a ^ ")") args)))
   | Emo_ir.Interpolate es ->
       (* parts render through the shared runtime; the result is a
          native string *)
@@ -870,10 +880,13 @@ and emit_specialized_func (f : Emo_ir.func) : string =
   in
   env.refs <- List.map (fun (p, _) -> local p) f.Emo_ir.fparams;
   let params =
-    String.concat " "
-      (List.map
-         (fun (p, t) -> Printf.sprintf "(%s : %s)" (local p) (ocaml_type t))
-         f.Emo_ir.fparams)
+    match f.Emo_ir.fparams with
+    | [] -> "(() : unit)"
+    | ps ->
+        String.concat " "
+          (List.map
+             (fun (p, t) -> Printf.sprintf "(%s : %s)" (local p) (ocaml_type t))
+             ps)
   in
   let result = ocaml_type f.Emo_ir.fresult in
   let body = emit_native_stmts env f.Emo_ir.fbody ~tail:true ~arm_unit:false in
@@ -1042,7 +1055,7 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
                 v
         in
         let unboxes = String.concat " " (List.map bridge_in f.Emo_ir.fparams) in
-        let call = Printf.sprintf "%s %s" (sp_name f.Emo_ir.fname) unboxes in
+        let call = sp_apply f.Emo_ir.fname unboxes in
         let box_out =
           match f.Emo_ir.fresult with
           | Emo_check.Int64 ->
@@ -1091,7 +1104,7 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
                      (local p))
                  f.Emo_ir.fparams)
           in
-          let call = Printf.sprintf "%s %s" (sp_name f.Emo_ir.fname) unboxes in
+          let call = sp_apply f.Emo_ir.fname unboxes in
           put env
             "let %s (args : Emo_eval.value list) : Emo_eval.value =\n\
             \  match args with\n\

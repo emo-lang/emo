@@ -152,13 +152,22 @@ let examples_dir = "../../examples"
 
 (* A directory with its own package.emo is a package project — it runs
    through resolution and the scheduler in test/emo_project, not here. *)
+(* A directory holding .emo submodules is a multi-module tree — it
+   runs through project semantics in test/emo_project, not here. *)
+let has_emo_subdir dir =
+  Sys.readdir dir
+  |> Array.to_list
+  |> List.exists (fun e ->
+      Sys.file_exists (Filename.concat dir e)
+      && Sys.is_directory (Filename.concat dir e))
+
 let example_names () =
   Sys.readdir examples_dir |> Array.to_list |> List.sort compare
   |> List.filter (fun name ->
-      Sys.file_exists (Filename.concat examples_dir (name ^ "/main.emo"))
-      && not
-           (Sys.file_exists
-              (Filename.concat examples_dir (name ^ "/package.emo"))))
+      let dir = Filename.concat examples_dir name in
+      Sys.file_exists (Filename.concat dir "main.emo")
+      && not (Sys.file_exists (Filename.concat dir "package.emo"))
+      && not (has_emo_subdir dir))
 
 let examples_tests =
   List.map

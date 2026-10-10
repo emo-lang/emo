@@ -1320,6 +1320,10 @@ let bootstrap_example root name entry expected =
 
 let bootstrap_tests =
   [
+    tc "alias_demo compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example (examples_dir ()) "alias_demo" "alias_demo/main.emo"
+          true);
     tc "fib compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example (examples_dir ()) "fib" "fib/main.emo" true);
     tc "hello_world compiles to a binary with the interpreter's output"

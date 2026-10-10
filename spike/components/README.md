@@ -4,7 +4,9 @@ The third GUI spike. The first proved a macOS window is reachable;
 the second measured how much binding layer a C toolkit needs. This one
 builds the actual architecture: **a React/Elm-style component model,
 written once in Emo, painting through AppKit on macOS and GTK 4 on
-Linux — zero compiler changes.**
+Linux.** It shipped with zero compiler changes, and its multi-module
+follow-up then drove two compiler fixes (local cross-module calls on
+the c target, and the ocaml emitter's zero-parameter functions).
 
 ## Run
 
@@ -49,17 +51,23 @@ EMO_GUI_AUTOTEST=1 ./ui-app         # self-driving: +1, -1, +1, report,
 
 ## Language findings along the way
 
-1. **Local cross-module calls are refused on the c target.** The
-   natural architecture — a shared `app.emo` plus two thin entry
-   files — dies at check time: `ui.show(n)` through a module alias
-   lowers to a type-level method and refuses ("the c target does not
-   support the type-level method ... yet"), on both one- and
-   two-segment paths, while the same shape works on the ocaml target
-   (`examples/shop`) and package `require`s work everywhere
-   (`xml_demo`). That refusal is what forced the neutral-vocabulary
-   shape: one self-contained Emo file, the platform difference pushed
-   into C. A general-purpose Emo UI package will need either the
-   alias-call fix or the package path.
+1. **Local cross-module calls were refused on the c target — and are
+   now fixed.** The natural architecture — a shared module plus thin
+   entry files — died in codegen: `ui.show(n)` through a module alias
+   lowered to a type-level method ("the c target does not support the
+   type-level method ... yet"). Two root causes, both fixed
+   (2026-10-10): an entry-module alias binding (`const ui =
+   internal.vnode`) lowered its value side into garbage C, so alias
+   bindings now lower to nothing at the entry and to a harmless Int
+   local inside defs; and the cache keys never included the
+   compiler's own content, letting stale cached binaries survive
+   compiler fixes — all three target arms now mix the running
+   executable's digest into the key. The multi-module split was then
+   attempted for real, and it surfaced the NEXT gap: cross-module
+   type annotations are still refused (E4005 — the checker's type
+   tables are per-module), so `def view(count Int64) VNode` cannot be
+   spelled across modules and the spike stays one file. A
+   general-purpose Emo UI package starts with cross-module types.
 2. **Recursive types need the xml package's shape.** A class cannot
    name itself in its own `init` (E4005), and an interface cannot
    name itself in a signature. The working shape is interface

@@ -1,6 +1,6 @@
 # 组件化 spike:一份 Emo 源码,两个 GUI 平台
 
-第三个 GUI spike。第一个证明了够得着 macOS 窗口;第二个量化了 C 工具包需要多厚的绑定层;这一个直接搭架构:**React/Elm 风格的组件模型,Emo 写一次,macOS 走 AppKit、Linux 走 GTK 4——零编译器改动。**
+第三个 GUI spike。第一个证明了够得着 macOS 窗口;第二个量化了 C 工具包需要多厚的绑定层;这一个直接搭架构:**React/Elm 风格的组件模型,Emo 写一次,macOS 走 AppKit、Linux 走 GTK 4。**它以零编译器改动落地,而它的多模块后续反过来驱动了两个编译器修复(C 目标的本地跨模块调用,以及 ocaml 发射器的零参函数)。
 
 ## 运行
 
@@ -21,7 +21,7 @@ EMO_GUI_AUTOTEST=1 ./ui-app         # 自驱:+1、-1、+1、报告、退出—�
 
 ## 顺带的语言发现
 
-1. **本地跨模块调用在 c 目标被拒绝。** 顺手 innocent 的架构——共享 `app.emo` 加两个薄入口——死在检查期:经模块别名的 `ui.show(n)` 降级成类型级方法并拒绝("the c target does not support the type-level method ... yet"),单段、两段路径皆然;而同样的形状在 ocaml 目标可行(`examples/shop`),包 `require` 更是处处可行(`xml_demo`)。正是这个拒绝逼出了中性词汇层形态:一个自包含的 Emo 文件,平台差异推进 C。将来通用的 Emo UI 包要么修别名调用,要么走包路径。
+1. **本地跨模块调用曾在 c 目标被拒绝——现已修复。** 顺手 innocen 的架构——共享模块加薄入口——死在 codegen:经模块别名的 `ui.show(n)` 降级成类型级方法("the c target does not support the type-level method ... yet")。两个根因,均已修复(2026-10-10):入口模块的别名绑定(`const ui = internal.vnode`)把值一侧降成了垃圾 C——别名绑定现在在入口不降任何语句、在 def 体内降为无害的 Int 局部;另外缓存 key 从不包含编译器自身内容,陈旧的缓存二进制在编译器修复后依然存活——三个目标臂现在都把运行中可执行文件的摘要混入键值。多模块拆分随后真的试了一次,并暴露出**下一个缺口:跨模块类型注解仍然被拒**(E4005——checker 的类型表按模块隔离),`def view(count Int64) VNode` 无法跨模块书写,spike 保持单文件。拆分实验留在 git 历史里;通用的 Emo UI 包从跨模块类型起步。
 2. **递归类型必须用 xml 包的形状。** 类不能在自己的 `init` 里提名(E4005),接口不能在签名里自指。可行形状:接口 `VNode`(统一访问器)+ `VControl`/`VColumn` 两个具体类,`children Array[VNode]` 放在容器上,遍历时 `is()` 收窄。
 3. **递归是唯一的循环。** 没有 `while`/`for`——布局遍历用递归;累积结果靠 `Array[Draw]` 随返回值穿线(`Laid` 结果类捆住指令和游标),因为 def 只返回一个值,而 `Box.new([])` 装的是动态数组、其 `.append` 在动态世界没有接线(运行时 "message not understood: append/1")。
 4. **`Map.new` 收变长 pairs**,空表用 `Map.new()`——元组数组在检查期被拒(E4009)。
