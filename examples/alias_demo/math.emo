@@ -1,0 +1,4 @@
+// A sibling module: the alias-qualified call's simplest shape.
+def f(x Int64) Int64 {
+  return x + 1
+}

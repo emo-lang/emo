@@ -1,0 +1,10 @@
+// Local module aliases: `const name = module.path` binds a namespace,
+// not a value — calls through it are direct cross-module calls.
+const math = alias_demo.math
+const advanced = alias_demo.internal.advanced
+
+def app() Int64 {
+  return math.f(1) + advanced.g(10)
+}
+
+println(app())

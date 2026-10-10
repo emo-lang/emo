@@ -157,6 +157,12 @@ let ocaml_target_ok () : bool =
    toolchain; c emits C compiled by the system cc into a standalone
    binary; typescript emits one self-contained .ts file that runs on
    Node. *)
+(* The cache key's compiler component: the running executable's own
+   content digest, so a new compiler invalidates every cached build —
+   codegen changes otherwise ride stale cache-* binaries forever (the
+   latch-era gotcha, hit for real by the cross-module fix). *)
+let compiler_key = lazy (Digest.to_hex (Digest.file Sys.executable_name))
+
 let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
     ~(cclibs : string list) ~(target : string) : int =
   match Sys.file_exists entry with
@@ -281,8 +287,9 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             let digest =
               Digest.to_hex
                 (Digest.string
-                   (Printf.sprintf "%s|%s|%s|%s" main_c_contents
-                      Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h cclib_key))
+                   (Printf.sprintf "%s|%s|%s|%s|%s" main_c_contents
+                      Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h cclib_key
+                      (Lazy.force compiler_key)))
             in
             let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
             if Sys.file_exists cache_binary then begin
@@ -359,9 +366,10 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               let digest =
                 Digest.to_hex
                   (Digest.string
-                     (Printf.sprintf "%s|%s|%b|%s" source
+                     (Printf.sprintf "%s|%s|%b|%s|%s" source
                         Emo_codegen.ocaml_runtime_ml specialize
-                        (String.concat "," cclibs)))
+                        (String.concat "," cclibs)
+                        (Lazy.force compiler_key)))
               in
               let cache_binary =
                 Filename.concat build_dir ("cache-" ^ digest)
