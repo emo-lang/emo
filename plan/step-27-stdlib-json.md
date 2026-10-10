@@ -107,10 +107,14 @@ tripping over latent backend bugs. Fixed in this step:
   declarations program-wide (`Emo_check.preregister_types`; CHECK.md,
   cross-module types), so `is()` narrows and interface-typed results
   dispatch across modules on the interpreter, ocaml, typescript, and
-  c. json_demo now passes the checker on c and fails compiling the
-  *emitted C* instead (an `emo_str`/`int64_t` parameter mismatch in
-  the specialized lowering) — a different, codegen-level gap; wasm and
-  beam keep their own capability walls.
+  c. json_demo runs byte-identically through the interpreter and the
+  c binary; the landing flushed two c-codegen defects — the Bytes
+  method arms guessed an Unknown receiver was Bytes (cross-module
+  `.get` lowered to byte indexing; gradual receivers now dispatch
+  dynamically, with the runtime's builtin table carrying the
+  bytes/map/box/array families), and the class vtables spelled
+  predicate methods with the symbol-safe `_q` instead of the source
+  `?` (dynamic dispatch and `is()` matching missed them).
 
 ## Tasks
 

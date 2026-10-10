@@ -70,8 +70,8 @@ incrementally shippable steps — one file per step, executed in order.
 | 24 | C target (emit C) | done (close-out recorded; the native → ocaml rename landed; aligned 2026-10-10 — Void foreign returns, `emo_defs.h`, content-keyed caches, cross-module calls and types) |
 | 25 | Toolchain distribution & release | done (v0.25.9; M9 complete) |
 | 26 | Target independence (runtimes decoupled from the host) | done (M10 complete; every runtime embedded, the ocaml target installation-independent) |
-| 27 | The standard library: `json` | done on interpreter/ocaml/typescript; cross-module types landed (2026-10-10) — c passes the checker and fails compiling the emitted C (codegen gap, step-27 follow-up); wasm, beam wait on their own capability walls |
-| 28 | The standard library: `yaml` | done on interpreter/ocaml/typescript; cross-module types landed (2026-10-10) — c passes the checker and fails compiling the emitted C (same codegen gap); wasm, beam wait on their own capability walls |
+| 27 | The standard library: `json` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — the landing flushed the c Bytes-arm guess on gradual receivers and the vtable's `_q`/`?` spelling); wasm, beam wait on their own capability walls |
+| 28 | The standard library: `yaml` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — flushed the trampoline's cluster-scope collision); wasm, beam wait on their own capability walls |
 | 29 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; the cross-module-types gate resolved (2026-10-10); wasm, beam wait on their own capability walls |
 | 30 | The standard library: `os` | done on interpreter/ocaml/c; the browser and bytecode targets refuse the package (no process to fork) |
 | 31 | The standard library: `base64` | done on every target — the first package on all five goldens; flushed out the wasm `&&` cast, the wasm zero-length copies, and the beam logical-op/tuple-index/Exception gaps |
