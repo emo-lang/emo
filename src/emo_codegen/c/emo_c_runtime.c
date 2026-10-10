@@ -2624,6 +2624,95 @@ static emo_value emo_bm_to_string(emo_value recv, const emo_value *args) {
   return emo_box_str(emo_to_string_method(recv));
 }
 
+/* The gradual call sites dispatch through the name/arity table when the
+   checker could not pin the receiver; the payload's own kind picks the
+   family — a Map and Bytes share the `get`/`set` spellings but not the
+   mechanics. */
+static emo_value emo_bm_get(emo_value recv, const emo_value *args) {
+  if (emo_cell_kind(recv) == EMO_MAP) return emo_map_get(recv, args[0]);
+  return emo_box_i64(emo_bytes_get(recv, emo_unbox_i64(args[0])));
+}
+
+static emo_value emo_bm_set(emo_value recv, const emo_value *args) {
+  if (emo_cell_kind(recv) == EMO_MAP)
+    return emo_map_set(recv, args[0], args[1]);
+  return emo_box_i64(
+      emo_bytes_set(recv, emo_unbox_i64(args[0]), emo_unbox_i64(args[1])));
+}
+
+static emo_value emo_bm_get_u16_le(emo_value recv, const emo_value *args) {
+  return emo_box_i64(emo_bytes_get_u16_le(recv, emo_unbox_i64(args[0])));
+}
+
+static emo_value emo_bm_get_u32_le(emo_value recv, const emo_value *args) {
+  return emo_box_i64(emo_bytes_get_u32_le(recv, emo_unbox_i64(args[0])));
+}
+
+static emo_value emo_bm_get_u64_le(emo_value recv, const emo_value *args) {
+  return emo_box_i64(emo_bytes_get_u64_le(recv, emo_unbox_i64(args[0])));
+}
+
+static emo_value emo_bm_set_u16_le(emo_value recv, const emo_value *args) {
+  return emo_box_i64(emo_bytes_set_u16_le(
+      recv, emo_unbox_i64(args[0]), emo_unbox_i64(args[1])));
+}
+
+static emo_value emo_bm_set_u32_le(emo_value recv, const emo_value *args) {
+  return emo_box_i64(emo_bytes_set_u32_le(
+      recv, emo_unbox_i64(args[0]), emo_unbox_i64(args[1])));
+}
+
+static emo_value emo_bm_set_u64_le(emo_value recv, const emo_value *args) {
+  return emo_box_i64(emo_bytes_set_u64_le(
+      recv, emo_unbox_i64(args[0]), emo_unbox_i64(args[1])));
+}
+
+static emo_value emo_bm_has(emo_value recv, const emo_value *args) {
+  return emo_vbool(emo_map_has(recv, args[0]));
+}
+
+static emo_value emo_bm_remove(emo_value recv, const emo_value *args) {
+  return emo_map_remove(recv, args[0]);
+}
+
+static emo_value emo_bm_keys(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_map_keys(recv);
+}
+
+static emo_value emo_bm_values(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_map_values(recv);
+}
+
+static emo_value emo_bm_read(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_read(recv);
+}
+
+static emo_value emo_bm_replace(emo_value recv, const emo_value *args) {
+  return emo_box_replace(recv, args[0]);
+}
+
+static emo_value emo_bm_append(emo_value recv, const emo_value *args) {
+  return emo_array_append(recv, args[0]);
+}
+
+static emo_value emo_bm_to_bytes(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_bytes_of_str(emo_str_of(recv));
+}
+
+static emo_value emo_bm_to_bits(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_i64(emo_f64_bits(emo_unbox_f64(recv)));
+}
+
+static emo_value emo_bm_to_byte(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_i64(emo_unbox_i64(recv) & 255);
+}
+
 static const emo_builtin_method emo_builtin_methods[] = {
     {"substring", 2, emo_bm_substring},
     {"index_of", 1, emo_bm_index_of},
@@ -2646,6 +2735,24 @@ static const emo_builtin_method emo_builtin_methods[] = {
     {"pop_back", 0, emo_bm_pop_back},
     {"length", 0, emo_bm_length},
     {"to_string", 0, emo_bm_to_string},
+    {"get", 1, emo_bm_get},
+    {"set", 2, emo_bm_set},
+    {"get_u16_le", 1, emo_bm_get_u16_le},
+    {"get_u32_le", 1, emo_bm_get_u32_le},
+    {"get_u64_le", 1, emo_bm_get_u64_le},
+    {"set_u16_le", 2, emo_bm_set_u16_le},
+    {"set_u32_le", 2, emo_bm_set_u32_le},
+    {"set_u64_le", 2, emo_bm_set_u64_le},
+    {"has", 1, emo_bm_has},
+    {"remove", 1, emo_bm_remove},
+    {"keys", 0, emo_bm_keys},
+    {"values", 0, emo_bm_values},
+    {"read", 0, emo_bm_read},
+    {"replace", 1, emo_bm_replace},
+    {"append", 1, emo_bm_append},
+    {"to_bytes", 0, emo_bm_to_bytes},
+    {"to_bits", 0, emo_bm_to_bits},
+    {"to_byte", 0, emo_bm_to_byte},
 };
 
 emo_value emo_dynamic_builtin(emo_value recv, const char *name, int64_t arity,
