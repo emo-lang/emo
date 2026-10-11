@@ -1,7 +1,7 @@
 # Development Tasks
 
 A numbered checklist of every implementation task, consolidated from
-`plan/step-01-project-scaffold.md` through `plan/step-26-target-independence.md`.
+`plan/step-01-project-scaffold.md` onward.
 The plan files remain the specs — each task below belongs to a step that
 holds its full goal, scope, and acceptance details. This file is the tracker.
 
@@ -35,6 +35,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M8 — Self-contained hosted backend | 24 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — step 23's assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
 | M9 — Toolchain | 25 | The toolchain release (cut as v0.25.9): signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
 | M10 — Target independence | 26 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
+| M11 — For / While loops | 34–35 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
 
 ## Design gates
 
@@ -940,3 +941,87 @@ nothing. All three are fixed in the runtime dispatch
 instances to their vtable before any builtin. The package rides `os`,
 so its manifest declares the ocaml and c targets and widens when
 those surfaces reach the other runtimes.
+
+## M11 — For / While loops
+
+The loop surface `CHECK.md` settled (2026-10-06): guaranteed tail calls
+stay, and `for` / `while` join them. `for var i = 0; i < n; i = i + 1 { ... }`
+is paren-less with exactly three clauses, the header `var` scoped to
+header and body; `while cond { ... }` is condition-only; `break` and
+`continue` are bare statements bound to the nearest enclosing loop; no
+`do`/`while`, no `+=`/`++`. The rationale: loops are the native shape
+for the vectorizer and the OpenMP parallel-loop rung (the HPC gate),
+they remove the tail-position proof burden from loop code, and they
+pair with `var` — while the var-escape rule (E4012) already fences the
+Go loop-capture trap. The design lives in `CHECK.md` and the README;
+each step's plan file is written when the step starts.
+
+### Step 34 — Loop surface: lexer, parser, checker, interpreter
+
+**Prereq:** Step 33.
+**Done when:** the README's loop snippets run verbatim through
+`emo run`; the CHECK.md worked example (`for var i = 0; i < 100;
+i = i + 50`) prints `i = 0` then `i = 50`; a 10M-iteration `while`
+keeps the stack flat; every refusal — a reserved word used as an
+identifier, a missing clause, `;` outside a `for` header,
+`break`/`continue` outside a loop — has its own diagnostic;
+`dune test` green.
+
+- [ ] **T34.1** — Keywords: reserve `for`, `while`, `break`,
+      `continue` in the lexer; the LSP completion list and the VS Code
+      grammar flip in lockstep; code using the four words as
+      identifiers reports a clear reserved-word diagnostic.
+- [ ] **T34.2** — Parser: `while cond { }` and the three-clause `for`
+      — no omissions, the post clause an assignment, `;` a token legal
+      only inside a `for` header, `suppress_block_sugar` set on the
+      `while` condition and all three `for` clauses so the trailing
+      `{` opens the body; AST nodes for the four statements.
+- [ ] **T34.3** — Checker: the header `var` scoped to header+body in
+      the existing depth model; `break`/`continue` bind to the nearest
+      enclosing loop and are rejected outside one; `definitely_returns`
+      accounts for loops so `return`-reachability stays sound;
+      capturing the header `var` in an arrow block stays E4012.
+- [ ] **T34.4** — Interpreter: the four statements in `eval_stmt`; the
+      iteration runs a host loop, never recursion — 10M iterations
+      flat; `continue` runs a `for`'s post clause first; the step
+      budget counts each iteration.
+- [ ] **T34.5** — Example and rejections: `examples/loops` — the
+      worked example, `while` counting, `break`/`continue`, nested
+      loops — golden through `emo run`; the parser and checker
+      rejection corpus pinning every refusal.
+- [ ] **T34.6** — README alignment: the README (English + zh-CN)
+      already documents the settled syntax — verify it against the
+      implemented surface and reconcile any drift.
+
+### Step 35 — Loops on every target: IR and the six backends
+
+**Prereq:** Step 34.
+**Done when:** `examples/loops` compiles on c, ocaml, typescript,
+wasm, beam, and riscv64, each printing byte-for-byte what `emo run`
+prints (goldens in CI); a 10M-iteration loop stays flat on every
+target; the tail-call guarantee is untouched (`loops_tail` unchanged);
+`dune test` green.
+
+- [ ] **T35.1** — IR: the loop statements in `emo_ir`'s `stmt` and the
+      Ast→IR lowering — the header `var` as a loop-scoped mutable
+      binding; one node set, every backend a case.
+- [ ] **T35.2** — c: the emitted C's own `while`/`for` with native
+      `break`/`continue`; `return` inside a loop rides the existing
+      branch-to-epilogue.
+- [ ] **T35.3** — ocaml: native `while`/`for` over the existing `ref`
+      discipline for the header `var`; `break`/`continue` lower
+      through the one mechanism the plan file records (a done flag or
+      a local exception — decided, never a silent fallback).
+- [ ] **T35.4** — typescript: native `while`/`for` in the emitted
+      body; `break`/`continue` are the target language's own.
+- [ ] **T35.5** — wasm: structured control flow — `Loop` with `Br_if`
+      on the condition; `break` branches out of the loop block,
+      `continue` to the head, the post clause running first.
+- [ ] **T35.6** — beam: the loop lowers to a tail-recursive local
+      function — condition guard, body, recursive call with the
+      rebound variables; `break` threads a done marker.
+- [ ] **T35.7** — riscv64: labels and conditional branches — the loop
+      head a label, `break`/`continue` jumps.
+- [ ] **T35.8** — Goldens and benchmarks: `examples/loops` on all six
+      target golden lists; a plain-loop row beside `loops_tail` in
+      `benchmarks/results.md`; the CI groups; close-out.
