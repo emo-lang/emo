@@ -368,8 +368,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                   (Digest.string
                      (Printf.sprintf "%s|%s|%b|%s|%s" source
                         Emo_codegen.ocaml_runtime_ml specialize
-                        (String.concat "," cclibs)
-                        (Lazy.force compiler_key)))
+                        (String.concat "," cclibs) (Lazy.force compiler_key)))
               in
               let cache_binary =
                 Filename.concat build_dir ("cache-" ^ digest)

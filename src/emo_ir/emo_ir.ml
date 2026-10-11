@@ -662,7 +662,7 @@ and lower_func env ~(module_path : string list) ~(mangled : string)
   let param_types =
     self_param
     @ List.map
-        (fun p -> (p.Ast.param_name, ann_type p.Ast.param_type))
+        (fun p -> (p.Ast.param_name, decl_type p.Ast.param_type))
         d.Ast.def_params
   in
   let fbody = lower_stmts env d.Ast.def_body in
@@ -673,14 +673,14 @@ and lower_func env ~(module_path : string list) ~(mangled : string)
     fparams = param_types;
     fresult =
       (match d.Ast.def_return with
-      | Some r -> ann_type r
+      | Some r -> decl_type r
       | None -> Emo_check.Void);
     fbody;
     fspecializable = false;
     fforeign = None;
   }
 
-and ann_type (a : Ast.type_ann) : Emo_check.t =
+and decl_type (a : Ast.type_decl) : Emo_check.t =
   match a.Ast.type_desc with
   | Ast.Named_type "Int64" -> Emo_check.Int64
   | Ast.Named_type "Float64" -> Emo_check.Float64
@@ -1093,9 +1093,9 @@ let lower (input : input) : program =
                   fmodule = m.mpath;
                   fparams =
                     List.map
-                      (fun p -> (p.Ast.param_name, ann_type p.Ast.param_type))
+                      (fun p -> (p.Ast.param_name, decl_type p.Ast.param_type))
                       f.Ast.foreign_params;
-                  fresult = ann_type f.Ast.foreign_return;
+                  fresult = decl_type f.Ast.foreign_return;
                   fbody = [];
                   fspecializable = false;
                   fforeign = Some f.Ast.foreign_symbol;
