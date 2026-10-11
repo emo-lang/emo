@@ -166,35 +166,37 @@ plot.save(chart, "chart.svg")
 
 ### 第 3 层 —— Matplotlib 式的表面
 
-mark 是值:`plot.line(x, y)`、`plot.scatter(x, y)`、
-`plot.bar(labels, values)`、`plot.area(x, y)`、
-`plot.hist(values, bins)`。每个返回一个携带数据与默认样式的 mark,
-`axes(marks: [...])` 通过结构化 `Mark` 接口把它们收起来。完整表面,
+mark 是 `plot.mark` 子模块里的值:`plot.mark.line(x, y)`、
+`plot.mark.scatter(x, y)`、`plot.mark.bar(labels, values)`、
+`plot.mark.area(x, y)`、`plot.mark.hist(values, bins)`。每个返回一个
+携带数据与默认样式的 mark,`plot.axes(marks: [...])` 通过结构化
+`Mark` 接口把它们收起来。数据集图表在包根(2026-10-12 决定),这个
+低层就落在 `mark` 子模块;完整表面,
 以及唯一真正的设计难题——没有默认参数时样式如何携带——在下面的
 "Emo 里的 API"一节展开。
 
-### 第 4 层 —— Seaborn 式的表面(`plot.stats`)
+### 第 4 层 —— 面向数据集的图表表面(`plot.*`)
 
-在同一个引擎之上的、面向数据集的 API,是同一个 `plot` 包的 `stats`
-子模块——`plot.stats`(2026-10-12 决定)。一个 `require "plot"` 就把
-两个表面都带进来,下面的调用写作 `plot.stats.*`。Seaborn 的洞见是:
-一张图就是从数据列到美学通道的*映射*,加一个统计变换,加一个 mark,
-再按一个或多个分组列分面。Emo 用一个 `Table` 加上同一套
-`Figure`/`Mark` 值恰好能表达:
+在同一个引擎之上的、面向数据集的 API,位于 `plot` 包根
+(2026-10-12 决定):一个图表收一个 `Table` 加一张通道映射,返回一整
+张 `Figure`。Seaborn 的洞见是:一张图就是从数据列到美学通道的*映射*,
+加一个统计变换,加一个 mark,再按一个或多个分组列分面。Emo 用一个
+`Table` 加上同一套 `Figure`/`Mark` 值恰好能表达:
 
 ```
-plot.stats.scatter(tips, { "x": "total_bill", "y": "tip", "color": "time" })
-plot.stats.hist(tips,    { "x": "tip", "color": "smoker" })
-plot.stats.box(tips,     { "x": "time", "y": "total_bill" })
-plot.stats.heatmap(correlation)
+plot.scatter(tips, { "x": "total_bill", "y": "tip", "color": "time" })
+plot.hist(tips,    { "x": "tip", "color": "smoker" })
+plot.box(tips,     { "x": "time", "y": "total_bill" })
+plot.heatmap(correlation)
 ```
 
 通道键是 Emo 自己的词表(2026-10-12 决定):`x`、`y`、`color`、`size`、
 `marker`、`dash`、`facet_row`、`facet_col`。每种图一个函数(2026-10-12
 决定):`scatter`、`line`、`hist`、`kde`、`ecdf`、`box`、`violin`、`bar`、
-`count`、`strip`、`point`、`reg`、`heatmap`、`clustermap`;上面的家族名
+`count`、`strip`、`point`、`reg`、`heatmap`、`clustermap`;家族名
 (`relational`、`distributions`、`categorical`、`regression`、`matrix`)
-只是文档分组,不是 API。
+只是文档分组,不是 API。图表建在低层的 `plot.mark` mark 之上,后者也
+是公开的(第 3 层)。
 
 其下的统计子层:`describe`、`quantile`、`histogram_bins`、`kde`、
 `ecdf`、`ols` 加置信带、`box_stats`,以及一个确定性的 PRNG。全是纯
@@ -207,20 +209,19 @@ plot.stats.heatmap(correlation)
 外加行数。缺失的数值是 `NaN`(统计函数跳过);标签列不设缺失哨兵。
 
 ```emo
-const tips = plot.stats.table(
+const tips = plot.table(
   { "total_bill": [16.99, 10.34, 21.01], "tip": [1.01, 1.66, 3.50] },
   { "time": ["Lunch", "Dinner", "Dinner"] }
 )
 ```
 
-`plot.stats.table(numbers, labels)` 校验各列等长、列名唯一,形状违例
+`plot.table(numbers, labels)` 校验各列等长、列名唯一,形状违例
 时 raise:字面量写出的表是程序意图,写错就是契约违反——将来面向数据
 的入口(CSV 或 JSON 读取器)才返回 `(R.error, reason)`。访问用
 `number(name)` / `label(name)`,并按列的类别校验。数据集 API 用一张
 `Map[String, String]` 命名通道——`{ "x": ..., "y": ..., "color": ... }`
 ——缺键就是没用那个通道;这是用编译期的通道名校验换真正的可选通道
-(2026-10-12 决定)。`Table` 放在 `plot.stats`,紧挨着唯一使用它的那
-一层,且绝不能再长成 pandas。
+(2026-10-12 决定)。`Table` 放在 `plot` 根,且绝不能再长成 pandas。
 
 ### 第 5 层 —— 其它后端与交互
 
@@ -247,7 +248,7 @@ const chart = plot.figure(
   axes: plot.axes(
     x_label: "Month",
     y_label: "Sales",
-    marks: [plot.line(months, sales), plot.scatter(months, sales)]
+    marks: [plot.mark.line(months, sales), plot.mark.scatter(months, sales)]
   )
 )
 
@@ -337,11 +338,11 @@ class Line {
 调用点仍是普通 Emo:
 
 ```emo
-plot.line(months, sales)                                    // 默认
-plot.line(months, sales).with_style(
-  plot.line_style().with_color("#c0392b"))                  // 改一项
-plot.line(months, sales).with_style(
-  plot.line_style().with_color("#c0392b").with_width(2.5))  // 改几项
+plot.mark.line(months, sales)                               // 默认
+plot.mark.line(months, sales).with_style(
+  plot.mark.line_style().with_color("#c0392b"))             // 改一项
+plot.mark.line(months, sales).with_style(
+  plot.mark.line_style().with_color("#c0392b").with_width(2.5))  // 改几项
 ```
 
 样板是机械的,且在包里只出现一次。代价是诚实的:`N` 个选项意味着每个
@@ -358,11 +359,11 @@ def line(x Array[Float64], y Array[Float64],
          dash Dash = Dash.solid, marker Marker = Marker.none,
          opacity Float64 = 1.0, label String = "") Void { ... }
 
-plot.line(months, sales)                                 // 全部默认
-plot.line(months, sales, color: "#c0392b", width: 2.5)   // 覆盖
+plot.mark.line(months, sales)                                 // 全部默认
+plot.mark.line(months, sales, color: "#c0392b", width: 2.5)   // 覆盖
 ```
 
-这会彻底消掉样式类、`with_*` 样板与 `plot.line_style()` 工厂,并给出
+这会彻底消掉样式类、`with_*` 样板与 `plot.mark.line_style()` 工厂,并给出
 最干净的调用点。它是语言特性,不是库特性:必须严格检查(默认值不得
 引用后面的参数;按名覆盖保持无歧义;漏掉*无默认值*的参数仍是
 E4009),而且它需要自己的设计评审与第二个消费者。建议是**先按
@@ -372,7 +373,7 @@ E4009),而且它需要自己的设计评审与第二个消费者。建议是**�
 
 | | `with_*` 样式值(不改语言) | 默认参数(改语言) |
 |---|---|---|
-| 调用点 | `plot.line(x, y).with_style(plot.line_style().with_color("#c00"))` | `plot.line(x, y, color: "#c00")` |
+| 调用点 | `plot.mark.line(x, y).with_style(plot.mark.line_style().with_color("#c00"))` | `plot.mark.line(x, y, color: "#c00")` |
 | 包内样板 | 每个样式类 `N` 个复制方法 | 无 |
 | 检查 | 编译期,每个选项有类型 | 编译期,每个选项有类型 |
 | 新语言面 | 无 | 参数默认值及其规则 |
@@ -380,9 +381,9 @@ E4009),而且它需要自己的设计评审与第二个消费者。建议是**�
 
 ### 契约的其余部分
 
-- **两扇门共用一个引擎。** 位置式表面(`plot.line(x, y)`)与数据集
-  表面(`plot.stats.scatter(table, { "x": "col", "y": "col" })`)是进入同一套
-  `Figure`/`Axes`/`Mark` 值的两种写法,不是两套实现。
+- **两扇门共用一个引擎。** 低层 mark 表面(`plot.mark.line(x, y)`)与
+  数据集图表表面(`plot.scatter(table, { "x": "col", "y": "col" })`)
+  是进入同一套 `Figure`/`Axes`/`Mark` 值的两种写法,不是两套实现。
 - **预期失败是值。** 依循标准库惯例,保存时路径打不开、`Table` 缺
   某个命名列、直方图没有值,都返回 `(R.ok, value)` /
   `(R.error, reason)`;只有真正的契约违反才 raise。这是正在落地的
@@ -393,14 +394,17 @@ E4009),而且它需要自己的设计评审与第二个消费者。建议是**�
 ## 命名与打包
 
 标准库拥有顶层短名,包名是小写单词(`json`、`yaml`、`http`、
-`base64`)。2026-10-12 的决定是**一个包 `plot`**——整套能力本质上就是
-画图,所以统计层是它的子模块,不是单独的包:
+`base64`)。2026-10-12 的决定是**一个包 `plot`**:数据集图表在根,低层
+mark 在子模块:
 
-- **`plot`**(模块 `plot`,包根)——核心:`Renderer` 接口与 SVG
-  渲染器、比例尺与刻度、声明式的 `Figure`/`Axes`/`Mark` 值、按 mark
-  的样式类,以及 `Table`。
-- **`plot.stats`**(`stats/` 子模块)——Seaborn 式统计层:描述统计与
-  分布、分类/关系/矩阵家族、回归、分面,以及主题与调色板。
+- **`plot`**(模块 `plot`,包根)——数据集图表(`plot.scatter`、
+  `plot.line`、`plot.hist`、`plot.box`……)、`figure`/`axes`/`save`
+  图 API、`Table` 及其 `plot.table` 构造器,以及 `Renderer` 接口。
+- **`plot.mark`**(`mark/` 子模块)——收坐标的低层 mark
+  (`plot.mark.line(x, y)`、`plot.mark.scatter(x, y)`、`plot.mark.bar`、
+  `plot.mark.area`、`plot.mark.hist`)及其样式类与 `Dash`/`Marker`
+  枚举。
+- 比例尺、刻度、统计辅助、SVG 渲染器、输出缓冲都在 `internal/`。
 
 该包声明**全部五个宿主目标**(`ocaml`、`c`、`typescript`、`wasm`、
 `beam`;freestanding 的 `riscv64` 不在范围内——它拒绝 `Map`),和那些
@@ -416,18 +420,20 @@ SVG 优先,一个独立的 `math` 包,然后是这一个 `plot` 包。
   以绘图所需为限(2026-10-12 决定):`exp`、`log`、`log10`、`pow`、
   `sqrt`、`min`、`max`、`abs`、`clamp`,以及常量 `e`/`pi`。三角函数
   暂缓(T0+T1 没有极坐标或 3D);`normal_quantile` 与 `normal_cdf`
-  放在 `plot.stats` 里,不进 `math`。可选的原生快路径在 `c`/`ocaml`
+  放在 `plot`(内部),不进 `math`。可选的原生快路径在 `c`/`ocaml`
   上经由 `foreign def`,默认关闭,并写明其输出与目标绑定;拼写用独立的
   `*_native` 函数(`math.exp` 纯、`math.exp_native` 原生——2026-10-12
   决定)。分派修复与 `math` 一起门控其上的所有工作。
-- **B. `plot` T0 核心——只做 SVG。** `Buffer`、比例尺、刻度、按 mark
-  的样式类、`Renderer` 接口、`SvgRenderer`、声明式的
-  `figure`/`axes`/mark 值、`Table`,以及带坐标轴、图例、标题的
-  折线/散点/柱/面积/直方图。出口条件:`examples/plot_demo` 产出的
-  一批 SVG 在五个目标上逐字节一致——标准库的 golden 标准。
-- **C. `plot.stats` T1。** 描述统计、分箱、KDE、ECDF、箱统计、带置信
-  带的 OLS、分类/分布/关系/矩阵家族、分面、调色板与主题——全部建在
-  `plot` 之上。
+- **B. `plot` T0 核心——只做 SVG。** `Buffer`、比例尺、刻度、
+  `plot.mark` 的 mark 及其样式类、`Renderer` 接口、`SvgRenderer`、
+  声明式的 `figure`/`axes` 值、`Table`,以及带坐标轴、图例、标题的
+  `plot.mark.line`/`scatter`/`bar`/`area`/`hist`。出口条件:
+  `examples/plot_demo` 产出的一批 SVG 在五个目标上逐字节一致——标准
+  库的 golden 标准。
+- **C. T1 图表。** 数据集图表函数(`plot.scatter`、`plot.hist`、
+  `plot.box`……):描述统计、分箱、KDE、ECDF、箱统计、带置信带的 OLS、
+  分类/分布/关系/矩阵图表、分面、调色板与主题——全部建在 T0 的 mark
+  之上。
 - **D. 终端渲染器**(2026-10-12 决定:排在 PNG 之前)。便宜的第二
   `Renderer`——把字符打印到终端,不开窗口;让图在 CI 与 CLI 里可见,
   也检验第 0 层真的与格式无关。
@@ -453,7 +459,7 @@ SVG 优先,一个独立的 `math` 包,然后是这一个 `plot` 包。
 3. **浮点数学放进一个标准库 `math` 包**(2026-10-12 决定):纯 Emo、
    五个目标,暂时以绘图所需为限——`exp`、`log`、`log10`、`pow`、
    `sqrt`、`min`、`max`、`abs`、`clamp`、`e`、`pi`;三角函数暂缓;
-   `normal_quantile` 与 `normal_cdf` 放 `plot.stats`。它在 `c`/`ocaml`
+   `normal_quantile` 与 `normal_cdf` 放 `plot` 内部。它在 `c`/`ocaml`
    上的可选 `foreign def` 快路径写明与目标绑定,并用独立的 `*_native`
    函数拼写。不放核心,也不做包内私有。`CHECK.md` 条目已经记录了当前原语在各目标上的不完整,所以这是
    已知的开放领域,而非意外。
@@ -504,8 +510,8 @@ SVG 优先,一个独立的 `math` 包,然后是这一个 `plot` 包。
 ## 建议
 
 站得住脚的第一个产品,现在已作为方向定案:**一个 `plot` 包——纯
-Emo、SVG 优先、声明式、`Renderer` 接口、逐字节 golden 校验,T0,其上是
-Seaborn 式的 `plot.stats` 子模块——前置为数值分派对齐与一个标准库
+Emo、SVG 优先、声明式、`Renderer` 接口、逐字节 golden 校验,T0,数据集
+图表在根、低层 mark 在 `plot.mark`——前置为数值分派对齐与一个标准库
 `math` 包。** 不需要任何语言改动。任何原生
 GUI 画布都是日后
 一条独立的 EmoUI 方向,绝不能门控本项工作。“完整的 Matplotlib 与
@@ -521,10 +527,10 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
    一次调用渲染。
 4. **数据——一个最小 `Table`**:列式,数值列 `Map[String, Array[Float64]]`、
    分类列 `Map[String, Array[String]]`,缺失数值用 `NaN`;由
-   `plot.stats.table(numbers, labels)` 构造并校验;数据集通道用
+   `plot.table(numbers, labels)` 构造并校验;数据集通道用
    `Map[String, String]` 命名。
-5. **包——一个 `plot`**,声明五个宿主目标,Seaborn 式层是它的
-   `plot.stats` 子模块。
+5. **包——一个 `plot`**,声明五个宿主目标;数据集图表在根,低层 mark
+   在 `plot.mark` 子模块。
 6. **数学——一个标准库 `math` 包**,默认纯 Emo 且逐字节一致,
    以绘图所需为限(见第 13 条)。
 7. **确定性——接受可选加入的原生快数学路径**,写明与目标绑定。
@@ -536,14 +542,14 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
    画布,共享的向量画布契约是一条**独立的 EmoUI 方向**(2026-10-12
    接受),不是绘图后端。
 10. **`Table` 与通道——即上面的具体形状。** 列式、两张 Map、缺失数值
-    用 `NaN`、`plot.stats.table(...)` 形状违例时 raise、通道用
+    用 `NaN`、`plot.table(...)` 形状违例时 raise、通道用
     `Map[String, String]`(接受运行期通道名校验)。
 11. **mark 不做直通。** mark 唯一的样式入口是 `with_style`;样式类保留
     自己的 `with_*` 复制方法。
 12. **渲染器先后——终端,然后 PNG。**
 13. **`math` 以绘图为限**:`exp`、`log`、`log10`、`pow`、`sqrt`、
     `min`、`max`、`abs`、`clamp`、`e`、`pi`;不做三角函数;
-    `normal_quantile`/`normal_cdf` 放 `plot.stats`。
+    `normal_quantile`/`normal_cdf` 放 `plot` 内部。
 14. **声明式树只用数组**——不做尾随块写法。
 15. **原生数学快路径——独立的 `*_native` 名字。** `math.exp` 是纯的、
     逐字节一致的实现;`math.exp_native` 是可选加入的 `c`/`ocaml`
@@ -551,12 +557,15 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
 16. **通道词表——Emo 自己的词。** `x`、`y`、`color`、`size`、`marker`、
     `dash`、`facet_row`、`facet_col`;通道值只写列名(常量走样式);
     未知通道报错;每个家族只读它支持的通道。
-17. **每种图一个函数。** `plot.stats` 暴露 `scatter`、`line`、`hist`、
+17. **每种图一个函数。** `plot` 根暴露 `scatter`、`line`、`hist`、
     `kde`、`ecdf`、`box`、`violin`、`bar`、`count`、`strip`、`point`、
     `reg`、`heatmap`、`clustermap`;家族名(`relational`、
     `distributions`、`categorical`、`regression`、`matrix`)只是文档
-    分组,不是 API。核心 mark 名统一成单数(`plot.bar`,不是
-    `plot.bars`)。
+    分组,不是 API。核心 mark 名统一成单数(`plot.mark.bar`,不是
+    `plot.mark.bars`)。
+18. **图表在根、mark 在 `plot.mark`。** 数据集图表表面占有 `plot.*`
+    (它是这个包的本意);低层坐标 mark 放在 `plot.mark` 子模块,与
+    `Mark`/`Figure` 的类型划分一致(2026-10-12 决定)。
 
 ## 剩余的开放问题
 

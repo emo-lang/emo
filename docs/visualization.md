@@ -194,29 +194,30 @@ a sequence of mutations against a live canvas.
 
 ### Layer 3 — the Matplotlib-like surface
 
-Marks are values: `plot.line(x, y)`, `plot.scatter(x, y)`,
-`plot.bar(labels, values)`, `plot.area(x, y)`,
-`plot.hist(values, bins)`. Each returns a mark carrying its data and a
-default style, and `axes(marks: [...])` collects them through a
-structural `Mark` interface. The full surface, and the one real design
+Marks are values in the `plot.mark` submodule: `plot.mark.line(x, y)`,
+`plot.mark.scatter(x, y)`, `plot.mark.bar(labels, values)`,
+`plot.mark.area(x, y)`, `plot.mark.hist(values, bins)`. Each returns a
+mark carrying its data and a default style, and `plot.axes(marks: [...])`
+collects them through a structural `Mark` interface. With the dataset
+charts at the package root (decision 2026-10-12), this low-level layer
+is the `mark` submodule; the full surface, and the one real design
 problem — how style is carried without default parameters — is worked
 out under "The API in Emo" below.
 
-### Layer 4 — the Seaborn-like surface (`plot.stats`)
+### Layer 4 — the dataset-oriented chart surface (`plot.*`)
 
-A dataset-oriented API over the same engine, in the `stats` submodule of
-the one `plot` package — `plot.stats` (decision 2026-10-12). One
-`require "plot"` brings both surfaces in, and the calls below read
-`plot.stats.*`. Seaborn's insight is that a plot is a *mapping* from
-data columns to aesthetics, plus a statistical transformation, plus a
-mark, faceted by one or more grouping columns.
+A dataset-oriented API over the same engine, at the `plot` package root
+(decision 2026-10-12): a chart takes a `Table` and a channel mapping and
+returns a whole `Figure`. Seaborn's insight is that a plot is a
+*mapping* from data columns to aesthetics, plus a statistical
+transformation, plus a mark, faceted by one or more grouping columns.
 Emo expresses that with a `Table` and the same figure and mark values:
 
 ```
-plot.stats.scatter(tips, { "x": "total_bill", "y": "tip", "color": "time" })
-plot.stats.hist(tips,    { "x": "tip", "color": "smoker" })
-plot.stats.box(tips,     { "x": "time", "y": "total_bill" })
-plot.stats.heatmap(correlation)
+plot.scatter(tips, { "x": "total_bill", "y": "tip", "color": "time" })
+plot.hist(tips,    { "x": "tip", "color": "smoker" })
+plot.box(tips,     { "x": "time", "y": "total_bill" })
+plot.heatmap(correlation)
 ```
 
 The channel keys are Emo's own vocabulary (decision 2026-10-12): `x`,
@@ -224,8 +225,9 @@ The channel keys are Emo's own vocabulary (decision 2026-10-12): `x`,
 chart kind is its own function (decision 2026-10-12) — `scatter`,
 `line`, `hist`, `kde`, `ecdf`, `box`, `violin`, `bar`, `count`,
 `strip`, `point`, `reg`, `heatmap`, `clustermap` — so the family names
-above (`relational`, `distributions`, `categorical`, `regression`,
-`matrix`) are documentation grouping, not API.
+(`relational`, `distributions`, `categorical`, `regression`, `matrix`)
+are documentation grouping, not API. A chart builds on the low-level
+`plot.mark` marks, which are also public (Layer 3).
 
 The statistics sublayer underneath: `describe`, `quantile`,
 `histogram_bins`, `kde`, `ecdf`, `ols` plus a confidence band,
@@ -241,13 +243,13 @@ grow into one. `Table` is column-oriented: numeric columns in a
 `NaN` (the statistics skip them); there is no missing-label sentinel.
 
 ```emo
-const tips = plot.stats.table(
+const tips = plot.table(
   { "total_bill": [16.99, 10.34, 21.01], "tip": [1.01, 1.66, 3.50] },
   { "time": ["Lunch", "Dinner", "Dinner"] }
 )
 ```
 
-`plot.stats.table(numbers, labels)` validates equal column lengths and
+`plot.table(numbers, labels)` validates equal column lengths and
 unique names and raises on a shape violation: a table written as a
 literal is programmer intent, so a mistake is a contract violation —
 the data-facing entry points added later (a CSV or JSON reader) return
@@ -256,8 +258,8 @@ checked against the column's kind. The dataset API names its channels
 with a `Map[String, String]` — `{ "x": ..., "y": ..., "color": ... }`
 — so an absent key is simply an unused channel; this trades
 compile-time channel-name checking for real optional channels
-(decision 2026-10-12). `Table` lives in `plot.stats`, next to the only
-layer that uses it, and it must not grow into pandas.
+(decision 2026-10-12). `Table` lives at the `plot` root, and it must
+not grow into pandas.
 
 ### Layer 5 — other backends and interaction
 
@@ -288,7 +290,7 @@ const chart = plot.figure(
   axes: plot.axes(
     x_label: "Month",
     y_label: "Sales",
-    marks: [plot.line(months, sales), plot.scatter(months, sales)]
+    marks: [plot.mark.line(months, sales), plot.mark.scatter(months, sales)]
   )
 )
 
@@ -382,11 +384,11 @@ class Line {
 Call sites stay ordinary Emo:
 
 ```emo
-plot.line(months, sales)                                    // default
-plot.line(months, sales).with_style(
-  plot.line_style().with_color("#c0392b"))                  // one option
-plot.line(months, sales).with_style(
-  plot.line_style().with_color("#c0392b").with_width(2.5))  // several
+plot.mark.line(months, sales)                               // default
+plot.mark.line(months, sales).with_style(
+  plot.mark.line_style().with_color("#c0392b"))             // one option
+plot.mark.line(months, sales).with_style(
+  plot.mark.line_style().with_color("#c0392b").with_width(2.5))  // several
 ```
 
 The boilerplate is mechanical and lives in the package once. The cost
@@ -406,12 +408,12 @@ def line(x Array[Float64], y Array[Float64],
          dash Dash = Dash.solid, marker Marker = Marker.none,
          opacity Float64 = 1.0, label String = "") Void { ... }
 
-plot.line(months, sales)                                 // defaults
-plot.line(months, sales, color: "#c0392b", width: 2.5)   // overrides
+plot.mark.line(months, sales)                                 // defaults
+plot.mark.line(months, sales, color: "#c0392b", width: 2.5)   // overrides
 ```
 
 This removes the style classes, the `with_*` boilerplate, and the
-`plot.line_style()` factory entirely, and gives the cleanest call
+`plot.mark.line_style()` factory entirely, and gives the cleanest call
 sites. It is a language feature, not a library one: it must be
 strictly checked (a default may not reference a later parameter;
 overriding by name stays unambiguous; a missing *non-defaulted*
@@ -425,7 +427,7 @@ model.
 
 | | `with_*` style values (no language change) | default parameters (language change) |
 |---|---|---|
-| call site | `plot.line(x, y).with_style(plot.line_style().with_color("#c00"))` | `plot.line(x, y, color: "#c00")` |
+| call site | `plot.mark.line(x, y).with_style(plot.mark.line_style().with_color("#c00"))` | `plot.mark.line(x, y, color: "#c00")` |
 | package boilerplate | `N` copy methods per style class | none |
 | checking | compile-time, every option typed | compile-time, every option typed |
 | new language surface | none | parameter defaults, plus their rules |
@@ -433,11 +435,10 @@ model.
 
 ### The rest of the contract
 
-- **Both front doors share one engine.** The positional surface
-  (`plot.line(x, y)`) and the dataset surface
-  (`plot.stats.scatter(table, { "x": "col", "y": "col" })`) are two
-  ways into the
-  same `Figure`/`Axes`/`Mark` values, not two implementations.
+- **Both front doors share one engine.** The low-level mark surface
+  (`plot.mark.line(x, y)`) and the dataset chart surface
+  (`plot.scatter(table, { "x": "col", "y": "col" })`) are two ways
+  into the same `Figure`/`Axes`/`Mark` values, not two implementations.
 - **Expected failures are values.** Following the standard-library
   convention, a save that cannot open its path, a `Table` missing a
   named column, and a histogram with no values return
@@ -453,18 +454,19 @@ model.
 
 The standard library owns the top-level short names, and package names
 are lowercase words (`json`, `yaml`, `http`, `base64`). The decision
-(2026-10-12) is **one package, `plot`** — the whole capability is
-drawing charts, so the statistical layer is its submodule, not a
-separate package:
+(2026-10-12) is **one package, `plot`**, with the dataset charts at the
+root and the low-level marks in a submodule:
 
-- **`plot`** (module `plot`, the package root) — the core: the
-  `Renderer` interface and the SVG renderer, scales and ticks, the
-  declarative `Figure`/`Axes`/`Mark` values, the per-mark style classes,
-  and the `Table`.
-- **`plot.stats`** (the `stats/` submodule) — the Seaborn-like
-  statistical layer: descriptives and distributions, the categorical,
-  relational, and matrix families, regression, faceting, and themes
-  and palettes.
+- **`plot`** (module `plot`, the package root) — the dataset charts
+  (`plot.scatter`, `plot.line`, `plot.hist`, `plot.box`, …), the
+  `figure`/`axes`/`save` figure API, the `Table` and its `plot.table`
+  constructor, and the `Renderer` interface.
+- **`plot.mark`** (the `mark/` submodule) — the low-level marks that
+  take coordinates (`plot.mark.line(x, y)`, `plot.mark.scatter(x, y)`,
+  `plot.mark.bar`, `plot.mark.area`, `plot.mark.hist`) and their style
+  classes and `Dash`/`Marker` enums.
+- Scales, ticks, the statistics helpers, the SVG renderer, and the
+  output buffer are `internal/`.
 
 The package declares **all five hosted targets** (`ocaml`, `c`,
 `typescript`, `wasm`, `beam`; the freestanding `riscv64` target is out
@@ -482,22 +484,24 @@ the two plot packages.
   needs (decision 2026-10-12): `exp`, `log`, `log10`, `pow`, `sqrt`,
   `min`, `max`, `abs`, `clamp`, and the constants `e`/`pi`. Trigonometry
   is deferred (no polar or 3D in T0+T1); `normal_quantile` and
-  `normal_cdf` live inside `plot.stats`, not `math`. The optional
+  `normal_cdf` live inside `plot` (internal), not `math`. The optional
   native fast path rides `foreign def` on `c`/`ocaml`, opt-in and
   documented as target-pinned, and is spelled with separate `*_native`
   functions (`math.exp` pure, `math.exp_native` native — decision
   2026-10-12). The dispatch fix and `math` both gate everything above
   them.
 - **B. `plot` T0 core — SVG only.** `Buffer`, scales, ticks, the
-  per-mark style classes, the `Renderer` interface, `SvgRenderer`,
-  the declarative `figure`/`axes`/mark values, `Table`, and
-  line/scatter/bar/area/hist with axes, legend, and title. Exit:
-  `examples/plot_demo` emits a corpus of SVGs byte-identical across
-  the five targets — the standard library's golden standard.
-- **C. `plot.stats` T1.** Descriptives, binning, KDE, ECDF, box
+  `plot.mark` marks and their style classes, the `Renderer` interface,
+  `SvgRenderer`, the declarative `figure`/`axes` values, `Table`, and
+  `plot.mark.line`/`scatter`/`bar`/`area`/`hist` with axes, legend,
+  and title. Exit: `examples/plot_demo` emits a corpus of SVGs
+  byte-identical across the five targets — the standard library's
+  golden standard.
+- **C. T1 charts.** The dataset chart functions (`plot.scatter`,
+  `plot.hist`, `plot.box`, …): descriptives, binning, KDE, ECDF, box
   statistics, OLS with a confidence band, the categorical,
-  distribution, relational, and matrix families, faceting, palettes,
-  and themes — all built on `plot`.
+  distribution, relational, and matrix charts, faceting, palettes, and
+  themes — all built on the T0 marks.
 - **D. Terminal renderer** (decision 2026-10-12: before PNG). The
   cheap second `Renderer` — Unicode characters printed to a terminal,
   not a window; it makes plots visible in CI and the CLI, and tests
@@ -527,7 +531,7 @@ discovered mid-implementation:
    2026-10-12): pure Emo, all five targets, scoped to plotting's needs
    for now — `exp`, `log`, `log10`, `pow`, `sqrt`, `min`, `max`, `abs`,
    `clamp`, `e`, `pi`; trigonometry deferred; `normal_quantile` and
-   `normal_cdf` in `plot.stats`. Its opt-in `foreign def` fast path on
+   `normal_cdf` internal to `plot`. Its opt-in `foreign def` fast path on
    `c`/`ocaml` is documented as target-pinned and spelled with separate
    `*_native` functions. Not in the core, and not package-private. The `CHECK.md` entry already records that the
    current primitives are partial across targets, so this is a
@@ -595,8 +599,9 @@ single language's look may be copied.
 
 The defensible first product, now settled as a direction: **one `plot`
 package — pure Emo, SVG-first, declarative, a `Renderer` interface,
-checked byte-identical goldens, T0, with the Seaborn-like `plot.stats`
-submodule above it — preceded by numeric dispatch parity and a
+checked byte-identical goldens, T0, with the dataset charts at the root
+and the low-level marks in `plot.mark` — preceded by numeric dispatch
+parity and a
 standard-library `math` package.** No
 language change is
 required. Any native GUI canvas is a separate, later EmoUI direction
@@ -616,10 +621,11 @@ T0 + T1.
 4. **Data — a minimal `Table`**: column-oriented, numeric columns in
    `Map[String, Array[Float64]]` and categorical in
    `Map[String, Array[String]]`, `NaN` for missing numbers; built and
-   validated by `plot.stats.table(numbers, labels)`; dataset channels
+   validated by `plot.table(numbers, labels)`; dataset channels
    named by a `Map[String, String]`.
-5. **Package — one `plot`**, declaring the five hosted targets, with
-   the Seaborn-like layer as its `plot.stats` submodule.
+5. **Package — one `plot`**, declaring the five hosted targets; the
+   dataset charts live at the root and the low-level marks in the
+   `plot.mark` submodule.
 6. **Math — a standard-library `math` package**, pure Emo and
    byte-identical by default, scoped to plotting's needs (see 13).
 7. **Determinism — an opt-in native fast math path is accepted**,
@@ -636,7 +642,7 @@ T0 + T1.
    2026-10-12 — not a plotting backend.
 10. **`Table` and channels — the concrete shape above.**
     Column-oriented with two maps, `NaN` for missing numbers,
-    `plot.stats.table(...)` raising on a shape violation, and
+    `plot.table(...)` raising on a shape violation, and
     `Map[String, String]` channel mappings (runtime channel-name
     checks accepted).
 11. **No mark pass-throughs.** A mark's only styling verb is
@@ -644,7 +650,7 @@ T0 + T1.
 12. **Renderer order — terminal, then PNG.**
 13. **`math` scoped to plot**: `exp`, `log`, `log10`, `pow`, `sqrt`,
     `min`, `max`, `abs`, `clamp`, `e`, `pi`; no trigonometry;
-    `normal_quantile`/`normal_cdf` inside `plot.stats`.
+    `normal_quantile`/`normal_cdf` internal to `plot`.
 14. **Array-only declarative tree** — no trailing-block spelling.
 15. **Native math fast path — separate `*_native` names.** `math.exp`
     is the pure, byte-identical implementation; `math.exp_native` is
@@ -654,12 +660,16 @@ T0 + T1.
     `size`, `marker`, `dash`, `facet_row`, `facet_col`; channel values
     are column names only (constants go in styles); unknown channels
     are an error; each family reads only the channels it supports.
-17. **One function per chart kind.** `plot.stats` exposes `scatter`,
+17. **One function per chart kind.** The `plot` root exposes `scatter`,
     `line`, `hist`, `kde`, `ecdf`, `box`, `violin`, `bar`, `count`,
     `strip`, `point`, `reg`, `heatmap`, `clustermap`; the family names
     (`relational`, `distributions`, `categorical`, `regression`,
     `matrix`) are documentation grouping, not API. Core mark names are
-    singular (`plot.bar`, not `plot.bars`).
+    singular (`plot.mark.bar`, not `plot.mark.bars`).
+18. **Charts at the root, marks in `plot.mark`.** The dataset chart
+    surface owns `plot.*` (it is the package's point); the low-level
+    coordinate marks live in the `plot.mark` submodule, matching the
+    `Mark`/`Figure` type split (decision 2026-10-12).
 
 ## Remaining open questions
 
