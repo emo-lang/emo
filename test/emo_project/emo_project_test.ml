@@ -1260,6 +1260,25 @@ println(resp.status)
             in
             Alcotest.(check string)
               "wasm refusal" "no build for target `wasm`" messages);
+    tc "the stdlib targets are honest: riscv64 refuses until declared"
+      (fun () ->
+        let registry = use_workspace_registry () in
+        let reg = Emo_pkg.Registry.Fs_dir registry in
+        let index = Emo_pkg.Registry.index reg [ "base64" ] in
+        let roots =
+          match Emo_pkg.Version.parse "0.1.0" with
+          | Ok v -> [ ("base64", v) ]
+          | Error _ -> Alcotest.fail "bad fixture version"
+        in
+        match Emo_pkg.Resolve.solve ~target:"riscv64" ~roots ~index with
+        | Ok _ -> Alcotest.fail "expected resolution to refuse riscv64"
+        | Error errors ->
+            let messages =
+              String.concat "; "
+                (List.map (fun e -> e.Emo_pkg.Resolve.e_message) errors)
+            in
+            Alcotest.(check string)
+              "riscv64 refusal" "no build for target `riscv64`" messages);
   ]
 
 let ffi_tests =
