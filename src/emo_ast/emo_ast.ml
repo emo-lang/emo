@@ -1,5 +1,5 @@
-(** The Emo syntax tree. Every [expr], [stmt], [pattern], [type_ann], and [item]
-    node carries the span of the source it was parsed from. *)
+(** The Emo syntax tree. Every [expr], [stmt], [pattern], [type_decl], and
+    [item] node carries the span of the source it was parsed from. *)
 
 type expr = { span : Emo_support.Span.t; desc : expr_desc }
 
@@ -29,13 +29,13 @@ and expr_desc =
 
 and string_part = Literal_text of string | Part_expr of expr
 and arg = { arg_name : string option; arg_value : expr }
-and param = { param_name : string; param_type : type_ann }
-and type_ann = { type_span : Emo_support.Span.t; type_desc : type_ann_desc }
+and param = { param_name : string; param_type : type_decl }
+and type_decl = { type_span : Emo_support.Span.t; type_desc : type_decl_desc }
 
-and type_ann_desc =
+and type_decl_desc =
   | Named_type of string (* Int64, User *)
-  | Applied_type of string * type_ann list (* Array[User], Box[Int64] *)
-  | Tuple_type of type_ann list (* (Int64, String) *)
+  | Applied_type of string * type_decl list (* Array[User], Box[Int64] *)
+  | Tuple_type of type_decl list (* (Int64, String) *)
 
 and unop = Not | Neg | Bit_not
 
@@ -109,7 +109,7 @@ and foreign_def = {
   foreign_span : Emo_support.Span.t;
   foreign_name : string; (* the Emo-visible name *)
   foreign_params : param list;
-  foreign_return : type_ann;
+  foreign_return : type_decl;
   foreign_symbol : string; (* the C symbol *)
 }
 
@@ -137,7 +137,7 @@ and fun_def = {
   def_span : Emo_support.Span.t;
   def_name : string;
   def_params : param list;
-  def_return : type_ann option;
+  def_return : type_decl option;
   def_body : stmt list;
 }
 (** A `def` — at top level, in a class, or the class's `init` (whose return type
@@ -147,7 +147,7 @@ and method_sig = {
   sig_span : Emo_support.Span.t;
   sig_name : string;
   sig_params : param list;
-  sig_return : type_ann;
+  sig_return : type_decl;
 }
 (** A method signature inside an `interface` — a name, parameters, and a
     required return type, with no body. *)

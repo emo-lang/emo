@@ -42,24 +42,24 @@ type symbol = {
 
 (* ---- Rendering type declarations and signatures --------------------- *)
 
-let rec type_ann_to_string (t : Ast.type_ann) : string =
+let rec type_decl_to_string (t : Ast.type_decl) : string =
   match t.Ast.type_desc with
   | Ast.Named_type n -> n
   | Ast.Applied_type (n, args) ->
-      n ^ "[" ^ String.concat ", " (List.map type_ann_to_string args) ^ "]"
+      n ^ "[" ^ String.concat ", " (List.map type_decl_to_string args) ^ "]"
   | Ast.Tuple_type ts ->
-      "(" ^ String.concat ", " (List.map type_ann_to_string ts) ^ ")"
+      "(" ^ String.concat ", " (List.map type_decl_to_string ts) ^ ")"
 
 let params_to_string (ps : Ast.param list) : string =
   String.concat ", "
     (List.map
-       (fun p -> p.Ast.param_name ^ " " ^ type_ann_to_string p.Ast.param_type)
+       (fun p -> p.Ast.param_name ^ " " ^ type_decl_to_string p.Ast.param_type)
        ps)
 
 let def_signature (d : Ast.fun_def) : string =
   let ret =
     match d.Ast.def_return with
-    | Some r -> " " ^ type_ann_to_string r
+    | Some r -> " " ^ type_decl_to_string r
     | None -> ""
   in
   Printf.sprintf "def %s(%s)%s" d.Ast.def_name
@@ -69,7 +69,7 @@ let def_signature (d : Ast.fun_def) : string =
 let foreign_signature (f : Ast.foreign_def) : string =
   Printf.sprintf "foreign def %s(%s) %s = \"%s\"" f.Ast.foreign_name
     (params_to_string f.Ast.foreign_params)
-    (type_ann_to_string f.Ast.foreign_return)
+    (type_decl_to_string f.Ast.foreign_return)
     f.Ast.foreign_symbol
 
 (* ---- Collecting declarations from one file -------------------------- *)
@@ -164,7 +164,7 @@ let collect_items ~(file : string) ~(module_path : string list)
                    ~detail:
                      (Printf.sprintf "def %s(%s) %s" m.Ast.sig_name
                         (params_to_string m.Ast.sig_params)
-                        (type_ann_to_string m.Ast.sig_return))
+                        (type_decl_to_string m.Ast.sig_return))
                    ~file ~span:m.Ast.sig_span
                    ~container:(Some i.Ast.interface_name) ~module_path
                    ~local:false))
@@ -234,7 +234,7 @@ let collect_locals ~(file : string) ~(module_path : string list)
         out :=
           mk ~name:p.Ast.param_name ~kind:Kind.variable
             ~detail:
-              (p.Ast.param_name ^ " " ^ type_ann_to_string p.Ast.param_type)
+              (p.Ast.param_name ^ " " ^ type_decl_to_string p.Ast.param_type)
             ~file ~span:p.Ast.param_type.Ast.type_span ~container:None
             ~module_path ~local:true
           :: !out)
