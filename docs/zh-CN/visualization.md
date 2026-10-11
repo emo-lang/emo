@@ -391,6 +391,163 @@ E4009),而且它需要自己的设计评审与第二个消费者。建议是**�
 - **默认样式是值,不是全局状态。** 主题或调色板是传给 `figure` 的
   普通值,于是同一个程序里的两张图可以带不同主题。
 
+## T0 细节
+
+以下决定把前面架构留白的地方定下来(2026-10-12)。
+
+### 图与坐标轴值
+
+手动组装图是高级路径;图表函数内部就把这些值建好。因为没有默认
+参数,构造就是「工厂给默认值 + `with_*` 复制方法」。
+
+```emo
+enum Scale { linear, log }
+enum Domain { auto, fixed }
+enum Share { all, none }
+
+class Figure {
+  def init(width Float64, height Float64, title String, theme Theme,
+           axes Array[Axes], grid (Int64, Int64), share Share) { ... }
+  def with_title(t String) Figure
+  def with_size(w Float64, h Float64) Figure
+  def with_theme(t Theme) Figure
+  def with_axes(a Array[Axes]) Figure
+  def with_grid(rows Int64, cols Int64) Figure
+  def with_share(s Share) Figure
+}
+
+class Axes {
+  def init(x_label String, y_label String, x_scale Scale, y_scale Scale,
+           x_domain (Domain, Float64, Float64), y_domain (Domain, Float64, Float64),
+           legend Bool, marks Array[Mark]) { ... }
+  def with_x_label(s String) Axes
+  def with_y_label(s String) Axes
+  def with_x_scale(s Scale) Axes
+  def with_y_scale(s Scale) Axes
+  def with_x_domain(a Float64, b Float64) Axes
+  def with_y_domain(a Float64, b Float64) Axes
+  def with_legend(on Bool) Axes
+  def with_marks(m Array[Mark]) Axes
+}
+
+def figure() Figure
+def axes() Axes
+```
+
+`Domain.auto` 由 mark 数据的并集推断范围;`Domain.fixed` 携带显式的
+`(low, high)`。“标签 + 枚举标签装在元组里”正是 README 自己推荐的
+携带式枚举惯用形。`grid` 是 `(行, 列)`,`share` 决定分面各面板是否
+共享数据域(默认 `Share.all`)。手动单轴图就是 `(1, 1)`。类不可变,
+所以没有就地改的 `add`;mark 通过 `with_marks([...])` 进来。
+
+```emo
+const chart = plot.figure()
+  .with_title("Monthly sales")
+  .with_axes([plot.axes()
+    .with_x_label("Month")
+    .with_y_label("Sales")
+    .with_marks([plot.mark.line(months, sales), plot.mark.scatter(months, sales)])])
+plot.save(chart, "chart.svg")
+```
+
+### 样式类
+
+公共字段放在一个组合出来的 `Paint` 里,各 mark 家族再加自己的。样式类
+保留 `with_*` 复制方法;mark 仍然只有 `with_style`。
+
+```emo
+class Paint {
+  def init(color (Int64, Int64, Int64), opacity Float64, label String) { ... }
+  def with_color(c (Int64, Int64, Int64)) Paint
+  def with_opacity(o Float64) Paint
+  def with_label(s String) Paint
+}
+
+class LineStyle {
+  def init(paint Paint, width Float64, dash Dash, marker Marker, marker_size Float64) { ... }
+  // with_paint / with_width / with_dash / with_marker / with_marker_size
+}
+class PointStyle { def init(paint Paint, size Float64, marker Marker) { ... } }
+class BarStyle   { def init(paint Paint, width Float64, edge_color (Int64, Int64, Int64), edge_width Float64) { ... } }
+class AreaStyle  { def init(paint Paint, edge_color (Int64, Int64, Int64), edge_width Float64) { ... } }
+class HistStyle  { def init(paint Paint, edge_color (Int64, Int64, Int64), edge_width Float64) { ... } }
+class TextStyle  { def init(color (Int64, Int64, Int64), size Float64, anchor Anchor, weight Weight) { ... } }
+class GridStyle  { def init(color (Int64, Int64, Int64), width Float64, dash Dash, visible Bool) { ... } }
+class AxisStyle  { def init(color (Int64, Int64, Int64), width Float64, tick_len Float64, label_size Float64) { ... } }
+
+enum Dash   { solid, dashed, dotted, dash_dot }
+enum Marker { none, circle, square, triangle, diamond, cross, plus }
+enum Anchor { start, middle, end }
+enum Weight { regular, bold }
+```
+
+画序就是 `marks` 数组的顺序——不设 `z` 字段。
+
+### 颜色
+
+颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组,每通道 0–255。不透明度
+是单独的 `opacity Float64`(0.0–1.0),绝不煍进三元组。`plot.rgb(r, g, b)`
+校验范围,越界 raise;裸三元组也接受,在绘制时校验。色图在 `Float64`
+里插值,返回三元组。
+
+### 输出缓冲
+
+Emo 没有 `StringBuilder` 也没有 `join`,`Bytes` 是定长的,而标准库的
+`bufio.BytesSink` 靠拼成一个字符串来累积——写入字节量的平方级。所以
+渲染器自带一个内部 `Buffer`:`List` 里的分块加一个字节计数,终结的
+`to_string` 开一个精确长度的 `Bytes` 把每块拷一次(线性;`Bytes` 没有
+批量写,所以是逐字节拷)。`SvgRenderer.finish()` 经由它返回。
+
+### 分面
+
+- `facet_row` / `facet_col` 取一个分类列;层级**排序**(数值层级按
+  数值序,字符串按字典序),保证图可复现。
+- 网格是 levels(`facet_row`) × levels(`facet_col`);只有一个通道时
+  就是 1×N 或 N×1 的条。
+- `Share.all`(默认)把所有面板放在同一个数据域,这正是分面的意义;
+  `Share.none` 才各自独立。
+- 整图一条图例,放右侧;每个面板用它的层级值标注(`"time = Lunch"`);
+  图标题在网格上方;`theme.spacing` 是面板间隙;`Share.all` 时轴标签
+  只出现在最外缘;层级数量不匹配留空格。
+- 分面属于图表层;`plot.mark` 不知道它,`Figure.grid` 是它的落点。
+
+### 主题与调色板
+
+```emo
+class Palette {
+  def init(colors Array[(Int64, Int64, Int64)]) { ... }
+  def color(i Int64) (Int64, Int64, Int64)          // i 取模长度
+}
+
+class Colormap {
+  def init(stops Array[(Float64, (Int64, Int64, Int64))]) { ... }
+  def at(t Float64) (Int64, Int64, Int64)           // t 夹到 [0,1],插值
+}
+
+class Theme {
+  def init(background (Int64, Int64, Int64), foreground (Int64, Int64, Int64),
+           grid GridStyle, axis AxisStyle, title TextStyle, label TextStyle,
+           palette Palette, cmap Colormap, spacing Float64,
+           width Float64, height Float64) { ... }
+  def with_palette(p Palette) Theme
+  def with_cmap(c Colormap) Theme
+  // …
+}
+
+def theme() Theme
+def dark_theme() Theme
+def palette() Palette
+def viridis() Colormap
+def sequential() Colormap
+def diverging() Colormap
+```
+
+主题是挂在 `Figure` 上的值,绝不是全局:
+`plot.scatter(t, ch).with_theme(plot.dark_theme())`。`color` 通道按列的
+类别分派:分类列按层级排序位置到 `Theme.palette` 取色;数值列归一化后
+到 `Theme.cmap` 取色。内置色图用少量停靠点插值近似,不追求逐点一致。
+主题只提供默认;mark 最终画出的仍是 `plot.mark` 的样式值。
+
 ## 命名与打包
 
 标准库拥有顶层短名,包名是小写单词(`json`、`yaml`、`http`、
@@ -566,6 +723,20 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
 18. **图表在根、mark 在 `plot.mark`。** 数据集图表表面占有 `plot.*`
     (它是这个包的本意);低层坐标 mark 放在 `plot.mark` 子模块,与
     `Mark`/`Figure` 的类型划分一致(2026-10-12 决定)。
+19. **图与轴——工厂加 `with_*`。** `Figure` = 宽、高、标题、主题、轴、
+    网格、share;`Axes` = 标签、比例尺、数据域、图例、mark;
+    `Domain`/`Scale`/`Share` 枚举,`Domain.auto` 由 mark 推断。
+20. **样式类——组合出的 `Paint` 加各家族自己的字段**,含
+    `Dash`/`Marker`/`Anchor`/`Weight` 枚举;画序就是 marks 数组顺序,
+    不设 `z`。
+21. **颜色——`(Int64, Int64, Int64)`,0–255。** 不透明度单独;`plot.rgb`
+    校验范围;色图在 `Float64` 里插值。
+22. **输出缓冲——内部带分块的 `Buffer`**,因为 `bufio.BytesSink` 是平方
+    级;`to_string` 是终结操作。
+23. **分面——层级排序、行列网格、默认 `Share.all`、一条图例、每面板
+    标签、层级不匹配留空。**
+24. **主题——挂在 `Figure` 上的值**,含背景/前景、网格/轴/标题/标签
+    样式、调色板、色图、间距与默认尺寸;`color` 通道按列类别分派。
 
 ## 剩余的开放问题
 

@@ -71,6 +71,13 @@ nothing behind it: `BytesReader` serves a string's bytes, and
 `BytesSink` accumulates what it is handed — its `to_string` hands the
 accumulation back without draining it.
 
+`BytesSink` is for bounded in-memory output: it accumulates by
+concatenating into one string, so building a large document through it
+costs time quadratic in the bytes written. A chunked implementation (a
+list of pieces plus a byte count, joined once) is the planned fix; until
+then, a large stream belongs in a file through `fd_writer` and
+`Writer`, which never accumulate.
+
 ## End of stream is a value
 
 Emo has no error channel, so end of stream is never an exception: the

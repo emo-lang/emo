@@ -450,6 +450,177 @@ model.
   palette is an ordinary value passed to `figure`, so two figures can
   carry different themes in one program.
 
+## T0 details
+
+These decisions fix the pieces the architecture left open (2026-10-12).
+
+### Figure and axes values
+
+Manual figure assembly is the advanced path; the chart functions build
+these values internally. With no default parameters, construction is a
+factory that supplies the defaults plus `with_*` copy methods.
+
+```emo
+enum Scale { linear, log }
+enum Domain { auto, fixed }
+enum Share { all, none }
+
+class Figure {
+  def init(width Float64, height Float64, title String, theme Theme,
+           axes Array[Axes], grid (Int64, Int64), share Share) { ... }
+  def with_title(t String) Figure
+  def with_size(w Float64, h Float64) Figure
+  def with_theme(t Theme) Figure
+  def with_axes(a Array[Axes]) Figure
+  def with_grid(rows Int64, cols Int64) Figure
+  def with_share(s Share) Figure
+}
+
+class Axes {
+  def init(x_label String, y_label String, x_scale Scale, y_scale Scale,
+           x_domain (Domain, Float64, Float64), y_domain (Domain, Float64, Float64),
+           legend Bool, marks Array[Mark]) { ... }
+  def with_x_label(s String) Axes
+  def with_y_label(s String) Axes
+  def with_x_scale(s Scale) Axes
+  def with_y_scale(s Scale) Axes
+  def with_x_domain(a Float64, b Float64) Axes
+  def with_y_domain(a Float64, b Float64) Axes
+  def with_legend(on Bool) Axes
+  def with_marks(m Array[Mark]) Axes
+}
+
+def figure() Figure
+def axes() Axes
+```
+
+`Domain.auto` infers the range from the union of the marks' data;
+`Domain.fixed` carries an explicit `(low, high)`. A label plus an enum
+tag in a tuple is the README's own idiom for a carrying enum. `grid` is
+`(rows, cols)` and `share` decides whether faceted panels share a data
+domain (default `Share.all`). A manual single-axis figure is `(1, 1)`.
+Classes are immutable, so there is no mutating `add`; marks arrive
+through `with_marks([...])`.
+
+```emo
+const chart = plot.figure()
+  .with_title("Monthly sales")
+  .with_axes([plot.axes()
+    .with_x_label("Month")
+    .with_y_label("Sales")
+    .with_marks([plot.mark.line(months, sales), plot.mark.scatter(months, sales)])])
+plot.save(chart, "chart.svg")
+```
+
+### Style classes
+
+The common fields live in a composed `Paint`; each mark family adds its
+own. Style classes keep `with_*` copy methods; a mark still has only
+`with_style`.
+
+```emo
+class Paint {
+  def init(color (Int64, Int64, Int64), opacity Float64, label String) { ... }
+  def with_color(c (Int64, Int64, Int64)) Paint
+  def with_opacity(o Float64) Paint
+  def with_label(s String) Paint
+}
+
+class LineStyle {
+  def init(paint Paint, width Float64, dash Dash, marker Marker, marker_size Float64) { ... }
+  // with_paint / with_width / with_dash / with_marker / with_marker_size
+}
+class PointStyle { def init(paint Paint, size Float64, marker Marker) { ... } }
+class BarStyle   { def init(paint Paint, width Float64, edge_color (Int64, Int64, Int64), edge_width Float64) { ... } }
+class AreaStyle  { def init(paint Paint, edge_color (Int64, Int64, Int64), edge_width Float64) { ... } }
+class HistStyle  { def init(paint Paint, edge_color (Int64, Int64, Int64), edge_width Float64) { ... } }
+class TextStyle  { def init(color (Int64, Int64, Int64), size Float64, anchor Anchor, weight Weight) { ... } }
+class GridStyle  { def init(color (Int64, Int64, Int64), width Float64, dash Dash, visible Bool) { ... } }
+class AxisStyle  { def init(color (Int64, Int64, Int64), width Float64, tick_len Float64, label_size Float64) { ... } }
+
+enum Dash   { solid, dashed, dotted, dash_dot }
+enum Marker { none, circle, square, triangle, diamond, cross, plus }
+enum Anchor { start, middle, end }
+enum Weight { regular, bold }
+```
+
+Draw order is the `marks` array order — there is no `z` field.
+
+### Colors
+
+A color is a `(Int64, Int64, Int64)` sRGB triple, each channel 0–255.
+Opacity is the separate `opacity Float64` (0.0–1.0), never baked into
+the triple. `plot.rgb(r, g, b)` validates the range and raises on an
+out-of-range channel; a raw triple is accepted and validated at draw
+time. Colormaps interpolate in `Float64` and return a triple.
+
+### The output buffer
+
+Emo has no `StringBuilder` and no `join`, `Bytes` is fixed-length, and
+the standard library's `bufio.BytesSink` accumulates by concatenating
+into one string, which is quadratic in the bytes written. The renderer
+therefore carries an internal `Buffer`: chunks in a `List` plus a byte
+count, with a terminal `to_string` that allocates one exact `Bytes` and
+copies each chunk in once (linear; `Bytes` has no bulk write, so the
+copy is byte-by-byte). `SvgRenderer.finish()` returns through it.
+
+### Faceting
+
+- `facet_row` / `facet_col` take a categorical column; the levels are
+  **sorted** (numeric order for numeric levels, lexicographic for
+  strings) so a chart is reproducible.
+- The grid is levels(`facet_row`) × levels(`facet_col`); one channel
+  alone gives a 1×N or N×1 strip.
+- `Share.all` (default) puts every panel on one data domain, which is
+  the point of faceting; `Share.none` gives each panel its own.
+- One legend for the whole figure, on the right; each panel is labelled
+  from its levels (`"time = Lunch"`); the figure title sits above the
+  grid; `theme.spacing` is the panel gap; under `Share.all` the axis
+  labels appear only at the outer edge; level-count mismatches leave
+  blank cells.
+- Faceting belongs to the chart layer; `plot.mark` knows nothing of it,
+  and `Figure.grid` is where it lands.
+
+### Themes and palettes
+
+```emo
+class Palette {
+  def init(colors Array[(Int64, Int64, Int64)]) { ... }
+  def color(i Int64) (Int64, Int64, Int64)          // i mod length
+}
+
+class Colormap {
+  def init(stops Array[(Float64, (Int64, Int64, Int64))]) { ... }
+  def at(t Float64) (Int64, Int64, Int64)           // clamp to [0,1], interpolate
+}
+
+class Theme {
+  def init(background (Int64, Int64, Int64), foreground (Int64, Int64, Int64),
+           grid GridStyle, axis AxisStyle, title TextStyle, label TextStyle,
+           palette Palette, cmap Colormap, spacing Float64,
+           width Float64, height Float64) { ... }
+  def with_palette(p Palette) Theme
+  def with_cmap(c Colormap) Theme
+  // …
+}
+
+def theme() Theme
+def dark_theme() Theme
+def palette() Palette
+def viridis() Colormap
+def sequential() Colormap
+def diverging() Colormap
+```
+
+The theme is a value on the `Figure`, never global:
+`plot.scatter(t, ch).with_theme(plot.dark_theme())`. The `color` channel
+dispatches on the column's kind: a categorical column resolves through
+`Theme.palette` by the level's sorted position; a numeric column is
+normalized and read through `Theme.cmap`. Built-in colormaps approximate
+their targets with a handful of stops interpolated, not point-for-point.
+The theme only supplies defaults; what a mark finally draws is still a
+`plot.mark` style value.
+
 ## Naming and packaging
 
 The standard library owns the top-level short names, and package names
@@ -670,6 +841,23 @@ T0 + T1.
     surface owns `plot.*` (it is the package's point); the low-level
     coordinate marks live in the `plot.mark` submodule, matching the
     `Mark`/`Figure` type split (decision 2026-10-12).
+19. **Figure and axes — factory plus `with_*`.** `Figure` = width,
+    height, title, theme, axes, grid, share; `Axes` = labels, scales,
+    domains, legend, marks; `Domain`/`Scale`/`Share` enums, with
+    `Domain.auto` inferring from the marks.
+20. **Style classes — a composed `Paint` plus per-family fields**, with
+    `Dash`/`Marker`/`Anchor`/`Weight` enums; draw order is the marks
+    array order, so there is no `z` field.
+21. **Color — `(Int64, Int64, Int64)`, 0–255.** Opacity is separate;
+    `plot.rgb` validates the range; colormaps interpolate in `Float64`.
+22. **Output buffer — an internal chunked `Buffer`**, because
+    `bufio.BytesSink` is quadratic; `to_string` is terminal.
+23. **Faceting — sorted levels, rows × cols, `Share.all` by default,
+    one legend, per-panel labels, blank cells for mismatched levels.**
+24. **Theme — a value on the `Figure`** holding background and
+    foreground, the grid/axis/title/label styles, a palette, a
+    colormap, spacing, and the default size; the `color` channel
+    dispatches on the column's kind.
 
 ## Remaining open questions
 
