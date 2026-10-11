@@ -382,10 +382,12 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 **前置:** 步骤 01–13(特化 pass);step-14 的 RISC-V 参考笔记是设计记录。
 **完成标准:** `emo build --target riscv64` 产出可在 `qemu-system-riscv64 -machine virt` 下引导的裸机 ELF;核心子集中每个示例的输出与 `emo run` 完全一致(CI 金测);`spawn`/`send`/`receive` 与 `foreign def` 以清晰诊断拒绝;缺 `"riscv64"` 的包在解析门被拒;`dune test` 全绿。
 
-- [ ] **T22.1** — 后端骨架:`--target riscv64` 管线(发射器模块;CLI 分支写出 `main.s`、调 `as`/`ld` 并附生成的链接脚本;`emo run` 在 QEMU 下引导该 ELF);入口桩、BSS 清零、SBI 控制台。金测:hello_world(串口输出与 `emo run` 逐字节一致)。
-- [ ] **T22.2** — 值模型与算术:带标签字的动态表示(`Int64`/`Float64` 装箱单元,Bool/Char 立即数)与 bump 分配器;回绕算术、比较、`if`、整数格式化(`INT64_MIN` 正确);有保证的尾调用编译为 `tail`。金测:fib。
-- [ ] **T22.3** — 动态世界数据结构:元组、数组、Box、枚举、实例 + vtable 分派、闭包与一等函数;带守卫的模式;按 `%g` 浮点规则的插值。金测:objects、language_tour。
-- [ ] **T22.4** — 引导:CI `riscv64_examples` 组(运行器装 QEMU + cross-binutils)、缺 `"riscv64"` 包的解析门拒绝测试、发射期拒绝诊断、收尾。
+- [x] **T22.1** — 后端骨架:`--target riscv64` 管线(发射器模块;CLI 分支写出 `main.s`、调 `as`/`ld` 并附生成的链接脚本;`emo run` 在 QEMU 下引导该 ELF);入口桩、BSS 清零、SBI 控制台。金测:hello_world(串口输出与 `emo run` 逐字节一致)。
+- [x] **T22.2** — 值模型与算术:带标签字的动态表示(`Int64`/`Float64` 装箱单元,Bool/Char 立即数)与 bump 分配器;回绕算术、比较、`if`、整数格式化(`INT64_MIN` 正确);有保证的尾调用编译为 `tail`。金测:fib。
+- [x] **T22.3** — 动态世界数据结构:元组、数组、Box、枚举、实例 + vtable 分派、闭包与一等函数;带守卫的模式;按 `%g` 浮点规则的插值。金测:objects、language_tour。
+- [x] **T22.4** — 引导:CI `riscv64_examples` 组(运行器装 QEMU + cross-binutils)、缺 `"riscv64"` 包的解析门拒绝测试、发射期拒绝诊断、收尾。
+
+**Step 22 验收达成。** M7 完成:freestanding RV64 后端交付——hello_world、fib、objects、language_tour 在 QEMU 下以逐字节一致的 golden 引导,拒绝响亮,解析门约束包。`%g` 浮点 to_string 作为独立后续落地(plan/step-22 收尾)。
 
 ## M8 — 自包含托管后端
 
