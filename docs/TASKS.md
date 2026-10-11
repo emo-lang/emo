@@ -1024,9 +1024,9 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
 - [x] **T35.1** — IR: the loop statements in `emo_ir`'s `stmt` and the
       Ast→IR lowering — the header `var` as a loop-scoped mutable
       binding; one node set, every backend a case. (Done 2026-10-11.)
-- [ ] **T35.2** — c: the emitted C's own `while`/`for` with native
+- [x] **T35.2** — c: the emitted C's own `while`/`for` with native
       `break`/`continue`; `return` inside a loop rides the existing
-      branch-to-epilogue.
+      branch-to-epilogue. (Done 2026-10-11.)
 - [ ] **T35.3** — ocaml: native `while`/`for` over the existing `ref`
       discipline for the header `var`; `break`/`continue` lower
       through the one mechanism the plan file records (a done flag or
