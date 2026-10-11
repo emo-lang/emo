@@ -2954,6 +2954,8 @@ and eval_stmt env s =
   | Ast.Raise e ->
       let v = eval_expr env e in
       raise (Emo_raise (v, span, !call_trace))
+  | Ast.While _ | Ast.For _ | Ast.Break | Ast.Continue ->
+      error span "E3099" "the loop statements do not run yet"
 
 and eval_expr env e =
   count_step ();

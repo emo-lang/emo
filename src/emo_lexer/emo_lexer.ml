@@ -31,6 +31,7 @@ module Token = struct
     | RBracket
     | Comma
     | Colon
+    | Semi
     | Dot
     | Arrow
     | Send
@@ -343,6 +344,7 @@ let lex ~file ~source =
         | ']' -> single (Token.Op Token.RBracket)
         | ',' -> single (Token.Op Token.Comma)
         | ':' -> single (Token.Op Token.Colon)
+        | ';' -> single (Token.Op Token.Semi)
         | '.' -> single (Token.Op Token.Dot)
         | '"' ->
             frames := String_frame (here ()) :: !frames;
@@ -506,10 +508,10 @@ let lex ~file ~source =
             ident_tail ();
             emit (Token.Upper_ident (String.sub source o (!offset - o))) l c o
         | c ->
-            if c = '@' || c = '$' || c = ';' || c = '#' then
+            if c = '@' || c = '$' || c = '#' then
               error "E1001" (here ())
                 (Printf.sprintf "unexpected character `%c`" c)
-                ~hint:"`@`, `$`, `;` and `#` have no meaning in Emo"
+                ~hint:"`@`, `$` and `#` have no meaning in Emo"
             else
               error "E1001" (here ())
                 (Printf.sprintf "unexpected character `%c`" c));

@@ -55,6 +55,7 @@ let pp_kind fmt (k : Token.kind) =
         | RBracket -> "]"
         | Comma -> ","
         | Colon -> ":"
+        | Semi -> ";"
         | Dot -> "."
         | Arrow -> "->"
         | Send -> "<-"
@@ -126,6 +127,18 @@ let foundation_tests =
             "test.emo:1:8";
           ]
           (List.map token_span toks));
+    tc "the semicolon lexes for the for header" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Lower_ident "a";
+            Op Semi;
+            Lower_ident "b";
+            Op Semi;
+            Lower_ident "c";
+            Eof;
+          ]
+          (kinds (lex_all "a; b; c")));
     tc "newlines are visible on the following token" (fun () ->
         match lex_all "(\n)" with
         | [ lparen; rparen; eof ] ->
@@ -551,7 +564,7 @@ let errors_tests =
               (match diagnostic.Diagnostic.hint with
               | Some _ -> true
               | None -> false))
-          [ ("@", 1); ("$", 1); (";", 1); ("#", 1); ("a @ b", 3) ]);
+          [ ("@", 1); ("$", 1); ("#", 1); ("a @ b", 3) ]);
     tc "a number followed by a name is two tokens for the parser" (fun () ->
         Alcotest.(check (list kind))
           "kinds"

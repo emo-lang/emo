@@ -635,6 +635,8 @@ and lower_stmt env (s : Ast.stmt) : stmt =
       Receive { branches = List.map (lower_branch env) branches }
   | Ast.Send { target; message } ->
       Send { target = lower_expr env target; message = lower_expr env message }
+  | Ast.While _ | Ast.For _ | Ast.Break | Ast.Continue ->
+      raise (Lower_error "the loop statements do not lower to a target yet")
 
 and lower_branch env (b : Ast.branch) : branch =
   let saved = env.locals in

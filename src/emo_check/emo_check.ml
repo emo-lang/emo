@@ -2212,6 +2212,9 @@ and check_stmt ctx env (s : Ast.stmt) : env =
   | Ast.Raise e ->
       ignore (check_expr ctx env e);
       env
+  | Ast.While _ | Ast.For _ | Ast.Break | Ast.Continue ->
+      report ctx span "E4099" "the loop statements are not checked yet";
+      env
 
 (* Checks one pattern against the scrutinee's type when decidable, binding
    pattern variables. Returns the environment for the branch body. *)
