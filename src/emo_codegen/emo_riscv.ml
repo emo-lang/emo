@@ -69,6 +69,10 @@ type env = {
   classes : (string * class_info) list; (* display name -> info *)
   ifaces : (string * (string * int) list) list; (* display -> method/arity *)
   mutable enums : ((string * string) * int) list; (* (enum, member) -> id *)
+  mutable loops : (string * string) list;
+      (* each enclosing loop's (exit label, continue label), innermost
+         first: break jumps to the exit, continue to the head — or to
+         the post label, on a `for`, so the post runs first *)
 }
 
 let gput env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -1128,7 +1132,45 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
   | Send _ -> refuse "send"
   | Receive _ -> refuse "receive"
   | Raise _ -> refuse "raise"
-  | While _ | For _ | Break | Continue -> refuse "the loop statements"
+  | While { cond; body; _ } ->
+      let head = fresh_label env "loop" in
+      let exit_l = fresh_label env "endloop" in
+      put env "%s:\n" head;
+      emit_expr env 0 cond;
+      put env "    andi t0, a0, 16\n";
+      put env "    beqz t0, %s\n" exit_l;
+      env.loops <- (exit_l, head) :: env.loops;
+      List.iter (emit_stmt env) body;
+      env.loops <- List.tl env.loops;
+      put env "    j %s\n" head;
+      put env "%s:\n" exit_l
+  | For { init; cond; post; body; _ } ->
+      (* the head tests, the body runs, the post label sits between the
+         body and the jump back — a `continue` lands on the post, a
+         `break` leaves past it *)
+      emit_stmt env init;
+      let head = fresh_label env "loop" in
+      let post_l = fresh_label env "post" in
+      let exit_l = fresh_label env "endloop" in
+      put env "%s:\n" head;
+      emit_expr env 0 cond;
+      put env "    andi t0, a0, 16\n";
+      put env "    beqz t0, %s\n" exit_l;
+      env.loops <- (exit_l, post_l) :: env.loops;
+      List.iter (emit_stmt env) body;
+      env.loops <- List.tl env.loops;
+      put env "%s:\n" post_l;
+      emit_stmt env post;
+      put env "    j %s\n" head;
+      put env "%s:\n" exit_l
+  | Break -> (
+      match env.loops with
+      | (exit_l, _) :: _ -> put env "    j %s\n" exit_l
+      | [] -> refuse "`break` outside a loop")
+  | Continue -> (
+      match env.loops with
+      | (_, continue_l) :: _ -> put env "    j %s\n" continue_l
+      | [] -> refuse "`continue` outside a loop")
 
 and describe_expr (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
@@ -2517,6 +2559,7 @@ let emit (program : Emo_ir.program) : string =
       classes;
       ifaces = program.pinterfaces;
       enums = [];
+      loops = [];
     }
   in
   (* Enum member ids over the whole program, first-seen order. *)

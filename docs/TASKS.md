@@ -1064,8 +1064,15 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       (Also fixed: the single-statement `Assign_var` path registered
       the shadow before evaluating the value, so `n = n + 1` read the
       variable it was defining.)
-- [ ] **T35.7** — riscv64: labels and conditional branches — the loop
+- [x] **T35.7** — riscv64: labels and conditional branches — the loop
       head a label, `break`/`continue` jumps.
+      (Done 2026-10-11. While is `head: test; beqz exit; body; j head`;
+      a `for` puts a post label between the body and the jump back, so
+      `continue` lands on the post and `break` leaves past it. The
+      header `var` is a frame slot, the existing discipline. The value
+      heap's no-reclamation arena — shared with the pre-loop
+      tail-recursive idiom — still bounds long-running programs;
+      unchanged by this task.)
 - [ ] **T35.8** — Goldens and benchmarks: `examples/loops` on all six
       target golden lists; a plain-loop row beside `loops_tail` in
       `benchmarks/results.md`; the CI groups; close-out.
