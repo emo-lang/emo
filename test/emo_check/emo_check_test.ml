@@ -117,8 +117,8 @@ println(grade)|}
     tc "Unknown branches join silently" (fun () ->
         let diagnostics =
           check
-            {|const box = Box.new(1)
-const v = if true { box.get() } else { 2 }
+            {|const scores = Map.new()
+const v = if true { scores.get("top") } else { 2 }
 println(v.to_string())|}
         in
         if List.length diagnostics > 0 then
@@ -1096,6 +1096,56 @@ let check_program (modules : (string * string) list) :
     units
   @ pre_errors
 
+(* Box.new types its cell: the argument's type is the element type, so
+   `read`/`replace` check against it and every other member is refused
+   — the runtime's rule, surfaced at check time (the stdlib builds its
+   state exclusively from bare `Box.new`, so an untyped cell unchecked
+   everything downstream). *)
+let box_tests =
+  [
+    tc "a box's read and replace check against the cell's type" (fun () ->
+        let diagnostics =
+          check
+            {|const n = Box.new(41)
+n.replace(n.read() + 1)
+println(n.read())|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "replace checks the value against the cell" (fun () ->
+        let diagnostics = check {|const s = Box.new("text")
+s.replace(42)|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "read's element flows to its consumers" (fun () ->
+        let diagnostics =
+          check
+            {|const s = Box.new("text")
+println(s.read() + "!")
+const n = Box.new(1)
+println(n.read() + 1)|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "an unknown method on a box is refused" (fun () ->
+        let diagnostics = check {|const n = Box.new(1)
+n.nope()|} in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
+    tc "a bare member access on a box is refused" (fun () ->
+        let diagnostics = check {|const n = Box.new(1)
+println(n.v)|} in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
+    tc "Box.new arity and named arguments are checked" (fun () ->
+        let diagnostics = check {|Box.new()
+Box.new(1, 2)
+Box.new(x: 1)|} in
+        Alcotest.(check int)
+          "three E4009s" 3
+          (List.length
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4009")
+                diagnostics)));
+  ]
+
 let cross_module_tests =
   [
     tc "a type declaration names another module's type" (fun () ->
@@ -1206,6 +1256,125 @@ const w = Widget.new()
 println(w)|}
               );
             ]
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+  ]
+
+(* The program's value signatures beside the type tables (CHECK.md,
+   cross-module signatures): every module's defs and consts pre-register
+   with their types, so a qualified `lib.f(x)` call checks its arguments
+   and `lib.answer` reads as more than Unknown — the same rule the
+   runtime's module loader enforces by raising. *)
+let member_signature_tests =
+  let lib =
+    {|def make() Int64 {
+  return 42
+}
+
+def greet(name String) String {
+  return "hi ${name}"
+}
+
+const answer = 7
+var counter = 0
+
+emo Math {
+  def double(n Int64) Int64 {
+    return n * 2
+  }
+
+  const tau = 6
+}
+|}
+  in
+  [
+    tc "a qualified call checks against the def's signature" (fun () ->
+        let diagnostics =
+          check_program [ ("lib", lib); ("app", "println(lib.greet(\"yo\"))") ]
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a qualified call's argument type is the def's" (fun () ->
+        let diagnostics =
+          check_program [ ("lib", lib); ("app", "println(lib.greet(42))") ]
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a qualified call's arity is the def's" (fun () ->
+        let diagnostics =
+          check_program [ ("lib", lib); ("app", "println(lib.make(1))") ]
+        in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+    tc "the return type flows to the caller" (fun () ->
+        let diagnostics =
+          check_program
+            [ ("lib", lib); ("app", "const x = lib.make()\nprintln(x.nope())") ]
+        in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
+    tc "a const read carries its type" (fun () ->
+        let diagnostics =
+          check_program
+            [ ("lib", lib); ("app", "const a = lib.answer\nprintln(a.nope())") ]
+        in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
+    tc "a bare def reference is the closure value" (fun () ->
+        let diagnostics =
+          check_program
+            [ ("lib", lib); ("app", "const f = lib.make\nprintln(f + 1)") ]
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "an unknown module member is refused statically" (fun () ->
+        let diagnostics =
+          check_program [ ("lib", lib); ("app", "println(lib.missing)") ]
+        in
+        Alcotest.(check bool) "E5004" true (has_code diagnostics "E5004"));
+    tc "another module's group checks its members" (fun () ->
+        let diagnostics =
+          check_program
+            [
+              ("lib", lib);
+              ("app", "println(Math.tau)\nprintln(Math.double(21))");
+            ]
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "another module's group member checks its argument" (fun () ->
+        let diagnostics =
+          check_program [ ("lib", lib); ("app", "println(Math.double(\"x\"))") ]
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a group member miss is the group's E4001" (fun () ->
+        let diagnostics =
+          check_program [ ("lib", lib); ("app", "println(Math.side())") ]
+        in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
+    tc "a capitalized name resolving nowhere is not defined" (fun () ->
+        let diagnostics =
+          check_program [ ("lib", lib); ("app", "const r = Nope") ]
+        in
+        Alcotest.(check bool) "E4003" true (has_code diagnostics "E4003"));
+    tc "a local shadows a module of the same name" (fun () ->
+        let diagnostics =
+          check_program
+            [
+              ("list", {|def length() Int64 {
+  return 0
+}
+|});
+              ("app", {|const list = [1, 2]
+println(list.length())|});
+            ]
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "the value-carrying builtins stay legal as names" (fun () ->
+        let diagnostics =
+          check
+            {|println(List.new([1, 2]).length())
+println(Map.new(("a", 1)).get("a"))
+println(Bytes.new(4).length())
+println(Byte.from_int64(200))
+println(Float64.from_bits(4614256656552045848))|}
         in
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics));
@@ -1608,6 +1777,8 @@ let () =
       ("map", map_tests);
       ("corpus", corpus_tests);
       ("printf", printf_tests);
+      ("box", box_tests);
+      ("member_signature", member_signature_tests);
       ("cross_module", cross_module_tests);
       ("callback", callback_tests);
       ("shape", shape_tests);

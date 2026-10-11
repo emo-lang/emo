@@ -22,9 +22,10 @@ const float = internal.float
 
 enum YamlKind { ynull, ybool, yint, yfloat, ystring, yarray, yobject }
 
-// The scalar accessors live on the interface; the containers (items,
-// entries, get) live on the concrete classes — an interface signature
-// cannot name its own interface — read them through `is()`.
+// The accessors live on the interface: the scalar `as_*` accessors,
+// and `get` — every kind answers it, the non-objects raising like the
+// scalar mismatches do. Container traversal beyond `get` (items,
+// entries) stays on the concrete classes behind `is()` narrowing.
 interface Yaml {
   def kind() YamlKind
   def is_null?() Bool
@@ -33,6 +34,7 @@ interface Yaml {
   def as_int() Int64
   def as_float() Float64
   def as_string() String
+  def get(key String) Yaml
 }
 
 class YamlNull {

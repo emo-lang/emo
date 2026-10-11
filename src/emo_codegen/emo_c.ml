@@ -940,7 +940,15 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
       match (name, args) with
       | "to_string", [] when self_.Emo_ir.ety = Emo_check.Bytes ->
           Printf.sprintf "emo_to_string_method(%s)" (as_dyn env self_)
-      | "to_string", [] when self_.Emo_ir.ety <> Emo_check.Unknown ->
+      | "to_string", []
+        when self_.Emo_ir.ety <> Emo_check.Unknown
+             &&
+             match self_.Emo_ir.ety with
+             | Emo_check.ClassType _ | Emo_check.InterfaceType _ -> false
+             | _ -> true ->
+          (* Instances keep out of the builtin conversion: the class's
+             own `to_string` answers first (the interpreter's rule), the
+             conversion only when no method carries the name. *)
           if is_dyn self_.Emo_ir.ety then
             Printf.sprintf "emo_to_string_dyn(%s)" (emit_expr env self_)
           else to_str env self_
@@ -1238,6 +1246,10 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                       else if is_dyn result_ty = is_dyn m.Emo_ir.fresult then v
                       else if is_dyn result_ty then box_code v m.Emo_ir.fresult
                       else unbox_code v m.Emo_ir.fresult
+                  | None when String.equal name "to_string" ->
+                      (* the builtin conversion answers when the class
+                         carries no method of the name *)
+                      Printf.sprintf "emo_to_string_dyn(%s)" (as_dyn env self_)
                   | None ->
                       refuse
                         (Printf.sprintf "the method `%s` on `%s`" name display))
