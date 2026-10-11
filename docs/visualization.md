@@ -195,7 +195,7 @@ a sequence of mutations against a live canvas.
 ### Layer 3 — the Matplotlib-like surface
 
 Marks are values: `plot.line(x, y)`, `plot.scatter(x, y)`,
-`plot.bars(labels, values)`, `plot.area(x, y)`,
+`plot.bar(labels, values)`, `plot.area(x, y)`,
 `plot.hist(values, bins)`. Each returns a mark carrying its data and a
 default style, and `axes(marks: [...])` collects them through a
 structural `Mark` interface. The full surface, and the one real design
@@ -213,13 +213,19 @@ mark, faceted by one or more grouping columns.
 Emo expresses that with a `Table` and the same figure and mark values:
 
 ```
-plot.stats.relational(tips, { "x": "total_bill", "y": "tip", "color": "time" })
-plot.stats.distributions(tips, { "x": "tip", "color": "smoker" })
-plot.stats.matrix(correlation)
+plot.stats.scatter(tips, { "x": "total_bill", "y": "tip", "color": "time" })
+plot.stats.hist(tips,    { "x": "tip", "color": "smoker" })
+plot.stats.box(tips,     { "x": "time", "y": "total_bill" })
+plot.stats.heatmap(correlation)
 ```
 
 The channel keys are Emo's own vocabulary (decision 2026-10-12): `x`,
-`y`, `color`, `size`, `marker`, `dash`, `facet_row`, `facet_col`.
+`y`, `color`, `size`, `marker`, `dash`, `facet_row`, `facet_col`. Each
+chart kind is its own function (decision 2026-10-12) — `scatter`,
+`line`, `hist`, `kde`, `ecdf`, `box`, `violin`, `bar`, `count`,
+`strip`, `point`, `reg`, `heatmap`, `clustermap` — so the family names
+above (`relational`, `distributions`, `categorical`, `regression`,
+`matrix`) are documentation grouping, not API.
 
 The statistics sublayer underneath: `describe`, `quantile`,
 `histogram_bins`, `kde`, `ecdf`, `ols` plus a confidence band,
@@ -429,7 +435,8 @@ model.
 
 - **Both front doors share one engine.** The positional surface
   (`plot.line(x, y)`) and the dataset surface
-  (`plot.stats.relational(table, x: "col")`) are two ways into the
+  (`plot.stats.scatter(table, { "x": "col", "y": "col" })`) are two
+  ways into the
   same `Figure`/`Axes`/`Mark` values, not two implementations.
 - **Expected failures are values.** Following the standard-library
   convention, a save that cannot open its path, a `Table` missing a
@@ -647,12 +654,14 @@ T0 + T1.
     `size`, `marker`, `dash`, `facet_row`, `facet_col`; channel values
     are column names only (constants go in styles); unknown channels
     are an error; each family reads only the channels it supports.
+17. **One function per chart kind.** `plot.stats` exposes `scatter`,
+    `line`, `hist`, `kde`, `ecdf`, `box`, `violin`, `bar`, `count`,
+    `strip`, `point`, `reg`, `heatmap`, `clustermap`; the family names
+    (`relational`, `distributions`, `categorical`, `regression`,
+    `matrix`) are documentation grouping, not API. Core mark names are
+    singular (`plot.bar`, not `plot.bars`).
 
 ## Remaining open questions
 
-1. **The chart kind.** How `plot.stats` selects a mark kind — a typed
-   `kind` argument, or one function per kind (`plot.stats.box`,
-   `plot.stats.violin`, …). It surfaced while writing the examples and
-   must be settled before `plot.stats` is specified.
-2. **Where the work starts.** Deferred (decision 2026-10-12): the
+1. **Where the work starts.** Deferred (decision 2026-10-12): the
    design is still being settled before any `plan/step-NN-*.md`.

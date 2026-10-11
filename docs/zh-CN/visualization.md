@@ -167,7 +167,7 @@ plot.save(chart, "chart.svg")
 ### 第 3 层 —— Matplotlib 式的表面
 
 mark 是值:`plot.line(x, y)`、`plot.scatter(x, y)`、
-`plot.bars(labels, values)`、`plot.area(x, y)`、
+`plot.bar(labels, values)`、`plot.area(x, y)`、
 `plot.hist(values, bins)`。每个返回一个携带数据与默认样式的 mark,
 `axes(marks: [...])` 通过结构化 `Mark` 接口把它们收起来。完整表面,
 以及唯一真正的设计难题——没有默认参数时样式如何携带——在下面的
@@ -183,13 +183,18 @@ mark 是值:`plot.line(x, y)`、`plot.scatter(x, y)`、
 `Figure`/`Mark` 值恰好能表达:
 
 ```
-plot.stats.relational(tips, { "x": "total_bill", "y": "tip", "color": "time" })
-plot.stats.distributions(tips, { "x": "tip", "color": "smoker" })
-plot.stats.matrix(correlation)
+plot.stats.scatter(tips, { "x": "total_bill", "y": "tip", "color": "time" })
+plot.stats.hist(tips,    { "x": "tip", "color": "smoker" })
+plot.stats.box(tips,     { "x": "time", "y": "total_bill" })
+plot.stats.heatmap(correlation)
 ```
 
 通道键是 Emo 自己的词表(2026-10-12 决定):`x`、`y`、`color`、`size`、
-`marker`、`dash`、`facet_row`、`facet_col`。
+`marker`、`dash`、`facet_row`、`facet_col`。每种图一个函数(2026-10-12
+决定):`scatter`、`line`、`hist`、`kde`、`ecdf`、`box`、`violin`、`bar`、
+`count`、`strip`、`point`、`reg`、`heatmap`、`clustermap`;上面的家族名
+(`relational`、`distributions`、`categorical`、`regression`、`matrix`)
+只是文档分组,不是 API。
 
 其下的统计子层:`describe`、`quantile`、`histogram_bins`、`kde`、
 `ecdf`、`ols` 加置信带、`box_stats`,以及一个确定性的 PRNG。全是纯
@@ -376,7 +381,7 @@ E4009),而且它需要自己的设计评审与第二个消费者。建议是**�
 ### 契约的其余部分
 
 - **两扇门共用一个引擎。** 位置式表面(`plot.line(x, y)`)与数据集
-  表面(`plot.stats.relational(table, x: "col")`)是进入同一套
+  表面(`plot.stats.scatter(table, { "x": "col", "y": "col" })`)是进入同一套
   `Figure`/`Axes`/`Mark` 值的两种写法,不是两套实现。
 - **预期失败是值。** 依循标准库惯例,保存时路径打不开、`Table` 缺
   某个命名列、直方图没有值,都返回 `(R.ok, value)` /
@@ -546,11 +551,14 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
 16. **通道词表——Emo 自己的词。** `x`、`y`、`color`、`size`、`marker`、
     `dash`、`facet_row`、`facet_col`;通道值只写列名(常量走样式);
     未知通道报错;每个家族只读它支持的通道。
+17. **每种图一个函数。** `plot.stats` 暴露 `scatter`、`line`、`hist`、
+    `kde`、`ecdf`、`box`、`violin`、`bar`、`count`、`strip`、`point`、
+    `reg`、`heatmap`、`clustermap`;家族名(`relational`、
+    `distributions`、`categorical`、`regression`、`matrix`)只是文档
+    分组,不是 API。核心 mark 名统一成单数(`plot.bar`,不是
+    `plot.bars`)。
 
 ## 剩余的开放问题
 
-1. **图表 kind。** `plot.stats` 怎么选 mark 种类——一个类型化的 `kind`
-   参数,还是每种一个函数(`plot.stats.box`、`plot.stats.violin`……)。
-   写示例时才浮出来,细化 `plot.stats` 前必须定。
-2. **从哪里开工。** 暂缓(2026-10-12 决定):设计还没定完,先不开
+1. **从哪里开工。** 暂缓(2026-10-12 决定):设计还没定完,先不开
    `plan/step-NN-*.md`。
