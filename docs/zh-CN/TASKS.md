@@ -2,7 +2,7 @@
 
 > 中文版,与英文版 [docs/TASKS.md](../TASKS.md) 内容一一对应;更新英文版时请同步更新本文件。
 
-从 `plan/step-01-project-scaffold.md` 到 `plan/step-26-target-independence.md` 汇总而成的编号任务清单。plan 文件仍是规格说明——下面每个任务所属的步骤文件里有完整的目标、范围与验收标准。本文件是进度追踪表。
+从 `plan/step-01-project-scaffold.md` 起汇总而成的编号任务清单。plan 文件仍是规格说明——下面每个任务所属的步骤文件里有完整的目标、范围与验收标准。本文件是进度追踪表。
 
 ## 使用说明
 
@@ -28,6 +28,7 @@
 | M8 — 自包含托管后端 | 24 | `emo build --target c` 发射 C、自带运行时、直接 C ABI——步骤 23 的评估已排期;解锁自包含工具分发(CHECK.md)。 |
 | M9 — 工具链 | 25 | 工具链发布(以 v0.25.9 剪出):GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
 | M10 — Target 独立 | 26 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |
+| M11 — For / While 循环 | 34–35 | 已定案的循环面在解释器与全部六个 target 上逐字节运行:`for`(三子句,头部 `var` 作用域限定在循环)与 `while`,搭配裸 `break`/`continue`;循环在任何栈上都不增长;尾调用保证不变。 |
 
 ## 设计闸门
 
@@ -450,3 +451,33 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 - [x] **T26.4** — 调度器与 IO:基于 effects 的调度器、文件 IO 与网络面,按依赖策略执行(核心用 OCaml 标准库加 `unix`;`ssl` 为唯一 opam 依赖;不用 eio)。Fixture:进程程序与 HTTP 往返,均仅对独立运行时编译。
 - [x] **T26.5** — 切换:ocaml 发射器的引用翻转到独立运行时;分支发射运行时 + `main.ml` 并调用 `ocamlopt`(ocamlfind 只为运行时自己的包);`.cmxa` 机制、库扫描与二进制旁查找删除;拒绝与 doctor 措辞改为与安装形态无关。全部 ocaml 金测与测试逐字节;带 OCaml 工具链的安装二进制构建金测子集。
 - [x] **T26.6** — 独立性审计与收尾:wasm 与 beam 记录为验证独立(无任务——证据在案);文档修正(`docs/toolchain.md`、`docs/toolchain-distribution.md`——用真实的 ocaml target 故事取代"源码安装带来 ocaml target");`benchmarks/results.md` 的 ocaml 列对独立运行时复测;收尾。 (2026-10-07 完成:wasm 与 beam 的证据记入 plan;两份工具链文档双语更正,doctor 删除 installation 行;基准套件在独立运行时上复测,ocaml 行落在机器观测噪声带内;plan 状态记为 done。步骤 26 于 2026-10-07 完成——任何 target 都不从二进制旁或宿主构建树读取运行时,ocaml target 在 OCaml 工具链在 PATH 的任何安装形态下可用,全部金测逐字节,`dune test` 全绿。)
+
+## M11 — For / While 循环
+
+`CHECK.md` 已定案的循环面(2026-10-06):保证的尾调用保留,`for` / `while` 加入其中。`for var i = 0; i < n; i = i + 1 { ... }` 无括号、恰好三个子句、头部的 `var` 作用域限定在头部与循环体;`while cond { ... }` 仅条件;`break` 与 `continue` 是绑定最近循环的裸语句;不加 `do`/`while`,不加 `+=`/`++`。动机:循环是向量化与 OpenMP 并行循环 rung(HPC 闸门)的原生形状,免去循环代码的尾位置证明负担,并与 `var` 自然搭配——而 var 逃逸规则(E4012)已挡住 Go 的循环捕获陷阱。设计记录在 `CHECK.md` 与 README;每个步骤的 plan 文件在步骤启动时编写。
+
+### Step 34 — 循环表面:lexer、parser、checker、解释器
+
+**前置:** Step 33。
+**完成标准:** README 的循环示例经 `emo run` 逐字运行;CHECK.md 的演示范例(`for var i = 0; i < 100; i = i + 50`)先打印 `i = 0` 再打印 `i = 50`;千万次迭代的 `while` 栈保持平坦;每种拒绝——保留字用作标识符、缺子句、`;` 出现在 `for` 头之外、循环外的 `break`/`continue`——各有自己的诊断;`dune test` 全绿。
+
+- [ ] **T34.1** — 关键字:lexer 保留 `for`、`while`、`break`、`continue`;LSP 补全列表与 VS Code grammar 同步翻转;把这四个词用作标识符的代码得到清晰的保留字诊断。
+- [ ] **T34.2** — Parser:`while cond { }` 与三子句 `for`——不许省略,post 子句是赋值,`;` 是仅在 `for` 头内合法的记号,`while` 条件与 `for` 三个子句都设 `suppress_block_sugar`,使随后的 `{` 打开循环体而非粘成尾随块;四个语句的 AST 节点。
+- [ ] **T34.3** — Checker:头部 `var` 在现有深度模型下作用域限定于头部+循环体;`break`/`continue` 绑定最近的循环,循环外一律拒绝;`definitely_returns` 把循环纳入,使 `return` 可达性保持可靠;箭头块捕获头部 `var` 仍是 E4012。
+- [ ] **T34.4** — 解释器:四个语句进入 `eval_stmt`;迭代跑宿主循环、绝不递归——千万次迭代栈平坦;`continue` 先执行 `for` 的 post 子句;步数预算按每次迭代计一步。
+- [ ] **T34.5** — 示例与拒绝语料:`examples/loops`——演示范例、`while` 计数、`break`/`continue`、嵌套循环——经 `emo run` 金测;parser 与 checker 的拒绝语料钉住每一种拒绝。
+- [ ] **T34.6** — README 对齐:README(英文 + 中文)已按定案写好循环语法——对照实现核对,漂移处一并修正。
+
+### Step 35 — 循环上全部 target:IR 与六个后端
+
+**前置:** Step 34。
+**完成标准:** `examples/loops` 在 c、ocaml、typescript、wasm、beam、riscv64 上编译,每个 target 逐字节打印 `emo run` 的输出(金测入 CI);千万次迭代的循环在每个 target 上栈保持平坦;尾调用保证不被触动(`loops_tail` 不变);`dune test` 全绿。
+
+- [ ] **T35.1** — IR:循环语句进入 `emo_ir` 的 `stmt` 与 Ast→IR 降低——头部 `var` 降为循环作用域的可变绑定;一套节点,每个后端一个分支。
+- [ ] **T35.2** — c:发射出的 C 自带的 `while`/`for` 与原生 `break`/`continue`;循环内的 `return` 走既有的分支到收尾路径。
+- [ ] **T35.3** — ocaml:原生 `while`/`for` 配既有的 `ref` 纪律表达头部 `var`;`break`/`continue` 经 plan 文件记录的唯一机制降低(done 标记或本地异常——落定,绝不静默回退)。
+- [ ] **T35.4** — typescript:发射体内原生 `while`/`for`;`break`/`continue` 用目标语言自己的。
+- [ ] **T35.5** — wasm:结构化控制流——`Loop` 加条件上的 `Br_if`;`break` 分支出循环块,`continue` 到循环头,post 子句先行执行。
+- [ ] **T35.6** — beam:循环降为尾递归的局部函数——条件守卫、循环体、带重绑变量的递归调用;`break` 穿线一个 done 标记。
+- [ ] **T35.7** — riscv64:标号与条件分支——循环头是标号,`break`/`continue` 是跳转。
+- [ ] **T35.8** — 金测与基准:`examples/loops` 上全部六个 target 金测列表;`benchmarks/results.md` 在 `loops_tail` 旁新增纯循环一行;CI 各组;收尾。
