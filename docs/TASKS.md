@@ -1051,9 +1051,19 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       `continue` lands on the post and a `break` leaves past it; frame
       depths are tracked for statement-level ifs and case dispatches so
       branch depths stay relative-correct inside nested control flow.)
-- [ ] **T35.6** — beam: the loop lowers to a tail-recursive local
+- [x] **T35.6** — beam: the loop lowers to a tail-recursive local
       function — condition guard, body, recursive call with the
       rebound variables; `break` threads a done marker.
+      (Done 2026-10-11. Each loop is a hidden module function taking
+      the header `var` plus every outer binding the body reads or
+      assigns, threaded through the recursive calls; a done flag
+      marks `break`, `continue` applies the post first. The body
+      emits as a tail chain — ifs weave the rest into their arms,
+      jumps truncate the dead rest — so every jump is a genuine tail
+      call; Core Erlang's `do` only tail-calls its last operand.)
+      (Also fixed: the single-statement `Assign_var` path registered
+      the shadow before evaluating the value, so `n = n + 1` read the
+      variable it was defining.)
 - [ ] **T35.7** — riscv64: labels and conditional branches — the loop
       head a label, `break`/`continue` jumps.
 - [ ] **T35.8** — Goldens and benchmarks: `examples/loops` on all six
