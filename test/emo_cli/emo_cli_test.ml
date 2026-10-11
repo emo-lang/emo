@@ -1641,6 +1641,98 @@ username = "u"|}
               (contains e "no registry"));
   ]
 
+(* ---- The riscv64 goldens (T22.1): the freestanding ELF boots under
+   QEMU and the payload's output matches the interpreter byte for byte.
+   Two transport facts belong to the harness, not the target: OpenSBI
+   (QEMU's default BIOS) prints its banner on the same serial stream —
+   the payload starts after the banner's last Boot HART line — and the
+   SBI console renders every newline as CRLF. Skips when QEMU or the
+   cross binutils are absent. ---- *)
+
+let riscv64_available =
+  lazy
+    (Sys.command "qemu-system-riscv64 --version >/dev/null 2>&1" = 0
+    && Sys.command "riscv64-unknown-elf-as --version >/dev/null 2>&1" = 0
+    && Sys.command "riscv64-unknown-elf-ld --version >/dev/null 2>&1" = 0)
+
+(* The payload's serial output: everything after OpenSBI's banner, with
+   the console's CRLF rendered back to LF. Without a banner (a bare-metal
+   boot) the stream is the payload's already. *)
+let riscv64_payload (serial : string) : string =
+  let strip_cr s =
+    let n = String.length s in
+    if n > 0 && s.[n - 1] = '\r' then String.sub s 0 (n - 1) else s
+  in
+  let lines = Array.of_list (String.split_on_char '\n' serial) in
+  let n = Array.length lines in
+  let rec last_banner i found =
+    if i >= n then found
+    else
+      last_banner (i + 1)
+        (if String.starts_with ~prefix:"Boot HART " lines.(i) then Some i
+         else found)
+  in
+  let from = match last_banner 0 None with Some i -> i + 1 | None -> 0 in
+  let out = Buffer.create 1024 in
+  for j = from to n - 1 do
+    Buffer.add_string out (strip_cr lines.(j));
+    if j < n - 1 then Buffer.add_char out '\n'
+  done;
+  Buffer.contents out
+
+let riscv64_examples_tests =
+  List.map
+    (fun name ->
+      tc (Printf.sprintf "%s compiles to riscv64 and boots under QEMU" name)
+        (fun () ->
+          if not (Lazy.force riscv64_available) then Alcotest.skip ();
+          let dir = Filename.concat examples_dir name in
+          let expected = read_file (Filename.concat dir "expected.txt") in
+          let out_elf = Filename.concat scratch (name ^ "-riscv64.elf") in
+          let exit_code =
+            Emo_cli.build_file
+              ~entry:(Filename.concat dir "main.emo")
+              ~output:out_elf ~specialize:false ~cclibs:[] ~target:"riscv64"
+          in
+          Alcotest.(check int) "build exit" 0 exit_code;
+          let cmd =
+            Printf.sprintf
+              "qemu-system-riscv64 -machine virt -nographic -kernel %s"
+              (Filename.quote out_elf)
+          in
+          let cmd_stdout, _cmd_stdin, cmd_stderr =
+            Unix.open_process_full cmd (Unix.environment ())
+          in
+          let serial = Buffer.create 4096 in
+          (try
+             while true do
+               Buffer.add_channel serial cmd_stdout 4096
+             done
+           with End_of_file -> ());
+          let err = Buffer.create 256 in
+          (try
+             while true do
+               Buffer.add_channel err cmd_stderr 4096
+             done
+           with End_of_file -> ());
+          let proc_status =
+            Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+          in
+          Alcotest.(check string)
+            "output" expected
+            (riscv64_payload (Buffer.contents serial));
+          match proc_status with
+          | Unix.WEXITED 0 -> ()
+          | s ->
+              Alcotest.fail
+                (Printf.sprintf "the image exited %s: %s"
+                   (match s with
+                   | Unix.WEXITED n -> string_of_int n
+                   | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                   | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                   (Buffer.contents err))))
+    [ "hello_world"; "fib" ]
+
 (* ---- new: the project scaffold (T25.3) ---- *)
 
 let read_file path =
@@ -1815,6 +1907,7 @@ let () =
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
       ("c_foreign", c_foreign_tests);
+      ("riscv64_examples", riscv64_examples_tests);
       ("publish", publish_tests);
       ("login", login_tests);
       ("new", new_tests);

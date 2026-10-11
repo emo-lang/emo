@@ -406,12 +406,12 @@ the core subset prints exactly what `emo run` prints (goldens in CI);
 diagnostics; packages without `"riscv64"` fail resolution; `dune test`
 green.
 
-- [ ] **T22.1** — The backend skeleton: `--target riscv64` plumbing
+- [x] **T22.1** — The backend skeleton: `--target riscv64` plumbing
       (emitter module; the CLI arm writing `main.s`, invoking
       `as`/`ld` with the generated linker script; `emo run` booting the
       ELF under QEMU); the entry stub, BSS clear, SBI console.
       Golden: hello_world (serial output byte-for-byte vs `emo run`).
-- [ ] **T22.2** — The value model and arithmetic: the tagged-word
+- [x] **T22.2** — The value model and arithmetic: the tagged-word
       dynamic representation (`Int64`/`Float64` boxed cells, Bool/Char
       immediates) and the bump allocator; wrap-around arithmetic,
       comparisons, `if`, integer formatting (`INT64_MIN` correct);

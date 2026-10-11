@@ -2,7 +2,8 @@
 
 **Milestone:** M7 · **Prereq:** steps 01–13 (the specialization pass);
 the step-14 RISC-V reference note is the design record ·
-**Status:** not started
+**Status:** T22.1–T22.2 done (2026-10-11 — the value model boots and
+fib is golden; T22.3–T22.4 remain)
 
 ## Goal
 
@@ -111,13 +112,58 @@ scheduler is the following step.
 - The hosted de-risk shortcut (cross-built OCaml riscv64 Linux
   userland) — optional, its own track.
 
+## Decisions settled in T22.1 (the trail)
+
+- **The image: two read-only segments and one read-write, via a
+  `PHDRS` block** — the flat one-segment layout earns an ld warning
+  ("LOAD segment with RWX permissions"); the split gives the loader
+  honest permissions and costs one small static script.
+- **The goldens own two transport facts; the payload owns none.**
+  OpenSBI's banner shares the serial stream (the payload's output
+  starts after the banner's last `Boot HART` line), and the SBI
+  console renders every newline as CRLF (the banner does the same).
+  The golden strips the banner and normalizes CRLF to LF; the payload
+  emits plain LF and the runner passes the stream through untouched.
+- **The psABI discipline starts at the entry body**: `ra` is
+  caller-saved, so any emitted function that calls and returns keeps
+  a frame for its own return address — `emo_program`'s bare `ret`
+  after a `call` was the first boot's infinite `ret`-to-self hang.
+
+## Decisions settled in T22.2 (the trail)
+
+- **The immediate layout: bit 0 set, kind in bits 3:1 (0 Bool,
+  1 Char, 2 Enum), payloads above bit 3.** Bool's payload rides bit 4
+  (`false` = 1, `true` = 17) — an earlier draft put it in bit 1, which
+  made `true` decode as Char. Truthiness tests, `not`, and every
+  comparison's boolean build key on bit 4.
+- **Field access runs on the untagged pointer, everywhere.** Int64's
+  tag is 0 and hides any slip (the fib bug that cost an afternoon);
+  the Float64 paths, the closure record in t0, and the interpolation
+  length reads all `andi -8` before touching fields.
+- **Tail calls carry the caller's return address in ra**: `ld ra,
+  0(sp)` before the frame release, because `tail`/`jr` never write ra —
+  otherwise the deepest frame returns into the middle of the loop body
+  and the recursion never terminates.
+- **The pre-pass must score every construct the emitter can emit** —
+  `expr_depth` missed `Builtin`'s arguments, so `println` of an
+  interpolation wrote four slots past a frame sized for none. The
+  frame layout (named slots, then depth-indexed temporaries) is only
+  as sound as that count.
+- The heap is 64 MiB of .bss beside the 1 MiB stack (both NOBITS);
+  `count_down(1000000)`'s boxed arguments fit with room to spare.
+
 ## Tasks
 
-- [ ] **T22.1** — The backend skeleton: `--target riscv64` plumbing
+- [x] **T22.1** — The backend skeleton: `--target riscv64` plumbing
       (emitter module; the CLI arm writing `main.s`, invoking
       `as`/`ld` with the generated linker script; `emo run` booting the
       ELF under QEMU); the entry stub, BSS clear, SBI console.
       Golden: hello_world (serial output byte-for-byte vs `emo run`).
+- [x] **T22.2** — The value model and arithmetic: the tagged-word
+      representation (numeric cells, Bool/Char immediates) and the
+      bump allocator; wrap-around `Int64`/`Float64` arithmetic,
+      comparisons, `if`, integer formatting (`INT64_MIN` correct);
+      guaranteed tail calls as `tail`. Golden: fib.
 - [ ] **T22.2** — The value model and arithmetic: the tagged-word
       representation (numeric cells, Bool/Char immediates) and the
       bump allocator; wrap-around `Int64`/`Float64` arithmetic,
