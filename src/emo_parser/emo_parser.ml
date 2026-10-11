@@ -719,12 +719,15 @@ and parse_for_init st =
       let init = parse_expr st in
       stmt start_span
         (Ast.Binding
-          {
-            mutable_ = true;
-            pattern =
-              { Ast.pattern_span = name_span; pattern_desc = Ast.Pattern_binding name };
-            init;
-          })
+           {
+             mutable_ = true;
+             pattern =
+               {
+                 Ast.pattern_span = name_span;
+                 pattern_desc = Ast.Pattern_binding name;
+               };
+             init;
+           })
   | Tok.Keyword Tok.Const ->
       error "E2026" (span st)
         "the `for` header binds a `var`; a loop's variable has to change"
@@ -1099,16 +1102,16 @@ and parse_emo_group st =
               error "E2001" const_tok
                 "a group cannot declare `var` (groups are stateless)"
           | {
-             Ast.stmt_desc =
-               Ast.Binding
-                 {
-                   mutable_ = false;
-                   pattern = { pattern_desc = Ast.Pattern_binding name; _ };
-                   init;
-                   _;
-                 };
-             _;
-            } ->
+           Ast.stmt_desc =
+             Ast.Binding
+               {
+                 mutable_ = false;
+                 pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                 init;
+                 _;
+               };
+           _;
+          } ->
               consts := (const_tok, name, init) :: !consts
           | { Ast.stmt_desc = Ast.Binding _; _ } ->
               error "E2001" const_tok "a group's `const` binds a plain name"

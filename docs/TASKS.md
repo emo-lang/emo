@@ -1128,7 +1128,7 @@ non-empty `data`; `dune test` green.
 - [x] **T36.2** — Parser: `const`/`var` accept a full pattern in
       place of the name (`Ast.Binding` carries it); the `const (`
       form stops being a hard error, breaking no grammar.
-- [ ] **T36.3** — IR: the pattern binding desugars to a one-arm
+- [x] **T36.3** — IR: the pattern binding desugars to a one-arm
       `case` wrapping the block remainder — no new IR nodes, the six
       backends see only existing ones.
 - [ ] **T36.4** — Checker: pattern bindings check through

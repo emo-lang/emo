@@ -227,6 +227,69 @@ def pick() Color {
 println(2)|}) ] ~entry:[]
         in
         Alcotest.(check int) "pinit length" 2 (List.length program.Emo_ir.pinit));
+    tc "a destructured binding desugars to a one-arm case" (fun () ->
+        let program =
+          lower_program
+            [
+              ( [ "app" ],
+                {|
+def probe(t (R, Int64)) Int64 {
+  const (R.ok, body) = t
+  return body
+}
+|}
+              );
+            ]
+            ~entry:[ "app" ]
+        in
+        let f = find_func program "app__probe" in
+        (match f.Emo_ir.fbody with
+        | [ Emo_ir.Case { scrutinee; branches = [ branch ]; _ } ] ->
+            Alcotest.(check bool) "no guard" true (branch.Emo_ir.guard = None);
+            Alcotest.(check int) "one arm" 1 (List.length branch.Emo_ir.body);
+            (match branch.Emo_ir.body with
+            | [ Emo_ir.Return_stmt { desc = Emo_ir.Var name; _ } ] ->
+                Alcotest.(check string) "bound name" "body" name
+            | other ->
+                Alcotest.fail
+                  (Printf.sprintf "expected the wrapped return, got %d stmts"
+                     (List.length other)));
+            Alcotest.(check string)
+              "scrutinee" "t"
+              (match scrutinee.Emo_ir.desc with
+              | Emo_ir.Var name -> name
+              | _ -> "other")
+        | other ->
+            Alcotest.fail
+              (Printf.sprintf "expected one Case stmt, got %d"
+                 (List.length other)));
+        ignore program);
+    tc "a binding's name is in scope for its successors" (fun () ->
+        let program =
+          lower_program
+            [
+              ( [ "app" ],
+                {|
+def probe(n Int64) Int64 {
+  const v = n + 1
+  return v
+}
+|}
+              );
+            ]
+            ~entry:[ "app" ]
+        in
+        let f = find_func program "app__probe" in
+        (match List.rev f.Emo_ir.fbody with
+        | Emo_ir.Return_stmt { desc = Emo_ir.Var name; _ } :: _ ->
+            Alcotest.(check string) "reads the binding" "v" name
+        | Emo_ir.Return_stmt _ :: _ ->
+            Alcotest.fail "the trailing return does not read `v` directly"
+        | other ->
+            Alcotest.fail
+              (Printf.sprintf "expected a trailing return, got %d stmts"
+                 (List.length other)));
+        ignore program);
   ]
 
 let () = Alcotest.run "emo_ir" [ ("ir", ir_tests) ]

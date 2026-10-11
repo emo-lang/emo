@@ -493,17 +493,14 @@ let stmt_tests =
                  (List.length stmts)));
     tc "a binding takes a full pattern in place of the name" (fun () ->
         match
-          parse_program
-            "const (R.ok, body) = pick()\nvar (a, b) = pair()"
+          parse_program "const (R.ok, body) = pick()\nvar (a, b) = pair()"
         with
         | [ ok_binding; pair_binding ] ->
             Alcotest.(check string)
-              "the assert-match binding"
-              "(const (tuple R.ok body) (pick call))"
+              "the assert-match binding" "(const (tuple R.ok body) (pick call))"
               (render pp_item ok_binding);
             Alcotest.(check string)
-              "a var destructures too"
-              "(var (tuple a b) (pair call))"
+              "a var destructures too" "(var (tuple a b) (pair call))"
               (render pp_item pair_binding)
         | stmts ->
             Alcotest.fail
@@ -517,8 +514,7 @@ let stmt_tests =
               (render pp_item wildcard)
         | stmts ->
             Alcotest.fail
-              (Printf.sprintf "expected 1 statement, got %d"
-                 (List.length stmts)));
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
     tc "a group's const binds a plain name" (fun () ->
         let diagnostic =
           program_err "emo Math {\n  const (R.ok, tau) = split()\n}"
@@ -538,8 +534,8 @@ let stmt_tests =
               ("code of " ^ source) "E2007" (code_of diagnostic);
             Alcotest.(check string)
               ("message of " ^ source)
-              (Printf.sprintf
-                 "expected a pattern, found `%s` (a reserved word)" word)
+              (Printf.sprintf "expected a pattern, found `%s` (a reserved word)"
+                 word)
               diagnostic.Diagnostic.message)
           [
             ("var for = 3", "for");

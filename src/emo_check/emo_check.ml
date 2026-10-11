@@ -794,7 +794,7 @@ let empty_env =
           } );
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
-        ( "R", { vtype = EnumType "R"; is_var = false; depth = 0 } );
+        ("R", { vtype = EnumType "R"; is_var = false; depth = 0 });
       ];
     depth = 0;
     ret = None;
@@ -2269,7 +2269,9 @@ and check_stmt ctx env (s : Ast.stmt) : env =
           | Some existing when existing.depth = env.depth ->
               (* Rebinding in the same scope: drift is an error only when the
                  earlier type is known and the new one provably breaks it. *)
-              if (not (conforms ctx t existing.vtype)) && existing.vtype <> Unknown
+              if
+                (not (conforms ctx t existing.vtype))
+                && existing.vtype <> Unknown
               then
                 report ctx span "E4004"
                   (Printf.sprintf "`%s` was bound as %s, this rebinds it as %s"
@@ -2282,8 +2284,8 @@ and check_stmt ctx env (s : Ast.stmt) : env =
              until they land the form refuses here, loudly, instead of
              silently dropping its bindings. *)
           report ctx pattern.Ast.pattern_span "E4024"
-            "a destructured binding is not supported yet; match the value in \
-             a `case`";
+            "a destructured binding is not supported yet; match the value in a \
+             `case`";
           env)
   | Ast.Assign { target; value } -> (
       let vt = check_expr ctx env value in
@@ -3033,7 +3035,8 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
                      Ast.Binding
                        {
                          mutable_;
-                         pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                         pattern =
+                           { pattern_desc = Ast.Pattern_binding name; _ };
                          init;
                          _;
                        };

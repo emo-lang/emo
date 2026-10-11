@@ -2826,7 +2826,8 @@ and eval_stmt env s =
   | Ast.Expr_stmt e -> ignore (eval_expr env e)
   | Ast.Binding { mutable_; pattern; init } -> (
       match pattern.Ast.pattern_desc with
-      | Ast.Pattern_binding name -> define env name ~mutable_ (eval_expr env init)
+      | Ast.Pattern_binding name ->
+          define env name ~mutable_ (eval_expr env init)
       | _ -> not_yet span "a destructured binding")
   | Ast.Assign { target; value } -> (
       let v = eval_expr env value in

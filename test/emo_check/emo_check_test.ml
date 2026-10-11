@@ -1818,9 +1818,7 @@ def pick(t (R, String)) String {
         then Alcotest.fail ("unexpected message: " ^ first.Diagnostic.message);
         let diagnostics = check "class R {\n  def init() {\n  }\n}" in
         Alcotest.(check bool) "class R" true (has_code diagnostics "E4023");
-        let diagnostics =
-          check "interface R {\n  def ok() String\n}\n"
-        in
+        let diagnostics = check "interface R {\n  def ok() String\n}\n" in
         Alcotest.(check bool) "interface R" true (has_code diagnostics "E4023");
         let diagnostics =
           check "emo R {\n  def ok() String {\n    return \"x\"\n  }\n}"
@@ -1828,10 +1826,12 @@ def pick(t (R, String)) String {
         Alcotest.(check bool) "group R" true (has_code diagnostics "E4023");
         let diagnostics = check "class Exception {\n  def init() {\n  }\n}" in
         Alcotest.(check bool)
-          "class Exception" true (has_code diagnostics "E4023");
+          "class Exception" true
+          (has_code diagnostics "E4023");
         let diagnostics = check "enum Exception { boom }" in
         Alcotest.(check bool)
-          "enum Exception" true (has_code diagnostics "E4023"));
+          "enum Exception" true
+          (has_code diagnostics "E4023"));
     tc "the refusal rides the program-wide name set too" (fun () ->
         let diagnostics =
           check_program [ ("a", {|class R {
@@ -1851,7 +1851,8 @@ let binding_pattern_tests =
   [
     tc "a plain binding checks clean" (fun () ->
         Alcotest.(check int)
-          "count" 0 (List.length (check "const x = 1\nprintln(x)")));
+          "count" 0
+          (List.length (check "const x = 1\nprintln(x)")));
     tc "a destructured binding refuses until its checks land" (fun () ->
         let diagnostics =
           check "const (R.ok, body) = (R.ok, 1)\nprintln(body)"

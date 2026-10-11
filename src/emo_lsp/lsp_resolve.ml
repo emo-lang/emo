@@ -41,11 +41,7 @@ let rec find_binding (items : Ast.item list) (name : string) : Ast.expr option =
         if !found = None then
           match s.Ast.stmt_desc with
           | Ast.Binding
-              {
-                pattern = { pattern_desc = Ast.Pattern_binding n; _ };
-                init;
-                _;
-              }
+              { pattern = { pattern_desc = Ast.Pattern_binding n; _ }; init; _ }
             when n = name ->
               found := Some init
           | Ast.If { then_body; else_body; _ } ->
