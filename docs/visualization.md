@@ -33,7 +33,7 @@ arithmetic, layout, and a fair amount of disciplined ordinary code.
 | **T0** | 2D chart core — line, scatter, bar, area, histogram; axes, ticks, legend, title; SVG output | one person, weeks; the spike already proves the shape and the gaps are known |
 | **T1** | Seaborn-grade statistics — distributions (hist/KDE/ECDF), categorical (box/violin/bar/count/strip), regression, matrix (heatmap/clustermap), faceting, palettes and themes | one person, 1–2 months; pure Emo on T0, arithmetic only |
 | **T2** | Raster PNG — a pure-Emo zlib stream (stored blocks), CRC32, a stroke-font rasterizer with supersampling | 1–2 months for a readable, correct implementation; no FFI needed |
-| **T3** | Interactive/GUI charts (EmoUI canvas), 3D, animation | gated: needs a canvas verb contract, first-class callbacks, and reclamation (the emo-ui checklist) |
+| **T3** | Interactive/GUI charts, 3D, animation | out of scope now; a native GUI canvas is a separate direction (see below), not part of this effort |
 | **out** | PDF/PS/EPS, LaTeX text, complex-script shaping, an Agg/FreeType-class native backend | not worth chasing; a native-only tier would fragment the product for fidelity nobody asked for |
 
 "Full Matplotlib + Seaborn parity" is not a decidable end state —
@@ -61,9 +61,10 @@ The choice of the SVG output format is load-bearing, not incidental.
 - **Vector is the scientific-figure use case.** Crisp at any zoom,
   editable, diffable, and small on disk.
 - **It composes with what already exists.** SVG drops into HTML for a
-  browser; the `wasm` and `typescript` targets can inject it into the
-  DOM; and a future EmoUI canvas is simply a second consumer of the
-  same scene description.
+  browser, and the `wasm` and `typescript` targets can inject it into
+  the DOM. A native GUI canvas, if one is ever built, would be a
+  second consumer of the same scene description — a separate
+  direction, not part of this effort (see Layer 5).
 - **There is a proven ancestor.** gnuplot outputs SVG (and PNG, and
   terminals) from one core with public-domain Hershey stroke fonts and
   no font engine — the closest architectural precedent to what Emo
@@ -154,9 +155,12 @@ interface Renderer {
 The `SvgRenderer` is the only shipped implementation in T0. A
 terminal renderer (braille/block characters, in the spirit of
 `UnicodePlot`) and a PNG rasterizer are later implementations of the
-same interface; an EmoUI canvas is a third. This is Matplotlib's
-Artist/Renderer split, and it mirrors the nine-verb `ui_*` contract
-the GUI spikes already established.
+same interface. `Renderer` is a plotting-side abstraction, not an Emo
+target: Emo's targets are `ocaml`/`c`/`typescript`/`wasm`/`beam`/
+`riscv64`, while EmoUI is a library over them whose platform backends
+are OS toolkits (AppKit, GTK 4). EmoUI's current contract places
+widgets and has no drawing verb, so it is not a plotting backend
+today (see Layer 5). This split is Matplotlib's Artist/Renderer.
 
 ### Layer 1 — geometry, scales, ticks
 
@@ -230,11 +234,16 @@ accept it, and it must not grow into pandas.
 
 ### Layer 5 — other backends and interaction
 
-Terminal output (T0's low-cost second renderer), PNG (T2), and an
-EmoUI canvas (T3). Interactivity — hover, zoom, legend toggling —
-belongs here and only here; it is gated on the emo-ui checklist
-(callbacks across the FFI, reclamation, a canvas verb), and should not
-shape the static API.
+Terminal output and PNG are further `Renderer` implementations.
+Interactive/GUI charts are **out of scope for now** (decision
+2026-10-12): EmoUI is not an Emo target, and its current contract
+(`ui_window_make`/`ui_label_make`/`ui_place`/…) places widgets and has
+no drawing verb, so drawing into EmoUI would be a new EmoUI
+capability, not a plotting backend. If interactivity is ever pursued,
+it is a **separate direction in EmoUI**: one shared vector-canvas
+contract that both EmoUI's canvas widget and this library's
+`Renderer` implement (decision 2026-10-12). It must not shape the
+static API now.
 
 ## The API in Emo
 
@@ -269,9 +278,10 @@ interface Mark {
 }
 ```
 
-An EmoUI-style attached block is a possible second spelling, but the
-array argument is the primary form: it is explicit, order-visible,
-and needs nothing new.
+A block-as-children attached block (the shape EmoUI also uses, but
+only as a syntax analogy — no dependency) is a possible second
+spelling; the array argument is the primary form: it is explicit,
+order-visible, and needs nothing new.
 
 ### Style is the one real design problem
 
@@ -455,8 +465,10 @@ the two plot packages.
 - **E. PNG.** Pure-Emo zlib (stored, then fixed-Huffman, DEFLATE
   blocks), CRC32 and Adler-32, and a scanline polygon/line rasterizer
   with supersampling, using the Hershey stroke font for text.
-- **F. EmoUI canvas.** Interactive charts, gated on the emo-ui
-  checklist; out of scope until that package exists.
+- **Out of scope (decision 2026-10-12).** Interactive/GUI charts and
+  an EmoUI canvas. EmoUI is not an Emo target and has no drawing verb
+  today, so this is a separate EmoUI direction (a shared vector-canvas
+  contract), not a plotting step. 3D and animation are likewise out.
 
 Each step ends with the repo building green, as every step does.
 
@@ -544,9 +556,10 @@ packages — `plot` (pure Emo, SVG-first, declarative, a `Renderer`
 interface, checked byte-identical goldens, T0) and `plot_stats` (the
 Seaborn-like T1 layer on top) — preceded by numeric dispatch parity
 and a standard-library `math` package.** No language change is
-required. The EmoUI canvas can share the engine later but must not
-gate it. "Full Matplotlib and Seaborn parity" is struck from the goal
-statement and replaced with the declared tier T0 + T1.
+required. Any native GUI canvas is a separate, later EmoUI direction
+and must not gate this work. "Full Matplotlib and Seaborn parity" is
+struck from the goal statement and replaced with the declared tier
+T0 + T1.
 
 ## Decisions recorded (2026-10-12)
 
@@ -568,6 +581,13 @@ statement and replaced with the declared tier T0 + T1.
 8. **Process — this `docs/` note first**, then a
    `plan/step-NN-*.md` step once the numeric-substrate work is
    scoped; `README.md` waits for decided design.
+9. **EmoUI — out of scope now.** EmoUI is not an Emo target: it is a
+   library over Emo's native targets whose platform backends are OS
+   toolkits, and its current contract places widgets and has no
+   drawing verb. Interactive/GUI charts are therefore excluded from
+   this effort. If a canvas is ever built, the shared vector-canvas
+   contract is an **independent EmoUI direction**, accepted
+   2026-10-12 — not a plotting backend.
 
 ## Remaining open questions
 
@@ -581,7 +601,7 @@ statement and replaced with the declared tier T0 + T1.
    before a consumer actually needs it.
 5. **The `math` surface.** The exact function list, the default
    rounding behavior, and the opt-in fast path's spelling.
-6. **A block spelling.** Should the declarative tree also accept an
-   EmoUI-style attached block, or stay array-only?
+6. **A block spelling.** Should the declarative tree also accept a
+   block-as-children attached block, or stay array-only?
 7. **Where the work starts.** Which is step one: the dispatch parity
    fix, the `math` package, or the `plot` skeleton?
