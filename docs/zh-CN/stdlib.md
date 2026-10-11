@@ -10,7 +10,7 @@ require "json"
 
 两条约定贯穿所有包:
 
-- **错误就是异常。** 每个失败的调用抛出普通的 Emo 异常,消息精确说明失败原因——没有错误码,没有 nil。消息一律以抛出它的包名加冒号开头——`json: expected array element at byte 3`、`os: open_write notes.txt: Permission denied`——未捕获的异常因此能报出来源(`file` 的错误以 `os:` 报出,因为系统调用由共享的 os 运行时执行);结构化上下文(偏移、路径、URL)放进异常可选的 `data` Map,不往消息里拼接。流结束不是错误:空字符串表示流结束。
+- **预期内的失败是值,违例才抛出。** 可能因数据而失败的调用返回 `(R.ok, value)` 或 `(R.error, reason)`——reason 是以包名加冒号开头的字符串(`json: expected array element at byte 3`、`os: open_write notes.txt: Permission denied`;`file` 的错误以 `os:` 报出,因为系统调用由共享的 os 运行时执行)。没有错误码,没有 nil。抛出保留给契约违例:`Exception` 是唯一的异常类,可选的 `data` Map 装机器可读的上下文,不往消息里拼接,抛出即结束进程。流结束不是错误:空字符串表示流结束。
 - **语言够用就用纯 Emo。** 格式类包和编解码器用 Emo 写在共享运行时之上,声明的每个目标都给出逐字节相同的答案。只有 `os`(以及构建在它之上的包)分发到 POSIX 支撑的运行时内建,也只有它们是仅原生目标。
 
 各包一览:
