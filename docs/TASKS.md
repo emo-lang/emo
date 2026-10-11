@@ -1034,8 +1034,15 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       (Done 2026-10-11 — the mechanism: one pair of local exceptions
       per loop, `Break_N`/`Continue_N`; `continue` unwinds to the
       handler above the post, `break` past the whole while.)
-- [ ] **T35.4** — typescript: native `while`/`for` in the emitted
+- [x] **T35.4** — typescript: native `while`/`for` in the emitted
       body; `break`/`continue` are the target language's own.
+      (Done 2026-10-11. Also fixed a pre-existing backend bug the
+      loops golden exposed: `stmts` emitted the rest of a chain before
+      its head — sprintf arguments evaluate right-to-left — so a `var`'s
+      ref registration landed after the statements that needed it; the
+      head now emits first. The self-tail-call driver loop gained the
+      `__emo_driver` label so a tail call inside a loop continues the
+      driver, not the Emo loop.)
 - [ ] **T35.5** — wasm: structured control flow — `Loop` with `Br_if`
       on the condition; `break` branches out of the loop block,
       `continue` to the head, the post clause running first.
