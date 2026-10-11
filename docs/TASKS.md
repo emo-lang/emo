@@ -416,7 +416,7 @@ green.
       immediates) and the bump allocator; wrap-around arithmetic,
       comparisons, `if`, integer formatting (`INT64_MIN` correct);
       guaranteed tail calls as `tail`. Golden: fib.
-- [ ] **T22.3** — Dynamic-world data structures: tuples, arrays, Box,
+- [x] **T22.3** — Dynamic-world data structures: tuples, arrays, Box,
       enums, instances with vtable dispatch, closures and first-class
       functions; patterns with guards; interpolation with the `%g`
       float rule. Golden: objects, language_tour.
