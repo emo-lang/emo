@@ -173,22 +173,21 @@ mark 是值:`plot.line(x, y)`、`plot.scatter(x, y)`、
 以及唯一真正的设计难题——没有默认参数时样式如何携带——在下面的
 "Emo 里的 API"一节展开。
 
-### 第 4 层 —— Seaborn 式的表面(`plot/stats`)
+### 第 4 层 —— Seaborn 式的表面(`plot.stats`)
 
-在同一个引擎之上的、面向数据集的 API,放在它自己的包里——
-`plot/stats`,一个带作用域的名字(2026-10-12 决定);
-`require "plot/stats"` 绑定短名 `stats`,所以下面的调用写作 `stats.*`。
-Seaborn 的洞见是:一张图就是从
-数据列到美学通道的*映射*,加一个统计变换,加一个 mark,再按一个或
-多个分组列分面。Emo 用一个 `Table` 加上同一套 `Figure`/`Mark` 值恰好能
-表达:
+在同一个引擎之上的、面向数据集的 API,是同一个 `plot` 包的 `stats`
+子模块——`plot.stats`(2026-10-12 决定)。一个 `require "plot"` 就把
+两个表面都带进来,下面的调用写作 `plot.stats.*`。Seaborn 的洞见是:
+一张图就是从数据列到美学通道的*映射*,加一个统计变换,加一个 mark,
+再按一个或多个分组列分面。Emo 用一个 `Table` 加上同一套
+`Figure`/`Mark` 值恰好能表达:
 
 ```
 const tips = plot.table(["total_bill", "tip", "time"], rows)
-stats.relational(tips, x: "total_bill", y: "tip", hue: "time")
-stats.distributions(tips, x: "tip", hue: "smoker")
-stats.categorical(tips, x: "day", y: "total_bill", kind: "box")
-stats.matrix(correlation)
+plot.stats.relational(tips, x: "total_bill", y: "tip", hue: "time")
+plot.stats.distributions(tips, x: "tip", hue: "smoker")
+plot.stats.categorical(tips, x: "day", y: "total_bill", kind: "box")
+plot.stats.matrix(correlation)
 ```
 
 其下的统计子层:`describe`、`quantile`、`histogram_bins`、`kde`、
@@ -362,7 +361,7 @@ E4009),而且它需要自己的设计评审与第二个消费者。建议是**�
 ### 契约的其余部分
 
 - **两扇门共用一个引擎。** 位置式表面(`plot.line(x, y)`)与数据集
-  表面(`stats.relational(table, x: "col")`)是进入同一套
+  表面(`plot.stats.relational(table, x: "col")`)是进入同一套
   `Figure`/`Axes`/`Mark` 值的两种写法,不是两套实现。
 - **预期失败是值。** 依循标准库惯例,保存时路径打不开、`Table` 缺
   某个命名列、直方图没有值,都返回 `(R.ok, value)` /
@@ -374,16 +373,16 @@ E4009),而且它需要自己的设计评审与第二个消费者。建议是**�
 ## 命名与打包
 
 标准库拥有顶层短名,包名是小写单词(`json`、`yaml`、`http`、
-`base64`)。2026-10-12 的决定是**拆成两个包**:
+`base64`)。2026-10-12 的决定是**一个包 `plot`**——整套能力本质上就是
+画图,所以统计层是它的子模块,不是单独的包:
 
-- **`plot`**——核心:`Renderer` 接口与 SVG 渲染器、比例尺与刻度、
-  声明式的 `Figure`/`Axes`/`Mark` 值、按 mark 的样式类,以及
-  `Table`。
-- **`plot/stats`**——作用域在 `plot` 下的包,require 时绑定短名 `stats`;
-  其上的 Seaborn 式统计层:描述统计与分布、分类/关系/矩阵家族、回归、
-  分面,以及主题与调色板。
+- **`plot`**(模块 `plot`,包根)——核心:`Renderer` 接口与 SVG
+  渲染器、比例尺与刻度、声明式的 `Figure`/`Axes`/`Mark` 值、按 mark
+  的样式类,以及 `Table`。
+- **`plot.stats`**(`stats/` 子模块)——Seaborn 式统计层:描述统计与
+  分布、分类/关系/矩阵家族、回归、分面,以及主题与调色板。
 
-两者都声明**全部五个宿主目标**(`ocaml`、`c`、`typescript`、`wasm`、
+该包声明**全部五个宿主目标**(`ocaml`、`c`、`typescript`、`wasm`、
 `beam`;freestanding 的 `riscv64` 不在范围内——它拒绝 `Map`),和那些
 格式包完全一致。
 
@@ -403,7 +402,7 @@ SVG 优先,一个独立的 `math` 包,然后是这两个绘图包。
   `figure`/`axes`/mark 值、`Table`,以及带坐标轴、图例、标题的
   折线/散点/柱/面积/直方图。出口条件:`examples/plot_demo` 产出的
   一批 SVG 在五个目标上逐字节一致——标准库的 golden 标准。
-- **C. `plot/stats` T1。** 描述统计、分箱、KDE、ECDF、箱统计、带置信
+- **C. `plot.stats` T1。** 描述统计、分箱、KDE、ECDF、箱统计、带置信
   带的 OLS、分类/分布/关系/矩阵家族、分面、调色板与主题——全部建在
   `plot` 之上。
 - **D. 终端渲染器。** 便宜的第二 `Renderer`;让图在 CI 与 CLI 里可见,
@@ -478,10 +477,10 @@ SVG 优先,一个独立的 `math` 包,然后是这两个绘图包。
 
 ## 建议
 
-站得住脚的第一个产品,现在已作为方向定案:**两个包——`plot`(纯
-Emo、SVG 优先、声明式、`Renderer` 接口、逐字节 golden 校验,T0)与
-`plot/stats`(其上的 Seaborn 式 T1 层,代码中写作 `stats.*`)——前置
-为数值分派对齐与一个标准库 `math` 包。** 不需要任何语言改动。任何原生
+站得住脚的第一个产品,现在已作为方向定案:**一个 `plot` 包——纯
+Emo、SVG 优先、声明式、`Renderer` 接口、逐字节 golden 校验,T0,其上是
+Seaborn 式的 `plot.stats` 子模块——前置为数值分派对齐与一个标准库
+`math` 包。** 不需要任何语言改动。任何原生
 GUI 画布都是日后
 一条独立的 EmoUI 方向,绝不能门控本项工作。“完整的 Matplotlib 与
 Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
@@ -495,8 +494,8 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
 3. **表面——声明式。** 一张图是一个 `Figure`/`Axes`/`Mark` 值图,
    一次调用渲染。
 4. **数据——一个最小 `Table`**(数值列与分类列),不奢求更多。
-5. **包——`plot` + `plot/stats`**(作用域名绑定短名 `stats`),
-   两者都声明五个宿主目标。
+5. **包——一个 `plot`**,声明五个宿主目标,Seaborn 式层是它的
+   `plot.stats` 子模块。
 6. **数学——一个标准库 `math` 包**,默认纯 Emo 且逐字节一致。
 7. **确定性——接受可选加入的原生快数学路径**,写明与目标绑定。
 8. **流程——先留这份 `docs/` 笔记**,等数值基底工作被拆细后再开
@@ -509,8 +508,8 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
 
 ## 剩余的开放问题
 
-1. **`Table` 的归属。** `plot`(建议如此,好让两扇门都接受)还是
-   `plot/stats`?
+1. **`Table` 的归属。** `plot` 根模块(建议如此,好让两扇门都接受)、
+   `plot.stats` 模块,还是它自己的 `plot.table` 模块?
 2. **mark 的直通方法。** 每个 mark 都重复 `with_color` 等,还是只留
    `with_style` 就够?
 3. **终端与 PNG 的先后**,以及在没有消费者之前是否值得做 PNG。

@@ -202,22 +202,22 @@ structural `Mark` interface. The full surface, and the one real design
 problem — how style is carried without default parameters — is worked
 out under "The API in Emo" below.
 
-### Layer 4 — the Seaborn-like surface (`plot/stats`)
+### Layer 4 — the Seaborn-like surface (`plot.stats`)
 
-A dataset-oriented API over the same engine, in its own package —
-`plot/stats`, a scoped name (decision 2026-10-12). `require "plot/stats"`
-binds the short name `stats`, so the calls below read `stats.*`.
-Seaborn's insight is that a plot is a *mapping* from data columns to
-aesthetics, plus a statistical transformation, plus a mark, faceted by
-one or more grouping columns.
+A dataset-oriented API over the same engine, in the `stats` submodule of
+the one `plot` package — `plot.stats` (decision 2026-10-12). One
+`require "plot"` brings both surfaces in, and the calls below read
+`plot.stats.*`. Seaborn's insight is that a plot is a *mapping* from
+data columns to aesthetics, plus a statistical transformation, plus a
+mark, faceted by one or more grouping columns.
 Emo expresses that with a `Table` and the same figure and mark values:
 
 ```
 const tips = plot.table(["total_bill", "tip", "time"], rows)
-stats.relational(tips, x: "total_bill", y: "tip", hue: "time")
-stats.distributions(tips, x: "tip", hue: "smoker")
-stats.categorical(tips, x: "day", y: "total_bill", kind: "box")
-stats.matrix(correlation)
+plot.stats.relational(tips, x: "total_bill", y: "tip", hue: "time")
+plot.stats.distributions(tips, x: "tip", hue: "smoker")
+plot.stats.categorical(tips, x: "day", y: "total_bill", kind: "box")
+plot.stats.matrix(correlation)
 ```
 
 The statistics sublayer underneath: `describe`, `quantile`,
@@ -408,7 +408,7 @@ model.
 
 - **Both front doors share one engine.** The positional surface
   (`plot.line(x, y)`) and the dataset surface
-  (`stats.relational(table, x: "col")`) are two ways into the
+  (`plot.stats.relational(table, x: "col")`) are two ways into the
   same `Figure`/`Axes`/`Mark` values, not two implementations.
 - **Expected failures are values.** Following the standard-library
   convention, a save that cannot open its path, a `Table` missing a
@@ -425,19 +425,22 @@ model.
 
 The standard library owns the top-level short names, and package names
 are lowercase words (`json`, `yaml`, `http`, `base64`). The decision
-(2026-10-12) is a **two-package split**:
+(2026-10-12) is **one package, `plot`** — the whole capability is
+drawing charts, so the statistical layer is its submodule, not a
+separate package:
 
-- **`plot`** — the core: the `Renderer` interface and the SVG
-  renderer, scales and ticks, the declarative `Figure`/`Axes`/`Mark`
-  values, the per-mark style classes, and the `Table`.
-- **`plot/stats`** — a scoped package (owner `plot`) whose short name
-  `stats` binds at the require; the Seaborn-like statistical layer on
-  top: descriptives and distributions, the categorical, relational,
-  and matrix families, regression, faceting, and themes and palettes.
+- **`plot`** (module `plot`, the package root) — the core: the
+  `Renderer` interface and the SVG renderer, scales and ticks, the
+  declarative `Figure`/`Axes`/`Mark` values, the per-mark style classes,
+  and the `Table`.
+- **`plot.stats`** (the `stats/` submodule) — the Seaborn-like
+  statistical layer: descriptives and distributions, the categorical,
+  relational, and matrix families, regression, faceting, and themes
+  and palettes.
 
-Both declare **all five hosted targets** (`ocaml`, `c`, `typescript`,
-`wasm`, `beam`; the freestanding `riscv64` target is out of scope — it
-refuses `Map`), exactly as the format packages do.
+The package declares **all five hosted targets** (`ocaml`, `c`,
+`typescript`, `wasm`, `beam`; the freestanding `riscv64` target is out
+of scope — it refuses `Map`), exactly as the format packages do.
 
 ## Sequencing
 
@@ -458,7 +461,7 @@ the two plot packages.
   line/scatter/bar/area/hist with axes, legend, and title. Exit:
   `examples/plot_demo` emits a corpus of SVGs byte-identical across
   the five targets — the standard library's golden standard.
-- **C. `plot/stats` T1.** Descriptives, binning, KDE, ECDF, box
+- **C. `plot.stats` T1.** Descriptives, binning, KDE, ECDF, box
   statistics, OLS with a confidence band, the categorical,
   distribution, relational, and matrix families, faceting, palettes,
   and themes — all built on `plot`.
@@ -554,11 +557,11 @@ single language's look may be copied.
 
 ## Recommendation
 
-The defensible first product, now settled as a direction: **two
-packages — `plot` (pure Emo, SVG-first, declarative, a `Renderer`
-interface, checked byte-identical goldens, T0) and `plot/stats` (the
-Seaborn-like T1 layer on top, referenced as `stats.*`) — preceded by
-numeric dispatch parity and a standard-library `math` package.** No
+The defensible first product, now settled as a direction: **one `plot`
+package — pure Emo, SVG-first, declarative, a `Renderer` interface,
+checked byte-identical goldens, T0, with the Seaborn-like `plot.stats`
+submodule above it — preceded by numeric dispatch parity and a
+standard-library `math` package.** No
 language change is
 required. Any native GUI canvas is a separate, later EmoUI direction
 and must not gate this work. "Full Matplotlib and Seaborn parity" is
@@ -576,8 +579,8 @@ T0 + T1.
    value graph rendered in one call.
 4. **Data — a minimal `Table`** (numeric and categorical columns),
    with no ambitions beyond carrying rows.
-5. **Packages — `plot` + `plot/stats`** (the scoped name binds the
-   short name `stats`), both declaring the five hosted targets.
+5. **Package — one `plot`**, declaring the five hosted targets, with
+   the Seaborn-like layer as its `plot.stats` submodule.
 6. **Math — a standard-library `math` package**, pure Emo and
    byte-identical by default.
 7. **Determinism — an opt-in native fast math path is accepted**,
@@ -595,8 +598,9 @@ T0 + T1.
 
 ## Remaining open questions
 
-1. **`Table`'s home.** `plot` (recommended, so both front doors
-   accept it) or `plot/stats`?
+1. **`Table`'s home.** The `plot` root module (recommended, so both
+   front doors accept it), the `plot.stats` module, or its own
+   `plot.table` module?
 2. **Mark pass-throughs.** Does every mark repeat `with_color` etc.,
    or is `with_style` alone enough?
 3. **Terminal versus PNG order**, and whether PNG is worth building
