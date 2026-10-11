@@ -64,6 +64,15 @@ type env = {
       (* interface name → its full method signatures: the single method
          behind an interface-typed foreign parameter names the
          trampoline (CHECK.md, 2026-10-11) *)
+  mutable owned : (string * Emo_check.t) list;
+      (* the dynamic bindings alive in this body, innermost first —
+         released at their block's end and at function exit (the
+         reclamation discipline, CHECK.md 2026-10-11) *)
+  mutable hoist : string list;
+      (* zero-initialized declarations hoisted to the body top, in
+         emission order (reversed here): a backward tail jump re-runs a
+         binding site, so its declaration must execute once *)
+  mutable hoist_on : bool; (* whether this body can be re-entered *)
 }
 
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -366,6 +375,51 @@ let shape_make_name env (t : Emo_check.t) : string =
         (Printf.sprintf "the struct make converter for `%s`"
            (Emo_check.to_string t))
 
+(* ---- The reclamation discipline (CHECK.md, 2026-10-11) ----
+
+   The runtime refcounts identity cells; the emitter owns the counts.
+   The convention keeps every site local: an identity word handed
+   across an expression is owned by the statement's autorelease pool
+   (released together at the next statement boundary); a binding, a
+   field, a capture, or an aggregate element is a longer-lived slot and
+   retains what it stores; a slot's exit releases. A type is
+   identity-capable when a value of it may be a refcounted cell. *)
+let may_own (t : Emo_check.t) : bool =
+  match t with
+  | Emo_check.Unknown | Emo_check.ClassType _ | Emo_check.InterfaceType _
+  | Emo_check.FuncType _ | Emo_check.BoxType _ ->
+      true
+  | _ -> false
+
+let wrap_owned (ty : Emo_check.t) (code : string) : string =
+  if may_own ty then Printf.sprintf "emo_autorelease(%s)" code else code
+
+(* Rebinds jump past a body's entry work (the parameter slots' initial
+   retain), so the head label the rebind targets is the inner one. *)
+let rebind_label (callee : string) : string =
+  Printf.sprintf "emo_head_%s_in" (c_ident callee)
+
+(* The release lines that unwind owned bindings down to [mark] — the
+   physical snapshot a block took when it opened. Each slot zeroes
+   after its release: a re-entered body (backward tail jump) re-runs
+   the block ends, and a released word must not release twice. *)
+let unwind_lines (owned : (string * Emo_check.t) list)
+    (mark : (string * Emo_check.t) list) : string list =
+  let rec go acc l =
+    if l == mark then acc
+    else
+      match l with
+      | (c, ty) :: rest ->
+          if is_dyn ty then
+            go
+              (Printf.sprintf "  emo_release(%s);\n  %s = (emo_value)0;\n" c c
+              :: acc)
+              rest
+          else go acc rest
+      | [] -> acc
+  in
+  go [] owned
+
 (* ---- Expressions ---- *)
 
 let compare_text (op : Ast.binop) : string =
@@ -443,7 +497,7 @@ and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
     (use_ty : Emo_check.t) : string =
   match Hashtbl.find_opt env.funsigs func with
   | None -> refuse (Printf.sprintf "the spawn target `%s`" func)
-  | Some (fparams, _fres) ->
+  | Some (fparams, fres) ->
       incr spawn_counter;
       let wrapper = Printf.sprintf "emo_spawn%d" !spawn_counter in
       let words = List.map (as_dyn env) args in
@@ -463,8 +517,13 @@ and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
             else Printf.sprintf "__a%d" i)
           fparams
       in
-      put wenv "  (void)(%s(%s));\n" (c_ident func)
-        (String.concat ", " call_args);
+      let call =
+        Printf.sprintf "%s(%s)" (c_ident func) (String.concat ", " call_args)
+      in
+      (* `do f(..)` discards the result — an identity result releases
+         here, owned by nobody else *)
+      if is_dyn fres && may_own fres then put wenv "  emo_release(%s);\n" call
+      else put wenv "  (void)(%s);\n" call;
       put wenv "}\n\n";
       let pid_expr =
         Printf.sprintf "emo_spawn_process(%s, INT64_C(%d), (emo_value[]){%s})"
@@ -684,7 +743,8 @@ and emit_expr env (e : Emo_ir.expr) : string =
           List.fold_left
             (fun acc part -> Printf.sprintf "emo_str_concat(%s, %s)" acc part)
             x rest)
-  | Method { self_; name; args } -> emit_method env e.Emo_ir.ety self_ name args
+  | Method { self_; name; args } ->
+      wrap_owned e.Emo_ir.ety (emit_method env e.Emo_ir.ety self_ name args)
   | Builtin { name = "self_pid"; args = [] } ->
       let v = "emo_process_self_pid()" in
       if is_dyn e.Emo_ir.ety then Printf.sprintf "emo_box_pid(%s)" v else v
@@ -717,6 +777,12 @@ and emit_expr env (e : Emo_ir.expr) : string =
                   let call =
                     Printf.sprintf "%s(%s)" (c_ident func)
                       (String.concat ", " arg_code)
+                  in
+                  let call =
+                    (* a dynamic identity result lands in the pool; the
+                       use site retains what it keeps *)
+                    if is_dyn fres && may_own fres then wrap_owned fres call
+                    else call
                   in
                   if fres = e.Emo_ir.ety then call
                   else if is_dyn fres && is_dyn e.Emo_ir.ety then call
@@ -753,7 +819,9 @@ and emit_expr env (e : Emo_ir.expr) : string =
       let use_ty = e.Emo_ir.ety in
       let pid_expr = emit_spawn_site env func args use_ty in
       pid_expr
-  | Box_new arg -> Printf.sprintf "emo_box_new(%s)" (as_dyn env arg)
+  | Box_new arg ->
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_box_new(%s)" (as_dyn env arg))
   | Bytes_new n ->
       Printf.sprintf "emo_bytes_new(%s)" (as_native env n Emo_check.Int64)
   | List_new arg -> Printf.sprintf "emo_list_new(%s)" (as_dyn env arg)
@@ -771,8 +839,10 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Field_read { obj; name } -> emit_field_read env e.Emo_ir.ety obj name
   | Call_value { f; args } ->
       let v = closure_call env f args in
-      if is_dyn e.Emo_ir.ety then v else unbox_code v e.Emo_ir.ety
-  | Closure { cparams; cbody } -> emit_closure env cparams cbody
+      if is_dyn e.Emo_ir.ety then wrap_owned e.Emo_ir.ety v
+      else unbox_code v e.Emo_ir.ety
+  | Closure { cparams; cbody } ->
+      wrap_owned e.Emo_ir.ety (emit_closure env cparams cbody)
   | Spawn_value _ -> refuse "spawning a first-class block yet"
   | Make_exception { message; data = None } ->
       Printf.sprintf "emo_make_exception(%s)" (to_str env message)
@@ -1333,11 +1403,14 @@ and emit_closure env (cparams : (string * Emo_check.t) list)
       fclass = None;
       tail_rebinds = [];
       in_main = false;
+      owned = [];
+      hoist = [];
+      hoist_on = false;
     }
   in
   put env "static emo_value %s(emo_value __cl, const emo_value *__args) {\n"
     name;
-  put env "  (void)__cl;\n  (void)__args;\n";
+  put env "  (void)__cl;\n  (void)__args;\n  emo_pool_enter();\n";
   List.iteri
     (fun i (n, c, _) -> put env "  emo_value %s = __args[%d];\n" c i)
     param_scope;
@@ -1349,6 +1422,8 @@ and emit_closure env (cparams : (string * Emo_check.t) list)
     cap_scope;
   env.scope <- param_scope @ cap_scope;
   emit_stmts env body;
+  List.iter (fun l -> put env "%s" l) (unwind_lines env.owned []);
+  put env "  emo_drain();\n  emo_pool_exit();\n";
   put env "  return emo_vbool(false);\n}\n\n";
   let cap_values =
     String.concat ", "
@@ -1571,7 +1646,8 @@ and pattern_bind_sfx env (get : string) (p : Ast.pattern) (sfx : string) : unit
   | Ast.Wildcard | Ast.Pattern_literal _ | Ast.Enum_member _ -> ()
   | Ast.Pattern_binding name ->
       let c = c_ident name ^ sfx in
-      put env "  emo_value %s = %s;\n" c get;
+      put env "  emo_value %s = emo_retain(%s);\n" c get;
+      env.owned <- (c, Emo_check.Unknown) :: env.owned;
       env.scope <- (name, c, Emo_check.Unknown) :: env.scope
   | Ast.Tuple_pattern ps ->
       List.iteri
@@ -1650,9 +1726,41 @@ and emit_tail_rebind env (callee : string) (args : Emo_ir.expr list) : unit =
               put env "    %s __t%d = %s;\n" (param_type ty) i value)
             pairs;
           List.iteri
-            (fun i (c_name, _) -> put env "    %s = __t%d;\n" c_name i)
+            (fun i (c_name, ty) ->
+              if is_dyn ty && may_own ty then
+                (* the slot keeps owning across the jump: the barrier
+                   swaps its reference *)
+                put env "    emo_release(%s);\n    %s = emo_retain(__t%d);\n"
+                  c_name c_name i
+              else put env "    %s = __t%d;\n" c_name i)
             slots);
-      put env "    goto emo_head_%s;\n  }\n" (c_ident callee)
+      (* the statement's pooled temporaries release here — the jump
+         skips the next statement boundary — and the current body's
+         bindings unwind: the frame lives on, the values do not *)
+      (* the frame lives on across the jump (no pool exit), and the
+         parameter slots carry the next pass — the unwind releases the
+         current pass's bindings and pooled temporaries while keeping
+         every slot the rebind just loaded *)
+      let keep =
+        List.map
+          (fun (c_name, _) -> c_name)
+          (List.assoc callee env.tail_rebinds)
+      in
+      let rec go acc l =
+        match l with
+        | (c, ty) :: rest ->
+            if List.mem c keep then go acc rest
+            else if is_dyn ty then
+              go
+                (Printf.sprintf "  emo_release(%s);\n  %s = (emo_value)0;\n" c c
+                :: acc)
+                rest
+            else go acc rest
+        | [] -> acc
+      in
+      List.iter (fun l -> put env "%s" l) (go [] env.owned);
+      put env "    emo_drain();\n";
+      put env "    goto %s;\n  }\n" (rebind_label callee)
 
 and emit_stmt env (s : Emo_ir.stmt) : unit =
   match s with
@@ -1708,9 +1816,28 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       match c_type init.Emo_ir.ety with
       | Some "void" -> refuse "Void bindings"
       | Some t ->
-          let c_name = c_ident name in
-          env.scope <- (name, c_name, init.Emo_ir.ety) :: env.scope;
-          put env "  %s %s = %s;\n" t c_name value
+          let c_name =
+            if t = "emo_value" && env.hoist_on then fresh_c env (c_ident name)
+            else c_ident name
+          in
+          if t = "emo_value" then begin
+            (* the binding owns a reference; a re-entered body
+                (backward tail jump) re-runs this site, so the slot's
+                declaration hoists (under a fresh name — shadowed Emo
+                names must not collide) and the old value releases
+                first *)
+            if env.hoist_on then begin
+              env.hoist <-
+                Printf.sprintf "  emo_value %s = (emo_value)0;" c_name
+                :: env.hoist;
+              put env "  emo_release(%s);\n  %s = emo_retain(%s);\n" c_name
+                c_name value
+            end
+            else put env "  emo_value %s = emo_retain(%s);\n" c_name value;
+            env.owned <- (c_name, init.Emo_ir.ety) :: env.owned
+          end
+          else put env "  %s %s = %s;\n" t c_name value;
+          env.scope <- (name, c_name, init.Emo_ir.ety) :: env.scope
       | None ->
           refuse
             (Printf.sprintf "`%s` bindings"
@@ -1721,7 +1848,11 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
           let v =
             if is_dyn ty then as_dyn env value else as_native env value ty
           in
-          put env "  %s = %s;\n" c_name v
+          if is_dyn ty then
+            (* the write barrier on overwrite *)
+            put env "  emo_release(%s);\n  %s = emo_retain(%s);\n" c_name c_name
+              v
+          else put env "  %s = %s;\n" c_name v
       | None -> refuse (Printf.sprintf "assignment to `%s` here" name))
   | Send { target; message } ->
       let pid =
@@ -1741,11 +1872,16 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
         if is_dyn cond.Emo_ir.ety then unbox_code c Emo_check.Bool else c
       in
       put env "  if (%s) {\n" (unwrap c);
+      let mark = env.owned in
       emit_stmts env then_;
+      List.iter (fun l -> put env "%s" l) (unwind_lines env.owned mark);
+      env.owned <- mark;
       if else_ = [] then put env "  }\n"
       else (
         put env "  } else {\n";
         emit_stmts env else_;
+        List.iter (fun l -> put env "%s" l) (unwind_lines env.owned mark);
+        env.owned <- mark;
         put env "  }\n")
   | Case { scrutinee; branches } ->
       (* Sequential branches: each tests, binds, and — when the guard
@@ -1773,12 +1909,15 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
             | None -> pattern_test env s b.Emo_ir.pattern
           in
           put env "  if (%s) {\n" (unwrap test);
+          let mark = env.owned in
           (match native_ty with
           | Some _ ->
               pattern_bind_native env s scrutinee.Emo_ir.ety b.Emo_ir.pattern
           | None -> pattern_bind env s b.Emo_ir.pattern);
           let run_body () =
             emit_stmts env b.Emo_ir.body;
+            List.iter (fun l -> put env "%s" l) (unwind_lines env.owned mark);
+            env.owned <- mark;
             put env "    goto %s;\n" end_label
           in
           match b.Emo_ir.guard with
@@ -1790,7 +1929,11 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
               in
               put env "    if (%s) {\n" g_code;
               run_body ();
-              put env "    }\n  }\n"
+              put env "    }\n";
+              (* the guard-fail path falls out of the branch block *)
+              List.iter (fun l -> put env "%s" l) (unwind_lines env.owned mark);
+              env.owned <- mark;
+              put env "  }\n"
           | None ->
               run_body ();
               put env "  }\n")
@@ -1871,17 +2014,37 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
               | Call { args; _ } -> emit_tail_rebind env callee args
               | _ -> assert false)
           | None ->
-              if env.fresult = Emo_check.Void then
-                put env "  goto emo_return;\n"
-              else if is_dyn env.fresult then
-                (* the closure convention: a direct dynamic return *)
-                put env "  return %s;\n" (as_dyn env e)
-              else
+              (* every exit releases the body's owned bindings, drains
+                 the statement's pool, and closes the frame's autorelease
+                 pool — the frame gives nothing back but the result *)
+              let unwind () =
+                List.iter (fun l -> put env "%s" l) (unwind_lines env.owned []);
+                put env "  emo_drain();\n  emo_pool_exit();\n"
+              in
+              if env.fresult = Emo_check.Void then begin
+                unwind ();
+                put env "  return;\n"
+              end
+              else if is_dyn env.fresult then begin
+                put env "  emo_value __ret = emo_retain(%s);\n" (as_dyn env e);
+                unwind ();
+                put env "  return __ret;\n"
+              end
+              else begin
                 let value = as_native env e env.fresult in
-                put env "  __result = %s;\n  goto emo_return;\n" value))
+                put env "  __result = %s;\n" value;
+                unwind ();
+                put env "  return __result;\n"
+              end))
 
 and emit_stmts env (stmts : Emo_ir.stmt list) : unit =
-  List.iter (emit_stmt env) stmts
+  (* The statement boundary is the borrow window: expression-internal
+     temporaries pool here and release together at the next boundary. *)
+  List.iter
+    (fun s ->
+      put env "  emo_drain();\n";
+      emit_stmt env s)
+    stmts
 
 and has_return (stmts : Emo_ir.stmt list) : bool =
   List.exists
@@ -2266,10 +2429,11 @@ let signature (f : Emo_ir.func) : string * string =
   (result_type f, params)
 
 (* A standalone function: the head label carries the tail-call
-   rebind, the epilogue label receives every `return`. [fclass] makes
-   `self` resolve fields when emitting a method. *)
+   rebind, and every exit releases the body's owned bindings. [fclass]
+   makes `self` resolve fields when emitting a method. *)
 let emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
   let ret, params = signature f in
+  let self_tail = List.mem f.Emo_ir.fname (tail_callees f.Emo_ir.fbody) in
   let env =
     {
       env0 with
@@ -2284,23 +2448,49 @@ let emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
             List.map (fun (n, ty) -> (c_ident n, ty)) f.Emo_ir.fparams );
         ];
       in_main = false;
+      owned = [];
+      hoist = [];
+      hoist_on = self_tail;
     }
   in
-  put env "%s %s(%s) {\n" ret (c_ident f.Emo_ir.fname) params;
-  if ret <> "void" && not (is_dyn f.Emo_ir.fresult) then
-    put env "  %s __result = %s;\n" ret (zero_value ret);
-  (* The head label exists only when a self-tail call jumps to it. *)
-  if List.mem f.Emo_ir.fname (tail_callees f.Emo_ir.fbody) then
-    put env "emo_head_%s:;\n" (c_ident f.Emo_ir.fname);
+  (* a re-entered body owns its identity parameters: the parameter
+     retains at entry (once), the rebind barrier swaps, the exit
+     releases — no fresh slot needed, the parameter is the slot *)
+  if env.hoist_on then
+    List.iter
+      (fun (n, ty) ->
+        if is_dyn ty && may_own ty then
+          env.owned <- (c_ident n, ty) :: env.owned)
+      f.Emo_ir.fparams;
+  let body = Buffer.create (4 * 1024) in
+  env.buf <- body;
   emit_stmts env f.Emo_ir.fbody;
-  (* a dynamic result returns directly — the epilogue slot is native
-     only *)
-  if has_return f.Emo_ir.fbody && not (is_dyn f.Emo_ir.fresult) then
-    put env "emo_return:;\n";
-  if ret = "void" then put env "  return;\n"
-  else if is_dyn f.Emo_ir.fresult then put env "  return (emo_value)0;\n"
-  else put env "  return __result;\n";
-  put env "}\n\n"
+  let unwind =
+    String.concat "" (unwind_lines env.owned []) ^ "  emo_drain();\n"
+  in
+  put env0 "%s %s(%s) {\n" ret (c_ident f.Emo_ir.fname) params;
+  if ret <> "void" && not (is_dyn f.Emo_ir.fresult) then
+    put env0 "  %s __result = %s;\n" ret (zero_value ret);
+  put env0 "  emo_pool_enter();\n";
+  List.iter (fun l -> put env0 "%s\n" l) (List.rev env.hoist);
+  if env.hoist_on then begin
+    List.iter
+      (fun (n, ty) ->
+        if is_dyn ty && may_own ty then
+          put env0 "  %s = emo_retain(%s);\n" (c_ident n) (c_ident n))
+      f.Emo_ir.fparams;
+    (* the rebind target: past the entry retain, which runs once *)
+    put env0 "emo_head_%s_in: ;\n" (c_ident f.Emo_ir.fname)
+  end;
+  Buffer.add_buffer env0.buf body;
+  (* the fall-off path unwinds and closes the frame; explicit returns
+     did both already *)
+  put env0 "%s" unwind;
+  put env0 "  emo_pool_exit();\n";
+  if ret = "void" then put env0 "  return;\n"
+  else if is_dyn f.Emo_ir.fresult then put env0 "  return (emo_value)0;\n"
+  else put env0 "  return __result;\n";
+  put env0 "}\n\n"
 
 (* A cluster slot: the member's parameter, prefixed to stay unique
    across the merged signature. *)
@@ -2362,6 +2552,7 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
         (String.concat ", " args))
     members;
   put env0 "%s %s(%s) {\n" ret cluster (with_entry cluster_params);
+  put env0 "  emo_pool_enter();\n";
   (* An external call may target any member of the cluster: route to
      that member's head before its body runs. *)
   List.iteri
@@ -2395,18 +2586,36 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
                     o.Emo_ir.fparams ))
               members;
           in_main = false;
+          owned = [];
+          hoist = [];
+          hoist_on = true;
         }
       in
       (* Every member is on the cluster's cycle, so its head label
          always has an incoming jump. The body lives in its own block:
          C labels open no scope, and sibling members' locals would
-         collide in the shared function scope. *)
-      put env "emo_head_%s: {\n" (c_ident m.Emo_ir.fname);
+         collide in the shared function scope. Identity slots retain at
+         entry (the initial dispatch only — rebinds jump past, to the
+         `_in` label, swapping through the barrier) and the exit unwind
+         releases them. The body buffers so its hoisted declarations
+         splice inside the block, before the `_in` label. *)
+      let body = Buffer.create (4 * 1024) in
+      env.buf <- body;
       emit_stmts env m.Emo_ir.fbody;
-      put env "}\n")
+      put env0 "emo_head_%s: {\n" (c_ident m.Emo_ir.fname);
+      List.iter (fun l -> put env0 "%s\n" l) (List.rev env.hoist);
+      List.iter
+        (fun (n, ty) ->
+          if is_dyn ty && may_own ty then
+            put env0 "  %s = emo_retain(%s);\n"
+              (slot_name m.Emo_ir.fname n)
+              (slot_name m.Emo_ir.fname n))
+        m.Emo_ir.fparams;
+      put env0 "emo_head_%s_in: ;\n" (c_ident m.Emo_ir.fname);
+      Buffer.add_buffer env0.buf body;
+      put env0 "}\n")
     members;
-  if List.exists (fun (m : Emo_ir.func) -> has_return m.Emo_ir.fbody) members
-  then put env0 "emo_return:;\n";
+  put env0 "  emo_drain();\n  emo_pool_exit();\n";
   if ret = "void" then put env0 "  return;\n"
   else if dyn_ret then put env0 "  return (emo_value)0;\n"
   else put env0 "  return __result;\n";
@@ -2437,6 +2646,9 @@ let emit_ctor env0 (c : Emo_ir.class_) : unit =
           fclass = Some c.Emo_ir.cname;
           tail_rebinds = [];
           in_main = false;
+          owned = [];
+          hoist = [];
+          hoist_on = false;
           scope =
             ("self", "self", Emo_check.Unknown)
             :: List.map (fun (n, ty) -> (n, c_ident n, ty)) real_params;
@@ -2452,8 +2664,12 @@ let emit_ctor env0 (c : Emo_ir.class_) : unit =
                 real_params));
       put env "  emo_value self = emo_instance_new(&vt_%s, %d);\n"
         c.Emo_ir.cname (List.length fields);
+      put env "  emo_pool_enter();\n";
       emit_stmts env init.Emo_ir.fbody;
-      if has_return init.Emo_ir.fbody then put env "emo_return:;\n";
+      (* the init body's bindings release and the frame closes; `self`
+         rides out owned by the caller *)
+      List.iter (fun l -> put env "%s" l) (unwind_lines env.owned []);
+      put env "  emo_drain();\n  emo_pool_exit();\n";
       put env "  return self;\n}\n\n"
 
 (* The dynamic-convention thunk for one method: convert the word
@@ -2593,6 +2809,9 @@ let emit (program : Emo_ir.program) : string * string =
       fields = fields_tbl;
       closures = Buffer.create (16 * 1024);
       closure_decls = [];
+      owned = [];
+      hoist = [];
+      hoist_on = false;
       forfuncs;
       cb_sigs = cb_sigs_tbl;
     }
@@ -2872,8 +3091,9 @@ let emit (program : Emo_ir.program) : string * string =
     }
   in
   put env "static void emo_root_entry(void) {\n";
+  put env "  emo_pool_enter();\n";
   emit_stmts env program.pinit;
-  if has_return program.pinit then put env "emo_return:;\n";
+  put env "  emo_drain();\n  emo_pool_exit();\n";
   put env "}\n\n";
   put env "int main(void) {\n";
   put env "  emo_startup();\n";
