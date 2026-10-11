@@ -2839,7 +2839,15 @@ and eval_stmt env s =
       match pattern.Ast.pattern_desc with
       | Ast.Pattern_binding name ->
           define env name ~mutable_ (eval_expr env init)
-      | _ -> not_yet span "a destructured binding")
+      | _ ->
+          (* A destructured binding binds like a one-arm case whose match
+             lands in this scope; a value matching nothing dies the
+             case-no-match death. *)
+          let v = eval_expr env init in
+          if not (match_pattern env span pattern v) then
+            error span "E3006"
+              (Printf.sprintf "no `case` branch matched this %s value"
+                 (type_name v)))
   | Ast.Assign { target; value } -> (
       let v = eval_expr env value in
       match target.Ast.desc with
@@ -2994,6 +3002,15 @@ and eval_stmt env s =
       Effect.perform (Send (pid, v, span))
   | Ast.Raise e ->
       let v = eval_expr env e in
+      (* The checker's raise discipline, at run time — the paths that
+         skip static checking (the REPL, unchecked embedding) answer to
+         the same rule. *)
+      (match v with
+      | Instance i when i.iclass.builtin_exception -> ()
+      | other ->
+          error span "E4024"
+            (Printf.sprintf "`raise` carries an `Exception` instance, got %s"
+               (type_name other)));
       raise (Emo_raise (v, span, !call_trace))
   | Ast.While { cond; body } -> (
       (* The iteration is this OCaml loop, not recursion: a self tail

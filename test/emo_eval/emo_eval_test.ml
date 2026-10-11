@@ -546,20 +546,44 @@ println(check(1))|}));
           "span" "test.emo:1:4"
           (Span.to_string diagnostic.Diagnostic.span));
     tc "raise unwinds to an uncaught-exception error" (fun () ->
-        let diagnostic = program_err {|raise "boom"|} in
+        let diagnostic = program_err {|raise Exception.new(message: "boom")|} in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
           "message" "uncaught exception: boom" diagnostic.Diagnostic.message;
         Alcotest.(check string)
           "span" "test.emo:1:1"
           (Span.to_string diagnostic.Diagnostic.span));
+    tc "the raise operand discipline holds at run time" (fun () ->
+        let diagnostic = program_err {|raise "boom"|} in
+        Alcotest.(check string) "code" "E4024" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "`raise` carries an `Exception` instance, got String"
+          diagnostic.Diagnostic.message);
+    tc "a destructured binding binds, and a mismatch dies the case death"
+      (fun () ->
+        Alcotest.(check string)
+          "the ok tuple binds" "7\n"
+          (run_program {|const (R.ok, body) = (R.ok, 7)
+println(body)|});
+        let diagnostic =
+          program_err {|const (R.ok, body) = (R.error, "why")
+println(body)|}
+        in
+        Alcotest.(check string) "code" "E3006" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "no `case` branch matched this Tuple value"
+          diagnostic.Diagnostic.message);
     tc "raise inside a def escapes the function" (fun () ->
         let diagnostic =
-          program_err "def f() Int64 {\n  raise 7\n}\nprintln(f())"
+          program_err
+            "def f() Int64 {\n\
+            \  raise Exception.new(message: \"seven\")\n\
+             }\n\
+             println(f())"
         in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
-          "message" "uncaught exception: 7" diagnostic.Diagnostic.message);
+          "message" "uncaught exception: seven" diagnostic.Diagnostic.message);
     tc "the builtin Exception constructs with a message" (fun () ->
         Alcotest.(check string)
           "field" "boom\n"
@@ -607,7 +631,7 @@ println(e.data.get("code"))|}));
         let diagnostic =
           program_err
             {|def inner() Int64 {
-  raise "boom"
+  raise Exception.new(message: "boom")
 }
 
 def outer(n Int64) Int64 {
@@ -642,7 +666,7 @@ mid(1)|}
   def init() {}
 
   def go() Int64 {
-    raise "bang"
+    raise Exception.new(message: "bang")
   }
 }
 Boomer.new().go()|}

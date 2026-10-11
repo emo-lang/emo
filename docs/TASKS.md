@@ -1136,7 +1136,7 @@ non-empty `data`; `dune test` green.
       operand must be an `Exception` instance (its own E-code for
       everything else); the uncaught diagnostic appends non-empty
       `data`.
-- [ ] **T36.5** — Interpreter: pattern-binding evaluation, mismatch
+- [x] **T36.5** — Interpreter: pattern-binding evaluation, mismatch
       riding the case-no-match runtime error; the raise-operand
       discipline at run time; existing goldens re-recorded where the
       uncaught format changed.

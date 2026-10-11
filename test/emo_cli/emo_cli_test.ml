@@ -108,7 +108,9 @@ let repl_tests =
     tc "an uncaught raise prints and the repl survives" (fun () ->
         let out = Buffer.create 128 in
         Emo_cli.repl_loop ~prompt:false
-          ~input:(queue_input [ {|raise "boom"|}; "2 * 3"; "exit" ])
+          ~input:
+            (queue_input
+               [ {|raise Exception.new(message: "boom")|}; "2 * 3"; "exit" ])
           ~output:(Buffer.add_string out);
         let text = Buffer.contents out in
         Alcotest.(check bool) "raise reported" true (contains text "E3010");
