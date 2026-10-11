@@ -477,12 +477,68 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                   0
                 end
               end
+        | "riscv64" ->
+            (* Emit RV64 assembly for the GNU cross binutils: one
+               freestanding ELF that boots under QEMU or on the machine
+               (step 22). *)
+            let asm = Emo_codegen.Riscv.emit program in
+            let out =
+              if Filename.check_suffix output ".elf" then output
+              else output ^ ".elf"
+            in
+            let asm_file = Filename.concat build_dir "emo_main.s" in
+            let obj_file = Filename.concat build_dir "emo_main.o" in
+            let ld_file = Filename.concat build_dir "emo_link.ld" in
+            let write path contents =
+              let oc = open_out_bin path in
+              output_string oc contents;
+              close_out oc
+            in
+            write asm_file asm;
+            write ld_file Emo_codegen.Riscv.linker_script;
+            let prefix =
+              List.find_opt
+                (fun p -> tool_exists (p ^ "-as") && tool_exists (p ^ "-ld"))
+                [ "riscv64-unknown-elf"; "riscv64-elf" ]
+            in
+            begin match prefix with
+            | None ->
+                prerr_endline
+                  "emo build: the riscv64 target needs the GNU cross binutils \
+                   on PATH — riscv64-unknown-elf-as and riscv64-unknown-elf-ld";
+                69
+            | Some prefix ->
+                let as_cmd =
+                  Printf.sprintf "%s-as -march=rv64gc -mabi=lp64d %s -o %s"
+                    prefix (Filename.quote asm_file) (Filename.quote obj_file)
+                in
+                let ld_cmd =
+                  Printf.sprintf "%s-ld -T %s %s -o %s" prefix
+                    (Filename.quote ld_file) (Filename.quote obj_file)
+                    (Filename.quote out)
+                in
+                let exit_code = Sys.command as_cmd in
+                let exit_code =
+                  if exit_code <> 0 then exit_code else Sys.command ld_cmd
+                in
+                if exit_code <> 0 then begin
+                  prerr_endline
+                    (Printf.sprintf
+                       "emo build: the riscv64 cross binutils failed (exit %d)"
+                       exit_code);
+                  70
+                end
+                else begin
+                  Printf.printf "built %s\n" out;
+                  0
+                end
+            end
         (* cache miss *)
         | other ->
             prerr_endline
               (Printf.sprintf
                  "emo build: unknown target `%s` (ocaml, c, typescript, wasm, \
-                  beam)"
+                  beam, riscv64)"
                  other);
             65
       with
@@ -524,7 +580,9 @@ let build =
     Arg.(
       value & opt string "c"
       & info [ "target" ] ~docv:"TARGET"
-          ~doc:"The compilation target: c, ocaml, typescript, wasm, or beam.")
+          ~doc:
+            "The compilation target: c, ocaml, typescript, wasm, beam, or \
+             riscv64.")
   in
   let build entry output no_specialize cclibs target =
     let out =
@@ -572,17 +630,58 @@ let run =
   let error_limit =
     Arg.(
       value & opt int 20
-      & info [ "error-limit" ] ~doc:"Maximum reported errors.")
+      & info [ "error-limit" ] ~docv:"N" ~doc:"Maximum reported errors.")
   in
-  let run file no_color error_limit =
+  let target =
+    Arg.(
+      value
+      & opt (some string) None
+      & info [ "target" ] ~docv:"TARGET"
+          ~doc:
+            "Compile first and run the artifact (only riscv64 today: the ELF \
+             boots under qemu-system-riscv64).")
+  in
+  let run file no_color error_limit target =
     let color = (not no_color) && Unix.isatty Unix.stderr in
-    match run_file ~file ~color ~error_limit with
-    | 0 -> Cmd.Exit.ok
-    | code -> exit code
+    match target with
+    | Some "riscv64" ->
+        let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
+        if not (Sys.file_exists build_dir) then
+          ignore
+            (Sys.command
+               (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir)));
+        let elf = Filename.concat build_dir "emo_run.elf" in
+        let code =
+          build_file ~entry:file ~output:elf ~specialize:false ~cclibs:[]
+            ~target:"riscv64"
+        in
+        if code <> 0 then exit code
+        else if not (tool_exists "qemu-system-riscv64") then begin
+          prerr_endline
+            "emo run: the riscv64 target needs qemu-system-riscv64 on PATH";
+          exit 69
+        end
+        else
+          exit
+            (Sys.command
+               (Printf.sprintf
+                  "qemu-system-riscv64 -machine virt -nographic -kernel %s"
+                  (Filename.quote elf)))
+    | Some other ->
+        prerr_endline
+          (Printf.sprintf
+             "emo run: unknown target `%s` for run — --target supports only \
+              riscv64 (other targets: `emo build`, then run the artifact)"
+             other);
+        exit 65
+    | None -> (
+        match run_file ~file ~color ~error_limit with
+        | 0 -> Cmd.Exit.ok
+        | code -> exit code)
   in
   Cmd.v
     (Cmd.info "run" ~doc:"Run an Emo program.")
-    Term.(const run $ file $ no_color $ error_limit)
+    Term.(const run $ file $ no_color $ error_limit $ target)
 
 (* True while the source still has open brackets or an unterminated string —
    the REPL keeps reading with a continuation prompt. *)
@@ -1651,6 +1750,18 @@ let doctor ~(emit : string -> unit) : int =
   if tool_exists "erlc" then line "beam:" "ok"
   else line "beam:" "unavailable — erlc not found";
   line "wasm:" "ok — no external tools needed";
+  if
+    tool_exists "riscv64-unknown-elf-as" && tool_exists "riscv64-unknown-elf-ld"
+  then
+    if tool_exists "qemu-system-riscv64" then
+      line "riscv64:" ("ok" ^ tool_version "qemu-system-riscv64")
+    else
+      line "riscv64:"
+        "unavailable — qemu-system-riscv64 not found (the dev loop needs it)"
+  else
+    line "riscv64:"
+      "unavailable — the riscv64 target needs the GNU cross binutils on PATH \
+       (riscv64-unknown-elf-as and riscv64-unknown-elf-ld)";
   if !broken then 1 else 0
 
 let doctor_cmd =

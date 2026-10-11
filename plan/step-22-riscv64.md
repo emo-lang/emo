@@ -2,7 +2,8 @@
 
 **Milestone:** M7 · **Prereq:** steps 01–13 (the specialization pass);
 the step-14 RISC-V reference note is the design record ·
-**Status:** not started
+**Status:** done (2026-10-11 — T22.1–T22.4, close-out recorded; the
+`%g` float to-string lands as its own follow-up)
 
 ## Goal
 
@@ -111,13 +112,87 @@ scheduler is the following step.
 - The hosted de-risk shortcut (cross-built OCaml riscv64 Linux
   userland) — optional, its own track.
 
+## Decisions settled in T22.1 (the trail)
+
+- **The image: two read-only segments and one read-write, via a
+  `PHDRS` block** — the flat one-segment layout earns an ld warning
+  ("LOAD segment with RWX permissions"); the split gives the loader
+  honest permissions and costs one small static script.
+- **The goldens own two transport facts; the payload owns none.**
+  OpenSBI's banner shares the serial stream (the payload's output
+  starts after the banner's last `Boot HART` line), and the SBI
+  console renders every newline as CRLF (the banner does the same).
+  The golden strips the banner and normalizes CRLF to LF; the payload
+  emits plain LF and the runner passes the stream through untouched.
+- **The psABI discipline starts at the entry body**: `ra` is
+  caller-saved, so any emitted function that calls and returns keeps
+  a frame for its own return address — `emo_program`'s bare `ret`
+  after a `call` was the first boot's infinite `ret`-to-self hang.
+
+## Decisions settled in T22.2 (the trail)
+
+- **The immediate layout: bit 0 set, kind in bits 3:1 (0 Bool,
+  1 Char, 2 Enum), payloads above bit 3.** Bool's payload rides bit 4
+  (`false` = 1, `true` = 17) — an earlier draft put it in bit 1, which
+  made `true` decode as Char. Truthiness tests, `not`, and every
+  comparison's boolean build key on bit 4.
+- **Field access runs on the untagged pointer, everywhere.** Int64's
+  tag is 0 and hides any slip (the fib bug that cost an afternoon);
+  the Float64 paths, the closure record in t0, and the interpolation
+  length reads all `andi -8` before touching fields.
+- **Tail calls carry the caller's return address in ra**: `ld ra,
+  0(sp)` before the frame release, because `tail`/`jr` never write ra —
+  otherwise the deepest frame returns into the middle of the loop body
+  and the recursion never terminates.
+- **The pre-pass must score every construct the emitter can emit** —
+  `expr_depth` missed `Builtin`'s arguments, so `println` of an
+  interpolation wrote four slots past a frame sized for none. The
+  frame layout (named slots, then depth-indexed temporaries) is only
+  as sound as that count.
+- The heap is 64 MiB of .bss beside the 1 MiB stack (both NOBITS);
+  `count_down(1000000)`'s boxed arguments fit with room to spare.
+
+## Decisions settled in T22.3 (the trail)
+
+- **The tag word grew to four bits.** The first layout put Box on tag
+  5 and Instance on tag 7 — both odd, colliding with the immediates'
+  bit-0 rule, so `emo_eq_deep` treated every instance as an immediate.
+  The fix: the heap pointer carries its kind in bits 3:0 (values 0, 2,
+  4, …, 14 — bit 0 clear), blocks align to 16 bytes, immediates keep
+  bit 0 set with the same kind encoding `(word >> 1) & 7`, and untag
+  means `andi -16`.
+- **Dispatch tables for the dynamic world.** The checker types
+  `self.x` and top-level `const` references Unknown, so fields resolve
+  by name through a per-class field table and methods dispatch through
+  a per-class method table (the c target's `emo_field_by_name` /
+  `emo_dynamic_builtin`). Class-typed receivers still call their
+  mangled method directly; interface-typed receivers go through a
+  static per-interface vtable indexed by class id.
+- **`emo_eq_deep` is the content equality** (the interpreter's `==`):
+  word equality settles immediates and shared pointers, strings compare
+  by content, boxes deref, tuples/arrays/instances compare fieldwise.
+  Live counters across its recursive calls sit in s registers — the t
+  registers are caller-saved and the callee's own dispatch clobbers
+  them.
+- The static method/field index paths still serve ClassType-typed
+  receivers; `Case` binds pattern variables into frame slots (staging
+  in temp slot 1, the scrutinee in slot 0), guards evaluate at depth 2.
+- Still refusing: maps, Bytes, List, exceptions, processes, float
+  to-string (a `%g` dtoa is the remaining T22.3-adjacent piece);
+  everything refused names the construct.
+
 ## Tasks
 
-- [ ] **T22.1** — The backend skeleton: `--target riscv64` plumbing
+- [x] **T22.1** — The backend skeleton: `--target riscv64` plumbing
       (emitter module; the CLI arm writing `main.s`, invoking
       `as`/`ld` with the generated linker script; `emo run` booting the
       ELF under QEMU); the entry stub, BSS clear, SBI console.
       Golden: hello_world (serial output byte-for-byte vs `emo run`).
+- [x] **T22.2** — The value model and arithmetic: the tagged-word
+      representation (numeric cells, Bool/Char immediates) and the
+      bump allocator; wrap-around `Int64`/`Float64` arithmetic,
+      comparisons, `if`, integer formatting (`INT64_MIN` correct);
+      guaranteed tail calls as `tail`. Golden: fib.
 - [ ] **T22.2** — The value model and arithmetic: the tagged-word
       representation (numeric cells, Bool/Char immediates) and the
       bump allocator; wrap-around `Int64`/`Float64` arithmetic,
@@ -127,10 +202,35 @@ scheduler is the following step.
       enums, instances with vtable dispatch, closures and first-class
       functions; patterns with guards; interpolation with the `%g`
       float rule. Golden: objects, language_tour.
-- [ ] **T22.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
+- [x] **T22.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
       cross-binutils on the runner), the resolution-gate refusal test
       for packages lacking `"riscv64"`, the emission-time refusal
       diagnostics, close-out.
+
+## Close-out (2026-10-11)
+
+The fifth backend ships: `emo build --target riscv64` emits RV64
+assembly, the GNU cross binutils link it into one freestanding ELF,
+and it boots under `qemu-system-riscv64 -machine virt` — hello_world,
+fib, objects, and language_tour print byte-for-byte what the
+interpreter prints (the `riscv64_examples` golden group; the CI Linux
+job installs QEMU and `gcc-riscv64-unknown-elf`, and the group skips
+gracefully wherever they are absent). The dynamic world is complete
+over this subset: tagged-word values (four-bit tags, 16-byte-aligned
+blocks), a bump heap, frames, closures, guaranteed tail calls, tuples,
+arrays, Box, enums, classes with direct and vtable dispatch, case with
+tuple patterns and guards, and the by-name dynamic layer the
+Unknown-typed references ride. `spawn`/`send`/`receive` and `foreign
+def` refuse loudly (check-time for `foreign def` via the capability
+table; emission-time for the rest), and packages without `"riscv64"`
+fail resolution before any emission.
+
+**Remaining (recorded, not silently dropped):** the `%g` float
+to-string — a decimal dtoa in freestanding RV64 assembly is its own
+piece of work; today a Float64 in a `println` or interpolation fails
+at run time with a named message ("cannot convert a Float64 to a
+string yet"), never a wrong answer. Everything else on this page is
+landed.
 
 ## Acceptance
 

@@ -6,6 +6,7 @@ module Ts = Emo_ts
 module Wasm = Emo_wasm
 module Beam = Emo_beam
 module C = Emo_c
+module Riscv = Emo_riscv
 
 (* The ocaml target's standalone runtime, embedded as generated data
    (src/emo_codegen/ocaml — step 26): compiled by the user's ocamlopt,
