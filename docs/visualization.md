@@ -202,20 +202,22 @@ structural `Mark` interface. The full surface, and the one real design
 problem — how style is carried without default parameters — is worked
 out under "The API in Emo" below.
 
-### Layer 4 — the Seaborn-like surface (`plot_stats`)
+### Layer 4 — the Seaborn-like surface (`plot/stats`)
 
 A dataset-oriented API over the same engine, in its own package —
-`plot_stats` (decision 2026-10-12). Seaborn's insight is that a plot
-is a *mapping* from data columns to aesthetics, plus a statistical
-transformation, plus a mark, faceted by one or more grouping columns.
+`plot/stats`, a scoped name (decision 2026-10-12). `require "plot/stats"`
+binds the short name `stats`, so the calls below read `stats.*`.
+Seaborn's insight is that a plot is a *mapping* from data columns to
+aesthetics, plus a statistical transformation, plus a mark, faceted by
+one or more grouping columns.
 Emo expresses that with a `Table` and the same figure and mark values:
 
 ```
 const tips = plot.table(["total_bill", "tip", "time"], rows)
-plot_stats.relational(tips, x: "total_bill", y: "tip", hue: "time")
-plot_stats.distributions(tips, x: "tip", hue: "smoker")
-plot_stats.categorical(tips, x: "day", y: "total_bill", kind: "box")
-plot_stats.matrix(correlation)
+stats.relational(tips, x: "total_bill", y: "tip", hue: "time")
+stats.distributions(tips, x: "tip", hue: "smoker")
+stats.categorical(tips, x: "day", y: "total_bill", kind: "box")
+stats.matrix(correlation)
 ```
 
 The statistics sublayer underneath: `describe`, `quantile`,
@@ -406,7 +408,7 @@ model.
 
 - **Both front doors share one engine.** The positional surface
   (`plot.line(x, y)`) and the dataset surface
-  (`plot_stats.relational(table, x: "col")`) are two ways into the
+  (`stats.relational(table, x: "col")`) are two ways into the
   same `Figure`/`Axes`/`Mark` values, not two implementations.
 - **Expected failures are values.** Following the standard-library
   convention, a save that cannot open its path, a `Table` missing a
@@ -428,9 +430,10 @@ are lowercase words (`json`, `yaml`, `http`, `base64`). The decision
 - **`plot`** — the core: the `Renderer` interface and the SVG
   renderer, scales and ticks, the declarative `Figure`/`Axes`/`Mark`
   values, the per-mark style classes, and the `Table`.
-- **`plot_stats`** — the Seaborn-like statistical layer on top:
-  descriptives and distributions, the categorical, relational, and
-  matrix families, regression, faceting, and themes and palettes.
+- **`plot/stats`** — a scoped package (owner `plot`) whose short name
+  `stats` binds at the require; the Seaborn-like statistical layer on
+  top: descriptives and distributions, the categorical, relational,
+  and matrix families, regression, faceting, and themes and palettes.
 
 Both declare **all five hosted targets** (`ocaml`, `c`, `typescript`,
 `wasm`, `beam`; the freestanding `riscv64` target is out of scope — it
@@ -455,7 +458,7 @@ the two plot packages.
   line/scatter/bar/area/hist with axes, legend, and title. Exit:
   `examples/plot_demo` emits a corpus of SVGs byte-identical across
   the five targets — the standard library's golden standard.
-- **C. `plot_stats` T1.** Descriptives, binning, KDE, ECDF, box
+- **C. `plot/stats` T1.** Descriptives, binning, KDE, ECDF, box
   statistics, OLS with a confidence band, the categorical,
   distribution, relational, and matrix families, faceting, palettes,
   and themes — all built on `plot`.
@@ -553,9 +556,10 @@ single language's look may be copied.
 
 The defensible first product, now settled as a direction: **two
 packages — `plot` (pure Emo, SVG-first, declarative, a `Renderer`
-interface, checked byte-identical goldens, T0) and `plot_stats` (the
-Seaborn-like T1 layer on top) — preceded by numeric dispatch parity
-and a standard-library `math` package.** No language change is
+interface, checked byte-identical goldens, T0) and `plot/stats` (the
+Seaborn-like T1 layer on top, referenced as `stats.*`) — preceded by
+numeric dispatch parity and a standard-library `math` package.** No
+language change is
 required. Any native GUI canvas is a separate, later EmoUI direction
 and must not gate this work. "Full Matplotlib and Seaborn parity" is
 struck from the goal statement and replaced with the declared tier
@@ -572,8 +576,8 @@ T0 + T1.
    value graph rendered in one call.
 4. **Data — a minimal `Table`** (numeric and categorical columns),
    with no ambitions beyond carrying rows.
-5. **Packages — `plot` + `plot_stats`**, both declaring the five
-   hosted targets.
+5. **Packages — `plot` + `plot/stats`** (the scoped name binds the
+   short name `stats`), both declaring the five hosted targets.
 6. **Math — a standard-library `math` package**, pure Emo and
    byte-identical by default.
 7. **Determinism — an opt-in native fast math path is accepted**,
@@ -591,17 +595,15 @@ T0 + T1.
 
 ## Remaining open questions
 
-1. **Stats package name.** Is `plot_stats` the right second name, or
-   a single word (`stats`) or another form?
-2. **`Table`'s home.** `plot` (recommended, so both front doors
-   accept it) or `plot_stats`?
-3. **Mark pass-throughs.** Does every mark repeat `with_color` etc.,
+1. **`Table`'s home.** `plot` (recommended, so both front doors
+   accept it) or `plot/stats`?
+2. **Mark pass-throughs.** Does every mark repeat `with_color` etc.,
    or is `with_style` alone enough?
-4. **Terminal versus PNG order**, and whether PNG is worth building
+3. **Terminal versus PNG order**, and whether PNG is worth building
    before a consumer actually needs it.
-5. **The `math` surface.** The exact function list, the default
+4. **The `math` surface.** The exact function list, the default
    rounding behavior, and the opt-in fast path's spelling.
-6. **A block spelling.** Should the declarative tree also accept a
+5. **A block spelling.** Should the declarative tree also accept a
    block-as-children attached block, or stay array-only?
-7. **Where the work starts.** Which is step one: the dispatch parity
+6. **Where the work starts.** Which is step one: the dispatch parity
    fix, the `math` package, or the `plot` skeleton?
