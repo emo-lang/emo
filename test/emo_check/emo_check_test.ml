@@ -1325,6 +1325,156 @@ foreign def run(g Greeter) Void = "run"
             Alcotest.fail ("parse failed: " ^ d.Diagnostic.message));
   ]
 
+(* The loop surface (CHECK.md, 2026-10-06): the header `var` scopes to the
+   header and body, `break`/`continue` bind to the nearest enclosing loop
+   and refuse outside one, and a loop never counts as a return point. *)
+let loop_tests =
+  [
+    tc "a clean for loop checks" (fun () ->
+        Alcotest.(check int) "count" 0
+          (List.length
+             (check
+                {|
+def probe(n Int64) Int64 {
+  for var i = 0; i < n; i = i + 1 {
+    println(i)
+  }
+  return 0
+}|})));
+    tc "a clean while loop checks" (fun () ->
+        Alcotest.(check int) "count" 0
+          (List.length
+             (check
+                {|
+def probe(n Int64) Int64 {
+  var i = 0
+  while i < n {
+    i = i + 1
+  }
+  return 0
+}|})));
+    tc "the header var ends with the loop" (fun () ->
+        let diagnostics =
+          check
+            {|
+def probe(n Int64) Int64 {
+  for var i = 0; i < n; i = i + 1 {
+    println(i)
+  }
+  return i
+}|}
+        in
+        Alcotest.(check bool) "E4003" true (has_code diagnostics "E4003"));
+    tc "break and continue refuse outside a loop" (fun () ->
+        let diagnostics =
+          check
+            {|
+def probe() Int64 {
+  break
+  continue
+}|}
+        in
+        Alcotest.(check bool) "E4022" true (has_code diagnostics "E4022"));
+    tc "break and continue bind to the nearest loop" (fun () ->
+        Alcotest.(check int) "count" 0
+          (List.length
+             (check
+                {|
+def probe(n Int64) Int64 {
+  var i = 0
+  while i < n {
+    for var j = 0; j < n; j = j + 1 {
+      break
+    }
+    continue
+  }
+  return 0
+}|})));
+    tc "break cannot cross an arrow block" (fun () ->
+        let diagnostics =
+          check
+            {|
+def probe(n Int64) Int64 {
+  var i = 0
+  while i < n {
+    const g = -> {
+      break
+    }
+    g()
+  }
+  return 0
+}|}
+        in
+        Alcotest.(check bool) "E4022" true (has_code diagnostics "E4022"));
+    tc "capturing the header var is the var-escape error" (fun () ->
+        let diagnostics =
+          check
+            {|
+def probe(n Int64) Int64 {
+  for var i = 0; i < n; i = i + 1 {
+    const g = -> {
+      return i
+    }
+    println(g())
+  }
+  return 0
+}|}
+        in
+        Alcotest.(check bool) "E4012" true (has_code diagnostics "E4012"));
+    tc "a loop does not satisfy a declared return" (fun () ->
+        let diagnostics =
+          check
+            {|
+def probe(n Int64) Int64 {
+  while n > 0 {
+    n = n - 1
+    return 0
+  }
+}|}
+        in
+        Alcotest.(check bool) "E4017" true (has_code diagnostics "E4017"));
+    tc "loop conditions must be Bool" (fun () ->
+        let diagnostics =
+          check
+            {|
+def probe() Int64 {
+  var i = 0
+  while i {
+    i = 1
+  }
+  for var j = 0; j; j = j + 1 {
+    println(j)
+  }
+  return 0
+}|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "the post clause may not retype the header var" (fun () ->
+        let diagnostics =
+          check
+            {|
+def probe(n Int64) Int64 {
+  for var i = 0; i < n; i = "many" {
+    println(i)
+  }
+  return 0
+}|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "the body scope ends before the post clause" (fun () ->
+        let diagnostics =
+          check
+            {|
+def probe(n Int64) Int64 {
+  for var i = 0; i < n; i = j {
+    var j = 1
+  }
+  return 0
+}|}
+        in
+        Alcotest.(check bool) "E4003" true (has_code diagnostics "E4003"));
+  ]
+
 (* The struct shapes (CHECK.md, 2026-10-11): a tuple or a carrier class
    crosses the C ABI as a struct by value — the element types (or the
    class's init-assigned fields) are the layout, recursion through
@@ -1452,6 +1602,7 @@ let () =
       ("narrowing", narrowing_tests);
       ("interface", interface_tests);
       ("var_escape", var_escape_tests);
+      ("loop", loop_tests);
       ("case", case_tests);
       ("void", void_tests);
       ("map", map_tests);

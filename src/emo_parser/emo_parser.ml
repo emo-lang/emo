@@ -1045,6 +1045,8 @@ and collect_fields stmts =
             Option.iter walk else_body
         | Ast.Case { branches; _ } ->
             List.iter (fun b -> walk b.Ast.body) branches
+        | Ast.While { body; _ } -> walk body
+        | Ast.For { init; post; body; _ } -> walk (init :: post :: body)
         | _ -> ())
       stmts
   in
