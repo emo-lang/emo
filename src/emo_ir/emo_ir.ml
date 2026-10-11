@@ -847,6 +847,10 @@ type input = {
    entry's top-level statements. *)
 let lower (input : input) : program =
   let symbols : (string list * string, symbol) Hashtbl.t = Hashtbl.create 16 in
+  (* The built-in `R` enum: no module declares it, so its symbol is
+     seeded — `R.ok` / `R.error` lower as the enum constructions they
+     are, on every target. *)
+  Hashtbl.replace symbols ([], "R") S_enum;
   let type_owners : (string, string list) Hashtbl.t = Hashtbl.create 16 in
   let iface_names : (string, unit) Hashtbl.t = Hashtbl.create 8 in
   let class_names : (string, unit) Hashtbl.t = Hashtbl.create 8 in

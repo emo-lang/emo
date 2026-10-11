@@ -80,6 +80,7 @@ let builtin_type_items : item list =
     ty "TcpListener" "a TCP listener";
     ty "UdpSocket" "a UDP socket";
     ty "Exception" "the base exception class";
+    ty "R" "the built-in result enum — (R.ok, value) beside (R.error, reason)";
   ]
 
 let builtin_function_items : item list =

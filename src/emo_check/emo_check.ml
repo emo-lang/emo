@@ -275,6 +275,29 @@ let interface_sigs_of ctx (i : Ast.interface_def) :
     i.Ast.interface_methods
 
 (* Pass one: gather every declaration the checker reasons about. *)
+(* The built-in `R` enum's members: whichever table a check answers
+   declaration lookups from carries them, whether or not any module
+   declares an enum. *)
+let seed_r_enum (enums : (string, string list) Hashtbl.t) =
+  Hashtbl.replace enums "R" [ "ok"; "error" ]
+
+(* The two names every program sees built in: the result enum `R` and the
+   exception class `Exception`. A declaration taking either would shadow
+   the very thing its name promises — refused at the declaration. *)
+let reserved_name ctx span kind name =
+  let reserved =
+    match name with
+    | "R" -> Some "the built-in `R` enum"
+    | "Exception" -> Some "the built-in `Exception` class"
+    | _ -> None
+  in
+  match reserved with
+  | Some reserved ->
+      report ctx span "E4023"
+        (Printf.sprintf "the %s name `%s` is reserved for %s; rename the %s"
+           kind name reserved kind)
+  | None -> ()
+
 let collect ctx (items : Ast.item list) : unit =
   List.iter
     (fun item ->
@@ -286,14 +309,19 @@ let collect ctx (items : Ast.item list) : unit =
           Option.iter (fun r -> ignore (decl_to_type ctx r)) d.Ast.def_return;
           Hashtbl.replace ctx.funcs d.Ast.def_name d
       | Ast.Item_class c ->
+          reserved_name ctx c.Ast.class_span "class" c.Ast.class_name;
           Hashtbl.replace ctx.classes c.Ast.class_name (class_info_of ctx c)
       | Ast.Item_interface i ->
+          reserved_name ctx i.Ast.interface_span "interface"
+            i.Ast.interface_name;
           Hashtbl.replace ctx.interfaces i.Ast.interface_name
             (interface_sigs_of ctx i)
       | Ast.Item_enum e ->
+          reserved_name ctx e.Ast.enum_span "enum" e.Ast.enum_name;
           Hashtbl.replace ctx.enums e.Ast.enum_name
             (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
       | Ast.Item_emo_group g ->
+          reserved_name ctx g.Ast.group_span "group" g.Ast.group_name;
           (* the group name must not collide with a module path; the
              members register in check_items once expressions can be
              checked *)
@@ -513,6 +541,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       target = "c";
     }
   in
+  seed_r_enum ctx.enums;
   let parsed = Emo_parser.parse_program_with_diagnostics ~file ~source in
   match parsed with
   | exception Emo_lexer.Error diagnostic ->
@@ -765,6 +794,7 @@ let empty_env =
           } );
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
+        ( "R", { vtype = EnumType "R"; is_var = false; depth = 0 } );
       ];
     depth = 0;
     ret = None;
@@ -2854,6 +2884,7 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
       pgroups = Hashtbl.create 16;
     }
   in
+  seed_r_enum tables.penums;
   let diagnostics = ref [] in
   let owners : (string, string) Hashtbl.t = Hashtbl.create 16 in
   let module_name path = String.concat "." path in
@@ -3095,6 +3126,7 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
       target;
     }
   in
+  seed_r_enum ctx.enums;
   collect ctx items;
   if List.length !(ctx.diagnostics) = 0 then check_items ctx items;
   ( sort_diagnostics (List.rev !(ctx.diagnostics)),

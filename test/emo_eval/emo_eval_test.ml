@@ -879,6 +879,27 @@ println(Color.red.is(Greeter))|}));
     tc "is() on primitives is a type error" (fun () ->
         let diagnostic = program_err "println(1.is(Int64))" in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+    tc "the built-in R constructs and matches without a declaration" (fun () ->
+        check_value "ok member" (Emo_eval.EnumMember ("R", "ok")) "R.ok";
+        check_value "error member"
+          (Emo_eval.EnumMember ("R", "error"))
+          "R.error";
+        Alcotest.(check string)
+          "the ok arm" "yes\n"
+          (run_program
+             {|case (R.ok, 1) {
+  (R.ok, n) -> { println("yes") }
+  (R.error, why) -> { println(why) }
+}
+|});
+        Alcotest.(check string)
+          "the error arm" "boom\n"
+          (run_program
+             {|case (R.error, "boom") {
+  (R.ok, n) -> { println(n) }
+  (R.error, why) -> { println(why) }
+}
+|}));
   ]
 
 let method_tests =

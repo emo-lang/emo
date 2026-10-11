@@ -370,6 +370,22 @@ let global_env () =
           };
       mutable_ = false;
     };
+  (* The built-in result enum: `(R.ok, value)` beside `(R.error, reason)`,
+     matched in `case`, no import needed. *)
+  Hashtbl.replace env.frame "R"
+    {
+      bound =
+        EnumType
+          {
+            ename = "R";
+            emembers =
+              [
+                ("ok", EnumMember ("R", "ok"));
+                ("error", EnumMember ("R", "error"));
+              ];
+          };
+      mutable_ = false;
+    };
   env
 
 (* The restricted profile: hermetic evaluation with a step budget — the same

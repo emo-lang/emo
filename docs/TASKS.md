@@ -1120,7 +1120,7 @@ process with the case-no-match runtime error; `raise "str"` and
 `Exception` refuse user redeclaration; the uncaught report prints
 non-empty `data`; `dune test` green.
 
-- [ ] **T36.1** — Built-in `R { ok, error }`: bound in the checker's
+- [x] **T36.1** — Built-in `R { ok, error }`: bound in the checker's
       root env and the interpreter's global frame (the `Exception`
       precedent); `R.ok` / `R.error` construct and pattern-match
       everywhere enum members already do; `enum R` / `class R` report
