@@ -85,6 +85,11 @@ type instr =
   | F64_convert_i64_s
   | F64_rem_s
   | F64_neg
+  | F64_sqrt
+  | F64_floor
+  | F64_ceil
+  | F64_trunc
+  | I64_trunc_f64_s
   | I64_reinterpret_f64
   | F64_reinterpret_i64
   | I64_lt_s
@@ -219,6 +224,11 @@ let rec instr_text indent (i : instr) : string =
   | F64_convert_i64_s -> Printf.sprintf "%sf64.convert_i64_s\n" pad
   | F64_rem_s -> Printf.sprintf "%sf64.rem_s\n" pad
   | F64_neg -> Printf.sprintf "%sf64.neg\n" pad
+  | F64_sqrt -> Printf.sprintf "%sf64.sqrt\n" pad
+  | F64_floor -> Printf.sprintf "%sf64.floor\n" pad
+  | F64_ceil -> Printf.sprintf "%sf64.ceil\n" pad
+  | F64_trunc -> Printf.sprintf "%sf64.trunc\n" pad
+  | I64_trunc_f64_s -> Printf.sprintf "%si64.trunc_f64_s\n" pad
   | I64_reinterpret_f64 -> Printf.sprintf "%si64.reinterpret_f64\n" pad
   | F64_reinterpret_i64 -> Printf.sprintf "%sf64.reinterpret_i64\n" pad
   | I64_lt_s -> Printf.sprintf "%si64.lt_s\n" pad
@@ -483,6 +493,11 @@ let rec encode_instr buf (i : instr) =
   | F64_div -> Buffer.add_char buf '\xa3'
   | F64_rem_s -> Buffer.add_char buf '\xa5'
   | F64_neg -> Buffer.add_char buf '\x9a'
+  | F64_ceil -> Buffer.add_char buf '\x9b'
+  | F64_floor -> Buffer.add_char buf '\x9c'
+  | F64_trunc -> Buffer.add_char buf '\x9d'
+  | F64_sqrt -> Buffer.add_char buf '\x9f'
+  | I64_trunc_f64_s -> Buffer.add_char buf '\xb0'
   | I64_reinterpret_f64 -> Buffer.add_char buf '\xbd'
   | F64_reinterpret_i64 -> Buffer.add_char buf '\xbf'
   | F64_convert_i64_s -> Buffer.add_char buf '\xb9'

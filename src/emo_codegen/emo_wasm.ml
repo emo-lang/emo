@@ -756,6 +756,31 @@ and method_call env self_ name args =
       e env (W.Call (rt "bytes_from_str"))
   (* The fixed-width conversions. Int64 and Byte are both a $vint around
      an i64, so only the narrowing back to Byte masks anything. *)
+  | (("sqrt" | "floor" | "ceil" | "trunc") as mname), [] ->
+      expr env self_;
+      e env (W.Ref_cast t_vfloat);
+      e env (W.Struct_get (t_vfloat, 0));
+      e env
+        (match mname with
+        | "sqrt" -> W.F64_sqrt
+        | "floor" -> W.F64_floor
+        | "ceil" -> W.F64_ceil
+        | _ -> W.F64_trunc);
+      e env (W.Struct_new t_vfloat)
+  | "to_float64", [] ->
+      expr env self_;
+      e env (W.Ref_cast t_vint);
+      e env (W.Struct_get (t_vint, 0));
+      e env W.F64_convert_i64_s;
+      e env (W.Struct_new t_vfloat)
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
+      (* a Float64 truncates toward zero; Int64 and Byte keep the
+         identity arm below *)
+      expr env self_;
+      e env (W.Ref_cast t_vfloat);
+      e env (W.Struct_get (t_vfloat, 0));
+      e env W.I64_trunc_f64_s;
+      e env (W.Struct_new t_vint)
   | "to_int64", [] ->
       (* identity for Int64 and Byte; a String receiver would parse, which
          this target does not do yet — the shape test keeps it from

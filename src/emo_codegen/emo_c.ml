@@ -1069,6 +1069,23 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                (as_native env v Emo_check.Int64))
       | "to_bytes", [] when self_.Emo_ir.ety = Emo_check.String ->
           Printf.sprintf "emo_bytes_of_str(%s)" (emit_expr env self_)
+      | (("sqrt" | "floor" | "ceil" | "trunc") as mname), []
+        when self_.Emo_ir.ety = Emo_check.Float64 ->
+          let v =
+            Printf.sprintf "emo_f64_%s(%s)" mname
+              (as_native env self_ Emo_check.Float64)
+          in
+          if is_dyn result_ty then box_code v Emo_check.Float64 else v
+      | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
+          box_int env result_ty
+            (Printf.sprintf "((int64_t)(%s))"
+               (as_native env self_ Emo_check.Float64))
+      | "to_float64", [] when self_.Emo_ir.ety = Emo_check.Int64 ->
+          let v =
+            Printf.sprintf "((double)(%s))"
+              (as_native env self_ Emo_check.Int64)
+          in
+          if is_dyn result_ty then box_code v Emo_check.Float64 else v
       | "to_bits", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
           Printf.sprintf "emo_f64_bits(%s)" (emit_expr env self_)
       | "to_byte", [] when self_.Emo_ir.ety = Emo_check.Int64 ->

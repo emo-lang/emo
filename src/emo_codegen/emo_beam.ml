@@ -479,6 +479,23 @@ and method_call env self_ name args =
   | "from_bits", [ v ] ->
       put env "apply 'emo_from_bits'/1 ";
       args_list env [ v ]
+  | (("sqrt" | "floor" | "ceil") as mname), [] ->
+      put env (Printf.sprintf "call 'math':'%s'(" mname);
+      expr env self_;
+      put env ")"
+  | "trunc", [] ->
+      (* the BIF answers an integer; the method answers a Float64 *)
+      put env "call 'erlang':'float'(call 'erlang':'trunc'(";
+      expr env self_;
+      put env "))"
+  | "to_float64", [] ->
+      put env "call 'erlang':'float'(";
+      expr env self_;
+      put env ")"
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
+      put env "call 'erlang':'trunc'(";
+      expr env self_;
+      put env ")"
   | "to_int64", [] -> expr env self_
   | "to_byte", [] ->
       put env "apply 'emo_to_byte'/1 ";

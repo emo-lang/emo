@@ -328,6 +328,13 @@ int64_t emo_shr_i64(int64_t a, int64_t c);
 int64_t emo_f64_bits(double d);
 double emo_f64_from_bits(int64_t bits);
 
+/* The Float64 method surface: the libm rounding/root functions the
+   interpreter offers as methods. */
+double emo_f64_sqrt(double x);
+double emo_f64_floor(double x);
+double emo_f64_ceil(double x);
+double emo_f64_trunc(double x);
+
 /* ---- Processes and the cooperative scheduler (T24.9) ----
 
    One OS thread; every Emo process is a ucontext fiber with its own

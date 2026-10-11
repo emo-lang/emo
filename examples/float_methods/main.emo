@@ -1,0 +1,42 @@
+// Float64's method surface: the libm root and rounding functions and
+// the explicit Int64 <-> Float64 conversions. Every target answers
+// byte-for-byte, as the interpreter does.
+//
+//   emo run main.emo
+
+def root(x Float64) Float64 {
+  return x.sqrt()
+}
+
+def down(x Float64) Float64 {
+  return x.floor()
+}
+
+def up(x Float64) Float64 {
+  return x.ceil()
+}
+
+def toward_zero(x Float64) Float64 {
+  return x.trunc()
+}
+
+def as_int(x Float64) Int64 {
+  return x.to_int64()
+}
+
+def as_float(n Int64) Float64 {
+  return n.to_float64()
+}
+
+println(root(2.0))
+println(root(9.0))
+println(down(2.75))
+println(down(0.0 - 2.25))
+println(up(2.25))
+println(up(0.0 - 2.75))
+println(toward_zero(2.75))
+println(toward_zero(0.0 - 2.75))
+println(as_int(2.75))
+println(as_int(0.0 - 2.75))
+println(as_float(3))
+println(as_float(0 - 7))
