@@ -183,12 +183,13 @@ mark 是值:`plot.line(x, y)`、`plot.scatter(x, y)`、
 `Figure`/`Mark` 值恰好能表达:
 
 ```
-const tips = plot.table(["total_bill", "tip", "time"], rows)
-plot.stats.relational(tips, x: "total_bill", y: "tip", hue: "time")
-plot.stats.distributions(tips, x: "tip", hue: "smoker")
-plot.stats.categorical(tips, x: "day", y: "total_bill", kind: "box")
+plot.stats.relational(tips, { "x": "total_bill", "y": "tip", "color": "time" })
+plot.stats.distributions(tips, { "x": "tip", "color": "smoker" })
 plot.stats.matrix(correlation)
 ```
+
+通道键是 Emo 自己的词表(2026-10-12 决定):`x`、`y`、`color`、`size`、
+`marker`、`dash`、`facet_row`、`facet_col`。
 
 其下的统计子层:`describe`、`quantile`、`histogram_bins`、`kde`、
 `ecdf`、`ols` 加置信带、`box_stats`,以及一个确定性的 PRNG。全是纯
@@ -211,7 +212,7 @@ const tips = plot.stats.table(
 时 raise:字面量写出的表是程序意图,写错就是契约违反——将来面向数据
 的入口(CSV 或 JSON 读取器)才返回 `(R.error, reason)`。访问用
 `number(name)` / `label(name)`,并按列的类别校验。数据集 API 用一张
-`Map[String, String]` 命名通道——`{ "x": ..., "y": ..., "hue": ... }`
+`Map[String, String]` 命名通道——`{ "x": ..., "y": ..., "color": ... }`
 ——缺键就是没用那个通道;这是用编译期的通道名校验换真正的可选通道
 (2026-10-12 决定)。`Table` 放在 `plot.stats`,紧挨着唯一使用它的那
 一层,且绝不能再长成 pandas。
@@ -542,10 +543,14 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
 15. **原生数学快路径——独立的 `*_native` 名字。** `math.exp` 是纯的、
     逐字节一致的实现;`math.exp_native` 是可选加入的 `c`/`ocaml`
     `foreign def` 快路径,调用点上一眼可辨。
+16. **通道词表——Emo 自己的词。** `x`、`y`、`color`、`size`、`marker`、
+    `dash`、`facet_row`、`facet_col`;通道值只写列名(常量走样式);
+    未知通道报错;每个家族只读它支持的通道。
 
 ## 剩余的开放问题
 
-1. **通道词表。** 确切的键名及其在各家族中的有效性——等 `plot.stats`
-   细化时定下来。
+1. **图表 kind。** `plot.stats` 怎么选 mark 种类——一个类型化的 `kind`
+   参数,还是每种一个函数(`plot.stats.box`、`plot.stats.violin`……)。
+   写示例时才浮出来,细化 `plot.stats` 前必须定。
 2. **从哪里开工。** 暂缓(2026-10-12 决定):设计还没定完,先不开
    `plan/step-NN-*.md`。

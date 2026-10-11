@@ -213,12 +213,13 @@ mark, faceted by one or more grouping columns.
 Emo expresses that with a `Table` and the same figure and mark values:
 
 ```
-const tips = plot.table(["total_bill", "tip", "time"], rows)
-plot.stats.relational(tips, x: "total_bill", y: "tip", hue: "time")
-plot.stats.distributions(tips, x: "tip", hue: "smoker")
-plot.stats.categorical(tips, x: "day", y: "total_bill", kind: "box")
+plot.stats.relational(tips, { "x": "total_bill", "y": "tip", "color": "time" })
+plot.stats.distributions(tips, { "x": "tip", "color": "smoker" })
 plot.stats.matrix(correlation)
 ```
+
+The channel keys are Emo's own vocabulary (decision 2026-10-12): `x`,
+`y`, `color`, `size`, `marker`, `dash`, `facet_row`, `facet_col`.
 
 The statistics sublayer underneath: `describe`, `quantile`,
 `histogram_bins`, `kde`, `ecdf`, `ols` plus a confidence band,
@@ -246,7 +247,7 @@ literal is programmer intent, so a mistake is a contract violation —
 the data-facing entry points added later (a CSV or JSON reader) return
 `(R.error, reason)` instead. Access is `number(name)` / `label(name)`,
 checked against the column's kind. The dataset API names its channels
-with a `Map[String, String]` — `{ "x": ..., "y": ..., "hue": ... }`
+with a `Map[String, String]` — `{ "x": ..., "y": ..., "color": ... }`
 — so an absent key is simply an unused channel; this trades
 compile-time channel-name checking for real optional channels
 (decision 2026-10-12). `Table` lives in `plot.stats`, next to the only
@@ -642,10 +643,16 @@ T0 + T1.
     is the pure, byte-identical implementation; `math.exp_native` is
     the opt-in `c`/`ocaml` `foreign def` fast path, visibly different
     at the call site.
+16. **Channel vocabulary — Emo's own words.** `x`, `y`, `color`,
+    `size`, `marker`, `dash`, `facet_row`, `facet_col`; channel values
+    are column names only (constants go in styles); unknown channels
+    are an error; each family reads only the channels it supports.
 
 ## Remaining open questions
 
-1. **Channel vocabulary.** The exact key names and their per-family
-   validity — to fix when `plot.stats` is specified.
+1. **The chart kind.** How `plot.stats` selects a mark kind — a typed
+   `kind` argument, or one function per kind (`plot.stats.box`,
+   `plot.stats.violin`, …). It surfaced while writing the examples and
+   must be settled before `plot.stats` is specified.
 2. **Where the work starts.** Deferred (decision 2026-10-12): the
    design is still being settled before any `plan/step-NN-*.md`.
