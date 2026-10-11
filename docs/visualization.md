@@ -223,16 +223,34 @@ plot.stats.matrix(correlation)
 The statistics sublayer underneath: `describe`, `quantile`,
 `histogram_bins`, `kde`, `ecdf`, `ols` plus a confidence band,
 `box_stats`, and a deterministic PRNG. All pure arithmetic; the KDE
-and the normal quantile use the `math` package (decision 2026-10-12).
+uses `math.exp`, and the normal quantile (`normal_quantile`) is the
+statistics layer's own (decision 2026-10-12).
 
 The **minimal table** (decision 2026-10-12) is the one new data
-structure this layer needs — Emo has no data-frame. `Table` holds
-numeric columns (`Array[Float64]`) and categorical columns (an integer
-code per row plus the level names), so `x:`/`y:` read numeric columns
-while `hue:`/`style:`/`facet:` read categorical ones; construction
-validates equal row counts and unique names, and a malformed table is
-an `(R.error, reason)` value. It lives in `plot` so both front doors
-accept it, and it must not grow into pandas.
+structure this layer needs — Emo has no data-frame, and it must not
+grow into one. `Table` is column-oriented: numeric columns in a
+`Map[String, Array[Float64]]`, categorical columns in a
+`Map[String, Array[String]]`, plus a row count. Missing numbers are
+`NaN` (the statistics skip them); there is no missing-label sentinel.
+
+```emo
+const tips = plot.stats.table(
+  { "total_bill": [16.99, 10.34, 21.01], "tip": [1.01, 1.66, 3.50] },
+  { "time": ["Lunch", "Dinner", "Dinner"] }
+)
+```
+
+`plot.stats.table(numbers, labels)` validates equal column lengths and
+unique names and raises on a shape violation: a table written as a
+literal is programmer intent, so a mistake is a contract violation —
+the data-facing entry points added later (a CSV or JSON reader) return
+`(R.error, reason)` instead. Access is `number(name)` / `label(name)`,
+checked against the column's kind. The dataset API names its channels
+with a `Map[String, String]` — `{ "x": ..., "y": ..., "hue": ... }`
+— so an absent key is simply an unused channel; this trades
+compile-time channel-name checking for real optional channels
+(decision 2026-10-12). `Table` lives in `plot.stats`, next to the only
+layer that uses it, and it must not grow into pandas.
 
 ### Layer 5 — other backends and interaction
 
@@ -336,8 +354,9 @@ def line_style() LineStyle {
 }
 ```
 
-**The mark carries a style and offers `with_style`**, plus thin
-`with_*` pass-throughs for the common one-option case:
+**The mark carries a style and has exactly one styling verb,
+`with_style`** (decision 2026-10-12 — no `with_*` pass-throughs, so
+every mark has the same single styling entry):
 
 ```emo
 class Line {
@@ -350,26 +369,27 @@ class Line {
   def with_style(s LineStyle) Line {
     return Line.new(x: self.x, y: self.y, style: s)
   }
-
-  def with_color(c String) Line {
-    return self.with_style(self.style.with_color(c))
-  }
 }
 ```
 
 Call sites stay ordinary Emo:
 
 ```emo
-plot.line(months, sales)                                          // default
-plot.line(months, sales).with_color("#c0392b")                    // one option
+plot.line(months, sales)                                    // default
 plot.line(months, sales).with_style(
-  plot.line_style().with_color("#c0392b").with_width(2.5))        // several
+  plot.line_style().with_color("#c0392b"))                  // one option
+plot.line(months, sales).with_style(
+  plot.line_style().with_color("#c0392b").with_width(2.5))  // several
 ```
 
 The boilerplate is mechanical and lives in the package once. The cost
-is honest: `N` options means `N` copy methods per style class (and `N`
-pass-throughs per mark if we want them), and with no generics there is
-no way to factor that away.
+is honest: `N` options means `N` copy methods per style class, and no
+generics factor that away. Because a mark has only `with_style`, that
+cost is paid once per style class and is never multiplied by the
+number of marks. A one-option change is more verbose than a
+pass-through would be; if real chart code shows that verbosity
+dominating, a `with_*` pass-through on the marks is a bounded future
+addition — not now.
 
 **The alternative is default parameters.**
 
@@ -398,7 +418,7 @@ model.
 
 | | `with_*` style values (no language change) | default parameters (language change) |
 |---|---|---|
-| call site | `plot.line(x, y).with_color("#c00")` | `plot.line(x, y, color: "#c00")` |
+| call site | `plot.line(x, y).with_style(plot.line_style().with_color("#c00"))` | `plot.line(x, y, color: "#c00")` |
 | package boilerplate | `N` copy methods per style class | none |
 | checking | compile-time, every option typed | compile-time, every option typed |
 | new language surface | none | parameter defaults, plus their rules |
@@ -450,11 +470,14 @@ the two plot packages.
 
 - **A. Numeric substrate first.** Close gap 2 (float method dispatch
   on `c`/`wasm`/`beam`), and land a new standard-library **`math`
-  package** — pure Emo, all five targets: `log`, `log10`, `exp`,
-  `pow`, `sin`/`cos`/`tan`/`atan2`, `hypot`, and `normal_quantile`.
-  Its optional native fast path rides `foreign def` on `c`/`ocaml`,
-  opt-in and documented as target-pinned (decision 2026-10-12). The
-  dispatch fix and `math` both gate everything above them.
+  package** — pure Emo, all five targets, scoped to what plotting
+  needs (decision 2026-10-12): `exp`, `log`, `log10`, `pow`, `sqrt`,
+  `min`, `max`, `abs`, `clamp`, and the constants `e`/`pi`. Trigonometry
+  is deferred (no polar or 3D in T0+T1); `normal_quantile` and
+  `normal_cdf` live inside `plot.stats`, not `math`. The optional
+  native fast path rides `foreign def` on `c`/`ocaml`, opt-in and
+  documented as target-pinned. The dispatch fix and `math` both gate
+  everything above them.
 - **B. `plot` T0 core — SVG only.** `Buffer`, scales, ticks, the
   per-mark style classes, the `Renderer` interface, `SvgRenderer`,
   the declarative `figure`/`axes`/mark values, `Table`, and
@@ -465,9 +488,10 @@ the two plot packages.
   statistics, OLS with a confidence band, the categorical,
   distribution, relational, and matrix families, faceting, palettes,
   and themes — all built on `plot`.
-- **D. Terminal renderer.** The cheap second `Renderer`; makes plots
-  visible in CI and the CLI, and tests that Layer 0 is genuinely
-  format-agnostic.
+- **D. Terminal renderer** (decision 2026-10-12: before PNG). The
+  cheap second `Renderer` — Unicode characters printed to a terminal,
+  not a window; it makes plots visible in CI and the CLI, and tests
+  that Layer 0 is genuinely format-agnostic.
 - **E. PNG.** Pure-Emo zlib (stored, then fixed-Huffman, DEFLATE
   blocks), CRC32 and Adler-32, and a scanline polygon/line rasterizer
   with supersampling, using the Hershey stroke font for text.
@@ -490,12 +514,14 @@ discovered mid-implementation:
    (`non-native expression in specialized body`, `Type_ref margin_t`).
    A bug report, not a design item; file it first.
 3. **Float math goes in a standard-library `math` package** (decision
-   2026-10-12): pure Emo, all five targets, with an opt-in
-   `foreign def` fast path on `c`/`ocaml` whose output is documented
-   as target-pinned. Not in the core, and not package-private. The
-   `CHECK.md` entry already records that the current primitives are
-   partial across targets, so this is a known-open area rather than a
-   surprise.
+   2026-10-12): pure Emo, all five targets, scoped to plotting's needs
+   for now — `exp`, `log`, `log10`, `pow`, `sqrt`, `min`, `max`, `abs`,
+   `clamp`, `e`, `pi`; trigonometry deferred; `normal_quantile` and
+   `normal_cdf` in `plot.stats`. Its opt-in `foreign def` fast path on
+   `c`/`ocaml` is documented as target-pinned. Not in the core, and not
+   package-private. The `CHECK.md` entry already records that the
+   current primitives are partial across targets, so this is a
+   known-open area rather than a surprise.
 4. **Default parameters** — build the library on the `with_*` style
    design first (see "The API in Emo"), which needs no language
    change; let real chart code decide whether parameter defaults earn
@@ -577,12 +603,15 @@ T0 + T1.
    deferred; the detailed comparison is under "The API in Emo".
 3. **Surface — declarative.** A chart is a `Figure`/`Axes`/`Mark`
    value graph rendered in one call.
-4. **Data — a minimal `Table`** (numeric and categorical columns),
-   with no ambitions beyond carrying rows.
+4. **Data — a minimal `Table`**: column-oriented, numeric columns in
+   `Map[String, Array[Float64]]` and categorical in
+   `Map[String, Array[String]]`, `NaN` for missing numbers; built and
+   validated by `plot.stats.table(numbers, labels)`; dataset channels
+   named by a `Map[String, String]`.
 5. **Package — one `plot`**, declaring the five hosted targets, with
    the Seaborn-like layer as its `plot.stats` submodule.
 6. **Math — a standard-library `math` package**, pure Emo and
-   byte-identical by default.
+   byte-identical by default, scoped to plotting's needs (see 13).
 7. **Determinism — an opt-in native fast math path is accepted**,
    documented as target-pinned.
 8. **Process — this `docs/` note first**, then a
@@ -595,19 +624,25 @@ T0 + T1.
    this effort. If a canvas is ever built, the shared vector-canvas
    contract is an **independent EmoUI direction**, accepted
    2026-10-12 — not a plotting backend.
+10. **`Table` and channels — the concrete shape above.**
+    Column-oriented with two maps, `NaN` for missing numbers,
+    `plot.stats.table(...)` raising on a shape violation, and
+    `Map[String, String]` channel mappings (runtime channel-name
+    checks accepted).
+11. **No mark pass-throughs.** A mark's only styling verb is
+    `with_style`; style classes keep their `with_*` copy methods.
+12. **Renderer order — terminal, then PNG.**
+13. **`math` scoped to plot**: `exp`, `log`, `log10`, `pow`, `sqrt`,
+    `min`, `max`, `abs`, `clamp`, `e`, `pi`; no trigonometry;
+    `normal_quantile`/`normal_cdf` inside `plot.stats`.
+14. **Array-only declarative tree** — no trailing-block spelling.
 
 ## Remaining open questions
 
-1. **`Table`'s home.** The `plot` root module (recommended, so both
-   front doors accept it), the `plot.stats` module, or its own
-   `plot.table` module?
-2. **Mark pass-throughs.** Does every mark repeat `with_color` etc.,
-   or is `with_style` alone enough?
-3. **Terminal versus PNG order**, and whether PNG is worth building
-   before a consumer actually needs it.
-4. **The `math` surface.** The exact function list, the default
-   rounding behavior, and the opt-in fast path's spelling.
-5. **A block spelling.** Should the declarative tree also accept a
-   block-as-children attached block, or stay array-only?
-6. **Where the work starts.** Which is step one: the dispatch parity
-   fix, the `math` package, or the `plot` skeleton?
+1. **Channel vocabulary.** The exact key names — `x`, `y`, `hue`,
+   `size`, `style`, `row`, `col` — to fix when `plot.stats` is
+   specified.
+2. **`math`'s fast-path spelling.** How the opt-in native path is
+   selected, and whether it is per-call or package-level.
+3. **Where the work starts.** Deferred (decision 2026-10-12): the
+   design is still being settled before any `plan/step-NN-*.md`.

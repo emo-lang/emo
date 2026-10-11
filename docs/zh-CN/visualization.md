@@ -192,14 +192,29 @@ plot.stats.matrix(correlation)
 
 其下的统计子层:`describe`、`quantile`、`histogram_bins`、`kde`、
 `ecdf`、`ols` 加置信带、`box_stats`,以及一个确定性的 PRNG。全是纯
-算术;KDE 与正态分位使用 `math` 包(2026-10-12 决定)。
+算术;KDE 用 `math.exp`,而正态分位(`normal_quantile`)是统计层自己
+的(2026-10-12 决定)。
 
 **最小表**(2026-10-12 决定)是这一层唯一需要的新数据结构——Emo
-没有 data-frame。`Table` 持数值列(`Array[Float64]`)与分类列(每行
-一个整数码外加层级名),于是 `x:`/`y:` 读数值列,而
-`hue:`/`style:`/`facet:` 读分类列;构造时校验行数相等、列名唯一,
-畸形表以 `(R.error, reason)` 值报出。它放在 `plot` 里,好让两扇门都
-接受它,且绝不能再长成 pandas。
+没有 data-frame,它也不能长成 data-frame。`Table` 是列式的:数值列放
+`Map[String, Array[Float64]]`,分类列放 `Map[String, Array[String]]`,
+外加行数。缺失的数值是 `NaN`(统计函数跳过);标签列不设缺失哨兵。
+
+```emo
+const tips = plot.stats.table(
+  { "total_bill": [16.99, 10.34, 21.01], "tip": [1.01, 1.66, 3.50] },
+  { "time": ["Lunch", "Dinner", "Dinner"] }
+)
+```
+
+`plot.stats.table(numbers, labels)` 校验各列等长、列名唯一,形状违例
+时 raise:字面量写出的表是程序意图,写错就是契约违反——将来面向数据
+的入口(CSV 或 JSON 读取器)才返回 `(R.error, reason)`。访问用
+`number(name)` / `label(name)`,并按列的类别校验。数据集 API 用一张
+`Map[String, String]` 命名通道——`{ "x": ..., "y": ..., "hue": ... }`
+——缺键就是没用那个通道;这是用编译期的通道名校验换真正的可选通道
+(2026-10-12 决定)。`Table` 放在 `plot.stats`,紧挨着唯一使用它的那
+一层,且绝不能再长成 pandas。
 
 ### 第 5 层 —— 其它后端与交互
 
@@ -296,8 +311,8 @@ def line_style() LineStyle {
 }
 ```
 
-**mark 持有一个样式并提供 `with_style`**,再为常见的只改一项提供薄的
-`with_*` 直通:
+**mark 持有一个样式,且只有一个样式入口 `with_style`**(2026-10-12
+决定——不做 `with_*` 直通,于是每个 mark 的样式入口完全一致):
 
 ```emo
 class Line {
@@ -310,25 +325,24 @@ class Line {
   def with_style(s LineStyle) Line {
     return Line.new(x: self.x, y: self.y, style: s)
   }
-
-  def with_color(c String) Line {
-    return self.with_style(self.style.with_color(c))
-  }
 }
 ```
 
 调用点仍是普通 Emo:
 
 ```emo
-plot.line(months, sales)                                          // 默认
-plot.line(months, sales).with_color("#c0392b")                    // 改一项
+plot.line(months, sales)                                    // 默认
 plot.line(months, sales).with_style(
-  plot.line_style().with_color("#c0392b").with_width(2.5))        // 改几项
+  plot.line_style().with_color("#c0392b"))                  // 改一项
+plot.line(months, sales).with_style(
+  plot.line_style().with_color("#c0392b").with_width(2.5))  // 改几项
 ```
 
 样板是机械的,且在包里只出现一次。代价是诚实的:`N` 个选项意味着每个
-样式类 `N` 个复制方法(若需要,每个 mark 再 `N` 个直通),而没有泛型,
-语言消不掉这份重复。
+样式类 `N` 个复制方法,而没有泛型,语言消不掉这份重复。因为 mark 只有
+`with_style`,这份代价每个样式类只付一次,不会乘以 mark 的数量。改一
+项的写法比直通啰嗦;若真实图表代码显示这份啰嗦占了大头,给 mark 补
+`with_*` 直通是一个有界的后续增补——不是现在。
 
 **另一条路是默认参数。**
 
@@ -352,7 +366,7 @@ E4009),而且它需要自己的设计评审与第二个消费者。建议是**�
 
 | | `with_*` 样式值(不改语言) | 默认参数(改语言) |
 |---|---|---|
-| 调用点 | `plot.line(x, y).with_color("#c00")` | `plot.line(x, y, color: "#c00")` |
+| 调用点 | `plot.line(x, y).with_style(plot.line_style().with_color("#c00"))` | `plot.line(x, y, color: "#c00")` |
 | 包内样板 | 每个样式类 `N` 个复制方法 | 无 |
 | 检查 | 编译期,每个选项有类型 | 编译期,每个选项有类型 |
 | 新语言面 | 无 | 参数默认值及其规则 |
@@ -389,14 +403,16 @@ E4009),而且它需要自己的设计评审与第二个消费者。建议是**�
 ## 工作顺序
 
 依赖是真实的,所以顺序不是随意的。2026-10-12 的决定钉死了形状:
-SVG 优先,一个独立的 `math` 包,然后是这两个绘图包。
+SVG 优先,一个独立的 `math` 包,然后是这一个 `plot` 包。
 
 - **A. 先做数值基底。** 补上缺口 2(`c`/`wasm`/`beam` 的浮点方法
-  分派),并落地一个新的标准库 **`math` 包**——纯 Emo、五个目标:
-  `log`、`log10`、`exp`、`pow`、`sin`/`cos`/`tan`/`atan2`、`hypot`,
-  以及 `normal_quantile`。它可选的原生快路径在 `c`/`ocaml` 上经由
-  `foreign def`,默认关闭,并写明其输出与目标绑定(2026-10-12 决定)。
-  分派修复与 `math` 一起门控其上的所有工作。
+  分派),并落地一个新的标准库 **`math` 包**——纯 Emo、五个目标,
+  以绘图所需为限(2026-10-12 决定):`exp`、`log`、`log10`、`pow`、
+  `sqrt`、`min`、`max`、`abs`、`clamp`,以及常量 `e`/`pi`。三角函数
+  暂缓(T0+T1 没有极坐标或 3D);`normal_quantile` 与 `normal_cdf`
+  放在 `plot.stats` 里,不进 `math`。可选的原生快路径在 `c`/`ocaml`
+  上经由 `foreign def`,默认关闭,并写明其输出与目标绑定。分派修复
+  与 `math` 一起门控其上的所有工作。
 - **B. `plot` T0 核心——只做 SVG。** `Buffer`、比例尺、刻度、按 mark
   的样式类、`Renderer` 接口、`SvgRenderer`、声明式的
   `figure`/`axes`/mark 值、`Table`,以及带坐标轴、图例、标题的
@@ -405,7 +421,8 @@ SVG 优先,一个独立的 `math` 包,然后是这两个绘图包。
 - **C. `plot.stats` T1。** 描述统计、分箱、KDE、ECDF、箱统计、带置信
   带的 OLS、分类/分布/关系/矩阵家族、分面、调色板与主题——全部建在
   `plot` 之上。
-- **D. 终端渲染器。** 便宜的第二 `Renderer`;让图在 CI 与 CLI 里可见,
+- **D. 终端渲染器**(2026-10-12 决定:排在 PNG 之前)。便宜的第二
+  `Renderer`——把字符打印到终端,不开窗口;让图在 CI 与 CLI 里可见,
   也检验第 0 层真的与格式无关。
 - **E. PNG。** 纯 Emo 的 zlib(stored,再到固定 Huffman 的 DEFLATE
   块)、CRC32 与 Adler-32,以及带超采样的扫描线多边形/线段光栅器,
@@ -427,9 +444,11 @@ SVG 优先,一个独立的 `math` 包,然后是这两个绘图包。
    (`non-native expression in specialized body`、`Type_ref margin_t`)。
    这是 bug,不是设计项;先报它。
 3. **浮点数学放进一个标准库 `math` 包**(2026-10-12 决定):纯 Emo、
-   五个目标,并在 `c`/`ocaml` 上提供一个可选加入的 `foreign def`
-   快路径,其输出写明与目标绑定。不放核心,也不做包内私有。
-   `CHECK.md` 条目已经记录了当前原语在各目标上的不完整,所以这是
+   五个目标,暂时以绘图所需为限——`exp`、`log`、`log10`、`pow`、
+   `sqrt`、`min`、`max`、`abs`、`clamp`、`e`、`pi`;三角函数暂缓;
+   `normal_quantile` 与 `normal_cdf` 放 `plot.stats`。它在 `c`/`ocaml`
+   上的可选 `foreign def` 快路径写明与目标绑定。不放核心,也不做包内
+   私有。`CHECK.md` 条目已经记录了当前原语在各目标上的不完整,所以这是
    已知的开放领域,而非意外。
 4. **默认参数**——先按 `with_*` 样式设计把库建起来(见"Emo 里的
    API"),它不改语言;让真实图表代码决定参数默认值是否挣得位置,
@@ -493,10 +512,14 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
    携带,不改语言。默认参数暂缓;详细对比见"Emo 里的 API"。
 3. **表面——声明式。** 一张图是一个 `Figure`/`Axes`/`Mark` 值图,
    一次调用渲染。
-4. **数据——一个最小 `Table`**(数值列与分类列),不奢求更多。
+4. **数据——一个最小 `Table`**:列式,数值列 `Map[String, Array[Float64]]`、
+   分类列 `Map[String, Array[String]]`,缺失数值用 `NaN`;由
+   `plot.stats.table(numbers, labels)` 构造并校验;数据集通道用
+   `Map[String, String]` 命名。
 5. **包——一个 `plot`**,声明五个宿主目标,Seaborn 式层是它的
    `plot.stats` 子模块。
-6. **数学——一个标准库 `math` 包**,默认纯 Emo 且逐字节一致。
+6. **数学——一个标准库 `math` 包**,默认纯 Emo 且逐字节一致,
+   以绘图所需为限(见第 13 条)。
 7. **确定性——接受可选加入的原生快数学路径**,写明与目标绑定。
 8. **流程——先留这份 `docs/` 笔记**,等数值基底工作被拆细后再开
    `plan/step-NN-*.md`;`README.md` 等已定设计。
@@ -505,17 +528,21 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
    没有绘制动词。因此交互/GUI 图表被排除在本项工作之外。若将来真做
    画布,共享的向量画布契约是一条**独立的 EmoUI 方向**(2026-10-12
    接受),不是绘图后端。
+10. **`Table` 与通道——即上面的具体形状。** 列式、两张 Map、缺失数值
+    用 `NaN`、`plot.stats.table(...)` 形状违例时 raise、通道用
+    `Map[String, String]`(接受运行期通道名校验)。
+11. **mark 不做直通。** mark 唯一的样式入口是 `with_style`;样式类保留
+    自己的 `with_*` 复制方法。
+12. **渲染器先后——终端,然后 PNG。**
+13. **`math` 以绘图为限**:`exp`、`log`、`log10`、`pow`、`sqrt`、
+    `min`、`max`、`abs`、`clamp`、`e`、`pi`;不做三角函数;
+    `normal_quantile`/`normal_cdf` 放 `plot.stats`。
+14. **声明式树只用数组**——不做尾随块写法。
 
 ## 剩余的开放问题
 
-1. **`Table` 的归属。** `plot` 根模块(建议如此,好让两扇门都接受)、
-   `plot.stats` 模块,还是它自己的 `plot.table` 模块?
-2. **mark 的直通方法。** 每个 mark 都重复 `with_color` 等,还是只留
-   `with_style` 就够?
-3. **终端与 PNG 的先后**,以及在没有消费者之前是否值得做 PNG。
-4. **`math` 的表面。** 确切的函数清单、默认舍入行为,以及可选快路径
-   的拼写。
-5. **块写法。** 声明式树是否也要接受块当子节点的挂载块,还是只留
-   数组?
-6. **从哪里开工。** 第一步是分派对齐修复、`math` 包,还是 `plot`
-   骨架?
+1. **通道词表。** 确切的键名——`x`、`y`、`hue`、`size`、`style`、
+   `row`、`col`——等 `plot.stats` 细化时定下来。
+2. **`math` 快路径的拼写。** 可选的原生路径怎么选,是逐调用还是包级。
+3. **从哪里开工。** 暂缓(2026-10-12 决定):设计还没定完,先不开
+   `plan/step-NN-*.md`。
