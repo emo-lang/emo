@@ -1,9 +1,11 @@
 # Emo and visualization — an assessment and a design direction
 
 Written 2026-10-12. This is a technical feasibility assessment and a
-proposed direction, not decided design; project-state claims reflect
-the repository as of the date above (`develop` at `v0.28.1`). Nothing
-here enters `README.md` until it is settled in `CHECK.md`.
+design direction; project-state claims reflect the repository as of
+the date above (`develop` at `v0.28.1`). The direction was settled in
+discussion on 2026-10-12 (see "Decisions recorded" at the end) but
+stays a `docs/` design note until the work is scoped into a plan step;
+it enters `README.md` only when it becomes decided design.
 
 The question: what would it take to give Emo plotting and
 statistical-graphics capability comparable to Python's **Matplotlib**
@@ -114,8 +116,9 @@ their targets.
    measurable — which doubles as the text source for a raster backend.
 6. **There are no default parameters.** Verified: `def f(a Int64, b Int64)`
    called as `f(1)` is E4009. Named arguments exist; defaults do not.
-   Style options therefore need typed carriers or presets (see the API
-   sketch), which is a real ergonomics question, not a footnote.
+   Style options are carried by per-mark style values with `with_*` copy
+   methods instead (see "The API in Emo") — a real design problem rather
+   than a footnote.
 7. **Binding patterns are settled but not in this build.** `const (lo, hi) = f(x)`
    is recorded in `CHECK.md`; the `v0.28.1` interpreter still rejects
    it. The plot code can live without it (index the tuple), but it is
@@ -166,51 +169,64 @@ scales want the math layer from gap 1.
 
 ### Layer 2 — figure and axes
 
-An explicit object model: a `Figure` holds one or more `Axes`, each
-with its scales, marks, styling, legend, and labels.
+The object model is a value graph: a `Figure` holds one or more
+`Axes`, each with its scales, mark list, legend, and labels.
+Constructing a figure is an ordinary call returning an ordinary value,
+and rendering is one further call.
 
 ```
-const fig = plot.figure(width: 800.0, height: 600.0, title: "Monthly sales")
-const ax = fig.axes()
+const chart = plot.figure(
+  title: "Monthly sales",
+  axes: plot.axes(x_label: "Month", y_label: "Sales", marks: [...])
+)
+plot.save(chart, "chart.svg")
 ```
 
 Deliberately **no pyplot-style global state**: Emo's principle of
 least surprise argues against a hidden current figure and current
-axes, which are Matplotlib's most-criticized design decision.
-Constructing a figure is an ordinary call returning an ordinary value.
+axes, which are Matplotlib's most-criticized design decision. The
+surface is declarative (decision 2026-10-12): a chart is a value, not
+a sequence of mutations against a live canvas.
 
 ### Layer 3 — the Matplotlib-like surface
 
-Marks as ordinary functions on an `Axes`: `ax.line(x, y)`,
-`ax.scatter(x, y)`, `ax.bars(labels, values)`, `ax.area(x, y)`,
-`ax.hist(values, bins)`. Composite conveniences (`plot.line(x, y)`
-constructing its own figure) sit on top.
+Marks are values: `plot.line(x, y)`, `plot.scatter(x, y)`,
+`plot.bars(labels, values)`, `plot.area(x, y)`,
+`plot.hist(values, bins)`. Each returns a mark carrying its data and a
+default style, and `axes(marks: [...])` collects them through a
+structural `Mark` interface. The full surface, and the one real design
+problem — how style is carried without default parameters — is worked
+out under "The API in Emo" below.
 
-### Layer 4 — the Seaborn-like surface
+### Layer 4 — the Seaborn-like surface (`plot_stats`)
 
-A dataset-oriented API over the same engine. Seaborn's insight is
-that a plot is a *mapping* from data columns to aesthetics, plus a
-statistical transformation, plus a mark, faceted by one or more
-grouping columns. Emo can express exactly that with `Map` and
-`Array`:
+A dataset-oriented API over the same engine, in its own package —
+`plot_stats` (decision 2026-10-12). Seaborn's insight is that a plot
+is a *mapping* from data columns to aesthetics, plus a statistical
+transformation, plus a mark, faceted by one or more grouping columns.
+Emo expresses that with a `Table` and the same figure and mark values:
 
 ```
-plot.relational(data, x: "total_bill", y: "tip", hue: "time")
-plot.distributions(data, x: "tip", hue: "smoker")
-plot.categorical(data, x: "day", y: "total_bill", kind: "box")
-plot.matrix(data)
+const tips = plot.table(["total_bill", "tip", "time"], rows)
+plot_stats.relational(tips, x: "total_bill", y: "tip", hue: "time")
+plot_stats.distributions(tips, x: "tip", hue: "smoker")
+plot_stats.categorical(tips, x: "day", y: "total_bill", kind: "box")
+plot_stats.matrix(correlation)
 ```
 
 The statistics sublayer underneath: `describe`, `quantile`,
 `histogram_bins`, `kde`, `ecdf`, `ols` plus a confidence band,
 `box_stats`, and a deterministic PRNG. All pure arithmetic; the KDE
-and the normal quantile need the math layer.
+and the normal quantile use the `math` package (decision 2026-10-12).
 
-A **minimal table type** is the one new data structure this layer
-needs — Emo has no data-frame. A `Table` class holding
-`Map[String, Array[Float64]]` plus column names, or a pair of
-`Array[String]` names with `Array[Array[Float64]]` columns, is enough;
-it must not grow into pandas.
+The **minimal table** (decision 2026-10-12) is the one new data
+structure this layer needs — Emo has no data-frame. `Table` holds
+numeric columns (`Array[Float64]`) and categorical columns (an integer
+code per row plus the level names), so `x:`/`y:` read numeric columns
+while `hue:`/`style:`/`facet:` read categorical ones; construction
+validates equal row counts and unique names, and a malformed table is
+an `(R.error, reason)` value. It lives in `plot` so both front doors
+accept it, and it must not grow into pandas.
 
 ### Layer 5 — other backends and interaction
 
@@ -223,78 +239,219 @@ shape the static API.
 ## The API in Emo
 
 No new syntax is required, which is itself a strong sign the design
-fits. Two things need a decision, and they are the interesting part.
+fits. The surface is declarative (decision 2026-10-12): a chart is a
+value — a `Figure` holding `Axes`, each holding marks — and one call
+renders it. Nothing mutates a hidden current figure.
 
-**How marks carry style.** With no default parameters, a mark can
-take all of its options explicitly, or take a typed `Style` value, or
-return a chainable immutable mark. The choices, with their costs:
+```emo
+const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
+const sales = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0, 27.0, 35.0]
 
-- *All parameters on the function* — fully explicit and strict, but
-  every call names color, width, dash, marker, opacity, and label even
-  when it wants none of them. Unusable.
-- *A typed `Style` carrier* — `Style.new(...)` requires every field
-  too, so the plot package ships named presets (`plot.default_style`,
-  `plot.grid_style`) and per-mark constructors. Strict and typed, at
-  the cost of ceremony.
-- *A chainable mark* — `ax.line(x, y).color("#2f6fb3").width(2.5)`,
-  where each method returns a new immutable mark copying the fields.
-  Reads best and is ordinary code (no new construct), but every option
-  needs a hand-written copy method.
-- *Default parameters in the language* — the clean fix, and a genuine
-  language ask. It earns its place only if a second, unrelated
-  consumer wants it; a plotting library alone is not sufficient
-  justification under the project's rules.
+const chart = plot.figure(
+  title: "Monthly sales",
+  axes: plot.axes(
+    x_label: "Month",
+    y_label: "Sales",
+    marks: [plot.line(months, sales), plot.scatter(months, sales)]
+  )
+)
 
-The recommendation is to start with the typed `Style` carrier plus
-presets, keep the chainable form as a package-level ergonomic layer
-if it proves worth the boilerplate, and revisit default parameters as
-a language question only after real API friction is documented.
+plot.save(chart, "chart.svg")
+```
 
-**Data in, marks out.** Both a positional surface (Matplotlib-like,
-`ax.line(x, y)`) and a dataset surface (Seaborn-like,
-`plot.relational(data, x: "col")`) belong on the same engine; they
-are two front doors to Layer 3, not two implementations.
+`marks` is `Array[Mark]`, where `Mark` is a structural interface, so
+`Line` and `Scatter` — different classes — sit in one array with no
+inheritance:
 
-**Expected failures are values.** Following the standard library
-convention, a save that cannot open its path, a `Table` missing a
-named column, a histogram with no values return `(R.ok, value)` /
-`(R.error, reason)`; only a genuine contract violation raises. This
-is the in-flight error-handling convention (`CHECK.md`, M12) and the
-plot package must be written against it from day one.
+```emo
+interface Mark {
+  def draw(ctx DrawContext) Void
+}
+```
+
+An EmoUI-style attached block is a possible second spelling, but the
+array argument is the primary form: it is explicit, order-visible,
+and needs nothing new.
+
+### Style is the one real design problem
+
+Emo has **no default parameters** — `def f(a Int64, b Int64)` called as
+`f(1)` is E4009 — so "optional" styling cannot ride the function
+signature. Every option is either required at the call site or carried
+by a value the caller builds. The design below needs no language
+change; the alternative, default parameters, is weighed after it.
+
+**Marks are values with the default style baked in.** A mark factory
+takes only the data and returns an already-styled mark:
+
+```emo
+def line(x Array[Float64], y Array[Float64]) Line {
+  return Line.new(x: x, y: y, style: line_style())
+}
+```
+
+**Each mark family has its own style class**, so a style can never
+carry a field its mark ignores — strictness, no silently-ignored
+options — and each class exposes one `with_*` copy method per option:
+
+```emo
+class LineStyle {
+  def init(color String, width Float64, dash Dash, marker Marker, opacity Float64, label String) {
+    self.color = color
+    self.width = width
+    self.dash = dash
+    self.marker = marker
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c String) LineStyle {
+    return LineStyle.new(color: c, width: self.width, dash: self.dash,
+      marker: self.marker, opacity: self.opacity, label: self.label)
+  }
+
+  def with_width(w Float64) LineStyle {
+    return LineStyle.new(color: self.color, width: w, dash: self.dash,
+      marker: self.marker, opacity: self.opacity, label: self.label)
+  }
+
+  // … one per option …
+}
+
+def line_style() LineStyle {
+  return LineStyle.new(color: "#2f6fb3", width: 1.5, dash: Dash.solid,
+    marker: Marker.none, opacity: 1.0, label: "")
+}
+```
+
+**The mark carries a style and offers `with_style`**, plus thin
+`with_*` pass-throughs for the common one-option case:
+
+```emo
+class Line {
+  def init(x Array[Float64], y Array[Float64], style LineStyle) {
+    self.x = x
+    self.y = y
+    self.style = style
+  }
+
+  def with_style(s LineStyle) Line {
+    return Line.new(x: self.x, y: self.y, style: s)
+  }
+
+  def with_color(c String) Line {
+    return self.with_style(self.style.with_color(c))
+  }
+}
+```
+
+Call sites stay ordinary Emo:
+
+```emo
+plot.line(months, sales)                                          // default
+plot.line(months, sales).with_color("#c0392b")                    // one option
+plot.line(months, sales).with_style(
+  plot.line_style().with_color("#c0392b").with_width(2.5))        // several
+```
+
+The boilerplate is mechanical and lives in the package once. The cost
+is honest: `N` options means `N` copy methods per style class (and `N`
+pass-throughs per mark if we want them), and with no generics there is
+no way to factor that away.
+
+**The alternative is default parameters.**
+
+```emo
+def line(x Array[Float64], y Array[Float64],
+         color String = "#2f6fb3", width Float64 = 1.5,
+         dash Dash = Dash.solid, marker Marker = Marker.none,
+         opacity Float64 = 1.0, label String = "") Void { ... }
+
+plot.line(months, sales)                                 // defaults
+plot.line(months, sales, color: "#c0392b", width: 2.5)   // overrides
+```
+
+This removes the style classes, the `with_*` boilerplate, and the
+`plot.line_style()` factory entirely, and gives the cleanest call
+sites. It is a language feature, not a library one: it must be
+strictly checked (a default may not reference a later parameter;
+overriding by name stays unambiguous; a missing *non-defaulted*
+parameter stays E4009), and it needs its own design pass and a second
+consumer. The recommendation is to **build the library on the
+`with_*` design first** — no language change, bounded boilerplate —
+and let the friction from real charts decide whether parameter
+defaults have earned their place. If they are added, the public
+surface loses the style factories without disturbing the declarative
+model.
+
+| | `with_*` style values (no language change) | default parameters (language change) |
+|---|---|---|
+| call site | `plot.line(x, y).with_color("#c00")` | `plot.line(x, y, color: "#c00")` |
+| package boilerplate | `N` copy methods per style class | none |
+| checking | compile-time, every option typed | compile-time, every option typed |
+| new language surface | none | parameter defaults, plus their rules |
+| available today | yes | after the feature lands |
+
+### The rest of the contract
+
+- **Both front doors share one engine.** The positional surface
+  (`plot.line(x, y)`) and the dataset surface
+  (`plot_stats.relational(table, x: "col")`) are two ways into the
+  same `Figure`/`Axes`/`Mark` values, not two implementations.
+- **Expected failures are values.** Following the standard-library
+  convention, a save that cannot open its path, a `Table` missing a
+  named column, and a histogram with no values return
+  `(R.ok, value)` / `(R.error, reason)`; only a genuine contract
+  violation raises. This is the in-flight error-handling convention
+  (`CHECK.md`, M12), and the plot packages must be written against it
+  from day one.
+- **The default style is a value, not global state.** A theme or
+  palette is an ordinary value passed to `figure`, so two figures can
+  carry different themes in one program.
 
 ## Naming and packaging
 
-The standard library owns the top-level short names, and package
-names are single lowercase words (`json`, `yaml`, `http`, `base64`).
-**`plot`** is the natural name — generic, English, and not a copy of
-any single tool's surface. The Matplotlib-like and Seaborn-like
-surfaces can live in one package (the seam is an internal module
-boundary), or the statistical layer can be a second package. Starting
-with one `plot` package that declares **all five hosted targets**
-(`ocaml`, `c`, `typescript`, `wasm`, `beam`; the freestanding
-`riscv64` target is out of scope — it refuses `Map`) is the
-conservative choice, exactly as the format packages do.
+The standard library owns the top-level short names, and package names
+are lowercase words (`json`, `yaml`, `http`, `base64`). The decision
+(2026-10-12) is a **two-package split**:
+
+- **`plot`** — the core: the `Renderer` interface and the SVG
+  renderer, scales and ticks, the declarative `Figure`/`Axes`/`Mark`
+  values, the per-mark style classes, and the `Table`.
+- **`plot_stats`** — the Seaborn-like statistical layer on top:
+  descriptives and distributions, the categorical, relational, and
+  matrix families, regression, faceting, and themes and palettes.
+
+Both declare **all five hosted targets** (`ocaml`, `c`, `typescript`,
+`wasm`, `beam`; the freestanding `riscv64` target is out of scope — it
+refuses `Map`), exactly as the format packages do.
 
 ## Sequencing
 
-Dependencies are real, so the order is not arbitrary:
+Dependencies are real, so the order is not arbitrary. The 2026-10-12
+decisions fix the shape: SVG first, a standalone `math` package, then
+the two plot packages.
 
 - **A. Numeric substrate first.** Close gap 2 (float method dispatch
-  on `c`/`wasm`/`beam`) and land the pure-Emo math layer (`log10`,
-  `exp`, `log`, `pow`, trig, the normal quantile). Without both, the
-  package cannot declare five targets and the statistical layer cannot
-  be built. This is the gating step.
-- **B. T0 core.** `Buffer`, scales, ticks, `Style`, the `Renderer`
-  interface, `SvgRenderer`, and line/scatter/bar/area/hist with axes,
-  legend, and title. Exit: `examples/plot_demo` emits a corpus of SVGs
-  that are byte-identical across the five targets — the standard
-  library's golden standard.
-- **C. T1 statistics.** `Table`, descriptives, binning, KDE, ECDF,
-  box statistics, OLS with a confidence band, the categorical and
-  matrix families, faceting, palettes, and themes.
-- **D. Terminal renderer.** The cheap second backend; makes plots
-  visible in CI and in the CLI. Also the honest test that Layer 0 is
-  genuinely format-agnostic.
+  on `c`/`wasm`/`beam`), and land a new standard-library **`math`
+  package** — pure Emo, all five targets: `log`, `log10`, `exp`,
+  `pow`, `sin`/`cos`/`tan`/`atan2`, `hypot`, and `normal_quantile`.
+  Its optional native fast path rides `foreign def` on `c`/`ocaml`,
+  opt-in and documented as target-pinned (decision 2026-10-12). The
+  dispatch fix and `math` both gate everything above them.
+- **B. `plot` T0 core — SVG only.** `Buffer`, scales, ticks, the
+  per-mark style classes, the `Renderer` interface, `SvgRenderer`,
+  the declarative `figure`/`axes`/mark values, `Table`, and
+  line/scatter/bar/area/hist with axes, legend, and title. Exit:
+  `examples/plot_demo` emits a corpus of SVGs byte-identical across
+  the five targets — the standard library's golden standard.
+- **C. `plot_stats` T1.** Descriptives, binning, KDE, ECDF, box
+  statistics, OLS with a confidence band, the categorical,
+  distribution, relational, and matrix families, faceting, palettes,
+  and themes — all built on `plot`.
+- **D. Terminal renderer.** The cheap second `Renderer`; makes plots
+  visible in CI and the CLI, and tests that Layer 0 is genuinely
+  format-agnostic.
 - **E. PNG.** Pure-Emo zlib (stored, then fixed-Huffman, DEFLATE
   blocks), CRC32 and Adler-32, and a scanline polygon/line rasterizer
   with supersampling, using the Hershey stroke font for text.
@@ -314,12 +471,17 @@ discovered mid-implementation:
 2. **The `ocaml` specialization defect** the spike hit
    (`non-native expression in specialized body`, `Type_ref margin_t`).
    A bug report, not a design item; file it first.
-3. **Float math** — prefer a pure-Emo layer in the package, promote
-   to core only if a second consumer appears. The `CHECK.md` entry
-   already records that the current primitives are partial across
-   targets, so this is a known-open area rather than a surprise.
-4. **Default parameters** — do **not** add pre-emptively. Document the
-   friction; decide as a language question with a second consumer.
+3. **Float math goes in a standard-library `math` package** (decision
+   2026-10-12): pure Emo, all five targets, with an opt-in
+   `foreign def` fast path on `c`/`ocaml` whose output is documented
+   as target-pinned. Not in the core, and not package-private. The
+   `CHECK.md` entry already records that the current primitives are
+   partial across targets, so this is a known-open area rather than a
+   surprise.
+4. **Default parameters** — build the library on the `with_*` style
+   design first (see "The API in Emo"), which needs no language
+   change; let real chart code decide whether parameter defaults earn
+   their place, with a second consumer.
 5. **No new syntax.** A plotting library should be expressible in the
    language as it stands; if it needs a construct, that is evidence
    the construct is wrong, not the library.
@@ -330,12 +492,11 @@ discovered mid-implementation:
   thousands of points comfortably but not millions; the `c` target is
   where dense scatter and rasterization belong. Specialization matters
   — the benchmark suite exists to measure it.
-- **Determinism versus native math.** If `sin`/`exp`/`log` ride a
-  platform `libm` through `foreign def`, last-bit differences across
-  machines and OSes can change SVG bytes and break the byte-identical
-  golden convention. A pure-Emo, fixed-order math layer is the only
-  way to guarantee identical output; the native path can exist as an
-  opt-in fast path with output documented as target-pinned.
+- **Determinism versus native math.** *Accepted (2026-10-12):* the
+  `math` package is pure Emo and byte-identical by default; its native
+  `foreign def` fast path is opt-in and its output is documented as
+  target-pinned, so the default path preserves the byte-identical
+  golden convention.
 - **Text metrics.** Without a font engine, automatic layout is either
   approximate (advance table) or limited to the bundled stroke font.
   This is the same trade gnuplot made and it has been acceptable for
@@ -361,10 +522,10 @@ single language's look may be copied.
   aesthetics), statistical transformations, and themes and palettes.
   Its API is the model for Layer 4.
 - **ggplot2 / Vega-Lite / Observable Plot** — the grammar-of-graphics
-  and spec-first orientation, and SVG-first output. A declarative
-  `Figure` value that renders in one call is a plausible Emo surface;
-  it should be weighed against the imperative `Axes` surface rather
-  than assumed.
+  and spec-first orientation, and SVG-first output. *Adopted
+  (2026-10-12):* Emo's surface is declarative — a `Figure` value
+  rendered in one call — rather than an `Axes` object mutated in
+  place.
 - **gnuplot** (C) — terminal backends, Hershey fonts, multiple output
   formats from one core. The closest ancestor to the SVG + terminal +
   PNG plan, and proof that the plan is old and sound.
@@ -378,36 +539,49 @@ single language's look may be copied.
 
 ## Recommendation
 
-If the capability is wanted, the defensible first product is:
-**a `plot` package, pure Emo, SVG-first, with a `Renderer` interface
-and a checked byte-identical golden, covering T0 and then T1.** It
-requires one gating prerequisite (numeric dispatch parity and a
-pure-Emo math layer) and no language change. It can share the emo-ui
-canvas later, but it must not wait for it. "Full Matplotlib and
-Seaborn parity" should be struck from the goal statement and replaced
-with the declared tier.
+The defensible first product, now settled as a direction: **two
+packages — `plot` (pure Emo, SVG-first, declarative, a `Renderer`
+interface, checked byte-identical goldens, T0) and `plot_stats` (the
+Seaborn-like T1 layer on top) — preceded by numeric dispatch parity
+and a standard-library `math` package.** No language change is
+required. The EmoUI canvas can share the engine later but must not
+gate it. "Full Matplotlib and Seaborn parity" is struck from the goal
+statement and replaced with the declared tier T0 + T1.
 
-## Open questions for discussion
+## Decisions recorded (2026-10-12)
 
-1. **Output format order.** SVG first is argued above; is a terminal
-   renderer worth promoting ahead of PNG (cheaper, and it stress-tests
-   Layer 0), and is PNG worth building at all before a consumer
-   actually needs it?
-2. **Style API.** Typed `Style` carriers plus presets, a chainable
-   immutable mark, or a language-level default-parameter mechanism?
-3. **Declarative versus imperative surface.** A `Figure` value
-   rendered in one call, an `Axes` object mutated through marks, or
-   both? Layer 4 can be declarative on top of an imperative Layer 3,
-   but the seam should be chosen deliberately.
-4. **Table type.** Does the dataset layer need a `Table` at all, or
-   can it run on `Map[String, Array[Float64]]` and tuples? How much
-   structure is worth introducing?
-5. **Package split.** One `plot` package, or `plot` plus a statistical
-   `seaborn`-analogue package? What is the second package named?
-6. **Math layer home.** Package-internal, a public `math` package, or
-   the core? (The recommendation is package-internal first.)
-7. **Determinism policy.** Is an opt-in native fast math path with
-   target-pinned output acceptable, or must every target's SVG be
-   byte-identical, full stop?
-8. **Where the work lives.** A new `plan/step-NN-*.md` step once the
-   direction is settled, or a `docs/` design note first?
+1. **Output order — SVG first.** `plot` ships only `SvgRenderer`;
+   terminal and PNG are later `Renderer` implementations.
+2. **Style API — per-mark style classes with `with_*` copy methods**,
+   carried by mark values, no language change. Default parameters are
+   deferred; the detailed comparison is under "The API in Emo".
+3. **Surface — declarative.** A chart is a `Figure`/`Axes`/`Mark`
+   value graph rendered in one call.
+4. **Data — a minimal `Table`** (numeric and categorical columns),
+   with no ambitions beyond carrying rows.
+5. **Packages — `plot` + `plot_stats`**, both declaring the five
+   hosted targets.
+6. **Math — a standard-library `math` package**, pure Emo and
+   byte-identical by default.
+7. **Determinism — an opt-in native fast math path is accepted**,
+   documented as target-pinned.
+8. **Process — this `docs/` note first**, then a
+   `plan/step-NN-*.md` step once the numeric-substrate work is
+   scoped; `README.md` waits for decided design.
+
+## Remaining open questions
+
+1. **Stats package name.** Is `plot_stats` the right second name, or
+   a single word (`stats`) or another form?
+2. **`Table`'s home.** `plot` (recommended, so both front doors
+   accept it) or `plot_stats`?
+3. **Mark pass-throughs.** Does every mark repeat `with_color` etc.,
+   or is `with_style` alone enough?
+4. **Terminal versus PNG order**, and whether PNG is worth building
+   before a consumer actually needs it.
+5. **The `math` surface.** The exact function list, the default
+   rounding behavior, and the opt-in fast path's spelling.
+6. **A block spelling.** Should the declarative tree also accept an
+   EmoUI-style attached block, or stay array-only?
+7. **Where the work starts.** Which is step one: the dispatch parity
+   fix, the `math` package, or the `plot` skeleton?
