@@ -486,6 +486,23 @@ let stmt_tests =
     tc "a binding name cannot end in a question mark" (fun () ->
         let diagnostic = program_err "const is_x? = true" in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
+    tc "the loop words are reserved and report as such" (fun () ->
+        List.iter
+          (fun (source, word) ->
+            let diagnostic = program_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) "E2007" (code_of diagnostic);
+            Alcotest.(check string)
+              ("message of " ^ source)
+              (Printf.sprintf
+                 "expected a binding name, found `%s` (a reserved word)" word)
+              diagnostic.Diagnostic.message)
+          [
+            ("var for = 3", "for");
+            ("var while = 3", "while");
+            ("var break = 3", "break");
+            ("var continue = 3", "continue");
+          ]);
     tc "the initializer stays on the = line" (fun () ->
         let diagnostic = program_err "const x =\n1" in
         Alcotest.(check string) "code" "E2002" (code_of diagnostic));

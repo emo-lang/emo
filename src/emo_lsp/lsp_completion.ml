@@ -40,6 +40,10 @@ let keyword_items : item list =
     kw "emo" "declare a function group";
     kw "if" "conditional statement";
     kw "else" "else branch";
+    kw "for" "three-clause loop";
+    kw "while" "condition-only loop";
+    kw "break" "leave the nearest loop";
+    kw "continue" "skip to the next iteration";
     kw "case" "pattern match";
     kw "when" "branch guard";
     kw "receive" "receive a process message";

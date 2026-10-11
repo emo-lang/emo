@@ -44,6 +44,16 @@
     "body": ["if ${1:cond} {", "\t$0", "}"],
     "description": "An if statement"
   },
+  "For": {
+    "prefix": "for",
+    "body": ["for var ${1:i} = ${2:0}; ${3:${1} < 100}; ${4:${1} = ${1} + 1} {", "\t$0", "}"],
+    "description": "A three-clause for loop"
+  },
+  "While": {
+    "prefix": "while",
+    "body": ["while ${1:cond} {", "\t$0", "}"],
+    "description": "A while loop"
+  },
   "Case": {
     "prefix": "case",
     "body": ["case ${1:value} {", "\t${2:pattern} -> {", "\t\t$0", "\t}", "}"],

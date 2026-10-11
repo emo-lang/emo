@@ -9,6 +9,10 @@ module Token = struct
     | Enum
     | If
     | Else
+    | For
+    | While
+    | Break
+    | Continue
     | Case
     | When
     | Receive
@@ -135,6 +139,10 @@ let keyword_of_string = function
   | "enum" -> Some Token.Enum
   | "if" -> Some Token.If
   | "else" -> Some Token.Else
+  | "for" -> Some Token.For
+  | "while" -> Some Token.While
+  | "break" -> Some Token.Break
+  | "continue" -> Some Token.Continue
   | "case" -> Some Token.Case
   | "when" -> Some Token.When
   | "receive" -> Some Token.Receive

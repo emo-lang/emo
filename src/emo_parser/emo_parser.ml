@@ -53,6 +53,10 @@ let keyword_spelling = function
   | Tok.Enum -> "enum"
   | Tok.If -> "if"
   | Tok.Else -> "else"
+  | Tok.For -> "for"
+  | Tok.While -> "while"
+  | Tok.Break -> "break"
+  | Tok.Continue -> "continue"
   | Tok.Case -> "case"
   | Tok.When -> "when"
   | Tok.Receive -> "receive"
@@ -60,7 +64,7 @@ let keyword_spelling = function
   | Tok.Raise -> "raise"
   | Tok.Self -> "self"
   | Tok.Do -> "do"
-  | Tok.Require -> "`require`"
+  | Tok.Require -> "require"
 
 let describe_kind (k : Tok.kind) =
   match k with
@@ -73,7 +77,7 @@ let describe_kind (k : Tok.kind) =
   | False -> "`false`"
   | Lower_ident s -> Printf.sprintf "identifier `%s`" s
   | Upper_ident s -> Printf.sprintf "type name `%s`" s
-  | Keyword k -> "`" ^ keyword_spelling k ^ "`"
+  | Keyword k -> "`" ^ keyword_spelling k ^ "` (a reserved word)"
   | Op o -> "`" ^ op_spelling o ^ "`"
   | Eof -> "end of input"
 
