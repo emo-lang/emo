@@ -9,6 +9,10 @@ module Token = struct
     | Enum
     | If
     | Else
+    | For
+    | While
+    | Break
+    | Continue
     | Case
     | When
     | Receive
@@ -27,6 +31,7 @@ module Token = struct
     | RBracket
     | Comma
     | Colon
+    | Semi
     | Dot
     | Arrow
     | Send
@@ -135,6 +140,10 @@ let keyword_of_string = function
   | "enum" -> Some Token.Enum
   | "if" -> Some Token.If
   | "else" -> Some Token.Else
+  | "for" -> Some Token.For
+  | "while" -> Some Token.While
+  | "break" -> Some Token.Break
+  | "continue" -> Some Token.Continue
   | "case" -> Some Token.Case
   | "when" -> Some Token.When
   | "receive" -> Some Token.Receive
@@ -335,6 +344,7 @@ let lex ~file ~source =
         | ']' -> single (Token.Op Token.RBracket)
         | ',' -> single (Token.Op Token.Comma)
         | ':' -> single (Token.Op Token.Colon)
+        | ';' -> single (Token.Op Token.Semi)
         | '.' -> single (Token.Op Token.Dot)
         | '"' ->
             frames := String_frame (here ()) :: !frames;
@@ -498,10 +508,10 @@ let lex ~file ~source =
             ident_tail ();
             emit (Token.Upper_ident (String.sub source o (!offset - o))) l c o
         | c ->
-            if c = '@' || c = '$' || c = ';' || c = '#' then
+            if c = '@' || c = '$' || c = '#' then
               error "E1001" (here ())
                 (Printf.sprintf "unexpected character `%c`" c)
-                ~hint:"`@`, `$`, `;` and `#` have no meaning in Emo"
+                ~hint:"`@`, `$` and `#` have no meaning in Emo"
             else
               error "E1001" (here ())
                 (Printf.sprintf "unexpected character `%c`" c));

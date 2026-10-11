@@ -18,6 +18,7 @@ let op_spelling = function
   | Tok.RBracket -> "]"
   | Tok.Comma -> ","
   | Tok.Colon -> ":"
+  | Tok.Semi -> ";"
   | Tok.Dot -> "."
   | Tok.Arrow -> "->"
   | Tok.Send -> "<-"
@@ -53,6 +54,10 @@ let keyword_spelling = function
   | Tok.Enum -> "enum"
   | Tok.If -> "if"
   | Tok.Else -> "else"
+  | Tok.For -> "for"
+  | Tok.While -> "while"
+  | Tok.Break -> "break"
+  | Tok.Continue -> "continue"
   | Tok.Case -> "case"
   | Tok.When -> "when"
   | Tok.Receive -> "receive"
@@ -60,7 +65,7 @@ let keyword_spelling = function
   | Tok.Raise -> "raise"
   | Tok.Self -> "self"
   | Tok.Do -> "do"
-  | Tok.Require -> "`require`"
+  | Tok.Require -> "require"
 
 let describe_kind (k : Tok.kind) =
   match k with
@@ -73,7 +78,7 @@ let describe_kind (k : Tok.kind) =
   | False -> "`false`"
   | Lower_ident s -> Printf.sprintf "identifier `%s`" s
   | Upper_ident s -> Printf.sprintf "type name `%s`" s
-  | Keyword k -> "`" ^ keyword_spelling k ^ "`"
+  | Keyword k -> "`" ^ keyword_spelling k ^ "` (a reserved word)"
   | Op o -> "`" ^ op_spelling o ^ "`"
   | Eof -> "end of input"
 
@@ -408,6 +413,9 @@ and parse_primary st =
           (merge_span open_span close_span)
           (Ast.Map_literal (List.rev !entries))
   | Tok.Op Tok.LParen -> parse_paren st
+  | Tok.Op Tok.Semi ->
+      error "E2025" (span st)
+        "`;` separates a `for` header's clauses; it has no use outside one"
   | t ->
       error "E2001" (span st)
         (Printf.sprintf "expected an expression, found %s" (describe_kind t))
@@ -518,6 +526,9 @@ and parse_args st =
     List.rev !args
 
 and parse_block st =
+  if at_op st Tok.Semi then
+    error "E2025" (span st)
+      "`;` separates a `for` header's clauses; it has no use outside one";
   expect_op st Tok.LBrace "`{`" |> ignore;
   let stmts = ref [] in
   let rec loop () =
@@ -560,21 +571,7 @@ and parse_stmt st =
   | Tok.Keyword ((Tok.Const | Tok.Var) as kw) ->
       advance st |> ignore;
       let mutable_ = kw = Tok.Var in
-      let name =
-        match kind st with
-        | Tok.Lower_ident n ->
-            let tok = advance st in
-            check_snake st tok "binding" ~allow_question:false;
-            n
-        | Tok.Upper_ident t ->
-            error "E2007" (span st)
-              (Printf.sprintf "expected a binding name, found type name `%s`" t)
-              ~hint:"variable names are lower_snake; type names are UpperCamel"
-        | t ->
-            error "E2007" (span st)
-              (Printf.sprintf "expected a binding name, found %s"
-                 (describe_kind t))
-      in
+      let name, _ = parse_binding_name st in
       expect_op st Tok.Assign "`=`" |> ignore;
       if at_eof st || newline_before st then
         error "E2002" (span st)
@@ -582,6 +579,48 @@ and parse_stmt st =
       let init = parse_expr st in
       end_statement st;
       stmt start_span (Ast.Binding { mutable_; name; init })
+  | Tok.Keyword Tok.While ->
+      advance st |> ignore;
+      st.suppress_block_sugar <- true;
+      let cond = parse_expr st in
+      st.suppress_block_sugar <- false;
+      if at_op st Tok.LBrace && newline_before st then
+        error "E2001" (span st)
+          "the `while` body must open on the condition's line";
+      let body, _ = parse_block st in
+      stmt start_span (Ast.While { cond; body })
+  | Tok.Keyword Tok.For ->
+      advance st |> ignore;
+      (* Every clause parses with block sugar suppressed, so the `{` after
+         the header opens the body and never attaches to a call. *)
+      st.suppress_block_sugar <- true;
+      let init = parse_for_init st in
+      expect_op st Tok.Semi "`;`"
+        ~hint:"the `for` header takes three `;`-separated clauses"
+      |> ignore;
+      if at_op st Tok.Semi then
+        error "E2026" (span st) "the `for` header's condition clause is missing"
+          ~hint:"the header is `var i = 0; i < n; i = i + 1`";
+      let cond = parse_expr st in
+      expect_op st Tok.Semi "`;`"
+        ~hint:"the `for` header takes three `;`-separated clauses"
+      |> ignore;
+      let post = parse_for_post st in
+      st.suppress_block_sugar <- false;
+      if at_op st Tok.LBrace && newline_before st then
+        error "E2001" (span st) "the `for` body must open on the header's line";
+      let body, close_span = parse_block st in
+      stmt
+        (merge_span start_span close_span)
+        (Ast.For { init; cond; post; body })
+  | Tok.Keyword Tok.Break ->
+      advance st |> ignore;
+      expect_bare st "break";
+      stmt start_span Ast.Break
+  | Tok.Keyword Tok.Continue ->
+      advance st |> ignore;
+      expect_bare st "continue";
+      stmt start_span Ast.Continue
   | Tok.Keyword Tok.Case ->
       advance st |> ignore;
       st.suppress_block_sugar <- true;
@@ -638,6 +677,77 @@ and parse_stmt st =
       in
       stmt start_span stmt_desc
 
+(* A binding name in declaration position: lower_snake, no trailing `?`. *)
+and parse_binding_name st =
+  match kind st with
+  | Tok.Lower_ident n ->
+      let tok = advance st in
+      check_snake st tok "binding" ~allow_question:false;
+      (n, tok.Tok.span)
+  | Tok.Upper_ident t ->
+      error "E2007" (span st)
+        (Printf.sprintf "expected a binding name, found type name `%s`" t)
+        ~hint:"variable names are lower_snake; type names are UpperCamel"
+  | t ->
+      error "E2007" (span st)
+        (Printf.sprintf "expected a binding name, found %s" (describe_kind t))
+
+(* The `for` header's first clause is exactly a `var` declaration — the
+   loop's one binding, scoped to the header and the body. *)
+and parse_for_init st =
+  let start_span = span st in
+  match kind st with
+  | Tok.Keyword Tok.Var ->
+      advance st |> ignore;
+      let name, _ = parse_binding_name st in
+      expect_op st Tok.Assign "`=`" |> ignore;
+      if at_eof st || newline_before st then
+        error "E2002" (span st)
+          "the binding's initializer must stay on the `=`'s line";
+      let init = parse_expr st in
+      stmt start_span (Ast.Binding { mutable_ = true; name; init })
+  | Tok.Keyword Tok.Const ->
+      error "E2026" (span st)
+        "the `for` header binds a `var`; a loop's variable has to change"
+        ~hint:"write `for var i = 0; i < n; i = i + 1 { ... }`"
+  | _ ->
+      error "E2026" (span st)
+        "the `for` header's first clause declares its loop variable"
+        ~hint:
+          "write `for var i = 0; i < n; i = i + 1 { ... }`; a bare condition \
+           is `while`"
+
+(* The `for` header's last clause is one assignment: the loop's single,
+   visible update step. *)
+and parse_for_post st =
+  let start_span = span st in
+  if at_eof st || at_op st Tok.LBrace || at_op st Tok.Semi || newline_before st
+  then
+    error "E2026" (span st) "the `for` header's post clause is missing"
+      ~hint:"the header ends in an update step: `var i = 0; i < n; i = i + 1`";
+  let e = parse_expr st in
+  match kind st with
+  | Tok.Op Tok.Assign when not (newline_before st) ->
+      advance st |> ignore;
+      let target = scoped_target e in
+      check_assign_target st target;
+      let value = parse_expr st in
+      stmt start_span (Ast.Assign { target; value })
+  | _ ->
+      error "E2026" (span st)
+        "the `for` header's last clause is an assignment (`i = i + 1`)"
+        ~hint:"`++` and `+=` do not exist; write the update out"
+
+(* `break` and `continue` stand alone: no value, no parentheses. *)
+and expect_bare st word =
+  match kind st with
+  | Tok.Eof | Tok.Op Tok.RBrace -> ()
+  | _ when newline_before st -> ()
+  | _ ->
+      error "E2027" (span st)
+        (Printf.sprintf
+           "`%s` stands alone; it takes no value and no parentheses" word)
+
 (* `acme/json_tools = "2.3.1"` — a scoped package name as a manifest deps
    key. In target position the slash form is unambiguous (a division is
    never assignable), so it folds into one ident; the checker confines
@@ -668,6 +778,9 @@ and check_assign_target st target =
 and end_statement st =
   match kind st with
   | Tok.Eof | Tok.Op Tok.RBrace -> ()
+  | Tok.Op Tok.Semi ->
+      error "E2025" (span st)
+        "`;` separates a `for` header's clauses; it has no use outside one"
   | _ when newline_before st -> ()
   | _ ->
       error "E2002" (span st) "expressions cannot be juxtaposed"
@@ -930,6 +1043,8 @@ and collect_fields stmts =
             Option.iter walk else_body
         | Ast.Case { branches; _ } ->
             List.iter (fun b -> walk b.Ast.body) branches
+        | Ast.While { body; _ } -> walk body
+        | Ast.For { init; post; body; _ } -> walk (init :: post :: body)
         | _ -> ())
       stmts
   in

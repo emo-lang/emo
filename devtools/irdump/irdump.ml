@@ -176,6 +176,18 @@ and dump_s indent s =
   | Return_stmt e ->
       indent @@@ "Return";
       dump_e (indent + 2) e
+  | While { cond; body; _ } ->
+      indent @@@ "While";
+      dump_e (indent + 2) cond;
+      List.iter (dump_s (indent + 2)) body
+  | For { init; cond; post; body; _ } ->
+      indent @@@ "For";
+      dump_s (indent + 2) init;
+      dump_e (indent + 2) cond;
+      dump_s (indent + 2) post;
+      List.iter (dump_s (indent + 2)) body
+  | Break -> indent @@@ "Break"
+  | Continue -> indent @@@ "Continue"
 
 let inputs, entry, _ =
   Emo_project.compile_inputs ~entry_file:"main.emo" ~target:"native"

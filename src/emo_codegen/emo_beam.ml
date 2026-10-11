@@ -8,10 +8,18 @@
 
 type env = {
   buf : Buffer.t;
+  loops_buf : Buffer.t;
+      (* loop functions, emitted at module scope after main: a loop is
+         a tail-recursive local function, discovered while bodies emit *)
   mutable fresh : int;
   mutable local_map : (string * string) list;
   mutable funcs : (string * int) list;
   mutable fname : string;
+  mutable loops : (string * string list * Emo_ir.stmt option) list;
+      (* each enclosing loop's (function atom, threaded Emo variable
+         names — the header first on a `for` —, post clause), innermost
+         first: break/continue call the function with the current
+         values and a done flag *)
   mutable classes : Emo_ir.class_ list;
   mutable iface_classes : (string * string list) list;
   mutable class_field : (string * (string * int) list) list;
@@ -656,6 +664,10 @@ catch
 and stmts env (xs : Emo_ir.stmt list) : unit =
   match xs with
   | [] -> put env "'ok'"
+  | ((Emo_ir.While _ | Emo_ir.For _) as loop) :: rest ->
+      (* a loop rebinds its threaded bindings over the rest of the
+         chain, so it consumes the rest like a let *)
+      emit_loop env loop rest ~leaf:(fun () -> put env "'ok'")
   | [ s ] -> stmt env s
   | Emo_ir.Let { name; init; _ } :: rest ->
       (* a let scopes over everything after it *)
@@ -729,9 +741,13 @@ and stmt env (s : Emo_ir.stmt) : unit =
       put env "\nin ";
       put env v
   | Emo_ir.Assign_var { name; value } ->
+      (* the value reads the old binding — the shadow registers after,
+         or a self-referencing assignment (`n = n + 1`) would read the
+         variable it is defining *)
+      let value_code = expr_block env value in
       let v = fresh_var env name in
       put env ("let <" ^ v ^ "> =\n");
-      expr env value;
+      put env value_code;
       put env "\nin ";
       put env v
   | Emo_ir.Set_global_var _ ->
@@ -876,6 +892,381 @@ and stmt env (s : Emo_ir.stmt) : unit =
           put env "call 'erlang':'throw'({'emo_raise', ";
           expr env x;
           put env "})")
+  | Emo_ir.While _ | Emo_ir.For _ ->
+      failwith "beam: a loop outside a statement chain"
+  | Emo_ir.Break -> (
+      match env.loops with
+      | (lname, var_names, _) :: _ ->
+          emit_loop_jump env lname var_names "'true'"
+      | [] -> failwith "beam: `break` outside a loop")
+  | Emo_ir.Continue -> (
+      match env.loops with
+      | (lname, var_names, post) :: _ -> (
+          (* the post clause runs before the next test; the rebinding it
+             creates lives only in the jump — the local map restores, or
+             later body statements would read a variable bound inside
+             this let *)
+          match post with
+          | Some (Emo_ir.Assign_var { name; value; _ }) ->
+              let saved = env.local_map in
+              let value_code = expr_block env value in
+              let v = fresh_var env name in
+              put env ("let <" ^ v ^ "> =\n");
+              put env value_code;
+              put env "\nin ";
+              emit_loop_jump env lname var_names "'false'";
+              env.local_map <- saved
+          | Some _ -> failwith "beam: this `for` post clause"
+          | None -> emit_loop_jump env lname var_names "'false'")
+      | [] -> failwith "beam: `continue` outside a loop")
+
+(* The free variables of a loop body: every outer binding it reads or
+   assigns threads through the loop function's parameters — a module
+   level function sees nothing of the enclosing scope, so a read of an
+   outer variable (a nested loop's `col > row`) rides a parameter just
+   like an assignment does. Over-collection is harmless: the value
+   round-trips unchanged, and a shadowing binding only widens the set. *)
+and free_expr env (e : Emo_ir.expr) (acc : string list) : string list =
+  let add name acc = if List.mem name acc then acc else acc @ [ name ] in
+  let xs es acc = List.fold_left (fun acc x -> free_expr env x acc) acc es in
+  match e.Emo_ir.desc with
+  | Emo_ir.Var name -> add name acc
+  | Emo_ir.Unary (_, x)
+  | Emo_ir.Box_new x
+  | Emo_ir.Bytes_new x
+  | Emo_ir.List_new x ->
+      free_expr env x acc
+  | Emo_ir.Binary (_, l, r) -> free_expr env l (free_expr env r acc)
+  | Emo_ir.Cond { c; t; e } ->
+      free_expr env c (free_expr env t (free_expr env e acc))
+  | Emo_ir.Index (b, i) -> free_expr env b (free_expr env i acc)
+  | Emo_ir.Field_read { obj; _ } -> free_expr env obj acc
+  | Emo_ir.Call { args; _ }
+  | Emo_ir.Builtin { args; _ }
+  | Emo_ir.Do_spawn { args; _ } ->
+      xs args acc
+  | Emo_ir.Call_value { f; args } | Emo_ir.Spawn_value { f; args } ->
+      xs (f :: args) acc
+  | Emo_ir.Method { self_; args; _ } -> xs (self_ :: args) acc
+  | Emo_ir.Interpolate es | Emo_ir.Tuple es | Emo_ir.Array_lit es -> xs es acc
+  | Emo_ir.Map_lit es -> xs es acc
+  | Emo_ir.Make_exception { message; data } ->
+      free_expr env message
+        (match data with Some d -> free_expr env d acc | None -> acc)
+  | Emo_ir.Closure { cparams; cbody } ->
+      let names = List.map fst cparams in
+      List.fold_left
+        (fun acc name -> List.filter (fun n -> n <> name) acc)
+        (free_stmts env cbody acc) names
+  | Emo_ir.Const _ | Emo_ir.Type_ref _ | Emo_ir.Global _ | Emo_ir.Global_var _
+  | Emo_ir.Make_enum _ ->
+      acc
+
+and free_stmt env (s : Emo_ir.stmt) (acc : string list) : string list =
+  match s with
+  | Emo_ir.Effect e -> free_expr env e acc
+  | Emo_ir.Let { init; _ } -> free_expr env init acc
+  | Emo_ir.Assign_var { name; value } ->
+      free_expr env value (if List.mem name acc then acc else acc @ [ name ])
+  | Emo_ir.Set_global_var { value; _ } -> free_expr env value acc
+  | Emo_ir.Set_field { self_; name = _; value } ->
+      free_expr env self_ (free_expr env value acc)
+  | Emo_ir.If { cond; then_; else_ } ->
+      free_expr env cond (free_stmts env then_ (free_stmts env else_ acc))
+  | Emo_ir.While { cond; body; _ } ->
+      free_expr env cond (free_stmts env body acc)
+  | Emo_ir.For { init = Emo_ir.Let { init; _ }; cond; post; body; _ } ->
+      free_expr env init
+        (free_expr env cond (free_stmt env post (free_stmts env body acc)))
+  | Emo_ir.For { init = _; _ } ->
+      failwith "beam: the `for` header binds a `var`"
+  | Emo_ir.Case { scrutinee; branches } ->
+      List.fold_left
+        (fun acc (b : Emo_ir.branch) ->
+          let acc =
+            match b.Emo_ir.guard with
+            | Some g -> free_expr env g acc
+            | None -> acc
+          in
+          free_stmts env b.Emo_ir.body acc)
+        (free_expr env scrutinee acc)
+        branches
+  | Emo_ir.Receive { branches } ->
+      List.fold_left
+        (fun acc (b : Emo_ir.branch) ->
+          let acc =
+            match b.Emo_ir.guard with
+            | Some g -> free_expr env g acc
+            | None -> acc
+          in
+          free_stmts env b.Emo_ir.body acc)
+        acc branches
+  | Emo_ir.Send { target; message } ->
+      free_expr env target (free_expr env message acc)
+  | Emo_ir.Return_stmt e | Emo_ir.Raise e -> free_expr env e acc
+  | Emo_ir.Break | Emo_ir.Continue -> acc
+
+and free_stmts env (xs : Emo_ir.stmt list) (acc : string list) : string list =
+  List.fold_left (fun acc s -> free_stmt env s acc) acc xs
+
+(* The recursive jump a break or continue emits: the loop function
+   called with the current values of its threaded bindings — the
+   do-chain's shadowing means the local map holds the latest — and the
+   done flag. *)
+and emit_loop_jump env lname var_names done_atom =
+  let args =
+    List.map
+      (fun name ->
+        match List.assoc_opt name env.local_map with
+        | Some v -> v
+        | None -> failwith ("beam: unbound loop var " ^ name))
+      var_names
+  in
+  emit_loop_jump_args env lname args done_atom
+
+and emit_loop_jump_args env lname (args : string list) done_atom =
+  put env
+    (Printf.sprintf "apply %s/%d (%s)" lname
+       (List.length args + 1)
+       (String.concat ", " (args @ [ done_atom ])))
+
+(* Whether a statement holds a break/continue of the enclosing loop:
+   nested loops' jumps bind to themselves and stop the walk. A `case`
+   whose branches jump cannot weave into the tail chain (its arms emit
+   through the plain statement path), so the body weaver refuses it
+   rather than lower a jump that would return. *)
+and has_direct_jump env (s : Emo_ir.stmt) : bool =
+  match s with
+  | Emo_ir.Break | Emo_ir.Continue -> true
+  | Emo_ir.If { then_; else_; _ } ->
+      List.exists (has_direct_jump env) then_
+      || List.exists (has_direct_jump env) else_
+  | Emo_ir.Case { branches; _ } ->
+      List.exists
+        (fun (b : Emo_ir.branch) ->
+          List.exists
+            (fun bs ->
+              List.exists
+                (fun inner ->
+                  match inner with
+                  | Emo_ir.While _ | Emo_ir.For _ -> false
+                  | x -> has_direct_jump env x)
+                bs)
+            [ b.Emo_ir.body ])
+        branches
+  | _ -> false
+
+(* The loop body as a tail chain: an if weaves the rest of the body
+   into both arms (its fall-through continues there), a break or
+   continue is the tail itself and truncates the dead rest, and plain
+   statements sequence through `do`. Every fall-through path ends in
+   [leaf] — the threaded jump, a genuine tail call — so a jump never
+   sits in a scrutinee or a `do` head where it could return. *)
+and emit_loop_body env ~(leaf : unit -> unit) (xs : Emo_ir.stmt list) : unit =
+  match xs with
+  | [] -> leaf ()
+  | Emo_ir.Break :: _ -> stmt env Emo_ir.Break
+  | Emo_ir.Continue :: _ -> stmt env Emo_ir.Continue
+  | Emo_ir.If { cond; then_; else_; _ } :: rest ->
+      put env "\t\tcase ";
+      expr env cond;
+      put env " of\n\t\t  <'true'> when 'true' ->\n\t\t";
+      emit_loop_body env (then_ @ rest) ~leaf;
+      put env "\n\t\t  <'false'> when 'true' ->\n\t\t";
+      emit_loop_body env (else_ @ rest) ~leaf;
+      put env "\n\t\tend"
+  | ((Emo_ir.While _ | Emo_ir.For _) as loop) :: rest ->
+      emit_loop env loop rest ~leaf
+  | Emo_ir.Case { branches; _ } :: rest ->
+      if
+        List.exists
+          (fun (b : Emo_ir.branch) ->
+            List.exists (has_direct_jump env) b.Emo_ir.body)
+          branches
+      then
+        failwith "beam: a `case` branch jumps out of a loop — not supported yet"
+      else (
+        put env "do\n";
+        stmt env (List.hd xs);
+        put env "\n";
+        emit_loop_body env rest ~leaf)
+  | Emo_ir.Let { name; init; _ } :: rest ->
+      (* the binding scopes over the rest of the body *)
+      let v = fresh_var env name in
+      put env ("let <" ^ v ^ "> =\n");
+      expr env init;
+      put env "\nin ";
+      emit_loop_body env rest ~leaf
+  | Emo_ir.Assign_var { name; value } :: rest ->
+      (* the rebinding scopes over the rest: an accumulation
+         (`line = line + ...`) must reach the later reads *)
+      let value_code = expr_block env value in
+      let v = fresh_var env name in
+      put env ("let <" ^ v ^ "> =\n");
+      put env value_code;
+      put env "\nin ";
+      emit_loop_body env rest ~leaf
+  | s :: rest ->
+      put env "do\n";
+      stmt env s;
+      put env "\n";
+      emit_loop_body env rest ~leaf
+
+(* One loop statement: a tail-recursive module function. The site calls
+   it with the header's init and the current threaded bindings; every
+   exit returns them (the header included), and the site rebinds them
+   over the rest of the chain. *)
+and emit_loop env ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
+    (rest : Emo_ir.stmt list) : unit =
+  let header, init, cond, post, body =
+    match loop with
+    | Emo_ir.While { cond; body; _ } -> (None, None, cond, None, body)
+    | Emo_ir.For
+        {
+          init = Emo_ir.Let { mutable_ = true; name; init };
+          cond;
+          post;
+          body;
+          _;
+        } ->
+        (Some name, Some (name, init), cond, Some post, body)
+    | Emo_ir.For { init = _; _ } ->
+        failwith "beam: the `for` header binds a `var`"
+    | _ -> assert false
+  in
+  let frees =
+    free_expr env cond
+      (free_stmts env body
+         (match post with Some p -> free_stmt env p [] | None -> []))
+  in
+  let frees =
+    List.filter
+      (fun n ->
+        List.mem_assoc n env.local_map
+        && match header with Some h -> n <> h | None -> true)
+      frees
+  in
+  let var_names = (match header with Some h -> [ h ] | None -> []) @ frees in
+  let n = env.fresh + 1 in
+  env.fresh <- n;
+  let lname = Printf.sprintf "'__loop_%d'" n in
+  let arity = List.length var_names + 1 in
+  let saved_map = env.local_map in
+  let saved_loops = env.loops in
+  let before = Buffer.length env.buf in
+  let param_of = List.map (fun name -> (name, fresh_var env name)) var_names in
+  let done_param =
+    env.fresh <- env.fresh + 1;
+    Printf.sprintf "_done%d" env.fresh
+  in
+  env.loops <- (lname, var_names, post) :: env.loops;
+  let exit_value =
+    match frees with
+    | [] -> "'ok'"
+    | ws ->
+        "{"
+        ^ String.concat "," (List.map (fun name -> List.assoc name param_of) ws)
+        ^ "}"
+  in
+  put env
+    (Printf.sprintf "%s/%d =\n    fun (%s) ->\n" lname arity
+       (String.concat ", " (List.map snd param_of @ [ done_param ])));
+  put env (Printf.sprintf "\tcase %s of\n" done_param);
+  put env (Printf.sprintf "\t  <'true'> when 'true' -> %s\n" exit_value);
+  put env "\t  <'false'> when 'true' ->\n\t    case ";
+  expr env cond;
+  put env " of\n";
+  put env "\t      <'true'> when 'true' ->\n\t";
+  let emit_thread_case () =
+    (* the fall-through leaf: this iteration's final bindings ride the
+       recursive call; its bindings scope to this case, so the map
+       restores after *)
+    let saved_leaf = env.local_map in
+    put env "\t\tcase {";
+    put env
+      (String.concat ","
+         (List.map
+            (fun name ->
+              match List.assoc_opt name env.local_map with
+              | Some v -> v
+              | None -> failwith ("beam: unbound loop var " ^ name))
+            var_names));
+    put env "} of\n\t          <{";
+    let rebound =
+      List.map
+        (fun _ ->
+          env.fresh <- env.fresh + 1;
+          Printf.sprintf "_t%d" env.fresh)
+        var_names
+    in
+    put env (String.concat "," rebound);
+    put env "}> when 'true' ->\n\t\t    ";
+    (* the post reads the rebound header, not the parameter *)
+    List.iter2
+      (fun name r -> env.local_map <- (name, r) :: env.local_map)
+      var_names rebound;
+    let rebound_written = match rebound with _ :: ws -> ws | [] -> [] in
+    (match post with
+    | Some (Emo_ir.Assign_var { name; value; _ }) ->
+        let value_code = expr_block env value in
+        let v = fresh_var env name in
+        put env (Printf.sprintf "let <%s> =\n" v);
+        put env value_code;
+        put env "\nin ";
+        emit_loop_jump_args env lname (v :: rebound_written) "'false'"
+    | Some _ -> failwith "beam: this `for` post clause"
+    | None -> emit_loop_jump_args env lname rebound "'false'");
+    put env "\n\t        end";
+    env.local_map <- saved_leaf
+  in
+  emit_loop_body env body ~leaf:emit_thread_case;
+  put env "\n";
+  put env (Printf.sprintf "\t      <'false'> when 'true' -> %s\n" exit_value);
+  put env "\t    end\n";
+  put env "\tend";
+  let slice = Buffer.sub env.buf before (Buffer.length env.buf - before) in
+  Buffer.truncate env.buf before;
+  Buffer.add_string env.loops_buf slice;
+  Buffer.add_string env.loops_buf "\n\n";
+  env.local_map <- saved_map;
+  env.loops <- saved_loops;
+  (* the site: the initial call, its exit value rebound over the rest *)
+  let emit_initial_call () =
+    put env (Printf.sprintf "apply %s/%d (" lname arity);
+    let sep = ref false in
+    let comma () = if !sep then put env ", " else sep := true in
+    (match init with
+    | Some (_, e) ->
+        comma ();
+        expr env e
+    | None -> ());
+    List.iter
+      (fun name ->
+        comma ();
+        match List.assoc_opt name env.local_map with
+        | Some v -> put env v
+        | None -> failwith ("beam: unbound loop var " ^ name))
+      frees;
+    comma ();
+    put env "'false')"
+  in
+  if frees = [] then (
+    put env "do\n";
+    emit_initial_call ();
+    put env "\n";
+    if rest = [] then leaf () else emit_loop_body env rest ~leaf)
+  else (
+    put env "case ";
+    emit_initial_call ();
+    put env " of\n\t  <{";
+    let saved_site = env.local_map in
+    let rebound = List.map (fun name -> fresh_var env name) frees in
+    put env (String.concat "," rebound);
+    put env "}> when 'true' ->\n";
+    if rest = [] then leaf () else emit_loop_body env rest ~leaf;
+    (* the pattern bindings scope to this arm *)
+    env.local_map <- saved_site;
+    put env "\nend")
 
 (* ---- Guard expressions ----
 
@@ -2422,8 +2813,10 @@ let emit (program : Emo_ir.program) : string =
   let env =
     {
       buf;
+      loops_buf = Buffer.create 1024;
       fresh = 0;
       local_map = [];
+      loops = [];
       funcs = [];
       fname = "";
       classes = [];
@@ -2561,14 +2954,17 @@ let emit (program : Emo_ir.program) : string =
              f.Emo_ir.fparams)
         ~fname:f.Emo_ir.fname ~body:f.Emo_ir.fbody)
     program.Emo_ir.pfuncs;
-  put env "'main'/0 =\n";
-  put env "    fun () ->\n";
   env.fname <- "main";
   env.local_map <- [];
   let before = Buffer.length buf in
   stmts env program.Emo_ir.pinit;
   let body = Buffer.sub buf before (Buffer.length buf - before) in
   Buffer.truncate buf before;
+  (* the loop functions discovered in any body join the definitions
+     ahead of main *)
+  Buffer.add_buffer buf env.loops_buf;
+  put env "'main'/0 =\n";
+  put env "    fun () ->\n";
   put env (body_wrapper body);
   put env "\nend\n";
   Buffer.contents buf

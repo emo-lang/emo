@@ -1123,6 +1123,92 @@ printf(fmt(), [])|}
           (contains_substring diagnostic.Diagnostic.message "unknown conversion"));
   ]
 
+let loop_tests =
+  [
+    tc "the worked for loop prints each step" (fun () ->
+        Alcotest.(check string)
+          "output" "i = 0\ni = 50\n"
+          (run_program
+             {|for var i = 0; i < 100; i = i + 50 {
+  println("i = ${i}")
+}|}));
+    tc "a while counts through its body" (fun () ->
+        Alcotest.(check string)
+          "output" "n = 0\nn = 1\nn = 2\n"
+          (run_program
+             {|var n = 0
+while n < 3 {
+  println("n = ${n}")
+  n = n + 1
+}|}));
+    tc "continue still runs the for post clause" (fun () ->
+        Alcotest.(check string)
+          "output" "0\n2\n4\n"
+          (run_program
+             {|for var i = 0; i < 5; i = i + 1 {
+  if i % 2 == 1 {
+    continue
+  }
+  println(i)
+}|}));
+    tc "break leaves the nearest loop only" (fun () ->
+        Alcotest.(check string)
+          "output" "b0\nb1\na0\nb0\nb1\na1\n"
+          (run_program
+             {|for var i = 0; i < 2; i = i + 1 {
+  for var j = 0; j < 100; j = j + 1 {
+    if j == 2 {
+      break
+    }
+    println("b${j}")
+  }
+  println("a${i}")
+}|}));
+    tc "the header var is the loop's one binding" (fun () ->
+        Alcotest.(check string)
+          "output" "0\n5\n"
+          (run_program
+             {|for var i = 0; i < 10; i = i + 1 {
+  println(i)
+  i = i + 4
+}|}));
+    tc "a loop condition must be a Bool at runtime" (fun () ->
+        let diagnostic = program_err {|while 1 { println("never") }|} in
+        Alcotest.(check string) "code" "E3001" (code_of diagnostic);
+        let diagnostic =
+          program_err {|for var i = 0; i; i = i + 1 { println("never") }|}
+        in
+        Alcotest.(check string) "for code" "E3001" (code_of diagnostic));
+    tc "ten million iterations keep the stack flat" (fun () ->
+        Alcotest.(check string)
+          "output" "49999995000000\n"
+          (run_program
+             {|var i = 0
+var sum = 0
+while i < 10000000 {
+  sum = sum + i
+  i = i + 1
+}
+println(sum)|}));
+    tc "the step budget counts every iteration" (fun () ->
+        let saved_budget = !Emo_eval.step_budget in
+        let saved_count = !Emo_eval.step_count in
+        Emo_eval.step_budget := Some 500;
+        Fun.protect
+          ~finally:(fun () ->
+            Emo_eval.step_budget := saved_budget;
+            Emo_eval.step_count := saved_count)
+          (fun () ->
+            match
+              run_program
+                {|for var i = 0; i < 1000; i = i + 1 {
+  println(i)
+}|}
+            with
+            | _ -> Alcotest.fail "expected the budget to stop the loop"
+            | exception Emo_eval.Budget_exceeded _ -> ()));
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -1134,6 +1220,7 @@ let () =
       ("closure", closure_tests);
       ("tail_call", tail_call_tests);
       ("control_flow", control_flow_tests);
+      ("loop", loop_tests);
       ("acceptance", acceptance_tests);
       ("class", class_tests);
       ("method", method_tests);

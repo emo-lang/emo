@@ -68,6 +68,11 @@ type env = {
       (* the dynamic bindings alive in this body, innermost first —
          released at their block's end and at function exit (the
          reclamation discipline, CHECK.md 2026-10-11) *)
+  mutable loops : ((string * Emo_check.t) list * string option) list;
+      (* each enclosing loop's owned-bindings mark and — for a `for`,
+         whose post must run first — its continue label, innermost
+         first: break/continue unwind to the innermost mark before the
+         jump, so a body binding skips no release *)
   mutable hoist : string list;
       (* zero-initialized declarations hoisted to the body top, in
          emission order (reversed here): a backward tail jump re-runs a
@@ -1367,6 +1372,13 @@ and closure_free env (cparams : (string * Emo_check.t) list)
           branches
     | Receive _ | Send _ | Raise _ -> ()
     | Return_stmt e -> ex e
+    | While { cond; body; _ } ->
+        ex cond;
+        List.iter st body
+    | For { init; post; body; _ } ->
+        List.iter st [ init; post ];
+        List.iter st body
+    | Break | Continue -> ()
   in
   List.iter st body;
   List.filter
@@ -1404,6 +1416,7 @@ and emit_closure env (cparams : (string * Emo_check.t) list)
       tail_rebinds = [];
       in_main = false;
       owned = [];
+      loops = [];
       hoist = [];
       hoist_on = false;
     }
@@ -1848,10 +1861,15 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
           let v =
             if is_dyn ty then as_dyn env value else as_native env value ty
           in
-          if is_dyn ty then
-            (* the write barrier on overwrite *)
-            put env "  emo_release(%s);\n  %s = emo_retain(%s);\n" c_name c_name
-              v
+          if is_dyn ty then (
+            (* the write barrier on overwrite: the new value lands in a
+               temporary first — the expression may read the slot being
+               overwritten (`s = s + "b"`), so the old value drops only
+               after it is fully evaluated *)
+            let tmp = fresh_c env "__assign" in
+            put env "  {\n    emo_value %s = emo_retain(%s);\n" tmp v;
+            put env "    emo_release(%s);\n    %s = %s;\n  }\n" c_name c_name
+              tmp)
           else put env "  %s = %s;\n" c_name v
       | None -> refuse (Printf.sprintf "assignment to `%s` here" name))
   | Send { target; message } ->
@@ -2036,6 +2054,77 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
                 unwind ();
                 put env "  return __result;\n"
               end))
+  | While { cond; body; _ } ->
+      let c = emit_expr env cond in
+      let c =
+        if is_dyn cond.Emo_ir.ety then unbox_code c Emo_check.Bool else c
+      in
+      put env "  while (%s) {\n" (unwrap c);
+      let mark = env.owned in
+      env.loops <- (mark, None) :: env.loops;
+      (* an empty body never drains, and the test pools a temporary per
+         iteration when it is dynamic — drain in its place *)
+      if body = [] then put env "    emo_drain();\n";
+      emit_stmts env body;
+      List.iter (fun l -> put env "%s" l) (unwind_lines env.owned mark);
+      env.owned <- mark;
+      env.loops <- List.tl env.loops;
+      put env "  }\n"
+  | For { init; cond; post; body; _ } -> (
+      (* The header binds once, before the first test, and a C block
+         scopes it to the loop. The loop is a while(1) with the test up
+         front because `continue` must run the post clause first (the
+         interpreter's rule) — C's for could carry the post only as an
+         expression, and the post is a statement with a write barrier.
+         A `continue` gotos the label above the post; a `break` skips
+         it, like the post of any exit. *)
+      match init with
+      | Let _ ->
+          let loop_mark = env.owned in
+          put env "  {\n";
+          emit_stmt env init;
+          let cont_label =
+            if has_continue body then Some (fresh_c env "__continue") else None
+          in
+          put env "  while (1) {\n";
+          let c = emit_expr env cond in
+          let c =
+            if is_dyn cond.Emo_ir.ety then unbox_code c Emo_check.Bool else c
+          in
+          put env "    if (!(%s)) {\n      break;\n    }\n" (unwrap c);
+          let mark = env.owned in
+          env.loops <- (mark, cont_label) :: env.loops;
+          if body = [] then put env "    emo_drain();\n";
+          emit_stmts env body;
+          List.iter (fun l -> put env "%s" l) (unwind_lines env.owned mark);
+          env.owned <- mark;
+          env.loops <- List.tl env.loops;
+          (match cont_label with
+          | Some l -> put env "    %s: ;\n" l
+          | None -> ());
+          put env "    emo_drain();\n";
+          emit_stmt env post;
+          put env "  }\n";
+          List.iter (fun l -> put env "%s" l) (unwind_lines env.owned loop_mark);
+          env.owned <- loop_mark;
+          put env "  }\n"
+      | _ -> refuse "this `for` header")
+  | Break -> (
+      match env.loops with
+      | (mark, _) :: _ ->
+          List.iter (fun l -> put env "%s" l) (unwind_lines env.owned mark);
+          env.owned <- mark;
+          put env "  break;\n"
+      | [] -> refuse "`break` outside a loop")
+  | Continue -> (
+      match env.loops with
+      | (mark, label) :: _ -> (
+          List.iter (fun l -> put env "%s" l) (unwind_lines env.owned mark);
+          env.owned <- mark;
+          match label with
+          | Some l -> put env "  goto %s;\n" l
+          | None -> put env "  continue;\n")
+      | [] -> refuse "`continue` outside a loop")
 
 and emit_stmts env (stmts : Emo_ir.stmt list) : unit =
   (* The statement boundary is the borrow window: expression-internal
@@ -2044,6 +2133,22 @@ and emit_stmts env (stmts : Emo_ir.stmt list) : unit =
     (fun s ->
       put env "  emo_drain();\n";
       emit_stmt env s)
+    stmts
+
+(* Whether this loop body holds a `continue` of its own: nested loops'
+   and arrow blocks' continues bind to themselves, so the walk stops at
+   them — the label exists only when something jumps to it. *)
+and has_continue (stmts : Emo_ir.stmt list) : bool =
+  List.exists
+    (fun (s : Emo_ir.stmt) ->
+      match s with
+      | Continue -> true
+      | If { then_; else_; _ } -> has_continue then_ || has_continue else_
+      | Case { branches; _ } | Receive { branches; _ } ->
+          List.exists
+            (fun (b : Emo_ir.branch) -> has_continue b.Emo_ir.body)
+            branches
+      | _ -> false)
     stmts
 
 and has_return (stmts : Emo_ir.stmt list) : bool =
@@ -2449,6 +2554,7 @@ let emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
         ];
       in_main = false;
       owned = [];
+      loops = [];
       hoist = [];
       hoist_on = self_tail;
     }
@@ -2587,6 +2693,7 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
               members;
           in_main = false;
           owned = [];
+          loops = [];
           hoist = [];
           hoist_on = true;
         }
@@ -2647,6 +2754,7 @@ let emit_ctor env0 (c : Emo_ir.class_) : unit =
           tail_rebinds = [];
           in_main = false;
           owned = [];
+          loops = [];
           hoist = [];
           hoist_on = false;
           scope =
@@ -2810,6 +2918,7 @@ let emit (program : Emo_ir.program) : string * string =
       closures = Buffer.create (16 * 1024);
       closure_decls = [];
       owned = [];
+      loops = [];
       hoist = [];
       hoist_on = false;
       forfuncs;
@@ -3088,6 +3197,7 @@ let emit (program : Emo_ir.program) : string * string =
       scope = [];
       in_main = false;
       fresult = Emo_check.Void;
+      loops = [];
     }
   in
   put env "static void emo_root_entry(void) {\n";

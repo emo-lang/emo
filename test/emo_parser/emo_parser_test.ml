@@ -129,6 +129,14 @@ and pp_stmt fmt (s : Emo_ast.stmt) =
       Format.fprintf fmt "(receive @[<hov>%a@])" (pp_list pp_branch) branches
   | Emo_ast.Send { target; message } ->
       Format.fprintf fmt "(<- %a %a)" pp_expr target pp_expr message
+  | Emo_ast.While { cond; body } ->
+      Format.fprintf fmt "(while %a @[<hov>%a@])" pp_expr cond (pp_list pp_stmt)
+        body
+  | Emo_ast.For { init; cond; post; body } ->
+      Format.fprintf fmt "(for %a %a %a @[<hov>%a@])" pp_stmt init pp_expr cond
+        pp_stmt post (pp_list pp_stmt) body
+  | Emo_ast.Break -> Format.pp_print_string fmt "break"
+  | Emo_ast.Continue -> Format.pp_print_string fmt "continue"
 
 and pp_branch fmt { Emo_ast.pattern; guard; body } =
   Format.fprintf fmt "(branch %a%a |@[<hov>%a@])" pp_pattern pattern
@@ -486,6 +494,23 @@ let stmt_tests =
     tc "a binding name cannot end in a question mark" (fun () ->
         let diagnostic = program_err "const is_x? = true" in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
+    tc "the loop words are reserved and report as such" (fun () ->
+        List.iter
+          (fun (source, word) ->
+            let diagnostic = program_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) "E2007" (code_of diagnostic);
+            Alcotest.(check string)
+              ("message of " ^ source)
+              (Printf.sprintf
+                 "expected a binding name, found `%s` (a reserved word)" word)
+              diagnostic.Diagnostic.message)
+          [
+            ("var for = 3", "for");
+            ("var while = 3", "while");
+            ("var break = 3", "break");
+            ("var continue = 3", "continue");
+          ]);
     tc "the initializer stays on the = line" (fun () ->
         let diagnostic = program_err "const x =\n1" in
         Alcotest.(check string) "code" "E2002" (code_of diagnostic));
@@ -1413,6 +1438,107 @@ require "a/b"|});
         Alcotest.(check string) "code" "E2009" (code_of diagnostic));
   ]
 
+let loop_tests =
+  [
+    tc "a while loop parses cond and body" (fun () ->
+        match parse_program "while i < 10 { i = i + 1 }" with
+        | [ item ] -> (
+            match item.Emo_ast.item_desc with
+            | Emo_ast.Item_stmt s ->
+                Alcotest.(check string)
+                  "shape" "(while (< i 10) (= i (+ i 1)))" (render pp_stmt s)
+            | _ -> Alcotest.fail "expected a statement")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "the three-clause for parses with a var header" (fun () ->
+        match
+          parse_program "for var i = 0; i < 100; i = i + 50 { println(i) }"
+        with
+        | [ item ] -> (
+            match item.Emo_ast.item_desc with
+            | Emo_ast.Item_stmt s ->
+                Alcotest.(check string)
+                  "shape"
+                  "(for (var i 0) (< i 100) (= i (+ i 50)) (println call i))"
+                  (render pp_stmt s)
+            | _ -> Alcotest.fail "expected a statement")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "block sugar stays off inside the clauses" (fun () ->
+        match parse_program "while f() { g() }" with
+        | [ item ] -> (
+            match item.Emo_ast.item_desc with
+            | Emo_ast.Item_stmt s ->
+                Alcotest.(check string)
+                  "shape" "(while (f call) (g call))" (render pp_stmt s)
+            | _ -> Alcotest.fail "expected a statement")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "break and continue parse as bare statements" (fun () ->
+        match parse_program "while true { break\ncontinue }" with
+        | [ item ] -> (
+            match item.Emo_ast.item_desc with
+            | Emo_ast.Item_stmt
+                { stmt_desc = Emo_ast.While { body = [ b; c ]; _ }; _ } ->
+                Alcotest.(check string) "break" "break" (render pp_stmt b);
+                Alcotest.(check string) "continue" "continue" (render pp_stmt c)
+            | _ -> Alcotest.fail "expected a while statement")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "every for clause is required" (fun () ->
+        List.iter
+          (fun (source, code) ->
+            let diagnostic = program_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) code (code_of diagnostic))
+          [
+            ("for var i = 0; i < 10 { i = i + 1 }", "E2001" (* the second `;` *));
+            ("for var i = 0; ; i = i + 1 { () }", "E2026");
+            ("for var i = 0; i < 10; { () }", "E2026");
+          ]);
+    tc "the for init clause is a var declaration" (fun () ->
+        List.iter
+          (fun source ->
+            let diagnostic = program_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) "E2026" (code_of diagnostic))
+          [
+            "for i = 0; i < 10; i = i + 1 { () }";
+            "for const i = 0; i < 10; i = i + 1 { () }";
+          ]);
+    tc "the for post clause is an assignment" (fun () ->
+        List.iter
+          (fun source ->
+            let diagnostic = program_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) "E2026" (code_of diagnostic))
+          [
+            "for var i = 0; i < 10; i + 1 { () }";
+            "for var i = 0; i < 10; i { () }";
+          ]);
+    tc "a semicolon is legal only inside a for header" (fun () ->
+        List.iter
+          (fun source ->
+            let diagnostic = program_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) "E2025" (code_of diagnostic))
+          [ "x = 1; y = 2"; "; x = 1"; "while x; { () }" ]);
+    tc "break and continue take nothing" (fun () ->
+        List.iter
+          (fun source ->
+            let diagnostic = program_err source in
+            Alcotest.(check string)
+              ("code of " ^ source) "E2027" (code_of diagnostic))
+          [ "while true { break 3 }"; "while true { continue() }" ]);
+    tc "the loop body opens on the header's line" (fun () ->
+        let diagnostic = program_err "while x < 10\n{ x = x + 1 }" in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic));
+  ]
+
 let () =
   Alcotest.run "emo_parser"
     [
@@ -1426,6 +1552,7 @@ let () =
       ("call", call_tests);
       ("control", control_tests);
       ("stmt", stmt_tests);
+      ("loop", loop_tests);
       ("string", string_tests);
       ("item", item_tests);
       ("def", def_tests);

@@ -69,6 +69,10 @@ type env = {
   classes : (string * class_info) list; (* display name -> info *)
   ifaces : (string * (string * int) list) list; (* display -> method/arity *)
   mutable enums : ((string * string) * int) list; (* (enum, member) -> id *)
+  mutable loops : (string * string) list;
+      (* each enclosing loop's (exit label, continue label), innermost
+         first: break jumps to the exit, continue to the head — or to
+         the post label, on a `for`, so the post runs first *)
 }
 
 let gput env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -235,6 +239,13 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
           branches
     | Receive _ | Send _ | Raise _ -> ()
     | Return_stmt e -> ex e
+    | While { cond; body; _ } ->
+        ex cond;
+        List.iter st body
+    | For { init; post; body; _ } ->
+        List.iter st [ init; post ];
+        List.iter st body
+    | Break | Continue -> ()
   in
   List.iter st body;
   List.filter
@@ -323,6 +334,10 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
                            max (expr_depth g) (stmts_depth b.Emo_ir.body)
                        | None -> stmts_depth b.Emo_ir.body))
                    0 branches)
+        | While { cond; body; _ } -> max (expr_depth cond) (stmts_depth body)
+        | For { init; cond; post; body; _ } ->
+            max (expr_depth cond) (stmts_depth (init :: post :: body))
+        | Break | Continue -> 0
         | _ -> 0))
     0 stmts
 
@@ -351,6 +366,8 @@ let rec collect_stmt (f : frame) (s : Emo_ir.stmt) : unit =
             (pattern_bindings b.Emo_ir.pattern);
           collect_stmts f b.Emo_ir.body)
         branches
+  | While { body; _ } -> collect_stmts f body
+  | For { init; post; body; _ } -> collect_stmts f (init :: post :: body)
   | _ -> ()
 
 and collect_stmts (f : frame) (stmts : Emo_ir.stmt list) : unit =
@@ -585,13 +602,30 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         put env "    %s t0, t0, t1\n" mnemonic;
         put env "    mv a0, t0\n";
         put env "    call emo_box_i64\n"
-    | (Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul), Emo_check.Float64 ->
+    | (Emo_ast.Div | Emo_ast.Mod), Emo_check.Int64 ->
+        (* the divisor is checked first: RISC-V's div/rem define x/0
+           instead of trapping, and the language raises. INT64_MIN / -1
+           needs no check — the hardware's wrap matches the c runtime's
+           saturation. *)
+        emit_int_pair env d l r;
+        put env "    bnez t1, 1f\n";
+        put env "    la a0, msg_divzero\n";
+        put env "    la a1, msg_divzero_end\n";
+        put env "    call emo_fail\n";
+        put env "1:\n";
+        put env "    %s t0, t0, t1\n"
+          (if op = Emo_ast.Div then "div" else "rem");
+        put env "    mv a0, t0\n";
+        put env "    call emo_box_i64\n"
+    | (Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Div), Emo_check.Float64
+      ->
         emit_float_pair env d l r;
         let mnemonic =
           match op with
           | Emo_ast.Add -> "fadd.d"
           | Emo_ast.Sub -> "fsub.d"
           | Emo_ast.Mul -> "fmul.d"
+          | Emo_ast.Div -> "fdiv.d"
           | _ -> assert false
         in
         put env "    %s fa0, fa0, fa1\n" mnemonic;
@@ -1115,6 +1149,45 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
   | Send _ -> refuse "send"
   | Receive _ -> refuse "receive"
   | Raise _ -> refuse "raise"
+  | While { cond; body; _ } ->
+      let head = fresh_label env "loop" in
+      let exit_l = fresh_label env "endloop" in
+      put env "%s:\n" head;
+      emit_expr env 0 cond;
+      put env "    andi t0, a0, 16\n";
+      put env "    beqz t0, %s\n" exit_l;
+      env.loops <- (exit_l, head) :: env.loops;
+      List.iter (emit_stmt env) body;
+      env.loops <- List.tl env.loops;
+      put env "    j %s\n" head;
+      put env "%s:\n" exit_l
+  | For { init; cond; post; body; _ } ->
+      (* the head tests, the body runs, the post label sits between the
+         body and the jump back — a `continue` lands on the post, a
+         `break` leaves past it *)
+      emit_stmt env init;
+      let head = fresh_label env "loop" in
+      let post_l = fresh_label env "post" in
+      let exit_l = fresh_label env "endloop" in
+      put env "%s:\n" head;
+      emit_expr env 0 cond;
+      put env "    andi t0, a0, 16\n";
+      put env "    beqz t0, %s\n" exit_l;
+      env.loops <- (exit_l, post_l) :: env.loops;
+      List.iter (emit_stmt env) body;
+      env.loops <- List.tl env.loops;
+      put env "%s:\n" post_l;
+      emit_stmt env post;
+      put env "    j %s\n" head;
+      put env "%s:\n" exit_l
+  | Break -> (
+      match env.loops with
+      | (exit_l, _) :: _ -> put env "    j %s\n" exit_l
+      | [] -> refuse "`break` outside a loop")
+  | Continue -> (
+      match env.loops with
+      | (_, continue_l) :: _ -> put env "    j %s\n" continue_l
+      | [] -> refuse "`continue` outside a loop")
 
 and describe_expr (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
@@ -2275,6 +2348,9 @@ msg_method_end:
 msg_arith:
     .ascii "arithmetic on values of these kinds"
 msg_arith_end:
+msg_divzero:
+    .ascii "division by zero"
+msg_divzero_end:
 name_to_string:
     .ascii "to_string"
 name_length:
@@ -2420,6 +2496,15 @@ and walk_stmt_enum env (s : Emo_ir.stmt) : unit =
       walk_expr_enum env target;
       walk_expr_enum env message
   | Raise e -> walk_expr_enum env e
+  | While { cond; body; _ } ->
+      walk_expr_enum env cond;
+      walk_stmts_enum env body
+  | For { init; cond; post; body; _ } ->
+      walk_stmt_enum env init;
+      walk_expr_enum env cond;
+      walk_stmt_enum env post;
+      walk_stmts_enum env body
+  | Break | Continue -> ()
 
 and walk_stmts_enum env (stmts : Emo_ir.stmt list) : unit =
   List.iter (walk_stmt_enum env) stmts
@@ -2494,6 +2579,7 @@ let emit (program : Emo_ir.program) : string =
       classes;
       ifaces = program.pinterfaces;
       enums = [];
+      loops = [];
     }
   in
   (* Enum member ids over the whole program, first-seen order. *)

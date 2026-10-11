@@ -1,0 +1,15 @@
+// Plain for-loop — the iteration statement (step 34), beside the
+// tail-recursive loop in loops_tail.
+//
+//   emo build main.emo -o main.emo-bin
+//   emo build main.emo --target c -o main.c-bin
+//
+// The ocaml target keeps any function containing a loop out of Stage B
+// (the specialized emitter does not lower the loop statements), so this
+// benchmark has no specialized-vs-unspecialized split: both builds run
+// the dynamic path. The c target lowers the loop to labels and jumps.
+var total = 0
+for var i = 0; i < 10000000; i = i + 1 {
+  total = total + 1
+}
+println(total)

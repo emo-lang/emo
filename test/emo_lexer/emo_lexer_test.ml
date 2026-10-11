@@ -31,6 +31,10 @@ let pp_kind fmt (k : Token.kind) =
         | Enum -> "enum"
         | If -> "if"
         | Else -> "else"
+        | For -> "for"
+        | While -> "while"
+        | Break -> "break"
+        | Continue -> "continue"
         | Case -> "case"
         | When -> "when"
         | Receive -> "receive"
@@ -51,6 +55,7 @@ let pp_kind fmt (k : Token.kind) =
         | RBracket -> "]"
         | Comma -> ","
         | Colon -> ":"
+        | Semi -> ";"
         | Dot -> "."
         | Arrow -> "->"
         | Send -> "<-"
@@ -122,6 +127,18 @@ let foundation_tests =
             "test.emo:1:8";
           ]
           (List.map token_span toks));
+    tc "the semicolon lexes for the for header" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Lower_ident "a";
+            Op Semi;
+            Lower_ident "b";
+            Op Semi;
+            Lower_ident "c";
+            Eof;
+          ]
+          (kinds (lex_all "a; b; c")));
     tc "newlines are visible on the following token" (fun () ->
         match lex_all "(\n)" with
         | [ lparen; rparen; eof ] ->
@@ -170,8 +187,8 @@ let ident_tests =
           (kinds (lex_all "doing classX")));
     tc "every keyword lexes" (fun () ->
         let source =
-          "def const var class interface enum if else case when receive return \
-           raise self do"
+          "def const var class interface enum if else for while break continue \
+           case when receive return raise self do"
         in
         let expected =
           [
@@ -183,6 +200,10 @@ let ident_tests =
             Token.Keyword Token.Enum;
             Token.Keyword Token.If;
             Token.Keyword Token.Else;
+            Token.Keyword Token.For;
+            Token.Keyword Token.While;
+            Token.Keyword Token.Break;
+            Token.Keyword Token.Continue;
             Token.Keyword Token.Case;
             Token.Keyword Token.When;
             Token.Keyword Token.Receive;
@@ -194,6 +215,17 @@ let ident_tests =
           ]
         in
         Alcotest.(check (list kind)) "kinds" expected (kinds (lex_all source)));
+    tc "keyword prefixes of the new words stay identifiers" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Lower_ident "force";
+            Lower_ident "whiles";
+            Lower_ident "breaks";
+            Lower_ident "continueX";
+            Eof;
+          ]
+          (kinds (lex_all "force whiles breaks continueX")));
   ]
 
 let operator_tests =
@@ -537,7 +569,7 @@ let errors_tests =
               (match diagnostic.Diagnostic.hint with
               | Some _ -> true
               | None -> false))
-          [ ("@", 1); ("$", 1); (";", 1); ("#", 1); ("a @ b", 3) ]);
+          [ ("@", 1); ("$", 1); ("#", 1); ("a @ b", 3) ]);
     tc "a number followed by a name is two tokens for the parser" (fun () ->
         Alcotest.(check (list kind))
           "kinds"

@@ -1457,6 +1457,8 @@ let bootstrap_tests =
         bootstrap_example (examples_dir ()) "pipeline" "pipeline/main.emo" true);
     tc "list compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example (examples_dir ()) "list" "list/main.emo" true);
+    tc "loops compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example (examples_dir ()) "loops" "loops/main.emo" true);
     tc "tcp_echo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
@@ -1583,6 +1585,7 @@ let ts_golden_tests =
       ("slog_demo", "main.emo");
       ("printf_demo", "main.emo");
       ("sync_demo", "main.emo");
+      ("loops", "main.emo");
     ]
 
 (* The cross-module type rule (CHECK.md, settled 2026-10-10): the

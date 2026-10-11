@@ -206,6 +206,7 @@ let wasm_goldens =
     "list";
     "base64_demo";
     "sync_demo";
+    "loops";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -229,6 +230,7 @@ let beam_goldens =
     "base64_demo";
     "sync_demo";
     "printf_demo";
+    "loops";
   ]
 
 let erl_available =
@@ -438,6 +440,7 @@ let c_goldens =
     "slog_demo";
     "bufio_demo";
     "printf_demo";
+    "loops";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
@@ -2005,7 +2008,7 @@ let riscv64_examples_tests =
                    | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
                    (Buffer.contents err))))
-    [ "hello_world"; "fib"; "objects"; "language_tour" ]
+    [ "hello_world"; "fib"; "objects"; "language_tour"; "loops" ]
 
 (* T22.4's honest refusals: a program the checker admits but the
    freestanding backend cannot honor yet exits 65 with a message that
@@ -2091,7 +2094,6 @@ do work()|};
 }
 do work()|},
               "spawn" );
-            ("division", {|println(7 / 2)|}, "`/`");
             ("bytes", {|println(Bytes.new(4))|}, "Bytes");
           ]);
   ]

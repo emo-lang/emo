@@ -75,6 +75,15 @@ and stmt_desc =
   | Return of expr option
   | Raise of expr
   | If of { cond : expr; then_body : stmt list; else_body : stmt list option }
+  | While of { cond : expr; body : stmt list }
+  | For of {
+      init : stmt; (* the header `var` — scoped to the header and the body *)
+      cond : expr;
+      post : stmt; (* the header assignment — the loop's one update step *)
+      body : stmt list;
+    }
+  | Break
+  | Continue
   | Case of { scrutinee : expr; branches : branch list }
   | Receive of branch list
   | Send of { target : expr; message : expr }

@@ -29,7 +29,7 @@
       "patterns": [
         {
           "name": "keyword.control.flow.emo",
-          "match": "\\b(if|else|case|when|receive|return|raise|do)\\b"
+          "match": "\\b(if|else|for|while|break|continue|case|when|receive|return|raise|do)\\b"
         },
         {
           "name": "keyword.declaration.emo",

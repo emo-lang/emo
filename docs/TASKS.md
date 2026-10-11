@@ -967,31 +967,50 @@ identifier, a missing clause, `;` outside a `for` header,
 `break`/`continue` outside a loop — has its own diagnostic;
 `dune test` green.
 
-- [ ] **T34.1** — Keywords: reserve `for`, `while`, `break`,
+- [x] **T34.1** — Keywords: reserve `for`, `while`, `break`,
       `continue` in the lexer; the LSP completion list and the VS Code
       grammar flip in lockstep; code using the four words as
-      identifiers reports a clear reserved-word diagnostic.
-- [ ] **T34.2** — Parser: `while cond { }` and the three-clause `for`
+      identifiers reports a clear reserved-word diagnostic. (Done 2026-10-11.)
+- [x] **T34.2** — Parser: `while cond { }` and the three-clause `for`
       — no omissions, the post clause an assignment, `;` a token legal
       only inside a `for` header, `suppress_block_sugar` set on the
       `while` condition and all three `for` clauses so the trailing
-      `{` opens the body; AST nodes for the four statements.
-- [ ] **T34.3** — Checker: the header `var` scoped to header+body in
+      `{` opens the body; AST nodes for the four statements. (Done 2026-10-11.)
+- [x] **T34.3** — Checker: the header `var` scoped to header+body in
       the existing depth model; `break`/`continue` bind to the nearest
       enclosing loop and are rejected outside one; `definitely_returns`
       accounts for loops so `return`-reachability stays sound;
-      capturing the header `var` in an arrow block stays E4012.
-- [ ] **T34.4** — Interpreter: the four statements in `eval_stmt`; the
+      capturing the header `var` in an arrow block stays E4012. (Done 2026-10-11.)
+- [x] **T34.4** — Interpreter: the four statements in `eval_stmt`; the
       iteration runs a host loop, never recursion — 10M iterations
       flat; `continue` runs a `for`'s post clause first; the step
-      budget counts each iteration.
-- [ ] **T34.5** — Example and rejections: `examples/loops` — the
+      budget counts each iteration. (Done 2026-10-11.)
+- [x] **T34.5** — Example and rejections: `examples/loops` — the
       worked example, `while` counting, `break`/`continue`, nested
       loops — golden through `emo run`; the parser and checker
-      rejection corpus pinning every refusal.
-- [ ] **T34.6** — README alignment: the README (English + zh-CN)
+      rejection corpus pinning every refusal. (Done 2026-10-11.)
+- [x] **T34.6** — README alignment: the README (English + zh-CN)
       already documents the settled syntax — verify it against the
-      implemented surface and reconcile any drift.
+      implemented surface and reconcile any drift. (Done 2026-10-11.)
+
+Step 34 close-out (2026-10-11, on `feat/loops`): the loop surface is
+live in the lexer, parser, checker, and interpreter, one commit per
+task. `;` became a token whose only legal home is a `for` header
+(E2025), and the header's shape is parse-time law — the init clause a
+`var`, the post clause an assignment, no clause optional (E2026), with
+block sugar suppressed in every clause. The checker splits the loop
+into two scopes — header, then body as its child — so the header `var`
+sits a level below any arrow block in the body and capturing one is
+the ordinary var-escape error (E4012); `break`/`continue` bind to the
+nearest loop through a `loop_depth` field that arrow blocks reset to
+zero (E4022 outside a loop), and no loop shape counts as a return
+point. The interpreter runs each iteration as an OCaml tail loop with
+a fresh body frame — 10M iterations verified flat — `continue` still
+runs a `for`'s post clause, and the step budget counts every
+iteration, which is what keeps the restricted config profile
+terminating now that loops exist. `examples/loops` is golden through
+the interpreter; the six backends refuse the loop statements loudly
+until step 35 lowers them.
 
 ### Step 35 — Loops on every target: IR and the six backends
 
@@ -1002,26 +1021,77 @@ prints (goldens in CI); a 10M-iteration loop stays flat on every
 target; the tail-call guarantee is untouched (`loops_tail` unchanged);
 `dune test` green.
 
-- [ ] **T35.1** — IR: the loop statements in `emo_ir`'s `stmt` and the
+- [x] **T35.1** — IR: the loop statements in `emo_ir`'s `stmt` and the
       Ast→IR lowering — the header `var` as a loop-scoped mutable
-      binding; one node set, every backend a case.
-- [ ] **T35.2** — c: the emitted C's own `while`/`for` with native
+      binding; one node set, every backend a case. (Done 2026-10-11.)
+- [x] **T35.2** — c: the emitted C's own `while`/`for` with native
       `break`/`continue`; `return` inside a loop rides the existing
-      branch-to-epilogue.
-- [ ] **T35.3** — ocaml: native `while`/`for` over the existing `ref`
+      branch-to-epilogue. (Done 2026-10-11.)
+- [x] **T35.3** — ocaml: native `while`/`for` over the existing `ref`
       discipline for the header `var`; `break`/`continue` lower
       through the one mechanism the plan file records (a done flag or
       a local exception — decided, never a silent fallback).
-- [ ] **T35.4** — typescript: native `while`/`for` in the emitted
+      (Done 2026-10-11 — the mechanism: one pair of local exceptions
+      per loop, `Break_N`/`Continue_N`; `continue` unwinds to the
+      handler above the post, `break` past the whole while.)
+- [x] **T35.4** — typescript: native `while`/`for` in the emitted
       body; `break`/`continue` are the target language's own.
-- [ ] **T35.5** — wasm: structured control flow — `Loop` with `Br_if`
+      (Done 2026-10-11. Also fixed a pre-existing backend bug the
+      loops golden exposed: `stmts` emitted the rest of a chain before
+      its head — sprintf arguments evaluate right-to-left — so a `var`'s
+      ref registration landed after the statements that needed it; the
+      head now emits first. The self-tail-call driver loop gained the
+      `__emo_driver` label so a tail call inside a loop continues the
+      driver, not the Emo loop.)
+- [x] **T35.5** — wasm: structured control flow — `Loop` with `Br_if`
       on the condition; `break` branches out of the loop block,
       `continue` to the head, the post clause running first.
-- [ ] **T35.6** — beam: the loop lowers to a tail-recursive local
+      (Done 2026-10-11. For lowers to `block $exit { init; loop $head {
+      test; br_if $exit; block $post { body } post; br $head } }`, so a
+      `continue` lands on the post and a `break` leaves past it; frame
+      depths are tracked for statement-level ifs and case dispatches so
+      branch depths stay relative-correct inside nested control flow.)
+- [x] **T35.6** — beam: the loop lowers to a tail-recursive local
       function — condition guard, body, recursive call with the
       rebound variables; `break` threads a done marker.
-- [ ] **T35.7** — riscv64: labels and conditional branches — the loop
+      (Done 2026-10-11. Each loop is a hidden module function taking
+      the header `var` plus every outer binding the body reads or
+      assigns, threaded through the recursive calls; a done flag
+      marks `break`, `continue` applies the post first. The body
+      emits as a tail chain — ifs weave the rest into their arms,
+      jumps truncate the dead rest — so every jump is a genuine tail
+      call; Core Erlang's `do` only tail-calls its last operand.)
+      (Also fixed: the single-statement `Assign_var` path registered
+      the shadow before evaluating the value, so `n = n + 1` read the
+      variable it was defining.)
+- [x] **T35.7** — riscv64: labels and conditional branches — the loop
       head a label, `break`/`continue` jumps.
-- [ ] **T35.8** — Goldens and benchmarks: `examples/loops` on all six
+      (Done 2026-10-11. While is `head: test; beqz exit; body; j head`;
+      a `for` puts a post label between the body and the jump back, so
+      `continue` lands on the post and `break` leaves past it. The
+      header `var` is a frame slot, the existing discipline. The value
+      heap's no-reclamation arena — shared with the pre-loop
+      tail-recursive idiom — still bounds long-running programs;
+      unchanged by this task.)
+- [x] **T35.8** — Goldens and benchmarks: `examples/loops` on all six
       target golden lists; a plain-loop row beside `loops_tail` in
-      `benchmarks/results.md`; the CI groups; close-out.
+      `benchmarks/results.md`; the CI groups; close-out. (Done
+      2026-10-11. The riscv64 target gained `/` and `%` — `div`/`rem`
+      with a zero-division abort — so the example boots there; the
+      plain-loop benchmark records the ocaml target's dynamic-by-
+      construction number beside the c target and the interpreter.)
+
+Step 35 close-out (2026-10-11, on `feat/loops`): the loop statements
+lower on all six targets, one commit per task. The IR carries
+While/For/Break/Continue with the header `var` as a loop-scoped mutable
+binding, and assignment lowering resolves innermost-first so a header
+`var` updates itself under a same-named module-level `var`. c emits its
+own `while` and a `while(1)` form whose continue label runs the post;
+ocaml uses the ref discipline and a pair of local exceptions per loop;
+typescript uses the target's native `for` with a labeled driver loop
+for tail calls; wasm lowers to block/loop/br_if with a post block;
+beam threads every free variable through a hidden recursive function
+with a done flag; riscv64 uses labels and jumps — and gained `/` and
+`%` so the example boots. `examples/loops` is golden on all six targets
+plus the interpreter, and the plain-loop benchmark row records the
+dynamic-by-construction ocaml number beside the c target.

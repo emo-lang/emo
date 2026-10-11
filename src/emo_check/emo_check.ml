@@ -516,6 +516,10 @@ type env = {
   in_void : bool;
       (* true while checking a function whose return type is Void; any
          `return` inside is E4016 *)
+  loop_depth : int;
+      (* nesting depth of enclosing `for`/`while` bodies; `break` and
+         `continue` are legal only when it is above zero — an arrow block
+         resets it, a closure is not the loop it sits in *)
 }
 
 (* The built-in surface every program sees. *)
@@ -742,6 +746,7 @@ let empty_env =
     ret = None;
     block_depth = -1;
     in_void = false;
+    loop_depth = 0;
   }
 
 let lookup_env env name = List.assoc_opt name env.bindings
@@ -1164,6 +1169,7 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
             block_depth = env.depth;
             ret = None;
             in_void = false;
+            loop_depth = 0;
           }
           params
       in
@@ -2212,6 +2218,54 @@ and check_stmt ctx env (s : Ast.stmt) : env =
   | Ast.Raise e ->
       ignore (check_expr ctx env e);
       env
+  | Ast.While { cond; body } ->
+      let ct = check_expr ctx env cond in
+      (match ct with
+      | Bool | Unknown -> ()
+      | other ->
+          report ctx cond.Ast.span "E4004"
+            (Printf.sprintf "the `while` condition must be a Bool, got %s"
+               (to_string other)));
+      let body_env =
+        { (child_scope env) with loop_depth = env.loop_depth + 1 }
+      in
+      let (_ : env) =
+        List.fold_left (fun env s -> check_stmt ctx env s) body_env body
+      in
+      env
+  | Ast.For { init; cond; post; body } ->
+      (* The header is one scope: the `var` covers the condition and the
+         post clause. The body is a child of it — an arrow block in the
+         body sits a level below the header `var`, so capturing one is
+         the ordinary var-escape error (E4012). *)
+      let loop_env = child_scope env in
+      let loop_env = check_stmt ctx loop_env init in
+      let ct = check_expr ctx loop_env cond in
+      (match ct with
+      | Bool | Unknown -> ()
+      | other ->
+          report ctx cond.Ast.span "E4004"
+            (Printf.sprintf "the `for` condition must be a Bool, got %s"
+               (to_string other)));
+      let loop_env = check_stmt ctx loop_env post in
+      let body_env =
+        { (child_scope loop_env) with loop_depth = env.loop_depth + 1 }
+      in
+      let (_ : env) =
+        List.fold_left (fun env s -> check_stmt ctx env s) body_env body
+      in
+      env
+  | Ast.Break ->
+      if env.loop_depth = 0 then
+        report ctx span "E4022"
+          "`break` leaves the nearest loop; there is no loop to leave here";
+      env
+  | Ast.Continue ->
+      if env.loop_depth = 0 then
+        report ctx span "E4022"
+          "`continue` skips to the next iteration of a loop; there is no loop \
+           to skip here";
+      env
 
 (* Checks one pattern against the scrutinee's type when decidable, binding
    pattern variables. Returns the environment for the branch body. *)
@@ -2350,6 +2404,9 @@ and always_returns ctx (s : Ast.stmt) : bool =
   | Ast.Return (Some _) -> true
   | Ast.Return None -> false
   | Ast.Raise _ -> true
+  (* A loop may run zero times and `break`/`continue` leave it without
+     returning, so no loop shape counts as a return point. *)
+  | Ast.While _ | Ast.For _ | Ast.Break | Ast.Continue -> false
   | Ast.If { then_body; else_body = Some else_body; _ } ->
       definitely_returns ctx then_body && definitely_returns ctx else_body
   | Ast.Case { scrutinee; branches } -> (
@@ -2396,6 +2453,7 @@ let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
       ret = (if is_init then None else Some effective);
       block_depth = -1;
       in_void = (not is_init) && effective = Void;
+      loop_depth = 0;
     }
   in
   let frame =

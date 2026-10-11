@@ -13,6 +13,10 @@ type env = {
   mutable refs : string list; (* mutable local bindings, innermost first *)
   mutable fresh : int; (* unique scrutinee names *)
   mutable in_receive : bool; (* lowering a receive's branch bodies *)
+  mutable in_loop : bool;
+      (* a loop sits between here and the nearest function boundary:
+         native break/continue are legal exactly when this holds —
+         receive arms and arrow blocks cross a boundary and reset it *)
   mutable fname : string; (* the function being emitted, for trampolining *)
   mutable fparams : string list; (* its parameters, in order *)
 }
@@ -41,6 +45,8 @@ let trampoline env (f : Emo_ir.func) : bool =
               (fun (b : Emo_ir.branch) -> in_body b.Emo_ir.body)
               branches
         | Emo_ir.If { then_; else_; _ } -> in_body then_ || in_body else_
+        | Emo_ir.While { body; _ } -> in_body body
+        | Emo_ir.For { body; _ } -> in_body body
         | _ -> false)
       xs
   in
@@ -299,10 +305,15 @@ let rec expr env (e : Emo_ir.expr) : string =
       let params = String.concat ", " (List.map fst cparams) in
       let saved = env.refs in
       let saved_name = env.fname in
+      let saved_loop = env.in_loop in
       env.fname <- "";
+      (* a block is a function boundary: its body may not jump out to
+         an enclosing loop *)
+      env.in_loop <- false;
       let body = stmts env cbody ~tail:true in
       env.fname <- saved_name;
       env.refs <- saved;
+      env.in_loop <- saved_loop;
       Printf.sprintf "(async (%s) => {\n%s\n})" params body
   | Emo_ir.Global_var _ -> failwith "ts: module-level `var` is not supported"
 
@@ -313,7 +324,13 @@ and stmts env (xs : Emo_ir.stmt list) ~(tail : bool) : string =
   | [] -> if tail then "return undefined;" else ""
   | [ s ] -> stmt env s ~tail
   | s :: rest ->
-      Printf.sprintf "%s\n%s" (stmt env s ~tail:false) (stmts env rest ~tail)
+      (* The head emits before the rest: a `var`'s ref registration must
+         land before later statements read or assign through it. OCaml
+         evaluates sprintf arguments right-to-left — inline, the rest
+         would emit first and every ref shaped by the head would be
+         missed. *)
+      let head_code = stmt env s ~tail:false in
+      Printf.sprintf "%s\n%s" head_code (stmts env rest ~tail)
 
 and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
   match s with
@@ -348,7 +365,11 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       Printf.sprintf "E.send(%s, %s);" (expr env target) (expr env message)
   | Receive { branches } ->
       let saved = env.in_receive in
+      let saved_loop = env.in_loop in
       env.in_receive <- true;
+      (* the dispatch runs inside the receive callback — a function
+         boundary: no enclosing loop's break/continue reaches past it *)
+      env.in_loop <- false;
       let scratch = fresh env in
       (* Same shape as `case`: guards nest inside the bindings' scope. *)
       let rec chain bs =
@@ -383,6 +404,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       in
       let dispatch = chain branches in
       env.in_receive <- saved;
+      env.in_loop <- saved_loop;
       Printf.sprintf "await E.receive(async (%s) => {\n%s\n})" scratch dispatch
   | Raise e -> Printf.sprintf "E.throwException(%s);" (expr env e)
   | Return_stmt e -> (
@@ -418,8 +440,62 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
                    (fun p t -> Printf.sprintf "%s = %s; " p t)
                    env.fparams temps)
             in
-            Printf.sprintf "{ %s%scontinue; }" evals assigns
+            (* the labeled continue names the driver loop: a bare one
+               would bind to an enclosing Emo loop when the tail call
+               sits inside one *)
+            Printf.sprintf "{ %s%scontinue __emo_driver; }" evals assigns
         | _ -> Printf.sprintf "return %s;" (expr env e))
+  | While { cond; body; _ } ->
+      (* Native loop; break/continue are the target's own. Body
+         bindings are loop-scoped (the refs stack restores), and a Void
+         body ending here falls off as undefined. *)
+      let saved_refs = env.refs in
+      let saved_loop = env.in_loop in
+      env.in_loop <- true;
+      let cond_code = Printf.sprintf "E.truthy(%s)" (expr env cond) in
+      let body_code = stmts env body ~tail:false in
+      env.refs <- saved_refs;
+      env.in_loop <- saved_loop;
+      let loop = Printf.sprintf "while (%s) {\n%s\n}" cond_code body_code in
+      if tail then loop ^ "\nreturn undefined;" else loop
+  | For { init; cond; post; body; _ } -> (
+      (* The header `var` keeps the ref discipline — a `{ v: ... }` box
+         — declared in a block ahead of a native `for`; the post is the
+         third clause, so a native `continue` runs it first, a `break`
+         skips it, both the language's own. The block contains the
+         header binding: two sequential loops may share a header name. *)
+      match init with
+      | Emo_ir.Let { mutable_ = true; name; init = init_expr } ->
+          let saved_refs = env.refs in
+          let saved_loop = env.in_loop in
+          let init_code = expr env init_expr in
+          env.refs <- name :: env.refs;
+          env.in_loop <- true;
+          let cond_code = Printf.sprintf "E.truthy(%s)" (expr env cond) in
+          let post_code =
+            match post with
+            | Emo_ir.Assign_var { name = pn; value; _ }
+              when List.mem pn env.refs ->
+                Printf.sprintf "%s.v = %s" pn (expr env value)
+            | Emo_ir.Assign_var { name = pn; _ } ->
+                failwith
+                  ("ts: the `for` post assigns the non-mutable `" ^ pn ^ "`")
+            | _ -> failwith "ts: this `for` post clause"
+          in
+          let body_code = stmts env body ~tail:false in
+          env.refs <- saved_refs;
+          env.in_loop <- saved_loop;
+          let loop =
+            Printf.sprintf "{\nlet %s = { v: %s };\nfor (; %s; %s) {\n%s\n}\n}"
+              name init_code cond_code post_code body_code
+          in
+          if tail then loop ^ "\nreturn undefined;" else loop
+      | _ -> failwith "ts: the `for` header binds a `var`")
+  | Break ->
+      if env.in_loop then "break;" else failwith "ts: `break` outside a loop"
+  | Continue ->
+      if env.in_loop then "continue;"
+      else failwith "ts: `continue` outside a loop"
 
 and block env (xs : Emo_ir.stmt list) : string =
   match xs with [] -> "" | xs -> stmts env xs ~tail:false
@@ -474,7 +550,8 @@ let emit_func env (f : Emo_ir.func) : string =
   env.fname <- saved_name;
   env.fparams <- saved_params;
   if tramp then
-    Printf.sprintf "async function %s(%s) {\n  for (;;) {\n%s\n  }\n}"
+    Printf.sprintf
+      "async function %s(%s) {\n  __emo_driver: for (;;) {\n%s\n  }\n}"
       f.Emo_ir.fname params body
   else
     Printf.sprintf "async function %s(%s) {\n%s\n}" f.Emo_ir.fname params body
@@ -583,7 +660,15 @@ let emit_ts (program : Emo_ir.program) : string =
          "foreign definitions are not supported on the typescript target yet");
   let buf = Buffer.create (16 * 1024) in
   let env =
-    { buf; refs = []; fresh = 0; fname = ""; fparams = []; in_receive = false }
+    {
+      buf;
+      refs = [];
+      fresh = 0;
+      fname = "";
+      fparams = [];
+      in_receive = false;
+      in_loop = false;
+    }
   in
   Buffer.add_string buf ts_prelude;
   Buffer.add_string buf "\n// ---- program ----\n";
