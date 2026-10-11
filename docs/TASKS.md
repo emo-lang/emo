@@ -1043,9 +1043,14 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       head now emits first. The self-tail-call driver loop gained the
       `__emo_driver` label so a tail call inside a loop continues the
       driver, not the Emo loop.)
-- [ ] **T35.5** — wasm: structured control flow — `Loop` with `Br_if`
+- [x] **T35.5** — wasm: structured control flow — `Loop` with `Br_if`
       on the condition; `break` branches out of the loop block,
       `continue` to the head, the post clause running first.
+      (Done 2026-10-11. For lowers to `block $exit { init; loop $head {
+      test; br_if $exit; block $post { body } post; br $head } }`, so a
+      `continue` lands on the post and a `break` leaves past it; frame
+      depths are tracked for statement-level ifs and case dispatches so
+      branch depths stay relative-correct inside nested control flow.)
 - [ ] **T35.6** — beam: the loop lowers to a tail-recursive local
       function — condition guard, body, recursive call with the
       rebound variables; `break` threads a done marker.

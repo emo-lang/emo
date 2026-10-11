@@ -239,6 +239,13 @@ type env = {
   mutable iface_classes : (string * string list) list;
   mutable classes : Emo_ir.class_ list;
   mutable hidden : (int * W.func_type) list;
+  mutable depth : int;
+      (* control frames currently open (blocks, loops, ifs): a br's
+         relative depth is counted against this *)
+  mutable loops : (int * int) list;
+      (* each enclosing loop's (exit depth, continue depth) — the env
+         depth outside the frame that carries each label, innermost
+         first; break/continue branch by the difference *)
 }
 
 let e env i = env.rev <- i :: env.rev
@@ -1056,10 +1063,12 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
           | None -> failwith ("wasm: unknown field " ^ class_name ^ "." ^ name))
       | _ -> failwith ("wasm: unknown class " ^ class_name))
   | Emo_ir.If { cond; then_; else_ } ->
-      truthy (expr_block env cond)
-      @ [
-          W.If (W.Void, stmts env then_ ~tail:false, stmts env else_ ~tail:false);
-        ]
+      let saved = env.depth in
+      env.depth <- saved + 1;
+      let t = stmts env then_ ~tail:false in
+      let e = stmts env else_ ~tail:false in
+      env.depth <- saved;
+      truthy (expr_block env cond) @ [ W.If (W.Void, t, e) ]
   | Emo_ir.Case { scrutinee; branches } -> case env scrutinee branches ~tail
   | Emo_ir.Receive { branches } -> receive env branches ~tail
   | Emo_ir.Send { target; message } ->
@@ -1075,8 +1084,83 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
           | Some fidx -> arg_code @ [ W.Return_call fidx ]
           | None -> failwith ("wasm: unbound call " ^ g))
       | _ -> expr_block env x @ if tail then [] else [ W.Return ])
-  | Emo_ir.While _ | Emo_ir.For _ | Emo_ir.Break | Emo_ir.Continue ->
-      failwith "wasm: the loop statements are not supported yet"
+  | Emo_ir.While { cond; body; _ } ->
+      (* block $exit { loop $head { cond; i32.eqz; br_if $exit; body;
+         br $head } } — continue branches to the head (the next test),
+         break out of $exit, both the loop's own frames. *)
+      let d = env.depth in
+      let saved = env.loops in
+      env.loops <- (d, d + 1) :: env.loops;
+      env.depth <- d + 1;
+      let cond_code = truthy (expr_block env cond) in
+      env.depth <- d + 2;
+      let body_code = stmts env body ~tail:false in
+      env.depth <- d;
+      env.loops <- saved;
+      [
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  cond_code @ [ W.I32_eqz; W.Br_if 1 ] @ body_code @ [ W.Br 0 ]
+                );
+            ] );
+      ]
+  | Emo_ir.For { init; cond; post; body; _ } -> (
+      (* block $exit { <init>; loop $head { cond; i32.eqz; br_if $exit;
+         block $post { body } <post>; br $head } } — continue branches
+         to $post, so it runs before the next test; break leaves
+         $exit past the post, as it does on any exit. The header `var`
+         is a fresh local, the existing discipline. *)
+      match init with
+      | Emo_ir.Let { mutable_ = true; name; init = init_expr } ->
+          let d = env.depth in
+          let saved = env.loops in
+          let t =
+            match init_expr.Emo_ir.desc with
+            | Emo_ir.Closure _ -> W.RefNull t_vfun
+            | _ -> W.Anyref
+          in
+          let idx = fresh_local env name t in
+          let init_code = expr_block env init_expr @ [ W.Local_set idx ] in
+          env.loops <- (d, d + 2) :: env.loops;
+          env.depth <- d + 1;
+          let cond_code = truthy (expr_block env cond) in
+          env.depth <- d + 2;
+          let post_code =
+            match post with
+            | Emo_ir.Assign_var { name = pn; value; _ } -> (
+                match List.assoc_opt pn env.local_map with
+                | Some pidx -> expr_block env value @ [ W.Local_set pidx ]
+                | None -> failwith ("wasm: assignment to unbound " ^ pn))
+            | _ -> failwith "wasm: this `for` post clause"
+          in
+          env.depth <- d + 3;
+          let body_code = stmts env body ~tail:false in
+          env.depth <- d;
+          env.loops <- saved;
+          [
+            W.Block
+              ( W.Void,
+                init_code
+                @ [
+                    W.Loop
+                      ( W.Void,
+                        cond_code @ [ W.I32_eqz; W.Br_if 1 ]
+                        @ [ W.Block (W.Void, body_code) ]
+                        @ post_code @ [ W.Br 0 ] );
+                  ] );
+          ]
+      | _ -> failwith "wasm: the `for` header binds a `var`")
+  | Emo_ir.Break -> (
+      match env.loops with
+      | (exit_d, _) :: _ -> [ W.Br (env.depth - exit_d - 1) ]
+      | [] -> failwith "wasm: `break` outside a loop")
+  | Emo_ir.Continue -> (
+      match env.loops with
+      | (_, continue_d) :: _ -> [ W.Br (env.depth - continue_d - 1) ]
+      | [] -> failwith "wasm: `continue` outside a loop")
 
 and dispatch_branches env (s : W.instr list) (branches : Emo_ir.branch list)
     ~(tail : bool) : W.instr list =
@@ -1102,11 +1186,23 @@ and dispatch_branches env (s : W.instr list) (branches : Emo_ir.branch list)
           match guard with [] -> test | _ -> test @ guard @ [ W.I32_and ]
         in
         let body =
-          if tail then stmts_value env b.Emo_ir.body ~tail
-          else stmts env b.Emo_ir.body ~tail
+          let saved = env.depth in
+          env.depth <- saved + 1;
+          let code =
+            if tail then stmts_value env b.Emo_ir.body ~tail
+            else stmts env b.Emo_ir.body ~tail
+          in
+          env.depth <- saved;
+          code
         in
         env.binders <- saved;
-        let no_match = build rest in
+        let no_match =
+          let saved = env.depth in
+          env.depth <- saved + 1;
+          let nm = build rest in
+          env.depth <- saved;
+          nm
+        in
         [ W.If_else (blocktype, cond, body, no_match) ]
   in
   let arms = build branches in
@@ -3866,6 +3962,8 @@ let assemble (program : Emo_ir.program) : W.module_ =
       nfuncs = runtime_count;
       strings = [];
       string_pool = [];
+      depth = 0;
+      loops = [];
       iface_classes = [];
       classes = [];
       hidden = [];
