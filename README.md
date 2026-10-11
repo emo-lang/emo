@@ -354,6 +354,15 @@ built myapp
   ```
 
   The callback method's parameters stay in the marshaling tier (`Float64`, `String`, `Bool`, `Int64`), and its return adds `Void`. Two objects of different classes both satisfying the interface each dispatch to their own method — the object rides in the userdata. On targets without the contract the parameter refuses at check time, like any unhonored `foreign def`.
+- **Compound data crosses as a struct shape.** A `foreign def` parameter whose type is a tuple — or a carrier class — passes a C struct by value: the element types in order are the layout, a nested tuple nests a struct within the struct, and a class instance contributes its init-assigned fields (the class's shape is its init signature). A compound return comes back as a tuple:
+
+  ```emo
+  foreign def stretch(r ((Float64, Float64), Float64)) (Float64, Float64) = "stretch"
+
+  stretch(((1.0, 2.0), 3.0))   # a struct of a struct and a scalar, by value
+  ```
+
+  The `c` target declares the same `typedef struct` the C side sees — in `emo_defs.h`, so a shim compiles against the real layouts — and the by-value calling convention is the C compiler's job. Shape fields stay in the marshaling tier; a class-typed return refuses (name the tuple), and so does every target without the mechanism.
 - **The default build needs only a C compiler.** The `c` target invokes the system `cc`; `--target ocaml` requires the OCaml toolchain — the same one that builds Emo itself.
 
 ## Configuration

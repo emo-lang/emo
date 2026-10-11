@@ -285,6 +285,87 @@ let cb_name env (iname : string) : string =
   | Some name -> name
   | None -> refuse (Printf.sprintf "the callback for `%s`" iname)
 
+(* ---- Struct shapes (CHECK.md, 2026-10-11) ----
+
+   A foreign parameter whose type is a tuple — or a carrier class —
+   crosses the C ABI as a struct by value: the emitter declares the
+   same struct the C side sees and cc's ABI classifier owns the calling
+   convention. Per shape the emitter also emits two static converters —
+   emo_sbuildN flattens a dynamic word (tuple elements, or instance
+   fields) into the struct, emo_smkN builds the dynamic word back from
+   a returned struct — so a call site keeps one textual occurrence of
+   its argument expression and needs no temporaries. Identical layouts
+   share one typedef, keyed by the serialized member tree. *)
+
+let shape_counter = ref 0
+let shape_table : (string, string) Hashtbl.t = Hashtbl.create 8
+
+(* A member is a marshaling scalar or a nested shape (its key). *)
+type member_kind = KScalar of Emo_check.t | KNested of string
+
+let shape_members : (string, (string * member_kind) list) Hashtbl.t =
+  Hashtbl.create 8
+
+let shape_carrier : (string, string) Hashtbl.t =
+  Hashtbl.create 8 (* "tup" | "cls" *)
+
+let shape_build : (string, string) Hashtbl.t = Hashtbl.create 8
+let shape_make : (string, string) Hashtbl.t = Hashtbl.create 8
+let shape_order : string list ref = ref []
+
+(* A shape's build converter exists only for parameter positions, its
+   make converter only for result positions — no unused statics. *)
+let shape_param_keys : string list ref = ref []
+let shape_result_keys : string list ref = ref []
+
+(* The canonical serialization of a shape's member tree: the dedup key.
+   Class names are program-unique (E4021), so the display name in the
+   key is safe. *)
+let rec shape_key env (t : Emo_check.t) : string =
+  match t with
+  | Emo_check.TupleType ts ->
+      "(" ^ String.concat "," (List.map (shape_key env) ts) ^ ")"
+  | Emo_check.ClassType display -> (
+      match Hashtbl.find_opt env.classes display with
+      | Some c ->
+          let fields =
+            match c.Emo_ir.cinit with
+            | Some init -> List.tl init.Emo_ir.fparams
+            | None -> []
+          in
+          "class " ^ display ^ "("
+          ^ String.concat ","
+              (List.map (fun (_, ty) -> shape_key env ty) fields)
+          ^ ")"
+      | None -> refuse (Printf.sprintf "the carrier class `%s`" display))
+  | scalar -> Emo_check.to_string scalar
+
+let shape_name env (t : Emo_check.t) : string =
+  match Hashtbl.find_opt shape_table (shape_key env t) with
+  | Some n -> n
+  | None ->
+      refuse (Printf.sprintf "the struct shape of `%s`" (Emo_check.to_string t))
+
+(* The converter that flattens the argument word into the struct: the
+   carrier decides the accessor (tuple elements vs instance fields). *)
+let shape_build_name env (t : Emo_check.t) : string =
+  let carrier = match t with Emo_check.ClassType _ -> "cls" | _ -> "tup" in
+  let k = shape_key env t ^ "/" ^ carrier in
+  match Hashtbl.find_opt shape_build k with
+  | Some n -> n
+  | None ->
+      refuse
+        (Printf.sprintf "the struct build converter for `%s`"
+           (Emo_check.to_string t))
+
+let shape_make_name env (t : Emo_check.t) : string =
+  match Hashtbl.find_opt shape_make (shape_key env t) with
+  | Some n -> n
+  | None ->
+      refuse
+        (Printf.sprintf "the struct make converter for `%s`"
+           (Emo_check.to_string t))
+
 (* ---- Expressions ---- *)
 
 let compare_text (op : Ast.binop) : string =
@@ -519,6 +600,14 @@ and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
                  cb_name env iname;
                  Printf.sprintf "(void *)(%s)" (as_dyn env arg);
                ]
+           | Emo_check.TupleType _ | Emo_check.ClassType _ ->
+               (* the struct, by value, flattened by the shape's build
+                  converter — the argument expression stays one textual
+                  occurrence *)
+               [
+                 Printf.sprintf "%s(%s)" (shape_build_name env ty)
+                   (as_dyn env arg);
+               ]
            | _ ->
                let v = as_native env arg ty in
                [
@@ -529,13 +618,22 @@ and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
          args f.Emo_ir.fparams)
   in
   let call = Printf.sprintf "%s(%s)" symbol (String.concat ", " arg_code) in
-  if f.Emo_ir.fresult = Emo_check.String then
-    (* the C result is a char *: copy into a cell first — every Emo
-       String representation is an emo_str from here on *)
-    let v = Printf.sprintf "emo_str_from_cstr(%s)" call in
-    if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
-  else if is_dyn use_ty then box_code call f.Emo_ir.fresult
-  else call
+  match f.Emo_ir.fresult with
+  | Emo_check.TupleType _ ->
+      (* the returned struct becomes the tuple word *)
+      Printf.sprintf "%s(%s)" (shape_make_name env f.Emo_ir.fresult) call
+  | Emo_check.ClassType _ ->
+      (* the checker refuses a class-shaped return; this is the
+         emitter's own guard *)
+      refuse "a class-typed foreign return"
+  | _ ->
+      if f.Emo_ir.fresult = Emo_check.String then
+        (* the C result is a char *: copy into a cell first — every Emo
+           String representation is an emo_str from here on *)
+        let v = Printf.sprintf "emo_str_from_cstr(%s)" call in
+        if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+      else if is_dyn use_ty then box_code call f.Emo_ir.fresult
+      else call
 
 and emit_expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
@@ -1826,6 +1924,179 @@ let foreign_c_type (t : Emo_check.t) : string =
   | Emo_check.Void -> "void"
   | _ -> refuse (Printf.sprintf "`%s` across the C ABI" (Emo_check.to_string t))
 
+(* Registers a struct shape (recursively — nested shapes first, so
+   their typedefs precede ours in the buffer) and returns its typedef
+   name. Class-carried members keep their field names; tuple-carried
+   members are positional. *)
+let rec register_shape env (typedefs : Buffer.t) (t : Emo_check.t) : string =
+  let key = shape_key env t in
+  match Hashtbl.find_opt shape_table key with
+  | Some n -> n
+  | None ->
+      let carrier, fields =
+        match t with
+        | Emo_check.TupleType ts ->
+            ("tup", List.mapi (fun i ty -> (Printf.sprintf "__f%d" i, ty)) ts)
+        | Emo_check.ClassType display -> (
+            match Hashtbl.find_opt env.classes display with
+            | Some c ->
+                let fields =
+                  match c.Emo_ir.cinit with
+                  | Some init -> List.tl init.Emo_ir.fparams
+                  | None -> []
+                in
+                ("cls", List.map (fun (pname, ty) -> (c_ident pname, ty)) fields)
+            | None -> refuse (Printf.sprintf "the carrier class `%s`" display))
+        | _ ->
+            refuse
+              (Printf.sprintf "`%s` as a struct shape" (Emo_check.to_string t))
+      in
+      if fields = [] then
+        refuse
+          (Printf.sprintf "the struct shape of `%s` — it has no fields"
+             (Emo_check.to_string t));
+      incr shape_counter;
+      let n = Printf.sprintf "emo_shape%d" !shape_counter in
+      Hashtbl.replace shape_table key n;
+      Hashtbl.replace shape_carrier key carrier;
+      shape_order := !shape_order @ [ key ];
+      let members =
+        List.map
+          (fun (mname, ty) ->
+            match ty with
+            | Emo_check.TupleType _ | Emo_check.ClassType _ ->
+                ignore (register_shape env typedefs ty);
+                (mname, KNested (shape_key env ty))
+            | scalar -> (mname, KScalar scalar))
+          fields
+      in
+      Hashtbl.replace shape_members key members;
+      let member_lines =
+        String.concat ""
+          (List.map
+             (fun (mname, kind) ->
+               let cty =
+                 match kind with
+                 | KScalar scalar -> foreign_c_type scalar
+                 | KNested k -> Hashtbl.find shape_table k
+               in
+               Printf.sprintf "  %s %s;\n" cty mname)
+             members)
+      in
+      Buffer.add_string typedefs
+        (Printf.sprintf "typedef struct {\n%s} %s;\n" member_lines n);
+      n
+
+(* The scalar flattening into (and boxing back out of) the struct, in
+   the same tier as any foreign argument. *)
+let shape_scalar_build (accessor : string) (t : Emo_check.t) : string =
+  match t with
+  | Emo_check.Int64 -> Printf.sprintf "emo_unbox_i64(%s)" accessor
+  | Emo_check.Float64 -> Printf.sprintf "emo_unbox_f64(%s)" accessor
+  | Emo_check.Bool -> Printf.sprintf "emo_bool_of(%s)" accessor
+  | Emo_check.String -> Printf.sprintf "emo_str_cstr(emo_str_of(%s))" accessor
+  | _ ->
+      refuse (Printf.sprintf "`%s` as a struct member" (Emo_check.to_string t))
+
+let shape_scalar_make (member : string) (t : Emo_check.t) : string =
+  match t with
+  | Emo_check.Int64 -> Printf.sprintf "emo_box_i64(%s)" member
+  | Emo_check.Float64 -> Printf.sprintf "emo_box_f64(%s)" member
+  | Emo_check.Bool -> Printf.sprintf "emo_vbool(%s)" member
+  | Emo_check.String ->
+      Printf.sprintf "emo_box_str(emo_str_from_cstr(%s))" member
+  | _ ->
+      refuse (Printf.sprintf "`%s` as a struct member" (Emo_check.to_string t))
+
+(* The converters, after every shape is registered. Names are assigned
+   for all used converters first (a nested reference is
+   static-to-static), then the prototypes and definitions emit in
+   registration order. Build converters are per (shape, carrier) — the
+   same layout may arrive as a tuple or as an instance — while a make
+   converter is per shape: the return carrier is always a tuple. *)
+let emit_shape_converters (out : Buffer.t) : unit =
+  let build_name key carrier =
+    let k = key ^ "/" ^ carrier in
+    match Hashtbl.find_opt shape_build k with
+    | Some n -> n
+    | None ->
+        incr shape_counter;
+        let n = Printf.sprintf "emo_sbuild%d" !shape_counter in
+        Hashtbl.replace shape_build k n;
+        n
+  in
+  let make_name key =
+    match Hashtbl.find_opt shape_make key with
+    | Some n -> n
+    | None ->
+        incr shape_counter;
+        let n = Printf.sprintf "emo_smk%d" !shape_counter in
+        Hashtbl.replace shape_make key n;
+        n
+  in
+  List.iter
+    (fun key ->
+      if List.mem key !shape_param_keys then
+        ignore (build_name key (Hashtbl.find shape_carrier key));
+      if List.mem key !shape_result_keys then ignore (make_name key))
+    !shape_order;
+  let protos = Buffer.create 512 in
+  let defs = Buffer.create 2048 in
+  List.iter
+    (fun key ->
+      let members = Hashtbl.find shape_members key in
+      let carrier = Hashtbl.find shape_carrier key in
+      let shape = Hashtbl.find shape_table key in
+      if List.mem key !shape_param_keys then begin
+        let bname = build_name key carrier in
+        let accessor i =
+          if carrier = "cls" then
+            Printf.sprintf "emo_instance_field(__v, INT64_C(%d))" i
+          else Printf.sprintf "emo_index(__v, INT64_C(%d))" i
+        in
+        let inits =
+          List.mapi
+            (fun i (_, kind) ->
+              match kind with
+              | KScalar scalar -> shape_scalar_build (accessor i) scalar
+              | KNested k ->
+                  Printf.sprintf "%s(%s)"
+                    (build_name k (Hashtbl.find shape_carrier k))
+                    (accessor i))
+            members
+        in
+        Buffer.add_string protos
+          (Printf.sprintf "static %s %s(emo_value);\n" shape bname);
+        Buffer.add_string defs
+          (Printf.sprintf
+             "static %s %s(emo_value __v) {\n  return (%s){%s};\n}\n\n" shape
+             bname shape (String.concat ", " inits))
+      end;
+      if List.mem key !shape_result_keys then begin
+        let mname = make_name key in
+        let elems =
+          List.map
+            (fun (member, kind) ->
+              match kind with
+              | KScalar scalar ->
+                  shape_scalar_make (Printf.sprintf "__s.%s" member) scalar
+              | KNested k -> Printf.sprintf "%s(__s.%s)" (make_name k) member)
+            members
+        in
+        Buffer.add_string protos
+          (Printf.sprintf "static emo_value %s(%s);\n" mname shape);
+        Buffer.add_string defs
+          (Printf.sprintf
+             "static emo_value %s(%s __s) {\n\
+             \  return emo_tuple_new(INT64_C(%d), (emo_value[]){%s});\n\
+              }\n\n"
+             mname shape (List.length elems) (String.concat ", " elems))
+      end)
+    !shape_order;
+  Buffer.add_buffer out protos;
+  Buffer.add_string out "\n";
+  Buffer.add_buffer out defs
+
 (* The trampoline body for one interface, emitted once per distinct
    marshaled signature. Static by design: the C side receives the
    function pointer as an argument, never the name, so nothing lands
@@ -2233,6 +2504,15 @@ let emit (program : Emo_ir.program) : string * string =
   closure_counter := 0;
   cb_counter := 0;
   Hashtbl.reset cb_table;
+  shape_counter := 0;
+  Hashtbl.reset shape_table;
+  Hashtbl.reset shape_members;
+  Hashtbl.reset shape_carrier;
+  Hashtbl.reset shape_build;
+  Hashtbl.reset shape_make;
+  shape_order := [];
+  shape_param_keys := [];
+  shape_result_keys := [];
   let clusters = tail_clusters program.pfuncs in
   let cluster_members name =
     List.find_opt (List.mem name) clusters |> Option.value ~default:[ name ]
@@ -2396,13 +2676,46 @@ let emit (program : Emo_ir.program) : string * string =
   (* The forward declarations move ahead of the wrappers in the final
      assembly; the rest of the emission continues in the main buffer. *)
   env0.buf <- buf;
+  (* Struct shapes first: every tuple- or class-typed foreign parameter
+     and result registers its layout, and the typedefs land in main.c
+     and emo_defs.h ahead of the externs that reference them — a shim
+     compiles against the real shapes. *)
+  let typedefs = Buffer.create 512 in
+  List.iter
+    (fun (f : Emo_ir.func) ->
+      match f.Emo_ir.fforeign with
+      | None -> ()
+      | Some _ -> (
+          List.iter
+            (fun (_, t) ->
+              match t with
+              | (Emo_check.TupleType _ | Emo_check.ClassType _) as shape ->
+                  ignore (register_shape env0 typedefs shape);
+                  let key = shape_key env0 shape in
+                  if not (List.mem key !shape_param_keys) then
+                    shape_param_keys := !shape_param_keys @ [ key ]
+              | _ -> ())
+            f.Emo_ir.fparams;
+          match f.Emo_ir.fresult with
+          | (Emo_check.TupleType _ | Emo_check.ClassType _) as shape ->
+              ignore (register_shape env0 typedefs shape);
+              let key = shape_key env0 shape in
+              if not (List.mem key !shape_result_keys) then
+                shape_result_keys := !shape_result_keys @ [ key ]
+          | _ -> ()))
+    program.pfuncs;
+  Buffer.add_buffer buf typedefs;
+  Buffer.add_string buf "\n";
+  Buffer.add_buffer defs_h typedefs;
+  Buffer.add_string defs_h "\n";
   (* Foreign defs: the C symbol declarations — the direct ABI. They
      also land in emo_defs.h, so a shim's definitions are checked
      against the compiler's declarations at cc time. A parameter whose
      type names a single-method interface expands to the callback
      pair: the function pointer (the method's parameters marshaled,
      plus the trailing void *userdata) and the userdata pointer,
-     adjacent and in that order. *)
+     adjacent and in that order. A tuple- or class-typed parameter
+     crosses as its struct, by value. *)
   let foreign_c_params (pname : string) (t : Emo_check.t) : string list =
     match t with
     | Emo_check.InterfaceType iname ->
@@ -2418,7 +2731,13 @@ let emit (program : Emo_ir.program) : string * string =
             (String.concat ", " inner);
           Printf.sprintf "void *%s_data" (c_ident pname);
         ]
+    | Emo_check.TupleType _ | Emo_check.ClassType _ -> [ shape_name env0 t ]
     | t -> [ foreign_c_type t ]
+  in
+  let foreign_c_result (t : Emo_check.t) : string =
+    match t with
+    | Emo_check.TupleType _ | Emo_check.ClassType _ -> shape_name env0 t
+    | t -> foreign_c_type t
   in
   List.iter
     (fun (f : Emo_ir.func) ->
@@ -2435,7 +2754,7 @@ let emit (program : Emo_ir.program) : string * string =
           in
           let line =
             Printf.sprintf "extern %s %s(%s);\n"
-              (foreign_c_type f.Emo_ir.fresult)
+              (foreign_c_result f.Emo_ir.fresult)
               symbol params
           in
           put env0 "%s" line;
@@ -2459,6 +2778,10 @@ let emit (program : Emo_ir.program) : string * string =
             f.Emo_ir.fparams)
     program.pfuncs;
   Buffer.add_buffer buf cb_buf;
+  (* The struct converters, after the typedefs and before any def
+     body: build flattens the argument word into the struct, make
+     rebuilds the tuple word from a returned struct. *)
+  emit_shape_converters buf;
   (* Interface contracts and class vtables. *)
   List.iter
     (fun (name, sigs) ->

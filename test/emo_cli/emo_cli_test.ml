@@ -1170,6 +1170,107 @@ run_greet(Polite.new(), 1)
                  (Buffer.contents err)));
   ]
 
+(* The struct shapes (CHECK.md, 2026-10-11): a tuple or a carrier class
+   crosses the C ABI as a struct by value, and a struct result returns
+   as a tuple — the typedefs land in emo_defs.h, so the shim compiles
+   against the real layouts, and cc owns the ABI classification. The
+   fixture exercises all three directions: a tuple by value, a class
+   in and a struct out, and a nested-tuple shape. Skips without cc. *)
+let c_shape_tests =
+  [
+    tc "the c target marshals struct shapes by value both ways" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let dir = Filename.concat scratch "c-shape" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let c_src = Filename.concat dir "emo_shape.c" in
+        let oc = open_out_bin c_src in
+        output_string oc
+          {|
+/* The C side of the shape fixture: the struct definitions mirror what
+   emo_defs.h declares (a real shim includes the header instead). */
+#include <math.h>
+#include <stdint.h>
+typedef struct { double __f0, __f1; } emo_shape1;
+typedef struct { double x, y; } emo_shape2;
+typedef struct { emo_shape2 __f0; double __f1; } emo_shape3;
+double emo_test_dist(emo_shape1 p) {
+  return sqrt((p.__f0 * p.__f0) + (p.__f1 * p.__f1));
+}
+typedef struct { double lo, hi; } emo_test_range;
+emo_test_range emo_test_summarize(emo_shape2 p) {
+  emo_test_range r = { p.x < p.y ? p.x : p.y, p.x < p.y ? p.y : p.x };
+  return r;
+}
+emo_shape2 emo_test_stretch(emo_shape3 s) {
+  emo_shape2 r = { s.__f0.x * s.__f1, s.__f0.y * s.__f1 };
+  return r;
+}
+|};
+        close_out oc;
+        let obj = Filename.concat dir "emo_shape.o" in
+        let cc =
+          Printf.sprintf "cc -O2 -std=c11 -Wall -c %s -o %s"
+            (Filename.quote c_src) (Filename.quote obj)
+        in
+        if Sys.command cc <> 0 then
+          Alcotest.fail "the shape shim did not compile";
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc
+          {|
+class Point {
+  def init(x Float64, y Float64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+foreign def dist(p (Float64, Float64)) Float64 = "emo_test_dist"
+foreign def summarize(p Point) (Float64, Float64) = "emo_test_summarize"
+foreign def stretch(r ((Float64, Float64), Float64)) (Float64, Float64) = "emo_test_stretch"
+
+println(dist((3.0, 4.0)))
+println(summarize(Point.new(x: 1.5, y: 2.5)))
+println(stretch(((1.0, 2.0), 3.0)))
+|};
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code =
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
+            ~cclibs:[ obj ] ~target:"c"
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let cmd_stdout, _cmd_stdin, cmd_stderr =
+          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
+        in
+        let out = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel out cmd_stdout 4096
+           done
+         with End_of_file -> ());
+        let err = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel err cmd_stderr 4096
+           done
+         with End_of_file -> ());
+        let proc_status =
+          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+        in
+        Alcotest.(check string)
+          "output" "5.0\n(1.5, 2.5)\n(3.0, 6.0)\n" (Buffer.contents out);
+        match proc_status with
+        | Unix.WEXITED 0 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "exited %s: %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | _ -> "signal")
+                 (Buffer.contents err)));
+  ]
+
 (* ---- publish: the upload is dogfooded through the stdlib http client ----
 
    A captive HTTP server on loopback (a raw socket in a helper thread)
@@ -2098,6 +2199,7 @@ let () =
       ("c_dynamic", c_dynamic_tests);
       ("c_foreign", c_foreign_tests);
       ("c_callback", c_callback_tests);
+      ("c_shape", c_shape_tests);
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
       ("publish", publish_tests);

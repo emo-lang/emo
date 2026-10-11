@@ -1325,6 +1325,123 @@ foreign def run(g Greeter) Void = "run"
             Alcotest.fail ("parse failed: " ^ d.Diagnostic.message));
   ]
 
+(* The struct shapes (CHECK.md, 2026-10-11): a tuple or a carrier class
+   crosses the C ABI as a struct by value — the element types (or the
+   class's init-assigned fields) are the layout, recursion through
+   nested tuples is the nesting, and a compound return is always a
+   tuple. *)
+let shape_tests =
+  [
+    tc "a tuple shape is a valid foreign parameter and return on c" (fun () ->
+        let diagnostics =
+          check
+            {|
+foreign def stretch(r (Float64, Float64), by Float64) (Float64, Float64) = "stretch"
+|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a carrier class is a valid foreign parameter on c" (fun () ->
+        let diagnostics =
+          check
+            {|
+class Point {
+  def init(x Float64, y Float64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+foreign def dist(p Point) Float64 = "dist"
+|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a nested tuple shape nests the struct" (fun () ->
+        let diagnostics =
+          check
+            {|
+foreign def stretch(r ((Float64, Int64), Bool)) Float64 = "stretch"
+|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a shape field outside the tier is refused" (fun () ->
+        let diagnostics =
+          check
+            {|
+foreign def stretch(r (Float64, Array)) Float64 = "stretch"
+|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true);
+    tc "a class-typed foreign return is refused — name the tuple" (fun () ->
+        let diagnostics =
+          check
+            {|
+class Point {
+  def init(x Float64, y Float64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+foreign def make() Point = "make"
+|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true;
+        Alcotest.(check bool)
+          "names the tuple rule"
+          (List.exists
+             (fun d ->
+               contains_substring d.Diagnostic.message "crosses as a tuple type")
+             diagnostics)
+          true);
+    tc "a carrier class whose fields diverge from init is refused" (fun () ->
+        let diagnostics =
+          check
+            {|
+class Bad {
+  def init(x Float64, y Float64) {
+    self.x = x
+  }
+}
+
+foreign def dist(p Bad) Float64 = "dist"
+|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true);
+    tc "a stateless class cannot carry a struct" (fun () ->
+        let diagnostics =
+          check
+            {|
+class Empty {
+  def ping() Int64 {
+    return 1
+  }
+}
+
+foreign def dist(p Empty) Float64 = "dist"
+|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true);
+    tc "a non-c target refuses the tuple shape" (fun () ->
+        match
+          Emo_parser.parse_program ~file:"test.emo"
+            ~source:
+              {|
+foreign def stretch(r (Float64, Float64)) Float64 = "stretch"
+|}
+        with
+        | items ->
+            let diagnostics, _, _, _ =
+              Emo_check.check_module_typed ~modules:[] ~current:[]
+                ~target:"ocaml" items
+            in
+            Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true
+        | exception Emo_parser.Error d ->
+            Alcotest.fail ("parse failed: " ^ d.Diagnostic.message));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -1342,4 +1459,5 @@ let () =
       ("printf", printf_tests);
       ("cross_module", cross_module_tests);
       ("callback", callback_tests);
+      ("shape", shape_tests);
     ]

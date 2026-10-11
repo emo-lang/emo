@@ -292,20 +292,18 @@ let collect ctx (items : Ast.item list) : unit =
              directly on the C ABI alongside the marshaled scalars, and
              takes Void as a foreign RETURN — the shape of a
              fire-and-forget C call; a Void parameter stays meaningless.
-             A parameter may also name a single-method interface — the
-             callback contract (CHECK.md 2026-10-11): the method's
-             parameters stay in the marshaling tier and its return adds
-             Void, since the C side invokes the trampoline without a
-             result. Every other backend takes Float64/String/Bool
-             only. *)
+             Compound data crosses as a struct shape (CHECK.md
+             2026-10-11): a tuple marshals its element types in order
+             and a class instance marshals its init-assigned fields,
+             both by value, with recursion through nested tuples. A
+             single-method interface is the callback pair. Every other
+             backend takes Float64/String/Bool only. *)
           let ffi_ok = function
             | Ast.Named_type "Float64"
             | Ast.Named_type "String"
             | Ast.Named_type "Bool" ->
                 true
             | Ast.Named_type "Int64" -> ctx.target = "c"
-            | Ast.Named_type name ->
-                ctx.target = "c" && Hashtbl.mem ctx.interfaces name
             | _ -> false
           in
           let ffi_return_ok = function
@@ -316,13 +314,29 @@ let collect ctx (items : Ast.item list) : unit =
             | Ast.Named_type "Int64" | Ast.Named_type "Void" -> ctx.target = "c"
             | _ -> false
           in
+          (* The struct shape tier: a field is a marshaling scalar or a
+             tuple of the same tier (the recursion is the nesting). *)
+          let rec ffi_field_ty_ok = function
+            | Float64 | String | Bool | Int64 -> true
+            | TupleType ts -> List.for_all ffi_field_ty_ok ts
+            | _ -> false
+          in
+          let rec ffi_field_desc_ok = function
+            | Ast.Named_type ("Float64" | "String" | "Bool" | "Int64") -> true
+            | Ast.Tuple_type ts ->
+                List.for_all (fun t -> ffi_field_desc_ok t.Ast.type_desc) ts
+            | _ -> false
+          in
           let allowed =
             if ctx.target = "c" then
-              "Float64, String, Bool, Int64, or a single-method interface"
+              "Float64, String, Bool, Int64, a single-method interface, or a \
+               struct shape (a tuple of marshaling types, or a carrier class)"
             else "Float64, String, or Bool"
           in
           let allowed_return =
-            if ctx.target = "c" then "Float64, String, Bool, Int64, or Void"
+            if ctx.target = "c" then
+              "Float64, String, Bool, Int64, Void, or a tuple of marshaling \
+               types"
             else "Float64, String, or Bool"
           in
           (* The callback contract a named interface must satisfy: one
@@ -360,6 +374,47 @@ let collect ctx (items : Ast.item list) : unit =
                      name)
             | None -> ()
           in
+          (* The carrier-class contract: the class's shape is its init
+             signature — every field assigns a same-named parameter, in
+             order, and every field type stays in the shape tier. *)
+          let struct_class_ok span name =
+            match Hashtbl.find_opt ctx.classes name with
+            | Some info -> (
+                match info.cinit_params with
+                | None ->
+                    report ctx span "E4200"
+                      (Printf.sprintf
+                         "carrier class `%s` has no init — a struct shape \
+                          needs at least one field"
+                         name)
+                | Some params ->
+                    if info.cfields <> List.map (fun (pname, _) -> pname) params
+                    then
+                      report ctx span "E4200"
+                        (Printf.sprintf
+                           "carrier class `%s` must assign each init parameter \
+                            to a same-named field, in order — its shape is its \
+                            init signature"
+                           name)
+                    else
+                      List.iter
+                        (fun (pname, pty) ->
+                          if not (ffi_field_ty_ok pty) then
+                            report ctx span "E4200"
+                              (Printf.sprintf
+                                 "field `%s` of `%s` marshals only Float64, \
+                                  String, Bool, or Int64 (nested tuples \
+                                  included), not %s"
+                                 pname name (to_string pty)))
+                        params)
+            | None -> ()
+          in
+          let struct_tuple_ok span desc =
+            if not (ffi_field_desc_ok desc) then
+              report ctx span "E4200"
+                "a struct shape marshals only Float64, String, Bool, or Int64 \
+                 fields (nested tuples included)"
+          in
           List.iter
             (fun p ->
               ignore (decl_to_type ctx p.Ast.param_type);
@@ -368,6 +423,11 @@ let collect ctx (items : Ast.item list) : unit =
               | Ast.Named_type name
                 when ctx.target = "c" && Hashtbl.mem ctx.interfaces name ->
                   callback_ok span name
+              | Ast.Named_type name
+                when ctx.target = "c" && Hashtbl.mem ctx.classes name ->
+                  struct_class_ok span name
+              | Ast.Tuple_type _ as desc when ctx.target = "c" ->
+                  struct_tuple_ok span desc
               | desc ->
                   if not (ffi_ok desc) then
                     report ctx span "E4200"
@@ -376,10 +436,24 @@ let collect ctx (items : Ast.item list) : unit =
                          p.Ast.param_name allowed))
             f.Ast.foreign_params;
           ignore (decl_to_type ctx f.Ast.foreign_return);
-          if not (ffi_return_ok f.Ast.foreign_return.Ast.type_desc) then
-            report ctx f.Ast.foreign_return.Ast.type_span "E4200"
-              (Printf.sprintf "foreign return must be %s on this target"
-                 allowed_return);
+          let rspan = f.Ast.foreign_return.Ast.type_span in
+          (match f.Ast.foreign_return.Ast.type_desc with
+          | Ast.Tuple_type _ as desc when ctx.target = "c" ->
+              struct_tuple_ok rspan desc
+          | Ast.Named_type name
+            when ctx.target = "c"
+                 && (Hashtbl.mem ctx.interfaces name
+                    || Hashtbl.mem ctx.classes name) ->
+              report ctx rspan "E4200"
+                (Printf.sprintf
+                   "a compound foreign return crosses as a tuple type — name \
+                    the tuple, not `%s`"
+                   name)
+          | desc ->
+              if not (ffi_return_ok desc) then
+                report ctx rspan "E4200"
+                  (Printf.sprintf "foreign return must be %s on this target"
+                     allowed_return));
           (* Call-site checking reuses the def signature. *)
           Hashtbl.replace ctx.funcs f.Ast.foreign_name
             {

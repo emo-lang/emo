@@ -804,6 +804,7 @@ let lower (input : input) : program =
   let symbols : (string list * string, symbol) Hashtbl.t = Hashtbl.create 16 in
   let type_owners : (string, string list) Hashtbl.t = Hashtbl.create 16 in
   let iface_names : (string, unit) Hashtbl.t = Hashtbl.create 8 in
+  let class_names : (string, unit) Hashtbl.t = Hashtbl.create 8 in
   (* pass 1: every program-wide symbol *)
   List.iter
     (fun (m : module_input) ->
@@ -827,6 +828,7 @@ let lower (input : input) : program =
                     List.map (fun p -> p.Ast.param_name) init.Ast.def_params
                 | None -> []
               in
+              Hashtbl.replace class_names c.Ast.class_name ();
               Hashtbl.replace symbols
                 (m.mpath, c.Ast.class_name)
                 (S_class
@@ -1099,15 +1101,23 @@ let lower (input : input) : program =
                   funcs := { thunk with fresult = Emo_check.Unknown } :: !funcs)
                 g.Ast.group_consts
           | Ast.Item_foreign f ->
-              (* A parameter naming a program-wide interface stays an
-                 InterfaceType — the c target's callback pair — instead
-                 of degrading to Unknown (decl_type has no type
-                 tables). *)
-              let foreign_param_type (p : Ast.param) : Emo_check.t =
-                match p.Ast.param_type.Ast.type_desc with
+              (* The FFI carrier types stay what they are — an interface
+                 is the callback pair, a class or a tuple is a C struct
+                 shape — instead of degrading to Unknown (decl_type has
+                 no type tables). Tuple shapes recurse: a nested tuple
+                 is a struct within the struct. *)
+              let rec foreign_ffi_type (a : Ast.type_decl) : Emo_check.t =
+                match a.Ast.type_desc with
                 | Ast.Named_type name when Hashtbl.mem iface_names name ->
                     Emo_check.InterfaceType name
-                | _ -> decl_type p.Ast.param_type
+                | Ast.Named_type name when Hashtbl.mem class_names name ->
+                    Emo_check.ClassType name
+                | Ast.Tuple_type ts ->
+                    Emo_check.TupleType (List.map foreign_ffi_type ts)
+                | _ -> decl_type a
+              in
+              let foreign_param_type (p : Ast.param) : Emo_check.t =
+                foreign_ffi_type p.Ast.param_type
               in
               funcs :=
                 {
@@ -1117,7 +1127,7 @@ let lower (input : input) : program =
                     List.map
                       (fun p -> (p.Ast.param_name, foreign_param_type p))
                       f.Ast.foreign_params;
-                  fresult = decl_type f.Ast.foreign_return;
+                  fresult = foreign_ffi_type f.Ast.foreign_return;
                   fbody = [];
                   fspecializable = false;
                   fforeign = Some f.Ast.foreign_symbol;
