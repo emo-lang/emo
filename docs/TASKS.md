@@ -1027,10 +1027,13 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
 - [x] **T35.2** — c: the emitted C's own `while`/`for` with native
       `break`/`continue`; `return` inside a loop rides the existing
       branch-to-epilogue. (Done 2026-10-11.)
-- [ ] **T35.3** — ocaml: native `while`/`for` over the existing `ref`
+- [x] **T35.3** — ocaml: native `while`/`for` over the existing `ref`
       discipline for the header `var`; `break`/`continue` lower
       through the one mechanism the plan file records (a done flag or
       a local exception — decided, never a silent fallback).
+      (Done 2026-10-11 — the mechanism: one pair of local exceptions
+      per loop, `Break_N`/`Continue_N`; `continue` unwinds to the
+      handler above the post, `break` past the whole while.)
 - [ ] **T35.4** — typescript: native `while`/`for` in the emitted
       body; `break`/`continue` are the target language's own.
 - [ ] **T35.5** — wasm: structured control flow — `Loop` with `Br_if`

@@ -52,7 +52,19 @@ type env = {
   mutable fresult : Emo_check.t;
       (* the current function's declared result type; the specialized
          emitter keys its fall-off on it (Void ends without `return`) *)
+  mutable loops : (string * string) list;
+      (* each enclosing loop's (break, continue) local exception names,
+         innermost first — break/continue raise the innermost pair *)
 }
+
+(* Loop exception numbering across the whole emission: every loop gets
+   its own pair of local exceptions, so an inner `break` names the
+   inner loop's constructor and never escapes past it. *)
+let loop_counter = ref 0
+
+let fresh_loop () =
+  incr loop_counter;
+  !loop_counter
 
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
 
@@ -140,8 +152,81 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
       let code = emit_expr env e in
       if tail then code
       else Printf.sprintf "raise (Emo_runtime.Return_signal (%s))" code
-  | Emo_ir.While _ | Emo_ir.For _ | Emo_ir.Break | Emo_ir.Continue ->
-      failwith "ocaml: the loop statements are not supported yet"
+  | Emo_ir.While { cond; body; _ } ->
+      (* One mechanism for break/continue, per loop: a pair of local
+         exceptions. `continue` unwinds the iteration to the handler
+         that skips the rest of the body; `break` unwinds the whole
+         while. Only these are caught — Return_signal and Emo raise
+         propagate past both handlers to their own consumers. *)
+      let n = fresh_loop () in
+      let break_exc = Printf.sprintf "Break_%d" n in
+      let continue_exc = Printf.sprintf "Continue_%d" n in
+      let saved = env.loops in
+      env.loops <- (break_exc, continue_exc) :: env.loops;
+      let body_code = emit_stmts env body ~tail:false in
+      env.loops <- saved;
+      let loop =
+        Printf.sprintf
+          "(while %s do (let _ = (try (let _ = %s in ()) with %s -> ()) in ()) \
+           done)"
+          (unbox env cond "Bool") body_code continue_exc
+      in
+      let loop = Printf.sprintf "(try %s with %s -> ())" loop break_exc in
+      if tail then
+        Printf.sprintf
+          "(let exception %s in let exception %s in let _ = %s in \
+           Emo_eval.Void)"
+          break_exc continue_exc loop
+      else
+        Printf.sprintf "(let exception %s in let exception %s in %s)" break_exc
+          continue_exc loop
+  | Emo_ir.For { init; cond; post; body; _ } -> (
+      (* The header `var` is a ref over the loop — the existing
+         discipline — and the post rides at each iteration's end, after
+         the continue handler: a `continue` runs it first, a `break`
+         skips it with everything else. *)
+      match init with
+      | Emo_ir.Let { mutable_ = true; name; init = init_expr } ->
+          let n = fresh_loop () in
+          let break_exc = Printf.sprintf "Break_%d" n in
+          let continue_exc = Printf.sprintf "Continue_%d" n in
+          let saved = env.refs in
+          let init_code = emit_expr env init_expr in
+          env.refs <- local name :: env.refs;
+          env.loops <- (break_exc, continue_exc) :: env.loops;
+          (* emitted under the registered ref — a sprintf argument would
+             evaluate after the restore below and miss the deref *)
+          let cond_code = unbox env cond "Bool" in
+          let body_code = emit_stmts env body ~tail:false in
+          let post_code = emit_stmt env post ~tail:false in
+          env.loops <- List.tl env.loops;
+          env.refs <- saved;
+          let loop =
+            Printf.sprintf
+              "(while %s do (let _ = (try (let _ = %s in ()) with %s -> ()) in \
+               (let _ = %s in ())) done)"
+              cond_code body_code continue_exc post_code
+          in
+          let loop = Printf.sprintf "(try %s with %s -> ())" loop break_exc in
+          if tail then
+            Printf.sprintf
+              "(let exception %s in let exception %s in let %s = ref (%s) in \
+               let _ = %s in Emo_eval.Void)"
+              break_exc continue_exc (local name) init_code loop
+          else
+            Printf.sprintf
+              "(let exception %s in let exception %s in let %s = ref (%s) in \
+               %s)"
+              break_exc continue_exc (local name) init_code loop
+      | _ -> failwith "ocaml: the `for` header binds a `var`")
+  | Emo_ir.Break -> (
+      match env.loops with
+      | (break_exc, _) :: _ -> Printf.sprintf "(raise %s)" break_exc
+      | [] -> failwith "ocaml: `break` outside a loop")
+  | Emo_ir.Continue -> (
+      match env.loops with
+      | (_, continue_exc) :: _ -> Printf.sprintf "(raise %s)" continue_exc
+      | [] -> failwith "ocaml: `continue` outside a loop")
 
 and unbox env (e : Emo_ir.expr) kind =
   if env.native && e.Emo_ir.ety = Emo_check.Bool then
@@ -881,6 +966,7 @@ and emit_specialized_func (f : Emo_ir.func) : string =
       native = true;
       fname = f.Emo_ir.fname;
       fresult = f.Emo_ir.fresult;
+      loops = [];
     }
   in
   env.refs <- List.map (fun (p, _) -> local p) f.Emo_ir.fparams;
@@ -1007,6 +1093,7 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
       native = false;
       fname = "<pinit>";
       fresult = Emo_check.Unknown;
+      loops = [];
     }
   in
   put env "(* generated by emo build — do not edit *)\n";
