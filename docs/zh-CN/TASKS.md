@@ -29,6 +29,7 @@
 | M9 — 工具链 | 25 | 工具链发布(以 v0.25.9 剪出):GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
 | M10 — Target 独立 | 26 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |
 | M11 — For / While 循环 | 34–35 | 已定案的循环面在解释器与全部六个 target 上逐字节运行:`for`(三子句,头部 `var` 作用域限定在循环)与 `while`,搭配裸 `break`/`continue`;循环在任何栈上都不增长;尾调用保证不变。 |
+| M12 — 错误处理 | 36–37 | Erlang 式分界落地:预期内的失败返回 `(R.ok, value)` / `(R.error, reason)`,用 `case` 匹配或用绑定模式断言绑定;违例抛出唯一的 `Exception` 类;stdlib 的 raise 点逐包迁移到新约定——所有 target 逐字节一致,`R` 一并抵达 freestanding 层。 |
 
 ## 设计闸门
 
@@ -39,7 +40,7 @@
 | CLI 命令名 | T1.3、T7.1–T7.2 | 已在 M1 落定——`run` / `repl` / `check` / `version` 已随 M1 交付 |
 | 字符串转义规则 | T2.3、T2.4 | 最小集合 `\n \t \\ \' \"` |
 | 进程获取自身 pid 的机制 | T11.1 | 已落定——`self_pid()` 内置、`Pid` 类型渲染为 `<pid N>`、`halt()`;核心不提供用户态 kill/wait |
-| 异常捕获语法 | T12.5、步骤 12 验收 | 暂无 catch 形式;仅有未捕获异常报告 |
+| 错误处理模型(原:异常捕获语法) | T12.5、M12 | 已定案 2026-10-11——无 catch;`(R.ok, value)` / `(R.error, reason)` 元组 + 唯一的 `Exception` 类(`CHECK.md`);步骤 36–37 落地 |
 | 清单/锁文件文件名、scope 前缀格式、版本区间、deps CLI 命令名 | T10.2、T10.5–T10.6、T10.8 | `package.emo`、`package.lock`、`owner/name`、仅精确版本、`emo deps *` |
 | C FFI 绑定表面语法 | T13.6 | 已落定——`foreign def name(params) Ret = "c_symbol"`,仅 `Float`/`String`/`Bool`,经生成的 C 包装器编组 |
 | 动态世界的回收模型(无追踪 GC) | T24.5 | 已落定——身份对象用引用计数、值语义数据走 arena(`CHECK.md`,T24.5 落定) |
@@ -436,7 +437,7 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 
 ## M10 — Target 独立
 
-让宿主/目标的区分真正落地。宿主语言(emo 是怎么造出来的——今天是 OCaml)回答一个问题;target(emo 把你的程序变成什么)回答另一个。完整兑现这个区分,意味着宿主只贡献发射器:每个 target 的运行时都活在 target 自己的生态里,绝不在二进制旁、也绝不在宿主构建树里——将来宿主重写(Go、Rust)只动发射器。
+让宿主/目标的区分真正落地。宿主语言(emo 是怎么造出来的——今天是 OCaml)回答一个问题;target(emo 把你的程序变成什么)回答另一个。完整兑现这个区分,意味着宿主只贡献发射器:每个 target 的运行时都活在 target 自己的生态里,绝不在二进制旁、也绝不在宿主构建树里——将来宿主重写(Go 或别的宿主语言)只动发射器。
 
 审计发现五个 target 已有三个达标——**c**(独立 C 运行时,以内嵌生成数据分发,待推广的模式)、**wasm**(运行时编译进模块;那 3 个导入是对 wasm 引擎的 ABI,与编译器宿主分属两个轴)、**beam**(单个自包含 Core Erlang 模块,站在 OTP 上)。两个没有:**typescript** 的运行时前奏是旁挂文件,因此在每个安装好的二进制上都是坏的(发布布局只带 `bin/emo`);**ocaml** 链接宿主自己的八个库、从宿主构建树里找,这就是它只在树内可用的原因——也是 `opam install emo` 带不来它的原因(已验证:opam 安装集为七个文件,零个 `.cmxa`)。
 
@@ -568,3 +569,31 @@ Step 34 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 - [x] **T35.8** — 金测与基准:`examples/loops` 上全部六个 target 金测列表;`benchmarks/results.md` 在 `loops_tail` 旁新增纯循环一行;CI 各组;收尾。(2026-10-11 完成;riscv64 补齐 `/` 与 `%`——`div`/`rem` 加零除中止——使示例可启动。)
 
 Step 35 收尾(2026-10-11,`feat/loops` 分支):循环语句在全部六个 target 上完成降低,每任务一次提交。各 target 的机制与英文版收尾一致;`examples/loops` 在全部六个 target 与解释器上金测通过,纯循环基准行记录了 ocaml target 按构造即为动态的数字。
+
+## M12 — 错误处理
+
+`CHECK.md` 已定案的错误模型(2026-10-11):预期内的失败是值——来自内置 `R` 枚举的 `(R.ok, value)` / `(R.error, reason)`——用 `case` 匹配,或用绑定模式断言绑定(`const (R.ok, body) = f()`);违例抛出唯一的 `Exception` 类,抛出即结束进程——任何 target 都没有 catch 构造。`R` 位于规格层(`CHECK.md`,类型分层),包括 riscv64 在内的每个 target 都获得它;stdlib 迁移把 ~220 处 raise 逐包挪到新约定。设计记录在 `CHECK.md` 与 README(双语);每个步骤的 plan 文件在步骤启动时编写。
+
+### Step 36 — 错误处理表面:R、绑定模式、raise 纪律
+
+**前置:** Step 35。
+**完成标准:** README 的异常示例经 `emo run` 逐字运行;错误元组流入 `const (R.ok, body)` 时进程以 case 无匹配的运行时错误结束;`raise "str"` 与 `raise user` 各有自己的诊断;内置名 `R` 与 `Exception` 拒绝用户重复声明;未捕获报告打印非空 `data`;`dune test` 全绿。
+
+- [ ] **T36.1** — 内置 `R { ok, error }`:绑定在 checker 根环境与解释器全局帧(走 `Exception` 的先例);`R.ok` / `R.error` 在枚举成员已通行的每一处构造与模式匹配;`enum R` / `class R` 报保留名诊断。
+- [ ] **T36.2** — Parser:`const`/`var` 接受完整模式代替名字(`Ast.Binding` 携带它);`const (` 不再是硬错,不破坏任何文法。
+- [ ] **T36.3** — IR:模式绑定脱糖为单臂 `case` 包住块的剩余部分——没有新 IR 节点,六个后端只见既有节点。
+- [ ] **T36.4** — Checker:模式绑定经 `check_pattern` 对初始化式的类型检查;`raise` 的操作数必须是 `Exception` 实例(其余各有自己的 E-code);未捕获诊断附加非空 `data`。
+- [ ] **T36.5** — 解释器:模式绑定求值,不匹配走 case 无匹配的运行时错误;raise 操作数纪律的运行时面;未捕获格式变化的既有金测重录。
+- [ ] **T36.6** — 示例与拒绝语料:`examples/errors`——README 示例逐字(ok/error 匹配、断言绑定、违例抛出)——经 `emo run` 金测;匹配示例在全部六个 target 逐字节金测(riscv64 跑匹配的一半;其 raise 拒绝不变);拒绝语料钉住每一种新诊断。
+- [ ] **T36.7** — README 对齐:README(英文 + 中文)已按定案写好——对照实现核对,漂移处一并修正。
+
+### Step 37 — stdlib 迁移:元组替换 raise,逐包进行
+
+**前置:** Step 36。
+**完成标准:** 每个标准库包的数据性失败返回 `(R.error, reason)`,只有契约违例抛出;每个包在其声明的 target 上金测全绿;`dune test` 全绿。
+
+- [ ] **T37.1** — `file` + `os`:open/read/write 与权限缺失、路径不存在返回元组;原生 raise 点(os 运行时,interp + ocaml + c)改为返回;waitpid 解码不动。
+- [ ] **T37.2** — `json` + `yaml`(+ `internal/float`):解析与访问器失败返回元组——最大的两处,约 150 个点。
+- [ ] **T37.3** — `xml` + `base64` + `bufio` + `slog` + `http` + `sync`:同样的分界;`http` 的连接被拒/解析失败/超期按 README 网络节改为元组。
+- [ ] **T37.4** — 金测:每个被触及包的错误路径 fixture 重录为匹配 `(R.error, why)`;包金测在全部声明 target 上全绿。
+- [ ] **T37.5** — 文档:`docs/stdlib/` 各包页面(及中文镜像)措辞 raise → 返回;错误消息表更新。

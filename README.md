@@ -51,7 +51,7 @@ Emo's syntax favors explicitness: everything is visibly what it is — a call lo
 - **A call may take a trailing block as its final argument.** Right after the closing parenthesis, a block attaches to the call: `page(title: "Home") { ... }` passes a zero-parameter block, and `list(users) -> (user User) { ... }` passes a parameterized one. The block must touch the call, exactly like the parentheses — this is the single notation behind UI trees and callbacks.
 - **Blocks have a single form**: `{ ... }` and `-> (x) { ... }` — the latter being the parameterized block and the anonymous function. A block that ends without `return` is a Void block; one that returns a value must return on every path.
 - **Functions and methods are defined with `def`**, uniformly at top level and inside classes. `def` is the named form of the arrow block: `def total(cart Cart) Decimal { ... }` pairs with `const total = -> (cart Cart) { ... }`.
-- **Bindings are `const` (immutable) or `var` (mutable, block-scoped)** — constants versus variables, self-explanatory by wording. `var` bindings cannot escape their block; capturing one in a closure that outlives the block is a compile error.
+- **Bindings are `const` (immutable) or `var` (mutable, block-scoped)** — constants versus variables, self-explanatory by wording. Both take a full pattern in place of the name: `const (R.ok, body) = file.read(path)` destructures a tuple, and a pattern that does not match is a runtime error — the same rule as a `case` scrutinee matching no branch. `var` bindings cannot escape their block; capturing one in a closure that outlives the block is a compile error.
 - **Arguments can be passed by position or by name.** Given `def hello(name String)`, both `hello("world")` and `hello(name: "world")` are valid calls. Named form is the natural shape for props and options: `page(title: "Home") { ... }`.
 - **Type declarations are postfix, separated by a space**: parameters as `name String`, return types as `def full_name() String`. **Parameter types are always explicit; the return type may be omitted, which declares the function Void** — an omitted return type is not an untyped one, it is the strongest statement a signature can make. `init` is exempt — it returns the class it constructs, so it declares no return type. Arrow blocks (`-> (cart Cart) { ... }`) always declare their parameter types but infer their return types; when inference fails, the compiler reports an error asking for an explicit type declaration. Interface methods always declare their return types — a signature is a contract. Elsewhere, type declarations remain optional (see Type System).
 - **Predicate methods end in `?`**: `def is_older?() Bool` reads naturally at the call site.
@@ -143,7 +143,7 @@ Math.tau          // 6
 
 ### Enums
 
-An enum is a closed, nominal set of named values — nothing more. Carrying data on members is deliberately excluded as an anti-pattern: when a value must be one of a known set with data attached, the idiomatic shape is an enum tag carried in a tuple — `(Outcome.ok, value)` — destructured directly in `case` and `receive`. Polymorphic data heavier than that is classes organized by an interface, and failure paths are exceptions.
+An enum is a closed, nominal set of named values — nothing more. Carrying data on members is deliberately excluded as an anti-pattern: when a value must be one of a known set with data attached, the idiomatic shape is an enum tag carried in a tuple — the built-in `R` exists for exactly the ok/error pair, `(R.ok, value)` beside `(R.error, reason)` — destructured directly in `case` and `receive`. Polymorphic data heavier than that is classes organized by an interface; failure paths are the error tuple, and only contract violations raise.
 
 ```emo
 enum Color { red, green, blue }
@@ -155,42 +155,29 @@ enum Color { red, green, blue }
 
 ### Exceptions
 
-Errors are exceptions. An exception is an ordinary class instance, raised like this:
+Errors split in two, and Emo keeps the split visible. An **expected failure** — a malformed document, a missing file, a refused connection — is an ordinary value: the call returns `(R.ok, value)` on success and `(R.error, reason)` on failure, the reason a string stating exactly what failed (`json: expected array element at byte 3`). `R` is a built-in enum, no import needed, and the pair is matched, not caught:
 
 ```emo
-raise Exception.new(message: "something went wrong")
-```
-
-An exception may carry structured data — an optional second argument, any
-`Map`, read back through `e.data`:
-
-```emo
-raise Exception.new("disk blew up", { "fd": 3 })
-```
-
-A raise is handled with `begin` / `catch` / `ensure`:
-
-```emo
-begin {
-  const body = file.read(path)
-  println(body)
-} catch {
-  e -> { println("failed: ${e.message}") }
-} ensure {
-  println("done")
+case file.read(path) {
+  (R.ok, body)   -> { println(body) }
+  (R.error, why) -> { println("read failed: ${why}") }
 }
 ```
 
-`catch` takes the same `pattern -> { ... }` branches as `case` and
-`receive`, matched against the raised exception; the first match wins, and a
-raise that matches no branch keeps propagating. Because an exception is an
-ordinary class instance, a branch can narrow on its class (`e when
-e.is(Timeout) -> { ... }`), and `raise` inside `catch` re-raises. The three
-clauses share one scope, so `ensure` can release what `begin` acquired, and
-`ensure` runs on every exit — normal completion, a raise, or a `return`.
-The construct is a statement, not an expression.
+When a failure is not expected, a binding pattern says so — a pattern that does not match is a runtime error, ending the process loudly:
 
-Uncaught exceptions kill only the offending process, and supervision is library-level (see Concurrency). There are no checked exceptions.
+```emo
+const (R.ok, body) = file.read(path)
+```
+
+A **violation** — a broken contract, a bug — raises. `Exception` is the language's one exception class, carrying a `message` and an optional `data` Map of machine-readable context (a peer address, a file descriptor) that the crash report and supervision libraries read back:
+
+```emo
+raise Exception.new(message: "queue drained below zero")
+raise Exception.new("connect timed out", { "op": "connect", "peer": host })
+```
+
+A raise cannot be caught — Emo has no catch construct — and the `raise` operand must be an `Exception` instance. Uncaught exceptions kill only the offending process, and supervision is library-level (see Concurrency). There are no checked exceptions.
 
 ### Mutability
 
@@ -311,7 +298,7 @@ The concurrency semantics are shaped by the following decisions:
 
 Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API. On the native backend it runs on the same effects-based scheduler as the concurrency runtime — non-blocking sockets parked and woken by the scheduler, with TLS provided by OpenSSL bindings. Networking is ocaml/c-only: the `net` and `http` packages declare `targets = ["ocaml", "c"]`, and dependency resolution refuses them on every other target.
 
-The API is **direct style**: network calls look like ordinary blocking calls, and the scheduler switches processes under the hood. There is no `async`/`await` and therefore no function coloring — any function can perform IO, and the API ecosystem stays single-tracked. Timeouts are seconds, and every failure — refused connection, unresolvable name, exceeded deadline, closed socket — raises an ordinary Emo exception whose message states the peer, the operation, and the reason.
+The API is **direct style**: network calls look like ordinary blocking calls, and the scheduler switches processes under the hood. There is no `async`/`await` and therefore no function coloring — any function can perform IO, and the API ecosystem stays single-tracked. Timeouts are seconds, and every failure — refused connection, unresolvable name, exceeded deadline, closed socket — returns `(R.error, reason)`, the reason stating the peer, the operation, and the reason.
 
 The socket surface is the standard library's `net` package; HTTP lives in the `http` package:
 

@@ -45,7 +45,7 @@ Emo 的语法推崇显式：一切皆可见其本来面目——调用长得像�
 - **调用可以拿一个尾随块作为最后一个参数。** 紧跟右括号之后，块附着在调用上：`page(title: "Home") { ... }` 传零参块，`list(users) -> (user User) { ... }` 传带参块。块必须紧贴调用，与括号一样——这就是 UI 树与回调背后的唯一记法。
 - **块只有一种形式**：`{ ... }` 与 `-> (x) { ... }`——后者是带参块，也是匿名函数。不以 `return` 结尾的块是 Void 块；返回值的块必须在每条路径上 return。
 - **函数与方法用 `def` 定义**，顶层与类内统一。`def` 是箭头块的具名形式：`def total(cart Cart) Decimal { ... }` 与 `const total = -> (cart Cart) { ... }` 相配。
-- **绑定分 `const`（不可变）与 `var`（可变，块作用域）**——常量与变量，顾名思义。`var` 绑定不能逃出其块；在比块活得久的闭包里捕获它，是编译错误。
+- **绑定分 `const`（不可变）与 `var`（可变，块作用域）**——常量与变量，顾名思义。两者都能用完整模式代替名字：`const (R.ok, body) = file.read(path)` 解构元组，不匹配的模式是运行时错误——与 `case` 无分支匹配的 scrutinee 同一条规则。`var` 绑定不能逃出其块；在比块活得久的闭包里捕获它，是编译错误。
 - **参数可按位置或按名传递。** 给定 `def hello(name String)`，`hello("world")` 与 `hello(name: "world")` 都是合法调用。具名形式是 props 与选项的自然形状：`page(title: "Home") { ... }`。
 - **类型声明为后缀，以空格分隔**：参数写作 `name String`，返回类型写作 `def full_name() String`。**参数类型永远显式；返回类型可以省略，省略即声明该函数为 Void**——省略的返回类型不是无类型，而是一个签名所能做出的最强声明。`init` 例外——它返回所构造的类，因此不声明返回类型。箭头块（`-> (cart Cart) { ... }`）参数总是带类型声明但返回类型推断；推断失败时，编译器报错要求显式类型声明。接口方法永远声明返回类型——签名是契约。其他位置，类型声明仍然可选（见类型系统）。
 - **谓词方法以 `?` 结尾**：`def is_older?() Bool` 在调用处读起来自然。
@@ -137,7 +137,7 @@ Math.tau          // 6
 
 ### 枚举（Enums）
 
-枚举是一个封闭、名义的命名值集合——仅此而已。刻意排除在成员上携带数据的反模式：当一个值必须属于已知集合且携带数据时，惯用形状是装在元组里的枚举标签——`(Outcome.ok, value)`——在 `case` 与 `receive` 中直接解构。更重的多态数据是用接口组织的类，失败路径是异常。
+枚举是一个封闭、名义的命名值集合——仅此而已。刻意排除在成员上携带数据的反模式：当一个值必须属于已知集合且携带数据时，惯用形状是装在元组里的枚举标签——内置的 `R` 正是为 ok/error 这一对而生，`(R.ok, value)` 与 `(R.error, reason)`——在 `case` 与 `receive` 中直接解构。更重的多态数据是用接口组织的类；失败路径是错误元组，只有契约违例才抛出。
 
 ```emo
 enum Color { red, green, blue }
@@ -149,39 +149,29 @@ enum Color { red, green, blue }
 
 ### 异常（Exceptions）
 
-错误即异常。异常是普通的类实例，这样抛出：
+错误分两类，Emo 让这条分界线可见。**预期内的失败**——文档格式错、文件不存在、连接被拒——是普通的值：调用成功返回 `(R.ok, value)`，失败返回 `(R.error, reason)`，reason 是精确说明失败原因的字符串（`json: expected array element at byte 3`）。`R` 是内置枚举，无需导入；这一对用匹配处理，而不是捕获：
 
 ```emo
-raise Exception.new(message: "something went wrong")
-```
-
-异常可以携带结构化数据——可选的第二个实参，任意 `Map`，经 `e.data` 读回：
-
-```emo
-raise Exception.new("disk blew up", { "fd": 3 })
-```
-
-异常用 `begin` / `catch` / `ensure` 处理：
-
-```emo
-begin {
-  const body = file.read(path)
-  println(body)
-} catch {
-  e -> { println("failed: ${e.message}") }
-} ensure {
-  println("done")
+case file.read(path) {
+  (R.ok, body)   -> { println(body) }
+  (R.error, why) -> { println("read failed: ${why}") }
 }
 ```
 
-`catch` 复用 `case`、`receive` 的 `pattern -> { ... }` 分支，对抛出的异常做
-匹配；首个匹配的分支生效，没有分支匹配时异常继续向外传播。因为异常是
-普通的类实例，分支可以用 `is` 对其类别做窄化（`e when e.is(Timeout) ->
-{ ... }`），`catch` 里的 `raise` 即重新抛出。三个子句**共享同一个作用域**，
-所以 `ensure` 能释放 `begin` 中获取的资源；`ensure` 在任何退出路径上都会
-执行——正常结束、抛出、或 `return`。整个构造是**语句**，不是表达式。
+当失败不在预期之内时，绑定模式把这一点说出口——不匹配的模式是运行时错误，让进程响亮地结束：
 
-未捕获的异常只杀死出错的进程，监督是库层面的事（见并发）。没有受检异常。
+```emo
+const (R.ok, body) = file.read(path)
+```
+
+**违例**——被破坏的契约、bug——用抛出表达。`Exception` 是语言中唯一的异常类，携带 `message` 与可选的 `data` Map；Map 装机器可读的上下文（对端地址、文件描述符），供崩溃报告与监督库读回：
+
+```emo
+raise Exception.new(message: "queue drained below zero")
+raise Exception.new("connect timed out", { "op": "connect", "peer": host })
+```
+
+抛出无法被捕获——Emo 没有 catch 构造——且 `raise` 的操作数必须是 `Exception` 实例。未捕获的异常只杀死出错的进程，监督是库层面的事（见并发）。没有受检异常。
 
 ### 可变性（Mutability）
 
@@ -296,7 +286,7 @@ Emo 自带围绕**进程与消息传递**的原生并发模型，精神上属于
 
 网络是一等公民：几乎所有现代程序都要联网。Emo 提供统一的异步网络 API。在原生后端上，它运行在与并发运行时同一个 effects 调度器之上——非阻塞 socket 由调度器挂起与唤醒，TLS 由 OpenSSL 绑定提供。网络能力仅限 ocaml 与 c 后端：`net` 与 `http` 包声明 `targets = ["ocaml", "c"]`，依赖解析在其他一切目标上拒绝它们。
 
-API 是**直接风格**：网络调用看起来像普通的阻塞调用，调度器在底层切换进程。没有 `async`/`await`，因此没有函数着色——任何函数都能做 IO，API 生态保持单轨。超时以秒计，每个失败——连接被拒、名字无法解析、超期、socket 关闭——抛出普通的 Emo 异常，其消息写明对端、操作与原因。
+API 是**直接风格**：网络调用看起来像普通的阻塞调用，调度器在底层切换进程。没有 `async`/`await`，因此没有函数着色——任何函数都能做 IO，API 生态保持单轨。超时以秒计，每个失败——连接被拒、名字无法解析、超期、socket 关闭——返回 `(R.error, reason)`，reason 写明对端、操作与原因。
 
 socket 面是标准库的 `net` 包；HTTP 在 `http` 包：
 

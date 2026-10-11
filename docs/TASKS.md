@@ -36,6 +36,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M9 — Toolchain | 25 | The toolchain release (cut as v0.25.9): signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
 | M10 — Target independence | 26 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
 | M11 — For / While loops | 34–35 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
+| M12 — Error handling | 36–37 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
 
 ## Design gates
 
@@ -47,7 +48,7 @@ before starting the gated work:
 | CLI command names | T1.3, T7.1–T7.2 | settled in M1 — `run` / `repl` / `check` / `version` shipped |
 | String escape rules | T2.3, T2.4 | Minimal set `\n \t \\ \' \"` |
 | Self-pid mechanism | T11.1 | settled — `self_pid()` builtin, `Pid` type rendering as `<pid N>`, `halt()`; no user-facing kill/wait |
-| Exception catch syntax | T12.5, Step 12 acceptance | Catch form absent; uncaught reporting only |
+| Error-handling model (was: exception catch syntax) | T12.5, M12 | settled 2026-10-11 — no catch; `(R.ok, value)` / `(R.error, reason)` tuples plus the one `Exception` class (`CHECK.md`); Steps 36–37 land it |
 | Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T10.2, T10.5–T10.6, T10.8 | `package.emo`, `package.lock`, `owner/name`, exact pins only, `emo deps *` |
 | C FFI binding-surface syntax | T13.6 | settled — `foreign def name(params) Ret = "c_symbol"`, `Float`/`String`/`Bool` only, through generated C wrappers |
 | Reclamation model for the dynamic world (no tracing GC) | T24.5 | settled — reference counting for identity objects, arena for value-semantic data (`CHECK.md`, at T24.5) |
@@ -582,8 +583,8 @@ emo was built — today OCaml) answers one question; the targets (what
 emo turns your program into) answer another. Fully honoring the split
 means the host contributes only the emitters: every target's runtime
 lives in the target's own ecosystem, never beside the binary and never
-in the host build tree — so a future host rewrite (Go, Rust) touches
-only the emitters.
+in the host build tree — so a future host rewrite (Go, or another
+host entirely) touches only the emitters.
 
 The audit found three of five targets already there — **c** (standalone
 C runtime embedded as generated data, the pattern to generalize),
@@ -1095,3 +1096,79 @@ with a done flag; riscv64 uses labels and jumps — and gained `/` and
 `%` so the example boots. `examples/loops` is golden on all six targets
 plus the interpreter, and the plain-loop benchmark row records the
 dynamic-by-construction ocaml number beside the c target.
+
+## M12 — Error handling
+
+The error model `CHECK.md` settled (2026-10-11): expected failures are
+values — `(R.ok, value)` / `(R.error, reason)` off the built-in `R`
+enum — matched in `case` or assert-bound through a binding pattern
+(`const (R.ok, body) = f()`); a violation raises the one `Exception`
+class, and a raise ends the process — no catch construct, on any
+target. `R` sits in the spec-core tier (`CHECK.md`, type layering), so
+every target including riscv64 gets it; the stdlib migration moves the
+~220 raise sites to the convention, package by package. The design
+lives in `CHECK.md` and the README (both languages); each step's plan
+file is written when the step starts.
+
+### Step 36 — Error-handling surface: R, binding patterns, raise discipline
+
+**Prereq:** Step 35.
+**Done when:** the README's exception snippets run verbatim through
+`emo run`; an error tuple flowing into `const (R.ok, body)` ends the
+process with the case-no-match runtime error; `raise "str"` and
+`raise user` each get their own diagnostic; the built-in names `R` and
+`Exception` refuse user redeclaration; the uncaught report prints
+non-empty `data`; `dune test` green.
+
+- [ ] **T36.1** — Built-in `R { ok, error }`: bound in the checker's
+      root env and the interpreter's global frame (the `Exception`
+      precedent); `R.ok` / `R.error` construct and pattern-match
+      everywhere enum members already do; `enum R` / `class R` report
+      a reserved-name diagnostic.
+- [ ] **T36.2** — Parser: `const`/`var` accept a full pattern in
+      place of the name (`Ast.Binding` carries it); the `const (`
+      form stops being a hard error, breaking no grammar.
+- [ ] **T36.3** — IR: the pattern binding desugars to a one-arm
+      `case` wrapping the block remainder — no new IR nodes, the six
+      backends see only existing ones.
+- [ ] **T36.4** — Checker: pattern bindings check through
+      `check_pattern` against the initializer's type; `raise`'s
+      operand must be an `Exception` instance (its own E-code for
+      everything else); the uncaught diagnostic appends non-empty
+      `data`.
+- [ ] **T36.5** — Interpreter: pattern-binding evaluation, mismatch
+      riding the case-no-match runtime error; the raise-operand
+      discipline at run time; existing goldens re-recorded where the
+      uncaught format changed.
+- [ ] **T36.6** — Example and rejections: `examples/errors` — the
+      README snippets verbatim (ok/error matching, the assert-match
+      binding, a violation raising) — golden through `emo run`; the
+      matching example golden on all six targets byte-for-byte
+      (riscv64 runs the matching half; its raise refusal unchanged);
+      the rejection corpus pinning every new diagnostic.
+- [ ] **T36.7** — README alignment: the README (English + zh-CN)
+      already documents the settled surface — verify it against the
+      implemented one and reconcile any drift.
+
+### Step 37 — The stdlib migration: tuples replace raises, package by package
+
+**Prereq:** Step 36.
+**Done when:** every stdlib package's data-driven failures return
+`(R.error, reason)` and only contract violations raise; every package
+golden green on its declared targets; `dune test` green.
+
+- [ ] **T37.1** — `file` + `os`: open/read/write and permission
+      misses, missing paths return tuples; the native raise sites (os
+      runtime, interp + ocaml + c) return instead; waitpid decoding
+      untouched.
+- [ ] **T37.2** — `json` + `yaml` (+ `internal/float`): parse and
+      accessor failures return tuples — the two biggest sites, ~150.
+- [ ] **T37.3** — `xml` + `base64` + `bufio` + `slog` + `http` +
+      `sync`: the same split; `http`'s refused/unresolved/deadline
+      failures become tuples, per the README's network section.
+- [ ] **T37.4** — Goldens: every touched package's error-path
+      fixtures re-recorded to match `(R.error, why)`; package goldens
+      green on all declared targets.
+- [ ] **T37.5** — Docs: the per-package pages under `docs/stdlib/`
+      (and the zh-CN mirrors) reworded raise → returns; error-message
+      tables updated.
