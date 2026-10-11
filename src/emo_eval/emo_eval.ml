@@ -691,6 +691,13 @@ let rec assign env span name value =
    stack. *)
 exception Return_signal of value
 
+(* `break` and `continue` unwind to the nearest enclosing loop's host
+   loop; crossing a function boundary is a checker-caught error, and the
+   call boundary turns one into a loud error all the same. *)
+exception Break_signal
+
+exception Continue_signal
+
 exception
   Tail_call of closure * (string option * value) list * (string * value) list
 (* callee, arguments, pre-bound extras (a method's `self`) *)
@@ -2784,6 +2791,11 @@ and eval_frame closure frame span =
           run closure.body
         with
         | Return_signal v -> v
+        | Break_signal | Continue_signal ->
+            (* The checker refuses `break` outside a loop and across a
+               closure; this is the boundary for anything unchecked. *)
+            error span "E3014"
+              "`break` and `continue` leave a loop; none encloses this call"
         | Tail_call (c, args, extras) ->
             let frame = bind_params c span args in
             List.iter (fun (k, v) -> define frame k ~mutable_:false v) extras;
@@ -2954,8 +2966,48 @@ and eval_stmt env s =
   | Ast.Raise e ->
       let v = eval_expr env e in
       raise (Emo_raise (v, span, !call_trace))
-  | Ast.While _ | Ast.For _ | Ast.Break | Ast.Continue ->
-      error span "E3099" "the loop statements do not run yet"
+  | Ast.While { cond; body } ->
+      (* The iteration is this OCaml loop, not recursion: a self tail
+         call compiles to a jump, so ten million iterations stay flat.
+         Each iteration runs its body in a fresh child frame, and the
+         step budget counts every iteration. *)
+      let rec iterate () =
+        count_step ();
+        match eval_expr env cond with
+        | Bool true ->
+            let body_env = child env in
+            (try List.iter (eval_stmt body_env) body with Continue_signal -> ());
+            iterate ()
+        | Bool false -> ()
+        | v ->
+            error cond.Ast.span "E3001"
+              (Printf.sprintf "the `while` condition must be a Bool, got %s"
+                 (type_name v))
+      in
+      (try iterate () with Break_signal -> ())
+  | Ast.For { init; cond; post; body } ->
+      (* The header `var` is one binding across the loop; the body's
+         frame is fresh every iteration. `continue` still runs the post
+         clause — the update is the loop's, not the body's. *)
+      let loop_env = child env in
+      eval_stmt loop_env init;
+      let rec iterate () =
+        count_step ();
+        match eval_expr loop_env cond with
+        | Bool true ->
+            let body_env = child loop_env in
+            (try List.iter (eval_stmt body_env) body with Continue_signal -> ());
+            eval_stmt loop_env post;
+            iterate ()
+        | Bool false -> ()
+        | v ->
+            error cond.Ast.span "E3001"
+              (Printf.sprintf "the `for` condition must be a Bool, got %s"
+                 (type_name v))
+      in
+      (try iterate () with Break_signal -> ())
+  | Ast.Break -> raise Break_signal
+  | Ast.Continue -> raise Continue_signal
 
 and eval_expr env e =
   count_step ();
