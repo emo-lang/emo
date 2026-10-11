@@ -1731,7 +1731,7 @@ let riscv64_examples_tests =
                    | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
                    (Buffer.contents err))))
-    [ "hello_world"; "fib" ]
+    [ "hello_world"; "fib"; "objects"; "language_tour" ]
 
 (* ---- new: the project scaffold (T25.3) ---- *)
 

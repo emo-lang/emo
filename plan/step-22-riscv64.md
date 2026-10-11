@@ -2,8 +2,8 @@
 
 **Milestone:** M7 · **Prereq:** steps 01–13 (the specialization pass);
 the step-14 RISC-V reference note is the design record ·
-**Status:** T22.1–T22.2 done (2026-10-11 — the value model boots and
-fib is golden; T22.3–T22.4 remain)
+**Status:** T22.1–T22.3 done (2026-10-11 — the data structures are
+golden; T22.4 bootstrap remains)
 
 ## Goal
 
@@ -151,6 +151,35 @@ scheduler is the following step.
   as sound as that count.
 - The heap is 64 MiB of .bss beside the 1 MiB stack (both NOBITS);
   `count_down(1000000)`'s boxed arguments fit with room to spare.
+
+## Decisions settled in T22.3 (the trail)
+
+- **The tag word grew to four bits.** The first layout put Box on tag
+  5 and Instance on tag 7 — both odd, colliding with the immediates'
+  bit-0 rule, so `emo_eq_deep` treated every instance as an immediate.
+  The fix: the heap pointer carries its kind in bits 3:0 (values 0, 2,
+  4, …, 14 — bit 0 clear), blocks align to 16 bytes, immediates keep
+  bit 0 set with the same kind encoding `(word >> 1) & 7`, and untag
+  means `andi -16`.
+- **Dispatch tables for the dynamic world.** The checker types
+  `self.x` and top-level `const` references Unknown, so fields resolve
+  by name through a per-class field table and methods dispatch through
+  a per-class method table (the c target's `emo_field_by_name` /
+  `emo_dynamic_builtin`). Class-typed receivers still call their
+  mangled method directly; interface-typed receivers go through a
+  static per-interface vtable indexed by class id.
+- **`emo_eq_deep` is the content equality** (the interpreter's `==`):
+  word equality settles immediates and shared pointers, strings compare
+  by content, boxes deref, tuples/arrays/instances compare fieldwise.
+  Live counters across its recursive calls sit in s registers — the t
+  registers are caller-saved and the callee's own dispatch clobbers
+  them.
+- The static method/field index paths still serve ClassType-typed
+  receivers; `Case` binds pattern variables into frame slots (staging
+  in temp slot 1, the scrutinee in slot 0), guards evaluate at depth 2.
+- Still refusing: maps, Bytes, List, exceptions, processes, float
+  to-string (a `%g` dtoa is the remaining T22.3-adjacent piece);
+  everything refused names the construct.
 
 ## Tasks
 
