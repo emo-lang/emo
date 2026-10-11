@@ -1843,6 +1843,22 @@ def pick(t (R, String)) String {
         Alcotest.(check bool) "E4023" true (has_code diagnostics "E4023"));
   ]
 
+(* Bindings take a full pattern (the parser carries it on `Binding`);
+   the checker's destructuring checks land with the step's pattern
+   work — until then the parsed form refuses here instead of dropping
+   its bindings. *)
+let binding_pattern_tests =
+  [
+    tc "a plain binding checks clean" (fun () ->
+        Alcotest.(check int)
+          "count" 0 (List.length (check "const x = 1\nprintln(x)")));
+    tc "a destructured binding refuses until its checks land" (fun () ->
+        let diagnostics =
+          check "const (R.ok, body) = (R.ok, 1)\nprintln(body)"
+        in
+        Alcotest.(check bool) "E4024" true (has_code diagnostics "E4024"));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -1865,4 +1881,5 @@ let () =
       ("callback", callback_tests);
       ("shape", shape_tests);
       ("r_enum", r_enum_tests);
+      ("binding_pattern", binding_pattern_tests);
     ]

@@ -585,29 +585,32 @@ and lower_stmts env (stmts : Ast.stmt list) : stmt list =
 and lower_stmt env (s : Ast.stmt) : stmt =
   match s.Ast.stmt_desc with
   | Ast.Expr_stmt e -> Effect (lower_expr env e)
-  | Ast.Binding { mutable_; name; init } -> (
-      (* `const order = shop.order` binds a module path: record the
-         alias so later `order.total(x)` resolves through it. *)
-      match
-        ( mutable_,
-          Option.bind (full_chain init) (fun chain ->
-              if is_module_path env chain then Some chain else None) )
-      with
-      | false, Some target ->
-          env.aliases <- (name, target) :: env.aliases;
-          (* The alias itself is a namespace, not a value: calls resolve
-             through it, nothing reads it. The dead local carries an
-             Int literal because a String literal would emit native
-             emo_str into a value-typed slot — invalid C. *)
-          Let
-            {
-              mutable_ = false;
-              name;
-              init = { ety = Unknown; desc = Const (L_int 0L) };
-            }
-      | _ ->
-          env.locals <- name :: env.locals;
-          Let { mutable_; name; init = lower_expr env init })
+  | Ast.Binding { mutable_; pattern; init } -> (
+      match pattern.Ast.pattern_desc with
+      | Ast.Pattern_binding name -> (
+          (* `const order = shop.order` binds a module path: record the
+             alias so later `order.total(x)` resolves through it. *)
+          match
+            ( mutable_,
+              Option.bind (full_chain init) (fun chain ->
+                  if is_module_path env chain then Some chain else None) )
+          with
+          | false, Some target ->
+              env.aliases <- (name, target) :: env.aliases;
+              (* The alias itself is a namespace, not a value: calls resolve
+                 through it, nothing reads it. The dead local carries an
+                 Int literal because a String literal would emit native
+                 emo_str into a value-typed slot — invalid C. *)
+              Let
+                {
+                  mutable_ = false;
+                  name;
+                  init = { ety = Unknown; desc = Const (L_int 0L) };
+                }
+          | _ ->
+              env.locals <- name :: env.locals;
+              Let { mutable_; name; init = lower_expr env init })
+      | _ -> raise (Lower_error "a destructured binding has no lowering yet"))
   | Ast.Assign { target; value } -> (
       match target.Ast.desc with
       | Ast.Ident name -> (
@@ -933,12 +936,30 @@ let lower (input : input) : program =
                        List.map (fun p -> p.Ast.param_name) f.Ast.foreign_params;
                    })
           | Ast.Item_stmt
-              { stmt_desc = Ast.Binding { mutable_ = true; name; _ }; _ }
+              {
+                stmt_desc =
+                  Ast.Binding
+                    {
+                      mutable_ = true;
+                      pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                      _;
+                    };
+                _;
+              }
             when m.mpath <> input.entry ->
               Hashtbl.replace symbols (m.mpath, name)
                 (S_global { gname = mangle m.mpath name })
           | Ast.Item_stmt
-              { stmt_desc = Ast.Binding { mutable_ = false; name; _ }; _ }
+              {
+                stmt_desc =
+                  Ast.Binding
+                    {
+                      mutable_ = false;
+                      pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                      _;
+                    };
+                _;
+              }
             when m.mpath <> input.entry ->
               (* A const binding in a non-entry module becomes a zero-arg
                  function other modules can call. *)
@@ -960,8 +981,17 @@ let lower (input : input) : program =
           (fun (item : Ast.item) ->
             match item.Ast.item_desc with
             | Ast.Item_stmt
-                { stmt_desc = Ast.Binding { mutable_ = false; name; init }; _ }
-              -> (
+                {
+                  stmt_desc =
+                    Ast.Binding
+                      {
+                        mutable_ = false;
+                        pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                        init;
+                        _;
+                      };
+                  _;
+                } -> (
                 match full_chain init with
                 | Some chain
                   when List.exists (fun mp -> mp = chain) all_module_paths ->
@@ -1018,7 +1048,17 @@ let lower (input : input) : program =
         (fun (item : Ast.item) ->
           match item.Ast.item_desc with
           | Ast.Item_stmt
-              { stmt_desc = Ast.Binding { mutable_ = false; name; init }; _ }
+              {
+                stmt_desc =
+                  Ast.Binding
+                    {
+                      mutable_ = false;
+                      pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                      init;
+                      _;
+                    };
+                _;
+              }
             when m.mpath <> input.entry ->
               (* A module alias (`const d = internal.discounts`) binds a
                  path, not a value: uses resolve through the alias, so
@@ -1046,7 +1086,17 @@ let lower (input : input) : program =
                   }
                   :: !funcs
           | Ast.Item_stmt
-              { stmt_desc = Ast.Binding { mutable_ = true; name; init }; _ }
+              {
+                stmt_desc =
+                  Ast.Binding
+                    {
+                      mutable_ = true;
+                      pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                      init;
+                      _;
+                    };
+                _;
+              }
             when m.mpath <> input.entry ->
               globals :=
                 (mangle m.mpath name, lower_expr const_env init) :: !globals
@@ -1228,7 +1278,12 @@ let lower (input : input) : program =
                 uses resolve through it, so the entry lowers no binding
                 for it — a value slot here would emit garbage C. *)
             match s.Ast.stmt_desc with
-            | Ast.Binding { mutable_ = false; name; _ }
+            | Ast.Binding
+                {
+                  mutable_ = false;
+                  pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                  _;
+                }
               when List.mem_assoc name pre_aliases ->
                 None
             | _ -> Some (lower_stmt env s))

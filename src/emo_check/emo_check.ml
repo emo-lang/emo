@@ -2261,19 +2261,30 @@ and check_stmt ctx env (s : Ast.stmt) : env =
   | Ast.Expr_stmt e ->
       ignore (check_expr ctx env e);
       env
-  | Ast.Binding { mutable_; name; init } -> (
+  | Ast.Binding { mutable_; pattern; init } -> (
       let t = check_expr ctx env init in
-      match lookup_env env name with
-      | Some existing when existing.depth = env.depth ->
-          (* Rebinding in the same scope: drift is an error only when the
-             earlier type is known and the new one provably breaks it. *)
-          if (not (conforms ctx t existing.vtype)) && existing.vtype <> Unknown
-          then
-            report ctx span "E4004"
-              (Printf.sprintf "`%s` was bound as %s, this rebinds it as %s" name
-                 (to_string existing.vtype) (to_string t));
-          bind env name { existing with vtype = t }
-      | _ -> bind env name { vtype = t; is_var = mutable_; depth = env.depth })
+      match pattern.Ast.pattern_desc with
+      | Ast.Pattern_binding name -> (
+          match lookup_env env name with
+          | Some existing when existing.depth = env.depth ->
+              (* Rebinding in the same scope: drift is an error only when the
+                 earlier type is known and the new one provably breaks it. *)
+              if (not (conforms ctx t existing.vtype)) && existing.vtype <> Unknown
+              then
+                report ctx span "E4004"
+                  (Printf.sprintf "`%s` was bound as %s, this rebinds it as %s"
+                     name (to_string existing.vtype) (to_string t));
+              bind env name { existing with vtype = t }
+          | _ ->
+              bind env name { vtype = t; is_var = mutable_; depth = env.depth })
+      | _ ->
+          (* A destructured binding's checks ride the step-36 pattern work;
+             until they land the form refuses here, loudly, instead of
+             silently dropping its bindings. *)
+          report ctx pattern.Ast.pattern_span "E4024"
+            "a destructured binding is not supported yet; match the value in \
+             a `case`";
+          env)
   | Ast.Assign { target; value } -> (
       let vt = check_expr ctx env value in
       match target.Ast.desc with
@@ -3017,7 +3028,17 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
                       });
                  env
              | Ast.Item_stmt
-                 { Ast.stmt_desc = Ast.Binding { mutable_; name; init }; _ } ->
+                 {
+                   Ast.stmt_desc =
+                     Ast.Binding
+                       {
+                         mutable_;
+                         pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                         init;
+                         _;
+                       };
+                   _;
+                 } ->
                  let t = check_expr ctx env init in
                  Hashtbl.replace tables.pvalues (path, name) t;
                  bind env name { vtype = t; is_var = mutable_; depth = 0 }

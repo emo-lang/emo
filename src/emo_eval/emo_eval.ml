@@ -2824,8 +2824,10 @@ and eval_stmt env s =
   let span = s.Ast.stmt_span in
   match s.Ast.stmt_desc with
   | Ast.Expr_stmt e -> ignore (eval_expr env e)
-  | Ast.Binding { mutable_; name; init } ->
-      define env name ~mutable_ (eval_expr env init)
+  | Ast.Binding { mutable_; pattern; init } -> (
+      match pattern.Ast.pattern_desc with
+      | Ast.Pattern_binding name -> define env name ~mutable_ (eval_expr env init)
+      | _ -> not_yet span "a destructured binding")
   | Ast.Assign { target; value } -> (
       let v = eval_expr env value in
       match target.Ast.desc with
@@ -3296,7 +3298,13 @@ let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
   in
   let field_target (s : Ast.stmt) =
     match s.Ast.stmt_desc with
-    | Ast.Binding { name; init; _ } -> Some (name, init)
+    | Ast.Binding
+        {
+          pattern = { Ast.pattern_desc = Ast.Pattern_binding name; _ };
+          init;
+          _;
+        } ->
+        Some (name, init)
     | Ast.Assign { target = { Ast.desc = Ast.Ident name; _ }; value } ->
         Some (name, value)
     | _ -> None

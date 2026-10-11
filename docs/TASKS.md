@@ -1125,7 +1125,7 @@ non-empty `data`; `dune test` green.
       precedent); `R.ok` / `R.error` construct and pattern-match
       everywhere enum members already do; `enum R` / `class R` report
       a reserved-name diagnostic.
-- [ ] **T36.2** — Parser: `const`/`var` accept a full pattern in
+- [x] **T36.2** — Parser: `const`/`var` accept a full pattern in
       place of the name (`Ast.Binding` carries it); the `const (`
       form stops being a hard error, breaking no grammar.
 - [ ] **T36.3** — IR: the pattern binding desugars to a one-arm
