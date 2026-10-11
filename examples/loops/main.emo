@@ -1,0 +1,30 @@
+for var i = 0; i < 100; i = i + 50 {
+  println("i = ${i}")
+}
+
+var n = 0
+while n < 3 {
+  println("n = ${n}")
+  n = n + 1
+}
+
+for var j = 0; j < 10; j = j + 1 {
+  if j % 2 == 1 {
+    continue
+  }
+  if j == 8 {
+    break
+  }
+  println("j = ${j}")
+}
+
+for var row = 1; row <= 3; row = row + 1 {
+  var line = ""
+  for var col = 1; col <= 3; col = col + 1 {
+    if col > row {
+      break
+    }
+    line = line + "${row * col} "
+  }
+  println(line)
+}

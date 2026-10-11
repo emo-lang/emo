@@ -26,6 +26,8 @@ language's design, not just its features.
 - **[`hello_world/`](hello_world/)** — the smallest program.
 - **[`if_expr/`](if_expr/)** — the one-line `if` expression picking
   values, nested and as an operand.
+- **[`loops/`](loops/)** — the three-clause `for` and `while`, with
+  `break`, `continue`, and nested loops.
 - **[`objects/`](objects/)** — classes, enums, interfaces, equality.
 - **[`shop/`](shop/)** — the module system: the directory tree is the
   module tree, with an `internal/` private subtree.
