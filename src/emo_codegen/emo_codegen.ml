@@ -140,6 +140,8 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
       let code = emit_expr env e in
       if tail then code
       else Printf.sprintf "raise (Emo_runtime.Return_signal (%s))" code
+  | Emo_ir.While _ | Emo_ir.For _ | Emo_ir.Break | Emo_ir.Continue ->
+      failwith "ocaml: the loop statements are not supported yet"
 
 and unbox env (e : Emo_ir.expr) kind =
   if env.native && e.Emo_ir.ety = Emo_check.Bool then
@@ -823,7 +825,11 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
                 | Emo_ir.Receive _ -> "Receive"
                 | Emo_ir.Send _ -> "Send"
                 | Emo_ir.Return_stmt _ -> "Return"
-                | Emo_ir.Raise _ -> "Raise");
+                | Emo_ir.Raise _ -> "Raise"
+                | Emo_ir.While _ -> "While"
+                | Emo_ir.For _ -> "For"
+                | Emo_ir.Break -> "Break"
+                | Emo_ir.Continue -> "Continue");
               raise
                 (Emo_ir.Lower_error "non-native statement in specialized body"))
       )

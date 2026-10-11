@@ -1021,9 +1021,9 @@ prints (goldens in CI); a 10M-iteration loop stays flat on every
 target; the tail-call guarantee is untouched (`loops_tail` unchanged);
 `dune test` green.
 
-- [ ] **T35.1** — IR: the loop statements in `emo_ir`'s `stmt` and the
+- [x] **T35.1** — IR: the loop statements in `emo_ir`'s `stmt` and the
       Ast→IR lowering — the header `var` as a loop-scoped mutable
-      binding; one node set, every backend a case.
+      binding; one node set, every backend a case. (Done 2026-10-11.)
 - [ ] **T35.2** — c: the emitted C's own `while`/`for` with native
       `break`/`continue`; `return` inside a loop rides the existing
       branch-to-epilogue.

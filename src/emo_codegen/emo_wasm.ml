@@ -1075,6 +1075,8 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
           | Some fidx -> arg_code @ [ W.Return_call fidx ]
           | None -> failwith ("wasm: unbound call " ^ g))
       | _ -> expr_block env x @ if tail then [] else [ W.Return ])
+  | Emo_ir.While _ | Emo_ir.For _ | Emo_ir.Break | Emo_ir.Continue ->
+      failwith "wasm: the loop statements are not supported yet"
 
 and dispatch_branches env (s : W.instr list) (branches : Emo_ir.branch list)
     ~(tail : bool) : W.instr list =

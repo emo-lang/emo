@@ -47,6 +47,15 @@ and stmt =
   | Set_global_var of { name : string; value : expr } (* a module-level `var` *)
   | Set_field of { self_ : expr; name : string; value : expr }
   | If of { cond : expr; then_ : stmt list; else_ : stmt list }
+  | While of { cond : expr; body : stmt list }
+  | For of {
+      init : stmt; (* the header `var` — scoped to the loop *)
+      cond : expr;
+      post : stmt; (* the header assignment — the loop's one update step *)
+      body : stmt list;
+    }
+  | Break
+  | Continue
   | Case of { scrutinee : expr; branches : branch list }
   | Receive of { branches : branch list }
   | Send of { target : expr; message : expr }
@@ -602,10 +611,17 @@ and lower_stmt env (s : Ast.stmt) : stmt =
   | Ast.Assign { target; value } -> (
       match target.Ast.desc with
       | Ast.Ident name -> (
-          match lookup_symbol env env.current name with
-          | Some (S_global { gname }) ->
-              Set_global_var { name = gname; value = lower_expr env value }
-          | _ -> Assign_var { name; value = lower_expr env value })
+          if
+            (* The innermost binding wins, reads and assigns alike: a local
+             shadows a same-named module-level `var` (the checker's own
+             rule, and a `for` header's variable shadows one too). *)
+            List.mem name env.locals
+          then Assign_var { name; value = lower_expr env value }
+          else
+            match lookup_symbol env env.current name with
+            | Some (S_global { gname }) ->
+                Set_global_var { name = gname; value = lower_expr env value }
+            | _ -> Assign_var { name; value = lower_expr env value })
       | Ast.Member ({ Ast.desc = Ast.Self; _ }, field) ->
           Set_field
             {
@@ -635,8 +651,31 @@ and lower_stmt env (s : Ast.stmt) : stmt =
       Receive { branches = List.map (lower_branch env) branches }
   | Ast.Send { target; message } ->
       Send { target = lower_expr env target; message = lower_expr env message }
-  | Ast.While _ | Ast.For _ | Ast.Break | Ast.Continue ->
-      raise (Lower_error "the loop statements do not lower to a target yet")
+  | Ast.While { cond; body } ->
+      While { cond = lower_expr env cond; body = lower_stmts env body }
+  | Ast.For { init; cond; post; body } -> (
+      (* The parser admits one header shape: a `var` init, a condition,
+         an assignment post. The header `var` lowers as a loop-scoped
+         mutable binding the For node carries — nothing leaks past the
+         loop, on any backend. *)
+      match init.Ast.stmt_desc with
+      | Ast.Binding { mutable_ = true; _ } ->
+          let saved = env.locals in
+          let lowered_init = lower_stmt env init in
+          let node =
+            For
+              {
+                init = lowered_init;
+                cond = lower_expr env cond;
+                post = lower_stmt env post;
+                body = lower_stmts env body;
+              }
+          in
+          env.locals <- saved;
+          node
+      | _ -> raise (Lower_error "the `for` header binds a `var`"))
+  | Ast.Break -> Break
+  | Ast.Continue -> Continue
 
 and lower_branch env (b : Ast.branch) : branch =
   let saved = env.locals in
@@ -755,6 +794,10 @@ and stmt_native special (s : stmt) : bool =
              && stmts_native special b.body)
            branches
   | Receive _ | Send _ | Raise _ -> false
+  | While _ | For _ | Break | Continue ->
+      false
+      (* a loop keeps its function dynamic — the specialized
+              emitters do not lower the loop statements yet *)
   | Return_stmt e -> expr_native special e
 
 (* Iterates to a fixed point: a function qualifies when its shape is

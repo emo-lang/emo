@@ -420,6 +420,8 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
             in
             Printf.sprintf "{ %s%scontinue; }" evals assigns
         | _ -> Printf.sprintf "return %s;" (expr env e))
+  | While _ | For _ | Break | Continue ->
+      failwith "ts: the loop statements are not supported yet"
 
 and block env (xs : Emo_ir.stmt list) : string =
   match xs with [] -> "" | xs -> stmts env xs ~tail:false

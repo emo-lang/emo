@@ -876,6 +876,8 @@ and stmt env (s : Emo_ir.stmt) : unit =
           put env "call 'erlang':'throw'({'emo_raise', ";
           expr env x;
           put env "})")
+  | Emo_ir.While _ | Emo_ir.For _ | Emo_ir.Break | Emo_ir.Continue ->
+      failwith "beam: the loop statements are not supported yet"
 
 (* ---- Guard expressions ----
 

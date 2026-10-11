@@ -1367,6 +1367,13 @@ and closure_free env (cparams : (string * Emo_check.t) list)
           branches
     | Receive _ | Send _ | Raise _ -> ()
     | Return_stmt e -> ex e
+    | While { cond; body; _ } ->
+        ex cond;
+        List.iter st body
+    | For { init; post; body; _ } ->
+        List.iter st [ init; post ];
+        List.iter st body
+    | Break | Continue -> ()
   in
   List.iter st body;
   List.filter
@@ -2036,6 +2043,7 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
                 unwind ();
                 put env "  return __result;\n"
               end))
+  | While _ | For _ | Break | Continue -> refuse "the loop statements"
 
 and emit_stmts env (stmts : Emo_ir.stmt list) : unit =
   (* The statement boundary is the borrow window: expression-internal

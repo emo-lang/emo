@@ -235,6 +235,13 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
           branches
     | Receive _ | Send _ | Raise _ -> ()
     | Return_stmt e -> ex e
+    | While { cond; body; _ } ->
+        ex cond;
+        List.iter st body
+    | For { init; post; body; _ } ->
+        List.iter st [ init; post ];
+        List.iter st body
+    | Break | Continue -> ()
   in
   List.iter st body;
   List.filter
@@ -323,6 +330,10 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
                            max (expr_depth g) (stmts_depth b.Emo_ir.body)
                        | None -> stmts_depth b.Emo_ir.body))
                    0 branches)
+        | While { cond; body; _ } -> max (expr_depth cond) (stmts_depth body)
+        | For { init; cond; post; body; _ } ->
+            max (expr_depth cond) (stmts_depth (init :: post :: body))
+        | Break | Continue -> 0
         | _ -> 0))
     0 stmts
 
@@ -351,6 +362,8 @@ let rec collect_stmt (f : frame) (s : Emo_ir.stmt) : unit =
             (pattern_bindings b.Emo_ir.pattern);
           collect_stmts f b.Emo_ir.body)
         branches
+  | While { body; _ } -> collect_stmts f body
+  | For { init; post; body; _ } -> collect_stmts f (init :: post :: body)
   | _ -> ()
 
 and collect_stmts (f : frame) (stmts : Emo_ir.stmt list) : unit =
@@ -1115,6 +1128,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
   | Send _ -> refuse "send"
   | Receive _ -> refuse "receive"
   | Raise _ -> refuse "raise"
+  | While _ | For _ | Break | Continue -> refuse "the loop statements"
 
 and describe_expr (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
@@ -2420,6 +2434,15 @@ and walk_stmt_enum env (s : Emo_ir.stmt) : unit =
       walk_expr_enum env target;
       walk_expr_enum env message
   | Raise e -> walk_expr_enum env e
+  | While { cond; body; _ } ->
+      walk_expr_enum env cond;
+      walk_stmts_enum env body
+  | For { init; cond; post; body; _ } ->
+      walk_stmt_enum env init;
+      walk_expr_enum env cond;
+      walk_stmt_enum env post;
+      walk_stmts_enum env body
+  | Break | Continue -> ()
 
 and walk_stmts_enum env (stmts : Emo_ir.stmt list) : unit =
   List.iter (walk_stmt_enum env) stmts
