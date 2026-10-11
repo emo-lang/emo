@@ -1331,7 +1331,8 @@ foreign def run(g Greeter) Void = "run"
 let loop_tests =
   [
     tc "a clean for loop checks" (fun () ->
-        Alcotest.(check int) "count" 0
+        Alcotest.(check int)
+          "count" 0
           (List.length
              (check
                 {|
@@ -1342,7 +1343,8 @@ def probe(n Int64) Int64 {
   return 0
 }|})));
     tc "a clean while loop checks" (fun () ->
-        Alcotest.(check int) "count" 0
+        Alcotest.(check int)
+          "count" 0
           (List.length
              (check
                 {|
@@ -1366,17 +1368,15 @@ def probe(n Int64) Int64 {
         in
         Alcotest.(check bool) "E4003" true (has_code diagnostics "E4003"));
     tc "break and continue refuse outside a loop" (fun () ->
-        let diagnostics =
-          check
-            {|
+        let diagnostics = check {|
 def probe() Int64 {
   break
   continue
-}|}
-        in
+}|} in
         Alcotest.(check bool) "E4022" true (has_code diagnostics "E4022"));
     tc "break and continue bind to the nearest loop" (fun () ->
-        Alcotest.(check int) "count" 0
+        Alcotest.(check int)
+          "count" 0
           (List.length
              (check
                 {|

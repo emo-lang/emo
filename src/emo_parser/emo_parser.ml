@@ -608,10 +608,10 @@ and parse_stmt st =
       let post = parse_for_post st in
       st.suppress_block_sugar <- false;
       if at_op st Tok.LBrace && newline_before st then
-        error "E2001" (span st)
-          "the `for` body must open on the header's line";
+        error "E2001" (span st) "the `for` body must open on the header's line";
       let body, close_span = parse_block st in
-      stmt (merge_span start_span close_span)
+      stmt
+        (merge_span start_span close_span)
         (Ast.For { init; cond; post; body })
   | Tok.Keyword Tok.Break ->
       advance st |> ignore;
@@ -721,9 +721,7 @@ and parse_for_init st =
    visible update step. *)
 and parse_for_post st =
   let start_span = span st in
-  if
-    at_eof st || at_op st Tok.LBrace || at_op st Tok.Semi
-    || newline_before st
+  if at_eof st || at_op st Tok.LBrace || at_op st Tok.Semi || newline_before st
   then
     error "E2026" (span st) "the `for` header's post clause is missing"
       ~hint:"the header ends in an update step: `var i = 0; i < n; i = i + 1`";

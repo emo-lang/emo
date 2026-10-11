@@ -2263,9 +2263,10 @@ and check_stmt ctx env (s : Ast.stmt) : env =
   | Ast.Continue ->
       if env.loop_depth = 0 then
         report ctx span "E4022"
-          "`continue` skips to the next iteration of a loop; there is no \
-           loop to skip here";
+          "`continue` skips to the next iteration of a loop; there is no loop \
+           to skip here";
       env
+
 (* Checks one pattern against the scrutinee's type when decidable, binding
    pattern variables. Returns the environment for the branch body. *)
 and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =

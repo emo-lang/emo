@@ -544,12 +544,14 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 **前置:** Step 33。
 **完成标准:** README 的循环示例经 `emo run` 逐字运行;CHECK.md 的演示范例(`for var i = 0; i < 100; i = i + 50`)先打印 `i = 0` 再打印 `i = 50`;千万次迭代的 `while` 栈保持平坦;每种拒绝——保留字用作标识符、缺子句、`;` 出现在 `for` 头之外、循环外的 `break`/`continue`——各有自己的诊断;`dune test` 全绿。
 
-- [ ] **T34.1** — 关键字:lexer 保留 `for`、`while`、`break`、`continue`;LSP 补全列表与 VS Code grammar 同步翻转;把这四个词用作标识符的代码得到清晰的保留字诊断。
-- [ ] **T34.2** — Parser:`while cond { }` 与三子句 `for`——不许省略,post 子句是赋值,`;` 是仅在 `for` 头内合法的记号,`while` 条件与 `for` 三个子句都设 `suppress_block_sugar`,使随后的 `{` 打开循环体而非粘成尾随块;四个语句的 AST 节点。
-- [ ] **T34.3** — Checker:头部 `var` 在现有深度模型下作用域限定于头部+循环体;`break`/`continue` 绑定最近的循环,循环外一律拒绝;`definitely_returns` 把循环纳入,使 `return` 可达性保持可靠;箭头块捕获头部 `var` 仍是 E4012。
-- [ ] **T34.4** — 解释器:四个语句进入 `eval_stmt`;迭代跑宿主循环、绝不递归——千万次迭代栈平坦;`continue` 先执行 `for` 的 post 子句;步数预算按每次迭代计一步。
-- [ ] **T34.5** — 示例与拒绝语料:`examples/loops`——演示范例、`while` 计数、`break`/`continue`、嵌套循环——经 `emo run` 金测;parser 与 checker 的拒绝语料钉住每一种拒绝。
-- [ ] **T34.6** — README 对齐:README(英文 + 中文)已按定案写好循环语法——对照实现核对,漂移处一并修正。
+- [x] **T34.1** — 关键字:lexer 保留 `for`、`while`、`break`、`continue`;LSP 补全列表与 VS Code grammar 同步翻转;把这四个词用作标识符的代码得到清晰的保留字诊断。(2026-10-11 完成。)
+- [x] **T34.2** — Parser:`while cond { }` 与三子句 `for`——不许省略,post 子句是赋值,`;` 是仅在 `for` 头内合法的记号,`while` 条件与 `for` 三个子句都设 `suppress_block_sugar`,使随后的 `{` 打开循环体而非粘成尾随块;四个语句的 AST 节点。(2026-10-11 完成。)
+- [x] **T34.3** — Checker:头部 `var` 在现有深度模型下作用域限定于头部+循环体;`break`/`continue` 绑定最近的循环,循环外一律拒绝;`definitely_returns` 把循环纳入,使 `return` 可达性保持可靠;箭头块捕获头部 `var` 仍是 E4012。(2026-10-11 完成。)
+- [x] **T34.4** — 解释器:四个语句进入 `eval_stmt`;迭代跑宿主循环、绝不递归——千万次迭代栈平坦;`continue` 先执行 `for` 的 post 子句;步数预算按每次迭代计一步。(2026-10-11 完成。)
+- [x] **T34.5** — 示例与拒绝语料:`examples/loops`——演示范例、`while` 计数、`break`/`continue`、嵌套循环——经 `emo run` 金测;parser 与 checker 的拒绝语料钉住每一种拒绝。(2026-10-11 完成。)
+- [x] **T34.6** — README 对齐:README(英文 + 中文)已按定案写好循环语法——对照实现核对,漂移处一并修正。(2026-10-11 完成。)
+
+Step 34 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、checker、解释器全链路落地,每个任务一个提交。`;` 成为正式 token,唯一合法位置是 `for` 头部(E2025);头部形状是解析期法则——init 必须是 `var`、post 必须是赋值、三个子句缺一不可(E2026),所有子句解析时关闭块语法糖。checker 把循环拆成两层作用域——header 一层,body 是它的子层——因此头部 `var` 比 body 中任何箭头块浅一层,捕获它就是普通的 var 逃逸错误(E4012);`break`/`continue` 经 `loop_depth` 字段绑定最近的循环,箭头块把该字段清零(循环外为 E4022),且任何循环形状都不算返回点。解释器每轮迭代是一个 OCaml 尾循环、body 每轮全新帧——千万次迭代实测栈平坦;`continue` 仍先执行 `for` 的 post 子句;步数预算计入每一次迭代——循环出现之后,受限配置档的终止性正靠它保证。`examples/loops` 经解释器金测;六个后端对循环语句响亮拒绝,留待 Step 35 下降。
 
 ### Step 35 — 循环上全部 target:IR 与六个后端
 

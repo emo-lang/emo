@@ -130,8 +130,8 @@ and pp_stmt fmt (s : Emo_ast.stmt) =
   | Emo_ast.Send { target; message } ->
       Format.fprintf fmt "(<- %a %a)" pp_expr target pp_expr message
   | Emo_ast.While { cond; body } ->
-      Format.fprintf fmt "(while %a @[<hov>%a@])" pp_expr cond
-        (pp_list pp_stmt) body
+      Format.fprintf fmt "(while %a @[<hov>%a@])" pp_expr cond (pp_list pp_stmt)
+        body
   | Emo_ast.For { init; cond; post; body } ->
       Format.fprintf fmt "(for %a %a %a @[<hov>%a@])" pp_stmt init pp_expr cond
         pp_stmt post (pp_list pp_stmt) body
@@ -1446,14 +1446,14 @@ let loop_tests =
             match item.Emo_ast.item_desc with
             | Emo_ast.Item_stmt s ->
                 Alcotest.(check string)
-                  "shape" "(while (< i 10) (= i (+ i 1)))"
-                  (render pp_stmt s)
+                  "shape" "(while (< i 10) (= i (+ i 1)))" (render pp_stmt s)
             | _ -> Alcotest.fail "expected a statement")
         | items ->
             Alcotest.fail
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "the three-clause for parses with a var header" (fun () ->
-        match parse_program "for var i = 0; i < 100; i = i + 50 { println(i) }"
+        match
+          parse_program "for var i = 0; i < 100; i = i + 50 { println(i) }"
         with
         | [ item ] -> (
             match item.Emo_ast.item_desc with
@@ -1472,8 +1472,7 @@ let loop_tests =
             match item.Emo_ast.item_desc with
             | Emo_ast.Item_stmt s ->
                 Alcotest.(check string)
-                  "shape" "(while (f call) (g call))"
-                  (render pp_stmt s)
+                  "shape" "(while (f call) (g call))" (render pp_stmt s)
             | _ -> Alcotest.fail "expected a statement")
         | items ->
             Alcotest.fail
@@ -1482,13 +1481,10 @@ let loop_tests =
         match parse_program "while true { break\ncontinue }" with
         | [ item ] -> (
             match item.Emo_ast.item_desc with
-            | Emo_ast.Item_stmt {
-                stmt_desc = Emo_ast.While { body = [ b; c ]; _ };
-                _;
-              } ->
+            | Emo_ast.Item_stmt
+                { stmt_desc = Emo_ast.While { body = [ b; c ]; _ }; _ } ->
                 Alcotest.(check string) "break" "break" (render pp_stmt b);
-                Alcotest.(check string) "continue" "continue"
-                  (render pp_stmt c)
+                Alcotest.(check string) "continue" "continue" (render pp_stmt c)
             | _ -> Alcotest.fail "expected a while statement")
         | items ->
             Alcotest.fail
@@ -1497,11 +1493,10 @@ let loop_tests =
         List.iter
           (fun (source, code) ->
             let diagnostic = program_err source in
-            Alcotest.(check string) ("code of " ^ source) code
-              (code_of diagnostic))
+            Alcotest.(check string)
+              ("code of " ^ source) code (code_of diagnostic))
           [
-            ( "for var i = 0; i < 10 { i = i + 1 }",
-              "E2001" (* the second `;` *) );
+            ("for var i = 0; i < 10 { i = i + 1 }", "E2001" (* the second `;` *));
             ("for var i = 0; ; i = i + 1 { () }", "E2026");
             ("for var i = 0; i < 10; { () }", "E2026");
           ]);
@@ -1511,16 +1506,20 @@ let loop_tests =
             let diagnostic = program_err source in
             Alcotest.(check string)
               ("code of " ^ source) "E2026" (code_of diagnostic))
-          [ "for i = 0; i < 10; i = i + 1 { () }";
-            "for const i = 0; i < 10; i = i + 1 { () }" ]);
+          [
+            "for i = 0; i < 10; i = i + 1 { () }";
+            "for const i = 0; i < 10; i = i + 1 { () }";
+          ]);
     tc "the for post clause is an assignment" (fun () ->
         List.iter
           (fun source ->
             let diagnostic = program_err source in
             Alcotest.(check string)
               ("code of " ^ source) "E2026" (code_of diagnostic))
-          [ "for var i = 0; i < 10; i + 1 { () }";
-            "for var i = 0; i < 10; i { () }" ]);
+          [
+            "for var i = 0; i < 10; i + 1 { () }";
+            "for var i = 0; i < 10; i { () }";
+          ]);
     tc "a semicolon is legal only inside a for header" (fun () ->
         List.iter
           (fun source ->

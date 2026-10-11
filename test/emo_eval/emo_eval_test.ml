@@ -1173,9 +1173,7 @@ while n < 3 {
   i = i + 4
 }|}));
     tc "a loop condition must be a Bool at runtime" (fun () ->
-        let diagnostic =
-          program_err {|while 1 { println("never") }|}
-        in
+        let diagnostic = program_err {|while 1 { println("never") }|} in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic);
         let diagnostic =
           program_err {|for var i = 0; i; i = i + 1 { println("never") }|}

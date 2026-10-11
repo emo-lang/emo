@@ -218,8 +218,13 @@ let ident_tests =
     tc "keyword prefixes of the new words stay identifiers" (fun () ->
         Alcotest.(check (list kind))
           "kinds"
-          [ Lower_ident "force"; Lower_ident "whiles"; Lower_ident "breaks";
-            Lower_ident "continueX"; Eof ]
+          [
+            Lower_ident "force";
+            Lower_ident "whiles";
+            Lower_ident "breaks";
+            Lower_ident "continueX";
+            Eof;
+          ]
           (kinds (lex_all "force whiles breaks continueX")));
   ]
 

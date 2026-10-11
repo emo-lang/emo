@@ -967,31 +967,50 @@ identifier, a missing clause, `;` outside a `for` header,
 `break`/`continue` outside a loop — has its own diagnostic;
 `dune test` green.
 
-- [ ] **T34.1** — Keywords: reserve `for`, `while`, `break`,
+- [x] **T34.1** — Keywords: reserve `for`, `while`, `break`,
       `continue` in the lexer; the LSP completion list and the VS Code
       grammar flip in lockstep; code using the four words as
-      identifiers reports a clear reserved-word diagnostic.
-- [ ] **T34.2** — Parser: `while cond { }` and the three-clause `for`
+      identifiers reports a clear reserved-word diagnostic. (Done 2026-10-11.)
+- [x] **T34.2** — Parser: `while cond { }` and the three-clause `for`
       — no omissions, the post clause an assignment, `;` a token legal
       only inside a `for` header, `suppress_block_sugar` set on the
       `while` condition and all three `for` clauses so the trailing
-      `{` opens the body; AST nodes for the four statements.
-- [ ] **T34.3** — Checker: the header `var` scoped to header+body in
+      `{` opens the body; AST nodes for the four statements. (Done 2026-10-11.)
+- [x] **T34.3** — Checker: the header `var` scoped to header+body in
       the existing depth model; `break`/`continue` bind to the nearest
       enclosing loop and are rejected outside one; `definitely_returns`
       accounts for loops so `return`-reachability stays sound;
-      capturing the header `var` in an arrow block stays E4012.
-- [ ] **T34.4** — Interpreter: the four statements in `eval_stmt`; the
+      capturing the header `var` in an arrow block stays E4012. (Done 2026-10-11.)
+- [x] **T34.4** — Interpreter: the four statements in `eval_stmt`; the
       iteration runs a host loop, never recursion — 10M iterations
       flat; `continue` runs a `for`'s post clause first; the step
-      budget counts each iteration.
-- [ ] **T34.5** — Example and rejections: `examples/loops` — the
+      budget counts each iteration. (Done 2026-10-11.)
+- [x] **T34.5** — Example and rejections: `examples/loops` — the
       worked example, `while` counting, `break`/`continue`, nested
       loops — golden through `emo run`; the parser and checker
-      rejection corpus pinning every refusal.
-- [ ] **T34.6** — README alignment: the README (English + zh-CN)
+      rejection corpus pinning every refusal. (Done 2026-10-11.)
+- [x] **T34.6** — README alignment: the README (English + zh-CN)
       already documents the settled syntax — verify it against the
-      implemented surface and reconcile any drift.
+      implemented surface and reconcile any drift. (Done 2026-10-11.)
+
+Step 34 close-out (2026-10-11, on `feat/loops`): the loop surface is
+live in the lexer, parser, checker, and interpreter, one commit per
+task. `;` became a token whose only legal home is a `for` header
+(E2025), and the header's shape is parse-time law — the init clause a
+`var`, the post clause an assignment, no clause optional (E2026), with
+block sugar suppressed in every clause. The checker splits the loop
+into two scopes — header, then body as its child — so the header `var`
+sits a level below any arrow block in the body and capturing one is
+the ordinary var-escape error (E4012); `break`/`continue` bind to the
+nearest loop through a `loop_depth` field that arrow blocks reset to
+zero (E4022 outside a loop), and no loop shape counts as a return
+point. The interpreter runs each iteration as an OCaml tail loop with
+a fresh body frame — 10M iterations verified flat — `continue` still
+runs a `for`'s post clause, and the step budget counts every
+iteration, which is what keeps the restricted config profile
+terminating now that loops exist. `examples/loops` is golden through
+the interpreter; the six backends refuse the loop statements loudly
+until step 35 lowers them.
 
 ### Step 35 — Loops on every target: IR and the six backends
 
