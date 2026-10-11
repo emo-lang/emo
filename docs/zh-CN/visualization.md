@@ -411,8 +411,9 @@ SVG 优先,一个独立的 `math` 包,然后是这一个 `plot` 包。
   `sqrt`、`min`、`max`、`abs`、`clamp`,以及常量 `e`/`pi`。三角函数
   暂缓(T0+T1 没有极坐标或 3D);`normal_quantile` 与 `normal_cdf`
   放在 `plot.stats` 里,不进 `math`。可选的原生快路径在 `c`/`ocaml`
-  上经由 `foreign def`,默认关闭,并写明其输出与目标绑定。分派修复
-  与 `math` 一起门控其上的所有工作。
+  上经由 `foreign def`,默认关闭,并写明其输出与目标绑定;拼写用独立的
+  `*_native` 函数(`math.exp` 纯、`math.exp_native` 原生——2026-10-12
+  决定)。分派修复与 `math` 一起门控其上的所有工作。
 - **B. `plot` T0 核心——只做 SVG。** `Buffer`、比例尺、刻度、按 mark
   的样式类、`Renderer` 接口、`SvgRenderer`、声明式的
   `figure`/`axes`/mark 值、`Table`,以及带坐标轴、图例、标题的
@@ -447,8 +448,8 @@ SVG 优先,一个独立的 `math` 包,然后是这一个 `plot` 包。
    五个目标,暂时以绘图所需为限——`exp`、`log`、`log10`、`pow`、
    `sqrt`、`min`、`max`、`abs`、`clamp`、`e`、`pi`;三角函数暂缓;
    `normal_quantile` 与 `normal_cdf` 放 `plot.stats`。它在 `c`/`ocaml`
-   上的可选 `foreign def` 快路径写明与目标绑定。不放核心,也不做包内
-   私有。`CHECK.md` 条目已经记录了当前原语在各目标上的不完整,所以这是
+   上的可选 `foreign def` 快路径写明与目标绑定,并用独立的 `*_native`
+   函数拼写。不放核心,也不做包内私有。`CHECK.md` 条目已经记录了当前原语在各目标上的不完整,所以这是
    已知的开放领域,而非意外。
 4. **默认参数**——先按 `with_*` 样式设计把库建起来(见"Emo 里的
    API"),它不改语言;让真实图表代码决定参数默认值是否挣得位置,
@@ -538,11 +539,13 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
     `min`、`max`、`abs`、`clamp`、`e`、`pi`;不做三角函数;
     `normal_quantile`/`normal_cdf` 放 `plot.stats`。
 14. **声明式树只用数组**——不做尾随块写法。
+15. **原生数学快路径——独立的 `*_native` 名字。** `math.exp` 是纯的、
+    逐字节一致的实现;`math.exp_native` 是可选加入的 `c`/`ocaml`
+    `foreign def` 快路径,调用点上一眼可辨。
 
 ## 剩余的开放问题
 
-1. **通道词表。** 确切的键名——`x`、`y`、`hue`、`size`、`style`、
-   `row`、`col`——等 `plot.stats` 细化时定下来。
-2. **`math` 快路径的拼写。** 可选的原生路径怎么选,是逐调用还是包级。
-3. **从哪里开工。** 暂缓(2026-10-12 决定):设计还没定完,先不开
+1. **通道词表。** 确切的键名及其在各家族中的有效性——等 `plot.stats`
+   细化时定下来。
+2. **从哪里开工。** 暂缓(2026-10-12 决定):设计还没定完,先不开
    `plan/step-NN-*.md`。

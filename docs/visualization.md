@@ -476,8 +476,10 @@ the two plot packages.
   is deferred (no polar or 3D in T0+T1); `normal_quantile` and
   `normal_cdf` live inside `plot.stats`, not `math`. The optional
   native fast path rides `foreign def` on `c`/`ocaml`, opt-in and
-  documented as target-pinned. The dispatch fix and `math` both gate
-  everything above them.
+  documented as target-pinned, and is spelled with separate `*_native`
+  functions (`math.exp` pure, `math.exp_native` native — decision
+  2026-10-12). The dispatch fix and `math` both gate everything above
+  them.
 - **B. `plot` T0 core — SVG only.** `Buffer`, scales, ticks, the
   per-mark style classes, the `Renderer` interface, `SvgRenderer`,
   the declarative `figure`/`axes`/mark values, `Table`, and
@@ -518,8 +520,8 @@ discovered mid-implementation:
    for now — `exp`, `log`, `log10`, `pow`, `sqrt`, `min`, `max`, `abs`,
    `clamp`, `e`, `pi`; trigonometry deferred; `normal_quantile` and
    `normal_cdf` in `plot.stats`. Its opt-in `foreign def` fast path on
-   `c`/`ocaml` is documented as target-pinned. Not in the core, and not
-   package-private. The `CHECK.md` entry already records that the
+   `c`/`ocaml` is documented as target-pinned and spelled with separate
+   `*_native` functions. Not in the core, and not package-private. The `CHECK.md` entry already records that the
    current primitives are partial across targets, so this is a
    known-open area rather than a surprise.
 4. **Default parameters** — build the library on the `with_*` style
@@ -636,13 +638,14 @@ T0 + T1.
     `min`, `max`, `abs`, `clamp`, `e`, `pi`; no trigonometry;
     `normal_quantile`/`normal_cdf` inside `plot.stats`.
 14. **Array-only declarative tree** — no trailing-block spelling.
+15. **Native math fast path — separate `*_native` names.** `math.exp`
+    is the pure, byte-identical implementation; `math.exp_native` is
+    the opt-in `c`/`ocaml` `foreign def` fast path, visibly different
+    at the call site.
 
 ## Remaining open questions
 
-1. **Channel vocabulary.** The exact key names — `x`, `y`, `hue`,
-   `size`, `style`, `row`, `col` — to fix when `plot.stats` is
-   specified.
-2. **`math`'s fast-path spelling.** How the opt-in native path is
-   selected, and whether it is per-call or package-level.
-3. **Where the work starts.** Deferred (decision 2026-10-12): the
+1. **Channel vocabulary.** The exact key names and their per-family
+   validity — to fix when `plot.stats` is specified.
+2. **Where the work starts.** Deferred (decision 2026-10-12): the
    design is still being settled before any `plan/step-NN-*.md`.
