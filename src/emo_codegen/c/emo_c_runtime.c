@@ -439,7 +439,7 @@ emo_value emo_box_replace(emo_value box, emo_value v) {
   emo_value old = (emo_value)*p;
   *p = (uintptr_t)v;
   emo_release(old);
-  return emo_retain(box); /* the chained call hands the caller its own claim */
+  return emo_retain(v); /* replace answers the new value, like every target */
 }
 
 /* ---- The List deque ----

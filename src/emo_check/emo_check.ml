@@ -97,6 +97,26 @@ type ctx = {
       (* bare type name → its declaring module path (the program's
          pre-registration); empty when checking a lone file, where no
          cross-module resolution exists *)
+  pdefs : (string list * string, t) Hashtbl.t;
+      (* the program's module def signatures, pre-registered beside the
+         type tables: (module path, name) → FuncType — a qualified
+         `lib.f(x)` call checks its arguments like any other call;
+         empty when checking a lone file *)
+  pvalues : (string list * string, t) Hashtbl.t;
+      (* the program's module const/var types: (module path, name) →
+         the initializer's type, so `lib.answer` reads as more than
+         Unknown; empty when checking a lone file *)
+  pgroups :
+    ( string,
+      (string * (string * t) list * t) list * (string * t) list )
+    Hashtbl.t;
+      (* the program's function groups beside the modules' own (they
+         are global at runtime, so another module's group is callable
+         by bare name): name → (defs, consts) *)
+  program_checked : bool;
+      (* whether the program tables are present — a lone-file check
+         resolves no cross-file names, so an unknown capitalized name
+         stays silent there exactly like every other cross-file gap *)
   target : string;
       (* the compilation target: the capability table gates `foreign
          def` per target (CHECK.md) — `c` honors Int64 directly on
@@ -486,6 +506,10 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       requires = ref [];
       types = Hashtbl.create 64;
       type_owners = Hashtbl.create 0;
+      pdefs = Hashtbl.create 0;
+      pvalues = Hashtbl.create 0;
+      pgroups = Hashtbl.create 0;
+      program_checked = false;
       target = "c";
     }
   in
@@ -750,6 +774,14 @@ let empty_env =
   }
 
 let lookup_env env name = List.assoc_opt name env.bindings
+
+(* Whether a name is bound locally (a var, const, def, or parameter).
+   A dotted path is a module reference only when its head is not bound
+   here: the runtime looks the head up in the environment first, so a
+   local named like a module wins. *)
+let bound_local env name =
+  match lookup_env env name with Some _ -> true | None -> false
+
 let bind env name info = { env with bindings = (name, info) :: env.bindings }
 
 let child_scope env =
@@ -824,9 +856,10 @@ let module_prefix_known ctx path =
 (* The longest known module prefix of a dotted path. *)
 let longest_module_prefix ctx (path : string list) : string list =
   let rec prefixes path =
-    match path with [] -> [] | _ :: rest -> path :: prefixes rest
+    match List.rev path with
+    | [] -> []
+    | _ :: rest -> path :: prefixes (List.rev rest)
   in
-  let candidates = List.rev (prefixes path) in
   let rec longest known = function
     | [] -> known
     | candidate :: rest ->
@@ -834,7 +867,7 @@ let longest_module_prefix ctx (path : string list) : string list =
           (if module_prefix_known ctx candidate then candidate else known)
           rest
   in
-  longest [] candidates
+  longest [] (prefixes path)
 
 (* Type-name resolution for `is()` targets; unknown names narrow to nothing. *)
 let resolve_type_name ctx span name =
@@ -1035,6 +1068,24 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
         check_internal_type ctx span name;
         InterfaceType name)
       else if name = "Box" || name = "Exception" then Unknown
+      else if
+        (* The runtime's value-carrying builtins (every frame pre-binds
+           them): a bare use stays a runtime question, not a checker
+           one. *)
+        List.mem name
+          [ "Int64"; "Byte"; "Float64"; "Box"; "Bytes"; "List"; "Map" ]
+      then Unknown
+      else if Hashtbl.mem ctx.groups name || Hashtbl.mem ctx.pgroups name then
+        Unknown
+      else if module_prefix_known ctx [ name ] then (
+        ctx.refs := [ name ] :: !(ctx.refs);
+        Unknown)
+      else if ctx.program_checked then (
+        (* A capitalized name that resolves to no type, group, or
+           module is a mistake the runtime only finds when the value is
+           used; report it where the name is written. *)
+        report ctx span "E4003" (Printf.sprintf "`%s` is not defined" name);
+        Unknown)
       else Unknown
   | Ast.Interpolated parts ->
       List.iter (fun p -> check_part ctx env p) parts;
@@ -1046,53 +1097,98 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
           report ctx span "E4003" "`self` is not defined here";
           Unknown)
   | Ast.Member (recv, name) -> (
-      let group_head =
-        match recv.Ast.desc with Ast.Type_ident g -> Some g | _ -> None
+      let full = Option.value (dotted_path e) ~default:[] in
+      let prefix = longest_module_prefix ctx full in
+      let module_path =
+        match full with
+        | head :: _ when not (bound_local env head) -> true
+        | _ -> false
       in
-      (match group_head with
-      | Some gname -> (
-          match Hashtbl.find_opt ctx.groups gname with
-          | Some (defs, consts) ->
-              (* a group member: consts carry their type, defs are
-                 referenceable only as calls *)
-              if List.mem_assoc name consts then ignore (List.assoc name consts)
-              else if
-                not (List.exists (fun (n, _, _) -> String.equal n name) defs)
-              then
-                report ctx span "E4001"
-                  (Printf.sprintf "the group `%s` has no member `%s`" gname name)
-          | None -> ())
-      | None -> ());
-      if module_prefix_known ctx (Option.value (dotted_path e) ~default:[]) then (
-        (* A qualified module reference: record the longest known module
-           prefix; cross-module types stay unchecked this step. *)
-        let path = Option.value (dotted_path e) ~default:[] in
-        ctx.refs := longest_module_prefix ctx path :: !(ctx.refs);
+      if module_path && module_prefix_known ctx full then (
+        (* A qualified module reference: the whole path names a
+           module. *)
+        ctx.refs := full :: !(ctx.refs);
         Unknown)
+      else if
+        module_path && prefix <> []
+        && List.length full = List.length prefix + 1
+        && List.nth full (List.length prefix) = name
+      then (
+        (* A read of another module's member: the pre-registered value
+           tables answer for consts/vars, and a bare def reference is
+           the closure value itself. *)
+        ctx.refs := prefix :: !(ctx.refs);
+        let dotted = String.concat "." prefix in
+        match Hashtbl.find_opt ctx.pvalues (prefix, name) with
+        | Some t -> t
+        | None -> (
+            match Hashtbl.find_opt ctx.pdefs (prefix, name) with
+            | Some ft -> ft
+            | None ->
+                report ctx span "E5004"
+                  (Printf.sprintf "module `%s` has no member `%s`" dotted name);
+                Unknown))
       else
-        let rt = check_expr ctx env recv in
-        match rt with
-        | ClassType c -> (
-            match Hashtbl.find_opt ctx.classes c with
-            | Some info when List.mem name info.cfields -> Unknown
-            | Some info ->
+        let from_group =
+          (* A bare `Math.tau` / `Math.double` read: groups are global,
+             so the module's own table and the program's registry both
+             answer — consts carry their type, a bare def reference is
+             the closure value. *)
+          match recv.Ast.desc with
+          | Ast.Type_ident gname -> (
+              match
+                match Hashtbl.find_opt ctx.groups gname with
+                | Some g -> Some g
+                | None -> Hashtbl.find_opt ctx.pgroups gname
+              with
+              | Some (defs, consts) ->
+                  Some
+                    (if List.mem_assoc name consts then List.assoc name consts
+                     else
+                       match
+                         List.find_opt
+                           (fun (n, _, _) -> String.equal n name)
+                           defs
+                       with
+                       | Some (_, params, ret) -> FuncType (params, ret)
+                       | None ->
+                           report ctx span "E4001"
+                             (Printf.sprintf "the group `%s` has no member `%s`"
+                                gname name);
+                           Unknown)
+              | None -> None)
+          | _ -> None
+        in
+        match from_group with
+        | Some t -> t
+        | None -> (
+            let rt = check_expr ctx env recv in
+            match rt with
+            | ClassType c -> (
+                match Hashtbl.find_opt ctx.classes c with
+                | Some info when List.mem name info.cfields -> Unknown
+                | Some info ->
+                    report ctx span "E4001"
+                      (Printf.sprintf "`%s` has no field `%s`" c name);
+                    Unknown
+                | None -> Unknown)
+            | EnumType e -> (
+                match Hashtbl.find_opt ctx.enums e with
+                | Some members when List.mem name members -> EnumType e
+                | Some members ->
+                    report ctx span "E4001"
+                      (Printf.sprintf "enum `%s` has no member `%s`" e name);
+                    Unknown
+                | None -> Unknown)
+            | BoxType _ ->
                 report ctx span "E4001"
-                  (Printf.sprintf "`%s` has no field `%s`" c name);
+                  "a member access must be a call, like `x.read()`";
                 Unknown
-            | None -> Unknown)
-        | EnumType e -> (
-            match Hashtbl.find_opt ctx.enums e with
-            | Some members when List.mem name members -> EnumType e
-            | Some members ->
+            | Unknown -> Unknown
+            | other ->
                 report ctx span "E4001"
-                  (Printf.sprintf "enum `%s` has no member `%s`" e name);
-                Unknown
-            | None -> Unknown)
-        | Unknown -> Unknown
-        | other ->
-            report ctx span "E4001"
-              (Printf.sprintf "%s has no field `%s`" (to_string other) name);
-            Unknown)
+                  (Printf.sprintf "%s has no field `%s`" (to_string other) name);
+                Unknown))
   | Ast.Index (base, index) -> (
       let bt = check_expr ctx env base in
       let it = check_expr ctx env index in
@@ -1347,38 +1443,83 @@ and check_apply ctx env span what ft args : t =
 (* Method calls: dispatch on the receiver's known type against the collected
    declarations; the builtin method set is typed inline. Unknown receivers
    stay unchecked. *)
+(* A call through a qualified module path: the pre-registered tables
+   answer for defs (checked like any call) and consts (argument-less);
+   an unknown member reports statically what the runtime's module
+   loader raises. *)
+and check_module_member_call ctx env span (mpath : string list) mname args : t =
+  ctx.refs := mpath :: !(ctx.refs);
+  let dotted = String.concat "." mpath in
+  match Hashtbl.find_opt ctx.pdefs (mpath, mname) with
+  | Some ft -> check_apply ctx env span (dotted ^ "." ^ mname) ft args
+  | None -> (
+      match Hashtbl.find_opt ctx.pvalues (mpath, mname) with
+      | Some t ->
+          if List.length args > 0 then
+            report ctx span "E4009"
+              (Printf.sprintf "the constant `%s.%s` takes no arguments" dotted
+                 mname);
+          t
+      | None ->
+          report ctx span "E5004"
+            (Printf.sprintf "module `%s` has no member `%s`" dotted mname);
+          Unknown)
+
 and check_method_call ctx env span recv mname args : t =
-  (match recv.Ast.desc with
-    | Ast.Type_ident gname when Hashtbl.mem ctx.groups gname -> (
-        match Hashtbl.find_opt ctx.groups gname with
-        | Some (defs, consts) -> (
-            if List.mem_assoc mname consts then (
-              if List.length args > 0 then
-                report ctx span "E4009"
-                  (Printf.sprintf "the constant `%s.%s` takes no arguments"
-                     gname mname);
-              List.assoc mname consts)
-            else
-              match
-                List.find_opt (fun (n, _, _) -> String.equal n mname) defs
-              with
-              | Some (_, params, ret) ->
-                  check_apply ctx env span
-                    (gname ^ "." ^ mname)
-                    (FuncType (params, ret))
-                    args
-              | None ->
-                  report ctx span "E4001"
-                    (Printf.sprintf "the group `%s` has no member `%s`" gname
-                       mname);
-                  Unknown)
-        | None -> Unknown)
-    | _ -> Unknown)
+  (match dotted_path recv with
+    | Some full ->
+        (* A receiver that is exactly a module path (its head not
+           shadowed by a local): the call goes through the program's
+           signature tables. *)
+        let prefix = longest_module_prefix ctx full in
+        let module_path =
+          match full with
+          | head :: _ when not (bound_local env head) -> true
+          | _ -> false
+        in
+        if module_path && prefix <> [] && prefix = full then
+          check_module_member_call ctx env span prefix mname args
+        else Unknown
+    | None -> (
+        match recv.Ast.desc with
+        | Ast.Type_ident gname -> (
+            (* The module's own groups first, then the program's global
+               registry — groups are callable by bare name from any
+               module. *)
+            match
+              match Hashtbl.find_opt ctx.groups gname with
+              | Some g -> Some g
+              | None -> Hashtbl.find_opt ctx.pgroups gname
+            with
+            | Some (defs, consts) -> (
+                if List.mem_assoc mname consts then (
+                  if List.length args > 0 then
+                    report ctx span "E4009"
+                      (Printf.sprintf "the constant `%s.%s` takes no arguments"
+                         gname mname);
+                  List.assoc mname consts)
+                else
+                  match
+                    List.find_opt (fun (n, _, _) -> String.equal n mname) defs
+                  with
+                  | Some (_, params, ret) ->
+                      check_apply ctx env span
+                        (gname ^ "." ^ mname)
+                        (FuncType (params, ret))
+                        args
+                  | None ->
+                      report ctx span "E4001"
+                        (Printf.sprintf "the group `%s` has no member `%s`"
+                           gname mname);
+                      Unknown)
+            | None -> Unknown)
+        | _ -> Unknown))
   |> fun fallback ->
   if fallback <> Unknown then fallback
   else if
     match recv.Ast.desc with
     | Ast.Type_ident g when Hashtbl.mem ctx.groups g -> true
+    | Ast.Type_ident g when Hashtbl.mem ctx.pgroups g -> true
     | _ -> false
   then fallback
   else if
@@ -1410,6 +1551,30 @@ and check_method_call ctx env span recv mname args : t =
             (Printf.sprintf "`List.new` expects an Array, got %s"
                (to_string other));
           ListType Unknown)
+  else if
+    match (recv.Ast.desc, mname) with
+    | Ast.Type_ident "Box", "new" -> true
+    | _ -> false
+  then (
+    (* Box.new(v) — the one mutable cell's constructor. The argument's
+       type is the cell's element type, so `read` and `replace` check
+       against it; every other member on a box is refused. *)
+    let arg_values =
+      List.map
+        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+        args
+    in
+    match arg_values with
+    | [ (None, vt) ] -> BoxType vt
+    | [ (Some n, _) ] ->
+        report ctx span "E4009"
+          (Printf.sprintf "`Box.new` takes a positional value, got `%s`" n);
+        BoxType Unknown
+    | _ ->
+        report ctx span "E4009"
+          (Printf.sprintf "`Box.new` expects 1 argument, got %d"
+             (List.length arg_values));
+        BoxType Unknown)
   else if
     match (recv.Ast.desc, mname) with
     | Ast.Type_ident "Exception", "new" -> true
@@ -2629,6 +2794,17 @@ type program_types = {
   popaths : (string, string list) Hashtbl.t;
       (* type name → its declaring module path, for the internal rule
          on bare names (E5001) *)
+  pdefs : (string list * string, t) Hashtbl.t;
+      (* module path and def name → the def's FuncType, from the
+         declared parameter and return type declarations *)
+  pvalues : (string list * string, t) Hashtbl.t;
+      (* module path and name → a top-level const/var's type *)
+  pgroups :
+    ( string,
+      (string * (string * t) list * t) list * (string * t) list )
+    Hashtbl.t;
+      (* group name → (defs, consts), the program-wide registry the
+         runtime keeps *)
 }
 
 (* The resolution-only context the pass needs: its tables ARE the
@@ -2639,7 +2815,7 @@ let preregister_ctx tables diagnostics =
     file = "<program>";
     classes = tables.pclasses;
     interfaces = tables.pinterfaces;
-    groups = Hashtbl.create 0;
+    groups = tables.pgroups;
     enums = tables.penums;
     funcs = Hashtbl.create 0;
     diagnostics;
@@ -2652,6 +2828,10 @@ let preregister_ctx tables diagnostics =
     (* Resolution only: the pass predates any module's check, so no
        internal boundary can be judged here. *)
     type_owners = Hashtbl.create 0;
+    pdefs = tables.pdefs;
+    pvalues = tables.pvalues;
+    pgroups = tables.pgroups;
+    program_checked = false;
     target = "c";
   }
 
@@ -2669,6 +2849,9 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
       pinterfaces = Hashtbl.create 16;
       penums = Hashtbl.create 16;
       popaths = Hashtbl.create 16;
+      pdefs = Hashtbl.create 16;
+      pvalues = Hashtbl.create 16;
+      pgroups = Hashtbl.create 16;
     }
   in
   let diagnostics = ref [] in
@@ -2747,6 +2930,111 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
           | _ -> ())
         items)
     units;
+  (* The program's value signatures beside the type tables: every
+     module's defs and foreigns carry their declared FuncType, and every
+     top-level const/var carries its initializer's type — so a
+     consumer's `lib.make(x)` call checks its arguments and `lib.answer`
+     reads as more than Unknown. Initializers are typed in the unit's
+     own order with its defs pre-bound (the same shape a module's own
+     check uses); the diagnostics land here and are dropped, because the
+     module's own check reports the same expressions against its full
+     environment. *)
+  List.iter
+    (fun (path, items) ->
+      let prebound =
+        List.fold_left
+          (fun env item ->
+            match item.Ast.item_desc with
+            | Ast.Item_def d ->
+                bind env d.Ast.def_name
+                  { vtype = signature_of_def ctx d; is_var = false; depth = 0 }
+            | Ast.Item_foreign f ->
+                bind env f.Ast.foreign_name
+                  {
+                    vtype =
+                      signature_of_def ctx
+                        {
+                          Ast.def_span = f.Ast.foreign_span;
+                          def_name = f.Ast.foreign_name;
+                          def_params = f.Ast.foreign_params;
+                          def_return = Some f.Ast.foreign_return;
+                          def_body = [];
+                        };
+                    is_var = false;
+                    depth = 0;
+                  }
+            | _ -> env)
+          empty_env items
+      in
+      ignore
+        (List.fold_left
+           (fun env item ->
+             match item.Ast.item_desc with
+             | Ast.Item_def d ->
+                 Hashtbl.replace tables.pdefs (path, d.Ast.def_name)
+                   (signature_of_def ctx d);
+                 env
+             | Ast.Item_foreign f ->
+                 Hashtbl.replace tables.pdefs (path, f.Ast.foreign_name)
+                   (signature_of_def ctx
+                      {
+                        Ast.def_span = f.Ast.foreign_span;
+                        def_name = f.Ast.foreign_name;
+                        def_params = f.Ast.foreign_params;
+                        def_return = Some f.Ast.foreign_return;
+                        def_body = [];
+                      });
+                 env
+             | Ast.Item_stmt
+                 { Ast.stmt_desc = Ast.Binding { mutable_; name; init }; _ } ->
+                 let t = check_expr ctx env init in
+                 Hashtbl.replace tables.pvalues (path, name) t;
+                 bind env name { vtype = t; is_var = mutable_; depth = 0 }
+             | Ast.Item_emo_group g ->
+                 (* Groups are global at runtime, so the registry is
+                    program-wide too: defs from their declarations,
+                    consts typed in order with the group's defs visible
+                    bare (the members do not leak outward). *)
+                 let gdefs =
+                   List.map
+                     (fun d ->
+                       ( d.Ast.def_name,
+                         List.map
+                           (fun p ->
+                             ( p.Ast.param_name,
+                               decl_to_type ctx p.Ast.param_type ))
+                           d.Ast.def_params,
+                         match d.Ast.def_return with
+                         | Some r -> decl_to_type ctx r
+                         | None -> Void ))
+                     g.Ast.group_defs
+                 in
+                 let scoped =
+                   List.fold_left
+                     (fun env (n, params, ret) ->
+                       bind env n
+                         {
+                           vtype = FuncType (params, ret);
+                           is_var = false;
+                           depth = env.depth;
+                         })
+                     env gdefs
+                 in
+                 let _, gconsts =
+                   List.fold_left
+                     (fun (env, acc) (_, name, init) ->
+                       let t = check_expr ctx env init in
+                       let env =
+                         bind env name { vtype = t; is_var = false; depth = 0 }
+                       in
+                       (env, acc @ [ (name, t) ]))
+                     (scoped, []) g.Ast.group_consts
+                 in
+                 Hashtbl.replace tables.pgroups g.Ast.group_name (gdefs, gconsts);
+                 env
+             | _ -> env)
+           prebound items))
+    units;
   (tables, List.rev !diagnostics)
 
 (* Checks one module's items with the project's module table: unbound names
@@ -2791,6 +3079,19 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
         (match program with
         | Some p -> Hashtbl.copy p.popaths
         | None -> Hashtbl.create 0);
+      pdefs =
+        (match program with
+        | Some p -> Hashtbl.copy p.pdefs
+        | None -> Hashtbl.create 0);
+      pvalues =
+        (match program with
+        | Some p -> Hashtbl.copy p.pvalues
+        | None -> Hashtbl.create 0);
+      pgroups =
+        (match program with
+        | Some p -> Hashtbl.copy p.pgroups
+        | None -> Hashtbl.create 0);
+      program_checked = Option.is_some program;
       target;
     }
   in

@@ -1172,3 +1172,42 @@ golden green on its declared targets; `dune test` green.
 - [ ] **T37.5** — Docs: the per-package pages under `docs/stdlib/`
       (and the zh-CN mirrors) reworded raise → returns; error-message
       tables updated.
+
+### Step 38 — Checker strictness: Box typing and cross-module value signatures
+
+The checker pass on `feat/checker` (2026-10-11): the two divergences the
+loops step recorded, plus what unblinding them exposed. Decisions in
+CHECK.md.
+
+- [x] **T38.1** — `Box.new` types as `Box[T]`: the checker's constructor
+      special case beside `List.new`/`Map.new`, so `read`/`replace`
+      check against the cell and every other member — including a bare
+      member access — is refused at check time (the bare `x.v`
+      divergence; the stdlib's Box state was wholly unchecked). Two
+      latent c-side deviations fell out the moment receivers carried
+      types: `emo_box_replace` answered with the box while every other
+      target answers with the new value (aligned), and the emitter's
+      builtin `to_string` arm hijacked statically-typed instance
+      receivers, printing the debug repr instead of calling the class's
+      method (instances now dispatch by class first, the conversion
+      only when no method carries the name).
+- [x] **T38.2** — Cross-module value signatures: defs and foreigns as
+      their declared `FuncType`s, consts/vars as their initializer's
+      types, and the `emo` groups into a program-wide registry — all
+      pre-registered beside the type tables. A qualified call checks
+      through `check_apply`; a bare member read resolves or reports
+      E5004 statically; group members type (a bare `Math.tau` read as
+      Unknown even same-module before); a local shadows a module of the
+      same name, the runtime's rule. Two pre-existing checker bugs fell
+      out: `longest_module_prefix` walked the path's suffixes, never its
+      prefixes, and the empty dotted path passed as a module prefix —
+      bare member access on any non-simple receiver (`foo(1).field`)
+      read as Unknown.
+- [x] **T38.3** — A capitalized value name resolving to no type, group,
+      or module reports E4003 where it is written, in a program check
+      (the runtime's value-carrying builtins stay legal); the lone-file
+      view keeps the old silence, like every cross-file gap it cannot
+      see through. The json/yaml interfaces declare `get` (a
+      self-referencing signature; json gains the four raising scalar
+      variants its classes already answered with). Checker and project
+      tests; the CHECK.md entry; every target's goldens green.

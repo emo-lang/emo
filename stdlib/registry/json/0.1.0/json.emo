@@ -12,11 +12,12 @@
 
 enum JsonKind { jnull, jbool, jint, jfloat, jstring, jarray, jobject }
 
-// The scalar accessors live on the interface, so a payload is one
-// call away without asking what it is. Arrays and objects carry their
-// containers on the concrete classes — read them through `is()`
-// (`if v.is(JsonObject) { ... v.get("k") ... }`), since an interface
-// signature cannot name its own interface.
+// The accessors live on the interface, so a payload is one call away
+// without asking what it is: `get` reads an object's value (every kind
+// answers — the non-objects raise), and the scalar `as_*` accessors
+// answer with the payload or raise on a kind mismatch. Container
+// traversal beyond `get` — `items`, `entries` — stays on the concrete
+// classes behind `is()` narrowing.
 interface Json {
   def kind() JsonKind
   def is_null?() Bool
@@ -26,6 +27,7 @@ interface Json {
   def as_int() Int64
   def as_float() Float64
   def as_string() String
+  def get(key String) Json
 }
 
 class JsonNull {
@@ -118,6 +120,9 @@ class JsonBool {
   def entries() Array[(String, Json)] {
     raise Exception.new(message: "json: expected an object, got true or false")
   }
+  def get(key String) Json {
+    raise Exception.new(message: "json: expected an object, got true or false")
+  }
 }
 
 class JsonInt {
@@ -159,6 +164,9 @@ class JsonInt {
     raise Exception.new(message: "json: expected an array, got an integer")
   }
   def entries() Array[(String, Json)] {
+    raise Exception.new(message: "json: expected an object, got an integer")
+  }
+  def get(key String) Json {
     raise Exception.new(message: "json: expected an object, got an integer")
   }
 }
@@ -204,6 +212,9 @@ class JsonFloat {
   def entries() Array[(String, Json)] {
     raise Exception.new(message: "json: expected an object, got a number")
   }
+  def get(key String) Json {
+    raise Exception.new(message: "json: expected an object, got a number")
+  }
 }
 
 class JsonString {
@@ -245,6 +256,9 @@ class JsonString {
     raise Exception.new(message: "json: expected an array, got a string")
   }
   def entries() Array[(String, Json)] {
+    raise Exception.new(message: "json: expected an object, got a string")
+  }
+  def get(key String) Json {
     raise Exception.new(message: "json: expected an object, got a string")
   }
 }
