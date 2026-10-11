@@ -558,11 +558,13 @@ Step 34 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 **前置:** Step 34。
 **完成标准:** `examples/loops` 在 c、ocaml、typescript、wasm、beam、riscv64 上编译,每个 target 逐字节打印 `emo run` 的输出(金测入 CI);千万次迭代的循环在每个 target 上栈保持平坦;尾调用保证不被触动(`loops_tail` 不变);`dune test` 全绿。
 
-- [ ] **T35.1** — IR:循环语句进入 `emo_ir` 的 `stmt` 与 Ast→IR 降低——头部 `var` 降为循环作用域的可变绑定;一套节点,每个后端一个分支。
-- [ ] **T35.2** — c:发射出的 C 自带的 `while`/`for` 与原生 `break`/`continue`;循环内的 `return` 走既有的分支到收尾路径。
-- [ ] **T35.3** — ocaml:原生 `while`/`for` 配既有的 `ref` 纪律表达头部 `var`;`break`/`continue` 经 plan 文件记录的唯一机制降低(done 标记或本地异常——落定,绝不静默回退)。
-- [ ] **T35.4** — typescript:发射体内原生 `while`/`for`;`break`/`continue` 用目标语言自己的。
-- [ ] **T35.5** — wasm:结构化控制流——`Loop` 加条件上的 `Br_if`;`break` 分支出循环块,`continue` 到循环头,post 子句先行执行。
-- [ ] **T35.6** — beam:循环降为尾递归的局部函数——条件守卫、循环体、带重绑变量的递归调用;`break` 穿线一个 done 标记。
-- [ ] **T35.7** — riscv64:标号与条件分支——循环头是标号,`break`/`continue` 是跳转。
-- [ ] **T35.8** — 金测与基准:`examples/loops` 上全部六个 target 金测列表;`benchmarks/results.md` 在 `loops_tail` 旁新增纯循环一行;CI 各组;收尾。
+- [x] **T35.1** — IR:循环语句进入 `emo_ir` 的 `stmt` 与 Ast→IR 降低——头部 `var` 降为循环作用域的可变绑定;一套节点,每个后端一个分支。(2026-10-11 完成;赋值降低改为最内层优先,头部 `var` 正确遮蔽同名模块级 `var`。)
+- [x] **T35.2** — c:发射出的 C 自带的 `while`/`for` 与原生 `break`/`continue`;循环内的 `return` 走既有的分支到收尾路径。(2026-10-11 完成;`for` 用 `while(1)` 加 continue 标签使 post 先行;顺带修复动态重绑先释放后求值的未定义行为。)
+- [x] **T35.3** — ocaml:原生 `while`/`for` 配既有的 `ref` 纪律表达头部 `var`;`break`/`continue` 经 plan 文件记录的唯一机制降低(done 标记或本地异常——落定,绝不静默回退)。(2026-10-11 完成;机制落定为每循环一对局部异常 `Break_N`/`Continue_N`。)
+- [x] **T35.4** — typescript:发射体内原生 `while`/`for`;`break`/`continue` 用目标语言自己的。(2026-10-11 完成;自尾调用的 driver 循环加 `__emo_driver` 标签;顺带修复 `stmts` 链先发尾部后发头部的预存发射顺序 bug。)
+- [x] **T35.5** — wasm:结构化控制流——`Loop` 加条件上的 `Br_if`;`break` 分支出循环块,`continue` 到循环头,post 子句先行执行。(2026-10-11 完成;`for` 用 `$post` 块包住 body 使 continue 先跑 post;语句级 if 与 case 分派计入分支深度。)
+- [x] **T35.6** — beam:循环降为尾递归的局部函数——条件守卫、循环体、带重绑变量的递归调用;`break` 穿线一个 done 标记。(2026-10-11 完成;循环体读或写的全部外层绑定经参数线程化;体发射为尾链,跳转永不落在 scrutinee 或 do 首位;顺带修复单语句 `Assign_var` 先注册影子后求值的预存 bug。)
+- [x] **T35.7** — riscv64:标号与条件分支——循环头是标号,`break`/`continue` 是跳转。(2026-10-11 完成;`for` 在 body 与回跳之间放 post 标签,continue 落在 post 上。)
+- [x] **T35.8** — 金测与基准:`examples/loops` 上全部六个 target 金测列表;`benchmarks/results.md` 在 `loops_tail` 旁新增纯循环一行;CI 各组;收尾。(2026-10-11 完成;riscv64 补齐 `/` 与 `%`——`div`/`rem` 加零除中止——使示例可启动。)
+
+Step 35 收尾(2026-10-11,`feat/loops` 分支):循环语句在全部六个 target 上完成降低,每任务一次提交。各 target 的机制与英文版收尾一致;`examples/loops` 在全部六个 target 与解释器上金测通过,纯循环基准行记录了 ocaml target 按构造即为动态的数字。

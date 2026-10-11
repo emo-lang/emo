@@ -602,13 +602,30 @@ and emit_binary env d (ty : Emo_check.t) (op : Emo_ast.binop) (l : Emo_ir.expr)
         put env "    %s t0, t0, t1\n" mnemonic;
         put env "    mv a0, t0\n";
         put env "    call emo_box_i64\n"
-    | (Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul), Emo_check.Float64 ->
+    | (Emo_ast.Div | Emo_ast.Mod), Emo_check.Int64 ->
+        (* the divisor is checked first: RISC-V's div/rem define x/0
+           instead of trapping, and the language raises. INT64_MIN / -1
+           needs no check — the hardware's wrap matches the c runtime's
+           saturation. *)
+        emit_int_pair env d l r;
+        put env "    bnez t1, 1f\n";
+        put env "    la a0, msg_divzero\n";
+        put env "    la a1, msg_divzero_end\n";
+        put env "    call emo_fail\n";
+        put env "1:\n";
+        put env "    %s t0, t0, t1\n"
+          (if op = Emo_ast.Div then "div" else "rem");
+        put env "    mv a0, t0\n";
+        put env "    call emo_box_i64\n"
+    | (Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Div), Emo_check.Float64
+      ->
         emit_float_pair env d l r;
         let mnemonic =
           match op with
           | Emo_ast.Add -> "fadd.d"
           | Emo_ast.Sub -> "fsub.d"
           | Emo_ast.Mul -> "fmul.d"
+          | Emo_ast.Div -> "fdiv.d"
           | _ -> assert false
         in
         put env "    %s fa0, fa0, fa1\n" mnemonic;
@@ -2331,6 +2348,9 @@ msg_method_end:
 msg_arith:
     .ascii "arithmetic on values of these kinds"
 msg_arith_end:
+msg_divzero:
+    .ascii "division by zero"
+msg_divzero_end:
 name_to_string:
     .ascii "to_string"
 name_length:

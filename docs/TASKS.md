@@ -1073,6 +1073,25 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       heap's no-reclamation arena — shared with the pre-loop
       tail-recursive idiom — still bounds long-running programs;
       unchanged by this task.)
-- [ ] **T35.8** — Goldens and benchmarks: `examples/loops` on all six
+- [x] **T35.8** — Goldens and benchmarks: `examples/loops` on all six
       target golden lists; a plain-loop row beside `loops_tail` in
-      `benchmarks/results.md`; the CI groups; close-out.
+      `benchmarks/results.md`; the CI groups; close-out. (Done
+      2026-10-11. The riscv64 target gained `/` and `%` — `div`/`rem`
+      with a zero-division abort — so the example boots there; the
+      plain-loop benchmark records the ocaml target's dynamic-by-
+      construction number beside the c target and the interpreter.)
+
+Step 35 close-out (2026-10-11, on `feat/loops`): the loop statements
+lower on all six targets, one commit per task. The IR carries
+While/For/Break/Continue with the header `var` as a loop-scoped mutable
+binding, and assignment lowering resolves innermost-first so a header
+`var` updates itself under a same-named module-level `var`. c emits its
+own `while` and a `while(1)` form whose continue label runs the post;
+ocaml uses the ref discipline and a pair of local exceptions per loop;
+typescript uses the target's native `for` with a labeled driver loop
+for tail calls; wasm lowers to block/loop/br_if with a post block;
+beam threads every free variable through a hidden recursive function
+with a done flag; riscv64 uses labels and jumps — and gained `/` and
+`%` so the example boots. `examples/loops` is golden on all six targets
+plus the interpreter, and the plain-loop benchmark row records the
+dynamic-by-construction ocaml number beside the c target.

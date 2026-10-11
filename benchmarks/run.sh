@@ -121,6 +121,14 @@ row "tail loop 10M" "ms per run, interpreter (emo run)" "$(interp_ms loops_tail)
 row "tail loop 10M" "ms per run, plain OCaml baseline" "$(time_ms "$BLD/tail_loop_ml")"
 row "tail loop 10M" "ms per run, C baseline" "$(time_ms "$BLD/tail_loop_c")"
 
+# --- plain for-loop: the iteration statement; the ocaml target keeps
+# --- any loop-bearing function dynamic by construction ---
+build plain_loop
+build_c plain_loop
+row "plain loop 10M" "ms per run, ocaml target (dynamic by construction)" "$(time_ms "$ROOT/benchmarks/plain_loop/main.emo-bin")"
+row "plain loop 10M" "ms per run, c target (emo build --target c)" "$(time_ms "$ROOT/benchmarks/plain_loop/main.c-bin")"
+row "plain loop 10M" "ms per run, interpreter (emo run)" "$(interp_ms plain_loop)"
+
 # --- foreign call overhead: 10M C sqrt calls through `foreign def` ---
 build ffi_call --cclib m
 build_c ffi_call
