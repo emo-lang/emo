@@ -43,6 +43,15 @@ jobs:
       - name: Install dependencies
         run: opam install -y dune cmdliner alcotest eio_main ssl yojson digestif
 
+      # The riscv64 goldens boot the freestanding ELF under QEMU (T22.4);
+      # on macOS the group skips gracefully — the cross binutils would
+      # need a brew install per run.
+      - name: Install riscv64 QEMU and cross binutils
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-misc gcc-riscv64-unknown-elf
+
       - name: Build
         run: opam exec -- dune build
 

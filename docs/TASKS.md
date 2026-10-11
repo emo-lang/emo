@@ -420,10 +420,16 @@ green.
       enums, instances with vtable dispatch, closures and first-class
       functions; patterns with guards; interpolation with the `%g`
       float rule. Golden: objects, language_tour.
-- [ ] **T22.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
+- [x] **T22.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
       cross-binutils on the runner), the resolution-gate refusal test
       for packages lacking `"riscv64"`, the emission-time refusal
       diagnostics, close-out.
+
+**Step 22 acceptance met.** M7 is done: the freestanding RV64 backend
+ships — hello_world, fib, objects, and language_tour boot under QEMU
+as byte-for-byte goldens, the refusals are loud, and resolution gates
+packages. The `%g` float to-string lands as its own follow-up
+(plan/step-22 close-out).
 
 ## M8 — Self-contained hosted backend
 

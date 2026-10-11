@@ -8,7 +8,10 @@
   emo_support
   emo_eval
   emo_lexer
-  emo_parser))
+  emo_parser
+  emo_ir
+  emo_check
+  emo_codegen))
 
 (rule
  (alias runtest)

@@ -155,8 +155,7 @@ let examples_dir = "../../examples"
 (* A directory holding .emo submodules is a multi-module tree — it
    runs through project semantics in test/emo_project, not here. *)
 let has_emo_subdir dir =
-  Sys.readdir dir
-  |> Array.to_list
+  Sys.readdir dir |> Array.to_list
   |> List.exists (fun e ->
       Sys.file_exists (Filename.concat dir e)
       && Sys.is_directory (Filename.concat dir e))
@@ -166,7 +165,7 @@ let example_names () =
   |> List.filter (fun name ->
       let dir = Filename.concat examples_dir name in
       Sys.file_exists (Filename.concat dir "main.emo")
-      && not (Sys.file_exists (Filename.concat dir "package.emo"))
+      && (not (Sys.file_exists (Filename.concat dir "package.emo")))
       && not (has_emo_subdir dir))
 
 let examples_tests =
@@ -1733,6 +1732,95 @@ let riscv64_examples_tests =
                    (Buffer.contents err))))
     [ "hello_world"; "fib"; "objects"; "language_tour" ]
 
+(* T22.4's honest refusals: a program the checker admits but the
+   freestanding backend cannot honor yet exits 65 with a message that
+   names the construct — the check itself rides the emitter's
+   Lower_error, so the text is asserted directly. *)
+let riscv64_refusal_tests =
+  [
+    tc "a map literal refuses with a clear diagnostic" (fun () ->
+        let dir = Filename.concat scratch "riscv-map" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc {|println({ "a": 1 })|};
+        close_out oc;
+        Alcotest.(check int)
+          "exit" 65
+          (Emo_cli.build_file ~entry
+             ~output:(Filename.concat dir "out")
+             ~specialize:false ~cclibs:[] ~target:"riscv64"));
+    tc "spawn refuses with a clear diagnostic" (fun () ->
+        let dir = Filename.concat scratch "riscv-spawn" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc {|
+def work() {
+  println("nope")
+}
+do work()|};
+        close_out oc;
+        Alcotest.(check int)
+          "exit" 65
+          (Emo_cli.build_file ~entry
+             ~output:(Filename.concat dir "out")
+             ~specialize:false ~cclibs:[] ~target:"riscv64"));
+    tc "the refusals name the construct" (fun () ->
+        let refusal src =
+          let items, parse_diags =
+            Emo_parser.parse_program_with_diagnostics ~file:"main.emo"
+              ~source:src
+          in
+          (match parse_diags with
+          | [] -> ()
+          | _ -> Alcotest.fail "parse errors");
+          let diags, _refs, _requires, types =
+            Emo_check.check_module_typed ~modules:[] ~current:[]
+              ~target:"riscv64" items
+          in
+          match diags with
+          | _ :: _ -> Alcotest.fail "unexpected check errors"
+          | [] -> (
+              let program =
+                Emo_ir.lower
+                  {
+                    Emo_ir.modules =
+                      [ { Emo_ir.mpath = []; mitems = items; mtypes = types } ];
+                    entry = [];
+                  }
+              in
+              match
+                try
+                  ignore (Emo_codegen.Riscv.emit program);
+                  None
+                with Emo_ir.Lower_error message -> Some message
+              with
+              | None -> None
+              | Some message -> Some message)
+        in
+        List.iter
+          (fun (name, src, fragment) ->
+            match refusal src with
+            | None ->
+                Alcotest.fail (Printf.sprintf "%s: expected a refusal" name)
+            | Some message ->
+                Alcotest.(check bool)
+                  name true
+                  (contains message "does not support"
+                  && contains message fragment))
+          [
+            ( "processes",
+              {|def work() {
+  println("nope")
+}
+do work()|},
+              "spawn" );
+            ("division", {|println(7 / 2)|}, "`/`");
+            ("bytes", {|println(Bytes.new(4))|}, "Bytes");
+          ]);
+  ]
+
 (* ---- new: the project scaffold (T25.3) ---- *)
 
 let read_file path =
@@ -1908,6 +1996,7 @@ let () =
       ("c_dynamic", c_dynamic_tests);
       ("c_foreign", c_foreign_tests);
       ("riscv64_examples", riscv64_examples_tests);
+      ("riscv64_refusal", riscv64_refusal_tests);
       ("publish", publish_tests);
       ("login", login_tests);
       ("new", new_tests);

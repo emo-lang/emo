@@ -65,7 +65,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 19 | The systems layer (wasm runtime + EmoOS primitives) | done |
 | 20 | Wasm runtime: decoder & validator | done |
 | 21 | Wasm runtime: interpreter core & spec goldens | in progress (tasks written) |
-| 22 | RISC-V target (freestanding RV64) | not started (tasks written) |
+| 22 | RISC-V target (freestanding RV64) | done (T22.1–T22.4; the `%g` float to-string lands as its own follow-up) |
 | 23 | Self-contained hosted native backend (no OCaml runtime) & deep C FFI | assessment delivered — executed as step 24 (emit C) |
 | 24 | C target (emit C) | done (close-out recorded; the native → ocaml rename landed; aligned 2026-10-10 — Void foreign returns, `emo_defs.h`, content-keyed caches, cross-module calls and types) |
 | 25 | Toolchain distribution & release | done (v0.25.9; M9 complete) |

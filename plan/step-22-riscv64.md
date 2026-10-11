@@ -2,8 +2,8 @@
 
 **Milestone:** M7 · **Prereq:** steps 01–13 (the specialization pass);
 the step-14 RISC-V reference note is the design record ·
-**Status:** T22.1–T22.3 done (2026-10-11 — the data structures are
-golden; T22.4 bootstrap remains)
+**Status:** done (2026-10-11 — T22.1–T22.4, close-out recorded; the
+`%g` float to-string lands as its own follow-up)
 
 ## Goal
 
@@ -202,10 +202,35 @@ scheduler is the following step.
       enums, instances with vtable dispatch, closures and first-class
       functions; patterns with guards; interpolation with the `%g`
       float rule. Golden: objects, language_tour.
-- [ ] **T22.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
+- [x] **T22.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
       cross-binutils on the runner), the resolution-gate refusal test
       for packages lacking `"riscv64"`, the emission-time refusal
       diagnostics, close-out.
+
+## Close-out (2026-10-11)
+
+The fifth backend ships: `emo build --target riscv64` emits RV64
+assembly, the GNU cross binutils link it into one freestanding ELF,
+and it boots under `qemu-system-riscv64 -machine virt` — hello_world,
+fib, objects, and language_tour print byte-for-byte what the
+interpreter prints (the `riscv64_examples` golden group; the CI Linux
+job installs QEMU and `gcc-riscv64-unknown-elf`, and the group skips
+gracefully wherever they are absent). The dynamic world is complete
+over this subset: tagged-word values (four-bit tags, 16-byte-aligned
+blocks), a bump heap, frames, closures, guaranteed tail calls, tuples,
+arrays, Box, enums, classes with direct and vtable dispatch, case with
+tuple patterns and guards, and the by-name dynamic layer the
+Unknown-typed references ride. `spawn`/`send`/`receive` and `foreign
+def` refuse loudly (check-time for `foreign def` via the capability
+table; emission-time for the rest), and packages without `"riscv64"`
+fail resolution before any emission.
+
+**Remaining (recorded, not silently dropped):** the `%g` float
+to-string — a decimal dtoa in freestanding RV64 assembly is its own
+piece of work; today a Float64 in a `println` or interpolation fails
+at run time with a named message ("cannot convert a Float64 to a
+string yet"), never a wrong answer. Everything else on this page is
+landed.
 
 ## Acceptance
 
