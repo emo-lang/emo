@@ -202,6 +202,22 @@ emo_value emo_field_by_name(emo_value instance, const char *name);
 bool emo_is_iface(emo_value instance, const emo_iface *ifc);
 int emo_is_instance(emo_value v);
 
+/* Reclamation (CHECK.md, the T24.5 gate): reference counting over the
+   identity-bearing cells — instances, closures, Box. Everything else
+   is arena-resident and these are no-ops on it. The emitter owns the
+   discipline: retain on capture into a longer-lived slot (bindings,
+   fields — a barrier inside set_field/box_replace — closures,
+   aggregates), release at binding-scope exit and on overwrite, and an
+   autorelease pool draining at statement boundaries carries
+   expression-internal temporaries. Cycles leak, documented. */
+emo_value emo_retain(emo_value v); /* pass-through */
+void emo_release(emo_value v);
+emo_value emo_autorelease(emo_value v); /* pass-through: pools the word */
+void emo_drain(void);
+void emo_pool_enter(void); /* every generated body opens a frame pool */
+void emo_pool_exit(void);  /* and closes it at every return */
+int64_t emo_identity_live_count(void); /* a reclamation probe for tests */
+
 /* The dynamic builtin send: an untyped receiver answers through its
    vtable when it is an instance, and through the builtin that owns the
    method name otherwise. The receiver value is evaluated once. */

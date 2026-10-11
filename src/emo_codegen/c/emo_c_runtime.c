@@ -97,6 +97,87 @@ static uintptr_t *emo_payload(emo_value v) {
   return (uintptr_t *)(((emo_cell *)v) + 1);
 }
 
+/* ---- Reclamation (CHECK.md, the T24.5 gate) ----
+
+   Reference counting over the identity-bearing objects; the
+   value-semantic data stays in the bump arena for the process
+   lifetime. Three cell kinds carry identity — instances, closures, and
+   Box — and they alone are malloc'd individually with a refcount ahead
+   of the cell header, so release can hand them back to the system.
+   Everything else (strings, tuples, arrays, maps, lists, bytes) is
+   never freed and needs no bookkeeping; the constructors of the
+   arena-resident aggregates retain the identity words they store, so
+   an object captured by arena data lives as long as the arena — the
+   documented shape. Cycles among instances and closures leak (the
+   Swift model). */
+
+typedef struct {
+  int64_t rc;
+  /* the emo_cell header follows */
+} emo_idhead;
+
+static int64_t emo_identity_live = 0;
+
+static emo_value emo_idcell_new(uintptr_t kind, int64_t words) {
+  /* zeroed: the field write barrier releases the previous word, so a
+     fresh cell's fields must read as 0, not as malloc garbage */
+  emo_idhead *h = calloc(1, sizeof(emo_idhead) + sizeof(emo_cell) +
+                               (size_t)words * sizeof(emo_value));
+  if (h == NULL) {
+    fputs("emo: out of memory\n", stderr);
+    abort();
+  }
+  h->rc = 1;
+  emo_identity_live++;
+  emo_cell *c = (emo_cell *)(h + 1);
+  c->header = kind;
+  return (uintptr_t)c; /* malloc alignment: low bits 000 */
+}
+
+static int64_t *emo_rc_of(emo_value v) {
+  return &((emo_idhead *)((emo_cell *)v - 1))->rc;
+}
+
+static uintptr_t emo_cell_kind(emo_value v); /* defined with the accessors */
+
+static int emo_identity_kind(uintptr_t kind) {
+  return kind == EMO_INSTANCE || kind == EMO_CLOSURE || kind == EMO_BOX;
+}
+
+emo_value emo_retain(emo_value v) {
+  if (v == 0 || (v & 7) != 0) return v; /* immediates carry no count */
+  if (!emo_identity_kind(emo_cell_kind(v))) return v;
+  (*emo_rc_of(v))++;
+  return v;
+}
+
+void emo_release(emo_value v) {
+  if (v == 0 || (v & 7) != 0) return;
+  if (!emo_identity_kind(emo_cell_kind(v))) return;
+  if (--*emo_rc_of(v) > 0) return;
+  emo_identity_live--;
+  uintptr_t *p = emo_payload(v);
+  switch (emo_cell_kind(v)) {
+  case EMO_INSTANCE: {
+    /* [header][vtable][fields...] */
+    const emo_vtable *vt = (const emo_vtable *)p[0];
+    for (int64_t i = 0; i < vt->field_count; i++)
+      emo_release((emo_value)p[i + 1]);
+    break;
+  }
+  case EMO_CLOSURE: {
+    /* [header][fn][ncaps][captured...] */
+    int64_t ncaps = (int64_t)p[1];
+    for (int64_t i = 0; i < ncaps; i++) emo_release((emo_value)p[i + 2]);
+    break;
+  }
+  default: /* EMO_BOX: [header][payload] */
+    emo_release((emo_value)p[0]);
+    break;
+  }
+  free((emo_idhead *)((emo_cell *)v - 1));
+}
+
 /* ---- Hosted startup and println ---- */
 
 void emo_startup(void) {
@@ -304,7 +385,10 @@ emo_value emo_tuple_new(int64_t arity, emo_value *elems) {
   emo_value v = emo_cell_new(EMO_TUPLE, arity + 1);
   uintptr_t *p = emo_payload(v);
   p[0] = (uintptr_t)arity;
-  for (int64_t i = 0; i < arity; i++) p[i + 1] = (uintptr_t)elems[i];
+  for (int64_t i = 0; i < arity; i++) {
+    p[i + 1] = (uintptr_t)elems[i];
+    emo_retain(elems[i]); /* the arena cell holds its identities */
+  }
   return v;
 }
 
@@ -313,7 +397,10 @@ emo_value emo_array_new(int64_t len, emo_value *elems) {
   emo_value v = emo_cell_new(EMO_ARRAY, len + 1);
   uintptr_t *p = emo_payload(v);
   p[0] = (uintptr_t)len;
-  for (int64_t i = 0; i < len; i++) p[i + 1] = (uintptr_t)elems[i];
+  for (int64_t i = 0; i < len; i++) {
+    p[i + 1] = (uintptr_t)elems[i];
+    emo_retain(elems[i]);
+  }
   return v;
 }
 
@@ -322,26 +409,37 @@ emo_value emo_array_append(emo_value arr, emo_value v) {
   emo_value out = emo_cell_new(EMO_ARRAY, n + 2);
   uintptr_t *p = emo_payload(out);
   p[0] = (uintptr_t)(n + 1);
-  for (int64_t i = 0; i < n; i++) p[i + 1] = emo_payload(arr)[i + 1];
+  for (int64_t i = 0; i < n; i++) {
+    p[i + 1] = emo_payload(arr)[i + 1];
+    emo_retain((emo_value)p[i + 1]);
+  }
   p[n + 1] = (uintptr_t)v;
+  emo_retain(v);
   return out;
 }
 
 emo_value emo_box_new(emo_value v) {
-  return emo_box_kind(EMO_BOX, (int64_t)v);
+  emo_value box = emo_idcell_new(EMO_BOX, 1);
+  *emo_payload(box) = (uintptr_t)v;
+  emo_retain(v); /* the box owns its contents */
+  return box;
 }
 
 emo_value emo_box_read(emo_value box) {
   box = emo_expect_kind(box, EMO_BOX);
-  return (emo_value)*emo_payload(box);
+  emo_value v = (emo_value)*emo_payload(box);
+  return emo_retain(v); /* the read hands the caller its own claim */
 }
 
 emo_value emo_box_replace(emo_value box, emo_value v) {
   box = emo_expect_kind(box, EMO_BOX);
   uintptr_t *p = emo_payload(box);
+  /* the write barrier: the box owns the new value and drops the old */
+  emo_retain(v);
   emo_value old = (emo_value)*p;
   *p = (uintptr_t)v;
-  return old;
+  emo_release(old);
+  return emo_retain(box); /* the chained call hands the caller its own claim */
 }
 
 /* ---- The List deque ----
@@ -378,6 +476,7 @@ emo_value emo_list_new(emo_value arr) {
   for (int64_t i = 0; i < n; i++) {
     emo_list_node *node = emo_alloc(sizeof(emo_list_node));
     node->v = (emo_value)emo_payload(arr)[i + 1];
+    emo_retain(node->v); /* the list holds its elements */
     node->prev = l->tail;
     node->next = NULL;
     if (l->tail != NULL)
@@ -394,6 +493,7 @@ emo_value emo_list_push_front(emo_value l, emo_value v) {
   emo_list *list = emo_list_of(l);
   emo_list_node *node = emo_alloc(sizeof(emo_list_node));
   node->v = v;
+  emo_retain(v);
   node->prev = NULL;
   node->next = list->head;
   if (list->head != NULL)
@@ -402,13 +502,14 @@ emo_value emo_list_push_front(emo_value l, emo_value v) {
     list->tail = node;
   list->head = node;
   list->size++;
-  return l;
+  return emo_retain(l); /* the chained call hands the caller its own claim */
 }
 
 emo_value emo_list_push_back(emo_value l, emo_value v) {
   emo_list *list = emo_list_of(l);
   emo_list_node *node = emo_alloc(sizeof(emo_list_node));
   node->v = v;
+  emo_retain(v);
   node->prev = list->tail;
   node->next = NULL;
   if (list->tail != NULL)
@@ -417,7 +518,7 @@ emo_value emo_list_push_back(emo_value l, emo_value v) {
     list->head = node;
   list->tail = node;
   list->size++;
-  return l;
+  return emo_retain(l);
 }
 
 emo_value emo_list_pop_front(emo_value l) {
@@ -563,7 +664,7 @@ emo_value emo_map_get(emo_value m, emo_value key) {
     fprintf(stderr, "runtime error: no key %.*s in this Map\n", (int)len, buf);
     exit(70);
   }
-  return ((emo_map_entry *)emo_payload(m)[2])[i].value;
+  return emo_retain(((emo_map_entry *)emo_payload(m)[2])[i].value);
 }
 
 emo_value emo_map_set(emo_value m, emo_value key, emo_value value) {
@@ -572,8 +673,15 @@ emo_value emo_map_set(emo_value m, emo_value key, emo_value value) {
   int64_t i = emo_map_find(m, key);
   uintptr_t *p = emo_payload(m);
   if (i >= 0) {
-    ((emo_map_entry *)p[2])[i].value = value;
-    return m;
+    /* the write barrier: the map owns its entries */
+    emo_retain(key);
+    emo_retain(value);
+    emo_map_entry *slot = (emo_map_entry *)p[2];
+    emo_release(slot[i].key);
+    emo_release(slot[i].value);
+    slot[i].key = key;
+    slot[i].value = value;
+    return emo_retain(m);
   }
   int64_t cap = (int64_t)p[1];
   int64_t count = (int64_t)p[0];
@@ -590,7 +698,10 @@ emo_value emo_map_set(emo_value m, emo_value key, emo_value value) {
   emo_map_entry *entries = (emo_map_entry *)p[2];
   entries[count].key = key;
   entries[count].value = value;
+  emo_retain(key); /* the map owns its entries */
+  emo_retain(value);
   entries[count].next = -1;
+  emo_retain(m); /* the chained call hands the caller its own claim */
   p[0] = (uintptr_t)(count + 1);
   uintptr_t mask = p[3];
   if (p[4] == (uintptr_t)NULL ||
@@ -643,6 +754,8 @@ emo_value emo_map_remove(emo_value m, emo_value key) {
   while (*link >= 0) {
     emo_map_entry *e = &entries[*link];
     if (e->key != 0 && emo_eq_dyn(e->key, key)) {
+      emo_release(e->key); /* the map drops the removed entry */
+      emo_release(e->value);
       e->key = 0;
       *link = e->next;
       p[0] = (uintptr_t)((int64_t)p[0] - 1);
@@ -687,7 +800,7 @@ emo_value emo_map_values(emo_value m) {
 
 emo_value emo_instance_new(const emo_vtable *vt, int64_t nfields) {
   /* [header][vtable][fields...] */
-  emo_value v = emo_cell_new(EMO_INSTANCE, nfields + 1);
+  emo_value v = emo_idcell_new(EMO_INSTANCE, nfields + 1);
   *emo_payload(v) = (uintptr_t)vt;
   return v;
 }
@@ -712,7 +825,12 @@ void emo_set_field(emo_value instance, int64_t i, emo_value v) {
   instance = emo_expect_kind(instance, EMO_INSTANCE);
   if (i < 0 || i >= (int64_t)((const emo_vtable *)*emo_payload(instance))->field_count)
     emo_fatal("a field index is out of range for its class");
+  /* the write barrier (CHECK.md): the instance owns its field, so the
+     store retains the new value and releases the overwritten one */
+  emo_retain(v);
+  uintptr_t old = emo_payload(instance)[i + 1];
   emo_payload(instance)[i + 1] = (uintptr_t)v;
+  emo_release((emo_value)old);
 }
 
 bool emo_is_class(emo_value instance, const emo_vtable *vt) {
@@ -782,11 +900,16 @@ bool emo_enum_is(emo_value v, const char *enum_name, const char *member) {
 
 emo_value emo_closure_new(emo_closure_fn fn, int64_t ncaps,
                           const emo_value *caps) {
-  /* [header][fn][captured...] */
-  emo_value v = emo_cell_new(EMO_CLOSURE, ncaps + 1);
+  /* [header][fn][ncaps][captured...] — the capture count rides in the
+     cell so release can free the captures */
+  emo_value v = emo_idcell_new(EMO_CLOSURE, ncaps + 2);
   uintptr_t *p = emo_payload(v);
   *p++ = (uintptr_t)fn;
-  for (int64_t i = 0; i < ncaps; i++) *p++ = (uintptr_t)caps[i];
+  *p++ = (uintptr_t)ncaps;
+  for (int64_t i = 0; i < ncaps; i++) {
+    *p++ = (uintptr_t)caps[i];
+    emo_retain(caps[i]);
+  }
   return v;
 }
 
@@ -797,7 +920,7 @@ emo_closure_fn emo_closure_fn_of(emo_value closure) {
 
 emo_value emo_closure_get(emo_value closure, int64_t i) {
   closure = emo_expect_kind(closure, EMO_CLOSURE);
-  return (emo_value)emo_payload(closure)[i + 1];
+  return (emo_value)emo_payload(closure)[i + 2];
 }
 
 emo_value emo_closure_call0(emo_value f) {
@@ -1347,7 +1470,14 @@ bool emo_eq_dyn(emo_value a, emo_value b) {
         return false;
     return true;
   }
-  case EMO_BOX: return emo_eq_dyn(emo_box_read(a), emo_box_read(b));
+  case EMO_BOX: {
+    /* the reads hand each caller a claim; drop them after comparing */
+    emo_value va = emo_box_read(a), vb = emo_box_read(b);
+    bool eq = emo_eq_dyn(va, vb);
+    emo_release(va);
+    emo_release(vb);
+    return eq;
+  }
   case EMO_LIST: {
     /* element-wise, front to back — the Box rule generalized */
     emo_list *la = (emo_list *)*emo_payload(a);
@@ -1620,6 +1750,29 @@ typedef struct emo_msg {
   emo_value v;
 } emo_msg;
 
+/* The autorelease pool: identity words handed out inside one statement
+   wait here and release together at the statement boundary (the
+   generated `emo_drain`). The ObjC shape — it lets every call site
+   pass borrowed words without ownership analysis. */
+typedef struct emo_pool {
+  emo_value *items;
+  int64_t count;
+  int64_t cap;
+} emo_pool;
+
+static void emo_pool_push(emo_pool *p, emo_value v) {
+  if (p->count == p->cap) {
+    int64_t ncap = p->cap < 16 ? 16 : p->cap * 2;
+    emo_value *items = realloc(p->items, (size_t)ncap * sizeof(emo_value));
+    if (items == NULL) abort();
+    p->items = items;
+    p->cap = ncap;
+  }
+  p->items[p->count++] = v;
+}
+
+
+
 typedef struct emo_process {
   int64_t pid;
   ucontext_t ctx;
@@ -1630,6 +1783,8 @@ typedef struct emo_process {
   int finished;    /* body returned or halted */
   int64_t wait_fd; /* -1: parked on a mailbox; >= 0: parked on readability */
   emo_value *spawn_args;
+  int64_t spawn_nargs;
+  void *top_frame; /* the fiber's autorelease-pool frame stack (emo_frame) */
   void (*entry)(void);
   void *stack; /* the fiber's malloc'd stack — ctx.uc_stack is clobbered
                   by swapcontext on save */
@@ -1639,6 +1794,80 @@ static emo_process *emo_runq_head = NULL, *emo_runq_tail = NULL;
 static emo_process *emo_process_table = NULL;
 static emo_process **emo_process_table_tail = &emo_process_table;
 static emo_process *emo_current = NULL;
+
+/* The autorelease pool is FRAME-scoped (the ObjC @autoreleasepool
+   shape): a generated function enters a pool at its first line and
+   exits it at every return, so the words it pools release together —
+   and never the caller's. A statement boundary drains the current
+   frame's pool, which is exactly the borrow window of the expressions
+   in it. The frame stack rides the fiber (the process holds its top),
+   so fibers never see each other's pools. */
+
+typedef struct emo_frame {
+  emo_pool pool;
+  struct emo_frame *parent;
+} emo_frame;
+
+static emo_frame *emo_frame_free = NULL;
+
+static emo_frame *emo_frame_alloc(void) {
+  emo_frame *f = emo_frame_free;
+  if (f != NULL)
+    emo_frame_free = f->parent;
+  else {
+    f = malloc(sizeof(emo_frame));
+    if (f == NULL) abort();
+  }
+  f->pool.items = NULL;
+  f->pool.count = 0;
+  f->pool.cap = 0;
+  return f;
+}
+
+static emo_frame *emo_cur_frame(void) {
+  if (emo_current == NULL) return NULL; /* nothing runs outside a fiber */
+  return emo_current->top_frame;
+}
+
+void emo_pool_enter(void) {
+  if (emo_current == NULL) return;
+  emo_frame *f = emo_frame_alloc();
+  f->parent = emo_current->top_frame;
+  emo_current->top_frame = f;
+}
+
+void emo_pool_exit(void) {
+  if (emo_current == NULL) return;
+  emo_frame *f = emo_current->top_frame;
+  if (f == NULL) return;
+  for (int64_t i = 0; i < f->pool.count; i++) emo_release(f->pool.items[i]);
+  free(f->pool.items);
+  emo_current->top_frame = f->parent;
+  f->parent = emo_frame_free;
+  emo_frame_free = f;
+}
+
+static emo_pool *emo_pool_of(void) {
+  emo_frame *f = emo_cur_frame();
+  return &f->pool;
+}
+
+emo_value emo_autorelease(emo_value v) {
+  if (v == 0 || (v & 7) != 0) return v;
+  if (!emo_identity_kind(emo_cell_kind(v))) return v;
+  emo_pool_push(emo_pool_of(), v);
+  return v;
+}
+
+void emo_drain(void) {
+  emo_frame *f = emo_cur_frame();
+  if (f == NULL) return;
+  for (int64_t i = 0; i < f->pool.count; i++) emo_release(f->pool.items[i]);
+  f->pool.count = 0;
+}
+
+int64_t emo_identity_live_count(void) { return emo_identity_live; }
+
 static int64_t emo_next_pid = 1;
 static int64_t emo_root_pid = -1; /* the entry process: its finish ends
                                      the program */
@@ -1678,6 +1907,13 @@ static emo_process *emo_runq_pop(void) {
 static void emo_process_trampoline(void) {
   emo_process *self = emo_current;
   self->entry();
+  /* the body's frames closed themselves; the spawn-time references
+     drop here */
+  self->top_frame = NULL;
+  for (int64_t i = 0; i < self->spawn_nargs; i++)
+    emo_release(self->spawn_args[i]); /* drop the spawn-time references */
+  free(self->spawn_args);
+  self->spawn_args = NULL;
   if (getenv("EMO_TRACE"))
     fprintf(stderr, "[trace] exit %lld\n", (long long)self->pid);
   self->finished = 1;
@@ -1696,6 +1932,9 @@ int64_t emo_spawn_process(void (*entry)(void), int64_t nargs,
     p->spawn_args = malloc((size_t)nargs * sizeof(emo_value));
     if (p->spawn_args == NULL) abort();
     memcpy(p->spawn_args, args, (size_t)nargs * sizeof(emo_value));
+    for (int64_t i = 0; i < nargs; i++)
+      emo_retain(p->spawn_args[i]); /* the child owns its arguments */
+    p->spawn_nargs = nargs;
   }
   const size_t stack_size = 256 * 1024;
   p->stack = emo_proc_stack_alloc(stack_size);
@@ -1748,6 +1987,7 @@ void emo_process_send(int64_t pid, emo_value message) {
   if (m == NULL) abort();
   m->next = NULL;
   m->v = message;
+  emo_retain(message); /* the mailbox owns the message until it's taken */
   if (target->inbox_tail == NULL) target->inbox_head = m;
   else target->inbox_tail->next = m;
   target->inbox_tail = m;
@@ -1795,6 +2035,7 @@ void emo_mailbox_take_current(void *m) {
       emo_current->inbox_tail = n;
     }
   }
+  emo_release(dead->v); /* the mailbox drops its send-time reference */
   free(dead);
 }
 
