@@ -3,7 +3,9 @@
 Written 2026-10-10. This is a technical feasibility assessment, not
 decided design; project-state claims reflect the repository as of the
 date above, and Zig-version claims reflect Zig 0.17.0 (released
-2026-10-01).
+2026-10-01). Settled 2026-10-11: the backend is shelved behind the
+re-evaluation triggers below, and `zig cc` remains a separate driver
+evaluation — see CHECK.md.
 
 The question: should Emo grow a code-generation backend that emits Zig
 source — a seventh target beside the interpreter, C, OCaml,

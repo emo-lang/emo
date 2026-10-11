@@ -292,38 +292,88 @@ let collect ctx (items : Ast.item list) : unit =
              directly on the C ABI alongside the marshaled scalars, and
              takes Void as a foreign RETURN — the shape of a
              fire-and-forget C call; a Void parameter stays meaningless.
-             Every other backend takes Float64/String/Bool only. *)
+             A parameter may also name a single-method interface — the
+             callback contract (CHECK.md 2026-10-11): the method's
+             parameters stay in the marshaling tier and its return adds
+             Void, since the C side invokes the trampoline without a
+             result. Every other backend takes Float64/String/Bool
+             only. *)
           let ffi_ok = function
             | Ast.Named_type "Float64"
             | Ast.Named_type "String"
             | Ast.Named_type "Bool" ->
                 true
             | Ast.Named_type "Int64" -> ctx.target = "c"
+            | Ast.Named_type name ->
+                ctx.target = "c" && Hashtbl.mem ctx.interfaces name
             | _ -> false
           in
-          let ffi_return_ok desc =
-            ffi_ok desc
-            ||
-            match desc with
-            | Ast.Named_type "Void" -> ctx.target = "c"
+          let ffi_return_ok = function
+            | Ast.Named_type "Float64"
+            | Ast.Named_type "String"
+            | Ast.Named_type "Bool" ->
+                true
+            | Ast.Named_type "Int64" | Ast.Named_type "Void" -> ctx.target = "c"
             | _ -> false
           in
           let allowed =
-            if ctx.target = "c" then "Float64, String, Bool, or Int64"
+            if ctx.target = "c" then
+              "Float64, String, Bool, Int64, or a single-method interface"
             else "Float64, String, or Bool"
           in
           let allowed_return =
             if ctx.target = "c" then "Float64, String, Bool, Int64, or Void"
             else "Float64, String, or Bool"
           in
+          (* The callback contract a named interface must satisfy: one
+             method, marshaling-tier parameters, and a return the
+             trampoline can hand back across the C ABI. *)
+          let callback_ok span name =
+            match Hashtbl.find_opt ctx.interfaces name with
+            | Some [ (mname, mparams, mret) ] ->
+                List.iter
+                  (fun (pname, pty) ->
+                    match pty with
+                    | Float64 | String | Bool | Int64 -> ()
+                    | _ ->
+                        report ctx span "E4200"
+                          (Printf.sprintf
+                             "callback method `%s` takes only Float64, String, \
+                              Bool, or Int64 parameters (`%s` is %s)"
+                             mname pname (to_string pty)))
+                  mparams;
+                if
+                  not
+                    (match mret with
+                    | Float64 | String | Bool | Int64 | Void -> true
+                    | _ -> false)
+                then
+                  report ctx span "E4200"
+                    (Printf.sprintf
+                       "callback method `%s` must return Float64, String, \
+                        Bool, Int64, or Void (it returns %s)"
+                       mname (to_string mret))
+            | Some _ ->
+                report ctx span "E4200"
+                  (Printf.sprintf
+                     "callback interface `%s` must declare exactly one method"
+                     name)
+            | None -> ()
+          in
           List.iter
             (fun p ->
               ignore (decl_to_type ctx p.Ast.param_type);
-              if not (ffi_ok p.Ast.param_type.Ast.type_desc) then
-                report ctx p.Ast.param_type.Ast.type_span "E4200"
-                  (Printf.sprintf
-                     "foreign parameter `%s` must be %s on this target"
-                     p.Ast.param_name allowed))
+              let span = p.Ast.param_type.Ast.type_span in
+              match p.Ast.param_type.Ast.type_desc with
+              | Ast.Named_type name
+                when ctx.target = "c" && Hashtbl.mem ctx.interfaces name ->
+                  callback_ok span name
+              | desc ->
+                  if not (ffi_ok desc) then
+                    report ctx span "E4200"
+                      (Printf.sprintf
+                         "foreign parameter `%s` must be %s on this target"
+                         p.Ast.param_name allowed))
             f.Ast.foreign_params;
           ignore (decl_to_type ctx f.Ast.foreign_return);
           if not (ffi_return_ok f.Ast.foreign_return.Ast.type_desc) then

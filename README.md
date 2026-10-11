@@ -341,6 +341,19 @@ built myapp
   ```
 
   `Float64`, `String`, and `Bool` cross the boundary today; other types are refused by the checker. Link additional C libraries with `--cclib` (`emo build main.emo --cclib m`). Foreign definitions run only in compiled programs — `emo run` refuses them. A target that cannot honor a `foreign def` refuses it at check time: `c` and `ocaml` honor it, while `wasm`, `typescript`, `beam`, and the freestanding `riscv64` refuse.
+- **C calls back into Emo through an interface.** A `foreign def` parameter may name a single-method interface — the callback type. The `c` target passes the C side a generated trampoline plus the object as an opaque `void *userdata`; the callback's C signature is the method's parameters (marshaled like any foreign argument) followed by the trailing `void *userdata`, and invoking it dispatches to the receiver's own method:
+
+  ```emo
+  interface Handler {
+    def on_click(tag Int64) String
+  }
+
+  foreign def set_handler(h Handler) Void = "set_handler"
+
+  set_handler(MyHandler.new())   # the C side calls cb(tag, data) later
+  ```
+
+  The callback method's parameters stay in the marshaling tier (`Float64`, `String`, `Bool`, `Int64`), and its return adds `Void`. Two objects of different classes both satisfying the interface each dispatch to their own method — the object rides in the userdata. On targets without the contract the parameter refuses at check time, like any unhonored `foreign def`.
 - **The default build needs only a C compiler.** The `c` target invokes the system `cc`; `--target ocaml` requires the OCaml toolchain — the same one that builds Emo itself.
 
 ## Configuration

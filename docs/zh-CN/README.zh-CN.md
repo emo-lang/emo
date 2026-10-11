@@ -326,6 +326,19 @@ built myapp
   ```
 
   `Float64`、`String` 与 `Bool` 现在可跨界；其他类型被检查器拒绝。用 `--cclib` 链接额外的 C 库（`emo build main.emo --cclib m`）。外部定义只在编译程序中运行——`emo run` 拒绝它们。无法兑现 `foreign def` 的目标会在检查期拒绝它：`c` 与 `ocaml` 能兑现，而 `wasm`、`typescript`、`beam` 与 freestanding 的 `riscv64` 都会拒绝。
+- **C 经接口回调进 Emo。** `foreign def` 的参数可以名一个单方法接口——它就是回调类型。`c` 目标向 C 侧传递一个生成的 trampoline 和作为不透明 `void *userdata` 的对象；回调的 C 签名是该方法的参数（与任何 foreign 实参同样封送）后跟收尾的 `void *userdata`,调用它即分发到接收者自己的方法：
+
+  ```emo
+  interface Handler {
+    def on_click(tag Int64) String
+  }
+
+  foreign def set_handler(h Handler) Void = "set_handler"
+
+  set_handler(MyHandler.new())   # C 侧稍后调用 cb(tag, data)
+  ```
+
+  回调方法的参数留在封送层（`Float64`、`String`、`Bool`、`Int64`）,返回额外允许 `Void`。满足同一接口的两个不同类的对象各自分发到自己的方法——对象就骑在 userdata 里。没有该契约的目标在检查期拒绝该参数,与任何无法兑现的 `foreign def` 一致。
 - **默认构建只需要一个 C 编译器。** `c` 目标调用系统 `cc`；`--target ocaml` 需要 OCaml 工具链——与构建 Emo 本身相同的那个。
 
 ## 配置

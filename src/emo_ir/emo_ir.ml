@@ -81,6 +81,11 @@ type program = {
   pclasses : class_ list;
   pinterfaces : (string * (string * int) list) list;
       (* interface name → method name/arity, for the runtime's is() *)
+  piface_sigs :
+    (string * (string * (string * Emo_check.t) list * Emo_check.t) list) list;
+      (* interface name → full method signatures — param names and types
+         plus the return type — for the c target's callback trampolines
+         (CHECK.md, 2026-10-11) *)
   pinit : stmt list; (* the entry module's top-level statements *)
   pglobals : (string * expr) list; (* module-level `var` ref cells *)
   pentry : string list; (* the entry module's path *)
@@ -798,6 +803,7 @@ type input = {
 let lower (input : input) : program =
   let symbols : (string list * string, symbol) Hashtbl.t = Hashtbl.create 16 in
   let type_owners : (string, string list) Hashtbl.t = Hashtbl.create 16 in
+  let iface_names : (string, unit) Hashtbl.t = Hashtbl.create 8 in
   (* pass 1: every program-wide symbol *)
   List.iter
     (fun (m : module_input) ->
@@ -832,6 +838,11 @@ let lower (input : input) : program =
           | Ast.Item_enum e ->
               Hashtbl.replace symbols (m.mpath, e.Ast.enum_name) S_enum;
               Hashtbl.replace type_owners e.Ast.enum_name m.mpath
+          | Ast.Item_interface i ->
+              (* Names only, in pass 1: a foreign def in any module may
+                 name any module's interface as a callback parameter, so
+                 pass 2 resolves the type against the whole program. *)
+              Hashtbl.replace iface_names i.Ast.interface_name ()
           | Ast.Item_emo_group g ->
               (* a function group's members: registered under both the
                  group-qualified key (`Foo.hello` resolves here) and the
@@ -912,6 +923,7 @@ let lower (input : input) : program =
   let funcs = ref [] in
   let classes = ref [] in
   let interfaces = ref [] in
+  let iface_sigs = ref [] in
   let globals = ref [] in
   (* The entry module can be discovered twice (as the entry root and as
      a sibling file): two paths, one parsed item list. Dedupe by path
@@ -1087,13 +1099,23 @@ let lower (input : input) : program =
                   funcs := { thunk with fresult = Emo_check.Unknown } :: !funcs)
                 g.Ast.group_consts
           | Ast.Item_foreign f ->
+              (* A parameter naming a program-wide interface stays an
+                 InterfaceType — the c target's callback pair — instead
+                 of degrading to Unknown (decl_type has no type
+                 tables). *)
+              let foreign_param_type (p : Ast.param) : Emo_check.t =
+                match p.Ast.param_type.Ast.type_desc with
+                | Ast.Named_type name when Hashtbl.mem iface_names name ->
+                    Emo_check.InterfaceType name
+                | _ -> decl_type p.Ast.param_type
+              in
               funcs :=
                 {
                   fname = mangle m.mpath f.Ast.foreign_name;
                   fmodule = m.mpath;
                   fparams =
                     List.map
-                      (fun p -> (p.Ast.param_name, decl_type p.Ast.param_type))
+                      (fun p -> (p.Ast.param_name, foreign_param_type p))
                       f.Ast.foreign_params;
                   fresult = decl_type f.Ast.foreign_return;
                   fbody = [];
@@ -1107,7 +1129,19 @@ let lower (input : input) : program =
                   List.map
                     (fun s -> (s.Ast.sig_name, List.length s.Ast.sig_params))
                     i.Ast.interface_methods )
-                :: !interfaces
+                :: !interfaces;
+              iface_sigs :=
+                ( i.Ast.interface_name,
+                  List.map
+                    (fun s ->
+                      ( s.Ast.sig_name,
+                        List.map
+                          (fun p ->
+                            (p.Ast.param_name, decl_type p.Ast.param_type))
+                          s.Ast.sig_params,
+                        decl_type s.Ast.sig_return ))
+                    i.Ast.interface_methods )
+                :: !iface_sigs
           | _ -> ())
         m.mitems)
     input.modules;
@@ -1157,6 +1191,7 @@ let lower (input : input) : program =
     pfuncs;
     pclasses = !classes;
     pinterfaces = !interfaces;
+    piface_sigs = !iface_sigs;
     pinit;
     pglobals = List.rev !globals;
     pentry = input.entry;

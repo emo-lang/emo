@@ -1068,6 +1068,108 @@ println(ident(1))
         Alcotest.(check int) "refused" 65 exit_code);
   ]
 
+(* The callback contract (CHECK.md, 2026-10-11): a foreign parameter
+   whose type names a single-method interface crosses as the pair
+   (trampoline, userdata). The C side stores both and invokes the
+   callback later — two different objects prove the userdata carries
+   the right receiver per call. Skips without cc. *)
+let c_callback_tests =
+  [
+    tc "the c target dispatches an interface callback through userdata"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let dir = Filename.concat scratch "c-callback" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        let c_src = Filename.concat dir "emo_greet.c" in
+        let oc = open_out_bin c_src in
+        output_string oc
+          {|
+/* The C side of the callback fixture: it stores the pair the Emo call
+   passed and invokes the callback per round — the shape every
+   C callback API (the user_data idiom) expects of a host. */
+#include <stdio.h>
+#include <stdint.h>
+void emo_test_run_greet(const char *(*cb)(const char *name, int64_t n, void *userdata),
+                        void *userdata, int64_t times) {
+  for (int64_t i = 0; i < times; i = i + 1) {
+    const char *s = cb("world", i, userdata);
+    printf("greet: %s\n", s);
+  }
+}
+|};
+        close_out oc;
+        let obj = Filename.concat dir "emo_greet.o" in
+        let cc =
+          Printf.sprintf "cc -O2 -std=c11 -Wall -c %s -o %s"
+            (Filename.quote c_src) (Filename.quote obj)
+        in
+        if Sys.command cc <> 0 then
+          Alcotest.fail "the callback shim did not compile";
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc
+          {|
+interface Greeter {
+  def greet(name String, n Int64) String
+}
+
+class Loud {
+  def greet(name String, n Int64) String {
+    return "LOUD " + name + " x" + n.to_string()
+  }
+}
+
+class Polite {
+  def greet(name String, n Int64) String {
+    return "hi " + name
+  }
+}
+
+foreign def run_greet(g Greeter, times Int64) Void = "emo_test_run_greet"
+
+run_greet(Loud.new(), 2)
+run_greet(Polite.new(), 1)
+|};
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code =
+          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
+            ~cclibs:[ obj ] ~target:"c"
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let cmd_stdout, _cmd_stdin, cmd_stderr =
+          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
+        in
+        let out = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel out cmd_stdout 4096
+           done
+         with End_of_file -> ());
+        let err = Buffer.create 256 in
+        (try
+           while true do
+             Buffer.add_channel err cmd_stderr 4096
+           done
+         with End_of_file -> ());
+        let proc_status =
+          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
+        in
+        Alcotest.(check string)
+          "output"
+          "greet: LOUD world x0\ngreet: LOUD world x1\ngreet: hi world\n"
+          (Buffer.contents out);
+        match proc_status with
+        | Unix.WEXITED 0 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "exited %s: %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | _ -> "signal")
+                 (Buffer.contents err)));
+  ]
+
 (* ---- publish: the upload is dogfooded through the stdlib http client ----
 
    A captive HTTP server on loopback (a raw socket in a helper thread)
@@ -1995,6 +2097,7 @@ let () =
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
       ("c_foreign", c_foreign_tests);
+      ("c_callback", c_callback_tests);
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
       ("publish", publish_tests);

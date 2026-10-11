@@ -57,6 +57,13 @@ type env = {
   forfuncs : (string, Emo_ir.func) Hashtbl.t;
       (* foreign def's mangled name -> its IR: calls go straight to
          the C symbol, no wrapper (T24.8) *)
+  cb_sigs :
+    ( string,
+      (string * (string * Emo_check.t) list * Emo_check.t) list )
+    Hashtbl.t;
+      (* interface name → its full method signatures: the single method
+         behind an interface-typed foreign parameter names the
+         trampoline (CHECK.md, 2026-10-11) *)
 }
 
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -65,6 +72,11 @@ let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
    copies would give every function's sites the same names. *)
 let spawn_counter = ref 0
 let closure_counter = ref 0
+
+(* Callback trampoline numbering, keyed by the marshaled method
+   signature so identical callback shapes share one function. *)
+let cb_counter = ref 0
+let cb_table : (string, string) Hashtbl.t = Hashtbl.create 8
 
 (* C reserved words (C11) and the emitted entry: an Emo def named
    `double` would otherwise emit an illegal C declaration. The guard
@@ -239,6 +251,39 @@ let zero_value (c_ty : string) : string =
   | "emo_str" -> "(emo_str){INT64_C(0), \"\"}"
   | "emo_value" -> "(emo_value)0"
   | _ -> "0"
+
+(* ---- Callback trampolines (CHECK.md, 2026-10-11) ----
+
+   A foreign parameter whose type names a single-method interface
+   crosses the C ABI as the pair (trampoline, userdata): the trampoline
+   carries the C calling convention — the method's parameters marshaled
+   like any foreign argument, plus the trailing void *userdata the C
+   side supplies — boxes them into the dynamic world, and dispatches by
+   the method's name through emo_send, so every object structurally
+   conforming to the interface lands on its own method. Identical
+   shapes share one function, keyed by the marshaled signature. *)
+
+let cb_key (mname : string) (ptys : Emo_check.t list) (ret : Emo_check.t) :
+    string =
+  Printf.sprintf "%s(%s)->%s" mname
+    (String.concat "," (List.map Emo_check.to_string ptys))
+    (Emo_check.to_string ret)
+
+(* The one method behind an interface-typed foreign parameter — the
+   checker admits single-method interfaces only. *)
+let cb_sig env (iname : string) :
+    string * (string * Emo_check.t) list * Emo_check.t =
+  match Hashtbl.find_opt env.cb_sigs iname with
+  | Some [ (mname, mparams, mret) ] -> (mname, mparams, mret)
+  | _ -> refuse (Printf.sprintf "the callback interface `%s`" iname)
+
+let cb_name env (iname : string) : string =
+  let mname, mparams, mret = cb_sig env iname in
+  match
+    Hashtbl.find_opt cb_table (cb_key mname (List.map snd mparams) mret)
+  with
+  | Some name -> name
+  | None -> refuse (Printf.sprintf "the callback for `%s`" iname)
 
 (* ---- Expressions ---- *)
 
@@ -463,11 +508,25 @@ and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
     (args : Emo_ir.expr list) : string =
   let symbol = Option.get f.Emo_ir.fforeign in
   let arg_code =
-    List.map2
-      (fun (arg : Emo_ir.expr) (_, ty) ->
-        let v = as_native env arg ty in
-        if ty = Emo_check.String then Printf.sprintf "emo_str_cstr(%s)" v else v)
-      args f.Emo_ir.fparams
+    List.concat
+      (List.map2
+         (fun (arg : Emo_ir.expr) (_, ty) ->
+           match ty with
+           | Emo_check.InterfaceType iname ->
+               (* the callback pair: the trampoline's function pointer,
+                  then the receiver as the userdata word *)
+               [
+                 cb_name env iname;
+                 Printf.sprintf "(void *)(%s)" (as_dyn env arg);
+               ]
+           | _ ->
+               let v = as_native env arg ty in
+               [
+                 (if ty = Emo_check.String then
+                    Printf.sprintf "emo_str_cstr(%s)" v
+                  else v);
+               ])
+         args f.Emo_ir.fparams)
   in
   let call = Printf.sprintf "%s(%s)" symbol (String.concat ", " arg_code) in
   if f.Emo_ir.fresult = Emo_check.String then
@@ -1747,6 +1806,17 @@ and has_return (stmts : Emo_ir.stmt list) : bool =
    cell. Opaque handles ride pointer-sized Int64s. A Void return is
    the shape of a fire-and-forget call. *)
 
+(* ---- Callback trampolines (CHECK.md, 2026-10-11) ----
+
+   A foreign parameter whose type names a single-method interface
+   crosses the C ABI as the pair (trampoline, userdata): the trampoline
+   carries the C calling convention — the method's parameters marshaled
+   like any foreign argument, plus the trailing void *userdata the C
+   side supplies — boxes them into the dynamic world, and dispatches by
+   the method's name through emo_send, so every object structurally
+   conforming to the interface lands on its own method. Identical
+   shapes share one function, keyed by the marshaled signature. *)
+
 let foreign_c_type (t : Emo_check.t) : string =
   match t with
   | Emo_check.Int64 -> "int64_t"
@@ -1755,6 +1825,81 @@ let foreign_c_type (t : Emo_check.t) : string =
   | Emo_check.String -> "const char *"
   | Emo_check.Void -> "void"
   | _ -> refuse (Printf.sprintf "`%s` across the C ABI" (Emo_check.to_string t))
+
+(* The trampoline body for one interface, emitted once per distinct
+   marshaled signature. Static by design: the C side receives the
+   function pointer as an argument, never the name, so nothing lands
+   in emo_defs.h. *)
+let emit_cb_trampoline (out : Buffer.t)
+    (sigs :
+      ( string,
+        (string * (string * Emo_check.t) list * Emo_check.t) list )
+      Hashtbl.t) (iname : string) : unit =
+  match Hashtbl.find_opt sigs iname with
+  | Some [ (mname, mparams, mret) ] ->
+      let key = cb_key mname (List.map snd mparams) mret in
+      if not (Hashtbl.mem cb_table key) then begin
+        incr cb_counter;
+        let name = Printf.sprintf "emo_cb%d" !cb_counter in
+        Hashtbl.replace cb_table key name;
+        let cparams =
+          List.mapi
+            (fun i (_, pt) -> Printf.sprintf "%s __p%d" (foreign_c_type pt) i)
+            mparams
+          @ [ "void *userdata" ]
+        in
+        let boxed =
+          List.mapi
+            (fun i (_, pt) ->
+              match pt with
+              | Emo_check.Int64 -> Printf.sprintf "emo_box_i64(__p%d)" i
+              | Emo_check.Float64 -> Printf.sprintf "emo_box_f64(__p%d)" i
+              | Emo_check.Bool -> Printf.sprintf "emo_vbool(__p%d)" i
+              | Emo_check.String ->
+                  Printf.sprintf "emo_box_str(emo_str_from_cstr(__p%d))" i
+              | t ->
+                  refuse
+                    (Printf.sprintf "`%s` across the callback boundary"
+                       (Emo_check.to_string t)))
+            mparams
+        in
+        let send =
+          let argv =
+            match boxed with
+            | [] -> "(const emo_value *)0"
+            | xs -> Printf.sprintf "(emo_value[]){%s}" (String.concat ", " xs)
+          in
+          Printf.sprintf
+            "emo_send((emo_value)userdata, \"%s\", INT64_C(%d), %s)" mname
+            (List.length boxed) argv
+        in
+        let head =
+          Printf.sprintf "static %s %s(%s)" (foreign_c_type mret) name
+            (String.concat ", " cparams)
+        in
+        let body =
+          match mret with
+          | Emo_check.Void ->
+              Printf.sprintf "%s {\n  (void)%s;\n}\n\n" head send
+          | Emo_check.String ->
+              Printf.sprintf
+                "%s {\n  return emo_str_cstr(emo_str_of(%s));\n}\n\n" head send
+          | Emo_check.Int64 ->
+              Printf.sprintf "%s {\n  return emo_unbox_i64(%s);\n}\n\n" head
+                send
+          | Emo_check.Float64 ->
+              Printf.sprintf "%s {\n  return emo_unbox_f64(%s);\n}\n\n" head
+                send
+          | Emo_check.Bool ->
+              Printf.sprintf "%s {\n  return emo_bool_of(%s);\n}\n\n" head send
+          | t ->
+              refuse
+                (Printf.sprintf "`%s` across the callback boundary"
+                   (Emo_check.to_string t))
+        in
+        Buffer.add_string out body
+      end
+  | _ -> refuse (Printf.sprintf "the callback interface `%s`" iname)
 
 (* ---- The tail-call graph ----
 
@@ -2086,6 +2231,8 @@ let emit_thunk env0 (c : Emo_ir.class_) (m : Emo_ir.func) : unit =
 let emit (program : Emo_ir.program) : string * string =
   spawn_counter := 0;
   closure_counter := 0;
+  cb_counter := 0;
+  Hashtbl.reset cb_table;
   let clusters = tail_clusters program.pfuncs in
   let cluster_members name =
     List.find_opt (List.mem name) clusters |> Option.value ~default:[ name ]
@@ -2123,6 +2270,10 @@ let emit (program : Emo_ir.program) : string * string =
   List.iter
     (fun (name, sigs) -> Hashtbl.replace ifaces_tbl name sigs)
     program.pinterfaces;
+  let cb_sigs_tbl = Hashtbl.create 8 in
+  List.iter
+    (fun (name, sigs) -> Hashtbl.replace cb_sigs_tbl name sigs)
+    program.Emo_ir.piface_sigs;
   let buf = Buffer.create (16 * 1024) in
   let funsigs = Hashtbl.create 32 in
   List.iter
@@ -2163,6 +2314,7 @@ let emit (program : Emo_ir.program) : string * string =
       closures = Buffer.create (16 * 1024);
       closure_decls = [];
       forfuncs;
+      cb_sigs = cb_sigs_tbl;
     }
   in
   let head = Buffer.create 256 in
@@ -2246,7 +2398,28 @@ let emit (program : Emo_ir.program) : string * string =
   env0.buf <- buf;
   (* Foreign defs: the C symbol declarations — the direct ABI. They
      also land in emo_defs.h, so a shim's definitions are checked
-     against the compiler's declarations at cc time. *)
+     against the compiler's declarations at cc time. A parameter whose
+     type names a single-method interface expands to the callback
+     pair: the function pointer (the method's parameters marshaled,
+     plus the trailing void *userdata) and the userdata pointer,
+     adjacent and in that order. *)
+  let foreign_c_params (pname : string) (t : Emo_check.t) : string list =
+    match t with
+    | Emo_check.InterfaceType iname ->
+        let _mname, mparams, mret = cb_sig env0 iname in
+        let inner =
+          List.mapi
+            (fun i (_, pt) -> Printf.sprintf "%s __p%d" (foreign_c_type pt) i)
+            mparams
+          @ [ "void *userdata" ]
+        in
+        [
+          Printf.sprintf "%s (*%s_cb)(%s)" (foreign_c_type mret) (c_ident pname)
+            (String.concat ", " inner);
+          Printf.sprintf "void *%s_data" (c_ident pname);
+        ]
+    | t -> [ foreign_c_type t ]
+  in
   List.iter
     (fun (f : Emo_ir.func) ->
       match f.Emo_ir.fforeign with
@@ -2256,8 +2429,9 @@ let emit (program : Emo_ir.program) : string * string =
             match f.Emo_ir.fparams with
             | [] -> "void"
             | ps ->
-                String.concat ", "
-                  (List.map (fun (_, t) -> foreign_c_type t) ps)
+                ps
+                |> List.concat_map (fun (pname, t) -> foreign_c_params pname t)
+                |> String.concat ", "
           in
           let line =
             Printf.sprintf "extern %s %s(%s);\n"
@@ -2268,6 +2442,23 @@ let emit (program : Emo_ir.program) : string * string =
           Buffer.add_string defs_h line)
     program.pfuncs;
   put env0 "\n";
+  (* The callback trampolines, after the externs and before any def
+     body: static, referenced only as function-pointer arguments. *)
+  let cb_buf = Buffer.create 1024 in
+  List.iter
+    (fun (f : Emo_ir.func) ->
+      match f.Emo_ir.fforeign with
+      | None -> ()
+      | Some _ ->
+          List.iter
+            (fun (_, t) ->
+              match t with
+              | Emo_check.InterfaceType iname ->
+                  emit_cb_trampoline cb_buf cb_sigs_tbl iname
+              | _ -> ())
+            f.Emo_ir.fparams)
+    program.pfuncs;
+  Buffer.add_buffer buf cb_buf;
   (* Interface contracts and class vtables. *)
   List.iter
     (fun (name, sigs) ->

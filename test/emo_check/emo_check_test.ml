@@ -1211,6 +1211,120 @@ println(w)|}
           Alcotest.fail ("codes: " ^ codes_dump diagnostics));
   ]
 
+(* The callback contract (CHECK.md, 2026-10-11): a foreign parameter may
+   name a single-method interface on the c target — its method stays in
+   the marshaling tier with Void added to the return — while every
+   other target refuses the parameter and the surface rules stay as
+   before. *)
+let callback_tests =
+  [
+    tc "a single-method interface is a valid foreign parameter on c" (fun () ->
+        let diagnostics =
+          check
+            {|
+interface Greeter {
+  def greet(name String, n Int64) String
+}
+
+foreign def run_greet(g Greeter, times Int64) Void = "run_greet"
+|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a multi-method interface is refused as a callback" (fun () ->
+        let diagnostics =
+          check
+            {|
+interface Two {
+  def a() Int64
+  def b() Int64
+}
+
+foreign def run(t Two) Void = "run"
+|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true;
+        Alcotest.(check bool)
+          "names the one-method rule"
+          (List.exists
+             (fun d ->
+               contains_substring d.Diagnostic.message
+                 "must declare exactly one method")
+             diagnostics)
+          true);
+    tc "a callback method parameter outside the marshaling tier is refused"
+      (fun () ->
+        let diagnostics =
+          check
+            {|
+interface Bad {
+  def go(xs Array) Int64
+}
+
+foreign def run(b Bad) Void = "run"
+|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true);
+    tc "a callback method return outside the tier is refused" (fun () ->
+        let diagnostics =
+          check
+            {|
+interface Bad {
+  def go(n Int64) Array
+}
+
+foreign def run(b Bad) Void = "run"
+|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true);
+    tc "a foreign return of interface type is still refused" (fun () ->
+        let diagnostics =
+          check
+            {|
+interface Greeter {
+  def greet() String
+}
+
+foreign def make() Greeter = "make"
+|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true);
+    tc "a class-typed foreign parameter stays refused" (fun () ->
+        let diagnostics =
+          check
+            {|
+class Thing {
+  def go() Int64 {
+    return 1
+  }
+}
+
+foreign def run(t Thing) Void = "run"
+|}
+        in
+        Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true);
+    tc "a non-c target refuses the interface parameter" (fun () ->
+        match
+          Emo_parser.parse_program ~file:"test.emo"
+            ~source:
+              {|
+interface Greeter {
+  def greet() String
+}
+
+foreign def run(g Greeter) Void = "run"
+|}
+        with
+        | items ->
+            let diagnostics, _, _, _ =
+              Emo_check.check_module_typed ~modules:[] ~current:[]
+                ~target:"ocaml" items
+            in
+            Alcotest.(check bool) "E4200" (has_code diagnostics "E4200") true
+        | exception Emo_parser.Error d ->
+            Alcotest.fail ("parse failed: " ^ d.Diagnostic.message));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -1227,4 +1341,5 @@ let () =
       ("corpus", corpus_tests);
       ("printf", printf_tests);
       ("cross_module", cross_module_tests);
+      ("callback", callback_tests);
     ]
