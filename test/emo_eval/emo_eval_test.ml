@@ -594,13 +594,14 @@ println(e.data.get("code"))|}));
         Alcotest.(check string)
           "span" "test.emo:1:1"
           (Span.to_string diagnostic.Diagnostic.span));
-    tc "uncaught data-carrying exceptions still report the message" (fun () ->
+    tc "uncaught data-carrying exceptions report data beside the message"
+      (fun () ->
         let diagnostic =
           program_err {|raise Exception.new("disk blew up", { "fd": 3 })|}
         in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
-          "message" "uncaught exception: disk blew up"
+          "message" "uncaught exception: disk blew up (data: {\"fd\": 3})"
           diagnostic.Diagnostic.message);
     tc "uncaught raises carry the Emo call chain" (fun () ->
         let diagnostic =
@@ -1083,6 +1084,19 @@ println(English.new().is(Greeter))  // true — structural interface check|}));
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
           "message" "uncaught exception:  kaboom " diagnostic.Diagnostic.message);
+    tc "an uncaught raise prints non-empty data beside the message" (fun () ->
+        let diagnostic =
+          program_err
+            {|raise Exception.new(message: "boom", data: { "peer": "10.0.0.1:80" })|}
+        in
+        Alcotest.(check bool)
+          "data rides along" true
+          (contains_substring diagnostic.Diagnostic.message
+             "(data: {\"peer\": \"10.0.0.1:80\"})");
+        let diagnostic = program_err {|raise Exception.new(message: "bare")|} in
+        Alcotest.(check string)
+          "empty data stays silent" "uncaught exception: bare"
+          diagnostic.Diagnostic.message);
   ]
 
 (* ---- printf ---- *)

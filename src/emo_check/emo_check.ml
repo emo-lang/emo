@@ -2280,13 +2280,12 @@ and check_stmt ctx env (s : Ast.stmt) : env =
           | _ ->
               bind env name { vtype = t; is_var = mutable_; depth = env.depth })
       | _ ->
-          (* A destructured binding's checks ride the step-36 pattern work;
-             until they land the form refuses here, loudly, instead of
-             silently dropping its bindings. *)
-          report ctx pattern.Ast.pattern_span "E4024"
-            "a destructured binding is not supported yet; match the value in a \
-             `case`";
-          env)
+          (* A destructured binding checks through the same pattern
+             machinery a `case` arm uses: the pattern must fit the
+             initializer's type, and its names enter scope immutable. A
+             value matching nothing stays a runtime death — the
+             case-no-match error — not a provable one. *)
+          check_pattern ctx env span t pattern)
   | Ast.Assign { target; value } -> (
       let vt = check_expr ctx env value in
       match target.Ast.desc with
@@ -2424,7 +2423,13 @@ and check_stmt ctx env (s : Ast.stmt) : env =
       ignore (check_expr ctx env message);
       env
   | Ast.Raise e ->
-      ignore (check_expr ctx env e);
+      let t = check_expr ctx env e in
+      (match t with
+      | ClassType "Exception" | Unknown -> ()
+      | other ->
+          report ctx e.Ast.span "E4024"
+            (Printf.sprintf "`raise` carries an `Exception` instance, got %s"
+               (to_string other)));
       env
   | Ast.While { cond; body } ->
       let ct = check_expr ctx env cond in

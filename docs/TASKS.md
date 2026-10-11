@@ -1131,7 +1131,7 @@ non-empty `data`; `dune test` green.
 - [x] **T36.3** — IR: the pattern binding desugars to a one-arm
       `case` wrapping the block remainder — no new IR nodes, the six
       backends see only existing ones.
-- [ ] **T36.4** — Checker: pattern bindings check through
+- [x] **T36.4** — Checker: pattern bindings check through
       `check_pattern` against the initializer's type; `raise`'s
       operand must be an `Exception` instance (its own E-code for
       everything else); the uncaught diagnostic appends non-empty

@@ -726,6 +726,17 @@ exception
 (* The Emo-level call chain, maintained as closures enter and leave frames. *)
 let call_trace : (string * Emo_support.Span.t) list ref = ref []
 
+(* The crash report's machine-readable context: an `Exception`'s non-empty
+   `data` Map renders alongside the message (CHECK.md, error handling). *)
+let exception_data (v : value) : string option =
+  match v with
+  | Instance i when i.iclass.builtin_exception -> (
+      match List.assoc_opt "data" i.ifields with
+      | Some (Map m) when Hashtbl.length m.entries > 0 ->
+          Some (to_string (Map m))
+      | _ -> None)
+  | _ -> None
+
 (* Formats an uncaught raise: the value's to_string plus the call chain. *)
 let uncaught_diagnostic (v, span, trace) =
   let hint =
@@ -740,14 +751,14 @@ let uncaught_diagnostic (v, span, trace) =
                     (Emo_support.Span.to_string s))
                 trace))
   in
+  let message =
+    match exception_data v with
+    | Some data ->
+        Printf.sprintf "uncaught exception: %s (data: %s)" (to_string v) data
+    | None -> Printf.sprintf "uncaught exception: %s" (to_string v)
+  in
   Emo_support.Diagnostic.
-    {
-      severity = Error;
-      code = Some "E3010";
-      message = Printf.sprintf "uncaught exception: %s" (to_string v);
-      span;
-      hint;
-    }
+    { severity = Error; code = Some "E3010"; message; span; hint }
 
 let literal_value = function
   | Ast.L_int n -> Int64 n

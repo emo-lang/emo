@@ -1843,21 +1843,58 @@ def pick(t (R, String)) String {
         Alcotest.(check bool) "E4023" true (has_code diagnostics "E4023"));
   ]
 
-(* Bindings take a full pattern (the parser carries it on `Binding`);
-   the checker's destructuring checks land with the step's pattern
-   work — until then the parsed form refuses here instead of dropping
-   its bindings. *)
+(* Bindings take a full pattern; the checker runs it through the same
+   `check_pattern` a `case` arm uses — the pattern must fit the
+   initializer's type, and the pattern's names enter scope. *)
 let binding_pattern_tests =
   [
     tc "a plain binding checks clean" (fun () ->
         Alcotest.(check int)
           "count" 0
           (List.length (check "const x = 1\nprintln(x)")));
-    tc "a destructured binding refuses until its checks land" (fun () ->
+    tc "a destructured binding checks like a case arm" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|
+def show(t (R, Int64)) Int64 {
+  const (R.ok, body) = t
+  return body
+}
+
+println(show((R.ok, 7)))|})));
+    tc "the pattern's names carry the initializer's parts" (fun () ->
         let diagnostics =
-          check "const (R.ok, body) = (R.ok, 1)\nprintln(body)"
+          check
+            {|
+def show(n Int64) Int64 {
+  return n
+}
+
+const (R.ok, body) = (R.ok, "seven")
+println(show(body))|}
         in
-        Alcotest.(check bool) "E4024" true (has_code diagnostics "E4024"));
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a pattern that cannot fit refuses like a case pattern" (fun () ->
+        let diagnostics = check "const (R.ok, body) = 5" in
+        Alcotest.(check bool) "E4013" true (has_code diagnostics "E4013"));
+    tc "a `raise` carries an Exception instance and nothing else" (fun () ->
+        Alcotest.(check int)
+          "exception raise" 0
+          (List.length (check {|raise Exception.new(message: "boom")|}));
+        let diagnostics = check {|raise "boom"|} in
+        Alcotest.(check bool) "string raise" true (has_code diagnostics "E4024");
+        let diagnostics =
+          check {|
+class Ink {
+  def init() {
+  }
+}
+
+raise Ink.new()|}
+        in
+        Alcotest.(check bool) "class raise" true (has_code diagnostics "E4024"));
   ]
 
 let () =

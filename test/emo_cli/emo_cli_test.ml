@@ -43,7 +43,9 @@ let run_tests =
           "exit" 65
           (Emo_cli.run_file ~file ~color:false ~error_limit:20));
     tc "an uncaught exception exits 1" (fun () ->
-        let file = fixture "raise.emo" {|raise "boom"|} in
+        let file =
+          fixture "raise.emo" {|raise Exception.new(message: "boom")|}
+        in
         Alcotest.(check int)
           "exit" 1
           (Emo_cli.run_file ~file ~color:false ~error_limit:20));
@@ -753,7 +755,8 @@ let c_dynamic_tests =
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
         let entry = Filename.concat dir "main.emo" in
         let oc = open_out_bin entry in
-        output_string oc {|raise "boom"
+        output_string oc
+          {|raise Exception.new(message: "boom")
 println("not reached")
 |};
         close_out oc;
