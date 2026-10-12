@@ -659,8 +659,7 @@ and method_call env self_ name args =
               W.If_else
                 ( W.Result W.Anyref,
                   [ W.Local_get scratch; W.Ref_test tidx ],
-                  (W.Local_get scratch :: W.Ref_cast tidx :: [])
-                  @ [ W.Call fidx ],
+                  [ W.Local_get scratch; W.Ref_cast tidx ] @ [ W.Call fidx ],
                   chain rest );
             ]
       in

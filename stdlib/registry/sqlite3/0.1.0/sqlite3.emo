@@ -1,0 +1,184 @@
+// The sqlite3 package: a direct-style binding over SQLite's prepared
+// statement API. A Database is an open connection; a Statement is one
+// compiled SQL text, stepped row by row with typed column reads.
+//
+// Following the standard library's convention, every failing call
+// raises an ordinary Emo exception whose message names the operation
+// and carries SQLite's own error text — no error codes, no nil. The
+// one non-raise boundary is step(): reaching the end of the rows is a
+// value (false), not a failure.
+//
+// Handles are opaque Int64s over SQLite's pointers. Bind indices are
+// 1-based — they name the ?NNN parameters in the SQL text; column
+// indices are 0-based, SQLite's convention. Strings cross the C
+// boundary NUL-terminated, so a String carrying an embedded NUL
+// truncates there; blobs are out of scope until Bytes can cross the
+// FFI.
+//
+// The package is c-target only: its calls are `foreign def`s against
+// emo_sqlite3_shim.c, which the build compiles and links together with
+// the system sqlite3 library the manifest's `link` field names. The
+// interpreter refuses foreign code (E3009), so `emo run` cannot execute
+// a program that touches this package — build it with `emo build`.
+
+// Opens the database at `path` (":memory:" for a transient in-memory
+// database), raising when SQLite cannot open it.
+def open(path String) Database {
+  const handle = internal.ffi.open(path)
+  if handle == 0 {
+    raise Exception.new(message: "sqlite3: open ${path}: out of memory")
+  }
+  if internal.ffi.errcode(handle) != 0 {
+    const message = internal.ffi.errmsg(handle)
+    internal.ffi.close(handle)
+    raise Exception.new(message: "sqlite3: open ${path}: ${message}")
+  }
+  return Database.new(handle)
+}
+
+// An open database connection. close() when done.
+class Database {
+  def init(handle Int64) {
+    self.handle = handle
+  }
+
+  // Runs one or more semicolon-separated statements that return no
+  // rows — DDL and one-off writes. Raises on any error.
+  def exec(sql String) {
+    if internal.ffi.exec(self.handle, sql) != 0 {
+      raise Exception.new(
+        message: "sqlite3: exec: ${internal.ffi.errmsg(self.handle)}")
+    }
+  }
+
+  // Compiles `sql` into a Statement, raising on a syntax or schema
+  // error. finalize() the statement when done.
+  def prepare(sql String) Statement {
+    const handle = internal.ffi.prepare(self.handle, sql)
+    if handle == 0 {
+      raise Exception.new(
+        message: "sqlite3: prepare: ${internal.ffi.errmsg(self.handle)}")
+    }
+    return Statement.new(handle, self.handle)
+  }
+
+  // The rowid of the most recent insert on this connection.
+  def last_insert_rowid() Int64 {
+    return internal.ffi.last_insert_rowid(self.handle)
+  }
+
+  // The number of rows the most recent insert/update/delete touched.
+  def changes() Int64 {
+    return internal.ffi.changes(self.handle)
+  }
+
+  // Closes the connection, raising if unfinalized statements keep it
+  // busy.
+  def close() {
+    if internal.ffi.close(self.handle) != 0 {
+      raise Exception.new(
+        message: "sqlite3: close: ${internal.ffi.errmsg(self.handle)}")
+    }
+  }
+}
+
+// One compiled SQL statement: bind its parameters (1-based), step()
+// through the rows, read columns (0-based) while a row is current,
+// reset() to run it again, finalize() when done.
+class Statement {
+  def init(handle Int64, db Int64) {
+    self.handle = handle
+    self.db = db
+  }
+
+  def bind_int(i Int64, v Int64) {
+    const rc = internal.ffi.bind_int64(self.handle, i, v)
+    if rc != 0 {
+      raise Exception.new(
+        message: "sqlite3: bind_int: ${internal.ffi.errmsg(self.db)}")
+    }
+  }
+
+  def bind_float(i Int64, v Float64) {
+    const rc = internal.ffi.bind_double(self.handle, i, v)
+    if rc != 0 {
+      raise Exception.new(
+        message: "sqlite3: bind_float: ${internal.ffi.errmsg(self.db)}")
+    }
+  }
+
+  def bind_text(i Int64, v String) {
+    const rc = internal.ffi.bind_text(self.handle, i, v)
+    if rc != 0 {
+      raise Exception.new(
+        message: "sqlite3: bind_text: ${internal.ffi.errmsg(self.db)}")
+    }
+  }
+
+  def bind_null(i Int64) {
+    const rc = internal.ffi.bind_null(self.handle, i)
+    if rc != 0 {
+      raise Exception.new(
+        message: "sqlite3: bind_null: ${internal.ffi.errmsg(self.db)}")
+    }
+  }
+
+  // Advances to the next row: true while a row is current, false once
+  // the rows are exhausted. Any other outcome raises.
+  def step() Bool {
+    const rc = internal.ffi.step(self.handle)
+    if rc == 100 {
+      return true
+    }
+    if rc == 101 {
+      return false
+    }
+    raise Exception.new(
+      message: "sqlite3: step: ${internal.ffi.errmsg(self.db)} (code ${rc})")
+  }
+
+  // Back to the first row, keeping the bindings. sqlite3_reset returns
+  // the most recent step's error code; step() already raised it (a raise
+  // ends the process), so it is not re-reported here — the reset just
+  // clears the statement for another run.
+  def reset() {
+    internal.ffi.reset(self.handle)
+  }
+
+  // Destroys the statement. sqlite3_finalize returns the most recent
+  // step's error code; a pending error is raised here rather than
+  // dropped, since finalize is the statement's last chance to report it.
+  def finalize() {
+    const rc = internal.ffi.finalize(self.handle)
+    if rc != 0 {
+      raise Exception.new(
+        message: "sqlite3: finalize: ${internal.ffi.errmsg(self.db)}")
+    }
+  }
+
+  def column_count() Int64 {
+    return internal.ffi.column_count(self.handle)
+  }
+
+  def column_name(i Int64) String {
+    return internal.ffi.column_name(self.handle, i)
+  }
+
+  def column_int(i Int64) Int64 {
+    return internal.ffi.column_int64(self.handle, i)
+  }
+
+  def column_float(i Int64) Float64 {
+    return internal.ffi.column_double(self.handle, i)
+  }
+
+  // The column's text; a NULL column reads as the empty string —
+  // column_is_null tells the two apart.
+  def column_text(i Int64) String {
+    return internal.ffi.column_text(self.handle, i)
+  }
+
+  def column_is_null(i Int64) Bool {
+    return internal.ffi.column_is_null(self.handle, i)
+  }
+}

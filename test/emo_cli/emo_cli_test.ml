@@ -513,9 +513,23 @@ let c_goldens =
     "math_demo";
     "branch_var";
     "plot_demo";
+    (* sqlite3_demo: the package's manifest `link` field and its
+       package-carried C shim do the whole native link — the build here
+       passes cclibs:[] on purpose *)
+    "sqlite3_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
+
+(* sqlite3_demo additionally needs the system sqlite3 development
+   library — probe once with a tiny link. *)
+let sqlite3_available =
+  lazy
+    (Lazy.force cc_available
+    && Sys.command
+         "echo 'int main(void){return 0;}' | cc -x c - -lsqlite3 -o /dev/null \
+          >/dev/null 2>&1"
+       = 0)
 
 (* T24.2's integer core: fib's plain recursion, the 1M-deep tail
    count_down, a mutual-tail ping/pong cluster, wrap-around Int64
@@ -923,6 +937,8 @@ let c_examples_tests =
     (fun name ->
       tc (Printf.sprintf "%s compiles to c and runs standalone" name) (fun () ->
           if not (Lazy.force cc_available) then Alcotest.skip ();
+          if name = "sqlite3_demo" && not (Lazy.force sqlite3_available) then
+            Alcotest.skip ();
           let dir = Filename.concat examples_dir name in
           let expected = read_file (Filename.concat dir "expected.txt") in
           let out_bin = Filename.concat scratch (name ^ "-c-bin") in

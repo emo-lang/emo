@@ -622,9 +622,7 @@ def scale(n Int64) Int64 {
   deps {}
 }
 |};
-  write_file
-    (Filename.concat q_dir "q.emo")
-    {|def qq() Int64 {
+  write_file (Filename.concat q_dir "q.emo") {|def qq() Int64 {
   return 9
 }
 |};
@@ -693,6 +691,36 @@ def span() Int64 {
   return leaf_tools.leaf()
 }
 |};
+  (* A package with native inputs: a C source and a `link` library. Its
+     manifest declares both native targets, so only the link gate —
+     never target resolution — can refuse it. *)
+  let native_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "native_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat native_dir "package.emo")
+    {|package {
+  name = "acme/native_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  link = ["m"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat native_dir "native_tools.emo")
+    {|foreign def floor(x Float64) Float64 = "emo_native_floor"
+
+def halve_floor(x Float64) Float64 {
+  return floor(x / 2.0)
+}
+|};
+  write_file
+    (Filename.concat native_dir "shim.c")
+    {|#include <math.h>
+double emo_native_floor(double x) { return floor(x); }
+|};
   dir
 
 let app_manifest =
@@ -731,11 +759,11 @@ let shadow_app () =
     acme/q = "1.0.0"
   }
 }
-|} );
-      ( "main.emo",
-        {|require "acme/shadow"
+|}
+      );
+      ("main.emo", {|require "acme/shadow"
 println(shadow.pick())
-|} );
+|});
     ]
     "main.emo"
 
@@ -1136,8 +1164,9 @@ println(c_tools.halve(8))
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
                 Alcotest.fail ("codes: " ^ codes_dump ds)));
-    tc "a package submodule resolves under the short name and its internal is relative"
-      (fun () ->
+    tc
+      "a package submodule resolves under the short name and its internal is \
+       relative" (fun () ->
         let entry =
           with_project
             [
@@ -1156,7 +1185,8 @@ println(c_tools.halve(8))
               ( "main.emo",
                 {|require "acme/nested_tools"
 println(nested_tools.scale(21))
-|} );
+|}
+              );
             ]
             "main.emo"
         in
@@ -1186,7 +1216,8 @@ println(nested_tools.scale(21))
               ( "main.emo",
                 {|require "acme/nested_tools"
 println(nested_tools.internal.helper.twice(21))
-|} );
+|}
+              );
             ]
             "main.emo"
         in
@@ -1212,9 +1243,10 @@ println(nested_tools.internal.helper.twice(21))
 }
 |}
               );
-              ("main.emo", {|require "acme/nested_tools"
+              ( "main.emo",
+                {|require "acme/nested_tools"
 println(helper.twice(21))
-|});
+|} );
             ]
             "main.emo"
         in
@@ -1238,7 +1270,7 @@ println(helper.twice(21))
       (fun () ->
         let entry = shadow_app () in
         with_registry (fun () ->
-            let inputs, entry_path, packages, _ =
+            let inputs, entry_path, packages, _, _ =
               Emo_project.compile_inputs ~entry_file:entry ~target:"c"
             in
             let program =
@@ -1253,12 +1285,14 @@ println(helper.twice(21))
             | None -> Alcotest.fail "the IR has no shadow__pick function"
             | Some f -> (
                 match f.Emo_ir.fbody with
-                | [ Emo_ir.Return_stmt { Emo_ir.desc = Emo_ir.Call { func; _ }; _ } ]
-                  ->
+                | [
+                 Emo_ir.Return_stmt { Emo_ir.desc = Emo_ir.Call { func; _ }; _ };
+                ] ->
                     Alcotest.(check string) "call target" "shadow__q__qq" func
                 | _ -> Alcotest.fail "unexpected shadow__pick body")));
-    tc "a declared transitive dependency resolves and its require pairs with its own package"
-      (fun () ->
+    tc
+      "a declared transitive dependency resolves and its require pairs with \
+       its own package" (fun () ->
         let entry =
           with_project
             [
@@ -1272,7 +1306,8 @@ println(helper.twice(21))
     acme/trans_tools = "1.0.0"
   }
 }
-|}              );
+|}
+              );
               ( "main.emo",
                 {|require "acme/trans_tools"
 println(trans_tools.span())
@@ -1302,7 +1337,8 @@ println(trans_tools.span())
     acme/trans_tools = "1.0.0"
   }
 }
-|}              );
+|}
+              );
               ("main.emo", {|println(leaf_tools.leaf())|});
             ]
             "main.emo"
@@ -1313,8 +1349,7 @@ println(trans_tools.span())
             | exception Emo_project.Static_errors ds ->
                 if not (has_code ds "E5008") then
                   Alcotest.fail ("codes: " ^ codes_dump ds)));
-    tc "a package cannot reference a dependency it did not declare"
-      (fun () ->
+    tc "a package cannot reference a dependency it did not declare" (fun () ->
         let entry =
           with_project
             [
@@ -1329,7 +1364,8 @@ println(trans_tools.span())
     acme/leaf_tools = "1.0.0"
   }
 }
-|}              );
+|}
+              );
               ( "main.emo",
                 {|require "acme/rogue_tools"
 println(rogue_tools.rogue())
@@ -1730,11 +1766,10 @@ let result_named name (results : Emo_project.test_result list) =
   | None -> Alcotest.fail ("no result for " ^ name)
 
 let main_add =
-  ( "main.emo",
-    {|def add(a Int64, b Int64) Int64 {
+  ("main.emo", {|def add(a Int64, b Int64) Int64 {
   return a + b
 }
-|} )
+|})
 
 let test_runner_tests =
   [
@@ -1755,7 +1790,8 @@ def test_fail() {
 def test_error() {
   println(List.new([]).pop_front())
 }
-|} );
+|}
+              );
             ]
         in
         Alcotest.(check int) "three results" 3 (List.length results);
@@ -1792,15 +1828,15 @@ def test_error() {
 def test_quiet() {
   expect_equal(2, main.add(1, 1))
 }
-|} );
+|}
+              );
             ]
         in
         Alcotest.(check string)
           "captured" "about to fail\n"
           (result_named "test_loud_fail" results).Emo_project.t_output;
         Alcotest.(check string)
-          "no leak" ""
-          (result_named "test_quiet" results).Emo_project.t_output);
+          "no leak" "" (result_named "test_quiet" results).Emo_project.t_output);
     tc "a parameterized test is a collection error, never a call" (fun () ->
         let results =
           run_tests_in
@@ -1814,11 +1850,13 @@ def test_quiet() {
 def test_fine() {
   expect_equal(2, main.add(1, 1))
 }
-|} );
+|}
+              );
             ]
         in
-        (match (result_named "test_takes_args" results).Emo_project.t_outcome
-        with
+        (match
+           (result_named "test_takes_args" results).Emo_project.t_outcome
+         with
         | Emo_project.Errored d ->
             Alcotest.(check string)
               "code" "E5008"
@@ -1848,17 +1886,15 @@ def test_fine() {
           run_tests_in
             [
               main_add;
-              ( "test/broken.emo",
-                {|def test_x() {
+              ("test/broken.emo", {|def test_x() {
   println(nope)
 }
-|} );
+|});
             ]
         with
         | _ -> Alcotest.fail "expected Static_errors"
         | exception Emo_project.Static_errors ds ->
-            Alcotest.(check bool)
-              "some diagnostic" true (List.length ds > 0));
+            Alcotest.(check bool) "some diagnostic" true (List.length ds > 0));
     tc "a module that raises at load errors as <load>" (fun () ->
         let results =
           run_tests_in
@@ -1870,7 +1906,8 @@ def test_fine() {
 def test_never() {
   expect_equal(2, main.add(1, 1))
 }
-|} );
+|}
+              );
               ( "test/fine.emo",
                 {|def test_ok() {
   expect_equal(2, main.add(1, 1))
@@ -1908,6 +1945,85 @@ def test_never() {
             | Emo_project.Passed -> ()
             | _ -> Alcotest.fail (r.Emo_project.t_name ^ " should pass"))
           results);
+  ]
+
+(* Packages with native inputs (C sources, a `link` library): the c
+   target carries them; every other target refuses the program rather
+   than silently dropping the link. *)
+let native_dep_tests =
+  [
+    tc "the c target collects a package's C sources and link libraries"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/nativeapp"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/native_tools = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/native_tools"
+println(native_tools.halve_floor(9.0))
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            let _inputs, _entry, _packages, _manifest, (c_sources, link_libs) =
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            in
+            Alcotest.(check (list string)) "link" [ "m" ] link_libs;
+            Alcotest.(check int) "one c source" 1 (List.length c_sources);
+            Alcotest.(check bool)
+              "the shim's path" true
+              (String.equal (Filename.basename (List.hd c_sources)) "shim.c")));
+    tc "a native-carrying package is refused off the c target" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/nativeapp"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/native_tools = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/native_tools"
+println(native_tools.halve_floor(9.0))
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"ocaml"
+            with
+            | _ -> Alcotest.fail "expected the link gate to refuse"
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.(check bool)
+                  "E5007" true
+                  (List.exists
+                     (fun d ->
+                       d.Emo_support.Diagnostic.code = Some "E5007"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "acme/native_tools")
+                     ds)));
   ]
 
 (* ---- Step 13 bootstrap: the examples/ suite as compiled binaries ----
@@ -2359,6 +2475,7 @@ let () =
       ("shop_golden", shop_golden_tests);
       ("stdlib_http", stdlib_http_tests);
       ("ffi", ffi_tests);
+      ("native_dep", native_dep_tests);
       ("bootstrap", bootstrap_tests);
       ("ts_golden", ts_golden_tests);
       ("cross_module", cross_module_tests);

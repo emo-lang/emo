@@ -1,0 +1,9 @@
+package {
+  name = "emo/sqlite3_demo"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    sqlite3 = "0.1.0"
+  }
+}

@@ -460,9 +460,7 @@ let default_output s =
   flush stdout
 
 let output : (string -> unit) ref = ref default_output
-
 let set_output f = output := f
-
 let reset_output () = output := default_output
 
 (* The List deque's operations: O(1) push and pop at both ends, and the

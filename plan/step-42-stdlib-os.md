@@ -1,6 +1,6 @@
-# Step 30 — The standard library: `os`
+# Step 42 — The standard library: `os`
 
-**Milestone:** M11 — The standard library · **Prereq:** step 24 (the
+**Milestone:** M13 — The standard library · **Prereq:** step 24 (the
 c target — where the POSIX runtime calls live), step 26 (target
 independence — the standalone ocaml runtime that also needs the os
 dispatch) · **Related:** `stdlib/registry/net` (the other
@@ -55,7 +55,7 @@ targets.
 - `os` exposes nothing about signals (no handlers, no kill) and
   nothing about file metadata (`stat`) — both are natural next rungs,
   along with `dup2`/`execvp` when a user asks for them.
-- The cross-module-types checker step (step 27's follow-up) does not
+- The cross-module-types checker step (step 39's follow-up) does not
   gate this package — os.emo crosses modules with native types only —
   but the ts/wasm/beam refusal is by `targets`, not by capability
   detection. (The checker step landed 2026-10-10; os.emo's bare
@@ -63,20 +63,20 @@ targets.
 
 ## Tasks
 
-- [x] **T30.1** — The checker signatures and the `os_` builtin
+- [x] **T42.1** — The checker signatures and the `os_` builtin
       prefix; the interpreter's Unix-backed dispatch. (Done
       2026-10-09.)
-- [x] **T30.2** — The c runtime's `emo_os_*` POSIX implementations
+- [x] **T42.2** — The c runtime's `emo_os_*` POSIX implementations
       and the c emitter's dispatch. (Done 2026-10-09.)
-- [x] **T30.3** — The standalone ocaml runtime's dispatch (the os
+- [x] **T42.3** — The standalone ocaml runtime's dispatch (the os
       calls ride the host's Unix module). (Done 2026-10-09.)
-- [x] **T30.4** — The package: `stdlib/registry/os/0.1.0` — thin
+- [x] **T42.4** — The package: `stdlib/registry/os/0.1.0` — thin
       wrappers, the wait-status decoders, the fork/pipe discipline
       spelled out. (Done 2026-10-09.)
-- [x] **T30.5** — The golden: `examples/os_demo` (raw IO, directory
+- [x] **T42.5** — The golden: `examples/os_demo` (raw IO, directory
       create/list/rename/remove, fork+pipe+waitpid with exit-status
       decode) on the bootstrap and c_goldens lists. (Done
       2026-10-09.)
-- [x] **T30.6** — The docs: `docs/stdlib/os.md` and its zh-CN
+- [x] **T42.6** — The docs: `docs/stdlib/os.md` and its zh-CN
       mirror; `dune build @fmt` and `dune test` green. (Done
       2026-10-09.)

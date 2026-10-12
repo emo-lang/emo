@@ -147,7 +147,8 @@ type env = {
   mutable locals : string list; (* innermost first *)
   types : (string * int * int, Emo_check.t) Hashtbl.t;
   module_paths : string list list; (* every module in the program *)
-  packages : string list list; (* the short-name prefix of every fetched package *)
+  packages : string list list;
+      (* the short-name prefix of every fetched package *)
   mutable aliases : (string * string list) list;
       (* `const order = shop.order` — a name bound to a module path *)
 }
@@ -913,7 +914,8 @@ let specialize (funcs : func list) : func list =
 type input = {
   modules : module_input list; (* every module in the dependency closure *)
   entry : string list; (* the entry module's path *)
-  packages : string list list; (* the short-name prefix of every fetched package *)
+  packages : string list list;
+      (* the short-name prefix of every fetched package *)
 }
 
 (* Lowers a whole program: symbols from every module first (forward
@@ -1066,8 +1068,7 @@ let lower (input : input) : program =
                 match full_chain init with
                 | Some chain ->
                     let chain =
-                      relativize_in ~current:m.mpath
-                        ~packages:input.packages
+                      relativize_in ~current:m.mpath ~packages:input.packages
                         ~module_paths:all_module_paths chain
                     in
                     if List.exists (fun mp -> mp = chain) all_module_paths then

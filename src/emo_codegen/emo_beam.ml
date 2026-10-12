@@ -451,8 +451,9 @@ and method_call env self_ name args =
         "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_len'/1 ";
       args_list env [ self_ ];
       put env
-        "\n  <_str> when call 'erlang':'is_binary'(_str) ->\n    call \
-         'erlang':'byte_size'(_str)";
+        "\n\
+        \  <_str> when call 'erlang':'is_binary'(_str) ->\n\
+        \    call 'erlang':'byte_size'(_str)";
       put env "\n  <_> when 'true' ->\n    call 'erlang':'length'(";
       expr env self_;
       put env ")\nend"
@@ -476,8 +477,7 @@ and method_call env self_ name args =
                 c.Emo_ir.cmethods
             then
               Some
-                (Printf.sprintf
-                   "  <%s> when 'true' ->\n    apply '%s'/1 (%s)\n"
+                (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/1 (%s)\n"
                    (instance_pattern env.classes c.Emo_ir.cname)
                    (Emo_ir.sanitize_ident (c.Emo_ir.cname ^ "__to_string"))
                    recv)
@@ -487,13 +487,13 @@ and method_call env self_ name args =
       put env (String.concat "" method_arms);
       put env
         (Printf.sprintf
-           "  <{'emo_bytes', _k}> when 'true' ->\n    apply \
-            'emo_bytes_to_str'/1 (%s)\n"
+           "  <{'emo_bytes', _k}> when 'true' ->\n\
+           \    apply 'emo_bytes_to_str'/1 (%s)\n"
            recv);
       put env
         (Printf.sprintf
-           "  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_to_str'/1 \
-            (%s)\n"
+           "  <{'emo_list', _k}> when 'true' ->\n\
+           \    apply 'emo_list_to_str'/1 (%s)\n"
            recv);
       put env
         (Printf.sprintf
@@ -3062,9 +3062,9 @@ let emit (program : Emo_ir.program) : string =
             c.Emo_ir.cmethods
           @ [
               ( c.Emo_ir.cname ^ "__new",
-                (match c.Emo_ir.cinit with
+                match c.Emo_ir.cinit with
                 | Some init -> List.length init.Emo_ir.fparams - 1
-                | None -> 0) );
+                | None -> 0 );
             ])
         program.Emo_ir.pclasses;
   put env "module 'emo_main' ['main'/0]\n";

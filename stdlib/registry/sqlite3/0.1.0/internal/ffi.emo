@@ -1,0 +1,31 @@
+// The raw bindings behind the sqlite3 package: one `foreign def` per
+// shim function in emo_sqlite3_shim.c. Everything here is c-target only
+// and subtree-private — callers outside the package cannot reach these
+// names; the public API lives in sqlite3.emo.
+//
+// Handles cross as pointer-sized Int64s; a failed open/prepare yields 0
+// (open can still report through errcode/errmsg when the handle is
+// nonzero, per sqlite3_open's contract). Strings cross NUL-terminated,
+// so a String carrying an embedded NUL truncates at the boundary.
+
+foreign def open(path String) Int64 = "emo_sqlite3_open"
+foreign def errcode(db Int64) Int64 = "emo_sqlite3_errcode"
+foreign def errmsg(db Int64) String = "emo_sqlite3_errmsg"
+foreign def exec(db Int64, sql String) Int64 = "emo_sqlite3_exec"
+foreign def prepare(db Int64, sql String) Int64 = "emo_sqlite3_prepare"
+foreign def step(stmt Int64) Int64 = "emo_sqlite3_step"
+foreign def bind_int64(stmt Int64, i Int64, v Int64) Int64 = "emo_sqlite3_bind_int64"
+foreign def bind_double(stmt Int64, i Int64, v Float64) Int64 = "emo_sqlite3_bind_double"
+foreign def bind_text(stmt Int64, i Int64, v String) Int64 = "emo_sqlite3_bind_text"
+foreign def bind_null(stmt Int64, i Int64) Int64 = "emo_sqlite3_bind_null"
+foreign def column_count(stmt Int64) Int64 = "emo_sqlite3_column_count"
+foreign def column_name(stmt Int64, i Int64) String = "emo_sqlite3_column_name"
+foreign def column_int64(stmt Int64, i Int64) Int64 = "emo_sqlite3_column_int64"
+foreign def column_double(stmt Int64, i Int64) Float64 = "emo_sqlite3_column_double"
+foreign def column_text(stmt Int64, i Int64) String = "emo_sqlite3_column_text"
+foreign def column_is_null(stmt Int64, i Int64) Bool = "emo_sqlite3_column_is_null"
+foreign def reset(stmt Int64) Int64 = "emo_sqlite3_reset"
+foreign def finalize(stmt Int64) Int64 = "emo_sqlite3_finalize"
+foreign def close(db Int64) Int64 = "emo_sqlite3_close"
+foreign def last_insert_rowid(db Int64) Int64 = "emo_sqlite3_last_insert_rowid"
+foreign def changes(db Int64) Int64 = "emo_sqlite3_changes"

@@ -96,6 +96,31 @@ by content, so editing it invalidates the cached binary. `foreign
 def` runs only in compiled programs — the interpreter refuses it with
 E3009.
 
+## Package-carried native code
+
+A package that binds a C library keeps the whole link inside its
+manifest and its tree, so consumers pass no flags at all:
+
+- **The manifest's optional `link` field names the system libraries.**
+  `link = ["sqlite3"]` turns into `-lsqlite3` on the c target's cc
+  invocation. Bare names only — a flag- or path-shaped entry is refused
+  at manifest read (`--cclib` keeps the verbatim-flag role).
+- **`.c`/`.h` files in the package's tree are part of the package.**
+  They are collected, checksummed, embedded in the compiler's bundled
+  stdlib, and published beside the `.emo` modules, and the c target
+  compiles a dependency's C sources in the program's one cc invocation.
+  This is where the out-parameter shims live: a package's
+  `foreign def`s bind the shim's exact-ABI wrappers (as the `sqlite3`
+  package does), and the shim compiles against the generated
+  `emo_defs.h`, so a signature drift breaks at cc time in both
+  directions.
+- **Only the c target honors a package's native inputs.** The
+  manifest's `targets` refuses the package at resolution on the other
+  targets; a package that declares the current target while carrying
+  native inputs makes the build refuse with E5007 rather than silently
+  dropping the link. Sources enter the build's cache key by content,
+  libraries by name.
+
 A target that cannot honor a `foreign def` refuses it at check time
 rather than compiling a broken call: today the c target and the
 OCaml-emitting native backend can, while `wasm`, `typescript`, `beam`,

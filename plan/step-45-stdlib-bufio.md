@@ -1,6 +1,6 @@
-# Step 33 — The standard library: `bufio`
+# Step 45 — The standard library: `bufio`
 
-**Milestone:** M11 — The standard library · **Prereq:** step 32
+**Milestone:** M13 — The standard library · **Prereq:** step 44
 (slog — the zero-compiler-change golden shape) · **Related:**
 `stdlib/registry/{os,base64}` (the fd surface and the cross-module
 shape), `docs/stdlib/bufio.md` · **Status:** done on
@@ -71,18 +71,18 @@ path, all caught by the demo's golden and fixed:
 
 ## Tasks
 
-- [x] **T33.1** — The package: the two interfaces, the four
+- [x] **T45.1** — The package: the two interfaces, the four
       adapters, `Reader` (read / read_byte / read_string / read_line
       / peek / discard / unread_byte / buffered / reset), `Writer`
       (write / write_byte / flush / buffered / available / reset),
       strict sizes and exact errors. (Done 2026-10-09.)
-- [x] **T33.2** — The golden: `examples/bufio_demo` — in-memory
+- [x] **T45.2** — The golden: `examples/bufio_demo` — in-memory
       streams, an 8-byte buffered file write that really flushes,
       read back through two stacked readers — on the bootstrap and c
       lists. (Done 2026-10-09.)
-- [x] **T33.3** — The c-backend fixes: the runtime dispatch for
+- [x] **T45.3** — The c-backend fixes: the runtime dispatch for
       untyped receivers (`emo_dynamic_builtin` + the builtin method
       table), the single evaluation of the receiver, and the Void
       statement-method emission. (Done 2026-10-09.)
-- [x] **T33.4** — The docs: `docs/stdlib/bufio.md` + zh-CN mirror;
+- [x] **T45.4** — The docs: `docs/stdlib/bufio.md` + zh-CN mirror;
       `dune build @fmt` and `dune test` green. (Done 2026-10-09.)

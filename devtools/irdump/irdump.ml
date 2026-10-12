@@ -5,7 +5,7 @@
 
    Usage: dune exec devtools/irdump/irdump.exe -- <dir containing
    main.emo>; the program is resolved and checked like `emo build`,
-   always on the native target. *)
+   always on the `ocaml` target. *)
 
 let ( @@@ ) indent text = Printf.printf "%s%s\n" (String.make indent ' ') text
 
@@ -189,8 +189,8 @@ and dump_s indent s =
   | Break -> indent @@@ "Break"
   | Continue -> indent @@@ "Continue"
 
-let inputs, entry, packages, _ =
-  Emo_project.compile_inputs ~entry_file:"main.emo" ~target:"native"
+let inputs, entry, packages, _, _ =
+  Emo_project.compile_inputs ~entry_file:"main.emo" ~target:"ocaml"
 
 let p = Emo_ir.lower { Emo_ir.modules = inputs; entry; packages }
 

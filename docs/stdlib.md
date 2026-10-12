@@ -623,3 +623,56 @@ application's own messages.
 Targets: `["ocaml", "c", "typescript", "wasm", "beam"]`. Reference:
 [`docs/stdlib/sync.md`](stdlib/sync.md) · Demo:
 `examples/sync_demo`.
+
+## The `sqlite3` package
+
+The database package: a direct-style binding over SQLite's prepared
+statement API. A `Database` is an open connection; a `Statement` is one
+compiled SQL text, stepped row by row with typed column reads. It is
+the standard library's first native-binding package: the calls are
+`foreign def`s against a C shim the package carries, and the manifest's
+`link` field names the system sqlite3 library — consuming it is plain
+`require`, no `--cclib`.
+
+```emo
+def open(path String) Database
+
+class Database {
+  def exec(sql String) Void
+  def prepare(sql String) Statement
+  def last_insert_rowid() Int64
+  def changes() Int64
+  def close() Void
+}
+
+class Statement {
+  def bind_int(i Int64, v Int64) Void
+  def bind_float(i Int64, v Float64) Void
+  def bind_text(i Int64, v String) Void
+  def bind_null(i Int64) Void
+  def step() Bool
+  def reset() Void
+  def finalize() Void
+  def column_count() Int64
+  def column_name(i Int64) String
+  def column_int(i Int64) Int64
+  def column_float(i Int64) Float64
+  def column_text(i Int64) String
+  def column_is_null(i Int64) Bool
+}
+```
+
+Every failing call raises an ordinary Emo exception whose message names
+the operation and carries SQLite's own error text; reaching the end of
+a statement's rows is a value (`step()` answering `false`), not a
+failure. Bind indices are 1-based — they name the `?NNN` parameters in
+the SQL text; column indices are 0-based. A NULL column reads as `""`,
+with `column_is_null` telling the two apart. Strings cross the C
+boundary NUL-terminated, so a String carrying an embedded NUL truncates
+there; blobs wait on `Bytes` crossing the FFI.
+
+Targets: `["c"]` — the calls are foreign defs, which the interpreter
+refuses (E3009), so `emo run` cannot execute a program that touches the
+package; build it with `emo build`. Reference:
+[`docs/stdlib/sqlite3.md`](stdlib/sqlite3.md) · Demo:
+`examples/sqlite3_demo`.

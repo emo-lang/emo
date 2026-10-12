@@ -171,12 +171,11 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
       66
   | true -> (
       try
-        let inputs, entry_path, packages, _manifest =
+        let inputs, entry_path, packages, _manifest, (dep_csources, dep_links) =
           Emo_project.compile_inputs ~entry_file:entry ~target
         in
         let program =
-          Emo_ir.lower
-            { Emo_ir.modules = inputs; entry = entry_path; packages }
+          Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path; packages }
         in
         let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
         if not (Sys.file_exists build_dir) then
@@ -265,6 +264,12 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               close_out oc
             in
             let main_c_contents, defs_h_contents = Emo_codegen.C.emit program in
+            (* The resolved packages' native inputs ride the cclib
+               mechanism: a package's .c sources pass to cc verbatim
+               (absolute existing paths) and enter the cache key by
+               content, its `link` libraries become -l flags. Sources
+               come before libraries so the link resolves. *)
+            let cclibs = cclibs @ dep_csources @ dep_links in
             (* Incremental, same scheme as the ocaml arm: the digest of
                the emitted C, the runtime sources, and the link inputs
                names the cached binary — an unchanged program skips cc.
@@ -324,7 +329,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               let cmd =
                 Printf.sprintf
                   "cc -O2 -ffp-contract=off -std=c11 -Wall \
-                   -Wno-deprecated-declarations -I %s %s %s                  %s -o %s"
+                   -Wno-deprecated-declarations -I %s %s %s                  \
+                   %s -o %s"
                   (Filename.quote build_dir) (Filename.quote main_c)
                   (Filename.quote runtime_c) cclib_flags (Filename.quote output)
               in
@@ -808,7 +814,9 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
       let passed = ref 0 and failed = ref 0 and errored = ref 0 in
       List.iter
         (fun (r : Emo_project.test_result) ->
-          let name = String.concat "." (r.Emo_project.t_module @ [ r.t_name ]) in
+          let name =
+            String.concat "." (r.Emo_project.t_module @ [ r.t_name ])
+          in
           match r.t_outcome with
           | Emo_project.Passed ->
               incr passed;
@@ -828,9 +836,10 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
       let buckets =
         bucket "passed" !passed
         :: (if !failed > 0 then [ bucket "failed" !failed ] else [])
-        @ (if !errored > 0 then
-             [ bucket (if !errored = 1 then "error" else "errors") !errored ]
-           else [])
+        @
+        if !errored > 0 then
+          [ bucket (if !errored = 1 then "error" else "errors") !errored ]
+        else []
       in
       Printf.printf "%d test%s, %s\n" total
         (if total = 1 then "" else "s")
@@ -857,10 +866,9 @@ let test_cmd =
     (Cmd.info "test"
        ~doc:
          "Run the project's tests: every top-level `def test_*` in every \
-          module under the test/ directory, each in its own scheduler \
-          run. Assertions are the expect_equal / expect_true / \
-          expect_false / expect_fail builtins; a failed assertion fails \
-          only its own test.")
+          module under the test/ directory, each in its own scheduler run. \
+          Assertions are the expect_equal / expect_true / expect_false / \
+          expect_fail builtins; a failed assertion fails only its own test.")
     Term.(const test $ no_color $ error_limit)
 
 (* `emo deps`: resolution and regeneration are explicit commands — the
@@ -1961,8 +1969,8 @@ def test_greet() {
 }
 |};
     write ".gitignore" ".emo-build/\n";
-    Printf.printf
-      "created %s — next: cd %s && emo run main.emo, or emo test\n" path path;
+    Printf.printf "created %s — next: cd %s && emo run main.emo, or emo test\n"
+      path path;
     0
   end
 
@@ -2119,6 +2127,18 @@ let emoji_build ~(dir : string) : int =
             exit 66
           end
         in
+        (* The package's own native inputs ride the build too — the
+           pre-publish gate must link what the package's consumers will
+           get: its tree's .c sources and its manifest's link
+           libraries. The dependency mechanism in build_file covers a
+           package's deps; the package itself is not its own dep. *)
+        let own_csources =
+          Emo_pkg.Registry.collect_files dir
+          |> List.filter_map (fun (rel, _) ->
+              if Filename.check_suffix rel ".c" then
+                Some (Filename.concat dir rel)
+              else None)
+        in
         let results =
           List.map
             (fun target ->
@@ -2127,7 +2147,9 @@ let emoji_build ~(dir : string) : int =
                   (Filename.concat ".emo-build" ("emoji-" ^ target))
               in
               let code =
-                build_file ~entry ~output ~specialize:true ~cclibs:[] ~target
+                build_file ~entry ~output ~specialize:true
+                  ~cclibs:(own_csources @ m.Emo_pkg.link)
+                  ~target
               in
               (target, code))
             m.Emo_pkg.targets
