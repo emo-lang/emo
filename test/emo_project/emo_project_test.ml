@@ -1962,6 +1962,8 @@ let ts_golden_tests =
       ("printf_demo", "main.emo");
       ("sync_demo", "main.emo");
       ("loops", "main.emo");
+      ("tcp_echo", "main.emo");
+      ("http_roundtrip", "main.emo");
     ]
 
 (* The cross-module type rule (CHECK.md, settled 2026-10-10): the

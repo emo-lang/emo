@@ -13,8 +13,8 @@ with `json = "0.1.0"` (the exact version) under `deps` in the
 manifest. A `require` without the matching pin is a compile error, and
 a package whose `targets` do not include the build's target is
 refused at resolution time — the format packages run everywhere, the
-systems and network packages declare the targets with a Unix-shaped
-host.
+systems packages declare a Unix-shaped host, and the network packages
+declare `ocaml`, `c`, and `typescript`.
 
 Two conventions hold across every package:
 
@@ -31,9 +31,10 @@ Two conventions hold across every package:
   string ends a stream.
 - **Pure Emo where the language suffices.** The format packages and
   the codec are written in Emo over the shared runtimes, so every
-  target they declare answers byte-for-byte identically. Only `os`
-  (and the packages that build on it) dispatch to runtime built-ins
-  backed by POSIX, and only they are native-only.
+  target they declare answers byte-for-byte identically. `os` and
+  `file` dispatch to runtime built-ins backed by POSIX, and only they
+  are native-only; `net` and `http` dispatch to runtime built-ins too —
+  POSIX-backed on `ocaml` and `c`, Node-backed on `typescript`.
 
 The packages:
 
@@ -42,8 +43,8 @@ The packages:
 | [`file`](#the-file-package) | whole-file read and write | `ocaml`, `c` |
 | [`os`](#the-os-package) | processes, pipes, raw fd IO, directories | `ocaml`, `c` |
 | [`bufio`](#the-bufio-package) | buffered readers and writers over any stream | `ocaml`, `c` |
-| [`net`](#the-net-package) | TCP, UDP, Unix-domain sockets, DNS, TLS | `ocaml`, `c` |
-| [`http`](#the-http-package) | HTTP client and server | `ocaml`, `c` |
+| [`net`](#the-net-package) | TCP, UDP, Unix-domain sockets, DNS, TLS | `ocaml`, `c`, `typescript` |
+| [`http`](#the-http-package) | HTTP client and server | `ocaml`, `c`, `typescript` |
 | [`json`](#the-json-package) | JSON decode and encode | all five |
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
@@ -250,7 +251,9 @@ reason when the peer closes early, a close mid-line is the error
 tuple, and `read_all` is the one read that treats EOF as normal. A
 Unix-domain listener has no port — `port()` on one is an error.
 
-Targets: `["ocaml", "c"]`. Reference:
+Targets: `["ocaml", "c", "typescript"]`. On `c` the package is TCP-only;
+UDP, Unix-domain sockets, `net.resolve`, and TLS are refused at runtime
+there. Reference:
 [`docs/stdlib/net.md`](stdlib/net.md) · Demo: `examples/tcp_echo`.
 
 ## The `http` package
@@ -303,7 +306,8 @@ http.serve_requests(listener) -> (req HttpRequest) {
 }
 ```
 
-Targets: `["ocaml", "c"]` (it pins `net` alongside it). Reference:
+Targets: `["ocaml", "c", "typescript"]` (it pins `net` alongside it). On `c`
+it is TCP-only, inherited from `net`. Reference:
 [`docs/stdlib/http.md`](stdlib/http.md) · Demo:
 `examples/http_roundtrip`.
 

@@ -1,6 +1,6 @@
 # `http` 包
 
-标准库的 HTTP 客户端与服务器,用纯 Emo 写在 `net` 包之上。通篇直接风格:一次请求读起来就是普通函数调用,socket 忙碌时调度器在底层挂起进程。本包**仅限 ocaml 与 c 目标**——它的 manifest 声明了 `targets = ["ocaml", "c"]`,依赖解析在其他一切目标上拒绝它。
+标准库的 HTTP 客户端与服务器,用纯 Emo 写在 `net` 包之上。通篇直接风格:一次请求读起来就是普通函数调用,socket 忙碌时调度器在底层挂起进程。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。在 `c` 上它继承 `net` 只覆盖 TCP 的限制;`https` 尤其需要 TLS,而 `c` 会拒绝。
 
 ## 引入
 
@@ -14,7 +14,7 @@ require "http"
 package {
   name = "acme/myapp"
   version = "0.1.0"
-  targets = ["ocaml", "c"]
+  targets = ["ocaml", "c", "typescript"]
 
   deps {
     http = "0.1.0"
@@ -135,7 +135,7 @@ case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/
 
 ## 限制
 
-- **仅限 ocaml 与 c 目标。** 包声明了 `targets = ["ocaml", "c"]`;wasm、TypeScript、BEAM 构建在解析期就会被拒绝。
+- **三个目标。** 包声明了 `targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期就会被拒绝。在 `c` 上它只覆盖 TCP,继承自 `net`。
 - **无连接池。** 每个请求一条 TCP 连接,交换完即关。
 - **不跟随重定向。** 3xx 响应原样返回。
 - **HTTP/1.1,`Content-Length`  body。** 没有 `Content-Length` 头的请求与响应,body 按连接剩余字节读取(客户端)或视为空(服务端);不支持 chunked 传输编码。
