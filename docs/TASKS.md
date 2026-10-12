@@ -1157,7 +1157,7 @@ non-empty `data`; `dune test` green.
 `(R.error, reason)` and only contract violations raise; every package
 golden green on its declared targets; `dune test` green.
 
-- [ ] **T37.1** — `file` + `os`: open/read/write and permission
+- [x] **T37.1** — `file` + `os`: open/read/write and permission
       misses, missing paths return tuples; the native raise sites (os
       runtime, interp + ocaml + c) return instead; waitpid decoding
       untouched.

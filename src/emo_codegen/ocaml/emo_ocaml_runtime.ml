@@ -209,8 +209,8 @@ module Emo_eval = struct
         (* host, port, timeout, insecure, resolved addresses *)
         -> conn Effect.t
     | Net_tls_listen : string * int * string * string -> listener Effect.t
-    | File_read : string -> string Effect.t
-    | File_write : string * string -> int Effect.t
+    | File_read : string -> value Effect.t
+    | File_write : string * string -> value Effect.t
 
   (* The synchronous net operations compiled method dispatch performs;
      they only run under the scheduler, exactly like the interpreted
@@ -666,6 +666,24 @@ module Emo_eval = struct
                 (if arg = "" then "" else " " ^ arg)
                 (Unix.error_message e)))
     | exception Sys_error message -> raise (net_raise ("os: " ^ message))
+
+  (* The data-driven os failures are values: the call answers
+     (R.ok, value) or (R.error, reason). [os_try] remains only for the
+     carved-out [waitpid]. *)
+  let os_result (f : unit -> value) : value =
+    match f () with
+    | v -> Tuple [ EnumMember ("R", "ok"); v ]
+    | exception Unix.Unix_error (e, fn, arg) ->
+        Tuple
+          [
+            EnumMember ("R", "error");
+            String
+              (Printf.sprintf "os: %s%s: %s" fn
+                 (if arg = "" then "" else " " ^ arg)
+                 (Unix.error_message e));
+          ]
+    | exception Sys_error message ->
+        Tuple [ EnumMember ("R", "error"); String ("os: " ^ message) ]
 
   (* ---- printf ----
 
@@ -1205,7 +1223,7 @@ let pf_hash_float conv minus plus space width prec f =
         error "E3007"
           (Printf.sprintf "`file_read` expects (path String), got %d arguments"
              (List.length args))
-    | "file_read", [ String path ] -> String (Effect.perform (File_read path))
+    | "file_read", [ String path ] -> Effect.perform (File_read path)
     | "file_read", [ v ] ->
         error "E3001"
           (Printf.sprintf "`file_read` expects a String path, got %s"
@@ -1216,8 +1234,8 @@ let pf_hash_float conv minus plus space width prec f =
              "`file_write` expects (path String, contents String), got %d \
               arguments"
              (List.length args))
-    | "file_write", [ String path; String contents ] ->
-        Int64 (Int64.of_int (Effect.perform (File_write (path, contents))))
+        | "file_write", [ String path; String contents ] ->
+      Effect.perform (File_write (path, contents))
     | "file_write", [ String _; v ] ->
         error "E3001"
           (Printf.sprintf "`file_write` expects String contents, got %s"
@@ -1239,7 +1257,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_getppid` expects no arguments, got %d"
              (List.length vs))
     | "os_fork", [] ->
-        os_try (fun () -> Int64 (Int64.of_int (Unix.fork ())))
+        os_result (fun () -> Int64 (Int64.of_int (Unix.fork ())))
     | "os_fork", vs ->
         error "E3007"
           (Printf.sprintf "`os_fork` expects no arguments, got %d"
@@ -1262,7 +1280,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
              (List.length vs))
     | "os_pipe", [] ->
-        os_try
+        os_result
           (fun () ->
             let r, w = Unix.pipe () in
             Tuple
@@ -1275,12 +1293,16 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_pipe` expects no arguments, got %d"
              (List.length vs))
     | "os_execv", [ String path; Array items ] ->
-        os_try
-          (fun () ->
-            let argv =
-              Array.of_list (List.map to_string (Array.to_list items))
-            in
-            Unix.execv path argv)
+        (* Success never returns — the process is replaced. Failure is a
+           data-driven value: the call returns Void, and the fork child
+           follows it with `_exit` (the POSIX idiom; a raise here would
+           run the parent's cleanup a second time). *)
+        (try
+           let argv =
+             Array.of_list (List.map to_string (Array.to_list items))
+           in
+           Unix.execv path argv
+         with Unix.Unix_error _ -> Void)
     | "os_execv", vs ->
         error "E3007"
           (Printf.sprintf
@@ -1294,7 +1316,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os__exit` expects (status Int64), got %d"
              (List.length vs))
     | "os_open_read", [ String path ] ->
-        os_try
+        os_result
           (fun () ->
             Int64
               (Int64.of_int
@@ -1304,7 +1326,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_open_read` expects (path String), got %d"
              (List.length vs))
     | "os_open_write", [ String path ] ->
-        os_try
+        os_result
           (fun () ->
             Int64
               (Int64.of_int
@@ -1317,7 +1339,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_open_write` expects (path String), got %d"
              (List.length vs))
     | "os_open_append", [ String path ] ->
-        os_try
+        os_result
           (fun () ->
             Int64
               (Int64.of_int
@@ -1333,7 +1355,7 @@ let pf_hash_float conv minus plus space width prec f =
         if n < 0L then
           error "E3007" "`os_read` expects a non-negative count"
         else
-          os_try
+          os_result
             (fun () ->
               let buf = Bytes.create (Int64.to_int n) in
               let got =
@@ -1346,7 +1368,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_read` expects (fd Int64, n Int64), got %d"
              (List.length vs))
     | "os_write", [ Int64 fd; String data ] ->
-        os_try
+        os_result
           (fun () ->
             Int64
               (Int64.of_int
@@ -1359,7 +1381,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_write` expects (fd Int64, data String), got %d"
              (List.length vs))
     | "os_close", [ Int64 fd ] ->
-        os_try
+        os_result
           (fun () ->
             Unix.close (Obj.magic (Int64.to_int fd) : Unix.file_descr);
             Int64 0L)
@@ -1368,7 +1390,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_close` expects (fd Int64), got %d"
              (List.length vs))
     | "os_list_dir", [ String path ] ->
-        os_try
+        os_result
           (fun () ->
             let names = Sys.readdir path in
             Array.sort compare names;
@@ -1378,7 +1400,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_list_dir` expects (path String), got %d"
              (List.length vs))
     | "os_mkdir", [ String path ] ->
-        os_try (fun () ->
+        os_result (fun () ->
             Unix.mkdir path 0o755;
             Int64 0L)
     | "os_mkdir", vs ->
@@ -1386,19 +1408,19 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_mkdir` expects (path String), got %d"
              (List.length vs))
     | "os_rmdir", [ String path ] ->
-        os_try (fun () -> Unix.rmdir path; Int64 0L)
+        os_result (fun () -> Unix.rmdir path; Int64 0L)
     | "os_rmdir", vs ->
         error "E3007"
           (Printf.sprintf "`os_rmdir` expects (path String), got %d"
              (List.length vs))
     | "os_unlink", [ String path ] ->
-        os_try (fun () -> Unix.unlink path; Int64 0L)
+        os_result (fun () -> Unix.unlink path; Int64 0L)
     | "os_unlink", vs ->
         error "E3007"
           (Printf.sprintf "`os_unlink` expects (path String), got %d"
              (List.length vs))
     | "os_rename", [ String old_path; String new_path ] ->
-        os_try
+        os_result
           (fun () ->
             Unix.rename old_path new_path;
             Int64 0L)
@@ -1413,7 +1435,7 @@ let pf_hash_float conv minus plus space width prec f =
           (Printf.sprintf "`os_getcwd` expects no arguments, got %d"
              (List.length vs))
     | "os_chdir", [ String path ] ->
-        os_try (fun () -> Sys.chdir path; Int64 0L)
+        os_result (fun () -> Sys.chdir path; Int64 0L)
     | "os_chdir", vs ->
         error "E3007"
           (Printf.sprintf "`os_chdir` expects (path String), got %d"
@@ -2720,31 +2742,51 @@ module Emo_runtime = struct
           | Emo_eval.File_read path ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                  (* The data-driven file failures are values: the call
+                     answers (R.ok, text) or (R.error, reason). *)
+                  let ok v =
+                    Effect.Shallow.continue_with k
+                      (Tuple [ EnumMember ("R", "ok"); v ])
+                      (handler state proc ())
+                  in
+                  let fail message =
+                    Effect.Shallow.continue_with k
+                      (Tuple [ EnumMember ("R", "error"); String message ])
+                      (handler state proc ())
+                  in
                   try
                     let ic = open_in_bin path in
                     let text = really_input_string ic (in_channel_length ic) in
                     close_in_noerr ic;
-                    Effect.Shallow.continue_with k text (handler state proc ())
+                    ok (String text)
                   with Sys_error message ->
-                    raise
-                      (Emo_eval.net_raise
-                         (Printf.sprintf "cannot read %s: %s" path message)))
+                    fail
+                      (Printf.sprintf "file: cannot read %s: %s" path message))
           | Emo_eval.File_write (path, contents) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
                   (* Close before resuming: the resumption runs the rest
                      of the process, and a read-your-own-write race beats
                      descriptor hygiene. *)
+                  let ok v =
+                    Effect.Shallow.continue_with k
+                      (Tuple [ EnumMember ("R", "ok"); v ])
+                      (handler state proc ())
+                  in
+                  let fail message =
+                    Effect.Shallow.continue_with k
+                      (Tuple [ EnumMember ("R", "error"); String message ])
+                      (handler state proc ())
+                  in
                   try
                     let oc = open_out_bin path in
                     output_string oc contents;
                     let n = String.length contents in
                     close_out_noerr oc;
-                    Effect.Shallow.continue_with k n (handler state proc ())
+                    ok (Int64 (Int64.of_int n))
                   with Sys_error message ->
-                    raise
-                      (Emo_eval.net_raise
-                         (Printf.sprintf "cannot write %s: %s" path message)))
+                    fail
+                      (Printf.sprintf "file: cannot write %s: %s" path message))
           | Emo_eval.Net_close_conn c ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->

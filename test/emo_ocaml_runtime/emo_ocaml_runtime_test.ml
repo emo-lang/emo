@@ -378,10 +378,15 @@ let () =
   let path = Sys.argv.(1) in
   let exit_code =
     Emo_runtime.run (fun () ->
-        p
-          (Emo_eval.call_builtin "file_write"
-             [ Emo_eval.String path; Emo_eval.String "emo file io\n" ]);
-        p (Emo_eval.call_builtin "file_read" [ Emo_eval.String path ]))
+        (* The data-driven failures are values: the second tuple slot
+           carries the byte count and the text. *)
+        let w =
+          Emo_eval.call_builtin "file_write"
+            [ Emo_eval.String path; Emo_eval.String "emo file io\n" ]
+        in
+        p (Emo_runtime.index w (Emo_eval.Int64 1L));
+        let r = Emo_eval.call_builtin "file_read" [ Emo_eval.String path ] in
+        p (Emo_runtime.index r (Emo_eval.Int64 1L)))
   in
   if exit_code <> 0 then exit exit_code
 |}

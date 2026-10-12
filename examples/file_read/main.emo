@@ -6,14 +6,14 @@
 
 const path = "emo-file-demo.txt"
 
-const written = file.write(path, "hello from disk\nline two\n")
+const (R.ok, written) = file.write(path, "hello from disk\nline two\n")
 println(written)
 
-const text = file.read(path)
+const (R.ok, text) = file.read(path)
 println(text.length())
 println(text.substring(0, 5))
 
 file.write(path, "overwritten\n")
-const second = file.read(path)
+const (R.ok, second) = file.read(path)
 println(second.length())
 println(second == text)

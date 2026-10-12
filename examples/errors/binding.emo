@@ -1,16 +1,11 @@
-// The README's assert-match binding: when a failure is not expected, a
-// binding pattern says so — a pattern that does not match is a runtime
-// error, ending the process loudly. The reader here stands in for
-// `file.read`, whose own tuple migration is the stdlib step. Run it:
+// The README's assert-match binding, verbatim: when a failure is not
+// expected, a binding pattern says so — a pattern that does not match
+// is a runtime error, ending the process loudly. Run it:
 //
 //   emo run binding.emo
 
-def read_line(path String) (R, String) {
-  if path == "config.emo" {
-    return (R.ok, "expected body")
-  }
-  return (R.error, path + ": no such file")
-}
+const path = "config.data"
+file.write(path, "expected body")
 
-const (R.ok, body) = read_line("config.emo")
+const (R.ok, body) = file.read(path)
 println(body.length())

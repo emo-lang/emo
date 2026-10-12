@@ -1,8 +1,9 @@
 // The os module: the process-level surface a systems program needs —
 // process ids, fork, exec, wait, pipes, the working directory, directory
-// listing, and raw (unbuffered, fd-based) file IO. Every failing call
-// raises an ordinary Emo exception whose message states exactly which
-// system call failed and why — no error codes, no nil.
+// listing, and raw (unbuffered, fd-based) file IO. Data-driven failures
+// are values: the call returns `(R.ok, value)` or `(R.error, reason)`,
+// the reason a string stating exactly which system call failed and why
+// (`os: open /x: no such file...`) — no error codes, no nil.
 //
 // The module is POSIX: it runs on the ocaml and c targets, the targets
 // with a Unix-shaped host. fork/exec/wait/pipe have no meaning on the
@@ -21,7 +22,7 @@ def getppid() Int64 {
   return os_getppid()
 }
 
-def fork() Int64 {
+def fork() (R, Int64) {
   return os_fork()
 }
 
@@ -58,13 +59,15 @@ def wait_stop_signal(status Int64) Int64 {
   return (status >> 8) & 255
 }
 
-def pipe() (Int64, Int64) {
+def pipe() (R, (Int64, Int64)) {
   return os_pipe()
 }
 
 // Replaces the calling process. argv[0] is conventionally the program
 // name again; the list must end where the arguments end. On success this
-// call never returns — the process is gone — and on failure it raises.
+// call never returns — the process is gone — and on failure it returns,
+// the fork child's cue to `_exit` (a raise here would run the parent's
+// cleanup a second time).
 def execv(path String, argv Array[String]) Void {
   os_execv(path, argv)
 }
@@ -76,49 +79,49 @@ def _exit(status Int64) Void {
   os__exit(status)
 }
 
-def open_read(path String) Int64 {
+def open_read(path String) (R, Int64) {
   return os_open_read(path)
 }
 
-def open_write(path String) Int64 {
+def open_write(path String) (R, Int64) {
   return os_open_write(path)
 }
 
-def open_append(path String) Int64 {
+def open_append(path String) (R, Int64) {
   return os_open_append(path)
 }
 
 // Reads up to n bytes; the empty string means end of file.
-def read(fd Int64, n Int64) String {
+def read(fd Int64, n Int64) (R, String) {
   return os_read(fd, n)
 }
 
-def write(fd Int64, data String) Int64 {
+def write(fd Int64, data String) (R, Int64) {
   return os_write(fd, data)
 }
 
-def close(fd Int64) Int64 {
+def close(fd Int64) (R, Int64) {
   return os_close(fd)
 }
 
 // The entry names of a directory, byte-order sorted, excluding "." and "..".
-def list_dir(path String) Array[String] {
+def list_dir(path String) (R, Array[String]) {
   return os_list_dir(path)
 }
 
-def mkdir(path String) Int64 {
+def mkdir(path String) (R, Int64) {
   return os_mkdir(path)
 }
 
-def rmdir(path String) Int64 {
+def rmdir(path String) (R, Int64) {
   return os_rmdir(path)
 }
 
-def unlink(path String) Int64 {
+def unlink(path String) (R, Int64) {
   return os_unlink(path)
 }
 
-def rename(old_path String, new_path String) Int64 {
+def rename(old_path String, new_path String) (R, Int64) {
   return os_rename(old_path, new_path)
 }
 
@@ -126,6 +129,6 @@ def getcwd() String {
   return os_getcwd()
 }
 
-def chdir(path String) Int64 {
+def chdir(path String) (R, Int64) {
   return os_chdir(path)
 }

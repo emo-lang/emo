@@ -482,34 +482,63 @@ let rec handler state (proc : Emo_eval.process) () :
                     let deadline = conn_deadline c in
                     write_loop state proc k finished c span live deadline
                       (Bytes.of_string data) 0))
-        | Emo_eval.File_read (path, span) ->
+        | Emo_eval.File_read (path, _) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                (* The data-driven file failures are values: the call
+                   answers (R.ok, text) or (R.error, reason) — the same
+                   tuple shape on every native target. *)
+                let ok text =
+                  Effect.Shallow.continue_with k
+                    (Emo_eval.Tuple
+                       [ Emo_eval.EnumMember ("R", "ok"); Emo_eval.String text ])
+                    (handler state proc ())
+                in
+                let fail message =
+                  Effect.Shallow.continue_with k
+                    (Emo_eval.Tuple
+                       [
+                         Emo_eval.EnumMember ("R", "error");
+                         Emo_eval.String message;
+                       ])
+                    (handler state proc ())
+                in
                 try
                   let ic = open_in_bin path in
                   let text = really_input_string ic (in_channel_length ic) in
                   close_in_noerr ic;
-                  Effect.Shallow.continue_with k text (handler state proc ())
+                  ok text
                 with Sys_error message ->
-                  raise
-                    (Emo_eval.net_raise span
-                       (Printf.sprintf "cannot read %s: %s" path message)))
-        | Emo_eval.File_write (path, contents, span) ->
+                  fail (Printf.sprintf "file: cannot read %s: %s" path message))
+        | Emo_eval.File_write (path, contents, _) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
                 (* Close before resuming: the resumption runs the rest
                    of the process, and a read-your-own-write race beats
                    descriptor hygiene. *)
+                let ok n =
+                  Effect.Shallow.continue_with k
+                    (Emo_eval.Tuple
+                       [ Emo_eval.EnumMember ("R", "ok"); Emo_eval.Int64 n ])
+                    (handler state proc ())
+                in
+                let fail message =
+                  Effect.Shallow.continue_with k
+                    (Emo_eval.Tuple
+                       [
+                         Emo_eval.EnumMember ("R", "error");
+                         Emo_eval.String message;
+                       ])
+                    (handler state proc ())
+                in
                 try
                   let oc = open_out_bin path in
                   output_string oc contents;
                   let n = String.length contents in
                   close_out_noerr oc;
-                  Effect.Shallow.continue_with k n (handler state proc ())
+                  ok (Int64.of_int n)
                 with Sys_error message ->
-                  raise
-                    (Emo_eval.net_raise span
-                       (Printf.sprintf "cannot write %s: %s" path message)))
+                  fail (Printf.sprintf "file: cannot write %s: %s" path message))
         | Emo_eval.Net_close_conn (c, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->

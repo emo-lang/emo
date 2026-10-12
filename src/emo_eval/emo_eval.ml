@@ -858,8 +858,8 @@ type _ Effect.t +=
   | Net_udp_close : udp * Emo_support.Span.t -> udp Effect.t
   | Net_connect_unix : string * float * Emo_support.Span.t -> conn Effect.t
   | Net_listen_unix : string * Emo_support.Span.t -> listener Effect.t
-  | File_read : string * Emo_support.Span.t -> string Effect.t
-  | File_write : string * string * Emo_support.Span.t -> int Effect.t
+  | File_read : string * Emo_support.Span.t -> value Effect.t
+  | File_write : string * string * Emo_support.Span.t -> value Effect.t
   | Net_tls_connect :
       (string * int * float * bool * string list * Emo_support.Span.t)
       -> conn Effect.t
@@ -2151,6 +2151,25 @@ and os_try span (f : unit -> value) : value =
               (Unix.error_message e)))
   | exception Sys_error message -> raise (net_raise span ("os: " ^ message))
 
+(* The data-driven os failures are values: the call answers
+   (R.ok, value) or (R.error, reason), the reason the same text the
+   exception carried (CHECK.md, error handling). [os_try] remains only
+   for the carved-out [waitpid]. *)
+and os_result span (f : unit -> value) : value =
+  match f () with
+  | v -> Tuple [ EnumMember ("R", "ok"); v ]
+  | exception Unix.Unix_error (e, fn, arg) ->
+      Tuple
+        [
+          EnumMember ("R", "error");
+          String
+            (Printf.sprintf "os: %s%s: %s" fn
+               (if arg = "" then "" else " " ^ arg)
+               (Unix.error_message e));
+        ]
+  | exception Sys_error message ->
+      Tuple [ EnumMember ("R", "error"); String ("os: " ^ message) ]
+
 (* ---- printf ----
 
    The renderer anchors on C17 §7.21.6.1: the numeric conversions go
@@ -2524,8 +2543,7 @@ and apply_builtin span name args =
       error span "E3007"
         (Printf.sprintf "`file_read` expects (path String), got %d arguments"
            (List.length args))
-  | "file_read", [ String path ] ->
-      String (Effect.perform (File_read (path, span)))
+  | "file_read", [ String path ] -> Effect.perform (File_read (path, span))
   | "file_read", [ v ] ->
       error span "E3001"
         (Printf.sprintf "`file_read` expects a String path, got %s"
@@ -2537,7 +2555,7 @@ and apply_builtin span name args =
             %d             arguments"
            (List.length args))
   | "file_write", [ String path; String contents ] ->
-      Int64 (Int64.of_int (Effect.perform (File_write (path, contents, span))))
+      Effect.perform (File_write (path, contents, span))
   | "file_write", [ String _; v ] ->
       error span "E3001"
         (Printf.sprintf "`file_write` expects String contents, got %s"
@@ -2559,7 +2577,8 @@ and apply_builtin span name args =
       error span "E3007"
         (Printf.sprintf "`os_getppid` expects no arguments, got %d"
            (List.length vs))
-  | "os_fork", [] -> os_try span (fun () -> Int64 (Int64.of_int (Unix.fork ())))
+  | "os_fork", [] ->
+      os_result span (fun () -> Int64 (Int64.of_int (Unix.fork ())))
   | "os_fork", vs ->
       error span "E3007"
         (Printf.sprintf "`os_fork` expects no arguments, got %d"
@@ -2582,7 +2601,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
            (List.length vs))
   | "os_pipe", [] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           let r, w = Unix.pipe () in
           Tuple
             [ Int64 (Int64.of_int (fd_int r)); Int64 (Int64.of_int (fd_int w)) ])
@@ -2590,10 +2609,15 @@ and apply_builtin span name args =
       error span "E3007"
         (Printf.sprintf "`os_pipe` expects no arguments, got %d"
            (List.length vs))
-  | "os_execv", [ String path; Array items ] ->
-      os_try span (fun () ->
-          let argv = Array.of_list (List.map to_string (Array.to_list items)) in
-          Unix.execv path argv)
+  | "os_execv", [ String path; Array items ] -> (
+      (* Success never returns — the process is replaced. Failure is a
+         data-driven value: the call returns Void, and the fork child
+         follows it with `_exit` (the POSIX idiom; a raise here would
+         run the parent's cleanup a second time). *)
+      try
+        let argv = Array.of_list (List.map to_string (Array.to_list items)) in
+        Unix.execv path argv
+      with Unix.Unix_error _ -> Void)
   | "os_execv", vs ->
       error span "E3007"
         (Printf.sprintf
@@ -2609,14 +2633,14 @@ and apply_builtin span name args =
         (Printf.sprintf "`os__exit` expects (status Int64), got %d"
            (List.length vs))
   | "os_open_read", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Int64 (Int64.of_int (fd_int (Unix.openfile path [ O_RDONLY ] 0))))
   | "os_open_read", vs ->
       error span "E3007"
         (Printf.sprintf "`os_open_read` expects (path String), got %d"
            (List.length vs))
   | "os_open_write", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Int64
             (Int64.of_int
                (fd_int
@@ -2626,7 +2650,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_open_write` expects (path String), got %d"
            (List.length vs))
   | "os_open_append", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Int64
             (Int64.of_int
                (fd_int
@@ -2638,7 +2662,7 @@ and apply_builtin span name args =
   | "os_read", [ Int64 fd; Int64 n ] ->
       if n < 0L then error span "E3007" "`os_read` expects a non-negative count"
       else
-        os_try span (fun () ->
+        os_result span (fun () ->
             let buf = Bytes.create (Int64.to_int n) in
             let got =
               Unix.read (fd_of_int (Int64.to_int fd)) buf 0 (Int64.to_int n)
@@ -2649,7 +2673,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_read` expects (fd Int64, n Int64), got %d"
            (List.length vs))
   | "os_write", [ Int64 fd; String data ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           let bytes = Bytes.of_string data in
           Int64
             (Int64.of_int
@@ -2661,14 +2685,14 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_write` expects (fd Int64, data String), got %d"
            (List.length vs))
   | "os_close", [ Int64 fd ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.close (fd_of_int (Int64.to_int fd));
           Int64 0L)
   | "os_close", vs ->
       error span "E3007"
         (Printf.sprintf "`os_close` expects (fd Int64), got %d" (List.length vs))
   | "os_list_dir", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           let names = Sys.readdir path in
           Array.sort compare names;
           Array (Array.map (fun s -> String s) names))
@@ -2677,7 +2701,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_list_dir` expects (path String), got %d"
            (List.length vs))
   | "os_mkdir", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.mkdir path 0o755;
           Int64 0L)
   | "os_mkdir", vs ->
@@ -2685,7 +2709,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_mkdir` expects (path String), got %d"
            (List.length vs))
   | "os_rmdir", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.rmdir path;
           Int64 0L)
   | "os_rmdir", vs ->
@@ -2693,7 +2717,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_rmdir` expects (path String), got %d"
            (List.length vs))
   | "os_unlink", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.unlink path;
           Int64 0L)
   | "os_unlink", vs ->
@@ -2701,7 +2725,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_unlink` expects (path String), got %d"
            (List.length vs))
   | "os_rename", [ String old_path; String new_path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.rename old_path new_path;
           Int64 0L)
   | "os_rename", vs ->
@@ -2715,7 +2739,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_getcwd` expects no arguments, got %d"
            (List.length vs))
   | "os_chdir", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Sys.chdir path;
           Int64 0L)
   | "os_chdir", vs ->

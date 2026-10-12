@@ -239,7 +239,7 @@ let errors_examples_tests =
             Alcotest.(check bool)
               "data rides along" true
               (contains diagnostic.Emo_support.Diagnostic.message
-                 "(data: {\"op\": \"connect\", \"peer\": \"10.0.0.1:443\"})");
+                 "(data: {\"op\": \"connect\", \"peer\": \"10.0.0.1:443\"})")
         | exception e -> raise e);
   ]
 
@@ -2069,7 +2069,14 @@ let riscv64_examples_tests =
                    | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
                    (Buffer.contents err))))
-    [ "hello_world"; "fib"; "objects"; "language_tour"; "loops"; "error_matching" ]
+    [
+      "hello_world";
+      "fib";
+      "objects";
+      "language_tour";
+      "loops";
+      "error_matching";
+    ]
 
 (* T22.4's honest refusals: a program the checker admits but the
    freestanding backend cannot honor yet exits 65 with a message that

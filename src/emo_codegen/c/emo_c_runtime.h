@@ -363,8 +363,8 @@ int64_t emo_unbox_pid(emo_value v);
 
 /* Files: the whole file in one call; failures print the interpreter's
    exception shape and exit 70. */
-emo_str emo_file_read(emo_str path);
-int64_t emo_file_write(emo_str path, emo_str contents);
+emo_value emo_file_read(emo_str path);
+emo_value emo_file_write(emo_str path, emo_str contents);
 
 /* TCP: handles are file descriptors. Blocking reads park the fiber on
    readability — the scheduler polls the parked descriptors. */
@@ -405,24 +405,24 @@ emo_value emo_make_exception(emo_str message);
 /* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- */
 int64_t emo_os_getpid(void);
 int64_t emo_os_getppid(void);
-int64_t emo_os_fork(void);
+emo_value emo_os_fork(void);
 int64_t emo_os_waitpid(int64_t pid);
-int64_t emo_os_pipe(void);
+emo_value emo_os_pipe(void);
 int64_t emo_os_execv(emo_str path, emo_value argv);
 void emo_os__exit(int64_t status);
-int64_t emo_os_open_read(emo_str path);
-int64_t emo_os_open_write(emo_str path);
-int64_t emo_os_open_append(emo_str path);
-emo_str emo_os_read(int64_t fd, int64_t n);
-int64_t emo_os_write(int64_t fd, emo_str data);
-int64_t emo_os_close(int64_t fd);
+emo_value emo_os_open_read(emo_str path);
+emo_value emo_os_open_write(emo_str path);
+emo_value emo_os_open_append(emo_str path);
+emo_value emo_os_read(int64_t fd, int64_t n);
+emo_value emo_os_write(int64_t fd, emo_str data);
+emo_value emo_os_close(int64_t fd);
 emo_value emo_os_list_dir(emo_str path);
-int64_t emo_os_mkdir(emo_str path);
-int64_t emo_os_rmdir(emo_str path);
-int64_t emo_os_unlink(emo_str path);
-int64_t emo_os_rename(emo_str old_path, emo_str new_path);
+emo_value emo_os_mkdir(emo_str path);
+emo_value emo_os_rmdir(emo_str path);
+emo_value emo_os_unlink(emo_str path);
+emo_value emo_os_rename(emo_str old_path, emo_str new_path);
 emo_str emo_os_getcwd(void);
-int64_t emo_os_chdir(emo_str path);
+emo_value emo_os_chdir(emo_str path);
 
 /* ---- The integer core (T24.2) ---- */
 

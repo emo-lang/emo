@@ -187,7 +187,8 @@ def expected_ok(parts Array[String], i Int64) String {
 
 def run(list_path String) Int64 {
   internal.instance.reset_all()
-  return walk(file_read(list_path).split("\n"), 0, 0, 0, 0, -1, [], [], "")
+  const (R.ok, text) = file_read(list_path)
+  return walk(text.split("\n"), 0, 0, 0, 0, -1, [], [], "")
 }
 
 // A fresh file gets a fresh register namespace and host, as the spec

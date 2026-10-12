@@ -1,12 +1,14 @@
 // Direct-style file io, running on the scheduler. Paths are taken as
 // given (relative paths resolve against the process's working
-// directory); every failure raises an ordinary Emo exception whose
-// message states exactly what failed — no error codes, no nil.
+// directory). Data-driven failures are values: the call returns
+// `(R.ok, value)` or `(R.error, reason)`, the reason a string stating
+// exactly what failed (`file: cannot read /x: no such file...`) — no
+// error codes, no nil.
 
-def read(path String) String {
+def read(path String) (R, String) {
   return file_read(path)
 }
 
-def write(path String, contents String) Int64 {
+def write(path String, contents String) (R, Int64) {
   return file_write(path, contents)
 }

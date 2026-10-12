@@ -1,18 +1,13 @@
-// The README's expected-failure shape: the call returns (R.ok, body)
-// or (R.error, reason), and the pair is matched, not caught — the
-// built-in R needs no import. The reader here stands in for
-// `file.read`, whose own tuple migration is the stdlib step. Run it:
+// The README's expected-failure shape, verbatim: the call returns
+// (R.ok, body) or (R.error, reason), and the pair is matched, not
+// caught — the built-in R needs no import. Run it:
 //
 //   emo run matching.emo
 
-def read_line(path String) (R, String) {
-  if path == "config.emo" {
-    return (R.ok, "payload line")
-  }
-  return (R.error, path + ": no such file")
-}
+const path = "config.data"
+file.write(path, "payload line")
 
-case read_line("config.emo") {
+case file.read(path) {
   (R.ok, body)   -> { println(body) }
   (R.error, why) -> { println("read failed: ${why}") }
 }

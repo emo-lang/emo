@@ -676,13 +676,17 @@ let empty_env =
         ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
         ( "file_read",
           {
-            vtype = FuncType ([ ("path", String) ], String);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; String ]);
             is_var = false;
             depth = 0;
           } );
         ( "file_write",
           {
-            vtype = FuncType ([ ("path", String); ("contents", String) ], Int64);
+            vtype =
+              FuncType
+                ( [ ("path", String); ("contents", String) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
           } );
@@ -690,7 +694,12 @@ let empty_env =
           { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
         ( "os_getppid",
           { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
-        ("os_fork", { vtype = FuncType ([], Int64); is_var = false; depth = 0 });
+        ( "os_fork",
+          {
+            vtype = FuncType ([], TupleType [ EnumType "R"; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
         ( "os_waitpid",
           {
             vtype = FuncType ([ ("pid", Int64) ], TupleType [ Int64; Int64 ]);
@@ -699,7 +708,9 @@ let empty_env =
           } );
         ( "os_pipe",
           {
-            vtype = FuncType ([], TupleType [ Int64; Int64 ]);
+            vtype =
+              FuncType
+                ([], TupleType [ EnumType "R"; TupleType [ Int64; Int64 ] ]);
             is_var = false;
             depth = 0;
           } );
@@ -719,68 +730,86 @@ let empty_env =
           } );
         ( "os_open_read",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_open_write",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_open_append",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_read",
           {
-            vtype = FuncType ([ ("fd", Int64); ("n", Int64) ], String);
+            vtype =
+              FuncType
+                ( [ ("fd", Int64); ("n", Int64) ],
+                  TupleType [ EnumType "R"; String ] );
             is_var = false;
             depth = 0;
           } );
         ( "os_write",
           {
-            vtype = FuncType ([ ("fd", Int64); ("data", String) ], Int64);
+            vtype =
+              FuncType
+                ( [ ("fd", Int64); ("data", String) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
           } );
         ( "os_close",
           {
-            vtype = FuncType ([ ("fd", Int64) ], Int64);
+            vtype =
+              FuncType ([ ("fd", Int64) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_list_dir",
           {
-            vtype = FuncType ([ ("path", String) ], ArrayType String);
+            vtype =
+              FuncType
+                ( [ ("path", String) ],
+                  TupleType [ EnumType "R"; ArrayType String ] );
             is_var = false;
             depth = 0;
           } );
         ( "os_mkdir",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_rmdir",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_unlink",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_rename",
           {
             vtype =
-              FuncType ([ ("old_path", String); ("new_path", String) ], Int64);
+              FuncType
+                ( [ ("old_path", String); ("new_path", String) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
           } );
@@ -788,7 +817,8 @@ let empty_env =
           { vtype = FuncType ([], String); is_var = false; depth = 0 } );
         ( "os_chdir",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
