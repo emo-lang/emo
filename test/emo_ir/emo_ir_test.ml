@@ -25,7 +25,7 @@ let lower_program (modules : (string list * string) list) ~(entry : string list)
         { Emo_ir.mpath = path; mitems = items; mtypes = types })
       modules
   in
-  Emo_ir.lower { Emo_ir.modules = prepared; entry }
+  Emo_ir.lower { Emo_ir.modules = prepared; entry; packages = [] }
 
 let find_func program name =
   match

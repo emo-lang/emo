@@ -2629,6 +2629,11 @@ double emo_f64_from_bits(int64_t bits) {
   return d;
 }
 
+double emo_f64_sqrt(double x) { return sqrt(x); }
+double emo_f64_floor(double x) { return floor(x); }
+double emo_f64_ceil(double x) { return ceil(x); }
+double emo_f64_trunc(double x) { return trunc(x); }
+
 /* ---- the os module: synchronous POSIX syscalls ---- */
 
 int64_t emo_os_getpid(void) { return (int64_t)getpid(); }
@@ -2848,7 +2853,14 @@ static emo_value emo_bm_trim(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_to_int64(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_box_i64(emo_str_to_int64(emo_str_of(recv)));
+  switch (emo_cell_kind(recv)) {
+    case EMO_FLOAT64:
+      return emo_box_i64((int64_t)emo_unbox_f64(recv));
+    case EMO_INT64:
+      return recv;
+    default:
+      return emo_box_i64(emo_str_to_int64(emo_str_of(recv)));
+  }
 }
 
 static emo_value emo_bm_split(emo_value recv, const emo_value *args) {
@@ -3005,6 +3017,31 @@ static emo_value emo_bm_to_bits(emo_value recv, const emo_value *args) {
   return emo_box_i64(emo_f64_bits(emo_unbox_f64(recv)));
 }
 
+static emo_value emo_bm_to_float64(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_f64((double)emo_unbox_i64(recv));
+}
+
+static emo_value emo_bm_sqrt(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_f64(emo_f64_sqrt(emo_unbox_f64(recv)));
+}
+
+static emo_value emo_bm_floor(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_f64(emo_f64_floor(emo_unbox_f64(recv)));
+}
+
+static emo_value emo_bm_ceil(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_f64(emo_f64_ceil(emo_unbox_f64(recv)));
+}
+
+static emo_value emo_bm_trunc(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_f64(emo_f64_trunc(emo_unbox_f64(recv)));
+}
+
 static emo_value emo_bm_to_byte(emo_value recv, const emo_value *args) {
   (void)args;
   return emo_box_i64(emo_unbox_i64(recv) & 255);
@@ -3050,6 +3087,11 @@ static const emo_builtin_method emo_builtin_methods[] = {
     {"to_bytes", 0, emo_bm_to_bytes},
     {"to_bits", 0, emo_bm_to_bits},
     {"to_byte", 0, emo_bm_to_byte},
+    {"to_float64", 0, emo_bm_to_float64},
+    {"sqrt", 0, emo_bm_sqrt},
+    {"floor", 0, emo_bm_floor},
+    {"ceil", 0, emo_bm_ceil},
+    {"trunc", 0, emo_bm_trunc},
 };
 
 emo_value emo_dynamic_builtin(emo_value recv, const char *name, int64_t arity,

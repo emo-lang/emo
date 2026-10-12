@@ -1,0 +1,20 @@
+// The math package: sqrt, the float scalars, and the transcendental
+// functions (exp, log, log10, pow), all pure Emo and byte-identical on
+// every target.
+//
+//   emo run main.emo
+
+require "math"
+
+println(math.sqrt(2.0))
+println(math.abs(0.0 - 3.5))
+println(math.min(2.0, 7.0))
+println(math.max(2.0, 7.0))
+println(math.clamp(12.0, 0.0, 10.0))
+println(math.exp(1.0))
+println(math.exp(0.0))
+println(math.log(math.e))
+println(math.log(10.0))
+println(math.log10(1000.0))
+println(math.pow(2.0, 10.0))
+println(math.pow(9.0, 0.5))

@@ -171,11 +171,12 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
       66
   | true -> (
       try
-        let inputs, entry_path, _manifest =
+        let inputs, entry_path, packages, _manifest =
           Emo_project.compile_inputs ~entry_file:entry ~target
         in
         let program =
-          Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path }
+          Emo_ir.lower
+            { Emo_ir.modules = inputs; entry = entry_path; packages }
         in
         let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
         if not (Sys.file_exists build_dir) then
@@ -322,8 +323,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               in
               let cmd =
                 Printf.sprintf
-                  "cc -O2 -std=c11 -Wall -Wno-deprecated-declarations -I %s %s \
-                   %s                  %s -o %s"
+                  "cc -O2 -ffp-contract=off -std=c11 -Wall \
+                   -Wno-deprecated-declarations -I %s %s %s                  %s -o %s"
                   (Filename.quote build_dir) (Filename.quote main_c)
                   (Filename.quote runtime_c) cclib_flags (Filename.quote output)
               in

@@ -1220,6 +1220,16 @@ const E: any = {
         dv.setFloat64(0, recv.v, true);
         return dv.getBigInt64(0, true);
       }
+      if (isFloat(recv)) {
+        // The Float64 method surface: the libm root/rounding functions,
+        // the truncating Int64 conversion, and to_string.
+        if (name === "sqrt") return new EFloat(Math.sqrt(recv.v));
+        if (name === "floor") return new EFloat(Math.floor(recv.v));
+        if (name === "ceil") return new EFloat(Math.ceil(recv.v));
+        if (name === "trunc") return new EFloat(Math.trunc(recv.v));
+        if (name === "to_int64") return BigInt(Math.trunc(recv.v));
+        if (name === "to_string") return floatStr(recv.v);
+      }
       if (recv instanceof EList) {
         if (name === "push_front") return listPushFront(recv, args[0]);
         if (name === "push_back") return listPushBack(recv, args[0]);
@@ -1273,6 +1283,7 @@ const E: any = {
     if (typeof recv === "bigint") {
       if (name === "to_string") return recv.toString();
       if (name === "to_byte") return Number(BigInt.asUintN(8, recv));
+      if (name === "to_float64") return new EFloat(Number(recv));
       if (name === "is") return isType(recv, args[0] as string);
     }
     if (typeof recv === "boolean") {

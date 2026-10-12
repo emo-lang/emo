@@ -254,6 +254,7 @@ def parse_config(text String) Json {
 ```
 
 - **`require` is a file-level statement that brings the package's short name into scope.** It needs no counterpart on the package side — a package's public surface is simply its module tree. Fully qualified paths are always available.
+- **A package's module tree is mounted under its short name.** The package root's `<short>.emo` is the module `<short>` a `require` binds; every other file or directory is a child of it — `json/internal/float.emo` is `json.internal.float`, `plot/mark.emo` is `plot.mark` — so two packages' `internal` and `mark` never collide. Inside the package, references are written against the package root (`internal.float` in `json.emo` means `json.internal.float`), so a package compiles the same whether built alone or mounted under its prefix.
 - **`require` pairs with the manifest, strictly.** Requiring a package that is missing from `deps` is a compile error — strictness comes first, and the manifest changes only by explicit action.
 
 - **Central registry, with configurable endpoints.** Packages are addressed by `name@version` through a central registry, backed by a global content-addressed cache shared across projects — no per-project dependency copies. The registry endpoint is read from the `EMO_REGISTRY` environment variable — set it globally or per project — serving private and on-premises distribution; unset, the standard library's bundled registry ships with the compiler and serves by default.
@@ -427,7 +428,7 @@ Documentation lives under `docs/`. The Chinese translation of this README is [`d
 - [`docs/stdlib.md`](docs/stdlib.md) — a tour of the standard library: every package, what it is for, and the surface it exposes.
 - [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`file`, `os`, `bufio`, `net`, `http`, `json`, `yaml`, `xml`, `base64`, `slog`, `sync`).
 - [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
-- [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md), [`docs/rtos-assessment.md`](docs/rtos-assessment.md), [`docs/xv6.md`](docs/xv6.md) — feasibility and market assessments.
+- [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md), [`docs/rtos-assessment.md`](docs/rtos-assessment.md), [`docs/xv6.md`](docs/xv6.md), [`docs/visualization.md`](docs/visualization.md) — feasibility and market assessments.
 - [`docs/TASKS.md`](docs/TASKS.md) — the implementation task checklist.
 
 ## License

@@ -616,15 +616,55 @@ and method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
   match (name, args) with
   | "to_string", [] ->
+      (* Instances answer their own `to_string` first — the interpreter's
+         rule; the builtin conversion answers otherwise. A Bytes receiver
+         stringifies raw; the labeled spelling is the display form the
+         generic to_str produces. *)
+      let scratch = fresh_local env "__str_recv" W.Anyref in
       expr env self_;
-      (* a Bytes receiver stringifies raw; the labeled spelling is the
-         display form the generic to_str produces *)
-      e env
-        (W.Call
-           (rt
-              (match self_.Emo_ir.ety with
-              | Emo_check.Bytes -> "bytes_to_str"
-              | _ -> "to_str")))
+      e env (W.Local_set scratch);
+      let builtin () =
+        [
+          W.Local_get scratch;
+          W.Call
+            (rt
+               (match self_.Emo_ir.ety with
+               | Emo_check.Bytes -> "bytes_to_str"
+               | _ -> "to_str"));
+        ]
+      in
+      let matching =
+        List.filter_map
+          (fun (c : Emo_ir.class_) ->
+            if
+              List.exists
+                (fun (m : Emo_ir.func) ->
+                  String.equal (member_name c m) "to_string"
+                  && List.length m.Emo_ir.fparams - 1 = 0)
+                c.Emo_ir.cmethods
+            then
+              match
+                ( List.assoc_opt c.Emo_ir.cname env.class_type,
+                  List.assoc_opt (c.Emo_ir.cname ^ "__to_string") env.funcs )
+              with
+              | Some tidx, Some fidx -> Some (tidx, fidx)
+              | _ -> None
+            else None)
+          env.classes
+      in
+      let rec chain = function
+        | [] -> builtin ()
+        | (tidx, fidx) :: rest ->
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [ W.Local_get scratch; W.Ref_test tidx ],
+                  (W.Local_get scratch :: W.Ref_cast tidx :: [])
+                  @ [ W.Call fidx ],
+                  chain rest );
+            ]
+      in
+      es env (if matching = [] then builtin () else chain matching)
   | "length", [] ->
       (* arrays, tuples, and strings carry a length; the arms rebuild
          from a scratch local — the if's arms cannot see the caller's
@@ -756,6 +796,31 @@ and method_call env self_ name args =
       e env (W.Call (rt "bytes_from_str"))
   (* The fixed-width conversions. Int64 and Byte are both a $vint around
      an i64, so only the narrowing back to Byte masks anything. *)
+  | (("sqrt" | "floor" | "ceil" | "trunc") as mname), [] ->
+      expr env self_;
+      e env (W.Ref_cast t_vfloat);
+      e env (W.Struct_get (t_vfloat, 0));
+      e env
+        (match mname with
+        | "sqrt" -> W.F64_sqrt
+        | "floor" -> W.F64_floor
+        | "ceil" -> W.F64_ceil
+        | _ -> W.F64_trunc);
+      e env (W.Struct_new t_vfloat)
+  | "to_float64", [] ->
+      expr env self_;
+      e env (W.Ref_cast t_vint);
+      e env (W.Struct_get (t_vint, 0));
+      e env W.F64_convert_i64_s;
+      e env (W.Struct_new t_vfloat)
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
+      (* a Float64 truncates toward zero; Int64 and Byte keep the
+         identity arm below *)
+      expr env self_;
+      e env (W.Ref_cast t_vfloat);
+      e env (W.Struct_get (t_vfloat, 0));
+      e env W.I64_trunc_f64_s;
+      e env (W.Struct_new t_vint)
   | "to_int64", [] ->
       (* identity for Int64 and Byte; a String receiver would parse, which
          this target does not do yet — the shape test keeps it from

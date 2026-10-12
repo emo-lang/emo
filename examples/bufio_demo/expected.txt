@@ -20,4 +20,6 @@ got: [buffered lines]
 got: [more]
 got: [tail]
 memory!
+memory!
+memory!?
 4096

@@ -265,6 +265,10 @@ let wasm_goldens =
     "sync_demo";
     "loops";
     "error_matching";
+    "float_methods";
+    "math_demo";
+    "branch_var";
+    "plot_demo";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -290,6 +294,10 @@ let beam_goldens =
     "printf_demo";
     "loops";
     "error_matching";
+    "float_methods";
+    "math_demo";
+    "branch_var";
+    "plot_demo";
   ]
 
 let erl_available =
@@ -501,6 +509,10 @@ let c_goldens =
     "printf_demo";
     "loops";
     "error_matching";
+    "float_methods";
+    "math_demo";
+    "branch_var";
+    "plot_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
@@ -2134,6 +2146,7 @@ do work()|};
                     Emo_ir.modules =
                       [ { Emo_ir.mpath = []; mitems = items; mtypes = types } ];
                     entry = [];
+                    packages = [];
                   }
               in
               match

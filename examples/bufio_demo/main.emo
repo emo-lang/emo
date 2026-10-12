@@ -78,6 +78,13 @@ mw.write_byte("!")
 mw.flush()
 println(sink.to_string())
 
+// to_string does not drain: a second call answers the same bytes, and a
+// later write extends the accumulation
+println(sink.to_string())
+mw.write("?")
+mw.flush()
+println(sink.to_string())
+
 // the buffer size reader and writer get when the caller names none
 println(bufio.default_size().to_string())
 

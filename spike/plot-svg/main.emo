@@ -1,0 +1,188 @@
+// A pure-Emo SVG plotting spike.
+//
+// No FFI, no graphics runtime: the whole chart is built as an SVG
+// string and printed to stdout. The point is to test whether Emo's
+// value types + string building can carry a real 2D chart, and to
+// surface the gaps a plotting library would have to close.
+
+// ---- the math shim the package would ship ----
+//
+// `log10` is not in the core float surface, so the nice-tick
+// algorithm — which is defined in terms of it — builds its own.
+
+def floor_log10(x Float64) Int64 {
+  var m = 0
+  var v = x
+  while v >= 10.0 {
+    v = v / 10.0
+    m = m + 1
+  }
+  while v < 1.0 {
+    v = v * 10.0
+    m = m - 1
+  }
+  return m
+}
+
+def pow10(n Int64) Float64 {
+  var v = 1.0
+  if n >= 0 {
+    for var i = 0; i < n; i = i + 1 { v = v * 10.0 }
+  } else {
+    for var i = 0; i < 0 - n; i = i + 1 { v = v / 10.0 }
+  }
+  return v
+}
+
+def round2(v Float64) Float64 {
+  return (v * 100.0).floor() / 100.0
+}
+
+// ---- nice ticks (Heckbert's nicenum) ----
+
+def nice_num(x Float64, round_it Bool) Float64 {
+  const e = floor_log10(x)
+  const f = x / pow10(e)
+  var nf = 10.0
+  if round_it {
+    if f < 1.5 {
+      nf = 1.0
+    } else {
+      if f < 3.0 {
+        nf = 2.0
+      } else {
+        if f < 7.0 {
+          nf = 5.0
+        }
+      }
+    }
+  } else {
+    if f <= 1.0 {
+      nf = 1.0
+    } else {
+      if f <= 2.0 {
+        nf = 2.0
+      } else {
+        if f <= 5.0 {
+          nf = 5.0
+        }
+      }
+    }
+  }
+  return nf * pow10(e)
+}
+
+// A `(lo, hi, step)` triple as the array-based carrier the language
+// offers today (no struct type beyond tuples).
+def tick_spec(lo Float64, hi Float64, want Int64) (Float64, Float64, Float64) {
+  const range = nice_num(hi - lo, false)
+  const step = nice_num(range / (want - 1).to_float64(), true)
+  const nlo = (lo / step).floor() * step
+  const nhi = (hi / step).ceil() * step
+  return (nlo, nhi, step)
+}
+
+def tick_values(lo Float64, hi Float64, step Float64) Array[Float64] {
+  var out = [lo]
+  var acc = lo + step
+  while acc <= hi + step / 2.0 {
+    out = out.append(acc)
+    acc = acc + step
+  }
+  return out
+}
+
+// ---- data ----
+
+const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"]
+const sales = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0, 27.0, 35.0]
+
+// ---- render ----
+
+const fig_w = 760.0
+const fig_h = 460.0
+const margin_l = 64.0
+const margin_r = 24.0
+const margin_t = 52.0
+const margin_b = 56.0
+const plot_w = fig_w - margin_l - margin_r
+const plot_h = fig_h - margin_t - margin_b
+
+def y_of(v Float64, lo Float64, hi Float64) Float64 {
+  return margin_t + plot_h - ((v - lo) / (hi - lo)) * plot_h
+}
+
+def x_of(i Int64, n Int64) Float64 {
+  return margin_l + (i.to_float64() / (n - 1).to_float64()) * plot_w
+}
+
+def gridlines(ticks Array[Float64], lo Float64, hi Float64) String {
+  var s = ""
+  for var i = 0; i < ticks.length(); i = i + 1 {
+    const y = round2(y_of(ticks[i], lo, hi))
+    s = s + "<line x1=\"" + round2(margin_l).to_string() + "\" y1=\"" + y.to_string() +
+      "\" x2=\"" + round2(margin_l + plot_w).to_string() + "\" y2=\"" + y.to_string() +
+      "\" stroke=\"#e6e6e6\" stroke-width=\"1\"/>\n"
+    s = s + "<text x=\"" + round2(margin_l - 10.0).to_string() + "\" y=\"" + (y + 4.0).to_string() +
+      "\" text-anchor=\"end\" font-family=\"sans-serif\" font-size=\"12\" fill=\"#555\">" +
+      ticks[i].to_string() + "</text>\n"
+  }
+  return s
+}
+
+def xlabels(n Int64) String {
+  var s = ""
+  for var i = 0; i < n; i = i + 1 {
+    const x = round2(x_of(i, n))
+    s = s + "<text x=\"" + x.to_string() + "\" y=\"" + round2(margin_t + plot_h + 20.0).to_string() +
+      "\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"12\" fill=\"#555\">" +
+      months[i] + "</text>\n"
+  }
+  return s
+}
+
+def series_line(ys Array[Float64], lo Float64, hi Float64) String {
+  var pts = ""
+  for var i = 0; i < ys.length(); i = i + 1 {
+    pts = pts + round2(x_of(i, ys.length())).to_string() + "," +
+      round2(y_of(ys[i], lo, hi)).to_string()
+    if i < ys.length() - 1 { pts = pts + " " }
+  }
+  return "<polyline fill=\"none\" stroke=\"#2f6fb3\" stroke-width=\"2.5\" stroke-linejoin=\"round\" points=\"" +
+    pts + "\"/>\n"
+}
+
+def series_dots(ys Array[Float64], lo Float64, hi Float64) String {
+  var s = ""
+  for var i = 0; i < ys.length(); i = i + 1 {
+    s = s + "<circle cx=\"" + round2(x_of(i, ys.length())).to_string() + "\" cy=\"" +
+      round2(y_of(ys[i], lo, hi)).to_string() +
+      "\" r=\"4\" fill=\"#2f6fb3\" stroke=\"white\" stroke-width=\"1.5\"/>\n"
+  }
+  return s
+}
+
+def chart() String {
+  const spec = tick_spec(0.0, 36.0, 6)
+  const lo = spec[0]
+  const hi = spec[1]
+  const step = spec[2]
+  const ticks = tick_values(lo, hi, step)
+  var s = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + fig_w.to_int64().to_string() +
+    "\" height=\"" + fig_h.to_int64().to_string() + "\" viewBox=\"0 0 " +
+    fig_w.to_int64().to_string() + " " + fig_h.to_int64().to_string() + "\">\n"
+  s = s + "<rect width=\"" + fig_w.to_int64().to_string() + "\" height=\"" + fig_h.to_int64().to_string() +
+    "\" fill=\"white\"/>\n"
+  s = s + "<text x=\"" + round2(margin_l).to_string() + "\" y=\"30\" font-family=\"sans-serif\" font-size=\"18\" font-weight=\"bold\" fill=\"#222\">Monthly sales</text>\n"
+  s = s + gridlines(ticks, lo, hi)
+  s = s + series_line(sales, lo, hi)
+  s = s + series_dots(sales, lo, hi)
+  s = s + xlabels(sales.length())
+  s = s + "<line x1=\"" + round2(margin_l).to_string() + "\" y1=\"" + round2(margin_t + plot_h).to_string() +
+    "\" x2=\"" + round2(margin_l + plot_w).to_string() + "\" y2=\"" + round2(margin_t + plot_h).to_string() +
+    "\" stroke=\"#888\" stroke-width=\"1\"/>\n"
+  s = s + "</svg>\n"
+  return s
+}
+
+println(chart())

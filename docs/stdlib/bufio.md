@@ -71,6 +71,11 @@ nothing behind it: `BytesReader` serves a string's bytes, and
 `BytesSink` accumulates what it is handed — its `to_string` hands the
 accumulation back without draining it.
 
+`BytesSink` accumulates in chunks: a write costs the bytes written, and
+`to_string` joins them once, so building a large document through it is
+linear. `to_string` does not drain — it can be called repeatedly, and a
+later write extends the same accumulation.
+
 ## End of stream is a value
 
 Emo has no error channel, so end of stream is never an exception: the

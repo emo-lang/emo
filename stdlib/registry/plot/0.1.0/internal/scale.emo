@@ -1,0 +1,98 @@
+// Linear scales and the "nice numbers" tick locator (Heckbert's
+// nicenum): the reason an axis reads 0/5/10 rather than 0/3.7/7.4.
+
+// floor(log10(x)) by counting powers of ten — no log primitive needed.
+def magnitude(x Float64) Int64 {
+  var m = 0
+  var v = x
+  while v >= 10.0 {
+    v = v / 10.0
+    m = m + 1
+  }
+  while v < 1.0 {
+    v = v * 10.0
+    m = m - 1
+  }
+  return m
+}
+
+def pow10(n Int64) Float64 {
+  var v = 1.0
+  if n >= 0 {
+    for var i = 0; i < n; i = i + 1 {
+      v = v * 10.0
+    }
+  } else {
+    for var i = 0; i < 0 - n; i = i + 1 {
+      v = v / 10.0
+    }
+  }
+  return v
+}
+
+def nice_num(x Float64, round_it Bool) Float64 {
+  const e = magnitude(x)
+  const f = x / pow10(e)
+  var nf = 10.0
+  if round_it {
+    if f < 1.5 {
+      nf = 1.0
+    } else {
+      if f < 3.0 {
+        nf = 2.0
+      } else {
+        if f < 7.0 {
+          nf = 5.0
+        }
+      }
+    }
+  } else {
+    if f <= 1.0 {
+      nf = 1.0
+    } else {
+      if f <= 2.0 {
+        nf = 2.0
+      } else {
+        if f <= 5.0 {
+          nf = 5.0
+        }
+      }
+    }
+  }
+  return nf * pow10(e)
+}
+
+// The smallest nice number at or above x (the top of a y domain).
+def nice_ceil(x Float64) Float64 {
+  if x <= 0.0 {
+    return 1.0
+  }
+  const step = pow10(magnitude(x))
+  const f = x / step
+  var nf = 10.0
+  if f <= 1.0 {
+    nf = 1.0
+  } else {
+    if f <= 2.0 {
+      nf = 2.0
+    } else {
+      if f <= 5.0 {
+        nf = 5.0
+      }
+    }
+  }
+  return nf * step
+}
+
+// Tick values across [lo, hi], stepping by a nice number.
+def ticks(lo Float64, hi Float64, want Int64) Array[Float64] {
+  const span = hi - lo
+  const step = nice_num(span / (want - 1).to_float64(), true)
+  var out = [lo]
+  var v = lo + step
+  while v <= hi + step / 2.0 {
+    out = out.append(v)
+    v = v + step
+  }
+  return out
+}

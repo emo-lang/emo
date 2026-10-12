@@ -161,7 +161,17 @@ let rec expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
   | Const (L_int n) -> Printf.sprintf "%Ldn" n
   | Const (L_byte n) -> string_of_int n
-  | Const (L_float f) -> Printf.sprintf "E.float(%s)" (string_of_float f)
+  | Const (L_float f) ->
+      (* The shortest decimal that reads back to the same binary64 — the
+         same rule the beam emitter uses. `string_of_float` would cut at
+         twelve significant digits and lose the literal's low bits. *)
+      let rec shortest p =
+        if p >= 17 then Printf.sprintf "%.17g" f
+        else
+          let s = Printf.sprintf "%.*g" p f in
+          if float_of_string s = f then s else shortest (p + 1)
+      in
+      Printf.sprintf "E.float(%s)" (shortest 1)
   | Const (L_string s) -> js_string s
   | Const (L_bool b) -> if b then "true" else "false"
   | Const (L_char c) -> Printf.sprintf "E.char(%C)" c
@@ -568,11 +578,17 @@ let emit_ctor_factory env (c : Emo_ir.class_) : string =
         | [] -> [])
     | None -> []
   in
-  Printf.sprintf "async function %s(%s) {\n  return new %s(%s);\n}"
-    (c.Emo_ir.cname ^ "__new")
-    (String.concat ", " params)
-    c.Emo_ir.cname
-    (String.concat ", " params)
+  if c.Emo_ir.cinit = None then
+    Printf.sprintf "async function %s() {\n  return new %s();\n}"
+      (c.Emo_ir.cname ^ "__new") c.Emo_ir.cname
+  else
+    Printf.sprintf
+      "async function %s(%s) {\n  const __o = new %s();\n  await \
+       __o.__emo_init(%s);\n  return __o;\n}"
+      (c.Emo_ir.cname ^ "__new")
+      (String.concat ", " params)
+      c.Emo_ir.cname
+      (String.concat ", " params)
 
 (* A class's content fields, in init-assignment order — the equality
    surface (__eq) reads them. *)
@@ -610,9 +626,12 @@ let emit_class env (c : Emo_ir.class_) : string =
       "  __eq(o: any): boolean {\n    return o instanceof %s && %s;\n  }\n"
       c.Emo_ir.cname conj
   in
-  let ctor =
+  (* The constructor is empty: `init` runs in the async `__emo_init`
+     method the factory awaits, since an init body may await a call. *)
+  let ctor = "  constructor() {}\n" in
+  let init_method =
     match c.Emo_ir.cinit with
-    | None -> "  constructor() {}\n"
+    | None -> ""
     | Some init ->
         let self_param, real_params =
           match init.Emo_ir.fparams with
@@ -623,7 +642,8 @@ let emit_class env (c : Emo_ir.class_) : string =
         let params_code = String.concat ", " real_params in
         let body = stmts env init.Emo_ir.fbody ~tail:false in
         env.refs <- saved;
-        Printf.sprintf "  constructor(%s) {\n    const %s = this;\n%s\n  }\n"
+        Printf.sprintf
+          "  async __emo_init(%s) {\n    const %s = this;\n%s\n  }\n"
           params_code self_param body
   in
   let methods =
@@ -643,8 +663,8 @@ let emit_class env (c : Emo_ir.class_) : string =
              params_code self_param body)
          c.Emo_ir.cmethods)
   in
-  Printf.sprintf "class %s {\n  static __emo = %S;\n%s%s%s\n}\n" c.Emo_ir.cname
-    c.Emo_ir.cdisplay ctor eq_method methods
+  Printf.sprintf "class %s {\n  static __emo = %S;\n%s%s%s%s\n}\n" c.Emo_ir.cname
+    c.Emo_ir.cdisplay ctor init_method eq_method methods
 
 (* ---- The program ---- *)
 

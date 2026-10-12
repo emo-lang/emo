@@ -450,23 +450,54 @@ and method_call env self_ name args =
       put env
         "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_len'/1 ";
       args_list env [ self_ ];
+      put env
+        "\n  <_str> when call 'erlang':'is_binary'(_str) ->\n    call \
+         'erlang':'byte_size'(_str)";
       put env "\n  <_> when 'true' ->\n    call 'erlang':'length'(";
       expr env self_;
       put env ")\nend"
   | "to_string", [] ->
-      put env "case ";
+      (* Instances answer their own `to_string` first — the interpreter's
+         rule; the builtin conversion answers only when no class carries
+         the name. The receiver is bound once, so a chained,
+         side-effecting receiver is not re-evaluated. *)
+      let recv = fresh_var env "__recv" in
+      put env ("let <" ^ recv ^ "> =\n");
       expr env self_;
+      put env ("\nin case " ^ recv ^ " of\n");
+      let method_arms =
+        List.filter_map
+          (fun (c : Emo_ir.class_) ->
+            if
+              List.exists
+                (fun (m : Emo_ir.func) ->
+                  String.equal (member_name c m) "to_string"
+                  && List.length m.Emo_ir.fparams - 1 = 0)
+                c.Emo_ir.cmethods
+            then
+              Some
+                (Printf.sprintf
+                   "  <%s> when 'true' ->\n    apply '%s'/1 (%s)\n"
+                   (instance_pattern env.classes c.Emo_ir.cname)
+                   (Emo_ir.sanitize_ident (c.Emo_ir.cname ^ "__to_string"))
+                   recv)
+            else None)
+          env.classes
+      in
+      put env (String.concat "" method_arms);
       put env
-        " of\n\
-        \  <{'emo_bytes', _k}> when 'true' ->\n\
-        \    apply 'emo_bytes_to_str'/1 ";
-      args_list env [ self_ ];
+        (Printf.sprintf
+           "  <{'emo_bytes', _k}> when 'true' ->\n    apply \
+            'emo_bytes_to_str'/1 (%s)\n"
+           recv);
       put env
-        "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_to_str'/1 ";
-      args_list env [ self_ ];
-      put env "\n  <_> when 'true' ->\n    apply 'emo_to_str'/1 ";
-      args_list env [ self_ ];
-      put env "\nend"
+        (Printf.sprintf
+           "  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_to_str'/1 \
+            (%s)\n"
+           recv);
+      put env
+        (Printf.sprintf
+           "  <_> when 'true' ->\n    apply 'emo_to_str'/1 (%s)\nend" recv)
   (* The fixed-width conversions. Int64 and Byte are both plain Erlang
      integers here, so `to_int64` is the identity and the static constructors
      differ only in Byte's range check. *)
@@ -479,6 +510,23 @@ and method_call env self_ name args =
   | "from_bits", [ v ] ->
       put env "apply 'emo_from_bits'/1 ";
       args_list env [ v ]
+  | (("sqrt" | "floor" | "ceil") as mname), [] ->
+      put env (Printf.sprintf "call 'math':'%s'(" mname);
+      expr env self_;
+      put env ")"
+  | "trunc", [] ->
+      (* the BIF answers an integer; the method answers a Float64 *)
+      put env "call 'erlang':'float'(call 'erlang':'trunc'(";
+      expr env self_;
+      put env "))"
+  | "to_float64", [] ->
+      put env "call 'erlang':'float'(";
+      expr env self_;
+      put env ")"
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
+      put env "call 'erlang':'trunc'(";
+      expr env self_;
+      put env ")"
   | "to_int64", [] -> expr env self_
   | "to_byte", [] ->
       put env "apply 'emo_to_byte'/1 ";
@@ -561,9 +609,13 @@ and method_call env self_ name args =
                    (Printf.sprintf "beam: method `%s` has no dispatch (in %s)"
                       name env.fname))
           | _ ->
-              put env "case ";
+              (* Bind the receiver once: the arms below pass it, and
+                 re-emitting it would run a side-effecting receiver (a
+                 chained call, say) twice. *)
+              let recv = fresh_var env "__recv" in
+              put env ("let <" ^ recv ^ "> =\n");
               expr env self_;
-              put env " of\n";
+              put env ("\nin case " ^ recv ^ " of\n");
               List.iter
                 (fun cname ->
                   let full = cname ^ "__" ^ mangled in
@@ -573,7 +625,7 @@ and method_call env self_ name args =
                        (instance_pattern env.classes cname)
                        (Emo_ir.sanitize_ident full)
                        arity);
-                  expr env self_;
+                  put env recv;
                   List.iter
                     (fun a ->
                       put env ", ";
@@ -661,6 +713,36 @@ catch
    A statement list becomes a left-nested `do` chain: `do E1 do E2 E3`.
    Core discards intermediate values naturally — no drops. *)
 
+and unique_names (names : string list) : string list =
+  let rec go seen acc = function
+    | [] -> List.rev acc
+    | n :: rest ->
+        if List.mem n seen then go seen acc rest
+        else go (n :: seen) (n :: acc) rest
+  in
+  go [] [] names
+
+(* The outer bindings a statement rebinds: an `Assign_var` target, or
+   `self` through a field set. A `Let` is a fresh binding and never
+   escapes, and a loop's own threading already carries its
+   reassignments out. *)
+and assigned_names (s : Emo_ir.stmt) : string list =
+  match s with
+  | Emo_ir.Assign_var { name; _ } -> [ name ]
+  | Emo_ir.Set_field _ -> [ "self" ]
+  | Emo_ir.If { then_; else_; _ } ->
+      assigned_names_list then_ @ assigned_names_list else_
+  | Emo_ir.While { body; _ } | Emo_ir.For { body; _ } ->
+      assigned_names_list body
+  | Emo_ir.Case { branches; _ } | Emo_ir.Receive { branches } ->
+      List.concat_map
+        (fun (b : Emo_ir.branch) -> assigned_names_list b.Emo_ir.body)
+        branches
+  | _ -> []
+
+and assigned_names_list (xs : Emo_ir.stmt list) : string list =
+  List.concat_map assigned_names xs
+
 and stmts env (xs : Emo_ir.stmt list) : unit =
   match xs with
   | [] -> put env "'ok'"
@@ -724,11 +806,110 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
       put env ")\nin ";
       env.local_map <- ("self", v) :: env.local_map;
       stmts env rest
+  | ((Emo_ir.If _ | Emo_ir.Case _) as s) :: rest
+    when List.exists
+           (fun n -> List.mem_assoc n env.local_map)
+           (assigned_names s) ->
+      (* A branch that rebinds an outer `var` threads the new bindings
+         out of the `case`, exactly like a loop: the branches answer a
+         tuple of the bindings' final values, and the names rebind from
+         it over the rest of the block. *)
+      let assigned =
+        unique_names
+          (List.filter
+             (fun n -> List.mem_assoc n env.local_map)
+             (assigned_names s))
+      in
+      let slot = fresh_var env "__thread" in
+      put env ("let <" ^ slot ^ "> =\n");
+      emit_threaded_control env assigned s;
+      put env "\nin ";
+      List.iteri
+        (fun i name ->
+          let v = fresh_var env name in
+          put env
+            (Printf.sprintf "let <%s> =\n  call 'erlang':'element'(%d, %s)\nin "
+               v (i + 1) slot);
+          env.local_map <- (name, v) :: env.local_map)
+        assigned;
+      stmts env rest
   | s :: rest ->
       put env "do\n";
       stmt env s;
       put env "\n";
       stmts env rest
+
+(* A branch body of a threaded `if`/`case`: run it, then answer the
+   tuple of the threaded bindings' final values. The branch's own
+   bindings are dropped; the caller rebinds the outer names. *)
+and emit_threaded_body env (assigned : string list) (body : Emo_ir.stmt list) :
+    unit =
+  (* The branch body as a tail chain whose fall-through leaf is the
+     tuple of final bindings — the same continuation trick the loop
+     body uses, so the tuple lands inside the last binding's scope. *)
+  let saved = env.local_map in
+  emit_loop_body env body ~leaf:(fun () ->
+      put env "{";
+      put env
+        (String.concat ", "
+           (List.map (fun n -> List.assoc n env.local_map) assigned));
+      put env "}");
+  env.local_map <- saved
+
+and emit_threaded_control env (assigned : string list) (s : Emo_ir.stmt) : unit
+    =
+  match s with
+  | Emo_ir.If { cond; then_; else_ } ->
+      put env "case ";
+      expr env cond;
+      put env " of\n";
+      put env "  <'true'> when 'true' ->\n";
+      emit_threaded_body env assigned then_;
+      put env "\n  <'false'> when 'true' ->\n";
+      emit_threaded_body env assigned else_;
+      put env "\nend"
+  | Emo_ir.Case { scrutinee; branches } ->
+      let scratch = fresh_var env "case" in
+      put env ("let <" ^ scratch ^ "> =\n");
+      expr env scrutinee;
+      put env "\nin case ";
+      put env scratch;
+      put env " of\n";
+      let exhaustive =
+        match List.rev branches with
+        | last :: _ -> (
+            last.Emo_ir.guard = None
+            &&
+            match last.Emo_ir.pattern.Emo_ast.pattern_desc with
+            | Emo_ast.Wildcard | Emo_ast.Pattern_binding _ -> true
+            | _ -> false)
+        | [] -> false
+      in
+      let rec emit_branches bs =
+        match bs with
+        | [] ->
+            if not exhaustive then (
+              put env "  <_> when 'true' ->\n";
+              put env "    call 'erlang':'error'({'emo_no_match', ";
+              put env scratch;
+              put env "})\n")
+        | b :: rest ->
+            put env "  <";
+            emit_pattern env b.Emo_ir.pattern;
+            put env "> ";
+            (match b.Emo_ir.guard with
+            | Some g ->
+                put env "when ";
+                guard_expr env g;
+                put env " ->\n"
+            | None -> put env "when 'true' ->\n");
+            emit_threaded_body env assigned b.Emo_ir.body;
+            put env "\n";
+            emit_branches rest
+      in
+      emit_branches branches;
+      put env "end"
+  | _ -> assert false
 
 and stmt env (s : Emo_ir.stmt) : unit =
   match s with
@@ -1071,9 +1252,12 @@ and emit_loop_body env ~(leaf : unit -> unit) (xs : Emo_ir.stmt list) : unit =
       put env "\t\tcase ";
       expr env cond;
       put env " of\n\t\t  <'true'> when 'true' ->\n\t\t";
+      let saved = env.local_map in
       emit_loop_body env (then_ @ rest) ~leaf;
+      env.local_map <- saved;
       put env "\n\t\t  <'false'> when 'true' ->\n\t\t";
       emit_loop_body env (else_ @ rest) ~leaf;
+      env.local_map <- saved;
       put env "\n\t\tend"
   | ((Emo_ir.While _ | Emo_ir.For _) as loop) :: rest ->
       emit_loop env loop rest ~leaf
@@ -1626,6 +1810,12 @@ let rt_source =
 		    apply 'emo_mask'/1 (call 'erlang':'div'(_x, _y))
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
+	  <_x> when call 'erlang':'is_float'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_float'(_y) ->
+		    call 'erlang':'/'(_x, _y)
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	end
 
@@ -1636,6 +1826,12 @@ let rt_source =
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
 		    call 'erlang':'rem'(_x, _y)
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_x> when call 'erlang':'is_float'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_float'(_y) ->
+		    call 'math':'fmod'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -1824,7 +2020,7 @@ let rt_source =
 	end
 
 'emo_array_append'/2 =
-    fun (_xs, _x) -> call 'lists':'reverse'(call 'lists':'reverse'([_x | _xs]))
+    fun (_xs, _x) -> call 'lists':'append'(_xs, [_x])
 
 'emo_box_replace'/2 =
     fun (_k, _v) ->
@@ -2864,7 +3060,12 @@ let emit (program : Emo_ir.program) : string =
             (fun (m : Emo_ir.func) ->
               (m.Emo_ir.fname, List.length m.Emo_ir.fparams))
             c.Emo_ir.cmethods
-          @ [ (c.Emo_ir.cname ^ "__new", List.length (class_fields c)) ])
+          @ [
+              ( c.Emo_ir.cname ^ "__new",
+                (match c.Emo_ir.cinit with
+                | Some init -> List.length init.Emo_ir.fparams - 1
+                | None -> 0) );
+            ])
         program.Emo_ir.pclasses;
   put env "module 'emo_main' ['main'/0]\n";
   put env "    attributes []\n";
@@ -2927,7 +3128,19 @@ let emit (program : Emo_ir.program) : string =
       env.local_map <- ("self", self_v) :: env.local_map;
       let before = Buffer.length buf in
       (match c.Emo_ir.cinit with
-      | Some init -> stmts env init.Emo_ir.fbody
+      | Some init ->
+          (* init's value is the instance, not whatever its last
+             statement produced: a trailing method call must not become
+             the constructor's result. *)
+          stmts env
+            (init.Emo_ir.fbody
+            @ [
+                Emo_ir.Effect
+                  {
+                    ety = Emo_check.ClassType c.Emo_ir.cname;
+                    desc = Emo_ir.Var "self";
+                  };
+              ])
       | None -> put env self_v);
       let body_text = Buffer.sub buf before (Buffer.length buf - before) in
       Buffer.truncate buf before;

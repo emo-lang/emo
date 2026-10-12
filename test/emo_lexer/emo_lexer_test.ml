@@ -315,6 +315,30 @@ let literal_tests =
           "kinds"
           [ Int64 1L; Byte 255; Int64 9223372036854775807L; Byte 0; Eof ]
           (kinds (lex_all "1 255B 9223372036854775807 0B")));
+    tc "radix prefixes and `_` separators carry their values" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [
+            Int64 255L;
+            Int64 10L;
+            Int64 493L;
+            Int64 4294967295L;
+            Int64 1000000L;
+            Eof;
+          ]
+          (kinds (lex_all "0xFF 0b1010 0o755 0xFFFF_FFFF 1_000_000")));
+    tc "float exponents lex as Float" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Float 1e10; Float 0.0015; Float 2500.0; Eof ]
+          (kinds (lex_all "1e10 1.5e-3 2.5E+3")));
+    tc "a doubled or trailing `_` is a lexical error" (fun () ->
+        Alcotest.(check string)
+          "code" "E1006"
+          (code_of (lex_err "1__0"));
+        Alcotest.(check string)
+          "code" "E1006"
+          (code_of (lex_err "1_")));
     tc "the L suffix is a lexical error now that bare digits are Int64"
       (fun () ->
         let diagnostic = lex_err "1L" in

@@ -58,18 +58,41 @@ class BytesReader {
 
 // The in-memory sink bytes_writer hands out: write appends, to_string
 // hands back everything accumulated so far, without draining it.
+//
+// Chunks, not one growing string: concatenating the whole accumulation
+// on every write is quadratic in the bytes written, while appending a
+// chunk to the deque is O(1). `to_string` copies each chunk once into
+// an exact-length buffer — linear — and leaves the deque intact by
+// rotating it (pop the front, push it back), so the call is not
+// draining.
 class BytesSink {
   def init() {
-    self.acc = Box.new("")
+    self.chunks = List.new([])
+    self.size = Box.new(0)
   }
 
   def write(data String) Int64 {
-    self.acc.replace(self.acc.read() + data)
+    if data != "" {
+      self.chunks.push_back(data)
+      self.size.replace(self.size.read() + data.length())
+    }
     return data.length()
   }
 
   def to_string() String {
-    return self.acc.read()
+    const out = Bytes.new(self.size.read())
+    const n = self.chunks.length()
+    var at = 0
+    for var i = 0; i < n; i = i + 1 {
+      const chunk = self.chunks.pop_front()
+      const data = chunk.to_bytes()
+      for var j = 0; j < data.length(); j = j + 1 {
+        out.set(at, data.get(j))
+        at = at + 1
+      }
+      self.chunks.push_back(chunk)
+    }
+    return out.to_string()
   }
 }
 

@@ -879,7 +879,10 @@ and box_int env (result_ty : Emo_check.t) (v : string) : string =
 
 and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
     (name : string) (args : Emo_ir.expr list) : string =
-  let finish v = if is_dyn result_ty then v else unbox_code v result_ty in
+  let finish v =
+    if result_ty = Emo_check.Void || is_dyn result_ty then v
+    else unbox_code v result_ty
+  in
   let arity = List.length args in
   (* The type-level methods (`Byte.from_int64`, `Float64.from_bits`)
      arrive with a Type_ref receiver. *)
@@ -1069,6 +1072,23 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                (as_native env v Emo_check.Int64))
       | "to_bytes", [] when self_.Emo_ir.ety = Emo_check.String ->
           Printf.sprintf "emo_bytes_of_str(%s)" (emit_expr env self_)
+      | (("sqrt" | "floor" | "ceil" | "trunc") as mname), []
+        when self_.Emo_ir.ety = Emo_check.Float64 ->
+          let v =
+            Printf.sprintf "emo_f64_%s(%s)" mname
+              (as_native env self_ Emo_check.Float64)
+          in
+          if is_dyn result_ty then box_code v Emo_check.Float64 else v
+      | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
+          box_int env result_ty
+            (Printf.sprintf "((int64_t)(%s))"
+               (as_native env self_ Emo_check.Float64))
+      | "to_float64", [] when self_.Emo_ir.ety = Emo_check.Int64 ->
+          let v =
+            Printf.sprintf "((double)(%s))"
+              (as_native env self_ Emo_check.Int64)
+          in
+          if is_dyn result_ty then box_code v Emo_check.Float64 else v
       | "to_bits", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
           Printf.sprintf "emo_f64_bits(%s)" (emit_expr env self_)
       | "to_byte", [] when self_.Emo_ir.ety = Emo_check.Int64 ->
@@ -1228,7 +1248,8 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                   (if args = [] then "NULL"
                    else Printf.sprintf "(emo_value[]){%s}" arg_code)
               in
-              if is_dyn result_ty then v else unbox_code v result_ty)
+              if result_ty = Emo_check.Void || is_dyn result_ty then v
+              else unbox_code v result_ty)
       | _ -> refuse "method calls")
 
 (* The class a field access resolves against: the receiver's static
