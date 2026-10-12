@@ -275,6 +275,29 @@ let interface_sigs_of ctx (i : Ast.interface_def) :
     i.Ast.interface_methods
 
 (* Pass one: gather every declaration the checker reasons about. *)
+(* The built-in `R` enum's members: whichever table a check answers
+   declaration lookups from carries them, whether or not any module
+   declares an enum. *)
+let seed_r_enum (enums : (string, string list) Hashtbl.t) =
+  Hashtbl.replace enums "R" [ "ok"; "error" ]
+
+(* The two names every program sees built in: the result enum `R` and the
+   exception class `Exception`. A declaration taking either would shadow
+   the very thing its name promises — refused at the declaration. *)
+let reserved_name ctx span kind name =
+  let reserved =
+    match name with
+    | "R" -> Some "the built-in `R` enum"
+    | "Exception" -> Some "the built-in `Exception` class"
+    | _ -> None
+  in
+  match reserved with
+  | Some reserved ->
+      report ctx span "E4023"
+        (Printf.sprintf "the %s name `%s` is reserved for %s; rename the %s"
+           kind name reserved kind)
+  | None -> ()
+
 let collect ctx (items : Ast.item list) : unit =
   List.iter
     (fun item ->
@@ -286,14 +309,19 @@ let collect ctx (items : Ast.item list) : unit =
           Option.iter (fun r -> ignore (decl_to_type ctx r)) d.Ast.def_return;
           Hashtbl.replace ctx.funcs d.Ast.def_name d
       | Ast.Item_class c ->
+          reserved_name ctx c.Ast.class_span "class" c.Ast.class_name;
           Hashtbl.replace ctx.classes c.Ast.class_name (class_info_of ctx c)
       | Ast.Item_interface i ->
+          reserved_name ctx i.Ast.interface_span "interface"
+            i.Ast.interface_name;
           Hashtbl.replace ctx.interfaces i.Ast.interface_name
             (interface_sigs_of ctx i)
       | Ast.Item_enum e ->
+          reserved_name ctx e.Ast.enum_span "enum" e.Ast.enum_name;
           Hashtbl.replace ctx.enums e.Ast.enum_name
             (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
       | Ast.Item_emo_group g ->
+          reserved_name ctx g.Ast.group_span "group" g.Ast.group_name;
           (* the group name must not collide with a module path; the
              members register in check_items once expressions can be
              checked *)
@@ -513,6 +541,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       target = "c";
     }
   in
+  seed_r_enum ctx.enums;
   let parsed = Emo_parser.parse_program_with_diagnostics ~file ~source in
   match parsed with
   | exception Emo_lexer.Error diagnostic ->
@@ -572,38 +601,51 @@ let empty_env =
             vtype =
               FuncType
                 ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
-                  TcpConn );
+                  TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_listen",
           {
-            vtype = FuncType ([ ("host", String); ("port", Int64) ], TcpListener);
+            vtype =
+              FuncType
+                ( [ ("host", String); ("port", Int64) ],
+                  TupleType [ EnumType "R"; TcpListener ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_resolve",
           {
-            vtype = FuncType ([ ("host", String) ], ArrayType String);
+            vtype =
+              FuncType
+                ( [ ("host", String) ],
+                  TupleType [ EnumType "R"; ArrayType String ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_udp_bind",
           {
-            vtype = FuncType ([ ("host", String); ("port", Int64) ], UdpSocket);
+            vtype =
+              FuncType
+                ( [ ("host", String); ("port", Int64) ],
+                  TupleType [ EnumType "R"; UdpSocket ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_connect_unix",
           {
             vtype =
-              FuncType ([ ("path", String); ("timeout", Float64) ], TcpConn);
+              FuncType
+                ( [ ("path", String); ("timeout", Float64) ],
+                  TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_listen_unix",
           {
-            vtype = FuncType ([ ("path", String) ], TcpListener);
+            vtype =
+              FuncType
+                ([ ("path", String) ], TupleType [ EnumType "R"; TcpListener ]);
             is_var = false;
             depth = 0;
           } );
@@ -612,7 +654,7 @@ let empty_env =
             vtype =
               FuncType
                 ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
-                  TcpConn );
+                  TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
           } );
@@ -621,7 +663,7 @@ let empty_env =
             vtype =
               FuncType
                 ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
-                  TcpConn );
+                  TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
           } );
@@ -635,7 +677,7 @@ let empty_env =
                     ("cert_path", String);
                     ("key_path", String);
                   ],
-                  TcpListener );
+                  TupleType [ EnumType "R"; TcpListener ] );
             is_var = false;
             depth = 0;
           } );
@@ -647,13 +689,17 @@ let empty_env =
         ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
         ( "file_read",
           {
-            vtype = FuncType ([ ("path", String) ], String);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; String ]);
             is_var = false;
             depth = 0;
           } );
         ( "file_write",
           {
-            vtype = FuncType ([ ("path", String); ("contents", String) ], Int64);
+            vtype =
+              FuncType
+                ( [ ("path", String); ("contents", String) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
           } );
@@ -661,7 +707,12 @@ let empty_env =
           { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
         ( "os_getppid",
           { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
-        ("os_fork", { vtype = FuncType ([], Int64); is_var = false; depth = 0 });
+        ( "os_fork",
+          {
+            vtype = FuncType ([], TupleType [ EnumType "R"; Int64 ]);
+            is_var = false;
+            depth = 0;
+          } );
         ( "os_waitpid",
           {
             vtype = FuncType ([ ("pid", Int64) ], TupleType [ Int64; Int64 ]);
@@ -670,7 +721,9 @@ let empty_env =
           } );
         ( "os_pipe",
           {
-            vtype = FuncType ([], TupleType [ Int64; Int64 ]);
+            vtype =
+              FuncType
+                ([], TupleType [ EnumType "R"; TupleType [ Int64; Int64 ] ]);
             is_var = false;
             depth = 0;
           } );
@@ -690,68 +743,86 @@ let empty_env =
           } );
         ( "os_open_read",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_open_write",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_open_append",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_read",
           {
-            vtype = FuncType ([ ("fd", Int64); ("n", Int64) ], String);
+            vtype =
+              FuncType
+                ( [ ("fd", Int64); ("n", Int64) ],
+                  TupleType [ EnumType "R"; String ] );
             is_var = false;
             depth = 0;
           } );
         ( "os_write",
           {
-            vtype = FuncType ([ ("fd", Int64); ("data", String) ], Int64);
+            vtype =
+              FuncType
+                ( [ ("fd", Int64); ("data", String) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
           } );
         ( "os_close",
           {
-            vtype = FuncType ([ ("fd", Int64) ], Int64);
+            vtype =
+              FuncType ([ ("fd", Int64) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_list_dir",
           {
-            vtype = FuncType ([ ("path", String) ], ArrayType String);
+            vtype =
+              FuncType
+                ( [ ("path", String) ],
+                  TupleType [ EnumType "R"; ArrayType String ] );
             is_var = false;
             depth = 0;
           } );
         ( "os_mkdir",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_rmdir",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_unlink",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "os_rename",
           {
             vtype =
-              FuncType ([ ("old_path", String); ("new_path", String) ], Int64);
+              FuncType
+                ( [ ("old_path", String); ("new_path", String) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
           } );
@@ -759,12 +830,14 @@ let empty_env =
           { vtype = FuncType ([], String); is_var = false; depth = 0 } );
         ( "os_chdir",
           {
-            vtype = FuncType ([ ("path", String) ], Int64);
+            vtype =
+              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
             is_var = false;
             depth = 0;
           } );
         ( "Exception",
           { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
+        ("R", { vtype = EnumType "R"; is_var = false; depth = 0 });
       ];
     depth = 0;
     ret = None;
@@ -831,6 +904,24 @@ and conforms ctx actual expected =
   | _, InterfaceType _ -> false
   | InterfaceType _, _ -> false
   | a, b -> a = b
+
+(* The error-handling convention's typing rule: an `(R.error, reason)`
+   pair conforms to any `(R, T)` pair of the enum — the reason is a
+   String by convention, and the ok slot's type only types the ok side
+   (`CHECK.md`, error handling). The expr must be the literal pair so a
+   plain `(R, String)` value never sneaks into an `(R, Int64)`. *)
+let r_error_pair_conforms ctx (e : Ast.expr) (actual : t) (expected : t) : bool
+    =
+  match (actual, expected) with
+  | TupleType [ EnumType "R"; _ ], TupleType [ EnumType "R"; _ ] -> (
+      match e.Ast.desc with
+      | Ast.Tuple [ first; _ ] -> (
+          match first.Ast.desc with
+          | Ast.Member ({ Ast.desc = Ast.Type_ident tag; _ }, member) ->
+              String.equal tag "R" && String.equal member "error"
+          | _ -> false)
+      | _ -> false)
+  | _ -> false
 
 let known_nonovoid = ignore
 
@@ -1731,34 +1822,36 @@ and check_method_call ctx env span recv mname args : t =
                 Unknown)
         | None -> Unknown)
     | v, "to_string" -> builtin0 String
-    | TcpConn, "read_line" -> builtin0 String
+    | TcpConn, "read_line" -> builtin0 (TupleType [ EnumType "R"; String ])
     | TcpConn, "read_exactly" -> (
         match arg_values with
-        | [ (None, Int64) ] | [ (Some "n", Int64) ] -> String
+        | [ (None, Int64) ] | [ (Some "n", Int64) ] ->
+            TupleType [ EnumType "R"; String ]
         | [ (_, other) ] ->
             report ctx span "E4004"
               (Printf.sprintf "`read_exactly` expects Int64, got %s"
                  (to_string other));
-            String
+            TupleType [ EnumType "R"; String ]
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`read_exactly` expects 1 argument, got %d"
                  (List.length arg_values));
-            String)
-    | TcpConn, "read_all" -> builtin0 String
+            TupleType [ EnumType "R"; String ])
+    | TcpConn, "read_all" -> builtin0 (TupleType [ EnumType "R"; String ])
     | TcpConn, "write" -> (
         match arg_values with
-        | [ (None, String) ] | [ (Some "data", String) ] -> TcpConn
+        | [ (None, String) ] | [ (Some "data", String) ] ->
+            TupleType [ EnumType "R"; TcpConn ]
         | [ (_, other) ] ->
             report ctx span "E4004"
               (Printf.sprintf "`write` expects String, got %s" (to_string other));
-            TcpConn
+            TupleType [ EnumType "R"; TcpConn ]
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`write` expects 1 argument, got %d"
                  (List.length arg_values));
-            TcpConn)
-    | TcpConn, "close" -> builtin0 TcpConn
+            TupleType [ EnumType "R"; TcpConn ])
+    | TcpConn, "close" -> builtin0 (TupleType [ EnumType "R"; TcpConn ])
     | TcpConn, "set_timeout" -> (
         match arg_values with
         | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpConn
@@ -1772,9 +1865,9 @@ and check_method_call ctx env span recv mname args : t =
               (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
                  (List.length arg_values));
             TcpConn)
-    | TcpListener, "accept" -> builtin0 TcpConn
+    | TcpListener, "accept" -> builtin0 (TupleType [ EnumType "R"; TcpConn ])
     | TcpListener, "port" -> builtin0 Int64
-    | TcpListener, "close" -> builtin0 TcpListener
+    | TcpListener, "close" -> builtin0 (TupleType [ EnumType "R"; TcpListener ])
     | TcpListener, "set_timeout" -> (
         match arg_values with
         | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpListener
@@ -1790,19 +1883,22 @@ and check_method_call ctx env span recv mname args : t =
             TcpListener)
     | UdpSocket, "send_to" -> (
         match arg_values with
-        | [ (None, String); (None, Int64); (None, String) ] -> UdpSocket
+        | [ (None, String); (None, Int64); (None, String) ] ->
+            TupleType [ EnumType "R"; UdpSocket ]
         | [ _; _; _ ] ->
             report ctx span "E4004"
               "`send_to` expects (host String, port Int64, data String)";
-            UdpSocket
+            TupleType [ EnumType "R"; UdpSocket ]
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`send_to` expects 3 arguments, got %d"
                  (List.length arg_values));
-            UdpSocket)
-    | UdpSocket, "recv_from" -> builtin0 (TupleType [ String; String; Int64 ])
+            TupleType [ EnumType "R"; UdpSocket ])
+    | UdpSocket, "recv_from" ->
+        builtin0
+          (TupleType [ EnumType "R"; TupleType [ String; String; Int64 ] ])
     | UdpSocket, "port" -> builtin0 Int64
-    | UdpSocket, "close" -> builtin0 UdpSocket
+    | UdpSocket, "close" -> builtin0 (TupleType [ EnumType "R"; UdpSocket ])
     | UdpSocket, "set_timeout" -> (
         match arg_values with
         | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> UdpSocket
@@ -2231,19 +2327,31 @@ and check_stmt ctx env (s : Ast.stmt) : env =
   | Ast.Expr_stmt e ->
       ignore (check_expr ctx env e);
       env
-  | Ast.Binding { mutable_; name; init } -> (
+  | Ast.Binding { mutable_; pattern; init } -> (
       let t = check_expr ctx env init in
-      match lookup_env env name with
-      | Some existing when existing.depth = env.depth ->
-          (* Rebinding in the same scope: drift is an error only when the
-             earlier type is known and the new one provably breaks it. *)
-          if (not (conforms ctx t existing.vtype)) && existing.vtype <> Unknown
-          then
-            report ctx span "E4004"
-              (Printf.sprintf "`%s` was bound as %s, this rebinds it as %s" name
-                 (to_string existing.vtype) (to_string t));
-          bind env name { existing with vtype = t }
-      | _ -> bind env name { vtype = t; is_var = mutable_; depth = env.depth })
+      match pattern.Ast.pattern_desc with
+      | Ast.Pattern_binding name -> (
+          match lookup_env env name with
+          | Some existing when existing.depth = env.depth ->
+              (* Rebinding in the same scope: drift is an error only when the
+                 earlier type is known and the new one provably breaks it. *)
+              if
+                (not (conforms ctx t existing.vtype))
+                && existing.vtype <> Unknown
+              then
+                report ctx span "E4004"
+                  (Printf.sprintf "`%s` was bound as %s, this rebinds it as %s"
+                     name (to_string existing.vtype) (to_string t));
+              bind env name { existing with vtype = t }
+          | _ ->
+              bind env name { vtype = t; is_var = mutable_; depth = env.depth })
+      | _ ->
+          (* A destructured binding checks through the same pattern
+             machinery a `case` arm uses: the pattern must fit the
+             initializer's type, and its names enter scope immutable. A
+             value matching nothing stays a runtime death — the
+             case-no-match error — not a provable one. *)
+          check_pattern ctx env span t pattern)
   | Ast.Assign { target; value } -> (
       let vt = check_expr ctx env value in
       match target.Ast.desc with
@@ -2291,7 +2399,10 @@ and check_stmt ctx env (s : Ast.stmt) : env =
         ctx.ret_sink := t :: !(ctx.ret_sink);
         match env.ret with
         | Some expected when t <> Unknown && expected <> Unknown ->
-            if not (conforms ctx t expected) then
+            if
+              (not (conforms ctx t expected))
+              && not (r_error_pair_conforms ctx e t expected)
+            then
               report ctx e.Ast.span "E4008"
                 (Printf.sprintf "return type mismatch: expected %s, got %s"
                    (to_string expected) (to_string t))
@@ -2381,7 +2492,13 @@ and check_stmt ctx env (s : Ast.stmt) : env =
       ignore (check_expr ctx env message);
       env
   | Ast.Raise e ->
-      ignore (check_expr ctx env e);
+      let t = check_expr ctx env e in
+      (match t with
+      | ClassType "Exception" | Unknown -> ()
+      | other ->
+          report ctx e.Ast.span "E4024"
+            (Printf.sprintf "`raise` carries an `Exception` instance, got %s"
+               (to_string other)));
       env
   | Ast.While { cond; body } ->
       let ct = check_expr ctx env cond in
@@ -2478,10 +2595,21 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
             report ctx p.Ast.pattern_span "E4013"
               (Printf.sprintf "a %d-element tuple pattern cannot match %s"
                  (List.length ps) (to_string scrutinee_t));
+          (* The convention's reading rule: `(R.error, why)` binds the
+             reason as the String it is, whatever the ok slot's type —
+             the slot only types the ok side (`CHECK.md`, error
+             handling). *)
+          let slot_types =
+            match (ps, ts) with
+            | ( [ { Ast.pattern_desc = Ast.Enum_member ("R", "error"); _ }; _ ],
+                [ EnumType "R"; t2 ] ) ->
+                [ EnumType "R"; String ]
+            | _ -> ts
+          in
           let env =
             List.fold_left2
               (fun env pat t -> check_pattern ctx env span t pat)
-              env ps ts
+              env ps slot_types
           in
           env
       | Unknown ->
@@ -2854,6 +2982,7 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
       pgroups = Hashtbl.create 16;
     }
   in
+  seed_r_enum tables.penums;
   let diagnostics = ref [] in
   let owners : (string, string) Hashtbl.t = Hashtbl.create 16 in
   let module_name path = String.concat "." path in
@@ -2986,7 +3115,18 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
                       });
                  env
              | Ast.Item_stmt
-                 { Ast.stmt_desc = Ast.Binding { mutable_; name; init }; _ } ->
+                 {
+                   Ast.stmt_desc =
+                     Ast.Binding
+                       {
+                         mutable_;
+                         pattern =
+                           { pattern_desc = Ast.Pattern_binding name; _ };
+                         init;
+                         _;
+                       };
+                   _;
+                 } ->
                  let t = check_expr ctx env init in
                  Hashtbl.replace tables.pvalues (path, name) t;
                  bind env name { vtype = t; is_var = mutable_; depth = 0 }
@@ -3095,6 +3235,7 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
       target;
     }
   in
+  seed_r_enum ctx.enums;
   collect ctx items;
   if List.length !(ctx.diagnostics) = 0 then check_items ctx items;
   ( sort_diagnostics (List.rev !(ctx.diagnostics)),

@@ -429,7 +429,16 @@ let document_symbols_of_items (text : string) (starts : int array)
                ~detail:("emo " ^ g.Ast.group_name)
                ~kind:Ix.Kind.namespace ~span:g.Ast.group_span ~children)
       | Ast.Item_stmt
-          { Ast.stmt_desc = Ast.Binding { mutable_; name; _ }; stmt_span } ->
+          {
+            Ast.stmt_desc =
+              Ast.Binding
+                {
+                  mutable_;
+                  pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                  _;
+                };
+            stmt_span;
+          } ->
           Some
             (node ~name
                ~detail:(if mutable_ then "var" else "const")

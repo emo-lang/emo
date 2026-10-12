@@ -41,7 +41,7 @@ def as_string() String
 数组与对象的容器挂在具体类上,通过 `is()` 收窄到类之后读取:
 
 ```emo
-const doc = yaml.decode(text)
+const (R.ok, doc) = yaml.decode(text)
 if doc.is(YamlObject) {
   println(doc.get("service").as_string())
   println(doc.get("ports").items().length().to_string())
@@ -59,7 +59,7 @@ if doc.is(YamlObject) {
 ## 解码
 
 ```emo
-def decode(text String) Yaml
+def decode(text String) (R, Yaml)
 ```
 
 严格、按行解析,遵循 YAML 1.2 核心模式:块映射与块序列(嵌套、
@@ -68,11 +68,13 @@ def decode(text String) Yaml
 `\uXXXX`、`\UXXXXXXXX` 与代理对)、注释、`|` 字面与 `>` 折叠块标量
 (带 `+`/`-` chomping),以及可选的前导 `---`。plain 标量按核心
 模式解析:`null`/`~`、`true`/`false`(含大小写变体)、十进制整数、
-`0x`/`0o` 整数、带 `.inf`/`.nan` 的浮点;其余一律是字符串。超出
-Int64 的整数拒绝;浮点只舍入一次,就近取偶。
+`0x`/`0o` 整数、带 `.inf`/`.nan` 的浮点;其余一律是字符串。
 
-一切不支持的构造都带字节偏移抛出:锚点与别名、标签、多文档输入、
-多行 plain/引号标量、多行流式、缩进中的 tab。
+一切不支持的构造都以 `(R.error, reason)` 返回并带字节偏移:锚点与
+别名、标签、多文档输入、多行 plain/引号标量、多行流式、缩进中的
+tab——非法输入与超出 `Int64` 的整数同理。reason 是 String,写明
+到底哪里失败——`yaml: bad indentation in a mapping at byte 21`。
+浮点只舍入一次,就近取偶。
 
 ## 编码
 
@@ -100,6 +102,8 @@ println(yaml.encode(doc))
 
 ## 错误
 
-遵循标准库的约定,一切失败——输入非法、键缺失、访问器类别不符、
-不支持的构造——都抛出普通的 Emo 异常,写明到底哪里失败(解码时还
-带字节偏移)。没有错误码,没有 nil。
+分界遵循标准库的约定。非法输入与不支持的构造——数据可以是任何东西
+——是 `decode` 返回的值 `(R.error, reason)`,reason 是 String,写明
+到底哪里失败(解码时还带字节偏移):用 `case` 匹配它,不要猜。
+访问器类别不符、键缺失,是调用方对文档的错误断言——这些抛出,终结
+进程。没有错误码,没有 nil。

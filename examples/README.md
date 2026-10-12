@@ -33,6 +33,13 @@ language's design, not just its features.
   module tree, with an `internal/` private subtree.
 - **[`http_roundtrip/`](http_roundtrip/)** — an HTTP server and client
   round-trip on localhost in one direct-style program.
+- **[`error_matching/`](error_matching/)** — the built-in `R` pair
+  matched in `case`, the errors example's matching half, golden
+  byte-for-byte on all six targets.
+- **[`errors/`](errors/)** — the README's error-handling snippets run
+  verbatim: ok/error matching, the assert-match binding, and a
+  violation raising (one program each; the raise ends the process with
+  the crash report).
 
 Each demo that produces deterministic output carries an
 `expected.txt`; run the program and compare.

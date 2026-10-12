@@ -1,0 +1,11 @@
+// The README's assert-match binding, verbatim: when a failure is not
+// expected, a binding pattern says so — a pattern that does not match
+// is a runtime error, ending the process loudly. Run it:
+//
+//   emo run binding.emo
+
+const path = "config.data"
+file.write(path, "expected body")
+
+const (R.ok, body) = file.read(path)
+println(body.length())

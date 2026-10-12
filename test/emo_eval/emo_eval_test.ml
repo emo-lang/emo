@@ -546,20 +546,44 @@ println(check(1))|}));
           "span" "test.emo:1:4"
           (Span.to_string diagnostic.Diagnostic.span));
     tc "raise unwinds to an uncaught-exception error" (fun () ->
-        let diagnostic = program_err {|raise "boom"|} in
+        let diagnostic = program_err {|raise Exception.new(message: "boom")|} in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
           "message" "uncaught exception: boom" diagnostic.Diagnostic.message;
         Alcotest.(check string)
           "span" "test.emo:1:1"
           (Span.to_string diagnostic.Diagnostic.span));
+    tc "the raise operand discipline holds at run time" (fun () ->
+        let diagnostic = program_err {|raise "boom"|} in
+        Alcotest.(check string) "code" "E4024" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "`raise` carries an `Exception` instance, got String"
+          diagnostic.Diagnostic.message);
+    tc "a destructured binding binds, and a mismatch dies the case death"
+      (fun () ->
+        Alcotest.(check string)
+          "the ok tuple binds" "7\n"
+          (run_program {|const (R.ok, body) = (R.ok, 7)
+println(body)|});
+        let diagnostic =
+          program_err {|const (R.ok, body) = (R.error, "why")
+println(body)|}
+        in
+        Alcotest.(check string) "code" "E3006" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "no `case` branch matched this Tuple value"
+          diagnostic.Diagnostic.message);
     tc "raise inside a def escapes the function" (fun () ->
         let diagnostic =
-          program_err "def f() Int64 {\n  raise 7\n}\nprintln(f())"
+          program_err
+            "def f() Int64 {\n\
+            \  raise Exception.new(message: \"seven\")\n\
+             }\n\
+             println(f())"
         in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
-          "message" "uncaught exception: 7" diagnostic.Diagnostic.message);
+          "message" "uncaught exception: seven" diagnostic.Diagnostic.message);
     tc "the builtin Exception constructs with a message" (fun () ->
         Alcotest.(check string)
           "field" "boom\n"
@@ -594,19 +618,20 @@ println(e.data.get("code"))|}));
         Alcotest.(check string)
           "span" "test.emo:1:1"
           (Span.to_string diagnostic.Diagnostic.span));
-    tc "uncaught data-carrying exceptions still report the message" (fun () ->
+    tc "uncaught data-carrying exceptions report data beside the message"
+      (fun () ->
         let diagnostic =
           program_err {|raise Exception.new("disk blew up", { "fd": 3 })|}
         in
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
-          "message" "uncaught exception: disk blew up"
+          "message" "uncaught exception: disk blew up (data: {\"fd\": 3})"
           diagnostic.Diagnostic.message);
     tc "uncaught raises carry the Emo call chain" (fun () ->
         let diagnostic =
           program_err
             {|def inner() Int64 {
-  raise "boom"
+  raise Exception.new(message: "boom")
 }
 
 def outer(n Int64) Int64 {
@@ -641,7 +666,7 @@ mid(1)|}
   def init() {}
 
   def go() Int64 {
-    raise "bang"
+    raise Exception.new(message: "bang")
   }
 }
 Boomer.new().go()|}
@@ -879,6 +904,27 @@ println(Color.red.is(Greeter))|}));
     tc "is() on primitives is a type error" (fun () ->
         let diagnostic = program_err "println(1.is(Int64))" in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+    tc "the built-in R constructs and matches without a declaration" (fun () ->
+        check_value "ok member" (Emo_eval.EnumMember ("R", "ok")) "R.ok";
+        check_value "error member"
+          (Emo_eval.EnumMember ("R", "error"))
+          "R.error";
+        Alcotest.(check string)
+          "the ok arm" "yes\n"
+          (run_program
+             {|case (R.ok, 1) {
+  (R.ok, n) -> { println("yes") }
+  (R.error, why) -> { println(why) }
+}
+|});
+        Alcotest.(check string)
+          "the error arm" "boom\n"
+          (run_program
+             {|case (R.error, "boom") {
+  (R.ok, n) -> { println(n) }
+  (R.error, why) -> { println(why) }
+}
+|}));
   ]
 
 let method_tests =
@@ -1062,6 +1108,19 @@ println(English.new().is(Greeter))  // true — structural interface check|}));
         Alcotest.(check string) "code" "E3010" (code_of diagnostic);
         Alcotest.(check string)
           "message" "uncaught exception:  kaboom " diagnostic.Diagnostic.message);
+    tc "an uncaught raise prints non-empty data beside the message" (fun () ->
+        let diagnostic =
+          program_err
+            {|raise Exception.new(message: "boom", data: { "peer": "10.0.0.1:80" })|}
+        in
+        Alcotest.(check bool)
+          "data rides along" true
+          (contains_substring diagnostic.Diagnostic.message
+             "(data: {\"peer\": \"10.0.0.1:80\"})");
+        let diagnostic = program_err {|raise Exception.new(message: "bare")|} in
+        Alcotest.(check string)
+          "empty data stays silent" "uncaught exception: bare"
+          diagnostic.Diagnostic.message);
   ]
 
 (* ---- printf ---- *)

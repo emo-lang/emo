@@ -65,7 +65,7 @@ and stmt_desc =
   | Expr_stmt of expr
   | Binding of {
       mutable_ : bool; (* true = var, false = const *)
-      name : string;
+      pattern : pattern; (* the binding's target: a name, or a full pattern *)
       init : expr;
     }
   | Assign of {

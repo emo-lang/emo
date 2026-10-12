@@ -32,28 +32,32 @@ package {
 
 ## Errors
 
-Following the standard library's convention, every failing call raises
-an ordinary Emo exception whose message states exactly which system
-call failed and why — `os: open_write notes.txt: Permission denied` —
-no error codes, no nil. The calls that never fail (`getpid`,
-`getppid`, `fork` on a healthy system) are plain functions.
+Following the standard library's convention, a call whose failure the
+data can trigger answers `(R.ok, value)` or `(R.error, reason)` — the
+reason a String stating exactly which system call failed and why —
+`os: open_write notes.txt: Permission denied` — no error codes, no
+nil. The calls that never fail (`getpid`, `getppid`, `getcwd`, the
+`wait_*` status decoders) are plain functions, and so is `waitpid`'s
+raw status word; `execv` returns on failure instead of raising, the
+fork child's cue to `_exit`.
 
 ## Processes
 
 ```emo
 def getpid() Int64
 def getppid() Int64
-def fork() Int64
+def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
 def execv(path String, argv Array[String]) Void
 def _exit(status Int64) Void
 ```
 
-`fork()` returns twice: `0` in the child, the child's pid in the
-parent. `waitpid(pid)` blocks until that child changes state and
-answers `(pid, status)`; `status` is the kernel's raw 16-bit word,
-decoded by the `wait_*` helpers — the same encoding every Unix kernel
-uses, so the numbers mean the same thing on both targets:
+`fork()` answers the child's pid in `(R.ok, pid)` — `0` in the child,
+the child's pid in the parent. `waitpid(pid)` blocks until that child
+changes state and answers `(pid, status)`; `status` is the kernel's
+raw 16-bit word, decoded by the `wait_*` helpers — the same encoding
+every Unix kernel uses, so the numbers mean the same thing on both
+targets:
 
 ```emo
 const w = os.waitpid(pid)
@@ -67,22 +71,24 @@ if os.wait_exited(w[1]) {
 - `wait_stopped` / `wait_stop_signal` — stopped, and which signal.
 
 `execv(path, argv)` replaces the calling process; on success it never
-returns, and on failure it raises. `_exit(status)` ends the calling
-process immediately, without unwinding — the fork child's way out, so
-a child cannot run its parent's cleanup a second time.
+returns, and on failure it returns — the fork child follows it with
+`_exit`, since a raise there would run the parent's cleanup a second
+time. `_exit(status)` ends the calling process immediately, without
+unwinding — the fork child's way out, so a child cannot run its
+parent's cleanup a second time.
 
 ## Pipes
 
 ```emo
-def pipe() (Int64, Int64)
+def pipe() (R, (Int64, Int64))
 ```
 
-`(read_end, write_end)` — unidirectional, byte-oriented, in-process.
-The classic shape, one write per read:
+`(R.ok, (read_end, write_end))` — unidirectional, byte-oriented,
+in-process. The classic shape, one write per read:
 
 ```emo
-const p = os.pipe()
-const pid = os.fork()
+const (R.ok, p) = os.pipe()
+const (R.ok, pid) = os.fork()
 if pid == 0 {
   os.close(p[0])
   os.write(p[1], "from the child")
@@ -90,7 +96,8 @@ if pid == 0 {
   os._exit(0)
 }
 os.close(p[1])
-println(os.read(p[0], 64))
+const (R.ok, text) = os.read(p[0], 64)
+println(text)
 os.close(p[0])
 ```
 
@@ -99,12 +106,12 @@ os.close(p[0])
 Unbuffered: every `read` and `write` crosses to the kernel.
 
 ```emo
-def open_read(path String) Int64
-def open_write(path String) Int64
-def open_append(path String) Int64
-def read(fd Int64, n Int64) String
-def write(fd Int64, data String) Int64
-def close(fd Int64) Int64
+def open_read(path String) (R, Int64)
+def open_write(path String) (R, Int64)
+def open_append(path String) (R, Int64)
+def read(fd Int64, n Int64) (R, String)
+def write(fd Int64, data String) (R, Int64)
+def close(fd Int64) (R, Int64)
 ```
 
 `open_write` creates or truncates; `open_append` creates or appends;
@@ -115,13 +122,13 @@ when fewer are available, and the empty string at end of file.
 ## Directories and the working directory
 
 ```emo
-def list_dir(path String) Array[String]
-def mkdir(path String) Int64
-def rmdir(path String) Int64
-def unlink(path String) Int64
-def rename(old_path String, new_path String) Int64
+def list_dir(path String) (R, Array[String])
+def mkdir(path String) (R, Int64)
+def rmdir(path String) (R, Int64)
+def unlink(path String) (R, Int64)
+def rename(old_path String, new_path String) (R, Int64)
 def getcwd() String
-def chdir(path String) Int64
+def chdir(path String) (R, Int64)
 ```
 
 `list_dir` answers the entry names of a directory, byte-order sorted,

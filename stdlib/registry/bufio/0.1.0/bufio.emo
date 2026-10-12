@@ -82,7 +82,10 @@ class FdReader {
   }
 
   def read(n Int64) String {
-    return os.read(self.fd, n)
+    case os.read(self.fd, n) {
+      (R.error, why) -> { raise Exception.new(message: why) }
+      (R.ok, text)   -> { return text }
+    }
   }
 }
 
@@ -93,7 +96,10 @@ class FdWriter {
   }
 
   def write(data String) Int64 {
-    return os.write(self.fd, data)
+    case os.write(self.fd, data) {
+      (R.error, why) -> { raise Exception.new(message: why) }
+      (R.ok, put)    -> { return put }
+    }
   }
 }
 

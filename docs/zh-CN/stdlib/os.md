@@ -30,26 +30,29 @@ package {
 
 ## 错误
 
-遵循标准库的约定,每个失败的调用都会抛出普通的 Emo 异常,消息写明
-是哪个系统调用、为何失败——`os: open_write notes.txt: Permission
-denied`——没有错误码,没有 nil。不会失败的调用(`getpid`、
-`getppid`、健康系统上的 `fork`)就是普通函数。
+遵循标准库的约定,凡是数据能触发的失败,调用都以 `(R.ok, value)` 或
+`(R.error, reason)` 返回——reason 是 String,写明是哪个系统调用、
+为何失败——`os: open_write notes.txt: Permission denied`——没有
+错误码,没有 nil。不会失败的调用(`getpid`、`getppid`、`getcwd`、
+`wait_*` 状态解码器)就是普通函数,`waitpid` 的原始状态字同理;
+`execv` 失败时返回而不是抛出——那是 fork 子进程接 `_exit` 的暗号。
 
 ## 进程
 
 ```emo
 def getpid() Int64
 def getppid() Int64
-def fork() Int64
+def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
 def execv(path String, argv Array[String]) Void
 def _exit(status Int64) Void
 ```
 
-`fork()` 返回两次:子进程中是 `0`,父进程中是子进程的 pid。
-`waitpid(pid)` 阻塞到该子进程改变状态,回答 `(pid, status)`;
-`status` 是内核原始的 16 位状态字,由 `wait_*` 系列辅助函数解码——
-与所有 Unix 内核相同的编码,所以在两个目标上这些数字含义一致:
+`fork()` 以 `(R.ok, pid)` 回答子进程的 pid——子进程中是 `0`,父进程
+中是子进程的 pid。`waitpid(pid)` 阻塞到该子进程改变状态,回答
+`(pid, status)`;`status` 是内核原始的 16 位状态字,由 `wait_*` 系列
+辅助函数解码——与所有 Unix 内核相同的编码,所以在两个目标上这些
+数字含义一致:
 
 ```emo
 const w = os.waitpid(pid)
@@ -62,21 +65,22 @@ if os.wait_exited(w[1]) {
 - `wait_signaled` / `wait_signal` —— 被信号杀死,以及是哪个信号。
 - `wait_stopped` / `wait_stop_signal` —— 被停止,以及是哪个信号。
 
-`execv(path, argv)` 替换调用进程;成功时它绝不返回,失败时抛异常。
-`_exit(status)` 立即结束调用进程,不做任何展开——这是 fork 子进程
-的出口,保证子进程不会把父进程的清理逻辑再跑一遍。
+`execv(path, argv)` 替换调用进程;成功时它绝不返回,失败时返回
+——fork 子进程随后接 `_exit`,因为在那里抛异常会把父进程的清理
+逻辑再跑一遍。`_exit(status)` 立即结束调用进程,不做任何展开——
+这是 fork 子进程的出口,保证子进程不会把父进程的清理逻辑再跑一遍。
 
 ## 管道
 
 ```emo
-def pipe() (Int64, Int64)
+def pipe() (R, (Int64, Int64))
 ```
 
-`(读端, 写端)`——单向、字节流、进程内。经典形状,一写一读:
+`(R.ok, (读端, 写端))`——单向、字节流、进程内。经典形状,一写一读:
 
 ```emo
-const p = os.pipe()
-const pid = os.fork()
+const (R.ok, p) = os.pipe()
+const (R.ok, pid) = os.fork()
 if pid == 0 {
   os.close(p[0])
   os.write(p[1], "from the child")
@@ -84,7 +88,8 @@ if pid == 0 {
   os._exit(0)
 }
 os.close(p[1])
-println(os.read(p[0], 64))
+const (R.ok, text) = os.read(p[0], 64)
+println(text)
 os.close(p[0])
 ```
 
@@ -93,12 +98,12 @@ os.close(p[0])
 非缓冲:每次 `read` 和 `write` 都直接进内核。
 
 ```emo
-def open_read(path String) Int64
-def open_write(path String) Int64
-def open_append(path String) Int64
-def read(fd Int64, n Int64) String
-def write(fd Int64, data String) Int64
-def close(fd Int64) Int64
+def open_read(path String) (R, Int64)
+def open_write(path String) (R, Int64)
+def open_append(path String) (R, Int64)
+def read(fd Int64, n Int64) (R, String)
+def write(fd Int64, data String) (R, Int64)
+def close(fd Int64) (R, Int64)
 ```
 
 `open_write` 创建或截断;`open_append` 创建或追加;两者都只以写
@@ -108,13 +113,13 @@ def close(fd Int64) Int64
 ## 目录与工作目录
 
 ```emo
-def list_dir(path String) Array[String]
-def mkdir(path String) Int64
-def rmdir(path String) Int64
-def unlink(path String) Int64
-def rename(old_path String, new_path String) Int64
+def list_dir(path String) (R, Array[String])
+def mkdir(path String) (R, Int64)
+def rmdir(path String) (R, Int64)
+def unlink(path String) (R, Int64)
+def rename(old_path String, new_path String) (R, Int64)
 def getcwd() String
-def chdir(path String) Int64
+def chdir(path String) (R, Int64)
 ```
 
 `list_dir` 返回目录里的条目名,按字节序排序,不含 `.` 和 `..`——

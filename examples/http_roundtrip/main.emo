@@ -4,13 +4,24 @@
 require "http"
 require "net"
 
-const listener = net.listen("127.0.0.1", 0)
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
 
 // One process per connection, inside the library's serve helper.
 do http.serve_requests(listener) -> (req HttpRequest) {
   return http.response(200, [], "hello from emo")
 }
 
-const resp = http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello")
-println(resp.body)
-println(resp.status)
+case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> {
+    println(resp.body)
+    println(resp.status)
+  }
+}
+
+// A request that can never leave: the host does not resolve, and the
+// failure comes back as a value.
+case http.get("http://256.256.256.256:1/hello") {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> { println("unexpected ok") }
+}

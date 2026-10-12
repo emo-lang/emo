@@ -46,19 +46,21 @@ http.request(method, url, headers, body, timeout)
 `http.request`'s full signature:
 
 ```emo
-def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) HttpResponse
+def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
 ```
 
 - `headers` is an array of `(name, value)` tuples, appended after the
   built-in `Host`, `Content-Length`, and `Connection: close` lines.
 - `timeout` is in seconds and is passed to `net.connect` /
   `net.tls_connect`; `0.0` (what the verb helpers use) waits indefinitely.
-- The URL must carry an explicit `http://` or `https://` scheme; anything
-  else raises. `https://` URLs go through `net.tls_connect` — TLS with
+- The URL must carry an explicit `http://` or `https://` scheme;
+  anything else is the error tuple, as is every transport failure the
+  `net` package reports — match the pair, don't assume the response.
+  `https://` URLs go through `net.tls_connect` — TLS with
   certificate verification on, per the `net` package's default. Default
   ports are 80 and 443; `host:port` overrides them.
 
-Every call returns an `HttpResponse`:
+Every success answers `(R.ok, resp)` with an `HttpResponse`:
 
 ```emo
 class HttpResponse {
@@ -70,10 +72,14 @@ class HttpResponse {
 ```emo
 require "http"
 
-const resp = http.get("http://127.0.0.1:8901/hello.txt")
-println(resp.status)                 // 200
-println(resp.header("content-type")) // text/plain
-println(resp.body)
+case http.get("http://127.0.0.1:8901/hello.txt") {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> {
+    println(resp.status)                 // 200
+    println(resp.header("content-type")) // text/plain
+    println(resp.body)
+  }
+}
 ```
 
 Redirects are never followed: a 3xx is a response like any other, and
@@ -125,7 +131,7 @@ A complete server:
 require "http"
 require "net"
 
-const listener = net.listen("127.0.0.1", 8902)
+const (R.ok, listener) = net.listen("127.0.0.1", 8902)
 println("listening on http://127.0.0.1:8902")
 
 http.serve_requests(listener) -> (req HttpRequest) {
@@ -142,15 +148,19 @@ client and a server live in one program:
 require "http"
 require "net"
 
-const listener = net.listen("127.0.0.1", 0)
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
 
 do http.serve_requests(listener) -> (req HttpRequest) {
   return http.response(201, [], req.method + " " + req.path + " " + req.body)
 }
 
-const resp = http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/items", [("Content-Type", "text/plain")], "payload", 5.0)
-println(resp.status) // 201
-println(resp.body)   // POST /items payload
+case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/items", [("Content-Type", "text/plain")], "payload", 5.0) {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> {
+    println(resp.status) // 201
+    println(resp.body)   // POST /items payload
+  }
+}
 ```
 
 ## Limitations

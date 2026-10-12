@@ -1761,6 +1761,142 @@ foreign def stretch(r (Float64, Float64)) Float64 = "stretch"
             Alcotest.fail ("parse failed: " ^ d.Diagnostic.message));
   ]
 
+(* The built-in `R` enum (M12): the ok/error pair every program sees,
+   no import needed, matched in `case` — and a name no declaration may
+   take, beside the shipped `Exception` class. *)
+let r_enum_tests =
+  [
+    tc "the built-in R constructs and matches like any enum" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|def pick(t (R, String)) String {
+  case t {
+    (R.ok, n) -> { return "ok ${n}" }
+    (R.error, why) -> { return "error ${why}" }
+  }
+}
+
+println(pick((R.ok, "7")))
+println(pick((R.error, "boom")))|})));
+    tc "a bare R scrutinee matches member patterns exhaustively" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|def show(x R) String {
+  case x {
+    R.ok -> { return "yes" }
+    R.error -> { return "no" }
+  }
+}
+
+println(show(R.ok))|})));
+    tc "R's member table answers the member and coverage checks" (fun () ->
+        let diagnostics = check "println(R.wrong)" in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001");
+        let diagnostics =
+          check
+            {|
+def pick(t (R, String)) String {
+  case t {
+    (R.ok, n) -> { return "ok ${n}" }
+  }
+}
+|}
+        in
+        Alcotest.(check bool) "E4014" true (has_code diagnostics "E4014"));
+    tc "declaring R or Exception is refused" (fun () ->
+        let diagnostics = check "enum R { ok, error }" in
+        Alcotest.(check bool) "enum R" true (has_code diagnostics "E4023");
+        let first = List.hd diagnostics in
+        if
+          not
+            (contains_substring first.Diagnostic.message
+               "the enum name `R` is reserved for the built-in `R` enum")
+        then Alcotest.fail ("unexpected message: " ^ first.Diagnostic.message);
+        let diagnostics = check "class R {\n  def init() {\n  }\n}" in
+        Alcotest.(check bool) "class R" true (has_code diagnostics "E4023");
+        let diagnostics = check "interface R {\n  def ok() String\n}\n" in
+        Alcotest.(check bool) "interface R" true (has_code diagnostics "E4023");
+        let diagnostics =
+          check "emo R {\n  def ok() String {\n    return \"x\"\n  }\n}"
+        in
+        Alcotest.(check bool) "group R" true (has_code diagnostics "E4023");
+        let diagnostics = check "class Exception {\n  def init() {\n  }\n}" in
+        Alcotest.(check bool)
+          "class Exception" true
+          (has_code diagnostics "E4023");
+        let diagnostics = check "enum Exception { boom }" in
+        Alcotest.(check bool)
+          "enum Exception" true
+          (has_code diagnostics "E4023"));
+    tc "the refusal rides the program-wide name set too" (fun () ->
+        let diagnostics =
+          check_program [ ("a", {|class R {
+  def init() {
+  }
+}
+|}) ]
+        in
+        Alcotest.(check bool) "E4023" true (has_code diagnostics "E4023"));
+  ]
+
+(* Bindings take a full pattern; the checker runs it through the same
+   `check_pattern` a `case` arm uses — the pattern must fit the
+   initializer's type, and the pattern's names enter scope. *)
+let binding_pattern_tests =
+  [
+    tc "a plain binding checks clean" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length (check "const x = 1\nprintln(x)")));
+    tc "a destructured binding checks like a case arm" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|
+def show(t (R, Int64)) Int64 {
+  const (R.ok, body) = t
+  return body
+}
+
+println(show((R.ok, 7)))|})));
+    tc "the pattern's names carry the initializer's parts" (fun () ->
+        let diagnostics =
+          check
+            {|
+def show(n Int64) Int64 {
+  return n
+}
+
+const (R.ok, body) = (R.ok, "seven")
+println(show(body))|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a pattern that cannot fit refuses like a case pattern" (fun () ->
+        let diagnostics = check "const (R.ok, body) = 5" in
+        Alcotest.(check bool) "E4013" true (has_code diagnostics "E4013"));
+    tc "a `raise` carries an Exception instance and nothing else" (fun () ->
+        Alcotest.(check int)
+          "exception raise" 0
+          (List.length (check {|raise Exception.new(message: "boom")|}));
+        let diagnostics = check {|raise "boom"|} in
+        Alcotest.(check bool) "string raise" true (has_code diagnostics "E4024");
+        let diagnostics =
+          check {|
+class Ink {
+  def init() {
+  }
+}
+
+raise Ink.new()|}
+        in
+        Alcotest.(check bool) "class raise" true (has_code diagnostics "E4024"));
+  ]
+
 let () =
   Alcotest.run "emo_check"
     [
@@ -1782,4 +1918,6 @@ let () =
       ("cross_module", cross_module_tests);
       ("callback", callback_tests);
       ("shape", shape_tests);
+      ("r_enum", r_enum_tests);
+      ("binding_pattern", binding_pattern_tests);
     ]

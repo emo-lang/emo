@@ -370,6 +370,22 @@ let global_env () =
           };
       mutable_ = false;
     };
+  (* The built-in result enum: `(R.ok, value)` beside `(R.error, reason)`,
+     matched in `case`, no import needed. *)
+  Hashtbl.replace env.frame "R"
+    {
+      bound =
+        EnumType
+          {
+            ename = "R";
+            emembers =
+              [
+                ("ok", EnumMember ("R", "ok"));
+                ("error", EnumMember ("R", "error"));
+              ];
+          };
+      mutable_ = false;
+    };
   env
 
 (* The restricted profile: hermetic evaluation with a step budget — the same
@@ -710,6 +726,17 @@ exception
 (* The Emo-level call chain, maintained as closures enter and leave frames. *)
 let call_trace : (string * Emo_support.Span.t) list ref = ref []
 
+(* The crash report's machine-readable context: an `Exception`'s non-empty
+   `data` Map renders alongside the message (CHECK.md, error handling). *)
+let exception_data (v : value) : string option =
+  match v with
+  | Instance i when i.iclass.builtin_exception -> (
+      match List.assoc_opt "data" i.ifields with
+      | Some (Map m) when Hashtbl.length m.entries > 0 ->
+          Some (to_string (Map m))
+      | _ -> None)
+  | _ -> None
+
 (* Formats an uncaught raise: the value's to_string plus the call chain. *)
 let uncaught_diagnostic (v, span, trace) =
   let hint =
@@ -724,14 +751,14 @@ let uncaught_diagnostic (v, span, trace) =
                     (Emo_support.Span.to_string s))
                 trace))
   in
+  let message =
+    match exception_data v with
+    | Some data ->
+        Printf.sprintf "uncaught exception: %s (data: %s)" (to_string v) data
+    | None -> Printf.sprintf "uncaught exception: %s" (to_string v)
+  in
   Emo_support.Diagnostic.
-    {
-      severity = Error;
-      code = Some "E3010";
-      message = Printf.sprintf "uncaught exception: %s" (to_string v);
-      span;
-      hint;
-    }
+    { severity = Error; code = Some "E3010"; message; span; hint }
 
 let literal_value = function
   | Ast.L_int n -> Int64 n
@@ -805,41 +832,42 @@ type _ Effect.t +=
    every blocking call is a suspension point. Contexts outside a scheduled
    run refuse them with E3009, like the process operations.
 
-   Failures are ordinary Emo exceptions: an `Exception` instance whose
-   message states exactly what failed — connection refused, name
-   unresolvable, deadline exceeded, socket closed. No error codes, no nil
-   returns (the README error model). *)
+   The data-driven failures are values, not exceptions: an operation
+   answers (R.ok, value) or (R.error, reason), the reason stating exactly
+   what failed — connection refused, name unresolvable, deadline exceeded,
+   socket closed (the README error model; CHECK.md, error handling). No
+   error codes, no nil. The effects carry the final tuple: the driver
+   finishes the parked continuation with it, and the refusals below are
+   the only raising path left. *)
 
 type _ Effect.t +=
-  | Net_resolve : string * Emo_support.Span.t -> string list Effect.t
-  | Net_connect :
-      (string * int * float * string list * Emo_support.Span.t)
-      -> conn Effect.t
-  | Net_listen : string * int * Emo_support.Span.t -> listener Effect.t
-  | Net_accept : listener * Emo_support.Span.t -> conn Effect.t
-  | Net_read_line : conn * Emo_support.Span.t -> string Effect.t
-  | Net_read_exactly : conn * int * Emo_support.Span.t -> string Effect.t
-  | Net_read_all : conn * Emo_support.Span.t -> string Effect.t
-  | Net_write : conn * string * Emo_support.Span.t -> unit Effect.t
-  | Net_close_conn : conn * Emo_support.Span.t -> conn Effect.t
-  | Net_close_listener : listener * Emo_support.Span.t -> listener Effect.t
-  | Net_udp_bind : string * int * Emo_support.Span.t -> udp Effect.t
+  | Net_resolve : string * Emo_support.Span.t -> value Effect.t
+  | Net_connect : (string * int * float * Emo_support.Span.t) -> value Effect.t
+  | Net_listen : string * int * Emo_support.Span.t -> value Effect.t
+  | Net_accept : listener * Emo_support.Span.t -> value Effect.t
+  | Net_read_line : conn * Emo_support.Span.t -> value Effect.t
+  | Net_read_exactly : conn * int * Emo_support.Span.t -> value Effect.t
+  | Net_read_all : conn * Emo_support.Span.t -> value Effect.t
+  | Net_write : conn * string * Emo_support.Span.t -> value Effect.t
+  | Net_close_conn : conn * Emo_support.Span.t -> value Effect.t
+  | Net_close_listener : listener * Emo_support.Span.t -> value Effect.t
+  | Net_udp_bind : string * int * Emo_support.Span.t -> value Effect.t
   | Net_udp_send_to :
       (udp * string * int * string * Emo_support.Span.t)
-      -> unit Effect.t
+      -> value Effect.t
   | Net_udp_recv_from : udp * Emo_support.Span.t -> value Effect.t
-  | Net_udp_close : udp * Emo_support.Span.t -> udp Effect.t
-  | Net_connect_unix : string * float * Emo_support.Span.t -> conn Effect.t
-  | Net_listen_unix : string * Emo_support.Span.t -> listener Effect.t
-  | File_read : string * Emo_support.Span.t -> string Effect.t
-  | File_write : string * string * Emo_support.Span.t -> int Effect.t
+  | Net_udp_close : udp * Emo_support.Span.t -> value Effect.t
+  | Net_connect_unix : string * float * Emo_support.Span.t -> value Effect.t
+  | Net_listen_unix : string * Emo_support.Span.t -> value Effect.t
+  | File_read : string * Emo_support.Span.t -> value Effect.t
+  | File_write : string * string * Emo_support.Span.t -> value Effect.t
   | Net_tls_connect :
-      (string * int * float * bool * string list * Emo_support.Span.t)
-      -> conn Effect.t
-  | (* host, port, timeout, insecure, resolved addresses *)
+      (string * int * float * bool * Emo_support.Span.t)
+      -> value Effect.t
+  | (* host, port, timeout, insecure *)
       Net_tls_listen :
       (string * int * string * string * Emo_support.Span.t)
-      -> listener Effect.t
+      -> value Effect.t
   | Compiled_receive :
       (value -> (int * value list) option)
       -> (int * value list) Effect.t
@@ -995,7 +1023,7 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_resolve`")
-            | Net_connect (_, _, _, _, span) ->
+            | Net_connect (_, _, _, span) ->
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_connect`")
@@ -1048,7 +1076,7 @@ let run_without_scheduler (body : unit -> unit) : unit =
             | Compiled_receive _ ->
                 Some
                   (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
-            | Net_tls_connect (_, _, _, _, _, span) ->
+            | Net_tls_connect (_, _, _, _, span) ->
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_tls_connect`")
@@ -1063,8 +1091,9 @@ let run_without_scheduler (body : unit -> unit) : unit =
 let not_yet span what =
   error span "E3009" (Printf.sprintf "%s is not supported yet" what)
 
-(* Builds the Emo exception a network failure unwinds with. Drivers
-   discontinue the parked continuation with it. *)
+(* Builds the Emo exception a synchronous carved-out failure unwinds
+   with (the [waitpid] decode path; the net and file failures below are
+   values, not exceptions). *)
 let net_raise span message =
   Emo_raise
     ( Instance
@@ -1081,6 +1110,14 @@ let net_raise span message =
         },
       span,
       !call_trace )
+
+(* The net failures are values: drivers finish the parked continuation
+   with one of these — (R.ok, value) or (R.error, reason), the reason
+   the same text the exceptions carried (CHECK.md, error handling). *)
+let net_ok (v : value) : value = Tuple [ EnumMember ("R", "ok"); v ]
+
+let net_error (message : string) : value =
+  Tuple [ EnumMember ("R", "error"); String message ]
 
 let rec eval_unary env span op x =
   let v = eval_expr env x in
@@ -1121,149 +1158,176 @@ and eval_binary env span op left_expr right_expr =
     | Ast.And -> "&&"
     | Ast.Or -> "||"
   in
-  let left = eval_expr env left_expr in
-  let right = eval_expr env right_expr in
-  let type_mismatch expects =
-    error span "E3001"
-      (Printf.sprintf "operator `%s` expects %s, got %s and %s" (op_name op)
-         expects (type_name left) (type_name right))
-  in
-  let as_float = function
-    | Int64 x -> Int64.to_float x
-    | Float f -> f
-    | v -> type_mismatch "two numbers"
-  in
-  let check_bool v =
-    match v with Bool b -> b | v -> type_mismatch "two Bools"
-  in
-  let is_pair64 x y =
-    match (x, y) with Int64 _, Int64 _ -> true | _ -> false
-  in
-  let is_pair_byte x y =
-    match (x, y) with Byte _, Byte _ -> true | _ -> false
-  in
-  let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
-  let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
-  (* Fixed-width arithmetic wraps in two's complement; Byte, being
+  (* `&&` and `||` short-circuit: the right operand evaluates only when
+     its value is needed, matching the compiled targets, whose
+     `&&`/`||` lower to branches. The eager path below would run a
+     guarded right side (`i < n && data.get(i) == 32`) even when the
+     guard is false. *)
+  match op with
+  | Ast.And | Ast.Or ->
+      let bool_of what v =
+        match v with
+        | Bool b -> b
+        | v ->
+            error span "E3001"
+              (Printf.sprintf "operator `%s` expects two Bools, got %s" what
+                 (type_name v))
+      in
+      let what = op_name op in
+      let left = bool_of what (eval_expr env left_expr) in
+      if op = Ast.And then
+        if left then Bool (bool_of what (eval_expr env right_expr))
+        else Bool false
+      else if left then Bool true
+      else Bool (bool_of what (eval_expr env right_expr))
+  | _ -> (
+      let left = eval_expr env left_expr in
+      let right = eval_expr env right_expr in
+      let type_mismatch expects =
+        error span "E3001"
+          (Printf.sprintf "operator `%s` expects %s, got %s and %s" (op_name op)
+             expects (type_name left) (type_name right))
+      in
+      let as_float = function
+        | Int64 x -> Int64.to_float x
+        | Float f -> f
+        | v -> type_mismatch "two numbers"
+      in
+      let check_bool v =
+        match v with Bool b -> b | v -> type_mismatch "two Bools"
+      in
+      let is_pair64 x y =
+        match (x, y) with Int64 _, Int64 _ -> true | _ -> false
+      in
+      let is_pair_byte x y =
+        match (x, y) with Byte _, Byte _ -> true | _ -> false
+      in
+      let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
+      let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
+      (* Fixed-width arithmetic wraps in two's complement; Byte, being
      unsigned, wraps modulo 256. Shift counts are non-negative and
      saturate at the width, matching the Int64 rule. *)
-  let i64_bin f = Int64 (f (i64_of left) (i64_of right)) in
-  let byte_bin f = Byte (f (byte_of left) (byte_of right) land 255) in
-  let i64_div f =
-    if i64_of right = 0L then error span "E3005" "division by zero";
-    i64_bin f
-  in
-  let byte_div f =
-    if byte_of right = 0 then error span "E3005" "division by zero";
-    byte_bin f
-  in
-  let i64_shift_count () =
-    let c = i64_of right in
-    if c < 0L then error span "E3005" "shift count must be non-negative";
-    c
-  in
-  let i64_shl () =
-    let c = i64_shift_count () in
-    if c >= 64L then Int64 0L
-    else Int64 (Int64.shift_left (i64_of left) (Int64.to_int c))
-  in
-  let i64_shr () =
-    let c = i64_shift_count () in
-    if c >= 64L then Int64 (if i64_of left < 0L then -1L else 0L)
-    else Int64 (Int64.shift_right (i64_of left) (Int64.to_int c))
-  in
-  let byte_shl () =
-    let c = byte_of right in
-    if c >= 8 then Byte 0 else Byte ((byte_of left lsl c) land 255)
-  in
-  let byte_shr () =
-    let c = byte_of right in
-    if c >= 8 then Byte 0 else Byte (byte_of left lsr c)
-  in
-  match op with
-  | Ast.And -> Bool (if check_bool left then check_bool right else false)
-  | Ast.Or -> Bool (if check_bool left then true else check_bool right)
-  | Ast.Eq -> Bool (equal_value left right)
-  | Ast.Ne -> Bool (not (equal_value left right))
-  | Ast.Lt when is_pair64 left right ->
-      Bool (Int64.compare (i64_of left) (i64_of right) < 0)
-  | Ast.Lt when is_pair_byte left right -> Bool (byte_of left < byte_of right)
-  | Ast.Le when is_pair64 left right ->
-      Bool (Int64.compare (i64_of left) (i64_of right) <= 0)
-  | Ast.Le when is_pair_byte left right -> Bool (byte_of left <= byte_of right)
-  | Ast.Gt when is_pair64 left right ->
-      Bool (Int64.compare (i64_of left) (i64_of right) > 0)
-  | Ast.Gt when is_pair_byte left right -> Bool (byte_of left > byte_of right)
-  | Ast.Ge when is_pair64 left right ->
-      Bool (Int64.compare (i64_of left) (i64_of right) >= 0)
-  | Ast.Ge when is_pair_byte left right -> Bool (byte_of left >= byte_of right)
-  | Ast.Lt -> Bool (as_float left < as_float right)
-  | Ast.Le -> Bool (as_float left <= as_float right)
-  | Ast.Gt -> Bool (as_float left > as_float right)
-  | Ast.Ge -> Bool (as_float left >= as_float right)
-  | Ast.Add when is_pair64 left right -> i64_bin Int64.add
-  | Ast.Sub when is_pair64 left right -> i64_bin Int64.sub
-  | Ast.Mul when is_pair64 left right -> i64_bin Int64.mul
-  | Ast.Div when is_pair64 left right -> i64_div Int64.div
-  | Ast.Mod when is_pair64 left right -> i64_div Int64.rem
-  | Ast.Add when is_pair_byte left right -> byte_bin ( + )
-  | Ast.Sub when is_pair_byte left right -> byte_bin ( - )
-  | Ast.Mul when is_pair_byte left right -> byte_bin ( * )
-  | Ast.Div when is_pair_byte left right -> byte_div ( / )
-  | Ast.Mod when is_pair_byte left right -> byte_div ( mod )
-  | Ast.Bit_and when is_pair64 left right -> i64_bin Int64.logand
-  | Ast.Bit_or when is_pair64 left right -> i64_bin Int64.logor
-  | Ast.Bit_xor when is_pair64 left right -> i64_bin Int64.logxor
-  | Ast.Shl when is_pair64 left right -> i64_shl ()
-  | Ast.Shr when is_pair64 left right -> i64_shr ()
-  | Ast.Bit_and when is_pair_byte left right ->
-      Byte (byte_of left land byte_of right)
-  | Ast.Bit_or when is_pair_byte left right ->
-      Byte (byte_of left lor byte_of right)
-  | Ast.Bit_xor when is_pair_byte left right ->
-      Byte (byte_of left lxor byte_of right)
-  | Ast.Shl when is_pair_byte left right -> byte_shl ()
-  | Ast.Shr when is_pair_byte left right -> byte_shr ()
-  | Ast.Add -> (
-      match (left, right) with
-      | Float x, Float y -> Float (x +. y)
-      | Int64 x, Float y -> Float (Int64.to_float x +. y)
-      | Float x, Int64 y -> Float (x +. Int64.to_float y)
-      | String x, String y -> String (x ^ y)
-      | _ -> type_mismatch "two numbers or two strings")
-  | Ast.Sub -> (
-      match (left, right) with
-      | Float x, Float y -> Float (x -. y)
-      | Int64 x, Float y -> Float (Int64.to_float x -. y)
-      | Float x, Int64 y -> Float (x -. Int64.to_float y)
-      | _ -> type_mismatch "two numbers")
-  | Ast.Mul -> (
-      match (left, right) with
-      | Float x, Float y -> Float (x *. y)
-      | Int64 x, Float y -> Float (Int64.to_float x *. y)
-      | Float x, Int64 y -> Float (x *. Int64.to_float y)
-      | _ -> type_mismatch "two numbers")
-  | Ast.Div | Ast.Mod -> (
-      let zero_check d =
-        match d with
-        | Float f when f = 0.0 -> error span "E3005" "division by zero"
-        | _ -> ()
+      let i64_bin f = Int64 (f (i64_of left) (i64_of right)) in
+      let byte_bin f = Byte (f (byte_of left) (byte_of right) land 255) in
+      let i64_div f =
+        if i64_of right = 0L then error span "E3005" "division by zero";
+        i64_bin f
       in
-      match (left, right) with
-      | Float x, Float y ->
-          zero_check right;
-          if op = Ast.Div then Float (x /. y) else Float (Float.rem x y)
-      | Int64 x, Float y ->
-          zero_check right;
-          if op = Ast.Div then Float (Int64.to_float x /. y)
-          else Float (Float.rem (Int64.to_float x) y)
-      | Float x, Int64 y ->
-          zero_check right;
-          if op = Ast.Div then Float (x /. Int64.to_float y)
-          else Float (Float.rem x (Int64.to_float y))
-      | _ -> type_mismatch "two numbers")
-  | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr ->
-      type_mismatch "two Int64s or two Bytes"
+      let byte_div f =
+        if byte_of right = 0 then error span "E3005" "division by zero";
+        byte_bin f
+      in
+      let i64_shift_count () =
+        let c = i64_of right in
+        if c < 0L then error span "E3005" "shift count must be non-negative";
+        c
+      in
+      let i64_shl () =
+        let c = i64_shift_count () in
+        if c >= 64L then Int64 0L
+        else Int64 (Int64.shift_left (i64_of left) (Int64.to_int c))
+      in
+      let i64_shr () =
+        let c = i64_shift_count () in
+        if c >= 64L then Int64 (if i64_of left < 0L then -1L else 0L)
+        else Int64 (Int64.shift_right (i64_of left) (Int64.to_int c))
+      in
+      let byte_shl () =
+        let c = byte_of right in
+        if c >= 8 then Byte 0 else Byte ((byte_of left lsl c) land 255)
+      in
+      let byte_shr () =
+        let c = byte_of right in
+        if c >= 8 then Byte 0 else Byte (byte_of left lsr c)
+      in
+      match op with
+      | Ast.And -> Bool (if check_bool left then check_bool right else false)
+      | Ast.Or -> Bool (if check_bool left then true else check_bool right)
+      | Ast.Eq -> Bool (equal_value left right)
+      | Ast.Ne -> Bool (not (equal_value left right))
+      | Ast.Lt when is_pair64 left right ->
+          Bool (Int64.compare (i64_of left) (i64_of right) < 0)
+      | Ast.Lt when is_pair_byte left right ->
+          Bool (byte_of left < byte_of right)
+      | Ast.Le when is_pair64 left right ->
+          Bool (Int64.compare (i64_of left) (i64_of right) <= 0)
+      | Ast.Le when is_pair_byte left right ->
+          Bool (byte_of left <= byte_of right)
+      | Ast.Gt when is_pair64 left right ->
+          Bool (Int64.compare (i64_of left) (i64_of right) > 0)
+      | Ast.Gt when is_pair_byte left right ->
+          Bool (byte_of left > byte_of right)
+      | Ast.Ge when is_pair64 left right ->
+          Bool (Int64.compare (i64_of left) (i64_of right) >= 0)
+      | Ast.Ge when is_pair_byte left right ->
+          Bool (byte_of left >= byte_of right)
+      | Ast.Lt -> Bool (as_float left < as_float right)
+      | Ast.Le -> Bool (as_float left <= as_float right)
+      | Ast.Gt -> Bool (as_float left > as_float right)
+      | Ast.Ge -> Bool (as_float left >= as_float right)
+      | Ast.Add when is_pair64 left right -> i64_bin Int64.add
+      | Ast.Sub when is_pair64 left right -> i64_bin Int64.sub
+      | Ast.Mul when is_pair64 left right -> i64_bin Int64.mul
+      | Ast.Div when is_pair64 left right -> i64_div Int64.div
+      | Ast.Mod when is_pair64 left right -> i64_div Int64.rem
+      | Ast.Add when is_pair_byte left right -> byte_bin ( + )
+      | Ast.Sub when is_pair_byte left right -> byte_bin ( - )
+      | Ast.Mul when is_pair_byte left right -> byte_bin ( * )
+      | Ast.Div when is_pair_byte left right -> byte_div ( / )
+      | Ast.Mod when is_pair_byte left right -> byte_div ( mod )
+      | Ast.Bit_and when is_pair64 left right -> i64_bin Int64.logand
+      | Ast.Bit_or when is_pair64 left right -> i64_bin Int64.logor
+      | Ast.Bit_xor when is_pair64 left right -> i64_bin Int64.logxor
+      | Ast.Shl when is_pair64 left right -> i64_shl ()
+      | Ast.Shr when is_pair64 left right -> i64_shr ()
+      | Ast.Bit_and when is_pair_byte left right ->
+          Byte (byte_of left land byte_of right)
+      | Ast.Bit_or when is_pair_byte left right ->
+          Byte (byte_of left lor byte_of right)
+      | Ast.Bit_xor when is_pair_byte left right ->
+          Byte (byte_of left lxor byte_of right)
+      | Ast.Shl when is_pair_byte left right -> byte_shl ()
+      | Ast.Shr when is_pair_byte left right -> byte_shr ()
+      | Ast.Add -> (
+          match (left, right) with
+          | Float x, Float y -> Float (x +. y)
+          | Int64 x, Float y -> Float (Int64.to_float x +. y)
+          | Float x, Int64 y -> Float (x +. Int64.to_float y)
+          | String x, String y -> String (x ^ y)
+          | _ -> type_mismatch "two numbers or two strings")
+      | Ast.Sub -> (
+          match (left, right) with
+          | Float x, Float y -> Float (x -. y)
+          | Int64 x, Float y -> Float (Int64.to_float x -. y)
+          | Float x, Int64 y -> Float (x -. Int64.to_float y)
+          | _ -> type_mismatch "two numbers")
+      | Ast.Mul -> (
+          match (left, right) with
+          | Float x, Float y -> Float (x *. y)
+          | Int64 x, Float y -> Float (Int64.to_float x *. y)
+          | Float x, Int64 y -> Float (x *. Int64.to_float y)
+          | _ -> type_mismatch "two numbers")
+      | Ast.Div | Ast.Mod -> (
+          let zero_check d =
+            match d with
+            | Float f when f = 0.0 -> error span "E3005" "division by zero"
+            | _ -> ()
+          in
+          match (left, right) with
+          | Float x, Float y ->
+              zero_check right;
+              if op = Ast.Div then Float (x /. y) else Float (Float.rem x y)
+          | Int64 x, Float y ->
+              zero_check right;
+              if op = Ast.Div then Float (Int64.to_float x /. y)
+              else Float (Float.rem (Int64.to_float x) y)
+          | Float x, Int64 y ->
+              zero_check right;
+              if op = Ast.Div then Float (x /. Int64.to_float y)
+              else Float (Float.rem x (Int64.to_float y))
+          | _ -> type_mismatch "two numbers")
+      | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr ->
+          type_mismatch "two Int64s or two Bytes")
 
 and eval_index env span base index =
   let b = eval_expr env base in
@@ -1783,12 +1847,11 @@ and eval_method env span recv mname arg_exprs =
           Bytes (Bytes.of_string s)
       | TcpConn c, "read_line" ->
           none_expected "read_line";
-          String (Effect.perform (Net_read_line (c, span)))
+          Effect.perform (Net_read_line (c, span))
       | TcpConn c, "read_exactly" -> (
           match eval_args () with
           | [ Int64 n ] ->
-              String
-                (Effect.perform (Net_read_exactly (c, Int64.to_int n, span)))
+              Effect.perform (Net_read_exactly (c, Int64.to_int n, span))
           | [ v ] ->
               error span "E3001"
                 (Printf.sprintf "`read_exactly` expects an Int64, got %s"
@@ -1799,12 +1862,10 @@ and eval_method env span recv mname arg_exprs =
           )
       | TcpConn c, "read_all" ->
           none_expected "read_all";
-          String (Effect.perform (Net_read_all (c, span)))
+          Effect.perform (Net_read_all (c, span))
       | TcpConn c, "write" -> (
           match eval_args () with
-          | [ String s ] ->
-              Effect.perform (Net_write (c, s, span));
-              TcpConn c
+          | [ String s ] -> Effect.perform (Net_write (c, s, span))
           | [ v ] ->
               error span "E3001"
                 (Printf.sprintf "`write` expects a String, got %s" (type_name v))
@@ -1813,7 +1874,7 @@ and eval_method env span recv mname arg_exprs =
                 (Printf.sprintf "`write` expects 1 argument, got %d" argc))
       | TcpConn c, "close" ->
           none_expected "close";
-          TcpConn (Effect.perform (Net_close_conn (c, span)))
+          Effect.perform (Net_close_conn (c, span))
       | TcpConn c, "set_timeout" -> (
           match eval_args () with
           | [ Float f ] when f >= 0.0 ->
@@ -1830,7 +1891,7 @@ and eval_method env span recv mname arg_exprs =
           )
       | TcpListener l, "accept" ->
           none_expected "accept";
-          TcpConn (Effect.perform (Net_accept (l, span)))
+          Effect.perform (Net_accept (l, span))
       | TcpListener { lunix = true; ldesc; _ }, "port" ->
           error span "E3007"
             (Printf.sprintf "a unix-domain listener (%s) has no port" ldesc)
@@ -1839,7 +1900,7 @@ and eval_method env span recv mname arg_exprs =
           Int64 (Int64.of_int l.lport)
       | TcpListener l, "close" ->
           none_expected "close";
-          TcpListener (Effect.perform (Net_close_listener (l, span)))
+          Effect.perform (Net_close_listener (l, span))
       | TcpListener l, "set_timeout" -> (
           match eval_args () with
           | [ Float f ] when f >= 0.0 ->
@@ -1856,17 +1917,11 @@ and eval_method env span recv mname arg_exprs =
           )
       | UdpSocket u, "send_to" -> (
           match eval_args () with
-          | [ String host; Int64 port; String data ] -> (
-              let addrs = Effect.perform (Net_resolve (host, span)) in
-              match addrs with
-              | addr :: _ ->
-                  Effect.perform
-                    (Net_udp_send_to (u, addr, Int64.to_int port, data, span));
-                  UdpSocket u
-              | [] ->
-                  raise
-                    (net_raise span
-                       (Printf.sprintf "cannot resolve host `%s`" host)))
+          | [ String host; Int64 port; String data ] ->
+              (* The handler resolves the host; failure rides back in
+                 the tuple like every other data-driven net failure. *)
+              Effect.perform
+                (Net_udp_send_to (u, host, Int64.to_int port, data, span))
           | _ ->
               error span "E3007"
                 "`send_to` expects (host String, port Int64, data String)")
@@ -1879,7 +1934,7 @@ and eval_method env span recv mname arg_exprs =
           Int64 (Int64.of_int u.uport)
       | UdpSocket u, "close" ->
           none_expected "close";
-          UdpSocket (Effect.perform (Net_udp_close (u, span)))
+          Effect.perform (Net_udp_close (u, span))
       | UdpSocket u, "set_timeout" -> (
           match eval_args () with
           | [ Float f ] when f >= 0.0 ->
@@ -2123,6 +2178,25 @@ and os_try span (f : unit -> value) : value =
               (if arg = "" then "" else " " ^ arg)
               (Unix.error_message e)))
   | exception Sys_error message -> raise (net_raise span ("os: " ^ message))
+
+(* The data-driven os failures are values: the call answers
+   (R.ok, value) or (R.error, reason), the reason the same text the
+   exception carried (CHECK.md, error handling). [os_try] remains only
+   for the carved-out [waitpid]. *)
+and os_result span (f : unit -> value) : value =
+  match f () with
+  | v -> Tuple [ EnumMember ("R", "ok"); v ]
+  | exception Unix.Unix_error (e, fn, arg) ->
+      Tuple
+        [
+          EnumMember ("R", "error");
+          String
+            (Printf.sprintf "os: %s%s: %s" fn
+               (if arg = "" then "" else " " ^ arg)
+               (Unix.error_message e));
+        ]
+  | exception Sys_error message ->
+      Tuple [ EnumMember ("R", "error"); String ("os: " ^ message) ]
 
 (* ---- printf ----
 
@@ -2458,16 +2532,10 @@ and apply_builtin span name args =
             got %d arguments"
            (List.length args))
   | "net_connect", [ String host; Int64 port; Float timeout ] ->
-      let addrs = Effect.perform (Net_resolve (host, span)) in
-      TcpConn
-        (Effect.perform
-           (Net_connect (host, Int64.to_int port, timeout, addrs, span)))
-  | "net_resolve", [ String host ] ->
-      Array
-        (Array.of_list
-           (List.map
-              (fun a -> String a)
-              (Effect.perform (Net_resolve (host, span)))))
+      (* The handler resolves the host, then connects; failure rides
+         back in the tuple. *)
+      Effect.perform (Net_connect (host, Int64.to_int port, timeout, span))
+  | "net_resolve", [ String host ] -> Effect.perform (Net_resolve (host, span))
   | "net_resolve", vs ->
       error span "E3007"
         (Printf.sprintf "`net_resolve` expects 1 argument, got %d"
@@ -2481,7 +2549,7 @@ and apply_builtin span name args =
            "`net_listen` expects (host String, port Int64), got %d arguments"
            (List.length args))
   | "net_listen", [ String host; Int64 port ] ->
-      TcpListener (Effect.perform (Net_listen (host, Int64.to_int port, span)))
+      Effect.perform (Net_listen (host, Int64.to_int port, span))
   | "net_listen", _ ->
       error span "E3001" "`net_listen` expects (host String, port Int64)"
   | "net_udp_bind", args when List.length args <> 2 ->
@@ -2490,15 +2558,14 @@ and apply_builtin span name args =
            "`net_udp_bind` expects (host String, port Int64), got %d arguments"
            (List.length args))
   | "net_udp_bind", [ String host; Int64 port ] ->
-      UdpSocket (Effect.perform (Net_udp_bind (host, Int64.to_int port, span)))
+      Effect.perform (Net_udp_bind (host, Int64.to_int port, span))
   | "net_udp_bind", _ ->
       error span "E3001" "`net_udp_bind` expects (host String, port Int64)"
   | "file_read", args when List.length args <> 1 ->
       error span "E3007"
         (Printf.sprintf "`file_read` expects (path String), got %d arguments"
            (List.length args))
-  | "file_read", [ String path ] ->
-      String (Effect.perform (File_read (path, span)))
+  | "file_read", [ String path ] -> Effect.perform (File_read (path, span))
   | "file_read", [ v ] ->
       error span "E3001"
         (Printf.sprintf "`file_read` expects a String path, got %s"
@@ -2510,7 +2577,7 @@ and apply_builtin span name args =
             %d             arguments"
            (List.length args))
   | "file_write", [ String path; String contents ] ->
-      Int64 (Int64.of_int (Effect.perform (File_write (path, contents, span))))
+      Effect.perform (File_write (path, contents, span))
   | "file_write", [ String _; v ] ->
       error span "E3001"
         (Printf.sprintf "`file_write` expects String contents, got %s"
@@ -2532,7 +2599,8 @@ and apply_builtin span name args =
       error span "E3007"
         (Printf.sprintf "`os_getppid` expects no arguments, got %d"
            (List.length vs))
-  | "os_fork", [] -> os_try span (fun () -> Int64 (Int64.of_int (Unix.fork ())))
+  | "os_fork", [] ->
+      os_result span (fun () -> Int64 (Int64.of_int (Unix.fork ())))
   | "os_fork", vs ->
       error span "E3007"
         (Printf.sprintf "`os_fork` expects no arguments, got %d"
@@ -2555,7 +2623,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
            (List.length vs))
   | "os_pipe", [] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           let r, w = Unix.pipe () in
           Tuple
             [ Int64 (Int64.of_int (fd_int r)); Int64 (Int64.of_int (fd_int w)) ])
@@ -2563,10 +2631,15 @@ and apply_builtin span name args =
       error span "E3007"
         (Printf.sprintf "`os_pipe` expects no arguments, got %d"
            (List.length vs))
-  | "os_execv", [ String path; Array items ] ->
-      os_try span (fun () ->
-          let argv = Array.of_list (List.map to_string (Array.to_list items)) in
-          Unix.execv path argv)
+  | "os_execv", [ String path; Array items ] -> (
+      (* Success never returns — the process is replaced. Failure is a
+         data-driven value: the call returns Void, and the fork child
+         follows it with `_exit` (the POSIX idiom; a raise here would
+         run the parent's cleanup a second time). *)
+      try
+        let argv = Array.of_list (List.map to_string (Array.to_list items)) in
+        Unix.execv path argv
+      with Unix.Unix_error _ -> Void)
   | "os_execv", vs ->
       error span "E3007"
         (Printf.sprintf
@@ -2582,14 +2655,14 @@ and apply_builtin span name args =
         (Printf.sprintf "`os__exit` expects (status Int64), got %d"
            (List.length vs))
   | "os_open_read", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Int64 (Int64.of_int (fd_int (Unix.openfile path [ O_RDONLY ] 0))))
   | "os_open_read", vs ->
       error span "E3007"
         (Printf.sprintf "`os_open_read` expects (path String), got %d"
            (List.length vs))
   | "os_open_write", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Int64
             (Int64.of_int
                (fd_int
@@ -2599,7 +2672,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_open_write` expects (path String), got %d"
            (List.length vs))
   | "os_open_append", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Int64
             (Int64.of_int
                (fd_int
@@ -2611,7 +2684,7 @@ and apply_builtin span name args =
   | "os_read", [ Int64 fd; Int64 n ] ->
       if n < 0L then error span "E3007" "`os_read` expects a non-negative count"
       else
-        os_try span (fun () ->
+        os_result span (fun () ->
             let buf = Bytes.create (Int64.to_int n) in
             let got =
               Unix.read (fd_of_int (Int64.to_int fd)) buf 0 (Int64.to_int n)
@@ -2622,7 +2695,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_read` expects (fd Int64, n Int64), got %d"
            (List.length vs))
   | "os_write", [ Int64 fd; String data ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           let bytes = Bytes.of_string data in
           Int64
             (Int64.of_int
@@ -2634,15 +2707,27 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_write` expects (fd Int64, data String), got %d"
            (List.length vs))
   | "os_close", [ Int64 fd ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.close (fd_of_int (Int64.to_int fd));
           Int64 0L)
   | "os_close", vs ->
       error span "E3007"
         (Printf.sprintf "`os_close` expects (fd Int64), got %d" (List.length vs))
   | "os_list_dir", [ String path ] ->
-      os_try span (fun () ->
-          let names = Sys.readdir path in
+      os_result span (fun () ->
+          (* opendir, not Sys.readdir: the failure rides the Unix_error
+             branch, so the reason names the call (`os: opendir p: ...`)
+             — the text the c runtime prints for the same miss. *)
+          let dir = Unix.opendir path in
+          let rec collect acc =
+            match Unix.readdir dir with
+            | "." | ".." -> collect acc
+            | name -> collect (name :: acc)
+            | exception End_of_file ->
+                Unix.closedir dir;
+                Array.of_list (List.rev acc)
+          in
+          let names = collect [] in
           Array.sort compare names;
           Array (Array.map (fun s -> String s) names))
   | "os_list_dir", vs ->
@@ -2650,7 +2735,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_list_dir` expects (path String), got %d"
            (List.length vs))
   | "os_mkdir", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.mkdir path 0o755;
           Int64 0L)
   | "os_mkdir", vs ->
@@ -2658,7 +2743,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_mkdir` expects (path String), got %d"
            (List.length vs))
   | "os_rmdir", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.rmdir path;
           Int64 0L)
   | "os_rmdir", vs ->
@@ -2666,7 +2751,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_rmdir` expects (path String), got %d"
            (List.length vs))
   | "os_unlink", [ String path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.unlink path;
           Int64 0L)
   | "os_unlink", vs ->
@@ -2674,7 +2759,7 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_unlink` expects (path String), got %d"
            (List.length vs))
   | "os_rename", [ String old_path; String new_path ] ->
-      os_try span (fun () ->
+      os_result span (fun () ->
           Unix.rename old_path new_path;
           Int64 0L)
   | "os_rename", vs ->
@@ -2688,8 +2773,8 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_getcwd` expects no arguments, got %d"
            (List.length vs))
   | "os_chdir", [ String path ] ->
-      os_try span (fun () ->
-          Sys.chdir path;
+      os_result span (fun () ->
+          Unix.chdir path;
           Int64 0L)
   | "os_chdir", vs ->
       error span "E3007"
@@ -2702,7 +2787,7 @@ and apply_builtin span name args =
             %d             arguments"
            (List.length args))
   | "net_connect_unix", [ String path; Float timeout ] ->
-      TcpConn (Effect.perform (Net_connect_unix (path, timeout, span)))
+      Effect.perform (Net_connect_unix (path, timeout, span))
   | "net_connect_unix", _ ->
       error span "E3001"
         "`net_connect_unix` expects (path String, timeout Float64)"
@@ -2712,7 +2797,7 @@ and apply_builtin span name args =
            "`net_listen_unix` expects (path String), got %d arguments"
            (List.length args))
   | "net_listen_unix", [ String path ] ->
-      TcpListener (Effect.perform (Net_listen_unix (path, span)))
+      Effect.perform (Net_listen_unix (path, span))
   | "net_listen_unix", _ ->
       error span "E3001" "`net_listen_unix` expects (path String)"
   | "net_tls_connect", args when List.length args <> 3 ->
@@ -2722,11 +2807,10 @@ and apply_builtin span name args =
             Float64),             got %d arguments"
            (List.length args))
   | "net_tls_connect", [ String host; Int64 port; Float timeout ] ->
-      let addrs = Effect.perform (Net_resolve (host, span)) in
-      TcpConn
-        (Effect.perform
-           (Net_tls_connect
-              (host, Int64.to_int port, timeout, false, addrs, span)))
+      (* The handler resolves the host, then connects and shakes hands;
+         failure rides back in the tuple. *)
+      Effect.perform
+        (Net_tls_connect (host, Int64.to_int port, timeout, false, span))
   | "net_tls_connect", _ ->
       error span "E3001"
         "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
@@ -2737,10 +2821,8 @@ and apply_builtin span name args =
             timeout             Float64), got %d arguments"
            (List.length args))
   | "net_tls_connect_insecure", [ String host; Int64 port; Float timeout ] ->
-      let addrs = Effect.perform (Net_resolve (host, span)) in
-      TcpConn
-        (Effect.perform
-           (Net_tls_connect (host, Int64.to_int port, timeout, true, addrs, span)))
+      Effect.perform
+        (Net_tls_connect (host, Int64.to_int port, timeout, true, span))
   | "net_tls_connect_insecure", _ ->
       error span "E3001"
         "`net_tls_connect_insecure` expects (host String, port Int64, \
@@ -2752,9 +2834,7 @@ and apply_builtin span name args =
             String,             key_path String), got %d arguments"
            (List.length args))
   | "net_listen_tls", [ String host; Int64 port; String cert; String key ] ->
-      TcpListener
-        (Effect.perform
-           (Net_tls_listen (host, Int64.to_int port, cert, key, span)))
+      Effect.perform (Net_tls_listen (host, Int64.to_int port, cert, key, span))
   | "net_listen_tls", _ ->
       error span "E3001"
         "`net_listen_tls` expects (host String, port Int64, cert_path \
@@ -2808,8 +2888,19 @@ and eval_stmt env s =
   let span = s.Ast.stmt_span in
   match s.Ast.stmt_desc with
   | Ast.Expr_stmt e -> ignore (eval_expr env e)
-  | Ast.Binding { mutable_; name; init } ->
-      define env name ~mutable_ (eval_expr env init)
+  | Ast.Binding { mutable_; pattern; init } -> (
+      match pattern.Ast.pattern_desc with
+      | Ast.Pattern_binding name ->
+          define env name ~mutable_ (eval_expr env init)
+      | _ ->
+          (* A destructured binding binds like a one-arm case whose match
+             lands in this scope; a value matching nothing dies the
+             case-no-match death. *)
+          let v = eval_expr env init in
+          if not (match_pattern env span pattern v) then
+            error span "E3006"
+              (Printf.sprintf "no `case` branch matched this %s value"
+                 (type_name v)))
   | Ast.Assign { target; value } -> (
       let v = eval_expr env value in
       match target.Ast.desc with
@@ -2964,6 +3055,15 @@ and eval_stmt env s =
       Effect.perform (Send (pid, v, span))
   | Ast.Raise e ->
       let v = eval_expr env e in
+      (* The checker's raise discipline, at run time — the paths that
+         skip static checking (the REPL, unchecked embedding) answer to
+         the same rule. *)
+      (match v with
+      | Instance i when i.iclass.builtin_exception -> ()
+      | other ->
+          error span "E4024"
+            (Printf.sprintf "`raise` carries an `Exception` instance, got %s"
+               (type_name other)));
       raise (Emo_raise (v, span, !call_trace))
   | Ast.While { cond; body } -> (
       (* The iteration is this OCaml loop, not recursion: a self tail
@@ -3280,7 +3380,13 @@ let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
   in
   let field_target (s : Ast.stmt) =
     match s.Ast.stmt_desc with
-    | Ast.Binding { name; init; _ } -> Some (name, init)
+    | Ast.Binding
+        {
+          pattern = { Ast.pattern_desc = Ast.Pattern_binding name; _ };
+          init;
+          _;
+        } ->
+        Some (name, init)
     | Ast.Assign { target = { Ast.desc = Ast.Ident name; _ }; value } ->
         Some (name, value)
     | _ -> None
@@ -3391,49 +3497,48 @@ let new_obj (name : string)
 
 (* ---- Synchronous net operations for the compiled backend ----
 
-   Each performs its effect; they only run under the scheduler, exactly
-   like the interpreted paths. *)
+   Each performs its effect and hands back the final (R.ok, ...) /
+   (R.error, ...) tuple the driver built; they only run under the
+   scheduler, exactly like the interpreted paths. *)
 
-let read_line_sync (c : conn) : string =
+let read_line_sync (c : conn) : value =
   Effect.perform (Net_read_line (c, Emo_support.Span.zero))
 
-let read_exactly_sync (c : conn) (n : int) : string =
+let read_exactly_sync (c : conn) (n : int) : value =
   Effect.perform (Net_read_exactly (c, n, Emo_support.Span.zero))
 
-let read_all_sync (c : conn) : string =
+let read_all_sync (c : conn) : value =
   Effect.perform (Net_read_all (c, Emo_support.Span.zero))
 
-let write_sync (c : conn) (data : string) : unit =
+let write_sync (c : conn) (data : string) : value =
   Effect.perform (Net_write (c, data, Emo_support.Span.zero))
 
-let close_sync (c : conn) : conn =
+let close_sync (c : conn) : value =
   Effect.perform (Net_close_conn (c, Emo_support.Span.zero))
 
-let accept_sync (l : listener) : conn =
+let accept_sync (l : listener) : value =
   Effect.perform (Net_accept (l, Emo_support.Span.zero))
 
-let close_listener_sync (l : listener) : listener =
+let close_listener_sync (l : listener) : value =
   Effect.perform (Net_close_listener (l, Emo_support.Span.zero))
 
-let udp_send_sync (u : udp) (host : string) (port : int) (data : string) : unit
+let udp_send_sync (u : udp) (host : string) (port : int) (data : string) : value
     =
   Effect.perform (Net_udp_send_to (u, host, port, data, Emo_support.Span.zero))
 
 let udp_recv_sync (u : udp) : value =
   Effect.perform (Net_udp_recv_from (u, Emo_support.Span.zero))
 
-let udp_close_sync (u : udp) : udp =
+let udp_close_sync (u : udp) : value =
   Effect.perform (Net_udp_close (u, Emo_support.Span.zero))
 
-let net_resolve_sync (host : string) : string list =
+let net_resolve_sync (host : string) : value =
   Effect.perform (Net_resolve (host, Emo_support.Span.zero))
 
-let net_connect_sync (host : string) (port : int) (timeout : float) : conn =
-  Effect.perform
-    (Net_connect
-       (host, port, timeout, net_resolve_sync host, Emo_support.Span.zero))
+let net_connect_sync (host : string) (port : int) (timeout : float) : value =
+  Effect.perform (Net_connect (host, port, timeout, Emo_support.Span.zero))
 
-let net_listen_sync (host : string) (port : int) : listener =
+let net_listen_sync (host : string) (port : int) : value =
   Effect.perform (Net_listen (host, port, Emo_support.Span.zero))
 
 (* Runs a whole file: declarations register, statements execute in order. *)

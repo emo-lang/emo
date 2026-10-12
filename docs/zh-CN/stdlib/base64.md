@@ -28,16 +28,17 @@ package {
 
 ```emo
 def encode(data String) String
-def decode(text String) String
+def decode(text String) (R, String)
 ```
 
 `encode` 永远输出标准字母表(`A-Z a-z 0-9 + /`)加 `=` 填充,每三
-个字节一组、每组四个字符。`decode` 回答文本所指的精确字节。
+个字节一组、每组四个字符。`decode` 回答文本所指的精确字节,失败时
+以值的形式返回。
 
 ## 严格性
 
-解码器只接受编码器能产出的东西——其余都是错误并抛异常,带出错字
-节偏移:
+解码器只接受编码器能产出的东西——其余以 `(R.error, reason)` 返回,
+带出错字节偏移:
 
 - 只认标准字母表,`=` 填充只许出现在最后一个量子;
 - 最后一个量子持两个或三个数据字符(一个不行,四个不行,未填充且
@@ -46,17 +47,15 @@ def decode(text String) String
   的同义词。
 
 不容忍空白,不接受换行拆行:拆过行的消息由调用方先拼回再解码。每次
-拒绝都抛普通 Emo 异常——`base64: non-zero padding bits at byte 1`
-——没有错误码,没有 nil。
+拒绝都是普通的值,绝不是崩溃——reason 形如
+`base64: non-zero padding bits at byte 1`;没有错误码,没有 nil。
 
 ## 错误
 
-```emo
-def err: base64: <什么错> at byte <偏移>
-```
-
-偏移指向输入停止是合法 base64 的第一个字节——出错的字符、第一个
-放错位置的 `=`,或最后一个量子耗尽的位置。
+reason 是带包前缀和首个出错字节的 String:
+`base64: <什么错> at byte <偏移>`。偏移指向输入停止是合法 base64
+的第一个字节——出错的字符、第一个放错位置的 `=`,或最后一个量子
+耗尽的位置。
 
 ## 测试向量
 

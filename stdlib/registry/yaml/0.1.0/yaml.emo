@@ -11,11 +11,11 @@
 // `|` and folded `>` block scalars with clip/strip/keep chomping, and
 // an optional leading `---`.
 //
-// Not supported (each raises): anchors, aliases, tags, multi-document
-// input, multi-line plain/quoted scalars and multi-line flow, and
-// tabs in indentation. Double-quoted scalars accept the YAML escape
-// set (a superset of JSON's). Mapping keys are strings; integers
-// outside Int64 refuse.
+// Not supported (each answers `(R.error, reason)` from `decode`):
+// anchors, aliases, tags, multi-document input, multi-line
+// plain/quoted scalars and multi-line flow, and tabs in indentation.
+// Double-quoted scalars accept the YAML escape set (a superset of
+// JSON's). Mapping keys are strings; integers outside Int64 refuse.
 
 // The exact-decimal float machinery lives beside the module.
 const float = internal.float
@@ -413,15 +413,23 @@ def lookup(entries Array[(String, Yaml)], key String, i Int64) Yaml {
 // `---` opens the document; a second document, anchors, aliases,
 // tags, and multi-line plain/quoted scalars all raise with the byte
 // offset.
-def decode(text String) Yaml {
+def decode(text String) (R, Yaml) {
   const data = text.to_bytes()
-  const p0 = doc_start(data, 0, 0)
-  const r = parse_node(data, p0, 0)
-  const after = doc_end(data, r[1])
-  if after >= 0 {
-    raise Exception.new(message: err(after, "multi-document YAML is not supported yet"))
+  case doc_start(data, 0, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, p0)      -> {
+      case parse_node(data, p0, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, r)       -> {
+          const after = doc_end(data, r[1])
+          if after >= 0 {
+            return (R.error, err(after, "multi-document YAML is not supported yet"))
+          }
+          return (R.ok, r[0])
+        }
+      }
+    }
   }
-  return r[0]
 }
 
 def err(at Int64, what String) String {
@@ -431,12 +439,12 @@ def err(at Int64, what String) String {
 // Skips blank lines, comment lines, and `%` directives; consumes one
 // leading `---` (content after it on the same line is the document
 // root) and returns the document's first content position.
-def doc_start(data Bytes, i Int64, seen Int64) Int64 {
+def doc_start(data Bytes, i Int64, seen Int64) (R, Int64) {
   if i >= data.length() {
     if seen > 0 {
-      return i
+      return (R.ok, i)
     }
-    raise Exception.new(message: err(i, "empty document"))
+    return (R.error, err(i, "empty document"))
   }
   const e = line_end(data, i)
   const t = skip_spaces(data, i, e)
@@ -449,11 +457,11 @@ def doc_start(data Bytes, i Int64, seen Int64) Int64 {
   if marker_len(data, t, e, 45) > 0 {
     const after = skip_spaces(data, t + 3, e)
     if after < e {
-      return after
+      return (R.ok, after)
     }
     return doc_start(data, next_line(data, e), 1)
   }
-  return t
+  return (R.ok, t)
 }
 
 // After the root node: an optional `...` closes the document; any
@@ -506,8 +514,8 @@ def skip_spaces(data Bytes, i Int64, e Int64) Int64 {
 }
 
 // The indentation column of the content position i; a tab inside the
-// indentation raises.
-def line_indent_at(data Bytes, i Int64) Int64 {
+// indentation is an error value.
+def line_indent_at(data Bytes, i Int64) (R, Int64) {
   const s = line_start(data, i)
   return count_indent(data, s, i, 0)
 }
@@ -522,17 +530,17 @@ def line_start(data Bytes, i Int64) Int64 {
   return line_start(data, i - 1)
 }
 
-def count_indent(data Bytes, s Int64, i Int64, n Int64) Int64 {
+def count_indent(data Bytes, s Int64, i Int64, n Int64) (R, Int64) {
   if s < i {
     const c = data.get(s)
     if c == 32 {
       return count_indent(data, s + 1, i, n + 1)
     }
     if c == 9 {
-      raise Exception.new(message: err(s, "tabs are not allowed in indentation"))
+      return (R.error, err(s, "tabs are not allowed in indentation"))
     }
   }
-  return n
+  return (R.ok, n)
 }
 
 // The length of a `---` or `...` marker at t (0 when there is none).
@@ -568,20 +576,24 @@ def skip_prologue(data Bytes, i Int64) Int64 {
 
 // ---- block node parsing ----
 
-def parse_node(data Bytes, pos Int64, depth Int64) (Yaml, Int64) {
+def parse_node(data Bytes, pos Int64, depth Int64) (R, (Yaml, Int64)) {
   if depth > 512 {
-    raise Exception.new(message: err(pos, "nesting deeper than 512"))
+    return (R.error, err(pos, "nesting deeper than 512"))
   }
-  const indent = line_indent_at(data, pos)
-  if is_dash(data, pos) {
-    return parse_sequence(data, pos, indent, depth, [])
+  case line_indent_at(data, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, indent)  -> {
+      if is_dash(data, pos) {
+        return parse_sequence(data, pos, indent, depth, [])
+      }
+      const e = content_end(data, pos)
+      const colon = find_key_colon(data, pos, e)
+      if colon >= 0 {
+        return parse_mapping(data, pos, colon, indent, depth, [])
+      }
+      return parse_node_line(data, pos, e, indent, depth)
+    }
   }
-  const e = content_end(data, pos)
-  const colon = find_key_colon(data, pos, e)
-  if colon >= 0 {
-    return parse_mapping(data, pos, colon, indent, depth, [])
-  }
-  return parse_node_line(data, pos, e, indent, depth)
 }
 
 // A `-` that opens a sequence entry: followed by a space or the line
@@ -630,10 +642,10 @@ def trim_end(data Bytes, e Int64) Int64 {
 // A node line that is neither a mapping entry nor a sequence entry:
 // a block scalar header, a flow collection, a quoted scalar, or a
 // plain scalar.
-def parse_node_line(data Bytes, pos Int64, e Int64, indent Int64, depth Int64) (Yaml, Int64) {
+def parse_node_line(data Bytes, pos Int64, e Int64, indent Int64, depth Int64) (R, (Yaml, Int64)) {
   const c = data.get(pos)
   if c == 124 || c == 62 {
-    return parse_block_scalar(data, pos, e, indent)
+    return (R.ok, parse_block_scalar(data, pos, e, indent))
   }
   if c == 91 || c == 123 {
     return parse_flow(data, pos, depth)
@@ -643,14 +655,23 @@ def parse_node_line(data Bytes, pos Int64, e Int64, indent Int64, depth Int64) (
   }
   const more = next_content_line(data, e)
   if more >= 0 {
-    const mi = line_indent_at(data, more)
-    if mi > indent {
-      raise Exception.new(message: err(more, "multi-line plain scalars are not supported yet"))
+    case line_indent_at(data, more) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, mi)      -> {
+        if mi > indent {
+          return (R.error, err(more, "multi-line plain scalars are not supported yet"))
+        }
+      }
     }
   }
   const t = strip_comment(data, pos, e)
   const end = trim_end(data, t)
-  return (resolve_plain(slice_text(data, pos, end)), next_line(data, e))
+  case resolve_plain(slice_text(data, pos, end)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v)      -> {
+      return (R.ok, (v, next_line(data, e)))
+    }
+  }
 }
 
 // The next content position after the line containing e (-1 at EOF or
@@ -674,45 +695,57 @@ def next_content_line(data Bytes, e Int64) Int64 {
 
 // pos sits on the first key; colon is the key's `:`; indent is the
 // mapping's column.
-def parse_mapping(data Bytes, pos Int64, colon Int64, indent Int64, depth Int64, entries Array[(String, Yaml)]) (Yaml, Int64) {
-  const key = key_scalar(data, pos, colon)
-  const vr = mapping_value(data, colon + 1, indent, depth)
-  return parse_mapping_loop(data, vr[1], indent, depth, entries.append((key, vr[0])))
+def parse_mapping(data Bytes, pos Int64, colon Int64, indent Int64, depth Int64, entries Array[(String, Yaml)]) (R, (Yaml, Int64)) {
+  case key_scalar(data, pos, colon) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, key)     -> {
+      case mapping_value(data, colon + 1, indent, depth) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, vr)      -> {
+          return parse_mapping_loop(data, vr[1], indent, depth, entries.append((key, vr[0])))
+        }
+      }
+    }
+  }
 }
 
-def parse_mapping_loop(data Bytes, pos Int64, indent Int64, depth Int64, entries Array[(String, Yaml)]) (Yaml, Int64) {
+def parse_mapping_loop(data Bytes, pos Int64, indent Int64, depth Int64, entries Array[(String, Yaml)]) (R, (Yaml, Int64)) {
   const p = skip_prologue(data, pos)
   if p >= data.length() {
-    return (YamlObject.new(entries: entries), p)
+    return (R.ok, (YamlObject.new(entries: entries), p))
   }
   const le = line_end(data, p)
   if marker_len(data, p, le, 45) > 0 {
-    return (YamlObject.new(entries: entries), p)
+    return (R.ok, (YamlObject.new(entries: entries), p))
   }
   if marker_len(data, p, le, 46) > 0 {
-    return (YamlObject.new(entries: entries), p)
+    return (R.ok, (YamlObject.new(entries: entries), p))
   }
-  const ni = line_indent_at(data, p)
-  if ni < indent {
-    return (YamlObject.new(entries: entries), p)
+  case line_indent_at(data, p) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ni)      -> {
+      if ni < indent {
+        return (R.ok, (YamlObject.new(entries: entries), p))
+      }
+      if ni > indent {
+        return (R.error, err(p, "bad indentation in a mapping"))
+      }
+      if is_dash(data, p) {
+        return (R.ok, (YamlObject.new(entries: entries), p))
+      }
+      const e = content_end(data, p)
+      const colon = find_key_colon(data, p, e)
+      if colon < 0 {
+        return (R.ok, (YamlObject.new(entries: entries), p))
+      }
+      return parse_mapping(data, p, colon, indent, depth, entries)
+    }
   }
-  if ni > indent {
-    raise Exception.new(message: err(p, "bad indentation in a mapping"))
-  }
-  if is_dash(data, p) {
-    return (YamlObject.new(entries: entries), p)
-  }
-  const e = content_end(data, p)
-  const colon = find_key_colon(data, p, e)
-  if colon < 0 {
-    return (YamlObject.new(entries: entries), p)
-  }
-  return parse_mapping(data, p, colon, indent, depth, entries)
 }
 
 // The value after `key:`: inline on the same line, a block scalar, or
 // a nested block on the following lines. Returns (value, next pos).
-def mapping_value(data Bytes, v Int64, indent Int64, depth Int64) (Yaml, Int64) {
+def mapping_value(data Bytes, v Int64, indent Int64, depth Int64) (R, (Yaml, Int64)) {
   const e = line_end(data, v)
   const vs = skip_spaces(data, v, e)
   if vs < e {
@@ -721,55 +754,72 @@ def mapping_value(data Bytes, v Int64, indent Int64, depth Int64) (Yaml, Int64) 
     }
     const c = data.get(vs)
     if c == 124 || c == 62 {
-      return parse_block_scalar(data, vs, e, indent)
+      return (R.ok, parse_block_scalar(data, vs, e, indent))
     }
     if c == 91 || c == 123 {
-      const fr = parse_flow(data, vs, depth)
-      return (fr[0], next_line(data, line_end(data, fr[1])))
+      case parse_flow(data, vs, depth) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, fr)      -> {
+          return (R.ok, (fr[0], next_line(data, line_end(data, fr[1]))))
+        }
+      }
     }
     if c == 34 || c == 39 {
       return parse_quoted_line(data, vs, indent)
     }
     const more = next_content_line(data, e)
     if more >= 0 {
-      const mi = line_indent_at(data, more)
-      if mi > indent {
-        raise Exception.new(message: err(more, "multi-line plain scalars are not supported yet"))
+      case line_indent_at(data, more) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, mi)      -> {
+          if mi > indent {
+            return (R.error, err(more, "multi-line plain scalars are not supported yet"))
+          }
+        }
       }
     }
     const t = strip_comment(data, vs, e)
     const end = trim_end(data, t)
-    return (resolve_plain(slice_text(data, vs, end)), next_line(data, e))
+    case resolve_plain(slice_text(data, vs, end)) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v)      -> {
+        return (R.ok, (v, next_line(data, e)))
+      }
+    }
   }
   return mapping_value_nested(data, e, indent, depth)
 }
 
 // No inline value: the next content line either opens a nested block
 // (deeper), a same-indent sequence, or the value is null.
-def mapping_value_nested(data Bytes, e Int64, indent Int64, depth Int64) (Yaml, Int64) {
+def mapping_value_nested(data Bytes, e Int64, indent Int64, depth Int64) (R, (Yaml, Int64)) {
   const p = skip_prologue(data, next_line(data, e))
   if p >= data.length() {
-    return (YamlNull.new(), p)
+    return (R.ok, (YamlNull.new(), p))
   }
   const le = line_end(data, p)
   if marker_len(data, p, le, 46) > 0 {
-    return (YamlNull.new(), p)
+    return (R.ok, (YamlNull.new(), p))
   }
-  const ni = line_indent_at(data, p)
-  if ni > indent {
-    return parse_node(data, p, depth + 1)
-  }
-  if ni == indent {
-    if is_dash(data, p) {
-      return parse_sequence(data, p, indent, depth + 1, [])
+  case line_indent_at(data, p) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ni)      -> {
+      if ni > indent {
+        return parse_node(data, p, depth + 1)
+      }
+      if ni == indent {
+        if is_dash(data, p) {
+          return parse_sequence(data, p, indent, depth + 1, [])
+        }
+      }
+      return (R.ok, (YamlNull.new(), p))
     }
   }
-  return (YamlNull.new(), p)
 }
 
 // ---- sequences ----
 
-def parse_sequence(data Bytes, pos Int64, indent Int64, depth Int64, items Array[Yaml]) (Yaml, Int64) {
+def parse_sequence(data Bytes, pos Int64, indent Int64, depth Int64, items Array[Yaml]) (R, (Yaml, Int64)) {
   const e = line_end(data, pos)
   const cs = skip_spaces(data, pos + 1, e)
   if cs >= e {
@@ -781,8 +831,12 @@ def parse_sequence(data Bytes, pos Int64, indent Int64, depth Int64, items Array
   const colon = find_key_colon(data, cs, e)
   if colon >= 0 {
     const col = cs - line_start(data, cs)
-    const m = parse_mapping(data, cs, colon, col, depth + 1, [])
-    return sequence_continue(data, m[1], indent, depth, items.append(m[0]))
+    case parse_mapping(data, cs, colon, col, depth + 1, []) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, m)       -> {
+        return sequence_continue(data, m[1], indent, depth, items.append(m[0]))
+      }
+    }
   }
   const c = data.get(cs)
   if c == 124 || c == 62 {
@@ -790,68 +844,96 @@ def parse_sequence(data Bytes, pos Int64, indent Int64, depth Int64, items Array
     return sequence_continue(data, r[1], indent, depth, items.append(r[0]))
   }
   if c == 91 || c == 123 {
-    const fr = parse_flow(data, cs, depth)
-    return sequence_continue(data, next_line(data, line_end(data, fr[1])), indent, depth, items.append(fr[0]))
+    case parse_flow(data, cs, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, fr)      -> {
+        return sequence_continue(data, next_line(data, line_end(data, fr[1])), indent, depth, items.append(fr[0]))
+      }
+    }
   }
   if c == 34 || c == 39 {
-    const qr = parse_quoted_line(data, cs, indent)
-    return sequence_continue(data, qr[1], indent, depth, items.append(qr[0]))
+    case parse_quoted_line(data, cs, indent) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, qr)      -> {
+        return sequence_continue(data, qr[1], indent, depth, items.append(qr[0]))
+      }
+    }
   }
   const more = next_content_line(data, e)
   if more >= 0 {
-    const mi = line_indent_at(data, more)
-    if mi > indent {
-      raise Exception.new(message: err(more, "multi-line plain scalars are not supported yet"))
+    case line_indent_at(data, more) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, mi)      -> {
+        if mi > indent {
+          return (R.error, err(more, "multi-line plain scalars are not supported yet"))
+        }
+      }
     }
   }
   const t = strip_comment(data, cs, e)
   const end = trim_end(data, t)
-  const item = resolve_plain(slice_text(data, cs, end))
-  return sequence_continue(data, next_line(data, e), indent, depth, items.append(item))
+  case resolve_plain(slice_text(data, cs, end)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, item)   -> {
+      return sequence_continue(data, next_line(data, e), indent, depth, items.append(item))
+    }
+  }
 }
 
 // A dash with nothing after it: the item is a deeper block or null.
-def sequence_nested_or_null(data Bytes, pos Int64, e Int64, indent Int64, depth Int64, items Array[Yaml]) (Yaml, Int64) {
+def sequence_nested_or_null(data Bytes, pos Int64, e Int64, indent Int64, depth Int64, items Array[Yaml]) (R, (Yaml, Int64)) {
   const p = skip_prologue(data, next_line(data, e))
   const item = YamlNull.new()
   if p >= data.length() {
-    return (YamlArray.new(items: items.append(item)), p)
+    return (R.ok, (YamlArray.new(items: items.append(item)), p))
   }
   const le = line_end(data, p)
   if marker_len(data, p, le, 46) > 0 {
-    return (YamlArray.new(items: items.append(item)), p)
+    return (R.ok, (YamlArray.new(items: items.append(item)), p))
   }
-  const ni = line_indent_at(data, p)
-  if ni > indent {
-    const r = parse_node(data, p, depth + 1)
-    return sequence_continue(data, r[1], indent, depth, items.append(r[0]))
+  case line_indent_at(data, p) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ni)      -> {
+      if ni > indent {
+        case parse_node(data, p, depth + 1) {
+          (R.error, w2) -> { return (R.error, w2) }
+          (R.ok, r)     -> {
+            return sequence_continue(data, r[1], indent, depth, items.append(r[0]))
+          }
+        }
+      }
+      return (R.ok, (YamlArray.new(items: items.append(item)), p))
+    }
   }
-  return (YamlArray.new(items: items.append(item)), p)
 }
 
-def sequence_continue(data Bytes, pos Int64, indent Int64, depth Int64, items Array[Yaml]) (Yaml, Int64) {
+def sequence_continue(data Bytes, pos Int64, indent Int64, depth Int64, items Array[Yaml]) (R, (Yaml, Int64)) {
   const p = skip_prologue(data, pos)
   if p >= data.length() {
-    return (YamlArray.new(items: items), p)
+    return (R.ok, (YamlArray.new(items: items), p))
   }
   const le = line_end(data, p)
   if marker_len(data, p, le, 45) > 0 {
-    return (YamlArray.new(items: items), p)
+    return (R.ok, (YamlArray.new(items: items), p))
   }
   if marker_len(data, p, le, 46) > 0 {
-    return (YamlArray.new(items: items), p)
+    return (R.ok, (YamlArray.new(items: items), p))
   }
-  const ni = line_indent_at(data, p)
-  if ni < indent {
-    return (YamlArray.new(items: items), p)
+  case line_indent_at(data, p) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ni)      -> {
+      if ni < indent {
+        return (R.ok, (YamlArray.new(items: items), p))
+      }
+      if ni > indent {
+        return (R.error, err(p, "bad indentation in a sequence"))
+      }
+      if is_dash(data, p) {
+        return parse_sequence(data, p, indent, depth, items)
+      }
+      return (R.ok, (YamlArray.new(items: items), p))
+    }
   }
-  if ni > indent {
-    raise Exception.new(message: err(p, "bad indentation in a sequence"))
-  }
-  if is_dash(data, p) {
-    return parse_sequence(data, p, indent, depth, items)
-  }
-  return (YamlArray.new(items: items), p)
 }
 
 // ---- block scalars (`|` literal, `>` folded) ----
@@ -1020,9 +1102,9 @@ def clip_end(b Bytes, e Int64) Int64 {
 
 // ---- flow collections ----
 
-def parse_flow(data Bytes, pos Int64, depth Int64) (Yaml, Int64) {
+def parse_flow(data Bytes, pos Int64, depth Int64) (R, (Yaml, Int64)) {
   if depth > 512 {
-    raise Exception.new(message: err(pos, "nesting deeper than 512"))
+    return (R.error, err(pos, "nesting deeper than 512"))
   }
   const p = flow_skip(data, pos)
   const c = data.get(p)
@@ -1032,67 +1114,97 @@ def parse_flow(data Bytes, pos Int64, depth Int64) (Yaml, Int64) {
   if c == 123 {
     return flow_mapping(data, p + 1, depth, [])
   }
-  raise Exception.new(message: err(p, "expected a flow collection"))
+  return (R.error, err(p, "expected a flow collection"))
 }
 
 def flow_skip(data Bytes, i Int64) Int64 {
-  if data.get(i) == 32 || data.get(i) == 9 {
+  if i < data.length() && (data.get(i) == 32 || data.get(i) == 9) {
     return flow_skip(data, i + 1)
   }
   return i
 }
 
-def flow_sequence(data Bytes, i Int64, depth Int64, items Array[Yaml]) (Yaml, Int64) {
+def flow_sequence(data Bytes, i Int64, depth Int64, items Array[Yaml]) (R, (Yaml, Int64)) {
   const p = flow_skip(data, i)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated flow sequence"))
+  }
   if data.get(p) == 93 {
-    return (YamlArray.new(items: items), p + 1)
+    return (R.ok, (YamlArray.new(items: items), p + 1))
   }
-  const r = flow_node(data, p, depth)
-  const q = flow_skip(data, r[1])
-  if data.get(q) == 44 {
-    return flow_sequence(data, q + 1, depth, items.append(r[0]))
+  case flow_node(data, p, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)       -> {
+      const q = flow_skip(data, r[1])
+      if q >= data.length() {
+        return (R.error, err(q, "expected `,` or `]` in a flow sequence"))
+      }
+      if data.get(q) == 44 {
+        return flow_sequence(data, q + 1, depth, items.append(r[0]))
+      }
+      if data.get(q) == 93 {
+        return (R.ok, (YamlArray.new(items: items.append(r[0])), q + 1))
+      }
+      return (R.error, err(q, "expected `,` or `]` in a flow sequence"))
+    }
   }
-  if data.get(q) == 93 {
-    return (YamlArray.new(items: items.append(r[0])), q + 1)
-  }
-  raise Exception.new(message: err(q, "expected `,` or `]` in a flow sequence"))
 }
 
-def flow_mapping(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]) (Yaml, Int64) {
+def flow_mapping(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]) (R, (Yaml, Int64)) {
   const p = flow_skip(data, i)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated flow mapping"))
+  }
   if data.get(p) == 125 {
-    return (YamlObject.new(entries: entries), p + 1)
+    return (R.ok, (YamlObject.new(entries: entries), p + 1))
   }
-  const kr = flow_scalar(data, p)
-  const colon = flow_skip(data, kr[1])
-  if data.get(colon) == 44 || data.get(colon) == 125 {
-    const pair = (kr[0].as_string(), YamlNull.new())
-    return flow_mapping_more(data, colon, depth, entries.append(pair))
+  case flow_scalar(data, p) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, kr)      -> {
+      const colon = flow_skip(data, kr[1])
+      if colon >= data.length() {
+        return (R.error, err(colon, "expected `:` in a flow mapping"))
+      }
+      if data.get(colon) == 44 || data.get(colon) == 125 {
+        const pair = (kr[0].as_string(), YamlNull.new())
+        return flow_mapping_more(data, colon, depth, entries.append(pair))
+      }
+      if data.get(colon) != 58 {
+        return (R.error, err(colon, "expected `:` in a flow mapping"))
+      }
+      case flow_node(data, colon + 1, depth) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, vr)      -> {
+          const pair = (kr[0].as_string(), vr[0])
+          return flow_mapping_more(data, vr[1], depth, entries.append(pair))
+        }
+      }
+    }
   }
-  if data.get(colon) != 58 {
-    raise Exception.new(message: err(colon, "expected `:` in a flow mapping"))
-  }
-  const vr = flow_node(data, colon + 1, depth)
-  const pair = (kr[0].as_string(), vr[0])
-  return flow_mapping_more(data, vr[1], depth, entries.append(pair))
 }
 
-def flow_mapping_more(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]) (Yaml, Int64) {
+def flow_mapping_more(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]) (R, (Yaml, Int64)) {
   const q = flow_skip(data, i)
+  if q >= data.length() {
+    return (R.error, err(q, "expected `,` or `}` in a flow mapping"))
+  }
   if data.get(q) == 44 {
     return flow_mapping(data, q + 1, depth, entries)
   }
   if data.get(q) == 125 {
-    return (YamlObject.new(entries: entries), q + 1)
+    return (R.ok, (YamlObject.new(entries: entries), q + 1))
   }
-  raise Exception.new(message: err(q, "expected `,` or `}` in a flow mapping"))
+  return (R.error, err(q, "expected `,` or `}` in a flow mapping"))
 }
 
-def flow_node(data Bytes, i Int64, depth Int64) (Yaml, Int64) {
+def flow_node(data Bytes, i Int64, depth Int64) (R, (Yaml, Int64)) {
   if depth > 512 {
-    raise Exception.new(message: err(i, "nesting deeper than 512"))
+    return (R.error, err(i, "nesting deeper than 512"))
   }
   const p = flow_skip(data, i)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated flow collection"))
+  }
   const c = data.get(p)
   if c == 91 || c == 123 {
     return parse_flow(data, p, depth)
@@ -1102,27 +1214,36 @@ def flow_node(data Bytes, i Int64, depth Int64) (Yaml, Int64) {
   }
   const e = flow_plain_end(data, p, p)
   const end = trim_end_flow(data, p, e)
-  return (resolve_plain(slice_text(data, p, end)), end)
+  case resolve_plain(slice_text(data, p, end)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v)      -> { return (R.ok, (v, end)) }
+  }
 }
 
 // A flow scalar: quoted or plain (plain runs to `,` `]` `}` or to a
 // `:` followed by a separator).
-def flow_scalar(data Bytes, i Int64) (Yaml, Int64) {
+def flow_scalar(data Bytes, i Int64) (R, (Yaml, Int64)) {
   const c = data.get(i)
   if c == 34 || c == 39 {
     return parse_quoted(data, i)
   }
   const e = flow_plain_end(data, i, i)
   const end = trim_end_flow(data, i, e)
-  return (resolve_plain(slice_text(data, i, end)), end)
+  case resolve_plain(slice_text(data, i, end)) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, v)      -> { return (R.ok, (v, end)) }
+  }
 }
 
 def flow_plain_end(data Bytes, i Int64, last Int64) Int64 {
+  if i >= data.length() {
+    return last
+  }
   const c = data.get(i)
   if c == 44 || c == 93 || c == 125 {
     return last
   }
-  if c == 58 {
+  if c == 58 && i + 1 < data.length() {
     const after = data.get(i + 1)
     if after == 32 || after == 44 || after == 93 || after == 125 {
       return last
@@ -1148,38 +1269,50 @@ def trim_end_flow(data Bytes, i Int64, last Int64) Int64 {
 
 // Double-quoted: the YAML escape set (a superset of JSON's).
 // Returns (Yaml, next pos).
-def parse_quoted(data Bytes, pos Int64) (Yaml, Int64) {
+def parse_quoted(data Bytes, pos Int64) (R, (Yaml, Int64)) {
   if data.get(pos) == 34 {
-    const r = parse_double(data, pos)
-    return (YamlString.new(value: r[0]), r[1])
+    case parse_double(data, pos) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)       -> { return (R.ok, (YamlString.new(value: r[0]), r[1])) }
+    }
   }
   return parse_single(data, pos)
 }
 
-def parse_quoted_line(data Bytes, pos Int64, indent Int64) (Yaml, Int64) {
-  const r = parse_quoted(data, pos)
-  const more = next_content_line(data, line_end(data, r[1]))
-  if more >= 0 {
-    const mi = line_indent_at(data, more)
-    if mi > indent {
-      raise Exception.new(message: err(more, "multi-line quoted scalars are not supported yet"))
+def parse_quoted_line(data Bytes, pos Int64, indent Int64) (R, (Yaml, Int64)) {
+  case parse_quoted(data, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)       -> {
+      const more = next_content_line(data, line_end(data, r[1]))
+      if more >= 0 {
+        case line_indent_at(data, more) {
+          (R.error, w2) -> { return (R.error, w2) }
+          (R.ok, mi)     -> {
+            if mi > indent {
+              return (R.error, err(more, "multi-line quoted scalars are not supported yet"))
+            }
+          }
+        }
+      }
+      return (R.ok, (r[0], next_line(data, line_end(data, r[1]))))
     }
   }
-  return (r[0], next_line(data, line_end(data, r[1])))
 }
 
 // Single-quoted: `''` escapes a quote. Returns (Yaml, next pos).
-def parse_single(data Bytes, pos Int64) (Yaml, Int64) {
+def parse_single(data Bytes, pos Int64) (R, (Yaml, Int64)) {
   const e = line_end(data, pos)
   const buf = Bytes.new(e - pos)
-  const r = scan_single(data, pos + 1, e, buf, 0)
-  return (YamlString.new(value: bytes_head(buf, r[1])), r[0])
+  case scan_single(data, pos + 1, e, buf, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return (R.ok, (YamlString.new(value: bytes_head(buf, r[1])), r[0])) }
+  }
 }
 
 // Returns (next pos after the closing quote, bytes written).
-def scan_single(data Bytes, i Int64, e Int64, buf Bytes, w Int64) (Int64, Int64) {
+def scan_single(data Bytes, i Int64, e Int64, buf Bytes, w Int64) (R, (Int64, Int64)) {
   if i >= e {
-    raise Exception.new(message: err(e, "unterminated single-quoted scalar"))
+    return (R.error, err(e, "unterminated single-quoted scalar"))
   }
   const c = data.get(i)
   if c == 39 {
@@ -1189,7 +1322,7 @@ def scan_single(data Bytes, i Int64, e Int64, buf Bytes, w Int64) (Int64, Int64)
         return scan_single(data, i + 2, e, buf, w + 1)
       }
     }
-    return (i + 1, w)
+    return (R.ok, (i + 1, w))
   }
   buf.set(w, c)
   return scan_single(data, i + 1, e, buf, w + 1)
@@ -1200,105 +1333,140 @@ def scan_single(data Bytes, i Int64, e Int64, buf Bytes, w Int64) (Int64, Int64)
 // The YAML escape set: \" \\ \/ \b \f \n \r \t \0 \a \v \e
 // \<space> \N \_ \L \P and \xXX \uXXXX \UXXXXXXXX (with surrogate
 // pairs). Returns (String, next pos). Single-line.
-def parse_double(data Bytes, pos Int64) (String, Int64) {
+def parse_double(data Bytes, pos Int64) (R, (String, Int64)) {
   const e = line_end(data, pos)
-  const m = double_measure(data, pos + 1, e, 0)
-  const out = Bytes.new(m[0])
-  const r = double_fill(data, pos + 1, out, 0)
-  return (out.to_string(), r[0])
+  case double_measure(data, pos + 1, e, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, m)       -> {
+      const out = Bytes.new(m[0])
+      case double_fill(data, pos + 1, out, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, r)       -> { return (R.ok, (out.to_string(), r[0])) }
+      }
+    }
+  }
 }
 
 // Pass one: validate escapes and measure the decoded length.
-def double_measure(data Bytes, i Int64, e Int64, len Int64) (Int64, Int64) {
+def double_measure(data Bytes, i Int64, e Int64, len Int64) (R, (Int64, Int64)) {
   if i >= e {
-    raise Exception.new(message: err(i, "unterminated double-quoted scalar"))
+    return (R.error, err(i, "unterminated double-quoted scalar"))
   }
   const c = data.get(i)
   if c == 34 {
-    return (len, i + 1)
+    return (R.ok, (len, i + 1))
   }
   if c == 92 {
-    const er = double_escape(data, i + 1, e)
-    return double_measure(data, er[1], e, len + utf8_len(er[0]))
+    case double_escape(data, i + 1, e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er)      -> {
+        return double_measure(data, er[1], e, len + utf8_len(er[0]))
+      }
+    }
   }
   if c < 32 {
-    raise Exception.new(message: err(i, "unescaped control character in a double-quoted scalar"))
+    return (R.error, err(i, "unescaped control character in a double-quoted scalar"))
   }
   return double_measure(data, i + 1, e, len + 1)
 }
 
 // One escape after the backslash: (code point, next position).
-def double_escape(data Bytes, i Int64, e Int64) (Int64, Int64) {
+def double_escape(data Bytes, i Int64, e Int64) (R, (Int64, Int64)) {
   if i >= e {
-    raise Exception.new(message: err(i, "unterminated double-quoted scalar"))
+    return (R.error, err(i, "unterminated double-quoted scalar"))
   }
   const c = data.get(i)
   if c == 117 {
-    const cp = hex_run(data, i + 1, 4)
-    if cp >= 55296 && cp <= 56319 {
-      // a high surrogate must pair with a low one
-      if i + 10 >= e {
-        raise Exception.new(message: err(i, "unterminated double-quoted scalar"))
+    case hex_run(data, i + 1, 4) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, cp)      -> {
+        if cp >= 55296 && cp <= 56319 {
+          // a high surrogate must pair with a low one
+          if i + 10 >= e {
+            return (R.error, err(i, "unterminated double-quoted scalar"))
+          }
+          if data.get(i + 5) != 92 || data.get(i + 6) != 117 {
+            return (R.error, err(i, "lone surrogate escape"))
+          }
+          case hex_run(data, i + 7, 4) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, lo)      -> {
+              if lo < 56320 || lo > 57343 {
+                return (R.error, err(i, "lone surrogate escape"))
+              }
+              const full = 65536 + ((cp - 55296) * 1024) + (lo - 56320)
+              return (R.ok, (full, i + 11))
+            }
+          }
+        }
+        if cp >= 56320 && cp <= 57343 {
+          return (R.error, err(i, "lone surrogate escape"))
+        }
+        return (R.ok, (cp, i + 5))
       }
-      if data.get(i + 5) != 92 || data.get(i + 6) != 117 {
-        raise Exception.new(message: err(i, "lone surrogate escape"))
-      }
-      const lo = hex_run(data, i + 7, 4)
-      if lo < 56320 || lo > 57343 {
-        raise Exception.new(message: err(i, "lone surrogate escape"))
-      }
-      const full = 65536 + ((cp - 55296) * 1024) + (lo - 56320)
-      return (full, i + 11)
     }
-    if cp >= 56320 && cp <= 57343 {
-      raise Exception.new(message: err(i, "lone surrogate escape"))
-    }
-    return (cp, i + 5)
   }
   if c == 120 {
-    return (hex_run(data, i + 1, 2), i + 3)
+    case hex_run(data, i + 1, 2) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, cp)      -> { return (R.ok, (cp, i + 3)) }
+    }
   }
   if c == 85 {
-    return (hex_run(data, i + 1, 8), i + 9)
+    case hex_run(data, i + 1, 8) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, cp)      -> { return (R.ok, (cp, i + 9)) }
+    }
   }
   const dec = double_simple(c)
   if dec >= 0 {
-    return (dec, i + 1)
+    return (R.ok, (dec, i + 1))
   }
-  raise Exception.new(message: err(i, "invalid escape"))
+  return (R.error, err(i, "invalid escape"))
 }
 
 // Pass two: write the decoded bytes; stops after the closing quote.
-def double_fill(data Bytes, i Int64, out Bytes, w Int64) (Int64, Int64) {
+def double_fill(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
   if i >= data.length() {
-    raise Exception.new(message: err(i, "unterminated double-quoted scalar"))
+    return (R.error, err(i, "unterminated double-quoted scalar"))
   }
   const c = data.get(i)
   if c == 34 {
-    return (i + 1, w)
+    return (R.ok, (i + 1, w))
   }
   if c == 92 {
     const le = line_end(data, i)
-    const er = double_escape(data, i + 1, le)
-    const nw = utf8_put(out, w, er[0])
-    return double_fill(data, er[1], out, nw)
+    case double_escape(data, i + 1, le) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er)      -> {
+        const nw = utf8_put(out, w, er[0])
+        return double_fill(data, er[1], out, nw)
+      }
+    }
   }
   if c < 32 {
-    raise Exception.new(message: err(i, "unescaped control character in a double-quoted scalar"))
+    return (R.error, err(i, "unescaped control character in a double-quoted scalar"))
   }
   out.set(w, c)
   return double_fill(data, i + 1, out, w + 1)
 }
 
 // `count` hex digits starting at i, most significant first.
-def hex_run(data Bytes, i Int64, count Int64) Int64 {
+def hex_run(data Bytes, i Int64, count Int64) (R, Int64) {
   if count <= 0 {
-    return 0
+    return (R.ok, 0)
   }
-  const d = hex_val(data, i)
-  const rest = hex_run(data, i + 1, count - 1)
-  const weight = hex_power(count)
-  return d * weight + rest
+  case hex_val(data, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, d)      -> {
+      case hex_run(data, i + 1, count - 1) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, rest)    -> {
+          return (R.ok, d * hex_power(count) + rest)
+        }
+      }
+    }
+  }
 }
 
 def hex_power(count Int64) Int64 {
@@ -1308,18 +1476,18 @@ def hex_power(count Int64) Int64 {
   return 16 * hex_power(count - 1)
 }
 
-def hex_val(data Bytes, i Int64) Int64 {
+def hex_val(data Bytes, i Int64) (R, Int64) {
   const b = data.get(i)
   if b >= 48 && b <= 57 {
-    return b - 48
+    return (R.ok, b - 48)
   }
   if b >= 97 && b <= 102 {
-    return b - 87
+    return (R.ok, b - 87)
   }
   if b >= 65 && b <= 70 {
-    return b - 55
+    return (R.ok, b - 55)
   }
-  raise Exception.new(message: err(i, "invalid hex digit in an escape"))
+  return (R.error, err(i, "invalid hex digit in an escape"))
 }
 
 // The letter after the backslash in a double-quoted scalar: the code
@@ -1441,19 +1609,23 @@ def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
 
 // The mapping key: quoted scalars parse; plain keys keep their text
 // (trailing spaces and a trailing comment stripped).
-def key_scalar(data Bytes, pos Int64, colon Int64) String {
+def key_scalar(data Bytes, pos Int64, colon Int64) (R, String) {
   const c = data.get(pos)
   if c == 34 {
-    const r = parse_double(data, pos)
-    return r[0]
+    case parse_double(data, pos) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)       -> { return (R.ok, r[0]) }
+    }
   }
   if c == 39 {
-    const r = parse_single(data, pos)
-    return r[0].as_string()
+    case parse_single(data, pos) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)       -> { return (R.ok, r[0].as_string()) }
+    }
   }
   const t = strip_comment(data, pos, colon)
   const end = trim_end(data, t)
-  return slice_text(data, pos, end)
+  return (R.ok, slice_text(data, pos, end))
 }
 
 // The colon that separates a block mapping key from its value: an
@@ -1519,30 +1691,34 @@ def find_colon(data Bytes, i Int64, e Int64, depth Int64, quote Int64, found Int
 // YAML 1.2 core schema: null (~, null, Null, NULL, empty), booleans
 // (true/True/TRUE, false/False/FALSE), decimal/hex/octal integers,
 // floats (with .inf and .nan), everything else a string.
-def resolve_plain(text String) Yaml {
+def resolve_plain(text String) (R, Yaml) {
   if text == "" || text == "~" || text == "null" || text == "Null" || text == "NULL" {
-    return YamlNull.new()
+    return (R.ok, YamlNull.new())
   }
   if text == "true" || text == "True" || text == "TRUE" {
-    return YamlBool.new(value: true)
+    return (R.ok, YamlBool.new(value: true))
   }
   if text == "false" || text == "False" || text == "FALSE" {
-    return YamlBool.new(value: false)
+    return (R.ok, YamlBool.new(value: false))
   }
-  const num = plain_number(text)
-  if num.is(YamlInt) || num.is(YamlFloat) {
-    return num
+  case plain_number(text) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, num)     -> {
+      if num.is(YamlInt) || num.is(YamlFloat) {
+        return (R.ok, num)
+      }
+      return (R.ok, YamlString.new(value: text))
+    }
   }
-  return YamlString.new(value: text)
 }
 
 // Returns YamlInt or YamlFloat for a number, YamlNull when the text
 // is not a number.
-def plain_number(s String) Yaml {
+def plain_number(s String) (R, Yaml) {
   const b = s.to_bytes()
   const e = b.length()
   if e == 0 {
-    return YamlNull.new()
+    return (R.ok, YamlNull.new())
   }
   if b.get(0) == 45 {
     return plain_number_signed(b, 1, e, -1)
@@ -1553,25 +1729,25 @@ def plain_number(s String) Yaml {
   return plain_number_signed(b, 0, e, 1)
 }
 
-def plain_number_signed(b Bytes, i Int64, e Int64, neg Int64) Yaml {
+def plain_number_signed(b Bytes, i Int64, e Int64, neg Int64) (R, Yaml) {
   if i >= e {
-    return YamlNull.new()
+    return (R.ok, YamlNull.new())
   }
   const inf = special_inf(b, i, e, neg)
   if inf.is(YamlFloat) {
-    return inf
+    return (R.ok, inf)
   }
   const nan = special_nan(b, i, e)
   if nan.is(YamlFloat) {
-    return nan
+    return (R.ok, nan)
   }
   const c = b.get(i)
   if c == 46 {
     const fr = frac_exp(b, i + 1, e)
-    return float_from_parts(b, i, 0, i + 1, fr[0] - (i + 1), fr[1], neg)
+    return (R.ok, float_from_parts(b, i, 0, i + 1, fr[0] - (i + 1), fr[1], neg))
   }
   if c < 48 || c > 57 {
-    return YamlNull.new()
+    return (R.ok, YamlNull.new())
   }
   return number_after_digits(b, i, e, neg)
 }
@@ -1616,17 +1792,17 @@ def special_nan(b Bytes, i Int64, e Int64) Yaml {
 // One or more digits scanned; from there a `.`, an exponent, or the
 // end decides int vs float (hex and octal keep the `0x` / `0o`
 // forms; anything wider than Int64 refuses).
-def number_after_digits(b Bytes, i Int64, e Int64, neg Int64) Yaml {
+def number_after_digits(b Bytes, i Int64, e Int64, neg Int64) (R, Yaml) {
   const de = digits_end(b, i, e)
   if de - i == 1 {
     if b.get(i) == 48 {
       if de < e {
         const x = b.get(de)
         if x == 120 || x == 88 {
-          return hex_int(b, de + 1, e, 0, neg)
+          return (R.ok, hex_int(b, de + 1, e, 0, neg))
         }
         if x == 111 || x == 79 {
-          return oct_int(b, de + 1, e, 0, neg)
+          return (R.ok, oct_int(b, de + 1, e, 0, neg))
         }
       }
     }
@@ -1638,18 +1814,18 @@ def number_after_digits(b Bytes, i Int64, e Int64, neg Int64) Yaml {
   if d == 46 {
     const fr = frac_exp(b, de + 1, e)
     if fr[2] != e {
-      return YamlNull.new()
+      return (R.ok, YamlNull.new())
     }
-    return float_from_parts(b, i, de - i, de + 1, fr[0] - (de + 1), fr[1], neg)
+    return (R.ok, float_from_parts(b, i, de - i, de + 1, fr[0] - (de + 1), fr[1], neg))
   }
   if d == 101 || d == 69 {
     const er = exp_scan(b, de + 1, e)
     if er[1] != e {
-      return YamlNull.new()
+      return (R.ok, YamlNull.new())
     }
-    return float_from_parts(b, i, de - i, de, 0, er[0], neg)
+    return (R.ok, float_from_parts(b, i, de - i, de, 0, er[0], neg))
   }
-  return YamlNull.new()
+  return (R.ok, YamlNull.new())
 }
 
 // (exponent value, end position): the value clamps at 100000, far
@@ -1705,19 +1881,19 @@ def decimal_abs(b Bytes, i Int64, e Int64, acc Int64) Int64 {
 }
 
 // Decimal digits [i, de): assemble with overflow refusal.
-def int_finish(b Bytes, i Int64, de Int64, neg Int64) Yaml {
+def int_finish(b Bytes, i Int64, de Int64, neg Int64) (R, Yaml) {
   if neg < 0 {
     const v = int_neg(b, i, de, 0)
     if v.is(YamlNull) {
-      raise Exception.new(message: "yaml: integer out of range")
+      return (R.error, "yaml: integer out of range")
     }
-    return v
+    return (R.ok, v)
   }
   const v = int_pos(b, i, de, 0)
   if v.is(YamlNull) {
-    raise Exception.new(message: "yaml: integer out of range")
+    return (R.error, "yaml: integer out of range")
   }
-  return v
+  return (R.ok, v)
 }
 
 def int_pos(b Bytes, i Int64, de Int64, acc Int64) Yaml {
@@ -2016,8 +2192,12 @@ def plain_unsafe(b Bytes, i Int64, last Int64) Bool {
 // Whether the plain form would decode as something other than a
 // string.
 def plain_special(s String) Bool {
-  const v = resolve_plain(s)
-  return v.is(YamlNull) || v.is(YamlBool) || v.is(YamlInt) || v.is(YamlFloat)
+  case resolve_plain(s) {
+    (R.error, _)  -> { return false }
+    (R.ok, v)     -> {
+      return v.is(YamlNull) || v.is(YamlBool) || v.is(YamlInt) || v.is(YamlFloat)
+    }
+  }
 }
 
 // Double-quoted with the yaml module's escaping: `"`, `\`, and

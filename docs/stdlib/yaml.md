@@ -45,7 +45,7 @@ Arrays and objects carry their containers on the concrete classes,
 read through `is()` into the class:
 
 ```emo
-const doc = yaml.decode(text)
+const (R.ok, doc) = yaml.decode(text)
 if doc.is(YamlObject) {
   println(doc.get("service").as_string())
   println(doc.get("ports").items().length().to_string())
@@ -64,7 +64,7 @@ if doc.is(YamlObject) {
 ## Decode
 
 ```emo
-def decode(text String) Yaml
+def decode(text String) (R, Yaml)
 ```
 
 Strict and line-oriented, per YAML 1.2's core schema: block mappings
@@ -76,12 +76,14 @@ comments, literal `|` and folded `>` block scalars with `+`/`-`
 chomping, and an optional leading `---`. Plain scalars resolve per
 the core schema: `null`/`~`, `true`/`false` (and the cased forms),
 decimal integers, `0x`/`0o` integers, floats with `.inf`/`.nan`;
-everything else is a string. Integers outside Int64 refuse; floats
-round once, to nearest with ties to even.
+everything else is a string.
 
-Everything unsupported raises with the byte offset: anchors and
-aliases, tags, multi-document input, multi-line plain or quoted
-scalars, multi-line flow, tabs in indentation.
+Everything unsupported comes back as `(R.error, reason)` with the byte
+offset: anchors and aliases, tags, multi-document input, multi-line
+plain or quoted scalars, multi-line flow, tabs in indentation — as do
+malformed input and integers outside `Int64`. The reason a String
+stating exactly what failed — `yaml: bad indentation in a mapping at
+byte 21`. Floats round once, to nearest with ties to even.
 
 ## Encode
 
@@ -112,8 +114,10 @@ println(yaml.encode(doc))
 
 ## Errors
 
-Following the standard library's convention, every failure —
-malformed input, a missing key, a wrong-kind accessor, an unsupported
-construct — raises an ordinary Emo exception whose message states
-exactly what failed (and at what byte offset, for decode). No error
-codes, no nil.
+The split follows the standard library's convention. Malformed input
+and unsupported constructs — the data can be anything — are the value
+`(R.error, reason)` from `decode`, the reason a String stating exactly
+what failed (and at what byte offset): match it, don't guess. A
+wrong-kind accessor and a missing key are the caller's broken
+assertions about the document — those raise, ending the process. No
+error codes, no nil.

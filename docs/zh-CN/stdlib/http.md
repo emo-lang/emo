@@ -38,14 +38,14 @@ http.request(method, url, headers, body, timeout)
 `http.request` 的完整签名:
 
 ```emo
-def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) HttpResponse
+def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
 ```
 
 - `headers` 是 `(name, value)` 元组的数组,追加在内置的 `Host`、`Content-Length`、`Connection: close` 几行之后。
 - `timeout` 以秒为单位,传给 `net.connect` / `net.tls_connect`;`0.0`(动词助手用的值)表示无限等待。
-- URL 必须带显式的 `http://` 或 `https://` scheme,其他一律 raise。`https://` 走 `net.tls_connect`——TLS 且按 `net` 包的默认开启证书校验。默认端口 80 与 443;`host:port` 可覆盖。
+- URL 必须带显式的 `http://` 或 `https://` scheme,其他一律以错误元组返回——`net` 包上报的每种传输失败同理:匹配这个元组,别假设响应已到手。`https://` 走 `net.tls_connect`——TLS 且按 `net` 包的默认开启证书校验。默认端口 80 与 443;`host:port` 可覆盖。
 
-每次调用返回一个 `HttpResponse`:
+成功时以 `(R.ok, resp)` 回答一个 `HttpResponse`:
 
 ```emo
 class HttpResponse {
@@ -57,10 +57,14 @@ class HttpResponse {
 ```emo
 require "http"
 
-const resp = http.get("http://127.0.0.1:8901/hello.txt")
-println(resp.status)                 // 200
-println(resp.header("content-type")) // text/plain
-println(resp.body)
+case http.get("http://127.0.0.1:8901/hello.txt") {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> {
+    println(resp.status)                 // 200
+    println(resp.header("content-type")) // text/plain
+    println(resp.body)
+  }
+}
 ```
 
 重定向从不自动跟随:3xx 和其他响应一样原样返回,跟随它(读 `resp.header("location")` 再发下一个请求)是调用者显式、可见的动作。
@@ -99,7 +103,7 @@ def response(status Int64, headers Array[(String, String)], body String) HttpRes
 require "http"
 require "net"
 
-const listener = net.listen("127.0.0.1", 8902)
+const (R.ok, listener) = net.listen("127.0.0.1", 8902)
 println("listening on http://127.0.0.1:8902")
 
 http.serve_requests(listener) -> (req HttpRequest) {
@@ -114,15 +118,19 @@ http.serve_requests(listener) -> (req HttpRequest) {
 require "http"
 require "net"
 
-const listener = net.listen("127.0.0.1", 0)
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
 
 do http.serve_requests(listener) -> (req HttpRequest) {
   return http.response(201, [], req.method + " " + req.path + " " + req.body)
 }
 
-const resp = http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/items", [("Content-Type", "text/plain")], "payload", 5.0)
-println(resp.status) // 201
-println(resp.body)   // POST /items payload
+case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/items", [("Content-Type", "text/plain")], "payload", 5.0) {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> {
+    println(resp.status) // 201
+    println(resp.body)   // POST /items payload
+  }
+}
 ```
 
 ## 限制

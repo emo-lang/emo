@@ -4,11 +4,14 @@
 // internal/float.emo — so every target answers identically.
 //
 // A decoded document is a `Json`: an interface over one class per JSON
-// kind. The `as_*` accessors answer with the payload and raise when the
-// kind does not match (`doc.get("age").as_int()`); `kind()` and
-// `is_null?()` discriminate without guessing. Every failure raises an
-// ordinary Emo exception whose message states exactly what failed, at
-// what byte offset — no error codes, no nil.
+// kind. `kind()` and `is_null?()` discriminate without guessing. The
+// split follows the error-handling settle: malformed input — the data
+// can be anything — is the value `(R.error, reason)` from `decode`,
+// the reason stating exactly what failed and at what byte offset; the
+// `as_*` accessors and `get` are the caller's assertions about the
+// document, and a failed assertion is a broken contract — they raise
+// (`doc.get("age").as_int()` is only correct code when "age" holds an
+// integer). No error codes, no nil.
 
 enum JsonKind { jnull, jbool, jint, jfloat, jstring, jarray, jobject }
 
@@ -100,7 +103,11 @@ class JsonBool {
     return self.encode()
   }
 
-
+  // The plain text, unquoted: the natural rendering of a JSON string
+  // used as one — decode's error reasons print as their message.
+  def to_string() String {
+    return self.value
+  }
 
   def as_bool() Bool {
     return self.value
@@ -238,7 +245,11 @@ class JsonString {
     return self.encode()
   }
 
-
+  // The plain text, unquoted: the natural rendering of a JSON string
+  // used as one — decode's error reasons print as their message.
+  def to_string() String {
+    return self.value
+  }
 
   def as_bool() Bool {
     raise Exception.new(message: "json: expected true or false, got a string")
@@ -416,17 +427,26 @@ def object(entries Array[(String, Json)]) Json {
 // ---- decode ----
 
 // Parses one JSON document; trailing data after the value is a
-// mistake. Malformed input raises with the byte offset.
-def decode(text String) Json {
+// mistake. Malformed input returns `(R.error, reason)` — the reason a
+// Json string stating exactly what failed, at what byte offset
+// (`why.as_string()` reads it back).
+def decode(text String) (R, Json) {
   const data = text.to_bytes()
-  const r = parse_value(data, skip_ws(data, 0), 0)
-  const after = skip_ws(data, r[1])
-  if after != data.length() {
-    raise Exception.new(message: err(after, "trailing data"))
+  case parse_value(data, skip_ws(data, 0), 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)       -> {
+      const after = skip_ws(data, r[1])
+      if after != data.length() {
+        return (R.error, err(after, "trailing data"))
+      }
+      return (R.ok, r[0])
+    }
   }
-  return r[0]
 }
 
+// The reason rides as a Json string: the error tuple's payload slot is
+// the document's own type, and a string is the Json value a reason
+// already is.
 def err(at Int64, what String) String {
   return "json: " + what + " at byte " + at.to_string()
 }
@@ -441,12 +461,12 @@ def skip_ws(data Bytes, i Int64) Int64 {
   return i
 }
 
-def parse_value(data Bytes, pos Int64, depth Int64) (Json, Int64) {
+def parse_value(data Bytes, pos Int64, depth Int64) (R, (Json, Int64)) {
   if depth > 512 {
-    raise Exception.new(message: err(pos, "nesting deeper than 512"))
+    return (R.error, err(pos, "nesting deeper than 512"))
   }
   if pos >= data.length() {
-    raise Exception.new(message: err(pos, "unexpected end of input"))
+    return (R.error, err(pos, "unexpected end of input"))
   }
   const b = data.get(pos)
   if b == 123 {
@@ -456,8 +476,10 @@ def parse_value(data Bytes, pos Int64, depth Int64) (Json, Int64) {
     return parse_array(data, pos, depth)
   }
   if b == 34 {
-    const sr = parse_string(data, pos)
-    return (JsonString.new(value: sr[0]), sr[1])
+    case parse_string(data, pos) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, sr)      -> { return (R.ok, (JsonString.new(value: sr[0]), sr[1])) }
+    }
   }
   if b == 116 {
     return parse_literal(data, pos, "true", JsonBool.new(value: true))
@@ -471,7 +493,7 @@ def parse_value(data Bytes, pos Int64, depth Int64) (Json, Int64) {
   if b == 45 || (b >= 48 && b <= 57) {
     return parse_number(data, pos)
   }
-  raise Exception.new(message: err(pos, "unexpected byte " + b.to_string()))
+  return (R.error, err(pos, "unexpected byte " + b.to_string()))
 }
 
 def match_at(data Bytes, pos Int64, w Bytes, i Int64) Bool {
@@ -487,93 +509,107 @@ def match_at(data Bytes, pos Int64, w Bytes, i Int64) Bool {
   return match_at(data, pos, w, i + 1)
 }
 
-def parse_literal(data Bytes, pos Int64, word String, value Json) (Json, Int64) {
+def parse_literal(data Bytes, pos Int64, word String, value Json) (R, (Json, Int64)) {
   const w = word.to_bytes()
   if match_at(data, pos, w, 0) == false {
-    raise Exception.new(message: err(pos, "invalid literal"))
+    return (R.error, err(pos, "invalid literal"))
   }
-  return (value, pos + w.length())
+  return (R.ok, (value, pos + w.length()))
 }
 
 // ---- arrays ----
 
-def parse_array(data Bytes, pos Int64, depth Int64) (Json, Int64) {
-  const r = parse_items(data, pos + 1, depth + 1, [], true)
-  return (JsonArray.new(items: r[0]), r[1])
+def parse_array(data Bytes, pos Int64, depth Int64) (R, (Json, Int64)) {
+  case parse_items(data, pos + 1, depth + 1, [], true) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return (R.ok, (JsonArray.new(items: r[0]), r[1])) }
+  }
 }
 
-def parse_items(data Bytes, pos Int64, depth Int64, acc Array[Json], first Bool) (Array[Json], Int64) {
+def parse_items(data Bytes, pos Int64, depth Int64, acc Array[Json], first Bool) (R, (Array[Json], Int64)) {
   const ip = skip_ws(data, pos)
   if ip >= data.length() {
-    raise Exception.new(message: err(ip, "unterminated array"))
+    return (R.error, err(ip, "unterminated array"))
   }
   if data.get(ip) == 93 {
     if first {
-      return (acc, ip + 1)
+      return (R.ok, (acc, ip + 1))
     }
-    raise Exception.new(message: err(ip, "expected array element"))
+    return (R.error, err(ip, "expected array element"))
   }
-  const ir = parse_value(data, ip, depth)
-  return parse_more_items(data, ir[1], depth, acc.append(ir[0]))
+  case parse_value(data, ip, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ir)     -> { return parse_more_items(data, ir[1], depth, acc.append(ir[0])) }
+  }
 }
 
-def parse_more_items(data Bytes, pos Int64, depth Int64, acc Array[Json]) (Array[Json], Int64) {
+def parse_more_items(data Bytes, pos Int64, depth Int64, acc Array[Json]) (R, (Array[Json], Int64)) {
   const mp = skip_ws(data, pos)
   if mp >= data.length() {
-    raise Exception.new(message: err(mp, "unterminated array"))
+    return (R.error, err(mp, "unterminated array"))
   }
   if data.get(mp) == 44 {
     return parse_items(data, mp + 1, depth, acc, false)
   }
   if data.get(mp) == 93 {
-    return (acc, mp + 1)
+    return (R.ok, (acc, mp + 1))
   }
-  raise Exception.new(message: err(mp, "expected `,` or `]`"))
+  return (R.error, err(mp, "expected `,` or `]`"))
 }
 
 // ---- objects ----
 
-def parse_object(data Bytes, pos Int64, depth Int64) (Json, Int64) {
-  const r = parse_entries(data, pos + 1, depth + 1, [], true)
-  return (JsonObject.new(entries: r[0]), r[1])
+def parse_object(data Bytes, pos Int64, depth Int64) (R, (Json, Int64)) {
+  case parse_entries(data, pos + 1, depth + 1, [], true) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return (R.ok, (JsonObject.new(entries: r[0]), r[1])) }
+  }
 }
 
-def parse_entries(data Bytes, pos Int64, depth Int64, acc Array[(String, Json)], first Bool) (Array[(String, Json)], Int64) {
+def parse_entries(data Bytes, pos Int64, depth Int64, acc Array[(String, Json)], first Bool) (R, (Array[(String, Json)], Int64)) {
   const ep = skip_ws(data, pos)
   if ep >= data.length() {
-    raise Exception.new(message: err(ep, "unterminated object"))
+    return (R.error, err(ep, "unterminated object"))
   }
   if data.get(ep) == 125 {
     if first {
-      return (acc, ep + 1)
+      return (R.ok, (acc, ep + 1))
     }
-    raise Exception.new(message: err(ep, "expected object member"))
+    return (R.error, err(ep, "expected object member"))
   }
   if data.get(ep) != 34 {
-    raise Exception.new(message: err(ep, "expected object key"))
+    return (R.error, err(ep, "expected object key"))
   }
-  const ekr = parse_string(data, ep)
-  const ekp = skip_ws(data, ekr[1])
-  if ekp >= data.length() || data.get(ekp) != 58 {
-    raise Exception.new(message: err(ekp, "expected `:`"))
+  case parse_string(data, ep) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ekr)    -> {
+      const ekp = skip_ws(data, ekr[1])
+      if ekp >= data.length() || data.get(ekp) != 58 {
+        return (R.error, err(ekp, "expected `:`"))
+      }
+      case parse_value(data, skip_ws(data, ekp + 1), depth) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, evr)    -> {
+          const eentry = (ekr[0], evr[0])
+          return parse_more_entries(data, evr[1], depth, acc.append(eentry))
+        }
+      }
+    }
   }
-  const evr = parse_value(data, skip_ws(data, ekp + 1), depth)
-  const eentry = (ekr[0], evr[0])
-  return parse_more_entries(data, evr[1], depth, acc.append(eentry))
 }
 
-def parse_more_entries(data Bytes, pos Int64, depth Int64, acc Array[(String, Json)]) (Array[(String, Json)], Int64) {
+def parse_more_entries(data Bytes, pos Int64, depth Int64, acc Array[(String, Json)]) (R, (Array[(String, Json)], Int64)) {
   const gp = skip_ws(data, pos)
   if gp >= data.length() {
-    raise Exception.new(message: err(gp, "unterminated object"))
+    return (R.error, err(gp, "unterminated object"))
   }
   if data.get(gp) == 44 {
     return parse_entries(data, gp + 1, depth, acc, false)
   }
   if data.get(gp) == 125 {
-    return (acc, gp + 1)
+    return (R.ok, (acc, gp + 1))
   }
-  raise Exception.new(message: err(gp, "expected `,` or `}`"))
+  return (R.error, err(gp, "expected `,` or `}`"))
 }
 
 def lookup(entries Array[(String, Json)], key String, i Int64) Json {
@@ -592,62 +628,76 @@ def lookup(entries Array[(String, Json)], key String, i Int64) Json {
 // Pass one: scan from the opening quote, validate every escape, and
 // measure the decoded length. Pass two: fill. Working on bytes keeps
 // every target on the same UTF-8 path.
-def parse_string(data Bytes, pos Int64) (String, Int64) {
-  const len = scan_string(data, pos + 1, 0)
-  const out = Bytes.new(len)
-  const r = fill_string(data, pos + 1, out, 0)
-  return (out.to_string(), r[1])
+def parse_string(data Bytes, pos Int64) (R, (String, Int64)) {
+  case scan_string(data, pos + 1, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, len)    -> {
+      const out = Bytes.new(len)
+      case fill_string(data, pos + 1, out, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, r)      -> { return (R.ok, (out.to_string(), r[1])) }
+      }
+    }
+  }
 }
 
-def scan_string(data Bytes, i Int64, len Int64) Int64 {
+def scan_string(data Bytes, i Int64, len Int64) (R, Int64) {
   if i >= data.length() {
-    raise Exception.new(message: err(i, "unterminated string"))
+    return (R.error, err(i, "unterminated string"))
   }
   const sb = data.get(i)
   if sb == 34 {
-    return len
+    return (R.ok, len)
   }
   if sb == 92 {
     return scan_escape(data, i + 1, len)
   }
   if sb < 32 {
-    raise Exception.new(message: err(i, "unescaped control character in string"))
+    return (R.error, err(i, "unescaped control character in string"))
   }
   return scan_string(data, i + 1, len + 1)
 }
 
-def scan_escape(data Bytes, i Int64, len Int64) Int64 {
+def scan_escape(data Bytes, i Int64, len Int64) (R, Int64) {
   if i >= data.length() {
-    raise Exception.new(message: err(i, "unterminated string"))
+    return (R.error, err(i, "unterminated string"))
   }
   const eb = data.get(i)
   if eb == 117 {
-    const cp1 = read_hex4(data, i + 1)
-    if cp1 >= 55296 && cp1 <= 56319 {
-      // a high surrogate must be followed by \uDC00-\uDFFF
-      if i + 6 >= data.length() {
-        raise Exception.new(message: err(i, "unterminated string"))
+    case read_hex4(data, i + 1) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, cp1)    -> {
+        if cp1 >= 55296 && cp1 <= 56319 {
+          // a high surrogate must be followed by \uDC00-\uDFFF
+          if i + 6 >= data.length() {
+            return (R.error, err(i, "unterminated string"))
+          }
+          if data.get(i + 5) != 92 || data.get(i + 6) != 117 {
+            return (R.error, err(i, "lone surrogate escape"))
+          }
+          case read_hex4(data, i + 7) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, cp2)    -> {
+              if cp2 < 56320 || cp2 > 57343 {
+                return (R.error, err(i, "lone surrogate escape"))
+              }
+              const high = (cp1 - 55296) << 10
+              const cp = 65536 + high + (cp2 - 56320)
+              return scan_string(data, i + 11, len + utf8_len(cp))
+            }
+          }
+        }
+        if cp1 >= 56320 && cp1 <= 57343 {
+          return (R.error, err(i, "lone surrogate escape"))
+        }
+        return scan_string(data, i + 5, len + utf8_len(cp1))
       }
-      if data.get(i + 5) != 92 || data.get(i + 6) != 117 {
-        raise Exception.new(message: err(i, "lone surrogate escape"))
-      }
-      const cp2 = read_hex4(data, i + 7)
-      if cp2 < 56320 || cp2 > 57343 {
-        raise Exception.new(message: err(i, "lone surrogate escape"))
-      }
-      const high = (cp1 - 55296) << 10
-      const cp = 65536 + high + (cp2 - 56320)
-      return scan_string(data, i + 11, len + utf8_len(cp))
     }
-    if cp1 >= 56320 && cp1 <= 57343 {
-      raise Exception.new(message: err(i, "lone surrogate escape"))
-    }
-    return scan_string(data, i + 5, len + utf8_len(cp1))
   }
   if simple_escape(eb) > 0 {
     return scan_string(data, i + 1, len + 1)
   }
-  raise Exception.new(message: err(i, "invalid escape"))
+  return (R.error, err(i, "invalid escape"))
 }
 
 // The byte an escape stands for, or 0 when there is no simple form.
@@ -692,34 +742,54 @@ def utf8_len(cp Int64) Int64 {
   return 4
 }
 
-def read_hex4(data Bytes, i Int64) Int64 {
-  return (hex_val(data, i) << 12) | (hex_val(data, i + 1) << 8) | (hex_val(data, i + 2) << 4) | hex_val(data, i + 3)
+def read_hex4(data Bytes, i Int64) (R, Int64) {
+  case hex_val(data, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, h0)     -> {
+      case hex_val(data, i + 1) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, h1)     -> {
+          case hex_val(data, i + 2) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, h2)     -> {
+              case hex_val(data, i + 3) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, h3)     -> {
+                  return (R.ok, (h0 << 12) | (h1 << 8) | (h2 << 4) | h3)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
-def hex_val(data Bytes, i Int64) Int64 {
+def hex_val(data Bytes, i Int64) (R, Int64) {
   if i >= data.length() {
-    raise Exception.new(message: err(i, "unterminated string"))
+    return (R.error, err(i, "unterminated string"))
   }
   const b = data.get(i)
   if b >= 48 && b <= 57 {
-    return b - 48
+    return (R.ok, b - 48)
   }
   if b >= 97 && b <= 102 {
-    return b - 87
+    return (R.ok, b - 87)
   }
   if b >= 65 && b <= 70 {
-    return b - 55
+    return (R.ok, b - 55)
   }
-  raise Exception.new(message: err(i, "invalid \\u escape"))
+  return (R.error, err(i, "invalid \\u escape"))
 }
 
-def fill_string(data Bytes, i Int64, out Bytes, w Int64) (Int64, Int64) {
+def fill_string(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
   if i >= data.length() {
-    raise Exception.new(message: err(i, "unterminated string"))
+    return (R.error, err(i, "unterminated string"))
   }
   const fb = data.get(i)
   if fb == 34 {
-    return (w, i + 1)
+    return (R.ok, (w, i + 1))
   }
   if fb == 92 {
     return fill_escape(data, i + 1, out, w)
@@ -728,22 +798,30 @@ def fill_string(data Bytes, i Int64, out Bytes, w Int64) (Int64, Int64) {
   return fill_string(data, i + 1, out, w + 1)
 }
 
-def fill_escape(data Bytes, i Int64, out Bytes, w Int64) (Int64, Int64) {
+def fill_escape(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
   const xb = data.get(i)
   if xb == 117 {
-    const cp1 = read_hex4(data, i + 1)
-    if cp1 >= 55296 && cp1 <= 56319 {
-      const cp2 = read_hex4(data, i + 7)
-      const high = (cp1 - 55296) << 10
-      const xnw = put_utf8(out, w, 65536 + high + (cp2 - 56320))
-      return fill_string(data, i + 11, out, xnw)
+    case read_hex4(data, i + 1) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, cp1)    -> {
+        if cp1 >= 55296 && cp1 <= 56319 {
+          case read_hex4(data, i + 7) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, cp2)    -> {
+              const high = (cp1 - 55296) << 10
+              const xnw = put_utf8(out, w, 65536 + high + (cp2 - 56320))
+              return fill_string(data, i + 11, out, xnw)
+            }
+          }
+        }
+        const xnw = put_utf8(out, w, cp1)
+        return fill_string(data, i + 5, out, xnw)
+      }
     }
-    const xnw = put_utf8(out, w, cp1)
-    return fill_string(data, i + 5, out, xnw)
   }
   const xdec = simple_escape(xb)
   if xdec == 0 {
-    raise Exception.new(message: err(i, "invalid escape"))
+    return (R.error, err(i, "invalid escape"))
   }
   out.set(w, xdec)
   return fill_string(data, i + 1, out, w + 1)
@@ -791,26 +869,26 @@ def skip_digits(data Bytes, i Int64) Int64 {
 }
 
 // Accumulates the digits in [i, end) into an Int64, honoring neg so
-// the exact minimum is reachable; overflow raises.
-def acc_digits(data Bytes, i Int64, end Int64, acc Int64, neg Bool) Int64 {
+// the exact minimum is reachable; overflow is an error value.
+def acc_digits(data Bytes, i Int64, end Int64, acc Int64, neg Bool) (R, Int64) {
   if i >= end {
-    return acc
+    return (R.ok, acc)
   }
   const d = data.get(i) - 48
   if neg {
     if acc < -922337203685477580 {
-      raise Exception.new(message: err(i, "integer out of range"))
+      return (R.error, err(i, "integer out of range"))
     }
     if acc == -922337203685477580 && d > 8 {
-      raise Exception.new(message: err(i, "integer out of range"))
+      return (R.error, err(i, "integer out of range"))
     }
     return acc_digits(data, i + 1, end, acc * 10 - d, neg)
   }
   if acc > 922337203685477580 {
-    raise Exception.new(message: err(i, "integer out of range"))
+    return (R.error, err(i, "integer out of range"))
   }
   if acc == 922337203685477580 && d > 7 {
-    raise Exception.new(message: err(i, "integer out of range"))
+    return (R.error, err(i, "integer out of range"))
   }
   return acc_digits(data, i + 1, end, acc * 10 + d, neg)
 }
@@ -824,34 +902,34 @@ def scan_sign(data Bytes, pos Int64) (Bool, Int64) {
 }
 
 // The index past the integer part, RFC 8259 strict on leading zeros.
-def scan_int(data Bytes, i Int64) Int64 {
+def scan_int(data Bytes, i Int64) (R, Int64) {
   if i >= data.length() || is_digit(data.get(i)) == false {
-    raise Exception.new(message: err(i, "invalid number"))
+    return (R.error, err(i, "invalid number"))
   }
   if data.get(i) == 48 {
     if i + 1 < data.length() {
       if is_digit(data.get(i + 1)) {
-        raise Exception.new(message: err(i + 1, "leading zero in number"))
+        return (R.error, err(i + 1, "leading zero in number"))
       }
     }
-    return i + 1
+    return (R.ok, i + 1)
   }
-  return skip_digits(data, i)
+  return (R.ok, skip_digits(data, i))
 }
 
 // The fraction length and the index past it.
-def scan_frac(data Bytes, i Int64) (Int64, Int64) {
+def scan_frac(data Bytes, i Int64) (R, (Int64, Int64)) {
   if i < data.length() {
     if data.get(i) == 46 {
       if i + 1 >= data.length() || is_digit(data.get(i + 1)) == false {
-        raise Exception.new(message: err(i + 1, "digit expected after decimal point"))
+        return (R.error, err(i + 1, "digit expected after decimal point"))
       }
       const fs = i + 1
       const fe = skip_digits(data, fs)
-      return (fe - fs, fe)
+      return (R.ok, (fe - fs, fe))
     }
   }
-  return (0, i)
+  return (R.ok, (0, i))
 }
 
 // The exponent's sign and the index past it.
@@ -868,19 +946,19 @@ def scan_exp_sign(data Bytes, i Int64) (Int64, Int64) {
 }
 
 // The exponent value (clamped) and the index past it.
-def scan_exp(data Bytes, i Int64) (Int64, Int64) {
+def scan_exp(data Bytes, i Int64) (R, (Int64, Int64)) {
   if i < data.length() {
     const b = data.get(i)
     if b == 101 || b == 69 {
       const sr = scan_exp_sign(data, i + 1)
       if sr[1] >= data.length() || is_digit(data.get(sr[1])) == false {
-        raise Exception.new(message: err(sr[1], "digit expected in exponent"))
+        return (R.error, err(sr[1], "digit expected in exponent"))
       }
       const ea = take_exp(data, sr[1], 0)
-      return (sr[0] * ea[0], ea[1])
+      return (R.ok, (sr[0] * ea[0], ea[1]))
     }
   }
-  return (0, i)
+  return (R.ok, (0, i))
 }
 
 def clamp_exp(a Int64) Int64 {
@@ -901,31 +979,47 @@ def take_exp(data Bytes, i Int64, acc Int64) (Int64, Int64) {
   return take_exp(data, i + 1, clamp_exp(acc * 10 + (b - 48)))
 }
 
-def parse_number(data Bytes, pos Int64) (Json, Int64) {
+def parse_number(data Bytes, pos Int64) (R, (Json, Int64)) {
   const sr = scan_sign(data, pos)
   const neg = sr[0]
   const int_start = sr[1]
-  const ie = scan_int(data, int_start)
-  const int_len = ie - int_start
-  const fr = scan_frac(data, ie)
-  const ex = scan_exp(data, fr[1])
-  const frac_len = fr[0]
-  const exp_val = ex[0]
-  if frac_len == 0 && exp_val == 0 {
-    return (JsonInt.new(value: acc_digits(data, int_start, ie, 0, neg)), ex[1])
+  case scan_int(data, int_start) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ie)     -> {
+      const int_len = ie - int_start
+      case scan_frac(data, ie) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, fr)     -> {
+          case scan_exp(data, fr[1]) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, ex)     -> {
+              const frac_len = fr[0]
+              const exp_val = ex[0]
+              if frac_len == 0 && exp_val == 0 {
+                case acc_digits(data, int_start, ie, 0, neg) {
+                  (R.error, why) -> { return (R.error, why) }
+                  (R.ok, acc)    -> {
+                    return (R.ok, (JsonInt.new(value: acc), ex[1]))
+                  }
+                }
+              }
+              const nd = int_len + frac_len
+              const digits = Bytes.new(nd)
+              copy_range(data, digits, int_start, 0, int_len)
+              // the `.` sits between the two digit runs and never enters the buffer
+              copy_range(data, digits, int_start + int_len + 1, int_len, frac_len)
+              const fv = Float64.from_bits(fpmath.parse_exact(neg, digits, nd, int_len + exp_val))
+              if fpmath.finite(fv) == false {
+                return (R.error, err(pos, "number out of range"))
+              }
+              return (R.ok, (JsonFloat.new(value: fv), ex[1]))
+            }
+          }
+        }
+      }
+    }
   }
-  const nd = int_len + frac_len
-  const digits = Bytes.new(nd)
-  copy_range(data, digits, int_start, 0, int_len)
-  // the `.` sits between the two digit runs and never enters the buffer
-  copy_range(data, digits, int_start + int_len + 1, int_len, frac_len)
-  const fv = Float64.from_bits(fpmath.parse_exact(neg, digits, nd, int_len + exp_val))
-  if fpmath.finite(fv) == false {
-    raise Exception.new(message: err(pos, "number out of range"))
-  }
-  return (JsonFloat.new(value: fv), ex[1])
 }
-
 def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
   if n > 0 {
     dst.set(di, src.get(si))

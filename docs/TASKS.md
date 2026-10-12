@@ -1120,33 +1120,33 @@ process with the case-no-match runtime error; `raise "str"` and
 `Exception` refuse user redeclaration; the uncaught report prints
 non-empty `data`; `dune test` green.
 
-- [ ] **T36.1** — Built-in `R { ok, error }`: bound in the checker's
+- [x] **T36.1** — Built-in `R { ok, error }`: bound in the checker's
       root env and the interpreter's global frame (the `Exception`
       precedent); `R.ok` / `R.error` construct and pattern-match
       everywhere enum members already do; `enum R` / `class R` report
       a reserved-name diagnostic.
-- [ ] **T36.2** — Parser: `const`/`var` accept a full pattern in
+- [x] **T36.2** — Parser: `const`/`var` accept a full pattern in
       place of the name (`Ast.Binding` carries it); the `const (`
       form stops being a hard error, breaking no grammar.
-- [ ] **T36.3** — IR: the pattern binding desugars to a one-arm
+- [x] **T36.3** — IR: the pattern binding desugars to a one-arm
       `case` wrapping the block remainder — no new IR nodes, the six
       backends see only existing ones.
-- [ ] **T36.4** — Checker: pattern bindings check through
+- [x] **T36.4** — Checker: pattern bindings check through
       `check_pattern` against the initializer's type; `raise`'s
       operand must be an `Exception` instance (its own E-code for
       everything else); the uncaught diagnostic appends non-empty
       `data`.
-- [ ] **T36.5** — Interpreter: pattern-binding evaluation, mismatch
+- [x] **T36.5** — Interpreter: pattern-binding evaluation, mismatch
       riding the case-no-match runtime error; the raise-operand
       discipline at run time; existing goldens re-recorded where the
       uncaught format changed.
-- [ ] **T36.6** — Example and rejections: `examples/errors` — the
+- [x] **T36.6** — Example and rejections: `examples/errors` — the
       README snippets verbatim (ok/error matching, the assert-match
       binding, a violation raising) — golden through `emo run`; the
       matching example golden on all six targets byte-for-byte
       (riscv64 runs the matching half; its raise refusal unchanged);
       the rejection corpus pinning every new diagnostic.
-- [ ] **T36.7** — README alignment: the README (English + zh-CN)
+- [x] **T36.7** — README alignment: the README (English + zh-CN)
       already documents the settled surface — verify it against the
       implemented one and reconcile any drift.
 
@@ -1157,19 +1157,22 @@ non-empty `data`; `dune test` green.
 `(R.error, reason)` and only contract violations raise; every package
 golden green on its declared targets; `dune test` green.
 
-- [ ] **T37.1** — `file` + `os`: open/read/write and permission
+- [x] **T37.1** — `file` + `os`: open/read/write and permission
       misses, missing paths return tuples; the native raise sites (os
       runtime, interp + ocaml + c) return instead; waitpid decoding
       untouched.
-- [ ] **T37.2** — `json` + `yaml` (+ `internal/float`): parse and
+- [x] **T37.2** — `json` + `yaml` (+ `internal/float`): parse and
       accessor failures return tuples — the two biggest sites, ~150.
-- [ ] **T37.3** — `xml` + `base64` + `bufio` + `slog` + `http` +
+- [x] **T37.3** — `xml` + `base64` + `bufio` + `slog` + `http` +
       `sync`: the same split; `http`'s refused/unresolved/deadline
       failures become tuples, per the README's network section.
-- [ ] **T37.4** — Goldens: every touched package's error-path
+      (`xml`/`base64` decode failures and the whole `net` surface
+      return tuples; `bufio`/`slog`/`sync` keep their raises — every
+      one is a caller mistake.)
+- [x] **T37.4** — Goldens: every touched package's error-path
       fixtures re-recorded to match `(R.error, why)`; package goldens
       green on all declared targets.
-- [ ] **T37.5** — Docs: the per-package pages under `docs/stdlib/`
+- [x] **T37.5** — Docs: the per-package pages under `docs/stdlib/`
       (and the zh-CN mirrors) reworded raise → returns; error-message
       tables updated.
 

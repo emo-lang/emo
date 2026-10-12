@@ -571,14 +571,14 @@ and parse_stmt st =
   | Tok.Keyword ((Tok.Const | Tok.Var) as kw) ->
       advance st |> ignore;
       let mutable_ = kw = Tok.Var in
-      let name, _ = parse_binding_name st in
+      let pattern = binding_pattern st in
       expect_op st Tok.Assign "`=`" |> ignore;
       if at_eof st || newline_before st then
         error "E2002" (span st)
           "the binding's initializer must stay on the `=`'s line";
       let init = parse_expr st in
       end_statement st;
-      stmt start_span (Ast.Binding { mutable_; name; init })
+      stmt start_span (Ast.Binding { mutable_; pattern; init })
   | Tok.Keyword Tok.While ->
       advance st |> ignore;
       st.suppress_block_sugar <- true;
@@ -692,6 +692,18 @@ and parse_binding_name st =
       error "E2007" (span st)
         (Printf.sprintf "expected a binding name, found %s" (describe_kind t))
 
+(* A binding's target: a plain name keeps the binding-name path (its
+   diagnostics are the pinned ones), a `_` or any other pattern-opening
+   token takes the full pattern grammar — `const (` is no longer a hard
+   error, so `(R.ok, body)` destructures the initializer. *)
+and binding_pattern st =
+  match kind st with
+  | Tok.Lower_ident "_" -> parse_pattern st
+  | Tok.Lower_ident _ | Tok.Upper_ident _ ->
+      let name, name_span = parse_binding_name st in
+      { Ast.pattern_span = name_span; pattern_desc = Ast.Pattern_binding name }
+  | _ -> parse_pattern st
+
 (* The `for` header's first clause is exactly a `var` declaration — the
    loop's one binding, scoped to the header and the body. *)
 and parse_for_init st =
@@ -699,13 +711,23 @@ and parse_for_init st =
   match kind st with
   | Tok.Keyword Tok.Var ->
       advance st |> ignore;
-      let name, _ = parse_binding_name st in
+      let name, name_span = parse_binding_name st in
       expect_op st Tok.Assign "`=`" |> ignore;
       if at_eof st || newline_before st then
         error "E2002" (span st)
           "the binding's initializer must stay on the `=`'s line";
       let init = parse_expr st in
-      stmt start_span (Ast.Binding { mutable_ = true; name; init })
+      stmt start_span
+        (Ast.Binding
+           {
+             mutable_ = true;
+             pattern =
+               {
+                 Ast.pattern_span = name_span;
+                 pattern_desc = Ast.Pattern_binding name;
+               };
+             init;
+           })
   | Tok.Keyword Tok.Const ->
       error "E2026" (span st)
         "the `for` header binds a `var`; a loop's variable has to change"
@@ -1080,10 +1102,19 @@ and parse_emo_group st =
               error "E2001" const_tok
                 "a group cannot declare `var` (groups are stateless)"
           | {
-           Ast.stmt_desc = Ast.Binding { mutable_ = false; name; init; _ };
+           Ast.stmt_desc =
+             Ast.Binding
+               {
+                 mutable_ = false;
+                 pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                 init;
+                 _;
+               };
            _;
           } ->
               consts := (const_tok, name, init) :: !consts
+          | { Ast.stmt_desc = Ast.Binding _; _ } ->
+              error "E2001" const_tok "a group's `const` binds a plain name"
           | _ ->
               error "E2001" const_tok
                 "expected a `const` binding in the group body");

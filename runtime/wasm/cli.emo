@@ -9,7 +9,8 @@
 // the golden, never silent.
 
 def run(list_path String) Int64 {
-  return walk_lines(file_read(list_path).split("\n"), 0, 0, 0, 0)
+  const (R.ok, text) = file_read(list_path)
+  return walk_lines(text.split("\n"), 0, 0, 0, 0)
 }
 
 // Walk lines[i..), then print `claimed N, pending M, failed K` and

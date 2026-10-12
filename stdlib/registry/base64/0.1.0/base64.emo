@@ -8,8 +8,8 @@
 // wrapped message must be joined by the caller), and the padding bits
 // the RFC requires to be zero really must be zero — a non-canonical
 // tail such as `QR==` is a mistake, not a synonym of `QQ==`. Every
-// rejection raises an ordinary Emo exception with the offending byte
-// offset.
+// rejection is a decode failure — the value `(R.error, reason)` — with
+// the offending byte offset in the reason.
 
 // ---- encode ----
 
@@ -76,47 +76,47 @@ def char_of(v Int64) Int64 {
 
 // ---- decode ----
 
-// The single raising function: the scanning and filling helpers below
+// The single fallible function: the scanning and filling helpers below
 // stay pure and report (kind, offset) pairs, and decode — which knows
 // the whole input — speaks for them with the exact mistake and byte
 // offset.
-def decode(text String) String {
+def decode(text String) (R, String) {
   const data = text.to_bytes()
   const n = data.length()
   const found = padding_start(data, 0, n)
   if found < 0 {
-    raise Exception.new(message: err(data, -(found + 1), "padding only at the end"))
+    return (R.error, err(data, -(found + 1), "padding only at the end"))
   }
   const np = found
   const pads = n - np
   const qt = np % 4
   if pads > 2 {
-    raise Exception.new(message: err(data, np, "too much padding"))
+    return (R.error, err(data, np, "too much padding"))
   }
   if pads == 0 {
     if qt != 0 {
-      raise Exception.new(message: err(data, np, "the final quantum is short"))
+      return (R.error, err(data, np, "the final quantum is short"))
     }
   }
   if pads == 1 {
     if qt != 3 {
-      raise Exception.new(message: err(data, np, "one pad character needs three data characters before it"))
+      return (R.error, err(data, np, "one pad character needs three data characters before it"))
     }
   }
   if pads == 2 {
     if qt != 2 {
-      raise Exception.new(message: err(data, np, "two pad characters need two data characters before it"))
+      return (R.error, err(data, np, "two pad characters need two data characters before it"))
     }
   }
   const out = Bytes.new(decoded_len(qt, np))
   const r = fill_decode(data, np, out, 0, 0)
   if r[0] == 1 {
-    raise Exception.new(message: err(data, r[1], "not a base64 character"))
+    return (R.error, err(data, r[1], "not a base64 character"))
   }
   if r[0] == 2 {
-    raise Exception.new(message: err(data, r[1], "non-zero padding bits"))
+    return (R.error, err(data, r[1], "non-zero padding bits"))
   }
-  return out.to_string()
+  return (R.ok, out.to_string())
 }
 
 // The first `=` (or the length when unpadded); everything from there

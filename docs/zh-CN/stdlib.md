@@ -36,17 +36,18 @@ require "json"
 调度器上的直接风格整文件 IO:一次调用读入整个文件,一次调用写出整个文件。路径按原样使用(相对路径相对进程的工作目录解析)。
 
 ```emo
-def read(path String) String
-def write(path String, contents String) Int64
+def read(path String) (R, String)
+def write(path String, contents String) (R, Int64)
 ```
 
-`read` 返回文件的字节;文件缺失或不可读则抛出。`write` 创建或截断,写完全部字节,返回写入的字节数。需要流式、缓冲或追加的 IO,用 `os` 和 `bufio`——`file` 是一次性读写的那一档。
+`read` 返回文件的字节,文件缺失或不可读时返回 `(R.error, reason)`。`write` 创建或截断,写完全部字节,返回写入的字节数。需要流式、缓冲或追加的 IO,用 `os` 和 `bufio`——`file` 是一次性读写的那一档。
 
 ```emo
 require "file"
 
-file.write("notes.txt", "hello from disk\n")
-println(file.read("notes.txt"))
+const (R.ok, n) = file.write("notes.txt", "hello from disk\n")
+const (R.ok, text) = file.read("notes.txt")
+println(text)
 ```
 
 参考:[`docs/zh-CN/stdlib/file.md`](stdlib/file.md) · 示例:`examples/file_read`。
@@ -58,30 +59,30 @@ println(file.read("notes.txt"))
 ```emo
 def getpid() Int64
 def getppid() Int64
-def fork() Int64
+def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
 def execv(path String, argv Array[String]) Void
 def _exit(status Int64) Void
 
-def pipe() (Int64, Int64)
+def pipe() (R, (Int64, Int64))
 
-def open_read(path String) Int64
-def open_write(path String) Int64
-def open_append(path String) Int64
-def read(fd Int64, n Int64) String
-def write(fd Int64, data String) Int64
-def close(fd Int64) Int64
+def open_read(path String) (R, Int64)
+def open_write(path String) (R, Int64)
+def open_append(path String) (R, Int64)
+def read(fd Int64, n Int64) (R, String)
+def write(fd Int64, data String) (R, Int64)
+def close(fd Int64) (R, Int64)
 
-def list_dir(path String) Array[String]
-def mkdir(path String) Int64
-def rmdir(path String) Int64
-def unlink(path String) Int64
-def rename(old_path String, new_path String) Int64
+def list_dir(path String) (R, Array[String])
+def mkdir(path String) (R, Int64)
+def rmdir(path String) (R, Int64)
+def unlink(path String) (R, Int64)
+def rename(old_path String, new_path String) (R, Int64)
 def getcwd() String
-def chdir(path String) Int64
+def chdir(path String) (R, Int64)
 ```
 
-`fork()` 返回两次——子进程得 `0`,父进程得子进程的 pid——子进程通过 `_exit` 离开。`waitpid(pid)` 返回 `(pid, status)`,`status` 是内核原始的 16 位状态字,由 `wait_exited` / `wait_exit_code` / `wait_signaled` / `wait_signal` / `wait_stopped` / `wait_stop_signal` 这些助手解码。`open_write` 创建或截断,`open_append` 创建或追加;`read` 最多返回 `n` 字节,文件结束返回空字符串。`list_dir` 返回按字节序排序的目录项名,不含 `.` 和 `..`,两个目标上顺序一致。
+`fork()` 以 `(R.ok, pid)` 回答——子进程得 `0`,父进程得子进程的 pid——子进程通过 `_exit` 离开。`waitpid(pid)` 返回 `(pid, status)`,`status` 是内核原始的 16 位状态字,由 `wait_exited` / `wait_exit_code` / `wait_signaled` / `wait_signal` / `wait_stopped` / `wait_stop_signal` 这些助手解码。`open_write` 创建或截断,`open_append` 创建或追加;`read` 最多返回 `n` 字节,文件结束返回空字符串。`list_dir` 返回按字节序排序的目录项名,不含 `.` 和 `..`,两个目标上顺序一致。
 
 目标:`["ocaml", "c"]`。参考:[`docs/zh-CN/stdlib/os.md`](stdlib/os.md) · 示例:`examples/os_demo`。
 
@@ -141,43 +142,43 @@ w.reset(sink)   // 先刷出,再改挂到 sink
 
 ## net 包
 
-套接字:TCP、UDP、Unix 域套接字、DNS 和 TLS——一层薄而可读的 Emo 源码,架在运行时的网络内建之上。直接风格:阻塞调用读起来和其他函数调用一样,套接字忙时调度器把进程停驻。每个失败——连接被拒、名字解析不出、超时——都带着对端、操作和原因抛出。
+套接字:TCP、UDP、Unix 域套接字、DNS 和 TLS——一层薄而可读的 Emo 源码,架在运行时的网络内建之上。直接风格:阻塞调用读起来和其他函数调用一样,套接字忙时调度器把进程停驻。每个失败——连接被拒、名字解析不出、超时——都以 `(R.error, reason)` 返回,reason 写明对端、操作与原因。
 
 ```emo
-def resolve(host String) Array[String]
-def connect(host String, port Int64, timeout Float64) TcpConn
-def listen(host String, port Int64) TcpListener
-def connect_unix(path String, timeout Float64) TcpConn
-def listen_unix(path String) TcpListener
-def tls_connect(host String, port Int64, timeout Float64) TcpConn
-def tls_connect_insecure(host String, port Int64, timeout Float64) TcpConn
-def listen_tls(host String, port Int64, cert_path String, key_path String) TcpListener
-def udp_bind(host String, port Int64) UdpSocket
+def resolve(host String) (R, Array[String])
+def connect(host String, port Int64, timeout Float64) (R, TcpConn)
+def listen(host String, port Int64) (R, TcpListener)
+def connect_unix(path String, timeout Float64) (R, TcpConn)
+def listen_unix(path String) (R, TcpListener)
+def tls_connect(host String, port Int64, timeout Float64) (R, TcpConn)
+def tls_connect_insecure(host String, port Int64, timeout Float64) (R, TcpConn)
+def listen_tls(host String, port Int64, cert_path String, key_path String) (R, TcpListener)
+def udp_bind(host String, port Int64) (R, UdpSocket)
 ```
 
 超时以秒计;`0.0` 表示无限等待。`tls_connect` 按系统信任库验证对端证书;`tls_connect_insecure` 是显式、可见危险的退出。
 
 ```emo
-conn.read_line()          // String —— 一行,不含终止符
-conn.read_exactly(n)      // String —— 恰好 n 字节
-conn.read_all()           // String —— 读到对端关闭为止
-conn.write(data)          // TcpConn —— 返回自身,写入可以链式
-conn.close()              // TcpConn
+conn.read_line()          // (R, String) —— 一行,不含终止符
+conn.read_exactly(n)      // (R, String) —— 恰好 n 字节
+conn.read_all()           // (R, String) —— 读到对端关闭为止
+conn.write(data)          // (R, TcpConn) —— 经解构的 (R.ok, conn) 链式写入
+conn.close()              // (R, TcpConn)
 conn.set_timeout(seconds) // TcpConn
 
-listener.accept()         // TcpConn —— 停驻直到连接到来
+listener.accept()         // (R, TcpConn) —— 停驻直到连接到来
 listener.port()           // Int64 —— 绑定的端口
-listener.close()          // TcpListener
+listener.close()          // (R, TcpListener)
 listener.set_timeout(seconds)
 
-socket.send_to(host, port, data) // UdpSocket —— 返回自身
-socket.recv_from()               // (String, String, Int64) —— 数据、主机、端口
+socket.send_to(host, port, data) // (R, UdpSocket)
+socket.recv_from()               // (R, (String, String, Int64)) —— 数据、主机、端口
 socket.port()                    // Int64
-socket.close()                   // UdpSocket
+socket.close()                   // (R, UdpSocket)
 socket.set_timeout(seconds)
 ```
 
-EOF 绝不是静默的部分结果:对端提前关闭时 `read_exactly` 抛出,行中途中闭是错误,`read_all` 是唯一把 EOF 当作正常读完的读取。Unix 域监听器没有端口——对它调 `port()` 是错误。
+EOF 绝不是静默的部分结果:对端提前关闭时 `read_exactly` 以 reason 失败,行中途中闭是错误元组,`read_all` 是唯一把 EOF 当作正常读完的读取。Unix 域监听器没有端口——对它调 `port()` 是错误。
 
 目标:`["ocaml", "c"]`。参考:[`docs/zh-CN/stdlib/net.md`](stdlib/net.md) · 示例:`examples/tcp_echo`。
 
@@ -186,11 +187,11 @@ EOF 绝不是静默的部分结果:对端提前关闭时 `read_exactly` 抛出,�
 构建在 `net` 之上的纯 Emo HTTP 客户端与服务器。全程直接风格;每个请求一条连接,交换完成后关闭;重定向从不自动跟随——3xx 和其他响应一样。
 
 ```emo
-def get(url String) HttpResponse
-def post(url String, body String) HttpResponse
-def put(url String, body String) HttpResponse
-def delete(url String) HttpResponse
-def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) HttpResponse
+def get(url String) (R, HttpResponse)
+def post(url String, body String) (R, HttpResponse)
+def put(url String, body String) (R, HttpResponse)
+def delete(url String) (R, HttpResponse)
+def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
 ```
 
 URL 必须带显式的 `http://` 或 `https://` scheme;`https` 走 `net.tls_connect`——证书验证开启。响应:
@@ -216,7 +217,7 @@ def response(status Int64, headers Array[(String, String)], body String) HttpRes
 require "http"
 require "net"
 
-const listener = net.listen("127.0.0.1", 8902)
+const (R.ok, listener) = net.listen("127.0.0.1", 8902)
 
 http.serve_requests(listener) -> (req HttpRequest) {
   return http.response(200, [("Content-Type", "text/plain")], "hello from emo\n")
@@ -230,7 +231,7 @@ http.serve_requests(listener) -> (req HttpRequest) {
 JSON 读写器:严格、字节级的 RFC 8259 解码进 `Json` 值树,再编码回去——紧凑或带缩进。`Json` 是一个接口,每种 JSON 类一个实现类(`JsonNull`、`JsonBool`、`JsonInt`、`JsonFloat`、`JsonString`、`JsonArray`、`JsonObject`),由 `JsonKind` 枚举区分。
 
 ```emo
-def decode(text String) Json
+def decode(text String) (R, Json)
 def encode(v Json) String
 def encode_pretty(v Json) String   // 两空格缩进
 ```
@@ -258,7 +259,7 @@ def array(items Array[Json]) Json
 def object(entries Array[(String, Json)]) Json
 ```
 
-解码在每个格式错误处带字节偏移抛出;嵌套超过 512 层直接抛出,不赌栈。浮点以最短往返形式编码,且始终保持可见的浮点形态(`1.0`,绝不是 `1`),因此 encode → decode → encode 是恒等——值与种类都不变。
+解码以 `(R.ok, doc)` 或 `(R.error, reason)` 回答——reason 带字节偏移,覆盖每个格式错误,嵌套超过 512 层同理。浮点以最短往返形式编码,且始终保持可见的浮点形态(`1.0`,绝不是 `1`),因此 encode → decode → encode 是恒等——值与种类都不变。
 
 目标:全部五个——每个目标上都逐字节一致。参考:[`docs/zh-CN/stdlib/json.md`](stdlib/json.md) · 示例:`examples/json_demo`、`examples/json_edge`。
 
@@ -267,13 +268,13 @@ def object(entries Array[(String, Json)]) Json
 YAML 读写器:YAML 1.2 的 core schema 解码进与 json 包同构设计的 `Yaml` 值树,再以块风格编码回去。两个包相互独立——require yaml 不需要 json。
 
 ```emo
-def decode(text String) Yaml
+def decode(text String) (R, Yaml)
 def encode(v Yaml) String
 ```
 
 `Yaml` 是一个接口,实现类为 `YamlNull`、`YamlBool`、`YamlInt`、`YamlFloat`、`YamlString`、`YamlArray`、`YamlObject`,由 `YamlKind` 区分;访问器和工厂与 json 完全同名(`yaml.null()`、`yaml.bool(b)`、`yaml.int64(n)`、`yaml.float64(x)`、`yaml.string(s)`、`yaml.array(items)`、`yaml.object(entries)`);映射的键是字符串。
 
-解码覆盖块映射与块序列(含紧凑的 `- key: value` 形式)、flow 集合、带 YAML 转义集的引号标量、注释、带 chomping 的 `|`/`>` 块标量,以及按 core schema 解析的 plain 标量(`null`/`~`、布尔、十进制与 `0x`/`0o` 整数、含 `.inf`/`.nan` 的浮点)。锚点与别名、tag、多文档输入、缩进中的 tab 都带字节偏移抛出。
+解码覆盖块映射与块序列(含紧凑的 `- key: value` 形式)、flow 集合、带 YAML 转义集的引号标量、注释、带 chomping 的 `|`/`>` 块标量,以及按 core schema 解析的 plain 标量(`null`/`~`、布尔、十进制与 `0x`/`0o` 整数、含 `.inf`/`.nan` 的浮点)。锚点与别名、tag、多文档输入、缩进中的 tab 都以 `(R.error, reason)` 返回并带字节偏移。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/yaml.md`](stdlib/yaml.md) · 示例:`examples/yaml_demo`、`examples/yaml_edge`。
 
@@ -282,7 +283,7 @@ def encode(v Yaml) String
 XML 读写器:良构的 XML 解码进 `Xml` 值树,再编码回去。XML 全是文本——任何东西都不强转成数字或布尔,全部文本子节点都保留,因此 `encode(decode(x))` 精确复现原树。
 
 ```emo
-def decode(text String) Xml
+def decode(text String) (R, Xml)
 def encode(v Xml) String
 ```
 
@@ -301,7 +302,7 @@ def element(name String, attrs Array[(String, String)], children Array[Xml]) Xml
 def text(s String) Xml
 ```
 
-解码严格检查良构性——元素按序嵌套闭合、属性唯一且值带引号、根元素恰好一个——并跳过声明、注释、处理指令和不含内部子集的 DOCTYPE;CDATA 按原始文本解码;五个预定义实体加 `&#ddd;` / `&#xhh;` 字符引用在文本和属性值里处处解码。每个失败带字节偏移抛出。
+解码严格检查良构性——元素按序嵌套闭合、属性唯一且值带引号、根元素恰好一个——并跳过声明、注释、处理指令和不含内部子集的 DOCTYPE;CDATA 按原始文本解码;五个预定义实体加 `&#ddd;` / `&#xhh;` 字符引用在文本和属性值里处处解码。每个失败都以 `(R.error, reason)` 返回并带字节偏移。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/xml.md`](stdlib/xml.md) · 示例:`examples/xml_demo`、`examples/xml_edge`。
 
@@ -311,10 +312,10 @@ RFC 4648 base64 编解码器:字节进,带填充的 base64 文本出,再回来�
 
 ```emo
 def encode(data String) String
-def decode(text String) String
+def decode(text String) (R, String)
 ```
 
-`encode` 永远输出标准字母表加 `=` 填充。`decode` 只接受编码器产出的东西:仅标准字母表,填充只在最后一个量子,RFC 要求为零的填充位必须真的是零——`QR==` 是错误,不是 `QQ==` 的同义词。不容忍空白,不接受换行拆分;每次拒绝都带出错字节偏移抛出。
+`encode` 永远输出标准字母表加 `=` 填充。`decode` 只接受编码器产出的东西:仅标准字母表,填充只在最后一个量子,RFC 要求为零的填充位必须真的是零——`QR==` 是错误,不是 `QQ==` 的同义词。不容忍空白,不接受换行拆分;每次拒绝都以 `(R.error, reason)` 返回,带出错字节偏移。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/base64.md`](stdlib/base64.md) · 示例:`examples/base64_demo`。
 

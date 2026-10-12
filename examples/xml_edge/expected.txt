@@ -14,3 +14,6 @@ plain bold after
 y
 <r/>
 r
+xml: closing tag `a` does not match `b` at byte 8
+xml: unterminated element `a` at byte 3
+xml: unknown entity at byte 4

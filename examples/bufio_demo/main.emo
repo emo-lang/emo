@@ -51,7 +51,7 @@ println(pe.read(8) == "")
 
 // ---- a buffered writer over a file, 8 bytes at a time ----
 const path = "bufio-demo-" + os.getpid().to_string() + ".tmp"
-const fd = os.open_write(path)
+const (R.ok, fd) = os.open_write(path)
 const bw = bufio.writer_size(bufio.fd_writer(fd), 8)
 bw.write("buffered ")
 bw.write("lines\n")
@@ -65,7 +65,7 @@ println(bw.available().to_string())
 os.close(fd)
 
 // ---- read the file back through two stacked readers ----
-const rfd = os.open_read(path)
+const (R.ok, rfd) = os.open_read(path)
 const top = bufio.reader_size(bufio.reader_size(bufio.fd_reader(rfd), 8), 4)
 dump(top)
 os.close(rfd)

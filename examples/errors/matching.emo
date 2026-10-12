@@ -1,0 +1,13 @@
+// The README's expected-failure shape, verbatim: the call returns
+// (R.ok, body) or (R.error, reason), and the pair is matched, not
+// caught — the built-in R needs no import. Run it:
+//
+//   emo run matching.emo
+
+const path = "config.data"
+file.write(path, "payload line")
+
+case file.read(path) {
+  (R.ok, body)   -> { println(body) }
+  (R.error, why) -> { println("read failed: ${why}") }
+}

@@ -27,21 +27,22 @@ package {
 ## 接口
 
 ```emo
-def read(path String) String
-def write(path String, contents String) Int64
+def read(path String) (R, String)
+def write(path String, contents String) (R, Int64)
 ```
 
-`read` 返回文件的字节。文件缺失或不可读时抛普通 Emo 异常,消息写
-明路径和原因——`cannot read notes.txt: No such file or directory`。
+`read` 返回文件的字节,失败时返回 `(R.error, reason)`——reason 是
+String,写明路径和内核的说法:
+`file: cannot read notes.txt: No such file or directory`。
 
 `write` 创建或截断该路径,写完全部 `contents` 字节,返回写入的字
-节数——永远是全部,否则失败抛出。路径不可写时以同样的方式抛出。
+节数——永远是全部,否则失败以错误元组返回。路径不可写时同理。
 
 ## 路径
 
 路径按原样使用:相对路径相对进程的工作目录解析,工作目录由
 `os.getcwd` 读取、`os.chdir` 改动。`file` 自己不做路径规范化,也不
-做权限判断——内核说什么,异常就说什么。
+做权限判断——内核说什么,reason 就说什么。
 
 ## 什么时候往下走
 

@@ -209,7 +209,17 @@ let collect_items ~(file : string) ~(module_path : string list)
                    ~local:false))
             g.Ast.group_consts
       | Ast.Item_stmt
-          { Ast.stmt_desc = Ast.Binding { mutable_; name; init }; stmt_span } ->
+          {
+            Ast.stmt_desc =
+              Ast.Binding
+                {
+                  mutable_;
+                  pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                  init;
+                  _;
+                };
+            stmt_span;
+          } ->
           add
             (mk ~name
                ~kind:(if mutable_ then Kind.variable else Kind.constant)
@@ -244,7 +254,12 @@ let collect_locals ~(file : string) ~(module_path : string list)
     List.iter
       (fun (s : Ast.stmt) ->
         match s.Ast.stmt_desc with
-        | Ast.Binding { mutable_; name; _ } ->
+        | Ast.Binding
+            {
+              mutable_;
+              pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+              _;
+            } ->
             out :=
               mk ~name
                 ~kind:(if mutable_ then Kind.variable else Kind.constant)

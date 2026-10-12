@@ -106,10 +106,10 @@ and pp_type_ann fmt { Emo_ast.type_desc; _ } =
 and pp_stmt fmt (s : Emo_ast.stmt) =
   match s.Emo_ast.stmt_desc with
   | Emo_ast.Expr_stmt e -> pp_expr fmt e
-  | Emo_ast.Binding { mutable_; name; init } ->
-      Format.fprintf fmt "(%s %s %a)"
+  | Emo_ast.Binding { mutable_; pattern; init } ->
+      Format.fprintf fmt "(%s %a %a)"
         (if mutable_ then "var" else "const")
-        name pp_expr init
+        pp_pattern pattern pp_expr init
   | Emo_ast.Assign { target; value } ->
       Format.fprintf fmt "(= %a %a)" pp_expr target pp_expr value
   | Emo_ast.Return None -> Format.pp_print_string fmt "return"
@@ -491,6 +491,38 @@ let stmt_tests =
             Alcotest.fail
               (Printf.sprintf "expected 2 statements, got %d"
                  (List.length stmts)));
+    tc "a binding takes a full pattern in place of the name" (fun () ->
+        match
+          parse_program "const (R.ok, body) = pick()\nvar (a, b) = pair()"
+        with
+        | [ ok_binding; pair_binding ] ->
+            Alcotest.(check string)
+              "the assert-match binding" "(const (tuple R.ok body) (pick call))"
+              (render pp_item ok_binding);
+            Alcotest.(check string)
+              "a var destructures too" "(var (tuple a b) (pair call))"
+              (render pp_item pair_binding)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 statements, got %d"
+                 (List.length stmts)));
+    tc "the wildcard binds nothing and still parses" (fun () ->
+        match parse_program "const _ = side_effect()" with
+        | [ wildcard ] ->
+            Alcotest.(check string)
+              "wildcard" "(const _ (side_effect call))"
+              (render pp_item wildcard)
+        | stmts ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 statement, got %d" (List.length stmts)));
+    tc "a group's const binds a plain name" (fun () ->
+        let diagnostic =
+          program_err "emo Math {\n  const (R.ok, tau) = split()\n}"
+        in
+        Alcotest.(check string) "code" "E2001" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "a group's `const` binds a plain name"
+          diagnostic.Diagnostic.message);
     tc "a binding name cannot end in a question mark" (fun () ->
         let diagnostic = program_err "const is_x? = true" in
         Alcotest.(check string) "code" "E2007" (code_of diagnostic));
@@ -502,8 +534,8 @@ let stmt_tests =
               ("code of " ^ source) "E2007" (code_of diagnostic);
             Alcotest.(check string)
               ("message of " ^ source)
-              (Printf.sprintf
-                 "expected a binding name, found `%s` (a reserved word)" word)
+              (Printf.sprintf "expected a pattern, found `%s` (a reserved word)"
+                 word)
               diagnostic.Diagnostic.message)
           [
             ("var for = 3", "for");

@@ -5,13 +5,13 @@ require "xml"
 // order and quoting, mixed content, and decode/encode round-trips.
 
 // ---- entity forms ----
-const ents = xml.decode("<r a=\"&#65;\">&#x4e16;&lt;&amp;&gt;&quot;&apos;&#x1f600;</r>")
+const (R.ok, ents) = xml.decode("<r a=\"&#65;\">&#x4e16;&lt;&amp;&gt;&quot;&apos;&#x1f600;</r>")
 println(ents.text().to_bytes().length().to_string())
 println(ents.encode())
 println(ents.attr("a"))
 
 // ---- attributes: order preserved, both quote styles ----
-const attrs = xml.decode("<e one='1' two=\"2\" three='333' />")
+const (R.ok, attrs) = xml.decode("<e one='1' two=\"2\" three='333' />")
 println(attrs.encode())
 if attrs.is(XmlElement) {
   println(attrs.attrs().length().to_string())
@@ -19,7 +19,7 @@ if attrs.is(XmlElement) {
 }
 
 // ---- same-name children: get takes the first ----
-const many = xml.decode("<list><i>1</i><i>2</i><i>3</i></list>")
+const (R.ok, many) = xml.decode("<list><i>1</i><i>2</i><i>3</i></list>")
 if many.is(XmlElement) {
   println(many.get("i").text())
   println(many.children().length().to_string())
@@ -27,7 +27,7 @@ if many.is(XmlElement) {
 }
 
 // ---- mixed content and round trips ----
-const mixed = xml.decode("<p>plain <b>bold</b> after</p>")
+const (R.ok, mixed) = xml.decode("<p>plain <b>bold</b> after</p>")
 println(mixed.encode())
 if mixed.is(XmlElement) {
   println(mixed.children().length().to_string())
@@ -35,13 +35,27 @@ if mixed.is(XmlElement) {
 }
 
 // ---- self-closing and nested ----
-const nest = xml.decode("<outer><inner><deepest x=\"y\"/></inner></outer>")
+const (R.ok, nest) = xml.decode("<outer><inner><deepest x=\"y\"/></inner></outer>")
 println(nest.encode())
 if nest.is(XmlElement) {
   println(nest.get("inner").get("deepest").attr("x"))
 }
 
 // ---- a document with declaration, comment, and PI ----
-const full = xml.decode("<?xml version=\"1.0\" encoding=\"utf-8\"?><!-- leading --><?render fancy?><r/>")
+const (R.ok, full) = xml.decode("<?xml version=\"1.0\" encoding=\"utf-8\"?><!-- leading --><?render fancy?><r/>")
 println(full.encode())
 println(full.name())
+
+// ---- malformed input: the failure comes back as a value ----
+case xml.decode("<a><b></a>") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case xml.decode("<a>") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case xml.decode("<a>&nope;</a>") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}

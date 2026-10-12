@@ -46,7 +46,7 @@ Arrays and objects carry their containers on the concrete classes,
 read through `is()` into the class:
 
 ```emo
-const doc = json.decode(text)
+const (R.ok, doc) = json.decode(text)
 if doc.is(JsonObject) {
   println(doc.get("name").as_string())
   println(doc.get("tags").items().length())
@@ -64,18 +64,19 @@ if doc.is(JsonObject) {
 ## Decode
 
 ```emo
-def decode(text String) Json
+def decode(text String) (R, Json)
 ```
 
 Strict, byte-level, RFC 8259: duplicate keys last-win in `get`,
 leading zeros and trailing commas refuse, `\uXXXX` escapes decode with
-surrogate pairs into UTF-8, and every failure raises with the byte
-offset — `json: expected array element at byte 3`. Nesting deeper than
-512 raises rather than betting the stack. Integers that fit `Int64`
-decode as `JsonInt`; anything with a fraction or exponent decodes as
-`JsonFloat`, rounded once, to nearest with ties to even — the same
-answer `strtod` gives. An out-of-range number
-(`1e400`) raises instead of inventing an infinity.
+surrogate pairs into UTF-8. Every malformed input — and every number
+out of `Int64`'s or the float's range, nesting deeper than 512
+included — comes back as `(R.error, reason)` instead of inventing a
+value: the reason a String stating exactly what failed and at what
+byte offset, `json: expected array element at byte 3`. Integers that
+fit `Int64` decode as `JsonInt`; anything with a fraction or exponent
+decodes as `JsonFloat`, rounded once, to nearest with ties to even —
+the same answer `strtod` gives.
 
 ## Encode
 
@@ -110,8 +111,10 @@ println(json.encode_pretty(doc))
 
 ## Errors
 
-Following the standard library's convention, every failure — malformed
-input, a missing key, a wrong-kind accessor, an out-of-range number, a
-non-finite float — raises an ordinary Emo exception whose message
-states exactly what failed (and at what byte offset, for decode). No
+The split follows the standard library's convention. Malformed input —
+the data can be anything — is the value `(R.error, reason)` from
+`decode`, the reason a String stating exactly what failed (and at what
+byte offset): match it, don't guess. A wrong-kind accessor, a missing
+key, and a non-finite float handed to `encode` are the caller's broken
+assertions about the document — those raise, ending the process. No
 error codes, no nil.

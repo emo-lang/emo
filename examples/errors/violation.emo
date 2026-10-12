@@ -1,0 +1,12 @@
+// The README's violation: a broken contract raises. Exception is the
+// language's one exception class, and its data Map is the crash
+// report's machine-readable context. A raise cannot be caught; it ends
+// the process. Run it:
+//
+//   emo run violation.emo
+
+def connect(host String) {
+  raise Exception.new("connect timed out", { "op": "connect", "peer": host })
+}
+
+connect("10.0.0.1:443")

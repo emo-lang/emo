@@ -36,7 +36,7 @@ A decoded document is a `Xml`: an interface over `XmlElement` and
 containers live on the element class, read through `is()`:
 
 ```emo
-const doc = xml.decode(text)
+const (R.ok, doc) = xml.decode(text)
 if doc.is(XmlElement) {
   println(doc.name())
   println(doc.attr("id"))
@@ -58,7 +58,7 @@ if doc.is(XmlElement) {
 ## Decode
 
 ```emo
-def decode(text String) Xml
+def decode(text String) (R, Xml)
 ```
 
 Strict and well-formedness checking: elements nest and close in
@@ -69,7 +69,11 @@ subset are skipped; CDATA sections decode as raw text; the five
 predefined entities plus `&#ddd;` / `&#xhh;` character references
 decode everywhere (text and attribute values). Names are literal — a
 prefix stays part of the name, and no namespace resolution happens.
-Every failure raises with the byte offset.
+Every failure — a mismatched closing tag, a duplicate attribute, an
+unknown entity, an unterminated construct — comes back as
+`(R.error, reason)`, the reason a String stating exactly what failed
+and at what byte offset: ``xml: closing tag `a` does not match `b` at
+byte 8``.
 
 ## Encode
 
@@ -97,8 +101,9 @@ println(xml.encode(note))
 
 ## Errors
 
-Following the standard library's convention, every failure —
-malformed markup, a mismatched closing tag, a duplicate attribute, an
-unknown entity, a missing element or attribute — raises an ordinary
-Emo exception whose message states exactly what failed (and at what
-byte offset, for decode). No error codes, no nil.
+The split follows the standard library's convention. Malformed markup —
+the data can be anything — is the value `(R.error, reason)` from
+`decode`, the reason a String stating exactly what failed (and at what
+byte offset): match it, don't guess. A missing element or attribute is
+the caller's broken assertion about the document — those raise, ending
+the process. No error codes, no nil.

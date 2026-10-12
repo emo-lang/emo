@@ -6,14 +6,25 @@
 
 const path = "emo-file-demo.txt"
 
-const written = file.write(path, "hello from disk\nline two\n")
+const (R.ok, written) = file.write(path, "hello from disk\nline two\n")
 println(written)
 
-const text = file.read(path)
+const (R.ok, text) = file.read(path)
 println(text.length())
 println(text.substring(0, 5))
 
 file.write(path, "overwritten\n")
-const second = file.read(path)
+const (R.ok, second) = file.read(path)
 println(second.length())
 println(second == text)
+
+// The misses answer as values: an unreadable path and an uncreatable
+// one each come back as (R.error, reason) instead of ending the run.
+case file.read("emo-file-demo-missing.txt") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case file.write("/emo-file-demo-missing-dir/emo-file-demo.txt", "hi") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}

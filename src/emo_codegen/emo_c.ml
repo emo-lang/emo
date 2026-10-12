@@ -30,6 +30,10 @@ let runtime_h = Emo_c_runtime_data.runtime_h
 type env = {
   mutable buf : Buffer.t;
   mutable fresh : int; (* unique temporaries, for tail-call rebinds *)
+  fresh_prefix : string;
+      (* salt on every fresh name: a cluster's members share one C
+         function, and labels are function-scoped in C — each member
+         salts with its mangled name so their labels cannot collide *)
   mutable scope : (string * string * Emo_check.t) list;
       (* Emo name → (C name, bound type), innermost first: parameters
          and lets — the type drives the regime at assignment *)
@@ -548,27 +552,16 @@ and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
     | None -> refuse (Printf.sprintf "the builtin `%s`" name)
   in
   match name with
-  | "file_read" ->
-      let v = Printf.sprintf "emo_file_read(%s)" (arg 0 Emo_check.String) in
-      if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+  | "file_read" -> Printf.sprintf "emo_file_read(%s)" (arg 0 Emo_check.String)
   | "file_write" ->
-      let v =
-        Printf.sprintf "emo_file_write(%s, %s)" (arg 0 Emo_check.String)
-          (arg 1 Emo_check.String)
-      in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_file_write(%s, %s)" (arg 0 Emo_check.String)
+        (arg 1 Emo_check.String)
   | "net_listen" ->
-      let v =
-        Printf.sprintf "emo_net_listen(%s, %s)" (arg 0 Emo_check.String)
-          (arg 1 Emo_check.Int64)
-      in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_net_listen(%s, %s)" (arg 0 Emo_check.String)
+        (arg 1 Emo_check.Int64)
   | "net_connect" ->
-      let v =
-        Printf.sprintf "emo_net_connect(%s, %s, %s)" (arg 0 Emo_check.String)
-          (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
-      in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_net_connect(%s, %s, %s)" (arg 0 Emo_check.String)
+        (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
   | "printf" ->
       (* The format rides as a String, the data as its dynamic array —
          the runtime walks the elements against the conversions. *)
@@ -581,9 +574,7 @@ and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
   | "os_getppid" ->
       let v = Printf.sprintf "emo_os_getppid()" in
       if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
-  | "os_fork" ->
-      let v = Printf.sprintf "emo_os_fork()" in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_fork" -> Printf.sprintf "emo_os_fork()"
   | "os_waitpid" ->
       let v = Printf.sprintf "emo_os_waitpid(%s)" (arg 0 Emo_check.Int64) in
       v
@@ -598,55 +589,31 @@ and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
       v
   | "os__exit" -> Printf.sprintf "emo_os__exit(%s)" (arg 0 Emo_check.Int64)
   | "os_open_read" ->
-      let v = Printf.sprintf "emo_os_open_read(%s)" (arg 0 Emo_check.String) in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_os_open_read(%s)" (arg 0 Emo_check.String)
   | "os_open_write" ->
-      let v = Printf.sprintf "emo_os_open_write(%s)" (arg 0 Emo_check.String) in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_os_open_write(%s)" (arg 0 Emo_check.String)
   | "os_open_append" ->
-      let v =
-        Printf.sprintf "emo_os_open_append(%s)" (arg 0 Emo_check.String)
-      in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_os_open_append(%s)" (arg 0 Emo_check.String)
   | "os_read" ->
-      let v =
-        Printf.sprintf "emo_os_read(%s, %s)" (arg 0 Emo_check.Int64)
-          (arg 1 Emo_check.Int64)
-      in
-      if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+      Printf.sprintf "emo_os_read(%s, %s)" (arg 0 Emo_check.Int64)
+        (arg 1 Emo_check.Int64)
   | "os_write" ->
-      let v =
-        Printf.sprintf "emo_os_write(%s, %s)" (arg 0 Emo_check.Int64)
-          (arg 1 Emo_check.String)
-      in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
-  | "os_close" ->
-      let v = Printf.sprintf "emo_os_close(%s)" (arg 0 Emo_check.Int64) in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_os_write(%s, %s)" (arg 0 Emo_check.Int64)
+        (arg 1 Emo_check.String)
+  | "os_close" -> Printf.sprintf "emo_os_close(%s)" (arg 0 Emo_check.Int64)
   | "os_list_dir" ->
       let v = Printf.sprintf "emo_os_list_dir(%s)" (arg 0 Emo_check.String) in
       v
-  | "os_mkdir" ->
-      let v = Printf.sprintf "emo_os_mkdir(%s)" (arg 0 Emo_check.String) in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
-  | "os_rmdir" ->
-      let v = Printf.sprintf "emo_os_rmdir(%s)" (arg 0 Emo_check.String) in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
-  | "os_unlink" ->
-      let v = Printf.sprintf "emo_os_unlink(%s)" (arg 0 Emo_check.String) in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_mkdir" -> Printf.sprintf "emo_os_mkdir(%s)" (arg 0 Emo_check.String)
+  | "os_rmdir" -> Printf.sprintf "emo_os_rmdir(%s)" (arg 0 Emo_check.String)
+  | "os_unlink" -> Printf.sprintf "emo_os_unlink(%s)" (arg 0 Emo_check.String)
   | "os_rename" ->
-      let v =
-        Printf.sprintf "emo_os_rename(%s, %s)" (arg 0 Emo_check.String)
-          (arg 1 Emo_check.String)
-      in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_os_rename(%s, %s)" (arg 0 Emo_check.String)
+        (arg 1 Emo_check.String)
   | "os_getcwd" ->
       let v = Printf.sprintf "emo_os_getcwd()" in
       if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
-  | "os_chdir" ->
-      let v = Printf.sprintf "emo_os_chdir(%s)" (arg 0 Emo_check.String) in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_chdir" -> Printf.sprintf "emo_os_chdir(%s)" (arg 0 Emo_check.String)
   | other -> Printf.sprintf "emo_unsupported(\"%s\")" other
 
 and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
@@ -1132,30 +1099,27 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                  true
              | _ -> false -> (
           let recv = emit_expr env self_ in
-          (* The helpers return native values; each case states its return
-         so a dynamic use site takes the boxed form. *)
+          (* The tuple-shaped calls (the data-driven failures) answer
+             (R.ok, v) / (R.error, reason) directly — already dynamic
+             values, no boxing at any use site; the native-returning
+             helpers state their type so a dynamic use site takes the
+             boxed form. *)
           let ret (t : Emo_check.t) (v : string) : string =
             if is_dyn result_ty then box_code v t else v
           in
           match (name, args) with
-          | "accept", [] ->
-              ret Emo_check.Int64 (Printf.sprintf "emo_net_accept(%s)" recv)
+          | "accept", [] -> Printf.sprintf "emo_net_accept(%s)" recv
           | "port", [] ->
               ret Emo_check.Int64 (Printf.sprintf "emo_net_port(%s)" recv)
-          | "read_line", [] ->
-              ret Emo_check.String (Printf.sprintf "emo_net_read_line(%s)" recv)
+          | "read_line", [] -> Printf.sprintf "emo_net_read_line(%s)" recv
           | "read_exactly", [ n ] ->
-              ret Emo_check.String
-                (Printf.sprintf "emo_net_read_exactly(%s, %s)" recv
-                   (as_native env n Emo_check.Int64))
-          | "read_all", [] ->
-              ret Emo_check.String (Printf.sprintf "emo_net_read_all(%s)" recv)
+              Printf.sprintf "emo_net_read_exactly(%s, %s)" recv
+                (as_native env n Emo_check.Int64)
+          | "read_all", [] -> Printf.sprintf "emo_net_read_all(%s)" recv
           | "write", [ data ] ->
-              ret Emo_check.Int64
-                (Printf.sprintf "emo_net_write(%s, %s)" recv
-                   (as_native env data Emo_check.String))
-          | "close", [] ->
-              ret Emo_check.Int64 (Printf.sprintf "emo_net_close(%s)" recv)
+              Printf.sprintf "emo_net_write(%s, %s)" recv
+                (as_native env data Emo_check.String)
+          | "close", [] -> Printf.sprintf "emo_net_close(%s)" recv
           | "set_timeout", [ t ] ->
               ret Emo_check.Int64
                 (Printf.sprintf "emo_net_set_timeout(%s, %s)" recv
@@ -1619,7 +1583,7 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
 
 and fresh_c env base =
   env.fresh <- env.fresh + 1;
-  Printf.sprintf "%s%d" base env.fresh
+  Printf.sprintf "%s%s%d" env.fresh_prefix base env.fresh
 
 (* One branch's pattern as a predicate over the scrutinee word. *)
 and pattern_test env (s : string) (p : Ast.pattern) : string =
@@ -1978,9 +1942,12 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
          not collide at C scope. *)
       let uniq = env.fresh + 1 in
       env.fresh <- uniq;
-      let s = Printf.sprintf "__msg%d" uniq in
-      let retry = Printf.sprintf "__recv_retry_%d" uniq in
-      let end_label = Printf.sprintf "__recv_end_%d" uniq in
+      (* through the same salt as fresh_c: a receive inside a cluster
+         member shares one C function with its siblings *)
+      let q = env.fresh_prefix in
+      let s = Printf.sprintf "%s__msg%d" q uniq in
+      let retry = Printf.sprintf "%s__recv_retry_%d" q uniq in
+      let end_label = Printf.sprintf "%s__recv_end_%d" q uniq in
       put env "  emo_value %s = (emo_value)0;\n" s;
       put env "%s: ;\n" retry;
       put env "  if (emo_mailbox_empty()) {\n";
@@ -1992,7 +1959,7 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       List.iteri
         (fun i (b : Emo_ir.branch) ->
           let test = pattern_test env s b.Emo_ir.pattern in
-          let lbl = Printf.sprintf "__recv_b%d_%d" i uniq in
+          let lbl = Printf.sprintf "%s__recv_b%d_%d" q i uniq in
           put env "      if (%s) {\n" test;
           match b.Emo_ir.guard with
           | Some g ->
@@ -2016,9 +1983,9 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       put env "  goto %s;\n" retry;
       List.iteri
         (fun i (b : Emo_ir.branch) ->
-          put env "%s: ;\n" (Printf.sprintf "__recv_b%d_%d" i uniq);
+          put env "%s: ;\n" (Printf.sprintf "%s__recv_b%d_%d" q i uniq);
           pattern_bind_sfx env s b.Emo_ir.pattern
-            (Printf.sprintf "__r%d_%d" uniq i);
+            (Printf.sprintf "%s__r%d_%d" q uniq i);
           emit_stmts env b.Emo_ir.body;
           put env "  goto %s;\n" end_label)
         branches;
@@ -2689,6 +2656,7 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
         {
           env0 with
           fresh = 0;
+          fresh_prefix = c_ident m.Emo_ir.fname ^ "__";
           fname = m.Emo_ir.fname;
           fresult = m.Emo_ir.fresult;
           scope =
@@ -2917,6 +2885,7 @@ let emit (program : Emo_ir.program) : string * string =
     {
       buf;
       fresh = 0;
+      fresh_prefix = "";
       scope = [];
       fname = "";
       fresult = Emo_check.Void;

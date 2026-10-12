@@ -2115,12 +2115,6 @@ int64_t emo_unbox_pid(emo_value v) {
 
 /* ---- Hosted IO ---- */
 
-static void emo_io_fatal(emo_str what, const char *detail) {
-  fprintf(stderr, "uncaught exception: %.*s (%s)\n", (int)what.len,
-          what.bytes, detail);
-  exit(70);
-}
-
 static emo_str emo_str_from_parts(const char *p, int64_t n) {
   char *buf = emo_alloc(n);
   memcpy(buf, p, (size_t)n);
@@ -2128,12 +2122,36 @@ static emo_str emo_str_from_parts(const char *p, int64_t n) {
   return s;
 }
 
-emo_str emo_file_read(emo_str path) {
+/* The data-driven os failures are values: the call answers
+   (R.ok, value) or (R.error, reason) — the reason the same text the
+   raise carried. */
+static emo_value emo_os_pair(const char *member, emo_value v) {
+  emo_value elems[2];
+  elems[0] = emo_enum_new("R", member);
+  elems[1] = v;
+  return emo_tuple_new(2, elems);
+}
+
+static emo_value emo_os_ok(emo_value v) { return emo_os_pair("ok", v); }
+
+static emo_value emo_os_fail(const char *what, const char *arg) {
+  char buf[512];
+  if (arg[0] == 0)
+    snprintf(buf, sizeof buf, "os: %s: %s", what, strerror(errno));
+  else
+    snprintf(buf, sizeof buf, "os: %s %s: %s", what, arg, strerror(errno));
+  return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
+}
+
+emo_value emo_file_read(emo_str path) {
   char *clean = (char *)emo_str_cstr(path);
   FILE *f = fopen(clean, "rb");
-  if (f == NULL)
-    emo_io_fatal(emo_str_concat((emo_str){13, "read failed: "}, path),
-                 strerror(errno));
+  if (f == NULL) {
+    char why[512];
+    snprintf(why, sizeof why, "file: cannot read %s: %s", clean,
+             strerror(errno));
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
   fseek(f, 0, SEEK_END);
   long n = ftell(f);
   fseek(f, 0, SEEK_SET);
@@ -2141,23 +2159,32 @@ emo_str emo_file_read(emo_str path) {
   size_t got = fread((char *)out.bytes, 1, (size_t)n, f);
   fclose(f);
   if ((long)got != n)
-    emo_io_fatal(emo_str_concat((emo_str){13, "read failed: "}, path),
-                 "short read");
-  return out;
+    return emo_os_pair(
+        "error",
+        emo_box_str(emo_str_concat(
+            emo_str_from_cstr("file: cannot read "),
+            emo_str_concat(path, emo_str_from_cstr(": short read")))));
+  return emo_os_pair("ok", emo_box_str(out));
 }
 
-int64_t emo_file_write(emo_str path, emo_str contents) {
+emo_value emo_file_write(emo_str path, emo_str contents) {
   char *clean = (char *)emo_str_cstr(path);
   FILE *f = fopen(clean, "wb");
-  if (f == NULL)
-    emo_io_fatal(emo_str_concat((emo_str){13, "write failed: "}, path),
-                 strerror(errno));
+  if (f == NULL) {
+    char why[512];
+    snprintf(why, sizeof why, "file: cannot write %s: %s", clean,
+             strerror(errno));
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
   size_t put = fwrite(contents.bytes, 1, (size_t)contents.len, f);
   fclose(f);
   if ((int64_t)put != contents.len)
-    emo_io_fatal(emo_str_concat((emo_str){13, "write failed: "}, path),
-                 "short write");
-  return contents.len;
+    return emo_os_pair(
+        "error",
+        emo_box_str(emo_str_concat(
+            emo_str_from_cstr("file: cannot write "),
+            emo_str_concat(path, emo_str_from_cstr(": short write")))));
+  return emo_os_pair("ok", emo_box_i64((int64_t)contents.len));
 }
 
 /* ---- TCP ---- */
@@ -2183,10 +2210,16 @@ void emo_net_wait_readable(int64_t fd) {
   swapcontext(&emo_current->ctx, &emo_sched_ctx);
 }
 
-int64_t emo_net_listen(emo_str host, int64_t port) {
+/* The data-driven net failures are values, like the os ones above: the
+   call answers (R.ok, fd) or (R.error, reason) — the reason the same
+   text the fatal print carried. */
+
+emo_value emo_net_listen(emo_str host, int64_t port) {
   char *h = (char *)emo_str_cstr(host);
   int fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) emo_net_fatal("listen failed", strerror(errno));
+  if (fd < 0)
+    return emo_os_pair("error",
+                       emo_box_str(emo_str_from_cstr("listen failed")));
   int one = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
   struct sockaddr_in addr;
@@ -2195,15 +2228,20 @@ int64_t emo_net_listen(emo_str host, int64_t port) {
   addr.sin_port = htons((uint16_t)port);
   if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
     close(fd);
-    emo_net_fatal("listen failed", "invalid host");
+    char buf[512];
+    snprintf(buf, sizeof buf, "cannot resolve host `%s`", h);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
   }
   if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0 ||
       listen(fd, 16) < 0) {
+    char what[512];
+    snprintf(what, sizeof what, "cannot listen on %s:%d: %s", h, (int)port,
+             strerror(errno));
     close(fd);
-    emo_net_fatal("listen failed", strerror(errno));
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
   }
   emo_net_nonblock(fd);
-  return fd;
+  return emo_os_pair("ok", emo_box_i64(fd));
 }
 
 int64_t emo_net_port(int64_t listener) {
@@ -2214,38 +2252,52 @@ int64_t emo_net_port(int64_t listener) {
   return ntohs(addr.sin_port);
 }
 
-int64_t emo_net_accept(int64_t listener) {
+emo_value emo_net_accept(int64_t listener) {
   for (;;) {
     int fd = accept((int)listener, NULL, NULL);
     if (fd >= 0) {
       emo_net_nonblock(fd);
-      return fd;
+      return emo_os_pair("ok", emo_box_i64(fd));
     }
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
       emo_net_wait_readable(listener);
       continue;
     }
-    emo_net_fatal("accept failed", strerror(errno));
+    char what[512];
+    snprintf(what, sizeof what, "cannot accept: %s", strerror(errno));
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
   }
 }
 
-int64_t emo_net_connect(emo_str host, int64_t port, double timeout) {
+emo_value emo_net_connect(emo_str host, int64_t port, double timeout) {
   char *h = (char *)emo_str_cstr(host);
   int fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) emo_net_fatal("connect failed", strerror(errno));
+  if (fd < 0)
+    return emo_os_pair("error",
+                       emo_box_str(emo_str_from_cstr("connect failed")));
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof addr);
   addr.sin_family = AF_INET;
   addr.sin_port = htons((uint16_t)port);
   if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
     close(fd);
-    emo_net_fatal("connect failed", "invalid host");
+    char buf[512];
+    snprintf(buf, sizeof buf, "cannot resolve host `%s`", h);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
   }
-  if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0)
-    emo_net_fatal("connect failed", strerror(errno));
+  if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
+    char what[512];
+    if (errno == ECONNREFUSED)
+      snprintf(what, sizeof what, "connection refused to %s:%d", h, (int)port);
+    else
+      snprintf(what, sizeof what, "cannot connect to %s:%d: %s", h, (int)port,
+               strerror(errno));
+    close(fd);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+  }
   emo_net_set_timeout(fd, timeout);
   emo_net_nonblock(fd);
-  return fd;
+  return emo_os_pair("ok", emo_box_i64(fd));
 }
 
 int64_t emo_net_set_timeout(int64_t fd, double seconds) {
@@ -2257,20 +2309,22 @@ int64_t emo_net_set_timeout(int64_t fd, double seconds) {
 }
 
 /* One byte at a time is slow but exact; the arena absorbs the growth. */
-emo_str emo_net_read_line(int64_t fd) {
+emo_value emo_net_read_line(int64_t fd) {
   emo_str out = emo_str_from_parts("", 0);
   for (;;) {
     char c;
     ssize_t got = recv((int)fd, &c, 1, 0);
-    if (got == 0) return out; /* EOF ends the line */
+    if (got == 0) return emo_os_pair("ok", emo_box_str(out)); /* EOF ends the line */
     if (got < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         emo_net_wait_readable(fd);
         continue;
       }
-      emo_net_fatal("read failed", strerror(errno));
+      char what[512];
+      snprintf(what, sizeof what, "cannot read: %s", strerror(errno));
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
-    if (c == '\n') return out;
+    if (c == '\n') return emo_os_pair("ok", emo_box_str(out));
     if (c == '\r') continue;
     char *bigger = emo_alloc(out.len + 1);
     memcpy(bigger, out.bytes, (size_t)out.len);
@@ -2280,37 +2334,44 @@ emo_str emo_net_read_line(int64_t fd) {
   }
 }
 
-emo_str emo_net_read_exactly(int64_t fd, int64_t n) {
+emo_value emo_net_read_exactly(int64_t fd, int64_t n) {
   emo_str out = emo_str_from_parts("", n);
   int64_t got_total = 0;
   while (got_total < n) {
     ssize_t got = recv((int)fd, (char *)out.bytes + got_total,
                        (size_t)(n - got_total), 0);
-    if (got == 0) emo_net_fatal("read failed", "the connection closed early");
+    if (got == 0)
+      return emo_os_pair(
+          "error",
+          emo_box_str(emo_str_from_cstr("the connection closed early")));
     if (got < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         emo_net_wait_readable(fd);
         continue;
       }
-      emo_net_fatal("read failed", strerror(errno));
+      char what[512];
+      snprintf(what, sizeof what, "cannot read: %s", strerror(errno));
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
     got_total += got;
   }
-  return out;
+  return emo_os_pair("ok", emo_box_str(out));
 }
 
-emo_str emo_net_read_all(int64_t fd) {
+emo_value emo_net_read_all(int64_t fd) {
   emo_str out = emo_str_from_parts("", 0);
   for (;;) {
     char chunk[4096];
     ssize_t got = recv((int)fd, chunk, sizeof chunk, 0);
-    if (got == 0) return out;
+    if (got == 0) return emo_os_pair("ok", emo_box_str(out));
     if (got < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         emo_net_wait_readable(fd);
         continue;
       }
-      emo_net_fatal("read failed", strerror(errno));
+      char what[512];
+      snprintf(what, sizeof what, "cannot read: %s", strerror(errno));
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
     char *bigger = emo_alloc(out.len + got);
     memcpy(bigger, out.bytes, (size_t)out.len);
@@ -2320,20 +2381,24 @@ emo_str emo_net_read_all(int64_t fd) {
   }
 }
 
-int64_t emo_net_write(int64_t fd, emo_str data) {
+emo_value emo_net_write(int64_t fd, emo_str data) {
   int64_t sent_total = 0;
   while (sent_total < data.len) {
     ssize_t sent =
         send((int)fd, data.bytes + sent_total, (size_t)(data.len - sent_total), 0);
-    if (sent < 0) emo_net_fatal("write failed", strerror(errno));
+    if (sent < 0) {
+      char what[512];
+      snprintf(what, sizeof what, "cannot write: %s", strerror(errno));
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+    }
     sent_total += sent;
   }
-  return data.len;
+  return emo_os_pair("ok", emo_box_i64(fd));
 }
 
-int64_t emo_net_close(int64_t fd) {
+emo_value emo_net_close(int64_t fd) {
   close((int)fd);
-  return fd;
+  return emo_os_pair("ok", emo_box_i64(fd));
 }
 
 /* ---- String methods ---- */
@@ -2566,40 +2631,33 @@ double emo_f64_from_bits(int64_t bits) {
 
 /* ---- the os module: synchronous POSIX syscalls ---- */
 
-static int64_t emo_os_fail(const char *what, const char *arg) {
-  char buf[512];
-  if (arg[0] == 0)
-    snprintf(buf, sizeof buf, "os: %s: %s", what, strerror(errno));
-  else
-    snprintf(buf, sizeof buf, "os: %s %s: %s", what, arg, strerror(errno));
-  emo_raise(emo_make_exception(emo_str_from_cstr(buf)));
-  return 0; /* unreachable: emo_raise exits */
-}
-
 int64_t emo_os_getpid(void) { return (int64_t)getpid(); }
 
 int64_t emo_os_getppid(void) { return (int64_t)getppid(); }
 
-int64_t emo_os_fork(void) { return (int64_t)fork(); }
+emo_value emo_os_fork(void) { return emo_os_ok(emo_box_i64((int64_t)fork())); }
 
 int64_t emo_os_waitpid(int64_t pid) {
   int st = 0;
-  if (waitpid((pid_t)pid, &st, 0) < 0)
-    return (int64_t)emo_os_fail("waitpid", "");
+  if (waitpid((pid_t)pid, &st, 0) < 0) {
+    char buf[512];
+    snprintf(buf, sizeof buf, "os: waitpid: %s", strerror(errno));
+    emo_raise(emo_make_exception(emo_str_from_cstr(buf)));
+  }
   emo_value elems[2];
   elems[0] = emo_box_i64(pid);
   elems[1] = emo_box_i64((int64_t)st);
   return emo_tuple_new(2, elems);
 }
 
-int64_t emo_os_pipe(void) {
+emo_value emo_os_pipe(void) {
   int fds[2];
   if (pipe(fds) != 0)
-    return (int64_t)emo_os_fail("pipe", "");
+    return emo_os_fail("pipe", "");
   emo_value elems[2];
   elems[0] = emo_box_i64(fds[0]);
   elems[1] = emo_box_i64(fds[1]);
-  return emo_tuple_new(2, elems);
+  return emo_os_ok(emo_tuple_new(2, elems));
 }
 
 int64_t emo_os_execv(emo_str path, emo_value argv) {
@@ -2615,60 +2673,59 @@ int64_t emo_os_execv(emo_str path, emo_value argv) {
   }
   argv_c[count] = NULL;
   execv(p, argv_c);
-  char buf[512];
-  snprintf(buf, sizeof buf, "os: execv %s: %s", p, strerror(errno));
-  emo_raise(emo_make_exception(emo_str_from_cstr(buf)));
-  return (emo_value)0; /* unreachable */
+  /* Failure is a data-driven value: the call returns (the value is
+     discarded) — the fork child's cue to `_exit` (a raise here would
+     run the parent's cleanup a second time). */
+  return 0;
 }
 
 void emo_os__exit(int64_t status) { _exit((int)status); }
 
-int64_t emo_os_open_read(emo_str path) {
+emo_value emo_os_open_read(emo_str path) {
   char *p = (char *)emo_str_cstr(path);
   int fd = open(p, O_RDONLY);
   if (fd < 0)
-    return (int64_t)emo_os_fail("open", p);
-  return fd;
+    return emo_os_fail("open", p);
+  return emo_os_ok(emo_box_i64(fd));
 }
 
-int64_t emo_os_open_write(emo_str path) {
+emo_value emo_os_open_write(emo_str path) {
   char *p = (char *)emo_str_cstr(path);
   int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
   if (fd < 0)
-    return (int64_t)emo_os_fail("open", p);
-  return fd;
+    return emo_os_fail("open", p);
+  return emo_os_ok(emo_box_i64(fd));
 }
 
-int64_t emo_os_open_append(emo_str path) {
+emo_value emo_os_open_append(emo_str path) {
   char *p = (char *)emo_str_cstr(path);
   int fd = open(p, O_WRONLY | O_CREAT | O_APPEND, 0644);
   if (fd < 0)
-    return (int64_t)emo_os_fail("open", p);
-  return fd;
+    return emo_os_fail("open", p);
+  return emo_os_ok(emo_box_i64(fd));
 }
 
-emo_str emo_os_read(int64_t fd, int64_t n) {
+emo_value emo_os_read(int64_t fd, int64_t n) {
   if (n <= 0)
-    return (emo_str){0, ""};
+    return emo_os_ok(emo_box_str((emo_str){0, ""}));
   char *buf = (char *)emo_alloc((size_t)n);
   ssize_t got = read((int)fd, buf, (size_t)n);
   if (got < 0)
-    emo_os_fail("read", "");
-  emo_str out = {(int64_t)got, buf};
-  return out;
+    return emo_os_fail("read", "");
+  return emo_os_ok(emo_box_str((emo_str){(int64_t)got, buf}));
 }
 
-int64_t emo_os_write(int64_t fd, emo_str data) {
+emo_value emo_os_write(int64_t fd, emo_str data) {
   ssize_t put = write((int)fd, data.bytes, (size_t)data.len);
   if (put < 0)
-    return (int64_t)emo_os_fail("write", "");
-  return (int64_t)put;
+    return emo_os_fail("write", "");
+  return emo_os_ok(emo_box_i64((int64_t)put));
 }
 
-int64_t emo_os_close(int64_t fd) {
+emo_value emo_os_close(int64_t fd) {
   if (close((int)fd) != 0)
-    return (int64_t)emo_os_fail("close", "");
-  return 0;
+    return emo_os_fail("close", "");
+  return emo_os_ok(emo_box_i64(0));
 }
 
 static int emo_os_cmp_cstr(const void *a, const void *b) {
@@ -2703,36 +2760,36 @@ emo_value emo_os_list_dir(emo_str path) {
   emo_value *elems = (emo_value *)emo_alloc(sizeof(emo_value) * slot);
   for (size_t k = 0; k < count; k++)
     elems[k] = emo_box_str(emo_str_from_cstr(names[k]));
-  return emo_array_new((int64_t)count, elems);
+  return emo_os_ok(emo_array_new((int64_t)count, elems));
 }
 
-int64_t emo_os_mkdir(emo_str path) {
+emo_value emo_os_mkdir(emo_str path) {
   char *p = (char *)emo_str_cstr(path);
   if (mkdir(p, 0755) != 0)
-    return (int64_t)emo_os_fail("mkdir", p);
-  return 0;
+    return emo_os_fail("mkdir", p);
+  return emo_os_ok(emo_box_i64(0));
 }
 
-int64_t emo_os_rmdir(emo_str path) {
+emo_value emo_os_rmdir(emo_str path) {
   char *p = (char *)emo_str_cstr(path);
   if (rmdir(p) != 0)
-    return (int64_t)emo_os_fail("rmdir", p);
-  return 0;
+    return emo_os_fail("rmdir", p);
+  return emo_os_ok(emo_box_i64(0));
 }
 
-int64_t emo_os_unlink(emo_str path) {
+emo_value emo_os_unlink(emo_str path) {
   char *p = (char *)emo_str_cstr(path);
   if (unlink(p) != 0)
-    return (int64_t)emo_os_fail("unlink", p);
-  return 0;
+    return emo_os_fail("unlink", p);
+  return emo_os_ok(emo_box_i64(0));
 }
 
-int64_t emo_os_rename(emo_str old_path, emo_str new_path) {
+emo_value emo_os_rename(emo_str old_path, emo_str new_path) {
   char *o = (char *)emo_str_cstr(old_path);
   char *n = (char *)emo_str_cstr(new_path);
   if (rename(o, n) != 0)
-    return (int64_t)emo_os_fail("rename", o);
-  return 0;
+    return emo_os_fail("rename", o);
+  return emo_os_ok(emo_box_i64(0));
 }
 
 emo_str emo_os_getcwd(void) {
@@ -2742,11 +2799,11 @@ emo_str emo_os_getcwd(void) {
   return emo_str_from_cstr(buf);
 }
 
-int64_t emo_os_chdir(emo_str path) {
+emo_value emo_os_chdir(emo_str path) {
   char *p = (char *)emo_str_cstr(path);
   if (chdir(p) != 0)
-    return (int64_t)emo_os_fail("chdir", p);
-  return 0;
+    return emo_os_fail("chdir", p);
+  return emo_os_ok(emo_box_i64(0));
 }
 
 /* ---- The dynamic builtin send ----
@@ -2800,26 +2857,25 @@ static emo_value emo_bm_split(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_read_line(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_box_str(emo_net_read_line(emo_unbox_i64(recv)));
+  return emo_net_read_line(emo_unbox_i64(recv));
 }
 
 static emo_value emo_bm_read_exactly(emo_value recv, const emo_value *args) {
-  return emo_box_str(
-      emo_net_read_exactly(emo_unbox_i64(recv), emo_unbox_i64(args[0])));
+  return emo_net_read_exactly(emo_unbox_i64(recv), emo_unbox_i64(args[0]));
 }
 
 static emo_value emo_bm_read_all(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_box_str(emo_net_read_all(emo_unbox_i64(recv)));
+  return emo_net_read_all(emo_unbox_i64(recv));
 }
 
 static emo_value emo_bm_write(emo_value recv, const emo_value *args) {
-  return emo_box_i64(emo_net_write(emo_unbox_i64(recv), emo_str_of(args[0])));
+  return emo_net_write(emo_unbox_i64(recv), emo_str_of(args[0]));
 }
 
 static emo_value emo_bm_close(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_box_i64(emo_net_close(emo_unbox_i64(recv)));
+  return emo_net_close(emo_unbox_i64(recv));
 }
 
 static emo_value emo_bm_set_timeout(emo_value recv, const emo_value *args) {
@@ -2829,7 +2885,7 @@ static emo_value emo_bm_set_timeout(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_accept(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_box_i64(emo_net_accept(emo_unbox_i64(recv)));
+  return emo_net_accept(emo_unbox_i64(recv));
 }
 
 static emo_value emo_bm_port(emo_value recv, const emo_value *args) {
