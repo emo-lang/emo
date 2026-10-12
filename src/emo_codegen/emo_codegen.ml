@@ -46,6 +46,9 @@ type env = {
   mutable refs : string list; (* locals bound as refs, innermost first *)
   mutable immutables : string list;
       (* immutable bindings shadowing a ref (block params) *)
+  mutable nrefs : string list;
+      (* the specialized emitter's ref cells — the `var`s a native body
+         reads through `!` and assigns through `:=` *)
   specialize : bool; (* Stage B on/off for the whole build *)
   mutable native : bool; (* emitting a specialized body right now *)
   mutable fname : string; (* the function being emitted *)
@@ -627,7 +630,9 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Const (L_bool b) -> if b then "true" else "false"
   | Emo_ir.Const (L_char c) -> Printf.sprintf "%C" c
   | Emo_ir.Const (L_string s) -> Printf.sprintf "%S" s
-  | Emo_ir.Var name -> local name
+  | Emo_ir.Var name ->
+      let n = local name in
+      if List.mem n env.nrefs then "!" ^ n else n
   | Emo_ir.Binary (op, l, r) -> (
       (* Comparisons and `&&`/`||` are polymorphic; arithmetic and bit
          operations are Int64 unless an operand is Float64. *)
@@ -820,11 +825,13 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
              optional guards, as OCaml match arms; bindings enter
              env.refs so body reads stay consistent *)
           let saved_refs = env.refs in
+          let saved_nrefs = env.nrefs in
           let sv = "v_case_scrutinee" in
           let arms =
             branches
             |> List.map (fun (b : Emo_ir.branch) ->
                 let saved = env.refs in
+                let saved_nr = env.nrefs in
                 env.refs <- saved;
                 let pat = emit_native_pattern env b.Emo_ir.pattern in
                 let guard =
@@ -837,6 +844,7 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
                     ~arm_unit:false
                 in
                 env.refs <- saved;
+                env.nrefs <- saved_nr;
                 Printf.sprintf "| %s%s ->\n(%s)\n" pat guard body)
             |> String.concat ""
           in
@@ -852,6 +860,7 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
             else Printf.sprintf "\n| _ -> %s" (fall ())
           in
           env.refs <- saved_refs;
+          env.nrefs <- saved_nrefs;
           Printf.sprintf "(let %s = %s in\nmatch %s with\n%s%s)" sv
             (emit_native_expr env scrutinee)
             sv arms fallback
@@ -875,6 +884,19 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
             (emit_native_expr env cond)
             (emit_native_stmts env then_ ~tail ~arm_unit)
             (emit_native_stmts env else_ ~tail ~arm_unit)
+      | Emo_ir.Let { mutable_ = true; name; init } :: rest ->
+          (* the ref must be registered before the rest is emitted, or a
+             later read of the name would see the cell itself *)
+          let init_code = emit_native_expr env init in
+          env.refs <- local name :: env.refs;
+          env.nrefs <- local name :: env.nrefs;
+          if arm_unit then
+            Printf.sprintf "(let %s = ref (%s) in\n%s)" (local name)
+              init_code
+              (emit_native_stmts env rest ~tail ~arm_unit)
+          else
+            Printf.sprintf "let %s = ref (%s) in\n%s" (local name) init_code
+              (emit_native_stmts env rest ~tail ~arm_unit)
       | stmt :: rest -> (
           let rest_code = emit_native_stmts env rest ~tail ~arm_unit in
           match stmt with
@@ -883,6 +905,54 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
               Printf.sprintf "let %s = %s in\n%s" (local name)
                 (emit_native_expr env init)
                 rest_code
+          | Emo_ir.Assign_var { name; value } ->
+              let n = local name in
+              let v = emit_native_expr env value in
+              if arm_unit then Printf.sprintf "(%s := %s; ())" n v
+              else Printf.sprintf "(%s := %s;\n%s)" n v rest_code
+          | Emo_ir.Case { scrutinee; branches } ->
+              (* a case in statement position: each arm runs its body
+                 and then the rest of the block *)
+              let saved_refs = env.refs in
+              let saved_nrefs = env.nrefs in
+              let sv = "v_case_seq" in
+              let arms =
+                branches
+                |> List.map (fun (b : Emo_ir.branch) ->
+                    let srefs = env.refs in
+                    let snrefs = env.nrefs in
+                    let pat = emit_native_pattern env b.Emo_ir.pattern in
+                    let guard =
+                      match b.Emo_ir.guard with
+                      | Some g ->
+                          Printf.sprintf " when %s" (emit_native_expr env g)
+                      | None -> ""
+                    in
+                    let body =
+                      emit_native_stmts env b.Emo_ir.body ~tail:false
+                        ~arm_unit:true
+                    in
+                    env.refs <- srefs;
+                    env.nrefs <- snrefs;
+                    Printf.sprintf "| %s%s ->\n(let _ = (%s) in\n%s)\n" pat
+                      guard body rest_code)
+                |> String.concat ""
+              in
+              let fallback =
+                if
+                  List.exists
+                    (fun (b : Emo_ir.branch) ->
+                      match b.Emo_ir.pattern.Emo_ast.pattern_desc with
+                      | Emo_ast.Wildcard | Emo_ast.Pattern_binding _ -> true
+                      | _ -> false)
+                    branches
+                then ""
+                else "\n| _ -> Emo_runtime.no_return ()"
+              in
+              env.refs <- saved_refs;
+              env.nrefs <- saved_nrefs;
+              Printf.sprintf "(let %s = %s in\nmatch %s with\n%s%s)" sv
+                (emit_native_expr env scrutinee) sv arms fallback
           | Emo_ir.Effect e ->
               Printf.sprintf "(let _ = %s in\n%s)" (emit_native_expr env e)
                 rest_code
@@ -971,6 +1041,7 @@ and emit_specialized_func (f : Emo_ir.func) : string =
       buf = Buffer.create 256;
       refs = [];
       immutables = [];
+      nrefs = [];
       specialize = true;
       native = true;
       fname = f.Emo_ir.fname;
@@ -1098,6 +1169,7 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
       buf = Buffer.create 4096;
       refs = [];
       immutables = [];
+      nrefs = [];
       specialize;
       native = false;
       fname = "<pinit>";

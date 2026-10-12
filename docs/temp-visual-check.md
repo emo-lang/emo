@@ -10,54 +10,35 @@ if the file outlives the work.
 
 ## 1. Blocking the plot work
 
-### B1 — the ocaml/c specialization gap: `var` and `case` in a typed function
+### B1 — the ocaml/c specialization gap: `var` and `case` — resolved
 
 **Symptom.** A function with a real signature (native parameters and
 return) that contains a `var` reassignment outside a loop, or a `case`
-statement, fails `emo build --target ocaml`:
+statement, failed `emo build --target ocaml` with `NONNATIVE STMT ...
+Assign` / `... Case`. The `c` target accepted both.
 
-```console
-$ emo build main.emo --target ocaml
-ASSERT ... build failed: NONNATIVE STMT in <fn>: Assign
-# or
-ASSERT ... build failed: NONNATIVE STMT in <fn>: Case
-```
+**Cause.** `Emo_ir.stmt_native` classified `Assign_var`, a mutable
+`Let`, and `Case` as native, and `Emo_ir.specialize` marked the function
+`fspecializable` on that basis, but the ocaml native emitter
+`emit_native_stmts` lowered only `Effect`, an immutable `Let`, `If`, and
+`Return_stmt`. The predicate and the emitter disagreed.
 
-The `c` target accepts both.
+**Resolved (2026-10-12) — option B, complete the ocaml native emitter.**
+It now lowers all three, matching the c emitter and the predicate:
 
-**Cause.** `Emo_ir.stmt_native` (`src/emo_ir/emo_ir.ml`) classifies
-`Assign_var`, a mutable `Let`, and `Case` as native, and `Emo_ir.specialize`
-marks the function `fspecializable` on that basis. The ocaml native
-emitter `emit_native_stmts` (`src/emo_codegen/emo_codegen.ml`, around
-line 840) lowers only `Effect`, an immutable `Let`, `If`, and
-`Return_stmt`; anything else hits the `NONNATIVE STMT` refusal. The c
-native emitter (`emo_c.ml`) does lower `Assign_var` and `Case`, but the
-predicate is shared, so the ocaml target is the one that breaks.
+- `var x = init` binds `let x = ref init` and registers `x` as a native
+  ref cell; `x = v` emits `x := v`; a read emits `!x`. A new `env.nrefs`
+  set keeps the ref cells distinct from the immutable params and
+  bindings `env.refs` already tracked.
+- a `case` in statement position emits a native `match` whose arms run
+  their body and then the rest of the block.
+- the mutable `Let` registers its ref **before** the rest of the block is
+  emitted, so a later read sees the cell (the ordering bug the first
+  attempt hit).
 
-**Why it blocks plot.** Plot code is imperative numerics: domains, tick
-loops, and scales use `var` and `case` heavily, and library functions
-carry full type declarations. On `ocaml` these functions cannot compile
-as written.
-
-**The choice.**
-
-- **A — make `stmt_native` conservative.** Return `false` for
-  `Assign_var`, a mutable `Let`, and `Case`, matching what the ocaml
-  emitter actually lowers. Correct, small, but de-specializes every such
-  function on `ocaml` and `c` (a performance regression on `c`, which can
-  handle them).
-- **B — complete the ocaml native emitter.** Lower `Assign_var`, a
-  mutable `Let`, and `Case` natively (the c emitter is the reference).
-  Keeps specialization and is the real fix, at more implementation risk.
-
-A narrower third option is a per-target specialization predicate (c keeps
-its native `Assign_var`/`Case`, ocaml falls back), but that is more
-machinery than the two above.
-
-**Evidence from the session.** Adding a throwaway example with
-`if y = 1` / `case { y = 10 }` inside typed functions turned the
-`emo_project` bootstrap suite red with exactly the errors above; the
-example was removed to keep the tree green, and this gap left open.
+`examples/branch_var` (a `var` in `if`, `case`, and a loop) is the
+regression: it runs on the interpreter, `c`, `wasm`, and `beam`, and the
+`emo_project` bootstrap suite builds it on `ocaml`.
 
 ### B2 — the beam target cannot represent NaN or infinity — resolved
 
@@ -134,8 +115,9 @@ Commits on `feat/plot`, oldest first:
 
 ## 4. Decision checklist
 
-- [ ] **B1** — conservative `stmt_native` (A) or complete the ocaml native
-      emitter (B)?
+- [x] **B1** — completed the ocaml native emitter (`Assignment`,
+      mutable `Let`, statement `Case`); `examples/branch_var` is the
+      regression.
 - [x] **B2** — a presence enum (`enum Presence { present, absent }`)
       plus a parallel array; recorded in `docs/visualization.md`.
 - [ ] **P1** — fix the `runtime/wasm` rule `deps` so `dune test` is green?
