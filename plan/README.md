@@ -16,12 +16,11 @@ incrementally shippable steps — one file per step, executed in order.
   passing on an effects-based scheduler, plus the direct-style networking API.
 - **M4 — Compilation targets (steps 13–14):** native code generation, then
   wasm / TypeScript / BEAM / riscv64.
-- **M13 — The standard library (steps 27–33, 39):** the bundled stdlib
+- **M13 — The standard library (steps 39–46):** the bundled stdlib
   packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the
   native-binding `sqlite3` — each with a full API reference and a runnable
-  golden, on every target it declares. (`sqlite3` lands at step 39, after the
-  M11 loop and M12 error-handling steps interleaved chronologically; the full
-  milestone list is in `docs/TASKS.md`.)
+  golden, on every target it declares. (The full milestone list is in
+  `docs/TASKS.md`.)
 
 ## Ground rules
 
@@ -76,11 +75,11 @@ incrementally shippable steps — one file per step, executed in order.
 | 24 | C target (emit C) | done (close-out recorded; the native → ocaml rename landed; aligned 2026-10-10 — Void foreign returns, `emo_defs.h`, content-keyed caches, cross-module calls and types) |
 | 25 | Toolchain distribution & release | done (v0.25.9; M9 complete) |
 | 26 | Target independence (runtimes decoupled from the host) | done (M10 complete; every runtime embedded, the ocaml target installation-independent) |
-| 27 | The standard library: `json` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — the landing flushed the c Bytes-arm guess on gradual receivers and the vtable's `_q`/`?` spelling); wasm, beam wait on their own capability walls |
-| 28 | The standard library: `yaml` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — flushed the trampoline's cluster-scope collision); wasm, beam wait on their own capability walls |
-| 29 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; the cross-module-types gate resolved (2026-10-10); wasm, beam wait on their own capability walls |
-| 30 | The standard library: `os` | done on interpreter/ocaml/c; the browser and bytecode targets refuse the package (no process to fork) |
-| 31 | The standard library: `base64` | done on every target — the first package on all five goldens; flushed out the wasm `&&` cast, the wasm zero-length copies, and the beam logical-op/tuple-index/Exception gaps |
-| 32 | The standard library: `slog` | done on interpreter/ocaml/c/typescript; wasm, beam wait on `Map` support (attrs are a Map); loggers are values, no state, no clock — the first package whose golden needed zero compiler changes |
-| 33 | The standard library: `bufio` | done on interpreter/ocaml/c; the package rides `os`, so wasm/beam/typescript refuse it at resolution like `os` does |
-| 39 | The standard library: `sqlite3` | done on c — the first native-binding package: the manifest's `link` field and package-carried C sources land with it; every other target refuses at resolution, the interpreter at run time (E3009) |
+| 39 | The standard library: `json` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — the landing flushed the c Bytes-arm guess on gradual receivers and the vtable's `_q`/`?` spelling); wasm, beam wait on their own capability walls |
+| 40 | The standard library: `yaml` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — flushed the trampoline's cluster-scope collision); wasm, beam wait on their own capability walls |
+| 41 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; the cross-module-types gate resolved (2026-10-10); wasm, beam wait on their own capability walls |
+| 42 | The standard library: `os` | done on interpreter/ocaml/c; the browser and bytecode targets refuse the package (no process to fork) |
+| 43 | The standard library: `base64` | done on every target — the first package on all five goldens; flushed out the wasm `&&` cast, the wasm zero-length copies, and the beam logical-op/tuple-index/Exception gaps |
+| 44 | The standard library: `slog` | done on interpreter/ocaml/c/typescript; wasm, beam wait on `Map` support (attrs are a Map); loggers are values, no state, no clock — the first package whose golden needed zero compiler changes |
+| 45 | The standard library: `bufio` | done on interpreter/ocaml/c; the package rides `os`, so wasm/beam/typescript refuse it at resolution like `os` does |
+| 46 | The standard library: `sqlite3` | done on c — the first native-binding package: the manifest's `link` field and package-carried C sources land with it; every other target refuses at resolution, the interpreter at run time (E3009) |

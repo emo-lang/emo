@@ -37,7 +37,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M10 — Target independence | 26 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
 | M11 — For / While loops | 34–35 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
 | M12 — Error handling | 36–37 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
-| M13 — The standard library | 27–33, 39 | The bundled stdlib packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the native-binding `sqlite3` — each resolving against the manifest's `targets`, answering byte-for-byte on every target it declares, and shipping a full API reference plus a runnable golden. |
+| M13 — The standard library | 39–46 | The bundled stdlib packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the native-binding `sqlite3` — each resolving against the manifest's `targets`, answering byte-for-byte on every target it declares, and shipping a full API reference plus a runnable golden. |
 | M14 — Visualization (`plot`) | 39–45 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
 | M15 — Unit testing | 46 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
 
@@ -681,294 +681,6 @@ release-layout binary wherever the OCaml toolchain is on PATH; the
 typescript target likewise; all goldens byte-for-byte and `dune test`
 green.
 
-## M13 — The standard library
-
-The bundled stdlib is a milestone of its own: one package per step, each
-shipping its API reference and a runnable golden. `json` (27) through
-`bufio` (33) are the pure-Emo and `os`-backed packages; `sqlite3` picks
-the sequence up at step 39 — the next free number when it landed
-(2026-10-12), after the M11 loop (34–35) and M12 error-handling (36–38)
-steps that interleaved chronologically.
-
-### Step 27 — The standard library: `json` · `plan/step-27-stdlib-json.md`
-
-**Prereq:** Step 10 (packages) + step 26 (target independence).
-**Done when:** `require "json"` decodes and encodes JSON on every
-target the compiler ships, byte-identically — strict offset-bearing
-errors, exactly round-tripping numbers, a value tree of ordinary Emo
-data over the shared runtimes, zero per-target runtime work beyond the
-typescript UTF-8 bytes fix; goldens on all six paths; `dune test`
-green.
-
-- [x] **T27.1** — The spec and the skeleton: the package
-      `stdlib/registry/json/0.1.0` (`package.emo` over the five tested
-      targets, `json.emo` with the value model — `JsonKind`, the
-      `Json` interface, seven payload classes, the factories — and
-      `internal/float.emo` for the numeric machinery) embedded by
-      rebuild. Verification: a factory-built value encodes,
-      interpreted. (Done 2026-10-09.)
-- [x] **T27.2** — The typescript bytes fix: `to_bytes` encodes UTF-8
-      and `Bytes.to_string` decodes UTF-8 in the ts prelude; all
-      existing ts goldens byte-for-byte. (Done 2026-10-09: the
-      interpreter, c, and typescript agree on a non-ASCII
-      round-trip.)
-- [x] **T27.3** — The decoder: the byte-level scanner and
-      recursive-descent parser over the RFC 8259 grammar — escapes
-      with surrogate pairs, exact `Int64`/`Float64` numbers, the depth
-      cap, offset-bearing errors. (Done 2026-10-09: decode rounds
-      decimals once, to nearest with ties to even — `strtod`'s
-      answer — via exact long division in `internal/float.emo`.)
-- [x] **T27.4** — The encoder: compact and pretty forms; string
-      escaping; integers through `Int64.to_string`; the
-      shortest-round-trip float formatter. (Done 2026-10-09: π prints
-      `3.141592653589793`, denormal-min prints `5.0e-324`, max prints
-      `1.7976931348623157e+308`; a float always stays visibly a
-      float.)
-- [x] **T27.5** — The golden example: `examples/json_demo` wired into
-      the interpreter-bootstrap and typescript golden lists (one
-      `expected.txt`); c, wasm, and beam wait on the cross-module
-      follow-up below. (Done 2026-10-09.)
-- [x] **T27.6** — The edge fixtures: `examples/json_edge` — escape
-      matrix, surrogate pairs, the 512-array cap round-tripped,
-      duplicate keys, number boundaries, round-trips, pretty form —
-      wired into the interpreter-bootstrap list. (Done 2026-10-09;
-      flushed out the missing empty-container guards in the compact
-      encoder.)
-- [x] **T27.7** — The docs and close-out: `docs/stdlib/json.md` and
-      its zh-CN mirror; `dune build @fmt` and `dune test` green.
-      (Done 2026-10-09.)
-
-Step 27 close-out (2026-10-09, on `feat/stdlib`): `require "json"`
-decodes and encodes byte-identically on the interpreter, the ocaml
-target, and the typescript target — goldens `json_demo` (bootstrap +
-ts) and `json_edge` (bootstrap) green, `dune build @fmt` and
-`dune test` green end to end. The package is ordinary pure Emo; the c,
-wasm, and beam targets stay blocked on one checker step — cross-module
-type names ("cross-module types stay unchecked this step", step 9) —
-with the minimal repros and the backend fixes this step already landed
-recorded in `plan/step-27-stdlib-json.md`. Compiler fixes riding this
-step: the span type table keyed by file (multi-module type
-corruption), the typescript tail-call rewrite's argument
-temporaries + string escapes + interface separators, the c `emo_send`
-argument array + unknown-receiver vtable fallback + mutual-tail
-cluster entry dispatch, and the wasm interface-dispatch `Ref_cast` +
-field display-name resolution.
-
-### Step 28 — The standard library: `yaml` · `plan/step-28-stdlib-yaml.md`
-
-**Prereq:** Step 27 (the json package — the tree design and the float
-machinery this package mirrors). **Done when:** `require "yaml"`
-decodes and encodes YAML 1.2 (core schema) byte-identically on the
-targets the checker carries — block/flow, quoted scalars with the
-YAML escape set, block scalars with chomping, duplicate keys
-last-win, numbers at their boundaries; goldens green on
-interpreter/ocaml/typescript; c, wasm, and beam wait on the
-cross-module-types follow-up shared with step 27.
-
-- [x] **T28.1** — The package and the parser: `stdlib/registry/yaml/
-      0.1.0` embedded by rebuild; the value model, the block/flow
-      parser. (Done 2026-10-09.)
-- [x] **T28.2** — The encoder: block style; plain-when-unambiguous
-      strings; empty-container flow forms. (Done 2026-10-09.)
-- [x] **T28.3** — The goldens: `examples/yaml_demo` (bootstrap +
-      typescript) and `examples/yaml_edge` (bootstrap). (Done
-      2026-10-09.)
-- [x] **T28.4** — The docs: `docs/stdlib/yaml.md` + zh-CN mirror;
-      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
-
-Step 28 close-out (2026-10-09, on `feat/stdlib`): the yaml package
-mirrors the json package's tree design and passes its goldens on the
-interpreter, ocaml, and typescript; c, wasm, and beam remain gated on
-the cross-module-types checker step shared with step 27. The package
-also flushed out the typescript runtime's field-shadows-method
-dispatch bug (fixed in `ts_runtime.ts`: E.method now falls through to
-the prototype's method when the own property is not a function).
-
-### Step 29 — The standard library: `xml` · `plan/step-29-stdlib-xml.md`
-
-**Prereq:** Step 27 (the json package — the tree design and the
-byte-scanner patterns this package follows). **Done when:**
-`require "xml"` decodes and encodes well-formed XML byte-identically
-on the verified targets — elements with quoted attributes, self-
-closing form, the five entities plus character references, CDATA as
-raw text, comments / PIs / declaration / DOCTYPE skipped, mixed
-content, offset-bearing errors; goldens green on
-interpreter/ocaml/typescript/c; wasm and beam wait on the
-cross-module-types follow-up shared with steps 27–28.
-
-- [x] **T29.1** — The package, the value model, and the decoder.
-      (Done 2026-10-09.)
-- [x] **T29.2** — The encoder. (Done 2026-10-09.)
-- [x] **T29.3** — The goldens: `examples/xml_demo` (bootstrap + c +
-      typescript) and `examples/xml_edge` (bootstrap). (Done
-      2026-10-09.)
-- [x] **T29.4** — The docs: `docs/stdlib/xml.md` + zh-CN mirror;
-      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
-
-Step 29 close-out (2026-10-09, on `feat/stdlib`): the xml package —
-the leanest of the three format packages (XML is all text, so no
-float machinery) — passes its goldens on the interpreter, ocaml,
-typescript, AND c (xml_demo rides the c_goldens list). The package
-also flushed out the exact-buffer `to_string().substring(byte_count)`
-out-of-bounds pattern across all three format packages (fixed:
-exact-fill buffers return `to_string()` directly). wasm and beam
-remain gated on the cross-module-types checker step.
-
-### Step 30 — The standard library: `os` · `plan/step-30-stdlib-os.md`
-
-**Prereq:** Step 24 (the c target) and step 26 (target independence —
-the standalone ocaml runtime needs the dispatch too). **Done when:**
-`require "os"` gives a program process identity, fork / execv /
-waitpid / _exit, a pipe, raw unbuffered fd file IO, and the directory
-surface; every failing call raises naming the system call; waitpid
-answers the kernel's raw 16-bit status with pure-Emo decoders;
-list_dir answers byte-order-sorted names without `.` and `..`;
-goldens green on interpreter/ocaml/c; ts/wasm/beam refuse the package
-by declaration.
-
-- [x] **T30.1** — The checker signatures, the `os_` builtin prefix,
-      and the interpreter's Unix-backed dispatch. (Done 2026-10-09.)
-- [x] **T30.2** — The c runtime's `emo_os_*` POSIX implementations
-      and the c emitter's dispatch. (Done 2026-10-09.)
-- [x] **T30.3** — The standalone ocaml runtime's dispatch. (Done
-      2026-10-09.)
-- [x] **T30.4** — The package: thin wrappers, the wait-status
-      decoders, the fork/pipe discipline. (Done 2026-10-09.)
-- [x] **T30.5** — The golden: `examples/os_demo` on the bootstrap
-      and c_goldens lists. (Done 2026-10-09.)
-- [x] **T30.6** — The docs: `docs/stdlib/os.md` + zh-CN mirror;
-      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
-
-Step 30 close-out (2026-10-09, on `feat/stdlib`): the os package —
-the second runtime-backed package after net, and the first reaching
-into process machinery — verified on the interpreter, ocaml, and c
-targets; the os_demo golden exercises fork+pipe+waitpid (child exits
-7 through _exit, the parent decodes the raw status) beside the raw IO
-and directory surfaces. Unlike the format packages, os crosses
-modules with native types only, so the c target takes it without the
-cross-module-types checker step; ts/wasm/beam are refused by the
-package's targets declaration.
-
-### Step 31 — The standard library: `base64` · `plan/step-31-stdlib-base64.md`
-
-**Prereq:** Step 27 (the json package — the byte-scanner discipline).
-**Done when:** `require "base64"` encodes with the standard alphabet
-and `=` padding and decodes strictly — alphabet-only, padding only in
-the final quantum, canonical zero padding bits — with the offending
-byte offset on every rejection; the golden rides ALL five lists
-(bootstrap, c, typescript, wasm, beam), byte-identical everywhere.
-
-- [x] **T31.1** — The package: the arithmetic alphabet both
-      directions, the strict decoder, offset-bearing errors. (Done
-      2026-10-09.)
-- [x] **T31.2** — The wasm fixes: the `&&`/`||` left-operand cast and
-      the zero-length byte-copy guard. (Done 2026-10-09.)
-- [x] **T31.3** — The beam fixes: the logical operators, the tuple
-      index, and `Make_exception`. (Done 2026-10-09.)
-- [x] **T31.4** — The golden: `examples/base64_demo` on all five
-      lists. (Done 2026-10-09.)
-- [x] **T31.5** — The docs: `docs/stdlib/base64.md` + zh-CN mirror;
-      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
-
-Step 31 close-out (2026-10-09, on `feat/stdlib`): the base64 package
-is the first standard-library package on all five goldens — and the
-step flushed out four latent backend bugs no shipped example had ever
-reached: the wasm `&&`/`||` left operand skipped its `ref.cast` (this
-was the wall gating json/yaml/xml out of the wasm goldens), the wasm
-zero-length byte copies were do-whiles that trapped on
-`"".to_bytes()`, the beam logical operators called `emo_add` on two
-booleans, and the beam tuple index used `lists:nth` on an Erlang
-tuple; beam also gained `Make_exception` (the exception object is its
-message). The json/yaml/xml wasm gate should be re-examined against
-these fixes — the `&&` wall is gone, though their cross-module class
-types may still be gated by the step-27 follow-up.
-
-### Step 32 — The standard library: `slog` · `plan/step-32-stdlib-slog.md`
-
-**Prereq:** Step 31 (base64 — the native-types-only surface shape).
-**Done when:** `require "slog"` logs one line per record, logfmt or
-JSON, filtered by a minimum level; loggers are ordinary values — an
-opaque handle carrying name, level, and format — attrs are a
-`Map[String, String]` with keys strict to one alphabet, and the golden
-rides the bootstrap, c, and typescript lists byte-identical; wasm and
-beam refuse the package until their runtimes implement `Map`.
-
-- [x] **T32.1** — The package: the ordered levels and the two
-      formats, the handle pack/parse, the logfmt and JSON renderers,
-      strict keys and exact errors. (Done 2026-10-09.)
-- [x] **T32.2** — The golden: `examples/slog_demo` — both formats,
-      filtering, a child logger, quoting and escaping, UTF-8, and
-      `enabled` — on the bootstrap, c, and typescript lists. (Done
-      2026-10-09.)
-- [x] **T32.3** — The docs: `docs/stdlib/slog.md` + zh-CN mirror;
-      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
-
-Step 32 close-out (2026-10-09, on `feat/slog`): the slog package is
-the first standard-library package whose golden needed zero compiler
-changes — the step-31 wasm/beam fixes held, and `Map` on
-interp/ocaml/c/typescript carried the whole surface. The design
-answers "a logger without a framework": the handle packs
-`name/level/format` in plain sight so the package holds no state at
-all, records carry no timestamp (no clock — deterministic output, a
-caller with a time passes it as an attribute), and attribute keys are
-strict to one alphabet shared with the handle's percent-escaping. The
-manifest declares the three targets that work today and widens when
-the wasm/beam `Map` gap closes.
-
-### Step 33 — The standard library: `bufio` · `plan/step-33-stdlib-bufio.md`
-
-**Prereq:** Step 32 (slog — the zero-compiler-change golden shape).
-**Done when:** `require "bufio"` reads and writes through a
-fixed-size buffer over two one-method structural interfaces —
-`Reader` with line, delimiter, peek, discard, and one-level unread;
-`Writer` with coalescing writes, explicit flush, and never a silent
-discard — the fd and in-memory adapters cover the concrete streams,
-the golden rides the bootstrap and c lists byte-identical, and the
-c-backend cross-module dispatch is sound (an instance answers through
-its vtable, once, and Void method statements keep their calls).
-
-- [x] **T33.1** — The package: the two interfaces, the four
-      adapters, the `Reader` and `Writer` surfaces, strict sizes and
-      exact errors. (Done 2026-10-09.)
-- [x] **T33.2** — The golden: `examples/bufio_demo` — in-memory
-      streams, an 8-byte buffered file write that really flushes,
-      read back through two stacked readers — on the bootstrap and c
-      lists. (Done 2026-10-09.)
-- [x] **T33.3** — The c-backend fixes: the runtime dispatch for
-      untyped receivers (`emo_dynamic_builtin` + the builtin method
-      table), the single evaluation of the receiver, and the Void
-      statement-method emission. (Done 2026-10-09.)
-- [x] **T33.4** — The docs: `docs/stdlib/bufio.md` + zh-CN mirror;
-      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
-
-Step 33 close-out (2026-10-09, on `feat/bufio`): the bufio package is
-the first standard-library package whose state isBoxes inside an
-ordinary class — the buffer, cursor, source, and last-read byte live
-in `Box`es, and the class stays immutable around them. The step
-flushed out three latent c-backend bugs in the cross-module
-method-call path: the name hijack that sent `read_line` on a user
-class to the socket builtin, the receiver expression evaluated up to
-three times by the dispatch, and Void method statements compiled to
-nothing. All three are fixed in the runtime dispatch
-(`emo_dynamic_builtin`), which evaluates the receiver once and hands
-instances to their vtable before any builtin. The package rides `os`,
-so its manifest declares the ocaml and c targets and widens when
-those surfaces reach the other runtimes.
-
-### Step 39 — The standard library: `sqlite3` · `plan/step-39-stdlib-sqlite3.md`
-
-**Prereq:** Step 24 (the c target's direct C ABI) + step 25 (the embedded stdlib).
-**Done when:** `require "sqlite3"` on the c target opens a database, executes DDL, prepares statements, binds int / float / text / null parameters, and reads typed columns — with no `--cclib` and no hand-compiled shim on the consumer's side; the manifest's `link` field and package-carried `.c`/`.h` sources land with it; every other target refuses (resolution's `targets` gate, or the non-c build's E5007), the interpreter at run time (E3009); `dune test` green.
-
-- [x] **T39.1** — The manifest's `link` field: parse (strict, optional, bare names only), tests.
-- [x] **T39.2** — Packages carry `.c`/`.h`: `Registry.collect_files` and `gen-stdlib-data.sh` collect and embed them; publish and checksums flow through unchanged.
-- [x] **T39.3** — The build wiring: `load_deps`/`compile_inputs` collect each dependency's C sources and link libraries; the c target's cc invocation and cache key take them; the non-c gate (E5007).
-- [x] **T39.4** — The `sqlite3` package: manifest, `internal/ffi.emo`, `emo_sqlite3_shim.c`, the `Database`/`Statement` public surface.
-- [x] **T39.5** — `examples/sqlite3_demo` golden on the c target (gated on a sqlite3 probe, beside `cc_available`), plus the native-dependency tests in `test/emo_project`.
-- [x] **T39.6** — The docs: the CHECK.md entry, README (+ zh-CN), `docs/native-backend.md` (+ zh-CN), `docs/stdlib/sqlite3.md` (+ zh-CN), the stdlib tours.
-
-Step 39 close-out (2026-10-12, on `feat/sqlite3`): the package system learns to carry native code — a manifest gains the optional `link` field (bare library names; a flag- or path-shaped entry is E5103), and `.c`/`.h` sources ride the package tree into collection, checksums, embedding, and publishing — so the c target compiles and links a dependency's native inputs with no consumer-side flags. The `sqlite3` package is the first consumer: a `foreign def` binding over a package-carried exact-ABI shim (`emo_sqlite3_shim.c`, every signature `int64_t`/`double`/`bool`/`const char *`), c-target only, raising per the `os` convention until the error-handling migration lands.
-
 ## M11 — For / While loops
 
 The loop surface `CHECK.md` settled (2026-10-06): guaranteed tail calls
@@ -985,7 +697,7 @@ each step's plan file is written when the step starts.
 
 ### Step 34 — Loop surface: lexer, parser, checker, interpreter
 
-**Prereq:** Step 33.
+**Prereq:** Step 45.
 **Done when:** the README's loop snippets run verbatim through
 `emo run`; the CHECK.md worked example (`for var i = 0; i < 100;
 i = i + 50`) prints `i = 0` then `i = 50`; a 10M-iteration `while`
@@ -1241,9 +953,294 @@ CHECK.md.
       variants its classes already answered with). Checker and project
       tests; the CHECK.md entry; every target's goldens green.
 
+## M13 — The standard library
+
+The bundled stdlib is a milestone of its own: one package per step, each
+shipping its API reference and a runnable golden. The steps run `json`
+(39) through `bufio` (45), then the native-binding `sqlite3` (46).
+
+### Step 39 — The standard library: `json` · `plan/step-39-stdlib-json.md`
+
+**Prereq:** Step 10 (packages) + step 26 (target independence).
+**Done when:** `require "json"` decodes and encodes JSON on every
+target the compiler ships, byte-identically — strict offset-bearing
+errors, exactly round-tripping numbers, a value tree of ordinary Emo
+data over the shared runtimes, zero per-target runtime work beyond the
+typescript UTF-8 bytes fix; goldens on all six paths; `dune test`
+green.
+
+- [x] **T39.1** — The spec and the skeleton: the package
+      `stdlib/registry/json/0.1.0` (`package.emo` over the five tested
+      targets, `json.emo` with the value model — `JsonKind`, the
+      `Json` interface, seven payload classes, the factories — and
+      `internal/float.emo` for the numeric machinery) embedded by
+      rebuild. Verification: a factory-built value encodes,
+      interpreted. (Done 2026-10-09.)
+- [x] **T39.2** — The typescript bytes fix: `to_bytes` encodes UTF-8
+      and `Bytes.to_string` decodes UTF-8 in the ts prelude; all
+      existing ts goldens byte-for-byte. (Done 2026-10-09: the
+      interpreter, c, and typescript agree on a non-ASCII
+      round-trip.)
+- [x] **T39.3** — The decoder: the byte-level scanner and
+      recursive-descent parser over the RFC 8259 grammar — escapes
+      with surrogate pairs, exact `Int64`/`Float64` numbers, the depth
+      cap, offset-bearing errors. (Done 2026-10-09: decode rounds
+      decimals once, to nearest with ties to even — `strtod`'s
+      answer — via exact long division in `internal/float.emo`.)
+- [x] **T39.4** — The encoder: compact and pretty forms; string
+      escaping; integers through `Int64.to_string`; the
+      shortest-round-trip float formatter. (Done 2026-10-09: π prints
+      `3.141592653589793`, denormal-min prints `5.0e-324`, max prints
+      `1.7976931348623157e+308`; a float always stays visibly a
+      float.)
+- [x] **T39.5** — The golden example: `examples/json_demo` wired into
+      the interpreter-bootstrap and typescript golden lists (one
+      `expected.txt`); c, wasm, and beam wait on the cross-module
+      follow-up below. (Done 2026-10-09.)
+- [x] **T39.6** — The edge fixtures: `examples/json_edge` — escape
+      matrix, surrogate pairs, the 512-array cap round-tripped,
+      duplicate keys, number boundaries, round-trips, pretty form —
+      wired into the interpreter-bootstrap list. (Done 2026-10-09;
+      flushed out the missing empty-container guards in the compact
+      encoder.)
+- [x] **T39.7** — The docs and close-out: `docs/stdlib/json.md` and
+      its zh-CN mirror; `dune build @fmt` and `dune test` green.
+      (Done 2026-10-09.)
+
+Step 39 close-out (2026-10-09, on `feat/stdlib`): `require "json"`
+decodes and encodes byte-identically on the interpreter, the ocaml
+target, and the typescript target — goldens `json_demo` (bootstrap +
+ts) and `json_edge` (bootstrap) green, `dune build @fmt` and
+`dune test` green end to end. The package is ordinary pure Emo; the c,
+wasm, and beam targets stay blocked on one checker step — cross-module
+type names ("cross-module types stay unchecked this step", step 9) —
+with the minimal repros and the backend fixes this step already landed
+recorded in `plan/step-39-stdlib-json.md`. Compiler fixes riding this
+step: the span type table keyed by file (multi-module type
+corruption), the typescript tail-call rewrite's argument
+temporaries + string escapes + interface separators, the c `emo_send`
+argument array + unknown-receiver vtable fallback + mutual-tail
+cluster entry dispatch, and the wasm interface-dispatch `Ref_cast` +
+field display-name resolution.
+
+### Step 40 — The standard library: `yaml` · `plan/step-40-stdlib-yaml.md`
+
+**Prereq:** Step 39 (the json package — the tree design and the float
+machinery this package mirrors). **Done when:** `require "yaml"`
+decodes and encodes YAML 1.2 (core schema) byte-identically on the
+targets the checker carries — block/flow, quoted scalars with the
+YAML escape set, block scalars with chomping, duplicate keys
+last-win, numbers at their boundaries; goldens green on
+interpreter/ocaml/typescript; c, wasm, and beam wait on the
+cross-module-types follow-up shared with step 39.
+
+- [x] **T40.1** — The package and the parser: `stdlib/registry/yaml/
+      0.1.0` embedded by rebuild; the value model, the block/flow
+      parser. (Done 2026-10-09.)
+- [x] **T40.2** — The encoder: block style; plain-when-unambiguous
+      strings; empty-container flow forms. (Done 2026-10-09.)
+- [x] **T40.3** — The goldens: `examples/yaml_demo` (bootstrap +
+      typescript) and `examples/yaml_edge` (bootstrap). (Done
+      2026-10-09.)
+- [x] **T40.4** — The docs: `docs/stdlib/yaml.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 40 close-out (2026-10-09, on `feat/stdlib`): the yaml package
+mirrors the json package's tree design and passes its goldens on the
+interpreter, ocaml, and typescript; c, wasm, and beam remain gated on
+the cross-module-types checker step shared with step 39. The package
+also flushed out the typescript runtime's field-shadows-method
+dispatch bug (fixed in `ts_runtime.ts`: E.method now falls through to
+the prototype's method when the own property is not a function).
+
+### Step 41 — The standard library: `xml` · `plan/step-41-stdlib-xml.md`
+
+**Prereq:** Step 39 (the json package — the tree design and the
+byte-scanner patterns this package follows). **Done when:**
+`require "xml"` decodes and encodes well-formed XML byte-identically
+on the verified targets — elements with quoted attributes, self-
+closing form, the five entities plus character references, CDATA as
+raw text, comments / PIs / declaration / DOCTYPE skipped, mixed
+content, offset-bearing errors; goldens green on
+interpreter/ocaml/typescript/c; wasm and beam wait on the
+cross-module-types follow-up shared with steps 27–28.
+
+- [x] **T41.1** — The package, the value model, and the decoder.
+      (Done 2026-10-09.)
+- [x] **T41.2** — The encoder. (Done 2026-10-09.)
+- [x] **T41.3** — The goldens: `examples/xml_demo` (bootstrap + c +
+      typescript) and `examples/xml_edge` (bootstrap). (Done
+      2026-10-09.)
+- [x] **T41.4** — The docs: `docs/stdlib/xml.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 41 close-out (2026-10-09, on `feat/stdlib`): the xml package —
+the leanest of the three format packages (XML is all text, so no
+float machinery) — passes its goldens on the interpreter, ocaml,
+typescript, AND c (xml_demo rides the c_goldens list). The package
+also flushed out the exact-buffer `to_string().substring(byte_count)`
+out-of-bounds pattern across all three format packages (fixed:
+exact-fill buffers return `to_string()` directly). wasm and beam
+remain gated on the cross-module-types checker step.
+
+### Step 42 — The standard library: `os` · `plan/step-42-stdlib-os.md`
+
+**Prereq:** Step 24 (the c target) and step 26 (target independence —
+the standalone ocaml runtime needs the dispatch too). **Done when:**
+`require "os"` gives a program process identity, fork / execv /
+waitpid / _exit, a pipe, raw unbuffered fd file IO, and the directory
+surface; every failing call raises naming the system call; waitpid
+answers the kernel's raw 16-bit status with pure-Emo decoders;
+list_dir answers byte-order-sorted names without `.` and `..`;
+goldens green on interpreter/ocaml/c; ts/wasm/beam refuse the package
+by declaration.
+
+- [x] **T42.1** — The checker signatures, the `os_` builtin prefix,
+      and the interpreter's Unix-backed dispatch. (Done 2026-10-09.)
+- [x] **T42.2** — The c runtime's `emo_os_*` POSIX implementations
+      and the c emitter's dispatch. (Done 2026-10-09.)
+- [x] **T42.3** — The standalone ocaml runtime's dispatch. (Done
+      2026-10-09.)
+- [x] **T42.4** — The package: thin wrappers, the wait-status
+      decoders, the fork/pipe discipline. (Done 2026-10-09.)
+- [x] **T42.5** — The golden: `examples/os_demo` on the bootstrap
+      and c_goldens lists. (Done 2026-10-09.)
+- [x] **T42.6** — The docs: `docs/stdlib/os.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 42 close-out (2026-10-09, on `feat/stdlib`): the os package —
+the second runtime-backed package after net, and the first reaching
+into process machinery — verified on the interpreter, ocaml, and c
+targets; the os_demo golden exercises fork+pipe+waitpid (child exits
+7 through _exit, the parent decodes the raw status) beside the raw IO
+and directory surfaces. Unlike the format packages, os crosses
+modules with native types only, so the c target takes it without the
+cross-module-types checker step; ts/wasm/beam are refused by the
+package's targets declaration.
+
+### Step 43 — The standard library: `base64` · `plan/step-43-stdlib-base64.md`
+
+**Prereq:** Step 39 (the json package — the byte-scanner discipline).
+**Done when:** `require "base64"` encodes with the standard alphabet
+and `=` padding and decodes strictly — alphabet-only, padding only in
+the final quantum, canonical zero padding bits — with the offending
+byte offset on every rejection; the golden rides ALL five lists
+(bootstrap, c, typescript, wasm, beam), byte-identical everywhere.
+
+- [x] **T43.1** — The package: the arithmetic alphabet both
+      directions, the strict decoder, offset-bearing errors. (Done
+      2026-10-09.)
+- [x] **T43.2** — The wasm fixes: the `&&`/`||` left-operand cast and
+      the zero-length byte-copy guard. (Done 2026-10-09.)
+- [x] **T43.3** — The beam fixes: the logical operators, the tuple
+      index, and `Make_exception`. (Done 2026-10-09.)
+- [x] **T43.4** — The golden: `examples/base64_demo` on all five
+      lists. (Done 2026-10-09.)
+- [x] **T43.5** — The docs: `docs/stdlib/base64.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 43 close-out (2026-10-09, on `feat/stdlib`): the base64 package
+is the first standard-library package on all five goldens — and the
+step flushed out four latent backend bugs no shipped example had ever
+reached: the wasm `&&`/`||` left operand skipped its `ref.cast` (this
+was the wall gating json/yaml/xml out of the wasm goldens), the wasm
+zero-length byte copies were do-whiles that trapped on
+`"".to_bytes()`, the beam logical operators called `emo_add` on two
+booleans, and the beam tuple index used `lists:nth` on an Erlang
+tuple; beam also gained `Make_exception` (the exception object is its
+message). The json/yaml/xml wasm gate should be re-examined against
+these fixes — the `&&` wall is gone, though their cross-module class
+types may still be gated by the step-39 follow-up.
+
+### Step 44 — The standard library: `slog` · `plan/step-44-stdlib-slog.md`
+
+**Prereq:** Step 43 (base64 — the native-types-only surface shape).
+**Done when:** `require "slog"` logs one line per record, logfmt or
+JSON, filtered by a minimum level; loggers are ordinary values — an
+opaque handle carrying name, level, and format — attrs are a
+`Map[String, String]` with keys strict to one alphabet, and the golden
+rides the bootstrap, c, and typescript lists byte-identical; wasm and
+beam refuse the package until their runtimes implement `Map`.
+
+- [x] **T44.1** — The package: the ordered levels and the two
+      formats, the handle pack/parse, the logfmt and JSON renderers,
+      strict keys and exact errors. (Done 2026-10-09.)
+- [x] **T44.2** — The golden: `examples/slog_demo` — both formats,
+      filtering, a child logger, quoting and escaping, UTF-8, and
+      `enabled` — on the bootstrap, c, and typescript lists. (Done
+      2026-10-09.)
+- [x] **T44.3** — The docs: `docs/stdlib/slog.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 44 close-out (2026-10-09, on `feat/slog`): the slog package is
+the first standard-library package whose golden needed zero compiler
+changes — the step-43 wasm/beam fixes held, and `Map` on
+interp/ocaml/c/typescript carried the whole surface. The design
+answers "a logger without a framework": the handle packs
+`name/level/format` in plain sight so the package holds no state at
+all, records carry no timestamp (no clock — deterministic output, a
+caller with a time passes it as an attribute), and attribute keys are
+strict to one alphabet shared with the handle's percent-escaping. The
+manifest declares the three targets that work today and widens when
+the wasm/beam `Map` gap closes.
+
+### Step 45 — The standard library: `bufio` · `plan/step-45-stdlib-bufio.md`
+
+**Prereq:** Step 44 (slog — the zero-compiler-change golden shape).
+**Done when:** `require "bufio"` reads and writes through a
+fixed-size buffer over two one-method structural interfaces —
+`Reader` with line, delimiter, peek, discard, and one-level unread;
+`Writer` with coalescing writes, explicit flush, and never a silent
+discard — the fd and in-memory adapters cover the concrete streams,
+the golden rides the bootstrap and c lists byte-identical, and the
+c-backend cross-module dispatch is sound (an instance answers through
+its vtable, once, and Void method statements keep their calls).
+
+- [x] **T45.1** — The package: the two interfaces, the four
+      adapters, the `Reader` and `Writer` surfaces, strict sizes and
+      exact errors. (Done 2026-10-09.)
+- [x] **T45.2** — The golden: `examples/bufio_demo` — in-memory
+      streams, an 8-byte buffered file write that really flushes,
+      read back through two stacked readers — on the bootstrap and c
+      lists. (Done 2026-10-09.)
+- [x] **T45.3** — The c-backend fixes: the runtime dispatch for
+      untyped receivers (`emo_dynamic_builtin` + the builtin method
+      table), the single evaluation of the receiver, and the Void
+      statement-method emission. (Done 2026-10-09.)
+- [x] **T45.4** — The docs: `docs/stdlib/bufio.md` + zh-CN mirror;
+      `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
+
+Step 45 close-out (2026-10-09, on `feat/bufio`): the bufio package is
+the first standard-library package whose state isBoxes inside an
+ordinary class — the buffer, cursor, source, and last-read byte live
+in `Box`es, and the class stays immutable around them. The step
+flushed out three latent c-backend bugs in the cross-module
+method-call path: the name hijack that sent `read_line` on a user
+class to the socket builtin, the receiver expression evaluated up to
+three times by the dispatch, and Void method statements compiled to
+nothing. All three are fixed in the runtime dispatch
+(`emo_dynamic_builtin`), which evaluates the receiver once and hands
+instances to their vtable before any builtin. The package rides `os`,
+so its manifest declares the ocaml and c targets and widens when
+those surfaces reach the other runtimes.
+
+### Step 46 — The standard library: `sqlite3` · `plan/step-46-stdlib-sqlite3.md`
+
+**Prereq:** Step 24 (the c target's direct C ABI) + step 25 (the embedded stdlib).
+**Done when:** `require "sqlite3"` on the c target opens a database, executes DDL, prepares statements, binds int / float / text / null parameters, and reads typed columns — with no `--cclib` and no hand-compiled shim on the consumer's side; the manifest's `link` field and package-carried `.c`/`.h` sources land with it; every other target refuses (resolution's `targets` gate, or the non-c build's E5007), the interpreter at run time (E3009); `dune test` green.
+
+- [x] **T46.1** — The manifest's `link` field: parse (strict, optional, bare names only), tests.
+- [x] **T46.2** — Packages carry `.c`/`.h`: `Registry.collect_files` and `gen-stdlib-data.sh` collect and embed them; publish and checksums flow through unchanged.
+- [x] **T46.3** — The build wiring: `load_deps`/`compile_inputs` collect each dependency's C sources and link libraries; the c target's cc invocation and cache key take them; the non-c gate (E5007).
+- [x] **T46.4** — The `sqlite3` package: manifest, `internal/ffi.emo`, `emo_sqlite3_shim.c`, the `Database`/`Statement` public surface.
+- [x] **T46.5** — `examples/sqlite3_demo` golden on the c target (gated on a sqlite3 probe, beside `cc_available`), plus the native-dependency tests in `test/emo_project`.
+- [x] **T46.6** — The docs: the CHECK.md entry, README (+ zh-CN), `docs/native-backend.md` (+ zh-CN), `docs/stdlib/sqlite3.md` (+ zh-CN), the stdlib tours.
+
+Step 46 close-out (2026-10-12, on `feat/sqlite3`): the package system learns to carry native code — a manifest gains the optional `link` field (bare library names; a flag- or path-shaped entry is E5103), and `.c`/`.h` sources ride the package tree into collection, checksums, embedding, and publishing — so the c target compiles and links a dependency's native inputs with no consumer-side flags. The `sqlite3` package is the first consumer: a `foreign def` binding over a package-carried exact-ABI shim (`emo_sqlite3_shim.c`, every signature `int64_t`/`double`/`bool`/`const char *`), c-target only, raising per the `os` convention until the error-handling migration lands.
+
 ---
 
-## M13 — Visualization (`plot`)
+## M14 — Visualization (`plot`)
 
 T0 has landed: `plot` emits a bar chart to SVG, byte-identical on all
 five hosted targets, built on the internal `Buffer`, scales/ticks, the
@@ -1391,7 +1388,7 @@ from the same value graph, with no host image library.
 
 ---
 
-## M14 — Unit testing
+## M15 — Unit testing
 
 The testing surface settled on `feat/unit-test` (2026-10-12): a `test/`
 directory at the project root — every `.emo` file under it is a test

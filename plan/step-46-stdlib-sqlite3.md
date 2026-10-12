@@ -1,4 +1,4 @@
-# Step 39 — The standard library: `sqlite3`
+# Step 46 — The standard library: `sqlite3`
 
 **Milestone:** M13 — The standard library · **Prereq:** step 24 (the c
 target's direct C ABI), step 25 (the embedded stdlib) · **Related:**
@@ -65,20 +65,20 @@ package-carried shim and links the system library by itself.
 
 ## Tasks
 
-- [x] T39.1 — the manifest's `link` field: parse (strict, optional,
+- [x] T46.1 — the manifest's `link` field: parse (strict, optional,
   bare names only), tests.
-- [x] T39.2 — packages carry `.c`/`.h`: `Registry.collect_files` and
+- [x] T46.2 — packages carry `.c`/`.h`: `Registry.collect_files` and
   `gen-stdlib-data.sh` collect and embed them; publish and checksums
   flow through unchanged.
-- [x] T39.3 — the build wiring: `load_deps`/`compile_inputs` collect
+- [x] T46.3 — the build wiring: `load_deps`/`compile_inputs` collect
   each dependency's C sources and link libraries; the c target's cc
   invocation and cache key take them; the non-c gate (E5007).
-- [x] T39.4 — the `sqlite3` package: manifest, `internal/ffi.emo`,
+- [x] T46.4 — the `sqlite3` package: manifest, `internal/ffi.emo`,
   `emo_sqlite3_shim.c`, the `Database`/`Statement` public surface.
-- [x] T39.5 — `examples/sqlite3_demo` golden on the c target (gated
+- [x] T46.5 — `examples/sqlite3_demo` golden on the c target (gated
   on a sqlite3 probe, beside `cc_available`), plus the
   native-dependency tests in `test/emo_project`.
-- [x] T39.6 — docs: CHECK.md entry, README (+ zh-CN),
+- [x] T46.6 — docs: CHECK.md entry, README (+ zh-CN),
   `docs/native-backend.md` (+ zh-CN), `docs/stdlib/sqlite3.md` (+
   zh-CN), the stdlib tours.
 

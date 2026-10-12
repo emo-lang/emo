@@ -30,7 +30,7 @@
 | M10 — Target 独立 | 26 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |
 | M11 — For / While 循环 | 34–35 | 已定案的循环面在解释器与全部六个 target 上逐字节运行:`for`(三子句,头部 `var` 作用域限定在循环)与 `while`,搭配裸 `break`/`continue`;循环在任何栈上都不增长;尾调用保证不变。 |
 | M12 — 错误处理 | 36–37 | Erlang 式分界落地:预期内的失败返回 `(R.ok, value)` / `(R.error, reason)`,用 `case` 匹配或用绑定模式断言绑定;违例抛出唯一的 `Exception` 类;stdlib 的 raise 点逐包迁移到新约定——所有 target 逐字节一致,`R` 一并抵达 freestanding 层。 |
-| M13 — 标准库 | 27–33、39 | 随编译器交付的 stdlib 各包——`json`、`yaml`、`xml`、`os`、`base64`、`slog`、`bufio`,以及首个原生绑定包 `sqlite3`——逐一按 manifest 的 `targets` 解析,在它声明的每个 target 上逐字节一致,并各自附完整 API 参考与可运行金测。 |
+| M13 — 标准库 | 39–46 | 随编译器交付的 stdlib 各包——`json`、`yaml`、`xml`、`os`、`base64`、`slog`、`bufio`,以及首个原生绑定包 `sqlite3`——逐一按 manifest 的 `targets` 解析,在它声明的每个 target 上逐字节一致,并各自附完整 API 参考与可运行金测。 |
 | M14 — 可视化(`plot`) | 39–45 | `plot` 包补齐其 T0 表面(连续轴;line / scatter / area / histogram mark;对数标度、域、图例、网格、主题、调色板、分面)与 T1 数据集图表,随后加入终端与 PNG 渲染器——SVG 输出在全部五个宿主 target 上逐字节一致。 |
 | M15 — 单元测试 | 46 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
 
@@ -458,114 +458,13 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 
 步骤 26 完成(2026-10-07,T26.1–T26.6 于 `feat/target-independence`):没有任何 target 从二进制旁或宿主构建树读取运行时;ocaml target 在 OCaml 工具链在 PATH 上的任何安装形态下、用孤立的发布布局二进制即可工作;typescript target 亦然;全部金测逐字节,`dune test` 全绿。
 
-## M13 — 标准库
-
-随编译器交付的 stdlib 自成里程碑:每个步骤一个包,各自带上 API 参考与可运行金测。`json`(27)到 `bufio`(33)是纯 Emo 与骑 `os` 的包;`sqlite3` 在 step 39 接上这个序列——它是该包落地时的下一个空号(2026-10-12),排在时间上与之交错的 M11 循环(34–35)与 M12 错误处理(36–38)之后。
-
-### Step 27 — 标准库:`json` · `plan/step-27-stdlib-json.md`
-
-**前置:** Step 10(包)+ Step 26(target 独立)。
-**完成标准:** `require "json"` 在编译器交付的每个 target 上解码与编码 JSON 且逐字节一致——严格、携带偏移的错误,数字精确往返,值树是普通 Emo 数据、跑在共享运行时上,除 typescript UTF-8 bytes 修复外零按 target 的运行时工作;六条路径全部金测;`dune test` 全绿。
-
-- [x] **T27.1** — 规格与骨架:包 `stdlib/registry/json/0.1.0`(覆盖五个已测 target 的 `package.emo`;`json.emo` 带值模型——`JsonKind`、`Json` 接口、七个载荷类、各工厂;`internal/float.emo` 承载数值机制),重新构建时内嵌。验证:工厂构造的值可编码,解释执行。(2026-10-09 完成。)
-- [x] **T27.2** — typescript bytes 修复:ts 前奏里 `to_bytes` 按 UTF-8 编码、`Bytes.to_string` 按 UTF-8 解码;全部既有 ts 金测逐字节。(2026-10-09 完成:解释器、c、typescript 就非 ASCII 往返达成一致。)
-- [x] **T27.3** — 解码器:逐字节的扫描器加递归下降解析器,按 RFC 8259 文法——转义含代理对、精确的 `Int64`/`Float64` 数字、深度上限、带偏移的错误。(2026-10-09 完成:decode 对小数只舍入一次,就近取整、平局取偶——`strtod` 的答案——经 `internal/float.emo` 里的精确长除法实现。)
-- [x] **T27.4** — 编码器:紧凑与 pretty 两种形态;字符串转义;整数走 `Int64.to_string`;最短往返浮点格式化器。(2026-10-09 完成:π 打印 `3.141592653589793`,最小非规格化数打印 `5.0e-324`,最大值打印 `1.7976931348623157e+308`;浮点数永远看得出是浮点数。)
-- [x] **T27.5** — 金测示例:`examples/json_demo` 接入解释器 bootstrap 与 typescript 金测列表(共用一份 `expected.txt`);c、wasm、beam 等下方的跨模块后续。(2026-10-09 完成。)
-- [x] **T27.6** — 边界 fixture:`examples/json_edge`——转义矩阵、代理对、512 数组上限的往返、重复键、数字边界、往返、pretty 形态——接入解释器 bootstrap 列表。(2026-10-09 完成;揪出紧凑编码器缺失的空容器守卫。)
-- [x] **T27.7** — 文档与收尾:`docs/stdlib/json.md` 及 zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
-
-步骤 27 收尾(2026-10-09,`feat/stdlib` 分支):`require "json"` 在解释器、ocaml target、typescript target 上解码与编码逐字节一致——金测 `json_demo`(bootstrap + ts)与 `json_edge`(bootstrap)全绿,`dune build @fmt` 与 `dune test` 端到端全绿。这个包是普通的纯 Emo;c、wasm、beam 仍被一个检查器步骤挡住——跨模块类型名("cross-module types stay unchecked this step",步骤 9)——最小复现与本步骤已落地的后端修复记录在 `plan/step-27-stdlib-json.md`。随本步骤落地的编译器修复:按文件键控的 span 类型表(多模块类型互窜)、typescript 尾调用重写的实参临时变量 + 字符串转义 + 接口分隔符、c 的 `emo_send` 实参数组 + 未知接收者的 vtable 回退 + 互尾调用簇的入口分派、wasm 接口分派的 `Ref_cast` + 字段显示名解析。
-
-### Step 28 — 标准库:`yaml` · `plan/step-28-stdlib-yaml.md`
-
-**前置:** Step 27(json 包——本包沿用的树设计与浮点机制)。**完成标准:** `require "yaml"` 在检查器支持的 target 上解码与编码 YAML 1.2(core schema)且逐字节一致——块/流样式、带引号标量配 YAML 转义集、块标量配 chomping、重复键后者胜、数字打满边界;解释器/ocaml/typescript 金测全绿;c、wasm、beam 等与 Step 27 共享的跨模块类型后续。
-
-- [x] **T28.1** — 包与解析器:`stdlib/registry/yaml/0.1.0` 重新构建时内嵌;值模型、块/流解析器。(2026-10-09 完成。)
-- [x] **T28.2** — 编码器:块样式;无歧义时用 plain 字符串;空容器的流形态。(2026-10-09 完成。)
-- [x] **T28.3** — 金测:`examples/yaml_demo`(bootstrap + typescript)与 `examples/yaml_edge`(bootstrap)。(2026-10-09 完成。)
-- [x] **T28.4** — 文档:`docs/stdlib/yaml.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
-
-步骤 28 收尾(2026-10-09,`feat/stdlib` 分支):yaml 包沿用 json 包的树设计,在解释器、ocaml、typescript 上金测全绿;c、wasm、beam 仍被与 Step 27 共享的跨模块类型检查器步骤挡住。本包还揪出 typescript 运行时的字段遮蔽方法分派 bug(已在 `ts_runtime.ts` 修复:自有属性不是函数时,E.method 现在会落到原型的方法上)。
-
-### Step 29 — 标准库:`xml` · `plan/step-29-stdlib-xml.md`
-
-**前置:** Step 27(json 包——本包沿用的树设计与字节扫描器模式)。**完成标准:** `require "xml"` 在已验证 target 上解码与编码良构 XML 且逐字节一致——带引号属性的元素、自闭合形式、五个实体加字符引用、CDATA 作原始文本、注释 / PI / 声明 / DOCTYPE 跳过、混合内容、带偏移的错误;解释器/ocaml/typescript/c 金测全绿;wasm 与 beam 等与 Step 27–28 共享的跨模块类型后续。
-
-- [x] **T29.1** — 包、值模型与解码器。(2026-10-09 完成。)
-- [x] **T29.2** — 编码器。(2026-10-09 完成。)
-- [x] **T29.3** — 金测:`examples/xml_demo`(bootstrap + c + typescript)与 `examples/xml_edge`(bootstrap)。(2026-10-09 完成。)
-- [x] **T29.4** — 文档:`docs/stdlib/xml.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
-
-步骤 29 收尾(2026-10-09,`feat/stdlib` 分支):xml 包——三个格式包里最轻的(XML 全是文本,没有浮点机制)——在解释器、ocaml、typescript 以及 c 上金测全绿(xml_demo 挂上 c_goldens 列表)。本包还揪出三个格式包共有的 exact-buffer `to_string().substring(byte_count)` 越界模式(修复:恰好填满的缓冲直接返回 `to_string()`)。wasm 与 beam 仍被跨模块类型检查器步骤挡住。
-
-### Step 30 — 标准库:`os` · `plan/step-30-stdlib-os.md`
-
-**前置:** Step 24(c target)与 Step 26(target 独立——独立 ocaml 运行时同样需要这套分派)。**完成标准:** `require "os"` 给程序进程身份、fork / execv / waitpid / _exit、管道、裸的无缓冲 fd 文件 IO 与目录面;每个失败的调用抛异常并点名系统调用;waitpid 以纯 Emo 解码器应答内核的原始 16 位状态;list_dir 以字节序排序返回名字,不带 `.` 与 `..`;解释器/ocaml/c 金测全绿;ts/wasm/beam 按 targets 声明拒绝该包。
-
-- [x] **T30.1** — checker 签名、`os_` 内建前缀、解释器的 Unix 后端分派。(2026-10-09 完成。)
-- [x] **T30.2** — c 运行时的 `emo_os_*` POSIX 实现与 c 发射器的分派。(2026-10-09 完成。)
-- [x] **T30.3** — 独立 ocaml 运行时的分派。(2026-10-09 完成。)
-- [x] **T30.4** — 包本体:薄封装、wait 状态解码器、fork/pipe 纪律。(2026-10-09 完成。)
-- [x] **T30.5** — 金测:`examples/os_demo` 挂上 bootstrap 与 c_goldens 列表。(2026-10-09 完成。)
-- [x] **T30.6** — 文档:`docs/stdlib/os.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
-
-步骤 30 收尾(2026-10-09,`feat/stdlib` 分支):os 包——net 之后第二个运行时后端的包,也是第一个伸进进程机制的——在解释器、ocaml、c 上验证;os_demo 金测演练 fork+pipe+waitpid(子进程经 _exit 以 7 退出,父进程解码原始状态)以及裸 IO 与目录面。与格式包不同,os 跨模块只用原生类型,所以 c target 无需跨模块类型检查器步骤即可带走它;ts/wasm/beam 由包的 targets 声明拒绝。
-
-### Step 31 — 标准库:`base64` · `plan/step-31-stdlib-base64.md`
-
-**前置:** Step 27(json 包——字节扫描器纪律)。**完成标准:** `require "base64"` 以标准字母表加 `=` 填充编码,解码严格——只收字母表、填充只出现在末尾分组、零填充位规范——每次拒绝都给出违规字节偏移;金测挂全部五个列表(bootstrap、c、typescript、wasm、beam),处处逐字节一致。
-
-- [x] **T31.1** — 包本体:双向的算术字母表、严格解码器、带偏移的错误。(2026-10-09 完成。)
-- [x] **T31.2** — wasm 修复:`&&`/`||` 左操作数补 cast 与零长度字节拷贝守卫。(2026-10-09 完成。)
-- [x] **T31.3** — beam 修复:逻辑运算符、元组索引与 `Make_exception`。(2026-10-09 完成。)
-- [x] **T31.4** — 金测:`examples/base64_demo` 挂全部五个列表。(2026-10-09 完成。)
-- [x] **T31.5** — 文档:`docs/stdlib/base64.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
-
-步骤 31 收尾(2026-10-09,`feat/stdlib` 分支):base64 是第一个挂满五个金测的标准库包——本步骤还揪出四个从未被已发布示例触及的潜在后端 bug:wasm 的 `&&`/`||` 左操作数漏了 `ref.cast`(这正是把 json/yaml/xml 挡在 wasm 金测之外的墙)、wasm 的零长度字节拷贝是会在 `"".to_bytes()` 上陷阱的 do-while、beam 的逻辑运算符对两个布尔调用 `emo_add`、beam 的元组索引对 Erlang 元组用 `lists:nth`;beam 还补上 `Make_exception`(异常对象即其消息)。json/yaml/xml 的 wasm 闸门应对照这些修复重验——`&&` 之墙已倒,但它们的跨模块类类型可能仍被 step-27 后续挡着。
-
-### Step 32 — 标准库:`slog` · `plan/step-32-stdlib-slog.md`
-
-**前置:** Step 31(base64——纯原生类型的表面形状)。**完成标准:** `require "slog"` 每条记录打一行,logfmt 或 JSON,按最低级别过滤;logger 是普通的值——一个携带名称、级别、格式的不透明句柄——attrs 是键严格限于单一字母表的 `Map[String, String]`,金测挂 bootstrap、c、typescript 列表且逐字节一致;wasm 与 beam 在其运行时实现 `Map` 之前拒绝该包。
-
-- [x] **T32.1** — 包本体:有序级别与两种格式、句柄打包/解析、logfmt 与 JSON 渲染器、严格键与精确错误。(2026-10-09 完成。)
-- [x] **T32.2** — 金测:`examples/slog_demo`——两种格式、过滤、子 logger、引号与转义、UTF-8、`enabled`——挂 bootstrap、c、typescript 列表。(2026-10-09 完成。)
-- [x] **T32.3** — 文档:`docs/stdlib/slog.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
-
-步骤 32 收尾(2026-10-09,`feat/slog` 分支):slog 是第一个金测零编译器改动的标准库包——step-31 的 wasm/beam 修复顶住了,interp/ocaml/c/typescript 上的 `Map` 扛起整个表面。设计回答的是"没有框架的 logger":句柄把 `name/level/format` 摆在明处,包自身不持任何状态;记录不带时间戳(无时钟——输出确定,有时间的调用方把它作为属性传入);属性键严格限于与句柄百分号转义共享的同一字母表。manifest 声明今天可用的三个 target,wasm/beam 的 `Map` 缺口补上后加宽。
-
-### Step 33 — 标准库:`bufio` · `plan/step-33-stdlib-bufio.md`
-
-**前置:** Step 32(slog——金测零编译器改动的形状)。**完成标准:** `require "bufio"` 经固定大小缓冲、架在两个单方法结构接口上读写——`Reader` 有行、分隔符、peek、discard 与一级 unread;`Writer` 有合并写、显式 flush、绝不静默丢弃——fd 与内存适配器覆盖具体流,金测挂 bootstrap 与 c 列表且逐字节一致,c 后端的跨模块分派可靠(实例经自己的 vtable 应答、且只求值一次,Void 方法语句保住其调用)。
-
-- [x] **T33.1** — 包本体:两个接口、四个适配器、`Reader` 与 `Writer` 表面、严格尺寸与精确错误。(2026-10-09 完成。)
-- [x] **T33.2** — 金测:`examples/bufio_demo`——内存流、真正 flush 的 8 字节缓冲文件写、经两个叠层 reader 读回——挂 bootstrap 与 c 列表。(2026-10-09 完成。)
-- [x] **T33.3** — c 后端修复:无类型接收者的运行时分派(`emo_dynamic_builtin` + 内建方法表)、接收者表达式只求值一次、Void 语句方法的发射。(2026-10-09 完成。)
-- [x] **T33.4** — 文档:`docs/stdlib/bufio.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
-
-步骤 33 收尾(2026-10-09,`feat/bufio` 分支):bufio 是第一个状态以 Box 住在普通类里的标准库包——缓冲、游标、数据源、上次读到的字节都活在 `Box` 中,类在其周围保持不可变。本步骤揪出 c 后端跨模块方法调用路径的三个潜在 bug:把用户类上的 `read_line` 劫持到 socket 内建的名字劫持、接收者表达式被分派求值多达三次、Void 方法语句被编译成空。三处都已在运行时分派(`emo_dynamic_builtin`)修复——它只求值接收者一次,并在任何内建之前把实例交给其 vtable。本包骑在 `os` 上,manifest 声明 ocaml 与 c target,待那些表面到达其他运行时再加宽。
-
-### Step 39 — 标准库:`sqlite3` · `plan/step-39-stdlib-sqlite3.md`
-
-**前置:** Step 24(c target 的直接 C ABI)+ Step 25(内嵌 stdlib)。
-**完成标准:** c target 上 `require "sqlite3"` 打开数据库、执行 DDL、准备语句、绑定 int / float / text / null 参数并读取带类型列——消费方无需 `--cclib`、无需手工编译 shim;manifest 的 `link` 字段与随包携带的 `.c`/`.h` 源码随之落地;其他 target 一律拒绝(解析期 `targets` 闸门,或非 c 构建期的 E5007),解释器运行时拒绝(E3009);`dune test` 全绿。
-
-- [x] **T39.1** — manifest 的 `link` 字段:解析(严格、可选、仅裸库名)与测试。
-- [x] **T39.2** — 包可携带 `.c`/`.h`:`Registry.collect_files` 与 `gen-stdlib-data.sh` 收集并内嵌它们;publish 与 checksum 流程不变。
-- [x] **T39.3** — 构建接线:`load_deps`/`compile_inputs` 收集每个依赖的 C 源码与链接库;c target 的 cc 调用与缓存键纳入它们;非 c 闸门(E5007)。
-- [x] **T39.4** — `sqlite3` 包:manifest、`internal/ffi.emo`、`emo_sqlite3_shim.c`、`Database`/`Statement` 公开表面。
-- [x] **T39.5** — c target 上的 `examples/sqlite3_demo` 金测(以 sqlite3 探针为门,与 `cc_available` 并列),外加 `test/emo_project` 里的原生依赖测试。
-- [x] **T39.6** — 文档:CHECK.md 条目、README(+ zh-CN)、`docs/native-backend.md`(+ zh-CN)、`docs/stdlib/sqlite3.md`(+ zh-CN)、stdlib 巡览。
-
-Step 39 收尾(2026-10-12,`feat/sqlite3` 分支):包系统学会携带原生代码——manifest 新增可选 `link` 字段(仅裸库名;旗标或路径形状的条目报 E5103),`.c`/`.h` 源码随包树进入收集、校验和、内嵌与发布——于是 c target 自行编译并链接依赖的原生输入,消费方零旗标。`sqlite3` 是首个消费者:以 `foreign def` 绑定随包携带的精确 ABI shim(`emo_sqlite3_shim.c`,每个签名只有 `int64_t`/`double`/`bool`/`const char *`),仅 c target,按 `os` 约定 raise,直到错误处理迁移落地。
-
 ## M11 — For / While 循环
 
 `CHECK.md` 已定案的循环面(2026-10-06):保证的尾调用保留,`for` / `while` 加入其中。`for var i = 0; i < n; i = i + 1 { ... }` 无括号、恰好三个子句、头部的 `var` 作用域限定在头部与循环体;`while cond { ... }` 仅条件;`break` 与 `continue` 是绑定最近循环的裸语句;不加 `do`/`while`,不加 `+=`/`++`。动机:循环是向量化与 OpenMP 并行循环 rung(HPC 闸门)的原生形状,免去循环代码的尾位置证明负担,并与 `var` 自然搭配——而 var 逃逸规则(E4012)已挡住 Go 的循环捕获陷阱。设计记录在 `CHECK.md` 与 README;每个步骤的 plan 文件在步骤启动时编写。
 
 ### Step 34 — 循环表面:lexer、parser、checker、解释器
 
-**前置:** Step 33。
+**前置:** Step 45。
 **完成标准:** README 的循环示例经 `emo run` 逐字运行;CHECK.md 的演示范例(`for var i = 0; i < 100; i = i + 50`)先打印 `i = 0` 再打印 `i = 50`;千万次迭代的 `while` 栈保持平坦;每种拒绝——保留字用作标识符、缺子句、`;` 出现在 `for` 头之外、循环外的 `break`/`continue`——各有自己的诊断;`dune test` 全绿。
 
 - [x] **T34.1** — 关键字:lexer 保留 `for`、`while`、`break`、`continue`;LSP 补全列表与 VS Code grammar 同步翻转;把这四个词用作标识符的代码得到清晰的保留字诊断。(2026-10-11 完成。)
@@ -629,9 +528,110 @@ Step 34 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 - [x] **T38.2** — 跨模块值签名:def 与 foreign 按声明的 `FuncType`、const/var 按初始化表达式的类型、`emo` 组进程序级注册表——全部在类型表之侧预注册。限定调用经 `check_apply` 受查;裸成员读取要么解析出类型、要么静态报 E5004;组成员获得类型(此前连同模块的裸 `Math.tau` 都是 Unknown);局部名遮蔽同名模块,与运行时规则一致。顺带落地两个预存 bug:`longest_module_prefix` 走的是路径的后缀而非前缀;空点路径被当成模块前缀——任何非简单接收者上的裸成员访问(`foo(1).field`)恒为 Unknown。
 - [x] **T38.3** — 项目检查下,解析不到任何类型、组或模块的大驼峰值名在书写处报 E4003(运行时携带值的内建名保持合法);单文件视图保持旧的沉默,与它看不见的所有跨文件缺口一致。json/yaml 接口声明 `get`(自引用签名;json 补齐四个标量类的 raise 型变体,与类已有的回答一致)。checker 与 project 测试;CHECK.md 条目;全部 target 金测绿。
 
+## M13 — 标准库
+
+随编译器交付的 stdlib 自成里程碑:每个步骤一个包,各自带上 API 参考与可运行金测。步骤从 `json`(39)排到 `bufio`(45),最后是原生绑定包 `sqlite3`(46)。
+
+### Step 39 — 标准库:`json` · `plan/step-39-stdlib-json.md`
+
+**前置:** Step 10(包)+ Step 26(target 独立)。
+**完成标准:** `require "json"` 在编译器交付的每个 target 上解码与编码 JSON 且逐字节一致——严格、携带偏移的错误,数字精确往返,值树是普通 Emo 数据、跑在共享运行时上,除 typescript UTF-8 bytes 修复外零按 target 的运行时工作;六条路径全部金测;`dune test` 全绿。
+
+- [x] **T39.1** — 规格与骨架:包 `stdlib/registry/json/0.1.0`(覆盖五个已测 target 的 `package.emo`;`json.emo` 带值模型——`JsonKind`、`Json` 接口、七个载荷类、各工厂;`internal/float.emo` 承载数值机制),重新构建时内嵌。验证:工厂构造的值可编码,解释执行。(2026-10-09 完成。)
+- [x] **T39.2** — typescript bytes 修复:ts 前奏里 `to_bytes` 按 UTF-8 编码、`Bytes.to_string` 按 UTF-8 解码;全部既有 ts 金测逐字节。(2026-10-09 完成:解释器、c、typescript 就非 ASCII 往返达成一致。)
+- [x] **T39.3** — 解码器:逐字节的扫描器加递归下降解析器,按 RFC 8259 文法——转义含代理对、精确的 `Int64`/`Float64` 数字、深度上限、带偏移的错误。(2026-10-09 完成:decode 对小数只舍入一次,就近取整、平局取偶——`strtod` 的答案——经 `internal/float.emo` 里的精确长除法实现。)
+- [x] **T39.4** — 编码器:紧凑与 pretty 两种形态;字符串转义;整数走 `Int64.to_string`;最短往返浮点格式化器。(2026-10-09 完成:π 打印 `3.141592653589793`,最小非规格化数打印 `5.0e-324`,最大值打印 `1.7976931348623157e+308`;浮点数永远看得出是浮点数。)
+- [x] **T39.5** — 金测示例:`examples/json_demo` 接入解释器 bootstrap 与 typescript 金测列表(共用一份 `expected.txt`);c、wasm、beam 等下方的跨模块后续。(2026-10-09 完成。)
+- [x] **T39.6** — 边界 fixture:`examples/json_edge`——转义矩阵、代理对、512 数组上限的往返、重复键、数字边界、往返、pretty 形态——接入解释器 bootstrap 列表。(2026-10-09 完成;揪出紧凑编码器缺失的空容器守卫。)
+- [x] **T39.7** — 文档与收尾:`docs/stdlib/json.md` 及 zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
+
+步骤 39 收尾(2026-10-09,`feat/stdlib` 分支):`require "json"` 在解释器、ocaml target、typescript target 上解码与编码逐字节一致——金测 `json_demo`(bootstrap + ts)与 `json_edge`(bootstrap)全绿,`dune build @fmt` 与 `dune test` 端到端全绿。这个包是普通的纯 Emo;c、wasm、beam 仍被一个检查器步骤挡住——跨模块类型名("cross-module types stay unchecked this step",步骤 9)——最小复现与本步骤已落地的后端修复记录在 `plan/step-39-stdlib-json.md`。随本步骤落地的编译器修复:按文件键控的 span 类型表(多模块类型互窜)、typescript 尾调用重写的实参临时变量 + 字符串转义 + 接口分隔符、c 的 `emo_send` 实参数组 + 未知接收者的 vtable 回退 + 互尾调用簇的入口分派、wasm 接口分派的 `Ref_cast` + 字段显示名解析。
+
+### Step 40 — 标准库:`yaml` · `plan/step-40-stdlib-yaml.md`
+
+**前置:** Step 39(json 包——本包沿用的树设计与浮点机制)。**完成标准:** `require "yaml"` 在检查器支持的 target 上解码与编码 YAML 1.2(core schema)且逐字节一致——块/流样式、带引号标量配 YAML 转义集、块标量配 chomping、重复键后者胜、数字打满边界;解释器/ocaml/typescript 金测全绿;c、wasm、beam 等与 Step 39 共享的跨模块类型后续。
+
+- [x] **T40.1** — 包与解析器:`stdlib/registry/yaml/0.1.0` 重新构建时内嵌;值模型、块/流解析器。(2026-10-09 完成。)
+- [x] **T40.2** — 编码器:块样式;无歧义时用 plain 字符串;空容器的流形态。(2026-10-09 完成。)
+- [x] **T40.3** — 金测:`examples/yaml_demo`(bootstrap + typescript)与 `examples/yaml_edge`(bootstrap)。(2026-10-09 完成。)
+- [x] **T40.4** — 文档:`docs/stdlib/yaml.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
+
+步骤 40 收尾(2026-10-09,`feat/stdlib` 分支):yaml 包沿用 json 包的树设计,在解释器、ocaml、typescript 上金测全绿;c、wasm、beam 仍被与 Step 39 共享的跨模块类型检查器步骤挡住。本包还揪出 typescript 运行时的字段遮蔽方法分派 bug(已在 `ts_runtime.ts` 修复:自有属性不是函数时,E.method 现在会落到原型的方法上)。
+
+### Step 41 — 标准库:`xml` · `plan/step-41-stdlib-xml.md`
+
+**前置:** Step 39(json 包——本包沿用的树设计与字节扫描器模式)。**完成标准:** `require "xml"` 在已验证 target 上解码与编码良构 XML 且逐字节一致——带引号属性的元素、自闭合形式、五个实体加字符引用、CDATA 作原始文本、注释 / PI / 声明 / DOCTYPE 跳过、混合内容、带偏移的错误;解释器/ocaml/typescript/c 金测全绿;wasm 与 beam 等与 Step 39–28 共享的跨模块类型后续。
+
+- [x] **T41.1** — 包、值模型与解码器。(2026-10-09 完成。)
+- [x] **T41.2** — 编码器。(2026-10-09 完成。)
+- [x] **T41.3** — 金测:`examples/xml_demo`(bootstrap + c + typescript)与 `examples/xml_edge`(bootstrap)。(2026-10-09 完成。)
+- [x] **T41.4** — 文档:`docs/stdlib/xml.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
+
+步骤 41 收尾(2026-10-09,`feat/stdlib` 分支):xml 包——三个格式包里最轻的(XML 全是文本,没有浮点机制)——在解释器、ocaml、typescript 以及 c 上金测全绿(xml_demo 挂上 c_goldens 列表)。本包还揪出三个格式包共有的 exact-buffer `to_string().substring(byte_count)` 越界模式(修复:恰好填满的缓冲直接返回 `to_string()`)。wasm 与 beam 仍被跨模块类型检查器步骤挡住。
+
+### Step 42 — 标准库:`os` · `plan/step-42-stdlib-os.md`
+
+**前置:** Step 24(c target)与 Step 26(target 独立——独立 ocaml 运行时同样需要这套分派)。**完成标准:** `require "os"` 给程序进程身份、fork / execv / waitpid / _exit、管道、裸的无缓冲 fd 文件 IO 与目录面;每个失败的调用抛异常并点名系统调用;waitpid 以纯 Emo 解码器应答内核的原始 16 位状态;list_dir 以字节序排序返回名字,不带 `.` 与 `..`;解释器/ocaml/c 金测全绿;ts/wasm/beam 按 targets 声明拒绝该包。
+
+- [x] **T42.1** — checker 签名、`os_` 内建前缀、解释器的 Unix 后端分派。(2026-10-09 完成。)
+- [x] **T42.2** — c 运行时的 `emo_os_*` POSIX 实现与 c 发射器的分派。(2026-10-09 完成。)
+- [x] **T42.3** — 独立 ocaml 运行时的分派。(2026-10-09 完成。)
+- [x] **T42.4** — 包本体:薄封装、wait 状态解码器、fork/pipe 纪律。(2026-10-09 完成。)
+- [x] **T42.5** — 金测:`examples/os_demo` 挂上 bootstrap 与 c_goldens 列表。(2026-10-09 完成。)
+- [x] **T42.6** — 文档:`docs/stdlib/os.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
+
+步骤 42 收尾(2026-10-09,`feat/stdlib` 分支):os 包——net 之后第二个运行时后端的包,也是第一个伸进进程机制的——在解释器、ocaml、c 上验证;os_demo 金测演练 fork+pipe+waitpid(子进程经 _exit 以 7 退出,父进程解码原始状态)以及裸 IO 与目录面。与格式包不同,os 跨模块只用原生类型,所以 c target 无需跨模块类型检查器步骤即可带走它;ts/wasm/beam 由包的 targets 声明拒绝。
+
+### Step 43 — 标准库:`base64` · `plan/step-43-stdlib-base64.md`
+
+**前置:** Step 39(json 包——字节扫描器纪律)。**完成标准:** `require "base64"` 以标准字母表加 `=` 填充编码,解码严格——只收字母表、填充只出现在末尾分组、零填充位规范——每次拒绝都给出违规字节偏移;金测挂全部五个列表(bootstrap、c、typescript、wasm、beam),处处逐字节一致。
+
+- [x] **T43.1** — 包本体:双向的算术字母表、严格解码器、带偏移的错误。(2026-10-09 完成。)
+- [x] **T43.2** — wasm 修复:`&&`/`||` 左操作数补 cast 与零长度字节拷贝守卫。(2026-10-09 完成。)
+- [x] **T43.3** — beam 修复:逻辑运算符、元组索引与 `Make_exception`。(2026-10-09 完成。)
+- [x] **T43.4** — 金测:`examples/base64_demo` 挂全部五个列表。(2026-10-09 完成。)
+- [x] **T43.5** — 文档:`docs/stdlib/base64.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
+
+步骤 43 收尾(2026-10-09,`feat/stdlib` 分支):base64 是第一个挂满五个金测的标准库包——本步骤还揪出四个从未被已发布示例触及的潜在后端 bug:wasm 的 `&&`/`||` 左操作数漏了 `ref.cast`(这正是把 json/yaml/xml 挡在 wasm 金测之外的墙)、wasm 的零长度字节拷贝是会在 `"".to_bytes()` 上陷阱的 do-while、beam 的逻辑运算符对两个布尔调用 `emo_add`、beam 的元组索引对 Erlang 元组用 `lists:nth`;beam 还补上 `Make_exception`(异常对象即其消息)。json/yaml/xml 的 wasm 闸门应对照这些修复重验——`&&` 之墙已倒,但它们的跨模块类类型可能仍被 step-39 后续挡着。
+
+### Step 44 — 标准库:`slog` · `plan/step-44-stdlib-slog.md`
+
+**前置:** Step 43(base64——纯原生类型的表面形状)。**完成标准:** `require "slog"` 每条记录打一行,logfmt 或 JSON,按最低级别过滤;logger 是普通的值——一个携带名称、级别、格式的不透明句柄——attrs 是键严格限于单一字母表的 `Map[String, String]`,金测挂 bootstrap、c、typescript 列表且逐字节一致;wasm 与 beam 在其运行时实现 `Map` 之前拒绝该包。
+
+- [x] **T44.1** — 包本体:有序级别与两种格式、句柄打包/解析、logfmt 与 JSON 渲染器、严格键与精确错误。(2026-10-09 完成。)
+- [x] **T44.2** — 金测:`examples/slog_demo`——两种格式、过滤、子 logger、引号与转义、UTF-8、`enabled`——挂 bootstrap、c、typescript 列表。(2026-10-09 完成。)
+- [x] **T44.3** — 文档:`docs/stdlib/slog.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
+
+步骤 44 收尾(2026-10-09,`feat/slog` 分支):slog 是第一个金测零编译器改动的标准库包——step-43 的 wasm/beam 修复顶住了,interp/ocaml/c/typescript 上的 `Map` 扛起整个表面。设计回答的是"没有框架的 logger":句柄把 `name/level/format` 摆在明处,包自身不持任何状态;记录不带时间戳(无时钟——输出确定,有时间的调用方把它作为属性传入);属性键严格限于与句柄百分号转义共享的同一字母表。manifest 声明今天可用的三个 target,wasm/beam 的 `Map` 缺口补上后加宽。
+
+### Step 45 — 标准库:`bufio` · `plan/step-45-stdlib-bufio.md`
+
+**前置:** Step 44(slog——金测零编译器改动的形状)。**完成标准:** `require "bufio"` 经固定大小缓冲、架在两个单方法结构接口上读写——`Reader` 有行、分隔符、peek、discard 与一级 unread;`Writer` 有合并写、显式 flush、绝不静默丢弃——fd 与内存适配器覆盖具体流,金测挂 bootstrap 与 c 列表且逐字节一致,c 后端的跨模块分派可靠(实例经自己的 vtable 应答、且只求值一次,Void 方法语句保住其调用)。
+
+- [x] **T45.1** — 包本体:两个接口、四个适配器、`Reader` 与 `Writer` 表面、严格尺寸与精确错误。(2026-10-09 完成。)
+- [x] **T45.2** — 金测:`examples/bufio_demo`——内存流、真正 flush 的 8 字节缓冲文件写、经两个叠层 reader 读回——挂 bootstrap 与 c 列表。(2026-10-09 完成。)
+- [x] **T45.3** — c 后端修复:无类型接收者的运行时分派(`emo_dynamic_builtin` + 内建方法表)、接收者表达式只求值一次、Void 语句方法的发射。(2026-10-09 完成。)
+- [x] **T45.4** — 文档:`docs/stdlib/bufio.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
+
+步骤 45 收尾(2026-10-09,`feat/bufio` 分支):bufio 是第一个状态以 Box 住在普通类里的标准库包——缓冲、游标、数据源、上次读到的字节都活在 `Box` 中,类在其周围保持不可变。本步骤揪出 c 后端跨模块方法调用路径的三个潜在 bug:把用户类上的 `read_line` 劫持到 socket 内建的名字劫持、接收者表达式被分派求值多达三次、Void 方法语句被编译成空。三处都已在运行时分派(`emo_dynamic_builtin`)修复——它只求值接收者一次,并在任何内建之前把实例交给其 vtable。本包骑在 `os` 上,manifest 声明 ocaml 与 c target,待那些表面到达其他运行时再加宽。
+
+### Step 46 — 标准库:`sqlite3` · `plan/step-46-stdlib-sqlite3.md`
+
+**前置:** Step 24(c target 的直接 C ABI)+ Step 25(内嵌 stdlib)。
+**完成标准:** c target 上 `require "sqlite3"` 打开数据库、执行 DDL、准备语句、绑定 int / float / text / null 参数并读取带类型列——消费方无需 `--cclib`、无需手工编译 shim;manifest 的 `link` 字段与随包携带的 `.c`/`.h` 源码随之落地;其他 target 一律拒绝(解析期 `targets` 闸门,或非 c 构建期的 E5007),解释器运行时拒绝(E3009);`dune test` 全绿。
+
+- [x] **T46.1** — manifest 的 `link` 字段:解析(严格、可选、仅裸库名)与测试。
+- [x] **T46.2** — 包可携带 `.c`/`.h`:`Registry.collect_files` 与 `gen-stdlib-data.sh` 收集并内嵌它们;publish 与 checksum 流程不变。
+- [x] **T46.3** — 构建接线:`load_deps`/`compile_inputs` 收集每个依赖的 C 源码与链接库;c target 的 cc 调用与缓存键纳入它们;非 c 闸门(E5007)。
+- [x] **T46.4** — `sqlite3` 包:manifest、`internal/ffi.emo`、`emo_sqlite3_shim.c`、`Database`/`Statement` 公开表面。
+- [x] **T46.5** — c target 上的 `examples/sqlite3_demo` 金测(以 sqlite3 探针为门,与 `cc_available` 并列),外加 `test/emo_project` 里的原生依赖测试。
+- [x] **T46.6** — 文档:CHECK.md 条目、README(+ zh-CN)、`docs/native-backend.md`(+ zh-CN)、`docs/stdlib/sqlite3.md`(+ zh-CN)、stdlib 巡览。
+
+Step 46 收尾(2026-10-12,`feat/sqlite3` 分支):包系统学会携带原生代码——manifest 新增可选 `link` 字段(仅裸库名;旗标或路径形状的条目报 E5103),`.c`/`.h` 源码随包树进入收集、校验和、内嵌与发布——于是 c target 自行编译并链接依赖的原生输入,消费方零旗标。`sqlite3` 是首个消费者:以 `foreign def` 绑定随包携带的精确 ABI shim(`emo_sqlite3_shim.c`,每个签名只有 `int64_t`/`double`/`bool`/`const char *`),仅 c target,按 `os` 约定 raise,直到错误处理迁移落地。
+
 ---
 
-## M13 — 可视化(`plot`)
+## M14 — 可视化(`plot`)
 
 T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上逐字节一致,构建在内部 `Buffer`、标度/刻度、带 `SvgRenderer` 的 `Renderer` 接口,以及声明式的 `figure`/`axes`/`mark` 值之上。数值底座与 `math` 包(sequencing A)已完成。本 milestone 完成设计的 sequencing B–E:T0 表面的其余部分、`Table` 与通道(channels)、T1 数据集图表,最后是终端与 PNG 渲染器。设计与定案记录在 `docs/visualization.md`;包当前表面在 `docs/stdlib/plot.md`;本工作触及的语言使能项在 `docs/temp-visual-check.md`。范围之外(decision 9):交互/GUI 图表、EmoUI 画布、3D、动画。每个步骤的 plan 文件在步骤启动时编写。
 
@@ -714,7 +714,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 
 ---
 
-## M14 — 单元测试
+## M15 — 单元测试
 
 `feat/unit-test` 上定案的测试面(2026-10-12):项目根部的 `test/` 目录——其中每个 `.emo` 文件都是测试文件,每个顶层 `def test_*` 都是一个测试——断言做成内建(`expect_equal` / `expect_true` / `expect_false` / `expect_fail`),失败时抛出唯一的 `Exception` 类,由 OCaml 运行器逐个测试捕获(Emo 没有 catch,运行器是唯一能截获 raise 的地方)。不新增任何语法构造。本分支上工作已经开始:T46.1–T46.5 与 T46.7 的部分实现留在树中尚未评审——各自按下面的任务定义补齐完成,而不是按现状直接并入。
 
