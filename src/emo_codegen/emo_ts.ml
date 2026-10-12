@@ -583,8 +583,11 @@ let emit_ctor_factory env (c : Emo_ir.class_) : string =
       (c.Emo_ir.cname ^ "__new") c.Emo_ir.cname
   else
     Printf.sprintf
-      "async function %s(%s) {\n  const __o = new %s();\n  await \
-       __o.__emo_init(%s);\n  return __o;\n}"
+      "async function %s(%s) {\n\
+      \  const __o = new %s();\n\
+      \  await __o.__emo_init(%s);\n\
+      \  return __o;\n\
+       }"
       (c.Emo_ir.cname ^ "__new")
       (String.concat ", " params)
       c.Emo_ir.cname
@@ -663,8 +666,8 @@ let emit_class env (c : Emo_ir.class_) : string =
              params_code self_param body)
          c.Emo_ir.cmethods)
   in
-  Printf.sprintf "class %s {\n  static __emo = %S;\n%s%s%s%s\n}\n" c.Emo_ir.cname
-    c.Emo_ir.cdisplay ctor init_method eq_method methods
+  Printf.sprintf "class %s {\n  static __emo = %S;\n%s%s%s%s\n}\n"
+    c.Emo_ir.cname c.Emo_ir.cdisplay ctor init_method eq_method methods
 
 (* ---- The program ---- *)
 

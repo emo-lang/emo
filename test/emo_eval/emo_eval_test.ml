@@ -162,9 +162,8 @@ let run_stmts source =
 let run_program source =
   let buf = Buffer.create 64 in
   Emo_eval.set_output (Buffer.add_string buf);
-  Fun.protect
-    ~finally:Emo_eval.reset_output
-    (fun () -> Emo_eval.run_program ~file:"test.emo" ~source);
+  Fun.protect ~finally:Emo_eval.reset_output (fun () ->
+      Emo_eval.run_program ~file:"test.emo" ~source);
   Buffer.contents buf
 
 let program_err source =
@@ -1190,8 +1189,7 @@ let expect_tests =
     tc "expect_true and expect_false pass silently" (fun () ->
         Alcotest.(check string)
           "silent" ""
-          (run_program
-             {|expect_true(1 + 1 == 2)
+          (run_program {|expect_true(1 + 1 == 2)
 expect_false(1 + 1 == 3)|}));
     tc "expect_equal failure raises with both renderings" (fun () ->
         let diagnostic = program_err {|expect_equal(3, 1 + 1)|} in

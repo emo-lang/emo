@@ -206,8 +206,7 @@ let manifest_tests =
             Alcotest.fail
               (match d.Diagnostic.code with Some c -> c | None -> "?")
         | Ok m ->
-            Alcotest.(check (list string))
-              "link" [ "sqlite3" ] m.Emo_pkg.link);
+            Alcotest.(check (list string)) "link" [ "sqlite3" ] m.Emo_pkg.link);
     tc "link defaults to empty" (fun () ->
         match
           check

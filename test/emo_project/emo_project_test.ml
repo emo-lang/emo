@@ -622,9 +622,7 @@ def scale(n Int64) Int64 {
   deps {}
 }
 |};
-  write_file
-    (Filename.concat q_dir "q.emo")
-    {|def qq() Int64 {
+  write_file (Filename.concat q_dir "q.emo") {|def qq() Int64 {
   return 9
 }
 |};
@@ -761,11 +759,11 @@ let shadow_app () =
     acme/q = "1.0.0"
   }
 }
-|} );
-      ( "main.emo",
-        {|require "acme/shadow"
+|}
+      );
+      ("main.emo", {|require "acme/shadow"
 println(shadow.pick())
-|} );
+|});
     ]
     "main.emo"
 
@@ -1166,8 +1164,9 @@ println(c_tools.halve(8))
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
                 Alcotest.fail ("codes: " ^ codes_dump ds)));
-    tc "a package submodule resolves under the short name and its internal is relative"
-      (fun () ->
+    tc
+      "a package submodule resolves under the short name and its internal is \
+       relative" (fun () ->
         let entry =
           with_project
             [
@@ -1186,7 +1185,8 @@ println(c_tools.halve(8))
               ( "main.emo",
                 {|require "acme/nested_tools"
 println(nested_tools.scale(21))
-|} );
+|}
+              );
             ]
             "main.emo"
         in
@@ -1216,7 +1216,8 @@ println(nested_tools.scale(21))
               ( "main.emo",
                 {|require "acme/nested_tools"
 println(nested_tools.internal.helper.twice(21))
-|} );
+|}
+              );
             ]
             "main.emo"
         in
@@ -1242,9 +1243,10 @@ println(nested_tools.internal.helper.twice(21))
 }
 |}
               );
-              ("main.emo", {|require "acme/nested_tools"
+              ( "main.emo",
+                {|require "acme/nested_tools"
 println(helper.twice(21))
-|});
+|} );
             ]
             "main.emo"
         in
@@ -1283,12 +1285,14 @@ println(helper.twice(21))
             | None -> Alcotest.fail "the IR has no shadow__pick function"
             | Some f -> (
                 match f.Emo_ir.fbody with
-                | [ Emo_ir.Return_stmt { Emo_ir.desc = Emo_ir.Call { func; _ }; _ } ]
-                  ->
+                | [
+                 Emo_ir.Return_stmt { Emo_ir.desc = Emo_ir.Call { func; _ }; _ };
+                ] ->
                     Alcotest.(check string) "call target" "shadow__q__qq" func
                 | _ -> Alcotest.fail "unexpected shadow__pick body")));
-    tc "a declared transitive dependency resolves and its require pairs with its own package"
-      (fun () ->
+    tc
+      "a declared transitive dependency resolves and its require pairs with \
+       its own package" (fun () ->
         let entry =
           with_project
             [
@@ -1302,7 +1306,8 @@ println(helper.twice(21))
     acme/trans_tools = "1.0.0"
   }
 }
-|}              );
+|}
+              );
               ( "main.emo",
                 {|require "acme/trans_tools"
 println(trans_tools.span())
@@ -1332,7 +1337,8 @@ println(trans_tools.span())
     acme/trans_tools = "1.0.0"
   }
 }
-|}              );
+|}
+              );
               ("main.emo", {|println(leaf_tools.leaf())|});
             ]
             "main.emo"
@@ -1343,8 +1349,7 @@ println(trans_tools.span())
             | exception Emo_project.Static_errors ds ->
                 if not (has_code ds "E5008") then
                   Alcotest.fail ("codes: " ^ codes_dump ds)));
-    tc "a package cannot reference a dependency it did not declare"
-      (fun () ->
+    tc "a package cannot reference a dependency it did not declare" (fun () ->
         let entry =
           with_project
             [
@@ -1359,7 +1364,8 @@ println(trans_tools.span())
     acme/leaf_tools = "1.0.0"
   }
 }
-|}              );
+|}
+              );
               ( "main.emo",
                 {|require "acme/rogue_tools"
 println(rogue_tools.rogue())
@@ -1760,11 +1766,10 @@ let result_named name (results : Emo_project.test_result list) =
   | None -> Alcotest.fail ("no result for " ^ name)
 
 let main_add =
-  ( "main.emo",
-    {|def add(a Int64, b Int64) Int64 {
+  ("main.emo", {|def add(a Int64, b Int64) Int64 {
   return a + b
 }
-|} )
+|})
 
 let test_runner_tests =
   [
@@ -1785,7 +1790,8 @@ def test_fail() {
 def test_error() {
   println(List.new([]).pop_front())
 }
-|} );
+|}
+              );
             ]
         in
         Alcotest.(check int) "three results" 3 (List.length results);
@@ -1822,15 +1828,15 @@ def test_error() {
 def test_quiet() {
   expect_equal(2, main.add(1, 1))
 }
-|} );
+|}
+              );
             ]
         in
         Alcotest.(check string)
           "captured" "about to fail\n"
           (result_named "test_loud_fail" results).Emo_project.t_output;
         Alcotest.(check string)
-          "no leak" ""
-          (result_named "test_quiet" results).Emo_project.t_output);
+          "no leak" "" (result_named "test_quiet" results).Emo_project.t_output);
     tc "a parameterized test is a collection error, never a call" (fun () ->
         let results =
           run_tests_in
@@ -1844,11 +1850,13 @@ def test_quiet() {
 def test_fine() {
   expect_equal(2, main.add(1, 1))
 }
-|} );
+|}
+              );
             ]
         in
-        (match (result_named "test_takes_args" results).Emo_project.t_outcome
-        with
+        (match
+           (result_named "test_takes_args" results).Emo_project.t_outcome
+         with
         | Emo_project.Errored d ->
             Alcotest.(check string)
               "code" "E5008"
@@ -1878,17 +1886,15 @@ def test_fine() {
           run_tests_in
             [
               main_add;
-              ( "test/broken.emo",
-                {|def test_x() {
+              ("test/broken.emo", {|def test_x() {
   println(nope)
 }
-|} );
+|});
             ]
         with
         | _ -> Alcotest.fail "expected Static_errors"
         | exception Emo_project.Static_errors ds ->
-            Alcotest.(check bool)
-              "some diagnostic" true (List.length ds > 0));
+            Alcotest.(check bool) "some diagnostic" true (List.length ds > 0));
     tc "a module that raises at load errors as <load>" (fun () ->
         let results =
           run_tests_in
@@ -1900,7 +1906,8 @@ def test_fine() {
 def test_never() {
   expect_equal(2, main.add(1, 1))
 }
-|} );
+|}
+              );
               ( "test/fine.emo",
                 {|def test_ok() {
   expect_equal(2, main.add(1, 1))
@@ -1978,9 +1985,7 @@ println(native_tools.halve_floor(9.0))
             Alcotest.(check int) "one c source" 1 (List.length c_sources);
             Alcotest.(check bool)
               "the shim's path" true
-              (String.equal
-                 (Filename.basename (List.hd c_sources))
-                 "shim.c")));
+              (String.equal (Filename.basename (List.hd c_sources)) "shim.c")));
     tc "a native-carrying package is refused off the c target" (fun () ->
         let entry =
           with_project

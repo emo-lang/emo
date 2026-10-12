@@ -1040,8 +1040,8 @@ let normalize_module ctx (path : string list) : string list option =
 
 (* The longest dotted prefix of [full] that names a module here, paired
    with its absolute path. *)
-let module_prefix_of ctx (full : string list) : (string list * string list) option
-    =
+let module_prefix_of ctx (full : string list) :
+    (string list * string list) option =
   let rec prefixes = function
     | [] -> []
     | path -> path :: prefixes (List.rev (List.tl (List.rev path)))
@@ -1058,7 +1058,8 @@ let module_prefix_of ctx (full : string list) : (string list * string list) opti
    declared. *)
 let out_of_scope ctx (head : string) : bool =
   let pkg = package_of ctx ctx.current in
-  ctx.packages <> [] && module_prefix_known ctx [ head ]
+  ctx.packages <> []
+  && module_prefix_known ctx [ head ]
   && not (visible ctx pkg [ head ])
 
 (* Type-name resolution for `is()` targets; unknown names narrow to nothing. *)
@@ -1246,15 +1247,15 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
               ctx.refs := name_path :: !(ctx.refs);
               Unknown
           | None ->
-              (if out_of_scope ctx name then
-                 report ctx span "E5008"
-                   (Printf.sprintf "%s does not declare `%s` in its deps"
-                      (package_label ctx) name)
-               else
-                 report ctx span "E4003"
-                   (Printf.sprintf "`%s` is not defined" name));
+              if out_of_scope ctx name then
+                report ctx span "E5008"
+                  (Printf.sprintf "%s does not declare `%s` in its deps"
+                     (package_label ctx) name)
+              else
+                report ctx span "E4003"
+                  (Printf.sprintf "`%s` is not defined" name);
               Unknown))
-  | Ast.Type_ident name ->
+  | Ast.Type_ident name -> (
       if
         (* A declared type in value position: classes, enums, interfaces. *)
         Hashtbl.mem ctx.classes name
@@ -1277,7 +1278,7 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
       then Unknown
       else if Hashtbl.mem ctx.groups name || Hashtbl.mem ctx.pgroups name then
         Unknown
-      else (
+      else
         match normalize_module ctx [ name ] with
         | Some name_path ->
             ctx.refs := name_path :: !(ctx.refs);
@@ -1308,27 +1309,26 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
         | _ -> false
       in
       let resolved = if module_path then module_prefix_of ctx full else None in
-      (match resolved with
+      match resolved with
       | Some (op, np) when List.length op = List.length full ->
           (* A qualified module reference: the whole dotted path names a
              module. *)
           ctx.refs := np :: !(ctx.refs);
           Unknown
-      | Some (op, np) when List.length full = List.length op + 1 ->
+      | Some (op, np) when List.length full = List.length op + 1 -> (
           (* A read of another module's member: the pre-registered value
              tables answer for consts/vars, and a bare def reference is
              the closure value itself. *)
           ctx.refs := np :: !(ctx.refs);
           let dotted = String.concat "." np in
-          (match Hashtbl.find_opt ctx.pvalues (np, name) with
+          match Hashtbl.find_opt ctx.pvalues (np, name) with
           | Some t -> t
           | None -> (
               match Hashtbl.find_opt ctx.pdefs (np, name) with
               | Some ft -> ft
               | None ->
                   report ctx span "E5004"
-                    (Printf.sprintf "module `%s` has no member `%s`" dotted
-                       name);
+                    (Printf.sprintf "module `%s` has no member `%s`" dotted name);
                   Unknown))
       | _ -> (
           match full with
@@ -1337,67 +1337,71 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                 (Printf.sprintf "%s does not declare `%s` in its deps"
                    (package_label ctx) head);
               Unknown
-          | _ ->
-        let from_group =
-          (* A bare `Math.tau` / `Math.double` read: groups are global,
+          | _ -> (
+              let from_group =
+                (* A bare `Math.tau` / `Math.double` read: groups are global,
              so the module's own table and the program's registry both
              answer — consts carry their type, a bare def reference is
              the closure value. *)
-          match recv.Ast.desc with
-          | Ast.Type_ident gname -> (
-              match
-                match Hashtbl.find_opt ctx.groups gname with
-                | Some g -> Some g
-                | None -> Hashtbl.find_opt ctx.pgroups gname
-              with
-              | Some (defs, consts) ->
-                  Some
-                    (if List.mem_assoc name consts then List.assoc name consts
-                     else
-                       match
-                         List.find_opt
-                           (fun (n, _, _) -> String.equal n name)
-                           defs
-                       with
-                       | Some (_, params, ret) -> FuncType (params, ret)
-                       | None ->
-                           report ctx span "E4001"
-                             (Printf.sprintf "the group `%s` has no member `%s`"
-                                gname name);
-                           Unknown)
-              | None -> None)
-          | _ -> None
-        in
-        match from_group with
-        | Some t -> t
-        | None -> (
-            let rt = check_expr ctx env recv in
-            match rt with
-            | ClassType c -> (
-                match Hashtbl.find_opt ctx.classes c with
-                | Some info when List.mem name info.cfields -> Unknown
-                | Some info ->
-                    report ctx span "E4001"
-                      (Printf.sprintf "`%s` has no field `%s`" c name);
-                    Unknown
-                | None -> Unknown)
-            | EnumType e -> (
-                match Hashtbl.find_opt ctx.enums e with
-                | Some members when List.mem name members -> EnumType e
-                | Some members ->
-                    report ctx span "E4001"
-                      (Printf.sprintf "enum `%s` has no member `%s`" e name);
-                    Unknown
-                | None -> Unknown)
-            | BoxType _ ->
-                report ctx span "E4001"
-                  "a member access must be a call, like `x.read()`";
-                Unknown
-            | Unknown -> Unknown
-            | other ->
-                report ctx span "E4001"
-                  (Printf.sprintf "%s has no field `%s`" (to_string other) name);
-                Unknown))))
+                match recv.Ast.desc with
+                | Ast.Type_ident gname -> (
+                    match
+                      match Hashtbl.find_opt ctx.groups gname with
+                      | Some g -> Some g
+                      | None -> Hashtbl.find_opt ctx.pgroups gname
+                    with
+                    | Some (defs, consts) ->
+                        Some
+                          (if List.mem_assoc name consts then
+                             List.assoc name consts
+                           else
+                             match
+                               List.find_opt
+                                 (fun (n, _, _) -> String.equal n name)
+                                 defs
+                             with
+                             | Some (_, params, ret) -> FuncType (params, ret)
+                             | None ->
+                                 report ctx span "E4001"
+                                   (Printf.sprintf
+                                      "the group `%s` has no member `%s`" gname
+                                      name);
+                                 Unknown)
+                    | None -> None)
+                | _ -> None
+              in
+              match from_group with
+              | Some t -> t
+              | None -> (
+                  let rt = check_expr ctx env recv in
+                  match rt with
+                  | ClassType c -> (
+                      match Hashtbl.find_opt ctx.classes c with
+                      | Some info when List.mem name info.cfields -> Unknown
+                      | Some info ->
+                          report ctx span "E4001"
+                            (Printf.sprintf "`%s` has no field `%s`" c name);
+                          Unknown
+                      | None -> Unknown)
+                  | EnumType e -> (
+                      match Hashtbl.find_opt ctx.enums e with
+                      | Some members when List.mem name members -> EnumType e
+                      | Some members ->
+                          report ctx span "E4001"
+                            (Printf.sprintf "enum `%s` has no member `%s`" e
+                               name);
+                          Unknown
+                      | None -> Unknown)
+                  | BoxType _ ->
+                      report ctx span "E4001"
+                        "a member access must be a call, like `x.read()`";
+                      Unknown
+                  | Unknown -> Unknown
+                  | other ->
+                      report ctx span "E4001"
+                        (Printf.sprintf "%s has no field `%s`" (to_string other)
+                           name);
+                      Unknown))))
   | Ast.Index (base, index) -> (
       let bt = check_expr ctx env base in
       let it = check_expr ctx env index in
@@ -1676,7 +1680,7 @@ and check_module_member_call ctx env span (mpath : string list) mname args : t =
 
 and check_method_call ctx env span recv mname args : t =
   (match dotted_path recv with
-    | Some full ->
+    | Some full -> (
         (* A receiver that is exactly a module path (its head not
            shadowed by a local): the call goes through the program's
            signature tables. *)
@@ -1686,7 +1690,7 @@ and check_method_call ctx env span recv mname args : t =
           | _ -> false
         in
         if not module_path then Unknown
-        else (
+        else
           match module_prefix_of ctx full with
           | Some (op, np) when List.length op = List.length full ->
               check_module_member_call ctx env span np mname args
@@ -3317,8 +3321,8 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
 let check_module_typed ~(modules : string list list)
     ?(packages : string list list = [])
     ?(package_deps : (string list * string list) list = [])
-    ~(current : string list) ?(program : program_types option)
-    ?(target = "c") (items : Ast.item list) :
+    ~(current : string list) ?(program : program_types option) ?(target = "c")
+    (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list

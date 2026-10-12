@@ -891,8 +891,7 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
           env.refs <- local name :: env.refs;
           env.nrefs <- local name :: env.nrefs;
           if arm_unit then
-            Printf.sprintf "(let %s = ref (%s) in\n%s)" (local name)
-              init_code
+            Printf.sprintf "(let %s = ref (%s) in\n%s)" (local name) init_code
               (emit_native_stmts env rest ~tail ~arm_unit)
           else
             Printf.sprintf "let %s = ref (%s) in\n%s" (local name) init_code
@@ -952,7 +951,8 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
               env.refs <- saved_refs;
               env.nrefs <- saved_nrefs;
               Printf.sprintf "(let %s = %s in\nmatch %s with\n%s%s)" sv
-                (emit_native_expr env scrutinee) sv arms fallback
+                (emit_native_expr env scrutinee)
+                sv arms fallback
           | Emo_ir.Effect e ->
               Printf.sprintf "(let _ = %s in\n%s)" (emit_native_expr env e)
                 rest_code

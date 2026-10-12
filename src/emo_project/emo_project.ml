@@ -118,19 +118,21 @@ let rec walk ?(body : string option) p rel fs_dir =
           else (
             Hashtbl.replace p.dirs path fs_path;
             walk p path fs_path)
-      | `File fs_path ->
+      | `File fs_path -> (
           let fs_path = normalize_path fs_path in
-          (match body with
+          match body with
           | Some b when String.equal name b ->
               if Hashtbl.mem p.files rel then
                 report p "E5005"
-                  (Printf.sprintf "module path `%s` is claimed by both %s and %s"
+                  (Printf.sprintf
+                     "module path `%s` is claimed by both %s and %s"
                      (String.concat "." rel) (Hashtbl.find p.files rel) fs_path)
               else Hashtbl.replace p.files rel fs_path
           | _ ->
               if Hashtbl.mem p.dirs path then
                 report p "E5005"
-                  (Printf.sprintf "module path `%s` is claimed by both %s and %s"
+                  (Printf.sprintf
+                     "module path `%s` is claimed by both %s and %s"
                      (String.concat "." path) fs_path (Hashtbl.find p.dirs path))
               else if Hashtbl.mem p.files path then ()
               else Hashtbl.replace p.files path fs_path))
@@ -234,8 +236,7 @@ let parse_cached p (file : string) : Ast.item list =
    written against the package root (`internal.float` in `json.emo` means
    `json.internal.float`) — and a def body's closure captures this env, so
    the binding holds when the def is called later. *)
-let load_module p
-    (handle_of : string list -> Emo_eval.module_handle option)
+let load_module p (handle_of : string list -> Emo_eval.module_handle option)
     (path : string list) : Emo_eval.env =
   match Hashtbl.find_opt p.files path with
   | None ->
@@ -453,8 +454,7 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
       (fun (errors, entries) (path, items) ->
         let diagnostics, refs, requires =
           Emo_check.check_module ~modules:module_paths ~packages:p.packages
-            ~package_deps:p.package_deps ~current:path ~program
-            items
+            ~package_deps:p.package_deps ~current:path ~program items
         in
         Hashtbl.replace graph path refs;
         Hashtbl.replace requires_table path requires;
@@ -784,8 +784,7 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
   else begin
     (* The root project's own declared deps, for the visibility rule and
        the require/manifest pairing. *)
-    p.package_deps <-
-      ([], List.map fst manifest.Emo_pkg.deps) :: p.package_deps;
+    p.package_deps <- ([], List.map fst manifest.Emo_pkg.deps) :: p.package_deps;
     let entries = resolution_for_run ~manifest ~manifest_dir ~target in
     let reg = registry () in
     List.map
@@ -876,17 +875,13 @@ let compile_inputs ~entry_file ~target :
   let c_sources = List.concat_map (fun d -> d.nd_csources) native_deps in
   let link_libs = List.concat_map (fun d -> d.nd_link) native_deps in
   let native_carrying =
-    List.filter
-      (fun d -> d.nd_csources <> [] || d.nd_link <> [])
-      native_deps
+    List.filter (fun d -> d.nd_csources <> [] || d.nd_link <> []) native_deps
   in
   (match native_carrying with
   | [] -> ()
   | ds when target = "c" -> ignore ds
   | ds ->
-      let names =
-        String.concat ", " (List.map (fun d -> d.nd_name) ds)
-      in
+      let names = String.concat ", " (List.map (fun d -> d.nd_name) ds) in
       raise
         (Static_errors
            [
@@ -1008,8 +1003,7 @@ let check_entry ~entry_file : Emo_support.Diagnostic.t list =
     | None ->
         let diags, _refs, _requires =
           Emo_check.check_module ~modules:module_paths ~packages:p.packages
-            ~package_deps:p.package_deps ~current:[] ~program
-            items
+            ~package_deps:p.package_deps ~current:[] ~program items
         in
         diags
   in
@@ -1049,9 +1043,8 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
        | Some _ -> []
        | None ->
            let diags, _refs, _requires =
-             Emo_check.check_module ~modules:module_paths
-               ~packages:p.packages ~package_deps:p.package_deps ~current:[]
-               ~program items
+             Emo_check.check_module ~modules:module_paths ~packages:p.packages
+               ~package_deps:p.package_deps ~current:[] ~program items
            in
            diags
      in
@@ -1071,7 +1064,6 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
    with Emo_eval.Emo_raise (v, span, trace) ->
      raise (Static_errors [ Emo_eval.uncaught_diagnostic (v, span, trace) ]));
   p
-
 
 (* ---- `emo test`: the test runner ----
 
@@ -1112,7 +1104,9 @@ let run_tests () : test_result list =
          (fun path ->
            (* Under test/ means two segments at least — a root-level
               test.emo file is an ordinary module, not a test file. *)
-           match path with "test" :: _ :: _ -> true | _ -> false)
+           match path with
+           | "test" :: _ :: _ -> true
+           | _ -> false)
          (module_paths p))
   in
   let results = ref [] in
@@ -1129,7 +1123,8 @@ let run_tests () : test_result list =
         let env = ref None in
         try
           ignore
-            (Emo_sched_det.run (fun () -> env := Some (!Emo_eval.module_loader mpath)));
+            (Emo_sched_det.run (fun () ->
+                 env := Some (!Emo_eval.module_loader mpath)));
           match !env with
           | Some e -> Ok e
           | None -> assert false (* run returned without the body *)

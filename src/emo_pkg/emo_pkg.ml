@@ -285,7 +285,9 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                  hint = None;
                })
   in
-  let targets = read_string_list ~field:"targets" ~missing_code:(Some "E5101") in
+  let targets =
+    read_string_list ~field:"targets" ~missing_code:(Some "E5101")
+  in
   List.iter
     (fun t ->
       if not (List.mem t known_targets) then
@@ -718,9 +720,7 @@ module Registry = struct
         let deps =
           List.concat_map
             (fun (_, pvs) ->
-              List.concat_map
-                (fun pv -> List.map fst pv.Resolve.pv_deps)
-                pvs)
+              List.concat_map (fun pv -> List.map fst pv.Resolve.pv_deps) pvs)
             entries
         in
         go (fresh @ seen) (acc @ entries) deps

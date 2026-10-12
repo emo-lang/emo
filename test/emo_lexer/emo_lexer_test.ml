@@ -333,12 +333,8 @@ let literal_tests =
           [ Float 1e10; Float 0.0015; Float 2500.0; Eof ]
           (kinds (lex_all "1e10 1.5e-3 2.5E+3")));
     tc "a doubled or trailing `_` is a lexical error" (fun () ->
-        Alcotest.(check string)
-          "code" "E1006"
-          (code_of (lex_err "1__0"));
-        Alcotest.(check string)
-          "code" "E1006"
-          (code_of (lex_err "1_")));
+        Alcotest.(check string) "code" "E1006" (code_of (lex_err "1__0"));
+        Alcotest.(check string) "code" "E1006" (code_of (lex_err "1_")));
     tc "the L suffix is a lexical error now that bare digits are Int64"
       (fun () ->
         let diagnostic = lex_err "1L" in

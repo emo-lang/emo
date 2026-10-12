@@ -403,8 +403,7 @@ let lex ~file ~source =
                   go ())
                 else if (not (eof ())) && cur () = '_' then (
                   if not !any then
-                    error "E1006" (here ())
-                      "a `_` must sit between two digits";
+                    error "E1006" (here ()) "a `_` must sit between two digits";
                   match char_at 1 with
                   | Some n when pred n ->
                       bump ();
@@ -457,9 +456,9 @@ let lex ~file ~source =
                   let has_dot =
                     match char_at 0 with
                     | Some '.'
-                      when (match char_at 1 with
+                      when match char_at 1 with
                            | Some d -> is_digit d
-                           | None -> false) ->
+                           | None -> false ->
                         bump ();
                         ignore (scan_run is_digit);
                         true
@@ -491,8 +490,9 @@ let lex ~file ~source =
                   in
                   if
                     (not has_dot) && (not has_exp)
-                    && (not (eof ())) && cur () = 'B'
-                  then (
+                    && (not (eof ()))
+                    && cur () = 'B'
+                  then
                     let digits = String.sub source so (!offset - so) in
                     match int_of_string_opt digits with
                     | Some n when n >= 0 && n <= 255 ->
@@ -500,7 +500,7 @@ let lex ~file ~source =
                         `Byte n
                     | _ ->
                         error "E1006" (span_from sl sc so)
-                          "byte literal out of range (0-255)")
+                          "byte literal out of range (0-255)"
                   else if has_dot || has_exp then `Float
                   else `Int
             in

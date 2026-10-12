@@ -175,8 +175,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
           Emo_project.compile_inputs ~entry_file:entry ~target
         in
         let program =
-          Emo_ir.lower
-            { Emo_ir.modules = inputs; entry = entry_path; packages }
+          Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path; packages }
         in
         let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
         if not (Sys.file_exists build_dir) then
@@ -330,7 +329,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               let cmd =
                 Printf.sprintf
                   "cc -O2 -ffp-contract=off -std=c11 -Wall \
-                   -Wno-deprecated-declarations -I %s %s %s                  %s -o %s"
+                   -Wno-deprecated-declarations -I %s %s %s                  \
+                   %s -o %s"
                   (Filename.quote build_dir) (Filename.quote main_c)
                   (Filename.quote runtime_c) cclib_flags (Filename.quote output)
               in
@@ -814,7 +814,9 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
       let passed = ref 0 and failed = ref 0 and errored = ref 0 in
       List.iter
         (fun (r : Emo_project.test_result) ->
-          let name = String.concat "." (r.Emo_project.t_module @ [ r.t_name ]) in
+          let name =
+            String.concat "." (r.Emo_project.t_module @ [ r.t_name ])
+          in
           match r.t_outcome with
           | Emo_project.Passed ->
               incr passed;
@@ -834,9 +836,10 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
       let buckets =
         bucket "passed" !passed
         :: (if !failed > 0 then [ bucket "failed" !failed ] else [])
-        @ (if !errored > 0 then
-             [ bucket (if !errored = 1 then "error" else "errors") !errored ]
-           else [])
+        @
+        if !errored > 0 then
+          [ bucket (if !errored = 1 then "error" else "errors") !errored ]
+        else []
       in
       Printf.printf "%d test%s, %s\n" total
         (if total = 1 then "" else "s")
@@ -863,10 +866,9 @@ let test_cmd =
     (Cmd.info "test"
        ~doc:
          "Run the project's tests: every top-level `def test_*` in every \
-          module under the test/ directory, each in its own scheduler \
-          run. Assertions are the expect_equal / expect_true / \
-          expect_false / expect_fail builtins; a failed assertion fails \
-          only its own test.")
+          module under the test/ directory, each in its own scheduler run. \
+          Assertions are the expect_equal / expect_true / expect_false / \
+          expect_fail builtins; a failed assertion fails only its own test.")
     Term.(const test $ no_color $ error_limit)
 
 (* `emo deps`: resolution and regeneration are explicit commands — the
@@ -1967,8 +1969,8 @@ def test_greet() {
 }
 |};
     write ".gitignore" ".emo-build/\n";
-    Printf.printf
-      "created %s — next: cd %s && emo run main.emo, or emo test\n" path path;
+    Printf.printf "created %s — next: cd %s && emo run main.emo, or emo test\n"
+      path path;
     0
   end
 
@@ -2146,7 +2148,8 @@ let emoji_build ~(dir : string) : int =
               in
               let code =
                 build_file ~entry ~output ~specialize:true
-                  ~cclibs:(own_csources @ m.Emo_pkg.link) ~target
+                  ~cclibs:(own_csources @ m.Emo_pkg.link)
+                  ~target
               in
               (target, code))
             m.Emo_pkg.targets
