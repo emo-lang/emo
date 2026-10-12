@@ -1,0 +1,84 @@
+// A mark is a value that knows how to draw itself into an axes and what
+// its data spans. `bar` is the T0 bar mark.
+
+interface Mark {
+  def draw(ctx DrawContext) Void
+  def y_max() Float64
+  def bands() Int64
+  def x_labels() Array[String]
+}
+
+class BarStyle {
+  def init(color (Int64, Int64, Int64), width Float64, opacity Float64, label String) {
+    self.color = color
+    self.width = width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) BarStyle {
+    return BarStyle.new(color: c, width: self.width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_width(w Float64) BarStyle {
+    return BarStyle.new(color: self.color, width: w, opacity: self.opacity, label: self.label)
+  }
+
+  def with_label(s String) BarStyle {
+    return BarStyle.new(color: self.color, width: self.width, opacity: self.opacity, label: s)
+  }
+}
+
+def bar_style() BarStyle {
+  return BarStyle.new(color: (47, 111, 179), width: 0.8, opacity: 1.0, label: "")
+}
+
+class Bar {
+  def init(labels Array[String], values Array[Float64], color (Int64, Int64, Int64), width Float64, opacity Float64, label String) {
+    self.labels = labels
+    self.values = values
+    self.color = color
+    self.width = width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def draw(ctx DrawContext) Void {
+    const n = self.values.length()
+    const band = ctx.plot_w / n.to_float64()
+    const base = ctx.py(0.0)
+    for var i = 0; i < n; i = i + 1 {
+      const cx = ctx.px(i.to_float64() + 0.5)
+      const half = band * self.width / 2.0
+      const top = ctx.py(self.values[i])
+      ctx.renderer.rect(cx - half, top, half * 2.0, base - top, self.color)
+    }
+  }
+
+  def y_max() Float64 {
+    var hi = 0.0
+    for var i = 0; i < self.values.length(); i = i + 1 {
+      if self.values[i] > hi {
+        hi = self.values[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return self.values.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.labels
+  }
+
+  def with_style(s BarStyle) Bar {
+    return Bar.new(labels: self.labels, values: self.values, color: s.color, width: s.width, opacity: s.opacity, label: s.label)
+  }
+}
+
+def bar(labels Array[String], values Array[Float64]) Bar {
+  const s = bar_style()
+  return Bar.new(labels: labels, values: values, color: s.color, width: s.width, opacity: s.opacity, label: s.label)
+}

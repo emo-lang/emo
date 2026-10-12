@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+<rect x="0.0" y="0.0" width="640.0" height="480.0" fill="rgb(255,255,255)"/>
+<text x="64.0" y="30.0" text-anchor="start" font-family="sans-serif" font-size="18.0" font-weight="bold" fill="rgb(34,34,34)">Monthly sales</text>
+<text x="64.0" y="52.0" text-anchor="start" font-family="sans-serif" font-size="13.0" font-weight="normal" fill="rgb(85,85,85)">Sales</text>
+<line x1="64.0" y1="408.0" x2="616.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="412.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">0</text>
+<line x1="64.0" y1="339.2" x2="616.0" y2="339.2" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="343.2" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">10</text>
+<line x1="64.0" y1="270.4" x2="616.0" y2="270.4" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="274.4" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">20</text>
+<line x1="64.0" y1="201.6" x2="616.0" y2="201.6" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="205.6" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">30</text>
+<line x1="64.0" y1="132.8" x2="616.0" y2="132.8" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="136.8" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">40</text>
+<line x1="64.0" y1="64.0" x2="616.0" y2="64.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="68.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">50</text>
+<rect x="73.2" y="325.44" width="73.6" height="82.56" fill="rgb(47,111,179)"/>
+<rect x="165.2" y="284.16" width="73.6" height="123.84" fill="rgb(47,111,179)"/>
+<rect x="257.2" y="304.8" width="73.6" height="103.2" fill="rgb(47,111,179)"/>
+<rect x="349.2" y="242.88" width="73.6" height="165.12" fill="rgb(47,111,179)"/>
+<rect x="441.2" y="263.52" width="73.6" height="144.48" fill="rgb(47,111,179)"/>
+<rect x="533.2" y="201.6" width="73.6" height="206.4" fill="rgb(47,111,179)"/>
+<line x1="64.0" y1="408.0" x2="616.0" y2="408.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<text x="110.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">Jan</text>
+<text x="202.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">Feb</text>
+<text x="294.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">Mar</text>
+<text x="386.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">Apr</text>
+<text x="478.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">May</text>
+<text x="570.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">Jun</text>
+<text x="340.0" y="452.0" text-anchor="middle" font-family="sans-serif" font-size="13.0" font-weight="normal" fill="rgb(85,85,85)">Month</text>
+</svg>
+

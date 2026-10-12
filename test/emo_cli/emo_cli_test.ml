@@ -268,6 +268,7 @@ let wasm_goldens =
     "float_methods";
     "math_demo";
     "branch_var";
+    "plot_demo";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -296,6 +297,7 @@ let beam_goldens =
     "float_methods";
     "math_demo";
     "branch_var";
+    "plot_demo";
   ]
 
 let erl_available =
@@ -510,6 +512,7 @@ let c_goldens =
     "float_methods";
     "math_demo";
     "branch_var";
+    "plot_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

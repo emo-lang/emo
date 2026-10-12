@@ -1,0 +1,81 @@
+// The backend contract: a small display list any output format can
+// answer. `SvgRenderer` is the only implementation in T0.
+
+enum Anchor { start, middle, end }
+enum Weight { regular, bold }
+
+interface Renderer {
+  def rect(x Float64, y Float64, w Float64, h Float64, fill (Int64, Int64, Int64)) Void
+  def circle(cx Float64, cy Float64, r Float64, fill (Int64, Int64, Int64)) Void
+  def line(x1 Float64, y1 Float64, x2 Float64, y2 Float64, stroke (Int64, Int64, Int64), width Float64) Void
+  def text(x Float64, y Float64, body String, size Float64, anchor Anchor, weight Weight, fill (Int64, Int64, Int64)) Void
+  def finish() String
+}
+
+class SvgRenderer {
+  def init(width Float64, height Float64) {
+    self.buf = Buffer.new()
+    self.buf.write("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"")
+    self.buf.write_int(width.to_int64())
+    self.buf.write("\" height=\"")
+    self.buf.write_int(height.to_int64())
+    self.buf.write("\" viewBox=\"0 0 ")
+    self.buf.write_int(width.to_int64())
+    self.buf.write(" ")
+    self.buf.write_int(height.to_int64())
+    self.buf.write("\">\n")
+  }
+
+  def rect(x Float64, y Float64, w Float64, h Float64, fill (Int64, Int64, Int64)) Void {
+    self.buf.write("<rect x=\"").write_f64(x)
+    self.buf.write("\" y=\"").write_f64(y)
+    self.buf.write("\" width=\"").write_f64(w)
+    self.buf.write("\" height=\"").write_f64(h)
+    self.buf.write("\" fill=\"").write_color(fill)
+    self.buf.write("\"/>\n")
+  }
+
+  def circle(cx Float64, cy Float64, r Float64, fill (Int64, Int64, Int64)) Void {
+    self.buf.write("<circle cx=\"").write_f64(cx)
+    self.buf.write("\" cy=\"").write_f64(cy)
+    self.buf.write("\" r=\"").write_f64(r)
+    self.buf.write("\" fill=\"").write_color(fill)
+    self.buf.write("\"/>\n")
+  }
+
+  def line(x1 Float64, y1 Float64, x2 Float64, y2 Float64, stroke (Int64, Int64, Int64), width Float64) Void {
+    self.buf.write("<line x1=\"").write_f64(x1)
+    self.buf.write("\" y1=\"").write_f64(y1)
+    self.buf.write("\" x2=\"").write_f64(x2)
+    self.buf.write("\" y2=\"").write_f64(y2)
+    self.buf.write("\" stroke=\"").write_color(stroke)
+    self.buf.write("\" stroke-width=\"").write_f64(width)
+    self.buf.write("\"/>\n")
+  }
+
+  def text(x Float64, y Float64, body String, size Float64, anchor Anchor, weight Weight, fill (Int64, Int64, Int64)) Void {
+    var a = "start"
+    case anchor {
+      Anchor.start -> { a = "start" }
+      Anchor.middle -> { a = "middle" }
+      Anchor.end -> { a = "end" }
+    }
+    var wt = "normal"
+    if weight == Weight.bold {
+      wt = "bold"
+    }
+    self.buf.write("<text x=\"").write_f64(x)
+    self.buf.write("\" y=\"").write_f64(y)
+    self.buf.write("\" text-anchor=\"").write(a)
+    self.buf.write("\" font-family=\"sans-serif\" font-size=\"").write_f64(size)
+    self.buf.write("\" font-weight=\"").write(wt)
+    self.buf.write("\" fill=\"").write_color(fill)
+    self.buf.write("\">").write(body)
+    self.buf.write("</text>\n")
+  }
+
+  def finish() String {
+    self.buf.write("</svg>\n")
+    return self.buf.to_string()
+  }
+}
