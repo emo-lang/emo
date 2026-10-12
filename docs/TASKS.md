@@ -1146,7 +1146,7 @@ non-empty `data`; `dune test` green.
       matching example golden on all six targets byte-for-byte
       (riscv64 runs the matching half; its raise refusal unchanged);
       the rejection corpus pinning every new diagnostic.
-- [ ] **T36.7** — README alignment: the README (English + zh-CN)
+- [x] **T36.7** — README alignment: the README (English + zh-CN)
       already documents the settled surface — verify it against the
       implemented one and reconcile any drift.
 
