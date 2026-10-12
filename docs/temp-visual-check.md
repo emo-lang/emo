@@ -59,21 +59,29 @@ machinery than the two above.
 `emo_project` bootstrap suite red with exactly the errors above; the
 example was removed to keep the tree green, and this gap left open.
 
-### B2 — the beam target cannot represent NaN or infinity
+### B2 — the beam target cannot represent NaN or infinity — resolved
 
 **Symptom.** Erlang floats have no NaN and no infinity, so
 `Float64.from_bits` with a NaN/Inf bit pattern cannot work on the `beam`
 target (the runtime decodes the bits through the external term format).
 
-**Why it blocks plot.** The design note's `Table` (decision 10) uses
-`NaN` for a missing number. That representation is impossible on `beam`,
-which the package declares as a target. The statistics layer also expects
-to skip missing values.
+**Why it blocked plot.** The design note's `Table` used `NaN` for a
+missing number, impossible on `beam`.
 
-**The choice.** A presence mask (a parallel `Array[Bool]` or a bitset per
-column) works on every target and is the portable shape; a sentinel value
-is not (no in-band value is free of meaning). This needs a decision in
-`docs/visualization.md` before `Table` is implemented.
+**Resolved (2026-10-12).** A missing number is a presence enum, not an
+in-band value:
+
+```emo
+enum Presence { present, absent }
+```
+
+A numeric column is its `Array[Float64]` values plus a parallel
+`Array[Presence]`, and the statistics skip the `absent` entries. The type
+lives in the `plot` package, not the language core (`CHECK.md`'s tiers:
+not syntax-dependent, not universal). `docs/visualization.md` decisions
+4, 10, and 25 carry the change. `inf`/`nan` stay unmodelled for now —
+`math` raises on overflow rather than returning them, and data rarely
+carries infinities; the enum can grow a member if a real need appears.
 
 ## 2. Known broken, pre-existing (not from this work)
 
@@ -128,8 +136,8 @@ Commits on `feat/plot`, oldest first:
 
 - [ ] **B1** — conservative `stmt_native` (A) or complete the ocaml native
       emitter (B)?
-- [ ] **B2** — represent a missing number with a presence mask (portable)
-      and update the `Table` design.
+- [x] **B2** — a presence enum (`enum Presence { present, absent }`)
+      plus a parallel array; recorded in `docs/visualization.md`.
 - [ ] **P1** — fix the `runtime/wasm` rule `deps` so `dune test` is green?
 - [ ] **P2** — make `bufio.BytesSink` chunked (stdlib), or keep the plot
       package's private `Buffer` only?

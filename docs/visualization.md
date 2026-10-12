@@ -239,8 +239,17 @@ The **minimal table** (decision 2026-10-12) is the one new data
 structure this layer needs — Emo has no data-frame, and it must not
 grow into one. `Table` is column-oriented: numeric columns in a
 `Map[String, Array[Float64]]`, categorical columns in a
-`Map[String, Array[String]]`, plus a row count. Missing numbers are
-`NaN` (the statistics skip them); there is no missing-label sentinel.
+`Map[String, Array[String]]`, plus a row count. A missing number is not
+an in-band `NaN` — the beam target's Erlang floats cannot represent one
+— but a parallel presence column:
+
+```emo
+enum Presence { present, absent }
+```
+
+so every numeric column is its values plus a same-length
+`Map[String, Array[Presence]]`, and the statistics skip the `absent`
+entries. There is no missing-label sentinel.
 
 ```emo
 const tips = plot.table(
@@ -249,12 +258,14 @@ const tips = plot.table(
 )
 ```
 
-`plot.table(numbers, labels)` validates equal column lengths and
-unique names and raises on a shape violation: a table written as a
-literal is programmer intent, so a mistake is a contract violation —
+`plot.table(numbers, labels)` (every value present) and
+`plot.table_missing(numbers, presence, labels)` validate equal column
+lengths and unique names and raise on a shape violation: a table written
+as a literal is programmer intent, so a mistake is a contract violation —
 the data-facing entry points added later (a CSV or JSON reader) return
 `(R.error, reason)` instead. Access is `number(name)` / `label(name)`,
-checked against the column's kind. The dataset API names its channels
+with the presence array read beside `number`, checked against the
+column's kind. The dataset API names its channels
 with a `Map[String, String]` — `{ "x": ..., "y": ..., "color": ... }`
 — so an absent key is simply an unused channel; this trades
 compile-time channel-name checking for real optional channels
@@ -791,9 +802,11 @@ T0 + T1.
    value graph rendered in one call.
 4. **Data — a minimal `Table`**: column-oriented, numeric columns in
    `Map[String, Array[Float64]]` and categorical in
-   `Map[String, Array[String]]`, `NaN` for missing numbers; built and
-   validated by `plot.table(numbers, labels)`; dataset channels
-   named by a `Map[String, String]`.
+   `Map[String, Array[String]]`, and a parallel
+   `Map[String, Array[Presence]]` (`enum Presence { present, absent }`)
+   for missing numbers; built and validated by `plot.table(numbers, labels)`
+   (all present) or `plot.table_missing(numbers, presence, labels)`;
+   dataset channels named by a `Map[String, String]`.
 5. **Package — one `plot`**, declaring the five hosted targets; the
    dataset charts live at the root and the low-level marks in the
    `plot.mark` submodule.
@@ -812,7 +825,8 @@ T0 + T1.
    contract is an **independent EmoUI direction**, accepted
    2026-10-12 — not a plotting backend.
 10. **`Table` and channels — the concrete shape above.**
-    Column-oriented with two maps, `NaN` for missing numbers,
+    Column-oriented with two maps, a parallel `Array[Presence]`
+    (`enum Presence { present, absent }`) for missing numbers,
     `plot.table(...)` raising on a shape violation, and
     `Map[String, String]` channel mappings (runtime channel-name
     checks accepted).
@@ -858,6 +872,10 @@ T0 + T1.
     foreground, the grid/axis/title/label styles, a palette, a
     colormap, spacing, and the default size; the `color` channel
     dispatches on the column's kind.
+25. **Missing numbers — a presence enum, not `NaN`.** The beam target's
+    Erlang floats cannot represent `NaN` or infinity, so a numeric
+    column carries a parallel `Array[Presence]` and the statistics skip
+    `absent` entries; the type lives in `plot`, not the language core.
 
 ## Remaining open questions
 

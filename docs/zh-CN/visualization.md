@@ -206,7 +206,15 @@ plot.heatmap(correlation)
 **最小表**(2026-10-12 决定)是这一层唯一需要的新数据结构——Emo
 没有 data-frame,它也不能长成 data-frame。`Table` 是列式的:数值列放
 `Map[String, Array[Float64]]`,分类列放 `Map[String, Array[String]]`,
-外加行数。缺失的数值是 `NaN`(统计函数跳过);标签列不设缺失哨兵。
+外加行数。缺失的数值不是带内的 `NaN`——beam 目标的 Erlang 浮点根本
+表示不了——而是一条并列的存在性列:
+
+```emo
+enum Presence { present, absent }
+```
+
+于是每个数值列是它的值加一条同长的 `Map[String, Array[Presence]]`,统计
+函数跳过 `absent` 项。标签列不设缺失哨兵。
 
 ```emo
 const tips = plot.table(
@@ -215,10 +223,12 @@ const tips = plot.table(
 )
 ```
 
-`plot.table(numbers, labels)` 校验各列等长、列名唯一,形状违例
-时 raise:字面量写出的表是程序意图,写错就是契约违反——将来面向数据
-的入口(CSV 或 JSON 读取器)才返回 `(R.error, reason)`。访问用
-`number(name)` / `label(name)`,并按列的类别校验。数据集 API 用一张
+`plot.table(numbers, labels)`(所有值都在)与
+`plot.table_missing(numbers, presence, labels)` 校验各列等长、列名唯一,
+形状违例时 raise:字面量写出的表是程序意图,写错就是契约违反——将来
+面向数据的入口(CSV 或 JSON 读取器)才返回 `(R.error, reason)`。访问用
+`number(name)` / `label(name)`,存在性数组在 `number` 旁边读取,并按列
+的类别校验。数据集 API 用一张
 `Map[String, String]` 命名通道——`{ "x": ..., "y": ..., "color": ... }`
 ——缺键就是没用那个通道;这是用编译期的通道名校验换真正的可选通道
 (2026-10-12 决定)。`Table` 放在 `plot` 根,且绝不能再长成 pandas。
@@ -683,9 +693,11 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
 3. **表面——声明式。** 一张图是一个 `Figure`/`Axes`/`Mark` 值图,
    一次调用渲染。
 4. **数据——一个最小 `Table`**:列式,数值列 `Map[String, Array[Float64]]`、
-   分类列 `Map[String, Array[String]]`,缺失数值用 `NaN`;由
-   `plot.table(numbers, labels)` 构造并校验;数据集通道用
-   `Map[String, String]` 命名。
+   分类列 `Map[String, Array[String]]`,再加一条并列的
+   `Map[String, Array[Presence]]`(`enum Presence { present, absent }`)
+   表示缺失;由 `plot.table(numbers, labels)`(全在)或
+   `plot.table_missing(numbers, presence, labels)` 构造并校验;数据集
+   通道用 `Map[String, String]` 命名。
 5. **包——一个 `plot`**,声明五个宿主目标;数据集图表在根,低层 mark
    在 `plot.mark` 子模块。
 6. **数学——一个标准库 `math` 包**,默认纯 Emo 且逐字节一致,
@@ -699,8 +711,9 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
    画布,共享的向量画布契约是一条**独立的 EmoUI 方向**(2026-10-12
    接受),不是绘图后端。
 10. **`Table` 与通道——即上面的具体形状。** 列式、两张 Map、缺失数值
-    用 `NaN`、`plot.table(...)` 形状违例时 raise、通道用
-    `Map[String, String]`(接受运行期通道名校验)。
+    用并列的 `Array[Presence]`(`enum Presence { present, absent }`)、
+    `plot.table(...)` 形状违例时 raise、通道用 `Map[String, String]`
+    (接受运行期通道名校验)。
 11. **mark 不做直通。** mark 唯一的样式入口是 `with_style`;样式类保留
     自己的 `with_*` 复制方法。
 12. **渲染器先后——终端,然后 PNG。**
@@ -737,6 +750,9 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
     标签、层级不匹配留空。**
 24. **主题——挂在 `Figure` 上的值**,含背景/前景、网格/轴/标题/标签
     样式、调色板、色图、间距与默认尺寸;`color` 通道按列类别分派。
+25. **缺失数值——存在性枚举,不是 `NaN`。** beam 目标的 Erlang 浮点
+    无法表示 `NaN` 或无穷,所以数值列带一条并列的 `Array[Presence]`,
+    统计跳过 `absent` 项;该类型放在 `plot` 里,不进语言核心。
 
 ## 剩余的开放问题
 
