@@ -1,0 +1,7 @@
+package {
+  name = "emo/demo_test"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}

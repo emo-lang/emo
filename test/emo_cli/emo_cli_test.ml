@@ -2340,6 +2340,90 @@ let doctor_tests =
           (contains text "no external tools"));
   ]
 
+(* ---- test: the `emo test` subcommand (step 39) ---- *)
+
+let write_fixture_project name files =
+  let dir = Filename.concat scratch name in
+  if Sys.file_exists dir then Emo_cli.remove_tree dir;
+  Unix.mkdir dir 0o755;
+  List.iter
+    (fun (rel, source) ->
+      let path = Filename.concat dir rel in
+      let parent = Filename.dirname path in
+      if not (Sys.file_exists parent) then Unix.mkdir parent 0o755;
+      let oc = open_out_bin path in
+      output_string oc source;
+      close_out oc)
+    files;
+  dir
+
+let in_dir dir f =
+  let old_cwd = Sys.getcwd () in
+  Sys.chdir dir;
+  Fun.protect ~finally:(fun () -> Sys.chdir old_cwd) f
+
+let add_main =
+  ("main.emo", "def add(a Int64, b Int64) Int64 {\n  return a + b\n}\n")
+
+let test_cmd_tests =
+  [
+    tc "a passing project exits 0" (fun () ->
+        let dir =
+          write_fixture_project "test-cmd-pass"
+            [
+              add_main;
+              ( "test/arith.emo",
+                "def test_add() {\n  expect_equal(3, main.add(1, 2))\n}\n" );
+            ]
+        in
+        Alcotest.(check int)
+          "exit" 0
+          (in_dir dir (fun () ->
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+    tc "a failing assertion exits 1" (fun () ->
+        let dir =
+          write_fixture_project "test-cmd-fail"
+            [
+              add_main;
+              ( "test/arith.emo",
+                "def test_add() {\n  expect_equal(4, main.add(1, 2))\n}\n" );
+            ]
+        in
+        Alcotest.(check int)
+          "exit" 1
+          (in_dir dir (fun () ->
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+    tc "a static error in a test module exits 65" (fun () ->
+        let dir =
+          write_fixture_project "test-cmd-static"
+            [
+              add_main;
+              ("test/broken.emo", "def test_x() {\n  println(nope)\n}\n");
+            ]
+        in
+        Alcotest.(check int)
+          "exit" 65
+          (in_dir dir (fun () ->
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+    tc "a project without test/ exits 0" (fun () ->
+        let dir = write_fixture_project "test-cmd-none" [ add_main ] in
+        Alcotest.(check int)
+          "exit" 0
+          (in_dir dir (fun () ->
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+    tc "the scaffold's own test passes" (fun () ->
+        let dir = Filename.concat scratch "scaffold-tested" in
+        if Sys.file_exists dir then Emo_cli.remove_tree dir;
+        Alcotest.(check int) "scaffold" 0 (Emo_cli.scaffold ~path:dir);
+        Alcotest.(check bool)
+          "the scaffold ships a test" true
+          (Sys.file_exists (Filename.concat dir "test/greet.emo"));
+        Alcotest.(check int)
+          "emo test" 0
+          (in_dir dir (fun () ->
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -2363,6 +2447,7 @@ let () =
       ("publish", publish_tests);
       ("login", login_tests);
       ("new", new_tests);
+      ("test_cmd", test_cmd_tests);
       ("emoji", emoji_tests);
       ("doctor", doctor_tests);
     ]

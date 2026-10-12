@@ -283,6 +283,14 @@ let global_env () =
     { bound = BuiltinFn "self_pid"; mutable_ = false };
   Hashtbl.replace env.frame "halt"
     { bound = BuiltinFn "halt"; mutable_ = false };
+  Hashtbl.replace env.frame "expect_equal"
+    { bound = BuiltinFn "expect_equal"; mutable_ = false };
+  Hashtbl.replace env.frame "expect_true"
+    { bound = BuiltinFn "expect_true"; mutable_ = false };
+  Hashtbl.replace env.frame "expect_false"
+    { bound = BuiltinFn "expect_false"; mutable_ = false };
+  Hashtbl.replace env.frame "expect_fail"
+    { bound = BuiltinFn "expect_fail"; mutable_ = false };
   Hashtbl.replace env.frame "net_connect"
     { bound = BuiltinFn "net_connect"; mutable_ = false };
   Hashtbl.replace env.frame "net_listen"
@@ -447,12 +455,15 @@ let ensure_module_loaded h =
       h.menv <- Some env
 
 (* Program output goes to stdout; tests redirect it through [set_output]. *)
-let output : (string -> unit) ref =
-  ref (fun s ->
-      print_string s;
-      flush stdout)
+let default_output s =
+  print_string s;
+  flush stdout
+
+let output : (string -> unit) ref = ref default_output
 
 let set_output f = output := f
+
+let reset_output () = output := default_output
 
 (* The List deque's operations: O(1) push and pop at both ends, and the
    elements front to back. Popping an empty List is a domain error, like
@@ -1118,6 +1129,10 @@ let net_ok (v : value) : value = Tuple [ EnumMember ("R", "ok"); v ]
 
 let net_error (message : string) : value =
   Tuple [ EnumMember ("R", "error"); String message ]
+
+(* A failed assertion unwinds with the same Exception a `raise` carries —
+   the `emo test` runner traps it per test. *)
+let expect_raise span message = net_raise span message
 
 let rec eval_unary env span op x =
   let v = eval_expr env x in
@@ -2514,6 +2529,48 @@ and apply_builtin span name args =
   | "printf", vs ->
       error span "E3007"
         (Printf.sprintf "`printf` expects 2 arguments, got %d" (List.length vs))
+  (* ---- the expect builtins: test assertions. A failure raises an
+     ordinary Emo exception; the `emo test` runner traps it per test. ---- *)
+  | "expect_equal", [ expected; actual ] ->
+      if not (equal_value expected actual) then
+        raise
+          (expect_raise span
+             (Printf.sprintf "expect_equal: expected %s, got %s"
+                (to_string expected) (to_string actual)));
+      Void
+  | "expect_equal", vs ->
+      error span "E3007"
+        (Printf.sprintf "`expect_equal` expects 2 arguments, got %d"
+           (List.length vs))
+  | "expect_true", [ Bool true ] -> Void
+  | "expect_true", [ Bool false ] ->
+      raise (expect_raise span "expect_true: got false")
+  | "expect_true", [ v ] ->
+      error span "E3001"
+        (Printf.sprintf "`expect_true` expects a Bool, got %s" (type_name v))
+  | "expect_true", vs ->
+      error span "E3007"
+        (Printf.sprintf "`expect_true` expects 1 argument, got %d"
+           (List.length vs))
+  | "expect_false", [ Bool false ] -> Void
+  | "expect_false", [ Bool true ] ->
+      raise (expect_raise span "expect_false: got true")
+  | "expect_false", [ v ] ->
+      error span "E3001"
+        (Printf.sprintf "`expect_false` expects a Bool, got %s" (type_name v))
+  | "expect_false", vs ->
+      error span "E3007"
+        (Printf.sprintf "`expect_false` expects 1 argument, got %d"
+           (List.length vs))
+  | "expect_fail", [ String message ] -> raise (expect_raise span message)
+  | "expect_fail", [ v ] ->
+      error span "E3001"
+        (Printf.sprintf "`expect_fail` expects a String message, got %s"
+           (type_name v))
+  | "expect_fail", vs ->
+      error span "E3007"
+        (Printf.sprintf "`expect_fail` expects 1 argument, got %d"
+           (List.length vs))
   | "self_pid", [] -> Pid (Effect.perform Self_pid)
   | "self_pid", vs ->
       error span "E3007"

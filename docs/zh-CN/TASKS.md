@@ -30,6 +30,7 @@
 | M10 — Target 独立 | 26 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |
 | M11 — For / While 循环 | 34–35 | 已定案的循环面在解释器与全部六个 target 上逐字节运行:`for`(三子句,头部 `var` 作用域限定在循环)与 `while`,搭配裸 `break`/`continue`;循环在任何栈上都不增长;尾调用保证不变。 |
 | M12 — 错误处理 | 36–37 | Erlang 式分界落地:预期内的失败返回 `(R.ok, value)` / `(R.error, reason)`,用 `case` 匹配或用绑定模式断言绑定;违例抛出唯一的 `Exception` 类;stdlib 的 raise 点逐包迁移到新约定——所有 target 逐字节一致,`R` 一并抵达 freestanding 层。 |
+| M14 — 单元测试 | 46 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
 
 ## 设计闸门
 
@@ -605,3 +606,21 @@ Step 35 收尾(2026-10-11,`feat/loops` 分支):循环语句在全部六个 targe
 - [x] **T38.1** — `Box.new` 类型化为 `Box[T]`:在 `List.new`/`Map.new` 之侧补上构造器特判,`read`/`replace` 按单元类型受查,其余成员——包括裸成员访问——在检查期拒绝(裸 `x.v` 分歧;此前 stdlib 的 Box 状态完全失察)。接收者一旦带上类型,两处 c 侧预存偏差随即现形:`emo_box_replace` 返回 box 本身,而其余所有 target 都返回新值(已对齐);发射器的内建 `to_string` 臂劫持了静态类型的实例接收者,打印调试 repr 而不调用类自己的方法(实例先按类分派,无同名方法时才走内建转换)。
 - [x] **T38.2** — 跨模块值签名:def 与 foreign 按声明的 `FuncType`、const/var 按初始化表达式的类型、`emo` 组进程序级注册表——全部在类型表之侧预注册。限定调用经 `check_apply` 受查;裸成员读取要么解析出类型、要么静态报 E5004;组成员获得类型(此前连同模块的裸 `Math.tau` 都是 Unknown);局部名遮蔽同名模块,与运行时规则一致。顺带落地两个预存 bug:`longest_module_prefix` 走的是路径的后缀而非前缀;空点路径被当成模块前缀——任何非简单接收者上的裸成员访问(`foo(1).field`)恒为 Unknown。
 - [x] **T38.3** — 项目检查下,解析不到任何类型、组或模块的大驼峰值名在书写处报 E4003(运行时携带值的内建名保持合法);单文件视图保持旧的沉默,与它看不见的所有跨文件缺口一致。json/yaml 接口声明 `get`(自引用签名;json 补齐四个标量类的 raise 型变体,与类已有的回答一致)。checker 与 project 测试;CHECK.md 条目;全部 target 金测绿。
+
+## M14 — 单元测试
+
+`feat/unit-test` 上定案的测试面(2026-10-12):项目根部的 `test/` 目录——其中每个 `.emo` 文件都是测试文件,每个顶层 `def test_*` 都是一个测试——断言做成内建(`expect_equal` / `expect_true` / `expect_false` / `expect_fail`),失败时抛出唯一的 `Exception` 类,由 OCaml 运行器逐个测试捕获(Emo 没有 catch,运行器是唯一能截获 raise 的地方)。不新增任何语法构造。本分支上工作已经开始:T46.1–T46.5 与 T46.7 的部分实现留在树中尚未评审——各自按下面的任务定义补齐完成,而不是按现状直接并入。
+
+### Step 46 — 单元测试框架:`emo test` 与 `expect_*` 内建
+
+**前置:** 无(基于 develop)。
+**完成标准:** 在带 `test/` 目录的项目里 `emo test` 运行每个 `def test_*`,逐测试报告 pass/fail/error 与捕获的输出,按退出码族退出 0/1/65;`expect_*` 内建在解释器中抛出真正的 `Exception`,在编译 target 上诚实地拒绝;`emo new` 脚手架带一个通过的测试;`dune test` 全绿。
+
+- [x] **T46.1** — 解释器中的 `expect_*` 内建:在 `global_env` 注册、`apply_builtin` 分派,经 `expect_raise` 辅助函数抛出(沿用 `net_raise` 先例——真正的 `Exception` 实例;消息点名断言本身,`expect_equal` 渲染双方值);元数错误 E3007 / 类型错误 E3001 沿用现有内建风格。eval 测试:通过与失败路径、消息渲染、错误码。
+- [x] **T46.2** — checker + IR 表面:checker 的 `empty_env` 补 `expect_*` 签名(Unknown 值参数、Void 返回——`println` 模式),`is_builtin` 加 `expect_` 前缀族,使编译程序引用这些名字时得到各后端的标配诚实拒绝(riscv 对所有内建统一拒绝;c / ocaml / ts / wasm / beam 在内建分派穷尽处补拒绝臂)。checker 测试覆盖签名。
+- [x] **T46.3** — 求值器加 `reset_output`:默认输出槽具名化,`set_output` 重定向后可恢复(运行器的逐测试输出捕获)。
+- [x] **T46.4** — `emo_project` 的运行器核心:`prepare_root`(在工作目录发现、从那里找 manifest)、`test_outcome` / `test_result` 类型,以及 `run_tests`——先全树检查(静态错误经 `Static_errors` 抛出),按首段 `test/` 选出测试模块,从模块 env 收集 `def test_*`(仅 `ArrowBlock`;带参数的 `test_*` 是收集错误,绝不调用),每个测试在独立的 `Emo_sched_det.run` 中运行,输出捕获后恢复;`Emo_raise` 判 failed,`Emo_eval.Error` 判 errored。project 测试:混合结果、收集错误、无 `test/` 目录、测试模块中的静态错误。
+- [x] **T46.5** — `emo test` 子命令:报告(每测试一行,失败时附渲染的诊断与捕获的输出,末尾汇总行)、退出码 0/1/65、注册进根命令组、帮助文本写明约定。CLI 测试:一个全通过项目与一个失败项目,端到端。
+- [x] **T46.6** — `emo new` 脚手架补 `test/greet.emo`(一个通过的 `test_greet`,内建无需 manifest 依赖),提示语提到 `emo test`;脚手架金测同步更新。
+- [x] **T46.7** — `examples/test_demo/`:一个小模块、`test/` 下全通过的测试、供金测 harness 使用的 `expected.txt`;协调逐 target 金测构建(它们会降级树中每个模块——在 `expect_*` 于编译 target 拒绝期间,示例的测试模块不能把编译金测弄红)。
+- [x] **T46.8** — 文档:README 增加 Testing 一节(约定、命令、内建、raise 只失败当前一个测试),并同步 `docs/zh-CN/README.zh-CN.md` 镜像。

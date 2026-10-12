@@ -563,10 +563,10 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
    immediately), modules load lazily on first access with load-once
    semantics, and the entry's own items evaluate in file order. With
    ~check:true every module is checked first. *)
-(* The manifest is the nearest package.emo at or above the entry file's
-   directory; None when the project has no manifest. *)
-let find_manifest ~entry_file : string option =
-  let dir = ref (Filename.dirname entry_file) in
+(* The manifest is the nearest package.emo at or above [dir]; None when
+   the tree has no manifest. *)
+let find_manifest_in ~(dir : string) : string option =
+  let dir = ref dir in
   let rec walk () =
     let candidate = Filename.concat !dir "package.emo" in
     if Sys.file_exists candidate then Some candidate
@@ -577,6 +577,39 @@ let find_manifest ~entry_file : string option =
   in
   walk ()
 
+let find_manifest ~entry_file : string option =
+  find_manifest_in ~dir:(Filename.dirname entry_file)
+
+(* Parses the manifest at [manifest_path] and re-roots the project's
+   module tree at the manifest's directory — the package, not whatever
+   directory the compiler ran in, is the module tree's root. *)
+let use_manifest (p : project) (manifest_path : string) :
+    project * (Emo_pkg.manifest * string (* its directory *)) option =
+  let manifest =
+    match
+      Emo_pkg.parse_manifest ~file:manifest_path
+        ~source:(read_file manifest_path)
+    with
+    | m -> m
+    | exception Emo_pkg.Manifest_error d -> raise (Static_errors [ d ])
+  in
+  (* Re-root at an absolute manifest directory: every registered
+     file path is then absolute, so the entry lookup (which
+     absolutizes the entry file) matches what the walk registers —
+     a relative entry used to slip past the match and get lowered
+     twice, once as the root module and once under its own name. *)
+  let dir =
+    let d = Filename.dirname manifest_path in
+    if Filename.is_relative d then Filename.concat (Sys.getcwd ()) d else d
+  in
+  Hashtbl.reset p.files;
+  Hashtbl.reset p.dirs;
+  Hashtbl.replace p.dirs [] dir;
+  walk p [] dir;
+  (* The project's own manifest is data, not a module. *)
+  Hashtbl.remove p.files [ "package" ];
+  (p, Some (manifest, dir))
+
 (* Discovers the project, parses the nearest manifest, and re-roots the
    module tree at the manifest's directory — the package, not whatever
    directory the compiler ran in, is the module tree's root. *)
@@ -586,31 +619,17 @@ let prepare ~entry_file :
   (match diagnostics p with [] -> () | ds -> raise (Static_errors ds));
   match find_manifest ~entry_file with
   | None -> (p, None)
-  | Some manifest_path ->
-      let manifest =
-        match
-          Emo_pkg.parse_manifest ~file:manifest_path
-            ~source:(read_file manifest_path)
-        with
-        | m -> m
-        | exception Emo_pkg.Manifest_error d -> raise (Static_errors [ d ])
-      in
-      (* Re-root at an absolute manifest directory: every registered
-         file path is then absolute, so the entry lookup (which
-         absolutizes the entry file) matches what the walk registers —
-         a relative entry used to slip past the match and get lowered
-         twice, once as the root module and once under its own name. *)
-      let dir =
-        let d = Filename.dirname manifest_path in
-        if Filename.is_relative d then Filename.concat (Sys.getcwd ()) d else d
-      in
-      Hashtbl.reset p.files;
-      Hashtbl.reset p.dirs;
-      Hashtbl.replace p.dirs [] dir;
-      walk p [] dir;
-      (* The project's own manifest is data, not a module. *)
-      Hashtbl.remove p.files [ "package" ];
-      (p, Some (manifest, dir))
+  | Some manifest_path -> use_manifest p manifest_path
+
+(* The entry-less prepare: `emo test` runs the project at the working
+   directory, so discovery and the manifest search both start there. *)
+let prepare_root () :
+    project * (Emo_pkg.manifest * string (* its directory *)) option =
+  let p = discover ~entry_file:"." in
+  (match diagnostics p with [] -> () | ds -> raise (Static_errors ds));
+  match find_manifest_in ~dir:(Sys.getcwd ()) with
+  | None -> (p, None)
+  | Some manifest_path -> use_manifest p manifest_path
 
 let dep_error ~(manifest_dir : string) (message : string) =
   Static_errors
@@ -989,3 +1008,138 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
    with Emo_eval.Emo_raise (v, span, trace) ->
      raise (Static_errors [ Emo_eval.uncaught_diagnostic (v, span, trace) ]));
   p
+
+
+(* ---- `emo test`: the test runner ----
+
+   A test module is any module under the project's test/ directory; a
+   test is a top-level `def test_*` in one. The whole tree passes the
+   static stages first (like `emo run` with checking on); each test then
+   runs in its own scheduler run, so one test's processes and output
+   never leak into the next. *)
+
+type test_outcome =
+  | Passed
+  | Failed of Emo_support.Diagnostic.t (* an assertion (or any raise) *)
+  | Errored of Emo_support.Diagnostic.t (* a runtime error *)
+
+type test_result = {
+  t_module : string list;
+  t_name : string;
+  t_outcome : test_outcome;
+  t_output : string; (* everything the test printed *)
+}
+
+(* Runs every test under test/ and returns one result per test, modules
+   and tests in sorted order. Any lex/parse/check failure in the tree
+   raises [Static_errors], like [run_entry ~check:true]. *)
+let run_tests () : test_result list =
+  let p, prepared = prepare_root () in
+  Option.iter
+    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p)
+    prepared;
+  let manifest = Option.map fst prepared in
+  let _paths, _graph, _program, errors = check_project ~manifest p in
+  (match errors with [] -> () | ds -> raise (Static_errors ds));
+  install_hooks p;
+  let test_modules =
+    List.sort compare
+      (List.filter
+         (fun path ->
+           (* Under test/ means two segments at least — a root-level
+              test.emo file is an ordinary module, not a test file. *)
+           match path with "test" :: _ :: _ -> true | _ -> false)
+         (module_paths p))
+  in
+  let results = ref [] in
+  let push r = results := r :: !results in
+  List.iter
+    (fun mpath ->
+      let file = Hashtbl.find p.files mpath in
+      let span = Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0 in
+      (* A module's items run once, in their own scheduler run. A
+         top-level raise or error here fails the module's load rather
+         than any single test — the run continues with the next
+         module. *)
+      let loaded =
+        let env = ref None in
+        try
+          ignore
+            (Emo_sched_det.run (fun () -> env := Some (!Emo_eval.module_loader mpath)));
+          match !env with
+          | Some e -> Ok e
+          | None -> assert false (* run returned without the body *)
+        with
+        | Emo_eval.Emo_raise (v, s, trace) ->
+            Error (Emo_eval.uncaught_diagnostic (v, s, trace))
+        | Emo_eval.Error d -> Error d
+      in
+      match loaded with
+      | Error d ->
+          push
+            {
+              t_module = mpath;
+              t_name = "<load>";
+              t_outcome = Errored d;
+              t_output = "";
+            }
+      | Ok env ->
+          let tests =
+            Hashtbl.fold
+              (fun name binding acc ->
+                match binding.Emo_eval.bound with
+                | Emo_eval.ArrowBlock c
+                  when String.length name >= 5 && String.sub name 0 5 = "test_"
+                  ->
+                    (name, c) :: acc
+                | _ -> acc)
+              env.Emo_eval.frame []
+          in
+          List.iter
+            (fun (name, closure) ->
+              match closure.Emo_eval.params with
+              | _ :: _ ->
+                  push
+                    {
+                      t_module = mpath;
+                      t_name = name;
+                      t_outcome =
+                        Errored
+                          {
+                            Emo_support.Diagnostic.severity = Error;
+                            code = Some "E5008";
+                            message =
+                              Printf.sprintf
+                                "test `%s` takes parameters; test functions \
+                                 take none"
+                                name;
+                            span;
+                            hint = None;
+                          };
+                      t_output = "";
+                    }
+              | [] ->
+                  let buf = Buffer.create 256 in
+                  Emo_eval.set_output (Buffer.add_string buf);
+                  let outcome =
+                    Fun.protect ~finally:Emo_eval.reset_output (fun () ->
+                        try
+                          ignore
+                            (Emo_sched_det.run (fun () ->
+                                 ignore (Emo_eval.apply_closure closure span [])));
+                          Passed
+                        with
+                        | Emo_eval.Emo_raise (v, s, trace) ->
+                            Failed (Emo_eval.uncaught_diagnostic (v, s, trace))
+                        | Emo_eval.Error d -> Errored d)
+                  in
+                  push
+                    {
+                      t_module = mpath;
+                      t_name = name;
+                      t_outcome = outcome;
+                      t_output = Buffer.contents buf;
+                    })
+            (List.sort compare tests))
+    test_modules;
+  List.rev !results

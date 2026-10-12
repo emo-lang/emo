@@ -777,6 +777,92 @@ let check =
     (Cmd.info "check" ~doc:"Check an Emo file without running it.")
     Term.(const check $ file $ no_color $ error_limit)
 
+(* `emo test`: the project's test convention — every `def test_*` under
+   the test/ directory runs, each in its own scheduler run. A failing
+   assertion (or any uncaught raise) fails its test; a runtime error
+   errors it. Exit codes: 0 all pass, 1 any failure or error, 65 the
+   tree's static stages failed. *)
+let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
+  let indent text =
+    let text =
+      (* A test's output already ends in a newline; the indentation
+         wraps its lines, not the trailing blank. *)
+      let n = String.length text in
+      if n > 0 && text.[n - 1] = '\n' then String.sub text 0 (n - 1) else text
+    in
+    String.concat "\n"
+      (List.map (fun line -> "  " ^ line) (String.split_on_char '\n' text))
+  in
+  let show_diagnostic color d =
+    print_endline
+      (indent (Emo_support.Render.render ~color ~source:(Sys.getcwd ()) d))
+  in
+  try
+    let results = Emo_project.run_tests () in
+    let total = List.length results in
+    if total = 0 then begin
+      print_endline "no tests found under test/";
+      0
+    end
+    else begin
+      let passed = ref 0 and failed = ref 0 and errored = ref 0 in
+      List.iter
+        (fun (r : Emo_project.test_result) ->
+          let name = String.concat "." (r.Emo_project.t_module @ [ r.t_name ]) in
+          match r.t_outcome with
+          | Emo_project.Passed ->
+              incr passed;
+              Printf.printf "ok %s\n" name
+          | Emo_project.Failed d ->
+              incr failed;
+              Printf.printf "FAIL %s\n" name;
+              show_diagnostic color d;
+              if r.t_output <> "" then print_endline (indent r.t_output)
+          | Emo_project.Errored d ->
+              incr errored;
+              Printf.printf "ERROR %s\n" name;
+              show_diagnostic color d;
+              if r.t_output <> "" then print_endline (indent r.t_output))
+        results;
+      let bucket word n = Printf.sprintf "%d %s" n word in
+      let buckets =
+        bucket "passed" !passed
+        :: (if !failed > 0 then [ bucket "failed" !failed ] else [])
+        @ (if !errored > 0 then
+             [ bucket (if !errored = 1 then "error" else "errors") !errored ]
+           else [])
+      in
+      Printf.printf "%d test%s, %s\n" total
+        (if total = 1 then "" else "s")
+        (String.concat ", " buckets);
+      if !failed + !errored > 0 then 1 else 0
+    end
+  with
+  | Emo_project.Static_errors diagnostics ->
+      render_errors ~color ~error_limit diagnostics;
+      65
+  | Emo_lexer.Error diagnostic ->
+      render_errors ~color ~error_limit [ diagnostic ];
+      65
+
+let test_cmd =
+  let no_color, error_limit = static_flags () in
+  let test no_color error_limit =
+    let color = (not no_color) && Unix.isatty Unix.stderr in
+    match run_tests_cmd ~color ~error_limit with
+    | 0 -> Cmd.Exit.ok
+    | code -> exit code
+  in
+  Cmd.v
+    (Cmd.info "test"
+       ~doc:
+         "Run the project's tests: every top-level `def test_*` in every \
+          module under the test/ directory, each in its own scheduler \
+          run. Assertions are the expect_equal / expect_true / \
+          expect_false / expect_fail builtins; a failed assertion fails \
+          only its own test.")
+    Term.(const test $ no_color $ error_limit)
+
 (* `emo deps`: resolution and regeneration are explicit commands — the
    lockfile is written only here. *)
 let deps_resolve ~(name : string option) : int =
@@ -1793,7 +1879,8 @@ let doctor_cmd =
       $ const ())
 
 (* `emo new <name>`: the project scaffold — package.emo, a hello-world
-   main.emo, and .gitignore (T25.3). Strictness holds: an existing
+   main.emo with its test under test/, and .gitignore (T25.3). Strictness
+   holds: an existing
    directory or clashing files refuse; nothing is ever overwritten. The
    manifest carries the plain name when no owner is given — running,
    checking, and building work at once, and `emo publish` names the
@@ -1843,6 +1930,7 @@ let scaffold ~(path : string) : int =
     in
     make_dirs (Filename.dirname path);
     Unix.mkdir path 0o755;
+    Unix.mkdir (Filename.concat path "test") 0o755;
     write "package.emo"
       (Printf.sprintf
          {|package {
@@ -1865,8 +1953,16 @@ def greet(whom String) String {
 println(greet("world"))
 |}
          leaf);
+    write "test/greet.emo"
+      {|// Tests for main.emo's greet — run them with `emo test`.
+
+def test_greet() {
+  expect_equal("Hello, world!", main.greet("world"))
+}
+|};
     write ".gitignore" ".emo-build/\n";
-    Printf.printf "created %s — next: cd %s && emo run main.emo\n" path path;
+    Printf.printf
+      "created %s — next: cd %s && emo run main.emo, or emo test\n" path path;
     0
   end
 
@@ -2197,6 +2293,7 @@ let cmd =
       run;
       repl;
       check;
+      test_cmd;
       build;
       deps;
       install_cmd;

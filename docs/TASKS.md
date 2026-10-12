@@ -38,6 +38,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M11 — For / While loops | 34–35 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
 | M12 — Error handling | 36–37 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
 | M13 — Visualization (`plot`) | 39–45 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
+| M14 — Unit testing | 46 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
 
 ## Design gates
 
@@ -1363,3 +1364,73 @@ from the same value graph, with no host image library.
 - [ ] **T45.3** — A scanline polygon/line rasterizer with supersampling.
 - [ ] **T45.4** — Text through the Hershey stroke font.
 - [ ] **T45.5** — `plot.png(fig)`, its demo, and goldens.
+
+---
+
+## M14 — Unit testing
+
+The testing surface settled on `feat/unit-test` (2026-10-12): a `test/`
+directory at the project root — every `.emo` file under it is a test
+file, every top-level `def test_*` a test — and assertions as builtins
+(`expect_equal` / `expect_true` / `expect_false` / `expect_fail`) whose
+failure raises the one `Exception` class, caught per test by the OCaml
+runner (Emo has no catch; the runner is the only place a raise can be
+trapped). No new syntax constructs. Work began on this branch: partial
+implementations of T46.1–T46.5 and T46.7 sit in the tree unreviewed —
+each is finished against its task definition below, not merged as
+found.
+
+### Step 46 — Unit test framework: `emo test` and the `expect_*` builtins
+
+**Prereq:** none beyond develop.
+**Done when:** `emo test` in a project with a `test/` directory runs
+every `def test_*`, reporting pass/fail/error per test with captured
+output and exiting 0/1/65 by the family; the `expect_*` builtins raise
+real `Exception`s in the interpreter and refuse honestly on compiled
+targets; `emo new` scaffolds a passing test; `dune test` green.
+
+- [x] **T46.1** — `expect_*` builtins in the interpreter: registered
+      in `global_env`, dispatched in `apply_builtin`, raising via an
+      `expect_raise` helper on the `net_raise` precedent (a real
+      `Exception` instance; the message names the assertion, and
+      `expect_equal` renders both values); arity E3007 / type E3001
+      follow the existing builtin style. Eval tests: pass and fail
+      paths, message rendering, the error codes.
+- [x] **T46.2** — Checker + IR surface: `expect_*` signatures in the
+      checker's `empty_env` (Unknown value params, Void results — the
+      `println` pattern) and the `expect_` prefix family in
+      `is_builtin`, so a compiled program naming one meets the
+      backend's standard honest refusal (riscv refuses every builtin
+      generically; c / ocaml / ts / wasm / beam gain refusal arms
+      wherever their builtin dispatch is exhaustive). Checker tests
+      for the signatures.
+- [x] **T46.3** — `reset_output` in the evaluator: the default sink
+      named and restorable after `set_output` redirection (the
+      runner's per-test capture).
+- [x] **T46.4** — Runner core in `emo_project`: `prepare_root`
+      (discovery at the working directory, the manifest search from
+      there), the `test_outcome` / `test_result` types, and
+      `run_tests` — the whole tree checked first (`Static_errors`
+      out), test modules by the `test/` first segment, `def test_*`
+      collected from the module env (`ArrowBlock` only; a
+      parameterized `test_*` is a collection error, never a call),
+      each test in its own `Emo_sched_det.run` with output captured
+      and restored; `Emo_raise` fails the test, `Emo_eval.Error`
+      errors it. Project tests: mixed outcomes, the collection error,
+      no `test/` directory, a static error in a test module.
+- [x] **T46.5** — `emo test` subcommand: reporting (one line per
+      test, the rendered diagnostic and captured output on failure,
+      the summary line), exit codes 0/1/65, registration in the root
+      command group, help text naming the convention. CLI tests: a
+      passing project and a failing one, end-to-end.
+- [x] **T46.6** — `emo new` scaffolds `test/greet.emo` with a passing
+      `test_greet` (builtins need no manifest dep) and the hint
+      mentions `emo test`; scaffold goldens updated.
+- [x] **T46.7** — `examples/test_demo/`: a small module, passing
+      tests under `test/`, `expected.txt` for the golden harness;
+      reconcile the per-target golden builds (they lower every module
+      in the tree — the example's test modules must not break the
+      compiled goldens while `expect_*` refuses there).
+- [x] **T46.8** — Docs: README gains the Testing section (the
+      convention, the command, the builtins, a raise failing only the
+      one test), mirrored in `docs/zh-CN/README.zh-CN.md`.
