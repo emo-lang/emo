@@ -266,6 +266,7 @@ let wasm_goldens =
     "loops";
     "error_matching";
     "float_methods";
+    "math_demo";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -292,6 +293,7 @@ let beam_goldens =
     "loops";
     "error_matching";
     "float_methods";
+    "math_demo";
   ]
 
 let erl_available =
@@ -504,6 +506,7 @@ let c_goldens =
     "loops";
     "error_matching";
     "float_methods";
+    "math_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

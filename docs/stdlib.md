@@ -48,6 +48,7 @@ The packages:
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
+| [`math`](#the-math-package) | float scalars and elementary functions | all five |
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | `ocaml`, `c`, `typescript` |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
 
@@ -451,6 +452,40 @@ line-wrap acceptance; every rejection comes back as
 Targets: all five. Reference:
 [`docs/stdlib/base64.md`](stdlib/base64.md) · Demo:
 `examples/base64_demo`.
+
+## The `math` package
+
+The elementary float functions: the scalars, `sqrt`, and the
+transcendentals the rest of the standard library builds on. Pure Emo
+over the scalar operations all five targets share, with fixed-order
+series, so each answers byte-for-byte.
+
+```emo
+const e = 2.718281828459045
+const pi = 3.141592653589793
+
+def abs(x Float64) Float64
+def min(a Float64, b Float64) Float64
+def max(a Float64, b Float64) Float64
+def clamp(x Float64, lo Float64, hi Float64) Float64
+def sqrt(x Float64) Float64
+def exp(x Float64) Float64
+def log(x Float64) Float64
+def log10(x Float64) Float64
+def pow(base Float64, exponent Float64) Float64
+```
+
+`exp` range-reduces to `2^k * exp(r)` with a short Taylor series; `log`
+uses `log(x) = e*ln2 + log(m)` with the atanh series. Out-of-domain
+arguments are contract violations, not values — `log` of a non-positive
+number and `exp`'s overflow raise, because the beam target's Erlang
+floats cannot represent NaN or infinity at all, so returning one is not
+an option. A native fast path (the host libm through `foreign def`) is
+deliberately absent: it would refuse the wasm/typescript/beam targets
+and pin the output to a platform.
+
+Targets: all five. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
+Demo: `examples/math_demo`.
 
 ## The `slog` package
 

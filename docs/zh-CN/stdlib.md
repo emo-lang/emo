@@ -26,6 +26,7 @@ require "json"
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
+| [`math`](#math-包) | 浮点标量与初等函数 | 全部五个 |
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | `ocaml`、`c`、`typescript` |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
 
@@ -318,6 +319,29 @@ def decode(text String) (R, String)
 `encode` 永远输出标准字母表加 `=` 填充。`decode` 只接受编码器产出的东西:仅标准字母表,填充只在最后一个量子,RFC 要求为零的填充位必须真的是零——`QR==` 是错误,不是 `QQ==` 的同义词。不容忍空白,不接受换行拆分;每次拒绝都以 `(R.error, reason)` 返回,带出错字节偏移。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/base64.md`](stdlib/base64.md) · 示例:`examples/base64_demo`。
+
+## math 包
+
+初等浮点函数:标量、`sqrt`,以及标准库其余部分所依赖的超越函数。纯 Emo 写在五个目标共享的标量运算之上,级数顺序固定,所以每个函数都逐字节相同。
+
+```emo
+const e = 2.718281828459045
+const pi = 3.141592653589793
+
+def abs(x Float64) Float64
+def min(a Float64, b Float64) Float64
+def max(a Float64, b Float64) Float64
+def clamp(x Float64, lo Float64, hi Float64) Float64
+def sqrt(x Float64) Float64
+def exp(x Float64) Float64
+def log(x Float64) Float64
+def log10(x Float64) Float64
+def pow(base Float64, exponent Float64) Float64
+```
+
+`exp` 先把参数归约到 `2^k * exp(r)`,再用短 Taylor 级数展开 `exp(r)`;`log` 用 `log(x) = e*ln2 + log(m)` 加 atanh 级数。域外参数是契约违反而不是值——`log` 的非正数、`exp` 的上溢都 raise,因为 beam 目标的 Erlang 浮点根本无法表示 NaN 或无穷,返回值不是可选项。这里刻意不放原生快路径(经 `foreign def` 调宿主 libm):它会拒绝 wasm/typescript/beam,并把输出钉在某个平台上。
+
+目标:全部五个。参考:[`docs/zh-CN/stdlib/math.md`](stdlib/math.md) · 示例:`examples/math_demo`。
 
 ## slog 包
 
