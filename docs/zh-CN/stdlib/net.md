@@ -1,6 +1,6 @@
 # `net` 包
 
-标准库的 socket 包:TCP、UDP、Unix 域 socket、DNS 与 TLS。它是运行时网络 builtin 之上一层薄薄的、可读的 Emo 源码——这里每个函数都只是对 builtin 的一次调用,语义(超时、EOF、错误)就是运行时的语义。本包**仅限 ocaml 与 c 目标**:manifest 声明了 `targets = ["ocaml", "c"]`,依赖解析在其他一切目标上拒绝它。
+标准库的 socket 包:TCP、UDP、Unix 域 socket、DNS 与 TLS。它是运行时网络 builtin 之上一层薄薄的、可读的 Emo 源码——这里每个函数都只是对 builtin 的一次调用,语义(超时、EOF、错误)就是运行时的语义。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。各目标覆盖面不同:`ocaml` 与 `typescript` 实现完整能力,`c` 只实现 TCP——UDP、Unix 域 socket、`net.resolve` 与 TLS 在 `c` 上运行时被拒绝。
 
 网络是**直接风格**:阻塞调用读起来就是普通函数调用,socket 忙碌时调度器把进程挂起。没有 `async`/`await`,没有回调注册。每一种失败——连接被拒、名字解析不出、超过期限、socket 已关——都以 `(R.error, reason)` 返回:reason 是 String,写明操作、对端与原因。用 `case` 匹配它,别让它崩掉进程。
 
@@ -16,7 +16,7 @@ require "net"
 package {
   name = "acme/myapp"
   version = "0.1.0"
-  targets = ["ocaml", "c"]
+  targets = ["ocaml", "c", "typescript"]
 
   deps {
     net = "0.1.0"
@@ -177,7 +177,8 @@ case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
 
 ## 限制
 
-- **仅限 ocaml 与 c 目标**——`targets = ["ocaml", "c"]`;wasm、TypeScript、BEAM 构建在解析期被拒绝。
-- **DNS 只有正向解析,且在调度循环内同步执行**——`getaddrinfo` 期间整个循环阻塞;没有反向解析。
+- **三个目标**——`targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期被拒绝。`c` 只实现 TCP,其余操作在 `c` 上运行时被拒绝。
+- **DNS 只有正向解析。** 在 `ocaml` 上它在调度循环内同步执行——`getaddrinfo` 期间整个循环阻塞;在 `typescript` 上由 Node 的解析器在事件循环中执行。没有反向解析。
+- **TLS 的原因文本来自各自的库**——`ocaml` 上是 OpenSSL,`typescript` 上是 Node;两者的证书验证默认都开启。
 - **UDP 只有非连接的收发**——没有 `connect` 式数据报,没有组播,没有广播助手。
 - **没有原始 socket,没有 socket 选项**——超出上面操作暴露范围的一律没有。

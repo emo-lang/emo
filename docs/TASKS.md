@@ -279,7 +279,7 @@ Promotion trail: **TypeScript → `plan/step-15-typescript.md`** (2026-10-02, fi
 - [x] **T15.1** — Target plumbing and core emitter: `--target` through CLI, project, and the resolution gate; the IR → TypeScript emitter for the core subset; the tagged-value runtime. Golden: hello_world, fib, objects.
 - [ ] **T15.2** — Full core semantics: patterns and guards, tuples, arrays, Box, interpolation, content equality, multi-file module references. Golden: language_tour, shop.
 - [x] **T15.3** — Concurrency: cooperative tasks, mailboxes, selective receive, `self_pid`, `halt`. Golden: pipeline.
-- [ ] **T15.4** — Direct-style IO: sockets and HTTP over Node's APIs as awaited promises; stdlib target metadata gains `"typescript"`. Golden: tcp_echo, http_roundtrip.
+- [x] **T15.4** — Direct-style IO: sockets and HTTP over Node's APIs as awaited promises; stdlib target metadata gains `"typescript"`. Golden: tcp_echo, http_roundtrip. (Done 2026-10-12: the whole `net` surface rides `node:net`/`node:dgram`/`node:tls`/`node:dns` behind `E.builtin` with one persistent per-connection reader; the root process finishing releases the live handles so the loop drains, matching the native rule. `net` and `http` declare `"typescript"`; tcp_echo and http_roundtrip join the target's goldens. The `c` target stays TCP-only, and the `http` server block's double close — hidden by the native scheduler, surfaced by the TypeScript target — is fixed.)
 - [ ] **T15.5** — Bootstrap: the target-aware golden suite in CI, plus the resolution-gate test for packages lacking the target.
 
 ### Step 16 — Wasm target (WasmGC) · `plan/step-16-wasm.md`

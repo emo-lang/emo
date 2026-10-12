@@ -3,9 +3,12 @@
 The standard library's socket package: TCP, UDP, Unix-domain sockets, DNS,
 and TLS. It is a thin, readable layer of Emo source over the runtime's
 network builtins — every function here is one call to a builtin, and the
-semantics (timeouts, EOF, errors) are the runtime's. The package is
-**ocaml- and c-only**: its manifest declares `targets = ["ocaml", "c"]`, and
-dependency resolution refuses it on every other target.
+semantics (timeouts, EOF, errors) are the runtime's. The package declares
+the `ocaml`, `c`, and `typescript` targets (`targets = ["ocaml", "c",
+"typescript"]`); dependency resolution refuses it on every other target.
+Coverage differs by target: `ocaml` and `typescript` implement the whole
+surface, while `c` implements TCP only — UDP, Unix-domain sockets,
+`net.resolve`, and TLS are refused at runtime there.
 
 Networking is **direct style**: a blocking call reads like any other
 function call, and the scheduler parks the process while the socket is
@@ -28,7 +31,7 @@ The `require` pairs strictly with the manifest — `net` must be pinned in
 package {
   name = "acme/myapp"
   version = "0.1.0"
-  targets = ["ocaml", "c"]
+  targets = ["ocaml", "c", "typescript"]
 
   deps {
     net = "0.1.0"
@@ -227,11 +230,14 @@ case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
 
 ## Limitations
 
-- **OCaml and c targets only** — `targets = ["ocaml", "c"]`; wasm, TypeScript, and
-  BEAM builds are refused at resolution time.
-- **DNS is forward-only and runs inline in the scheduler loop** —
-  `getaddrinfo` blocks the loop for its duration; there is no reverse
-  lookup.
+- **Three targets** — `targets = ["ocaml", "c", "typescript"]`; wasm, BEAM,
+  and riscv64 builds are refused at resolution time. The `c` target
+  implements TCP only; the other operations are refused at runtime there.
+- **DNS is forward-only.** On `ocaml` it runs inline in the scheduler loop —
+  `getaddrinfo` blocks the loop for its duration; on `typescript` Node's
+  resolver runs on the event loop. There is no reverse lookup.
+- **The TLS reason text is the library's** — OpenSSL's on `ocaml`, Node's on
+  `typescript`; verification itself is on by default on both.
 - **UDP is unconnected send/receive only** — no `connect`ed datagrams, no
   multicast, no broadcast helpers.
 - **No raw sockets, no socket options** beyond what the operations above

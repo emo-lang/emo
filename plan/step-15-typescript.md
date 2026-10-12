@@ -71,7 +71,7 @@ GC question as the only open front.
 
 ## Tasks
 
-- [ ] **T15.1** — Target plumbing and core emitter: `--target` through
+- [x] **T15.1** — Target plumbing and core emitter: `--target` through
       the CLI, project, and resolution gate; the IR → TypeScript
       emitter for the core subset (values, control flow, classes,
       interfaces, enums, exceptions, closures, modules); the tagged-value
@@ -80,11 +80,21 @@ GC question as the only open front.
 - [ ] **T15.2** — Full core semantics: patterns and guards, tuples,
       arrays, Box, string interpolation, content equality, module
       references across files. Golden: language_tour, shop.
-- [ ] **T15.3** — Concurrency: tasks, mailboxes, selective receive,
+- [x] **T15.3** — Concurrency: tasks, mailboxes, selective receive,
       `self_pid`, `halt`. Golden: pipeline.
-- [ ] **T15.4** — Direct-style IO: sockets and HTTP over Node's APIs as
+- [x] **T15.4** — Direct-style IO: sockets and HTTP over Node's APIs as
       awaited promises; stdlib target metadata gains `"typescript"`.
-      Golden: tcp_echo, http_roundtrip.
+      Golden: tcp_echo, http_roundtrip. (Done 2026-10-12: the runtime
+      carries the whole `net` surface over `node:net`/`node:dgram`/
+      `node:tls`/`node:dns`, one persistent per-connection reader feeds
+      the buffered reads, `E.builtin` dispatches the ten net builtins,
+      and the root process finishing releases the live handles so the
+      loop drains — the native rule that the root ending ends the
+      program. `net` and `http` declare `"typescript"`; the `http`
+      server block closed its connection twice, which the native
+      scheduler hid and the TypeScript target surfaced — the block now
+      returns the connection for `handle_connection` to close. The
+      `c` target keeps TCP only.)
 - [ ] **T15.5** — Bootstrap: the target-aware golden suite in CI (each
       example's TypeScript run matches the interpreter byte-for-byte),
       and the resolution gate test for packages that lack the target.
@@ -107,5 +117,12 @@ GC question as the only open front.
   in a benchmark worth caring about.
 - **Cooperative tasks, not workers** (this file, Scope) — processes are
   semantics first, parallelism later.
+- **Networking over Node's modules, not a custom loop** (T15.4) — the
+  runtime wraps `node:net`/`node:dgram`/`node:tls`/`node:dns`; the
+  emitter already awaits every call, so the Emo surface stays direct
+  style with no new language machinery. Errors unwrap to the target's
+  message text (Node's TLS reason where OpenSSL's would appear on
+  `ocaml`), and spawned processes end silently on an exception, as the
+  native scheduler's event log does.
 - Promoted from step 14 per its T14.1; the umbrella keeps the other
   targets' decisions.

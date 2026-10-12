@@ -297,7 +297,7 @@ The concurrency semantics are shaped by the following decisions:
 
 ## Networking
 
-Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API. On the native backend it runs on the same effects-based scheduler as the concurrency runtime — non-blocking sockets parked and woken by the scheduler, with TLS provided by OpenSSL bindings. Networking is ocaml/c-only: the `net` and `http` packages declare `targets = ["ocaml", "c"]`, and dependency resolution refuses them on every other target.
+Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API. On the native backends it runs on the same effects-based scheduler as the concurrency runtime — non-blocking sockets parked and woken by the scheduler, with TLS provided by OpenSSL bindings; on the TypeScript target it runs on Node's event loop, the emitted `await`s settling each call. The `net` and `http` packages declare `targets = ["ocaml", "c", "typescript"]`, and dependency resolution refuses them on every other target; the `c` target implements TCP only.
 
 The API is **direct style**: network calls look like ordinary blocking calls, and the scheduler switches processes under the hood. There is no `async`/`await` and therefore no function coloring — any function can perform IO, and the API ecosystem stays single-tracked. Timeouts are seconds, and every failure — refused connection, unresolvable name, exceeded deadline, closed socket — returns `(R.error, reason)`, the reason stating the peer, the operation, and the reason.
 
@@ -307,7 +307,7 @@ The socket surface is the standard library's `net` package; HTTP lives in the `h
 - **Connections.** `read_line()`, `read_exactly(n)`, `read_all()`, `write(data)`, and `close()` — a graceful close delivers pending writes first. `set_timeout(seconds)` bounds the operations that follow (the default is no timeout; `0.0` waits indefinitely). A listener serves `accept()` and reports `port()`; a datagram socket `send_to(host, port, data)`s and `recv_from()`s, and reports `port()`.
 - **HTTP.** `http.get(url)`, `http.post(url, body)`, `http.put(url, body)`, `http.delete(url)`, and the general `http.request(method, url, headers, body, timeout)` return an `HttpResponse` carrying `status`, `headers`, and `body`. Redirects are never followed: a 3xx is a response like any other, and following it is the caller's explicit move. On the server, `http.serve(listener) -> (conn TcpConn) { ... }` is the process-per-connection helper, and `http.serve_requests(listener) -> (req HttpRequest) { ... }` parses each request and writes the handler's `HttpResponse` back — the handler is an ordinary Emo function. The full API reference lives in [docs/stdlib/http.md](docs/stdlib/http.md).
 
-Layering is conventional: sockets (TCP/UDP/Unix domain, plus TLS) live in the `net` package, and HTTP (client and server) in the `http` package built on top of it. TLS is an OpenSSL binding on the `ocaml` target.
+Layering is conventional: sockets (TCP/UDP/Unix domain, plus TLS) live in the `net` package, and HTTP (client and server) in the `http` package built on top of it. TLS is an OpenSSL binding on `ocaml` and Node's `tls` on `typescript`; the `c` target refuses it.
 
 ## Native Builds
 

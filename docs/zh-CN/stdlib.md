@@ -6,12 +6,12 @@
 require "json"
 ```
 
-同时在清单的 `deps` 下固定精确版本(如 `json = "0.1.0"`)。`require` 没有对应的 pin 是编译错误;包的 `targets` 不含本次构建目标的,在解析阶段直接拒绝——格式类包在所有目标上运行,系统类和网络类包只声明拥有 Unix 形态宿主的目标。
+同时在清单的 `deps` 下固定精确版本(如 `json = "0.1.0"`)。`require` 没有对应的 pin 是编译错误;包的 `targets` 不含本次构建目标的,在解析阶段直接拒绝——格式类包在所有目标上运行,系统类包只声明拥有 Unix 形态宿主的目标,网络类包声明 `ocaml`、`c` 与 `typescript`。
 
 两条约定贯穿所有包:
 
 - **预期内的失败是值,违例才抛出。** 可能因数据而失败的调用返回 `(R.ok, value)` 或 `(R.error, reason)`——reason 是以包名加冒号开头的字符串(`json: expected array element at byte 3`、`os: open_write notes.txt: Permission denied`;`file` 的错误以 `os:` 报出,因为系统调用由共享的 os 运行时执行)。没有错误码,没有 nil。抛出保留给契约违例:`Exception` 是唯一的异常类,可选的 `data` Map 装机器可读的上下文,不往消息里拼接,抛出即结束进程。流结束不是错误:空字符串表示流结束。
-- **语言够用就用纯 Emo。** 格式类包和编解码器用 Emo 写在共享运行时之上,声明的每个目标都给出逐字节相同的答案。只有 `os`(以及构建在它之上的包)分发到 POSIX 支撑的运行时内建,也只有它们是仅原生目标。
+- **语言够用就用纯 Emo。** 格式类包和编解码器用 Emo 写在共享运行时之上,声明的每个目标都给出逐字节相同的答案。`os` 与 `file` 分发到 POSIX 支撑的运行时内建,也只有它们是仅原生目标;`net` 与 `http` 同样分发到运行时内建——在 `ocaml`/`c` 上由 POSIX 支撑,在 `typescript` 上由 Node 支撑。
 
 各包一览:
 
@@ -20,8 +20,8 @@ require "json"
 | [`file`](#file-包) | 整文件读写 | `ocaml`、`c` |
 | [`os`](#os-包) | 进程、管道、裸 fd IO、目录 | `ocaml`、`c` |
 | [`bufio`](#bufio-包) | 任意流上的缓冲读写 | `ocaml`、`c` |
-| [`net`](#net-包) | TCP、UDP、Unix 域套接字、DNS、TLS | `ocaml`、`c` |
-| [`http`](#http-包) | HTTP 客户端与服务器 | `ocaml`、`c` |
+| [`net`](#net-包) | TCP、UDP、Unix 域套接字、DNS、TLS | `ocaml`、`c`、`typescript` |
+| [`http`](#http-包) | HTTP 客户端与服务器 | `ocaml`、`c`、`typescript` |
 | [`json`](#json-包) | JSON 解码与编码 | 全部五个 |
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
@@ -182,7 +182,7 @@ socket.set_timeout(seconds)
 
 EOF 绝不是静默的部分结果:对端提前关闭时 `read_exactly` 以 reason 失败,行中途中闭是错误元组,`read_all` 是唯一把 EOF 当作正常读完的读取。Unix 域监听器没有端口——对它调 `port()` 是错误。
 
-目标:`["ocaml", "c"]`。参考:[`docs/zh-CN/stdlib/net.md`](stdlib/net.md) · 示例:`examples/tcp_echo`。
+目标:`["ocaml", "c", "typescript"]`。在 `c` 上本包只覆盖 TCP;UDP、Unix 域套接字、`net.resolve` 与 TLS 在 `c` 上运行时被拒绝。参考:[`docs/zh-CN/stdlib/net.md`](stdlib/net.md) · 示例:`examples/tcp_echo`。
 
 ## http 包
 
@@ -226,7 +226,7 @@ http.serve_requests(listener) -> (req HttpRequest) {
 }
 ```
 
-目标:`["ocaml", "c"]`(清单里同时固定 `net`)。参考:[`docs/zh-CN/stdlib/http.md`](stdlib/http.md) · 示例:`examples/http_roundtrip`。
+目标:`["ocaml", "c", "typescript"]`(清单里同时固定 `net`)。在 `c` 上它只覆盖 TCP,继承自 `net`。参考:[`docs/zh-CN/stdlib/http.md`](stdlib/http.md) · 示例:`examples/http_roundtrip`。
 
 ## json 包
 

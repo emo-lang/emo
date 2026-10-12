@@ -3,9 +3,10 @@
 The standard library's HTTP client and server, written in pure Emo on top of
 the `net` package. Direct style throughout: a request reads like any other
 function call, and the scheduler parks the process underneath while the
-socket is busy. The package is **native-only** — its manifest declares
-`targets = ["ocaml", "c"]`, and dependency resolution refuses it on every other
-target.
+socket is busy. The package declares the `ocaml`, `c`, and `typescript`
+targets (`targets = ["ocaml", "c", "typescript"]`); dependency resolution
+refuses it on every other target. On `c` it inherits `net`'s TCP-only
+coverage; `https` in particular needs TLS, which `c` refuses.
 
 ## Using the package
 
@@ -21,7 +22,7 @@ connections directly:
 package {
   name = "acme/myapp"
   version = "0.1.0"
-  targets = ["ocaml", "c"]
+  targets = ["ocaml", "c", "typescript"]
 
   deps {
     http = "0.1.0"
@@ -165,8 +166,9 @@ case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/
 
 ## Limitations
 
-- **OCaml and c targets only.** The package declares `targets = ["ocaml", "c"]`;
-  resolution refuses it for wasm, TypeScript, and BEAM builds.
+- **Three targets.** The package declares `targets = ["ocaml", "c", "typescript"]`;
+  resolution refuses it for wasm, BEAM, and riscv64 builds. On `c` it is
+  TCP-only, inherited from `net`.
 - **No connection pooling.** One TCP connection per request, closed after
   the exchange.
 - **No redirect following.** 3xx responses are returned as-is.
