@@ -449,3 +449,52 @@ sync.stop(wg)
 目标:`["ocaml", "c", "typescript", "wasm", "beam"]`。参考:
 [`docs/zh-CN/stdlib/sync.md`](stdlib/sync.md) · 示例:
 `examples/sync_demo`。
+
+## sqlite3 包
+
+数据库包:对 SQLite 预备语句(prepared statement)API 的直接风格
+绑定。`Database` 是一个打开的连接;`Statement` 是一条编译好的
+SQL,逐行步进、按类型读取列。它是标准库第一个原生绑定包:调用经
+`foreign def` 落到包自带的 C shim,系统 sqlite3 库由清单的 `link`
+字段声明——消费方只需 `require`,无需 `--cclib`。
+
+```emo
+def open(path String) Database
+
+class Database {
+  def exec(sql String) Void
+  def prepare(sql String) Statement
+  def last_insert_rowid() Int64
+  def changes() Int64
+  def close() Void
+}
+
+class Statement {
+  def bind_int(i Int64, v Int64) Void
+  def bind_float(i Int64, v Float64) Void
+  def bind_text(i Int64, v String) Void
+  def bind_null(i Int64) Void
+  def step() Bool
+  def reset() Void
+  def finalize() Void
+  def column_count() Int64
+  def column_name(i Int64) String
+  def column_int(i Int64) Int64
+  def column_float(i Int64) Float64
+  def column_text(i Int64) String
+  def column_is_null(i Int64) Bool
+}
+```
+
+每个会失败的调用都抛出普通的 Emo 异常,消息指出操作并携带
+SQLite 自己的错误文本;而行读到尽头是值(`step()` 回答
+`false`),不是失败。绑定下标从 1 起——它们命名 SQL 文本里的
+`?NNN` 参数;列下标从 0 起。NULL 列读出为 `""`,用
+`column_is_null` 区分两者。字符串过 C 边界时以 NUL 结尾,因此含
+内嵌 NUL 的 String 会在边界处截断;blob 要等 `Bytes` 能过 FFI
+之后再说。
+
+目标:`["c"]`——这些调用是 foreign def,解释器拒绝执行(E3009),
+所以 `emo run` 跑不了用到这个包的程序;请用 `emo build` 构建。参
+考:[`docs/zh-CN/stdlib/sqlite3.md`](stdlib/sqlite3.md) · 示例:
+`examples/sqlite3_demo`。

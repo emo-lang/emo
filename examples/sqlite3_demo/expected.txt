@@ -1,0 +1,8 @@
+insert: rowid 1, changes 1
+insert: rowid 2, changes 1
+columns: 4
+names: id, title, score, tag
+row 1: first score=1.5 tag=<null>
+row 2: second score=2.5 tag=pinned
+update changes: 1
+done

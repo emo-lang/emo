@@ -1,6 +1,6 @@
 # Step 28 — The standard library: `yaml`
 
-**Milestone:** M11 — The standard library · **Prereq:** step 27 (the
+**Milestone:** M13 — The standard library · **Prereq:** step 27 (the
 json package — the yaml package shares its tree design, its block
 parser discipline, and its exact-decimal float machinery) ·
 **Related:** `stdlib/registry/json` (the sibling format package),

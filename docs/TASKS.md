@@ -37,8 +37,9 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M10 — Target independence | 26 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
 | M11 — For / While loops | 34–35 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
 | M12 — Error handling | 36–37 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
-| M13 — Visualization (`plot`) | 39–45 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
-| M14 — Unit testing | 46 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
+| M13 — The standard library | 27–33, 39 | The bundled stdlib packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the native-binding `sqlite3` — each resolving against the manifest's `targets`, answering byte-for-byte on every target it declares, and shipping a full API reference plus a runnable golden. |
+| M14 — Visualization (`plot`) | 39–45 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
+| M15 — Unit testing | 46 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
 
 ## Design gates
 
@@ -680,6 +681,15 @@ release-layout binary wherever the OCaml toolchain is on PATH; the
 typescript target likewise; all goldens byte-for-byte and `dune test`
 green.
 
+## M13 — The standard library
+
+The bundled stdlib is a milestone of its own: one package per step, each
+shipping its API reference and a runnable golden. `json` (27) through
+`bufio` (33) are the pure-Emo and `os`-backed packages; `sqlite3` picks
+the sequence up at step 39 — the next free number when it landed
+(2026-10-12), after the M11 loop (34–35) and M12 error-handling (36–38)
+steps that interleaved chronologically.
+
 ### Step 27 — The standard library: `json` · `plan/step-27-stdlib-json.md`
 
 **Prereq:** Step 10 (packages) + step 26 (target independence).
@@ -944,6 +954,20 @@ nothing. All three are fixed in the runtime dispatch
 instances to their vtable before any builtin. The package rides `os`,
 so its manifest declares the ocaml and c targets and widens when
 those surfaces reach the other runtimes.
+
+### Step 39 — The standard library: `sqlite3` · `plan/step-39-stdlib-sqlite3.md`
+
+**Prereq:** Step 24 (the c target's direct C ABI) + step 25 (the embedded stdlib).
+**Done when:** `require "sqlite3"` on the c target opens a database, executes DDL, prepares statements, binds int / float / text / null parameters, and reads typed columns — with no `--cclib` and no hand-compiled shim on the consumer's side; the manifest's `link` field and package-carried `.c`/`.h` sources land with it; every other target refuses (resolution's `targets` gate, or the non-c build's E5007), the interpreter at run time (E3009); `dune test` green.
+
+- [x] **T39.1** — The manifest's `link` field: parse (strict, optional, bare names only), tests.
+- [x] **T39.2** — Packages carry `.c`/`.h`: `Registry.collect_files` and `gen-stdlib-data.sh` collect and embed them; publish and checksums flow through unchanged.
+- [x] **T39.3** — The build wiring: `load_deps`/`compile_inputs` collect each dependency's C sources and link libraries; the c target's cc invocation and cache key take them; the non-c gate (E5007).
+- [x] **T39.4** — The `sqlite3` package: manifest, `internal/ffi.emo`, `emo_sqlite3_shim.c`, the `Database`/`Statement` public surface.
+- [x] **T39.5** — `examples/sqlite3_demo` golden on the c target (gated on a sqlite3 probe, beside `cc_available`), plus the native-dependency tests in `test/emo_project`.
+- [x] **T39.6** — The docs: the CHECK.md entry, README (+ zh-CN), `docs/native-backend.md` (+ zh-CN), `docs/stdlib/sqlite3.md` (+ zh-CN), the stdlib tours.
+
+Step 39 close-out (2026-10-12, on `feat/sqlite3`): the package system learns to carry native code — a manifest gains the optional `link` field (bare library names; a flag- or path-shaped entry is E5103), and `.c`/`.h` sources ride the package tree into collection, checksums, embedding, and publishing — so the c target compiles and links a dependency's native inputs with no consumer-side flags. The `sqlite3` package is the first consumer: a `foreign def` binding over a package-carried exact-ABI shim (`emo_sqlite3_shim.c`, every signature `int64_t`/`double`/`bool`/`const char *`), c-target only, raising per the `os` convention until the error-handling migration lands.
 
 ## M11 — For / While loops
 

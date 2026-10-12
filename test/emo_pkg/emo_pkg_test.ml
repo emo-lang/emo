@@ -191,6 +191,90 @@ let manifest_tests =
               "code" "E5103"
               (match d.Diagnostic.code with Some c -> c | None -> "?")
         | Ok _ -> Alcotest.fail "expected E5103");
+    tc "link libraries parse" (fun () ->
+        match
+          check
+            {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  link = ["sqlite3"]
+  deps {}
+}|}
+        with
+        | Error d ->
+            Alcotest.fail
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | Ok m ->
+            Alcotest.(check (list string))
+              "link" [ "sqlite3" ] m.Emo_pkg.link);
+    tc "link defaults to empty" (fun () ->
+        match
+          check
+            {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  deps {}
+}|}
+        with
+        | Error d ->
+            Alcotest.fail
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | Ok m -> Alcotest.(check (list string)) "link" [] m.Emo_pkg.link);
+    tc "a non-array link is rejected" (fun () ->
+        match
+          check
+            {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  link = "sqlite3"
+  deps {}
+}|}
+        with
+        | Error d ->
+            Alcotest.(check string)
+              "code" "E5103"
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | Ok _ -> Alcotest.fail "expected E5103");
+    tc "non-string link entries are rejected" (fun () ->
+        match
+          check
+            {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  link = [3]
+  deps {}
+}|}
+        with
+        | Error d ->
+            Alcotest.(check string)
+              "code" "E5103"
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | Ok _ -> Alcotest.fail "expected E5103");
+    tc "flag-shaped link entries are rejected" (fun () ->
+        List.iter
+          (fun bad ->
+            match
+              check
+                (Printf.sprintf
+                   {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  link = ["%s"]
+  deps {}
+}|}
+                   bad)
+            with
+            | Error d ->
+                Alcotest.(check string)
+                  "code" "E5103"
+                  (match d.Diagnostic.code with Some c -> c | None -> "?")
+            | Ok _ -> Alcotest.fail ("expected E5103 for " ^ bad))
+          [ "-lsqlite3"; "/usr/lib/libsqlite3.dylib"; "" ]);
     tc "runaway evaluation hits the step budget" (fun () ->
         match
           check

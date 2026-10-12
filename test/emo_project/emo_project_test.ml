@@ -693,6 +693,36 @@ def span() Int64 {
   return leaf_tools.leaf()
 }
 |};
+  (* A package with native inputs: a C source and a `link` library. Its
+     manifest declares both native targets, so only the link gate —
+     never target resolution — can refuse it. *)
+  let native_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "native_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat native_dir "package.emo")
+    {|package {
+  name = "acme/native_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  link = ["m"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat native_dir "native_tools.emo")
+    {|foreign def floor(x Float64) Float64 = "emo_native_floor"
+
+def halve_floor(x Float64) Float64 {
+  return floor(x / 2.0)
+}
+|};
+  write_file
+    (Filename.concat native_dir "shim.c")
+    {|#include <math.h>
+double emo_native_floor(double x) { return floor(x); }
+|};
   dir
 
 let app_manifest =
@@ -1238,7 +1268,7 @@ println(helper.twice(21))
       (fun () ->
         let entry = shadow_app () in
         with_registry (fun () ->
-            let inputs, entry_path, packages, _ =
+            let inputs, entry_path, packages, _, _ =
               Emo_project.compile_inputs ~entry_file:entry ~target:"c"
             in
             let program =
@@ -1910,6 +1940,87 @@ def test_never() {
           results);
   ]
 
+(* Packages with native inputs (C sources, a `link` library): the c
+   target carries them; every other target refuses the program rather
+   than silently dropping the link. *)
+let native_dep_tests =
+  [
+    tc "the c target collects a package's C sources and link libraries"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/nativeapp"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/native_tools = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/native_tools"
+println(native_tools.halve_floor(9.0))
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            let _inputs, _entry, _packages, _manifest, (c_sources, link_libs) =
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            in
+            Alcotest.(check (list string)) "link" [ "m" ] link_libs;
+            Alcotest.(check int) "one c source" 1 (List.length c_sources);
+            Alcotest.(check bool)
+              "the shim's path" true
+              (String.equal
+                 (Filename.basename (List.hd c_sources))
+                 "shim.c")));
+    tc "a native-carrying package is refused off the c target" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/nativeapp"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/native_tools = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/native_tools"
+println(native_tools.halve_floor(9.0))
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"ocaml"
+            with
+            | _ -> Alcotest.fail "expected the link gate to refuse"
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.(check bool)
+                  "E5007" true
+                  (List.exists
+                     (fun d ->
+                       d.Emo_support.Diagnostic.code = Some "E5007"
+                       && contains_substring d.Emo_support.Diagnostic.message
+                            "acme/native_tools")
+                     ds)));
+  ]
+
 (* ---- Step 13 bootstrap: the examples/ suite as compiled binaries ----
    Every example runs through the interpreter and through `emo build`,
    and both outputs must match the example's golden file byte-for-byte. *)
@@ -2359,6 +2470,7 @@ let () =
       ("shop_golden", shop_golden_tests);
       ("stdlib_http", stdlib_http_tests);
       ("ffi", ffi_tests);
+      ("native_dep", native_dep_tests);
       ("bootstrap", bootstrap_tests);
       ("ts_golden", ts_golden_tests);
       ("cross_module", cross_module_tests);

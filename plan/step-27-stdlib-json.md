@@ -1,6 +1,6 @@
 # Step 27 — The standard library: `json`
 
-**Milestone:** M11 — The standard library · **Prereq:** step 10
+**Milestone:** M13 — The standard library · **Prereq:** step 10
 (packages — the mechanism a stdlib package rides) and step 26 (target
 independence — the reason a pure-Emo package reaches every target) ·
 **Related:** `stdlib/registry/{net,http,file}` (the worked pattern),

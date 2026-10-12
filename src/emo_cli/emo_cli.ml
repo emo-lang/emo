@@ -171,7 +171,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
       66
   | true -> (
       try
-        let inputs, entry_path, packages, _manifest =
+        let inputs, entry_path, packages, _manifest, (dep_csources, dep_links) =
           Emo_project.compile_inputs ~entry_file:entry ~target
         in
         let program =
@@ -265,6 +265,12 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               close_out oc
             in
             let main_c_contents, defs_h_contents = Emo_codegen.C.emit program in
+            (* The resolved packages' native inputs ride the cclib
+               mechanism: a package's .c sources pass to cc verbatim
+               (absolute existing paths) and enter the cache key by
+               content, its `link` libraries become -l flags. Sources
+               come before libraries so the link resolves. *)
+            let cclibs = cclibs @ dep_csources @ dep_links in
             (* Incremental, same scheme as the ocaml arm: the digest of
                the emitted C, the runtime sources, and the link inputs
                names the cached binary — an unchanged program skips cc.
@@ -2119,6 +2125,18 @@ let emoji_build ~(dir : string) : int =
             exit 66
           end
         in
+        (* The package's own native inputs ride the build too — the
+           pre-publish gate must link what the package's consumers will
+           get: its tree's .c sources and its manifest's link
+           libraries. The dependency mechanism in build_file covers a
+           package's deps; the package itself is not its own dep. *)
+        let own_csources =
+          Emo_pkg.Registry.collect_files dir
+          |> List.filter_map (fun (rel, _) ->
+              if Filename.check_suffix rel ".c" then
+                Some (Filename.concat dir rel)
+              else None)
+        in
         let results =
           List.map
             (fun target ->
@@ -2127,7 +2145,8 @@ let emoji_build ~(dir : string) : int =
                   (Filename.concat ".emo-build" ("emoji-" ^ target))
               in
               let code =
-                build_file ~entry ~output ~specialize:true ~cclibs:[] ~target
+                build_file ~entry ~output ~specialize:true
+                  ~cclibs:(own_csources @ m.Emo_pkg.link) ~target
               in
               (target, code))
             m.Emo_pkg.targets

@@ -16,6 +16,12 @@ incrementally shippable steps — one file per step, executed in order.
   passing on an effects-based scheduler, plus the direct-style networking API.
 - **M4 — Compilation targets (steps 13–14):** native code generation, then
   wasm / TypeScript / BEAM / riscv64.
+- **M13 — The standard library (steps 27–33, 39):** the bundled stdlib
+  packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the
+  native-binding `sqlite3` — each with a full API reference and a runnable
+  golden, on every target it declares. (`sqlite3` lands at step 39, after the
+  M11 loop and M12 error-handling steps interleaved chronologically; the full
+  milestone list is in `docs/TASKS.md`.)
 
 ## Ground rules
 
@@ -76,3 +82,5 @@ incrementally shippable steps — one file per step, executed in order.
 | 30 | The standard library: `os` | done on interpreter/ocaml/c; the browser and bytecode targets refuse the package (no process to fork) |
 | 31 | The standard library: `base64` | done on every target — the first package on all five goldens; flushed out the wasm `&&` cast, the wasm zero-length copies, and the beam logical-op/tuple-index/Exception gaps |
 | 32 | The standard library: `slog` | done on interpreter/ocaml/c/typescript; wasm, beam wait on `Map` support (attrs are a Map); loggers are values, no state, no clock — the first package whose golden needed zero compiler changes |
+| 33 | The standard library: `bufio` | done on interpreter/ocaml/c; the package rides `os`, so wasm/beam/typescript refuse it at resolution like `os` does |
+| 39 | The standard library: `sqlite3` | done on c — the first native-binding package: the manifest's `link` field and package-carried C sources land with it; every other target refuses at resolution, the interpreter at run time (E3009) |

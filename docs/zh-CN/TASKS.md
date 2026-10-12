@@ -30,8 +30,9 @@
 | M10 — Target 独立 | 26 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |
 | M11 — For / While 循环 | 34–35 | 已定案的循环面在解释器与全部六个 target 上逐字节运行:`for`(三子句,头部 `var` 作用域限定在循环)与 `while`,搭配裸 `break`/`continue`;循环在任何栈上都不增长;尾调用保证不变。 |
 | M12 — 错误处理 | 36–37 | Erlang 式分界落地:预期内的失败返回 `(R.ok, value)` / `(R.error, reason)`,用 `case` 匹配或用绑定模式断言绑定;违例抛出唯一的 `Exception` 类;stdlib 的 raise 点逐包迁移到新约定——所有 target 逐字节一致,`R` 一并抵达 freestanding 层。 |
-| M13 — 可视化(`plot`) | 39–45 | `plot` 包补齐其 T0 表面(连续轴;line / scatter / area / histogram mark;对数标度、域、图例、网格、主题、调色板、分面)与 T1 数据集图表,随后加入终端与 PNG 渲染器——SVG 输出在全部五个宿主 target 上逐字节一致。 |
-| M14 — 单元测试 | 46 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
+| M13 — 标准库 | 27–33、39 | 随编译器交付的 stdlib 各包——`json`、`yaml`、`xml`、`os`、`base64`、`slog`、`bufio`,以及首个原生绑定包 `sqlite3`——逐一按 manifest 的 `targets` 解析,在它声明的每个 target 上逐字节一致,并各自附完整 API 参考与可运行金测。 |
+| M14 — 可视化(`plot`) | 39–45 | `plot` 包补齐其 T0 表面(连续轴;line / scatter / area / histogram mark;对数标度、域、图例、网格、主题、调色板、分面)与 T1 数据集图表,随后加入终端与 PNG 渲染器——SVG 输出在全部五个宿主 target 上逐字节一致。 |
+| M15 — 单元测试 | 46 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
 
 ## 设计闸门
 
@@ -457,6 +458,10 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 
 步骤 26 完成(2026-10-07,T26.1–T26.6 于 `feat/target-independence`):没有任何 target 从二进制旁或宿主构建树读取运行时;ocaml target 在 OCaml 工具链在 PATH 上的任何安装形态下、用孤立的发布布局二进制即可工作;typescript target 亦然;全部金测逐字节,`dune test` 全绿。
 
+## M13 — 标准库
+
+随编译器交付的 stdlib 自成里程碑:每个步骤一个包,各自带上 API 参考与可运行金测。`json`(27)到 `bufio`(33)是纯 Emo 与骑 `os` 的包;`sqlite3` 在 step 39 接上这个序列——它是该包落地时的下一个空号(2026-10-12),排在时间上与之交错的 M11 循环(34–35)与 M12 错误处理(36–38)之后。
+
 ### Step 27 — 标准库:`json` · `plan/step-27-stdlib-json.md`
 
 **前置:** Step 10(包)+ Step 26(target 独立)。
@@ -539,6 +544,20 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 - [x] **T33.4** — 文档:`docs/stdlib/bufio.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
 
 步骤 33 收尾(2026-10-09,`feat/bufio` 分支):bufio 是第一个状态以 Box 住在普通类里的标准库包——缓冲、游标、数据源、上次读到的字节都活在 `Box` 中,类在其周围保持不可变。本步骤揪出 c 后端跨模块方法调用路径的三个潜在 bug:把用户类上的 `read_line` 劫持到 socket 内建的名字劫持、接收者表达式被分派求值多达三次、Void 方法语句被编译成空。三处都已在运行时分派(`emo_dynamic_builtin`)修复——它只求值接收者一次,并在任何内建之前把实例交给其 vtable。本包骑在 `os` 上,manifest 声明 ocaml 与 c target,待那些表面到达其他运行时再加宽。
+
+### Step 39 — 标准库:`sqlite3` · `plan/step-39-stdlib-sqlite3.md`
+
+**前置:** Step 24(c target 的直接 C ABI)+ Step 25(内嵌 stdlib)。
+**完成标准:** c target 上 `require "sqlite3"` 打开数据库、执行 DDL、准备语句、绑定 int / float / text / null 参数并读取带类型列——消费方无需 `--cclib`、无需手工编译 shim;manifest 的 `link` 字段与随包携带的 `.c`/`.h` 源码随之落地;其他 target 一律拒绝(解析期 `targets` 闸门,或非 c 构建期的 E5007),解释器运行时拒绝(E3009);`dune test` 全绿。
+
+- [x] **T39.1** — manifest 的 `link` 字段:解析(严格、可选、仅裸库名)与测试。
+- [x] **T39.2** — 包可携带 `.c`/`.h`:`Registry.collect_files` 与 `gen-stdlib-data.sh` 收集并内嵌它们;publish 与 checksum 流程不变。
+- [x] **T39.3** — 构建接线:`load_deps`/`compile_inputs` 收集每个依赖的 C 源码与链接库;c target 的 cc 调用与缓存键纳入它们;非 c 闸门(E5007)。
+- [x] **T39.4** — `sqlite3` 包:manifest、`internal/ffi.emo`、`emo_sqlite3_shim.c`、`Database`/`Statement` 公开表面。
+- [x] **T39.5** — c target 上的 `examples/sqlite3_demo` 金测(以 sqlite3 探针为门,与 `cc_available` 并列),外加 `test/emo_project` 里的原生依赖测试。
+- [x] **T39.6** — 文档:CHECK.md 条目、README(+ zh-CN)、`docs/native-backend.md`(+ zh-CN)、`docs/stdlib/sqlite3.md`(+ zh-CN)、stdlib 巡览。
+
+Step 39 收尾(2026-10-12,`feat/sqlite3` 分支):包系统学会携带原生代码——manifest 新增可选 `link` 字段(仅裸库名;旗标或路径形状的条目报 E5103),`.c`/`.h` 源码随包树进入收集、校验和、内嵌与发布——于是 c target 自行编译并链接依赖的原生输入,消费方零旗标。`sqlite3` 是首个消费者:以 `foreign def` 绑定随包携带的精确 ABI shim(`emo_sqlite3_shim.c`,每个签名只有 `int64_t`/`double`/`bool`/`const char *`),仅 c target,按 `os` 约定 raise,直到错误处理迁移落地。
 
 ## M11 — For / While 循环
 

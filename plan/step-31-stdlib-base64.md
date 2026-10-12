@@ -1,6 +1,6 @@
 # Step 31 — The standard library: `base64`
 
-**Milestone:** M11 — The standard library · **Prereq:** step 27 (the
+**Milestone:** M13 — The standard library · **Prereq:** step 27 (the
 json package — the byte-scanner discipline and the exact-buffer
 patterns this package follows) · **Related:**
 `stdlib/registry/{json,yaml,xml,os}` (the sibling packages),

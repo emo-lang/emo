@@ -33,6 +33,8 @@ type manifest = {
   name : string; (* owner/name for packages, plain for the standard library *)
   version : Version.t;
   targets : string list;
+  link : string list;
+      (* system libraries the c target links (bare names, `-l`-style) *)
   deps : (string * Version.t) list; (* exact versions *)
 }
 
@@ -43,6 +45,7 @@ let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
        name = "acme/json_tools"
        version = "0.1.0"
        targets = ["ocaml", "wasm"]
+       link = ["sqlite3"]
        deps { json = "2.3.1" }
      }
    Unknown fields, missing fields, and non-literal values are errors. *)
@@ -121,10 +124,12 @@ end
        name = "acme/json_tools"
        version = "0.1.0"
        targets = ["ocaml", "wasm"]
+       link = ["sqlite3"]
        deps { json = "2.3.1" }
      }
    Unknown fields, missing fields, and non-literal values are errors — the
-   manifest is data, not program logic (until phase B). *)
+   manifest is data, not program logic (until phase B). `link` is optional
+   (default []): the system libraries the c target links, as bare names. *)
 (* The budget for restricted manifest evaluation: generous but finite. *)
 let manifest_budget = 10_000
 
@@ -170,14 +175,14 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
         raise
           (Manifest_error { d with Emo_support.Diagnostic.code = Some "E5103" })
   in
-  (* Strict fixed schema: nothing besides name, version, and targets may be
-     defined in the package block. *)
+  (* Strict fixed schema: nothing besides name, version, targets, and link
+     may be defined in the package block. *)
   Hashtbl.iter
     (fun k _ ->
       if
         not
           (String.equal k "name" || String.equal k "version"
-         || String.equal k "targets")
+         || String.equal k "targets" || String.equal k "link")
       then
         raise (manifest_error "E5100" (Printf.sprintf "unknown field `%s`" k)))
     env.Emo_eval.frame;
@@ -211,8 +216,8 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                  hint = None;
                })
   in
-  let read_targets () =
-    match Emo_eval.lookup_opt env "targets" with
+  let read_string_list ~field ~missing_code =
+    match Emo_eval.lookup_opt env field with
     | Some (Emo_eval.Array items) ->
         List.map
           (fun v ->
@@ -226,7 +231,7 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                          severity = Error;
                          code = Some "E5103";
                          message =
-                           Printf.sprintf "targets must be strings, got %s"
+                           Printf.sprintf "%s must be strings, got %s" field
                              (Emo_eval.type_name other);
                          span =
                            Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0
@@ -234,30 +239,34 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                          hint = None;
                        }))
           (Array.to_list items)
-    | Some other ->
+    | Some _ ->
         raise
           (Manifest_error
              Emo_support.Diagnostic.
                {
                  severity = Error;
                  code = Some "E5103";
-                 message = Printf.sprintf "`targets` must be an array";
+                 message = Printf.sprintf "`%s` must be an array" field;
                  span =
                    Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
                  hint = None;
                })
-    | None ->
-        raise
-          (Manifest_error
-             Emo_support.Diagnostic.
-               {
-                 severity = Error;
-                 code = Some "E5101";
-                 message = "missing field `targets`";
-                 span =
-                   Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
-                 hint = None;
-               })
+    | None -> (
+        match missing_code with
+        | Some code ->
+            raise
+              (Manifest_error
+                 Emo_support.Diagnostic.
+                   {
+                     severity = Error;
+                     code = Some code;
+                     message = Printf.sprintf "missing field `%s`" field;
+                     span =
+                       Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0
+                         ~stop:0;
+                     hint = None;
+                   })
+        | None -> [])
   in
   let name = read_string "name" in
   let version =
@@ -276,7 +285,7 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                  hint = None;
                })
   in
-  let targets = read_targets () in
+  let targets = read_string_list ~field:"targets" ~missing_code:(Some "E5101") in
   List.iter
     (fun t ->
       if not (List.mem t known_targets) then
@@ -292,6 +301,29 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                  hint = None;
                }))
     targets;
+  (* The libraries the c target links: bare names only — a `-`- or
+     `/`-shaped entry is a flag or a path, not a library, and refusing it
+     keeps the manifest data rather than a shell fragment. *)
+  let link = read_string_list ~field:"link" ~missing_code:None in
+  List.iter
+    (fun lib ->
+      if lib = "" || lib.[0] = '-' || String.contains lib '/' then
+        raise
+          (Manifest_error
+             Emo_support.Diagnostic.
+               {
+                 severity = Error;
+                 code = Some "E5103";
+                 message =
+                   Printf.sprintf
+                     "link entry `%s` must be a bare library name (like \
+                      \"sqlite3\")"
+                     lib;
+                 span =
+                   Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
+                 hint = None;
+               }))
+    link;
   let deps =
     List.map
       (fun (dep, raw) ->
@@ -312,7 +344,7 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                    }))
       deps_pairs
   in
-  { name; version; targets; deps }
+  { name; version; targets; link; deps }
 
 (* `acme/json_tools` binds as `json_tools`: the scoped name's short name is
    what a require brings into scope. Centralized here for a later
@@ -528,7 +560,11 @@ module Registry = struct
          (List.map (fun (p, c) -> p ^ "\000" ^ c ^ "\000") sorted))
     |> Digestif.SHA256.to_hex
 
-  (* Collects every .emo file under [dir], relative paths as keys. *)
+  (* Collects every package file under [dir], relative paths as keys: the
+     .emo modules plus the .c/.h sources a native-binding package carries
+     (the c target compiles them into the program — CHECK.md, 2026-10-12).
+     Build output (.emo-build) and dune's tree (_build) are not package
+     content. *)
   let collect_files (dir : string) : (string * string) list =
     let rec walk rel =
       let dir_path = Filename.concat dir (String.concat "/" rel) in
@@ -543,8 +579,14 @@ module Registry = struct
           else
             let rel_entry = rel @ [ entry ] in
             let path = Filename.concat dir_path entry in
-            if Sys.is_directory path then walk rel_entry
-            else if Filename.check_suffix entry ".emo" then
+            if Sys.is_directory path then
+              if entry = ".emo-build" || entry = "_build" then []
+              else walk rel_entry
+            else if
+              Filename.check_suffix entry ".emo"
+              || Filename.check_suffix entry ".c"
+              || Filename.check_suffix entry ".h"
+            then
               let ic = open_in_bin path in
               let content =
                 Fun.protect
@@ -871,8 +913,9 @@ end
 (* Publishing: the client side of the registry's publish protocol.
    [prepare] validates the package rooted at [dir] and builds the .emoji
    archive — the CLI ships the bytes over HTTP. The content digest is the
-   Registry digest over the .emo sources; a root README.md rides along but
-   is never digested, matching the server. *)
+   Registry digest over the package's collected sources (.emo plus any
+   .c/.h); a root README.md rides along but is never digested, matching
+   the server. *)
 module Publish = struct
   type prepared = {
     p_manifest : manifest;

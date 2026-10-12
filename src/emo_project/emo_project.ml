@@ -760,15 +760,27 @@ let register_package (p : project) (short : string) (dir : string) : unit =
   p.packages <- [ short ] :: p.packages;
   match diagnostics p with [] -> () | ds -> raise (Static_errors ds)
 
+(* The native side of one resolved dependency: the C sources it carries
+   (absolute paths into the materialized cache dir — the c target compiles
+   them into the program) and the system libraries its manifest links.
+   Both are empty for a pure-Emo package. *)
+type native_dep = {
+  nd_name : string;
+  nd_csources : string list;
+  nd_link : string list;
+}
+
 (* The dependency side of a run: resolve or verify, then fetch every
    resolved package into the shared cache and register its modules.
    The target gates twice: the fresh solve filters published versions,
    and each fetched package's own manifest must declare the target —
    a lockfile satisfied for one target must not silently serve
-   another. *)
+   another. Returns each package's native inputs; the interpreter and
+   the non-c targets ignore them (the build's strictness gate refuses
+   a native-carrying package off the c target). *)
 let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
-    ~(target : string) (p : project) : unit =
-  if manifest.Emo_pkg.deps = [] then ()
+    ~(target : string) (p : project) : native_dep list =
+  if manifest.Emo_pkg.deps = [] then []
   else begin
     (* The root project's own declared deps, for the visibility rule and
        the require/manifest pairing. *)
@@ -776,7 +788,7 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
       ([], List.map fst manifest.Emo_pkg.deps) :: p.package_deps;
     let entries = resolution_for_run ~manifest ~manifest_dir ~target in
     let reg = registry () in
-    List.iter
+    List.map
       (fun entry ->
         match
           Emo_pkg.Registry.fetch reg ~name:entry.Emo_pkg.Lockfile.dep
@@ -805,7 +817,18 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
                 let short = Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep in
                 register_package p short dir;
                 p.package_deps <-
-                  ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps))
+                  ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps;
+                {
+                  nd_name = entry.Emo_pkg.Lockfile.dep;
+                  nd_csources =
+                    List.filter_map
+                      (fun (rel, _) ->
+                        if Filename.check_suffix rel ".c" then
+                          Some (Filename.concat dir rel)
+                        else None)
+                      f.Emo_pkg.Registry.f_files;
+                  nd_link = pkg.Emo_pkg.link;
+                }))
       entries
   end
 
@@ -833,16 +856,54 @@ let same_file (id : (int * int) option) (file : string) : bool =
 
 (* The backend's lowering input: every module in the project, parsed and
    checked (the backend runs the full check), plus the entry module's
-   path. Raises [Static_errors] on any diagnostic. *)
+   path and the dependencies' native inputs (C sources to compile,
+   libraries to link). Raises [Static_errors] on any diagnostic.
+   A native-carrying package (C sources or a `link` list) is honored by
+   the c target alone; any other target refuses the program outright —
+   dropping the native inputs would be a silent fallback. *)
 let compile_inputs ~entry_file ~target :
     Emo_ir.module_input list
     * string list
     * string list list
-    * Emo_pkg.manifest option =
+    * Emo_pkg.manifest option
+    * (string list * string list) =
   let p, prepared = prepare ~entry_file in
-  Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target p)
-    prepared;
+  let native_deps =
+    match prepared with
+    | None -> []
+    | Some (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target p
+  in
+  let c_sources = List.concat_map (fun d -> d.nd_csources) native_deps in
+  let link_libs = List.concat_map (fun d -> d.nd_link) native_deps in
+  let native_carrying =
+    List.filter
+      (fun d -> d.nd_csources <> [] || d.nd_link <> [])
+      native_deps
+  in
+  (match native_carrying with
+  | [] -> ()
+  | ds when target = "c" -> ignore ds
+  | ds ->
+      let names =
+        String.concat ", " (List.map (fun d -> d.nd_name) ds)
+      in
+      raise
+        (Static_errors
+           [
+             {
+               Emo_support.Diagnostic.severity = Error;
+               code = Some "E5007";
+               message =
+                 Printf.sprintf
+                   "the %s target cannot link native dependencies (%s) — only \
+                    the c target carries a package's C sources and libraries"
+                   target names;
+               span =
+                 Emo_support.Span.make ~file:p.root ~line:1 ~col:1 ~start:0
+                   ~stop:0;
+               hint = None;
+             };
+           ]));
   let module_paths = module_paths p in
   let diagnostics = ref [] in
   (* The entry file is reachable via two paths (the project root and
@@ -912,7 +973,7 @@ let compile_inputs ~entry_file ~target :
       [] units
   in
   (match !diagnostics with [] -> () | ds -> raise (Static_errors ds));
-  (inputs, entry, p.packages, Option.map fst prepared)
+  (inputs, entry, p.packages, Option.map fst prepared, (c_sources, link_libs))
 
 (* The deps commands operate on the project at the working directory — the
    root rule makes the manifest's directory the project root. *)
@@ -925,7 +986,8 @@ let manifest_here () : string option =
 let check_entry ~entry_file : Emo_support.Diagnostic.t list =
   let p, prepared = prepare ~entry_file in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p)
+    (fun (m, dir) ->
+      ignore (load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p))
     prepared;
   let manifest = Option.map fst prepared in
   let items = parse_cached p (entry_path entry_file) in
@@ -963,7 +1025,8 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
     ?(globals : (string * Emo_eval.value) list = []) () : project =
   let p, prepared = prepare ~entry_file in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p)
+    (fun (m, dir) ->
+      ignore (load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p))
     prepared;
   let manifest = Option.map fst prepared in
   install_hooks p;
@@ -1036,7 +1099,8 @@ type test_result = {
 let run_tests () : test_result list =
   let p, prepared = prepare_root () in
   Option.iter
-    (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p)
+    (fun (m, dir) ->
+      ignore (load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p))
     prepared;
   let manifest = Option.map fst prepared in
   let _paths, _graph, _program, errors = check_project ~manifest p in
