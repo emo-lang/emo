@@ -42,58 +42,83 @@ def request_value(method String, path String, headers Array[(String, String)], b
 
 // ---- Client ----
 
-// The general form: every verb and every knob, all explicit.
-def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) HttpResponse {
-  const parts = parse_url(url)
-  case parts {
-    ("http", host, port, path) -> {
-      const conn = net.connect(host, port, timeout)
-      return exchange(conn, method, host, path, headers, body)
+// The general form: every verb and every knob, all explicit. The
+// network's data-driven failures — refused connection, unresolvable
+// name, exceeded deadline, closed socket — ride back as
+// (R.error, reason); an unsupported url scheme is the caller's data
+// failing the same way.
+def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse) {
+  case parse_url(url) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parts)  -> {
+      case parts {
+        ("http", host, port, path) -> {
+          case net.connect(host, port, timeout) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, conn)   -> { return exchange(conn, method, host, path, headers, body) }
+          }
+        }
+        ("https", host, port, path) -> {
+          case net.tls_connect(host, port, timeout) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, conn)   -> { return exchange(conn, method, host, path, headers, body) }
+          }
+        }
+        _ -> { return (R.error, "http: unsupported url scheme in `" + url + "`") }
+      }
     }
-    ("https", host, port, path) -> {
-      const conn = net.tls_connect(host, port, timeout)
-      return exchange(conn, method, host, path, headers, body)
-    }
-    _ -> { raise Exception.new(message: "http: unsupported url `" + url + "`") }
   }
 }
 
-def get(url String) HttpResponse {
+def get(url String) (R, HttpResponse) {
   return request("GET", url, [], "", 0.0)
 }
 
-def post(url String, body String) HttpResponse {
+def post(url String, body String) (R, HttpResponse) {
   return request("POST", url, [], body, 0.0)
 }
 
-def put(url String, body String) HttpResponse {
+def put(url String, body String) (R, HttpResponse) {
   return request("PUT", url, [], body, 0.0)
 }
 
-def delete(url String) HttpResponse {
+def delete(url String) (R, HttpResponse) {
   return request("DELETE", url, [], "", 0.0)
 }
 
 // Sends one request and reads one response; the connection closes after
 // each exchange (Connection: close), so no pooling to reason about.
-def exchange(conn TcpConn, method String, host String, path String, headers Array[(String, String)], body String) HttpResponse {
-  conn.write(request_head(method, host, path, headers, body) + body)
-  const resp = read_response(conn)
-  conn.close()
-  return resp
+def exchange(conn TcpConn, method String, host String, path String, headers Array[(String, String)], body String) (R, HttpResponse) {
+  case conn.write(request_head(method, host, path, headers, body) + body) {
+    (R.error, why) -> {
+      conn.close()
+      return (R.error, why)
+    }
+    (R.ok, _) -> { }
+  }
+  case read_response(conn) {
+    (R.error, why) -> {
+      conn.close()
+      return (R.error, why)
+    }
+    (R.ok, resp)   -> {
+      conn.close()
+      return (R.ok, resp)
+    }
+  }
 }
 
 // Splits "scheme://authority/path" into (scheme, host, port, path).
 // Redirects are never followed: a 3xx response is the caller's to read
 // and act on, visibly.
-def parse_url(url String) (String, String, Int64, String) {
+def parse_url(url String) (R, (String, String, Int64, String)) {
   if url.starts_with("https://") {
-    return parse_authority(url.substring(8, url.length() - 8), "https")
+    return (R.ok, parse_authority(url.substring(8, url.length() - 8), "https"))
   }
   if url.starts_with("http://") {
-    return parse_authority(url.substring(7, url.length() - 7), "http")
+    return (R.ok, parse_authority(url.substring(7, url.length() - 7), "http"))
   }
-  raise Exception.new(message: "http: unsupported url scheme in `" + url + "`")
+  return (R.error, "http: unsupported url scheme in `" + url + "`")
 }
 
 def parse_authority(rest String, scheme String) (String, String, Int64, String) {
@@ -156,27 +181,51 @@ def join(lines Array[String], sep String, i Int64, acc String) String {
   return join(lines, sep, i + 1, acc + sep + lines[i])
 }
 
-def read_response(conn TcpConn) HttpResponse {
-  const status = read_status(conn)
-  const headers = read_headers(conn, [])
-  const length = header_value(headers, "content-length")
+def read_response(conn TcpConn) (R, HttpResponse) {
+  case read_status(conn) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, status) -> {
+      case read_headers(conn, []) {
+        (R.error, why)  -> { return (R.error, why) }
+        (R.ok, headers) -> {
+          const length = header_value(headers, "content-length")
+          case read_body(conn, length) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, body)   -> { return (R.ok, response(status, headers, body)) }
+          }
+        }
+      }
+    }
+  }
+}
+
+def read_body(conn TcpConn, length String) (R, String) {
   if length == "" {
-    return response(status, headers, conn.read_all())
+    return conn.read_all()
   }
-  return response(status, headers, conn.read_exactly(length.to_int64()))
+  return conn.read_exactly(length.to_int64())
 }
 
-def read_status(conn TcpConn) Int64 {
-  const parts = conn.read_line().split(" ")
-  return parts[1].to_int64()
+def read_status(conn TcpConn) (R, Int64) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      const parts = line.split(" ")
+      return (R.ok, parts[1].to_int64())
+    }
+  }
 }
 
-def read_headers(conn TcpConn, acc Array[(String, String)]) Array[(String, String)] {
-  const line = conn.read_line()
-  if line == "" {
-    return acc
+def read_headers(conn TcpConn, acc Array[(String, String)]) (R, Array[(String, String)]) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      if line == "" {
+        return (R.ok, acc)
+      }
+      return read_headers(conn, acc.append(header_pair(line)))
+    }
   }
-  return read_headers(conn, acc.append(header_pair(line)))
 }
 
 // Splits "Name: value" into (name, value); a malformed line is kept as a
@@ -207,40 +256,71 @@ def find_header(headers Array[(String, String)], name String, i Int64) String {
 // ---- Server ----
 
 // The process-per-connection helper: every accepted connection runs its
-// own process, so one slow client never blocks the next.
-def serve(listener TcpListener, handler Block) Int64 {
-  const conn = listener.accept()
-  do handle_connection(conn, handler)
-  return serve(listener, handler)
+// own process, so one slow client never blocks the next. An accept
+// failure — the listener closed under the loop, the deadline gone —
+// ends the loop with the reason.
+def serve(listener TcpListener, handler Block) (R, TcpConn) {
+  case listener.accept() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, conn)   -> {
+      do handle_connection(conn, handler)
+      return serve(listener, handler)
+    }
+  }
 }
 
 // The request-level server: reads the request, hands it to the handler,
 // writes the handler's response back, and closes.
-def serve_requests(listener TcpListener, handler Block) Int64 {
+def serve_requests(listener TcpListener, handler Block) (R, TcpConn) {
   return serve(listener) -> (conn TcpConn) {
-    const req = read_request(conn)
-    const resp = handler(req)
-    write_response(conn, resp)
-    return conn.close()
+    case read_request(conn) {
+      (R.error, why) -> {
+        conn.close()
+        return (R.error, why)
+      }
+      (R.ok, req) -> {
+        const resp = handler(req)
+        case write_response(conn, resp) {
+          (R.error, why) -> {
+            conn.close()
+            return (R.error, why)
+          }
+          (R.ok, _) -> { return conn.close() }
+        }
+      }
+    }
   }
 }
 
-def handle_connection(conn TcpConn, handler Block) TcpConn {
-  const conn2 = handler(conn)
-  return conn2.close()
+def handle_connection(conn TcpConn, handler Block) (R, TcpConn) {
+  return handler(conn)
 }
 
-def read_request(conn TcpConn) HttpRequest {
-  const parts = conn.read_line().split(" ")
-  const headers = read_headers(conn, [])
-  const length = header_value(headers, "content-length")
-  if length == "" {
-    return request_value(parts[0], parts[1], headers, "")
+def read_request(conn TcpConn) (R, HttpRequest) {
+  case conn.read_line() {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, line)   -> {
+      const parts = line.split(" ")
+      case read_headers(conn, []) {
+        (R.error, why)  -> { return (R.error, why) }
+        (R.ok, headers) -> {
+          const length = header_value(headers, "content-length")
+          if length == "" {
+            return (R.ok, request_value(parts[0], parts[1], headers, ""))
+          }
+          case conn.read_exactly(length.to_int64()) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, body)   -> {
+              return (R.ok, request_value(parts[0], parts[1], headers, body))
+            }
+          }
+        }
+      }
+    }
   }
-  return request_value(parts[0], parts[1], headers, conn.read_exactly(length.to_int64()))
 }
 
-def write_response(conn TcpConn, resp HttpResponse) TcpConn {
+def write_response(conn TcpConn, resp HttpResponse) (R, TcpConn) {
   const head = "HTTP/1.1 " + resp.status.to_string() + " " + reason_phrase(resp.status) + "\r\nContent-Length: " + resp.body.length().to_string() + "\r\n\r\n"
   return conn.write(head + resp.body)
 }

@@ -666,18 +666,34 @@ let net_tests =
         let output, _events =
           run_det
             {|
-def serve(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  conn.write(conn.read_line() + "\n")
-  return serve(listener)
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write(line + "\n")
+          serve(listener)
+        }
+      }
+    }
+  }
 }
 
-const listener = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
 do serve(listener)
-const conn = net_connect("127.0.0.1", listener.port(), 0.0)
-conn.write("ping\n")
-println(conn.read_line())
-println("done")
+case net_connect("127.0.0.1", listener.port(), 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("ping\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    println("done")
+  }
+}
 |}
         in
         Alcotest.(check string) "output" "ping\ndone\n" output);
@@ -685,7 +701,7 @@ println("done")
         let output, _events =
           run_det
             {|
-const listener = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
 println(listener.port() > 0)
 println(listener.port() < 65536)
 |}
@@ -695,178 +711,239 @@ println(listener.port() < 65536)
         let output, _events =
           run_det
             {|
-def once(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  conn.write("bye")
-  return conn.close()
+def once(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      conn.write("bye")
+      conn.close()
+    }
+  }
 }
 
-const listener = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
 do once(listener)
-const conn = net_connect("127.0.0.1", listener.port(), 0.0)
-println(conn.read_all())
-println(conn.read_all())
-println("after")
-|}
-        in
-        Alcotest.(check string) "output" "bye\n\nafter\n" output);
-    tc "connecting to a closed port raises a precise exception" (fun () ->
-        let port = closed_port () in
-        let message =
-          run_det_raised
-            (Printf.sprintf
-               {|
-net_connect("127.0.0.1", %d, 0.0)
-println("unreachable")
-|}
-               port)
-        in
-        Alcotest.(check string)
-          "message"
-          (Printf.sprintf "connection refused to 127.0.0.1:%d" port)
-          message);
-    tc "a read deadline raises a precise exception" (fun () ->
-        let message =
-          run_det_raised
-            {|
-def silent(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  return halt()
-}
-
-const listener = net_listen("127.0.0.1", 0)
-do silent(listener)
-const conn = net_connect("127.0.0.1", listener.port(), 0.0)
-conn.set_timeout(0.2)
-println(conn.read_line())
-|}
-        in
-        let expected_prefix = "timed out reading a line from 127.0.0.1:" in
-        let ok =
-          String.length message >= String.length expected_prefix
-          && String.sub message 0 (String.length expected_prefix)
-             = expected_prefix
-        in
-        Alcotest.(check bool) "timeout message names the peer" true ok);
-    tc "reading a closed connection raises" (fun () ->
-        let message =
-          run_det_raised
-            {|
-const listener = net_listen("127.0.0.1", 0)
-const conn = net_connect("127.0.0.1", listener.port(), 0.0)
-conn.close()
-conn.read_line()
-|}
-        in
-        let expected_prefix = "the connection to 127.0.0.1:" in
-        let ok =
-          String.length message >= String.length expected_prefix
-          && String.sub message 0 (String.length expected_prefix)
-             = expected_prefix
-        in
-        Alcotest.(check bool) "closed-connection message" true ok);
-    tc "closing a connection twice raises" (fun () ->
-        let message =
-          run_det_raised
-            {|
-const listener = net_listen("127.0.0.1", 0)
-const conn = net_connect("127.0.0.1", listener.port(), 0.0)
-conn.close()
-conn.close()
-|}
-        in
-        let expected_prefix = "the connection to 127.0.0.1:" in
-        let ok =
-          String.length message >= String.length expected_prefix
-          && String.sub message 0 (String.length expected_prefix)
-             = expected_prefix
-        in
-        Alcotest.(check bool) "double-close message" true ok);
-    tc "a close mid-line surfaces as a precise exception" (fun () ->
-        let message =
-          run_det_raised
-            {|
-def cut(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  conn.write("half")
-  return conn.close()
-}
-
-const listener = net_listen("127.0.0.1", 0)
-do cut(listener)
-const conn = net_connect("127.0.0.1", listener.port(), 0.0)
-conn.read_line()
-|}
-        in
-        let expected_prefix = "the connection to 127.0.0.1:" in
-        let expected_suffix = "closed mid-line" in
-        let ok =
-          String.length message
-          >= String.length expected_prefix + String.length expected_suffix
-          && String.sub message 0 (String.length expected_prefix)
-             = expected_prefix
-          &&
-          let n = String.length message in
-          String.sub message
-            (n - String.length expected_suffix)
-            (String.length expected_suffix)
-          = expected_suffix
-        in
-        Alcotest.(check bool) "mid-line close message" true ok);
-    tc "udp sockets exchange datagrams both ways" (fun () ->
-        let output, _events =
-          run_det
-            {|
-const a = net_udp_bind("127.0.0.1", 0)
-const b = net_udp_bind("127.0.0.1", 0)
-a.send_to("127.0.0.1", b.port(), "datagram")
-case b.recv_from() {
-  (data, host, port) -> {
-    println(data)
-    println(host == "127.0.0.1")
-    println(port == a.port())
+case net_connect("127.0.0.1", listener.port(), 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    case conn.read_all() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, text)   -> { println(text) }
+    }
+    case conn.read_all() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, text)   -> { println(text) }
+    }
+    println("after")
   }
 }
 |}
         in
-        Alcotest.(check string) "output" "datagram\ntrue\ntrue\n" output);
-    tc "a udp receive deadline raises a precise exception" (fun () ->
-        let message =
-          run_det_raised
+        Alcotest.(check string) "output" "bye\n\nafter\n" output);
+    tc "connecting to a closed port answers a precise reason" (fun () ->
+        let port = closed_port () in
+        let output, _events =
+          run_det
+            (Printf.sprintf
+               {|
+const result = net_connect("127.0.0.1", %d, 0.0)
+case result {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("connected?!") }
+}
+|}
+               port)
+        in
+        Alcotest.(check string)
+          "output"
+          (Printf.sprintf "connection refused to 127.0.0.1:%d\n" port)
+          output);
+    tc "a read deadline answers a precise reason" (fun () ->
+        let output, _events =
+          run_det
             {|
-const a = net_udp_bind("127.0.0.1", 0)
+def silent(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> { halt() }
+  }
+}
+
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
+do silent(listener)
+case net_connect("127.0.0.1", listener.port(), 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.set_timeout(0.2)
+    case conn.read_line() {
+      (R.error, why) -> { println(why) }
+      (R.ok, line)   -> { println(line) }
+    }
+  }
+}
+|}
+        in
+        let expected_prefix = "timed out reading a line from 127.0.0.1:" in
+        let ok =
+          String.length output >= String.length expected_prefix
+          && String.sub output 0 (String.length expected_prefix)
+             = expected_prefix
+        in
+        Alcotest.(check bool) "timeout reason names the peer" true ok);
+    tc "reading a closed connection answers the reason" (fun () ->
+        let output, _events =
+          run_det
+            {|
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
+case net_connect("127.0.0.1", listener.port(), 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.close()
+    case conn.read_line() {
+      (R.error, why) -> { println(why) }
+      (R.ok, line)   -> { println(line) }
+    }
+  }
+}
+|}
+        in
+        let expected_prefix = "the connection to 127.0.0.1:" in
+        let ok =
+          String.length output >= String.length expected_prefix
+          && String.sub output 0 (String.length expected_prefix)
+             = expected_prefix
+        in
+        Alcotest.(check bool) "closed-connection reason" true ok);
+    tc "closing a connection twice answers the reason" (fun () ->
+        let output, _events =
+          run_det
+            {|
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
+case net_connect("127.0.0.1", listener.port(), 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.close()
+    case conn.close() {
+      (R.error, why) -> { println(why) }
+      (R.ok, _)      -> { println("closed again?!") }
+    }
+  }
+}
+|}
+        in
+        let expected_prefix = "the connection to 127.0.0.1:" in
+        let ok =
+          String.length output >= String.length expected_prefix
+          && String.sub output 0 (String.length expected_prefix)
+             = expected_prefix
+        in
+        Alcotest.(check bool) "double-close reason" true ok);
+    tc "a close mid-line surfaces as a precise reason" (fun () ->
+        let output, _events =
+          run_det
+            {|
+def cut(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      conn.write("half")
+      conn.close()
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
+do cut(listener)
+case net_connect("127.0.0.1", listener.port(), 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    case conn.read_line() {
+      (R.error, why) -> { println(why) }
+      (R.ok, line)   -> { println(line) }
+    }
+  }
+}
+|}
+        in
+        let expected_prefix = "the connection to 127.0.0.1:" in
+        let ok =
+          String.length output >= String.length expected_prefix
+          && String.sub output 0 (String.length expected_prefix)
+             = expected_prefix
+          && contains_substring output "closed mid-line"
+        in
+        Alcotest.(check bool) "mid-line close reason" true ok);
+    tc "udp sockets exchange datagrams both ways" (fun () ->
+        let output, _events =
+          run_det
+            {|
+const (R.ok, a) = net_udp_bind("127.0.0.1", 0)
+const (R.ok, b) = net_udp_bind("127.0.0.1", 0)
+a.send_to("127.0.0.1", b.port(), "datagram")
+case b.recv_from() {
+  (R.ok, (data, host, port)) -> {
+    println(data)
+    println(host == "127.0.0.1")
+    println(port == a.port())
+  }
+  (R.error, why) -> { println("recv failed: ${why}") }
+}
+|}
+        in
+        Alcotest.(check string) "output" "datagram\ntrue\ntrue\n" output);
+    tc "a udp receive deadline answers a precise reason" (fun () ->
+        let output, _events =
+          run_det
+            {|
+const (R.ok, a) = net_udp_bind("127.0.0.1", 0)
 a.set_timeout(0.1)
 case a.recv_from() {
-  _ -> { println("received") }
+  (R.ok, _)      -> { println("received") }
+  (R.error, why) -> { println(why) }
 }
-println("unreachable")
 |}
         in
         let expected_prefix = "timed out waiting to receive on 127.0.0.1:" in
         let ok =
-          String.length message >= String.length expected_prefix
-          && String.sub message 0 (String.length expected_prefix)
+          String.length output >= String.length expected_prefix
+          && String.sub output 0 (String.length expected_prefix)
              = expected_prefix
         in
-        Alcotest.(check bool) "udp timeout message names the socket" true ok);
+        Alcotest.(check bool) "udp timeout reason names the socket" true ok);
     tc "unix-domain sockets echo over the connection surface" (fun () ->
         let path = unix_test_path "echo" in
         let output, _events =
           run_det
             (Printf.sprintf
                {|
-def serve(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  conn.write(conn.read_line() + "\n")
-  return serve(listener)
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write(line + "\n")
+          serve(listener)
+        }
+      }
+    }
+  }
 }
 
-const listener = net_listen_unix("%s")
+const (R.ok, listener) = net_listen_unix("%s")
 do serve(listener)
-const conn = net_connect_unix("%s", 0.0)
-conn.write("hello unix\n")
-println(conn.read_line())
-println("done")
+case net_connect_unix("%s", 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello unix\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    println("done")
+  }
+}
 |}
                path path)
         in
@@ -877,7 +954,7 @@ println("done")
           run_det_raised
             (Printf.sprintf
                {|
-const listener = net_listen_unix("%s")
+const (R.ok, listener) = net_listen_unix("%s")
 listener.port()
 |} path)
         in
@@ -886,27 +963,29 @@ listener.port()
           (Printf.sprintf "a unix-domain listener (unix socket %s) has no port"
              path)
           message);
-    tc "connecting to an absent unix path raises a precise exception" (fun () ->
+    tc "connecting to an absent unix path answers a precise reason" (fun () ->
         let path = unix_test_path "absent" in
-        let message =
-          run_det_raised
+        let output, _events =
+          run_det
             (Printf.sprintf
-               {|net_connect_unix("%s", 0.0)
-println("unreachable")
+               {|case net_connect_unix("%s", 0.0) {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("connected?!") }
+}
 |} path)
         in
         let expected_prefix = "cannot connect to unix socket " in
         let ok =
-          String.length message >= String.length expected_prefix
-          && String.sub message 0 (String.length expected_prefix)
+          String.length output >= String.length expected_prefix
+          && String.sub output 0 (String.length expected_prefix)
              = expected_prefix
         in
-        Alcotest.(check bool) "absent-path message" true ok);
+        Alcotest.(check bool) "absent-path reason" true ok);
     tc "resolution reaches addresses by name" (fun () ->
         let output, _events =
           run_det
             {|
-const addrs = net_resolve("localhost")
+const (R.ok, addrs) = net_resolve("localhost")
 println(addrs.length() > 0)
 |}
         in
@@ -915,106 +994,156 @@ println(addrs.length() > 0)
         let output, _events =
           run_det
             {|
-def serve(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  conn.write(conn.read_line() + "\n")
-  return serve(listener)
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write(line + "\n")
+          serve(listener)
+        }
+      }
+    }
+  }
 }
 
-const listener = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
 do serve(listener)
-const conn = net_connect("localhost", listener.port(), 0.0)
-conn.write("by name\n")
-println(conn.read_line())
-println("done")
+case net_connect("localhost", listener.port(), 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("by name\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    println("done")
+  }
+}
 |}
         in
         Alcotest.(check string) "output" "by name\ndone\n" output);
-    tc "an unresolvable host raises a precise exception" (fun () ->
-        let message =
-          run_det_raised
+    tc "an unresolvable host answers a precise reason" (fun () ->
+        let output, _events =
+          run_det
             {|
-net_resolve("definitely not a host")
-println("unreachable")
+case net_resolve("definitely not a host") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("resolved?!") }
+}
 |}
         in
         Alcotest.(check string)
-          "message" "cannot resolve host `definitely not a host`" message);
+          "output" "cannot resolve host `definitely not a host`\n" output);
     tc "udp sends resolve the peer by name" (fun () ->
         let output, _events =
           run_det
             {|
 // Both sockets and the send resolve `localhost` the same way, so the
 // first resolved address serves bind and send alike.
-const a = net_udp_bind("localhost", 0)
-const b = net_udp_bind("localhost", 0)
+const (R.ok, a) = net_udp_bind("localhost", 0)
+const (R.ok, b) = net_udp_bind("localhost", 0)
 a.send_to("localhost", b.port(), "named")
 case b.recv_from() {
-  (data, _host, _port) -> { println(data) }
+  (R.ok, (data, _host, _port)) -> { println(data) }
+  (R.error, why)               -> { println("recv failed: ${why}") }
 }
 |}
         in
         Alcotest.(check string) "output" "named\n" output);
     tc "a TLS handshake to a self-signed certificate fails closed" (fun () ->
-        let message =
-          run_det_raised
+        let output, _events =
+          run_det
             {|
-def serve(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  conn.write(conn.read_line() + "\n")
-  return serve(listener)
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write(line + "\n")
+          serve(listener)
+        }
+      }
+    }
+  }
 }
 
-const listener = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
+const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
 do serve(listener)
-const conn = net_tls_connect("localhost", listener.port(), 0.0)
-conn.write("no\n")
-println("unreachable")
+case net_tls_connect("localhost", listener.port(), 0.0) {
+  (R.error, why) -> { println(why) }
+  (R.ok, conn)   -> {
+    conn.write("no\n")
+    println("handshook?!")
+  }
+}
 |}
         in
         let expected_prefix = "the TLS handshake with localhost:" in
         let ok =
-          String.length message >= String.length expected_prefix
-          && String.sub message 0 (String.length expected_prefix)
+          String.length output >= String.length expected_prefix
+          && String.sub output 0 (String.length expected_prefix)
              = expected_prefix
-          && contains_substring message "verify"
+          && contains_substring output "verify"
         in
         Alcotest.(check bool) "verification fails closed" true ok);
     tc "TLS round-trips when verification is explicitly skipped" (fun () ->
         let output, _events =
           run_det
             {|
-def serve(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  conn.write(conn.read_line() + "\n")
-  return serve(listener)
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write(line + "\n")
+          serve(listener)
+        }
+      }
+    }
+  }
 }
 
-const listener = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
+const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
 do serve(listener)
-const conn = net_tls_connect_insecure("localhost", listener.port(), 0.0)
-conn.write("secret over tls\n")
-println(conn.read_line())
-println("done")
+case net_tls_connect_insecure("localhost", listener.port(), 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("secret over tls\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    println("done")
+  }
+}
 |}
         in
         Alcotest.(check string) "output" "secret over tls\ndone\n" output);
-    tc "a TLS listener with a missing certificate raises a precise error"
+    tc "a TLS listener with a missing certificate answers a precise reason"
       (fun () ->
-        let message =
-          run_det_raised
+        let output, _events =
+          run_det
             {|
-net_listen_tls("127.0.0.1", 0, "fixtures/absent-cert.pem", "fixtures/absent-key.pem")
-println("unreachable")
+case net_listen_tls("127.0.0.1", 0, "fixtures/absent-cert.pem", "fixtures/absent-key.pem") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("listening?!") }
+}
 |}
         in
         let expected_prefix =
           "cannot load the TLS certificate for 127.0.0.1:0"
         in
         Alcotest.(check bool)
-          "missing-certificate message" true
-          (String.length message >= String.length expected_prefix
-          && String.sub message 0 (String.length expected_prefix)
+          "missing-certificate reason" true
+          (String.length output >= String.length expected_prefix
+          && String.sub output 0 (String.length expected_prefix)
              = expected_prefix));
     tc "networking is refused outside a scheduler" (fun () ->
         let diagnostic =

@@ -553,17 +553,11 @@ and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
       Printf.sprintf "emo_file_write(%s, %s)" (arg 0 Emo_check.String)
         (arg 1 Emo_check.String)
   | "net_listen" ->
-      let v =
-        Printf.sprintf "emo_net_listen(%s, %s)" (arg 0 Emo_check.String)
-          (arg 1 Emo_check.Int64)
-      in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_net_listen(%s, %s)" (arg 0 Emo_check.String)
+        (arg 1 Emo_check.Int64)
   | "net_connect" ->
-      let v =
-        Printf.sprintf "emo_net_connect(%s, %s, %s)" (arg 0 Emo_check.String)
-          (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
-      in
-      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+      Printf.sprintf "emo_net_connect(%s, %s, %s)" (arg 0 Emo_check.String)
+        (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
   | "printf" ->
       (* The format rides as a String, the data as its dynamic array —
          the runtime walks the elements against the conversions. *)
@@ -1101,30 +1095,28 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                  true
              | _ -> false -> (
           let recv = emit_expr env self_ in
-          (* The helpers return native values; each case states its return
-         so a dynamic use site takes the boxed form. *)
+          (* The tuple-shaped calls (the data-driven failures) answer
+             (R.ok, v) / (R.error, reason) directly — already dynamic
+             values, no boxing at any use site; the native-returning
+             helpers state their type so a dynamic use site takes the
+             boxed form. *)
           let ret (t : Emo_check.t) (v : string) : string =
             if is_dyn result_ty then box_code v t else v
           in
           match (name, args) with
-          | "accept", [] ->
-              ret Emo_check.Int64 (Printf.sprintf "emo_net_accept(%s)" recv)
+          | "accept", [] -> Printf.sprintf "emo_net_accept(%s)" recv
           | "port", [] ->
               ret Emo_check.Int64 (Printf.sprintf "emo_net_port(%s)" recv)
           | "read_line", [] ->
-              ret Emo_check.String (Printf.sprintf "emo_net_read_line(%s)" recv)
+              Printf.sprintf "emo_net_read_line(%s)" recv
           | "read_exactly", [ n ] ->
-              ret Emo_check.String
-                (Printf.sprintf "emo_net_read_exactly(%s, %s)" recv
-                   (as_native env n Emo_check.Int64))
-          | "read_all", [] ->
-              ret Emo_check.String (Printf.sprintf "emo_net_read_all(%s)" recv)
+              Printf.sprintf "emo_net_read_exactly(%s, %s)" recv
+                (as_native env n Emo_check.Int64)
+          | "read_all", [] -> Printf.sprintf "emo_net_read_all(%s)" recv
           | "write", [ data ] ->
-              ret Emo_check.Int64
-                (Printf.sprintf "emo_net_write(%s, %s)" recv
-                   (as_native env data Emo_check.String))
-          | "close", [] ->
-              ret Emo_check.Int64 (Printf.sprintf "emo_net_close(%s)" recv)
+              Printf.sprintf "emo_net_write(%s, %s)" recv
+                (as_native env data Emo_check.String)
+          | "close", [] -> Printf.sprintf "emo_net_close(%s)" recv
           | "set_timeout", [ t ] ->
               ret Emo_check.Int64
                 (Printf.sprintf "emo_net_set_timeout(%s, %s)" recv

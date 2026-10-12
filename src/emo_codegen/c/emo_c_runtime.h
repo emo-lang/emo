@@ -367,16 +367,18 @@ emo_value emo_file_read(emo_str path);
 emo_value emo_file_write(emo_str path, emo_str contents);
 
 /* TCP: handles are file descriptors. Blocking reads park the fiber on
-   readability — the scheduler polls the parked descriptors. */
-int64_t emo_net_listen(emo_str host, int64_t port);
+   readability — the scheduler polls the parked descriptors. The
+   data-driven failures are values: (R.ok, fd) or (R.error, reason),
+   the same tuple shape as the os calls. */
+emo_value emo_net_listen(emo_str host, int64_t port);
 int64_t emo_net_port(int64_t listener);
-int64_t emo_net_accept(int64_t listener);
-int64_t emo_net_connect(emo_str host, int64_t port, double timeout);
-emo_str emo_net_read_line(int64_t fd);
-emo_str emo_net_read_exactly(int64_t fd, int64_t n);
-emo_str emo_net_read_all(int64_t fd);
-int64_t emo_net_write(int64_t fd, emo_str data);
-int64_t emo_net_close(int64_t fd); /* returns fd */
+emo_value emo_net_accept(int64_t listener);
+emo_value emo_net_connect(emo_str host, int64_t port, double timeout);
+emo_value emo_net_read_line(int64_t fd);
+emo_value emo_net_read_exactly(int64_t fd, int64_t n);
+emo_value emo_net_read_all(int64_t fd);
+emo_value emo_net_write(int64_t fd, emo_str data);
+emo_value emo_net_close(int64_t fd); /* (R.ok, fd) */
 int64_t emo_net_set_timeout(int64_t fd, double seconds); /* returns fd */
 
 /* The scheduler hook: park the current fiber until its fd is

@@ -832,41 +832,42 @@ type _ Effect.t +=
    every blocking call is a suspension point. Contexts outside a scheduled
    run refuse them with E3009, like the process operations.
 
-   Failures are ordinary Emo exceptions: an `Exception` instance whose
-   message states exactly what failed — connection refused, name
-   unresolvable, deadline exceeded, socket closed. No error codes, no nil
-   returns (the README error model). *)
+   The data-driven failures are values, not exceptions: an operation
+   answers (R.ok, value) or (R.error, reason), the reason stating exactly
+   what failed — connection refused, name unresolvable, deadline exceeded,
+   socket closed (the README error model; CHECK.md, error handling). No
+   error codes, no nil. The effects carry the final tuple: the driver
+   finishes the parked continuation with it, and the refusals below are
+   the only raising path left. *)
 
 type _ Effect.t +=
-  | Net_resolve : string * Emo_support.Span.t -> string list Effect.t
-  | Net_connect :
-      (string * int * float * string list * Emo_support.Span.t)
-      -> conn Effect.t
-  | Net_listen : string * int * Emo_support.Span.t -> listener Effect.t
-  | Net_accept : listener * Emo_support.Span.t -> conn Effect.t
-  | Net_read_line : conn * Emo_support.Span.t -> string Effect.t
-  | Net_read_exactly : conn * int * Emo_support.Span.t -> string Effect.t
-  | Net_read_all : conn * Emo_support.Span.t -> string Effect.t
-  | Net_write : conn * string * Emo_support.Span.t -> unit Effect.t
-  | Net_close_conn : conn * Emo_support.Span.t -> conn Effect.t
-  | Net_close_listener : listener * Emo_support.Span.t -> listener Effect.t
-  | Net_udp_bind : string * int * Emo_support.Span.t -> udp Effect.t
+  | Net_resolve : string * Emo_support.Span.t -> value Effect.t
+  | Net_connect : (string * int * float * Emo_support.Span.t) -> value Effect.t
+  | Net_listen : string * int * Emo_support.Span.t -> value Effect.t
+  | Net_accept : listener * Emo_support.Span.t -> value Effect.t
+  | Net_read_line : conn * Emo_support.Span.t -> value Effect.t
+  | Net_read_exactly : conn * int * Emo_support.Span.t -> value Effect.t
+  | Net_read_all : conn * Emo_support.Span.t -> value Effect.t
+  | Net_write : conn * string * Emo_support.Span.t -> value Effect.t
+  | Net_close_conn : conn * Emo_support.Span.t -> value Effect.t
+  | Net_close_listener : listener * Emo_support.Span.t -> value Effect.t
+  | Net_udp_bind : string * int * Emo_support.Span.t -> value Effect.t
   | Net_udp_send_to :
       (udp * string * int * string * Emo_support.Span.t)
-      -> unit Effect.t
+      -> value Effect.t
   | Net_udp_recv_from : udp * Emo_support.Span.t -> value Effect.t
-  | Net_udp_close : udp * Emo_support.Span.t -> udp Effect.t
-  | Net_connect_unix : string * float * Emo_support.Span.t -> conn Effect.t
-  | Net_listen_unix : string * Emo_support.Span.t -> listener Effect.t
+  | Net_udp_close : udp * Emo_support.Span.t -> value Effect.t
+  | Net_connect_unix : string * float * Emo_support.Span.t -> value Effect.t
+  | Net_listen_unix : string * Emo_support.Span.t -> value Effect.t
   | File_read : string * Emo_support.Span.t -> value Effect.t
   | File_write : string * string * Emo_support.Span.t -> value Effect.t
   | Net_tls_connect :
-      (string * int * float * bool * string list * Emo_support.Span.t)
-      -> conn Effect.t
-  | (* host, port, timeout, insecure, resolved addresses *)
+      (string * int * float * bool * Emo_support.Span.t)
+      -> value Effect.t
+  | (* host, port, timeout, insecure *)
       Net_tls_listen :
       (string * int * string * string * Emo_support.Span.t)
-      -> listener Effect.t
+      -> value Effect.t
   | Compiled_receive :
       (value -> (int * value list) option)
       -> (int * value list) Effect.t
@@ -1022,7 +1023,7 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_resolve`")
-            | Net_connect (_, _, _, _, span) ->
+            | Net_connect (_, _, _, span) ->
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_connect`")
@@ -1075,7 +1076,7 @@ let run_without_scheduler (body : unit -> unit) : unit =
             | Compiled_receive _ ->
                 Some
                   (fun (_ : (a, _) continuation) -> refused nowhere "`receive`")
-            | Net_tls_connect (_, _, _, _, _, span) ->
+            | Net_tls_connect (_, _, _, _, span) ->
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_tls_connect`")
@@ -1090,8 +1091,9 @@ let run_without_scheduler (body : unit -> unit) : unit =
 let not_yet span what =
   error span "E3009" (Printf.sprintf "%s is not supported yet" what)
 
-(* Builds the Emo exception a network failure unwinds with. Drivers
-   discontinue the parked continuation with it. *)
+(* Builds the Emo exception a synchronous carved-out failure unwinds
+   with (the [waitpid] decode path; the net and file failures below are
+   values, not exceptions). *)
 let net_raise span message =
   Emo_raise
     ( Instance
@@ -1108,6 +1110,14 @@ let net_raise span message =
         },
       span,
       !call_trace )
+
+(* The net failures are values: drivers finish the parked continuation
+   with one of these — (R.ok, value) or (R.error, reason), the reason
+   the same text the exceptions carried (CHECK.md, error handling). *)
+let net_ok (v : value) : value = Tuple [ EnumMember ("R", "ok"); v ]
+
+let net_error (message : string) : value =
+  Tuple [ EnumMember ("R", "error"); String message ]
 
 let rec eval_unary env span op x =
   let v = eval_expr env x in
@@ -1810,12 +1820,10 @@ and eval_method env span recv mname arg_exprs =
           Bytes (Bytes.of_string s)
       | TcpConn c, "read_line" ->
           none_expected "read_line";
-          String (Effect.perform (Net_read_line (c, span)))
+          Effect.perform (Net_read_line (c, span))
       | TcpConn c, "read_exactly" -> (
           match eval_args () with
-          | [ Int64 n ] ->
-              String
-                (Effect.perform (Net_read_exactly (c, Int64.to_int n, span)))
+          | [ Int64 n ] -> Effect.perform (Net_read_exactly (c, Int64.to_int n, span))
           | [ v ] ->
               error span "E3001"
                 (Printf.sprintf "`read_exactly` expects an Int64, got %s"
@@ -1826,12 +1834,10 @@ and eval_method env span recv mname arg_exprs =
           )
       | TcpConn c, "read_all" ->
           none_expected "read_all";
-          String (Effect.perform (Net_read_all (c, span)))
+          Effect.perform (Net_read_all (c, span))
       | TcpConn c, "write" -> (
           match eval_args () with
-          | [ String s ] ->
-              Effect.perform (Net_write (c, s, span));
-              TcpConn c
+          | [ String s ] -> Effect.perform (Net_write (c, s, span))
           | [ v ] ->
               error span "E3001"
                 (Printf.sprintf "`write` expects a String, got %s" (type_name v))
@@ -1840,7 +1846,7 @@ and eval_method env span recv mname arg_exprs =
                 (Printf.sprintf "`write` expects 1 argument, got %d" argc))
       | TcpConn c, "close" ->
           none_expected "close";
-          TcpConn (Effect.perform (Net_close_conn (c, span)))
+          Effect.perform (Net_close_conn (c, span))
       | TcpConn c, "set_timeout" -> (
           match eval_args () with
           | [ Float f ] when f >= 0.0 ->
@@ -1857,7 +1863,7 @@ and eval_method env span recv mname arg_exprs =
           )
       | TcpListener l, "accept" ->
           none_expected "accept";
-          TcpConn (Effect.perform (Net_accept (l, span)))
+          Effect.perform (Net_accept (l, span))
       | TcpListener { lunix = true; ldesc; _ }, "port" ->
           error span "E3007"
             (Printf.sprintf "a unix-domain listener (%s) has no port" ldesc)
@@ -1866,7 +1872,7 @@ and eval_method env span recv mname arg_exprs =
           Int64 (Int64.of_int l.lport)
       | TcpListener l, "close" ->
           none_expected "close";
-          TcpListener (Effect.perform (Net_close_listener (l, span)))
+          Effect.perform (Net_close_listener (l, span))
       | TcpListener l, "set_timeout" -> (
           match eval_args () with
           | [ Float f ] when f >= 0.0 ->
@@ -1883,17 +1889,11 @@ and eval_method env span recv mname arg_exprs =
           )
       | UdpSocket u, "send_to" -> (
           match eval_args () with
-          | [ String host; Int64 port; String data ] -> (
-              let addrs = Effect.perform (Net_resolve (host, span)) in
-              match addrs with
-              | addr :: _ ->
-                  Effect.perform
-                    (Net_udp_send_to (u, addr, Int64.to_int port, data, span));
-                  UdpSocket u
-              | [] ->
-                  raise
-                    (net_raise span
-                       (Printf.sprintf "cannot resolve host `%s`" host)))
+          | [ String host; Int64 port; String data ] ->
+              (* The handler resolves the host; failure rides back in
+                 the tuple like every other data-driven net failure. *)
+              Effect.perform
+                (Net_udp_send_to (u, host, Int64.to_int port, data, span))
           | _ ->
               error span "E3007"
                 "`send_to` expects (host String, port Int64, data String)")
@@ -1906,7 +1906,7 @@ and eval_method env span recv mname arg_exprs =
           Int64 (Int64.of_int u.uport)
       | UdpSocket u, "close" ->
           none_expected "close";
-          UdpSocket (Effect.perform (Net_udp_close (u, span)))
+          Effect.perform (Net_udp_close (u, span))
       | UdpSocket u, "set_timeout" -> (
           match eval_args () with
           | [ Float f ] when f >= 0.0 ->
@@ -2504,16 +2504,10 @@ and apply_builtin span name args =
             got %d arguments"
            (List.length args))
   | "net_connect", [ String host; Int64 port; Float timeout ] ->
-      let addrs = Effect.perform (Net_resolve (host, span)) in
-      TcpConn
-        (Effect.perform
-           (Net_connect (host, Int64.to_int port, timeout, addrs, span)))
-  | "net_resolve", [ String host ] ->
-      Array
-        (Array.of_list
-           (List.map
-              (fun a -> String a)
-              (Effect.perform (Net_resolve (host, span)))))
+      (* The handler resolves the host, then connects; failure rides
+         back in the tuple. *)
+      Effect.perform (Net_connect (host, Int64.to_int port, timeout, span))
+  | "net_resolve", [ String host ] -> Effect.perform (Net_resolve (host, span))
   | "net_resolve", vs ->
       error span "E3007"
         (Printf.sprintf "`net_resolve` expects 1 argument, got %d"
@@ -2527,7 +2521,7 @@ and apply_builtin span name args =
            "`net_listen` expects (host String, port Int64), got %d arguments"
            (List.length args))
   | "net_listen", [ String host; Int64 port ] ->
-      TcpListener (Effect.perform (Net_listen (host, Int64.to_int port, span)))
+      Effect.perform (Net_listen (host, Int64.to_int port, span))
   | "net_listen", _ ->
       error span "E3001" "`net_listen` expects (host String, port Int64)"
   | "net_udp_bind", args when List.length args <> 2 ->
@@ -2536,7 +2530,7 @@ and apply_builtin span name args =
            "`net_udp_bind` expects (host String, port Int64), got %d arguments"
            (List.length args))
   | "net_udp_bind", [ String host; Int64 port ] ->
-      UdpSocket (Effect.perform (Net_udp_bind (host, Int64.to_int port, span)))
+      Effect.perform (Net_udp_bind (host, Int64.to_int port, span))
   | "net_udp_bind", _ ->
       error span "E3001" "`net_udp_bind` expects (host String, port Int64)"
   | "file_read", args when List.length args <> 1 ->
@@ -2753,7 +2747,7 @@ and apply_builtin span name args =
             %d             arguments"
            (List.length args))
   | "net_connect_unix", [ String path; Float timeout ] ->
-      TcpConn (Effect.perform (Net_connect_unix (path, timeout, span)))
+      Effect.perform (Net_connect_unix (path, timeout, span))
   | "net_connect_unix", _ ->
       error span "E3001"
         "`net_connect_unix` expects (path String, timeout Float64)"
@@ -2763,7 +2757,7 @@ and apply_builtin span name args =
            "`net_listen_unix` expects (path String), got %d arguments"
            (List.length args))
   | "net_listen_unix", [ String path ] ->
-      TcpListener (Effect.perform (Net_listen_unix (path, span)))
+      Effect.perform (Net_listen_unix (path, span))
   | "net_listen_unix", _ ->
       error span "E3001" "`net_listen_unix` expects (path String)"
   | "net_tls_connect", args when List.length args <> 3 ->
@@ -2773,11 +2767,9 @@ and apply_builtin span name args =
             Float64),             got %d arguments"
            (List.length args))
   | "net_tls_connect", [ String host; Int64 port; Float timeout ] ->
-      let addrs = Effect.perform (Net_resolve (host, span)) in
-      TcpConn
-        (Effect.perform
-           (Net_tls_connect
-              (host, Int64.to_int port, timeout, false, addrs, span)))
+      (* The handler resolves the host, then connects and shakes hands;
+         failure rides back in the tuple. *)
+      Effect.perform (Net_tls_connect (host, Int64.to_int port, timeout, false, span))
   | "net_tls_connect", _ ->
       error span "E3001"
         "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
@@ -2788,10 +2780,7 @@ and apply_builtin span name args =
             timeout             Float64), got %d arguments"
            (List.length args))
   | "net_tls_connect_insecure", [ String host; Int64 port; Float timeout ] ->
-      let addrs = Effect.perform (Net_resolve (host, span)) in
-      TcpConn
-        (Effect.perform
-           (Net_tls_connect (host, Int64.to_int port, timeout, true, addrs, span)))
+      Effect.perform (Net_tls_connect (host, Int64.to_int port, timeout, true, span))
   | "net_tls_connect_insecure", _ ->
       error span "E3001"
         "`net_tls_connect_insecure` expects (host String, port Int64, \
@@ -2803,9 +2792,7 @@ and apply_builtin span name args =
             String,             key_path String), got %d arguments"
            (List.length args))
   | "net_listen_tls", [ String host; Int64 port; String cert; String key ] ->
-      TcpListener
-        (Effect.perform
-           (Net_tls_listen (host, Int64.to_int port, cert, key, span)))
+      Effect.perform (Net_tls_listen (host, Int64.to_int port, cert, key, span))
   | "net_listen_tls", _ ->
       error span "E3001"
         "`net_listen_tls` expects (host String, port Int64, cert_path \
@@ -3468,49 +3455,48 @@ let new_obj (name : string)
 
 (* ---- Synchronous net operations for the compiled backend ----
 
-   Each performs its effect; they only run under the scheduler, exactly
-   like the interpreted paths. *)
+   Each performs its effect and hands back the final (R.ok, ...) /
+   (R.error, ...) tuple the driver built; they only run under the
+   scheduler, exactly like the interpreted paths. *)
 
-let read_line_sync (c : conn) : string =
+let read_line_sync (c : conn) : value =
   Effect.perform (Net_read_line (c, Emo_support.Span.zero))
 
-let read_exactly_sync (c : conn) (n : int) : string =
+let read_exactly_sync (c : conn) (n : int) : value =
   Effect.perform (Net_read_exactly (c, n, Emo_support.Span.zero))
 
-let read_all_sync (c : conn) : string =
+let read_all_sync (c : conn) : value =
   Effect.perform (Net_read_all (c, Emo_support.Span.zero))
 
-let write_sync (c : conn) (data : string) : unit =
+let write_sync (c : conn) (data : string) : value =
   Effect.perform (Net_write (c, data, Emo_support.Span.zero))
 
-let close_sync (c : conn) : conn =
+let close_sync (c : conn) : value =
   Effect.perform (Net_close_conn (c, Emo_support.Span.zero))
 
-let accept_sync (l : listener) : conn =
+let accept_sync (l : listener) : value =
   Effect.perform (Net_accept (l, Emo_support.Span.zero))
 
-let close_listener_sync (l : listener) : listener =
+let close_listener_sync (l : listener) : value =
   Effect.perform (Net_close_listener (l, Emo_support.Span.zero))
 
-let udp_send_sync (u : udp) (host : string) (port : int) (data : string) : unit
+let udp_send_sync (u : udp) (host : string) (port : int) (data : string) : value
     =
   Effect.perform (Net_udp_send_to (u, host, port, data, Emo_support.Span.zero))
 
 let udp_recv_sync (u : udp) : value =
   Effect.perform (Net_udp_recv_from (u, Emo_support.Span.zero))
 
-let udp_close_sync (u : udp) : udp =
+let udp_close_sync (u : udp) : value =
   Effect.perform (Net_udp_close (u, Emo_support.Span.zero))
 
-let net_resolve_sync (host : string) : string list =
+let net_resolve_sync (host : string) : value =
   Effect.perform (Net_resolve (host, Emo_support.Span.zero))
 
-let net_connect_sync (host : string) (port : int) (timeout : float) : conn =
-  Effect.perform
-    (Net_connect
-       (host, port, timeout, net_resolve_sync host, Emo_support.Span.zero))
+let net_connect_sync (host : string) (port : int) (timeout : float) : value =
+  Effect.perform (Net_connect (host, port, timeout, Emo_support.Span.zero))
 
-let net_listen_sync (host : string) (port : int) : listener =
+let net_listen_sync (host : string) (port : int) : value =
   Effect.perform (Net_listen (host, port, Emo_support.Span.zero))
 
 (* Runs a whole file: declarations register, statements execute in order. *)

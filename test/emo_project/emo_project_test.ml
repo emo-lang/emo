@@ -1122,15 +1122,19 @@ let stdlib_http_tests =
                 {|require "http"
 require "net"
 
-const listener = net.listen("127.0.0.1", 0)
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
 
 do http.serve_requests(listener) -> (req HttpRequest) {
   return http.response(200, [], "hello from emo")
 }
 
-const resp = http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello")
-println(resp.body)
-println(resp.status)
+case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> {
+    println(resp.body)
+    println(resp.status)
+  }
+}
 |}
               );
             ]

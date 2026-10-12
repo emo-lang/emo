@@ -668,26 +668,23 @@ let method_call self name args =
       v
   | Emo_eval.TcpConn c, "read_line" ->
       none_expected ();
-      Emo_eval.String (Emo_eval.read_line_sync c)
+      Emo_eval.read_line_sync c
   | Emo_eval.TcpConn c, "read_exactly" -> (
       one_expected ();
       match List.hd args with
-      | Emo_eval.Int64 n ->
-          Emo_eval.String (Emo_eval.read_exactly_sync c (Int64.to_int n))
+      | Emo_eval.Int64 n -> Emo_eval.read_exactly_sync c (Int64.to_int n)
       | _ -> failwith "`read_exactly` expects an Int64")
   | Emo_eval.TcpConn c, "read_all" ->
       none_expected ();
-      Emo_eval.String (Emo_eval.read_all_sync c)
+      Emo_eval.read_all_sync c
   | Emo_eval.TcpConn c, "write" -> (
       one_expected ();
       match List.hd args with
-      | Emo_eval.String data ->
-          Emo_eval.write_sync c data;
-          self
+      | Emo_eval.String data -> Emo_eval.write_sync c data
       | _ -> failwith "`write` expects a String")
   | Emo_eval.TcpConn c, "close" ->
       none_expected ();
-      Emo_eval.TcpConn (Emo_eval.close_sync c)
+      Emo_eval.close_sync c
   | Emo_eval.TcpConn c, "set_timeout" -> (
       one_expected ();
       match List.hd args with
@@ -697,18 +694,17 @@ let method_call self name args =
       | _ -> failwith "`set_timeout` expects a Float64")
   | Emo_eval.TcpListener l, "accept" ->
       none_expected ();
-      Emo_eval.TcpConn (Emo_eval.accept_sync l)
+      Emo_eval.accept_sync l
   | Emo_eval.TcpListener l, "port" ->
       none_expected ();
       Emo_eval.Int64 (Int64.of_int l.Emo_eval.lport)
   | Emo_eval.TcpListener l, "close" ->
       none_expected ();
-      Emo_eval.TcpListener (Emo_eval.close_listener_sync l)
+      Emo_eval.close_listener_sync l
   | Emo_eval.UdpSocket u, "send_to" -> (
       match args with
       | [ Emo_eval.String host; Emo_eval.Int64 port; Emo_eval.String data ] ->
-          Emo_eval.udp_send_sync u host (Int64.to_int port) data;
-          self
+          Emo_eval.udp_send_sync u host (Int64.to_int port) data
       | _ -> failwith "`send_to` expects (host, port, data)")
   | Emo_eval.UdpSocket u, "recv_from" ->
       none_expected ();
@@ -718,7 +714,7 @@ let method_call self name args =
       Emo_eval.Int64 (Int64.of_int u.Emo_eval.uport)
   | Emo_eval.UdpSocket u, "close" ->
       none_expected ();
-      Emo_eval.UdpSocket (Emo_eval.udp_close_sync u)
+      Emo_eval.udp_close_sync u
   | _ -> (
       (* Compiled objects dispatch through their table; everything else
          is NoMethodError. *)

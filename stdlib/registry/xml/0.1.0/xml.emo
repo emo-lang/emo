@@ -16,7 +16,8 @@
 // children are kept — including whitespace-only ones — so
 // encode(decode(x)) reproduces the tree exactly.
 //
-// Not supported (each raises): entity definitions beyond the five
+// Not supported (each answers as a decode failure — the value
+// `(R.error, reason)`): entity definitions beyond the five
 // predefined ones, DOCTYPE with an internal subset, documents with
 // more than one root element, and namespace resolution.
 
@@ -202,16 +203,28 @@ def encode(v Xml) String {
 // Decodes one XML document into the Xml tree. The declaration,
 // DOCTYPE (without an internal subset), comments, and processing
 // instructions before the root are skipped; anything after the root
-// element raises.
-def decode(text String) Xml {
+// element fails the decode.
+def decode(text String) (R, Xml) {
   const data = text.to_bytes()
-  const p0 = skip_prolog(data, 0)
-  const r = parse_node(data, p0, 0)
-  const after = skip_prolog(data, r[1])
-  if after < data.length() {
-    raise Exception.new(message: err(after, "content after the root element"))
+  case skip_prolog(data, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, p0)     -> {
+      case parse_node(data, p0, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, r)      -> {
+          case skip_prolog(data, r[1]) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, after)  -> {
+              if after < data.length() {
+                return (R.error, err(after, "content after the root element"))
+              }
+              return (R.ok, r[0])
+            }
+          }
+        }
+      }
+    }
   }
-  return r[0]
 }
 
 def err(at Int64, what String) String {
@@ -220,27 +233,36 @@ def err(at Int64, what String) String {
 
 // Skips whitespace, the declaration, comments, processing
 // instructions, and a DOCTYPE; returns the next markup position.
-def skip_prolog(data Bytes, i Int64) Int64 {
+def skip_prolog(data Bytes, i Int64) (R, Int64) {
   if i >= data.length() {
-    return i
+    return (R.ok, i)
   }
   const ws = skip_ws(data, i)
   if ws >= data.length() {
-    return ws
+    return (R.ok, ws)
   }
   if data.get(ws) != 60 {
-    return ws
+    return (R.ok, ws)
   }
   if is_open(data, ws, 63) {
-    return skip_prolog(data, scan_stop2(data, ws + 2))
+    case scan_stop2(data, ws + 2) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, stop)   -> { return skip_prolog(data, stop) }
+    }
   }
   if is_open(data, ws, 33) {
     if comment_at(data, ws) {
-      return skip_prolog(data, scan_stop3(data, ws + 4))
+      case scan_stop3(data, ws + 4) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, stop)   -> { return skip_prolog(data, stop) }
+      }
     }
-    return skip_prolog(data, skip_doctype(data, ws + 2, 0))
+    case skip_doctype(data, ws + 2, 0) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, after)  -> { return skip_prolog(data, after) }
+    }
   }
-  return ws
+  return (R.ok, ws)
 }
 
 // `<` followed by the given byte.
@@ -252,31 +274,31 @@ def is_open(data Bytes, i Int64, which Int64) Bool {
 }
 
 // The position past the next two-byte stop `c1 c2` (a `?>`).
-def scan_stop2(data Bytes, i Int64) Int64 {
+def scan_stop2(data Bytes, i Int64) (R, Int64) {
   if i + 1 >= data.length() {
-    raise Exception.new(message: err(i, "unterminated construct"))
+    return (R.error, err(i, "unterminated construct"))
   }
   if data.get(i) == 63 && data.get(i + 1) == 62 {
-    return i + 2
+    return (R.ok, i + 2)
   }
   return scan_stop2(data, i + 1)
 }
 
 // The position past the next three-byte stop `c1 c2 c3` (a `-->`).
-def scan_stop3(data Bytes, i Int64) Int64 {
+def scan_stop3(data Bytes, i Int64) (R, Int64) {
   if i + 2 >= data.length() {
-    raise Exception.new(message: err(i, "unterminated comment"))
+    return (R.error, err(i, "unterminated comment"))
   }
   if data.get(i) == 45 && data.get(i + 1) == 45 && data.get(i + 2) == 62 {
-    return i + 3
+    return (R.ok, i + 3)
   }
   return scan_stop3(data, i + 1)
 }
 
 // Skips a DOCTYPE, tracking the internal subset's brackets.
-def skip_doctype(data Bytes, i Int64, depth Int64) Int64 {
+def skip_doctype(data Bytes, i Int64, depth Int64) (R, Int64) {
   if i >= data.length() {
-    raise Exception.new(message: err(i, "unterminated DOCTYPE"))
+    return (R.error, err(i, "unterminated DOCTYPE"))
   }
   const c = data.get(i)
   if c == 91 {
@@ -286,31 +308,37 @@ def skip_doctype(data Bytes, i Int64, depth Int64) Int64 {
     return skip_doctype(data, i + 1, depth - 1)
   }
   if depth == 0 && c == 62 {
-    return i + 1
+    return (R.ok, i + 1)
   }
   return skip_doctype(data, i + 1, depth)
 }
 
 // ---- node parsing ----
 
-def parse_node(data Bytes, pos Int64, depth Int64) (Xml, Int64) {
+def parse_node(data Bytes, pos Int64, depth Int64) (R, (Xml, Int64)) {
   if depth > 512 {
-    raise Exception.new(message: err(pos, "nesting deeper than 512"))
+    return (R.error, err(pos, "nesting deeper than 512"))
   }
   if data.get(pos) != 60 {
     return parse_text(data, pos, depth)
   }
   if comment_at(data, pos) {
-    return parse_node(data, scan_stop3(data, pos + 4), depth)
+    case scan_stop3(data, pos + 4) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, stop)   -> { return parse_node(data, stop, depth) }
+    }
   }
   if is_open(data, pos, 63) {
-    return parse_node(data, scan_stop2(data, pos + 2), depth)
+    case scan_stop2(data, pos + 2) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, stop)   -> { return parse_node(data, stop, depth) }
+    }
   }
   if cdata_at(data, pos) {
     return parse_cdata(data, pos, depth)
   }
   if is_close(data, pos) {
-    raise Exception.new(message: err(pos, "unexpected closing tag"))
+    return (R.error, err(pos, "unexpected closing tag"))
   }
   return parse_element(data, pos, depth)
 }
@@ -359,20 +387,24 @@ def comment_at(data Bytes, i Int64) Bool {
 }
 
 // CDATA: the raw bytes become a text node (no entity decoding).
-def parse_cdata(data Bytes, pos Int64, depth Int64) (Xml, Int64) {
+def parse_cdata(data Bytes, pos Int64, depth Int64) (R, (Xml, Int64)) {
   const start = pos + 9
-  const stop = cdata_end(data, start)
-  return (XmlText.new(text: slice_text(data, start, stop)), stop + 3)
+  case cdata_end(data, start) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, stop)   -> {
+      return (R.ok, (XmlText.new(text: slice_text(data, start, stop)), stop + 3))
+    }
+  }
 }
 
-def cdata_end(data Bytes, i Int64) Int64 {
+def cdata_end(data Bytes, i Int64) (R, Int64) {
   if i + 2 >= data.length() {
-    raise Exception.new(message: err(i, "unterminated CDATA section"))
+    return (R.error, err(i, "unterminated CDATA section"))
   }
   if data.get(i) == 93 {
     if data.get(i + 1) == 93 {
       if data.get(i + 2) == 62 {
-        return i
+        return (R.ok, i)
       }
     }
   }
@@ -380,12 +412,18 @@ def cdata_end(data Bytes, i Int64) Int64 {
 }
 
 // Text: runs to the next `<`, entities decoded.
-def parse_text(data Bytes, pos Int64, depth Int64) (Xml, Int64) {
+def parse_text(data Bytes, pos Int64, depth Int64) (R, (Xml, Int64)) {
   const e = text_end(data, pos)
-  const len = text_len(data, pos, e, 0)
-  const out = Bytes.new(len)
-  const r = text_fill(data, pos, e, out, 0)
-  return (XmlText.new(text: out.to_string()), r[0])
+  case text_len(data, pos, e, 0) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, len)    -> {
+      const out = Bytes.new(len)
+      case text_fill(data, pos, e, out, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, r)      -> { return (R.ok, (XmlText.new(text: out.to_string()), r[0])) }
+      }
+    }
+  }
 }
 
 def text_end(data Bytes, i Int64) Int64 {
@@ -399,91 +437,101 @@ def text_end(data Bytes, i Int64) Int64 {
 }
 
 // The decoded length of the text run [pos, e).
-def text_len(data Bytes, pos Int64, e Int64, n Int64) Int64 {
+def text_len(data Bytes, pos Int64, e Int64, n Int64) (R, Int64) {
   if pos >= e {
-    return n
+    return (R.ok, n)
   }
   if data.get(pos) == 38 {
-    const er = entity(data, pos + 1, e)
-    return text_len(data, er[1], e, n + utf8_len(er[0]))
+    case entity(data, pos + 1, e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er)     -> { return text_len(data, er[1], e, n + utf8_len(er[0])) }
+    }
   }
   return text_len(data, pos + 1, e, n + 1)
 }
 
 // Fills the decoded bytes of the text run; returns (end pos, written).
-def text_fill(data Bytes, pos Int64, e Int64, out Bytes, w Int64) (Int64, Int64) {
+def text_fill(data Bytes, pos Int64, e Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
   if pos >= e {
-    return (pos, w)
+    return (R.ok, (pos, w))
   }
   if data.get(pos) == 38 {
-    const er = entity(data, pos + 1, e)
-    const nw = utf8_put(out, w, er[0])
-    return text_fill(data, er[1], e, out, nw)
+    case entity(data, pos + 1, e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er)     -> {
+        const nw = utf8_put(out, w, er[0])
+        return text_fill(data, er[1], e, out, nw)
+      }
+    }
   }
   out.set(w, data.get(pos))
   return text_fill(data, pos + 1, e, out, w + 1)
 }
 
 // The entity after `&`: (code point, position past the `;`).
-def entity(data Bytes, i Int64, e Int64) (Int64, Int64) {
+def entity(data Bytes, i Int64, e Int64) (R, (Int64, Int64)) {
   if i >= e {
-    raise Exception.new(message: err(i, "unterminated entity"))
+    return (R.error, err(i, "unterminated entity"))
   }
   const c = data.get(i)
   if c == 35 {
-    const h = hex_or_dec(data, i + 1, e)
-    if h[0] < 0 {
-      raise Exception.new(message: err(i, "unknown or malformed entity"))
+    case hex_or_dec(data, i + 1, e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, h)      -> {
+        if h[0] < 0 {
+          return (R.error, err(i, "unknown or malformed entity"))
+        }
+        if h[1] >= e || data.get(h[1]) != 59 {
+          return (R.error, err(i, "entity missing `;`"))
+        }
+        return (R.ok, (h[0], h[1] + 1))
+      }
     }
-    if h[1] >= e || data.get(h[1]) != 59 {
-      raise Exception.new(message: err(i, "entity missing `;`"))
-    }
-    return (h[0], h[1] + 1)
   }
   return named_entity(data, i, e, 0)
 }
 
 // A character reference: (code point, position of the `;`).
-def hex_or_dec(data Bytes, i Int64, e Int64) (Int64, Int64) {
+def hex_or_dec(data Bytes, i Int64, e Int64) (R, (Int64, Int64)) {
   if i < e {
     if data.get(i) == 120 || data.get(i) == 88 {
       return hex_ref(data, i + 1, e, 0)
     }
     return dec_ref(data, i, e, 0)
   }
-  return (-1, i)
+  return (R.ok, (-1, i))
 }
 
-def dec_ref(data Bytes, i Int64, e Int64, acc Int64) (Int64, Int64) {
+def dec_ref(data Bytes, i Int64, e Int64, acc Int64) (R, (Int64, Int64)) {
   if i >= e {
-    return (acc, i)
+    return (R.ok, (acc, i))
   }
   const c = b_at(data, i)
   if c < 48 || c > 57 {
-    return (acc, i)
+    return (R.ok, (acc, i))
   }
   const v = acc * 10 + (c - 48)
   if v < 0 {
-    raise Exception.new(message: "xml: character reference out of range")
+    return (R.error, "xml: character reference out of range")
   }
   return dec_ref(data, i + 1, e, v)
 }
 
-def hex_ref(data Bytes, i Int64, e Int64, acc Int64) (Int64, Int64) {
+def hex_ref(data Bytes, i Int64, e Int64, acc Int64) (R, (Int64, Int64)) {
   if i >= e {
-    return (acc, i)
+    return (R.ok, (acc, i))
   }
   const c = b_at(data, i)
   if c == 59 {
-    return (acc, i)
+    return (R.ok, (acc, i))
   }
   const d = hex_digit(c)
   if d < 0 {
-    return (acc, i)
+    return (R.ok, (acc, i))
   }
   const v = acc * 16 + d
   if v < 0 {
-    raise Exception.new(message: "xml: character reference out of range")
+    return (R.error, "xml: character reference out of range")
   }
   return hex_ref(data, i + 1, e, v)
 }
@@ -494,35 +542,35 @@ def b_at(data Bytes, i Int64) Int64 {
 
 // The five predefined named entities: (code point, position past
 // the `;`).
-def named_entity(data Bytes, i Int64, e Int64, n Int64) (Int64, Int64) {
+def named_entity(data Bytes, i Int64, e Int64, n Int64) (R, (Int64, Int64)) {
   if i + n >= e {
-    raise Exception.new(message: err(i, "unknown or unterminated entity"))
+    return (R.error, err(i, "unknown or unterminated entity"))
   }
   if b_at(data, i + n) == 59 {
     // `lt` and `gt` are two letters past the `&` (`;` at n == 2);
     // `amp` is three (n == 3); `quot` and `apos` are four (n == 4).
     if n == 2 {
       if word_is(data, i, "lt") {
-        return (60, i + 3)
+        return (R.ok, (60, i + 3))
       }
       if word_is(data, i, "gt") {
-        return (62, i + 3)
+        return (R.ok, (62, i + 3))
       }
     }
     if n == 3 {
       if word_is(data, i, "amp") {
-        return (38, i + 4)
+        return (R.ok, (38, i + 4))
       }
     }
     if n == 4 {
       if word_is(data, i, "quot") {
-        return (34, i + 5)
+        return (R.ok, (34, i + 5))
       }
       if word_is(data, i, "apos") {
-        return (39, i + 5)
+        return (R.ok, (39, i + 5))
       }
     }
-    raise Exception.new(message: err(i, "unknown entity"))
+    return (R.error, err(i, "unknown entity"))
   }
   return named_entity(data, i, e, n + 1)
 }
@@ -534,68 +582,78 @@ def word_is(data Bytes, i Int64, word String) Bool {
 
 // ---- elements ----
 
-def parse_element(data Bytes, pos Int64, depth Int64) (Xml, Int64) {
+def parse_element(data Bytes, pos Int64, depth Int64) (R, (Xml, Int64)) {
   const ne = scan_name(data, pos + 1)
   const name = slice_text(data, pos + 1, ne)
   if name == "" {
-    raise Exception.new(message: err(pos, "expected an element name"))
+    return (R.error, err(pos, "expected an element name"))
   }
-  const ar = parse_attrs(data, ne, [])
-  const after = skip_ws(data, ar[1])
-  if after >= data.length() {
-    raise Exception.new(message: err(pos, "unterminated element"))
-  }
-  if data.get(after) == 47 {
-    if after + 1 >= data.length() {
-      raise Exception.new(message: err(after, "unterminated element"))
+  case parse_attrs(data, ne, []) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, ar)     -> {
+      const after = skip_ws(data, ar[1])
+      if after >= data.length() {
+        return (R.error, err(pos, "unterminated element"))
+      }
+      if data.get(after) == 47 {
+        if after + 1 >= data.length() {
+          return (R.error, err(after, "unterminated element"))
+        }
+        if data.get(after + 1) != 62 {
+          return (R.error, err(after, "expected `>`"))
+        }
+        return (R.ok, (XmlElement.new(name: name, attrs: ar[0], children: []), after + 2))
+      }
+      if data.get(after) != 62 {
+        return (R.error, err(after, "expected `>`"))
+      }
+      case parse_children(data, after + 1, depth + 1, name, []) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, cr)     -> {
+          return (R.ok, (XmlElement.new(name: name, attrs: ar[0], children: cr[0]), cr[1]))
+        }
+      }
     }
-    if data.get(after + 1) != 62 {
-      raise Exception.new(message: err(after, "expected `>`"))
-    }
-    return (XmlElement.new(name: name, attrs: ar[0], children: []), after + 2)
   }
-  if data.get(after) != 62 {
-    raise Exception.new(message: err(after, "expected `>`"))
-  }
-  const cr = parse_children(data, after + 1, depth + 1, name, [])
-  return (XmlElement.new(name: name, attrs: ar[0], children: cr[0]), cr[1])
 }
 
-// Attributes until `>` or `/>`; duplicates raise.
-def parse_attrs(data Bytes, i Int64, acc Array[(String, String)]) (Array[(String, String)], Int64) {
+// Attributes until `>` or `/>`; duplicates fail the decode.
+def parse_attrs(data Bytes, i Int64, acc Array[(String, String)]) (R, (Array[(String, String)], Int64)) {
   const p = skip_ws(data, i)
   if p >= data.length() {
-    raise Exception.new(message: err(i, "unterminated element"))
+    return (R.error, err(i, "unterminated element"))
   }
   const c = data.get(p)
   if c == 62 || c == 47 {
-    return (acc, p)
+    return (R.ok, (acc, p))
   }
   const ne = scan_name(data, p)
   if ne == p {
-    raise Exception.new(message: err(p, "expected an attribute name"))
+    return (R.error, err(p, "expected an attribute name"))
   }
   const aname = slice_text(data, p, ne)
   if dup_attr(acc, aname, acc.length() - 1) {
-    raise Exception.new(message: err(p, "duplicate attribute `" + aname + "`"))
+    return (R.error, err(p, "duplicate attribute `" + aname + "`"))
   }
   const w1 = skip_ws(data, ne)
   if w1 >= data.length() {
-    raise Exception.new(message: err(w1, "unterminated element"))
+    return (R.error, err(w1, "unterminated element"))
   }
   if data.get(w1) != 61 {
-    raise Exception.new(message: err(w1, "expected `=`"))
+    return (R.error, err(w1, "expected `=`"))
   }
   const w2 = skip_ws(data, w1 + 1)
   if w2 >= data.length() {
-    raise Exception.new(message: err(w2, "unterminated element"))
+    return (R.error, err(w2, "unterminated element"))
   }
   const q = data.get(w2)
   if q != 34 && q != 39 {
-    raise Exception.new(message: err(w2, "expected a quoted attribute value"))
+    return (R.error, err(w2, "expected a quoted attribute value"))
   }
-  const vr = attr_value(data, w2 + 1, q)
-  return parse_attrs(data, vr[1], acc.append((aname, vr[0])))
+  case attr_value(data, w2 + 1, q) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, vr)     -> { return parse_attrs(data, vr[1], acc.append((aname, vr[0]))) }
+  }
 }
 
 def dup_attr(attrs Array[(String, String)], name String, i Int64) Bool {
@@ -610,48 +668,66 @@ def dup_attr(attrs Array[(String, String)], name String, i Int64) Bool {
 }
 
 // The attribute value: raw bytes until the closing quote, entities
-// decoded. A raw `<` inside raises.
-def attr_value(data Bytes, i Int64, q Int64) (String, Int64) {
-  const e = attr_value_end(data, i, q)
-  const len = attr_len(data, i, e, 0)
-  const out = Bytes.new(len)
-  const r = attr_fill(data, i, e, out, 0)
-  // r[0] sits on the closing quote; resume past it.
-  return (out.to_string(), r[0] + 1)
+// decoded. A raw `<` inside fails the decode.
+def attr_value(data Bytes, i Int64, q Int64) (R, (String, Int64)) {
+  case attr_value_end(data, i, q) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, e)      -> {
+      case attr_len(data, i, e, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, len)    -> {
+          const out = Bytes.new(len)
+          case attr_fill(data, i, e, out, 0) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, r)      -> {
+              // r[0] sits on the closing quote; resume past it.
+              return (R.ok, (out.to_string(), r[0] + 1))
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
-def attr_value_end(data Bytes, i Int64, q Int64) Int64 {
+def attr_value_end(data Bytes, i Int64, q Int64) (R, Int64) {
   if i >= data.length() {
-    raise Exception.new(message: err(i, "unterminated attribute value"))
+    return (R.error, err(i, "unterminated attribute value"))
   }
   if data.get(i) == q {
-    return i
+    return (R.ok, i)
   }
   if data.get(i) == 60 {
-    raise Exception.new(message: err(i, "`<` inside an attribute value"))
+    return (R.error, err(i, "`<` inside an attribute value"))
   }
   return attr_value_end(data, i + 1, q)
 }
 
-def attr_len(data Bytes, pos Int64, e Int64, n Int64) Int64 {
+def attr_len(data Bytes, pos Int64, e Int64, n Int64) (R, Int64) {
   if pos >= e {
-    return n
+    return (R.ok, n)
   }
   if data.get(pos) == 38 {
-    const er = entity(data, pos + 1, e)
-    return attr_len(data, er[1], e, n + utf8_len(er[0]))
+    case entity(data, pos + 1, e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er)     -> { return attr_len(data, er[1], e, n + utf8_len(er[0])) }
+    }
   }
   return attr_len(data, pos + 1, e, n + 1)
 }
 
-def attr_fill(data Bytes, pos Int64, e Int64, out Bytes, w Int64) (Int64, Int64) {
+def attr_fill(data Bytes, pos Int64, e Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
   if pos >= e {
-    return (pos, w)
+    return (R.ok, (pos, w))
   }
   if data.get(pos) == 38 {
-    const er = entity(data, pos + 1, e)
-    const nw = utf8_put(out, w, er[0])
-    return attr_fill(data, er[1], e, out, nw)
+    case entity(data, pos + 1, e) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, er)     -> {
+        const nw = utf8_put(out, w, er[0])
+        return attr_fill(data, er[1], e, out, nw)
+      }
+    }
   }
   out.set(w, data.get(pos))
   return attr_fill(data, pos + 1, e, out, w + 1)
@@ -659,34 +735,38 @@ def attr_fill(data Bytes, pos Int64, e Int64, out Bytes, w Int64) (Int64, Int64)
 
 // The element's children up to the matching close tag, in document
 // order.
-def parse_children(data Bytes, pos Int64, depth Int64, name String, acc Array[Xml]) (Array[Xml], Int64) {
+def parse_children(data Bytes, pos Int64, depth Int64, name String, acc Array[Xml]) (R, (Array[Xml], Int64)) {
   if pos >= data.length() {
-    raise Exception.new(message: err(pos, "unterminated element `" + name + "`"))
+    return (R.error, err(pos, "unterminated element `" + name + "`"))
   }
   if is_close(data, pos) {
     return close_tag(data, pos, name, acc)
   }
   if data.get(pos) != 60 {
-    const tr = parse_text(data, pos, depth)
-    return parse_children(data, tr[1], depth, name, acc.append(tr[0]))
+    case parse_text(data, pos, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, tr)     -> { return parse_children(data, tr[1], depth, name, acc.append(tr[0])) }
+    }
   }
-  const r = parse_node(data, pos, depth)
-  return parse_children(data, r[1], depth, name, acc.append(r[0]))
+  case parse_node(data, pos, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return parse_children(data, r[1], depth, name, acc.append(r[0])) }
+  }
 }
 
 // Consumes `</name ... >` and returns (acc, past `>`).
-def close_tag(data Bytes, pos Int64, name String, acc Array[Xml]) (Array[Xml], Int64) {
+def close_tag(data Bytes, pos Int64, name String, acc Array[Xml]) (R, (Array[Xml], Int64)) {
   const i = pos + 2
   const ne = scan_name(data, i)
   const seen = slice_text(data, i, ne)
   if seen != name {
-    raise Exception.new(message: err(i, "closing tag `" + seen + "` does not match `" + name + "`"))
+    return (R.error, err(i, "closing tag `" + seen + "` does not match `" + name + "`"))
   }
   const after = skip_ws(data, ne)
   if after >= data.length() || data.get(after) != 62 {
-    raise Exception.new(message: err(after, "expected `>`"))
+    return (R.error, err(after, "expected `>`"))
   }
-  return (acc, after + 1)
+  return (R.ok, (acc, after + 1))
 }
 
 // ---- names and misc ----

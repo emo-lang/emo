@@ -335,34 +335,41 @@ let () =
 let processes_out = "7\n"
 
 (* The HTTP roundtrip: a server process accepts, reads one request line,
-   and answers it; the client reads the response back. *)
+   and answers it; the client reads the response back. The net calls
+   answer (R.ok, value) / (R.error, reason) — the tests ride the ok
+   slot, exactly like the compiled code does. *)
 let http_main =
   {|let p v = ignore (Emo_eval.call_builtin "println" [ v ])
 
 let () =
   let exit_code =
     Emo_runtime.run (fun () ->
-        let listener =
+        let answered =
           Emo_eval.call_builtin "net_listen"
             [ Emo_eval.String "127.0.0.1"; Emo_eval.Int64 0L ]
         in
+        let listener = Emo_runtime.index answered (Emo_eval.Int64 1L) in
         let port = Emo_runtime.method_call listener "port" [] in
         ignore
           (Emo_runtime.spawn (fun () ->
-               let conn = Emo_runtime.method_call listener "accept" [] in
-               let request = Emo_runtime.method_call conn "read_line" [] in
+               let answered = Emo_runtime.method_call listener "accept" [] in
+               let conn = Emo_runtime.index answered (Emo_eval.Int64 1L) in
+               let requested = Emo_runtime.method_call conn "read_line" [] in
+               let request = Emo_runtime.index requested (Emo_eval.Int64 1L) in
                let body =
                  Emo_eval.String ("hello " ^ Emo_eval.to_string request ^ "\n")
                in
                ignore (Emo_runtime.method_call conn "write" [ body ]);
                ignore (Emo_runtime.method_call conn "close" [])));
-        let conn =
+        let answered =
           Emo_eval.call_builtin "net_connect"
             [ Emo_eval.String "127.0.0.1"; port; Emo_eval.Float 5.0 ]
         in
+        let conn = Emo_runtime.index answered (Emo_eval.Int64 1L) in
         ignore
           (Emo_runtime.method_call conn "write" [ Emo_eval.String "emo\r\n" ]);
-        p (Emo_runtime.method_call conn "read_line" []);
+        let received = Emo_runtime.method_call conn "read_line" [] in
+        p (Emo_runtime.index received (Emo_eval.Int64 1L));
         ignore (Emo_runtime.method_call conn "close" []))
   in
   if exit_code <> 0 then exit exit_code
@@ -400,15 +407,17 @@ let udp_main =
 let () =
   let exit_code =
     Emo_runtime.run (fun () ->
-        let u =
+        let answered =
           Emo_eval.call_builtin "net_udp_bind"
             [ Emo_eval.String "127.0.0.1"; Emo_eval.Int64 0L ]
         in
+        let u = Emo_runtime.index answered (Emo_eval.Int64 1L) in
         let port = Emo_runtime.method_call u "port" [] in
         ignore
           (Emo_runtime.method_call u "send_to"
              [ Emo_eval.String "127.0.0.1"; port; Emo_eval.String "datagram" ]);
-        match Emo_runtime.method_call u "recv_from" [] with
+        let received = Emo_runtime.method_call u "recv_from" [] in
+        match Emo_runtime.index received (Emo_eval.Int64 1L) with
         | Emo_eval.Tuple (data :: _) -> p data
         | _ -> p (Emo_eval.String "unexpected"))
   in

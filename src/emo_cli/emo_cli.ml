@@ -943,14 +943,20 @@ let json_string_field (key : string) (json : string) : string option =
    other `__`-prefixed names are bound by the host before the program runs.
    Each program prints the HTTP status on the first line and the response
    body after it — that is the whole channel back. A transport failure
-   raises inside the program and surfaces as an uncaught Emo exception,
-   which the host maps to a plain error. *)
+   comes back as (R.error, reason); the program re-raises the reason so
+   the host maps it to a plain error, exactly like before the failures
+   became values. *)
 let upload_program =
   {|require "http"
 
 const resp = http.request("POST", __url, [("Authorization", "Bearer " + __token), ("Content-Type", "application/octet-stream")], __body, 120.0)
-println(resp.status)
-println(resp.body)
+case resp {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, ok)     -> {
+    println(ok.status)
+    println(ok.body)
+  }
+}
 |}
 
 (* The login step: email + password as JSON, no credentials header yet. *)
@@ -958,8 +964,13 @@ let login_program =
   {|require "http"
 
 const resp = http.request("POST", __url, [("Content-Type", "application/json")], __body, 60.0)
-println(resp.status)
-println(resp.body)
+case resp {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, ok)     -> {
+    println(ok.status)
+    println(ok.body)
+  }
+}
 |}
 
 (* The token-minting step: HTTP basic auth — the account API's documented
@@ -968,8 +979,13 @@ let token_program =
   {|require "http"
 
 const resp = http.request("POST", __url, [("Authorization", "Basic " + __basic), ("Content-Type", "application/json")], __body, 60.0)
-println(resp.status)
-println(resp.body)
+case resp {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, ok)     -> {
+    println(ok.status)
+    println(ok.body)
+  }
+}
 |}
 
 let rec remove_tree path =

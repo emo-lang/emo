@@ -1163,9 +1163,12 @@ golden green on its declared targets; `dune test` green.
       untouched.
 - [x] **T37.2** — `json` + `yaml` (+ `internal/float`): parse and
       accessor failures return tuples — the two biggest sites, ~150.
-- [ ] **T37.3** — `xml` + `base64` + `bufio` + `slog` + `http` +
+- [x] **T37.3** — `xml` + `base64` + `bufio` + `slog` + `http` +
       `sync`: the same split; `http`'s refused/unresolved/deadline
       failures become tuples, per the README's network section.
+      (`xml`/`base64` decode failures and the whole `net` surface
+      return tuples; `bufio`/`slog`/`sync` keep their raises — every
+      one is a caller mistake.)
 - [ ] **T37.4** — Goldens: every touched package's error-path
       fixtures re-recorded to match `(R.error, why)`; package goldens
       green on all declared targets.

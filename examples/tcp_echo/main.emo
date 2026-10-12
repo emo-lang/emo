@@ -9,50 +9,73 @@
 // registry; the standard library is Emo source, so `net` and `http`
 // are ordinary modules you can open and read. The listener binds
 // port 0, and the kernel hands back a free port — every run is
-// self-contained, nothing to clean up.
+// self-contained, nothing to clean up. Failures come back as
+// (R.error, reason); a demo answers them with a line, not a crash.
 
 require "net"
 
 // The echo server: accept one connection, echo every line with a
 // prefix, and close politely when the client says goodbye.
 def echo_server(listener TcpListener, boss Pid) Int64 {
-  const conn = listener.accept()
-  return echo_loop(conn, boss)
+  case listener.accept() {
+    (R.error, why) -> {
+      println("accept failed: ${why}")
+      return halt()
+    }
+    (R.ok, conn) -> { return echo_loop(conn, boss) }
+  }
 }
 
 def echo_loop(conn TcpConn, boss Pid) Int64 {
-  const line = conn.read_line()
-  if line == "bye" {
-    conn.write("goodbye\n")
-    conn.close()
-    boss <- "served"
-    return halt()
+  case conn.read_line() {
+    (R.error, why) -> {
+      println("read failed: ${why}")
+      return halt()
+    }
+    (R.ok, line) -> {
+      if line == "bye" {
+        conn.write("goodbye\n")
+        conn.close()
+        boss <- "served"
+        return halt()
+      }
+      conn.write("echo: ${line}\n")
+      return echo_loop(conn, boss)
+    }
   }
-  conn.write("echo: ${line}\n")
-  return echo_loop(conn, boss)
 }
 
 // The client: one line over the wire, one echo back each.
 def chat(conn TcpConn, lines Array[String], i Int64) Int64 {
   if i == lines.length() {
     conn.write("bye\n")
-    println(conn.read_line())
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
     conn.close()
     return 0
   }
   conn.write("${lines[i]}\n")
-  println(conn.read_line())
+  case conn.read_line() {
+    (R.error, why) -> { println("read failed: ${why}") }
+    (R.ok, line)   -> { println(line) }
+  }
   return chat(conn, lines, i + 1)
 }
 
 // Port 0 asks the kernel for a free port; the server runs in its own
 // process, spawned with `do`.
-const listener = net.listen("127.0.0.1", 0)
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
 const server = do echo_server(listener, self_pid())
 
-const conn = net.connect("127.0.0.1", listener.port(), 5.0)
-conn.set_timeout(5.0)
-chat(conn, [ "你好, socket", "direct style", "no callbacks" ], 0)
+case net.connect("127.0.0.1", listener.port(), 5.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.set_timeout(5.0)
+    chat(conn, [ "你好, socket", "direct style", "no callbacks" ], 0)
+  }
+}
 
 receive {
   "served" -> {

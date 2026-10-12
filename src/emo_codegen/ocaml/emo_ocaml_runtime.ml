@@ -184,67 +184,74 @@ module Emo_eval = struct
       (* the backend's selective receive: the matcher tries each compiled
      branch (pattern + guard) and returns the branch index with the
      payload's items *)
-    | Net_resolve : string -> string list Effect.t
-    | Net_connect : string * int * float * string list -> conn Effect.t
-    | Net_connect_unix : string * float -> conn Effect.t
-    | Net_listen : string * int -> listener Effect.t
-    | Net_listen_unix : string -> listener Effect.t
-    | Net_accept : listener -> conn Effect.t
-    | Net_read_line : conn -> string Effect.t
-    | Net_read_exactly : conn * int -> string Effect.t
-    | Net_read_all : conn -> string Effect.t
-    | Net_write : conn * string -> unit Effect.t
-    | Net_close_conn : conn -> conn Effect.t
-    | Net_close_listener : listener -> listener Effect.t
-    | Net_udp_bind : string * int -> udp Effect.t
-    | Net_udp_send_to : udp * string * int * string -> unit Effect.t
+    | Net_resolve : string -> value Effect.t
+    | Net_connect : string * int * float -> value Effect.t
+    | Net_connect_unix : string * float -> value Effect.t
+    | Net_listen : string * int -> value Effect.t
+    | Net_listen_unix : string -> value Effect.t
+    | Net_accept : listener -> value Effect.t
+    | Net_read_line : conn -> value Effect.t
+    | Net_read_exactly : conn * int -> value Effect.t
+    | Net_read_all : conn -> value Effect.t
+    | Net_write : conn * string -> value Effect.t
+    | Net_close_conn : conn -> value Effect.t
+    | Net_close_listener : listener -> value Effect.t
+    | Net_udp_bind : string * int -> value Effect.t
+    | Net_udp_send_to : udp * string * int * string -> value Effect.t
     | Net_udp_recv_from : udp -> value Effect.t
-    | Net_udp_close : udp -> udp Effect.t
+    | Net_udp_close : udp -> value Effect.t
     | Net_tls_connect :
         string
         * int
         * float
         * bool
-        * string list
-        (* host, port, timeout, insecure, resolved addresses *)
-        -> conn Effect.t
-    | Net_tls_listen : string * int * string * string -> listener Effect.t
+        (* host, port, timeout, insecure *)
+        -> value Effect.t
+    | Net_tls_listen : string * int * string * string -> value Effect.t
     | File_read : string -> value Effect.t
     | File_write : string * string -> value Effect.t
+
+  (* The net failures are values: the handler finishes the parked
+     continuation with (R.ok, value) or (R.error, reason) — the same
+     tuple shape on every native target (CHECK.md, error handling). *)
+  let net_ok (v : value) : value = Tuple [ EnumMember ("R", "ok"); v ]
+
+  let net_error (message : string) : value =
+    Tuple [ EnumMember ("R", "error"); String message ]
 
   (* The synchronous net operations compiled method dispatch performs;
      they only run under the scheduler, exactly like the interpreted
      paths. *)
-  let read_line_sync (c : conn) : string = Effect.perform (Net_read_line c)
+  let read_line_sync (c : conn) : value = Effect.perform (Net_read_line c)
 
-  let read_exactly_sync (c : conn) (n : int) : string =
+  let read_exactly_sync (c : conn) (n : int) : value =
     Effect.perform (Net_read_exactly (c, n))
 
-  let read_all_sync (c : conn) : string = Effect.perform (Net_read_all c)
+  let read_all_sync (c : conn) : value = Effect.perform (Net_read_all c)
 
-  let write_sync (c : conn) (data : string) : unit =
+  let write_sync (c : conn) (data : string) : value =
     Effect.perform (Net_write (c, data))
 
-  let close_sync (c : conn) : conn = Effect.perform (Net_close_conn c)
-  let accept_sync (l : listener) : conn = Effect.perform (Net_accept l)
+  let close_sync (c : conn) : value = Effect.perform (Net_close_conn c)
+  let accept_sync (l : listener) : value = Effect.perform (Net_accept l)
 
-  let close_listener_sync (l : listener) : listener =
+  let close_listener_sync (l : listener) : value =
     Effect.perform (Net_close_listener l)
 
   let udp_send_sync (u : udp) (host : string) (port : int) (data : string) :
-      unit =
+      value =
     Effect.perform (Net_udp_send_to (u, host, port, data))
 
   let udp_recv_sync (u : udp) : value = Effect.perform (Net_udp_recv_from u)
-  let udp_close_sync (u : udp) : udp = Effect.perform (Net_udp_close u)
+  let udp_close_sync (u : udp) : value = Effect.perform (Net_udp_close u)
 
-  let net_resolve_sync (host : string) : string list =
+  let net_resolve_sync (host : string) : value =
     Effect.perform (Net_resolve host)
 
-  let net_connect_sync (host : string) (port : int) (timeout : float) : conn =
-    Effect.perform (Net_connect (host, port, timeout, net_resolve_sync host))
+  let net_connect_sync (host : string) (port : int) (timeout : float) : value =
+    Effect.perform (Net_connect (host, port, timeout))
 
-  let net_listen_sync (host : string) (port : int) : listener =
+  let net_listen_sync (host : string) (port : int) : value =
     Effect.perform (Net_listen (host, port))
 
   (* ---- Concurrency core ----
@@ -404,8 +411,8 @@ module Emo_eval = struct
     List.iter (fun hook -> hook info) p.exit_hooks;
     p.exit_hooks <- []
 
-  (* Builds the Emo exception a network failure unwinds with. The driver
-     discontinues the parked continuation with it. *)
+  (* Builds the Emo exception the carved-out synchronous failures unwind
+     with (the waitpid decode path; the net failures are values). *)
   let net_raise message =
     Emo_raise
       (Instance
@@ -1185,14 +1192,10 @@ let pf_hash_float conv minus plus space width prec f =
               got %d arguments"
              (List.length args))
     | "net_connect", [ String host; Int64 port; Float timeout ] ->
-        let addrs = Effect.perform (Net_resolve host) in
-        TcpConn
-          (Effect.perform
-             (Net_connect (host, Int64.to_int port, timeout, addrs)))
-    | "net_resolve", [ String host ] ->
-        Array
-          (Array.of_list
-             (List.map (fun a -> String a) (Effect.perform (Net_resolve host))))
+        (* The handler resolves the host, then connects; failure rides
+           back in the tuple. *)
+        Effect.perform (Net_connect (host, Int64.to_int port, timeout))
+    | "net_resolve", [ String host ] -> Effect.perform (Net_resolve host)
     | "net_resolve", vs ->
         error "E3007"
           (Printf.sprintf "`net_resolve` expects 1 argument, got %d"
@@ -1206,7 +1209,7 @@ let pf_hash_float conv minus plus space width prec f =
              "`net_listen` expects (host String, port Int64), got %d arguments"
              (List.length args))
     | "net_listen", [ String host; Int64 port ] ->
-        TcpListener (Effect.perform (Net_listen (host, Int64.to_int port)))
+        Effect.perform (Net_listen (host, Int64.to_int port))
     | "net_listen", _ ->
         error "E3001" "`net_listen` expects (host String, port Int64)"
     | "net_udp_bind", args when List.length args <> 2 ->
@@ -1216,7 +1219,7 @@ let pf_hash_float conv minus plus space width prec f =
               arguments"
              (List.length args))
     | "net_udp_bind", [ String host; Int64 port ] ->
-        UdpSocket (Effect.perform (Net_udp_bind (host, Int64.to_int port)))
+        Effect.perform (Net_udp_bind (host, Int64.to_int port))
     | "net_udp_bind", _ ->
         error "E3001" "`net_udp_bind` expects (host String, port Int64)"
     | "file_read", args when List.length args <> 1 ->
@@ -1447,7 +1450,7 @@ let pf_hash_float conv minus plus space width prec f =
               %d arguments"
              (List.length args))
     | "net_connect_unix", [ String path; Float timeout ] ->
-        TcpConn (Effect.perform (Net_connect_unix (path, timeout)))
+        Effect.perform (Net_connect_unix (path, timeout))
     | "net_connect_unix", _ ->
         error "E3001"
           "`net_connect_unix` expects (path String, timeout Float64)"
@@ -1457,7 +1460,7 @@ let pf_hash_float conv minus plus space width prec f =
              "`net_listen_unix` expects (path String), got %d arguments"
              (List.length args))
     | "net_listen_unix", [ String path ] ->
-        TcpListener (Effect.perform (Net_listen_unix path))
+        Effect.perform (Net_listen_unix path)
     | "net_listen_unix", _ ->
         error "E3001" "`net_listen_unix` expects (path String)"
     | "net_tls_connect", args when List.length args <> 3 ->
@@ -1467,10 +1470,9 @@ let pf_hash_float conv minus plus space width prec f =
               Float64), got %d arguments"
              (List.length args))
     | "net_tls_connect", [ String host; Int64 port; Float timeout ] ->
-        let addrs = Effect.perform (Net_resolve host) in
-        TcpConn
-          (Effect.perform
-             (Net_tls_connect (host, Int64.to_int port, timeout, false, addrs)))
+        (* The handler resolves the host, then connects and shakes
+           hands; failure rides back in the tuple. *)
+        Effect.perform (Net_tls_connect (host, Int64.to_int port, timeout, false))
     | "net_tls_connect", _ ->
         error "E3001"
           "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
@@ -1481,10 +1483,7 @@ let pf_hash_float conv minus plus space width prec f =
               timeout Float64), got %d arguments"
              (List.length args))
     | "net_tls_connect_insecure", [ String host; Int64 port; Float timeout ] ->
-        let addrs = Effect.perform (Net_resolve host) in
-        TcpConn
-          (Effect.perform
-             (Net_tls_connect (host, Int64.to_int port, timeout, true, addrs)))
+        Effect.perform (Net_tls_connect (host, Int64.to_int port, timeout, true))
     | "net_tls_connect_insecure", _ ->
         error "E3001"
           "`net_tls_connect_insecure` expects (host String, port Int64, \
@@ -1496,8 +1495,7 @@ let pf_hash_float conv minus plus space width prec f =
               String, key_path String), got %d arguments"
              (List.length args))
     | "net_listen_tls", [ String host; Int64 port; String cert; String key ] ->
-        TcpListener
-          (Effect.perform (Net_tls_listen (host, Int64.to_int port, cert, key)))
+        Effect.perform (Net_tls_listen (host, Int64.to_int port, cert, key))
     | "net_listen_tls", _ ->
         error "E3001"
           "`net_listen_tls` expects (host String, port Int64, cert_path \
@@ -2217,26 +2215,23 @@ module Emo_runtime = struct
         Emo_eval.Int64 (Int64.of_int l.Emo_eval.lsize)
     | Emo_eval.TcpConn c, "read_line" ->
         none_expected ();
-        Emo_eval.String (Emo_eval.read_line_sync c)
+        Emo_eval.read_line_sync c
     | Emo_eval.TcpConn c, "read_exactly" -> (
         one_expected ();
         match List.hd args with
-        | Emo_eval.Int64 n ->
-            Emo_eval.String (Emo_eval.read_exactly_sync c (Int64.to_int n))
+        | Emo_eval.Int64 n -> Emo_eval.read_exactly_sync c (Int64.to_int n)
         | _ -> failwith "`read_exactly` expects an Int64")
     | Emo_eval.TcpConn c, "read_all" ->
         none_expected ();
-        Emo_eval.String (Emo_eval.read_all_sync c)
+        Emo_eval.read_all_sync c
     | Emo_eval.TcpConn c, "write" -> (
         one_expected ();
         match List.hd args with
-        | Emo_eval.String data ->
-            Emo_eval.write_sync c data;
-            self
+        | Emo_eval.String data -> Emo_eval.write_sync c data
         | _ -> failwith "`write` expects a String")
     | Emo_eval.TcpConn c, "close" ->
         none_expected ();
-        Emo_eval.TcpConn (Emo_eval.close_sync c)
+        Emo_eval.close_sync c
     | Emo_eval.TcpConn c, "set_timeout" -> (
         one_expected ();
         match List.hd args with
@@ -2246,18 +2241,17 @@ module Emo_runtime = struct
         | _ -> failwith "`set_timeout` expects a Float64")
     | Emo_eval.TcpListener l, "accept" ->
         none_expected ();
-        Emo_eval.TcpConn (Emo_eval.accept_sync l)
+        Emo_eval.accept_sync l
     | Emo_eval.TcpListener l, "port" ->
         none_expected ();
         Emo_eval.Int64 (Int64.of_int l.Emo_eval.lport)
     | Emo_eval.TcpListener l, "close" ->
         none_expected ();
-        Emo_eval.TcpListener (Emo_eval.close_listener_sync l)
+        Emo_eval.close_listener_sync l
     | Emo_eval.UdpSocket u, "send_to" -> (
         match args with
         | [ Emo_eval.String host; Emo_eval.Int64 port; Emo_eval.String data ] ->
-            Emo_eval.udp_send_sync u host (Int64.to_int port) data;
-            self
+            Emo_eval.udp_send_sync u host (Int64.to_int port) data
         | _ -> failwith "`send_to` expects (host, port, data)")
     | Emo_eval.UdpSocket u, "recv_from" ->
         none_expected ();
@@ -2267,7 +2261,7 @@ module Emo_runtime = struct
         Emo_eval.Int64 (Int64.of_int u.Emo_eval.uport)
     | Emo_eval.UdpSocket u, "close" ->
         none_expected ();
-        Emo_eval.UdpSocket (Emo_eval.udp_close_sync u)
+        Emo_eval.udp_close_sync u
     | _ -> (
         (* Compiled objects dispatch through their table; everything else
            is NoMethodError. *)
@@ -2492,10 +2486,9 @@ module Emo_runtime = struct
   (* A connect candidate: the socket family and address, as resolved. *)
   type candidate = { cfam : Unix.socket_domain; caddr : Unix.sockaddr }
 
-  (* Maps a Unix error onto the precise Emo exception message for [what]. *)
-  let io_error what desc (err : Unix.error) =
-    Emo_eval.net_raise
-      (Printf.sprintf "cannot %s on %s: %s" what desc (Unix.error_message err))
+  (* Maps a Unix error onto the precise failure reason for [what]. *)
+  let io_reason what desc (err : Unix.error) =
+    Printf.sprintf "cannot %s on %s: %s" what desc (Unix.error_message err)
 
   (* Consumes [n] bytes from the front of the live buffer. *)
   let buffer_take live n =
@@ -2534,8 +2527,9 @@ module Emo_runtime = struct
     | exception Unix.Unix_error _ -> []
 
   (* Binds and listens; port 0 resolves to the assigned port in the
-     returned description. Every candidate address is tried. *)
-  let listen_on host port : Unix.file_descr * int =
+     returned description. Every candidate address is tried; failure is
+     the reason string. *)
+  let listen_on host port : (Unix.file_descr * int, string) result =
     let bind_addr ai =
       let fd = Unix.socket ai.Unix.ai_family Unix.SOCK_STREAM 0 in
       Unix.setsockopt fd Unix.SO_REUSEADDR true;
@@ -2547,7 +2541,7 @@ module Emo_runtime = struct
             | Unix.ADDR_INET (_, p) -> p
             | Unix.ADDR_UNIX _ -> port
           in
-          (fd, bound)
+          Ok (fd, bound)
       | exception e ->
           Unix.close fd;
           raise e
@@ -2556,25 +2550,17 @@ module Emo_runtime = struct
       Unix.getaddrinfo host (string_of_int port)
         [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ]
     with
-    | [] ->
-        raise
-          (Emo_eval.net_raise (Printf.sprintf "cannot resolve host `%s`" host))
+    | [] -> Error (Printf.sprintf "cannot resolve host `%s`" host)
     | entries ->
         let rec try_all = function
-          | [] ->
-              raise
-                (Emo_eval.net_raise
-                   (Printf.sprintf "cannot listen on %s:%d" host port))
+          | [] -> Error (Printf.sprintf "cannot listen on %s:%d" host port)
           | ai :: rest -> (
               try bind_addr ai with
-              | Emo_eval.Emo_raise _ as exn ->
-                  if rest = [] then raise exn else try_all rest
               | Unix.Unix_error (err, _, _) ->
                   if rest = [] then
-                    raise
-                      (Emo_eval.net_raise
-                         (Printf.sprintf "cannot listen on %s:%d: %s" host port
-                            (Unix.error_message err)))
+                    Error
+                      (Printf.sprintf "cannot listen on %s:%d: %s" host port
+                         (Unix.error_message err))
                   else try_all rest)
         in
         try_all entries
@@ -2641,25 +2627,39 @@ module Emo_runtime = struct
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
                   match resolve_addrs host with
                   | [] ->
-                      Effect.Shallow.discontinue_with k
-                        (Emo_eval.net_raise
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_error
                            (Printf.sprintf "cannot resolve host `%s`" host))
                         (handler state proc ())
                   | addresses ->
-                      Effect.Shallow.continue_with k addresses
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_ok
+                           (Emo_eval.Array
+                              (Array.of_list
+                                 (List.map
+                                    (fun a -> Emo_eval.String a)
+                                    addresses))))
                         (handler state proc ()))
-          | Emo_eval.Net_connect (host, port, timeout, addrs) ->
+          | Emo_eval.Net_connect (host, port, timeout) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
-                  connect_entry state proc k ~host ~port ~timeout addrs)
+                  match resolve_addrs host with
+                  | [] ->
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_error
+                           (Printf.sprintf "cannot resolve host `%s`" host))
+                        (handler state proc ())
+                  | addrs ->
+                      connect_entry state proc k ~host ~port ~timeout addrs)
           | Emo_eval.Net_listen (host, port) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
                   match listen_on host port with
-                  | exception (Emo_eval.Emo_raise _ as exn) ->
-                      Effect.Shallow.discontinue_with k exn
+                  | Error reason ->
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_error reason)
                         (handler state proc ())
-                  | fd, bound ->
+                  | Ok (fd, bound) ->
                       Unix.set_nonblock fd;
                       let l =
                         {
@@ -2672,13 +2672,16 @@ module Emo_runtime = struct
                         }
                       in
                       Hashtbl.replace state.listeners l.Emo_eval.lid (fd, None);
-                      Effect.Shallow.continue_with k l (handler state proc ()))
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_ok (Emo_eval.TcpListener l))
+                        (handler state proc ()))
           | Emo_eval.Net_tls_listen (host, port, cert_path, key_path) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
                   match tls_listener ~host ~port ~cert_path ~key_path with
-                  | Error exn ->
-                      Effect.Shallow.discontinue_with k exn
+                  | Error reason ->
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_error reason)
                         (handler state proc ())
                   | Ok (fd, bound, ctx) ->
                       Unix.set_nonblock fd;
@@ -2694,12 +2697,21 @@ module Emo_runtime = struct
                       in
                       Hashtbl.replace state.listeners l.Emo_eval.lid
                         (fd, Some ctx);
-                      Effect.Shallow.continue_with k l (handler state proc ()))
-          | Emo_eval.Net_tls_connect (host, port, timeout, insecure, addrs) ->
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_ok (Emo_eval.TcpListener l))
+                        (handler state proc ()))
+          | Emo_eval.Net_tls_connect (host, port, timeout, insecure) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
-                  connect_tls_entry state proc k ~host ~port ~timeout ~insecure
-                    addrs)
+                  match resolve_addrs host with
+                  | [] ->
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_error
+                           (Printf.sprintf "cannot resolve host `%s`" host))
+                        (handler state proc ())
+                  | addrs ->
+                      connect_tls_entry state proc k ~host ~port ~timeout
+                        ~insecure addrs)
           | Emo_eval.Net_accept l ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -2797,7 +2809,9 @@ module Emo_runtime = struct
                        with Unix.Unix_error _ -> ());
                       (try Unix.close live.lfd with Unix.Unix_error _ -> ());
                       Hashtbl.remove state.live c.Emo_eval.cid;
-                      Effect.Shallow.continue_with k c (handler state proc ())))
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_ok (Emo_eval.TcpConn c))
+                        (handler state proc ())))
           | Emo_eval.Net_connect_unix (path, timeout) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -2806,8 +2820,9 @@ module Emo_runtime = struct
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
                   match bind_unix_listener path with
-                  | Error exn ->
-                      Effect.Shallow.discontinue_with k exn
+                  | Error reason ->
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_error reason)
                         (handler state proc ())
                   | Ok fd ->
                       Unix.set_nonblock fd;
@@ -2822,13 +2837,16 @@ module Emo_runtime = struct
                         }
                       in
                       Hashtbl.replace state.listeners l.Emo_eval.lid (fd, None);
-                      Effect.Shallow.continue_with k l (handler state proc ()))
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_ok (Emo_eval.TcpListener l))
+                        (handler state proc ()))
           | Emo_eval.Net_udp_bind (host, port) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
                   match bind_udp_socket host port with
-                  | Error exn ->
-                      Effect.Shallow.discontinue_with k exn
+                  | Error reason ->
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_error reason)
                         (handler state proc ())
                   | Ok (fd, bound) ->
                       Unix.set_nonblock fd;
@@ -2842,7 +2860,9 @@ module Emo_runtime = struct
                         }
                       in
                       Hashtbl.replace state.udps u.Emo_eval.uid fd;
-                      Effect.Shallow.continue_with k u (handler state proc ()))
+                      Effect.Shallow.continue_with k
+                        (Emo_eval.net_ok (Emo_eval.UdpSocket u))
+                        (handler state proc ()))
           | Emo_eval.Net_udp_send_to (u, addr, port, data) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -2855,8 +2875,8 @@ module Emo_runtime = struct
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
                   if u.Emo_eval.uclosed then
-                    Effect.Shallow.discontinue_with k
-                      (Emo_eval.net_raise
+                    Effect.Shallow.continue_with k
+                      (Emo_eval.net_error
                          (Printf.sprintf
                             "the udp socket on %s is already closed"
                             u.Emo_eval.udesc))
@@ -2868,7 +2888,9 @@ module Emo_runtime = struct
                         try Unix.close fd with Unix.Unix_error _ -> ())
                     | None -> ());
                     Hashtbl.remove state.udps u.Emo_eval.uid;
-                    Effect.Shallow.continue_with k u (handler state proc ())))
+                    Effect.Shallow.continue_with k
+                      (Emo_eval.net_ok (Emo_eval.UdpSocket u))
+                      (handler state proc ())))
           | Emo_eval.Compiled_receive matcher ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -2884,8 +2906,8 @@ module Emo_runtime = struct
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
                   if l.Emo_eval.lclosed then
-                    Effect.Shallow.discontinue_with k
-                      (Emo_eval.net_raise
+                    Effect.Shallow.continue_with k
+                      (Emo_eval.net_error
                          (Printf.sprintf "the listener on %s is already closed"
                             l.Emo_eval.ldesc))
                       (handler state proc ())
@@ -2896,7 +2918,9 @@ module Emo_runtime = struct
                         try Unix.close fd with Unix.Unix_error _ -> ())
                     | None -> ());
                     Hashtbl.remove state.listeners l.Emo_eval.lid;
-                    Effect.Shallow.continue_with k l (handler state proc ())))
+                    Effect.Shallow.continue_with k
+                      (Emo_eval.net_ok (Emo_eval.TcpListener l))
+                      (handler state proc ())))
           | _ -> None);
     }
 
@@ -2909,32 +2933,30 @@ module Emo_runtime = struct
 
   (* The closed-connection check every connection operation starts with. *)
   and conn_entry :
-      'x.
       state ->
       Emo_eval.process ->
-      ('x, unit) Effect.Shallow.continuation ->
+      (Emo_eval.value, unit) Effect.Shallow.continuation ->
       Emo_eval.conn ->
       (live -> Emo_eval.exit_info option) ->
       Emo_eval.exit_info option =
    fun state proc k c body ->
     let closed =
-      Emo_eval.net_raise
+      Emo_eval.net_error
         (Printf.sprintf "the connection to %s is closed" c.Emo_eval.cdesc)
     in
     if c.Emo_eval.cclosed then
-      Effect.Shallow.discontinue_with k closed (handler state proc ())
+      Effect.Shallow.continue_with k closed (handler state proc ())
     else
       match Hashtbl.find_opt state.live c.Emo_eval.cid with
       | Some live -> body live
-      | None -> Effect.Shallow.discontinue_with k closed (handler state proc ())
+      | None -> Effect.Shallow.continue_with k closed (handler state proc ())
 
   (* Parks on fd interest plus the deadline; the timeout message states
      the configured budget, which is what the operation was given. *)
   and park_fd :
-      'x.
       state ->
       Emo_eval.process ->
-      ('x, unit) Effect.Shallow.continuation ->
+      (Emo_eval.value, unit) Effect.Shallow.continuation ->
       bool ref ->
       Unix.file_descr ->
       [ `R | `W ] ->
@@ -2944,8 +2966,8 @@ module Emo_runtime = struct
       Emo_eval.exit_info option =
    fun state proc k finished fd kind ~deadline ~timeout_message step ->
     (* A wake only re-runs the step when nothing has completed the
-       operation yet; the completion itself goes through finish_w/abort_w,
-       which set the flag — so a racing timer and readiness wake resume
+       operation yet; the completion itself goes through finish_w,
+       which sets the flag — so a racing timer and readiness wake resume
        the parked continuation exactly once. *)
     let wake st = if !finished then None else step st in
     add_io state fd kind (fun () -> Queue.add (Io (proc, wake)) state.runq);
@@ -2959,8 +2981,8 @@ module Emo_runtime = struct
                    fun st ->
                      if !finished then None
                      else
-                       abort_w finished st proc k
-                         (Emo_eval.net_raise timeout_message) ))
+                       finish_w finished st proc k
+                         (Emo_eval.net_error timeout_message) ))
               state.runq)
     | None -> ());
     None
@@ -2974,16 +2996,6 @@ module Emo_runtime = struct
       Emo_eval.exit_info option =
    fun state proc k v ->
     Effect.Shallow.continue_with k v (handler state proc ())
-
-  and abort :
-      'x.
-      state ->
-      Emo_eval.process ->
-      ('x, unit) Effect.Shallow.continuation ->
-      exn ->
-      Emo_eval.exit_info option =
-   fun state proc k exn ->
-    Effect.Shallow.discontinue_with k exn (handler state proc ())
 
   (* Guarded completions: the first of a readiness wake and a deadline
      wake wins; later ones observe the flag and do nothing. *)
@@ -3001,22 +3013,8 @@ module Emo_runtime = struct
       finished := true;
       finish st proc k v)
 
-  and abort_w :
-      'x.
-      bool ref ->
-      state ->
-      Emo_eval.process ->
-      ('x, unit) Effect.Shallow.continuation ->
-      exn ->
-      Emo_eval.exit_info option =
-   fun finished st proc k exn ->
-    if !finished then None
-    else (
-      finished := true;
-      abort st proc k exn)
-
   and connect_entry state proc
-      (k : (Emo_eval.conn, unit) Effect.Shallow.continuation) ~(host : string)
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation) ~(host : string)
       ~(port : int) ~(timeout : float) (addresses : string list) :
       Emo_eval.exit_info option =
     let target = Printf.sprintf "%s:%d" host port in
@@ -3042,7 +3040,7 @@ module Emo_runtime = struct
   (* A TLS connect runs the same connect machinery; on a connected socket
      the TLS handshake takes over, parking through the scheduler. *)
   and connect_tls_entry state proc
-      (k : (Emo_eval.conn, unit) Effect.Shallow.continuation) ~(host : string)
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation) ~(host : string)
       ~(port : int) ~(timeout : float) ~(insecure : bool)
       (addresses : string list) : Emo_eval.exit_info option =
     let ctx = client_tls_ctx ~insecure in
@@ -3068,7 +3066,7 @@ module Emo_runtime = struct
 
   (* A unix-domain connect has one candidate address: the path itself. *)
   and connect_unix_entry state proc
-      (k : (Emo_eval.conn, unit) Effect.Shallow.continuation) ~(path : string)
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation) ~(path : string)
       ~(timeout : float) : Emo_eval.exit_info option =
     let target = Printf.sprintf "unix socket %s" path in
     let deadline =
@@ -3087,17 +3085,18 @@ module Emo_runtime = struct
     | [] ->
         (* Every candidate failed; the last OS error is the precise
            reason. *)
-        abort state proc k
-          (match last_error with
+        let reason =
+          match last_error with
           | Some Unix.ECONNREFUSED ->
-              Emo_eval.net_raise
-                (Printf.sprintf "connection refused to %s" target)
+              Printf.sprintf "connection refused to %s" target
           | Some err ->
-              Emo_eval.net_raise
-                (Printf.sprintf "cannot connect to %s: %s" target
-                   (Unix.error_message err))
-          | None ->
-              Emo_eval.net_raise (Printf.sprintf "cannot connect to %s" target))
+              Printf.sprintf "cannot connect to %s: %s" target
+                (Unix.error_message err)
+          | None -> Printf.sprintf "cannot connect to %s" target
+        in
+        Effect.Shallow.continue_with k
+          (Emo_eval.net_error reason)
+          (handler state proc ())
     | addr :: rest -> (
         (* One completion flag per address attempt; moving to the next
            candidate starts a fresh attempt with its own flag. *)
@@ -3110,13 +3109,10 @@ module Emo_runtime = struct
         in
         let refusal err =
           match err with
-          | Unix.ECONNREFUSED ->
-              Emo_eval.net_raise
-                (Printf.sprintf "connection refused to %s" target)
+          | Unix.ECONNREFUSED -> Printf.sprintf "connection refused to %s" target
           | _ ->
-              Emo_eval.net_raise
-                (Printf.sprintf "cannot connect to %s: %s" target
-                   (Unix.error_message err))
+              Printf.sprintf "cannot connect to %s: %s" target
+                (Unix.error_message err)
         in
         let step st =
           match Unix.getsockopt_error fd with
@@ -3130,7 +3126,7 @@ module Emo_runtime = struct
         in
         let timeout_step st =
           cleanup st;
-          abort_w finished st proc k (Emo_eval.net_raise message)
+          finish_w finished st proc k (Emo_eval.net_error message)
         in
         match Unix.connect fd addr.caddr with
         | () -> connect_tls_upgrade state proc k finished fd target tls
@@ -3146,7 +3142,9 @@ module Emo_runtime = struct
             None
         | exception Unix.Unix_error (err, _, _) ->
             cleanup state;
-            if rest = [] then abort_w finished state proc k (refusal err)
+            if rest = [] then
+              finish_w finished state proc k
+                (Emo_eval.net_error (refusal err))
             else
               connect_next state proc k ~target ~deadline ~message ~tls
                 ~last_error:(Some err) rest)
@@ -3172,11 +3170,13 @@ module Emo_runtime = struct
      immediately; TLS hands the socket to OpenSSL and shakes hands
      asynchronously. *)
   and connect_tls_upgrade state proc
-      (k : (Emo_eval.conn, unit) Effect.Shallow.continuation)
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (finished : bool ref) (fd : Unix.file_descr) (target : string)
       (tls : Ssl.context option) : Emo_eval.exit_info option =
     match tls with
-    | None -> finish_w finished state proc k (make_conn state fd target)
+    | None ->
+        finish_w finished state proc k
+          (Emo_eval.net_ok (Emo_eval.TcpConn (make_conn state fd target)))
     | Some ctx ->
         let ssl = Ssl.embed_socket fd ctx in
         handshake state proc k finished fd ssl target Ssl.connect
@@ -3185,11 +3185,13 @@ module Emo_runtime = struct
      want_write park the continuation on the fd, so both ends of a
      loopback handshake progress through the scheduler. *)
   and handshake state proc
-      (k : (Emo_eval.conn, unit) Effect.Shallow.continuation)
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (finished : bool ref) (fd : Unix.file_descr) (ssl : Ssl.socket)
       (desc : string) (once : Ssl.socket -> unit) : Emo_eval.exit_info option =
     match once ssl with
-    | () -> finish_w finished state proc k (make_tls_conn state fd ssl desc)
+    | () ->
+        finish_w finished state proc k
+          (Emo_eval.net_ok (Emo_eval.TcpConn (make_tls_conn state fd ssl desc)))
     | exception
         ( Ssl.Connection_error (Ssl.Error_want_read as want)
         | Ssl.Accept_error (Ssl.Error_want_read as want) )
@@ -3202,8 +3204,8 @@ module Emo_runtime = struct
         park_and_handshake state proc k finished fd ssl desc `W once
     | exception
         (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _) ->
-        abort_w finished state proc k
-          (Emo_eval.net_raise
+        finish_w finished state proc k
+          (Emo_eval.net_error
              (Printf.sprintf "the TLS handshake with %s failed: %s" desc
                 ((Ssl.get_error_string [@alert "-deprecated"]) ())))
 
@@ -3215,30 +3217,29 @@ module Emo_runtime = struct
   (* The setup half of a TLS listener: TCP listen plus a server context
      holding the certificate. *)
   and tls_listener ~(host : string) ~(port : int) ~(cert_path : string)
-      ~(key_path : string) : (Unix.file_descr * int * Ssl.context, exn) result =
+      ~(key_path : string) :
+      (Unix.file_descr * int * Ssl.context, string) result =
     let[@alert "-deprecated"] ctx =
       Ssl.create_context Ssl.SSLv23 Ssl.Server_context
     in
     match Ssl.use_certificate ctx cert_path key_path with
     | () -> (
-        try
-          let fd, bound = listen_on host port in
-          Ok (fd, bound, ctx)
-        with Emo_eval.Emo_raise _ as exn -> Error exn)
+        match listen_on host port with
+        | Ok (fd, bound) -> Ok (fd, bound, ctx)
+        | Error reason -> Error reason)
     | exception (Ssl.Certificate_error message | Ssl.Private_key_error message)
       ->
         Error
-          (Emo_eval.net_raise
-             (Printf.sprintf "cannot load the TLS certificate for %s:%d: %s"
-                host port message))
+          (Printf.sprintf "cannot load the TLS certificate for %s:%d: %s" host
+             port message)
 
   and accept_loop state proc
-      (k : (Emo_eval.conn, unit) Effect.Shallow.continuation)
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (finished : bool ref) (l : Emo_eval.listener) (deadline : float option) :
       Emo_eval.exit_info option =
     if l.Emo_eval.lclosed then
-      Effect.Shallow.discontinue_with k
-        (Emo_eval.net_raise
+      Effect.Shallow.continue_with k
+        (Emo_eval.net_error
            (Printf.sprintf "the listener on %s is closed" l.Emo_eval.ldesc))
         (handler state proc ())
     else
@@ -3252,7 +3253,10 @@ module Emo_runtime = struct
           Unix.set_nonblock client;
           let desc = describe_sockaddr sockaddr in
           match tls_ctx with
-          | None -> finish_w finished state proc k (make_conn state client desc)
+          | None ->
+              finish_w finished state proc k
+                (Emo_eval.net_ok
+                   (Emo_eval.TcpConn (make_conn state client desc)))
           | Some ctx ->
               let ssl = Ssl.embed_socket client ctx in
               handshake state proc k finished client ssl desc Ssl.accept)
@@ -3263,11 +3267,12 @@ module Emo_runtime = struct
                  l.Emo_eval.ldesc) (fun st ->
               accept_loop st proc k finished l deadline)
       | exception Unix.Unix_error (err, _, _) ->
-          abort_w finished state proc k (io_error "accept" l.Emo_eval.ldesc err)
+          finish_w finished state proc k
+            (Emo_eval.net_error (io_reason "accept" l.Emo_eval.ldesc err))
 
   (* The setup half of a unix-domain listener: bind and listen, reporting
-     failure as the Emo exception instead of raising across the entry. *)
-  and bind_unix_listener path : (Unix.file_descr, exn) result =
+     failure as the reason string. *)
+  and bind_unix_listener path : (Unix.file_descr, string) result =
     let fd = Unix.socket Unix.PF_UNIX Unix.SOCK_STREAM 0 in
     match Unix.bind fd (Unix.ADDR_UNIX path) with
     | () ->
@@ -3276,26 +3281,20 @@ module Emo_runtime = struct
     | exception Unix.Unix_error (err, _, _) ->
         (try Unix.close fd with Unix.Unix_error _ -> ());
         Error
-          (Emo_eval.net_raise
-             (Printf.sprintf "cannot listen on unix socket %s: %s" path
-                (Unix.error_message err)))
+          (Printf.sprintf "cannot listen on unix socket %s: %s" path
+             (Unix.error_message err))
 
   (* The setup half of a UDP socket: resolve, socket, bind; returns the
      fd and the bound port. *)
-  and bind_udp_socket host port : (Unix.file_descr * int, exn) result =
+  and bind_udp_socket host port : (Unix.file_descr * int, string) result =
     match
       match Unix.getaddrinfo host "0" [ Unix.AI_SOCKTYPE Unix.SOCK_DGRAM ] with
       | entry :: _ -> Ok (entry.Unix.ai_family, entry.Unix.ai_addr)
-      | [] ->
-          Error
-            (Emo_eval.net_raise
-               (Printf.sprintf "cannot resolve host `%s`" host))
+      | [] -> Error (Printf.sprintf "cannot resolve host `%s`" host)
       | exception Unix.Unix_error _ ->
-          Error
-            (Emo_eval.net_raise
-               (Printf.sprintf "cannot resolve host `%s`" host))
+          Error (Printf.sprintf "cannot resolve host `%s`" host)
     with
-    | Error exn -> Error exn
+    | Error reason -> Error reason
     | Ok (family, addr) -> (
         let fd = Unix.socket family Unix.SOCK_DGRAM 0 in
         match Unix.bind fd addr with
@@ -3309,18 +3308,18 @@ module Emo_runtime = struct
         | exception Unix.Unix_error (err, _, _) ->
             (try Unix.close fd with Unix.Unix_error _ -> ());
             Error
-              (Emo_eval.net_raise
-                 (Printf.sprintf "cannot bind udp on %s:%d: %s" host port
-                    (Unix.error_message err))))
+              (Printf.sprintf "cannot bind udp on %s:%d: %s" host port
+                 (Unix.error_message err)))
 
   (* Sends one datagram; a full buffer parks the send on write interest.
      The peer address arrives resolved. *)
-  and udp_send_entry state proc (k : (unit, unit) Effect.Shallow.continuation)
+  and udp_send_entry state proc
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (addr : string) (port : int) (data : string) (u : Emo_eval.udp) :
       Emo_eval.exit_info option =
     if u.Emo_eval.uclosed then
-      Effect.Shallow.discontinue_with k
-        (Emo_eval.net_raise
+      Effect.Shallow.continue_with k
+        (Emo_eval.net_error
            (Printf.sprintf "the udp socket on %s is closed" u.Emo_eval.udesc))
         (handler state proc ())
     else
@@ -3332,27 +3331,43 @@ module Emo_runtime = struct
           Some (Unix.gettimeofday () +. u.Emo_eval.utimeout)
         else None
       in
-      let target = Unix.ADDR_INET (Unix.inet_addr_of_string addr, port) in
-      let rec send_step st =
-        match Unix.sendto fd bytes 0 (Bytes.length bytes) [] target with
-        | _n -> finish_w finished st proc k ()
-        | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
-            park_fd state proc k finished fd `W ~deadline
-              ~timeout_message:
-                (Printf.sprintf "timed out sending on %s" u.Emo_eval.udesc)
-              send_step
-        | exception Unix.Unix_error (err, _, _) ->
-            abort_w finished st proc k (io_error "send" u.Emo_eval.udesc err)
-      in
-      send_step state
+      (* The peer name rides in unresolved; the same lookup the bind
+         used picks its address. *)
+      match resolve_addrs addr with
+      | [] ->
+          Effect.Shallow.continue_with k
+            (Emo_eval.net_error
+               (Printf.sprintf "cannot resolve host `%s`" addr))
+            (handler state proc ())
+      | resolved :: _ -> (
+          let target =
+            Unix.ADDR_INET (Unix.inet_addr_of_string resolved, port)
+          in
+          let rec send_step st =
+            match Unix.sendto fd bytes 0 (Bytes.length bytes) [] target with
+            | _n ->
+                finish_w finished st proc k
+                  (Emo_eval.net_ok (Emo_eval.UdpSocket u))
+            | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
+                park_fd state proc k finished fd `W ~deadline
+                  ~timeout_message:
+                    (Printf.sprintf "timed out sending on %s"
+                       u.Emo_eval.udesc)
+                  send_step
+            | exception Unix.Unix_error (err, _, _) ->
+                finish_w finished st proc k
+                  (Emo_eval.net_error
+                     (io_reason "send" u.Emo_eval.udesc err))
+          in
+          send_step state)
 
   (* Waits for one datagram and returns it as (data, host, port). *)
   and udp_recv_entry state proc
       (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (u : Emo_eval.udp) : Emo_eval.exit_info option =
     if u.Emo_eval.uclosed then
-      Effect.Shallow.discontinue_with k
-        (Emo_eval.net_raise
+      Effect.Shallow.continue_with k
+        (Emo_eval.net_error
            (Printf.sprintf "the udp socket on %s is closed" u.Emo_eval.udesc))
         (handler state proc ())
     else
@@ -3361,23 +3376,26 @@ module Emo_runtime = struct
       match Unix.recvfrom fd buf 0 65536 [] with
       | n, sockaddr -> (
           let data = Bytes.sub_string buf 0 n in
-          match sockaddr with
-          | Unix.ADDR_INET (addr, port) ->
-              Effect.Shallow.continue_with k
-                (Emo_eval.Tuple
-                   [
-                     Emo_eval.String data;
-                     Emo_eval.String (Unix.string_of_inet_addr addr);
-                     Emo_eval.Int64 (Int64.of_int port);
-                   ])
-                (handler state proc ())
-          | Unix.ADDR_UNIX _ ->
-              Effect.Shallow.continue_with k
-                (Emo_eval.Tuple
-                   [
-                     Emo_eval.String data; Emo_eval.String ""; Emo_eval.Int64 0L;
-                   ])
-                (handler state proc ()))
+          let received =
+            match sockaddr with
+            | Unix.ADDR_INET (addr, port) ->
+                Emo_eval.Tuple
+                  [
+                    Emo_eval.String data;
+                    Emo_eval.String (Unix.string_of_inet_addr addr);
+                    Emo_eval.Int64 (Int64.of_int port);
+                  ]
+            | Unix.ADDR_UNIX _ ->
+                Emo_eval.Tuple
+                  [
+                    Emo_eval.String data;
+                    Emo_eval.String "";
+                    Emo_eval.Int64 0L;
+                  ]
+          in
+          Effect.Shallow.continue_with k
+            (Emo_eval.net_ok received)
+            (handler state proc ()))
       | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
           let finished = ref false in
           let deadline =
@@ -3390,8 +3408,8 @@ module Emo_runtime = struct
               (Printf.sprintf "timed out waiting to receive on %s"
                  u.Emo_eval.udesc) (fun st -> udp_recv_entry st proc k u)
       | exception Unix.Unix_error (err, _, _) ->
-          Effect.Shallow.discontinue_with k
-            (io_error "receive" u.Emo_eval.udesc err)
+          Effect.Shallow.continue_with k
+            (Emo_eval.net_error (io_reason "receive" u.Emo_eval.udesc err))
             (handler state proc ())
 
   and read_chunk live buf : read_result =
@@ -3413,56 +3431,63 @@ module Emo_runtime = struct
             RFailed ((Ssl.get_error_string [@alert "-deprecated"]) ())
         | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> RWant `R)
 
-  and read_line_loop state proc (k : (string, unit) Effect.Shallow.continuation)
+  and read_line_loop state proc
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (finished : bool ref) (c : Emo_eval.conn) (live : live)
       (deadline : float option) : Emo_eval.exit_info option =
     match line_in_buffer live with
-    | Some line -> finish_w finished state proc k line
+    | Some line ->
+        finish_w finished state proc k (Emo_eval.net_ok (Emo_eval.String line))
     | None ->
         read_more state proc k finished c live deadline
           ~timeout_what:"reading a line from"
           ~at_eof:(fun st rest ->
             (* A clean close completes with an empty line; a close
                mid-line is a failure, never a silent partial line. *)
-            if rest = "" then finish_w finished st proc k ""
+            if rest = "" then
+              finish_w finished st proc k (Emo_eval.net_ok (Emo_eval.String ""))
             else
-              abort_w finished st proc k
-                (Emo_eval.net_raise
+              finish_w finished st proc k
+                (Emo_eval.net_error
                    (Printf.sprintf "the connection to %s closed mid-line"
                       c.Emo_eval.cdesc)))
           ~again:(fun st -> read_line_loop st proc k finished c live deadline)
 
   and read_exactly_loop state proc
-      (k : (string, unit) Effect.Shallow.continuation) (finished : bool ref)
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+      (finished : bool ref)
       (c : Emo_eval.conn) (live : live) (deadline : float option) (n : int) :
       Emo_eval.exit_info option =
     if Buffer.length live.rbuf >= n then
-      finish_w finished state proc k (buffer_take live n)
+      finish_w finished state proc k
+        (Emo_eval.net_ok (Emo_eval.String (buffer_take live n)))
     else
       read_more state proc k finished c live deadline
         ~timeout_what:"reading from"
         ~at_eof:(fun st rest ->
-          abort_w finished st proc k
-            (Emo_eval.net_raise
+          finish_w finished st proc k
+            (Emo_eval.net_error
                (Printf.sprintf
                   "the connection to %s closed after %d of %d bytes"
                   c.Emo_eval.cdesc (String.length rest) n)))
         ~again:(fun st ->
           read_exactly_loop st proc k finished c live deadline n)
 
-  and read_all_loop state proc (k : (string, unit) Effect.Shallow.continuation)
+  and read_all_loop state proc
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (finished : bool ref) (c : Emo_eval.conn) (live : live)
       (deadline : float option) : Emo_eval.exit_info option =
     read_more state proc k finished c live deadline ~timeout_what:"reading from"
       ~at_eof:(fun st rest ->
         (* read_all delivers everything that arrived, empty included. *)
-        finish_w finished st proc k rest)
+        finish_w finished st proc k (Emo_eval.net_ok (Emo_eval.String rest)))
       ~again:(fun st -> read_all_loop st proc k finished c live deadline)
 
   (* Pulls one chunk into the live buffer and re-runs [again]; the three
      read operations differ only in when their buffer satisfies them, so
      EOF and readiness handling is shared here. *)
-  and read_more state proc (k : (string, unit) Effect.Shallow.continuation)
+  and read_more state proc
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (finished : bool ref) (c : Emo_eval.conn) (live : live)
       (deadline : float option) ~(timeout_what : string)
       ~(at_eof : state -> string -> Emo_eval.exit_info option)
@@ -3483,11 +3508,11 @@ module Emo_runtime = struct
             (Printf.sprintf "timed out %s %s" timeout_what c.Emo_eval.cdesc)
           again
     | RFailed detail ->
-        abort_w finished state proc k
-          (Emo_eval.net_raise
+        finish_w finished state proc k
+          (Emo_eval.net_error
              (Printf.sprintf "cannot read on %s: %s" c.Emo_eval.cdesc detail))
 
-  and write_loop state proc (k : (unit, unit) Effect.Shallow.continuation)
+  and write_loop state proc (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (finished : bool ref) (c : Emo_eval.conn) (live : live)
       (deadline : float option) (bytes : Bytes.t) (off : int) :
       Emo_eval.exit_info option =
@@ -3499,7 +3524,7 @@ module Emo_runtime = struct
           | n -> (n, None)
           | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> (0, Some `W)
           | exception Unix.Unix_error (err, _, _) ->
-              (0, Some (`Failed (io_error "write" c.Emo_eval.cdesc err))))
+              (0, Some (`Failed (io_reason "write" c.Emo_eval.cdesc err))))
       | Some ssl -> (
           match Ssl.write ssl bytes off (len - off) with
           | n -> (n, None)
@@ -3509,10 +3534,8 @@ module Emo_runtime = struct
               ( 0,
                 Some
                   (`Failed
-                     (Emo_eval.net_raise
-                        (Printf.sprintf "cannot write on %s: %s"
-                           c.Emo_eval.cdesc
-                           ((Ssl.get_error_string [@alert "-deprecated"]) ()))))
+                     (Printf.sprintf "cannot write on %s: %s" c.Emo_eval.cdesc
+                        ((Ssl.get_error_string [@alert "-deprecated"]) ())))
               ))
     in
     let off = off + sent in
@@ -3523,10 +3546,12 @@ module Emo_runtime = struct
           write_loop st proc k finished c live deadline bytes off)
     in
     match want with
-    | Some (`Failed exn) -> abort_w finished state proc k exn
+    | Some (`Failed reason) ->
+        finish_w finished state proc k (Emo_eval.net_error reason)
     | Some `R -> park `R
     | Some `W -> park `W
-    | None when off >= len -> finish_w finished state proc k ()
+    | None when off >= len ->
+        finish_w finished state proc k (Emo_eval.net_ok (Emo_eval.TcpConn c))
     | None -> park `W
 
   (* Fires due timers, then polls fd readiness once and wakes the parked

@@ -601,38 +601,52 @@ let empty_env =
             vtype =
               FuncType
                 ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
-                  TcpConn );
+                  TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_listen",
           {
-            vtype = FuncType ([ ("host", String); ("port", Int64) ], TcpListener);
+            vtype =
+              FuncType
+                ( [ ("host", String); ("port", Int64) ],
+                  TupleType [ EnumType "R"; TcpListener ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_resolve",
           {
-            vtype = FuncType ([ ("host", String) ], ArrayType String);
+            vtype =
+              FuncType
+                ( [ ("host", String) ],
+                  TupleType [ EnumType "R"; ArrayType String ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_udp_bind",
           {
-            vtype = FuncType ([ ("host", String); ("port", Int64) ], UdpSocket);
+            vtype =
+              FuncType
+                ( [ ("host", String); ("port", Int64) ],
+                  TupleType [ EnumType "R"; UdpSocket ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_connect_unix",
           {
             vtype =
-              FuncType ([ ("path", String); ("timeout", Float64) ], TcpConn);
+              FuncType
+                ( [ ("path", String); ("timeout", Float64) ],
+                  TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
           } );
         ( "net_listen_unix",
           {
-            vtype = FuncType ([ ("path", String) ], TcpListener);
+            vtype =
+              FuncType
+                ( [ ("path", String) ],
+                  TupleType [ EnumType "R"; TcpListener ] );
             is_var = false;
             depth = 0;
           } );
@@ -641,7 +655,7 @@ let empty_env =
             vtype =
               FuncType
                 ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
-                  TcpConn );
+                  TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
           } );
@@ -650,7 +664,7 @@ let empty_env =
             vtype =
               FuncType
                 ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
-                  TcpConn );
+                  TupleType [ EnumType "R"; TcpConn ] );
             is_var = false;
             depth = 0;
           } );
@@ -664,7 +678,7 @@ let empty_env =
                     ("cert_path", String);
                     ("key_path", String);
                   ],
-                  TcpListener );
+                  TupleType [ EnumType "R"; TcpListener ] );
             is_var = false;
             depth = 0;
           } );
@@ -1808,34 +1822,36 @@ and check_method_call ctx env span recv mname args : t =
                 Unknown)
         | None -> Unknown)
     | v, "to_string" -> builtin0 String
-    | TcpConn, "read_line" -> builtin0 String
+    | TcpConn, "read_line" -> builtin0 (TupleType [ EnumType "R"; String ])
     | TcpConn, "read_exactly" -> (
         match arg_values with
-        | [ (None, Int64) ] | [ (Some "n", Int64) ] -> String
+        | [ (None, Int64) ] | [ (Some "n", Int64) ] ->
+            TupleType [ EnumType "R"; String ]
         | [ (_, other) ] ->
             report ctx span "E4004"
               (Printf.sprintf "`read_exactly` expects Int64, got %s"
                  (to_string other));
-            String
+            TupleType [ EnumType "R"; String ]
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`read_exactly` expects 1 argument, got %d"
                  (List.length arg_values));
-            String)
-    | TcpConn, "read_all" -> builtin0 String
+            TupleType [ EnumType "R"; String ])
+    | TcpConn, "read_all" -> builtin0 (TupleType [ EnumType "R"; String ])
     | TcpConn, "write" -> (
         match arg_values with
-        | [ (None, String) ] | [ (Some "data", String) ] -> TcpConn
+        | [ (None, String) ] | [ (Some "data", String) ] ->
+            TupleType [ EnumType "R"; TcpConn ]
         | [ (_, other) ] ->
             report ctx span "E4004"
               (Printf.sprintf "`write` expects String, got %s" (to_string other));
-            TcpConn
+            TupleType [ EnumType "R"; TcpConn ]
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`write` expects 1 argument, got %d"
                  (List.length arg_values));
-            TcpConn)
-    | TcpConn, "close" -> builtin0 TcpConn
+            TupleType [ EnumType "R"; TcpConn ])
+    | TcpConn, "close" -> builtin0 (TupleType [ EnumType "R"; TcpConn ])
     | TcpConn, "set_timeout" -> (
         match arg_values with
         | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpConn
@@ -1849,9 +1865,9 @@ and check_method_call ctx env span recv mname args : t =
               (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
                  (List.length arg_values));
             TcpConn)
-    | TcpListener, "accept" -> builtin0 TcpConn
+    | TcpListener, "accept" -> builtin0 (TupleType [ EnumType "R"; TcpConn ])
     | TcpListener, "port" -> builtin0 Int64
-    | TcpListener, "close" -> builtin0 TcpListener
+    | TcpListener, "close" -> builtin0 (TupleType [ EnumType "R"; TcpListener ])
     | TcpListener, "set_timeout" -> (
         match arg_values with
         | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpListener
@@ -1867,19 +1883,22 @@ and check_method_call ctx env span recv mname args : t =
             TcpListener)
     | UdpSocket, "send_to" -> (
         match arg_values with
-        | [ (None, String); (None, Int64); (None, String) ] -> UdpSocket
+        | [ (None, String); (None, Int64); (None, String) ] ->
+            TupleType [ EnumType "R"; UdpSocket ]
         | [ _; _; _ ] ->
             report ctx span "E4004"
               "`send_to` expects (host String, port Int64, data String)";
-            UdpSocket
+            TupleType [ EnumType "R"; UdpSocket ]
         | _ ->
             report ctx span "E4009"
               (Printf.sprintf "`send_to` expects 3 arguments, got %d"
                  (List.length arg_values));
-            UdpSocket)
-    | UdpSocket, "recv_from" -> builtin0 (TupleType [ String; String; Int64 ])
+            TupleType [ EnumType "R"; UdpSocket ])
+    | UdpSocket, "recv_from" ->
+        builtin0
+          (TupleType [ EnumType "R"; TupleType [ String; String; Int64 ] ])
     | UdpSocket, "port" -> builtin0 Int64
-    | UdpSocket, "close" -> builtin0 UdpSocket
+    | UdpSocket, "close" -> builtin0 (TupleType [ EnumType "R"; UdpSocket ])
     | UdpSocket, "set_timeout" -> (
         match arg_values with
         | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> UdpSocket
