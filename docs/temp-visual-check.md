@@ -66,22 +66,20 @@ carries infinities; the enum can grow a member if a real need appears.
 
 ## 2. Known broken, pre-existing (not from this work)
 
-### P1 — the `runtime/wasm` test rules are red on `develop`
+### P1 — the `runtime/wasm` test rules are red on `develop` — resolved
 
-`dune test` fails the `runtime/wasm` rules with 17 occurrences of:
+`dune test` failed the `runtime/wasm` rules with 17 occurrences of
+`error[E5004]: module internal has no member instance` / `... model`.
+The rules' `deps` enumerated individual `internal/*.emo` files, so the
+dune sandbox held an incomplete module tree — and since `emo run`
+checks the whole directory tree, a reference to an unlisted module
+failed.
 
-```console
-error[E5004]: module `internal` has no member `instance`
-error[E5004]: module `internal` has no member `model`
-```
-
-The rules' `deps` (in `runtime/wasm/dune`) list only the `internal/*.emo`
-files a fixture happens to reach, so the dune sandbox's module tree is
-incomplete and the checker cannot resolve `internal.instance` /
-`internal.model`. Reduced to the committed tree with all of this work
-stashed, the same 17 errors appear, so it predates the plot branch; the
-fix is to list the whole `internal/` subtree (or depend on the
-directory) in those rules.
+**Resolved (2026-10-12).** Each rule now depends on `(source_tree .)` —
+the entire `runtime/wasm` directory — so the sandbox tree matches the
+real directory. An intermediate `(source_tree internal)` was too narrow:
+it pulled in `internal/runlist.emo`, which references the top-level
+`wasm` module that those rules did not list. `dune test` is green.
 
 ### P2 — `bufio.BytesSink` accumulates quadratically — resolved
 
@@ -125,7 +123,8 @@ Commits on `feat/plot`, oldest first:
       regression.
 - [x] **B2** — a presence enum (`enum Presence { present, absent }`)
       plus a parallel array; recorded in `docs/visualization.md`.
-- [ ] **P1** — fix the `runtime/wasm` rule `deps` so `dune test` is green?
+- [x] **P1** — the `runtime/wasm` rules depend on `(source_tree .)`;
+      `dune test` is green.
 - [x] **P2** — `bufio.BytesSink` is chunked (linear), non-draining, and
       the docs/demo updated.
 - [ ] Then: the plot T0 skeleton (the design note's sequencing step B).

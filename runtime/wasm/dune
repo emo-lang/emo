@@ -11,16 +11,7 @@
   main.emo
   wasm.emo
   cli.emo
-  internal/instance.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   testdata/cases.smoke.txt
   package.emo)
  (action
@@ -41,16 +32,7 @@
   leb-fixture.emo
   wasm.emo
   cli.emo
-  internal/instance.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -70,16 +52,7 @@
   type-fixture.emo
   wasm.emo
   cli.emo
-  internal/instance.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -99,16 +72,7 @@
   spec.emo
   wasm.emo
   cli.emo
-  internal/instance.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   testdata/cases.all.txt
   package.emo)
  (action
@@ -133,17 +97,7 @@
   runs-smoke.emo
   wasm.emo
   cli.emo
-  internal/runlist.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/instance.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   testdata/runs.smoke.txt
   package.emo)
  (action
@@ -164,17 +118,7 @@
   runs.emo
   wasm.emo
   cli.emo
-  internal/runlist.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/instance.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   testdata/runs.all.txt
   package.emo)
  (action
@@ -203,16 +147,7 @@
   instance-fixture.emo
   wasm.emo
   cli.emo
-  internal/instance.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -232,7 +167,7 @@
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
   value-fixture.emo
-  internal/value.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -252,7 +187,7 @@
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
   int-fixture.emo
-  internal/ints.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -272,7 +207,7 @@
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
   float-fixture.emo
-  internal/floats.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -292,7 +227,7 @@
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
   float-convert-fixture.emo
-  internal/floats.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -312,8 +247,7 @@
  (deps
   (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
   store-fixture.emo
-  internal/store.emo
-  internal/value.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -335,16 +269,7 @@
   fac-fixture.emo
   wasm.emo
   cli.emo
-  internal/instance.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -366,16 +291,7 @@
   link-fixture.emo
   wasm.emo
   cli.emo
-  internal/instance.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
@@ -397,16 +313,7 @@
   host-fixture.emo
   wasm.emo
   cli.emo
-  internal/instance.emo
-  internal/corpus.emo
-  internal/error.emo
-  internal/reader.emo
-  internal/decode.emo
-  internal/model.emo
-  internal/store.emo
-  internal/value.emo
-  internal/ints.emo
-  internal/floats.emo
+  (source_tree .)
   package.emo)
  (action
   (with-stdout-to
