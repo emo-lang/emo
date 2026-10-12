@@ -628,6 +628,71 @@ def scale(n Int64) Int64 {
   return 9
 }
 |};
+  (* A declared transitive dependency: `trans_tools` requires `leaf_tools`,
+     and an app may declare only `trans_tools`. *)
+  let leaf_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "leaf_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat leaf_dir "package.emo")
+    {|package {
+  name = "acme/leaf_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat leaf_dir "leaf_tools.emo")
+    {|def leaf() Int64 {
+  return 7
+}
+|};
+  let trans_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "trans_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat trans_dir "package.emo")
+    {|package {
+  name = "acme/trans_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/leaf_tools = "1.0.0"
+  }
+}
+|};
+  write_file
+    (Filename.concat trans_dir "trans_tools.emo")
+    {|require "acme/leaf_tools"
+
+def span() Int64 {
+  return leaf_tools.leaf()
+}
+|};
+  (* A package that reaches a dependency it never declared. *)
+  let rogue_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "rogue_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat rogue_dir "package.emo")
+    {|package {
+  name = "acme/rogue_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat rogue_dir "rogue_tools.emo")
+    {|def rogue() Int64 {
+  return leaf_tools.leaf()
+}
+|};
   dir
 
 let app_manifest =
@@ -1192,6 +1257,92 @@ println(helper.twice(21))
                   ->
                     Alcotest.(check string) "call target" "shadow__q__qq" func
                 | _ -> Alcotest.fail "unexpected shadow__pick body")));
+    tc "a declared transitive dependency resolves and its require pairs with its own package"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/trans_tools = "1.0.0"
+  }
+}
+|}              );
+              ( "main.emo",
+                {|require "acme/trans_tools"
+println(trans_tools.span())
+|} );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            Alcotest.(check string) "transitive dep resolves" "7\n" output));
+    tc "the project cannot reference a transitive dependency it did not declare"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/trans_tools = "1.0.0"
+  }
+}
+|}              );
+              ("main.emo", {|println(leaf_tools.leaf())|});
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected E5008"
+            | exception Emo_project.Static_errors ds ->
+                if not (has_code ds "E5008") then
+                  Alcotest.fail ("codes: " ^ codes_dump ds)));
+    tc "a package cannot reference a dependency it did not declare"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/rogue_tools = "1.0.0"
+    acme/leaf_tools = "1.0.0"
+  }
+}
+|}              );
+              ( "main.emo",
+                {|require "acme/rogue_tools"
+println(rogue_tools.rogue())
+|} );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected E5008"
+            | exception Emo_project.Static_errors ds ->
+                if not (has_code ds "E5008") then
+                  Alcotest.fail ("codes: " ^ codes_dump ds)));
   ]
 
 let sched_tests =

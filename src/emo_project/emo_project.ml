@@ -26,6 +26,13 @@ type project = {
          its full prefixed path from outside, and relative to the prefix
          from inside (a package's own references are written against its
          root, per the README's module tree) *)
+  mutable package_deps : (string list * string list) list;
+      (* a package prefix → the scoped names it declares in its manifest
+         (the root project's deps use the prefix []): a module may
+         reference only its own package's subtree and its own declared
+         deps, and a `require` is paired against the owning package's
+         manifest, so a package cannot reach a sibling or transitive
+         dependency it never declared *)
   diagnostics : Emo_support.Diagnostic.t list ref;
   cache : (string, string * Ast.item list) Hashtbl.t;
       (* file → (content hash, parsed items): unchanged modules skip
@@ -138,6 +145,7 @@ let discover ~entry_file : project =
       files = Hashtbl.create 8;
       dirs = Hashtbl.create 8;
       packages = [];
+      package_deps = [];
       diagnostics = ref [];
       cache = Hashtbl.create 8;
       parses = 0;
@@ -445,7 +453,7 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
       (fun (errors, entries) (path, items) ->
         let diagnostics, refs, requires =
           Emo_check.check_module ~modules:module_paths ~packages:p.packages
-            ~current:path ~program
+            ~package_deps:p.package_deps ~current:path ~program
             items
         in
         Hashtbl.replace graph path refs;
@@ -501,27 +509,35 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
                 hint = Some "create a package.emo manifest with a deps block";
               };
             ]
-        | Some m, _ ->
+        | Some _, _ ->
+            (* The require is paired against the requiring module's own
+               package manifest, not the project's: a package's internal
+               `require` answers to that package's deps block. *)
+            let pkg = package_of p path in
+            let declared =
+              match List.assoc_opt pkg p.package_deps with
+              | Some ds -> ds
+              | None -> []
+            in
             List.filter_map
-              (fun (pkg, span) ->
-                match List.assoc_opt pkg m.Emo_pkg.deps with
-                | Some _ -> None
-                | None ->
-                    Some
-                      {
-                        Emo_support.Diagnostic.severity = Error;
-                        code = Some "E5006";
-                        message =
-                          Printf.sprintf
-                            "module `%s` requires `%s`, but the manifest \
-                             (package.emo) does not list it in deps"
-                            (String.concat "." path) pkg;
-                        span;
-                        hint =
-                          Some
-                            "add the package to the manifest's deps block, or \
-                             remove the require";
-                      })
+              (fun (dep, span) ->
+                if List.mem dep declared then None
+                else
+                  Some
+                    {
+                      Emo_support.Diagnostic.severity = Error;
+                      code = Some "E5006";
+                      message =
+                        Printf.sprintf
+                          "module `%s` requires `%s`, but its package's \
+                           manifest (package.emo) does not list it in deps"
+                          (String.concat "." path) dep;
+                      span;
+                      hint =
+                        Some
+                          "add the package to the manifest's deps block, or \
+                           remove the require";
+                    })
               requires
         | None, [] -> [])
       (Hashtbl.fold (fun k v acc -> (k, v) :: acc) requires_table [])
@@ -629,7 +645,7 @@ let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
   else
     let reg = registry () in
     let index =
-      Emo_pkg.Registry.index reg (List.map fst manifest.Emo_pkg.deps)
+      Emo_pkg.Registry.index_closure reg (List.map fst manifest.Emo_pkg.deps)
     in
     match Emo_pkg.Resolve.solve ~target ~roots:manifest.Emo_pkg.deps ~index with
     | Error errors ->
@@ -734,7 +750,11 @@ let register_package (p : project) (short : string) (dir : string) : unit =
 let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) (p : project) : unit =
   if manifest.Emo_pkg.deps = [] then ()
-  else
+  else begin
+    (* The root project's own declared deps, for the visibility rule and
+       the require/manifest pairing. *)
+    p.package_deps <-
+      ([], List.map fst manifest.Emo_pkg.deps) :: p.package_deps;
     let entries = resolution_for_run ~manifest ~manifest_dir ~target in
     let reg = registry () in
     List.iter
@@ -763,10 +783,12 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
                        (Printf.sprintf
                           "package %s does not declare the `%s` target"
                           entry.Emo_pkg.Lockfile.dep target));
-                register_package p
-                  (Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep)
-                  dir))
+                let short = Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep in
+                register_package p short dir;
+                p.package_deps <-
+                  ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps))
       entries
+  end
 
 let entry_path (entry_file : string) : string =
   if Filename.is_relative entry_file then
@@ -863,7 +885,8 @@ let compile_inputs ~entry_file ~target :
       (fun acc (path, items) ->
         let diags, _refs, _requires, types =
           Emo_check.check_module_typed ~modules:module_paths
-            ~packages:p.packages ~current:path ~program ~target items
+            ~packages:p.packages ~package_deps:p.package_deps ~current:path
+            ~program ~target items
         in
         diagnostics := !diagnostics @ diags;
         { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc)
@@ -904,7 +927,7 @@ let check_entry ~entry_file : Emo_support.Diagnostic.t list =
     | None ->
         let diags, _refs, _requires =
           Emo_check.check_module ~modules:module_paths ~packages:p.packages
-            ~current:[] ~program
+            ~package_deps:p.package_deps ~current:[] ~program
             items
         in
         diags
@@ -945,7 +968,8 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
        | None ->
            let diags, _refs, _requires =
              Emo_check.check_module ~modules:module_paths
-               ~packages:p.packages ~current:[] ~program items
+               ~packages:p.packages ~package_deps:p.package_deps ~current:[]
+               ~program items
            in
            diags
      in

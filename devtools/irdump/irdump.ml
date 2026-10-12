@@ -189,10 +189,10 @@ and dump_s indent s =
   | Break -> indent @@@ "Break"
   | Continue -> indent @@@ "Continue"
 
-let inputs, entry, _ =
+let inputs, entry, packages, _ =
   Emo_project.compile_inputs ~entry_file:"main.emo" ~target:"native"
 
-let p = Emo_ir.lower { Emo_ir.modules = inputs; entry }
+let p = Emo_ir.lower { Emo_ir.modules = inputs; entry; packages }
 
 let () =
   List.iter

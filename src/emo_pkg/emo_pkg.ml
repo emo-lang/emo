@@ -663,6 +663,28 @@ module Registry = struct
             (versions t ~name) ))
       names
 
+  (* Like [index], but walks each indexed package's own `deps` so a
+     transitive dependency is present in the index. The solver walks the
+     closure from the index, so indexing only the given names leaves a
+     package's own deps unknown to it. *)
+  let index_closure (t : t) (names : string list) : Resolve.index =
+    let rec go seen acc pending =
+      let fresh = List.filter (fun n -> not (List.mem n seen)) pending in
+      if fresh = [] then acc
+      else
+        let entries = index t fresh in
+        let deps =
+          List.concat_map
+            (fun (_, pvs) ->
+              List.concat_map
+                (fun pv -> List.map fst pv.Resolve.pv_deps)
+                pvs)
+            entries
+        in
+        go (fresh @ seen) (acc @ entries) deps
+    in
+    go [] [] names
+
   (* The global cache: shared across projects, content-addressed — the
      directory name embeds the checksum, so equal content is stored once. *)
   (* A durable user cache — the OS wipes the temp directory, and a

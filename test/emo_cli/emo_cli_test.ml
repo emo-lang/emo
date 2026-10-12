@@ -2146,6 +2146,7 @@ do work()|};
                     Emo_ir.modules =
                       [ { Emo_ir.mpath = []; mitems = items; mtypes = types } ];
                     entry = [];
+                    packages = [];
                   }
               in
               match
