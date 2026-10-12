@@ -14,7 +14,7 @@ incrementally shippable steps — one file per step, executed in order.
   packages with MVS resolution.
 - **M3 — Concurrency & networking (steps 11–12):** processes and message
   passing on an effects-based scheduler, plus the direct-style networking API.
-- **M4 — Compilation targets (steps 13–14):** native code generation, then
+- **M4 — Compilation targets (steps 13–16):** native code generation, then
   wasm / TypeScript / BEAM / riscv64.
 - **M13 — The standard library (steps 32–39):** the bundled stdlib
   packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the
