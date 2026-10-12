@@ -390,47 +390,134 @@ let lex ~file ~source =
         | '/' -> single (Token.Op Token.Slash)
         | '%' -> single (Token.Op Token.Percent)
         | dc when is_digit dc -> (
-            let rec digits () =
-              if (not (eof ())) && is_digit (cur ()) then (
-                bump ();
-                digits ())
+            let sl = l and sc = c and so = o in
+            let fail message = error "E1006" (span_from sl sc so) message in
+            (* A `_` is a digit separator: it may appear only between two
+               digits of the run — never leading, trailing, or doubled. *)
+            let scan_run pred =
+              let any = ref false in
+              let rec go () =
+                if (not (eof ())) && pred (cur ()) then (
+                  any := true;
+                  bump ();
+                  go ())
+                else if (not (eof ())) && cur () = '_' then (
+                  if not !any then
+                    error "E1006" (here ())
+                      "a `_` must sit between two digits";
+                  match char_at 1 with
+                  | Some n when pred n ->
+                      bump ();
+                      bump ();
+                      go ()
+                  | _ ->
+                      error "E1006" (here ())
+                        "a `_` must sit between two digits")
+              in
+              go ();
+              !any
             in
-            digits ();
-            match char_at 0 with
-            | Some '.'
-              when match char_at 1 with Some d -> is_digit d | None -> false ->
-                bump ();
-                digits ();
-                emit
-                  (Token.Float
-                     (float_of_string (String.sub source o (!offset - o))))
-                  l c o
-            | _ -> (
-                if (not (eof ())) && cur () = '_' then
-                  error "E1006" (here ())
-                    "a number cannot be directly followed by `_`"
-                    ~hint:"digit separators are not supported";
-                match char_at 0 with
-                | Some 'L' ->
-                    error "E1006" (span_from l c o)
-                      "Int64 literals need no suffix"
-                      ~hint:"write the digits bare; the default is Int64"
-                | Some 'B' -> (
-                    let digits = String.sub source o (!offset - o) in
+            let hex_digit ch =
+              is_digit ch || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
+            in
+            (* The radix prefixes: 0x/0X hex, 0b binary, 0o/0O octal. The
+               binary prefix is lowercase so `0B` stays the Byte literal
+               zero. *)
+            let radix =
+              if dc <> '0' then `Dec
+              else
+                match char_at 1 with
+                | Some ('x' | 'X') -> `Hex
+                | Some 'b' -> `Bin
+                | Some ('o' | 'O') -> `Oct
+                | _ -> `Dec
+            in
+            let result =
+              match radix with
+              | `Hex ->
+                  bump ();
+                  bump ();
+                  if not (scan_run hex_digit) then
+                    fail "a hexadecimal literal needs at least one digit";
+                  `Int
+              | `Bin ->
+                  bump ();
+                  bump ();
+                  if not (scan_run (fun ch -> ch = '0' || ch = '1')) then
+                    fail "a binary literal needs at least one digit";
+                  `Int
+              | `Oct ->
+                  bump ();
+                  bump ();
+                  if not (scan_run (fun ch -> ch >= '0' && ch <= '7')) then
+                    fail "an octal literal needs at least one digit";
+                  `Int
+              | `Dec ->
+                  ignore (scan_run is_digit);
+                  let has_dot =
+                    match char_at 0 with
+                    | Some '.'
+                      when (match char_at 1 with
+                           | Some d -> is_digit d
+                           | None -> false) ->
+                        bump ();
+                        ignore (scan_run is_digit);
+                        true
+                    | _ -> false
+                  in
+                  (* An exponent only when a digit follows (after an
+                     optional sign), so `1else` stays `1` then `else`. *)
+                  let exp_ahead =
+                    match char_at 0 with
+                    | Some ('e' | 'E') -> (
+                        match char_at 1 with
+                        | Some ('+' | '-') -> (
+                            match char_at 2 with
+                            | Some d -> is_digit d
+                            | None -> false)
+                        | Some d -> is_digit d
+                        | None -> false)
+                    | _ -> false
+                  in
+                  let has_exp =
+                    if exp_ahead then (
+                      bump ();
+                      (match char_at 0 with
+                      | Some ('+' | '-') -> bump ()
+                      | _ -> ());
+                      ignore (scan_run is_digit);
+                      true)
+                    else false
+                  in
+                  if
+                    (not has_dot) && (not has_exp)
+                    && (not (eof ())) && cur () = 'B'
+                  then (
+                    let digits = String.sub source so (!offset - so) in
                     match int_of_string_opt digits with
                     | Some n when n >= 0 && n <= 255 ->
                         bump ();
-                        emit (Token.Byte n) l c o
+                        `Byte n
                     | _ ->
-                        error "E1006" (span_from l c o)
+                        error "E1006" (span_from sl sc so)
                           "byte literal out of range (0-255)")
-                | _ -> (
-                    let digits = String.sub source o (!offset - o) in
-                    match Int64.of_string_opt digits with
-                    | Some n -> emit (Token.Int64 n) l c o
-                    | None ->
-                        error "E1006" (span_from l c o)
-                          "integer literal out of range for Int64")))
+                  else if has_dot || has_exp then `Float
+                  else `Int
+            in
+            let text = String.sub source so (!offset - so) in
+            match result with
+            | `Byte n -> emit (Token.Byte n) sl sc so
+            | `Float -> emit (Token.Float (float_of_string text)) sl sc so
+            | `Int -> (
+                if (not (eof ())) && cur () = 'L' then
+                  error "E1006" (span_from sl sc so)
+                    "Int64 literals need no suffix"
+                    ~hint:"write the digits bare; the default is Int64";
+                match Int64.of_string_opt text with
+                | Some n -> emit (Token.Int64 n) sl sc so
+                | None ->
+                    error "E1006" (span_from sl sc so)
+                      "integer literal out of range for Int64"))
         | '\'' ->
             let qline, qcol, qoff = (l, c, o) in
             let quoted_span =
