@@ -33,6 +33,21 @@ case base64.decode("Zm9vYmFy") {
   (R.ok, text)   -> { println(text) }
 }
 
+// The decoder's rejections are values too: a stray character, a short
+// final quantum, padding bits that would carry data.
+case base64.decode("Zg=!") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case base64.decode("Zm9vYg") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case base64.decode("Zh==") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+
 // Bytes are the payload: multi-byte UTF-8 round-trips untouched.
 const text = "emo — plain text,中文 mixed"
 println(base64.encode(text))

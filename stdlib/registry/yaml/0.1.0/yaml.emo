@@ -1118,7 +1118,7 @@ def parse_flow(data Bytes, pos Int64, depth Int64) (R, (Yaml, Int64)) {
 }
 
 def flow_skip(data Bytes, i Int64) Int64 {
-  if data.get(i) == 32 || data.get(i) == 9 {
+  if i < data.length() && (data.get(i) == 32 || data.get(i) == 9) {
     return flow_skip(data, i + 1)
   }
   return i
@@ -1126,6 +1126,9 @@ def flow_skip(data Bytes, i Int64) Int64 {
 
 def flow_sequence(data Bytes, i Int64, depth Int64, items Array[Yaml]) (R, (Yaml, Int64)) {
   const p = flow_skip(data, i)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated flow sequence"))
+  }
   if data.get(p) == 93 {
     return (R.ok, (YamlArray.new(items: items), p + 1))
   }
@@ -1133,6 +1136,9 @@ def flow_sequence(data Bytes, i Int64, depth Int64, items Array[Yaml]) (R, (Yaml
     (R.error, why) -> { return (R.error, why) }
     (R.ok, r)       -> {
       const q = flow_skip(data, r[1])
+      if q >= data.length() {
+        return (R.error, err(q, "expected `,` or `]` in a flow sequence"))
+      }
       if data.get(q) == 44 {
         return flow_sequence(data, q + 1, depth, items.append(r[0]))
       }
@@ -1146,6 +1152,9 @@ def flow_sequence(data Bytes, i Int64, depth Int64, items Array[Yaml]) (R, (Yaml
 
 def flow_mapping(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]) (R, (Yaml, Int64)) {
   const p = flow_skip(data, i)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated flow mapping"))
+  }
   if data.get(p) == 125 {
     return (R.ok, (YamlObject.new(entries: entries), p + 1))
   }
@@ -1153,6 +1162,9 @@ def flow_mapping(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]
     (R.error, why) -> { return (R.error, why) }
     (R.ok, kr)      -> {
       const colon = flow_skip(data, kr[1])
+      if colon >= data.length() {
+        return (R.error, err(colon, "expected `:` in a flow mapping"))
+      }
       if data.get(colon) == 44 || data.get(colon) == 125 {
         const pair = (kr[0].as_string(), YamlNull.new())
         return flow_mapping_more(data, colon, depth, entries.append(pair))
@@ -1173,6 +1185,9 @@ def flow_mapping(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]
 
 def flow_mapping_more(data Bytes, i Int64, depth Int64, entries Array[(String, Yaml)]) (R, (Yaml, Int64)) {
   const q = flow_skip(data, i)
+  if q >= data.length() {
+    return (R.error, err(q, "expected `,` or `}` in a flow mapping"))
+  }
   if data.get(q) == 44 {
     return flow_mapping(data, q + 1, depth, entries)
   }
@@ -1187,6 +1202,9 @@ def flow_node(data Bytes, i Int64, depth Int64) (R, (Yaml, Int64)) {
     return (R.error, err(i, "nesting deeper than 512"))
   }
   const p = flow_skip(data, i)
+  if p >= data.length() {
+    return (R.error, err(p, "unterminated flow collection"))
+  }
   const c = data.get(p)
   if c == 91 || c == 123 {
     return parse_flow(data, p, depth)
@@ -1218,11 +1236,14 @@ def flow_scalar(data Bytes, i Int64) (R, (Yaml, Int64)) {
 }
 
 def flow_plain_end(data Bytes, i Int64, last Int64) Int64 {
+  if i >= data.length() {
+    return last
+  }
   const c = data.get(i)
   if c == 44 || c == 93 || c == 125 {
     return last
   }
-  if c == 58 {
+  if c == 58 && i + 1 < data.length() {
     const after = data.get(i + 1)
     if after == 32 || after == 44 || after == 93 || after == 125 {
       return last

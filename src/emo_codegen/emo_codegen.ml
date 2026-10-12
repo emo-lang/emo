@@ -478,6 +478,14 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Cond { c; t; e = else_ } ->
       Printf.sprintf "(if %s then (%s) else (%s))" (unbox env c "Bool")
         (emit_expr env t) (emit_expr env else_)
+  | Emo_ir.Binary (((Ast.And | Ast.Or) as op), l, r) ->
+      (* `&&`/`||` short-circuit: the right operand rides a thunk, so a
+         false guard never evaluates it — matching the interpreter and
+         every other target (a plain `and_` call would evaluate both
+         arguments first). *)
+      let fn = if op = Ast.And then "and_l" else "or_l" in
+      Printf.sprintf "(Emo_runtime.%s (%s) (fun () -> (%s)))" fn
+        (emit_expr env l) (emit_expr env r)
   | Emo_ir.Binary (op, l, r) ->
       let lname = emit_expr env l in
       let rname = emit_expr env r in
@@ -518,8 +526,9 @@ and emit_expr env (e : Emo_ir.expr) : string =
           | Ast.Bit_xor -> "bit_xor"
           | Ast.Shl -> "shl"
           | Ast.Shr -> "shr"
-          | Ast.And -> "and_"
-          | Ast.Or -> "or_"
+          (* `&&`/`||` never reach this arm: the short-circuit arm
+             above emits them. *)
+          | Ast.And | Ast.Or -> failwith "unreachable: `&&`/`||` short-circuit"
         in
         Printf.sprintf "(Emo_runtime.%s (%s) (%s))" fn lname rname
   | Emo_ir.Index (b, i) ->

@@ -1169,7 +1169,7 @@ golden green on its declared targets; `dune test` green.
       (`xml`/`base64` decode failures and the whole `net` surface
       return tuples; `bufio`/`slog`/`sync` keep their raises — every
       one is a caller mistake.)
-- [ ] **T37.4** — Goldens: every touched package's error-path
+- [x] **T37.4** — Goldens: every touched package's error-path
       fixtures re-recorded to match `(R.error, why)`; package goldens
       green on all declared targets.
 - [ ] **T37.5** — Docs: the per-package pages under `docs/stdlib/`

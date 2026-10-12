@@ -10,3 +10,5 @@ true
 7
 true
 true
+os: open os-demo-missing.tmp: No such file or directory
+os: opendir os-demo-missing.d: No such file or directory

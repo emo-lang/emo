@@ -23,3 +23,7 @@ e2: []
 - a.example
 - b.example
 8443
+yaml: multi-document YAML is not supported yet at byte 5
+yaml: empty document at byte 0
+yaml: bad indentation in a mapping at byte 21
+yaml: expected `,` or `]` in a flow sequence at byte 5

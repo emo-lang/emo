@@ -30,3 +30,7 @@
 7
 [0,-0.5,5.0e-324,1.7976931348623157e+308]
 {"deep":[true,null,{"x":1}]}
+json: unexpected byte 125 at byte 5
+json: unterminated array at byte 5
+json: trailing data at byte 9
+json: nesting deeper than 512 at byte 513

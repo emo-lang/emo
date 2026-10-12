@@ -178,7 +178,10 @@ let () =
   p (Emo_runtime.gt (Emo_eval.Byte 3) (Emo_eval.Byte 2));
   p (Emo_runtime.ge (Emo_eval.Int64 5L) (Emo_eval.Int64 5L));
   p (Emo_runtime.not_ (Emo_eval.Bool false));
-  p (Emo_runtime.and_ (Emo_eval.Bool true) (Emo_eval.Bool false))
+  (* the short-circuit pair: the thunk form, and a false left operand
+     whose right side must never run *)
+  p (Emo_runtime.and_l (Emo_eval.Bool true) (fun () -> Emo_eval.Bool false));
+  p (Emo_runtime.and_l (Emo_eval.Bool false) (fun () -> failwith "unreached"))
 |}
 
 let arithmetic_out =
@@ -204,6 +207,7 @@ let arithmetic_out =
    true\n\
    true\n\
    true\n\
+   false\n\
    false\n"
 
 let strings_main =

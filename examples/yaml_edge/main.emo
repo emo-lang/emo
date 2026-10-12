@@ -58,3 +58,21 @@ if back.is(YamlObject) {
     println(srv.get("port").as_int().to_string())
   }
 }
+
+// ---- malformed input: the failure comes back as a value ----
+case yaml.decode("a: 1\n---\nb: 2\n") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case yaml.decode("") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case yaml.decode("top:\n    nested: 1\n  sibling: 2\n") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case yaml.decode("[1, 2") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}

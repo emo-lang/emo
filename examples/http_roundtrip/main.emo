@@ -18,3 +18,10 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
     println(resp.status)
   }
 }
+
+// A request that can never leave: the host does not resolve, and the
+// failure comes back as a value.
+case http.get("http://256.256.256.256:1/hello") {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> { println("unexpected ok") }
+}

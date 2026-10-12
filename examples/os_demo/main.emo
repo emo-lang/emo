@@ -59,3 +59,16 @@ println(os.wait_exit_code(w[1]).to_string())
 // ---- process identity ----
 println(os.getpid() != os.getppid())
 println(os.getcwd().length() > 0)
+
+// ---- the misses answer as values ----
+case os.open_read("os-demo-missing.tmp") {
+  (R.error, why) -> { println(why) }
+  (R.ok, fd)     -> {
+    os.close(fd)
+    println("unexpected ok")
+  }
+}
+case os.list_dir("os-demo-missing.d") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}

@@ -1158,149 +1158,176 @@ and eval_binary env span op left_expr right_expr =
     | Ast.And -> "&&"
     | Ast.Or -> "||"
   in
-  let left = eval_expr env left_expr in
-  let right = eval_expr env right_expr in
-  let type_mismatch expects =
-    error span "E3001"
-      (Printf.sprintf "operator `%s` expects %s, got %s and %s" (op_name op)
-         expects (type_name left) (type_name right))
-  in
-  let as_float = function
-    | Int64 x -> Int64.to_float x
-    | Float f -> f
-    | v -> type_mismatch "two numbers"
-  in
-  let check_bool v =
-    match v with Bool b -> b | v -> type_mismatch "two Bools"
-  in
-  let is_pair64 x y =
-    match (x, y) with Int64 _, Int64 _ -> true | _ -> false
-  in
-  let is_pair_byte x y =
-    match (x, y) with Byte _, Byte _ -> true | _ -> false
-  in
-  let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
-  let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
-  (* Fixed-width arithmetic wraps in two's complement; Byte, being
+  (* `&&` and `||` short-circuit: the right operand evaluates only when
+     its value is needed, matching the compiled targets, whose
+     `&&`/`||` lower to branches. The eager path below would run a
+     guarded right side (`i < n && data.get(i) == 32`) even when the
+     guard is false. *)
+  match op with
+  | Ast.And | Ast.Or ->
+      let bool_of what v =
+        match v with
+        | Bool b -> b
+        | v ->
+            error span "E3001"
+              (Printf.sprintf "operator `%s` expects two Bools, got %s" what
+                 (type_name v))
+      in
+      let what = op_name op in
+      let left = bool_of what (eval_expr env left_expr) in
+      if op = Ast.And then
+        if left then Bool (bool_of what (eval_expr env right_expr))
+        else Bool false
+      else if left then Bool true
+      else Bool (bool_of what (eval_expr env right_expr))
+  | _ -> (
+      let left = eval_expr env left_expr in
+      let right = eval_expr env right_expr in
+      let type_mismatch expects =
+        error span "E3001"
+          (Printf.sprintf "operator `%s` expects %s, got %s and %s" (op_name op)
+             expects (type_name left) (type_name right))
+      in
+      let as_float = function
+        | Int64 x -> Int64.to_float x
+        | Float f -> f
+        | v -> type_mismatch "two numbers"
+      in
+      let check_bool v =
+        match v with Bool b -> b | v -> type_mismatch "two Bools"
+      in
+      let is_pair64 x y =
+        match (x, y) with Int64 _, Int64 _ -> true | _ -> false
+      in
+      let is_pair_byte x y =
+        match (x, y) with Byte _, Byte _ -> true | _ -> false
+      in
+      let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
+      let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
+      (* Fixed-width arithmetic wraps in two's complement; Byte, being
      unsigned, wraps modulo 256. Shift counts are non-negative and
      saturate at the width, matching the Int64 rule. *)
-  let i64_bin f = Int64 (f (i64_of left) (i64_of right)) in
-  let byte_bin f = Byte (f (byte_of left) (byte_of right) land 255) in
-  let i64_div f =
-    if i64_of right = 0L then error span "E3005" "division by zero";
-    i64_bin f
-  in
-  let byte_div f =
-    if byte_of right = 0 then error span "E3005" "division by zero";
-    byte_bin f
-  in
-  let i64_shift_count () =
-    let c = i64_of right in
-    if c < 0L then error span "E3005" "shift count must be non-negative";
-    c
-  in
-  let i64_shl () =
-    let c = i64_shift_count () in
-    if c >= 64L then Int64 0L
-    else Int64 (Int64.shift_left (i64_of left) (Int64.to_int c))
-  in
-  let i64_shr () =
-    let c = i64_shift_count () in
-    if c >= 64L then Int64 (if i64_of left < 0L then -1L else 0L)
-    else Int64 (Int64.shift_right (i64_of left) (Int64.to_int c))
-  in
-  let byte_shl () =
-    let c = byte_of right in
-    if c >= 8 then Byte 0 else Byte ((byte_of left lsl c) land 255)
-  in
-  let byte_shr () =
-    let c = byte_of right in
-    if c >= 8 then Byte 0 else Byte (byte_of left lsr c)
-  in
-  match op with
-  | Ast.And -> Bool (if check_bool left then check_bool right else false)
-  | Ast.Or -> Bool (if check_bool left then true else check_bool right)
-  | Ast.Eq -> Bool (equal_value left right)
-  | Ast.Ne -> Bool (not (equal_value left right))
-  | Ast.Lt when is_pair64 left right ->
-      Bool (Int64.compare (i64_of left) (i64_of right) < 0)
-  | Ast.Lt when is_pair_byte left right -> Bool (byte_of left < byte_of right)
-  | Ast.Le when is_pair64 left right ->
-      Bool (Int64.compare (i64_of left) (i64_of right) <= 0)
-  | Ast.Le when is_pair_byte left right -> Bool (byte_of left <= byte_of right)
-  | Ast.Gt when is_pair64 left right ->
-      Bool (Int64.compare (i64_of left) (i64_of right) > 0)
-  | Ast.Gt when is_pair_byte left right -> Bool (byte_of left > byte_of right)
-  | Ast.Ge when is_pair64 left right ->
-      Bool (Int64.compare (i64_of left) (i64_of right) >= 0)
-  | Ast.Ge when is_pair_byte left right -> Bool (byte_of left >= byte_of right)
-  | Ast.Lt -> Bool (as_float left < as_float right)
-  | Ast.Le -> Bool (as_float left <= as_float right)
-  | Ast.Gt -> Bool (as_float left > as_float right)
-  | Ast.Ge -> Bool (as_float left >= as_float right)
-  | Ast.Add when is_pair64 left right -> i64_bin Int64.add
-  | Ast.Sub when is_pair64 left right -> i64_bin Int64.sub
-  | Ast.Mul when is_pair64 left right -> i64_bin Int64.mul
-  | Ast.Div when is_pair64 left right -> i64_div Int64.div
-  | Ast.Mod when is_pair64 left right -> i64_div Int64.rem
-  | Ast.Add when is_pair_byte left right -> byte_bin ( + )
-  | Ast.Sub when is_pair_byte left right -> byte_bin ( - )
-  | Ast.Mul when is_pair_byte left right -> byte_bin ( * )
-  | Ast.Div when is_pair_byte left right -> byte_div ( / )
-  | Ast.Mod when is_pair_byte left right -> byte_div ( mod )
-  | Ast.Bit_and when is_pair64 left right -> i64_bin Int64.logand
-  | Ast.Bit_or when is_pair64 left right -> i64_bin Int64.logor
-  | Ast.Bit_xor when is_pair64 left right -> i64_bin Int64.logxor
-  | Ast.Shl when is_pair64 left right -> i64_shl ()
-  | Ast.Shr when is_pair64 left right -> i64_shr ()
-  | Ast.Bit_and when is_pair_byte left right ->
-      Byte (byte_of left land byte_of right)
-  | Ast.Bit_or when is_pair_byte left right ->
-      Byte (byte_of left lor byte_of right)
-  | Ast.Bit_xor when is_pair_byte left right ->
-      Byte (byte_of left lxor byte_of right)
-  | Ast.Shl when is_pair_byte left right -> byte_shl ()
-  | Ast.Shr when is_pair_byte left right -> byte_shr ()
-  | Ast.Add -> (
-      match (left, right) with
-      | Float x, Float y -> Float (x +. y)
-      | Int64 x, Float y -> Float (Int64.to_float x +. y)
-      | Float x, Int64 y -> Float (x +. Int64.to_float y)
-      | String x, String y -> String (x ^ y)
-      | _ -> type_mismatch "two numbers or two strings")
-  | Ast.Sub -> (
-      match (left, right) with
-      | Float x, Float y -> Float (x -. y)
-      | Int64 x, Float y -> Float (Int64.to_float x -. y)
-      | Float x, Int64 y -> Float (x -. Int64.to_float y)
-      | _ -> type_mismatch "two numbers")
-  | Ast.Mul -> (
-      match (left, right) with
-      | Float x, Float y -> Float (x *. y)
-      | Int64 x, Float y -> Float (Int64.to_float x *. y)
-      | Float x, Int64 y -> Float (x *. Int64.to_float y)
-      | _ -> type_mismatch "two numbers")
-  | Ast.Div | Ast.Mod -> (
-      let zero_check d =
-        match d with
-        | Float f when f = 0.0 -> error span "E3005" "division by zero"
-        | _ -> ()
+      let i64_bin f = Int64 (f (i64_of left) (i64_of right)) in
+      let byte_bin f = Byte (f (byte_of left) (byte_of right) land 255) in
+      let i64_div f =
+        if i64_of right = 0L then error span "E3005" "division by zero";
+        i64_bin f
       in
-      match (left, right) with
-      | Float x, Float y ->
-          zero_check right;
-          if op = Ast.Div then Float (x /. y) else Float (Float.rem x y)
-      | Int64 x, Float y ->
-          zero_check right;
-          if op = Ast.Div then Float (Int64.to_float x /. y)
-          else Float (Float.rem (Int64.to_float x) y)
-      | Float x, Int64 y ->
-          zero_check right;
-          if op = Ast.Div then Float (x /. Int64.to_float y)
-          else Float (Float.rem x (Int64.to_float y))
-      | _ -> type_mismatch "two numbers")
-  | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr ->
-      type_mismatch "two Int64s or two Bytes"
+      let byte_div f =
+        if byte_of right = 0 then error span "E3005" "division by zero";
+        byte_bin f
+      in
+      let i64_shift_count () =
+        let c = i64_of right in
+        if c < 0L then error span "E3005" "shift count must be non-negative";
+        c
+      in
+      let i64_shl () =
+        let c = i64_shift_count () in
+        if c >= 64L then Int64 0L
+        else Int64 (Int64.shift_left (i64_of left) (Int64.to_int c))
+      in
+      let i64_shr () =
+        let c = i64_shift_count () in
+        if c >= 64L then Int64 (if i64_of left < 0L then -1L else 0L)
+        else Int64 (Int64.shift_right (i64_of left) (Int64.to_int c))
+      in
+      let byte_shl () =
+        let c = byte_of right in
+        if c >= 8 then Byte 0 else Byte ((byte_of left lsl c) land 255)
+      in
+      let byte_shr () =
+        let c = byte_of right in
+        if c >= 8 then Byte 0 else Byte (byte_of left lsr c)
+      in
+      match op with
+      | Ast.And -> Bool (if check_bool left then check_bool right else false)
+      | Ast.Or -> Bool (if check_bool left then true else check_bool right)
+      | Ast.Eq -> Bool (equal_value left right)
+      | Ast.Ne -> Bool (not (equal_value left right))
+      | Ast.Lt when is_pair64 left right ->
+          Bool (Int64.compare (i64_of left) (i64_of right) < 0)
+      | Ast.Lt when is_pair_byte left right ->
+          Bool (byte_of left < byte_of right)
+      | Ast.Le when is_pair64 left right ->
+          Bool (Int64.compare (i64_of left) (i64_of right) <= 0)
+      | Ast.Le when is_pair_byte left right ->
+          Bool (byte_of left <= byte_of right)
+      | Ast.Gt when is_pair64 left right ->
+          Bool (Int64.compare (i64_of left) (i64_of right) > 0)
+      | Ast.Gt when is_pair_byte left right ->
+          Bool (byte_of left > byte_of right)
+      | Ast.Ge when is_pair64 left right ->
+          Bool (Int64.compare (i64_of left) (i64_of right) >= 0)
+      | Ast.Ge when is_pair_byte left right ->
+          Bool (byte_of left >= byte_of right)
+      | Ast.Lt -> Bool (as_float left < as_float right)
+      | Ast.Le -> Bool (as_float left <= as_float right)
+      | Ast.Gt -> Bool (as_float left > as_float right)
+      | Ast.Ge -> Bool (as_float left >= as_float right)
+      | Ast.Add when is_pair64 left right -> i64_bin Int64.add
+      | Ast.Sub when is_pair64 left right -> i64_bin Int64.sub
+      | Ast.Mul when is_pair64 left right -> i64_bin Int64.mul
+      | Ast.Div when is_pair64 left right -> i64_div Int64.div
+      | Ast.Mod when is_pair64 left right -> i64_div Int64.rem
+      | Ast.Add when is_pair_byte left right -> byte_bin ( + )
+      | Ast.Sub when is_pair_byte left right -> byte_bin ( - )
+      | Ast.Mul when is_pair_byte left right -> byte_bin ( * )
+      | Ast.Div when is_pair_byte left right -> byte_div ( / )
+      | Ast.Mod when is_pair_byte left right -> byte_div ( mod )
+      | Ast.Bit_and when is_pair64 left right -> i64_bin Int64.logand
+      | Ast.Bit_or when is_pair64 left right -> i64_bin Int64.logor
+      | Ast.Bit_xor when is_pair64 left right -> i64_bin Int64.logxor
+      | Ast.Shl when is_pair64 left right -> i64_shl ()
+      | Ast.Shr when is_pair64 left right -> i64_shr ()
+      | Ast.Bit_and when is_pair_byte left right ->
+          Byte (byte_of left land byte_of right)
+      | Ast.Bit_or when is_pair_byte left right ->
+          Byte (byte_of left lor byte_of right)
+      | Ast.Bit_xor when is_pair_byte left right ->
+          Byte (byte_of left lxor byte_of right)
+      | Ast.Shl when is_pair_byte left right -> byte_shl ()
+      | Ast.Shr when is_pair_byte left right -> byte_shr ()
+      | Ast.Add -> (
+          match (left, right) with
+          | Float x, Float y -> Float (x +. y)
+          | Int64 x, Float y -> Float (Int64.to_float x +. y)
+          | Float x, Int64 y -> Float (x +. Int64.to_float y)
+          | String x, String y -> String (x ^ y)
+          | _ -> type_mismatch "two numbers or two strings")
+      | Ast.Sub -> (
+          match (left, right) with
+          | Float x, Float y -> Float (x -. y)
+          | Int64 x, Float y -> Float (Int64.to_float x -. y)
+          | Float x, Int64 y -> Float (x -. Int64.to_float y)
+          | _ -> type_mismatch "two numbers")
+      | Ast.Mul -> (
+          match (left, right) with
+          | Float x, Float y -> Float (x *. y)
+          | Int64 x, Float y -> Float (Int64.to_float x *. y)
+          | Float x, Int64 y -> Float (x *. Int64.to_float y)
+          | _ -> type_mismatch "two numbers")
+      | Ast.Div | Ast.Mod -> (
+          let zero_check d =
+            match d with
+            | Float f when f = 0.0 -> error span "E3005" "division by zero"
+            | _ -> ()
+          in
+          match (left, right) with
+          | Float x, Float y ->
+              zero_check right;
+              if op = Ast.Div then Float (x /. y) else Float (Float.rem x y)
+          | Int64 x, Float y ->
+              zero_check right;
+              if op = Ast.Div then Float (Int64.to_float x /. y)
+              else Float (Float.rem (Int64.to_float x) y)
+          | Float x, Int64 y ->
+              zero_check right;
+              if op = Ast.Div then Float (x /. Int64.to_float y)
+              else Float (Float.rem x (Int64.to_float y))
+          | _ -> type_mismatch "two numbers")
+      | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr ->
+          type_mismatch "two Int64s or two Bytes")
 
 and eval_index env span base index =
   let b = eval_expr env base in
@@ -1823,7 +1850,8 @@ and eval_method env span recv mname arg_exprs =
           Effect.perform (Net_read_line (c, span))
       | TcpConn c, "read_exactly" -> (
           match eval_args () with
-          | [ Int64 n ] -> Effect.perform (Net_read_exactly (c, Int64.to_int n, span))
+          | [ Int64 n ] ->
+              Effect.perform (Net_read_exactly (c, Int64.to_int n, span))
           | [ v ] ->
               error span "E3001"
                 (Printf.sprintf "`read_exactly` expects an Int64, got %s"
@@ -2687,7 +2715,19 @@ and apply_builtin span name args =
         (Printf.sprintf "`os_close` expects (fd Int64), got %d" (List.length vs))
   | "os_list_dir", [ String path ] ->
       os_result span (fun () ->
-          let names = Sys.readdir path in
+          (* opendir, not Sys.readdir: the failure rides the Unix_error
+             branch, so the reason names the call (`os: opendir p: ...`)
+             — the text the c runtime prints for the same miss. *)
+          let dir = Unix.opendir path in
+          let rec collect acc =
+            match Unix.readdir dir with
+            | "." | ".." -> collect acc
+            | name -> collect (name :: acc)
+            | exception End_of_file ->
+                Unix.closedir dir;
+                Array.of_list (List.rev acc)
+          in
+          let names = collect [] in
           Array.sort compare names;
           Array (Array.map (fun s -> String s) names))
   | "os_list_dir", vs ->
@@ -2734,7 +2774,7 @@ and apply_builtin span name args =
            (List.length vs))
   | "os_chdir", [ String path ] ->
       os_result span (fun () ->
-          Sys.chdir path;
+          Unix.chdir path;
           Int64 0L)
   | "os_chdir", vs ->
       error span "E3007"
@@ -2769,7 +2809,8 @@ and apply_builtin span name args =
   | "net_tls_connect", [ String host; Int64 port; Float timeout ] ->
       (* The handler resolves the host, then connects and shakes hands;
          failure rides back in the tuple. *)
-      Effect.perform (Net_tls_connect (host, Int64.to_int port, timeout, false, span))
+      Effect.perform
+        (Net_tls_connect (host, Int64.to_int port, timeout, false, span))
   | "net_tls_connect", _ ->
       error span "E3001"
         "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
@@ -2780,7 +2821,8 @@ and apply_builtin span name args =
             timeout             Float64), got %d arguments"
            (List.length args))
   | "net_tls_connect_insecure", [ String host; Int64 port; Float timeout ] ->
-      Effect.perform (Net_tls_connect (host, Int64.to_int port, timeout, true, span))
+      Effect.perform
+        (Net_tls_connect (host, Int64.to_int port, timeout, true, span))
   | "net_tls_connect_insecure", _ ->
       error span "E3001"
         "`net_tls_connect_insecure` expects (host String, port Int64, \

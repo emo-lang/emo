@@ -268,8 +268,16 @@ let ge a b =
 
 let eq a b = Emo_eval.Bool (Emo_eval.equal_value a b)
 let ne a b = Emo_eval.Bool (not (Emo_eval.equal_value a b))
-let and_ a b = Emo_eval.Bool (if unbox_bool a then unbox_bool b else false)
-let or_ a b = Emo_eval.Bool (if unbox_bool a then true else unbox_bool b)
+
+(* `&&`/`||` short-circuit: the right operand rides a thunk, so a false
+   guard never evaluates it — matching the interpreter and the other
+   targets. *)
+let and_l a (rb : unit -> Emo_eval.value) : Emo_eval.value =
+  if unbox_bool a then rb () else Emo_eval.Bool false
+
+let or_l a (rb : unit -> Emo_eval.value) : Emo_eval.value =
+  if unbox_bool a then Emo_eval.Bool true else rb ()
+
 let not_ v = Emo_eval.Bool (not (unbox_bool v))
 let no_return () = failwith "reached the end of a function without `return`"
 

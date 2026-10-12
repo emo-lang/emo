@@ -447,8 +447,8 @@ def decode(text String) (R, Json) {
 // The reason rides as a Json string: the error tuple's payload slot is
 // the document's own type, and a string is the Json value a reason
 // already is.
-def err(at Int64, what String) Json {
-  return JsonString.new(value: "json: " + what + " at byte " + at.to_string())
+def err(at Int64, what String) String {
+  return "json: " + what + " at byte " + at.to_string()
 }
 
 def skip_ws(data Bytes, i Int64) Int64 {

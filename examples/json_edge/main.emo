@@ -95,3 +95,21 @@ if back.is(JsonObject) {
   println(back.get("nums").encode())
   println(back.get("nest").encode())
 }
+
+// ---- malformed input: the failure comes back as a value ----
+case json.decode("{\"a\":}") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case json.decode("[1, 2") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case json.decode("{\"a\": 1} trailing") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case json.decode(open_array(514) + close_array(514)) {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}

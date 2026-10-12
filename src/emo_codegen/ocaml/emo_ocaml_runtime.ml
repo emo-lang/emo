@@ -1395,7 +1395,20 @@ let pf_hash_float conv minus plus space width prec f =
     | "os_list_dir", [ String path ] ->
         os_result
           (fun () ->
-            let names = Sys.readdir path in
+            (* opendir, not Sys.readdir: the failure rides the
+               Unix_error branch, so the reason names the call
+               (`os: opendir p: ...`) — the text the c runtime prints
+               for the same miss. *)
+            let dir = Unix.opendir path in
+            let rec collect acc =
+              match Unix.readdir dir with
+              | "." | ".." -> collect acc
+              | name -> collect (name :: acc)
+              | exception End_of_file ->
+                  Unix.closedir dir;
+                  Array.of_list (List.rev acc)
+            in
+            let names = collect [] in
             Array.sort compare names;
             Array (Array.map (fun s -> String s) names))
     | "os_list_dir", vs ->
@@ -1437,8 +1450,7 @@ let pf_hash_float conv minus plus space width prec f =
         error "E3007"
           (Printf.sprintf "`os_getcwd` expects no arguments, got %d"
              (List.length vs))
-    | "os_chdir", [ String path ] ->
-        os_result (fun () -> Sys.chdir path; Int64 0L)
+    | "os_chdir", [ String path ] -> os_result (fun () -> Unix.chdir path; Int64 0L)
     | "os_chdir", vs ->
         error "E3007"
           (Printf.sprintf "`os_chdir` expects (path String), got %d"
@@ -1773,8 +1785,13 @@ module Emo_runtime = struct
 
   let eq a b = Emo_eval.Bool (Emo_eval.equal_value a b)
   let ne a b = Emo_eval.Bool (not (Emo_eval.equal_value a b))
-  let and_ a b = Emo_eval.Bool (if unbox_bool a then unbox_bool b else false)
-  let or_ a b = Emo_eval.Bool (if unbox_bool a then true else unbox_bool b)
+  (* `&&`/`||` short-circuit: the right operand rides a thunk, so a
+     false guard never evaluates it — matching the interpreter and the
+     other targets. *)
+  let and_l a (rb : unit -> Emo_eval.value) : Emo_eval.value =
+    if unbox_bool a then rb () else Emo_eval.Bool false
+  let or_l a (rb : unit -> Emo_eval.value) : Emo_eval.value =
+    if unbox_bool a then Emo_eval.Bool true else rb ()
   let not_ v = Emo_eval.Bool (not (unbox_bool v))
   let no_return () = failwith "reached the end of a function without `return`"
 
@@ -2490,6 +2507,20 @@ module Emo_runtime = struct
   let io_reason what desc (err : Unix.error) =
     Printf.sprintf "cannot %s on %s: %s" what desc (Unix.error_message err)
 
+  (* OCaml's Sys_error message prefixes the path ("p: No such file or
+     directory"); the reason states the failure once, after the path
+     the call already names — the text the c runtime prints for the
+     same miss. *)
+  let file_reason verb path message =
+    let prefix = path ^ ": " in
+    let n = String.length prefix in
+    let why =
+      if n <= String.length message && String.sub message 0 n = prefix then
+        String.sub message n (String.length message - n)
+      else message
+    in
+    Printf.sprintf "file: cannot %s %s: %s" verb path why
+
   (* Consumes [n] bytes from the front of the live buffer. *)
   let buffer_take live n =
     let s = Buffer.contents live.rbuf in
@@ -2772,8 +2803,7 @@ module Emo_runtime = struct
                     close_in_noerr ic;
                     ok (String text)
                   with Sys_error message ->
-                    fail
-                      (Printf.sprintf "file: cannot read %s: %s" path message))
+                    fail (file_reason "read" path message))
           | Emo_eval.File_write (path, contents) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -2797,8 +2827,7 @@ module Emo_runtime = struct
                     close_out_noerr oc;
                     ok (Int64 (Int64.of_int n))
                   with Sys_error message ->
-                    fail
-                      (Printf.sprintf "file: cannot write %s: %s" path message))
+                    fail (file_reason "write" path message))
           | Emo_eval.Net_close_conn c ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->

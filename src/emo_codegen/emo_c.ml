@@ -30,6 +30,10 @@ let runtime_h = Emo_c_runtime_data.runtime_h
 type env = {
   mutable buf : Buffer.t;
   mutable fresh : int; (* unique temporaries, for tail-call rebinds *)
+  fresh_prefix : string;
+      (* salt on every fresh name: a cluster's members share one C
+         function, and labels are function-scoped in C — each member
+         salts with its mangled name so their labels cannot collide *)
   mutable scope : (string * string * Emo_check.t) list;
       (* Emo name → (C name, bound type), innermost first: parameters
          and lets — the type drives the regime at assignment *)
@@ -1107,8 +1111,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           | "accept", [] -> Printf.sprintf "emo_net_accept(%s)" recv
           | "port", [] ->
               ret Emo_check.Int64 (Printf.sprintf "emo_net_port(%s)" recv)
-          | "read_line", [] ->
-              Printf.sprintf "emo_net_read_line(%s)" recv
+          | "read_line", [] -> Printf.sprintf "emo_net_read_line(%s)" recv
           | "read_exactly", [ n ] ->
               Printf.sprintf "emo_net_read_exactly(%s, %s)" recv
                 (as_native env n Emo_check.Int64)
@@ -1580,7 +1583,7 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
 
 and fresh_c env base =
   env.fresh <- env.fresh + 1;
-  Printf.sprintf "%s%d" base env.fresh
+  Printf.sprintf "%s%s%d" env.fresh_prefix base env.fresh
 
 (* One branch's pattern as a predicate over the scrutinee word. *)
 and pattern_test env (s : string) (p : Ast.pattern) : string =
@@ -1939,9 +1942,12 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
          not collide at C scope. *)
       let uniq = env.fresh + 1 in
       env.fresh <- uniq;
-      let s = Printf.sprintf "__msg%d" uniq in
-      let retry = Printf.sprintf "__recv_retry_%d" uniq in
-      let end_label = Printf.sprintf "__recv_end_%d" uniq in
+      (* through the same salt as fresh_c: a receive inside a cluster
+         member shares one C function with its siblings *)
+      let q = env.fresh_prefix in
+      let s = Printf.sprintf "%s__msg%d" q uniq in
+      let retry = Printf.sprintf "%s__recv_retry_%d" q uniq in
+      let end_label = Printf.sprintf "%s__recv_end_%d" q uniq in
       put env "  emo_value %s = (emo_value)0;\n" s;
       put env "%s: ;\n" retry;
       put env "  if (emo_mailbox_empty()) {\n";
@@ -1953,7 +1959,7 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       List.iteri
         (fun i (b : Emo_ir.branch) ->
           let test = pattern_test env s b.Emo_ir.pattern in
-          let lbl = Printf.sprintf "__recv_b%d_%d" i uniq in
+          let lbl = Printf.sprintf "%s__recv_b%d_%d" q i uniq in
           put env "      if (%s) {\n" test;
           match b.Emo_ir.guard with
           | Some g ->
@@ -1977,9 +1983,9 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       put env "  goto %s;\n" retry;
       List.iteri
         (fun i (b : Emo_ir.branch) ->
-          put env "%s: ;\n" (Printf.sprintf "__recv_b%d_%d" i uniq);
+          put env "%s: ;\n" (Printf.sprintf "%s__recv_b%d_%d" q i uniq);
           pattern_bind_sfx env s b.Emo_ir.pattern
-            (Printf.sprintf "__r%d_%d" uniq i);
+            (Printf.sprintf "%s__r%d_%d" q uniq i);
           emit_stmts env b.Emo_ir.body;
           put env "  goto %s;\n" end_label)
         branches;
@@ -2650,6 +2656,7 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
         {
           env0 with
           fresh = 0;
+          fresh_prefix = c_ident m.Emo_ir.fname ^ "__";
           fname = m.Emo_ir.fname;
           fresult = m.Emo_ir.fresult;
           scope =
@@ -2878,6 +2885,7 @@ let emit (program : Emo_ir.program) : string * string =
     {
       buf;
       fresh = 0;
+      fresh_prefix = "";
       scope = [];
       fname = "";
       fresult = Emo_check.Void;

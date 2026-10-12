@@ -17,3 +17,14 @@ file.write(path, "overwritten\n")
 const (R.ok, second) = file.read(path)
 println(second.length())
 println(second == text)
+
+// The misses answer as values: an unreadable path and an uncreatable
+// one each come back as (R.error, reason) instead of ending the run.
+case file.read("emo-file-demo-missing.txt") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case file.write("/emo-file-demo-missing-dir/emo-file-demo.txt", "hi") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}

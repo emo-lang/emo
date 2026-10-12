@@ -3,3 +3,5 @@
 hello
 12
 false
+file: cannot read emo-file-demo-missing.txt: No such file or directory
+file: cannot write /emo-file-demo-missing-dir/emo-file-demo.txt: No such file or directory

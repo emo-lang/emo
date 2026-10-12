@@ -2146,12 +2146,12 @@ static emo_value emo_os_fail(const char *what, const char *arg) {
 emo_value emo_file_read(emo_str path) {
   char *clean = (char *)emo_str_cstr(path);
   FILE *f = fopen(clean, "rb");
-  if (f == NULL)
-    return emo_os_pair(
-        "error",
-        emo_box_str(emo_str_concat(
-            emo_str_from_cstr("file: cannot read "),
-            emo_str_concat(path, emo_str_from_cstr(": no such file")))));
+  if (f == NULL) {
+    char why[512];
+    snprintf(why, sizeof why, "file: cannot read %s: %s", clean,
+             strerror(errno));
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
   fseek(f, 0, SEEK_END);
   long n = ftell(f);
   fseek(f, 0, SEEK_SET);
@@ -2170,12 +2170,12 @@ emo_value emo_file_read(emo_str path) {
 emo_value emo_file_write(emo_str path, emo_str contents) {
   char *clean = (char *)emo_str_cstr(path);
   FILE *f = fopen(clean, "wb");
-  if (f == NULL)
-    return emo_os_pair(
-        "error",
-        emo_box_str(emo_str_concat(
-            emo_str_from_cstr("file: cannot write "),
-            emo_str_concat(path, emo_str_from_cstr(": no such file")))));
+  if (f == NULL) {
+    char why[512];
+    snprintf(why, sizeof why, "file: cannot write %s: %s", clean,
+             strerror(errno));
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
   size_t put = fwrite(contents.bytes, 1, (size_t)contents.len, f);
   fclose(f);
   if ((int64_t)put != contents.len)

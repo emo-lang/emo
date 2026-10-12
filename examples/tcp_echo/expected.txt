@@ -1,3 +1,4 @@
+connect failed: cannot resolve host `256.256.256.256`
 echo: 你好, socket
 echo: direct style
 echo: no callbacks

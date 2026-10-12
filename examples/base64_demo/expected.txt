@@ -10,5 +10,8 @@ foo
 foob
 fooba
 foobar
+base64: padding only at the end at byte 3
+base64: the final quantum is short at byte 6
+base64: non-zero padding bits at byte 1
 ZW1vIOKAlCBwbGFpbiB0ZXh0LOS4reaWhyBtaXhlZA==
 emo — plain text,中文 mixed

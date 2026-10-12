@@ -45,3 +45,17 @@ if nest.is(XmlElement) {
 const (R.ok, full) = xml.decode("<?xml version=\"1.0\" encoding=\"utf-8\"?><!-- leading --><?render fancy?><r/>")
 println(full.encode())
 println(full.name())
+
+// ---- malformed input: the failure comes back as a value ----
+case xml.decode("<a><b></a>") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case xml.decode("<a>") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case xml.decode("<a>&nope;</a>") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}

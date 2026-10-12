@@ -956,7 +956,8 @@ case net_connect_unix("%s", 0.0) {
                {|
 const (R.ok, listener) = net_listen_unix("%s")
 listener.port()
-|} path)
+|}
+               path)
         in
         Alcotest.(check string)
           "message"
@@ -972,7 +973,8 @@ listener.port()
   (R.error, why) -> { println(why) }
   (R.ok, _)      -> { println("connected?!") }
 }
-|} path)
+|}
+               path)
         in
         let expected_prefix = "cannot connect to unix socket " in
         let ok =

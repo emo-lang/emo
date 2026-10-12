@@ -1192,7 +1192,12 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
                               d.Emo_support.Diagnostic.message)
                           ds)))
         in
-        Alcotest.(check string) "output" "hello from emo\n200\n" output);
+        Alcotest.(check string)
+          "output"
+          "hello from emo\n\
+           200\n\
+           request failed: cannot resolve host `256.256.256.256`\n"
+          output);
     tc "emo build caches by content hash across builds" (fun () ->
         use_workspace_registry () |> ignore;
         let emo_exe = emo_exe_path () in
@@ -1382,20 +1387,16 @@ let build_example root entry name =
   (status, Buffer.contents out, bin)
 
 (* The bootstrap assertion for one example: the interpreter run and the
-   compiled binary agree with the golden text. [expected] picks the
-   golden file; the http example has none, so its fixed output is
-   spelled here. [root] is the project root discovery walks from — the
-   examples/ directory, except http_roundtrip which is a package of its
-   own. *)
-let bootstrap_example root name entry expected =
+   compiled binary agree with the example's golden text. [root] is the
+   project root discovery walks from — the examples/ directory, except
+   http_roundtrip which is a package of its own. *)
+let bootstrap_example root name entry =
   let golden =
-    if expected then
-      (* Root projects keep their golden beside the entry inside
-         <root>/<name>/; a package project is its own root. *)
-      let nested = Filename.concat (Filename.concat root name) "expected.txt" in
-      if Sys.file_exists nested then Emo_project.read_file nested
-      else Emo_project.read_file (Filename.concat root "expected.txt")
-    else "hello from emo\n200\n"
+    (* Root projects keep their golden beside the entry inside
+       <root>/<name>/; a package project is its own root. *)
+    let nested = Filename.concat (Filename.concat root name) "expected.txt" in
+    if Sys.file_exists nested then Emo_project.read_file nested
+    else Emo_project.read_file (Filename.concat root "expected.txt")
   in
   (* Module and package discovery root at the current directory, so the
      interpreter runs from the project root, like `emo run`. *)
@@ -1439,104 +1440,102 @@ let bootstrap_tests =
   [
     tc "alias_demo compiles to a binary with the interpreter's output"
       (fun () ->
-        bootstrap_example (examples_dir ()) "alias_demo" "alias_demo/main.emo"
-          true);
+        bootstrap_example (examples_dir ()) "alias_demo" "alias_demo/main.emo");
     tc "fib compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "fib" "fib/main.emo" true);
+        bootstrap_example (examples_dir ()) "fib" "fib/main.emo");
     tc "hello_world compiles to a binary with the interpreter's output"
       (fun () ->
-        bootstrap_example (examples_dir ()) "hello_world" "hello_world/main.emo"
-          true);
+        bootstrap_example (examples_dir ()) "hello_world" "hello_world/main.emo");
     tc "objects compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "objects" "objects/main.emo" true);
+        bootstrap_example (examples_dir ()) "objects" "objects/main.emo");
     tc "language_tour compiles to a binary with the interpreter's output"
       (fun () ->
         bootstrap_example (examples_dir ()) "language_tour"
-          "language_tour/main.emo" true);
+          "language_tour/main.emo");
     tc "shop compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example
           (Filename.concat (examples_dir ()) "shop")
-          "shop" "main.emo" true);
+          "shop" "main.emo");
     tc "pipeline compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "pipeline" "pipeline/main.emo" true);
+        bootstrap_example (examples_dir ()) "pipeline" "pipeline/main.emo");
     tc "list compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "list" "list/main.emo" true);
+        bootstrap_example (examples_dir ()) "list" "list/main.emo");
     tc "loops compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "loops" "loops/main.emo" true);
+        bootstrap_example (examples_dir ()) "loops" "loops/main.emo");
     tc "tcp_echo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "tcp_echo")
-          "tcp_echo" "main.emo" true);
+          "tcp_echo" "main.emo");
     tc "http_roundtrip compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "http_roundtrip")
-          "http_roundtrip" "main.emo" false);
+          "http_roundtrip" "main.emo");
     tc "json_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "json_demo")
-          "json_demo" "main.emo" true);
+          "json_demo" "main.emo");
     tc "json_edge compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "json_edge")
-          "json_edge" "main.emo" true);
+          "json_edge" "main.emo");
     tc "yaml_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "yaml_demo")
-          "yaml_demo" "main.emo" true);
+          "yaml_demo" "main.emo");
     tc "yaml_edge compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "yaml_edge")
-          "yaml_edge" "main.emo" true);
+          "yaml_edge" "main.emo");
     tc "xml_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "xml_demo")
-          "xml_demo" "main.emo" true);
+          "xml_demo" "main.emo");
     tc "xml_edge compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "xml_edge")
-          "xml_edge" "main.emo" true);
+          "xml_edge" "main.emo");
     tc "os_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "os_demo")
-          "os_demo" "main.emo" true);
+          "os_demo" "main.emo");
     tc "base64_demo compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "base64_demo")
-          "base64_demo" "main.emo" true);
+          "base64_demo" "main.emo");
     tc "slog_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "slog_demo")
-          "slog_demo" "main.emo" true);
+          "slog_demo" "main.emo");
     tc "bufio_demo compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "bufio_demo")
-          "bufio_demo" "main.emo" true);
+          "bufio_demo" "main.emo");
     tc "printf_demo compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "printf_demo")
-          "printf_demo" "main.emo" true);
+          "printf_demo" "main.emo");
     tc "sync_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
           (Filename.concat (examples_dir ()) "sync_demo")
-          "sync_demo" "main.emo" true);
+          "sync_demo" "main.emo");
   ]
 
 (* ---- The TypeScript target (step 15) ----

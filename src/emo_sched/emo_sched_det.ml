@@ -214,6 +214,20 @@ type candidate = { cfam : Unix.socket_domain; caddr : Unix.sockaddr }
 let io_reason what desc (err : Unix.error) =
   Printf.sprintf "cannot %s on %s: %s" what desc (Unix.error_message err)
 
+(* OCaml's Sys_error message prefixes the path ("p: No such file or
+   directory"); the reason states the failure once, after the path the
+   call already names — the text the c runtime prints for the same
+   miss. *)
+let file_reason verb path message =
+  let prefix = path ^ ": " in
+  let n = String.length prefix in
+  let why =
+    if n <= String.length message && String.sub message 0 n = prefix then
+      String.sub message n (String.length message - n)
+    else message
+  in
+  Printf.sprintf "file: cannot %s %s: %s" verb path why
+
 (* Consumes [n] bytes from the front of the live buffer. *)
 let buffer_take live n =
   let s = Buffer.contents live.rbuf in
@@ -279,13 +293,13 @@ let listen_on host port : (Unix.file_descr * int, string) result =
       let rec try_all = function
         | [] -> Error (Printf.sprintf "cannot listen on %s:%d" host port)
         | ai :: rest -> (
-            try bind_addr ai with
-            | Unix.Unix_error (err, _, _) ->
-                if rest = [] then
-                  Error
-                    (Printf.sprintf "cannot listen on %s:%d: %s" host port
-                       (Unix.error_message err))
-                else try_all rest)
+            try bind_addr ai
+            with Unix.Unix_error (err, _, _) ->
+              if rest = [] then
+                Error
+                  (Printf.sprintf "cannot listen on %s:%d: %s" host port
+                     (Unix.error_message err))
+              else try_all rest)
       in
       try_all entries
 
@@ -383,9 +397,7 @@ let rec handler state (proc : Emo_eval.process) () :
                       (Emo_eval.net_ok
                          (Emo_eval.Array
                             (Array.of_list
-                               (List.map
-                                  (fun a -> Emo_eval.String a)
-                                  addresses))))
+                               (List.map (fun a -> Emo_eval.String a) addresses))))
                       (handler state proc ()))
         | Emo_eval.Net_connect (host, port, timeout, span) ->
             Some
@@ -442,8 +454,7 @@ let rec handler state (proc : Emo_eval.process) () :
                         lclosed = false;
                       }
                     in
-                    Hashtbl.replace state.listeners l.Emo_eval.lid
-                      (fd, Some ctx);
+                    Hashtbl.replace state.listeners l.Emo_eval.lid (fd, Some ctx);
                     Effect.Shallow.continue_with k
                       (Emo_eval.net_ok (Emo_eval.TcpListener l))
                       (handler state proc ()))
@@ -526,7 +537,7 @@ let rec handler state (proc : Emo_eval.process) () :
                   close_in_noerr ic;
                   ok text
                 with Sys_error message ->
-                  fail (Printf.sprintf "file: cannot read %s: %s" path message))
+                  fail (file_reason "read" path message))
         | Emo_eval.File_write (path, contents, _) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -555,7 +566,7 @@ let rec handler state (proc : Emo_eval.process) () :
                   close_out_noerr oc;
                   ok (Int64.of_int n)
                 with Sys_error message ->
-                  fail (Printf.sprintf "file: cannot write %s: %s" path message))
+                  fail (file_reason "write" path message))
         | Emo_eval.Net_close_conn (c, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -845,7 +856,8 @@ and connect_next state proc k ~target ~deadline ~message
       (* Every candidate failed; the last OS error is the precise reason. *)
       let reason =
         match last_error with
-        | Some Unix.ECONNREFUSED -> Printf.sprintf "connection refused to %s" target
+        | Some Unix.ECONNREFUSED ->
+            Printf.sprintf "connection refused to %s" target
         | Some err ->
             Printf.sprintf "cannot connect to %s: %s" target
               (Unix.error_message err)
@@ -971,8 +983,8 @@ and park_and_handshake state proc k finished fd ssl desc span kind once =
 (* The setup half of a TLS listener: TCP listen plus a server context
    holding the certificate. *)
 and tls_listener ~(host : string) ~(port : int) ~(cert_path : string)
-    ~(key_path : string) :
-    (Unix.file_descr * int * Ssl.context, string) result =
+    ~(key_path : string) : (Unix.file_descr * int * Ssl.context, string) result
+    =
   let[@alert "-deprecated"] ctx =
     Ssl.create_context Ssl.SSLv23 Ssl.Server_context
   in
@@ -1063,9 +1075,10 @@ and bind_udp_socket host port : (Unix.file_descr * int, string) result =
 
 (* Sends one datagram; a full buffer parks the send on write interest.
    The peer address arrives resolved. *)
-and udp_send_entry state proc (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
-    (addr : string) (port : int) (data : string) (span : Emo_support.Span.t)
-    (u : Emo_eval.udp) : outcome =
+and udp_send_entry state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation) (addr : string)
+    (port : int) (data : string) (span : Emo_support.Span.t) (u : Emo_eval.udp)
+    : outcome =
   if u.Emo_eval.uclosed then
     Effect.Shallow.continue_with k
       (Emo_eval.net_error
@@ -1087,10 +1100,8 @@ and udp_send_entry state proc (k : (Emo_eval.value, unit) Effect.Shallow.continu
         Effect.Shallow.continue_with k
           (Emo_eval.net_error (Printf.sprintf "cannot resolve host `%s`" addr))
           (handler state proc ())
-    | resolved :: _ -> (
-        let target =
-          Unix.ADDR_INET (Unix.inet_addr_of_string resolved, port)
-        in
+    | resolved :: _ ->
+        let target = Unix.ADDR_INET (Unix.inet_addr_of_string resolved, port) in
         let rec send_step st =
           match Unix.sendto fd bytes 0 (Bytes.length bytes) [] target with
           | _n ->
@@ -1105,7 +1116,7 @@ and udp_send_entry state proc (k : (Emo_eval.value, unit) Effect.Shallow.continu
               finish_w finished st proc k
                 (Emo_eval.net_error (io_reason "send" u.Emo_eval.udesc err))
         in
-        send_step state)
+        send_step state
 
 (* Waits for one datagram and returns it as (data, host, port). *)
 and udp_recv_entry state proc
@@ -1120,7 +1131,7 @@ and udp_recv_entry state proc
     let fd = Hashtbl.find state.udps u.Emo_eval.uid in
     let buf = Bytes.create 65536 in
     match Unix.recvfrom fd buf 0 65536 [] with
-    | n, sockaddr -> (
+    | n, sockaddr ->
         let data = Bytes.sub_string buf 0 n in
         let received =
           match sockaddr with
@@ -1135,9 +1146,8 @@ and udp_recv_entry state proc
               Emo_eval.Tuple
                 [ Emo_eval.String data; Emo_eval.String ""; Emo_eval.Int64 0L ]
         in
-        Effect.Shallow.continue_with k
-          (Emo_eval.net_ok received)
-          (handler state proc ()))
+        Effect.Shallow.continue_with k (Emo_eval.net_ok received)
+          (handler state proc ())
     | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
         let finished = ref false in
         let deadline =
@@ -1174,11 +1184,13 @@ and read_chunk live buf : read_result =
           RFailed ((Ssl.get_error_string [@alert "-deprecated"]) ())
       | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> RWant `R)
 
-and read_line_loop state proc (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+and read_line_loop state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
     (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
     (live : live) (deadline : float option) : outcome =
   match line_in_buffer live with
-  | Some line -> finish_w finished state proc k (Emo_eval.net_ok (Emo_eval.String line))
+  | Some line ->
+      finish_w finished state proc k (Emo_eval.net_ok (Emo_eval.String line))
   | None ->
       read_more state proc k finished c span live deadline
         ~timeout_what:"reading a line from"
@@ -1196,9 +1208,9 @@ and read_line_loop state proc (k : (Emo_eval.value, unit) Effect.Shallow.continu
           read_line_loop st proc k finished c span live deadline)
 
 and read_exactly_loop state proc
-    (k : (Emo_eval.value, unit) Effect.Shallow.continuation) (finished : bool ref)
-    (c : Emo_eval.conn) (span : Emo_support.Span.t) (live : live)
-    (deadline : float option) (n : int) : outcome =
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+    (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
+    (live : live) (deadline : float option) (n : int) : outcome =
   if Buffer.length live.rbuf >= n then
     finish_w finished state proc k
       (Emo_eval.net_ok (Emo_eval.String (buffer_take live n)))
@@ -1213,7 +1225,8 @@ and read_exactly_loop state proc
       ~again:(fun st ->
         read_exactly_loop st proc k finished c span live deadline n)
 
-and read_all_loop state proc (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+and read_all_loop state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
     (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
     (live : live) (deadline : float option) : outcome =
   read_more state proc k finished c span live deadline
@@ -1226,7 +1239,8 @@ and read_all_loop state proc (k : (Emo_eval.value, unit) Effect.Shallow.continua
 (* Pulls one chunk into the live buffer and re-runs [again]; the three
    read operations differ only in when their buffer satisfies them, so
    EOF and readiness handling is shared here. *)
-and read_more state proc (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+and read_more state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
     (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
     (live : live) (deadline : float option) ~(timeout_what : string)
     ~(at_eof : state -> string -> outcome) ~(again : state -> outcome) : outcome
@@ -1250,7 +1264,8 @@ and read_more state proc (k : (Emo_eval.value, unit) Effect.Shallow.continuation
         (Emo_eval.net_error
            (Printf.sprintf "cannot read on %s: %s" c.Emo_eval.cdesc detail))
 
-and write_loop state proc (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+and write_loop state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
     (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
     (live : live) (deadline : float option) (bytes : Bytes.t) (off : int) :
     outcome =
@@ -1273,8 +1288,7 @@ and write_loop state proc (k : (Emo_eval.value, unit) Effect.Shallow.continuatio
               Some
                 (`Failed
                    (Printf.sprintf "cannot write on %s: %s" c.Emo_eval.cdesc
-                      ((Ssl.get_error_string [@alert "-deprecated"]) ())))
-            ))
+                      ((Ssl.get_error_string [@alert "-deprecated"]) ()))) ))
   in
   let off = off + sent in
   let park kind =

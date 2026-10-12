@@ -645,8 +645,7 @@ let empty_env =
           {
             vtype =
               FuncType
-                ( [ ("path", String) ],
-                  TupleType [ EnumType "R"; TcpListener ] );
+                ([ ("path", String) ], TupleType [ EnumType "R"; TcpListener ]);
             is_var = false;
             depth = 0;
           } );
@@ -911,7 +910,8 @@ and conforms ctx actual expected =
    String by convention, and the ok slot's type only types the ok side
    (`CHECK.md`, error handling). The expr must be the literal pair so a
    plain `(R, String)` value never sneaks into an `(R, Int64)`. *)
-let r_error_pair_conforms ctx (e : Ast.expr) (actual : t) (expected : t) : bool =
+let r_error_pair_conforms ctx (e : Ast.expr) (actual : t) (expected : t) : bool
+    =
   match (actual, expected) with
   | TupleType [ EnumType "R"; _ ], TupleType [ EnumType "R"; _ ] -> (
       match e.Ast.desc with
@@ -2399,8 +2399,9 @@ and check_stmt ctx env (s : Ast.stmt) : env =
         ctx.ret_sink := t :: !(ctx.ret_sink);
         match env.ret with
         | Some expected when t <> Unknown && expected <> Unknown ->
-            if not (conforms ctx t expected)
-            && not (r_error_pair_conforms ctx e t expected)
+            if
+              (not (conforms ctx t expected))
+              && not (r_error_pair_conforms ctx e t expected)
             then
               report ctx e.Ast.span "E4008"
                 (Printf.sprintf "return type mismatch: expected %s, got %s"
@@ -2600,8 +2601,8 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
              handling). *)
           let slot_types =
             match (ps, ts) with
-            | [ { Ast.pattern_desc = Ast.Enum_member ("R", "error"); _ }; _ ],
-              [ EnumType "R"; t2 ] ->
+            | ( [ { Ast.pattern_desc = Ast.Enum_member ("R", "error"); _ }; _ ],
+                [ EnumType "R"; t2 ] ) ->
                 [ EnumType "R"; String ]
             | _ -> ts
           in
