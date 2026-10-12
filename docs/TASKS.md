@@ -1161,8 +1161,7 @@ golden green on its declared targets; `dune test` green.
       misses, missing paths return tuples; the native raise sites (os
       runtime, interp + ocaml + c) return instead; waitpid decoding
       untouched.
-- [~] **T37.2** — `json` converted; `yaml` deferred to its own pass (see the task note)
-      — `json` + `yaml` (+ `internal/float`): parse and
+- [x] **T37.2** — `json` + `yaml` (+ `internal/float`): parse and
       accessor failures return tuples — the two biggest sites, ~150.
 - [ ] **T37.3** — `xml` + `base64` + `bufio` + `slog` + `http` +
       `sync`: the same split; `http`'s refused/unresolved/deadline

@@ -7,7 +7,7 @@ require "yaml"
 
 const text = "service: gateway\nreplicas: 3\nratio: 0.75\nlabels:\n  env: prod\n  tier: edge\nports:\n  - 8080\n  - 8443\ntls:\n  enabled: true\n  cert: /etc/cert.pem\nnote: |\n  multi line\n  block scalar\nempty: null\n"
 
-const doc = yaml.decode(text)
+const (R.ok, doc) = yaml.decode(text)
 if doc.is(YamlObject) {
   println(doc.get("service").as_string())
   println(doc.get("replicas").as_int() + 1)
@@ -29,7 +29,7 @@ if doc.is(YamlObject) {
 
 // Round trip: encode to block style and decode again.
 const text2 = yaml.encode(doc)
-const doc2 = yaml.decode(text2)
+const (R.ok, doc2) = yaml.decode(text2)
 if doc2.is(YamlObject) {
   println(doc2.get("service").as_string())
   println(doc2.get("ratio").encode())
@@ -37,7 +37,7 @@ if doc2.is(YamlObject) {
 }
 
 // Flow collections decode like their block counterparts.
-const flow = yaml.decode("{a: 1, b: [x, y]}")
+const (R.ok, flow) = yaml.decode("{a: 1, b: [x, y]}")
 if flow.is(YamlObject) {
   println(flow.get("a").as_int().to_string())
   println(flow.get("b").encode())
