@@ -1,6 +1,6 @@
-# Step 43 — The standard library: `base64`
+# Step 36 — The standard library: `base64`
 
-**Milestone:** M13 — The standard library · **Prereq:** step 39 (the
+**Milestone:** M13 — The standard library · **Prereq:** step 32 (the
 json package — the byte-scanner discipline and the exact-buffer
 patterns this package follows) · **Related:**
 `stdlib/registry/{json,yaml,xml,os}` (the sibling packages),
@@ -37,7 +37,7 @@ example until this package walked through them:
   `truthy` documents as the contract, so any logical operator in
   unspecialized code failed module validation (`struct.get` on
   anyref). This was the wall that had gated json/yaml/xml out of the
-  wasm goldens since step 39.
+  wasm goldens since step 32.
 - **The wasm zero-length byte copies** were do-whiles: `"".to_bytes()`
   and `Bytes.new(0).to_string()` each read element 0 of an empty
   array and trapped.
@@ -62,26 +62,26 @@ rule applied to bytes.
 - The wasm/beam gates on json/yaml/xml should be re-examined: the
   `&&` fix removes the wall this step documented, but those packages
   also pass class/interface values across module boundaries — the
-  cross-module-types checker step (step 39's follow-up) may still gate
+  cross-module-types checker step (step 32's follow-up) may still gate
   them. First step when picked up: build json_demo for wasm and see.
   (The checker step landed 2026-10-10; on c the packages now fail at
   emitted-C compile time instead — the codegen gap recorded in
-  step 39. wasm and beam remain unverified for them.)
+  step 32. wasm and beam remain unverified for them.)
 - The guard emitter's `'andalso'` lowering (Core Erlang has no
   `andalso` call) is the same bug family as the beam `&&` fix and is
   still dormant — no shipped example reaches it.
 
 ## Tasks
 
-- [x] **T43.1** — The package: arithmetic alphabet both directions,
+- [x] **T36.1** — The package: arithmetic alphabet both directions,
       the strict decoder, offset-bearing errors. (Done 2026-10-09.)
-- [x] **T43.2** — The wasm fixes: the `&&`/`||` cast and the
+- [x] **T36.2** — The wasm fixes: the `&&`/`||` cast and the
       zero-length byte-copy guard. (Done 2026-10-09.)
-- [x] **T43.3** — The beam fixes: the logical operators, the tuple
+- [x] **T36.3** — The beam fixes: the logical operators, the tuple
       index, and `Make_exception`. (Done 2026-10-09.)
-- [x] **T43.4** — The golden: `examples/base64_demo` on all five
+- [x] **T36.4** — The golden: `examples/base64_demo` on all five
       lists — the RFC 4648 vectors plus a multi-byte UTF-8 round
       trip. (Done 2026-10-09.)
-- [x] **T43.5** — The docs: `docs/stdlib/base64.md` and its zh-CN
+- [x] **T36.5** — The docs: `docs/stdlib/base64.md` and its zh-CN
       mirror; `dune build @fmt` and `dune test` green. (Done
       2026-10-09.)

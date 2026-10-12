@@ -981,7 +981,7 @@ function netFail(message: string): never {
   throw netError(message);
 }
 
-// The wire's return convention (T37.3): a data-driven failure — a
+// The wire's return convention (T30.3): a data-driven failure — a
 // refused connection, an unresolvable name, an exceeded deadline, a
 // closed socket — is the value (R.error, reason); only the caller's own
 // mistakes raise. Every network operation answers one of these.

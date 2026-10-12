@@ -35,11 +35,11 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M8 — Self-contained hosted backend | 24 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — step 23's assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
 | M9 — Toolchain | 25 | The toolchain release (cut as v0.25.9): signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
 | M10 — Target independence | 26 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
-| M11 — For / While loops | 34–35 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
-| M12 — Error handling | 36–37 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
-| M13 — The standard library | 39–46 | The bundled stdlib packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the native-binding `sqlite3` — each resolving against the manifest's `targets`, answering byte-for-byte on every target it declares, and shipping a full API reference plus a runnable golden. |
-| M14 — Visualization (`plot`) | 47–53 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
-| M15 — Unit testing | 54 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
+| M11 — For / While loops | 27–28 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
+| M12 — Error handling | 29–30 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
+| M13 — The standard library | 32–39 | The bundled stdlib packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the native-binding `sqlite3` — each resolving against the manifest's `targets`, answering byte-for-byte on every target it declares, and shipping a full API reference plus a runnable golden. |
+| M14 — Visualization (`plot`) | 40–46 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
+| M15 — Unit testing | 47 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
 
 ## Design gates
 
@@ -51,7 +51,7 @@ before starting the gated work:
 | CLI command names | T1.3, T7.1–T7.2 | settled in M1 — `run` / `repl` / `check` / `version` shipped |
 | String escape rules | T2.3, T2.4 | Minimal set `\n \t \\ \' \"` |
 | Self-pid mechanism | T11.1 | settled — `self_pid()` builtin, `Pid` type rendering as `<pid N>`, `halt()`; no user-facing kill/wait |
-| Error-handling model (was: exception catch syntax) | T12.5, M12 | settled 2026-10-11 — no catch; `(R.ok, value)` / `(R.error, reason)` tuples plus the one `Exception` class (`CHECK.md`); Steps 36–37 land it |
+| Error-handling model (was: exception catch syntax) | T12.5, M12 | settled 2026-10-11 — no catch; `(R.ok, value)` / `(R.error, reason)` tuples plus the one `Exception` class (`CHECK.md`); Steps 29–30 land it |
 | Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T10.2, T10.5–T10.6, T10.8 | `package.emo`, `package.lock`, `owner/name`, exact pins only, `emo deps *` |
 | C FFI binding-surface syntax | T13.6 | settled — `foreign def name(params) Ret = "c_symbol"`, `Float`/`String`/`Bool` only, through generated C wrappers |
 | Reclamation model for the dynamic world (no tracing GC) | T24.5 | settled — reference counting for identity objects, arena for value-semantic data (`CHECK.md`, at T24.5) |
@@ -695,9 +695,9 @@ pair with `var` — while the var-escape rule (E4012) already fences the
 Go loop-capture trap. The design lives in `CHECK.md` and the README;
 each step's plan file is written when the step starts.
 
-### Step 34 — Loop surface: lexer, parser, checker, interpreter
+### Step 27 — Loop surface: lexer, parser, checker, interpreter
 
-**Prereq:** Step 45.
+**Prereq:** Step 26.
 **Done when:** the README's loop snippets run verbatim through
 `emo run`; the CHECK.md worked example (`for var i = 0; i < 100;
 i = i + 50`) prints `i = 0` then `i = 50`; a 10M-iteration `while`
@@ -706,33 +706,33 @@ identifier, a missing clause, `;` outside a `for` header,
 `break`/`continue` outside a loop — has its own diagnostic;
 `dune test` green.
 
-- [x] **T34.1** — Keywords: reserve `for`, `while`, `break`,
+- [x] **T27.1** — Keywords: reserve `for`, `while`, `break`,
       `continue` in the lexer; the LSP completion list and the VS Code
       grammar flip in lockstep; code using the four words as
       identifiers reports a clear reserved-word diagnostic. (Done 2026-10-11.)
-- [x] **T34.2** — Parser: `while cond { }` and the three-clause `for`
+- [x] **T27.2** — Parser: `while cond { }` and the three-clause `for`
       — no omissions, the post clause an assignment, `;` a token legal
       only inside a `for` header, `suppress_block_sugar` set on the
       `while` condition and all three `for` clauses so the trailing
       `{` opens the body; AST nodes for the four statements. (Done 2026-10-11.)
-- [x] **T34.3** — Checker: the header `var` scoped to header+body in
+- [x] **T27.3** — Checker: the header `var` scoped to header+body in
       the existing depth model; `break`/`continue` bind to the nearest
       enclosing loop and are rejected outside one; `definitely_returns`
       accounts for loops so `return`-reachability stays sound;
       capturing the header `var` in an arrow block stays E4012. (Done 2026-10-11.)
-- [x] **T34.4** — Interpreter: the four statements in `eval_stmt`; the
+- [x] **T27.4** — Interpreter: the four statements in `eval_stmt`; the
       iteration runs a host loop, never recursion — 10M iterations
       flat; `continue` runs a `for`'s post clause first; the step
       budget counts each iteration. (Done 2026-10-11.)
-- [x] **T34.5** — Example and rejections: `examples/loops` — the
+- [x] **T27.5** — Example and rejections: `examples/loops` — the
       worked example, `while` counting, `break`/`continue`, nested
       loops — golden through `emo run`; the parser and checker
       rejection corpus pinning every refusal. (Done 2026-10-11.)
-- [x] **T34.6** — README alignment: the README (English + zh-CN)
+- [x] **T27.6** — README alignment: the README (English + zh-CN)
       already documents the settled syntax — verify it against the
       implemented surface and reconcile any drift. (Done 2026-10-11.)
 
-Step 34 close-out (2026-10-11, on `feat/loops`): the loop surface is
+Step 27 close-out (2026-10-11, on `feat/loops`): the loop surface is
 live in the lexer, parser, checker, and interpreter, one commit per
 task. `;` became a token whose only legal home is a `for` header
 (E2025), and the header's shape is parse-time law — the init clause a
@@ -749,31 +749,31 @@ runs a `for`'s post clause, and the step budget counts every
 iteration, which is what keeps the restricted config profile
 terminating now that loops exist. `examples/loops` is golden through
 the interpreter; the six backends refuse the loop statements loudly
-until step 35 lowers them.
+until step 28 lowers them.
 
-### Step 35 — Loops on every target: IR and the six backends
+### Step 28 — Loops on every target: IR and the six backends
 
-**Prereq:** Step 34.
+**Prereq:** Step 27.
 **Done when:** `examples/loops` compiles on c, ocaml, typescript,
 wasm, beam, and riscv64, each printing byte-for-byte what `emo run`
 prints (goldens in CI); a 10M-iteration loop stays flat on every
 target; the tail-call guarantee is untouched (`loops_tail` unchanged);
 `dune test` green.
 
-- [x] **T35.1** — IR: the loop statements in `emo_ir`'s `stmt` and the
+- [x] **T28.1** — IR: the loop statements in `emo_ir`'s `stmt` and the
       Ast→IR lowering — the header `var` as a loop-scoped mutable
       binding; one node set, every backend a case. (Done 2026-10-11.)
-- [x] **T35.2** — c: the emitted C's own `while`/`for` with native
+- [x] **T28.2** — c: the emitted C's own `while`/`for` with native
       `break`/`continue`; `return` inside a loop rides the existing
       branch-to-epilogue. (Done 2026-10-11.)
-- [x] **T35.3** — ocaml: native `while`/`for` over the existing `ref`
+- [x] **T28.3** — ocaml: native `while`/`for` over the existing `ref`
       discipline for the header `var`; `break`/`continue` lower
       through the one mechanism the plan file records (a done flag or
       a local exception — decided, never a silent fallback).
       (Done 2026-10-11 — the mechanism: one pair of local exceptions
       per loop, `Break_N`/`Continue_N`; `continue` unwinds to the
       handler above the post, `break` past the whole while.)
-- [x] **T35.4** — typescript: native `while`/`for` in the emitted
+- [x] **T28.4** — typescript: native `while`/`for` in the emitted
       body; `break`/`continue` are the target language's own.
       (Done 2026-10-11. Also fixed a pre-existing backend bug the
       loops golden exposed: `stmts` emitted the rest of a chain before
@@ -782,7 +782,7 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       head now emits first. The self-tail-call driver loop gained the
       `__emo_driver` label so a tail call inside a loop continues the
       driver, not the Emo loop.)
-- [x] **T35.5** — wasm: structured control flow — `Loop` with `Br_if`
+- [x] **T28.5** — wasm: structured control flow — `Loop` with `Br_if`
       on the condition; `break` branches out of the loop block,
       `continue` to the head, the post clause running first.
       (Done 2026-10-11. For lowers to `block $exit { init; loop $head {
@@ -790,7 +790,7 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       `continue` lands on the post and a `break` leaves past it; frame
       depths are tracked for statement-level ifs and case dispatches so
       branch depths stay relative-correct inside nested control flow.)
-- [x] **T35.6** — beam: the loop lowers to a tail-recursive local
+- [x] **T28.6** — beam: the loop lowers to a tail-recursive local
       function — condition guard, body, recursive call with the
       rebound variables; `break` threads a done marker.
       (Done 2026-10-11. Each loop is a hidden module function taking
@@ -803,7 +803,7 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       (Also fixed: the single-statement `Assign_var` path registered
       the shadow before evaluating the value, so `n = n + 1` read the
       variable it was defining.)
-- [x] **T35.7** — riscv64: labels and conditional branches — the loop
+- [x] **T28.7** — riscv64: labels and conditional branches — the loop
       head a label, `break`/`continue` jumps.
       (Done 2026-10-11. While is `head: test; beqz exit; body; j head`;
       a `for` puts a post label between the body and the jump back, so
@@ -812,7 +812,7 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       heap's no-reclamation arena — shared with the pre-loop
       tail-recursive idiom — still bounds long-running programs;
       unchanged by this task.)
-- [x] **T35.8** — Goldens and benchmarks: `examples/loops` on all six
+- [x] **T28.8** — Goldens and benchmarks: `examples/loops` on all six
       target golden lists; a plain-loop row beside `loops_tail` in
       `benchmarks/results.md`; the CI groups; close-out. (Done
       2026-10-11. The riscv64 target gained `/` and `%` — `div`/`rem`
@@ -820,7 +820,7 @@ target; the tail-call guarantee is untouched (`loops_tail` unchanged);
       plain-loop benchmark records the ocaml target's dynamic-by-
       construction number beside the c target and the interpreter.)
 
-Step 35 close-out (2026-10-11, on `feat/loops`): the loop statements
+Step 28 close-out (2026-10-11, on `feat/loops`): the loop statements
 lower on all six targets, one commit per task. The IR carries
 While/For/Break/Continue with the header `var` as a loop-scoped mutable
 binding, and assignment lowering resolves innermost-first so a header
@@ -848,9 +848,9 @@ every target including riscv64 gets it; the stdlib migration moves the
 lives in `CHECK.md` and the README (both languages); each step's plan
 file is written when the step starts.
 
-### Step 36 — Error-handling surface: R, binding patterns, raise discipline
+### Step 29 — Error-handling surface: R, binding patterns, raise discipline
 
-**Prereq:** Step 35.
+**Prereq:** Step 28.
 **Done when:** the README's exception snippets run verbatim through
 `emo run`; an error tuple flowing into `const (R.ok, body)` ends the
 process with the case-no-match runtime error; `raise "str"` and
@@ -858,69 +858,69 @@ process with the case-no-match runtime error; `raise "str"` and
 `Exception` refuse user redeclaration; the uncaught report prints
 non-empty `data`; `dune test` green.
 
-- [x] **T36.1** — Built-in `R { ok, error }`: bound in the checker's
+- [x] **T29.1** — Built-in `R { ok, error }`: bound in the checker's
       root env and the interpreter's global frame (the `Exception`
       precedent); `R.ok` / `R.error` construct and pattern-match
       everywhere enum members already do; `enum R` / `class R` report
       a reserved-name diagnostic.
-- [x] **T36.2** — Parser: `const`/`var` accept a full pattern in
+- [x] **T29.2** — Parser: `const`/`var` accept a full pattern in
       place of the name (`Ast.Binding` carries it); the `const (`
       form stops being a hard error, breaking no grammar.
-- [x] **T36.3** — IR: the pattern binding desugars to a one-arm
+- [x] **T29.3** — IR: the pattern binding desugars to a one-arm
       `case` wrapping the block remainder — no new IR nodes, the six
       backends see only existing ones.
-- [x] **T36.4** — Checker: pattern bindings check through
+- [x] **T29.4** — Checker: pattern bindings check through
       `check_pattern` against the initializer's type; `raise`'s
       operand must be an `Exception` instance (its own E-code for
       everything else); the uncaught diagnostic appends non-empty
       `data`.
-- [x] **T36.5** — Interpreter: pattern-binding evaluation, mismatch
+- [x] **T29.5** — Interpreter: pattern-binding evaluation, mismatch
       riding the case-no-match runtime error; the raise-operand
       discipline at run time; existing goldens re-recorded where the
       uncaught format changed.
-- [x] **T36.6** — Example and rejections: `examples/errors` — the
+- [x] **T29.6** — Example and rejections: `examples/errors` — the
       README snippets verbatim (ok/error matching, the assert-match
       binding, a violation raising) — golden through `emo run`; the
       matching example golden on all six targets byte-for-byte
       (riscv64 runs the matching half; its raise refusal unchanged);
       the rejection corpus pinning every new diagnostic.
-- [x] **T36.7** — README alignment: the README (English + zh-CN)
+- [x] **T29.7** — README alignment: the README (English + zh-CN)
       already documents the settled surface — verify it against the
       implemented one and reconcile any drift.
 
-### Step 37 — The stdlib migration: tuples replace raises, package by package
+### Step 30 — The stdlib migration: tuples replace raises, package by package
 
-**Prereq:** Step 36.
+**Prereq:** Step 29.
 **Done when:** every stdlib package's data-driven failures return
 `(R.error, reason)` and only contract violations raise; every package
 golden green on its declared targets; `dune test` green.
 
-- [x] **T37.1** — `file` + `os`: open/read/write and permission
+- [x] **T30.1** — `file` + `os`: open/read/write and permission
       misses, missing paths return tuples; the native raise sites (os
       runtime, interp + ocaml + c) return instead; waitpid decoding
       untouched.
-- [x] **T37.2** — `json` + `yaml` (+ `internal/float`): parse and
+- [x] **T30.2** — `json` + `yaml` (+ `internal/float`): parse and
       accessor failures return tuples — the two biggest sites, ~150.
-- [x] **T37.3** — `xml` + `base64` + `bufio` + `slog` + `http` +
+- [x] **T30.3** — `xml` + `base64` + `bufio` + `slog` + `http` +
       `sync`: the same split; `http`'s refused/unresolved/deadline
       failures become tuples, per the README's network section.
       (`xml`/`base64` decode failures and the whole `net` surface
       return tuples; `bufio`/`slog`/`sync` keep their raises — every
       one is a caller mistake.)
-- [x] **T37.4** — Goldens: every touched package's error-path
+- [x] **T30.4** — Goldens: every touched package's error-path
       fixtures re-recorded to match `(R.error, why)`; package goldens
       green on all declared targets.
-- [x] **T37.5** — Docs: the per-package pages under `docs/stdlib/`
+- [x] **T30.5** — Docs: the per-package pages under `docs/stdlib/`
       (and the zh-CN mirrors) reworded raise → returns; error-message
       tables updated.
 
-### Step 38 — Checker strictness: Box typing and cross-module value signatures
+### Step 31 — Checker strictness: Box typing and cross-module value signatures
 
 The checker pass on `feat/checker` (2026-10-11): the two divergences the
 loops step recorded, plus what unblinding them exposed. Decisions in
 CHECK.md.
 
-- [x] **T38.1** — `Box.new` types as `Box[T]`: the checker's constructor
+- [x] **T31.1** — `Box.new` types as `Box[T]`: the checker's constructor
       special case beside `List.new`/`Map.new`, so `read`/`replace`
       check against the cell and every other member — including a bare
       member access — is refused at check time (the bare `x.v`
@@ -932,7 +932,7 @@ CHECK.md.
       receivers, printing the debug repr instead of calling the class's
       method (instances now dispatch by class first, the conversion
       only when no method carries the name).
-- [x] **T38.2** — Cross-module value signatures: defs and foreigns as
+- [x] **T31.2** — Cross-module value signatures: defs and foreigns as
       their declared `FuncType`s, consts/vars as their initializer's
       types, and the `emo` groups into a program-wide registry — all
       pre-registered beside the type tables. A qualified call checks
@@ -944,7 +944,7 @@ CHECK.md.
       prefixes, and the empty dotted path passed as a module prefix —
       bare member access on any non-simple receiver (`foo(1).field`)
       read as Unknown.
-- [x] **T38.3** — A capitalized value name resolving to no type, group,
+- [x] **T31.3** — A capitalized value name resolving to no type, group,
       or module reports E4003 where it is written, in a program check
       (the runtime's value-carrying builtins stay legal); the lone-file
       view keeps the old silence, like every cross-file gap it cannot
@@ -957,9 +957,9 @@ CHECK.md.
 
 The bundled stdlib is a milestone of its own: one package per step, each
 shipping its API reference and a runnable golden. The steps run `json`
-(39) through `bufio` (45), then the native-binding `sqlite3` (46).
+(32) through `bufio` (38), then the native-binding `sqlite3` (39).
 
-### Step 39 — The standard library: `json` · `plan/step-39-stdlib-json.md`
+### Step 32 — The standard library: `json` · `plan/step-32-stdlib-json.md`
 
 **Prereq:** Step 10 (packages) + step 26 (target independence).
 **Done when:** `require "json"` decodes and encodes JSON on every
@@ -969,45 +969,45 @@ data over the shared runtimes, zero per-target runtime work beyond the
 typescript UTF-8 bytes fix; goldens on all six paths; `dune test`
 green.
 
-- [x] **T39.1** — The spec and the skeleton: the package
+- [x] **T32.1** — The spec and the skeleton: the package
       `stdlib/registry/json/0.1.0` (`package.emo` over the five tested
       targets, `json.emo` with the value model — `JsonKind`, the
       `Json` interface, seven payload classes, the factories — and
       `internal/float.emo` for the numeric machinery) embedded by
       rebuild. Verification: a factory-built value encodes,
       interpreted. (Done 2026-10-09.)
-- [x] **T39.2** — The typescript bytes fix: `to_bytes` encodes UTF-8
+- [x] **T32.2** — The typescript bytes fix: `to_bytes` encodes UTF-8
       and `Bytes.to_string` decodes UTF-8 in the ts prelude; all
       existing ts goldens byte-for-byte. (Done 2026-10-09: the
       interpreter, c, and typescript agree on a non-ASCII
       round-trip.)
-- [x] **T39.3** — The decoder: the byte-level scanner and
+- [x] **T32.3** — The decoder: the byte-level scanner and
       recursive-descent parser over the RFC 8259 grammar — escapes
       with surrogate pairs, exact `Int64`/`Float64` numbers, the depth
       cap, offset-bearing errors. (Done 2026-10-09: decode rounds
       decimals once, to nearest with ties to even — `strtod`'s
       answer — via exact long division in `internal/float.emo`.)
-- [x] **T39.4** — The encoder: compact and pretty forms; string
+- [x] **T32.4** — The encoder: compact and pretty forms; string
       escaping; integers through `Int64.to_string`; the
       shortest-round-trip float formatter. (Done 2026-10-09: π prints
       `3.141592653589793`, denormal-min prints `5.0e-324`, max prints
       `1.7976931348623157e+308`; a float always stays visibly a
       float.)
-- [x] **T39.5** — The golden example: `examples/json_demo` wired into
+- [x] **T32.5** — The golden example: `examples/json_demo` wired into
       the interpreter-bootstrap and typescript golden lists (one
       `expected.txt`); c, wasm, and beam wait on the cross-module
       follow-up below. (Done 2026-10-09.)
-- [x] **T39.6** — The edge fixtures: `examples/json_edge` — escape
+- [x] **T32.6** — The edge fixtures: `examples/json_edge` — escape
       matrix, surrogate pairs, the 512-array cap round-tripped,
       duplicate keys, number boundaries, round-trips, pretty form —
       wired into the interpreter-bootstrap list. (Done 2026-10-09;
       flushed out the missing empty-container guards in the compact
       encoder.)
-- [x] **T39.7** — The docs and close-out: `docs/stdlib/json.md` and
+- [x] **T32.7** — The docs and close-out: `docs/stdlib/json.md` and
       its zh-CN mirror; `dune build @fmt` and `dune test` green.
       (Done 2026-10-09.)
 
-Step 39 close-out (2026-10-09, on `feat/stdlib`): `require "json"`
+Step 32 close-out (2026-10-09, on `feat/stdlib`): `require "json"`
 decodes and encodes byte-identically on the interpreter, the ocaml
 target, and the typescript target — goldens `json_demo` (bootstrap +
 ts) and `json_edge` (bootstrap) green, `dune build @fmt` and
@@ -1015,7 +1015,7 @@ ts) and `json_edge` (bootstrap) green, `dune build @fmt` and
 wasm, and beam targets stay blocked on one checker step — cross-module
 type names ("cross-module types stay unchecked this step", step 9) —
 with the minimal repros and the backend fixes this step already landed
-recorded in `plan/step-39-stdlib-json.md`. Compiler fixes riding this
+recorded in `plan/step-32-stdlib-json.md`. Compiler fixes riding this
 step: the span type table keyed by file (multi-module type
 corruption), the typescript tail-call rewrite's argument
 temporaries + string escapes + interface separators, the c `emo_send`
@@ -1023,39 +1023,39 @@ argument array + unknown-receiver vtable fallback + mutual-tail
 cluster entry dispatch, and the wasm interface-dispatch `Ref_cast` +
 field display-name resolution.
 
-### Step 40 — The standard library: `yaml` · `plan/step-40-stdlib-yaml.md`
+### Step 33 — The standard library: `yaml` · `plan/step-33-stdlib-yaml.md`
 
-**Prereq:** Step 39 (the json package — the tree design and the float
+**Prereq:** Step 32 (the json package — the tree design and the float
 machinery this package mirrors). **Done when:** `require "yaml"`
 decodes and encodes YAML 1.2 (core schema) byte-identically on the
 targets the checker carries — block/flow, quoted scalars with the
 YAML escape set, block scalars with chomping, duplicate keys
 last-win, numbers at their boundaries; goldens green on
 interpreter/ocaml/typescript; c, wasm, and beam wait on the
-cross-module-types follow-up shared with step 39.
+cross-module-types follow-up shared with step 32.
 
-- [x] **T40.1** — The package and the parser: `stdlib/registry/yaml/
+- [x] **T33.1** — The package and the parser: `stdlib/registry/yaml/
       0.1.0` embedded by rebuild; the value model, the block/flow
       parser. (Done 2026-10-09.)
-- [x] **T40.2** — The encoder: block style; plain-when-unambiguous
+- [x] **T33.2** — The encoder: block style; plain-when-unambiguous
       strings; empty-container flow forms. (Done 2026-10-09.)
-- [x] **T40.3** — The goldens: `examples/yaml_demo` (bootstrap +
+- [x] **T33.3** — The goldens: `examples/yaml_demo` (bootstrap +
       typescript) and `examples/yaml_edge` (bootstrap). (Done
       2026-10-09.)
-- [x] **T40.4** — The docs: `docs/stdlib/yaml.md` + zh-CN mirror;
+- [x] **T33.4** — The docs: `docs/stdlib/yaml.md` + zh-CN mirror;
       `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
 
-Step 40 close-out (2026-10-09, on `feat/stdlib`): the yaml package
+Step 33 close-out (2026-10-09, on `feat/stdlib`): the yaml package
 mirrors the json package's tree design and passes its goldens on the
 interpreter, ocaml, and typescript; c, wasm, and beam remain gated on
-the cross-module-types checker step shared with step 39. The package
+the cross-module-types checker step shared with step 32. The package
 also flushed out the typescript runtime's field-shadows-method
 dispatch bug (fixed in `ts_runtime.ts`: E.method now falls through to
 the prototype's method when the own property is not a function).
 
-### Step 41 — The standard library: `xml` · `plan/step-41-stdlib-xml.md`
+### Step 34 — The standard library: `xml` · `plan/step-34-stdlib-xml.md`
 
-**Prereq:** Step 39 (the json package — the tree design and the
+**Prereq:** Step 32 (the json package — the tree design and the
 byte-scanner patterns this package follows). **Done when:**
 `require "xml"` decodes and encodes well-formed XML byte-identically
 on the verified targets — elements with quoted attributes, self-
@@ -1063,18 +1063,18 @@ closing form, the five entities plus character references, CDATA as
 raw text, comments / PIs / declaration / DOCTYPE skipped, mixed
 content, offset-bearing errors; goldens green on
 interpreter/ocaml/typescript/c; wasm and beam wait on the
-cross-module-types follow-up shared with steps 27–28.
+cross-module-types follow-up shared with steps 32–33.
 
-- [x] **T41.1** — The package, the value model, and the decoder.
+- [x] **T34.1** — The package, the value model, and the decoder.
       (Done 2026-10-09.)
-- [x] **T41.2** — The encoder. (Done 2026-10-09.)
-- [x] **T41.3** — The goldens: `examples/xml_demo` (bootstrap + c +
+- [x] **T34.2** — The encoder. (Done 2026-10-09.)
+- [x] **T34.3** — The goldens: `examples/xml_demo` (bootstrap + c +
       typescript) and `examples/xml_edge` (bootstrap). (Done
       2026-10-09.)
-- [x] **T41.4** — The docs: `docs/stdlib/xml.md` + zh-CN mirror;
+- [x] **T34.4** — The docs: `docs/stdlib/xml.md` + zh-CN mirror;
       `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
 
-Step 41 close-out (2026-10-09, on `feat/stdlib`): the xml package —
+Step 34 close-out (2026-10-09, on `feat/stdlib`): the xml package —
 the leanest of the three format packages (XML is all text, so no
 float machinery) — passes its goldens on the interpreter, ocaml,
 typescript, AND c (xml_demo rides the c_goldens list). The package
@@ -1083,7 +1083,7 @@ out-of-bounds pattern across all three format packages (fixed:
 exact-fill buffers return `to_string()` directly). wasm and beam
 remain gated on the cross-module-types checker step.
 
-### Step 42 — The standard library: `os` · `plan/step-42-stdlib-os.md`
+### Step 35 — The standard library: `os` · `plan/step-35-stdlib-os.md`
 
 **Prereq:** Step 24 (the c target) and step 26 (target independence —
 the standalone ocaml runtime needs the dispatch too). **Done when:**
@@ -1095,20 +1095,20 @@ list_dir answers byte-order-sorted names without `.` and `..`;
 goldens green on interpreter/ocaml/c; ts/wasm/beam refuse the package
 by declaration.
 
-- [x] **T42.1** — The checker signatures, the `os_` builtin prefix,
+- [x] **T35.1** — The checker signatures, the `os_` builtin prefix,
       and the interpreter's Unix-backed dispatch. (Done 2026-10-09.)
-- [x] **T42.2** — The c runtime's `emo_os_*` POSIX implementations
+- [x] **T35.2** — The c runtime's `emo_os_*` POSIX implementations
       and the c emitter's dispatch. (Done 2026-10-09.)
-- [x] **T42.3** — The standalone ocaml runtime's dispatch. (Done
+- [x] **T35.3** — The standalone ocaml runtime's dispatch. (Done
       2026-10-09.)
-- [x] **T42.4** — The package: thin wrappers, the wait-status
+- [x] **T35.4** — The package: thin wrappers, the wait-status
       decoders, the fork/pipe discipline. (Done 2026-10-09.)
-- [x] **T42.5** — The golden: `examples/os_demo` on the bootstrap
+- [x] **T35.5** — The golden: `examples/os_demo` on the bootstrap
       and c_goldens lists. (Done 2026-10-09.)
-- [x] **T42.6** — The docs: `docs/stdlib/os.md` + zh-CN mirror;
+- [x] **T35.6** — The docs: `docs/stdlib/os.md` + zh-CN mirror;
       `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
 
-Step 42 close-out (2026-10-09, on `feat/stdlib`): the os package —
+Step 35 close-out (2026-10-09, on `feat/stdlib`): the os package —
 the second runtime-backed package after net, and the first reaching
 into process machinery — verified on the interpreter, ocaml, and c
 targets; the os_demo golden exercises fork+pipe+waitpid (child exits
@@ -1118,28 +1118,28 @@ modules with native types only, so the c target takes it without the
 cross-module-types checker step; ts/wasm/beam are refused by the
 package's targets declaration.
 
-### Step 43 — The standard library: `base64` · `plan/step-43-stdlib-base64.md`
+### Step 36 — The standard library: `base64` · `plan/step-36-stdlib-base64.md`
 
-**Prereq:** Step 39 (the json package — the byte-scanner discipline).
+**Prereq:** Step 32 (the json package — the byte-scanner discipline).
 **Done when:** `require "base64"` encodes with the standard alphabet
 and `=` padding and decodes strictly — alphabet-only, padding only in
 the final quantum, canonical zero padding bits — with the offending
 byte offset on every rejection; the golden rides ALL five lists
 (bootstrap, c, typescript, wasm, beam), byte-identical everywhere.
 
-- [x] **T43.1** — The package: the arithmetic alphabet both
+- [x] **T36.1** — The package: the arithmetic alphabet both
       directions, the strict decoder, offset-bearing errors. (Done
       2026-10-09.)
-- [x] **T43.2** — The wasm fixes: the `&&`/`||` left-operand cast and
+- [x] **T36.2** — The wasm fixes: the `&&`/`||` left-operand cast and
       the zero-length byte-copy guard. (Done 2026-10-09.)
-- [x] **T43.3** — The beam fixes: the logical operators, the tuple
+- [x] **T36.3** — The beam fixes: the logical operators, the tuple
       index, and `Make_exception`. (Done 2026-10-09.)
-- [x] **T43.4** — The golden: `examples/base64_demo` on all five
+- [x] **T36.4** — The golden: `examples/base64_demo` on all five
       lists. (Done 2026-10-09.)
-- [x] **T43.5** — The docs: `docs/stdlib/base64.md` + zh-CN mirror;
+- [x] **T36.5** — The docs: `docs/stdlib/base64.md` + zh-CN mirror;
       `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
 
-Step 43 close-out (2026-10-09, on `feat/stdlib`): the base64 package
+Step 36 close-out (2026-10-09, on `feat/stdlib`): the base64 package
 is the first standard-library package on all five goldens — and the
 step flushed out four latent backend bugs no shipped example had ever
 reached: the wasm `&&`/`||` left operand skipped its `ref.cast` (this
@@ -1150,11 +1150,11 @@ booleans, and the beam tuple index used `lists:nth` on an Erlang
 tuple; beam also gained `Make_exception` (the exception object is its
 message). The json/yaml/xml wasm gate should be re-examined against
 these fixes — the `&&` wall is gone, though their cross-module class
-types may still be gated by the step-39 follow-up.
+types may still be gated by the step-32 follow-up.
 
-### Step 44 — The standard library: `slog` · `plan/step-44-stdlib-slog.md`
+### Step 37 — The standard library: `slog` · `plan/step-37-stdlib-slog.md`
 
-**Prereq:** Step 43 (base64 — the native-types-only surface shape).
+**Prereq:** Step 36 (base64 — the native-types-only surface shape).
 **Done when:** `require "slog"` logs one line per record, logfmt or
 JSON, filtered by a minimum level; loggers are ordinary values — an
 opaque handle carrying name, level, and format — attrs are a
@@ -1162,19 +1162,19 @@ opaque handle carrying name, level, and format — attrs are a
 rides the bootstrap, c, and typescript lists byte-identical; wasm and
 beam refuse the package until their runtimes implement `Map`.
 
-- [x] **T44.1** — The package: the ordered levels and the two
+- [x] **T37.1** — The package: the ordered levels and the two
       formats, the handle pack/parse, the logfmt and JSON renderers,
       strict keys and exact errors. (Done 2026-10-09.)
-- [x] **T44.2** — The golden: `examples/slog_demo` — both formats,
+- [x] **T37.2** — The golden: `examples/slog_demo` — both formats,
       filtering, a child logger, quoting and escaping, UTF-8, and
       `enabled` — on the bootstrap, c, and typescript lists. (Done
       2026-10-09.)
-- [x] **T44.3** — The docs: `docs/stdlib/slog.md` + zh-CN mirror;
+- [x] **T37.3** — The docs: `docs/stdlib/slog.md` + zh-CN mirror;
       `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
 
-Step 44 close-out (2026-10-09, on `feat/slog`): the slog package is
+Step 37 close-out (2026-10-09, on `feat/slog`): the slog package is
 the first standard-library package whose golden needed zero compiler
-changes — the step-43 wasm/beam fixes held, and `Map` on
+changes — the step-36 wasm/beam fixes held, and `Map` on
 interp/ocaml/c/typescript carried the whole surface. The design
 answers "a logger without a framework": the handle packs
 `name/level/format` in plain sight so the package holds no state at
@@ -1184,9 +1184,9 @@ strict to one alphabet shared with the handle's percent-escaping. The
 manifest declares the three targets that work today and widens when
 the wasm/beam `Map` gap closes.
 
-### Step 45 — The standard library: `bufio` · `plan/step-45-stdlib-bufio.md`
+### Step 38 — The standard library: `bufio` · `plan/step-38-stdlib-bufio.md`
 
-**Prereq:** Step 44 (slog — the zero-compiler-change golden shape).
+**Prereq:** Step 37 (slog — the zero-compiler-change golden shape).
 **Done when:** `require "bufio"` reads and writes through a
 fixed-size buffer over two one-method structural interfaces —
 `Reader` with line, delimiter, peek, discard, and one-level unread;
@@ -1196,21 +1196,21 @@ the golden rides the bootstrap and c lists byte-identical, and the
 c-backend cross-module dispatch is sound (an instance answers through
 its vtable, once, and Void method statements keep their calls).
 
-- [x] **T45.1** — The package: the two interfaces, the four
+- [x] **T38.1** — The package: the two interfaces, the four
       adapters, the `Reader` and `Writer` surfaces, strict sizes and
       exact errors. (Done 2026-10-09.)
-- [x] **T45.2** — The golden: `examples/bufio_demo` — in-memory
+- [x] **T38.2** — The golden: `examples/bufio_demo` — in-memory
       streams, an 8-byte buffered file write that really flushes,
       read back through two stacked readers — on the bootstrap and c
       lists. (Done 2026-10-09.)
-- [x] **T45.3** — The c-backend fixes: the runtime dispatch for
+- [x] **T38.3** — The c-backend fixes: the runtime dispatch for
       untyped receivers (`emo_dynamic_builtin` + the builtin method
       table), the single evaluation of the receiver, and the Void
       statement-method emission. (Done 2026-10-09.)
-- [x] **T45.4** — The docs: `docs/stdlib/bufio.md` + zh-CN mirror;
+- [x] **T38.4** — The docs: `docs/stdlib/bufio.md` + zh-CN mirror;
       `dune build @fmt` and `dune test` green. (Done 2026-10-09.)
 
-Step 45 close-out (2026-10-09, on `feat/bufio`): the bufio package is
+Step 38 close-out (2026-10-09, on `feat/bufio`): the bufio package is
 the first standard-library package whose state isBoxes inside an
 ordinary class — the buffer, cursor, source, and last-read byte live
 in `Box`es, and the class stays immutable around them. The step
@@ -1224,19 +1224,19 @@ instances to their vtable before any builtin. The package rides `os`,
 so its manifest declares the ocaml and c targets and widens when
 those surfaces reach the other runtimes.
 
-### Step 46 — The standard library: `sqlite3` · `plan/step-46-stdlib-sqlite3.md`
+### Step 39 — The standard library: `sqlite3` · `plan/step-39-stdlib-sqlite3.md`
 
 **Prereq:** Step 24 (the c target's direct C ABI) + step 25 (the embedded stdlib).
 **Done when:** `require "sqlite3"` on the c target opens a database, executes DDL, prepares statements, binds int / float / text / null parameters, and reads typed columns — with no `--cclib` and no hand-compiled shim on the consumer's side; the manifest's `link` field and package-carried `.c`/`.h` sources land with it; every other target refuses (resolution's `targets` gate, or the non-c build's E5007), the interpreter at run time (E3009); `dune test` green.
 
-- [x] **T46.1** — The manifest's `link` field: parse (strict, optional, bare names only), tests.
-- [x] **T46.2** — Packages carry `.c`/`.h`: `Registry.collect_files` and `gen-stdlib-data.sh` collect and embed them; publish and checksums flow through unchanged.
-- [x] **T46.3** — The build wiring: `load_deps`/`compile_inputs` collect each dependency's C sources and link libraries; the c target's cc invocation and cache key take them; the non-c gate (E5007).
-- [x] **T46.4** — The `sqlite3` package: manifest, `internal/ffi.emo`, `emo_sqlite3_shim.c`, the `Database`/`Statement` public surface.
-- [x] **T46.5** — `examples/sqlite3_demo` golden on the c target (gated on a sqlite3 probe, beside `cc_available`), plus the native-dependency tests in `test/emo_project`.
-- [x] **T46.6** — The docs: the CHECK.md entry, README (+ zh-CN), `docs/native-backend.md` (+ zh-CN), `docs/stdlib/sqlite3.md` (+ zh-CN), the stdlib tours.
+- [x] **T39.1** — The manifest's `link` field: parse (strict, optional, bare names only), tests.
+- [x] **T39.2** — Packages carry `.c`/`.h`: `Registry.collect_files` and `gen-stdlib-data.sh` collect and embed them; publish and checksums flow through unchanged.
+- [x] **T39.3** — The build wiring: `load_deps`/`compile_inputs` collect each dependency's C sources and link libraries; the c target's cc invocation and cache key take them; the non-c gate (E5007).
+- [x] **T39.4** — The `sqlite3` package: manifest, `internal/ffi.emo`, `emo_sqlite3_shim.c`, the `Database`/`Statement` public surface.
+- [x] **T39.5** — `examples/sqlite3_demo` golden on the c target (gated on a sqlite3 probe, beside `cc_available`), plus the native-dependency tests in `test/emo_project`.
+- [x] **T39.6** — The docs: the CHECK.md entry, README (+ zh-CN), `docs/native-backend.md` (+ zh-CN), `docs/stdlib/sqlite3.md` (+ zh-CN), the stdlib tours.
 
-Step 46 close-out (2026-10-12, on `feat/sqlite3`): the package system learns to carry native code — a manifest gains the optional `link` field (bare library names; a flag- or path-shaped entry is E5103), and `.c`/`.h` sources ride the package tree into collection, checksums, embedding, and publishing — so the c target compiles and links a dependency's native inputs with no consumer-side flags. The `sqlite3` package is the first consumer: a `foreign def` binding over a package-carried exact-ABI shim (`emo_sqlite3_shim.c`, every signature `int64_t`/`double`/`bool`/`const char *`), c-target only, raising per the `os` convention until the error-handling migration lands.
+Step 39 close-out (2026-10-12, on `feat/sqlite3`): the package system learns to carry native code — a manifest gains the optional `link` field (bare library names; a flag- or path-shaped entry is E5103), and `.c`/`.h` sources ride the package tree into collection, checksums, embedding, and publishing — so the c target compiles and links a dependency's native inputs with no consumer-side flags. The `sqlite3` package is the first consumer: a `foreign def` binding over a package-carried exact-ABI shim (`emo_sqlite3_shim.c`, every signature `int64_t`/`double`/`bool`/`const char *`), c-target only, raising per the `os` convention until the error-handling migration lands.
 
 ---
 
@@ -1255,136 +1255,136 @@ work touches in `docs/temp-visual-check.md`. Out of scope (decision 9):
 interactive/GUI charts, an EmoUI canvas, 3D, animation. Each step's plan
 file is written when the step starts.
 
-### Step 47 — Compiler and language enablers for plotting
+### Step 40 — Compiler and language enablers for plotting
 
 Independent of the plot steps; each unblocks or de-risks work below.
 **Done when:** the enabler's own tests pass and the affected plot code
 uses it.
 
-- [ ] **T47.1** — Type `self.field` precisely (R2 in
+- [ ] **T40.1** — Type `self.field` precisely (R2 in
       `docs/temp-visual-check.md`) with the emitters aligned, so a mark's
       style fields need not be stored flat. Today a native-typed field
       read on a dynamic receiver is still boxed, and the emitters key
       their native/dynamic choice on the expression's static type alone.
-- [ ] **T47.2** — A class method named like a builtin method is not
+- [ ] **T40.2** — A class method named like a builtin method is not
       shadowed (R3). `to_string` is fixed; `length` is not.
-- [ ] **T47.3** — `math`'s opt-in native fast path: separate `*_native`
+- [ ] **T40.3** — `math`'s opt-in native fast path: separate `*_native`
       `foreign def` functions on `c`/`ocaml` (`math.exp` pure and
       byte-identical, `math.exp_native` the pinned fast path; decision
       15), documented as target-pinned.
-- [ ] **T47.4** — File and fix the `ocaml` specialization defect the
+- [ ] **T40.4** — File and fix the `ocaml` specialization defect the
       plot spike hit (`non-native expression in specialized body`,
       `Type_ref`), so specialized native bodies lower the same as the
       interpreter.
 
-### Step 48 — T0 completion: continuous axes and the remaining marks
+### Step 41 — T0 completion: continuous axes and the remaining marks
 
-**Prereq:** Step 47 optional (T47.1 eases the style classes).
+**Prereq:** Step 40 optional (T40.1 eases the style classes).
 **Done when:** `examples/plot_demo` grows line/scatter/area/histogram
 panels and stays byte-identical on all five targets; `dune test` green.
 
-- [ ] **T48.1** — Extend the `Mark` interface beyond the categorical
+- [ ] **T41.1** — Extend the `Mark` interface beyond the categorical
       `y_max`/`bands`/`x_labels` (continuous x and y ranges, `y_min`, the
       point/line primitives a `DrawContext` needs), keeping `Bar` as its
       first implementation.
-- [ ] **T48.2** — `plot.mark.line` and `LineStyle`.
-- [ ] **T48.3** — `plot.mark.scatter` and `ScatterStyle`.
-- [ ] **T48.4** — `plot.mark.area` and `AreaStyle`.
-- [ ] **T48.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
-- [ ] **T48.6** — `Axes` draw: a continuous x scale, the y domain
+- [ ] **T41.2** — `plot.mark.line` and `LineStyle`.
+- [ ] **T41.3** — `plot.mark.scatter` and `ScatterStyle`.
+- [ ] **T41.4** — `plot.mark.area` and `AreaStyle`.
+- [ ] **T41.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
+- [ ] **T41.6** — `Axes` draw: a continuous x scale, the y domain
       inferred from every mark's range, and per-mark dispatch (replacing
       today's bar-only `first_labels`/`bands` path).
-- [ ] **T48.7** — Demos and goldens: one figure per new mark, all five
+- [ ] **T41.7** — Demos and goldens: one figure per new mark, all five
       targets byte-for-byte.
 
-### Step 49 — Figure fidelity: scales, domains, legend, grid, themes, color
+### Step 42 — Figure fidelity: scales, domains, legend, grid, themes, color
 
-**Prereq:** Steps 47–48.
+**Prereq:** Steps 40–41.
 **Done when:** every field the T0 values already declare is rendered —
 log scales, domains, grid, legend, theme — and `DrawContext` is typed
 against the `Renderer` interface, not `SvgRenderer`.
 
-- [ ] **T49.1** — `Scale.log`: log axes with correct tick placement and
+- [ ] **T42.1** — `Scale.log`: log axes with correct tick placement and
       formatting.
-- [ ] **T49.2** — `Domain.auto` / `Domain.fixed`: domain fields on
+- [ ] **T42.2** — `Domain.auto` / `Domain.fixed`: domain fields on
       `Axes` and inference from the marks (decision 19).
-- [ ] **T49.3** — Legend rendering for `with_legend` (decision 20's
-      draw-order rule; one shared legend under faceting, T49.7).
-- [ ] **T49.4** — Grid rendering from `Figure.grid`, driven by the
+- [ ] **T42.3** — Legend rendering for `with_legend` (decision 20's
+      draw-order rule; one shared legend under faceting, T42.7).
+- [ ] **T42.4** — Grid rendering from `Figure.grid`, driven by the
       theme's grid style.
-- [ ] **T49.5** — `Theme` as a value on `Figure` (background and
+- [ ] **T42.5** — `Theme` as a value on `Figure` (background and
       foreground, the grid/axis/title/label styles, a palette, a
       colormap, spacing, the default size; decision 24) with
       `with_theme`.
-- [ ] **T49.6** — Palettes and colormaps (decision 21/24): interpolation
+- [ ] **T42.6** — Palettes and colormaps (decision 21/24): interpolation
       in `Float64`, the `color` channel dispatching on the column's kind,
       and `plot.rgb` validating the 0–255 range.
-- [ ] **T49.7** — Faceting (decision 23): sorted levels, rows × cols,
+- [ ] **T42.7** — Faceting (decision 23): sorted levels, rows × cols,
       `Share.all` by default, one legend, per-panel labels, blank cells
       for mismatched levels.
-- [ ] **T49.8** — Decouple `DrawContext` from the concrete
+- [ ] **T42.8** — Decouple `DrawContext` from the concrete
       `SvgRenderer`: type it against the `internal` `Renderer` interface
       so a terminal or raster renderer can join (the prerequisite for
-      Steps 52–53).
+      Steps 45–46).
 
-### Step 50 — Table and channels
+### Step 43 — Table and channels
 
-**Prereq:** Step 48.
+**Prereq:** Step 41.
 **Done when:** `plot.table` / `plot.table_missing` build a validated
 `Table`, and the chart layer resolves channels through the vocabulary.
 
-- [ ] **T50.1** — `enum Presence { present, absent }` and the parallel
+- [ ] **T43.1** — `enum Presence { present, absent }` and the parallel
       `Map[String, Array[Presence]]` for missing numbers, with the
       statistics skipping `absent` entries (decision 25).
-- [ ] **T50.2** — `plot.table(numbers, labels)` and
+- [ ] **T43.2** — `plot.table(numbers, labels)` and
       `plot.table_missing(numbers, presence, labels)`: column-oriented
       `Table`, shape violations raising (decision 4/10).
-- [ ] **T50.3** — Channels `Map[String, String]` (decision 16): the
+- [ ] **T43.3** — Channels `Map[String, String]` (decision 16): the
       vocabulary `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,
       unknown channels an error, each family reading only the channels it
       supports.
 
-### Step 51 — T1 dataset charts
+### Step 44 — T1 dataset charts
 
-**Prereq:** Steps 49–50.
+**Prereq:** Steps 42–43.
 **Done when:** every `plot.*` chart in decision 17 is implemented on the
 T0 marks, with fixtures byte-identical on all five targets.
 
-- [ ] **T51.1** — Statistics: descriptives, binning, KDE, ECDF, box
+- [ ] **T44.1** — Statistics: descriptives, binning, KDE, ECDF, box
       statistics, and OLS with a confidence band; `normal_quantile` and
       `normal_cdf` internal to `plot` (decision 13).
-- [ ] **T51.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
-- [ ] **T51.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
+- [ ] **T44.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
+- [ ] **T44.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
       `plot.box`, `plot.violin`.
-- [ ] **T51.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
+- [ ] **T44.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
       `plot.point`.
-- [ ] **T51.5** — Matrix: `plot.heatmap`, `plot.clustermap`.
-- [ ] **T51.6** — Apply faceting, palettes, and themes at the chart
+- [ ] **T44.5** — Matrix: `plot.heatmap`, `plot.clustermap`.
+- [ ] **T44.6** — Apply faceting, palettes, and themes at the chart
       layer; demos and byte-identical goldens.
 
-### Step 52 — Terminal renderer
+### Step 45 — Terminal renderer
 
-**Prereq:** Step 49 (T49.8's `Renderer` decoupling).
+**Prereq:** Step 42 (T42.8's `Renderer` decoupling).
 **Done when:** a figure renders to a terminal through the same Layer 0
 value graph, proving the contract is format-agnostic.
 
-- [ ] **T52.1** — A Unicode `Renderer` implementation (blocks or braille
+- [ ] **T45.1** — A Unicode `Renderer` implementation (blocks or braille
       for marks, text labels) behind the `internal` `Renderer`
       interface.
-- [ ] **T52.2** — Wire it through a CLI/demo path and test that the same
+- [ ] **T45.2** — Wire it through a CLI/demo path and test that the same
       figure renders through SVG and the terminal.
 
-### Step 53 — PNG renderer
+### Step 46 — PNG renderer
 
-**Prereq:** Step 52.
+**Prereq:** Step 45.
 **Done when:** `plot.png(fig)` emits a valid PNG on all five targets,
 from the same value graph, with no host image library.
 
-- [ ] **T53.1** — Pure-Emo DEFLATE with stored blocks.
-- [ ] **T53.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
-- [ ] **T53.3** — A scanline polygon/line rasterizer with supersampling.
-- [ ] **T53.4** — Text through the Hershey stroke font.
-- [ ] **T53.5** — `plot.png(fig)`, its demo, and goldens.
+- [ ] **T46.1** — Pure-Emo DEFLATE with stored blocks.
+- [ ] **T46.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
+- [ ] **T46.3** — A scanline polygon/line rasterizer with supersampling.
+- [ ] **T46.4** — Text through the Hershey stroke font.
+- [ ] **T46.5** — `plot.png(fig)`, its demo, and goldens.
 
 ---
 
@@ -1397,11 +1397,11 @@ file, every top-level `def test_*` a test — and assertions as builtins
 failure raises the one `Exception` class, caught per test by the OCaml
 runner (Emo has no catch; the runner is the only place a raise can be
 trapped). No new syntax constructs. Work began on this branch: partial
-implementations of T54.1–T54.5 and T54.7 sit in the tree unreviewed —
+implementations of T47.1–T47.5 and T47.7 sit in the tree unreviewed —
 each is finished against its task definition below, not merged as
 found.
 
-### Step 54 — Unit test framework: `emo test` and the `expect_*` builtins
+### Step 47 — Unit test framework: `emo test` and the `expect_*` builtins
 
 **Prereq:** none beyond develop.
 **Done when:** `emo test` in a project with a `test/` directory runs
@@ -1410,14 +1410,14 @@ output and exiting 0/1/65 by the family; the `expect_*` builtins raise
 real `Exception`s in the interpreter and refuse honestly on compiled
 targets; `emo new` scaffolds a passing test; `dune test` green.
 
-- [x] **T54.1** — `expect_*` builtins in the interpreter: registered
+- [x] **T47.1** — `expect_*` builtins in the interpreter: registered
       in `global_env`, dispatched in `apply_builtin`, raising via an
       `expect_raise` helper on the `net_raise` precedent (a real
       `Exception` instance; the message names the assertion, and
       `expect_equal` renders both values); arity E3007 / type E3001
       follow the existing builtin style. Eval tests: pass and fail
       paths, message rendering, the error codes.
-- [x] **T54.2** — Checker + IR surface: `expect_*` signatures in the
+- [x] **T47.2** — Checker + IR surface: `expect_*` signatures in the
       checker's `empty_env` (Unknown value params, Void results — the
       `println` pattern) and the `expect_` prefix family in
       `is_builtin`, so a compiled program naming one meets the
@@ -1425,10 +1425,10 @@ targets; `emo new` scaffolds a passing test; `dune test` green.
       generically; c / ocaml / ts / wasm / beam gain refusal arms
       wherever their builtin dispatch is exhaustive). Checker tests
       for the signatures.
-- [x] **T54.3** — `reset_output` in the evaluator: the default sink
+- [x] **T47.3** — `reset_output` in the evaluator: the default sink
       named and restorable after `set_output` redirection (the
       runner's per-test capture).
-- [x] **T54.4** — Runner core in `emo_project`: `prepare_root`
+- [x] **T47.4** — Runner core in `emo_project`: `prepare_root`
       (discovery at the working directory, the manifest search from
       there), the `test_outcome` / `test_result` types, and
       `run_tests` — the whole tree checked first (`Static_errors`
@@ -1439,19 +1439,19 @@ targets; `emo new` scaffolds a passing test; `dune test` green.
       and restored; `Emo_raise` fails the test, `Emo_eval.Error`
       errors it. Project tests: mixed outcomes, the collection error,
       no `test/` directory, a static error in a test module.
-- [x] **T54.5** — `emo test` subcommand: reporting (one line per
+- [x] **T47.5** — `emo test` subcommand: reporting (one line per
       test, the rendered diagnostic and captured output on failure,
       the summary line), exit codes 0/1/65, registration in the root
       command group, help text naming the convention. CLI tests: a
       passing project and a failing one, end-to-end.
-- [x] **T54.6** — `emo new` scaffolds `test/greet.emo` with a passing
+- [x] **T47.6** — `emo new` scaffolds `test/greet.emo` with a passing
       `test_greet` (builtins need no manifest dep) and the hint
       mentions `emo test`; scaffold goldens updated.
-- [x] **T54.7** — `examples/test_demo/`: a small module, passing
+- [x] **T47.7** — `examples/test_demo/`: a small module, passing
       tests under `test/`, `expected.txt` for the golden harness;
       reconcile the per-target golden builds (they lower every module
       in the tree — the example's test modules must not break the
       compiled goldens while `expect_*` refuses there).
-- [x] **T54.8** — Docs: README gains the Testing section (the
+- [x] **T47.8** — Docs: README gains the Testing section (the
       convention, the command, the builtins, a raise failing only the
       one test), mirrored in `docs/zh-CN/README.zh-CN.md`.

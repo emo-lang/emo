@@ -1,4 +1,4 @@
-# Step 39 — The standard library: `json`
+# Step 32 — The standard library: `json`
 
 **Milestone:** M13 — The standard library · **Prereq:** step 10
 (packages — the mechanism a stdlib package rides) and step 26 (target
@@ -118,37 +118,37 @@ tripping over latent backend bugs. Fixed in this step:
 
 ## Tasks
 
-- [ ] **T39.1** — The spec and the skeleton: this plan; the package
+- [ ] **T32.1** — The spec and the skeleton: this plan; the package
       `stdlib/registry/json/0.1.0` (`package.emo` declaring the five
       tested targets, `json.emo` with the value model, the factories,
       and `internal/float.emo` for the numeric machinery) embedded by
       rebuild. Verification: a program that `require "json"`, builds a
       value with the factories, and encodes it runs interpreted.
-- [ ] **T39.2** — The typescript bytes fix: `to_bytes` encodes UTF-8
+- [ ] **T32.2** — The typescript bytes fix: `to_bytes` encodes UTF-8
       and `Bytes.to_string` decodes UTF-8 in the ts prelude. All
       existing ts goldens byte-for-byte (ASCII is unaffected).
-- [ ] **T39.3** — The decoder: the byte-level scanner and
+- [ ] **T32.3** — The decoder: the byte-level scanner and
       recursive-descent parser over the RFC 8259 grammar — string
       escapes including `\uXXXX` with surrogate pairs, the number
       grammar with exact `Int64`/`Float64` handling, whitespace,
       the depth cap, and offset-bearing errors.
-- [ ] **T39.4** — The encoder: compact and pretty (two-space indent)
+- [ ] **T32.4** — The encoder: compact and pretty (two-space indent)
       forms; escaping of `"`, `\`, and control characters; integers
       through `Int64.to_string`; the shortest-round-trip float
       formatter (exact binary→decimal expansion, shortest prefix that
       reads back to the same bits).
-- [x] **T39.5** — The golden example: `examples/json_demo` wired into
+- [x] **T32.5** — The golden example: `examples/json_demo` wired into
       the interpreter-bootstrap and typescript golden lists (one
       `expected.txt`); the c, wasm, and beam lists wait on the
       cross-module-types follow-up above. (Done 2026-10-09.)
-- [x] **T39.6** — The edge fixtures: `examples/json_edge` — the
+- [x] **T32.6** — The edge fixtures: `examples/json_edge` — the
       escape matrix, surrogate pairs, the 512-array cap round-tripped,
       duplicate keys, number boundaries (denormals, 1e308,
       9007199254740993), the pretty form — wired into the
       interpreter-bootstrap list (ocaml binary agrees byte for byte).
       (Done 2026-10-09; found the missing empty-container guards in
       the compact encoder.)
-- [ ] **T39.7** — The docs and close-out: `docs/stdlib/json.md` and
+- [ ] **T32.7** — The docs and close-out: `docs/stdlib/json.md` and
       its `docs/zh-CN/` mirror; `dune build @fmt` and `dune test`
       green; close-out.
 

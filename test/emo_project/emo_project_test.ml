@@ -1745,7 +1745,7 @@ println(sqrt(4.0))|}
               "line" 1 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
   ]
 
-(* ---- Step 46: the `emo test` runner core ----
+(* ---- Step 47: the `emo test` runner core ----
 
    Scratch projects run through [Emo_project.run_tests] with the scratch
    directory as the working directory; outcomes come back as values. *)

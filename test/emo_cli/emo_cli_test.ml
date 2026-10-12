@@ -2356,7 +2356,7 @@ let doctor_tests =
           (contains text "no external tools"));
   ]
 
-(* ---- test: the `emo test` subcommand (step 39) ---- *)
+(* ---- test: the `emo test` subcommand (step 47) ---- *)
 
 let write_fixture_project name files =
   let dir = Filename.concat scratch name in

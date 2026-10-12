@@ -1,4 +1,4 @@
-// Plain for-loop — the iteration statement (step 34), beside the
+// Plain for-loop — the iteration statement (step 27), beside the
 // tail-recursive loop in loops_tail.
 //
 //   emo build main.emo -o main.emo-bin
