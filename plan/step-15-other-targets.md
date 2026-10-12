@@ -53,7 +53,7 @@ recommended priority.
 
 ## Bare metal — `riscv64` (last)
 
-- **Strategy:** freestanding RISC-V images, per the EmoOS ambition: no
+- **Strategy:** freestanding RISC-V images: no
   OS, no libc, pluggable runtime (allocator, GC, scheduler as
   replaceable components). The target is named for the ISA —
   `riscv64` — and QEMU is its default runner (the no-hardware dev
@@ -63,7 +63,7 @@ recommended priority.
   control flow — zero runtime dependencies) is the only surface available
   to kernel code; the standard library requires the full runtime. This
   split is a *library-architecture* task that should actually be pulled
-  earlier if EmoOS work starts — flagged in `plan/README.md` reviews.
+  earlier — flagged in `plan/README.md` reviews.
 - **Explicit memory primitives** (`peek` / `poke` and friends) as
   visibly-named core-library functions — dangerous reads dangerous.
 - **Numeric width is target-independent:** `Int64` is 64-bit two's
@@ -75,8 +75,7 @@ recommended priority.
   `Int64` on RV32 is off the table.
 - **Prereq:** step 14 Stage B (specialized, lean codegen); a custom or
   minimal GC story; linker scripts.
-- **Risk:** highest of the four; also the most speculative until an EmoOS
-  effort exists.
+- **Risk:** highest of the four; also the most speculative.
 
 ## RISC-V reference note (recorded 2026-10-05)
 

@@ -12,12 +12,12 @@ The runtime is written in Emo **as the language is today**. Where the
 language makes something awkward, the plan works around it and records
 the pressure (below); it never adds a primitive to make one task easier.
 A primitive the runtime genuinely needs goes through step 20's gate as a
-task of its own, with both consumers named.
+task of its own.
 
 ## Boundaries carried in from step 20
 
-These bind the runtime ladder as a whole (steps 21 and 21, and the
-kernel path that shares the layer), not just this step.
+These bind the runtime ladder as a whole (steps 20–22), not just
+this step.
 
 **The package is the boundary.** `runtime/wasm/` is an Emo package with
 its own `package.emo`; everything it offers crosses that deps edge and
@@ -155,10 +155,10 @@ step 21 tasks, and they are not promises.
 - **Sequences.** `Array` has no constructor and `.append` copies, so
   collecting *n* items is O(n²) in time and allocation; there is no
   List, Map, or Set. The runtime avoids collecting entirely (cons lists,
-  known lengths, one pass). A real allocator story for EmoOS would want
-  a growable buffer — but Bytes already covers the byte case, and the
-  kernel's other containers are the kernel's to design. Step 22, where
-  the interpreter gets hot loops, is where this should be re-read.
+  known lengths, one pass). A real allocator story would want a
+  growable buffer — but Bytes already covers the byte case. Step 22,
+  where the interpreter gets hot loops, is where this should be
+  re-read.
 - **`catch`.** `CHECK.md` lists the catch form as unsettled. The
   runtime is written to not need it, which costs a bounds check before
   every access. When the form settles, the reader is the one module that

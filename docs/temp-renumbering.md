@@ -203,23 +203,23 @@ In-body `M`-refs still carry the pre-renumber labels, matching the English
 (e.g. step 19's "M7 完成", the toolchain intro's "M8 把 … M9 把 …") —
 those are item 5's scope.
 
-### 3. EmoOS residuals in plan files
+### 3. EmoOS residuals in plan files — done
 
-```
-plan/step-15-other-targets.md:56   - **Strategy:** freestanding RISC-V images, per the EmoOS ambition: no
-plan/step-15-other-targets.md:66     earlier if EmoOS work starts — flagged in `plan/README.md` reviews.
-plan/step-15-other-targets.md:78   - **Risk:** highest of the four; also the most speculative until an EmoOS
-plan/step-20-wasm-runtime.md:1     # Step 20 — The systems layer (wasm runtime + EmoOS primitives)
-plan/step-20-wasm-runtime.md:9     the same primitive layer, the road to **EmoOS**: an operating-system
-plan/step-20-wasm-runtime.md:31    4. **M7 (EmoOS)** — the kernel path, on the same layer (below).
-plan/step-20-wasm-runtime.md:55    | Mechanism | wasm runtime needs it for | EmoOS needs it for |
-plan/step-21-wasm-decoder.md:158     known lengths, one pass). A real allocator story for EmoOS would want
-```
+Beyond the four planned removals in `plan/step-20-wasm-runtime.md` (its
+title, the two-consumer framing, the `EmoOS needs it for` table column,
+the `M7 (EmoOS)` roadmap item), the same framing reached further: the
+kernel paragraphs and the gate's "both consumers" clause there, the
+kernel bullet and `M7` note in the step's own semantics, and the
+"both consumers named" / "kernel path" / "two consumers" wording in
+`plan/step-21-wasm-decoder.md` and `plan/step-22-wasm-interpreter.md`.
+`plan/step-15-other-targets.md`'s three "EmoOS ambition/work/effort"
+clauses are gone too. `EmoOS` now appears in `plan/` zero times.
 
-`plan/step-20-wasm-runtime.md` needs the most work: its title, the
-"two consumers" framing, the `EmoOS needs it for` table column, and the
-`M7 (EmoOS)` roadmap item all go away (the same cleanup already applied to
-`docs/TASKS.md`'s M5 intro).
+Kept: the gate's name (`unification gate`) and its notes about the wasm
+runtime itself; generic "kernel code" phrasing for the freestanding
+target in `plan/step-15-other-targets.md` (a kernel is just the
+freestanding use case, and `README.md` still records the EmoOS
+ambition).
 
 ### 4. Semantic references
 

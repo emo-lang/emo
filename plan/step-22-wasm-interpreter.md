@@ -34,8 +34,7 @@ Two things this step is not, same as step 21: it is not fast (no JIT,
 no tiering — interpreter-first is the ladder's rule), and it is not a
 language change. Where today's Emo makes execution awkward, the task
 works around it and records the pressure; a primitive the interpreter
-genuinely needs goes through step 20's gate as a task of its own, with
-both consumers named.
+genuinely needs goes through step 20's gate as a task of its own.
 
 ## Scope
 
@@ -144,16 +143,15 @@ of these is a task here; they are the gate's raw material.
   (`Float64.sqrt`/`floor`/`ceil`/`trunc`, `Float64.to_int64`,
   `Int64.to_float64`; `nearest` built in Emo), so T22.5's conversion
   half can land. `CHECK.md` carries the record.
-- **`Int32` / `Float32`.** The interpreter is a second consumer for
-  both (the backends were the first — they mask and convert too), but
-  "two consumers doing the same workaround" is an argument the gate
-  has not heard yet, not a decision. The masking discipline this step
-  implements is the shared evidence.
+- **`Int32` / `Float32`.** The interpreter is another consumer for
+  both (the backends mask and convert too), but the shared workaround
+  is not yet accepted by the gate, not a decision. The masking
+  discipline this step implements is the shared evidence.
 - **The method-on-recursive-result limit** (step 21's find): it is now
   a standing rule for every runtime module, and the interpreter's
   walker is exactly the shape that would trip it. A fix in the
-  interpreter's evaluator would name two consumers (the runtime and
-  the compiler's own tail-call guarantee); recorded, not acted on.
+  interpreter's evaluator would serve the runtime and the compiler's
+  own tail-call guarantee; recorded, not acted on.
 - **`argv`**, unchanged: the drivers compile their paths in.
 
 ## The run-list harness
