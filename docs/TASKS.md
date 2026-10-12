@@ -37,6 +37,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M10 — Target independence | 26 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
 | M11 — For / While loops | 34–35 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
 | M12 — Error handling | 36–37 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
+| M13 — Visualization (`plot`) | 39–45 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
 
 ## Design gates
 
@@ -1214,3 +1215,151 @@ CHECK.md.
       self-referencing signature; json gains the four raising scalar
       variants its classes already answered with). Checker and project
       tests; the CHECK.md entry; every target's goldens green.
+
+---
+
+## M13 — Visualization (`plot`)
+
+T0 has landed: `plot` emits a bar chart to SVG, byte-identical on all
+five hosted targets, built on the internal `Buffer`, scales/ticks, the
+`Renderer` interface with `SvgRenderer`, and the declarative
+`figure`/`axes`/`mark` values. The numeric substrate and the `math`
+package (sequencing A) are done. This milestone finishes the design's
+sequencing B–E: the rest of the T0 surface, the `Table` and channels,
+the T1 dataset charts, then the terminal and PNG renderers. Design and
+recorded decisions live in `docs/visualization.md`; the package's
+current surface in `docs/stdlib/plot.md`; the language enablers this
+work touches in `docs/temp-visual-check.md`. Out of scope (decision 9):
+interactive/GUI charts, an EmoUI canvas, 3D, animation. Each step's plan
+file is written when the step starts.
+
+### Step 39 — Compiler and language enablers for plotting
+
+Independent of the plot steps; each unblocks or de-risks work below.
+**Done when:** the enabler's own tests pass and the affected plot code
+uses it.
+
+- [ ] **T39.1** — Type `self.field` precisely (R2 in
+      `docs/temp-visual-check.md`) with the emitters aligned, so a mark's
+      style fields need not be stored flat. Today a native-typed field
+      read on a dynamic receiver is still boxed, and the emitters key
+      their native/dynamic choice on the expression's static type alone.
+- [ ] **T39.2** — A class method named like a builtin method is not
+      shadowed (R3). `to_string` is fixed; `length` is not.
+- [ ] **T39.3** — `math`'s opt-in native fast path: separate `*_native`
+      `foreign def` functions on `c`/`ocaml` (`math.exp` pure and
+      byte-identical, `math.exp_native` the pinned fast path; decision
+      15), documented as target-pinned.
+- [ ] **T39.4** — File and fix the `ocaml` specialization defect the
+      plot spike hit (`non-native expression in specialized body`,
+      `Type_ref`), so specialized native bodies lower the same as the
+      interpreter.
+
+### Step 40 — T0 completion: continuous axes and the remaining marks
+
+**Prereq:** Step 39 optional (T39.1 eases the style classes).
+**Done when:** `examples/plot_demo` grows line/scatter/area/histogram
+panels and stays byte-identical on all five targets; `dune test` green.
+
+- [ ] **T40.1** — Extend the `Mark` interface beyond the categorical
+      `y_max`/`bands`/`x_labels` (continuous x and y ranges, `y_min`, the
+      point/line primitives a `DrawContext` needs), keeping `Bar` as its
+      first implementation.
+- [ ] **T40.2** — `plot.mark.line` and `LineStyle`.
+- [ ] **T40.3** — `plot.mark.scatter` and `ScatterStyle`.
+- [ ] **T40.4** — `plot.mark.area` and `AreaStyle`.
+- [ ] **T40.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
+- [ ] **T40.6** — `Axes` draw: a continuous x scale, the y domain
+      inferred from every mark's range, and per-mark dispatch (replacing
+      today's bar-only `first_labels`/`bands` path).
+- [ ] **T40.7** — Demos and goldens: one figure per new mark, all five
+      targets byte-for-byte.
+
+### Step 41 — Figure fidelity: scales, domains, legend, grid, themes, color
+
+**Prereq:** Steps 39–40.
+**Done when:** every field the T0 values already declare is rendered —
+log scales, domains, grid, legend, theme — and `DrawContext` is typed
+against the `Renderer` interface, not `SvgRenderer`.
+
+- [ ] **T41.1** — `Scale.log`: log axes with correct tick placement and
+      formatting.
+- [ ] **T41.2** — `Domain.auto` / `Domain.fixed`: domain fields on
+      `Axes` and inference from the marks (decision 19).
+- [ ] **T41.3** — Legend rendering for `with_legend` (decision 20's
+      draw-order rule; one shared legend under faceting, T41.7).
+- [ ] **T41.4** — Grid rendering from `Figure.grid`, driven by the
+      theme's grid style.
+- [ ] **T41.5** — `Theme` as a value on `Figure` (background and
+      foreground, the grid/axis/title/label styles, a palette, a
+      colormap, spacing, the default size; decision 24) with
+      `with_theme`.
+- [ ] **T41.6** — Palettes and colormaps (decision 21/24): interpolation
+      in `Float64`, the `color` channel dispatching on the column's kind,
+      and `plot.rgb` validating the 0–255 range.
+- [ ] **T41.7** — Faceting (decision 23): sorted levels, rows × cols,
+      `Share.all` by default, one legend, per-panel labels, blank cells
+      for mismatched levels.
+- [ ] **T41.8** — Decouple `DrawContext` from the concrete
+      `SvgRenderer`: type it against the `internal` `Renderer` interface
+      so a terminal or raster renderer can join (the prerequisite for
+      Steps 44–45).
+
+### Step 42 — Table and channels
+
+**Prereq:** Step 40.
+**Done when:** `plot.table` / `plot.table_missing` build a validated
+`Table`, and the chart layer resolves channels through the vocabulary.
+
+- [ ] **T42.1** — `enum Presence { present, absent }` and the parallel
+      `Map[String, Array[Presence]]` for missing numbers, with the
+      statistics skipping `absent` entries (decision 25).
+- [ ] **T42.2** — `plot.table(numbers, labels)` and
+      `plot.table_missing(numbers, presence, labels)`: column-oriented
+      `Table`, shape violations raising (decision 4/10).
+- [ ] **T42.3** — Channels `Map[String, String]` (decision 16): the
+      vocabulary `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,
+      unknown channels an error, each family reading only the channels it
+      supports.
+
+### Step 43 — T1 dataset charts
+
+**Prereq:** Steps 41–42.
+**Done when:** every `plot.*` chart in decision 17 is implemented on the
+T0 marks, with fixtures byte-identical on all five targets.
+
+- [ ] **T43.1** — Statistics: descriptives, binning, KDE, ECDF, box
+      statistics, and OLS with a confidence band; `normal_quantile` and
+      `normal_cdf` internal to `plot` (decision 13).
+- [ ] **T43.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
+- [ ] **T43.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
+      `plot.box`, `plot.violin`.
+- [ ] **T43.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
+      `plot.point`.
+- [ ] **T43.5** — Matrix: `plot.heatmap`, `plot.clustermap`.
+- [ ] **T43.6** — Apply faceting, palettes, and themes at the chart
+      layer; demos and byte-identical goldens.
+
+### Step 44 — Terminal renderer
+
+**Prereq:** Step 41 (T41.8's `Renderer` decoupling).
+**Done when:** a figure renders to a terminal through the same Layer 0
+value graph, proving the contract is format-agnostic.
+
+- [ ] **T44.1** — A Unicode `Renderer` implementation (blocks or braille
+      for marks, text labels) behind the `internal` `Renderer`
+      interface.
+- [ ] **T44.2** — Wire it through a CLI/demo path and test that the same
+      figure renders through SVG and the terminal.
+
+### Step 45 — PNG renderer
+
+**Prereq:** Step 44.
+**Done when:** `plot.png(fig)` emits a valid PNG on all five targets,
+from the same value graph, with no host image library.
+
+- [ ] **T45.1** — Pure-Emo DEFLATE with stored blocks.
+- [ ] **T45.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
+- [ ] **T45.3** — A scanline polygon/line rasterizer with supersampling.
+- [ ] **T45.4** — Text through the Hershey stroke font.
+- [ ] **T45.5** — `plot.png(fig)`, its demo, and goldens.
