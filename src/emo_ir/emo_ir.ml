@@ -238,7 +238,16 @@ and relativize_in ~(current : string list) ~(packages : string list list)
   match pkg_of packages with
   | [] -> path
   | pkg ->
-      if List.exists (fun m -> m = pkg @ path) module_paths then pkg @ path
+      (* Prefix, not exact: the relative path may name a directory module
+         (`internal`) whose defs live one segment deeper. *)
+      let prefixed = pkg @ path in
+      if
+        List.exists
+          (fun m ->
+            List.length prefixed <= List.length m
+            && List.take (List.length prefixed) m = prefixed)
+          module_paths
+      then prefixed
       else path
 
 and relativize env (path : string list) : string list =

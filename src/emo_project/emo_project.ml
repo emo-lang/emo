@@ -221,8 +221,14 @@ let parse_cached p (file : string) : Ast.item list =
 
 (* Evaluates one module's items in a fresh environment (the module's
    namespace) and returns it. This is the whole load story: top-level items
-   run once, on first load, in file order. *)
-let load_module p (path : string list) : Emo_eval.env =
+   run once, on first load, in file order. A package's own submodule names
+   are pre-bound in the environment, so a reference inside the package is
+   written against the package root (`internal.float` in `json.emo` means
+   `json.internal.float`) — and a def body's closure captures this env, so
+   the binding holds when the def is called later. *)
+let load_module p
+    (handle_of : string list -> Emo_eval.module_handle option)
+    (path : string list) : Emo_eval.env =
   match Hashtbl.find_opt p.files path with
   | None ->
       failwith
@@ -230,18 +236,19 @@ let load_module p (path : string list) : Emo_eval.env =
            (String.concat "." path))
   | Some file ->
       let items = parse_cached p file in
-      (* A module's own references are written against its package root:
-         inside [json.emo], `internal.float` means `json.internal.float`.
-         The evaluator resolves a bare module name against this while the
-         module's items evaluate. *)
-      let saved = !Emo_eval.current_package in
-      Emo_eval.current_package := package_of p path;
-      Fun.protect
-        ~finally:(fun () -> Emo_eval.current_package := saved)
-        (fun () ->
-          let env = Emo_eval.global_env () in
-          List.iter (Emo_eval.eval_item env) items;
-          env)
+      let env = Emo_eval.global_env () in
+      (match package_of p path with
+      | [] -> ()
+      | pkg ->
+          List.iter
+            (fun (name, child) ->
+              match handle_of child with
+              | Some h ->
+                  Emo_eval.define env name ~mutable_:false (Emo_eval.Module h)
+              | None -> ())
+            (children p pkg));
+      List.iter (Emo_eval.eval_item env) items;
+      env
 
 (* Installs the evaluator's module hooks for this project: discovery
    (normalized path → handle with children) and loading. *)
@@ -255,17 +262,6 @@ let install_hooks p =
     Hashtbl.create 8
   in
   let handle_of path =
-    (* Resolve a package-relative name (`internal` inside `json`) to its
-       absolute path before memoizing, so a module loads exactly once
-       whether reached relatively or by its full path. *)
-    let path =
-      match resolve p path with
-      | Some _ -> path
-      | None -> (
-          match !Emo_eval.current_package with
-          | [] -> path
-          | pkg -> if resolve p (pkg @ path) <> None then pkg @ path else path)
-    in
     match Hashtbl.find_opt handles path with
     | Some h -> Some h
     | None -> (
@@ -284,7 +280,7 @@ let install_hooks p =
             Some h)
   in
   Emo_eval.module_handle_of := handle_of;
-  (Emo_eval.module_loader := fun path -> load_module p path);
+  (Emo_eval.module_loader := fun path -> load_module p handle_of path);
   (* The program's bare-type owner index: type names are program-wide
      (CHECK.md, cross-module types), but a bare reference carries no
      module path to load through. Resolved on demand — the first lookup
