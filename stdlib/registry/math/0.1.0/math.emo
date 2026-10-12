@@ -118,14 +118,12 @@ def log(x Float64) Float64 {
   }
   const bits = x.to_bits()
   // the mantissa, then the [1, 2) exponent bias (0x3FF)
-  const mant = Float64.from_bits((bits & 4503599627370495) | 4607182418800017408)
-  const raw_ex = ((bits >> 52) & 2047) - 1023
-  // The [sqrt(1/2), sqrt(2)) adjustment written as expressions: a `var`
-  // assignment inside an `if` does not thread its binding out on every
-  // backend, so the conditional expression is the portable spelling.
-  const adjust = mant > 1.4142135623730951
-  const m = if adjust { mant / 2.0 } else { mant }
-  const ex = if adjust { raw_ex + 1 } else { raw_ex }
+  var m = Float64.from_bits((bits & 4503599627370495) | 4607182418800017408)
+  var ex = ((bits >> 52) & 2047) - 1023
+  if m > 1.4142135623730951 {
+    m = m / 2.0
+    ex = ex + 1
+  }
   const z = (m - 1.0) / (m + 1.0)
   const z2 = z * z
   var term = z

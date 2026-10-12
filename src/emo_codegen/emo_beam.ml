@@ -678,6 +678,36 @@ catch
    A statement list becomes a left-nested `do` chain: `do E1 do E2 E3`.
    Core discards intermediate values naturally — no drops. *)
 
+and unique_names (names : string list) : string list =
+  let rec go seen acc = function
+    | [] -> List.rev acc
+    | n :: rest ->
+        if List.mem n seen then go seen acc rest
+        else go (n :: seen) (n :: acc) rest
+  in
+  go [] [] names
+
+(* The outer bindings a statement rebinds: an `Assign_var` target, or
+   `self` through a field set. A `Let` is a fresh binding and never
+   escapes, and a loop's own threading already carries its
+   reassignments out. *)
+and assigned_names (s : Emo_ir.stmt) : string list =
+  match s with
+  | Emo_ir.Assign_var { name; _ } -> [ name ]
+  | Emo_ir.Set_field _ -> [ "self" ]
+  | Emo_ir.If { then_; else_; _ } ->
+      assigned_names_list then_ @ assigned_names_list else_
+  | Emo_ir.While { body; _ } | Emo_ir.For { body; _ } ->
+      assigned_names_list body
+  | Emo_ir.Case { branches; _ } | Emo_ir.Receive { branches } ->
+      List.concat_map
+        (fun (b : Emo_ir.branch) -> assigned_names_list b.Emo_ir.body)
+        branches
+  | _ -> []
+
+and assigned_names_list (xs : Emo_ir.stmt list) : string list =
+  List.concat_map assigned_names xs
+
 and stmts env (xs : Emo_ir.stmt list) : unit =
   match xs with
   | [] -> put env "'ok'"
@@ -741,11 +771,110 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
       put env ")\nin ";
       env.local_map <- ("self", v) :: env.local_map;
       stmts env rest
+  | ((Emo_ir.If _ | Emo_ir.Case _) as s) :: rest
+    when List.exists
+           (fun n -> List.mem_assoc n env.local_map)
+           (assigned_names s) ->
+      (* A branch that rebinds an outer `var` threads the new bindings
+         out of the `case`, exactly like a loop: the branches answer a
+         tuple of the bindings' final values, and the names rebind from
+         it over the rest of the block. *)
+      let assigned =
+        unique_names
+          (List.filter
+             (fun n -> List.mem_assoc n env.local_map)
+             (assigned_names s))
+      in
+      let slot = fresh_var env "__thread" in
+      put env ("let <" ^ slot ^ "> =\n");
+      emit_threaded_control env assigned s;
+      put env "\nin ";
+      List.iteri
+        (fun i name ->
+          let v = fresh_var env name in
+          put env
+            (Printf.sprintf "let <%s> =\n  call 'erlang':'element'(%d, %s)\nin "
+               v (i + 1) slot);
+          env.local_map <- (name, v) :: env.local_map)
+        assigned;
+      stmts env rest
   | s :: rest ->
       put env "do\n";
       stmt env s;
       put env "\n";
       stmts env rest
+
+(* A branch body of a threaded `if`/`case`: run it, then answer the
+   tuple of the threaded bindings' final values. The branch's own
+   bindings are dropped; the caller rebinds the outer names. *)
+and emit_threaded_body env (assigned : string list) (body : Emo_ir.stmt list) :
+    unit =
+  (* The branch body as a tail chain whose fall-through leaf is the
+     tuple of final bindings — the same continuation trick the loop
+     body uses, so the tuple lands inside the last binding's scope. *)
+  let saved = env.local_map in
+  emit_loop_body env body ~leaf:(fun () ->
+      put env "{";
+      put env
+        (String.concat ", "
+           (List.map (fun n -> List.assoc n env.local_map) assigned));
+      put env "}");
+  env.local_map <- saved
+
+and emit_threaded_control env (assigned : string list) (s : Emo_ir.stmt) : unit
+    =
+  match s with
+  | Emo_ir.If { cond; then_; else_ } ->
+      put env "case ";
+      expr env cond;
+      put env " of\n";
+      put env "  <'true'> when 'true' ->\n";
+      emit_threaded_body env assigned then_;
+      put env "\n  <'false'> when 'true' ->\n";
+      emit_threaded_body env assigned else_;
+      put env "\nend"
+  | Emo_ir.Case { scrutinee; branches } ->
+      let scratch = fresh_var env "case" in
+      put env ("let <" ^ scratch ^ "> =\n");
+      expr env scrutinee;
+      put env "\nin case ";
+      put env scratch;
+      put env " of\n";
+      let exhaustive =
+        match List.rev branches with
+        | last :: _ -> (
+            last.Emo_ir.guard = None
+            &&
+            match last.Emo_ir.pattern.Emo_ast.pattern_desc with
+            | Emo_ast.Wildcard | Emo_ast.Pattern_binding _ -> true
+            | _ -> false)
+        | [] -> false
+      in
+      let rec emit_branches bs =
+        match bs with
+        | [] ->
+            if not exhaustive then (
+              put env "  <_> when 'true' ->\n";
+              put env "    call 'erlang':'error'({'emo_no_match', ";
+              put env scratch;
+              put env "})\n")
+        | b :: rest ->
+            put env "  <";
+            emit_pattern env b.Emo_ir.pattern;
+            put env "> ";
+            (match b.Emo_ir.guard with
+            | Some g ->
+                put env "when ";
+                guard_expr env g;
+                put env " ->\n"
+            | None -> put env "when 'true' ->\n");
+            emit_threaded_body env assigned b.Emo_ir.body;
+            put env "\n";
+            emit_branches rest
+      in
+      emit_branches branches;
+      put env "end"
+  | _ -> assert false
 
 and stmt env (s : Emo_ir.stmt) : unit =
   match s with
@@ -1088,9 +1217,12 @@ and emit_loop_body env ~(leaf : unit -> unit) (xs : Emo_ir.stmt list) : unit =
       put env "\t\tcase ";
       expr env cond;
       put env " of\n\t\t  <'true'> when 'true' ->\n\t\t";
+      let saved = env.local_map in
       emit_loop_body env (then_ @ rest) ~leaf;
+      env.local_map <- saved;
       put env "\n\t\t  <'false'> when 'true' ->\n\t\t";
       emit_loop_body env (else_ @ rest) ~leaf;
+      env.local_map <- saved;
       put env "\n\t\tend"
   | ((Emo_ir.While _ | Emo_ir.For _) as loop) :: rest ->
       emit_loop env loop rest ~leaf
