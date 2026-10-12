@@ -1,8 +1,8 @@
 # Step 23 — C target (emit C)
 
-**Milestone:** M8 — the self-contained hosted backend (step 23's assessment, scheduled) · **Prereq:** steps 01–14 (the IR and the
+**Milestone:** M8 — the self-contained hosted backend (the hosted-native-FFI assessment, scheduled) · **Prereq:** steps 01–14 (the IR and the
 specialization data) · **Related:**
-`plan/step-23-hosted-native-ffi.md` (the design record this step
+`plan/hosted-native-ffi.md` (the design record this step
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-19-riscv64.md` (the tagged-word value model),
 `docs/native-backend.md` (the emit-and-delegate precedent) ·
@@ -23,9 +23,9 @@ own unspecialized build on the language's only loop idiom. The
 numbers are in `benchmarks/results.md` and
 `docs/industrial-software.md`.
 
-Step 23 assessed the self-contained hosted backend and recommended
-its route — **emit C** — without scheduling it. This step schedules
-it: the settled route is followed as written, and what execution
+The hosted-native-FFI assessment recommended the self-contained
+hosted backend's route — **emit C** — without scheduling it. This
+step schedules it: the settled route is followed as written, and what execution
 needs beyond the assessment (a golden progression, a task split
 sized for spare sittings, and the decisions that must close before
 the emitter exists) lives here.
@@ -51,7 +51,7 @@ and enters `known_targets` only once its first golden lands
 - **Tail-call lowering — settled: the trampoline / block loop.**
   Every self- or mutually-tail call lowers to a parameter rebind
   and a jump to the function head; `return` is a branch to the
-  epilogue, never a raised signal. Step 23 marks this the fork in
+  epilogue, never a raised signal. The assessment marks this the fork in
   the road that must be chosen before the emitter is written; it
   is also the fix for the current backend's ~4x loop regression.
 - **Wrap-around `Int64` — settled: unsigned arithmetic.** Emit

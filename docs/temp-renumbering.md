@@ -221,16 +221,28 @@ target in `plan/step-15-other-targets.md` (a kernel is just the
 freestanding use case, and `README.md` still records the EmoOS
 ambition).
 
-### 4. Semantic references
+### 4. Semantic references — done
 
-Prose that names a step by role rather than by its current number needs a
-human read — chiefly the phantom-assessment mentions listed above, and any
-"step NN" in `docs/toolchain*.md`, `docs/runtime-and-freestanding.md`,
-`docs/rtos-assessment.md`, `docs/xv6.md` that must point at the renumbered
-step, not a mechanical replacement.
+Human read of every semantic step reference:
 
-(Item 1's human reads are done; the remaining semantic prose in those files
-was folded into subtasks 1.3–1.5.)
+- **Phantom mentions.** `CHECK.md` and the toolchain /
+  runtime-and-freestanding docs are correct (the phantom is now only named
+  `plan/hosted-native-ffi.md`). The audit turned up phantom `step 23`
+  references in `plan/step-23-c-target.md` that items 1 and 3 missed — its
+  `Milestone` line, the "Step 23 assessed…" paragraph, and "Step 23 marks this
+  the fork…" — reworded to the hosted-native-FFI assessment, and its stale
+  `plan/step-23-hosted-native-ffi.md` path fixed to
+  `plan/hosted-native-ffi.md`.
+- **`step NN` in the listed docs.** `docs/toolchain.md`,
+  `docs/toolchain-distribution.md`, `docs/runtime-and-freestanding.md`,
+  `docs/rtos-assessment.md`, and `docs/xv6.md` all point at the renumbered
+  step (RISC-V → step 19, other-targets → step 15, native backend → step 14,
+  target independence → step 25, toolchain → step 24).
+- **Repo-wide sweep.** No `step NN` / `步骤 NN` outside 01–46, and no broken
+  `plan/*.md` reference in any tracked file except the intentional old → new
+  example in this file.
+
+(Item 1's mechanical pass plus subtasks 1.3–1.5 carried the rest.)
 
 ### 5. Milestone labels outside the tracker (found while doing item 1)
 
