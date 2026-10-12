@@ -97,24 +97,22 @@ is native-only (`targets = ["ocaml", "c"]`) while `plot` is all five.
 
 ## 3. Resolved this session (for the record)
 
-Commits on `feat/plot`, oldest first:
+On `feat/plot`, in rough order:
 
-- `4120a23` — `Float64.{sqrt,floor,ceil,trunc,to_int64}` and
-  `Int64.to_float64` on `c`, `wasm`, and `beam`; `examples/float_methods`
-  golden on the interpreter and those three.
-- `483e2de` — float-correctness gaps the `math` package surfaced: the TS
-  emitter cut float literals at twelve significant digits and its runtime
-  lacked the float methods; `beam` `emo_div`/`emo_mod` had no float arm;
-  the `c` build now passes `-ffp-contract=off` so an FMA cannot drift a
-  bit; the interpreter and ocaml runtime treated `NaN` as equal to itself.
-- `cc968f8` — the `math` package (pure Emo, all five targets, byte-for-byte)
-  and `examples/math_demo`.
-- `a9eed3c` — the numeric literal forms the README already promised:
-  `0x` / `0b` / `0o` prefixes, `_` separators, and float exponents.
-- `371ed9b` — a `var` assigned in an `if`/`case` is threaded out of the
-  branch on `beam`, which used to leave it "unbound variable"; `math.log`
-  is back to the natural spelling, so the `math_demo` beam golden covers
-  it.
+- the `Float64` method surface on `c`, `wasm`, and `beam`
+  (`examples/float_methods`);
+- the float-correctness gaps the `math` package surfaced (literal
+  precision and methods on TypeScript, float division/modulo on beam,
+  C float contraction, NaN equality);
+- the `math` package itself, pure Emo and byte-identical on all five
+  targets (`examples/math_demo`);
+- the numeric literal forms the README promised (hex/binary/octal
+  prefixes, digit separators, float exponents);
+- a `var` assigned in a beam `if`/`case` threaded out of the branch;
+- the ocaml native emitter completed for `var`/`case`
+  (`examples/branch_var`);
+- the in-memory `bufio` sink made linear;
+- the `runtime/wasm` rules' sandbox dependencies fixed.
 
 ## 4. Decision checklist
 
