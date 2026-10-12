@@ -5,6 +5,10 @@ design. It records a gap found while landing the package short-name prefix
 (the fix that made `plot.mark` real) and the two directions to choose
 between. It is English-only on purpose, like `temp-visual-check.md`.
 
+**Decision (2026-10-12): Option B.** Own-subtree-first stays, pinned by
+tests; per-package isolation and transitive resolution are recorded here as
+open defects to pick up later.
+
 ## What is landed
 
 The compiler now mounts a package's tree under its short name
@@ -92,14 +96,16 @@ Needs:
 Scope: `emo_pkg` (index closure), `emo_project`, `emo_check`, `emo_ir`,
 `emo_eval`, plus fixtures/tests. Largest of the two options.
 
-## Option B — pin the current rule and record the gap, defer
+## Option B — pin the current rule and record the gap, defer (chosen)
 
 Keep own-subtree-first, and:
-1. Add an interpreter-vs-compiled equivalence test for the shadowing case
-   (guards the consistency fix).
-2. Add a test documenting own-subtree-first precedence.
-3. Record "no per-package isolation" and "transitive deps do not resolve"
-   as tracked defects (this file, or `docs/TASKS.md`).
+1. An interpreter-vs-IR equivalence test for the shadowing case pins the
+   consistency fix: `run_entry` returns `100`, and the IR's `shadow__pick`
+   body calls `shadow__q__qq`. Both are in `test/emo_project`.
+2. An own-subtree-first precedence test: the same fixture's interpreter
+   output is `100`, not the dependency's `9`.
+3. This file records the two open defects: no per-package isolation, and
+   transitive deps do not resolve.
 
 Smallest change; the language keeps a documented global namespace where any
 package can name any registered module.

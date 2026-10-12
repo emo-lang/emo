@@ -581,6 +581,53 @@ def scale(n Int64) Int64 {
   return n * 2
 }
 |};
+  (* Own-subtree-first fixture: `shadow`'s own submodule `shadow.q` shares a
+     short name with the dependency package `q`, so `q.qq()` inside
+     `shadow.emo` is ambiguous and must resolve to the package's own
+     subtree (100), not the dependency (9). *)
+  let shadow_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "shadow" "1.0.0"))
+  in
+  write_file
+    (Filename.concat shadow_dir "package.emo")
+    {|package {
+  name = "acme/shadow"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat shadow_dir "shadow.emo")
+    {|def pick() Int64 {
+  return q.qq()
+}
+|};
+  write_file
+    (Filename.concat shadow_dir "q.emo")
+    {|def qq() Int64 {
+  return 100
+}
+|};
+  let q_dir =
+    Filename.concat dir (Filename.concat "acme" (Filename.concat "q" "1.0.0"))
+  in
+  write_file
+    (Filename.concat q_dir "package.emo")
+    {|package {
+  name = "acme/q"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat q_dir "q.emo")
+    {|def qq() Int64 {
+  return 9
+}
+|};
   dir
 
 let app_manifest =
@@ -602,6 +649,30 @@ let app_manifest =
 let app_main = {|require "acme/c_tools"
 println(c_tools.halve(84))
 |}
+
+(* The own-subtree-first shadowing fixture's app: it depends on both the dep
+   package `q` and `shadow`, whose own submodule is also named `q`. *)
+let shadow_app () =
+  with_project
+    [
+      ( "package.emo",
+        {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/shadow = "1.0.0"
+    acme/q = "1.0.0"
+  }
+}
+|} );
+      ( "main.emo",
+        {|require "acme/shadow"
+println(shadow.pick())
+|} );
+    ]
+    "main.emo"
 
 let with_registry f =
   let old = Sys.getenv_opt "EMO_REGISTRY" in
@@ -1088,6 +1159,39 @@ println(helper.twice(21))
             | exception Emo_project.Static_errors ds ->
                 if not (has_code ds "E4003") then
                   Alcotest.fail ("codes: " ^ codes_dump ds)));
+    tc "own-subtree-first: a package's own submodule wins over a same-named dep"
+      (fun () ->
+        let entry = shadow_app () in
+        with_registry (fun () ->
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            Alcotest.(check string) "own submodule wins" "100\n" output));
+    tc "the IR resolves a shadowed submodule the way the interpreter does"
+      (fun () ->
+        let entry = shadow_app () in
+        with_registry (fun () ->
+            let inputs, entry_path, packages, _ =
+              Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+            in
+            let program =
+              Emo_ir.lower
+                { Emo_ir.modules = inputs; entry = entry_path; packages }
+            in
+            match
+              List.find_opt
+                (fun (f : Emo_ir.func) -> f.Emo_ir.fname = "shadow__pick")
+                program.Emo_ir.pfuncs
+            with
+            | None -> Alcotest.fail "the IR has no shadow__pick function"
+            | Some f -> (
+                match f.Emo_ir.fbody with
+                | [ Emo_ir.Return_stmt { Emo_ir.desc = Emo_ir.Call { func; _ }; _ } ]
+                  ->
+                    Alcotest.(check string) "call target" "shadow__q__qq" func
+                | _ -> Alcotest.fail "unexpected shadow__pick body")));
   ]
 
 let sched_tests =
