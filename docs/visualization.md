@@ -568,12 +568,13 @@ time. Colormaps interpolate in `Float64` and return a triple.
 ### The output buffer
 
 Emo has no `StringBuilder` and no `join`, `Bytes` is fixed-length, and
-the standard library's `bufio.BytesSink` accumulates by concatenating
-into one string, which is quadratic in the bytes written. The renderer
-therefore carries an internal `Buffer`: chunks in a `List` plus a byte
-count, with a terminal `to_string` that allocates one exact `Bytes` and
-copies each chunk in once (linear; `Bytes` has no bulk write, so the
-copy is byte-by-byte). `SvgRenderer.finish()` returns through it.
+the standard library's `bufio` package is native-only (`targets =
+["ocaml", "c"]`, since it builds on `os`), so a five-target renderer
+cannot lean on its in-memory sink. The renderer therefore carries an
+internal `Buffer`: chunks in a `List` plus a byte count, with a terminal
+`to_string` that allocates one exact `Bytes` and copies each chunk in
+once (linear; `Bytes` has no bulk write, so the copy is byte-by-byte).
+`SvgRenderer.finish()` returns through it.
 
 ### Faceting
 
@@ -864,8 +865,9 @@ T0 + T1.
     array order, so there is no `z` field.
 21. **Color — `(Int64, Int64, Int64)`, 0–255.** Opacity is separate;
     `plot.rgb` validates the range; colormaps interpolate in `Float64`.
-22. **Output buffer — an internal chunked `Buffer`**, because
-    `bufio.BytesSink` is quadratic; `to_string` is terminal.
+22. **Output buffer — an internal chunked `Buffer`**, because `bufio`
+    is native-only (`targets = ["ocaml", "c"]`) while `plot` is all
+    five; `to_string` is terminal.
 23. **Faceting — sorted levels, rows × cols, `Share.all` by default,
     one legend, per-panel labels, blank cells for mismatched levels.**
 24. **Theme — a value on the `Figure`** holding background and

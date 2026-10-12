@@ -503,10 +503,11 @@ enum Weight { regular, bold }
 ### 输出缓冲
 
 Emo 没有 `StringBuilder` 也没有 `join`,`Bytes` 是定长的,而标准库的
-`bufio.BytesSink` 靠拼成一个字符串来累积——写入字节量的平方级。所以
-渲染器自带一个内部 `Buffer`:`List` 里的分块加一个字节计数,终结的
-`to_string` 开一个精确长度的 `Bytes` 把每块拷一次(线性;`Bytes` 没有
-批量写,所以是逐字节拷)。`SvgRenderer.finish()` 经由它返回。
+`bufio` 包只有原生目标(`targets = ["ocaml", "c"]`,因为它构建在 `os`
+之上),所以一个五目标的渲染器用不上它的内存汇。于是渲染器自带一个内部
+`Buffer`:`List` 里的分块加一个字节计数,终结的 `to_string` 开一个精确
+长度的 `Bytes` 把每块拷一次(线性;`Bytes` 没有批量写,所以是逐字节拷)。
+`SvgRenderer.finish()` 经由它返回。
 
 ### 分面
 
@@ -744,8 +745,9 @@ Seaborn 对等”从目标表述中删掉,换成声明清楚的档位 T0 + T1。
     不设 `z`。
 21. **颜色——`(Int64, Int64, Int64)`,0–255。** 不透明度单独;`plot.rgb`
     校验范围;色图在 `Float64` 里插值。
-22. **输出缓冲——内部带分块的 `Buffer`**,因为 `bufio.BytesSink` 是平方
-    级;`to_string` 是终结操作。
+22. **输出缓冲——内部带分块的 `Buffer`**,因为 `bufio` 只有原生目标
+    (`targets = ["ocaml", "c"]`)而 `plot` 是五个;`to_string` 是终结
+    操作。
 23. **分面——层级排序、行列网格、默认 `Share.all`、一条图例、每面板
     标签、层级不匹配留空。**
 24. **主题——挂在 `Figure` 上的值**,含背景/前景、网格/轴/标题/标签
