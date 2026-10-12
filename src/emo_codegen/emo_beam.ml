@@ -1643,6 +1643,12 @@ let rt_source =
 		    apply 'emo_mask'/1 (call 'erlang':'div'(_x, _y))
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
+	  <_x> when call 'erlang':'is_float'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_float'(_y) ->
+		    call 'erlang':'/'(_x, _y)
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	end
 
@@ -1653,6 +1659,12 @@ let rt_source =
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
 		    call 'erlang':'rem'(_x, _y)
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_x> when call 'erlang':'is_float'(_x) ->
+	      case _b of
+		<_y> when call 'erlang':'is_float'(_y) ->
+		    call 'math':'fmod'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)

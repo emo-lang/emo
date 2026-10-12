@@ -161,7 +161,17 @@ let rec expr env (e : Emo_ir.expr) : string =
   match e.Emo_ir.desc with
   | Const (L_int n) -> Printf.sprintf "%Ldn" n
   | Const (L_byte n) -> string_of_int n
-  | Const (L_float f) -> Printf.sprintf "E.float(%s)" (string_of_float f)
+  | Const (L_float f) ->
+      (* The shortest decimal that reads back to the same binary64 — the
+         same rule the beam emitter uses. `string_of_float` would cut at
+         twelve significant digits and lose the literal's low bits. *)
+      let rec shortest p =
+        if p >= 17 then Printf.sprintf "%.17g" f
+        else
+          let s = Printf.sprintf "%.*g" p f in
+          if float_of_string s = f then s else shortest (p + 1)
+      in
+      Printf.sprintf "E.float(%s)" (shortest 1)
   | Const (L_string s) -> js_string s
   | Const (L_bool b) -> if b then "true" else "false"
   | Const (L_char c) -> Printf.sprintf "E.char(%C)" c

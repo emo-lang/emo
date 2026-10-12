@@ -458,7 +458,7 @@ module Emo_eval = struct
     match (a, b) with
     | Int64 x, Int64 y -> Int64.equal x y
     | Byte x, Byte y -> Int.equal x y
-    | Float x, Float y -> Float.equal x y
+    | Float x, Float y -> x = y
     | Bool x, Bool y -> Bool.equal x y
     | Void, Void -> true
     | Char x, Char y -> Char.equal x y
