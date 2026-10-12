@@ -2,11 +2,12 @@
 
 Written 2026-10-12, on `feat/plot`. This is a temporary working list, not
 decided design: it tracks the compiler, language, and backend issues
-found while landing the numeric substrate the plot work needs (the float
-method dispatch and the `math` package). The plot design itself lives in
-[`visualization.md`](visualization.md); the decisions there are unaffected
-by this file. It is English-only on purpose — a translation follows only
-if the file outlives the work.
+found while landing the numeric substrate (the float method dispatch and
+the `math` package) and the plot T0 skeleton. The plot design itself
+lives in [`visualization.md`](visualization.md); the decisions there are
+unaffected by this file, except where noted under "Open" below. It is
+English-only on purpose — a translation follows only if the file
+outlives the work.
 
 ## 1. Blocking the plot work
 
@@ -112,9 +113,45 @@ On `feat/plot`, in rough order:
 - the ocaml native emitter completed for `var`/`case`
   (`examples/branch_var`);
 - the in-memory `bufio` sink made linear;
-- the `runtime/wasm` rules' sandbox dependencies fixed.
+- the `runtime/wasm` rules' sandbox dependencies fixed;
+- the plot T0 skeleton (`plot` package) and its bar-chart demo
+  (`examples/plot_demo`), byte-identical on all five targets, with the
+  package documented in `docs/stdlib/plot.md`;
+- the back-end gaps that blocked it: `String.length` on a binary and
+  `Array.append` on beam; beam's class factory returning the instance
+  and class dispatch binding the receiver once; `to_string` dispatching
+  to a class's own method on beam and wasm; class construction and
+  marshaling on c and TypeScript.
 
-## 4. Decision checklist
+## 4. Open — remaining
+
+### R1 — the design note's `plot.mark` is really `mark`
+
+A package's submodules are addressed at the top level, not under the
+package name: `require "plot"` then `mark.bar(...)`, never
+`plot.mark.bar(...)`. A package-root submodule would also take the
+generic top-level name `mark`. `docs/visualization.md` (decision 18 and
+the surrounding prose, both languages) still says `plot.mark`; it needs
+revision, and the same question applies to the planned `stats` module.
+
+### R2 — checker field types stay `Unknown`
+
+Typing `self.field` precisely is the natural fix for nested field reads,
+but it broke the emitters: a native-typed field read on a dynamic
+receiver is still boxed, and the emitters key their native/dynamic
+choice on the expression's static type alone. Doing it properly means
+aligning the emitters with the checker, not just changing the checker.
+Until then, marks store their style fields flat — a field of a field is
+unknown at check time, which some back ends cannot dispatch.
+
+### R3 — a class method named like a builtin method is shadowed
+
+`to_string` and `length` are emitted by name ahead of class dispatch, so
+a class method with that name would be shadowed. `to_string` is fixed
+(the class answers first on beam and wasm); `length` is not, and no
+library hits it yet.
+
+## 5. Checklist
 
 - [x] **B1** — completed the ocaml native emitter (`Assignment`,
       mutable `Let`, statement `Case`); `examples/branch_var` is the
@@ -125,4 +162,11 @@ On `feat/plot`, in rough order:
       `dune test` is green.
 - [x] **P2** — `bufio.BytesSink` is chunked (linear), non-draining, and
       the docs/demo updated.
-- [ ] Then: the plot T0 skeleton (the design note's sequencing step B).
+- [x] **T0** — the plot skeleton, the bar-chart demo on all five targets,
+      and the package docs.
+- [ ] **R1** — revise `docs/visualization.md` for the real module path
+      (`mark`, not `plot.mark`).
+- [ ] **R2** — type `self.field` precisely, with the emitters aligned.
+- [ ] **R3** — the builtin-vs-class-method shadowing (`length` first).
+- [ ] Then: further plot work — T1 statistics, the other mark families,
+      and the terminal/PNG renderers (the design note's later steps).
