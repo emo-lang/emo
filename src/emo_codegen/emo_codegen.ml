@@ -127,10 +127,10 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
   | Emo_ir.Set_field { self_; name; value } ->
       if tail then
         Printf.sprintf
-          "(Emo_runtime.obj_set_field %s \"%s\" %s;\nEmo_eval.Int64 0L)"
+          "(Emo_runtime.obj_set_field (%s) \"%s\" (%s);\nEmo_eval.Int64 0L)"
           (emit_expr env self_) name (emit_expr env value)
       else
-        Printf.sprintf "Emo_runtime.obj_set_field %s \"%s\" %s"
+        Printf.sprintf "Emo_runtime.obj_set_field (%s) \"%s\" (%s)"
           (emit_expr env self_) name (emit_expr env value)
   | Emo_ir.If { cond; then_; else_ } ->
       let then_code = emit_stmts env then_ ~tail in

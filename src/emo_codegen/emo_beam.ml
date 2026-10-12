@@ -450,23 +450,54 @@ and method_call env self_ name args =
       put env
         "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_len'/1 ";
       args_list env [ self_ ];
+      put env
+        "\n  <_str> when call 'erlang':'is_binary'(_str) ->\n    call \
+         'erlang':'byte_size'(_str)";
       put env "\n  <_> when 'true' ->\n    call 'erlang':'length'(";
       expr env self_;
       put env ")\nend"
   | "to_string", [] ->
-      put env "case ";
+      (* Instances answer their own `to_string` first — the interpreter's
+         rule; the builtin conversion answers only when no class carries
+         the name. The receiver is bound once, so a chained,
+         side-effecting receiver is not re-evaluated. *)
+      let recv = fresh_var env "__recv" in
+      put env ("let <" ^ recv ^ "> =\n");
       expr env self_;
+      put env ("\nin case " ^ recv ^ " of\n");
+      let method_arms =
+        List.filter_map
+          (fun (c : Emo_ir.class_) ->
+            if
+              List.exists
+                (fun (m : Emo_ir.func) ->
+                  String.equal (member_name c m) "to_string"
+                  && List.length m.Emo_ir.fparams - 1 = 0)
+                c.Emo_ir.cmethods
+            then
+              Some
+                (Printf.sprintf
+                   "  <%s> when 'true' ->\n    apply '%s'/1 (%s)\n"
+                   (instance_pattern env.classes c.Emo_ir.cname)
+                   (Emo_ir.sanitize_ident (c.Emo_ir.cname ^ "__to_string"))
+                   recv)
+            else None)
+          env.classes
+      in
+      put env (String.concat "" method_arms);
       put env
-        " of\n\
-        \  <{'emo_bytes', _k}> when 'true' ->\n\
-        \    apply 'emo_bytes_to_str'/1 ";
-      args_list env [ self_ ];
+        (Printf.sprintf
+           "  <{'emo_bytes', _k}> when 'true' ->\n    apply \
+            'emo_bytes_to_str'/1 (%s)\n"
+           recv);
       put env
-        "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_to_str'/1 ";
-      args_list env [ self_ ];
-      put env "\n  <_> when 'true' ->\n    apply 'emo_to_str'/1 ";
-      args_list env [ self_ ];
-      put env "\nend"
+        (Printf.sprintf
+           "  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_to_str'/1 \
+            (%s)\n"
+           recv);
+      put env
+        (Printf.sprintf
+           "  <_> when 'true' ->\n    apply 'emo_to_str'/1 (%s)\nend" recv)
   (* The fixed-width conversions. Int64 and Byte are both plain Erlang
      integers here, so `to_int64` is the identity and the static constructors
      differ only in Byte's range check. *)
@@ -578,9 +609,13 @@ and method_call env self_ name args =
                    (Printf.sprintf "beam: method `%s` has no dispatch (in %s)"
                       name env.fname))
           | _ ->
-              put env "case ";
+              (* Bind the receiver once: the arms below pass it, and
+                 re-emitting it would run a side-effecting receiver (a
+                 chained call, say) twice. *)
+              let recv = fresh_var env "__recv" in
+              put env ("let <" ^ recv ^ "> =\n");
               expr env self_;
-              put env " of\n";
+              put env ("\nin case " ^ recv ^ " of\n");
               List.iter
                 (fun cname ->
                   let full = cname ^ "__" ^ mangled in
@@ -590,7 +625,7 @@ and method_call env self_ name args =
                        (instance_pattern env.classes cname)
                        (Emo_ir.sanitize_ident full)
                        arity);
-                  expr env self_;
+                  put env recv;
                   List.iter
                     (fun a ->
                       put env ", ";
@@ -1985,7 +2020,7 @@ let rt_source =
 	end
 
 'emo_array_append'/2 =
-    fun (_xs, _x) -> call 'lists':'reverse'(call 'lists':'reverse'([_x | _xs]))
+    fun (_xs, _x) -> call 'lists':'append'(_xs, [_x])
 
 'emo_box_replace'/2 =
     fun (_k, _v) ->
@@ -3025,7 +3060,12 @@ let emit (program : Emo_ir.program) : string =
             (fun (m : Emo_ir.func) ->
               (m.Emo_ir.fname, List.length m.Emo_ir.fparams))
             c.Emo_ir.cmethods
-          @ [ (c.Emo_ir.cname ^ "__new", List.length (class_fields c)) ])
+          @ [
+              ( c.Emo_ir.cname ^ "__new",
+                (match c.Emo_ir.cinit with
+                | Some init -> List.length init.Emo_ir.fparams - 1
+                | None -> 0) );
+            ])
         program.Emo_ir.pclasses;
   put env "module 'emo_main' ['main'/0]\n";
   put env "    attributes []\n";
@@ -3088,7 +3128,19 @@ let emit (program : Emo_ir.program) : string =
       env.local_map <- ("self", self_v) :: env.local_map;
       let before = Buffer.length buf in
       (match c.Emo_ir.cinit with
-      | Some init -> stmts env init.Emo_ir.fbody
+      | Some init ->
+          (* init's value is the instance, not whatever its last
+             statement produced: a trailing method call must not become
+             the constructor's result. *)
+          stmts env
+            (init.Emo_ir.fbody
+            @ [
+                Emo_ir.Effect
+                  {
+                    ety = Emo_check.ClassType c.Emo_ir.cname;
+                    desc = Emo_ir.Var "self";
+                  };
+              ])
       | None -> put env self_v);
       let body_text = Buffer.sub buf before (Buffer.length buf - before) in
       Buffer.truncate buf before;

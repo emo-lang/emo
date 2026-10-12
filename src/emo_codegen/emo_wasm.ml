@@ -616,15 +616,55 @@ and method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
   match (name, args) with
   | "to_string", [] ->
+      (* Instances answer their own `to_string` first — the interpreter's
+         rule; the builtin conversion answers otherwise. A Bytes receiver
+         stringifies raw; the labeled spelling is the display form the
+         generic to_str produces. *)
+      let scratch = fresh_local env "__str_recv" W.Anyref in
       expr env self_;
-      (* a Bytes receiver stringifies raw; the labeled spelling is the
-         display form the generic to_str produces *)
-      e env
-        (W.Call
-           (rt
-              (match self_.Emo_ir.ety with
-              | Emo_check.Bytes -> "bytes_to_str"
-              | _ -> "to_str")))
+      e env (W.Local_set scratch);
+      let builtin () =
+        [
+          W.Local_get scratch;
+          W.Call
+            (rt
+               (match self_.Emo_ir.ety with
+               | Emo_check.Bytes -> "bytes_to_str"
+               | _ -> "to_str"));
+        ]
+      in
+      let matching =
+        List.filter_map
+          (fun (c : Emo_ir.class_) ->
+            if
+              List.exists
+                (fun (m : Emo_ir.func) ->
+                  String.equal (member_name c m) "to_string"
+                  && List.length m.Emo_ir.fparams - 1 = 0)
+                c.Emo_ir.cmethods
+            then
+              match
+                ( List.assoc_opt c.Emo_ir.cname env.class_type,
+                  List.assoc_opt (c.Emo_ir.cname ^ "__to_string") env.funcs )
+              with
+              | Some tidx, Some fidx -> Some (tidx, fidx)
+              | _ -> None
+            else None)
+          env.classes
+      in
+      let rec chain = function
+        | [] -> builtin ()
+        | (tidx, fidx) :: rest ->
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [ W.Local_get scratch; W.Ref_test tidx ],
+                  (W.Local_get scratch :: W.Ref_cast tidx :: [])
+                  @ [ W.Call fidx ],
+                  chain rest );
+            ]
+      in
+      es env (if matching = [] then builtin () else chain matching)
   | "length", [] ->
       (* arrays, tuples, and strings carry a length; the arms rebuild
          from a scratch local — the if's arms cannot see the caller's

@@ -879,7 +879,10 @@ and box_int env (result_ty : Emo_check.t) (v : string) : string =
 
 and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
     (name : string) (args : Emo_ir.expr list) : string =
-  let finish v = if is_dyn result_ty then v else unbox_code v result_ty in
+  let finish v =
+    if result_ty = Emo_check.Void || is_dyn result_ty then v
+    else unbox_code v result_ty
+  in
   let arity = List.length args in
   (* The type-level methods (`Byte.from_int64`, `Float64.from_bits`)
      arrive with a Type_ref receiver. *)
@@ -1245,7 +1248,8 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                   (if args = [] then "NULL"
                    else Printf.sprintf "(emo_value[]){%s}" arg_code)
               in
-              if is_dyn result_ty then v else unbox_code v result_ty)
+              if result_ty = Emo_check.Void || is_dyn result_ty then v
+              else unbox_code v result_ty)
       | _ -> refuse "method calls")
 
 (* The class a field access resolves against: the receiver's static

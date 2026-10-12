@@ -1221,13 +1221,14 @@ const E: any = {
         return dv.getBigInt64(0, true);
       }
       if (isFloat(recv)) {
-        // The Float64 method surface: the libm root/rounding functions
-        // and the truncating Int64 conversion.
+        // The Float64 method surface: the libm root/rounding functions,
+        // the truncating Int64 conversion, and to_string.
         if (name === "sqrt") return new EFloat(Math.sqrt(recv.v));
         if (name === "floor") return new EFloat(Math.floor(recv.v));
         if (name === "ceil") return new EFloat(Math.ceil(recv.v));
         if (name === "trunc") return new EFloat(Math.trunc(recv.v));
         if (name === "to_int64") return BigInt(Math.trunc(recv.v));
+        if (name === "to_string") return floatStr(recv.v);
       }
       if (recv instanceof EList) {
         if (name === "push_front") return listPushFront(recv, args[0]);
