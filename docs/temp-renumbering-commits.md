@@ -1,7 +1,8 @@
 # Renumbering — commit-message work log
 
-Tracking the alignment of the `Task No` references baked into the **commit
-messages** on `develop` with the final task numbering in `docs/TASKS.md`.
+Tracking the alignment of the `Task No` and milestone references baked
+into the **commit messages** on `develop` with the final numbering in
+`docs/TASKS.md`.
 
 ## Goal
 
@@ -10,6 +11,7 @@ messages** on `develop` with the final task numbering in `docs/TASKS.md`.
   messages were not).
 - Every `step NN` / `Step NN` / `step-NN` reference in a commit message
   points at the current step number.
+- Every `M<label>` milestone reference points at the current milestone.
 
 ## Why the messages were stale
 
@@ -64,10 +66,11 @@ Samples:
   continuous`, `Move the … step into M4`, `Fix the phantom step-23 …`
   (`ecab804`, the phantom keeps no number). Their old → new prose is
   superseded history and must not be remapped.
-- **Out of scope here:** `M`-milestone labels inside commit messages
-  (e.g. `Plan M10 — target independence`). The task asked for `Task No`
-  only; the `M`-labels in the tree were item 5 of `temp-renumbering.md`.
-  A follow-up can align them the same way if wanted.
+- **Milestone labels** (`M6`, `M10`, …) inside commit messages are aligned
+  too, per item 5 of `temp-renumbering.md`: `M6→M5`, `M8→M6`, `M9→M7`,
+  `M10→M8`, `M11→M9`, `M12→M10`, `M13→M11`, `M14→M12`, `M15→M13`
+  (`M1–M4` unchanged). Commits whose label points at a dropped milestone
+  (`M5` function groups, `M7` EmoOS) are left as historical.
 
 ## Execution
 
@@ -83,10 +86,13 @@ Two `git filter-branch --msg-filter` passes over `develop`:
    EmoOS` / `Mirror the step` / `Track the remaining` / `Make the
    milestone` subjects.
 
-Both passes are single-pass (one lookup per token), so the identity and
-swap ranges are safe. Original commit hashes are preserved in
-`refs/original/refs/heads/develop` and in the branch
-`backup/pre-commit-renumber`.
+3. **Pass 3 — milestone labels.** Applies the `M` old → new map above to
+   every message that carries one, skipping the same renumbering-operation
+   subjects and any message naming the dropped `EmoOS` milestone.
+
+Each pass is single-lookup, so the identity and swap ranges are safe.
+Original commit hashes are preserved in `refs/original/refs/heads/develop`
+and in the branch `backup/pre-commit-renumber`.
 
 ## Verification
 
@@ -100,11 +106,15 @@ swap ranges are safe. Original commit hashes are preserved in
   `Step 46 — Unit test framework …`.
 - Remaining `step` references are either current or the intentionally
   preserved renumbering-operation / phantom ones.
+- `M`-labels in task/planning commits now match `docs/TASKS.md` (e.g.
+  `Register M9 — For / While loops`, `Plan M8 — target independence`,
+  `Define M7 — Toolchain`, `Add the plot milestone … M12`). Metas
+  (`Renumber …`, `Move the …`, `Make the milestone …`) and the dropped
+  `EmoOS` commit keep their historical labels.
 
 ## Follow-up — not done
 
 - [ ] Push: `develop` has fully diverged from `origin/develop`, so syncing
       the remote needs an explicit **force-push** (separate authorization).
-- [ ] Optional: align the `M`-milestone labels inside commit messages.
 - [ ] Optional: drop `refs/original/refs/heads/develop` once the rewrite is
       accepted (the standalone `backup/pre-commit-renumber` branch remains).
