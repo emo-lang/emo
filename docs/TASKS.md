@@ -28,8 +28,8 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M1 — MVP interpreter | 01–07 | Single-file Emo programs (functions, classes, enums, exceptions) run via `emo run` / `emo repl` with readable errors. |
 | M2 — Compile-time experience | 08–10 | Gradual type checker, structural module system, and packages with MVS resolution; multi-package projects build and run. |
 | M3 — Concurrency & networking | 11–12 | Processes and message passing on an effects-based scheduler; direct-style networking. |
-| M4 — Compilation targets | 13–16 | Native code generation via `emo build`; then wasm / TypeScript / BEAM / riscv64. |
-| M5 — BEAM & function groups | 17–18 | The BEAM target ships its golden tier; `emo Foo { ... }` function groups resolve and run on all four targets. |
+| M4 — Compilation targets | 13–17 | Native code generation via `emo build`; then wasm / TypeScript / BEAM / riscv64. |
+| M5 — Function groups | 18 | `emo Foo { ... }` function groups resolve and run on all four targets. |
 | M6 — Systems programming | 19–21 | A WebAssembly runtime written in Emo: the shared systems layer, then the binary decoder/validator, then the interpreter with spec-suite goldens. |
 | M7 — EmoOS | 22 | The kernel path on the same systems layer: a unikernel build path (near term), then freestanding codegen (shared with the engine tiering). |
 | M8 — Self-contained hosted backend | 23–24 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — step 23's assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
