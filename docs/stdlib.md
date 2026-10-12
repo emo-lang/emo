@@ -49,6 +49,7 @@ The packages:
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
 | [`math`](#the-math-package) | float scalars and elementary functions | all five |
+| [`plot`](#the-plot-package) | declarative 2D charts rendered to SVG | all five |
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | `ocaml`, `c`, `typescript` |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
 
@@ -486,6 +487,39 @@ and pin the output to a platform.
 
 Targets: all five. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
 Demo: `examples/math_demo`.
+
+## The `plot` package
+
+The declarative 2D charting package: a figure is a value — a `Figure`
+holding `Axes`, each holding marks — and one call renders it to SVG.
+Pure Emo, so all five targets answer byte-for-byte.
+
+```emo
+def figure() Figure
+def axes() Axes
+def svg(fig Figure) String
+
+def with_title(t String) Figure
+def with_size(w Float64, h Float64) Figure
+def with_axes(a Array[Axes]) Figure
+
+def with_x_label(s String) Axes
+def with_y_label(s String) Axes
+def with_marks(m Array[Mark]) Axes
+```
+
+The `mark` module carries the marks; T0 ships the bar mark,
+`mark.bar(labels, values)`, refined through `mark.bar_style()`. Colors
+are `(Int64, Int64, Int64)` sRGB triples, 0–255 per channel. Every label
+is an SVG `<text>` element, so the package carries no font engine.
+
+`svg` returns the document; writing it to a file is the caller's step,
+since the package runs on all five targets while file IO is native-only.
+
+Targets: all five. T0 is the bar mark with linear axes and SVG output;
+log scales, faceting, legends, and the other mark families are reserved.
+Reference: [`docs/stdlib/plot.md`](stdlib/plot.md) · Demo:
+`examples/plot_demo`.
 
 ## The `slog` package
 

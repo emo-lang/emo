@@ -27,6 +27,7 @@ require "json"
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
 | [`math`](#math-包) | 浮点标量与初等函数 | 全部五个 |
+| [`plot`](#plot-包) | 声明式二维图表,渲染为 SVG | 全部五个 |
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | `ocaml`、`c`、`typescript` |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
 
@@ -342,6 +343,30 @@ def pow(base Float64, exponent Float64) Float64
 `exp` 先把参数归约到 `2^k * exp(r)`,再用短 Taylor 级数展开 `exp(r)`;`log` 用 `log(x) = e*ln2 + log(m)` 加 atanh 级数。域外参数是契约违反而不是值——`log` 的非正数、`exp` 的上溢都 raise,因为 beam 目标的 Erlang 浮点根本无法表示 NaN 或无穷,返回值不是可选项。这里刻意不放原生快路径(经 `foreign def` 调宿主 libm):它会拒绝 wasm/typescript/beam,并把输出钉在某个平台上。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/math.md`](stdlib/math.md) · 示例:`examples/math_demo`。
+
+## plot 包
+
+声明式二维绘图包:一张图就是一个值——`Figure` 持有 `Axes`,每个 `Axes` 持有 mark——一次调用即渲染成 SVG。纯 Emo,五个目标逐字节相同。
+
+```emo
+def figure() Figure
+def axes() Axes
+def svg(fig Figure) String
+
+def with_title(t String) Figure
+def with_size(w Float64, h Float64) Figure
+def with_axes(a Array[Axes]) Figure
+
+def with_x_label(s String) Axes
+def with_y_label(s String) Axes
+def with_marks(m Array[Mark]) Axes
+```
+
+`mark` 模块带着各种 mark;T0 只有柱状 mark `mark.bar(labels, values)`,经 `mark.bar_style()` 细化。颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组,每通道 0–255。每个标签都是 SVG `<text>` 元素,所以这个包不带字体引擎。
+
+`svg` 返回文档;写进文件是调用方的事——这个包在五个目标上都能跑,而文件 IO 只有原生目标可用。
+
+目标:全部五个。T0 是柱状 mark 加线性坐标轴与 SVG 输出;对数刻度、分面、图例、以及其它 mark 家族均为预留。参考:[`docs/zh-CN/stdlib/plot.md`](stdlib/plot.md) · 示例:`examples/plot_demo`。
 
 ## slog 包
 
