@@ -535,7 +535,7 @@ end
    holding the package's manifest (package.emo) and source files. *)
 module Registry = struct
   (* A registry endpoint: a filesystem directory, or the standard
-     library carried in the compiler binary itself (T25.2) — a lone emo
+     library carried in the compiler binary itself (T24.2) — a lone emo
      binary resolves stdlib packages with nothing beside it. *)
   type t = Fs_dir of string | Embedded
 
@@ -730,7 +730,7 @@ module Registry = struct
   (* The global cache: shared across projects, content-addressed — the
      directory name embeds the checksum, so equal content is stored once. *)
   (* A durable user cache — the OS wipes the temp directory, and a
-     product cannot re-fetch on every build (T25.4). EMO_CACHE_DIR
+     product cannot re-fetch on every build (T24.4). EMO_CACHE_DIR
      overrides; XDG_CACHE_HOME is honored. *)
   let default_cache_dir () =
     match Sys.getenv_opt "EMO_CACHE_DIR" with

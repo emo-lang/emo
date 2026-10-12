@@ -35,7 +35,7 @@ runtime）；机械重命名单独落地，先于下文的 native 修复。
 | 目标 | 当前表示 | 当前语义 |
 | --- | --- | --- |
 | Wasm | `i64` | 64 位回绕 —— 符合 |
-| BEAM | 掩码后的 Erlang 整数（step 17） | 64 位回绕 —— 符合 |
+| BEAM | 掩码后的 Erlang 整数（step 18） | 64 位回绕 —— 符合 |
 | native | OCaml `int`（去箱） | 63 位回绕 —— 偏差 |
 
 native 后端发射 OCaml 源码，把整数映射到 OCaml 的 `int`——64 位
@@ -70,7 +70,7 @@ binary64——OCaml `float`、Wasm `f64`、Erlang float、TypeScript
 
 ## RISC-V 32 位是代码生成问题，不是语义问题
 
-裸金属目标按 ISA 命名（`riscv64`，step 14）。将来的 `riscv32`
+裸金属目标按 ISA 命名（`riscv64`，step 15）。将来的 `riscv32`
 用寄存器对实现同一个 `Int64`：add/sub 走进位链，mul/div 拆
 hi/lo——教科书式的 `long long` 技术，与上面 native 的 hi/lo
 路线共享。在 RV32 上角色反转：`Int32` 是寄存器宽度的快路径，

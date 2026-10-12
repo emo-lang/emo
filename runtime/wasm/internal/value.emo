@@ -1,4 +1,4 @@
-// The value model (T21.3).
+// The value model (T22.3).
 //
 // A runtime value is a tagged pair `(kind, bits)`, where `kind` is the
 // spec's value-type byte and `bits` carries the payload:
@@ -12,7 +12,7 @@
 //
 // Bit patterns, not numbers: this is the only way NaN payloads survive
 // loads, stores, and `reinterpret` exactly. A float converts to
-// `Float64` only at an operation (T21.5) and re-encodes after. Null is
+// `Float64` only at an operation (T22.5) and re-encodes after. Null is
 // its own encoding — a negative payload in a reference kind, which no
 // real index or host value is.
 //

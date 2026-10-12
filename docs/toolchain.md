@@ -21,7 +21,7 @@ phrase means its opposite — the division of labor is:
    default build path is the `c` target: `emo build` invokes the
    system `cc` and nothing else, so a machine with the installed
    binary builds Emo programs with no OCaml toolchain — verified by
-   step 25's acceptance (a lone binary in an empty directory runs,
+   step 24's acceptance (a lone binary in an empty directory runs,
    checks, builds, installs dependencies, and publishes) and reported
    per target by `emo doctor`.
 
@@ -38,7 +38,7 @@ phrase means its opposite — the division of labor is:
 
 ## The ocaml target needs only the OCaml toolchain
 
-Since step 26 (target independence), every target runtime rides inside
+Since step 25 (target independence), every target runtime rides inside
 the `emo` binary as generated data — the C runtime, the TypeScript
 prelude, and the ocaml target's standalone runtime
 (`emo_ocaml_runtime.ml`) alike. `emo build --target ocaml` writes the
@@ -64,9 +64,9 @@ otherwise resolve from inside the staging directory and fail.
 
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) — why
   the distribution has this shape (the design record).
-- [`plan/step-25-toolchain.md`](../plan/step-25-toolchain.md) — the
+- [`plan/step-24-toolchain.md`](../plan/step-24-toolchain.md) — the
   step that built it (M9 — Toolchain, released as v0.25.9).
-- [`plan/step-26-target-independence.md`](../plan/step-26-target-independence.md)
+- [`plan/step-25-target-independence.md`](../plan/step-25-target-independence.md)
   — the step that freed the targets from the installation shape (M10 —
   Target independence).
 - [`.github/workflows/release.yml`](../.github/workflows/release.yml)

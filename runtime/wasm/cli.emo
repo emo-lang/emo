@@ -4,7 +4,7 @@
 // (main.emo, spec.emo) are one-liners because the language has no argv.
 //
 // Verdict phases: a claimed case's actual verdict comes from the
-// decoder and validator (T20.4 onward). Until the decoder lands, a
+// decoder and validator (T21.4 onward). Until the decoder lands, a
 // claimed case reports `undecided` and counts as failed — visible in
 // the golden, never silent.
 

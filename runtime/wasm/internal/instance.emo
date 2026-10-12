@@ -1,6 +1,6 @@
-// The instance model (T21.2).
+// The instance model (T22.2).
 //
-// The decoder and validator (steps 20) prove a module sound; this
+// The decoder and validator (steps 21) prove a module sound; this
 // materializes what they proved into frozen records the interpreter can
 // walk without re-parsing: function types, imports, function bodies as
 // byte ranges, the table / memory / global declarations, the element
@@ -129,7 +129,7 @@ var loaded = []
 // A cross-module field read off a tuple element — `p[0].pos` where `p`
 // came from `internal.reader.u32` — does not type eagerly, so `+` over
 // it silently defaults wrong; routing the read through an Int64
-// parameter forces the type. (Language pressure recorded by step 21.)
+// parameter forces the type. (Language pressure recorded by step 22.)
 def as_int(x Int64) Int64 {
   return x
 }
@@ -677,7 +677,7 @@ def count_imports_rest(imports Array[Import], kind Int64, i Int64, acc Int64) In
 
 // ---- the entry points ----
 
-// Validate then materialize. Returns the step-20 verdict; on success the
+// Validate then materialize. Returns the step-21 verdict; on success the
 // module is appended to the registry and `handle` is its index.
 def load(data Bytes) (Bool, String, Int64, String, Int64) {
   const v = internal.decode.module_from(data)
@@ -715,7 +715,7 @@ def describe(handle Int64) String {
 }
 
 // ============================================================================
-// The frame machine (T21.7)
+// The frame machine (T22.7)
 // ============================================================================
 //
 // The operand stack and locals live in one shared byte arena of 16-byte
@@ -742,7 +742,7 @@ var instances = []
 var reg_names = []
 var reg_handles = []
 
-// The `spectest` host module state (T21.9): one table and one memory,
+// The `spectest` host module state (T22.9): one table and one memory,
 // allocated once and shared by every importer.
 var spectest_table = internal.store.tbl_new(10, 20, true, 112, (112, -1))
 var spectest_memory = internal.store.mem_new(1, 2, true)
@@ -2060,13 +2060,13 @@ def push_args(args Array[(Int64, Int64)], i Int64, n Int64) Int64 {
 }
 
 // ============================================================================
-// Instantiation and linking (T21.8)
+// Instantiation and linking (T22.8)
 // ============================================================================
 
 // A live module: its code plus the store (memories, tables, globals)
 // and the resolved targets of its imported functions. `targets[i]` is
 // (kind, handle, index): kind 0 = a function of instance `handle`,
-// kind 1 = a host function (T21.9).
+// kind 1 = a host function (T22.9).
 class Instance {
   def init(module Module, mems Array[(Box[Bytes], Int64, Bool)], tables Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], globals Array[(Box[(Int64, Int64)], Bool)], targets Array[(Int64, Int64, Int64)], start Int64, datalist Array[Bytes], elemlist Array[Array[(Int64, Int64)]]) {
     self.module = module
@@ -2419,7 +2419,7 @@ def instantiate(handle Int64) (Bool, String, Int64) {
   return (true, "", h)
 }
 
-// ---- the spectest host module (T21.9) ----
+// ---- the spectest host module (T22.9) ----
 
 def host_func_id(name String) Int64 {
   if name == "print" {

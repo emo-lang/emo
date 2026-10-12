@@ -54,7 +54,7 @@ Erlang 在电信业验证过的高可用监控面形态:SCADA 上位机、MES �
 工单、看板——大量并发连接、单进程崩溃隔离、整体不宕机。
 
 但硬实时够不着:GC、值拷贝、没有调度保证。freestanding 的 `riscv64`
-目标配可插拔 GC 与 arena(step 22,写作时未开始)是理论出路,离产品
+目标配可插拔 GC 与 arena(step 19,写作时未开始)是理论出路,离产品
 很远——而功能安全认证(IEC 61508 等)要求的工具链成熟度与可追溯性,
 新语言一样都没有。freestanding 目标的实时前景另见
 `docs/zh-CN/rtos-assessment.md`。
@@ -98,7 +98,7 @@ Erlang 在电信业验证过的高可用监控面形态:SCADA 上位机、MES �
    每个函数体包进 `try ... with Native_return`,每次 `return` 抛一个
    局部异常——这破坏了 OCaml 的尾调用优化,而且每次调用都有分配。于是
    有约 4 倍的差距,以及 1 亿深度时的栈溢出(1000 万时循环尚能完成)。
-   `plan/step-22-riscv64.md` 已经把那个异常称为 "emission
+   `plan/step-19-riscv64.md` 已经把那个异常称为 "emission
    convenience",并计划在 RV64 上用 "分支到 epilogue + 保证尾调用"
    修掉它;OCaml 承载的后端还没有修。
 

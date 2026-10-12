@@ -1,4 +1,4 @@
-// The step 12 acceptance: an HTTP server and client round-trip on
+// The step 13 acceptance: an HTTP server and client round-trip on
 // localhost, in one program, entirely direct style — the scheduler
 // switches processes underneath while the code reads like blocking calls.
 require "http"

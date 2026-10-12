@@ -204,7 +204,7 @@ def utf8_cont_two(data Bytes, pos Int64, end Int64, lo Int64, hi Int64) Bool {
   return utf8_cont2(data, pos + 1, end)
 }
 
-// ---- constant expressions (T20.9) ----
+// ---- constant expressions (T21.9) ----
 //
 // The initializer-expression subset (global initializers, element and
 // data offsets): instructions until the terminating 0x0b. Decode-level,
@@ -367,7 +367,7 @@ def const_expr_t(r Reader, code Int64) (Reader, Int64) {
   return (e[0], code)
 }
 
-// ---- the instruction stream (T20.10) ----
+// ---- the instruction stream (T21.10) ----
 //
 // Dispatch on the first byte; the numeric instructions' immediates
 // decode here, and the structured instructions recurse (the matching
@@ -723,7 +723,7 @@ def s33_acc(r Reader, count Int64, acc Int64) (Reader, Int64) {
 // module-model decision.
 //
 // LEB128 lives in this module rather than a sibling because qualified
-// type declarations do not parse (step 20 pressure): a def in leb.emo
+// type declarations do not parse (step 21 pressure): a def in leb.emo
 // could not spell this module's Reader in its signature.
 
 def print_dbg(label String, data Bytes) Int64 {
@@ -964,7 +964,7 @@ def locals_pairs(r Reader, limit Int64, n Int64, total Int64) (Bool, Int64, Int6
   return locals_pairs(stepped(c[0], v[2]), limit, n - 1, total2)
 }
 
-// ---- the type-stack validator (T20.15-T20.17) ----
+// ---- the type-stack validator (T21.15-T21.17) ----
 //
 // The spec's validation algorithm, in its functionally-threaded shape:
 // the value stack is an Array[Int64] of codes with Unknown = 0 as the
@@ -1017,7 +1017,7 @@ def vpop(stack Array[Int64], height Int64, f Frame) (Bool, Int64, Array[Int64], 
 
 // Tail-accumulator form: a method call on a recursive result
 // (`f(n-1).append(x)`) sends the interpreter into a spin past ~25
-// nesting levels (step 20 pressure, reproduced in isolation) — the
+// nesting levels (step 21 pressure, reproduced in isolation) — the
 // append rides in argument position instead.
 def trunc_to(items Array[Int64], n Int64) Array[Int64] {
   return trunc_to_rest(items, n, 0, [])

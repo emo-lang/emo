@@ -1,4 +1,4 @@
-// The store fixture (T21.6): little-endian widths, bounds traps, grow
+// The store fixture (T22.6): little-endian widths, bounds traps, grow
 // and its cap, the table operations, and mutable globals.
 
 def show(label String, text String) Int64 {

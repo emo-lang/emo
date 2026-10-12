@@ -1,11 +1,11 @@
 (* The C backend: the IR lowered to one C translation unit that the
    system cc compiles next to the Emo runtime sources into a single
-   standalone binary — no OCaml runtime (plan/step-24-c-target.md;
+   standalone binary — no OCaml runtime (plan/step-23-c-target.md;
    docs/native-backend.md records the emit-and-delegate precedent).
 
    The two-world structure starts at the signature: native types cross
    as C scalars, and the dynamic world's tagged word arrives with its
-   task (T24.4).
+   task (T23.4).
 
    Tail calls lower explicitly (CHECK.md): a self-tail call is a
    parameter rebind and a jump to the function head; a mutual-tail
@@ -60,7 +60,7 @@ type env = {
   mutable closure_decls : string list; (* their forward declarations *)
   forfuncs : (string, Emo_ir.func) Hashtbl.t;
       (* foreign def's mangled name -> its IR: calls go straight to
-         the C symbol, no wrapper (T24.8) *)
+         the C symbol, no wrapper (T23.8) *)
   cb_sigs :
     ( string,
       (string * (string * Emo_check.t) list * Emo_check.t) list )
@@ -204,7 +204,7 @@ let c_float (f : float) : string =
 (* Native Emo types cross as C scalars — Int64/Float64/Bool/Char as
    machine words, String as the runtime's length-prefixed [emo_str].
    The dynamic world — Unknown, tuples, arrays, Box — crosses as one
-   tagged [emo_value] word (T24.4). [Void] is a result type only. *)
+   tagged [emo_value] word (T23.4). [Void] is a result type only. *)
 let c_type (t : Emo_check.t) : string option =
   match t with
   | Emo_check.Int64 -> Some "int64_t"
@@ -541,7 +541,7 @@ and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
       if is_dyn use_ty then Printf.sprintf "emo_box_pid(%s)" pid_expr
       else pid_expr
 
-(* The IO builtins (T24.10): files and TCP over the hosted OS. The
+(* The IO builtins (T23.10): files and TCP over the hosted OS. The
    net surface beyond this tier — TLS, unix sockets, UDP, DNS —
    compiles and fails at runtime, honestly. *)
 and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
@@ -728,7 +728,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
       refuse "halt in a value position"
   | Builtin { name; args } -> emit_io_builtin env e.Emo_ir.ety name args
   | Call { func; args } -> (
-      (* A foreign def calls its C symbol directly (T24.8). *)
+      (* A foreign def calls its C symbol directly (T23.8). *)
       match Hashtbl.find_opt env.forfuncs func with
       | Some f -> foreign_call env e.Emo_ir.ety f args
       | None -> (
@@ -871,7 +871,7 @@ and to_str env (e : Emo_ir.expr) : string =
 
 (* The supported methods of the dynamic world: Box's read/replace,
    sequence length, and the scalar to_string. Instances arrive with
-   T24.5. *)
+   T23.5. *)
 (* The Bytes accessors return native int64_t; a dynamic use site
    takes the boxed form. *)
 and box_int env (result_ty : Emo_check.t) (v : string) : string =
@@ -2164,7 +2164,7 @@ and has_return (stmts : Emo_ir.stmt list) : bool =
       | _ -> false)
     stmts
 
-(* ---- Foreign defs (T24.8) ----
+(* ---- Foreign defs (T23.8) ----
 
    The direct C ABI: a `foreign def` declares the C symbol and calls
    it with native types — no wrapper generator. A String crossing OUT

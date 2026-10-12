@@ -2,7 +2,7 @@
 
 Emo's Syntax section states: `var` bindings are block-scoped, and
 capturing one in a closure that can outlive its block is a compile
-error. This document records how the compiler (step 08, `emo_check`)
+error. This document records how the compiler (step 09, `emo_check`)
 decides when a capture is an error.
 
 ## The rule as implemented

@@ -97,7 +97,7 @@ static uintptr_t *emo_payload(emo_value v) {
   return (uintptr_t *)(((emo_cell *)v) + 1);
 }
 
-/* ---- Reclamation (CHECK.md, the T24.5 gate) ----
+/* ---- Reclamation (CHECK.md, the T23.5 gate) ----
 
    Reference counting over the identity-bearing objects; the
    value-semantic data stays in the bump arena for the process
@@ -796,7 +796,7 @@ emo_value emo_map_values(emo_value m) {
   return emo_map_collect(m, true);
 }
 
-/* ---- Instances (T24.5) ---- */
+/* ---- Instances (T23.5) ---- */
 
 emo_value emo_instance_new(const emo_vtable *vt, int64_t nfields) {
   /* [header][vtable][fields...] */
@@ -865,7 +865,7 @@ bool emo_is_iface(emo_value instance, const emo_iface *ifc) {
   return true;
 }
 
-/* ---- Enums (T24.5) ---- */
+/* ---- Enums (T23.5) ---- */
 
 emo_value emo_enum_new(const char *enum_name, const char *member) {
   size_t elen = strlen(enum_name), mlen = strlen(member);
@@ -896,7 +896,7 @@ bool emo_enum_is(emo_value v, const char *enum_name, const char *member) {
   return emo_enum_words_equal(p, member);
 }
 
-/* ---- Closures (T24.5) ---- */
+/* ---- Closures (T23.5) ---- */
 
 emo_value emo_closure_new(emo_closure_fn fn, int64_t ncaps,
                           const emo_value *caps) {

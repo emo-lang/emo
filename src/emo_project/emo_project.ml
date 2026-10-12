@@ -646,7 +646,7 @@ let dep_error ~(manifest_dir : string) (message : string) =
     ]
 
 (* With EMO_REGISTRY unset, the standard library rides the compiler
-   binary itself (T25.2) — EMO_REGISTRY names a filesystem registry and
+   binary itself (T24.2) — EMO_REGISTRY names a filesystem registry and
    overrides the bundled default. *)
 let bundled_registry () : Emo_pkg.Registry.t = Emo_pkg.Registry.Embedded
 

@@ -3,8 +3,8 @@
 # directory: (relative path, content) pairs as OCaml string literals,
 # with the same relative keys the filesystem registry's collect_files
 # produces (.emo modules plus the .c/.h sources of native-binding
-# packages). The stdlib rides the compiler binary (T25.2,
-# plan/step-25-toolchain.md) — edit the registry, then rebuild.
+# packages). The stdlib rides the compiler binary (T24.2,
+# plan/step-24-toolchain.md) — edit the registry, then rebuild.
 #
 # Usage: gen-stdlib-data.sh <registry-dir>  (module on stdout)
 set -e

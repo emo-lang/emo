@@ -1,4 +1,4 @@
-(* The ocaml target's standalone runtime (step 26): fixtures compile
+(* The ocaml target's standalone runtime (step 25): fixtures compile
    against emo_ocaml_runtime.ml alone — extracted from the compiler's
    generated data into a bare directory and compiled by the target's own
    toolchain. Zero emo_* dependencies, nothing from the host build tree;

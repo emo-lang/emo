@@ -4,8 +4,8 @@
 > `runtime/wasm/`, not a decided design document. They record how the
 > runtime is used today; they do not extend the plan or the README. The
 > authoritative material is `runtime/wasm/README.md`,
-> `plan/step-19-wasm-runtime.md`, `plan/step-20-wasm-decoder.md`, and
-> `plan/step-21-wasm-interpreter.md`.
+> `plan/step-20-wasm-runtime.md`, `plan/step-21-wasm-decoder.md`, and
+> `plan/step-22-wasm-interpreter.md`.
 
 ## What it is
 
@@ -110,7 +110,7 @@ imports resolve through the register namespace.
 
 ## Limits (why it is not wasmtime)
 
-1. **No CLI and no argv.** `plan/step-20` deferred argv, so every driver
+1. **No CLI and no argv.** `plan/step-21` deferred argv, so every driver
    hardcodes its path (e.g. `cli.run("testdata/cases.smoke.txt")`).
 2. **`internal/` is subtree-private** (enforced by the compiler). Code
    outside the package cannot see `instantiate` / `call`, so **an
@@ -135,6 +135,6 @@ imports resolve through the register namespace.
 - Re-export an execution surface from `wasm.emo` (e.g.
   `instantiate`, `call`, `get_global`) with a defined host interface.
 - Give the `emo` CLI or a standalone driver access to argv (the gap
-  step 20 left open), or add an `emo wasm run foo.wasm` subcommand.
+  step 21 left open), or add an `emo wasm run foo.wasm` subcommand.
 - To run real-world `.wasm`, add WASI / an `emo` host module and more
   proposals (GC and beyond).

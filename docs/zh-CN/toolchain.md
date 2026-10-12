@@ -18,7 +18,7 @@
 2. **此后的一切都不再需要 OCaml。** 装好的二进制默认构建路径就是
    `c` target:`emo build` 调用系统 `cc`,仅此而已——一台只有装好
    二进制的机器就能构建 Emo 程序,无需任何 OCaml 工具链。这一点由
-   步骤 25 的验收证明(孤二进制在空目录中运行、检查、构建、安装
+   步骤 24 的验收证明(孤二进制在空目录中运行、检查、构建、安装
    依赖、发布),并由 `emo doctor` 按 target 报告。
 
 ## justfile 自动化的正是这条链
@@ -41,7 +41,7 @@
 
 ## ocaml target 只需要 OCaml 工具链
 
-自步骤 26(target independence)起,每个 target 的 runtime 都以
+自步骤 25(target independence)起,每个 target 的 runtime 都以
 生成数据的形式随 `emo` 二进制携带——C runtime、TypeScript prelude、
 以及 ocaml target 的 standalone runtime(`emo_ocaml_runtime.ml`)都是
 如此。`emo build --target ocaml` 把 runtime 与 emitted 程序并排写出,
@@ -56,9 +56,9 @@ release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`,带 runtim
 
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) ——
   分发为何是这个形状(设计记录)。
-- [`plan/step-25-toolchain.md`](../../plan/step-25-toolchain.md) ——
+- [`plan/step-24-toolchain.md`](../../plan/step-24-toolchain.md) ——
   构建它的步骤(M9 — 工具链,以 v0.25.9 发布)。
-- [`plan/step-26-target-independence.md`](../../plan/step-26-target-independence.md)
+- [`plan/step-25-target-independence.md`](../../plan/step-25-target-independence.md)
   —— 把各 target 从安装形态中解放出来的步骤(M10 — Target
   independence)。
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml)

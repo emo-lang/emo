@@ -1,4 +1,4 @@
-// The linking fixture (T21.8): module B imports a table and a function
+// The linking fixture (T22.8): module B imports a table and a function
 // from module A (registered by name), calls A's function directly, and
 // calls through the shared table indirectly. A missing import is a
 // link failure.

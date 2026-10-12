@@ -1,6 +1,6 @@
 name: Release
 
-# Tag-triggered releases (T25.6): a `v*` tag produces per-platform
+# Tag-triggered releases (T24.6): a `v*` tag produces per-platform
 # archives — Linux x86_64/aarch64 and macOS x86_64/arm64 — drafted as a
 # GitHub Release with SHA256SUMS. The Linux binary is built on the
 # oldest supported glibc (Ubuntu 22.04, glibc 2.35) and verified in a
@@ -59,7 +59,7 @@ jobs:
         # private key, so signing there is impossible — the draft's
         # macOS archives are signed + notarized from a machine that
         # has the identity, with `just notarize <tag>`
-        # (devtools/notarize-release.sh, T25.7's local route).
+        # (devtools/notarize-release.sh, T24.7's local route).
         run: |
           version=$(cat VERSION)
           devtools/package-release.sh _build/default/src/emo_cli/emo.exe \

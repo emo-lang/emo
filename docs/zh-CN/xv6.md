@@ -24,13 +24,13 @@
 
 | xv6 需要什么 | Emo 现状 | 理论上可达方式 |
 | --- | --- | --- |
-| 裸机启动、链接脚本、固定布局 | `riscv64` 目标已规划（`plan/step-22`），未实现 | 后端发汇编文本 + `ld` 脚本 + 入口 stub |
-| **CSR 读写**（`satp`/`stvec`/`sstatus`/`sepc`……） | 无原语；`peek`/`poke` 够不到寄存器组（`plan/step-14`） | 手写 `.S`/C shim（xv6 同样用 inline asm） |
+| 裸机启动、链接脚本、固定布局 | `riscv64` 目标已规划（`plan/step-19`），未实现 | 后端发汇编文本 + `ld` 脚本 + 入口 stub |
+| **CSR 读写**（`satp`/`stvec`/`sstatus`/`sepc`……） | 无原语；`peek`/`poke` 够不到寄存器组（`plan/step-15`） | 手写 `.S`/C shim（xv6 同样用 inline asm） |
 | **trap 入口与返回**（`sret`） | 无 inline asm | 手写 `.S`，和 xv6 一样 |
 | 原始物理内存（MMIO、页表） | `peek`/`poke` 已设计但**未实现**；`Bytes` 有，但只是宿主缓冲 | `Int64` 地址 + `peek`/`poke` |
 | **位域/重叠 union**（PTE、`struct proc` 落一整页） | 无 union、无 `offsetof`、无布局控制 | `Int64` 掩码 + `peek`/`poke` 手工偏移 |
 | **就地可变表**（`proc[]`、页 freelist） | 数组不可变、字段 `init` 后冻结、无全局 `var` | 原始内存 + `Box` |
-| **自旋锁与原子**（`amoswap`、LR/SC、`fence`） | 语言无原子/屏障语义 | 汇编 shim（`plan/step-14` 的机制/策略切分） |
+| **自旋锁与原子**（`amoswap`、LR/SC、`fence`） | 语言无原子/屏障语义 | 汇编 shim（`plan/step-15` 的机制/策略切分） |
 | `volatile` MMIO 语义 | `peek`/`poke` 是可被重排/消除的调用 | 同一层 shim，或语言层 `volatile` 决策 |
 | 函数指针/中断分发 | 部分 —— 闭包是堆记录 `[code, captured]`，非裸代码地址 | 编译期 vtable 能做分发；`stvec` 需 shim |
 | 用户态（U-mode）与 `ecall` 门 | 全是 CSR + `sret` | 汇编 shim |
@@ -64,20 +64,20 @@ CSR 访问、原子/屏障、裸代码指针。这些是"补一个 primitive"的
 
 - **后端形态够用。** `riscv64` 发汇编文本交给 GNU `as`/`ld`，配上生成的
   链接脚本；手写 `.S`/freestanding C 源码编入镜像，以 psABI 为契约 ——
-  这正是 `plan/step-14` 描述的"裸机 C 互操作"形态。IR（命名函数、闭包、
+  这正是 `plan/step-15` 描述的"裸机 C 互操作"形态。IR（命名函数、闭包、
   编译期 vtable、保证尾调用）对内核逻辑是充分的。
 - **无 GC 是加分项。** bump 分配器天然能当 `kalloc` 的底座，freelist 自己
   维护；抢占一旦有了就是纯寄存器/栈切换，不用对付增量回收。
 - **两个硬前置门槛：**
-  1. 在 `riscv64` 上，`plan/step-22` 目前**在发射期拒绝 `foreign def`**，
+  1. 在 `riscv64` 上，`plan/step-19` 目前**在发射期拒绝 `foreign def`**，
      而内核需要 CSR、原子、trap 的桥。也就是说"把 C/汇编编进镜像"这条桥
-     必须在 FFI 阶梯（`plan/step-14` 的 rung 1–2）上前移；否则连 M1 都
+     必须在 FFI 阶梯（`plan/step-15` 的 rung 1–2）上前移；否则连 M1 都
      过不去。
   2. **`Int32` 与精确位宽的 `peek`/`poke`**：设备寄存器必须按宽度访问
      （`docs/numeric-width.md` 明说），而 `Int32` 目前只是"约定好的未来
      类型，表面未定"。
 - 另外，`Int64`/`Float64` 在 freestanding 的动态世界里是**装箱两字单元**；
-  内核路径依赖 step 13 的 Stage B 特化来保持裸寄存器，否则每次访存都要过
+  内核路径依赖 step 14 的 Stage B 特化来保持裸寄存器，否则每次访存都要过
   装箱路径。
 
 ## 一个更尖锐的观察
@@ -96,7 +96,7 @@ CSR 访问、原子/屏障、裸代码指针。这些是"补一个 primitive"的
 
 - **纯 Emo、不加新表面、不带汇编/C shim：不可行。** CSR、trap 返回、
   原子这三样无法表达。
-- **Emo + 一层薄基底**（汇编/C shim —— `plan/step-14` 已认可的机制/策略
+- **Emo + 一层薄基底**（汇编/C shim —— `plan/step-15` 已认可的机制/策略
   切分）：**理论可行。** 页表构造、分配器、进程表、调度、syscall 分发、
   ELF 装载、驱动策略、文件系统逻辑都能在 Emo 里写。
 - **理论上真正的 blocker 只有三处：**（1）trap/CSR/原子原语 —— 可加；
@@ -116,9 +116,9 @@ CSR 访问、原子/屏障、裸代码指针。这些是"补一个 primitive"的
   `riscv64` 目标在两个轴上的位置。
 - `docs/numeric-width.md` —— 位宽显式的数值类型，以及 MMIO 的 `Int32`/
   精确位宽 `peek`/`poke` 缺口。
-- `plan/step-22-riscv64.md` —— freestanding 目标、值模型、启动 profile，
+- `plan/step-19-riscv64.md` —— freestanding 目标、值模型、启动 profile，
   以及 `foreign def` 的拒绝。
-- `plan/step-14-other-targets.md` —— RISC-V 参考注记、机制/策略切分、
+- `plan/step-15-other-targets.md` —— RISC-V 参考注记、机制/策略切分、
   C 互操作阶梯。
 - `docs/native-backend.md` —— IR/特化流水线与 `foreign def` 表面。
 - `README.md` 的 "EmoOS" —— 单语言闭环的野心。

@@ -1,5 +1,5 @@
 // The WebAssembly runtime, written in Emo the way wasmtime is written
-// in Rust. Step 20 grew the binary decoder and validator here, step
+// in Rust. Step 21 grew the binary decoder and validator here, step
 // 21 the interpreter and the host imports.
 //
 // The package surface: `smoke()` identifies the package; `decode(bytes)`
@@ -15,7 +15,7 @@ def decode(data Bytes) (Bool, String, Int64, String) {
   return internal.decode.module_from(data)
 }
 
-// Validate and materialize: the step-20 verdict, plus a handle to the
+// Validate and materialize: the step-21 verdict, plus a handle to the
 // loaded module on success (-1 on failure). The module records stay
 // inside the package; a caller never sees an unvalidated module.
 def load(data Bytes) (Bool, String, Int64, String, Int64) {

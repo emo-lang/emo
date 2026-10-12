@@ -2,14 +2,14 @@
 
 This package is a WebAssembly runtime — decoder, validator, and
 interpreter — written in Emo, the way wasmtime is written in Rust.
-Step 20 of the language plan grew the decoder and validator; step 21
+Step 21 of the language plan grew the decoder and validator; step 22
 the interpreter, the linking layer, and the `spectest` host.
 
 ## What it offers
 
 Two entry points on the package surface:
 
-- `wasm.load(bytes)` — validate and materialize a module: the step-20
+- `wasm.load(bytes)` — validate and materialize a module: the step-21
   verdict, plus a handle to the loaded module on success. The module
   records stay inside the package, so a caller never sees an
   unvalidated module.
@@ -71,7 +71,7 @@ per claimed case and a summary; any disagreement fails.
   `testdata/cases.smoke.txt`, diffed against `expected.txt`. A
   regression in any claimed case turns the default test red.
 - `dune build @wasm_spec` runs the full list against
-  `spec.expected.txt`. This is step 20's acceptance gate; the language
+  `spec.expected.txt`. This is step 21's acceptance gate; the language
   tests do not depend on it, because the suite is large and a language
   change has no reason to re-run it.
 

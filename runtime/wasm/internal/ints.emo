@@ -1,4 +1,4 @@
-// The integer families (T21.4).
+// The integer families (T22.4).
 //
 // Pure functions over the value model: i32 and i64 arithmetic,
 // comparisons, shifts and rotates, bit counting, division and

@@ -1,12 +1,12 @@
 (* The riscv64 target: emit RV64 assembly text for the GNU cross
    binutils to assemble and link into one freestanding ELF
-   (plan/step-22-riscv64.md). Boot profile A: under
+   (plan/step-19-riscv64.md). Boot profile A: under
    `qemu-system-riscv64 -machine virt`, OpenSBI enters the payload at
    0x80200000 in S-mode with a0 = hart id and a1 = the DTB pointer, and
    the legacy ecalls (a7 = 1 console putchar, a7 = 8 shutdown) are the
    runtime's whole IO.
 
-   The value model (T22.2/T22.3): a dynamic value is one tagged machine
+   The value model (T19.2/T19.3): a dynamic value is one tagged machine
    word. Heap pointers carry their kind in the low three bits — 0
    Int64 cell, 1 Float64 cell, 2 String, 3 Tuple, 4 Array, 5 Box,
    6 Closure, 7 Instance — and every block is [header word][payload],

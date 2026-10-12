@@ -1,4 +1,4 @@
-// The type-section fixture (T20.7): the representation decision's
+// The type-section fixture (T21.7): the representation decision's
 // proof — a hand-written type section decodes to the Array[FuncType]
 // model, and the malformed shapes reject.
 
@@ -13,7 +13,7 @@ println("t1_params = " + good[1][1].params.length().to_string())
 println("t1_p1 = " + good[1][1].params[1].to_string())
 println("consumed = " + good[2].to_string())
 
-// v128 is out of scope for step 20 and rejects as a valtype.
+// v128 is out of scope for step 21 and rejects as a valtype.
 const simd = internal.model.type_section(
   internal.corpus.decode_hex("0160017b00"), 0, 5)
 println("simd_ok = " + simd[0].to_string())

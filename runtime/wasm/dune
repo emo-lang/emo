@@ -1,7 +1,7 @@
 ; The smoke rule makes the wasm package non-inert: `dune test` runs
 ; `emo run main.emo` and diffs its stdout against expected.txt, so a
 ; red line here means the runtime's own golden broke. The second pair
-; runs the full list under the wasm_spec alias (step 20's acceptance
+; runs the full list under the wasm_spec alias (step 21's acceptance
 ; gate).
 
 (rule
@@ -86,7 +86,7 @@
  (action
   (diff spec.expected.txt spec.actual)))
 
-; The run corpus (step 21). The smoke slice rides the default test;
+; The run corpus (step 22). The smoke slice rides the default test;
 ; the full list is the wasm_runs alias. The drivers only walk the
 ; list — execution lands with the interpreter tasks.
 
@@ -138,7 +138,7 @@
  (action
   (diff runs.all.expected.txt runs.actual)))
 
-; The instance-model fixture (T21.2).
+; The instance-model fixture (T22.2).
 
 (rule
  (alias runtest)
@@ -160,7 +160,7 @@
  (action
   (diff instance-fixture.expected.txt instance-fixture.actual)))
 
-; The value-model fixture (T21.3).
+; The value-model fixture (T22.3).
 
 (rule
  (alias runtest)
@@ -180,7 +180,7 @@
  (action
   (diff value-fixture.expected.txt value-fixture.actual)))
 
-; The integer-family fixture (T21.4).
+; The integer-family fixture (T22.4).
 
 (rule
  (alias runtest)
@@ -200,7 +200,7 @@
  (action
   (diff int-fixture.expected.txt int-fixture.actual)))
 
-; The float-family fixture (T21.5, bridge and moves).
+; The float-family fixture (T22.5, bridge and moves).
 
 (rule
  (alias runtest)
@@ -220,7 +220,7 @@
  (action
   (diff float-fixture.expected.txt float-fixture.actual)))
 
-; The float conversion/rounding fixture (T21.5, part 2).
+; The float conversion/rounding fixture (T22.5, part 2).
 
 (rule
  (alias runtest)
@@ -240,7 +240,7 @@
  (action
   (diff float-convert-fixture.expected.txt float-convert-fixture.actual)))
 
-; The store fixture (T21.6).
+; The store fixture (T22.6).
 
 (rule
  (alias runtest)
@@ -260,7 +260,7 @@
  (action
   (diff store-fixture.expected.txt store-fixture.actual)))
 
-; The frame-machine fixture (T21.7).
+; The frame-machine fixture (T22.7).
 
 (rule
  (alias runtest)
@@ -282,7 +282,7 @@
  (action
   (diff fac-fixture.expected.txt fac-fixture.actual)))
 
-; The linking fixture (T21.8).
+; The linking fixture (T22.8).
 
 (rule
  (alias runtest)
@@ -304,7 +304,7 @@
  (action
   (diff link-fixture.expected.txt link-fixture.actual)))
 
-; The spectest host fixture (T21.9).
+; The spectest host fixture (T22.9).
 
 (rule
  (alias runtest)

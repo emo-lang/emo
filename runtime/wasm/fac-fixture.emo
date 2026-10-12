@@ -1,4 +1,4 @@
-// The frame-machine fixture (T21.7): a recursive `fac` proves the
+// The frame-machine fixture (T22.7): a recursive `fac` proves the
 // tail-call chain, and a `loop` sum proves structured control, locals,
 // branches, and the numeric walk.
 

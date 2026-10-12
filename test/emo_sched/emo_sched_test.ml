@@ -615,7 +615,7 @@ receive {
         Alcotest.(check string) "output" "100000\n" output);
   ]
 
-(* ---- Networking: the TCP surface (T12.1) ----
+(* ---- Networking: the TCP surface (T13.1) ----
 
    Every test runs on the own scheduler over real loopback sockets: a
    listener on port 0, a spawned server process, and a client in the root

@@ -1,4 +1,4 @@
-// The instance-model fixture (T21.2): hand-built modules load with the
+// The instance-model fixture (T22.2): hand-built modules load with the
 // right counts and body ranges. The bytes are the hex of a module
 // compiled from wat by hand; the summary is the golden.
 

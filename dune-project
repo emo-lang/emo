@@ -1,7 +1,7 @@
 (lang dune 3.24)
 (name emo)
 
-; The opam package (T25.8) is generated from this stanza — the source
+; The opam package (T24.8) is generated from this stanza — the source
 ; channel that brings the ocaml compilation target.
 (generate_opam_files true)
 

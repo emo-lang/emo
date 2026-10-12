@@ -725,7 +725,7 @@ double emo_native_floor(double x) { return floor(x); }
 
 let app_manifest =
   (* The run path resolves dependencies for the default target (`c`,
-     the T25.1 flip), so the mechanism fixture deps a package that
+     the T24.1 flip), so the mechanism fixture deps a package that
      declares it; the gate-refusal tests below use the ocaml-only
      json_tools. *)
   {|package {
@@ -788,7 +788,7 @@ let parsed_app_manifest dir =
   | m -> m
   | exception Emo_pkg.Manifest_error d -> Alcotest.fail d.Diagnostic.message
 
-(* ---- install: the project-dependencies front end (T25.4) ---- *)
+(* ---- install: the project-dependencies front end (T24.4) ---- *)
 
 let install_tests =
   [
@@ -1745,7 +1745,7 @@ println(sqrt(4.0))|}
               "line" 1 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
   ]
 
-(* ---- Step 47: the `emo test` runner core ----
+(* ---- Step 46: the `emo test` runner core ----
 
    Scratch projects run through [Emo_project.run_tests] with the scratch
    directory as the working directory; outcomes come back as values. *)
@@ -2026,7 +2026,7 @@ println(native_tools.halve_floor(9.0))
                      ds)));
   ]
 
-(* ---- Step 13 bootstrap: the examples/ suite as compiled binaries ----
+(* ---- Step 14 bootstrap: the examples/ suite as compiled binaries ----
    Every example runs through the interpreter and through `emo build`,
    and both outputs must match the example's golden file byte-for-byte. *)
 
@@ -2228,7 +2228,7 @@ let bootstrap_tests =
           "sync_demo" "main.emo");
   ]
 
-(* ---- The TypeScript target (step 15) ----
+(* ---- The TypeScript target (step 17) ----
 
    Each core example builds with --target typescript and the emitted
    program, run on Node, must match the example's golden output. *)

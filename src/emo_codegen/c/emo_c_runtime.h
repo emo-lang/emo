@@ -1,14 +1,14 @@
 /* The Emo C runtime — hosted profile: libc plus these sources. The
    compiler emits one main.c per program, compiles it next to
    emo_c_runtime.c, and links a standalone binary with the system cc
-   (plan/step-24-c-target.md). This file carries hosted startup,
-   println, the integer core's wrap-around helpers (T24.2), the scalar
-   runtime (T24.3), and the dynamic value model (T24.4): one tagged
+   (plan/step-23-c-target.md). This file carries hosted startup,
+   println, the integer core's wrap-around helpers (T23.2), the scalar
+   runtime (T23.3), and the dynamic value model (T23.4): one tagged
    word per value, 8-byte-aligned heap cells, boxed Int64/Float64
    two-word cells, Bool/Char immediates, and the bump allocator (the
    provisional reclamation profile — CHECK.md; nothing is ever
    freed). Classes, enums, interfaces, and closures extend the cell
-   kind set in T24.5. */
+   kind set in T23.5. */
 
 #ifndef EMO_C_RUNTIME_H
 #define EMO_C_RUNTIME_H
@@ -27,14 +27,14 @@
 
 /* A String in native (typed) positions: length-prefixed bytes, no
    NUL terminator — one is added only when a string crosses the FFI
-   boundary (T24.8). Passed by value; literals are (emo_str){len,
+   boundary (T23.8). Passed by value; literals are (emo_str){len,
    "..."} compound literals. */
 typedef struct {
   int64_t len;
   const char *bytes;
 } emo_str;
 
-/* ---- The dynamic value model (T24.4) ----
+/* ---- The dynamic value model (T23.4) ----
 
    One machine word. Low three bits:
      000  a pointer to an 8-byte-aligned cell (kind in the header)
@@ -66,7 +66,7 @@ enum emo_kind {
 };
 
 /* A class's compile-time vtable: every generated program defines one
-   static vtable per class (T24.5), stored in the instance cell.
+   static vtable per class (T23.5), stored in the instance cell.
    Identity is vtable-pointer equality; `is(Interface)` matches
    structurally against the method name/arity list. */
 typedef struct {
@@ -101,7 +101,7 @@ typedef emo_value (*emo_closure_fn)(emo_value closure, const emo_value *args);
 /* ---- Hosted startup and println ---- */
 
 /* Every generated main calls this first. The scheduler's
-   initialization hooks in here (T24.9). */
+   initialization hooks in here (T23.9). */
 void emo_startup(void);
 
 /* println over stdio, one line per value. The integer form is exact
@@ -127,13 +127,13 @@ emo_str emo_str_from_char(int32_t v);
 emo_str emo_str_concat(emo_str a, emo_str b);
 bool emo_str_eq(emo_str a, emo_str b);
 
-/* The FFI boundary (T24.8): a String crossing OUT gets a
+/* The FFI boundary (T23.8): a String crossing OUT gets a
    NUL-terminated copy (the length prefix does not survive the C
    ABI); a char * coming IN is copied into a cell. */
 const char *emo_str_cstr(emo_str s);
 emo_str emo_str_from_cstr(const char *cs);
 
-/* ---- The dynamic world (T24.4) ---- */
+/* ---- The dynamic world (T23.4) ---- */
 
 /* Boxing: a native scalar into the dynamic world. String copies its
    bytes into a cell; Bool and Char are immediates. */
@@ -191,7 +191,7 @@ int64_t emo_map_length(emo_value map);
 emo_value emo_map_keys(emo_value map);   /* an Array, insertion order */
 emo_value emo_map_values(emo_value map); /* an Array, insertion order */
 
-/* Instances (T24.5): the vtable rides in the cell; fields are
+/* Instances (T23.5): the vtable rides in the cell; fields are
    dynamic words addressed by the compile-time field index. */
 emo_value emo_instance_new(const emo_vtable *vt, int64_t nfields);
 const emo_vtable *emo_vtable_of(emo_value instance);
@@ -202,7 +202,7 @@ emo_value emo_field_by_name(emo_value instance, const char *name);
 bool emo_is_iface(emo_value instance, const emo_iface *ifc);
 int emo_is_instance(emo_value v);
 
-/* Reclamation (CHECK.md, the T24.5 gate): reference counting over the
+/* Reclamation (CHECK.md, the T23.5 gate): reference counting over the
    identity-bearing cells — instances, closures, Box. Everything else
    is arena-resident and these are no-ops on it. The emitter owns the
    discipline: retain on capture into a longer-lived slot (bindings,
@@ -237,18 +237,18 @@ bool emo_is_tuple(emo_value v);
 /* A case expression with no matching branch. */
 void emo_no_match(void);
 
-/* An uncaught raise (T24.6): render the value like the interpreter's
+/* An uncaught raise (T23.6): render the value like the interpreter's
    E3010 and exit 1. `begin`/`catch`/`ensure` is unscheduled — until
    then every raise terminates the process, so no unwinder exists. */
 void emo_raise(emo_value v);
 
-/* Enums (T24.5): a member is (enum name, member name), compared and
+/* Enums (T23.5): a member is (enum name, member name), compared and
    rendered by name — no data on members (a carrying tag rides in a
    tuple). */
 emo_value emo_enum_new(const char *enum_name, const char *member);
 bool emo_enum_is(emo_value v, const char *enum_name, const char *member);
 
-/* Closures (T24.5): [header][fn][captured...]. Creation and the
+/* Closures (T23.5): [header][fn][captured...]. Creation and the
    call sites agree on the arity syntactically. */
 emo_value emo_closure_new(emo_closure_fn fn, int64_t ncaps, const emo_value *caps);
 emo_closure_fn emo_closure_fn_of(emo_value closure);
@@ -297,7 +297,7 @@ void emo_printf(emo_str fmt, emo_value args);
    the same way at runtime). */
 emo_str emo_to_string_method(emo_value v);
 
-/* ---- The systems layer (T24.7) ---- */
+/* ---- The systems layer (T23.7) ---- */
 
 /* Bytes: a fixed-length mutable byte buffer — [header][len][bytes...].
    All indices and values are Int64 at the surface; get zero-extends,
@@ -335,7 +335,7 @@ double emo_f64_floor(double x);
 double emo_f64_ceil(double x);
 double emo_f64_trunc(double x);
 
-/* ---- Processes and the cooperative scheduler (T24.9) ----
+/* ---- Processes and the cooperative scheduler (T23.9) ----
 
    One OS thread; every Emo process is a ucontext fiber with its own
    stack. `do` spawns a fiber; `send` delivers to a FIFO mailbox, wakes
@@ -366,7 +366,7 @@ void emo_mailbox_take_current(void *m);
 emo_value emo_box_pid(int64_t pid);
 int64_t emo_unbox_pid(emo_value v);
 
-/* ---- Hosted IO (T24.10) ---- */
+/* ---- Hosted IO (T23.10) ---- */
 
 /* Files: the whole file in one call; failures print the interpreter's
    exception shape and exit 70. */
@@ -433,7 +433,7 @@ emo_value emo_os_rename(emo_str old_path, emo_str new_path);
 emo_str emo_os_getcwd(void);
 emo_value emo_os_chdir(emo_str path);
 
-/* ---- The integer core (T24.2) ---- */
+/* ---- The integer core (T23.2) ---- */
 
 /* Wrap-around Int64 division and remainder: INT64_MIN / -1 wraps to
    INT64_MIN with remainder 0 — signed division there is undefined in

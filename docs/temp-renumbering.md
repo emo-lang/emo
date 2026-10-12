@@ -136,6 +136,54 @@ Notes:
   refer to the **phantom** assessment, not the C target — review before
   rewriting.
 
+#### Subtasks
+
+Item 1 is split so each piece can be executed and reviewed on its own.
+Every piece applies the same old → new mapping above; the only pieces that
+need a human read are the toolchain / phantom ones (1.3, 1.4) and their
+zh-CN mirrors (1.5).
+
+- [x] **1.1 — CI, devtools & root config.** `.github/workflows/ci.yml`,
+  `.github/workflows/release.yml`, `devtools/gen-stdlib-data.sh`,
+  `devtools/notarize-release.sh`, `devtools/ocaml-runtime-inventory.sh`,
+  `devtools/package-release.sh`, `devtools/vendor-wasm-spec`, `dune-project`.
+- [x] **1.2 — `docs/` narrative (English).** `industrial-software.md`,
+  `native-backend.md`, `numeric-width.md`, `rtos-assessment.md`,
+  `var-escape.md`, `zig-backend.md`, `xv6.md`.
+- [x] **1.3 — `docs/` toolchain & wasm-runtime (English; phantom review).**
+  `toolchain.md`, `toolchain-distribution.md`, `runtime-and-freestanding.md`,
+  `wasm-runtime-temp.md`.
+- [x] **1.4 — `CHECK.md` (phantom review).**
+- [x] **1.5 — `docs/zh-CN/` mirror.** `industrial-software.md`,
+  `native-backend.md`, `numeric-width.md`, `rtos-assessment.md`,
+  `runtime-and-freestanding.md`, `toolchain-distribution.md`, `toolchain.md`,
+  `wasm-runtime-temp.md`, `xv6.md`, `zig-backend.md`.
+- [x] **1.6 — `runtime/wasm/` runtime & fixtures.** `README.md`, `cli.emo`,
+  `dune`, all `*-fixture.emo`, `wasm.emo`, `testdata/README.md`.
+- [x] **1.7 — `runtime/wasm/internal/`.** `decode.emo`, `error.emo`,
+  `floats.emo`, `instance.emo`, `ints.emo`, `model.emo`, `reader.emo`,
+  `runlist.emo`, `store.emo`, `value.emo`.
+- [x] **1.8 — `src/` OCaml sources.** `emo_cli/`, `emo_codegen/`,
+  `emo_eval/`, `emo_ir/`, `emo_parser/`, `emo_pkg/`, `emo_project/`.
+- [x] **1.9 — `test/` OCaml suites.** `emo_check`, `emo_cli`, `emo_eval`,
+  `emo_ocaml_runtime`, `emo_pkg`, `emo_project`, `emo_sched`.
+- [x] **1.10 — `examples/` & `benchmarks/`.** `benchmarks/plain_loop/main.emo`,
+  `examples/http_roundtrip/main.emo`.
+
+All ten are done. Verified by re-extracting every `step`/`Step`/`T`-id token
+in the file list above: each now carries a **new** number. Three call-outs:
+
+- `CHECK.md`'s phantom-reference `(step 23 leaned C: …)` became `(the
+  hosted-native-FFI assessment leaned C: …)`; `plan/step-23-c-target.md` is
+  the C target and stands as written.
+- `step-06` maps to itself (`06 → 06`), so `step-06` is untouched; the
+  `step-08` references became `step-09`.
+- **False positive fixed by hand:** `src/emo_pkg/emo_pkg.ml:804`'s
+  `step 8 (Int32.of_int i)` is a function call on a local `step`, not a
+  step reference; a blind replacement to `09` would be an invalid OCaml
+  literal. It was reverted to `step 8`. No other `step`-as-identifier hit
+  was found (`conv_step2` in `instance.emo` was likewise left alone).
+
 ### 2. `docs/zh-CN/TASKS.md`
 
 Still the old structure: `## M1 … ## M15` with `EmoOS` present (6
@@ -168,3 +216,42 @@ human read — chiefly the phantom-assessment mentions listed above, and any
 "step NN" in `docs/toolchain*.md`, `docs/runtime-and-freestanding.md`,
 `docs/rtos-assessment.md`, `docs/xv6.md` that must point at the renumbered
 step, not a mechanical replacement.
+
+(Item 1's human reads are done; the remaining semantic prose in those files
+was folded into subtasks 1.3–1.5.)
+
+### 5. Milestone labels outside the tracker (found while doing item 1)
+
+Item 1's token list covered `step`/`T`-ids only, so milestone labels were
+left untouched there. They are stale across the repo and are **not** a
+purely mechanical mapping: old `M5` (Function groups) and old `M7` (EmoOS)
+were dropped, so those must be reworded, not renumbered.
+
+Old → new: `M1–M4` same; `M6 → M5`; `M8 → M6`; `M9 → M7`; `M10 → M8`;
+`M11 → M9`; `M12 → M10`; `M13 → M11`; `M14 → M12`; `M15 → M13`.
+
+Evidence (each is pre-renumber):
+
+```
+plan/step-07-function-group.md:3   M5  (function groups are in M1 now)
+plan/step-18-beam.md:3             M5
+plan/step-19-riscv64.md:3          M7  (EmoOS; RISC-V is in M4)
+plan/step-20-wasm-runtime.md:3     M6  (→ M5)
+plan/step-21-wasm-decoder.md:3     M6  (→ M5)
+plan/step-22-wasm-interpreter.md:3 M6  (→ M5)
+plan/step-23-c-target.md:3         M8  (→ M6)
+plan/step-24-toolchain.md:3        M9  (→ M7)
+plan/step-25-target-independence.md:3 M10 (→ M8)
+plan/step-31..38-stdlib-*.md:3     M13 (→ M11)
+docs/TASKS.md:52                   "T13.5, M12" gate row — M12 is Visualization now; error handling is M10
+CHECK.md:26                        "M9, step 24" — M9 is For/While now; toolchain is M7
+docs/toolchain.md:68,70            M9 — Toolchain, M10 — Target independence
+docs/zh-CN/toolchain.md:60,62      same, in Chinese
+docs/toolchain-distribution.md:118 "M9 — Toolchain"
+docs/zh-CN/toolchain-distribution.md:102 "M9 — 工具链"
+test/emo_check/emo_check_test.ml:1786  (M12) on the `R` enum — error handling is M10
+docs/visualization.md:458          (CHECK.md, M12) — already correct (plot is M12)
+```
+
+Note the two `M12` uses mean opposite things: the visualization ones are
+correct, the error-handling ones are old. A human read per site is needed.

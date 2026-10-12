@@ -1,4 +1,4 @@
-(* emo_ocaml_runtime.ml — the ocaml target's standalone runtime (step 26).
+(* emo_ocaml_runtime.ml — the ocaml target's standalone runtime (step 25).
 
    Everything a compiled Emo program links against, in one file with zero
    emo_* dependencies: `ocamlopt emo_ocaml_runtime.ml main.ml -o prog`.
@@ -8,7 +8,7 @@
    machine — never looked up in the host build tree.
 
    The contract is the emitted-code inventory in
-   plan/step-26-target-independence.md (T26.2): the two module names below
+   plan/step-25-target-independence.md (T25.2): the two module names below
    are load-bearing — the emitter's qualified paths resolve through them —
    and every symbol the inventory lists must exist with the same arity and
    behavior as the host libraries it replaces (emo_eval, emo_runtime,
@@ -659,7 +659,7 @@ module Emo_eval = struct
      Bridges compiled code into the builtin surface (println, the net_*
      family, halt, ...): the same argument shapes and runtime errors as
      interpreted calls. The net/file arms perform their effects; the
-     scheduler driver handles them (T26.4). *)
+     scheduler driver handles them (T25.4). *)
 
   (* The os module's syscalls run synchronously; OS failures surface
      as ordinary Emo exceptions with the OS reason attached. *)

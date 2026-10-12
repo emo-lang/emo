@@ -32,7 +32,7 @@ S-mode, so a firmware layer exists but no OS or libc; profile B
 freestanding relative to the operating system and the C library — the
 difference is whether a firmware layer sits underneath.
 
-In Emo (`plan/step-22-riscv64.md`), `riscv64` is the freestanding
+In Emo (`plan/step-19-riscv64.md`), `riscv64` is the freestanding
 target: no OS, no libc, no default runtime; the allocator, GC, and
 scheduler are replaceable components; `core` is the only library layer
 kernel code may use; `peek`/`poke` are the explicitly dangerous memory
@@ -82,7 +82,7 @@ runtime "ships inside the binary": the scheduler and networking stack
 are libraries of the backend, so a compiled program carries its runtime
 with it, with no interpreter and no runtime download. A freestanding
 target has **no host runtime** — it carries its own, with its own
-allocator (step 22's bump allocator, "GC deferred").
+allocator (step 19's bump allocator, "GC deferred").
 
 Why the runtime matters to the GC, FFI, and HPC discussions: the runtime
 owns **value representation, memory management, and scheduling**. "No
@@ -98,8 +98,8 @@ Crossing the two axes names the targets precisely:
 
 | | Borrowed host runtime | Own runtime |
 | --- | --- | --- |
-| **Hosted** | the shipped native backend (emits OCaml, links the OCaml runtime) | the proposed self-contained backend (`plan/step-23-hosted-native-ffi.md`) |
-| **Freestanding** | — (not a useful combination) | the `riscv64` target (`plan/step-22-riscv64.md`) |
+| **Hosted** | the shipped native backend (emits OCaml, links the OCaml runtime) | the proposed self-contained backend (`plan/hosted-native-ffi.md`) |
+| **Freestanding** | — (not a useful combination) | the `riscv64` target (`plan/step-19-riscv64.md`) |
 
 Read that way, "a freestanding target" and "a self-contained runtime" are
 statements about different axes: the first about the environment an image
@@ -109,9 +109,9 @@ boots into, the second about whose machinery carries the program.
 
 - `docs/native-backend.md` — the shipped native backend, its OCaml
   emission and its C FFI.
-- `plan/step-22-riscv64.md` — the freestanding target, its value model
+- `plan/step-19-riscv64.md` — the freestanding target, its value model
   and boot profiles.
-- `plan/step-23-hosted-native-ffi.md` — the proposed self-contained
+- `plan/hosted-native-ffi.md` — the proposed self-contained
   hosted backend.
 - `README.md`, "Native Builds" — the runtime-ships-inside-the-binary
   statement.

@@ -1,7 +1,7 @@
 (* The BEAM target: emit Core Erlang text for `erlc` to assemble.
 
    The grammar facts this emitter relies on were probed against the
-   pinned OTP 29 reader (plan/step-17-beam.md): every atom quoted, `do`
+   pinned OTP 29 reader (plan/step-18-beam.md): every atom quoted, `do`
    sequences exactly two expressions with no comma and no end, fun
    bodies are one expression with no end, and binary literals are
    per-segment `#{...}#`. *)
@@ -344,7 +344,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env
         (Printf.sprintf "{'emo_enum', %s, %s}" (atom enum_name) (atom member))
   | Box_new v ->
-      (* a Box is a process-dictionary key (T17.4 upgrades to a
+      (* a Box is a process-dictionary key (T18.4 upgrades to a
          holding process for cross-process boxes) *)
       put env "let <_boxref> = call 'erlang':'make_ref'() in ";
       put env "do call 'erlang':'put'(_boxref, ";
@@ -671,7 +671,7 @@ and builtin env name args =
   | _ ->
       raise
         (Emo_ir.Lower_error
-           ("beam: builtin `" ^ name ^ "` is not available yet (T17.1)"))
+           ("beam: builtin `" ^ name ^ "` is not available yet (T18.1)"))
 
 and binary_lit_newline = "#<10>(8,1,'integer',['unsigned'|['big']])"
 

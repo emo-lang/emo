@@ -1,7 +1,7 @@
 # The native backend
 
 How `emo build` turns an Emo program into a standalone binary, and the
-one open design item step 13 settled: the shape of Stage A's OCaml
+one open design item step 14 settled: the shape of Stage A's OCaml
 emission.
 
 ## The pipeline
@@ -12,10 +12,10 @@ parse → check → lower (Emo_ir) → specialize → emit OCaml → ocamlopt �
 
 - **`Emo_ir`** (`src/emo_ir`) is the mid-level IR every backend lowers
   to. It is a program of named functions over typed values: each
-  expression carries the step 08 checker's type, qualified references
+  expression carries the step 09 checker's type, qualified references
   are resolved to module-qualified names, and class method tables are
   explicit. Adding a backend means lowering from the IR, never from the
-  AST again (step 14's targets).
+  AST again (step 15's targets).
 - **Specialization** (`Emo_ir.specialize`) is a fixed-point pass over
   the IR: a function specializes when every value in it is native
   (parameters, locals, intermediates) and its calls go only to other
@@ -36,7 +36,7 @@ parse → check → lower (Emo_ir) → specialize → emit OCaml → ocamlopt �
 
 The plan left one implementation choice open: emit OCaml **source
 text**, or construct OCaml **module trees** in memory (via the compiler
-libraries) and compile those. Step 13 ships source emission:
+libraries) and compile those. Step 14 ships source emission:
 
 - **Source text is one stable contract.** The emitted file is ordinary
   OCaml that the installed toolchain compiles — no dependency on
@@ -56,7 +56,7 @@ libraries) and compile those. Step 13 ships source emission:
   matters at the current scale: the whole pipeline for the benchmark
   set is a few hundred milliseconds of toolchain work.
 
-Revisit only if a step 14 target wants to share the constructed-tree
+Revisit only if a step 15 target wants to share the constructed-tree
 path — the IR, not the emitter, is the layer backends have in common.
 
 ## C FFI
