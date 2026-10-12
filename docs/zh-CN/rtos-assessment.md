@@ -35,7 +35,7 @@
 
 ## Emo 现有设计:哪些帮忙
 
-- **freestanding 目标 + 可替换的运行时。** `plan/step-22` 给的是无 OS、
+- **freestanding 目标 + 可替换的运行时。** `plan/step-19` 给的是无 OS、
   无 libc、无默认运行时,分配器、GC、调度器都是可替换组件——正是内核
   自持运行时所需的形态。
 - **无 GC 对抢占友好。** 抢占于是只是"存寄存器、换栈";若有追踪式 GC,
@@ -52,12 +52,12 @@
 
 ## Emo 现有设计:哪些帮倒忙
 
-- **不承诺抢占。** `plan/step-22` 把 timer preemption 放在 M3,并标注
+- **不承诺抢占。** `plan/step-19` 把 timer preemption 放在 M3,并标注
   "optional; semantics do not require it"。RTOS 需要它,所以必须补。
 - **语言层没有 `volatile`、原子或屏障语义。** `peek`/`poke` 是调用,
   优化器可能重排或消除;ISR 与任务的竞争没有原语。这是**语言 + 代码
   生成**的缺口。
-- **渐进类型会给动态区域装箱**,而 step-22 在 freestanding 动态世界里
+- **渐进类型会给动态区域装箱**,而 step-19 在 freestanding 动态世界里
   把 `Int64`/`Float64` 装箱;带标签的路径代价不恒定,与 WCET 冲突。
 - **值语义会产生分配**(字符串、数组、实例、消息)——配 arena 或静态
   分配没问题,无界就是灾难。
@@ -71,7 +71,7 @@
 
 | 目标 | 难度 | 说明 |
 | --- | --- | --- |
-| 协作式内核(green threads、消息、MMIO console) | 中 | step-22 M2 的范围;不是 RTOS |
+| 协作式内核(green threads、消息、MMIO console) | 中 | step-19 M2 的范围;不是 RTOS |
 | 软实时工控/监督面 | 中 | 协作式 + 有界分配或许够用 |
 | 抢占式 RTOS 核心(FreeRTOS 级) | 难(数月~数年) | 需 M3 抢占 + `volatile`/原子 + 确定性内存 + ISR 基础设施 |
 | 移植 FreeRTOS(C)并由 Emo 驱动 | 低到中 | C 互操作;两套调度器共存的摩擦 |
@@ -96,7 +96,7 @@ Emo 的进程与 mailbox 是为**隔离**而生的(Erlang 血统),而 RTOS 的�
 3. **语言原语**:`volatile` 语义与原子/屏障;在 `CHECK.md` 单独立项。
 4. **确定性内存**:静态或 arena 分配器;内核路径上不做无界分配。
 5. **优先级调度与优先级继承**:策略用 Emo 写,架在汇编机制之上
-   (step 14 已定下这个分工)。
+   (step 15 已定下这个分工)。
 6. **工具**:调试器、栈深分析、WCET、静态检查。
 7. **认证**:等 1.0/LTS 冻结之后。
 
@@ -112,7 +112,7 @@ Emo 的进程与 mailbox 是为**隔离**而生的(Erlang 血统),而 RTOS 的�
 - `docs/industrial-software.md` —— 生产控制细分领域与"硬实时够不着"的
   结论。
 - `docs/runtime-and-freestanding.md` —— freestanding 与 runtime 的含义。
-- `plan/step-22-riscv64.md` —— freestanding 目标、它的值模型,以及
+- `plan/step-19-riscv64.md` —— freestanding 目标、它的值模型,以及
   协作式/抢占式/SMP 各里程碑。
-- `plan/step-14-other-targets.md` —— 调度器评估与"机制/策略"分工。
+- `plan/step-15-other-targets.md` —— 调度器评估与"机制/策略"分工。
 - `README.md` 的 "EmoOS" —— 单语言闭环的抱负。

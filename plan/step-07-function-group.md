@@ -1,6 +1,6 @@
-# Step 18 — Function groups (`emo` keyword)
+# Step 07 — Function groups (`emo` keyword)
 
-**Milestone:** M5 · **Prereq:** steps 01–17 · **Status:** complete
+**Milestone:** M1 · **Prereq:** steps 01–06 · **Status:** complete
 
 ## Goal
 
@@ -60,9 +60,9 @@ emits functions and qualified calls gets groups for free.
 
 ## Tasks
 
-- [x] **T18.1** — Parser, checker, IR lowering, native pipeline;
+- [x] **T07.1** — Parser, checker, IR lowering, native pipeline;
       `examples/function_group/` golden through `emo run`.
-- [x] **T18.2** — The typescript, wasm, and beam goldens for the
+- [x] **T07.2** — The typescript, wasm, and beam goldens for the
       example; README (en + zh-CN).
 
 ## Close-out

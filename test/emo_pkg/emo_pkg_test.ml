@@ -721,7 +721,7 @@ let publish_tests =
         | Error _ -> ());
   ]
 
-(* T25.2: the standard library rides the compiler binary as generated
+(* T24.2: the standard library rides the compiler binary as generated
    data — the embedded registry must match the filesystem one it was
    generated from, or a published stdlib and the binary drift apart. *)
 let original_cwd = Sys.getcwd ()

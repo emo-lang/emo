@@ -1,4 +1,4 @@
-// The float families (T21.5), part one: the bridge and the moves.
+// The float families (T22.5), part one: the bridge and the moves.
 //
 // f64 arithmetic rides the host `Float64`; f32 arithmetic promotes to
 // `Float64`, operates, and demotes with round-to-nearest-even bit

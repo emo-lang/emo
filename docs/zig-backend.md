@@ -81,7 +81,7 @@ mentions are naming-precedent citations in `docs/numeric-width.md`.
 | Arena that never recycles (product gate) | `std.heap.ArenaAllocator` | a semantic match — explicit allocators and allocate-only arenas are the same idea |
 | `foreign` FFI | bare `extern fn` declarations | smooth; mirrors `emo_defs.h`, dodges the removed `@cImport` |
 | C→Emo callbacks (the macOS shim is `.m`) | `export fn` with the C calling convention | smooth at the ABI, but zig cannot compile Objective-C — the AppKit path still needs clang, so "one toolchain" does not hold there |
-| Exceptions (`Exception` + data `Map`) | Zig error unions carry no payload | friction: exception values must live on the heap; whenever `begin`/`catch` lands (T12.5, unimplemented), whatever mechanism the C runtime picks — most plausibly `setjmp`/`longjmp` — the Zig backend must mirror it |
+| Exceptions (`Exception` + data `Map`) | Zig error unions carry no payload | friction: exception values must live on the heap; whenever `begin`/`catch` lands (T13.5, unimplemented), whatever mechanism the C runtime picks — most plausibly `setjmp`/`longjmp` — the Zig backend must mirror it |
 | `receive` / fiber scheduling (trampoline + receive labels) | nothing off the shelf (async removed in 0.14) | neutral: hand-port the C runtime's machinery, same cost |
 
 ## The core dilemma
@@ -163,7 +163,7 @@ binaries.
 2. **Evaluate zig cc as an optional driver for the C target** as its
    own small step, with the cache-key fix included — particularly if
    Windows support or static Linux distribution enters the plan.
-3. **riscv64 stays as planned.** Step 22 emits assembly text directly
+3. **riscv64 stays as planned.** Step 19 emits assembly text directly
    and links with GNU as/ld; it does not pass through Zig, and the
    freestanding value model is already designed.
 

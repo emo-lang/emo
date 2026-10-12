@@ -1,6 +1,6 @@
 #!/bin/sh
 # Notarizes a draft GitHub Release's macOS archives from this machine
-# — the local half of T25.7. CI runners hold no Developer ID private
+# — the local half of T24.7. CI runners hold no Developer ID private
 # key, so release.yml drafts the release unsigned; this script signs
 # the binaries with the keychain's Developer ID Application identity,
 # submits the rebuilt zips to the notary service, re-uploads the

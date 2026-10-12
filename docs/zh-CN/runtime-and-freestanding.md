@@ -26,7 +26,7 @@ profile A(默认)由 OpenSBI 托管、跑在 S-mode,存在固件层但没有 OS 
 libc;profile B(`-bios none`、M-mode、自带 UART 驱动)才是真裸机。相对
 操作系统与 C 库,两者都是 freestanding——区别只在于下面垫不垫一层固件。
 
-在 Emo 里(`plan/step-22-riscv64.md`),`riscv64` 就是那个 freestanding
+在 Emo 里(`plan/step-19-riscv64.md`),`riscv64` 就是那个 freestanding
 目标:无 OS、无 libc、无默认运行时;分配器、GC、调度器是可替换组件;
 `core` 是 kernel 代码唯一可用的库层;`peek`/`poke` 是显式危险的访存
 原语。它的 `println` 不调用 libc——而是发一个 SBI `ecall` 到固件的
@@ -68,7 +68,7 @@ runtime 是面下面的机器。
 (native 的装箱、内建、派发辅助)与 `src/emo_sched`(进程调度器)。
 README 说 runtime 是"随二进制一起发布的":调度器与网络栈是后端的库,
 所以编译产物自带运行时,既没有解释器也没有运行时下载。freestanding
-目标**没有 host runtime**——它自带,含自己的分配器(step-22 的 bump
+目标**没有 host runtime**——它自带,含自己的分配器(step-19 的 bump
 分配器,"GC deferred")。
 
 为什么 runtime 对 GC、FFI 与 HPC 的讨论至关重要:runtime 掌管**值表示、
@@ -83,8 +83,8 @@ runtime 而非代码生成上的原因。
 
 | | 借用 host runtime | 自持 runtime |
 | --- | --- | --- |
-| **Hosted(宿主环境)** | 现在交付的 native 后端(发射 OCaml,链接 OCaml 运行时) | 提议中的自持后端(`plan/step-23-hosted-native-ffi.md`) |
-| **Freestanding(独立环境)** | ——(无意义的组合) | `riscv64` 目标(`plan/step-22-riscv64.md`) |
+| **Hosted(宿主环境)** | 现在交付的 native 后端(发射 OCaml,链接 OCaml 运行时) | 提议中的自持后端(`plan/hosted-native-ffi.md`) |
+| **Freestanding(独立环境)** | ——(无意义的组合) | `riscv64` 目标(`plan/step-19-riscv64.md`) |
 
 这样读来,"freestanding 目标"与"自持 runtime"说的是两个不同的维度:
 前者是镜像启动进入的环境,后者是承载程序的机器归谁所有。
@@ -93,7 +93,7 @@ runtime 而非代码生成上的原因。
 
 - `docs/native-backend.md` —— 现在交付的 native 后端、它的 OCaml 发射
   与 C FFI。
-- `plan/step-22-riscv64.md` —— freestanding 目标、它的值模型与启动
+- `plan/step-19-riscv64.md` —— freestanding 目标、它的值模型与启动
   profile。
-- `plan/step-23-hosted-native-ffi.md` —— 提议中的自持 hosted 后端。
+- `plan/hosted-native-ffi.md` —— 提议中的自持 hosted 后端。
 - `README.md` 的 "Native Builds" —— runtime 随二进制发布的表述。

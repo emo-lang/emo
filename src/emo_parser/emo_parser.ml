@@ -835,7 +835,7 @@ and parse_item st =
       { Ast.item_span = d.Ast.def_span; item_desc = Ast.Item_def d }
   | Tok.Lower_ident "foreign" ->
       (* `foreign def name(params) Ret = "symbol"` — the C FFI binding
-         surface (step 13). *)
+         surface (step 14). *)
       advance st |> ignore;
       advance st |> ignore;
       (* `def` consumed; parse the signature without a body. *)

@@ -73,7 +73,7 @@ crash isolation, no whole-system downtime.
 
 Hard real-time is out of reach, though: GC, value copying, no
 scheduling guarantees. The freestanding `riscv64` target with pluggable
-GC and arenas (step 22, not started as of this writing) is the
+GC and arenas (step 19, not started as of this writing) is the
 theoretical path, far from product — and functional-safety
 certification (IEC 61508 and friends) demands toolchain maturity and
 traceability that a new language has none of. The real-time prospects of
@@ -125,7 +125,7 @@ Three findings bear on the FFI question:
    in `try ... with Native_return`, raising a local exception on every
    `return` — which defeats OCaml's tail-call optimization and
    allocates per call. Hence the ~4x gap and the stack overflow at 100M
-   depth (the loop completes at 10M). `plan/step-22-riscv64.md` already
+   depth (the loop completes at 10M). `plan/step-19-riscv64.md` already
    calls the exception an "emission convenience" and plans a
    branch-to-epilogue with guaranteed tail calls on RV64; the
    OCaml-hosted backend has not been fixed.

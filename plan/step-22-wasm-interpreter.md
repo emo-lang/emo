@@ -1,19 +1,19 @@
-# Step 21 — Wasm runtime: the interpreter and the golden runs
+# Step 22 — Wasm runtime: the interpreter and the golden runs
 
-**Milestone:** M6 · **Prereq:** step 20 · **Status:** done
+**Milestone:** M5 · **Prereq:** step 21 · **Status:** done
 
-The rung step 20 pointed at: the modules the decoder accepts start
+The rung step 21 pointed at: the modules the decoder accepts start
 *running*. The bar moves from "is this module well-formed?" to "does it
 do what the spec says?" — the official suite's `assert_return` /
 `assert_trap` commands are the goldens, executed by the Emo-written
-runtime. The three boundaries recorded in `plan/step-20-wasm-decoder.md`
+runtime. The three boundaries recorded in `plan/step-21-wasm-decoder.md`
 bind unchanged — the package is the edge, the spec data stays off the
 default test path, and the split condition stands — so they are not
 restated here.
 
-The task list follows the step-20 discipline: sized for spare-time work,
+The task list follows the step-21 discipline: sized for spare-time work,
 every prefix builds green, the corpus lands whole and is claimed family
-by family. One rule from step 20 earned its keep twice over and carries
+by family. One rule from step 21 earned its keep twice over and carries
 formally into this step: **no shape that puts a method call on a
 recursive result** (`f(n-1).append(x)`) — the interpreter spins past
 roughly 25 nesting levels. Every array-returning recursion stays a
@@ -30,12 +30,11 @@ run commands — every `assert_return` returns its expected values
 every `assert_uninstantiable` / `assert_unlinkable` module fails at
 instantiation, and `register` + imported modules link.
 
-Two things this step is not, same as step 20: it is not fast (no JIT,
+Two things this step is not, same as step 21: it is not fast (no JIT,
 no tiering — interpreter-first is the ladder's rule), and it is not a
 language change. Where today's Emo makes execution awkward, the task
 works around it and records the pressure; a primitive the interpreter
-genuinely needs goes through step 19's gate as a task of its own, with
-both consumers named.
+genuinely needs goes through step 20's gate as a task of its own.
 
 ## Scope
 
@@ -44,7 +43,7 @@ both consumers named.
 - The run-list harness: a vendored command corpus (invoke with
   arguments, expected results, trap expectations), text lists under
   `runtime/wasm/testdata/`, a runner, drivers, and a dedicated dune
-  alias — the same shape as step 20's module corpus, so claiming stays
+  alias — the same shape as step 21's module corpus, so claiming stays
   deliberate and visible.
 - The instance model: materializing what the decoder proved — function
   bodies as byte ranges with their signatures, the index spaces, the
@@ -67,7 +66,7 @@ both consumers named.
 
 ### Out
 
-- Everything step 20 already excluded: the text format, the GC /
+- Everything step 21 already excluded: the text format, the GC /
   threads / SIMD / exceptions / memory64 proposals, WASI.
 - Self-hosting — running Emo's own `--target wasm` goldens inside this
   runtime. That is the ladder's exit sign and needs the GC proposal's
@@ -76,7 +75,7 @@ both consumers named.
   masks (the backends' own discipline), and f32 is carried as its bit
   pattern with correctly-rounded conversion by integer bit surgery.
   The gate evidence this produces is recorded below, not acted on.
-- A CLI. Step 20 deferred argv; the corpus driver keeps its list path
+- A CLI. Step 21 deferred argv; the corpus driver keeps its list path
   compiled in, and no consumer has yet asked for more.
 - Performance work beyond correctness: no arena tuning, no decode
   caching, no dispatch tables.
@@ -102,7 +101,7 @@ Marked as provisional per `plan/README.md`; the settled ones move into
   against the spec's conversion cases. If the surgery turns out to be
   a maintenance burden, the gate note below is the record; the
   primitive is not pre-justified.
-- **Traps are values.** Same forced shape as step 20's diagnosed
+- **Traps are values.** Same forced shape as step 21's diagnosed
   failures: execution returns either values or a trap record (kind +
   message), never raises. The store's bounds checks run before every
   access.
@@ -112,7 +111,7 @@ Marked as provisional per `plan/README.md`; the settled ones move into
   is proportional to the labels crossed, which validation already
   bounded.
 - **The operand stack is a byte arena.** A `Bytes` buffer of little-
-  endian u64 slots (the T19.2 accessors), doubling by copy when full —
+  endian u64 slots (the T20.2 accessors), doubling by copy when full —
   the no-growable-buffer pressure worked around in the one place step
   20 predicted it would bite. Locals ride the same arena; frames are
   slices of it.
@@ -131,7 +130,7 @@ Marked as provisional per `plan/README.md`; the settled ones move into
 
 ## Pressure the interpreter puts on the language
 
-Re-read from step 20's list, now with execution-shaped evidence. None
+Re-read from step 21's list, now with execution-shaped evidence. None
 of these is a task here; they are the gate's raw material.
 
 - **The growable buffer.** The arena's doubling-by-copy is amortized
@@ -142,18 +141,17 @@ of these is a task here; they are the gate's raw material.
   `sqrt`, `floor`, `ceil`, `trunc`, and float ↔ int conversion; the
   language had none. The gate settled them into the core surface
   (`Float64.sqrt`/`floor`/`ceil`/`trunc`, `Float64.to_int64`,
-  `Int64.to_float64`; `nearest` built in Emo), so T21.5's conversion
+  `Int64.to_float64`; `nearest` built in Emo), so T22.5's conversion
   half can land. `CHECK.md` carries the record.
-- **`Int32` / `Float32`.** The interpreter is a second consumer for
-  both (the backends were the first — they mask and convert too), but
-  "two consumers doing the same workaround" is an argument the gate
-  has not heard yet, not a decision. The masking discipline this step
-  implements is the shared evidence.
-- **The method-on-recursive-result limit** (step 20's find): it is now
+- **`Int32` / `Float32`.** The interpreter is another consumer for
+  both (the backends mask and convert too), but the shared workaround
+  is not yet accepted by the gate, not a decision. The masking
+  discipline this step implements is the shared evidence.
+- **The method-on-recursive-result limit** (step 21's find): it is now
   a standing rule for every runtime module, and the interpreter's
   walker is exactly the shape that would trip it. A fix in the
-  interpreter's evaluator would name two consumers (the runtime and
-  the compiler's own tail-call guarantee); recorded, not acted on.
+  interpreter's evaluator would serve the runtime and the compiler's
+  own tail-call guarantee; recorded, not acted on.
 - **`argv`**, unchanged: the drivers compile their paths in.
 
 ## The run-list harness
@@ -169,7 +167,7 @@ each module fresh, resolves imports through the register namespace and
 the host module, invokes, and compares bit patterns exactly — except
 the NaN tokens, which match by payload class. `runtime/wasm/runs.emo`
 drives the full list under a new `wasm_runs` alias; a smoke slice
-rides `dune test` beside step 20's.
+rides `dune test` beside step 21's.
 
 ## Tasks
 
@@ -178,40 +176,40 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### First, the harness
 
-- [x] **T21.1** — *The run-list format and the vendoring mode.* **(S)**
+- [x] **T22.1** — *The run-list format and the vendoring mode.* **(S)**
       The command-line grammar and its codec (`i:` / `I:` / `f:` /
       `F:` / `ref:` words, NaN tokens, the verdict prefixes), the
-      runner module beside step 20's, the `runs.emo` driver, the
+      runner module beside step 21's, the `runs.emo` driver, the
       `wasm_runs` dune rule, and `vendor-wasm-spec runs` writing the
       list as all-`pending`. Acceptance: the alias runs, the summary
       reports `pending N` for the vendored commands, `dune test`
       stays green. *(Independent of every execution task — the
-      break-sitting of this step, like T20.3 was.)*
-- [x] **T21.2** — *The instance model.* **(M)** Materialize a validated
+      break-sitting of this step, like T21.3 was.)*
+- [x] **T22.2** — *The instance model.* **(M)** Materialize a validated
       module: functions as (signature, body byte range) pairs in index
       order, the table / memory / global declarations, the element and
       data segments, imports, exports, start, and the declared
       reference set — frozen records under `internal/`, assembled by
       the same recursive walks the validator uses. Surface:
-      `wasm.load(bytes)` returns the module or the step-20 verdict,
+      `wasm.load(bytes)` returns the module or the step-21 verdict,
       so a caller never sees an unvalidated module. Fixture: a
       hand-written module loads with the right counts and ranges.
 
 ### Then the values, fixture-first
 
-- [x] **T21.3** — *The value model.* **(M)** The tagged scalars of the
+- [x] **T22.3** — *The value model.* **(M)** The tagged scalars of the
       provisional decision, the NaN payload discipline (arithmetic
       canonicalizes only when the spec says; moves preserve), and the
       hex-word codec the runner compares with. Fixtures: wrap-around,
       payload round-trips, null references. No execution yet — every
       later task leans on these functions directly.
-- [x] **T21.4** — *The integer families.* **(L)** i32/i64 arithmetic,
+- [x] **T22.4** — *The integer families.* **(L)** i32/i64 arithmetic,
       comparisons, shifts and rotates (mask counts), clz / ctz /
       popcnt, division and remainder with their traps (zero, MIN / −1),
       sign extension and saturating truncation, the i64↔i32 wrap and
       extends. Pure functions over the value model, proven by
       hand-written fixtures lifted from the spec's boundary cases.
-- [x] **T21.5** — *The float families.* **(L)** f32/f64 arithmetic and
+- [x] **T22.5** — *The float families.* **(L)** f32/f64 arithmetic and
       comparisons through the `Float64` bridge; the conversions —
       including truncation with its overflow / NaN traps, promote /
       demote with the bit-surgery round-to-nearest-even, and
@@ -220,13 +218,13 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### Then the store and the machine
 
-- [x] **T21.6** — *The store.* **(M)** Linear memory as `Bytes` with
+- [x] **T22.6** — *The store.* **(M)** Linear memory as `Bytes` with
       page-granular grow (cap 2¹⁶ pages), little-endian loads / stores
       of every width, bounds-checked before access; tables as value
       arrays with grow / size / fill / copy / init; globals with
       mutation. Traps are values here too. Fixtures: the OOB edges,
       grow's wrap behavior, fill / copy overlaps.
-- [x] **T21.7** — *The frame machine.* **(L)** The operand arena and
+- [x] **T22.7** — *The frame machine.* **(L)** The operand arena and
       the walker: locals and parameters, the parametric and variable
       instructions, structured control by recursion with branches as
       unwind signals, `call` and `call_indirect` (null and type
@@ -238,14 +236,14 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### Then the world around the machine
 
-- [x] **T21.8** — *Instantiation and linking.* **(M)** Resolve imports
+- [x] **T22.8** — *Instantiation and linking.* **(M)** Resolve imports
       through the register namespace and the host; evaluate global
       initializers; lay out element and data segments with the spec's
       trap-on-overflow (an `assert_uninstantiable` module fails here,
       partially-initialized store discarded); run the start function;
       `register` a named instance. Missing and mismatched imports are
       link failures. Fixture: two modules linking through a table.
-- [x] **T21.9** — *The spectest host module.* **(S)** The `spectest`
+- [x] **T22.9** — *The spectest host module.* **(S)** The `spectest`
       imports the suite references — the print functions (output to
       the runner's log), the typed globals, the table, the memory —
       as host-side values behind the same import interface. *(A short
@@ -254,20 +252,20 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### Then the sweeps
 
-- [x] **T21.10** — *Sweep I: numbers, control, calls.* **(L)** Claim
+- [x] **T22.10** — *Sweep I: numbers, control, calls.* **(L)** Claim
       the run-list families in order — the integer and float suites,
       conversions, `if` / `br` / `br_table` / `loop`, `call` /
       `call_indirect`, `fac`, `forward`, `stack`. Each family's flip
       is its own sitting; the residuals stay `pending`.
-- [x] **T21.11** — *Sweep II: memory, tables, linking, traps.* **(L)**
+- [x] **T22.11** — *Sweep II: memory, tables, linking, traps.* **(L)**
       The addressing and endianness suites, `memory_*` / `table_*`
       operations, `elem` / `data` initialization, `linking` through
       the register namespace, `imports` through spectest, the trap
       cases, and the leftovers — the run list ends at zero pending
       and zero failed.
-- [x] **T21.12** — *Close-out.* **(S)** The run-list smoke slice rides
+- [x] **T22.12** — *Close-out.* **(S)** The run-list smoke slice rides
       `dune test`; `runtime/wasm/README.md` grows the execution
-      surface and the run-corpus section; step 21's acceptance is
+      surface and the run-corpus section; step 22's acceptance is
       recorded here and in `docs/TASKS.md` (both languages).
 
 ## Acceptance
@@ -287,7 +285,7 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ## Close-out
 
-**Step 21 acceptance met.** The `wasm_runs` alias reports **25135
+**Step 22 acceptance met.** The `wasm_runs` alias reports **25135
 claimed, 0 pending, 0 failed** — every `assert_return` bit-exact (NaN
 classes for the NaN tokens), every `assert_trap` and instantiation
 failure where the spec says, and `register`/linking behaving. The

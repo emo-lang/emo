@@ -67,7 +67,7 @@ MSVC,一行 Zig 都不用生成。建议:把后端方案挂起,写明重新评�
 | 永不回收的 arena(产品门) | `std.heap.ArenaAllocator` | 语义天生匹配——显式分配器与只分配不回收的 arena 是同一个想法 |
 | `foreign` FFI | 裸 `extern fn` 声明 | 顺;与 `emo_defs.h` 同构,躲开已移除的 `@cImport` |
 | C→Emo 回调(macOS shim 是 `.m`) | 带C调用约定的 `export fn` | ABI 层顺,但 zig 编不了 Objective-C——AppKit 路线仍需 clang,「单一工具链」在那里不成立 |
-| 异常(`Exception` + data `Map`) | Zig 的 error union 不带 payload | 有摩擦:异常值必须放堆上;将来 `begin`/`catch` 落地时(T12.5,未实现),C 运行时选什么机制——大概率是 `setjmp`/`longjmp`——Zig 后端就得镜像什么 |
+| 异常(`Exception` + data `Map`) | Zig 的 error union 不带 payload | 有摩擦:异常值必须放堆上;将来 `begin`/`catch` 落地时(T13.5,未实现),C 运行时选什么机制——大概率是 `setjmp`/`longjmp`——Zig 后端就得镜像什么 |
 | `receive` / fiber 调度(trampoline + receive 标签) | 无现成物(async 已于 0.14 移除) | 中性:手移植 C 运行时的既有机制,同价 |
 
 ## 核心两难
@@ -132,7 +132,7 @@ cclib 和 emo 二进制自身)——驱动可换之后,驱动版本必须进键,
    或出现一个 C 目标经 zig cc 也满足不了的具体需求。
 2. **把 zig cc 作为 C 目标的可选驱动单独小步评估**,连同缓存键修复
    一起——若 Windows 支持或 Linux 静态分发进入计划,尤其如此。
-3. **riscv64 维持原计划。**step 22 直接产出汇编文本、用 GNU as/ld
+3. **riscv64 维持原计划。**step 19 直接产出汇编文本、用 GNU as/ld
    链接,不经过 Zig;freestanding 值模型已有设计。
 
 ## 参考

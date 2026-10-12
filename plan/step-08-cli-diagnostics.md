@@ -1,6 +1,6 @@
-# Step 07 — CLI & Diagnostics: `run`, `repl`
+# Step 08 — CLI & Diagnostics: `run`, `repl`
 
-**Milestone:** M1 complete · **Prereq:** steps 01–06 · **Status:** done
+**Milestone:** M1 complete · **Prereq:** steps 01–07 · **Status:** done
 
 ## Goal
 
@@ -45,7 +45,7 @@ renderer. This step adds no language semantics — it hardens what exists.
 
 ### Out
 
-- `emo check` (needs step 08 — the flag exists from step 01 and stays
+- `emo check` (needs step 09 — the flag exists from step 01 and stays
   "not implemented").
 - Debugger, watch mode, notebooks.
 

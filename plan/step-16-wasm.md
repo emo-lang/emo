@@ -1,6 +1,6 @@
 # Step 16 — Wasm Target (WasmGC)
 
-**Milestone:** M4 · **Prereq:** steps 01–13 · **Status:** complete
+**Milestone:** M4 · **Prereq:** steps 01–15 · **Status:** complete
 
 ## Goal
 
@@ -9,7 +9,7 @@ module that runs on any WasmGC host — Node first, standalone runtimes
 (wasmtime) as they are installed. This is the compiler's third backend
 and the first non-OCaml emission target: the output is a binary `.wasm`
 (the runnable) plus a `.wat` sibling (the readable form, in the spirit
-of step 13's debuggable generated code), both produced by the compiler
+of step 14's debuggable generated code), both produced by the compiler
 itself with no external toolchain.
 
 ## Scope
@@ -29,7 +29,7 @@ itself with no external toolchain.
   a mutable value field; Enum two interned-name indices; instances one
   struct per class with the fields in declaration order; exceptions a
   message struct raised through a Wasm exception tag.
-- **Lowering from the IR** — the step 13/15 rule; the same mangled
+- **Lowering from the IR** — the step 14/15 rule; the same mangled
   names, the same dynamic semantics, and the specialization story stays
   out (dynamic form only, like the TypeScript target's first pass).
 - **Emission.** The backend lowers the IR to a WAT-shaped intermediate
@@ -42,7 +42,7 @@ itself with no external toolchain.
   exceptions surface through the module's exception tag and are
   rendered by the host wrapper with the interpreter's message.
 - **Target plumbing, completed.** `--target wasm` through the CLI, and
-  the resolution gate reads the target (finishing the T15.1 remainder):
+  the resolution gate reads the target (finishing the T17.1 remainder):
   a program requiring a package that does not declare `"wasm"` fails
   resolution before any emission — the standard library packages
   (net/http) declare only `native`, so IO programs refuse honestly
@@ -103,4 +103,4 @@ itself with no external toolchain.
   assembler; the two serializations are cross-checked by the golden
   tests.
 - **Node is the reference host**; wasmtime follows when installed.
-- Promoted from step 14 per its T14.1 (2026-10-02, second target).
+- Promoted from step 15 per its T15.1 (2026-10-02, second target).

@@ -1,11 +1,11 @@
-# Step 12 — Networking Library
+# Step 13 — Networking Library
 
-**Milestone:** M3 complete · **Prereq:** steps 01–11 · **Status:** done
+**Milestone:** M3 complete · **Prereq:** steps 01–12 · **Status:** done
 
 ## Goal
 
 The README's unified asynchronous networking API in **direct style**: network
-calls read as ordinary blocking calls, the scheduler (step 11) switches
+calls read as ordinary blocking calls, the scheduler (step 12) switches
 processes underneath, and no `async` / `await` exists anywhere — function
 coloring is structurally impossible.
 
@@ -17,13 +17,13 @@ coloring is structurally impossible.
   - *Core library*: TCP sockets (connect, listen, accept, read, write),
     UDP, Unix-domain sockets. TLS starts as an OpenSSL binding on native.
   - *Standard library*: HTTP client and server on top of the socket layer.
-- **Backend mapping** — native rides the step 11 scheduler (own effects
+- **Backend mapping** — native rides the step 12 scheduler (own effects
   runtime over io_uring / kqueue / IOCP, libuv fallback); every blocking
   socket call is a suspension point. The public API is one direct-style
   surface; no backend leaks through.
 - **Process-per-connection server shape** — `accept` returns a socket; the
   idiomatic server starts a process per connection with
-  `do handle(conn)` (library pattern built on step 11, shipped as
+  `do handle(conn)` (library pattern built on step 12, shipped as
   standard-library helpers, not runtime).
 - **HTTP** —
   - Client: `http.get(url)`-style verbs with headers/body, timeouts,
@@ -34,7 +34,7 @@ coloring is structurally impossible.
     timeouts raise ordinary Emo exceptions (the README error model); no
   error codes, no nil returns.
 - **Standard-library packaging** — these modules live as the official
-  top-level stdlib packages (`http`, `net`), exercising the step 10 package
+  top-level stdlib packages (`http`, `net`), exercising the step 11 package
   machinery for real; they declare `targets = ["native"]` (today `["ocaml", "c"]`) and fail
   resolution elsewhere until their backends exist (honest target metadata).
 
@@ -43,7 +43,7 @@ coloring is structurally impossible.
 - TLS beyond the OpenSSL binding (the pure-OCaml stack is a later
   alternative).
 - WebSocket, HTTP/2+ (follow-ups on the same surface).
-- Wasm / BEAM / TS backends for this API (step 14; WASI sockets / fetch
+- Wasm / BEAM / TS backends for this API (step 15; WASI sockets / fetch
   there).
 
 ## Tasks

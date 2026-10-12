@@ -1,6 +1,6 @@
-# Step 15 — TypeScript Target
+# Step 17 — TypeScript Target
 
-**Milestone:** M4 · **Prereq:** steps 01–13 · **Status:** in progress
+**Milestone:** M4 · **Prereq:** steps 01–16 · **Status:** in progress
 
 ## Goal
 
@@ -18,9 +18,9 @@ GC question as the only open front.
 ### In
 
 - **Target plumbing.** `--target` on `emo build` (native remains the
-  default); step 10's resolution gate reads it; the target flows through
+  default); step 11's resolution gate reads it; the target flows through
   to the backend choice.
-- **Lowering from the IR.** The step 13 rule holds for every backend:
+- **Lowering from the IR.** The step 14 rule holds for every backend:
   the TypeScript emitter lowers from `Emo_ir`, not from the AST. The
   roadmap's earlier note ("the AST suffices") is superseded — the IR's
   resolved calls, explicit method tables, and module-qualified names are
@@ -54,7 +54,7 @@ GC question as the only open front.
 - **Examples subset green.** hello_world, fib, objects, language_tour,
   shop, pipeline, tcp_echo, http_roundtrip — each compiled to
   TypeScript, output byte-for-byte equal to `emo run`, checked in the
-  test suite the way step 13's bootstrap does.
+  test suite the way step 14's bootstrap does.
 - **Stdlib metadata.** `net` and `http` gain `"typescript"` in
   `targets`; resolution refuses programs requiring packages that do not
   declare the target being built (already the rule; now exercised).
@@ -71,18 +71,18 @@ GC question as the only open front.
 
 ## Tasks
 
-- [x] **T15.1** — Target plumbing and core emitter: `--target` through
+- [x] **T17.1** — Target plumbing and core emitter: `--target` through
       the CLI, project, and resolution gate; the IR → TypeScript
       emitter for the core subset (values, control flow, classes,
       interfaces, enums, exceptions, closures, modules); the tagged-value
       runtime; `emo build --target typescript` emits and runs under
       Node. Golden: hello_world, fib, objects.
-- [ ] **T15.2** — Full core semantics: patterns and guards, tuples,
+- [ ] **T17.2** — Full core semantics: patterns and guards, tuples,
       arrays, Box, string interpolation, content equality, module
       references across files. Golden: language_tour, shop.
-- [x] **T15.3** — Concurrency: tasks, mailboxes, selective receive,
+- [x] **T17.3** — Concurrency: tasks, mailboxes, selective receive,
       `self_pid`, `halt`. Golden: pipeline.
-- [x] **T15.4** — Direct-style IO: sockets and HTTP over Node's APIs as
+- [x] **T17.4** — Direct-style IO: sockets and HTTP over Node's APIs as
       awaited promises; stdlib target metadata gains `"typescript"`.
       Golden: tcp_echo, http_roundtrip. (Done 2026-10-12: the runtime
       carries the whole `net` surface over `node:net`/`node:dgram`/
@@ -95,7 +95,7 @@ GC question as the only open front.
       scheduler hid and the TypeScript target surfaced — the block now
       returns the connection for `handle_connection` to close. The
       `c` target keeps TCP only.)
-- [ ] **T15.5** — Bootstrap: the target-aware golden suite in CI (each
+- [ ] **T17.5** — Bootstrap: the target-aware golden suite in CI (each
       example's TypeScript run matches the interpreter byte-for-byte),
       and the resolution gate test for packages that lack the target.
 
@@ -117,12 +117,12 @@ GC question as the only open front.
   in a benchmark worth caring about.
 - **Cooperative tasks, not workers** (this file, Scope) — processes are
   semantics first, parallelism later.
-- **Networking over Node's modules, not a custom loop** (T15.4) — the
+- **Networking over Node's modules, not a custom loop** (T17.4) — the
   runtime wraps `node:net`/`node:dgram`/`node:tls`/`node:dns`; the
   emitter already awaits every call, so the Emo surface stays direct
   style with no new language machinery. Errors unwrap to the target's
   message text (Node's TLS reason where OpenSSL's would appear on
   `ocaml`), and spawned processes end silently on an exception, as the
   native scheduler's event log does.
-- Promoted from step 14 per its T14.1; the umbrella keeps the other
+- Promoted from step 15 per its T15.1; the umbrella keeps the other
   targets' decisions.

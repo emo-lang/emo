@@ -41,12 +41,12 @@ every runtime-level construct in the README parses.
   `const pid = do fetch(page)` binds the process reference. The operand
   must be a call expression — `do task(x)` or an immediately invoked block
   `do -> { ... }()` — anything else is a parse error. The syntax lands
-  here; evaluation semantics land in step 11, and until then the evaluator
+  here; evaluation semantics land in step 12, and until then the evaluator
   reports a clear not-yet error.
 - **Send statements** — `pid <- message` delivers a message to a process's
   mailbox; the space-delimited `<-` is send (step 02 rejects every
   juxtaposed form with an error), never assignment. Messages are ordinary
-  values. Syntax lands here; semantics in step 11 (not-yet error until
+  values. Syntax lands here; semantics in step 12 (not-yet error until
   then).
 - **`case` statements** — `case expr { pattern -> { ... } ... }`: branches
   are tested top to bottom and the first match's block runs. `case` is a
@@ -55,14 +55,14 @@ every runtime-level construct in the README parses.
   (`Color.red`; a bare lowercase name is a binding pattern — members and
   variables share the lowercase space, so qualification is what keeps them
   apart), literals matching by value, a binding name, and `_`. Guards:
-  `pattern when cond`. Exhaustiveness is the checker's job (step 08). The
+  `pattern when cond`. Exhaustiveness is the checker's job (step 09). The
   branch `->` never collides with arrow blocks: patterns are not
   expressions, so the two `->`s occur in disjoint parser states (Elixir
   precedent). Tuple patterns destructure by position (see Tuples below).
 - **`receive` statements** — `receive { ... }` with the same branch shape
   as `case`: on evaluation it takes the first mailbox message matching any
   branch, and non-matching messages stay queued (selective receive for
-  free — no separate mechanism). Syntax lands here; semantics in step 11
+  free — no separate mechanism). Syntax lands here; semantics in step 12
   (not-yet error until then).
 - **Tuples** — literals are `(a, b, c)`, resolved by content, with no
   trailing-comma forms anywhere:
@@ -95,7 +95,7 @@ every runtime-level construct in the README parses.
   a statement boundary is ambiguous, it is an error, not a guess.
 - **Qualified module paths** are plain member access: `shop.order.total(cart)`
   parses as member/call. No import syntax exists and none is added — modules
-  arrive in step 09 by making namespaces values.
+  arrive in step 10 by making namespaces values.
 - Statement-level `const` / `var` bindings parse here (declaration
   initializers are expressions); top-level and class-body declarations are
   step 04.
@@ -105,7 +105,7 @@ every runtime-level construct in the README parses.
 - `def` / `class` / `interface` / `enum` / `raise` (step 04).
 - Pattern matching, destructuring — undecided (`CHECK.md`).
 - Error recovery beyond a basic sync point (polished multi-error recovery is
-  step 07's diagnostics work; here: recover to the next newline and continue).
+  step 08's diagnostics work; here: recover to the next newline and continue).
 
 ## Tasks
 

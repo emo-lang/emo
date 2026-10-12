@@ -1,6 +1,6 @@
-# Step 17 — BEAM Target (Core Erlang)
+# Step 18 — BEAM Target (Core Erlang)
 
-**Milestone:** M5 · **Prereq:** steps 01–16 · **Status:** complete
+**Milestone:** M4 · **Prereq:** steps 01–17 · **Status:** complete
 
 ## Goal
 
@@ -70,16 +70,16 @@ that shares it natively.
 
 ## Tasks
 
-- [ ] **T17.1** — The backend skeleton: probes recorded (this file);
+- [ ] **T18.1** — The backend skeleton: probes recorded (this file);
       `--target beam` plumbing; the Core Erlang emitter (module, defs,
       literals, call/apply, sequencing); hello_world golden under an
       `erl` runner.
-- [x] **T17.2** — The value model and arithmetic: masked wrap-around
+- [x] **T18.2** — The value model and arithmetic: masked wrap-around
       Int, binary Strings with interpolation over strcat, tuples,
       arrays, enums, deep content equality; fib golden.
-- [x] **T17.3** — Classes/instances, Box holding processes, closures
+- [x] **T18.3** — Classes/instances, Box holding processes, closures
       as funs, case patterns with guards; objects + language_tour
       goldens.
-- [x] **T17.4** — Processes (`do`/`<-`/`receive` via the primop
+- [x] **T18.4** — Processes (`do`/`<-`/`receive` via the primop
       dance), shop multi-module, pipeline golden; the CI `beam_examples`
       group and the resolution-gate test for `"beam"`.

@@ -8,7 +8,7 @@
 ; sources are written next to the emitted main.c, the TypeScript
 ; prelude is prepended to the emitted program — so every backend works
 ; from the build tree and from an installation alike, with no
-; beside-the-binary file lookups (step 26's runtime-independence
+; beside-the-binary file lookups (step 25's runtime-independence
 ; principle: the host contributes only the emitters).
 
 (rule

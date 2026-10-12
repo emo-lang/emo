@@ -1,4 +1,4 @@
-// The run-list format and its codec (T21.1).
+// The run-list format and its codec (T22.1).
 //
 // The interpreter's corpus is a command list, one command per line,
 // written by `devtools/vendor-wasm-spec runs` (see

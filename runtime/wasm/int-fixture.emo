@@ -1,4 +1,4 @@
-// The integer-family fixture (T21.4): the spec's boundary cases —
+// The integer-family fixture (T22.4): the spec's boundary cases —
 // wrap-around, division traps and the MIN / -1 exception, masked shift
 // counts, rotates, bit counting, and the wrap / extend conversions.
 

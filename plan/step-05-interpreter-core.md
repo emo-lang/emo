@@ -53,12 +53,12 @@ this step, function-only Emo programs run.
   parentheses is a one-element tuple (`(a)`); an operator inside makes it
   a group (`(sum * 3)`); `(a,)` is rejected. Immutable value type, `==`
   element-wise, numeric indexing `t[0]`, `length()`. The natural message
-  envelope — `(reply_to, request)` pairs feed receive patterns in step 11.
+  envelope — `(reply_to, request)` pairs feed receive patterns in step 12.
 - **`Box`** — the mutable cell (README, Mutability), implemented from M1:
   `Box.new(v)` constructs, `box.read()` reads, `box.replace(v)` replaces —
   the entire operation set; there is deliberately no functional-update
   sugar. An OCaml `ref` under the hood. Snapshot-on-send semantics arrive
-  with processes (step 11); in M1 a Box is simply program-local state —
+  with processes (step 12); in M1 a Box is simply program-local state —
   and the legal way for closures to hold long-lived mutable state, since
   capturing a `var` is a compile error.
 - **Minimal builtin surface** — `print(value)` (provisional name), and

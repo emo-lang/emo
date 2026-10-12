@@ -9,7 +9,7 @@ module C = Emo_c
 module Riscv = Emo_riscv
 
 (* The ocaml target's standalone runtime, embedded as generated data
-   (src/emo_codegen/ocaml — step 26): compiled by the user's ocamlopt,
+   (src/emo_codegen/ocaml — step 25): compiled by the user's ocamlopt,
    never linked from the host build tree. *)
 let ocaml_runtime_ml = Emo_ocaml_runtime_data.runtime_ml
 

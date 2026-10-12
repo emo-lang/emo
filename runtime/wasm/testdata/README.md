@@ -28,10 +28,10 @@ suite; `cases.smoke.txt` is the representative subset the default
 - **Pending cases:** every case is vendored `pending`; the decoder and
   validator tasks flip cases to their claimed verdict as the runtime
   grows the matching capability. The runner skips pending cases and
-  prints their count, so the gap is visible on every run. Step 20 is
+  prints their count, so the gap is visible on every run. Step 21 is
   done when nothing is pending.
 
-## The run list (step 21)
+## The run list (step 22)
 
 `runs.all.txt` vendors the spec suite's *commands* — the interpreter's
 corpus; `runs.smoke.txt` is the representative subset the default
@@ -73,5 +73,5 @@ limit is modelled).
 - **Pending commands:** as with the case list, everything lands
   `pending`; the sweeps flip families to their verdicts
   (`devtools/vendor-wasm-spec runs-flip`). The runner skips pending
-  commands and prints their count. Step 21 is done when nothing is
+  commands and prints their count. Step 22 is done when nothing is
   pending and nothing fails.

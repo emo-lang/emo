@@ -42,7 +42,7 @@ an integer?" for itself:
 | Target | Representation today | Semantics today |
 | --- | --- | --- |
 | Wasm | `i64` | 64-bit wrap — conforms |
-| BEAM | masked Erlang integer (step 17) | 64-bit wrap — conforms |
+| BEAM | masked Erlang integer (step 18) | 64-bit wrap — conforms |
 | native | OCaml `int` (unboxed) | 63-bit wrap — deviates |
 
 The native backend emits OCaml source and maps the integer onto
@@ -84,7 +84,7 @@ target-independent by construction.
 
 ## RISC-V 32-bit is a codegen problem, not a semantics one
 
-The bare-metal target is named for the ISA (`riscv64`, step 14). A
+The bare-metal target is named for the ISA (`riscv64`, step 15). A
 future `riscv32` implements the same `Int64` with register pairs:
 carry chains for add/sub, hi/lo splits for mul/div — the textbook
 `long long` technique, shared with the native hi/lo route above. On

@@ -1,4 +1,4 @@
-// The module model, as far as it exists (T20.7: the type section).
+// The module model, as far as it exists (T21.7: the type section).
 //
 // Representation, settled here with the type-fixture: sequences are
 // Array[T] and values are the spec's own byte codes (a valtype is
@@ -17,7 +17,7 @@ class FuncType {
 }
 
 // Decode one valtype byte: (ok, code, new_pos). v128 (0x7b) is out of
-// scope for step 20 and rejects here.
+// scope for step 21 and rejects here.
 
 // Decode a valtype vector of known length: (ok, codes, new_pos).
 def valtype_vec(data Bytes, pos Int64, limit Int64, n Int64) (Bool, Array[Int64], Int64) {
@@ -86,12 +86,12 @@ def type_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[FuncType]) 
   return type_rest(data, ft[2], limit, n - 1, acc.append(ft[1]))
 }
 
-// ---- declaration sections (T20.8) ----
+// ---- declaration sections (T21.8) ----
 //
 // The content decoders check byte-level shape (kinds, limits, mut,
 // name bounds) and exact consumption; the semantic passes live in the
 // validator below. Global sections decode with their initializer
-// expressions in T20.9.
+// expressions in T21.9.
 
 // Limits: a flags byte (0 = min, 1 = min+max), then u32s.
 // (ok, min, max, has_max, new_pos)
@@ -660,7 +660,7 @@ def data_rest(data Bytes, pos Int64, limit Int64, n Int64, dc Int64, seen Int64)
   return data_rest(data, r, limit, n - 1, dc, seen + 1)
 }
 
-// ---- the validator (T20.14 onward) ----
+// ---- the validator (T21.14 onward) ----
 //
 // A second pass over the module: the decode pass proved the byte
 // shape; this pass checks the semantics that make a module valid.
@@ -688,7 +688,7 @@ def validate(data Bytes) (Bool, String, Int64, String) {
 def vwalk(data Bytes, pos Int64, last_rank Int64, types Array[FuncType], n_imp_funcs Int64, func_typeidxs Array[Int64], n_imp_globals Int64, table_codes Array[Int64], mems Array[Int64], global_codes Array[Int64], global_mut Array[Int64], export_names Array[String], dc Int64, elem_types Array[Int64]) (Bool, String, Int64, String) {
   if pos >= data.length() {
     // The module is walked; now that the context is complete, the
-    // code section's bodies run the type-stack validator (T20.15-17).
+    // code section's bodies run the type-stack validator (T21.15-17).
     const c = vcodes(data, types, func_typeidxs, n_imp_funcs, global_codes, global_mut, table_codes, mems.length(), dc, elem_types)
     if !c[0] {
       return (false, c[1], c[2], "invalid")
@@ -1057,7 +1057,7 @@ def counts_with(acc Array[Int64], elem_types Array[Int64], i Int64) Array[Int64]
 // One flat signature per function index (imports included — their
 // type indices sit at the front of func_typeidxs). plen_of/rlen_of
 // keep the field.method() chains out of inline arithmetic — the
-// checker mis-types those (step 20 pressure).
+// checker mis-types those (step 21 pressure).
 def sigs_for(types Array[FuncType], func_typeidxs Array[Int64], x Int64, sigs Array[Int64], off Array[Int64], lo Int64) (Bool, Array[Int64], Array[Int64]) {
   if x == func_typeidxs.length() {
     return (true, sigs, off.append(lo))

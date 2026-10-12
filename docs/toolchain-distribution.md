@@ -20,7 +20,7 @@ parse → check → lower → specialize → emit OCaml → ocamlfind ocamlopt �
 | Goal | Requirement today | Removed by |
 | --- | --- | --- |
 | Run the tool (`emo run`/`repl`, `wasm`/`beam`/`typescript` builds) | a self-contained `emo` executable | already met — `ocamlopt` links the OCaml runtime into a native executable |
-| Build a native program with `emo build` | the target's own toolchain on PATH — `cc` for the default `c` target; `ocamlfind` (with `unix`, `ssl`) for the `ocaml` target (corrected 2026-10-07, see the step-26 update below) | only a direct machine-code backend would remove `cc` |
+| Build a native program with `emo build` | the target's own toolchain on PATH — `cc` for the default `c` target; `ocamlfind` (with `unix`, `ssl`) for the `ocaml` target (corrected 2026-10-07, see the step-25 update below) | only a direct machine-code backend would remove `cc` |
 | A self-contained output binary | the runtime already rides inside the output on every target | static linking of the remaining C dependencies (libc, OpenSSL), per platform |
 
 The distribution decision in `CHECK.md` targets the **second** row: dropping
@@ -44,7 +44,7 @@ a bigger binary buys nothing here. The `c` backend is what replaces
   libssl-dev`, or the project's own setup script. With the user's consent it
   may run the system package manager. It does not download OCaml itself.
   (The `emo_runtime.cmxa` version check below is obsolete — no `.cmxa` ships,
-  see the step-26 update.)
+  see the step-25 update.)
 - **Provision through the ecosystem.** Publish Emo as an opam package and a
   Homebrew formula; `opam install emo` then brings a matching OCaml,
   `ocamlfind`, and runtime, with the version relationship enforced by the
@@ -53,7 +53,7 @@ a bigger binary buys nothing here. The `c` backend is what replaces
 - **Version matching is mandatory.** The user's `ocamlopt` must match the
   `emo_runtime.cmxa` the tool ships; `emo doctor` turns a mismatch into one
   clear message rather than a raw toolchain error. *(Obsolete since
-  2026-10-07: no `.cmxa` ships — see the step-26 update below.)*
+  2026-10-07: no `.cmxa` ships — see the step-25 update below.)*
 
 ## Platforms: native Windows and WSL2
 
@@ -113,10 +113,10 @@ real C FFI (pointers, structs, arrays, callbacks — the hard gate in
 `docs/industrial-software.md`), and HPC codegen (vectorization, OpenMP
 pragmas). Those timelines are independent of distribution.
 
-## Update 2026-10-07: the release tooling is scheduled and landed (step 25)
+## Update 2026-10-07: the release tooling is scheduled and landed (step 24)
 
-The deferral above held until the `c` backend shipped (step 24); M9 —
-Toolchain (`plan/step-25-toolchain.md`) now schedules what this
+The deferral above held until the `c` backend shipped (step 23); M7 —
+Toolchain (`plan/step-24-toolchain.md`) now schedules what this
 document left unscheduled:
 
 - **The tag-triggered release workflow**
@@ -142,7 +142,7 @@ document left unscheduled:
   validates the notarized binary's ticket online at first run.
 - **Native Windows is deferred, recorded as the blocker it is.** The
   C runtime's processes are POSIX `ucontext` fibers and its sockets
-  are non-blocking fds (T24.9/T24.10); a native Windows port is that
+  are non-blocking fds (T23.9/T23.10); a native Windows port is that
   scheduler and IO layer re-based on Windows primitives, and the
   prebuilt channel waits for it. WSL2 remains the supported Windows
   path, and Microsoft Trusted Signing stays the recorded signing
@@ -153,11 +153,11 @@ document left unscheduled:
   install on a prebuilt machine — and its exit code reflects only
   what is actually broken. *(Corrected 2026-10-07: the ocaml line
   reports the toolchain, never the installation shape — see the
-  step-26 update below.)*
+  step-25 update below.)*
 
-## Update 2026-10-07: target independence (step 26)
+## Update 2026-10-07: target independence (step 25)
 
-Step 26 (`plan/step-26-target-independence.md`) removed the
+Step 25 (`plan/step-25-target-independence.md`) removed the
 installation-shape question this document kept answering. The
 runtime-independence principle: a target's runtime is written in the
 target's language, carried as generated data inside the compiler, and
@@ -197,4 +197,4 @@ host contributes only the emitter. Concretely:
 - `docs/runtime-and-freestanding.md` — runtime versus freestanding, and what a
   native output carries.
 - `docs/industrial-software.md` — the FFI gate.
-- `plan/step-23-hosted-native-ffi.md` — the `c` backend assessment.
+- `plan/hosted-native-ffi.md` — the `c` backend assessment.

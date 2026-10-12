@@ -1,9 +1,9 @@
-# Step 23 — Self-contained hosted native backend (no OCaml runtime), and deep C FFI
+# Self-contained hosted native backend (no OCaml runtime), and deep C FFI
 
-**Milestone:** M4 follow-on · **Prereq:** step 13 (the IR and
-specialization); the dynamic-value study in step 22 · **Related:**
-`plan/step-14-other-targets.md` (the C-interop ladder),
-`plan/step-22-riscv64.md` (the first self-contained value model),
+**Milestone:** M4 follow-on · **Prereq:** step 14 (the IR and
+specialization); the dynamic-value study in step 19 · **Related:**
+`plan/step-15-other-targets.md` (the C-interop ladder),
+`plan/step-19-riscv64.md` (the first self-contained value model),
 `docs/industrial-software.md` (the performance probe) ·
 **Status:** assessment — not scheduled
 
@@ -12,7 +12,7 @@ specialization); the dynamic-value study in step 22 · **Related:**
 `docs/native-backend.md` is explicit that the shipped native target emits
 OCaml source and links the OCaml runtime. That choice bought a fast path to
 a working backend, and it is also the ceiling on what the native target can
-ever do for numeric code and C interop. `plan/step-22-riscv64.md` is the
+ever do for numeric code and C interop. `plan/step-19-riscv64.md` is the
 first design in the repo that owns its runtime instead: a tagged-word value,
 a bump allocator, the psABI as Emo's own calling convention, and a
 C-interop ladder.
@@ -53,8 +53,8 @@ land on their C shapes.
 `emo build --target <host-native>` produces a standalone binary that links
 no OCaml runtime: Emo's own runtime (allocator, strings, dynamic values,
 scheduler) plus `libc`, with `foreign def` mapping directly onto the C ABI.
-The target is hosted, so unlike step 22 it may assume an OS, libc, and a
-system linker; the difference from step 22 is the substrate, not the value
+The target is hosted, so unlike step 19 it may assume an OS, libc, and a
+system linker; the difference from step 19 is the substrate, not the value
 model.
 
 ## What is already in place
@@ -68,14 +68,14 @@ is engineering rather than research:
   `emo_beam.ml` (~1.6k), and `emo_ts.ml` (~0.6k) all lower from it, not from
   the AST. A new backend is a new emitter, not a new compiler.
 - **Semantics are pinned by golden tests.** Every example's compiled output
-  must match `emo run` byte-for-byte (step 13's acceptance). The new backend
+  must match `emo run` byte-for-byte (step 14's acceptance). The new backend
   has a referee; `%g` float printing, content equality, interpolation, and
   the rest have prior art in the wasm and BEAM backends.
-- **A dynamic value model is already designed** (step 22): one tagged word;
+- **A dynamic value model is already designed** (step 19): one tagged word;
   8-byte-aligned heap cells with 3 low bits as the kind tag; `Int64`/
   `Float64` as boxed two-word cells in the dynamic world; NaN-boxing
   rejected so bit-casts round-trip.
-- **A C-interop ladder is already written** (step 14 note): scalars → width
+- **A C-interop ladder is already written** (step 15 note): scalars → width
   types → opaque handles and copied buffers → structs and callbacks →
   header ingestion.
 - **The scheduler has a reference model.** `emo_sched_det.ml` is the
@@ -99,7 +99,7 @@ Order-of-magnitude only; the anchors are the shipped backends' sizes.
 | C FFI rungs 1–3 | low | Owning the ABI makes scalars, width types, and opaque handles + copied buffers nearly direct. |
 | C FFI rung 4 (struct by value, callbacks) | high | Platform layout knowledge and a re-entrant runtime. |
 | Exceptions | low | Branch-to-epilogue for `return`; a catch form is still open in `CHECK.md`. |
-| Processes and scheduler | moderate | Cooperative-first, copied messages, a textbook context switch; step 14 rates the policy "easy 15–20%" and the substrate the cost. |
+| Processes and scheduler | moderate | Cooperative-first, copied messages, a textbook context switch; step 15 rates the policy "easy 15–20%" and the substrate the cost. |
 | `Int64` semantics | **easier than today** | A hosted backend uses `int64_t` directly, which retires the OCaml 63-bit deviation (`CHECK.md`) rather than working around it. |
 
 A whole emitter is roughly 0.6k–3.6k lines of OCaml; a hosted Emo runtime is
@@ -114,7 +114,7 @@ This is the only genuinely theoretical difficulty, and it is a design
 problem more than a coding problem. With no collector, memory is reclaimed
 by one of a few known schemes:
 
-- **Arena / bump, program lifetime** — simplest to build (step 22's M1),
+- **Arena / bump, program lifetime** — simplest to build (step 19's M1),
   but it leaks unboundedly. Viable for one-shot compute or bounded programs,
   not for long-lived services.
 - **Reference counting** (the Swift / Objective-C lineage) — no tracing, so
@@ -147,7 +147,7 @@ by one of:
   mutually-tail call becomes a parameter rebind and a jump to the function
   head;
 - **LLVM `musttail`**, at the cost of an LLVM dependency;
-- **direct assembly** with a tail pseudo-instruction (step 22's route).
+- **direct assembly** with a tail pseudo-instruction (step 19's route).
 
 This is a fork in the road that must be chosen before the emitter is
 written, because it constrains the IR lowering. It is also the fix for the
@@ -184,11 +184,11 @@ boundaries:
 - Value semantics and immutable sharing suit reference counting and reduce
   cycles.
 - Guaranteed tail calls and no loop keyword keep control flow simple.
-- Structural interfaces with compile-time vtables (step 22) remove runtime
+- Structural interfaces with compile-time vtables (step 19) remove runtime
   method lookup — the current backend's string-keyed `Hashtbl` dispatch
   goes away.
 - Fixed arity, no varargs, no by-value aggregates make the psABI
-  convention its simple form (step 22's note).
+  convention its simple form (step 19's note).
 - Width-explicit numerics land directly on C types.
 - Cooperative, copy-message concurrency on one hart is lock-free and
   atomic-free.
@@ -239,7 +239,7 @@ reason is instructive, because it is not the collector.
   target, where SIMD throughput is not the goal. The route is settled in
   the next section: emit C, not LLVM.
 - **A lesson for the FFI ladder.** The `cgo` model adds a rung between
-  step 14's "copied buffers" and "opaque handles": **borrow for the
+  step 15's "copied buffers" and "opaque handles": **borrow for the
   call** — C receives a pointer valid only until it returns. It is
   zero-copy, safe under a non-moving layout, and the natural default for
   a `Buffer[Float64]` handed to BLAS.
@@ -369,12 +369,12 @@ Registered in `CHECK.md`:
 
 ## Open design items
 
-- Whether the dynamic value layout for a hosted target matches step 22's
+- Whether the dynamic value layout for a hosted target matches step 19's
   tagged word exactly (pointer tagging on hosted x86-64/arm64 is fine) or
   differs from the freestanding one.
 - Whether the runtime is written in C (portable, links libc directly) or in
   Emo's own specialized subset (bootstrapping pressure, single-language
-  closure). Step 14's strategic framing — "C interop is a bridge, not a
+  closure). Step 15's strategic framing — "C interop is a bridge, not a
   foundation" — argues for C for the runtime and Emo for the policy above
   it.
 - How `foreign def` availability is declared per target, given the open
@@ -383,6 +383,6 @@ Registered in `CHECK.md`:
 ## Promotion trail
 
 Recorded 2026-10-06 as an assessment, not a scheduled step. If scheduled it
-follows step 14's promotion rule: split into a full `step-NN` with the
+follows step 15's promotion rule: split into a full `step-NN` with the
 standard goal / scope / tasks / acceptance format, update `plan/README.md`'s
 status table, and settle the three decisions above in `CHECK.md` first.

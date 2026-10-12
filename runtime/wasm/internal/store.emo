@@ -1,4 +1,4 @@
-// The store (T21.6, shared cells T21.11).
+// The store (T22.6, shared cells T22.11).
 //
 // Linear memory, tables, and globals each live behind a `Box` — the
 // language's one mutable cell — so an imported memory/table/global is

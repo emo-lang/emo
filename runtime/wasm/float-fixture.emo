@@ -1,4 +1,4 @@
-// The float-family fixture (T21.5): promote/demote round-to-nearest-even
+// The float-family fixture (T22.5): promote/demote round-to-nearest-even
 // at the conversion boundaries, the f32 bridge, the NaN-aware moves and
 // comparisons, and min/max with signed zero.
 

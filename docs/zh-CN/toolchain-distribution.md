@@ -97,10 +97,10 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
 门）、以及 HPC 代码生成（vectorization、OpenMP pragma）。这些时间线与分发
 相互独立。
 
-## 更新（2026-10-07）：发布工具链已排期并落地（步骤 25）
+## 更新（2026-10-07）：发布工具链已排期并落地（步骤 24）
 
-上文的推迟维持到 `c` 后端交付（步骤 24）为止；M9 — 工具链
-（`plan/step-25-toolchain.md`）现在把本文档留白未排期的部分排上了：
+上文的推迟维持到 `c` 后端交付（步骤 23）为止；M7 — 工具链
+（`plan/step-24-toolchain.md`）现在把本文档留白未排期的部分排上了：
 
 - **tag 触发的发布工作流**（`.github/workflows/release.yml`）在四个
   平台构建发布二进制——Linux x86_64/aarch64（Ubuntu 22.04，受支持的
@@ -119,7 +119,7 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
   .app/.dmg/.pkg），因此 Gatekeeper 在首次运行时在线校验公证
   票据。
 - **原生 Windows 推迟，阻塞点如实记录。** C 运行时的进程是 POSIX
-  `ucontext` 纤维、socket 是非阻塞 fd（T24.9/T24.10）；原生 Windows
+  `ucontext` 纤维、socket 是非阻塞 fd（T23.9/T23.10）；原生 Windows
   移植是把这层调度器与 IO 重建在 Windows 原语之上，预编译渠道等它。
   WSL2 仍是受支持的 Windows 路径，Microsoft Trusted Signing 仍是
   移植落地时的既定签名路线。
@@ -127,11 +127,11 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
   检查——默认 `c` 目标做 cc 编译并运行的冒烟、ocaml 目标在预编译
   机器上报出需要源码构建安装——退出码只反映真正损坏的部分。
   （2026-10-07 更正：ocaml 行报告的是工具链，从不报告安装形态——
-  见下文步骤 26 的更新。）
+  见下文步骤 25 的更新。）
 
-## 更新（2026-10-07）：target 独立（步骤 26）
+## 更新（2026-10-07）：target 独立（步骤 25）
 
-步骤 26（`plan/step-26-target-independence.md`）移除了本文档反复
+步骤 25（`plan/step-25-target-independence.md`）移除了本文档反复
 回答的安装形态问题。runtime 独立原则：target 的 runtime 以 target
 自己的语言编写、以生成数据的形式随编译器携带、由 target 自己的
 工具链在用户机器上编译——宿主只贡献 emitter。具体而言：
@@ -163,4 +163,4 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
 - `docs/runtime-and-freestanding.md` —— runtime 与 freestanding 之别，以及
   native 产物带的是什么。
 - `docs/industrial-software.md` —— FFI 的硬门。
-- `plan/step-23-hosted-native-ffi.md` —— `c` 后端评估。
+- `plan/hosted-native-ffi.md` —— `c` 后端评估。

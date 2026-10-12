@@ -39,7 +39,7 @@ The rest of this note is about the second.
 
 ## What Emo's design already helps
 
-- **The freestanding target and a replaceable runtime.** `plan/step-22`
+- **The freestanding target and a replaceable runtime.** `plan/step-19`
   gives no OS, no libc, no default runtime, with the allocator, GC, and
   scheduler as replaceable components — exactly the kernel-owns-its-runtime
   shape an RTOS wants.
@@ -62,13 +62,13 @@ The rest of this note is about the second.
 
 ## What Emo's design works against
 
-- **No preemption promise.** `plan/step-22` places timer preemption at M3
+- **No preemption promise.** `plan/step-19` places timer preemption at M3
   and marks it "optional; semantics do not require it". An RTOS requires
   it, so it must be built.
 - **No `volatile`, atomic, or barrier semantics** in the language.
   `peek`/`poke` are calls the optimizer may reorder or elide, and ISR/task
   races have no primitive. This is a language-and-codegen gap.
-- **Gradual typing boxes dynamic regions**, and step 22 boxes `Int64` and
+- **Gradual typing boxes dynamic regions**, and step 19 boxes `Int64` and
   `Float64` in the freestanding dynamic world; the tagged path has
   non-constant cost, which fights WCET.
 - **Value semantics allocate** (strings, arrays, instances, messages) —
@@ -85,7 +85,7 @@ The rest of this note is about the second.
 
 | Target | Difficulty | Notes |
 | --- | --- | --- |
-| Cooperative kernel (green threads, messages, MMIO console) | moderate | step 22's M2 scope; not an RTOS |
+| Cooperative kernel (green threads, messages, MMIO console) | moderate | step 19's M2 scope; not an RTOS |
 | Soft real-time industrial control / supervision | moderate | cooperative plus bounded allocation may suffice |
 | Preemptive RTOS core (FreeRTOS-class) | hard (months to years) | M3 preemption plus `volatile`/atomics, deterministic memory, ISR infrastructure |
 | Porting FreeRTOS (C) and driving it from Emo | low to moderate | C interop; scheduler-coexistence friction |
@@ -117,7 +117,7 @@ not scheduling.
 4. **Deterministic memory**: static or arena allocators; no unbounded
    allocation on the kernel path.
 5. **Priority scheduling and priority inheritance**: policy in Emo, on top
-   of the assembly mechanism (the split step 14 already settled).
+   of the assembly mechanism (the split step 15 already settled).
 6. **Tooling**: debugger, stack-depth analysis, WCET, static checking.
 7. **Certification**: only after a frozen 1.0/LTS.
 
@@ -135,8 +135,8 @@ supervision, not hard real time.
 - `docs/industrial-software.md` — the plant-control segment and the "hard
   real-time is out of reach" conclusion.
 - `docs/runtime-and-freestanding.md` — what freestanding and runtime mean.
-- `plan/step-22-riscv64.md` — the freestanding target, its value model,
+- `plan/step-19-riscv64.md` — the freestanding target, its value model,
   and the cooperative / preemptive / SMP milestones.
-- `plan/step-14-other-targets.md` — the scheduler assessment and the
+- `plan/step-15-other-targets.md` — the scheduler assessment and the
   mechanism-versus-policy split.
 - `README.md`, "EmoOS" — the single-language-closure ambition.

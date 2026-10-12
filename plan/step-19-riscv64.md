@@ -1,8 +1,8 @@
-# Step 22 — RISC-V Target (Freestanding RV64)
+# Step 19 — RISC-V Target (Freestanding RV64)
 
-**Milestone:** M7 · **Prereq:** steps 01–13 (the specialization pass);
-the step-14 RISC-V reference note is the design record ·
-**Status:** done (2026-10-11 — T22.1–T22.4, close-out recorded; the
+**Milestone:** M4 · **Prereq:** steps 01–14 (the specialization pass);
+the step-15 RISC-V reference note is the design record ·
+**Status:** done (2026-10-11 — T19.1–T19.4, close-out recorded; the
 `%g` float to-string lands as its own follow-up)
 
 ## Goal
@@ -13,7 +13,7 @@ ELF, and it boots under `qemu-system-riscv64 -machine virt`, printing
 through the SBI console. The fifth backend and the first with no host
 runtime — no OCaml, no WasmGC, no BEAM, no JS: the dynamic value gets a
 memory layout of its own, and the allocator is ours. This is M1 of the
-riscv64 roadmap in the step-14 note (backend + bare-metal boot); the
+riscv64 roadmap in the step-15 note (backend + bare-metal boot); the
 scheduler is the following step.
 
 ## Probed facts (binutils 2.45, QEMU 11.1.1, OpenSBI v1.8.1 — this host, 2026-10-05)
@@ -48,11 +48,11 @@ scheduler is the following step.
 
 ### In
 
-- **The emission target: RV64 assembly text + GNU as/ld** (step 13's
+- **The emission target: RV64 assembly text + GNU as/ld** (step 14's
   emit-and-delegate pattern; `erlc` is the BEAM precedent). One
   whole-program artifact — the native target's single `main.ml`, with
   the same mangled labels. Per-module ELF linking stays out.
-- **Boot profile A** (decided — resolves the step-14 note's M1 line,
+- **Boot profile A** (decided — resolves the step-15 note's M1 line,
   which conflated the two profiles): OpenSBI-hosted S-mode at
   0x80200000; the entry stub sets `sp`, clears `.bss`, parks non-boot
   harts when `-smp > 1`; a generated linker script; `println` through
@@ -65,7 +65,7 @@ scheduler is the following step.
   cells in the dynamic world** — the decided wrap-around semantics need
   all 2⁶⁴ bit patterns, so the OCaml 63-bit shortcut is unavailable
   here (CHECK.md's open decision is scoped to the OCaml-hosted backend
-  and unaffected). Specialized code (step 13's Stage B) keeps raw
+  and unaffected). Specialized code (step 14's Stage B) keeps raw
   registers: `Int64` in a register, `Float64` in an f-register — the
   two-world structure the compiler already has.
 - **The heap: a bump allocator** (GC deferred — the no-GC pluggable
@@ -93,7 +93,7 @@ scheduler is the following step.
   other target.
 - **Runner**: `emo run --target riscv64` boots the ELF under
   `qemu-system-riscv64 -machine virt -nographic`. QEMU is the dev loop,
-  not part of the target (step-14 note) — the same image runs on real
+  not part of the target (step-15 note) — the same image runs on real
   RISC-V hardware.
 
 ### Out
@@ -106,13 +106,13 @@ scheduler is the following step.
   layout); register allocation and peephole work (correctness first:
   every temporary gets a stack slot, like the wasm target's implicit
   stack machine); RV32.
-- FFI beyond the ladder design recorded in the step-14 note; the
+- FFI beyond the ladder design recorded in the step-15 note; the
   CHECK.md loud-refusal gate for `foreign def` on wasm/BEAM lands
   before any FFI deepening, not here.
 - The hosted de-risk shortcut (cross-built OCaml riscv64 Linux
   userland) — optional, its own track.
 
-## Decisions settled in T22.1 (the trail)
+## Decisions settled in T19.1 (the trail)
 
 - **The image: two read-only segments and one read-write, via a
   `PHDRS` block** — the flat one-segment layout earns an ld warning
@@ -129,7 +129,7 @@ scheduler is the following step.
   a frame for its own return address — `emo_program`'s bare `ret`
   after a `call` was the first boot's infinite `ret`-to-self hang.
 
-## Decisions settled in T22.2 (the trail)
+## Decisions settled in T19.2 (the trail)
 
 - **The immediate layout: bit 0 set, kind in bits 3:1 (0 Bool,
   1 Char, 2 Enum), payloads above bit 3.** Bool's payload rides bit 4
@@ -152,7 +152,7 @@ scheduler is the following step.
 - The heap is 64 MiB of .bss beside the 1 MiB stack (both NOBITS);
   `count_down(1000000)`'s boxed arguments fit with room to spare.
 
-## Decisions settled in T22.3 (the trail)
+## Decisions settled in T19.3 (the trail)
 
 - **The tag word grew to four bits.** The first layout put Box on tag
   5 and Instance on tag 7 — both odd, colliding with the immediates'
@@ -178,31 +178,31 @@ scheduler is the following step.
   receivers; `Case` binds pattern variables into frame slots (staging
   in temp slot 1, the scrutinee in slot 0), guards evaluate at depth 2.
 - Still refusing: maps, Bytes, List, exceptions, processes, float
-  to-string (a `%g` dtoa is the remaining T22.3-adjacent piece);
+  to-string (a `%g` dtoa is the remaining T19.3-adjacent piece);
   everything refused names the construct.
 
 ## Tasks
 
-- [x] **T22.1** — The backend skeleton: `--target riscv64` plumbing
+- [x] **T19.1** — The backend skeleton: `--target riscv64` plumbing
       (emitter module; the CLI arm writing `main.s`, invoking
       `as`/`ld` with the generated linker script; `emo run` booting the
       ELF under QEMU); the entry stub, BSS clear, SBI console.
       Golden: hello_world (serial output byte-for-byte vs `emo run`).
-- [x] **T22.2** — The value model and arithmetic: the tagged-word
+- [x] **T19.2** — The value model and arithmetic: the tagged-word
       representation (numeric cells, Bool/Char immediates) and the
       bump allocator; wrap-around `Int64`/`Float64` arithmetic,
       comparisons, `if`, integer formatting (`INT64_MIN` correct);
       guaranteed tail calls as `tail`. Golden: fib.
-- [ ] **T22.2** — The value model and arithmetic: the tagged-word
+- [ ] **T19.2** — The value model and arithmetic: the tagged-word
       representation (numeric cells, Bool/Char immediates) and the
       bump allocator; wrap-around `Int64`/`Float64` arithmetic,
       comparisons, `if`, integer formatting (signed, `INT64_MIN`
       correct); guaranteed tail calls as `tail`. Golden: fib.
-- [ ] **T22.3** — Dynamic-world data structures: tuples, arrays, Box,
+- [ ] **T19.3** — Dynamic-world data structures: tuples, arrays, Box,
       enums, instances with vtable dispatch, closures and first-class
       functions; patterns with guards; interpolation with the `%g`
       float rule. Golden: objects, language_tour.
-- [x] **T22.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
+- [x] **T19.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
       cross-binutils on the runner), the resolution-gate refusal test
       for packages lacking `"riscv64"`, the emission-time refusal
       diagnostics, close-out.
@@ -248,7 +248,7 @@ landed.
 - **Boot profile A for M1** (OpenSBI-hosted S-mode, 0x80200000) — the
   probed default chain, no UART driver in the loop; profile B
   (`-bios none`, M-mode) is the later kernel-ownership step. Fixes the
-  step-14 note's M1 line, which mixed the two profiles.
+  step-15 note's M1 line, which mixed the two profiles.
 - **Dynamic value = tagged word; `Int64`/`Float64` boxed two-word
   cells** — the wrap-around semantics forbid the 63-bit shortcut;
   NaN-boxing rejected (`Float64` must round-trip bit patterns, and a
@@ -259,4 +259,4 @@ landed.
   tail call a single pseudo-instruction.
 - **Whole-program single artifact** — the native/wasm precedent;
   per-module ELF linking is a later, mechanical step.
-- Scheduled from step 14 per its split-out task (2026-10-05).
+- Scheduled from step 15 per its split-out task (2026-10-05).

@@ -95,14 +95,14 @@ let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
    Pipeline: resolve + check the project (the same static stages as
    `emo run`), lower every module to the IR, emit OCaml, and hand the
    files to the OCaml toolchain. The runtime rides the compiler as
-   generated data (step 26), so the toolchain alone decides whether the
+   generated data (step 25), so the toolchain alone decides whether the
    target can build, on any installation shape. *)
 
 (* The OCaml toolchain comes from the opam switch: PATH first, then the
    switch prefixes under ~/.opam (dune test actions run without the opam
    environment). The switch scan checks the tool only — whether the
    runtime's own packages are present is [ocaml_target_ok]'s question,
-   answered the same way on every installation shape (step 26). *)
+   answered the same way on every installation shape (step 25). *)
 let find_ocamlfind () : string =
   let has_tool sw =
     Sys.file_exists (Filename.concat (Filename.concat sw "bin") "ocamlfind")
@@ -133,7 +133,7 @@ let find_ocamlfind () : string =
 (* Whether the ocaml target can run at all: ocamlfind with the unix and
    ssl packages the runtime itself uses. The runtime rides the compiler
    as generated data, so nothing about the emo installation matters —
-   only the target's toolchain (step 26). `emo build --target ocaml`
+   only the target's toolchain (step 25). `emo build --target ocaml`
    refuses on this with the fix named, and `emo doctor` reports it per
    target. *)
 let tool_exists (name : string) : bool =
@@ -221,7 +221,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               0)
         | "typescript" ->
             (* The prelude rides the compiler as generated data; the
-               arm never touches the filesystem for it (step 26). *)
+               arm never touches the filesystem for it (step 25). *)
             let source = Emo_codegen.Ts.emit_ts program in
             let digest =
               Digest.to_hex
@@ -257,7 +257,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         | "c" ->
             (* Emit one main.c plus the Emo runtime sources, compile
                with the system cc: a standalone binary with no OCaml
-               runtime (step 24). *)
+               runtime (step 23). *)
             let write path contents =
               let oc = open_out_bin path in
               output_string oc contents;
@@ -351,7 +351,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               end
             end
         | "ocaml" ->
-            (* The refusal is installation-independent (step 26): the
+            (* The refusal is installation-independent (step 25): the
                runtime rides the compiler, so the only question is
                whether the target's own toolchain — ocamlfind with the
                unix and ssl packages — is on PATH. Name the fix, never
@@ -486,7 +486,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         | "riscv64" ->
             (* Emit RV64 assembly for the GNU cross binutils: one
                freestanding ELF that boots under QEMU or on the machine
-               (step 22). *)
+               (step 19). *)
             let asm = Emo_codegen.Riscv.emit program in
             let out =
               if Filename.check_suffix output ".elf" then output
@@ -953,7 +953,7 @@ let deps =
 
 (* `emo install`: the project-dependencies front end — resolve, fetch
    into the user cache, lock; the project is then ready for run/build
-   (T25.4). `emo deps` keeps the explicit paths. *)
+   (T24.4). `emo deps` keeps the explicit paths. *)
 let install () : int =
   let dir = Sys.getcwd () in
   let color = Unix.isatty Unix.stderr in
@@ -1786,7 +1786,7 @@ let publish_cmd =
           | code -> exit code)
       $ registry $ token $ dry_run)
 
-(* ---- `emo doctor`: the target-aware environment check (T25.5) ----
+(* ---- `emo doctor`: the target-aware environment check (T24.5) ----
 
    One line per target: what it needs, what was found. The default
    target's health decides the exit code — the other targets are
@@ -1837,7 +1837,7 @@ let cc_smoke () : (unit, string) result =
 
 (* The ocaml target's check: ocamlfind with the unix and ssl packages
    the runtime itself uses — the same question on every installation
-   shape, since the runtime rides the compiler (step 26). *)
+   shape, since the runtime rides the compiler (step 25). *)
 let doctor ~(emit : string -> unit) : int =
   let ocaml_ok = ocaml_target_ok () in
   emit (Printf.sprintf "emo %s" version);
@@ -1887,7 +1887,7 @@ let doctor_cmd =
       $ const ())
 
 (* `emo new <name>`: the project scaffold — package.emo, a hello-world
-   main.emo with its test under test/, and .gitignore (T25.3). Strictness
+   main.emo with its test under test/, and .gitignore (T24.3). Strictness
    holds: an existing
    directory or clashing files refuse; nothing is ever overwritten. The
    manifest carries the plain name when no owner is given — running,

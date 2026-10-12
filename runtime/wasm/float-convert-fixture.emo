@@ -1,4 +1,4 @@
-// The float conversion/rounding fixture (T21.5, part 2): sqrt, the
+// The float conversion/rounding fixture (T22.5, part 2): sqrt, the
 // rounding directions, int <-> float, and the truncation traps at the
 // spec's boundaries.
 

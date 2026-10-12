@@ -27,13 +27,13 @@ that half.
 
 | What xv6 needs | Emo today | Theoretically reachable by |
 | --- | --- | --- |
-| Bare-metal boot, linker script, fixed layout | the `riscv64` target is planned (`plan/step-22`), not built | backend emits assembly text + `ld` script + entry stub |
-| **CSR access** (`satp`/`stvec`/`sstatus`/`sepc`/…) | no primitive; `peek`/`poke` cannot reach register sets (`plan/step-14`) | hand-written `.S`/C shim (xv6 uses inline asm for this too) |
+| Bare-metal boot, linker script, fixed layout | the `riscv64` target is planned (`plan/step-19`), not built | backend emits assembly text + `ld` script + entry stub |
+| **CSR access** (`satp`/`stvec`/`sstatus`/`sepc`/…) | no primitive; `peek`/`poke` cannot reach register sets (`plan/step-15`) | hand-written `.S`/C shim (xv6 uses inline asm for this too) |
 | **Trap entry and return** (`sret`) | no inline asm | hand-written `.S`, as in xv6 |
 | Raw physical memory (MMIO, page tables) | `peek`/`poke` designed but **not built**; `Bytes` exists but is a hosted buffer | `Int64` address + `peek`/`poke` |
 | **Bit-fields / overlapping unions** (PTE, `struct proc` over a page) | no union, no `offsetof`, no layout control | `Int64` masking + `peek`/`poke` at manual offsets |
 | **In-place mutable tables** (`proc[]`, page freelist) | arrays immutable, fields frozen after `init`, no global `var` | raw memory + `Box` |
-| **Spinlocks and atomics** (`amoswap`, LR/SC, `fence`) | no atomic or barrier semantics | assembly shims (the mechanism/policy split of `plan/step-14`) |
+| **Spinlocks and atomics** (`amoswap`, LR/SC, `fence`) | no atomic or barrier semantics | assembly shims (the mechanism/policy split of `plan/step-15`) |
 | `volatile` MMIO semantics | `peek`/`poke` are calls the optimizer may reorder or elide | the same shim, or a language-level `volatile` decision |
 | Function pointers / interrupt dispatch | partial — a closure is a heap record `[code, captured]`, not a raw code address | compile-time vtables cover dispatch; `stvec` needs a shim |
 | User mode (U-mode) and the `ecall` gate | all CSR + `sret` | assembly shims |
@@ -76,7 +76,7 @@ not the assembly.
   GNU `as`/`ld` with a generated linker script, and hand-written
   `.S`/freestanding C sources compile into the image with the psABI as
   the contract — exactly the "C interop on bare metal" shape
-  `plan/step-14` describes. The IR (named functions, closures,
+  `plan/step-15` describes. The IR (named functions, closures,
   compile-time vtables, guaranteed tail calls) is sufficient for kernel
   logic.
 - **No GC is an asset.** The bump allocator can serve as the base under
@@ -84,17 +84,17 @@ not the assembly.
   it is a pure register/stack switch, with no incremental collector to
   reconcile.
 - **Two hard prerequisites:**
-  1. On `riscv64`, `plan/step-22` currently **refuses `foreign def` at
+  1. On `riscv64`, `plan/step-19` currently **refuses `foreign def` at
      emission time**, while a kernel needs a bridge for CSRs, atomics,
      and trap handling. The "compile C/assembly into the image" bridge
-     must therefore move ahead of the FFI ladder (`plan/step-14`,
+     must therefore move ahead of the FFI ladder (`plan/step-15`,
      rungs 1–2); without it M1 is not reachable.
   2. **`Int32` and exact-width `peek`/`poke`**: device registers must be
      accessed at their width (`docs/numeric-width.md` says so), and
      `Int32` is at present only an agreed future type with an open
      surface.
 - Also, `Int64`/`Float64` are **boxed two-word cells** in the
-  freestanding dynamic world; the kernel path depends on step 13's
+  freestanding dynamic world; the kernel path depends on step 14's
   Stage B specialization keeping raw registers, or every access goes
   through the boxed path.
 
@@ -118,7 +118,7 @@ collector) than a language that checks the kernel's most dangerous code.
 - **Pure Emo, no new surface, no assembly/C shim: not feasible.** CSRs,
   trap return, and atomics are not expressible.
 - **Emo plus a thin substrate** (assembly/C shim — the mechanism/policy
-  split `plan/step-14` already accepts): **theoretically feasible.**
+  split `plan/step-15` already accepts): **theoretically feasible.**
   Page-table construction, the allocator, the process table, scheduling,
   syscall dispatch, ELF loading, driver policy, and filesystem logic are
   all expressible in Emo.
@@ -141,9 +141,9 @@ whose semantics are precisely defined.** `peek`/`poke` are its germ; add
   the `riscv64` target's position in the two axes.
 - `docs/numeric-width.md` — width-explicit numerics and the `Int32` /
   exact-width `peek`/`poke` gap for MMIO.
-- `plan/step-22-riscv64.md` — the freestanding target, the value model,
+- `plan/step-19-riscv64.md` — the freestanding target, the value model,
   the boot profiles, and the `foreign def` refusal.
-- `plan/step-14-other-targets.md` — the RISC-V reference note, the
+- `plan/step-15-other-targets.md` — the RISC-V reference note, the
   mechanism/policy split, and the C-interop ladder.
 - `docs/native-backend.md` — the IR/specialization pipeline and the
   `foreign def` surface.

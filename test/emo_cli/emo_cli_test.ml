@@ -471,17 +471,17 @@ let wasm_examples_tests =
 (* The C goldens: build with --target c through the system cc and run
    the standalone binary, byte-for-byte against expected.txt. Skips
    when cc is absent. The list names the backend's current support
-   set; it grows task by task (T24.1: hello_world, T24.3: if_expr,
-   T24.5: objects, language_tour — classes, interfaces, enums, case
-   with guards, closures, and array append; T24.6: shop, function_group
+   set; it grows task by task (T23.1: hello_world, T23.3: if_expr,
+   T23.5: objects, language_tour — classes, interfaces, enums, case
+   with guards, closures, and array append; T23.6: shop, function_group
    — multi-file modules, the internal/ subtree, const aliases, and
-   `emo` groups; T24.7: bit_ops, bytes, fixed_width — the bitwise
+   `emo` groups; T23.7: bit_ops, bytes, fixed_width — the bitwise
    operators, Bytes with little-endian accessors, and Byte with
-   explicit conversions; T24.9: pipeline, showcase — processes
-   (do / <- / receive) on the cooperative fiber scheduler; T24.10:
+   explicit conversions; T23.9: pipeline, showcase — processes
+   (do / <- / receive) on the cooperative fiber scheduler; T23.10:
    file_read, tcp_echo, http_roundtrip — hosted file and socket IO
    with the stdlib resolving for the c target). The full fib and
-   numerics examples join when foreign defs land (T24.8) — their
+   numerics examples join when foreign defs land (T23.8) — their
    c_scalar / c_integer fixtures cover the same semantics. *)
 let c_goldens =
   [
@@ -531,7 +531,7 @@ let sqlite3_available =
           >/dev/null 2>&1"
        = 0)
 
-(* T24.2's integer core: fib's plain recursion, the 1M-deep tail
+(* T23.2's integer core: fib's plain recursion, the 1M-deep tail
    count_down, a mutual-tail ping/pong cluster, wrap-around Int64
    (INT64_MIN formatting, division and remainder by -1, overflow on
    plus and times), and var assignment under if/else — all run under
@@ -656,7 +656,7 @@ let c_integer_tests =
                  (Buffer.contents err)));
   ]
 
-(* T24.3's scalar runtime: Float64 rendering across the %g boundary
+(* T23.3's scalar runtime: Float64 rendering across the %g boundary
    (integral magnitudes below 1e16 keep one decimal, 1e-4 and 1e+06
    flip to exponent form), Bool/Char printing, string concatenation
    and content equality, interpolation, and to_string. The expected
@@ -767,7 +767,7 @@ let c_scalar_tests =
                  (Buffer.contents err)));
   ]
 
-(* T24.4's dynamic value model: the tagged word crossing native and
+(* T23.4's dynamic value model: the tagged word crossing native and
    dynamic code — a heterogeneous array (elements Unknown), tuples,
    Box identity and replacement, structural equality, dynamic
    arithmetic and to_string over runtime kinds, and indexing with
@@ -980,7 +980,7 @@ let c_examples_tests =
                    (Buffer.contents err))))
     c_goldens
 
-(* T24.8: the c target's direct C ABI. A foreign def declares the C
+(* T23.8: the c target's direct C ABI. A foreign def declares the C
    symbol and calls it — no wrapper generator. Strings cross with a
    NUL terminator; opaque handles ride pointer-sized Int64s behind a
    tiny library compiled into the scratch dir. Skips without cc. *)
@@ -1269,7 +1269,7 @@ run_greet(Polite.new(), 1)
    fixture exercises all three directions: a tuple by value, a class
    in and a struct out, and a nested-tuple shape. Skips without cc. *)
 
-(* The reclamation gate (CHECK.md, the T24.5 discipline): the runtime
+(* The reclamation gate (CHECK.md, the T23.5 discipline): the runtime
    exposes its live-identity counter, and a loop that drops every
    object it makes must return the count to where it started —
    reclamation observed, not assumed. A second phase keeps one object
@@ -2007,7 +2007,7 @@ username = "u"|}
               (contains e "no registry"));
   ]
 
-(* ---- The riscv64 goldens (T22.1): the freestanding ELF boots under
+(* ---- The riscv64 goldens (T19.1): the freestanding ELF boots under
    QEMU and the payload's output matches the interpreter byte for byte.
    Two transport facts belong to the harness, not the target: OpenSBI
    (QEMU's default BIOS) prints its banner on the same serial stream —
@@ -2106,7 +2106,7 @@ let riscv64_examples_tests =
       "error_matching";
     ]
 
-(* T22.4's honest refusals: a program the checker admits but the
+(* T19.4's honest refusals: a program the checker admits but the
    freestanding backend cannot honor yet exits 65 with a message that
    names the construct — the check itself rides the emitter's
    Lower_error, so the text is asserted directly. *)
@@ -2196,7 +2196,7 @@ do work()|},
           ]);
   ]
 
-(* ---- new: the project scaffold (T25.3) ---- *)
+(* ---- new: the project scaffold (T24.3) ---- *)
 
 let read_file path =
   let ic = open_in_bin path in
@@ -2332,7 +2332,7 @@ let emoji_tests =
               (Emo_cli.emoji_build ~dir:(Sys.getcwd ()))));
   ]
 
-(* ---- doctor: the target-aware environment check (T25.5) ---- *)
+(* ---- doctor: the target-aware environment check (T24.5) ---- *)
 
 let doctor_tests =
   [
@@ -2356,7 +2356,7 @@ let doctor_tests =
           (contains text "no external tools"));
   ]
 
-(* ---- test: the `emo test` subcommand (step 39) ---- *)
+(* ---- test: the `emo test` subcommand (step 46) ---- *)
 
 let write_fixture_project name files =
   let dir = Filename.concat scratch name in

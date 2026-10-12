@@ -5,7 +5,7 @@ module Ast = Emo_ast
    from the AST again.
 
    Types are the checker's own [Emo_check.t]: every expression carries the
-   type step 08 gave it, and [Unknown] marks the dynamic regions. A
+   type step 09 gave it, and [Unknown] marks the dynamic regions. A
    function whose parameters, result, and body are entirely native
    ([fspecializable]) is Stage B's specialization target; everything else
    keeps dynamic semantics at its Unknown regions. *)

@@ -444,7 +444,7 @@ def welcome(g Greeter) String {
 
 welcome(English.new())|})));
     (* Missing-method and wrong-shape call-site rejections land with the
-       call-site checks (T8.7). *)
+       call-site checks (T9.7). *)
     tc "a class that does not conform cannot narrow to an interface" (fun () ->
         let diagnostics =
           check
@@ -747,7 +747,7 @@ case anything {
 }|})));
   ]
 
-(* The step-08 acceptance corpus: strict type-declaration rejections,
+(* The step-09 acceptance corpus: strict type-declaration rejections,
    inference successes, and the zero-false-positive discipline. *)
 let corpus_tests =
   [
@@ -1783,7 +1783,7 @@ foreign def stretch(r (Float64, Float64)) Float64 = "stretch"
             Alcotest.fail ("parse failed: " ^ d.Diagnostic.message));
   ]
 
-(* The built-in `R` enum (M12): the ok/error pair every program sees,
+(* The built-in `R` enum (M10): the ok/error pair every program sees,
    no import needed, matched in `case` — and a name no declaration may
    take, beside the shipped `Exception` class. *)
 let r_enum_tests =

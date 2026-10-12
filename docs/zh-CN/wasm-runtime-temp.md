@@ -1,6 +1,6 @@
 # wasm 运行时——如何使用（临时笔记）
 
-> **临时文档。** 这里是对 `runtime/wasm/` 中运行时的使用笔记,不是已落定的设计文档。它只记录运行时今天如何使用,不扩展计划或 README。权威材料是 `runtime/wasm/README.md`、`plan/step-19-wasm-runtime.md`、`plan/step-20-wasm-decoder.md` 和 `plan/step-21-wasm-interpreter.md`。
+> **临时文档。** 这里是对 `runtime/wasm/` 中运行时的使用笔记,不是已落定的设计文档。它只记录运行时今天如何使用,不扩展计划或 README。权威材料是 `runtime/wasm/README.md`、`plan/step-20-wasm-runtime.md`、`plan/step-21-wasm-decoder.md` 和 `plan/step-22-wasm-interpreter.md`。
 
 ## 它是什么
 
@@ -80,7 +80,7 @@ cd runtime/wasm
 
 ## 限制(为什么它不是 wasmtime)
 
-1. **没有 CLI,也没有 argv。** `plan/step-20` 推迟了 argv,所以每个驱动都把路径写死在源码里(如 `cli.run("testdata/cases.smoke.txt")`)。
+1. **没有 CLI,也没有 argv。** `plan/step-21` 推迟了 argv,所以每个驱动都把路径写死在源码里(如 `cli.run("testdata/cases.smoke.txt")`)。
 2. **`internal/` 是子树私有的**(由编译器强制)。包外代码看不到 `instantiate` / `call`,所以**外部包根本无法执行模块**——只能 `decode` / `load`。在 `/tmp` 里建一个包,连 `wasm.load` 都会以 `E4003` 失败(未声明依赖且 `wasm.*` 不在作用域)。要让它对外可用,需要在 `wasm.emo` 里 re-export 一层执行 API。
 3. **import 只有两个来源:** 注册命名空间和 `spectest` host。没有 WASI,也没有 `emo` host 模块,所以它**无法运行 `emo build --target wasm` 的产物**。那正是计划里的 self-hosting 退出标准,需要 GC 类型,不在本阶梯内。
 4. **它不是可发布的包。** `package.emo` 声明 `deps {}`,依赖走中心 registry 的精确版本,没有文档化的 path 依赖;这个包是仓库内的 fixture,计划说它只有通过 vendored suite 且 Emo 达到 1.0 之后才离开本仓库。
@@ -88,5 +88,5 @@ cd runtime/wasm
 ## 怎样才可用
 
 - 从 `wasm.emo` re-export 一层执行面(如 `instantiate`、`call`、`get_global`),并定义稳定的 host 接口。
-- 让 `emo` CLI 或独立 driver 能访问 argv(step 20 留下的空档),或增加 `emo wasm run foo.wasm` 子命令。
+- 让 `emo` CLI 或独立 driver 能访问 argv(step 21 留下的空档),或增加 `emo wasm run foo.wasm` 子命令。
 - 想运行真实世界的 `.wasm`,还需补 WASI / `emo` host 模块以及更多提案(GC 等)。

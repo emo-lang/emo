@@ -1,6 +1,6 @@
-# Step 44 — The standard library: `slog`
+# Step 36 — The standard library: `slog`
 
-**Milestone:** M13 — The standard library · **Prereq:** step 43
+**Milestone:** M11 — The standard library · **Prereq:** step 35
 (base64 — the native-types-only surface shape that crosses module
 boundaries cleanly) · **Related:** `stdlib/registry/{json,os,base64}`
 (the sibling packages), `docs/stdlib/slog.md` · **Status:** done on
@@ -48,19 +48,19 @@ with the exact mistake; filtering is the only silence.
 ## What the step flushed out
 
 Nothing in the backends — the first package whose golden needed zero
-compiler changes, walking only paths steps 24–31 had already paved
+compiler changes, walking only paths steps 23–31 had already paved
 (`Map` on interp/ocaml/c/ts, `Bytes` and native-type surfaces
-everywhere they run). The step-43 wasm/beam fixes held.
+everywhere they run). The step-35 wasm/beam fixes held.
 
 ## Tasks
 
-- [x] **T44.1** — The package: the ordered levels and two formats,
+- [x] **T36.1** — The package: the ordered levels and two formats,
       the handle pack/parse, the logfmt and JSON renderers, strict
       keys and exact errors. (Done 2026-10-09.)
-- [x] **T44.2** — The golden: `examples/slog_demo` — both formats,
+- [x] **T36.2** — The golden: `examples/slog_demo` — both formats,
       filtering, a child logger, quoting and escaping, UTF-8, and
       `enabled` — on the bootstrap, c, and typescript lists. (Done
       2026-10-09.)
-- [x] **T44.3** — The docs: `docs/stdlib/slog.md` and its zh-CN
+- [x] **T36.3** — The docs: `docs/stdlib/slog.md` and its zh-CN
       mirror; `dune build @fmt` and `dune test` green. (Done
       2026-10-09.)

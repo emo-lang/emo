@@ -1,6 +1,6 @@
 #!/bin/sh
 # Assembles the release archive for one platform from a built emo
-# binary (T25.6). The stdlib rides inside the binary (T25.2), so the
+# binary (T24.6). The stdlib rides inside the binary (T24.2), so the
 # archive carries the executable, the license, and nothing else.
 #
 # Usage: package-release.sh <emo-binary> <version> <os> <arch> <out-dir>
@@ -75,7 +75,7 @@ if [ "$os" = macos ]; then
   done
 fi
 
-# macOS signing (T25.7): EMO_CODESIGN_IDENTITY turns the signing hook
+# macOS signing (T24.7): EMO_CODESIGN_IDENTITY turns the signing hook
 # on — the identity signs the binary with the hardened runtime. Notary
 # credentials are any one of three shapes: EMO_NOTARY_PROFILE (a
 # `notarytool store-credentials` profile in the keychain), the App

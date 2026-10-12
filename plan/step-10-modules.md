@@ -1,6 +1,6 @@
-# Step 09 — Structural Module System
+# Step 10 — Structural Module System
 
-**Milestone:** M2 · **Prereq:** steps 01–08 · **Status:** not started
+**Milestone:** M2 · **Prereq:** steps 01–09 · **Status:** not started
 
 ## Goal
 
@@ -14,9 +14,9 @@ and incremental builds. After this step, multi-file projects work end to end.
 ### In
 
 - **Root discovery** — the project root is the nearest ancestor directory
-  containing the package manifest (step 10 introduces the manifest itself;
+  containing the package manifest (step 11 introduces the manifest itself;
   until then the root is the entry file's directory, a transitional rule
-  replaced in step 10 — documented in both steps).
+  replaced in step 11 — documented in both steps).
 - **Module loading** — `shop/order.emo` is module `shop.order`:
   - A directory or file referenced as a member path evaluates to a `Module`
     value — a namespace whose members load lazily on first access.
@@ -45,8 +45,8 @@ and incremental builds. After this step, multi-file projects work end to end.
 
 ### Out
 
-- Packages, `require`, registry, manifest (step 10).
-- Compiled artifact caching (step 13).
+- Packages, `require`, registry, manifest (step 11).
+- Compiled artifact caching (step 14).
 - Any visibility keywords — they do not exist structurally.
 
 ## Tasks
@@ -95,4 +95,4 @@ def checkout(cart Cart) Decimal {
 ## Open design items
 
 - Transitional root rule (entry file's directory) must be swapped for
-  manifest-based roots in step 10 — do not let it fossilize.
+  manifest-based roots in step 11 — do not let it fossilize.

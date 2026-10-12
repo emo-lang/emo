@@ -1,13 +1,13 @@
-// The decode pipeline. T20.4 added the reader bounds (the 8 raw header
-// bytes); T20.6 adds the header semantics (magic, version) and the
+// The decode pipeline. T21.4 added the reader bounds (the 8 raw header
+// bytes); T21.6 adds the header semantics (magic, version) and the
 // section walk: ids and sizes, the fixed section order, custom
 // sections skipped, unknown ids rejected, sizes that overrun the
-// module. The sections' contents decode from T20.7 onward — the walk
+// module. The sections' contents decode from T21.7 onward — the walk
 // skips them for now, so only header/id/order/size families claim.
 //
 // The walk threads the cursor as (data, pos) primitives rather than a
 // Reader value: def signatures cannot spell another module's class
-// (qualified type declarations do not parse — step 20 pressure), so any
+// (qualified type declarations do not parse — step 21 pressure), so any
 // cross-def cursor travel goes through locals without type declarations.
 
 def debug_print_outcome(label String, o (Bool, String, Int64, String)) Int64 {
@@ -43,7 +43,7 @@ def module_from(data Bytes) (Bool, String, Int64, String) {  const r = internal.
       }
     }
     // The shape is sound: the validator checks the semantics that
-    // make the module valid (T20.14 onward).
+    // make the module valid (T21.14 onward).
     const v = internal.model.validate(data)
     if !v[0] {
       return internal.error.invalid(v[2], v[1])
@@ -116,7 +116,7 @@ def walk(data Bytes, pos Int64, last_rank Int64, dc Int64, n_funcs Int64, saw_co
     return internal.error.malformed(r1.pos, "unexpected section")
   }
   if id == 1 {
-    // The type section decodes its content (T20.7) and must consume it
+    // The type section decodes its content (T21.7) and must consume it
     // exactly: leftover bytes are a "section size mismatch".
     const t = internal.model.type_section(r2.data, r2.pos, r2.pos + size)
     if !t[0] {

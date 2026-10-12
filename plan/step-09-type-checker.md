@@ -1,6 +1,6 @@
-# Step 08 — Gradual Type Checker
+# Step 09 — Gradual Type Checker
 
-**Milestone:** M2 · **Prereq:** steps 01–07 · **Status:** done
+**Milestone:** M2 · **Prereq:** steps 01–08 · **Status:** done
 
 ## Goal
 
@@ -79,7 +79,7 @@ before evaluation (`emo run` refuses to run a program with certain errors);
 
 - Generics, type constraints (do not exist by design).
 - Pattern matching / destructuring checks (undecided syntax).
-- Cross-module checking (step 09 loads the graph; this step checks one
+- Cross-module checking (step 10 loads the graph; this step checks one
   compilation unit).
 
 ## Tasks

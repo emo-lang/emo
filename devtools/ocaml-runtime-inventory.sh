@@ -3,7 +3,7 @@
 # examples with an expected.txt) through the ocaml emitter and collect
 # every host-module symbol the emitted sources reference. The result is
 # the standalone ocaml runtime's contract, recorded in
-# plan/step-26-target-independence.md (T26.2); re-run it after emitter
+# plan/step-25-target-independence.md (T25.2); re-run it after emitter
 # changes to catch contract drift — any host module outside Emo_eval and
 # Emo_runtime fails the run.
 #

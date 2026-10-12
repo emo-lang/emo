@@ -1,6 +1,6 @@
-# Step 26 — Target independence (runtimes decoupled from the host)
+# Step 25 — Target independence (runtimes decoupled from the host)
 
-**Milestone:** M10 — Target independence · **Prereq:** step 25 (the
+**Milestone:** M8 — Target independence · **Prereq:** step 24 (the
 toolchain whose claims this step corrects) · **Related:**
 `docs/toolchain.md` (the host/target distinction this step completes),
 `CHECK.md` (the backend-naming and runtime-language decisions this
@@ -33,12 +33,12 @@ Two do not:
 - **typescript** — the runtime prelude is a *side file*
   (`ts_prelude.ts`, found beside the binary). A release archive ships
   only `bin/emo`, so the typescript target is broken on every
-  installed binary today — the same class of bug T25.2 fixed for the
+  installed binary today — the same class of bug T24.2 fixed for the
   stdlib and T24 fixed for the C runtime.
 - **ocaml** — the runtime *is* the host: eight host libraries
   (`emo_runtime.cmxa` and friends) looked up in the host build tree
   and linked by the host toolchain. It works only inside the
-  repository, which is why the T25.1 refusal points at a source
+  repository, which is why the T24.1 refusal points at a source
   install — and why that guidance is itself wrong: `opam install emo`
   installs only the executable (verified: seven files, zero `.cmxa`),
   so the ocaml target is unavailable on *every* installation shape
@@ -62,12 +62,12 @@ works from the release layout.
 
 ## Decisions to settle here
 
-- **The runtime-independence principle (CHECK.md, before T26.1):** a
+- **The runtime-independence principle (CHECK.md, before T25.1):** a
   target's runtime is written in the target's language, carried as
   generated data inside the compiler, and compiled by the target's own
   toolchain on the user's machine. The host contributes only the
   emitter.
-- **The ocaml runtime's dependency policy (before T26.4):** the
+- **The ocaml runtime's dependency policy (before T25.4):** the
   standalone runtime's core (values, strings, scheduler) has zero
   dependencies beyond the OCaml standard library; networking keeps
   `eio_main`/`ssl` as target-ecosystem opam dependencies — declared in
@@ -76,13 +76,13 @@ works from the release layout.
 
 ## Tasks
 
-- [x] **T26.1** — The principle and the ts embed: the principle above
+- [x] **T25.1** — The principle and the ts embed: the principle above
       recorded in `CHECK.md`; `ts_prelude.ts` embedded as generated
       data (the C runtime's dune rule pattern) and the typescript arm
       stops reading the filesystem. Verification: a lone release-layout
       binary compiles a typescript program; the ts goldens stay
       byte-for-byte.
-- [x] **T26.2** — The emitted-code inventory and the standalone
+- [x] **T25.2** — The emitted-code inventory and the standalone
       skeleton: emit the golden subset through the ocaml emitter and
       collect mechanically every host symbol the emitted code
       references; the inventory is the standalone runtime's contract,
@@ -90,16 +90,16 @@ works from the release layout.
       (`emo_ocaml_runtime.ml`) compiles with plain `ocamlopt` — zero
       `emo_*` dependencies — and a fixture proves it from the build
       directory alone.
-- [x] **T26.3** — The value and scalar core: the value ADT, strings
+- [x] **T25.3** — The value and scalar core: the value ADT, strings
       and their operations, print/interpolation rendering,
       arithmetic/comparison dispatch, and the case/error paths the
       inventory names, in the standalone runtime. Each piece covered
       by a fixture compiled against the runtime alone.
-- [x] **T26.4** — The scheduler and IO: the effects-based scheduler,
+- [x] **T25.4** — The scheduler and IO: the effects-based scheduler,
       file IO, and the networking surface, per the dependency policy
       above. Fixtures: a process program and an HTTP roundtrip
       compiled against the standalone runtime alone.
-- [x] **T26.5** — The cutover: the ocaml emitter's references flip to
+- [x] **T25.5** — The cutover: the ocaml emitter's references flip to
       the standalone runtime; the arm emits runtime + `main.ml` and
       invokes `ocamlopt` (ocamlfind only for the packages the runtime
       itself uses); the `.cmxa` machinery, the library scan in
@@ -109,7 +109,7 @@ works from the release layout.
       source-install conditional. All ocaml goldens and tests
       byte-for-byte; the lone-binary verification: an installed binary
       with an OCaml toolchain builds the golden subset.
-- [x] **T26.6** — The independence audit and close-out: wasm and beam
+- [x] **T25.6** — The independence audit and close-out: wasm and beam
       recorded as verified-independent (runtime inside the module /
       one OTP-standing module — no tasks, evidence noted here); the
       docs corrected (`docs/toolchain.md`,
@@ -118,7 +118,7 @@ works from the release layout.
       `benchmarks/results.md`'s ocaml column re-run against the
       standalone runtime to confirm no regression; close-out.
 
-## The independence audit (T26.6)
+## The independence audit (T25.6)
 
 - **wasm — verified independent.** The runtime compiles into the
   module: 3 imports (the engine ABI — a `(ptr, len)` println and an
@@ -131,16 +131,16 @@ works from the release layout.
   text module (`emo_codegen/emo_beam.ml`) handed to the user's
   `erlc`; OTP is the target ecosystem's standard library, as libc is
   to `c`. No side files, no host lookups.
-- **c, typescript, ocaml — embedded as generated data** (T26.1,
-  T26.5): `emo_codegen/{c,ts,ocaml}` ride the compiler via the dune
+- **c, typescript, ocaml — embedded as generated data** (T25.1,
+  T25.5): `emo_codegen/{c,ts,ocaml}` ride the compiler via the dune
   rule; the CLI never reads a runtime from beside the binary or the
   host build tree. Verified from the release layout: a lone binary in
-  an empty directory builds typescript (T26.1) and the ocaml golden
-  subset (T26.5).
+  an empty directory builds typescript (T25.1) and the ocaml golden
+  subset (T25.5).
 
 ## Close-out
 
-Completed 2026-10-07, tasks T26.1–T26.6 on `feat/target-independence`.
+Completed 2026-10-07, tasks T25.1–T25.6 on `feat/target-independence`.
 Acceptance against the goal: no target reads its runtime from beside
 the binary or the host build tree (c, ocaml, ts embedded; wasm, beam
 inside the emitted artifact); `emo build --target ocaml` works from a
@@ -159,7 +159,7 @@ http 75 req/s). The docs carry the corrected story bilingually
 (`docs/toolchain.md`, `docs/toolchain-distribution.md`, and their
 `docs/zh-CN/` mirrors).
 
-## The emitted-code inventory (T26.2 — the standalone runtime's contract)
+## The emitted-code inventory (T25.2 — the standalone runtime's contract)
 
 Collected mechanically by `devtools/ocaml-runtime-inventory.sh` (2026-10-07):
 the golden corpus — every `examples/` entry with an `expected.txt`, sixteen
@@ -224,10 +224,10 @@ class definitions) drop out of the ADT — compiled functions are always
 
 ## Open design items
 
-- ~~The runtime-independence principle~~ — settled before T26.1
+- ~~The runtime-independence principle~~ — settled before T25.1
   (CHECK.md): the host contributes only the emitter; runtimes live in
   the target's language as generated data.
-- ~~The ocaml runtime's dependency policy~~ — settled at the T26.4
+- ~~The ocaml runtime's dependency policy~~ — settled at the T25.4
   port (CHECK.md): the core stands on the OCaml standard library plus
   `unix`, which ships with the compiler; `ssl` is the one opam-package
   dependency, declared by the build invocation and refused with a

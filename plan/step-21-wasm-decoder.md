@@ -1,8 +1,8 @@
-# Step 20 — Wasm runtime: the decoder and validator
+# Step 21 — Wasm runtime: the decoder and validator
 
-**Milestone:** M6 · **Prereq:** step 19 · **Status:** not started
+**Milestone:** M5 · **Prereq:** step 20 · **Status:** not started
 
-The boundaries below are decided now, because step 20 is where they first
+The boundaries below are decided now, because step 21 is where they first
 bite — and they are the whole answer to "why does a wasm runtime live in
 a language repository". The task list is sized for spare-time work: every
 task ends with the tree green, and every prefix of the list is a
@@ -11,13 +11,13 @@ consistent tree (the rule `docs/TASKS.md` already states for every step).
 The runtime is written in Emo **as the language is today**. Where the
 language makes something awkward, the plan works around it and records
 the pressure (below); it never adds a primitive to make one task easier.
-A primitive the runtime genuinely needs goes through step 19's gate as a
-task of its own, with both consumers named.
+A primitive the runtime genuinely needs goes through step 20's gate as a
+task of its own.
 
-## Boundaries carried in from step 19
+## Boundaries carried in from step 20
 
-These bind the runtime ladder as a whole (steps 20 and 21, and the
-kernel path that shares the layer), not just this step.
+These bind the runtime ladder as a whole (steps 20–22), not just
+this step.
 
 **The package is the boundary.** `runtime/wasm/` is an Emo package with
 its own `package.emo`; everything it offers crosses that deps edge and
@@ -36,7 +36,7 @@ re-run it. It lives with the package under `runtime/wasm/testdata/`; a
 dedicated alias runs it (the Emo-written runtime executing the suite),
 while the default `dune test` runs only a small smoke subset. Wiring
 that smoke subset in is the first task of this step — until then the
-package is inert, and step 19's claim that "the build has something to
+package is inert, and step 20's claim that "the build has something to
 check" is not yet true.
 
 **The split is scheduled, not open-ended.** The runtime leaves this
@@ -47,7 +47,7 @@ release cadence and issue tracker. The self-hosting test is the exit
 sign that keeps the two in one place until then: the acceptance is
 running Emo's own `--target wasm` goldens inside the Emo-written
 runtime. Until the split, every primitive the runtime asks for still
-goes through step 19's unification gate — the runtime is a consumer that
+goes through step 20's unification gate — the runtime is a consumer that
 justifies a primitive, never an argument that skips the gate.
 
 ## Goal
@@ -58,7 +58,7 @@ offset. The bar is the official spec suite's binary-format cases: every
 `assert_malformed` and `assert_invalid` case whose module is given in
 binary form must be rejected in the right phase, and every valid module
 must be accepted. The interpreter, the host imports, and the
-`assert_return` corpus are step 21's.
+`assert_return` corpus are step 22's.
 
 Two things this step is not: it is not a `.wat` text parser, and it is
 not fast. What the runtime does, it does in the language as it stands —
@@ -85,7 +85,7 @@ no new syntax, no new primitive, no compiler assist.
 - The text format: `.wat` parsing, and every `assert_malformed` case the
   spec marks `module_type: text`.
 - Execution: the interpreter core, host imports, WASI, and the
-  `assert_return` / `assert_trap` corpus — step 21.
+  `assert_return` / `assert_trap` corpus — step 22.
 - The GC, threads, SIMD, exceptions, and memory64 proposals; the target
   is the core spec's MVP instruction set plus what the spec suite's
   binary cases exercise.
@@ -99,7 +99,7 @@ no new syntax, no new primitive, no compiler assist.
 ## Provisional decisions
 
 Marked as provisional per `plan/README.md`; the settled ones move into
-`README.md` / `docs/` when step 20 closes.
+`README.md` / `docs/` when step 21 closes.
 
 - **Failures are values.** The decoder and validator return a result
   carrying the phase (`malformed` vs `invalid`), the byte offset, and a
@@ -122,13 +122,13 @@ Marked as provisional per `plan/README.md`; the settled ones move into
   binary, so the recursion is well-founded and each pass returns the
   decoded value plus the new offset. A tag tuple (`(Kind.num, NumOp.add,
   imm)`) plus `case` carries the instruction shapes, since enums are
-  payload-free. The exact tag shape is settled in T20.7, with the
+  payload-free. The exact tag shape is settled in T21.7, with the
   fixture that proves it.
 - **The corpus is text, not binary.** Generated case lists hold the
   module bytes hex-encoded, one case per line, with the expected
   verdict. No `.wasm` blobs enter the repository, the data stays
   reviewable in a diff, and no wasm toolchain is needed at test time —
-  `wast2json` is needed only to regenerate the list. If step 21's larger
+  `wast2json` is needed only to regenerate the list. If step 22's larger
   corpus outgrows one line per case, the runner's case reader is the
   only place that changes.
 - **The corpus is vendored ahead of capability.** A case whose verdict
@@ -142,7 +142,7 @@ Marked as provisional per `plan/README.md`; the settled ones move into
   because there is no argv; all the logic lives in the runner module.
 - **The tests run the interpreter.** `emo run` executes the package for
   every rule in this step: it needs no registry for a deps-less package
-  and no opam toolchain, and the corpus is small. Step 21 may move the
+  and no opam toolchain, and the corpus is small. Step 22 may move the
   `wasm_spec` alias to a native build when the corpus and the interpreter
   are both real; the rules are written so that swap is one command.
 
@@ -150,15 +150,15 @@ Marked as provisional per `plan/README.md`; the settled ones move into
 
 Recorded now, decided nowhere: these are the places the runtime works
 around the language, with the evidence the gate would need. They are not
-step 20 tasks, and they are not promises.
+step 21 tasks, and they are not promises.
 
 - **Sequences.** `Array` has no constructor and `.append` copies, so
   collecting *n* items is O(n²) in time and allocation; there is no
   List, Map, or Set. The runtime avoids collecting entirely (cons lists,
-  known lengths, one pass). A real allocator story for EmoOS would want
-  a growable buffer — but Bytes already covers the byte case, and the
-  kernel's other containers are the kernel's to design. Step 21, where
-  the interpreter gets hot loops, is where this should be re-read.
+  known lengths, one pass). A real allocator story would want a
+  growable buffer — but Bytes already covers the byte case. Step 22,
+  where the interpreter gets hot loops, is where this should be
+  re-read.
 - **`catch`.** `CHECK.md` lists the catch form as unsettled. The
   runtime is written to not need it, which costs a bounds check before
   every access. When the form settles, the reader is the one module that
@@ -166,10 +166,10 @@ step 20 tasks, and they are not promises.
 - **Fixed widths.** `Int32` is not in the family yet. The decoder does
   not need it (a u32 fits `Int`, and an i32 payload is stored as its
   unsigned bit pattern); the *interpreter* does, for i32 wrap-around —
-  step 21, per step 19's staging.
+  step 22, per step 20's staging.
 - **argv.** A runtime that cannot be handed a file path is a runtime
   whose test driver has the path compiled in. Fine for a corpus runner,
-  not fine for a CLI. Step 21 decides whether a CLI is a consumer that
+  not fine for a CLI. Step 22 decides whether a CLI is a consumer that
   justifies the primitive.
 
 ## The corpus harness
@@ -197,14 +197,14 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### First, the package stops being inert
 
-- [x] **T20.1** — *The smoke rule.* **(S)** `runtime/wasm/main.emo`
+- [x] **T21.1** — *The smoke rule.* **(S)** `runtime/wasm/main.emo`
       calls `wasm.smoke()` and prints it; `expected.txt` holds the line;
       `runtime/wasm/dune` adds a `(alias runtest)` rule that runs
       `emo run main.emo` in the sandbox and `diff`s stdout against the
       golden. Deps are `{}`, so this needs no registry, no lockfile and
       no native toolchain. Red when `wasm.emo` stops printing its line,
       which is the point.
-- [x] **T20.2** — *The runner and the two drivers.* **(S)** The case-list
+- [x] **T21.2** — *The runner and the two drivers.* **(S)** The case-list
       format and its hex codec, `runtime/wasm/internal/corpus.emo`,
       `runtime/wasm/cli.emo` (read a list, walk it, print verdicts and a
       summary), `main.emo` → `testdata/cases.smoke.txt`, `spec.emo` →
@@ -212,7 +212,7 @@ prefix of this list leaves the repo building and `dune test` green.
       rule on the `wasm_spec` alias. Both lists start empty: the
       acceptance is that both aliases run, `dune test` stays green, and
       the summary reports `pending 0`.
-- [x] **T20.3** — *The vendoring tool and the first corpus.* **(S)**
+- [x] **T21.3** — *The vendoring tool and the first corpus.* **(S)**
       `devtools/vendor-wasm-spec` reads a local wasm-spec checkout
       (revision pinned in `testdata/README.md`), runs
       `wast2json --no-check`, and writes the text case lists; the
@@ -223,74 +223,74 @@ prefix of this list leaves the repo building and `dune test` green.
 
 ### Then the decoder, bottom-up
 
-- [x] **T20.4** — *Failures and the reader.* **(S)** `internal/error.emo`
+- [x] **T21.4** — *Failures and the reader.* **(S)** `internal/error.emo`
       — the diagnosed-failure value (`ok`, `phase`, `offset`, `message`);
       `internal/reader.emo` — a `Bytes` cursor with an offset, `u8` /
       `peek` / `skip` / `remaining`, and a bounds check before every
       access, since the raise it prevents cannot be caught. Fixtures: the
       truncated-read family, claimed from this task on.
-- [x] **T20.5** — *LEB128.* **(S)** `u32` / `u64` / `s32` / `s64`,
+- [x] **T21.5** — *LEB128.* **(S)** `u32` / `u64` / `s32` / `s64`,
       including the spec's length caps: an over-long or over-wide
       encoding is `malformed`, not a wrapped value. `u64` needs `Int64`
       and its explicit conversions; `u32` stays in `Int`. Fixtures:
       `binary-leb128.wast` plus hand-written boundary vectors (2³²−1,
       the sign-extension forms, the too-long forms). Self-contained —
       the best candidate for a short sitting.
-- [x] **T20.6** — *The header and the section walk.* **(M)** Magic,
+- [x] **T21.6** — *The header and the section walk.* **(M)** Magic,
       version, section id and size, the ordering and uniqueness rules,
       custom sections skipped, unknown ids rejected, trailing bytes
       after the last section, sizes that overrun the module.
-- [x] **T20.7** — *The type section, and the model's shape.* **(M)**
+- [x] **T21.7** — *The type section, and the model's shape.* **(M)**
       Value and reference types, function types, limits — and the tag
       tuples and cons lists the rest of the model copies. The
       representation decision in "Provisional decisions" is settled here,
       with the fixture that proves it decodes to what it should.
-- [x] **T20.8** — *The declaration sections.* **(M)** Function, table,
+- [x] **T21.8** — *The declaration sections.* **(M)** Function, table,
       memory, global, import, and export, with their index spaces and
       the export-name uniqueness rule.
-- [x] **T20.9** — *Element, data, and constant expressions.* **(M)**
+- [x] **T21.9** — *Element, data, and constant expressions.* **(M)**
       The constant-expression subset as a decoded expression stream, the
       element type, the data segments, and their bounds.
-- [x] **T20.10** — *The opcode table and the numeric instructions.*
+- [x] **T21.10** — *The opcode table and the numeric instructions.*
       **(M)** The dispatch on the first byte, and the immediates of the
       numeric instructions (`i32.const`, `f64.const`, the reinterpret
       family). Kept to one sitting by taking the table family by family.
-- [x] **T20.11** — *Parametric, variable, and memory instructions.*
+- [x] **T21.11** — *Parametric, variable, and memory instructions.*
       **(M)** `drop` / `select`, `local.*` / `global.*`, and the memory
       instructions with their alignment and offset immediates.
-- [x] **T20.12** — *The structured instructions.* **(M)** `block`,
+- [x] **T21.12** — *The structured instructions.* **(M)** `block`,
       `loop`, `if` / `else` / `end` with their block types, `br`,
       `br_if`, `br_table`, and the matching-`end` bookkeeping that makes
       a function body one well-formed expression. Recursion follows the
       nesting, so the tail-call guarantee carries it.
-- [x] **T20.13** — *The public entry and the valid corpus.* **(S)**
+- [x] **T21.13** — *The public entry and the valid corpus.* **(S)**
       `decode(bytes)` on the package's surface, the decoded module as
       the thing the validator consumes, and the `ok` cases: minimal
       valid modules, including empty and custom-section-only ones.
 
 ### Then the validator
 
-- [x] **T20.14** — *The context and function typing.* **(M)** The
+- [x] **T21.14** — *The context and function typing.* **(M)** The
       validation context (types, functions, tables, memories, globals),
       index-space checks, and function signature agreement.
-- [x] **T20.15** — *The type stack.* **(L)** Operand typing for the
+- [x] **T21.15** — *The type stack.* **(L)** Operand typing for the
       plain instructions, including the numeric rules the spec states
       per opcode.
-- [x] **T20.16** — *Control frames.* **(L)** Block/loop/if typing, label
+- [x] **T21.16** — *Control frames.* **(L)** Block/loop/if typing, label
       depths, branch operand types, and the polymorphic stack after an
       unconditional branch — the part of the spec that is easy to get
       subtly wrong, so its fixtures come first.
-- [x] **T20.17** — *Cross-section rules.* **(M)** Start function,
+- [x] **T21.17** — *Cross-section rules.* **(M)** Start function,
       element/data offsets against declared limits, table and memory
       limits, global initializer typing, and the last `assert_invalid`
       families.
 
 ### Close-out
 
-- [x] **T20.18** — *Corpus sweep and close-out.* **(S)** The `wasm_spec`
+- [x] **T21.18** — *Corpus sweep and close-out.* **(S)** The `wasm_spec`
       alias runs the full list with nothing pending; the smoke list
       carries a representative subset; `runtime/wasm/README.md` states
-      what the package offers and what it refuses; step 20's acceptance
+      what the package offers and what it refuses; step 21's acceptance
       is recorded here and in `docs/TASKS.md` (both languages).
 
 ## Acceptance

@@ -1,4 +1,4 @@
-// The value-model fixture (T21.3): wrap-around, payload round-trips,
+// The value-model fixture (T22.3): wrap-around, payload round-trips,
 // null references, the NaN classes, and the expected-value codec.
 
 def show(label String, text String) Int64 {
