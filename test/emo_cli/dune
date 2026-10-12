@@ -5,6 +5,7 @@
   unix
   threads
   emo_cli
+  emo_project
   emo_support
   emo_eval
   emo_lexer

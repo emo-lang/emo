@@ -1,0 +1,21 @@
+// The errors example's matching half, with no IO in the way: the
+// README's matching shape over the built-in R pair — the tuple's
+// second slot carries the value or the reason, so the pair's type
+// stays uniform. This program is golden byte-for-byte on all six
+// targets — interpreter, c, ocaml, TypeScript, wasm, and riscv64.
+def parse_flag(raw String) (R, String) {
+  if raw == "on" {
+    return (R.ok, "flag is on")
+  }
+  return (R.error, "flag: expected `on`")
+}
+
+case parse_flag("on") {
+  (R.ok, value)  -> { println(value) }
+  (R.error, why) -> { println("read failed: ${why}") }
+}
+
+case parse_flag("off") {
+  (R.ok, value)  -> { println(value) }
+  (R.error, why) -> { println("read failed: ${why}") }
+}

@@ -1140,7 +1140,7 @@ non-empty `data`; `dune test` green.
       riding the case-no-match runtime error; the raise-operand
       discipline at run time; existing goldens re-recorded where the
       uncaught format changed.
-- [ ] **T36.6** — Example and rejections: `examples/errors` — the
+- [x] **T36.6** — Example and rejections: `examples/errors` — the
       README snippets verbatim (ok/error matching, the assert-match
       binding, a violation raising) — golden through `emo run`; the
       matching example golden on all six targets byte-for-byte

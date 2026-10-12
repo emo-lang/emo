@@ -190,6 +190,59 @@ let examples_tests =
           Alcotest.(check string) "output" expected (Buffer.contents out)))
     (example_names ())
 
+(* The README's error-handling snippets, verbatim, through the real
+   `emo run` pipeline: check first, then evaluate. The examples carry no
+   main.emo, so the automatic interpreter golden skips them — matching
+   and binding exit 0, and the violation's raise is the E3010 crash
+   report, exit 1. Each snippet runs from a scratch copy so the
+   project scan never sees the examples tree. *)
+let errors_examples_tests =
+  let run_snippet name =
+    let file = Filename.concat examples_dir ("errors/" ^ name ^ ".emo") in
+    let out = Buffer.create 256 in
+    Emo_eval.set_output (Buffer.add_string out);
+    let exit_code =
+      Fun.protect
+        ~finally:(fun () ->
+          Emo_eval.set_output (fun s ->
+              print_string s;
+              flush stdout))
+        (fun () -> Emo_cli.run_file ~file ~color:false ~error_limit:20)
+    in
+    (exit_code, Buffer.contents out)
+  in
+  [
+    tc "the matching snippet runs verbatim" (fun () ->
+        let exit_code, out = run_snippet "matching" in
+        Alcotest.(check int) "exit" 0 exit_code;
+        Alcotest.(check string) "output" "payload line\n" out);
+    tc "the assert-match binding runs verbatim" (fun () ->
+        let exit_code, out = run_snippet "binding" in
+        Alcotest.(check int) "exit" 0 exit_code;
+        Alcotest.(check string) "output" "13\n" out);
+    tc "the violation raises and the crash report carries the data" (fun () ->
+        let source =
+          read_file (Filename.concat examples_dir "errors/violation.emo")
+        in
+        let file = fixture "errors-violation.emo" source in
+        match
+          Emo_project.run_entry ~entry_file:file ~check:true
+            ~sched:Emo_project.Own ()
+        with
+        | _ -> Alcotest.fail "expected the raise to end the program"
+        | exception Emo_project.Static_errors [ diagnostic ] ->
+            Alcotest.(check string)
+              "code" "E3010"
+              (match diagnostic.Emo_support.Diagnostic.code with
+              | Some c -> c
+              | None -> "");
+            Alcotest.(check bool)
+              "data rides along" true
+              (contains diagnostic.Emo_support.Diagnostic.message
+                 "(data: {\"op\": \"connect\", \"peer\": \"10.0.0.1:443\"})");
+        | exception e -> raise e);
+  ]
+
 (* The WasmGC goldens: compile each subset example with --target wasm
    and run it under Node's WasmGC, byte-for-byte against expected.txt.
    Skips when Node is absent — the runtime is the only WasmGC
@@ -211,6 +264,7 @@ let wasm_goldens =
     "base64_demo";
     "sync_demo";
     "loops";
+    "error_matching";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -235,6 +289,7 @@ let beam_goldens =
     "sync_demo";
     "printf_demo";
     "loops";
+    "error_matching";
   ]
 
 let erl_available =
@@ -445,6 +500,7 @@ let c_goldens =
     "bufio_demo";
     "printf_demo";
     "loops";
+    "error_matching";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
@@ -2013,7 +2069,7 @@ let riscv64_examples_tests =
                    | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
                    (Buffer.contents err))))
-    [ "hello_world"; "fib"; "objects"; "language_tour"; "loops" ]
+    [ "hello_world"; "fib"; "objects"; "language_tour"; "loops"; "error_matching" ]
 
 (* T22.4's honest refusals: a program the checker admits but the
    freestanding backend cannot honor yet exits 65 with a message that
@@ -2100,6 +2156,7 @@ do work()|};
 do work()|},
               "spawn" );
             ("bytes", {|println(Bytes.new(4))|}, "Bytes");
+            ("raise", {|raise Exception.new(message: "boom")|}, "raise");
           ]);
   ]
 
@@ -2270,6 +2327,7 @@ let () =
       ("run", run_tests);
       ("repl", repl_tests);
       ("examples", examples_tests);
+      ("errors_examples", errors_examples_tests);
       ("wasm_examples", wasm_examples_tests);
       ("beam_examples", beam_examples_tests);
       ("c_examples", c_examples_tests);
