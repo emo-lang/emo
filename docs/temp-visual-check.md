@@ -83,14 +83,19 @@ stashed, the same 17 errors appear, so it predates the plot branch; the
 fix is to list the whole `internal/` subtree (or depend on the
 directory) in those rules.
 
-### P2 — `bufio.BytesSink` accumulates quadratically
+### P2 — `bufio.BytesSink` accumulates quadratically — resolved
 
-`BytesSink.write` is `self.acc.replace(self.acc.read() + data)` — a full
-string copy per call, so building a document through it costs time
-quadratic in the bytes written. Noted in `docs/stdlib/bufio.md`; the plot
-renderer therefore needs its own chunked `Buffer` (see the design note's
-"output buffer" decision). The stdlib fix — a chunked sink, joined once —
-is planned but not done.
+`BytesSink.write` was `self.acc.replace(self.acc.read() + data)` — a
+full string copy per call, quadratic in the bytes written.
+
+**Resolved (2026-10-12).** `BytesSink` now keeps chunks in a `List` plus
+a byte count: a write costs the bytes written, and `to_string` copies
+each chunk once into an exact-length buffer. It stays non-draining by
+rotating the deque (pop the front, push it back). `examples/bufio_demo`
+covers repeated `to_string` and a write after it, and the package docs
+say linear. This is a standard-library improvement, not a plot
+prerequisite — the plot renderer keeps its own `Buffer` because `bufio`
+is native-only (`targets = ["ocaml", "c"]`) while `plot` is all five.
 
 ## 3. Resolved this session (for the record)
 
@@ -121,6 +126,6 @@ Commits on `feat/plot`, oldest first:
 - [x] **B2** — a presence enum (`enum Presence { present, absent }`)
       plus a parallel array; recorded in `docs/visualization.md`.
 - [ ] **P1** — fix the `runtime/wasm` rule `deps` so `dune test` is green?
-- [ ] **P2** — make `bufio.BytesSink` chunked (stdlib), or keep the plot
-      package's private `Buffer` only?
+- [x] **P2** — `bufio.BytesSink` is chunked (linear), non-draining, and
+      the docs/demo updated.
 - [ ] Then: the plot T0 skeleton (the design note's sequencing step B).
