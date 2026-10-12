@@ -30,6 +30,8 @@
 | M10 — Target 独立 | 26 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |
 | M11 — For / While 循环 | 34–35 | 已定案的循环面在解释器与全部六个 target 上逐字节运行:`for`(三子句,头部 `var` 作用域限定在循环)与 `while`,搭配裸 `break`/`continue`;循环在任何栈上都不增长;尾调用保证不变。 |
 | M12 — 错误处理 | 36–37 | Erlang 式分界落地:预期内的失败返回 `(R.ok, value)` / `(R.error, reason)`,用 `case` 匹配或用绑定模式断言绑定;违例抛出唯一的 `Exception` 类;stdlib 的 raise 点逐包迁移到新约定——所有 target 逐字节一致,`R` 一并抵达 freestanding 层。 |
+| M13 — 可视化(`plot`) | 39–45 | `plot` 包补齐其 T0 表面(连续轴;line / scatter / area / histogram mark;对数标度、域、图例、网格、主题、调色板、分面)与 T1 数据集图表,随后加入终端与 PNG 渲染器——SVG 输出在全部五个宿主 target 上逐字节一致。 |
+| M14 — 单元测试 | 46 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
 
 ## 设计闸门
 
@@ -167,7 +169,7 @@
 - [x] **T8.9** — `emo check` 命令;接入 `emo run`。
 - [x] **T8.10** — 测试类别:严格类型声明拒绝、推断成功、零误报纸料。
 
-后续:把选定的 `var` 逃逸分析近似方案写进 `docs/`。
+后续:选定的 `var` 逃逸分析近似方案已记于 `docs/var-escape.md`。
 
 ### 步骤 09 — 结构化模块系统 · `plan/step-09-modules.md`
 
@@ -377,7 +379,7 @@
 
 ## M7 — EmoOS
 
-M6 系统层之上的内核路径。近期:unikernel 构建路径——native 后端已输出 OCaml,MirageOS/solo5 一脉证明该栈可引导——以 `foreign def` FFI 作为机器逃生舱(端口 io、asm 垫片),并真正落地 step 14 笔记中的 `core` 库分层。远期:裸机代码生成,与 wasm 引擎分层化是同一笔投入。内核工作开工时撰写各 step 计划。
+M6 系统层之上的内核路径。近期:unikernel 构建路径——native 后端已输出 OCaml,MirageOS/solo5 一脉证明该栈可引导——以 `foreign def` FFI 作为机器逃生舱(端口 io、asm 垫片),并真正落地 step 14 笔记中的 `core` 库分层。远期:裸机代码生成,与 wasm 引擎分层化是同一笔投入。内核工作开工时撰写各 step 计划;裸机代码生成这一步已单独拆出——即下面的 Step 22。
 
 ### Step 22 — RISC-V 目标(裸机 RV64)· `plan/step-22-riscv64.md`
 
@@ -446,12 +448,14 @@ M6 系统层之上的内核路径。近期:unikernel 构建路径——native �
 **前置:** 步骤 25(本步骤要修正其表述的工具链)。
 **完成标准:** 没有任何 target 从二进制旁或宿主构建树读取运行时——c、ocaml、typescript 的运行时以生成数据随编译器内嵌,wasm 与 beam 的在发射模块内;`emo build --target ocaml` 在任何 OCaml 工具链在 PATH 上的安装形态下可用,无 `.cmxa` 查找、无安装形态条件分支;typescript target 在发布布局下可用;全部金测逐字节;`dune test` 全绿。
 
-- [x] **T26.1** — 原则与 ts 内嵌:运行时独立原则记入 `CHECK.md`;ts 前奏以内嵌生成数据(C runtime 的 dune 规则模式)分发,typescript 分支停止读文件系统。验证:孤零零的发布布局二进制能编译 typescript 程序;ts 金测逐字节。
-- [x] **T26.2** — 发射代码清单与独立骨架:经 ocaml 发射器发射金测子集,机械收集发射代码引用的每个宿主符号,把清单记为独立运行时的契约;骨架以纯 `ocamlopt` 编译——零 `emo_*` 依赖——由仅从构建目录出发的 fixture 证明。
-- [x] **T26.3** — 值与标量核心:值 ADT、字符串、print/插值渲染、算术/比较分派,以及清单点名的 case/错误路径,全部独立化。每片由仅对独立运行时编译的 fixture 覆盖。
-- [x] **T26.4** — 调度器与 IO:基于 effects 的调度器、文件 IO 与网络面,按依赖策略执行(核心用 OCaml 标准库加 `unix`;`ssl` 为唯一 opam 依赖;不用 eio)。Fixture:进程程序与 HTTP 往返,均仅对独立运行时编译。
-- [x] **T26.5** — 切换:ocaml 发射器的引用翻转到独立运行时;分支发射运行时 + `main.ml` 并调用 `ocamlopt`(ocamlfind 只为运行时自己的包);`.cmxa` 机制、库扫描与二进制旁查找删除;拒绝与 doctor 措辞改为与安装形态无关。全部 ocaml 金测与测试逐字节;带 OCaml 工具链的安装二进制构建金测子集。
-- [x] **T26.6** — 独立性审计与收尾:wasm 与 beam 记录为验证独立(无任务——证据在案);文档修正(`docs/toolchain.md`、`docs/toolchain-distribution.md`——用真实的 ocaml target 故事取代"源码安装带来 ocaml target");`benchmarks/results.md` 的 ocaml 列对独立运行时复测;收尾。 (2026-10-07 完成:wasm 与 beam 的证据记入 plan;两份工具链文档双语更正,doctor 删除 installation 行;基准套件在独立运行时上复测,ocaml 行落在机器观测噪声带内;plan 状态记为 done。步骤 26 于 2026-10-07 完成——任何 target 都不从二进制旁或宿主构建树读取运行时,ocaml target 在 OCaml 工具链在 PATH 的任何安装形态下可用,全部金测逐字节,`dune test` 全绿。)
+- [x] **T26.1** — 原则与 ts 内嵌:运行时独立原则记入 `CHECK.md`;ts 前奏以内嵌生成数据(C runtime 的 dune 规则模式)分发,typescript 分支停止读文件系统。验证:孤零零的发布布局二进制能编译 typescript 程序;ts 金测逐字节。 (2026-10-07 完成:前奏作为生成数据随 `emo_codegen/ts` 内嵌,CLI 不再为它触碰文件系统;孤立二进制能编译并运行 typescript 程序;七个 ts 金测全绿。)
+- [x] **T26.2** — 发射代码清单与独立骨架:经 ocaml 发射器发射金测子集,机械收集发射代码引用的每个宿主符号,把清单记为独立运行时的契约;骨架以纯 `ocamlopt` 编译——零 `emo_*` 依赖——由仅从构建目录出发的 fixture 证明。 (2026-10-07 完成:两个模块、七十余个符号作为契约记入 plan,由 `devtools/ocaml-runtime-inventory.sh` 在十六个示例的金测语料上机械收集,并带游离模块告警;骨架随 ADT、信号与 effects 定型落地。)
+- [x] **T26.3** — 值与标量核心:值 ADT、字符串、print/插值渲染、算术/比较分派,以及清单点名的 case/错误路径,全部独立化。每片由仅对独立运行时编译的 fixture 覆盖。 (2026-10-07 完成:五个按发射器调用形状编写的 fixture 程序,以 `ocamlopt -open Emo_ocaml_runtime` 仅对抽出的运行时编译。)
+- [x] **T26.4** — 调度器与 IO:基于 effects 的调度器、文件 IO 与网络面,按依赖策略执行(核心用 OCaml 标准库加 `unix`;`ssl` 为唯一 opam 依赖;不用 eio)。Fixture:进程程序与 HTTP 往返,均仅对独立运行时编译。 (2026-10-07 完成:det 调度器整体移植——spawn/send/receive、fd 与定时器停靠、TLS、UDP、文件 IO;eio 退出,策略落定为 unix 加 ssl;另有四个 fixture 骑在调度器上。)
+- [x] **T26.5** — 切换:ocaml 发射器的引用翻转到独立运行时;分支发射运行时 + `main.ml` 并调用 `ocamlopt`(ocamlfind 只为运行时自己的包);`.cmxa` 机制、库扫描与二进制旁查找删除;拒绝与 doctor 措辞改为与安装形态无关。全部 ocaml 金测与测试逐字节;带 OCaml 工具链的安装二进制构建金测子集。 (2026-10-07 完成:该分支写出运行时 + `main.ml`,并用目标自己的 ocamlopt 编译;cmxa 机制、库扫描与二进制旁查找全部删除;十六个金测逐字节一致,发射的 `main.ml` 不变;孤立的发布布局二进制能构建金测子集。)
+- [x] **T26.6** — 独立性审计与收尾:wasm 与 beam 记录为验证独立(无任务——证据在案);文档修正(`docs/toolchain.md`、`docs/toolchain-distribution.md`——用真实的 ocaml target 故事取代"源码安装带来 ocaml target");`benchmarks/results.md` 的 ocaml 列对独立运行时复测;收尾。 (2026-10-07 完成:wasm 与 beam 的证据记入 plan;两份工具链文档双语更正,doctor 删除 installation 行;基准套件在独立运行时上复测,ocaml 行落在机器观测噪声带内;plan 状态记为 done。)
+
+步骤 26 完成(2026-10-07,T26.1–T26.6 于 `feat/target-independence`):没有任何 target 从二进制旁或宿主构建树读取运行时;ocaml target 在 OCaml 工具链在 PATH 上的任何安装形态下、用孤立的发布布局二进制即可工作;typescript target 亦然;全部金测逐字节,`dune test` 全绿。
 
 ### Step 27 — 标准库:`json` · `plan/step-27-stdlib-json.md`
 
@@ -562,13 +566,13 @@ Step 34 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 - [x] **T35.1** — IR:循环语句进入 `emo_ir` 的 `stmt` 与 Ast→IR 降低——头部 `var` 降为循环作用域的可变绑定;一套节点,每个后端一个分支。(2026-10-11 完成;赋值降低改为最内层优先,头部 `var` 正确遮蔽同名模块级 `var`。)
 - [x] **T35.2** — c:发射出的 C 自带的 `while`/`for` 与原生 `break`/`continue`;循环内的 `return` 走既有的分支到收尾路径。(2026-10-11 完成;`for` 用 `while(1)` 加 continue 标签使 post 先行;顺带修复动态重绑先释放后求值的未定义行为。)
 - [x] **T35.3** — ocaml:原生 `while`/`for` 配既有的 `ref` 纪律表达头部 `var`;`break`/`continue` 经 plan 文件记录的唯一机制降低(done 标记或本地异常——落定,绝不静默回退)。(2026-10-11 完成;机制落定为每循环一对局部异常 `Break_N`/`Continue_N`。)
-- [x] **T35.4** — typescript:发射体内原生 `while`/`for`;`break`/`continue` 用目标语言自己的。(2026-10-11 完成;自尾调用的 driver 循环加 `__emo_driver` 标签;顺带修复 `stmts` 链先发尾部后发头部的预存发射顺序 bug。)
-- [x] **T35.5** — wasm:结构化控制流——`Loop` 加条件上的 `Br_if`;`break` 分支出循环块,`continue` 到循环头,post 子句先行执行。(2026-10-11 完成;`for` 用 `$post` 块包住 body 使 continue 先跑 post;语句级 if 与 case 分派计入分支深度。)
-- [x] **T35.6** — beam:循环降为尾递归的局部函数——条件守卫、循环体、带重绑变量的递归调用;`break` 穿线一个 done 标记。(2026-10-11 完成;循环体读或写的全部外层绑定经参数线程化;体发射为尾链,跳转永不落在 scrutinee 或 do 首位;顺带修复单语句 `Assign_var` 先注册影子后求值的预存 bug。)
-- [x] **T35.7** — riscv64:标号与条件分支——循环头是标号,`break`/`continue` 是跳转。(2026-10-11 完成;`for` 在 body 与回跳之间放 post 标签,continue 落在 post 上。)
-- [x] **T35.8** — 金测与基准:`examples/loops` 上全部六个 target 金测列表;`benchmarks/results.md` 在 `loops_tail` 旁新增纯循环一行;CI 各组;收尾。(2026-10-11 完成;riscv64 补齐 `/` 与 `%`——`div`/`rem` 加零除中止——使示例可启动。)
+- [x] **T35.4** — typescript:发射体内原生 `while`/`for`;`break`/`continue` 用目标语言自己的。(2026-10-11 完成。顺带修复循环金测暴露的预存后端 bug:`stmts` 在链头之前发射链的其余部分——sprintf 参数从右往左求值——导致 `var` 的 ref 注册落在需要它的语句之后;现在链头先行发射。自尾调用的 driver 循环获得 `__emo_driver` 标签,使循环内的尾调用续接 driver,而不是 Emo 循环。)
+- [x] **T35.5** — wasm:结构化控制流——`Loop` 加条件上的 `Br_if`;`break` 分支出循环块,`continue` 到循环头,post 子句先行执行。(2026-10-11 完成。`for` 降为 `block $exit { init; loop $head { test; br_if $exit; block $post { body } post; br $head } }`,因此 `continue` 落在 post 上、`break` 越过它离开;语句级 if 与 case 分派都会跟踪帧深度,使嵌套控制流内部的分支深度保持相对正确。)
+- [x] **T35.6** — beam:循环降为尾递归的局部函数——条件守卫、循环体、带重绑变量的递归调用;`break` 穿线一个 done 标记。(2026-10-11 完成。每个循环是一个隐藏的模块函数,除头部 `var` 外还接收循环体读取或赋值的全部外层绑定,并在线程化的递归调用间传递;done 标志标记 `break`,`continue` 先执行 post。循环体发射为尾链——if 把其余部分编进自己的分支,跳转截断其后的死代码——因此每次跳转都是真正的尾调用;Core Erlang 的 `do` 只对其最后一个操作数做尾调用。)(另修复:单语句 `Assign_var` 路径在求值之前就注册了遮蔽绑定,导致 `n = n + 1` 读到它正在定义的那个变量。)
+- [x] **T35.7** — riscv64:标号与条件分支——循环头是标号,`break`/`continue` 是跳转。(2026-10-11 完成。`while` 是 `head: test; beqz exit; body; j head`;`for` 在 body 与回跳之间放一个 post 标签,因此 `continue` 落在 post 上、`break` 越过它离开。头部 `var` 是一个帧槽,沿用既有纪律。值堆那套无回收 arena——与循环之前的尾递归惯用法共用——仍为长跑程序划界;本任务未改动它。)
+- [x] **T35.8** — 金测与基准:`examples/loops` 上全部六个 target 金测列表;`benchmarks/results.md` 在 `loops_tail` 旁新增纯循环一行;CI 各组;收尾。(2026-10-11 完成。riscv64 target 补齐 `/` 与 `%`——`div`/`rem` 加零除中止——使示例能在该处启动;纯循环基准在 c target 与解释器之侧记录了 ocaml target 按构造即为动态的数字。)
 
-Step 35 收尾(2026-10-11,`feat/loops` 分支):循环语句在全部六个 target 上完成降低,每任务一次提交。各 target 的机制与英文版收尾一致;`examples/loops` 在全部六个 target 与解释器上金测通过,纯循环基准行记录了 ocaml target 按构造即为动态的数字。
+步骤 35 收尾(2026-10-11,`feat/loops` 分支):循环语句在全部六个 target 上完成降低,每任务一次提交。IR 承载 While/For/Break/Continue,头部 `var` 是循环作用域的可变绑定;赋值降低按最内层优先解析,使头部 `var` 在同名模块级 `var` 之下仍更新自身。c 发射自己的 `while` 与一个 `while(1)` 形式,其 continue 标签执行 post;ocaml 采用 ref 纪律,每循环一对局部异常;typescript 用目标原生的 `for`,并为尾调用加一个带标签的 driver 循环;wasm 降为 block/loop/br_if 加一个 post 块;beam 把每个自由变量经一个隐藏的递归函数线程化,配 done 标志;riscv64 用标签与跳转——并补齐 `/` 与 `%` 使示例可启动。`examples/loops` 在全部六个 target 加解释器上金测通过,纯循环基准行在 c target 之侧记录了 ocaml target 按构造即为动态的数字。
 
 ## M12 — 错误处理
 
@@ -605,3 +609,106 @@ Step 35 收尾(2026-10-11,`feat/loops` 分支):循环语句在全部六个 targe
 - [x] **T38.1** — `Box.new` 类型化为 `Box[T]`:在 `List.new`/`Map.new` 之侧补上构造器特判,`read`/`replace` 按单元类型受查,其余成员——包括裸成员访问——在检查期拒绝(裸 `x.v` 分歧;此前 stdlib 的 Box 状态完全失察)。接收者一旦带上类型,两处 c 侧预存偏差随即现形:`emo_box_replace` 返回 box 本身,而其余所有 target 都返回新值(已对齐);发射器的内建 `to_string` 臂劫持了静态类型的实例接收者,打印调试 repr 而不调用类自己的方法(实例先按类分派,无同名方法时才走内建转换)。
 - [x] **T38.2** — 跨模块值签名:def 与 foreign 按声明的 `FuncType`、const/var 按初始化表达式的类型、`emo` 组进程序级注册表——全部在类型表之侧预注册。限定调用经 `check_apply` 受查;裸成员读取要么解析出类型、要么静态报 E5004;组成员获得类型(此前连同模块的裸 `Math.tau` 都是 Unknown);局部名遮蔽同名模块,与运行时规则一致。顺带落地两个预存 bug:`longest_module_prefix` 走的是路径的后缀而非前缀;空点路径被当成模块前缀——任何非简单接收者上的裸成员访问(`foo(1).field`)恒为 Unknown。
 - [x] **T38.3** — 项目检查下,解析不到任何类型、组或模块的大驼峰值名在书写处报 E4003(运行时携带值的内建名保持合法);单文件视图保持旧的沉默,与它看不见的所有跨文件缺口一致。json/yaml 接口声明 `get`(自引用签名;json 补齐四个标量类的 raise 型变体,与类已有的回答一致)。checker 与 project 测试;CHECK.md 条目;全部 target 金测绿。
+
+---
+
+## M13 — 可视化(`plot`)
+
+T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上逐字节一致,构建在内部 `Buffer`、标度/刻度、带 `SvgRenderer` 的 `Renderer` 接口,以及声明式的 `figure`/`axes`/`mark` 值之上。数值底座与 `math` 包(sequencing A)已完成。本 milestone 完成设计的 sequencing B–E:T0 表面的其余部分、`Table` 与通道(channels)、T1 数据集图表,最后是终端与 PNG 渲染器。设计与定案记录在 `docs/visualization.md`;包当前表面在 `docs/stdlib/plot.md`;本工作触及的语言使能项在 `docs/temp-visual-check.md`。范围之外(decision 9):交互/GUI 图表、EmoUI 画布、3D、动画。每个步骤的 plan 文件在步骤启动时编写。
+
+### Step 39 — 绘图所需的编译器与语言使能项
+
+与绘图各步骤相互独立;每一项要么解除下面工作的阻塞,要么降低其风险。
+**完成标准:** 使能项自身的测试通过,且受影响的绘图代码用上它。
+
+- [ ] **T39.1** — 精确类型化 `self.field`(`docs/temp-visual-check.md` 的 R2)并同步发射器,使 mark 的样式字段不必再扁平存储。今天在动态接收者上读取原生类型字段仍会被装箱,而发射器只按表达式的静态类型来决定原生/动态路径。
+- [ ] **T39.2** — 与内建方法同名的类方法不被遮蔽(R3)。`to_string` 已修;`length` 未修。
+- [ ] **T39.3** — `math` 的可选原生快路径:在 `c`/`ocaml` 上分设 `*_native` 的 `foreign def` 函数(`math.exp` 纯净且逐字节一致,`math.exp_native` 为钉定的快路径;decision 15),并记明其 target 钉定。
+- [ ] **T39.4** — 归档并修复绘图 spike 撞上的 `ocaml` 特化缺陷(`non-native expression in specialized body`、`Type_ref`),使特化后的原生体与解释器下降结果一致。
+
+### Step 40 — T0 收尾:连续轴与其余 mark
+
+**前置:** Step 39 可选(T39.1 让样式类更好写)。
+**完成标准:** `examples/plot_demo` 增加 line/scatter/area/histogram 面板,并在全部五个 target 上逐字节一致;`dune test` 全绿。
+
+- [ ] **T40.1** — 把 `Mark` 接口从分类式的 `y_max`/`bands`/`x_labels` 扩展出去(连续的 x 与 y 范围、`y_min`、`DrawContext` 所需的点/线图元),并让 `Bar` 保持首个实现。
+- [ ] **T40.2** — `plot.mark.line` 与 `LineStyle`。
+- [ ] **T40.3** — `plot.mark.scatter` 与 `ScatterStyle`。
+- [ ] **T40.4** — `plot.mark.area` 与 `AreaStyle`。
+- [ ] **T40.5** — `plot.mark.hist`(分箱计数)与 `HistStyle`。
+- [ ] **T40.6** — `Axes` 绘制:连续 x 标度、从每个 mark 的范围推断出的 y 域,以及逐 mark 分派(取代今天只支持柱的 `first_labels`/`bands` 路径)。
+- [ ] **T40.7** — 示例与金测:每个新 mark 一张图,全部五个 target 逐字节。
+
+### Step 41 — 图形保真:标度、域、图例、网格、主题、颜色
+
+**前置:** Step 39–40。
+**完成标准:** T0 值已声明的每个字段都被渲染出来——对数标度、域、网格、图例、主题——且 `DrawContext` 按 `Renderer` 接口类型化,而非 `SvgRenderer`。
+
+- [ ] **T41.1** — `Scale.log`:对数轴,刻度位置与格式正确。
+- [ ] **T41.2** — `Domain.auto` / `Domain.fixed`:`Axes` 上的域字段,以及从 mark 推断(decision 19)。
+- [ ] **T41.3** — `with_legend` 的图例渲染(decision 20 的绘制顺序规则;分面(faceting)下共用一份图例,T41.7)。
+- [ ] **T41.4** — 从 `Figure.grid` 渲染网格,由主题的网格样式驱动。
+- [ ] **T41.5** — `Theme` 作为 `Figure` 上的值(背景与前景,网格/轴/标题/标签样式,调色板、colormap、间距、默认尺寸;decision 24),配 `with_theme`。
+- [ ] **T41.6** — 调色板与 colormap(decision 21/24):在 `Float64` 中插值,`color` 通道按列的类型分派,`plot.rgb` 校验 0–255 范围。
+- [ ] **T41.7** — 分面(faceting,decision 23):排序后的水平、行 × 列、默认 `Share.all`、一份图例、逐面板标签、水平不匹配处留空格。
+- [ ] **T41.8** — 把 `DrawContext` 与具体 `SvgRenderer` 解耦:按 `internal` 的 `Renderer` 接口类型化,好让终端或栅格渲染器接入(Steps 44–45 的前置)。
+
+### Step 42 — Table 与通道
+
+**前置:** Step 40。
+**完成标准:** `plot.table` / `plot.table_missing` 构建出经校验的 `Table`,图表层通过词表解析通道。
+
+- [ ] **T42.1** — `enum Presence { present, absent }` 与用于缺失数字的并行 `Map[String, Array[Presence]]`,统计跳过 `absent` 项(decision 25)。
+- [ ] **T42.2** — `plot.table(numbers, labels)` 与 `plot.table_missing(numbers, presence, labels)`:列式 `Table`,形状违例抛出(decision 4/10)。
+- [ ] **T42.3** — 通道 `Map[String, String]`(decision 16):词表 `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,未知通道报错,每族只读它支持的通道。
+
+### Step 43 — T1 数据集图表
+
+**前置:** Step 41–42。
+**完成标准:** decision 17 里的每个 `plot.*` 图表都在 T0 mark 上实现,fixture 在全部五个 target 上逐字节一致。
+
+- [ ] **T43.1** — 统计:描述统计、分箱、KDE、ECDF、箱线统计,以及带置信带的 OLS;`normal_quantile` 与 `normal_cdf` 作为 `plot` 内部(decision 13)。
+- [ ] **T43.2** — 关系型:`plot.scatter`、`plot.line`、`plot.reg`。
+- [ ] **T43.3** — 分布型:`plot.hist`、`plot.kde`、`plot.ecdf`、`plot.box`、`plot.violin`。
+- [ ] **T43.4** — 分类型:`plot.bar`、`plot.count`、`plot.strip`、`plot.point`。
+- [ ] **T43.5** — 矩阵型:`plot.heatmap`、`plot.clustermap`。
+- [ ] **T43.6** — 在图表层应用分面、调色板与主题;示例与逐字节金测。
+
+### Step 44 — 终端渲染器
+
+**前置:** Step 41(T41.8 的 `Renderer` 解耦)。
+**完成标准:** 同一张图经同一份 Layer 0 值图渲染到终端,证明契约与格式无关。
+
+- [ ] **T44.1** — 一个 Unicode `Renderer` 实现(mark 用方块或盲文、文本标签),位于 `internal` 的 `Renderer` 接口之后。
+- [ ] **T44.2** — 经 CLI/示例路径接入,并测试同一张图既能经 SVG 也能经终端渲染。
+
+### Step 45 — PNG 渲染器
+
+**前置:** Step 44。
+**完成标准:** `plot.png(fig)` 在全部五个 target 上从同一份值图产出合法 PNG,不依赖宿主图像库。
+
+- [ ] **T45.1** — 纯 Emo 的 DEFLATE,stored blocks。
+- [ ] **T45.2** — Fixed-Huffman DEFLATE、CRC32 与 Adler-32。
+- [ ] **T45.3** — 带超采样的扫描线多边形/线段光栅化器。
+- [ ] **T45.4** — 经 Hershey 笔画字体的文本。
+- [ ] **T45.5** — `plot.png(fig)`、其示例与金测。
+
+---
+
+## M14 — 单元测试
+
+`feat/unit-test` 上定案的测试面(2026-10-12):项目根部的 `test/` 目录——其中每个 `.emo` 文件都是测试文件,每个顶层 `def test_*` 都是一个测试——断言做成内建(`expect_equal` / `expect_true` / `expect_false` / `expect_fail`),失败时抛出唯一的 `Exception` 类,由 OCaml 运行器逐个测试捕获(Emo 没有 catch,运行器是唯一能截获 raise 的地方)。不新增任何语法构造。本分支上工作已经开始:T46.1–T46.5 与 T46.7 的部分实现留在树中尚未评审——各自按下面的任务定义补齐完成,而不是按现状直接并入。
+
+### Step 46 — 单元测试框架:`emo test` 与 `expect_*` 内建
+
+**前置:** 无(基于 develop)。
+**完成标准:** 在带 `test/` 目录的项目里 `emo test` 运行每个 `def test_*`,逐测试报告 pass/fail/error 与捕获的输出,按退出码族退出 0/1/65;`expect_*` 内建在解释器中抛出真正的 `Exception`,在编译 target 上诚实地拒绝;`emo new` 脚手架带一个通过的测试;`dune test` 全绿。
+
+- [x] **T46.1** — 解释器中的 `expect_*` 内建:在 `global_env` 注册、`apply_builtin` 分派,经 `expect_raise` 辅助函数抛出(沿用 `net_raise` 先例——真正的 `Exception` 实例;消息点名断言本身,`expect_equal` 渲染双方值);元数错误 E3007 / 类型错误 E3001 沿用现有内建风格。eval 测试:通过与失败路径、消息渲染、错误码。
+- [x] **T46.2** — checker + IR 表面:checker 的 `empty_env` 补 `expect_*` 签名(Unknown 值参数、Void 返回——`println` 模式),`is_builtin` 加 `expect_` 前缀族,使编译程序引用这些名字时得到各后端的标配诚实拒绝(riscv 对所有内建统一拒绝;c / ocaml / ts / wasm / beam 在内建分派穷尽处补拒绝臂)。checker 测试覆盖签名。
+- [x] **T46.3** — 求值器加 `reset_output`:默认输出槽具名化,`set_output` 重定向后可恢复(运行器的逐测试输出捕获)。
+- [x] **T46.4** — `emo_project` 的运行器核心:`prepare_root`(在工作目录发现、从那里找 manifest)、`test_outcome` / `test_result` 类型,以及 `run_tests`——先全树检查(静态错误经 `Static_errors` 抛出),按首段 `test/` 选出测试模块,从模块 env 收集 `def test_*`(仅 `ArrowBlock`;带参数的 `test_*` 是收集错误,绝不调用),每个测试在独立的 `Emo_sched_det.run` 中运行,输出捕获后恢复;`Emo_raise` 判 failed,`Emo_eval.Error` 判 errored。project 测试:混合结果、收集错误、无 `test/` 目录、测试模块中的静态错误。
+- [x] **T46.5** — `emo test` 子命令:报告(每测试一行,失败时附渲染的诊断与捕获的输出,末尾汇总行)、退出码 0/1/65、注册进根命令组、帮助文本写明约定。CLI 测试:一个全通过项目与一个失败项目,端到端。
+- [x] **T46.6** — `emo new` 脚手架补 `test/greet.emo`(一个通过的 `test_greet`,内建无需 manifest 依赖),提示语提到 `emo test`;脚手架金测同步更新。
+- [x] **T46.7** — `examples/test_demo/`:一个小模块、`test/` 下全通过的测试、供金测 harness 使用的 `expected.txt`;协调逐 target 金测构建(它们会降级树中每个模块——在 `expect_*` 于编译 target 拒绝期间,示例的测试模块不能把编译金测弄红)。
+- [x] **T46.8** — 文档:README 增加 Testing 一节(约定、命令、内建、raise 只失败当前一个测试),并同步 `docs/zh-CN/README.zh-CN.md` 镜像。

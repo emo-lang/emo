@@ -163,10 +163,7 @@ let run_program source =
   let buf = Buffer.create 64 in
   Emo_eval.set_output (Buffer.add_string buf);
   Fun.protect
-    ~finally:(fun () ->
-      Emo_eval.set_output (fun s ->
-          print_string s;
-          flush stdout))
+    ~finally:Emo_eval.reset_output
     (fun () -> Emo_eval.run_program ~file:"test.emo" ~source);
   Buffer.contents buf
 
@@ -1182,6 +1179,57 @@ printf(fmt(), [])|}
           (contains_substring diagnostic.Diagnostic.message "unknown conversion"));
   ]
 
+(* ---- expect: the test assertions ---- *)
+
+let expect_tests =
+  [
+    tc "expect_equal passes silently on structural equality" (fun () ->
+        Alcotest.(check string)
+          "silent" ""
+          (run_program {|expect_equal([1, [2, "x"]], [1, [2, "x"]])|}));
+    tc "expect_true and expect_false pass silently" (fun () ->
+        Alcotest.(check string)
+          "silent" ""
+          (run_program
+             {|expect_true(1 + 1 == 2)
+expect_false(1 + 1 == 3)|}));
+    tc "expect_equal failure raises with both renderings" (fun () ->
+        let diagnostic = program_err {|expect_equal(3, 1 + 1)|} in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check bool)
+          "message" true
+          (contains_substring diagnostic.Diagnostic.message
+             "expect_equal: expected 3, got 2"));
+    tc "expect_true failure names the value" (fun () ->
+        let diagnostic = program_err {|expect_true(false)|} in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check bool)
+          "message" true
+          (contains_substring diagnostic.Diagnostic.message
+             "expect_true: got false"));
+    tc "expect_false failure names the value" (fun () ->
+        let diagnostic = program_err {|expect_false(true)|} in
+        Alcotest.(check bool)
+          "message" true
+          (contains_substring diagnostic.Diagnostic.message
+             "expect_false: got true"));
+    tc "expect_fail always raises, carrying the message" (fun () ->
+        let diagnostic = program_err {|expect_fail("boom")|} in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check bool)
+          "message" true
+          (contains_substring diagnostic.Diagnostic.message "boom"));
+    tc "expect_true rejects a non-Bool" (fun () ->
+        let diagnostic = program_err {|expect_true(1)|} in
+        Alcotest.(check string) "code" "E3001" (code_of diagnostic));
+    tc "expect_fail rejects a non-String message" (fun () ->
+        let diagnostic = program_err {|expect_fail(42)|} in
+        Alcotest.(check string) "code" "E3001" (code_of diagnostic));
+    tc "expect_equal rejects a wrong argument count" (fun () ->
+        let diagnostic = program_err {|expect_equal(1)|} in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic));
+  ]
+
 let loop_tests =
   [
     tc "the worked for loop prints each step" (fun () ->
@@ -1287,4 +1335,5 @@ let () =
       ("to_string", to_string_tests);
       ("object_acceptance", object_acceptance_tests);
       ("printf", printf_tests);
+      ("expect", expect_tests);
     ]

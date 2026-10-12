@@ -1709,6 +1709,207 @@ println(sqrt(4.0))|}
               "line" 1 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
   ]
 
+(* ---- Step 46: the `emo test` runner core ----
+
+   Scratch projects run through [Emo_project.run_tests] with the scratch
+   directory as the working directory; outcomes come back as values. *)
+
+let run_tests_in files =
+  let scratch = write_project files in
+  Sys.chdir scratch;
+  Emo_project.run_tests ()
+
+let result_named name (results : Emo_project.test_result list) =
+  match
+    List.find_opt
+      (fun (r : Emo_project.test_result) ->
+        String.equal r.Emo_project.t_name name)
+      results
+  with
+  | Some r -> r
+  | None -> Alcotest.fail ("no result for " ^ name)
+
+let main_add =
+  ( "main.emo",
+    {|def add(a Int64, b Int64) Int64 {
+  return a + b
+}
+|} )
+
+let test_runner_tests =
+  [
+    tc "pass, fail, and error classify per test" (fun () ->
+        let results =
+          run_tests_in
+            [
+              main_add;
+              ( "test/arith.emo",
+                {|def test_pass() {
+  expect_equal(2, main.add(1, 1))
+}
+
+def test_fail() {
+  expect_equal(3, main.add(1, 1))
+}
+
+def test_error() {
+  println(List.new([]).pop_front())
+}
+|} );
+            ]
+        in
+        Alcotest.(check int) "three results" 3 (List.length results);
+        (match (result_named "test_pass" results).Emo_project.t_outcome with
+        | Emo_project.Passed -> ()
+        | _ -> Alcotest.fail "test_pass should pass");
+        (match (result_named "test_fail" results).Emo_project.t_outcome with
+        | Emo_project.Failed d ->
+            Alcotest.(check string)
+              "code" "E3010"
+              (match d.Diagnostic.code with Some c -> c | None -> "?");
+            Alcotest.(check bool)
+              "message" true
+              (contains_substring d.Diagnostic.message
+                 "expect_equal: expected 3, got 2")
+        | _ -> Alcotest.fail "test_fail should fail");
+        match (result_named "test_error" results).Emo_project.t_outcome with
+        | Emo_project.Errored d ->
+            Alcotest.(check string)
+              "code" "E3004"
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | _ -> Alcotest.fail "test_error should error");
+    tc "a test's output is captured per test" (fun () ->
+        let results =
+          run_tests_in
+            [
+              main_add;
+              ( "test/out.emo",
+                {|def test_loud_fail() {
+  println("about to fail")
+  expect_equal(3, main.add(1, 1))
+}
+
+def test_quiet() {
+  expect_equal(2, main.add(1, 1))
+}
+|} );
+            ]
+        in
+        Alcotest.(check string)
+          "captured" "about to fail\n"
+          (result_named "test_loud_fail" results).Emo_project.t_output;
+        Alcotest.(check string)
+          "no leak" ""
+          (result_named "test_quiet" results).Emo_project.t_output);
+    tc "a parameterized test is a collection error, never a call" (fun () ->
+        let results =
+          run_tests_in
+            [
+              main_add;
+              ( "test/param.emo",
+                {|def test_takes_args(x Int64) {
+  expect_equal(x, main.add(x, 0))
+}
+
+def test_fine() {
+  expect_equal(2, main.add(1, 1))
+}
+|} );
+            ]
+        in
+        (match (result_named "test_takes_args" results).Emo_project.t_outcome
+        with
+        | Emo_project.Errored d ->
+            Alcotest.(check string)
+              "code" "E5008"
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | _ -> Alcotest.fail "a parameterized test should error");
+        match (result_named "test_fine" results).Emo_project.t_outcome with
+        | Emo_project.Passed -> ()
+        | _ -> Alcotest.fail "the sibling test still runs");
+    tc "a project without test/ runs nothing" (fun () ->
+        let results = run_tests_in [ main_add ] in
+        Alcotest.(check int) "empty" 0 (List.length results));
+    tc "a root-level test.emo file is not a test module" (fun () ->
+        let results =
+          run_tests_in
+            [
+              main_add;
+              ( "test.emo",
+                {|def test_file() {
+  expect_equal(2, main.add(1, 1))
+}
+|} );
+            ]
+        in
+        Alcotest.(check int) "empty" 0 (List.length results));
+    tc "a static error in a test module stops the run" (fun () ->
+        match
+          run_tests_in
+            [
+              main_add;
+              ( "test/broken.emo",
+                {|def test_x() {
+  println(nope)
+}
+|} );
+            ]
+        with
+        | _ -> Alcotest.fail "expected Static_errors"
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.(check bool)
+              "some diagnostic" true (List.length ds > 0));
+    tc "a module that raises at load errors as <load>" (fun () ->
+        let results =
+          run_tests_in
+            [
+              main_add;
+              ( "test/boom.emo",
+                {|raise Exception.new(message: "load boom")
+
+def test_never() {
+  expect_equal(2, main.add(1, 1))
+}
+|} );
+              ( "test/fine.emo",
+                {|def test_ok() {
+  expect_equal(2, main.add(1, 1))
+}
+|} );
+            ]
+        in
+        (match (result_named "<load>" results).Emo_project.t_outcome with
+        | Emo_project.Errored d ->
+            Alcotest.(check bool)
+              "message" true
+              (contains_substring d.Diagnostic.message "load boom")
+        | _ -> Alcotest.fail "the load raise should error");
+        (match (result_named "test_ok" results).Emo_project.t_outcome with
+        | Emo_project.Passed -> ()
+        | _ -> Alcotest.fail "the next module still runs");
+        if
+          List.exists
+            (fun (r : Emo_project.test_result) ->
+              String.equal r.Emo_project.t_name "test_never")
+            results
+        then Alcotest.fail "test_never must not run");
+    tc "the test_demo example's tests pass" (fun () ->
+        let examples =
+          match Sys.getenv_opt "EMO_EXAMPLES_DIR" with
+          | Some dir -> from_original_cwd dir
+          | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
+        in
+        Sys.chdir (Filename.concat examples "test_demo");
+        let results = Emo_project.run_tests () in
+        Alcotest.(check int) "two tests" 2 (List.length results);
+        List.iter
+          (fun (r : Emo_project.test_result) ->
+            match r.Emo_project.t_outcome with
+            | Emo_project.Passed -> ()
+            | _ -> Alcotest.fail (r.Emo_project.t_name ^ " should pass"))
+          results);
+  ]
+
 (* ---- Step 13 bootstrap: the examples/ suite as compiled binaries ----
    Every example runs through the interpreter and through `emo build`,
    and both outputs must match the example's golden file byte-for-byte. *)
@@ -2154,6 +2355,7 @@ let () =
       ("deps", deps_tests);
       ("install", install_tests);
       ("sched", sched_tests);
+      ("test_runner", test_runner_tests);
       ("shop_golden", shop_golden_tests);
       ("stdlib_http", stdlib_http_tests);
       ("ffi", ffi_tests);

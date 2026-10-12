@@ -606,6 +606,31 @@ let empty_env =
           } );
         ("self_pid", { vtype = FuncType ([], Pid); is_var = false; depth = 0 });
         ("halt", { vtype = FuncType ([], Unknown); is_var = false; depth = 0 });
+        ( "expect_equal",
+          {
+            vtype =
+              FuncType ([ ("expected", Unknown); ("actual", Unknown) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "expect_true",
+          {
+            vtype = FuncType ([ ("value", Unknown) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "expect_false",
+          {
+            vtype = FuncType ([ ("value", Unknown) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "expect_fail",
+          {
+            vtype = FuncType ([ ("message", String) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
         ( "net_connect",
           {
             vtype =

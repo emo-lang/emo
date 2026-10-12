@@ -1,0 +1,11 @@
+// Tests for main.emo's arithmetic — run them with `emo test`.
+
+def test_add() {
+  expect_equal(3, main.add(1, 2))
+  expect_equal(-1, main.add(-3, 2))
+}
+
+def test_is_even() {
+  expect_true(main.is_even(4))
+  expect_false(main.is_even(5))
+}

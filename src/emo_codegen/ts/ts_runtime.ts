@@ -1800,6 +1800,11 @@ const E: any = {
   truthy: (b: any) => b === true,
   println,
   printf,
+  builtin(name: string, _args: any[]): never {
+    throw new Error(
+      "builtin `" + name + "` is not available on the typescript target",
+    );
+  },
   interpolate: (items: any[]) => items.map(toStr).join(""),
   toStr,
 

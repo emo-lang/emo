@@ -1066,6 +1066,28 @@ printf(fmt(), ["anything"])|}
         Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
   ]
 
+(* ---- expect: the test assertions ---- *)
+
+let expect_tests =
+  [
+    tc "expect calls check clean on any values" (fun () ->
+        let diagnostics =
+          check
+            {|expect_equal([1, "x"], [1, "x"])
+expect_true(1 == 1)
+expect_false(1 == 2)
+expect_fail("boom")|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "expect_equal arity is two" (fun () ->
+        let diagnostics = check {|expect_equal(1)|} in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+    tc "expect_fail's message is a String" (fun () ->
+        let diagnostics = check {|expect_fail(42)|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+  ]
+
 (* The cross-module rule (CHECK.md, settled 2026-10-10): every module's
    type declarations pre-register before any module is checked, and a
    name's second declaration is a loud collision. *)
@@ -1913,6 +1935,7 @@ let () =
       ("map", map_tests);
       ("corpus", corpus_tests);
       ("printf", printf_tests);
+      ("expect", expect_tests);
       ("box", box_tests);
       ("member_signature", member_signature_tests);
       ("cross_module", cross_module_tests);
