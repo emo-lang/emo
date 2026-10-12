@@ -29,24 +29,24 @@ package {
 ## The surface
 
 ```emo
-def read(path String) String
-def write(path String, contents String) Int64
+def read(path String) (R, String)
+def write(path String, contents String) (R, Int64)
 ```
 
-`read` answers the file's bytes. A missing or unreadable file raises
-an ordinary Emo exception whose message names the path and the
-reason — `cannot read notes.txt: No such file or directory`.
+`read` answers the file's bytes, or `(R.error, reason)` — the reason a
+String naming the path and what the kernel said:
+`file: cannot read notes.txt: No such file or directory`.
 
 `write` creates or truncates the path, writes every byte of
 `contents`, and answers how many were written — always all of them,
-or the failure raises. Unwritable paths raise the same way.
+or the failure as the error tuple. Unwritable paths fail the same way.
 
 ## Paths
 
 Paths are taken as given: a relative path resolves against the
 process's working directory, which `os.getcwd` reads and `os.chdir`
 moves. `file` does no path normalization and no permission checks of
-its own — what the kernel says, the exception says.
+its own — what the kernel says, the reason says.
 
 ## When to reach lower
 

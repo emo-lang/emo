@@ -596,7 +596,7 @@ Step 35 收尾(2026-10-11,`feat/loops` 分支):循环语句在全部六个 targe
 - [x] **T37.2** — `json` + `yaml`(+ `internal/float`):解析与访问器失败返回元组——最大的两处,约 150 个点。
 - [x] **T37.3** — `xml` + `base64` + `bufio` + `slog` + `http` + `sync`:同样的分界;`http` 的连接被拒/解析失败/超期按 README 网络节改为元组。(`xml`/`base64` 的解码失败与 `net` 全表面返回元组;`bufio`/`slog`/`sync` 保留 raise——每一处都是调用方失误。)
 - [x] **T37.4** — 金测:每个被触及包的错误路径 fixture 重录为匹配 `(R.error, why)`;包金测在全部声明 target 上全绿。
-- [ ] **T37.5** — 文档:`docs/stdlib/` 各包页面(及中文镜像)措辞 raise → 返回;错误消息表更新。
+- [x] **T37.5** — 文档:`docs/stdlib/` 各包页面(及中文镜像)措辞 raise → 返回;错误消息表更新。
 
 ### Step 38 — 检查器严格化:Box 类型化与跨模块值签名
 

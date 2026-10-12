@@ -11,11 +11,11 @@
 // `|` and folded `>` block scalars with clip/strip/keep chomping, and
 // an optional leading `---`.
 //
-// Not supported (each raises): anchors, aliases, tags, multi-document
-// input, multi-line plain/quoted scalars and multi-line flow, and
-// tabs in indentation. Double-quoted scalars accept the YAML escape
-// set (a superset of JSON's). Mapping keys are strings; integers
-// outside Int64 refuse.
+// Not supported (each answers `(R.error, reason)` from `decode`):
+// anchors, aliases, tags, multi-document input, multi-line
+// plain/quoted scalars and multi-line flow, and tabs in indentation.
+// Double-quoted scalars accept the YAML escape set (a superset of
+// JSON's). Mapping keys are strings; integers outside Int64 refuse.
 
 // The exact-decimal float machinery lives beside the module.
 const float = internal.float

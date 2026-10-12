@@ -63,20 +63,22 @@ write one in another. Paths are taken as given (relative paths
 resolve against the process's working directory).
 
 ```emo
-def read(path String) String
-def write(path String, contents String) Int64
+def read(path String) (R, String)
+def write(path String, contents String) (R, Int64)
 ```
 
-`read` answers the file's bytes; a missing or unreadable file raises.
-`write` creates or truncates, writes every byte, and answers how many
-were written. For anything streamed, buffered, or appended, use `os`
-and `bufio` underneath — `file` is the one-shot shape.
+`read` answers the file's bytes, or `(R.error, reason)` when the file
+is missing or unreadable. `write` creates or truncates, writes every
+byte, and answers how many were written. For anything streamed,
+buffered, or appended, use `os` and `bufio` underneath — `file` is the
+one-shot shape.
 
 ```emo
 require "file"
 
-file.write("notes.txt", "hello from disk\n")
-println(file.read("notes.txt"))
+const (R.ok, n) = file.write("notes.txt", "hello from disk\n")
+const (R.ok, text) = file.read("notes.txt")
+println(text)
 ```
 
 Reference: [`docs/stdlib/file.md`](stdlib/file.md) · Demo:
@@ -92,33 +94,33 @@ can build anything else.
 ```emo
 def getpid() Int64
 def getppid() Int64
-def fork() Int64
+def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
 def execv(path String, argv Array[String]) Void
 def _exit(status Int64) Void
 
-def pipe() (Int64, Int64)
+def pipe() (R, (Int64, Int64))
 
-def open_read(path String) Int64
-def open_write(path String) Int64
-def open_append(path String) Int64
-def read(fd Int64, n Int64) String
-def write(fd Int64, data String) Int64
-def close(fd Int64) Int64
+def open_read(path String) (R, Int64)
+def open_write(path String) (R, Int64)
+def open_append(path String) (R, Int64)
+def read(fd Int64, n Int64) (R, String)
+def write(fd Int64, data String) (R, Int64)
+def close(fd Int64) (R, Int64)
 
-def list_dir(path String) Array[String]
-def mkdir(path String) Int64
-def rmdir(path String) Int64
-def unlink(path String) Int64
-def rename(old_path String, new_path String) Int64
+def list_dir(path String) (R, Array[String])
+def mkdir(path String) (R, Int64)
+def rmdir(path String) (R, Int64)
+def unlink(path String) (R, Int64)
+def rename(old_path String, new_path String) (R, Int64)
 def getcwd() String
-def chdir(path String) Int64
+def chdir(path String) (R, Int64)
 ```
 
-`fork()` returns twice — `0` in the child, the child's pid in the
-parent — and the child leaves through `_exit`. `waitpid(pid)` answers
-`(pid, status)` with the kernel's raw 16-bit status word, decoded by
-the `wait_exited` / `wait_exit_code` / `wait_signaled` /
+`fork()` answers `(R.ok, pid)` — the child sees `0`, the parent the
+child's pid — and the child leaves through `_exit`. `waitpid(pid)`
+answers `(pid, status)` with the kernel's raw 16-bit status word,
+decoded by the `wait_exited` / `wait_exit_code` / `wait_signaled` /
 `wait_signal` / `wait_stopped` / `wait_stop_signal` helpers.
 `open_write` creates or truncates, `open_append` creates or appends;
 `read` answers up to `n` bytes and the empty string at end of file.
@@ -202,18 +204,19 @@ readable layer of Emo source over the runtime's network builtins.
 Direct style: a blocking call reads like any other function call, and
 the scheduler parks the process while the socket is busy. Every
 failure — refused connection, unresolvable name, exceeded deadline —
-raises with the peer, the operation, and the reason.
+comes back as `(R.error, reason)`, the reason naming the peer, the
+operation, and what went wrong.
 
 ```emo
-def resolve(host String) Array[String]
-def connect(host String, port Int64, timeout Float64) TcpConn
-def listen(host String, port Int64) TcpListener
-def connect_unix(path String, timeout Float64) TcpConn
-def listen_unix(path String) TcpListener
-def tls_connect(host String, port Int64, timeout Float64) TcpConn
-def tls_connect_insecure(host String, port Int64, timeout Float64) TcpConn
-def listen_tls(host String, port Int64, cert_path String, key_path String) TcpListener
-def udp_bind(host String, port Int64) UdpSocket
+def resolve(host String) (R, Array[String])
+def connect(host String, port Int64, timeout Float64) (R, TcpConn)
+def listen(host String, port Int64) (R, TcpListener)
+def connect_unix(path String, timeout Float64) (R, TcpConn)
+def listen_unix(path String) (R, TcpListener)
+def tls_connect(host String, port Int64, timeout Float64) (R, TcpConn)
+def tls_connect_insecure(host String, port Int64, timeout Float64) (R, TcpConn)
+def listen_tls(host String, port Int64, cert_path String, key_path String) (R, TcpListener)
+def udp_bind(host String, port Int64) (R, UdpSocket)
 ```
 
 Timeouts are seconds; `0.0` waits indefinitely. `tls_connect` verifies
@@ -221,29 +224,29 @@ the peer certificate against the system trust store;
 `tls_connect_insecure` is the explicit, visibly dangerous opt-out.
 
 ```emo
-conn.read_line()          // String — one line, without the terminator
-conn.read_exactly(n)      // String — exactly n bytes
-conn.read_all()           // String — everything until the peer closes
-conn.write(data)          // TcpConn — returns itself, so writes chain
-conn.close()              // TcpConn
+conn.read_line()          // (R, String) — one line, without the terminator
+conn.read_exactly(n)      // (R, String) — exactly n bytes
+conn.read_all()           // (R, String) — everything until the peer closes
+conn.write(data)          // (R, TcpConn) — chain through the (R.ok, conn)
+conn.close()              // (R, TcpConn)
 conn.set_timeout(seconds) // TcpConn
 
-listener.accept()         // TcpConn — parks until a connection arrives
+listener.accept()         // (R, TcpConn) — parks until a connection arrives
 listener.port()           // Int64 — the bound port
-listener.close()          // TcpListener
+listener.close()          // (R, TcpListener)
 listener.set_timeout(seconds)
 
-socket.send_to(host, port, data) // UdpSocket — returns itself
-socket.recv_from()               // (String, String, Int64) — data, host, port
+socket.send_to(host, port, data) // (R, UdpSocket)
+socket.recv_from()               // (R, (String, String, Int64)) — data, host, port
 socket.port()                    // Int64
-socket.close()                   // UdpSocket
+socket.close()                   // (R, UdpSocket)
 socket.set_timeout(seconds)
 ```
 
-EOF is never a silent partial result: `read_exactly` raises when the
-peer closes early, a close mid-line is an error, and `read_all` is
-the one read that treats EOF as normal. A Unix-domain listener has no
-port — `port()` on one is an error.
+EOF is never a silent partial result: `read_exactly` fails with its
+reason when the peer closes early, a close mid-line is the error
+tuple, and `read_all` is the one read that treats EOF as normal. A
+Unix-domain listener has no port — `port()` on one is an error.
 
 Targets: `["ocaml", "c"]`. Reference:
 [`docs/stdlib/net.md`](stdlib/net.md) · Demo: `examples/tcp_echo`.
@@ -255,11 +258,11 @@ throughout; one connection per request, closed after the exchange;
 redirects are never followed — a 3xx is a response like any other.
 
 ```emo
-def get(url String) HttpResponse
-def post(url String, body String) HttpResponse
-def put(url String, body String) HttpResponse
-def delete(url String) HttpResponse
-def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) HttpResponse
+def get(url String) (R, HttpResponse)
+def post(url String, body String) (R, HttpResponse)
+def put(url String, body String) (R, HttpResponse)
+def delete(url String) (R, HttpResponse)
+def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
 ```
 
 The URL must carry an explicit `http://` or `https://` scheme;
@@ -291,7 +294,7 @@ handler's `HttpResponse` back, and closes. Most handlers want
 require "http"
 require "net"
 
-const listener = net.listen("127.0.0.1", 8902)
+const (R.ok, listener) = net.listen("127.0.0.1", 8902)
 
 http.serve_requests(listener) -> (req HttpRequest) {
   return http.response(200, [("Content-Type", "text/plain")], "hello from emo\n")
@@ -343,10 +346,11 @@ def array(items Array[Json]) Json
 def object(entries Array[(String, Json)]) Json
 ```
 
-Decode raises with the byte offset on every malformation; nesting
-deeper than 512 raises rather than betting the stack. Floats encode
-in the shortest round-trip form and stay visibly floats (`1.0`, never
-`1`), so encode → decode → encode is the identity, value and kind.
+`decode` answers `(R.ok, doc)` or `(R.error, reason)` — the reason
+carrying the byte offset on every malformation, nesting deeper than
+512 included. Floats encode in the shortest round-trip form and stay
+visibly floats (`1.0`, never `1`), so encode → decode → encode is the
+identity, value and kind.
 
 Targets: all five — byte-identical answers on every one. Reference:
 [`docs/stdlib/json.md`](stdlib/json.md) · Demos: `examples/json_demo`,
@@ -360,7 +364,7 @@ back in block style. The packages are independent — requiring yaml
 does not require json.
 
 ```emo
-def decode(text String) Yaml
+def decode(text String) (R, Yaml)
 def encode(v Yaml) String
 ```
 
@@ -376,8 +380,8 @@ Decode covers block mappings and sequences (including the compact
 escape set, comments, `|`/`>` block scalars with chomping, and plain
 scalars resolved per the core schema (`null`/`~`, booleans, decimal
 and `0x`/`0o` integers, floats including `.inf`/`.nan`). Anchors and
-aliases, tags, multi-document input, and tabs in indentation raise
-with the byte offset.
+aliases, tags, multi-document input, and tabs in indentation come
+back as `(R.error, reason)` with the byte offset.
 
 Targets: all five. Reference: [`docs/stdlib/yaml.md`](stdlib/yaml.md)
 · Demos: `examples/yaml_demo`, `examples/yaml_edge`.
@@ -390,7 +394,7 @@ numbers or booleans, and all text children are kept, so
 `encode(decode(x))` reproduces the tree.
 
 ```emo
-def decode(text String) Xml
+def decode(text String) (R, Xml)
 def encode(v Xml) String
 ```
 
@@ -419,7 +423,8 @@ order, attributes are unique with quoted values, exactly one root —
 and skips the declaration, comments, processing instructions, and a
 DOCTYPE without an internal subset; CDATA decodes as raw text; the
 five predefined entities plus `&#ddd;` / `&#xhh;` references decode
-everywhere. Every failure raises with the byte offset.
+everywhere. Every failure comes back as `(R.error, reason)` with the
+byte offset.
 
 Targets: all five. Reference: [`docs/stdlib/xml.md`](stdlib/xml.md)
 · Demos: `examples/xml_demo`, `examples/xml_edge`.
@@ -432,7 +437,7 @@ with the same bytes.
 
 ```emo
 def encode(data String) String
-def decode(text String) String
+def decode(text String) (R, String)
 ```
 
 `encode` always emits the standard alphabet with `=` padding.
@@ -440,8 +445,8 @@ def decode(text String) String
 alphabet only, padding only in the final quantum, and the padding
 bits the RFC requires to be zero really must be zero — `QR==` is a
 mistake, not a synonym of `QQ==`. No whitespace tolerance and no
-line-wrap acceptance; every rejection raises with the offending byte
-offset.
+line-wrap acceptance; every rejection comes back as
+`(R.error, reason)` with the offending byte offset.
 
 Targets: all five. Reference:
 [`docs/stdlib/base64.md`](stdlib/base64.md) · Demo:

@@ -10,9 +10,10 @@ dependency resolution refuses it on every other target.
 Networking is **direct style**: a blocking call reads like any other
 function call, and the scheduler parks the process while the socket is
 busy. There is no `async`/`await` and no callback registration. Every
-failure — a refused connection, an unresolvable name, an exceeded deadline,
-a closed socket — raises an ordinary Emo exception whose message names the
-peer, the operation, and the reason.
+failure — a refused connection, an unresolvable name, an exceeded
+deadline, a closed socket — comes back as `(R.error, reason)`: the
+reason a String naming the operation, the peer, and what went wrong.
+Match it; don't let it crash the process.
 
 ## Using the package
 
@@ -38,73 +39,75 @@ package {
 ## Functions
 
 ```emo
-net.resolve(host)                                   // Array[String]
-net.connect(host, port, timeout)                    // TcpConn
-net.listen(host, port)                              // TcpListener
-net.connect_unix(path, timeout)                     // TcpConn
-net.listen_unix(path)                               // TcpListener
-net.tls_connect(host, port, timeout)                // TcpConn
-net.tls_connect_insecure(host, port, timeout)       // TcpConn
-net.listen_tls(host, port, cert_path, key_path)     // TcpListener
-net.udp_bind(host, port)                            // UdpSocket
+net.resolve(host)                                   // (R, Array[String])
+net.connect(host, port, timeout)                    // (R, TcpConn)
+net.listen(host, port)                              // (R, TcpListener)
+net.connect_unix(path, timeout)                     // (R, TcpConn)
+net.listen_unix(path)                               // (R, TcpListener)
+net.tls_connect(host, port, timeout)                // (R, TcpConn)
+net.tls_connect_insecure(host, port, timeout)       // (R, TcpConn)
+net.listen_tls(host, port, cert_path, key_path)     // (R, TcpListener)
+net.udp_bind(host, port)                            // (R, UdpSocket)
 ```
 
-- `net.resolve(host)` resolves a name to its IP addresses as strings, and
-  raises `` cannot resolve host `...` `` when DNS yields nothing. Numeric
-  addresses resolve to themselves.
+- `net.resolve(host)` resolves a name to its IP addresses as strings;
+  when DNS yields nothing the answer is the error tuple
+  (``cannot resolve host `...` ``). Numeric addresses resolve to
+  themselves.
 - `net.connect(host, port, timeout)` resolves the host and connects,
-  returning a `TcpConn`. `timeout` is in seconds; `0.0` waits indefinitely.
-  A refused connection raises `connection refused to host:port`.
-- `net.listen(host, port)` binds and listens, returning a `TcpListener`.
-  Port `0` asks the kernel for a free port; read it back with
-  `listener.port()`.
+  answering the `TcpConn`. `timeout` is in seconds; `0.0` waits
+  indefinitely. A refused connection is the error tuple
+  (`connection refused to host:port`).
+- `net.listen(host, port)` binds and listens, answering a
+  `TcpListener`. Port `0` asks the kernel for a free port; read it
+  back with `listener.port()`.
 - `net.connect_unix(path, timeout)` and `net.listen_unix(path)` are the
   Unix-domain pair; a Unix listener has no port.
 - `net.tls_connect` connects with TLS and **verifies the peer certificate
   against the system trust store** — a self-signed certificate fails the
-  handshake, closed. `net.tls_connect_insecure` skips verification; it is
-  the explicit, visibly dangerous opt-out, meant for tests and
-  self-signed development setups.
+  handshake, as the error tuple. `net.tls_connect_insecure` skips
+  verification; it is the explicit, visibly dangerous opt-out, meant
+  for tests and self-signed development setups.
 - `net.listen_tls(host, port, cert_path, key_path)` serves TLS from a PEM
-  certificate/key pair; unloadable certificates raise a precise error
-  (`` cannot load the TLS certificate for ... ``).
+  certificate/key pair; unloadable certificates fail with a precise
+  reason (``cannot load the TLS certificate for ... ``).
 - `net.udp_bind(host, port)` binds a datagram socket; port `0` picks a free
   one.
 
 ## Connections: `TcpConn`
 
 ```emo
-conn.read_line()          // String — one line, without the terminator
-conn.read_exactly(n)      // String — exactly n bytes
-conn.read_all()           // String — everything until the peer closes
-conn.write(data)          // TcpConn — returns itself, so writes chain
-conn.close()              // TcpConn
+conn.read_line()          // (R, String) — one line, without the terminator
+conn.read_exactly(n)      // (R, String) — exactly n bytes
+conn.read_all()           // (R, String) — everything until the peer closes
+conn.write(data)          // (R, TcpConn) — chain through the (R.ok, conn)
+conn.close()              // (R, TcpConn)
 conn.set_timeout(seconds) // TcpConn — bounds the operations that follow
 ```
 
 - **EOF is never a silent partial result.** `read_line` strips the `\n`
-  (and a `\r` before it); a clean close at a line boundary returns `""`,
-  but a close **mid-line is an error**
-  (`the connection to ... closed mid-line`). `read_exactly(n)` raises when
-  the peer closes early (`closed after M of N bytes`). `read_all` is the
-  one read that treats EOF as normal: it delivers everything that arrived,
-  empty included.
+  (and a `\r` before it); a clean close at a line boundary returns
+  `(R.ok, "")`, but a close **mid-line is the error tuple**
+  (`the connection to ... closed mid-line`). `read_exactly(n)` fails
+  with its reason when the peer closes early (`closed after M of N
+  bytes`). `read_all` is the one read that treats EOF as normal: it
+  delivers everything that arrived, empty included.
 - `write(data)` writes the whole string (bytes, not characters — Emo
-  strings are byte strings) and returns the connection, so
-  `conn.write(a).write(b)` chains. A graceful `close()` delivers pending
-  writes first.
+  strings are byte strings) and answers the connection, so writes
+  chain through the destructured `(R.ok, conn)`. A graceful `close()`
+  delivers pending writes first.
 - `set_timeout(seconds)` sets a **per-operation** deadline for the reads
   and writes that follow: the budget is computed when each operation
   starts, and a multi-step read honors one budget. `0.0` — the default —
   means no timeout; a negative value is an error. An exceeded deadline
-  raises `timed out ...`.
+  is the error tuple (`timed out ...`).
 
 ## Listeners: `TcpListener`
 
 ```emo
-listener.accept()           // TcpConn — the next connection
+listener.accept()           // (R, TcpConn) — the next connection
 listener.port()             // Int64 — the bound port
-listener.close()            // TcpListener
+listener.close()            // (R, TcpListener)
 listener.set_timeout(seconds)
 ```
 
@@ -116,40 +119,58 @@ connection timeouts bound reads.
 ## Datagrams: `UdpSocket`
 
 ```emo
-socket.send_to(host, port, data)  // UdpSocket — returns itself
-socket.recv_from()                // (String, String, Int64) — data, host, port
+socket.send_to(host, port, data)  // (R, UdpSocket)
+socket.recv_from()                // (R, (String, String, Int64)) — data, host, port
 socket.port()                     // Int64
-socket.close()                    // UdpSocket
+socket.close()                    // (R, UdpSocket)
 socket.set_timeout(seconds)
 ```
 
-`recv_from()` waits for one datagram and returns it as a
-`(data, host, port)` tuple — destructure it with `case`. `send_to`
-resolves the host by name on every call.
+`recv_from()` waits for one datagram and answers it as
+`(R.ok, (data, host, port))` — destructure it twice, the outer `case`
+for the failure, the inner tuple for the payload. `send_to` resolves
+the host by name on every call.
 
 ## Examples
 
 A TCP echo round-trip in one program — the server runs in its own process
-(`do`), the client talks to it:
+(`do`), the client talks to it. Failures destructure; the happy paths
+ride `(R.ok, ...)`:
 
 ```emo
 require "net"
 
 def echo_once(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  conn.write("echo: " + conn.read_line() + "\n")
-  conn.close()
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write("echo: ${line}\n")
+          conn.close()
+        }
+      }
+    }
+  }
   return 0
 }
 
-const listener = net.listen("127.0.0.1", 0)
+const (R.ok, listener) = net.listen("127.0.0.1", 0)
 do echo_once(listener)
 
-const conn = net.connect("127.0.0.1", listener.port(), 5.0)
-conn.set_timeout(5.0)
-conn.write("hello\n")
-println(conn.read_line())  // echo: hello
-conn.close()
+case net.connect("127.0.0.1", listener.port(), 5.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.set_timeout(5.0)
+    conn.write("hello\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }  // echo: hello
+    }
+    conn.close()
+  }
+}
 ```
 
 UDP, both ends on loopback:
@@ -157,12 +178,13 @@ UDP, both ends on loopback:
 ```emo
 require "net"
 
-const a = net.udp_bind("127.0.0.1", 0)
-const b = net.udp_bind("127.0.0.1", 0)
+const (R.ok, a) = net.udp_bind("127.0.0.1", 0)
+const (R.ok, b) = net.udp_bind("127.0.0.1", 0)
 
 a.send_to("127.0.0.1", b.port(), "ping")
 case b.recv_from() {
-  (data, host, port) -> {
+  (R.error, why)       -> { println("recv failed: ${why}") }
+  (R.ok, (data, host, port)) -> {
     println(data + " from " + host + ":" + port.to_string())
   }
 }
@@ -177,19 +199,30 @@ clients use `net.tls_connect`, which verifies):
 require "net"
 
 def serve(listener TcpListener) Int64 {
-  const conn = listener.accept()
-  conn.write("secure: " + conn.read_line() + "\n")
-  conn.close()
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      conn.write("secure: hello\n")
+      conn.close()
+    }
+  }
   return 0
 }
 
-const listener = net.listen_tls("127.0.0.1", 0, "tls-cert.pem", "tls-key.pem")
+const (R.ok, listener) = net.listen_tls("127.0.0.1", 0, "tls-cert.pem", "tls-key.pem")
 do serve(listener)
 
-const conn = net.tls_connect_insecure("localhost", listener.port(), 5.0)
-conn.write("hello\n")
-println(conn.read_line())  // secure: hello
-conn.close()
+case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }  // secure: hello
+    }
+    conn.close()
+  }
+}
 ```
 
 ## Limitations

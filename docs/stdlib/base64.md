@@ -30,17 +30,17 @@ package {
 
 ```emo
 def encode(data String) String
-def decode(text String) String
+def decode(text String) (R, String)
 ```
 
 `encode` always emits the standard alphabet (`A-Z a-z 0-9 + /`) with
 `=` padding, in groups of four characters per three bytes. `decode`
-answers the exact bytes the text names.
+answers the exact bytes the text names, or the failure as a value.
 
 ## Strictness
 
 The decoder accepts exactly what the encoder produces — anything else
-is a mistake and raises, with the offending byte offset:
+comes back as `(R.error, reason)`, with the offending byte offset:
 
 - the standard alphabet only, `=` padding only in the final quantum;
 - the final quantum holds two or three data characters (never one,
@@ -50,18 +50,16 @@ is a mistake and raises, with the offending byte offset:
 
 There is no whitespace tolerance and no line-wrap acceptance: a
 wrapped message is joined by the caller before it is decoded. Every
-rejection raises an ordinary Emo exception —
-`base64: non-zero padding bits at byte 1` — no error codes, no nil.
+rejection is an ordinary value, never a crash — the reason reads
+`base64: non-zero padding bits at byte 1`; no error codes, no nil.
 
 ## Errors
 
-```emo
-def err: base64: <what> at byte <offset>
-```
-
-The offset names the first byte where the input stops being valid
-base64 — the offending character, the first misplaced `=`, or the
-position where the final quantum runs out.
+The reason is a String with the package prefix and the first offending
+byte: `base64: <what> at byte <offset>`. The offset names the first
+byte where the input stops being valid base64 — the offending
+character, the first misplaced `=`, or the position where the final
+quantum runs out.
 
 ## The vectors
 

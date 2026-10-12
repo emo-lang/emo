@@ -82,8 +82,10 @@ class FdReader {
   }
 
   def read(n Int64) String {
-    const (R.ok, text) = os.read(self.fd, n)
-    return text
+    case os.read(self.fd, n) {
+      (R.error, why) -> { raise Exception.new(message: why) }
+      (R.ok, text)   -> { return text }
+    }
   }
 }
 
@@ -94,8 +96,10 @@ class FdWriter {
   }
 
   def write(data String) Int64 {
-    const (R.ok, put) = os.write(self.fd, data)
-    return put
+    case os.write(self.fd, data) {
+      (R.error, why) -> { raise Exception.new(message: why) }
+      (R.ok, put)    -> { return put }
+    }
   }
 }
 

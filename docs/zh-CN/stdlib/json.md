@@ -41,7 +41,7 @@ def as_string() String
 数组与对象的容器挂在具体类上,通过 `is()` 收窄到类之后读取:
 
 ```emo
-const doc = json.decode(text)
+const (R.ok, doc) = json.decode(text)
 if doc.is(JsonObject) {
   println(doc.get("name").as_string())
   println(doc.get("tags").items().length())
@@ -58,16 +58,16 @@ if doc.is(JsonObject) {
 ## 解码
 
 ```emo
-def decode(text String) Json
+def decode(text String) (R, Json)
 ```
 
 严格、字节级、遵循 RFC 8259:重复键在 `get` 里后者获胜,前导零与
-尾逗号拒绝,`\uXXXX` 转义连同代理对一起解码成 UTF-8,一切失败都带
-字节偏移抛出——`json: expected array element at byte 3`。嵌套超过
-512 层时抛出,而不是赌栈不会爆。能装进 `Int64` 的整数解码为
-`JsonInt`;带小数或指数的一律解码为 `JsonFloat`,只做一次舍入,
-就近取偶——与 `strtod` 同一答案。越界的数字(`1e400`)抛出,而不是
-凭空造一个无穷大。
+尾逗号拒绝,`\uXXXX` 转义连同代理对一起解码成 UTF-8。一切非法输入——
+包括嵌套超过 512 层、数字超出 `Int64` 或浮点范围——都以
+`(R.error, reason)` 返回,而不是凭空造一个值:reason 是 String,
+写明到底哪里失败、在第几个字节——`json: expected array element at
+byte 3`。能装进 `Int64` 的整数解码为 `JsonInt`;带小数或指数的一律
+解码为 `JsonFloat`,只做一次舍入,就近取偶——与 `strtod` 同一答案。
 
 ## 编码
 
@@ -99,6 +99,8 @@ println(json.encode_pretty(doc))
 
 ## 错误
 
-遵循标准库的约定,一切失败——输入非法、键缺失、访问器类别不符、
-数字越界、浮点非有限——都抛出普通的 Emo 异常,写明到底哪里失败
-(解码时还带字节偏移)。没有错误码,没有 nil。
+分界遵循标准库的约定。非法输入——数据可以是任何东西——是 `decode`
+返回的值 `(R.error, reason)`,reason 是 String,写明到底哪里失败
+(解码时还带字节偏移):用 `case` 匹配它,不要猜。访问器类别不符、
+键缺失、把非有限浮点交给 `encode`,是调用方对文档的错误断言——
+这些抛出,终结进程。没有错误码,没有 nil。

@@ -32,7 +32,7 @@ package {
 应答其字符,对元素拒绝。容器挂在元素类上,通过 `is()` 收窄读取:
 
 ```emo
-const doc = xml.decode(text)
+const (R.ok, doc) = xml.decode(text)
 if doc.is(XmlElement) {
   println(doc.name())
   println(doc.attr("id"))
@@ -52,15 +52,17 @@ if doc.is(XmlElement) {
 ## 解码
 
 ```emo
-def decode(text String) Xml
+def decode(text String) (R, Xml)
 ```
 
 严格并做良构性检查:元素按序嵌套闭合,闭合标签必须匹配,属性唯一
 且带引号,文档恰好一个根。声明、注释、处理指令、无内部子集的
 DOCTYPE 会被跳过;CDATA 段按原始文本解码;五个预定义实体加上
 `&#ddd;` / `&#xhh;` 字符引用在文本与属性值里都会解码。名字按字面
-处理——前缀保留在名字里,不做命名空间解析。一切失败都带字节偏移
-抛出。
+处理——前缀保留在名字里,不做命名空间解析。一切失败——闭合标签
+不匹配、属性重复、未知实体、构造未闭合——都以 `(R.error, reason)`
+返回,reason 是 String,写明到底哪里失败、在第几个字节:
+``xml: closing tag `a` does not match `b` at byte 8``。
 
 ## 编码
 
@@ -86,6 +88,8 @@ println(xml.encode(note))
 
 ## 错误
 
-遵循标准库的约定,一切失败——标记非法、闭合标签不匹配、属性重复、
-未知实体、元素或属性缺失——都抛出普通的 Emo 异常,写明到底哪里失败
-(解码时还带字节偏移)。没有错误码,没有 nil。
+分界遵循标准库的约定。非法标记——数据可以是任何东西——是 `decode`
+返回的值 `(R.error, reason)`,reason 是 String,写明到底哪里失败
+(解码时还带字节偏移):用 `case` 匹配它,不要猜。元素或属性缺失,
+是调用方对文档的错误断言——这些抛出,终结进程。没有错误码,没有
+nil。

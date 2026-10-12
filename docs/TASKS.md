@@ -1172,7 +1172,7 @@ golden green on its declared targets; `dune test` green.
 - [x] **T37.4** — Goldens: every touched package's error-path
       fixtures re-recorded to match `(R.error, why)`; package goldens
       green on all declared targets.
-- [ ] **T37.5** — Docs: the per-package pages under `docs/stdlib/`
+- [x] **T37.5** — Docs: the per-package pages under `docs/stdlib/`
       (and the zh-CN mirrors) reworded raise → returns; error-message
       tables updated.
 
