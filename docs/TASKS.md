@@ -38,8 +38,8 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M11 — For / While loops | 34–35 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
 | M12 — Error handling | 36–37 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
 | M13 — The standard library | 39–46 | The bundled stdlib packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the native-binding `sqlite3` — each resolving against the manifest's `targets`, answering byte-for-byte on every target it declares, and shipping a full API reference plus a runnable golden. |
-| M14 — Visualization (`plot`) | 39–45 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
-| M15 — Unit testing | 46 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
+| M14 — Visualization (`plot`) | 47–53 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
+| M15 — Unit testing | 54 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
 
 ## Design gates
 
@@ -1255,136 +1255,136 @@ work touches in `docs/temp-visual-check.md`. Out of scope (decision 9):
 interactive/GUI charts, an EmoUI canvas, 3D, animation. Each step's plan
 file is written when the step starts.
 
-### Step 39 — Compiler and language enablers for plotting
+### Step 47 — Compiler and language enablers for plotting
 
 Independent of the plot steps; each unblocks or de-risks work below.
 **Done when:** the enabler's own tests pass and the affected plot code
 uses it.
 
-- [ ] **T39.1** — Type `self.field` precisely (R2 in
+- [ ] **T47.1** — Type `self.field` precisely (R2 in
       `docs/temp-visual-check.md`) with the emitters aligned, so a mark's
       style fields need not be stored flat. Today a native-typed field
       read on a dynamic receiver is still boxed, and the emitters key
       their native/dynamic choice on the expression's static type alone.
-- [ ] **T39.2** — A class method named like a builtin method is not
+- [ ] **T47.2** — A class method named like a builtin method is not
       shadowed (R3). `to_string` is fixed; `length` is not.
-- [ ] **T39.3** — `math`'s opt-in native fast path: separate `*_native`
+- [ ] **T47.3** — `math`'s opt-in native fast path: separate `*_native`
       `foreign def` functions on `c`/`ocaml` (`math.exp` pure and
       byte-identical, `math.exp_native` the pinned fast path; decision
       15), documented as target-pinned.
-- [ ] **T39.4** — File and fix the `ocaml` specialization defect the
+- [ ] **T47.4** — File and fix the `ocaml` specialization defect the
       plot spike hit (`non-native expression in specialized body`,
       `Type_ref`), so specialized native bodies lower the same as the
       interpreter.
 
-### Step 40 — T0 completion: continuous axes and the remaining marks
+### Step 48 — T0 completion: continuous axes and the remaining marks
 
-**Prereq:** Step 39 optional (T39.1 eases the style classes).
+**Prereq:** Step 47 optional (T47.1 eases the style classes).
 **Done when:** `examples/plot_demo` grows line/scatter/area/histogram
 panels and stays byte-identical on all five targets; `dune test` green.
 
-- [ ] **T40.1** — Extend the `Mark` interface beyond the categorical
+- [ ] **T48.1** — Extend the `Mark` interface beyond the categorical
       `y_max`/`bands`/`x_labels` (continuous x and y ranges, `y_min`, the
       point/line primitives a `DrawContext` needs), keeping `Bar` as its
       first implementation.
-- [ ] **T40.2** — `plot.mark.line` and `LineStyle`.
-- [ ] **T40.3** — `plot.mark.scatter` and `ScatterStyle`.
-- [ ] **T40.4** — `plot.mark.area` and `AreaStyle`.
-- [ ] **T40.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
-- [ ] **T40.6** — `Axes` draw: a continuous x scale, the y domain
+- [ ] **T48.2** — `plot.mark.line` and `LineStyle`.
+- [ ] **T48.3** — `plot.mark.scatter` and `ScatterStyle`.
+- [ ] **T48.4** — `plot.mark.area` and `AreaStyle`.
+- [ ] **T48.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
+- [ ] **T48.6** — `Axes` draw: a continuous x scale, the y domain
       inferred from every mark's range, and per-mark dispatch (replacing
       today's bar-only `first_labels`/`bands` path).
-- [ ] **T40.7** — Demos and goldens: one figure per new mark, all five
+- [ ] **T48.7** — Demos and goldens: one figure per new mark, all five
       targets byte-for-byte.
 
-### Step 41 — Figure fidelity: scales, domains, legend, grid, themes, color
+### Step 49 — Figure fidelity: scales, domains, legend, grid, themes, color
 
-**Prereq:** Steps 39–40.
+**Prereq:** Steps 47–48.
 **Done when:** every field the T0 values already declare is rendered —
 log scales, domains, grid, legend, theme — and `DrawContext` is typed
 against the `Renderer` interface, not `SvgRenderer`.
 
-- [ ] **T41.1** — `Scale.log`: log axes with correct tick placement and
+- [ ] **T49.1** — `Scale.log`: log axes with correct tick placement and
       formatting.
-- [ ] **T41.2** — `Domain.auto` / `Domain.fixed`: domain fields on
+- [ ] **T49.2** — `Domain.auto` / `Domain.fixed`: domain fields on
       `Axes` and inference from the marks (decision 19).
-- [ ] **T41.3** — Legend rendering for `with_legend` (decision 20's
-      draw-order rule; one shared legend under faceting, T41.7).
-- [ ] **T41.4** — Grid rendering from `Figure.grid`, driven by the
+- [ ] **T49.3** — Legend rendering for `with_legend` (decision 20's
+      draw-order rule; one shared legend under faceting, T49.7).
+- [ ] **T49.4** — Grid rendering from `Figure.grid`, driven by the
       theme's grid style.
-- [ ] **T41.5** — `Theme` as a value on `Figure` (background and
+- [ ] **T49.5** — `Theme` as a value on `Figure` (background and
       foreground, the grid/axis/title/label styles, a palette, a
       colormap, spacing, the default size; decision 24) with
       `with_theme`.
-- [ ] **T41.6** — Palettes and colormaps (decision 21/24): interpolation
+- [ ] **T49.6** — Palettes and colormaps (decision 21/24): interpolation
       in `Float64`, the `color` channel dispatching on the column's kind,
       and `plot.rgb` validating the 0–255 range.
-- [ ] **T41.7** — Faceting (decision 23): sorted levels, rows × cols,
+- [ ] **T49.7** — Faceting (decision 23): sorted levels, rows × cols,
       `Share.all` by default, one legend, per-panel labels, blank cells
       for mismatched levels.
-- [ ] **T41.8** — Decouple `DrawContext` from the concrete
+- [ ] **T49.8** — Decouple `DrawContext` from the concrete
       `SvgRenderer`: type it against the `internal` `Renderer` interface
       so a terminal or raster renderer can join (the prerequisite for
-      Steps 44–45).
+      Steps 52–53).
 
-### Step 42 — Table and channels
+### Step 50 — Table and channels
 
-**Prereq:** Step 40.
+**Prereq:** Step 48.
 **Done when:** `plot.table` / `plot.table_missing` build a validated
 `Table`, and the chart layer resolves channels through the vocabulary.
 
-- [ ] **T42.1** — `enum Presence { present, absent }` and the parallel
+- [ ] **T50.1** — `enum Presence { present, absent }` and the parallel
       `Map[String, Array[Presence]]` for missing numbers, with the
       statistics skipping `absent` entries (decision 25).
-- [ ] **T42.2** — `plot.table(numbers, labels)` and
+- [ ] **T50.2** — `plot.table(numbers, labels)` and
       `plot.table_missing(numbers, presence, labels)`: column-oriented
       `Table`, shape violations raising (decision 4/10).
-- [ ] **T42.3** — Channels `Map[String, String]` (decision 16): the
+- [ ] **T50.3** — Channels `Map[String, String]` (decision 16): the
       vocabulary `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,
       unknown channels an error, each family reading only the channels it
       supports.
 
-### Step 43 — T1 dataset charts
+### Step 51 — T1 dataset charts
 
-**Prereq:** Steps 41–42.
+**Prereq:** Steps 49–50.
 **Done when:** every `plot.*` chart in decision 17 is implemented on the
 T0 marks, with fixtures byte-identical on all five targets.
 
-- [ ] **T43.1** — Statistics: descriptives, binning, KDE, ECDF, box
+- [ ] **T51.1** — Statistics: descriptives, binning, KDE, ECDF, box
       statistics, and OLS with a confidence band; `normal_quantile` and
       `normal_cdf` internal to `plot` (decision 13).
-- [ ] **T43.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
-- [ ] **T43.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
+- [ ] **T51.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
+- [ ] **T51.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
       `plot.box`, `plot.violin`.
-- [ ] **T43.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
+- [ ] **T51.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
       `plot.point`.
-- [ ] **T43.5** — Matrix: `plot.heatmap`, `plot.clustermap`.
-- [ ] **T43.6** — Apply faceting, palettes, and themes at the chart
+- [ ] **T51.5** — Matrix: `plot.heatmap`, `plot.clustermap`.
+- [ ] **T51.6** — Apply faceting, palettes, and themes at the chart
       layer; demos and byte-identical goldens.
 
-### Step 44 — Terminal renderer
+### Step 52 — Terminal renderer
 
-**Prereq:** Step 41 (T41.8's `Renderer` decoupling).
+**Prereq:** Step 49 (T49.8's `Renderer` decoupling).
 **Done when:** a figure renders to a terminal through the same Layer 0
 value graph, proving the contract is format-agnostic.
 
-- [ ] **T44.1** — A Unicode `Renderer` implementation (blocks or braille
+- [ ] **T52.1** — A Unicode `Renderer` implementation (blocks or braille
       for marks, text labels) behind the `internal` `Renderer`
       interface.
-- [ ] **T44.2** — Wire it through a CLI/demo path and test that the same
+- [ ] **T52.2** — Wire it through a CLI/demo path and test that the same
       figure renders through SVG and the terminal.
 
-### Step 45 — PNG renderer
+### Step 53 — PNG renderer
 
-**Prereq:** Step 44.
+**Prereq:** Step 52.
 **Done when:** `plot.png(fig)` emits a valid PNG on all five targets,
 from the same value graph, with no host image library.
 
-- [ ] **T45.1** — Pure-Emo DEFLATE with stored blocks.
-- [ ] **T45.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
-- [ ] **T45.3** — A scanline polygon/line rasterizer with supersampling.
-- [ ] **T45.4** — Text through the Hershey stroke font.
-- [ ] **T45.5** — `plot.png(fig)`, its demo, and goldens.
+- [ ] **T53.1** — Pure-Emo DEFLATE with stored blocks.
+- [ ] **T53.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
+- [ ] **T53.3** — A scanline polygon/line rasterizer with supersampling.
+- [ ] **T53.4** — Text through the Hershey stroke font.
+- [ ] **T53.5** — `plot.png(fig)`, its demo, and goldens.
 
 ---
 
@@ -1397,11 +1397,11 @@ file, every top-level `def test_*` a test — and assertions as builtins
 failure raises the one `Exception` class, caught per test by the OCaml
 runner (Emo has no catch; the runner is the only place a raise can be
 trapped). No new syntax constructs. Work began on this branch: partial
-implementations of T46.1–T46.5 and T46.7 sit in the tree unreviewed —
+implementations of T54.1–T54.5 and T54.7 sit in the tree unreviewed —
 each is finished against its task definition below, not merged as
 found.
 
-### Step 46 — Unit test framework: `emo test` and the `expect_*` builtins
+### Step 54 — Unit test framework: `emo test` and the `expect_*` builtins
 
 **Prereq:** none beyond develop.
 **Done when:** `emo test` in a project with a `test/` directory runs
@@ -1410,14 +1410,14 @@ output and exiting 0/1/65 by the family; the `expect_*` builtins raise
 real `Exception`s in the interpreter and refuse honestly on compiled
 targets; `emo new` scaffolds a passing test; `dune test` green.
 
-- [x] **T46.1** — `expect_*` builtins in the interpreter: registered
+- [x] **T54.1** — `expect_*` builtins in the interpreter: registered
       in `global_env`, dispatched in `apply_builtin`, raising via an
       `expect_raise` helper on the `net_raise` precedent (a real
       `Exception` instance; the message names the assertion, and
       `expect_equal` renders both values); arity E3007 / type E3001
       follow the existing builtin style. Eval tests: pass and fail
       paths, message rendering, the error codes.
-- [x] **T46.2** — Checker + IR surface: `expect_*` signatures in the
+- [x] **T54.2** — Checker + IR surface: `expect_*` signatures in the
       checker's `empty_env` (Unknown value params, Void results — the
       `println` pattern) and the `expect_` prefix family in
       `is_builtin`, so a compiled program naming one meets the
@@ -1425,10 +1425,10 @@ targets; `emo new` scaffolds a passing test; `dune test` green.
       generically; c / ocaml / ts / wasm / beam gain refusal arms
       wherever their builtin dispatch is exhaustive). Checker tests
       for the signatures.
-- [x] **T46.3** — `reset_output` in the evaluator: the default sink
+- [x] **T54.3** — `reset_output` in the evaluator: the default sink
       named and restorable after `set_output` redirection (the
       runner's per-test capture).
-- [x] **T46.4** — Runner core in `emo_project`: `prepare_root`
+- [x] **T54.4** — Runner core in `emo_project`: `prepare_root`
       (discovery at the working directory, the manifest search from
       there), the `test_outcome` / `test_result` types, and
       `run_tests` — the whole tree checked first (`Static_errors`
@@ -1439,19 +1439,19 @@ targets; `emo new` scaffolds a passing test; `dune test` green.
       and restored; `Emo_raise` fails the test, `Emo_eval.Error`
       errors it. Project tests: mixed outcomes, the collection error,
       no `test/` directory, a static error in a test module.
-- [x] **T46.5** — `emo test` subcommand: reporting (one line per
+- [x] **T54.5** — `emo test` subcommand: reporting (one line per
       test, the rendered diagnostic and captured output on failure,
       the summary line), exit codes 0/1/65, registration in the root
       command group, help text naming the convention. CLI tests: a
       passing project and a failing one, end-to-end.
-- [x] **T46.6** — `emo new` scaffolds `test/greet.emo` with a passing
+- [x] **T54.6** — `emo new` scaffolds `test/greet.emo` with a passing
       `test_greet` (builtins need no manifest dep) and the hint
       mentions `emo test`; scaffold goldens updated.
-- [x] **T46.7** — `examples/test_demo/`: a small module, passing
+- [x] **T54.7** — `examples/test_demo/`: a small module, passing
       tests under `test/`, `expected.txt` for the golden harness;
       reconcile the per-target golden builds (they lower every module
       in the tree — the example's test modules must not break the
       compiled goldens while `expect_*` refuses there).
-- [x] **T46.8** — Docs: README gains the Testing section (the
+- [x] **T54.8** — Docs: README gains the Testing section (the
       convention, the command, the builtins, a raise failing only the
       one test), mirrored in `docs/zh-CN/README.zh-CN.md`.

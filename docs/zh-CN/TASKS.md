@@ -31,8 +31,8 @@
 | M11 — For / While 循环 | 34–35 | 已定案的循环面在解释器与全部六个 target 上逐字节运行:`for`(三子句,头部 `var` 作用域限定在循环)与 `while`,搭配裸 `break`/`continue`;循环在任何栈上都不增长;尾调用保证不变。 |
 | M12 — 错误处理 | 36–37 | Erlang 式分界落地:预期内的失败返回 `(R.ok, value)` / `(R.error, reason)`,用 `case` 匹配或用绑定模式断言绑定;违例抛出唯一的 `Exception` 类;stdlib 的 raise 点逐包迁移到新约定——所有 target 逐字节一致,`R` 一并抵达 freestanding 层。 |
 | M13 — 标准库 | 39–46 | 随编译器交付的 stdlib 各包——`json`、`yaml`、`xml`、`os`、`base64`、`slog`、`bufio`,以及首个原生绑定包 `sqlite3`——逐一按 manifest 的 `targets` 解析,在它声明的每个 target 上逐字节一致,并各自附完整 API 参考与可运行金测。 |
-| M14 — 可视化(`plot`) | 39–45 | `plot` 包补齐其 T0 表面(连续轴;line / scatter / area / histogram mark;对数标度、域、图例、网格、主题、调色板、分面)与 T1 数据集图表,随后加入终端与 PNG 渲染器——SVG 输出在全部五个宿主 target 上逐字节一致。 |
-| M15 — 单元测试 | 46 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
+| M14 — 可视化(`plot`) | 47–53 | `plot` 包补齐其 T0 表面(连续轴;line / scatter / area / histogram mark;对数标度、域、图例、网格、主题、调色板、分面)与 T1 数据集图表,随后加入终端与 PNG 渲染器——SVG 输出在全部五个宿主 target 上逐字节一致。 |
+| M15 — 单元测试 | 54 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
 
 ## 设计闸门
 
@@ -635,99 +635,99 @@ Step 46 收尾(2026-10-12,`feat/sqlite3` 分支):包系统学会携带原生代�
 
 T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上逐字节一致,构建在内部 `Buffer`、标度/刻度、带 `SvgRenderer` 的 `Renderer` 接口,以及声明式的 `figure`/`axes`/`mark` 值之上。数值底座与 `math` 包(sequencing A)已完成。本 milestone 完成设计的 sequencing B–E:T0 表面的其余部分、`Table` 与通道(channels)、T1 数据集图表,最后是终端与 PNG 渲染器。设计与定案记录在 `docs/visualization.md`;包当前表面在 `docs/stdlib/plot.md`;本工作触及的语言使能项在 `docs/temp-visual-check.md`。范围之外(decision 9):交互/GUI 图表、EmoUI 画布、3D、动画。每个步骤的 plan 文件在步骤启动时编写。
 
-### Step 39 — 绘图所需的编译器与语言使能项
+### Step 47 — 绘图所需的编译器与语言使能项
 
 与绘图各步骤相互独立;每一项要么解除下面工作的阻塞,要么降低其风险。
 **完成标准:** 使能项自身的测试通过,且受影响的绘图代码用上它。
 
-- [ ] **T39.1** — 精确类型化 `self.field`(`docs/temp-visual-check.md` 的 R2)并同步发射器,使 mark 的样式字段不必再扁平存储。今天在动态接收者上读取原生类型字段仍会被装箱,而发射器只按表达式的静态类型来决定原生/动态路径。
-- [ ] **T39.2** — 与内建方法同名的类方法不被遮蔽(R3)。`to_string` 已修;`length` 未修。
-- [ ] **T39.3** — `math` 的可选原生快路径:在 `c`/`ocaml` 上分设 `*_native` 的 `foreign def` 函数(`math.exp` 纯净且逐字节一致,`math.exp_native` 为钉定的快路径;decision 15),并记明其 target 钉定。
-- [ ] **T39.4** — 归档并修复绘图 spike 撞上的 `ocaml` 特化缺陷(`non-native expression in specialized body`、`Type_ref`),使特化后的原生体与解释器下降结果一致。
+- [ ] **T47.1** — 精确类型化 `self.field`(`docs/temp-visual-check.md` 的 R2)并同步发射器,使 mark 的样式字段不必再扁平存储。今天在动态接收者上读取原生类型字段仍会被装箱,而发射器只按表达式的静态类型来决定原生/动态路径。
+- [ ] **T47.2** — 与内建方法同名的类方法不被遮蔽(R3)。`to_string` 已修;`length` 未修。
+- [ ] **T47.3** — `math` 的可选原生快路径:在 `c`/`ocaml` 上分设 `*_native` 的 `foreign def` 函数(`math.exp` 纯净且逐字节一致,`math.exp_native` 为钉定的快路径;decision 15),并记明其 target 钉定。
+- [ ] **T47.4** — 归档并修复绘图 spike 撞上的 `ocaml` 特化缺陷(`non-native expression in specialized body`、`Type_ref`),使特化后的原生体与解释器下降结果一致。
 
-### Step 40 — T0 收尾:连续轴与其余 mark
+### Step 48 — T0 收尾:连续轴与其余 mark
 
-**前置:** Step 39 可选(T39.1 让样式类更好写)。
+**前置:** Step 47 可选(T47.1 让样式类更好写)。
 **完成标准:** `examples/plot_demo` 增加 line/scatter/area/histogram 面板,并在全部五个 target 上逐字节一致;`dune test` 全绿。
 
-- [ ] **T40.1** — 把 `Mark` 接口从分类式的 `y_max`/`bands`/`x_labels` 扩展出去(连续的 x 与 y 范围、`y_min`、`DrawContext` 所需的点/线图元),并让 `Bar` 保持首个实现。
-- [ ] **T40.2** — `plot.mark.line` 与 `LineStyle`。
-- [ ] **T40.3** — `plot.mark.scatter` 与 `ScatterStyle`。
-- [ ] **T40.4** — `plot.mark.area` 与 `AreaStyle`。
-- [ ] **T40.5** — `plot.mark.hist`(分箱计数)与 `HistStyle`。
-- [ ] **T40.6** — `Axes` 绘制:连续 x 标度、从每个 mark 的范围推断出的 y 域,以及逐 mark 分派(取代今天只支持柱的 `first_labels`/`bands` 路径)。
-- [ ] **T40.7** — 示例与金测:每个新 mark 一张图,全部五个 target 逐字节。
+- [ ] **T48.1** — 把 `Mark` 接口从分类式的 `y_max`/`bands`/`x_labels` 扩展出去(连续的 x 与 y 范围、`y_min`、`DrawContext` 所需的点/线图元),并让 `Bar` 保持首个实现。
+- [ ] **T48.2** — `plot.mark.line` 与 `LineStyle`。
+- [ ] **T48.3** — `plot.mark.scatter` 与 `ScatterStyle`。
+- [ ] **T48.4** — `plot.mark.area` 与 `AreaStyle`。
+- [ ] **T48.5** — `plot.mark.hist`(分箱计数)与 `HistStyle`。
+- [ ] **T48.6** — `Axes` 绘制:连续 x 标度、从每个 mark 的范围推断出的 y 域,以及逐 mark 分派(取代今天只支持柱的 `first_labels`/`bands` 路径)。
+- [ ] **T48.7** — 示例与金测:每个新 mark 一张图,全部五个 target 逐字节。
 
-### Step 41 — 图形保真:标度、域、图例、网格、主题、颜色
+### Step 49 — 图形保真:标度、域、图例、网格、主题、颜色
 
-**前置:** Step 39–40。
+**前置:** Step 47–48。
 **完成标准:** T0 值已声明的每个字段都被渲染出来——对数标度、域、网格、图例、主题——且 `DrawContext` 按 `Renderer` 接口类型化,而非 `SvgRenderer`。
 
-- [ ] **T41.1** — `Scale.log`:对数轴,刻度位置与格式正确。
-- [ ] **T41.2** — `Domain.auto` / `Domain.fixed`:`Axes` 上的域字段,以及从 mark 推断(decision 19)。
-- [ ] **T41.3** — `with_legend` 的图例渲染(decision 20 的绘制顺序规则;分面(faceting)下共用一份图例,T41.7)。
-- [ ] **T41.4** — 从 `Figure.grid` 渲染网格,由主题的网格样式驱动。
-- [ ] **T41.5** — `Theme` 作为 `Figure` 上的值(背景与前景,网格/轴/标题/标签样式,调色板、colormap、间距、默认尺寸;decision 24),配 `with_theme`。
-- [ ] **T41.6** — 调色板与 colormap(decision 21/24):在 `Float64` 中插值,`color` 通道按列的类型分派,`plot.rgb` 校验 0–255 范围。
-- [ ] **T41.7** — 分面(faceting,decision 23):排序后的水平、行 × 列、默认 `Share.all`、一份图例、逐面板标签、水平不匹配处留空格。
-- [ ] **T41.8** — 把 `DrawContext` 与具体 `SvgRenderer` 解耦:按 `internal` 的 `Renderer` 接口类型化,好让终端或栅格渲染器接入(Steps 44–45 的前置)。
+- [ ] **T49.1** — `Scale.log`:对数轴,刻度位置与格式正确。
+- [ ] **T49.2** — `Domain.auto` / `Domain.fixed`:`Axes` 上的域字段,以及从 mark 推断(decision 19)。
+- [ ] **T49.3** — `with_legend` 的图例渲染(decision 20 的绘制顺序规则;分面(faceting)下共用一份图例,T49.7)。
+- [ ] **T49.4** — 从 `Figure.grid` 渲染网格,由主题的网格样式驱动。
+- [ ] **T49.5** — `Theme` 作为 `Figure` 上的值(背景与前景,网格/轴/标题/标签样式,调色板、colormap、间距、默认尺寸;decision 24),配 `with_theme`。
+- [ ] **T49.6** — 调色板与 colormap(decision 21/24):在 `Float64` 中插值,`color` 通道按列的类型分派,`plot.rgb` 校验 0–255 范围。
+- [ ] **T49.7** — 分面(faceting,decision 23):排序后的水平、行 × 列、默认 `Share.all`、一份图例、逐面板标签、水平不匹配处留空格。
+- [ ] **T49.8** — 把 `DrawContext` 与具体 `SvgRenderer` 解耦:按 `internal` 的 `Renderer` 接口类型化,好让终端或栅格渲染器接入(Steps 52–53 的前置)。
 
-### Step 42 — Table 与通道
+### Step 50 — Table 与通道
 
-**前置:** Step 40。
+**前置:** Step 48。
 **完成标准:** `plot.table` / `plot.table_missing` 构建出经校验的 `Table`,图表层通过词表解析通道。
 
-- [ ] **T42.1** — `enum Presence { present, absent }` 与用于缺失数字的并行 `Map[String, Array[Presence]]`,统计跳过 `absent` 项(decision 25)。
-- [ ] **T42.2** — `plot.table(numbers, labels)` 与 `plot.table_missing(numbers, presence, labels)`:列式 `Table`,形状违例抛出(decision 4/10)。
-- [ ] **T42.3** — 通道 `Map[String, String]`(decision 16):词表 `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,未知通道报错,每族只读它支持的通道。
+- [ ] **T50.1** — `enum Presence { present, absent }` 与用于缺失数字的并行 `Map[String, Array[Presence]]`,统计跳过 `absent` 项(decision 25)。
+- [ ] **T50.2** — `plot.table(numbers, labels)` 与 `plot.table_missing(numbers, presence, labels)`:列式 `Table`,形状违例抛出(decision 4/10)。
+- [ ] **T50.3** — 通道 `Map[String, String]`(decision 16):词表 `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,未知通道报错,每族只读它支持的通道。
 
-### Step 43 — T1 数据集图表
+### Step 51 — T1 数据集图表
 
-**前置:** Step 41–42。
+**前置:** Step 49–50。
 **完成标准:** decision 17 里的每个 `plot.*` 图表都在 T0 mark 上实现,fixture 在全部五个 target 上逐字节一致。
 
-- [ ] **T43.1** — 统计:描述统计、分箱、KDE、ECDF、箱线统计,以及带置信带的 OLS;`normal_quantile` 与 `normal_cdf` 作为 `plot` 内部(decision 13)。
-- [ ] **T43.2** — 关系型:`plot.scatter`、`plot.line`、`plot.reg`。
-- [ ] **T43.3** — 分布型:`plot.hist`、`plot.kde`、`plot.ecdf`、`plot.box`、`plot.violin`。
-- [ ] **T43.4** — 分类型:`plot.bar`、`plot.count`、`plot.strip`、`plot.point`。
-- [ ] **T43.5** — 矩阵型:`plot.heatmap`、`plot.clustermap`。
-- [ ] **T43.6** — 在图表层应用分面、调色板与主题;示例与逐字节金测。
+- [ ] **T51.1** — 统计:描述统计、分箱、KDE、ECDF、箱线统计,以及带置信带的 OLS;`normal_quantile` 与 `normal_cdf` 作为 `plot` 内部(decision 13)。
+- [ ] **T51.2** — 关系型:`plot.scatter`、`plot.line`、`plot.reg`。
+- [ ] **T51.3** — 分布型:`plot.hist`、`plot.kde`、`plot.ecdf`、`plot.box`、`plot.violin`。
+- [ ] **T51.4** — 分类型:`plot.bar`、`plot.count`、`plot.strip`、`plot.point`。
+- [ ] **T51.5** — 矩阵型:`plot.heatmap`、`plot.clustermap`。
+- [ ] **T51.6** — 在图表层应用分面、调色板与主题;示例与逐字节金测。
 
-### Step 44 — 终端渲染器
+### Step 52 — 终端渲染器
 
-**前置:** Step 41(T41.8 的 `Renderer` 解耦)。
+**前置:** Step 49(T49.8 的 `Renderer` 解耦)。
 **完成标准:** 同一张图经同一份 Layer 0 值图渲染到终端,证明契约与格式无关。
 
-- [ ] **T44.1** — 一个 Unicode `Renderer` 实现(mark 用方块或盲文、文本标签),位于 `internal` 的 `Renderer` 接口之后。
-- [ ] **T44.2** — 经 CLI/示例路径接入,并测试同一张图既能经 SVG 也能经终端渲染。
+- [ ] **T52.1** — 一个 Unicode `Renderer` 实现(mark 用方块或盲文、文本标签),位于 `internal` 的 `Renderer` 接口之后。
+- [ ] **T52.2** — 经 CLI/示例路径接入,并测试同一张图既能经 SVG 也能经终端渲染。
 
-### Step 45 — PNG 渲染器
+### Step 53 — PNG 渲染器
 
-**前置:** Step 44。
+**前置:** Step 52。
 **完成标准:** `plot.png(fig)` 在全部五个 target 上从同一份值图产出合法 PNG,不依赖宿主图像库。
 
-- [ ] **T45.1** — 纯 Emo 的 DEFLATE,stored blocks。
-- [ ] **T45.2** — Fixed-Huffman DEFLATE、CRC32 与 Adler-32。
-- [ ] **T45.3** — 带超采样的扫描线多边形/线段光栅化器。
-- [ ] **T45.4** — 经 Hershey 笔画字体的文本。
-- [ ] **T45.5** — `plot.png(fig)`、其示例与金测。
+- [ ] **T53.1** — 纯 Emo 的 DEFLATE,stored blocks。
+- [ ] **T53.2** — Fixed-Huffman DEFLATE、CRC32 与 Adler-32。
+- [ ] **T53.3** — 带超采样的扫描线多边形/线段光栅化器。
+- [ ] **T53.4** — 经 Hershey 笔画字体的文本。
+- [ ] **T53.5** — `plot.png(fig)`、其示例与金测。
 
 ---
 
 ## M15 — 单元测试
 
-`feat/unit-test` 上定案的测试面(2026-10-12):项目根部的 `test/` 目录——其中每个 `.emo` 文件都是测试文件,每个顶层 `def test_*` 都是一个测试——断言做成内建(`expect_equal` / `expect_true` / `expect_false` / `expect_fail`),失败时抛出唯一的 `Exception` 类,由 OCaml 运行器逐个测试捕获(Emo 没有 catch,运行器是唯一能截获 raise 的地方)。不新增任何语法构造。本分支上工作已经开始:T46.1–T46.5 与 T46.7 的部分实现留在树中尚未评审——各自按下面的任务定义补齐完成,而不是按现状直接并入。
+`feat/unit-test` 上定案的测试面(2026-10-12):项目根部的 `test/` 目录——其中每个 `.emo` 文件都是测试文件,每个顶层 `def test_*` 都是一个测试——断言做成内建(`expect_equal` / `expect_true` / `expect_false` / `expect_fail`),失败时抛出唯一的 `Exception` 类,由 OCaml 运行器逐个测试捕获(Emo 没有 catch,运行器是唯一能截获 raise 的地方)。不新增任何语法构造。本分支上工作已经开始:T54.1–T54.5 与 T54.7 的部分实现留在树中尚未评审——各自按下面的任务定义补齐完成,而不是按现状直接并入。
 
-### Step 46 — 单元测试框架:`emo test` 与 `expect_*` 内建
+### Step 54 — 单元测试框架:`emo test` 与 `expect_*` 内建
 
 **前置:** 无(基于 develop)。
 **完成标准:** 在带 `test/` 目录的项目里 `emo test` 运行每个 `def test_*`,逐测试报告 pass/fail/error 与捕获的输出,按退出码族退出 0/1/65;`expect_*` 内建在解释器中抛出真正的 `Exception`,在编译 target 上诚实地拒绝;`emo new` 脚手架带一个通过的测试;`dune test` 全绿。
 
-- [x] **T46.1** — 解释器中的 `expect_*` 内建:在 `global_env` 注册、`apply_builtin` 分派,经 `expect_raise` 辅助函数抛出(沿用 `net_raise` 先例——真正的 `Exception` 实例;消息点名断言本身,`expect_equal` 渲染双方值);元数错误 E3007 / 类型错误 E3001 沿用现有内建风格。eval 测试:通过与失败路径、消息渲染、错误码。
-- [x] **T46.2** — checker + IR 表面:checker 的 `empty_env` 补 `expect_*` 签名(Unknown 值参数、Void 返回——`println` 模式),`is_builtin` 加 `expect_` 前缀族,使编译程序引用这些名字时得到各后端的标配诚实拒绝(riscv 对所有内建统一拒绝;c / ocaml / ts / wasm / beam 在内建分派穷尽处补拒绝臂)。checker 测试覆盖签名。
-- [x] **T46.3** — 求值器加 `reset_output`:默认输出槽具名化,`set_output` 重定向后可恢复(运行器的逐测试输出捕获)。
-- [x] **T46.4** — `emo_project` 的运行器核心:`prepare_root`(在工作目录发现、从那里找 manifest)、`test_outcome` / `test_result` 类型,以及 `run_tests`——先全树检查(静态错误经 `Static_errors` 抛出),按首段 `test/` 选出测试模块,从模块 env 收集 `def test_*`(仅 `ArrowBlock`;带参数的 `test_*` 是收集错误,绝不调用),每个测试在独立的 `Emo_sched_det.run` 中运行,输出捕获后恢复;`Emo_raise` 判 failed,`Emo_eval.Error` 判 errored。project 测试:混合结果、收集错误、无 `test/` 目录、测试模块中的静态错误。
-- [x] **T46.5** — `emo test` 子命令:报告(每测试一行,失败时附渲染的诊断与捕获的输出,末尾汇总行)、退出码 0/1/65、注册进根命令组、帮助文本写明约定。CLI 测试:一个全通过项目与一个失败项目,端到端。
-- [x] **T46.6** — `emo new` 脚手架补 `test/greet.emo`(一个通过的 `test_greet`,内建无需 manifest 依赖),提示语提到 `emo test`;脚手架金测同步更新。
-- [x] **T46.7** — `examples/test_demo/`:一个小模块、`test/` 下全通过的测试、供金测 harness 使用的 `expected.txt`;协调逐 target 金测构建(它们会降级树中每个模块——在 `expect_*` 于编译 target 拒绝期间,示例的测试模块不能把编译金测弄红)。
-- [x] **T46.8** — 文档:README 增加 Testing 一节(约定、命令、内建、raise 只失败当前一个测试),并同步 `docs/zh-CN/README.zh-CN.md` 镜像。
+- [x] **T54.1** — 解释器中的 `expect_*` 内建:在 `global_env` 注册、`apply_builtin` 分派,经 `expect_raise` 辅助函数抛出(沿用 `net_raise` 先例——真正的 `Exception` 实例;消息点名断言本身,`expect_equal` 渲染双方值);元数错误 E3007 / 类型错误 E3001 沿用现有内建风格。eval 测试:通过与失败路径、消息渲染、错误码。
+- [x] **T54.2** — checker + IR 表面:checker 的 `empty_env` 补 `expect_*` 签名(Unknown 值参数、Void 返回——`println` 模式),`is_builtin` 加 `expect_` 前缀族,使编译程序引用这些名字时得到各后端的标配诚实拒绝(riscv 对所有内建统一拒绝;c / ocaml / ts / wasm / beam 在内建分派穷尽处补拒绝臂)。checker 测试覆盖签名。
+- [x] **T54.3** — 求值器加 `reset_output`:默认输出槽具名化,`set_output` 重定向后可恢复(运行器的逐测试输出捕获)。
+- [x] **T54.4** — `emo_project` 的运行器核心:`prepare_root`(在工作目录发现、从那里找 manifest)、`test_outcome` / `test_result` 类型,以及 `run_tests`——先全树检查(静态错误经 `Static_errors` 抛出),按首段 `test/` 选出测试模块,从模块 env 收集 `def test_*`(仅 `ArrowBlock`;带参数的 `test_*` 是收集错误,绝不调用),每个测试在独立的 `Emo_sched_det.run` 中运行,输出捕获后恢复;`Emo_raise` 判 failed,`Emo_eval.Error` 判 errored。project 测试:混合结果、收集错误、无 `test/` 目录、测试模块中的静态错误。
+- [x] **T54.5** — `emo test` 子命令:报告(每测试一行,失败时附渲染的诊断与捕获的输出,末尾汇总行)、退出码 0/1/65、注册进根命令组、帮助文本写明约定。CLI 测试:一个全通过项目与一个失败项目,端到端。
+- [x] **T54.6** — `emo new` 脚手架补 `test/greet.emo`(一个通过的 `test_greet`,内建无需 manifest 依赖),提示语提到 `emo test`;脚手架金测同步更新。
+- [x] **T54.7** — `examples/test_demo/`:一个小模块、`test/` 下全通过的测试、供金测 harness 使用的 `expected.txt`;协调逐 target 金测构建(它们会降级树中每个模块——在 `expect_*` 于编译 target 拒绝期间,示例的测试模块不能把编译金测弄红)。
+- [x] **T54.8** — 文档:README 增加 Testing 一节(约定、命令、内建、raise 只失败当前一个测试),并同步 `docs/zh-CN/README.zh-CN.md` 镜像。
