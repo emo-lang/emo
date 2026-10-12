@@ -49,7 +49,7 @@ before starting the gated work:
 | CLI command names | T01.3, T08.1–T08.2 | settled in M1 — `run` / `repl` / `check` / `version` shipped |
 | String escape rules | T02.3, T02.4 | Minimal set `\n \t \\ \' \"` |
 | Self-pid mechanism | T12.1 | settled — `self_pid()` builtin, `Pid` type rendering as `<pid N>`, `halt()`; no user-facing kill/wait |
-| Error-handling model (was: exception catch syntax) | T13.5, M12 | settled 2026-10-11 — no catch; `(R.ok, value)` / `(R.error, reason)` tuples plus the one `Exception` class (`CHECK.md`); Steps 28–29 land it |
+| Error-handling model (was: exception catch syntax) | T13.5, M10 | settled 2026-10-11 — no catch; `(R.ok, value)` / `(R.error, reason)` tuples plus the one `Exception` class (`CHECK.md`); Steps 28–29 land it |
 | Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T11.2, T11.5–T11.6, T11.8 | `package.emo`, `package.lock`, `owner/name`, exact pins only, `emo deps *` |
 | C FFI binding-surface syntax | T14.6 | settled — `foreign def name(params) Ret = "c_symbol"`, `Float`/`String`/`Bool` only, through generated C wrappers |
 | Reclamation model for the dynamic world (no tracing GC) | T23.5 | settled — reference counting for identity objects, arena for value-semantic data (`CHECK.md`, at T23.5) |
@@ -343,7 +343,7 @@ green.
       for packages lacking `"riscv64"`, the emission-time refusal
       diagnostics, close-out.
 
-**Step 19 acceptance met.** M7 is done: the freestanding RV64 backend
+**Step 19 acceptance met.** The freestanding RV64 backend
 ships — hello_world, fib, objects, and language_tour boot under QEMU
 as byte-for-byte goldens, the refusals are loud, and resolution gates
 packages. The `%g` float to-string lands as its own follow-up
@@ -451,7 +451,7 @@ shares the tagged-word value model.
 
 The last mile of the self-contained story, and the toolchain
 release — cut as v0.25.9, with the official 1.0 following.
-M8 removed the OCaml toolchain from the *programs*; M9 removes the
+M6 removed the OCaml toolchain from the *programs*; M7 removes the
 installation burden from the *tool* — the release engineering
 `CHECK.md` left unscheduled, on the decided direction
 (`docs/toolchain-distribution.md` is the design record): prebuilt
@@ -558,7 +558,7 @@ default-target flip moved every default path to `c` (and flushed out
 that the content-hash cache had only ever lived in the ocaml arm),
 the embed's dune rule needs `-type f -o -type l` because the macOS
 sandbox materializes `source_tree` deps as symlinks, and the archives
-ship without an install script. **Step 24 acceptance met.** M9 is
+ship without an install script. **Step 24 acceptance met.** M7 is
 done: the toolchain release is v0.25.9 — the official 1.0 follows.
 
 ## M8 — Target independence

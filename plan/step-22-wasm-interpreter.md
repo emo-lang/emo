@@ -1,6 +1,6 @@
 # Step 22 — Wasm runtime: the interpreter and the golden runs
 
-**Milestone:** M6 · **Prereq:** step 21 · **Status:** done
+**Milestone:** M5 · **Prereq:** step 21 · **Status:** done
 
 The rung step 21 pointed at: the modules the decoder accepts start
 *running*. The bar moves from "is this module well-formed?" to "does it

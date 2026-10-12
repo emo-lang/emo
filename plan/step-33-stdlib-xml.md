@@ -1,6 +1,6 @@
 # Step 33 — The standard library: `xml`
 
-**Milestone:** M13 — The standard library · **Prereq:** step 31 (the
+**Milestone:** M11 — The standard library · **Prereq:** step 31 (the
 json package — the tree design, the byte-scanner discipline, and the
 exact-buffer patterns this package follows) · **Related:**
 `stdlib/registry/{json,yaml}` (the sibling format packages),

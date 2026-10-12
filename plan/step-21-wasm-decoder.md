@@ -1,6 +1,6 @@
 # Step 21 — Wasm runtime: the decoder and validator
 
-**Milestone:** M6 · **Prereq:** step 20 · **Status:** not started
+**Milestone:** M5 · **Prereq:** step 20 · **Status:** not started
 
 The boundaries below are decided now, because step 21 is where they first
 bite — and they are the whole answer to "why does a wasm runtime live in

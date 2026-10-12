@@ -1,6 +1,6 @@
 # Step 36 — The standard library: `slog`
 
-**Milestone:** M13 — The standard library · **Prereq:** step 35
+**Milestone:** M11 — The standard library · **Prereq:** step 35
 (base64 — the native-types-only surface shape that crosses module
 boundaries cleanly) · **Related:** `stdlib/registry/{json,os,base64}`
 (the sibling packages), `docs/stdlib/slog.md` · **Status:** done on

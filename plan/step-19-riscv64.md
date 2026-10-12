@@ -1,6 +1,6 @@
 # Step 19 — RISC-V Target (Freestanding RV64)
 
-**Milestone:** M7 · **Prereq:** steps 01–14 (the specialization pass);
+**Milestone:** M4 · **Prereq:** steps 01–14 (the specialization pass);
 the step-15 RISC-V reference note is the design record ·
 **Status:** done (2026-10-11 — T19.1–T19.4, close-out recorded; the
 `%g` float to-string lands as its own follow-up)

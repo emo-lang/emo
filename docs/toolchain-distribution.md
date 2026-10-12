@@ -115,7 +115,7 @@ pragmas). Those timelines are independent of distribution.
 
 ## Update 2026-10-07: the release tooling is scheduled and landed (step 24)
 
-The deferral above held until the `c` backend shipped (step 23); M9 —
+The deferral above held until the `c` backend shipped (step 23); M7 —
 Toolchain (`plan/step-24-toolchain.md`) now schedules what this
 document left unscheduled:
 

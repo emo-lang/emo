@@ -1,6 +1,6 @@
 # Step 24 — Toolchain distribution & release (v1.0.0)
 
-**Milestone:** M9 — Toolchain · **Prereq:** step 23 (the `c` target; the
+**Milestone:** M7 — Toolchain · **Prereq:** step 23 (the `c` target; the
 `native` → `ocaml` rename landed with it) · **Related:**
 `docs/toolchain-distribution.md` (the design record this step
 schedules), `CHECK.md` ("Binary / CLI tool distribution mechanism" —
@@ -12,7 +12,7 @@ cut as v0.25.9 before tagging — the official 1.0 follows)
 
 ## Why this step exists
 
-M8 made *built programs* self-contained: `emo build --target c`
+M6 made *built programs* self-contained: `emo build --target c`
 needs only the system `cc`. The *tool* is still a source-checkout or
 opam-switch artifact. The pieces of a distribution already exist in
 embryo — the C runtime ships as generated data inside the compiler
@@ -194,7 +194,7 @@ which the macOS sandbox materializes as symlinks — the generator
 walks `-type f -o -type l`, a fact found by probe rather than guess.
 Decisions recorded along the way: archives ship without an install
 script; the formula's checksums fill at release time; `emo.opam` is
-generated (no dev_repo field in dune's stanza). The recorded M8
+generated (no dev_repo field in dune's stanza). The recorded M6
 follow-ups — retain/release emission, the zero-copy buffer rung,
 cross-module type propagation — remain with the backend line, and
 the registry service (HTTP fetching included) is the next

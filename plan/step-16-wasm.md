@@ -1,6 +1,6 @@
 # Step 16 — Wasm Target (WasmGC)
 
-**Milestone:** M4 · **Prereq:** steps 01–14 · **Status:** complete
+**Milestone:** M4 · **Prereq:** steps 01–15 · **Status:** complete
 
 ## Goal
 

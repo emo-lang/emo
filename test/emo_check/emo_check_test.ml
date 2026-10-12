@@ -1783,7 +1783,7 @@ foreign def stretch(r (Float64, Float64)) Float64 = "stretch"
             Alcotest.fail ("parse failed: " ^ d.Diagnostic.message));
   ]
 
-(* The built-in `R` enum (M12): the ok/error pair every program sees,
+(* The built-in `R` enum (M10): the ok/error pair every program sees,
    no import needed, matched in `case` — and a name no declaration may
    take, beside the shipped `Exception` class. *)
 let r_enum_tests =

@@ -1,6 +1,6 @@
 # Step 34 — The standard library: `os`
 
-**Milestone:** M13 — The standard library · **Prereq:** step 23 (the
+**Milestone:** M11 — The standard library · **Prereq:** step 23 (the
 c target — where the POSIX runtime calls live), step 25 (target
 independence — the standalone ocaml runtime that also needs the os
 dispatch) · **Related:** `stdlib/registry/net` (the other

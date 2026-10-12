@@ -1,6 +1,6 @@
 # Step 08 — CLI & Diagnostics: `run`, `repl`
 
-**Milestone:** M1 complete · **Prereq:** steps 01–06 · **Status:** done
+**Milestone:** M1 complete · **Prereq:** steps 01–07 · **Status:** done
 
 ## Goal
 

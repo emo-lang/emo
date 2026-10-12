@@ -1,6 +1,6 @@
 # Step 25 — Target independence (runtimes decoupled from the host)
 
-**Milestone:** M10 — Target independence · **Prereq:** step 24 (the
+**Milestone:** M8 — Target independence · **Prereq:** step 24 (the
 toolchain whose claims this step corrects) · **Related:**
 `docs/toolchain.md` (the host/target distinction this step completes),
 `CHECK.md` (the backend-naming and runtime-language decisions this

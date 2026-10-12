@@ -1,6 +1,6 @@
 # Step 37 — The standard library: `bufio`
 
-**Milestone:** M13 — The standard library · **Prereq:** step 36
+**Milestone:** M11 — The standard library · **Prereq:** step 36
 (slog — the zero-compiler-change golden shape) · **Related:**
 `stdlib/registry/{os,base64}` (the fd surface and the cross-module
 shape), `docs/stdlib/bufio.md` · **Status:** done on

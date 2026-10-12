@@ -1,6 +1,6 @@
 # Step 18 — BEAM Target (Core Erlang)
 
-**Milestone:** M5 · **Prereq:** steps 01–16 · **Status:** complete
+**Milestone:** M4 · **Prereq:** steps 01–17 · **Status:** complete
 
 ## Goal
 

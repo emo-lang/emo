@@ -1,6 +1,6 @@
 # Step 23 — C target (emit C)
 
-**Milestone:** M8 — the self-contained hosted backend (the hosted-native-FFI assessment, scheduled) · **Prereq:** steps 01–14 (the IR and the
+**Milestone:** M6 — the self-contained hosted backend (the hosted-native-FFI assessment, scheduled) · **Prereq:** steps 01–14 (the IR and the
 specialization data) · **Related:**
 `plan/hosted-native-ffi.md` (the design record this step
 schedules — the assessment holds; this file only adds what execution

@@ -1,6 +1,6 @@
 # Step 38 — The standard library: `sqlite3`
 
-**Milestone:** M13 — The standard library · **Prereq:** step 23 (the c
+**Milestone:** M11 — The standard library · **Prereq:** step 23 (the c
 target's direct C ABI), step 24 (the embedded stdlib) · **Related:**
 `docs/native-backend.md` (the FFI surface), CHECK.md 2026-10-12 (the
 package-carried-native-code settle), `docs/stdlib/sqlite3.md` ·

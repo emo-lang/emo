@@ -1,6 +1,6 @@
 # Step 07 — Function groups (`emo` keyword)
 
-**Milestone:** M5 · **Prereq:** steps 01–18 · **Status:** complete
+**Milestone:** M1 · **Prereq:** steps 01–06 · **Status:** complete
 
 ## Goal
 

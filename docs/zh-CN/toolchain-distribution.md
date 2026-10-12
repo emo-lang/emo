@@ -99,7 +99,7 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
 
 ## 更新（2026-10-07）：发布工具链已排期并落地（步骤 24）
 
-上文的推迟维持到 `c` 后端交付（步骤 23）为止；M9 — 工具链
+上文的推迟维持到 `c` 后端交付（步骤 23）为止；M7 — 工具链
 （`plan/step-24-toolchain.md`）现在把本文档留白未排期的部分排上了：
 
 - **tag 触发的发布工作流**（`.github/workflows/release.yml`）在四个

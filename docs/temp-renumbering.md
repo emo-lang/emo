@@ -1,6 +1,7 @@
-# Renumbering — remaining work
+# Renumbering — work log
 
-Tracking the step/Task renumbering to the final scheme.
+Tracking the step/Task renumbering to the final scheme. Every item below
+is done.
 
 ## Goal
 
@@ -35,7 +36,7 @@ Tracking the step/Task renumbering to the final scheme.
 
 (The phantom `23` is retired and takes no number.)
 
-## Remaining
+## Remaining — all done
 
 ### 1. Step/Task references in the rest of the repo
 
@@ -244,38 +245,37 @@ Human read of every semantic step reference:
 
 (Item 1's mechanical pass plus subtasks 1.3–1.5 carried the rest.)
 
-### 5. Milestone labels outside the tracker (found while doing item 1)
+### 5. Milestone labels outside the tracker — done
 
 Item 1's token list covered `step`/`T`-ids only, so milestone labels were
-left untouched there. They are stale across the repo and are **not** a
-purely mechanical mapping: old `M5` (Function groups) and old `M7` (EmoOS)
-were dropped, so those must be reworded, not renumbered.
+left untouched there. Old → new: `M1–M4` same; `M6 → M5`; `M8 → M6`;
+`M9 → M7`; `M10 → M8`; `M11 → M9`; `M12 → M10`; `M13 → M11`;
+`M14 → M12`; `M15 → M13`. Old `M5` (Function groups) and `M7` (EmoOS)
+were dropped, so their references were reworded, not renumbered.
 
-Old → new: `M1–M4` same; `M6 → M5`; `M8 → M6`; `M9 → M7`; `M10 → M8`;
-`M11 → M9`; `M12 → M10`; `M13 → M11`; `M14 → M12`; `M15 → M13`.
+Applied:
 
-Evidence (each is pre-renumber):
+- **`plan/*.md` `**Milestone:**` fields** now match the milestone that holds
+  each step (`07 → M1`, `18 → M4`, `19 → M4`, `20–22 → M5`, `23 → M6`,
+  `24 → M7`, `25 → M8`, `31–38 → M11`); every step file was checked
+  against its range.
+- **Plan-file prereqs that were only mechanically renumbered** — the same
+  six the trackers' renumbering had to adjust semantically (`07`, `08`,
+  `16`, `17`, `18`, `20`) — now read `steps 01–06`, `01–07`, `01–15`,
+  `01–16`, `01–17`, `01–19`.
+- **In-body labels.** `plan/step-24-toolchain.md` `M8 → M6`;
+  `docs/TASKS.md` gate row `M12 → M10`, the toolchain intro `M8/M9 → M6/M7`,
+  and the Step 24 close-out `M9 → M7`; the `docs/zh-CN/TASKS.md` mirrors;
+  `CHECK.md` `M9 → M7`; `docs/toolchain.md` (and zh) `M9/M10 → M7/M8`;
+  `docs/toolchain-distribution.md` (and zh) `M9 → M7`;
+  `test/emo_check/emo_check_test.ml` `M12 → M10`.
+- **Step 19's close-out ``M7 is done``** was a stale EmoOS/number claim (the
+  RV64 backend is M4 work, and M4 is not complete) — the milestone claim was
+  dropped in both trackers.
+- **Left alone.** `docs/visualization.md`'s `M12` (plot *is* M12), and every
+  `M1–M4` used in the freestanding roadmap (`plan/step-15-other-targets.md`,
+  `plan/step-19-riscv64.md`, `docs/rtos-assessment.md`, `docs/xv6.md`,
+  `plan/hosted-native-ffi.md`) for the RISC-V profile / scheduler phases —
+  a *different* M-scheme that must not be renumbered.
 
-```
-plan/step-07-function-group.md:3   M5  (function groups are in M1 now)
-plan/step-18-beam.md:3             M5
-plan/step-19-riscv64.md:3          M7  (EmoOS; RISC-V is in M4)
-plan/step-20-wasm-runtime.md:3     M6  (→ M5)
-plan/step-21-wasm-decoder.md:3     M6  (→ M5)
-plan/step-22-wasm-interpreter.md:3 M6  (→ M5)
-plan/step-23-c-target.md:3         M8  (→ M6)
-plan/step-24-toolchain.md:3        M9  (→ M7)
-plan/step-25-target-independence.md:3 M10 (→ M8)
-plan/step-31..38-stdlib-*.md:3     M13 (→ M11)
-docs/TASKS.md:52                   "T13.5, M12" gate row — M12 is Visualization now; error handling is M10
-CHECK.md:26                        "M9, step 24" — M9 is For/While now; toolchain is M7
-docs/toolchain.md:68,70            M9 — Toolchain, M10 — Target independence
-docs/zh-CN/toolchain.md:60,62      same, in Chinese
-docs/toolchain-distribution.md:118 "M9 — Toolchain"
-docs/zh-CN/toolchain-distribution.md:102 "M9 — 工具链"
-test/emo_check/emo_check_test.ml:1786  (M12) on the `R` enum — error handling is M10
-docs/visualization.md:458          (CHECK.md, M12) — already correct (plot is M12)
-```
-
-Note the two `M12` uses mean opposite things: the visualization ones are
-correct, the error-handling ones are old. A human read per site is needed.
+`dune build` green (the only code edit is a comment).

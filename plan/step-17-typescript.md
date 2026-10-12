@@ -1,6 +1,6 @@
 # Step 17 — TypeScript Target
 
-**Milestone:** M4 · **Prereq:** steps 01–14 · **Status:** in progress
+**Milestone:** M4 · **Prereq:** steps 01–16 · **Status:** in progress
 
 ## Goal
 
