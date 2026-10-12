@@ -892,6 +892,23 @@ and conforms ctx actual expected =
   | InterfaceType _, _ -> false
   | a, b -> a = b
 
+(* The error-handling convention's typing rule: an `(R.error, reason)`
+   pair conforms to any `(R, T)` pair of the enum — the reason is a
+   String by convention, and the ok slot's type only types the ok side
+   (`CHECK.md`, error handling). The expr must be the literal pair so a
+   plain `(R, String)` value never sneaks into an `(R, Int64)`. *)
+let r_error_pair_conforms ctx (e : Ast.expr) (actual : t) (expected : t) : bool =
+  match (actual, expected) with
+  | TupleType [ EnumType "R"; _ ], TupleType [ EnumType "R"; _ ] -> (
+      match e.Ast.desc with
+      | Ast.Tuple [ first; _ ] -> (
+          match first.Ast.desc with
+          | Ast.Member ({ Ast.desc = Ast.Type_ident tag; _ }, member) ->
+              String.equal tag "R" && String.equal member "error"
+          | _ -> false)
+      | _ -> false)
+  | _ -> false
+
 let known_nonovoid = ignore
 
 (* The dotted path of a member chain rooted at an identifier, if any:
@@ -2363,7 +2380,9 @@ and check_stmt ctx env (s : Ast.stmt) : env =
         ctx.ret_sink := t :: !(ctx.ret_sink);
         match env.ret with
         | Some expected when t <> Unknown && expected <> Unknown ->
-            if not (conforms ctx t expected) then
+            if not (conforms ctx t expected)
+            && not (r_error_pair_conforms ctx e t expected)
+            then
               report ctx e.Ast.span "E4008"
                 (Printf.sprintf "return type mismatch: expected %s, got %s"
                    (to_string expected) (to_string t))
@@ -2556,10 +2575,21 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
             report ctx p.Ast.pattern_span "E4013"
               (Printf.sprintf "a %d-element tuple pattern cannot match %s"
                  (List.length ps) (to_string scrutinee_t));
+          (* The convention's reading rule: `(R.error, why)` binds the
+             reason as the String it is, whatever the ok slot's type —
+             the slot only types the ok side (`CHECK.md`, error
+             handling). *)
+          let slot_types =
+            match (ps, ts) with
+            | [ { Ast.pattern_desc = Ast.Enum_member ("R", "error"); _ }; _ ],
+              [ EnumType "R"; t2 ] ->
+                [ EnumType "R"; String ]
+            | _ -> ts
+          in
           let env =
             List.fold_left2
               (fun env pat t -> check_pattern ctx env span t pat)
-              env ps ts
+              env ps slot_types
           in
           env
       | Unknown ->
