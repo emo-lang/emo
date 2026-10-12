@@ -21,10 +21,10 @@
 | M1 — MVP 解释器 | 01–07 | 单文件 Emo 程序(函数、类、枚举、异常)可通过 `emo run` / `emo repl` 运行,错误信息可读。 |
 | M2 — 编译期体验 | 08–10 | 渐进类型检查器、结构化模块系统、基于 MVS 的包解析;多包项目可构建、可运行。 |
 | M3 — 并发与网络 | 11–12 | 基于效果(effect)调度器的进程与消息传递;直风格(direct style)网络 API。 |
-| M4 — 编译目标 | 13–17 | 通过 `emo build` 生成原生代码;随后是 wasm / TypeScript / BEAM / riscv64。 |
+| M4 — 编译目标 | 13–17, 22 | 通过 `emo build` 生成原生代码;随后是 wasm / TypeScript / BEAM / riscv64。 |
 | M5 — 函数组 | 18 | `emo Foo { ... }` 函数组在四个目标上解析并运行。 |
 | M6 — 系统级编程 | 19–21 | 用 Emo 编写的 WebAssembly 运行时:共享系统层,随后是二进制解码器/验证器,再是解释器与 spec 套件金测。 |
-| M7 — EmoOS | 22 | 同一系统层之上的内核路径:近期是 unikernel 构建路径,远期是裸机代码生成(与引擎分层共用投入)。 |
+| M7 — EmoOS | — | 同一系统层之上的内核路径:近期是 unikernel 构建路径,远期是裸机代码生成(与引擎分层共用投入)。 |
 | M8 — 自包含托管后端 | 23–24 | `emo build --target c` 发射 C、自带运行时、直接 C ABI——步骤 23 的评估已排期;解锁自包含工具分发(CHECK.md)。 |
 | M9 — 工具链 | 25 | 工具链发布(以 v0.25.9 剪出):GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
 | M10 — Target 独立 | 26 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |

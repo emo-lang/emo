@@ -28,10 +28,10 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M1 — MVP interpreter | 01–07 | Single-file Emo programs (functions, classes, enums, exceptions) run via `emo run` / `emo repl` with readable errors. |
 | M2 — Compile-time experience | 08–10 | Gradual type checker, structural module system, and packages with MVS resolution; multi-package projects build and run. |
 | M3 — Concurrency & networking | 11–12 | Processes and message passing on an effects-based scheduler; direct-style networking. |
-| M4 — Compilation targets | 13–17 | Native code generation via `emo build`; then wasm / TypeScript / BEAM / riscv64. |
+| M4 — Compilation targets | 13–17, 22 | Native code generation via `emo build`; then wasm / TypeScript / BEAM / riscv64. |
 | M5 — Function groups | 18 | `emo Foo { ... }` function groups resolve and run on all four targets. |
 | M6 — Systems programming | 19–21 | A WebAssembly runtime written in Emo: the shared systems layer, then the binary decoder/validator, then the interpreter with spec-suite goldens. |
-| M7 — EmoOS | 22 | The kernel path on the same systems layer: a unikernel build path (near term), then freestanding codegen (shared with the engine tiering). |
+| M7 — EmoOS | — | The kernel path on the same systems layer: a unikernel build path (near term), then freestanding codegen (shared with the engine tiering). |
 | M8 — Self-contained hosted backend | 23–24 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — step 23's assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
 | M9 — Toolchain | 25 | The toolchain release (cut as v0.25.9): signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
 | M10 — Target independence | 26 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
