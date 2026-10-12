@@ -147,6 +147,7 @@ type env = {
   mutable locals : string list; (* innermost first *)
   types : (string * int * int, Emo_check.t) Hashtbl.t;
   module_paths : string list list; (* every module in the program *)
+  packages : string list list; (* the short-name prefix of every fetched package *)
   mutable aliases : (string * string list) list;
       (* `const order = shop.order` — a name bound to a module path *)
 }
@@ -218,6 +219,31 @@ and substitute_alias env (path : string list) : string list =
       | Some target -> target @ rest
       | None -> path)
   | [] -> []
+
+(* A reference inside a package is written against the package root
+   (`internal.float` in `json.emo`), so resolve it under the current
+   package's prefix when the prefixed path is a known module. An already
+   absolute path is left alone. *)
+and relativize_in ~(current : string list) ~(packages : string list list)
+    ~(module_paths : string list list) (path : string list) : string list =
+  let rec pkg_of = function
+    | [] -> []
+    | pkg :: rest ->
+        if
+          List.length pkg <= List.length current
+          && List.take (List.length pkg) current = pkg
+        then pkg
+        else pkg_of rest
+  in
+  match pkg_of packages with
+  | [] -> path
+  | pkg ->
+      if List.exists (fun m -> m = pkg @ path) module_paths then pkg @ path
+      else path
+
+and relativize env (path : string list) : string list =
+  relativize_in ~current:env.current ~packages:env.packages
+    ~module_paths:env.module_paths path
 
 (* Reorders named/positional arguments into the callee's parameter order —
    positionals fill the first free slots left to right, named arguments
@@ -305,6 +331,7 @@ and lower_expr env (e : Ast.expr) : expr =
              the type is the segment before the member — `Color.red`, or
              `pkg.Color.red` — and an unqualified type lives in the
              current module. *)
+          let path = relativize env path in
           let enum_candidates =
             match path with
             | [ type_name ] ->
@@ -551,7 +578,7 @@ and lower_call env span callee args =
 and resolve_callee env (callee : Ast.expr) : (string * string list) option =
   match dotted_path callee with
   | Some (module_path, name) -> (
-      let module_path = substitute_alias env module_path in
+      let module_path = relativize env (substitute_alias env module_path) in
       match Hashtbl.find_opt env.symbols (module_path, name) with
       | Some (S_func { mangled; params }) -> Some (mangled, params)
       | Some (S_class { mangled; params }) -> Some (mangled, params)
@@ -625,6 +652,7 @@ and lower_stmt env (s : Ast.stmt) : stmt =
           match
             ( mutable_,
               Option.bind (full_chain init) (fun chain ->
+                  let chain = relativize env chain in
                   if is_module_path env chain then Some chain else None) )
           with
           | false, Some target ->
@@ -875,6 +903,7 @@ let specialize (funcs : func list) : func list =
 type input = {
   modules : module_input list; (* every module in the dependency closure *)
   entry : string list; (* the entry module's path *)
+  packages : string list list; (* the short-name prefix of every fetched package *)
 }
 
 (* Lowers a whole program: symbols from every module first (forward
@@ -1025,9 +1054,15 @@ let lower (input : input) : program =
                   _;
                 } -> (
                 match full_chain init with
-                | Some chain
-                  when List.exists (fun mp -> mp = chain) all_module_paths ->
-                    Some (name, chain)
+                | Some chain ->
+                    let chain =
+                      relativize_in ~current:m.mpath
+                        ~packages:input.packages
+                        ~module_paths:all_module_paths chain
+                    in
+                    if List.exists (fun mp -> mp = chain) all_module_paths then
+                      Some (name, chain)
+                    else None
                 | _ -> None)
             | _ -> None)
           m.mitems)
@@ -1073,6 +1108,7 @@ let lower (input : input) : program =
           locals = [];
           types = m.mtypes;
           module_paths = all_module_paths;
+          packages = input.packages;
           aliases = pre_aliases;
         }
       in
@@ -1099,6 +1135,7 @@ let lower (input : input) : program =
               if
                 match
                   Option.bind (full_chain init) (fun chain ->
+                      let chain = relativize const_env chain in
                       if is_module_path const_env chain then Some chain
                       else None)
                 with
@@ -1146,6 +1183,7 @@ let lower (input : input) : program =
           locals = [];
           types = m.mtypes;
           module_paths = all_module_paths;
+          packages = input.packages;
           aliases = pre_aliases;
         }
       in
@@ -1297,6 +1335,7 @@ let lower (input : input) : program =
       locals = [];
       types = entry_module.mtypes;
       module_paths = all_module_paths;
+      packages = input.packages;
       aliases = pre_aliases;
     }
   in

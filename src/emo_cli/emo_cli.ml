@@ -171,11 +171,12 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
       66
   | true -> (
       try
-        let inputs, entry_path, _manifest =
+        let inputs, entry_path, packages, _manifest =
           Emo_project.compile_inputs ~entry_file:entry ~target
         in
         let program =
-          Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path }
+          Emo_ir.lower
+            { Emo_ir.modules = inputs; entry = entry_path; packages }
         in
         let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
         if not (Sys.file_exists build_dir) then

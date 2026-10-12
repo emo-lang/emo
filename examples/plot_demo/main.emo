@@ -7,7 +7,7 @@ require "plot"
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
 const sales = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0]
 
-const ax = plot.axes().with_x_label("Month").with_y_label("Sales").with_marks([mark.bar(months, sales)])
+const ax = plot.axes().with_x_label("Month").with_y_label("Sales").with_marks([plot.mark.bar(months, sales)])
 const chart = plot.figure().with_title("Monthly sales").with_axes([ax])
 
 println(plot.svg(chart))

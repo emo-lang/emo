@@ -54,7 +54,7 @@ enum Share { all, none }
 
 ## mark
 
-mark 在 `mark` 模块里。T0 只有柱状 mark:
+mark 在 `plot.mark` 子模块里——包的子模块以包的短名为前缀寻址。T0 只有柱状 mark:
 
 ```emo
 def bar(labels Array[String], values Array[Float64]) Bar
@@ -64,8 +64,8 @@ def bar_style() BarStyle
 mark 也是值。`Bar.with_style(s BarStyle)` 以及样式上的 `with_color` / `with_width` / `with_label` 细化它,不改动任何东西:
 
 ```emo
-mark.bar(months, sales).with_style(
-  mark.bar_style().with_color((192, 57, 43)).with_width(0.6))
+plot.mark.bar(months, sales).with_style(
+  plot.mark.bar_style().with_color((192, 57, 43)).with_width(0.6))
 ```
 
 **颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组**,每通道 0–255。不透明度是样式上单独的 `Float64`,绝不煍进三元组。
@@ -83,7 +83,7 @@ const sales = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0]
 const ax = plot.axes()
   .with_x_label("Month")
   .with_y_label("Sales")
-  .with_marks([mark.bar(months, sales)])
+  .with_marks([plot.mark.bar(months, sales)])
 const chart = plot.figure().with_title("Monthly sales").with_axes([ax])
 
 println(plot.svg(chart))

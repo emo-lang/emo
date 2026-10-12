@@ -362,7 +362,7 @@ def with_y_label(s String) Axes
 def with_marks(m Array[Mark]) Axes
 ```
 
-`mark` 模块带着各种 mark;T0 只有柱状 mark `mark.bar(labels, values)`,经 `mark.bar_style()` 细化。颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组,每通道 0–255。每个标签都是 SVG `<text>` 元素,所以这个包不带字体引擎。
+`plot.mark` 子模块带着各种 mark;T0 只有柱状 mark `plot.mark.bar(labels, values)`,经 `plot.mark.bar_style()` 细化。颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组,每通道 0–255。每个标签都是 SVG `<text>` 元素,所以这个包不带字体引擎。
 
 `svg` 返回文档;写进文件是调用方的事——这个包在五个目标上都能跑,而文件 IO 只有原生目标可用。
 

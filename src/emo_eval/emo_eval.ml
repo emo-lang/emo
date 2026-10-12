@@ -407,6 +407,13 @@ let count_step () =
 let module_handle_of : (string list -> module_handle option) ref =
   ref (fun _ -> None)
 
+(* The short-name prefix of the package whose module is currently
+   evaluating: a package's own references are written against its root
+   (`internal.float` inside `json`), so the hook above resolves a bare
+   name relatively while this is set. The project layer saves and restores
+   it around each module load. *)
+let current_package : string list ref = ref []
+
 let module_loader : (string list -> env) ref =
   ref (fun path ->
       failwith

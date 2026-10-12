@@ -551,6 +551,36 @@ let registry_dir =
   return n / 2
 }
 |};
+  (* A package with a submodule and an internal subtree: its body references
+     the internal relative to the package root, and a consumer addresses the
+     submodule under the short-name prefix. *)
+  let nested_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "nested_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat nested_dir "package.emo")
+    {|package {
+  name = "acme/nested_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat nested_dir "nested_tools.emo")
+    {|const helper = internal.helper
+
+def scale(n Int64) Int64 {
+  return helper.twice(n)
+}
+|};
+  write_file
+    (Filename.concat (Filename.concat nested_dir "internal") "helper.emo")
+    {|def twice(n Int64) Int64 {
+  return n * 2
+}
+|};
   dir
 
 let app_manifest =
@@ -970,6 +1000,94 @@ println(c_tools.halve(8))
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
                 Alcotest.fail ("codes: " ^ codes_dump ds)));
+    tc "a package submodule resolves under the short name and its internal is relative"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/nested_tools = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/nested_tools"
+println(nested_tools.scale(21))
+|} );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            Alcotest.(check string) "output" "42\n" output));
+    tc "internal/ stays private across the package boundary" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/nested_tools = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/nested_tools"
+println(nested_tools.internal.helper.twice(21))
+|} );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected E5001"
+            | exception Emo_project.Static_errors ds ->
+                if not (has_code ds "E5001") then
+                  Alcotest.fail ("codes: " ^ codes_dump ds)));
+    tc "a package module is not addressable at the top level" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    acme/nested_tools = "1.0.0"
+  }
+}
+|}
+              );
+              ("main.emo", {|require "acme/nested_tools"
+println(helper.twice(21))
+|});
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected `helper` to be undefined"
+            | exception Emo_project.Static_errors ds ->
+                if not (has_code ds "E4003") then
+                  Alcotest.fail ("codes: " ^ codes_dump ds)));
   ]
 
 let sched_tests =

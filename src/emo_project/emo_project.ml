@@ -20,6 +20,12 @@ type project = {
   root : string; (* filesystem path of the project root (the working dir) *)
   files : (string list, string) Hashtbl.t; (* module path → .emo file *)
   dirs : (string list, string) Hashtbl.t; (* module path → directory *)
+  mutable packages : string list list;
+      (* the short-name prefix of every fetched package registered in
+         [files] / [dirs]: a module under one of these is addressed by
+         its full prefixed path from outside, and relative to the prefix
+         from inside (a package's own references are written against its
+         root, per the README's module tree) *)
   diagnostics : Emo_support.Diagnostic.t list ref;
   cache : (string, string * Ast.item list) Hashtbl.t;
       (* file → (content hash, parsed items): unchanged modules skip
@@ -84,7 +90,11 @@ let normalize_path (path : string) : string =
   in
   s
 
-let rec walk p rel fs_dir =
+(* [body] names the file that is the current module's own body rather
+   than a child: registering a package [json] walks the package root with
+   [body = Some "json"], so [json.emo] defines the module `json` while
+   [internal/] and [mark.emo] become `json.internal` and `json.mark`. *)
+let rec walk ?(body : string option) p rel fs_dir =
   List.iter
     (fun (name, kind) ->
       let path = rel @ [ name ] in
@@ -103,12 +113,20 @@ let rec walk p rel fs_dir =
             walk p path fs_path)
       | `File fs_path ->
           let fs_path = normalize_path fs_path in
-          if Hashtbl.mem p.dirs path then
-            report p "E5005"
-              (Printf.sprintf "module path `%s` is claimed by both %s and %s"
-                 (String.concat "." path) fs_path (Hashtbl.find p.dirs path))
-          else if Hashtbl.mem p.files path then ()
-          else Hashtbl.replace p.files path fs_path)
+          (match body with
+          | Some b when String.equal name b ->
+              if Hashtbl.mem p.files rel then
+                report p "E5005"
+                  (Printf.sprintf "module path `%s` is claimed by both %s and %s"
+                     (String.concat "." rel) (Hashtbl.find p.files rel) fs_path)
+              else Hashtbl.replace p.files rel fs_path
+          | _ ->
+              if Hashtbl.mem p.dirs path then
+                report p "E5005"
+                  (Printf.sprintf "module path `%s` is claimed by both %s and %s"
+                     (String.concat "." path) fs_path (Hashtbl.find p.dirs path))
+              else if Hashtbl.mem p.files path then ()
+              else Hashtbl.replace p.files path fs_path))
     (entries fs_dir)
 
 (* Discovers the module tree under the working directory. *)
@@ -119,6 +137,7 @@ let discover ~entry_file : project =
       root;
       files = Hashtbl.create 8;
       dirs = Hashtbl.create 8;
+      packages = [];
       diagnostics = ref [];
       cache = Hashtbl.create 8;
       parses = 0;
@@ -141,12 +160,37 @@ let module_paths p : string list list =
 
 let diagnostics p : Emo_support.Diagnostic.t list = List.rev !(p.diagnostics)
 
-(* Child module names of a directory module, with their normalized paths. *)
+(* Child modules of a module, from the registered tables rather than the
+   filesystem: a package's public module `json` is a body file ([json.emo])
+   that also has children ([json.internal], [json.mark]), so a module path
+   may be both a body and a namespace. Scanning keys one segment deeper
+   yields exactly the children and naturally excludes the body itself. *)
 let children p (path : string list) : (string * string list) list =
-  match Hashtbl.find_opt p.dirs path with
+  let n = List.length path in
+  let collect tbl acc =
+    Hashtbl.fold
+      (fun key _ acc ->
+        if List.length key = n + 1 && List.take n key = path then
+          (List.nth key n, key) :: acc
+        else acc)
+      tbl acc
+  in
+  List.sort
+    (fun (a, _) (b, _) -> compare a b)
+    (collect p.dirs (collect p.files []))
+
+(* The package a module path belongs to: the short-name prefix registered
+   for a fetched dependency, or [] for the project's own tree. *)
+let package_of p (path : string list) : string list =
+  match
+    List.find_opt
+      (fun pkg ->
+        List.length pkg <= List.length path
+        && List.take (List.length pkg) path = pkg)
+      p.packages
+  with
+  | Some pkg -> pkg
   | None -> []
-  | Some fs_dir ->
-      List.map (fun (name, _) -> (name, path @ [ name ])) (entries fs_dir)
 
 let read_file path =
   let ic = open_in_bin path in
@@ -186,9 +230,18 @@ let load_module p (path : string list) : Emo_eval.env =
            (String.concat "." path))
   | Some file ->
       let items = parse_cached p file in
-      let env = Emo_eval.global_env () in
-      List.iter (Emo_eval.eval_item env) items;
-      env
+      (* A module's own references are written against its package root:
+         inside [json.emo], `internal.float` means `json.internal.float`.
+         The evaluator resolves a bare module name against this while the
+         module's items evaluate. *)
+      let saved = !Emo_eval.current_package in
+      Emo_eval.current_package := package_of p path;
+      Fun.protect
+        ~finally:(fun () -> Emo_eval.current_package := saved)
+        (fun () ->
+          let env = Emo_eval.global_env () in
+          List.iter (Emo_eval.eval_item env) items;
+          env)
 
 (* Installs the evaluator's module hooks for this project: discovery
    (normalized path → handle with children) and loading. *)
@@ -202,6 +255,17 @@ let install_hooks p =
     Hashtbl.create 8
   in
   let handle_of path =
+    (* Resolve a package-relative name (`internal` inside `json`) to its
+       absolute path before memoizing, so a module loads exactly once
+       whether reached relatively or by its full path. *)
+    let path =
+      match resolve p path with
+      | Some _ -> path
+      | None -> (
+          match !Emo_eval.current_package with
+          | [] -> path
+          | pkg -> if resolve p (pkg @ path) <> None then pkg @ path else path)
+    in
     match Hashtbl.find_opt handles path with
     | Some h -> Some h
     | None -> (
@@ -384,7 +448,8 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
     List.fold_left
       (fun (errors, entries) (path, items) ->
         let diagnostics, refs, requires =
-          Emo_check.check_module ~modules:module_paths ~current:path ~program
+          Emo_check.check_module ~modules:module_paths ~packages:p.packages
+            ~current:path ~program
             items
         in
         Hashtbl.replace graph path refs;
@@ -652,13 +717,16 @@ let install_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     Printf.sprintf "resolved %d dependencies" (List.length entries)
     :: (fetched @ [ lock_line ])
 
-(* Registers a fetched package's module tree at the top level — a package's
-   directory tree is its public module tree, so `json_tools.emo` at the
-   package root is the module `json_tools` that a require binds. The
-   package's own manifest is data, not a module, and is skipped. *)
-let register_package (p : project) (dir : string) : unit =
-  walk p [] dir;
-  Hashtbl.remove p.files [ "package" ];
+(* Registers a fetched package's module tree under its short name — the
+   package name is a module-path prefix (README: "a package name becomes a
+   top-level module path prefix"). The package root's `<short>.emo` is the
+   module `<short>` a require binds; every other entry becomes a child
+   (`<short>.internal`, `<short>.mark`), so two packages' `internal` and
+   `mark` no longer collide. The package's own manifest is data, not a
+   module, and is skipped. *)
+let register_package (p : project) (short : string) (dir : string) : unit =
+  walk ~body:short p [ short ] dir;
+  p.packages <- [ short ] :: p.packages;
   match diagnostics p with [] -> () | ds -> raise (Static_errors ds)
 
 (* The dependency side of a run: resolve or verify, then fetch every
@@ -699,7 +767,9 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
                        (Printf.sprintf
                           "package %s does not declare the `%s` target"
                           entry.Emo_pkg.Lockfile.dep target));
-                register_package p dir))
+                register_package p
+                  (Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep)
+                  dir))
       entries
 
 let entry_path (entry_file : string) : string =
@@ -728,7 +798,10 @@ let same_file (id : (int * int) option) (file : string) : bool =
    checked (the backend runs the full check), plus the entry module's
    path. Raises [Static_errors] on any diagnostic. *)
 let compile_inputs ~entry_file ~target :
-    Emo_ir.module_input list * string list * Emo_pkg.manifest option =
+    Emo_ir.module_input list
+    * string list
+    * string list list
+    * Emo_pkg.manifest option =
   let p, prepared = prepare ~entry_file in
   Option.iter
     (fun (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target p)
@@ -793,15 +866,15 @@ let compile_inputs ~entry_file ~target :
     List.fold_left
       (fun acc (path, items) ->
         let diags, _refs, _requires, types =
-          Emo_check.check_module_typed ~modules:module_paths ~current:path
-            ~program ~target items
+          Emo_check.check_module_typed ~modules:module_paths
+            ~packages:p.packages ~current:path ~program ~target items
         in
         diagnostics := !diagnostics @ diags;
         { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc)
       [] units
   in
   (match !diagnostics with [] -> () | ds -> raise (Static_errors ds));
-  (inputs, entry, Option.map fst prepared)
+  (inputs, entry, p.packages, Option.map fst prepared)
 
 (* The deps commands operate on the project at the working directory — the
    root rule makes the manifest's directory the project root. *)
@@ -834,7 +907,8 @@ let check_entry ~entry_file : Emo_support.Diagnostic.t list =
     | Some _ -> []
     | None ->
         let diags, _refs, _requires =
-          Emo_check.check_module ~modules:module_paths ~current:[] ~program
+          Emo_check.check_module ~modules:module_paths ~packages:p.packages
+            ~current:[] ~program
             items
         in
         diags
@@ -874,8 +948,8 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
        | Some _ -> []
        | None ->
            let diags, _refs, _requires =
-             Emo_check.check_module ~modules:module_paths ~current:[] ~program
-               items
+             Emo_check.check_module ~modules:module_paths
+               ~packages:p.packages ~current:[] ~program items
            in
            diags
      in

@@ -62,7 +62,8 @@ enum Share { all, none }
 
 ## Marks
 
-The marks live in the `mark` module. T0 ships the bar mark:
+The marks live in the `plot.mark` submodule — a package's submodules are
+addressed under its short name. T0 ships the bar mark:
 
 ```emo
 def bar(labels Array[String], values Array[Float64]) Bar
@@ -74,8 +75,8 @@ A mark is a value too. `Bar.with_style(s BarStyle)` and the style's
 anything:
 
 ```emo
-mark.bar(months, sales).with_style(
-  mark.bar_style().with_color((192, 57, 43)).with_width(0.6))
+plot.mark.bar(months, sales).with_style(
+  plot.mark.bar_style().with_color((192, 57, 43)).with_width(0.6))
 ```
 
 **Colors are `(Int64, Int64, Int64)` sRGB triples**, each channel 0–255.
@@ -97,7 +98,7 @@ const sales = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0]
 const ax = plot.axes()
   .with_x_label("Month")
   .with_y_label("Sales")
-  .with_marks([mark.bar(months, sales)])
+  .with_marks([plot.mark.bar(months, sales)])
 const chart = plot.figure().with_title("Monthly sales").with_axes([ax])
 
 println(plot.svg(chart))

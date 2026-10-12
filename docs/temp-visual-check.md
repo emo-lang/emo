@@ -125,14 +125,26 @@ On `feat/plot`, in rough order:
 
 ## 4. Open — remaining
 
-### R1 — the design note's `plot.mark` is really `mark`
+### R1 — the design note's `plot.mark` — resolved
 
-A package's submodules are addressed at the top level, not under the
-package name: `require "plot"` then `mark.bar(...)`, never
-`plot.mark.bar(...)`. A package-root submodule would also take the
-generic top-level name `mark`. `docs/visualization.md` (decision 18 and
-the surrounding prose, both languages) still says `plot.mark`; it needs
-revision, and the same question applies to the planned `stats` module.
+The design note's `plot.mark.bar` was right; the compiler was wrong. A
+package's directory tree is now registered under its short-name prefix
+(`json.emo` → `json`, `internal/float.emo` → `json.internal.float`), and a
+reference inside a package is resolved against its package root first
+(so `internal.float` in `json.emo` still means `json.internal.float`).
+The ocaml/c/typescript/wasm/beam lowering, the checker, and the evaluator
+all apply the same rule.
+
+What this fixed beyond `plot.mark`:
+
+- two packages' `internal` no longer silently collide (json and yaml both
+  ship `internal/float.emo`; the second used to be dropped without a
+  diagnostic);
+- `internal/` privacy is now enforced across the package boundary —
+  `plot.internal.scale` from a consumer reports E5001;
+- `examples/plot_demo` and the plot docs now spell `plot.mark`.
+
+`docs/visualization.md`'s `plot.mark` needs no revision.
 
 ### R2 — checker field types stay `Unknown`
 
@@ -164,8 +176,8 @@ library hits it yet.
       the docs/demo updated.
 - [x] **T0** — the plot skeleton, the bar-chart demo on all five targets,
       and the package docs.
-- [ ] **R1** — revise `docs/visualization.md` for the real module path
-      (`mark`, not `plot.mark`).
+- [x] **R1** — resolved by fixing the compiler's package namespacing;
+      `docs/visualization.md`'s `plot.mark` was right.
 - [ ] **R2** — type `self.field` precisely, with the emitters aligned.
 - [ ] **R3** — the builtin-vs-class-method shadowing (`length` first).
 - [ ] Then: further plot work — T1 statistics, the other mark families,

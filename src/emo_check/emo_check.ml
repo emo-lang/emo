@@ -81,6 +81,10 @@ type ctx = {
   mutable ret_sink : t list ref;
       (* while checking an arrow block, its return types land here *)
   modules : string list list; (* every known module path in the project *)
+  packages : string list list;
+      (* the short-name prefix of every fetched package: a reference inside
+         such a package is written against its root and resolves under the
+         prefix (`internal.float` inside `json` means `json.internal.float`) *)
   current : string list; (* the module being checked *)
   refs : string list list ref; (* module paths referenced by this module *)
   requires : (string * Emo_support.Span.t) list ref;
@@ -529,6 +533,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       diagnostics = ref [];
       ret_sink = ref [];
       modules = [];
+      packages = [];
       current = [];
       refs = ref [];
       requires = ref [];
@@ -960,6 +965,28 @@ let longest_module_prefix ctx (path : string list) : string list =
   in
   longest [] (prefixes path)
 
+(* The package a module belongs to: the registered short-name prefix that
+   is a prefix of its path, or [] for the project's own tree. *)
+let package_of ctx (path : string list) : string list =
+  match
+    List.find_opt
+      (fun pkg ->
+        List.length pkg <= List.length path
+        && List.take (List.length pkg) path = pkg)
+      ctx.packages
+  with
+  | Some pkg -> pkg
+  | None -> []
+
+(* A reference inside a package is written against the package root
+   (`internal.float` in `json.emo`), so resolve it under the current
+   package's prefix first; an already-absolute path (the file naming its
+   own package, or another package's short name) is left alone. *)
+let relativize ctx (path : string list) : string list =
+  match package_of ctx ctx.current with
+  | [] -> path
+  | pkg -> if module_prefix_known ctx (pkg @ path) then pkg @ path else path
+
 (* Type-name resolution for `is()` targets; unknown names narrow to nothing. *)
 let resolve_type_name ctx span name =
   if Hashtbl.mem ctx.classes name then ClassType name
@@ -1138,9 +1165,11 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                  name);
           info.vtype
       | None ->
-          if module_prefix_known ctx [ name ] then (
-            (* A root-level module reference. *)
-            ctx.refs := [ name ] :: !(ctx.refs);
+          let name_path = relativize ctx [ name ] in
+          if module_prefix_known ctx name_path then (
+            (* A module reference: root-level, or relative to the current
+               package's root. *)
+            ctx.refs := name_path :: !(ctx.refs);
             Unknown)
           else (
             report ctx span "E4003" (Printf.sprintf "`%s` is not defined" name);
@@ -1168,8 +1197,8 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
       then Unknown
       else if Hashtbl.mem ctx.groups name || Hashtbl.mem ctx.pgroups name then
         Unknown
-      else if module_prefix_known ctx [ name ] then (
-        ctx.refs := [ name ] :: !(ctx.refs);
+      else if module_prefix_known ctx (relativize ctx [ name ]) then (
+        ctx.refs := relativize ctx [ name ] :: !(ctx.refs);
         Unknown)
       else if ctx.program_checked then (
         (* A capitalized name that resolves to no type, group, or
@@ -1189,12 +1218,13 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
           Unknown)
   | Ast.Member (recv, name) -> (
       let full = Option.value (dotted_path e) ~default:[] in
-      let prefix = longest_module_prefix ctx full in
       let module_path =
         match full with
         | head :: _ when not (bound_local env head) -> true
         | _ -> false
       in
+      let full = if module_path then relativize ctx full else full in
+      let prefix = longest_module_prefix ctx full in
       if module_path && module_prefix_known ctx full then (
         (* A qualified module reference: the whole path names a
            module. *)
@@ -1562,6 +1592,11 @@ and check_method_call ctx env span recv mname args : t =
         (* A receiver that is exactly a module path (its head not
            shadowed by a local): the call goes through the program's
            signature tables. *)
+        let full =
+          match full with
+          | head :: _ when not (bound_local env head) -> relativize ctx full
+          | _ -> full
+        in
         let prefix = longest_module_prefix ctx full in
         let module_path =
           match full with
@@ -2949,6 +2984,7 @@ let preregister_ctx tables diagnostics =
     diagnostics;
     ret_sink = ref [];
     modules = [];
+    packages = [];
     current = [];
     refs = ref [];
     requires = ref [];
@@ -3185,7 +3221,8 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
 (* [program] carries the pre-registered type tables (preregister_types):
    the module's own declarations overwrite its entries, every other
    module's declarations stay resolvable. *)
-let check_module_typed ~(modules : string list list) ~(current : string list)
+let check_module_typed ~(modules : string list list)
+    ?(packages : string list list = []) ~(current : string list)
     ?(program : program_types option) ?(target = "c") (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
@@ -3211,6 +3248,7 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
       diagnostics = ref [];
       ret_sink = ref [];
       modules;
+      packages;
       current;
       refs = ref [];
       requires = ref [];
@@ -3244,13 +3282,14 @@ let check_module_typed ~(modules : string list list) ~(current : string list)
     ctx.types )
 
 (* The plain entry: same checking, types discarded. *)
-let check_module ~(modules : string list list) ~(current : string list)
+let check_module ~(modules : string list list)
+    ?(packages : string list list = []) ~(current : string list)
     ?(program : program_types option) (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list =
   let diagnostics, refs, requires, _types =
-    check_module_typed ~modules ~current ?program items
+    check_module_typed ~modules ~packages ~current ?program items
   in
   (diagnostics, refs, requires)
 

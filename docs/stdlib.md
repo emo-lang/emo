@@ -508,8 +508,9 @@ def with_y_label(s String) Axes
 def with_marks(m Array[Mark]) Axes
 ```
 
-The `mark` module carries the marks; T0 ships the bar mark,
-`mark.bar(labels, values)`, refined through `mark.bar_style()`. Colors
+The `plot.mark` submodule carries the marks; T0 ships the bar mark,
+`plot.mark.bar(labels, values)`, refined through `plot.mark.bar_style()`.
+Colors
 are `(Int64, Int64, Int64)` sRGB triples, 0–255 per channel. Every label
 is an SVG `<text>` element, so the package carries no font engine.
 

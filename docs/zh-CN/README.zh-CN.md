@@ -242,6 +242,7 @@ def parse_config(text String) Json {
 ```
 
 - **`require` 是把包的短名带入作用域的文件级语句。** 包侧无需对应物——包的公开面就是它的模块树。完全限定的路径永远可用。
+- **包的模块树挂载在短名之下。** 包根的 `<short>.emo` 就是 `require` 绑定的模块 `<short>`;其余文件或目录都是它的子节点——`json/internal/float.emo` 就是 `json.internal.float`,`plot/mark.emo` 就是 `plot.mark`——所以两个包的 `internal` 和 `mark` 永不冲突。包内部引用以包根为基准书写(`json.emo` 里的 `internal.float` 即 `json.internal.float`),因此一个包无论单独构建还是挂载在前缀下,编译结果一致。
 - **`require` 与 manifest 严格配对。** require 一个 `deps` 里没有的包是编译错误——严格优先，manifest 只因显式操作而改变。
 
 - **中心注册表，端点可配置。** 包按 `name@version` 通过中心注册表寻址，由全局内容寻址缓存支撑、跨项目共享——没有每项目的依赖副本。注册表端点读 `EMO_REGISTRY` 环境变量——全局或每项目设置——服务私有与本地部署；未设置时，标准库的内置注册表随编译器附带并默认服务。
