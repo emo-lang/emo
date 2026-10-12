@@ -1,6 +1,6 @@
-# Step 10 — Packages & Version Resolution
+# Step 11 — Packages & Version Resolution
 
-**Milestone:** M2 complete · **Prereq:** steps 01–09 · **Status:** done
+**Milestone:** M2 complete · **Prereq:** steps 01–10 · **Status:** done
 
 ## Goal
 

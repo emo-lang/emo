@@ -49,7 +49,7 @@ this step the README's code examples all parse completely.
 
 ### Out
 
-- `require` (step 10), pattern matching, mixins (undecided), default
+- `require` (step 11), pattern matching, mixins (undecided), default
   arguments, visibility keywords (do not exist structurally).
 
 ## Tasks

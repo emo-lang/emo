@@ -1,6 +1,6 @@
-# Step 34 — The standard library: `xml`
+# Step 33 — The standard library: `xml`
 
-**Milestone:** M13 — The standard library · **Prereq:** step 32 (the
+**Milestone:** M13 — The standard library · **Prereq:** step 31 (the
 json package — the tree design, the byte-scanner discipline, and the
 exact-buffer patterns this package follows) · **Related:**
 `stdlib/registry/{json,yaml}` (the sibling format packages),
@@ -39,25 +39,25 @@ entities, and missing elements all raise with the byte offset.
 
 ## Follow-ups
 
-- The cross-module-types checker step (step 32's follow-up) gated
+- The cross-module-types checker step (step 31's follow-up) gated
   wasm and beam here as it gated json and yaml. (The c target works:
   the xml_demo golden rides the c_goldens list. The step landed
   2026-10-10; wasm and beam now wait on their own capability walls.)
 
 ## Tasks
 
-- [x] **T34.1** — The package, the value model (XmlElement /
+- [x] **T33.1** — The package, the value model (XmlElement /
       XmlText over the Xml interface), and the decoder: elements,
       attributes, text with entities, CDATA, comments, PIs,
       declaration and DOCTYPE skipping, the depth cap, and
       offset-bearing errors. (Done 2026-10-09.)
-- [x] **T34.2** — The encoder: elements with escaped attributes,
+- [x] **T33.2** — The encoder: elements with escaped attributes,
       self-closing form, escaped text, exact round-trips. (Done
       2026-10-09.)
-- [x] **T34.3** — The goldens: `examples/xml_demo` (bootstrap + c +
+- [x] **T33.3** — The goldens: `examples/xml_demo` (bootstrap + c +
       typescript) and `examples/xml_edge` (bootstrap — entity forms,
       attributes, same-name children, mixed content, self-closing,
       declaration/comment/PI skipping). (Done 2026-10-09.)
-- [x] **T34.4** — The docs: `docs/stdlib/xml.md` and its zh-CN
+- [x] **T33.4** — The docs: `docs/stdlib/xml.md` and its zh-CN
       mirror; `dune build @fmt` and `dune test` green. (Done
       2026-10-09.)

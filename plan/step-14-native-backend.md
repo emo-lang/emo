@@ -1,6 +1,6 @@
-# Step 13 — Native Backend
+# Step 14 — Native Backend
 
-**Milestone:** M4 · **Prereq:** steps 01–12 · **Status:** done
+**Milestone:** M4 · **Prereq:** steps 01–13 · **Status:** done
 
 ## Goal
 
@@ -8,7 +8,7 @@
 story the README promises — type information feeding specialization
 (unboxed representations, direct dispatch). This step introduces the
 compiler's first machine-targeting backend and, with it, a mid-level IR that
-step 14's other targets will share.
+step 15's other targets will share.
 
 ## Scope
 
@@ -19,7 +19,7 @@ step 14's other targets will share.
     (or a directly-linked OCaml module tree), compile with the OCaml
     toolchain, link the runtime (scheduler, builtins). This reuses OCaml's
     optimizer, GC, and platform support, and lands a real backend fast.
-  - **Stage B: specialization.** Where the step 08 checker has complete
+  - **Stage B: specialization.** Where the step 09 checker has complete
     type knowledge for a module, specialize: unbox primitives, direct
     (non-duck) method dispatch, eliminate runtime tag checks. Mixed
     modules keep dynamic semantics at their `Unknown` regions — gradual
@@ -27,17 +27,17 @@ step 14's other targets will share.
   - Recommendation: A then B. A pure from-scratch codegen detour is not
     warranted before the language has users.
 - **Mid-level IR** — a small, typed IR between the checked AST and every
-  backend (this one and step 14's): modules of named functions over typed
+  backend (this one and step 15's): modules of named functions over typed
   values, closures, tagged-dynamic fallbacks. Adding a backend means
   lowering from the IR, never from the AST again.
-- **`emo build`** — resolves (step 10), checks, lowers, compiles, links;
+- **`emo build`** — resolves (step 11), checks, lowers, compiles, links;
   output is a single executable. Build-as-install ergonomics: building an
   executable from a package is just `emo build`, no separate install step.
   Incremental: content-hash caching per module/IR-unit across builds.
 - **C FFI** — link Emo binaries against C libraries through OCaml's
   first-class FFI; the binding-surface syntax is a design item (below) and
   must be settled before shipping any FFI.
-- **Runtime linkage** — the step 11/12 scheduler and net stack link into
+- **Runtime linkage** — the step 12/12 scheduler and net stack link into
   produced binaries; programs using them carry the runtime, everything
   else stays lean.
 - **Benchmarks** — a `benchmarks/` set (fib, process ping-pong, HTTP
@@ -47,8 +47,8 @@ step 14's other targets will share.
 ### Out
 
 - Self-hosting (explicitly not a goal — the compiler stays OCaml).
-- Other targets (step 14), debug builds / DWARF (later hardening).
-- The bare-metal target (step 14).
+- Other targets (step 15), debug builds / DWARF (later hardening).
+- The bare-metal target (step 15).
 
 ## Tasks
 
@@ -57,7 +57,7 @@ step 14's other targets will share.
 - [x] `emo build` with incremental caching.
 - [x] Benchmark set wired into CI (numbers recorded, not just pass/fail).
 - [x] Stage B: type-driven specialization passes (unboxing, direct
-      dispatch) behind completeness checks from step 08 data.
+      dispatch) behind completeness checks from step 09 data.
 - [x] C FFI linking path once binding syntax is decided.
 - [x] Bootstrap test: the `examples/` suite as compiled binaries matches
       interpreter output byte-for-byte.
@@ -98,9 +98,9 @@ Both open design items settled:
 
 Notes:
 
-- T13.5's specialization landed with the T13.1/T13.2 commits: the
+- T14.5's specialization landed with the T14.1/T14.2 commits: the
   completeness fixed point lives in the checker/`Emo_ir.specialize`, and
-  the T13.2 emitter carries the specialized/dynamic split with dynamic
+  the T14.2 emitter carries the specialized/dynamic split with dynamic
   wrappers.
 - The build cache keys on the emitted source, the runtime libraries'
   sizes, the specialize flag, and `--cclib` flags — any change

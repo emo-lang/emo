@@ -1,6 +1,6 @@
-# Step 19 — The systems layer (wasm runtime + EmoOS primitives)
+# Step 20 — The systems layer (wasm runtime + EmoOS primitives)
 
-**Milestone:** M6 · **Prereq:** steps 01–18 · **Status:** complete
+**Milestone:** M6 · **Prereq:** steps 01–07 · **Status:** complete
 
 ## The project
 
@@ -16,16 +16,16 @@ so the layer is designed once, with a single gate:
 
 Ladder (each rung gets its own step plan when it starts):
 
-1. **Step 19 (this step)** — the systems layer: bitwise operators,
+1. **Step 20 (this step)** — the systems layer: bitwise operators,
    the `Bytes` buffer, the fixed-width integer family's first
    members, float bit reinterpretation, and file reading.
-2. **Step 20** — the runtime's binary decoder and validator (module
+2. **Step 21** — the runtime's binary decoder and validator (module
    model, LEB128, sections, type-stack checking).
-3. **Step 21** — the interpreter core, host imports, and conformance
+3. **Step 22** — the interpreter core, host imports, and conformance
    goldens from the official spec test suite.
 
 The package boundary, the spec-data split, and the condition for leaving
-this repository are recorded in `plan/step-20-wasm-decoder.md`; they
+this repository are recorded in `plan/step-21-wasm-decoder.md`; they
 bind the whole ladder, and they are what keeps an in-repo runtime from
 growing into an in-repo language.
 4. **M7 (EmoOS)** — the kernel path, on the same layer (below).
@@ -99,7 +99,7 @@ already answered by existing mechanisms:
   widening or narrowing — conversions are explicit named methods.**
   This step lands the first two members a consumer names today:
   `Int64` (the runtime's `i64`; also the float-bit bridge's carrier)
-  and `Byte` (the `Bytes` element). Later members land in steps 20–21
+  and `Byte` (the `Bytes` element). Later members land in steps 21–22
   (`Int32` for wasm) and M7 (`UInt32`/`UInt64` for kernel addresses)
   — the gate cuts both ways: no speculative types either.
 - **`Float.to_bits() Int64` / `Float.from_bits(v Int64) Float`** —
@@ -123,14 +123,14 @@ already answered by existing mechanisms:
 - All four backends for everything above; per-backend representation
   notes live in the tasks.
 - `runtime/wasm/` — the empty Emo package the runtime will grow in
-  (created in T19.4 with a `package.emo` and a smoke module so the
+  (created in T20.4 with a `package.emo` and a smoke module so the
   directory is real from day one).
 - Goldens per task; the bit-op and bytes examples join every target's
   CI group.
 
 ### Out
 
-- The decoder, validator, and interpreter themselves — steps 20–21.
+- The decoder, validator, and interpreter themselves — steps 21–22.
 - The kernel itself — M7; this layer only guarantees its primitives.
 - Remaining width-family members (`Int8`, `Int16`, `Int32`,
   `UInt16`, `UInt32`, `UInt64`), big-endian accessors, atomics,
@@ -141,20 +141,20 @@ already answered by existing mechanisms:
 
 ## Tasks
 
-- [x] **T19.1** — Bitwise operators (`& | ^ << >> ~`) on integer
+- [x] **T20.1** — Bitwise operators (`& | ^ << >> ~`) on integer
       types: lexer, parser, checker, interpreter, and all four
       backends; `examples/bit_ops/` golden through `emo run` and
       every target's CI group.
-- [x] **T19.2** — The `Bytes` core type: construction, bounds-
+- [x] **T20.2** — The `Bytes` core type: construction, bounds-
       checked get/set, little-endian accessors, String interop; all
       four backends; golden example. The u64 accessors wait for
-      `Int64` (T19.4) — 63-bit host Int cannot carry them. Known wasm
+      `Int64` (T20.4) — 63-bit host Int cannot carry them. Known wasm
       gap: printing a raw `Bytes` value writes the buffer's bytes
       instead of the `Bytes[n]` label — the `to_str` bytes branch
       interacts with something subtle in the chain and is backed out;
       `to_string()` (raw) and every other method work. Revisit with the
       label as a `to_str` caller-side wrapper.
-- [x] **T19.3** — `file.read` stdlib package (native, scheduler-
+- [x] **T20.3** — `file.read` stdlib package (native, scheduler-
       direct); a golden example reading a file from disk. Ships
       `file.write` too — the demo writes its own data file, which
       keeps the golden independent of the working directory. The
@@ -162,7 +162,7 @@ already answered by existing mechanisms:
       the resumption runs synchronously, and read-your-own-write
       beats descriptor hygiene. Tests resolve the registry through
       EMO_REGISTRY pointed at the sandbox's stdlib copy.
-- [x] **T19.4** — `Int64` and `Byte`: literals, wrap-around
+- [x] **T20.4** — `Int64` and `Byte`: literals, wrap-around
       arithmetic, comparisons, explicit conversions; all four
       backends; golden example. `runtime/wasm/` package skeleton
       created here.

@@ -1,6 +1,6 @@
-# Step 33 — The standard library: `yaml`
+# Step 32 — The standard library: `yaml`
 
-**Milestone:** M13 — The standard library · **Prereq:** step 32 (the
+**Milestone:** M13 — The standard library · **Prereq:** step 31 (the
 json package — the yaml package shares its tree design, its block
 parser discipline, and its exact-decimal float machinery) ·
 **Related:** `stdlib/registry/json` (the sibling format package),
@@ -38,7 +38,7 @@ last-win, and the number formats at their boundaries.
 
 ## Follow-ups
 
-- The cross-module-types checker step (step 32's follow-up) gated c,
+- The cross-module-types checker step (step 31's follow-up) gated c,
   wasm, and beam here exactly as it gated the json package. (Landed
   2026-10-10; yaml_demo runs byte-identically through the interpreter
   and the c binary — the landing also flushed a trampoline defect the
@@ -47,18 +47,18 @@ last-win, and the number formats at their boundaries.
 
 ## Tasks
 
-- [x] **T33.1** — The package and the parser: `stdlib/registry/yaml/
+- [x] **T32.1** — The package and the parser: `stdlib/registry/yaml/
       0.1.0` (`package.emo` over the five targets, `yaml.emo` with the
       value model and the block/flow parser, `internal/float.emo` for
       the numeric machinery) embedded by rebuild. (Done 2026-10-09.)
-- [x] **T33.2** — The encoder: block style, plain-when-unambiguous
+- [x] **T32.2** — The encoder: block style, plain-when-unambiguous
       string policy with double-quoting otherwise, empty-container
       flow forms. (Done 2026-10-09.)
-- [x] **T33.3** — The goldens: `examples/yaml_demo` (bootstrap +
+- [x] **T32.3** — The goldens: `examples/yaml_demo` (bootstrap +
       typescript) and `examples/yaml_edge` (bootstrap — escape
       matrix, surrogate pairs, number boundaries, block-scalar
       chomping, duplicate keys, empty containers, round-trips).
       (Done 2026-10-09.)
-- [x] **T33.4** — The docs: `docs/stdlib/yaml.md` and its zh-CN
+- [x] **T32.4** — The docs: `docs/stdlib/yaml.md` and its zh-CN
       mirror; `dune build @fmt` and `dune test` green. (Done
       2026-10-09.)

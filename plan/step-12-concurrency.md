@@ -1,6 +1,6 @@
-# Step 11 — Processes & Message Passing
+# Step 12 — Processes & Message Passing
 
-**Milestone:** M3 · **Prereq:** steps 01–10 · **Status:** done
+**Milestone:** M3 · **Prereq:** steps 01–11 · **Status:** done
 
 ## Goal
 
@@ -25,7 +25,7 @@ semantics, not the spellings.
   semantics fastest and keeps the runtime behind one internal interface.
 - **Scheduler, phase B — own effects runtime:** replace Eio beneath that
   interface with a hand-written OCaml 5 effects scheduler (io_uring / kqueue
-  / IOCP with libuv fallback comes with step 12's IO). The evaluator's
+  / IOCP with libuv fallback comes with step 13's IO). The evaluator's
   blocking points (`receive`, IO) are effect handlers; a pluggable,
   injectable scheduler decision log makes concurrency tests deterministic.
 - **Processes** —
@@ -64,10 +64,10 @@ semantics, not the spellings.
 
 ### Out
 
-- Networking (step 12 — though the scheduler interface lands here).
+- Networking (step 13 — though the scheduler interface lands here).
 - Supervision library, gen-server-style patterns (standard library, later).
 - Shared-memory primitives (excluded from core semantics by design).
-- BEAM mapping (step 14 — but this step's tests should avoid constructs a
+- BEAM mapping (step 15 — but this step's tests should avoid constructs a
   BEAM backend could not honor).
 
 ## Tasks

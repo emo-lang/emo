@@ -25,10 +25,10 @@ intentionally do nothing yet. No Emo language functionality in this step.
     emo_parser/    # steps 03–04 (hand-written recursive descent)
     emo_ast/       # AST shared by parser / eval / checker, steps 03+
     emo_eval/      # steps 05–06
-    emo_check/     # step 08
+    emo_check/     # step 09
     emo_cli/       # the `emo` binary
   test/            # alcotest suites, one per library
-  examples/        # created in step 07 (acceptance programs)
+  examples/        # created in step 08 (acceptance programs)
   ```
 
 - CLI binary with subcommands (names are provisional — see open items):

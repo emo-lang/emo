@@ -1,25 +1,25 @@
-# Step 14 — Other Targets: Wasm, TypeScript, BEAM, RISC-V Bare Metal
+# Step 15 — Other Targets: Wasm, TypeScript, BEAM, RISC-V Bare Metal
 
-**Milestone:** M4 roadmap · **Prereq:** steps 01–13 (per target, below) ·
+**Milestone:** M4 roadmap · **Prereq:** steps 01–14 (per target, below) ·
 **Status:** not started
 
 ## Goal
 
 The remaining README compilation targets, each a sub-project with its own
-prerequisites and risk profile. Unlike steps 01–13 these are **roadmap
+prerequisites and risk profile. Unlike steps 01–14 these are **roadmap
 entries, not execution-ready plans** — each gets its own detailed step file
 when scheduled, following the same format. Order within the step is by
 recommended priority.
 
 ## WebAssembly (recommended first)
 
-- **Strategy:** compile the step 13 IR to Wasm; start with WASI
+- **Strategy:** compile the step 14 IR to Wasm; start with WASI
   (command-line programs, filesystem, sockets via WASI where available),
   browser embedding (`fetch` / WebSocket bridging) after.
 - **Key decisions:** WasmGC vs a custom GC for Emo values (WasmGC aligns
   with every-value-carries-a-tag only partially — struct-of-payload designs
   need care); module loading under the WASI sandbox.
-- **Prereq:** IR from step 13; stdlib target metadata extended with
+- **Prereq:** IR from step 14; stdlib target metadata extended with
   `"wasm"`.
 - **Risk:** GC strategy is the whole game; prototype both before choosing.
 
@@ -29,10 +29,10 @@ recommended priority.
   naturally (Emo type declarations → TS types, `Unknown` → `any`-free
   escape hatches to be defined). The runtime value tags become a thin TS
   runtime library.
-- **Key decisions:** the direct-style problem — step 12's blocking calls
+- **Key decisions:** the direct-style problem — step 13's blocking calls
   must map onto the event loop (Promise-returning internals with an
   ergonomic surface); how processes map to workers or cooperative tasks.
-- **Prereq:** step 08 (checker feeds type declarations); no IR dependency — the
+- **Prereq:** step 09 (checker feeds type declarations); no IR dependency — the
   AST suffices, or reuse IR if it simplifies.
 - **Risk:** function coloring leaks backwards from TS's ecosystem; keep
   the Emo surface direct-style and absorb the mapping in the emitted code.
@@ -46,7 +46,7 @@ recommended priority.
   exceptions → errors; tail calls are native; the mutable cell →
   process-dictionary-free design (an ordinary process-held state pattern),
   snapshots already match BEAM copying.
-- **Prereq:** steps 08 and 11 (semantics frozen); stdlib surface audit for
+- **Prereq:** steps 09 and 11 (semantics frozen); stdlib surface audit for
   BEAM-unsupported operations.
 - **Risk:** low semantically, moderate in tooling (rebar/OTP integration,
   releases).
@@ -73,7 +73,7 @@ recommended priority.
   as the native backend's 64-bit route; there `Int32` is the
   register-width fast path and `Int64` the emulated one. Narrowing
   `Int64` on RV32 is off the table.
-- **Prereq:** step 13 Stage B (specialized, lean codegen); a custom or
+- **Prereq:** step 14 Stage B (specialized, lean codegen); a custom or
   minimal GC story; linker scripts.
 - **Risk:** highest of the four; also the most speculative until an EmoOS
   effort exists.
@@ -134,7 +134,7 @@ of re-deriving it.
 - The freestanding target is the first that must lay the dynamic value
   out itself — every shipped target delegates it (OCaml variant,
   WasmGC structs, BEAM tuples, JS objects). The scheme, settled in
-  `plan/step-22-riscv64.md`: one tagged machine word per value; heap
+  `plan/step-19-riscv64.md`: one tagged machine word per value; heap
   blocks 8-byte aligned with the 3 free pointer bits as the kind tag;
   Bool and Char immediate.
 - **`Int64`/`Float64` are boxed two-word cells in the dynamic world** —
@@ -153,7 +153,7 @@ of re-deriving it.
 ### Boot profiles (probed, 2026-10-05)
 
 Two ways to run under QEMU `virt`; the milestones table below had
-conflated them before this split, settled in `plan/step-22-riscv64.md`:
+conflated them before this split, settled in `plan/step-19-riscv64.md`:
 
 - **Profile A — OpenSBI-hosted (the M1 profile).** The default
   `-kernel` chain: OpenSBI at 0x80000000 enters the payload at
@@ -170,7 +170,7 @@ conflated them before this split, settled in `plan/step-22-riscv64.md`:
 
 Question assessed: how hard is an Emo process scheduler on RISC-V under
 QEMU? The split: **the scheduler itself is the easy ~15–20%** — the
-semantics were settled in step 11 and already implemented three times
+semantics were settled in step 12 and already implemented three times
 (interpreter runtime, Wasm driver loop, BEAM processes) with golden
 tests; the hard part is the substrate beneath it (the codegen backend
 plus the freestanding runtime).
@@ -205,7 +205,7 @@ Milestones:
 
 | Milestone | Content | Difficulty |
 | --- | --- | --- |
-| M1 | riscv64 backend (emit assembly text for cross-binutils, mirroring step 13's emit-and-delegate pattern), boot stub under profile A (OpenSBI-hosted S-mode at 0x80200000: set stack, clear BSS, park non-boot harts), SBI console for `println`, "Hello, world" under `qemu-system-riscv64` | high — the dominant cost of the whole effort |
+| M1 | riscv64 backend (emit assembly text for cross-binutils, mirroring step 14's emit-and-delegate pattern), boot stub under profile A (OpenSBI-hosted S-mode at 0x80200000: set stack, clear BSS, park non-boot harts), SBI console for `println`, "Hello, world" under `qemu-system-riscv64` | high — the dominant cost of the whole effort |
 | M2 | cooperative scheduler: ≥2 processes, send/receive, round-robin, no preemption | moderate-low |
 | M3 | timer preemption: `stvec` trap handler, SBI `set_timer`, time slices | moderate — optional; semantics do not require it |
 | M4 | multi-hart SMP (per-hart run queues, IPIs, LR/SC atomics) | high — defer indefinitely |
@@ -272,13 +272,13 @@ what already exists (firmware, driver code, legacy libraries).
 - [x] When a target is scheduled, split it into `step-NN-<target>.md` with
       the full standard format (goal / scope / tasks / acceptance) and
       update `plan/README.md`'s status table. (riscv64 →
-      `plan/step-22-riscv64.md`, 2026-10-05.)
+      `plan/step-19-riscv64.md`, 2026-10-05.)
 - [ ] Record here which key decision each target settled and where
       (README / CHECK.md / docs) — keep the trail.
 
 ## Promotion trail
 
-- **TypeScript → `plan/step-15-typescript.md`** (scheduled 2026-10-02,
+- **TypeScript → `plan/step-17-typescript.md`** (scheduled 2026-10-02,
   first target). Its key decisions are settled in that file's
   "Decisions settled here": lowering from the IR (superseding this
   file's earlier "the AST suffices" note), uniform async mapping, and
@@ -293,7 +293,7 @@ what already exists (firmware, driver code, legacy libraries).
 
 - Each promoted target ships with: a compiling toolchain path
   (`emo build --target <t>`), its `examples/` subset green, and target
-  metadata honored by step 10's resolution gate.
+  metadata honored by step 11's resolution gate.
 
 ## Open design items
 
