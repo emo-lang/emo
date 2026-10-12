@@ -184,12 +184,24 @@ in the file list above: each now carries a **new** number. Three call-outs:
   literal. It was reverted to `step 8`. No other `step`-as-identifier hit
   was found (`conv_step2` in `instance.emo` was likewise left alone).
 
-### 2. `docs/zh-CN/TASKS.md`
+### 2. `docs/zh-CN/TASKS.md` — done
 
-Still the old structure: `## M1 … ## M15` with `EmoOS` present (6
-occurrences) and the old step numbers. Needs the full mirror of the English
-work: drop EmoOS, milestone table to `M1–M13`, step sections renumbered
-`01–46`, plus `T`-ids, prereqs, and plan-file references.
+Mirrored the English work: the milestone table is `M1–M13`, EmoOS is gone
+(0 occurrences), the 46 step sections are renumbered `01–46` and reordered
+(function groups into M1 as 07, BEAM into M4 as 18, the wasm target before
+TypeScript), every `T`-id is padded/mapped, and the prereqs, plan-file
+references, and in-prose step references follow. The six prereqs whose
+endpoint is not a plain old → new mapping (new `07`, `08`, `16`, `17`, `18`,
+`20`) were set from the English. The structure now matches `docs/TASKS.md`
+exactly — the same milestones with the same step numbers in the same order.
+
+Done with a one-off script (`devtools/tmp-renumber-zh.py`, since moved to
+`/Users/daqing/protected/tmp/`), verified with a mapped-backup line-multiset
+diff: the only changed lines are the intended ones.
+
+In-body `M`-refs still carry the pre-renumber labels, matching the English
+(e.g. step 19's "M7 完成", the toolchain intro's "M8 把 … M9 把 …") —
+those are item 5's scope.
 
 ### 3. EmoOS residuals in plan files
 
