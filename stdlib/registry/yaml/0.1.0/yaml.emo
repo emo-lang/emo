@@ -18,6 +18,9 @@ require "float"
 // plain/quoted scalars and multi-line flow, and tabs in indentation.
 // Double-quoted scalars accept the YAML escape set (a superset of
 // JSON's). Mapping keys are strings; integers outside Int64 refuse.
+// Values outside binary64's range refuse, and so do the core schema's
+// non-finite spellings (`.inf`, `-.inf`, `.nan`): no target that lacks
+// non-finite values can carry one.
 
 enum YamlKind { ynull, ybool, yint, yfloat, ystring, yarray, yobject }
 
@@ -1689,7 +1692,9 @@ def find_colon(data Bytes, i Int64, e Int64, depth Int64, quote Int64, found Int
 
 // YAML 1.2 core schema: null (~, null, Null, NULL, empty), booleans
 // (true/True/TRUE, false/False/FALSE), decimal/hex/octal integers,
-// floats (with .inf and .nan), everything else a string.
+// finite floats, everything else a string. `.inf` and `.nan` name
+// non-finite values the value model cannot carry on every target, so
+// they refuse like a number outside binary64's range.
 def resolve_plain(text String) (R, Yaml) {
   if text == "" || text == "~" || text == "null" || text == "Null" || text == "NULL" {
     return (R.ok, YamlNull.new())
@@ -1732,18 +1737,13 @@ def plain_number_signed(b Bytes, i Int64, e Int64, neg Int64) (R, Yaml) {
   if i >= e {
     return (R.ok, YamlNull.new())
   }
-  const inf = special_inf(b, i, e, neg)
-  if inf.is(YamlFloat) {
-    return (R.ok, inf)
-  }
-  const nan = special_nan(b, i, e)
-  if nan.is(YamlFloat) {
-    return (R.ok, nan)
+  if special_inf(b, i, e) || special_nan(b, i, e) {
+    return (R.error, "yaml: non-finite floats are not supported")
   }
   const c = b.get(i)
   if c == 46 {
     const fr = frac_exp(b, i + 1, e)
-    return (R.ok, float_from_parts(b, i, 0, i + 1, fr[0] - (i + 1), fr[1], neg))
+    return float_from_parts(b, i, 0, fr[0] - (i + 1), fr[1], neg)
   }
   if c < 48 || c > 57 {
     return (R.ok, YamlNull.new())
@@ -1751,41 +1751,32 @@ def plain_number_signed(b Bytes, i Int64, e Int64, neg Int64) (R, Yaml) {
   return number_after_digits(b, i, e, neg)
 }
 
-// `.inf` with its sign.
-def special_inf(b Bytes, i Int64, e Int64, neg Int64) Yaml {
+// `.inf` / `.Inf` / `.INF`, any sign.
+def special_inf(b Bytes, i Int64, e Int64) Bool {
   if e - i != 4 {
-    return YamlNull.new()
+    return false
   }
   if b.get(i) != 46 {
-    return YamlNull.new()
+    return false
   }
   const a = b.get(i + 1)
   const mid = b.get(i + 2)
   const c = b.get(i + 3)
-  if (a == 105 || a == 73) && (mid == 110 || mid == 78) && (c == 102 || c == 70) {
-    if neg < 0 {
-      return YamlFloat.new(value: Float64.from_bits(9218868437227405312 | ~9223372036854775807))
-    }
-    return YamlFloat.new(value: Float64.from_bits(9218868437227405312))
-  }
-  return YamlNull.new()
+  return (a == 105 || a == 73) && (mid == 110 || mid == 78) && (c == 102 || c == 70)
 }
 
-// `.nan` in its cased spellings.
-def special_nan(b Bytes, i Int64, e Int64) Yaml {
+// `.nan` / `.NaN` / `.NAN`.
+def special_nan(b Bytes, i Int64, e Int64) Bool {
   if e - i != 4 {
-    return YamlNull.new()
+    return false
   }
   if b.get(i) != 46 {
-    return YamlNull.new()
+    return false
   }
   const a = b.get(i + 1)
   const mid = b.get(i + 2)
   const c = b.get(i + 3)
-  if (a == 110 || a == 78) && (mid == 97 || mid == 65) && (c == 110 || c == 78) {
-    return YamlFloat.new(value: Float64.from_bits(9221120237041090560))
-  }
-  return YamlNull.new()
+  return (a == 110 || a == 78) && (mid == 97 || mid == 65) && (c == 110 || c == 78)
 }
 
 // One or more digits scanned; from there a `.`, an exponent, or the
@@ -1815,14 +1806,14 @@ def number_after_digits(b Bytes, i Int64, e Int64, neg Int64) (R, Yaml) {
     if fr[2] != e {
       return (R.ok, YamlNull.new())
     }
-    return (R.ok, float_from_parts(b, i, de - i, de + 1, fr[0] - (de + 1), fr[1], neg))
+    return float_from_parts(b, i, de - i, fr[0] - (de + 1), fr[1], neg)
   }
   if d == 101 || d == 69 {
     const er = exp_scan(b, de + 1, e)
     if er[1] != e {
       return (R.ok, YamlNull.new())
     }
-    return (R.ok, float_from_parts(b, i, de - i, de, 0, er[0], neg))
+    return float_from_parts(b, i, de - i, 0, er[0], neg)
   }
   return (R.ok, YamlNull.new())
 }
@@ -1977,16 +1968,15 @@ def hex_digit(c Int64) Int64 {
   return -1
 }
 
-// The float literal (sign, integer digits, fraction digits, exponent)
-// through the package's exact decimal converter: the digits are
-// contiguous in the source around the `.`, and the exponent shifts
-// the point from the integer part's digit count.
-def float_from_parts(b Bytes, di Int64, dl Int64, fi Int64, fl Int64, ev Int64, neg Int64) Yaml {
-  const digits = Bytes.new(dl + fl)
-  copy_range(b, digits, di, 0, dl)
-  copy_range(b, digits, fi, dl, fl)
-  const bits = float.parse_exact(neg < 0, digits, dl + fl, dl + ev)
-  return YamlFloat.new(value: Float64.from_bits(bits))
+// The float literal through the float package's checked constructor:
+// the digit runs sit in the source around the `.`, and the exponent
+// shifts the point from the integer part's digit count. An out-of-range
+// magnitude refuses rather than build a pattern no target can carry.
+def float_from_parts(b Bytes, di Int64, dl Int64, fl Int64, ev Int64, neg Int64) (R, Yaml) {
+  case float.parse_decimal(b, di, dl, fl, ev, neg < 0) {
+    (R.error, _) -> { return (R.error, "yaml: number out of range") }
+    (R.ok, x)    -> { return (R.ok, YamlFloat.new(value: x)) }
+  }
 }
 
 // ---- encode ----

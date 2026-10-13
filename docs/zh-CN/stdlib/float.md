@@ -28,6 +28,7 @@ package {
 
 ```emo
 def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64
+def parse_decimal(src Bytes, ii Int64, il Int64, fl Int64, e10 Int64, neg Bool) (R, Float64)
 def finite_bits(bits Int64) Bool
 def to_text(x Float64) String
 ```
@@ -38,9 +39,12 @@ def to_text(x Float64) String
 
 无论值是多少,答案都是一个位模式。超出 binary64 范围时是无穷的位模式;低于下界时值下溢——舍入到最小 denormal,或者舍入到零。`finite_bits` 说明一个位模式到底是不是值:全 1 的指数拼出无穷或 NaN,而 beam 二者都没有——它的 `from_bits` 直接拒绝这样的位模式。
 
-## 范围检查属于调用方
+## 受检的字面量构造函数
 
-解码是给答案而不是 raise,因为只有调用方知道越界的数字意味着什么:对 `json` 和 `sql` 来说它是坏输入——没有 binary64 装得下的数——所以它们先查 `finite_bits`,给出 `(R.error, …)`,而不是把值建出来。在 beam 上这个顺序有实打实的理由:那里不存在的值不能先建出来再丢掉。
+格式类包的扫描器已经找到了字面量的两段数字和它的十进制指数,于是把它们交出来:
+`parse_decimal(src, ii, il, fl, e10, neg)` 读 `ii` 处的 `il` 个整数位,跳过 `.`,读 `fl` 个小数位,给出 `(-1)^neg * 0.<digits> * 10^(il + e10)` 最近的 binary64。结果非有限时它直接拒绝——`(R.error, …)`——在把值建出来之前。在 beam 上这个顺序有实打实的理由:那里不存在的值不能先建出来再丢掉。`json`、`sql`、`yaml` 都终结在这个构造函数上,所以同一个字面量无论由哪种格式承载都解析出同样的位,也没有哪个格式会忘记检查;`yaml` 的 `.inf`/`.nan` 出于同样的理由拒绝,它们是值模型装不下的输入。
+
+`parse_exact` 仍是裸原语:它无论值是多少都给出位模式,供手里是位而非字面量的调用方使用;`finite_bits` 说明这样一个位模式究竟是不是值。
 
 ## 编码
 

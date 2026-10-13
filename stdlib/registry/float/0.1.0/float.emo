@@ -7,12 +7,13 @@
 // answer strtod gives. Encode prints the shortest decimal that reads
 // back to the same bits.
 //
-// An out-of-range literal is not an error here. Decode answers with a
-// bit pattern whatever the value, and `finite_bits` says whether that
-// pattern is a value at all; only the caller knows whether an
-// out-of-range number is a decode error or a datum. Encoding is the
-// other way round: a non-finite value has no decimal text, so `to_text`
-// raises.
+// Decode answers with a bit pattern whatever the value, and
+// `finite_bits` says whether that pattern is a value at all. The
+// checked constructor `parse_decimal` refuses a non-finite result
+// before building it: every format package reads its literals through
+// it, so none can forget the check (a value that cannot exist on BEAM
+// must not be built there first). Encoding is the other way round: a
+// non-finite value has no decimal text, so `to_text` raises.
 
 const dec = internal.decimal
 
@@ -32,6 +33,31 @@ def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64 {
 // bits before it builds the value it cannot hold.
 def finite_bits(bits Int64) Bool {
   return dec.finite_bits(bits)
+}
+
+// The binary64 value of a decimal literal written with `il` integer
+// digits at `ii`, a `.`, then `fl` fraction digits, and `e10` shifting
+// the decimal point from the integer digits' end. The two digit runs
+// are contiguous in `src` around the point, which never enters the
+// buffer. Rounds once, to nearest with ties to even, and refuses a
+// magnitude binary64 cannot hold — the pattern is checked before the
+// value is built. Every format package's number scanner ends here.
+def parse_decimal(src Bytes, ii Int64, il Int64, fl Int64, e10 Int64, neg Bool) (R, Float64) {
+  const digits = Bytes.new(il + fl)
+  copy_range(src, digits, ii, 0, il)
+  copy_range(src, digits, ii + il + 1, il, fl)
+  const bits = parse_exact(neg, digits, il + fl, il + e10)
+  if finite_bits(bits) == false {
+    return (R.error, "float: number out of range")
+  }
+  return (R.ok, Float64.from_bits(bits))
+}
+
+def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
+  if n > 0 {
+    dst.set(di, src.get(si))
+    copy_range(src, dst, si + 1, di + 1, n - 1)
+  }
 }
 
 // The shortest decimal text that reads back to exactly x. Raises on a

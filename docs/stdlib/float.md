@@ -38,6 +38,7 @@ package {
 
 ```emo
 def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64
+def parse_decimal(src Bytes, ii Int64, il Int64, fl Int64, e10 Int64, neg Bool) (R, Float64)
 def finite_bits(bits Int64) Bool
 def to_text(x Float64) String
 ```
@@ -62,14 +63,25 @@ whether a pattern is a value at all: an all-ones exponent spells
 infinity or NaN, and BEAM has neither — its `from_bits` refuses such a
 pattern outright.
 
-## The range check belongs to the caller
+## The checked literal constructor
 
-Decode answers instead of raising because only the caller knows what an
-out-of-range number means: to `json` and `sql` it is malformed input, a
-number no binary64 can hold, so they check `finite_bits` and answer
-`(R.error, …)` rather than build the value. The check comes first for a
-reason on BEAM: a value that cannot exist there cannot be built and
-then discarded.
+A format package's scanner has already found the literal's two digit
+runs and its decimal exponent, so it hands them over:
+`parse_decimal(src, ii, il, fl, e10, neg)` reads `il` integer digits at
+`ii`, skips the `.`, reads `fl` fraction digits, and answers the
+nearest binary64 of `(-1)^neg * 0.<digits> * 10^(il + e10)`. It refuses
+— `(R.error, …)` — when the result is not finite, before building it.
+The check comes first for a reason on BEAM: a value that cannot exist
+there cannot be built and then discarded. This is the constructor
+`json`, `sql` and `yaml` all end at, so a literal parses to the same
+bits whichever format carries it and no format can forget the check;
+`yaml`'s `.inf`/`.nan` refuse for the same reason, as input the value
+model cannot carry.
+
+`parse_exact` stays the raw primitive: it answers a pattern whatever
+the value, for a caller that has bits to interpret rather than a
+literal to read, and `finite_bits` says whether such a pattern is a
+value at all.
 
 ## Encoding
 

@@ -76,3 +76,21 @@ case yaml.decode("[1, 2") {
   (R.error, why) -> { println(why) }
   (R.ok, _)      -> { println("unexpected ok") }
 }
+
+// ---- non-finite floats refuse like a number outside binary64's range ----
+case yaml.decode("f: 1e400") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case yaml.decode("f: .inf") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case yaml.decode("f: -.Inf") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}
+case yaml.decode("f: .nan") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected ok") }
+}

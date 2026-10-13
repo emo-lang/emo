@@ -345,11 +345,12 @@ binary64 与十进制文本之间的精确转换:十进制字面量变成离它�
 
 ```emo
 def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64
+def parse_decimal(src Bytes, ii Int64, il Int64, fl Int64, e10 Int64, neg Bool) (R, Float64)
 def finite_bits(bits Int64) Bool
 def to_text(x Float64) String
 ```
 
-`parse_exact` 只舍入一次——就近舍入、平局取偶,即 `strtod` 的答案——超出 binary64 范围的值给出无穷的位模式。`finite_bits` 说明一个位模式究竟是不是值,json 与 sql 的解码器在把它当数据之前问的就是这一句;`to_text` 打印最短的能读回原值的文本,非有限值没有十进制文本,于是 raise。
+`parse_decimal` 是格式类包读取字面量时经过的受检构造函数:把字面量的两段数字与指数变成最近的 binary64,并拒绝 binary64 装不下的量级。`parse_exact` 是它底下的裸原语,只舍入一次——就近舍入、平局取偶,即 `strtod` 的答案——超出 binary64 范围的值给出无穷的位模式;`finite_bits` 说明一个位模式究竟是不是值。`to_text` 打印最短的能读回原值的文本,非有限值没有十进制文本,于是 raise。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/float.md`](stdlib/float.md)。
 

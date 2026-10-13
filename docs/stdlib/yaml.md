@@ -76,15 +76,18 @@ including `\xXX`, `\uXXXX`, `\UXXXXXXXX`, and surrogate pairs),
 comments, literal `|` and folded `>` block scalars with `+`/`-`
 chomping, and an optional leading `---`. Plain scalars resolve per
 the core schema: `null`/`~`, `true`/`false` (and the cased forms),
-decimal integers, `0x`/`0o` integers, floats with `.inf`/`.nan`;
-everything else is a string.
+decimal integers, `0x`/`0o` integers, and finite floats; everything
+else is a string.
 
 Everything unsupported comes back as `(R.error, reason)` with the byte
 offset: anchors and aliases, tags, multi-document input, multi-line
 plain or quoted scalars, multi-line flow, tabs in indentation — as do
-malformed input and integers outside `Int64`. The reason a String
-stating exactly what failed — `yaml: bad indentation in a mapping at
-byte 21`. Floats round once, to nearest with ties to even.
+malformed input, integers outside `Int64`, and every float that is not
+finite: a decimal rounding past binary64's range, or the core schema's
+`.inf`/`-.inf`/`.nan`, which name values the model cannot carry on
+every target the package declares. The reason a String stating exactly
+what failed — `yaml: bad indentation in a mapping at byte 21`. Floats
+round once, to nearest with ties to even.
 
 ## Encode
 
@@ -98,7 +101,8 @@ print plain when no reader could misread them (never resolvable as
 indicator characters, no `: ` or ` #` inside); everything else goes
 out double-quoted with the standard escapes. Mappings and sequences
 print `{}` / `[]` when empty. Floats use the same shortest round-trip
-form as the json package; a non-finite float raises.
+form as the json package; a non-finite float — which `decode` never
+produces — raises.
 
 ## Building values
 

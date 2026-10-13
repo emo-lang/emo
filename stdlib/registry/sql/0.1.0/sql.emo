@@ -40,8 +40,6 @@ require "float"
 
 // ---- kinds ----
 
-const fpmath = float
-
 enum StmtKind { select }
 enum SelKind { star, expr }
 enum TableKind { named, join, subquery }
@@ -325,7 +323,7 @@ class FloatLit {
   }
 
   def to_string() String {
-    return fpmath.to_text(self.value)
+    return float.to_text(self.value)
   }
 }
 
@@ -2174,17 +2172,10 @@ def number_value(text String, base Int64, neg Bool) (R, Expr) {
   }
   const int_len = ie
   const frac_len = if has_dot { fe - ie - 1 } else { 0 }
-  const nd = int_len + frac_len
-  const digits = Bytes.new(nd)
-  copy_range(data, digits, 0, 0, int_len)
-  if has_dot {
-    copy_range(data, digits, ie + 1, int_len, frac_len)
+  case float.parse_decimal(data, 0, int_len, frac_len, exp_val, neg) {
+    (R.error, _) -> { return (R.error, err(base, "number out of range")) }
+    (R.ok, x)    -> { return (R.ok, FloatLit.new(value: x)) }
   }
-  const bits = fpmath.parse_exact(neg, digits, nd, int_len + exp_val)
-  if !fpmath.finite_bits(bits) {
-    return (R.error, err(base, "number out of range"))
-  }
-  return (R.ok, FloatLit.new(value: Float64.from_bits(bits)))
 }
 
 def take_exp(data Bytes, i Int64, acc Int64) (Int64, Int64) {

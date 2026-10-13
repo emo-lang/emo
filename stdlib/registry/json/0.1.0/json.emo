@@ -390,10 +390,8 @@ class JsonObject {
   }
 }
 
-const fpmath = float
-
 def float_text(x Float64) String {
-  return fpmath.to_text(x)
+  return float.to_text(x)
 }
 
 // ---- constructors ----
@@ -1005,16 +1003,10 @@ def parse_number(data Bytes, pos Int64) (R, (Json, Int64)) {
                   }
                 }
               }
-              const nd = int_len + frac_len
-              const digits = Bytes.new(nd)
-              copy_range(data, digits, int_start, 0, int_len)
-              // the `.` sits between the two digit runs and never enters the buffer
-              copy_range(data, digits, int_start + int_len + 1, int_len, frac_len)
-              const bits = fpmath.parse_exact(neg, digits, nd, int_len + exp_val)
-              if fpmath.finite_bits(bits) == false {
-                return (R.error, err(pos, "number out of range"))
+              case float.parse_decimal(data, int_start, int_len, frac_len, exp_val, neg) {
+                (R.error, _) -> { return (R.error, err(pos, "number out of range")) }
+                (R.ok, x)    -> { return (R.ok, (JsonFloat.new(value: x), ex[1])) }
               }
-              return (R.ok, (JsonFloat.new(value: Float64.from_bits(bits)), ex[1]))
             }
           }
         }
@@ -1022,13 +1014,6 @@ def parse_number(data Bytes, pos Int64) (R, (Json, Int64)) {
     }
   }
 }
-def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
-  if n > 0 {
-    dst.set(di, src.get(si))
-    copy_range(src, dst, si + 1, di + 1, n - 1)
-  }
-}
-
 // ---- encode ----
 
 def encode(v Json) String {

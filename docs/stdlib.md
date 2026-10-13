@@ -498,16 +498,19 @@ package's `internal` subtree, so all five targets answer byte-for-byte;
 
 ```emo
 def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64
+def parse_decimal(src Bytes, ii Int64, il Int64, fl Int64, e10 Int64, neg Bool) (R, Float64)
 def finite_bits(bits Int64) Bool
 def to_text(x Float64) String
 ```
 
-`parse_exact` rounds once, to nearest with ties to even — the answer
-`strtod` gives — and answers the infinity pattern for a value past
-binary64's range. `finite_bits` says whether a pattern is a value at
-all, which is what the json and sql decoders ask before they treat one
-as data; `to_text` prints the shortest round-tripping text and raises on
-a non-finite value, which has no decimal text.
+`parse_decimal` is the checked constructor the format packages read
+literals through: it turns a literal's digit runs and exponent into the
+nearest binary64 and refuses a magnitude binary64 cannot hold.
+`parse_exact` is the raw primitive beneath it, rounding once (nearest,
+ties to even — the answer `strtod` gives) and answering the infinity
+pattern for a value past binary64's range; `finite_bits` says whether a
+pattern is a value at all. `to_text` prints the shortest round-tripping
+text and raises on a non-finite value, which has no decimal text.
 
 Targets: all five. Reference:
 [`docs/stdlib/float.md`](stdlib/float.md).
