@@ -1,10 +1,9 @@
 # The `json` Package
 
 The standard library's JSON reader and writer, written in pure Emo over
-the shared runtimes — bytes, interfaces, and the exact-decimal float
-machinery in the package's `internal` subtree. No per-target runtime
-work: every target that compiles the language answers identically,
-byte for byte.
+the shared runtimes — bytes, interfaces, and the `float` package's
+exact-decimal conversion. No per-target runtime work: every target that
+compiles the language answers identically, byte for byte.
 
 ## Using the package
 

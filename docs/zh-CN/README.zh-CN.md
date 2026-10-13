@@ -17,8 +17,8 @@ Emo 是**简洁、显式、直观**的。它汲取了三十年开源编程语言
 预编译二进制是最快的起步方式。二进制内嵌标准库——无需安装其他东西（用 `emo build` 构建时才需要 C 编译器，那是默认 target）。从 [GitHub Releases](https://github.com/emo-lang/emo/releases) 下载你平台的归档，然后：
 
 ```console
-$ unzip emo-v0.25.9-macos-arm64.zip
-$ ./emo-v0.25.9-macos-arm64/bin/emo run hello.emo
+$ unzip emo-<version>-macos-arm64.zip
+$ ./emo-<version>-macos-arm64/bin/emo run hello.emo
 ```
 
 Homebrew，来自项目自有 tap：
@@ -242,7 +242,7 @@ def parse_config(text String) Json {
 ```
 
 - **`require` 是把包的短名带入作用域的文件级语句。** 包侧无需对应物——包的公开面就是它的模块树。完全限定的路径永远可用。
-- **包的模块树挂载在短名之下。** 包根的 `<short>.emo` 就是 `require` 绑定的模块 `<short>`;其余文件或目录都是它的子节点——`json/internal/float.emo` 就是 `json.internal.float`,`plot/mark.emo` 就是 `plot.mark`——所以两个包的 `internal` 和 `mark` 永不冲突。包内部引用以包根为基准书写(`json.emo` 里的 `internal.float` 即 `json.internal.float`),因此一个包无论单独构建还是挂载在前缀下,编译结果一致。
+- **包的模块树挂载在短名之下。** 包根的 `<short>.emo` 就是 `require` 绑定的模块 `<short>`;其余文件或目录都是它的子节点——`plot/internal/svg.emo` 就是 `plot.internal.svg`,`plot/mark.emo` 就是 `plot.mark`——所以两个包的 `internal` 和 `mark` 永不冲突。包内部引用以包根为基准书写(`plot.emo` 里的 `internal.scale` 即 `plot.internal.scale`),因此一个包无论单独构建还是挂载在前缀下,编译结果一致。
 - **`require` 与 manifest 严格配对。** require 一个 `deps` 里没有的包是编译错误——严格优先，manifest 只因显式操作而改变。
 
 - **中心注册表，端点可配置。** 包按 `name@version` 通过中心注册表寻址，由全局内容寻址缓存支撑、跨项目共享——没有每项目的依赖副本。注册表端点读 `EMO_REGISTRY` 环境变量——全局或每项目设置——服务私有与本地部署；未设置时，标准库的内置注册表随编译器附带并默认服务。
@@ -432,7 +432,7 @@ Emo 通过 OCaml 的一等 C FFI 与 C 互操作：在原生后端，Emo 二进�
 - [`docs/zh-CN/numeric-width.md`](docs/zh-CN/numeric-width.md) —— 所有目标上显式位宽的数值类型。
 - [`docs/var-escape.md`](docs/var-escape.md) —— `var` 逃逸规则(暂无中文)。
 - [`docs/zh-CN/stdlib.md`](docs/zh-CN/stdlib.md) —— 标准库导览:每个包的用途与对外接口。
-- [`docs/zh-CN/stdlib/`](docs/zh-CN/stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`json`、`yaml`、`xml`、`base64`、`slog`、`sync`、`sqlite3`)。
+- [`docs/zh-CN/stdlib/`](docs/zh-CN/stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`json`、`yaml`、`xml`、`base64`、`float`、`math`、`plot`、`slog`、`sync`、`sql`、`sqlite3`)。
 - [`docs/zh-CN/lsp.md`](docs/zh-CN/lsp.md) —— 语言服务器与 VS Code 扩展。
 - [`docs/zh-CN/industrial-software.md`](docs/zh-CN/industrial-software.md)、[`docs/zh-CN/sql-database.md`](docs/zh-CN/sql-database.md)、[`docs/zh-CN/rtos-assessment.md`](docs/zh-CN/rtos-assessment.md)、[`docs/zh-CN/xv6.md`](docs/zh-CN/xv6.md)、[`docs/zh-CN/visualization.md`](docs/zh-CN/visualization.md) —— 可行性与市场评估。
 - [`docs/zh-CN/TASKS.md`](docs/zh-CN/TASKS.md) —— 实现任务清单。

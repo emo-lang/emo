@@ -28,10 +28,10 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M1 — MVP interpreter | 01–08 | Single-file Emo programs (functions, classes, enums, exceptions) run via `emo run` / `emo repl` with readable errors. |
 | M2 — Compile-time experience | 09–11 | Gradual type checker, structural module system, and packages with MVS resolution; multi-package projects build and run. |
 | M3 — Concurrency & networking | 12–13 | Processes and message passing on an effects-based scheduler; direct-style networking. |
-| M4 — Compilation targets | 14–19 | Native code generation via `emo build`; then wasm / TypeScript / BEAM / riscv64. |
+| M4 — Compilation targets | 14–19 | Native code generation via `emo build`; then Wasm / TypeScript / BEAM / RISC-V. |
 | M5 — Wasm Runtime | 20–22 | A WebAssembly runtime written in Emo: the shared systems layer, then the binary decoder/validator, then the interpreter with spec-suite goldens. |
 | M6 — Self-contained hosted backend | 23 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — the hosted-native-FFI assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
-| M7 — Toolchain | 24 | The toolchain release (cut as v0.25.9): signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
+| M7 — Toolchain | 24 | The toolchain release: signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
 | M8 — Target independence | 25 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
 | M9 — For / While loops | 26–27 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
 | M10 — Error handling | 28–30 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
@@ -55,7 +55,7 @@ before starting the gated work:
 | Reclamation model for the dynamic world (no tracing GC) | T23.5 | settled — reference counting for identity objects, arena for value-semantic data (`CHECK.md`, at T23.5) |
 | `emo build` default target | T24.1 | flip `ocaml` → `c`: a distributed binary carries no OCaml toolchain; the `ocaml` target stays for source installs |
 | Stdlib: embed vs sidecar tree | T24.2 | embed as generated data inside the compiler (the C runtime's mechanism); `EMO_REGISTRY` override stays |
-| `emo install` semantics | T24.4 | the project-dependencies front end over resolve/fetch/lock; global executable installation out of scope for 1.0 |
+| `emo install` semantics | T24.4 | `emo install` is the project-dependency frontend over `emo deps`'s resolve/fetch/lock; installing global executables is out of scope for 1.0 |
 | The runtime-independence principle | T25.1 | a target's runtime is written in the target's language, carried as generated data inside the compiler; the host contributes only the emitter |
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
 
@@ -270,14 +270,14 @@ Close-out: the exact `net.*` / `http.*` names are in the README (Networking); th
 
 Close-out: Stage A emits OCaml source (tradeoff documented in `docs/native-backend.md`); the IR lives in `src/emo_ir` with the Stage B `specialize` fixed point, and T14.5's specialization landed with the T14.1/T14.2 commits. `foreign def` settled as above, marshaling through generated C wrappers (`emo build` compiles them with `cc`); `Float`/`String`/`Bool` cross the boundary, everything else refuses with E4200. Benchmarks: `benchmarks/results.md` records fib(30) 345ms unspecialized vs 212ms specialized (~1.6x), ping-pong, JSON scan, and an HTTP echo load test at 112 req/s. Bootstrap: all five examples build to binaries matching `emo run` byte-for-byte (the `bootstrap` suite in `test/emo_project`). Decisions are in `plan/step-14-native-backend.md` (Close-out). **Step 14 acceptance met.**
 
-### Step 15 — Other targets: wasm, TypeScript, BEAM, riscv64 bare metal · `plan/step-15-other-targets.md`
+### Step 15 — Other targets: Wasm, TypeScript, BEAM, RISC-V · `plan/step-15-other-targets.md`
 
-**Prereq:** Steps 01–14 (per target). These are roadmap entries, not execution-ready plans — each target gets its own step file when scheduled. Recommended order: Wasm → TypeScript → BEAM → riscv64.
+**Prereq:** Steps 01–14 (per target). These are roadmap entries, not execution-ready plans — each target gets its own step file when scheduled. Recommended order: Wasm → TypeScript → BEAM → RISC-V.
 
 - [x] **T15.1** — When a target is scheduled, split it into `step-NN-<target>.md` with the full standard format (goal / scope / tasks / acceptance) and update `plan/README.md`'s status table; its tasks continue the numbering (`T17.*`, …).
 - [ ] **T15.2** — Record which key decision each target settled and where (README / `CHECK.md` / docs) — keep the trail.
 
-Key decisions to settle per target: Wasm — WasmGC vs custom GC (prototype both); TypeScript — direct-style mapping onto the event loop, process mapping; BEAM — class value semantics vs Erlang maps; riscv64 — pluggable runtime, linker scripts (highest risk; pull the `core`-library layering earlier).
+Key decisions to settle per target: Wasm — WasmGC vs custom GC (prototype both); TypeScript — direct-style mapping onto the event loop, process mapping; BEAM — class value semantics vs Erlang maps; RISC-V — pluggable runtime, linker scripts (highest risk; pull the `core`-library layering earlier).
 
 Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, first target; its key decisions — IR lowering, uniform async, cooperative tasks — are settled in that file). **Wasm → `plan/step-16-wasm.md`** (2026-10-02, second target; the GC question is settled — WasmGC, structs and arrays with RTT dispatch, no custom heap). BEAM is next in the recommended order.
 
@@ -450,7 +450,7 @@ shares the tagged-word value model.
 ## M7 — Toolchain
 
 The last mile of the self-contained story, and the toolchain
-release — cut as v0.25.9, with the official 1.0 following.
+release, with the official 1.0 following.
 M6 removed the OCaml toolchain from the *programs*; M7 removes the
 installation burden from the *tool* — the release engineering
 `CHECK.md` left unscheduled, on the decided direction
@@ -489,7 +489,7 @@ the `c` target, scaffolds with `emo new`, installs dependencies with
       four settlements recorded in `CHECK.md` — the build default
       flips `ocaml` → `c`; the stdlib embeds as generated data (the
       C runtime's mechanism) over a sidecar tree; `emo install` is
-      the project-dependencies front end (global executable
+      the project-dependencies frontend (global executable
       installation out of scope for 1.0); the dependency cache
       leaves the temp directory for a durable user location. The
       flip lands here, with the resolution-gate tests and the CI
@@ -549,8 +549,7 @@ the `c` target, scaffolds with `emo new`, installs dependencies with
       target) — including a stdlib-importing program and the golden
       subset executed from the installed binary. the release commit
       carries the released VERSION; annotated tag, release notes,
-      close-out. (Done 2026-10-07: acceptance ran against the packaged-and-unpacked archive (built while
-VERSION read v1.0.0; re-cut v0.25.9 before tagging) — doctor healthy in the prebuilt shape; new → run → build green; install resolves through the embedded stdlib; goldens 14/14 from the installed binary (13 via emo run byte-for-byte, numerics via its designed compiled path — it crosses foreign def, which emo run refuses; http_roundtrip/tcp_echo ride the in-tree suite). VERSION shipped as v0.25.9.)
+      close-out. (Done 2026-10-07: acceptance ran against the packaged-and-unpacked archive — doctor healthy in the prebuilt shape; new → run → build green; install resolves through the embedded stdlib; goldens 14/14 from the installed binary (13 via emo run byte-for-byte, numerics via its designed compiled path — it crosses foreign def, which emo run refuses; http_roundtrip/tcp_echo ride the in-tree suite).)
 
 Close-out: recorded 2026-10-07 in `plan/step-24-toolchain.md` — the
 acceptance ran against the packaged artifact, not the build tree; the
@@ -559,7 +558,7 @@ that the content-hash cache had only ever lived in the ocaml arm),
 the embed's dune rule needs `-type f -o -type l` because the macOS
 sandbox materializes `source_tree` deps as symlinks, and the archives
 ship without an install script. **Step 24 acceptance met.** M7 is
-done: the toolchain release is v0.25.9 — the official 1.0 follows.
+done: the toolchain release accompanies the official 1.0.
 
 ## M8 — Target independence
 
@@ -939,7 +938,8 @@ CHECK.md.
 
 The bundled stdlib is a milestone of its own: one package per step, each
 shipping its API reference and a runnable golden. The steps run `json`
-(32) through `bufio` (38), then the native-binding `sqlite3` (39).
+(31) through `bufio` (37), then the native-binding `sqlite3` (38) and
+the SQL parser `sql`.
 
 ### Step 31 — The standard library: `json` · `plan/step-31-stdlib-json.md`
 

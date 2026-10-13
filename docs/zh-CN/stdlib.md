@@ -26,12 +26,14 @@ require "json"
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
+| [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
 | [`math`](#math-包) | 浮点标量与初等函数 | 全部五个 |
 | [`plot`](#plot-包) | 声明式二维图表,渲染为 SVG | 全部五个 |
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | `ocaml`、`c`、`typescript` |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
+| [`sql`](#sql-包) | SQL 文本解析为抽象语法树 | 全部五个 |
 
-所有包版本均为 0.1.0。每个包在 [`docs/stdlib/`](../stdlib/) 下有完整的 API 参考(中文翻译在 [`docs/zh-CN/stdlib/`](stdlib/)),`examples/` 下有可运行的示例。
+所有包版本均为 0.1.0。每个包在 [`docs/stdlib/`](../stdlib/) 下有完整的 API 参考(中文翻译在 [`docs/zh-CN/stdlib/`](stdlib/));程序直接调用的每个包在 `examples/` 下有可运行的示例。
 
 ## file 包
 
@@ -321,6 +323,20 @@ def decode(text String) (R, String)
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/base64.md`](stdlib/base64.md) · 示例:`examples/base64_demo`。
 
+## float 包
+
+binary64 与十进制文本之间的精确转换:十进制字面量变成离它最近的那些位,`Float64` 变成能读回它的最短文本。两个方向都是包内 `internal` 子树里的 `Int64` 运算,所以五个目标都逐字节相同;`json`、`sql`、`yaml` 读写数字都经过它。
+
+```emo
+def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64
+def finite_bits(bits Int64) Bool
+def to_text(x Float64) String
+```
+
+`parse_exact` 只舍入一次——就近舍入、平局取偶,即 `strtod` 的答案——超出 binary64 范围的值给出无穷的位模式。`finite_bits` 说明一个位模式究竟是不是值,json 与 sql 的解码器在把它当数据之前问的就是这一句;`to_text` 打印最短的能读回原值的文本,非有限值没有十进制文本,于是 raise。
+
+目标:全部五个。参考:[`docs/zh-CN/stdlib/float.md`](stdlib/float.md)。
+
 ## math 包
 
 初等浮点函数:标量、`sqrt`,以及标准库其余部分所依赖的超越函数。纯 Emo 写在五个目标共享的标量运算之上,级数顺序固定,所以每个函数都逐字节相同。
@@ -449,6 +465,35 @@ sync.stop(wg)
 目标:`["ocaml", "c", "typescript", "wasm", "beam"]`。参考:
 [`docs/zh-CN/stdlib/sync.md`](stdlib/sync.md) · 示例:
 `examples/sync_demo`。
+
+## sql 包
+
+SQL parser:SQL 文本进,抽象语法树出。纯 Emo 实现,只依赖共享
+运行时——解析出的树按语法节点一类一个类(`Select` 语句、`Expr`
+表达式、`TableRef` 表引用),每个节点都回答 `to_string()`,给出
+规范的 SQL 渲染。
+
+```emo
+def parse(text String) (R, Stmt)
+```
+
+`SELECT` 全链路——带 DISTINCT 的选择列表、带 `ON`/`USING` 的连接、
+`WHERE`、`GROUP BY`、`HAVING`、`ORDER BY`、`LIMIT`、`OFFSET`——
+之下是完整的表达式语法:字面量、参数(`?`、`?NNN`)、带限定的列名、
+函数调用、`CAST`、`CASE`、`EXISTS`、子查询,以及按标准优先级排列的
+运算符体系。格式错误的输入返回值 `(R.error, reason)`,reason
+准确说明发生了什么、在哪个字节偏移;不 raise、没有错误码、没有 nil。
+
+```emo
+require "sql"
+
+const (R.ok, stmt) = sql.parse("SELECT * FROM users WHERE id = ?1")
+println(stmt.to_string())   // SELECT * FROM users WHERE id = ?1
+```
+
+目标:`["ocaml", "c", "typescript", "wasm", "beam"]`。参考:
+[`docs/zh-CN/stdlib/sql.md`](stdlib/sql.md) · 示例:`examples/sql_demo`、
+`examples/sql_edge`。
 
 ## sqlite3 包
 

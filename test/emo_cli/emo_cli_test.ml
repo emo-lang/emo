@@ -269,6 +269,8 @@ let wasm_goldens =
     "math_demo";
     "branch_var";
     "plot_demo";
+    "sql_demo";
+    "sql_edge";
   ]
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
@@ -298,6 +300,8 @@ let beam_goldens =
     "math_demo";
     "branch_var";
     "plot_demo";
+    "sql_demo";
+    "sql_edge";
   ]
 
 let erl_available =
@@ -517,6 +521,8 @@ let c_goldens =
        package-carried C shim do the whole native link — the build here
        passes cclibs:[] on purpose *)
     "sqlite3_demo";
+    "sql_demo";
+    "sql_edge";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)

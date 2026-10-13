@@ -1,0 +1,41 @@
+// The float package: exact conversion between an IEEE binary64 value
+// and its decimal text, with no host formatting primitive involved.
+// Both directions are plain Int64 arithmetic in internal/decimal.emo,
+// so all five hosted targets answer byte-for-byte.
+//
+// Decode rounds the literal once — to nearest, ties to even, the same
+// answer strtod gives. Encode prints the shortest decimal that reads
+// back to the same bits.
+//
+// An out-of-range literal is not an error here. Decode answers with a
+// bit pattern whatever the value, and `finite_bits` says whether that
+// pattern is a value at all; only the caller knows whether an
+// out-of-range number is a decode error or a datum. Encoding is the
+// other way round: a non-finite value has no decimal text, so `to_text`
+// raises.
+
+const dec = internal.decimal
+
+// The bit pattern of (-1)^neg x 0.digits x 10^e10, correctly rounded.
+// digits holds ASCII digit bytes; leading zeros shift the exponent,
+// trailing zeros after the point change nothing, and digits past the
+// cap only steer sticky rounding. A value past binary64's range answers
+// with the infinity pattern — ask finite_bits before treating the
+// pattern as a value.
+def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64 {
+  return dec.parse_exact(neg, digits, n, e10)
+}
+
+// Whether a bit pattern is a finite binary64 value. An all-ones
+// exponent spells infinity or NaN, and BEAM has neither: its
+// `from_bits` refuses such a pattern outright, so a caller asks the
+// bits before it builds the value it cannot hold.
+def finite_bits(bits Int64) Bool {
+  return dec.finite_bits(bits)
+}
+
+// The shortest decimal text that reads back to exactly x. Raises on a
+// non-finite value — there is no decimal text for one.
+def to_text(x Float64) String {
+  return dec.to_text(x)
+}

@@ -3,8 +3,9 @@
 The standard library's YAML reader and writer: YAML 1.2 (core schema)
 decoded into a `Yaml` value tree that mirrors the json package's
 design, and encoded back in block style. Pure Emo over the shared
-runtimes; the packages are independent — requiring yaml does not
-require json.
+runtimes; numbers go through the `float` package's exact-decimal
+conversion, the one json and sql use, and the packages are otherwise
+independent — requiring yaml does not require json.
 
 ## Using the package
 

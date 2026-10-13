@@ -1,0 +1,25 @@
+SELECT * FROM users
+SELECT DISTINCT u.name AS username, count(*) AS n, max(o.total) FROM main.users AS u LEFT JOIN orders AS o ON o.user_id = u.id WHERE u.active = TRUE AND o.total >= 100 GROUP BY u.name HAVING count(*) > 1 ORDER BY n DESC, username ASC LIMIT 20 OFFSET 40
+3
+1
+1
+1
+2
+1
+1
+username
+true
+1
+SELECT 1 + 2 * 3, (1 + 2) * 3, -x, NOT flag, a || ' ' || b FROM t
+SELECT CASE WHEN score >= 90 THEN 'A' WHEN score >= 60 THEN 'B' ELSE 'F' END, CASE kind WHEN 1 THEN 'one' ELSE 'other' END FROM grades
+SELECT CAST(price AS VARCHAR(255)), CAST(n AS NUMERIC(10, 2)) FROM products
+SELECT * FROM t WHERE x IN (1, 2, 3) AND y NOT IN (SELECT y FROM excluded) AND z BETWEEN 10 AND 20 AND name LIKE 'a%' AND code NOT LIKE 'x_' AND deleted IS NULL AND flagged IS NOT FALSE
+SELECT ?, ?1, ?42 FROM t WHERE id = ? AND qty > ?2
+SELECT EXISTS (SELECT 1 FROM t WHERE t.id = s.id), (SELECT max(v) FROM t) FROM s
+SELECT 2.5, 0.5, 12.0, 1000.0, 0.0015, 9223372036854775807, -9223372036854775808 FROM nums
+SELECT 'it''s' FROM t
+SELECT "weird name", t."odd col" FROM "my table" AS t
+SELECT a.city, a.n FROM (SELECT city, count(*) AS n FROM users GROUP BY city) AS a WHERE a.n > 5
+SELECT * FROM a CROSS JOIN b, c NATURAL INNER JOIN d
+sql: expected an expression at byte 7
+sql: expected an expression at byte 26

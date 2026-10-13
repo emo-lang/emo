@@ -1,0 +1,38 @@
+sql: empty input at byte 0
+sql: expected an expression at byte 7
+sql: expected a table name at byte 13
+sql: expected SELECT at byte 0
+sql: expected an expression at byte 21
+sql: expected `)` after the expression at byte 10
+sql: unterminated literal at byte 7
+sql: unterminated literal at byte 7
+sql: unterminated comment at byte 7
+sql: expected an expression at byte 31
+sql: empty IN list at byte 28
+sql: expected AND after the BETWEEN lower bound at byte 33
+sql: expected NULL, TRUE, or FALSE after IS at byte 27
+sql: expected GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET, or end of statement at byte 24
+sql: expected an expression at byte 16
+sql: expected a type name at byte 16
+sql: DISTINCT does not take a `*` argument at byte 22
+sql: a NATURAL join takes no ON or USING clause at byte 31
+sql: each clause appears once, in the order WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET at byte 28
+sql: each clause appears once, in the order WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET at byte 27
+sql: each clause appears once, in the order WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET at byte 24
+sql: expected end of statement at byte 10
+sql: expected GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET, or end of statement at byte 28
+sql: malformed number literal at byte 10
+sql: malformed number literal at byte 8
+sql: malformed parameter at byte 7
+sql: parameter index must be at least 1 at byte 7
+sql: parameter index must be at least 1 at byte 7
+parsed: SELECT 9223372036854775807 FROM t
+sql: integer out of range at byte 25
+parsed: SELECT -9223372036854775808 FROM t
+sql: integer out of range at byte 26
+sql: number out of range at byte 7
+parsed: SELECT 5.0e-324 FROM t
+parsed: SELECT 2.2250738585072014e-308 FROM t
+parsed: SELECT 9007199254740993 FROM t
+parsed: SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) FROM t
+sql: nesting deeper than 512 at byte 520

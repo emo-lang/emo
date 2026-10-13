@@ -1,0 +1,72 @@
+require "sql"
+
+// The sql package's edges: malformed inputs answer with a reason, the
+// number boundaries hold, and the strictness rules (no chained
+// comparisons, no duplicate or out-of-order clauses, one statement per
+// parse) refuse.
+
+def why(text String) {
+  case sql.parse(text) {
+    (R.error, reason) -> { println(reason) }
+    (R.ok, q)         -> { println("parsed: " + q.to_string()) }
+  }
+}
+
+// ---- malformed inputs: every failure is a value with a position ----
+why("")
+why("SELECT FROM")
+why("SELECT * FROM")
+why("INSERT INTO t VALUES (1)")
+why("SELECT * FROM t WHERE")
+why("SELECT (1 FROM t")
+why("SELECT 'unterminated")
+why("SELECT \"unterminated")
+why("SELECT /* unterminated")
+why("SELECT * FROM t WHERE x = 1 AND")
+why("SELECT * FROM t WHERE x IN ()")
+why("SELECT * FROM t WHERE x BETWEEN 1")
+why("SELECT * FROM t WHERE x IS MAYBE")
+why("SELECT * FROM t WHERE x NOT")
+why("SELECT DISTINCT DISTINCT x FROM t")
+why("SELECT CAST(x AS) FROM t")
+why("SELECT COUNT(DISTINCT *) FROM t")
+why("SELECT * FROM a NATURAL JOIN b ON a.x = b.x")
+why("SELECT * FROM t WHERE x = 1 WHERE y = 2")
+why("SELECT * FROM t GROUP BY x WHERE y")
+why("SELECT * FROM t LIMIT 1 ORDER BY x")
+why("SELECT 1; SELECT 2")
+why("SELECT * FROM t WHERE a = b = c")
+why("SELECT 1.2.3 FROM t")
+why("SELECT 1e FROM t")
+why("SELECT ?x FROM t")
+why("SELECT ?0 FROM t")
+why("SELECT ?00 FROM t")
+
+// ---- numbers at their boundaries ----
+why("SELECT 9223372036854775807 FROM t")
+why("SELECT 9223372036854775808 FROM t")
+why("SELECT -9223372036854775808 FROM t")
+why("SELECT -9223372036854775809 FROM t")
+why("SELECT 1e400 FROM t")
+why("SELECT 5e-324 FROM t")
+why("SELECT 2.2250738585072014e-308 FROM t")
+why("SELECT 9007199254740993 FROM t")
+
+// ---- the nesting cap: 512 parentheses parse, 513 refuses ----
+def parens(n Int64) String {
+  const open = Bytes.new(n)
+  const close = Bytes.new(n)
+  fill_char(open, 0, n, 40)
+  fill_char(close, 0, n, 41)
+  return open.to_string() + "1" + close.to_string()
+}
+
+def fill_char(buf Bytes, i Int64, n Int64, c Int64) {
+  if i < n {
+    buf.set(i, c)
+    fill_char(buf, i + 1, n, c)
+  }
+}
+
+why("SELECT " + parens(512) + " FROM t")
+why("SELECT " + parens(513) + " FROM t")

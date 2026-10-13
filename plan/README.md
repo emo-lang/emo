@@ -72,7 +72,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 21 | Wasm runtime: decoder & validator | done |
 | 22 | Wasm runtime: interpreter core & spec goldens | in progress (tasks written) |
 | 23 | C target (emit C) | done (close-out recorded; the native → ocaml rename landed; aligned 2026-10-10 — Void foreign returns, `emo_defs.h`, content-keyed caches, cross-module calls and types) |
-| 24 | Toolchain distribution & release | done (v0.25.9; M7 complete) |
+| 24 | Toolchain distribution & release | done (M7 complete) |
 | 25 | Target independence (runtimes decoupled from the host) | done (M8 complete; every runtime embedded, the ocaml target installation-independent) |
 | 31 | The standard library: `json` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — the landing flushed the c Bytes-arm guess on gradual receivers and the vtable's `_q`/`?` spelling); wasm, beam wait on their own capability walls |
 | 32 | The standard library: `yaml` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — flushed the trampoline's cluster-scope collision); wasm, beam wait on their own capability walls |

@@ -1,7 +1,9 @@
+require "float"
+
 // The standard JSON library: decode and encode between JSON text and
 // ordinary Emo values. Pure Emo over the shared runtimes — bytes,
-// interfaces, and the exact-decimal float machinery in
-// internal/float.emo — so every target answers identically.
+// interfaces, and the float package's exact-decimal conversion — so
+// every target answers identically.
 //
 // A decoded document is a `Json`: an interface over one class per JSON
 // kind. `kind()` and `is_null?()` discriminate without guessing. The
@@ -388,7 +390,7 @@ class JsonObject {
   }
 }
 
-const fpmath = internal.float
+const fpmath = float
 
 def float_text(x Float64) String {
   return fpmath.to_text(x)
@@ -1008,11 +1010,11 @@ def parse_number(data Bytes, pos Int64) (R, (Json, Int64)) {
               copy_range(data, digits, int_start, 0, int_len)
               // the `.` sits between the two digit runs and never enters the buffer
               copy_range(data, digits, int_start + int_len + 1, int_len, frac_len)
-              const fv = Float64.from_bits(fpmath.parse_exact(neg, digits, nd, int_len + exp_val))
-              if fpmath.finite(fv) == false {
+              const bits = fpmath.parse_exact(neg, digits, nd, int_len + exp_val)
+              if fpmath.finite_bits(bits) == false {
                 return (R.error, err(pos, "number out of range"))
               }
-              return (R.ok, (JsonFloat.new(value: fv), ex[1]))
+              return (R.ok, (JsonFloat.new(value: Float64.from_bits(bits)), ex[1]))
             }
           }
         }

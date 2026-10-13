@@ -1,9 +1,11 @@
+require "float"
+
 // The yaml package: decode and encode YAML 1.2 (core schema) into a
 // Yaml value tree that mirrors the json package's design — one
 // interface, one class per kind, scalar accessors on the interface,
 // containers read through `is()` into the concrete class. Pure Emo
-// over the shared runtimes; the exact-decimal float machinery lives
-// in internal/float.emo.
+// over the shared runtimes; the float package carries the exact-decimal
+// conversion.
 //
 // Supported: block mappings and sequences (nested, the compact
 // `- k: v` form, same-indent sequences under a key), flow collections,
@@ -16,9 +18,6 @@
 // plain/quoted scalars and multi-line flow, and tabs in indentation.
 // Double-quoted scalars accept the YAML escape set (a superset of
 // JSON's). Mapping keys are strings; integers outside Int64 refuse.
-
-// The exact-decimal float machinery lives beside the module.
-const float = internal.float
 
 enum YamlKind { ynull, ybool, yint, yfloat, ystring, yarray, yobject }
 

@@ -963,15 +963,18 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
               let else_code =
                 emit_native_stmts env else_ ~tail:false ~arm_unit:true
               in
+              (* the arm bodies hang off one [let _ = ... in] so the rest
+                 of the block is emitted once, not once per arm — a run
+                 of statement-position ifs would otherwise double the
+                 text at each one *)
               Printf.sprintf
-                "(if %s then\n\
-                 (let _ = (%s) in\n\
-                 %s)\n\
+                "(let _ = (if %s then\n\
+                 (%s)\n\
                  else\n\
-                 (let _ = (%s) in\n\
-                 %s))"
+                 (%s)) in\n\
+                 %s)"
                 (emit_native_expr env cond)
-                then_code rest_code else_code rest_code
+                then_code else_code rest_code
           | Emo_ir.Return_stmt e ->
               let code = emit_native_expr env e in
               if tail then code

@@ -80,7 +80,7 @@ single-digit person-years to *usable*; an order of magnitude more to
   across processes by construction, `Box` mutability never crosses a
   process boundary, and a snapshot is a value rather than a discipline.
 
-And the SQL front-end itself is proven territory: the wasm decoder
+And the SQL frontend itself is proven territory: the wasm decoder
 and validator already written in Emo (about 3,900 lines so far) are
 the same genre of work — grammars, binary formats, index-space
 validation — at a tenth to a fiftieth of the scale.
