@@ -31,6 +31,7 @@
 | M11 — 标准库 | 31–38 | 随编译器交付的 stdlib 各包——`json`、`yaml`、`xml`、`os`、`base64`、`slog`、`bufio`,以及首个原生绑定包 `sqlite3`——逐一按 manifest 的 `targets` 解析,在它声明的每个 target 上逐字节一致,并各自附完整 API 参考与可运行金测。 |
 | M12 — 可视化(`plot`) | 39–45 | `plot` 包补齐其 T0 表面(连续轴;line / scatter / area / histogram mark;对数标度、域、图例、网格、主题、调色板、分面)与 T1 数据集图表,随后加入终端与 PNG 渲染器——SVG 输出在全部五个宿主 target 上逐字节一致。 |
 | M13 — 单元测试 | 46 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
+| M14 — CSV 读写 | 47 | 随编译器交付的 `csv` 包——RFC 4180 记录,只认 UTF-8——像其他 stdlib 包一样解析,在全部五个 target 上逐字节一致,并附 API 参考与可运行金测。 |
 
 ## 设计闸门
 
@@ -723,3 +724,18 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 - [x] **T46.6** — `emo new` 脚手架补 `test/greet.emo`(一个通过的 `test_greet`,内建无需 manifest 依赖),提示语提到 `emo test`;脚手架金测同步更新。
 - [x] **T46.7** — `examples/test_demo/`:一个小模块、`test/` 下全通过的测试、供金测 harness 使用的 `expected.txt`;协调逐 target 金测构建(它们会降级树中每个模块——在 `expect_*` 于编译 target 拒绝期间,示例的测试模块不能把编译金测弄红)。
 - [x] **T46.8** — 文档:README 增加 Testing 一节(约定、命令、内建、raise 只失败当前一个测试),并同步 `docs/zh-CN/README.zh-CN.md` 镜像。
+
+## M14 — CSV 读写
+
+`csv` 包像其他格式包一样从随编译器交付的 registry 读取和写出 RFC 4180 记录(只认 UTF-8)。它不需要任何按 target 的运行时工作:字节与数组就撑起整个表面,所以 golden 骑上全部五张 target 名单。
+
+### Step 47 — 标准库:`csv`
+
+**前置:** Step 35(base64——字节扫描纪律与“五张名单”的形态)与 step 31(json——格式包的约定)。
+**完成判定:** `require "csv"` 把 RFC 4180 文本解码为 `Array[Array[String]]` 并写回,在全部五个 target 上逐字节一致——严格的引号规则、CRLF/LF/CR 记录、忽略开头 BOM、逐字节校验 UTF-8、带字节偏移的错误,以及用于 TSV 的单字节分隔符这对函数;五条金测路径全绿;`dune test` 全绿。
+
+- [x] **T47.1** — 包:`stdlib/registry/csv/0.1.0`(manifest 声明全部五个 target,`csv.emo` 含记录模型、严格解码器、规范编码器、UTF-8 校验、分隔符那对函数)。
+- [x] **T47.2** — 金测:`examples/csv_demo` 上 bootstrap、c、typescript、wasm、beam 名单;`examples/csv_edge` 上 bootstrap 名单——覆盖每种记录形态、格式错误矩阵、UTF-8 边界、BOM,以及编码器的引号规则。
+- [x] **T47.3** — TypeScript 的 UTF-8 修复:运行时的解码器把三字节首字节 E8–EF 判为非法(`b < 0xe8`),导致 U+8000–U+FFFF 被解成 U+FFFD;`csv_demo` 暴露了它。
+- [x] **T47.4** — wasm 的 `!` 修复:一元 `!` 直接读 `$vbool` 字段而漏了 `&&`/`||` 已经发出的 `ref.cast`,于是任何用到 `!` 的模块都无法通过 WebAssembly 验证;`bad_utf8` 里的 `!continuation(…)` 暴露了它。
+- [x] **T47.5** — 文档:`docs/stdlib/csv.md` 及其 zh-CN 镜像;stdlib 导览与 README 的包清单。

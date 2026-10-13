@@ -49,6 +49,7 @@ The packages:
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
+| [`csv`](#the-csv-package) | RFC 4180 CSV records, UTF-8 | all five |
 | [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
 | [`math`](#the-math-package) | float scalars and elementary functions | all five |
 | [`plot`](#the-plot-package) | declarative 2D charts rendered to SVG | all five |
@@ -459,6 +460,33 @@ line-wrap acceptance; every rejection comes back as
 Targets: all five. Reference:
 [`docs/stdlib/base64.md`](stdlib/base64.md) · Demo:
 `examples/base64_demo`.
+
+## The `csv` package
+
+The CSV reader and writer: RFC 4180 records as arrays of string
+fields, UTF-8 only. Decode is strict about quoting, record endings,
+and UTF-8; encode writes the RFC's canonical form, so
+`decode(encode(rows))` is `rows`. Pure Emo, so all five targets answer
+byte-for-byte.
+
+```emo
+def decode(text String) (R, Array[Array[String]])
+def encode(rows Array[Array[String]]) String
+def decode_delimited(text String, delimiter String) (R, Array[Array[String]])
+def encode_delimited(rows Array[Array[String]], delimiter String) String
+```
+
+A document is records of string fields — no header is imposed; the
+first record is a header only if the caller reads it as one. A record
+ends at CRLF, LF, or a lone CR (a final one opens no empty record); a
+quoted field holds delimiters and line breaks; a leading BOM is
+removed; and every byte must be valid UTF-8. A one-byte delimiter
+(TSV, semicolons) is the `_delimited` pair. Malformed input is
+`(R.error, reason)` with the byte offset; a bad delimiter and a
+zero-field record raise.
+
+Targets: all five. Reference: [`docs/stdlib/csv.md`](stdlib/csv.md) ·
+Demos: `examples/csv_demo`, `examples/csv_edge`.
 
 ## The `float` package
 

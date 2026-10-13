@@ -324,7 +324,7 @@ function utf8Decode(d: Uint8Array): string {
       ok = b >= 0xc2;
     } else if (ok && len === 3) {
       cp = b & 0x0f;
-      ok = b >= 0xe0 && b < 0xe8;
+      ok = b >= 0xe0 && b < 0xf0;
     } else if (ok) {
       cp = b & 0x07;
       ok = b >= 0xf0 && b < 0xf5;

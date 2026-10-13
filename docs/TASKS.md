@@ -38,6 +38,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M11 — The standard library | 31–38 | The bundled stdlib packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the native-binding `sqlite3` — each resolving against the manifest's `targets`, answering byte-for-byte on every target it declares, and shipping a full API reference plus a runnable golden. |
 | M12 — Visualization (`plot`) | 39–45 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
 | M13 — Unit testing | 46 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
+| M14 — CSV read/write | 47 | The bundled `csv` package — RFC 4180 records, UTF-8 only — resolving like any stdlib package, answering byte-for-byte on all five targets, with the API reference and runnable goldens. |
 
 ## Design gates
 
@@ -1437,3 +1438,39 @@ targets; `emo new` scaffolds a passing test; `dune test` green.
 - [x] **T46.8** — Docs: README gains the Testing section (the
       convention, the command, the builtins, a raise failing only the
       one test), mirrored in `docs/zh-CN/README.zh-CN.md`.
+
+## M14 — CSV read/write
+
+The `csv` package reads and writes RFC 4180 records — UTF-8 only —
+from the bundled registry like the other format packages. It needs no
+per-target runtime work: bytes and arrays carry the whole surface, so
+the golden rides all five target lists.
+
+### Step 47 — The standard library: `csv` · `plan/step-47-stdlib-csv.md`
+
+**Prereq:** Step 35 (base64 — the byte-scanner discipline and the
+all-five-golden shape) and step 31 (json — the format-package
+conventions).
+**Done when:** `require "csv"` decodes RFC 4180 text into
+`Array[Array[String]]` and encodes it back, byte-identical on all five
+targets — strict quoting, CRLF/LF/CR records, a leading BOM ignored,
+every byte validated as UTF-8, offset-bearing errors, and a one-byte
+delimiter pair for TSV; goldens on all five paths; `dune test` green.
+
+- [x] **T47.1** — The package: `stdlib/registry/csv/0.1.0` (manifest
+      over all five targets, `csv.emo` with the record model, the
+      strict decoder, the canonical encoder, the UTF-8 validator, the
+      delimiter pair).
+- [x] **T47.2** — The goldens: `examples/csv_demo` on the bootstrap,
+      c, typescript, wasm, and beam lists; `examples/csv_edge` on the
+      bootstrap list — every record shape, the malformed matrix, the
+      UTF-8 boundaries, the BOM, and the encoder's quoting rule.
+- [x] **T47.3** — The TypeScript UTF-8 fix: the runtime's decoder
+      rejected 3-byte lead bytes E8–EF (`b < 0xe8`), so U+8000–U+FFFF
+      decoded as U+FFFD; `csv_demo` flushed it.
+- [x] **T47.4** — The wasm `!` fix: unary `!` read the `$vbool` field
+      without the `ref.cast` `&&`/`||` already emitted, so any module
+      using `!` failed WebAssembly validation; `bad_utf8`'s
+      `!continuation(…)` flushed it.
+- [x] **T47.5** — The docs: `docs/stdlib/csv.md` and its zh-CN
+      mirror; the stdlib tour and README package lists.

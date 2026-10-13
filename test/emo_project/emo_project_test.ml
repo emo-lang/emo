@@ -2193,6 +2193,16 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "xml_edge")
           "xml_edge" "main.emo");
+    tc "csv_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "csv_demo")
+          "csv_demo" "main.emo");
+    tc "csv_edge compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "csv_edge")
+          "csv_edge" "main.emo");
     tc "sql_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
@@ -2284,6 +2294,7 @@ let ts_golden_tests =
       ("json_demo", "main.emo");
       ("yaml_demo", "main.emo");
       ("xml_demo", "main.emo");
+      ("csv_demo", "main.emo");
       ("sql_demo", "main.emo");
       ("base64_demo", "main.emo");
       ("slog_demo", "main.emo");

@@ -262,6 +262,7 @@ let wasm_goldens =
     "fixed_width";
     "list";
     "base64_demo";
+    "csv_demo";
     "sync_demo";
     "loops";
     "error_matching";
@@ -292,6 +293,7 @@ let beam_goldens =
     "fixed_width";
     "list";
     "base64_demo";
+    "csv_demo";
     "sync_demo";
     "printf_demo";
     "loops";
@@ -507,6 +509,7 @@ let c_goldens =
     "list";
     "os_demo";
     "base64_demo";
+    "csv_demo";
     "sync_demo";
     "slog_demo";
     "bufio_demo";

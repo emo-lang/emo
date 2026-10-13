@@ -1,0 +1,423 @@
+// The standard CSV library: RFC 4180 records decoded to arrays of
+// string fields and encoded back, UTF-8 only. Pure Emo over the shared
+// runtimes, so every target answers with the same bytes.
+//
+// A CSV document is a sequence of records, each a sequence of string
+// fields — the decoded value is exactly that, `Array[Array[String]]`,
+// with no header imposed. The first record is a header only when the
+// caller reads it as one.
+//
+// Decode is strict. A record ends at CR, LF, or CRLF; a quoted field
+// may hold delimiters and line breaks; a quote inside a field must
+// quote the field; a final line break does not open an empty record;
+// and every byte of the input must be valid UTF-8 — one leading BOM
+// excepted. Any other shape is a decode failure, `(R.error, reason)`,
+// with the offending byte offset in the reason. Encode is the RFC's
+// canonical writer: CRLF ends every record, and a field is quoted
+// exactly when it holds the delimiter, a quote, CR, or LF. Nothing is
+// trimmed and no byte is invented, so `decode(encode(rows))` is
+// `rows`.
+//
+// The delimiter is a comma by default; the `_delimited` pair takes a
+// one-byte delimiter (a tab for TSV, a semicolon, …). A delimiter that
+// is not one ASCII byte, or that is a quote or a line break, is a
+// caller's mistake and raises.
+
+// ---- the byte constants ----
+
+const dquote = 34
+const cr = 13
+const lf = 10
+const byte_bom = 239
+
+// ---- decode ----
+
+// RFC 4180, comma-separated.
+def decode(text String) (R, Array[Array[String]]) {
+  return decode_delimited(text, ",")
+}
+
+// RFC 4180 with a one-byte field delimiter.
+def decode_delimited(text String, delimiter String) (R, Array[Array[String]]) {
+  const d = delimiter_byte(delimiter)
+  const data = text.to_bytes()
+  const n = data.length()
+  const start = bom_skip(data, n)
+  const bad = bad_utf8(data, start, n)
+  if bad >= 0 {
+    return (R.error, err(bad, "invalid UTF-8 sequence"))
+  }
+  return parse_records(data, start, n, d, [])
+}
+
+// A record list is empty at end of input; otherwise one record is
+// parsed and the scan continues just past its terminator. A final
+// terminator therefore ends the scan inside parse_record, never as an
+// extra empty record.
+def parse_records(data Bytes, pos Int64, n Int64, d Int64, acc Array[Array[String]]) (R, Array[Array[String]]) {
+  if pos >= n {
+    return (R.ok, acc)
+  }
+  case parse_record(data, pos, n, d) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, rr)     -> { return parse_records(data, rr[1], n, d, acc.append(rr[0])) }
+  }
+}
+
+def parse_record(data Bytes, pos Int64, n Int64, d Int64) (R, (Array[String], Int64)) {
+  case parse_field(data, pos, n, d) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, fr)     -> { return parse_rest_fields(data, fr[1], n, d, [fr[0]]) }
+  }
+}
+
+def parse_rest_fields(data Bytes, stop Int64, n Int64, d Int64, acc Array[String]) (R, (Array[String], Int64)) {
+  if stop < n && data.get(stop) == d {
+    case parse_field(data, stop + 1, n, d) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, fr)     -> { return parse_rest_fields(data, fr[1], n, d, acc.append(fr[0])) }
+    }
+  }
+  return (R.ok, (acc, consume_terminator(data, stop, n)))
+}
+
+// CR, LF, or CRLF ends a record; at end of input there is nothing to
+// consume. A lone CR ends the record too, so CR-only files read.
+def consume_terminator(data Bytes, stop Int64, n Int64) Int64 {
+  if stop < n && data.get(stop) == cr {
+    if stop + 1 < n && data.get(stop + 1) == lf {
+      return stop + 2
+    }
+    return stop + 1
+  }
+  if stop < n && data.get(stop) == lf {
+    return stop + 1
+  }
+  return stop
+}
+
+def parse_field(data Bytes, i Int64, n Int64, d Int64) (R, (String, Int64)) {
+  if i < n && data.get(i) == dquote {
+    return parse_quoted(data, i, n, d)
+  }
+  return parse_unquoted(data, i, n, d)
+}
+
+// An unquoted field runs to the delimiter, a line break, or end of
+// input; a quote inside one is a mistake — the field had to be quoted.
+def parse_unquoted(data Bytes, i Int64, n Int64, d Int64) (R, (String, Int64)) {
+  const stop = scan_unquoted(data, i, n, d)
+  if stop < 0 {
+    return (R.error, err(-(stop + 1), "unexpected quote in an unquoted field"))
+  }
+  return (R.ok, (slice(data, i, stop), stop))
+}
+
+def scan_unquoted(data Bytes, i Int64, n Int64, d Int64) Int64 {
+  if i >= n {
+    return i
+  }
+  const b = data.get(i)
+  if b == d || b == cr || b == lf {
+    return i
+  }
+  if b == dquote {
+    return -(i + 1)
+  }
+  return scan_unquoted(data, i + 1, n, d)
+}
+
+// A quoted field: measure the decoded length and find the closing
+// quote (a doubled quote is one quote of data, not the close), then
+// fill. Nothing but the delimiter, a line break, or end of input may
+// follow the closing quote.
+def parse_quoted(data Bytes, i Int64, n Int64, d Int64) (R, (String, Int64)) {
+  const inner = i + 1
+  case measure_quoted(data, inner, n, 0, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, mr)     -> {
+      const len = mr[0]
+      const stop = mr[1]
+      if len == 0 {
+        return finish_field(data, stop, n, d, "")
+      }
+      const out = Bytes.new(len)
+      fill_quoted(data, inner, stop - 1, out, 0)
+      return finish_field(data, stop, n, d, out.to_string())
+    }
+  }
+}
+
+def measure_quoted(data Bytes, i Int64, n Int64, len Int64, start Int64) (R, (Int64, Int64)) {
+  if i >= n {
+    return (R.error, err(start, "unterminated quoted field"))
+  }
+  const b = data.get(i)
+  if b == dquote {
+    if i + 1 < n && data.get(i + 1) == dquote {
+      return measure_quoted(data, i + 2, n, len + 1, start)
+    }
+    return (R.ok, (len, i + 1))
+  }
+  return measure_quoted(data, i + 1, n, len + 1, start)
+}
+
+// Fills [inner, stop) decoding each doubled quote to one quote; `stop`
+// is the index of the closing quote.
+def fill_quoted(data Bytes, i Int64, stop Int64, out Bytes, w Int64) Int64 {
+  if i >= stop {
+    return w
+  }
+  const b = data.get(i)
+  if b == dquote {
+    out.set(w, dquote)
+    return fill_quoted(data, i + 2, stop, out, w + 1)
+  }
+  out.set(w, b)
+  return fill_quoted(data, i + 1, stop, out, w + 1)
+}
+
+def finish_field(data Bytes, stop Int64, n Int64, d Int64, value String) (R, (String, Int64)) {
+  if stop >= n {
+    return (R.ok, (value, stop))
+  }
+  const b = data.get(stop)
+  if b == d || b == cr || b == lf {
+    return (R.ok, (value, stop))
+  }
+  return (R.error, err(stop, "stray text after a closing quote"))
+}
+
+// ---- encode ----
+
+def encode(rows Array[Array[String]]) String {
+  return encode_delimited(rows, ",")
+}
+
+def encode_delimited(rows Array[Array[String]], delimiter String) String {
+  const d = delimiter_byte(delimiter)
+  const total = encoded_len(rows, d)
+  if total == 0 {
+    return ""
+  }
+  const out = Bytes.new(total)
+  fill_rows(rows, 0, d, out, 0)
+  return out.to_string()
+}
+
+// Every record ends in CRLF, so the length is each field's encoded
+// length plus two; the field scan doubles as the UTF-8 check, before
+// anything is allocated.
+def encoded_len(rows Array[Array[String]], d Int64) Int64 {
+  return encoded_len_rows(rows, 0, d, 0)
+}
+
+def encoded_len_rows(rows Array[Array[String]], i Int64, d Int64, total Int64) Int64 {
+  if i >= rows.length() {
+    return total
+  }
+  const rec = rows[i]
+  if rec.length() == 0 {
+    raise Exception.new(message: "csv: a record must have at least one field")
+  }
+  return encoded_len_rows(rows, i + 1, d, total + encoded_len_fields(rec, 0, d, 0) + 2)
+}
+
+def encoded_len_fields(fields Array[String], j Int64, d Int64, total Int64) Int64 {
+  if j >= fields.length() {
+    return total
+  }
+  if j + 1 < fields.length() {
+    return encoded_len_fields(fields, j + 1, d, total + field_len(fields[j], d) + 1)
+  }
+  return encoded_len_fields(fields, j + 1, d, total + field_len(fields[j], d))
+}
+
+def field_len(field String, d Int64) Int64 {
+  const b = field.to_bytes()
+  const n = b.length()
+  const bad = bad_utf8(b, 0, n)
+  if bad >= 0 {
+    raise Exception.new(message: "csv: a field is not valid UTF-8 at byte ${bad}")
+  }
+  if needs_quote(b, n, d) {
+    return 2 + n + count_quotes(b, 0, n, 0)
+  }
+  return n
+}
+
+// A field is quoted when it holds the delimiter, a quote, CR, or LF.
+def needs_quote(b Bytes, n Int64, d Int64) Bool {
+  return has_byte(b, 0, n, d) || has_byte(b, 0, n, dquote) || has_byte(b, 0, n, cr) || has_byte(b, 0, n, lf)
+}
+
+def has_byte(b Bytes, i Int64, n Int64, c Int64) Bool {
+  if i >= n {
+    return false
+  }
+  if b.get(i) == c {
+    return true
+  }
+  return has_byte(b, i + 1, n, c)
+}
+
+def count_quotes(b Bytes, i Int64, n Int64, count Int64) Int64 {
+  if i >= n {
+    return count
+  }
+  if b.get(i) == dquote {
+    return count_quotes(b, i + 1, n, count + 1)
+  }
+  return count_quotes(b, i + 1, n, count)
+}
+
+def fill_rows(rows Array[Array[String]], i Int64, d Int64, out Bytes, w Int64) Int64 {
+  if i >= rows.length() {
+    return w
+  }
+  const wf = fill_fields(rows[i], 0, d, out, w)
+  out.set(wf, cr)
+  out.set(wf + 1, lf)
+  return fill_rows(rows, i + 1, d, out, wf + 2)
+}
+
+def fill_fields(fields Array[String], j Int64, d Int64, out Bytes, w Int64) Int64 {
+  if j >= fields.length() {
+    return w
+  }
+  const wf = fill_field(fields[j], d, out, w)
+  if j + 1 < fields.length() {
+    out.set(wf, d)
+    return fill_fields(fields, j + 1, d, out, wf + 1)
+  }
+  return wf
+}
+
+def fill_field(field String, d Int64, out Bytes, w Int64) Int64 {
+  const b = field.to_bytes()
+  const n = b.length()
+  if needs_quote(b, n, d) {
+    out.set(w, dquote)
+    const wq = fill_quoted_field(b, 0, n, out, w + 1)
+    out.set(wq, dquote)
+    return wq + 1
+  }
+  copy_bytes(b, out, 0, w, n)
+  return w + n
+}
+
+def fill_quoted_field(b Bytes, i Int64, n Int64, out Bytes, w Int64) Int64 {
+  if i >= n {
+    return w
+  }
+  const c = b.get(i)
+  if c == dquote {
+    out.set(w, dquote)
+    out.set(w + 1, dquote)
+    return fill_quoted_field(b, i + 1, n, out, w + 2)
+  }
+  out.set(w, c)
+  return fill_quoted_field(b, i + 1, n, out, w + 1)
+}
+
+// ---- the shared byte helpers ----
+
+// The field delimiter as a byte. A delimiter that is not exactly one
+// ASCII byte, or that is a quote or a line break, is the caller's
+// mistake — it raises rather than parsing something surprising.
+def delimiter_byte(delimiter String) Int64 {
+  if delimiter.length() != 1 {
+    raise Exception.new(message: "csv: the delimiter must be one byte, got ${delimiter.length()}")
+  }
+  const b = delimiter.to_bytes().get(0)
+  if b == 0 || b >= 128 {
+    raise Exception.new(message: "csv: the delimiter must be an ASCII byte")
+  }
+  if b == dquote {
+    raise Exception.new(message: "csv: the delimiter cannot be the quote character")
+  }
+  if b == cr || b == lf {
+    raise Exception.new(message: "csv: the delimiter cannot be a line break")
+  }
+  return b
+}
+
+// A leading UTF-8 BOM is the file's encoding mark, not a field byte.
+def bom_skip(data Bytes, n Int64) Int64 {
+  if n >= 3 && data.get(0) == byte_bom && data.get(1) == 187 && data.get(2) == 191 {
+    return 3
+  }
+  return 0
+}
+
+// The offset of the first byte that is not valid UTF-8, or -1 when
+// every byte from `i` on is. Rejects overlong forms, surrogates, and
+// code points past U+10FFFF, so decode accepts one encoding per
+// character — exactly what encode emits.
+def bad_utf8(data Bytes, i Int64, n Int64) Int64 {
+  if i >= n {
+    return -1
+  }
+  const b = data.get(i)
+  if b < 128 {
+    return bad_utf8(data, i + 1, n)
+  }
+  if b < 194 {
+    return i
+  }
+  if b < 224 {
+    if i + 1 >= n || !continuation(data.get(i + 1)) {
+      return i
+    }
+    return bad_utf8(data, i + 2, n)
+  }
+  if b < 240 {
+    if i + 2 >= n || !continuation(data.get(i + 1)) || !continuation(data.get(i + 2)) {
+      return i
+    }
+    if b == 224 && data.get(i + 1) < 160 {
+      return i
+    }
+    if b == 237 && data.get(i + 1) > 159 {
+      return i
+    }
+    return bad_utf8(data, i + 3, n)
+  }
+  if b < 245 {
+    if i + 3 >= n || !continuation(data.get(i + 1)) || !continuation(data.get(i + 2)) || !continuation(data.get(i + 3)) {
+      return i
+    }
+    if b == 240 && data.get(i + 1) < 144 {
+      return i
+    }
+    if b == 244 && data.get(i + 1) > 143 {
+      return i
+    }
+    return bad_utf8(data, i + 4, n)
+  }
+  return i
+}
+
+def continuation(b Int64) Bool {
+  return b >= 128 && b <= 191
+}
+
+def copy_bytes(src Bytes, dst Bytes, si Int64, di Int64, count Int64) {
+  if count > 0 {
+    dst.set(di, src.get(si))
+    copy_bytes(src, dst, si + 1, di + 1, count - 1)
+  }
+}
+
+def slice(data Bytes, start Int64, stop Int64) String {
+  if start >= stop {
+    return ""
+  }
+  const out = Bytes.new(stop - start)
+  copy_bytes(data, out, start, 0, stop - start)
+  return out.to_string()
+}
+
+def err(offset Int64, what String) String {
+  return "csv: " + what + " at byte " + offset.to_string()
+}

@@ -26,6 +26,7 @@ require "json"
 | [`yaml`](#yaml-包) | YAML 1.2(core schema)解码与编码 | 全部五个 |
 | [`xml`](#xml-包) | XML 解码与编码 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
+| [`csv`](#csv-包) | RFC 4180 CSV 记录,UTF-8 | 全部五个 |
 | [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
 | [`math`](#math-包) | 浮点标量与初等函数 | 全部五个 |
 | [`plot`](#plot-包) | 声明式二维图表,渲染为 SVG | 全部五个 |
@@ -322,6 +323,21 @@ def decode(text String) (R, String)
 `encode` 永远输出标准字母表加 `=` 填充。`decode` 只接受编码器产出的东西:仅标准字母表,填充只在最后一个量子,RFC 要求为零的填充位必须真的是零——`QR==` 是错误,不是 `QQ==` 的同义词。不容忍空白,不接受换行拆分;每次拒绝都以 `(R.error, reason)` 返回,带出错字节偏移。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/base64.md`](stdlib/base64.md) · 示例:`examples/base64_demo`。
+
+## csv 包
+
+CSV 读写器:把 RFC 4180 记录表示成字符串字段的数组,只认 UTF-8。解码对引号、记录结尾和 UTF-8 都很严格;编码写的是 RFC 的规范形式,所以 `decode(encode(rows))` 就是 `rows`。纯 Emo,五个目标逐字节一致。
+
+```emo
+def decode(text String) (R, Array[Array[String]])
+def encode(rows Array[Array[String]]) String
+def decode_delimited(text String, delimiter String) (R, Array[Array[String]])
+def encode_delimited(rows Array[Array[String]], delimiter String) String
+```
+
+一份文档就是若干条记录,每条记录是一串字符串字段——不强行规定表头;第一条记录只有在调用方按表头读它时才是表头。记录在 CRLF、LF 或单独的 CR 处结束(末尾的一个不会再开出一条空记录);引号字段内可以放分隔符和换行;开头的 BOM 会被去掉;每个字节都必须是合法 UTF-8。单字节分隔符(TSV、分号)由 `_delimited` 这对函数承担。格式错误的输入是 `(R.error, reason)`,带字节偏移;分隔符不合法和零字段的记录会抛出。
+
+目标:全部五个。参考:[`docs/zh-CN/stdlib/csv.md`](stdlib/csv.md) · 示例:`examples/csv_demo`、`examples/csv_edge`。
 
 ## float 包
 
