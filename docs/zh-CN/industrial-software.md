@@ -39,7 +39,7 @@ C++ 积累,而 Emo 的 FFI 目前只放行三种类型过边界。各细分领�
 过边界——指针、结构体、数组、回调都不行——所以现在包一层 OCCT 级
 内核是不可行的。这是硬门槛,不是调优问题。
 
-性能方向相同。native 后端的 specialization("types feed performance")
+性能方向相同。`ocaml` 后端的 specialization("types feed performance")
 方向正确,但 benchmarks 只证明了"开 specialized 比不开快",没有任何
 对标 C/Fortran 的工业级负载——下文的性能探针是微基准,不是工业级
 负载。gradual typing 下每个值带运行期类型标签,
@@ -70,7 +70,7 @@ Erlang 在电信业验证过的高可用监控面形态:SCADA 上位机、MES �
 提交到 `benchmarks/`——`loops_tail`、`ffi_call`、`bytes_scan`,以及
 原有的 `fib`——C 与纯 OCaml 参照程序在 `benchmarks/baselines/`;
 `benchmarks/run.sh` 会把它们重新生成到 `benchmarks/results.md`。下面的
-数字即那次运行,环境是 macOS arm64、OCaml 5.5.1 承载的 native 后端
+数字即那次运行,环境是 macOS arm64、OCaml 5.5.1 承载的 `ocaml` 后端
 (单位毫秒/次,取三次带一次预热的最好值)。
 
 | 工作负载 | specialized | 非 specialized | 解释器 | 参照基线 |

@@ -32,7 +32,7 @@ this step the README's code examples all parse completely.
   no body, no `init`).
 - **`enum`** — `enum Color { red, green, blue }`; members are bare
   lower_snake identifiers. No payloads — `enum Color(String)` or
-  Rust-shaped variants are rejected by construction.
+  positional-payload variants are rejected by construction.
 - **`raise`** — statement `raise <expression>`; the catch form is undecided
   (`CHECK.md`) and intentionally absent.
 - **Naming conventions enforced here** (they are syntactic in Emo): type

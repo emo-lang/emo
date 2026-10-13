@@ -9,7 +9,7 @@ specialization); the dynamic-value study in step 19 · **Related:**
 
 ## Why this file exists
 
-`docs/native-backend.md` is explicit that the shipped native target emits
+`docs/ocaml-backend.md` is explicit that the shipped native target emits
 OCaml source and links the OCaml runtime. That choice bought a fast path to
 a working backend, and it is also the ceiling on what the native target can
 ever do for numeric code and C interop. `plan/step-19-riscv64.md` is the
@@ -128,7 +128,7 @@ by one of a few known schemes:
 
 The constraint that makes this hard is deliberate: Emo's type system has no
 ownership, lifetime, or linearity annotations, and the project's philosophy
-excludes the Rust-shaped mechanisms that would supply them. So without a
+excludes the mechanisms that would supply them. So without a
 language-surface addition, the dynamic world's only fully general no-GC
 option is reference counting; the alternative is to bound programs to
 arenas. For the **specialized numeric tier** the problem does not exist at
@@ -254,7 +254,7 @@ The route is the decision everything else hangs on, and the
 recommendation is **emit C** — with LLVM ruled out and assembly confined
 to the freestanding target.
 
-The reasoning is partly the project's own. `docs/native-backend.md` chose
+The reasoning is partly the project's own. `docs/ocaml-backend.md` chose
 to emit OCaml *source* rather than construct compiler-libs trees because
 source text is one stable contract, the generated file is readable and
 debuggable, and the host optimizer still applies. The same argument holds
@@ -312,7 +312,7 @@ Alternatives considered, and why not:
 | direct assembly | whatever is written; no vectorizer by default | binutils | medium | native | target-specific | poor |
 | QBE | basic; no vectorization | QBE (small, C) | high | basic | medium | poor |
 | libgccjit | GCC optimizer + vectorization | libgccjit (heavy, ties GCC) | medium | — | low | good but heavy |
-| Cranelift | moderate | Rust ecosystem | medium | — | medium | moderate |
+| Cranelift | moderate | the Cranelift project | medium | — | medium | moderate |
 
 QBE is simple but does not vectorize, which removes the point; libgccjit
 vectorizes but makes GCC a heavy runtime dependency; direct assembly owns

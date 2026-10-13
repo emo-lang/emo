@@ -53,13 +53,12 @@ parse → check → lower → specialize → emit OCaml → ocamlfind ocamlopt �
 emit-OCaml 流水线是 POSIX 绑死的，所以**原生 Windows 不是受支持目标** —— 原因不只是
 OCaml，而是运行时链接了什么：
 
-- 产物的链接行写死了 `eio_posix`（`src/emo_cli/emo_cli.ml`），所以构建出的
-  程序是 POSIX-only；
-- 运行时链接 `unix` 与 `ssl`（OpenSSL bindings），调度器是 Eio 上的 OCaml 5
-effects（`src/emo_sched/dune`）。
+- 产物链接 `unix` 与 `ssl`（OpenSSL bindings），它的独立调度器是基于 `unix`
+  的轮询循环——所以构建出的程序是 POSIX-only；
+- 编译器自身的宿主调度器是 Eio 上的 OCaml 5 effects（`src/emo_sched/dune`）。
 
 有一点值得直说：即使有一个 Windows 版 `emo`，它能跑解释器和
-`wasm`/`beam`/`typescript` 目标，但 `emo build` 的 native 目标在 Windows 上
+`wasm`/`beam`/`typescript` 目标，但 `emo build --target ocaml` 在 Windows 上
 不通 —— 因为 OCaml 不便于交叉编译。OCaml 本身支持 Windows，但这是最少被压测的
 配置：`Unix` 是子集、包生态偏 POSIX、OCaml 5 的 effects/multicore 运行时在
 Windows 上最少被验证。
@@ -159,7 +158,7 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
 ## 参考
 
 - `CHECK.md` —— "Binary / CLI tool distribution mechanism"。
-- `docs/native-backend.md` —— emit-OCaml 流水线与 OCaml 工具链要求。
+- [`docs/zh-CN/ocaml-backend.md`](ocaml-backend.md) —— emit-OCaml 流水线与 OCaml 工具链要求。
 - `docs/runtime-and-freestanding.md` —— runtime 与 freestanding 之别，以及
   native 产物带的是什么。
 - `docs/industrial-software.md` —— FFI 的硬门。

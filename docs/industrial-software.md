@@ -51,7 +51,7 @@ pointers, structs, arrays, or callbacks — so wrapping an OCCT-class
 kernel is not possible today. That is a hard gate, not a tuning
 problem.
 
-Performance runs the same direction. The native backend's
+Performance runs the same direction. The `ocaml` backend's
 specialization ("types feed performance") is directionally right, but
 the benchmarks only show specialized beating unspecialized; no
 industrial-scale workload has been measured against C or Fortran, and
@@ -93,7 +93,7 @@ first numbers behind it. The cases are committed under `benchmarks/` —
 `loops_tail`, `ffi_call`, `bytes_scan`, and the existing `fib` — with C
 and plain-OCaml references in `benchmarks/baselines/`; `benchmarks/run.sh`
 regenerates them into `benchmarks/results.md`. The figures below are that
-run on macOS arm64, with the OCaml 5.5.1-hosted native backend
+run on macOS arm64, with the `ocaml` backend on OCaml 5.5.1
 (milliseconds per run, best-of-three with one warmup).
 
 | workload | specialized | unspecialized | interpreter | baseline |

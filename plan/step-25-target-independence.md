@@ -47,7 +47,7 @@ Two do not:
 The user's goal this step schedules: target generation stays the
 host's job (the emitters are the compiler), but target runtimes become
 fully independent of the host language — so a future host rewrite
-(Go, Rust) touches only the emitters, and the ocaml target becomes
+(in Go, say) touches only the emitters, and the ocaml target becomes
 usable wherever the *target's* toolchain exists, on any installation.
 
 ## Goal

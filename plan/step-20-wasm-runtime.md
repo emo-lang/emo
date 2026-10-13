@@ -5,7 +5,7 @@
 ## The project
 
 A **WebAssembly runtime written in Emo** — decoder, validator, and
-interpreter, the way wasmtime is a runtime written in Rust. The
+interpreter, the way wazero is a runtime written in Go. The
 layer is designed once, with a single gate:
 
 > **The unification gate:** a primitive lands in this layer only when

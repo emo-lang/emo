@@ -1,8 +1,8 @@
 # Runtime and freestanding — two terms, two axes
 
 Emo's docs use "freestanding", "runtime", and "host runtime" repeatedly —
-the `riscv64` target, the native backend, the proposed self-contained
-backend. They describe two different things: **freestanding is about the
+the `riscv64` target, the `ocaml` and `c` backends.
+They describe two different things: **freestanding is about the
 environment a program runs in; runtime is about the code that supports it
 while it runs.** This note pins both down and maps them onto Emo's
 targets.
@@ -67,7 +67,7 @@ the machine behind it.
 
 1. **Language runtime** — the sense above.
 2. **Host runtime** — the runtime of the *host language* an
-   implementation borrows. Emo's shipped native backend emits OCaml and
+   implementation borrows. Emo's `ocaml` backend emits OCaml and
    links the **OCaml runtime**, so every Emo binary carries OCaml's
    collector and value model; that is a host runtime.
 3. **Cloud / execution runtime** — a "Lambda runtime", a "JVM runtime":
@@ -75,21 +75,30 @@ the machine behind it.
 4. **Runtime versus compile time** — runtime errors versus compile-time
    errors, runtime types versus static types. A different axis.
 
-In Emo, the runtime layer is `src/emo_eval` (the evaluator),
+In the reference implementation, the compiler's own runtime layer — what
+the interpreter runs on — is `src/emo_eval` (the evaluator),
 `src/emo_runtime` (native boxing, builtins, dispatch helpers), and
-`src/emo_sched` (the process scheduler). The README states that the
-runtime "ships inside the binary": the scheduler and networking stack
-are libraries of the backend, so a compiled program carries its runtime
-with it, with no interpreter and no runtime download. A freestanding
-target has **no host runtime** — it carries its own, with its own
-allocator (step 19's bump allocator, "GC deferred").
+`src/emo_sched` (the process scheduler). A **target's** runtime is a
+different thing: the runtime-independence principle (2026-10-07) writes
+it in the target's language, carries it as generated data inside the
+compiler, and compiles it with the target's own toolchain — `c` carries
+`src/emo_codegen/c/emo_c_runtime.c`, `ocaml` carries
+`src/emo_codegen/ocaml/emo_ocaml_runtime.ml`, `typescript` carries
+`src/emo_codegen/ts/ts_runtime.ts`, and `wasm`/`beam` carry theirs inside
+the emitted module. (The `ocaml` file is the scheduler and builtins; the
+collector and value model underneath are still OCaml's — the borrowed
+host runtime of point 2.) That is the README's "ships inside the binary": a
+compiled program carries its runtime with it, with no interpreter and no
+runtime download. A freestanding target has **no host runtime** — it
+carries its own, with its own allocator (step 19's bump allocator, "GC
+deferred").
 
 Why the runtime matters to the GC, FFI, and HPC discussions: the runtime
 owns **value representation, memory management, and scheduling**. "No
 GC" and "seamless C FFI" are, underneath, rewrites of that layer — how a
 value is laid out (boxed, tagged, address-stable), who reclaims memory
 (tracing GC, reference counting, arenas), and how C enters (the ABI, the
-root-scanning problem). It is why the proposed self-contained backend's
+root-scanning problem). It is why the `c` backend's
 cost sits in the runtime, not in code generation.
 
 ## The two axes, applied to Emo
@@ -98,7 +107,7 @@ Crossing the two axes names the targets precisely:
 
 | | Borrowed host runtime | Own runtime |
 | --- | --- | --- |
-| **Hosted** | the shipped native backend (emits OCaml, links the OCaml runtime) | the proposed self-contained backend (`plan/hosted-native-ffi.md`) |
+| **Hosted** | the `ocaml` backend (emits OCaml, links the OCaml runtime) | the `c` backend (emits C, its own runtime; step 23) |
 | **Freestanding** | — (not a useful combination) | the `riscv64` target (`plan/step-19-riscv64.md`) |
 
 Read that way, "a freestanding target" and "a self-contained runtime" are
@@ -107,11 +116,12 @@ boots into, the second about whose machinery carries the program.
 
 ## References
 
-- `docs/native-backend.md` — the shipped native backend, its OCaml
-  emission and its C FFI.
+- [`docs/ocaml-backend.md`](ocaml-backend.md) — the emit-OCaml backend,
+  its OCaml emission and its C FFI.
+- [`docs/c-backend.md`](c-backend.md) — the C backend, its own runtime,
+  and the package-carried native code.
 - `plan/step-19-riscv64.md` — the freestanding target, its value model
   and boot profiles.
-- `plan/hosted-native-ffi.md` — the proposed self-contained
-  hosted backend.
+- `plan/hosted-native-ffi.md` — the `c` backend assessment.
 - `README.md`, "Native Builds" — the runtime-ships-inside-the-binary
   statement.

@@ -210,7 +210,7 @@ Emo is gradually typed: **types are dynamic at runtime, but statically checked a
 - There is no generics machinery: no generic definition syntax and no type-constraint system. Parameterized types exist only as type-declaration vocabulary (e.g. `Array[User]`, `Map[String, Int64]`, `Box[Int64]`) serving the checker and library signatures; application code relies on inference and rarely sees any type spelling at all. A parameter that receives a block is declared `Block`.
 - The container types also take a bare spelling — `List`, `Box`, `Map` — meaning "any elements": a `Map` parameter accepts a `Map[String, Int64]` as readily as a `Map[Int64, User]`, and values read back from it are checked progressively.
 - Strictness defaults high and can be relaxed explicitly.
-- Type information feeds back into performance: modules with sufficiently complete type knowledge can be specialized (unboxed representations, direct dispatch) on the native backend.
+- Type information feeds back into performance: modules with sufficiently complete type knowledge can be specialized (unboxed representations, direct dispatch) on the `ocaml` and `c` backends.
 
 ## Modules and Visibility
 
@@ -284,7 +284,7 @@ def parse_config(text String) Json {
 
 ## Concurrency
 
-Emo ships with a native concurrency model built around **processes and message passing**, in the spirit of the actor model. This choice is deliberate: it maps natively onto BEAM processes, while the native backend implements it with a scheduler built on OCaml 5 effects — the same foundation proven by runtimes such as Eio.
+Emo ships with a native concurrency model built around **processes and message passing**, in the spirit of the actor model. This choice is deliberate: it maps natively onto BEAM processes, while the `ocaml` backend implements it with a scheduler built on OCaml 5 effects — the same foundation proven by runtimes such as Eio.
 
 The concurrency semantics are shaped by the following decisions:
 
@@ -294,13 +294,13 @@ The concurrency semantics are shaped by the following decisions:
 - **A process learns its own pid with `self_pid()`.** The idiomatic reply pattern is one line — `sender <- (self_pid(), request)` — with the tuple destructured right in the receiver's branch pattern. Pids are opaque values of type `Pid` that compare by identity and render as `<pid 3>`.
 - **`halt()` stops the current process.** So does an unhandled error, and either kills only the offending process; core provides the process-exit signal a supervisor needs and nothing more — kill, wait, and restart policies are library territory.
 - Message passing is the core concurrency primitive; shared-memory primitives are not part of the core semantics.
-- Data is immutable by default, so messages can be passed by copying on BEAM and by reference on the native backend while keeping identical observable semantics.
+- Data is immutable by default, so messages can be passed by copying on BEAM and by reference on the `ocaml` and `c` backends while keeping identical observable semantics.
 - Tail calls are guaranteed; recursion is the idiomatic shape of a receive loop.
 - Crash isolation and supervision are library-level on both backends: an unhandled error kills only the offending process.
 
 ## Networking
 
-Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API. On the native backends it runs on the same effects-based scheduler as the concurrency runtime — non-blocking sockets parked and woken by the scheduler, with TLS provided by OpenSSL bindings; on the TypeScript target it runs on Node's event loop, the emitted `await`s settling each call. The `net` and `http` packages declare `targets = ["ocaml", "c", "typescript"]`, and dependency resolution refuses them on every other target; the `c` target implements TCP only.
+Networking is a first-class citizen: nearly every modern program talks over the network. Emo provides a unified asynchronous networking API. On the `ocaml` backend it runs on the same effects-based scheduler as the concurrency runtime — non-blocking sockets parked and woken by the scheduler, with TLS provided by OpenSSL bindings; on the TypeScript target it runs on Node's event loop, the emitted `await`s settling each call. The `net` and `http` packages declare `targets = ["ocaml", "c", "typescript"]`, and dependency resolution refuses them on every other target; the `c` target implements TCP only.
 
 The API is **direct style**: network calls look like ordinary blocking calls, and the scheduler switches processes under the hood. There is no `async`/`await` and therefore no function coloring — any function can perform IO, and the API ecosystem stays single-tracked. Timeouts are seconds, and every failure — refused connection, unresolvable name, exceeded deadline, closed socket — returns `(R.error, reason)`, the reason stating the peer, the operation, and the reason.
 
@@ -431,13 +431,14 @@ Writing a kernel shapes the language in four ways:
 
 The reference implementation of Emo is written in OCaml 5. Self-hosting is explicitly not a goal: Emo's reference implementation stays in OCaml.
 
-Emo interoperates with C through OCaml's first-class C FFI: on the native backend, Emo binaries link directly against C libraries.
+Emo interoperates with C through `foreign def`: the `c` backend calls the symbol directly through the C ABI, while the `ocaml` backend marshals through a generated C wrapper.
 
 ## Documentation
 
 Documentation lives under `docs/`. The Chinese translation of this README is [`docs/zh-CN/README.zh-CN.md`](docs/zh-CN/README.zh-CN.md).
 
-- [`docs/native-backend.md`](docs/native-backend.md) — how `emo build` produces a native binary, and the C FFI.
+- [`docs/c-backend.md`](docs/c-backend.md) — the default target: emitted C, the C runtime, and the C FFI.
+- [`docs/ocaml-backend.md`](docs/ocaml-backend.md) — the emit-OCaml backend, and the OCaml toolchain requirement.
 - [`docs/toolchain.md`](docs/toolchain.md) — building and installing the `emo` CLI: why dune is the one OCaml step, and the justfile automation.
 - [`docs/toolchain-distribution.md`](docs/toolchain-distribution.md) — how the toolchain is distributed: the OCaml requirement, `emo doctor`, and deferring the `c` backend.
 - [`docs/runtime-and-freestanding.md`](docs/runtime-and-freestanding.md) — what "runtime" and "freestanding" mean, and how they map to Emo's targets.

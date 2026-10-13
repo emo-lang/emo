@@ -145,6 +145,6 @@ whose semantics are precisely defined.** `peek`/`poke` are its germ; add
   the boot profiles, and the `foreign def` refusal.
 - `plan/step-15-other-targets.md` — the RISC-V reference note, the
   mechanism/policy split, and the C-interop ladder.
-- `docs/native-backend.md` — the IR/specialization pipeline and the
-  `foreign def` surface.
+- [`docs/c-backend.md`](c-backend.md) / [`docs/ocaml-backend.md`](ocaml-backend.md) — the
+  IR/specialization pipeline and the `foreign def` surface.
 - `README.md`, "EmoOS" — the single-language-closure ambition.

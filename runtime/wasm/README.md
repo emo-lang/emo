@@ -1,7 +1,7 @@
 # The Emo-written WebAssembly runtime
 
 This package is a WebAssembly runtime — decoder, validator, and
-interpreter — written in Emo, the way wasmtime is written in Rust.
+interpreter — written in Emo, the way wazero is written in Go.
 Step 21 of the language plan grew the decoder and validator; step 22
 the interpreter, the linking layer, and the `spectest` host.
 
@@ -95,7 +95,7 @@ registration, or an invocation with its expected values or trap.
 
 The run driver is compiled rather than interpreted: the evaluator is
 correct but cannot carry the loop-heavy memory tests (its own recursion
-limit), while the native backend emits boxed `Int64`. The two share the
+limit), while the `ocaml` backend emits boxed `Int64`. The two share the
 same source.
 
 ## Why a wasm runtime lives in a language repository

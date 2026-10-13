@@ -17,7 +17,7 @@ language's design, not just its features.
 - **[`tcp_echo/`](tcp_echo/)** — direct-style networking: a server and
   a client in one program, with the standard library resolved through
   the registry.
-- **[`numerics/`](numerics/)** — the native backend: `foreign def` C
+- **[`numerics/`](numerics/)** — the compiled backends: `foreign def` C
   bindings and a specialized numeric kernel, compiled to one binary.
 
 ## Acceptance examples
