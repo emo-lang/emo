@@ -10,6 +10,12 @@
 
 let member key json = Yojson.Safe.Util.member key json
 
+(* [member] for a parent that may itself be absent: optional LSP fields
+   such as `initializationOptions` and `settings` arrive as `Null` often
+   enough, and [Yojson.Safe.Util.member] raises on a non-object. *)
+let nested_member key json =
+  match json with `Assoc _ -> Yojson.Safe.Util.member key json | _ -> `Null
+
 let to_string_option = function
   | `Null -> None
   | v -> Some (Yojson.Safe.to_string v)

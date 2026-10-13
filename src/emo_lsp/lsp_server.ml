@@ -977,7 +977,7 @@ let handle_execute_command (state : state) (params : Yojson.Safe.t) :
             "package {\n\
             \  name = \"%s\"\n\
             \  version = \"0.1.0\"\n\
-            \  targets = [\"native\"]\n\n\
+            \  targets = [\"ocaml\", \"wasm\"]\n\n\
             \  deps {}\n\
              }\n"
             name
@@ -1013,8 +1013,8 @@ let handle_request (state : state) ~(id : Yojson.Safe.t) ~(method_ : string)
   let reply json = Protocol.respond state.oc ~id json in
   match method_ with
   | "initialize" ->
-      let options = Yojson.Safe.Util.member "initializationOptions" params in
-      (match Yojson.Safe.Util.member "registry" options with
+      let options = Lsp_util.nested_member "initializationOptions" params in
+      (match Lsp_util.nested_member "registry" options with
       | `String r -> state.registry <- Some r
       | _ -> ());
       let root =
@@ -1120,9 +1120,9 @@ let handle_notification (state : state) ~(method_ : string)
       Protocol.notify state.oc ~method_:"textDocument/publishDiagnostics"
         (`Assoc [ ("uri", `String uri); ("diagnostics", `List []) ])
   | "workspace/didChangeConfiguration" -> (
-      let settings = Yojson.Safe.Util.member "settings" params in
-      let emo = Yojson.Safe.Util.member "emo" settings in
-      match Yojson.Safe.Util.member "registry" emo with
+      let settings = Lsp_util.nested_member "settings" params in
+      let emo = Lsp_util.nested_member "emo" settings in
+      match Lsp_util.nested_member "registry" emo with
       | `String r -> state.registry <- Some r
       | _ -> ())
   | "$/cancelRequest" | "workspace/didChangeWatchedFiles" -> ()

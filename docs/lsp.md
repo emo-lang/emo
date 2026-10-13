@@ -1,9 +1,9 @@
 # The Emo Language Server
 
-Emo ships with a Language Server Protocol implementation, `emo-lsp`, and a
-Visual Studio Code extension that drives it. Together they provide syntax
-highlighting, completion, diagnostics, hover, navigation, and package
-management for `.emo` sources.
+Emo ships with a Language Server Protocol implementation, `emo-lsp`, and editor
+integrations that drive it: a Visual Studio Code extension and a Neovim plugin.
+Together they provide syntax highlighting, completion, diagnostics, hover,
+navigation, and package management for `.emo` sources.
 
 ## Building the server
 
@@ -57,13 +57,46 @@ The client finds the server in this order:
 The registry used for package completion and dependency resolution comes from
 `emo.registry`, then `EMO_REGISTRY`, then the bundled `server/registry`.
 
+## The Neovim plugin
+
+The plugin lives under [`editors/neovim`](../editors/neovim). It is a plain
+Neovim package — a Vim syntax file, an indent expression, and a small LSP
+client — and requires Neovim 0.11 or newer, for `vim.lsp.config` and
+`vim.lsp.enable`.
+
+```sh
+editors/neovim/scripts/build-server.sh   # builds emo-lsp in this checkout
+```
+
+Put the plugin directory on the runtimepath and, optionally, configure it:
+
+```lua
+vim.opt.runtimepath:prepend('/path/to/emo/editors/neovim')
+require('emo').setup({
+  server_path = '/path/to/emo-lsp',
+  emo_path = '/path/to/emo',
+  registry = '/path/to/emo/stdlib/registry',
+})
+```
+
+It finds the server in the `server_path` option, then `emo-lsp` on the `PATH`,
+then a build inside the Emo checkout. The registry comes from `registry`, then
+`EMO_REGISTRY`; the `emo` CLI behind the `:Emo*` commands comes from
+`emo_path`, then `EMO_BIN`. `:checkhealth emo` reports what was resolved.
+
+The commands mirror the extension's — `:EmoRestart`, `:EmoCheck`, `:EmoBuild`,
+`:EmoRun`, `:EmoDepsResolve`, `:EmoDepsList`, `:EmoDepsUpdate`, and
+`:EmoPackageInit`. See
+[`editors/neovim/README.md`](../editors/neovim/README.md) for the full list and
+the options table.
+
 ## Features
 
-- **Syntax highlighting.** A TextMate grammar covers keywords, declarations,
-  string interpolation, `predicate?` names, and the language's case
-  conventions. The server additionally emits semantic tokens so user-defined
-  classes, enums, interfaces, functions, and parameters are coloured
-  consistently.
+- **Syntax highlighting.** A TextMate grammar (VS Code) or a Vim syntax file
+  (Neovim) covers keywords, declarations, string interpolation, `predicate?`
+  names, and the language's case conventions. The server additionally emits
+  semantic tokens so user-defined classes, enums, interfaces, functions, and
+  parameters are coloured consistently.
 - **Completion.** Keywords, built-in types and functions, declarations from
   the current file and the project, members after `.` (class fields and
   methods, function-group members, module members), and package names inside
