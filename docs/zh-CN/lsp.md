@@ -1,8 +1,8 @@
 # Emo 语言服务器
 
-Emo 自带语言服务器协议（LSP）实现 `emo-lsp`，以及一个驱动它的 Visual
-Studio Code 扩展。二者共同为 `.emo` 源文件提供语法高亮、补全、诊断、悬停、
-导航与包管理。
+Emo 自带语言服务器协议（LSP）实现 `emo-lsp`，以及驱动它的编辑器集成：一个
+Visual Studio Code 扩展和一个 Neovim 插件。它们共同为 `.emo` 源文件提供语法
+高亮、补全、诊断、悬停、导航与包管理。
 
 ## 构建服务器
 
@@ -54,11 +54,41 @@ npx @vscode/vsce package       # 产出 emo-lsp-0.1.0.vsix
 包补全与依赖求解所用的注册表依次取 `emo.registry`、`EMO_REGISTRY`，最后是
 内置的 `server/registry`。
 
+## Neovim 插件
+
+插件位于 [`editors/neovim`](../editors/neovim)。它是一个普通的 Neovim 包
+——一个 Vim 语法文件、一个缩进表达式和一个小巧的 LSP 客户端——需要 Neovim
+0.11 或更新版本，因为用到了 `vim.lsp.config` 与 `vim.lsp.enable`。
+
+```sh
+editors/neovim/scripts/build-server.sh   # 在本代码树中构建 emo-lsp
+```
+
+把插件目录加入 runtimepath，并按需配置：
+
+```lua
+vim.opt.runtimepath:prepend('/path/to/emo/editors/neovim')
+require('emo').setup({
+  server_path = '/path/to/emo-lsp',
+  emo_path = '/path/to/emo',
+  registry = '/path/to/emo/stdlib/registry',
+})
+```
+
+服务器依次从 `server_path`、`PATH` 上的 `emo-lsp`、Emo 代码树内的构建产物中
+查找。注册表依次取 `registry`、`EMO_REGISTRY`；`:Emo*` 命令背后的 `emo` CLI
+依次取 `emo_path`、`EMO_BIN`。`:checkhealth emo` 会报告实际解析到的结果。
+
+命令与扩展一一对应——`:EmoRestart`、`:EmoCheck`、`:EmoBuild`、`:EmoRun`、
+`:EmoDepsResolve`、`:EmoDepsList`、`:EmoDepsUpdate`、`:EmoPackageInit`。
+完整列表与选项表见
+[`editors/neovim/README.md`](../editors/neovim/README.md)。
+
 ## 功能
 
-- **语法高亮。** TextMate 语法覆盖关键字、声明、字符串插值、以 `?` 结尾的
-  谓词名以及语言的命名约定。服务器另外发送语义词法单元，使用户自定义的类、
-  枚举、接口、函数与参数着色一致。
+- **语法高亮。** TextMate 语法（VS Code）或 Vim 语法文件（Neovim）覆盖
+  关键字、声明、字符串插值、以 `?` 结尾的谓词名以及语言的命名约定。服务器
+  另外发送语义词法单元，使用户自定义的类、枚举、接口、函数与参数着色一致。
 - **代码补全。** 关键字、内建类型与函数、当前文件与项目中的声明、`.` 之后的
   成员（类的字段与方法、函数组成员、模块成员），以及 `require "..."` 中的包名。
 - **诊断。** 词法、语法与类型检查错误，另含“每个 `require` 都必须在
