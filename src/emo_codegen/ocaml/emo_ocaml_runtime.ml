@@ -3625,17 +3625,20 @@ module Emo_runtime = struct
 
   let rec loop state =
     if Queue.is_empty state.runq then
-      if Hashtbl.length state.io > 0 || state.timers <> [] then
+      (* When the root process has ended, the program ends with it: the
+         remaining processes are cancelled. A receiver parked at that
+         moment is not a deadlock — only a receiver parked while the root
+         still lives can never be woken. *)
+      if
+        match state.root.Emo_eval.status with
+        | `Done _ -> true
+        | `Running -> false
+      then ()
+      else if Hashtbl.length state.io > 0 || state.timers <> [] then (
         (* A server parked in accept or a client parked in a socket call
            keeps the program alive — but only while its root lives. *)
-        if
-          match state.root.Emo_eval.status with
-          | `Done _ -> true
-          | `Running -> false
-        then ()
-        else (
-          pump_io state;
-          loop state)
+        pump_io state;
+        loop state)
       else if Hashtbl.length state.cwaiters > 0 then
         (* Every live process is parked in receive with nothing left to
            wake it: the program can never move again. *)

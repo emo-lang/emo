@@ -1508,6 +1508,45 @@ let build_binary ?(cclib = []) source name =
   let status = Unix.close_process_in ic in
   (Buffer.contents out, status, bin)
 
+(* The compiled ocaml scheduler honors the same rule as the interpreter:
+   when the root process has ended, a receiver still parked is cancelled
+   instead of reported as a system-wide deadlock. *)
+let compiled_sched_tests =
+  [
+    tc "the compiled root exiting cancels a parked process" (fun () ->
+        let build_out, status, bin =
+          build_binary
+            {|def parked() Int64 {
+  receive {
+    _ -> { return 0 }
+  }
+}
+
+do parked()
+println("root done")|}
+            "parked-exit"
+        in
+        (match status with
+        | Unix.WEXITED 0 -> ()
+        | _ -> Alcotest.fail (Printf.sprintf "build failed: %s" build_out));
+        let ic = Unix.open_process_in bin in
+        let output = Buffer.create 64 in
+        (try
+           while true do
+             Buffer.add_string output (input_line ic);
+             Buffer.add_char output '\n'
+           done
+         with End_of_file -> ());
+        let status = Unix.close_process_in ic in
+        let output = Buffer.contents output in
+        (match status with
+        | Unix.WEXITED 0 -> ()
+        | Unix.WEXITED n ->
+            Alcotest.fail (Printf.sprintf "binary exited %d: %s" n output)
+        | _ -> Alcotest.fail "binary died on a signal");
+        Alcotest.(check string) "output" "root done\n" output);
+  ]
+
 let stdlib_http_tests =
   [
     tc "an http server and client round-trip on localhost" (fun () ->
@@ -2495,6 +2534,7 @@ let () =
       ("sched", sched_tests);
       ("test_runner", test_runner_tests);
       ("shop_golden", shop_golden_tests);
+      ("compiled_sched", compiled_sched_tests);
       ("stdlib_http", stdlib_http_tests);
       ("ffi", ffi_tests);
       ("native_dep", native_dep_tests);

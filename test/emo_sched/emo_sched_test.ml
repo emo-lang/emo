@@ -432,6 +432,21 @@ let determinism_tests =
            observable result set is the same. *)
         Alcotest.(check string)
           "result set" (sorted_out eio_out) (sorted_out own_out));
+    tc "the root exiting cancels a parked process instead of deadlocking"
+      (fun () ->
+        let output, _ =
+          run_det
+            {|def parked() Int64 {
+  receive {
+    _ -> { return 0 }
+  }
+}
+
+do parked()
+println("root done")
+|}
+        in
+        Alcotest.(check string) "output" "root done\n" output);
     tc "a system-wide deadlock is an error" (fun () ->
         match run_det {|receive {
   _ -> { println("never") }
