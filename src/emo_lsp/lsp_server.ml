@@ -974,12 +974,34 @@ let handle_execute_command (state : state) (params : Yojson.Safe.t) :
         in
         let template =
           Printf.sprintf
-            "package {\n\
-            \  name = \"%s\"\n\
-            \  version = \"0.1.0\"\n\
-            \  targets = [\"ocaml\", \"wasm\"]\n\n\
-            \  deps {}\n\
-             }\n"
+            {|package {
+  // The package name — this init defaulted it to local/<directory>.
+  // A plain name works while the project stays local; publishing
+  // (`emo publish`) asks for the owner/name form, e.g. "acme/hello".
+  name = "%s"
+  // This package's own version: exact major.minor.patch.
+  version = "0.1.0"
+  // The backends this package runs and builds on. Known targets:
+  // "ocaml", "c", "wasm", "typescript", "beam", "riscv64".
+  targets = ["ocaml", "wasm"]
+  // Optional: system libraries the c target links, as bare names.
+  // link = ["sqlite3"]
+
+  // Dependencies — one per line, as  name = "exact version".
+  // Versions are exact major.minor.patch pins, never ranges. The name
+  // is what `require` names in your .emo files: a standard-library
+  // short name like "json", or a registry package's owner/name; the
+  // package binds in code under its short name.
+  deps {
+    // json = "0.1.0"       then:  require "json"       binds `json`
+    // acme/leaf = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
+  }
+  // After editing deps: `emo deps resolve` writes package.lock,
+  // `emo deps update <name>` regenerates it after one pin changes, and
+  // `emo deps list` shows the locked versions — builds never rewrite
+  // the lockfile silently.
+}
+|}
             name
         in
         Lsp_util.write_file path template;

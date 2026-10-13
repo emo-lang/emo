@@ -1942,11 +1942,31 @@ let scaffold ~(path : string) : int =
     write "package.emo"
       (Printf.sprintf
          {|package {
+  // The package name. A plain name works while the project stays local;
+  // publishing (`emo publish`) asks for the owner/name form,
+  // e.g. "acme/hello".
   name = "%s"
+  // This package's own version: exact major.minor.patch.
   version = "0.1.0"
+  // The backends this package runs and builds on. Known targets:
+  // "ocaml", "c", "wasm", "typescript", "beam", "riscv64".
   targets = ["ocaml", "c"]
+  // Optional: system libraries the c target links, as bare names.
+  // link = ["sqlite3"]
 
-  deps {}
+  // Dependencies — one per line, as  name = "exact version".
+  // Versions are exact major.minor.patch pins, never ranges. The name
+  // is what `require` names in your .emo files: a standard-library
+  // short name like "json", or a registry package's owner/name; the
+  // package binds in code under its short name.
+  deps {
+    // json = "0.1.0"       then:  require "json"       binds `json`
+    // acme/leaf = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
+  }
+  // After editing deps: `emo deps resolve` writes package.lock,
+  // `emo deps update <name>` regenerates it after one pin changes, and
+  // `emo deps list` shows the locked versions — builds never rewrite
+  // the lockfile silently.
 }
 |}
          package_name);
@@ -2039,11 +2059,31 @@ let scaffold_package ~(name : string) ~(path : string) : int =
         write "package.emo"
           (Printf.sprintf
              {|package {
+  // The publishable package name: owner/name, each part 1-64 lowercase
+  // letters, digits, `_` or `-`.
   name = "%s/%s"
+  // This package's own version: exact major.minor.patch. Publishing an
+  // existing version is rejected — bump it before re-publishing.
   version = "0.1.0"
+  // The backends this package runs and builds on. Known targets:
+  // "ocaml", "c", "wasm", "typescript", "beam", "riscv64".
   targets = ["ocaml", "c"]
+  // Optional: system libraries the c target links, as bare names.
+  // link = ["sqlite3"]
 
-  deps {}
+  // Dependencies — one per line, as  name = "exact version".
+  // Versions are exact major.minor.patch pins, never ranges. The name
+  // is what `require` names in your .emo files: a standard-library
+  // short name like "json", or a registry package's owner/name; the
+  // package binds in code under its short name.
+  deps {
+    // json = "0.1.0"       then:  require "json"       binds `json`
+    // acme/leaf = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
+  }
+  // After editing deps: `emo deps resolve` writes package.lock,
+  // `emo deps update <name>` regenerates it after one pin changes, and
+  // `emo deps list` shows the locked versions — builds never rewrite
+  // the lockfile silently.
 }
 |}
              owner short);
