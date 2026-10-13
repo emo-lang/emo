@@ -1,7 +1,7 @@
 # 运行时与独立环境 —— 两个词,两个维度
 
 Emo 的文档里反复出现"freestanding""runtime""host runtime"——`riscv64`
-目标、native 后端、以及提议中的自持后端。它们说的是两件不同的事:
+目标、`ocaml` 与 `c` 后端。它们说的是两件不同的事:
 **freestanding 描述程序跑在什么环境里;runtime 描述运行时支撑它的那层
 代码。** 本文把两者钉死,并映射到 Emo 的各个目标。
 
@@ -56,7 +56,7 @@ runtime 是面下面的机器。
 
 1. **语言运行时** —— 上文这个意思。
 2. **host runtime(宿主运行时)** —— 实现**借来的**宿主语言的运行时。
-   Emo 现在交付的 native 后端发射 OCaml 并链接 **OCaml 运行时**,
+   Emo 的 `ocaml` 后端发射 OCaml 并链接 **OCaml 运行时**,
    所以每个 Emo 二进制都背着 OCaml 的回收器和值模型;那就是 host
    runtime。
 3. **云/执行环境意义的 runtime** —— "Lambda runtime""JVM runtime":
@@ -64,17 +64,25 @@ runtime 是面下面的机器。
 4. **runtime 与 compile time** —— 运行时错误 vs 编译期错误,运行时
    类型 vs 静态类型。这是另一个维度。
 
-在 Emo 里,runtime 层是 `src/emo_eval`(求值器)、`src/emo_runtime`
-(native 的装箱、内建、派发辅助)与 `src/emo_sched`(进程调度器)。
-README 说 runtime 是"随二进制一起发布的":调度器与网络栈是后端的库,
-所以编译产物自带运行时,既没有解释器也没有运行时下载。freestanding
-目标**没有 host runtime**——它自带,含自己的分配器(step-19 的 bump
+在参考实现里,编译器自身的 runtime 层——解释器运行所依赖的那层——
+是 `src/emo_eval`(求值器)、`src/emo_runtime`(native 的装箱、内建、
+派发辅助)与 `src/emo_sched`(进程调度器)。**目标**的 runtime 是
+另一回事:runtime 独立性原则(2026-10-07)要求它用目标语言书写、
+以生成数据的形式随编译器携带、并由目标自己的工具链编译——`c` 携带
+`src/emo_codegen/c/emo_c_runtime.c`,`ocaml` 携带
+`src/emo_codegen/ocaml/emo_ocaml_runtime.ml`,`typescript` 携带
+`src/emo_codegen/ts/ts_runtime.ts`,而 `wasm`/`beam` 的 runtime 就在
+发射出的模块里。（`ocaml` 那个文件是调度器与内建;它脚下的回收器与
+值模型仍是 OCaml 的——即上文第 2 点的 borrowed host runtime。）
+这正是 README 说的"随二进制一起发布":编译产物
+自带运行时,既没有解释器也没有运行时下载。freestanding 目标
+**没有 host runtime**——它自带,含自己的分配器(step-19 的 bump
 分配器,"GC deferred")。
 
 为什么 runtime 对 GC、FFI 与 HPC 的讨论至关重要:runtime 掌管**值表示、
 内存管理与调度**。"无 GC"与"无缝 C FFI",底层都是在重写这一层——
 值怎么摆(装箱、打标签、地址稳定)、内存谁回收(追踪 GC、引用计数、
-arena)、C 怎么进来(ABI、根扫描问题)。这正是"自持后端"的成本落在
+arena)、C 怎么进来(ABI、根扫描问题)。这正是 `c` 后端的成本落在
 runtime 而非代码生成上的原因。
 
 ## 两个维度,套到 Emo 上
@@ -83,7 +91,7 @@ runtime 而非代码生成上的原因。
 
 | | 借用 host runtime | 自持 runtime |
 | --- | --- | --- |
-| **Hosted(宿主环境)** | 现在交付的 native 后端(发射 OCaml,链接 OCaml 运行时) | 提议中的自持后端(`plan/hosted-native-ffi.md`) |
+| **Hosted(宿主环境)** | `ocaml` 后端(发射 OCaml,链接 OCaml 运行时) | `c` 后端(发射 C,自持 runtime;步骤 23) |
 | **Freestanding(独立环境)** | ——(无意义的组合) | `riscv64` 目标(`plan/step-19-riscv64.md`) |
 
 这样读来,"freestanding 目标"与"自持 runtime"说的是两个不同的维度:
@@ -91,9 +99,11 @@ runtime 而非代码生成上的原因。
 
 ## 参考资料
 
-- `docs/native-backend.md` —— 现在交付的 native 后端、它的 OCaml 发射
-  与 C FFI。
+- [`docs/zh-CN/ocaml-backend.md`](ocaml-backend.md) —— 发射 OCaml 的后端、
+  它的 OCaml 发射与 C FFI。
+- [`docs/zh-CN/c-backend.md`](c-backend.md) —— C 后端、它自持的 runtime,
+  以及包自带原生代码。
 - `plan/step-19-riscv64.md` —— freestanding 目标、它的值模型与启动
   profile。
-- `plan/hosted-native-ffi.md` —— 提议中的自持 hosted 后端。
+- `plan/hosted-native-ffi.md` —— `c` 后端评估。
 - `README.md` 的 "Native Builds" —— runtime 随二进制发布的表述。

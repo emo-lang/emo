@@ -17,62 +17,60 @@ added as aliases; integer literals without type declarations are
 
 The implementation now spells the types `Int64` and `Float64`
 (checker, stdlib, examples, runtime); the mechanical rename landed on
-its own, ahead of the native fix below.
+its own, ahead of the `ocaml` route below.
 
 ## Why the types are named by width
 
-The 63-bit defect below and the bare `Int` spelling share a root: a
-name that does not say its width invites the C question — "how wide is
-`int` *here*?" — and that is exactly the ambiguity this decision
+The 63-bit mapping below (now history) and the bare `Int` spelling share
+a root: a name that does not say its width invites the C question — "how
+wide is `int` *here*?" — and that is exactly the ambiguity this decision
 removes. Width-suffixed names:
 
 - say what they are — everything is visibly what it is;
 - leave no natural-width type for FFI code to misproject (C's `int`
   is 32-bit on mainstream ABIs; its `float` and `double` differ in
   width too, and a width-less `Float` beside them is a standing trap);
-- follow the systems-language lineage (Rust and Zig spell `i32`/`i64`
-  and `f32`/`f64`) — the implementation-defined-width `int` is the C
+- follow the systems-language lineage (Zig spells `i32`/`i64` and
+  `f32`/`f64`) — the implementation-defined-width `int` is the C
   outlier, and the cautionary tale.
 
-## Int64: three targets, three integers
+## Int64: one integer, every target
 
-The decision replaces a status quo where each target answered "what is
-an integer?" for itself:
+`Int64` is 64-bit two's complement with wrap-around on every target.
+Each target reaches it with the representation it already had:
 
-| Target | Representation today | Semantics today |
+| Target | Representation | Semantics |
 | --- | --- | --- |
 | Wasm | `i64` | 64-bit wrap — conforms |
 | BEAM | masked Erlang integer (step 18) | 64-bit wrap — conforms |
-| native | OCaml `int` (unboxed) | 63-bit wrap — deviates |
+| TypeScript | `BigInt` wrapping at 64 bits | 64-bit wrap — conforms |
+| `ocaml` | OCaml `int64` (boxed `Int64 of int64` in the dynamic layer) | 64-bit wrap — conforms |
+| `c` | `uint64_t` (the tagged word in the dynamic layer) | 64-bit wrap — conforms |
+| `riscv64` | boxed 64-bit cell | 64-bit wrap — conforms |
 
-The native backend emits OCaml source and maps the integer onto
-OCaml's `int`, which is 63 bits on 64-bit platforms: one bit of the
-machine word is the runtime's immediate/pointer tag. (BEAM's small
-integers pay four bits for the same purpose — which is why the BEAM
-backend masks; unmasked Erlang integers would upgrade to bignums
-instead of wrapping.) `(2^62) * 2` therefore lands on different values
-on native and on Wasm/BEAM today.
+The BEAM backend masks small integers to signed 64 bits, because
+Erlang's integers are arbitrary-precision and an unmasked add would
+upgrade to a bignum instead of wrapping.
 
-That mapping put a host implementation detail into the language
-semantics. The tag bit is the price OCaml's runtime pays for its value
-model — unboxed ints, tag-free polymorphic comparison, GC stack
-scanning — and it is not a price Emo passes on to its users. The host
-`int` is an implementation candidate, not the definition.
+## The `ocaml` route (settled)
 
-## The native fix (open decision)
+The `ocaml` backend carries `Int64` as OCaml's `int64` in both layers —
+boxed in the dynamic value (`Int64 of int64`), and as the specialized
+parameter, local, and result type with arithmetic emitted as
+`Int64.add`-style operations — so its wrap-around matches every other
+target (settled 2026-10-11, tracked in `CHECK.md`).
 
-Implementing the decided semantics on the native backend means
-producing 64-bit arithmetic from a 63-bit host `int`. Two routes — a
-real tradeoff, to be settled before that work starts (tracked in
-`CHECK.md`):
+An earlier mapping put the integer on OCaml's `int`, which is 63 bits on
+64-bit platforms — one machine-word bit is the runtime's immediate/pointer
+tag — and `(2^62) * 2` therefore landed on different values there than on
+Wasm and BEAM. The `Int64` rename and the boxed-`Int64` route removed that
+deviation: the host `int` was an implementation candidate, not the
+definition.
 
-- **Emit OCaml's boxed `Int64`.** Semantically exact, but the host
-  `Int64` is boxed — the specialization pass loses the unboxed
-  arithmetic that motivated the current mapping.
-- **Two-word (hi/lo) emulation on OCaml `int`.** Stays unboxed;
-  add/sub become carry-chained pairs, mul/div split hi/lo — arithmetic
-  expands roughly 2–4×. The same technique the future RV32 codegen
-  needs (below), so the work is shared.
+The alternative — unboxed two-word (hi/lo) emulation on OCaml `int` — was
+not taken: its RV32 motivation is moot (the freestanding target is
+`riscv64`, with native 64-bit registers), and the `c` target (the default
+since step 24) is where specialized numeric performance lives.
 
 ## Float64: already uniform
 
@@ -87,7 +85,7 @@ target-independent by construction.
 The bare-metal target is named for the ISA (`riscv64`, step 15). A
 future `riscv32` implements the same `Int64` with register pairs:
 carry chains for add/sub, hi/lo splits for mul/div — the textbook
-`long long` technique, shared with the native hi/lo route above. On
+`long long` technique. On
 RV32 the roles invert: `Int32` is the register-width fast path,
 `Int64` the emulated one — semantics unchanged, performance
 characteristics differ by target. The costs (two registers and 8 bytes
@@ -103,7 +101,8 @@ two's complement, wrapping at 2³². It does not exist to fix the
 default integer — the decision above does that. Its motivation:
 
 - **FFI.** C `int32_t` parameters need a landing type (`foreign def`
-  currently admits `Float64`/`String`/`Bool` only).
+  admits `Float64`/`String`/`Bool`/`Int64` per target, but has no 32-bit
+  landing type).
 - **Bare metal.** MMIO and device registers are 32-bit on RV32;
   `peek`/`poke` need exact widths.
 - **RV32 performance.** The register-width escape hatch where

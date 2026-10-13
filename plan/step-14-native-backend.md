@@ -92,7 +92,7 @@ Both open design items settled:
   primitives the OCaml compiler inlines (`sqrt` on ARM64 macOS). The
   interpreter refuses foreign defs with E3009.
 - **Stage A emission** — OCaml source text, tradeoff documented in
-  `docs/native-backend.md` (stable toolchain contract, readable
+  `docs/ocaml-backend.md` (stable toolchain contract, readable
   generated code, unchanged optimizer; the IR is the layer backends
   share).
 

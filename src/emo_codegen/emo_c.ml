@@ -1,7 +1,7 @@
 (* The C backend: the IR lowered to one C translation unit that the
    system cc compiles next to the Emo runtime sources into a single
    standalone binary — no OCaml runtime (plan/step-23-c-target.md;
-   docs/native-backend.md records the emit-and-delegate precedent).
+   docs/ocaml-backend.md records the emit-and-delegate precedent).
 
    The two-world structure starts at the signature: native types cross
    as C scalars, and the dynamic world's tagged word arrives with its

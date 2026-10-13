@@ -2,7 +2,7 @@
 
 **Milestone:** M11 — The standard library · **Prereq:** step 23 (the c
 target's direct C ABI), step 24 (the embedded stdlib) · **Related:**
-`docs/native-backend.md` (the FFI surface), CHECK.md 2026-10-12 (the
+`docs/c-backend.md` (the FFI surface), CHECK.md 2026-10-12 (the
 package-carried-native-code settle), `docs/stdlib/sqlite3.md` ·
 **Status:** done on c; every other target refuses the package at
 resolution, and the interpreter refuses its foreign defs with E3009.
@@ -79,7 +79,7 @@ package-carried shim and links the system library by itself.
   on a sqlite3 probe, beside `cc_available`), plus the
   native-dependency tests in `test/emo_project`.
 - [x] T38.6 — docs: CHECK.md entry, README (+ zh-CN),
-  `docs/native-backend.md` (+ zh-CN), `docs/stdlib/sqlite3.md` (+
+  `docs/c-backend.md` (+ zh-CN), `docs/stdlib/sqlite3.md` (+
   zh-CN), the stdlib tours.
 
 ## Out of scope

@@ -60,14 +60,15 @@ a bigger binary buys nothing here. The `c` backend is what replaces
 The emit-OCaml pipeline is POSIX-wired, so **native Windows is not a supported
 target** — and the cause is not OCaml alone, but what the runtime links:
 
-- the emitted program's link line hardcodes `eio_posix` (`src/emo_cli/emo_cli.ml`),
-  so a built program is POSIX-only;
-- the runtime links `unix` and `ssl` (OpenSSL bindings), and the scheduler is
-  OCaml 5 effects on Eio (`src/emo_sched/dune`).
+- the emitted program links `unix` and `ssl` (OpenSSL bindings), and its
+  standalone scheduler is a poll loop over `unix` — so a built program is
+  POSIX-only;
+- the compiler's own host scheduler is OCaml 5 effects on Eio
+  (`src/emo_sched/dune`).
 
 One consequence worth stating plainly: even a prebuilt Windows `emo` could run
-the interpreter and the `wasm`/`beam`/`typescript` targets, but `emo build`'s
-native target would not work on Windows, because OCaml does not cross-compile
+the interpreter and the `wasm`/`beam`/`typescript` targets, but `emo build --target ocaml`
+would not work on Windows, because OCaml does not cross-compile
 readily. OCaml itself supports Windows, but it is the least-exercised
 configuration — the `Unix` module is a subset, the package ecosystem is
 POSIX-heavy, and the OCaml 5 effects/multicore runtime is least tested there.
@@ -192,7 +193,7 @@ host contributes only the emitter. Concretely:
 ## References
 
 - `CHECK.md` — "Binary / CLI tool distribution mechanism".
-- `docs/native-backend.md` — the emit-OCaml pipeline and the OCaml-toolchain
+- [`docs/ocaml-backend.md`](ocaml-backend.md) — the emit-OCaml pipeline and the OCaml-toolchain
   requirement.
 - `docs/runtime-and-freestanding.md` — runtime versus freestanding, and what a
   native output carries.

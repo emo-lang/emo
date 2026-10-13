@@ -102,9 +102,9 @@ validation — at a tenth to a fiftieth of the scale.
    or Set and no sort in the standard library; no generics; every
    value carries a runtime type tag; immutable arrays transform by
    allocation. First-version join/sort hot loops will trail C++ and
-   Rust peers by a factor nobody has measured yet — the specialization
+   Go peers by a factor nobody has measured yet — the specialization
    story ("types feed performance") is stated design, not a number.
-4. **GC tail latency.** The native backend shares one heap, so major
+4. **GC tail latency.** The `ocaml` backend shares one heap, so major
    GC work can land on p99; BEAM's per-process heaps avoid that but
    cap throughput. Latency versus throughput is a backend choice to
    make deliberately and early.

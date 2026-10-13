@@ -198,7 +198,7 @@ Emo 是渐近类型的：**运行时类型动态，编译期静态检查**。
 - 没有泛型机制：没有泛型定义语法，也没有类型约束系统。参数化类型只作为类型声明词汇存在（如 `Array[User]`、`Map[String, Int64]`、`Box[Int64]`），服务检查器与库签名；应用代码依赖推断，几乎看不到任何类型拼写。接收块的参数类型声明为 `Block`。
 - 容器类型另有裸拼写——`List`、`Box`、`Map`——表示「任意元素」：`Map` 参数同样乐于接受 `Map[String, Int64]` 或 `Map[Int64, User]`，从中读回的值按渐进规则检查。
 - 严格度默认高，可显式放宽。
-- 类型信息反哺性能：类型知识足够完整的模块可在原生后端特化（去箱表示、直接调用）。
+- 类型信息反哺性能：类型知识足够完整的模块可在 `ocaml` 与 `c` 后端特化（去箱表示、直接调用）。
 
 ## 模块与可见性
 
@@ -272,7 +272,7 @@ def parse_config(text String) Json {
 
 ## 并发
 
-Emo 自带围绕**进程与消息传递**的原生并发模型，精神上属于 actor 模型。这个选择是刻意的：它原生映射到 BEAM 进程，而原生后端用构建于 OCaml 5 effects 之上的调度器实现——与 Eio 这类运行时同源。
+Emo 自带围绕**进程与消息传递**的原生并发模型，精神上属于 actor 模型。这个选择是刻意的：它原生映射到 BEAM 进程，而 `ocaml` 后端用构建于 OCaml 5 effects 之上的调度器实现——与 Eio 这类运行时同源。
 
 并发语义由以下决策塑造：
 
@@ -282,13 +282,13 @@ Emo 自带围绕**进程与消息传递**的原生并发模型，精神上属于
 - **进程用 `self_pid()` 得知自己的 pid。** 惯用的应答模式一行写完——`sender <- (self_pid(), request)`——元组直接在接收方的分支模式中解构。Pid 是 `Pid` 类型的透明值，按身份比较，渲染为 `<pid 3>`。
 - **`halt()` 停止当前进程。** 未处理的错误也一样，两者都只杀死出错的进程；核心只提供监督所需的进程退出信号——kill、wait 与重启策略是库的地盘。
 - 消息传递是核心并发原语；共享内存原语不属于核心语义。
-- 数据默认不可变，因此消息在 BEAM 上按复制传递、在原生后端按引用传递，而可观察语义完全相同。
+- 数据默认不可变，因此消息在 BEAM 上按复制传递、在 `ocaml` 与 `c` 后端按引用传递，而可观察语义完全相同。
 - 尾调用有保证；递归是 receive 循环的惯用形状。
 - 崩溃隔离与监督在两个后端上都是库层面：未处理的错误只杀死出错的进程。
 
 ## 网络
 
-网络是一等公民：几乎所有现代程序都要联网。Emo 提供统一的异步网络 API。在原生后端上，它运行在与并发运行时同一个 effects 调度器之上——非阻塞 socket 由调度器挂起与唤醒，TLS 由 OpenSSL 绑定提供；在 TypeScript 目标上它跑在 Node 的事件循环上，每次调用由生成代码里的 `await` 落地。`net` 与 `http` 包声明 `targets = ["ocaml", "c", "typescript"]`，依赖解析在其他一切目标上拒绝它们；`c` 目标只实现 TCP。
+网络是一等公民：几乎所有现代程序都要联网。Emo 提供统一的异步网络 API。在 `ocaml` 后端上，它运行在与并发运行时同一个 effects 调度器之上——非阻塞 socket 由调度器挂起与唤醒，TLS 由 OpenSSL 绑定提供；在 TypeScript 目标上它跑在 Node 的事件循环上，每次调用由生成代码里的 `await` 落地。`net` 与 `http` 包声明 `targets = ["ocaml", "c", "typescript"]`，依赖解析在其他一切目标上拒绝它们；`c` 目标只实现 TCP。
 
 API 是**直接风格**：网络调用看起来像普通的阻塞调用，调度器在底层切换进程。没有 `async`/`await`，因此没有函数着色——任何函数都能做 IO，API 生态保持单轨。超时以秒计，每个失败——连接被拒、名字无法解析、超期、socket 关闭——返回 `(R.error, reason)`，reason 写明对端、操作与原因。
 
@@ -419,13 +419,14 @@ Emo 的触角伸到操作系统层：这门语言有能力写内核，于是 Emo
 
 Emo 的参考实现用 OCaml 5 编写。自举明确不是目标：Emo 的参考实现保持在 OCaml。
 
-Emo 通过 OCaml 的一等 C FFI 与 C 互操作：在原生后端，Emo 二进制直接链接 C 库。
+Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符号，`ocaml` 后端则经生成的 C 包装器编组。
 
 ## 文档
 
 文档在 `docs/` 之下。本 README 的中文翻译是 [`docs/zh-CN/README.zh-CN.md`](docs/zh-CN/README.zh-CN.md)。
 
-- [`docs/zh-CN/native-backend.md`](docs/zh-CN/native-backend.md) —— `emo build` 如何产出原生二进制,以及 C FFI。
+- [`docs/zh-CN/c-backend.md`](docs/zh-CN/c-backend.md) —— 默认目标：发射 C、C 运行时，以及 C FFI。
+- [`docs/zh-CN/ocaml-backend.md`](docs/zh-CN/ocaml-backend.md) —— 发射 OCaml 的后端，以及 OCaml 工具链要求。
 - [`docs/zh-CN/toolchain.md`](docs/zh-CN/toolchain.md) —— `emo` CLI 的构建与安装:为何 dune 是唯一需要 OCaml 的一步,以及 justfile 自动化。
 - [`docs/zh-CN/toolchain-distribution.md`](docs/zh-CN/toolchain-distribution.md) —— 工具链如何分发：OCaml 依赖、`emo doctor`、以及推迟 `c` 后端。
 - [`docs/zh-CN/runtime-and-freestanding.md`](docs/zh-CN/runtime-and-freestanding.md) —— "runtime" 与 "freestanding" 各指什么,以及它们如何对应 Emo 的各目标。

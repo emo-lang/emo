@@ -5,12 +5,12 @@ specialization data) · **Related:**
 `plan/hosted-native-ffi.md` (the design record this step
 schedules — the assessment holds; this file only adds what execution
 needs), `plan/step-19-riscv64.md` (the tagged-word value model),
-`docs/native-backend.md` (the emit-and-delegate precedent) ·
+`docs/ocaml-backend.md` (the emit-and-delegate precedent) ·
 **Status:** done (2026-10-06 — close-out recorded; the native → ocaml rename follows as its own step)
 
 ## Why this step exists
 
-`docs/native-backend.md` is explicit that the shipped native target
+`docs/ocaml-backend.md` is explicit that the shipped native target
 emits OCaml source and links the OCaml runtime. That bought a fast
 path to a working backend, and it is the ceiling on numeric code and
 C interop: the FFI round trip costs ~43 ns all-in (the boxed calling

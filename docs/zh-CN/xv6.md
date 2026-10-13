@@ -120,5 +120,5 @@ CSR 访问、原子/屏障、裸代码指针。这些是"补一个 primitive"的
   以及 `foreign def` 的拒绝。
 - `plan/step-15-other-targets.md` —— RISC-V 参考注记、机制/策略切分、
   C 互操作阶梯。
-- `docs/native-backend.md` —— IR/特化流水线与 `foreign def` 表面。
+- [`docs/zh-CN/c-backend.md`](c-backend.md) / [`docs/zh-CN/ocaml-backend.md`](ocaml-backend.md) —— IR/特化流水线与 `foreign def` 表面。
 - `README.md` 的 "EmoOS" —— 单语言闭环的野心。

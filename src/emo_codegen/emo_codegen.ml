@@ -1219,9 +1219,10 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
         let params_pattern =
           String.concat "; " (List.map (fun (p, _) -> local p) f.Emo_ir.fparams)
         in
-        (* The specialized body runs on OCaml int (the 63-bit native
-           mapping, the documented deviation); the value world is Int64
-           — the bridge converts at the boundary. *)
+        (* The specialized body carries native types as OCaml natives —
+           Int64 as int64, Float64 as float, Bool as bool — while the
+           value world is boxed Emo_eval.value; the bridge converts at
+           the boundary. *)
         let bridge_in (p, t) =
           let v = local p in
           match t with
