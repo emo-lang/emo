@@ -1,0 +1,20 @@
+; The default build target, stated explicitly so it does not fall back
+; to dune's implicit (alias_rec all). The implicit definition would
+; pull in every file target in the tree — which includes the
+; runtime/wasm corpus: its fixture rules produce .actual files and the
+; runs_bin binary, so a bare `dune build` used to spend ~50s executing
+; the corpus (and re-ran it on every compiler relink) without even
+; diffing the output.
+;
+; The default build is therefore compilation only: the installable
+; binaries (emo, emo-lsp) plus every module and test executable under
+; src/, bin/, and test/. Running Emo code stays opt-in — `dune test`
+; for the @runtest suites (including the wasm smoke slice), and the
+; wasm_spec / wasm_runs aliases for the full runtime/wasm corpora.
+(alias
+ (name default)
+ (deps
+  (alias_rec install)
+  (alias_rec src/all)
+  (alias_rec bin/all)
+  (alias_rec test/all)))
