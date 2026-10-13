@@ -1936,7 +1936,11 @@ int64_t emo_spawn_process(void (*entry)(void), int64_t nargs,
       emo_retain(p->spawn_args[i]); /* the child owns its arguments */
     p->spawn_nargs = nargs;
   }
-  const size_t stack_size = 256 * 1024;
+  /* Every process, the root one included, runs on one of these, so the size
+     is what bounds recursion. Match the OS default for a main thread: a
+     smaller stack overflows into the neighbouring heap silently instead of
+     faulting, which corrupts live cells rather than reporting anything. */
+  const size_t stack_size = 8 * 1024 * 1024;
   p->stack = emo_proc_stack_alloc(stack_size);
   getcontext(&p->ctx);
   p->ctx.uc_stack.ss_sp = p->stack;

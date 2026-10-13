@@ -49,15 +49,17 @@ The packages:
 | [`yaml`](#the-yaml-package) | YAML 1.2 (core schema) decode and encode | all five |
 | [`xml`](#the-xml-package) | XML decode and encode | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
+| [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
 | [`math`](#the-math-package) | float scalars and elementary functions | all five |
 | [`plot`](#the-plot-package) | declarative 2D charts rendered to SVG | all five |
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | `ocaml`, `c`, `typescript` |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
+| [`sql`](#the-sql-package) | SQL text to an abstract syntax tree | all five |
 
 All packages are version 0.1.0. Each has a full API reference under
 [`docs/stdlib/`](stdlib/) (Chinese translations under
-[`docs/zh-CN/stdlib/`](zh-CN/stdlib/)) and a runnable demo under
-`examples/`.
+[`docs/zh-CN/stdlib/`](zh-CN/stdlib/)), and every package a program
+calls on its own has a runnable demo under `examples/`.
 
 ## The `file` package
 
@@ -458,6 +460,30 @@ Targets: all five. Reference:
 [`docs/stdlib/base64.md`](stdlib/base64.md) · Demo:
 `examples/base64_demo`.
 
+## The `float` package
+
+Exact conversion between binary64 and decimal text: a decimal literal
+becomes the nearest bits, and a `Float64` becomes the shortest text
+that reads back to it. Both directions are `Int64` arithmetic in the
+package's `internal` subtree, so all five targets answer byte-for-byte;
+`json`, `sql` and `yaml` all read and write numbers through it.
+
+```emo
+def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64
+def finite_bits(bits Int64) Bool
+def to_text(x Float64) String
+```
+
+`parse_exact` rounds once, to nearest with ties to even — the answer
+`strtod` gives — and answers the infinity pattern for a value past
+binary64's range. `finite_bits` says whether a pattern is a value at
+all, which is what the json and sql decoders ask before they treat one
+as data; `to_text` prints the shortest round-tripping text and raises on
+a non-finite value, which has no decimal text.
+
+Targets: all five. Reference:
+[`docs/stdlib/float.md`](stdlib/float.md).
+
 ## The `math` package
 
 The elementary float functions: the scalars, `sqrt`, and the
@@ -623,6 +649,36 @@ application's own messages.
 Targets: `["ocaml", "c", "typescript", "wasm", "beam"]`. Reference:
 [`docs/stdlib/sync.md`](stdlib/sync.md) · Demo:
 `examples/sync_demo`.
+
+## The `sql` package
+
+The SQL parser: SQL text in, an abstract syntax tree out. Pure Emo
+over the shared runtimes — a parsed tree is one class per grammar node
+(`Select` statements, `Expr` expressions, `TableRef` table references),
+each answering `to_string()` with the canonical rendering.
+
+```emo
+def parse(text String) (R, Stmt)
+```
+
+`SELECT` end to end — distinct select lists, joins with `ON`/`USING`,
+`WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, `OFFSET` — and the
+full expression grammar underneath: literals, parameters (`?`, `?NNN`),
+qualified columns, calls, `CAST`, `CASE`, `EXISTS`, subqueries, and the
+operator tower with standard precedence. Malformed input is the value
+`(R.error, reason)`, the reason stating what failed at what byte
+offset; nothing raises, no error codes, no nil.
+
+```emo
+require "sql"
+
+const (R.ok, stmt) = sql.parse("SELECT * FROM users WHERE id = ?1")
+println(stmt.to_string())   // SELECT * FROM users WHERE id = ?1
+```
+
+Targets: `["ocaml", "c", "typescript", "wasm", "beam"]`. Reference:
+[`docs/stdlib/sql.md`](stdlib/sql.md) · Demos: `examples/sql_demo`,
+`examples/sql_edge`.
 
 ## The `sqlite3` package
 

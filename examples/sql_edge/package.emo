@@ -1,0 +1,10 @@
+package {
+  name = "emo/sql_edge"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {
+    float = "0.1.0"
+    sql = "0.1.0"
+  }
+}

@@ -1,4 +1,7 @@
-// Exact IEEE binary64 <-> decimal conversion for the json package.
+// Exact IEEE binary64 <-> decimal conversion: the machinery behind the
+// float package's parse_exact and to_text, and subtree-private to it —
+// the format packages reach the algorithm through float, never through
+// this path, so there is one copy of it in the standard library.
 //
 // Both directions run on plain Int64 arithmetic so every target answers
 // identically — no host formatting primitive is involved. Decode rounds
@@ -107,7 +110,7 @@ def expand(m Int64, e2 Int64, buf Bytes) (Int64, Int64) {
   return (n, full + e2)
 }
 
-// ---- rounding a candidate and shaping JSON text ----
+// ---- rounding a candidate and shaping the output text ----
 
 def lesser(a Int64, b Int64) Int64 {
   if a < b {
@@ -276,8 +279,8 @@ def put_fraction_len(n Int64) Int64 {
 }
 
 // Shapes digits buf[0..n) with exponent e10 (value = 0.digits x 10^E)
-// into JSON number text. A float always stays visibly a float: the
-// fixed form carries a fractional part, the exponent form carries an
+// into decimal text. A float always stays visibly a float: the fixed
+// form carries a fractional part, the exponent form carries an
 // exponent.
 def format_digits(neg Bool, buf Bytes, n Int64, e10 Int64) String {
   const out = Bytes.new(number_text_len(neg, n, e10))
@@ -322,11 +325,14 @@ def shape_number(out Bytes, w0 Int64, buf Bytes, n Int64, e10 Int64) {
   }
 }
 
-// ---- public: encode ----
+// ---- encode ----
 
-def finite(x Float64) Bool {
-  const eb = (x.to_bits() >> 52) & 2047
-  return eb != 2047
+// The same question asked of a bit pattern, before it becomes a Float64.
+// An all-ones exponent spells infinity or NaN, and BEAM has neither: its
+// `from_bits` refuses such a pattern outright, so the decoder must look
+// at the bits rather than at the value it cannot build.
+def finite_bits(bits Int64) Bool {
+  return ((bits >> 52) & 2047) != 2047
 }
 
 def zero_bits(neg Bool) Int64 {
@@ -354,12 +360,12 @@ def significand_e2(eb Int64) Int64 {
 }
 
 // The shortest decimal text that reads back to exactly x. Raises on a
-// non-finite value — JSON has no spelling for one.
+// non-finite value — the text formats have no spelling for one.
 def to_text(x Float64) String {
   const bits = x.to_bits()
   const eb = (bits >> 52) & 2047
   if eb == 2047 {
-    raise Exception.new(message: "json: cannot encode a non-finite number")
+    raise Exception.new(message: "float: cannot encode a non-finite number")
   }
   const neg = bits < 0
   const m0 = bits & 4503599627370495
@@ -556,55 +562,79 @@ def assemble_denormal(neg Bool, h Int64, sticky Bool, e Int64) Int64 {
 
 // The normal-range tail: overflow lands on the infinity pattern —
 // callers that verify candidates read it as a miss, and the decoder
-// turns it into the out-of-range error.
-def assemble_normal(neg Bool, stored Int64, e Int64, h Int64, sticky Bool) Int64 {
+// turns it into the out-of-range error. Its exponent sits at or above
+// the smallest normal, so the fraction is a plain 52-bit field.
+def assemble_normal(neg Bool, stored Int64, e Int64) Int64 {
   if e + 52 > 1023 {
     return 9218868437227405312
   }
-  if e + 52 >= -1022 {
-    return bits_with(neg, (e + 1075) << 52, stored - 4503599627370496)
-  }
-  return assemble_denormal(neg, h, sticky, e)
+  return bits_with(neg, (e + 1075) << 52, stored - 4503599627370496)
 }
 
 // Rounds h (54 bits, [2^53, 2^54)), its guard bit, and the sticky
 // knowledge into a double's bit pattern; value ~ h x 2^(e2 - 1). Ties
 // go to even.
 def assemble(neg Bool, h Int64, guard Int64, sticky Bool, e2 Int64) Int64 {
+  // Below the smallest normal the 53-bit step is a rounding of its own:
+  // carrying out of it bumps e2 while the cut below still reads h
+  // against e2, and the two disagree. The denormal range takes the one
+  // rounding that counts, straight at the 2^-1074 grid.
+  if e2 + 52 < -1022 {
+    return assemble_denormal(neg, h, sticky, e2)
+  }
   const first = round_to_even(guard, sticky, h >> 1)
   if first == 9007199254740992 {
     // the round-up carried into a new power of two
-    return assemble_normal(neg, 4503599627370496, e2 + 1, h, sticky)
+    return assemble_normal(neg, 4503599627370496, e2 + 1)
   }
-  return assemble_normal(neg, first, e2, h, sticky)
+  return assemble_normal(neg, first, e2)
 }
 
 // ---- long division, base 2^8 (the f < 0 decode path) ----
 
-def part_at(parts Array[Int64], i Int64) Int64 {
-  if i < 0 || i > 7 {
+// The limb src[i], or zero outside [0, n).
+def src_at(src Bytes, n Int64, i Int64) Int64 {
+  if i < 0 || i >= n {
     return 0
   }
-  return parts[i]
+  return src.get(i)
 }
 
-// Writes m << t as little-endian limbs; returns the limb count.
-def set_shifted(dst Bytes, m Int64, t Int64) Int64 {
-  const parts = [m & 255, (m >> 8) & 255, (m >> 16) & 255, (m >> 24) & 255, (m >> 32) & 255, (m >> 40) & 255, (m >> 48) & 255, (m >> 56) & 255]
-  const limbshift = t / 8
-  const bitshift = t % 8
-  fill_shifted(dst, parts, 0, limbshift, bitshift, limbshift + 9)
-  return count_limbs(dst, limbshift + 9)
-}
-
-def fill_shifted(dst Bytes, parts Array[Int64], i Int64, limbshift Int64, bitshift Int64, total Int64) {
-  if i < total {
-    const cur = part_at(parts, i - limbshift)
-    const prev = part_at(parts, i - limbshift - 1)
-    const combined = (cur << bitshift) | (prev >> (8 - bitshift))
-    dst.set(i, combined % 256)
-    fill_shifted(dst, parts, i + 1, limbshift, bitshift, total)
+// The two halves of a shift that may run either way: the numerator
+// takes the first, the divisor the second.
+def positive_part(v Int64) Int64 {
+  if v > 0 {
+    return v
   }
+  return 0
+}
+
+def negative_part(v Int64) Int64 {
+  if v < 0 {
+    return -v
+  }
+  return 0
+}
+
+// The byte a shift of more than one limb writes at position i: this
+// limb's low bits landing above the previous limb's high bits.
+def fill_shl(src Bytes, n Int64, dst Bytes, i Int64, ls Int64, bs Int64, total Int64) {
+  if i < total {
+    const cur = src_at(src, n, i - ls)
+    const prev = src_at(src, n, i - ls - 1)
+    dst.set(i, ((cur << bs) % 256) | (prev >> (8 - bs)))
+    fill_shl(src, n, dst, i + 1, ls, bs, total)
+  }
+}
+
+// Writes src[0..n) << t as little-endian limbs; returns the limb count.
+// The mantissa can be wider than a register, so the shift splits into
+// whole limbs and a sub-limb bit offset rather than fitting an Int64.
+def shl_limbs(src Bytes, n Int64, dst Bytes, t Int64) Int64 {
+  const ls = t / 8
+  const bs = t % 8
+  fill_shl(src, n, dst, 0, ls, bs, ls + n + 1)
+  return count_limbs(dst, ls + n + 1)
 }
 
 // The byte shl_into writes at position i.
@@ -762,20 +792,61 @@ def trim_tail(digits Bytes, s Int64, n Int64) Int64 {
   return n
 }
 
-// Takes the first 18 significant digits into m; everything past them
-// only sets the sticky flag. Returns (m, used, tail_sticky).
-def take_mantissa(digits Bytes, i Int64, t Int64, m Int64, used Int64, sticky Bool) (Int64, Int64, Bool) {
+// Multiplies limbs[0..nl) by ten and adds carry, limb by limb;
+// returns the carry out of the top limb.
+def mul10_add(limbs Bytes, i Int64, nl Int64, carry Int64) Int64 {
+  if i >= nl {
+    return carry
+  }
+  const v = limbs.get(i) * 10 + carry
+  limbs.set(i, v % 256)
+  return mul10_add(limbs, i + 1, nl, v / 256)
+}
+
+def fold_once(limbs Bytes, nl Int64, d Int64) Int64 {
+  const c = mul10_add(limbs, 0, nl, d)
+  if c == 0 {
+    return nl
+  }
+  limbs.set(nl, c)
+  return nl + 1
+}
+
+// Folds up to `cap` significant digits into base-256 limbs and returns
+// (limb count, the index one past the last digit folded). Everything
+// past the cap is left to the sticky flag.
+//
+// The cap has to leave every exact tie inside. A tie is (2m + 1) x
+// 2^-1075, so its exact decimal carries the 1075 digits of 5^1075 and
+// needs at most 768 significant digits — the cap below is past that,
+// and a literal that long is a tie the fold reads whole. A tie is where
+// a dropped tail costs the most: truncation puts a value that sits
+// exactly on the tie just under it, and "ties to even" then reads as
+// "round down".
+//
+// Past the cap the sticky flag stands in for the tail. The window below
+// keeps 54 bits of m x 10^f, so its last place is m x 5^f / 2^54 and the
+// digits past the cap are worth a fraction 2^54 / 10^(cap-1) of that
+// place: eighteen digits left the tail at 0.18 of a place, where a
+// carry rounds the wrong way. At eight hundred it is under 10^-783 of a
+// place, and a mantissa that keeps every digit — the common case, no
+// digits past the cap, exact ties included — has no tail at all.
+def fold_digits(digits Bytes, i Int64, t Int64, cap Int64, limbs Bytes, nl Int64) (Int64, Int64) {
+  if i >= t || cap == 0 {
+    return (nl, i)
+  }
+  return fold_digits(digits, i + 1, t, cap - 1, limbs, fold_once(limbs, nl, digits.get(i) - 48))
+}
+
+// Whether any digit in [i, t) is nonzero.
+def tail_nonzero(digits Bytes, i Int64, t Int64) Bool {
   if i >= t {
-    return (m, used, sticky)
+    return false
   }
-  const d = digits.get(i) - 48
-  if used < 18 {
-    return take_mantissa(digits, i + 1, t, m * 10 + d, used + 1, sticky)
+  if digits.get(i) != 48 {
+    return true
   }
-  if d != 0 {
-    return take_mantissa(digits, i + 1, t, m, used, true)
-  }
-  return take_mantissa(digits, i + 1, t, m, used, sticky)
+  return tail_nonzero(digits, i + 1, t)
 }
 
 // Assembles up to `nl` limbs into an Int64, most significant first.
@@ -816,7 +887,7 @@ def quotient_sticky(q Int64, r_nonzero Bool, tail Bool) Bool {
 // The bit pattern of (-1)^neg x 0.digits x 10^e10, correctly rounded —
 // the same answer strtod gives. digits holds ASCII digit bytes; leading
 // zeros shift the exponent, trailing zeros after the point change
-// nothing, and digits past the eighteenth only steer sticky rounding.
+// nothing, and only digits past the cap steer sticky rounding.
 // An out-of-range value lands on the infinity pattern; the decoder's
 // finiteness check turns that into the error.
 def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64 {
@@ -826,40 +897,60 @@ def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64 {
   }
   const e = e10 - s
   const t = trim_tail(digits, s, n)
-  const taken = take_mantissa(digits, s, t, 0, 0, false)
-  const f = e - taken[1]
-  if f > 320 {
+  // Room for the eight hundred digits the cap keeps (under 334 limbs)
+  // plus the 5^f a non-negative f multiplies in (under 94 more).
+  const limbs = Bytes.new(448)
+  const folded = fold_digits(digits, s, t, 800, limbs, 1)
+  const nl = folded[0]
+  const f = e - (folded[1] - s)
+  const tail = tail_nonzero(digits, folded[1], t)
+  // The value sits under 10^e, so its range follows e and not f: under
+  // 10^-330 it is zero, and over 10^320 it is past every double. In
+  // between the mantissa decides, and f is then at least -1130 — the
+  // cap plus the exponent — which is what sizes the buffers below.
+  if e > 320 {
     return 9218868437227405312
   }
-  if f < -345 {
+  if e < -330 {
     return zero_bits(neg)
   }
   if f >= 0 {
-    const limbs = Bytes.new(120)
-    const nl = mul5_times(limbs, set_u64(limbs, taken[0]), f)
-    const nbits = bit_len8(limbs, nl)
-    const w = window54(limbs, nl, nbits)
-    return assemble(neg, w[0], w[0] & 1, w[1] || taken[2], nbits + f - 53)
+    const nl5 = mul5_times(limbs, nl, f)
+    const nbits = bit_len8(limbs, nl5)
+    const w = window54(limbs, nl5, nbits)
+    return assemble(neg, w[0], w[0] & 1, w[1] || tail, nbits + f - 53)
   }
-  const dlimbs = Bytes.new(120)
-  const dl = mul5_times(dlimbs, set_u64(dlimbs, 1), -f)
-  const shift = 54 + bit_len8(dlimbs, dl) - bits64(taken[0])
-  const ulimbs = Bytes.new(160)
-  const un = set_shifted(ulimbs, taken[0], shift)
-  const qlimbs = Bytes.new(120)
-  if dl == 1 {
-    const rem = div_small(ulimbs, qlimbs, un - 1, dlimbs.get(0), 0)
+  // 5^g needs under a third of g limbs, and the shift that puts the
+  // quotient at 54 bits moves the numerator by at most the mantissa's
+  // own width, so every buffer here fits in dc + nl.
+  const g = -f
+  const dc = g / 3 + 24
+  const dlimbs = Bytes.new(dc)
+  const dl = mul5_times(dlimbs, set_u64(dlimbs, 1), g)
+  const shift = 54 + bit_len8(dlimbs, dl) - bit_len8(limbs, nl)
+  // A mantissa can hold more bits than the fifty-four the window keeps,
+  // and that surplus cannot come off the numerator — a right shift
+  // there would drop bits the quotient still needs. It rides on the
+  // divisor instead, and floor(U / (D x 2^n)) is exactly the window of
+  // floor(U / D) with the exponent `shift` already carrying the n back.
+  const lifted = Bytes.new(dc + nl + 16)
+  const dlen = shl_limbs(dlimbs, dl, lifted, negative_part(shift))
+  const ulimbs = Bytes.new(dc + nl + 16)
+  const un = shl_limbs(limbs, nl, ulimbs, positive_part(shift))
+  const qlimbs = Bytes.new(dc + nl + 16)
+  if dlen == 1 {
+    const rem = div_small(ulimbs, qlimbs, un - 1, lifted.get(0), 0)
     const q = gather(qlimbs, un - 1, 0)
-    return assemble(neg, quotient_window(q), quotient_window(q) & 1, quotient_sticky(q, rem != 0, taken[2]), quotient_e2(f, shift, q))
+    return assemble(neg, quotient_window(q), quotient_window(q) & 1, quotient_sticky(q, rem != 0, tail), quotient_e2(f, shift, q))
   }
-  const sh = 8 - bits8(dlimbs.get(dl - 1))
-  const vnorm = Bytes.new(120)
-  shl_into(dlimbs, vnorm, 0, dl, sh)
-  const work = Bytes.new(160)
+  const sh = 8 - bits8(lifted.get(dlen - 1))
+  const vnorm = Bytes.new(dlen + 1)
+  shl_into(lifted, vnorm, 0, dlen, sh)
+  const work = Bytes.new(dc + nl + 16)
   const wn = shl_into(ulimbs, work, 0, un, sh)
-  const qraw = Bytes.new(120)
-  div_loop(work, vnorm, qraw, wn - dl, dl)
-  const q = gather(qraw, wn - dl, 0)
-  shr_range(work, 0, dl, sh)
-  return assemble(neg, quotient_window(q), quotient_window(q) & 1, quotient_sticky(q, any_below(work, dl - 1), taken[2]), quotient_e2(f, shift, q))
+  const qraw = Bytes.new(dc + nl + 16)
+  div_loop(work, vnorm, qraw, wn - dlen, dlen)
+  const q = gather(qraw, wn - dlen, 0)
+  shr_range(work, 0, dlen, sh)
+  return assemble(neg, quotient_window(q), quotient_window(q) & 1, quotient_sticky(q, any_below(work, dlen - 1), tail), quotient_e2(f, shift, q))
 }

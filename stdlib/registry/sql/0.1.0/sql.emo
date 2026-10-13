@@ -1,0 +1,2275 @@
+require "float"
+
+// The sql package: parse SQL text into an abstract syntax tree. Pure
+// Emo over the shared runtimes — bytes and the float package's
+// exact-decimal conversion — so every target answers identically.
+//
+// A parsed statement is a `Stmt`: an interface over one class per
+// statement kind, discriminated by the `StmtKind` enum. Within a
+// statement, expressions are `Expr` nodes (one class per `ExprKind`)
+// and table references are `TableRef` nodes (one class per
+// `TableKind`). All three interfaces answer `to_string()`, the
+// canonical SQL rendering — uppercase keywords, explicit JOIN kinds,
+// `AS` on aliases — so a parsed tree can always be read back as text.
+// Node fields are public and frozen after construction; read the
+// concrete class behind an `Expr` through `is()` narrowing.
+//
+// Following the standard library's convention, malformed input is the
+// value `(R.error, reason)` from `parse` — the reason a String stating
+// exactly what failed and at what byte offset. A parsed tree is a
+// value, not a contract; nothing in the package raises.
+//
+// Supported in this version: SELECT statements — a DISTINCT select
+// list (`*`, `t.*`, expressions with optional AS aliases), a FROM list
+// of named tables (optionally schema-qualified, optionally aliased),
+// subqueries, and INNER/LEFT/RIGHT/FULL/CROSS/NATURAL joins with ON or
+// USING; WHERE, GROUP BY, HAVING, ORDER BY with ASC/DESC, LIMIT and
+// OFFSET; the full expression grammar — literals (NULL, TRUE, FALSE,
+// integers, decimals, exponent numbers, single-quoted strings with
+// the '' escape), `?` and `?NNN` parameters, qualified column names,
+// function calls with DISTINCT and `*` arguments, CAST, CASE, EXISTS,
+// scalar subqueries, and operators OR / AND / NOT / comparisons /
+// LIKE / IN (list or subquery) / BETWEEN / IS [NOT] NULL|TRUE|FALSE /
+// + - * / % || with standard precedence; `--` and `/* */` comments.
+//
+// Not supported (each answers `(R.error, reason)`): INSERT, UPDATE,
+// DELETE, DDL, WITH, UNION/INTERSECT/EXCEPT, window functions,
+// GROUPING SETS, quoted-identifier bracket styles other than the
+// standard double quote, backslash escapes in string literals
+// (standard SQL has none), and multiple statements in one parse call.
+
+// ---- kinds ----
+
+const fpmath = float
+
+enum StmtKind { select }
+enum SelKind { star, expr }
+enum TableKind { named, join, subquery }
+enum JoinKind { inner, left, right, full, cross }
+enum SortDir { asc, desc }
+enum ExprKind { lit_null, lit_bool, lit_int, lit_float, lit_string, param, column, unary, binary, like, in_e, between, is_e, func_call, case_e, cast, exists, subquery, paren }
+enum UnOp { neg, pos, not }
+enum BinOp { or, and, eq, ne, lt, le, gt, ge, add, sub, mul, div, mod, concat }
+enum IsKind { is_null, is_true, is_false }
+
+// ---- tokens ----
+
+enum Tk { t_eof, t_ident, t_qident, t_string, t_number, t_param, t_comma, t_lparen, t_rparen, t_dot, t_semi, t_star, t_slash, t_percent, t_plus, t_minus, t_eq, t_ne, t_lt, t_le, t_gt, t_ge, t_concat }
+
+class Tok {
+  def init(kind Tk, text String, pos Int64) {
+    self.kind = kind
+    self.text = text
+    self.pos = pos
+  }
+}
+
+// ---- statements ----
+
+interface Stmt {
+  def kind() StmtKind
+  def to_string() String
+}
+
+// A SELECT statement. The optional single clauses ride as 0-or-1
+// arrays — `where_e`, `having_e`, `limit_e`, `offset_e` hold their
+// expression when present and are empty otherwise — the same "empty
+// means absent" reading as the list clauses (`group_by`, `order_by`,
+// `from_t`).
+class Select {
+  def init(distinct Bool, columns Array[SelItem], from_t Array[TableRef], where_e Array[Expr], group_by Array[Expr], having_e Array[Expr], order_by Array[OrderItem], limit_e Array[Expr], offset_e Array[Expr]) {
+    self.distinct = distinct
+    self.columns = columns
+    self.from_t = from_t
+    self.where_e = where_e
+    self.group_by = group_by
+    self.having_e = having_e
+    self.order_by = order_by
+    self.limit_e = limit_e
+    self.offset_e = offset_e
+  }
+
+  def kind() StmtKind {
+    return StmtKind.select
+  }
+
+  def to_string() String {
+    var s = "SELECT "
+    if self.distinct {
+      s = s + "DISTINCT "
+    }
+    s = s + comma_sels(self.columns, 0, "")
+    if self.from_t.length() > 0 {
+      s = s + " FROM " + comma_tables(self.from_t, 0, "")
+    }
+    if self.where_e.length() == 1 {
+      s = s + " WHERE " + self.where_e[0].to_string()
+    }
+    if self.group_by.length() > 0 {
+      s = s + " GROUP BY " + comma_exprs(self.group_by, 0, "")
+    }
+    if self.having_e.length() == 1 {
+      s = s + " HAVING " + self.having_e[0].to_string()
+    }
+    if self.order_by.length() > 0 {
+      s = s + " ORDER BY " + comma_orders(self.order_by, 0, "")
+    }
+    if self.limit_e.length() == 1 {
+      s = s + " LIMIT " + self.limit_e[0].to_string()
+    }
+    if self.offset_e.length() == 1 {
+      s = s + " OFFSET " + self.offset_e[0].to_string()
+    }
+    return s
+  }
+}
+
+// ---- select items ----
+
+interface SelItem {
+  def kind() SelKind
+  def to_string() String
+}
+
+// A `*` in the select list: `parts` empty, or the qualifier before
+// the star (`t.*` is ["t"], `db.t.*` is ["db", "t"]).
+class SelStar {
+  def init(parts Array[String]) {
+    self.parts = parts
+  }
+
+  def kind() SelKind {
+    return SelKind.star
+  }
+
+  def to_string() String {
+    if self.parts.length() == 0 {
+      return "*"
+    }
+    return dot_join(self.parts, 0, "") + ".*"
+  }
+}
+
+// One expression in the select list, with its optional alias riding
+// as a 0-or-1 array.
+class SelExpr {
+  def init(value Expr, alias_e Array[String]) {
+    self.value = value
+    self.alias_e = alias_e
+  }
+
+  def kind() SelKind {
+    return SelKind.expr
+  }
+
+  def to_string() String {
+    if self.alias_e.length() == 1 {
+      return self.value.to_string() + " AS " + ident_text(self.alias_e[0])
+    }
+    return self.value.to_string()
+  }
+}
+
+class OrderItem {
+  def init(expr Expr, dir SortDir) {
+    self.expr = expr
+    self.dir = dir
+  }
+
+  def to_string() String {
+    if self.dir == SortDir.desc {
+      return self.expr.to_string() + " DESC"
+    }
+    return self.expr.to_string() + " ASC"
+  }
+}
+
+// ---- table references ----
+
+interface TableRef {
+  def kind() TableKind
+  def to_string() String
+}
+
+// A named table, optionally schema-qualified (`["main", "users"]`),
+// with its optional alias as a 0-or-1 array.
+class TblNamed {
+  def init(parts Array[String], alias_e Array[String]) {
+    self.parts = parts
+    self.alias_e = alias_e
+  }
+
+  def kind() TableKind {
+    return TableKind.named
+  }
+
+  def to_string() String {
+    if self.alias_e.length() == 1 {
+      return dot_join(self.parts, 0, "") + " AS " + ident_text(self.alias_e[0])
+    }
+    return dot_join(self.parts, 0, "")
+  }
+}
+
+// A joined pair. `on_e` rides as a 0-or-1 array; `using` is the
+// USING column list, empty when the join has no USING clause. A
+// NATURAL join has neither; a CROSS join has neither.
+class TblJoin {
+  def init(left TableRef, right TableRef, jtype JoinKind, natural Bool, on_e Array[Expr], using Array[String]) {
+    self.left = left
+    self.right = right
+    self.jtype = jtype
+    self.natural = natural
+    self.on_e = on_e
+    self.using = using
+  }
+
+  def kind() TableKind {
+    return TableKind.join
+  }
+
+  def to_string() String {
+    var s = self.left.to_string() + " "
+    if self.natural {
+      s = s + "NATURAL "
+    }
+    s = s + join_kind_text(self.jtype) + " JOIN " + self.right.to_string()
+    if self.on_e.length() == 1 {
+      s = s + " ON " + self.on_e[0].to_string()
+    }
+    if self.using.length() > 0 {
+      s = s + " USING (" + comma_strings(self.using, 0, "") + ")"
+    }
+    return s
+  }
+}
+
+// A parenthesized subquery in the FROM list, with its optional alias
+// as a 0-or-1 array.
+class TblSubquery {
+  def init(query Stmt, alias_e Array[String]) {
+    self.query = query
+    self.alias_e = alias_e
+  }
+
+  def kind() TableKind {
+    return TableKind.subquery
+  }
+
+  def to_string() String {
+    if self.alias_e.length() == 1 {
+      return "(" + self.query.to_string() + ") AS " + ident_text(self.alias_e[0])
+    }
+    return "(" + self.query.to_string() + ")"
+  }
+}
+
+// ---- expressions ----
+
+interface Expr {
+  def kind() ExprKind
+  def to_string() String
+}
+
+class NullLit {
+  def init() {
+  }
+
+  def kind() ExprKind {
+    return ExprKind.lit_null
+  }
+
+  def to_string() String {
+    return "NULL"
+  }
+}
+
+class BoolLit {
+  def init(value Bool) {
+    self.value = value
+  }
+
+  def kind() ExprKind {
+    return ExprKind.lit_bool
+  }
+
+  def to_string() String {
+    if self.value {
+      return "TRUE"
+    }
+    return "FALSE"
+  }
+}
+
+class IntLit {
+  def init(value Int64) {
+    self.value = value
+  }
+
+  def kind() ExprKind {
+    return ExprKind.lit_int
+  }
+
+  def to_string() String {
+    return self.value.to_string()
+  }
+}
+
+class FloatLit {
+  def init(value Float64) {
+    self.value = value
+  }
+
+  def kind() ExprKind {
+    return ExprKind.lit_float
+  }
+
+  def to_string() String {
+    return fpmath.to_text(self.value)
+  }
+}
+
+class StrLit {
+  def init(value String) {
+    self.value = value
+  }
+
+  def kind() ExprKind {
+    return ExprKind.lit_string
+  }
+
+  def to_string() String {
+    return sql_quote(self.value)
+  }
+}
+
+// A `?` parameter, or `?NNN` with its 1-based index (`index` 0 for a
+// bare `?`).
+class Param {
+  def init(index Int64) {
+    self.index = index
+  }
+
+  def kind() ExprKind {
+    return ExprKind.param
+  }
+
+  def to_string() String {
+    if self.index == 0 {
+      return "?"
+    }
+    return "?" + self.index.to_string()
+  }
+}
+
+// A column reference, qualified through `parts` (`["a"]`, `["t", "a"]`).
+class Column {
+  def init(parts Array[String]) {
+    self.parts = parts
+  }
+
+  def kind() ExprKind {
+    return ExprKind.column
+  }
+
+  def to_string() String {
+    return dot_join(self.parts, 0, "")
+  }
+}
+
+class Unary {
+  def init(op UnOp, operand Expr) {
+    self.op = op
+    self.operand = operand
+  }
+
+  def kind() ExprKind {
+    return ExprKind.unary
+  }
+
+  def to_string() String {
+    const inner = self.operand.to_string()
+    if self.op == UnOp.not {
+      const wrapped = if atomic_e(self.operand) { inner } else { "(" + inner + ")" }
+      return "NOT " + wrapped
+    }
+    // A sign on a negative numeric literal needs parens — `- -5` must
+    // never render as `--5` (a comment opener).
+    const wrapped = if atomic_e(self.operand) && !negative_number(self.operand) { inner } else { "(" + inner + ")" }
+    if self.op == UnOp.neg {
+      return "-" + wrapped
+    }
+    return "+" + wrapped
+  }
+}
+
+class Binary {
+  def init(op BinOp, left Expr, right Expr) {
+    self.op = op
+    self.left = left
+    self.right = right
+  }
+
+  def kind() ExprKind {
+    return ExprKind.binary
+  }
+
+  def to_string() String {
+    return self.left.to_string() + binop_text(self.op) + self.right.to_string()
+  }
+}
+
+// `value [NOT] LIKE pattern`. (The ESCAPE clause is not supported.)
+class Like {
+  def init(value Expr, pattern Expr, negated Bool) {
+    self.value = value
+    self.pattern = pattern
+    self.negated = negated
+  }
+
+  def kind() ExprKind {
+    return ExprKind.like
+  }
+
+  def to_string() String {
+    if self.negated {
+      return self.value.to_string() + " NOT LIKE " + self.pattern.to_string()
+    }
+    return self.value.to_string() + " LIKE " + self.pattern.to_string()
+  }
+}
+
+// `value [NOT] BETWEEN low AND high`.
+class Between {
+  def init(value Expr, low Expr, high Expr, negated Bool) {
+    self.value = value
+    self.low = low
+    self.high = high
+    self.negated = negated
+  }
+
+  def kind() ExprKind {
+    return ExprKind.between
+  }
+
+  def to_string() String {
+    if self.negated {
+      return self.value.to_string() + " NOT BETWEEN " + self.low.to_string() + " AND " + self.high.to_string()
+    }
+    return self.value.to_string() + " BETWEEN " + self.low.to_string() + " AND " + self.high.to_string()
+  }
+}
+
+// `value [NOT] IN (choices)`. An IN subquery is one `Subquery` choice —
+// `x IN (SELECT ...)` parses to choices [Subquery(...)].
+class InTest {
+  def init(value Expr, choices Array[Expr], negated Bool) {
+    self.value = value
+    self.choices = choices
+    self.negated = negated
+  }
+
+  def kind() ExprKind {
+    return ExprKind.in_e
+  }
+
+  def to_string() String {
+    if self.choices.length() == 1 && self.choices[0].kind() == ExprKind.subquery {
+      if self.negated {
+        return self.value.to_string() + " NOT IN " + self.choices[0].to_string()
+      }
+      return self.value.to_string() + " IN " + self.choices[0].to_string()
+    }
+    if self.negated {
+      return self.value.to_string() + " NOT IN (" + comma_exprs(self.choices, 0, "") + ")"
+    }
+    return self.value.to_string() + " IN (" + comma_exprs(self.choices, 0, "") + ")"
+  }
+}
+
+// `value IS [NOT] NULL|TRUE|FALSE`.
+class IsTest {
+  def init(value Expr, target IsKind, negated Bool) {
+    self.value = value
+    self.target = target
+    self.negated = negated
+  }
+
+  def kind() ExprKind {
+    return ExprKind.is_e
+  }
+
+  def to_string() String {
+    var s = self.value.to_string() + " IS "
+    if self.negated {
+      s = s + "NOT "
+    }
+    if self.target == IsKind.is_true {
+      return s + "TRUE"
+    }
+    if self.target == IsKind.is_false {
+      return s + "FALSE"
+    }
+    return s + "NULL"
+  }
+}
+
+// A function call: `name(args)`, with `star` for a `*` argument
+// (`COUNT(*)`) and `distinct` for `COUNT(DISTINCT x)`.
+class FuncCall {
+  def init(name String, star Bool, distinct Bool, args Array[Expr]) {
+    self.name = name
+    self.star = star
+    self.distinct = distinct
+    self.args = args
+  }
+
+  def kind() ExprKind {
+    return ExprKind.func_call
+  }
+
+  def to_string() String {
+    if self.star {
+      return ident_text(self.name) + "(*)"
+    }
+    var s = ident_text(self.name) + "("
+    if self.distinct {
+      s = s + "DISTINCT "
+    }
+    return s + comma_exprs(self.args, 0, "") + ")"
+  }
+}
+
+// A CASE expression: `CASE [operand] WHEN cond THEN value ... [ELSE
+// e] END`. The optional operand and ELSE value ride as 0-or-1 arrays.
+class CaseExpr {
+  def init(operand_e Array[Expr], whens Array[(Expr, Expr)], else_e Array[Expr]) {
+    self.operand_e = operand_e
+    self.whens = whens
+    self.else_e = else_e
+  }
+
+  def kind() ExprKind {
+    return ExprKind.case_e
+  }
+
+  def to_string() String {
+    var s = "CASE"
+    if self.operand_e.length() == 1 {
+      s = s + " " + self.operand_e[0].to_string()
+    }
+    s = s + case_whens(self.whens, 0, "")
+    if self.else_e.length() == 1 {
+      s = s + " ELSE " + self.else_e[0].to_string()
+    }
+    return s + " END"
+  }
+}
+
+// CAST(value AS type_name); the type name keeps its source spelling
+// (`VARCHAR(255)`, `DOUBLE PRECISION` shape aside — one identifier
+// plus an optional parenthesized parameter list).
+class Cast {
+  def init(value Expr, type_name String) {
+    self.value = value
+    self.type_name = type_name
+  }
+
+  def kind() ExprKind {
+    return ExprKind.cast
+  }
+
+  def to_string() String {
+    return "CAST(" + self.value.to_string() + " AS " + self.type_name + ")"
+  }
+}
+
+// EXISTS (SELECT ...).
+class Exists {
+  def init(query Stmt) {
+    self.query = query
+  }
+
+  def kind() ExprKind {
+    return ExprKind.exists
+  }
+
+  def to_string() String {
+    return "EXISTS (" + self.query.to_string() + ")"
+  }
+}
+
+// A scalar subquery in expression position.
+class Subquery {
+  def init(query Stmt) {
+    self.query = query
+  }
+
+  def kind() ExprKind {
+    return ExprKind.subquery
+  }
+
+  def to_string() String {
+    return "(" + self.query.to_string() + ")"
+  }
+}
+
+// Explicit parentheses from the source text, kept so the rendering
+// shows the grouping the writer wrote.
+class Paren {
+  def init(inner Expr) {
+    self.inner = inner
+  }
+
+  def kind() ExprKind {
+    return ExprKind.paren
+  }
+
+  def to_string() String {
+    return "(" + self.inner.to_string() + ")"
+  }
+}
+
+// ---- rendering helpers ----
+
+// The literal/parameter/column/call leaves render without parens
+// around them everywhere; the operator nodes take parens when a unary
+// operand wraps them.
+def atomic_e(e Expr) Bool {
+  const k = e.kind()
+  if k == ExprKind.lit_null { return true }
+  if k == ExprKind.lit_bool { return true }
+  if k == ExprKind.lit_int { return true }
+  if k == ExprKind.lit_float { return true }
+  if k == ExprKind.lit_string { return true }
+  if k == ExprKind.param { return true }
+  if k == ExprKind.column { return true }
+  if k == ExprKind.func_call { return true }
+  if k == ExprKind.case_e { return true }
+  if k == ExprKind.cast { return true }
+  if k == ExprKind.exists { return true }
+  if k == ExprKind.subquery { return true }
+  if k == ExprKind.paren { return true }
+  return false
+}
+
+// A numeric literal below zero — the case a unary sign must wrap in
+// parens to keep the rendering out of comment territory.
+def negative_number(e Expr) Bool {
+  if e.is(IntLit) {
+    return e.value < 0
+  }
+  if e.is(FloatLit) {
+    return e.value < 0.0
+  }
+  return false
+}
+
+def binop_text(op BinOp) String {
+  if op == BinOp.or { return " OR " }
+  if op == BinOp.and { return " AND " }
+  if op == BinOp.eq { return " = " }
+  if op == BinOp.ne { return " <> " }
+  if op == BinOp.lt { return " < " }
+  if op == BinOp.le { return " <= " }
+  if op == BinOp.gt { return " > " }
+  if op == BinOp.ge { return " >= " }
+  if op == BinOp.add { return " + " }
+  if op == BinOp.sub { return " - " }
+  if op == BinOp.mul { return " * " }
+  if op == BinOp.div { return " / " }
+  if op == BinOp.mod { return " % " }
+  return " || "
+}
+
+def join_kind_text(k JoinKind) String {
+  if k == JoinKind.left { return "LEFT" }
+  if k == JoinKind.right { return "RIGHT" }
+  if k == JoinKind.full { return "FULL" }
+  if k == JoinKind.cross { return "CROSS" }
+  return "INNER"
+}
+
+// A name in a dotted path, quoted only when the spelling needs it:
+// anything beyond a plain identifier, or a reserved word.
+def dot_join(parts Array[String], i Int64, acc String) String {
+  if i >= parts.length() {
+    return acc
+  }
+  if i == 0 {
+    return dot_join(parts, 1, ident_text(parts[0]))
+  }
+  return dot_join(parts, i + 1, acc + "." + ident_text(parts[i]))
+}
+
+def ident_text(s String) String {
+  if plain_ident(s) && !is_reserved(ascii_lower(s)) {
+    return s
+  }
+  return quote_ident(s)
+}
+
+def plain_ident(s String) Bool {
+  const data = s.to_bytes()
+  if data.length() == 0 {
+    return false
+  }
+  return plain_ident_b(data, 0)
+}
+
+def plain_ident_b(data Bytes, i Int64) Bool {
+  if i >= data.length() {
+    return true
+  }
+  if !is_ident_part(data.get(i)) {
+    return false
+  }
+  return plain_ident_b(data, i + 1)
+}
+
+def quote_ident(s String) String {
+  const data = s.to_bytes()
+  const out = Bytes.new(quoted_len(data, 0, 34) + 2)
+  out.set(0, 34)
+  fill_quoted(data, out, 0, 1, 34)
+  return out.to_string()
+}
+
+// The USING column list, quoted where the spelling needs it.
+def comma_strings(parts Array[String], i Int64, acc String) String {
+  if i >= parts.length() {
+    return acc
+  }
+  if i == 0 {
+    return comma_strings(parts, 1, ident_text(parts[0]))
+  }
+  return comma_strings(parts, i + 1, acc + ", " + ident_text(parts[i]))
+}
+
+def comma_exprs(xs Array[Expr], i Int64, acc String) String {
+  if i >= xs.length() {
+    return acc
+  }
+  if i == 0 {
+    return comma_exprs(xs, 1, xs[0].to_string())
+  }
+  return comma_exprs(xs, i + 1, acc + ", " + xs[i].to_string())
+}
+
+def comma_sels(xs Array[SelItem], i Int64, acc String) String {
+  if i >= xs.length() {
+    return acc
+  }
+  if i == 0 {
+    return comma_sels(xs, 1, xs[0].to_string())
+  }
+  return comma_sels(xs, i + 1, acc + ", " + xs[i].to_string())
+}
+
+def comma_tables(xs Array[TableRef], i Int64, acc String) String {
+  if i >= xs.length() {
+    return acc
+  }
+  if i == 0 {
+    return comma_tables(xs, 1, xs[0].to_string())
+  }
+  return comma_tables(xs, i + 1, acc + ", " + xs[i].to_string())
+}
+
+def comma_orders(xs Array[OrderItem], i Int64, acc String) String {
+  if i >= xs.length() {
+    return acc
+  }
+  if i == 0 {
+    return comma_orders(xs, 1, xs[0].to_string())
+  }
+  return comma_orders(xs, i + 1, acc + ", " + xs[i].to_string())
+}
+
+def case_whens(ws Array[(Expr, Expr)], i Int64, acc String) String {
+  if i >= ws.length() {
+    return acc
+  }
+  const pair = ws[i]
+  return case_whens(ws, i + 1, acc + " WHEN " + pair[0].to_string() + " THEN " + pair[1].to_string())
+}
+
+// The SQL text of `s` between single quotes; embedded quotes double.
+def sql_quote(s String) String {
+  const data = s.to_bytes()
+  const out = Bytes.new(quoted_len(data, 0, 39) + 2)
+  out.set(0, 39)
+  fill_quoted(data, out, 0, 1, 39)
+  return out.to_string()
+}
+
+def quoted_len(data Bytes, i Int64, quote Int64) Int64 {
+  if i >= data.length() {
+    return 0
+  }
+  if data.get(i) == quote {
+    return 2 + quoted_len(data, i + 1, quote)
+  }
+  return 1 + quoted_len(data, i + 1, quote)
+}
+
+def fill_quoted(data Bytes, out Bytes, i Int64, w Int64, quote Int64) Int64 {
+  if i >= data.length() {
+    out.set(w, quote)
+    return w + 1
+  }
+  const b = data.get(i)
+  if b == quote {
+    out.set(w, quote)
+    out.set(w + 1, quote)
+    return fill_quoted(data, out, i + 1, w + 2, quote)
+  }
+  out.set(w, b)
+  return fill_quoted(data, out, i + 1, w + 1, quote)
+}
+
+// ---- lexer ----
+
+// The whole input becomes an array of tokens, eof-terminated; the
+// parser then works index-based over it. Identifiers keep their source
+// spelling (keywords are recognised by the parser, case-insensitively,
+// so nothing is reserved at the lexer level). String and quoted
+// identifier literals arrive decoded.
+
+def lex(text String) (R, Array[Tok]) {
+  return lex_all(text.to_bytes(), 0, [])
+}
+
+def lex_all(data Bytes, pos Int64, acc Array[Tok]) (R, Array[Tok]) {
+  case skip_trivia(data, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, t)      -> {
+      if t >= data.length() {
+        return (R.ok, acc.append(Tok.new(kind: Tk.t_eof, text: "", pos: t)))
+      }
+      case lex_token(data, t) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, r)      -> { return lex_all(data, r[1], acc.append(r[0])) }
+      }
+    }
+  }
+}
+
+// Whitespace and both comment forms. A `--` comment runs to the end
+// of the line; a `/* */` comment does not nest.
+def skip_trivia(data Bytes, i Int64) (R, Int64) {
+  if i >= data.length() {
+    return (R.ok, i)
+  }
+  const b = data.get(i)
+  if b == 32 || b == 9 || b == 10 || b == 13 {
+    return skip_trivia(data, i + 1)
+  }
+  if b == 45 && i + 1 < data.length() && data.get(i + 1) == 45 {
+    return skip_line_comment(data, i + 2)
+  }
+  if b == 47 && i + 1 < data.length() && data.get(i + 1) == 42 {
+    return skip_block_comment(data, i + 2, i)
+  }
+  return (R.ok, i)
+}
+
+def skip_line_comment(data Bytes, i Int64) (R, Int64) {
+  if i >= data.length() {
+    return (R.ok, i)
+  }
+  if data.get(i) == 10 {
+    return skip_trivia(data, i + 1)
+  }
+  return skip_line_comment(data, i + 1)
+}
+
+def skip_block_comment(data Bytes, i Int64, start Int64) (R, Int64) {
+  if i + 1 >= data.length() {
+    return (R.error, err(start, "unterminated comment"))
+  }
+  if data.get(i) == 42 && data.get(i + 1) == 47 {
+    return skip_trivia(data, i + 2)
+  }
+  return skip_block_comment(data, i + 1, start)
+}
+
+def lex_token(data Bytes, pos Int64) (R, (Tok, Int64)) {
+  const b = data.get(pos)
+  if is_ident_start(b) {
+    return lex_ident(data, pos, pos)
+  }
+  if b == 34 {
+    return lex_quoted(data, pos)
+  }
+  if b == 39 {
+    return lex_string(data, pos)
+  }
+  if is_digit(b) || (b == 46 && pos + 1 < data.length() && is_digit(data.get(pos + 1))) {
+    return lex_number(data, pos)
+  }
+  if b == 63 {
+    return lex_param(data, pos)
+  }
+  if b == 40 {
+    return tok_op(data, pos, Tk.t_lparen, 1)
+  }
+  if b == 41 {
+    return tok_op(data, pos, Tk.t_rparen, 1)
+  }
+  if b == 44 {
+    return tok_op(data, pos, Tk.t_comma, 1)
+  }
+  if b == 46 {
+    return tok_op(data, pos, Tk.t_dot, 1)
+  }
+  if b == 59 {
+    return tok_op(data, pos, Tk.t_semi, 1)
+  }
+  if b == 42 {
+    return tok_op(data, pos, Tk.t_star, 1)
+  }
+  if b == 43 {
+    return tok_op(data, pos, Tk.t_plus, 1)
+  }
+  if b == 45 {
+    return tok_op(data, pos, Tk.t_minus, 1)
+  }
+  if b == 47 {
+    return tok_op(data, pos, Tk.t_slash, 1)
+  }
+  if b == 37 {
+    return tok_op(data, pos, Tk.t_percent, 1)
+  }
+  if b == 61 {
+    return tok_op(data, pos, Tk.t_eq, 1)
+  }
+  if b == 60 {
+    if pos + 1 < data.length() && data.get(pos + 1) == 61 {
+      return tok_op(data, pos, Tk.t_le, 2)
+    }
+    if pos + 1 < data.length() && data.get(pos + 1) == 62 {
+      return tok_op(data, pos, Tk.t_ne, 2)
+    }
+    return tok_op(data, pos, Tk.t_lt, 1)
+  }
+  if b == 62 {
+    if pos + 1 < data.length() && data.get(pos + 1) == 61 {
+      return tok_op(data, pos, Tk.t_ge, 2)
+    }
+    return tok_op(data, pos, Tk.t_gt, 1)
+  }
+  if b == 33 {
+    if pos + 1 < data.length() && data.get(pos + 1) == 61 {
+      return tok_op(data, pos, Tk.t_ne, 2)
+    }
+    return (R.error, err(pos, "unexpected character `!`"))
+  }
+  if b == 124 {
+    if pos + 1 < data.length() && data.get(pos + 1) == 124 {
+      return tok_op(data, pos, Tk.t_concat, 2)
+    }
+    return (R.error, err(pos, "unexpected character `|`"))
+  }
+  return (R.error, err(pos, "unexpected character `" + byte_text(b) + "`"))
+}
+
+def tok_op(data Bytes, pos Int64, kind Tk, width Int64) (R, (Tok, Int64)) {
+  return (R.ok, (Tok.new(kind: kind, text: slice_text(data, pos, pos + width), pos: pos), pos + width))
+}
+
+def lex_ident(data Bytes, start Int64, i Int64) (R, (Tok, Int64)) {
+  if i < data.length() && is_ident_part(data.get(i)) {
+    return lex_ident(data, start, i + 1)
+  }
+  return (R.ok, (Tok.new(kind: Tk.t_ident, text: slice_text(data, start, i), pos: start), i))
+}
+
+// A double-quoted identifier; the quote doubles inside (`"a""b"` is
+// the identifier a"b).
+def lex_quoted(data Bytes, pos Int64) (R, (Tok, Int64)) {
+  case scan_quoted(data, pos + 1, 34, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, end_)   -> {
+      const out = Bytes.new(decoded_len(data, pos + 1, 34))
+      fill_decoded(data, pos + 1, 34, out, 0)
+      return (R.ok, (Tok.new(kind: Tk.t_qident, text: out.to_string(), pos: pos), end_))
+    }
+  }
+}
+
+// A single-quoted string literal; the quote doubles inside. Standard
+// SQL has no backslash escapes — a backslash is an ordinary character.
+def lex_string(data Bytes, pos Int64) (R, (Tok, Int64)) {
+  case scan_quoted(data, pos + 1, 39, pos) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, end_)   -> {
+      const out = Bytes.new(decoded_len(data, pos + 1, 39))
+      fill_decoded(data, pos + 1, 39, out, 0)
+      return (R.ok, (Tok.new(kind: Tk.t_string, text: out.to_string(), pos: pos), end_))
+    }
+  }
+}
+
+// The scan pass: validate the literal and find the position past its
+// closing quote. A doubled quote rides through as content.
+def scan_quoted(data Bytes, i Int64, quote Int64, start Int64) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, err(start, "unterminated literal"))
+  }
+  if data.get(i) == quote {
+    if i + 1 < data.length() && data.get(i + 1) == quote {
+      return scan_quoted(data, i + 2, quote, start)
+    }
+    return (R.ok, i + 1)
+  }
+  return scan_quoted(data, i + 1, quote, start)
+}
+
+// The decoded content length of a scanned literal: a doubled quote
+// contributes one character; the closing quote contributes nothing.
+// The scan pass validated the structure, so the quote at the last
+// byte is always the closing one.
+def decoded_len(data Bytes, i Int64, quote Int64) Int64 {
+  if data.get(i) == quote {
+    if i + 1 < data.length() && data.get(i + 1) == quote {
+      return 1 + decoded_len(data, i + 2, quote)
+    }
+    return 0
+  }
+  return 1 + decoded_len(data, i + 1, quote)
+}
+
+// The fill pass: copy the content out, un-doubling quotes, stopping at
+// the closing quote.
+def fill_decoded(data Bytes, i Int64, quote Int64, out Bytes, w Int64) Int64 {
+  if data.get(i) == quote {
+    if i + 1 < data.length() && data.get(i + 1) == quote {
+      out.set(w, quote)
+      return fill_decoded(data, i + 2, quote, out, w + 1)
+    }
+    return w
+  }
+  out.set(w, data.get(i))
+  return fill_decoded(data, i + 1, quote, out, w + 1)
+}
+
+// A number literal: digits with an optional fraction and exponent;
+// `.5` and `12.` are literals (the dot needs a digit on at least one
+// side, picked by the caller). The text is validated and valued by
+// the parser, not here.
+def lex_number(data Bytes, start Int64) (R, (Tok, Int64)) {
+  var i = scan_digits(data, start)
+  if i < data.length() && data.get(i) == 46 {
+    i = scan_digits(data, i + 1)
+  }
+  if i < data.length() && (data.get(i) == 101 || data.get(i) == 69) {
+    var j = i + 1
+    if j < data.length() && (data.get(j) == 43 || data.get(j) == 45) {
+      j = j + 1
+    }
+    if j < data.length() && is_digit(data.get(j)) {
+      i = scan_digits(data, j)
+    } else {
+      return (R.error, err(i, "malformed number literal"))
+    }
+  }
+  if i < data.length() {
+    const nb = data.get(i)
+    if is_ident_part(nb) || nb == 46 {
+      return (R.error, err(i, "malformed number literal"))
+    }
+  }
+  return (R.ok, (Tok.new(kind: Tk.t_number, text: slice_text(data, start, i), pos: start), i))
+}
+
+def scan_digits(data Bytes, i Int64) Int64 {
+  if i < data.length() && is_digit(data.get(i)) {
+    return scan_digits(data, i + 1)
+  }
+  return i
+}
+
+def lex_param(data Bytes, pos Int64) (R, (Tok, Int64)) {
+  const i = scan_digits(data, pos + 1)
+  if i < data.length() && is_ident_start(data.get(i)) {
+    return (R.error, err(pos, "malformed parameter"))
+  }
+  return (R.ok, (Tok.new(kind: Tk.t_param, text: slice_text(data, pos, i), pos: pos), i))
+}
+
+// ---- byte helpers ----
+
+def is_digit(b Int64) Bool {
+  return b >= 48 && b <= 57
+}
+
+def is_alpha(b Int64) Bool {
+  return (b >= 97 && b <= 122) || (b >= 65 && b <= 90)
+}
+
+// Identifiers take ASCII letters, digits, underscore, and any
+// non-ASCII byte (UTF-8 content rides through as part of the name).
+def is_ident_start(b Int64) Bool {
+  return is_alpha(b) || b == 95 || b >= 128
+}
+
+def is_ident_part(b Int64) Bool {
+  return is_ident_start(b) || is_digit(b)
+}
+
+def slice_text(data Bytes, start Int64, end_ Int64) String {
+  const out = Bytes.new(end_ - start)
+  copy_range(data, out, start, 0, end_ - start)
+  return out.to_string()
+}
+
+def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
+  if n > 0 {
+    dst.set(di, src.get(si))
+    copy_range(src, dst, si + 1, di + 1, n - 1)
+  }
+}
+
+def byte_text(b Int64) String {
+  const out = Bytes.new(1)
+  out.set(0, b)
+  return out.to_string()
+}
+
+def err(at Int64, what String) String {
+  return "sql: " + what + " at byte " + at.to_string()
+}
+
+// ---- parser ----
+
+// The parser is index-based over the token array; every function takes
+// the position to read from and returns the value with the position
+// past it: (R, (value, Int64)). `depth` caps expression nesting the
+// same way the format packages cap document nesting.
+
+def parse(text String) (R, Stmt) {
+  case lex(text) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, toks)   -> {
+      case parse_stmt(toks, 0) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, r)      -> {
+          var i = r[1]
+          if at_kind(toks, i, Tk.t_semi) {
+            i = i + 1
+          }
+          if at_kind(toks, i, Tk.t_eof) {
+            return (R.ok, r[0])
+          }
+          return (R.error, err(peek(toks, i).pos, "expected end of statement"))
+        }
+      }
+    }
+  }
+}
+
+def parse_stmt(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
+  if at_kind(toks, i, Tk.t_eof) {
+    return (R.error, err(0, "empty input"))
+  }
+  if at_kw(toks, i, "select") {
+    return parse_select(toks, i, 0)
+  }
+  return (R.error, err(peek(toks, i).pos, "expected SELECT"))
+}
+
+def parse_select(toks Array[Tok], i Int64, depth Int64) (R, (Stmt, Int64)) {
+  var j = i + 1
+  var distinct = false
+  if at_kw(toks, j, "distinct") {
+    distinct = true
+    j = j + 1
+  }
+  case parse_sel_items(toks, j, depth, []) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, cr)     -> {
+      case parse_opt_from(toks, cr[1], depth) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, fr)     -> {
+          return parse_clauses(toks, fr[1], depth, 0, distinct, cr[0], fr[0], [], [], [], [], [], [])
+        }
+      }
+    }
+  }
+}
+
+// The trailing clause chain, one branch per clause in their fixed
+// order. `stage` is the last clause taken (0 before WHERE), so a clause
+// that would step backwards is not taken at all: duplicates and
+// out-of-order clauses both refuse instead of being quietly reordered.
+def parse_clauses(toks Array[Tok], i Int64, depth Int64, stage Int64, distinct Bool, columns Array[SelItem], from_t Array[TableRef], where_e Array[Expr], group_by Array[Expr], having_e Array[Expr], order_by Array[OrderItem], limit_e Array[Expr], offset_e Array[Expr]) (R, (Stmt, Int64)) {
+  if at_kw(toks, i, "where") && stage < 1 {
+    case parse_expr(toks, i + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 1, distinct, columns, from_t, [r[0]], group_by, having_e, order_by, limit_e, offset_e) }
+    }
+  }
+  if at_kw(toks, i, "group") && at_kw(toks, i + 1, "by") && stage < 2 {
+    case parse_expr_list(toks, i + 2, depth, []) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 2, distinct, columns, from_t, where_e, r[0], having_e, order_by, limit_e, offset_e) }
+    }
+  }
+  if at_kw(toks, i, "having") && stage < 3 {
+    case parse_expr(toks, i + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 3, distinct, columns, from_t, where_e, group_by, [r[0]], order_by, limit_e, offset_e) }
+    }
+  }
+  if at_kw(toks, i, "order") && at_kw(toks, i + 1, "by") && stage < 4 {
+    case parse_order_list(toks, i + 2, depth, []) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 4, distinct, columns, from_t, where_e, group_by, having_e, r[0], limit_e, offset_e) }
+    }
+  }
+  if at_kw(toks, i, "limit") && stage < 5 {
+    case parse_expr(toks, i + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 5, distinct, columns, from_t, where_e, group_by, having_e, order_by, [r[0]], offset_e) }
+    }
+  }
+  if at_kw(toks, i, "offset") && stage < 6 {
+    case parse_expr(toks, i + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return parse_clauses(toks, r[1], depth, 6, distinct, columns, from_t, where_e, group_by, having_e, order_by, limit_e, [r[0]]) }
+    }
+  }
+  const tk = peek(toks, i).kind
+  if tk == Tk.t_eof || tk == Tk.t_rparen || tk == Tk.t_semi || tk == Tk.t_comma {
+    return (R.ok, (Select.new(distinct: distinct, columns: columns, from_t: from_t, where_e: where_e, group_by: group_by, having_e: having_e, order_by: order_by, limit_e: limit_e, offset_e: offset_e), i))
+  }
+  if at_kw(toks, i, "where") || at_kw(toks, i, "having") || at_kw(toks, i, "limit") || at_kw(toks, i, "offset") || ((at_kw(toks, i, "group") || at_kw(toks, i, "order")) && at_kw(toks, i + 1, "by")) {
+    return (R.error, err(peek(toks, i).pos, "each clause appears once, in the order WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET"))
+  }
+  return (R.error, err(peek(toks, i).pos, "expected GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET, or end of statement"))
+}
+
+// ---- select list ----
+
+def parse_sel_items(toks Array[Tok], i Int64, depth Int64, acc Array[SelItem]) (R, (Array[SelItem], Int64)) {
+  case parse_sel_item(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      if at_kind(toks, r[1], Tk.t_comma) {
+        return parse_sel_items(toks, r[1] + 1, depth, acc.append(r[0]))
+      }
+      return (R.ok, (acc.append(r[0]), r[1]))
+    }
+  }
+}
+
+def parse_sel_item(toks Array[Tok], i Int64, depth Int64) (R, (SelItem, Int64)) {
+  if at_kind(toks, i, Tk.t_star) {
+    return (R.ok, (SelStar.new(parts: []), i + 1))
+  }
+  if at_kind(toks, i, Tk.t_ident) || at_kind(toks, i, Tk.t_qident) {
+    case scan_star_path(toks, i) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, sr)     -> {
+        if sr[0] {
+          return (R.ok, (SelStar.new(parts: sr[1]), sr[2]))
+        }
+      }
+    }
+  }
+  case parse_expr(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      case parse_opt_alias(toks, r[1]) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, ar)     -> { return (R.ok, (SelExpr.new(value: r[0], alias_e: ar[0]), ar[1])) }
+      }
+    }
+  }
+}
+
+// A qualified `*` ahead? Walks ident (dot ident)* and reports true
+// when a dot leads to a star; the position returned is past the star.
+def scan_star_path(toks Array[Tok], i Int64) (R, (Bool, Array[String], Int64)) {
+  return scan_star_path_rest(toks, [peek(toks, i).text], i)
+}
+
+def scan_star_path_rest(toks Array[Tok], acc Array[String], i Int64) (R, (Bool, Array[String], Int64)) {
+  if at_kind(toks, i + 1, Tk.t_dot) {
+    if at_kind(toks, i + 2, Tk.t_star) {
+      return (R.ok, (true, acc, i + 3))
+    }
+    if at_kind(toks, i + 2, Tk.t_ident) || at_kind(toks, i + 2, Tk.t_qident) {
+      return scan_star_path_rest(toks, acc.append(peek(toks, i + 2).text), i + 2)
+    }
+  }
+  return (R.ok, (false, [], 0))
+}
+
+// ---- FROM ----
+
+def parse_opt_from(toks Array[Tok], i Int64, depth Int64) (R, (Array[TableRef], Int64)) {
+  if !at_kw(toks, i, "from") {
+    return (R.ok, ([], i))
+  }
+  return parse_from_list(toks, i + 1, depth, [])
+}
+
+def parse_from_list(toks Array[Tok], i Int64, depth Int64, acc Array[TableRef]) (R, (Array[TableRef], Int64)) {
+  case parse_table_ref(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      if at_kind(toks, r[1], Tk.t_comma) {
+        return parse_from_list(toks, r[1] + 1, depth, acc.append(r[0]))
+      }
+      return (R.ok, (acc.append(r[0]), r[1]))
+    }
+  }
+}
+
+def parse_table_ref(toks Array[Tok], i Int64, depth Int64) (R, (TableRef, Int64)) {
+  case parse_table_primary(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return parse_join_tail(toks, r[1], r[0], depth) }
+  }
+}
+
+def parse_table_primary(toks Array[Tok], i Int64, depth Int64) (R, (TableRef, Int64)) {
+  const t = peek(toks, i)
+  if t.kind == Tk.t_lparen {
+    if at_kw(toks, i + 1, "select") {
+      case parse_select(toks, i + 1, depth + 1) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, sr)     -> {
+          case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, j)      -> {
+              case parse_opt_alias(toks, j) {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, ar)     -> { return (R.ok, (TblSubquery.new(query: sr[0], alias_e: ar[0]), ar[1])) }
+              }
+            }
+          }
+        }
+      }
+    }
+    return (R.error, err(t.pos, "expected a subquery after `(`"))
+  }
+  if t.kind == Tk.t_ident || t.kind == Tk.t_qident {
+    case scan_name_path(toks, i) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, pr)     -> {
+        case parse_opt_alias(toks, pr[1]) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, ar)     -> { return (R.ok, (TblNamed.new(parts: pr[0], alias_e: ar[0]), ar[1])) }
+        }
+      }
+    }
+  }
+  return (R.error, err(t.pos, "expected a table name"))
+}
+
+// The join chain, left-associative: each round wraps the accumulated
+// left side in a new TblJoin.
+def parse_join_tail(toks Array[Tok], i Int64, left TableRef, depth Int64) (R, (TableRef, Int64)) {
+  case match_join(toks, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, m)      -> {
+      if !m[0] {
+        return (R.ok, (left, i))
+      }
+      case parse_table_primary(toks, m[3], depth) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, rr)     -> {
+          case parse_join_condition(toks, rr[1], m[1], m[2], depth) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, jr)     -> {
+              const joined = TblJoin.new(left: left, right: rr[0], jtype: m[2], natural: m[1], on_e: jr[0], using: jr[1])
+              return parse_join_tail(toks, jr[2], joined, depth)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Recognises `[NATURAL] [INNER|LEFT|RIGHT|FULL|CROSS [OUTER]] JOIN`.
+// A bare JOIN (or NATURAL JOIN) is an inner join. When no join
+// keyword is present reports found = false with the position
+// unchanged; a join keyword without its JOIN refuses.
+def match_join(toks Array[Tok], i Int64) (R, (Bool, Bool, JoinKind, Int64)) {
+  var natural = false
+  var j = i
+  if at_kw(toks, j, "natural") {
+    natural = true
+    j = j + 1
+  }
+  var kind = JoinKind.inner
+  var found = false
+  if at_kw(toks, j, "join") {
+    found = true
+  }
+  if !found && at_kw(toks, j, "inner") {
+    kind = JoinKind.inner
+    found = true
+    j = j + 1
+  }
+  if !found && at_kw(toks, j, "left") {
+    kind = JoinKind.left
+    found = true
+    j = j + 1
+  }
+  if !found && at_kw(toks, j, "right") {
+    kind = JoinKind.right
+    found = true
+    j = j + 1
+  }
+  if !found && at_kw(toks, j, "full") {
+    kind = JoinKind.full
+    found = true
+    j = j + 1
+  }
+  if !found && at_kw(toks, j, "cross") {
+    kind = JoinKind.cross
+    found = true
+    j = j + 1
+  }
+  if found && (kind == JoinKind.left || kind == JoinKind.right || kind == JoinKind.full) && at_kw(toks, j, "outer") {
+    j = j + 1
+  }
+  if !found {
+    if natural {
+      return (R.error, err(peek(toks, j).pos, "expected a join kind after NATURAL"))
+    }
+    return (R.ok, (false, false, JoinKind.inner, i))
+  }
+  if !at_kw(toks, j, "join") {
+    return (R.error, err(peek(toks, j).pos, "expected JOIN"))
+  }
+  return (R.ok, (true, natural, kind, j + 1))
+}
+
+def parse_join_condition(toks Array[Tok], i Int64, natural Bool, jtype JoinKind, depth Int64) (R, (Array[Expr], Array[String], Int64)) {
+  if natural {
+    if at_kw(toks, i, "on") || at_kw(toks, i, "using") {
+      return (R.error, err(peek(toks, i).pos, "a NATURAL join takes no ON or USING clause"))
+    }
+    return (R.ok, ([], [], i))
+  }
+  if at_kw(toks, i, "on") {
+    case parse_expr(toks, i + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return (R.ok, ([r[0]], [], r[1])) }
+    }
+  }
+  if at_kw(toks, i, "using") {
+    return parse_using_cols(toks, i + 1)
+  }
+  if jtype == JoinKind.cross {
+    return (R.ok, ([], [], i))
+  }
+  return (R.error, err(peek(toks, i).pos, "expected ON or USING for the join"))
+}
+
+def parse_using_cols(toks Array[Tok], i Int64) (R, (Array[Expr], Array[String], Int64)) {
+  case want_kind(toks, i, Tk.t_lparen, "`(` after USING") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, j)      -> { return parse_using_rest(toks, j, []) }
+  }
+}
+
+def parse_using_rest(toks Array[Tok], i Int64, acc Array[String]) (R, (Array[Expr], Array[String], Int64)) {
+  const t = peek(toks, i)
+  if t.kind != Tk.t_ident && t.kind != Tk.t_qident {
+    return (R.error, err(t.pos, "expected a column name in USING"))
+  }
+  const cols = acc.append(t.text)
+  if at_kind(toks, i + 1, Tk.t_comma) {
+    return parse_using_rest(toks, i + 2, cols)
+  }
+  case want_kind(toks, i + 1, Tk.t_rparen, "`)` after the USING column list") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, j)      -> { return (R.ok, ([], cols, j)) }
+  }
+}
+
+// An optional alias: `AS name` or a bare identifier that is not a
+// reserved word (the reserved set is the clause and join vocabulary —
+// everything else may name a column, a table, or an alias).
+def parse_opt_alias(toks Array[Tok], i Int64) (R, (Array[String], Int64)) {
+  if at_kw(toks, i, "as") {
+    const t2 = peek(toks, i + 1)
+    if (t2.kind == Tk.t_ident && !is_reserved(ascii_lower(t2.text))) || t2.kind == Tk.t_qident {
+      return (R.ok, ([t2.text], i + 2))
+    }
+    return (R.error, err(t2.pos, "expected an alias after AS"))
+  }
+  const t = peek(toks, i)
+  if t.kind == Tk.t_ident && !is_reserved(ascii_lower(t.text)) {
+    return (R.ok, ([t.text], i + 1))
+  }
+  if t.kind == Tk.t_qident {
+    return (R.ok, ([t.text], i + 1))
+  }
+  return (R.ok, ([], i))
+}
+
+// Folded here rather than with `String.lower`, which the wasm and beam
+// method surface does not carry; SQL folds ASCII only.
+def ascii_lower(s String) String {
+  const src = s.to_bytes()
+  const out = Bytes.new(src.length())
+  fold_ascii(src, out, 0)
+  return out.to_string()
+}
+
+def fold_ascii(src Bytes, out Bytes, i Int64) {
+  if i < src.length() {
+    const c = src.get(i)
+    if c >= 65 && c <= 90 {
+      out.set(i, c + 32)
+    } else {
+      out.set(i, c)
+    }
+    fold_ascii(src, out, i + 1)
+  }
+}
+
+def is_reserved(word String) Bool {
+  if word == "select" { return true }
+  if word == "from" { return true }
+  if word == "where" { return true }
+  if word == "group" { return true }
+  if word == "having" { return true }
+  if word == "order" { return true }
+  if word == "limit" { return true }
+  if word == "offset" { return true }
+  if word == "distinct" { return true }
+  if word == "join" { return true }
+  if word == "inner" { return true }
+  if word == "left" { return true }
+  if word == "right" { return true }
+  if word == "full" { return true }
+  if word == "cross" { return true }
+  if word == "natural" { return true }
+  if word == "on" { return true }
+  if word == "using" { return true }
+  if word == "as" { return true }
+  if word == "and" { return true }
+  if word == "or" { return true }
+  if word == "not" { return true }
+  if word == "in" { return true }
+  if word == "between" { return true }
+  if word == "like" { return true }
+  if word == "is" { return true }
+  if word == "null" { return true }
+  if word == "true" { return true }
+  if word == "false" { return true }
+  if word == "case" { return true }
+  if word == "when" { return true }
+  if word == "then" { return true }
+  if word == "else" { return true }
+  if word == "end" { return true }
+  if word == "cast" { return true }
+  if word == "exists" { return true }
+  if word == "union" { return true }
+  if word == "asc" { return true }
+  if word == "desc" { return true }
+  return false
+}
+
+// ---- expressions ----
+
+// Precedence, loosest first: OR, AND, NOT, the predicate family
+// (comparisons, LIKE, IN, BETWEEN, IS), additive (+ - ||),
+// multiplicative (* / %), unary (- +), primary.
+
+def parse_expr(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  return parse_or(toks, i, depth)
+}
+
+def parse_or(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  case parse_and(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return parse_or_rest(toks, r[1], r[0], depth) }
+  }
+}
+
+def parse_or_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, Int64)) {
+  if at_kw(toks, i, "or") {
+    case parse_and(toks, i + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return parse_or_rest(toks, r[1], Binary.new(op: BinOp.or, left: acc, right: r[0]), depth) }
+    }
+  }
+  return (R.ok, (acc, i))
+}
+
+def parse_and(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  case parse_not(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return parse_and_rest(toks, r[1], r[0], depth) }
+  }
+}
+
+def parse_and_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, Int64)) {
+  if at_kw(toks, i, "and") {
+    case parse_not(toks, i + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return parse_and_rest(toks, r[1], Binary.new(op: BinOp.and, left: acc, right: r[0]), depth) }
+    }
+  }
+  return (R.ok, (acc, i))
+}
+
+def parse_not(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  if at_kw(toks, i, "not") {
+    case parse_not(toks, i + 1, depth + 1) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return (R.ok, (Unary.new(op: UnOp.not, operand: r[0]), r[1])) }
+    }
+  }
+  return parse_pred(toks, i, depth)
+}
+
+// The predicate family: exactly one tail operator is allowed — SQL
+// has no chained comparisons, and a second one refuses here rather
+// than folding left silently.
+def parse_pred(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  case parse_add(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return parse_pred_tail(toks, r[1], r[0], depth) }
+  }
+}
+
+def parse_pred_tail(toks Array[Tok], i Int64, left Expr, depth Int64) (R, (Expr, Int64)) {
+  var negated = false
+  var j = i
+  if at_kw(toks, j, "not") {
+    if at_kw(toks, j + 1, "in") || at_kw(toks, j + 1, "like") || at_kw(toks, j + 1, "between") {
+      negated = true
+      j = j + 1
+    }
+  }
+  if at_kw(toks, j, "like") {
+    case parse_add(toks, j + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return (R.ok, (Like.new(value: left, pattern: r[0], negated: negated), r[1])) }
+    }
+  }
+  if at_kw(toks, j, "between") {
+    case parse_add(toks, j + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, lo)     -> {
+        if !at_kw(toks, lo[1], "and") {
+          return (R.error, err(peek(toks, lo[1]).pos, "expected AND after the BETWEEN lower bound"))
+        }
+        case parse_add(toks, lo[1] + 1, depth) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, hi)     -> { return (R.ok, (Between.new(value: left, low: lo[0], high: hi[0], negated: negated), hi[1])) }
+        }
+      }
+    }
+  }
+  if at_kw(toks, j, "in") {
+    return parse_in_tail(toks, j + 1, left, negated, depth)
+  }
+  if negated {
+    return (R.error, err(peek(toks, i).pos, "expected IN, LIKE, or BETWEEN after NOT"))
+  }
+  if at_kw(toks, j, "is") {
+    var k = j + 1
+    var is_neg = false
+    if at_kw(toks, k, "not") {
+      is_neg = true
+      k = k + 1
+    }
+    if at_kw(toks, k, "null") {
+      return (R.ok, (IsTest.new(value: left, target: IsKind.is_null, negated: is_neg), k + 1))
+    }
+    if at_kw(toks, k, "true") {
+      return (R.ok, (IsTest.new(value: left, target: IsKind.is_true, negated: is_neg), k + 1))
+    }
+    if at_kw(toks, k, "false") {
+      return (R.ok, (IsTest.new(value: left, target: IsKind.is_false, negated: is_neg), k + 1))
+    }
+    return (R.error, err(peek(toks, k).pos, "expected NULL, TRUE, or FALSE after IS"))
+  }
+  const tk = peek(toks, j).kind
+  if tk == Tk.t_eq || tk == Tk.t_ne || tk == Tk.t_lt || tk == Tk.t_le || tk == Tk.t_gt || tk == Tk.t_ge {
+    case parse_add(toks, j + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return (R.ok, (Binary.new(op: binop_of(tk), left: left, right: r[0]), r[1])) }
+    }
+  }
+  return (R.ok, (left, i))
+}
+
+def binop_of(tk Tk) BinOp {
+  if tk == Tk.t_ne { return BinOp.ne }
+  if tk == Tk.t_lt { return BinOp.lt }
+  if tk == Tk.t_le { return BinOp.le }
+  if tk == Tk.t_gt { return BinOp.gt }
+  if tk == Tk.t_ge { return BinOp.ge }
+  return BinOp.eq
+}
+
+// `IN (` then either a subquery or a comma-separated expression list.
+// A subquery arrives as one Subquery choice — InTest always holds
+// plain expression choices.
+def parse_in_tail(toks Array[Tok], i Int64, left Expr, negated Bool, depth Int64) (R, (Expr, Int64)) {
+  case want_kind(toks, i, Tk.t_lparen, "`(` after IN") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, j)      -> {
+      if at_kind(toks, j, Tk.t_rparen) {
+        return (R.error, err(peek(toks, j).pos, "empty IN list"))
+      }
+      if at_kw(toks, j, "select") {
+        case parse_select(toks, j, depth + 1) {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, sr)     -> {
+            case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
+              (R.error, why) -> { return (R.error, why) }
+              (R.ok, k)      -> { return (R.ok, (InTest.new(value: left, choices: [Subquery.new(query: sr[0])], negated: negated), k)) }
+            }
+          }
+        }
+      }
+      case parse_expr_list(toks, j, depth + 1, []) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, lr)     -> {
+          case want_kind(toks, lr[1], Tk.t_rparen, "`)` after the IN list") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, k)      -> { return (R.ok, (InTest.new(value: left, choices: lr[0], negated: negated), k)) }
+          }
+        }
+      }
+    }
+  }
+}
+
+def parse_add(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  case parse_mul(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return parse_add_rest(toks, r[1], r[0], depth) }
+  }
+}
+
+def parse_add_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, Int64)) {
+  const tk = peek(toks, i).kind
+  if tk == Tk.t_plus || tk == Tk.t_minus || tk == Tk.t_concat {
+    case parse_mul(toks, i + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> {
+        const op = if tk == Tk.t_plus { BinOp.add } else { if tk == Tk.t_minus { BinOp.sub } else { BinOp.concat } }
+        return parse_add_rest(toks, r[1], Binary.new(op: op, left: acc, right: r[0]), depth)
+      }
+    }
+  }
+  return (R.ok, (acc, i))
+}
+
+def parse_mul(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  case parse_unary(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return parse_mul_rest(toks, r[1], r[0], depth) }
+  }
+}
+
+def parse_mul_rest(toks Array[Tok], i Int64, acc Expr, depth Int64) (R, (Expr, Int64)) {
+  const tk = peek(toks, i).kind
+  if tk == Tk.t_star || tk == Tk.t_slash || tk == Tk.t_percent {
+    case parse_unary(toks, i + 1, depth) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> {
+        const op = if tk == Tk.t_star { BinOp.mul } else { if tk == Tk.t_slash { BinOp.div } else { BinOp.mod } }
+        return parse_mul_rest(toks, r[1], Binary.new(op: op, left: acc, right: r[0]), depth)
+      }
+    }
+  }
+  return (R.ok, (acc, i))
+}
+
+def parse_unary(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  if at_kind(toks, i, Tk.t_minus) {
+    // A minus directly on a number literal folds the sign into the
+    // literal, so the exact minimum Int64 stays reachable.
+    if at_kind(toks, i + 1, Tk.t_number) {
+      const t = peek(toks, i + 1)
+      case number_value(t.text, t.pos, true) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, v)      -> { return (R.ok, (v, i + 2)) }
+      }
+    }
+    case parse_unary(toks, i + 1, depth + 1) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return (R.ok, (Unary.new(op: UnOp.neg, operand: r[0]), r[1])) }
+    }
+  }
+  if at_kind(toks, i, Tk.t_plus) {
+    case parse_unary(toks, i + 1, depth + 1) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> { return (R.ok, (Unary.new(op: UnOp.pos, operand: r[0]), r[1])) }
+    }
+  }
+  return parse_primary(toks, i, depth)
+}
+
+def parse_primary(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  if depth > 512 {
+    return (R.error, err(peek(toks, i).pos, "nesting deeper than 512"))
+  }
+  const t = peek(toks, i)
+  if t.kind == Tk.t_number {
+    case number_value(t.text, t.pos, false) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, v)      -> { return (R.ok, (v, i + 1)) }
+    }
+  }
+  if t.kind == Tk.t_string {
+    return (R.ok, (StrLit.new(value: t.text), i + 1))
+  }
+  if t.kind == Tk.t_param {
+    return param_value(t, i)
+  }
+  if t.kind == Tk.t_lparen {
+    if at_kw(toks, i + 1, "select") {
+      case parse_select(toks, i + 1, depth + 1) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, sr)     -> {
+          case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, j)      -> { return (R.ok, (Subquery.new(query: sr[0]), j)) }
+          }
+        }
+      }
+    }
+    case parse_expr(toks, i + 1, depth + 1) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, r)      -> {
+        case want_kind(toks, r[1], Tk.t_rparen, "`)` after the expression") {
+          (R.error, why) -> { return (R.error, why) }
+          (R.ok, j)      -> { return (R.ok, (Paren.new(inner: r[0]), j)) }
+        }
+      }
+    }
+  }
+  if t.kind == Tk.t_ident {
+    const word = ascii_lower(t.text)
+    if word == "null" {
+      return (R.ok, (NullLit.new(), i + 1))
+    }
+    if word == "true" {
+      return (R.ok, (BoolLit.new(value: true), i + 1))
+    }
+    if word == "false" {
+      return (R.ok, (BoolLit.new(value: false), i + 1))
+    }
+    if word == "case" {
+      return parse_case(toks, i, depth)
+    }
+    if word == "cast" {
+      return parse_cast(toks, i, depth)
+    }
+    if word == "exists" {
+      return parse_exists(toks, i, depth)
+    }
+    if is_reserved(word) {
+      return (R.error, err(t.pos, "expected an expression"))
+    }
+    return parse_column_or_call(toks, i, depth)
+  }
+  if t.kind == Tk.t_qident {
+    return parse_column_or_call(toks, i, depth)
+  }
+  return (R.error, err(t.pos, "expected an expression"))
+}
+
+// A name path: if it is one part and a parenthesis follows, a function
+// call; otherwise a column reference.
+def parse_column_or_call(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  case scan_name_path(toks, i) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, pr)     -> {
+      if pr[0].length() == 1 && at_kind(toks, pr[1], Tk.t_lparen) {
+        return parse_call_args(toks, pr[1], pr[0][0], depth)
+      }
+      return (R.ok, (Column.new(parts: pr[0]), pr[1]))
+    }
+  }
+}
+
+def scan_name_path(toks Array[Tok], i Int64) (R, (Array[String], Int64)) {
+  return scan_name_path_rest(toks, [peek(toks, i).text], i)
+}
+
+def scan_name_path_rest(toks Array[Tok], acc Array[String], i Int64) (R, (Array[String], Int64)) {
+  if at_kind(toks, i + 1, Tk.t_dot) {
+    if at_kind(toks, i + 2, Tk.t_ident) || at_kind(toks, i + 2, Tk.t_qident) {
+      return scan_name_path_rest(toks, acc.append(peek(toks, i + 2).text), i + 2)
+    }
+  }
+  return (R.ok, (acc, i + 1))
+}
+
+def parse_call_args(toks Array[Tok], i Int64, name String, depth Int64) (R, (Expr, Int64)) {
+  var distinct = false
+  var k = i + 1
+  if at_kw(toks, k, "distinct") {
+    distinct = true
+    k = k + 1
+  }
+  if at_kind(toks, k, Tk.t_star) {
+    if distinct {
+      return (R.error, err(peek(toks, k).pos, "DISTINCT does not take a `*` argument"))
+    }
+    case want_kind(toks, k + 1, Tk.t_rparen, "`)` after `*`") {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, j)      -> { return (R.ok, (FuncCall.new(name: name, star: true, distinct: false, args: []), j)) }
+    }
+  }
+  if at_kind(toks, k, Tk.t_rparen) {
+    case want_kind(toks, k, Tk.t_rparen, "`)`") {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, j)      -> { return (R.ok, (FuncCall.new(name: name, star: false, distinct: distinct, args: []), j)) }
+    }
+  }
+  case parse_expr_list(toks, k, depth + 1, []) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, lr)     -> {
+      case want_kind(toks, lr[1], Tk.t_rparen, "`)` after the argument list") {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, j)      -> { return (R.ok, (FuncCall.new(name: name, star: false, distinct: distinct, args: lr[0]), j)) }
+      }
+    }
+  }
+}
+
+def parse_expr_list(toks Array[Tok], i Int64, depth Int64, acc Array[Expr]) (R, (Array[Expr], Int64)) {
+  case parse_expr(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      if at_kind(toks, r[1], Tk.t_comma) {
+        return parse_expr_list(toks, r[1] + 1, depth, acc.append(r[0]))
+      }
+      return (R.ok, (acc.append(r[0]), r[1]))
+    }
+  }
+}
+
+def parse_case(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  case parse_case_operand(toks, i + 1, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, or_)    -> {
+      case parse_when_clauses(toks, or_[1], depth + 1, []) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, wr)     -> {
+          case parse_case_else(toks, wr[1], depth + 1) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, er)     -> {
+              if !at_kw(toks, er[1], "end") {
+                return (R.error, err(peek(toks, er[1]).pos, "expected END or ELSE in the CASE expression"))
+              }
+              return (R.ok, (CaseExpr.new(operand_e: or_[0], whens: wr[0], else_e: er[0]), er[1] + 1))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The optional CASE operand and ELSE value ride as 0-or-1 arrays.
+def parse_case_operand(toks Array[Tok], i Int64, depth Int64) (R, (Array[Expr], Int64)) {
+  if at_kw(toks, i, "when") {
+    return (R.ok, ([], i))
+  }
+  case parse_expr(toks, i, depth + 1) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return (R.ok, ([r[0]], r[1])) }
+  }
+}
+
+def parse_case_else(toks Array[Tok], i Int64, depth Int64) (R, (Array[Expr], Int64)) {
+  if !at_kw(toks, i, "else") {
+    return (R.ok, ([], i))
+  }
+  case parse_expr(toks, i + 1, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> { return (R.ok, ([r[0]], r[1])) }
+  }
+}
+
+def parse_when_clauses(toks Array[Tok], i Int64, depth Int64, acc Array[(Expr, Expr)]) (R, (Array[(Expr, Expr)], Int64)) {
+  if !at_kw(toks, i, "when") {
+    if acc.length() == 0 {
+      return (R.error, err(peek(toks, i).pos, "expected WHEN in the CASE expression"))
+    }
+    return (R.ok, (acc, i))
+  }
+  case parse_expr(toks, i + 1, depth + 1) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, cr)     -> {
+      if !at_kw(toks, cr[1], "then") {
+        return (R.error, err(peek(toks, cr[1]).pos, "expected THEN after the WHEN condition"))
+      }
+      case parse_expr(toks, cr[1] + 1, depth + 1) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, vr)     -> { return parse_when_clauses(toks, vr[1], depth, acc.append((cr[0], vr[0]))) }
+      }
+    }
+  }
+}
+
+def parse_cast(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  case want_kind(toks, i + 1, Tk.t_lparen, "`(` after CAST") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, j)      -> {
+      case parse_expr(toks, j, depth) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, r)      -> {
+          if !at_kw(toks, r[1], "as") {
+            return (R.error, err(peek(toks, r[1]).pos, "expected AS in the CAST expression"))
+          }
+          case parse_type_name(toks, r[1] + 1) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, tr)     -> {
+              case want_kind(toks, tr[1], Tk.t_rparen, "`)` after the CAST type") {
+                (R.error, why) -> { return (R.error, why) }
+                (R.ok, k)      -> { return (R.ok, (Cast.new(value: r[0], type_name: tr[0]), k)) }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// A type name: one identifier, optionally with a parenthesized
+// integer parameter list (`VARCHAR(255)`, `NUMERIC(10, 2)`). The
+// source spelling is kept.
+def parse_type_name(toks Array[Tok], i Int64) (R, (String, Int64)) {
+  const t = peek(toks, i)
+  if t.kind != Tk.t_ident && t.kind != Tk.t_qident {
+    return (R.error, err(t.pos, "expected a type name"))
+  }
+  if !at_kind(toks, i + 1, Tk.t_lparen) {
+    return (R.ok, (t.text, i + 1))
+  }
+  if !at_kind(toks, i + 2, Tk.t_number) || !all_digits(peek(toks, i + 2).text) {
+    return (R.error, err(peek(toks, i + 2).pos, "expected an integer type parameter"))
+  }
+  var s = t.text + "(" + peek(toks, i + 2).text
+  var j = i + 3
+  if at_kind(toks, j, Tk.t_comma) {
+    if !at_kind(toks, j + 1, Tk.t_number) || !all_digits(peek(toks, j + 1).text) {
+      return (R.error, err(peek(toks, j + 1).pos, "expected an integer type parameter"))
+    }
+    s = s + ", " + peek(toks, j + 1).text
+    j = j + 2
+  }
+  case want_kind(toks, j, Tk.t_rparen, "`)` after the type parameters") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, k)      -> { return (R.ok, (s + ")", k)) }
+  }
+}
+
+def all_digits(s String) Bool {
+  return all_digits_b(s.to_bytes(), 0)
+}
+
+def all_digits_b(data Bytes, i Int64) Bool {
+  if i >= data.length() {
+    return true
+  }
+  if !is_digit(data.get(i)) {
+    return false
+  }
+  return all_digits_b(data, i + 1)
+}
+
+def parse_exists(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
+  case want_kind(toks, i + 1, Tk.t_lparen, "`(` after EXISTS") {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, j)      -> {
+      if !at_kw(toks, j, "select") {
+        return (R.error, err(peek(toks, j).pos, "expected a subquery after EXISTS"))
+      }
+      case parse_select(toks, j, depth + 1) {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, sr)     -> {
+          case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, k)      -> { return (R.ok, (Exists.new(query: sr[0]), k)) }
+          }
+        }
+      }
+    }
+  }
+}
+
+def parse_order_list(toks Array[Tok], i Int64, depth Int64, acc Array[OrderItem]) (R, (Array[OrderItem], Int64)) {
+  case parse_expr(toks, i, depth) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, r)      -> {
+      var dir = SortDir.asc
+      var j = r[1]
+      if at_kw(toks, j, "asc") {
+        dir = SortDir.asc
+        j = j + 1
+      }
+      if at_kw(toks, j, "desc") {
+        dir = SortDir.desc
+        j = j + 1
+      }
+      const item = OrderItem.new(expr: r[0], dir: dir)
+      if at_kind(toks, j, Tk.t_comma) {
+        return parse_order_list(toks, j + 1, depth, acc.append(item))
+      }
+      return (R.ok, (acc.append(item), j))
+    }
+  }
+}
+
+// ---- number and parameter values ----
+
+// Values a number token: an integer literal when it has no dot and no
+// exponent, else a float rounded once to nearest with ties to even —
+// the same answer strtod gives. Out-of-range refuses. `neg` folds a
+// leading minus sign in, which lets the exact minimum Int64 through.
+def number_value(text String, base Int64, neg Bool) (R, Expr) {
+  const data = text.to_bytes()
+  const ie = scan_digits(data, 0)
+  var fe = ie
+  var has_dot = false
+  if ie < data.length() && data.get(ie) == 46 {
+    has_dot = true
+    fe = scan_digits(data, ie + 1)
+  }
+  var exp_val = 0
+  var has_exp = false
+  if fe < data.length() && (data.get(fe) == 101 || data.get(fe) == 69) {
+    has_exp = true
+    var j = fe + 1
+    var sign = 1
+    if j < data.length() && data.get(j) == 43 {
+      j = j + 1
+    } else {
+      if j < data.length() && data.get(j) == 45 {
+        sign = -1
+        j = j + 1
+      }
+    }
+    const ea = take_exp(data, j, 0)
+    exp_val = sign * ea[0]
+  }
+  if !has_dot && !has_exp {
+    case acc_digits(data, 0, ie, base, 0, neg) {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, n)      -> { return (R.ok, IntLit.new(value: if neg { 0 - n } else { n })) }
+    }
+  }
+  const int_len = ie
+  const frac_len = if has_dot { fe - ie - 1 } else { 0 }
+  const nd = int_len + frac_len
+  const digits = Bytes.new(nd)
+  copy_range(data, digits, 0, 0, int_len)
+  if has_dot {
+    copy_range(data, digits, ie + 1, int_len, frac_len)
+  }
+  const bits = fpmath.parse_exact(neg, digits, nd, int_len + exp_val)
+  if !fpmath.finite_bits(bits) {
+    return (R.error, err(base, "number out of range"))
+  }
+  return (R.ok, FloatLit.new(value: Float64.from_bits(bits)))
+}
+
+def take_exp(data Bytes, i Int64, acc Int64) (Int64, Int64) {
+  if i >= data.length() {
+    return (acc, i)
+  }
+  const b = data.get(i)
+  if b < 48 || b > 57 {
+    return (acc, i)
+  }
+  return take_exp(data, i + 1, clamp_exp(acc * 10 + (b - 48)))
+}
+
+def clamp_exp(a Int64) Int64 {
+  if a > 100000 {
+    return 100000
+  }
+  return a
+}
+
+// Accumulates the digits in [i, end_) into an Int64. With `neg` the
+// magnitude 9223372036854775808 is allowed — the folded-minimum case.
+def acc_digits(data Bytes, i Int64, end_ Int64, base Int64, acc Int64, neg Bool) (R, Int64) {
+  if i >= end_ {
+    return (R.ok, acc)
+  }
+  const d = data.get(i) - 48
+  if acc > 922337203685477580 {
+    return (R.error, err(base + i, "integer out of range"))
+  }
+  if acc == 922337203685477580 {
+    if neg {
+      if d > 8 {
+        return (R.error, err(base + i, "integer out of range"))
+      }
+    } else {
+      if d > 7 {
+        return (R.error, err(base + i, "integer out of range"))
+      }
+    }
+  }
+  return acc_digits(data, i + 1, end_, base, acc * 10 + d, neg)
+}
+
+// `?` is the one unnamed parameter and `?NNN` counts from 1, so `?0`
+// and `?00` refuse: index 0 is the bare `?`'s marker, and reading the
+// spelled-out zero as a second way to write it would drop the digits
+// the writer wrote.
+def param_value(t Tok, i Int64) (R, (Expr, Int64)) {
+  const data = t.text.to_bytes()
+  if data.length() == 1 {
+    return (R.ok, (Param.new(index: 0), i + 1))
+  }
+  case acc_digits(data, 1, data.length(), t.pos, 0, false) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, n)      -> {
+      if n == 0 {
+        return (R.error, err(t.pos, "parameter index must be at least 1"))
+      }
+      return (R.ok, (Param.new(index: n), i + 1))
+    }
+  }
+}
+
+// ---- token helpers ----
+
+def peek(toks Array[Tok], i Int64) Tok {
+  if i >= toks.length() {
+    return toks[toks.length() - 1]
+  }
+  return toks[i]
+}
+
+def at_kind(toks Array[Tok], i Int64, kind Tk) Bool {
+  return peek(toks, i).kind == kind
+}
+
+def at_kw(toks Array[Tok], i Int64, word String) Bool {
+  const t = peek(toks, i)
+  return t.kind == Tk.t_ident && ascii_lower(t.text) == word
+}
+
+def want_kind(toks Array[Tok], i Int64, kind Tk, what String) (R, Int64) {
+  if at_kind(toks, i, kind) {
+    return (R.ok, i + 1)
+  }
+  return (R.error, err(peek(toks, i).pos, "expected " + what))
+}

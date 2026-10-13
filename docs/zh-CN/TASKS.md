@@ -24,7 +24,7 @@
 | M4 — 编译目标 | 14–19 | 通过 `emo build` 生成原生代码;随后是 wasm / TypeScript / BEAM / riscv64。 |
 | M5 — Wasm 运行时 | 20–22 | 用 Emo 编写的 WebAssembly 运行时:共享系统层,随后是二进制解码器/验证器,再是解释器与 spec 套件金测。 |
 | M6 — 自包含托管后端 | 23 | `emo build --target c` 发射 C、自带运行时、直接 C ABI——hosted-native-FFI 评估已排期;解锁自包含工具分发(CHECK.md)。 |
-| M7 — 工具链 | 24 | 工具链发布(以 v0.25.9 剪出):GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
+| M7 — 工具链 | 24 | 工具链发布:GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
 | M8 — Target 独立 | 25 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |
 | M9 — For / While 循环 | 26–27 | 已定案的循环面在解释器与全部六个 target 上逐字节运行:`for`(三子句,头部 `var` 作用域限定在循环)与 `while`,搭配裸 `break`/`continue`;循环在任何栈上都不增长;尾调用保证不变。 |
 | M10 — 错误处理 | 28–30 | Erlang 式分界落地:预期内的失败返回 `(R.ok, value)` / `(R.error, reason)`,用 `case` 匹配或用绑定模式断言绑定;违例抛出唯一的 `Exception` 类;stdlib 的 raise 点逐包迁移到新约定——所有 target 逐字节一致,`R` 一并抵达 freestanding 层。 |
@@ -47,7 +47,7 @@
 | 动态世界的回收模型(无追踪 GC) | T23.5 | 已落定——身份对象用引用计数、值语义数据走 arena(`CHECK.md`,T23.5 落定) |
 | `emo build` 默认 target | T24.1 | 由 `ocaml` 翻转为 `c`:分发的二进制不携带 OCaml 工具链;`ocaml` target 保留给源码构建安装 |
 | 标准库:内嵌 vs 旁挂目录 | T24.2 | 内嵌为编译器内的生成数据(C 运行时的同一机制);`EMO_REGISTRY` 覆盖保留 |
-| `emo install` 语义 | T24.4 | resolve/fetch/lock 之上的项目依赖前端;全局可执行文件安装不进 1.0 范围 |
+| `emo install` 语义 | T24.4 | `emo install` 是 `emo deps` 的 resolve/fetch/lock 之上的项目依赖前端;全局可执行文件安装不进 1.0 范围 |
 | 运行时独立原则 | T25.1 | target 的运行时用 target 的语言写,以生成数据随编译器内嵌;宿主只贡献发射器 |
 | ocaml 运行时的依赖策略 | T25.4 | 核心用 OCaml 标准库加 `unix`;`ssl` 是唯一的 opam 依赖,缺失时以清晰消息拒绝;不用 eio |
 
@@ -409,7 +409,7 @@
 
 ## M7 — 工具链
 
-自包含故事的最后一公里,也是工具链发布——以 v0.25.9 剪出,正式的 1.0 随后。M6 把 OCaml 工具链从*程序*里移除了;M7 把安装负担从*工具*身上移除——`CHECK.md` 中"发布工具链本身未排期"的部分就此排期,按已定的方向(`docs/toolchain-distribution.md` 是设计记录):GitHub Releases 上的按平台预编译二进制为主渠道,`opam` 与 Homebrew formula 作为源码构建渠道,并补齐产品所需的命令集——`emo new`、`emo install`、`emo doctor` 加入 `run`/`repl`/`check`/`build`/`deps`/`publish`——让一台只有二进制的机器就能运行、检查、构建(经 `c` target)、安装依赖、发布包。
+自包含故事的最后一公里,也是工具链发布——正式的 1.0 随后。M6 把 OCaml 工具链从*程序*里移除了;M7 把安装负担从*工具*身上移除——`CHECK.md` 中"发布工具链本身未排期"的部分就此排期,按已定的方向(`docs/toolchain-distribution.md` 是设计记录):GitHub Releases 上的按平台预编译二进制为主渠道,`opam` 与 Homebrew formula 作为源码构建渠道,并补齐产品所需的命令集——`emo new`、`emo install`、`emo doctor` 加入 `run`/`repl`/`check`/`build`/`deps`/`publish`——让一台只有二进制的机器就能运行、检查、构建(经 `c` target)、安装依赖、发布包。
 
 边界,明说:公共 registry *服务*是另一个里程碑——工具随包发布时只讲文件系统 registry 加内置标准库(`publish` 已经讲 HTTP;HTTP 拉取与它对话的服务一起落地);原生 Windows 不在本次发布内——WSL2 是受支持的 Windows 路径,C 运行时的 ucontext/socket 移植是记录在案的阻塞点(Microsoft Trusted Signing 仍是它落地时的既定签名路线);c 后端的记录在案的后续工作(retain/release 发射、零拷贝缓冲区 rung、跨模块类型传播)属于后端线,不随本里程碑。
 
@@ -426,9 +426,9 @@
 - [x] **T24.6** — 发布打包与 CI:现有 CI 旁的 tag 触发工作流——按平台矩阵构建(Linux x86_64/aarch64、macOS x86_64/arm64),经 dune 产出发布二进制,T24.1 落定的归档布局、`SHA256SUMS`、GitHub Release 草稿。Linux 二进制可移植——静态或最旧的可用 glibc——在干净容器中验证,而非构建机上。 (2026-10-07 完成:package-release.sh 本机端到端验证;矩阵 = linux x86_64/aarch64(ubuntu-22.04,glibc 2.35)+ macOS x86_64/arm64,打包前先跑测试套件,Linux 在干净 ubuntu:22.04 容器中验证。)
 - [x] **T24.7** — 签名与平台闸门:macOS codesign(hardened runtime)→ notarytool → staple,凭据在 CI secrets——`CHECK.md` 中"已解决、非阻塞"的一项就此排期。Windows:WSL2 记录为受支持路径,原生预编译记录为推迟,ucontext/socket 移植点名为阻塞;`docs/toolchain-distribution.md` 同步更新(双语)。 (2026-10-07 完成:四个密钥把 codesign → notarytool → staple 设为条件路径;密钥缺席以未签名发布并出 notice;分发文档双语更新。)
 - [x] **T24.8** — 供给渠道与安装文档:Homebrew formula(先自有 tap;项目够格后进 core)与 opam 包——带来 `ocaml` target 的源码渠道。README 安装章节双语更新:预编译归档优先,其后 brew、opam、WSL2。 (2026-10-07 完成:公式在 devtools/homebrew/emo.rb 供自有 tap 使用,校验和发布时填写;dune-project 生成 emo.opam(stanza 无 dev_repo 字段——弃之);README 安装章节双语落地。)
-- [x] **T24.9** — 发布验收与剪出:对每个已发布制品端到端——下载、解包、`emo doctor`、`emo new`、`emo run`、`emo install`、`emo build`(`c` target)——包括一个带标准库导入的程序与从安装后的二进制执行的金测子集。发布 commit 携带发布的 VERSION;annotated tag、发布说明、收尾。 (2026-10-07 完成:验收对着打包并解压的归档执行(构建时 VERSION 读作 v1.0.0;打 tag 前重剪为 v0.25.9)——doctor 以预编译形态全绿;new → run → build 全通;install 经内嵌标准库解析;金测 14/14 出自安装后的二进制(13 个经 emo run 逐字节,numerics 走其设计的编译路径——它跨 foreign def,emo run 按设计拒绝;http_roundtrip/tcp_echo 依托树内套件)。VERSION 以 v0.25.9 发布。)
+- [x] **T24.9** — 发布验收与剪出:对每个已发布制品端到端——下载、解包、`emo doctor`、`emo new`、`emo run`、`emo install`、`emo build`(`c` target)——包括一个带标准库导入的程序与从安装后的二进制执行的金测子集。发布 commit 携带发布的 VERSION;annotated tag、发布说明、收尾。 (2026-10-07 完成:验收对着打包并解压的归档执行——doctor 以预编译形态全绿;new → run → build 全通;install 经内嵌标准库解析;金测 14/14 出自安装后的二进制(13 个经 emo run 逐字节,numerics 走其设计的编译路径——它跨 foreign def,emo run 按设计拒绝;http_roundtrip/tcp_echo 依托树内套件)。)
 
-收尾:2026-10-07 记于 `plan/step-24-toolchain.md`——验收对着打包制品而非构建树执行;默认 target 翻转把每条默认路径移到 `c`(并暴露出内容哈希缓存原本只在 ocaml 分支实现),内嵌的 dune 规则需要 `-type f -o -type l`(macOS 沙箱把 source_tree 依赖物化为符号链接),归档不带安装脚本发布。**步骤 24 验收达成。** M7 完成:工具链发布是 v0.25.9——正式的 1.0 随后。
+收尾:2026-10-07 记于 `plan/step-24-toolchain.md`——验收对着打包制品而非构建树执行;默认 target 翻转把每条默认路径移到 `c`(并暴露出内容哈希缓存原本只在 ocaml 分支实现),内嵌的 dune 规则需要 `-type f -o -type l`(macOS 沙箱把 source_tree 依赖物化为符号链接),归档不带安装脚本发布。**步骤 24 验收达成。** M7 完成:工具链发布随正式的 1.0 一起。
 
 ## M8 — Target 独立
 
@@ -522,7 +522,7 @@ Step 26 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 
 ## M11 — 标准库
 
-随编译器交付的 stdlib 自成里程碑:每个步骤一个包,各自带上 API 参考与可运行金测。步骤从 `json`(32)排到 `bufio`(38),最后是原生绑定包 `sqlite3`(39)。
+随编译器交付的 stdlib 自成里程碑:每个步骤一个包,各自带上 API 参考与可运行金测。步骤从 `json`(31)排到 `bufio`(37),其后是原生绑定包 `sqlite3`(38)与 SQL parser `sql`。
 
 ### Step 31 — 标准库:`json` · `plan/step-31-stdlib-json.md`
 

@@ -1,0 +1,83 @@
+require "sql"
+
+// The sql package end to end: parse statements, read the AST through
+// the interfaces, and render every tree back to canonical SQL. Every
+// target must print this file's expected.txt byte for byte — the
+// package is pure Emo over the shared runtimes.
+
+// ---- the shape the package is named for ----
+const (R.ok, q1) = sql.parse("SELECT * FROM users")
+println(q1.to_string())
+
+// ---- a full SELECT through every clause ----
+const text = "SELECT DISTINCT u.name AS username, count(*) AS n, max(o.total) FROM main.users u LEFT JOIN orders o ON o.user_id = u.id WHERE u.active = TRUE AND o.total >= 100 GROUP BY u.name HAVING count(*) > 1 ORDER BY n DESC, username ASC LIMIT 20 OFFSET 40"
+const (R.ok, q2) = sql.parse(text)
+println(q2.to_string())
+
+// ---- reading the tree ----
+if q2.is(Select) {
+  println(q2.columns.length())
+  println(q2.from_t.length())
+  println(q2.where_e.length())
+  println(q2.group_by.length())
+  println(q2.order_by.length())
+  println(q2.limit_e.length())
+  println(q2.offset_e.length())
+  const first = q2.columns[0]
+  if first.is(SelExpr) {
+    println(first.alias_e[0])
+  }
+  const src = q2.from_t[0]
+  if src.is(TblJoin) {
+    println(src.jtype == JoinKind.left)
+    println(src.on_e.length())
+  }
+}
+
+// ---- expressions ----
+const (R.ok, e1) = sql.parse("SELECT 1 + 2 * 3, (1 + 2) * 3, -x, NOT flag, a || ' ' || b FROM t")
+println(e1.to_string())
+
+const (R.ok, e2) = sql.parse("SELECT CASE WHEN score >= 90 THEN 'A' WHEN score >= 60 THEN 'B' ELSE 'F' END, CASE kind WHEN 1 THEN 'one' ELSE 'other' END FROM grades")
+println(e2.to_string())
+
+const (R.ok, e3) = sql.parse("SELECT CAST(price AS VARCHAR(255)), CAST(n AS NUMERIC(10, 2)) FROM products")
+println(e3.to_string())
+
+const (R.ok, e4) = sql.parse("SELECT * FROM t WHERE x IN (1, 2, 3) AND y NOT IN (SELECT y FROM excluded) AND z BETWEEN 10 AND 20 AND name LIKE 'a%' AND code NOT LIKE 'x_' AND deleted IS NULL AND flagged IS NOT FALSE")
+println(e4.to_string())
+
+const (R.ok, e5) = sql.parse("SELECT ? , ?1, ?42 FROM t WHERE id = ? AND qty > ?2")
+println(e5.to_string())
+
+const (R.ok, e6) = sql.parse("SELECT EXISTS (SELECT 1 FROM t WHERE t.id = s.id), (SELECT max(v) FROM t) FROM s")
+println(e6.to_string())
+
+const (R.ok, e7) = sql.parse("SELECT 2.5, .5, 12., 1e3, 1.5e-3, 9223372036854775807, -9223372036854775808 FROM nums")
+println(e7.to_string())
+
+// ---- strings: the '' escape rides through ----
+const (R.ok, e8) = sql.parse("SELECT 'it''s' FROM t")
+println(e8.to_string())
+
+// ---- quoted identifiers ----
+const (R.ok, e9) = sql.parse("SELECT \"weird name\", t.\"odd col\" FROM \"my table\" t")
+println(e9.to_string())
+
+// ---- subquery in the FROM list, comments ride through ----
+const (R.ok, e10) = sql.parse("SELECT a.city, a.n FROM (SELECT city, count(*) AS n FROM users GROUP BY city) a -- the per-city counts\nWHERE a.n > 5 /* trailing */")
+println(e10.to_string())
+
+// ---- CROSS and NATURAL joins ----
+const (R.ok, e11) = sql.parse("SELECT * FROM a CROSS JOIN b, c NATURAL JOIN d")
+println(e11.to_string())
+
+// ---- a malformed statement is a value, not a crash ----
+case sql.parse("SELECT FROM") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected") }
+}
+case sql.parse("SELECT * FROM t WHERE a = ") {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("unexpected") }
+}

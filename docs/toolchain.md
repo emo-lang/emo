@@ -65,7 +65,7 @@ otherwise resolve from inside the staging directory and fail.
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) — why
   the distribution has this shape (the design record).
 - [`plan/step-24-toolchain.md`](../plan/step-24-toolchain.md) — the
-  step that built it (M7 — Toolchain, released as v0.25.9).
+  step that built it (M7 — Toolchain).
 - [`plan/step-25-target-independence.md`](../plan/step-25-target-independence.md)
   — the step that freed the targets from the installation shape (M8 —
   Target independence).

@@ -7,8 +7,8 @@ schedules), `CHECK.md` ("Binary / CLI tool distribution mechanism" —
 the direction is settled there; "release tooling itself is
 unscheduled" is what this step changes), `plan/step-23-c-target.md`
 (the backend being distributed) · **Status:** done (2026-10-07 — close-out recorded below; the
-milestone was written against v1.0.0, and the toolchain release was
-cut as v0.25.9 before tagging — the official 1.0 follows)
+milestone was written against v1.0.0, and the toolchain release
+accompanies the official 1.0)
 
 ## Why this step exists
 
@@ -145,8 +145,7 @@ All four close in `CHECK.md` at T24.1:
       subset executed from the installed binary. VERSION becomes
       1.0.0 in the release commit; annotated tag, release notes,
       close-out.
- (Done 2026-10-07: from the packaged-and-unpacked v1.0.0 archive — doctor healthy in the prebuilt shape, `emo new` → run → build green, `emo install` resolving through the embedded stdlib, and the golden subset 14/14 from the installed binary: 13 via `emo run` byte-for-byte, numerics through its designed compiled path (it crosses `foreign def`, which `emo run` refuses by design); http_roundtrip and tcp_echo ride the in-tree suite, needing live network clients. the release first carried VERSION v1.0.0 and was re-cut v0.25.9
-before tagging.)
+ (Done 2026-10-07: from the packaged-and-unpacked archive — doctor healthy in the prebuilt shape, `emo new` → run → build green, `emo install` resolving through the embedded stdlib, and the golden subset 14/14 from the installed binary: 13 via `emo run` byte-for-byte, numerics through its designed compiled path (it crosses `foreign def`, which `emo run` refuses by design); http_roundtrip and tcp_echo ride the in-tree suite, needing live network clients.)
 ## Acceptance
 
 Met 2026-10-07, with the signing path wired but unsigned until the
@@ -174,7 +173,7 @@ repository secrets exist (the workflow notices):
 - ~~Default build target~~ — settled at T24.1: `c`.
 - ~~Stdlib embed vs sidecar~~ — settled at T24.1: embed.
 - ~~`emo install` semantics~~ — settled at T24.1: the project
-  front end; global executable installation out of scope for 1.0.
+  frontend; global executable installation out of scope for 1.0.
 - ~~Whether a pinned, checksummed install script rides T24.8~~ —
   settled at close-out: the archives alone ship. The install-script
   question returns with the registry service milestone, which is

@@ -387,6 +387,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Call (rt "neg"))
   | Unary (Ast.Not, operand) ->
       expr env operand;
+      e env (W.Ref_cast t_vbool);
       e env (W.Struct_get (t_vbool, 0));
       e env W.I32_eqz;
       e env (W.Struct_new t_vbool)

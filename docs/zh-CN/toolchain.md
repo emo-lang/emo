@@ -57,7 +57,7 @@ release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`,带 runtim
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) ——
   分发为何是这个形状(设计记录)。
 - [`plan/step-24-toolchain.md`](../../plan/step-24-toolchain.md) ——
-  构建它的步骤(M7 — 工具链,以 v0.25.9 发布)。
+  构建它的步骤(M7 — 工具链)。
 - [`plan/step-25-target-independence.md`](../../plan/step-25-target-independence.md)
   —— 把各 target 从安装形态中解放出来的步骤(M8 — Target
   independence)。
