@@ -1,0 +1,60 @@
+empty -> 0x
+one-empty -> 1x[];
+trailing-lf -> 1x[a][b];
+no-trailing -> 1x[a][b];
+blank-line -> 2x[a];[];
+blank-mid -> 3x[a];[];[b];
+crlf -> 2x[a];[b];
+lone-cr -> 2x[a];[b];
+crlf-only -> 1x[];
+empty-fields -> 1x[][][];
+spaces -> 1x[ a ][ b ];
+ragged -> 3x[a][b][c];[d];[e][f];
+quoted-empty -> 1x[][x];
+quoted-comma -> 1x[a,b][c];
+quoted-lf -> 1x[a\nb];
+quoted-crlf -> 1x[a\r\nb];
+quoted-quote -> 1x[a"b];
+quoted-only-quote -> 1x["];
+quoted-cr -> 1x[a\rb];
+e-unterminated !! csv: unterminated quoted field at byte 0
+e-unterminated-empty !! csv: unterminated quoted field at byte 0
+e-bare-quote !! csv: unexpected quote in an unquoted field at byte 2
+e-tail !! csv: stray text after a closing quote at byte 3
+e-quote-then-text !! csv: stray text after a closing quote at byte 3
+e-quote-then-quote !! csv: unterminated quoted field at byte 0
+u-2byte -> 1x[é];
+u-3byte-a -> 1x[李];
+u-3byte-b -> 1x[雷];
+u-4byte -> 1x[😀];
+u-mixed -> 1x[a][王晓明][naïve][😀];
+v-min-2 -> 2
+v-min-3 -> 3
+v-max-before-surrogate -> 3
+v-min-after-surrogate -> 3
+v-min-4 -> 4
+v-max-4 -> 4
+i-continuation !! csv: invalid UTF-8 sequence at byte 0
+i-c0-overlong !! csv: invalid UTF-8 sequence at byte 0
+i-c1-overlong !! csv: invalid UTF-8 sequence at byte 0
+i-e0-overlong !! csv: invalid UTF-8 sequence at byte 0
+i-ed-surrogate !! csv: invalid UTF-8 sequence at byte 0
+i-f0-overlong !! csv: invalid UTF-8 sequence at byte 0
+i-f4-too-big !! csv: invalid UTF-8 sequence at byte 0
+i-f5 !! csv: invalid UTF-8 sequence at byte 0
+i-ff !! csv: invalid UTF-8 sequence at byte 0
+i-truncated-2 !! csv: invalid UTF-8 sequence at byte 0
+i-truncated-3 !! csv: invalid UTF-8 sequence at byte 0
+i-truncated-4 !! csv: invalid UTF-8 sequence at byte 0
+i-bad-in-field !! csv: invalid UTF-8 sequence at byte 2
+bom -> 1x[a][b];
+bom-only -> 0x
+bom-mid -> 1
+enc-empty:
+enc-one-empty:\r\n
+enc-matrix:a,\"a,b\",\"\"\"\",\"a\"\"b\",\"a\nb\",\"a\rb\",\"\r\n\", a ,,\",\"\r\n
+enc-round-trip:true
+enc-tsv:a\ta,b\t\"\"\"\"\t\"a\"\"b\"\t\"a\nb\"\t\"a\rb\"\t\"\r\n\"\t a \t\t,\r\n
+enc-semicolon:\"a;b\";c\r\n
+tsv -> 1x[a][b\tc][d];
+semicolon -> 1x[a][b;c][d];

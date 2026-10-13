@@ -1,0 +1,30 @@
+records: 4
+name | city | note
+Smith, John | 上海 | line1
+line2
+O'Brien | 北京 | say "hi"
+Ng | 广州 | 
+fields: 3
+a,b | c
+d | e"f
+records: 4
+a
+b
+c
+d
+records: 2
+x
+
+encoded bytes: 45
+round trip: true
+id | name
+1 | Smith, John
+2 | 李雷 😀
+3 | 
+records: 2
+a | b | c
+x	y | z | 
+encoded bytes: 17
+csv: unterminated quoted field at byte 0
+csv: unexpected quote in an unquoted field at byte 4
+csv: stray text after a closing quote at byte 8

@@ -1,0 +1,76 @@
+require "csv"
+
+// The csv package end to end: decode a UTF-8 table that uses the full
+// RFC 4180 quoting, read it as records, encode it back, and round-trip
+// the record endings and a second delimiter. Every target must print
+// this file's expected.txt byte for byte — the package is pure Emo over
+// the shared runtimes.
+
+// One line per record, fields separated by " | ".
+def dump(rows Array[Array[String]]) {
+  var i = 0
+  while i < rows.length() {
+    var line = ""
+    var j = 0
+    while j < rows[i].length() {
+      if j > 0 {
+        line = line + " | "
+      }
+      line = line + rows[i][j]
+      j = j + 1
+    }
+    println(line)
+    i = i + 1
+  }
+}
+
+// ---- decode ----
+
+// A header and three data rows: a quoted comma, an embedded line
+// break, an escaped quote, an emoji, and a trailing empty field.
+const text = "name,city,note\r\n\"Smith, John\",上海,\"line1\nline2\"\r\nO'Brien,北京,\"say \"\"hi\"\"\"\r\nNg,广州,"
+const (R.ok, rows) = csv.decode(text)
+println("records: " + rows.length().to_string())
+dump(rows)
+
+// A quoted field may hold the delimiter, a line break, and a quote.
+const (R.ok, quoted) = csv.decode("\"a,b\",\"c\nd\",\"e\"\"f\"")
+println("fields: " + quoted[0].length().to_string())
+dump(quoted)
+
+// CRLF, LF, and a lone CR all end a record; a final one does not open
+// an empty record, and a blank line is a record of one empty field.
+const (R.ok, endings) = csv.decode("a\r\nb\nc\rd\n")
+println("records: " + endings.length().to_string())
+dump(endings)
+const (R.ok, blank) = csv.decode("x\n\n")
+println("records: " + blank.length().to_string())
+dump(blank)
+
+// ---- encode ----
+
+const built = [["id", "name"], ["1", "Smith, John"], ["2", "李雷 😀"], ["3", ""]]
+const encoded = csv.encode(built)
+println("encoded bytes: " + encoded.to_bytes().length().to_string())
+
+// encode quotes exactly the fields that need it, so decode reads the
+// table back unchanged.
+const (R.ok, back) = csv.decode(encoded)
+println("round trip: " + (back == built).to_string())
+dump(back)
+
+// ---- a second delimiter ----
+
+const (R.ok, tsv) = csv.decode_delimited("a\tb\tc\r\n\"x\ty\"\tz\t\r\n", "\t")
+println("records: " + tsv.length().to_string())
+dump(tsv)
+println("encoded bytes: " + csv.encode_delimited(tsv, "\t").to_bytes().length().to_string())
+
+// ---- decode failures are values ----
+
+const (R.error, why) = csv.decode("\"unterminated")
+println(why)
+const (R.error, why) = csv.decode("bare\"quote")
+println(why)
+const (R.error, why) = csv.decode("\"closed\"tail")
+println(why)

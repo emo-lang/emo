@@ -1,0 +1,197 @@
+require "csv"
+
+// The csv package's edge matrix: every record shape, every malformed
+// quoting shape, the UTF-8 boundary bytes on both sides of valid and
+// invalid, the BOM, and the encoder's quoting rule. Decode failures are
+// values — the reason carries the byte offset — so the whole matrix
+// prints and every target must match expected.txt byte for byte.
+
+// ---- helpers ----
+
+def bytes_of(vals Array[Int64]) Bytes {
+  const b = Bytes.new(vals.length())
+  var i = 0
+  while i < vals.length() {
+    b.set(i, vals[i])
+    i = i + 1
+  }
+  return b
+}
+
+def show(label String, r (R, Array[Array[String]])) {
+  case r {
+    (R.ok, rows) -> { println(label + " -> " + render(rows)) }
+    (R.error, why) -> { println(label + " !! " + why) }
+  }
+}
+
+// The first field's byte length — for boundary bytes that are valid
+// UTF-8 but invisible.
+def show_len(label String, r (R, Array[Array[String]])) {
+  case r {
+    (R.ok, rows) -> { println(label + " -> " + rows[0][0].to_bytes().length().to_string()) }
+    (R.error, why) -> { println(label + " !! " + why) }
+  }
+}
+
+// CR, LF, tab, quote, and every byte outside printable ASCII made
+// visible, so an encoded document fits on one line.
+def visible(s String) String {
+  const b = s.to_bytes()
+  var out = ""
+  var i = 0
+  while i < b.length() {
+    const c = b.get(i)
+    if c == 13 {
+      out = out + "\\r"
+    } else {
+      if c == 10 {
+        out = out + "\\n"
+      } else {
+        if c == 9 {
+          out = out + "\\t"
+        } else {
+          if c == 34 {
+            out = out + "\\\""
+          } else {
+            if c < 32 || c > 126 {
+              out = out + "?"
+            } else {
+              out = out + byte_char(c)
+            }
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  return out
+}
+
+def byte_char(c Int64) String {
+  const b = Bytes.new(1)
+  b.set(0, c)
+  return b.to_string()
+}
+
+def has_control(b Bytes, i Int64, n Int64) Bool {
+  if i >= n {
+    return false
+  }
+  const c = b.get(i)
+  if c == 13 || c == 10 || c == 9 {
+    return true
+  }
+  return has_control(b, i + 1, n)
+}
+
+def render_field(f String) String {
+  const b = f.to_bytes()
+  if has_control(b, 0, b.length()) {
+    return visible(f)
+  }
+  return f
+}
+
+// Records as `Nx[field][field];…` — one line, no ambiguity. A field
+// holding CR, LF, or tab is escaped; every other field prints as the
+// UTF-8 it is.
+def render(rows Array[Array[String]]) String {
+  var s = rows.length().to_string() + "x"
+  var i = 0
+  while i < rows.length() {
+    var j = 0
+    while j < rows[i].length() {
+      s = s + "[" + render_field(rows[i][j]) + "]"
+      j = j + 1
+    }
+    s = s + ";"
+    i = i + 1
+  }
+  return s
+}
+
+// ---- record shapes ----
+
+show("empty", csv.decode(""))
+show("one-empty", csv.decode("\n"))
+show("trailing-lf", csv.decode("a,b\n"))
+show("no-trailing", csv.decode("a,b"))
+show("blank-line", csv.decode("a\n\n"))
+show("blank-mid", csv.decode("a\n\nb"))
+show("crlf", csv.decode("a\r\nb"))
+show("lone-cr", csv.decode("a\rb"))
+show("crlf-only", csv.decode("\r\n"))
+show("empty-fields", csv.decode(",,"))
+show("spaces", csv.decode(" a , b "))
+show("ragged", csv.decode("a,b,c\nd\ne,f"))
+
+// ---- quoted fields ----
+
+show("quoted-empty", csv.decode("\"\",x"))
+show("quoted-comma", csv.decode("\"a,b\",c"))
+show("quoted-lf", csv.decode("\"a\nb\""))
+show("quoted-crlf", csv.decode("\"a\r\nb\""))
+show("quoted-quote", csv.decode("\"a\"\"b\""))
+show("quoted-only-quote", csv.decode("\"\"\"\""))
+show("quoted-cr", csv.decode("\"a\rb\""))
+
+// ---- malformed shapes ----
+
+show("e-unterminated", csv.decode("\"abc"))
+show("e-unterminated-empty", csv.decode("\""))
+show("e-bare-quote", csv.decode("ab\"c"))
+show("e-tail", csv.decode("\"a\"b"))
+show("e-quote-then-text", csv.decode("\"a\" x"))
+show("e-quote-then-quote", csv.decode("\"a\"\""))
+
+// ---- UTF-8 ----
+
+show("u-2byte", csv.decode("é"))
+show("u-3byte-a", csv.decode("李"))
+show("u-3byte-b", csv.decode("雷"))
+show("u-4byte", csv.decode("😀"))
+show("u-mixed", csv.decode("a,王晓明,naïve,😀"))
+
+show_len("v-min-2", csv.decode(bytes_of([194, 128]).to_string()))
+show_len("v-min-3", csv.decode(bytes_of([224, 160, 128]).to_string()))
+show_len("v-max-before-surrogate", csv.decode(bytes_of([237, 159, 191]).to_string()))
+show_len("v-min-after-surrogate", csv.decode(bytes_of([238, 128, 128]).to_string()))
+show_len("v-min-4", csv.decode(bytes_of([240, 144, 128, 128]).to_string()))
+show_len("v-max-4", csv.decode(bytes_of([244, 143, 191, 191]).to_string()))
+
+show("i-continuation", csv.decode(bytes_of([128]).to_string()))
+show("i-c0-overlong", csv.decode(bytes_of([192, 128]).to_string()))
+show("i-c1-overlong", csv.decode(bytes_of([193, 191]).to_string()))
+show("i-e0-overlong", csv.decode(bytes_of([224, 159, 191]).to_string()))
+show("i-ed-surrogate", csv.decode(bytes_of([237, 160, 128]).to_string()))
+show("i-f0-overlong", csv.decode(bytes_of([240, 143, 191, 191]).to_string()))
+show("i-f4-too-big", csv.decode(bytes_of([244, 144, 128, 128]).to_string()))
+show("i-f5", csv.decode(bytes_of([245, 128, 128, 128]).to_string()))
+show("i-ff", csv.decode(bytes_of([255]).to_string()))
+show("i-truncated-2", csv.decode(bytes_of([195]).to_string()))
+show("i-truncated-3", csv.decode(bytes_of([230, 157]).to_string()))
+show("i-truncated-4", csv.decode(bytes_of([240, 159, 152]).to_string()))
+show("i-bad-in-field", csv.decode("a," + bytes_of([255]).to_string()))
+
+// ---- the BOM ----
+
+show("bom", csv.decode(bytes_of([239, 187, 191]).to_string() + "a,b"))
+show("bom-only", csv.decode(bytes_of([239, 187, 191]).to_string()))
+show_len("bom-mid", csv.decode("a," + bytes_of([239, 187, 191]).to_string() + "b"))
+
+// ---- encode ----
+
+println("enc-empty:" + visible(csv.encode([])))
+println("enc-one-empty:" + visible(csv.encode([[""]])))
+const matrix = ["a", "a,b", "\"", "a\"b", "a\nb", "a\rb", "\r\n", " a ", "", ","]
+println("enc-matrix:" + visible(csv.encode([matrix])))
+const (R.ok, matrix_back) = csv.decode(csv.encode([matrix]))
+println("enc-round-trip:" + (matrix_back[0] == matrix).to_string())
+println("enc-tsv:" + visible(csv.encode_delimited([matrix], "\t")))
+println("enc-semicolon:" + visible(csv.encode_delimited([["a;b", "c"]], ";")))
+
+// ---- the delimiter read back ----
+
+show("tsv", csv.decode_delimited("a\t\"b\tc\"\td\r\n", "\t"))
+show("semicolon", csv.decode_delimited("a;\"b;c\";d", ";"))

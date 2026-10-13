@@ -386,6 +386,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
       expr env operand;
       e env (W.Call (rt "neg"))
   | Unary (Ast.Not, operand) ->
+      (* The operand arrives as anyref, so it is narrowed to $vbool
+         before the field read, exactly like `&&` and `||`. *)
       expr env operand;
       e env (W.Ref_cast t_vbool);
       e env (W.Struct_get (t_vbool, 0));
