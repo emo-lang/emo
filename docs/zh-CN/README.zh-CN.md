@@ -14,7 +14,13 @@ Emo 是**简洁、显式、直观**的。它汲取了三十年开源编程语言
 
 ## 安装
 
-预编译二进制是最快的起步方式。二进制内嵌标准库——无需安装其他东西（用 `emo build` 构建时才需要 C 编译器，那是默认 target）。从 [GitHub Releases](https://github.com/emo-lang/emo/releases) 下载你平台的归档，然后：
+macOS 或 Linux（含 WSL2）上一行搞定——脚本会识别平台、下载最新 release、校验其 SHA256，并安装到 `~/.emo/bin`：
+
+```console
+curl -fsSL https://raw.githubusercontent.com/emo-lang/emo/develop/scripts/install.sh | sh
+```
+
+预编译归档同样可以。二进制内嵌标准库——无需安装其他东西（用 `emo build` 构建时才需要 C 编译器，那是默认 target）。从 [GitHub Releases](https://github.com/emo-lang/emo/releases) 下载你平台的归档，然后：
 
 ```console
 $ unzip emo-<version>-macos-arm64.zip
@@ -41,149 +47,7 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 
 Emo 的语法推崇显式：一切皆可见其本来面目——调用长得像调用，return 写在明处，块只有一种形状。
 
-- **调用总是使用紧贴被调者的显式括号。** 没有可选括号调用；每个调用都可见地是调用，让初学者读得清、解析器无需消歧。括号必须紧贴被调者——`f (a)` 中间有空格是错误，绝不是静默的调用。
-- **调用可以拿一个尾随块作为最后一个参数。** 紧跟右括号之后，块附着在调用上：`page(title: "Home") { ... }` 传零参块，`list(users) -> (user User) { ... }` 传带参块。块必须紧贴调用，与括号一样——这就是 UI 树与回调背后的唯一记法。
-- **块只有一种形式**：`{ ... }` 与 `-> (x) { ... }`——后者是带参块，也是匿名函数。不以 `return` 结尾的块是 Void 块；返回值的块必须在每条路径上 return。
-- **函数与方法用 `def` 定义**，顶层与类内统一。`def` 是箭头块的具名形式：`def total(cart Cart) Decimal { ... }` 与 `const total = -> (cart Cart) { ... }` 相配。
-- **绑定分 `const`（不可变）与 `var`（可变，块作用域）**——常量与变量，顾名思义。两者都能用完整模式代替名字：`const (R.ok, body) = file.read(path)` 解构元组，不匹配的模式是运行时错误——与 `case` 无分支匹配的 scrutinee 同一条规则。`var` 绑定不能逃出其块；在比块活得久的闭包里捕获它，是编译错误。
-- **参数可按位置或按名传递。** 给定 `def hello(name String, count Int64)`，`hello("world", 3)` 与 `hello(name: "world", count: 3)` 都是合法调用，且都按参数声明顺序读：`hello(count: 3, name: "world")` 是错误，命名参数之后再写位置参数（`hello(name: "world", 3)`）同样是错误。调用末尾的块是唯一例外——它按构造就是调用的最后一个实参，附加书写时更是读起来根本不像实参：`page(title: "Home") { ... }`。具名形式是 props 与选项的自然形状。
-- **类型声明为后缀，以空格分隔**：参数写作 `name String`，返回类型写作 `def full_name() String`。**参数类型永远显式；返回类型可以省略，省略即声明该函数为 Void**——省略的返回类型不是无类型，而是一个签名所能做出的最强声明。`init` 例外——它返回所构造的类，因此不声明返回类型。箭头块（`-> (cart Cart) { ... }`）参数总是带类型声明但返回类型推断；推断失败时，编译器报错要求显式类型声明。接口方法永远声明返回类型——签名是契约。其他位置，类型声明仍然可选（见类型系统）。
-- **谓词方法以 `?` 结尾**：`def is_older?() Bool` 在调用处读起来自然。
-- **`return` 双向服从签名。** 声明了返回类型的函数必须在每条路径上以 `return` 结束——没有"最后一个表达式即返回值"的规则，编译器拒绝任何落空的路径。Void 函数是精确的镜像：它完全不写 `return`——连 `return void` 也不行——函数体就此结束。
-- **`if` 语句只有一种形状。** `if <cond> { ... }` 加可选的 `else { ... }`——没有 `else if`、`elif` 或任何链式形式；进一步的判断是 `else` 块内可见嵌套的 `if`。与所有控制流一样，这个 `if` 是语句。
-- **单行 `if` 表达式选取一个值。** `const label = if n >= 90 { "high" } else { "low" }`——两个分支各持恰好一个表达式，分支类型必须一致(`Unknown` 静默合流)，条件是 Bool,`else` 分支不可省略。整个构造必须保持在一行内：其中任何位置的换行都是语法错误，并指向出错的记号。需要多行才能算出的值，用 `if` 语句显式计算并绑定。
-- **`case` 将值与模式匹配。** 分支为 `pattern -> { ... }`，首中即停，分支可带守卫：`Color.red when signal.is_bright?()`。模式包括：限定名的枚举成员（`Color.red`——裸小写名是绑定模式，因为成员与变量共享小写空间）、按值匹配的字面量、匹配一切的 `_`。与所有控制流一样，`case` 是语句：结果通过显式 `return` 或绑定离开分支。无分支匹配的 scrutinee 是运行时错误——绝不静默跳过。
-- **循环是 `for` 与 `while`。** `for var i = 0; i < 100; i = i + 50 { ... }` 在头部绑定索引——作用域限于循环——并有三个以 `;` 分隔的子句：init、condition、post。三个子句都不可省略；init 必须是 `var` 声明，post 是完整写出的赋值（`i = i + 1`——没有 `+=` 或 `++`）。`while cond { ... }` 只带条件、不绑定，变量在循环前声明。两者都是语句，形态与 `if` 一样无括号；`;` 只在 `for` 头部合法。`break` 跳出最近的外层循环，`continue` 跳到下一次迭代（在 `for` 中先执行 post 子句）；两者在循环外都直接报错，而且循环永远不满足声明的返回类型——函数仍然必须以 `return` 结束。
-- **元组是 `(a, b, c)`。** 定长、异构、不可变的值，按元素比较；类型声明形式与字面量一致——`(Int64, String)`。括号规则按内容判定，没有尾逗号形式：有逗号就是元组（`()`、`(a, b)`）；括号里是单个无运算符的值，就是一元素元组（`(a)`——给单独的值加分组没有意义）；含运算符的表达式是分组（`(sum * 3)`、`x && (y || z)`）。`(a,)` 是语法错误——一元素元组写作 `(a)`——`(` 直接接着 `(` 也不行：`((x))` 永不解析；先把内层的值绑定到名字。`Map.new(("a", 1), ("b", 2))` 的成对元组是例外——每个实参的括号就是这对元组本身，不是嵌套。逗号之后的嵌套合法且永不相邻：`(a, (b, c))`。在 `case` 模式中，括号永远是元组模式，按位置解构：`(Color.red, count) -> { ... }`。
-- **Map 是 `{ "key": value }`** ——可变、保持插入序的哈希表。`{}` 是空 map；键与值是任意表达式，其类型在条目间按与数组元素完全相同的规则统一；键必须是可哈希的原语类型——`String`、`Int64`、`Byte`、`Bool`、`Char`、`Float64`——可证明不可哈希的键是编译错误。`Map.new(("a", 1), ("b", 2))` 从 `(key, value)` 对构建；后出现的对覆盖先出现的。方法面：`get`（键缺失是运行时错误）、`set`（插入或替换并返回 map，`m.set("a", 1).set("b", 2)` 可链式；替换保持键的位置）、`has`、`remove`（不存在时是空操作，返回 map）、`length`、`keys`、`values`——后两者按插入序返回数组。`==` 比较条目、与顺序无关；map 发给另一个进程送达的是快照副本；`m[k]` 索引是编译错误——读取的形式是 `get`。
-- **命名遵循严格的大小写约定，由编译器强制。** 所有类型以大写字母开头——内置的（`String`、`Int64`、`Bool`、`Float64`、`Char`）与用户定义的（`class Foo`、`interface Bar`）皆然。其余一切——变量、关键字、函数名——小写，且函数名只用 snake_case；不允许 camelCase。
-- **字符串永远是双引号，插值只有一种形式。** `"hello, ${name}"`——花括号里是任意表达式。转义是最小集 `\n \r \t \\ \' \"`。单引号表示 `char` 类型：`'a'` 是一个字符，`"a"` 是长度为一的 String。
-- **`println(value)` 输出一行**——值的 `.to_string()` 渲染加换行。每个原语都实现 `.to_string()`，插值用同一渲染。
-- **`printf(format, data)` 提供 C 风格的格式化输出。** `printf("hello: %s\n", ["world"])`——格式是 `String`，参数装进一个 `Array`，从左到右依次消费。转换符与 C 一致：`%d %i %u %o %x %X` 对应 `Int64`（无符号与十六进制形式按 64 位位模式读取）、`%c` 对应 `Char`、`Byte` 或 `Int64`（一个字节，按 C 的 unsigned char 转换）、`%s` 对应 `String`、`%f %F %e %E %g %G` 对应 `Float64`，`%%` 输出字面百分号。旗标（`-`、`+`、空格、`#`、`0`）、宽度、精度遵循 C17 §7.21.6.1——`%*d` 从数组取宽度，负的 `*` 宽度表示左对齐。所有目标上的渲染逐字节一致：浮点数半途情形按偶数舍入，`%g` 按舍入后的指数切换风格。在 Emo 中没有意义的形式一律报错而非猜测——`%n`、`%p`、十六进制浮点 `%a`、长度修饰符（`ll`、`h`、`z`……）全部拒绝。当格式与数据都是字面量（或数组元素类型已知）时，检查器会静态核对：转换类型错误、数量错误、格式串畸形都是编译错误；动态的格式或数组留到运行时检查，不匹配是运行时错误。
-- **注释是 `//` 到行尾；没有块注释。**
-
-### 类（Classes）
-
-`class` 是用户定义类型的唯一记法：方法住在类体内，紧挨它们所属的类型。
-
-```emo
-class User {
-  def init(name String, age Int64) {
-    self.name = name
-    self.age = age
-  }
-
-  def full_name() String {
-    return self.name + " " + self.age.to_string()
-  }
-
-  def is_older?() Bool {
-    return self.age > 35
-  }
-}
-```
-
-- **`init` 是字段赋值的唯一窗口。** 字段通过 `init` 内的 `self.x = ...` 诞生；在其他任何地方给 `self.x` 赋值都是编译错误。因此类是不可变的值类型：实例在赋值时复制（底层写时复制），内容相等的两个实例即 `==`。
-- **`self` 隐式传入、显式使用**——签名里没有 `self`，但体内总是写明（`self.name`），字段永不与局部变量混淆。
-- **没有继承——单继承与多继承都没有。** 复用靠鸭子类型的函数、组合与接口，而不是类层次。也没有 mixin 或 `include`：把另一个类型的方法拼进类里，只是换了个拼写的继承，一样带来方法解析与命名冲突问题。也没有方法提升：一个类的方法就是它类体里定义的那些，形状不会从别的类型那里增长——这也是一个类型不会"意外满足"某个接口的原因。
-
-### 接口（Interfaces）
-
-多态是结构化的：`interface` 声明一组方法签名，任何形状匹配的类都满足它——无需 `implements` 声明。
-
-```emo
-interface Greeter {
-  def greet() String
-}
-
-class English {
-  def greet() String {
-    return "Hello"
-  }
-}
-
-def welcome(g Greeter) String {
-  return g.greet()
-}
-```
-
-- 接口属于消费者：实现方无需知道接口的存在。
-- 接口是编译期契约：检查器在带类型声明的位置验证形状，而运行时分发保持鸭子类型，零开销。
-- 窄化只走向类目标：`if g.is(English)` 在分支内把 `g` 变为类 `English`。接口目标（`g.is(Greeter)`）是运行时的形状测试——它把 `Unknown` 值窄化为该接口，而对已有类型的值保持原类型不变，因为 Emo 没有交集类型。
-
-### 函数组（Function Groups）
-
-`emo` 声明一个**函数组**：一组有名字、无状态的函数与常量。没有实例、没有 `init`、没有字段——成员就是全部，通过组名调用：
-
-```emo
-emo Math {
-  const tau = 6
-
-  def abs(x Int64) Int64 {
-    if x < 0 {
-      return 0 - x
-    }
-    return x
-  }
-}
-
-Math.abs(0 - 7)   // 6
-Math.tau          // 6
-```
-
-- **组不是类。** 没有可实例化的东西，也没有可传递的东西——它是一个函数命名空间。关键字出现在声明处，在使用处消失：`Math.abs(7)` 从不提及它。
-- **成员通过组引用**——`Math.abs(7)`、`Config.version`——而在组内它们裸写可见，如同静态方法在自己的类里那样。
-- **组设计上无状态**：没有 `var`、没有字段、没有 `init`。要状态，用类和 `Box`。
-
-### 枚举（Enums）
-
-枚举是一个封闭、名义的命名值集合——仅此而已。刻意排除在成员上携带数据的反模式：当一个值必须属于已知集合且携带数据时，惯用形状是装在元组里的枚举标签——内置的 `R` 正是为 ok/error 这一对而生，`(R.ok, value)` 与 `(R.error, reason)`——在 `case` 与 `receive` 中直接解构。更重的多态数据是用接口组织的类；失败路径是错误元组，只有契约违例才抛出。
-
-```emo
-enum Color { red, green, blue }
-```
-
-- 成员是该类型的全部值——无法从集合之外构造枚举值。
-- 成员是不可变值：可 `==` 比较、可哈希、可作 map 键。
-- 在 `case` 中匹配枚举必须覆盖每个成员；在类型可判定处，检查器报告缺失的成员。
-
-### 异常（Exceptions）
-
-错误分两类，Emo 让这条分界线可见。**预期内的失败**——文档格式错、文件不存在、连接被拒——是普通的值：调用成功返回 `(R.ok, value)`，失败返回 `(R.error, reason)`，reason 是精确说明失败原因的字符串（`json: expected array element at byte 3`）。`R` 是内置枚举，无需导入；这一对用匹配处理，而不是捕获：
-
-```emo
-case file.read(path) {
-  (R.ok, body)   -> { println(body) }
-  (R.error, why) -> { println("read failed: ${why}") }
-}
-```
-
-当失败不在预期之内时，绑定模式把这一点说出口——不匹配的模式是运行时错误，让进程响亮地结束：
-
-```emo
-const (R.ok, body) = file.read(path)
-```
-
-**违例**——被破坏的契约、bug——用抛出表达。`Exception` 是语言中唯一的异常类，携带 `message` 与可选的 `data` Map；Map 装机器可读的上下文（对端地址、文件描述符），供崩溃报告与监督库读回：
-
-```emo
-raise Exception.new(message: "queue drained below zero")
-raise Exception.new("connect timed out", { "op": "connect", "peer": host })
-```
-
-抛出无法被捕获——Emo 没有 catch 构造——且 `raise` 的操作数必须是 `Exception` 实例。两个内置名字都是保留的：任何声明——无论何种形式——都不能取 `Exception`,也不能取结果枚举 `R`。未捕获的异常只杀死出错的进程，监督是库层面的事（见并发）。没有受检异常。
-
-### 可变性（Mutability）
-
-可变性分层，且每层都显式。可变面是一个封闭的五件套——`var`、`Box`、`Bytes`、`List`、`Map`——各自是独立的值类型，没有一个由另一个搭建；除此之外没有任何东西会原地修改。这五者的修改都经别名可见——通过一个绑定做的修改，其余所有绑定都看得见——而 `==` 处处保持结构化：`Box` 按内容比较，`List` 按元素比较，`Map` 按条目比较，`Bytes` 按字节比较。
-
-- `const` 绑定永不改变；`var` 绑定在块内可变且不能逃出。
-- 数组是不可变值：长度固定、内容绝不原地修改——变换数组的操作返回新数组，`==` 按元素比较。
-- `Bytes` 是定长的可变字节缓冲：`Bytes.new(n)` 分配 `n` 个字节，`get` 与 `set` 逐个寻址（旁边还有小端的多字节访问器），`==` 按内容比较。长度终生不变——`set` 替换字节，不增长缓冲。
-- Map 是唯一可变的集合：`Map.new(("foo", "bar"), ("hello", 123))` 只把每个元组当作初始化来源——键和值被读进一个全新的 map，返回值就是这个 map 本身；后面的对覆盖前面的值，键保持首次插入的位置。`set` 与 `remove` 原地修改 map（各自返回 map），键在更新时保持其插入位置，`==` 比较条目而非顺序。键必须是原始类型——非原始类型的键是错误。map 发给另一个进程送达的是快照副本，map 的可变性同样永不跨越进程边界。
-- 类字段只在 `init` 内赋值，此后冻结。
-- 长寿命的可变状态——每进程一份——住在 `Box` 里：`Box.new(0)` 构造，`box.read()` 读取，`box.replace(v)` 替换——刻意没有别的。把 Box 发给另一个进程送达的是快照副本，可变性永不跨越进程边界。
-- `List` 是 Box 旁边的双端队列：Box 守着一个单元格，List 在两端原地增删。`List.new([1, 2, "foo"])` 只把数组当作初始化来源——元素被复制进一个全新的双端队列，返回值就是这个队列本身；数组不会被保留，两者从此看不到彼此的任何修改。`list.push_front(x)` 与 `list.push_back(x)` 在两端插入并返回该列表；`list.pop_front()` 与 `list.pop_back()` 移除并给出元素；`list.length()` 计长。对空 List 弹出是运行时错误，与越界索引同理；`==` 按元素比较。把 List 发给另一个进程送达的是快照副本——可变性永不跨越进程边界。
+完整说明见 [`SYNTAX.zh-CN.md`](SYNTAX.zh-CN.md)：调用与其尾随块、`def` 与绑定、后缀类型声明、`if` 与单行 `if` 表达式、`case`、`for` 与 `while`、元组、map、命名、字符串、输出——以及类、接口、函数组、枚举、异常与可变性这些构造。
 
 ## 类型系统
 
@@ -295,9 +159,9 @@ API 是**直接风格**：网络调用看起来像普通的阻塞调用，调度
 
 socket 面是标准库的 `net` 包；HTTP 在 `http` 包：
 
-- **Socket。** `net.connect(host, port, timeout)`、`net.connect_unix(path, timeout)`、`net.tls_connect(host, port, timeout)` 与 `net.tls_connect_insecure(host, port, timeout)`——证书验证默认开启，insecure 变体是显式、可见危险的退出——返回 `TcpConn`。`net.listen(host, port)`、`net.listen_unix(path)`、`net.listen_tls(host, port, cert_path, key_path)` 返回 `TcpListener`；`net.udp_bind(host, port)` 返回 `UdpSocket`；`net.resolve(host)` 把名字解析为地址。完整 API 文档见 [docs/zh-CN/stdlib/net.md](docs/zh-CN/stdlib/net.md)。
+- **Socket。** `net.connect(host, port, timeout)`、`net.connect_unix(path, timeout)`、`net.tls_connect(host, port, timeout)` 与 `net.tls_connect_insecure(host, port, timeout)`——证书验证默认开启，insecure 变体是显式、可见危险的退出——返回 `TcpConn`。`net.listen(host, port)`、`net.listen_unix(path)`、`net.listen_tls(host, port, cert_path, key_path)` 返回 `TcpListener`；`net.udp_bind(host, port)` 返回 `UdpSocket`；`net.resolve(host)` 把名字解析为地址。完整 API 文档见 [docs/zh-CN/stdlib/net.md](stdlib/net.md)。
 - **连接。** `read_line()`、`read_exactly(n)`、`read_all()`、`write(data)`、`close()`——优雅关闭先投递待写数据。`set_timeout(seconds)` 约束其后的操作（默认无超时；`0.0` 无限等待）。监听者服务 `accept()` 并报告 `port()`；数据报 socket `send_to(host, port, data)` 与 `recv_from()`，并报告 `port()`。
-- **HTTP。** `http.get(url)`、`http.post(url, body)`、`http.put(url, body)`、`http.delete(url)` 与通用的 `http.request(method, url, headers, body, timeout)` 返回携带 `status`、`headers`、`body` 的 `HttpResponse`。重定向从不自动跟随：3xx 是和其他一样的响应，跟随它是调用者的显式动作。服务器侧，`http.serve(listener) -> (conn TcpConn) { ... }` 是每连接一进程的助手，`http.serve_requests(listener) -> (req HttpRequest) { ... }` 解析每个请求并写回处理者的 `HttpResponse`——处理者是普通的 Emo 函数。完整 API 文档见 [docs/zh-CN/stdlib/http.md](docs/zh-CN/stdlib/http.md)。
+- **HTTP。** `http.get(url)`、`http.post(url, body)`、`http.put(url, body)`、`http.delete(url)` 与通用的 `http.request(method, url, headers, body, timeout)` 返回携带 `status`、`headers`、`body` 的 `HttpResponse`。重定向从不自动跟随：3xx 是和其他一样的响应，跟随它是调用者的显式动作。服务器侧，`http.serve(listener) -> (conn TcpConn) { ... }` 是每连接一进程的助手，`http.serve_requests(listener) -> (req HttpRequest) { ... }` 解析每个请求并写回处理者的 `HttpResponse`——处理者是普通的 Emo 函数。完整 API 文档见 [docs/zh-CN/stdlib/http.md](stdlib/http.md)。
 
 分层是常规的：socket（TCP/UDP/Unix 域，加 TLS）住在 `net` 包，HTTP（客户端与服务器）住在建立于其上的 `http` 包。TLS 在 `ocaml` 上是 OpenSSL 绑定，在 `typescript` 上是 Node 的 `tls`；`c` 目标拒绝它。
 
@@ -394,7 +258,7 @@ page(title: "Home") {
 }
 ```
 
-这里的一切都是普通语法（见语法）：显式括号的调用、单一形式的块、具名参数。组件树由普通函数调用组成——组件定义为函数（`def card(user User) Component { ... }`），或作为类通过同名小写工厂函数暴露（`def card(user User) Component { return Card.new(user) }`）。从调用者一侧，每个组件都是小写函数；大写类型从不被调用，`.new` 从不出现在树里。属于这个领域的一条规则：结构化字面量不可变，所以 props 与组件树是普通的不可变数据。
+这里的一切都是普通语法（见 [`SYNTAX.zh-CN.md`](SYNTAX.zh-CN.md)）：显式括号的调用、单一形式的块、具名参数。组件树由普通函数调用组成——组件定义为函数（`def card(user User) Component { ... }`），或作为类通过同名小写工厂函数暴露（`def card(user User) Component { return Card.new(user) }`）。从调用者一侧，每个组件都是小写函数；大写类型从不被调用，`.new` 从不出现在树里。属于这个领域的一条规则：结构化字面量不可变，所以 props 与组件树是普通的不可变数据。
 
 响应式是显式的而非隐式的：
 
@@ -424,21 +288,22 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 
 ## 文档
 
-文档在 `docs/` 之下。本 README 的中文翻译是 [`docs/zh-CN/README.zh-CN.md`](docs/zh-CN/README.zh-CN.md)。
+文档在 `docs/` 之下，语法参考放在仓库根目录。本 README 与语法参考的中文翻译分别是 [`docs/zh-CN/README.zh-CN.md`](README.zh-CN.md) 与 [`SYNTAX.zh-CN.md`](SYNTAX.zh-CN.md)。
 
-- [`docs/zh-CN/c-backend.md`](docs/zh-CN/c-backend.md) —— 默认目标：发射 C、C 运行时，以及 C FFI。
-- [`docs/zh-CN/ocaml-backend.md`](docs/zh-CN/ocaml-backend.md) —— 发射 OCaml 的后端，以及 OCaml 工具链要求。
-- [`docs/zh-CN/toolchain.md`](docs/zh-CN/toolchain.md) —— `emo` CLI 的构建与安装:为何 dune 是唯一需要 OCaml 的一步,以及 justfile 自动化。
-- [`docs/zh-CN/toolchain-distribution.md`](docs/zh-CN/toolchain-distribution.md) —— 工具链如何分发：OCaml 依赖、`emo doctor`、以及推迟 `c` 后端。
-- [`docs/zh-CN/runtime-and-freestanding.md`](docs/zh-CN/runtime-and-freestanding.md) —— "runtime" 与 "freestanding" 各指什么,以及它们如何对应 Emo 的各目标。
-- [`docs/zh-CN/numeric-width.md`](docs/zh-CN/numeric-width.md) —— 所有目标上显式位宽的数值类型。
-- [`docs/var-escape.md`](docs/var-escape.md) —— `var` 逃逸规则(暂无中文)。
-- [`docs/zh-CN/stdlib.md`](docs/zh-CN/stdlib.md) —— 标准库导览:每个包的用途与对外接口。
-- [`docs/zh-CN/stdlib/`](docs/zh-CN/stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`json`、`yaml`、`xml`、`base64`、`csv`、`float`、`math`、`plot`、`slog`、`sync`、`sql`、`sqlite3`)。
-- [`docs/zh-CN/lsp.md`](docs/zh-CN/lsp.md) —— 语言服务器与 VS Code 扩展。
-- [`docs/zh-CN/industrial-software.md`](docs/zh-CN/industrial-software.md)、[`docs/zh-CN/sql-database.md`](docs/zh-CN/sql-database.md)、[`docs/zh-CN/rtos-assessment.md`](docs/zh-CN/rtos-assessment.md)、[`docs/zh-CN/xv6.md`](docs/zh-CN/xv6.md)、[`docs/zh-CN/visualization.md`](docs/zh-CN/visualization.md) —— 可行性与市场评估。
-- [`docs/zh-CN/TASKS.md`](docs/zh-CN/TASKS.md) —— 实现任务清单。
+- [`SYNTAX.zh-CN.md`](SYNTAX.zh-CN.md) —— 语言语法参考。
+- [`docs/zh-CN/c-backend.md`](c-backend.md) —— 默认目标：发射 C、C 运行时，以及 C FFI。
+- [`docs/zh-CN/ocaml-backend.md`](ocaml-backend.md) —— 发射 OCaml 的后端，以及 OCaml 工具链要求。
+- [`docs/zh-CN/toolchain.md`](toolchain.md) —— `emo` CLI 的构建与安装:为何 dune 是唯一需要 OCaml 的一步,以及 justfile 自动化。
+- [`docs/zh-CN/toolchain-distribution.md`](toolchain-distribution.md) —— 工具链如何分发：OCaml 依赖、`emo doctor`、以及推迟 `c` 后端。
+- [`docs/zh-CN/runtime-and-freestanding.md`](runtime-and-freestanding.md) —— "runtime" 与 "freestanding" 各指什么,以及它们如何对应 Emo 的各目标。
+- [`docs/zh-CN/numeric-width.md`](numeric-width.md) —— 所有目标上显式位宽的数值类型。
+- [`docs/var-escape.md`](../var-escape.md) —— `var` 逃逸规则(暂无中文)。
+- [`docs/zh-CN/stdlib.md`](stdlib.md) —— 标准库导览:每个包的用途与对外接口。
+- [`docs/zh-CN/stdlib/`](stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`json`、`yaml`、`xml`、`base64`、`csv`、`float`、`math`、`plot`、`slog`、`sync`、`sql`、`sqlite3`)。
+- [`docs/zh-CN/lsp.md`](lsp.md) —— 语言服务器与 VS Code 扩展。
+- [`docs/zh-CN/industrial-software.md`](industrial-software.md)、[`docs/zh-CN/sql-database.md`](sql-database.md)、[`docs/zh-CN/rtos-assessment.md`](rtos-assessment.md)、[`docs/zh-CN/xv6.md`](xv6.md)、[`docs/zh-CN/visualization.md`](visualization.md) —— 可行性与市场评估。
+- [`docs/zh-CN/TASKS.md`](TASKS.md) —— 实现任务清单。
 
 ## 许可
 
-Emo 以 [MIT License](LICENSE) 发布。
+Emo 以 [MIT License](../../LICENSE) 发布。
