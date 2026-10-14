@@ -1,0 +1,260 @@
+// P1 — what a render loop costs the arena, and what a region buys.
+//
+// The workload is spike/components/app.emo's shape, with the shim
+// removed: view() rebuilds the whole tree on every event; a column's
+// children array grows by repeated .append; every node carries a style
+// Map; layout walks the tree depth-first, accumulating Draw commands
+// into a second append-built array. Nothing here is per-platform, and
+// the native paint is replaced by the layout cursor — which is all the
+// shim ever reads back.
+//
+// Two ladders over the same workload, doubling the node count each rung:
+//
+//   ladder "plain"   — on_event without a region: the cost itself.
+//   ladder "region"  — on_event opening a region and resetting it once
+//                      the event is over and only an Int64 model leaves.
+//
+// The second is the boundary a region CAN be sound at. Reading the two
+// ladders side by side is the point: the arena goes flat, and the
+// identity leak does not.
+
+foreign def live() Int64 = "emo_identity_live_count"
+foreign def arena_bytes() Int64 = "emo_arena_bytes"
+foreign def arena_chunks() Int64 = "emo_arena_chunks"
+foreign def arena_mark() Int64 = "emo_arena_mark"
+foreign def arena_reset(mark Int64) Int64 = "emo_arena_reset"
+
+interface VNode {
+  def kind() String
+  def text() String
+  def style() Map[String, Float64]
+}
+
+class VLeaf {
+  def init(kind String, text String, style Map[String, Float64]) {
+    self.kind = kind
+    self.text = text
+    self.style = style
+  }
+
+  def kind() String {
+    return self.kind
+  }
+
+  def text() String {
+    return self.text
+  }
+
+  def style() Map[String, Float64] {
+    return self.style
+  }
+}
+
+class VColumn {
+  def init(style Map[String, Float64], children Array[VNode]) {
+    self.style = style
+    self.children = children
+  }
+
+  def kind() String {
+    return "column"
+  }
+
+  def text() String {
+    return ""
+  }
+
+  def style() Map[String, Float64] {
+    return self.style
+  }
+
+  def children() Array[VNode] {
+    return self.children
+  }
+}
+
+// ---- Component constructors ----
+
+def label(text String) VNode {
+  return VLeaf.new(kind: "label", text: text,
+    style: Map.new(("height", 24.0)))
+}
+
+def column(children Array[VNode]) VNode {
+  return VColumn.new(style: Map.new(("gap", 4.0), ("padding", 8.0)),
+    children: children)
+}
+
+// ---- view(): the tree, rebuilt as a pure function of the model ----
+
+def leaves(into Array[VNode], i Int64, per Int64) Array[VNode] {
+  if i == per {
+    return into
+  }
+  return leaves(into.append(label("row ${i}")), i + 1, per)
+}
+
+def panels(into Array[VNode], i Int64, count Int64, per Int64) Array[VNode] {
+  if i == count {
+    return into
+  }
+  return panels(into.append(column(leaves([], 0, per))), i + 1, count, per)
+}
+
+def view(nodes Int64) VNode {
+  return column(panels([], 0, nodes / 20, 20))
+}
+
+// ---- Layout: the depth-first walk, commands accumulated by append ----
+
+class Draw {
+  def init(kind String, text String, y Float64) {
+    self.kind = kind
+    self.text = text
+    self.y = y
+  }
+}
+
+class Laid {
+  def init(cmds Array[Draw], cursor Float64) {
+    self.cmds = cmds
+    self.cursor = cursor
+  }
+}
+
+def style_num(style Map[String, Float64], key String, fallback Float64) Float64 {
+  if style.has(key) {
+    return style.get(key)
+  }
+  return fallback
+}
+
+def layout_step(kids Array[VNode], i Int64, cmds Array[Draw],
+                cursor Float64, gap Float64) Laid {
+  if i == kids.length() {
+    return Laid.new(cmds: cmds, cursor: cursor)
+  }
+  const r = layout_node(kids[i], cmds, cursor, gap)
+  return layout_step(kids, i + 1, r.cmds, r.cursor + gap, gap)
+}
+
+def layout_node(node VNode, cmds Array[Draw], y Float64, gap Float64) Laid {
+  const style = node.style()
+  const pad = style_num(style, "padding", 0.0)
+  if node.is(VColumn) {
+    const kids = node.children()
+    return layout_step(kids, 0, cmds, y + pad, style_num(style, "gap", gap))
+  }
+  const h = style_num(style, "height", 24.0)
+  return Laid.new(
+    cmds: cmds.append(Draw.new(kind: node.kind(), text: node.text(), y: y)),
+    cursor: y + h)
+}
+
+def paint(root VNode, width Float64) Float64 {
+  const r = layout_node(root, [], 0.0, 12.0)
+  return r.cursor + width * 0.0
+}
+
+// ---- The Elm loop ----
+
+def update(tag Int64, count Int64) Int64 {
+  if tag == 1 {
+    return count + 1
+  }
+  return count
+}
+
+// No region: the tree is dropped unread, and the arena keeps all of it.
+// `nodes` is the tree's size — the shape a component library's list
+// gives a render — and `count` is the model the event moves.
+def on_event(nodes Int64, tag Int64, count Int64) Int64 {
+  const next = update(tag, count)
+  const cursor = paint(view(nodes), 480.0)
+  if cursor < 0.0 {
+    return next - 1
+  }
+  return next
+}
+
+// A region around the whole event. Everything view() and paint() build
+// is dead by the time on_event returns — the model is an Int64, and the
+// cursor is a typed Float64, a C double and not an arena cell — so the
+// reset reads nothing it frees.
+def on_event_scoped(nodes Int64, tag Int64, count Int64) Int64 {
+  const mark = arena_mark()
+  const next = update(tag, count)
+  const cursor = paint(view(nodes), 480.0)
+  const guard = cursor * 0.0
+  arena_reset(mark)
+  if guard > 1.0 {
+    return next - 1
+  }
+  return next
+}
+
+// ---- The measurement ----
+
+class Growth {
+  def init(per Int64, ids Int64) {
+    self.per = per
+    self.ids = ids
+  }
+}
+
+def x100(now Int64, prev Int64) Int64 {
+  if prev == 0 {
+    return 0
+  }
+  return now * 100 / prev
+}
+
+def churn(nodes Int64, renders Int64, prev Growth, scoped Bool) Growth {
+  const bytes0 = arena_bytes()
+  const chunks0 = arena_chunks()
+  const ids0 = live()
+
+  var count = 0
+  for var i = 0; i < renders; i = i + 1 {
+    if scoped {
+      count = on_event_scoped(nodes, 1, count)
+    } else {
+      count = on_event(nodes, 1, count)
+    }
+  }
+
+  const bytes = arena_bytes() - bytes0
+  const per = bytes / renders
+  const chunks = arena_chunks() - chunks0
+  const ids = live() - ids0
+  const ids_per = ids / renders
+
+  println("nodes=${nodes} renders=${renders} model=${count}")
+  println("  arena  bytes/render=${per}  x_prev=${x100(per, prev.per)}/100  bytes/node=${x100(per, nodes)}/100")
+  println("  rent   ids/render=${ids_per}  x_prev=${x100(ids_per, prev.ids)}/100  leaked=${ids}  chunks=${chunks}")
+
+  return Growth.new(per: per, ids: ids_per)
+}
+
+// Double the node count each rung, same render count, so each row's
+// ratio is that term's order: a linear cost holds at 200/100.
+def ladder(i Int64, nodes Int64, renders Int64, prev Growth) Growth {
+  if i == 5 {
+    return prev
+  }
+  return ladder(i + 1, nodes * 2, renders, churn(nodes, renders, prev, false))
+}
+
+def ladder_scoped(i Int64, nodes Int64, renders Int64, prev Growth) Growth {
+  if i == 5 {
+    return prev
+  }
+  return ladder_scoped(i + 1, nodes * 2, renders,
+    churn(nodes, renders, prev, true))
+}
+
+println("=== no region: on_event builds the frame and leaks it ===")
+ladder(0, 25, 100, Growth.new(per: 0, ids: 0))
+
+println("=== a region around each event: arena flat, identities not ===")
+ladder_scoped(0, 25, 100, Growth.new(per: 0, ids: 0))

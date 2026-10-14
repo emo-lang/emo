@@ -1,0 +1,14 @@
+// Probe: a bare def is a value. It satisfies a `Block` parameter and is
+// callable — locally (`inc`) and module-qualified (`lib.inc`) — so a
+// per-platform entry can pass `app.view` / `app.update` directly.
+
+def apply(f Block, x Int64) Int64 {
+  return f(x)
+}
+
+def inc(x Int64) Int64 {
+  return x + 1
+}
+
+println(apply(inc, 1))
+println(apply(lib.inc, 10))

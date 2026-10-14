@@ -119,6 +119,7 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 - [`docs/zh-CN/stdlib.md`](stdlib.md) —— 标准库导览:每个包的用途与对外接口。
 - [`docs/zh-CN/stdlib/`](stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`json`、`yaml`、`xml`、`base64`、`csv`、`float`、`math`、`plot`、`slog`、`sync`、`sql`、`sqlite3`)。
 - [`docs/zh-CN/lsp.md`](lsp.md) —— 语言服务器与 VS Code 扩展。
+- [`docs/zh-CN/emo-ui.md`](emo-ui.md) —— EmoUI 的评估与设计方向:一套声明式树渲染到 Web、TUI、macOS 与 GTK 4。
 - [`docs/zh-CN/industrial-software.md`](industrial-software.md)、[`docs/zh-CN/sql-database.md`](sql-database.md)、[`docs/zh-CN/rtos-assessment.md`](rtos-assessment.md)、[`docs/zh-CN/xv6.md`](xv6.md)、[`docs/zh-CN/visualization.md`](visualization.md) —— 可行性与市场评估。
 - [`docs/zh-CN/TASKS.md`](TASKS.md) —— 实现任务清单。
 

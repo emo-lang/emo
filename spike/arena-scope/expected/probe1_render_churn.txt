@@ -1,0 +1,33 @@
+=== no region: on_event builds the frame and leaks it ===
+nodes=25 renders=100 model=100
+  arena  bytes/render=20104  x_prev=0/100  bytes/node=80416/100
+  rent   ids/render=41  x_prev=0/100  leaked=4100  chunks=30
+nodes=50 renders=100 model=100
+  arena  bytes/render=42728  x_prev=212/100  bytes/node=85456/100
+  rent   ids/render=82  x_prev=200/100  leaked=8200  chunks=65
+nodes=100 renders=100 model=100
+  arena  bytes/render=129848  x_prev=303/100  bytes/node=129848/100
+  rent   ids/render=205  x_prev=250/100  leaked=20500  chunks=199
+nodes=200 renders=100 model=100
+  arena  bytes/render=339208  x_prev=261/100  bytes/node=169604/100
+  rent   ids/render=410  x_prev=200/100  leaked=41000  chunks=520
+nodes=400 renders=100 model=100
+  arena  bytes/render=998528  x_prev=294/100  bytes/node=249632/100
+  rent   ids/render=820  x_prev=200/100  leaked=82000  chunks=1540
+=== a region around each event: arena flat, identities not ===
+nodes=25 renders=100 model=100
+  arena  bytes/render=0  x_prev=0/100  bytes/node=0/100
+  rent   ids/render=41  x_prev=0/100  leaked=4100  chunks=0
+nodes=50 renders=100 model=100
+  arena  bytes/render=0  x_prev=0/100  bytes/node=0/100
+  rent   ids/render=82  x_prev=200/100  leaked=8200  chunks=0
+nodes=100 renders=100 model=100
+  arena  bytes/render=0  x_prev=0/100  bytes/node=0/100
+  rent   ids/render=205  x_prev=250/100  leaked=20500  chunks=0
+nodes=200 renders=100 model=100
+  arena  bytes/render=0  x_prev=0/100  bytes/node=0/100
+  rent   ids/render=410  x_prev=200/100  leaked=41000  chunks=0
+nodes=400 renders=100 model=100
+  arena  bytes/render=0  x_prev=0/100  bytes/node=0/100
+  rent   ids/render=820  x_prev=200/100  leaked=82000  chunks=0
+exit=0

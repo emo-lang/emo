@@ -39,6 +39,8 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M12 — Visualization (`plot`) | 39–45 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
 | M13 — Unit testing | 46 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
 | M14 — CSV read/write | 47 | The bundled `csv` package — RFC 4180 records, UTF-8 only — resolving like any stdlib package, answering byte-for-byte on all five targets, with the API reference and runnable goldens. |
+| M15 — EmoUI | 48 | One declarative EmoUI tree renders on a terminal, a server-rendered page, a macOS/AppKit window, and a GTK 4 window (the browser DOM following its runtime path), each behind a thin per-platform entry; the shared app module is portable Emo, the composition syntax is identical everywhere, and per-platform component libraries share convergent names. |
+| M16 — Value-family reclamation | 49 | The `c` target reclaims the value-semantic kinds, not only the identity cells: a long-running program's arena bytes and identity liveness stay flat across renders instead of rising per event, array growth is linear rather than quadratic, and every existing golden on every target stays byte-identical (`spike/arena-scope`, `CHECK.md`). |
 
 ## Design gates
 
@@ -59,6 +61,9 @@ before starting the gated work:
 | `emo install` semantics | T24.4 | `emo install` is the project-dependency frontend over `emo deps`'s resolve/fetch/lock; installing global executables is out of scope for 1.0 |
 | The runtime-independence principle | T25.1 | a target's runtime is written in the target's language, carried as generated data inside the compiler; the host contributes only the emitter |
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
+| EmoUI native UI packaging (per-package compile flags / `pkg_config`) | T48.7–T48.9 | direction settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). The field surface (`pkg_config`, compile/link flags, whether `.m` is collected) stays T48.7's own work |
+| `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). Until it lands the native UI backends are demo scale with the limit documented, not gated on this |
+| EmoUI browser runtime path | T48.10–T48.11 | open — `docs/emo-ui.md`; the TypeScript runtime is Node-only and the wasm host has three imports, so a browser-safe split plus a `dom_*` layer (or new wasm imports) and a bundling step are the choice |
 
 ---
 
@@ -1490,3 +1495,150 @@ delimiter pair for TSV; goldens on all five paths; `dune test` green.
       `!continuation(…)` flushed it.
 - [x] **T47.5** — The docs: `docs/stdlib/csv.md` and its zh-CN
       mirror; the stdlib tour and README package lists.
+
+## M15 — EmoUI
+
+EmoUI is the declarative UI framework the language's syntax was shaped
+to serve: UIs composed as trees of components that render from explicit
+state, with no template language — the UI is plain Emo. One shared
+application module (components, `update`, `view`, written against the
+portable `ui` core) renders on a terminal, a server-rendered page, a
+macOS/AppKit window, and a GTK 4 window, with the browser DOM following
+its own runtime path; each platform may ship its own component library,
+but the way components are called and composed is identical. The design
+and its evidence are `docs/emo-ui.md`, `docs/emo-ui-check.md`,
+`spike/components`, and `spike/emo-ui-probe`; the EmoUI packages live in
+their own repository, while the compiler-side gates the design found
+(the native packaging mechanism, the browser runtime path, terminal raw
+mode) land here. The `c` target's long-running memory is the fourth
+thing a UI forces and the one it does not get for free: the 2026-10-14
+arena-scope spike settled that the cheap fix does not exist, so it is
+scheduled separately (**M16**, step 49) and the native backends are
+demo scale until it lands — the limit documented, not papered over.
+
+### Step 48 — EmoUI · `plan/step-48-emo-ui.md`
+
+**Prereq:** Step 23 (the `c` target and `foreign def`) and step 25
+(target independence); the cross-module type names (2026-10-14) and the
+C→Emo callback contract (2026-10-11) are already in `develop`.
+**Done when:** the shared portable app module answers byte-for-byte on
+the debug and SSR backends across all five hosted targets and drives the
+TUI, macOS, GTK 4, and browser backends through thin per-platform
+entries; the composition syntax is identical on every backend; the
+native packaging mechanism is settled so a native UI backend is a
+`require` rather than a hand-copied shim build; no language change was
+required.
+
+**Decisions settled here (2026-10-14; full text in `docs/emo-ui.md`):**
+
+1. EmoUI is a **third-party project**, not a standard-library package;
+   a later split moving the portable core and the pure-Emo backends into
+   the stdlib is possible once stable, not v1.
+2. The tree type is a **multi-module `ui.Node`** (interface spine plus
+   concrete classes with typed props), not a stringly-tagged class and
+   not one class per platform with no core.
+3. **Children are an explicit `Array[Node]`**; trailing blocks are for
+   callbacks and iteration and must `return` their value — no implicit
+   child collection, so the README's illustrative tree is revised.
+4. **Layout is a portable vocabulary mapped to native layout** (CSS
+   flexbox / GTK boxes / AppKit stack views / a TUI cell grid), not a
+   shared Emo layout engine; the TUI keeps a small Emo box model.
+5. **Style is a typed value** with a factory and `with_*` copies — no
+   stringly map and no default parameters (E4009).
+6. **State is Elm** over explicit primitives; events are typed messages
+   registered Emo-side and exposed to the backend as `Int64` tags.
+7. **The backend is an Emo interface** (`mount`/`patch`/`run`); the
+   nine-verb `ui_*` contract is the native implementation detail.
+8. **Platform libraries share convergent names**; platform-specific
+   components carry the platform package's name at the call site.
+9. **Sequencing: TUI and SSR first, native toolkits next, the browser
+   DOM last.**
+10. **No new syntax**; a checked block/function type is the one language
+    ask worth weighing later, and it is not a gate.
+
+- [ ] **T48.1** — The portable `ui` core package: the `Node` spine and
+      primitives, the typed `Style` with `with_*` copies, the layout
+      vocabulary, and the `Backend` interface. Pure Emo, all five hosted
+      targets.
+- [ ] **T48.2** — The Elm loop: `App` (model/`update`/`view`), the
+      `ui.on(msg)` tag registry and `ui.dispatch(tag)`, and
+      `ui.run(view, update, model, backend)`; tag round-trip tests and a
+      retained `patch` versus a full rebuild.
+- [ ] **T48.3** — The headless `debug` backend: the tree rendered to a
+      stable text form, the byte-identical golden harness.
+- [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
+      model) and ANSI painting; a scripted-input golden.
+- [ ] **T48.5** — Terminal input: raw mode and key events (`termios` via
+      `foreign def`, or a terminal builtin); line mode first.
+- [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
+      byte-identical on all five hosted targets; forms and links as the
+      interaction model.
+- [ ] **T48.7** — The native packaging mechanism: per-package manifest
+      fields (`pkg_config` and/or compile/link flags, plus whatever
+      collects `.m`); the app-level build-script path is not the
+      supported one. The gate for T48.8 and T48.9.
+- [ ] **T48.8** — `ui-macos`: the nine-verb AppKit shim over the callback
+      contract; the convergence corpus runs. Demo scale — the `c`
+      target's long-running memory is step 49 (`CHECK.md`).
+- [ ] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`; the
+      convergence corpus runs. Demo scale, as T48.8.
+- [ ] **T48.10** — The browser runtime path: a browser-safe split of the
+      TypeScript runtime (or a `dom_*` builtin family) plus the
+      bundling step; the gate for T48.11.
+- [ ] **T48.11** — `ui-browser`: the DOM backend over the browser path;
+      the convergence corpus runs.
+- [ ] **T48.12** — The convergence corpus: one sample application on
+      every backend, with the same portable app module throughout.
+- [ ] **T48.13** — Docs: the README's EmoUI section revised to the
+      array-children spelling and the settled decisions; `docs/emo-ui.md`
+      settled into decided design where README-eligible; the EmoUI
+      package references in its own repository.
+
+---
+
+## M16 — Value-family reclamation
+
+The `c` target's reclamation model (T23.5, 2026-10-11) counts references
+over the identity-bearing cells — instances, closures, `Box` — and lets
+every value-semantic kind (strings, tuples, arrays, maps, lists, bytes,
+enums, boxed scalars) sit in a bump arena until process exit. A UI
+re-runs `view()` per event on exactly those kinds, which is what turned
+a tidiness item into a product problem. The 2026-10-14 arena-scope spike
+measured the cost, ruled out the cheap fixes, and settled the direction:
+a region reclaims 100% of the arena's bytes and 0% of the leak, because
+identities are `malloc`'d outside it and the arena's aggregates retain
+them across its boundary — and the reset strands those refcounts
+permanently. The real fix is refcounting the value families, and it is
+this milestone (`CHECK.md`, `spike/arena-scope/`). Nothing here is a
+prerequisite for step 48: the native backends are built at demo scale
+with the limit documented.
+
+### Step 49 — Value-family reclamation · `plan/step-49-value-reclamation.md`
+
+**Prereq:** none — explicitly not a prerequisite for step 48.
+**Done when:** a long-running `c`-target program holds a flat working
+set — arena bytes and identity liveness stop rising per render and track
+the live tree — array growth is linear rather than quadratic, every
+existing golden on every target is byte-identical, and the interpreter
+and the non-`c` targets are untouched.
+
+- [ ] **T49.1** — The runtime: extend the identity discipline
+      (`emo_identity_kind`, `emo_retain`/`emo_release`, and the
+      constructors that store into aggregates) from the three identity
+      kinds to the value families, so a value cell can reach refcount
+      zero and an aggregate releases what it holds; includes the audit
+      that no value-family construction can form a cycle. The emitter
+      already retains and releases every dynamic binding
+      (`emo_c.ml:1851`, `:423`), so this starts runtime-side.
+- [ ] **T49.2** — The granularity: decide what the autorelease pool owns
+      now that every dynamic type may own memory, and implement it —
+      expression-internal temporaries are the hard half, `may_own` plus
+      the constructor audit that follows (`emo_c_runtime.c:1753`).
+- [ ] **T49.3** — The array shape: an O(1) append or a builder, so
+      growing a k-element array is not quadratic in bytes and retains;
+      T48.1's children representation depends on the answer.
+- [ ] **T49.4** — The gate: the spike's render ladder and region probes
+      as a checked-in test that fails today and passes after, on the `c`
+      target, with `dune test` green.
+- [ ] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
+      mirror, and step 48's demo-scale notes updated to point here.

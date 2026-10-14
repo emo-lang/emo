@@ -1,0 +1,73 @@
+// P3 — the region a UI reaches for first, and why it is unsound.
+//
+// The boundary a component library would naturally propose is one
+// render: open a region, call view(), close it once the tree is built.
+// That is exactly the boundary that cannot work — view()'s result
+// escapes into paint(), so the region would close over a tree still in
+// use. This probe closes it there anyway and reads the tree back.
+//
+// Nothing here is hypothetical. The instance cell is malloc'd (it is an
+// identity), so the reset does not touch it; the Array[VNode] it holds
+// is arena memory, so the reset does. The tree's shape survives and its
+// contents do not.
+
+foreign def arena_bytes() Int64 = "emo_arena_bytes"
+foreign def arena_mark() Int64 = "emo_arena_mark"
+foreign def arena_reset(mark Int64) Int64 = "emo_arena_reset"
+
+interface VNode {
+  def text() String
+}
+
+class VLeaf {
+  def init(text String) {
+    self.text = text
+  }
+
+  def text() String {
+    return self.text
+  }
+}
+
+class VColumn {
+  def init(children Array[VNode]) {
+    self.children = children
+  }
+
+  def text() String {
+    return ""
+  }
+
+  def children() Array[VNode] {
+    return self.children
+  }
+}
+
+def leaves(into Array[VNode], i Int64, per Int64) Array[VNode] {
+  if i == per {
+    return into
+  }
+  return leaves(into.append(VLeaf.new(text: "row ${i}")), i + 1, per)
+}
+
+def view(nodes Int64) VNode {
+  return VColumn.new(children: leaves([], 0, nodes))
+}
+
+const width = 480.0
+
+const mark = arena_mark()
+const tree = view(60)
+
+if tree.is(VColumn) {
+  println("region open : children=${tree.children().length()} (read inside the region)")
+  println("region open : the column's own text is \"${tree.text()}\"")
+
+  const reclaimed = arena_reset(mark)
+  println("")
+  println("region closed: reclaimed ${reclaimed} bytes; the arena now holds ${arena_bytes()}")
+  println("the root instance is malloc'd, so it survived the reset...")
+  println("the native Float64 ${width} survived too - it is a C double, not a cell")
+  println("...but the array the instance holds was arena memory. Reading it now:")
+  println("children=${tree.children().length()}")
+}

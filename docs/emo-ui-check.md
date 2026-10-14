@@ -79,11 +79,13 @@ In dependency order, each gate with its evidence:
    program-wide pre-registration is in the checker, the rule is in
    CHECK.md, and the ui/app split is its regression test. Unlocked:
    the ui/app split, shared component libraries, the package itself.
-2. **Memory reclamation** — the c target's bump allocator never frees
-   (self-documented in `emo_c_runtime.c`); a minutes-long demo cannot
-   measure a days-long app. The reclamation decision is already
-   recorded as open in CHECK.md; GUI is the consumer that makes it
-   non-optional.
+2. **Memory reclamation — settled (2026-10-14): refcount the value
+   families.** The c target's bump allocator never frees
+   (self-documented in `emo_c_runtime.c`), so a minutes-long demo cannot
+   measure a days-long app. The region shortcut was tested and ruled out
+   (`spike/arena-scope`, CHECK.md); the native backends are demo scale
+   with the limit documented, and reclamation is scheduled as its own
+   milestone — step 49, not a prerequisite for them.
 3. **First-class callbacks** — today a C callback re-enters Emo
    through a fixed extern name with state threaded through its
    signature (the spikes' pattern). Blocks crossing the FFI (E4200)

@@ -119,6 +119,7 @@ Documentation lives under `docs/`. The Chinese translation of this README is [`d
 - [`docs/stdlib.md`](docs/stdlib.md) — a tour of the standard library: every package, what it is for, and the surface it exposes.
 - [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`file`, `os`, `bufio`, `net`, `http`, `json`, `yaml`, `xml`, `base64`, `csv`, `float`, `math`, `plot`, `slog`, `sync`, `sql`, `sqlite3`).
 - [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
+- [`docs/emo-ui.md`](docs/emo-ui.md) — the EmoUI assessment and design direction: one declarative tree for Web, TUI, macOS, and GTK 4.
 - [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md), [`docs/rtos-assessment.md`](docs/rtos-assessment.md), [`docs/xv6.md`](docs/xv6.md), [`docs/visualization.md`](docs/visualization.md) — feasibility and market assessments.
 - [`docs/TASKS.md`](docs/TASKS.md) — the implementation task checklist.
 

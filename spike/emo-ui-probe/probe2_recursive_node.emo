@@ -1,0 +1,35 @@
+// Probe: recursive node types — can a class name itself in its own init?
+class Node {
+  def init(kind String, children Array[Node]) {
+    self.kind = kind
+    self.children = children
+  }
+  def kind_name() String {
+    return self.kind
+  }
+}
+
+def text(s String) Node {
+  return Node.new(kind: "text:${s}", children: [])
+}
+
+const tree = Node.new(kind: "column", children: [text("a"), text("b")])
+println(tree.kind_name())
+println(tree.children.length())
+
+// Probe: can an interface name itself in a signature?
+interface VNode {
+  def render() String
+  def kids() Array[VNode]
+}
+
+class Text {
+  def init(s String) { self.s = s }
+  def render() String { return self.s }
+  def kids() Array[VNode] { return [] }
+}
+
+def show(n VNode) String {
+  return n.render()
+}
+println(show(Text.new("hi")))

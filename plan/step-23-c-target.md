@@ -62,7 +62,9 @@ and enters `known_targets` only once its first golden lands
   (stack and unboxed values), so the first tiers land before the
   decision does. Settle reference counting vs bounded arenas in
   `CHECK.md` before any long-running dynamic program ships — this
-  gates T23.5.
+  gates T23.5. (T23.5 landed 2026-10-11: refcounting for identity
+  objects, arena for value-semantic data. The value families' half of
+  that arena is step 49 — `CHECK.md`, `spike/arena-scope/`.)
 - **HPC surface — out of scope.** The mutable typed buffer, the
   data-parallel construct, and the ecosystem rungs remain the gate
   *beyond* this backend (`CHECK.md`); step 23's acceptance does

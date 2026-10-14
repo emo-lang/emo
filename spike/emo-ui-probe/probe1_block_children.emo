@@ -1,0 +1,33 @@
+// Probe: trailing-block children — what does a Block parameter actually carry?
+class VNode {
+  def init(kind String) {
+    self.kind = kind
+  }
+  def kind() String {
+    return self.kind
+  }
+}
+
+def text(s String) VNode {
+  return VNode.new(kind: "text:${s}")
+}
+
+// The component calls the block and inspects the result.
+def card(f Block) VNode {
+  const kids = f()
+  println("card got: ${kids}")
+  return VNode.new(kind: "card")
+}
+
+// Spelling A: block returns an array (explicit).
+const a = card() {
+  return [text("a"), text("b")]
+}
+println(a.kind())
+
+// Spelling B: the README's spelling — a sequence of child calls.
+const b = card() {
+  text("c")
+  text("d")
+}
+println(b.kind())

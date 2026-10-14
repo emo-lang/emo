@@ -1,0 +1,4 @@
+def hello(name String, count Int64) String {
+  return "${name}:${count}"
+}
+println(hello("a"))

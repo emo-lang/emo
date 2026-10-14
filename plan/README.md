@@ -21,6 +21,21 @@ incrementally shippable steps — one file per step, executed in order.
   native-binding `sqlite3` — each with a full API reference and a runnable
   golden, on every target it declares. (The full milestone list is in
   `docs/TASKS.md`.)
+- **M15 — EmoUI (step 48):** one declarative EmoUI tree renders on a
+  terminal, a server-rendered page, a macOS/AppKit window, and a GTK 4
+  window behind thin per-platform entries, with the browser DOM following
+  its own runtime path; the portable core and the pure-Emo backends answer
+  byte-for-byte, the composition syntax is identical everywhere, and
+  per-platform component libraries share convergent names. The design is
+  `docs/emo-ui.md`.
+- **M16 — Value-family reclamation (step 49):** the `c` target reclaims
+  the value-semantic kinds as well as the identity cells, so a
+  long-running program's arena bytes and identity liveness stay flat
+  across renders; array growth becomes linear. Scheduled when the
+  2026-10-14 arena-scope spike ruled region reclamation out
+  (`spike/arena-scope`, `CHECK.md`). Not a prerequisite for step 48 —
+  the native UI backends are built at demo scale with the limit
+  documented.
 
 ## Ground rules
 
@@ -82,5 +97,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 36 | The standard library: `slog` | done on interpreter/ocaml/c/typescript; wasm, beam wait on `Map` support (attrs are a Map); loggers are values, no state, no clock — the first package whose golden needed zero compiler changes |
 | 37 | The standard library: `bufio` | done on interpreter/ocaml/c; the package rides `os`, so wasm/beam/typescript refuse it at resolution like `os` does |
 | 38 | The standard library: `sqlite3` | done on c — the first native-binding package: the manifest's `link` field and package-carried C sources land with it; every other target refuses at resolution, the interpreter at run time (E3009) |
+| 48 | EmoUI | planned — decisions settled 2026-10-14 (`docs/emo-ui.md`, `plan/step-48-emo-ui.md`); the compiler-side gates are the native packaging mechanism, the browser runtime path, and terminal raw mode; the native backends are demo scale until step 49 lands |
+| 49 | Value-family reclamation | planned — scheduled 2026-10-14 after the arena-scope spike ruled out region reclamation (`spike/arena-scope`, `CHECK.md`); direction settled, nothing implemented |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

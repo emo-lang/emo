@@ -32,6 +32,8 @@
 | M12 — 可视化(`plot`) | 39–45 | `plot` 包补齐其 T0 表面(连续轴;line / scatter / area / histogram mark;对数标度、域、图例、网格、主题、调色板、分面)与 T1 数据集图表,随后加入终端与 PNG 渲染器——SVG 输出在全部五个宿主 target 上逐字节一致。 |
 | M13 — 单元测试 | 46 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
 | M14 — CSV 读写 | 47 | 随编译器交付的 `csv` 包——RFC 4180 记录,只认 UTF-8——像其他 stdlib 包一样解析,在全部五个 target 上逐字节一致,并附 API 参考与可运行金测。 |
+| M15 — EmoUI | 48 | 一套声明式 EmoUI 树渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口(浏览器 DOM 随后按其运行时路径接入),各自只落在一个薄薄的每平台入口后面;共享 app 模块是可移植的 Emo,组合语法处处一致,各平台组件库共享收敛命名。 |
+| M16 — 值语义家族的回收 | 49 | `c` 目标回收值语义的那些种类,而不只是身份格:长跑程序每次渲染的 arena 字节与身份存活数保持平坦,而不是随事件上涨;数组增长是线性而非二次;每个 target 上既有的金测逐字节不变(`spike/arena-scope`、`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -51,6 +53,9 @@
 | `emo install` 语义 | T24.4 | `emo install` 是 `emo deps` 的 resolve/fetch/lock 之上的项目依赖前端;全局可执行文件安装不进 1.0 范围 |
 | 运行时独立原则 | T25.1 | target 的运行时用 target 的语言写,以生成数据随编译器内嵌;宿主只贡献发射器 |
 | ocaml 运行时的依赖策略 | T25.4 | 核心用 OCaml 标准库加 `unix`;`ssl` 是唯一的 opam 依赖,缺失时以清晰消息拒绝;不用 eio |
+| EmoUI 原生 UI 打包(per-package 编译 flags / `pkg_config`) | T48.7–T48.9 | 方向已定(2026-10-14)——manifest 长出 per-package 原生字段,原生后端不再以应用级构建脚本发布(`CHECK.md`、`docs/emo-ui.md`)。字段面(`pkg_config`、编译/链接 flags、`.m` 是否收集)仍属 T48.7 自己的范围 |
+| `c` 目标的长跑内存(值语义家族的回收) | T48.8–T48.9(demo 尺度)、step 49 | 已定(2026-10-14)——region 回收不可行;值语义家族需要引用计数,作为 step 49 排期(`CHECK.md`、`spike/arena-scope/`)。在它落地之前,原生 UI 后端停在 demo 尺度并把限制写进文档,而不是被它闸住 |
+| EmoUI 浏览器运行时路径 | T48.10–T48.11 | 开放 —— `docs/emo-ui.md`;TypeScript 运行时只面向 Node、wasm 宿主只有三个 import,选项是拆出浏览器安全版加 `dom_*` 层(或新增 wasm import)再配打包步骤 |
 
 ---
 
@@ -741,3 +746,56 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 - [x] **T47.3** — TypeScript 的 UTF-8 修复:运行时的解码器把三字节首字节 E8–EF 判为非法(`b < 0xe8`),导致 U+8000–U+FFFF 被解成 U+FFFD;`csv_demo` 暴露了它。
 - [x] **T47.4** — wasm 的 `!` 修复:一元 `!` 直接读 `$vbool` 字段而漏了 `&&`/`||` 已经发出的 `ref.cast`,于是任何用到 `!` 的模块都无法通过 WebAssembly 验证;`bad_utf8` 里的 `!continuation(…)` 暴露了它。
 - [x] **T47.5** — 文档:`docs/stdlib/csv.md` 及其 zh-CN 镜像;stdlib 导览与 README 的包清单。
+
+## M15 — EmoUI
+
+EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从显式状态渲染,没有模板语言——UI 就是普通 Emo。一个共享的应用模块(组件、`update`、`view`,对着可移植的 `ui` 核心写)渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口;浏览器 DOM 随后按自己的运行时路径接入。每个平台可以有各自的组件库,但组件的调用与组合方式完全一致。设计与证据是 `docs/emo-ui.md`、`docs/emo-ui-check.md`、`spike/components` 与 `spike/emo-ui-probe`;EmoUI 各包活在它自己的仓库里,而设计发现的那几道编译器侧关口(原生打包机制、浏览器运行时路径、终端 raw mode)落在本仓库。`c` 目标的长跑内存是 UI 逼出来的第四条,也是它拿不到白送的一条:2026-10-14 的 arena-scope spike 落定「廉价的解法不存在」,所以它被单独排期(**M16**,step 49),在它落地之前原生后端停在 demo 尺度——限制写进文档,而不是糊过去。
+
+### Step 48 — EmoUI
+
+**前置:** Step 23(`c` 目标与 `foreign def`)与 step 25(target 独立);跨模块类型名(2026-10-14)与 C→Emo 回调契约(2026-10-11)已在 `develop` 上。
+**完成判定:** 共享的可移植 app 模块在 debug 与 SSR 后端上对全部五个托管 target 逐字节一致,并经薄薄的每平台入口驱动 TUI、macOS、GTK 4 与浏览器后端;组合语法在每个后端上完全相同;原生打包机制已落定,于是原生 UI 后端是一个 `require`,而不是手抄的 shim 构建;不需要任何语言改动。
+
+**已落定决策(2026-10-14;全文在 `docs/emo-ui.md`):**
+
+1. EmoUI 是**第三方项目**,不是标准库包;稳定之后把可移植核心与纯 Emo 后端搬进标准库是可能的后续分拆,不是 v1。
+2. 树类型是**多模块的 `ui.Node`**(接口树脊加带类型 props 的具体类),不是字符串化的单类,也不是每平台一套节点类、没有核心。
+3. **子节点是显式的 `Array[Node]`**;尾随 block 用于回调与迭代,且必须 `return` 其值——没有隐式子节点收集,所以 README 的示意树要改。
+4. **布局是一套映射到原生布局的可移植词汇表**(CSS flexbox / GTK boxes / AppKit stack views / TUI 字符网格),不是共享 Emo 布局引擎;TUI 保留一个小 Emo 盒模型。
+5. **样式是带类型值**,配工厂与 `with_*` 复制——不用字符串 map,不用默认参数(E4009)。
+6. **状态是 Elm**,压在显式原语上;事件是登记在 Emo 侧的带类型消息,以后端可见的 `Int64` tag 暴露。
+7. **后端是一个 Emo 接口**(`mount`/`patch`/`run`);九动词 `ui_*` 契约是原生实现细节。
+8. **平台库共享收敛命名**;平台特有组件在调用点带上平台包名。
+9. **顺序:TUI 与 SSR 先行,原生工具包其次,浏览器 DOM 最后。**
+10. **不加新语法**;带检查的 block/函数类型是唯一值得之后掂量的语言诉求,不是关口。
+
+- [ ] **T48.1** — 可移植 `ui` 核心包:`Node` 树脊与原语、带类型 `Style` 及其 `with_*` 复制、布局词汇表、`Backend` 接口。纯 Emo,全部五个托管 target。
+- [ ] **T48.2** — Elm 循环:`App`(model/`update`/`view`)、`ui.on(msg)` tag 登记表与 `ui.dispatch(tag)`、`ui.run(view, update, model, backend)`;tag 往返测试,以及保留式 `patch` 对全量重建。
+- [ ] **T48.3** — 无头 `debug` 后端:把树渲染成稳定文本,作为逐字节一致的金测 harness。
+- [ ] **T48.4** — `ui-tui`:字符网格布局(那个小 Emo 盒模型)与 ANSI 绘制;一段脚本化输入的金测。
+- [ ] **T48.5** — 终端输入:raw mode 与按键事件(`foreign def` 接 `termios`,或一个终端 builtin);行模式先行。
+- [ ] **T48.6** — `ui-ssr`:节点树到 HTML 加样式表,在全部五个托管 target 上逐字节一致;交互模型是表单与链接。
+- [ ] **T48.7** — 原生打包机制:per-package 的 manifest 字段(`pkg_config` 与/或编译/链接 flags,以及收集 `.m` 的那部分);应用级构建脚本不是受支持的路径。T48.8 与 T48.9 的关口。
+- [ ] **T48.8** — `ui-macos`:九动词 AppKit shim,压在回调契约上;一致性语料跑通。demo 尺度——`c` 目标的长跑内存是 step 49(`CHECK.md`)。
+- [ ] **T48.9** — `ui-gtk`:GTK 4 shim,用 `pkg-config` 构建;一致性语料跑通。demo 尺度,同 T48.8。
+- [ ] **T48.10** — 浏览器运行时路径:TypeScript 运行时拆出浏览器安全版(或一个 `dom_*` builtin 家族)加打包步骤;T48.11 的关口。
+- [ ] **T48.11** — `ui-browser`:压在浏览器路径上的 DOM 后端;一致性语料跑通。
+- [ ] **T48.12** — 一致性语料:一个示例应用跑在每个后端上,全程用同一个可移植 app 模块。
+- [ ] **T48.13** — 文档:README 的 EmoUI 一节改成数组子节点写法并写入已定决策;`docs/emo-ui.md` 中够格进 README 的部分落定为已定设计;EmoUI 各包的参考写进它自己的仓库。
+
+---
+
+## M16 — 值语义家族的回收
+
+`c` 目标的回收模型(T23.5,2026-10-11)只对带身份的那些格做引用计数——实例、闭包、`Box`——而所有值语义的种类(字符串、元组、数组、map、list、bytes、枚举、装箱标量)都住在 bump arena 里,直到进程退出才释放。UI 每个事件重跑一次 `view()`,用的恰好就是这些种类——这就是把一个整洁度问题变成产品问题的原因。2026-10-14 的 arena-scope spike 实测了代价、排除了廉价的解法,并落定了方向:region 回收 100% 的 arena 字节与 0% 的泄漏,因为身份是在 region 之外 `malloc` 的,而 arena 的聚合体跨过它的边界 retain 它们——reset 于是把那些引用计数永久搁死。真正的解法是值语义家族的引用计数,也就是本里程碑(`CHECK.md`、`spike/arena-scope/`)。这里没有任何东西是 step 48 的先决条件:原生后端以 demo 尺度构建,限制写进文档。
+
+### Step 49 — 值语义家族的回收 · `plan/step-49-value-reclamation.md`
+
+**前置:** 无——明确不是 step 48 的先决条件。
+**完成判定:** 一个长跑的 `c` 目标程序持有平坦的工作集——arena 字节与身份存活数不再随每次渲染上涨,而是跟随活着的树;数组增长是线性而非二次;每个 target 上既有的金测逐字节不变;解释器与非 `c` 目标不受影响。
+
+- [ ] **T49.1** — 运行时:把身份纪律(`emo_identity_kind`、`emo_retain`/`emo_release`,以及往聚合体里存值的那些构造器)从三种身份格扩展到值语义家族,让一个值格能走到引用计数归零、聚合体释放它所持有的东西;包含「值语义的构造不会成环」这一审计。发射器本来就对每个动态绑定做 retain 与 release(`emo_c.ml:1851`、`:423`),所以这一项从运行时侧起步。
+- [ ] **T49.2** — 粒度:在每种动态类型都可能持有内存之后,决定 autorelease pool 拥有什么并实现它——表达式内部的临时值是难的那一半,`may_own` 加上随之而来的构造器审计(`emo_c_runtime.c:1753`)。
+- [ ] **T49.3** — 数组的形状:一个 O(1) 的 append 或一个 builder,让 k 元素数组的增长在字节与 retain 上都不是二次的;T48.1 的 children 表示取决于这个答案。
+- [ ] **T49.4** — 闸门:把 spike 的渲染阶梯与 region 探针做成签入的测试——今天失败、之后通过,只针对 `c` 目标,且 `dune test` 全绿。
+- [ ] **T49.5** — 文档:`CHECK.md`、`docs/emo-ui.md` 及其 zh-CN 镜像,以及 step 48 的 demo 尺度注记都改为指向此处。

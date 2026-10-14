@@ -1,0 +1,48 @@
+// Probe: iteration blocks, message-carrying events, and the
+// explicitly-typed component surface.
+
+enum Msg { increment, decrement, quit }
+
+class Node {
+  def init(kind String, text String, msg Msg, children Array[Node]) {
+    self.kind = kind
+    self.text = text
+    self.msg = msg
+    self.children = children
+  }
+}
+
+def text(s String) Node {
+  return Node.new(kind: "text", text: s, msg: Msg.quit, children: [])
+}
+
+def button(label String, msg Msg) Node {
+  return Node.new(kind: "button", text: label, msg: msg, children: [])
+}
+
+def column(children Array[Node]) Node {
+  return Node.new(kind: "column", text: "", msg: Msg.quit, children: children)
+}
+
+// Iteration: the block returns the node per element; the component
+// collects the returns. `return` is required — a Void block yields void.
+def each_from(xs Array[String], i Int64, f Block) Array[Node] {
+  if i == xs.length() {
+    return []
+  }
+  const head = f(xs[i])
+  return [head].append(each_from(xs, i + 1, f))
+}
+
+def each_users(xs Array[String], f Block) Array[Node] {
+  return each_from(xs, 0, f)
+}
+
+const users = ["ada", "grace"]
+const list = column(children: each_users(users) -> (u String) {
+  return text("user: ${u}")
+})
+
+println(list.children.length())
+println(list.children[0].text)
+println(button("+", Msg.increment).msg)

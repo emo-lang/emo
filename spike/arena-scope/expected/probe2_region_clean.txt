@@ -1,0 +1,9 @@
+outside the region  bytes=0 chunks=0 ids=0
+inside  the region  bytes=563200 chunks=9 ids=4000
+reset reclaimed     bytes=563200
+outside the region  bytes=0 chunks=0 ids=4000
+
+the work inside produced total=4000 (rows*per=4000, so it was read)
+arena  : 563200 bytes in, 0 left  -> reclaimed
+rent   : 4000 identities in, 4000 left  -> leaked
+exit=0

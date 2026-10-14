@@ -1,0 +1,65 @@
+// P2 — what a region does, precisely.
+//
+// The narrowest honest demonstration. Open a region, build a pile of
+// arena data inside it, hand nothing out but an Int64, reset. The
+// arena bytes come back exactly. The identities the arena retained do
+// not — and that second number is the whole problem.
+
+foreign def live() Int64 = "emo_identity_live_count"
+foreign def arena_bytes() Int64 = "emo_arena_bytes"
+foreign def arena_chunks() Int64 = "emo_arena_chunks"
+foreign def arena_mark() Int64 = "emo_arena_mark"
+foreign def arena_reset(mark Int64) Int64 = "emo_arena_reset"
+
+class Leaf {
+  def init(text String) {
+    self.text = text
+  }
+
+  def text() String {
+    return self.text
+  }
+}
+
+def row(into Array[Leaf], i Int64, per Int64) Array[Leaf] {
+  if i == per {
+    return into
+  }
+  return row(into.append(Leaf.new(text: "row ${i}")), i + 1, per)
+}
+
+// The region's body: builds, reads, discards. Only an Int64 — a machine
+// word, not an arena cell — crosses the boundary.
+def build(rows Int64, per Int64) Int64 {
+  var total = 0
+  for var i = 0; i < rows; i = i + 1 {
+    const r = row([], 0, per)
+    total = total + r.length()
+  }
+  return total
+}
+
+const bytes0 = arena_bytes()
+const chunks0 = arena_chunks()
+const ids0 = live()
+
+const mark = arena_mark()
+const total = build(200, 20)
+const during_bytes = arena_bytes()
+const during_chunks = arena_chunks()
+const during_ids = live()
+
+const reclaimed = arena_reset(mark)
+
+const after_bytes = arena_bytes()
+const after_chunks = arena_chunks()
+const after_ids = live()
+
+println("outside the region  bytes=${bytes0} chunks=${chunks0} ids=${ids0}")
+println("inside  the region  bytes=${during_bytes} chunks=${during_chunks} ids=${during_ids}")
+println("reset reclaimed     bytes=${reclaimed}")
+println("outside the region  bytes=${after_bytes} chunks=${after_chunks} ids=${after_ids}")
+println("")
+println("the work inside produced total=${total} (rows*per=4000, so it was read)")
+println("arena  : ${during_bytes - bytes0} bytes in, ${after_bytes - bytes0} left  -> reclaimed")
+println("rent   : ${during_ids - ids0} identities in, ${after_ids - ids0} left  -> leaked")

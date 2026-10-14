@@ -1,0 +1,9 @@
+region open : children=60 (read inside the region)
+region open : the column's own text is ""
+
+region closed: reclaimed 18200 bytes; the arena now holds 104
+the root instance is malloc'd, so it survived the reset...
+the native Float64 480.0 survived too - it is a C double, not a cell
+...but the array the instance holds was arena memory. Reading it now:
+runtime error: only strings, Bytes, tuples, arrays, and Lists have a length
+exit=70
