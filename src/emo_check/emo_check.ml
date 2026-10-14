@@ -1597,8 +1597,8 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
           t)
 
 (* Validates the arguments of a call against a known signature: arity,
-   unknown or duplicate named arguments, and provable type mismatches.
-   Returns the result type. *)
+   argument order, unknown or duplicate named arguments, and provable
+   type mismatches. Returns the result type. *)
 and check_apply ctx env span what ft args : t =
   let arg_values =
     List.map
@@ -1620,6 +1620,49 @@ and check_apply ctx env span what ft args : t =
               Hashtbl.replace seen name ()
           | None -> ())
         arg_values;
+      (* Argument order: a call reads in parameter order. A positional
+         argument never follows a named one — the one exception is the
+         block the call ends with, which is the final argument by
+         construction, whether attached or written in the list — and a
+         named argument never reaches back to an earlier parameter. *)
+      let param_index name =
+        let rec go i = function
+          | [] -> -1
+          | (pn, _) :: rest -> if pn = name then i else go (i + 1) rest
+        in
+        go 0 params
+      in
+      let last = List.length args - 1 in
+      let cursor = ref 0 in
+      let seen_named = ref false in
+      let placed = Hashtbl.create 4 in
+      List.iteri
+        (fun i a ->
+          match a.Ast.arg_name with
+          | None ->
+              let attached_block =
+                i = last
+                &&
+                match a.Ast.arg_value.Ast.desc with
+                | Ast.Arrow_block _ -> true
+                | _ -> false
+              in
+              if !seen_named && not attached_block then
+                report ctx span "E4009"
+                  (Printf.sprintf
+                     "%s passes a positional argument after a named one" what);
+              incr cursor
+          | Some name ->
+              let idx = param_index name in
+              if idx >= 0 && not (Hashtbl.mem placed name) then (
+                seen_named := true;
+                Hashtbl.replace placed name ();
+                if idx < !cursor then
+                  report ctx span "E4009"
+                    (Printf.sprintf "%s passes `%s` out of parameter order" what
+                       name);
+                cursor := idx + 1))
+        args;
       if List.length arg_values <> List.length params then
         report ctx span "E4009"
           (Printf.sprintf "%s expects %d argument(s), got %d" what

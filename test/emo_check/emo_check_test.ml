@@ -790,6 +790,57 @@ let corpus_tests =
 page(titel: "Home")|}
         in
         Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+    tc "acceptance: arguments in parameter order" (fun () ->
+        if
+          List.length
+            (check
+               {|def foo(a String, b Int64) Int64 {
+  return b
+}
+
+foo(a: "hi", b: 33)
+foo("hi", 33)|})
+          > 0
+        then Alcotest.fail "expected a clean check");
+    tc "acceptance: an attached block follows a named argument" (fun () ->
+        if
+          List.length
+            (check
+               {|def page(title String, body Block) Void {
+  body()
+}
+
+page(title: "Home") { println("hi") }|})
+          > 0
+        then Alcotest.fail "expected a clean check");
+    tc "rejection: named arguments out of parameter order" (fun () ->
+        let diagnostics =
+          check
+            {|def foo(a String, b Int64) Int64 {
+  return b
+}
+
+foo(b: 33, a: "hi")|}
+        in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009");
+        Alcotest.(check bool)
+          "message" true
+          (contains_substring (codes_dump diagnostics)
+             "passes `a` out of parameter order"));
+    tc "rejection: a positional argument after a named one" (fun () ->
+        let diagnostics =
+          check
+            {|def foo(a String, b Int64) Int64 {
+  return b
+}
+
+foo(a: "hi", 33)|}
+        in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009");
+        Alcotest.(check bool)
+          "message" true
+          (contains_substring (codes_dump diagnostics)
+             "passes a positional argument after a named one"));
   ]
 
 let void_tests =
