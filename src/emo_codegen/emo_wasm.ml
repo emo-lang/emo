@@ -2209,6 +2209,7 @@ type driver_globals = {
   g_head : int;
   g_tail : int;
   g_saved : int;
+  g_root_done : int;
 }
 
 let rt_init (pool : string list) ~(g : driver_globals) : W.func_type =
@@ -2245,6 +2246,8 @@ let rt_init (pool : string list) ~(g : driver_globals) : W.func_type =
           W.Global_set g.g_curp;
           W.I32_const 1;
           W.Global_set g.g_next;
+          W.I32_const 0;
+          W.Global_set g.g_root_done;
         ];
   }
 
@@ -4111,6 +4114,17 @@ let rt_driver_resume (g : driver_globals) ~(t_i32_void : int) : W.func_type =
                                 W.Local_get 1;
                                 W.I32_const 0;
                                 W.Struct_set (t_proc, 1);
+                                (* the entry process ending ends the
+                                   program: the driver stops before it
+                                   picks another process *)
+                                W.Local_get 0;
+                                W.I32_eqz;
+                                W.If
+                                  ( W.Void,
+                                    [
+                                      W.I32_const 1; W.Global_set g.g_root_done;
+                                    ],
+                                    [] );
                               ],
                               [] );
                           W.Br 2;
@@ -4126,7 +4140,7 @@ let rt_driver_resume (g : driver_globals) ~(t_i32_void : int) : W.func_type =
       ];
   }
 
-let rt_driver_run ~(t_i32_void : int) : W.func_type =
+let rt_driver_run (g : driver_globals) ~(t_i32_void : int) : W.func_type =
   {
     W.ftype_idx = t_main;
     fparams = [];
@@ -4139,6 +4153,10 @@ let rt_driver_run ~(t_i32_void : int) : W.func_type =
               W.Loop
                 ( W.Void,
                   [
+                    (* the entry process is the program: once it has
+                       ended, everything still parked is dropped *)
+                    W.Global_get g.g_root_done;
+                    W.Br_if 1;
                     W.Call (rt "driver_next");
                     W.Local_set 0;
                     W.I32_const 0;
@@ -4309,23 +4327,12 @@ let assemble (program : Emo_ir.program) : W.module_ =
   env.binders <- [];
   (* A trailing receive must lower in tail position (it parks the entry
      process); after it the driver loop takes over. *)
-  let main_body =
+  let main_stmts =
     match List.rev program.Emo_ir.pinit with
     | (Emo_ir.Receive _ as last) :: rest_rev ->
         stmts env (List.rev rest_rev) ~tail:false
-        @ stmt env last ~tail:true
-        @ [ W.Drop; W.Call (rt "driver_run") ]
-    | _ ->
-        stmts env program.Emo_ir.pinit ~tail:false
-        @ [ W.Call (rt "driver_run") ]
-  in
-  let main_func : W.func_type =
-    {
-      W.ftype_idx = t_main;
-      fparams = [];
-      flocals = List.map (fun t -> (1, t)) env.local_decls;
-      fbody = main_body;
-    }
+        @ stmt env last ~tail:true @ [ W.Drop ]
+    | _ -> stmts env program.Emo_ir.pinit ~tail:false
   in
   (* The pool fills while the entry lowers; init and globals read it
      after. *)
@@ -4340,6 +4347,28 @@ let assemble (program : Emo_ir.program) : W.module_ =
       g_head = base + 3;
       g_tail = base + 4;
       g_saved = base + 5;
+      g_root_done = base + 6;
+    }
+  in
+  (* The entry process is the program. Its first turn is over here: if it
+     did not park — no waiting receive, or one that dispatched inline —
+     the program is over too, and the driver stops before it picks
+     anything up. If it did park, the driver resumes it, and the root
+     ending that turn is what stops the driver. *)
+  let entry_end =
+    [
+      W.Global_get g.g_curp;
+      W.Struct_get (t_proc, 2);
+      W.I32_eqz;
+      W.If (W.Void, [ W.I32_const 1; W.Global_set g.g_root_done ], []);
+    ]
+  in
+  let main_func : W.func_type =
+    {
+      W.ftype_idx = t_main;
+      fparams = [];
+      flocals = List.map (fun t -> (1, t)) env.local_decls;
+      fbody = main_stmts @ entry_end @ [ W.Call (rt "driver_run") ];
     }
   in
   let t_void_anyref = type_idx env (W.FuncT ([], [ W.Anyref ])) in
@@ -4358,7 +4387,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_park g;
         rt_driver_next g ~t_void_i32;
         rt_driver_resume g ~t_i32_void;
-        rt_driver_run ~t_i32_void;
+        rt_driver_run g ~t_i32_void;
         rt_self_pid g ~t_void_anyref;
         rt_halt g ~t_void_anyref;
         rt_proc_end g;
@@ -4422,6 +4451,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
           (W.RefNull t_cons, true);
           (W.RefNull t_cons, true);
           (W.Anyref, true);
+          (W.I32, true);
         ];
     start = rt "init";
     exports = [ ("main", main_idx) ];

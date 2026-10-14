@@ -370,17 +370,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
               expr env arg;
               put env "\nin ")
             args arg_locals;
-          put env "call 'erlang':'spawn'(fun () -> ";
-          let saved = env.local_map in
-          env.local_map <- [];
-          put env
-            (body_wrapper ~halt:true
-               (Printf.sprintf "apply '%s'/%d (%s)"
-                  (Emo_ir.sanitize_ident func)
-                  a
-                  (String.concat ", " arg_locals)));
-          env.local_map <- saved;
-          put env ")"
+          spawn_registered env
+            (Printf.sprintf "apply '%s'/%d (%s)"
+               (Emo_ir.sanitize_ident func)
+               a
+               (String.concat ", " arg_locals))
       | None -> failwith ("beam: unbound spawn " ^ func))
   | Spawn_value { f; args } ->
       let arg_locals = List.map (fun _ -> fresh_var env "_spawnarg") args in
@@ -391,15 +385,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
           put env "\nin ")
         args arg_locals;
       let f_code = expr_block env f in
-      put env "call 'erlang':'spawn'(fun () -> ";
-      let saved = env.local_map in
-      env.local_map <- [];
-      put env
-        (body_wrapper ~halt:true
-           (Printf.sprintf "apply %s (%s)" f_code
-              (String.concat ", " arg_locals)));
-      env.local_map <- saved;
-      put env ")"
+      spawn_registered env
+        (Printf.sprintf "apply %s (%s)" f_code (String.concat ", " arg_locals))
   | Builtin { name; args } -> builtin env name args
   | Make_exception { message; data } ->
       (* Exception.new's object is its message, and the construction
@@ -734,26 +721,52 @@ and expr_block env (x : Emo_ir.expr) : string =
   Buffer.truncate env.buf before;
   code
 
+(* A `do` spawns [call_text] and the child records itself in the root's
+   table, so 'main'/0 can kill whatever is still alive when it ends. The
+   child removes itself on the way out, so the table holds exactly the
+   children still running. The expression's value is the pid. *)
+and spawn_registered env (call_text : string) : unit =
+  let pid = fresh_var env "_spawnpid" in
+  let self = fresh_var env "_spawnself" in
+  put env (Printf.sprintf "let <%s> =\n" pid);
+  put env "call 'erlang':'spawn'(fun () -> ";
+  let saved = env.local_map in
+  env.local_map <- [];
+  put env (Printf.sprintf "let <%s> = call 'erlang':'self'()\nin " self);
+  put env (Printf.sprintf "do apply 'emo_spawn_reg'/1 (%s) " self);
+  put env
+    (body_wrapper ~halt:true
+       ~on_exit:(Printf.sprintf "apply 'emo_unreg'/1 (%s)" self)
+       call_text);
+  env.local_map <- saved;
+  put env ")";
+  put env (Printf.sprintf "\nin %s" pid)
+
 (* Every function/closure body runs under this wrapper: a `return`
    anywhere in the body throws the tagged result and the wrapper
    unwraps it as the function's value. A process wrapper also swallows
-   `halt`: the spawned fun returns and the process ends. *)
-and body_wrapper ?(halt : bool = false) (body : string) : string =
+   `halt`: the spawned fun returns and the process ends. [on_exit] is
+   the entry's: Core Erlang has no `after`, so the root process ending —
+   by return, `halt`, or an uncaught raise — runs it on both ways out,
+   killing every child that is still alive. *)
+and body_wrapper ?(halt : bool = false) ?(on_exit : string = "") (body : string)
+    : string =
   let halt_arm =
     if halt then "\n\t  <'emo_halt'> when 'true' -> 'ok'" else ""
   in
+  let exit_run = if on_exit = "" then "" else "do " ^ on_exit ^ " " in
   Printf.sprintf
     {json|try
 %s
 of
-    <_r> -> _r
+    <_r> -> %s_r
 catch
     <_C, _T, _S> ->
-	case _T of
+	%scase _T of
 	  <{'emo_return', _rv}> when 'true' -> _rv%s
 	  <_other> when 'true' -> call 'erlang':'throw'(_T)
 	end|json}
-    body halt_arm
+    body exit_run exit_run halt_arm
 
 (* ---- Statements ----
 
@@ -3063,6 +3076,35 @@ let rt_source =
 	      call 'erlang':'iolist_to_binary'([call 'binary':'copy'(#{#<48>(8,1,'integer',['unsigned'|['big']])}#, call 'erlang':'-'(_len, call 'erlang':'byte_size'(_s))), _s])
 	end
 
+%% The root process is the program. 'main'/0 owns this table, registers
+%% every process it spawns in it, and kills the survivors on its way
+%% out — a child never outlives the root, whatever the root did.
+'emo_root_table'/0 =
+    fun () ->
+	case call 'ets':'whereis'('emo_procs') of
+	  <'undefined'> when 'true' ->
+	      call 'ets':'new'('emo_procs', ['named_table', 'public', 'set'])
+	  <_t> when 'true' -> _t
+	end
+
+'emo_spawn_reg'/1 =
+    fun (_pid) ->
+	do call 'ets':'insert'('emo_procs', {_pid}) _pid
+
+'emo_unreg'/1 =
+    fun (_pid) ->
+	do call 'ets':'delete'('emo_procs', _pid) _pid
+
+'emo_kill_spawned'/0 =
+    fun () ->
+	case call 'ets':'whereis'('emo_procs') of
+	  <'undefined'> when 'true' -> 'ok'
+	  <_t> when 'true' ->
+	      call 'lists':'foreach'
+		  (fun (_o) -> call 'erlang':'exit'(call 'erlang':'element'(1, _o), 'kill'),
+		   call 'ets':'tab2list'('emo_procs'))
+	end
+
 |}
 
 (* ---- Module assembly ----
@@ -3245,6 +3287,7 @@ let emit (program : Emo_ir.program) : string =
   Buffer.add_buffer buf env.loops_buf;
   put env "'main'/0 =\n";
   put env "    fun () ->\n";
-  put env (body_wrapper body);
+  put env "        do apply 'emo_root_table'/0 ()\n";
+  put env (body_wrapper ~on_exit:"apply 'emo_kill_spawned'/0 ()" body);
   put env "\nend\n";
   Buffer.contents buf

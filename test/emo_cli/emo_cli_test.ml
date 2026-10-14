@@ -549,6 +549,149 @@ let sqlite3_available =
           >/dev/null 2>&1"
        = 0)
 
+(* The root process is the program, on every target. Both programs
+   below spawn work and let the root end without waiting for it; the
+   work must never print. Which program a target runs depends on when
+   it dispatches a process a send made runnable: the c runtime wakes
+   it while the root still runs, so the child has to be busy work
+   instead (and a child parked across a send would print before the
+   root ends there), while wasm and typescript only dispatch from
+   their driver, where a parked child woken by a send is the case that
+   used to run past the root. Beam is genuinely concurrent — a spawned
+   process may print before or after the root — so it asserts the
+   language-level guarantee itself instead: after 'main'/0 returns,
+   nothing it spawned is alive. That needs a child that never prints,
+   so its child parks in receive and is never sent to. *)
+let root_end_runnable =
+  {|def work(n Int64) Int64 {
+  for var i = 0; i < n; i = i + 1 { println(i) }
+  return 0
+}
+
+do work(5)
+println("root done")
+|}
+
+let root_end_woken =
+  {|def child() {
+  receive {
+    "go" -> { println("child ran") }
+  }
+}
+
+const c = do child()
+c <- "go"
+println("root done")
+|}
+
+let root_end_parked =
+  {|def child() {
+  receive {
+    "go" -> { println("child ran") }
+  }
+}
+
+do child()
+println("root done")
+|}
+
+(* Each program gets its own directory: a build compiles every sibling
+   .emo, and the emitters write their artifacts beside the entry. *)
+let root_end_entry name source =
+  let dir = Filename.concat scratch name in
+  if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+  let entry = Filename.concat dir "main.emo" in
+  let oc = open_out_bin entry in
+  output_string oc source;
+  close_out oc;
+  entry
+
+let run_cmd cmd =
+  let cmd_stdout, cmd_stdin, cmd_stderr =
+    Unix.open_process_full cmd (Unix.environment ())
+  in
+  let slurp ic =
+    let b = Buffer.create 256 in
+    (try
+       while true do
+         Buffer.add_channel b ic 4096
+       done
+     with End_of_file -> ());
+    Buffer.contents b
+  in
+  let out = slurp cmd_stdout in
+  let err = slurp cmd_stderr in
+  let status = Unix.close_process_full (cmd_stdout, cmd_stdin, cmd_stderr) in
+  (out, err, status)
+
+let check_run what (out, err, status) expected =
+  Alcotest.(check string) (what ^ " output") expected out;
+  match status with
+  | Unix.WEXITED 0 -> ()
+  | Unix.WEXITED n ->
+      Alcotest.fail (Printf.sprintf "%s exited %d: %s" what n err)
+  | Unix.WSIGNALED n ->
+      Alcotest.fail (Printf.sprintf "%s died on signal %d: %s" what n err)
+  | Unix.WSTOPPED n ->
+      Alcotest.fail (Printf.sprintf "%s stopped on signal %d" what n)
+
+let root_end_tests =
+  [
+    tc "the c root ending drops a runnable process" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry = root_end_entry "root-end-c" root_end_runnable in
+        let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (Emo_cli.build_file ~entry ~output:bin ~specialize:false ~cclibs:[]
+             ~target:"c");
+        check_run "c" (run_cmd (Filename.quote bin)) "root done\n");
+    tc "the wasm root ending drops a woken process" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = root_end_entry "root-end-wasm" root_end_woken in
+        let out_wasm = Filename.concat (Filename.dirname entry) "main.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (Emo_cli.build_file ~entry ~output:out_wasm ~specialize:false
+             ~cclibs:[] ~target:"wasm");
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote out_wasm)))
+          "root done\n");
+    tc "the typescript root ending drops a woken process" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = root_end_entry "root-end-ts" root_end_woken in
+        let out_ts = Filename.concat (Filename.dirname entry) "main" in
+        Alcotest.(check int)
+          "build exit" 0
+          (Emo_cli.build_file ~entry ~output:out_ts ~specialize:false ~cclibs:[]
+             ~target:"typescript");
+        check_run "typescript"
+          (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
+          "root done\n");
+    tc "the beam root ending leaves nothing it spawned alive" (fun () ->
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry = root_end_entry "root-end-beam" root_end_parked in
+        let out_core =
+          Filename.concat (Filename.dirname entry) "emo_main.core"
+        in
+        Alcotest.(check int)
+          "build exit" 0
+          (Emo_cli.build_file ~entry ~output:out_core ~specialize:false
+             ~cclibs:[] ~target:"beam");
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'emo_main:main(), L = \
+                 ets:tab2list(emo_procs), io:format(\"~p~n\", \
+                 [[erlang:is_process_alive(element(1, X)) || X <- L]]), \
+                 erlang:halt(0).'"
+                (Filename.quote (Filename.dirname out_core))))
+          "root done\n[false]\n");
+  ]
+
 (* T23.2's integer core: fib's plain recursion, the 1M-deep tail
    count_down, a mutual-tail ping/pong cluster, wrap-around Int64
    (INT64_MIN formatting, division and remainder by -1, overflow on
@@ -2469,6 +2612,7 @@ let () =
       ("wasm_examples", wasm_examples_tests);
       ("beam_examples", beam_examples_tests);
       ("c_examples", c_examples_tests);
+      ("root_end", root_end_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);

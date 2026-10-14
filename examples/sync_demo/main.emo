@@ -80,7 +80,8 @@ do joiner(z, self_pid(), "act3")
 
 tally(0, 0, 0)
 
-// The counters park once drained, so each group ends explicitly.
+// Each counter parks once its group drains. The entry process ending
+// here would drop it anyway; stopping it is the tidy exit.
 l.stop()
 m.stop()
 z.stop()

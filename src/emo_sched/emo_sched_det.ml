@@ -1346,62 +1346,62 @@ let pump_io state =
   end
 
 let rec loop state =
-  if Queue.is_empty state.runq then
-    (* When the root process has ended, the program ends with it: the
-       remaining processes are cancelled, exactly the phase A semantics.
-       A receiver parked at that moment is not a deadlock — only a
-       receiver parked while the root still lives can never be woken. *)
-    if
-      match state.root.Emo_eval.status with
-      | `Done _ -> true
-      | `Running -> false
-    then ()
-    else if Hashtbl.length state.io > 0 || state.timers <> [] then (
-      (* A server parked in accept or a client parked in a socket call
-         keeps the program alive — but only while its root lives. *)
-      pump_io state;
-      loop state)
-    else if
-      Hashtbl.length state.waiters > 0 || Hashtbl.length state.cwaiters > 0
-    then
-      (* Every live process is parked in receive with nothing left to wake
-         it: the program can never move again. *)
-      let span =
-        Emo_support.Span.make ~file:"<runtime>" ~line:1 ~col:1 ~start:0 ~stop:0
-      in
-      Emo_eval.error span "E3012"
-        (Printf.sprintf
-           "all %d waiting processes are blocked; no message will ever arrive"
-           (Hashtbl.length state.waiters + Hashtbl.length state.cwaiters))
-    else ()
-  else
-    let item = pick_and_take state in
-    let proc =
-      match item with
-      | Fresh (p, _) -> p
-      | Continue (p, _) -> p
-      | Resumed (p, _, _) -> p
-      | CResumed (p, _, _, _) -> p
-      | Io (p, _) -> p
-    in
-    state.current <- proc.Emo_eval.pid;
-    let h = handler state proc () in
-    let outcome =
-      match item with
-      | Fresh (_, body) ->
-          Effect.Shallow.continue_with (Effect.Shallow.fiber body) () h
-      | Continue (_, k) -> Effect.Shallow.continue_with k () h
-      | Resumed (_, picked, k) -> Effect.Shallow.continue_with k picked h
-      | CResumed (_, i, bindings, k) ->
-          Effect.Shallow.continue_with k (i, bindings) h
-      | Io (_, step) -> step state
-    in
-    (match outcome with
-    | None -> ()
-    | Some info ->
-        log state (Exited (proc.Emo_eval.pid, exit_name info));
-        Emo_eval.mark_exit proc info);
-    loop state
+  (* The root process is the program: once it has ended the program ends
+     with it, and every process still runnable or parked is dropped —
+     exactly the phase A semantics. Only a receiver parked while the root
+     still lives can never be woken, which is the deadlock below. *)
+  match state.root.Emo_eval.status with
+  | `Done _ -> ()
+  | `Running ->
+      if Queue.is_empty state.runq then
+        if Hashtbl.length state.io > 0 || state.timers <> [] then (
+          (* A server parked in accept or a client parked in a socket call
+             keeps the program alive — but only while its root lives. *)
+          pump_io state;
+          loop state)
+        else if
+          Hashtbl.length state.waiters > 0 || Hashtbl.length state.cwaiters > 0
+        then
+          (* Every live process is parked in receive with nothing left to
+             wake it: the program can never move again. *)
+          let span =
+            Emo_support.Span.make ~file:"<runtime>" ~line:1 ~col:1 ~start:0
+              ~stop:0
+          in
+          Emo_eval.error span "E3012"
+            (Printf.sprintf
+               "all %d waiting processes are blocked; no message will ever \
+                arrive"
+               (Hashtbl.length state.waiters + Hashtbl.length state.cwaiters))
+        else ()
+      else
+        let item = pick_and_take state in
+        let proc =
+          match item with
+          | Fresh (p, _) -> p
+          | Continue (p, _) -> p
+          | Resumed (p, _, _) -> p
+          | CResumed (p, _, _, _) -> p
+          | Io (p, _) -> p
+        in
+        state.current <- proc.Emo_eval.pid;
+        let h = handler state proc () in
+        let outcome =
+          match item with
+          | Fresh (_, body) ->
+              Effect.Shallow.continue_with (Effect.Shallow.fiber body) () h
+          | Continue (_, k) -> Effect.Shallow.continue_with k () h
+          | Resumed (_, picked, k) -> Effect.Shallow.continue_with k picked h
+          | CResumed (_, i, bindings, k) ->
+              Effect.Shallow.continue_with k (i, bindings) h
+          | Io (_, step) -> step state
+        in
+        (match outcome with
+        | None -> ()
+        | Some info ->
+            log state (Exited (proc.Emo_eval.pid, exit_name info));
+            Emo_eval.mark_exit proc info);
+        loop state
 
 (* Runs [root_body] as the root process under the seeded schedule and
    returns the event log, oldest first. *)

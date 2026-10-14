@@ -1512,15 +1512,43 @@ let build_binary ?(cclib = []) source name =
   let status = Unix.close_process_in ic in
   (Buffer.contents out, status, bin)
 
+(* Runs a built binary to completion and returns its output. *)
+let run_binary bin =
+  let ic = Unix.open_process_in bin in
+  let output = Buffer.create 64 in
+  (try
+     while true do
+       Buffer.add_string output (input_line ic);
+       Buffer.add_char output '\n'
+     done
+   with End_of_file -> ());
+  let status = Unix.close_process_in ic in
+  let output = Buffer.contents output in
+  (match status with
+  | Unix.WEXITED 0 -> ()
+  | Unix.WEXITED n ->
+      Alcotest.fail (Printf.sprintf "binary exited %d: %s" n output)
+  | _ -> Alcotest.fail "binary died on a signal");
+  output
+
+let build_and_run source name =
+  let build_out, status, bin = build_binary source name in
+  (match status with
+  | Unix.WEXITED 0 -> ()
+  | _ -> Alcotest.fail (Printf.sprintf "build failed: %s" build_out));
+  run_binary bin
+
 (* The compiled ocaml scheduler honors the same rule as the interpreter:
-   when the root process has ended, a receiver still parked is cancelled
-   instead of reported as a system-wide deadlock. *)
+   the root process is the program, so when it has ended a receiver still
+   parked is cancelled instead of reported as a system-wide deadlock, and
+   work still queued for a spawned process never runs. *)
 let compiled_sched_tests =
   [
     tc "the compiled root exiting cancels a parked process" (fun () ->
-        let build_out, status, bin =
-          build_binary
-            {|def parked() Int64 {
+        Alcotest.(check string)
+          "output" "root done\n"
+          (build_and_run
+             {|def parked() Int64 {
   receive {
     _ -> { return 0 }
   }
@@ -1528,27 +1556,19 @@ let compiled_sched_tests =
 
 do parked()
 println("root done")|}
-            "parked-exit"
-        in
-        (match status with
-        | Unix.WEXITED 0 -> ()
-        | _ -> Alcotest.fail (Printf.sprintf "build failed: %s" build_out));
-        let ic = Unix.open_process_in bin in
-        let output = Buffer.create 64 in
-        (try
-           while true do
-             Buffer.add_string output (input_line ic);
-             Buffer.add_char output '\n'
-           done
-         with End_of_file -> ());
-        let status = Unix.close_process_in ic in
-        let output = Buffer.contents output in
-        (match status with
-        | Unix.WEXITED 0 -> ()
-        | Unix.WEXITED n ->
-            Alcotest.fail (Printf.sprintf "binary exited %d: %s" n output)
-        | _ -> Alcotest.fail "binary died on a signal");
-        Alcotest.(check string) "output" "root done\n" output);
+             "parked-exit"));
+    tc "the compiled root exiting drops a runnable process" (fun () ->
+        Alcotest.(check string)
+          "output" "root done\n"
+          (build_and_run
+             {|def work(n Int64) Int64 {
+  for var i = 0; i < n; i = i + 1 { println(i) }
+  return 0
+}
+
+do work(5)
+println("root done")|}
+             "runnable-exit"));
   ]
 
 let stdlib_http_tests =

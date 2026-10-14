@@ -447,6 +447,19 @@ println("root done")
 |}
         in
         Alcotest.(check string) "output" "root done\n" output);
+    tc "the root exiting drops a runnable process" (fun () ->
+        let output, _ =
+          run_det
+            {|def work(n Int64) Int64 {
+  for var i = 0; i < n; i = i + 1 { println(i) }
+  return 0
+}
+
+do work(5)
+println("root done")
+|}
+        in
+        Alcotest.(check string) "output" "root done\n" output);
     tc "a system-wide deadlock is an error" (fun () ->
         match run_det {|receive {
   _ -> { println("never") }

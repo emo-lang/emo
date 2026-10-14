@@ -712,7 +712,11 @@ let emit_ts (program : Emo_ir.program) : string =
   put env
     "\n\
      E.runMain(async () => {\n\
+     try {\n\
      %s\n\
+     } finally {\n\
+     E.endRoot();\n\
+     }\n\
      }).catch((e: any) => {\n\
      if (e instanceof EHalt || e instanceof EReturn) return;\n\
     \      console.error(E.renderError(e));\n\

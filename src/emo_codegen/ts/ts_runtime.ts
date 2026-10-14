@@ -24,11 +24,31 @@ class EReturn {
   }
 }
 
+// The root process is the program: once it ends, every task still
+// parked is dropped. Closing the handles they were parked on is what
+// wakes them, so each resumption point calls _endIfShutdown before it
+// continues — unwinding the task instead of running it past the root.
+// A handle the task owns by then is passed in, so it is released too.
+class EProgramEnd {}
+let _shutdown = false;
+
+function _endIfShutdown(handle?: any): void {
+  if (!_shutdown) return;
+  if (handle) {
+    try {
+      if (handle.destroy) handle.destroy();
+      else if (handle.close) handle.close();
+    } catch (e) {}
+  }
+  throw new EProgramEnd();
+}
+
 // Processes end cleanly on EHalt/EReturn and on an uncaught Emo
 // exception. A spawned process's exception ends that process silently —
 // the root's is reported, matching the native scheduler's event log.
 function _taskError(e: any): any {
-  if (e instanceof EHalt || e instanceof EReturn) return undefined;
+  if (e instanceof EHalt || e instanceof EReturn || e instanceof EProgramEnd)
+    return undefined;
   if (e instanceof EEmoException) {
     console.error(
       "error[E3010]: uncaught exception: " + toStr(e.messageValue)
@@ -39,6 +59,7 @@ function _taskError(e: any): any {
 }
 
 function _taskEnd(e: any): void {
+  if (e instanceof EProgramEnd) return;
   if (e instanceof EHalt || e instanceof EReturn) return;
   if (e instanceof EEmoException) return;
   throw e;
@@ -1012,6 +1033,11 @@ async function netResult(
 // rule: the root process finishing ends the program.
 const _netRoots = new Set<any>();
 
+// Operation deadlines that are still ticking. They hold the loop open
+// on their own, so releasing the handles is not enough to end the
+// program: the parked operation they belong to is dropped with them.
+const _netTimers = new Set<any>();
+
 function netShutdown(): void {
   _netRoots.forEach((r) => {
     try {
@@ -1021,6 +1047,19 @@ function netShutdown(): void {
     } catch (e) {}
   });
   _netRoots.clear();
+  _netTimers.forEach((t) => clearTimeout(t));
+  _netTimers.clear();
+}
+
+// The root body has ended, so the program has ended. The emitted root
+// calls this the moment its last statement is done — synchronously,
+// before the microtasks a preceding send queued run — so a task a send
+// made runnable never gets to execute past the root. Node's own loop
+// then drains: the handles are closed, the timers are cleared, and the
+// pending resumptions unwinding at _endIfShutdown leave nothing behind.
+function endRoot(): void {
+  _shutdown = true;
+  netShutdown();
 }
 
 function netReason(e: any): string {
@@ -1056,14 +1095,22 @@ function netRace(
   const remaining = deadline - Date.now();
   if (remaining <= 0) return Promise.reject(netError(message));
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(netError(message)), remaining);
+    const timer = setTimeout(() => {
+      _netTimers.delete(timer);
+      reject(netError(message));
+    }, remaining);
+    _netTimers.add(timer);
+    const done = () => {
+      clearTimeout(timer);
+      _netTimers.delete(timer);
+    };
     p.then(
       (v) => {
-        clearTimeout(timer);
+        done();
         resolve(v);
       },
       (e) => {
-        clearTimeout(timer);
+        done();
         reject(e);
       }
     );
@@ -1215,10 +1262,12 @@ function connWait(
   return netRace(p, deadline, message).then(
     (v) => {
       drop();
+      _endIfShutdown();
       return v;
     },
     (e) => {
       drop();
+      _endIfShutdown();
       throw e;
     }
   );
@@ -1383,10 +1432,12 @@ function listenerAccept(l: EListener): Promise<EConn> {
   return netRace(wait, deadline, message).then(
     (sock) => {
       drop();
+      _endIfShutdown(sock);
       return wrapAccepted(l, sock);
     },
     (e) => {
       drop();
+      _endIfShutdown();
       throw e;
     }
   );
@@ -1465,10 +1516,12 @@ function udpRecvFrom(u: EUdp): Promise<any> {
   return netRace(wait, deadline, message).then(
     (pair) => {
       drop();
+      _endIfShutdown();
       return deliver(pair);
     },
     (e) => {
       drop();
+      _endIfShutdown();
       throw e;
     }
   );
@@ -1500,6 +1553,7 @@ async function netResolve(host: any): Promise<EArray> {
   if (typeof host !== "string")
     throw new Error("`net_resolve` expects a String host, got " + tag(host));
   const addrs = await netResolveAddrs(host);
+  _endIfShutdown();
   if (addrs.length === 0) netFail("cannot resolve host `" + host + "`");
   return new EArray(addrs);
 }
@@ -1593,6 +1647,7 @@ async function netConnect(
   const p = netInt(port);
   const t = netFloat(timeout);
   const addrs = await netResolveAddrs(host);
+  _endIfShutdown();
   if (addrs.length === 0) netFail("cannot resolve host `" + host + "`");
   const deadline = netDeadline(t);
   const message =
@@ -1610,8 +1665,10 @@ async function netConnect(
         deadline,
         message
       );
+      _endIfShutdown(sock);
       return new EConn(sock, netPeerDesc(sock), useTls);
     } catch (e) {
+      if (e instanceof EProgramEnd) throw e;
       last = e;
     }
   }
@@ -1624,7 +1681,7 @@ async function netConnectUnix(path: any, timeout: any): Promise<EConn> {
   const target = "unix socket " + path;
   const deadline = netDeadline(t);
   const message = "timed out after " + g6(t) + "s connecting to " + target;
-  return new Promise((resolve, reject) => {
+  const c: EConn = await new Promise<EConn>((resolve, reject) => {
     let done = false;
     let timer: any = null;
     const finish = (fn: () => void) => {
@@ -1660,6 +1717,8 @@ async function netConnectUnix(path: any, timeout: any): Promise<EConn> {
         Math.max(1, deadline - Date.now())
       );
   });
+  _endIfShutdown(c.sock);
+  return c;
 }
 
 async function netListen(host: any, port: any): Promise<EListener> {
@@ -1678,6 +1737,7 @@ async function netListen(host: any, port: any): Promise<EListener> {
     });
     l.server.listen({ host: host, port: p }, () => resolve());
   });
+  _endIfShutdown();
   const addr = l.server.address();
   l.port = addr && typeof addr === "object" ? addr.port : p;
   l.desc = host + ":" + l.port;
@@ -1702,6 +1762,7 @@ async function netListenUnix(path: any): Promise<EListener> {
     );
     l.server.listen({ path: path }, () => resolve());
   });
+  _endIfShutdown();
   return l;
 }
 
@@ -1747,6 +1808,7 @@ async function netListenTls(
     });
     l.server.listen({ host: host, port: p }, () => resolve());
   });
+  _endIfShutdown();
   const addr = l.server.address();
   l.port = addr && typeof addr === "object" ? addr.port : p;
   l.desc = host + ":" + l.port;
@@ -2304,6 +2366,7 @@ const E: any = {
       // Queue drained: the next delivery resolves us directly with the
       // message (send hands it to the waiter, not to the mailbox).
       const fresh = await new Promise<any>((res) => _waiters.set(pid, res));
+      _endIfShutdown();
       const r = await dispatch(fresh);
       if (r !== false) return r;
       // No branch took it: keep it at the head so FIFO order holds.
@@ -2328,10 +2391,11 @@ const E: any = {
           _taskError(e);
         }
       })
-      .finally(() => {
-        netShutdown();
-      });
+      .finally(endRoot);
   },
+
+  // Called by the emitted root body as it finishes — see endRoot above.
+  endRoot,
 };
 
 // `is` narrowing: an interface check when one is registered under the
