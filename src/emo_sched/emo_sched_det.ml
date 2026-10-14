@@ -916,14 +916,19 @@ and connect_next state proc k ~target ~deadline ~message
             connect_next state proc k ~target ~deadline ~message ~tls
               ~last_error:(Some err) span rest)
 
+(* One negotiate-all profile for both ends of a TLS connection: TLS 1.2 up to
+   1.3. The two SSL-2.0/3.0-era constants of this binding are the only ones
+   OpenSSL 4 refuses (`Failed to set protocol to SSLv3`), and 1.2 is the floor
+   OpenSSL 3 negotiates anyway. *)
+and tls_context (kind : Ssl.context_type) : Ssl.context =
+  let ctx = Ssl.create_context Ssl.TLSv1_2 kind in
+  Ssl.set_max_protocol_version ctx Ssl.TLSv1_3;
+  ctx
+
 (* A verifying client context, or one that explicitly skips verification
    (`net_tls_connect_insecure` — visibly dangerous, never a default). *)
 and client_tls_ctx ~(insecure : bool) : Ssl.context =
-  (* SSLv23 is the negotiate-all profile; the deprecation alert refers to
-     the SSL 2.0 days, not to what OpenSSL does with it today. *)
-  let[@alert "-deprecated"] ctx =
-    Ssl.create_context Ssl.SSLv23 Ssl.Client_context
-  in
+  let ctx = tls_context Ssl.Client_context in
   if insecure then Ssl.set_verify ctx [] None
   else (
     ignore (Ssl.set_default_verify_paths ctx);
@@ -985,9 +990,7 @@ and park_and_handshake state proc k finished fd ssl desc span kind once =
 and tls_listener ~(host : string) ~(port : int) ~(cert_path : string)
     ~(key_path : string) : (Unix.file_descr * int * Ssl.context, string) result
     =
-  let[@alert "-deprecated"] ctx =
-    Ssl.create_context Ssl.SSLv23 Ssl.Server_context
-  in
+  let ctx = tls_context Ssl.Server_context in
   match Ssl.use_certificate ctx cert_path key_path with
   | () -> (
       match listen_on host port with
