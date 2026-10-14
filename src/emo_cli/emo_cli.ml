@@ -210,8 +210,14 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             output_string oc core;
             close_out oc;
             let beam = Filename.remove_extension out ^ ".beam" in
+            (* erlc writes beside the source only with -o; without it the
+               .beam lands in the caller's working directory, wherever
+               that is *)
             let rc =
-              Sys.command (Printf.sprintf "erlc %s" (Filename.quote out))
+              Sys.command
+                (Printf.sprintf "erlc -o %s %s"
+                   (Filename.quote (Filename.dirname out))
+                   (Filename.quote out))
             in
             if rc <> 0 then (
               prerr_endline (Printf.sprintf "emo build: erlc failed on %s" out);
