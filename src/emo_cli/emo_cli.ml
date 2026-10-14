@@ -332,11 +332,17 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                        else "-l" ^ lib)
                      cclibs)
               in
+              (* -lm carries the runtime's math functions (sqrt,
+                 floor, ceil, trunc); macOS folds libm into libSystem,
+                 so the flag is a no-op there and the fix on glibc,
+                 where those symbols live in a separate library. It
+                 stays after cclib_flags so a package's own library
+                 (sqlite3, say) resolves its math imports too. *)
               let cmd =
                 Printf.sprintf
                   "cc -O2 -ffp-contract=off -std=c11 -Wall \
                    -Wno-deprecated-declarations -I %s %s %s                  \
-                   %s -o %s"
+                   %s -lm -o %s"
                   (Filename.quote build_dir) (Filename.quote main_c)
                   (Filename.quote runtime_c) cclib_flags (Filename.quote output)
               in
