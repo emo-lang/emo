@@ -31,7 +31,7 @@ dune install                          # 将 `emo-lsp` 与 `emo` 一同安装
 
 ## VS Code 扩展
 
-扩展位于 [`editors/vscode`](../editors/vscode)。它包含 TextMate 语法
+扩展位于 [`editors/vscode`](../../editors/vscode)。它包含 TextMate 语法
 （语法高亮）、语言配置、代码片段和一个精简的 LSP 客户端。
 
 ```sh
@@ -56,7 +56,7 @@ npx @vscode/vsce package       # 产出 emo-tools-lsp-0.2.2.vsix
 
 ## Neovim 插件
 
-插件位于 [`editors/neovim`](../editors/neovim)。它是一个普通的 Neovim 包
+插件位于 [`editors/neovim`](../../editors/neovim)。它是一个普通的 Neovim 包
 ——一个 Vim 语法文件、一个缩进表达式和一个小巧的 LSP 客户端——需要 Neovim
 0.11 或更新版本，因为用到了 `vim.lsp.config` 与 `vim.lsp.enable`。
 
@@ -82,7 +82,7 @@ require('emo').setup({
 命令与扩展一一对应——`:EmoRestart`、`:EmoCheck`、`:EmoBuild`、`:EmoRun`、
 `:EmoDepsResolve`、`:EmoDepsList`、`:EmoDepsUpdate`、`:EmoPackageInit`。
 完整列表与选项表见
-[`editors/neovim/README.md`](../editors/neovim/README.md)。
+[`editors/neovim/README.md`](../../editors/neovim/README.md)。
 
 ## 功能
 

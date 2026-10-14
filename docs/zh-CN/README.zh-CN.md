@@ -43,200 +43,19 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 
 无论从哪个渠道安装，`emo doctor` 都会按 target 检查环境并说出缺什么。
 
-## 语法
+## 设计细节
 
-Emo 的语法推崇显式：一切皆可见其本来面目——调用长得像调用，return 写在明处，块只有一种形状。
+每一块设计都有自己的文档：
 
-完整说明见 [`SYNTAX.zh-CN.md`](SYNTAX.zh-CN.md)：调用与其尾随块、`def` 与绑定、后缀类型声明、`if` 与单行 `if` 表达式、`case`、`for` 与 `while`、元组、map、命名、字符串、输出——以及类、接口、函数组、枚举、异常与可变性这些构造。
-
-## 类型系统
-
-Emo 是渐近类型的：**运行时类型动态，编译期静态检查**。
-
-- 运行时语义是动态类型的——每个值带类型标签。这与 BEAM 天然对齐，让日常代码免于类型仪式。
-- **整数类型的位宽是显式的：默认整数类型是 `Int64`。** 它是 64 位二进制补码、回绕——算术按模 2⁶⁴ 进行，溢出行为在原生、Wasm、BEAM、裸机上完全一致。无类型声明的整数字面量是 `Int64`；不存在不带位宽的 `Int` 拼写（见 `docs/numeric-width.md`）。
-- **浮点类型的位宽是显式的：默认浮点类型是 `Float64`。** 它在每个目标上都是 IEEE 754 binary64，浮点行为处处一致。无类型声明的浮点字面量是 `Float64`；不存在不带位宽的 `Float` 拼写。
-- **数值字面量**可用十进制、十六进制（`0xFF`）、二进制（`0b1010_1010`）或八进制（`0o755`），并用 `_` 作数字分隔符（`1_000_000`）。不存在前导零八进制，也没有宽度后缀——裸字面量保持 `Int64`/`Float64`。
-- 编译器内置类型检查。类型声明在全语言可选——函数签名的参数类型除外，返回类型可省略（省略即 Void）——无类型声明的代码仍被推断与检查，只报告确定的错误；有类型声明的代码严格检查。
-- 类型是结构化的，`is` 测试会窄化——`if user.is(Admin)` 之后，`user` 在分支内是 `Admin`，且不会泄漏到分支之外——符合鸭子类型直觉。
-- 没有泛型机制：没有泛型定义语法，也没有类型约束系统。参数化类型只作为类型声明词汇存在（如 `Array[User]`、`Map[String, Int64]`、`Box[Int64]`），服务检查器与库签名；应用代码依赖推断，几乎看不到任何类型拼写。接收块的参数类型声明为 `Block`。
-- 容器类型另有裸拼写——`List`、`Box`、`Map`——表示「任意元素」：`Map` 参数同样乐于接受 `Map[String, Int64]` 或 `Map[Int64, User]`，从中读回的值按渐进规则检查。
-- 严格度默认高，可显式放宽。
-- 类型信息反哺性能：类型知识足够完整的模块可在 `ocaml` 与 `c` 后端特化（去箱表示、直接调用）。
-
-## 模块与可见性
-
-Emo 的模块系统完全是结构化的：没有 `import`、没有 `export`、没有可见性关键字、也没有承载可见性的命名约定。**目录树即模块树：**
-
-```
-shop/
-  order.emo           # 模块 shop.order
-  pricing.emo         # 模块 shop.pricing
-  internal/
-    discounts.emo     # 模块 shop.internal.discounts —— 子树私有
-  checkout.emo        # 模块 shop.checkout
-```
-
-- **路径即模块。** 文件自动成为其路径上的模块——无需注册、无需声明。
-- **引用即限定路径。** 什么都不导入；路径直接使用，如同 URL。路径太长时，普通 `const` 绑定为其起别名——没有新语法，因为 import 语句本来就只是别名赋值：
-
-  ```emo
-  const order = shop.order
-
-  def checkout(cart Cart) Decimal {
-    const total = order.total(cart)
-    return total
-  }
-  ```
-
-- **可见性是结构化的。** 函数与块内的定义因作用域私有；模块级定义是公开的（可按限定路径寻址）；`internal/` 目录是子树私有的，由编译器强制——`shop/internal/` 之下的 everything 可在 `shop` 及其后代内使用，在其他任何地方都是编译错误。
-- **类型名与值一样，是模块路径限定的。** 类型引用就是一条路径：其他模块里的 `ui.VNode` 指向 `ui.emo` 的 `VNode`，裸名 `Order` 指本模块自己的类型，包内的相对写法与值一致（包内的 `internal.svg.Renderer`）。`is()` 能跨边界收窄，构造遵循同一条规则——`sync.WaitGroup.new(2)`、`ui.Point.new(...)`——声明类型所在的模块在首次使用时加载。因此两个模块可以有同名类型：它们是两个不同的类型，各自以模块寻址。隐私规则对类型与值同样生效：`internal/` 下声明的类型只在其子树内解析。
-- **依赖图是显式的。** 路径引用就是依赖声明，带来自动模块发现、增量编译与编译期循环检测。
-
-## 包管理
-
-包直接嵌入模块系统：包名成为顶层模块路径前缀。库没有 `install` 步骤——依赖解析是构建的副作用。使用包用 `require`：
-
-```emo
-require "acme/json_tools"
-
-def parse_config(text String) json_tools.Json {
-  return json_tools.parse(text)
-}
-```
-
-- **`require` 是把包的短名带入作用域的文件级语句。** 包侧无需对应物——包的公开面就是它的模块树。完全限定的路径永远可用。
-- **包的模块树挂载在短名之下。** 包根的 `<short>.emo` 就是 `require` 绑定的模块 `<short>`;其余文件或目录都是它的子节点——`plot/internal/svg.emo` 就是 `plot.internal.svg`,`plot/mark.emo` 就是 `plot.mark`——所以两个包的 `internal` 和 `mark` 永不冲突。包内部引用以包根为基准书写(`plot.emo` 里的 `internal.scale` 即 `plot.internal.scale`),因此一个包无论单独构建还是挂载在前缀下,编译结果一致。
-- **标准库无需 manifest 条目,第三方包需要。** 官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）并随编译器一起发布，所以 `require "json"` 隐式解析——连同这个依赖所拉入的标准库包。带 scope 的包（`acme/json_tools`）必须钉在 `deps` 里：require 一个没有钉的包是编译错误——严格优先，manifest 只因显式操作而改变。
-
-- **中心注册表，端点可配置。** 包按 `name@version` 通过中心注册表寻址，由全局内容寻址缓存支撑、跨项目共享——没有每项目的依赖副本。注册表端点读 `EMO_REGISTRY` 环境变量——全局或每项目设置——服务私有与本地部署；未设置时，标准库的内置注册表随编译器附带并默认服务。
-- **限定作用域的包名。** 第三方包在 scope 前缀下命名，归属显式，抢注无立足之地；scope 前缀成为模块路径前缀。官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）。
-- **manifest 是 Emo 配置文件**，以受限 profile 书写（可终止、密闭、无副作用）。**依赖是精确版本**——开发与测试所用的版本——并且 **targets 声明包支持的编译目标**。绑定原生代码的包还在可选的 `link` 字段里声明要链接的系统库：
-
-  ```emo
-  package {
-    name = "acme/json_tools"
-    version = "0.1.0"
-    targets = ["ocaml", "wasm"]
-    link = ["sqlite3"]
-
-    deps {
-      json = "2.3.1"
-      http = "1.4.2"
-    }
-  }
-  ```
-
-- **包可以自带原生代码。** 包目录树里的 `.c`、`.h` 文件是包的一部分——与 `.emo` 模块一同被收集、校验、发布。c 目标会把依赖包的 C 源文件编进程序，并链接其 `link` 字段声明的库，所以消费 `sqlite3` 这类原生绑定包只需 `require`——不用 `--cclib`，不用手写 shim。`link` 只接受裸库名。包的原生输入只有 c 目标兑现；其他目标在构建期拒绝这样的依赖，manifest 的 `targets` 则在解析期拒绝。
-
-- **版本是语义化的（major.minor.patch），按最小版本选择（MVS）解析。** 当不同的包要求同一依赖的不同版本时，满足所有要求的最小版本胜出——对精确要求，取所命名的最高者。升级永远是显式操作。lockfile（`package.lock`）记录带校验和的解析结果，应纳入版本控制；`emo deps resolve` 写它，`emo deps update` 在 pin 变化后重新生成，`emo deps list` 读它——构建从不静默重写。校验和是对包内收集到的源文件（`.emo`，以及可能存在的 `.c`/`.h`）的 SHA-256：按路径排序，逐文件以 `path \0 content \0` 喂入——与注册表在发布时重算的摘要是同一个算法。（注册表协议冻结前校验和是 MD5；旧编译器写出的 lockfile 删掉重新 resolve 即可。）
-- **目标兼容性在解析期检查。** 不支持当前构建目标的依赖，会以清晰的错误在解析期失败，而不是编译中途。
-- **发布用 `emo publish`，在包根目录运行。** 命令校验 manifest（`owner/name` 形式的包名、合法的版本号），把全部收集到的源文件——`.emo` 及可能存在的 `.c`/`.h`，含子目录——加上可选的根部 `README.md` 打成确定性的 `.emoji` 归档（gzip tar，路径排序、元数据清零：同样输入永远产出同样字节），POST 到注册表。端点来自 `--registry`、`EMO_REGISTRY` 或最近一次 `emo emoji login`；API token 来自 `--token`、`EMO_TOKEN` 或该 registry 对应的已存登录——已存 token 只会发给铸造它的那个 registry。`--dry-run` 只在本地校验与打包，打印归档名、大小、校验和与文件清单，不发请求。版本不可变：发布已存在的版本会被拒绝——在 manifest 里 bump `version`。
-- **共享包生命周期是 `emo emoji`** —— 以归档格式本身命名的命令组。`emo emoji new acme/string_tools` 脚手架一个可发布的包（`owner/name` 的 manifest、以包命名的公共模块、README）；`emo emoji build` 在 manifest 声明的每个目标下编译包的入口模块——发布前的门禁；`emo emoji login` 向注册表验证账号，并存入一个 push/yank/read 的 API token（`~/.config/emo/credentials`，0600，每个 registry 一个块，过期时间随 token 一并记录——`--expires-in-days` 可限定 token 的寿命），之后发布既不需要 flag 也不需要环境变量——有终端时询问邮箱与密码（密码关闭回显读取），否则从 stdin 读入两行；token 过期后，注册表会以专用错误码拒绝，`emo publish` 会提示重新 `emo emoji login`；`emo emoji publish` 与 `emo publish` 是同一次上传。
-
-## 并发
-
-Emo 自带围绕**进程与消息传递**的原生并发模型，精神上属于 actor 模型。这个选择是刻意的：它原生映射到 BEAM 进程，而 `ocaml` 后端用构建于 OCaml 5 effects 之上的调度器实现——与 Eio 这类运行时同源。
-
-并发语义由以下决策塑造：
-
-- **`do` 启动进程并返回其 pid。** `do work(item)` 在新进程中运行该调用；`do` 表达式的值是新进程的 pid，调用自身的结果被丢弃。
-- **`pid <- message` 发送。** `<-` 把消息投递到进程的信箱，两侧永远各写一个空格——紧贴的 `a<-b` 是语法错误而非猜测，与负数比较写作 `a < -b`。
-- **`receive` 的分支与 `case` 相同。** `receive { ... }` 扫描信箱找第一条匹配任一分支的消息；不匹配的消息留在队列，无匹配时进程阻塞——选择性接收来自普通的模式，没有独立机制。
-- **进程用 `self_pid()` 得知自己的 pid。** 惯用的应答模式一行写完——`sender <- (self_pid(), request)`——元组直接在接收方的分支模式中解构。Pid 是 `Pid` 类型的透明值，按身份比较，渲染为 `<pid 3>`。
-- **`halt()` 停止当前进程。** 未处理的错误也一样，两者都只杀死出错的进程；核心只提供监督所需的进程退出信号——kill、wait 与重启策略是库的地盘。
-- **根进程就是程序。** 它一结束——正常返回、`halt()`，或未捕获的 `raise`——程序随之结束，仍可运行或挂起的进程一律被丢弃。需要等待子进程的程序要让根进程活着，通常挂起在 `receive` 上；这条规则在所有目标上都成立，BEAM 也一样。
-- 消息传递是核心并发原语；共享内存原语不属于核心语义。
-- 数据默认不可变，因此消息在 BEAM 上按复制传递、在 `ocaml` 与 `c` 后端按引用传递，而可观察语义完全相同。
-- 尾调用有保证；递归是 receive 循环的惯用形状。
-- 崩溃隔离与监督在两个后端上都是库层面：未处理的错误只杀死出错的进程。
-
-## 网络
-
-网络是一等公民：几乎所有现代程序都要联网。Emo 提供统一的异步网络 API。在 `ocaml` 后端上，它运行在与并发运行时同一个 effects 调度器之上——非阻塞 socket 由调度器挂起与唤醒，TLS 由 OpenSSL 绑定提供；在 TypeScript 目标上它跑在 Node 的事件循环上，每次调用由生成代码里的 `await` 落地。`net` 与 `http` 包声明 `targets = ["ocaml", "c", "typescript"]`，依赖解析在其他一切目标上拒绝它们；`c` 目标只实现 TCP。
-
-API 是**直接风格**：网络调用看起来像普通的阻塞调用，调度器在底层切换进程。没有 `async`/`await`，因此没有函数着色——任何函数都能做 IO，API 生态保持单轨。超时以秒计，每个失败——连接被拒、名字无法解析、超期、socket 关闭——返回 `(R.error, reason)`，reason 写明对端、操作与原因。
-
-socket 面是标准库的 `net` 包；HTTP 在 `http` 包：
-
-- **Socket。** `net.connect(host, port, timeout)`、`net.connect_unix(path, timeout)`、`net.tls_connect(host, port, timeout)` 与 `net.tls_connect_insecure(host, port, timeout)`——证书验证默认开启，insecure 变体是显式、可见危险的退出——返回 `TcpConn`。`net.listen(host, port)`、`net.listen_unix(path)`、`net.listen_tls(host, port, cert_path, key_path)` 返回 `TcpListener`；`net.udp_bind(host, port)` 返回 `UdpSocket`；`net.resolve(host)` 把名字解析为地址。完整 API 文档见 [docs/zh-CN/stdlib/net.md](stdlib/net.md)。
-- **连接。** `read_line()`、`read_exactly(n)`、`read_all()`、`write(data)`、`close()`——优雅关闭先投递待写数据。`set_timeout(seconds)` 约束其后的操作（默认无超时；`0.0` 无限等待）。监听者服务 `accept()` 并报告 `port()`；数据报 socket `send_to(host, port, data)` 与 `recv_from()`，并报告 `port()`。
-- **HTTP。** `http.get(url)`、`http.post(url, body)`、`http.put(url, body)`、`http.delete(url)` 与通用的 `http.request(method, url, headers, body, timeout)` 返回携带 `status`、`headers`、`body` 的 `HttpResponse`。重定向从不自动跟随：3xx 是和其他一样的响应，跟随它是调用者的显式动作。服务器侧，`http.serve(listener) -> (conn TcpConn) { ... }` 是每连接一进程的助手，`http.serve_requests(listener) -> (req HttpRequest) { ... }` 解析每个请求并写回处理者的 `HttpResponse`——处理者是普通的 Emo 函数。完整 API 文档见 [docs/zh-CN/stdlib/http.md](stdlib/http.md)。
-
-分层是常规的：socket（TCP/UDP/Unix 域，加 TLS）住在 `net` 包，HTTP（客户端与服务器）住在建立于其上的 `http` 包。TLS 在 `ocaml` 上是 OpenSSL 绑定，在 `typescript` 上是 Node 的 `tls`；`c` 目标拒绝它。
-
-## 原生构建
-
-`emo build` 把程序编译为独立的原生二进制——一条命令、一个可执行文件，应用无需单独的安装步骤。默认 target 是 `c`：发射的 C 由系统 `cc` 编译，构建不需要 OCaml 工具链；`--target ocaml` 发射 OCaml，走构建 Emo 自身的那个后端：
-
-```console
-$ emo build main.emo -o myapp
-built myapp
-```
-
-- **运行时随二进制附带。** 调度器与网络栈是后端的库：生成进程、服务 HTTP 的程序编译后运行如一，没有解释器、没有运行时下载。
-- **编译产物以解释器为标准。** 每个示例编译为二进制后，其输出与 `emo run` 逐字节一致——在 CI 中断言，而非假设。
-- **类型反哺性能。** 类型完全已知的函数编译为特化的原生代码——去箱数字、直接调用——检查器无法钉住的区域保持动态语义。`benchmarks/` 记录数字（同一全带类型声明的程序，特化后明显快于 `--no-specialize`）。
-- **构建是增量的。** 构建按内容哈希缓存：未变化的程序（与运行时）重建时不调用工具链，构建报告 `(cached)`。
-- **C 互操作是一条 `foreign def`。** 声明给出 C 符号名——`c` 目标经 C ABI 直调；`ocaml` 目标通过生成的 C 包装封送：
-
-  ```emo
-  foreign def sqrt(x Float64) Float64 = "sqrt"
-  ```
-
-  `Float64`、`String` 与 `Bool` 现在可跨界；其他类型被检查器拒绝。用 `--cclib` 链接额外的 C 库（`emo build main.emo --cclib m`）。外部定义只在编译程序中运行——`emo run` 拒绝它们。无法兑现 `foreign def` 的目标会在检查期拒绝它：`c` 与 `ocaml` 能兑现，而 `wasm`、`typescript`、`beam` 与 freestanding 的 `riscv64` 都会拒绝。
-- **C 经接口回调进 Emo。** `foreign def` 的参数可以名一个单方法接口——它就是回调类型。`c` 目标向 C 侧传递一个生成的 trampoline 和作为不透明 `void *userdata` 的对象；回调的 C 签名是该方法的参数（与任何 foreign 实参同样封送）后跟收尾的 `void *userdata`,调用它即分发到接收者自己的方法：
-
-  ```emo
-  interface Handler {
-    def on_click(tag Int64) String
-  }
-
-  foreign def set_handler(h Handler) Void = "set_handler"
-
-  set_handler(MyHandler.new())   # C 侧稍后调用 cb(tag, data)
-  ```
-
-  回调方法的参数留在封送层（`Float64`、`String`、`Bool`、`Int64`）,返回额外允许 `Void`。满足同一接口的两个不同类的对象各自分发到自己的方法——对象就骑在 userdata 里。没有该契约的目标在检查期拒绝该参数,与任何无法兑现的 `foreign def` 一致。
-- **复合数据以 struct 形状跨界。** 类型为 tuple——或载体类——的 `foreign def` 参数按值传递一个 C 结构体:元素类型按序就是布局,嵌套 tuple 在结构体内再嵌一层结构体,类实例贡献它 init 赋值的字段(类的形状就是它的 init 签名)。复合返回以 tuple 回来:
-
-  ```emo
-  foreign def stretch(r ((Float64, Float64), Float64)) (Float64, Float64) = "stretch"
-
-  stretch(((1.0, 2.0), 3.0))   # 结构体内嵌结构体加标量,按值传递
-  ```
-
-  `c` 目标声明与 C 侧相同的 `typedef struct`——落在 `emo_defs.h`,shim 对着真实布局编译——按值的调用约定交给 C 编译器。形状字段留在封送层;类类型返回会拒绝(请写 tuple),没有该机制的目标同样拒绝。
-- **默认构建只需要一个 C 编译器。** `c` 目标调用系统 `cc`；`--target ocaml` 需要 OCaml 工具链——与构建 Emo 本身相同的那个。
-
-## 测试
-
-`emo test` 运行项目的测试。约定与模块树一样是结构性的：项目 `test/` 目录下的每个 `.emo` 文件都是测试文件，其中的每个顶层 `def test_*` 都是一个测试。根部的 `test.emo` 文件是普通模块，不是测试文件——目录才是标记。
-
-```emo
-// test/arithmetic.emo
-def test_add() {
-  expect_equal(3, main.add(1, 2))
-}
-```
-
-- **断言是 `expect_*` 内建。** `expect_equal(expected, actual)` 按语言的结构化 `==` 比较；`expect_true(value)` 与 `expect_false(value)` 接受 Bool；`expect_fail(message)` 无条件失败。断言失败抛出唯一的 `Exception` 类——与任何契约违例同一纪律——消息点名断言并渲染双方值：`expect_equal: expected 3, got 2`。
-- **每个测试隔离运行。** 运行器在独立的调度器运行中调用每个测试并捕获其输出，一个测试的进程、输出与失败不会泄漏到下一个。raise——无论是断言还是其他——只失败当前测试；运行时错误(`E30xx`)判为 error，单独报告。
-- **先检查整棵树。** `emo test` 对每个模块(含测试文件)执行与 `emo run` 相同的静态阶段;任何地方有静态错误即以退出码 65 中止。全部通过退出 0,有失败或错误退出 1。测试函数不接受参数——带参数的 `def test_*` 会被报告,绝不调用。
-
-## 配置
-
-Emo 就是自己的配置语言：配置文件只是一个 Emo 表达式，加载它就是求值这个表达式。无需学习另一种格式——块、字面量、字符串插值与方法调用都可用于配置。
-
-配置文件在受限 profile 下求值：
-
-- **保证终止**——求值在步数预算下进行，每一次循环迭代都计入预算。
-- **求值是密闭的**——结果只依赖文件内容与显式声明的输入；没有隐藏的文件系统或网络访问。
-- **无副作用**——求值配置产出数据，别无其他。
-
-因为类型检查器是内置的，配置 schema 只是类型声明，由同一遍检查——不需要第二种 schema 语言。
-
-为了与外部世界互操作，JSON/YAML/TOML 仍作为交换格式受支持：标准库读写它们，Emo 是事实源，那些格式是导出品。
+- [`docs/zh-CN/intro/syntax.md`](intro/syntax.md) —— 语言语法：调用与其尾随块、`def` 与绑定、控制流、值，以及类型定义构造。
+- [`docs/zh-CN/intro/type-system.md`](intro/type-system.md) —— 渐近类型、显式位宽的数值类型、结构化收窄。
+- [`docs/zh-CN/intro/modules-and-visibility.md`](intro/modules-and-visibility.md) —— 目录树即模块树、`internal/` 私有、显式依赖。
+- [`docs/zh-CN/intro/package-management.md`](intro/package-management.md) —— 包即模块前缀、精确版本按 MVS 解析、发布。
+- [`docs/zh-CN/intro/concurrency.md`](intro/concurrency.md) —— 进程与消息传递：`do`、`<-`、`receive`。
+- [`docs/zh-CN/intro/networking.md`](intro/networking.md) —— 基于 `net` 与 `http` 包的直接风格异步网络 API。
+- [`docs/zh-CN/intro/native-builds.md`](intro/native-builds.md) —— `emo build`、随二进制附带的运行时、`foreign def` C 互操作。
+- [`docs/zh-CN/intro/testing.md`](intro/testing.md) —— `emo test`、`test/` 约定、`expect_*` 断言。
+- [`docs/zh-CN/intro/configuration.md`](intro/configuration.md) —— 配置即 Emo 表达式，在受限 profile 下求值。
 
 ## EmoUI
 
@@ -258,7 +77,7 @@ page(title: "Home") {
 }
 ```
 
-这里的一切都是普通语法（见 [`SYNTAX.zh-CN.md`](SYNTAX.zh-CN.md)）：显式括号的调用、单一形式的块、具名参数。组件树由普通函数调用组成——组件定义为函数（`def card(user User) Component { ... }`），或作为类通过同名小写工厂函数暴露（`def card(user User) Component { return Card.new(user) }`）。从调用者一侧，每个组件都是小写函数；大写类型从不被调用，`.new` 从不出现在树里。属于这个领域的一条规则：结构化字面量不可变，所以 props 与组件树是普通的不可变数据。
+这里的一切都是普通语法（见 [`docs/zh-CN/intro/syntax.md`](intro/syntax.md)）：显式括号的调用、单一形式的块、具名参数。组件树由普通函数调用组成——组件定义为函数（`def card(user User) Component { ... }`），或作为类通过同名小写工厂函数暴露（`def card(user User) Component { return Card.new(user) }`）。从调用者一侧，每个组件都是小写函数；大写类型从不被调用，`.new` 从不出现在树里。属于这个领域的一条规则：结构化字面量不可变，所以 props 与组件树是普通的不可变数据。
 
 响应式是显式的而非隐式的：
 
@@ -288,9 +107,8 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 
 ## 文档
 
-文档在 `docs/` 之下，语法参考放在仓库根目录。本 README 与语法参考的中文翻译分别是 [`docs/zh-CN/README.zh-CN.md`](README.zh-CN.md) 与 [`SYNTAX.zh-CN.md`](SYNTAX.zh-CN.md)。
+文档在 `docs/` 之下。本 README 的中文翻译是 [`docs/zh-CN/README.zh-CN.md`](README.zh-CN.md)。
 
-- [`SYNTAX.zh-CN.md`](SYNTAX.zh-CN.md) —— 语言语法参考。
 - [`docs/zh-CN/c-backend.md`](c-backend.md) —— 默认目标：发射 C、C 运行时，以及 C FFI。
 - [`docs/zh-CN/ocaml-backend.md`](ocaml-backend.md) —— 发射 OCaml 的后端，以及 OCaml 工具链要求。
 - [`docs/zh-CN/toolchain.md`](toolchain.md) —— `emo` CLI 的构建与安装:为何 dune 是唯一需要 OCaml 的一步,以及 justfile 自动化。
