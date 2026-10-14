@@ -967,12 +967,7 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
                  of the block is emitted once, not once per arm — a run
                  of statement-position ifs would otherwise double the
                  text at each one *)
-              Printf.sprintf
-                "(let _ = (if %s then\n\
-                 (%s)\n\
-                 else\n\
-                 (%s)) in\n\
-                 %s)"
+              Printf.sprintf "(let _ = (if %s then\n(%s)\nelse\n(%s)) in\n%s)"
                 (emit_native_expr env cond)
                 then_code else_code rest_code
           | Emo_ir.Return_stmt e ->
