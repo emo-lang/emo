@@ -1760,9 +1760,9 @@ let stdlib_require_tests =
               ( "main.emo",
                 {|require "sync"
 
-const wg = sync.wait_group(1)
-sync.done(wg)
-sync.wait(wg)
+const wg = WaitGroup.new(1)
+wg.done()
+wg.wait()
 println("ok")
 |}
               );
@@ -1857,9 +1857,9 @@ println("ok")
               ( "main.emo",
                 {|require "sync"
 
-const wg = sync.wait_group(1)
-sync.done(wg)
-sync.wait(wg)
+const wg = WaitGroup.new(1)
+wg.done()
+wg.wait()
 println("ok")
 |}
               );

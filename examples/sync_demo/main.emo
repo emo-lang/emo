@@ -10,21 +10,21 @@ require "sync"
 //   emo run main.emo
 
 // A worker counts itself down when its unit of work is finished.
-def worker(wg Pid) {
-  sync.done(wg)
+def worker(wg WaitGroup) {
+  wg.done()
 }
 
 // A joiner parks on the wait group in its own process, so the entry
 // process never waits on a group with report traffic still in flight.
-def joiner(wg Pid, boss Pid, token String) {
-  sync.wait(wg)
+def joiner(wg WaitGroup, boss Pid, token String) {
+  wg.wait()
   boss <- token
 }
 
 // A waiter blocks until the group drains, then reports to the
 // collector.
-def waiter(wg Pid, collector Pid) {
-  sync.wait(wg)
+def waiter(wg WaitGroup, collector Pid) {
+  wg.wait()
   collector <- "awake"
 }
 
@@ -59,7 +59,7 @@ def tally(a Int64, b Int64, c Int64) Int64 {
 
 // Three workers, one countdown: the joiner's wait returns with the
 // third done.
-const l = sync.wait_group(3)
+const l = WaitGroup.new(3)
 do worker(l)
 do worker(l)
 do worker(l)
@@ -67,7 +67,7 @@ do joiner(l, self_pid(), "act1")
 
 // Any number of processes may wait on one group, and each is woken:
 // two waiters plus the collector's own wait.
-const m = sync.wait_group(2)
+const m = WaitGroup.new(2)
 const c = do collector(2, self_pid(), "act2")
 do waiter(m, c)
 do waiter(m, c)
@@ -75,12 +75,12 @@ do worker(m)
 do worker(m)
 
 // A zero-count group is born drained: the wait answers at once.
-const z = sync.wait_group(0)
+const z = WaitGroup.new(0)
 do joiner(z, self_pid(), "act3")
 
 tally(0, 0, 0)
 
 // The counters park once drained, so each group ends explicitly.
-sync.stop(l)
-sync.stop(m)
-sync.stop(z)
+l.stop()
+m.stop()
+z.stop()

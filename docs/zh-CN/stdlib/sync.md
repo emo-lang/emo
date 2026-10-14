@@ -26,25 +26,27 @@ require "sync"
 ## 接口面
 
 ```emo
-def wait_group(n Int64) Pid
-def done(wg Pid) Void
-def wait(wg Pid) Void
-def stop(wg Pid) Void
+class WaitGroup {
+  def init(n Int64)
+  def done() Void
+  def wait() Void
+  def stop() Void
+}
 ```
 
-`wait_group` 启动一个 `n` 份工作的倒计时,回答组的 pid——其余每个
-调用都以它为句柄。`done` 宣告一份工作完成;`wait` 阻塞到计数清
-零,若已清零则立即返回;`stop` 结束计数进程。
+`WaitGroup.new(n)` 启动一个 `n` 份工作的倒计时,回答组的句柄——
+每个方法都以它为接收者。`done` 宣告一份工作完成;`wait` 阻塞到计
+数清零,若已清零则立即返回;`stop` 结束计数进程。
 
 扇出/扇入的形状:
 
 ```emo
-const wg = sync.wait_group(3)  // 三份工作在前
-do worker(wg)                  // ……每个以 sync.done(wg) 收尾
+const wg = WaitGroup.new(3)  // 三份工作在前
+do worker(wg)                // ……每个以 wg.done() 收尾
 do worker(wg)
 do worker(wg)
-sync.wait(wg)                  // 第三次 done 时返回
-sync.stop(wg)
+wg.wait()                    // 第三次 done 时返回
+wg.stop()
 ```
 
 多个进程可以在同一个组上 `wait`,每个都会被唤醒。零计数的组生而清
@@ -52,7 +54,7 @@ sync.stop(wg)
 
 ## 生命周期
 
-计数在 `wait_group` 时一次性设定,只减不增:等待组是一次性的,没
+计数在 `WaitGroup.new` 时一次性设定,只减不增:等待组是一次性的,没
 有 `add`。计数进程在清零后泊车——迟到的 `wait` 仍然得到回答,迟
 到的 `done` 仍然在调用方抛出——而一个永久泊车的进程会把整个程序吊
 住,所以生命周期显式收尾:`stop` 结束计数进程,此刻仍泊在组上的
@@ -64,12 +66,12 @@ wait 之后 stop 掉组。
 超出计数的 `done` 不会无声消失——这个调用会与计数进程往返一趟并
 抛出,把调用方的错误在调用方点破,而不是任它沉进计数进程的信箱。
 (被 `stop` 抢跑的调用——计数进程已经不在——像任何发给死进程的
-消息一样丢弃。)`wait_group` 拒绝负数计数。
+消息一样丢弃。)`WaitGroup.new` 拒绝负数计数。
 
 ## 错误
 
 - `sync: the count must not be negative, got -2` ——
-  `wait_group` 的计数为负;
+  `WaitGroup.new` 的计数为负;
 - `sync: the countdown already drained` ——超出计数的 `done`;
 - `sync: the wait group was stopped under the wait` ——`stop`
   落下时仍泊着的 `wait`。

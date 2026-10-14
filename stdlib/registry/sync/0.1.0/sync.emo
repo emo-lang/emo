@@ -4,14 +4,20 @@
 // another — so every target the package declares answers with the same
 // observable behavior, and nothing here needed a compiler change.
 //
-//   const wg = sync.wait_group(3)  // three units of work ahead
-//   do worker(wg)                  // ... each ends with sync.done(wg)
+//   const wg = WaitGroup.new(3)  // three units of work ahead
+//   do worker(wg)                // ... each ends with wg.done()
 //   do worker(wg)
 //   do worker(wg)
-//   sync.wait(wg)                  // blocks until the third done
-//   sync.stop(wg)                  // ends the counter process
+//   wg.wait()                    // blocks until the third done
+//   wg.stop()                    // ends the counter process
 //
-// The count is set once at `wait_group` and only ever goes down: a
+// The waiting group is an ordinary value: `WaitGroup.new(n)` starts the
+// counter and hands back the handle, and the three methods carry the
+// whole surface. Sending the handle to another process copies it like
+// any class value — the pid inside is what travels, so a worker calls
+// `wg.done()` on its own copy and the counter hears it all the same.
+//
+// The count is set once at `WaitGroup.new` and only ever goes down: a
 // wait group is single-use, and there is no `add`. A `done` past the
 // count does not silently vanish — the call round-trips through the
 // counter and raises, naming the caller's mistake. `wait` blocks until
@@ -34,53 +40,55 @@
 // direction, is a tuple tagged `"sync"` — the package name — so the
 // group's traffic never collides with an application's own messages.
 
-// Starts a countdown of `n` units and answers the group's pid — the
-// handle every other call takes. The count must not be negative.
-def wait_group(n Int64) Pid {
-  if n < 0 {
-    raise Exception.new(message: "sync: the count must not be negative, got ${n}")
+// The wait group handle: the counter's pid, and the three calls over
+// it. The count must not be negative.
+class WaitGroup {
+  def init(n Int64) {
+    if n < 0 {
+      raise Exception.new(message: "sync: the count must not be negative, got ${n}")
+    }
+    self.pid = do counter_start(n)
   }
-  return do counter_start(n)
+
+  // Announces one finished unit. Raises when the countdown has already
+  // drained: a done beyond the count is a bug in the caller, and the
+  // round trip is what makes it surface at the caller instead of
+  // vanishing into the counter's mailbox.
+  def done() Void {
+    self.pid <- ("sync", "dec", self_pid())
+    receive {
+      ("sync", "underflow") -> {
+        raise Exception.new(message: "sync: the countdown already drained")
+      }
+      ("sync", "ok") -> { }
+    }
+  }
+
+  // Blocks until the countdown drains; answers immediately once it has.
+  // Any number of processes may wait, and each is woken. Raises when
+  // the group is stopped under the wait.
+  def wait() Void {
+    self.pid <- ("sync", "wait", self_pid())
+    receive {
+      ("sync", "drained") -> { }
+      ("sync", "stopped") -> {
+        raise Exception.new(message: "sync: the wait group was stopped under the wait")
+      }
+    }
+  }
+
+  // Ends the counter process. A wait still parked on the group wakes
+  // and raises at its caller. Fire-and-forget, so stopping twice is a
+  // harmless dropped send.
+  def stop() Void {
+    self.pid <- ("sync", "stop")
+  }
 }
 
 // The counter's entry: the waiter row is built here, inside the
 // counter's own process, rather than passed across the spawn.
 def counter_start(n Int64) Int64 {
   return counter(n, List.new([]))
-}
-
-// Announces one finished unit. Raises when the countdown has already
-// drained: a done beyond the count is a bug in the caller, and the
-// round trip is what makes it surface at the caller instead of
-// vanishing into the counter's mailbox.
-def done(wg Pid) Void {
-  wg <- ("sync", "dec", self_pid())
-  receive {
-    ("sync", "underflow") -> {
-      raise Exception.new(message: "sync: the countdown already drained")
-    }
-    ("sync", "ok") -> { }
-  }
-}
-
-// Blocks until the countdown drains; answers immediately once it has.
-// Any number of processes may wait, and each is woken. Raises when the
-// group is stopped under the wait.
-def wait(wg Pid) Void {
-  wg <- ("sync", "wait", self_pid())
-  receive {
-    ("sync", "drained") -> { }
-    ("sync", "stopped") -> {
-      raise Exception.new(message: "sync: the wait group was stopped under the wait")
-    }
-  }
-}
-
-// Ends the counter process. A wait still parked on the group wakes and
-// raises at its caller. Fire-and-forget, so stopping twice is a
-// harmless dropped send.
-def stop(wg Pid) Void {
-  wg <- ("sync", "stop")
 }
 
 // The counter process: the group's whole state is the count and the

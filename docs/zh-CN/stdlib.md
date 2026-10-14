@@ -452,28 +452,30 @@ attrs 是 `Map[String, String]`;键只能是 ASCII 字母、数字、`_`、`.`�
 贝),这正是包里没有 mutex 的原因——等待组只计数。
 
 ```emo
-def wait_group(n Int64) Pid
-def done(wg Pid) Void
-def wait(wg Pid) Void
-def stop(wg Pid) Void
+class WaitGroup {
+  def init(n Int64)
+  def done() Void
+  def wait() Void
+  def stop() Void
+}
 ```
 
-`wait_group` 启动一个 `n` 份工作的倒计时并回答组的 pid;`done` 宣
-告一份工作完成;`wait` 阻塞到计数清零,若已清零则立即返回;`stop`
-结束计数进程。多个进程可以在同一个组上 `wait`,每个都会被唤醒。
-计数一次性设定、只减不增:等待组是一次性的。超出计数的 `done` 在
-调用方抛出而非无声消失;`stop` 落下时仍泊着的 `wait` 会抛出而非悬
-挂。
+`WaitGroup.new(n)` 启动一个 `n` 份工作的倒计时并回答组的句柄;
+`done` 宣告一份工作完成;`wait` 阻塞到计数清零,若已清零则立即返
+回;`stop` 结束计数进程。多个进程可以在同一个组上 `wait`,每个都
+会被唤醒。计数一次性设定、只减不增:等待组是一次性的。超出计数
+的 `done` 在调用方抛出而非无声消失;`stop` 落下时仍泊着的 `wait`
+会抛出而非悬挂。
 
 ```emo
 require "sync"
 
-const wg = sync.wait_group(3)  // 三份工作在前
-do worker(wg)                  // ……每个以 sync.done(wg) 收尾
+const wg = WaitGroup.new(3)  // 三份工作在前
+do worker(wg)                // ……每个以 wg.done() 收尾
 do worker(wg)
 do worker(wg)
-sync.wait(wg)                  // 第三次 done 时返回
-sync.stop(wg)
+wg.wait()                    // 第三次 done 时返回
+wg.stop()
 ```
 
 等待组线上的每条消息都是打上 `"sync"`——包名——标签的元组,所以

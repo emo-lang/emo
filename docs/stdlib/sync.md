@@ -29,26 +29,28 @@ implements, so the package declares all five targets.
 ## The surface
 
 ```emo
-def wait_group(n Int64) Pid
-def done(wg Pid) Void
-def wait(wg Pid) Void
-def stop(wg Pid) Void
+class WaitGroup {
+  def init(n Int64)
+  def done() Void
+  def wait() Void
+  def stop() Void
+}
 ```
 
-`wait_group` starts a countdown of `n` units and answers the group's
-pid — the handle every other call takes. `done` announces one finished
-unit; `wait` blocks until the count drains and answers immediately
-once it has; `stop` ends the counter process.
+`WaitGroup.new(n)` starts a countdown of `n` units and answers the
+group's handle — the value every method is called on. `done` announces
+one finished unit; `wait` blocks until the count drains and answers
+immediately once it has; `stop` ends the counter process.
 
 The shape of a fan-out:
 
 ```emo
-const wg = sync.wait_group(3)  // three units of work ahead
-do worker(wg)                  // ... each ends with sync.done(wg)
+const wg = WaitGroup.new(3)  // three units of work ahead
+do worker(wg)                // ... each ends with wg.done()
 do worker(wg)
 do worker(wg)
-sync.wait(wg)                  // returns with the third done
-sync.stop(wg)
+wg.wait()                    // returns with the third done
+wg.stop()
 ```
 
 Several processes may `wait` on one group, and each is woken. A
@@ -56,14 +58,14 @@ zero-count group is born drained: its `wait` answers at once.
 
 ## The lifecycle
 
-The count is set once at `wait_group` and only ever goes down: a wait
-group is single-use, and there is no `add`. The counter process parks
-once drained — a late `wait` still answers, and a late `done` still
-raises at its caller — and a process parked forever would hold the
-whole program open, so the lifecycle ends explicitly: `stop` halts the
-counter, and a `wait` still parked at that moment raises at its caller
-instead of hanging. The discipline is the plain one: stop the group
-after your last wait.
+The count is set once at `WaitGroup.new` and only ever goes down: a
+wait group is single-use, and there is no `add`. The counter process
+parks once drained — a late `wait` still answers, and a late `done`
+still raises at its caller — and a process parked forever would hold
+the whole program open, so the lifecycle ends explicitly: `stop` halts
+the counter, and a `wait` still parked at that moment raises at its
+caller instead of hanging. The discipline is the plain one: stop the
+group after your last wait.
 
 ## Strictness
 
@@ -71,12 +73,12 @@ A `done` past the count does not silently vanish — the call
 round-trips through the counter and raises, naming the caller's
 mistake at the caller instead of letting it drown in the counter's
 mailbox. (A call raced by a `stop` — its counter already gone — drops
-like any send to a dead pid.) `wait_group` refuses a negative count.
+like any send to a dead pid.) `WaitGroup.new` refuses a negative count.
 
 ## Errors
 
 - `sync: the count must not be negative, got -2` — a
-  negative count at `wait_group`;
+  negative count at `WaitGroup.new`;
 - `sync: the countdown already drained` — a `done` beyond the
   count;
 - `sync: the wait group was stopped under the wait` — a `wait`

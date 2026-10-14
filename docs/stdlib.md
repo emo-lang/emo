@@ -649,29 +649,31 @@ guard (messages are snapshot copies), which is why the package has no
 mutex — a wait group only counts.
 
 ```emo
-def wait_group(n Int64) Pid
-def done(wg Pid) Void
-def wait(wg Pid) Void
-def stop(wg Pid) Void
+class WaitGroup {
+  def init(n Int64)
+  def done() Void
+  def wait() Void
+  def stop() Void
+}
 ```
 
-`wait_group` starts a countdown of `n` units and answers the group's
-pid; `done` announces one finished unit; `wait` blocks until the count
-drains and answers immediately once it has; `stop` ends the counter
-process. Several processes may `wait` on one group, and each is woken.
-The count is set once and only goes down: a wait group is single-use.
-A `done` past the count raises at its caller rather than vanishing; a
-`wait` parked when `stop` lands raises instead of hanging.
+`WaitGroup.new(n)` starts a countdown of `n` units and answers the
+group's handle; `done` announces one finished unit; `wait` blocks until
+the count drains and answers immediately once it has; `stop` ends the
+counter process. Several processes may `wait` on one group, and each is
+woken. The count is set once and only goes down: a wait group is
+single-use. A `done` past the count raises at its caller rather than
+vanishing; a `wait` parked when `stop` lands raises instead of hanging.
 
 ```emo
 require "sync"
 
-const wg = sync.wait_group(3)  // three units of work ahead
-do worker(wg)                  // ... each ends with sync.done(wg)
+const wg = WaitGroup.new(3)  // three units of work ahead
+do worker(wg)                // ... each ends with wg.done()
 do worker(wg)
 do worker(wg)
-sync.wait(wg)                  // returns with the third done
-sync.stop(wg)
+wg.wait()                    // returns with the third done
+wg.stop()
 ```
 
 Every wait-group message on the wire is a tuple tagged `"sync"` — the
