@@ -263,6 +263,9 @@ let wasm_goldens =
     "list";
     "base64_demo";
     "csv_demo";
+    "json_demo";
+    "yaml_demo";
+    "xml_demo";
     "sync_demo";
     "loops";
     "error_matching";
@@ -294,6 +297,9 @@ let beam_goldens =
     "list";
     "base64_demo";
     "csv_demo";
+    "json_demo";
+    "yaml_demo";
+    "xml_demo";
     "sync_demo";
     "printf_demo";
     "loops";
@@ -510,6 +516,9 @@ let c_goldens =
     "os_demo";
     "base64_demo";
     "csv_demo";
+    "json_demo";
+    "yaml_demo";
+    "xml_demo";
     "sync_demo";
     "slog_demo";
     "bufio_demo";

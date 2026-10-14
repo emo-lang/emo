@@ -587,6 +587,8 @@ Step 26 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 
 步骤 35 收尾(2026-10-09,`feat/stdlib` 分支):base64 是第一个挂满五个金测的标准库包——本步骤还揪出四个从未被已发布示例触及的潜在后端 bug:wasm 的 `&&`/`||` 左操作数漏了 `ref.cast`(这正是把 json/yaml/xml 挡在 wasm 金测之外的墙)、wasm 的零长度字节拷贝是会在 `"".to_bytes()` 上陷阱的 do-while、beam 的逻辑运算符对两个布尔调用 `emo_add`、beam 的元组索引对 Erlang 元组用 `lists:nth`;beam 还补上 `Make_exception`(异常对象即其消息)。json/yaml/xml 的 wasm 闸门应对照这些修复重验——`&&` 之墙已倒,但它们的跨模块类类型可能仍被 step-31 后续挡着。
 
+格式包后端后续(2026-10-14,`develop` 分支):重验完成——`json_demo`、`yaml_demo`、`xml_demo` 现已挂上 wasm、beam、c 三个金测列表。`String.substring` 在 wasm 与 beam 上都没有运行时;wasm 补了边界内的字节拷贝,beam 补了在解释器范围检查之后的 `binary:part/3`。其后浮出两个 wasm 类 bug:class-pad 公式 `ordinal * (max_fields + 1) + field_count` 让(序号 0, 1 个字段)与(序号 1, 0 个字段)得到同一个两字段结构,于是 WasmGC 合并了两者的 RTT,`ref.test` 无法区分 `YamlNull` 与 `YamlBool`(解码出的 null 答成了 `YamlBool`,看起来像分派 bug);现在每个类的字段总数固定为 `(ordinal + 1) * (max_fields + 1) + 2`,按类唯一,且避开两个全 anyref 的运行时形状。此外 `get` 内建在两个 target 上都遮蔽了每个类的 `get` 方法(`doc.get("k")` 被降为 Bytes 索引);两个后端现在都在运行时判定 Bytes/实例,回退到 Bytes 访问器。
+
 ### Step 36 — 标准库:`slog` · `plan/step-36-stdlib-slog.md`
 
 **前置:** Step 35(base64——纯原生类型的表面形状)。**完成标准:** `require "slog"` 每条记录打一行,logfmt 或 JSON,按最低级别过滤;logger 是普通的值——一个携带名称、级别、格式的不透明句柄——attrs 是键严格限于单一字母表的 `Map[String, String]`,金测挂 bootstrap、c、typescript 列表且逐字节一致;wasm 与 beam 在其运行时实现 `Map` 之前拒绝该包。

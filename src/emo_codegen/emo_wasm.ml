@@ -208,14 +208,16 @@ let rt = function
   | "list_pop_back" -> 65
   | "list_len" -> 66
   | "list_str" -> 67
+  | "str_substring" -> 68
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
    program funcs follow. The List ops (61..67) sit after main — main
-   stays at 60 so the exported entry keeps its index. *)
-let runtime_count = 68
+   stays at 60 so the exported entry keeps its index. The String
+   substring runtime (68) sits after them for the same reason. *)
+let runtime_count = 69
 (* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 12
-     + list ops 7 *)
+     + list ops 7 + the String substring *)
 
 (* ---- Lowering state ---- *)
 
@@ -725,6 +727,11 @@ and method_call env self_ name args =
            ]);
       e env W.I64_extend_i32_s;
       e env (W.Struct_new t_vint)
+  | "substring", [ start; len ] ->
+      expr env self_;
+      expr env start;
+      expr env len;
+      e env (W.Call (rt "str_substring"))
   | "append", [ v ] ->
       expr env self_;
       expr env v;
@@ -762,10 +769,62 @@ and method_call env self_ name args =
         (W.Call
            (rt
               (if mname = "pop_front" then "list_pop_front" else "list_pop_back")))
-  | "get", [ i ] ->
-      expr env self_;
-      expr env i;
-      e env (W.Call (rt "bytes_get"))
+  | "get", [ i ] -> (
+      (* `get` names both the Bytes accessor and a class method (the
+         format packages' object types, say). The interpreter checks
+         the receiver's class first, so dispatch at runtime: a Bytes
+         receiver takes the builtin and every instance takes its
+         class's method. When no class defines `get`, the builtin is
+         the whole call. *)
+      let candidates =
+        List.filter_map
+          (fun (c : Emo_ir.class_) ->
+            if
+              List.exists
+                (fun (m : Emo_ir.func) ->
+                  String.equal (member_name c m) mangled
+                  && List.length m.Emo_ir.fparams - 1 = 1)
+                c.Emo_ir.cmethods
+            then
+              match
+                ( List.assoc_opt c.Emo_ir.cname env.class_type,
+                  List.assoc_opt (c.Emo_ir.cname ^ "__" ^ mangled) env.funcs )
+              with
+              | Some tidx, Some fidx -> Some (tidx, fidx)
+              | _ -> None
+            else None)
+          env.classes
+      in
+      match candidates with
+      | [] ->
+          expr env self_;
+          expr env i;
+          e env (W.Call (rt "bytes_get"))
+      | _ ->
+          let recv = fresh_local env "__get_recv" W.Anyref in
+          let arg = fresh_local env "__get_arg" W.Anyref in
+          expr env self_;
+          e env (W.Local_set recv);
+          expr env i;
+          e env (W.Local_set arg);
+          let rec chain = function
+            | [] -> [ W.Unreachable ]
+            | (tidx, fidx) :: rest ->
+                [
+                  W.If_else
+                    ( W.Result W.Anyref,
+                      [ W.Local_get recv; W.Ref_test tidx ],
+                      W.Local_get recv :: W.Ref_cast tidx :: [ W.Local_get arg ]
+                      @ [ W.Call fidx ],
+                      chain rest );
+                ]
+          in
+          e env
+            (W.If_else
+               ( W.Result W.Anyref,
+                 [ W.Local_get recv; W.Ref_test t_vbytes ],
+                 [ W.Local_get recv; W.Local_get arg; W.Call (rt "bytes_get") ],
+                 chain candidates )))
   | "set", [ i; v ] ->
       expr env self_;
       expr env i;
@@ -1622,11 +1681,16 @@ let class_fields (c : Emo_ir.class_) : string list =
 (* The dummy-field count that makes a class's struct shape unique:
    WasmGC canonicalizes identically-shaped struct types into one, so
    layout-equal classes would share an RTT and ref.test could not tell
-   them apart. The ordinal is encoded in a base wide enough that
-   (ordinal, real-field-count) pairs cannot collide; dummies sit after
-   the real fields, so field indices are untouched. *)
+   them apart. The total field count is fixed at
+   (ordinal + 1) * (max_fields + 1) + 2, which is strictly increasing
+   in the ordinal — so no two classes collide, whatever their real
+   field counts. The +2 keeps every class at three fields or more,
+   clear of the two all-anyref runtime shapes ($vbox's one field and
+   $cons's two) that a padding-free layout would otherwise merge
+   with. Dummies sit after the real fields, so field indices are
+   untouched. *)
 let class_pad (max_fields : int) (ordinal : int) (c : Emo_ir.class_) : int =
-  (ordinal * (max_fields + 1)) + List.length (class_fields c)
+  ((ordinal + 1) * (max_fields + 1)) + 2 - List.length (class_fields c)
 
 let emit_class_decls env (c : Emo_ir.class_) ~(pad : int) : unit =
   let fields = class_fields c in
@@ -3498,6 +3562,89 @@ let rt_strcat : W.func_type =
       ];
   }
 
+(* substring(recv, start, len) -> $vstring: the copy keeps the new
+   string independent, and any out-of-bounds (start, len) traps — the
+   same failure shape as the Bytes accessors. Locals: 3 src, 4 total,
+   5 start, 6 count, 7 dest, 8 i. *)
+let rt_str_substring : W.func_type =
+  {
+    W.ftype_idx = t_bytes_set;
+    fparams = [ "s"; "start"; "len" ];
+    flocals =
+      [
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+      ];
+    fbody =
+      [
+        W.Block
+          ( W.Void,
+            bytes_of 0
+            @ [
+                W.Local_set 3; W.Local_get 3; W.Array_len t_bytes; W.Local_set 4;
+              ]
+            @ i64_of 1
+            @ [ W.I64_const 0L; W.I64_lt_s; W.Br_if 0 ]
+            @ i64_of 2
+            @ [ W.I64_const 0L; W.I64_lt_s; W.Br_if 0 ]
+            @ i64_of 1 @ i64_of 2
+            @ [
+                W.I64_add;
+                W.Local_get 4;
+                W.I64_extend_i32_u;
+                W.I64_gt_s;
+                W.Br_if 0;
+              ]
+            @ i64_of 1
+            @ [ W.I32_wrap_i64; W.Local_set 5 ]
+            @ i64_of 2
+            @ [ W.I32_wrap_i64; W.Local_set 6 ]
+            @ [
+                W.Local_get 6;
+                W.Array_new_default t_bytes;
+                W.Local_set 7;
+                W.I32_const 0;
+                W.Local_set 8;
+                (* entered only when there is something to copy — the
+                   loop's exit check is at its end, so a zero length
+                   must not enter it at all *)
+                W.Local_get 8;
+                W.Local_get 6;
+                W.I32_lt_s;
+                W.If
+                  ( W.Void,
+                    [
+                      W.Loop
+                        ( W.Void,
+                          [
+                            W.Local_get 7;
+                            W.Local_get 8;
+                            W.Local_get 3;
+                            W.Local_get 5;
+                            W.Local_get 8;
+                            W.I32_add;
+                            W.Array_get_u t_bytes;
+                            W.Array_set t_bytes;
+                            W.Local_get 8;
+                            W.I32_const 1;
+                            W.I32_add;
+                            W.Local_tee 8;
+                            W.Local_get 6;
+                            W.I32_lt_s;
+                            W.Br_if 0;
+                          ] );
+                    ],
+                    [] );
+              ]
+            @ [ W.Local_get 7; W.Struct_new t_vstring; W.Return ] );
+        W.Unreachable;
+      ];
+  }
+
 (* box(v) -> (ref null $vbox). *)
 let rt_box : W.func_type =
   {
@@ -4242,6 +4389,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_list_pop_back;
         rt_list_len;
         rt_list_str;
+        rt_str_substring;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

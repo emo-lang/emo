@@ -1135,6 +1135,22 @@ message). The json/yaml/xml wasm gate should be re-examined against
 these fixes — the `&&` wall is gone, though their cross-module class
 types may still be gated by the step-31 follow-up.
 
+Format-package backend follow-up (2026-10-14, on `develop`): the
+re-examination is done — `json_demo`, `yaml_demo`, and `xml_demo` now
+ride the wasm, beam, and c golden lists. `String.substring` had no
+wasm or beam runtime; wasm gained an in-bounds byte copy and beam a
+`binary:part/3` behind the interpreter's range check. Two wasm class
+bugs surfaced behind it: the class-pad formula `ordinal * (max_fields
++ 1) + field_count` gave (ordinal 0, one field) and (ordinal 1, zero
+fields) the same two-field struct, so WasmGC merged their RTTs and
+`ref.test` could not tell `YamlNull` from `YamlBool` (a decoded null
+answered as `YamlBool`, which read as a dispatch bug); each class's
+total field count is now `(ordinal + 1) * (max_fields + 1) + 2`,
+unique per class and clear of the two all-anyref runtime shapes. The
+`get` builtin also shadowed every class's `get` method on both targets
+(`doc.get("k")` lowered to Bytes indexing); both backends now test
+Bytes/instance at runtime and fall back to the Bytes accessor.
+
 ### Step 36 — The standard library: `slog` · `plan/step-36-stdlib-slog.md`
 
 **Prereq:** Step 35 (base64 — the native-types-only surface shape).

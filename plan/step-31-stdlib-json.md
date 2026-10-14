@@ -6,9 +6,8 @@ independence — the reason a pure-Emo package reaches every target) ·
 **Related:** `stdlib/registry/{net,http,file}` (the worked pattern),
 `docs/stdlib/http.md` (the doc format), `README.md` ("the official
 standard library alone owns the top-level short names —
-`json.decode()`") · **Status:** done on the interpreter, ocaml, and
-typescript targets (2026-10-09); c, wasm, and beam are blocked on the
-cross-module-types checker work recorded in the follow-ups below
+`json.decode()`") · **Status:** done on all five targets (c 2026-10-10;
+wasm and beam 2026-10-14 — see step 32's follow-up).
 
 ## Why this step exists
 
@@ -115,6 +114,10 @@ tripping over latent backend bugs. Fixed in this step:
   bytes/map/box/array families), and the class vtables spelled
   predicate methods with the symbol-safe `_q` instead of the source
   `?` (dynamic dispatch and `is()` matching missed them).
+- **The wasm and beam landing (2026-10-14):** `json_demo` rides the
+  wasm, beam, and c golden lists. The three fixes are recorded in
+  `plan/step-32-stdlib-yaml.md` (the `String.substring` runtimes, the
+  wasm class-pad RTT collision, and the `get` builtin/class dispatch).
 
 ## Tasks
 

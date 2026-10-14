@@ -4,10 +4,8 @@
 json package — the tree design, the byte-scanner discipline, and the
 exact-buffer patterns this package follows) · **Related:**
 `stdlib/registry/{json,yaml}` (the sibling format packages),
-`docs/stdlib/xml.md` · **Status:** done on the interpreter, ocaml,
-typescript, and c targets (2026-10-09); the cross-module-types checker
-step landed (2026-10-10), and wasm and beam wait on their own
-capability walls
+`docs/stdlib/xml.md` · **Status:** done on all five
+targets (c 2026-10-09; wasm and beam 2026-10-14)
 
 ## Why this step exists
 
@@ -43,6 +41,10 @@ entities, and missing elements all raise with the byte offset.
   wasm and beam here as it gated json and yaml. (The c target works:
   the xml_demo golden rides the c_goldens list. The step landed
   2026-10-10; wasm and beam now wait on their own capability walls.)
+- **The wasm and beam landing (2026-10-14):** `xml_demo` rides the
+  wasm and beam lists too, so its c_goldens claim finally matches the
+  test file. The three fixes are recorded in
+  `plan/step-32-stdlib-yaml.md`.
 
 ## Tasks
 

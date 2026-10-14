@@ -4,9 +4,8 @@
 json package — the yaml package shares its tree design, its block
 parser discipline, and its exact-decimal float machinery) ·
 **Related:** `stdlib/registry/json` (the sibling format package),
-`docs/stdlib/yaml.md` (the doc format) · **Status:** done on the
-interpreter, ocaml, typescript, and c targets (2026-10-10 on c); wasm
-and beam keep their own capability walls
+`docs/stdlib/yaml.md` (the doc format) · **Status:** done on all five
+targets (c 2026-10-10; wasm and beam 2026-10-14)
 
 ## Why this step exists
 
@@ -44,6 +43,22 @@ last-win, and the number formats at their boundaries.
   and the c binary — the landing also flushed a trampoline defect the
   yaml parser's mutual-tail cluster exposed: sibling cluster members'
   locals now live in per-head blocks.)
+- **The wasm and beam landing (2026-10-14):** `yaml_demo` now rides
+  the wasm, beam, and c golden lists (json_demo and xml_demo with it —
+  the three packages shared the gate). `String.substring` had no wasm
+  or beam runtime at all; wasm gained an in-bounds byte copy, beam a
+  `binary:part/3` behind the interpreter's range check. Two wasm class
+  bugs the format packages flushed are fixed: the class-pad formula
+  gave two classes the same WasmGC struct shape — `ordinal *
+  (max_fields + 1) + field_count` mapped (ordinal 0, 1 field) and
+  (ordinal 1, 0 fields) both to two fields, so canonicalization merged
+  their RTTs and every `ref.test` arm matched the wrong class (a
+  `YamlNull` instance answered `YamlBool.encode`); the total field
+  count is now `(ordinal + 1) * (max_fields + 1) + 2`, unique per
+  class and clear of the two all-anyref runtime shapes. And the `get`
+  builtin shadowed every class's `get` method (`doc.get("k")` lowered
+  to Bytes indexing on both targets): both backends now test
+  Bytes/instance at runtime and fall back to the Bytes accessor.
 
 ## Tasks
 

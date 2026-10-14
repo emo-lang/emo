@@ -426,7 +426,51 @@ and method_call env self_ name args =
     args_list env (self_ :: args)
   in
   match (name, args) with
-  | "get", [ _ ] -> bytes_only 2 "emo_bytes_get"
+  | "get", [ i ] -> (
+      (* `get` names both the Bytes accessor and a class method (the
+         format packages' object types, say). The interpreter checks
+         the receiver's class first, so dispatch at runtime: a Bytes
+         receiver takes the builtin and every instance takes its
+         class's method. When no class defines `get`, the builtin is
+         the whole call. *)
+      let candidates =
+        List.filter_map
+          (fun (c : Emo_ir.class_) ->
+            if
+              List.exists
+                (fun (m : Emo_ir.func) ->
+                  String.equal (member_name c m) mangled
+                  && List.length m.Emo_ir.fparams - 1 = 1)
+                c.Emo_ir.cmethods
+            then Some c.Emo_ir.cname
+            else None)
+          env.classes
+      in
+      match candidates with
+      | [] ->
+          put env "apply 'emo_bytes_get'/2 ";
+          args_list env [ self_; i ]
+      | _ ->
+          let recv = fresh_var env "__recv" in
+          put env ("let <" ^ recv ^ "> =\n");
+          expr env self_;
+          put env ("\nin case " ^ recv ^ " of\n");
+          List.iter
+            (fun cname ->
+              put env
+                (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/2 ("
+                   (instance_pattern env.classes cname)
+                   (Emo_ir.sanitize_ident (cname ^ "__" ^ mangled)));
+              put env recv;
+              put env ", ";
+              expr env i;
+              put env ")\n")
+            candidates;
+          put env "  <_> when 'true' ->\n    apply 'emo_bytes_get'/2 (";
+          put env recv;
+          put env ", ";
+          expr env i;
+          put env ")\nend")
   | "set", [ _; _ ] -> bytes_only 3 "emo_bytes_set"
   | "get_u16_le", [ _ ] -> bytes_only 2 "emo_bytes_u16_get"
   | "get_u32_le", [ _ ] -> bytes_only 2 "emo_bytes_u32_get"
@@ -539,6 +583,9 @@ and method_call env self_ name args =
       | "append", [ v ] ->
           put env "apply 'emo_array_append'/2 ";
           args_list env [ self_; v ]
+      | "substring", [ start; len ] ->
+          put env "apply 'emo_str_substring'/3 ";
+          args_list env [ self_; start; len ]
       | "read", [] ->
           put env "call 'erlang':'get'(";
           expr env self_;
@@ -2155,6 +2202,26 @@ let rt_source =
 	      call 'erlang':'get'(_k)
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_bytes', _other})
+	end
+
+%% String.substring(start, length): in-bounds only, the same range
+%% check the interpreter enforces before binary:part/3 would badarg.
+'emo_str_substring'/3 =
+    fun (_s, _start, _len) ->
+	case call 'erlang':'<'(_start, 0) of
+	  <'true'> when 'true' ->
+	      call 'erlang':'error'({'emo_bad_substring', _start, _len})
+	  <'false'> when 'true' ->
+	      case call 'erlang':'<'(_len, 0) of
+		<'true'> when 'true' ->
+		    call 'erlang':'error'({'emo_bad_substring', _start, _len})
+		<'false'> when 'true' ->
+		    case call 'erlang':'=<'(call 'erlang':'+'(_start, _len), call 'erlang':'byte_size'(_s)) of
+		      <'true'> when 'true' -> call 'binary':'part'(_s, _start, _len)
+		      <'false'> when 'true' ->
+			  call 'erlang':'error'({'emo_bad_substring', _start, _len})
+		    end
+	      end
 	end
 
 'emo_bytes_label'/1 =
