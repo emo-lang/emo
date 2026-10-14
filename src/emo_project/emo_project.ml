@@ -256,7 +256,7 @@ let load_module p (handle_of : string list -> Emo_eval.module_handle option)
                   Emo_eval.define env name ~mutable_:false (Emo_eval.Module h)
               | None -> ())
             (children p pkg));
-      List.iter (Emo_eval.eval_item env) items;
+      List.iter (Emo_eval.eval_item ~module_path:path env) items;
       env
 
 (* Installs the evaluator's module hooks for this project: discovery
@@ -448,7 +448,10 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
         (path, items) :: acc)
       p.files []
   in
-  let program, preregister_errors = Emo_check.preregister_types ~units in
+  let program, preregister_errors =
+    Emo_check.preregister_types ~packages:p.packages
+      ~package_deps:p.package_deps ~units
+  in
   let errors, entries =
     List.fold_left
       (fun (errors, entries) (path, items) ->
@@ -1068,7 +1071,10 @@ let compile_inputs ~entry_file ~target :
   (* The program's type tables (CHECK.md, cross-module types) come
    * before any module is checked, so every module's type declarations
    * resolve against every declaration. *)
-  let program, preregister_errors = Emo_check.preregister_types ~units in
+  let program, preregister_errors =
+    Emo_check.preregister_types ~packages:p.packages
+      ~package_deps:p.package_deps ~units
+  in
   diagnostics := preregister_errors;
   let inputs =
     List.fold_left

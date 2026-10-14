@@ -25,7 +25,7 @@ containers live on the element class, read through `is()`:
 
 ```emo
 const (R.ok, doc) = xml.decode(text)
-if doc.is(XmlElement) {
+if doc.is(xml.XmlElement) {
   println(doc.name())
   println(doc.attr("id"))
   println(doc.get("title").text())

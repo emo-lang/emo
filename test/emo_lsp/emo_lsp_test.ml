@@ -354,7 +354,9 @@ let test_dependency_members_resolve () =
       let ix = Lsp_index.get ~registry:reg root in
       let items = parse_items source in
       let units = Lsp_index.units_for ix ~current:[ "main" ] items in
-      let program, _ = Emo_check.preregister_types ~units in
+      let program, _ =
+        Emo_check.preregister_types ~packages:[] ~package_deps:[] ~units
+      in
       let modules = List.map fst ix.modules in
       let diags, _, _, _ =
         Emo_check.check_module_typed ~modules ~current:[ "main" ] ~program items

@@ -470,7 +470,7 @@ class WaitGroup {
 ```emo
 require "sync"
 
-const wg = WaitGroup.new(3)  // 三份工作在前
+const wg = sync.WaitGroup.new(3)  // 三份工作在前
 do worker(wg)                // ……每个以 wg.done() 收尾
 do worker(wg)
 do worker(wg)

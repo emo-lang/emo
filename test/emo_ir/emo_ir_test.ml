@@ -212,7 +212,8 @@ def pick() Color {
               | Emo_ir.Return_stmt
                   {
                     desc =
-                      Emo_ir.Make_enum { enum_name = "Color"; member = "red" };
+                      Emo_ir.Make_enum
+                        { enum_name = "app.Color"; member = "red" };
                     _;
                   } ->
                   true

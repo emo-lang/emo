@@ -290,12 +290,16 @@ let privacy_tests =
 }
 |}
               );
-              ("shop/pricing.emo", {|def price(c Coupon) Int64 {
+              ( "shop/pricing.emo",
+                {|def price(c shop.internal.coupons.Coupon) Int64 {
   return 7
-}|});
-              ("app/main.emo", {|def total(c Coupon) Int64 {
+}|}
+              );
+              ( "app/main.emo",
+                {|def total(c shop.internal.coupons.Coupon) Int64 {
   return 0
-}|});
+}|}
+              );
             ]
             "app/main.emo"
         in
@@ -330,7 +334,7 @@ let privacy_tests =
               );
               ( "app/main.emo",
                 {|def total(c Int64) Int64 {
-  if c.is(Coupon) {
+  if c.is(shop.internal.coupons.Coupon) {
     return 1
   }
   return 0
@@ -355,14 +359,14 @@ let privacy_tests =
 |}
               );
               ( "shop/pricing.emo",
-                {|def price(c Coupon) Int64 {
-  if c.is(Coupon) {
+                {|def price(c shop.internal.coupons.Coupon) Int64 {
+  if c.is(shop.internal.coupons.Coupon) {
     return 7
   }
   return 0
 }
 
-const made = Coupon.new(id: 7)
+const made = shop.internal.coupons.Coupon.new(id: 7)
 |}
               );
             ]
@@ -1760,7 +1764,7 @@ let stdlib_require_tests =
               ( "main.emo",
                 {|require "sync"
 
-const wg = WaitGroup.new(1)
+const wg = sync.WaitGroup.new(1)
 wg.done()
 wg.wait()
 println("ok")
@@ -1857,7 +1861,7 @@ println("ok")
               ( "main.emo",
                 {|require "sync"
 
-const wg = WaitGroup.new(1)
+const wg = sync.WaitGroup.new(1)
 wg.done()
 wg.wait()
 println("ok")
@@ -2520,7 +2524,7 @@ def make() VNode {
             [
               ("ui.emo", ui_source);
               ( "app.emo",
-                {|def view() VNode {
+                {|def view() ui.VNode {
   return ui.make()
 }
 
@@ -2533,40 +2537,57 @@ println(v.kind())|}
         match Emo_project.check_entry ~entry_file:entry with
         | [] -> ()
         | ds -> Alcotest.fail ("codes: " ^ codes_of ds));
-    tc "a type name claimed by two modules is a loud collision" (fun () ->
+    tc "the same type name in two modules is two distinct types" (fun () ->
         let entry =
           with_project
             [
-              ("a.emo", {|class Widget {
+              ( "a.emo",
+                {|class Widget {
   def init() {
     self.w = 1
   }
+
+  def weight() Int64 {
+    return self.w
+  }
 }
-|});
-              ("b.emo", {|class Widget {
+
+def make() Widget {
+  return Widget.new()
+}
+|}
+              );
+              ( "b.emo",
+                {|class Widget {
   def init() {
     self.w = 2
   }
+
+  def weight() Int64 {
+    return self.w
+  }
 }
-|});
-              ("main.emo", "const x = 1\nprintln(x)");
+
+def make() Widget {
+  return Widget.new()
+}
+|}
+              );
+              ( "main.emo",
+                "println(a.make().weight())\nprintln(b.make().weight())" );
             ]
             "main.emo"
         in
         match Emo_project.check_entry ~entry_file:entry with
-        | ds
-          when List.exists
-                 (fun d -> d.Emo_support.Diagnostic.code = Some "E4021")
-                 ds ->
-            ()
-        | ds -> Alcotest.fail ("expected E4021, got: " ^ codes_of ds));
+        | [] -> ()
+        | ds -> Alcotest.fail ("codes: " ^ codes_of ds));
     tc "the split runs end to end" (fun () ->
         let entry =
           with_project
             [
               ("ui.emo", ui_source);
               ( "app.emo",
-                {|def view() VNode {
+                {|def view() ui.VNode {
   return ui.make()
 }
 
@@ -2614,11 +2635,11 @@ class Swatch {
 |}
               );
               ( "main.emo",
-                {|const p = Point.new(x: 3, y: 4)
+                {|const p = geo.Point.new(x: 3, y: 4)
 println(p.show())
-println(p.is(Point))
-const s = Swatch.new(Color.green)
-if s.kind() == Color.green {
+println(p.is(geo.Point))
+const s = geo.Swatch.new(geo.Color.green)
+if s.kind() == geo.Color.green {
   println("green it is")
 }|}
               );

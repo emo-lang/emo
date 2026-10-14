@@ -31,7 +31,7 @@ def as_string() String
 
 ```emo
 const (R.ok, doc) = yaml.decode(text)
-if doc.is(YamlObject) {
+if doc.is(yaml.YamlObject) {
   println(doc.get("service").as_string())
   println(doc.get("ports").items().length().to_string())
 }

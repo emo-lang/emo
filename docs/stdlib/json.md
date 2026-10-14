@@ -34,7 +34,7 @@ read through `is()` into the class:
 
 ```emo
 const (R.ok, doc) = json.decode(text)
-if doc.is(JsonObject) {
+if doc.is(json.JsonObject) {
   println(doc.get("name").as_string())
   println(doc.get("tags").items().length())
 }

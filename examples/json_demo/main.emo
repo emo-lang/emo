@@ -8,7 +8,7 @@ require "json"
 // ---- decode and read ----
 const text = "{\"name\": \"王晓明\", \"age\": 28, \"active\": true, \"score\": 91.5, \"tags\": [\"a\", \"b\"], \"city\": {\"name\": \"上海\"}, \"note\": null}"
 const (R.ok, doc) = json.decode(text)
-if doc.is(JsonObject) {
+if doc.is(json.JsonObject) {
   // containers read through `is()` into the concrete class; the scalar
   // accessors then answer without further ceremony
   println(doc.get("name").as_string())
@@ -62,6 +62,6 @@ println(json.encode_pretty(built))
 
 // ---- a full round trip: decode, re-encode, decode again ----
 const (R.ok, once) = json.decode(json.encode(doc))
-if once.is(JsonObject) {
+if once.is(json.JsonObject) {
   println(once.get("name").encode())
 }

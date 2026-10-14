@@ -1,7 +1,7 @@
 // What a mark is handed to draw itself: the renderer plus the plot
 // rectangle and the data domains it maps through.
 class DrawContext {
-  def init(renderer SvgRenderer, x0 Float64, y0 Float64, plot_w Float64, plot_h Float64,
+  def init(renderer internal.svg.SvgRenderer, x0 Float64, y0 Float64, plot_w Float64, plot_h Float64,
            x_min Float64, x_max Float64, y_min Float64, y_max Float64) {
     self.renderer = renderer
     self.x0 = x0

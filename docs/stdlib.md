@@ -668,7 +668,7 @@ vanishing; a `wait` parked when `stop` lands raises instead of hanging.
 ```emo
 require "sync"
 
-const wg = WaitGroup.new(3)  // three units of work ahead
+const wg = sync.WaitGroup.new(3)  // three units of work ahead
 do worker(wg)                // ... each ends with wg.done()
 do worker(wg)
 do worker(wg)

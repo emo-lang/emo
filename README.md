@@ -238,7 +238,7 @@ shop/
   ```
 
 - **Visibility is structural.** Definitions inside functions and blocks are private by scoping; module-level definitions are public (addressable by their qualified paths); and an `internal/` directory is subtree-private, enforced by the compiler — everything under `shop/internal/` is usable within `shop` and its descendants, and a compile error anywhere else.
-- **Type names are program-wide.** A type declaration resolves against every module's declarations, so a library's types are used by bare name — `def view(count Int64) VNode` in the app names `ui.emo`'s `VNode`, `is()` narrows across the boundary, and construction follows the same rule: `Point.new(...)` builds the library's class, its module loading on first use. Names must be unique across the program: declaring the same type name in two modules is a compile error naming both. And the privacy rule reaches bare names with them: a type declared under `internal/` names nothing outside its subtree.
+- **Type names are module-qualified paths, exactly like values.** A type reference is a path: `ui.VNode` names `ui.emo`'s `VNode` from another module, a bare `Order` names the current module's own type, and package-relative forms work as they do for values (`internal.svg.Renderer` inside a package). `is()` narrows across the boundary, and construction follows the same rule — `sync.WaitGroup.new(2)`, `ui.Point.new(...)` — the declaring module loading on first use. Two modules may therefore declare the same type name: they are two distinct types, each addressed by its module. The privacy rule reaches types as it reaches values: a type declared under `internal/` resolves only within its subtree.
 - **The dependency graph is explicit.** Path references are the dependency declarations, giving automatic module discovery, incremental compilation, and compile-time cycle detection.
 
 ## Package Management
@@ -248,7 +248,7 @@ Packages slot directly into the module system: a package name becomes a top-leve
 ```emo
 require "acme/json_tools"
 
-def parse_config(text String) Json {
+def parse_config(text String) json_tools.Json {
   return json_tools.parse(text)
 }
 ```

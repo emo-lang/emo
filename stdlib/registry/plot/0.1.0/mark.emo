@@ -2,7 +2,7 @@
 // its data spans. `bar` is the T0 bar mark.
 
 interface Mark {
-  def draw(ctx DrawContext) Void
+  def draw(ctx internal.ctx.DrawContext) Void
   def y_max() Float64
   def bands() Int64
   def x_labels() Array[String]
@@ -43,7 +43,7 @@ class Bar {
     self.label = label
   }
 
-  def draw(ctx DrawContext) Void {
+  def draw(ctx internal.ctx.DrawContext) Void {
     const n = self.values.length()
     const band = ctx.plot_w / n.to_float64()
     const base = ctx.py(0.0)

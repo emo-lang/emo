@@ -7,9 +7,9 @@
 // and data segments, exports, and the start function.
 //
 // The walk is section-scoped: `find_section` locates a section's
-// content once, and each parser owns its bytes. Type names resolve
-// program-wide (CHECK.md, cross-module types), so the model module's
-// `FuncType` is referenced bare — its type declarations and its
+// content once, and each parser owns its bytes. Type names are
+// module-qualified paths (CHECK.md), so the model module's `FuncType` is
+// referenced as `internal.model.FuncType` — its type declarations and its
 // constructions alike; a field is still assignable only inside `init`,
 // and nothing here crosses a module edge except the verdict tuple and
 // plain handles.
@@ -101,7 +101,7 @@ class DataDef {
 }
 
 class Module {
-  def init(types Array[FuncType], imports Array[Import], funcs Array[FuncDef], tables Array[TableDef], mems Array[MemDef], globals Array[GlobalDef], exports Array[ExportDef], start Int64, elems Array[ElemDef], datas Array[DataDef], func_typeidxs Array[Int64], n_imp_funcs Int64, n_imp_globals Int64, data Bytes, dc Int64) {
+  def init(types Array[internal.model.FuncType], imports Array[Import], funcs Array[FuncDef], tables Array[TableDef], mems Array[MemDef], globals Array[GlobalDef], exports Array[ExportDef], start Int64, elems Array[ElemDef], datas Array[DataDef], func_typeidxs Array[Int64], n_imp_funcs Int64, n_imp_globals Int64, data Bytes, dc Int64) {
     self.types = types
     self.imports = imports
     self.funcs = funcs
@@ -194,21 +194,21 @@ def valtype_acc(data Bytes, pos Int64, limit Int64, n Int64, acc Array[Int64]) (
 }
 
 // A functype: tag 0x60, param vector, result vector.
-def functype_at(data Bytes, pos Int64, limit Int64) (Bool, FuncType, Int64) {
+def functype_at(data Bytes, pos Int64, limit Int64) (Bool, internal.model.FuncType, Int64) {
   if pos >= limit || data.get(pos) != 96 {
-    return (false, FuncType.new([], []), pos)
+    return (false, internal.model.FuncType.new([], []), pos)
   }
   const pn = internal.reader.u32(internal.reader.new(data, pos + 1, limit))
   if pn[0].failed {
-    return (false, FuncType.new([], []), pos)
+    return (false, internal.model.FuncType.new([], []), pos)
   }
   const pv = valtype_vec(data, pn[0].pos, limit, pn[1])
   const rn = internal.reader.u32(internal.reader.new(data, pv[1], limit))
   if rn[0].failed {
-    return (false, FuncType.new([], []), pos)
+    return (false, internal.model.FuncType.new([], []), pos)
   }
   const rv = valtype_vec(data, rn[0].pos, limit, rn[1])
-  return (true, FuncType.new(pv[0], rv[0]), rv[1])
+  return (true, internal.model.FuncType.new(pv[0], rv[0]), rv[1])
 }
 
 // A u32 vector of known length, in order.
@@ -239,7 +239,7 @@ def const_range(data Bytes, pos Int64, limit Int64) (Int64, Int64) {
 
 // ---- section parsers ----
 
-def parse_types(data Bytes) Array[FuncType] {
+def parse_types(data Bytes) Array[internal.model.FuncType] {
   const s = find_section(data, 1)
   if !s[0] {
     return []
@@ -251,7 +251,7 @@ def parse_types(data Bytes) Array[FuncType] {
   return types_rest(data, cn[0].pos, s[2], cn[1], [])
 }
 
-def types_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[FuncType]) Array[FuncType] {
+def types_rest(data Bytes, pos Int64, limit Int64, n Int64, acc Array[internal.model.FuncType]) Array[internal.model.FuncType] {
   if n == 0 {
     return acc
   }

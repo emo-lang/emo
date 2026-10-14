@@ -14,7 +14,7 @@ interface Renderer {
 
 class SvgRenderer {
   def init(width Float64, height Float64) {
-    self.buf = Buffer.new()
+    self.buf = internal.buffer.Buffer.new()
     self.buf.write("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"")
     self.buf.write_int(width.to_int64())
     self.buf.write("\" height=\"")

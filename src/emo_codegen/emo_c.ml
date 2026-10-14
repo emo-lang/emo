@@ -101,7 +101,15 @@ let cb_table : (string, string) Hashtbl.t = Hashtbl.create 8
    appends a suffix; Emo names never collide because `_c` cannot end
    a mangled Emo name... it can, so the check is on the exact word. *)
 let c_ident (name : string) : string =
-  let n = Emo_ir.sanitize_ident name in
+  (* A qualified type name (`main.LineSource`) is not a C identifier: each
+     module segment is sanitized and the segments join with `__`, matching
+     the program's mangling scheme. *)
+  let n =
+    String.split_on_char '.' name
+    |> List.map Emo_ir.sanitize_component
+    |> String.concat "__"
+  in
+  let n = Emo_ir.sanitize_ident n in
   let reserved =
     List.mem n
       [
@@ -337,8 +345,8 @@ let shape_param_keys : string list ref = ref []
 let shape_result_keys : string list ref = ref []
 
 (* The canonical serialization of a shape's member tree: the dedup key.
-   Class names are program-unique (E4021), so the display name in the
-   key is safe. *)
+   A class's display name is its module-qualified path (`acme.Point`), so
+   two modules' same-named classes never share a key. *)
 let rec shape_key env (t : Emo_check.t) : string =
   match t with
   | Emo_check.TupleType ts ->

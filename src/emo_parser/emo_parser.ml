@@ -251,6 +251,11 @@ and parse_postfix st =
         | Tok.Lower_ident name ->
             let name_span = (advance st).Tok.span in
             e := node (merge_span !e.Ast.span name_span) (Ast.Member (!e, name))
+        | Tok.Upper_ident name ->
+            (* A module-qualified type segment: `sync.WaitGroup.new`,
+               `plot.Scale.linear`. *)
+            let name_span = (advance st).Tok.span in
+            e := node (merge_span !e.Ast.span name_span) (Ast.Member (!e, name))
         | t ->
             error "E2001" (span st)
               (Printf.sprintf "expected a member name after `.`, found %s"
@@ -893,10 +898,12 @@ and parse_item st =
       { Ast.item_span = e.Ast.enum_span; item_desc = Ast.Item_enum e }
   | _ -> { Ast.item_span; item_desc = Ast.Item_stmt (parse_stmt st) }
 
-(* `true` when the current token can begin a type declaration. *)
+(* `true` when the current token can begin a type declaration: an
+   UpperCamel type name, a module prefix before one (`sync.WaitGroup`),
+   or a tuple type. *)
 and starts_type st =
   match kind st with
-  | Tok.Upper_ident _ | Tok.Op Tok.LParen -> true
+  | Tok.Upper_ident _ | Tok.Lower_ident _ | Tok.Op Tok.LParen -> true
   | _ -> false
 
 (* Type positions take UpperCamel names only. *)
@@ -1293,11 +1300,42 @@ and parse_params st =
       List.rev !params)
   else []
 
+(* A type reference: a bare `User`, or a module-qualified path —
+   `sync.WaitGroup`, `plot.internal.svg.DrawContext`. The last segment is
+   the type name (UpperCamel); every segment before it names a module
+   (lower_snake), so the split is visible in the spelling. Returns the
+   dotted name and the span it covers. *)
+and parse_type_ref_name st : string * Emo_support.Span.t =
+  let start_span = span st in
+  let segs = ref [] in
+  let rec loop () =
+    match kind st with
+    | Tok.Upper_ident name ->
+        let tok = advance st in
+        segs := name :: !segs;
+        tok.Tok.span
+    | Tok.Lower_ident name ->
+        advance st |> ignore;
+        segs := name :: !segs;
+        if not (at_op st Tok.Dot) then
+          error "E2017" (span st)
+            (Printf.sprintf "expected `.` and a type name after `%s`" name)
+            ~hint:"write a module-qualified type like `sync.WaitGroup`";
+        advance st |> ignore;
+        loop ()
+    | t ->
+        error "E2001" (span st)
+          (Printf.sprintf "expected a type declaration, found %s"
+             (describe_kind t))
+  in
+  let last_span = loop () in
+  (String.concat "." (List.rev !segs), merge_span start_span last_span)
+
 and parse_type_decl st =
   let tok = peek st in
   match tok.Tok.kind with
-  | Tok.Upper_ident name ->
-      advance st |> ignore;
+  | Tok.Upper_ident _ | Tok.Lower_ident _ ->
+      let name, name_span = parse_type_ref_name st in
       if at_op st Tok.LBracket then (
         advance st |> ignore;
         if at_op st Tok.RBracket then
@@ -1316,10 +1354,10 @@ and parse_type_decl st =
         let close_span = span st in
         expect_op st Tok.RBracket "`]`" |> ignore;
         {
-          Ast.type_span = merge_span tok.Tok.span close_span;
+          Ast.type_span = merge_span name_span close_span;
           type_desc = Ast.Applied_type (name, List.rev !args);
         })
-      else { Ast.type_span = tok.Tok.span; type_desc = Ast.Named_type name }
+      else { Ast.type_span = name_span; type_desc = Ast.Named_type name }
   | Tok.Op Tok.LParen ->
       advance st |> ignore;
       let types = ref [] in
@@ -1383,26 +1421,79 @@ and parse_string st =
   in
   loop ()
 
+(* The tail of an enum-member pattern: a `.` then the member name. The
+   type name is already assembled in [segs]. *)
+and parse_enum_member_tail st start_span segs =
+  expect_op st Tok.Dot "`.`" |> ignore;
+  match kind st with
+  | Tok.Lower_ident member ->
+      let mspan = (advance st).Tok.span in
+      let tname = String.concat "." (List.rev segs) in
+      {
+        Ast.pattern_span = merge_span start_span mspan;
+        pattern_desc = Ast.Enum_member (tname, member);
+      }
+  | t ->
+      error "E2007" (span st)
+        (Printf.sprintf "expected an enum member after `%s.`, found %s"
+           (String.concat "." (List.rev segs))
+           (describe_kind t))
+
 and parse_pattern st =
   let tok = peek st in
   match tok.Tok.kind with
-  | Tok.Upper_ident tname -> (
-      advance st |> ignore;
+  | Tok.Upper_ident tname ->
+      let tok = advance st in
       if not (at_op st Tok.Dot) then
         error "E2007" (span st) "enum members are matched by qualified name"
           ~hint:"write `Color.red`, not a bare type name";
-      expect_op st Tok.Dot "`.`" |> ignore;
-      match kind st with
-      | Tok.Lower_ident member ->
-          let mspan = (advance st).Tok.span in
-          {
-            Ast.pattern_span = merge_span tok.Tok.span mspan;
-            pattern_desc = Ast.Enum_member (tname, member);
-          }
-      | t ->
-          error "E2007" (span st)
-            (Printf.sprintf "expected an enum member after `%s.`, found %s"
-               tname (describe_kind t)))
+      parse_enum_member_tail st tok.Tok.span [ tname ]
+  | Tok.Lower_ident "_" ->
+      advance st |> ignore;
+      { Ast.pattern_span = tok.Tok.span; pattern_desc = Ast.Wildcard }
+  | Tok.Lower_ident first ->
+      (* A lower-led chain is a module-qualified enum pattern
+         (`plot.Scale.linear`); a lone lower ident is a binding. *)
+      let tok = advance st in
+      if not (at_op st Tok.Dot) then (
+        check_snake st tok "binding" ~allow_question:false;
+        {
+          Ast.pattern_span = tok.Tok.span;
+          pattern_desc = Ast.Pattern_binding first;
+        })
+      else
+        let start_span = tok.Tok.span in
+        let segs = ref [ first ] in
+        let rec chain () =
+          advance st |> ignore;
+          match kind st with
+          | Tok.Lower_ident s ->
+              let stok = advance st in
+              segs := s :: !segs;
+              if at_op st Tok.Dot then chain ()
+              else
+                (* the last lower segment is the member, the rest the type *)
+                let tname = String.concat "." (List.rev (List.tl !segs)) in
+                {
+                  Ast.pattern_span = merge_span start_span stok.Tok.span;
+                  pattern_desc = Ast.Enum_member (tname, s);
+                }
+          | Tok.Upper_ident s ->
+              advance st |> ignore;
+              segs := s :: !segs;
+              if not (at_op st Tok.Dot) then
+                error "E2007" (span st)
+                  "enum members are matched by qualified name"
+                  ~hint:"write `Color.red`, not a bare type name";
+              parse_enum_member_tail st start_span !segs
+          | t ->
+              error "E2007" (span st)
+                (Printf.sprintf
+                   "expected a module or type name in the enum pattern, found \
+                    %s"
+                   (describe_kind t))
+        in
+        chain ()
   | Tok.Int64 n ->
       advance st |> ignore;
       {
@@ -1449,16 +1540,6 @@ and parse_pattern st =
       | _ ->
           error "E2007" (span st) "patterns match plain strings only"
             ~hint:"interpolation in a pattern would never match a known value")
-  | Tok.Lower_ident "_" ->
-      advance st |> ignore;
-      { Ast.pattern_span = tok.Tok.span; pattern_desc = Ast.Wildcard }
-  | Tok.Lower_ident name ->
-      let tok = advance st in
-      check_snake st tok "binding" ~allow_question:false;
-      {
-        Ast.pattern_span = tok.Tok.span;
-        pattern_desc = Ast.Pattern_binding name;
-      }
   | Tok.Op Tok.LParen ->
       advance st |> ignore;
       if at_op st Tok.RParen then

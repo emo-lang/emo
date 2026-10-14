@@ -41,7 +41,7 @@ const (R.ok, d13) = yaml.decode("d: >\n  fold\n  me\n")
 println(d13.get("d").as_string())
 // ---- duplicate keys: entries keep both, `get` takes the last ----
 const (R.ok, dup) = yaml.decode("k: 1\nk: 2\nk: 3\n")
-if dup.is(YamlObject) {
+if dup.is(yaml.YamlObject) {
   println(dup.get("k").as_int().to_string())
   println(dup.entries().length().to_string())
 }
@@ -51,9 +51,9 @@ const (R.ok, d15) = yaml.decode("e1: {}\ne2: []\n")
 println(yaml.encode(d15))
 const (R.ok, doc) = yaml.decode("srv:\n  hosts:\n    - a.example\n    - b.example\n  port: 8443\n")
 const (R.ok, back) = yaml.decode(yaml.encode(doc))
-if back.is(YamlObject) {
+if back.is(yaml.YamlObject) {
   const srv = back.get("srv")
-  if srv.is(YamlObject) {
+  if srv.is(yaml.YamlObject) {
     println(srv.get("hosts").encode())
     println(srv.get("port").as_int().to_string())
   }

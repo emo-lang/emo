@@ -198,7 +198,9 @@ let compute_diagnostics (state : state) (file : string) (text : string) :
            so a qualified member (`sync.done`, `json.decode`) resolves in
            diagnostics, exactly as it does in a full project check. *)
         let units = Ix.units_for ix ~current items in
-        let program, _ = Emo_check.preregister_types ~units in
+        let program, _ =
+          Emo_check.preregister_types ~packages:[] ~package_deps:[] ~units
+        in
         let check_diags, _, _, _ =
           Emo_check.check_module_typed ~modules ~current ~program items
         in

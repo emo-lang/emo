@@ -73,7 +73,7 @@ println(deep2.encode().length())
 
 // ---- duplicate keys: entries keep both, `get` takes the last ----
 const (R.ok, dup) = json.decode("{\"k\": 1, \"k\": 2, \"k\": 3}")
-if dup.is(JsonObject) {
+if dup.is(json.JsonObject) {
   println(dup.get("k").encode())
   println(dup.entries().length())
 }
@@ -89,7 +89,7 @@ println(json.encode_pretty(d))
 // ---- a full round trip of everything above ----
 const (R.ok, doc) = json.decode("{\"esc\": \"\\u4e16\\ud83d\\ude00\", \"nums\": [0, -0.5, 5e-324, 1.7976931348623157e308], \"nest\": {\"deep\": [true, null, {\"x\": 1}]}}")
 const (R.ok, back) = json.decode(json.encode(doc))
-if back.is(JsonObject) {
+if back.is(json.JsonObject) {
   const esc = back.get("esc").as_string()
   println(esc.to_bytes().length())
   println(back.get("nums").encode())

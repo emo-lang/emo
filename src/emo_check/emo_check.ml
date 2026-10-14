@@ -101,10 +101,6 @@ type ctx = {
          earlier type; the file keeps modules whose offsets overlap
          (every module starts near zero) from reading each other's
          types *)
-  type_owners : (string, string list) Hashtbl.t;
-      (* bare type name → its declaring module path (the program's
-         pre-registration); empty when checking a lone file, where no
-         cross-module resolution exists *)
   pdefs : (string list * string, t) Hashtbl.t;
       (* the program's module def signatures, pre-registered beside the
          type tables: (module path, name) → FuncType — a qualified
@@ -138,10 +134,9 @@ let report ctx span code message =
       { severity = Error; code = Some code; message; span; hint = None }
     :: !(ctx.diagnostics)
 
-(* The internal rule reaches bare type names: a name resolves
-   program-wide, so a type declared in an `internal/`-private module is
-   refused outside its subtree — the same rule the reference graph
-   enforces for qualified paths (E5001). *)
+(* The internal rule is a path rule: a type declared in an
+   `internal/`-private module resolves only within its subtree — the same
+   rule the reference graph enforces for values (E5001). *)
 let internal_type_violation ctx (owner : string list) : bool =
   let rec private_root before = function
     | "internal" :: _ -> Some (List.rev before)
@@ -156,19 +151,124 @@ let internal_type_violation ctx (owner : string list) : bool =
         && List.for_all2 String.equal root
              (List.take (List.length root) ctx.current))
 
-(* Reports a bare type name reaching across an internal boundary.
+(* Reports a type reference reaching across an internal boundary.
    Resolution continues — the program is rejected either way — so the
    narrowing and conformance machinery keeps its data. *)
-let check_internal_type ctx span name =
-  match Hashtbl.find_opt ctx.type_owners name with
-  | Some owner when internal_type_violation ctx owner ->
-      report ctx span "E5001"
-        (Printf.sprintf
-           "module `%s` cannot reference the type `%s` declared in `%s`: \
-            `internal` is subtree-private"
-           (String.concat "." ctx.current)
-           name (String.concat "." owner))
-  | _ -> ()
+let check_internal_type_path ctx span owner name =
+  if internal_type_violation ctx owner then
+    report ctx span "E5001"
+      (Printf.sprintf
+         "module `%s` cannot reference the type `%s` declared in `%s`: \
+          `internal` is subtree-private"
+         (String.concat "." ctx.current)
+         name (String.concat "." owner))
+
+(* ---- Module-path resolution (shared by value and type references) ---- *)
+
+(* A module path is known when some declared module lives at or below it. *)
+let module_prefix_known ctx path =
+  List.exists
+    (fun m ->
+      List.length path <= List.length m
+      && List.for_all2 String.equal path (List.take (List.length path) m))
+    ctx.modules
+
+(* The package a module belongs to: the registered short-name prefix that
+   is a prefix of its path, or [] for the project's own tree. *)
+let package_of ctx (path : string list) : string list =
+  match
+    List.find_opt
+      (fun pkg ->
+        List.length pkg <= List.length path
+        && List.take (List.length pkg) path = pkg)
+      ctx.packages
+  with
+  | Some pkg -> pkg
+  | None -> []
+
+(* A reference inside a package is written against the package root
+   (`internal.float` in `json.emo`), so resolve it under the current
+   package's prefix first; absolute paths are resolved only when visible
+   (see [visible]). *)
+let deps_of ctx (pkg : string list) : string list =
+  match List.assoc_opt pkg ctx.package_deps with Some ds -> ds | None -> []
+
+(* A declared dependency's scoped name (`acme/json_tools`) has the short
+   name as its module-path prefix. *)
+let dep_prefix (name : string) : string list =
+  match String.index_opt name '/' with
+  | Some i -> [ String.sub name (i + 1) (String.length name - i - 1) ]
+  | None -> [ name ]
+
+let dep_prefixes_of ctx pkg = List.map dep_prefix (deps_of ctx pkg)
+
+let is_prefix (a : string list) (path : string list) : bool =
+  List.length a <= List.length path && List.take (List.length a) path = a
+
+(* A module in package [pkg] may name its own subtree and its own declared
+   deps. The root project ([]) also sees its own modules — a top-level
+   module not under any package prefix — plus its direct deps, so it cannot
+   reach a transitive dependency it never declared. *)
+let visible ctx (pkg : string list) (path : string list) : bool =
+  if pkg = [] then
+    (not (List.exists (fun q -> is_prefix q path) ctx.packages))
+    || List.exists (fun d -> is_prefix d path) (dep_prefixes_of ctx [])
+  else
+    is_prefix pkg path
+    || List.exists (fun d -> is_prefix d path) (dep_prefixes_of ctx pkg)
+
+(* How the current module's enclosing package is named in a diagnostic. *)
+let package_label ctx : string =
+  match package_of ctx ctx.current with
+  | [] -> "the project"
+  | pkg -> Printf.sprintf "the package `%s`" (String.concat "." pkg)
+
+(* Normalize a module path to its absolute form: the package-relative form
+   first (`internal` in `json.emo` → `json.internal`), then the absolute
+   path when it is visible. [None] when the path names no module here. *)
+let normalize_module ctx (path : string list) : string list option =
+  let pkg = package_of ctx ctx.current in
+  if pkg <> [] && module_prefix_known ctx (pkg @ path) then Some (pkg @ path)
+  else if module_prefix_known ctx path && visible ctx pkg path then Some path
+  else None
+
+(* ---- Type references ---- *)
+
+(* A type reference written at a use site: the last dotted segment is the
+   type name (UpperCamel); every segment before it names a module
+   (lower_snake), so the split is visible in the spelling. *)
+let split_type_ref (ref_ : string) : string list * string =
+  match List.rev (String.split_on_char '.' ref_) with
+  | name :: rev_mod -> (List.rev rev_mod, name)
+  | [] -> ([], ref_)
+
+(* The qualified display name a type is keyed by: `sync.WaitGroup`. *)
+let qualify_path (owner : string list) (name : string) : string =
+  if owner = [] then name else String.concat "." (owner @ [ name ])
+
+(* Resolves a type reference to its qualified name. A bare name means the
+   current module (or a lone file's own declarations); a dotted path is
+   resolved relative to the enclosing package first, then absolutely —
+   the same rule value references use. [None] when the path names no
+   module here or the module declares no such type. *)
+let resolve_type_ref ctx span (ref_ : string) : t option =
+  let mod_path, name = split_type_ref ref_ in
+  (* The built-in `R` enum keeps its bare name, and a lone-file check keys
+     its own declarations bare, so a bare lookup may still hit. *)
+  if mod_path = [] && Hashtbl.mem ctx.enums name then Some (EnumType name)
+  else
+    let owner =
+      if mod_path = [] then Some ctx.current else normalize_module ctx mod_path
+    in
+    match owner with
+    | None -> None
+    | Some owner ->
+        check_internal_type_path ctx span owner name;
+        let q = qualify_path owner name in
+        if Hashtbl.mem ctx.classes q then Some (ClassType q)
+        else if Hashtbl.mem ctx.interfaces q then Some (InterfaceType q)
+        else if Hashtbl.mem ctx.enums q then Some (EnumType q)
+        else None
 
 (* Type declarations resolve names through the collected declarations; an
    unknown name is a certain error (the declaration can never hold). *)
@@ -195,20 +295,14 @@ let rec decl_to_type ?(lenient = false) ctx
   | Ast.Named_type "Box" -> BoxType Unknown
   | Ast.Named_type "List" -> ListType Unknown
   | Ast.Named_type "Map" -> MapType (Unknown, Unknown)
-  | Ast.Named_type name ->
-      if Hashtbl.mem ctx.classes name then (
-        check_internal_type ctx span name;
-        ClassType name)
-      else if Hashtbl.mem ctx.interfaces name then (
-        check_internal_type ctx span name;
-        InterfaceType name)
-      else if Hashtbl.mem ctx.enums name then (
-        check_internal_type ctx span name;
-        EnumType name)
-      else if lenient then Unknown
-      else (
-        report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
-        Unknown)
+  | Ast.Named_type name -> (
+      match resolve_type_ref ctx span name with
+      | Some t -> t
+      | None ->
+          if lenient then Unknown
+          else (
+            report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
+            Unknown))
   | Ast.Applied_type ("Array", [ elem ]) ->
       ArrayType (decl_to_type ~lenient ctx elem)
   | Ast.Applied_type ("Map", [ key; value ]) ->
@@ -224,11 +318,7 @@ let rec decl_to_type ?(lenient = false) ctx
       report ctx span "E4005" "`List` takes one type argument: List[T]";
       ListType Unknown
   | Ast.Applied_type (name, _) ->
-      if
-        Hashtbl.mem ctx.classes name
-        || Hashtbl.mem ctx.interfaces name
-        || Hashtbl.mem ctx.enums name
-      then check_internal_type ctx span name;
+      ignore (resolve_type_ref ctx span name);
       report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
       Unknown
   | Ast.Tuple_type ts -> TupleType (List.map (decl_to_type ~lenient ctx) ts)
@@ -257,7 +347,7 @@ let class_info_of ctx (c : Ast.class_def) : class_info =
       c.Ast.class_methods
   in
   {
-    cname = c.Ast.class_name;
+    cname = qualify_path ctx.current c.Ast.class_name;
     cinit_params =
       Option.map
         (fun init ->
@@ -318,15 +408,19 @@ let collect ctx (items : Ast.item list) : unit =
           Hashtbl.replace ctx.funcs d.Ast.def_name d
       | Ast.Item_class c ->
           reserved_name ctx c.Ast.class_span "class" c.Ast.class_name;
-          Hashtbl.replace ctx.classes c.Ast.class_name (class_info_of ctx c)
+          Hashtbl.replace ctx.classes
+            (qualify_path ctx.current c.Ast.class_name)
+            (class_info_of ctx c)
       | Ast.Item_interface i ->
           reserved_name ctx i.Ast.interface_span "interface"
             i.Ast.interface_name;
-          Hashtbl.replace ctx.interfaces i.Ast.interface_name
+          Hashtbl.replace ctx.interfaces
+            (qualify_path ctx.current i.Ast.interface_name)
             (interface_sigs_of ctx i)
       | Ast.Item_enum e ->
           reserved_name ctx e.Ast.enum_span "enum" e.Ast.enum_name;
-          Hashtbl.replace ctx.enums e.Ast.enum_name
+          Hashtbl.replace ctx.enums
+            (qualify_path ctx.current e.Ast.enum_name)
             (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
       | Ast.Item_emo_group g ->
           reserved_name ctx g.Ast.group_span "group" g.Ast.group_name;
@@ -543,7 +637,6 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       refs = ref [];
       requires = ref [];
       types = Hashtbl.create 64;
-      type_owners = Hashtbl.create 0;
       pdefs = Hashtbl.create 0;
       pvalues = Hashtbl.create 0;
       pgroups = Hashtbl.create 0;
@@ -971,73 +1064,6 @@ let dotted_path (e : Ast.expr) : string list option =
   in
   go e
 
-(* A module path is known when some declared module lives at or below it. *)
-let module_prefix_known ctx path =
-  List.exists
-    (fun m ->
-      List.length path <= List.length m
-      && List.for_all2 String.equal path (List.take (List.length path) m))
-    ctx.modules
-
-(* The package a module belongs to: the registered short-name prefix that
-   is a prefix of its path, or [] for the project's own tree. *)
-let package_of ctx (path : string list) : string list =
-  match
-    List.find_opt
-      (fun pkg ->
-        List.length pkg <= List.length path
-        && List.take (List.length pkg) path = pkg)
-      ctx.packages
-  with
-  | Some pkg -> pkg
-  | None -> []
-
-(* A reference inside a package is written against the package root
-   (`internal.float` in `json.emo`), so resolve it under the current
-   package's prefix first; absolute paths are resolved only when visible
-   (see [visible]). *)
-let deps_of ctx (pkg : string list) : string list =
-  match List.assoc_opt pkg ctx.package_deps with Some ds -> ds | None -> []
-
-(* A declared dependency's scoped name (`acme/json_tools`) has the short
-   name as its module-path prefix. *)
-let dep_prefix (name : string) : string list =
-  match String.index_opt name '/' with
-  | Some i -> [ String.sub name (i + 1) (String.length name - i - 1) ]
-  | None -> [ name ]
-
-let dep_prefixes_of ctx pkg = List.map dep_prefix (deps_of ctx pkg)
-
-let is_prefix (a : string list) (path : string list) : bool =
-  List.length a <= List.length path && List.take (List.length a) path = a
-
-(* A module in package [pkg] may name its own subtree and its own declared
-   deps. The root project ([]) also sees its own modules — a top-level
-   module not under any package prefix — plus its direct deps, so it cannot
-   reach a transitive dependency it never declared. *)
-let visible ctx (pkg : string list) (path : string list) : bool =
-  if pkg = [] then
-    (not (List.exists (fun q -> is_prefix q path) ctx.packages))
-    || List.exists (fun d -> is_prefix d path) (dep_prefixes_of ctx [])
-  else
-    is_prefix pkg path
-    || List.exists (fun d -> is_prefix d path) (dep_prefixes_of ctx pkg)
-
-(* How the current module's enclosing package is named in a diagnostic. *)
-let package_label ctx : string =
-  match package_of ctx ctx.current with
-  | [] -> "the project"
-  | pkg -> Printf.sprintf "the package `%s`" (String.concat "." pkg)
-
-(* Normalize a module path to its absolute form: the package-relative form
-   first (`internal` in `json.emo` → `json.internal`), then the absolute
-   path when it is visible. [None] when the path names no module here. *)
-let normalize_module ctx (path : string list) : string list option =
-  let pkg = package_of ctx ctx.current in
-  if pkg <> [] && module_prefix_known ctx (pkg @ path) then Some (pkg @ path)
-  else if module_prefix_known ctx path && visible ctx pkg path then Some path
-  else None
-
 (* The longest dotted prefix of [full] that names a module here, paired
    with its absolute path. *)
 let module_prefix_of ctx (full : string list) :
@@ -1062,14 +1088,11 @@ let out_of_scope ctx (head : string) : bool =
   && module_prefix_known ctx [ head ]
   && not (visible ctx pkg [ head ])
 
-(* Type-name resolution for `is()` targets; unknown names narrow to nothing. *)
-let resolve_type_name ctx span name =
-  if Hashtbl.mem ctx.classes name then ClassType name
-  else if Hashtbl.mem ctx.interfaces name then InterfaceType name
-  else if Hashtbl.mem ctx.enums name then EnumType name
-  else (
-    ignore span;
-    Unknown)
+(* Type-reference resolution for `is()` targets; an unknown reference
+   narrows to nothing. The argument is the written reference — bare or
+   module-qualified — and the result carries the qualified identity. *)
+let resolve_type_name ctx span ref_ =
+  match resolve_type_ref ctx span ref_ with Some t -> t | None -> Unknown
 
 (* What a pattern covers of an enum scrutinee. *)
 type coverage = All | Members of string list
@@ -1256,42 +1279,33 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                   (Printf.sprintf "`%s` is not defined" name);
               Unknown))
   | Ast.Type_ident name -> (
-      if
-        (* A declared type in value position: classes, enums, interfaces. *)
-        Hashtbl.mem ctx.classes name
-      then (
-        check_internal_type ctx span name;
-        ClassType name)
-      else if Hashtbl.mem ctx.enums name then (
-        check_internal_type ctx span name;
-        EnumType name)
-      else if Hashtbl.mem ctx.interfaces name then (
-        check_internal_type ctx span name;
-        InterfaceType name)
-      else if name = "Box" || name = "Exception" then Unknown
-      else if
-        (* The runtime's value-carrying builtins (every frame pre-binds
+      match resolve_type_ref ctx span name with
+      | Some t -> t
+      | None -> (
+          if name = "Box" || name = "Exception" then Unknown
+          else if
+            (* The runtime's value-carrying builtins (every frame pre-binds
            them): a bare use stays a runtime question, not a checker
            one. *)
-        List.mem name
-          [ "Int64"; "Byte"; "Float64"; "Box"; "Bytes"; "List"; "Map" ]
-      then Unknown
-      else if Hashtbl.mem ctx.groups name || Hashtbl.mem ctx.pgroups name then
-        Unknown
-      else
-        match normalize_module ctx [ name ] with
-        | Some name_path ->
-            ctx.refs := name_path :: !(ctx.refs);
-            Unknown
-        | None ->
-            if ctx.program_checked then (
-              (* A capitalized name that resolves to no type, group, or
+            List.mem name
+              [ "Int64"; "Byte"; "Float64"; "Box"; "Bytes"; "List"; "Map" ]
+          then Unknown
+          else if Hashtbl.mem ctx.groups name || Hashtbl.mem ctx.pgroups name
+          then Unknown
+          else
+            match normalize_module ctx [ name ] with
+            | Some name_path ->
+                ctx.refs := name_path :: !(ctx.refs);
+                Unknown
+            | None ->
+                if ctx.program_checked then (
+                  (* A capitalized name that resolves to no type, group, or
                  module is a mistake the runtime only finds when the value
                  is used; report it where the name is written. *)
-              report ctx span "E4003"
-                (Printf.sprintf "`%s` is not defined" name);
-              Unknown)
-            else Unknown)
+                  report ctx span "E4003"
+                    (Printf.sprintf "`%s` is not defined" name);
+                  Unknown)
+                else Unknown))
   | Ast.Interpolated parts ->
       List.iter (fun p -> check_part ctx env p) parts;
       String
@@ -1308,100 +1322,114 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
         | head :: _ when not (bound_local env head) -> true
         | _ -> false
       in
-      let resolved = if module_path then module_prefix_of ctx full else None in
-      match resolved with
-      | Some (op, np) when List.length op = List.length full ->
-          (* A qualified module reference: the whole dotted path names a
+      (* A whole dotted path that names a type: `sync.WaitGroup`,
+         `plot.Scale` — maybe even before a `.new` / `.member`. *)
+      let type_ref =
+        if module_path then resolve_type_ref ctx span (String.concat "." full)
+        else None
+      in
+      match type_ref with
+      | Some t -> t
+      | None -> (
+          let resolved =
+            if module_path then module_prefix_of ctx full else None
+          in
+          match resolved with
+          | Some (op, np) when List.length op = List.length full ->
+              (* A qualified module reference: the whole dotted path names a
              module. *)
-          ctx.refs := np :: !(ctx.refs);
-          Unknown
-      | Some (op, np) when List.length full = List.length op + 1 -> (
-          (* A read of another module's member: the pre-registered value
+              ctx.refs := np :: !(ctx.refs);
+              Unknown
+          | Some (op, np) when List.length full = List.length op + 1 -> (
+              (* A read of another module's member: the pre-registered value
              tables answer for consts/vars, and a bare def reference is
              the closure value itself. *)
-          ctx.refs := np :: !(ctx.refs);
-          let dotted = String.concat "." np in
-          match Hashtbl.find_opt ctx.pvalues (np, name) with
-          | Some t -> t
-          | None -> (
-              match Hashtbl.find_opt ctx.pdefs (np, name) with
-              | Some ft -> ft
-              | None ->
-                  report ctx span "E5004"
-                    (Printf.sprintf "module `%s` has no member `%s`" dotted name);
-                  Unknown))
-      | _ -> (
-          match full with
-          | head :: _ when module_path && out_of_scope ctx head ->
-              report ctx span "E5008"
-                (Printf.sprintf "%s does not declare `%s` in its deps"
-                   (package_label ctx) head);
-              Unknown
+              ctx.refs := np :: !(ctx.refs);
+              let dotted = String.concat "." np in
+              match Hashtbl.find_opt ctx.pvalues (np, name) with
+              | Some t -> t
+              | None -> (
+                  match Hashtbl.find_opt ctx.pdefs (np, name) with
+                  | Some ft -> ft
+                  | None ->
+                      report ctx span "E5004"
+                        (Printf.sprintf "module `%s` has no member `%s`" dotted
+                           name);
+                      Unknown))
           | _ -> (
-              let from_group =
-                (* A bare `Math.tau` / `Math.double` read: groups are global,
+              match full with
+              | head :: _ when module_path && out_of_scope ctx head ->
+                  report ctx span "E5008"
+                    (Printf.sprintf "%s does not declare `%s` in its deps"
+                       (package_label ctx) head);
+                  Unknown
+              | _ -> (
+                  let from_group =
+                    (* A bare `Math.tau` / `Math.double` read: groups are global,
              so the module's own table and the program's registry both
              answer — consts carry their type, a bare def reference is
              the closure value. *)
-                match recv.Ast.desc with
-                | Ast.Type_ident gname -> (
-                    match
-                      match Hashtbl.find_opt ctx.groups gname with
-                      | Some g -> Some g
-                      | None -> Hashtbl.find_opt ctx.pgroups gname
-                    with
-                    | Some (defs, consts) ->
-                        Some
-                          (if List.mem_assoc name consts then
-                             List.assoc name consts
-                           else
-                             match
-                               List.find_opt
-                                 (fun (n, _, _) -> String.equal n name)
-                                 defs
-                             with
-                             | Some (_, params, ret) -> FuncType (params, ret)
-                             | None ->
-                                 report ctx span "E4001"
-                                   (Printf.sprintf
-                                      "the group `%s` has no member `%s`" gname
-                                      name);
-                                 Unknown)
-                    | None -> None)
-                | _ -> None
-              in
-              match from_group with
-              | Some t -> t
-              | None -> (
-                  let rt = check_expr ctx env recv in
-                  match rt with
-                  | ClassType c -> (
-                      match Hashtbl.find_opt ctx.classes c with
-                      | Some info when List.mem name info.cfields -> Unknown
-                      | Some info ->
+                    match recv.Ast.desc with
+                    | Ast.Type_ident gname -> (
+                        match
+                          match Hashtbl.find_opt ctx.groups gname with
+                          | Some g -> Some g
+                          | None -> Hashtbl.find_opt ctx.pgroups gname
+                        with
+                        | Some (defs, consts) ->
+                            Some
+                              (if List.mem_assoc name consts then
+                                 List.assoc name consts
+                               else
+                                 match
+                                   List.find_opt
+                                     (fun (n, _, _) -> String.equal n name)
+                                     defs
+                                 with
+                                 | Some (_, params, ret) ->
+                                     FuncType (params, ret)
+                                 | None ->
+                                     report ctx span "E4001"
+                                       (Printf.sprintf
+                                          "the group `%s` has no member `%s`"
+                                          gname name);
+                                     Unknown)
+                        | None -> None)
+                    | _ -> None
+                  in
+                  match from_group with
+                  | Some t -> t
+                  | None -> (
+                      let rt = check_expr ctx env recv in
+                      match rt with
+                      | ClassType c -> (
+                          match Hashtbl.find_opt ctx.classes c with
+                          | Some info when List.mem name info.cfields -> Unknown
+                          | Some info ->
+                              report ctx span "E4001"
+                                (Printf.sprintf "`%s` has no field `%s`" c name);
+                              Unknown
+                          | None -> Unknown)
+                      | EnumType e -> (
+                          match Hashtbl.find_opt ctx.enums e with
+                          | Some members when List.mem name members ->
+                              EnumType e
+                          | Some members ->
+                              report ctx span "E4001"
+                                (Printf.sprintf "enum `%s` has no member `%s`" e
+                                   name);
+                              Unknown
+                          | None -> Unknown)
+                      | BoxType _ ->
                           report ctx span "E4001"
-                            (Printf.sprintf "`%s` has no field `%s`" c name);
+                            "a member access must be a call, like `x.read()`";
                           Unknown
-                      | None -> Unknown)
-                  | EnumType e -> (
-                      match Hashtbl.find_opt ctx.enums e with
-                      | Some members when List.mem name members -> EnumType e
-                      | Some members ->
+                      | Unknown -> Unknown
+                      | other ->
                           report ctx span "E4001"
-                            (Printf.sprintf "enum `%s` has no member `%s`" e
-                               name);
-                          Unknown
-                      | None -> Unknown)
-                  | BoxType _ ->
-                      report ctx span "E4001"
-                        "a member access must be a call, like `x.read()`";
-                      Unknown
-                  | Unknown -> Unknown
-                  | other ->
-                      report ctx span "E4001"
-                        (Printf.sprintf "%s has no field `%s`" (to_string other)
-                           name);
-                      Unknown))))
+                            (Printf.sprintf "%s has no field `%s`"
+                               (to_string other) name);
+                          Unknown)))))
   | Ast.Index (base, index) -> (
       let bt = check_expr ctx env base in
       let it = check_expr ctx env index in
@@ -2400,6 +2428,16 @@ and check_binary ctx env span op l r =
       check_bool_side rt;
       Bool
 
+(* The type reference written by an `is()` target: a bare `T` or a
+   module-qualified `sync.WaitGroup`. *)
+and type_ref_of_expr (e : Ast.expr) : string option =
+  match e.Ast.desc with
+  | Ast.Type_ident n -> Some n
+  | _ -> (
+      match dotted_path e with
+      | Some p -> Some (String.concat "." p)
+      | None -> None)
+
 (* Narrowing: `if x.is(T)` refines x inside the then branch and never past
    it; the else branch keeps the pre-test type. A class target pins the
    concrete class, so it narrows from `Unknown` or an interface. An
@@ -2412,10 +2450,12 @@ and narrowed_then_env ctx env cond =
     match cond.Ast.desc with
     | Ast.Call
         ( { Ast.desc = Ast.Member (recv, "is"); _ },
-          [ { Ast.arg_value = { Ast.desc = Ast.Type_ident tname; _ }; _ } ] )
-      when match recv.Ast.desc with Ast.Ident _ -> true | _ -> false ->
+          [ { Ast.arg_value = target; _ } ] )
+      when (match recv.Ast.desc with Ast.Ident _ -> true | _ -> false)
+           && type_ref_of_expr target <> None ->
         (* the target's own check ran with the condition's expression *)
-        let target_type = resolve_type_name ctx recv.Ast.span tname in
+        let tname = Option.get (type_ref_of_expr target) in
+        let target_type = resolve_type_name ctx target.Ast.span tname in
         let rt = check_expr ctx env recv in
         (match rt with
         | ClassType _ | InterfaceType _ | EnumType _ | Int64 | Float64 | Bool
@@ -2700,25 +2740,27 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
       | _ ->
           mismatch (String.lowercase_ascii (to_string lt));
           env)
-  | Ast.Enum_member (t, m) -> (
-      check_internal_type ctx p.Ast.pattern_span t;
-      match scrutinee_t with
-      | EnumType e ->
-          (if not (String.equal t e) then
-             report ctx p.Ast.pattern_span "E4013"
-               (Printf.sprintf "`%s.%s` cannot match %s" t m
-                  (to_string scrutinee_t))
-           else
-             match Hashtbl.find_opt ctx.enums t with
-             | Some members when not (List.mem m members) ->
-                 report ctx p.Ast.pattern_span "E4013"
-                   (Printf.sprintf "enum `%s` has no member `%s`" t m)
-             | _ -> ());
-          env
-      | Unknown -> env
-      | _ ->
-          mismatch "qualified enum member";
-          env)
+  | Ast.Enum_member (t, m) ->
+      let qt =
+        match resolve_type_ref ctx p.Ast.pattern_span t with
+        | Some (EnumType q) -> q
+        | _ -> t
+      in
+      (match scrutinee_t with
+      | EnumType e -> (
+          if not (String.equal qt e) then
+            report ctx p.Ast.pattern_span "E4013"
+              (Printf.sprintf "`%s.%s` cannot match %s" t m
+                 (to_string scrutinee_t))
+          else
+            match Hashtbl.find_opt ctx.enums qt with
+            | Some members when not (List.mem m members) ->
+                report ctx p.Ast.pattern_span "E4013"
+                  (Printf.sprintf "enum `%s` has no member `%s`" t m)
+            | _ -> ())
+      | Unknown -> ()
+      | _ -> mismatch "qualified enum member");
+      env
   | Ast.Tuple_pattern ps -> (
       match scrutinee_t with
       | TupleType ts ->
@@ -2755,12 +2797,17 @@ and check_pattern ctx env span scrutinee_t (p : Ast.pattern) : env =
 
 (* What a pattern covers of an enum scrutinee: everything, or specific
    members; tuple patterns contribute their first element's coverage. *)
-and pattern_coverage scrutinee_t (p : Ast.pattern) : coverage =
+and pattern_coverage ctx scrutinee_t (p : Ast.pattern) : coverage =
+  let resolved t =
+    match resolve_type_ref ctx p.Ast.pattern_span t with
+    | Some (EnumType q) -> q
+    | _ -> t
+  in
   let first_members elem_t d =
     match d with
     | Ast.Enum_member (t, m) -> (
         match elem_t with
-        | EnumType e when String.equal t e -> Members [ m ]
+        | EnumType e when String.equal (resolved t) e -> Members [ m ]
         | _ -> Members [])
     | Ast.Wildcard | Ast.Pattern_binding _ -> All
     | _ -> Members []
@@ -2769,7 +2816,7 @@ and pattern_coverage scrutinee_t (p : Ast.pattern) : coverage =
   | Ast.Wildcard | Ast.Pattern_binding _ -> All
   | Ast.Enum_member (t, m) -> (
       match scrutinee_t with
-      | EnumType e when String.equal t e -> Members [ m ]
+      | EnumType e when String.equal (resolved t) e -> Members [ m ]
       | _ -> Members [])
   | Ast.Tuple_pattern (first :: _) ->
       (* The first element's coverage is checked against the element's
@@ -2787,7 +2834,7 @@ and case_missing_members ctx scrutinee_t (branches : Ast.branch list) :
     string list option =
   let unguarded = List.filter (fun b -> b.Ast.guard = None) branches in
   let coverings =
-    List.map (fun b -> pattern_coverage scrutinee_t b.Ast.pattern) unguarded
+    List.map (fun b -> pattern_coverage ctx scrutinee_t b.Ast.pattern) unguarded
   in
   let covered =
     List.concat_map (function All -> [] | Members ms -> ms) coverings
@@ -2919,8 +2966,9 @@ let check_fun_def ctx env ?self ?(prebound = []) (d : Ast.fun_def) : unit =
 (* Class bodies: every method is checked under its signature with self
    bound to the class. *)
 let check_class ctx env (c : Ast.class_def) : unit =
-  let info = Hashtbl.find ctx.classes c.Ast.class_name in
-  let self = ("self", ClassType c.Ast.class_name) in
+  let q = qualify_path ctx.current c.Ast.class_name in
+  let info = Hashtbl.find ctx.classes q in
+  let self = ("self", ClassType q) in
   (* Method signatures are pre-bound so methods can call each other. *)
   let prebound =
     List.map (fun (n, mi) -> (n, FuncType (mi.mparams, mi.mret))) info.cmethods
@@ -3039,20 +3087,17 @@ let sort_diagnostics diagnostics =
     diagnostics
 
 (* ---- Program-wide type pre-registration (CHECK.md: cross-module types,
-   settled 2026-10-10) ---- *)
+   settled 2026-10-14 — module-qualified names) ---- *)
 
 (* Every module's type declarations, collected before any module is
-   checked. Names stay unqualified and are program-unique: the emitters
-   key class tables and `is()` vtables by the bare name, so a name
-   declared by two modules is a loud error (E4021), never a silent
-   resolution. *)
+   checked and keyed by the qualified display name (`sync.WaitGroup`),
+   the identity the emitters key class tables and `is()` vtables by. Two
+   modules may declare the same short name; the qualified key keeps them
+   apart. *)
 type program_types = {
   pclasses : (string, class_info) Hashtbl.t;
   pinterfaces : (string, (string * (string * t) list * t) list) Hashtbl.t;
   penums : (string, string list) Hashtbl.t;
-  popaths : (string, string list) Hashtbl.t;
-      (* type name → its declaring module path, for the internal rule
-         on bare names (E5001) *)
   pdefs : (string list * string, t) Hashtbl.t;
       (* module path and def name → the def's FuncType, from the
          declared parameter and return type declarations *)
@@ -3068,8 +3113,11 @@ type program_types = {
 
 (* The resolution-only context the pass needs: its tables ARE the
    program's tables, so members' type declarations resolve against every
-   module's declarations regardless of order. *)
-let preregister_ctx tables diagnostics =
+   module's declarations regardless of order. [current] is set to the
+   unit being typed, so a bare type name qualifies to that unit's module
+   and a package-relative one resolves against it. *)
+let preregister_ctx tables diagnostics ~current ~modules ~packages ~package_deps
+    =
   {
     file = "<program>";
     classes = tables.pclasses;
@@ -3079,16 +3127,13 @@ let preregister_ctx tables diagnostics =
     funcs = Hashtbl.create 0;
     diagnostics;
     ret_sink = ref [];
-    modules = [];
-    packages = [];
-    package_deps = [];
-    current = [];
+    modules;
+    packages;
+    package_deps;
+    current;
     refs = ref [];
     requires = ref [];
     types = Hashtbl.create 0;
-    (* Resolution only: the pass predates any module's check, so no
-       internal boundary can be judged here. *)
-    type_owners = Hashtbl.create 0;
     pdefs = tables.pdefs;
     pvalues = tables.pvalues;
     pgroups = tables.pgroups;
@@ -3096,20 +3141,21 @@ let preregister_ctx tables diagnostics =
     target = "c";
   }
 
-(* Collects every unit's classes, interfaces, and enums into one name
-   set, in two phases: names first — so a signature can name a type
-   declared in any module, in any order — then the full infos, whose
-   members' type declarations now resolve program-wide. A name's second
-   declaration reports E4021 and stays unregistered; the first wins and
-   the program is rejected anyway. *)
-let preregister_types ~(units : (string list * Ast.item list) list) :
+(* Collects every unit's classes, interfaces, and enums into one table
+   keyed by qualified name (`sync.WaitGroup`), in two phases: names
+   first — so a signature can name a type declared in any module, in
+   any order — then the full infos, whose members' type declarations
+   resolve against the whole program. Two modules may declare the same
+   short name; the qualified key keeps them apart. *)
+let preregister_types ~(packages : string list list)
+    ~(package_deps : (string list * string list) list)
+    ~(units : (string list * Ast.item list) list) :
     program_types * Emo_support.Diagnostic.t list =
   let tables =
     {
       pclasses = Hashtbl.create 16;
       pinterfaces = Hashtbl.create 16;
       penums = Hashtbl.create 16;
-      popaths = Hashtbl.create 16;
       pdefs = Hashtbl.create 16;
       pvalues = Hashtbl.create 16;
       pgroups = Hashtbl.create 16;
@@ -3117,77 +3163,54 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
   in
   seed_r_enum tables.penums;
   let diagnostics = ref [] in
-  let owners : (string, string) Hashtbl.t = Hashtbl.create 16 in
-  let module_name path = String.concat "." path in
+  let module_paths = List.map fst units in
+  let ctx_for path =
+    (* This pass keeps resolution diagnostics to itself: a name that
+       resolves nowhere (or crosses an internal boundary) re-reports in
+       its owning module's own check, which has the full environment. *)
+    preregister_ctx tables (ref []) ~current:path ~modules:module_paths
+      ~packages ~package_deps
+  in
   List.iter
     (fun (path, items) ->
-      let here = module_name path in
       List.iter
         (fun item ->
-          let claim name span kind register =
-            match Hashtbl.find_opt owners name with
-            | Some first when not (String.equal first here) ->
-                diagnostics :=
-                  Emo_support.Diagnostic.
-                    {
-                      severity = Error;
-                      code = Some "E4021";
-                      message =
-                        Printf.sprintf
-                          "the %s name `%s` is declared by both module `%s` \
-                           and module `%s`; type names are program-wide, so \
-                           rename one of the declarations"
-                          kind name first here;
-                      span;
-                      hint = None;
-                    }
-                  :: !diagnostics
-            | Some _ -> ()
-            | None ->
-                Hashtbl.replace owners name here;
-                Hashtbl.replace tables.popaths name path;
-                register ()
-          in
           match item.Ast.item_desc with
           | Ast.Item_class c ->
-              claim c.Ast.class_name c.Ast.class_span "class" (fun () ->
-                  Hashtbl.replace tables.pclasses c.Ast.class_name
-                    {
-                      cname = c.Ast.class_name;
-                      cinit_params = None;
-                      cmethods = [];
-                      cfields = [];
-                    })
+              let q = qualify_path path c.Ast.class_name in
+              Hashtbl.replace tables.pclasses q
+                { cname = q; cinit_params = None; cmethods = []; cfields = [] }
           | Ast.Item_interface i ->
-              claim i.Ast.interface_name i.Ast.interface_span "interface"
-                (fun () ->
-                  Hashtbl.replace tables.pinterfaces i.Ast.interface_name [])
+              Hashtbl.replace tables.pinterfaces
+                (qualify_path path i.Ast.interface_name)
+                []
           | Ast.Item_enum e ->
-              claim e.Ast.enum_name e.Ast.enum_span "enum" (fun () ->
-                  Hashtbl.replace tables.penums e.Ast.enum_name [])
+              Hashtbl.replace tables.penums
+                (qualify_path path e.Ast.enum_name)
+                []
           | _ -> ())
         items)
     units;
   (* Member type declarations resolve against the whole program; a name that
      resolves nowhere re-reports in its owning module's own check, so
-     this pass keeps resolution diagnostics to itself — only the
-     collisions above flow out. *)
-  let ctx = preregister_ctx tables (ref []) in
+     this pass keeps resolution diagnostics to itself. *)
   List.iter
     (fun (path, items) ->
-      let here = module_name path in
+      let ctx = ctx_for path in
       List.iter
         (fun item ->
-          let owned name = Hashtbl.find_opt owners name = Some here in
           match item.Ast.item_desc with
-          | Ast.Item_class c when owned c.Ast.class_name ->
-              Hashtbl.replace tables.pclasses c.Ast.class_name
+          | Ast.Item_class c ->
+              Hashtbl.replace tables.pclasses
+                (qualify_path path c.Ast.class_name)
                 (class_info_of ctx c)
-          | Ast.Item_interface i when owned i.Ast.interface_name ->
-              Hashtbl.replace tables.pinterfaces i.Ast.interface_name
+          | Ast.Item_interface i ->
+              Hashtbl.replace tables.pinterfaces
+                (qualify_path path i.Ast.interface_name)
                 (interface_sigs_of ctx i)
-          | Ast.Item_enum e when owned e.Ast.enum_name ->
-              Hashtbl.replace tables.penums e.Ast.enum_name
+          | Ast.Item_enum e ->
+              Hashtbl.replace tables.penums
+                (qualify_path path e.Ast.enum_name)
                 (List.map (fun m -> m.Ast.member_name) e.Ast.enum_members)
           | _ -> ())
         items)
@@ -3203,6 +3226,7 @@ let preregister_types ~(units : (string list * Ast.item list) list) :
      environment. *)
   List.iter
     (fun (path, items) ->
+      let ctx = ctx_for path in
       let prebound =
         List.fold_left
           (fun env item ->
@@ -3353,10 +3377,6 @@ let check_module_typed ~(modules : string list list)
       refs = ref [];
       requires = ref [];
       types = Hashtbl.create 64;
-      type_owners =
-        (match program with
-        | Some p -> Hashtbl.copy p.popaths
-        | None -> Hashtbl.create 0);
       pdefs =
         (match program with
         | Some p -> Hashtbl.copy p.pdefs

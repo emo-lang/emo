@@ -45,7 +45,7 @@ immediately once it has; `stop` ends the counter process.
 The shape of a fan-out:
 
 ```emo
-const wg = WaitGroup.new(3)  // three units of work ahead
+const wg = sync.WaitGroup.new(3)  // three units of work ahead
 do worker(wg)                // ... each ends with wg.done()
 do worker(wg)
 do worker(wg)

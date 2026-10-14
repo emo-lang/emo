@@ -226,7 +226,7 @@ shop/
   ```
 
 - **可见性是结构化的。** 函数与块内的定义因作用域私有；模块级定义是公开的（可按限定路径寻址）；`internal/` 目录是子树私有的，由编译器强制——`shop/internal/` 之下的 everything 可在 `shop` 及其后代内使用，在其他任何地方都是编译错误。
-- **类型名是程序级的。** 类型声明的解析覆盖所有模块的声明，库的类型用裸名即可——应用模块里的 `def view(count Int64) VNode` 指的就是 `ui.emo` 的 `VNode`，`is()` 也能跨边界收窄，构造遵循同一条规则：`Point.new(...)` 直接构造库的类，其所在模块在首次使用时加载。名字必须程序内唯一：两个模块声明同一个类型名是编译错误，并点名两个模块。隐私规则对裸名同样生效：`internal/` 下声明的类型在其子树之外什么都不指。
+- **类型名与值一样，是模块路径限定的。** 类型引用就是一条路径：其他模块里的 `ui.VNode` 指向 `ui.emo` 的 `VNode`，裸名 `Order` 指本模块自己的类型，包内的相对写法与值一致（包内的 `internal.svg.Renderer`）。`is()` 能跨边界收窄，构造遵循同一条规则——`sync.WaitGroup.new(2)`、`ui.Point.new(...)`——声明类型所在的模块在首次使用时加载。因此两个模块可以有同名类型：它们是两个不同的类型，各自以模块寻址。隐私规则对类型与值同样生效：`internal/` 下声明的类型只在其子树内解析。
 - **依赖图是显式的。** 路径引用就是依赖声明，带来自动模块发现、增量编译与编译期循环检测。
 
 ## 包管理
@@ -236,7 +236,7 @@ shop/
 ```emo
 require "acme/json_tools"
 
-def parse_config(text String) Json {
+def parse_config(text String) json_tools.Json {
   return json_tools.parse(text)
 }
 ```

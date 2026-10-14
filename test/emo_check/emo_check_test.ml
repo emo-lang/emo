@@ -1107,7 +1107,9 @@ let units_of (modules : (string * string) list) =
 let check_program (modules : (string * string) list) :
     Emo_support.Diagnostic.t list =
   let units = units_of modules in
-  let program, pre_errors = Emo_check.preregister_types ~units in
+  let program, pre_errors =
+    Emo_check.preregister_types ~packages:[] ~package_deps:[] ~units
+  in
   let paths = List.map fst units in
   List.concat_map
     (fun (path, items) ->
@@ -1195,7 +1197,7 @@ def make() VNode {
 |}
               );
               ( "app",
-                {|def view() VNode {
+                {|def view() ui.VNode {
   return ui.make()
 }
 
@@ -1223,17 +1225,60 @@ println(v.kind())|}
 |}
               );
               ( "use",
-                {|def show(c Crate) Int64 {
+                {|def show(c shapes.Crate) Int64 {
   return c.area()
 }
 
-println(show(Crate.new()))|}
+println(show(shapes.Crate.new()))|}
               );
             ]
         in
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics));
-    tc "a type name declared twice is a loud collision" (fun () ->
+    tc "the same type name in two modules coexists, each module's own"
+      (fun () ->
+        let diagnostics =
+          check_program
+            [
+              ( "a",
+                {|class Widget {
+  def init() {
+    self.w = 1
+  }
+
+  def weight() Int64 {
+    return self.w
+  }
+}
+
+def make() Widget {
+  return Widget.new()
+}
+
+println(make().weight())|}
+              );
+              ( "b",
+                {|class Widget {
+  def init() {
+    self.w = 2
+  }
+
+  def weight() Int64 {
+    return self.w
+  }
+}
+
+def make() Widget {
+  return Widget.new()
+}
+
+println(make().weight())|}
+              );
+            ]
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "two modules' same-named types are told apart by their paths" (fun () ->
         let diagnostics =
           check_program
             [
@@ -1241,28 +1286,39 @@ println(show(Crate.new()))|}
   def init() {
     self.w = 1
   }
-}
-|});
+}|});
               ("b", {|class Widget {
   def init() {
     self.w = 2
   }
+}|});
+              ( "main",
+                {|def f(x a.Widget) Int64 {
+  return 1
 }
-|});
+
+def g(y b.Widget) Int64 {
+  return 2
+}
+
+def tag_a(x a.Widget) Int64 {
+  if x.is(a.Widget) {
+    return 1
+  }
+  return 0
+}
+
+def tag_b(y b.Widget) Int64 {
+  if y.is(b.Widget) {
+    return 2
+  }
+  return 0
+}|}
+              );
             ]
         in
-        Alcotest.(check bool) "E4021" true (has_code diagnostics "E4021");
-        let collision =
-          List.find (fun d -> d.Diagnostic.code = Some "E4021") diagnostics
-        in
-        if
-          not
-            (contains_substring collision.Diagnostic.message "module `a`"
-            && contains_substring collision.Diagnostic.message "module `b`")
-        then
-          Alcotest.fail
-            ("collision does not name both modules: "
-           ^ collision.Diagnostic.message));
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
     tc "a same-name declaration inside one module stays its own" (fun () ->
         let diagnostics =
           check_program

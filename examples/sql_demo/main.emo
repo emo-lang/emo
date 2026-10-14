@@ -15,7 +15,7 @@ const (R.ok, q2) = sql.parse(text)
 println(q2.to_string())
 
 // ---- reading the tree ----
-if q2.is(Select) {
+if q2.is(sql.Select) {
   println(q2.columns.length())
   println(q2.from_t.length())
   println(q2.where_e.length())
@@ -24,12 +24,12 @@ if q2.is(Select) {
   println(q2.limit_e.length())
   println(q2.offset_e.length())
   const first = q2.columns[0]
-  if first.is(SelExpr) {
+  if first.is(sql.SelExpr) {
     println(first.alias_e[0])
   }
   const src = q2.from_t[0]
-  if src.is(TblJoin) {
-    println(src.jtype == JoinKind.left)
+  if src.is(sql.TblJoin) {
+    println(src.jtype == sql.JoinKind.left)
     println(src.on_e.length())
   }
 }

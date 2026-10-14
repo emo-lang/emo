@@ -41,7 +41,7 @@ class WaitGroup {
 扇出/扇入的形状:
 
 ```emo
-const wg = WaitGroup.new(3)  // 三份工作在前
+const wg = sync.WaitGroup.new(3)  // 三份工作在前
 do worker(wg)                // ……每个以 wg.done() 收尾
 do worker(wg)
 do worker(wg)

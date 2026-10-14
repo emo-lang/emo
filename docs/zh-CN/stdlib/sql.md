@@ -16,10 +16,10 @@ require "sql"
 
 ```emo
 const (R.ok, stmt) = sql.parse("SELECT name, count(*) AS n FROM users GROUP BY name")
-if stmt.is(Select) {
+if stmt.is(sql.Select) {
   println(stmt.columns.length())
   const item = stmt.columns[1]
-  if item.is(SelExpr) {
+  if item.is(sql.SelExpr) {
     println(item.alias_e[0])   // "n"
   }
   println(stmt.group_by.length())

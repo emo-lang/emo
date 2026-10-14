@@ -35,7 +35,7 @@ class Figure {
 }
 
 class Axes {
-  def init(x_label String, y_label String, x_scale Scale, y_scale Scale, legend Bool, marks Array[Mark]) {
+  def init(x_label String, y_label String, x_scale Scale, y_scale Scale, legend Bool, marks Array[mark.Mark]) {
     self.x_label = x_label
     self.y_label = y_label
     self.x_scale = x_scale
@@ -52,7 +52,7 @@ class Axes {
     return Axes.new(x_label: self.x_label, y_label: s, x_scale: self.x_scale, y_scale: self.y_scale, legend: self.legend, marks: self.marks)
   }
 
-  def with_marks(m Array[Mark]) Axes {
+  def with_marks(m Array[mark.Mark]) Axes {
     return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, legend: self.legend, marks: m)
   }
 
@@ -77,14 +77,14 @@ def tick_text(x Float64) String {
   return x.to_string()
 }
 
-def first_labels(marks Array[Mark]) Array[String] {
+def first_labels(marks Array[mark.Mark]) Array[String] {
   if marks.length() == 0 {
     return []
   }
   return marks[0].x_labels()
 }
 
-def draw_axes(r SvgRenderer, fig Figure, ax Axes) Void {
+def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
   const ml = 64.0
   const mr = 24.0
   const mt = 64.0
@@ -103,18 +103,18 @@ def draw_axes(r SvgRenderer, fig Figure, ax Axes) Void {
     }
   }
   const top = scale.nice_ceil(ymax)
-  const ctx = DrawContext.new(renderer: r, x0: ml, y0: mt, plot_w: pw, plot_h: ph, x_min: 0.0, x_max: n.to_float64(), y_min: 0.0, y_max: top)
+  const ctx = internal.ctx.DrawContext.new(renderer: r, x0: ml, y0: mt, plot_w: pw, plot_h: ph, x_min: 0.0, x_max: n.to_float64(), y_min: 0.0, y_max: top)
   if fig.title != "" {
-    r.text(ml, 30.0, fig.title, 18.0, Anchor.start, Weight.bold, (34, 34, 34))
+    r.text(ml, 30.0, fig.title, 18.0, internal.svg.Anchor.start, internal.svg.Weight.bold, (34, 34, 34))
   }
   if ax.y_label != "" {
-    r.text(ml, 52.0, ax.y_label, 13.0, Anchor.start, Weight.regular, (85, 85, 85))
+    r.text(ml, 52.0, ax.y_label, 13.0, internal.svg.Anchor.start, internal.svg.Weight.regular, (85, 85, 85))
   }
   const ts = scale.ticks(0.0, top, 5)
   for var t = 0; t < ts.length(); t = t + 1 {
     const y = ctx.py(ts[t])
     r.line(ml, y, ml + pw, y, (230, 230, 230), 1.0)
-    r.text(ml - 8.0, y + 4.0, tick_text(ts[t]), 12.0, Anchor.end, Weight.regular, (85, 85, 85))
+    r.text(ml - 8.0, y + 4.0, tick_text(ts[t]), 12.0, internal.svg.Anchor.end, internal.svg.Weight.regular, (85, 85, 85))
   }
   for var k = 0; k < marks.length(); k = k + 1 {
     marks[k].draw(ctx)
@@ -123,15 +123,15 @@ def draw_axes(r SvgRenderer, fig Figure, ax Axes) Void {
   const labels = first_labels(marks)
   for var b = 0; b < labels.length(); b = b + 1 {
     const cx = ctx.px(b.to_float64() + 0.5)
-    r.text(cx, mt + ph + 18.0, labels[b], 12.0, Anchor.middle, Weight.regular, (85, 85, 85))
+    r.text(cx, mt + ph + 18.0, labels[b], 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
   }
   if ax.x_label != "" {
-    r.text(ml + pw / 2.0, mt + ph + 44.0, ax.x_label, 13.0, Anchor.middle, Weight.regular, (85, 85, 85))
+    r.text(ml + pw / 2.0, mt + ph + 44.0, ax.x_label, 13.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
   }
 }
 
 def svg(fig Figure) String {
-  const r = SvgRenderer.new(fig.width, fig.height)
+  const r = internal.svg.SvgRenderer.new(fig.width, fig.height)
   r.rect(0.0, 0.0, fig.width, fig.height, (255, 255, 255))
   for var i = 0; i < fig.axes.length(); i = i + 1 {
     draw_axes(r, fig, fig.axes[i])

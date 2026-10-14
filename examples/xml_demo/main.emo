@@ -8,14 +8,14 @@ require "xml"
 const text = "<?xml version=\"1.0\"?>\n<!-- a comment -->\n<feed version=\"1.0\" xmlns:yt=\"http://yt.example\">\n  <entry id=\"e1\">\n    <title>if a &lt; b &amp;&amp; b &gt; c</title>\n    <tags>\n      <tag>t1</tag><tag>t2</tag>\n    </tags>\n    <body><![CDATA[raw <b> & stuff]]></body>\n    <empty/>\n  </entry>\n  <entry id=\"e2\">\n    <title>第二个</title>\n  </entry>\n</feed>\n"
 
 const (R.ok, doc) = xml.decode(text)
-if doc.is(XmlElement) {
+if doc.is(xml.XmlElement) {
   println(doc.name())
   println(doc.attr("version"))
   println(doc.attr("xmlns:yt"))
   println(doc.children().length().to_string())
 
   const entry = doc.get("entry")
-  if entry.is(XmlElement) {
+  if entry.is(xml.XmlElement) {
     println(entry.attr("id"))
     println(entry.get("title").text())
     println(entry.get("title").children().length().to_string())

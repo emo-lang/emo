@@ -134,15 +134,12 @@ type module_input = {
 type symbol =
   | S_func of { mangled : string; params : string list }
   | S_class of { mangled : string; params : string list } (* init's params *)
+  | S_interface (* a declared interface, a type reference *)
   | S_global of { gname : string } (* a module-level `var` *)
   | S_enum
 
 type env = {
   symbols : (string list * string, symbol) Hashtbl.t; (* module path × name *)
-  type_owners : (string, string list) Hashtbl.t;
-      (* bare type name → its declaring module: type names are
-         program-unique (CHECK.md, cross-module types), so the bare name
-         resolves to one owner *)
   current : string list;
   mutable locals : string list; (* innermost first *)
   types : (string * int * int, Emo_check.t) Hashtbl.t;
@@ -208,6 +205,54 @@ and full_chain (e : Ast.expr) : string list option =
     | _ -> None
   in
   go e
+
+(* ---- Type references ---- *)
+(* A type reference written at a use site: the last dotted segment names
+   the type, every segment before it a module (bare means the current
+   module). Resolves to (declaring module path, qualified display name,
+   symbol). *)
+and resolve_type_ref env (ref_ : string) :
+    (string list * string * symbol) option =
+  let mod_path, name =
+    match List.rev (String.split_on_char '.' ref_) with
+    | name :: rev_mod -> (List.rev rev_mod, name)
+    | [] -> ([], ref_)
+  in
+  let abs =
+    if mod_path = [] then env.current
+    else relativize env (substitute_alias env mod_path)
+  in
+  match Hashtbl.find_opt env.symbols (abs, name) with
+  | Some (S_class _ as s) -> Some (abs, qualify_name abs name, s)
+  | Some (S_enum as s) -> Some (abs, qualify_name abs name, s)
+  | Some (S_interface as s) -> Some (abs, qualify_name abs name, s)
+  | _ -> (
+      (* The built-in `R` enum (seeded with no module) and `Exception`
+         keep their bare names. *)
+      match Hashtbl.find_opt env.symbols ([], name) with
+      | Some (S_enum as s) -> Some ([], name, s)
+      | _ -> if name = "Exception" then Some ([], name, S_interface) else None)
+
+and qualify_name (abs : string list) (name : string) : string =
+  String.concat "." (abs @ [ name ])
+
+(* The qualified display name a type reference resolves to; the written
+   reference when nothing declares it. *)
+and type_display env (ref_ : string) : string =
+  match resolve_type_ref env ref_ with Some (_, q, _) -> q | None -> ref_
+
+(* The class a `.new` receiver names, bare or module-qualified. *)
+and resolve_class env (recv : Ast.expr) : (string * string list) option =
+  match full_chain recv with
+  | Some chain -> (
+      let name = List.hd (List.rev chain) in
+      match resolve_type_ref env (String.concat "." chain) with
+      | Some (abs, _, _) -> (
+          match Hashtbl.find_opt env.symbols (abs, name) with
+          | Some (S_class { mangled; params }) -> Some (mangled, params)
+          | _ -> None)
+      | None -> None)
+  | None -> None
 
 (* Substitutes a leading module alias: [order.total] with [order ↔
    shop.order] becomes (["shop"; "order"], "total"). *)
@@ -320,10 +365,15 @@ and lower_expr env (e : Ast.expr) : expr =
         | Some (S_func { mangled; _ }) | Some (S_class { mangled; _ }) ->
             expr (Global mangled)
         | Some (S_global { gname }) -> expr (Global_var gname)
-        | Some S_enum -> { ety = Emo_check.EnumType name; desc = Type_ref name }
+        | Some S_interface ->
+            { ety = Emo_check.Unknown; desc = Type_ref (type_display env name) }
+        | Some S_enum ->
+            let q = type_display env name in
+            { ety = Emo_check.EnumType q; desc = Type_ref q }
         | None when is_builtin name -> expr (Builtin { name; args = [] })
         | None -> { ety = Emo_check.Unknown; desc = Type_ref name })
-  | Ast.Type_ident name -> { ety = Emo_check.Unknown; desc = Type_ref name }
+  | Ast.Type_ident name ->
+      { ety = type_of env e.Ast.span; desc = Type_ref (type_display env name) }
   | Ast.Self -> expr (Var "self")
   | Ast.Member (inner, name) -> (
       (* A dotted path: a module member (def, class, enum member), or a
@@ -338,47 +388,24 @@ and lower_expr env (e : Ast.expr) : expr =
             desc = Field_read { obj = lower_expr env inner; name };
           }
       | Some (path, member) -> (
-          (* A def or class: (module path, member name). An enum member:
-             the type is the segment before the member — `Color.red`, or
-             `pkg.Color.red` — and an unqualified type lives in the
-             current module. *)
+          (* A def, class, or enum member: (module path, member name).
+             An enum member's enum is the path before the member —
+             `Color.red`, or `pkg.Color.red`. *)
           let path = relativize env path in
-          let enum_candidates =
-            match path with
-            | [ type_name ] ->
-                (* An unqualified type lives in the root module, in the
-                   current module, or at its declaring module — the bare
-                   name is program-wide (CHECK.md, cross-module types). *)
-                let owned =
-                  match Hashtbl.find_opt env.type_owners type_name with
-                  | Some p -> [ (p, type_name) ]
-                  | None -> []
-                in
-                [ ([], type_name); (env.current, type_name) ] @ owned
-            | _ ->
-                let type_name = List.hd (List.rev path) in
-                [ (List.rev (List.tl (List.rev path)), type_name) ]
-          in
           match Hashtbl.find_opt env.symbols (path, member) with
           | Some (S_func { mangled; params }) when params = [] ->
               (* A const binding: calling the zero-arg function
                  evaluates it. *)
               expr (Call { func = mangled; args = [] })
-          | Some (S_func { mangled; _ }) | Some (S_class { mangled; _ }) ->
-              expr (Global mangled)
+          | Some (S_func { mangled; _ }) -> expr (Global mangled)
+          | Some (S_class _) ->
+              (* A class in value position — an `is()` target. *)
+              expr (Type_ref (qualify_name path member))
           | _ -> (
-              match
-                List.find_opt
-                  (fun key ->
-                    match Hashtbl.find_opt env.symbols key with
-                    | Some S_enum -> true
-                    | _ -> false)
-                  enum_candidates
-              with
-              | Some _ ->
-                  let enum_type = snd (List.hd enum_candidates) in
-                  expr (Make_enum { enum_name = enum_type; member })
-              | None ->
+              match resolve_type_ref env (String.concat "." path) with
+              | Some (_, q, S_enum) ->
+                  expr (Make_enum { enum_name = q; member })
+              | _ ->
                   {
                     ety = type_of env e.Ast.span;
                     desc = Field_read { obj = lower_expr env inner; name };
@@ -504,21 +531,10 @@ and lower_call env span callee args =
                              lower_map_arg env arg_value)
                            args);
                   }
-              | Ast.Type_ident class_name when name = "new" -> (
-                  (* The class resolves in the current module first, then
-                     anywhere in the program: type names are program-wide
-                     (CHECK.md, cross-module types), and the checker's
-                     uniqueness rule makes the bare name unambiguous. *)
-                  let owner =
-                    match lookup_symbol env env.current class_name with
-                    | Some (S_class _ as s) -> Some s
-                    | _ ->
-                        Option.bind
-                          (Hashtbl.find_opt env.type_owners class_name)
-                          (fun path -> lookup_symbol env path class_name)
-                  in
-                  match owner with
-                  | Some (S_class { mangled; params }) ->
+              | _ when name = "new" -> (
+                  (* A declared class, bare or module-qualified. *)
+                  match resolve_class env recv with
+                  | Some (mangled, params) ->
                       {
                         ety = type_of env span;
                         desc =
@@ -528,7 +544,7 @@ and lower_call env span callee args =
                               args = order_args env params args;
                             };
                       }
-                  | _ ->
+                  | None ->
                       (* The built-in exception, or an unsupported
                          constructor: the checker admitted only these. *)
                       let args =
@@ -593,7 +609,7 @@ and resolve_callee env (callee : Ast.expr) : (string * string list) option =
       match Hashtbl.find_opt env.symbols (module_path, name) with
       | Some (S_func { mangled; params }) -> Some (mangled, params)
       | Some (S_class { mangled; params }) -> Some (mangled, params)
-      | Some S_enum | Some (S_global _) | None -> None)
+      | Some S_enum | Some S_interface | Some (S_global _) | None -> None)
   | None -> (
       match callee.Ast.desc with
       | Ast.Ident name when not (List.mem name env.locals) -> (
@@ -756,13 +772,26 @@ and lower_branch env (b : Ast.branch) : branch =
   let () = collect_pattern_locals b.Ast.pattern env in
   let lowered =
     {
-      pattern = b.Ast.pattern;
+      pattern = qualify_pattern env b.Ast.pattern;
       guard = Option.map (lower_expr env) b.Ast.guard;
       body = lower_stmts env b.Ast.body;
     }
   in
   env.locals <- saved;
   lowered
+
+(* An enum-member pattern's enum carries the qualified identity the
+   code enums are keyed by; the raw AST keeps the written reference. *)
+and qualify_pattern env (p : Ast.pattern) : Ast.pattern =
+  match p.Ast.pattern_desc with
+  | Ast.Enum_member (t, m) ->
+      { p with pattern_desc = Ast.Enum_member (type_display env t, m) }
+  | Ast.Tuple_pattern ps ->
+      {
+        p with
+        pattern_desc = Ast.Tuple_pattern (List.map (qualify_pattern env) ps);
+      }
+  | _ -> p
 
 and collect_pattern_locals (p : Ast.pattern) env =
   match p.Ast.pattern_desc with
@@ -927,9 +956,6 @@ let lower (input : input) : program =
      seeded — `R.ok` / `R.error` lower as the enum constructions they
      are, on every target. *)
   Hashtbl.replace symbols ([], "R") S_enum;
-  let type_owners : (string, string list) Hashtbl.t = Hashtbl.create 16 in
-  let iface_names : (string, unit) Hashtbl.t = Hashtbl.create 8 in
-  let class_names : (string, unit) Hashtbl.t = Hashtbl.create 8 in
   (* pass 1: every program-wide symbol *)
   List.iter
     (fun (m : module_input) ->
@@ -953,23 +979,21 @@ let lower (input : input) : program =
                     List.map (fun p -> p.Ast.param_name) init.Ast.def_params
                 | None -> []
               in
-              Hashtbl.replace class_names c.Ast.class_name ();
               Hashtbl.replace symbols
                 (m.mpath, c.Ast.class_name)
                 (S_class
                    {
                      mangled = mangle m.mpath (c.Ast.class_name ^ "__new");
                      params = init_params;
-                   });
-              Hashtbl.replace type_owners c.Ast.class_name m.mpath
+                   })
           | Ast.Item_enum e ->
-              Hashtbl.replace symbols (m.mpath, e.Ast.enum_name) S_enum;
-              Hashtbl.replace type_owners e.Ast.enum_name m.mpath
+              Hashtbl.replace symbols (m.mpath, e.Ast.enum_name) S_enum
           | Ast.Item_interface i ->
-              (* Names only, in pass 1: a foreign def in any module may
-                 name any module's interface as a callback parameter, so
-                 pass 2 resolves the type against the whole program. *)
-              Hashtbl.replace iface_names i.Ast.interface_name ()
+              (* A declared interface is a type reference, resolvable in
+                 any module's signatures. *)
+              Hashtbl.replace symbols
+                (m.mpath, i.Ast.interface_name)
+                S_interface
           | Ast.Item_emo_group g ->
               (* a function group's members: registered under both the
                  group-qualified key (`Foo.hello` resolves here) and the
@@ -1114,7 +1138,6 @@ let lower (input : input) : program =
       let const_env =
         {
           symbols;
-          type_owners;
           current = m.mpath;
           locals = [];
           types = m.mtypes;
@@ -1189,7 +1212,6 @@ let lower (input : input) : program =
       let env =
         {
           symbols;
-          type_owners;
           current = m.mpath;
           locals = [];
           types = m.mtypes;
@@ -1230,7 +1252,7 @@ let lower (input : input) : program =
               classes :=
                 {
                   cname = mangle m.mpath display;
-                  cdisplay = display;
+                  cdisplay = qualify_name m.mpath display;
                   cinit = init;
                   cmethods = methods;
                 }
@@ -1288,10 +1310,11 @@ let lower (input : input) : program =
                  is a struct within the struct. *)
               let rec foreign_ffi_type (a : Ast.type_decl) : Emo_check.t =
                 match a.Ast.type_desc with
-                | Ast.Named_type name when Hashtbl.mem iface_names name ->
-                    Emo_check.InterfaceType name
-                | Ast.Named_type name when Hashtbl.mem class_names name ->
-                    Emo_check.ClassType name
+                | Ast.Named_type name -> (
+                    match resolve_type_ref env name with
+                    | Some (_, q, S_interface) -> Emo_check.InterfaceType q
+                    | Some (_, q, S_class _) -> Emo_check.ClassType q
+                    | _ -> decl_type a)
                 | Ast.Tuple_type ts ->
                     Emo_check.TupleType (List.map foreign_ffi_type ts)
                 | _ -> decl_type a
@@ -1315,13 +1338,13 @@ let lower (input : input) : program =
                 :: !funcs
           | Ast.Item_interface i ->
               interfaces :=
-                ( i.Ast.interface_name,
+                ( qualify_name m.mpath i.Ast.interface_name,
                   List.map
                     (fun s -> (s.Ast.sig_name, List.length s.Ast.sig_params))
                     i.Ast.interface_methods )
                 :: !interfaces;
               iface_sigs :=
-                ( i.Ast.interface_name,
+                ( qualify_name m.mpath i.Ast.interface_name,
                   List.map
                     (fun s ->
                       ( s.Ast.sig_name,
@@ -1341,7 +1364,6 @@ let lower (input : input) : program =
   let env =
     {
       symbols;
-      type_owners;
       current = input.entry;
       locals = [];
       types = entry_module.mtypes;

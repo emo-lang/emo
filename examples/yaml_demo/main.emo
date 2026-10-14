@@ -8,18 +8,18 @@ require "yaml"
 const text = "service: gateway\nreplicas: 3\nratio: 0.75\nlabels:\n  env: prod\n  tier: edge\nports:\n  - 8080\n  - 8443\ntls:\n  enabled: true\n  cert: /etc/cert.pem\nnote: |\n  multi line\n  block scalar\nempty: null\n"
 
 const (R.ok, doc) = yaml.decode(text)
-if doc.is(YamlObject) {
+if doc.is(yaml.YamlObject) {
   println(doc.get("service").as_string())
   println(doc.get("replicas").as_int() + 1)
   println(doc.get("ratio").encode())
   const labels = doc.get("labels")
-  if labels.is(YamlObject) {
+  if labels.is(yaml.YamlObject) {
     println(labels.get("env").as_string())
     println(labels.entries().length().to_string())
   }
   println(doc.get("ports").encode())
   const tls = doc.get("tls")
-  if tls.is(YamlObject) {
+  if tls.is(yaml.YamlObject) {
     println(tls.get("enabled").as_bool().to_string())
     println(tls.get("cert").as_string())
   }
@@ -30,7 +30,7 @@ if doc.is(YamlObject) {
 // Round trip: encode to block style and decode again.
 const text2 = yaml.encode(doc)
 const (R.ok, doc2) = yaml.decode(text2)
-if doc2.is(YamlObject) {
+if doc2.is(yaml.YamlObject) {
   println(doc2.get("service").as_string())
   println(doc2.get("ratio").encode())
   println(doc2.get("note").as_string().to_bytes().length().to_string())
@@ -38,7 +38,7 @@ if doc2.is(YamlObject) {
 
 // Flow collections decode like their block counterparts.
 const (R.ok, flow) = yaml.decode("{a: 1, b: [x, y]}")
-if flow.is(YamlObject) {
+if flow.is(yaml.YamlObject) {
   println(flow.get("a").as_int().to_string())
   println(flow.get("b").encode())
 }

@@ -63,8 +63,13 @@ package's element accessors moved onto its interface, whose signatures
 now name `Xml` itself), and an interface signature may name its own
 interface inside a checked program.
 
-Option B (module-qualified names, collision-free composition) can
-layer later if real collisions appear.
+Option B (module-qualified names, collision-free composition) layered
+later after all: **settled 2026-10-14**, type references became
+module-qualified paths (`ui.VNode`, `sync.WaitGroup`), so `def view(count
+Int64) ui.VNode` is the current spelling and two modules may declare the
+same short name as two distinct types. The pre-registration machinery
+this note describes is unchanged except that its keys and surface are
+qualified; CHECK.md carries the new rule.
 
 ## After the decision: the emo-ui package checklist
 

@@ -13,14 +13,14 @@ println(ents.attr("a"))
 // ---- attributes: order preserved, both quote styles ----
 const (R.ok, attrs) = xml.decode("<e one='1' two=\"2\" three='333' />")
 println(attrs.encode())
-if attrs.is(XmlElement) {
+if attrs.is(xml.XmlElement) {
   println(attrs.attrs().length().to_string())
   println(attrs.attr("two"))
 }
 
 // ---- same-name children: get takes the first ----
 const (R.ok, many) = xml.decode("<list><i>1</i><i>2</i><i>3</i></list>")
-if many.is(XmlElement) {
+if many.is(xml.XmlElement) {
   println(many.get("i").text())
   println(many.children().length().to_string())
   println(many.text())
@@ -29,7 +29,7 @@ if many.is(XmlElement) {
 // ---- mixed content and round trips ----
 const (R.ok, mixed) = xml.decode("<p>plain <b>bold</b> after</p>")
 println(mixed.encode())
-if mixed.is(XmlElement) {
+if mixed.is(xml.XmlElement) {
   println(mixed.children().length().to_string())
   println(mixed.text())
 }
@@ -37,7 +37,7 @@ if mixed.is(XmlElement) {
 // ---- self-closing and nested ----
 const (R.ok, nest) = xml.decode("<outer><inner><deepest x=\"y\"/></inner></outer>")
 println(nest.encode())
-if nest.is(XmlElement) {
+if nest.is(xml.XmlElement) {
   println(nest.get("inner").get("deepest").attr("x"))
 }
 

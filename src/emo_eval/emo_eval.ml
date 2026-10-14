@@ -695,6 +695,35 @@ let rec lookup_opt env name =
       | Some parent -> lookup_opt parent name
       | None -> None)
 
+(* Resolves a type reference — a bare name in the current module, or a
+   module-qualified path — to its declared value. A dotted path walks
+   the module tree, loading modules on demand; the env first, so a
+   module already bound (a sibling, the package tree) answers directly. *)
+let rec resolve_type_value env (ref_ : string) : value option =
+  match lookup_opt env ref_ with
+  | Some v -> Some v
+  | None -> (
+      match String.split_on_char '.' ref_ with
+      | head :: rest -> (
+          match lookup_opt env head with
+          | Some (Module h) -> walk_type h rest
+          | _ -> (
+              match !module_handle_of [ head ] with
+              | Some h -> walk_type h rest
+              | None -> None))
+      | [] -> None)
+
+and walk_type h segs : value option =
+  match segs with
+  | [] -> None
+  | [ last ] -> (
+      ensure_module_loaded h;
+      match h.menv with Some e -> lookup_opt e last | None -> None)
+  | seg :: rest -> (
+      match !module_handle_of (h.mpath @ [ seg ]) with
+      | Some child -> walk_type child rest
+      | None -> None)
+
 let rec assign env span name value =
   match Hashtbl.find_opt env.frame name with
   | Some { mutable_ = true; _ } ->
@@ -788,8 +817,15 @@ let rec match_pattern frame span pattern value =
       true
   | Ast.Pattern_literal l -> equal_value value (literal_value l)
   | Ast.Enum_member (t, m) -> (
+      (* The value's tag carries the qualified enum identity; resolve the
+         pattern's written reference to the same identity. *)
+      let tag =
+        match resolve_type_value frame t with
+        | Some (EnumType e) -> e.ename
+        | _ -> t
+      in
       match value with
-      | EnumMember (t', m') -> String.equal t t' && String.equal m m'
+      | EnumMember (t', m') -> String.equal tag t' && String.equal m m'
       | _ -> false)
   | Ast.Tuple_pattern ps -> (
       match value with
@@ -3314,7 +3350,15 @@ let method_closure class_name env d =
     void_ok = may_end_without_return d;
   }
 
-let eval_item env item =
+(* Type identity is the qualified name — `sync.WaitGroup` — so two
+   modules may declare the same short name; the runtime keys classes,
+   enums, and interfaces by it. A closure's body resolves its module's
+   own declarations through the env (bare), so only the identity carries
+   the prefix. *)
+let qualify_ename (module_path : string list) (name : string) : string =
+  if module_path = [] then name else String.concat "." (module_path @ [ name ])
+
+let eval_item ?(module_path = []) env item =
   match item.Ast.item_desc with
   | Ast.Item_stmt s -> eval_stmt env s
   | Ast.Item_require _ ->
@@ -3332,10 +3376,11 @@ let eval_item env item =
              void_ok = may_end_without_return d;
            })
   | Ast.Item_class c ->
+      let cname = qualify_ename module_path c.Ast.class_name in
       define env c.Ast.class_name ~mutable_:false
         (ClassDef
            {
-             cname = c.Ast.class_name;
+             cname;
              cinit =
                Option.map
                  (fun d -> method_closure c.Ast.class_name env d)
@@ -3348,23 +3393,23 @@ let eval_item env item =
              builtin_exception = false;
            })
   | Ast.Item_interface i ->
+      let iname = qualify_ename module_path i.Ast.interface_name in
       let sigs =
         List.map
           (fun s -> (s.Ast.sig_name, List.length s.Ast.sig_params))
           i.Ast.interface_methods
       in
-      Hashtbl.replace interface_registry i.Ast.interface_name sigs;
-      define env i.Ast.interface_name ~mutable_:false
-        (TypeValue i.Ast.interface_name)
+      Hashtbl.replace interface_registry iname sigs;
+      define env i.Ast.interface_name ~mutable_:false (TypeValue iname)
   | Ast.Item_enum e ->
+      let ename = qualify_ename module_path e.Ast.enum_name in
       let members =
         List.map
-          (fun m ->
-            (m.Ast.member_name, EnumMember (e.Ast.enum_name, m.Ast.member_name)))
+          (fun m -> (m.Ast.member_name, EnumMember (ename, m.Ast.member_name)))
           e.Ast.enum_members
       in
       define env e.Ast.enum_name ~mutable_:false
-        (EnumType { ename = e.Ast.enum_name; emembers = members })
+        (EnumType { ename; emembers = members })
   | Ast.Item_emo_group g ->
       (* members are defined into the frame first so bodies read them
          bare, then collected into the group value *)
