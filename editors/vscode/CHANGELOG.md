@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Fix language server startup: the extension registered the package
+  commands that the server already advertises, so the duplicate
+  registration threw during initialization and the server never started.
+
 ## 0.2.0
 
 - Published under the `MindWork` publisher.

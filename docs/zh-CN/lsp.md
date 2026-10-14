@@ -39,11 +39,11 @@ cd editors/vscode
 npm install
 npm run build                  # 将客户端打包为 out/extension.js
 bash scripts/install-server.sh # 放置 emo-lsp 与标准库注册表
-npx @vscode/vsce package       # 产出 emo-lsp-0.1.0.vsix
+npx @vscode/vsce package       # 产出 emo-tools-lsp-0.2.2.vsix
 ```
 
-用 `code --install-extension emo-lsp-0.1.0.vsix` 安装产出的 `.vsix`，或在
-扩展视图的 *Install from VSIX* 中安装。
+用 `code --install-extension emo-tools-lsp-0.2.2.vsix` 安装产出的 `.vsix`，
+或在扩展视图的 *Install from VSIX* 中安装。
 
 客户端按以下顺序查找服务器：
 

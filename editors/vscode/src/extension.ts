@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import {
   LanguageClient,
   LanguageClientOptions,
+  Middleware,
   RevealOutputChannelOn,
   ServerOptions,
   State,
@@ -50,6 +51,53 @@ function registryEndpoint(context: vscode.ExtensionContext): string | undefined 
 // Client lifecycle
 // ---------------------------------------------------------------------------
 
+/** The file of the active Emo editor, if any. */
+function activeFilePath(): string | undefined {
+  const editor = vscode.window.activeTextEditor;
+  if (editor && editor.document.languageId === 'emo') {
+    return editor.document.uri.fsPath;
+  }
+  return undefined;
+}
+
+// The server advertises its package commands through
+// `executeCommandProvider`, so the language client registers them with VS
+// Code on that basis. The extension must not register the same ids again —
+// a second `registerCommand` throws and breaks server initialization. This
+// middleware supplies the editor-side behaviour (tree refresh, quick picks,
+// the active file) and then lets the request reach the server.
+const commandMiddleware: Middleware = {
+  executeCommand: async (command, args, next) => {
+    switch (command) {
+      case 'emo.deps.resolve':
+        await runAndReport(command);
+        packageProvider.refresh();
+        return undefined;
+      case 'emo.deps.list':
+        await runAndReport(command);
+        return undefined;
+      case 'emo.package.init':
+        await runAndReport(command, args);
+        packageProvider.refresh();
+        return undefined;
+      case 'emo.deps.update':
+        await updateDependency(args[0], args[1]);
+        return undefined;
+      case 'emo.check':
+      case 'emo.build':
+      case 'emo.run': {
+        const file = activeFilePath();
+        if (file) {
+          await runAndReport(command, [file]);
+        }
+        return undefined;
+      }
+      default:
+        return next(command, args);
+    }
+  },
+};
+
 async function startClient(context: vscode.ExtensionContext): Promise<void> {
   const serverPath = resolveServerPath(context);
   if (path.isAbsolute(serverPath) && !fs.existsSync(serverPath)) {
@@ -74,6 +122,7 @@ async function startClient(context: vscode.ExtensionContext): Promise<void> {
     initializationOptions: { registry: registryEndpoint(context) },
     outputChannel: output,
     revealOutputChannelOn: RevealOutputChannelOn.Never,
+    middleware: commandMiddleware,
     synchronize: {
       fileEvents: vscode.workspace.createFileSystemWatcher('**/{package.emo,package.lock,.emo}'),
     },
@@ -361,14 +410,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   context.subscriptions.push(tree);
 
-  const activeFilePath = (): string | undefined => {
-    const editor = vscode.window.activeTextEditor;
-    if (editor && editor.document.languageId === 'emo') {
-      return editor.document.uri.fsPath;
-    }
-    return undefined;
-  };
-
+  // The package commands are advertised by the server and registered by the
+  // language client; only the extension-local commands are registered here.
   const registrations: Array<[string, (...args: any[]) => unknown]> = [
     [
       'emo.restartServer',
@@ -380,19 +423,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         packageProvider.refresh();
       },
     ],
-    ['emo.deps.resolve', async () => { await runAndReport('emo.deps.resolve'); packageProvider.refresh(); }],
-    ['emo.deps.update', async (name?: string, version?: string) => updateDependency(name, version)],
-    ['emo.deps.list', async () => { await runAndReport('emo.deps.list'); }],
-    [
-      'emo.package.init',
-      async () => {
-        await runAndReport('emo.package.init');
-        packageProvider.refresh();
-      },
-    ],
-    ['emo.check', async () => { const f = activeFilePath(); if (f) { await runAndReport('emo.check', [f]); } }],
-    ['emo.build', async () => { const f = activeFilePath(); if (f) { await runAndReport('emo.build', [f]); } }],
-    ['emo.run', async () => { const f = activeFilePath(); if (f) { await runAndReport('emo.run', [f]); } }],
     ['emo.packages.refresh', () => packageProvider.refresh()],
   ];
   for (const [command, handler] of registrations) {

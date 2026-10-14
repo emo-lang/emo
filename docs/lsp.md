@@ -42,11 +42,12 @@ cd editors/vscode
 npm install
 npm run build                  # bundles the client into out/extension.js
 bash scripts/install-server.sh # stages emo-lsp and the stdlib registry
-npx @vscode/vsce package       # produces emo-lsp-0.1.0.vsix
+npx @vscode/vsce package       # produces emo-tools-lsp-0.2.2.vsix
 ```
 
-Install the resulting `.vsix` with `code --install-extension emo-lsp-0.1.0.vsix`
-or through the Extensions view's *Install from VSIX*.
+Install the resulting `.vsix` with
+`code --install-extension emo-tools-lsp-0.2.2.vsix` or through the Extensions
+view's *Install from VSIX*.
 
 The client finds the server in this order:
 
