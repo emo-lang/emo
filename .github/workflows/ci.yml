@@ -7,7 +7,20 @@ on:
       - "src/**"
       - "test/**"
       - "examples/**"
+      # stdlib/registry is embedded into the compiler at build time
+      # (src/emo_pkg/dune) and tests diff embedded vs. filesystem.
+      - "stdlib/**"
+      # runtime/wasm and bin/ have their own dune files and join the
+      # default build target defined by the root dune file.
+      - "runtime/**"
+      - "bin/**"
+      - "dune"
       - "dune-project"
+      # Generated from dune-project, but CI installs dependencies from
+      # it, so a stale committed copy must trigger a run too.
+      - "emo.opam"
+      # Generator for the embedded stdlib data (src/emo_pkg/dune rule).
+      - "devtools/gen-stdlib-data.sh"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [main, develop]
@@ -40,8 +53,11 @@ jobs:
         with:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
 
+      # Dependencies come from the committed opam file (generated from
+      # dune-project), not a hand-maintained list, so the two cannot
+      # drift apart. --with-test pulls in alcotest for dune test.
       - name: Install dependencies
-        run: opam install -y dune cmdliner alcotest eio_main ssl yojson digestif
+        run: opam install . --deps-only --with-test -y
 
       # The riscv64 goldens boot the freestanding ELF under QEMU (T19.4);
       # on macOS the group skips gracefully — the cross binutils would
