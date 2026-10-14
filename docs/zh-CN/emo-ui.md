@@ -164,6 +164,8 @@ const list = column(
 
 相关的语言缺口:`Block` 是 `Unknown`,意味着 block 参数不受检。一个**带检查的函数类型**能让组件声明它要求的回调形状(`def each(xs Array[T], f (T) Node)`),并让树 block 对着它受检。今天 Emo 只有 `Block` 这一种写法,而 `Block` 被刻意定为 `Unknown`。新增一个带检查的 block/函数类型是一项实打实的语言改动(语法、合一、每个后端的闭包表示);它值得掂量,因为它是受检与不受检组件 API 之别,但它不是第一个包的关口。
 
+本节背后的完整论证——被丢弃的 block 值能被指定去向的三种方式、先例调研、模板语言能有的三种形态,以及它留下的唯一开放问题(Emo 自己语法里的树字面量,还是外部翻译器产出 `.emo`)——见 [`emo-ui-composition.md`](emo-ui-composition.md)。
+
 ### Layer 2 —— 组件库
 
 需求明确要每平台组件库。设计给它一条精确边界:
@@ -398,3 +400,4 @@ ui_tui.run(app.view, app.update, Model.new(0))
 3. **两个事件循环的集成** —— UI 进程与工具包循环如何共存,以及事件在 v1 还是更晚变成真正的进程消息。
 4. **带检查的 block/函数类型** —— 在第一个包显出摩擦之后,组件 API 是否值得它。
 5. **Web T1 的边界** —— 现有 TS runtime 里的 DOM builtin,还是浏览器专属 runtime 变体,以及打包步骤落在工具链的哪里。
+6. **树的拼法** —— 数组式 children 到底要不要一个字面量写法;如果要,它属于 Emo 自己的语法,还是属于一个产出 `.emo` 的外部翻译器。已经**关掉**的机制(发射、self 重绑定、环境式收集器、自带走作用域求值的模板引擎)记在 [`emo-ui-composition.md`](emo-ui-composition.md),那里也写明了能了结这个问题的证据是什么。

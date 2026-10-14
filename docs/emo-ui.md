@@ -355,6 +355,12 @@ unification, every backend's closure representation); it is worth
 weighing because it is the difference between a checked and an unchecked
 component API, but it is not a gate for a first package.
 
+The full argument behind this section — the three ways a discarded block
+value could be given a destination, the prior-art survey, the three
+shapes a template language can take, and the one question it leaves open
+(a tree literal form in Emo's own grammar, versus an external translator
+to `.emo`) — is in [`emo-ui-composition.md`](emo-ui-composition.md).
+
 ### Layer 2 — component libraries
 
 The requirement explicitly wants per-platform component libraries. The
@@ -841,3 +847,10 @@ tracked as **M16 — Value-family reclamation (step 49)**, spec in
 5. **The Web T1 boundary** — DOM builtins in the existing TS runtime
    versus a browser-specific runtime variant, and where the bundling
    step lives in the toolchain.
+6. **The tree spelling** — whether the array child form gets a literal
+   spelling at all, and if so whether it belongs in Emo's own grammar or
+   in an external translator that emits `.emo`. The mechanisms that are
+   *closed* (emission, self-rebinding, an ambient collector, and a
+   template engine with its own evaluation) are recorded in
+   [`emo-ui-composition.md`](emo-ui-composition.md), which also names
+   the evidence that would settle this one.
