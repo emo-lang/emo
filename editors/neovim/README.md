@@ -34,30 +34,61 @@ language server that quietly never starts.
 
 ## Installation
 
-With [lazy.nvim](https://github.com/folke/lazy.nvim), pointing at the plugin
-directory inside the Emo checkout:
+The plugin is a plain Neovim runtime directory — `ftdetect/`, `ftplugin/`,
+`indent/`, `lsp/`, `lua/`, `plugin/`, `syntax/` — at `<repo>/editors/neovim`.
+There is nothing to compile; only the `emo-lsp` executable from
+[Requirements](#requirements) has to exist. Put the directory on `runtimepath`
+one of two ways.
+
+### With lazy.nvim
+
+Add this entry **inside the list passed to `require("lazy").setup({ ... })`**
+in `init.lua`:
 
 ```lua
-{
-  dir = '/path/to/emo/editors/neovim',
-  main = 'emo',   -- the directory is named `neovim`, the module is not
-  opts = {},
-}
+require("lazy").setup({
+  -- ... your other plugins ...
+
+  {
+    dir = '/path/to/emo/editors/neovim',
+    main = 'emo',   -- the directory is named `neovim`, the module is not
+    opts = {},
+  },
+})
 ```
 
-Load it at startup rather than on the `ft` event: the filetype is what starts
-the language server, so a plugin loaded during that event has registered its
-autocommand too late to catch the first `.emo` buffer.
+Placement is the part to get right: a spec written after the closing `})` of
+`setup`, or in a file that never calls `setup`, is never read and never loads.
+`dir` marks a plugin that is already on disk — lazy.nvim loads it in place and
+never clones or updates it, so there is no sync and no network access. Point
+`dir` at the checkout you actually edit.
 
-Or without a plugin manager, before `filetype plugin indent on`:
+Do **not** add `ft` or `event` to the spec. The `.emo` filetype is what starts
+the language server, so a plugin loaded *during* that event registers its
+autocommand too late to catch the first `.emo` buffer. A spec with no `ft` or
+`event` loads at startup; add `lazy = false` if your lazy.nvim `defaults` would
+otherwise defer it.
+
+### Without a plugin manager
+
+Prepend the directory to `runtimepath` early in `init.lua`, before filetype
+detection sources any `ftdetect` or `ftplugin` script:
 
 ```lua
 vim.opt.runtimepath:prepend('/path/to/emo/editors/neovim')
-require('emo').setup()
 ```
 
-`setup` is optional; the plugin starts with its defaults on first load. Call it
-to override any of the [options](#options) below.
+The plugin calls its own `setup` when `plugin/emo.lua` loads, so this line is
+all that is required. Call `require('emo').setup({ ... })` yourself only to
+override any of the [options](#options) below.
+
+### Verifying
+
+`:checkhealth emo` is the check that matters. It reports the Neovim version,
+the resolved `server_path`, the registry, the `emo` CLI, and every running
+client. A server that cannot be found shows up here as an unresolved
+executable instead of a language server that quietly never starts. With
+lazy.nvim, `:Lazy` also lists the plugin as a local plugin.
 
 ## Features
 
@@ -125,9 +156,6 @@ looked up on the `PATH`, and `emo_path` and `registry` fall back to the
 server's `$EMO_BIN` and `$EMO_REGISTRY`.
 
 ## Configuration
-
-`:checkhealth emo` reports the Neovim version, the server path, the registry,
-the `emo` CLI, and any running clients.
 
 The language server is registered with `vim.lsp.config('emo', ...)`, so a
 `vim.lsp.config('emo', { ... })` call of your own merges on top of it. Buffers
