@@ -2,7 +2,7 @@
   "name": "emo-tools-lsp",
   "displayName": "Emo LSP",
   "description": "Emo language support: syntax highlighting, completion, diagnostics, and package management.",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "publisher": "MindWork",
   "license": "MIT",
   "repository": {

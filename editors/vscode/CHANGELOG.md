@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.4
+
+- Validate `package.emo` as a manifest instead of checking it as Emo
+  source: `name`, `version`, `targets`, and `deps` are no longer reported
+  as unbound names, and a malformed manifest reports the real manifest
+  error.
+
+## 0.2.3
+
+- Resolve symbols for the standard library and dependencies: an unpinned
+  `require "json"` (or any declared dependency) now feeds the checker and
+  the index, so members resolve in diagnostics, completion, hover, and
+  go-to-definition.
+- Bundle the full standard-library registry (every package, not just
+  `http` and `net`), so the standard library resolves out of the box.
+
 ## 0.2.2
 
 - Fix language server startup: the extension registered the package

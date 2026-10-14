@@ -7,4 +7,5 @@ out/**/*.map
 tsconfig.json
 esbuild.js
 package-lock.json
+scripts/**
 **/*.ts

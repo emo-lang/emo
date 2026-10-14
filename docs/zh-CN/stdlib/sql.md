@@ -8,19 +8,7 @@
 require "sql"
 ```
 
-`require` 与 manifest 严格配对:`sql` 必须在 `package.emo` 里钉住版本:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    sql = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "sql"` 无需在 `package.emo` 中声明。
 
 ## 语法树
 

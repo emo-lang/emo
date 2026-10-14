@@ -10,19 +10,7 @@
 require "file"
 ```
 
-`require` 与清单严格配对:`file` 必须钉在 `package.emo` 里:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c"]
-
-  deps {
-    file = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "file"` 无需在 `package.emo` 中声明。本包声明 `ocaml` 和 `c` 两个目标,其他目标的构建会拒绝它。
 
 ## 接口
 

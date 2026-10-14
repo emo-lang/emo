@@ -11,19 +11,7 @@
 require "xml"
 ```
 
-`require` 与清单严格配对:`xml` 必须钉在 `package.emo` 里:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    xml = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "xml"` 无需在 `package.emo` 中声明。
 
 ## 值
 

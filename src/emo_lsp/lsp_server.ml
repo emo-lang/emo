@@ -123,41 +123,87 @@ let manifest_deps (root : string) : (string * Emo_pkg.Version.t) list =
       | m -> m.Emo_pkg.deps
       | exception Emo_pkg.Manifest_error _ -> [])
 
-(* A require with no manifest entry is a compile error in the compiler
-   (E5006); surface it here as a quick-fixable diagnostic. *)
-let missing_dep_diagnostics (root : string) (items : Ast.item list) :
-    Diagnostic.t list =
+(* A scoped require (`acme/tools`) with no manifest entry is a compile
+   error in the compiler (E5006); surface it here as a quick-fixable
+   diagnostic. An unscoped require names a standard-library package and
+   needs no pin; a name the registry does not publish is E5009. *)
+let missing_dep_diagnostics ?(registry : string option) (root : string)
+    (items : Ast.item list) : Diagnostic.t list =
   if not (Lsp_util.file_exists (Filename.concat root "package.emo")) then []
   else
     let deps = manifest_deps root in
     List.filter_map
       (fun (name, span) ->
-        if List.mem_assoc name deps then None
+        if String.contains name '/' then
+          if List.mem_assoc name deps then None
+          else
+            Some
+              {
+                Diagnostic.severity = Error;
+                code = Some "E5006";
+                message =
+                  Printf.sprintf
+                    "`require \"%s\"` is not listed in package.emo deps" name;
+                span;
+                hint = Some "add the package to the manifest's deps block";
+              }
         else
-          Some
-            {
-              Diagnostic.severity = Error;
-              code = Some "E5006";
-              message =
-                Printf.sprintf
-                  "`require \"%s\"` is not listed in package.emo deps" name;
-              span;
-              hint = Some "add the package to the manifest's deps block";
-            })
+          match registry with
+          | None -> None
+          | Some endpoint -> (
+              match
+                Emo_pkg.Registry.versions (Emo_pkg.Registry.Fs_dir endpoint)
+                  ~name
+              with
+              | [] ->
+                  Some
+                    {
+                      Diagnostic.severity = Error;
+                      code = Some "E5009";
+                      message =
+                        Printf.sprintf
+                          "`require \"%s\"` names no standard-library package"
+                          name;
+                      span;
+                      hint = Some "check the package name";
+                    }
+              | _ -> None))
       (requires_of items)
+
+(* A `package.emo` is the manifest: data in the restricted profile, never a
+   module. Checking it as Emo source reads `name`/`version`/`deps` as
+   unbound names, so validate it as a manifest instead. *)
+let is_manifest_file (file : string) : bool =
+  String.equal (Filename.basename file) "package.emo"
+
+let manifest_diagnostics ~(file : string) (text : string) : Diagnostic.t list =
+  match Emo_pkg.parse_manifest ~file ~source:text with
+  | _ -> []
+  | exception Emo_pkg.Manifest_error d -> [ d ]
+  | exception _ -> []
 
 let compute_diagnostics (state : state) (file : string) (text : string) :
     Diagnostic.t list =
-  let items, parse_diags = parse file text in
-  match parse_diags with
-  | _ :: _ -> parse_diags
-  | [] ->
-      let root = root_for_file state file in
-      let ix = Ix.get ?registry:state.registry root in
-      let modules = List.map fst ix.modules in
-      let current = module_path_of_file root file in
-      let check_diags, _, _ = Emo_check.check_module ~modules ~current items in
-      check_diags @ missing_dep_diagnostics root items
+  if is_manifest_file file then manifest_diagnostics ~file text
+  else
+    let items, parse_diags = parse file text in
+    match parse_diags with
+    | _ :: _ -> parse_diags
+    | [] ->
+        let root = root_for_file state file in
+        let ix = Ix.get ?registry:state.registry root in
+        let modules = List.map fst ix.modules in
+        let current = module_path_of_file root file in
+        (* Pre-register every indexed module — project and dependency alike —
+           so a qualified member (`sync.done`, `json.decode`) resolves in
+           diagnostics, exactly as it does in a full project check. *)
+        let units = Ix.units_for ix ~current items in
+        let program, _ = Emo_check.preregister_types ~units in
+        let check_diags, _, _, _ =
+          Emo_check.check_module_typed ~modules ~current ~program items
+        in
+        check_diags
+        @ missing_dep_diagnostics ?registry:state.registry root items
 
 let publish_diagnostics (state : state) (uri : string) (file : string)
     (text : string) : unit =
@@ -990,7 +1036,8 @@ let handle_execute_command (state : state) (params : Yojson.Safe.t) :
   // Dependencies — one per line, as  name = "exact version".
   // Versions are exact major.minor.patch pins, never ranges. The name
   // is what `require` names in your .emo files: a standard-library
-  // short name like "json", or a registry package's owner/name; the
+  // short name like "json" needs no entry (the compiler ships it); a
+  // registry package's owner/name is pinned here. Either way the
   // package binds in code under its short name.
   deps {
     // json = "0.1.0"       then:  require "json"       binds `json`

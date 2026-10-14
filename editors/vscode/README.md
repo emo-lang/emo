@@ -14,10 +14,14 @@ document symbols, semantic tokens, and package management.
   from the current file and the project, members after `.` (class methods and
   fields, group members, module members), and package names inside
   `require "..."`.
-- **Diagnostics** — lex, parse, and type errors from the compiler, plus
-  manifest/`require` pairing errors, published as you type.
+- **Diagnostics** — lex, parse, and type errors from the compiler across the
+  project's modules and its dependencies, plus manifest/`require` pairing
+  errors for scoped packages, published as you type. An unscoped
+  `require "sync"` resolves the standard library with no manifest entry,
+  and `package.emo` is validated as a manifest rather than checked as Emo
+  source.
 - **Hover and go-to-definition** — signatures and jump-to-declaration across
-  the project's module tree.
+  the project's module tree, dependencies included.
 - **Document and workspace symbols** — an outline for the current file and
   fuzzy project-wide symbol search.
 - **Package management** — an *Emo Packages* view, quick fixes that add a
@@ -73,6 +77,18 @@ If neither is set, the extension looks for `emo-lsp` on your `PATH`.
 | `emo.emoPath` | `"emo"` | Path to the `emo` CLI |
 | `emo.registry` | `""` | Registry endpoint (defaults to `EMO_REGISTRY`) |
 | `emo.trace.server` | `"off"` | LSP trace level |
+
+## Packaging
+
+```sh
+cd editors/vscode
+bash scripts/build-vsix.sh            # → emo-tools-lsp-<version>.vsix
+bash scripts/build-vsix.sh --out /tmp/emo.vsix
+```
+
+The script builds and stages `emo-lsp` with the standard-library registry,
+bundles the extension, and packages it with `vsce`. Install the result with
+`code --install-extension emo-tools-lsp-<version>.vsix`.
 
 ## Development
 

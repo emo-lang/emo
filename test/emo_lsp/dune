@@ -1,6 +1,6 @@
 (executable
  (name emo_lsp_test)
- (libraries alcotest unix yojson emo_lsp emo_parser))
+ (libraries alcotest unix yojson emo_lsp emo_parser emo_check))
 
 (rule
  (alias runtest)

@@ -13,20 +13,8 @@ same bits everywhere — the property the plotting goldens rely on.
 require "math"
 ```
 
-A `require` pairs strictly with the manifest: `math` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    math = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "math"` needs no
+`package.emo` entry.
 
 ## Constants
 

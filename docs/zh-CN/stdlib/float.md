@@ -10,19 +10,7 @@ IEEE binary64 值与它的十进制文本之间的精确转换,中途不经过�
 require "float"
 ```
 
-`require` 与清单严格配对:`float` 必须在 `package.emo` 里钉住:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    float = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "float"` 无需在 `package.emo` 中声明。
 
 ## 表面
 

@@ -10,19 +10,7 @@ UTF-8。纯 Emo 写在共享运行时之上——字节与数组——所以每�
 require "csv"
 ```
 
-`require` 与清单严格配对:`csv` 必须钉在 `package.emo` 里:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    csv = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "csv"` 无需在 `package.emo` 中声明。
 
 ## 接口
 

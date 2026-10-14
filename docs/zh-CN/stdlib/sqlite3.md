@@ -17,20 +17,7 @@ E3009 拒绝,其他目标则在解析或构建期拒绝。`emo run` 无法执行
 require "sqlite3"
 ```
 
-`require` 与清单严格配对:`sqlite3` 必须在 `package.emo` 里固定
-版本:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["c"]
-
-  deps {
-    sqlite3 = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "sqlite3"` 无需在 `package.emo` 中声明。本包只声明 `c` 目标——它带有原生代码,只有 `c` 目标能构建它。
 
 ## 错误
 

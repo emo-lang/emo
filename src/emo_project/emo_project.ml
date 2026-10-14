@@ -498,15 +498,15 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
                 Emo_support.Diagnostic.severity = Error;
                 code = Some "E5006";
                 message =
-                  "this project has `require`s but no package.emo manifest to \
-                   declare dependencies";
+                  "this project has `require`s but no package.emo manifest";
                 span =
                   (match requires with
                   | (_, s) :: _ -> s
                   | [] ->
                       Emo_support.Span.make ~file:p.root ~line:1 ~col:1 ~start:0
                         ~stop:0);
-                hint = Some "create a package.emo manifest with a deps block";
+                hint =
+                  Some "create a package.emo manifest beside the entry file";
               };
             ]
         | Some _, _ ->
@@ -655,18 +655,17 @@ let registry () =
   | Some endpoint when endpoint <> "" -> Emo_pkg.Registry.Fs_dir endpoint
   | _ -> bundled_registry ()
 
-(* Resolves the manifest's exact pins against the registry, fresh — the
-   explicit regeneration path (`emo deps resolve`). The target filters
-   which published versions qualify. *)
-let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
-    ~(target : string) : Emo_pkg.Lockfile.entry list =
-  if manifest.Emo_pkg.deps = [] then []
+(* Solves [roots] against the registry and fetches every resolved package
+   — the shared body of the explicit resolution (`emo deps resolve`) and
+   the build-time resolution that carries the standard library's implicit
+   pins. The target filters which published versions qualify. *)
+let solved_entries ~(registry : Emo_pkg.Registry.t) ~(manifest_dir : string)
+    ~(target : string) (roots : (string * Emo_pkg.Version.t) list) :
+    Emo_pkg.Lockfile.entry list =
+  if roots = [] then []
   else
-    let reg = registry () in
-    let index =
-      Emo_pkg.Registry.index_closure reg (List.map fst manifest.Emo_pkg.deps)
-    in
-    match Emo_pkg.Resolve.solve ~target ~roots:manifest.Emo_pkg.deps ~index with
+    let index = Emo_pkg.Registry.index_closure registry (List.map fst roots) in
+    match Emo_pkg.Resolve.solve ~target ~roots ~index with
     | Error errors ->
         raise
           (dep_error ~manifest_dir
@@ -679,7 +678,7 @@ let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     | Ok r ->
         List.map
           (fun (dep, version) ->
-            match Emo_pkg.Registry.fetch reg ~name:dep ~version with
+            match Emo_pkg.Registry.fetch registry ~name:dep ~version with
             | Error m -> raise (dep_error ~manifest_dir m)
             | Ok f ->
                 {
@@ -688,6 +687,75 @@ let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
                   checksum = f.Emo_pkg.Registry.f_checksum;
                 })
           r.Emo_pkg.Resolve.resolved
+
+(* Resolves the manifest's exact pins against the registry, fresh — the
+   explicit regeneration path (`emo deps resolve`). *)
+let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
+    ~(target : string) : Emo_pkg.Lockfile.entry list =
+  solved_entries ~registry:(registry ()) ~manifest_dir ~target
+    manifest.Emo_pkg.deps
+
+(* Unscoped requires name standard-library packages: the official standard
+   library owns the top-level short names (README, Package Management),
+   ships with the compiler, and needs no manifest pin. A scoped require
+   (`acme/tools`) still pairs with the manifest's deps strictly. Each name
+   appears once, with the span of its first require; a name the project
+   already defines as a module is left to that module. *)
+let stdlib_requires (p : project) : (string * Emo_support.Span.t) list =
+  let seen : (string, Emo_support.Span.t) Hashtbl.t = Hashtbl.create 8 in
+  Hashtbl.iter
+    (fun _ file ->
+      let items = try parse_cached p file with _ -> [] in
+      List.iter
+        (fun (item : Ast.item) ->
+          match item.Ast.item_desc with
+          | Ast.Item_require name
+            when (not (String.contains name '/'))
+                 && (not (Hashtbl.mem p.files [ name ]))
+                 && not (Hashtbl.mem p.dirs [ name ]) ->
+              if not (Hashtbl.mem seen name) then
+                Hashtbl.replace seen name item.Ast.item_span
+          | _ -> ())
+        items)
+    p.files;
+  Hashtbl.fold (fun name span acc -> (name, span) :: acc) seen []
+  |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+
+(* The implicit pins for the project's standard-library requires: the
+   highest version the registry publishes for each name the manifest does
+   not already pin. A name the registry does not publish is neither a
+   standard-library package nor (being unscoped) a third-party one — an
+   error at the require. *)
+let stdlib_pins (registry : Emo_pkg.Registry.t) ~(explicit : string list)
+    (requires : (string * Emo_support.Span.t) list) :
+    (string * Emo_pkg.Version.t) list =
+  List.filter_map
+    (fun (name, span) ->
+      if List.mem name explicit then None
+      else
+        match Emo_pkg.Registry.versions registry ~name with
+        | [] ->
+            raise
+              (Static_errors
+                 [
+                   {
+                     Emo_support.Diagnostic.severity = Error;
+                     code = Some "E5009";
+                     message =
+                       Printf.sprintf
+                         "`require \"%s\"` names no standard-library package \
+                          in %s"
+                         name
+                         (Emo_pkg.Registry.describe registry);
+                     span;
+                     hint =
+                       Some
+                         "check the package name; a third-party package needs \
+                          its scoped name and a manifest deps entry";
+                   };
+                 ])
+        | versions -> Some (name, List.nth versions (List.length versions - 1)))
+    requires
 
 (* The build-time resolution: a satisfied lockfile is used as recorded; a
    mismatch is an error prompting explicit regeneration — never a silent
@@ -702,6 +770,44 @@ let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
       | [] -> entries
       | message :: _ -> raise (dep_error ~manifest_dir message))
   | Error _ -> resolve_deps ~manifest ~manifest_dir ~target
+
+(* The build-time resolution when the project also carries implicit
+   standard-library pins: the manifest's own resolution is established
+   first (a satisfied lockfile is used as recorded, a mismatch still
+   fails), and the implicit pins join it in one solve, so a stdlib package
+   a declared dependency also needs resolves once. Implicit pins never
+   enter package.lock: the standard library ships with the compiler, so
+   the manifest stays the recorded resolution. *)
+let resolution_with_stdlib ~(manifest : Emo_pkg.manifest)
+    ~(manifest_dir : string) ~(target : string) ~(registry : Emo_pkg.Registry.t)
+    ~(implicit : (string * Emo_pkg.Version.t) list) :
+    Emo_pkg.Lockfile.entry list =
+  ignore (resolution_for_run ~manifest ~manifest_dir ~target);
+  let entries =
+    solved_entries ~registry ~manifest_dir ~target
+      (manifest.Emo_pkg.deps @ implicit)
+  in
+  (* An implicit pin must not silently move a manifest pin: MVS takes the
+     highest exact version named, so a stdlib closure demanding a higher
+     one than the manifest states is a conflict the manifest must settle. *)
+  List.iter
+    (fun (dep, pinned) ->
+      match
+        List.find_opt (fun e -> String.equal e.Emo_pkg.Lockfile.dep dep) entries
+      with
+      | Some e when e.Emo_pkg.Lockfile.version = pinned -> ()
+      | Some e ->
+          raise
+            (dep_error ~manifest_dir
+               (Printf.sprintf
+                  "the standard library requires `%s` at %s, but the manifest \
+                   pins it at %s — update the manifest pin"
+                  dep
+                  (Emo_pkg.Version.to_string e.Emo_pkg.Lockfile.version)
+                  (Emo_pkg.Version.to_string pinned)))
+      | None -> ())
+    manifest.Emo_pkg.deps;
+  entries
 
 (* `emo install`: resolve the manifest, fetch every package into the
    user cache, and write the lockfile — the project is then ready for
@@ -780,13 +886,22 @@ type native_dep = {
    a native-carrying package off the c target). *)
 let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) (p : project) : native_dep list =
-  if manifest.Emo_pkg.deps = [] then []
+  let reg = registry () in
+  let explicit = List.map fst manifest.Emo_pkg.deps in
+  (* The standard library needs no manifest pin: every unscoped require
+     resolves from the registry implicitly (README, Package Management). *)
+  let implicit = stdlib_pins reg ~explicit (stdlib_requires p) in
+  (* The root project's own deps, for the visibility rule and the
+     require/manifest pairing — declared and implicit alike. *)
+  p.package_deps <- ([], explicit @ List.map fst implicit) :: p.package_deps;
+  if explicit = [] && implicit = [] then []
   else begin
-    (* The root project's own declared deps, for the visibility rule and
-       the require/manifest pairing. *)
-    p.package_deps <- ([], List.map fst manifest.Emo_pkg.deps) :: p.package_deps;
-    let entries = resolution_for_run ~manifest ~manifest_dir ~target in
-    let reg = registry () in
+    let entries =
+      if implicit = [] then resolution_for_run ~manifest ~manifest_dir ~target
+      else
+        resolution_with_stdlib ~manifest ~manifest_dir ~target ~registry:reg
+          ~implicit
+    in
     List.map
       (fun entry ->
         match

@@ -19,20 +19,8 @@ home to fix.
 require "float"
 ```
 
-A `require` pairs strictly with the manifest: `float` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    float = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "float"` needs no
+`package.emo` entry.
 
 ## The surface
 

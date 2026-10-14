@@ -12,20 +12,8 @@ byte for byte.
 require "sql"
 ```
 
-A `require` pairs strictly with the manifest: `sql` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    sql = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "sql"` needs no
+`package.emo` entry.
 
 ## The tree
 

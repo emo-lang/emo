@@ -10,19 +10,7 @@
 require "net"
 ```
 
-`require` 与 manifest 严格配对——`net` 必须在 `package.emo` 里钉版本:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript"]
-
-  deps {
-    net = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "net"` 无需在 `package.emo` 中声明。本包声明 `ocaml`、`c`、`typescript` 三个目标。
 
 ## 函数
 

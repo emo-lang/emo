@@ -13,20 +13,8 @@ encode(decode(x)) reproduces the tree.
 require "xml"
 ```
 
-A `require` pairs strictly with the manifest: `xml` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    xml = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "xml"` needs no
+`package.emo` entry.
 
 ## Values
 

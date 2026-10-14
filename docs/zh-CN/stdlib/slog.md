@@ -15,19 +15,7 @@
 require "slog"
 ```
 
-`require` 与清单严格配对:`slog` 必须钉在 `package.emo` 里:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript"]
-
-  deps {
-    slog = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "slog"` 无需在 `package.emo` 中声明。本包声明 `ocaml`、`c`、`typescript` 三个目标。
 
 声明的目标就是今天可用的目标:wasm 和 beam 运行时尚未实现 `Map`,
 而 attrs 是一个 `Map`。它们落地之日,清单随之加宽。

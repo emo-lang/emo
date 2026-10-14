@@ -24,20 +24,9 @@ Match it; don't let it crash the process.
 require "net"
 ```
 
-The `require` pairs strictly with the manifest — `net` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript"]
-
-  deps {
-    net = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "net"` needs no
+`package.emo` entry. The package declares the `ocaml`, `c`, and
+`typescript` targets.
 
 ## Functions
 

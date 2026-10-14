@@ -1738,6 +1738,143 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
               "riscv64 refusal" "no build for target `riscv64`" messages);
   ]
 
+let stdlib_require_tests =
+  [
+    tc
+      "an unscoped require resolves the standard library without a manifest pin"
+      (fun () ->
+        ignore (use_workspace_registry ());
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {}
+}
+|}
+              );
+              ( "main.emo",
+                {|require "sync"
+
+const wg = sync.wait_group(1)
+sync.done(wg)
+sync.wait(wg)
+println("ok")
+|}
+              );
+            ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        let output =
+          capture_output (fun () ->
+              ignore
+                (Emo_project.run_entry ~entry_file:entry ~check:true
+                   ~sched:Emo_project.Own ()))
+        in
+        Alcotest.(check string) "output" "ok\n" output;
+        Alcotest.(check bool)
+          "an implicit stdlib pin never enters package.lock" false
+          (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename)));
+    tc
+      "a standard-library package resolves its own transitive dependency \
+       implicitly" (fun () ->
+        ignore (use_workspace_registry ());
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}
+|}
+              );
+              ( "main.emo",
+                {|require "json"
+
+const (R.ok, v) = json.decode("1")
+println("ok")
+|}
+              );
+            ]
+            "main.emo"
+        in
+        let output =
+          capture_output (fun () ->
+              ignore (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+        in
+        Alcotest.(check string) "output" "ok\n" output);
+    tc "an unscoped require that names no standard-library package is E5009"
+      (fun () ->
+        ignore (use_workspace_registry ());
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  deps {}
+}
+|}
+              );
+              ("main.emo", "require \"not_a_package\"\n");
+            ]
+            "main.emo"
+        in
+        match Emo_project.run_entry ~entry_file:entry ~check:true () with
+        | _ -> Alcotest.fail "expected E5009"
+        | exception Emo_project.Static_errors ds ->
+            if not (has_code ds "E5009") then
+              Alcotest.fail ("codes: " ^ codes_dump ds));
+    tc "an explicit manifest pin still overrides the implicit resolution"
+      (fun () ->
+        ignore (use_workspace_registry ());
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {
+    sync = "0.1.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "sync"
+
+const wg = sync.wait_group(1)
+sync.done(wg)
+sync.wait(wg)
+println("ok")
+|}
+              );
+            ]
+            "main.emo"
+        in
+        let output =
+          capture_output (fun () ->
+              ignore
+                (Emo_project.run_entry ~entry_file:entry ~check:true
+                   ~sched:Emo_project.Own ()))
+        in
+        Alcotest.(check string) "output" "ok\n" output);
+  ]
+
 let ffi_tests =
   [
     tc "emo build links a foreign def and the binary calls the C symbol"
@@ -2536,6 +2673,7 @@ let () =
       ("shop_golden", shop_golden_tests);
       ("compiled_sched", compiled_sched_tests);
       ("stdlib_http", stdlib_http_tests);
+      ("stdlib_require", stdlib_require_tests);
       ("ffi", ffi_tests);
       ("native_dep", native_dep_tests);
       ("bootstrap", bootstrap_tests);

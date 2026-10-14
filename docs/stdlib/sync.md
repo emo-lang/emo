@@ -20,23 +20,11 @@ to guard. A wait group guards nothing; it only counts.
 require "sync"
 ```
 
-A `require` pairs strictly with the manifest: `sync` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    sync = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "sync"` needs no
+`package.emo` entry.
 
 The wait group is pure message passing over primitives every target
-implements, so the manifest declares all five.
+implements, so the package declares all five targets.
 
 ## The surface
 

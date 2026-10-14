@@ -14,22 +14,9 @@ coverage; `https` in particular needs TLS, which `c` refuses.
 require "http"
 ```
 
-A `require` pairs strictly with the manifest: `http` must be pinned in
-`package.emo`, and `net` alongside it if the program touches listeners or
-connections directly:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript"]
-
-  deps {
-    http = "0.1.0"
-    net = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "http"` needs
+no `package.emo` entry — the `net` package it builds on resolves with
+it. The package declares the `ocaml`, `c`, and `typescript` targets.
 
 ## Client
 

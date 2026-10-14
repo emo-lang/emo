@@ -228,7 +228,10 @@ let test_dependency_modules () =
         \  deps {}\n\
          }\n";
       write (Filename.concat pkg "foo.emo") "def bar() Int64 {\n  return 1\n}\n";
-      let modules = Lsp_index.dependency_modules ~root ~registry:(Some reg) in
+      let modules =
+        Lsp_index.dependency_modules ~root ~registry:(Some reg)
+          ~project_modules:[]
+      in
       let paths = List.map fst modules in
       Alcotest.(check bool)
         "package file registers under its short name" true
@@ -239,7 +242,153 @@ let test_dependency_modules () =
             "backing file exists" true (Sys.file_exists file)
       | None -> Alcotest.fail "no foo module")
 
+let parse_items source =
+  match Emo_parser.parse_program_with_diagnostics ~file:"test.emo" ~source with
+  | items, [] -> items
+  | _, ds -> Alcotest.failf "parse failed: %d diagnostics" (List.length ds)
+
+let diagnostic_codes ds =
+  List.filter_map
+    (fun (d : Lsp_server.Diagnostic.t) -> d.Lsp_server.Diagnostic.code)
+    ds
+
+(* A scoped require still needs a manifest pin (E5006); an unscoped one needs
+   no entry, but a name the registry does not publish is E5009. *)
+let test_missing_dep_diagnostics () =
+  with_temp_dir (fun root ->
+      let reg = Filename.concat root "registry" in
+      Unix.mkdir reg 0o755;
+      Unix.mkdir (Filename.concat reg "sync") 0o755;
+      Unix.mkdir (Filename.concat reg "sync/0.1.0") 0o755;
+      write
+        (Filename.concat root "package.emo")
+        "package {\n\
+        \  name = \"local/demo\"\n\
+        \  version = \"0.1.0\"\n\
+        \  targets = [\"ocaml\"]\n\
+        \  deps {}\n\
+         }\n";
+      let check source =
+        Lsp_server.missing_dep_diagnostics ~registry:reg root
+          (parse_items source)
+        |> diagnostic_codes
+      in
+      Alcotest.(check (list string))
+        "a scoped require needs a pin" [ "E5006" ]
+        (check "require \"acme/tools\"\n");
+      Alcotest.(check (list string))
+        "an unpinned stdlib require is fine" []
+        (check "require \"sync\"\n");
+      Alcotest.(check (list string))
+        "an unknown unscoped name" [ "E5009" ]
+        (check "require \"nope\"\n"))
+
 (* ---- Protocol -------------------------------------------------------- *)
+
+let test_stdlib_requires_indexed () =
+  with_temp_dir (fun root ->
+      let reg = Filename.concat root "registry" in
+      Unix.mkdir reg 0o755;
+      let pkg = Filename.concat reg "sync/0.1.0" in
+      Unix.mkdir (Filename.concat reg "sync") 0o755;
+      Unix.mkdir pkg 0o755;
+      write
+        (Filename.concat root "package.emo")
+        "package {\n\
+        \  name = \"local/demo\"\n\
+        \  version = \"0.1.0\"\n\
+        \  targets = [\"ocaml\"]\n\
+        \  deps {}\n\
+         }\n";
+      write
+        (Filename.concat pkg "package.emo")
+        "package {\n\
+        \  name = \"sync\"\n\
+        \  version = \"0.1.0\"\n\
+        \  targets = [\"ocaml\"]\n\
+        \  deps {}\n\
+         }\n";
+      write
+        (Filename.concat pkg "sync.emo")
+        "def wait_group(n Int64) Pid {\n  return self_pid()\n}\n";
+      write (Filename.concat root "main.emo") "require \"sync\"\n";
+      let project_modules = Lsp_index.scan root in
+      let modules =
+        Lsp_index.dependency_modules ~root ~registry:(Some reg) ~project_modules
+      in
+      let paths = List.map fst modules in
+      Alcotest.(check bool)
+        "an unpinned stdlib require registers its package" true
+        (List.mem [ "sync" ] paths))
+
+(* A dependency's members resolve when the check runs against the index's
+   pre-registered program — the mechanism behind live diagnostics for
+   `require "sync"` and every declared dependency. *)
+let test_dependency_members_resolve () =
+  with_temp_dir (fun root ->
+      let reg = Filename.concat root "registry" in
+      Unix.mkdir reg 0o755;
+      Unix.mkdir (Filename.concat reg "foo") 0o755;
+      Unix.mkdir (Filename.concat reg "foo/0.1.0") 0o755;
+      write
+        (Filename.concat root "package.emo")
+        "package {\n\
+        \  name = \"local/demo\"\n\
+        \  version = \"0.1.0\"\n\
+        \  targets = [\"ocaml\"]\n\
+        \  deps {}\n\
+         }\n";
+      write
+        (Filename.concat reg "foo/0.1.0/package.emo")
+        "package {\n\
+        \  name = \"foo\"\n\
+        \  version = \"0.1.0\"\n\
+        \  targets = [\"ocaml\"]\n\
+        \  deps {}\n\
+         }\n";
+      write
+        (Filename.concat reg "foo/0.1.0/foo.emo")
+        "def bar() Int64 {\n  return 1\n}\n";
+      let source = "require \"foo\"\n\nprintln(foo.bar())\n" in
+      write (Filename.concat root "main.emo") source;
+      let ix = Lsp_index.get ~registry:reg root in
+      let items = parse_items source in
+      let units = Lsp_index.units_for ix ~current:[ "main" ] items in
+      let program, _ = Emo_check.preregister_types ~units in
+      let modules = List.map fst ix.modules in
+      let diags, _, _, _ =
+        Emo_check.check_module_typed ~modules ~current:[ "main" ] ~program items
+      in
+      Alcotest.(check (list string))
+        "a dependency member resolves" [] (diagnostic_codes diags))
+
+(* `package.emo` is a manifest, not a module: a valid one produces no
+   diagnostics, and a malformed one reports the manifest error instead of
+   reading `name`/`version` as unbound Emo names. *)
+let test_manifest_diagnostics () =
+  Alcotest.(check bool)
+    "package.emo is a manifest" true
+    (Lsp_server.is_manifest_file "/x/package.emo");
+  Alcotest.(check bool)
+    "main.emo is not" false
+    (Lsp_server.is_manifest_file "/x/main.emo");
+  let valid =
+    "package {\n\
+    \  name = \"local/demo\"\n\
+    \  version = \"0.1.0\"\n\
+    \  targets = [\"ocaml\"]\n\
+    \  deps {}\n\
+     }\n"
+  in
+  Alcotest.(check (list string))
+    "a valid manifest has no diagnostics" []
+    (diagnostic_codes
+       (Lsp_server.manifest_diagnostics ~file:"package.emo" valid));
+  let missing_name = "package {\n  version = \"0.1.0\"\n}\n" in
+  Alcotest.(check (list string))
+    "a missing name is a manifest error" [ "E5101" ]
+    (diagnostic_codes
+       (Lsp_server.manifest_diagnostics ~file:"package.emo" missing_name))
 
 let test_initialize_result () =
   let result = Lsp_server.initialize_result () in
@@ -272,6 +421,10 @@ let () =
           tc "locals" test_locals_not_members;
           tc "members" test_members_of;
           tc "dependency modules" test_dependency_modules;
+          tc "unpinned stdlib require" test_stdlib_requires_indexed;
+          tc "missing dep diagnostics" test_missing_dep_diagnostics;
+          tc "dependency members resolve" test_dependency_members_resolve;
+          tc "manifest diagnostics" test_manifest_diagnostics;
         ] );
       ( "resolve",
         [

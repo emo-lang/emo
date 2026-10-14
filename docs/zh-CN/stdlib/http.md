@@ -8,20 +8,7 @@
 require "http"
 ```
 
-`require` 与 manifest 严格配对:`http` 必须在 `package.emo` 里钉版本;如果程序直接碰 listener 或连接,`net` 也要一并钉上:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript"]
-
-  deps {
-    http = "0.1.0"
-    net = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "http"` 无需在 `package.emo` 中声明——它依赖的 `net` 会一并解析。本包声明 `ocaml`、`c`、`typescript` 三个目标。
 
 ## 客户端
 

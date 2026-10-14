@@ -11,20 +11,8 @@ language answers identically, byte for byte.
 require "csv"
 ```
 
-A `require` pairs strictly with the manifest: `csv` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    csv = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "csv"` needs no
+`package.emo` entry.
 
 ## The surface
 

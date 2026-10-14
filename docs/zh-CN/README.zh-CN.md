@@ -243,7 +243,7 @@ def parse_config(text String) Json {
 
 - **`require` 是把包的短名带入作用域的文件级语句。** 包侧无需对应物——包的公开面就是它的模块树。完全限定的路径永远可用。
 - **包的模块树挂载在短名之下。** 包根的 `<short>.emo` 就是 `require` 绑定的模块 `<short>`;其余文件或目录都是它的子节点——`plot/internal/svg.emo` 就是 `plot.internal.svg`,`plot/mark.emo` 就是 `plot.mark`——所以两个包的 `internal` 和 `mark` 永不冲突。包内部引用以包根为基准书写(`plot.emo` 里的 `internal.scale` 即 `plot.internal.scale`),因此一个包无论单独构建还是挂载在前缀下,编译结果一致。
-- **`require` 与 manifest 严格配对。** require 一个 `deps` 里没有的包是编译错误——严格优先，manifest 只因显式操作而改变。
+- **标准库无需 manifest 条目,第三方包需要。** 官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）并随编译器一起发布，所以 `require "json"` 隐式解析——连同这个依赖所拉入的标准库包。带 scope 的包（`acme/json_tools`）必须钉在 `deps` 里：require 一个没有钉的包是编译错误——严格优先，manifest 只因显式操作而改变。
 
 - **中心注册表，端点可配置。** 包按 `name@version` 通过中心注册表寻址，由全局内容寻址缓存支撑、跨项目共享——没有每项目的依赖副本。注册表端点读 `EMO_REGISTRY` 环境变量——全局或每项目设置——服务私有与本地部署；未设置时，标准库的内置注册表随编译器附带并默认服务。
 - **限定作用域的包名。** 第三方包在 scope 前缀下命名，归属显式，抢注无立足之地；scope 前缀成为模块路径前缀。官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）。

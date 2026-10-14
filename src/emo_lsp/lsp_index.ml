@@ -294,6 +294,9 @@ let collect_locals ~(file : string) ~(module_path : string list)
 type t = {
   root : string;
   modules : (string list * string) list; (* module path -> backing file *)
+  units : (string list * Ast.item list) list;
+      (* module path -> parsed items: the pre-registration input, so a
+         check sees every module's declarations, dependencies included *)
   symbols : symbol list;
   by_name : (string, symbol list) Hashtbl.t;
   by_container : (string, symbol list) Hashtbl.t;
@@ -301,8 +304,8 @@ type t = {
   built_at : float;
 }
 
-let index_of (root : string) ~(modules : (string list * string) list)
-    ~(symbols : symbol list) : t =
+let index_of ?(units = []) (root : string)
+    ~(modules : (string list * string) list) ~(symbols : symbol list) : t =
   let by_name = Hashtbl.create 256 in
   let by_container = Hashtbl.create 128 in
   let by_file = Hashtbl.create 128 in
@@ -319,12 +322,32 @@ let index_of (root : string) ~(modules : (string list * string) list)
   {
     root;
     modules;
+    units;
     symbols;
     by_name;
     by_container;
     by_file;
     built_at = Unix.gettimeofday ();
   }
+
+(* The parsed items of every indexed module, with [items] substituted for
+   the module [current]: a diagnostic check runs against the editor's own
+   text for the file being checked while every other module — project or
+   dependency — contributes its declarations, so cross-module members
+   (`sync.done`, `json.decode`) resolve. *)
+let units_for (ix : t) ~(current : string list) (items : Ast.item list) :
+    (string list * Ast.item list) list =
+  let replaced = ref false in
+  let units =
+    List.map
+      (fun (path, existing) ->
+        if path = current then (
+          replaced := true;
+          (path, items))
+        else (path, existing))
+      ix.units
+  in
+  if !replaced then units else (current, items) :: units
 
 let symbols_named (ix : t) (name : string) : symbol list =
   Option.value ~default:[] (Hashtbl.find_opt ix.by_name name)
@@ -411,26 +434,57 @@ let parse_tolerant (file : string) : Ast.item list =
       | items, _ -> items
       | exception Emo_lexer.Error _ -> [])
 
+(* Declaration symbols for every indexed module, from the parsed items so
+   the tree is parsed once per index build. *)
+let symbols_of (modules : (string list * string) list)
+    (units : (string list * Ast.item list) list) : symbol list =
+  List.concat
+    (List.map2
+       (fun (module_path, file) (_, items) ->
+         collect_items ~file ~module_path items
+         @ collect_locals ~file ~module_path items)
+       modules units)
+
 let build (root : string) : t =
   let modules = scan root in
-  let symbols =
-    List.concat_map
-      (fun (module_path, file) ->
-        let items = parse_tolerant file in
-        collect_items ~file ~module_path items
-        @ collect_locals ~file ~module_path items)
-      modules
+  let units =
+    List.map (fun (path, file) -> (path, parse_tolerant file)) modules
   in
-  index_of root ~modules ~symbols
+  let symbols = symbols_of modules units in
+  index_of root ~modules ~units ~symbols
 
 let cache : (string, string * t) Hashtbl.t = Hashtbl.create 4
+
+(* Unscoped requires name standard-library packages: the official stdlib
+   owns the top-level short names, ships with the compiler, and needs no
+   manifest pin (they resolve automatically at build time). The index
+   still has to carry their modules, so the editor can resolve `sync`,
+   `json`, and friends. *)
+let stdlib_requires (modules : (string list * string) list) : string list =
+  let local_top =
+    List.filter_map
+      (fun (path, _) -> match path with name :: _ -> Some name | [] -> None)
+      modules
+  in
+  List.concat_map
+    (fun (_, file) ->
+      parse_tolerant file
+      |> List.filter_map (fun (item : Ast.item) ->
+          match item.Ast.item_desc with
+          | Ast.Item_require name when not (String.contains name '/') ->
+              Some name
+          | _ -> None))
+    modules
+  |> List.filter (fun name -> not (List.mem name local_top))
+  |> List.sort_uniq String.compare
 
 (* Module files contributed by the manifest's dependencies. A package's
    directory tree is its public module tree — `walk`-style — so a package
    registers its files relative to its own root (the file named after the
    package's short name becomes the module the `require` binds).
    Transitive dependencies are walked through each package's manifest. *)
-let dependency_modules ~(root : string) ~(registry : string option) :
+let dependency_modules ~(root : string) ~(registry : string option)
+    ~(project_modules : (string list * string) list) :
     (string list * string) list =
   match registry with
   | None | Some "" -> []
@@ -490,6 +544,18 @@ let dependency_modules ~(root : string) ~(registry : string option) :
                 end
               in
               List.iter (fun (n, v) -> go (n, v) 0) manifest.Emo_pkg.deps;
+              (* Implicit standard-library pins: each unscoped require
+                 resolves at the highest version the registry publishes. *)
+              List.iter
+                (fun name ->
+                  match
+                    Emo_pkg.Registry.versions (Emo_pkg.Registry.Fs_dir endpoint)
+                      ~name
+                    |> List.rev
+                  with
+                  | v :: _ -> go (name, v) 0
+                  | [] -> ())
+                (stdlib_requires project_modules);
               !out))
 
 (* The index for [root], rebuilt only when the tree's fingerprint moves.
@@ -498,22 +564,18 @@ let dependency_modules ~(root : string) ~(registry : string option) :
 let get ?registry (root : string) : t =
   let root = Lsp_util.normalize_path root in
   let project_modules = scan root in
-  let dep_modules = dependency_modules ~root ~registry in
+  let dep_modules = dependency_modules ~root ~registry ~project_modules in
   let modules = project_modules @ dep_modules in
   let key = root ^ "|" ^ Option.value ~default:"" registry in
   let fp = fingerprint root modules in
   match Hashtbl.find_opt cache key with
   | Some (cached_fp, ix) when cached_fp = fp -> ix
   | _ ->
-      let symbols =
-        List.concat_map
-          (fun (module_path, file) ->
-            let items = parse_tolerant file in
-            collect_items ~file ~module_path items
-            @ collect_locals ~file ~module_path items)
-          modules
+      let units =
+        List.map (fun (path, file) -> (path, parse_tolerant file)) modules
       in
-      let ix = index_of root ~modules ~symbols in
+      let symbols = symbols_of modules units in
+      let ix = index_of root ~modules ~units ~symbols in
       Hashtbl.replace cache key (fp, ix);
       ix
 

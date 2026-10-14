@@ -15,21 +15,7 @@ c 这两个有 Unix 形态宿主的目标。
 require "bufio"
 ```
 
-`require` 与清单严格配对:`bufio`(以及它依赖的 `os`)必须钉在
-`package.emo` 里:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c"]
-
-  deps {
-    bufio = "0.1.0"
-    os = "0.1.0"
-  }
-}
-```
+标准库随编译器一起发布:`require "bufio"` 无需在 `package.emo` 中声明——它依赖的 `os` 会一并解析。
 
 ## 流的两个形状
 

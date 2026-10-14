@@ -11,20 +11,8 @@ first standard-library package that does.
 require "base64"
 ```
 
-A `require` pairs strictly with the manifest: `base64` must be pinned
-in `package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    base64 = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "base64"` needs
+no `package.emo` entry.
 
 ## The surface
 

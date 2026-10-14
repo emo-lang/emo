@@ -17,21 +17,9 @@ runs on: the ocaml and c targets, the ones with a Unix-shaped host.
 require "bufio"
 ```
 
-A `require` pairs strictly with the manifest: `bufio` (and `os`,
-which it builds on) must be pinned in `package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c"]
-
-  deps {
-    bufio = "0.1.0"
-    os = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "bufio"` needs
+no `package.emo` entry — the `os` package it builds on resolves with
+it.
 
 ## The stream shapes
 

@@ -15,20 +15,9 @@ bytecode targets is a package error before any code runs.
 require "os"
 ```
 
-A `require` pairs strictly with the manifest: `os` must be pinned in
-`package.emo` with matching targets:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c"]
-
-  deps {
-    os = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "os"` needs no
+`package.emo` entry. The package declares the `ocaml` and `c` targets,
+so a build for another target refuses it.
 
 ## Errors
 

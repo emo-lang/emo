@@ -11,20 +11,8 @@ targets answer byte-for-byte.
 require "plot"
 ```
 
-A `require` pairs strictly with the manifest: `plot` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    plot = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "plot"` needs no
+`package.emo` entry.
 
 The package carries two public modules: `plot` (the figure surface) and
 `mark` (the marks). One `require "plot"` brings both into scope.

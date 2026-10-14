@@ -103,8 +103,9 @@ the options table.
   methods, function-group members, module members), and package names inside
   `require "..."`.
 - **Diagnostics.** Lex, parse, and type-check errors, plus a check that every
-  `require` is paired with a `deps` entry in `package.emo` (E5006). The
-  pairing error carries a quick fix that adds the dependency.
+  scoped `require` is paired with a `deps` entry in `package.emo` (E5006) and
+  that an unscoped `require` names a published standard-library package
+  (E5009). The pairing error carries a quick fix that adds the dependency.
 - **Hover and go-to-definition.** Signatures and cross-module jumps.
 - **Document and workspace symbols.** A file outline and project-wide symbol
   search.

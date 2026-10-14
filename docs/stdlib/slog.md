@@ -17,20 +17,9 @@ state anywhere in the package.
 require "slog"
 ```
 
-A `require` pairs strictly with the manifest: `slog` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript"]
-
-  deps {
-    slog = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "slog"` needs no
+`package.emo` entry. The package declares the `ocaml`, `c`, and
+`typescript` targets.
 
 The declared targets are the ones that work today: the wasm and beam
 runtimes do not implement `Map` yet, and attrs are a `Map`. The

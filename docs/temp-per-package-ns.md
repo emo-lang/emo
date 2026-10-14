@@ -25,6 +25,11 @@ still hold. The earlier "Option B" note is superseded.
    - `P`'s own subtree (own-subtree-first, unchanged), or
    - a package short name `P` declares in its deps.
 
+   The root project's entry carries its declared names plus the standard-
+   library requires that resolve implicitly (2026-10-14, CHECK.md): an
+   unscoped `require` is a visible dependency of `[]` without a manifest
+   entry.
+
    A head that names a module somewhere but is out of scope reports
    **E5008** (`the package `x` does not declare `q` in its deps`; the root
    is labelled `the project`). The checker normalizes the *longest module

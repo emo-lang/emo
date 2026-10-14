@@ -18,21 +18,9 @@
 require "sync"
 ```
 
-`require` 与清单严格配对:`sync` 必须钉在 `package.emo` 里:
+标准库随编译器一起发布:`require "sync"` 无需在 `package.emo` 中声明。
 
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    sync = "0.1.0"
-  }
-}
-```
-
-等待组是每个目标都实现了的进程原语之上的纯消息传递,所以清单声明
+等待组是每个目标都实现了的进程原语之上的纯消息传递,所以本包声明
 全部五个目标。
 
 ## 接口面

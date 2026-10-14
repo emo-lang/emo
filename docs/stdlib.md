@@ -2,19 +2,20 @@
 
 The standard library is a set of packages the compiler ships with:
 they live in the bundled registry, resolve like any other dependency,
-and are pinned in `package.emo` like any other dependency. Using one
-is `require`:
+and need no `package.emo` entry. Using one is `require`:
 
 ```emo
 require "json"
 ```
 
-with `json = "0.1.0"` (the exact version) under `deps` in the
-manifest. A `require` without the matching pin is a compile error, and
-a package whose `targets` do not include the build's target is
-refused at resolution time — the format packages run everywhere, the
-systems packages declare a Unix-shaped host, and the network packages
-declare `ocaml`, `c`, and `typescript`.
+An unscoped `require` names a standard-library package, and the
+compiler resolves it — along with that package's own standard-library
+dependencies — on its own. A scoped third-party package still pairs
+with the manifest strictly: it must be pinned under `deps`. A package
+whose `targets` do not include the build's target is refused at
+resolution time — the format packages run everywhere, the systems
+packages declare a Unix-shaped host, and the network packages declare
+`ocaml`, `c`, and `typescript`.
 
 Two conventions hold across every package:
 

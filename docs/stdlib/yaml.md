@@ -13,20 +13,8 @@ independent — requiring yaml does not require json.
 require "yaml"
 ```
 
-A `require` pairs strictly with the manifest: `yaml` must be pinned in
-`package.emo`:
-
-```emo
-package {
-  name = "acme/myapp"
-  version = "0.1.0"
-  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
-
-  deps {
-    yaml = "0.1.0"
-  }
-}
-```
+The standard library ships with the compiler: `require "yaml"` needs no
+`package.emo` entry.
 
 ## Values
 
