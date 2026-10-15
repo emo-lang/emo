@@ -549,15 +549,15 @@ and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
       if is_dyn use_ty then Printf.sprintf "emo_box_pid(%s)" pid_expr
       else pid_expr
 
-(* The IO builtins (T23.10): files and TCP over the hosted OS. The
-   net surface beyond this tier — TLS, unix sockets, UDP, DNS —
+(* The runtime implementations (T23.10): files and TCP over the hosted OS.
+   The net surface beyond this tier — TLS, unix sockets, UDP, DNS —
    compiles and fails at runtime, honestly. *)
-and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
+and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
     (args : Emo_ir.expr list) : string =
   let arg n (ty : Emo_check.t) =
     match List.nth_opt args n with
     | Some a -> as_native env a ty
-    | None -> refuse (Printf.sprintf "the builtin `%s`" name)
+    | None -> refuse (Printf.sprintf "the runtime implementation `%s`" name)
   in
   match name with
   | "file_read" -> Printf.sprintf "emo_file_read(%s)" (arg 0 Emo_check.String)
@@ -570,11 +570,6 @@ and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
   | "net_connect" ->
       Printf.sprintf "emo_net_connect(%s, %s, %s)" (arg 0 Emo_check.String)
         (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
-  | "printf" ->
-      (* The format rides as a String, the data as its dynamic array —
-         the runtime walks the elements against the conversions. *)
-      Printf.sprintf "emo_printf(%s, %s)" (arg 0 Emo_check.String)
-        (as_dyn env (List.nth args 1))
   (* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- *)
   | "os_getpid" ->
       let v = Printf.sprintf "emo_os_getpid()" in
@@ -623,6 +618,22 @@ and emit_io_builtin env (use_ty : Emo_check.t) (name : string)
       if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
   | "os_chdir" -> Printf.sprintf "emo_os_chdir(%s)" (arg 0 Emo_check.String)
   | other -> Printf.sprintf "emo_unsupported(\"%s\")" other
+
+(* `printf` is the language's own: the format rides as a String, the data
+   as its dynamic array — the runtime walks the elements against the
+   conversions. *)
+and emit_printf env (args : Emo_ir.expr list) : string =
+  match args with
+  | [ fmt; data ] ->
+      Printf.sprintf "emo_printf(%s, %s)"
+        (as_native env fmt Emo_check.String)
+        (as_dyn env data)
+  | _ -> refuse "printf without (format, data)"
+
+(* The language's own built-ins the c target has no lowering for: they
+   compile and fail at runtime, like the net surface beyond T23.10. *)
+and emit_builtin_unsupported (name : string) : string =
+  Printf.sprintf "emo_unsupported(\"%s\")" name
 
 and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
     (args : Emo_ir.expr list) : string =
@@ -734,7 +745,9 @@ and emit_expr env (e : Emo_ir.expr) : string =
          the statement forms emit the call; an expression position
          (this arm) only arises through a value use, which refuses *)
       refuse "halt in a value position"
-  | Builtin { name; args } -> emit_io_builtin env e.Emo_ir.ety name args
+  | Builtin { name = "printf"; args } -> emit_printf env args
+  | Builtin { name; _ } -> emit_builtin_unsupported name
+  | Runtime_impl { name; args } -> emit_runtime_impl env e.Emo_ir.ety name args
   | Call { func; args } -> (
       (* A foreign def calls its C symbol directly (T23.8). *)
       match Hashtbl.find_opt env.forfuncs func with
@@ -851,6 +864,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
            | Emo_ir.Call_value _ -> "Call_value"
            | Emo_ir.Method _ -> "Method"
            | Emo_ir.Builtin _ -> "Builtin"
+           | Emo_ir.Runtime_impl _ -> "Runtime_impl"
            | Emo_ir.Box_new _ -> "Box_new"
            | Emo_ir.Global_var _ -> "Global_var"
            | Emo_ir.Bytes_new _ -> "Bytes_new"
@@ -1363,7 +1377,7 @@ and closure_free env (cparams : (string * Emo_check.t) list)
     | Method { self_; args; _ } ->
         ex self_;
         List.iter ex args
-    | Builtin { args; _ } -> List.iter ex args
+    | Builtin { args; _ } | Runtime_impl { args; _ } -> List.iter ex args
     | Box_new x | Bytes_new x -> ex x
     | Make_exception { message; data } ->
         ex message;
@@ -1743,10 +1757,10 @@ and emit_builtin env (name : string) (args : Emo_ir.expr list) : unit =
             refuse
               (Printf.sprintf "println of `%s` values" (Emo_check.to_string t)))
   | "println", _ -> refuse "println with more than one argument"
+  | "printf", args -> put env "  (void)(%s);\n" (emit_printf env args)
   | "halt", [] -> put env "  emo_process_halt_current();\n"
   | "self_pid", [] -> put env "  (void)(emo_box_pid(emo_process_self_pid()));\n"
-  | name, args ->
-      put env "  (void)(%s);\n" (emit_io_builtin env Emo_check.Void name args)
+  | name, _ -> put env "  (void)(%s);\n" (emit_builtin_unsupported name)
 
 (* A tail call becomes a parameter rebind and a jump: the arguments
    land in fresh temporaries first, so one rebind cannot observe
@@ -1813,9 +1827,10 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       emit_builtin env "halt" []
   | Effect { desc = Builtin { name = "self_pid"; args = [] }; _ } ->
       put env "  (void)(emo_box_pid(emo_process_self_pid()));\n"
-  | Effect { ety; desc = Builtin { name; args; _ }; _ } ->
-      let code = emit_io_builtin env ety name args in
-      put env "  (void)(%s);\n" code
+  | Effect { ety; desc = Builtin { name; args }; _ } ->
+      emit_builtin env name args
+  | Effect { ety; desc = Runtime_impl { name; args }; _ } ->
+      put env "  (void)(%s);\n" (emit_runtime_impl env ety name args)
   | Effect { ety; desc = Do_spawn { func; args }; _ } ->
       let code = emit_spawn_site env func args ety in
       put env "  (void)(%s);\n" code

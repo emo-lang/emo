@@ -1425,8 +1425,8 @@ targets; `emo new` scaffolds a passing test; `dune test` green.
       paths, message rendering, the error codes.
 - [x] **T46.2** — Checker + IR surface: `expect_*` signatures in the
       checker's `empty_env` (Unknown value params, Void results — the
-      `println` pattern) and the `expect_` prefix family in
-      `is_builtin`, so a compiled program naming one meets the
+      `println` pattern) and the four `expect_*` names in `is_builtin`'s
+      bare-name list, so a compiled program naming one meets the
       backend's standard honest refusal (riscv refuses every builtin
       generically; c / ocaml / ts / wasm / beam gain refusal arms
       wherever their builtin dispatch is exhaustive). Checker tests

@@ -201,7 +201,7 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
     | Method { self_; args; _ } ->
         ex self_;
         List.iter ex args
-    | Builtin { args; _ } -> List.iter ex args
+    | Builtin { args; _ } | Runtime_impl { args; _ } -> List.iter ex args
     | Box_new x | Bytes_new x | List_new x -> ex x
     | Builder_new -> ()
     | Make_exception { message; data } ->
@@ -281,7 +281,7 @@ let rec expr_depth (e : Emo_ir.expr) : int =
   | Closure { cparams; cbody } ->
       let caps = closure_free ~cparams cbody in
       List.length caps + 1
-  | Builtin { args; _ } ->
+  | Builtin { args; _ } | Runtime_impl { args; _ } ->
       let child =
         match args with
         | [] -> 0
@@ -469,6 +469,8 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       call_runtime env "emo_println"
   | Builtin { name = "halt"; args = [] } -> put env "    li a7, 8\n    ecall\n"
   | Builtin { name; _ } -> refuse (Printf.sprintf "the `%s` builtin" name)
+  | Runtime_impl { name; _ } ->
+      refuse (Printf.sprintf "the `%s` runtime implementation" name)
   | _ -> refuse (describe_expr e)
 
 (* Evaluate the args, each spilled to its own slot first — later args
@@ -2461,7 +2463,8 @@ let rec walk_expr_enum env (e : Emo_ir.expr) : unit =
   | Method { self_; args; _ } ->
       walk_expr_enum env self_;
       List.iter (walk_expr_enum env) args
-  | Builtin { args; _ } -> List.iter (walk_expr_enum env) args
+  | Builtin { args; _ } | Runtime_impl { args; _ } ->
+      List.iter (walk_expr_enum env) args
   | Box_new x | Bytes_new x | List_new x -> walk_expr_enum env x
   | Builder_new -> ()
   | Make_exception { message; data } ->

@@ -571,6 +571,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
           raise
             (Emo_ir.Lower_error
                ("builtin `" ^ name ^ "` is not available on the wasm target")))
+  | Runtime_impl { name; _ } ->
+      raise
+        (Emo_ir.Lower_error
+           ("the runtime implementation `" ^ name
+          ^ "` is not available on the wasm target"))
   | Box_new v ->
       expr env v;
       e env (W.Call (rt "box"))

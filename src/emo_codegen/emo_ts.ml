@@ -260,6 +260,9 @@ let rec expr env (e : Emo_ir.expr) : string =
       else if name = "self_pid" then "E.self()"
       else if name = "halt" then "E.halt()"
       else Printf.sprintf "E.builtin(%S, [%s])" name args_code
+  | Runtime_impl { name; args } ->
+      Printf.sprintf "E.runtimeImpl(%S, [%s])" name
+        (String.concat ", " (List.map (expr env) args))
   | Box_new e -> Printf.sprintf "E.box(%s)" (expr env e)
   | Bytes_new e -> Printf.sprintf "E.bytesNew(%s)" (expr env e)
   | List_new e -> Printf.sprintf "E.listNew(%s)" (expr env e)

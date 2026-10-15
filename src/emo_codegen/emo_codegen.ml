@@ -560,6 +560,9 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Builtin { name; args } ->
       Printf.sprintf "Emo_eval.call_builtin %S [%s]" name
         (String.concat "; " (List.map (emit_expr env) args))
+  | Emo_ir.Runtime_impl { name; args } ->
+      Printf.sprintf "Emo_eval.call_runtime_impl %S [%s]" name
+        (String.concat "; " (List.map (emit_expr env) args))
   | Emo_ir.Box_new e ->
       Printf.sprintf "(Emo_runtime.box_new (%s))" (emit_expr env e)
   | Emo_ir.Bytes_new e ->
@@ -735,6 +738,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
         | Emo_ir.Call_value _ -> "Call_value"
         | Emo_ir.Method { name; _ } -> "Method " ^ name
         | Emo_ir.Builtin { name; _ } -> "Builtin " ^ name
+        | Emo_ir.Runtime_impl { name; _ } -> "Runtime_impl " ^ name
         | Emo_ir.Box_new _ -> "Box_new"
         | Emo_ir.Bytes_new _ -> "Bytes_new"
         | Emo_ir.List_new _ -> "List_new"

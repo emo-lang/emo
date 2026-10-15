@@ -349,7 +349,7 @@ let () =
   let exit_code =
     Emo_runtime.run (fun () ->
         let answered =
-          Emo_eval.call_builtin "net_listen"
+          Emo_eval.call_runtime_impl "net_listen"
             [ Emo_eval.String "127.0.0.1"; Emo_eval.Int64 0L ]
         in
         let listener = Emo_runtime.index answered (Emo_eval.Int64 1L) in
@@ -366,7 +366,7 @@ let () =
                ignore (Emo_runtime.method_call conn "write" [ body ]);
                ignore (Emo_runtime.method_call conn "close" [])));
         let answered =
-          Emo_eval.call_builtin "net_connect"
+          Emo_eval.call_runtime_impl "net_connect"
             [ Emo_eval.String "127.0.0.1"; port; Emo_eval.Float 5.0 ]
         in
         let conn = Emo_runtime.index answered (Emo_eval.Int64 1L) in
@@ -392,11 +392,11 @@ let () =
         (* The data-driven failures are values: the second tuple slot
            carries the byte count and the text. *)
         let w =
-          Emo_eval.call_builtin "file_write"
+          Emo_eval.call_runtime_impl "file_write"
             [ Emo_eval.String path; Emo_eval.String "emo file io\n" ]
         in
         p (Emo_runtime.index w (Emo_eval.Int64 1L));
-        let r = Emo_eval.call_builtin "file_read" [ Emo_eval.String path ] in
+        let r = Emo_eval.call_runtime_impl "file_read" [ Emo_eval.String path ] in
         p (Emo_runtime.index r (Emo_eval.Int64 1L)))
   in
   if exit_code <> 0 then exit exit_code
@@ -412,7 +412,7 @@ let () =
   let exit_code =
     Emo_runtime.run (fun () ->
         let answered =
-          Emo_eval.call_builtin "net_udp_bind"
+          Emo_eval.call_runtime_impl "net_udp_bind"
             [ Emo_eval.String "127.0.0.1"; Emo_eval.Int64 0L ]
         in
         let u = Emo_runtime.index answered (Emo_eval.Int64 1L) in

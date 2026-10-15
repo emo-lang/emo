@@ -2317,7 +2317,7 @@ const E: any = {
     return "error[E3010]: uncaught exception: " + (e && e.message);
   },
 
-  builtin(name: string, args: any[]): any {
+  runtimeImpl(name: string, args: any[]): any {
     switch (name) {
       case "net_resolve":
         return netResult(() => netResolve(args[0]));
@@ -2349,7 +2349,7 @@ const E: any = {
         throw new Error(
           "the `" +
             name +
-            "` builtin is not supported on the typescript target yet"
+            "` runtime implementation is not supported on the typescript target yet"
         );
     }
   },

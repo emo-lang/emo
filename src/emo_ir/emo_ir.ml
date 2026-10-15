@@ -31,6 +31,7 @@ and expr_desc =
   | Call_value of { f : expr; args : expr list } (* first-class blocks *)
   | Method of { self_ : expr; name : string; args : expr list }
   | Builtin of { name : string; args : expr list }
+  | Runtime_impl of { name : string; args : expr list }
   | Box_new of expr
   | Global_var of string (* a module-level `var`, read *)
   | Bytes_new of expr (* Bytes.new(n) — a zero-filled byte buffer *)
@@ -151,13 +152,23 @@ type env = {
       (* `const order = shop.order` — a name bound to a module path *)
 }
 
+(* The language's own built-ins: bare names, no declaration and no import,
+   registered in every frame. *)
 let is_builtin = function
-  | "println" | "printf" | "self_pid" | "halt" -> true
+  | "println" | "printf" | "self_pid" | "halt" | "expect_equal" | "expect_true"
+  | "expect_false" | "expect_fail" ->
+      true
+  | _ -> false
+
+(* The runtime's implementations of the standard library: one prefix per
+   package, the name that package's own Emo source calls underneath. Never
+   an API — nothing in the AST records which package a bare name belongs
+   to, so the prefix is the whole of the association. *)
+let is_runtime_impl = function
   | name ->
       (String.length name >= 4 && String.sub name 0 4 = "net_")
       || (String.length name >= 5 && String.sub name 0 5 = "file_")
       || (String.length name >= 3 && String.sub name 0 3 = "os_")
-      || (String.length name >= 7 && String.sub name 0 7 = "expect_")
 
 let type_of env (span : Emo_support.Span.t) : Emo_check.t =
   match
@@ -372,6 +383,8 @@ and lower_expr env (e : Ast.expr) : expr =
             let q = type_display env name in
             { ety = Emo_check.EnumType q; desc = Type_ref q }
         | None when is_builtin name -> expr (Builtin { name; args = [] })
+        | None when is_runtime_impl name ->
+            expr (Runtime_impl { name; args = [] })
         | None -> { ety = Emo_check.Unknown; desc = Type_ref name })
   | Ast.Type_ident name ->
       { ety = type_of env e.Ast.span; desc = Type_ref (type_display env name) }
@@ -473,19 +486,16 @@ and lower_map_arg env (entry : Ast.expr) : expr =
       raise (Lower_error "`Map.new` takes (key, value) pairs of two elements")
 
 and lower_call env span callee args =
+  let lower_args () =
+    List.map (fun { Ast.arg_value; _ } -> lower_expr env arg_value) args
+  in
   match callee.Ast.desc with
   | Ast.Ident name when is_builtin name ->
+      { ety = type_of env span; desc = Builtin { name; args = lower_args () } }
+  | Ast.Ident name when is_runtime_impl name ->
       {
         ety = type_of env span;
-        desc =
-          Builtin
-            {
-              name;
-              args =
-                List.map
-                  (fun { Ast.arg_value; _ } -> lower_expr env arg_value)
-                  args;
-            };
+        desc = Runtime_impl { name; args = lower_args () };
       }
   | _ -> (
       match resolve_callee env callee with
@@ -877,9 +887,9 @@ let rec expr_native (special : string list) (e : expr) : bool =
   | Field_read { obj; _ } -> expr_native special obj
   | Call { func; args } ->
       List.mem func special && List.for_all (expr_native special) args
-  | Call_value _ | Method _ | Builtin _ | Box_new _ | Bytes_new _ | List_new _
-  | Builder_new | Make_exception _ | Do_spawn _ | Spawn_value _ | Closure _
-  | Global_var _ ->
+  | Call_value _ | Method _ | Builtin _ | Runtime_impl _ | Box_new _
+  | Bytes_new _ | List_new _ | Builder_new | Make_exception _ | Do_spawn _
+  | Spawn_value _ | Closure _ | Global_var _ ->
       false (* dynamic operations keep the function dynamic *)
 
 and stmts_native special (stmts : stmt list) : bool =

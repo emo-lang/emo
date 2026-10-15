@@ -94,22 +94,6 @@ let builtin_function_items : item list =
     fn "printf" "printf(format String, data Array) — C-style formatting";
     fn "self_pid" "self_pid() -> Pid";
     fn "halt" "halt() — stop the current process";
-    fn "net_connect"
-      "net_connect(host String, port Int64, timeout Float64) TcpConn";
-    fn "net_listen" "net_listen(host String, port Int64) TcpListener";
-    fn "net_resolve" "net_resolve(host String) Array[String]";
-    fn "net_udp_bind" "net_udp_bind(host String, port Int64) UdpSocket";
-    fn "net_connect_unix"
-      "net_connect_unix(path String, timeout Float64) TcpConn";
-    fn "net_listen_unix" "net_listen_unix(path String) TcpListener";
-    fn "net_tls_connect"
-      "net_tls_connect(host String, port Int64, timeout Float64) TcpConn";
-    fn "net_tls_connect_insecure"
-      "net_tls_connect_insecure(host String, port Int64, timeout Float64) \
-       TcpConn";
-    fn "net_listen_tls"
-      "net_listen_tls(host String, port Int64, cert_path String, key_path \
-       String) TcpListener";
   ]
 
 let symbol_item (s : Ix.symbol) : item =

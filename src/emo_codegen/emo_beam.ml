@@ -389,6 +389,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
       spawn_registered env
         (Printf.sprintf "apply %s (%s)" f_code (String.concat ", " arg_locals))
   | Builtin { name; args } -> builtin env name args
+  | Runtime_impl { name; _ } ->
+      raise
+        (Emo_ir.Lower_error
+           ("beam: the runtime implementation `" ^ name
+          ^ "` is not available yet (T18.1)"))
   | Make_exception { message; data } ->
       (* Exception.new's object is its message, and the construction
          never returns — the throw happens right here, so a Raise
@@ -1195,6 +1200,7 @@ and free_expr env (e : Emo_ir.expr) (acc : string list) : string list =
   | Emo_ir.Field_read { obj; _ } -> free_expr env obj acc
   | Emo_ir.Call { args; _ }
   | Emo_ir.Builtin { args; _ }
+  | Emo_ir.Runtime_impl { args; _ }
   | Emo_ir.Do_spawn { args; _ } ->
       xs args acc
   | Emo_ir.Call_value { f; args } | Emo_ir.Spawn_value { f; args } ->

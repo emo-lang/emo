@@ -688,7 +688,8 @@ type env = {
          resets it, a closure is not the loop it sits in *)
 }
 
-(* The built-in surface every program sees. *)
+(* The language's own surface: the built-ins, the capability types, and the
+   two reserved names — every program sees them, no import needed. *)
 let empty_env =
   {
     bindings =
@@ -734,6 +735,20 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        (* The capability types: the language's own, import-free names. *)
+        ("Box", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
+        ("List", { vtype = Unknown; is_var = false; depth = 0 });
+        ("ArrayBuilder", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Int64", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Byte", { vtype = Unknown; is_var = false; depth = 0 });
+        ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
+        ( "Exception",
+          { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
+        ("R", { vtype = EnumType "R"; is_var = false; depth = 0 });
+        (* The runtime's implementations of the standard library: the bare
+           names a package's own Emo source calls underneath, never an API,
+           and never presented as a surface. *)
         ( "net_connect",
           {
             vtype =
@@ -819,13 +834,6 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
-        ("Box", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
-        ("List", { vtype = Unknown; is_var = false; depth = 0 });
-        ("ArrayBuilder", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Int64", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Byte", { vtype = Unknown; is_var = false; depth = 0 });
-        ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
         ( "file_read",
           {
             vtype =
@@ -974,9 +982,6 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
-        ( "Exception",
-          { vtype = ClassType "Exception"; is_var = false; depth = 0 } );
-        ("R", { vtype = EnumType "R"; is_var = false; depth = 0 });
       ];
     depth = 0;
     ret = None;

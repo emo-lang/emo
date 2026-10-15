@@ -35,6 +35,7 @@ type value =
   | CompiledFn of compiled_fn
   | ArrowBlock of closure
   | BuiltinFn of string
+  | RuntimeImplFn of string
   | ClassDef of class_def_value
   | Instance of instance_value
   | EnumType of enum_type_value
@@ -199,6 +200,7 @@ let type_name = function
   | CompiledFn _ -> "an arrow block"
   | ArrowBlock _ -> "an arrow block"
   | BuiltinFn _ -> "a builtin"
+  | RuntimeImplFn _ -> "a runtime implementation"
   | ClassDef _ -> "a class"
   | Instance _ -> "an instance"
   | EnumType _ -> "an enum"
@@ -276,6 +278,7 @@ let rec equal_value a b =
            x.ifields y.ifields
   | ArrowBlock x, ArrowBlock y -> x == y (* closures are identities *)
   | BuiltinFn x, BuiltinFn y -> String.equal x y
+  | RuntimeImplFn x, RuntimeImplFn y -> String.equal x y
   | _ -> false
 
 (* The map's key rule and its insertion order live beside equality:
@@ -290,6 +293,7 @@ and map_keys (m : emo_map) : value list = List.rev m.order
 
 let global_env () =
   let env = { frame = Hashtbl.create 16; parent = None } in
+  (* The language's own built-ins: the bare names every frame carries. *)
   Hashtbl.replace env.frame "println"
     { bound = BuiltinFn "println"; mutable_ = false };
   Hashtbl.replace env.frame "printf"
@@ -306,74 +310,13 @@ let global_env () =
     { bound = BuiltinFn "expect_false"; mutable_ = false };
   Hashtbl.replace env.frame "expect_fail"
     { bound = BuiltinFn "expect_fail"; mutable_ = false };
-  Hashtbl.replace env.frame "net_connect"
-    { bound = BuiltinFn "net_connect"; mutable_ = false };
-  Hashtbl.replace env.frame "net_listen"
-    { bound = BuiltinFn "net_listen"; mutable_ = false };
-  Hashtbl.replace env.frame "net_resolve"
-    { bound = BuiltinFn "net_resolve"; mutable_ = false };
-  Hashtbl.replace env.frame "file_read"
-    { bound = BuiltinFn "file_read"; mutable_ = false };
+  (* The capability types: the language's own types, import-free. *)
   Hashtbl.replace env.frame "Int64"
     { bound = TypeValue "Int64"; mutable_ = false };
   Hashtbl.replace env.frame "Byte"
     { bound = TypeValue "Byte"; mutable_ = false };
   Hashtbl.replace env.frame "Float64"
     { bound = TypeValue "Float64"; mutable_ = false };
-  Hashtbl.replace env.frame "file_write"
-    { bound = BuiltinFn "file_write"; mutable_ = false };
-  Hashtbl.replace env.frame "os_getpid"
-    { bound = BuiltinFn "os_getpid"; mutable_ = false };
-  Hashtbl.replace env.frame "os_getppid"
-    { bound = BuiltinFn "os_getppid"; mutable_ = false };
-  Hashtbl.replace env.frame "os_fork"
-    { bound = BuiltinFn "os_fork"; mutable_ = false };
-  Hashtbl.replace env.frame "os_waitpid"
-    { bound = BuiltinFn "os_waitpid"; mutable_ = false };
-  Hashtbl.replace env.frame "os_pipe"
-    { bound = BuiltinFn "os_pipe"; mutable_ = false };
-  Hashtbl.replace env.frame "os_execv"
-    { bound = BuiltinFn "os_execv"; mutable_ = false };
-  Hashtbl.replace env.frame "os__exit"
-    { bound = BuiltinFn "os__exit"; mutable_ = false };
-  Hashtbl.replace env.frame "os_open_read"
-    { bound = BuiltinFn "os_open_read"; mutable_ = false };
-  Hashtbl.replace env.frame "os_open_write"
-    { bound = BuiltinFn "os_open_write"; mutable_ = false };
-  Hashtbl.replace env.frame "os_open_append"
-    { bound = BuiltinFn "os_open_append"; mutable_ = false };
-  Hashtbl.replace env.frame "os_read"
-    { bound = BuiltinFn "os_read"; mutable_ = false };
-  Hashtbl.replace env.frame "os_write"
-    { bound = BuiltinFn "os_write"; mutable_ = false };
-  Hashtbl.replace env.frame "os_close"
-    { bound = BuiltinFn "os_close"; mutable_ = false };
-  Hashtbl.replace env.frame "os_list_dir"
-    { bound = BuiltinFn "os_list_dir"; mutable_ = false };
-  Hashtbl.replace env.frame "os_mkdir"
-    { bound = BuiltinFn "os_mkdir"; mutable_ = false };
-  Hashtbl.replace env.frame "os_rmdir"
-    { bound = BuiltinFn "os_rmdir"; mutable_ = false };
-  Hashtbl.replace env.frame "os_unlink"
-    { bound = BuiltinFn "os_unlink"; mutable_ = false };
-  Hashtbl.replace env.frame "os_rename"
-    { bound = BuiltinFn "os_rename"; mutable_ = false };
-  Hashtbl.replace env.frame "os_getcwd"
-    { bound = BuiltinFn "os_getcwd"; mutable_ = false };
-  Hashtbl.replace env.frame "os_chdir"
-    { bound = BuiltinFn "os_chdir"; mutable_ = false };
-  Hashtbl.replace env.frame "net_udp_bind"
-    { bound = BuiltinFn "net_udp_bind"; mutable_ = false };
-  Hashtbl.replace env.frame "net_connect_unix"
-    { bound = BuiltinFn "net_connect_unix"; mutable_ = false };
-  Hashtbl.replace env.frame "net_listen_unix"
-    { bound = BuiltinFn "net_listen_unix"; mutable_ = false };
-  Hashtbl.replace env.frame "net_tls_connect"
-    { bound = BuiltinFn "net_tls_connect"; mutable_ = false };
-  Hashtbl.replace env.frame "net_tls_connect_insecure"
-    { bound = BuiltinFn "net_tls_connect_insecure"; mutable_ = false };
-  Hashtbl.replace env.frame "net_listen_tls"
-    { bound = BuiltinFn "net_listen_tls"; mutable_ = false };
   Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
   Hashtbl.replace env.frame "Bytes"
     { bound = TypeValue "Bytes"; mutable_ = false };
@@ -411,6 +354,70 @@ let global_env () =
           };
       mutable_ = false;
     };
+  (* The runtime's implementations of the standard library's packages: the
+     bare names a package's own Emo source calls, never a surface. *)
+  Hashtbl.replace env.frame "net_connect"
+    { bound = RuntimeImplFn "net_connect"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen"
+    { bound = RuntimeImplFn "net_listen"; mutable_ = false };
+  Hashtbl.replace env.frame "net_resolve"
+    { bound = RuntimeImplFn "net_resolve"; mutable_ = false };
+  Hashtbl.replace env.frame "net_udp_bind"
+    { bound = RuntimeImplFn "net_udp_bind"; mutable_ = false };
+  Hashtbl.replace env.frame "net_connect_unix"
+    { bound = RuntimeImplFn "net_connect_unix"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen_unix"
+    { bound = RuntimeImplFn "net_listen_unix"; mutable_ = false };
+  Hashtbl.replace env.frame "net_tls_connect"
+    { bound = RuntimeImplFn "net_tls_connect"; mutable_ = false };
+  Hashtbl.replace env.frame "net_tls_connect_insecure"
+    { bound = RuntimeImplFn "net_tls_connect_insecure"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen_tls"
+    { bound = RuntimeImplFn "net_listen_tls"; mutable_ = false };
+  Hashtbl.replace env.frame "file_read"
+    { bound = RuntimeImplFn "file_read"; mutable_ = false };
+  Hashtbl.replace env.frame "file_write"
+    { bound = RuntimeImplFn "file_write"; mutable_ = false };
+  Hashtbl.replace env.frame "os_getpid"
+    { bound = RuntimeImplFn "os_getpid"; mutable_ = false };
+  Hashtbl.replace env.frame "os_getppid"
+    { bound = RuntimeImplFn "os_getppid"; mutable_ = false };
+  Hashtbl.replace env.frame "os_fork"
+    { bound = RuntimeImplFn "os_fork"; mutable_ = false };
+  Hashtbl.replace env.frame "os_waitpid"
+    { bound = RuntimeImplFn "os_waitpid"; mutable_ = false };
+  Hashtbl.replace env.frame "os_pipe"
+    { bound = RuntimeImplFn "os_pipe"; mutable_ = false };
+  Hashtbl.replace env.frame "os_execv"
+    { bound = RuntimeImplFn "os_execv"; mutable_ = false };
+  Hashtbl.replace env.frame "os__exit"
+    { bound = RuntimeImplFn "os__exit"; mutable_ = false };
+  Hashtbl.replace env.frame "os_open_read"
+    { bound = RuntimeImplFn "os_open_read"; mutable_ = false };
+  Hashtbl.replace env.frame "os_open_write"
+    { bound = RuntimeImplFn "os_open_write"; mutable_ = false };
+  Hashtbl.replace env.frame "os_open_append"
+    { bound = RuntimeImplFn "os_open_append"; mutable_ = false };
+  Hashtbl.replace env.frame "os_read"
+    { bound = RuntimeImplFn "os_read"; mutable_ = false };
+  Hashtbl.replace env.frame "os_write"
+    { bound = RuntimeImplFn "os_write"; mutable_ = false };
+  Hashtbl.replace env.frame "os_close"
+    { bound = RuntimeImplFn "os_close"; mutable_ = false };
+  Hashtbl.replace env.frame "os_list_dir"
+    { bound = RuntimeImplFn "os_list_dir"; mutable_ = false };
+  Hashtbl.replace env.frame "os_mkdir"
+    { bound = RuntimeImplFn "os_mkdir"; mutable_ = false };
+  Hashtbl.replace env.frame "os_rmdir"
+    { bound = RuntimeImplFn "os_rmdir"; mutable_ = false };
+  Hashtbl.replace env.frame "os_unlink"
+    { bound = RuntimeImplFn "os_unlink"; mutable_ = false };
+  Hashtbl.replace env.frame "os_rename"
+    { bound = RuntimeImplFn "os_rename"; mutable_ = false };
+  Hashtbl.replace env.frame "os_getcwd"
+    { bound = RuntimeImplFn "os_getcwd"; mutable_ = false };
+  Hashtbl.replace env.frame "os_chdir"
+    { bound = RuntimeImplFn "os_chdir"; mutable_ = false };
   env
 
 (* The restricted profile: hermetic evaluation with a step budget — the same
@@ -604,6 +611,7 @@ let rec to_string v =
   | CompiledFn f -> Printf.sprintf "<block %s>" f.fdesc
   | ArrowBlock _ -> "<arrow block>"
   | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
+  | RuntimeImplFn name -> Printf.sprintf "<runtime implementation %s>" name
   | ClassDef c -> c.cname
   | Instance i ->
       if
@@ -2234,19 +2242,25 @@ and eval_method env span recv mname arg_exprs =
             (Printf.sprintf "%s has no method `%s`" (type_name v) m))
 
 and apply f span args =
+  let check_positional kind name =
+    List.iter
+      (fun (name_, _) ->
+        match name_ with
+        | Some _ ->
+            error span "E3007"
+              (Printf.sprintf "%s `%s` takes positional arguments only" kind
+                 name)
+        | None -> ())
+      args
+  in
   match f with
   | ArrowBlock closure -> apply_closure closure span args
   | BuiltinFn name ->
-      List.iter
-        (fun (name_, _) ->
-          match name_ with
-          | Some n ->
-              error span "E3007"
-                (Printf.sprintf "builtin `%s` takes positional arguments only"
-                   name)
-          | None -> ())
-        args;
+      check_positional "builtin" name;
       apply_builtin span name (List.map snd args)
+  | RuntimeImplFn name ->
+      check_positional "runtime implementation" name;
+      apply_runtime_impl span name (List.map snd args)
   | v ->
       error span "E3007"
         (Printf.sprintf "%s is not callable"
@@ -2710,6 +2724,13 @@ and apply_builtin span name args =
   | "halt", vs ->
       error span "E3007"
         (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
+  | _, _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
+
+(* The standard library's runtime implementations — what a package's own
+   Emo source calls underneath its API. Every arm here is named for the
+   package that owns it. *)
+and apply_runtime_impl span name args =
+  match (name, args) with
   | "net_connect", args when List.length args <> 3 ->
       error span "E3007"
         (Printf.sprintf
@@ -3024,7 +3045,9 @@ and apply_builtin span name args =
       error span "E3001"
         "`net_listen_tls` expects (host String, port Int64, cert_path \
          String,          key_path String)"
-  | _ -> error span "E3007" (Printf.sprintf "unknown builtin `%s`" name)
+  | _, _ ->
+      error span "E3007"
+        (Printf.sprintf "unknown runtime implementation `%s`" name)
 
 (* The function frame. A [Tail_call] rebinds callee and arguments and
    iterates in place; the OCaml stack stays flat however long the Emo-level
@@ -3666,14 +3689,16 @@ let run_items items =
   with Emo_raise (v, span, trace) ->
     raise (Error (uncaught_diagnostic (v, span, trace)))
 
-(* Bridges compiled code into the builtin surface (println, the net_*
-   family, halt, ...): the same argument shapes and runtime errors as
-   interpreted calls. *)
+(* Bridge compiled code into each population's surface: the same argument
+   shapes and runtime errors as interpreted calls. *)
+let native_span =
+  Emo_support.Span.make ~file:"<native>" ~line:1 ~col:1 ~start:0 ~stop:0
+
 let call_builtin (name : string) (args : value list) : value =
-  let nowhere =
-    Emo_support.Span.make ~file:"<native>" ~line:1 ~col:1 ~start:0 ~stop:0
-  in
-  apply_builtin nowhere name args
+  apply_builtin native_span name args
+
+let call_runtime_impl (name : string) (args : value list) : value =
+  apply_runtime_impl native_span name args
 
 (* Sets a field on a compiled object inside the init window: replaces in
    place, or appends in first-assignment order. *)

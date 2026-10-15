@@ -32,9 +32,9 @@ module Emo_eval = struct
 
      The tagged dynamic representation, reshaped standalone: the
      interpreter-only, AST-carrying variants (ArrowBlock, BuiltinFn,
-     Module) and closure-backed class definitions drop out — compiled
-     functions are always [CompiledFn], and the shipped exception class
-     carries no methods. *)
+     RuntimeImplFn, Module) and closure-backed class definitions drop out —
+     compiled functions are always [CompiledFn], and the shipped exception
+     class carries no methods. *)
 
   type value =
     | Int64 of int64
@@ -1245,6 +1245,13 @@ let pf_hash_float conv minus plus space width prec f =
     | "halt", vs ->
         error "E3007"
           (Printf.sprintf "`halt` expects no arguments, got %d" (List.length vs))
+    | _, _ -> error "E3007" (Printf.sprintf "unknown builtin `%s`" name)
+
+  (* The standard library's runtime implementations — what a package's own
+     Emo source calls underneath its API. Every arm here is named for the
+     package that owns it. *)
+  let apply_runtime_impl name args =
+    match (name, args) with
     | "net_connect", args when List.length args <> 3 ->
         error "E3007"
           (Printf.sprintf
@@ -1572,10 +1579,15 @@ let pf_hash_float conv minus plus space width prec f =
         error "E3001"
           "`net_listen_tls` expects (host String, port Int64, cert_path \
            String, key_path String)"
-    | _ -> error "E3007" (Printf.sprintf "unknown builtin `%s`" name)
+    | _ ->
+        error "E3007"
+          (Printf.sprintf "unknown runtime implementation `%s`" name)
 
   let call_builtin (name : string) (args : value list) : value =
     apply_builtin name args
+
+  let call_runtime_impl (name : string) (args : value list) : value =
+    apply_runtime_impl name args
 end
 
 module Emo_runtime = struct
