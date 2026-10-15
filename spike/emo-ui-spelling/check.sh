@@ -5,8 +5,11 @@
 #   ./check.sh
 #
 # Every line states its expectation first and is compared against it, so a
-# compiler change that fixes one of these shows up as a FAIL here rather
-# than as a silently stale paragraph in the README.
+# compiler change that breaks one of these shows up as a FAIL here rather
+# than as a silently stale paragraph in the README. The two codegen defects
+# this file once pinned are fixed; the fixtures that isolated them stay
+# behind as the regression that keeps them fixed. The wasm/beam Map
+# refusal is still live and still pinned.
 #
 # Usage: ./check.sh
 
@@ -62,22 +65,26 @@ n=$(printf '%s' "$got" | grep -c 'mismatch/mixed.emo' || true)
 expect 0 "the same mistake beside a real node draws nothing" "$n"
 
 # --- which targets can compile the core -----------------------------------
+#
+# The core is the whole spike root: both spellings, the debug backend, and
+# measure.emo. Only the Map refusal stands in the way on wasm and beam; the
+# c field-table collision and the ocaml native String `+` that used to fail
+# here were fixed in codegen/, so those two now build.
 
 for t in ocaml c typescript wasm beam; do
   build . "$t" && rc=0 || rc=$?
   if [ "$rc" -eq 0 ]; then got=builds; else got=fails; fi
   case $t in
-    typescript) want=builds ;;
-    *)          want=fails ;;
+    wasm | beam) want=fails ;;
+    *)           want=builds ;;
   esac
   expect "$want" "core --target $t" "$got"
 done
 
-# --- and each failure names one cause -------------------------------------
+# --- and each remaining failure names its cause ---------------------------
 #
-# Three of the four are isolated in codegen/, where the other targets build
-# the same file; the fourth is wasm and beam refusing Map, which only
-# measure.emo uses.
+# wasm and beam refuse Map, which only measure.emo uses. The line is the
+# whole diagnostic the target prints, so a drift in the message fails here.
 
 why() {
   build "$1" "$2" && rc=0 || rc=$?
@@ -85,26 +92,29 @@ why() {
   expect "$4" "$1 --target $2 says why" "$got"
 }
 
-why codegen/field_table       c     "redefinition of '[a-z_]*Holder__fields'" \
-  "redefinition of 'main__Holder__fields'"
-why codegen/native_string_add ocaml "string but an expression was expected of type" \
-  "string but an expression was expected of type"
-why .                         wasm  "the wasm target does not support Map yet" \
+why . wasm "the wasm target does not support Map yet" \
   "the wasm target does not support Map yet"
-why .                         beam  "the beam target does not support Map yet" \
+why . beam "the beam target does not support Map yet" \
   "the beam target does not support Map yet"
 
-# Isolated, neither defect travels: the c fixture builds on the four
-# targets c is not broken on, and the ocaml one on the four ocaml is not.
+# --- the two codegen defects stay fixed -----------------------------------
+#
+# Each fixture is the smallest program that reached its defect, so the
+# defect coming back turns the target's build red. Building is not enough
+# on its own: a String `+` emitted as a numeric add still compiles, so the
+# formerly-broken target must also *run* to the value `emo run` gives.
 
-for t in ocaml typescript wasm beam; do
-  build codegen/field_table "$t" && rc=0 || rc=$?
-  expect 0 "codegen/field_table --target $t builds" "$rc"
-done
+defect() {
+  for t in ocaml c typescript wasm beam; do
+    build "$1" "$t" && rc=0 || rc=$?
+    expect 0 "$1 --target $t builds" "$rc"
+  done
+  build "$1" "$2" && rc=0 || rc=$?
+  got=$("$OUT" 2>&1 || true)
+  expect "$3" "$1 --target $2 prints what emo run prints" "$got"
+}
 
-for t in c typescript wasm beam; do
-  build codegen/native_string_add "$t" && rc=0 || rc=$?
-  expect 0 "codegen/native_string_add --target $t builds" "$rc"
-done
+defect codegen/field_table       c     "2"
+defect codegen/native_string_add ocaml "[    ]xy"
 
 exit $fail

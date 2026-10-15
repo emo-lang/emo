@@ -254,13 +254,16 @@ B      field column, length   = 3
 |---|---|
 | 解释器 | 能跑;golden 字节一致 |
 | `typescript` | 能构建 |
-| `ocaml` | **失败** —— 原生 `String` `+` |
-| `c` | **失败** —— `fields` 上的字段表冲突 |
+| `ocaml` | 能构建 |
+| `c` | 能构建 |
 | `wasm` | 整包失败(仅因 Map);去掉 `measure.emo` 后能构建 |
 | `beam` | 整包失败(仅因 Map);去掉 `measure.emo` 后能构建 |
 
-其中两个是内核自己的锅,一个是 spike 专属文件的锅,三者都是 `src/` 的缺陷,
-在这里被隔离出来并且**没有修** —— 本 spike 不改 `src/` 下任何东西:
+其中两个是内核自己的锅,一个是 spike 专属文件的锅,本 spike 运行期间三者都
+**没有修** —— 本 spike 不改 `src/` 下任何东西。两个 codegen 缺陷在之后被修掉
+(2026-10-15,并入 T48.1):每次修复都把它的夹具留在原地,作为钉住修复的回归,
+`check.sh` 现在既断言能构建、也断言在那个曾经拒绝的目标上能*跑出正确结果*。
+`Map` 的拒绝仍然存在。下面的编号保持原样:
 
 1. **`c` —— 类的字段名表与一个名叫 `fields` 的方法相撞。** 生成的 C 把字段表
    命名为 `<module>__<Class>__fields`,方法 `fields` 也是同一个名字,于是两者
@@ -269,8 +272,12 @@ B      field column, length   = 3
    叫什么无关 —— 所以这个相撞只需要包里*任何地方*有一个名叫 `fields` 的**方法**,
    而本 spike 自己的 `Model.fields()`(`model.emo:92`,表单模型上一个再普通不过的
    访问器名)就是一个,这就是整个内核为 `c` 构建失败的原因。
-   `codegen/field_table/` 把它隔离出来;另外四个目标能构建那个文件。
-   修法:给字段表改名(`__field_names`),让任何成员都遮蔽不了它。
+   `codegen/field_table/` 把它隔离出来;另外四个目标能构建那个文件。**已修**:
+   把两张元数据表都移出 `<cname>__<member>` 命名空间 —— 现在叫
+   `vt_<cname>_fields` 和 `vt_<cname>_methods`,归入原本 `vt_<cname>` 与
+   `iface_<name>` 的单下划线惯例。这里最初建议的修法 —— 改名成
+   `__field_names` —— 并不成立:一个名叫 `field_names` 的成员产出的正是那个符号,
+   改名只是把相撞挪到下一个普通访问器名上。
 2. **`ocaml` —— 原生 `String` `+`。** 对两个 `String` 局部量,生成的 OCaml 是
    `(Int64.add (v_a) (v_b))`:
    `Error: This constant has type string but an expression was expected of
@@ -280,15 +287,16 @@ B      field column, length   = 3
    交给 `Emo_runtime.add`,后者是处理 String 的 —— 所以这是特化路径独有,
    只在每个操作数都可原生表示时才会走到(两个 `String` 局部量;一次自递归的
    `String` 调用,也就是 `debug.emo` 的 `indent`)。`codegen/native_string_add/`
-   把它隔离出来;另外四个目标能构建那个文件。修法:加一个
-   `= Emo_check.String` 分支,产出 `(^)`。
+   把它隔离出来;另外四个目标能构建那个文件。**已修**:按建议加了
+   `= Emo_check.String` 分支产出 `(^)`;并且 `check.sh` 会在 `ocaml` 上*运行*
+   该夹具 —— 一个仍然能编译、但按数值 `+` 求值的实现只会通过"仅构建"的断言。
 3. **`wasm` 和 `beam` —— `Map`。** `the wasm target does not support Map
    yet`。本 spike 里唯一的 `Map` 是 `measure.emo` 的 `build_map`,所以内核
    自身在两个目标上都没问题;去掉 `measure.emo` 后整包能为 `wasm` 和 `beam`
-   构建,而 `ocaml` 和 `c` 仍然失败。记录而不绕过,因为它是一个真实的限制:
-   任何用到 `Map` 的 T48.1 内核都不能落在那些目标上。
+   构建。记录而不绕过,因为它是一个真实的限制:任何用到 `Map` 的 T48.1 内核
+   都不能落在那些目标上。
 
-`check.sh` 对这张表的每一行做断言,所以 `src/` 里的修复会在这里变成 FAIL,
+`check.sh` 对这张表的每一行做断言,所以 `src/` 里的改动会在这里变成 FAIL,
 而不是留成一段过时的文字。
 
 ## 结论
@@ -298,9 +306,9 @@ B      field column, length   = 3
 **B 是付得起的那一步,而且它是一个容器问题,不是语法问题。** 两个真实屏幕:
 95 行对 40 行,同一棵树,同样的渲染。B 的语法代价是零,并且同时消掉构造器 def
 和条件拼接问题 —— `ui.column(concat(head, concat(banner, tail, 0), 0), style)`
-变成一个 `if` 加一个 `push_back`。它只差一样语言侧的东西才不止是工效学收益:
-一个 `List` → `Array` 转换。`build_map` 那一行说明运行时已经有那条线性通路,
-所以那个转换是一个运行时原语,不是一个设计问题。而且 B 在 C 或 D 之下都不白做:
+变成一个 `if` 加一个 `push_back`。它只差一样语言侧的东西才不止是工效学收益,
+而那样东西以 `ArrayBuilder` 的形式到来了(2026-10-15,T49.3)—— 一个新容器,
+而不是本注记预言的 `List` → `Array` 转换。而且 B 在 C 或 D 之下都不白做:
 两者脱糖到同一棵树。
 
 **C 的要价买到的东西比注记设想的少。** 字面量删掉括号 —— A 里 72 个、B 里 18 个、
@@ -322,8 +330,15 @@ B      field column, length   = 3
 在构造时被检查,后端用 `is()` 收窄,`patch` 比较树。但*构造*一侧绝不能是在 Emo
 里用 `Array.append`:那既是二次路径又是嵌套 bug,而文档在这一次修正之前公布的
 恰恰是这个。
-把 `children_of` 作为遍历 deque 的运行时 `List` → `Array` 转换交付,A 写法最贵的
-那部分 —— 44 行和 O(k²) —— 不用改语法就消失了。
+
+本节最初点名的修法 —— 把 `children_of` 作为运行时 `List` → `Array` 转换交付 ——
+**已被取代**,而且转换那一半是被有意拒绝的。`ArrayBuilder` 于 2026-10-15 落地
+(T49.3):一个语言级的可变缓冲,以摊还 O(1) 追加,用 `to_array()` 拷出。T48.1
+内核把子节点构造进这样一个缓冲;不往 `List` 上加任何东西,因为语言里没有东西按
+下标读 deque,加转换等于让 deque 多担一份它不需要的职责
+(`docs/zh-CN/emo-ui-composition.md:142`)。`ui.emo` 的 `children_of` 是测量的
+脚手架,不是提案 —— 它是 A 写法用当时语言里已有的容器走到扁平 `Array[Node]` 的
+办法。无论哪条路,A 写法最贵的那部分 —— 44 行和 O(k²) —— 都不用改语法就消失了。
 
 **这个顺序暗示的是:B,然后如果工效学仍然难受就做 D,只有当 D 的第二套工具链
 比一套可感知标记的文法更贵时才做 C。** 这比注记希望了结的claim要小,而它是
@@ -348,9 +363,10 @@ B      field column, length   = 3
 - **[`spike/emo-ui-probe/probe3_iteration_and_messages.emo`](../emo-ui-probe/probe3_iteration_and_messages.emo)
   及其 README 把被掩盖的 `2` 记成了预期输出。** probe 已重写为产出扁平数组;
   预期输出块已更新。
-- **记录,但不修正:** [目标矩阵](#目标矩阵)里那三个 `src/` 缺陷,以及混合字面量
-  的检查器漏洞。两者都是给语言的发现,不是文档错误,本 spike 不改 `src/` 下任何东西。
-  `check.sh` 把它们钉住。
+- **记录,但不修正:** [目标矩阵](#目标矩阵)里那些 `src/` 缺陷,以及混合字面量
+  的检查器漏洞。两者都是给语言的发现,不是文档错误,本 spike 运行期间不改 `src/`
+  下任何东西。两个 codegen 缺陷之后被修掉,夹具现在充当回归;`Map` 的拒绝和检查器
+  漏洞仍然开着。`check.sh` 把这几项都钉住。
 
 ## 复现
 
@@ -360,7 +376,7 @@ B      field column, length   = 3
 ```sh
 ./count.sh    # 源码代价表
 ./run.sh      # main.emo 与 naive_crash.emo,与 golden 做 diff
-./check.sh    # 22 条断言:什么能检查、什么不能、哪些目标能构建
+./check.sh    # 24 条断言:什么能检查、什么不能、哪些目标能构建
 ```
 
 `run.sh` 把 `emo run main.emo` 和 `emo run naive_crash.emo` 与
@@ -369,11 +385,13 @@ B      field column, length   = 3
 那*就是*它的结果,所以退出码是被比较输出的一部分。两个脚本都在比较前剥掉绝对
 路径,所以 golden 不会带上上次是谁跑的。
 
-`check.sh` 每条期望都先声明再比较,这正是要点:三个目标失败和两个检查器结果
-都被钉住,所以 `src/` 里的修复会在这里变成 FAIL,而不是留成上面一段过时的文字。
+`check.sh` 每条期望都先声明再比较,这正是要点:目标结果、两个 codegen 回归和两个
+检查器结果都被钉住,所以 `src/` 里的改动会在这里变成 FAIL,而不是留成上面一段过时
+的文字。
 
-这里没有任何东西接进 `dune test` 或 CI,`src/` 下也没有任何改动。
-`.emo-build/` 装中间产物,已在全局 gitignore 中。
+这里没有任何东西接进 `dune test` 或 CI,跑这个 spike 也不会改动 `src/` 下的任何内容
+—— 那两个 codegen 修复属于 T48.1 的工作,不属于本目录。`.emo-build/` 装中间产物,
+已在全局 gitignore 中。
 
 ## 文件
 
@@ -390,4 +408,4 @@ B      field column, length   = 3
 | `naive_crash.emo` | 嵌套数组 bug 的真实症状:`E3007`,退出码 70 |
 | `features.emo` | 内核所依赖的五个语言特性,每一个都是承重的 |
 | `mismatch/` | 检查器对错误子节点字面量的覆盖(嵌套包) |
-| `codegen/field_table/`、`codegen/native_string_add/` | 两个 `src/` 缺陷,各自隔离(嵌套包) |
+| `codegen/field_table/`、`codegen/native_string_add/` | 两个 `src/` codegen 缺陷,各自隔离(嵌套包)—— 已修,并留作钉住修复的回归 |

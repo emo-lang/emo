@@ -639,7 +639,8 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
       if List.mem n env.nrefs then "!" ^ n else n
   | Emo_ir.Binary (op, l, r) -> (
       (* Comparisons and `&&`/`||` are polymorphic; arithmetic and bit
-         operations are Int64 unless an operand is Float64. *)
+         operations are Int64 unless an operand is Float64, and `+` on
+         Strings is concatenation. *)
       let le = "(" ^ emit_native_expr env l ^ ")" in
       let re = "(" ^ emit_native_expr env r ^ ")" in
       let float =
@@ -657,7 +658,9 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
       | Ast.And -> Printf.sprintf "(%s && %s)" le re
       | Ast.Or -> Printf.sprintf "(%s || %s)" le re
       | Ast.Add ->
-          if float then Printf.sprintf "(%s +. %s)" le re
+          if e.Emo_ir.ety = Emo_check.String then
+            Printf.sprintf "(%s ^ %s)" le re
+          else if float then Printf.sprintf "(%s +. %s)" le re
           else Printf.sprintf "(Int64.add %s %s)" le re
       | Ast.Sub ->
           if float then Printf.sprintf "(%s -. %s)" le re

@@ -301,47 +301,58 @@ The core is supposed to be portable. `emo build` on the package, by target:
 |---|---|
 | interpreter | runs; golden byte-exact |
 | `typescript` | builds |
-| `ocaml` | **fails** — native `String` `+` |
-| `c` | **fails** — field-table collision on `fields` |
+| `ocaml` | builds |
+| `c` | builds |
 | `wasm` | fails on the package (Map only); builds without `measure.emo` |
 | `beam` | fails on the package (Map only); builds without `measure.emo` |
 
-Two are the core's fault and one is a spike-only file's, and all three are
-defects in `src/`, isolated here and **not fixed** — this spike changes
-nothing under `src/`:
+Two were the core's fault and one is a spike-only file's, and none of the
+three was fixed while this spike ran — it changed nothing under `src/`. The
+two codegen defects were fixed afterwards (2026-10-15, folded into T48.1);
+each fix left its fixture behind as the regression that keeps it fixed, and
+`check.sh` now asserts the build *and* the run on the target that used to
+refuse. The `Map` refusal is still live. The descriptions keep their
+original numbering:
 
 1. **`c` — a class's field-name table collides with a method named
-   `fields`.** The generated C names the field table
+   `fields`.** The generated C named the field table
    `<module>__<Class>__fields` and a method `fields` the same, so they
-   collide: `error: redefinition of 'main__Holder__fields' as different kind
-   of symbol`. The table's name is fixed — `<module>__<Class>__fields`,
-   whatever the fields are called — so the collision needs only a *method*
-   named `fields` anywhere in the package, and this spike's own
-   `Model.fields()` (`model.emo:92`, an ordinary accessor name on a form
-   model) is one, which is why the whole core fails to build for `c`.
-   `codegen/field_table/` isolates it; the other four targets build that
-   file. Fix: mangle the field
-   table (`__field_names`), so no member can shadow it.
-2. **`ocaml` — native `String` `+`.** The emitted OCaml is
+   collided: `error: redefinition of 'main__Holder__fields' as different
+   kind of symbol`. The table's name was fixed —
+   `<module>__<Class>__fields`, whatever the fields are called — so the
+   collision needed only a *method* named `fields` anywhere in the package,
+   and this spike's own `Model.fields()` (`model.emo:92`, an ordinary
+   accessor name on a form model) was one, which is why the whole core
+   failed to build for `c`. `codegen/field_table/` isolates it; the other
+   four targets build that file. **Fixed** by moving both metadata tables
+   out of the `<cname>__<member>` namespace: they are `vt_<cname>_fields`
+   and `vt_<cname>_methods` now, joining the `vt_<cname>` and
+   `iface_<name>` single-underscore convention. The fix suggested here
+   originally — `__field_names` — would not have worked: a member named
+   `field_names` emits exactly that symbol, so the rename would only have
+   moved the collision to the next ordinary accessor name.
+2. **`ocaml` — native `String` `+`.** The emitted OCaml was
    `(Int64.add (v_a) (v_b))` for two `String` locals:
    `Error: This constant has type string but an expression was expected of
-   type int64`. Root cause is `src/emo_codegen/emo_codegen.ml:654-656`: the
-   unboxed `emit_native_expr` has a `Float64` branch (`+.`) and an else
+   type int64`. Root cause was `src/emo_codegen/emo_codegen.ml:654-656`: the
+   unboxed `emit_native_expr` had a `Float64` branch (`+.`) and an else
    branch (`Int64.add`) and **no `String` branch**. The boxed `emit_expr`
    path routes `Add` through `Emo_runtime.add`, which does handle Strings —
-   so this is the specialization only, reached when every operand is
+   so this was the specialization only, reached when every operand is
    natively representable (two `String` locals; a self-recursive `String`
    call, which `debug.emo`'s `indent` is). `codegen/native_string_add/`
-   isolates it; the other four targets build that file. Fix: a
-   `= Emo_check.String` branch emitting `(^)`.
+   isolates it; the other four targets build that file. **Fixed** by adding
+   the `= Emo_check.String` branch emitting `(^)`, exactly as suggested —
+   and `check.sh` runs the fixture on `ocaml`, because a numeric `+` that
+   still compiles would pass a build-only assertion.
 3. **`wasm` and `beam` — `Map`.** `the wasm target does not support Map
    yet`. The only `Map` in this spike is `measure.emo`'s `build_map`, so the
    core itself is fine on both; with `measure.emo` removed, the package
-   builds for `wasm` and `beam` while `ocaml` and `c` still fail. Recorded
-   rather than worked around, because it is a real limit on which targets
-   can host a T48.1 core that uses a `Map` anywhere.
+   builds for `wasm` and `beam`. Recorded rather than worked around, because
+   it is a real limit on which targets can host a T48.1 core that uses a
+   `Map` anywhere.
 
-`check.sh` asserts each row of this table, so a fix in `src/` turns into a
+`check.sh` asserts each row of this table, so a change in `src/` turns into a
 FAIL here rather than a stale paragraph.
 
 ## Verdict
@@ -353,11 +364,11 @@ note assumed.**
 question.** Two real screens: 95 lines against 40, identical trees, identical
 render. B costs zero syntax and removes both the builder defs and the
 conditional-splicing problem — `ui.column(concat(head, concat(banner, tail, 0), 0), style)`
-becomes an `if` and a `push_back`. It needs exactly one language-side thing
-to be more than an ergonomic win: a `List` → `Array` conversion. The
-`build_map` row says the runtime already has the linear route, so that
-conversion is a runtime primitive, not a design question. And B is not
-wasted under either C or D: both desugar to the same tree.
+becomes an `if` and a `push_back`. It needed exactly one language-side thing
+to be more than an ergonomic win, and that thing arrived as `ArrayBuilder`
+(2026-10-15, T49.3) — a new container, not the `List` → `Array` conversion
+this note predicted. And B is not wasted under either C or D: both desugar to
+the same tree.
 
 **C's price buys less than the note assumed.** The literal deletes brackets
 — 72 in A, 18 in B, 0 labels — plus static plumbing, and it leaves the 44
@@ -383,9 +394,20 @@ cost, not a grammar one.
 measurement supports it: the child list is checked at construction, backends
 narrow with `is()`, `patch` compares trees. But the *construction* side must
 not be `Array.append` in Emo: that is both the quadratic path and the nesting
-bug, and the docs published exactly that until this round. Ship `children_of`
-as a runtime `List` → `Array` conversion over the deque, and the A spelling's
-worst cost — 44 lines and O(k²) — goes away without a syntax change.
+bug, and the docs published exactly that until this round.
+
+The fix this section first named — a runtime `List` → `Array` conversion,
+shipped as `children_of` — is **superseded**, and the conversion half was
+refused on purpose. `ArrayBuilder` landed on 2026-10-15 (T49.3): a
+language-level mutable buffer that appends in amortized O(1) and copies out
+with `to_array()`. A T48.1 core builds children into one of those; nothing
+is added to `List`, because nothing in the language reads a deque by index
+and a conversion would give the deque a second job
+(`docs/emo-ui-composition.md:300-308`). `ui.emo`'s `children_of` is the
+measurement's scaffold, not a proposal — it is how the A spelling reached a
+flat `Array[Node]` with the containers the language had at the time. Either
+way the A spelling's worst cost — 44 lines and O(k²) — goes away without a
+syntax change.
 
 **The order this suggests: B, then D if the ergonomics still hurt, and C only
 if D's second toolchain turns out to cost more than a markup-aware grammar.**
@@ -416,10 +438,12 @@ Recorded here first, then applied:
 - **[`spike/emo-ui-probe/probe3_iteration_and_messages.emo`](../emo-ui-probe/probe3_iteration_and_messages.emo)
   and its READMEs document the masked `2`** as the expected output. The probe
   is rewritten to produce a flat array; the expected-output block updated.
-- **Recorded, not corrected:** the three `src/` defects in
+- **Recorded, not corrected:** the `src/` defects in
   [the target matrix](#the-target-matrix), and the mixed-literal checker
   hole. Both are findings for the language, not doc errors, and nothing under
-  `src/` changes in this spike. `check.sh` pins them.
+  `src/` changed while this spike ran. The two codegen defects were fixed
+  afterwards and their fixtures now serve as the regression; the `Map`
+  refusal and the checker hole are still open. `check.sh` pins all of them.
 
 ## Reproducing
 
@@ -429,7 +453,7 @@ From this directory, with the repo's compiler
 ```sh
 ./count.sh    # the source-cost table
 ./run.sh      # main.emo and naive_crash.emo, diffed against the goldens
-./check.sh    # 22 assertions: what checks, what does not, which targets build
+./check.sh    # 24 assertions: what checks, what does not, which targets build
 ```
 
 `run.sh` compares `emo run main.emo` and `emo run naive_crash.emo` against
@@ -440,11 +464,13 @@ output. Both scripts strip absolute paths before comparing, so the goldens do
 not carry whoever ran them last.
 
 `check.sh` states every expectation before comparing against it, which is the
-point: the three target failures and the two checker results are pinned, so a
-fix in `src/` turns into a FAIL here rather than a stale paragraph above.
+point: the target results, the two codegen regressions and the two checker
+results are pinned, so a change in `src/` turns into a FAIL here rather than a
+stale paragraph above.
 
-Nothing here is wired into `dune test` or CI, and nothing under `src/`
-changes. `.emo-build/` holds the intermediates and is gitignored globally.
+Nothing here is wired into `dune test` or CI, and running the spike changes
+nothing under `src/` — the two codegen fixes are T48.1's work, not this
+directory's. `.emo-build/` holds the intermediates and is gitignored globally.
 
 ## Files
 
@@ -461,4 +487,4 @@ changes. `.emo-build/` holds the intermediates and is gitignored globally.
 | `naive_crash.emo` | the nested-array bug's real symptom: `E3007`, exit 70 |
 | `features.emo` | the five language features the core rests on, each load-bearing |
 | `mismatch/` | the checker's coverage of a wrong child literal (nested package) |
-| `codegen/field_table/`, `codegen/native_string_add/` | the two `src/` defects, isolated (nested packages) |
+| `codegen/field_table/`, `codegen/native_string_add/` | the two `src/` codegen defects, isolated (nested packages) — fixed, and kept as the regression that pins the fix |

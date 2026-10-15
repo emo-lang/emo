@@ -770,7 +770,7 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 9. **顺序:TUI 与 SSR 先行,原生工具包其次,浏览器 DOM 最后。**
 10. **不加新语法**;带检查的 block/函数类型是唯一值得之后掂量的语言诉求,不是关口。
 
-- [ ] **T48.1** — 可移植 `ui` 核心包:`Node` 树脊与原语、带类型 `Style` 及其 `with_*` 复制、布局词汇表、`Backend` 接口。纯 Emo,全部五个托管 target。
+- [ ] **T48.1** — 可移植 `ui` 核心包:`Node` 树脊与原语、带类型 `Style` 及其 `with_*` 复制、布局词汇表、`Backend` 接口。纯 Emo,全部五个托管 target —— 这也让 A/B 拼写 spike 发现的两个 codegen 缺陷成为本任务的一部分。**两项均已于 2026-10-15 落地:** `c` 的类元数据表移出方法符号所在的 `<cname>__<member>` 命名空间(现为 `vt_<cname>_fields` / `vt_<cname>_methods`,归入 `vt_<cname>` 与 `iface_<name>` 惯例),以及 `ocaml` 原生 `String` 的 `+` 补上它的 `= Emo_check.String` 分支(在 `emit_native_expr` 里产出 `(^)`)。核心包本身尚未开工,所以这一项仍不打勾;`spike/emo-ui-spelling/codegen/` 下的两个夹具就是回归,其 `check.sh` 断言两者的构建与运行。
 - [ ] **T48.2** — Elm 循环:`App`(model/`update`/`view`)、`ui.on(msg)` tag 登记表与 `ui.dispatch(tag)`、`ui.run(view, update, model, backend)`;tag 往返测试,以及保留式 `patch` 对全量重建。
 - [ ] **T48.3** — 无头 `debug` 后端:把树渲染成稳定文本,作为逐字节一致的金测 harness。
 - [ ] **T48.4** — `ui-tui`:字符网格布局(那个小 Emo 盒模型)与 ANSI 绘制;一段脚本化输入的金测。

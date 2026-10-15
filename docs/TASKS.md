@@ -1561,7 +1561,16 @@ required.
 - [ ] **T48.1** — The portable `ui` core package: the `Node` spine and
       primitives, the typed `Style` with `with_*` copies, the layout
       vocabulary, and the `Backend` interface. Pure Emo, all five hosted
-      targets.
+      targets — which makes the two codegen defects the A/B spelling
+      spike found part of this task. **Both landed 2026-10-15:** the `c`
+      class metadata tables moved out of the `<cname>__<member>`
+      namespace a method's symbol occupies (`vt_<cname>_fields` /
+      `vt_<cname>_methods`, joining `vt_<cname>` and `iface_<name>`), and
+      the `ocaml` native `String` `+` gained its `= Emo_check.String`
+      branch emitting `(^)` in `emit_native_expr`. The package itself is
+      not started, so the box stays open; the two fixtures under
+      `spike/emo-ui-spelling/codegen/` are the regression, and its
+      `check.sh` asserts their build and their run.
 - [ ] **T48.2** — The Elm loop: `App` (model/`update`/`view`), the
       `ui.on(msg)` tag registry and `ui.dispatch(tag)`, and
       `ui.run(view, update, model, backend)`; tag round-trip tests and a

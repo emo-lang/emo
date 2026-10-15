@@ -414,4 +414,5 @@ targets, only `typescript` compiles the core today.
 - `spike/emo-ui-spelling` — the measurement the evidence gap above asked
   for: the T48.1 core and two real screens in both spellings, the
   child-array builder ladder, the two `src/` codegen defects the core
-  hits, and the checker's coverage of a wrong child literal.
+  hit (fixed 2026-10-15, folded into T48.1; their fixtures are the
+  regression), and the checker's coverage of a wrong child literal.

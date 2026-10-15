@@ -177,4 +177,4 @@ A 与 B 兼容:B 就是 A 把容器问题回答掉。C 与 D 脱糖到同一个�
 - [`intro/configuration.md`](intro/configuration.md) —— 配置即 Emo 表达式,"不要第二门语言"的先例。
 - [`emo-ui-check.md`](emo-ui-check.md) —— 那几个 spike;`spike/components` 就是那个已经 byte-identically 跑通 AppKit 与 GTK 4 的 React/Elm 式应用。
 - `spike/arena-scope` —— children 数组为什么想要另一个容器。那个容器现在有了:`ArrayBuilder` 回答了这条 ask,所以组合示例不必再用 `Array.append` 累加(它"追加一个元素即整数组拷贝"在 `src/emo_eval/emo_eval.ml:2147`);与它权衡过的"丢弃语句"那条事实在 `src/emo_check/emo_check.ml:2639`。
-- `spike/emo-ui-spelling` —— 上面那个证据缺口所要的测量:两种拼法各写一遍的 T48.1 内核与两个真实屏幕、子节点数组构造阶梯、内核撞上的两个 `src/` codegen 缺陷,以及 checker 对错误子节点字面量的覆盖。
+- `spike/emo-ui-spelling` —— 上面那个证据缺口所要的测量:两种拼法各写一遍的 T48.1 内核与两个真实屏幕、子节点数组构造阶梯、内核撞上的两个 `src/` codegen 缺陷(已于 2026-10-15 修掉,并入 T48.1;它们的夹具就是回归),以及 checker 对错误子节点字面量的覆盖。

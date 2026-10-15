@@ -3200,8 +3200,14 @@ let emit (program : Emo_ir.program) : string * string =
           c.Emo_ir.cmethods
       in
       let fs = fields_of c in
+      (* The metadata statics are named `vt_<cname>[_<table>]`, never
+         `<cname>__<table>`: a method's symbol is `<cname>__<method>`,
+         so a member named `fields` would land in the same identifier
+         namespace as the field table and redefine it. The single
+         underscore keeps the tables out of that namespace — the
+         convention `iface_<name>` already follows. *)
       if methods <> [] then
-        put env0 "static const emo_method_sig %s__methods[] = {%s};\n"
+        put env0 "static const emo_method_sig vt_%s_methods[] = {%s};\n"
           c.Emo_ir.cname
           (String.concat ", "
              (List.map
@@ -3210,16 +3216,18 @@ let emit (program : Emo_ir.program) : string * string =
                     (c_ident m.Emo_ir.fname))
                 methods));
       if fs <> [] then
-        put env0 "static const char *const %s__fields[] = {%s};\n"
+        put env0 "static const char *const vt_%s_fields[] = {%s};\n"
           c.Emo_ir.cname
           (String.concat ", " (List.map c_string fs));
       put env0 "static const emo_vtable vt_%s = { %s, %d, %s, %d, %s };\n\n"
         c.Emo_ir.cname
         (c_string c.Emo_ir.cdisplay)
         (List.length methods)
-        (if methods = [] then "NULL" else c.Emo_ir.cname ^ "__methods")
+        (if methods = [] then "NULL"
+         else Printf.sprintf "vt_%s_methods" c.Emo_ir.cname)
         (List.length fs)
-        (if fs = [] then "NULL" else c.Emo_ir.cname ^ "__fields"))
+        (if fs = [] then "NULL"
+         else Printf.sprintf "vt_%s_fields" c.Emo_ir.cname))
     program.pclasses;
   (* Definitions. *)
   List.iter

@@ -131,7 +131,15 @@ Recorded in `docs/emo-ui.md` and carried by this step:
       (interface plus `Column`/`Row`/`Text`/`Button`/`TextInput`/
       `Image`/`Spacer`/`Scroll`), the typed `Style` with `style()` and
       the `with_*` copies, the layout vocabulary, and the `Backend`
-      interface. Pure Emo, declaring all five hosted targets.
+      interface. Pure Emo, declaring all five hosted targets — which
+      makes the two codegen defects the spelling spike found part of
+      this task, both fixed 2026-10-15: the `c` class metadata tables
+      moved out of the `<cname>__<member>` namespace a method's symbol
+      occupies (they are `vt_<cname>_fields` / `vt_<cname>_methods`
+      now, joining `vt_<cname>` and `iface_<name>`), and the `ocaml`
+      native `String` `+` (a `= Emo_check.String` branch emitting `(^)`
+      in `emit_native_expr`). The two isolation fixtures stay in
+      `spike/emo-ui-spelling/codegen/` as the regression.
 - [ ] **T48.2** — The Elm loop: `App` (model/`update`/`view`), the
       `ui.on(msg)` tag registry and `ui.dispatch(tag)`, and
       `ui.run(view, update, model, backend)`. Tests for the tag
@@ -172,9 +180,10 @@ Recorded in `docs/emo-ui.md` and carried by this step:
 ## Acceptance
 
 - The shared portable app module is byte-identical on the debug and
-  SSR backends across all five hosted targets, and drives the TUI,
-  macOS, GTK 4, and browser backends through their per-platform
-  entries.
+  SSR backends across all five hosted targets — `c` and `ocaml`
+  included, which the two T48.1 codegen fixes are what unblocked — and
+  drives the TUI, macOS, GTK 4, and browser backends through their
+  per-platform entries.
 - The composition syntax is the same on every backend — a component
   tree is nested calls with `Array[Node]` children, and the only
   per-platform code is the backend package and a thin entry module.
