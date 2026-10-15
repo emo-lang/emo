@@ -4,6 +4,7 @@
   cmdliner
   unix
   emo_support
+  emo_tool
   emo_lexer
   emo_parser
   emo_ast

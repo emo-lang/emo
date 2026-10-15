@@ -325,19 +325,20 @@ let beam_examples_tests =
           if not (Lazy.force erl_available) then Alcotest.skip ();
           let dir = Filename.concat examples_dir name in
           let expected = read_file (Filename.concat dir "expected.txt") in
-          let out_core =
-            Filename.concat scratch (name ^ "-beam-emo_main.core")
-          in
+          (* The output asks for the module, and the file stem has to be
+             the module atom, so each example builds under its own name. *)
+          let out = Filename.concat scratch name in
           let exit_code =
             Emo_cli.build_file
               ~entry:(Filename.concat dir "main.emo")
-              ~output:out_core ~specialize:false ~cclibs:[] ~target:"beam"
+              ~output:out ~specialize:false ~cclibs:[] ~target:"beam"
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
             Printf.sprintf
-              "erl -noshell -pa %s -eval 'emo_main:main(), erlang:halt(0).'"
-              (Filename.quote (Filename.dirname out_core))
+              "erl -noshell -pa %s -eval '%s:main(), erlang:halt(0).'"
+              (Filename.quote (Filename.dirname out))
+              name
           in
           let out, err, proc_status = run_cmd cmd in
           Alcotest.(check string) "output" expected out;
@@ -587,6 +588,46 @@ let check_run what (out, err, status) expected =
       Alcotest.fail (Printf.sprintf "%s died on signal %d: %s" what n err)
   | Unix.WSTOPPED n ->
       Alcotest.fail (Printf.sprintf "%s stopped on signal %d" what n)
+
+(* `-o` names the artifact on every target, and on beam it names the
+   module too: erlc loads a .beam only when the file stem equals the
+   module atom, so the two are decided together. *)
+let beam_naming_tests =
+  [
+    tc "the beam module is named after -o" (fun () ->
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry = scratch_entry "beam-naming" "println(\"hello\")\n" in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (Emo_cli.build_file ~entry
+             ~output:(Filename.concat dir "app")
+             ~specialize:false ~cclibs:[] ~target:"beam");
+        let exists name = Sys.file_exists (Filename.concat dir name) in
+        Alcotest.(check bool) "app.core" true (exists "app.core");
+        Alcotest.(check bool) "app.beam" true (exists "app.beam");
+        Alcotest.(check bool)
+          "no artifact named after the old fixed module" false
+          (exists "emo_main.beam");
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                (Filename.quote dir)))
+          "hello\n");
+    tc "a module name that is not a BEAM atom is refused" (fun () ->
+        let entry = scratch_entry "beam-bad-name" "println(\"hello\")\n" in
+        let dir = Filename.dirname entry in
+        (* The stem would be `my-app`, which erlc can never load. *)
+        Alcotest.(check int)
+          "build exit" 65
+          (Emo_cli.build_file ~entry
+             ~output:(Filename.concat dir "my-app")
+             ~specialize:false ~cclibs:[] ~target:"beam");
+        Alcotest.(check bool)
+          "nothing was written" false
+          (Sys.file_exists (Filename.concat dir "my-app.core")));
+  ]
 
 let root_end_tests =
   [
@@ -2273,7 +2314,9 @@ let foreign_refusal_tests =
             | Some _ -> ())
           [
             ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
-            ("beam", fun p -> ignore (Emo_codegen.Beam.emit p));
+            ( "beam",
+              fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
+            );
             ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
             ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
           ]);
@@ -2290,7 +2333,9 @@ let foreign_refusal_tests =
                   && contains message "foreign def"))
           [
             ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
-            ("beam", fun p -> ignore (Emo_codegen.Beam.emit p));
+            ( "beam",
+              fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
+            );
           ]);
     tc "the c and ocaml targets still build the same program" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
@@ -2551,6 +2596,7 @@ let () =
       ("errors_examples", errors_examples_tests);
       ("wasm_examples", wasm_examples_tests);
       ("beam_examples", beam_examples_tests);
+      ("beam_naming", beam_naming_tests);
       ("c_examples", c_examples_tests);
       ("root_end", root_end_tests);
       ("c_integer", c_integer_tests);

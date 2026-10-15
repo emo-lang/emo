@@ -764,7 +764,9 @@ module Registry = struct
       let path = Filename.concat pkg_dir rel in
       let dir = Filename.dirname path in
       if not (Sys.file_exists dir) then
-        ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+        ignore
+          (Emo_tool.run_or_warn ~what:"emo deps"
+             ("mkdir -p " ^ Filename.quote dir));
       let oc = open_out_bin path in
       output_string oc content;
       close_out oc

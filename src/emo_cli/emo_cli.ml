@@ -48,6 +48,11 @@ let render_errors ~(color : bool) ~(error_limit : int)
 (* Raised when compiling the generated FFI wrappers with cc fails. *)
 exception Stub_cc_failed
 
+(* Raised when the build directory cannot be created. Every arm of the
+   build needs it, so the failure is named once here rather than
+   surfacing as a write error from whichever step reached it first. *)
+exception Build_dir_failed of string
+
 (* Runs one file through the project pipeline: discover the module tree,
    check every module, then evaluate. Exit codes: 0 success, 1 uncaught
    exception, 65 lex/parse/check, 66 unreadable input, 70 evaluation. *)
@@ -136,20 +141,34 @@ let find_ocamlfind () : string =
    only the target's toolchain (step 25). `emo build --target ocaml`
    refuses on this with the fix named, and `emo doctor` reports it per
    target. *)
+(* Probes answer in milliseconds or not at all, so they get a short
+   deadline — and a probe that hangs answers no better than one that
+   fails: the tool is reported as missing or broken rather than left
+   holding the command. Everything the toolchain actually runs goes
+   through [Emo_tool.run_status] with its own, much longer, deadline. *)
+
+let probe_ok ?(timeout = Emo_tool.probe_deadline) (cmd : string) : bool =
+  match Emo_tool.run_status ~timeout cmd with
+  | 0 -> true
+  | _ -> false
+  | exception Emo_tool.Timeout _ -> false
+
+let probe_first_line ?(timeout = Emo_tool.probe_deadline) (cmd : string) :
+    string =
+  match Emo_tool.probe ~timeout cmd with
+  | line, Unix.WEXITED 0 -> line
+  | _ -> ""
+  | exception Emo_tool.Timeout _ -> ""
+
 let tool_exists (name : string) : bool =
-  let cmd = Printf.sprintf "command -v %s" (Filename.quote name) in
-  let ic = Unix.open_process_in cmd in
-  let line = try input_line ic with End_of_file -> "" in
-  ignore (Unix.close_process_in ic);
-  line <> ""
+  probe_first_line (Printf.sprintf "command -v %s" (Filename.quote name)) <> ""
 
 let ocaml_target_ok () : bool =
   let found = find_ocamlfind () in
   (if found = "ocamlfind" then tool_exists "ocamlfind" else true)
-  && Sys.command
+  && probe_ok
        (Printf.sprintf "%s query unix ssl >/dev/null 2>&1"
           (Filename.quote found))
-     = 0
 
 (* The build command: entry file → artifact at [-o] (default: the
    entry's stem in the current directory). The target picks the
@@ -178,10 +197,12 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
           Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path; packages }
         in
         let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
-        if not (Sys.file_exists build_dir) then
-          ignore
-            (Sys.command
-               (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir)));
+        if
+          (not (Sys.file_exists build_dir))
+          && Emo_tool.run_status
+               (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir))
+             <> 0
+        then raise (Build_dir_failed build_dir);
         match target with
         | "wasm" ->
             let module_ = Emo_codegen.Wasm.assemble program in
@@ -200,31 +221,47 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             Printf.printf "built %s\n" out;
             0
         | "beam" ->
-            (* the .core file stem is the BEAM module atom: always
-               emo_main, next to the requested output *)
-            let core = Emo_codegen.Beam.emit program in
-            let out =
-              Filename.concat (Filename.dirname output) "emo_main.core"
-            in
-            let oc = open_out_bin out in
-            output_string oc core;
-            close_out oc;
-            let beam = Filename.remove_extension out ^ ".beam" in
-            (* erlc writes beside the source only with -o; without it the
-               .beam lands in the caller's working directory, wherever
-               that is *)
-            let rc =
-              Sys.command
-                (Printf.sprintf "erlc -o %s %s"
-                   (Filename.quote (Filename.dirname out))
-                   (Filename.quote out))
-            in
-            if rc <> 0 then (
-              prerr_endline (Printf.sprintf "emo build: erlc failed on %s" out);
-              70)
-            else (
-              Printf.printf "built %s\n" beam;
-              0)
+            (* erlc requires the module atom to equal the .core file's
+               stem (plan/step-18-beam.md), so the module is named after
+               the requested output and both the file and the atom come
+               from that one name. A stem that is not an atom is refused
+               here, where the rule can still be explained. *)
+            let stem = Filename.remove_extension (Filename.basename output) in
+            if not (Emo_codegen.Beam.valid_module_name stem) then begin
+              prerr_endline
+                (Printf.sprintf
+                   "emo build: `%s` is not a usable BEAM module name — the \
+                    module is named after the output file, and a BEAM module \
+                    name is a lower-case letter followed by letters, digits, \
+                    `_` or `@`"
+                   stem);
+              65
+            end
+            else
+              let core = Emo_codegen.Beam.emit ~module_name:stem program in
+              let out =
+                Filename.concat (Filename.dirname output) (stem ^ ".core")
+              in
+              let oc = open_out_bin out in
+              output_string oc core;
+              close_out oc;
+              let beam = Filename.remove_extension out ^ ".beam" in
+              (* erlc writes beside the source only with -o; without it the
+                 .beam lands in the caller's working directory, wherever
+                 that is *)
+              let rc =
+                Emo_tool.run_status
+                  (Printf.sprintf "erlc -o %s %s"
+                     (Filename.quote (Filename.dirname out))
+                     (Filename.quote out))
+              in
+              if rc <> 0 then (
+                prerr_endline
+                  (Printf.sprintf "emo build: erlc failed on %s" out);
+                70)
+              else (
+                Printf.printf "built %s\n" beam;
+                0)
         | "typescript" ->
             (* The prelude rides the compiler as generated data; the
                arm never touches the filesystem for it (step 25). *)
@@ -241,7 +278,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             in
             if Sys.file_exists cache_file then begin
               ignore
-                (Sys.command
+                (Emo_tool.run_or_warn ~what:"emo build"
                    (Printf.sprintf "cp %s %s"
                       (Filename.quote cache_file)
                       (Filename.quote out)));
@@ -253,7 +290,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               output_string oc source;
               close_out oc;
               ignore
-                (Sys.command
+                (Emo_tool.run_or_warn ~what:"emo build"
                    (Printf.sprintf "cp %s %s"
                       (Filename.quote cache_file)
                       (Filename.quote out)));
@@ -306,7 +343,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
             if Sys.file_exists cache_binary then begin
               ignore
-                (Sys.command
+                (Emo_tool.run_or_warn ~what:"emo build"
                    (Printf.sprintf "cp %s %s"
                       (Filename.quote cache_binary)
                       (Filename.quote output)));
@@ -346,7 +383,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                   (Filename.quote build_dir) (Filename.quote main_c)
                   (Filename.quote runtime_c) cclib_flags (Filename.quote output)
               in
-              let exit_code = Sys.command cmd in
+              let exit_code = Emo_tool.run_status cmd in
               if exit_code <> 0 then begin
                 prerr_endline
                   (Printf.sprintf "emo build: the C compiler failed (exit %d)"
@@ -355,7 +392,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               end
               else begin
                 ignore
-                  (Sys.command
+                  (Emo_tool.run_or_warn ~what:"emo build"
                      (Printf.sprintf "cp %s %s" (Filename.quote output)
                         (Filename.quote cache_binary)));
                 Printf.printf "built %s\n" output;
@@ -394,7 +431,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               in
               if Sys.file_exists cache_binary then begin
                 ignore
-                  (Sys.command
+                  (Emo_tool.run_or_warn ~what:"emo build"
                      (Printf.sprintf "cp %s %s"
                         (Filename.quote cache_binary)
                         (Filename.quote output)));
@@ -442,7 +479,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                         (Filename.quote stdlib_dir)
                         (Filename.quote c_path) (Filename.quote obj_path)
                     in
-                    if Sys.command cc_cmd <> 0 then raise Stub_cc_failed;
+                    if Emo_tool.run_status cc_cmd <> 0 then raise Stub_cc_failed;
                     Printf.sprintf " %s" (Filename.quote obj_path)
                   end
                 in
@@ -475,9 +512,10 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                     (Filename.quote ml_path) cclib_flags stub_obj
                     (Filename.quote output)
                 in
-                let exit_code = Sys.command compile_runtime in
+                let exit_code = Emo_tool.run_status compile_runtime in
                 let exit_code =
-                  if exit_code <> 0 then exit_code else Sys.command link_cmd
+                  if exit_code <> 0 then exit_code
+                  else Emo_tool.run_status link_cmd
                 in
                 if exit_code <> 0 then begin
                   prerr_endline
@@ -488,7 +526,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                 end
                 else begin
                   ignore
-                    (Sys.command
+                    (Emo_tool.run_or_warn ~what:"emo build"
                        (Printf.sprintf "cp %s %s" (Filename.quote output)
                           (Filename.quote cache_binary)));
                   Printf.printf "built %s\n" output;
@@ -535,9 +573,10 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                     (Filename.quote ld_file) (Filename.quote obj_file)
                     (Filename.quote out)
                 in
-                let exit_code = Sys.command as_cmd in
+                let exit_code = Emo_tool.run_status as_cmd in
                 let exit_code =
-                  if exit_code <> 0 then exit_code else Sys.command ld_cmd
+                  if exit_code <> 0 then exit_code
+                  else Emo_tool.run_status ld_cmd
                 in
                 if exit_code <> 0 then begin
                   prerr_endline
@@ -563,8 +602,20 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
       | Emo_project.Static_errors diagnostics ->
           render_errors ~color:false ~error_limit:20 diagnostics;
           65
+      | Emo_tool.Timeout { command; timeout } ->
+          (* One handler covers every toolchain step below: a build that
+             stopped because a tool stopped answering is an external
+             command failing, which is what 70 already means here. *)
+          prerr_endline
+            (Printf.sprintf
+               "emo build: %s did not finish within %.0fs and was killed"
+               command timeout);
+          70
       | Stub_cc_failed ->
           prerr_endline "emo build: the C stub compilation failed";
+          70
+      | Build_dir_failed dir ->
+          prerr_endline (Printf.sprintf "emo build: cannot create %s" dir);
           70
       | Emo_lexer.Error diagnostic ->
           render_errors ~color:false ~error_limit:20 [ diagnostic ];
@@ -664,10 +715,15 @@ let run =
     match target with
     | Some "riscv64" ->
         let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
-        if not (Sys.file_exists build_dir) then
-          ignore
-            (Sys.command
-               (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir)));
+        if
+          (not (Sys.file_exists build_dir))
+          && Emo_tool.run_status
+               (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir))
+             <> 0
+        then begin
+          prerr_endline (Printf.sprintf "emo run: cannot create %s" build_dir);
+          exit 70
+        end;
         let elf = Filename.concat build_dir "emo_run.elf" in
         let code =
           build_file ~entry:file ~output:elf ~specialize:false ~cclibs:[]
@@ -680,6 +736,8 @@ let run =
           exit 69
         end
         else
+          (* The program itself: how long it runs is the program's
+             business, so this wait has no deadline. *)
           exit
             (Sys.command
                (Printf.sprintf
@@ -1806,14 +1864,14 @@ let publish_cmd =
    rather than a raw toolchain error. *)
 
 let tool_version (name : string) : string =
-  let ic = Unix.open_process_in (name ^ " --version 2>/dev/null") in
-  let line = try input_line ic with End_of_file -> "" in
-  let status = Unix.close_process_in ic in
-  match status with
-  | WEXITED 0 when line <> "" -> " (" ^ String.trim line ^ ")"
-  | _ -> ""
+  match probe_first_line (name ^ " --version 2>/dev/null") with
+  | "" -> ""
+  | line -> " (" ^ line ^ ")"
 
-(* The c target's check: cc exists, compiles, and the result runs. *)
+(* The c target's check: cc exists, compiles, and the result runs. Every
+   step here is a probe — a smoke program is not a build — so a cc that
+   hangs is reported broken instead of holding `emo doctor` for the
+   length of a build deadline. *)
 let cc_smoke () : (unit, string) result =
   if not (tool_exists "cc") then Error "cc not found on PATH"
   else
@@ -1830,21 +1888,22 @@ let cc_smoke () : (unit, string) result =
       "#include <stdio.h>\nint main(void) { puts(\"emo\"); return 0; }\n";
     close_out oc;
     let compile =
-      Sys.command
-        (Printf.sprintf "cc -o %s %s" (Filename.quote bin) (Filename.quote c))
+      match
+        Emo_tool.run_status ~timeout:Emo_tool.probe_deadline
+          (Printf.sprintf "cc -o %s %s" (Filename.quote bin) (Filename.quote c))
+      with
+      | 0 -> true
+      | _ -> false
+      | exception Emo_tool.Timeout _ -> false
     in
-    if compile <> 0 then begin
+    if not compile then begin
       remove_tree dir;
       Error "cc failed to compile a smoke program"
     end
     else begin
-      let ic = Unix.open_process_in (Filename.quote bin) in
-      let out = try input_line ic with End_of_file -> "" in
-      let status = Unix.close_process_in ic in
+      let out = probe_first_line (Filename.quote bin) in
       remove_tree dir;
-      match status with
-      | WEXITED 0 when out = "emo" -> Ok ()
-      | _ -> Error "the cc smoke binary did not run"
+      if out = "emo" then Ok () else Error "the cc smoke binary did not run"
     end
 
 (* The ocaml target's check: ocamlfind with the unix and ssl packages
@@ -2380,4 +2439,15 @@ let cmd =
       version_cmd;
     ]
 
-let main () = exit (Cmd.eval' cmd)
+(* A wait that ran out of time outside `emo build` — a package command,
+   say — still has to name the command that hung and leave on the same
+   code an external command's failure does, rather than print a
+   backtrace. *)
+let main () =
+  match Cmd.eval' cmd with
+  | code -> exit code
+  | exception Emo_tool.Timeout { command; timeout } ->
+      prerr_endline
+        (Printf.sprintf "emo: %s did not finish within %.0fs and was killed"
+           command timeout);
+      exit 70

@@ -1,6 +1,13 @@
 (library
  (name emo_pkg)
- (libraries digestif emo_support emo_lexer emo_ast emo_parser emo_eval))
+ (libraries
+  digestif
+  emo_support
+  emo_tool
+  emo_lexer
+  emo_ast
+  emo_parser
+  emo_eval))
 
 ; The standard library rides the compiler as generated data (T24.2) —
 ; the same route as the C runtime — so a lone emo binary resolves

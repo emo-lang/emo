@@ -1,0 +1,3 @@
+(library
+ (name emo_tool)
+ (libraries unix))

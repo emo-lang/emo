@@ -1,0 +1,9 @@
+(executable
+ (name emo_tool_test)
+ (modules emo_tool_test)
+ (libraries alcotest unix emo_tool))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{exe:emo_tool_test.exe})))

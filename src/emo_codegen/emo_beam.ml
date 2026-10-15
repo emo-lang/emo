@@ -8,6 +8,9 @@
 
 type env = {
   buf : Buffer.t;
+  module_name : string;
+      (* The module atom, which erlc requires to equal the .core file's
+         stem; the CLI derives it from the requested output *)
   loops_buf : Buffer.t;
       (* loop functions, emitted at module scope after main: a loop is
          a tail-recursive local function, discovered while bodies emit *)
@@ -143,7 +146,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       match List.assoc_opt name env.funcs with
       | Some a ->
           put env
-            (Printf.sprintf "fun 'emo_main':'%s'/%d"
+            (Printf.sprintf "fun '%s':'%s'/%d" env.module_name
                (Emo_ir.sanitize_ident name)
                a)
       | None -> failwith ("beam: unbound global " ^ name))
@@ -3262,14 +3265,40 @@ let rt_source =
 (* ---- Module assembly ----
 
    One BEAM module per program (the wasm target's single-artifact
-   design): every def lands in 'emo_main' under its mangled name, and
-   'main'/0 runs the entry statements. *)
+   design): every def lands in the module named by [module_name] under
+   its mangled name, and 'main'/0 runs the entry statements.
 
-let emit (program : Emo_ir.program) : string =
+   The name is a required argument rather than a constant because erlc
+   requires the module atom to equal the .core file's stem
+   (plan/step-18-beam.md), and the file is the caller's `-o` to choose. *)
+
+(* Whether [name] can be a module atom. Quoted atoms would admit any
+   string, but the stem has to be a file name too, and erlc loads a
+   module by matching the two — so a name outside this set is refused
+   where it can still be explained, not assembled into a .core that
+   cannot be loaded. *)
+let valid_module_name (name : string) : bool =
+  let start c = c >= 'a' && c <= 'z' in
+  let rest c =
+    start c
+    || (c >= 'A' && c <= 'Z')
+    || (c >= '0' && c <= '9')
+    || c = '_' || c = '@'
+  in
+  String.length name > 0 && start name.[0] && String.for_all rest name
+
+let emit ~(module_name : string) (program : Emo_ir.program) : string =
+  if not (valid_module_name module_name) then
+    invalid_arg
+      (Printf.sprintf
+         "beam: `%s` is not a BEAM module name — a lower-case letter followed \
+          by letters, digits, `_` or `@`"
+         module_name);
   let buf = Buffer.create (16 * 1024) in
   let env =
     {
       buf;
+      module_name;
       loops_buf = Buffer.create 1024;
       fresh = 0;
       local_map = [];
@@ -3328,7 +3357,7 @@ let emit (program : Emo_ir.program) : string =
                 | None -> 0 );
             ])
         program.Emo_ir.pclasses;
-  put env "module 'emo_main' ['main'/0]\n";
+  put env (Printf.sprintf "module '%s' ['main'/0]\n" module_name);
   put env "    attributes []\n";
   put env rt_source;
   (* a def emitter shared by program functions and class methods *)

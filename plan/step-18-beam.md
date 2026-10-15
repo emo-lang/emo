@@ -12,7 +12,10 @@ that shares it natively.
 ## Probed facts (OTP 29, erts 17.1 — the pinned assembler)
 
 - Module form: `module 'name' [exports]` + `attributes []`, defs
-  `'f'/A = fun ...`, final `end`. File stem must match the module atom.
+  `'f'/A = fun ...`, final `end`. File stem must match the module atom —
+  so the module is named after `-o`, and a stem outside the unquoted-atom
+  form (a lower-case letter, then letters, digits, `_` or `@`) is
+  refused rather than assembled into a `.core` erlc cannot load.
 - **Every atom is quoted.**
 - `do` sequences exactly two expressions — no comma, no `end`; nesting
   carries the rest.

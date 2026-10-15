@@ -509,20 +509,40 @@ let read_channel ic =
   (try loop () with End_of_file -> ());
   Buffer.contents buf
 
-let run_emo (state : state) ~(cwd : string) (args : string list) : int * string
-    =
+(* Re-running the CLI for a package command.
+
+   [bounded] marks the commands that are the toolchain working — `deps`,
+   `check`, `build` — and so carry the build deadline. `emo run` executes
+   the user's program, which may legitimately run forever, so it keeps an
+   unbounded wait — and with it the inherited stdin that a program is
+   entitled to, which the deadline's /dev/null would take away.
+
+   Exit codes: the child's own, 128+n when a signal took it, 127 when it
+   could not be run at all (the shell's convention), and 124 when the
+   deadline killed it (what timeout(1) reports). *)
+let run_emo (state : state) ~(cwd : string) ~(bounded : bool)
+    (args : string list) : int * string =
   let cmd =
     Printf.sprintf "cd %s && exec %s %s 2>&1" (Filename.quote cwd)
       (Filename.quote state.emo_path)
       (String.concat " " (List.map Filename.quote args))
   in
-  try
-    let ic = Unix.open_process_in cmd in
-    let output = read_channel ic in
-    match Unix.close_process_in ic with
-    | Unix.WEXITED code -> (code, output)
-    | Unix.WSIGNALED n | Unix.WSTOPPED n -> (128 + n, output)
-  with e -> (127, Printexc.to_string e)
+  if not bounded then
+    try
+      let ic = Unix.open_process_in cmd in
+      let output = read_channel ic in
+      match Unix.close_process_in ic with
+      | Unix.WEXITED code -> (code, output)
+      | Unix.WSIGNALED n | Unix.WSTOPPED n -> (128 + n, output)
+    with e -> (127, Printexc.to_string e)
+  else
+    match Emo_tool.run_capture cmd with
+    | output, status -> (Emo_tool.exit_code status, output)
+    | exception Emo_tool.Timeout { timeout; _ } ->
+        ( 124,
+          Printf.sprintf
+            "the command did not finish within %.0fs and was killed" timeout )
+    | exception e -> (127, Printexc.to_string e)
 
 (* ---- Package info --------------------------------------------------- *)
 
@@ -996,20 +1016,24 @@ let handle_execute_command (state : state) (params : Yojson.Safe.t) :
   in
   match command with
   | "emo.deps.resolve" ->
-      let code, output = run_emo state ~cwd:root [ "deps"; "resolve" ] in
+      let code, output =
+        run_emo state ~cwd:root ~bounded:true [ "deps"; "resolve" ]
+      in
       Ix.invalidate ~root ();
       result code output
   | "emo.deps.update" -> (
       match args with
       | name :: _ ->
           let code, output =
-            run_emo state ~cwd:root [ "deps"; "update"; name ]
+            run_emo state ~cwd:root ~bounded:true [ "deps"; "update"; name ]
           in
           Ix.invalidate ~root ();
           result code output
       | [] -> result 1 "emo.deps.update needs a package name")
   | "emo.deps.list" ->
-      let code, output = run_emo state ~cwd:root [ "deps"; "list" ] in
+      let code, output =
+        run_emo state ~cwd:root ~bounded:true [ "deps"; "list" ]
+      in
       result code output
   | "emo.package.init" ->
       let path = Filename.concat root "package.emo" in
@@ -1059,7 +1083,9 @@ let handle_execute_command (state : state) (params : Yojson.Safe.t) :
       match args with
       | file :: _ ->
           let sub = String.sub command 4 (String.length command - 4) in
-          let code, output = run_emo state ~cwd:root [ sub; file ] in
+          let code, output =
+            run_emo state ~cwd:root ~bounded:(sub <> "run") [ sub; file ]
+          in
           result code output
       | [] -> result 1 (command ^ " needs a file path"))
   | other -> result 1 ("unknown command: " ^ other)
