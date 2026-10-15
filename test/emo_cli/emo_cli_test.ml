@@ -318,6 +318,12 @@ let beam_goldens =
 let erl_available =
   lazy (Sys.command "erl -noshell -eval 'halt().' >/dev/null 2>&1" = 0)
 
+(* The build path needs the compiler, not just the runtime: `emo build
+   --target beam` assembles its Core Erlang with `erlc`, so a test that
+   builds for beam has to skip where `erlc` is absent rather than fail. *)
+let erlc_available =
+  lazy (Sys.command "erlc -v >/dev/null 2>&1" = 0)
+
 let beam_examples_tests =
   List.map
     (fun name ->
@@ -2479,7 +2485,10 @@ let emoji_tests =
     tc "emoji build honors every target the manifest declares" (fun () ->
         (* The engine picks the output's stem, and the stem names the BEAM
            module — so the gate has to build under a name a module can
-           carry, on all five targets, not the two the scaffold declares. *)
+           carry, on all five targets, not the two the scaffold declares.
+           The beam half of that needs `erlc`, which the scaffold's two
+           targets never did. *)
+        if not (Lazy.force erlc_available) then Alcotest.skip ();
         let dir = Filename.concat scratch "emoji-targets" in
         if Sys.file_exists dir then Emo_cli.remove_tree dir;
         Unix.mkdir dir 0o755;
