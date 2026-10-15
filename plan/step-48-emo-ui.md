@@ -8,8 +8,11 @@ and design direction), `docs/emo-ui-check.md` (the gate checklist),
 `spike/components` (the two-platform component spike),
 `spike/emo-ui-probe` (the language probes) · **Status:** in progress —
 the layout is settled, T48.1's two codegen defects have landed, and the
-portable `ui` core itself is done (`projects/emo-ui/`); T48.2 onward are
-not started.
+portable `ui` core (T48.1) and the Elm loop with its tests (T48.2) have
+landed in `projects/emo-ui/`; T48.3 onward are not started. T48.2 turned
+up the first language-side gap this step has hit: the loop's shape — the
+application's `update` and `view` arriving as `Block` values — is what
+`c` and `wasm` cannot compile yet (`CHECK.md`, the Elm loop's shape).
 
 ## Why this step exists
 
@@ -177,10 +180,34 @@ placement; `docs/emo-ui.md`, ask 7).
       `emoji-<target>`, which the `beam` target refuses as a module
       name, so no package declaring all five targets could pass the
       pre-publish gate.
-- [ ] **T48.2** — The Elm loop: `App` (model/`update`/`view`), the
+- [x] **T48.2** — The Elm loop: `App` (model/`update`/`view`), the
       `ui.on(msg)` tag registry and `ui.dispatch(tag)`, and
       `ui.run(view, update, model, backend)`. Tests for the tag
-      round-trip and a retained `patch` versus a full rebuild.
+      round-trip and a retained `patch` versus a full rebuild. **Landed
+      2026-10-15** in `projects/emo-ui/ui.emo` (the loop) and
+      `projects/emo-ui/test.emo` (fourteen assertions: the tag round-trip
+      on `Registry.on`/`dispatch`, one mount and one patch per delivered
+      event on a retained backend, and the same trees out of a
+      full-rebuild one), both run by `./check.sh`. Two deviations from
+      `docs/emo-ui.md`'s Layer 5 text, both forced and both now the
+      document's: the tag table is a `Registry` object the loop owns and
+      hands to `view`, not a module-level `ui.on(msg)` table — a
+      module-level `const` is a thunk that re-runs its initializer on
+      every read on the compiled targets, and a module-level `var` is
+      `ocaml`-only (`CHECK.md`, module-level bindings) — and `view`
+      accordingly takes `(registry, model)`. The loop reaches the hosted
+      targets unevenly, and the unevenness is its spelling rather than
+      its structure: `ocaml`, `typescript` and `beam` compile the whole
+      package, while `c` refuses the bare defs `ui.run` takes (`Global`)
+      and `wasm` refuses the two-argument dynamic call `update` needs
+      (`only one-parameter closures`). `probe/def_shape` and
+      `probe/handler_shape` are the minimal pair that pins it: the same
+      loop with its two functions behind a `Handler` interface builds on
+      all five targets and prints what `emo run` prints on `c` and
+      `ocaml` (`CHECK.md`, the Elm loop's shape). The decision those two
+      probes hand back — grow `c` and `wasm`, or move the application's
+      functions behind an interface (which revises Layer 5) — wants
+      settling before T48.4 onward build backends on the loop.
 - [ ] **T48.3** — The headless `debug` backend: renders the tree to a
       stable text form, the byte-identical golden harness the core and
       the other backends share.

@@ -1,0 +1,53 @@
+// The same loop with the application's two functions behind an
+// interface: no `Block`-valued function anywhere, the loop reaches the
+// application by ordinary interface dispatch, and every hosted target
+// compiles it. The application's own signatures stay typed — `update`
+// narrows its model with `is()` exactly as a backend narrows a node.
+//
+//   emo build main.emo --target <t>    -> builds, for all five targets
+//   emo run main.emo                   -> count 1
+
+interface Handler {
+  def view(m Block) String
+  def update(msg Block, m Block) Block
+}
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+
+  def with_count(c Int64) Model {
+    return Model.new(count: c)
+  }
+}
+
+class Counter {
+  def view(m Block) String {
+    if m.is(Model) {
+      return "count ${m.count()}"
+    }
+    raise Exception.new(message: "view: not a Model")
+  }
+
+  def update(msg Block, m Block) Block {
+    if m.is(Model) {
+      return m.with_count(m.count() + 1)
+    }
+    raise Exception.new(message: "update: not a Model")
+  }
+}
+
+def drive(h Handler, m Block) String {
+  return h.view(h.update(1, m))
+}
+
+def main() {
+  println(drive(Counter.new(), Model.new(0)))
+}
+
+main()

@@ -1,8 +1,8 @@
 // The portable ui core: the node spine, the eight portable primitives,
-// the typed Style with its layout vocabulary, and the Backend interface.
-// Pure Emo — no platform, no FFI, no target-specific code — so one tree
-// type is what every component returns and every backend consumes
-// (docs/emo-ui.md, Layers 0, 3, 4 and 6).
+// the typed Style with its layout vocabulary, the Elm loop with its event
+// tags, and the Backend interface. Pure Emo — no platform, no FFI, no
+// target-specific code — so one tree type is what every component returns
+// and every backend consumes (docs/emo-ui.md, Layers 0, 3, 4, 5 and 6).
 //
 // Children are an explicit `Array[Node]` (docs/emo-ui.md, decision 3): a
 // tree is nested calls, and a list that is not known until it is walked
@@ -283,13 +283,133 @@ def spacer(style Style) Node {
   return Spacer.new(style: style)
 }
 
+// ---- The Elm loop (docs/emo-ui.md, Layer 5) ----
+//
+// A model, a pure `update`, a pure `view`, and a backend that delivers
+// event tags. This is the only place the core holds mutable state — the
+// model, the tree it last rendered, and the tag table — and all three
+// live in `Box`es, because `init` is a class's only window for assigning
+// a field (docs/intro/syntax.md), so anything that changes afterwards is
+// a `Box`.
+//
+// `view`, `update` and the initial model arrive as `Block`, the
+// language's spelling for the unknown tier, because an application's
+// types cannot be named here. Typing resumes at the application's own
+// signatures; the entry module's wiring is the unchecked callback
+// boundary docs/emo-ui.md records under "A worked shape".
+
+// The event sink. A backend delivers an event by calling `deliver(tag)`,
+// which is the whole of what it knows about the application — one
+// integer per event. A single-method interface is the callback type the
+// C→Emo callback contract names (CHECK.md), so a native shim reaches the
+// sink through its trampoline exactly as it reaches any other callback.
+interface Events {
+  def deliver(tag Int64) Void
+}
+
+// The tag table: a tag is the index of the message it stands for, and
+// `on` hands back the tag a message already has. Stability is the point
+// of the dedup — a tree is rebuilt on every event, and a backend that saw
+// a new integer for the same button each render would see a new widget
+// each render. The table is `Block`-valued because the core cannot name
+// an application's message type: this is the loop's one untyped slot, and
+// it is the FFI seam decision 6 puts the boundary at.
+//
+// The corollary is the table's limit: a message that carries a value is a
+// distinct message per value, so a message built from a changing string
+// (a text field's own contents) allocates a tag per render.
+//
+// The table is an object the loop owns and hands to `view`, not a
+// module-level binding — a module-level `const` lowers to a thunk that
+// re-runs its initializer on every read, so a table declared there would
+// be a fresh, empty one per read on every compiled target (`CHECK.md`,
+// module-level bindings). Owning it in the loop is also the shape that
+// matches the thing itself: the table belongs to one running loop, so two
+// loops in one process keep two tables instead of sharing one.
+class Registry {
+  def init() {
+    self.table = Box.new([])
+  }
+
+  def index_of(msg Block, i Int64) Int64 {
+    const reg = self.table.read()
+    if i >= reg.length() {
+      return -1
+    }
+    if reg[i] == msg {
+      return i
+    }
+    return self.index_of(msg, i + 1)
+  }
+
+  def on(msg Block) Int64 {
+    const reg = self.table.read()
+    const known = self.index_of(msg, 0)
+    if known >= 0 {
+      return known
+    }
+    self.table.replace(reg.append(msg))
+    return reg.length()
+  }
+
+  // An unregistered tag is a backend bug, not data: indexing the table
+  // raises, which is the language's answer for a broken contract.
+  def dispatch(tag Int64) Block {
+    return self.table.read()[tag]
+  }
+}
+
+class App {
+  def init(view Block, update Block, model Block, backend Backend) {
+    self.view_fn = Box.new(view)
+    self.update_fn = Box.new(update)
+    self.model = Box.new(model)
+    self.backend = backend
+    self.registry = Registry.new()
+    self.current = Box.new(view(self.registry, model))
+  }
+
+  // One event, start to finish: the tag becomes its message, the message
+  // becomes the next model, the model becomes the next tree, and the
+  // backend gets both trees. `patch` is handed the tree the backend last
+  // saw — what a retained backend diffs against, and what a full-rebuild
+  // one (a terminal repaint, a one-shot HTML render) ignores.
+  //
+  // The view and the update sit in `Box`es rather than in plain fields
+  // because `self.view(...)` reads as a method call wherever a class has
+  // no method of that name, and Emo cannot call a `Block` out of a field.
+  def deliver(tag Int64) Void {
+    const next = self.update_fn.read()(self.registry.dispatch(tag),
+      self.model.read())
+    self.model.replace(next)
+    const tree = self.view_fn.read()(self.registry, next)
+    self.backend.patch(self.current.read(), tree)
+    self.current.replace(tree)
+  }
+
+  def root() Node {
+    return self.current.read()
+  }
+}
+
+// The entry module's whole body (docs/emo-ui.md, "A worked shape"): the
+// application's three functions, its initial model, and the backend.
+// `view` takes the loop's `Registry` and then the model.
+def run(view Block, update Block, model Block, backend Backend) Void {
+  const app = App.new(view: view, update: update, model: model,
+    backend: backend)
+  backend.mount(app.root(), app)
+  backend.run()
+}
+
 // The backend seam is an Emo interface, not a C ABI: the nine-verb
 // `ui_*` contract the native spikes proved is an implementation detail
-// behind it (docs/emo-ui.md, Layer 6). `patch` is the growth edge — a
-// full rebuild is right for the terminal and SSR backends, a retained
-// patch for the native and DOM ones.
+// behind it (docs/emo-ui.md, Layer 6). `mount` hands the backend the
+// first tree and the sink it delivers events into; `patch` is the growth
+// edge — a full rebuild is right for the terminal and SSR backends, a
+// retained patch for the native and DOM ones.
 interface Backend {
-  def mount(root Node) Void
+  def mount(root Node, events Events) Void
   def patch(old Node, new Node) Void
   def run() Void
 }

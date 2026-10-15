@@ -1,0 +1,46 @@
+// The loop's landed shape, isolated: `ui.run` takes the application's
+// `update` and `view` as `Block` values, and the only expression that
+// produces one is a bare def name. That name is what the `c` target
+// refuses (`Global`), and what the `wasm` target refuses as soon as the
+// function takes more than one parameter.
+//
+//   emo build main.emo --target c      -> refused (Global)
+//   emo build main.emo --target wasm   -> refused (one-parameter closures)
+//   emo run main.emo                   -> count 1
+//
+// `handler_shape/` is the same loop with the two functions behind an
+// interface; every target compiles that one. The pair is what pins the
+// gap `projects/emo-ui/CHECK.md` records.
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+
+  def with_count(c Int64) Model {
+    return Model.new(count: c)
+  }
+}
+
+def update(msg Int64, m Model) Model {
+  return m.with_count(m.count() + msg)
+}
+
+def view(m Model) String {
+  return "count ${m.count()}"
+}
+
+def drive(view_fn Block, update_fn Block, m Block) String {
+  const next = update_fn(1, m)
+  return view_fn(next)
+}
+
+def main() {
+  println(drive(view, update, Model.new(0)))
+}
+
+main()

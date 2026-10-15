@@ -1595,10 +1595,20 @@ required.
       `emoji-<target>`, a stem the `beam` target refuses as a module
       name, so the pre-publish gate could not pass for any package
       declaring all five.
-- [ ] **T48.2** — The Elm loop: `App` (model/`update`/`view`), the
+- [x] **T48.2** — The Elm loop: `App` (model/`update`/`view`), the
       `ui.on(msg)` tag registry and `ui.dispatch(tag)`, and
       `ui.run(view, update, model, backend)`; tag round-trip tests and a
-      retained `patch` versus a full rebuild.
+      retained `patch` versus a full rebuild. **Landed 2026-10-15** as
+      `projects/emo-ui/ui.emo` plus its `test.emo` (fourteen assertions,
+      run by `./check.sh`). The tag table is a `Registry` object the loop
+      owns and hands to `view` rather than the module-level table Layer 5
+      sketched, because a module-level `const` re-runs its initializer on
+      every read on the compiled targets and a module-level `var` is
+      `ocaml`-only (`CHECK.md`). The loop compiles on `ocaml`,
+      `typescript` and `beam`; `c` refuses the bare defs `ui.run` takes
+      and `wasm` the two-argument dynamic call `update` needs — the same
+      loop with its two functions behind a `Handler` interface builds on
+      all five (`CHECK.md`, `projects/emo-ui/probe/`).
 - [ ] **T48.3** — The headless `debug` backend: the tree rendered to a
       stable text form, the byte-identical golden harness.
 - [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box

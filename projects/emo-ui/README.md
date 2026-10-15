@@ -38,18 +38,54 @@ Whether the array form later earns a literal spelling of its own is still open
 
 ## Status
 
-The portable **`ui` core** has landed (T48.1). `ui.emo` is the node spine — an
-`Node` interface plus the `Column`, `Row`, `Text`, `Button`, `TextInput`,
-`Image`, `Spacer` and `Scroll` classes with their positional lowercase
-constructors — the typed `Style` with its `style()` factory and `with_*` copies,
-the layout vocabulary (`Align`, and padding, gap, grow, width and height on the
-style), and the `Backend` interface (`mount`/`patch`/`run`). It is pure Emo,
-with no platform and no FFI, and it declares all five hosted targets; `./check.sh`
-is its gate.
+The portable **`ui` core** (T48.1) and the **Elm loop** (T48.2) have landed.
+`ui.emo` is the node spine — a `Node` interface plus the `Column`, `Row`, `Text`,
+`Button`, `TextInput`, `Image`, `Spacer` and `Scroll` classes with their
+positional lowercase constructors — the typed `Style` with its `style()` factory
+and `with_*` copies, the layout vocabulary (`Align`, and padding, gap, grow,
+width and height on the style), the `Backend` interface (`mount`/`patch`/`run`),
+and the loop: `App`, plus the `Registry` an event is tagged in. It is pure Emo,
+with no platform and no FFI, and it declares all five hosted targets.
 
-Still to come: the Elm loop (T48.2), the headless `debug` backend (T48.3), and
-one package per platform behind the browser runtime path (T48.4–T48.12). The
-design and its evidence:
+An application is a model, a pure `update`, a pure `view`, and a backend:
+
+```emo
+def update(msg Msg, m Model) Model { ... }
+
+def view(reg ui.Registry, m Model) ui.Node {
+  return ui.button("+", reg.on(Msg.inc), ui.style())
+}
+
+def main() {
+  ui.run(view, update, Model.new(0), backend)
+}
+```
+
+The tag table is the loop's own object, not the module-level `ui.on(msg)` table
+`docs/emo-ui.md`'s Layer 5 sketches: a module-level `const` re-runs its
+initializer on every read on the compiled targets, and a module-level `var` is
+`ocaml`-only, so a table kept there would hand every read a fresh, empty one
+(`CHECK.md`, module-level bindings). The table belongs to one running loop, and
+`view` is handed it.
+
+The loop compiles on `ocaml`, `typescript` and `beam`. It does not compile on
+`c` or `wasm` yet, and what stands in the way is its spelling rather than its
+structure: a bare def name is the only expression that yields the `Block` value
+`ui.run` takes, and `c` has no def-as-value (`Global`) while `wasm` refuses a
+dynamic call with more than one parameter. `probe/` holds that gap as a minimal
+pair — `def_shape/` is the landed shape and reaches both refusals,
+`handler_shape/` is the same loop with the application's two functions behind a
+`Handler` interface, and it builds on all five targets, printing what `emo run`
+prints on `c` and `ocaml` (`CHECK.md`, the Elm loop's shape). Which way to close
+it — grow the two targets, or move the application's functions behind an
+interface — is the open decision T48.4 onward waits on.
+
+`./check.sh` is the gate: the package type-checks, the loop's fourteen
+assertions run, and every target's build — and every refusal — is pinned there.
+
+Still to come: the headless `debug` backend (T48.3), and one package per
+platform behind the browser runtime path (T48.4–T48.12). The design and its
+evidence:
 
 - [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.

@@ -28,9 +28,29 @@ def inbox(users Array[User]) ui.Node {
 
 ## 状态
 
-可移植的 **`ui` 核心已经落地**(T48.1)。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)和 `Backend` 接口(`mount`/`patch`/`run`)。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标;`./check.sh` 是它的关口。
+可移植的 **`ui` 核心**(T48.1)与 **Elm 循环**(T48.2)都已落地。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
 
-接下来:Elm 循环(T48.2)、无头 `debug` 后端(T48.3),以及每平台一个包加浏览器运行时路径(T48.4–T48.12)。设计与证据:
+一个应用就是 model、纯 `update`、纯 `view` 加一个后端:
+
+```emo
+def update(msg Msg, m Model) Model { ... }
+
+def view(reg ui.Registry, m Model) ui.Node {
+  return ui.button("+", reg.on(Msg.inc), ui.style())
+}
+
+def main() {
+  ui.run(view, update, Model.new(0), backend)
+}
+```
+
+tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 草拟的模块级 `ui.on(msg)` 表:模块级 `const` 在编译目标上每次读取都会重跑初始化式,模块级 `var` 又只有 `ocaml` 支持,表放在那里等于每次读取都拿到一张新的空表(`CHECK.md`,模块级绑定)。这张表属于某一个正在跑的循环,由循环把它交给 `view`。
+
+循环在 `ocaml`、`typescript`、`beam` 上可编译;在 `c` 与 `wasm` 上还不行,而挡路的是它的拼写而不是它的结构:裸 def 名是唯一能产出 `ui.run` 所收 `Block` 值的表达式,而 `c` 没有 def 当值(`Global`),`wasm` 又拒绝参数多于一个的动态调用。`probe/` 把这个缺口做成一对最小对照——`def_shape/` 是已落地的写法,两个拒绝都能撞到;`handler_shape/` 把应用那两个函数放到 `Handler` 接口后面,是同一个循环,五个 target 全部可编译,在 `c` 与 `ocaml` 上打印出的结果与 `emo run` 一致(`CHECK.md`,Elm 循环的形状)。往哪边收口——把这两个 target 补起来,还是把应用的函数移到接口后面——是 T48.4 起要等的那个开放决定。
+
+`./check.sh` 是它的关口:包能通过类型检查、循环的十四条断言会跑,并且每个 target 的构建结果——以及每一次拒绝——都在里面钉死。
+
+接下来:无头 `debug` 后端(T48.3),以及每平台一个包加浏览器运行时路径(T48.4–T48.12)。设计与证据:
 
 - [`docs/zh-CN/emo-ui.md`](../../docs/zh-CN/emo-ui.md) —— 评估与设计方向。
 - [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md) —— 一棵树怎么写出来:子节点为什么是数组而不是块式写法。

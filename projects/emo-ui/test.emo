@@ -1,0 +1,244 @@
+// The core's own test: the tag round-trip and the retained patch
+// (T48.2). It is a module of the package, not a package of its own, so
+// `emo check ui.emo` checks it and `./check.sh` runs it.
+//
+//   emo run test.emo
+//
+// A failed assertion raises rather than printing a wrong report that
+// could be mistaken for the expected output, so the golden is the list
+// of checks and their `ok` lines.
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+def assert_same(want String, what String, got String) {
+  if want != got {
+    raise Exception.new(message: "expected [${want}], got [${got}]: ${what}")
+  }
+  check(true, what)
+}
+
+// ---- The application the loop drives -------------------------------
+//
+// A counter, written the way docs/emo-ui.md's Layer 5 example is: the
+// model is a value, `update` is pure and returns the next one, `view` is
+// pure and returns the tree. Nothing here names a platform, and nothing
+// here names the loop beyond `ui.on`.
+
+enum Msg { inc, dec }
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+
+  def with_count(c Int64) Model {
+    return Model.new(count: c)
+  }
+}
+
+def update(msg Msg, m Model) Model {
+  case msg {
+    Msg.inc -> { return m.with_count(m.count() + 1) }
+    Msg.dec -> { return m.with_count(m.count() - 1) }
+  }
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  return ui.column([
+    ui.text("count ${m.count()}", ui.style()),
+    ui.button("+", reg.on(Msg.inc), ui.style()),
+    ui.button("-", reg.on(Msg.dec), ui.style())
+  ], ui.style())
+}
+
+// ---- Reading a tree without a renderer ------------------------------
+//
+// T48.3's `debug` backend is what turns a tree into a stable text form;
+// until it lands these two walks are how this file says what a tree
+// holds. They are a backend's dispatch in miniature, narrowing with
+// `is()` exactly as one does.
+
+def label(node ui.Node) String {
+  if node.is(ui.Text) {
+    return node.body()
+  }
+  return label_from(node.children(), 0)
+}
+
+def label_from(kids Array[ui.Node], i Int64) String {
+  if i >= kids.length() {
+    return ""
+  }
+  const found = label(kids[i])
+  if found != "" {
+    return found
+  }
+  return label_from(kids, i + 1)
+}
+
+def tag_of(node ui.Node, which String) Int64 {
+  if node.is(ui.Button) {
+    if node.label() == which {
+      return node.event()
+    }
+    return -1
+  }
+  return tag_of_from(node.children(), which, 0)
+}
+
+def tag_of_from(kids Array[ui.Node], which String, i Int64) Int64 {
+  if i >= kids.length() {
+    return -1
+  }
+  const found = tag_of(kids[i], which)
+  if found >= 0 {
+    return found
+  }
+  return tag_of_from(kids, which, i + 1)
+}
+
+// ---- The two backends the retained/full-rebuild comparison needs -----
+//
+// Both are handed the same calls. `Recorder` is the retained one: it
+// takes `patch`'s `old` and keeps the chain, which is what a toolkit that
+// must not lose focus, selection, or scroll position diffs against.
+// `Rebuild` throws `old` away and repaints from `new`, which is all a
+// terminal or a one-shot HTML render ever needs. The test asserts both
+// show the same thing, because one loop has to serve both.
+//
+// The script says "click the button labelled so", and each tag is read
+// off the tree the backend currently holds — never out of the registry.
+// The round trip under test is `view` -> node -> backend -> `dispatch`
+// -> `update`, and reading the tag here is what puts the first half of it
+// in the path.
+
+def script() Array[String] {
+  return ["+", "+", "-"]
+}
+
+def click_all(e ui.Events, tree Box, labels Array[String], i Int64) {
+  if i < labels.length() {
+    e.deliver(tag_of(tree.read(), labels[i]))
+    click_all(e, tree, labels, i + 1)
+  }
+}
+
+class Recorder {
+  def init() {
+    self.mounts = Box.new(0)
+    self.patches = Box.new([])
+    self.events = Box.new(0)
+    self.tree = Box.new(ui.text("", ui.style()))
+  }
+
+  def mount(root ui.Node, events ui.Events) {
+    self.mounts.replace(self.mounts.read() + 1)
+    self.events.replace(events)
+    self.tree.replace(root)
+  }
+
+  def patch(old ui.Node, next ui.Node) {
+    self.patches.replace(self.patches.read().append((old, next)))
+    self.tree.replace(next)
+  }
+
+  def run() {
+    click_all(self.events.read(), self.tree, script(), 0)
+  }
+}
+
+class Rebuild {
+  def init() {
+    self.mounts = Box.new(0)
+    self.painted = Box.new([])
+    self.events = Box.new(0)
+    self.tree = Box.new(ui.text("", ui.style()))
+  }
+
+  def mount(root ui.Node, events ui.Events) {
+    self.mounts.replace(self.mounts.read() + 1)
+    self.events.replace(events)
+    self.tree.replace(root)
+    self.painted.replace(self.painted.read().append(label(root)))
+  }
+
+  def patch(old ui.Node, next ui.Node) {
+    self.tree.replace(next)
+    self.painted.replace(self.painted.read().append(label(next)))
+  }
+
+  def run() {
+    click_all(self.events.read(), self.tree, script(), 0)
+  }
+}
+
+// ---- The tag round-trip ---------------------------------------------
+//
+// Every piece of state here is a local, never a module-level binding: a
+// module-level `const` re-runs its initializer on each read on the
+// compiled targets (`CHECK.md`, module-level bindings), which would hand
+// each of these its own table, its own backend, and its own tags.
+
+def tag_checks() {
+  const reg = ui.Registry.new()
+  const inc = reg.on(Msg.inc)
+  const dec = reg.on(Msg.dec)
+
+  check(inc != dec, "two messages get two tags")
+  check(reg.on(Msg.inc) == inc, "a message keeps the tag it was first given")
+  check(reg.dispatch(inc) == Msg.inc, "dispatch resolves a tag to its message")
+  check(reg.dispatch(dec) == Msg.dec,
+    "and the other tag to the other message")
+
+  const tree = view(reg, Model.new(7))
+  check(tag_of(tree, "+") == inc,
+    "the tree carries the tag `on` gave the message")
+  assert_same("count 7", "the tree renders the model it was built from",
+    label(tree))
+}
+
+// ---- The loop: one mount, one patch per event, a retained chain -----
+
+def retained_checks() {
+  const retained = Recorder.new()
+  ui.run(view, update, Model.new(0), retained)
+
+  check(retained.mounts.read() == 1, "the loop mounts once")
+  const ps = retained.patches.read()
+  check(ps.length() == 3, "one delivered tag is one patch")
+
+  const olds = [label(ps[0][0]), label(ps[1][0]), label(ps[2][0])]
+  const news = [label(ps[0][1]), label(ps[1][1]), label(ps[2][1])]
+
+  check(olds == ["count 0", "count 1", "count 2"],
+    "each patch's old tree is the tree the backend last saw")
+  check(news == ["count 1", "count 2", "count 1"],
+    "and each new tree is the model after that event")
+  check(ps[0][1] == ps[1][0], "patch retains the tree itself, not a copy")
+  check(ps[1][1] == ps[2][0], "and the chain holds for every event")
+}
+
+// ---- The same loop, a backend that rebuilds -------------------------
+
+def rebuild_checks() {
+  const rebuilt = Rebuild.new()
+  ui.run(view, update, Model.new(0), rebuilt)
+
+  check(rebuilt.mounts.read() == 1, "a rebuilding backend mounts once too")
+  check(rebuilt.painted.read() == ["count 0", "count 1", "count 2", "count 1"],
+    "both backends show the same trees, so `old` is an offer, not a duty")
+}
+
+tag_checks()
+retained_checks()
+rebuild_checks()

@@ -497,11 +497,11 @@ def update(msg Msg, model Model) Model {
   }
 }
 
-def view(model Model) Node {
+def view(reg ui.Registry, model Model) Node {
   return column(
     text("clicked ${model.count} time(s)"),
-    button("+", event: ui.on(Msg.increment)),
-    button("-", event: ui.on(Msg.decrement))
+    button("+", reg.on(Msg.increment)),
+    button("-", reg.on(Msg.decrement))
   )
 }
 ```
@@ -513,9 +513,17 @@ with its index, so `update` stays typed (`Msg`) while the backend only
 ever sees an integer:
 
 ```emo
-def on(msg Msg) Int64      // registers msg, returns its tag
-def dispatch(tag Int64) Msg // the driver's lookup
+reg.on(msg Msg) Int64       // registers msg, returns its tag
+reg.dispatch(tag Int64) Msg // the driver's lookup
 ```
+
+The table is an object the loop owns and hands to `view`, not a
+module-level binding: a module-level `const` re-runs its initializer on
+every read on the compiled targets, and a module-level `var` is
+`ocaml`-only, so a table declared there would be a fresh, empty one per
+read (`CHECK.md`, module-level bindings). Owning it in the loop is also
+the truer shape — the table belongs to one running loop, so two loops in
+one process keep two tables. **Landed as `ui.Registry` (T48.2).**
 
 This preserves the README's promise that events are messages, keeps the
 typed update, and respects the callback tier. Local mutable state that
@@ -525,8 +533,7 @@ README's "reactivity primitives live in the standard library" is
 satisfied by these, and the "compiler optimizes to targeted refreshes"
 promise is a later pass over exactly those reads, not a hidden graph.
 
-Two integration facts bound this layer, and they are honest caveats, not
-design choices:
+The facts that bound this layer are honest caveats, not design choices:
 
 - **Two event loops.** On AppKit/GTK, `ui_run()` blocks in the toolkit's
   loop and events re-enter through the callback contract. Emo's own
@@ -543,6 +550,20 @@ design choices:
   the toolkit must not take the window down silently, and now it does
   not. The `typescript` target's share-on-send is the same gap on the
   Web path.
+- **The loop's shape on the hosted targets.** The loop is landed
+  (`projects/emo-ui/`, T48.2) and runs on the interpreter, but the shape
+  above — the application's `update` and `view` passed in as `Block`
+  values — compiles only where a bare def can be a value: `ocaml`,
+  `typescript` and `beam` do; `c` refuses it (`Global`) and `wasm`
+  refuses the two-argument dynamic call `update` needs (one-parameter
+  closures only). The same loop with those two functions behind a
+  `Handler` interface — ordinary interface dispatch, no `Block`-valued
+  function, the application still narrowing its model with `is()` as a
+  backend narrows a node — builds on all five targets and prints what the
+  interpreter prints (`projects/emo-ui/probe/`, `CHECK.md`, the Elm
+  loop's shape). Which way to close it — grow the two targets, or move
+  the application's functions behind an interface and revise this layer's
+  spelling — is open.
 - **Long-running memory.** The `c` target does not reclaim the value
   families a render allocates, and a UI re-renders per event, so this is
   the caveat that bounds the platform rather than the design:
@@ -560,11 +581,19 @@ to also admit a pure-Emo terminal writer and a browser DOM:
 
 ```emo
 interface Backend {
-  def mount(root Node) Void
+  def mount(root Node, events Events) Void
   def patch(old Node, new Node) Void
   def run() Void
 }
 ```
+
+`mount` hands the backend the first tree and the sink it delivers events
+into — a single-method `Events` interface, `deliver(tag)`, which is the
+whole of what a backend knows about the application. A single-method
+interface is the callback type the C→Emo contract already names
+(`CHECK.md`), so a native shim reaches the sink through the same
+trampoline as any other callback. Landed as `ui.Backend`/`ui.Events`
+(T48.2).
 
 Each platform implements it:
 
@@ -645,25 +674,28 @@ generalized:
 
 ```emo
 // app.emo — portable: components, update, view. No platform name.
-def view(model Model) ui.Node { ... }
+def view(reg ui.Registry, model Model) ui.Node { ... }
 
 // main_macos.emo
 require "ui_macos"
-ui_macos.run(app.view, app.update, Model.new(0))
+ui.run(app.view, app.update, Model.new(0), ui_macos.backend())
 
 // main_web.emo
 require "ui_web"
-ui_web.run(app.view, app.update, Model.new(0))
+ui.run(app.view, app.update, Model.new(0), ui_web.backend())
 
 // main_tui.emo
 require "ui_tui"
-ui_tui.run(app.view, app.update, Model.new(0))
+ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 ```
 
 A bare def is a value — locally and module-qualified (probe 5) — so
 `app.view` and `app.update` can be passed directly. They land in `Block`
 parameters, which are `Unknown`, so the entry's wiring is the same
-unchecked-callback boundary as Layer 1.
+unchecked-callback boundary as Layer 1. `view` takes the loop's
+`Registry` first because the table is the loop's (Layer 5). This is the
+shape `ui.run` landed with (T48.2) — and the one two targets cannot
+compile yet, which is the open item Layer 5 records.
 
 `app.emo` is the same file for all three; only the entry module differs,
 and it is a handful of lines. A platform-specific app that wants
@@ -906,7 +938,12 @@ tracked as **M16 — Value-family reclamation (step 49)**, spec in
    loop coexist, and whether events become real process messages in v1
    or later.
 4. **The checked block/function type** — whether the component API
-   earns it after a first package shows the friction.
+   earns it after a first package shows the friction. The loop has now
+   shown the friction's other face: its `Block`-valued `view`/`update`
+   is what `c` and `wasm` cannot compile (`CHECK.md`, the Elm loop's
+   shape), so the alternative to a checked function type — putting the
+   application's two functions behind an interface — is also the
+   alternative to growing those two targets.
 5. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
    subset of the TypeScript runtime plus a `dom_*` family, not a
    browser-specific runtime variant (`CHECK.md`). What stays open is

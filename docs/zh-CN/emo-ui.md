@@ -235,11 +235,11 @@ def update(msg Msg, model Model) Model {
   }
 }
 
-def view(model Model) Node {
+def view(reg ui.Registry, model Model) Node {
   return column(
     text("clicked ${model.count} time(s)"),
-    button("+", event: ui.on(Msg.increment)),
-    button("-", event: ui.on(Msg.decrement))
+    button("+", reg.on(Msg.increment)),
+    button("-", reg.on(Msg.decrement))
   )
 }
 ```
@@ -247,16 +247,19 @@ def view(model Model) Node {
 事件身份是 FFI 接缝。节点只携带一个 `Int64` tag,永不携带闭包(闭包不能跨 FFI,E4200)。建树时把带类型的消息登记进一张 Emo 侧的表,并往节点上盖它的索引,于是 `update` 保持带类型(`Msg`),而后端只看到整数:
 
 ```emo
-def on(msg Msg) Int64      // registers msg, returns its tag
-def dispatch(tag Int64) Msg // the driver's lookup
+reg.on(msg Msg) Int64       // registers msg, returns its tag
+reg.dispatch(tag Int64) Msg // the driver's lookup
 ```
+
+这张表是循环自己持有、并交给 `view` 的对象,而不是模块级绑定:模块级 `const` 在编译目标上每次读取都会重跑初始化式,模块级 `var` 只有 `ocaml` 支持,表放在那里等于每次读取都拿到一张新的空表(`CHECK.md`,模块级绑定)。放在循环里持有也更贴合它本身——这张表属于某一个正在跑的循环,所以同一进程里两个循环各持一张。**已随 T48.2 落地为 `ui.Registry`。**
 
 这保住了 README 关于事件是消息的承诺,保住了带类型的 update,也尊重了回调分层。不属于 model 的局部可变状态用语言自己的原语——一格用 `Box`,集合用 `List`/`Map`——在 `view` 时读取;README 的「响应式原语住在标准库」由这些满足,而「编译器优化成定向刷新」的承诺是之后针对这些读取的一趟处理,不是一张隐式图。
 
-两个集成事实约束着这一层,它们是诚实的告诫,不是设计选择:
+约束这一层的那几条事实是诚实的告诫,不是设计选择:
 
 - **两个事件循环。** 在 AppKit/GTK 上,`ui_run()` 阻塞在工具包循环里,事件经回调契约重入。Emo 自己的协作式调度器(进程、邮箱)不持有那个线程。一个带邮箱的 UI 进程与一个工具包循环需要一个集成方案(工具包循环驱动调度器,或事件作为消息投递进一个进程)。spike 用的同步 Elm 循环绕开了它,也是正确的 v1:进程与监督在循环被证明之后再来。
 - **后端一致性。** `c` 目标的 `raise` 曾经结束的是程序而不是出错的那个进程,`send` 曾经是共享而不是快照——两者已于 2026-10-15 关闭(`CHECK.md`,step 50)。GUI 是让两者都显形的消费者;一个在握着工具包时 raise 的 UI 不能悄悄把窗口一起带走,现在它也不会了。`typescript` 目标的 send 共享是 Web 路径上同一个缺口。
+- **循环在各个托管 target 上的形状。** 循环已经落地(`projects/emo-ui/`,T48.2),在解释器上跑得起来;但上面这个形状——应用的 `update` 与 `view` 以 `Block` 值传进来——只在「裸 def 可以当值」的地方能编译:`ocaml`、`typescript`、`beam` 可以;`c` 拒绝(`Global`),`wasm` 拒绝 `update` 需要的双参动态调用(只支持单参闭包)。把这两个函数放到 `Handler` 接口后面——普通的接口分发,没有任何 `Block` 值函数,应用照旧用 `is()` 收窄自己的 model,正如后端收窄节点——就是同一个循环,五个 target 全部可编译,打印结果与解释器一致(`projects/emo-ui/probe/`、`CHECK.md`,Elm 循环的形状)。往哪边收口——把这两个 target 补起来,还是把应用的函数移到接口后面并改写本层的拼写——仍然开放。
 - **长跑内存。** `c` 目标不回收一次渲染分配的值语义家族,而 UI 每个事件重渲染一次,所以这是约束平台而非约束设计的那条告诫:`spike/arena-scope` 实测 400 节点时每次渲染约 1 MB、约 820 个对象,两者都无界。region 修不了它——它回收字节、回收不了对象,还会搁死那些引用计数——所以原生后端停在 demo 尺度,值语义家族的引用计数作为独立里程碑排期(step 49,`CHECK.md`)。
 
 ### Layer 6 —— 后端接缝
@@ -265,11 +268,13 @@ def dispatch(tag Int64) Msg // the driver's lookup
 
 ```emo
 interface Backend {
-  def mount(root Node) Void
+  def mount(root Node, events Events) Void
   def patch(old Node, new Node) Void
   def run() Void
 }
 ```
+
+`mount` 把第一棵树和后端投递事件用的 sink 一起交给后端——一个单方法 `Events` 接口,`deliver(tag)`,这就是后端关于应用所知道的全部。单方法接口正是 C→Emo 回调契约早已命名的回调类型(`CHECK.md`),所以原生 shim 经同一条跳板抵达 sink,与抵达任何其它回调一样。已随 T48.2 落地为 `ui.Backend`/`ui.Events`。
 
 每个平台实现它:
 
@@ -302,24 +307,27 @@ interface Backend {
 
 ```emo
 // app.emo — portable: components, update, view. No platform name.
-def view(model Model) ui.Node { ... }
+def view(reg ui.Registry, model Model) ui.Node { ... }
 
 // main_macos.emo
 require "ui_macos"
-ui_macos.run(app.view, app.update, Model.new(0))
+ui.run(app.view, app.update, Model.new(0), ui_macos.backend())
 
 // main_web.emo
 require "ui_web"
-ui_web.run(app.view, app.update, Model.new(0))
+ui.run(app.view, app.update, Model.new(0), ui_web.backend())
 
 // main_tui.emo
 require "ui_tui"
-ui_tui.run(app.view, app.update, Model.new(0))
+ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 ```
 
 裸 def 是值——本地与模块限定都是(probe 5)——所以 `app.view` 与
 `app.update` 可以直接传进去。它们落在 `Block` 参数里,而那是
 `Unknown`,所以入口的接线和 Layer 1 一样是那条不受检的回调边界。
+`view` 先收循环的 `Registry`,因为那张表是循环的(Layer 5)。这就是
+`ui.run` 落地时的形状(T48.2)——也是有两个 target 还编译不了的形状,
+即 Layer 5 记下的那个开放项。
 
 `app.emo` 对所有三个都是同一个文件;只有入口模块不同,而它只有几行。一个想要 `ui_macos.table` 的平台特有应用把它写在入口里或一个 macOS 专属组件模块里;可移植组件从不提到它。这就是对需求的直接回答:**组合方式相同,组件库按平台,差异被隔离到一个小入口模块与一个包依赖里。**
 
@@ -406,6 +414,6 @@ ui_tui.run(app.view, app.update, Model.new(0))
 1. **原生打包机制** —— 方向已定(2026-10-14)走 per-package 的 manifest 字段,取代应用级构建脚本那条路;字段面(`pkg_config`、编译/链接 flags、`.m` 是否收集)是 T48.7 自己的范围。这卡住顺序里的第 3 项。
 2. **协调** —— 保留式后端何时从全量重建换成带 key 的 diff,以及编译器的定向刷新是否与它同时落地。
 3. **两个事件循环的集成** —— UI 进程与工具包循环如何共存,以及事件在 v1 还是更晚变成真正的进程消息。
-4. **带检查的 block/函数类型** —— 在第一个包显出摩擦之后,组件 API 是否值得它。
+4. **带检查的 block/函数类型** —— 在第一个包显出摩擦之后,组件 API 是否值得它。循环现在露出了这份摩擦的另一面:它那两个 `Block` 值的 `view`/`update` 正是 `c` 与 `wasm` 编译不了的东西(`CHECK.md`,Elm 循环的形状),所以「不加带检查的函数类型」的那条替代路——把应用的两个函数放到接口后面——同时也是「不补这两个 target」的那条替代路。
 5. **Web T1 的边界** —— 路线已定(2026-10-15):把 TypeScript runtime 拆出一个浏览器安全子集加一个 `dom_*` 家族,不做浏览器专属的 runtime 变体(`CHECK.md`)。仍然开放的是机械问题:打包步骤落在工具链的哪里,属于 T48.10 自己的范围。`typescript` 目标的 send 共享(`CHECK.md`,跨 target 不变量)也在这条路径上。
 6. **树的拼法** —— 数组式 children 到底要不要一个字面量写法;如果要,它属于 Emo 自己的语法,还是属于一个产出 `.emo` 的外部翻译器。已经**关掉**的机制(发射、self 重绑定、环境式收集器、自带走作用域求值的模板引擎)记在 [`emo-ui-composition.md`](emo-ui-composition.md),那里也写明了能了结这个问题的证据是什么。
