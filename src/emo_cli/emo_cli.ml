@@ -2255,9 +2255,11 @@ let emoji_build ~(dir : string) : int =
         let results =
           List.map
             (fun target ->
+              (* The output's stem is what names the BEAM module, so it
+                 has to be an atom: `emoji_beam`, not `emoji-beam`. *)
               let output =
                 Filename.concat dir
-                  (Filename.concat ".emo-build" ("emoji-" ^ target))
+                  (Filename.concat ".emo-build" ("emoji_" ^ target))
               in
               let code =
                 build_file ~entry ~output ~specialize:true

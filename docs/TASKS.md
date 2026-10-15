@@ -1572,7 +1572,7 @@ required.
     empty until scheduled. Terminal input (T48.5) settles with it as a
     standard-library package in the `sqlite3` shape.
 
-- [ ] **T48.1** — The portable `ui` core package: the `Node` spine and
+- [x] **T48.1** — The portable `ui` core package: the `Node` spine and
       primitives, the typed `Style` with `with_*` copies, the layout
       vocabulary, and the `Backend` interface. Pure Emo, all five hosted
       targets — which makes the two codegen defects the A/B spelling
@@ -1581,10 +1581,20 @@ required.
       namespace a method's symbol occupies (`vt_<cname>_fields` /
       `vt_<cname>_methods`, joining `vt_<cname>` and `iface_<name>`), and
       the `ocaml` native `String` `+` gained its `= Emo_check.String`
-      branch emitting `(^)` in `emit_native_expr`. The package itself is
-      not started, so the box stays open; the two fixtures under
+      branch emitting `(^)` in `emit_native_expr`; the two fixtures under
       `spike/emo-ui-spelling/codegen/` are the regression, and its
-      `check.sh` asserts their build and their run.
+      `check.sh` asserts their build and their run. **The package landed
+      2026-10-15** as `projects/emo-ui/` — `ui.emo` beside its own
+      `package.emo` (`emo_lang/ui`, declaring all five hosted targets) —
+      and it settles the children question the spike left to it:
+      children stay an explicit `Array[Node]`, and a list that is not
+      known until it is walked is built with `ArrayBuilder`, not with an
+      Emo `Array.append` loop. `projects/emo-ui/check.sh` is the
+      package's gate. Writing it turned up one more toolchain defect,
+      fixed here: `emo emoji build` named each target's output
+      `emoji-<target>`, a stem the `beam` target refuses as a module
+      name, so the pre-publish gate could not pass for any package
+      declaring all five.
 - [ ] **T48.2** — The Elm loop: `App` (model/`update`/`view`), the
       `ui.on(msg)` tag registry and `ui.dispatch(tag)`, and
       `ui.run(view, update, model, backend)`; tag round-trip tests and a
@@ -1678,7 +1688,9 @@ and the non-`c` targets are untouched.
       array half without touching the runtime, so step 49's "array growth
       is linear rather than quadratic" criterion is now reachable through
       the language rather than through T49.1; T48.1's representation
-      question is unblocked, not answered.
+      question was unblocked here and is **answered** by the core
+      (2026-10-15): children are an explicit `Array[Node]`, and the
+      container is what builds a dynamic child list.
 - [ ] **T49.4** — The gate: the spike's render ladder and region probes
       as a checked-in test that fails today and passes after, on the `c`
       target, with `dune test` green.

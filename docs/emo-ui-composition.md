@@ -304,8 +304,10 @@ checked as well as its expressions.
   `List` — and the measurement above is part of why it is not the deque.
   The settled choice stands as written (A, whose static case needs no
   container at all; whether the children representation moves off the
-  decided `Array[Node]` is T48.1's to settle). What changed is that the
-  piece B was missing is no longer missing.
+  decided `Array[Node]` was T48.1's to settle — and the portable core
+  settled it on 2026-10-15 by keeping `Array[Node]` and growing the
+  list with `ArrayBuilder`). What changed is that the piece B was
+  missing is no longer missing.
 
 - **C — a tree literal form in Emo's own grammar.** Parser-level
   desugaring to exactly the nested calls of A. Keeps the checker, the

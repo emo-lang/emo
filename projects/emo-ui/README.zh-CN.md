@@ -2,36 +2,46 @@
 
 用 Emo 写的组件式 UI 框架:一棵声明式树渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口——浏览器 DOM 随后按自己的运行时路径接入。Emo 的语法就是为它塑形的,原则是**没有模板语言——UI 就是普通的 Emo 代码**,与配置同一哲学。
 
-组件树是带块的嵌套调用:
+组件树是嵌套调用,子节点是一份显式的 `Array[ui.Node]`:
 
 ```emo
-page(title: "Home") {
-  navbar() {
-    logo()
-    menu(routes)
-  }
+def card(user User) ui.Node {
+  return ui.row([
+    ui.image(user.avatar(), ui.style().with_width(32.0)),
+    ui.text(user.name(), ui.style())
+  ], ui.style().with_gap(8.0))
 }
 
-list(users) -> (user User) {
-  card(user) {
-    text(user.name)
-    text(user.bio)
+def inbox(users Array[User]) ui.Node {
+  const rows = ArrayBuilder.new()
+  for var i = 0; i < users.length(); i = i + 1 {
+    rows.push(card(users[i]))
   }
+  return ui.column([
+    ui.text("Inbox", ui.style()),
+    ui.column(rows.to_array(), ui.style().with_padding(12.0))
+  ], ui.style())
 }
 ```
 
+子节点是一个实参,永远不是一个块:尾随块是给回调和迭代用的,它产出值时自己 `return`。要到遍历时才知道的子节点列表,用语言自带的 `ArrayBuilder` 攒起来、以 `to_array()` 交出去——这正是那两屏度量定下的容器问题(`docs/emo-ui.md` 决策 3;`spike/emo-ui-spelling`)。数组写法将来是否会再长出一种字面量拼法,仍然开放(`docs/emo-ui-composition.md`)。
+
 ## 状态
 
-**这个目录里还没有任何实现。** 设计已定,各包落在这里;第一个任务是 T48.1,可移植的 `ui` 核心。设计与证据:
+可移植的 **`ui` 核心已经落地**(T48.1)。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)和 `Backend` 接口(`mount`/`patch`/`run`)。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标;`./check.sh` 是它的关口。
+
+接下来:Elm 循环(T48.2)、无头 `debug` 后端(T48.3),以及每平台一个包加浏览器运行时路径(T48.4–T48.12)。设计与证据:
 
 - [`docs/zh-CN/emo-ui.md`](../../docs/zh-CN/emo-ui.md) —— 评估与设计方向。
-- [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md) —— 一棵树怎么写出来:组件为什么返回子节点而不是发射。
+- [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md) —— 一棵树怎么写出来:子节点为什么是数组而不是块式写法。
 - [`plan/step-48-emo-ui.md`](../../plan/step-48-emo-ui.md) —— 执行计划,T48.1–T48.13。
-- [`spike/emo-ui-spelling/`](../../spike/emo-ui-spelling/) —— 定下写法的两屏度量,以及 `ui.emo`,核心的原型。
+- [`spike/emo-ui-spelling/`](../../spike/emo-ui-spelling/) —— 定下写法的两屏度量,以及这个核心所自来的原型。
 - [`spike/emo-ui-probe/`](../../spike/emo-ui-probe/)、[`spike/components/`](../../spike/components/)、[`spike/macos-gui/`](../../spike/macos-gui/)、[`spike/gtk/`](../../spike/gtk/) —— 语言特性与原生工具包两方面的证据。
 
 ## 这个目录的位置
 
 EmoUI 是一个**独立项目**,不是标准库包:标准库以生成数据的形式内嵌在编译器二进制里,而一个带着每平台原生 shim 的 UI 框架不该放在那儿。它活在编译器仓库的 `projects/emo-ui/` 下,以它将来可以拆分出去的仓库命名,好让 `git subtree split -P projects/emo-ui` 之后能带着历史得到那个独立仓库(`CHECK.md`,in-tree 项目布局)。
 
-这个目录由它自己的 `package.emo` 生根,和任何其他 Emo 项目一样——仓库根没有 manifest,所以这个包的模块按它自己的程序来检查,编译器的构建也不会把它们扫进来。
+这个目录由它自己的 `package.emo` 生根——也就是可移植核心的那份,其中 `ui.emo` 就是 `require "emo_lang/ui"` 绑定的那个模块——而仓库根没有 manifest,所以这个包的模块按它自己的程序来检查,编译器的构建也不会把它们扫进来。后面每个后端都是它自己的包:一个带自己 `package.emo` 的子目录,模块遍历会把它整个排除在这个包之外,和 `spike/emo-ui-spelling/mismatch/` 完全一样。
+
+scope 写成 `emo_lang` 而不是组织名那个带连字符的写法:`deps` 的键是一个带 scope 的标识符,关键字(`emo`)与连字符(`emo-lang`)都写不进去。

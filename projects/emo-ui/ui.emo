@@ -1,0 +1,295 @@
+// The portable ui core: the node spine, the eight portable primitives,
+// the typed Style with its layout vocabulary, and the Backend interface.
+// Pure Emo — no platform, no FFI, no target-specific code — so one tree
+// type is what every component returns and every backend consumes
+// (docs/emo-ui.md, Layers 0, 3, 4 and 6).
+//
+// Children are an explicit `Array[Node]` (docs/emo-ui.md, decision 3): a
+// tree is nested calls, and a list that is not known until it is walked
+// is built with the language's `ArrayBuilder` and handed over as
+// `to_array()`. A trailing block is for callbacks and iteration, never
+// for collecting children.
+
+enum Align { start, center, end, stretch }
+
+// Style is a typed value with a factory and `with_*` copies, because Emo
+// has no default parameters (E4009): `text("a")` for a two-parameter def
+// is refused, so the unstyled call is spelled `text("a", ui.style())`.
+// `(R, Float64)` carries "unset or a value" — `(R.ok, 12.0)` is a width,
+// `(R.error, 0.0)` is auto — and the slot is never read on the error
+// branch. Every property is a layout property: the portable set is the
+// intersection the four platforms can honor, and each maps it to its own
+// native layout (docs/emo-ui.md, Layer 3).
+class Style {
+  def init(padding Float64, gap Float64, align Align, grow Bool,
+           width (R, Float64), height (R, Float64)) {
+    self.padding = padding
+    self.gap = gap
+    self.align = align
+    self.grow = grow
+    self.width = width
+    self.height = height
+  }
+
+  def padding() Float64 {
+    return self.padding
+  }
+
+  def gap() Float64 {
+    return self.gap
+  }
+
+  def align() Align {
+    return self.align
+  }
+
+  def grow() Bool {
+    return self.grow
+  }
+
+  def width() (R, Float64) {
+    return self.width
+  }
+
+  def height() (R, Float64) {
+    return self.height
+  }
+
+  def with_padding(p Float64) Style {
+    return Style.new(padding: p, gap: self.gap, align: self.align,
+      grow: self.grow, width: self.width, height: self.height)
+  }
+
+  def with_gap(g Float64) Style {
+    return Style.new(padding: self.padding, gap: g, align: self.align,
+      grow: self.grow, width: self.width, height: self.height)
+  }
+
+  def with_align(a Align) Style {
+    return Style.new(padding: self.padding, gap: self.gap, align: a,
+      grow: self.grow, width: self.width, height: self.height)
+  }
+
+  def with_grow(g Bool) Style {
+    return Style.new(padding: self.padding, gap: self.gap,
+      align: self.align, grow: g, width: self.width, height: self.height)
+  }
+
+  def with_width(w Float64) Style {
+    return Style.new(padding: self.padding, gap: self.gap,
+      align: self.align, grow: self.grow, width: (R.ok, w),
+      height: self.height)
+  }
+
+  def with_height(h Float64) Style {
+    return Style.new(padding: self.padding, gap: self.gap,
+      align: self.align, grow: self.grow, width: self.width,
+      height: (R.ok, h))
+  }
+}
+
+def style() Style {
+  return Style.new(padding: 0.0, gap: 0.0, align: Align.start, grow: false,
+    width: (R.error, 0.0), height: (R.error, 0.0))
+}
+
+// The spine: an interface plus concrete classes with typed props, so
+// `Array[Node]` holds anything and each prop is checked at construction.
+// It names itself in `children()`, which the checker accepts. A backend
+// narrows with `is()` — it knows the core classes and its own platform's,
+// and that union is its dispatch table.
+interface Node {
+  def style() Style
+  def children() Array[Node]
+}
+
+class Column {
+  def init(style Style, children Array[Node]) {
+    self.style = style
+    self.children = children
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+class Row {
+  def init(style Style, children Array[Node]) {
+    self.style = style
+    self.children = children
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+class Scroll {
+  def init(style Style, children Array[Node]) {
+    self.style = style
+    self.children = children
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+class Text {
+  def init(body String, style Style) {
+    self.body = body
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def body() String {
+    return self.body
+  }
+}
+
+// A button carries an event tag, never a closure: closures cannot cross
+// the FFI (E4200), so `update` stays typed Emo-side while the backend
+// only ever sees the `Int64` the tag registry handed out
+// (docs/emo-ui.md, Layer 5).
+class Button {
+  def init(label String, event Int64, style Style) {
+    self.label = label
+    self.event = event
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def label() String {
+    return self.label
+  }
+
+  def event() Int64 {
+    return self.event
+  }
+}
+
+class TextInput {
+  def init(value String, style Style) {
+    self.value = value
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def value() String {
+    return self.value
+  }
+}
+
+class Image {
+  def init(src String, style Style) {
+    self.src = src
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def src() String {
+    return self.src
+  }
+}
+
+class Spacer {
+  def init(style Style) {
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+}
+
+// The primitives are lowercase defs and take their children positionally;
+// `.new` never appears in a tree. Names are convergent across the
+// platform packages, so a component built from these compiles on all of
+// them (docs/emo-ui.md, C3–C4).
+def column(children Array[Node], style Style) Node {
+  return Column.new(style: style, children: children)
+}
+
+def row(children Array[Node], style Style) Node {
+  return Row.new(style: style, children: children)
+}
+
+def scroll(children Array[Node], style Style) Node {
+  return Scroll.new(style: style, children: children)
+}
+
+def text(body String, style Style) Node {
+  return Text.new(body: body, style: style)
+}
+
+def button(label String, event Int64, style Style) Node {
+  return Button.new(label: label, event: event, style: style)
+}
+
+def text_input(value String, style Style) Node {
+  return TextInput.new(value: value, style: style)
+}
+
+def image(src String, style Style) Node {
+  return Image.new(src: src, style: style)
+}
+
+def spacer(style Style) Node {
+  return Spacer.new(style: style)
+}
+
+// The backend seam is an Emo interface, not a C ABI: the nine-verb
+// `ui_*` contract the native spikes proved is an implementation detail
+// behind it (docs/emo-ui.md, Layer 6). `patch` is the growth edge — a
+// full rebuild is right for the terminal and SSR backends, a retained
+// patch for the native and DOM ones.
+interface Backend {
+  def mount(root Node) Void
+  def patch(old Node, new Node) Void
+  def run() Void
+}

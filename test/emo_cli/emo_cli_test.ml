@@ -2476,6 +2476,36 @@ let emoji_tests =
             Alcotest.(check int)
               "exit" 65
               (Emo_cli.emoji_build ~dir:(Sys.getcwd ()))));
+    tc "emoji build honors every target the manifest declares" (fun () ->
+        (* The engine picks the output's stem, and the stem names the BEAM
+           module — so the gate has to build under a name a module can
+           carry, on all five targets, not the two the scaffold declares. *)
+        let dir = Filename.concat scratch "emoji-targets" in
+        if Sys.file_exists dir then Emo_cli.remove_tree dir;
+        Unix.mkdir dir 0o755;
+        let write name contents =
+          let oc = open_out_bin (Filename.concat dir name) in
+          output_string oc contents;
+          close_out oc
+        in
+        write "package.emo"
+          {|package {
+  name = "acme/emoji-targets"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {}
+}
+|};
+        write "emoji-targets.emo" "def greet() String {\n  return \"hi\"\n}\n";
+        let old_cwd = Sys.getcwd () in
+        Sys.chdir dir;
+        Fun.protect
+          ~finally:(fun () -> Sys.chdir old_cwd)
+          (fun () ->
+            Alcotest.(check int)
+              "exit" 0
+              (Emo_cli.emoji_build ~dir:(Sys.getcwd ()))));
   ]
 
 (* ---- doctor: the target-aware environment check (T24.5) ---- *)

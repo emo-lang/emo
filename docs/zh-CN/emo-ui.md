@@ -20,7 +20,7 @@
 2. **四个平台并不同等地就绪。** macOS/AppKit 与 GTK 4 已经经 `foreign def` shim 证明可行;终端渲染器是廉价的纯 Emo;Web 最不成熟——TypeScript 目标只面向 Node(发射出的 runtime 顶部 import `node:net`、`node:fs`),而 wasm 目标的整个宿主接口只有三个 import(`println`、`abort`、`float_str`)。
 3. **EmoUI 后端今天无法用包表达。** 一个包只能携带 `.c`/`.h`,并且只能链接裸 `-l` 名。AppKit 后端是 Objective-C(`.m`、`-fobjc-arc`、`-framework AppKit`);GTK 后端需要 `pkg-config --cflags --libs gtk4`。两者都装不进。方向已定——manifest 长出 per-package 原生字段,而不是应用级构建脚本(`CHECK.md`)——字段面属于 T48.7 自己的工作;在它落地之前,原生后端退回到 spike 用的应用级脚本。
 4. **`c` 目标上一次渲染的内存不会被回收,而廉价的解法并不存在。** 树恰好由 arena 永不释放的那些种类搭成——子节点数组、样式 map、字符串——而 UI 每个事件重建一次。`spike/arena-scope` 实测:400 节点时每次渲染约 1 MB、约 820 个对象,两者都无界——60 fps 下约 60 MB/s、每秒约 49,000 个对象。region 能回收字节,回收不了对象,并且会把那些引用计数永久搁死。所以原生后端是 **demo 尺度并把限制写进文档**,而值语义家族的引用计数作为独立里程碑排期(step 49,`CHECK.md`)。
-5. **`Array` 没有 O(1) append**,而 `List` 无法转回可索引的 `Array`,所以已定的 children 写法——`Array[Node]` 靠 `.append` 增长、每次渲染重建——在字节与 retain 两面都是 O(k²)。T48.1 应当先定 children 的表示,或者给语言补一个廉价的数组 builder。**这后半句现在有答案了**:语言有了 `ArrayBuilder`(T49.3),用 `push` 以摊还 O(1) 把 `Array[T]` 长出来,再用 `to_array()` 交出。构造 child 列表不再为每个 child 付一次拷贝,所以 `children_of` 式的累加可以不必再绕那道嵌套 `.append` 的弯。T48.1 的表示问题——children 到底是不是数组——仍然开着。
+5. **`Array` 没有 O(1) append**,而 `List` 无法转回可索引的 `Array`,所以已定的 children 写法——`Array[Node]` 靠 `.append` 增长、每次渲染重建——在字节与 retain 两面都是 O(k²)。T48.1 应当先定 children 的表示,或者给语言补一个廉价的数组 builder。**这后半句现在有答案了**:语言有了 `ArrayBuilder`(T49.3),用 `push` 以摊还 O(1) 把 `Array[T]` 长出来,再用 `to_array()` 交出。构造 child 列表不再为每个 child 付一次拷贝,所以 `children_of` 式的累加可以不必再绕那道嵌套 `.append` 的弯。T48.1 的表示问题——children 到底是不是数组——已由可移植核心给出答案(2026-10-15):children 仍是显式的 `Array[Node]`,而走到哪才知道的子节点列表用 `ArrayBuilder` 攒。
 
 建议:**EmoUI 是一个独立项目——第三方,而不是标准库包——做成一个可移植的 `ui` 核心加每平台一个包;顺序上先 TUI 与服务端渲染的 HTML(纯 Emo,不需要新工具链),再原生工具包,最后浏览器 DOM。** 不加新语法。唯一值得掂量的语言诉求是一个带检查的 block/函数类型,它是便利项,不是关口。(它的托管位置在 2026-10-15 变了——放在本仓库的 `projects/emo-ui/`,而不是自建一个仓库;见下面的 *打包* 一节。)
 
@@ -359,7 +359,7 @@ ui_tui.run(app.view, app.update, Model.new(0))
 - **两个事件循环**(Emo 调度器 vs. 工具包/浏览器),如上。
 - **范围。** UI 框架是无界的。分档表是防线:可移植核心 + TUI + SSR 先行,原生工具包其次,DOM 最后;不承诺布局一致、不做动画、v1 的无障碍不超出原生控件自带的部分。
 - **没有泛型、没有默认参数。** 节点数组是 `Array[Node]`(没问题——接口就是元素类型),但样式工厂带 `N` 个复制方法,恰如 `plot` 接受的那样。有界样板。
-- **`c` 目标的长跑内存。** UI 每个事件分配一棵树,而其中值语义的那一半永不释放;region 回收字节而不回收身份泄漏(`spike/arena-scope`)。v1 的缓解是范围——原生后端停在 demo 尺度——并把值语义家族的引用计数作为独立里程碑排期(step 49)。`Array` 的二次构建是同一条发现的另一面,它落在 T48.1 的 children 表示上。
+- **`c` 目标的长跑内存。** UI 每个事件分配一棵树,而其中值语义的那一半永不释放;region 回收字节而不回收身份泄漏(`spike/arena-scope`)。v1 的缓解是范围——原生后端停在 demo 尺度——并把值语义家族的引用计数作为独立里程碑排期(step 49)。`Array` 的二次构建是同一条发现的另一面;`ArrayBuilder` 回答了它(T49.3),可移植核心把它接了下来——子节点列表用 `push` 攒,而不是每个子节点重建一次(T48.1)。
 
 ## 先例,以及该借什么
 

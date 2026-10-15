@@ -75,7 +75,9 @@ Four findings shape everything below:
    list no longer costs a copy per child, so `children_of`-style
    accumulation can be written without the nested-`.append` workaround.
    T48.1's representation question — whether children are an array at
-   all — stays open.
+   all — is **settled** by the portable core (2026-10-15): children
+   stay an explicit `Array[Node]`, and a child list that is not known
+   until it is walked is built with `ArrayBuilder`.
 
 The recommendation: **EmoUI is a project of its own — third-party
 rather than standard-library — built as a portable `ui` core plus one
@@ -783,7 +785,9 @@ mid-implementation:
   v1's mitigation is scope — native backends at demo scale — with
   refcounting the value families scheduled as its own milestone
   (step 49). The quadratic `Array` build is the same finding's second
-  edge, and it lands in T48.1's children representation.
+  edge; `ArrayBuilder` answers it (T49.3), and the portable core takes
+  it up — a child list is grown with `push` rather than rebuilt per
+  child (T48.1).
 
 ## Prior art, and what to borrow
 

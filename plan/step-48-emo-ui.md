@@ -7,8 +7,9 @@ already in `develop`. · **Related:** `docs/emo-ui.md` (the assessment
 and design direction), `docs/emo-ui-check.md` (the gate checklist),
 `spike/components` (the two-platform component spike),
 `spike/emo-ui-probe` (the language probes) · **Status:** in progress —
-the layout is settled and T48.1's two codegen defects have landed; the
-EmoUI packages themselves are not started.
+the layout is settled, T48.1's two codegen defects have landed, and the
+portable `ui` core itself is done (`projects/emo-ui/`); T48.2 onward are
+not started.
 
 ## Why this step exists
 
@@ -153,7 +154,7 @@ EmoUI's nor the compiler's: it is a **standard-library package in the
 gated by `targets` — and lands in `stdlib/` (`CHECK.md`, terminal input's
 placement; `docs/emo-ui.md`, ask 7).
 
-- [ ] **T48.1** — The portable `ui` core package: the `Node` spine
+- [x] **T48.1** — The portable `ui` core package: the `Node` spine
       (interface plus `Column`/`Row`/`Text`/`Button`/`TextInput`/
       `Image`/`Spacer`/`Scroll`), the typed `Style` with `style()` and
       the `with_*` copies, the layout vocabulary, and the `Backend`
@@ -165,7 +166,17 @@ placement; `docs/emo-ui.md`, ask 7).
       now, joining `vt_<cname>` and `iface_<name>`), and the `ocaml`
       native `String` `+` (a `= Emo_check.String` branch emitting `(^)`
       in `emit_native_expr`). The two isolation fixtures stay in
-      `spike/emo-ui-spelling/codegen/` as the regression.
+      `spike/emo-ui-spelling/codegen/` as the regression. **Landed
+      2026-10-15** as `projects/emo-ui/ui.emo` beside the package's own
+      `package.emo` (`emo_lang/ui`, all five targets), with
+      `./check.sh` as its gate; it answers the representation question
+      this task was holding open — children are an explicit
+      `Array[Node]`, and a dynamic child list is built with
+      `ArrayBuilder`. One toolchain defect turned up while writing it
+      and is fixed here: `emo emoji build` named each target's output
+      `emoji-<target>`, which the `beam` target refuses as a module
+      name, so no package declaring all five targets could pass the
+      pre-publish gate.
 - [ ] **T48.2** — The Elm loop: `App` (model/`update`/`view`), the
       `ui.on(msg)` tag registry and `ui.dispatch(tag)`, and
       `ui.run(view, update, model, backend)`. Tests for the tag
