@@ -36,7 +36,7 @@ targets.
 
 ## Decisions
 
-- **Runtime built-ins, not a scheduler effect.** Unlike `net`'s
+- **Runtime implementations, not a scheduler effect.** Unlike `net`'s
   connect/listen (which suspend the fiber scheduler), every os call is
   synchronous: the interpreter dispatches in `apply_builtin`, the c
   target emits calls into `emo_os_*` in the runtime, and the ocaml
@@ -63,9 +63,9 @@ targets.
 
 ## Tasks
 
-- [x] **T34.1** — The checker signatures and the `os_` builtin
-      prefix; the interpreter's Unix-backed dispatch. (Done
-      2026-10-09.)
+- [x] **T34.1** — The checker signatures and the `os_` runtime
+      implementation prefix; the interpreter's Unix-backed dispatch.
+      (Done 2026-10-09.)
 - [x] **T34.2** — The c runtime's `emo_os_*` POSIX implementations
       and the c emitter's dispatch. (Done 2026-10-09.)
 - [x] **T34.3** — The standalone ocaml runtime's dispatch (the os

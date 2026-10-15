@@ -65,14 +65,14 @@ runtime 是面下面的机器。
    类型 vs 静态类型。这是另一个维度。
 
 在参考实现里,编译器自身的 runtime 层——解释器运行所依赖的那层——
-是 `src/emo_eval`(求值器)、`src/emo_runtime`(native 的装箱、内建、
+是 `src/emo_eval`(求值器)、`src/emo_runtime`(native 的装箱、标准库的运行时实现、
 派发辅助)与 `src/emo_sched`(进程调度器)。**目标**的 runtime 是
 另一回事:runtime 独立性原则(2026-10-07)要求它用目标语言书写、
 以生成数据的形式随编译器携带、并由目标自己的工具链编译——`c` 携带
 `src/emo_codegen/c/emo_c_runtime.c`,`ocaml` 携带
 `src/emo_codegen/ocaml/emo_ocaml_runtime.ml`,`typescript` 携带
 `src/emo_codegen/ts/ts_runtime.ts`,而 `wasm`/`beam` 的 runtime 就在
-发射出的模块里。（`ocaml` 那个文件是调度器与内建;它脚下的回收器与
+发射出的模块里。（`ocaml` 那个文件是调度器与运行时实现;它脚下的回收器与
 值模型仍是 OCaml 的——即上文第 2 点的 borrowed host runtime。）
 这正是 README 说的"随二进制一起发布":编译产物
 自带运行时,既没有解释器也没有运行时下载。freestanding 目标

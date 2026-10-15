@@ -12,9 +12,9 @@ resolution, and the interpreter refuses its foreign defs with E3009.
 A language without a database binding has no answer to the most
 ordinary server-side question, and SQLite is the one database whose
 interface is a C library everywhere. It is also the first standard
-library package that cannot be pure Emo *and* cannot be a compiler
-builtin without taxing every binary — so it is the forcing case for
-the package system learning to carry native code.
+library package that cannot be pure Emo *and* cannot live in the
+always-linked runtime without taxing every binary — so it is the
+forcing case for the package system learning to carry native code.
 
 ## Goal
 
@@ -27,7 +27,7 @@ package-carried shim and links the system library by itself.
 
 ## Design note
 
-- **The route is `foreign def`, not builtins.** The builtin route
+- **The route is `foreign def`, not the runtime.** The runtime route
   (`os`/`file`'s shape) would put sqlite calls in the always-linked C
   runtime — every Emo binary linking `-lsqlite3` — and would need an
   OCaml-side binding for the interpreter. The foreign route keeps the

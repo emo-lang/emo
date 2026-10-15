@@ -194,12 +194,12 @@ backend is also the best test that the core really is decoupled from
 the toolkit: if the node model and the update loop run on a cell grid,
 they are genuinely backend-neutral.
 
-The gap is **input**, not output. There is no raw-mode or
-key-event builtin: the `os` package gives fd-level `read`, `os` is
+The gap is **input**, not output. The runtime implements no raw mode and
+no key events: the `os` package gives fd-level `read`, `os` is
 native-only, and there is no termios binding. Reading a line is possible
 today; arrow keys, resize events, and Ctrl-C-as-a-message want raw mode,
 which is a small `foreign def` to `termios` (c/ocaml) or a terminal
-builtin. Bounded, but it must be scheduled, not assumed.
+runtime implementation. Bounded, but it must be scheduled, not assumed.
 
 ### Web
 
@@ -222,8 +222,8 @@ only one of them is close.
   so it does not load in a browser; step 17's scope explicitly lists
   "browser embedding (`fetch`/WebSocket bridging)" as out; and browsers
   cannot execute `.ts`, so an output-bundling step enters the toolchain.
-  Getting there means a DOM capability layer (a `dom_*` builtin family
-  in the TS runtime, or a browser-only runtime variant), a browser-safe
+  Getting there means a DOM capability layer (a `dom_*` family in the TS
+  runtime, or a browser-only runtime variant), a browser-safe
   entry, and a build step. All are real work, none is architecturally
   blocked.
 - **T2 — wasm + DOM.** The `wasm` target's module imports exactly
@@ -568,8 +568,8 @@ Each platform implements it:
   writes ANSI; `run()` reads input and dispatches tags.
 - **SSR:** a pure-Emo class that serializes the tree to HTML/CSS;
   `run()` is one render.
-- **DOM (later):** an Emo class over `dom_*` builtins; `run()` hands
-  control to the browser and returns.
+- **DOM (later):** an Emo class over the runtime's `dom_*` calls;
+  `run()` hands control to the browser and returns.
 
 `patch` is the growth edge. The spike did a full rebuild per event
 (`clear` plus re-place), which is fine for a terminal and a static HTML
@@ -720,10 +720,10 @@ mid-implementation:
    must not die wholesale on one bad event, and event payloads crossing
    processes must not be silently shared.
 6. **A browser path for the Web (T1).** Either a browser-safe split of
-   the TypeScript runtime plus a `dom_*` builtin family and a bundling
+   the TypeScript runtime plus a `dom_*` family and a bundling
    step, or new wasm host imports. Not needed for SSR (T0).
 7. **Terminal input.** Raw mode and key events for the TUI (a small
-   termios binding or a terminal builtin).
+   termios binding, or a terminal runtime implementation).
 8. **No new syntax.** The tree is already expressible; if it is not, the
    gap is a type or a library function, not a construct.
 
@@ -870,7 +870,7 @@ tracked as **M16 — Value-family reclamation (step 49)**, spec in
    or later.
 4. **The checked block/function type** — whether the component API
    earns it after a first package shows the friction.
-5. **The Web T1 boundary** — DOM builtins in the existing TS runtime
+5. **The Web T1 boundary** — a `dom_*` layer in the existing TS runtime
    versus a browser-specific runtime variant, and where the bundling
    step lives in the toolchain.
 6. **The tree spelling** — whether the array child form gets a literal

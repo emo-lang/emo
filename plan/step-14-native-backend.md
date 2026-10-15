@@ -17,8 +17,9 @@ step 15's other targets will share.
 - **Backend strategy, staged** (decision point, recommendation below) —
   - **Stage A: compile to OCaml.** Lower the checked AST to OCaml source
     (or a directly-linked OCaml module tree), compile with the OCaml
-    toolchain, link the runtime (scheduler, builtins). This reuses OCaml's
-    optimizer, GC, and platform support, and lands a real backend fast.
+    toolchain, link the runtime (the scheduler and its implementations).
+    This reuses OCaml's optimizer, GC, and platform support, and lands a
+    real backend fast.
   - **Stage B: specialization.** Where the step 09 checker has complete
     type knowledge for a module, specialize: unbox primitives, direct
     (non-duck) method dispatch, eliminate runtime tag checks. Mixed

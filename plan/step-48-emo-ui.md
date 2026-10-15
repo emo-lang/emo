@@ -99,8 +99,8 @@ Recorded in `docs/emo-ui.md` and carried by this step:
 - **The compiler-side gates:** the native packaging mechanism (the
   manifest's per-package native fields — settled direction, `CHECK.md`),
   terminal raw-mode/key input, and the browser runtime path (a
-  browser-safe TypeScript runtime split or a `dom_*` builtin family,
-  plus the bundling step).
+  browser-safe TypeScript runtime split or a `dom_*` family in the
+  runtime, plus the bundling step).
 - **The convergence corpus:** one sample application run on every
   backend, so a `row` means the same thing everywhere.
 
@@ -142,8 +142,8 @@ Recorded in `docs/emo-ui.md` and carried by this step:
 - [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
       model) and ANSI painting; a scripted-input golden.
 - [ ] **T48.5** — Terminal input: raw mode and key events — a `termios`
-      `foreign def` (c/ocaml) or a terminal builtin; line mode first,
-      raw mode behind it.
+      `foreign def` (c/ocaml) or a terminal runtime implementation;
+      line mode first, raw mode behind it.
 - [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
       byte-identical on all five hosted targets; forms and links as the
       interaction model.
@@ -157,7 +157,7 @@ Recorded in `docs/emo-ui.md` and carried by this step:
 - [ ] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`;
       the convergence corpus runs. Demo scale, as T48.8.
 - [ ] **T48.10** — The browser runtime path: a browser-safe split of
-      the TypeScript runtime (or a `dom_*` builtin family) plus the
+      the TypeScript runtime (or a `dom_*` family in the runtime) plus the
       output-bundling step; the gate for T48.11.
 - [ ] **T48.11** — `ui-browser`: the DOM backend over the browser path;
       the convergence corpus runs.
@@ -203,6 +203,6 @@ Listed as open questions in `docs/emo-ui.md`:
    or later.
 4. **A checked block/function type** — whether the component API earns
    it after a first package shows the friction.
-5. **The browser path boundary** — DOM builtins in the existing
+5. **The browser path boundary** — a `dom_*` layer in the existing
    TypeScript runtime versus a browser-specific runtime variant, and
    where the bundling step lives in the toolchain. Gates T48.10–T48.11.

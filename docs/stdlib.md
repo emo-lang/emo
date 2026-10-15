@@ -33,9 +33,10 @@ Two conventions hold across every package:
 - **Pure Emo where the language suffices.** The format packages and
   the codec are written in Emo over the shared runtimes, so every
   target they declare answers byte-for-byte identically. `os` and
-  `file` dispatch to runtime built-ins backed by POSIX, and only they
-  are native-only; `net` and `http` dispatch to runtime built-ins too —
-  POSIX-backed on `ocaml` and `c`, Node-backed on `typescript`.
+  `file` dispatch to the runtime's implementations, backed by POSIX, and
+  only they are native-only; `net` and `http` dispatch to runtime
+  implementations too — POSIX-backed on `ocaml` and `c`, Node-backed on
+  `typescript`.
 
 The packages:
 
@@ -207,7 +208,7 @@ pins alongside it). Reference:
 ## The `net` package
 
 Sockets: TCP, UDP, Unix-domain sockets, DNS, and TLS — a thin,
-readable layer of Emo source over the runtime's network builtins.
+readable layer of Emo source over the runtime's network implementation.
 Direct style: a blocking call reads like any other function call, and
 the scheduler parks the process while the socket is busy. Every
 failure — refused connection, unresolvable name, exceeded deadline —

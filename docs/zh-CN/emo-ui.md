@@ -74,14 +74,14 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 
 四个平台里最便宜的,也是最好的第一个目标。渲染就是带 ANSI 转义的 `printf`——纯 Emo,在任何能写 stdout 的目标上都能跑,不需要 FFI,也不需要新的包机制。单元格网格本身就是一套布局(以字符格为单位的行/列/宽/高),正是 `plot` 终端渲染器已经规划的那类格式无关表面(`docs/visualization.md`,Layer 5)。终端后端也是检验「核心确实与工具包解耦」的最好办法:如果节点模型与 update 循环能在字符网格上跑,它们就真的是后端中立的。
 
-缺口在**输入**,不在输出。今天没有 raw mode 或按键事件 builtin:`os` 包给的是 fd 级 `read`,`os` 只面向原生,而且没有 termios 绑定。读一行今天可行;方向键、resize 事件、Ctrl-C-as-a-message 想要 raw mode,那是一个到 `termios` 的小 `foreign def`(c/ocaml)或一个终端 builtin。有界,但必须排期,不能假定。
+缺口在**输入**,不在输出。今天没有 raw mode 或按键事件运行时实现:`os` 包给的是 fd 级 `read`,`os` 只面向原生,而且没有 termios 绑定。读一行今天可行;方向键、resize 事件、Ctrl-C-as-a-message 想要 raw mode,那是一个到 `termios` 的小 `foreign def`(c/ocaml)或一个终端运行时实现。有界,但必须排期,不能假定。
 
 ### Web
 
 诚实的答案是:「Web」是三个不同的产品,只有一个是近的。
 
 - **T0 —— 服务端渲染的 HTML/CSS。** 一个纯 Emo 渲染器,把节点树变成 HTML 与样式表,在五个托管目标上逐字节一致。没有 DOM、没有 JavaScript、没有浏览器 runtime——这正是 `plot` 选择 SVG 时的那一步架构动作:渲染归查看器,场景归库。交互是表单、链接与服务端往返(htmx 形状),或之后的一条 SSE/WebSocket 通道。这廉价、可测,立刻给内容与表单类 UI 带来「Web」。它是正确的 T0。
-- **T1 —— DOM 后端。** 一个 Emo 程序,由 TypeScript 目标编译,在浏览器里对着 `document`/`Element` 运行。真正的交互在这里,而它没就绪:发射出的 runtime 顶部 import `node:async_hooks`、`node:net`、`node:dgram`、`node:tls`、`node:dns`、`node:fs`(`ts_runtime.ts`),所以在浏览器里加载不了;step 17 的范围明确把「browser embedding(`fetch`/WebSocket bridging)」列为 out;而浏览器不能执行 `.ts`,所以一个输出打包步骤会进入工具链。要走到那里,需要一层 DOM 能力(TS runtime 里一个 `dom_*` builtin 家族,或一个仅浏览器用的 runtime 变体)、一个浏览器安全的入口,以及一个构建步骤。都是实打实的工作,但没有一个是架构上被堵死的。
+- **T1 —— DOM 后端。** 一个 Emo 程序,由 TypeScript 目标编译,在浏览器里对着 `document`/`Element` 运行。真正的交互在这里,而它没就绪:发射出的 runtime 顶部 import `node:async_hooks`、`node:net`、`node:dgram`、`node:tls`、`node:dns`、`node:fs`(`ts_runtime.ts`),所以在浏览器里加载不了;step 17 的范围明确把「browser embedding(`fetch`/WebSocket bridging)」列为 out;而浏览器不能执行 `.ts`,所以一个输出打包步骤会进入工具链。要走到那里,需要一层 DOM 能力(TS runtime 里一个 `dom_*` 家族,或一个仅浏览器用的 runtime 变体)、一个浏览器安全的入口,以及一个构建步骤。都是实打实的工作,但没有一个是架构上被堵死的。
 - **T2 —— wasm + DOM。** `wasm` 目标的模块只 import `println`、`abort`、`float_str`;wasm 上的 DOM 后端意味着新的宿主 import 与一层 JS 胶水。更晚,而且只在 T1 被证明不够时才做。
 
 Web 与原生工具包还有一个共同的语义要点:**平台持有事件循环。** 浏览器页面或 AppKit 应用不能交给 Emo 一个阻塞的 `ui_run()`、然后让 Emo 自己的协作式调度器持有线程。`c` 目标的工具包主循环确实阻塞在 `ui_run` 里,事件经回调重入;浏览器不会。这会影响下面的状态设计。
@@ -276,7 +276,7 @@ interface Backend {
 - **macOS / GTK:** 一个 Emo 类,其方法调用 `foreign def` shim。shim 实现各原语(`window_make`、`label_make`、`place`、`connect`、……);Emo 侧遍历树并把节点映射到原生 handle。
 - **TUI:** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 读输入并分派 tag。
 - **SSR:** 一个纯 Emo 类,把树序列化成 HTML/CSS;`run()` 就是渲染一次。
-- **DOM(之后):** 一个 Emo 类,压在 `dom_*` builtin 上;`run()` 把控制权交给浏览器后返回。
+- **DOM(之后):** 一个 Emo 类,压在运行时的 `dom_*` 调用上;`run()` 把控制权交给浏览器后返回。
 
 `patch` 是成长边缘。spike 每个事件做全量重建(`clear` 加重新 `place`),对终端与静态 HTML 渲染没问题,对保留式工具包是错的(丢焦点、选区、滚动位置),对 DOM 也浪费。v1 可以对 TUI/SSR 先上全量重建、对原生/DOM 用保留式;带 key 的协调是后续项,而编译器的「静态可判定的定向刷新」是它的长期形态。
 
@@ -345,8 +345,8 @@ ui_tui.run(app.view, app.update, Model.new(0))
 3. **包原生输入的扩展(原生后端的真正关口)。** `.c`/`.h` 加裸 `-l` 表达不了 AppKit(`.m`、frameworks)或 GTK(`pkg-config`)。新增 per-package 编译 flag / `pkg_config` 机制——**已定(2026-10-14)走这条路,不走「写明使用应用级构建脚本」那条**(`CHECK.md`);字段面是 T48.7 自己的范围。
 4. **`c` 目标的内存回收——已定(2026-10-14)走值语义家族的引用计数。** region 那条路已被实测并排除(`spike/arena-scope`、`CHECK.md`);它作为独立里程碑排期(step 49),并且**不是**原生后端的关口——原生后端以 demo 尺度交付,并把限制写进文档。
 5. **`c` 目标的 `raise` 与 `send`**(在 `CHECK.md` 开放)。UI 不能因为一个坏事件整体死掉,跨进程的事件载荷也不能被静默共享。
-6. **Web 的浏览器路径(T1)。** 要么把 TypeScript runtime 拆出一个浏览器安全版本、加一个 `dom_*` builtin 家族与一个打包步骤,要么新增 wasm 宿主 import。SSR(T0)不需要。
-7. **终端输入。** TUI 的 raw mode 与按键事件(一个小的 termios 绑定或一个终端 builtin)。
+6. **Web 的浏览器路径(T1)。** 要么把 TypeScript runtime 拆出一个浏览器安全版本、加一个 `dom_*` 家族与一个打包步骤,要么新增 wasm 宿主 import。SSR(T0)不需要。
+7. **终端输入。** TUI 的 raw mode 与按键事件(一个小的 termios 绑定或一个终端运行时实现)。
 8. **不加新语法。** 树已经可表达;如果不可,缺口是一个类型或一个库函数,不是一条构造。
 
 ## 风险
@@ -405,5 +405,5 @@ ui_tui.run(app.view, app.update, Model.new(0))
 2. **协调** —— 保留式后端何时从全量重建换成带 key 的 diff,以及编译器的定向刷新是否与它同时落地。
 3. **两个事件循环的集成** —— UI 进程与工具包循环如何共存,以及事件在 v1 还是更晚变成真正的进程消息。
 4. **带检查的 block/函数类型** —— 在第一个包显出摩擦之后,组件 API 是否值得它。
-5. **Web T1 的边界** —— 现有 TS runtime 里的 DOM builtin,还是浏览器专属 runtime 变体,以及打包步骤落在工具链的哪里。
+5. **Web T1 的边界** —— 现有 TS runtime 里的 DOM 层,还是浏览器专属 runtime 变体,以及打包步骤落在工具链的哪里。
 6. **树的拼法** —— 数组式 children 到底要不要一个字面量写法;如果要,它属于 Emo 自己的语法,还是属于一个产出 `.emo` 的外部翻译器。已经**关掉**的机制(发射、self 重绑定、环境式收集器、自带走作用域求值的模板引擎)记在 [`emo-ui-composition.md`](emo-ui-composition.md),那里也写明了能了结这个问题的证据是什么。

@@ -4,10 +4,10 @@ The standard library's process-level surface: process ids, `fork`,
 `execv`, `waitpid`, pipes, the working directory, directory listing,
 and raw (unbuffered, fd-based) file IO — the machinery a systems
 program needs before it can build anything else. Unlike the format
-packages, `os` is not pure Emo: its calls dispatch to runtime
-built-ins backed by POSIX, and it declares only the targets that have
-a Unix-shaped host — `ocaml` and `c`. Declaring it for the browser or
-bytecode targets is a package error before any code runs.
+packages, `os` is not pure Emo: its calls dispatch to the runtime's
+implementations, backed by POSIX, and it declares only the targets
+that have a Unix-shaped host — `ocaml` and `c`. Declaring it for the
+browser or bytecode targets is a package error before any code runs.
 
 ## Using the package
 

@@ -77,7 +77,8 @@ the machine behind it.
 
 In the reference implementation, the compiler's own runtime layer — what
 the interpreter runs on — is `src/emo_eval` (the evaluator),
-`src/emo_runtime` (native boxing, builtins, dispatch helpers), and
+`src/emo_runtime` (native boxing, the stdlib's runtime
+implementations, dispatch helpers), and
 `src/emo_sched` (the process scheduler). A **target's** runtime is a
 different thing: the runtime-independence principle (2026-10-07) writes
 it in the target's language, carries it as generated data inside the
@@ -85,7 +86,8 @@ compiler, and compiles it with the target's own toolchain — `c` carries
 `src/emo_codegen/c/emo_c_runtime.c`, `ocaml` carries
 `src/emo_codegen/ocaml/emo_ocaml_runtime.ml`, `typescript` carries
 `src/emo_codegen/ts/ts_runtime.ts`, and `wasm`/`beam` carry theirs inside
-the emitted module. (The `ocaml` file is the scheduler and builtins; the
+the emitted module. (The `ocaml` file is the scheduler and the
+runtime implementations; the
 collector and value model underneath are still OCaml's — the borrowed
 host runtime of point 2.) That is the README's "ships inside the binary": a
 compiled program carries its runtime with it, with no interpreter and no

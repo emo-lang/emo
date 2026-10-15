@@ -37,7 +37,8 @@ configurable central registry into a global content-addressed cache.
 - **Manifest, phase B — restricted evaluator:** upgrade the parser to a real
   restricted-profile evaluation (the README's configuration story): the
   full expression language minus unbounded iteration, with an evaluation
-  step budget, no I/O builtins in scope, hermetic by construction. The
+  step budget, no I/O runtime implementations in scope, hermetic by
+  construction. The
   budget-exceeded error must be precise ("manifest evaluation exceeded N
   steps"). This restricted mode is a reusable interpreter flag — the same
   machinery later serves user-facing config files.

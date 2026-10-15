@@ -75,7 +75,7 @@ tripping over latent backend bugs. Fixed in this step:
 - **c emo_send arguments** (emo_c): argumentful interface dispatch
   passed an `emo_value` where the runtime reads `emo_value*` — invalid
   C for every argful send (nullary sends masked it). Now a compound
-  literal array. An unknown-receiver method outside the builtin table
+  literal array. An unknown-receiver method outside the runtime table
   also falls through to the vtable send instead of refusing.
 - **c mutual-tail clusters** (emo_c): the merged function entered at
   the first member's head regardless of which member was called; each
@@ -110,14 +110,14 @@ tripping over latent backend bugs. Fixed in this step:
   c binary; the landing flushed two c-codegen defects — the Bytes
   method arms guessed an Unknown receiver was Bytes (cross-module
   `.get` lowered to byte indexing; gradual receivers now dispatch
-  dynamically, with the runtime's builtin table carrying the
+  dynamically, with the runtime's method table carrying the
   bytes/map/box/array families), and the class vtables spelled
   predicate methods with the symbol-safe `_q` instead of the source
   `?` (dynamic dispatch and `is()` matching missed them).
 - **The wasm and beam landing (2026-10-14):** `json_demo` rides the
   wasm, beam, and c golden lists. The three fixes are recorded in
   `plan/step-32-stdlib-yaml.md` (the `String.substring` runtimes, the
-  wasm class-pad RTT collision, and the `get` builtin/class dispatch).
+  wasm class-pad RTT collision, and the `get` runtime/class dispatch).
 
 ## Tasks
 

@@ -156,7 +156,7 @@ aligning the emitters with the checker, not just changing the checker.
 Until then, marks store their style fields flat — a field of a field is
 unknown at check time, which some back ends cannot dispatch.
 
-### R3 — a class method named like a builtin method is shadowed
+### R3 — a class method named like a runtime method is shadowed
 
 `to_string` and `length` are emitted by name ahead of class dispatch, so
 a class method with that name would be shadowed. `to_string` is fixed
@@ -179,6 +179,6 @@ library hits it yet.
 - [x] **R1** — resolved by fixing the compiler's package namespacing;
       `docs/visualization.md`'s `plot.mark` was right.
 - [ ] **R2** — type `self.field` precisely, with the emitters aligned.
-- [ ] **R3** — the builtin-vs-class-method shadowing (`length` first).
+- [ ] **R3** — the runtime-method-vs-class-method shadowing (`length` first).
 - [ ] Then: further plot work — T1 statistics, the other mark families,
       and the terminal/PNG renderers (the design note's later steps).

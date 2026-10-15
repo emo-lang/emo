@@ -71,8 +71,9 @@ Repository facts, as of the date above:
   unchanged; `os`, `file`, and `bufio` declare `ocaml, c`; `net`,
   `http`, and `slog` declare `ocaml, c, typescript`; `sqlite3` is `c`
   only. A Lua target would implement the `os_*`/`file_*` group (20 and
-  2 builtins) or refuse it as TypeScript does — `ts_runtime.ts`
-  implements no `os_*` or `file_*` builtin at all.
+  2 runtime implementations) or refuse it as TypeScript does —
+  `ts_runtime.ts` implements no `os_*` or `file_*` runtime
+  implementation at all.
 - **CI.** The release matrix is four platforms (linux x86_64/aarch64,
   macos x86_64/arm64, `release.yml:26-32`); each would install a Lua
   interpreter, and Lua is the only candidate target whose *minor*

@@ -54,13 +54,13 @@ Three latent c-backend bugs, all in the cross-module method-call
 path, all caught by the demo's golden and fixed:
 
 - **The name hijack was unsound.** A receiver the checker lost the
-  type of (any cross-module value) dispatched builtin-owned method
+  type of (any cross-module value) dispatched runtime-owned method
   names (`read_line`, `trim`, `substring`, …) straight to the
-  builtin — `b.read_line()` on a user class became
+  runtime — `b.read_line()` on a user class became
   `emo_net_read_line(unbox(b))`, a type-check crash at runtime. The
   dispatch now lives in the runtime (`emo_dynamic_builtin`): an
   instance answers through its vtable, a non-instance through the
-  builtin that owns the name.
+  runtime method that owns the name.
 - **The receiver was evaluated up to three times.** The old arm list
   interpolated the receiver expression into the kind test and both
   arms; a side-effecting receiver (`pe.discard(2).to_string()`)
@@ -81,7 +81,7 @@ path, all caught by the demo's golden and fixed:
       read back through two stacked readers — on the bootstrap and c
       lists. (Done 2026-10-09.)
 - [x] **T37.3** — The c-backend fixes: the runtime dispatch for
-      untyped receivers (`emo_dynamic_builtin` + the builtin method
+      untyped receivers (`emo_dynamic_builtin` + the runtime method
       table), the single evaluation of the receiver, and the Void
       statement-method emission. (Done 2026-10-09.)
 - [x] **T37.4** — The docs: `docs/stdlib/bufio.md` + zh-CN mirror;

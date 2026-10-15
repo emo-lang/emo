@@ -56,9 +56,10 @@ last-win, and the number formats at their boundaries.
   `YamlNull` instance answered `YamlBool.encode`); the total field
   count is now `(ordinal + 1) * (max_fields + 1) + 2`, unique per
   class and clear of the two all-anyref runtime shapes. And the `get`
-  builtin shadowed every class's `get` method (`doc.get("k")` lowered
-  to Bytes indexing on both targets): both backends now test
-  Bytes/instance at runtime and fall back to the Bytes accessor.
+  method in the runtime shadowed every class's `get` method
+  (`doc.get("k")` lowered to Bytes indexing on both targets): both
+  backends now test Bytes/instance at runtime and fall back to the
+  Bytes accessor.
 
 ## Tasks
 

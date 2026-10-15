@@ -2,10 +2,11 @@
 
 The standard library's socket package: TCP, UDP, Unix-domain sockets, DNS,
 and TLS. It is a thin, readable layer of Emo source over the runtime's
-network builtins — every function here is one call to a builtin, and the
-semantics (timeouts, EOF, errors) are the runtime's. The package declares
-the `ocaml`, `c`, and `typescript` targets (`targets = ["ocaml", "c",
-"typescript"]`); dependency resolution refuses it on every other target.
+network implementation — every function here is one call into the
+runtime, and the semantics (timeouts, EOF, errors) are the runtime's.
+The package declares the `ocaml`, `c`, and `typescript` targets (`targets
+= ["ocaml", "c", "typescript"]`); dependency resolution refuses it on
+every other target.
 Coverage differs by target: `ocaml` and `typescript` implement the whole
 surface, while `c` implements TCP only — UDP, Unix-domain sockets,
 `net.resolve`, and TLS are refused at runtime there.

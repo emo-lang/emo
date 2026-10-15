@@ -78,7 +78,7 @@ Erlang 在电信业验证过的高可用监控面形态:SCADA 上位机、MES �
 | 尾递归循环,1000 万次 | 1670 ms(1 亿时栈溢出) | 392 ms | 5774 ms | 14 ms(OCaml)/ 3 ms(C) |
 | fib(30) | 17 ms | 35 ms | 910 ms | 6 ms(OCaml) |
 | foreign `sqrt`,1000 万次 | ——(强制动态) | 428 ms(约 43 ns/次) | ——(拒绝) | 45 ms(约 4.5 ns/次) |
-| `Bytes.get`,2000 万次 | ——(动态内建) | 1012 ms(约 51 ns/字节) | —— | 30 ms(OCaml)/ 15 ms(C) |
+| `Bytes.get`,2000 万次 | ——(动态分派) | 1012 ms(约 51 ns/字节) | —— | 30 ms(OCaml)/ 15 ms(C) |
 
 对 FFI 这个问题,有三点结论:
 

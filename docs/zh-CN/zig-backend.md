@@ -51,7 +51,7 @@ MSVC,一行 Zig 都不用生成。建议:把后端方案挂起,写明重新评�
 - **stdlib 面。**包清单按目标设门(`targets = [...]`);五个面向
   原生的包(`os`、`net`、`file`、`http`、`bufio`)今天声明
   `ocaml, c`,Zig 目标会被期待与 `c` 并排——运行时里 33 个
-  `os_*`/`net_*`/`file_*` builtin 直呼 libc,届时会经由 extern 声明
+  `os_*`/`net_*`/`file_*` 运行时实现直呼 libc,届时会经由 extern 声明
   继续直呼。
 - **CI。**release 矩阵是四个平台(linux x86_64/aarch64、macos
   x86_64/arm64,release.yml:26-32),每台要装 Zig。

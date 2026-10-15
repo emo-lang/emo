@@ -451,7 +451,7 @@ shares the tagged-word value model.
 - [x] **T23.7** — The systems-layer surface: `Bytes` with little-endian accessors, the bitwise operators, `Byte`, `Int64`/`Float64` bit-casts. Goldens: bit_ops, bytes, fixed_width. (Done 2026-10-06: all three full-example goldens byte-for-byte. `&`/`|`/`^` are exact two's-complement on int64_t; `<<`/`>>` guard the count (negative errors, ≥64 gives 0/sign-fill) in the runtime; Byte is uint8_t with wrap-by-truncation and the Int64 div/shift guards; a Byte in the dynamic world materializes as an Int64 cell. Bytes is a new cell kind with in-cell storage, `to_bytes`/`to_string` interop, and a runtime `to_string` method dispatch (Bytes content vs value rendering) — the interpreter's runtime dispatch, mirrored. The checker now types `Unknown + Unknown` as Unknown (the runtime dispatches `+` per the values — neither result is provable); C reserved words in Emo defs get a `_c` suffix.)
 - [x] **T23.8** — C FFI rungs 1–3 on the direct C ABI (no wrapper generator): scalars, width types as they land, opaque handles + copied buffers; the capability table flips `c` to honoring `foreign def`. Goldens: a libm `sqrt` fixture and a tiny C opaque-handle fixture under `test/`. (Done 2026-10-06: the c backend emits `extern` declarations and calls the symbol directly — no wrappers. Strings cross with a NUL terminator (`emo_str_cstr` out, `emo_str_from_cstr` in, per CHECK.md's layout decision); Int64 crosses as `int64_t` — the capability table is now target-aware in the checker (`c` admits Int64, the OCaml backend stays Float64/String/Bool); opaque handles ride pointer-sized Int64s behind a tiny externally-owned counter library, explicitly closed, in the `c_foreign` test group alongside the libm fixture.)
 - [x] **T23.9** — Processes and the cooperative scheduler: `do` / `<-` / `receive`, mailboxes, selective receive, `self_pid`, `halt`; single-threaded cooperative loop; traces diffed against `emo_sched_det`. Goldens: pipeline, showcase. (Done 2026-10-06: both full-example goldens byte-for-byte. Each Emo process is a ucontext fiber with its own stack; the scheduler keeps emo_sched_det's policy — FIFO run queue, spawn enqueues the child without suspending the spawner, send delivers + wakes + re-queues the sender at the tail, receive scans the mailbox in generated code for the first message a branch accepts (a failed guard leaves the message queued) and parks the fiber when nothing matches; an empty run queue with parked fibers is a reported deadlock. Pids are an EMO_PID cell (rendered `<pid N>`); `EMO_TRACE=1` prints spawn/send/park/dispatch/exit/reap events for diffing. Also fixed en route: the entry file discovered twice (root + tree copies, keyed by a `/.`-carrying path) lowered every symbol under two manglings — the walk now normalizes file paths and the IR dedupes module copies by the parsed items' physical identity.)
-- [x] **T23.10** — Hosted IO and stdlib metadata: `file.read`/`file.write`, TCP/UDP sockets, the HTTP client/server over the hosted OS; stdlib gains `"c"` in `targets`. Goldens: file_read, tcp_echo, http_roundtrip. (Done 2026-10-06: all three full-example goldens byte-for-byte, including the stdlib http/net packages compiling on the c target. Sockets are non-blocking fds whose would-block reads park the fiber — the scheduler polls parked descriptors while the run queue is empty; the root process finishing ends the program. Cross-module Unknown receivers dispatch by method/field NAME (globally builtin-owned names, runtime helpers; instance fields by vtable name). Unix sockets, TLS, DNS resolve, and UDP compile as honest runtime refusals. The stdlib file/net/http packages and the three examples declare `"c"`, lockfiles regenerated.)
+- [x] **T23.10** — Hosted IO and stdlib metadata: `file.read`/`file.write`, TCP/UDP sockets, the HTTP client/server over the hosted OS; stdlib gains `"c"` in `targets`. Goldens: file_read, tcp_echo, http_roundtrip. (Done 2026-10-06: all three full-example goldens byte-for-byte, including the stdlib http/net packages compiling on the c target. Sockets are non-blocking fds whose would-block reads park the fiber — the scheduler polls parked descriptors while the run queue is empty; the root process finishing ends the program. Cross-module Unknown receivers dispatch by method/field NAME (globally runtime-owned names, runtime helpers; instance fields by vtable name). Unix sockets, TLS, DNS resolve, and UDP compile as honest runtime refusals. The stdlib file/net/http packages and the three examples declare `"c"`, lockfiles regenerated.)
 - [x] **T23.11** — Bootstrap, benchmarks, close-out: the `c_examples` CI group; specialization (unboxing, direct dispatch) with `restrict` on hot loops; `benchmarks/results.md` gains the `c` column; the `native` → `ocaml` rename lands here or in its own step; close-out records the decisions. (Done 2026-10-06: all six benchmarks recorded on the c target — fib 7 ms, tail loop 4 ms (470x under the OCaml backend's specialized build, 1.3x from the C baseline), ffi 46 ms, bytes 43 ms, json 3 ms, http 83 req/s. Specialization is structural: the two-regime emitter already unboxes natives and dispatches directly where types are known; `restrict` waits for pointer-parameter loops (the buffer rung). The rename is its own step, next.)
 
 ## M7 — Toolchain
@@ -916,7 +916,7 @@ CHECK.md.
       latent c-side deviations fell out the moment receivers carried
       types: `emo_box_replace` answered with the box while every other
       target answers with the new value (aligned), and the emitter's
-      builtin `to_string` arm hijacked statically-typed instance
+      `to_string` dispatch arm hijacked statically-typed instance
       receivers, printing the debug repr instead of calling the class's
       method (instances now dispatch by class first, the conversion
       only when no method carries the name).
@@ -1084,8 +1084,9 @@ list_dir answers byte-order-sorted names without `.` and `..`;
 goldens green on interpreter/ocaml/c; ts/wasm/beam refuse the package
 by declaration.
 
-- [x] **T34.1** — The checker signatures, the `os_` builtin prefix,
-      and the interpreter's Unix-backed dispatch. (Done 2026-10-09.)
+- [x] **T34.1** — The checker signatures, the `os_` runtime
+      implementation prefix, and the interpreter's Unix-backed
+      dispatch. (Done 2026-10-09.)
 - [x] **T34.2** — The c runtime's `emo_os_*` POSIX implementations
       and the c emitter's dispatch. (Done 2026-10-09.)
 - [x] **T34.3** — The standalone ocaml runtime's dispatch. (Done
@@ -1153,8 +1154,8 @@ fields) the same two-field struct, so WasmGC merged their RTTs and
 answered as `YamlBool`, which read as a dispatch bug); each class's
 total field count is now `(ordinal + 1) * (max_fields + 1) + 2`,
 unique per class and clear of the two all-anyref runtime shapes. The
-`get` builtin also shadowed every class's `get` method on both targets
-(`doc.get("k")` lowered to Bytes indexing); both backends now test
+`get` method in the runtime also shadowed every class's `get` method on
+both targets (`doc.get("k")` lowered to Bytes indexing); both backends now test
 Bytes/instance at runtime and fall back to the Bytes accessor.
 
 ### Step 36 — The standard library: `slog` · `plan/step-36-stdlib-slog.md`
@@ -1209,7 +1210,7 @@ its vtable, once, and Void method statements keep their calls).
       read back through two stacked readers — on the bootstrap and c
       lists. (Done 2026-10-09.)
 - [x] **T37.3** — The c-backend fixes: the runtime dispatch for
-      untyped receivers (`emo_dynamic_builtin` + the builtin method
+      untyped receivers (`emo_dynamic_builtin` + the runtime method
       table), the single evaluation of the receiver, and the Void
       statement-method emission. (Done 2026-10-09.)
 - [x] **T37.4** — The docs: `docs/stdlib/bufio.md` + zh-CN mirror;
@@ -1221,11 +1222,11 @@ ordinary class — the buffer, cursor, source, and last-read byte live
 in `Box`es, and the class stays immutable around them. The step
 flushed out three latent c-backend bugs in the cross-module
 method-call path: the name hijack that sent `read_line` on a user
-class to the socket builtin, the receiver expression evaluated up to
+class to the socket implementation, the receiver expression evaluated up to
 three times by the dispatch, and Void method statements compiled to
 nothing. All three are fixed in the runtime dispatch
 (`emo_dynamic_builtin`), which evaluates the receiver once and hands
-instances to their vtable before any builtin. The package rides `os`,
+instances to their vtable before any runtime method. The package rides `os`,
 so its manifest declares the ocaml and c targets and widens when
 those surfaces reach the other runtimes.
 
@@ -1271,7 +1272,7 @@ uses it.
       style fields need not be stored flat. Today a native-typed field
       read on a dynamic receiver is still boxed, and the emitters key
       their native/dynamic choice on the expression's static type alone.
-- [ ] **T39.2** — A class method named like a builtin method is not
+- [ ] **T39.2** — A class method named like a runtime method is not
       shadowed (R3). `to_string` is fixed; `length` is not.
 - [ ] **T39.3** — `math`'s opt-in native fast path: separate `*_native`
       `foreign def` functions on `c`/`ocaml` (`math.exp` pure and
@@ -1570,7 +1571,8 @@ required.
 - [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
       model) and ANSI painting; a scripted-input golden.
 - [ ] **T48.5** — Terminal input: raw mode and key events (`termios` via
-      `foreign def`, or a terminal builtin); line mode first.
+      `foreign def`, or a terminal runtime implementation); line mode
+      first.
 - [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
       byte-identical on all five hosted targets; forms and links as the
       interaction model.
@@ -1584,7 +1586,7 @@ required.
 - [ ] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`; the
       convergence corpus runs. Demo scale, as T48.8.
 - [ ] **T48.10** — The browser runtime path: a browser-safe split of the
-      TypeScript runtime (or a `dom_*` builtin family) plus the
+      TypeScript runtime (or a `dom_*` family in the runtime) plus the
       bundling step; the gate for T48.11.
 - [ ] **T48.11** — `ui-browser`: the DOM backend over the browser path;
       the convergence corpus runs.

@@ -1,6 +1,6 @@
 # `net` 包
 
-标准库的 socket 包:TCP、UDP、Unix 域 socket、DNS 与 TLS。它是运行时网络 builtin 之上一层薄薄的、可读的 Emo 源码——这里每个函数都只是对 builtin 的一次调用,语义(超时、EOF、错误)就是运行时的语义。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。各目标覆盖面不同:`ocaml` 与 `typescript` 实现完整能力,`c` 只实现 TCP——UDP、Unix 域 socket、`net.resolve` 与 TLS 在 `c` 上运行时被拒绝。
+标准库的 socket 包:TCP、UDP、Unix 域 socket、DNS 与 TLS。它是运行时网络实现之上一层薄薄的、可读的 Emo 源码——这里每个函数都只是对运行时实现的一次调用,语义(超时、EOF、错误)就是运行时的语义。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。各目标覆盖面不同:`ocaml` 与 `typescript` 实现完整能力,`c` 只实现 TCP——UDP、Unix 域 socket、`net.resolve` 与 TLS 在 `c` 上运行时被拒绝。
 
 网络是**直接风格**:阻塞调用读起来就是普通函数调用,socket 忙碌时调度器把进程挂起。没有 `async`/`await`,没有回调注册。每一种失败——连接被拒、名字解析不出、超过期限、socket 已关——都以 `(R.error, reason)` 返回:reason 是 String,写明操作、对端与原因。用 `case` 匹配它,别让它崩掉进程。
 

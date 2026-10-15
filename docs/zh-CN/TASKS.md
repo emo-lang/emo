@@ -411,7 +411,7 @@
 - [x] **T23.7** — 系统层表面:带小端访问器的 `Bytes`、位运算符、`Byte`、`Int64`/`Float64` 位转换。金测:bit_ops、bytes、fixed_width。(2026-10-06 完成:三个完整例子金测逐字节通过。`&`/`|`/`^` 在 int64_t 上精确二补码;`<<`/`>>` 在运行时守卫计数(负数报错、≥64 得 0/符号填充);Byte 是 uint8_t,截断回绕,复用 Int64 的除法/移位守卫;动态世界中的 Byte 物化为存 0-255 的 Int64 单元。Bytes 是新的堆块种类,存储在单元内,`to_bytes`/`to_string` 互操作,运行时 `to_string` 方法分派(Bytes 出内容、其他值出渲染)——对应解释器的运行时分派。checker 现把 `Unknown + Unknown` 定型为 Unknown(运行时按值分派 `+`——两个结果都不可证明);Emo 定义名撞 C 保留字时加 `_c` 后缀。)
 - [x] **T23.8** — 直接 C ABI 上的 C FFI 第 1–3 级(不再需要包装器生成器):标量、随语言落地的宽度类型、不透明句柄 + 拷贝缓冲区;能力表中 `c` 翻转为支持 `foreign def`。金测:libm `sqrt` fixture 与一个小型 C 不透明句柄 fixture。(2026-10-06 完成:c 后端发射 `extern` 声明并直调符号——无包装。字符串跨界带 NUL 终止(出经 `emo_str_cstr`、入经 `emo_str_from_cstr`,按 CHECK.md 的布局决策);Int64 以 `int64_t` 直过——能力表在 checker 中目标感知(`c` 接纳 Int64,OCaml 后端保持 Float64/String/Bool);不透明句柄以指针尺寸的 Int64 承载,在 `c_foreign` 测试组中与 libm 夹具并列,配一个外部所有的计数器库、显式关闭。)
 - [x] **T23.9** — 进程与协作式调度器:`do` / `<-` / `receive`、邮箱、选择性 receive、`self_pid`、`halt`;单线程协作循环;执行轨迹与 `emo_sched_det` 做 diff。金测:pipeline、showcase。(2026-10-06 完成:两个完整例子金测逐字节通过。每个 Emo 进程是一个 ucontext 纤维,拥有独立栈;调度器沿用 emo_sched_det 的策略——FIFO 运行队列,spawn 入队子进程而不挂起父进程,send 投递 + 唤醒 + 把发送者重新排在队尾,receive 在生成代码中扫描邮箱取第一条被某分支接受的消息(守卫失败的消息留在队中),无匹配时停靠纤维;运行队列空而有纤维停靠即报告死锁。Pid 是 EMO_PID 单元(渲染 `<pid N>`);`EMO_TRACE=1` 打印 spawn/send/park/dispatch/exit/reap 事件供 diff。顺带修复:入口文件被双发现(根副本 + 树副本,键上带 `/.` 路径)导致每个符号按两种 mangling 降级——walk 现规范化文件路径,IR 按 parsed items 的物理同一性去重模块副本。)
-- [x] **T23.10** — 托管 IO 与标准库元数据:`file.read`/`file.write`、TCP/UDP socket、HTTP 客户端/服务器;标准库 `targets` 加 `"c"`。金测:file_read、tcp_echo、http_roundtrip。(2026-10-06 完成:三个完整例子金测逐字节通过,包括 stdlib 的 http/net 包在 c 目标上编译。socket 是非阻塞 fd,would-block 读取停靠纤维——运行队列空时调度器轮询停靠的描述符;根进程结束即程序结束。跨模块 Unknown 接收者按方法/字段名分派(全局内建独有的名称,运行时助手;实例字段按 vtable 名)。Unix socket、TLS、DNS 解析、UDP 编译为诚实的运行时拒绝。stdlib 的 file/net/http 包与三个示例已声明 `"c"`,lockfile 重新生成。)
+- [x] **T23.10** — 托管 IO 与标准库元数据:`file.read`/`file.write`、TCP/UDP socket、HTTP 客户端/服务器;标准库 `targets` 加 `"c"`。金测:file_read、tcp_echo、http_roundtrip。(2026-10-06 完成:三个完整例子金测逐字节通过,包括 stdlib 的 http/net 包在 c 目标上编译。socket 是非阻塞 fd,would-block 读取停靠纤维——运行队列空时调度器轮询停靠的描述符;根进程结束即程序结束。跨模块 Unknown 接收者按方法/字段名分派(全局运行时独有的名称,运行时助手;实例字段按 vtable 名)。Unix socket、TLS、DNS 解析、UDP 编译为诚实的运行时拒绝。stdlib 的 file/net/http 包与三个示例已声明 `"c"`,lockfile 重新生成。)
 - [x] **T23.11** — 引导、基准、收尾:CI `c_examples` 组;特化(去装箱、直接分派),热循环加 `restrict`;`benchmarks/results.md` 增加 `c` 列;`native` → `ocaml` 改名在此或紧随其后的独立步骤落地;收尾记录决策。(2026-10-06 完成:六个基准的 c 目标数字全部落档——fib 7 ms、tail loop 4 ms(比 OCaml 后端的特化构建快 470 倍,距 C 基线 1.3 倍)、ffi 46 ms、bytes 43 ms、json 3 ms、http 83 req/s。特化在本目标上是结构性的:双 regime 发射器已对已知类型去装箱并直接分派;`restrict` 等待指针参数的热循环(缓冲区 rung)。改名作为紧随其后的独立步骤。)
 
 ## M7 — 工具链
@@ -523,7 +523,7 @@ Step 26 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 
 `feat/checker` 上的检查器专项(2026-10-11):循环专项记下的两处分歧,以及揭开失察后暴露的问题。定案见 CHECK.md。
 
-- [x] **T30.1** — `Box.new` 类型化为 `Box[T]`:在 `List.new`/`Map.new` 之侧补上构造器特判,`read`/`replace` 按单元类型受查,其余成员——包括裸成员访问——在检查期拒绝(裸 `x.v` 分歧;此前 stdlib 的 Box 状态完全失察)。接收者一旦带上类型,两处 c 侧预存偏差随即现形:`emo_box_replace` 返回 box 本身,而其余所有 target 都返回新值(已对齐);发射器的内建 `to_string` 臂劫持了静态类型的实例接收者,打印调试 repr 而不调用类自己的方法(实例先按类分派,无同名方法时才走内建转换)。
+- [x] **T30.1** — `Box.new` 类型化为 `Box[T]`:在 `List.new`/`Map.new` 之侧补上构造器特判,`read`/`replace` 按单元类型受查,其余成员——包括裸成员访问——在检查期拒绝(裸 `x.v` 分歧;此前 stdlib 的 Box 状态完全失察)。接收者一旦带上类型,两处 c 侧预存偏差随即现形:`emo_box_replace` 返回 box 本身,而其余所有 target 都返回新值(已对齐);发射器的 `to_string` 分派臂劫持了静态类型的实例接收者,打印调试 repr 而不调用类自己的方法(实例先按类分派,无同名方法时才走内建转换)。
 - [x] **T30.2** — 跨模块值签名:def 与 foreign 按声明的 `FuncType`、const/var 按初始化表达式的类型、`emo` 组进程序级注册表——全部在类型表之侧预注册。限定调用经 `check_apply` 受查;裸成员读取要么解析出类型、要么静态报 E5004;组成员获得类型(此前连同模块的裸 `Math.tau` 都是 Unknown);局部名遮蔽同名模块,与运行时规则一致。顺带落地两个预存 bug:`longest_module_prefix` 走的是路径的后缀而非前缀;空点路径被当成模块前缀——任何非简单接收者上的裸成员访问(`foo(1).field`)恒为 Unknown。
 - [x] **T30.3** — 项目检查下,解析不到任何类型、组或模块的大驼峰值名在书写处报 E4003(运行时携带值的内建名保持合法);单文件视图保持旧的沉默,与它看不见的所有跨文件缺口一致。json/yaml 接口声明 `get`(自引用签名;json 补齐四个标量类的 raise 型变体,与类已有的回答一致)。checker 与 project 测试;CHECK.md 条目;全部 target 金测绿。
 
@@ -572,7 +572,7 @@ Step 26 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 
 **前置:** Step 23(c target)与 Step 25(target 独立——独立 ocaml 运行时同样需要这套分派)。**完成标准:** `require "os"` 给程序进程身份、fork / execv / waitpid / _exit、管道、裸的无缓冲 fd 文件 IO 与目录面;每个失败的调用抛异常并点名系统调用;waitpid 以纯 Emo 解码器应答内核的原始 16 位状态;list_dir 以字节序排序返回名字,不带 `.` 与 `..`;解释器/ocaml/c 金测全绿;ts/wasm/beam 按 targets 声明拒绝该包。
 
-- [x] **T34.1** — checker 签名、`os_` 内建前缀、解释器的 Unix 后端分派。(2026-10-09 完成。)
+- [x] **T34.1** — checker 签名、`os_` 运行时实现前缀、解释器的 Unix 后端分派。(2026-10-09 完成。)
 - [x] **T34.2** — c 运行时的 `emo_os_*` POSIX 实现与 c 发射器的分派。(2026-10-09 完成。)
 - [x] **T34.3** — 独立 ocaml 运行时的分派。(2026-10-09 完成。)
 - [x] **T34.4** — 包本体:薄封装、wait 状态解码器、fork/pipe 纪律。(2026-10-09 完成。)
@@ -593,7 +593,7 @@ Step 26 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 
 步骤 35 收尾(2026-10-09,`feat/stdlib` 分支):base64 是第一个挂满五个金测的标准库包——本步骤还揪出四个从未被已发布示例触及的潜在后端 bug:wasm 的 `&&`/`||` 左操作数漏了 `ref.cast`(这正是把 json/yaml/xml 挡在 wasm 金测之外的墙)、wasm 的零长度字节拷贝是会在 `"".to_bytes()` 上陷阱的 do-while、beam 的逻辑运算符对两个布尔调用 `emo_add`、beam 的元组索引对 Erlang 元组用 `lists:nth`;beam 还补上 `Make_exception`(异常对象即其消息)。json/yaml/xml 的 wasm 闸门应对照这些修复重验——`&&` 之墙已倒,但它们的跨模块类类型可能仍被 step-31 后续挡着。
 
-格式包后端后续(2026-10-14,`develop` 分支):重验完成——`json_demo`、`yaml_demo`、`xml_demo` 现已挂上 wasm、beam、c 三个金测列表。`String.substring` 在 wasm 与 beam 上都没有运行时;wasm 补了边界内的字节拷贝,beam 补了在解释器范围检查之后的 `binary:part/3`。其后浮出两个 wasm 类 bug:class-pad 公式 `ordinal * (max_fields + 1) + field_count` 让(序号 0, 1 个字段)与(序号 1, 0 个字段)得到同一个两字段结构,于是 WasmGC 合并了两者的 RTT,`ref.test` 无法区分 `YamlNull` 与 `YamlBool`(解码出的 null 答成了 `YamlBool`,看起来像分派 bug);现在每个类的字段总数固定为 `(ordinal + 1) * (max_fields + 1) + 2`,按类唯一,且避开两个全 anyref 的运行时形状。此外 `get` 内建在两个 target 上都遮蔽了每个类的 `get` 方法(`doc.get("k")` 被降为 Bytes 索引);两个后端现在都在运行时判定 Bytes/实例,回退到 Bytes 访问器。
+格式包后端后续(2026-10-14,`develop` 分支):重验完成——`json_demo`、`yaml_demo`、`xml_demo` 现已挂上 wasm、beam、c 三个金测列表。`String.substring` 在 wasm 与 beam 上都没有运行时;wasm 补了边界内的字节拷贝,beam 补了在解释器范围检查之后的 `binary:part/3`。其后浮出两个 wasm 类 bug:class-pad 公式 `ordinal * (max_fields + 1) + field_count` 让(序号 0, 1 个字段)与(序号 1, 0 个字段)得到同一个两字段结构,于是 WasmGC 合并了两者的 RTT,`ref.test` 无法区分 `YamlNull` 与 `YamlBool`(解码出的 null 答成了 `YamlBool`,看起来像分派 bug);现在每个类的字段总数固定为 `(ordinal + 1) * (max_fields + 1) + 2`,按类唯一,且避开两个全 anyref 的运行时形状。此外 运行时里的 `get` 方法在两个 target 上都遮蔽了每个类的 `get` 方法(`doc.get("k")` 被降为 Bytes 索引);两个后端现在都在运行时判定 Bytes/实例,回退到 Bytes 访问器。
 
 ### Step 36 — 标准库:`slog` · `plan/step-36-stdlib-slog.md`
 
@@ -611,10 +611,10 @@ Step 26 收尾(2026-10-11,`feat/loops` 分支):循环面在 lexer、parser、che
 
 - [x] **T37.1** — 包本体:两个接口、四个适配器、`Reader` 与 `Writer` 表面、严格尺寸与精确错误。(2026-10-09 完成。)
 - [x] **T37.2** — 金测:`examples/bufio_demo`——内存流、真正 flush 的 8 字节缓冲文件写、经两个叠层 reader 读回——挂 bootstrap 与 c 列表。(2026-10-09 完成。)
-- [x] **T37.3** — c 后端修复:无类型接收者的运行时分派(`emo_dynamic_builtin` + 内建方法表)、接收者表达式只求值一次、Void 语句方法的发射。(2026-10-09 完成。)
+- [x] **T37.3** — c 后端修复:无类型接收者的运行时分派(`emo_dynamic_builtin` + 运行时方法表)、接收者表达式只求值一次、Void 语句方法的发射。(2026-10-09 完成。)
 - [x] **T37.4** — 文档:`docs/stdlib/bufio.md` + zh-CN 镜像;`dune build @fmt` 与 `dune test` 全绿。(2026-10-09 完成。)
 
-步骤 37 收尾(2026-10-09,`feat/bufio` 分支):bufio 是第一个状态以 Box 住在普通类里的标准库包——缓冲、游标、数据源、上次读到的字节都活在 `Box` 中,类在其周围保持不可变。本步骤揪出 c 后端跨模块方法调用路径的三个潜在 bug:把用户类上的 `read_line` 劫持到 socket 内建的名字劫持、接收者表达式被分派求值多达三次、Void 方法语句被编译成空。三处都已在运行时分派(`emo_dynamic_builtin`)修复——它只求值接收者一次,并在任何内建之前把实例交给其 vtable。本包骑在 `os` 上,manifest 声明 ocaml 与 c target,待那些表面到达其他运行时再加宽。
+步骤 37 收尾(2026-10-09,`feat/bufio` 分支):bufio 是第一个状态以 Box 住在普通类里的标准库包——缓冲、游标、数据源、上次读到的字节都活在 `Box` 中,类在其周围保持不可变。本步骤揪出 c 后端跨模块方法调用路径的三个潜在 bug:把用户类上的 `read_line` 劫持到 socket 实现的名字劫持、接收者表达式被分派求值多达三次、Void 方法语句被编译成空。三处都已在运行时分派(`emo_dynamic_builtin`)修复——它只求值接收者一次,并在任何运行时方法之前把实例交给其 vtable。本包骑在 `os` 上,manifest 声明 ocaml 与 c target,待那些表面到达其他运行时再加宽。
 
 ### Step 38 — 标准库:`sqlite3` · `plan/step-38-stdlib-sqlite3.md`
 
@@ -642,7 +642,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 **完成标准:** 使能项自身的测试通过,且受影响的绘图代码用上它。
 
 - [ ] **T39.1** — 精确类型化 `self.field`(`docs/temp-visual-check.md` 的 R2)并同步发射器,使 mark 的样式字段不必再扁平存储。今天在动态接收者上读取原生类型字段仍会被装箱,而发射器只按表达式的静态类型来决定原生/动态路径。
-- [ ] **T39.2** — 与内建方法同名的类方法不被遮蔽(R3)。`to_string` 已修;`length` 未修。
+- [ ] **T39.2** — 与运行时方法同名的类方法不被遮蔽(R3)。`to_string` 已修;`length` 未修。
 - [ ] **T39.3** — `math` 的可选原生快路径:在 `c`/`ocaml` 上分设 `*_native` 的 `foreign def` 函数(`math.exp` 纯净且逐字节一致,`math.exp_native` 为钉定的快路径;decision 15),并记明其 target 钉定。
 - [ ] **T39.4** — 归档并修复绘图 spike 撞上的 `ocaml` 特化缺陷(`non-native expression in specialized body`、`Type_ref`),使特化后的原生体与解释器下降结果一致。
 
@@ -774,12 +774,12 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 - [ ] **T48.2** — Elm 循环:`App`(model/`update`/`view`)、`ui.on(msg)` tag 登记表与 `ui.dispatch(tag)`、`ui.run(view, update, model, backend)`;tag 往返测试,以及保留式 `patch` 对全量重建。
 - [ ] **T48.3** — 无头 `debug` 后端:把树渲染成稳定文本,作为逐字节一致的金测 harness。
 - [ ] **T48.4** — `ui-tui`:字符网格布局(那个小 Emo 盒模型)与 ANSI 绘制;一段脚本化输入的金测。
-- [ ] **T48.5** — 终端输入:raw mode 与按键事件(`foreign def` 接 `termios`,或一个终端 builtin);行模式先行。
+- [ ] **T48.5** — 终端输入:raw mode 与按键事件(`foreign def` 接 `termios`,或一个终端运行时实现);行模式先行。
 - [ ] **T48.6** — `ui-ssr`:节点树到 HTML 加样式表,在全部五个托管 target 上逐字节一致;交互模型是表单与链接。
 - [ ] **T48.7** — 原生打包机制:per-package 的 manifest 字段(`pkg_config` 与/或编译/链接 flags,以及收集 `.m` 的那部分);应用级构建脚本不是受支持的路径。T48.8 与 T48.9 的关口。
 - [ ] **T48.8** — `ui-macos`:九动词 AppKit shim,压在回调契约上;一致性语料跑通。demo 尺度——`c` 目标的长跑内存是 step 49(`CHECK.md`)。
 - [ ] **T48.9** — `ui-gtk`:GTK 4 shim,用 `pkg-config` 构建;一致性语料跑通。demo 尺度,同 T48.8。
-- [ ] **T48.10** — 浏览器运行时路径:TypeScript 运行时拆出浏览器安全版(或一个 `dom_*` builtin 家族)加打包步骤;T48.11 的关口。
+- [ ] **T48.10** — 浏览器运行时路径:TypeScript 运行时拆出浏览器安全版(或一个 `dom_*` 家族)加打包步骤;T48.11 的关口。
 - [ ] **T48.11** — `ui-browser`:压在浏览器路径上的 DOM 后端;一致性语料跑通。
 - [ ] **T48.12** — 一致性语料:一个示例应用跑在每个后端上,全程用同一个可移植 app 模块。
 - [ ] **T48.13** — 文档:README 的 EmoUI 一节改成数组子节点写法并写入已定决策;`docs/emo-ui.md` 中够格进 README 的部分落定为已定设计;EmoUI 各包的参考写进它自己的仓库。

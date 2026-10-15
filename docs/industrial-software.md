@@ -101,7 +101,7 @@ run on macOS arm64, with the `ocaml` backend on OCaml 5.5.1
 | tail loop, 10M iterations | 1670 ms (stack overflow at 100M) | 392 ms | 5774 ms | 14 ms (OCaml) / 3 ms (C) |
 | fib(30) | 17 ms | 35 ms | 910 ms | 6 ms (OCaml) |
 | foreign `sqrt`, 10M calls | — (forces dynamic) | 428 ms (~43 ns/call) | — (refused) | 45 ms (~4.5 ns/call) |
-| `Bytes.get`, 20M reads | — (dynamic builtin) | 1012 ms (~51 ns/byte) | — | 30 ms (OCaml) / 15 ms (C) |
+| `Bytes.get`, 20M reads | — (dynamic dispatch) | 1012 ms (~51 ns/byte) | — | 30 ms (OCaml) / 15 ms (C) |
 
 Three findings bear on the FFI question:
 

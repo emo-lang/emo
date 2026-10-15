@@ -47,8 +47,9 @@ GC question as the only open front.
   tail calls); deep non-IO recursion may be slow, and trampolining
   self-tail-calls is a recorded optimization, not a v1 gate.
 - **The TS runtime library.** A small `emo_runtime.ts` emitted next to
-  the program: value constructors and tags, builtins (`print`,
-  arithmetic, string/array methods), method dispatch, exception
+  the program: value constructors and tags, the language's builtins
+  (`print`), the runtime's methods (arithmetic, string/array), method
+  dispatch, exception
   carrying, the task/mailbox machinery, and the promise wrappers for
   sockets and HTTP.
 - **Examples subset green.** hello_world, fib, objects, language_tour,

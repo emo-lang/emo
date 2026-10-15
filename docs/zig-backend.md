@@ -65,7 +65,7 @@ Repository facts, as of the date above:
   (`targets = [...]`); the five native-facing packages (`os`, `net`,
   `file`, `http`, `bufio`) declare `ocaml, c` today and would be
   expected beside `c` — the runtime's 33 `os_*`/`net_*`/`file_*`
-  builtins call libc directly and would keep doing so through extern
+  implementations call libc directly and would keep doing so through extern
   declarations.
 - **CI.** The release matrix is four platforms (linux x86_64/aarch64,
   macos x86_64/arm64, release.yml:26-32); each would install Zig.

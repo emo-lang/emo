@@ -11,7 +11,7 @@ require "json"
 两条约定贯穿所有包:
 
 - **预期内的失败是值,违例才抛出。** 可能因数据而失败的调用返回 `(R.ok, value)` 或 `(R.error, reason)`——reason 是以包名加冒号开头的字符串(`json: expected array element at byte 3`、`os: open_write notes.txt: Permission denied`;`file` 的错误以 `os:` 报出,因为系统调用由共享的 os 运行时执行)。没有错误码,没有 nil。抛出保留给契约违例:`Exception` 是唯一的异常类,可选的 `data` Map 装机器可读的上下文,不往消息里拼接,抛出即结束进程。流结束不是错误:空字符串表示流结束。
-- **语言够用就用纯 Emo。** 格式类包和编解码器用 Emo 写在共享运行时之上,声明的每个目标都给出逐字节相同的答案。`os` 与 `file` 分发到 POSIX 支撑的运行时内建,也只有它们是仅原生目标;`net` 与 `http` 同样分发到运行时内建——在 `ocaml`/`c` 上由 POSIX 支撑,在 `typescript` 上由 Node 支撑。
+- **语言够用就用纯 Emo。** 格式类包和编解码器用 Emo 写在共享运行时之上,声明的每个目标都给出逐字节相同的答案。`os` 与 `file` 分发到 POSIX 支撑的运行时实现,也只有它们是仅原生目标;`net` 与 `http` 同样分发到运行时实现——在 `ocaml`/`c` 上由 POSIX 支撑,在 `typescript` 上由 Node 支撑。
 
 各包一览:
 
@@ -147,7 +147,7 @@ w.reset(sink)   // 先刷出,再改挂到 sink
 
 ## net 包
 
-套接字:TCP、UDP、Unix 域套接字、DNS 和 TLS——一层薄而可读的 Emo 源码,架在运行时的网络内建之上。直接风格:阻塞调用读起来和其他函数调用一样,套接字忙时调度器把进程停驻。每个失败——连接被拒、名字解析不出、超时——都以 `(R.error, reason)` 返回,reason 写明对端、操作与原因。
+套接字:TCP、UDP、Unix 域套接字、DNS 和 TLS——一层薄而可读的 Emo 源码,架在运行时的网络实现之上。直接风格:阻塞调用读起来和其他函数调用一样,套接字忙时调度器把进程停驻。每个失败——连接被拒、名字解析不出、超时——都以 `(R.error, reason)` 返回,reason 写明对端、操作与原因。
 
 ```emo
 def resolve(host String) (R, Array[String])
