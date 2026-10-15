@@ -2672,6 +2672,49 @@ let check_tests =
              ~color:false ~error_limit:20));
   ]
 
+(* ---- manifest as an entry: run and build refuse it (step 11) ---- *)
+
+let manifest_entry_tests =
+  let project name =
+    write_fixture_project name
+      [
+        ( "package.emo",
+          {|package {
+  name = "local/demo"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  deps {}
+}|}
+        );
+        ("main.emo", "println(\"hello\")\n");
+      ]
+  in
+  [
+    tc "run refuses a manifest, and runs the module beside it" (fun () ->
+        let dir = project "entry-manifest-run" in
+        Alcotest.(check int)
+          "exit" 66
+          (Emo_cli.run_file
+             ~file:(Filename.concat dir "package.emo")
+             ~color:false ~error_limit:20);
+        Alcotest.(check int)
+          "exit" 0
+          (in_dir dir (fun () ->
+               Emo_cli.run_file ~file:"main.emo" ~color:false ~error_limit:20)));
+    tc "build refuses a manifest, and builds the module beside it" (fun () ->
+        let dir = project "entry-manifest-build" in
+        Alcotest.(check int)
+          "exit" 66
+          (in_dir dir (fun () ->
+               Emo_cli.build_file ~entry:"package.emo" ~output:"manifest-entry"
+                 ~specialize:false ~cclibs:[] ~target:"wasm"));
+        Alcotest.(check int)
+          "exit" 0
+          (in_dir dir (fun () ->
+               Emo_cli.build_file ~entry:"main.emo" ~output:"manifest-entry"
+                 ~specialize:false ~cclibs:[] ~target:"wasm")));
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -2700,6 +2743,7 @@ let () =
       ("new", new_tests);
       ("test_cmd", test_cmd_tests);
       ("check", check_tests);
+      ("manifest_entry", manifest_entry_tests);
       ("emoji", emoji_tests);
       ("doctor", doctor_tests);
     ]

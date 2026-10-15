@@ -53,14 +53,26 @@ exception Stub_cc_failed
    surfacing as a write error from whichever step reached it first. *)
 exception Build_dir_failed of string
 
+(* A `package.emo` is a manifest, not a program: the module walk leaves it
+   out at every depth, so naming it as the entry would only read its fields
+   as unbound names. `emo check` reads a manifest as what it is; the
+   commands that need a program refuse the file and say which one to name. *)
+let refuse_manifest_entry ~(file : string) ~(hint : string) : int =
+  prerr_endline
+    (Printf.sprintf "%s: a package manifest, not a program — %s" file hint);
+  66
+
 (* Runs one file through the project pipeline: discover the module tree,
    check every module, then evaluate. Exit codes: 0 success, 1 uncaught
-   exception, 65 lex/parse/check, 66 unreadable input, 70 evaluation. *)
+   exception, 65 lex/parse/check, 66 unreadable input or a manifest in
+   place of a program, 70 evaluation. *)
 let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
   match Sys.file_exists file with
   | false ->
       prerr_endline (Printf.sprintf "%s: No such file or directory" file);
       66
+  | true when Emo_pkg.is_manifest_file file ->
+      refuse_manifest_entry ~file ~hint:"name the module to run"
   | true -> (
       let render diagnostic =
         render_errors ~color ~error_limit [ diagnostic ]
@@ -175,7 +187,8 @@ let ocaml_target_ok () : bool =
    backend: ocaml (default) emits OCaml compiled by the OCaml
    toolchain; c emits C compiled by the system cc into a standalone
    binary; typescript emits one self-contained .ts file that runs on
-   Node. *)
+   Node. A `package.emo` is a manifest rather than a program, so it is
+   refused like one (66) — `emo emoji build` is what builds a package. *)
 (* The cache key's compiler component: the running executable's own
    content digest, so a new compiler invalidates every cached build —
    codegen changes otherwise ride stale cache-* binaries forever (the
@@ -188,6 +201,9 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
   | false ->
       prerr_endline (Printf.sprintf "%s: No such file or directory" entry);
       66
+  | true when Emo_pkg.is_manifest_file entry ->
+      refuse_manifest_entry ~file:entry
+        ~hint:"`emo emoji build` builds a package from its manifest"
   | true -> (
       try
         let inputs, entry_path, packages, _manifest, (dep_csources, dep_links) =

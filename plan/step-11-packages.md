@@ -99,7 +99,8 @@ configurable central registry into a global content-addressed cache.
       profile of its own, the old scoped-identifier form and the fold behind it
       are deleted, and every manifest in the tree is migrated with it —
       `emo check <FILE>` reading a `package.emo` as a manifest, the way the
-      editor already does.
+      editor already does, while `emo run` and `emo build` refuse it as an
+      entry.
 
 ## Acceptance
 

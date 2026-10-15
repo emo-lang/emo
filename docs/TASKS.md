@@ -251,7 +251,10 @@ Caution: resolved in step 11 — a project roots at its nearest `package.emo`; m
       manifest rather than as a module, so the two agree on what a
       manifest says (`Emo_pkg.is_manifest_file` is where the rule lives),
       and the token-level phase-A manifest helpers that T11.7 superseded
-      are gone.
+      are gone. `emo run` and `emo build` refuse a manifest named as the
+      entry (66) instead of reading it as a program — a manifest is data
+      wherever it is read, and a command that needs a program says which
+      module to name.
 
 Also here: swap step 10's transitional root rule for manifest-based roots — done; the root rule now prefers the nearest `package.emo`.
 
