@@ -38,7 +38,8 @@ Whether the array form later earns a literal spelling of its own is still open
 
 ## Status
 
-The portable **`ui` core** (T48.1) and the **Elm loop** (T48.2) have landed.
+The portable **`ui` core** (T48.1), the **Elm loop** (T48.2) and the headless
+**`debug` backend with its golden** (T48.3) have landed.
 `ui.emo` is the node spine — a `Node` interface plus the `Column`, `Row`, `Text`,
 `Button`, `TextInput`, `Image`, `Spacer` and `Scroll` classes with their
 positional lowercase constructors — the typed `Style` with its `style()` factory
@@ -66,7 +67,11 @@ The tag table is the loop's own object, not the module-level `ui.on(msg)` table
 initializer on every read on the compiled targets, and a module-level `var` is
 `ocaml`-only, so a table kept there would hand every read a fresh, empty one
 (`CHECK.md`, module-level bindings). The table belongs to one running loop, and
-`view` is handed it.
+`view` is handed it. The tags are taken in statements before the tree is built
+rather than inside the arguments the tree is made of: `on` is a side effect, and
+operands are evaluated in the target's order — `ocaml`'s is the reverse of every
+other target's — so a tag taken from an argument position is a different tag per
+target (`CHECK.md`, operand evaluation order).
 
 The loop compiles on `ocaml`, `typescript` and `beam`. It does not compile on
 `c` or `wasm` yet, and what stands in the way is its spelling rather than its
@@ -80,12 +85,42 @@ prints on `c` and `ocaml` (`CHECK.md`, the Elm loop's shape). Which way to close
 it — grow the two targets, or move the application's functions behind an
 interface — is the open decision T48.4 onward waits on.
 
-`./check.sh` is the gate: the package type-checks, the loop's fourteen
-assertions run, and every target's build — and every refusal — is pinned there.
+`debug.emo` is the headless backend (T48.3): `render(node)` turns a tree into
+stable text — one node per line, two spaces per level, the node's own props then
+a style summary in a fixed field order — and the `Debug` class implements
+`Backend` over that text, logging every tree the loop hands it instead of
+printing it, so the caller decides when text reaches stdout. Its `run()` drives
+nothing, because headless means there is no input source: an event is stepped by
+hand through `deliver`, on the sink `mount` was given.
 
-Still to come: the headless `debug` backend (T48.3), and one package per
-platform behind the browser runtime path (T48.4–T48.12). The design and its
-evidence:
+`golden/` is what the text form is for: the harness the core and every later
+backend are measured against. It is a package in the consumer's position —
+`deps { emo_lang/ui = "0.1.0" }` and a `require`, reached through a registry the
+gate stages from the sources under test — and it holds one screen that carries
+every primitive, both `w=`/`h=` branches, all four `Align` values, an empty
+string prop and nested containers. `expected.txt` is the interpreter's own
+output; `./check.sh` builds and runs that screen on every target and requires
+those bytes exactly, so a backend that renders a tree differently fails here
+rather than in a screenshot.
+
+The text form is narrower than it looks, and the targets are why: it
+interpolates only `String`, `Int64`, `Bool` and `Float64`, because interpolating
+an enum or a tuple does not produce the same bytes on every target — `typescript`
+qualifies the name and `beam` has no conversion for the kind at all — so the
+style summary destructures (`align_name`, `extent`) and spells the names it
+prints itself. The golden also takes its event tags in statements before it
+builds a tree, never inside the argument list the tree is made of, because
+operands are evaluated in the target's order and `ocaml`'s is the reverse of
+every other target's, which would hand the same message a different tag per
+target. Both are recorded, with a minimal pair each, in `CHECK.md`
+(`probe/eval_order`, `probe/enum_print`).
+
+`./check.sh` is the gate: the package type-checks, the loop's seventeen
+assertions run, every target's build — and every refusal — is pinned there, and
+the golden's bytes are compared on each of the four targets that can run it.
+
+Still to come: one package per platform behind the browser runtime path
+(T48.4–T48.12). The design and its evidence:
 
 - [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.
@@ -106,9 +141,15 @@ layout).
 The directory is rooted by its own `package.emo` — the portable core's, whose
 `ui.emo` is the module `require "emo_lang/ui"` binds — and the repository root
 carries no manifest, so this package's modules are checked as its own program
-and no compiler build sweeps them in. Each later backend is a package of its
-own: a subdirectory with its own `package.emo`, which the module walk leaves out
-of this package entirely, exactly as `spike/emo-ui-spelling/mismatch/` does.
+and no compiler build sweeps them in. The `debug` backend is a *module* of that
+package rather than one of the packages below, because it carries no platform
+and no native code: `debug.emo` sits beside `ui.emo`, which also lets the core's
+own test exercise it. Each later backend is a package of its own: a subdirectory
+with its own `package.emo`, which the module walk leaves out of this package
+entirely, exactly as `spike/emo-ui-spelling/mismatch/` does. `golden/` is the
+first of those — a consumer rather than a backend, but a package of its own for
+the same reason, and the one whose `deps` entry exercises the registry flow the
+platform packages will use.
 
 The scope is spelled `emo_lang` rather than the organization's hyphenated name:
 a `deps` key is a scoped identifier, and neither a keyword (`emo`) nor a hyphen

@@ -54,19 +54,28 @@ def update(msg Msg, m Model) Model {
 }
 
 def view(reg ui.Registry, m Model) ui.Node {
+  // The tags are taken in statements of their own, before the tree is
+  // built. `on` is a side effect, and the order operands are evaluated in
+  // is the target's, not the source's — `ocaml` goes right to left where
+  // the other four targets go left to right — so a `reg.on(...)` sitting
+  // in an argument position would hand the messages different tags on
+  // different targets (`CHECK.md`, evaluation order).
+  const inc = reg.on(Msg.inc)
+  const dec = reg.on(Msg.dec)
+
   return ui.column([
     ui.text("count ${m.count()}", ui.style()),
-    ui.button("+", reg.on(Msg.inc), ui.style()),
-    ui.button("-", reg.on(Msg.dec), ui.style())
+    ui.button("+", inc, ui.style()),
+    ui.button("-", dec, ui.style())
   ], ui.style())
 }
 
-// ---- Reading a tree without a renderer ------------------------------
+// ---- Reading a tree ------------------------------------------------
 //
-// T48.3's `debug` backend is what turns a tree into a stable text form;
-// until it lands these two walks are how this file says what a tree
-// holds. They are a backend's dispatch in miniature, narrowing with
-// `is()` exactly as one does.
+// These two walks read *structure* off a tree — a label, a tag — by
+// narrowing with `is()`, which is a backend's dispatch in miniature. The
+// tree as *text* is `debug`'s job, and `golden/` is where that form is
+// pinned byte for byte; a walk here would say the same thing twice.
 
 def label(node ui.Node) String {
   if node.is(ui.Text) {
@@ -239,6 +248,38 @@ def rebuild_checks() {
     "both backends show the same trees, so `old` is an offer, not a duty")
 }
 
+// ---- The headless backend -------------------------------------------
+//
+// `debug.Debug` is the backend this package ships and `golden/` runs: it
+// renders every tree the loop hands it into a log instead of printing,
+// and it has no input source of its own — `run` drives nothing — so an
+// event is delivered by hand through `deliver`, on the sink `mount` was
+// given. Two runs of the same script must render the same text, or the
+// golden could not be a file.
+
+def debug_checks() {
+  const first = debug.Debug.new()
+  const second = debug.Debug.new()
+  ui.run(view, update, Model.new(0), first)
+  ui.run(view, update, Model.new(0), second)
+  first.deliver(0)
+  second.deliver(0)
+
+  check(first.log() == second.log(),
+    "two runs of the same script render the same text")
+  check(first.log().length() == 2,
+    "a mount and one delivered tag are one rendered tree each")
+
+  const step = debug.Debug.new()
+  ui.run(view, update, Model.new(0), step)
+  step.deliver(0)
+  step.deliver(1)
+
+  check(step.log()[2] == step.log()[0],
+    "an event that undoes the one before it renders the tree it started from")
+}
+
 tag_checks()
 retained_checks()
 rebuild_checks()
+debug_checks()

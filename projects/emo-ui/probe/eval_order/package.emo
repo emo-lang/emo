@@ -1,0 +1,5 @@
+package {
+  name = "emo_lang/ui_probe_eval_order"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+}

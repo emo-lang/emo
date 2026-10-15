@@ -1,0 +1,69 @@
+// The debug backend's golden (T48.3): one screen through the portable
+// core and out as stable text, byte-identical on every hosted target
+// that can run it.
+//
+// The screen is a consumer of the core, not a module of it — it declares
+// `emo_lang/ui` as a dependency exactly as an application would — which
+// is what makes the comparison meaningful: these are the bytes an
+// application sees, out of real `require`-d code, not out of the
+// package's own tree.
+//
+// Every primitive is here at least once, both `w=`/`h=` branches (a
+// number and `auto`), all four `Align` values, an empty string prop, and
+// nested containers, because the form is what is under test: a node that
+// renders differently on two targets is the failure this file exists to
+// catch. The event tags are registered before the tree is built (see
+// `screen`), because registration order is what `Registry.on` makes
+// observable.
+//
+//   emo run main.emo                       -> the golden, from the interpreter
+//   emo build main.emo --target <t> -o …   -> the same bytes, from the target
+
+enum Msg { save, cancel, retry }
+
+def field(label String, value String) ui.Node {
+  return ui.row([
+    ui.text(label, ui.style().with_width(64.0)),
+    ui.text_input(value, ui.style().with_grow(true))
+  ], ui.style().with_gap(8.0).with_align(ui.Align.center))
+}
+
+def screen(reg ui.Registry, name String) ui.Node {
+  // The tags are taken first, in statements of their own. `on` is a side
+  // effect, and an operand's evaluation order is the target's, not the
+  // source's — `ocaml` evaluates operands right to left while the other
+  // four targets evaluate them left to right — so a `reg.on(...)` inside
+  // an argument position would register the messages in an order this
+  // file does not fix, and the tags, which are the message's index in
+  // the table, would differ per target (`CHECK.md`, evaluation order).
+  const save = reg.on(Msg.save)
+  const cancel = reg.on(Msg.cancel)
+  const retry = reg.on(Msg.retry)
+
+  return ui.column([
+    ui.row([
+      ui.image("avatar.png", ui.style().with_width(32.0).with_height(32.0)),
+      ui.column([
+        ui.text(name, ui.style()),
+        ui.text("3 unread", ui.style())
+      ], ui.style().with_gap(2.0))
+    ], ui.style().with_gap(12.0).with_align(ui.Align.center)),
+    field("name", "Ada Lovelace"),
+    field("email", ""),
+    ui.scroll([
+      ui.text("older messages", ui.style()),
+      ui.spacer(ui.style().with_grow(true))
+    ], ui.style().with_height(120.0).with_align(ui.Align.stretch)),
+    ui.row([
+      ui.button("Save", save, ui.style().with_padding(6.0)),
+      ui.button("Cancel", cancel, ui.style()),
+      ui.button("Retry", retry, ui.style().with_width(9.0))
+    ], ui.style().with_gap(8.0).with_align(ui.Align.end))
+  ], ui.style().with_padding(16.0).with_gap(12.0).with_grow(true))
+}
+
+def main() {
+  println(ui.debug.render(screen(ui.Registry.new(), "Ada Lovelace")))
+}
+
+main()

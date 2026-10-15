@@ -1,0 +1,20 @@
+Column pad=16.0 gap=12.0 align=start grow=true w=auto h=auto
+  Row pad=0.0 gap=12.0 align=center grow=false w=auto h=auto
+    Image "avatar.png" pad=0.0 gap=0.0 align=start grow=false w=32.0 h=32.0
+    Column pad=0.0 gap=2.0 align=start grow=false w=auto h=auto
+      Text "Ada Lovelace" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "3 unread" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Row pad=0.0 gap=8.0 align=center grow=false w=auto h=auto
+    Text "name" pad=0.0 gap=0.0 align=start grow=false w=64.0 h=auto
+    Input "Ada Lovelace" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+  Row pad=0.0 gap=8.0 align=center grow=false w=auto h=auto
+    Text "email" pad=0.0 gap=0.0 align=start grow=false w=64.0 h=auto
+    Input "" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+  Scroll pad=0.0 gap=0.0 align=stretch grow=false w=auto h=120.0
+    Text "older messages" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+  Row pad=0.0 gap=8.0 align=end grow=false w=auto h=auto
+    Button "Save" #0 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+    Button "Cancel" #1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Button "Retry" #2 pad=0.0 gap=0.0 align=start grow=false w=9.0 h=auto
+

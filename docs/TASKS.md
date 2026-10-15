@@ -1609,8 +1609,27 @@ required.
       and `wasm` the two-argument dynamic call `update` needs — the same
       loop with its two functions behind a `Handler` interface builds on
       all five (`CHECK.md`, `projects/emo-ui/probe/`).
-- [ ] **T48.3** — The headless `debug` backend: the tree rendered to a
-      stable text form, the byte-identical golden harness.
+- [x] **T48.3** — The headless `debug` backend: the tree rendered to a
+      stable text form, the byte-identical golden harness. **Landed
+      2026-10-15** as `projects/emo-ui/debug.emo` (a module of the core's
+      own package, so the core's test can use it) plus
+      `projects/emo-ui/golden/` (a package in the consumer's position,
+      `deps { emo_lang/ui = "0.1.0" }`, reached through a registry
+      `./check.sh` stages). The text form is one node per line, two
+      spaces per level, props then a style summary in a fixed field
+      order; `Debug` implements `Backend` over it by logging every tree
+      the loop hands it, and its `run()` drives nothing — headless means
+      no input source, so events are stepped by hand. `golden/main.emo`
+      is one screen carrying every primitive, both `w=`/`h=` branches,
+      all four `Align` values, an empty prop and nested containers;
+      `expected.txt` is the interpreter's output, identical on `ocaml`,
+      `c`, `typescript` and `beam`, while `wasm` cannot lower the core
+      (the loop's shape, T48.2). Two silent cross-target divergences fell
+      out and are recorded with minimal pairs (`CHECK.md`): operands are
+      evaluated in the target's order and `ocaml`'s is the reverse of the
+      others', and an enum does not interpolate to the same bytes on
+      `typescript` or at all on `beam` (`probe/eval_order`,
+      `probe/enum_print`).
 - [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
       model) and ANSI painting; a scripted-input golden.
 - [ ] **T48.5** — Terminal input: raw mode and key events, as a

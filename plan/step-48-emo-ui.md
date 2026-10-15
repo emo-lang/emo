@@ -8,11 +8,17 @@ and design direction), `docs/emo-ui-check.md` (the gate checklist),
 `spike/components` (the two-platform component spike),
 `spike/emo-ui-probe` (the language probes) · **Status:** in progress —
 the layout is settled, T48.1's two codegen defects have landed, and the
-portable `ui` core (T48.1) and the Elm loop with its tests (T48.2) have
-landed in `projects/emo-ui/`; T48.3 onward are not started. T48.2 turned
+portable `ui` core (T48.1), the Elm loop with its tests (T48.2) and the
+headless `debug` backend with its byte-identical golden (T48.3) have
+landed in `projects/emo-ui/`; T48.4 onward are not started. T48.2 turned
 up the first language-side gap this step has hit: the loop's shape — the
 application's `update` and `view` arriving as `Block` values — is what
 `c` and `wasm` cannot compile yet (`CHECK.md`, the Elm loop's shape).
+T48.3 turned up two more, both silent rather than refusing: operands are
+evaluated in the target's order and `ocaml`'s is the reverse of the
+others', and an enum does not interpolate to the same bytes on
+`typescript` or at all on `beam` (`CHECK.md`, operand evaluation order
+and the enum display form; `probe/eval_order`, `probe/enum_print`).
 
 ## Why this step exists
 
@@ -208,9 +214,40 @@ placement; `docs/emo-ui.md`, ask 7).
       probes hand back — grow `c` and `wasm`, or move the application's
       functions behind an interface (which revises Layer 5) — wants
       settling before T48.4 onward build backends on the loop.
-- [ ] **T48.3** — The headless `debug` backend: renders the tree to a
+- [x] **T48.3** — The headless `debug` backend: renders the tree to a
       stable text form, the byte-identical golden harness the core and
-      the other backends share.
+      the other backends share. **Landed 2026-10-15.**
+      `projects/emo-ui/debug.emo` is a module of the core's own package —
+      a sibling, so the core's test can use it, and `ui.debug` to a
+      consumer — holding `render(node)` (one node per line, two spaces
+      per level, the node's props then a style summary in a fixed field
+      order) and the `Debug` class, which implements `Backend` by
+      rendering every tree the loop hands it into a log. Its `run()`
+      drives nothing: headless means no input source, so an event is
+      stepped by hand through `deliver` on the sink `mount` was given —
+      which is what `test.emo`'s new `debug_checks` exercises, in three
+      assertions (two runs of one script render the same text; a mount
+      and a delivered tag are one rendered tree each; an event that
+      undoes the one before it renders the tree it started from), for
+      seventeen in that file. `projects/emo-ui/golden/` is the harness:
+      a package of its own in the consumer's position — `deps { emo_lang/ui
+      = "0.1.0" }` and a `require`, reached the way an application
+      reaches the core, through a registry `./check.sh` stages from the
+      sources under test — holding one screen that carries every
+      primitive, both `w=`/`h=` branches, all four `Align` values, an
+      empty string prop and nested containers. Its `expected.txt` is the
+      interpreter's output, and the gate compares bytes on `ocaml`, `c`,
+      `typescript` and `beam` (all four identical); `wasm` cannot lower
+      the core at all — `App.deliver` calls a `Block` value with two
+      arguments — and the gate pins that refusal's text. Two divergences
+      the form had to be written around fell out, both recorded in
+      `CHECK.md` with minimal pairs pinned by `./check.sh`: operands are
+      evaluated in the target's order, and `ocaml`'s is the reverse of
+      every other target's, so a `reg.on(...)` in an argument position
+      hands out different tags per target (`probe/eval_order`); and an
+      enum interpolates to different bytes on `typescript` (qualified)
+      and raises on `beam`, which is why `debug.emo` interpolates no enum
+      and no tuple, destructuring instead (`probe/enum_print`).
 - [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
       model) and ANSI painting; a scripted-input golden.
 - [ ] **T48.5** — Terminal input: raw mode and key events, as a

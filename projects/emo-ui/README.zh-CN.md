@@ -28,7 +28,7 @@ def inbox(users Array[User]) ui.Node {
 
 ## 状态
 
-可移植的 **`ui` 核心**(T48.1)与 **Elm 循环**(T48.2)都已落地。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
+可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)与无头 **`debug` 后端及其金标**(T48.3)都已落地。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
 
 一个应用就是 model、纯 `update`、纯 `view` 加一个后端:
 
@@ -44,13 +44,19 @@ def main() {
 }
 ```
 
-tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 草拟的模块级 `ui.on(msg)` 表:模块级 `const` 在编译目标上每次读取都会重跑初始化式,模块级 `var` 又只有 `ocaml` 支持,表放在那里等于每次读取都拿到一张新的空表(`CHECK.md`,模块级绑定)。这张表属于某一个正在跑的循环,由循环把它交给 `view`。
+tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 草拟的模块级 `ui.on(msg)` 表:模块级 `const` 在编译目标上每次读取都会重跑初始化式,模块级 `var` 又只有 `ocaml` 支持,表放在那里等于每次读取都拿到一张新的空表(`CHECK.md`,模块级绑定)。这张表属于某一个正在跑的循环,由循环把它交给 `view`。tag 一律在建树之前用独立语句取好,而不是写在构成树的那些实参里:`on` 是副作用,而操作数按 target 的顺序求值——`ocaml` 与其它每个 target 相反——所以从实参位置取的 tag 会因 target 而异(`CHECK.md`,操作数求值顺序)。
 
 循环在 `ocaml`、`typescript`、`beam` 上可编译;在 `c` 与 `wasm` 上还不行,而挡路的是它的拼写而不是它的结构:裸 def 名是唯一能产出 `ui.run` 所收 `Block` 值的表达式,而 `c` 没有 def 当值(`Global`),`wasm` 又拒绝参数多于一个的动态调用。`probe/` 把这个缺口做成一对最小对照——`def_shape/` 是已落地的写法,两个拒绝都能撞到;`handler_shape/` 把应用那两个函数放到 `Handler` 接口后面,是同一个循环,五个 target 全部可编译,在 `c` 与 `ocaml` 上打印出的结果与 `emo run` 一致(`CHECK.md`,Elm 循环的形状)。往哪边收口——把这两个 target 补起来,还是把应用的函数移到接口后面——是 T48.4 起要等的那个开放决定。
 
-`./check.sh` 是它的关口:包能通过类型检查、循环的十四条断言会跑,并且每个 target 的构建结果——以及每一次拒绝——都在里面钉死。
+`debug.emo` 是无头后端(T48.3):`render(node)` 把一棵树变成稳定文本——一个节点一行、每层两个空格,先节点自己的属性,再一份字段顺序固定的样式摘要——而 `Debug` 类就在这份文本之上实现 `Backend`,把循环交给它的每一棵树记进日志而不是打印出来,于是何时让文本到达 stdout 由调用方决定。它的 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。
 
-接下来:无头 `debug` 后端(T48.3),以及每平台一个包加浏览器运行时路径(T48.4–T48.12)。设计与证据:
+`golden/` 就是这份文本形式要服务的东西:核心与之后每个后端都要拿它来量的那套标尺。它是一个处在消费者位置上的包——`deps { emo_lang/ui = "0.1.0" }` 加一条 `require`,经关口从被测源码现场搭出的 registry 抵达核心——里面装着唯一一块界面,涵盖每个原语、`w=`/`h=` 的两个分支、全部四个 `Align` 取值、一个空字符串属性以及嵌套容器。`expected.txt` 是解释器自己的输出;`./check.sh` 在每个 target 上构建并运行这块界面,要求逐字节相同——所以一个把树渲染得不一样的后端会在这里失败,而不是在截图里。
+
+这份文本形式比看上去要窄,原因在 target:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为插值枚举或元组在每个 target 上产出的字节并不相同——`typescript` 会带上限定名,`beam` 干脆没有这个类别的转换——所以那份样式摘要改用解构(`align_name`、`extent`)并自己拼出要打印的名字。金标也先在建树之前用独立语句取好事件 tag,绝不写在构成树的实参表里,因为操作数按 target 的顺序求值,而 `ocaml` 与其它每个 target 相反,那样会让同一条消息在不同 target 上拿到不同的 tag。两者都连同各自的最小对照记在 `CHECK.md` 里(`probe/eval_order`、`probe/enum_print`)。
+
+`./check.sh` 是它的关口:包能通过类型检查、循环的十七条断言会跑,每个 target 的构建结果——以及每一次拒绝——都在里面钉死,金标的字节也在四个跑得动的 target 上逐一比对。
+
+接下来:每平台一个包加浏览器运行时路径(T48.4–T48.12)。设计与证据:
 
 - [`docs/zh-CN/emo-ui.md`](../../docs/zh-CN/emo-ui.md) —— 评估与设计方向。
 - [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md) —— 一棵树怎么写出来:子节点为什么是数组而不是块式写法。
@@ -62,6 +68,6 @@ tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 �
 
 EmoUI 是一个**独立项目**,不是标准库包:标准库以生成数据的形式内嵌在编译器二进制里,而一个带着每平台原生 shim 的 UI 框架不该放在那儿。它活在编译器仓库的 `projects/emo-ui/` 下,以它将来可以拆分出去的仓库命名,好让 `git subtree split -P projects/emo-ui` 之后能带着历史得到那个独立仓库(`CHECK.md`,in-tree 项目布局)。
 
-这个目录由它自己的 `package.emo` 生根——也就是可移植核心的那份,其中 `ui.emo` 就是 `require "emo_lang/ui"` 绑定的那个模块——而仓库根没有 manifest,所以这个包的模块按它自己的程序来检查,编译器的构建也不会把它们扫进来。后面每个后端都是它自己的包:一个带自己 `package.emo` 的子目录,模块遍历会把它整个排除在这个包之外,和 `spike/emo-ui-spelling/mismatch/` 完全一样。
+这个目录由它自己的 `package.emo` 生根——也就是可移植核心的那份,其中 `ui.emo` 就是 `require "emo_lang/ui"` 绑定的那个模块——而仓库根没有 manifest,所以这个包的模块按它自己的程序来检查,编译器的构建也不会把它们扫进来。`debug` 后端是这个包的一个*模块*,而不是下面那类包,因为它不带平台、也不带原生代码:`debug.emo` 就坐在 `ui.emo` 旁边,这也让核心自己的测试能用上它。后面每个后端都是它自己的包:一个带自己 `package.emo` 的子目录,模块遍历会把它整个排除在这个包之外,和 `spike/emo-ui-spelling/mismatch/` 完全一样。`golden/` 是这类包里的第一个——它是消费者而不是后端,但同样出于这个理由自成一体,而且正是它那条 `deps` 在演练各平台包将来要用的 registry 流程。
 
 scope 写成 `emo_lang` 而不是组织名那个带连字符的写法:`deps` 的键是一个带 scope 的标识符,关键字(`emo`)与连字符(`emo-lang`)都写不进去。

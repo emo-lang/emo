@@ -523,7 +523,12 @@ every read on the compiled targets, and a module-level `var` is
 `ocaml`-only, so a table declared there would be a fresh, empty one per
 read (`CHECK.md`, module-level bindings). Owning it in the loop is also
 the truer shape — the table belongs to one running loop, so two loops in
-one process keep two tables. **Landed as `ui.Registry` (T48.2).**
+one process keep two tables. **Landed as `ui.Registry` (T48.2).** The
+tags are taken in statements before the tree is built, never inside the
+argument list the tree is made of: `on` is a side effect, and operands
+are evaluated in the target's order — `ocaml`'s is the reverse of every
+other target's — so a tag handed out from an argument position is a
+different tag per target (`CHECK.md`, operand evaluation order).
 
 This preserves the README's promise that events are messages, keeps the
 typed update, and respects the callback tier. Local mutable state that
@@ -603,6 +608,21 @@ Each platform implements it:
   native handles.
 - **TUI:** a pure-Emo class that lays the tree out on a cell grid and
   writes ANSI; `run()` reads input and dispatches tags.
+- **Debug (landed, T48.3):** the headless one, and the seam's reference
+  implementation. It renders every tree the loop hands it into a log
+  instead of printing — so a caller decides when text reaches stdout and
+  a golden is never disturbed by a backend that happens to be attached —
+  and `run()` drives nothing, because headless means no input source: an
+  event is stepped by hand through `deliver` on the sink `mount` was
+  given. `projects/emo-ui/golden/` is what it is for: one screen through
+  the core as a consumer reaches it, out as text, byte-identical on the
+  interpreter, `ocaml`, `c`, `typescript` and `beam` (`wasm` cannot lower
+  the core — the loop's shape, above). The form's narrowness is forced by
+  the targets rather than chosen: it interpolates only `String`, `Int64`,
+  `Bool` and `Float64`, because an enum or a tuple does not print the
+  same bytes on every target (`CHECK.md`, the enum display form), and its
+  golden takes the event tags in statements before building the tree,
+  because operand evaluation order is the target's (`CHECK.md`).
 - **SSR:** a pure-Emo class that serializes the tree to HTML/CSS;
   `run()` is one render.
 - **DOM (later):** an Emo class over the runtime's `dom_*` calls;
@@ -794,7 +814,12 @@ mid-implementation:
 - **Semantic drift across backends.** The syntax converging does not
   make a `row` mean the same thing everywhere. Mitigation: a small,
   declarative layout vocabulary, a convergent-name rule, and a
-  conformance corpus (one app, every backend).
+  conformance corpus (one app, every backend) — **landed as the
+  `debug` backend and `projects/emo-ui/golden/` (T48.3)**, which hold
+  one screen to identical bytes on every target that can run it, and
+  which found the first divergences before a second backend existed:
+  operand evaluation order and the enum display form are not the same
+  bytes on two of the targets today (`CHECK.md`).
 - **Text.** Portable automatic layout needs text metrics; the design
   avoids needing them by delegating layout to the platform (and the TUI
   counts cells). A future canvas or a pixel-identical mode reintroduces
