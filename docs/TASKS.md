@@ -53,7 +53,7 @@ before starting the gated work:
 | String escape rules | T02.3, T02.4 | Minimal set `\n \t \\ \' \"` |
 | Self-pid mechanism | T12.1 | settled — `self_pid()` builtin, `Pid` type rendering as `<pid N>`, `halt()`; no user-facing kill/wait |
 | Error-handling model (was: exception catch syntax) | T13.5, M10 | settled 2026-10-11 — no catch; `(R.ok, value)` / `(R.error, reason)` tuples plus the one `Exception` class (`CHECK.md`); Steps 28–29 land it |
-| Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T11.2, T11.5–T11.6, T11.8 | `package.emo`, `package.lock`, `owner/name`, exact pins only, `emo deps *` |
+| Manifest / lockfile names, scope-prefix format, version ranges, deps CLI names | T11.2, T11.5–T11.6, T11.8–T11.9 | `package.emo`, `package.lock`, `owner/name`, exact pins only, `emo deps *`; a deps key is a string literal (T11.9) |
 | C FFI binding-surface syntax | T14.6 | settled — `foreign def name(params) Ret = "c_symbol"`, `Float`/`String`/`Bool` only, through generated C wrappers |
 | Reclamation model for the dynamic world (no tracing GC) | T23.5 | settled — reference counting for identity objects, arena for value-semantic data (`CHECK.md`, at T23.5) |
 | `emo build` default target | T24.1 | flip `ocaml` → `c`: a distributed binary carries no OCaml toolchain; the `ocaml` target stays for source installs |
@@ -227,6 +227,26 @@ Caution: resolved in step 11 — a project roots at its nearest `package.emo`; m
 - [x] **T11.6** — Registry client + content-addressed cache + directory registry for tests.
 - [x] **T11.7** — Manifest phase B: restricted-profile evaluation with step budget.
 - [x] **T11.8** — End-to-end fixture: two local packages, one requiring the other, resolved, locked, built, run.
+- [x] **T11.9** — A `deps` key is a string literal: the deps block's one
+      spelling, so a package name is never something the lexer must
+      accept. **Landed 2026-10-15** across the parser, the manifest
+      evaluator and `emo_pkg`. A manifest parses in its own profile
+      (`parse_program_in ~manifest:true`, whose only caller is
+      `Emo_pkg.parse_manifest`), where a string assignment target is a
+      dependency's name and an identifier target stays a package field;
+      the `a / b` fold that turned a scoped name into an `Ident` is
+      deleted, along with the now-unreachable `E4015` scoped-name check
+      it fed. A string-keyed field is `E5102`, so a mistyped field can no
+      longer be silently dropped, an empty dependency name is `E5102`,
+      and a stray statement inside `deps` is `E5104`. Reason: `emo` is a
+      reserved word, so this repository's own
+      packages could not pin their scope as `emo/ui` — and a name is
+      already data everywhere else (the `name` field, `require`, the
+      lockfile, the registry), which left the key as the single place it
+      masqueraded as code. 29 manifests migrated (`examples/**`,
+      `benchmarks/http_echo`, five stdlib packages, the emo-ui golden),
+      every committed lockfile re-resolved, and `projects/emo-ui/` now
+      names its package `emo/ui`.
 
 Also here: swap step 10's transitional root rule for manifest-based roots — done; the root rule now prefers the nearest `package.emo`.
 
@@ -1585,7 +1605,7 @@ required.
       `spike/emo-ui-spelling/codegen/` are the regression, and its
       `check.sh` asserts their build and their run. **The package landed
       2026-10-15** as `projects/emo-ui/` — `ui.emo` beside its own
-      `package.emo` (`emo_lang/ui`, declaring all five hosted targets) —
+      `package.emo` (`emo/ui`, declaring all five hosted targets) —
       and it settles the children question the spike left to it:
       children stay an explicit `Array[Node]`, and a list that is not
       known until it is walked is built with `ArrayBuilder`, not with an
@@ -1614,7 +1634,7 @@ required.
       2026-10-15** as `projects/emo-ui/debug.emo` (a module of the core's
       own package, so the core's test can use it) plus
       `projects/emo-ui/golden/` (a package in the consumer's position,
-      `deps { emo_lang/ui = "0.1.0" }`, reached through a registry
+      `deps { "emo/ui" = "0.1.0" }`, reached through a registry
       `./check.sh` stages). The text form is one node per line, two
       spaces per level, props then a style summary in a fixed field
       order; `Debug` implements `Backend` over it by logging every tree

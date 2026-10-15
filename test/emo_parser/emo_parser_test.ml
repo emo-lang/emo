@@ -1427,21 +1427,6 @@ println(json_tools.parse("{}"))|}
         | items ->
             Alcotest.fail
               (Printf.sprintf "expected 2 items, got %d" (List.length items)));
-    tc "a scoped deps key folds into one ident" (fun () ->
-        match parse_program {|acme/json_tools = "2.3.1"|} with
-        | [ item ] -> (
-            match item.Emo_ast.item_desc with
-            | Emo_ast.Item_stmt
-                {
-                  stmt_desc =
-                    Emo_ast.Assign
-                      { target = { Emo_ast.desc = Emo_ast.Ident name }; _ };
-                } ->
-                Alcotest.(check string) "key" "acme/json_tools" name
-            | _ -> Alcotest.fail "expected a scoped assignment")
-        | items ->
-            Alcotest.fail
-              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "a scoped name keeps owner/name shape" (fun () ->
         match parse_program {|require "a/b/c"|} with
         | [ req ] ->
@@ -1468,6 +1453,56 @@ require "a/b"|});
     tc "require takes a plain string" (fun () ->
         let diagnostic = program_err {|require "a/${"b"}"|} in
         Alcotest.(check string) "code" "E2009" (code_of diagnostic));
+  ]
+
+(* The manifest profile: a `deps` entry names its package with a string
+   literal, so a string stands in assignment-target position — and only
+   there. Everywhere else the module profile's rule holds. *)
+let parse_manifest source =
+  Emo_parser.parse_program_in ~manifest:true ~file:"test.emo" ~source
+
+let manifest_err source =
+  match parse_manifest source with
+  | _ -> Alcotest.fail "expected a parse error"
+  | exception Emo_parser.Error diagnostic -> diagnostic
+
+let manifest_tests =
+  [
+    tc "a manifest's deps key is a string literal" (fun () ->
+        match parse_manifest {|"emo/ui" = "0.1.0"|} with
+        | [ item ] -> (
+            match item.Emo_ast.item_desc with
+            | Emo_ast.Item_stmt
+                {
+                  stmt_desc =
+                    Emo_ast.Assign
+                      { target = { Emo_ast.desc = Emo_ast.String key }; _ };
+                } ->
+                Alcotest.(check string) "key" "emo/ui" key
+            | _ -> Alcotest.fail "expected a string-keyed assignment")
+        | items ->
+            Alcotest.fail
+              (Printf.sprintf "expected 1 item, got %d" (List.length items)));
+    tc "a manifest rejects the old scoped key" (fun () ->
+        let diagnostic = manifest_err {|acme/json_tools = "2.3.1"|} in
+        Alcotest.(check string) "code" "E2015" (code_of diagnostic));
+    tc "a manifest rejects an interpolated key" (fun () ->
+        let diagnostic = manifest_err {|"acme/${short}" = "2.3.1"|} in
+        Alcotest.(check string) "code" "E2015" (code_of diagnostic));
+    tc "a module cannot assign to a string" (fun () ->
+        let diagnostic = program_err {|"json" = "1"|} in
+        Alcotest.(check string) "code" "E2015" (code_of diagnostic));
+    tc "a module rejects the old scoped key" (fun () ->
+        let diagnostic = program_err {|acme/json_tools = "2.3.1"|} in
+        Alcotest.(check string) "code" "E2015" (code_of diagnostic));
+    tc "a for-header post clause takes no string target" (fun () ->
+        let diagnostic =
+          manifest_err
+            {|for var i = 0; i < 3; "a" = "1" {
+  println(i)
+}|}
+        in
+        Alcotest.(check string) "code" "E2015" (code_of diagnostic));
   ]
 
 let loop_tests =
@@ -1595,4 +1630,5 @@ let () =
       ("recovery", recovery_tests);
       ("golden", golden_tests);
       ("require", require_tests);
+      ("manifest", manifest_tests);
     ]

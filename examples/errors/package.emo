@@ -4,6 +4,6 @@ package {
   targets = ["ocaml", "c"]
 
   deps {
-    file = "0.1.0"
+    "file" = "0.1.0"
   }
 }

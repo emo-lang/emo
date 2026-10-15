@@ -4,6 +4,6 @@ package {
   targets = ["ocaml", "c", "typescript", "wasm", "beam"]
 
   deps {
-    base64 = "0.1.0"
+    "base64" = "0.1.0"
   }
 }

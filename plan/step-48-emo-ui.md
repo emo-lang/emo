@@ -177,7 +177,7 @@ placement; `docs/emo-ui.md`, ask 7).
       in `emit_native_expr`). The two isolation fixtures stay in
       `spike/emo-ui-spelling/codegen/` as the regression. **Landed
       2026-10-15** as `projects/emo-ui/ui.emo` beside the package's own
-      `package.emo` (`emo_lang/ui`, all five targets), with
+      `package.emo` (`emo/ui`, all five targets), with
       `./check.sh` as its gate; it answers the representation question
       this task was holding open — children are an explicit
       `Array[Node]`, and a dynamic child list is built with
@@ -230,7 +230,7 @@ placement; `docs/emo-ui.md`, ask 7).
       and a delivered tag are one rendered tree each; an event that
       undoes the one before it renders the tree it started from), for
       seventeen in that file. `projects/emo-ui/golden/` is the harness:
-      a package of its own in the consumer's position — `deps { emo_lang/ui
+      a package of its own in the consumer's position — `deps { "emo/ui"
       = "0.1.0" }` and a `require`, reached the way an application
       reaches the core, through a registry `./check.sh` stages from the
       sources under test — holding one screen that carries every

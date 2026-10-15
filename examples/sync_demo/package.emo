@@ -4,6 +4,6 @@ package {
   targets = ["ocaml", "c", "typescript", "wasm", "beam"]
 
   deps {
-    sync = "0.1.0"
+    "sync" = "0.1.0"
   }
 }

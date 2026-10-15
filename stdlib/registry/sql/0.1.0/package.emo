@@ -4,6 +4,6 @@ package {
   targets = ["ocaml", "c", "typescript", "wasm", "beam"]
 
   deps {
-    float = "0.1.0"
+    "float" = "0.1.0"
   }
 }

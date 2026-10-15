@@ -217,7 +217,7 @@ let test_dependency_modules () =
         \  name = \"local/demo\"\n\
         \  version = \"0.1.0\"\n\
         \  targets = [\"ocaml\"]\n\
-        \  deps { foo = \"0.1.0\" }\n\
+        \  deps { \"foo\" = \"0.1.0\" }\n\
          }\n";
       write
         (Filename.concat pkg "package.emo")
@@ -392,6 +392,29 @@ let test_manifest_diagnostics () =
     (diagnostic_codes
        (Lsp_server.manifest_diagnostics ~file:"package.emo" missing_name))
 
+(* The code action that pins a dependency writes a deps entry, whose key
+   is a string literal — the one spelling a manifest accepts. *)
+let test_dep_insertion () =
+  let with_block =
+    "package {\n\
+    \  name = \"local/demo\"\n\
+    \  version = \"0.1.0\"\n\
+    \  targets = [\"ocaml\"]\n\
+    \  deps {}\n\
+     }\n"
+  in
+  let _, insert =
+    Lsp_server.dep_insertion with_block "emo/ui" "0.1.0"
+  in
+  Alcotest.(check string)
+    "the entry keys the name as a string"
+    "\n    \"emo/ui\" = \"0.1.0\"" insert;
+  let without_block = "package {\n  name = \"local/demo\"\n}\n" in
+  let _, insert = Lsp_server.dep_insertion without_block "json" "2.3.1" in
+  Alcotest.(check string)
+    "a fresh block does too"
+    "\n  deps {\n    \"json\" = \"2.3.1\"\n  }\n" insert
+
 let test_initialize_result () =
   let result = Lsp_server.initialize_result () in
   let capabilities = Yojson.Safe.Util.member "capabilities" result in
@@ -431,6 +454,7 @@ let () =
       ( "resolve",
         [
           tc "receiver segments" test_receiver_segments;
+          tc "dep insertion" test_dep_insertion;
           tc "initialize result" test_initialize_result;
         ] );
     ]

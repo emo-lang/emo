@@ -95,7 +95,7 @@ hand through `deliver`, on the sink `mount` was given.
 
 `golden/` is what the text form is for: the harness the core and every later
 backend are measured against. It is a package in the consumer's position —
-`deps { emo_lang/ui = "0.1.0" }` and a `require`, reached through a registry the
+`deps { "emo/ui" = "0.1.0" }` and a `require`, reached through a registry the
 gate stages from the sources under test — and it holds one screen that carries
 every primitive, both `w=`/`h=` branches, all four `Align` values, an empty
 string prop and nested containers. `expected.txt` is the interpreter's own
@@ -139,7 +139,7 @@ the standalone repository with its history (`CHECK.md`, the in-tree project
 layout).
 
 The directory is rooted by its own `package.emo` — the portable core's, whose
-`ui.emo` is the module `require "emo_lang/ui"` binds — and the repository root
+`ui.emo` is the module `require "emo/ui"` binds — and the repository root
 carries no manifest, so this package's modules are checked as its own program
 and no compiler build sweeps them in. The `debug` backend is a *module* of that
 package rather than one of the packages below, because it carries no platform
@@ -151,6 +151,6 @@ first of those — a consumer rather than a backend, but a package of its own fo
 the same reason, and the one whose `deps` entry exercises the registry flow the
 platform packages will use.
 
-The scope is spelled `emo_lang` rather than the organization's hyphenated name:
-a `deps` key is a scoped identifier, and neither a keyword (`emo`) nor a hyphen
-(`emo-lang`) can appear in one.
+The scope is `emo`, the same one every package in this repository carries: a
+`deps` key is a string literal, so a package name is data rather than something
+the lexer has to accept (T11.9).

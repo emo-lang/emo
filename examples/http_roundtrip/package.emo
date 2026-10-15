@@ -4,7 +4,7 @@ package {
   targets = ["ocaml", "c", "typescript"]
 
   deps {
-    http = "0.1.0"
-    net = "0.1.0"
+    "http" = "0.1.0"
+    "net" = "0.1.0"
   }
 }

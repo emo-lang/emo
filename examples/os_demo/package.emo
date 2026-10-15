@@ -4,6 +4,6 @@ package {
   targets = ["ocaml", "c"]
 
   deps {
-    os = "0.1.0"
+    "os" = "0.1.0"
   }
 }

@@ -60,8 +60,8 @@ let manifest_tests =
   targets = ["ocaml", "wasm"]
 
   deps {
-    json = "2.3.1"
-    http = "1.4.2"
+    "json" = "2.3.1"
+    "http" = "1.4.2"
   }
 }|}
         with
@@ -75,6 +75,113 @@ let manifest_tests =
               (Emo_pkg.Version.to_string m.Emo_pkg.version);
             Alcotest.(check int) "targets" 2 (List.length m.Emo_pkg.targets);
             Alcotest.(check int) "deps" 2 (List.length m.Emo_pkg.deps));
+    tc "a dependency's name is a string literal" (fun () ->
+        match
+          check
+            {|package {
+  name = "emo/ui_golden"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    "emo/ui" = "0.1.0"
+    "json" = "2.3.1"
+  }
+}|}
+        with
+        | Error d -> Alcotest.fail (codes_of (Error d))
+        | Ok m -> (
+            match m.Emo_pkg.deps with
+            | [ (first, _); (second, _) ] ->
+                Alcotest.(check string) "scoped dep" "emo/ui" first;
+                Alcotest.(check string) "bare dep" "json" second
+            | ds ->
+                Alcotest.fail
+                  (Printf.sprintf "expected 2 deps, got %d" (List.length ds))));
+    tc "the identifier key form is refused" (fun () ->
+        match
+          check
+            {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    json = "2.3.1"
+  }
+}|}
+        with
+        | Ok _ -> Alcotest.fail "expected the key to be refused"
+        | Error d ->
+            Alcotest.(check string) "code" "E5102" (codes_of (Error d));
+            Alcotest.(check (option string))
+              "the hint names the string form"
+              (Some
+                 {|write a dependency's name as a string: "acme/json_tools" = "1.2.3"|})
+              d.Diagnostic.hint);
+    tc "the old scoped key is refused" (fun () ->
+        match
+          check
+            {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    acme/json_tools = "2.3.1"
+  }
+}|}
+        with
+        | Ok _ -> Alcotest.fail "expected the key to be refused"
+        | Error d -> Alcotest.(check string) "code" "E2015" (codes_of (Error d)));
+    tc "an empty dependency name is refused" (fun () ->
+        match
+          check
+            {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    "" = "2.3.1"
+  }
+}|}
+        with
+        | Ok _ -> Alcotest.fail "expected the name to be refused"
+        | Error d ->
+            Alcotest.(check string) "code" "E5102" (codes_of (Error d));
+            Alcotest.(check string)
+              "the message names the empty name"
+              "a dependency's name is empty" d.Diagnostic.message);
+    tc "a stray statement in deps is refused" (fun () ->
+        match
+          check
+            {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    println("json")
+  }
+}|}
+        with
+        | Ok _ -> Alcotest.fail "expected the statement to be refused"
+        | Error d -> Alcotest.(check string) "code" "E5104" (codes_of (Error d)));
+    tc "a package field keyed by a string is refused" (fun () ->
+        match
+          check
+            {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  "link" = ["sqlite3"]
+
+  deps {}
+}|}
+        with
+        | Ok _ -> Alcotest.fail "expected the field to be refused"
+        | Error d -> Alcotest.(check string) "code" "E5102" (codes_of (Error d)));
     tc "an empty deps block is allowed" (fun () ->
         match
           check

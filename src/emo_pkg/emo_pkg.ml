@@ -40,15 +40,17 @@ type manifest = {
 
 let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
 
-(* Token-level strict reader: accepts exactly the README shape.
+(* Token-level helpers for a manifest's fields, against this shape:
      package {
        name = "acme/json_tools"
        version = "0.1.0"
        targets = ["ocaml", "wasm"]
        link = ["sqlite3"]
-       deps { json = "2.3.1" }
+       deps { "json" = "2.3.1" }
      }
-   Unknown fields, missing fields, and non-literal values are errors. *)
+   Non-literal values are errors. The manifest itself is read by
+   `parse_manifest` below, which evaluates the file in the restricted
+   profile. *)
 module Manifest_parser = struct
   open Emo_support
   module Tok = Emo_lexer.Token
@@ -125,7 +127,7 @@ end
        version = "0.1.0"
        targets = ["ocaml", "wasm"]
        link = ["sqlite3"]
-       deps { json = "2.3.1" }
+       deps { "json" = "2.3.1" }
      }
    Unknown fields, missing fields, and non-literal values are errors — the
    manifest is data, not program logic (until phase B). `link` is optional
@@ -137,24 +139,28 @@ exception Manifest_budget_exceeded of int
 
 (* Phase B: the manifest is evaluated as real Emo in the restricted profile
    (hermetic, step-budgeted, no I/O builtins in scope). The `package { ... }`
-   block's bindings become the fields and a `deps { ... }` block's bindings
-   become the dependencies. *)
+   block's bindings become the fields and a `deps { ... }` block's entries —
+   each named by a string literal — become the dependencies. *)
 let parse_manifest ~(file : string) ~(source : string) : manifest =
   let items =
-    match Emo_parser.parse_program ~file ~source with
+    match Emo_parser.parse_program_in ~manifest:true ~file ~source with
     | items -> items
     | exception Emo_lexer.Error d -> raise (Manifest_error d)
     | exception Emo_parser.Error d -> raise (Manifest_error d)
   in
-  let manifest_error code message =
+  let manifest_error ?hint ?span code message =
     Manifest_error
       Emo_support.Diagnostic.
         {
           severity = Error;
           code = Some code;
           message;
-          span = Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
-          hint = None;
+          span =
+            (match span with
+            | Some s -> s
+            | None ->
+                Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0);
+          hint;
         }
   in
   let env, deps_pairs =
@@ -170,6 +176,30 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
         raise
           (manifest_error "E5103"
              (Printf.sprintf "field `%s` must be literal data" name))
+    | Emo_eval.Manifest_shape_error (shape, span) -> (
+        let dep_key =
+          {|write a dependency's name as a string: "acme/json_tools" = "1.2.3"|}
+        in
+        match shape with
+        | Emo_eval.Dep_key_empty ->
+            raise
+              (manifest_error ~span "E5102" "a dependency's name is empty"
+                 ~hint:
+                   {|name the package you depend on: "acme/json_tools" = "1.2.3"|})
+        | Emo_eval.Dep_key_not_string ->
+            raise
+              (manifest_error ~hint:dep_key ~span "E5102"
+                 "a dependency's name is a string, not a field name")
+        | Emo_eval.Field_name_not_ident ->
+            raise
+              (manifest_error ~span "E5102" "a package field's name is not a string"
+                 ~hint:
+                   "the package block defines `name`, `version`, `targets` and \
+                    `link`; a dependency's name belongs in `deps`")
+        | Emo_eval.Dep_entry_expected ->
+            raise
+              (manifest_error ~hint:dep_key ~span "E5104"
+                 "a `deps` block holds dependency entries only"))
     | Emo_eval.Emo_raise (v, span, trace) ->
         let d = Emo_eval.uncaught_diagnostic (v, span, trace) in
         raise

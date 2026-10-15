@@ -26,11 +26,13 @@ def parse_config(text String) json_tools.Json {
     link = ["sqlite3"]
 
     deps {
-      json = "2.3.1"
-      http = "1.4.2"
+      "json" = "2.3.1"
+      "http" = "1.4.2"
     }
   }
   ```
+
+- **`deps` 的键是字符串字面量**——这个块唯一的写法。包名在这里和在其它所有地方一样是数据(`name` 字段、`require`、lockfile、注册表),所以 scope 能叫什么不取决于词法:owner 是关键字(`emo`)或带连字符都写得出来。包字段(`name`、`version`、`targets`、`link`)仍是标识符绑定——一边是固定 schema 的字段,另一边是 名字→版本 的映射。
 
 - **包可以自带原生代码。** 包目录树里的 `.c`、`.h` 文件是包的一部分——与 `.emo` 模块一同被收集、校验、发布。c 目标会把依赖包的 C 源文件编进程序，并链接其 `link` 字段声明的库，所以消费 `sqlite3` 这类原生绑定包只需 `require`——不用 `--cclib`，不用手写 shim。`link` 只接受裸库名。包的原生输入只有 c 目标兑现；其他目标在构建期拒绝这样的依赖，manifest 的 `targets` 则在解析期拒绝。
 

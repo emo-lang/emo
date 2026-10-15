@@ -647,7 +647,7 @@ let rec dep_insertion (source : string) (name : string) (version : string) :
   | Some i -> (
       match String.index_from_opt source i '{' with
       | Some brace ->
-          (brace + 1, Printf.sprintf "\n    %s = \"%s\"" name version)
+          (brace + 1, Printf.sprintf "\n    \"%s\" = \"%s\"" name version)
       | None -> dep_block_insertion source name version)
   | None -> dep_block_insertion source name version
 
@@ -657,7 +657,7 @@ and dep_block_insertion (source : string) (name : string) (version : string) :
   let offset =
     match last_brace with Some i -> i | None -> String.length source
   in
-  (offset, Printf.sprintf "\n  deps {\n    %s = \"%s\"\n  }\n" name version)
+  (offset, Printf.sprintf "\n  deps {\n    \"%s\" = \"%s\"\n  }\n" name version)
 
 let dep_edit (state : state) (root : string) (name : string) :
     Yojson.Safe.t option =
@@ -1059,15 +1059,15 @@ let handle_execute_command (state : state) (params : Yojson.Safe.t) :
   // Optional: system libraries the c target links, as bare names.
   // link = ["sqlite3"]
 
-  // Dependencies — one per line, as  name = "exact version".
+  // Dependencies — one per line, as  "name" = "exact version".
   // Versions are exact major.minor.patch pins, never ranges. The name
   // is what `require` names in your .emo files: a standard-library
   // short name like "json" needs no entry (the compiler ships it); a
   // registry package's owner/name is pinned here. Either way the
   // package binds in code under its short name.
   deps {
-    // json = "0.1.0"       then:  require "json"       binds `json`
-    // acme/leaf = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
+    // "json" = "0.1.0"       then:  require "json"       binds `json`
+    // "acme/leaf" = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
   }
   // After editing deps: `emo deps resolve` writes package.lock,
   // `emo deps update <name>` regenerates it after one pin changes, and

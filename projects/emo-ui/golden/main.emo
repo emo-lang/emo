@@ -3,7 +3,7 @@
 // that can run it.
 //
 // The screen is a consumer of the core, not a module of it — it declares
-// `emo_lang/ui` as a dependency exactly as an application would — which
+// `emo/ui` as a dependency exactly as an application would — which
 // is what makes the comparison meaningful: these are the bytes an
 // application sees, out of real `require`-d code, not out of the
 // package's own tree.

@@ -165,7 +165,7 @@ expect "emo_no_to_str" "enum_print -- and names the conversion it lacks" "$got"
 # --- the golden: one screen, the same bytes from every target ------------
 #
 # `golden/` is a consumer of the core — a package of its own, with
-# `emo_lang/ui` as a dependency — so it is built the way an application
+# `emo/ui` as a dependency — so it is built the way an application
 # is: through a registry, out of `require`-d code. It is also the only
 # build here that can reach every target, because the core's own package
 # lowers `test.emo`, and `test.emo` hands the loop two bare defs.
@@ -183,8 +183,8 @@ expect "emo_no_to_str" "enum_print -- and names the conversion it lacks" "$got"
 
 sum=$(cat package.emo ui.emo debug.emo | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
-mkdir -p "$REG/emo_lang/ui/0.1.0"
-cp package.emo ui.emo debug.emo "$REG/emo_lang/ui/0.1.0/"
+mkdir -p "$REG/emo/ui/0.1.0"
+cp package.emo ui.emo debug.emo "$REG/emo/ui/0.1.0/"
 
 G=$PWD/.emo-build/check/golden
 mkdir -p "$G"

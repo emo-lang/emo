@@ -26,11 +26,13 @@ def parse_config(text String) json_tools.Json {
     link = ["sqlite3"]
 
     deps {
-      json = "2.3.1"
-      http = "1.4.2"
+      "json" = "2.3.1"
+      "http" = "1.4.2"
     }
   }
   ```
+
+- **A `deps` key is a string literal** — the block's one spelling. A package name is data here as it is everywhere else (the `name` field, `require`, the lockfile, the registry), so what a scope may be called does not depend on the lexer: an owner that is a keyword (`emo`) or carries a hyphen is writable. The package fields (`name`, `version`, `targets`, `link`) stay identifier bindings — a fixed schema of fields on one side, a name→version map on the other.
 
 - **A package may carry native code.** `.c` and `.h` files in a package's tree are part of the package — collected, checksummed, and published beside its `.emo` modules. The `c` target compiles a dependency's C sources into the program and links the libraries its `link` field names, so consuming a native-binding package like `sqlite3` is just `require` — no `--cclib`, no manual shims. The `link` field takes bare library names only. Only the `c` target honors a package's native inputs; every other target refuses such a dependency at build time, and the manifest's `targets` refuses it at resolution.
 

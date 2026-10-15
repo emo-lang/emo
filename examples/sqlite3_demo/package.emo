@@ -4,6 +4,6 @@ package {
   targets = ["c"]
 
   deps {
-    sqlite3 = "0.1.0"
+    "sqlite3" = "0.1.0"
   }
 }

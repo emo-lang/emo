@@ -3576,6 +3576,16 @@ let eval_item ?(module_path = []) env item =
 exception Duplicate_field of string
 exception Impure_field of string
 
+(* A manifest block's shape: a deps entry names its package with a string
+   literal, while a package field's name is a bare identifier. *)
+type manifest_shape =
+  | Dep_key_empty
+  | Dep_key_not_string
+  | Field_name_not_ident
+  | Dep_entry_expected
+
+exception Manifest_shape_error of manifest_shape * Emo_support.Span.t
+
 (* Evaluates pre-parsed items hermetically: an empty environment (no I/O
    builtins in scope), a step budget, and `package`/`deps` blocks whose
    bindings are collected into a dependency table instead of the scope.
@@ -3620,18 +3630,33 @@ let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
     | Ast.String s -> deps := !deps @ [ (name, s) ]
     | _ -> raise (Impure_field name)
   in
+  (* A deps entry names its package with a string literal, as `require` does.
+     Anything else in the block is a mistake the reader must be told about. *)
+  let dep_entry (s : Ast.stmt) =
+    match s.Ast.stmt_desc with
+    | Ast.Assign { target = { Ast.desc = Ast.String ""; _ }; _ } ->
+        raise (Manifest_shape_error (Dep_key_empty, s.Ast.stmt_span))
+    | Ast.Assign { target = { Ast.desc = Ast.String name; _ }; value } ->
+        (name, value)
+    | Ast.Assign _ | Ast.Binding _ ->
+        raise (Manifest_shape_error (Dep_key_not_string, s.Ast.stmt_span))
+    | _ -> raise (Manifest_shape_error (Dep_entry_expected, s.Ast.stmt_span))
+  in
   let handle_stmt (s : Ast.stmt) =
-    match field_target s with
-    | Some (name, init) -> define_field env name init
-    | None -> ()
+    match s.Ast.stmt_desc with
+    | Ast.Assign { target = { Ast.desc = Ast.String _; _ }; _ } ->
+        raise (Manifest_shape_error (Field_name_not_ident, s.Ast.stmt_span))
+    | _ -> (
+        match field_target s with
+        | Some (name, init) -> define_field env name init
+        | None -> ())
   in
   let rec handle_block name body =
     if name = "deps" then
       List.iter
         (fun s ->
-          match field_target s with
-          | Some (name, init) -> add_dep name init
-          | None -> ())
+          let name, init = dep_entry s in
+          add_dep name init)
         body
     else
       (* A package block defines its fields; a nested `deps { ... }` block is

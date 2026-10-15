@@ -4,6 +4,6 @@ package {
   targets = ["ocaml", "c", "typescript", "wasm", "beam"]
 
   deps {
-    csv = "0.1.0"
+    "csv" = "0.1.0"
   }
 }

@@ -1202,8 +1202,8 @@ let run_embedded ~(registry : string) ~(tag : string) ~(program : string)
   targets = ["ocaml", "c"]
 
   deps {
-    http = "%s"
-    net = "%s"
+    "http" = "%s"
+    "net" = "%s"
   }
 }
 |}
@@ -2025,15 +2025,15 @@ let scaffold ~(path : string) : int =
   // Optional: system libraries the c target links, as bare names.
   // link = ["sqlite3"]
 
-  // Dependencies — one per line, as  name = "exact version".
+  // Dependencies — one per line, as  "name" = "exact version".
   // Versions are exact major.minor.patch pins, never ranges. The name
   // is what `require` names in your .emo files: a standard-library
   // short name like "json" needs no entry (the compiler ships it); a
   // registry package's owner/name is pinned here. Either way the
   // package binds in code under its short name.
   deps {
-    // json = "0.1.0"       then:  require "json"       binds `json`
-    // acme/leaf = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
+    // "json" = "0.1.0"       then:  require "json"       binds `json`
+    // "acme/leaf" = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
   }
   // After editing deps: `emo deps resolve` writes package.lock,
   // `emo deps update <name>` regenerates it after one pin changes, and
@@ -2143,15 +2143,15 @@ let scaffold_package ~(name : string) ~(path : string) : int =
   // Optional: system libraries the c target links, as bare names.
   // link = ["sqlite3"]
 
-  // Dependencies — one per line, as  name = "exact version".
+  // Dependencies — one per line, as  "name" = "exact version".
   // Versions are exact major.minor.patch pins, never ranges. The name
   // is what `require` names in your .emo files: a standard-library
   // short name like "json" needs no entry (the compiler ships it); a
   // registry package's owner/name is pinned here. Either way the
   // package binds in code under its short name.
   deps {
-    // json = "0.1.0"       then:  require "json"       binds `json`
-    // acme/leaf = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
+    // "json" = "0.1.0"       then:  require "json"       binds `json`
+    // "acme/leaf" = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
   }
   // After editing deps: `emo deps resolve` writes package.lock,
   // `emo deps update <name>` regenerates it after one pin changes, and

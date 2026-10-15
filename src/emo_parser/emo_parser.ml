@@ -89,6 +89,9 @@ type parser = {
   mutable suppress_block_sugar : bool;
       (* while parsing an if/case condition, a `{` starts the body, never a
          call's trailing block *)
+  mutable manifest : bool;
+      (* the manifest profile, where a deps entry's name is a string literal
+         and so may stand in assignment-target position *)
 }
 
 let peek st = Emo_lexer.Stream.peek st.stream
@@ -671,11 +674,10 @@ and parse_stmt st =
             Ast.Send { target = e; message }
         | Tok.Op Tok.Assign when not (newline_before st) ->
             advance st |> ignore;
-            let target = scoped_target e in
-            check_assign_target st target;
+            check_assign_target st ~allow_string:st.manifest e;
             let value = parse_expr st in
             end_statement st;
-            Ast.Assign { target; value }
+            Ast.Assign { target = e; value }
         | _ ->
             end_statement st;
             Ast.Expr_stmt e
@@ -756,10 +758,9 @@ and parse_for_post st =
   match kind st with
   | Tok.Op Tok.Assign when not (newline_before st) ->
       advance st |> ignore;
-      let target = scoped_target e in
-      check_assign_target st target;
+      check_assign_target st e;
       let value = parse_expr st in
-      stmt start_span (Ast.Assign { target; value })
+      stmt start_span (Ast.Assign { target = e; value })
   | _ ->
       error "E2026" (span st)
         "the `for` header's last clause is an assignment (`i = i + 1`)"
@@ -775,29 +776,28 @@ and expect_bare st word =
         (Printf.sprintf
            "`%s` stands alone; it takes no value and no parentheses" word)
 
-(* `acme/json_tools = "2.3.1"` — a scoped package name as a manifest deps
-   key. In target position the slash form is unambiguous (a division is
-   never assignable), so it folds into one ident; the checker confines
-   slash idents to manifests. *)
-and scoped_target target =
-  match target.Ast.desc with
-  | Ast.Binary
-      ( Ast.Div,
-        { Ast.desc = Ast.Ident owner; _ },
-        { Ast.desc = Ast.Ident name; _ } )
-    when (not (String.contains owner '/')) && not (String.contains name '/') ->
-      { target with Ast.desc = Ast.Ident (owner ^ "/" ^ name) }
-  | _ -> target
-
 (* `x = v` rebinds a variable; `self.x = v` is a field assignment, legal
-   only inside init. *)
-and check_assign_target st target =
+   only inside init. A dependency's name is data — as it is in `require`
+   and in the manifest's own `name` field — so a manifest's deps entry
+   writes it as a string literal, the one target position `allow_string`
+   opens, and the manifest reader holds it to that. *)
+and check_assign_target st ?(allow_string = false) target =
   match target.Ast.desc with
   | Ast.Ident _ -> ()
+  | Ast.String _ when allow_string -> ()
+  | Ast.Interpolated _ when allow_string ->
+      error "E2015" target.Ast.span
+        "a dependency's name is a plain string, not interpolation"
+        ~hint:{|write "acme/json_tools" = "2.3.1"|}
   | Ast.Member ({ Ast.desc = Ast.Self; _ }, _) ->
       if not st.in_init then
         error "E2016" target.Ast.span "fields are assigned only inside `init`"
           ~hint:"`init` is the only window where `self.x = ...` may appear"
+  | _ when st.manifest ->
+      error "E2015" target.Ast.span
+        "a manifest assigns to a package field or to a dependency's name"
+        ~hint:
+          {|a dependency's name is a string: write "acme/json_tools" = "1.2.3"|}
   | _ ->
       error "E2015" target.Ast.span "invalid assignment target"
         ~hint:"assign to a variable or to a `self` field"
@@ -1589,7 +1589,15 @@ and parse_branches st =
 (* Parses a source that holds exactly one expression. *)
 let parse_expr_source ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
-  let st = { stream; file; in_init = false; suppress_block_sugar = false } in
+  let st =
+    {
+      stream;
+      file;
+      in_init = false;
+      suppress_block_sugar = false;
+      manifest = false;
+    }
+  in
   let e = parse_expr st in
   if not (at_eof st) then
     error "E2001" (span st)
@@ -1619,10 +1627,19 @@ let resync st =
 
 (* Parses a file, recovering from item-level errors: after a diagnostic it
    resyncs at the next top-level item and keeps going, reporting as many
-   errors as possible in one pass. *)
-let parse_program_with_diagnostics ~file ~source =
+   errors as possible in one pass. `manifest` picks the profile; the
+   ordinary names below are the module profile's wrappers. *)
+let parse_program_with_diagnostics_in ~manifest ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
-  let st = { stream; file; in_init = false; suppress_block_sugar = false } in
+  let st =
+    {
+      stream;
+      file;
+      in_init = false;
+      suppress_block_sugar = false;
+      manifest;
+    }
+  in
   let items = ref [] in
   let diagnostics = ref [] in
   let rec loop () =
@@ -1640,11 +1657,18 @@ let parse_program_with_diagnostics ~file ~source =
   loop ();
   (List.rev !items, List.rev !diagnostics)
 
+(* The module profile: an ordinary Emo file, where a string is never an
+   assignment target. The manifest profile is `parse_program_in
+   ~manifest:true`, which `Emo_pkg` is the only caller of. *)
+let parse_program_with_diagnostics ~file ~source =
+  parse_program_with_diagnostics_in ~manifest:false ~file ~source
+
 (* Parses a file: a sequence of top-level items ended by newlines. Raises on
    the first diagnostic. Duplicate `require`s of one package in a file are
-   an error. *)
-let parse_program ~file ~source =
-  match parse_program_with_diagnostics ~file ~source with
+   an error. In the manifest profile a `deps` entry's name is a string
+   literal and so may stand in assignment-target position. *)
+let parse_program_in ~manifest ~file ~source =
+  match parse_program_with_diagnostics_in ~manifest ~file ~source with
   | items, [] ->
       let seen = Hashtbl.create 4 in
       List.iter
@@ -1661,3 +1685,5 @@ let parse_program ~file ~source =
         items;
       items
   | _, first :: _ -> raise (Error first)
+
+let parse_program ~file ~source = parse_program_in ~manifest:false ~file ~source

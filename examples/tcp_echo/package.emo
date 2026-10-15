@@ -4,6 +4,6 @@ package {
   targets = ["ocaml", "c", "typescript"]
 
   deps {
-    net = "0.1.0"
+    "net" = "0.1.0"
   }
 }

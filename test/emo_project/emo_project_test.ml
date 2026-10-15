@@ -663,7 +663,7 @@ def scale(n Int64) Int64 {
   targets = ["ocaml", "c"]
 
   deps {
-    acme/leaf_tools = "1.0.0"
+    "acme/leaf_tools" = "1.0.0"
   }
 }
 |};
@@ -738,7 +738,7 @@ let app_manifest =
   targets = ["ocaml"]
 
   deps {
-    acme/c_tools = "1.0.0"
+    "acme/c_tools" = "1.0.0"
   }
 }
 |}
@@ -759,8 +759,8 @@ let shadow_app () =
   targets = ["ocaml", "c"]
 
   deps {
-    acme/shadow = "1.0.0"
-    acme/q = "1.0.0"
+    "acme/shadow" = "1.0.0"
+    "acme/q" = "1.0.0"
   }
 }
 |}
@@ -839,7 +839,7 @@ let install_tests =
               "  targets = [\"ocaml\"]";
               "";
               "  deps {";
-              "    acme/c_tools = \"9.9.9\"";
+              "    \"acme/c_tools\" = \"9.9.9\"";
               "  }";
               "}";
             ]
@@ -1010,7 +1010,7 @@ let deps_tests =
   targets = ["ocaml"]
 
   deps {
-    acme/json_tools = "9.8.7"
+    "acme/json_tools" = "9.8.7"
   }
 }
 |}
@@ -1044,7 +1044,7 @@ let deps_tests =
   targets = ["ocaml", "wasm"]
 
   deps {
-    acme/json_tools = "2.3.1"
+    "acme/json_tools" = "2.3.1"
   }
 }
 |}
@@ -1084,7 +1084,7 @@ println(json_tools.parse("hello"))
   targets = ["ocaml", "wasm"]
 
   deps {
-    acme/wasm_tools = "1.0.0"
+    "acme/wasm_tools" = "1.0.0"
   }
 }
 |}
@@ -1114,7 +1114,7 @@ println(wasm_tools.shrink(4))
   targets = ["ocaml", "c"]
 
   deps {
-    acme/json_tools = "2.3.1"
+    "acme/json_tools" = "2.3.1"
   }
 }
 |}
@@ -1152,7 +1152,7 @@ println(json_tools.parse("hello"))
   targets = ["ocaml", "c"]
 
   deps {
-    acme/c_tools = "1.0.0"
+    "acme/c_tools" = "1.0.0"
   }
 }
 |}
@@ -1181,7 +1181,7 @@ println(c_tools.halve(8))
   targets = ["ocaml", "c"]
 
   deps {
-    acme/nested_tools = "1.0.0"
+    "acme/nested_tools" = "1.0.0"
   }
 }
 |}
@@ -1212,7 +1212,7 @@ println(nested_tools.scale(21))
   targets = ["ocaml", "c"]
 
   deps {
-    acme/nested_tools = "1.0.0"
+    "acme/nested_tools" = "1.0.0"
   }
 }
 |}
@@ -1242,7 +1242,7 @@ println(nested_tools.internal.helper.twice(21))
   targets = ["ocaml", "c"]
 
   deps {
-    acme/nested_tools = "1.0.0"
+    "acme/nested_tools" = "1.0.0"
   }
 }
 |}
@@ -1307,7 +1307,7 @@ println(helper.twice(21))
   targets = ["ocaml", "c"]
 
   deps {
-    acme/trans_tools = "1.0.0"
+    "acme/trans_tools" = "1.0.0"
   }
 }
 |}
@@ -1338,7 +1338,7 @@ println(trans_tools.span())
   targets = ["ocaml", "c"]
 
   deps {
-    acme/trans_tools = "1.0.0"
+    "acme/trans_tools" = "1.0.0"
   }
 }
 |}
@@ -1364,8 +1364,8 @@ println(trans_tools.span())
   targets = ["ocaml", "c"]
 
   deps {
-    acme/rogue_tools = "1.0.0"
-    acme/leaf_tools = "1.0.0"
+    "acme/rogue_tools" = "1.0.0"
+    "acme/leaf_tools" = "1.0.0"
   }
 }
 |}
@@ -1569,8 +1569,8 @@ let stdlib_http_tests =
   targets = ["ocaml"]
 
   deps {
-    http = "0.1.0"
-    net = "0.1.0"
+    "http" = "0.1.0"
+    "net" = "0.1.0"
   }
 }|}
               );
@@ -1849,7 +1849,7 @@ println("ok")
   targets = ["ocaml", "c", "typescript", "wasm", "beam"]
 
   deps {
-    sync = "0.1.0"
+    "sync" = "0.1.0"
   }
 }
 |}
@@ -2139,7 +2139,7 @@ let native_dep_tests =
   targets = ["ocaml", "c"]
 
   deps {
-    acme/native_tools = "1.0.0"
+    "acme/native_tools" = "1.0.0"
   }
 }
 |}
@@ -2172,7 +2172,7 @@ println(native_tools.halve_floor(9.0))
   targets = ["ocaml", "c"]
 
   deps {
-    acme/native_tools = "1.0.0"
+    "acme/native_tools" = "1.0.0"
   }
 }
 |}

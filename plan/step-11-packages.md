@@ -27,13 +27,15 @@ configurable central registry into a global content-addressed cache.
     targets = ["native", "wasm"] (the native target later renamed `ocaml`)
 
     deps {
-      json = "2.3.1"
-      http = "1.4.2"
+      "json" = "2.3.1"
+      "http" = "1.4.2"
     }
   }
   ```
   Unknown fields, missing fields, and non-literal values are errors — the
-  manifest is data, not program logic, in this phase.
+  manifest is data, not program logic, in this phase. A `deps` key is a string
+  literal (T11.9): a package name is data here as it is everywhere else, so the
+  block's spelling does not depend on what the lexer accepts as an identifier.
 - **Manifest, phase B — restricted evaluator:** upgrade the parser to a real
   restricted-profile evaluation (the README's configuration story): the
   full expression language minus unbounded iteration, with an evaluation
@@ -93,6 +95,9 @@ configurable central registry into a global content-addressed cache.
 - [x] Manifest phase B: restricted-profile evaluation with step budget.
 - [x] End-to-end fixture: two local packages, one requiring the other,
       resolved, locked, built, run.
+- [x] A `deps` key is a string literal (T11.9): the manifest parser moves to a
+      profile of its own, the old scoped-identifier form and the fold behind it
+      are deleted, and every manifest in the tree is migrated with it.
 
 ## Acceptance
 
@@ -109,4 +114,5 @@ configurable central registry into a global content-addressed cache.
 
 None — the provisional names settled during this step (`package.emo`,
 `package.lock`, `owner/name` scopes, exact pins, `emo deps *`) now live in the
-README; `CHECK.md` keeps only what is still pending.
+README, as does the `deps` key's string form (T11.9); `CHECK.md` keeps only what
+is still pending.
