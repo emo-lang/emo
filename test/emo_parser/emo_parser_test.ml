@@ -1497,8 +1497,7 @@ let manifest_tests =
         Alcotest.(check string) "code" "E2015" (code_of diagnostic));
     tc "a for-header post clause takes no string target" (fun () ->
         let diagnostic =
-          manifest_err
-            {|for var i = 0; i < 3; "a" = "1" {
+          manifest_err {|for var i = 0; i < 3; "a" = "1" {
   println(i)
 }|}
         in

@@ -151,8 +151,8 @@ let manifest_tests =
         | Error d ->
             Alcotest.(check string) "code" "E5102" (codes_of (Error d));
             Alcotest.(check string)
-              "the message names the empty name"
-              "a dependency's name is empty" d.Diagnostic.message);
+              "the message names the empty name" "a dependency's name is empty"
+              d.Diagnostic.message);
     tc "a stray statement in deps is refused" (fun () ->
         match
           check

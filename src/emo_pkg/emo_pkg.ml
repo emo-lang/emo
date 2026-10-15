@@ -2,8 +2,6 @@
    Manifest errors use E5100-range codes; resolution and lockfile use
    E5200-range. *)
 
-module Tok = Emo_lexer.Token
-
 (* Raised by the manifest reader on any schema violation. *)
 exception Manifest_error of Emo_support.Diagnostic.t
 
@@ -27,8 +25,7 @@ module Version = struct
   let compare (a : t) (b : t) = compare a b
 end
 
-(* The manifest: strict, fixed schema (phase A). Phase B upgrades the value
-   reading to restricted-profile evaluation. *)
+(* The manifest: the package block's fields. *)
 type manifest = {
   name : string; (* owner/name for packages, plain for the standard library *)
   version : Version.t;
@@ -40,88 +37,7 @@ type manifest = {
 
 let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
 
-(* Token-level helpers for a manifest's fields, against this shape:
-     package {
-       name = "acme/json_tools"
-       version = "0.1.0"
-       targets = ["ocaml", "wasm"]
-       link = ["sqlite3"]
-       deps { "json" = "2.3.1" }
-     }
-   Non-literal values are errors. The manifest itself is read by
-   `parse_manifest` below, which evaluates the file in the restricted
-   profile. *)
-module Manifest_parser = struct
-  open Emo_support
-  module Tok = Emo_lexer.Token
-
-  type stream = { toks : Tok.t array; mutable pos : int; file : string }
-
-  let eof_tok file =
-    {
-      Tok.kind = Tok.Eof;
-      span = Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
-      newline_before = false;
-    }
-
-  let peek st =
-    if st.pos >= Array.length st.toks then eof_tok st.file else st.toks.(st.pos)
-
-  let advance st =
-    let t = peek st in
-    if st.pos < Array.length st.toks then st.pos <- st.pos + 1;
-    t
-
-  let span st = (peek st).Tok.span
-
-  let err st code message =
-    raise
-      (Manifest_error
-         Emo_support.Diagnostic.
-           {
-             severity = Error;
-             code = Some code;
-             message;
-             span = span st;
-             hint = None;
-           })
-
-  let expect_op st op what =
-    match (peek st).Tok.kind with
-    | Tok.Op o when o = op -> advance st |> ignore
-    | _ -> err st "E5100" (Printf.sprintf "expected %s" what)
-
-  (* Reads a plain (non-interpolated) string literal: chunk pieces up to
-     String_end. Interpolation is rejected — manifests are data. *)
-  let expect_string st what =
-    match (peek st).Tok.kind with
-    | Tok.String_chunk _ ->
-        let buf = Buffer.create 16 in
-        let rec loop () =
-          match (peek st).Tok.kind with
-          | Tok.String_chunk text ->
-              advance st |> ignore;
-              Buffer.add_string buf text;
-              loop ()
-          | Tok.String_end ->
-              advance st |> ignore;
-              Buffer.contents buf
-          | Tok.Interp_open ->
-              err st "E5103"
-                (Printf.sprintf "%s must be a plain string, not interpolation"
-                   what)
-          | _ -> err st "E5103" (Printf.sprintf "expected %s" what)
-        in
-        loop ()
-    | _ -> err st "E5103" (Printf.sprintf "expected %s (a quoted string)" what)
-
-  let read_version st raw =
-    match Version.parse raw with
-    | Ok v -> v
-    | Error message -> err st "E5103" message
-end
-
-(* The manifest: strict fixed schema in phase A.
+(* The manifest's shape:
      package {
        name = "acme/json_tools"
        version = "0.1.0"
@@ -130,14 +46,14 @@ end
        deps { "json" = "2.3.1" }
      }
    Unknown fields, missing fields, and non-literal values are errors — the
-   manifest is data, not program logic (until phase B). `link` is optional
-   (default []): the system libraries the c target links, as bare names. *)
+   manifest is data, not program logic. `link` is optional (default []): the
+   system libraries the c target links, as bare names. *)
 (* The budget for restricted manifest evaluation: generous but finite. *)
 let manifest_budget = 10_000
 
 exception Manifest_budget_exceeded of int
 
-(* Phase B: the manifest is evaluated as real Emo in the restricted profile
+(* The manifest is evaluated as real Emo in the restricted profile
    (hermetic, step-budgeted, no I/O builtins in scope). The `package { ... }`
    block's bindings become the fields and a `deps { ... }` block's entries —
    each named by a string literal — become the dependencies. *)
@@ -192,7 +108,8 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                  "a dependency's name is a string, not a field name")
         | Emo_eval.Field_name_not_ident ->
             raise
-              (manifest_error ~span "E5102" "a package field's name is not a string"
+              (manifest_error ~span "E5102"
+                 "a package field's name is not a string"
                  ~hint:
                    "the package block defines `name`, `version`, `targets` and \
                     `link`; a dependency's name belongs in `deps`")
@@ -377,6 +294,13 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
       deps_pairs
   in
   { name; version; targets; link; deps }
+
+(* A `package.emo` is the manifest: data in the restricted profile, never a
+   module. A reader that walks Emo sources has to know that, or it reads
+   `name`/`version`/`deps` as unbound names — so `emo check` and the editor
+   both ask here rather than each keeping its own file-name rule. *)
+let is_manifest_file (file : string) : bool =
+  String.equal (Filename.basename file) "package.emo"
 
 (* `acme/json_tools` binds as `json_tools`: the scoped name's short name is
    what a require brings into scope. Centralized here for a later

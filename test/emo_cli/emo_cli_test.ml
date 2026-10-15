@@ -321,8 +321,7 @@ let erl_available =
 (* The build path needs the compiler, not just the runtime: `emo build
    --target beam` assembles its Core Erlang with `erlc`, so a test that
    builds for beam has to skip where `erlc` is absent rather than fail. *)
-let erlc_available =
-  lazy (Sys.command "erlc -v >/dev/null 2>&1" = 0)
+let erlc_available = lazy (Sys.command "erlc -v >/dev/null 2>&1" = 0)
 
 let beam_examples_tests =
   List.map
@@ -2625,6 +2624,54 @@ let test_cmd_tests =
                Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
   ]
 
+let check_tests =
+  [
+    tc "a manifest is checked as a manifest, not as a module" (fun () ->
+        let dir =
+          write_fixture_project "check-manifest"
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/demo"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    "float" = "0.1.0"
+  }
+}|}
+              );
+            ]
+        in
+        Alcotest.(check int)
+          "exit" 0
+          (Emo_cli.check_file
+             ~file:(Filename.concat dir "package.emo")
+             ~color:false ~error_limit:20));
+    tc "a malformed manifest reports its manifest error" (fun () ->
+        let dir =
+          write_fixture_project "check-manifest-bad"
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/demo"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    float = "0.1.0"
+  }
+}|}
+              );
+            ]
+        in
+        Alcotest.(check int)
+          "exit" 65
+          (Emo_cli.check_file
+             ~file:(Filename.concat dir "package.emo")
+             ~color:false ~error_limit:20));
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -2652,6 +2699,7 @@ let () =
       ("login", login_tests);
       ("new", new_tests);
       ("test_cmd", test_cmd_tests);
+      ("check", check_tests);
       ("emoji", emoji_tests);
       ("doctor", doctor_tests);
     ]

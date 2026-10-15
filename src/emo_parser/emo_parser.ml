@@ -1632,13 +1632,7 @@ let resync st =
 let parse_program_with_diagnostics_in ~manifest ~file ~source =
   let stream = Emo_lexer.lex ~file ~source in
   let st =
-    {
-      stream;
-      file;
-      in_init = false;
-      suppress_block_sugar = false;
-      manifest;
-    }
+    { stream; file; in_init = false; suppress_block_sugar = false; manifest }
   in
   let items = ref [] in
   let diagnostics = ref [] in

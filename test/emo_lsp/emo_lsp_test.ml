@@ -370,10 +370,10 @@ let test_dependency_members_resolve () =
 let test_manifest_diagnostics () =
   Alcotest.(check bool)
     "package.emo is a manifest" true
-    (Lsp_server.is_manifest_file "/x/package.emo");
+    (Emo_pkg.is_manifest_file "/x/package.emo");
   Alcotest.(check bool)
     "main.emo is not" false
-    (Lsp_server.is_manifest_file "/x/main.emo");
+    (Emo_pkg.is_manifest_file "/x/main.emo");
   let valid =
     "package {\n\
     \  name = \"local/demo\"\n\
@@ -403,17 +403,14 @@ let test_dep_insertion () =
     \  deps {}\n\
      }\n"
   in
-  let _, insert =
-    Lsp_server.dep_insertion with_block "emo/ui" "0.1.0"
-  in
+  let _, insert = Lsp_server.dep_insertion with_block "emo/ui" "0.1.0" in
   Alcotest.(check string)
-    "the entry keys the name as a string"
-    "\n    \"emo/ui\" = \"0.1.0\"" insert;
+    "the entry keys the name as a string" "\n    \"emo/ui\" = \"0.1.0\"" insert;
   let without_block = "package {\n  name = \"local/demo\"\n}\n" in
   let _, insert = Lsp_server.dep_insertion without_block "json" "2.3.1" in
   Alcotest.(check string)
-    "a fresh block does too"
-    "\n  deps {\n    \"json\" = \"2.3.1\"\n  }\n" insert
+    "a fresh block does too" "\n  deps {\n    \"json\" = \"2.3.1\"\n  }\n"
+    insert
 
 let test_initialize_result () =
   let result = Lsp_server.initialize_result () in

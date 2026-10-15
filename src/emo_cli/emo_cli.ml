@@ -672,12 +672,22 @@ let build =
     (Cmd.info "build" ~doc:"Compile an Emo program.")
     Term.(const build $ entry $ output $ no_specialize $ cclib $ target)
 
-(* `emo check`: the static stages only, over the whole module tree. *)
+(* `emo check`: the static stages only, over the whole module tree. A
+   `package.emo` is a manifest rather than a module, so it is read the way
+   every other manifest reader reads it. *)
 let check_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
   match Sys.file_exists file with
   | false ->
       prerr_endline (Printf.sprintf "%s: No such file or directory" file);
       66
+  | true when Emo_pkg.is_manifest_file file -> (
+      match
+        Emo_pkg.parse_manifest ~file ~source:(Emo_project.read_file file)
+      with
+      | _ -> 0
+      | exception Emo_pkg.Manifest_error d ->
+          render_errors ~color ~error_limit [ d ];
+          65)
   | true -> (
       try
         let errors = Emo_project.check_entry ~entry_file:file in
@@ -850,7 +860,8 @@ let check =
     | code -> exit code
   in
   Cmd.v
-    (Cmd.info "check" ~doc:"Check an Emo file without running it.")
+    (Cmd.info "check"
+       ~doc:"Check an Emo file, or a package.emo manifest, without running it.")
     Term.(const check $ file $ no_color $ error_limit)
 
 (* `emo test`: the project's test convention — every `def test_*` under

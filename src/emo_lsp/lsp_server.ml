@@ -170,12 +170,6 @@ let missing_dep_diagnostics ?(registry : string option) (root : string)
               | _ -> None))
       (requires_of items)
 
-(* A `package.emo` is the manifest: data in the restricted profile, never a
-   module. Checking it as Emo source reads `name`/`version`/`deps` as
-   unbound names, so validate it as a manifest instead. *)
-let is_manifest_file (file : string) : bool =
-  String.equal (Filename.basename file) "package.emo"
-
 let manifest_diagnostics ~(file : string) (text : string) : Diagnostic.t list =
   match Emo_pkg.parse_manifest ~file ~source:text with
   | _ -> []
@@ -184,7 +178,7 @@ let manifest_diagnostics ~(file : string) (text : string) : Diagnostic.t list =
 
 let compute_diagnostics (state : state) (file : string) (text : string) :
     Diagnostic.t list =
-  if is_manifest_file file then manifest_diagnostics ~file text
+  if Emo_pkg.is_manifest_file file then manifest_diagnostics ~file text
   else
     let items, parse_diags = parse file text in
     match parse_diags with

@@ -246,7 +246,12 @@ Caution: resolved in step 11 — a project roots at its nearest `package.emo`; m
       masqueraded as code. 29 manifests migrated (`examples/**`,
       `benchmarks/http_echo`, five stdlib packages, the emo-ui golden),
       every committed lockfile re-resolved, and `projects/emo-ui/` now
-      names its package `emo/ui`.
+      names its package `emo/ui`. The same day, `emo check <FILE>` learned
+      the rule the editor already applied: a `package.emo` is read as a
+      manifest rather than as a module, so the two agree on what a
+      manifest says (`Emo_pkg.is_manifest_file` is where the rule lives),
+      and the token-level phase-A manifest helpers that T11.7 superseded
+      are gone.
 
 Also here: swap step 10's transitional root rule for manifest-based roots — done; the root rule now prefers the nearest `package.emo`.
 
