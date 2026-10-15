@@ -1,0 +1,127 @@
+// The two screens in spelling A: children are an explicit Array[Node],
+// and there is no sugar (docs/emo-ui-composition.md, option A; the
+// decision is docs/emo-ui.md, decision 3).
+//
+// A dynamic child list has to be produced by a def, one def per element
+// type, because Emo has no generics. A conditional child is worse: an
+// array cannot be spliced into an array literal, so either the whole
+// children array is duplicated across the branches (screen_profile_dup),
+// or an explicit concat builder assembles it (screen_profile).
+
+// `[]` is Array[Unknown], and the one-line `if` expression demands its
+// branches agree structurally, so the empty case needs a def to carry the
+// type. There is nowhere to annotate a local binding.
+def no_nodes() Array[ui.Node] {
+  return []
+}
+
+def concat(a Array[ui.Node], b Array[ui.Node], i Int64) Array[ui.Node] {
+  if i == b.length() {
+    return a
+  }
+  return concat(a.append(b[i]), b, i + 1)
+}
+
+def field_rows(xs Array[model.Field], i Int64,
+               into Array[ui.Node]) Array[ui.Node] {
+  if i == xs.length() {
+    return into
+  }
+  return field_rows(xs, i + 1, into.append(components.field_row(xs[i])))
+}
+
+def action_buttons(xs Array[model.Action], i Int64,
+                   into Array[ui.Node]) Array[ui.Node] {
+  if i == xs.length() {
+    return into
+  }
+  return action_buttons(xs, i + 1, into.append(
+    components.action_button(xs[i].label(), tags.on(xs[i].msg()))))
+}
+
+def message_rows(xs Array[model.Message], i Int64,
+                 into Array[ui.Node]) Array[ui.Node] {
+  if i == xs.length() {
+    return into
+  }
+  return message_rows(xs, i + 1, into.append(components.message_row(xs[i])))
+}
+
+def profile_fields(m model.Model) ui.Node {
+  return ui.column(field_rows(m.fields(), 0, []), ui.style().with_gap(6.0))
+}
+
+def profile_buttons(m model.Model) ui.Node {
+  return ui.row(action_buttons(m.actions(), 0, []), ui.style().with_gap(8.0))
+}
+
+def screen_profile(m model.Model) ui.Node {
+  const banner = if m.error() == "" { no_nodes() } else { [components.error_banner(m)] }
+  const head = [components.heading("Profile"), components.avatar_band(m)]
+  const tail = [profile_fields(m), profile_buttons(m),
+    ui.spacer(ui.style().with_height(12.0)), components.license_block()]
+  return ui.column(concat(head, concat(banner, tail, 0), 0),
+    components.root_style())
+}
+
+// The same screen with the concat builder removed: the only way left to
+// put a conditional child between two fixed ones is to write the whole
+// children array twice.
+def screen_profile_dup(m model.Model) ui.Node {
+  if m.error() == "" {
+    return ui.column([
+      components.heading("Profile"),
+      components.avatar_band(m),
+      profile_fields(m),
+      profile_buttons(m),
+      ui.spacer(ui.style().with_height(12.0)),
+      components.license_block()
+    ], components.root_style())
+  }
+  return ui.column([
+    components.heading("Profile"),
+    components.avatar_band(m),
+    components.error_banner(m),
+    profile_fields(m),
+    profile_buttons(m),
+    ui.spacer(ui.style().with_height(12.0)),
+    components.license_block()
+  ], components.root_style())
+}
+
+// The idiom docs/emo-ui.md Layer 1 publishes, reproduced faithfully. It
+// type-checks and it is wrong: `append` takes one element, not an array,
+// so this builds [n0, [n1, [n2, []]]] — nested — and nothing reports it,
+// because the element comes through a Block and Block is Unknown.
+def each_from(xs Array[model.Field], i Int64, f Block) Array[ui.Node] {
+  if i == xs.length() {
+    return []
+  }
+  const head = f(xs[i])
+  return [head].append(each_from(xs, i + 1, f))
+}
+
+def screen_profile_naive(m model.Model) ui.Node {
+  return ui.column([
+    components.heading("Profile"),
+    components.avatar_band(m),
+    ui.column(each_from(m.fields(), 0) -> (f model.Field) {
+      return components.field_row(f)
+    }, ui.style().with_gap(6.0))
+  ], components.root_style())
+}
+
+def inbox_body(m model.Model) Array[ui.Node] {
+  if m.messages().length() == 0 {
+    return [components.empty_state()]
+  }
+  return message_rows(m.messages(), 0, [])
+}
+
+def screen_inbox(m model.Model) ui.Node {
+  return ui.column([
+    components.toolbar(m),
+    ui.scroll(inbox_body(m), ui.style().with_padding(8.0)),
+    components.footer(m, tags.on(model.Msg.compose))
+  ], components.root_style())
+}

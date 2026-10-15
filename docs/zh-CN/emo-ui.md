@@ -98,6 +98,7 @@ Web 与原生工具包还有一个共同的语义要点:**平台持有事件循�
 // ui.emo — the portable core
 interface Node {
   def style() Style
+  def children() Array[Node]
 }
 
 class Column {
@@ -123,7 +124,7 @@ class Button {
 }
 ```
 
-接口是树脊(`Array[Node]` 因此能装任何东西);具体类携带带类型的 props,在构造时受检。后端用 `is()` 收窄——`ui.Text`、`ui.Button`,以及平台自己的类。因为一个后端与一个平台库配对,它知道核心类与其平台类的并集;那就是分派表。
+接口是树脊(`Array[Node]` 因此能装任何东西),而且它指称自己,这一点 checker 接受(probe 2,以及上面那条递归接口的发现)。具体类携带带类型的 props,在构造时受检。后端用 `is()` 收窄——`ui.Text`、`ui.Button`,以及平台自己的类。因为一个后端与一个平台库配对,它知道核心类与其平台类的并集;那就是分派表。
 
 另有两种形态被掂量并拒绝作为核心:
 
@@ -137,16 +138,21 @@ class Button {
 树就是嵌套调用。迭代时,组件接一个 block 并对每个元素调用它;block **返回**该元素对应的节点,组件收集返回值:
 
 ```emo
-def each_from(xs Array[String], i Int64, f Block) Array[Node] {
-  if i == xs.length() { return [] }
-  return [f(xs[i])].append(each_from(xs, i + 1, f))
+def each_from(xs Array[String], i Int64, into Array[Node],
+              f Block) Array[Node] {
+  if i == xs.length() { return into }
+  const head = f(xs[i])
+  return each_from(xs, i + 1, into.append(head), f)
 }
 
-const list = column(
-  text("Users"),
-  each(users) -> (u String) { return card(u) }
-)
+def each_users(xs Array[String], f Block) Array[Node] {
+  return each_from(xs, 0, [], f)
+}
+
+const rows = each_users(users) -> (u String) { return card(u) }
 ```
+
+那个累加器是承重的。**`Array.append` 追加的是一个元素,不是一个数组**(`src/emo_eval/emo_eval.ml:2055`),所以那个顺手的 `[head].append(each_from(xs, i + 1, f))` 构造出 `[n0, [n1, [n2, []]]]` —— 嵌套的 —— 而且仍然能通过 `Array[Node]` 的类型检查,因为元素经由 `Block` 而来,而 `Block` 是 `Unknown`。没有任何东西会报告它,而那个错误的长度看上去又像是合理的。`spike/emo-ui-spelling` 量了这个惯用法、在一个真实屏幕上把它显示出来,并证明手写的 `List` → `Array` 转换有同样的二次形态。
 
 这能用(probe 3),但它暴露了本篇开头那条发现。**Emo 没有隐式子节点收集,而 `Block` 参数是 `Unknown`。** probe 1 把两半都摆出来了:
 

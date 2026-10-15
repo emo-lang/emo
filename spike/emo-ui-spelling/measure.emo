@@ -1,0 +1,248 @@
+// What a children array costs to build (docs/emo-ui-composition.md, "The
+// evidence gap"). The line counts in count.sh say what an A-spelled screen
+// costs to read; this says what it costs to run, because every dynamic
+// child list in spelling A is assembled out of `Array.append`, and
+// `emo_array_append` copies the whole cell (`8 * (len + 2)` bytes at
+// spike/arena-scope). Five ways to build the same k-element array, each
+// declared to return the same thing and given the same elements.
+//
+// The counters are `Box`es rather than `var`s because a recursive def
+// cannot mutate a local binding of its caller; a Box is the language's
+// per-process mutable cell, and a class holding Boxes keeps the counters
+// together without an eighth global.
+
+class Meter {
+  def init() {
+    self.appends_box = Box.new(0)
+    self.copies_box = Box.new(0)
+    self.pushes_box = Box.new(0)
+    self.sets_box = Box.new(0)
+  }
+
+  def note_append(len Int64) {
+    self.appends_box.replace(self.appends_box.read() + 1)
+    self.copies_box.replace(self.copies_box.read() + 8 * (len + 2))
+  }
+
+  def note_push() {
+    self.pushes_box.replace(self.pushes_box.read() + 1)
+  }
+
+  def note_set() {
+    self.sets_box.replace(self.sets_box.read() + 1)
+  }
+
+  def appends() Int64 {
+    return self.appends_box.read()
+  }
+
+  def copies() Int64 {
+    return self.copies_box.read()
+  }
+
+  def pushes() Int64 {
+    return self.pushes_box.read()
+  }
+
+  def sets() Int64 {
+    return self.sets_box.read()
+  }
+}
+
+def spaces(n Int64) String {
+  if n <= 0 {
+    return ""
+  }
+  return " " + spaces(n - 1)
+}
+
+def pad_left(s String, w Int64) String {
+  return spaces(w - s.length()) + s
+}
+
+def pad_right(s String, w Int64) String {
+  return s + spaces(w - s.length())
+}
+
+def mk(f model.Field) ui.Node {
+  return ui.text(f.label(), ui.style())
+}
+
+def mk_field(i Int64) model.Field {
+  return model.Field.new(label: "f${i}", value: "v${i}")
+}
+
+def fields_n(k Int64) Array[model.Field] {
+  var out = []
+  for var i = 0; i < k; i = i + 1 {
+    out = out.append(mk_field(i))
+  }
+  return out
+}
+
+// 1. The idiom docs/emo-ui.md Layer 1 publishes, reproduced faithfully.
+//    `append` takes one element, so this nests: [t0, [t1, [t2, []]]].
+def build_cons(xs Array[model.Field], i Int64, m Meter,
+               f Block) Array[ui.Node] {
+  if i == xs.length() {
+    return []
+  }
+  const head = f(xs[i])
+  m.note_append(1)
+  return [head].append(build_cons(xs, i + 1, m, f))
+}
+
+def run_cons(xs Array[model.Field], m Meter) Array[ui.Node] {
+  return build_cons(xs, 0, m) -> (f model.Field) {
+    return mk(f)
+  }
+}
+
+// 2. Accumulator: append onto a growing array. One append per element, but
+//    each one copies the array it grows.
+def build_acc(xs Array[model.Field], i Int64, into Array[ui.Node],
+              m Meter) Array[ui.Node] {
+  if i == xs.length() {
+    return into
+  }
+  m.note_append(into.length())
+  return build_acc(xs, i + 1, into.append(mk(xs[i])), m)
+}
+
+def run_acc(xs Array[model.Field], m Meter) Array[ui.Node] {
+  return build_acc(xs, 0, [], m)
+}
+
+// 3. A concat helper: what screens_a needs to splice a conditional child
+//    between fixed ones. Still `append` underneath, so still quadratic.
+def cat(a Array[ui.Node], b Array[ui.Node], i Int64,
+        m Meter) Array[ui.Node] {
+  if i == b.length() {
+    return a
+  }
+  m.note_append(a.length())
+  return cat(a.append(b[i]), b, i + 1, m)
+}
+
+def build_concat(xs Array[model.Field], i Int64, m Meter) Array[ui.Node] {
+  if i == xs.length() {
+    return []
+  }
+  return cat([mk(xs[i])], build_concat(xs, i + 1, m), 0, m)
+}
+
+def run_concat(xs Array[model.Field], m Meter) Array[ui.Node] {
+  return build_concat(xs, 0, m)
+}
+
+// 4. Spelling B: `List` accumulates cheaply (push_back is O(1)), and the
+//    hand-written conversion out of it — the only conversion there is — is
+//    the quadratic part. The list is drained by pop_front.
+def convert(kids List[ui.Node], m Meter) Array[ui.Node] {
+  var out = []
+  const n = kids.length()
+  for var i = 0; i < n; i = i + 1 {
+    m.note_append(out.length())
+    out = out.append(kids.pop_front())
+  }
+  return out
+}
+
+def build_list(xs Array[model.Field], m Meter) Array[ui.Node] {
+  const kids = List.new([])
+  for var i = 0; i < xs.length(); i = i + 1 {
+    kids.push_back(mk(xs[i]))
+    m.note_push()
+  }
+  return convert(kids, m)
+}
+
+// 5. `Map[Int64, Node]`, then `values()`. `values` and `keys` walk the
+//    map's insertion order (emo_eval.ml:274 `map_keys`), so this is the one
+//    builder that produces a correctly ordered array with no `append` at
+//    all — if it is linear, the runtime already has the O(k) path a future
+//    `List.to_array` would need.
+def build_map(xs Array[model.Field], m Meter) Array[ui.Node] {
+  const by_index = Map.new()
+  for var i = 0; i < xs.length(); i = i + 1 {
+    by_index.set(i, mk(xs[i]))
+    m.note_set()
+  }
+  return by_index.values()
+}
+
+def first_label(xs Array[ui.Node]) String {
+  const first = xs[0]
+  if first.is(ui.Text) {
+    return first.body()
+  }
+  return "<not a Text>"
+}
+
+def last_label(xs Array[ui.Node]) String {
+  const last = xs[xs.length() - 1]
+  if last.is(ui.Text) {
+    return last.body()
+  }
+  return "<not a Text>"
+}
+
+def flat_and_ordered(xs Array[ui.Node], k Int64) Bool {
+  if xs.length() != k {
+    return false
+  }
+  return first_label(xs) == "f0" && last_label(xs) == "f${k - 1}"
+}
+
+def row(name String, k Int64, len Int64, m Meter, ok Bool,
+        detail String) {
+  const flag = if ok { "" } else { "  <-- WRONG" }
+  println("  " + pad_right(name, 14) + pad_left(k.to_string(), 4)
+    + pad_left(len.to_string(), 6)
+    + pad_left(m.appends().to_string(), 9)
+    + pad_left(m.copies().to_string(), 10)
+    + pad_left(m.pushes().to_string(), 8)
+    + pad_left(m.sets().to_string(), 6)
+    + "   " + detail + flag)
+}
+
+def header() {
+  println("  " + pad_right("strategy", 14) + pad_left("k", 4)
+    + pad_left("len", 6) + pad_left("appends", 9) + pad_left("copies", 10)
+    + pad_left("pushes", 8) + pad_left("sets", 6) + "   first .. last")
+}
+
+def ladder(k Int64) {
+  const xs = fields_n(k)
+  const want = "f0 .. f${k - 1}"
+
+  const m1 = Meter.new()
+  const r1 = run_cons(xs, m1)
+  row("build_cons", k, r1.length(), m1, r1.length() == 2,
+    "f0 .. " + debug.clip("${r1[1]}", 32))
+
+  const m2 = Meter.new()
+  const r2 = run_acc(xs, m2)
+  row("build_acc", k, r2.length(), m2, flat_and_ordered(r2, k), want)
+
+  const m3 = Meter.new()
+  const r3 = run_concat(xs, m3)
+  row("build_concat", k, r3.length(), m3, flat_and_ordered(r3, k), want)
+
+  const m4 = Meter.new()
+  const r4 = build_list(xs, m4)
+  row("build_list", k, r4.length(), m4, flat_and_ordered(r4, k), want)
+
+  const m5 = Meter.new()
+  const r5 = build_map(xs, m5)
+  row("build_map", k, r5.length(), m5, flat_and_ordered(r5, k), want)
+}
+
+def report() {
+  println("child array build: 8*(len+2) bytes copied per Array.append")
+  header()
+  const ks = [2, 4, 8, 16, 32]
+  for var i = 0; i < ks.length(); i = i + 1 {
+    ladder(ks[i])
+  }
+}

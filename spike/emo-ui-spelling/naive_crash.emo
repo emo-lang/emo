@@ -1,0 +1,8 @@
+// What the backend actually does with the docs' each_from tree. This run is
+// expected to abort: `render` narrows with `is()`, and the nested array the
+// bug leaves in the children slot is not an instance, so the very first
+// `is()` on it raises E3007 before any of the render branches are reached.
+//
+//   emo run naive_crash.emo     # expected: exit 1, E3007
+
+println(debug.render(screens_a.screen_profile_naive(model.sample_model()), 0))

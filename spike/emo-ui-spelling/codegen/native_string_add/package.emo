@@ -1,0 +1,5 @@
+package {
+  name = "emo/demo_ui_spelling_codegen_native_string_add"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+}

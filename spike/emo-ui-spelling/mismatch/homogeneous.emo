@@ -1,0 +1,9 @@
+// A child slot given a String, in a literal that holds nothing else.
+// Caught: the literal's element type is String, so the argument does not
+// conform to `Array[Node]`.
+//
+//   emo check homogeneous.emo    # expected: E4004
+
+def broken() spine.Node {
+  return spine.column(["not a node"])
+}

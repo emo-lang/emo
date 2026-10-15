@@ -262,8 +262,7 @@ checked as well as its expressions.
   deque that mutates in place, and `push_back` returns the list, so a
   loop can fill one; the missing piece is a `List -> Array` conversion
   ([arena-scope](../spike/arena-scope), "A side finding for EmoUI").
-  Zero syntax change, and it removes both the O(k²) growth and most of
-  the verbosity:
+  Zero syntax change, and it removes the verbosity that makes A expensive:
 
   ```emo
   def view(users Array[User]) Node {
@@ -275,9 +274,17 @@ checked as well as its expressions.
         children: [text(users[i].name), text(users[i].bio)]
       ))
     }
-    return page(title: "Home", children: kids.to_array())
+    return page(title: "Home", children: children_of(kids))
   }
   ```
+
+  `children_of` is spelled as a call rather than a `kids.to_array()`
+  method because no such conversion exists in the language; writing it in
+  Emo means writing it on top of `append`, which is where B's quadratic
+  cost goes instead of away. `spike/emo-ui-spelling` measures all of this
+  and finds that `Map.set` plus `Map.values()` is the one container route
+  that does no array growth at all — so the conversion belongs in the
+  runtime, walking the deque, not in a library def.
 
 - **C — a tree literal form in Emo's own grammar.** Parser-level
   desugaring to exactly the nested calls of A. Keeps the checker, the
@@ -325,6 +332,42 @@ UI in the A spelling, and decide C versus D from that — at which point
 the question can be answered with line counts instead of arguments, and
 neither answer wastes B, because both desugar to the same tree.
 
+**The evidence, measured 2026-10-15.** `spike/emo-ui-spelling` wrote the
+T48.1 core (portable, `Array[Node]` children) and the two screens above
+in both spellings, plus a headless debug backend so the trees render:
+
+- **A is 95 lines, B is 40**, for byte-identical renders — the same two
+  screens, with every fixed-child-list widget shared verbatim between
+  them, so the delta is exactly how the dynamic lists are assembled.
+- **44 of A's 95 lines are iteration builders** (`no_nodes`, `concat`,
+  `field_rows`, `action_buttons`, `message_rows`, `each_from`). These
+  exist to turn an `Array[Field]` into an `Array[Node]`, which is a
+  data-driven transform, not tree shape.
+- **A tree literal deletes brackets and nothing else here**: 72 bracket
+  tokens in A, 18 in B, and **0 `children:` labels in either** — the
+  constructors take children positionally, so the label this note's
+  option-B sample is built around does not appear in real code.
+- The `each_from` idiom this note's sibling doc publishes (`[f(xs[i])].append(each_from(...))`) is **wrong**: `Array.append` takes one element, so it builds a nested array, and it type-checks only because the element comes through a `Block`. It is caught by nothing; the two screens render differently and only a child-count assertion notices. The corrected collector carries an accumulator.
+- **B's asymptotic win does not exist yet.** `List` is O(1) to fill, but the hand-written `List -> Array` conversion is a loop over `append`, so its copy count is identical to the naive accumulator's (4480 cells at k=32). `Map.set` + `Map.values()`, by contrast, does **0** array appends and **0** copies at every k on the ladder — the linear route already exists in the runtime, so the conversion should be a runtime primitive over the deque.
+
+What that decides: **B is the step that pays, and it is a container
+question rather than a syntax question.** C's price — parser, checker, six
+backends, formatter, LSP, a grammar that knows about markup — buys the
+brackets, and leaves the 44 builder lines untouched, because a literal
+that "desugars to exactly the nested calls of A" inherits them. C earns
+its price only if the literal also grows a loop form, at which point the
+thing being priced is no longer a tree literal. D can do better than this
+note assumed, for the reason this note gives for D: a text transformation
+with full knowledge of the target can lower a loop *inside* the literal
+straight to B's container form, deleting the brackets and the builders
+with no language change at all.
+
+So: **do B; then D if the ergonomics still hurt; C only if D's second
+toolchain turns out to cost more than a markup-aware grammar.** One
+experiment on two screens supports a claim that size, and no more. The
+target matrix there is not incidental either — of the five hosted
+targets, only `typescript` compiles the core today.
+
 ## References
 
 - [`emo-ui.md`](emo-ui.md) — the assessment; Layer 1 is the composition
@@ -344,3 +387,7 @@ neither answer wastes B, because both desugar to the same tree.
 - `spike/arena-scope` — why children arrays want a different container;
   `src/emo_check/emo_check.ml:2541` and `src/emo_eval/emo_eval.ml:2055`
   for the discarded-statement and `append` facts.
+- `spike/emo-ui-spelling` — the measurement the evidence gap above asked
+  for: the T48.1 core and two real screens in both spellings, the
+  child-array builder ladder, the two `src/` codegen defects the core
+  hits, and the checker's coverage of a wrong child literal.

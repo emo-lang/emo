@@ -1,0 +1,145 @@
+// The five language features the portable core rests on, checked before
+// ui.emo was written and kept as the record that they hold. Every one of
+// them is load-bearing: no `(R, Float64)` field and there is no optional
+// extent, no self-naming interface and there is no node spine.
+//
+//   emo run features.emo
+//
+// One is a free-standing class rather than part of ui.emo — a class field
+// holding a `Box` that its own method mutates, which is how measure.emo's
+// Meter counts from inside a recursive def. It is kept here because a
+// copied class is not the same as a copied value: the Box is shared, and
+// that is the whole mechanism.
+
+enum Align { start, center, end, stretch }
+
+class Style {
+  def init(padding Float64, gap Float64, align Align, grow Bool,
+           width (R, Float64), height (R, Float64)) {
+    self.padding = padding
+    self.gap = gap
+    self.align = align
+    self.grow = grow
+    self.width = width
+    self.height = height
+  }
+
+  def padding() Float64 {
+    return self.padding
+  }
+
+  def align() Align {
+    return self.align
+  }
+
+  def width() (R, Float64) {
+    return self.width
+  }
+
+  def with_align(a Align) Style {
+    return Style.new(padding: self.padding, gap: self.gap, align: a,
+      grow: self.grow, width: self.width, height: self.height)
+  }
+}
+
+def style() Style {
+  return Style.new(padding: 0.0, gap: 0.0, align: Align.start, grow: false,
+    width: (R.error, 0.0), height: (R.error, 0.0))
+}
+
+const s = style().with_align(Align.center)
+println(s.padding())
+println(s.align())
+
+case s.width() {
+  (R.ok, w) -> { println("width ${w}") }
+  (R.error, _) -> { println("width auto") }
+}
+
+// An interface naming itself, and a class field holding a List and a Map
+// that its own method mutates.
+interface Node {
+  def style() Style
+  def children() Array[Node]
+}
+
+class Text {
+  def init(body String, style Style) {
+    self.body = body
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def body() String {
+    return self.body
+  }
+}
+
+class Column {
+  def init(style Style, children Array[Node]) {
+    self.style = style
+    self.children = children
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+def text(body String, style Style) Node {
+  return Text.new(body: body, style: style)
+}
+
+def column(children Array[Node], style Style) Node {
+  return Column.new(style: style, children: children)
+}
+
+class Meter {
+  def init() {
+    self.appends = Box.new(0)
+    self.pushes = Box.new(0)
+  }
+
+  def bump() {
+    self.appends.replace(self.appends.read() + 1)
+  }
+
+  def appends() Int64 {
+    return self.appends.read()
+  }
+}
+
+// A List[Node] signature, the first in the repo.
+def consume(xs List[Node]) Int64 {
+  return xs.length()
+}
+
+def collect(m Meter, n Int64, into List[Node]) List[Node] {
+  if n == 0 {
+    return into
+  }
+  m.bump()
+  return collect(m, n - 1, into.push_back(text("x", style())))
+}
+
+const m = Meter.new()
+const l = collect(m, 3, List.new([]))
+println(consume(l))
+println(m.appends())
+
+const tree = column([text("a", style()), text("b", style())], style())
+println(tree.children().length())
+if tree.is(Column) {
+  println(tree.children()[0])
+}

@@ -1,0 +1,108 @@
+// The headless debug backend (T48.3): the tree as stable text. It is the
+// golden harness the core and every later backend share — a `row` that
+// means two different things on two backends shows up here first.
+//
+// `render` returns a String rather than being a Void printer: a Void def
+// takes no `return` at all, and this walk narrows through an early-return
+// chain. The chain is the statement-shaped control flow the language
+// gives you — there is no expression form that would read better.
+
+def indent(depth Int64) String {
+  if depth <= 0 {
+    return ""
+  }
+  return "  " + indent(depth - 1)
+}
+
+def extent(x (R, Float64)) String {
+  case x {
+    (R.ok, v) -> { return v.to_string() }
+    (R.error, _) -> { return "auto" }
+  }
+}
+
+def align_name(a ui.Align) String {
+  case a {
+    ui.Align.start -> { return "start" }
+    ui.Align.center -> { return "center" }
+    ui.Align.end -> { return "end" }
+    ui.Align.stretch -> { return "stretch" }
+  }
+}
+
+// The style summary is written in a fixed field order, so nothing about
+// map ordering can reach the golden.
+def brief(s ui.Style) String {
+  return "pad=" + s.padding().to_string() + " gap=" + s.gap().to_string()
+    + " align=" + align_name(s.align()) + " grow=" + s.grow().to_string()
+    + " w=" + extent(s.width()) + " h=" + extent(s.height())
+}
+
+// An array interpolates to its whole contents, which is kilobytes once it
+// is nested. Golden lines stay diffable at a fixed width.
+def clip(s String, n Int64) String {
+  if s.length() <= n {
+    return s
+  }
+  return s.substring(0, n) + "..."
+}
+
+def render_kids(kids Array[ui.Node], depth Int64) String {
+  var out = ""
+  for var i = 0; i < kids.length(); i = i + 1 {
+    out = out + render(kids[i], depth)
+  }
+  return out
+}
+
+def render(n ui.Node, depth Int64) String {
+  const pad = indent(depth)
+  if n.is(ui.Text) {
+    return pad + "Text \"" + n.body() + "\" " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.Button) {
+    return pad + "Button \"" + n.label() + "\" #" + n.event().to_string()
+      + " " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.TextInput) {
+    return pad + "Input \"" + n.value() + "\" " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.Image) {
+    return pad + "Image \"" + n.src() + "\" " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.Spacer) {
+    return pad + "Spacer " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.Column) {
+    return pad + "Column " + brief(n.style()) + "\n"
+      + render_kids(n.children(), depth + 1)
+  }
+  if n.is(ui.Row) {
+    return pad + "Row " + brief(n.style()) + "\n"
+      + render_kids(n.children(), depth + 1)
+  }
+  if n.is(ui.Scroll) {
+    return pad + "Scroll " + brief(n.style()) + "\n"
+      + render_kids(n.children(), depth + 1)
+  }
+  // A widget class this walk does not know about. It is not a slot for a
+  // non-node: `is()` raises E3007 on a value that is not an instance
+  // ("Array has no method `is`"), so an array smuggled into children
+  // crashes the backend here rather than rendering as Unknown. That crash
+  // is the each_from bug's real symptom — see naive_crash.emo.
+  return pad + "Unknown ${n}\n"
+}
+
+class Debug {
+  def mount(root ui.Node) {
+    println(render(root, 0))
+  }
+
+  def patch(old ui.Node, next ui.Node) {
+    println(render(next, 0))
+  }
+
+  def run() {
+    println("debug backend: nothing to run")
+  }
+}

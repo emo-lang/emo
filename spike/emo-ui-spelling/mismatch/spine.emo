@@ -1,0 +1,40 @@
+// The smallest piece of the A spelling that the two cases need: a node
+// interface that names itself, one container, one leaf, and the lowercase
+// constructors. A nested package roots its own module tree, so it cannot
+// see the parent's `ui.emo`; this is the shape of it, cut down.
+
+interface Node {
+  def children() Array[Node]
+}
+
+class Column {
+  def init(children Array[Node]) {
+    self.children = children
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+class Text {
+  def init(body String) {
+    self.body = body
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def body() String {
+    return self.body
+  }
+}
+
+def column(children Array[Node]) Node {
+  return Column.new(children: children)
+}
+
+def text(body String) Node {
+  return Text.new(body: body)
+}

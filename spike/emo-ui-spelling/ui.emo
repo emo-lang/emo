@@ -1,0 +1,286 @@
+// The portable ui core, in T48.1's shape (docs/emo-ui.md, Layers 0 and 4).
+//
+// The tree spine is an interface plus concrete classes with typed props,
+// so `Array[Node]` holds anything and props are checked at construction.
+// A backend narrows with `is()`. Pure Emo: no platform, no FFI, no
+// target-specific code.
+
+enum Align { start, center, end, stretch }
+
+// Style is a typed value with a factory and `with_*` copies, because Emo
+// has no default parameters (E4009) — `text("a")` for a two-parameter def
+// is refused, so the unstyled call is spelled `text("a", ui.style())`.
+// `(R, Float64)` carries "unset or a value": (R.ok, 12.0) is a width,
+// (R.error, 0.0) is auto. The slot is never read on the error branch.
+class Style {
+  def init(padding Float64, gap Float64, align Align, grow Bool,
+           width (R, Float64), height (R, Float64)) {
+    self.padding = padding
+    self.gap = gap
+    self.align = align
+    self.grow = grow
+    self.width = width
+    self.height = height
+  }
+
+  def padding() Float64 {
+    return self.padding
+  }
+
+  def gap() Float64 {
+    return self.gap
+  }
+
+  def align() Align {
+    return self.align
+  }
+
+  def grow() Bool {
+    return self.grow
+  }
+
+  def width() (R, Float64) {
+    return self.width
+  }
+
+  def height() (R, Float64) {
+    return self.height
+  }
+
+  def with_padding(p Float64) Style {
+    return Style.new(padding: p, gap: self.gap, align: self.align,
+      grow: self.grow, width: self.width, height: self.height)
+  }
+
+  def with_gap(g Float64) Style {
+    return Style.new(padding: self.padding, gap: g, align: self.align,
+      grow: self.grow, width: self.width, height: self.height)
+  }
+
+  def with_align(a Align) Style {
+    return Style.new(padding: self.padding, gap: self.gap, align: a,
+      grow: self.grow, width: self.width, height: self.height)
+  }
+
+  def with_grow(g Bool) Style {
+    return Style.new(padding: self.padding, gap: self.gap,
+      align: self.align, grow: g, width: self.width, height: self.height)
+  }
+
+  def with_width(w Float64) Style {
+    return Style.new(padding: self.padding, gap: self.gap,
+      align: self.align, grow: self.grow, width: (R.ok, w),
+      height: self.height)
+  }
+
+  def with_height(h Float64) Style {
+    return Style.new(padding: self.padding, gap: self.gap,
+      align: self.align, grow: self.grow, width: self.width,
+      height: (R.ok, h))
+  }
+}
+
+def style() Style {
+  return Style.new(padding: 0.0, gap: 0.0, align: Align.start, grow: false,
+    width: (R.error, 0.0), height: (R.error, 0.0))
+}
+
+// The spine. It names itself in `children()`, which the checker accepts
+// (probe2, and the shipped xml interface).
+interface Node {
+  def style() Style
+  def children() Array[Node]
+}
+
+class Column {
+  def init(style Style, children Array[Node]) {
+    self.style = style
+    self.children = children
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+class Row {
+  def init(style Style, children Array[Node]) {
+    self.style = style
+    self.children = children
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+class Scroll {
+  def init(style Style, children Array[Node]) {
+    self.style = style
+    self.children = children
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return self.children
+  }
+}
+
+class Text {
+  def init(body String, style Style) {
+    self.body = body
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def body() String {
+    return self.body
+  }
+}
+
+class Button {
+  def init(label String, event Int64, style Style) {
+    self.label = label
+    self.event = event
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def label() String {
+    return self.label
+  }
+
+  def event() Int64 {
+    return self.event
+  }
+}
+
+class TextInput {
+  def init(value String, style Style) {
+    self.value = value
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def value() String {
+    return self.value
+  }
+}
+
+class Image {
+  def init(src String, style Style) {
+    self.src = src
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+
+  def src() String {
+    return self.src
+  }
+}
+
+class Spacer {
+  def init(style Style) {
+    self.style = style
+  }
+
+  def style() Style {
+    return self.style
+  }
+
+  def children() Array[Node] {
+    return []
+  }
+}
+
+// The constructors are lowercase defs; `.new` never appears in a tree.
+def column(children Array[Node], style Style) Node {
+  return Column.new(style: style, children: children)
+}
+
+def row(children Array[Node], style Style) Node {
+  return Row.new(style: style, children: children)
+}
+
+def scroll(children Array[Node], style Style) Node {
+  return Scroll.new(style: style, children: children)
+}
+
+def text(body String, style Style) Node {
+  return Text.new(body: body, style: style)
+}
+
+def button(label String, event Int64, style Style) Node {
+  return Button.new(label: label, event: event, style: style)
+}
+
+def text_input(value String, style Style) Node {
+  return TextInput.new(value: value, style: style)
+}
+
+def image(src String, style Style) Node {
+  return Image.new(src: src, style: style)
+}
+
+def spacer(style Style) Node {
+  return Spacer.new(style: style)
+}
+
+// The backend seam (docs/emo-ui.md, Layer 6). An Emo interface, not a C ABI.
+interface Backend {
+  def mount(root Node) Void
+  def patch(old Node, new Node) Void
+  def run() Void
+}
+
+// `List[Node] -> Array[Node]`. The language has no such conversion, so it
+// is written here, and it drains the list: every element leaves through
+// pop_front, and the array is grown one element at a time. That growth is
+// the quadratic path measure.emo counts.
+def children_of(kids List[Node]) Array[Node] {
+  var out = []
+  const n = kids.length()
+  for var i = 0; i < n; i = i + 1 {
+    out = out.append(kids.pop_front())
+  }
+  return out
+}

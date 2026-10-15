@@ -1,0 +1,6 @@
+error[E3007]: Array has no method `is`
+  --> debug.emo:60:6
+   |
+60 |   if n.is(ui.Text) {
+   |      ^^^^^^^^^^^^^
+exit=70

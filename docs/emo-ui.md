@@ -245,6 +245,7 @@ identity, and children. The tree type is the recursive node:
 // ui.emo — the portable core
 interface Node {
   def style() Style
+  def children() Array[Node]
 }
 
 class Column {
@@ -270,10 +271,11 @@ class Button {
 }
 ```
 
-The interface is the tree spine (so `Array[Node]` holds anything);
-concrete classes carry typed props, checked at construction. A backend
-narrows with `is()` — `ui.Text`, `ui.Button`, and the platform's own
-classes. Because a backend is paired with a platform library, it knows
+The interface is the tree spine (so `Array[Node]` holds anything) and it
+names itself, which the checker accepts (probe 2, and the recursive-interface
+finding above). Concrete classes carry typed props, checked at construction.
+A backend narrows with `is()` — `ui.Text`, `ui.Button`, and the platform's
+own classes. Because a backend is paired with a platform library, it knows
 the union of the core classes and its platform's classes; that is the
 dispatch table.
 
@@ -298,16 +300,28 @@ calls it per element; the block **returns** the node for that element,
 and the component collects the returns:
 
 ```emo
-def each_from(xs Array[String], i Int64, f Block) Array[Node] {
-  if i == xs.length() { return [] }
-  return [f(xs[i])].append(each_from(xs, i + 1, f))
+def each_from(xs Array[String], i Int64, into Array[Node],
+              f Block) Array[Node] {
+  if i == xs.length() { return into }
+  const head = f(xs[i])
+  return each_from(xs, i + 1, into.append(head), f)
 }
 
-const list = column(
-  text("Users"),
-  each(users) -> (u String) { return card(u) }
-)
+def each_users(xs Array[String], f Block) Array[Node] {
+  return each_from(xs, 0, [], f)
+}
+
+const rows = each_users(users) -> (u String) { return card(u) }
 ```
+
+The accumulator is load-bearing. **`Array.append` appends one element,
+not an array** (`src/emo_eval/emo_eval.ml:2055`), so the tempting
+`[head].append(each_from(xs, i + 1, f))` builds `[n0, [n1, [n2, []]]]`
+— nested — and still type-checks at `Array[Node]`, because the element
+arrives through a `Block` and `Block` is `Unknown`. Nothing reports it,
+and the wrong length looks like a plausible one. `spike/emo-ui-spelling`
+measures the idiom, shows it on a real screen, and shows that the
+hand-written `List` → `Array` conversion has the same quadratic shape.
 
 This works (probe 3), but it exposes the finding at the top of this
 note. **Emo has no implicit child collection, and a `Block` parameter

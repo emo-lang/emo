@@ -1,0 +1,37 @@
+// Target `ocaml`: `+` on two Strings, where the IR specializes the
+// concatenation, is emitted as `Int64.add`.
+//
+//   emo run main.emo                             # prints [    ]xy
+//   emo build main.emo --target ocaml -o /tmp/x  # ocamlopt: error
+//   emo build main.emo --target c     -o /tmp/x  # builds
+//
+//   Error: This constant has type string but an expression was expected of
+//          type int64
+//
+// The generated OCaml for `line` is
+//
+//   (Int64.add (v_a) (v_b))
+//
+// `emit_native_expr` (emo_codegen.ml:654) has exactly two cases for
+// `Ast.Add` — Float64 becomes `+.`, everything else becomes `Int64.add` —
+// with no String case at all. `emit_expr`, the boxed path, routes `Add`
+// through `Emo_runtime.add`, which does handle Strings, so this is the
+// unboxed specialization only. It is reached when every operand is natively
+// representable: two String locals here, and a self-recursive String call
+// in debug.emo's `indent`. The fix is a `= Emo_check.String` branch
+// emitting `(^)`.
+
+def line() String {
+  const a = "x"
+  const b = "y"
+  return a + b
+}
+
+def indent(depth Int64) String {
+  if depth <= 0 {
+    return ""
+  }
+  return "  " + indent(depth - 1)
+}
+
+println("[" + indent(2) + "]" + line())

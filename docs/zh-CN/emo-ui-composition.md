@@ -119,7 +119,7 @@ Templ 保住的东西比看上去窄。它检查你嵌进去的 Go 表达式,不
 ## 摆在桌上的选项
 
 - **A —— 数组式 children,不加糖。** 已定(决策 3)。零语言改动。动态那一块啰嗦。
-- **B —— 数组式 children,外加一个廉价容器。** `List` 是那个原地变的 O(1) 双端队列,`push_back` 返回 list,所以循环可以直接往里填;缺的是 `List -> Array` 的通道([arena-scope](../../spike/arena-scope),"A side finding for EmoUI")。零语法改动,同时拿走 O(k²) 的增长和大部分啰嗦:
+- **B —— 数组式 children,外加一个廉价容器。** `List` 是那个原地变的 O(1) 双端队列,`push_back` 返回 list,所以循环可以直接往里填;缺的是 `List -> Array` 的通道([arena-scope](../../spike/arena-scope),"A side finding for EmoUI")。零语法改动,拿走的是让 A 变贵的那些啰嗦:
 
   ```emo
   def view(users Array[User]) Node {
@@ -131,9 +131,11 @@ Templ 保住的东西比看上去窄。它检查你嵌进去的 Go 表达式,不
         children: [text(users[i].name), text(users[i].bio)]
       ))
     }
-    return page(title: "Home", children: kids.to_array())
+    return page(title: "Home", children: children_of(kids))
   }
   ```
+
+  这里写成调用 `children_of(...)` 而不是方法 `kids.to_array()`,是因为语言里不存在这样的转换;在 Emo 里手写它,就等于建在 `append` 之上 —— B 的二次代价于是不是消失,而是搬到了那里。`spike/emo-ui-spelling` 把这些全量过一遍,并发现 `Map.set` 加 `Map.values()` 是唯一完全不产生数组增长的容器通路 —— 所以这个转换该落在运行时里遍历双端队列,而不是落在一个库 def 里。
 
 - **C —— Emo 自己语法里的树字面量。** parser 层脱糖,目标恰好是 A 的那组嵌套调用。checker、`Array[Node]` children、`patch`、六个后端全都不动;代价是一笔真实的语言改动(parser、checker、六个后端、formatter、LSP),并且让 Emo 的语法对标记敏感。
 - **D —— 外部翻译器,产出 `.emo`。** Templ 的形态:自己的 parser、自己的文件,产出 Emo,再由现有 checker 检查。**完全不动编译器** —— 这正是它便宜、可原型的原因 —— 而且它可以住在 EmoUI 仓库里,语言仓库一行不改。代价是第二套语法、第二套工具链(formatter、LSP、把错误映射回源文件),以及一个构建步骤。
@@ -150,6 +152,18 @@ A 与 B 兼容:B 就是 A 把容器问题回答掉。C 与 D 脱糖到同一个�
 
 **证据缺口。** 两个分支都还没被真实代码检验过。没有人写过一个界面的数组式 EmoUI 并量过它到底多难受;本文档里的示例都是示意的。便宜且可逆的顺序是:做 B,按 A 的拼法写出 T48.1 的可移植核心和一两屏真实界面,再据此决定 C 还是 D —— 那时候这个问题可以用行数回答而不是用论证,而且两个答案都不浪费 B,因为两者脱糖到同一棵树。
 
+**证据,量于 2026-10-15。** `spike/emo-ui-spelling` 写出了 T48.1 内核(可移植,`Array[Node]` children)和上面那两屏的两种拼法,外加一个无头调试后端,好让树真的渲染出来:
+
+- **A 是 95 行,B 是 40 行**,渲染字节一致 —— 同样两屏,每一个子节点列表固定的控件都在两者之间逐字共享,所以差量恰好是动态列表怎么拼装。
+- **A 那 95 行里有 44 行是迭代构造器**(`no_nodes`、`concat`、`field_rows`、`action_buttons`、`message_rows`、`each_from`)。它们存在的意义是把一个 `Array[Field]` 变成 `Array[Node]`,而那是数据驱动的变换,不是树的形状。
+- **树字面量在这里删掉的是括号,仅此而已**:A 里 72 个括号 token,B 里 18 个,而**两种写法里 `children:` 标签都是 0 个** —— 构造函数按位置接收 children,所以本文档选项 B 样例围绕的那个标签在真实代码里根本不出现。
+- 姊妹文档公布的 `each_from` 惯用法(`[f(xs[i])].append(each_from(...))`)**是错的**:`Array.append` 追加的是一个元素,所以它构造出嵌套数组,而它能通过类型检查只因为元素经由 `Block` 而来。没有任何东西会报告它;两屏渲染结果不同,只有一条子节点计数断言会注意到。修正后的收集器带一个累加器。
+- **B 的渐近收益目前并不存在。** `List` 填充是 O(1),但手写的 `List -> Array` 转换是在 `append` 上打转的循环,所以它的拷贝次数与朴素累加器**完全相同**(k=32 时 4480 个单元)。反过来,`Map.set` 加 `Map.values()` 在整条阶梯上都是 **0** 次数组追加、**0** 次拷贝 —— 线性通路在运行时里已经存在,所以这个转换该是遍历双端队列的运行时原语。
+
+这些决定了什么:**B 是付得起的那一步,而且它是容器问题而不是语法问题。** C 的要价 —— parser、checker、六个后端、formatter、LSP、一套对标记敏感的语法 —— 买到的是括号,而那 44 行构造器一动不动,因为一个「脱糖成恰好是 A 的那串嵌套调用」的字面量会原样继承它们。只有当字面量也长出一个循环形态时 C 才对得起它的价钱,而那时被定价的东西已经不再是树字面量了。D 能做得比本文档设想的更好,理由正是本文档给 D 的理由:一次知道目标的文本变换可以把字面量*内部*的循环直接下降成 B 的容器形态,不碰语言就同时删掉括号和那些构造器。
+
+所以:**做 B;然后如果工效学仍然难受就做 D;只有当 D 的第二套工具链比一套对标记敏感的语法更贵时才做 C。** 两个屏幕上的一次实验只支撑得起这么大的一个 claim,不多。那边那张目标矩阵也不是无关紧要的 —— 五个宿主目标里,今天只有 `typescript` 能编译这个内核。
+
 ## 参考
 
 - [`emo-ui.md`](emo-ui.md) —— 评估;Layer 1 是组合方式的讨论,决策 3 是已定的拼法,ask 2 是隐式收集的禁令。
@@ -159,3 +173,4 @@ A 与 B 兼容:B 就是 A 把容器问题回答掉。C 与 D 脱糖到同一个�
 - [`intro/configuration.md`](intro/configuration.md) —— 配置即 Emo 表达式,"不要第二门语言"的先例。
 - [`emo-ui-check.md`](emo-ui-check.md) —— 那几个 spike;`spike/components` 就是那个已经 byte-identically 跑通 AppKit 与 GTK 4 的 React/Elm 式应用。
 - `spike/arena-scope` —— children 数组为什么想要另一个容器;`src/emo_check/emo_check.ml:2541` 与 `src/emo_eval/emo_eval.ml:2055` 是"丢弃语句"与 `append` 两条事实的出处。
+- `spike/emo-ui-spelling` —— 上面那个证据缺口所要的测量:两种拼法各写一遍的 T48.1 内核与两个真实屏幕、子节点数组构造阶梯、内核撞上的两个 `src/` codegen 缺陷,以及 checker 对错误子节点字面量的覆盖。

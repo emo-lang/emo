@@ -1,0 +1,108 @@
+// The experiment's assembly and its golden report.
+//
+//   emo run main.emo
+//
+// Run it from this directory: the working directory is the project root
+// and every sibling `.emo` file is a module at its path.
+//
+// Every claim the README makes about the two spellings is asserted here
+// before anything is printed, and a failed assertion raises rather than
+// printing a wrong golden that could be mistaken for the new expected
+// output.
+
+// A Void def takes no `return` at all, so the pass case prints and the
+// fail case raises — which also makes the golden carry the assertion list.
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+def backend_demo(backend ui.Backend) {
+  backend.mount(ui.column([
+    ui.text("backend conformance", ui.style()),
+    ui.button("ok", 0, ui.style())
+  ], ui.style().with_gap(4.0)))
+  backend.run()
+}
+
+const m = model.sample_model()
+
+// Spelling A, corrected: the concat builder splices the conditional banner
+// in, and the iterated children come from per-element-type defs. Spelling
+// B: the same tree out of a List. Same order, same styles, same tags — if
+// they were not the same tree, comparing their line counts would be
+// comparing two different programs.
+const profile_a = debug.render(screens_a.screen_profile(m), 0)
+const profile_b = debug.render(screens_b.screen_profile(m), 0)
+const inbox_a = debug.render(screens_a.screen_inbox(m), 0)
+const inbox_b = debug.render(screens_b.screen_inbox(m), 0)
+
+// The idiom docs/emo-ui.md publishes, reproduced faithfully. It
+// type-checks, and its field column holds 2 children where it should hold
+// 3: `append` pushed the whole recursive array in as one element. It
+// cannot be rendered at all — naive_crash.emo shows what the backend does
+// with it — so it is examined here through a count and an interpolation,
+// both of which are safe on a value that is not a node.
+const naive_kids = screens_a.screen_profile_naive(m).children()[2].children()
+const rows_kids = screens_b.screen_profile(m).children()[2].children()
+
+check(profile_a == profile_b, "screen_profile: A and B render the same tree")
+check(inbox_a == inbox_b, "screen_inbox: A and B render the same tree")
+check(rows_kids.length() == 3, "the spelling-B field column holds 3 rows")
+check(naive_kids.length() == 2,
+  "the naive each_from column holds 2 children, not 3")
+check(naive_kids[1] != rows_kids[1],
+  "the naive column's second child is not the second field row")
+
+// The empty-message case takes the other branch of the inbox body, and the
+// banner case takes the other branch of the profile's conditional child,
+// so both branches of both spellings are compared.
+const empty = m.with_messages([])
+
+check(debug.render(screens_a.screen_inbox(empty), 0)
+  == debug.render(screens_b.screen_inbox(empty), 0),
+  "screen_inbox: A and B still agree with no messages")
+check(debug.render(screens_a.screen_profile(m.with_error("boom")), 0)
+  == debug.render(screens_b.screen_profile(m.with_error("boom")), 0),
+  "screen_profile: A and B still agree with the banner shown")
+
+// The event seam: a node carries an Int64, the registry turns it back into
+// the typed message `update` takes.
+const tag = tags.on(model.Msg.save)
+
+check(tags.dispatch(tag) == model.Msg.save, "tag ${tag} round-trips to Msg.save")
+check(tags.on(model.Msg.save) == tag, "a message keeps the tag it was given")
+check(tags.on(model.Msg.compose) != tag, "a new message gets a new tag")
+
+const next = app.update(model.Msg.compose, m)
+
+check(next.draft() == "New message", "update(Msg.compose) sets the draft")
+check(next.filter() == m.filter(), "update(Msg.compose) leaves the filter")
+
+println("")
+println("naive  field column, length   = ${naive_kids.length()}")
+println("       field column, child[1] = "
+  + debug.clip("${naive_kids[1]}", 72))
+println("B      field column, length   = ${rows_kids.length()}")
+println("       field column, child[1] = "
+  + debug.clip("${rows_kids[1]}", 72))
+println("")
+
+println("== screen_profile, spelling A ==")
+println(profile_a)
+println("== screen_profile, spelling B (identical text) ==")
+println(profile_b)
+println("== screen_inbox, spelling A ==")
+println(inbox_a)
+println("== screen_inbox, spelling B (identical text) ==")
+println(inbox_b)
+println("")
+
+measure.report()
+println("")
+
+println("== event seam ==")
+backend_demo(debug.Debug.new())

@@ -1,0 +1,38 @@
+// Target `c`: a class's field-name table collides with a method named
+// `fields`.
+//
+//   emo run main.emo                        # prints 2
+//   emo build main.emo --target c -o /tmp/x # cc: error
+//
+// The generated C names the field-name table `<module>__<Class>__fields`
+// and a method `fields` `<module>__<Class>__fields` too, so the two
+// definitions collide — and the vtable, which wants the table, silently
+// picks up the method pointer:
+//
+//   main.c:14:26: error: redefinition of 'main__Holder__fields' as
+//                 different kind of symbol
+//      14 | static const char *const main__Holder__fields[] = {"items"};
+//   main.c:6:11: note: previous definition is here
+//      6 | emo_value main__Holder__fields(emo_value self);
+//   main.c:15:89: warning: incompatible pointer types initializing
+//                 'const char *const *' with an expression of type
+//                 'emo_value (emo_value)'
+//
+// The table's name is fixed — `<module>__<Class>__fields`, whatever the
+// fields are called — so the collision needs only a method named
+// `fields`, which is an ordinary accessor name on a form model. Nothing
+// here is unusual. The fix is on the codegen side: mangle the field
+// table (`__field_names`, say) so a member can never shadow it. The
+// other four targets compile this file.
+
+class Holder {
+  def init(items Array[Int64]) {
+    self.items = items
+  }
+
+  def fields() Array[Int64] {
+    return self.items
+  }
+}
+
+println(Holder.new(items: [1, 2]).fields().length().to_string())

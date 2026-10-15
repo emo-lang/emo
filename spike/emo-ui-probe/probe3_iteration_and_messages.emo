@@ -26,16 +26,25 @@ def column(children Array[Node]) Node {
 
 // Iteration: the block returns the node per element; the component
 // collects the returns. `return` is required — a Void block yields void.
-def each_from(xs Array[String], i Int64, f Block) Array[Node] {
+//
+// The component carries an accumulator and appends one element at a time.
+// `Array.append` takes ONE ELEMENT, not an array, so the tempting
+// `[head].append(each_from(xs, i + 1, f))` builds [n0, [n1, [n2, []]]] —
+// nested, and still typed Array[Node], because the element arrives through
+// a Block and Block is Unknown. The third print below is what tells the two
+// apart; spike/emo-ui-spelling has the measurement and the real-screen
+// symptom.
+def each_from(xs Array[String], i Int64, into Array[Node],
+              f Block) Array[Node] {
   if i == xs.length() {
-    return []
+    return into
   }
   const head = f(xs[i])
-  return [head].append(each_from(xs, i + 1, f))
+  return each_from(xs, i + 1, into.append(head), f)
 }
 
 def each_users(xs Array[String], f Block) Array[Node] {
-  return each_from(xs, 0, f)
+  return each_from(xs, 0, [], f)
 }
 
 const users = ["ada", "grace"]
@@ -45,4 +54,5 @@ const list = column(children: each_users(users) -> (u String) {
 
 println(list.children.length())
 println(list.children[0].text)
+println(list.children[1].text)
 println(button("+", Msg.increment).msg)

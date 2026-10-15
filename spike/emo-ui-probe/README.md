@@ -22,7 +22,10 @@ emo run probe1_block_children.emo
   signature checks. The spike's E4005 workaround is no longer forced.
 - `probe3_iteration_and_messages.emo` — iteration blocks that `return`
   the per-element node work; an enum rides on a node as the event
-  identity.
+  identity. The collector carries an accumulator, because `Array.append`
+  takes one element and not an array: `[head].append(each_from(...))`
+  builds a nested array and still type-checks. `spike/emo-ui-spelling`
+  measures that idiom.
 - `no-defaults/probe4_no_default_params.emo` — `hello("a")` for
   `def hello(name String, count Int64)` is E4009. The style story must
   use a factory plus `with_*` copies. It sits in a nested package (its
@@ -49,6 +52,7 @@ hi
 $ emo run probe3_iteration_and_messages.emo
 2
 user: ada
+user: grace
 increment
 
 $ (cd first_class_def && emo run probe5_first_class_defs.emo)

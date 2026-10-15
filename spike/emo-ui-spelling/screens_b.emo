@@ -1,0 +1,54 @@
+// The same two screens in spelling B (docs/emo-ui-composition.md, option
+// B): a `List` accumulates the children in build order, and the list is
+// converted to the Array the node spine wants on the way into the widget.
+//
+// This is what the option costs and what it buys. It buys the conditional
+// child — `push_back` inside an `if` statement is the obvious thing to
+// write, where A had to duplicate the array or carry a concat builder.
+// It costs one `for` loop per iterated site and one `children_of`
+// conversion per list, and the conversion copies through `append`, so the
+// build is quadratic. Nothing here is sugar over the A spelling: the two
+// produce the same tree by construction, and they have to, or the line
+// counts are not comparable.
+
+def screen_profile(m model.Model) ui.Node {
+  const kids = List.new([])
+  kids.push_back(components.heading("Profile"))
+  kids.push_back(components.avatar_band(m))
+  if m.error() != "" {
+    kids.push_back(components.error_banner(m))
+  }
+  const rows = List.new([])
+  const fields = m.fields()
+  for var i = 0; i < fields.length(); i = i + 1 {
+    rows.push_back(components.field_row(fields[i]))
+  }
+  kids.push_back(ui.column(ui.children_of(rows), ui.style().with_gap(6.0)))
+  const buttons = List.new([])
+  const actions = m.actions()
+  for var i = 0; i < actions.length(); i = i + 1 {
+    buttons.push_back(components.action_button(actions[i].label(),
+      tags.on(actions[i].msg())))
+  }
+  kids.push_back(ui.row(ui.children_of(buttons), ui.style().with_gap(8.0)))
+  kids.push_back(ui.spacer(ui.style().with_height(12.0)))
+  kids.push_back(components.license_block())
+  return ui.column(ui.children_of(kids), components.root_style())
+}
+
+def screen_inbox(m model.Model) ui.Node {
+  const body = List.new([])
+  const messages = m.messages()
+  if messages.length() == 0 {
+    body.push_back(components.empty_state())
+  } else {
+    for var i = 0; i < messages.length(); i = i + 1 {
+      body.push_back(components.message_row(messages[i]))
+    }
+  }
+  const kids = List.new([])
+  kids.push_back(components.toolbar(m))
+  kids.push_back(ui.scroll(ui.children_of(body), ui.style().with_padding(8.0)))
+  kids.push_back(components.footer(m, tags.on(model.Msg.compose)))
+  return ui.column(ui.children_of(kids), components.root_style())
+}

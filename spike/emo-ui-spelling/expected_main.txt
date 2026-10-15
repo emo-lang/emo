@@ -1,0 +1,166 @@
+ok   screen_profile: A and B render the same tree
+ok   screen_inbox: A and B render the same tree
+ok   the spelling-B field column holds 3 rows
+ok   the naive each_from column holds 2 children, not 3
+ok   the naive column's second child is not the second field row
+ok   screen_inbox: A and B still agree with no messages
+ok   screen_profile: A and B still agree with the banner shown
+ok   tag 1 round-trips to Msg.save
+ok   a message keeps the tag it was given
+ok   a new message gets a new tag
+ok   update(Msg.compose) sets the draft
+ok   update(Msg.compose) leaves the filter
+
+naive  field column, length   = 2
+       field column, child[1] = [#ui.Row(style: #ui.Style(padding: 0.0, gap: 8.0, align: start, grow: fa...
+B      field column, length   = 3
+       field column, child[1] = #ui.Row(style: #ui.Style(padding: 0.0, gap: 8.0, align: start, grow: fal...
+
+== screen_profile, spelling A ==
+Column pad=16.0 gap=12.0 align=start grow=false w=auto h=auto
+  Text "Profile" pad=4.0 gap=0.0 align=start grow=false w=auto h=auto
+  Row pad=8.0 gap=12.0 align=start grow=false w=auto h=auto
+    Image "ada.png" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+    Column pad=0.0 gap=2.0 align=start grow=false w=auto h=auto
+      Text "Ada Lovelace" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "ada@example.com" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Column pad=0.0 gap=6.0 align=start grow=false w=auto h=auto
+    Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Full name" pad=0.0 gap=0.0 align=start grow=false w=120.0 h=auto
+      Input "Ada Lovelace" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Email" pad=0.0 gap=0.0 align=start grow=false w=120.0 h=auto
+      Input "ada@example.com" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Timezone" pad=0.0 gap=0.0 align=start grow=false w=120.0 h=auto
+      Input "Europe/London" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+  Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+    Button "Save" #1 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+    Button "Cancel" #2 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+  Spacer pad=0.0 gap=0.0 align=start grow=false w=auto h=12.0
+  Scroll pad=8.0 gap=0.0 align=start grow=false w=auto h=auto
+    Text "This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY." pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Text "See the license for the specific language governing permissions and limitations." pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+
+== screen_profile, spelling B (identical text) ==
+Column pad=16.0 gap=12.0 align=start grow=false w=auto h=auto
+  Text "Profile" pad=4.0 gap=0.0 align=start grow=false w=auto h=auto
+  Row pad=8.0 gap=12.0 align=start grow=false w=auto h=auto
+    Image "ada.png" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+    Column pad=0.0 gap=2.0 align=start grow=false w=auto h=auto
+      Text "Ada Lovelace" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "ada@example.com" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Column pad=0.0 gap=6.0 align=start grow=false w=auto h=auto
+    Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Full name" pad=0.0 gap=0.0 align=start grow=false w=120.0 h=auto
+      Input "Ada Lovelace" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Email" pad=0.0 gap=0.0 align=start grow=false w=120.0 h=auto
+      Input "ada@example.com" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Timezone" pad=0.0 gap=0.0 align=start grow=false w=120.0 h=auto
+      Input "Europe/London" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+  Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+    Button "Save" #1 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+    Button "Cancel" #2 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+  Spacer pad=0.0 gap=0.0 align=start grow=false w=auto h=12.0
+  Scroll pad=8.0 gap=0.0 align=start grow=false w=auto h=auto
+    Text "This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY." pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Text "See the license for the specific language governing permissions and limitations." pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+
+== screen_inbox, spelling A ==
+Column pad=16.0 gap=12.0 align=start grow=false w=auto h=auto
+  Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+    Text "Inbox" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Input "" pad=0.0 gap=0.0 align=start grow=false w=160.0 h=auto
+  Scroll pad=8.0 gap=0.0 align=start grow=false w=auto h=auto
+    Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Grace" pad=0.0 gap=0.0 align=start grow=false w=96.0 h=auto
+      Column pad=0.0 gap=2.0 align=start grow=true w=auto h=auto
+        Text "Compiler notes" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+        Text "The backend split looks right" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "2h" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+    Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Barbara" pad=0.0 gap=0.0 align=start grow=false w=96.0 h=auto
+      Column pad=0.0 gap=2.0 align=start grow=true w=auto h=auto
+        Text "Re: codegen" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+        Text "Ship the arena change first" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "1d" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+    Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Margaret" pad=0.0 gap=0.0 align=start grow=false w=96.0 h=auto
+      Column pad=0.0 gap=2.0 align=start grow=true w=auto h=auto
+        Text "Review request" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+        Text "Can you look at the layout pass?" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "3d" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+  Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+    Text "3 messages" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Button "Compose" #3 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+
+== screen_inbox, spelling B (identical text) ==
+Column pad=16.0 gap=12.0 align=start grow=false w=auto h=auto
+  Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+    Text "Inbox" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Input "" pad=0.0 gap=0.0 align=start grow=false w=160.0 h=auto
+  Scroll pad=8.0 gap=0.0 align=start grow=false w=auto h=auto
+    Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Grace" pad=0.0 gap=0.0 align=start grow=false w=96.0 h=auto
+      Column pad=0.0 gap=2.0 align=start grow=true w=auto h=auto
+        Text "Compiler notes" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+        Text "The backend split looks right" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "2h" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+    Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Barbara" pad=0.0 gap=0.0 align=start grow=false w=96.0 h=auto
+      Column pad=0.0 gap=2.0 align=start grow=true w=auto h=auto
+        Text "Re: codegen" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+        Text "Ship the arena change first" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "1d" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+    Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Margaret" pad=0.0 gap=0.0 align=start grow=false w=96.0 h=auto
+      Column pad=0.0 gap=2.0 align=start grow=true w=auto h=auto
+        Text "Review request" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+        Text "Can you look at the layout pass?" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "3d" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+  Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+    Text "3 messages" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Button "Compose" #3 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+
+
+child array build: 8*(len+2) bytes copied per Array.append
+  strategy         k   len  appends    copies  pushes  sets   first .. last
+  build_cons       2     2        2        48       0     0   f0 .. [#ui.Text(body: "f1", style: #ui...
+  build_acc        2     2        2        40       0     0   f0 .. f1
+  build_concat     2     2        1        24       0     0   f0 .. f1
+  build_list       2     2        2        40       2     0   f0 .. f1
+  build_map        2     2        0         0       0     2   f0 .. f1
+  build_cons       4     2        4        96       0     0   f0 .. [#ui.Text(body: "f1", style: #ui...
+  build_acc        4     4        4       112       0     0   f0 .. f3
+  build_concat     4     4        6       176       0     0   f0 .. f3
+  build_list       4     4        4       112       4     0   f0 .. f3
+  build_map        4     4        0         0       0     4   f0 .. f3
+  build_cons       8     2        8       192       0     0   f0 .. [#ui.Text(body: "f1", style: #ui...
+  build_acc        8     8        8       352       0     0   f0 .. f7
+  build_concat     8     8       28      1120       0     0   f0 .. f7
+  build_list       8     8        8       352       8     0   f0 .. f7
+  build_map        8     8        0         0       0     8   f0 .. f7
+  build_cons      16     2       16       384       0     0   f0 .. [#ui.Text(body: "f1", style: #ui...
+  build_acc       16    16       16      1216       0     0   f0 .. f15
+  build_concat    16    16      120      7360       0     0   f0 .. f15
+  build_list      16    16       16      1216      16     0   f0 .. f15
+  build_map       16    16        0         0       0    16   f0 .. f15
+  build_cons      32     2       32       768       0     0   f0 .. [#ui.Text(body: "f1", style: #ui...
+  build_acc       32    32       32      4480       0     0   f0 .. f31
+  build_concat    32    32      496     51584       0     0   f0 .. f31
+  build_list      32    32       32      4480      32     0   f0 .. f31
+  build_map       32    32        0         0       0    32   f0 .. f31
+
+== event seam ==
+Column pad=0.0 gap=4.0 align=start grow=false w=auto h=auto
+  Text "backend conformance" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Button "ok" #0 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+
+debug backend: nothing to run
+exit=0

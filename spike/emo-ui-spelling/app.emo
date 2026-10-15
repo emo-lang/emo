@@ -1,0 +1,31 @@
+// The Elm loop (docs/emo-ui.md, Layer 5): a typed message, a value-
+// immutable model, and an update that returns the next model. `view_*`
+// picks a screen, so the same update drives both spellings — the spelling
+// is a way of writing the view, not a second architecture.
+
+const screen_profile = 0
+const screen_inbox = 1
+
+def update(msg model.Msg, m model.Model) model.Model {
+  case msg {
+    model.Msg.save -> { return m.with_draft("") }
+    model.Msg.cancel -> { return m.with_filter("") }
+    model.Msg.filter -> { return m.with_filter(m.filter() + "unread") }
+    model.Msg.compose -> { return m.with_draft("New message") }
+    model.Msg.open_profile -> { return m }
+  }
+}
+
+def view_a(which Int64, m model.Model) ui.Node {
+  if which == screen_inbox {
+    return screens_a.screen_inbox(m)
+  }
+  return screens_a.screen_profile(m)
+}
+
+def view_b(which Int64, m model.Model) ui.Node {
+  if which == screen_inbox {
+    return screens_b.screen_inbox(m)
+  }
+  return screens_b.screen_profile(m)
+}

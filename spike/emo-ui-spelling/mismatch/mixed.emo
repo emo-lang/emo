@@ -1,0 +1,22 @@
+// The same mistake, in a literal that also holds a real node. Not caught —
+// and that is what this file is here to show.
+//
+//   emo check mixed.emo    # expected: no diagnostic
+//
+// A literal whose elements share no type degrades to `Array[Unknown]`
+// instead of reporting a conflict, and `Unknown` conforms to everything
+// (`conforms`, emo_check.ml:1011), recursing into `ArrayType` like it does
+// for any other container. So one stray element poisons the whole array's
+// type and every element in it goes unchecked. `[text("ok"), "x"]` is
+// accepted as `Array[Node]`; `[1, "x"]` is accepted as `Array[Int64]`.
+//
+// This is the same mechanism that hides the each_from bug in
+// screens_a.emo: there the element arrives through a Block, here through a
+// disagreeing literal, and in both cases the element type collapses to
+// Unknown and the check goes silent. The A spelling does not close the
+// hole on its own — only a spelling that types each child slot separately,
+// as a parsed tree literal would, does that.
+
+def broken() spine.Node {
+  return spine.column([spine.text("ok"), "not a node"])
+}
