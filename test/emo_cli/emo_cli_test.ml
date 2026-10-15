@@ -261,6 +261,7 @@ let wasm_goldens =
     "bit_ops";
     "fixed_width";
     "list";
+    "array_builder";
     "base64_demo";
     "csv_demo";
     "json_demo";
@@ -295,6 +296,7 @@ let beam_goldens =
     "bit_ops";
     "fixed_width";
     "list";
+    "array_builder";
     "base64_demo";
     "csv_demo";
     "json_demo";
@@ -513,6 +515,7 @@ let c_goldens =
     "tcp_echo";
     "http_roundtrip";
     "list";
+    "array_builder";
     "os_demo";
     "base64_demo";
     "csv_demo";

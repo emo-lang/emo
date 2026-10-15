@@ -566,6 +566,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
       Printf.sprintf "(Emo_runtime.bytes_new (%s))" (emit_expr env e)
   | Emo_ir.List_new e ->
       Printf.sprintf "(Emo_runtime.list_new (%s))" (emit_expr env e)
+  | Emo_ir.Builder_new -> "(Emo_runtime.builder_new ())"
   | Emo_ir.Make_exception { message; data } -> (
       match data with
       | None ->
@@ -737,6 +738,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
         | Emo_ir.Box_new _ -> "Box_new"
         | Emo_ir.Bytes_new _ -> "Bytes_new"
         | Emo_ir.List_new _ -> "List_new"
+        | Emo_ir.Builder_new -> "Builder_new"
         | Emo_ir.Make_exception _ -> "Make_exception"
         | Emo_ir.Do_spawn _ -> "Do_spawn"
         | Emo_ir.Spawn_value _ -> "Spawn_value"

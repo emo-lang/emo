@@ -95,13 +95,24 @@ ways to supply that, and no fourth:
 
 **The ambient collector contradicts the mutability rule outright.**
 [`syntax.md`](intro/syntax.md) defines the mutable surface as a
-closed set of five — `var`, `Box`, `Bytes`, `List`, `Map` — "and nothing
-else mutates in place". A sixth, process-global and implicit, would be
-the largest single violation in the language. It also collides with the
-concurrency model: nested containers need a stack of collectors, and
-`send` delivers snapshots, so the collector cannot cross a process
-boundary with the tree it is filling. [`emo-ui.md`](emo-ui.md) already
-rejects this shape ("implicit state, against the design philosophy").
+closed set — `var`, `Box`, `Bytes`, `List`, `Map`, `ArrayBuilder` — "and
+nothing else mutates in place". A process-global and implicit collector
+would be the largest single violation in the language: every one of the
+six named types is constructed by an explicit call and reaches its
+mutations through a name the code writes down, while an ambient
+collector is reached by nobody and written by anybody. It also collides
+with the concurrency model: nested containers need a stack of
+collectors, and `send` delivers snapshots, so the collector cannot cross
+a process boundary with the tree it is filling.
+[`emo-ui.md`](emo-ui.md) already rejects this shape ("implicit state,
+against the design philosophy").
+
+Adding `ArrayBuilder` to that set does not reopen this: what the rule
+closes is *unnameable* mutability, not the count. A builder is built by
+`ArrayBuilder.new()`, bound to a name the author chose, and appended to
+through that name — so it is exactly as visible as the `List` beside it,
+and the objection above is about visibility, not about how many types
+may mutate.
 
 **The implicit parameter costs a second calling convention.**
 [`syntax.md`](intro/syntax.md) states the rule it breaks: "Parameter
@@ -286,6 +297,16 @@ checked as well as its expressions.
   that does no array growth at all — so the conversion belongs in the
   runtime, walking the deque, not in a library def.
 
+  **That reading closed on 2026-10-15 (T49.3), and not in either shape
+  named here.** The language gained a third container: `ArrayBuilder`
+  grows in place by `push` in amortized O(1) and `to_array()` is the
+  copy-out, so B's cost profile no longer needs a conversion added to
+  `List` — and the measurement above is part of why it is not the deque.
+  The settled choice stands as written (A, whose static case needs no
+  container at all; whether the children representation moves off the
+  decided `Array[Node]` is T48.1's to settle). What changed is that the
+  piece B was missing is no longer missing.
+
 - **C — a tree literal form in Emo's own grammar.** Parser-level
   desugaring to exactly the nested calls of A. Keeps the checker, the
   `Array[Node]` child list, `patch`, and every backend; costs a real
@@ -377,16 +398,19 @@ targets, only `typescript` compiles the core today.
   chosen for plot.
 - [`intro/syntax.md`](intro/syntax.md) — attached blocks, explicit
   parameter types, the `return` discipline, the statement forms, and the
-  mutable five.
+  mutable six.
 - [`intro/type-system.md`](intro/type-system.md) — `Block` is `Unknown`.
 - [`intro/configuration.md`](intro/configuration.md) — config as an Emo
   expression, the precedent for "no second language".
 - [`emo-ui-check.md`](emo-ui-check.md) — the spikes; `spike/components`
   is the React/Elm-style application that already runs byte-identically
   through AppKit and GTK 4.
-- `spike/arena-scope` — why children arrays want a different container;
-  `src/emo_check/emo_check.ml:2541` and `src/emo_eval/emo_eval.ml:2055`
-  for the discarded-statement and `append` facts.
+- `spike/arena-scope` — why children arrays want a different container.
+  That container now exists: `ArrayBuilder` answers this ask, which is
+  why the composition example no longer has to accumulate with
+  `Array.append` (whose one-element copy is
+  `src/emo_eval/emo_eval.ml:2147`); the discarded-statement fact it was
+  weighed against is `src/emo_check/emo_check.ml:2639`.
 - `spike/emo-ui-spelling` — the measurement the evidence gap above asked
   for: the T48.1 core and two real screens in both spellings, the
   child-array builder ladder, the two `src/` codegen defects the core

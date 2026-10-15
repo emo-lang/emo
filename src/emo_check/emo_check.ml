@@ -28,6 +28,8 @@ type t =
   | TupleType of t list
   | BoxType of t
   | ListType of t (* the List deque's element type *)
+  | BuilderType of
+      t (* ArrayBuilder's element type; Unknown until a push pins it *)
   | FuncType of (string * t) list * t
 
 let rec to_string = function
@@ -51,6 +53,7 @@ let rec to_string = function
   | MapType (k, v) -> "Map[" ^ to_string k ^ ", " ^ to_string v ^ "]"
   | BoxType e -> "Box[" ^ to_string e ^ "]"
   | ListType e -> "List[" ^ to_string e ^ "]"
+  | BuilderType e -> "ArrayBuilder[" ^ to_string e ^ "]"
   | TupleType ts -> "(" ^ String.concat ", " (List.map to_string ts) ^ ")"
   | FuncType (ps, r) ->
       "("
@@ -294,6 +297,7 @@ let rec decl_to_type ?(lenient = false) ctx
   | Ast.Named_type "Block" -> Unknown
   | Ast.Named_type "Box" -> BoxType Unknown
   | Ast.Named_type "List" -> ListType Unknown
+  | Ast.Named_type "ArrayBuilder" -> BuilderType Unknown
   | Ast.Named_type "Map" -> MapType (Unknown, Unknown)
   | Ast.Named_type name -> (
       match resolve_type_ref ctx span name with
@@ -317,6 +321,12 @@ let rec decl_to_type ?(lenient = false) ctx
   | Ast.Applied_type ("List", _) ->
       report ctx span "E4005" "`List` takes one type argument: List[T]";
       ListType Unknown
+  | Ast.Applied_type ("ArrayBuilder", [ elem ]) ->
+      BuilderType (decl_to_type ~lenient ctx elem)
+  | Ast.Applied_type ("ArrayBuilder", _) ->
+      report ctx span "E4005"
+        "`ArrayBuilder` takes one type argument: ArrayBuilder[T]";
+      BuilderType Unknown
   | Ast.Applied_type (name, _) ->
       ignore (resolve_type_ref ctx span name);
       report ctx span "E4005" (Printf.sprintf "unknown type `%s`" name);
@@ -812,6 +822,7 @@ let empty_env =
         ("Box", { vtype = Unknown; is_var = false; depth = 0 });
         ("Bytes", { vtype = Unknown; is_var = false; depth = 0 });
         ("List", { vtype = Unknown; is_var = false; depth = 0 });
+        ("ArrayBuilder", { vtype = Unknown; is_var = false; depth = 0 });
         ("Int64", { vtype = Unknown; is_var = false; depth = 0 });
         ("Byte", { vtype = Unknown; is_var = false; depth = 0 });
         ("Float64", { vtype = Unknown; is_var = false; depth = 0 });
@@ -1021,6 +1032,7 @@ and conforms ctx actual expected =
       conforms ctx ka kb && conforms ctx va vb
   | BoxType a, BoxType b -> conforms ctx a b
   | ListType a, ListType b -> conforms ctx a b
+  | BuilderType a, BuilderType b -> conforms ctx a b
   | TupleType as_, TupleType bs ->
       List.length as_ = List.length bs && List.for_all2 (conforms ctx) as_ bs
   | FuncType (pa, ra), FuncType (pb, rb) ->
@@ -1288,7 +1300,16 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
            them): a bare use stays a runtime question, not a checker
            one. *)
             List.mem name
-              [ "Int64"; "Byte"; "Float64"; "Box"; "Bytes"; "List"; "Map" ]
+              [
+                "Int64";
+                "Byte";
+                "Float64";
+                "Box";
+                "Bytes";
+                "List";
+                "ArrayBuilder";
+                "Map";
+              ]
           then Unknown
           else if Hashtbl.mem ctx.groups name || Hashtbl.mem ctx.pgroups name
           then Unknown
@@ -1870,6 +1891,20 @@ and check_method_call ctx env span recv mname args : t =
         BoxType Unknown)
   else if
     match (recv.Ast.desc, mname) with
+    | Ast.Type_ident "ArrayBuilder", "new" -> true
+    | _ -> false
+  then (
+    (* ArrayBuilder.new() — the builder is born empty, so it takes no
+       argument: its element type is Unknown until the first `push` whose
+       argument type is known pins it. That pin is applied by
+       `pin_builder_push`, not here — see the Expr_stmt arm of check_stmt. *)
+    if args <> [] then
+      report ctx span "E4009"
+        (Printf.sprintf "`ArrayBuilder.new` expects no arguments, got %d"
+           (List.length args));
+    BuilderType Unknown)
+  else if
+    match (recv.Ast.desc, mname) with
     | Ast.Type_ident "Exception", "new" -> true
     | _ -> false
   then (
@@ -2211,6 +2246,40 @@ and check_method_call ctx env span recv mname args : t =
             ListType elem)
     | ListType elem, ("pop_front" | "pop_back") -> none_expected elem
     | ListType _, "length" -> builtin0 Int64
+    | BuilderType elem, "push" -> (
+        (* While the element type is still Unknown, `push` answers with the
+           argument's type: that answer is what the enclosing `const`
+           binding gets pinned to. Once pinned, every further push is
+           checked against it. *)
+        match List.map snd arg_values with
+        | [ v ] -> (
+            match elem with
+            | Unknown -> BuilderType v
+            | _ ->
+                if not (conforms ctx v elem) then
+                  report ctx span "E4004"
+                    (Printf.sprintf "`push` expects %s, got %s" (to_string elem)
+                       (to_string v));
+                BuilderType elem)
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`push` expects 1 argument, got %d"
+                 (List.length args));
+            BuilderType elem)
+    | BuilderType _, "length" -> builtin0 Int64
+    | BuilderType elem, "get" -> (
+        match arg_values with
+        | [ (_, idx) ] ->
+            if not (conforms ctx idx Int64) then
+              report ctx span "E4004"
+                (Printf.sprintf "`get` expects Int64, got %s" (to_string idx));
+            elem
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`get` expects 1 argument, got %d"
+                 (List.length arg_values));
+            elem)
+    | BuilderType elem, "to_array" -> builtin0 (ArrayType elem)
     | MapType (kt, vt), "get" -> (
         match arg_values with
         | [ (_, key) ] ->
@@ -2535,12 +2604,41 @@ and narrowed_then_env ctx env cond =
       bind (child_scope env) name { vtype = t; is_var; depth = env.depth + 1 }
   | None -> child_scope env
 
+and pin_builder_push env (e : Ast.expr) (t : t) : env =
+  (* A statement-level `name.push(v)` whose argument type is known pins the
+     const binding `name` to a builder of that element type. The pin is a
+     binding rewrite, never a re-check: `t` is the type check_expr already
+     computed, so no diagnostic is emitted twice. `var` bindings keep
+     Unknown, and a push nested inside a larger expression does not pin —
+     only the whole statement does. *)
+  let rec receiver_base (e : Ast.expr) =
+    (* `b.push(a).push(b)` is one statement whose outer push receives a
+       call, not a name; the binding to pin is the one at the base of the
+       chain, which is the builder both pushes write through. *)
+    match e.Ast.desc with
+    | Ast.Ident name -> Some name
+    | Ast.Call ({ Ast.desc = Ast.Member (inner, "push"); _ }, _) ->
+        receiver_base inner
+    | _ -> None
+  in
+  match (e.Ast.desc, t) with
+  | Ast.Call ({ Ast.desc = Ast.Member (base, "push"); _ }, _), BuilderType elem
+    when elem <> Unknown -> (
+      match receiver_base base with
+      | Some name -> (
+          match lookup_env env name with
+          | Some ({ vtype = BuilderType Unknown; is_var = false; _ } as info) ->
+              bind env name { info with vtype = BuilderType elem }
+          | _ -> env)
+      | None -> env)
+  | _ -> env
+
 and check_stmt ctx env (s : Ast.stmt) : env =
   let span = s.Ast.stmt_span in
   match s.Ast.stmt_desc with
   | Ast.Expr_stmt e ->
-      ignore (check_expr ctx env e);
-      env
+      let t = check_expr ctx env e in
+      pin_builder_push env e t
   | Ast.Binding { mutable_; pattern; init } -> (
       let t = check_expr ctx env init in
       match pattern.Ast.pattern_desc with

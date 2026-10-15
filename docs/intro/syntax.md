@@ -137,17 +137,23 @@ A raise cannot be caught — Emo has no catch construct — and the `raise` oper
 ## Mutability
 
 Mutability is layered, and every layer is explicit. The mutable surface is a
-closed set of five things — `var`, `Box`, `Bytes`, `List`, `Map` — each an
-independent value type of its own; none is built out of another, and nothing
-else mutates in place. Mutation is alias-visible on all five — a change made
-through one binding is seen through every other — while `==` stays structural
-everywhere: a `Box` compares by contents, a `List` element-wise, a `Map` by
-entries, `Bytes` by bytes.
+closed set of six things — `var`, `Box`, `Bytes`, `List`, `Map`,
+`ArrayBuilder` — each an independent value type of its own; none is built out
+of another, and nothing else mutates in place. Mutation is alias-visible on all
+six — a change made through one binding is seen through every other — while
+`==` stays structural everywhere: a `Box` compares by contents, a `List`
+element-wise, an `ArrayBuilder` element-wise, a `Map` by entries, `Bytes` by
+bytes.
 
 - `const` bindings never change; `var` bindings are mutable within their block and cannot escape it.
 - Arrays are immutable values: length is fixed and contents are never changed in place — operations that transform an array return a new one, and `==` compares element-wise.
 - A `Bytes` is a fixed-length mutable byte buffer: `Bytes.new(n)` allocates `n` bytes, `get` and `set` address them one by one (little-endian multi-byte accessors sit beside them), and `==` compares by content. The length never changes — `set` replaces bytes, it does not grow the buffer.
-- Maps are the one mutable collection: `Map.new(("foo", "bar"), ("hello", 123))` takes each pair only as an initialization source — keys and values are read once into a fresh map and the returned value is that map itself; later pairs overwrite earlier values, and the key keeps its first-insertion position. `set` and `remove` change the map in place (each returns the map), keys keep their insertion position across updates, and `==` compares entries rather than order. Keys must be primitive types — a non-primitive key is an error. A map sent to another process arrives as a snapshot copy, so map mutation never crosses a process boundary either.
+- Maps are the mutable keyed collection: `Map.new(("foo", "bar"), ("hello", 123))` takes each pair only as an initialization source — keys and values are read once into a fresh map and the returned value is that map itself; later pairs overwrite earlier values, and the key keeps its first-insertion position. `set` and `remove` change the map in place (each returns the map), keys keep their insertion position across updates, and `==` compares entries rather than order. Keys must be primitive types — a non-primitive key is an error. A map sent to another process arrives as a snapshot copy, so map mutation never crosses a process boundary either.
 - Class fields are assigned only inside `init` and freeze afterwards.
 - Long-lived mutable state — per process — lives in a `Box`: `Box.new(0)` constructs, `box.read()` reads, `box.replace(v)` replaces — deliberately nothing else. Sending a Box to another process delivers a snapshot copy, so mutability never crosses a process boundary.
 - A `List` is the deque beside the Box: a double-ended queue that mutates in place where a Box holds one cell. `List.new([1, 2, "foo"])` takes the array only as an initialization source — the elements are copied into a fresh deque and the returned value is that deque itself; the array is not kept, so the two never see each other's changes. `list.push_front(x)` and `list.push_back(x)` insert at either end and return the list; `list.pop_front()` and `list.pop_back()` remove and yield the element; `list.length()` measures. Popping an empty List is a runtime error, like an out-of-bounds index, and `==` compares element-wise. Sending a List to another process delivers a snapshot copy — mutability never crosses a process boundary.
+- An `ArrayBuilder` grows an array one element at a time. `ArrayBuilder.new()` takes nothing — a builder is born empty, and it is the one place an array is built without knowing its length up front. `b.push(v)` appends and answers the builder itself, so pushes chain; `b.length()` measures; `b.get(i)` reads back by index; `b.to_array()` returns a **fresh** `Array[T]` holding the elements pushed so far. The builder keeps its own elements, so growing it after `to_array` leaves the array it already returned untouched — the opposite of `List.new`, which copies on the way *in*. Reading outside the pushed prefix is a runtime error, and `==` compares element-wise. Sending an ArrayBuilder to another process delivers a snapshot copy.
+
+  The element type is pinned by the first `push` whose argument type is known: `const kids = ArrayBuilder.new()` followed by `kids.push("a")` makes `kids` an `ArrayBuilder[String]`, so `kids.push(1)` is a type error. The pin lands on the **`const` binding named at the base of the pushed chain** — `kids.push("a").push("b")` pins `kids` just as plainly — while a `var` binding accepts any element type and a push written inside a larger expression pins nothing, since only a whole statement is a place a binding's type can be settled. This is deliberately stricter than `List.new`, whose elements stay unchecked until something reads them.
+
+  On the BEAM target `get(i)` walks the builder's reversed accumulator and so costs O(n) where `push` is O(1); everywhere else `get` is O(1).

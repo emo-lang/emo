@@ -56,6 +56,7 @@
 | EmoUI 原生 UI 打包(per-package 编译 flags / `pkg_config`) | T48.7–T48.9 | 方向已定(2026-10-14)——manifest 长出 per-package 原生字段,原生后端不再以应用级构建脚本发布(`CHECK.md`、`docs/emo-ui.md`)。字段面(`pkg_config`、编译/链接 flags、`.m` 是否收集)仍属 T48.7 自己的范围 |
 | `c` 目标的长跑内存(值语义家族的回收) | T48.8–T48.9(demo 尺度)、step 49 | 已定(2026-10-14)——region 回收不可行;值语义家族需要引用计数,作为 step 49 排期(`CHECK.md`、`spike/arena-scope/`)。在它落地之前,原生 UI 后端停在 demo 尺度并把限制写进文档,而不是被它闸住 |
 | EmoUI 浏览器运行时路径 | T48.10–T48.11 | 开放 —— `docs/emo-ui.md`;TypeScript 运行时只面向 Node、wasm 宿主只有三个 import,选项是拆出浏览器安全版加 `dom_*` 层(或新增 wasm import)再配打包步骤 |
+| 数组增长(O(1) 的 append 还是一个 builder) | T48.1、T49.4 | 已定(2026-10-15,T49.3)——走 builder,并且是语言层的新类型 `ArrayBuilder`,而不是 `Array` 的表示层改动(`CHECK.md`、`docs/intro/syntax.md`);从 `List` 转回 `Array` 那一半刻意不做 |
 
 ---
 
@@ -796,6 +797,6 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 
 - [ ] **T49.1** — 运行时:把身份纪律(`emo_identity_kind`、`emo_retain`/`emo_release`,以及往聚合体里存值的那些构造器)从三种身份格扩展到值语义家族,让一个值格能走到引用计数归零、聚合体释放它所持有的东西;包含「值语义的构造不会成环」这一审计。发射器本来就对每个动态绑定做 retain 与 release(`emo_c.ml:1851`、`:423`),所以这一项从运行时侧起步。
 - [ ] **T49.2** — 粒度:在每种动态类型都可能持有内存之后,决定 autorelease pool 拥有什么并实现它——表达式内部的临时值是难的那一半,`may_own` 加上随之而来的构造器审计(`emo_c_runtime.c:1753`)。
-- [ ] **T49.3** — 数组的形状:一个 O(1) 的 append 或一个 builder,让 k 元素数组的增长在字节与 retain 上都不是二次的;T48.1 的 children 表示取决于这个答案。
+- [x] **T49.3** — 数组的形状:一个 O(1) 的 append 或一个 builder,让 k 元素数组的增长在字节与 retain 上都不是二次的;T48.1 的 children 表示取决于这个答案。**2026-10-15 已定 —— 走 builder,并且是语言层的新类型(`ArrayBuilder`),而不是 `Array` 的表示层改动。** 方法面 `new()` / `push` / `length` / `get` / `to_array`,解释器与五个宿主目标全上(`riscv64` 按名拒绝,退出码 65,`Map` 的先例);第一条静态可知类型的 `push` 钉住被 push 链最底端那个 `const` 绑定的元素类型(`docs/intro/syntax.md`,可变性)。这一项点名的第二种形状——从 `List` 转回可索引的 `Array`——刻意不做。数组这一半由此在没有动运行时的前提下得到回答,所以 step 49「数组增长是线性而非二次」这条判据现在可以从语言侧达成,而不必等 T49.1;T48.1 的表示问题是解除了阻塞,不是得到了答案。
 - [ ] **T49.4** — 闸门:把 spike 的渲染阶梯与 region 探针做成签入的测试——今天失败、之后通过,只针对 `c` 目标,且 `dune test` 全绿。
 - [ ] **T49.5** — 文档:`CHECK.md`、`docs/emo-ui.md` 及其 zh-CN 镜像,以及 step 48 的 demo 尺度注记都改为指向此处。

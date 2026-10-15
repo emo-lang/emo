@@ -203,6 +203,7 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
         List.iter ex args
     | Builtin { args; _ } -> List.iter ex args
     | Box_new x | Bytes_new x | List_new x -> ex x
+    | Builder_new -> ()
     | Make_exception { message; data } ->
         ex message;
         Option.iter ex data
@@ -928,6 +929,12 @@ and emit_method env d (ty : Emo_check.t) (self_ : Emo_ir.expr) (name : string)
           | Some _ ->
               refuse (Printf.sprintf "the method `%s` of `%s`" name display)
           | None -> refuse (Printf.sprintf "the interface `%s`" display))
+      | Emo_check.BuilderType _ ->
+          (* `ArrayBuilder.new` refuses at the construction site, so a
+             builder value cannot be built here; one still arrives as a
+             parameter's annotation, which is why the methods refuse by
+             name rather than falling through to the dynamic dispatch. *)
+          refuse (Printf.sprintf "the ArrayBuilder method `%s`" name)
       | _ ->
           (* a dynamic receiver: the runtime dispatches by name — the
              instance's method table first, then the scalar builtins
@@ -1197,6 +1204,7 @@ and describe_expr (e : Emo_ir.expr) : string =
   | Map_lit _ -> "maps"
   | Bytes_new _ -> "Bytes"
   | List_new _ -> "List"
+  | Builder_new -> "ArrayBuilder"
   | Make_exception _ -> "exceptions"
   | Do_spawn _ | Spawn_value _ -> "processes (`spawn`)"
   | _ -> "this expression"
@@ -2455,6 +2463,7 @@ let rec walk_expr_enum env (e : Emo_ir.expr) : unit =
       List.iter (walk_expr_enum env) args
   | Builtin { args; _ } -> List.iter (walk_expr_enum env) args
   | Box_new x | Bytes_new x | List_new x -> walk_expr_enum env x
+  | Builder_new -> ()
   | Make_exception { message; data } ->
       walk_expr_enum env message;
       Option.iter (walk_expr_enum env) data

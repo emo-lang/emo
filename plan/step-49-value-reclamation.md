@@ -131,10 +131,20 @@ render loop; the property is measured, not asserted.
       every dynamic type may own memory, and implement it —
       expression-internal temporaries are the hard half, `may_own` and
       the constructor audit that follows.
-- [ ] **T49.3** — The array shape: an O(1) append or a builder, so
+- [x] **T49.3** — The array shape: an O(1) append or a builder, so
       growing a k-element array is not quadratic in bytes and retains.
       The spike's P1 ladder is the before/after measurement; T48.1's
-      children representation depends on the answer.
+      children representation depends on the answer. **Settled
+      2026-10-15 — a builder, as a new language-level type
+      (`ArrayBuilder`) rather than an `Array` representation change**
+      (open item 2 below, now closed). This landed ahead of steps T49.1
+      and T49.2 and does not depend on either: it removes the per-element
+      `Array.append` copy from the language's side, so the acceptance
+      criterion "array growth is flat in the element count" holds for a
+      program that builds with it, while the arena's own accounting is
+      still T49.1's. The builder's growth follows the `Map` doubling and
+      its retired buffers stay arena-resident, so the leak this step
+      exists to close is unchanged by it.
 - [ ] **T49.4** — The gate: the render loop and the region probes as a
       checked-in test that fails today and passes after, on the `c`
       target, with every existing golden byte-identical and `dune test`
@@ -162,10 +172,15 @@ render loop; the property is measured, not asserted.
    thing the pool exists to erase. A wider pool, a smarter emitter, and
    a different aggregate representation are all on the table and have
    not been weighed against each other in writing.
-2. **Whether the append fix is a runtime or a language change.** An O(1)
-   append inside the existing `Array` is a representation change; a
-   builder, or a `List`→`Array` conversion, is a surface one. EmoUI's
-   children shape is the first consumer and should not decide it alone.
+2. **Whether the append fix is a runtime or a language change.**
+   **Settled 2026-10-15 — a surface change: a new `ArrayBuilder` type**
+   (T49.3). An O(1) append inside the existing `Array` would have been a
+   representation change, and the surveyed spellings (`Array.concat`,
+   a type-directed `append`, a conversion back from `List`) each left the
+   nested-array hole or the copy in place. EmoUI's children shape was the
+   first consumer and did not decide it alone: the argument that settled it
+   is that the language had no sub-quadratic way to build an array of
+   unknown length at all, which is a gap independent of any one caller.
 3. **Peak, not just growth.** See the Scope note: unmeasured, and not
    this step's acceptance criterion.
 

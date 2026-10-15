@@ -35,6 +35,7 @@ and expr_desc =
   | Global_var of string (* a module-level `var`, read *)
   | Bytes_new of expr (* Bytes.new(n) — a zero-filled byte buffer *)
   | List_new of expr (* List.new(array) — a fresh deque over the elements *)
+  | Builder_new (* ArrayBuilder.new() — a fresh empty growable array builder *)
   | Make_exception of { message : expr; data : expr option }
   | Do_spawn of { func : string; args : expr list }
   | Spawn_value of { f : expr; args : expr list }
@@ -521,6 +522,12 @@ and lower_call env span callee args =
                         desc = List_new (lower_expr env arg_value);
                       }
                   | _ -> raise (Lower_error "`List.new` takes one argument"))
+              | Ast.Type_ident "ArrayBuilder" when name = "new" -> (
+                  match args with
+                  | [] -> { ety = type_of env span; desc = Builder_new }
+                  | _ ->
+                      raise
+                        (Lower_error "`ArrayBuilder.new` takes no arguments"))
               | Ast.Type_ident "Map" when name = "new" ->
                   {
                     ety = type_of env span;
@@ -871,7 +878,8 @@ let rec expr_native (special : string list) (e : expr) : bool =
   | Call { func; args } ->
       List.mem func special && List.for_all (expr_native special) args
   | Call_value _ | Method _ | Builtin _ | Box_new _ | Bytes_new _ | List_new _
-  | Make_exception _ | Do_spawn _ | Spawn_value _ | Closure _ | Global_var _ ->
+  | Builder_new | Make_exception _ | Do_spawn _ | Spawn_value _ | Closure _
+  | Global_var _ ->
       false (* dynamic operations keep the function dynamic *)
 
 and stmts_native special (stmts : stmt list) : bool =

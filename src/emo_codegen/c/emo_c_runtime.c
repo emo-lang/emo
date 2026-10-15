@@ -549,6 +549,70 @@ emo_value emo_list_pop_back(emo_value l) {
 
 int64_t emo_list_length(emo_value l) { return emo_list_of(l)->size; }
 
+/* ---- The ArrayBuilder ----
+
+   A growable array under construction. The cell payload is
+   [size][cap][items]: a push past the capacity allocates a doubled
+   items buffer, copies, and repoints — the same amortized doubling the
+   Map below uses, and for the same reason (a k-element build must not
+   be quadratic). The builder is an identity, like a List, and rides the
+   arena under the same provisional reclamation profile: a superseded
+   items buffer is never freed (CHECK.md). */
+
+static uintptr_t *emo_builder_words(emo_value b) {
+  return emo_payload(emo_expect_kind(b, EMO_BUILDER));
+}
+
+emo_value emo_builder_new(void) {
+  emo_value v = emo_cell_new(EMO_BUILDER, 3);
+  uintptr_t *p = emo_payload(v);
+  p[0] = 0;               /* size */
+  p[1] = 0;               /* cap */
+  p[2] = (uintptr_t)NULL; /* items */
+  return v;
+}
+
+emo_value emo_builder_push(emo_value b, emo_value v) {
+  uintptr_t *p = emo_builder_words(b);
+  int64_t size = (int64_t)p[0];
+  int64_t cap = (int64_t)p[1];
+  if (size == cap) {
+    int64_t ncap = cap < 8 ? 8 : cap * 2;
+    emo_value *items = emo_alloc((size_t)ncap * sizeof(emo_value));
+    if (cap > 0) memcpy(items, (void *)p[2], (size_t)cap * sizeof(emo_value));
+    p[1] = (uintptr_t)ncap;
+    p[2] = (uintptr_t)items;
+  }
+  ((emo_value *)p[2])[size] = v;
+  emo_retain(v); /* the builder holds its elements */
+  p[0] = (uintptr_t)(size + 1);
+  return emo_retain(b); /* the chained call hands the caller its own claim */
+}
+
+int64_t emo_builder_length(emo_value b) {
+  return (int64_t)emo_builder_words(b)[0];
+}
+
+emo_value emo_builder_get(emo_value b, int64_t i) {
+  uintptr_t *p = emo_builder_words(b);
+  int64_t size = (int64_t)p[0];
+  if (i < 0 || i >= size) {
+    fprintf(stderr,
+            "runtime error: index %lld is out of bounds for a length-%lld "
+            "ArrayBuilder\n",
+            (long long)i, (long long)size);
+    exit(70);
+  }
+  return ((emo_value *)p[2])[i];
+}
+
+emo_value emo_builder_to_array(emo_value b) {
+  /* A fresh Array of exactly the builder's contents — a copy, so the
+     builder stays free to grow without touching what it handed out. */
+  uintptr_t *p = emo_builder_words(b);
+  return emo_array_new((int64_t)p[0], (emo_value *)p[2]);
+}
+
 /* ---- The Map ----
 
    A mutable, insertion-ordered hash table. The cell payload:
@@ -978,8 +1042,11 @@ emo_value emo_index(emo_value v, int64_t i) {
 int64_t emo_length(emo_value v) {
   uintptr_t k = emo_cell_kind(v);
   if (k == EMO_LIST) return emo_list_length(v);
+  if (k == EMO_BUILDER) return emo_builder_length(v);
   if (k != EMO_TUPLE && k != EMO_ARRAY && k != EMO_BYTES && k != EMO_STRING)
-    emo_fatal("only strings, Bytes, tuples, arrays, and Lists have a length");
+    emo_fatal(
+        "only strings, Bytes, tuples, arrays, Lists, and ArrayBuilders have a "
+        "length");
   return (int64_t)*emo_payload(v);
 }
 
@@ -1089,6 +1156,7 @@ static const char *emo_printf_kind_name(emo_value v) {
     case EMO_LIST: return "List";
     case EMO_PID: return "Pid";
     case EMO_MAP: return "Map";
+    case EMO_BUILDER: return "ArrayBuilder";
     default: return "value";
   }
 }
@@ -1491,6 +1559,15 @@ bool emo_eq_dyn(emo_value a, emo_value b) {
     }
     return true;
   }
+  case EMO_BUILDER: {
+    /* element-wise in push order — the List rule over a flat buffer */
+    uintptr_t *pa = emo_payload(a), *pb = emo_payload(b);
+    if (pa[0] != pb[0]) return false;
+    for (int64_t i = 0; i < (int64_t)pa[0]; i++)
+      if (!emo_eq_dyn(((emo_value *)pa[2])[i], ((emo_value *)pb[2])[i]))
+        return false;
+    return true;
+  }
   case EMO_INSTANCE: {
     /* Same class (vtable identity) and equal fields. */
     if (*emo_payload(a) != *emo_payload(b)) return false;
@@ -1617,6 +1694,16 @@ static void emo_render_dyn(emo_value v, FILE *out) {
       if (!first) fputs(", ", out);
       first = false;
       emo_render_dyn(n->v, out);
+    }
+    fputc(']', out);
+    return;
+  }
+  case EMO_BUILDER: {
+    uintptr_t *p = emo_payload(v);
+    fputs("ArrayBuilder[", out);
+    for (int64_t i = 0; i < (int64_t)p[0]; i++) {
+      if (i > 0) fputs(", ", out);
+      emo_render_dyn(((emo_value *)p[2])[i], out);
     }
     fputc(']', out);
     return;
@@ -2943,7 +3030,18 @@ static emo_value emo_bm_to_string(emo_value recv, const emo_value *args) {
    mechanics. */
 static emo_value emo_bm_get(emo_value recv, const emo_value *args) {
   if (emo_cell_kind(recv) == EMO_MAP) return emo_map_get(recv, args[0]);
+  if (emo_cell_kind(recv) == EMO_BUILDER)
+    return emo_builder_get(recv, emo_unbox_i64(args[0]));
   return emo_box_i64(emo_bytes_get(recv, emo_unbox_i64(args[0])));
+}
+
+static emo_value emo_bm_push(emo_value recv, const emo_value *args) {
+  return emo_builder_push(recv, args[0]);
+}
+
+static emo_value emo_bm_to_array(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_builder_to_array(recv);
 }
 
 static emo_value emo_bm_set(emo_value recv, const emo_value *args) {
@@ -3071,6 +3169,8 @@ static const emo_builtin_method emo_builtin_methods[] = {
     {"push_back", 1, emo_bm_push_back},
     {"pop_front", 0, emo_bm_pop_front},
     {"pop_back", 0, emo_bm_pop_back},
+    {"push", 1, emo_bm_push},
+    {"to_array", 0, emo_bm_to_array},
     {"length", 0, emo_bm_length},
     {"to_string", 0, emo_bm_to_string},
     {"get", 1, emo_bm_get},

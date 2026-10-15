@@ -226,8 +226,8 @@ let c_type (t : Emo_check.t) : string option =
   | Emo_check.String -> Some "emo_str"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
   | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
-  | Emo_check.ClassType _ | Emo_check.InterfaceType _ | Emo_check.EnumType _
-  | Emo_check.FuncType _ | Emo_check.Bytes ->
+  | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
+  | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
       Some "emo_value"
   | Emo_check.Void -> Some "void"
 
@@ -237,8 +237,8 @@ let is_dyn (t : Emo_check.t) : bool =
   match t with
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
   | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
-  | Emo_check.ClassType _ | Emo_check.InterfaceType _ | Emo_check.EnumType _
-  | Emo_check.FuncType _ | Emo_check.Bytes ->
+  | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
+  | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -262,8 +262,8 @@ let dummy_value (t : Emo_check.t) : string =
   | Emo_check.String -> "(emo_str){INT64_C(0), \"\"}"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
   | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
-  | Emo_check.ClassType _ | Emo_check.InterfaceType _ | Emo_check.EnumType _
-  | Emo_check.FuncType _ ->
+  | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
+  | Emo_check.EnumType _ | Emo_check.FuncType _ ->
       "(emo_value)0"
   | _ -> "0"
 
@@ -805,6 +805,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Bytes_new n ->
       Printf.sprintf "emo_bytes_new(%s)" (as_native env n Emo_check.Int64)
   | List_new arg -> Printf.sprintf "emo_list_new(%s)" (as_dyn env arg)
+  | Builder_new -> "emo_builder_new()"
   | Make_enum { enum_name; member } ->
       Printf.sprintf "emo_enum_new(%s, %s)" (c_string enum_name)
         (c_string member)
@@ -854,6 +855,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
            | Emo_ir.Global_var _ -> "Global_var"
            | Emo_ir.Bytes_new _ -> "Bytes_new"
            | Emo_ir.List_new _ -> "List_new"
+           | Emo_ir.Builder_new -> "Builder_new"
            | Emo_ir.Make_exception _ -> "Make_exception"
            | Emo_ir.Do_spawn _ -> "Do_spawn"
            | Emo_ir.Spawn_value _ -> "Spawn_value"
@@ -961,12 +963,34 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
              | Emo_check.ListType _ -> true
              | _ -> false ->
           finish (Printf.sprintf "emo_list_pop_back(%s)" (as_dyn env self_))
+      (* The ArrayBuilder: push and pop-free reads over a doubling
+         buffer. Push hands back the builder itself, so it answers in the
+         dynamic world like its receiver; get yields the element (a
+         static element type crosses the boundary through finish). *)
+      | "push", [ v ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.BuilderType _ -> true
+             | _ -> false ->
+          Printf.sprintf "emo_builder_push(%s, %s)" (as_dyn env self_)
+            (as_dyn env v)
+      | "get", [ i ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.BuilderType _ -> true
+             | _ -> false ->
+          finish
+            (Printf.sprintf "emo_builder_get(%s, %s)" (as_dyn env self_)
+               (as_native env i Emo_check.Int64))
+      | "to_array", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.BuilderType _ -> true
+             | _ -> false ->
+          Printf.sprintf "emo_builder_to_array(%s)" (as_dyn env self_)
       | "length", [] when self_.Emo_ir.ety = Emo_check.Bytes ->
           Printf.sprintf "emo_bytes_length(%s)" (as_dyn env self_)
       | "length", []
         when match self_.Emo_ir.ety with
              | Emo_check.ArrayType _ | Emo_check.TupleType _ | Emo_check.Unknown
-             | Emo_check.ListType _ ->
+             | Emo_check.ListType _ | Emo_check.BuilderType _ ->
                  true
              | _ -> false ->
           box_int env result_ty
@@ -1317,6 +1341,7 @@ and closure_free env (cparams : (string * Emo_check.t) list)
     | Var n -> add n
     | Unary (_, x) -> ex x
     | List_new x -> ex x
+    | Builder_new -> ()
     | Binary (_, l, r) ->
         ex l;
         ex r

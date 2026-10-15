@@ -50,7 +50,9 @@ page(title: "Home") {
 
 ## 前两种为什么是关着的
 
-**环境式收集器直接违反可变性规则。** [syntax.md](intro/syntax.md) 把可变表面定为一个封闭的集合 —— `var`、`Box`、`Bytes`、`List`、`Map` —— "nothing else mutates in place" 之外什么也不许。再加第六个、还是进程全局且隐式的,会是这门语言里最大的一次违例。它也和并发模型正面相撞:嵌套容器需要一个收集器栈,而 `send` 交付的是快照,收集器没法跟着它正在填的那棵树跨进程边界。[`emo-ui.md`](emo-ui.md) 已经否掉过这个形状("implicit state, against the design philosophy")。
+**环境式收集器直接违反可变性规则。** [syntax.md](intro/syntax.md) 把可变表面定为一个封闭的集合 —— `var`、`Box`、`Bytes`、`List`、`Map`、`ArrayBuilder` —— "nothing else mutates in place" 之外什么也不许。一个进程全局且隐式的收集器,会是这门语言里最大的一次违例:这六个具名类型无一不是由显式调用构造、并经由代码自己写下的名字去修改,而环境式收集器没人去取、谁都能往里写。它也和并发模型正面相撞:嵌套容器需要一个收集器栈,而 `send` 交付的是快照,收集器没法跟着它正在填的那棵树跨进程边界。[`emo-ui.md`](emo-ui.md) 已经否掉过这个形状("implicit state, against the design philosophy")。
+
+把 `ArrayBuilder` 加进这个集合并不重新打开这个问题:这条规则关掉的是**不可命名**的可变,不是类型的数量。builder 由 `ArrayBuilder.new()` 造出、绑到作者自己选的名字上、再经由那个名字追加 —— 它的可见程度与旁边的 `List` 别无二致,而上面的反对针对的是可见性,不是「能有几个类型可变」。
 
 **隐式参数要付的是"第二种调用约定"。** [syntax.md](intro/syntax.md) 写着的正是它要破的那条规则:"Parameter types are always explicit"。一个签名为 `def text(s String) Void` 的组件会发射 —— 而读者既看不出它会发射,也看不出发射到哪里。它同时也是 EmoUI 桌面上最大的一笔语言改动,比 [`emo-ui.md`](emo-ui.md) 已估价为 "a language change of real size" 的 checked block/function type 还大:闭包表示、`Block` 类型、checker、以及六个后端全都要带上这个额外参数,`Block` 还要多出一种携带它的形态。Compose 付的正是这笔钱 —— Kotlin 编译器插件给每个 `@Composable` 函数加上 `$composer` 参数和 changed-flags 位掩码 —— 而且值得说清楚,这笔钱在那边买到了东西:槽表里的位置记忆化,也就是 Compose 细粒度重组的根基。EmoUI 选了相反的机制(见下面"发射不改变数据模型"),所以它会付这笔钱却拿不到这个收益。
 
@@ -137,6 +139,8 @@ Templ 保住的东西比看上去窄。它检查你嵌进去的 Go 表达式,不
 
   这里写成调用 `children_of(...)` 而不是方法 `kids.to_array()`,是因为语言里不存在这样的转换;在 Emo 里手写它,就等于建在 `append` 之上 —— B 的二次代价于是不是消失,而是搬到了那里。`spike/emo-ui-spelling` 把这些全量过一遍,并发现 `Map.set` 加 `Map.values()` 是唯一完全不产生数组增长的容器通路 —— 所以这个转换该落在运行时里遍历双端队列,而不是落在一个库 def 里。
 
+  **这段读法在 2026-10-15 关掉了(T49.3),而且不是以这里点名的两种形状中的任何一种。** 语言多了第三个容器:`ArrayBuilder` 用 `push` 原地增长、摊还 O(1),`to_array()` 就是那份拷出 —— 于是 B 的成本曲线不再需要给 `List` 补一个转换,而上面那次测量也正是它没有落在双端队列上的原因之一。上面那条已定的选择照旧成立(A:静态那种情形根本不需要容器;children 表示是否要从已定的 `Array[Node]` 挪开,是 T48.1 的事)。变了的是:B 缺的那块不再缺了。
+
 - **C —— Emo 自己语法里的树字面量。** parser 层脱糖,目标恰好是 A 的那组嵌套调用。checker、`Array[Node]` children、`patch`、六个后端全都不动;代价是一笔真实的语言改动(parser、checker、六个后端、formatter、LSP),并且让 Emo 的语法对标记敏感。
 - **D —— 外部翻译器,产出 `.emo`。** Templ 的形态:自己的 parser、自己的文件,产出 Emo,再由现有 checker 检查。**完全不动编译器** —— 这正是它便宜、可原型的原因 —— 而且它可以住在 EmoUI 仓库里,语言仓库一行不改。代价是第二套语法、第二套工具链(formatter、LSP、把错误映射回源文件),以及一个构建步骤。
 
@@ -168,9 +172,9 @@ A 与 B 兼容:B 就是 A 把容器问题回答掉。C 与 D 脱糖到同一个�
 
 - [`emo-ui.md`](emo-ui.md) —— 评估;Layer 1 是组合方式的讨论,决策 3 是已定的拼法,ask 2 是隐式收集的禁令。
 - [`visualization.md`](visualization.md) —— 决策 14,plot 选了同一个形状。
-- [`intro/syntax.md`](intro/syntax.md) —— 附着的块、参数类型必须显式、`return` 纪律、语句形态、可变的五件。
+- [`intro/syntax.md`](intro/syntax.md) —— 附着的块、参数类型必须显式、`return` 纪律、语句形态、可变的六件。
 - [`intro/type-system.md`](intro/type-system.md) —— `Block` 是 `Unknown`。
 - [`intro/configuration.md`](intro/configuration.md) —— 配置即 Emo 表达式,"不要第二门语言"的先例。
 - [`emo-ui-check.md`](emo-ui-check.md) —— 那几个 spike;`spike/components` 就是那个已经 byte-identically 跑通 AppKit 与 GTK 4 的 React/Elm 式应用。
-- `spike/arena-scope` —— children 数组为什么想要另一个容器;`src/emo_check/emo_check.ml:2541` 与 `src/emo_eval/emo_eval.ml:2055` 是"丢弃语句"与 `append` 两条事实的出处。
+- `spike/arena-scope` —— children 数组为什么想要另一个容器。那个容器现在有了:`ArrayBuilder` 回答了这条 ask,所以组合示例不必再用 `Array.append` 累加(它"追加一个元素即整数组拷贝"在 `src/emo_eval/emo_eval.ml:2147`);与它权衡过的"丢弃语句"那条事实在 `src/emo_check/emo_check.ml:2639`。
 - `spike/emo-ui-spelling` —— 上面那个证据缺口所要的测量:两种拼法各写一遍的 T48.1 内核与两个真实屏幕、子节点数组构造阶梯、内核撞上的两个 `src/` codegen 缺陷,以及 checker 对错误子节点字面量的覆盖。

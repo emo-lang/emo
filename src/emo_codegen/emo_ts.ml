@@ -263,6 +263,7 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Box_new e -> Printf.sprintf "E.box(%s)" (expr env e)
   | Bytes_new e -> Printf.sprintf "E.bytesNew(%s)" (expr env e)
   | List_new e -> Printf.sprintf "E.listNew(%s)" (expr env e)
+  | Builder_new -> "E.builderNew()"
   | Make_exception { message; data } -> (
       match data with
       | None -> Printf.sprintf "E.throwException(%s)" (expr env message)

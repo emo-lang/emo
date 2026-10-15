@@ -46,6 +46,8 @@ let t_bytes_set = 30
 let t_lnode = 31
 let t_vlist = 32
 let t_list2 = 33
+let t_vbuilder = 34
+let t_builder_new = 35
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -136,6 +138,10 @@ let runtime_types : W.typ list =
     (* $vlist: head, tail, size *)
     W.FuncT ([ W.Anyref; W.Anyref ], [ W.Anyref ]);
     (* list push: list, value -> list *)
+    W.StructT [ (W.RefNull t_anyarray, true); (W.I32, true); (W.I32, true) ];
+    (* $vbuilder: items, len, cap — a doubling buffer *)
+    W.FuncT ([], [ W.Anyref ]);
+    (* builder_new: () -> builder *)
   ]
 
 let i_print = 0
@@ -209,15 +215,24 @@ let rt = function
   | "list_len" -> 66
   | "list_str" -> 67
   | "str_substring" -> 68
+  | "builder_new" -> 69
+  | "builder_push" -> 70
+  | "builder_get" -> 71
+  | "builder_to_array" -> 72
+  | "array_str" -> 73
+  | "builder_str" -> 74
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
    program funcs follow. The List ops (61..67) sit after main — main
    stays at 60 so the exported entry keeps its index. The String
-   substring runtime (68) sits after them for the same reason. *)
-let runtime_count = 69
+   substring runtime (68) and the ArrayBuilder ops (69..72) sit after
+   them for the same reason, as do the array and builder renderings
+   (73..74) the `to_str` chain calls. *)
+let runtime_count = 75
 (* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 12
-     + list ops 7 + the String substring *)
+     + list ops 7 + the String substring + the ArrayBuilder ops
+     + the array and builder renderings *)
 
 (* ---- Lowering state ---- *)
 
@@ -565,6 +580,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | List_new v ->
       expr env v;
       e env (W.Call (rt "list_new"))
+  | Builder_new -> e env (W.Call (rt "builder_new"))
   | Make_exception { message; data } ->
       expr env message;
       (* The data lowers only to refuse: the wasm target does not support
@@ -724,6 +740,13 @@ and method_call env self_ name args =
                  [
                    W.Local_get l; W.Ref_cast t_vlist; W.Struct_get (t_vlist, 2);
                  ] );
+             ( t_vbuilder,
+               fun l ->
+                 [
+                   W.Local_get l;
+                   W.Ref_cast t_vbuilder;
+                   W.Struct_get (t_vbuilder, 1);
+                 ] );
            ]);
       e env W.I64_extend_i32_s;
       e env (W.Struct_new t_vint)
@@ -769,7 +792,22 @@ and method_call env self_ name args =
         (W.Call
            (rt
               (if mname = "pop_front" then "list_pop_front" else "list_pop_back")))
-  | "get", [ i ] -> (
+  | "push", [ v ]
+    when match self_.Emo_ir.ety with
+         | Emo_check.BuilderType _ -> true
+         | _ -> false ->
+      (* `push` answers the builder itself, so chained pushes need no
+         temporary *)
+      expr env self_;
+      expr env v;
+      e env (W.Call (rt "builder_push"))
+  | "to_array", []
+    when match self_.Emo_ir.ety with
+         | Emo_check.BuilderType _ -> true
+         | _ -> false ->
+      expr env self_;
+      e env (W.Call (rt "builder_to_array"))
+  | "get", [ i ] ->
       (* `get` names both the Bytes accessor and a class method (the
          format packages' object types, say). The interpreter checks
          the receiver's class first, so dispatch at runtime: a Bytes
@@ -795,36 +833,46 @@ and method_call env self_ name args =
             else None)
           env.classes
       in
-      match candidates with
-      | [] ->
-          expr env self_;
-          expr env i;
-          e env (W.Call (rt "bytes_get"))
-      | _ ->
-          let recv = fresh_local env "__get_recv" W.Anyref in
-          let arg = fresh_local env "__get_arg" W.Anyref in
-          expr env self_;
-          e env (W.Local_set recv);
-          expr env i;
-          e env (W.Local_set arg);
-          let rec chain = function
-            | [] -> [ W.Unreachable ]
-            | (tidx, fidx) :: rest ->
-                [
-                  W.If_else
-                    ( W.Result W.Anyref,
-                      [ W.Local_get recv; W.Ref_test tidx ],
-                      W.Local_get recv :: W.Ref_cast tidx :: [ W.Local_get arg ]
-                      @ [ W.Call fidx ],
-                      chain rest );
-                ]
-          in
-          e env
-            (W.If_else
-               ( W.Result W.Anyref,
-                 [ W.Local_get recv; W.Ref_test t_vbytes ],
-                 [ W.Local_get recv; W.Local_get arg; W.Call (rt "bytes_get") ],
-                 chain candidates )))
+      let recv = fresh_local env "__get_recv" W.Anyref in
+      let arg = fresh_local env "__get_arg" W.Anyref in
+      expr env self_;
+      e env (W.Local_set recv);
+      expr env i;
+      e env (W.Local_set arg);
+      let fallback =
+        match candidates with
+        | [] -> [ W.Local_get recv; W.Local_get arg; W.Call (rt "bytes_get") ]
+        | _ ->
+            let rec chain = function
+              | [] -> [ W.Unreachable ]
+              | (tidx, fidx) :: rest ->
+                  [
+                    W.If_else
+                      ( W.Result W.Anyref,
+                        [ W.Local_get recv; W.Ref_test tidx ],
+                        W.Local_get recv :: W.Ref_cast tidx
+                        :: [ W.Local_get arg ]
+                        @ [ W.Call fidx ],
+                        chain rest );
+                  ]
+            in
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [ W.Local_get recv; W.Ref_test t_vbytes ],
+                  [ W.Local_get recv; W.Local_get arg; W.Call (rt "bytes_get") ],
+                  chain candidates );
+            ]
+      in
+      (* the builder's `get` joins the same runtime dispatch: a builder
+         receiver takes builder_get (which traps on an index outside the
+         live prefix), everything else falls through as before *)
+      e env
+        (W.If_else
+           ( W.Result W.Anyref,
+             [ W.Local_get recv; W.Ref_test t_vbuilder ],
+             [ W.Local_get recv; W.Local_get arg; W.Call (rt "builder_get") ],
+             fallback ))
   | "set", [ i; v ] ->
       expr env self_;
       expr env i;
@@ -1820,11 +1868,21 @@ let rt_to_str : W.func_type =
       [ W.Local_get 0; W.Call (rt "list_str") ]
       [ string_branch ]
   in
+  let builder_branch =
+    branch (test_of t_vbuilder)
+      [ W.Local_get 0; W.Call (rt "builder_str") ]
+      [ list_branch ]
+  in
+  let array_branch =
+    branch (test_of t_anyarray)
+      [ W.Local_get 0; W.Call (rt "array_str") ]
+      [ builder_branch ]
+  in
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
     flocals = [];
-    fbody = [ list_branch ];
+    fbody = [ array_branch ];
   }
 
 (* int_str(n i64) -> (ref null $bytes): digits LSB-first into the
@@ -3648,6 +3706,345 @@ let rt_str_substring : W.func_type =
       ];
   }
 
+(* ---- The ArrayBuilder ----
+
+   A doubling buffer: `$vbuilder` holds the backing array, the live
+   length and its capacity. `push` appends into the spare room and
+   doubles when there is none, so k pushes cost O(k) not O(k^2);
+   `to_array` copies the live prefix into an array of exactly that
+   length, which is what keeps a handed-out array independent of later
+   pushes. *)
+
+let rt_builder_new : W.func_type =
+  (* builder_new() -> builder. Empty, with room for the first eight. *)
+  {
+    W.ftype_idx = t_builder_new;
+    fparams = [];
+    flocals = [];
+    fbody =
+      [
+        W.I32_const 8;
+        W.Array_new_default t_anyarray;
+        W.I32_const 0;
+        W.I32_const 8;
+        W.Struct_new t_vbuilder;
+      ];
+  }
+
+let rt_builder_push : W.func_type =
+  (* builder_push(b, v) -> b. Locals: 2 builder, 3 fresh, 4 i,
+     5 new capacity. *)
+  {
+    W.ftype_idx = t_list2;
+    fparams = [ "b"; "v" ];
+    flocals =
+      [ (1, W.RefNull t_vbuilder); (1, W.RefNull t_anyarray); (2, W.I32) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vbuilder;
+        W.Local_set 2;
+        (* full: allocate double and copy the live prefix over *)
+        W.If_else
+          ( W.Void,
+            [
+              W.Local_get 2;
+              W.Struct_get (t_vbuilder, 1);
+              W.Local_get 2;
+              W.Struct_get (t_vbuilder, 2);
+              W.I32_eq;
+            ],
+            [
+              W.Local_get 2;
+              W.Struct_get (t_vbuilder, 2);
+              W.I32_const 2;
+              W.I32_mul;
+              W.Local_set 5;
+              W.Local_get 5;
+              W.Array_new_default t_anyarray;
+              W.Local_set 3;
+              W.I32_const 0;
+              W.Local_set 4;
+              W.Block
+                ( W.Void,
+                  [
+                    W.Loop
+                      ( W.Void,
+                        [
+                          W.Local_get 4;
+                          W.Local_get 2;
+                          W.Struct_get (t_vbuilder, 1);
+                          W.I32_ge;
+                          W.Br_if 1;
+                          W.Local_get 3;
+                          W.Local_get 4;
+                          W.Local_get 2;
+                          W.Struct_get (t_vbuilder, 0);
+                          W.Ref_cast t_anyarray;
+                          W.Local_get 4;
+                          W.Array_get t_anyarray;
+                          W.Array_set t_anyarray;
+                          W.Local_get 4;
+                          W.I32_const 1;
+                          W.I32_add;
+                          W.Local_set 4;
+                          W.Br 0;
+                        ] );
+                  ] );
+              W.Local_get 2;
+              W.Local_get 3;
+              W.Struct_set (t_vbuilder, 0);
+              W.Local_get 2;
+              W.Local_get 5;
+              W.Struct_set (t_vbuilder, 2);
+            ],
+            [] );
+        (* items[len] = v; len = len + 1 *)
+        W.Local_get 2;
+        W.Struct_get (t_vbuilder, 0);
+        W.Ref_cast t_anyarray;
+        W.Local_get 2;
+        W.Struct_get (t_vbuilder, 1);
+        W.Local_get 1;
+        W.Array_set t_anyarray;
+        W.Local_get 2;
+        W.Local_get 2;
+        W.Struct_get (t_vbuilder, 1);
+        W.I32_const 1;
+        W.I32_add;
+        W.Struct_set (t_vbuilder, 1);
+        W.Local_get 2;
+      ];
+  }
+
+let rt_builder_get : W.func_type =
+  (* builder_get(b, i) -> v; an index outside the live prefix traps.
+     Locals: 2 builder, 3 index. *)
+  {
+    W.ftype_idx = t_list2;
+    fparams = [ "b"; "i" ];
+    flocals = [ (1, W.RefNull t_vbuilder); (1, W.I32) ];
+    fbody =
+      [ W.Local_get 0; W.Ref_cast t_vbuilder; W.Local_set 2 ]
+      @ i64_of 1
+      @ [
+          W.I32_wrap_i64;
+          W.Local_set 3;
+          W.Block
+            ( W.Void,
+              [
+                W.Local_get 3;
+                W.I32_const 0;
+                W.I32_lt_s;
+                W.Br_if 0;
+                W.Local_get 3;
+                W.Local_get 2;
+                W.Struct_get (t_vbuilder, 1);
+                W.I32_ge;
+                W.Br_if 0;
+                W.Local_get 2;
+                W.Struct_get (t_vbuilder, 0);
+                W.Ref_cast t_anyarray;
+                W.Local_get 3;
+                W.Array_get t_anyarray;
+                W.Return;
+              ] );
+          W.Unreachable;
+        ];
+  }
+
+let rt_builder_to_array : W.func_type =
+  (* builder_to_array(b) -> a fresh array of exactly the live length.
+     Locals: 1 builder, 2 fresh, 3 i. *)
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "b" ];
+    flocals =
+      [ (1, W.RefNull t_vbuilder); (1, W.RefNull t_anyarray); (1, W.I32) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vbuilder;
+        W.Local_set 1;
+        W.Local_get 1;
+        W.Struct_get (t_vbuilder, 1);
+        W.Array_new_default t_anyarray;
+        W.Local_set 2;
+        W.I32_const 0;
+        W.Local_set 3;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 3;
+                    W.Local_get 1;
+                    W.Struct_get (t_vbuilder, 1);
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 2;
+                    W.Local_get 3;
+                    W.Local_get 1;
+                    W.Struct_get (t_vbuilder, 0);
+                    W.Ref_cast t_anyarray;
+                    W.Local_get 3;
+                    W.Array_get t_anyarray;
+                    W.Array_set t_anyarray;
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 2;
+      ];
+  }
+
+(* array_str(arr) -> $vstring: "[1, 2, 3]", every element through
+   to_str. Locals: 1 result, 2 array, 3 i, 4 scratch, 5 first. *)
+let rt_array_str : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "a" ];
+    flocals =
+      [
+        (1, W.RefNull t_bytes);
+        (1, W.RefNull t_anyarray);
+        (1, W.I32);
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+      ];
+    fbody =
+      bytes_const "[" @ [ W.Local_set 1 ]
+      @ [
+          W.Local_get 0;
+          W.Ref_cast t_anyarray;
+          W.Local_set 2;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.I32_const 1;
+          W.Local_set 5;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 2;
+                      W.Array_len t_anyarray;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 5;
+                      W.I32_eqz;
+                      W.If
+                        ( W.Void,
+                          (W.Local_get 1 :: bytes_const ", ")
+                          @ [ W.Call (rt "strcat"); W.Local_set 1 ],
+                          [] );
+                      W.I32_const 0;
+                      W.Local_set 5;
+                      W.Local_get 1;
+                      W.Local_get 2;
+                      W.Local_get 3;
+                      W.Array_get t_anyarray;
+                      W.Call (rt "to_str");
+                      W.Ref_cast t_vstring;
+                      W.Struct_get (t_vstring, 0);
+                      W.Call (rt "strcat");
+                      W.Local_set 1;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+        ]
+      @ (W.Local_get 1 :: bytes_const "]")
+      @ [
+          W.Call (rt "strcat");
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Struct_new t_vstring;
+        ];
+  }
+
+(* builder_str(b) -> $vstring: "ArrayBuilder[a, b, c]" over the live
+   prefix. Locals: 1 result, 2 builder, 3 i, 4 scratch, 5 first. *)
+let rt_builder_str : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "b" ];
+    flocals =
+      [
+        (1, W.RefNull t_bytes);
+        (1, W.RefNull t_vbuilder);
+        (1, W.I32);
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+      ];
+    fbody =
+      bytes_const "ArrayBuilder["
+      @ [ W.Local_set 1 ]
+      @ [
+          W.Local_get 0;
+          W.Ref_cast t_vbuilder;
+          W.Local_set 2;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.I32_const 1;
+          W.Local_set 5;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 2;
+                      W.Struct_get (t_vbuilder, 1);
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 5;
+                      W.I32_eqz;
+                      W.If
+                        ( W.Void,
+                          (W.Local_get 1 :: bytes_const ", ")
+                          @ [ W.Call (rt "strcat"); W.Local_set 1 ],
+                          [] );
+                      W.I32_const 0;
+                      W.Local_set 5;
+                      W.Local_get 1;
+                      W.Local_get 2;
+                      W.Struct_get (t_vbuilder, 0);
+                      W.Ref_cast t_anyarray;
+                      W.Local_get 3;
+                      W.Array_get t_anyarray;
+                      W.Call (rt "to_str");
+                      W.Ref_cast t_vstring;
+                      W.Struct_get (t_vstring, 0);
+                      W.Call (rt "strcat");
+                      W.Local_set 1;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+        ]
+      @ (W.Local_get 1 :: bytes_const "]")
+      @ [
+          W.Call (rt "strcat");
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Struct_new t_vstring;
+        ];
+  }
+
 (* box(v) -> (ref null $vbox). *)
 let rt_box : W.func_type =
   {
@@ -4419,6 +4816,12 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_list_len;
         rt_list_str;
         rt_str_substring;
+        rt_builder_new;
+        rt_builder_push;
+        rt_builder_get;
+        rt_builder_to_array;
+        rt_array_str;
+        rt_builder_str;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

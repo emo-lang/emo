@@ -356,6 +356,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | List_new v ->
       put env "apply 'emo_list_new'/1 ";
       args_list env [ v ]
+  | Builder_new -> put env "apply 'emo_builder_new'/0 ()"
   | Method { self_; name; args } -> method_call env self_ name args
   | Do_spawn { func; args } -> (
       (* the arguments evaluate in the spawner; the fun closes over
@@ -413,7 +414,7 @@ and method_call env self_ name args =
     args_list env (self_ :: args)
   in
   match (name, args) with
-  | "get", [ i ] -> (
+  | "get", [ i ] ->
       (* `get` names both the Bytes accessor and a class method (the
          format packages' object types, say). The interpreter checks
          the receiver's class first, so dispatch at runtime: a Bytes
@@ -433,31 +434,33 @@ and method_call env self_ name args =
             else None)
           env.classes
       in
-      match candidates with
-      | [] ->
-          put env "apply 'emo_bytes_get'/2 ";
-          args_list env [ self_; i ]
-      | _ ->
-          let recv = fresh_var env "__recv" in
-          put env ("let <" ^ recv ^ "> =\n");
-          expr env self_;
-          put env ("\nin case " ^ recv ^ " of\n");
-          List.iter
-            (fun cname ->
-              put env
-                (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/2 ("
-                   (instance_pattern env.classes cname)
-                   (Emo_ir.sanitize_ident (cname ^ "__" ^ mangled)));
-              put env recv;
-              put env ", ";
-              expr env i;
-              put env ")\n")
-            candidates;
-          put env "  <_> when 'true' ->\n    apply 'emo_bytes_get'/2 (";
+      let recv = fresh_var env "__recv" in
+      put env ("let <" ^ recv ^ "> =\n");
+      expr env self_;
+      put env ("\nin case " ^ recv ^ " of\n");
+      List.iter
+        (fun cname ->
+          put env
+            (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/2 ("
+               (instance_pattern env.classes cname)
+               (Emo_ir.sanitize_ident (cname ^ "__" ^ mangled)));
           put env recv;
           put env ", ";
           expr env i;
-          put env ")\nend")
+          put env ")\n")
+        candidates;
+      put env
+        (Printf.sprintf
+           "  <{'emo_builder', _k}> when 'true' ->\n\
+           \    apply 'emo_builder_get'/2 (%s, "
+           recv);
+      expr env i;
+      put env ")\n";
+      put env "  <_> when 'true' ->\n    apply 'emo_bytes_get'/2 (";
+      put env recv;
+      put env ", ";
+      expr env i;
+      put env ")\nend"
   | "set", [ _; _ ] -> bytes_only 3 "emo_bytes_set"
   | "get_u16_le", [ _ ] -> bytes_only 2 "emo_bytes_u16_get"
   | "get_u32_le", [ _ ] -> bytes_only 2 "emo_bytes_u32_get"
@@ -470,6 +473,8 @@ and method_call env self_ name args =
   | "push_back", [ _ ] -> bytes_only 2 "emo_list_push_back"
   | "pop_front", [] -> bytes_only 1 "emo_list_pop_front"
   | "pop_back", [] -> bytes_only 1 "emo_list_pop_back"
+  | "push", [ _ ] -> bytes_only 2 "emo_builder_push"
+  | "to_array", [] -> bytes_only 1 "emo_builder_to_array"
   | "length", [] ->
       put env "case ";
       expr env self_;
@@ -480,6 +485,11 @@ and method_call env self_ name args =
       args_list env [ self_ ];
       put env
         "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_len'/1 ";
+      args_list env [ self_ ];
+      put env
+        "\n\
+        \  <{'emo_builder', _k}> when 'true' ->\n\
+        \    apply 'emo_builder_len'/1 ";
       args_list env [ self_ ];
       put env
         "\n\
@@ -1177,6 +1187,7 @@ and free_expr env (e : Emo_ir.expr) (acc : string list) : string list =
   | Emo_ir.Bytes_new x
   | Emo_ir.List_new x ->
       free_expr env x acc
+  | Emo_ir.Builder_new -> acc
   | Emo_ir.Binary (_, l, r) -> free_expr env l (free_expr env r acc)
   | Emo_ir.Cond { c; t; e } ->
       free_expr env c (free_expr env t (free_expr env e acc))
@@ -1655,6 +1666,10 @@ let rt_source =
 	      apply 'emo_bytes_label'/1 ({'emo_bytes', _k})
 	  <{'emo_list', _k}> when 'true' ->
 	      apply 'emo_list_to_str'/1 ({'emo_list', _k})
+	  <{'emo_builder', _k}> when 'true' ->
+	      apply 'emo_builder_to_str'/1 ({'emo_builder', _k})
+	  <_a> when call 'erlang':'is_list'(_a) ->
+	      apply 'emo_array_to_str'/1 (_a)
 	  <_s> when call 'erlang':'is_binary'(_s) -> _s
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_to_str', _other})
@@ -2363,6 +2378,131 @@ let rt_source =
 	      call 'erlang':'error'({'emo_no_list', _other})
 	end
 
+%% The ArrayBuilder: BEAM's terms are immutable, so the builder is a
+%% {emo_builder, Key} tag over a per-process {Count, Reversed} pair in the
+%% process dictionary — the same mechanism emo_list_new uses. Push
+%% conses onto the reversed list, so it is O(1); get is O(n) (it walks to
+%% the index), which only push is required to avoid.
+'emo_builder_new'/0 =
+    fun () ->
+	let <_k> = call 'erlang':'make_ref'()
+	in do call 'erlang':'put'(_k, {0, []})
+	   {'emo_builder', _k}
+
+'emo_builder_push'/2 =
+    fun (_b, _v) ->
+	case _b of
+	  <{'emo_builder', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_n, _r}> when 'true' ->
+		    do call 'erlang':'put'(_k, {call 'erlang':'+'(_n, 1), [_v | _r]})
+		       _b
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_builder', _other})
+	end
+
+'emo_builder_elems'/1 =
+    fun (_b) ->
+	case _b of
+	  <{'emo_builder', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_n, _r}> when 'true' -> call 'lists':'reverse'(_r)
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_builder', _other})
+	end
+
+'emo_builder_len'/1 =
+    fun (_b) ->
+	case _b of
+	  <{'emo_builder', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_n, _r}> when 'true' -> _n
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_builder', _other})
+	end
+
+'emo_builder_get'/2 =
+    fun (_b, _i) ->
+	case _b of
+	  <{'emo_builder', _k}> when 'true' ->
+	      case call 'erlang':'get'(_k) of
+		<{_n, _r}> when 'true' ->
+		    case call 'erlang':'is_integer'(_i) of
+		      <'true'> when 'true' ->
+			  case call 'erlang':'>='(_i, 0) of
+			    <'true'> when 'true' ->
+				case call 'erlang':'<'(_i, _n) of
+				  <'true'> when 'true' ->
+				      call 'lists':'nth'(call 'erlang':'-'(_n, _i), _r)
+				  <'false'> when 'true' ->
+				      call 'erlang':'error'({'emo_builder_index', _i, _n})
+				end
+			    <'false'> when 'true' ->
+				call 'erlang':'error'({'emo_builder_index', _i, _n})
+			  end
+		      <'false'> when 'true' ->
+			  call 'erlang':'error'({'emo_builder_index', _i, _n})
+		    end
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_builder', _other})
+	end
+
+%% to_array hands out a fresh list — a copy, so the builder stays free to
+%% grow without touching the array it already returned.
+'emo_builder_to_array'/1 = fun (_b) -> apply 'emo_builder_elems'/1 (_b)
+
+'emo_builder_to_str'/1 =
+    fun (_b) ->
+	call 'erlang':'iolist_to_binary'
+	    (apply 'emo_builder_join'/2 (apply 'emo_builder_elems'/1 (_b), 1))
+
+'emo_builder_join'/2 =
+    fun (_elems, _first) ->
+	case _elems of
+	  <[_e | _rest]> when 'true' ->
+	      let <_piece> = apply 'emo_to_str'/1 (_e)
+	      in case _first of
+		   <1> when 'true' ->
+		       [[65, 114, 114, 97, 121, 66, 117, 105, 108, 100, 101, 114, 91], _piece
+			| apply 'emo_builder_join'/2 (_rest, 0)]
+		   <_> when 'true' ->
+		       [[44, 32], _piece | apply 'emo_builder_join'/2 (_rest, 0)]
+		 end
+	  <[]> when 'true' ->
+	      case _first of
+		<1> when 'true' ->
+		    [65, 114, 114, 97, 121, 66, 117, 105, 108, 100, 101, 114, 91, 93]
+		<_> when 'true' -> [93]
+	      end
+	end
+
+'emo_array_to_str'/1 =
+    fun (_a) ->
+	call 'erlang':'iolist_to_binary'
+	    (apply 'emo_array_join'/2 (_a, 1))
+
+'emo_array_join'/2 =
+    fun (_elems, _first) ->
+	case _elems of
+	  <[_e | _rest]> when 'true' ->
+	      let <_piece> = apply 'emo_to_str'/1 (_e)
+	      in case _first of
+		   <1> when 'true' ->
+		       [[91], _piece | apply 'emo_array_join'/2 (_rest, 0)]
+		   <_> when 'true' ->
+		       [[44, 32], _piece | apply 'emo_array_join'/2 (_rest, 0)]
+		 end
+	  <[]> when 'true' ->
+	      case _first of
+		<1> when 'true' -> [91, 93]
+		<_> when 'true' -> [93]
+	      end
+	end
+
 'emo_list_join'/2 =
     fun (_elems, _first) ->
 	case _elems of
@@ -2395,6 +2535,12 @@ let rt_source =
 	      case _b of
 		<{'emo_list', _kb}> when 'true' ->
 		    call 'erlang':'=:='(apply 'emo_list_elems'/1 (_a), apply 'emo_list_elems'/1 (_b))
+		<_other> when 'true' -> 'false'
+	      end
+	  <{'emo_builder', _ka}> when 'true' ->
+	      case _b of
+		<{'emo_builder', _kb}> when 'true' ->
+		    call 'erlang':'=:='(apply 'emo_builder_elems'/1 (_a), apply 'emo_builder_elems'/1 (_b))
 		<_other> when 'true' -> 'false'
 	      end
 	  <_other> when 'true' -> call 'erlang':'=:='(_a, _b)

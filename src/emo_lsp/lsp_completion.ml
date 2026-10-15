@@ -76,6 +76,8 @@ let builtin_type_items : item list =
     ty "Array" "Array[T] — fixed-length, immutable";
     ty "Box" "Box[T] — a mutable cell";
     ty "List" "List[T] — a mutable double-ended queue";
+    ty "ArrayBuilder"
+      "ArrayBuilder[T] — a mutable buffer that grows into an Array[T]";
     ty "TcpConn" "a TCP connection";
     ty "TcpListener" "a TCP listener";
     ty "UdpSocket" "a UDP socket";

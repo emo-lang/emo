@@ -48,6 +48,7 @@ module Emo_eval = struct
     | Tuple of value list
     | Array of value array
     | List of emo_list
+    | Builder of emo_builder
     | Map of emo_map
     | Box of value ref
     | Pid of int (* a process identity, from `do` or `self_pid()` *)
@@ -142,6 +143,11 @@ module Emo_eval = struct
     mutable lprev : emo_list_node option;
     mutable lnext : emo_list_node option;
   }
+
+  (* The ArrayBuilder: a flat element buffer under construction that
+     doubles when it fills. The identity is the record, so mutation is
+     visible through every alias — the same shape a Box and a List take. *)
+  and emo_builder = { mutable bitems : value array; mutable bsize : int }
 
   (* The map's key rule and its insertion order. *)
   let map_key_ok = function
@@ -362,6 +368,11 @@ module Emo_eval = struct
         let copy = fresh_list () in
         List.iter (fun v -> list_push_back copy (snapshot v)) (list_values l);
         List copy
+    | Builder b ->
+        Builder
+          { bitems = Array.map snapshot (Array.sub b.bitems 0 b.bsize);
+            bsize = b.bsize
+          }
     | Map m ->
         let copy = { entries = Hashtbl.create 8; order = [] } in
         List.iter
@@ -439,6 +450,7 @@ module Emo_eval = struct
     | Tuple _ -> "Tuple"
     | Array _ -> "Array"
     | List _ -> "List"
+    | Builder _ -> "ArrayBuilder"
     | Map _ -> "Map"
     | Box _ -> "Box"
     | Pid _ -> "Pid"
@@ -453,6 +465,36 @@ module Emo_eval = struct
     | EnumMember _ -> "an enum member"
     | TypeValue _ -> "a type"
     | EmoGroup _ -> "a function group"
+
+  (* The ArrayBuilder's operations: push at the end for amortized O(1) (the
+     buffer doubles when it fills), and `to_array` — a copy, so the builder
+     stays free to grow without touching the array it handed out. *)
+  let fresh_builder () : emo_builder = { bitems = [||]; bsize = 0 }
+
+  let builder_push (b : emo_builder) (v : value) : unit =
+    if b.bsize = Array.length b.bitems then (
+      let cap = Array.length b.bitems in
+      let ncap = if cap < 8 then 8 else cap * 2 in
+      let items = Array.make ncap v in
+      Array.blit b.bitems 0 items 0 cap;
+      b.bitems <- items);
+    b.bitems.(b.bsize) <- v;
+    b.bsize <- b.bsize + 1
+
+  let builder_get (b : emo_builder) (i : value) : value =
+    match i with
+    | Int64 n when n >= 0L && n < Int64.of_int b.bsize ->
+        b.bitems.(Int64.to_int n)
+    | Int64 n ->
+        error "E3004"
+          (Printf.sprintf "index %Ld is out of bounds for a length-%d ArrayBuilder"
+             n b.bsize)
+    | v ->
+        error "E3001"
+          (Printf.sprintf "the index must be an Int64, got %s" (type_name v))
+
+  let builder_to_array (b : emo_builder) : value =
+    Array (Array.sub b.bitems 0 b.bsize)
 
   let rec equal_value a b =
     match (a, b) with
@@ -483,6 +525,14 @@ module Emo_eval = struct
           | _ -> false
         in
         go x.lhead y.lhead
+    | Builder x, Builder y ->
+        x.bsize = y.bsize
+        &&
+        let ok = ref true in
+        for i = 0 to x.bsize - 1 do
+          if not (equal_value x.bitems.(i) y.bitems.(i)) then ok := false
+        done;
+        !ok
     | Box x, Box y -> equal_value !x !y
     | Pid x, Pid y -> Int.equal x y
     | TcpConn x, TcpConn y -> Int.equal x.cid y.cid
@@ -545,6 +595,11 @@ module Emo_eval = struct
         "List["
         ^ String.concat ", " (List.map to_string (list_values l))
         ^ "]"
+    | Builder b ->
+        "ArrayBuilder["
+        ^ String.concat ", "
+            (List.map to_string (Array.to_list (Array.sub b.bitems 0 b.bsize)))
+        ^ "]"
     | Map m ->
         "{"
         ^ String.concat ", "
@@ -595,6 +650,11 @@ module Emo_eval = struct
         "[" ^ String.concat ", " (List.map debug_value (Array.to_list vs)) ^ "]"
     | List l ->
         "List[" ^ String.concat ", " (List.map debug_value (list_values l)) ^ "]"
+    | Builder b ->
+        "ArrayBuilder["
+        ^ String.concat ", "
+            (List.map debug_value (Array.to_list (Array.sub b.bitems 0 b.bsize)))
+        ^ "]"
     | Map _ as v -> to_string v
     | v -> to_string v
 
@@ -1868,6 +1928,10 @@ module Emo_runtime = struct
           (Printf.sprintf "`List.new` expects an Array, got %s"
              (Emo_eval.type_name other))
 
+  (* ArrayBuilder.new(): the builder is born empty. *)
+  let builder_new () : Emo_eval.value =
+    Emo_eval.Builder (Emo_eval.fresh_builder ())
+
   let index collection i =
     match (collection, i) with
     | Emo_eval.Array xs, Emo_eval.Int64 n ->
@@ -2230,6 +2294,19 @@ module Emo_runtime = struct
     | Emo_eval.List l, "length" ->
         none_expected ();
         Emo_eval.Int64 (Int64.of_int l.Emo_eval.lsize)
+    | Emo_eval.Builder b, "push" ->
+        one_expected ();
+        Emo_eval.builder_push b (List.hd args);
+        Emo_eval.Builder b
+    | Emo_eval.Builder b, "get" ->
+        one_expected ();
+        Emo_eval.builder_get b (List.hd args)
+    | Emo_eval.Builder b, "to_array" ->
+        none_expected ();
+        Emo_eval.builder_to_array b
+    | Emo_eval.Builder b, "length" ->
+        none_expected ();
+        Emo_eval.Int64 (Int64.of_int b.Emo_eval.bsize)
     | Emo_eval.TcpConn c, "read_line" ->
         none_expected ();
         Emo_eval.read_line_sync c

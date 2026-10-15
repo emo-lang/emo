@@ -20,7 +20,7 @@
 2. **四个平台并不同等地就绪。** macOS/AppKit 与 GTK 4 已经经 `foreign def` shim 证明可行;终端渲染器是廉价的纯 Emo;Web 最不成熟——TypeScript 目标只面向 Node(发射出的 runtime 顶部 import `node:net`、`node:fs`),而 wasm 目标的整个宿主接口只有三个 import(`println`、`abort`、`float_str`)。
 3. **EmoUI 后端今天无法用包表达。** 一个包只能携带 `.c`/`.h`,并且只能链接裸 `-l` 名。AppKit 后端是 Objective-C(`.m`、`-fobjc-arc`、`-framework AppKit`);GTK 后端需要 `pkg-config --cflags --libs gtk4`。两者都装不进。方向已定——manifest 长出 per-package 原生字段,而不是应用级构建脚本(`CHECK.md`)——字段面属于 T48.7 自己的工作;在它落地之前,原生后端退回到 spike 用的应用级脚本。
 4. **`c` 目标上一次渲染的内存不会被回收,而廉价的解法并不存在。** 树恰好由 arena 永不释放的那些种类搭成——子节点数组、样式 map、字符串——而 UI 每个事件重建一次。`spike/arena-scope` 实测:400 节点时每次渲染约 1 MB、约 820 个对象,两者都无界——60 fps 下约 60 MB/s、每秒约 49,000 个对象。region 能回收字节,回收不了对象,并且会把那些引用计数永久搁死。所以原生后端是 **demo 尺度并把限制写进文档**,而值语义家族的引用计数作为独立里程碑排期(step 49,`CHECK.md`)。
-5. **`Array` 没有 O(1) append**,而 `List` 无法转回可索引的 `Array`,所以已定的 children 写法——`Array[Node]` 靠 `.append` 增长、每次渲染重建——在字节与 retain 两面都是 O(k²)。T48.1 应当先定 children 的表示,或者给语言补一个廉价的数组 builder。
+5. **`Array` 没有 O(1) append**,而 `List` 无法转回可索引的 `Array`,所以已定的 children 写法——`Array[Node]` 靠 `.append` 增长、每次渲染重建——在字节与 retain 两面都是 O(k²)。T48.1 应当先定 children 的表示,或者给语言补一个廉价的数组 builder。**这后半句现在有答案了**:语言有了 `ArrayBuilder`(T49.3),用 `push` 以摊还 O(1) 把 `Array[T]` 长出来,再用 `to_array()` 交出。构造 child 列表不再为每个 child 付一次拷贝,所以 `children_of` 式的累加可以不必再绕那道嵌套 `.append` 的弯。T48.1 的表示问题——children 到底是不是数组——仍然开着。
 
 建议:**EmoUI 作为第三方项目,做成一个可移植的 `ui` 核心加每平台一个包;顺序上先 TUI 与服务端渲染的 HTML(纯 Emo,不需要新工具链),再原生工具包,最后浏览器 DOM。** 不加新语法。唯一值得掂量的语言诉求是一个带检查的 block/函数类型,它是便利项,不是关口。
 
@@ -163,7 +163,7 @@ const rows = each_users(users) -> (u String) { return card(u) }
 
 1. **子节点是显式的 `Array[Node]` 参数。** 受检、顺序可见、不需要新东西。这正是 `docs/visualization.md` 为 plot 选的(decision 14,「Array-only declarative tree,no trailing-block spelling」)。这里也推荐这条。
 2. **block 把子节点 `return` 出来**(`{ return [a, b] }`)。能用,且与尾随 block 语法相容,但每个叶子都要加一个 `return`,而且单个子节点与多个子节点的写法不同。
-3. **一个让 block 往里追加的 builder**(`card(user) { children.push(a) }`)。能用,但把可变状态与一个环境收集器塞进树里——隐式状态,违背设计哲学。
+3. **一个让 block 往里追加的 builder**(`card(user) { children.push(a) }`)。能用,但把可变状态与一个环境收集器塞进树里——隐式状态,违背设计哲学。这条仍然被否掉:反对针对的是 block 在被没被告知的情况下就能取到的那个收集器,而语言自己的 `ArrayBuilder` 并不提供这样的东西——builder 是传进来的值、在调用点被写名字,所以这条选项只有写成「选项 1、但把数组换成 builder」才算可以接受。
 4. **给 block 加一条「最后一个表达式即值」的隐式规则。** 这是模板语言机制,与显式 `return` 规则相悖(`docs/intro/syntax.md`)。拒绝。
 
 因此设计说:**子节点列表是显式的 `Array[Node]`;尾随 block 用于回调与迭代,block 产生值时它 `return` 出来。** README 的 EmoUI 示例应改成这种写法,或者把 block 形式定义为必须 `return`。这是需求中「声明式语法」唯一一处实际上是 API 约定而非语法的地方,而这个约定必须写清。

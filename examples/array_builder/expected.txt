@@ -1,0 +1,15 @@
+0
+ArrayBuilder[]
+3
+ArrayBuilder[a, b, c]
+a
+c
+5
+[a, b, c, d, e]
+ArrayBuilder[a, b, c, d, e, f]
+false
+true
+g
+[a, b, c, d, e, f, g]
+[3, 1, 4]
+ArrayBuilder[]

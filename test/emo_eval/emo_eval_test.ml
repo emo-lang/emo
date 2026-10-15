@@ -1314,6 +1314,126 @@ println(sum)|}));
             | exception Emo_eval.Budget_exceeded _ -> ()));
   ]
 
+let array_builder_tests =
+  [
+    tc "a builder renders as ArrayBuilder[...] over its live prefix" (fun () ->
+        Alcotest.(check string)
+          "output" "ArrayBuilder[]\nArrayBuilder[a, b]\n"
+          (run_program
+             {|const kids = ArrayBuilder.new()
+println(kids)
+kids.push("a")
+kids.push("b")
+println(kids)|}));
+    tc "push answers the builder, so pushes chain" (fun () ->
+        Alcotest.(check string)
+          "output" "3\n"
+          (run_program
+             {|const kids = ArrayBuilder.new()
+kids.push("a").push("b").push("c")
+println(kids.length())|}));
+    tc "length and get read the live prefix" (fun () ->
+        Alcotest.(check string)
+          "output" "3\na\nc\n"
+          (run_program
+             {|const kids = ArrayBuilder.new()
+kids.push("a")
+kids.push("b")
+kids.push("c")
+println(kids.length())
+println(kids.get(0))
+println(kids.get(2))|}));
+    tc "get outside the live prefix is a runtime error" (fun () ->
+        let diagnostic =
+          program_err
+            {|const kids = ArrayBuilder.new()
+kids.push("a")
+println(kids.get(1))|}
+        in
+        Alcotest.(check string) "code" "E3004" (code_of diagnostic));
+    tc "get with a negative index is a runtime error" (fun () ->
+        let diagnostic =
+          program_err
+            {|const kids = ArrayBuilder.new()
+kids.push("a")
+println(kids.get(0 - 1))|}
+        in
+        Alcotest.(check string) "code" "E3004" (code_of diagnostic));
+    tc "to_array hands out a copy that later pushes cannot touch" (fun () ->
+        Alcotest.(check string)
+          "output" "[a, b]\nArrayBuilder[a, b, c]\n"
+          (run_program
+             {|const kids = ArrayBuilder.new()
+kids.push("a")
+kids.push("b")
+const frozen = kids.to_array()
+kids.push("c")
+println(frozen)
+println(kids)|}));
+    tc "to_array of an empty builder is an empty array" (fun () ->
+        Alcotest.(check string)
+          "output" "[]\n"
+          (run_program
+             {|const kids = ArrayBuilder.new()
+println(kids.to_array())|}));
+    tc "equality is element-wise" (fun () ->
+        Alcotest.(check string)
+          "output" "true\nfalse\n"
+          (run_program
+             {|const a = ArrayBuilder.new()
+a.push("x")
+const b = ArrayBuilder.new()
+b.push("x")
+println(a == b)
+b.push("y")
+println(a == b)|}));
+    tc "an alias sees the same mutation" (fun () ->
+        Alcotest.(check string)
+          "output" "1\n2\n"
+          (run_program
+             {|const kids = ArrayBuilder.new()
+const alias = kids
+alias.push("a")
+println(kids.length())
+kids.push("b")
+println(alias.length())|}));
+    tc "an element keeps its own rendering" (fun () ->
+        Alcotest.(check string)
+          "output" "ArrayBuilder[1, true, c]\n"
+          (run_program
+             {|const mixed = ArrayBuilder.new()
+mixed.push(1)
+mixed.push(true)
+mixed.push('c')
+println(mixed)|}));
+    tc "the builder grows past its first capacity" (fun () ->
+        Alcotest.(check string)
+          "output" "20\n19\n"
+          (run_program
+             {|const big = ArrayBuilder.new()
+for var i = 0; i < 20; i = i + 1 {
+  big.push(i)
+}
+println(big.length())
+println(big.get(19))|}));
+    tc "a snapshot copy is independent of its source" (fun () ->
+        let env =
+          run_stmts {|const kids = ArrayBuilder.new()
+kids.push("a")|}
+        in
+        let original = Emo_eval.lookup env span "kids" in
+        let copy = Emo_eval.snapshot original in
+        (match copy with
+        | Emo_eval.Builder b -> Emo_eval.builder_push b (Emo_eval.String "b")
+        | _ -> Alcotest.fail "expected a snapshot of a builder");
+        Alcotest.(check string)
+          "the source is untouched" "ArrayBuilder[a]"
+          (Emo_eval.to_string original);
+        Alcotest.(check string)
+          "the copy carries the push" "ArrayBuilder[a, b]"
+          (Emo_eval.to_string copy));
+  ]
+
 let () =
   Alcotest.run "emo_eval"
     [
@@ -1334,4 +1454,5 @@ let () =
       ("object_acceptance", object_acceptance_tests);
       ("printf", printf_tests);
       ("expect", expect_tests);
+      ("array_builder", array_builder_tests);
     ]

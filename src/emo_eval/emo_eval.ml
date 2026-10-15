@@ -24,6 +24,7 @@ type value =
   | Tuple of value list
   | Array of value array
   | List of emo_list
+  | Builder of emo_builder
   | Map of emo_map
   | Box of value ref
   | Pid of int (* a process identity, from `do` or `self_pid()` *)
@@ -132,6 +133,11 @@ and emo_list_node = {
   mutable lnext : emo_list_node option;
 }
 
+(* The ArrayBuilder: a flat element buffer under construction that
+   doubles when it fills. The identity is the record, so mutation is
+   visible through every alias — the same shape a Box and a List take. *)
+and emo_builder = { mutable bitems : value array; mutable bsize : int }
+
 and emo_map = {
   entries : (value, value) Hashtbl.t;
       (* hash table over the primitive key types; keys are validated
@@ -182,6 +188,7 @@ let type_name = function
   | Tuple _ -> "Tuple"
   | Array _ -> "Array"
   | List _ -> "List"
+  | Builder _ -> "ArrayBuilder"
   | Map _ -> "Map"
   | Box _ -> "Box"
   | Pid _ -> "Pid"
@@ -227,6 +234,14 @@ let rec equal_value a b =
         | _ -> false
       in
       go x.lhead y.lhead
+  | Builder x, Builder y ->
+      x.bsize = y.bsize
+      &&
+      let ok = ref true in
+      for i = 0 to x.bsize - 1 do
+        if not (equal_value x.bitems.(i) y.bitems.(i)) then ok := false
+      done;
+      !ok
   | Map x, Map y ->
       Hashtbl.length x.entries = Hashtbl.length y.entries
       && List.for_all
@@ -364,6 +379,8 @@ let global_env () =
     { bound = TypeValue "Bytes"; mutable_ = false };
   Hashtbl.replace env.frame "List"
     { bound = TypeValue "List"; mutable_ = false };
+  Hashtbl.replace env.frame "ArrayBuilder"
+    { bound = TypeValue "ArrayBuilder"; mutable_ = false };
   Hashtbl.replace env.frame "Map" { bound = TypeValue "Map"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
   Hashtbl.replace env.frame "Exception"
@@ -512,6 +529,36 @@ let list_pop_back span (l : emo_list) : value =
       l.lsize <- l.lsize - 1;
       node.lval
 
+(* The ArrayBuilder's operations: push at the end for amortized O(1) (the
+   buffer doubles when it fills), and `to_array` — a copy, so the builder
+   stays free to grow without touching the array it handed out. *)
+let fresh_builder () : emo_builder = { bitems = [||]; bsize = 0 }
+
+let builder_push (b : emo_builder) (v : value) : unit =
+  if b.bsize = Array.length b.bitems then (
+    let cap = Array.length b.bitems in
+    let ncap = if cap < 8 then 8 else cap * 2 in
+    let items = Array.make ncap v in
+    Array.blit b.bitems 0 items 0 cap;
+    b.bitems <- items);
+  b.bitems.(b.bsize) <- v;
+  b.bsize <- b.bsize + 1
+
+let builder_get span (b : emo_builder) (i : value) : value =
+  match i with
+  | Int64 n when n >= 0L && n < Int64.of_int b.bsize ->
+      b.bitems.(Int64.to_int n)
+  | Int64 n ->
+      error span "E3004"
+        (Printf.sprintf
+           "index %Ld is out of bounds for a length-%d ArrayBuilder" n b.bsize)
+  | v ->
+      error span "E3001"
+        (Printf.sprintf "the index must be an Int64, got %s" (type_name v))
+
+let builder_to_array (b : emo_builder) : value =
+  Array (Array.sub b.bitems 0 b.bsize)
+
 (* The one stringification rule: interpolation and `.to_string()` share it. *)
 let rec to_string v =
   match v with
@@ -529,6 +576,11 @@ let rec to_string v =
       "[" ^ String.concat ", " (List.map to_string (Array.to_list vs)) ^ "]"
   | List l ->
       "List[" ^ String.concat ", " (List.map to_string (list_values l)) ^ "]"
+  | Builder b ->
+      "ArrayBuilder["
+      ^ String.concat ", "
+          (List.map to_string (Array.to_list (Array.sub b.bitems 0 b.bsize)))
+      ^ "]"
   | Map m ->
       "{"
       ^ String.concat ", "
@@ -582,6 +634,11 @@ and debug_value v =
       "[" ^ String.concat ", " (List.map debug_value (Array.to_list vs)) ^ "]"
   | List l ->
       "List[" ^ String.concat ", " (List.map debug_value (list_values l)) ^ "]"
+  | Builder b ->
+      "ArrayBuilder["
+      ^ String.concat ", "
+          (List.map debug_value (Array.to_list (Array.sub b.bitems 0 b.bsize)))
+      ^ "]"
   | Map _ as v -> to_string v
   | v -> to_string v
 
@@ -961,11 +1018,12 @@ let find_process span pid =
   | Some p -> p
   | None -> error span "E3011" (Printf.sprintf "no process has pid %d" pid)
 
-(* Snapshots a message at the process boundary: every Box and List in the
-   message (directly or inside a tuple, array, or instance) arrives as a
-   fresh copy, so mutability never crosses a process boundary — mutations
-   on either side stay unobservable to the other. Everything else is
-   immutable data or identity and passes as-is. *)
+(* Snapshots a message at the process boundary: every Box, List, and
+   ArrayBuilder in the message (directly or inside a tuple, array, or
+   instance) arrives as a fresh copy, so mutability never crosses a
+   process boundary — mutations on either side stay unobservable to the
+   other. Everything else is immutable data or identity and passes
+   as-is. *)
 let rec snapshot (v : value) : value =
   match v with
   | Box r -> Box (ref (snapshot !r))
@@ -976,6 +1034,12 @@ let rec snapshot (v : value) : value =
       let copy = fresh_list () in
       List.iter (fun v -> list_push_back copy (snapshot v)) (list_values l);
       List copy
+  | Builder b ->
+      let copy = fresh_builder () in
+      for i = 0 to b.bsize - 1 do
+        builder_push copy (snapshot b.bitems.(i))
+      done;
+      Builder copy
   | Map m ->
       let copy = fresh_map () in
       List.iter
@@ -1655,6 +1719,14 @@ and eval_method env span recv mname arg_exprs =
           | _ ->
               error span "E3007"
                 (Printf.sprintf "`List.new` expects 1 argument, got %d" argc))
+      | TypeValue "ArrayBuilder", "new" ->
+          (* The builder is born empty; its element type is a compile-time
+             question the runtime never asks. *)
+          if argc <> 0 then
+            error span "E3007"
+              (Printf.sprintf "`ArrayBuilder.new` expects no arguments, got %d"
+                 argc)
+          else Builder (fresh_builder ())
       | TypeValue "Map", "new" ->
           (* Each argument is a (key, value) pair; later pairs overwrite
              earlier ones. *)
@@ -1723,6 +1795,28 @@ and eval_method env span recv mname arg_exprs =
       | List l, "length" ->
           none_expected "length";
           Int64 (Int64.of_int l.lsize)
+      | Builder b, "push" -> (
+          match eval_args () with
+          | [ v ] ->
+              builder_push b v;
+              Builder b
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`push` expects 1 argument, got %d"
+                   (List.length args)))
+      | Builder b, "get" -> (
+          match eval_args () with
+          | [ i ] -> builder_get span b i
+          | args ->
+              error span "E3007"
+                (Printf.sprintf "`get` expects 1 argument, got %d"
+                   (List.length args)))
+      | Builder b, "to_array" ->
+          none_expected "to_array";
+          builder_to_array b
+      | Builder b, "length" ->
+          none_expected "length";
+          Int64 (Int64.of_int b.bsize)
       | Bytes b, "length" ->
           none_expected "length";
           Int64 (Int64.of_int (Bytes.length b))

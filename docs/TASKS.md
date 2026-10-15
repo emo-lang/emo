@@ -64,6 +64,7 @@ before starting the gated work:
 | EmoUI native UI packaging (per-package compile flags / `pkg_config`) | T48.7–T48.9 | direction settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). The field surface (`pkg_config`, compile/link flags, whether `.m` is collected) stays T48.7's own work |
 | `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). Until it lands the native UI backends are demo scale with the limit documented, not gated on this |
 | EmoUI browser runtime path | T48.10–T48.11 | open — `docs/emo-ui.md`; the TypeScript runtime is Node-only and the wasm host has three imports, so a browser-safe split plus a `dom_*` layer (or new wasm imports) and a bundling step are the choice |
+| Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
 
 ---
 
@@ -1634,9 +1635,22 @@ and the non-`c` targets are untouched.
       now that every dynamic type may own memory, and implement it —
       expression-internal temporaries are the hard half, `may_own` plus
       the constructor audit that follows (`emo_c_runtime.c:1753`).
-- [ ] **T49.3** — The array shape: an O(1) append or a builder, so
+- [x] **T49.3** — The array shape: an O(1) append or a builder, so
       growing a k-element array is not quadratic in bytes and retains;
-      T48.1's children representation depends on the answer.
+      T48.1's children representation depends on the answer. **Settled
+      2026-10-15 — a builder, and a new language-level type
+      (`ArrayBuilder`) rather than an `Array` representation change.**
+      `new()` / `push` / `length` / `get` / `to_array`, on the
+      interpreter and all five hosted targets (`riscv64` refuses it by
+      name, exit 65, the `Map` precedent); the first statically-typed
+      `push` pins the element type of the `const` binding at the base of
+      the pushed chain (`docs/intro/syntax.md`, Mutability). The second
+      shape this task names — a conversion back from `List` to an
+      indexable `Array` — is deliberately not taken. This answers the
+      array half without touching the runtime, so step 49's "array growth
+      is linear rather than quadratic" criterion is now reachable through
+      the language rather than through T49.1; T48.1's representation
+      question is unblocked, not answered.
 - [ ] **T49.4** — The gate: the spike's render ladder and region probes
       as a checked-in test that fails today and passes after, on the `c`
       target, with `dune test` green.

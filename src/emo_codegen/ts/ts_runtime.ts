@@ -164,6 +164,19 @@ function listPopBack(l: EList): any {
   return node.v;
 }
 
+// The ArrayBuilder: a growable array under construction. JS's own
+// Array.push is already amortized O(1), so the class holds the buffer and
+// nothing else; `to_array` hands out a copy through EArray's own slice.
+// Dispatch goes through E.method's EBuilder arms, so the class carries no
+// methods of its own (an `is` interface check stays false, like Box and
+// Bytes).
+class EBuilder {
+  items: any[];
+  constructor() {
+    this.items = [];
+  }
+}
+
 class ETuple {
   items: any[];
   constructor(items: any[]) {
@@ -419,6 +432,10 @@ function deepEq(a: any, b: any): boolean {
     }
     return true;
   }
+  if (a instanceof EBuilder && b instanceof EBuilder) {
+    if (a.items.length !== b.items.length) return false;
+    return a.items.every((x: any, i: number) => deepEq(x, b.items[i]));
+  }
   if (
     a &&
     b &&
@@ -453,6 +470,8 @@ function toStr(v: any): string {
     for (let n = v.head; n; n = n.next) items.push(toStr(n.v));
     return "List[" + items.join(", ") + "]";
   }
+  if (v instanceof EBuilder)
+    return "ArrayBuilder[" + v.items.map(toStr).join(", ") + "]";
   if (v instanceof ETuple) return "(" + v.items.map(toStr).join(", ") + ")";
   if (v instanceof EArray) return "[" + v.items.map(toStr).join(", ") + "]";
   if (v instanceof EMap)
@@ -964,6 +983,7 @@ function tag(v: any): string {
   if (v instanceof EBox) return "Box";
   if (v instanceof EBytes) return "Bytes";
   if (v instanceof EList) return "List";
+  if (v instanceof EBuilder) return "ArrayBuilder";
   return "an instance";
 }
 
@@ -1855,6 +1875,7 @@ const E: any = {
     for (const item of arr.items) listPushBack(l, item);
     return l;
   },
+  builderNew: () => new EBuilder(),
   enum_: (type: string, member: string) => new EEnum(type, member),
 
   eq: deepEq,
@@ -2123,6 +2144,27 @@ const E: any = {
         if (name === "pop_front") return listPopFront(recv);
         if (name === "pop_back") return listPopBack(recv);
         if (name === "length") return BigInt(recv.size);
+        if (name === "to_string") return toStr(recv);
+      }
+      if (recv instanceof EBuilder) {
+        if (name === "push") {
+          recv.items.push(args[0]);
+          return recv;
+        }
+        if (name === "get") {
+          const i = Number(args[0]);
+          if (!Number.isInteger(i) || i < 0 || i >= recv.items.length)
+            throw new Error(
+              "index " +
+                args[0] +
+                " is out of bounds for a length-" +
+                recv.items.length +
+                " ArrayBuilder",
+            );
+          return recv.items[i];
+        }
+        if (name === "to_array") return new EArray(recv.items.slice());
+        if (name === "length") return BigInt(recv.items.length);
         if (name === "to_string") return toStr(recv);
       }
       if (name === "length" && recv instanceof EArray)

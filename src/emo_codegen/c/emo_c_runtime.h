@@ -62,7 +62,8 @@ enum emo_kind {
   EMO_BYTES,
   EMO_LIST,
   EMO_PID,
-  EMO_MAP
+  EMO_MAP,
+  EMO_BUILDER
 };
 
 /* A class's compile-time vtable: every generated program defines one
@@ -173,6 +174,18 @@ emo_value emo_list_push_back(emo_value l, emo_value v);
 emo_value emo_list_pop_front(emo_value l);
 emo_value emo_list_pop_back(emo_value l);
 int64_t emo_list_length(emo_value l);
+
+/* The ArrayBuilder: a growable array under construction, an identity
+   like a List. Push returns the builder (so pushes chain), get reads an
+   element back, and to_array hands out a fresh Array copy — the builder
+   stays free to grow without touching the array it already returned.
+   Growth is the Map's amortized doubling; the superseded buffer rides
+   the arena like every other dead cell. */
+emo_value emo_builder_new(void);
+emo_value emo_builder_push(emo_value b, emo_value v);
+int64_t emo_builder_length(emo_value b);
+emo_value emo_builder_get(emo_value b, int64_t i);
+emo_value emo_builder_to_array(emo_value b);
 
 /* The Map: a mutable, insertion-ordered hash table (chained buckets
    over an append-only entry array, so entries never move and the

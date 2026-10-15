@@ -2350,6 +2350,10 @@ let bootstrap_tests =
         bootstrap_example (examples_dir ()) "pipeline" "pipeline/main.emo");
     tc "list compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example (examples_dir ()) "list" "list/main.emo");
+    tc "array_builder compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example (examples_dir ()) "array_builder"
+          "array_builder/main.emo");
     tc "loops compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example (examples_dir ()) "loops" "loops/main.emo");
     tc "tcp_echo compiles to a binary with the interpreter's output" (fun () ->
@@ -2490,6 +2494,7 @@ let ts_golden_tests =
       ("bit_ops", "main.emo");
       ("fixed_width", "main.emo");
       ("list", "main.emo");
+      ("array_builder", "main.emo");
       ("map", "main.emo");
       ("json_demo", "main.emo");
       ("yaml_demo", "main.emo");

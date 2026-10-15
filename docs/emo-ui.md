@@ -69,6 +69,13 @@ Four findings shape everything below:
    `Array[Node]` grown by `.append` and rebuilt per render — is O(k²)
    in both bytes and retains. T48.1 should settle the children
    representation, or the language should gain a cheap array builder.
+   **The second half of this is now answered**: the language has
+   `ArrayBuilder` (T49.3), which grows an `Array[T]` by `push` in
+   amortized O(1) and hands it out with `to_array()`. Building the child
+   list no longer costs a copy per child, so `children_of`-style
+   accumulation can be written without the nested-`.append` workaround.
+   T48.1's representation question — whether children are an array at
+   all — stays open.
 
 The recommendation: **EmoUI is a third-party project, built as a
 portable `ui` core plus one package per platform, sequenced TUI and
@@ -346,7 +353,12 @@ four ways to make a block-bodied tree real, and three are wrong:
    leaf and changes the spelling between one child and many.
 3. **A builder the block appends into** (`card(user) { children.push(a) }`).
    Works, but puts mutation and an ambient collector into the tree —
-   implicit state, against the design philosophy.
+   implicit state, against the design philosophy. This is still rejected:
+   the objection is to a collector the block reaches without being told
+   about it, and the language's own `ArrayBuilder` does not supply one —
+   a builder is a value passed in and named at the call site, so this
+   option would only become acceptable by being written as option 1 with
+   a builder in place of the array.
 4. **An implicit "last expression is the value" rule for blocks.** This
    is a template language mechanism and contradicts the explicit-`return`
    rule (`docs/intro/syntax.md`). Reject.

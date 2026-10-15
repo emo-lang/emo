@@ -1221,6 +1221,115 @@ Box.new(x: 1)|} in
                 diagnostics)));
   ]
 
+let array_builder_tests =
+  [
+    tc "the builder's spelling resolves bare and parameterized" (fun () ->
+        let diagnostics =
+          check
+            {|def grow(b ArrayBuilder[String]) Int64 {
+  return b.length()
+}
+
+def bare(b ArrayBuilder) Int64 {
+  return b.length()
+}
+
+const kids = ArrayBuilder.new()
+kids.push("a")
+println(kids.to_array())|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "ArrayBuilder takes exactly one argument" (fun () ->
+        let diagnostics =
+          check "def f(b ArrayBuilder[String, Int64]) Int64 {\n  return 0\n}"
+        in
+        Alcotest.(check bool) "E4005" true (has_code diagnostics "E4005"));
+    tc "ArrayBuilder.new takes no arguments" (fun () ->
+        let diagnostics = check "const b = ArrayBuilder.new(1)" in
+        Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+    tc "the first push pins the const builder's element type" (fun () ->
+        let diagnostics =
+          check {|const kids = ArrayBuilder.new()
+kids.push("a")
+kids.push(1)|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a var builder is not pinned, so its pushes stay unchecked" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (check
+                {|var kids = ArrayBuilder.new()
+kids.push("a")
+kids.push(1)|})));
+    tc "a push not in statement position does not pin" (fun () ->
+        let diagnostics =
+          check
+            {|const kids = ArrayBuilder.new()
+println(kids.push("a"))
+kids.push(1)|}
+        in
+        Alcotest.(check int)
+          "count" 0
+          (List.length
+             (List.filter
+                (fun d -> d.Diagnostic.code = Some "E4004")
+                diagnostics)));
+    tc "push answers the builder, so chained pushes share one pin" (fun () ->
+        let diagnostics =
+          check
+            {|const kids = ArrayBuilder.new()
+kids.push("a").push("b")
+kids.push(1)|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "get answers the element and to_array answers the array" (fun () ->
+        let diagnostics =
+          check
+            {|const kids = ArrayBuilder.new()
+kids.push("a")
+println(kids.get(0) + "!")
+const xs = kids.to_array()
+println(xs[0])|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "get's index is an Int64" (fun () ->
+        let diagnostics =
+          check {|const kids = ArrayBuilder.new()
+kids.push("a")
+kids.get("0")|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "the element type crosses through push's argument" (fun () ->
+        let diagnostics =
+          check
+            {|const kids = ArrayBuilder.new()
+kids.push(1)
+const n = kids.to_array()
+println(n[0] + 1)|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+    tc "a pinned builder refuses an element the array could not hold" (fun () ->
+        let diagnostics =
+          check
+            {|const kids = ArrayBuilder.new()
+kids.push("a")
+const xs = kids.to_array()
+println(xs[0] + 1)|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "an unknown method on a builder is refused" (fun () ->
+        let diagnostics =
+          check {|const kids = ArrayBuilder.new()
+kids.nope()|}
+        in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
+  ]
+
 let cross_module_tests =
   [
     tc "a type declaration names another module's type" (fun () ->
@@ -2044,6 +2153,7 @@ let () =
       ("printf", printf_tests);
       ("expect", expect_tests);
       ("box", box_tests);
+      ("array_builder", array_builder_tests);
       ("member_signature", member_signature_tests);
       ("cross_module", cross_module_tests);
       ("callback", callback_tests);

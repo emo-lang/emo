@@ -1,0 +1,46 @@
+// The ArrayBuilder: grow an array by pushing, read it back by index, and
+// hand it out as an array with `to_array`. The first push pins the element
+// type, so every later push is checked against it.
+const kids = ArrayBuilder.new()
+println(kids.length())
+println(kids)
+
+kids.push("a")
+kids.push("b")
+kids.push("c")
+println(kids.length())
+println(kids)
+println(kids.get(0))
+println(kids.get(2))
+
+// Push answers the builder itself, so pushes chain.
+kids.push("d").push("e")
+println(kids.length())
+
+// to_array hands out a copy: growing the builder afterwards leaves the
+// array it already returned untouched.
+const frozen = kids.to_array()
+kids.push("f")
+println(frozen)
+println(kids)
+
+// Equality is element-wise, and an alias sees the same mutation.
+const twin = ArrayBuilder.new()
+twin.push("a")
+twin.push("b")
+twin.push("c")
+println(kids == twin)
+const alias = kids
+const before = alias.length()
+alias.push("g")
+println(alias.length() == before + 1)
+println(kids.get(6))
+println(kids.to_array())
+
+// A builder of numbers, and one that stays empty.
+const scores = ArrayBuilder.new()
+scores.push(3)
+scores.push(1)
+scores.push(4)
+println(scores.to_array())
+println(ArrayBuilder.new())
