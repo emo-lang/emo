@@ -39,7 +39,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M12 — Visualization (`plot`) | 39–45 | The `plot` package fills its T0 surface (continuous axes; line / scatter / area / histogram marks; log scales, domains, legends, grid, themes, palettes, faceting) and the T1 dataset charts, then adds terminal and PNG renderers — SVG output byte-identical on all five hosted targets. |
 | M13 — Unit testing | 46 | `emo test` discovers the project's `test/` directory and runs every top-level `def test_*` with per-test isolation, reporting, and the exit-code family; the `expect_*` assertion builtins raise the one `Exception` class on failure (interpreter; compiled targets refuse honestly); scaffold, example, tests, and docs land together. |
 | M14 — CSV read/write | 47 | The bundled `csv` package — RFC 4180 records, UTF-8 only — resolving like any stdlib package, answering byte-for-byte on all five targets, with the API reference and runnable goldens. |
-| M15 — EmoUI | 48 | One declarative EmoUI tree renders on a terminal, a server-rendered page, a macOS/AppKit window, and a GTK 4 window (the browser DOM following its runtime path), each behind a thin per-platform entry; the shared app module is portable Emo, the composition syntax is identical everywhere, and per-platform component libraries share convergent names. |
+| M15 — EmoUI | 48 | One declarative EmoUI tree renders on a terminal, a server-rendered page, a macOS/AppKit window, and a GTK 4 window (the browser DOM following its runtime path), each behind a thin per-platform entry; the shared app module is portable Emo, the composition syntax is identical everywhere, and per-platform component libraries share convergent names. The EmoUI packages live in this repository under `projects/emo-ui/`, and the compiler-side gates and the terminal-input package land in the tree (`CHECK.md`, the in-tree project layout). |
 | M16 — Value-family reclamation | 49 | The `c` target reclaims the value-semantic kinds, not only the identity cells: a long-running program's arena bytes and identity liveness stay flat across renders instead of rising per event, array growth is linear rather than quadratic, and every existing golden on every target stays byte-identical (`spike/arena-scope`, `CHECK.md`). |
 
 ## Design gates
@@ -66,6 +66,8 @@ before starting the gated work:
 | EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). Where the bundling step lives in the toolchain stays T48.10's own work |
 | Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
+| The in-tree project layout (`projects/`) | all of M15 | settled 2026-10-15 — `projects/<repo-name>/` at the repository root holds each named Emo project (EmoUI, EmoOS, EmoShell), named for the repository it can later be split out into; EmoUI stays not a standard-library package (`CHECK.md`) |
+| Terminal input's placement (T48.5) | T48.5 | settled 2026-10-15 — raw mode is a standard-library package in the `sqlite3` shape (package-carried `.c`/`.h` reached through `foreign def`, gated by `targets`), not a UI-framework or compiler-side artifact (`CHECK.md`, `docs/emo-ui.md`) |
 
 ---
 
@@ -1511,9 +1513,10 @@ its own runtime path; each platform may ship its own component library,
 but the way components are called and composed is identical. The design
 and its evidence are `docs/emo-ui.md`, `docs/emo-ui-check.md`,
 `spike/components`, and `spike/emo-ui-probe`; the EmoUI packages live in
-their own repository, while the compiler-side gates the design found
-(the native packaging mechanism, the browser runtime path, terminal raw
-mode) land here. The `c` target's long-running memory is the fourth
+this repository under `projects/emo-ui/` (`CHECK.md`, the in-tree
+project layout), while the compiler-side gates the design found (the
+native packaging mechanism and the browser runtime path) and the
+terminal-input package also land in the tree. The `c` target's long-running memory is the fourth
 thing a UI forces and the one it does not get for free: the 2026-10-14
 arena-scope spike settled that the cheap fix does not exist, so it is
 scheduled separately (**M16**, step 49) and the native backends are
@@ -1534,9 +1537,12 @@ required.
 
 **Decisions settled here (2026-10-14; full text in `docs/emo-ui.md`):**
 
-1. EmoUI is a **third-party project**, not a standard-library package;
-   a later split moving the portable core and the pure-Emo backends into
-   the stdlib is possible once stable, not v1.
+1. EmoUI is a **project of its own**, not a standard-library package; a
+   later split moving the portable core and the pure-Emo backends into
+   the stdlib is possible once stable, not v1. *(Revised 2026-10-15 by
+   decision 11: hosted in this repository under `projects/emo-ui/`, not
+   in a separate repository created up front. It remains not a stdlib
+   package.)*
 2. The tree type is a **multi-module `ui.Node`** (interface spine plus
    concrete classes with typed props), not a stringly-tagged class and
    not one class per platform with no core.
@@ -1558,6 +1564,13 @@ required.
    DOM last.**
 10. **No new syntax**; a checked block/function type is the one language
     ask worth weighing later, and it is not a gate.
+11. **The EmoUI packages live in this repository under
+    `projects/emo-ui/`** (settled 2026-10-15, `CHECK.md`). The directory
+    is named for the eventual repository so `git subtree split` can
+    extract it later with its history; `projects/emo-os/` and
+    `projects/emo-shell/` are reserved by the same decision and stay
+    empty until scheduled. Terminal input (T48.5) settles with it as a
+    standard-library package in the `sqlite3` shape.
 
 - [ ] **T48.1** — The portable `ui` core package: the `Node` spine and
       primitives, the typed `Style` with `with_*` copies, the layout
@@ -1580,8 +1593,11 @@ required.
       stable text form, the byte-identical golden harness.
 - [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
       model) and ANSI painting; a scripted-input golden.
-- [ ] **T48.5** — Terminal input: raw mode and key events (`termios` via
-      `foreign def`, or a terminal runtime implementation); line mode
+- [ ] **T48.5** — Terminal input: raw mode and key events, as a
+      **standard-library package in the `sqlite3` shape** —
+      package-carried `.c`/`.h` reached through `foreign def`, gated by
+      the manifest's `targets` — rather than a UI-framework or
+      compiler-side artifact (settled 2026-10-15, `CHECK.md`); line mode
       first.
 - [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
       byte-identical on all five hosted targets; forms and links as the

@@ -6,8 +6,9 @@ names (2026-10-14) and the C→Emo callback contract (2026-10-11) are
 already in `develop`. · **Related:** `docs/emo-ui.md` (the assessment
 and design direction), `docs/emo-ui-check.md` (the gate checklist),
 `spike/components` (the two-platform component spike),
-`spike/emo-ui-probe` (the language probes) · **Status:** planned — the
-decisions are settled; nothing is implemented.
+`spike/emo-ui-probe` (the language probes) · **Status:** in progress —
+the layout is settled and T48.1's two codegen defects have landed; the
+EmoUI packages themselves are not started.
 
 ## Why this step exists
 
@@ -24,10 +25,11 @@ an honest account of what the language does and does not give the tree
 today.
 
 `docs/emo-ui.md` is that design; this step schedules it. The EmoUI
-packages live in their own repository (`github.com/emo-lang/emo-ui`,
-linked from the README); the compiler-side gates the design identified
-— the native packaging mechanism, the browser runtime path, and
-terminal raw mode — land in this repository.
+packages live under `projects/emo-ui/` in this repository (decision 12
+below; the README links there), while the compiler-side gates the design
+identified — the native packaging mechanism and the browser runtime
+path — land beside them in this repository's own tree, and terminal raw
+mode lands in the standard library (decision 12, `CHECK.md`).
 
 ## Goal
 
@@ -43,10 +45,12 @@ pure-Emo backends answer byte-for-byte on all five hosted targets.
 
 Recorded in `docs/emo-ui.md` and carried by this step:
 
-1. **EmoUI is a third-party project**, not a standard-library package.
-   A later split that moves the portable core and the pure-Emo backends
+1. **EmoUI is a project of its own**, not a standard-library package. A
+   later split that moves the portable core and the pure-Emo backends
    (TUI, SSR) into the stdlib is possible once they are stable; it is
-   not v1.
+   not v1. *(Hosting revised 2026-10-15 by decision 12: it lives in this
+   repository under `projects/emo-ui/` rather than in a separate
+   repository created up front. It remains not a stdlib package.)*
 2. **The tree type is a multi-module `ui.Node`** — an interface spine
    plus concrete classes with typed props — not a single stringly-tagged
    class, and not one class per platform with no portable core.
@@ -80,6 +84,17 @@ Recorded in `docs/emo-ui.md` and carried by this step:
     lost); recursive node classes and self-naming interfaces now check;
     a bare def — local or module-qualified — is a value satisfying
     `Block`; default parameters are refused (E4009).
+12. **The packages live in this repository, under `projects/emo-ui/`**
+    (settled 2026-10-15, `CHECK.md`). This supersedes the hosting half
+    of decision 1 below — `github.com/emo-lang/emo-ui` stops being a
+    separate repository created up front — while leaving its substance
+    intact: EmoUI is still not a standard-library package, and the
+    stdlib embed walking `stdlib/registry` alone is why an in-tree
+    `projects/emo-ui` never enters the compiler binary. The directory is
+    named for the eventual repository so `git subtree split` can extract
+    it later with its history. `projects/emo-os/` and
+    `projects/emo-shell/` are reserved by the same decision and stay
+    empty until they are scheduled.
 
 ## Scope
 
@@ -127,6 +142,17 @@ Recorded in `docs/emo-ui.md` and carried by this step:
 
 ## Tasks
 
+Where each task lives, now that `projects/` is the layout: **T48.1–T48.4,
+T48.6, T48.8, T48.9, T48.11 and T48.12 are EmoUI package work** and land
+under `projects/emo-ui/`; **T48.7 and T48.10 are compiler-side gates**
+and land in this repository's own tree (`src/emo_pkg`, the TypeScript
+emitter and runtime); **T48.13 spans both** — the README and `docs/` are
+this repository's, the package references are EmoUI's. **T48.5** is neither
+EmoUI's nor the compiler's: it is a **standard-library package in the
+`sqlite3` shape** — package-carried `.c`/`.h` reached through `foreign def`,
+gated by `targets` — and lands in `stdlib/` (`CHECK.md`, terminal input's
+placement; `docs/emo-ui.md`, ask 7).
+
 - [ ] **T48.1** — The portable `ui` core package: the `Node` spine
       (interface plus `Column`/`Row`/`Text`/`Button`/`TextInput`/
       `Image`/`Spacer`/`Scroll`), the typed `Style` with `style()` and
@@ -149,9 +175,11 @@ Recorded in `docs/emo-ui.md` and carried by this step:
       the other backends share.
 - [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
       model) and ANSI painting; a scripted-input golden.
-- [ ] **T48.5** — Terminal input: raw mode and key events — a `termios`
-      `foreign def` (c/ocaml) or a terminal runtime implementation;
-      line mode first, raw mode behind it.
+- [ ] **T48.5** — Terminal input: raw mode and key events, as a
+      **standard-library package in the `sqlite3` shape** — package-carried
+      `.c`/`.h` reached through `foreign def`, gated by `targets` — not a
+      UI-framework or compiler-side artifact (`CHECK.md`); line mode first,
+      raw mode behind it.
 - [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
       byte-identical on all five hosted targets; forms and links as the
       interaction model.

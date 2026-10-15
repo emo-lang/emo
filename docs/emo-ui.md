@@ -77,12 +77,14 @@ Four findings shape everything below:
    T48.1's representation question — whether children are an array at
    all — stays open.
 
-The recommendation: **EmoUI is a third-party project, built as a
-portable `ui` core plus one package per platform, sequenced TUI and
-server-rendered HTML first (pure Emo, no new toolchain), native
-toolkits next, in-browser DOM last.** No new syntax. The one language
-ask worth weighing is a checked block/function type, and it is a
-convenience, not a gate.
+The recommendation: **EmoUI is a project of its own — third-party
+rather than standard-library — built as a portable `ui` core plus one
+package per platform, sequenced TUI and server-rendered HTML first
+(pure Emo, no new toolchain), native toolkits next, in-browser DOM
+last.** No new syntax. The one language ask worth weighing is a checked
+block/function type, and it is a convenience, not a gate. (Where it is
+hosted changed on 2026-10-15 — `projects/emo-ui/` in this repository
+rather than a repository of its own; see *Packaging* below.)
 
 ## What the requirement actually demands
 
@@ -200,6 +202,8 @@ native-only, and there is no termios binding. Reading a line is possible
 today; arrow keys, resize events, and Ctrl-C-as-a-message want raw mode,
 which is a small `foreign def` to `termios` (c/ocaml) or a terminal
 runtime implementation. Bounded, but it must be scheduled, not assumed.
+**Settled 2026-10-15** — scheduled as a standard-library package in the
+`sqlite3` shape (ask 7 below).
 
 ### Web
 
@@ -672,6 +676,15 @@ Both were on the table. The recommendation is **third-party, its own
 repository** (`github.com/emo-lang/emo-ui`, the link already in the
 README), with the portable core as an ordinary Emo package.
 
+**Revised 2026-10-15:** its own *repository* became its own *project
+directory* — `projects/emo-ui/` in this repository, named after the
+repository it can still be split out into (`CHECK.md`). The
+standard-library half of the question is untouched: the portable core
+stays an ordinary package, not a stdlib one. What the in-tree move
+does cost is the decoupling the separate repository would have bought —
+UI releases now ride the compiler's repository and CI — accepted for
+now in exchange for not maintaining a second repository in step.
+
 Reasons for third-party:
 
 - **The standard library ships inside the compiler as embedded data**
@@ -732,7 +745,13 @@ mid-implementation:
    (`CHECK.md`). Where the bundling step lives in the toolchain is
    T48.10's own work. Not needed for SSR (T0).
 7. **Terminal input.** Raw mode and key events for the TUI (a small
-   termios binding, or a terminal runtime implementation).
+   termios binding, or a terminal runtime implementation). **Settled
+   2026-10-15: a standard-library package, shipped the `sqlite3` way**
+   (`CHECK.md`) — package-carried `.c`/`.h` sources reached through
+   `foreign def`, gated by the manifest's `targets`, embedded with the
+   rest of the stdlib. Raw mode is a capability any TUI program needs,
+   so it belongs beside `os` and `file` rather than inside the UI
+   framework that happens to be its first consumer.
 8. **No new syntax.** The tree is already expressible; if it is not, the
    gap is a type or a library function, not a construct.
 
@@ -818,9 +837,14 @@ backends are four different programs.
 
 ## Decisions recorded (2026-10-14)
 
-1. **EmoUI is a third-party project**, not a standard-library package;
-   a stdlib move for the portable core and the pure-Emo backends is a
-   possible later split, not v1.
+1. **EmoUI is a project of its own**, not a standard-library package; a
+   stdlib move for the portable core and the pure-Emo backends is a
+   possible later split, not v1. **Revised 2026-10-15:** it is hosted in
+   this repository under `projects/emo-ui/`, not in a separate
+   repository created up front (`CHECK.md`, the in-tree project
+   layout). The not-a-standard-library-package half stands unchanged —
+   the stdlib embed walks `stdlib/registry` alone, so an in-tree
+   `projects/emo-ui` never enters the compiler binary.
 2. **The tree type is a multi-module `ui.Node`** (interface spine +
    concrete classes with typed props), not a single stringly-tagged
    class and not one class per platform with no core.

@@ -32,7 +32,7 @@
 | M12 — 可视化(`plot`) | 39–45 | `plot` 包补齐其 T0 表面(连续轴;line / scatter / area / histogram mark;对数标度、域、图例、网格、主题、调色板、分面)与 T1 数据集图表,随后加入终端与 PNG 渲染器——SVG 输出在全部五个宿主 target 上逐字节一致。 |
 | M13 — 单元测试 | 46 | `emo test` 发现项目的 `test/` 目录并逐个运行其中的顶层 `def test_*`,带逐测试隔离、报告与退出码族;`expect_*` 断言内建失败时抛出唯一的 `Exception` 类(解释器内;编译 target 诚实地拒绝);脚手架、示例、测试与文档一同落地。 |
 | M14 — CSV 读写 | 47 | 随编译器交付的 `csv` 包——RFC 4180 记录,只认 UTF-8——像其他 stdlib 包一样解析,在全部五个 target 上逐字节一致,并附 API 参考与可运行金测。 |
-| M15 — EmoUI | 48 | 一套声明式 EmoUI 树渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口(浏览器 DOM 随后按其运行时路径接入),各自只落在一个薄薄的每平台入口后面;共享 app 模块是可移植的 Emo,组合语法处处一致,各平台组件库共享收敛命名。 |
+| M15 — EmoUI | 48 | 一套声明式 EmoUI 树渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口(浏览器 DOM 随后按其运行时路径接入),各自只落在一个薄薄的每平台入口后面;共享 app 模块是可移植的 Emo,组合语法处处一致,各平台组件库共享收敛命名。EmoUI 各包活在本仓库的 `projects/emo-ui/` 下,编译器侧关口与终端输入包也落在本仓库(`CHECK.md`,in-tree 项目布局)。 |
 | M16 — 值语义家族的回收 | 49 | `c` 目标回收值语义的那些种类,而不只是身份格:长跑程序每次渲染的 arena 字节与身份存活数保持平坦,而不是随事件上涨;数组增长是线性而非二次;每个 target 上既有的金测逐字节不变(`spike/arena-scope`、`CHECK.md`)。 |
 | M17 — 跨 target 一致性 | 50 | 兑现已经做出的承诺,而不是新设计:`c` 目标里子进程 raise 只结束子进程、`send` 送的是快照,`foreign def` 在 `wasm` 与 `beam` 上按名拒绝;每个 target 上既有的金测逐字节不变(`CHECK.md`)。 |
 
@@ -59,6 +59,8 @@
 | EmoUI 浏览器运行时路径 | T48.10–T48.11 | 已定(2026-10-15)——走拆分路线:把 TypeScript 运行时拆出浏览器安全子集、加 `dom_*` 家族,再配一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`、`docs/emo-ui.md`)。打包步骤在工具链里的落点仍属 T48.10 自己的范围 |
 | 跨 target 一致性(`c` 的 raise、`c` 的 send、`foreign def` 在 `wasm`/`beam` 上) | step 50 | 已定(2026-10-15)——这是对已经做出的承诺的一致性修复,不是新设计:子进程 raise 只结束子进程、`send` 送快照、两个 emitter 按名拒绝 `foreign def`(`CHECK.md`)。`typescript` 目标 send 仍共享这一项保持开放 |
 | 数组增长(O(1) 的 append 还是一个 builder) | T48.1、T49.4 | 已定(2026-10-15,T49.3)——走 builder,并且是语言层的新类型 `ArrayBuilder`,而不是 `Array` 的表示层改动(`CHECK.md`、`docs/intro/syntax.md`);从 `List` 转回 `Array` 那一半刻意不做 |
+| in-tree 项目布局(`projects/`) | M15 全部 | 已定(2026-10-15)——仓库根的 `projects/<仓库名>/` 存放每个具名 Emo 项目(EmoUI、EmoOS、EmoShell),以它将来可拆分出去的仓库命名;EmoUI 仍不是标准库包(`CHECK.md`) |
+| 终端输入的位置(T48.5) | T48.5 | 已定(2026-10-15)——raw mode 是一个标准库包,形状同 `sqlite3`(包自带 `.c`/`.h`,经 `foreign def` 调用,由 `targets` 把关),不是 UI 框架侧或编译器侧的产物(`CHECK.md`、`docs/emo-ui.md`) |
 
 ---
 
@@ -752,7 +754,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 
 ## M15 — EmoUI
 
-EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从显式状态渲染,没有模板语言——UI 就是普通 Emo。一个共享的应用模块(组件、`update`、`view`,对着可移植的 `ui` 核心写)渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口;浏览器 DOM 随后按自己的运行时路径接入。每个平台可以有各自的组件库,但组件的调用与组合方式完全一致。设计与证据是 `docs/emo-ui.md`、`docs/emo-ui-check.md`、`spike/components` 与 `spike/emo-ui-probe`;EmoUI 各包活在它自己的仓库里,而设计发现的那几道编译器侧关口(原生打包机制、浏览器运行时路径、终端 raw mode)落在本仓库。`c` 目标的长跑内存是 UI 逼出来的第四条,也是它拿不到白送的一条:2026-10-14 的 arena-scope spike 落定「廉价的解法不存在」,所以它被单独排期(**M16**,step 49),在它落地之前原生后端停在 demo 尺度——限制写进文档,而不是糊过去。
+EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从显式状态渲染,没有模板语言——UI 就是普通 Emo。一个共享的应用模块(组件、`update`、`view`,对着可移植的 `ui` 核心写)渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口;浏览器 DOM 随后按自己的运行时路径接入。每个平台可以有各自的组件库,但组件的调用与组合方式完全一致。设计与证据是 `docs/emo-ui.md`、`docs/emo-ui-check.md`、`spike/components` 与 `spike/emo-ui-probe`;EmoUI 各包活在本仓库的 `projects/emo-ui/` 下(`CHECK.md`,in-tree 项目布局),而设计发现的那几道编译器侧关口(原生打包机制、浏览器运行时路径)与终端输入包也落在本仓库。`c` 目标的长跑内存是 UI 逼出来的第四条,也是它拿不到白送的一条:2026-10-14 的 arena-scope spike 落定「廉价的解法不存在」,所以它被单独排期(**M16**,step 49),在它落地之前原生后端停在 demo 尺度——限制写进文档,而不是糊过去。
 
 ### Step 48 — EmoUI
 
@@ -761,7 +763,7 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 
 **已落定决策(2026-10-14;全文在 `docs/emo-ui.md`):**
 
-1. EmoUI 是**第三方项目**,不是标准库包;稳定之后把可移植核心与纯 Emo 后端搬进标准库是可能的后续分拆,不是 v1。
+1. EmoUI 是**独立项目**,不是标准库包;稳定之后把可移植核心与纯 Emo 后端搬进标准库是可能的后续分拆,不是 v1。*(2026-10-15 由决策 11 修订:托管在本仓库的 `projects/emo-ui/` 下,而不是一开始就另建独立仓库。它仍不是 stdlib 包。)*
 2. 树类型是**多模块的 `ui.Node`**(接口树脊加带类型 props 的具体类),不是字符串化的单类,也不是每平台一套节点类、没有核心。
 3. **子节点是显式的 `Array[Node]`**;尾随 block 用于回调与迭代,且必须 `return` 其值——没有隐式子节点收集,所以 README 的示意树要改。
 4. **布局是一套映射到原生布局的可移植词汇表**(CSS flexbox / GTK boxes / AppKit stack views / TUI 字符网格),不是共享 Emo 布局引擎;TUI 保留一个小 Emo 盒模型。
@@ -771,12 +773,13 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 8. **平台库共享收敛命名**;平台特有组件在调用点带上平台包名。
 9. **顺序:TUI 与 SSR 先行,原生工具包其次,浏览器 DOM 最后。**
 10. **不加新语法**;带检查的 block/函数类型是唯一值得之后掂量的语言诉求,不是关口。
+11. **EmoUI 各包活在本仓库的 `projects/emo-ui/` 下**(已定 2026-10-15,`CHECK.md`)。该目录以将来那个仓库命名,好让 `git subtree split` 之后能带着历史把它拆出去;`projects/emo-os/` 与 `projects/emo-shell/` 由同一条决定预留,排期之前保持为空。终端输入(T48.5)随它一起落定为 `sqlite3` 形状的标准库包。
 
 - [ ] **T48.1** — 可移植 `ui` 核心包:`Node` 树脊与原语、带类型 `Style` 及其 `with_*` 复制、布局词汇表、`Backend` 接口。纯 Emo,全部五个托管 target —— 这也让 A/B 拼写 spike 发现的两个 codegen 缺陷成为本任务的一部分。**两项均已于 2026-10-15 落地:** `c` 的类元数据表移出方法符号所在的 `<cname>__<member>` 命名空间(现为 `vt_<cname>_fields` / `vt_<cname>_methods`,归入 `vt_<cname>` 与 `iface_<name>` 惯例),以及 `ocaml` 原生 `String` 的 `+` 补上它的 `= Emo_check.String` 分支(在 `emit_native_expr` 里产出 `(^)`)。核心包本身尚未开工,所以这一项仍不打勾;`spike/emo-ui-spelling/codegen/` 下的两个夹具就是回归,其 `check.sh` 断言两者的构建与运行。
 - [ ] **T48.2** — Elm 循环:`App`(model/`update`/`view`)、`ui.on(msg)` tag 登记表与 `ui.dispatch(tag)`、`ui.run(view, update, model, backend)`;tag 往返测试,以及保留式 `patch` 对全量重建。
 - [ ] **T48.3** — 无头 `debug` 后端:把树渲染成稳定文本,作为逐字节一致的金测 harness。
 - [ ] **T48.4** — `ui-tui`:字符网格布局(那个小 Emo 盒模型)与 ANSI 绘制;一段脚本化输入的金测。
-- [ ] **T48.5** — 终端输入:raw mode 与按键事件(`foreign def` 接 `termios`,或一个终端运行时实现);行模式先行。
+- [ ] **T48.5** — 终端输入:raw mode 与按键事件,做成 **`sqlite3` 形状的标准库包**——包自带 `.c`/`.h`,经 `foreign def` 调用,由 manifest 的 `targets` 把关——而不是 UI 框架侧或编译器侧的产物(已定 2026-10-15,`CHECK.md`);行模式先行。
 - [ ] **T48.6** — `ui-ssr`:节点树到 HTML 加样式表,在全部五个托管 target 上逐字节一致;交互模型是表单与链接。
 - [ ] **T48.7** — 原生打包机制:per-package 的 manifest 字段(`pkg_config` 与/或编译/链接 flags,以及收集 `.m` 的那部分);应用级构建脚本不是受支持的路径。T48.8 与 T48.9 的关口。
 - [ ] **T48.8** — `ui-macos`:九动词 AppKit shim,压在回调契约上;一致性语料跑通。demo 尺度——`c` 目标的长跑内存是 step 49(`CHECK.md`)。

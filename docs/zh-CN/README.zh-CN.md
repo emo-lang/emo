@@ -59,7 +59,7 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 
 ## EmoUI
 
-[EmoUI](https://github.com/emo-lang/emo-ui) 是用 Emo 写的组件式 UI 框架：UI 组合为组件树，从响应式状态渲染。Emo 的语法就是为它塑形的，原则是**没有模板语言——UI 就是普通的 Emo 代码**，与配置同一哲学。组件树是带块的嵌套调用（示意语法）：
+[EmoUI](projects/emo-ui) 是用 Emo 写的组件式 UI 框架：UI 组合为组件树，从响应式状态渲染。Emo 的语法就是为它塑形的，原则是**没有模板语言——UI 就是普通的 Emo 代码**，与配置同一哲学。组件树是带块的嵌套调用（示意语法）：
 
 ```emo
 page(title: "Home") {
