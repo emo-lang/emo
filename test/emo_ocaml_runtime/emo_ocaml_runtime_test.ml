@@ -22,15 +22,10 @@ let write_file path contents =
 
 (* Runs a shell command, returning its exit status and combined output. *)
 let run command =
-  let ic = Unix.open_process_in (Printf.sprintf "exec 2>&1; %s" command) in
-  let buffer = Buffer.create 1024 in
-  (try
-     while true do
-       Buffer.add_channel buffer ic 1
-     done
-   with End_of_file -> ());
-  let status = Unix.close_process_in ic in
-  (status, Buffer.contents buffer)
+  let out, err, status =
+    Emo_test_support.run_cmd (Printf.sprintf "exec 2>&1; %s" command)
+  in
+  (status, out ^ err)
 
 let require_ok (status, output) what =
   match status with

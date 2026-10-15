@@ -577,15 +577,8 @@ let digest_tests =
   ]
 
 let run_capture cmd =
-  let ic = Unix.open_process_in cmd in
-  let out = Buffer.create 256 in
-  (try
-     while true do
-       Buffer.add_channel out ic 1
-     done
-   with End_of_file -> ());
-  let status = Unix.close_process_in ic in
-  (Buffer.contents out, status)
+  let out, err, status = Emo_test_support.run_cmd cmd in
+  (out ^ err, status)
 
 let archive_files =
   [

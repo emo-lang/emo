@@ -1497,33 +1497,17 @@ let build_binary ?(cclib = []) source name =
   let cclib_args =
     String.concat "" (List.concat_map (fun lib -> [ " --cclib "; lib ]) cclib)
   in
-  let out = Buffer.create 256 in
-  let ic =
-    Unix.open_process_in
+  let out, _, status =
+    Emo_test_support.run_cmd
       (Printf.sprintf "exec 2>&1; %s build %s --target ocaml -o %s%s"
          (Filename.quote emo_exe) (Filename.quote entry) (Filename.quote bin)
          cclib_args)
   in
-  (try
-     while true do
-       Buffer.add_channel out ic 1
-     done
-   with End_of_file -> ());
-  let status = Unix.close_process_in ic in
-  (Buffer.contents out, status, bin)
+  (out, status, bin)
 
 (* Runs a built binary to completion and returns its output. *)
 let run_binary bin =
-  let ic = Unix.open_process_in bin in
-  let output = Buffer.create 64 in
-  (try
-     while true do
-       Buffer.add_string output (input_line ic);
-       Buffer.add_char output '\n'
-     done
-   with End_of_file -> ());
-  let status = Unix.close_process_in ic in
-  let output = Buffer.contents output in
+  let output, _, status = Emo_test_support.run_cmd bin in
   (match status with
   | Unix.WEXITED 0 -> ()
   | Unix.WEXITED n ->
@@ -1678,20 +1662,13 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
         in
         let bin = Filename.concat (Filename.dirname entry) "cached-prog" in
         let build () =
-          let out = Buffer.create 128 in
-          let ic =
-            Unix.open_process_in
+          let out, _, _ =
+            Emo_test_support.run_cmd
               (Printf.sprintf "exec 2>&1; %s build %s -o %s"
                  (Filename.quote emo_exe) (Filename.quote entry)
                  (Filename.quote bin))
           in
-          (try
-             while true do
-               Buffer.add_channel out ic 1
-             done
-           with End_of_file -> ());
-          ignore (Unix.close_process_in ic);
-          Buffer.contents out
+          out
         in
         (* The first build compiles; the second hits the content-hash
            cache and skips the toolchain. The first build's output is
@@ -1709,9 +1686,8 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
           && contains_substring second "(cached)");
         ignore (build ());
         (* the binary runs and prints *)
-        let ic = Unix.open_process_in bin in
-        let run_out = input_line ic in
-        ignore (Unix.close_process_in ic);
+        let out, _, _ = Emo_test_support.run_cmd bin in
+        let run_out = List.hd (String.split_on_char '\n' out) in
         Alcotest.(check string) "output" "42" run_out);
     tc "the stdlib targets are honest: native resolves, wasm refuses" (fun () ->
         let registry = use_workspace_registry () in
@@ -1913,10 +1889,9 @@ println(sqrt(2.0))|}
         (match status with
         | Unix.WEXITED 0 -> ()
         | _ -> Alcotest.fail (Printf.sprintf "build failed: %s" build_out));
-        let ic = Unix.open_process_in bin in
-        let first = input_line ic in
-        let second = input_line ic in
-        ignore (Unix.close_process_in ic);
+        let out, _, _ = Emo_test_support.run_cmd bin in
+        let first = List.nth (String.split_on_char '\n' out) 0 in
+        let second = List.nth (String.split_on_char '\n' out) 1 in
         Alcotest.(check string) "sqrt(4.0)" "2.0" first;
         Alcotest.(check bool)
           "sqrt(2.0)" true
@@ -2235,15 +2210,6 @@ let examples_dir () =
   | Some dir -> from_original_cwd dir
   | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
 
-let read_all ic =
-  let buf = Buffer.create 256 in
-  (try
-     while true do
-       Buffer.add_char buf (input_char ic)
-     done
-   with End_of_file -> ());
-  Buffer.contents buf
-
 let capture_program_output f =
   let out = Buffer.create 256 in
   Emo_eval.set_output (Buffer.add_string out);
@@ -2261,20 +2227,13 @@ let capture_program_output f =
 let build_example root entry name =
   let emo_exe = emo_exe_path () in
   let bin = Filename.concat root (name ^ "-bin") in
-  let out = Buffer.create 256 in
-  let ic =
-    Unix.open_process_in
+  let out, _, status =
+    Emo_test_support.run_cmd
       (Printf.sprintf "exec 2>&1; cd %s && %s build %s --target ocaml -o %s"
          (Filename.quote root) (Filename.quote emo_exe) (Filename.quote entry)
          (Filename.quote bin))
   in
-  (try
-     while true do
-       Buffer.add_channel out ic 1
-     done
-   with End_of_file -> ());
-  let status = Unix.close_process_in ic in
-  (status, Buffer.contents out, bin)
+  (status, out, bin)
 
 (* The bootstrap assertion for one example: the interpreter run and the
    compiled binary agree with the example's golden text. [root] is the
@@ -2319,9 +2278,7 @@ let bootstrap_example root name entry =
   (match status with
   | Unix.WEXITED 0 -> ()
   | _ -> Alcotest.fail (Printf.sprintf "%s: build failed: %s" name build_out));
-  let ic = Unix.open_process_in bin in
-  let compiled = read_all ic in
-  ignore (Unix.close_process_in ic);
+  let compiled, _, _ = Emo_test_support.run_cmd bin in
   Alcotest.(check string)
     (name ^ ": binary matches interpreter")
     interpreted compiled
@@ -2475,12 +2432,11 @@ let ts_golden_tests =
               (Filename.quote emo_exe) (Filename.quote entry)
               (Filename.quote out)
           in
-          let build_out = read_all (Unix.open_process_in build) in
+          let build_out, _, _ = Emo_test_support.run_cmd build in
           if not (Sys.file_exists (out ^ ".ts")) then
             Alcotest.fail ("build failed: " ^ build_out);
-          let compiled =
-            read_all
-              (Unix.open_process_in ("node " ^ Filename.quote (out ^ ".ts")))
+          let compiled, _, _ =
+            Emo_test_support.run_cmd ("node " ^ Filename.quote (out ^ ".ts"))
           in
           Alcotest.(check string)
             (name ^ ": typescript matches golden")
@@ -2685,22 +2641,18 @@ if s.kind() == geo.Color.green {
            constructor lowers to the declaring module's mangled
            wrapper. *)
         let bin = Filename.concat (Filename.dirname entry) "xmod-c" in
-        let ic =
-          Unix.open_process_in
+        let build_out, _, status =
+          Emo_test_support.run_cmd
             (Printf.sprintf
                "exec 2>&1; cd %s && %s build main.emo --target c -o %s"
                (Filename.quote (Filename.dirname entry))
                (Filename.quote (emo_exe_path ()))
                (Filename.quote bin))
         in
-        let build_out = read_all ic in
-        let status = Unix.close_process_in ic in
         (match status with
         | Unix.WEXITED 0 -> ()
         | _ -> Alcotest.fail ("c build failed: " ^ build_out));
-        let run = Unix.open_process_in (Filename.quote bin) in
-        let compiled = read_all run in
-        ignore (Unix.close_process_in run);
+        let compiled, _, _ = Emo_test_support.run_cmd (Filename.quote bin) in
         Alcotest.(check string) "c target" interpreted compiled);
   ]
 

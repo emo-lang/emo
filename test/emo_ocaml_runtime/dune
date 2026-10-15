@@ -1,6 +1,6 @@
 (executable
  (name emo_ocaml_runtime_test)
- (libraries alcotest unix emo_codegen))
+ (libraries alcotest unix emo_test_support emo_codegen))
 
 (rule
  (alias runtest)

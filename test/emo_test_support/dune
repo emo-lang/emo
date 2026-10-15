@@ -1,0 +1,14 @@
+(library
+ (name emo_test_support)
+ (modules emo_test_support)
+ (libraries alcotest unix))
+
+(executable
+ (name emo_test_support_test)
+ (modules emo_test_support_test)
+ (libraries alcotest unix emo_test_support))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{exe:emo_test_support_test.exe})))

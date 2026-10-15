@@ -1,4 +1,5 @@
 let tc name f = Alcotest.test_case name `Quick f
+let run_cmd = Emo_test_support.run_cmd
 
 let contains hay needle =
   let n = String.length needle in
@@ -338,25 +339,8 @@ let beam_examples_tests =
               "erl -noshell -pa %s -eval 'emo_main:main(), erlang:halt(0).'"
               (Filename.quote (Filename.dirname out_core))
           in
-          let cmd_stdout, _cmd_stdin, cmd_stderr =
-            Unix.open_process_full cmd (Unix.environment ())
-          in
-          let out = Buffer.create 256 in
-          (try
-             while true do
-               Buffer.add_channel out cmd_stdout 4096
-             done
-           with End_of_file -> ());
-          let err = Buffer.create 256 in
-          (try
-             while true do
-               Buffer.add_channel err cmd_stderr 4096
-             done
-           with End_of_file -> ());
-          let proc_status =
-            Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-          in
-          Alcotest.(check string) "output" expected (Buffer.contents out);
+          let out, err, proc_status = run_cmd cmd in
+          Alcotest.(check string) "output" expected out;
           match proc_status with
           | Unix.WEXITED 0 -> ()
           | s ->
@@ -366,7 +350,7 @@ let beam_examples_tests =
                    | Unix.WEXITED n -> string_of_int n
                    | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
-                   (Buffer.contents err))))
+                   err)))
     beam_goldens
 
 (* The host boundary: println forwards to stdout, abort exits nonzero
@@ -447,29 +431,13 @@ let wasm_examples_tests =
               ~output:out_wasm ~specialize:false ~cclibs:[] ~target:"wasm"
           in
           Alcotest.(check int) "build exit" 0 exit_code;
-          let cmd_stdout, _cmd_stdin, cmd_stderr =
-            Unix.open_process_full
+          let out, err, proc_status =
+            run_cmd
               (Printf.sprintf "node %s %s"
                  (Filename.quote (Lazy.force wasm_runner_path))
                  (Filename.quote out_wasm))
-              (Unix.environment ())
           in
-          let out = Buffer.create 256 in
-          (try
-             while true do
-               Buffer.add_channel out cmd_stdout 4096
-             done
-           with End_of_file -> ());
-          let err = Buffer.create 256 in
-          (try
-             while true do
-               Buffer.add_channel err cmd_stderr 4096
-             done
-           with End_of_file -> ());
-          let proc_status =
-            Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-          in
-          Alcotest.(check string) "output" expected (Buffer.contents out);
+          Alcotest.(check string) "output" expected out;
           match proc_status with
           | Unix.WEXITED 0 -> ()
           | s ->
@@ -479,7 +447,7 @@ let wasm_examples_tests =
                    | Unix.WEXITED n -> string_of_int n
                    | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
-                   (Buffer.contents err))))
+                   err)))
     wasm_goldens
 
 (* The C goldens: build with --target c through the system cc and run
@@ -608,24 +576,6 @@ let scratch_entry name source =
   output_string oc source;
   close_out oc;
   entry
-
-let run_cmd cmd =
-  let cmd_stdout, cmd_stdin, cmd_stderr =
-    Unix.open_process_full cmd (Unix.environment ())
-  in
-  let slurp ic =
-    let b = Buffer.create 256 in
-    (try
-       while true do
-         Buffer.add_channel b ic 4096
-       done
-     with End_of_file -> ());
-    Buffer.contents b
-  in
-  let out = slurp cmd_stdout in
-  let err = slurp cmd_stderr in
-  let status = Unix.close_process_full (cmd_stdout, cmd_stdin, cmd_stderr) in
-  (out, err, status)
 
 let check_run what (out, err, status) expected =
   Alcotest.(check string) (what ^ " output") expected out;
@@ -788,26 +738,8 @@ let c_integer_tests =
           Printf.sprintf "sh -c 'ulimit -s 1024; exec %s'"
             (Filename.quote out_bin)
         in
-        let cmd_stdout, _cmd_stdin, cmd_stderr =
-          Unix.open_process_full cmd (Unix.environment ())
-        in
-        let out = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel out cmd_stdout 4096
-           done
-         with End_of_file -> ());
-        let err = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel err cmd_stderr 4096
-           done
-         with End_of_file -> ());
-        let proc_status =
-          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-        in
-        Alcotest.(check string)
-          "output" c_integer_core_expected (Buffer.contents out);
+        let out, err, proc_status = run_cmd cmd in
+        Alcotest.(check string) "output" c_integer_core_expected out;
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -817,7 +749,7 @@ let c_integer_tests =
                  | Unix.WEXITED n -> string_of_int n
                  | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                  | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
-                 (Buffer.contents err)));
+                 err));
   ]
 
 (* T23.3's scalar runtime: Float64 rendering across the %g boundary
@@ -900,25 +832,8 @@ let c_scalar_tests =
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         Unix.putenv "EMO_FFI_PROBE" "hello ffi";
-        let cmd_stdout, _cmd_stdin, cmd_stderr =
-          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
-        in
-        let out = Buffer.create 512 in
-        (try
-           while true do
-             Buffer.add_channel out cmd_stdout 4096
-           done
-         with End_of_file -> ());
-        let err = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel err cmd_stderr 4096
-           done
-         with End_of_file -> ());
-        let proc_status =
-          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-        in
-        Alcotest.(check string) "output" expected (Buffer.contents out);
+        let out, err, proc_status = run_cmd (Filename.quote out_bin) in
+        Alcotest.(check string) "output" expected out;
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -928,7 +843,7 @@ let c_scalar_tests =
                  | Unix.WEXITED n -> string_of_int n
                  | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                  | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
-                 (Buffer.contents err)));
+                 err));
   ]
 
 (* T23.4's dynamic value model: the tagged word crossing native and
@@ -1053,21 +968,10 @@ println("not reached")
             ~target:"c"
         in
         Alcotest.(check int) "build exit" 0 exit_code;
-        let cmd_stdout, _cmd_stdin, cmd_stderr =
-          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
-        in
-        let err = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel err cmd_stderr 4096
-           done
-         with End_of_file -> ());
-        let proc_status =
-          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-        in
+        let _, err, proc_status = run_cmd (Filename.quote out_bin) in
         Alcotest.(check bool)
           "message" true
-          (contains (Buffer.contents err) "uncaught exception: boom");
+          (contains err "uncaught exception: boom");
         match proc_status with
         | Unix.WEXITED 1 -> ()
         | s ->
@@ -1104,25 +1008,8 @@ println("not reached")
             ~target:"c"
         in
         Alcotest.(check int) "build exit" 0 exit_code;
-        let cmd_stdout, _cmd_stdin, cmd_stderr =
-          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
-        in
-        let out = Buffer.create 512 in
-        (try
-           while true do
-             Buffer.add_channel out cmd_stdout 4096
-           done
-         with End_of_file -> ());
-        let err = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel err cmd_stderr 4096
-           done
-         with End_of_file -> ());
-        let proc_status =
-          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-        in
-        Alcotest.(check string) "output" expected (Buffer.contents out);
+        let out, err, proc_status = run_cmd (Filename.quote out_bin) in
+        Alcotest.(check string) "output" expected out;
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -1132,7 +1019,7 @@ println("not reached")
                  | Unix.WEXITED n -> string_of_int n
                  | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                  | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
-                 (Buffer.contents err)));
+                 err));
     tc "a spawned process that raises dies alone; the parent continues"
       (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
@@ -1170,26 +1057,8 @@ let c_examples_tests =
               ~output:out_bin ~specialize:false ~cclibs:[] ~target:"c"
           in
           Alcotest.(check int) "build exit" 0 exit_code;
-          let cmd_stdout, _cmd_stdin, cmd_stderr =
-            Unix.open_process_full (Filename.quote out_bin)
-              (Unix.environment ())
-          in
-          let out = Buffer.create 256 in
-          (try
-             while true do
-               Buffer.add_channel out cmd_stdout 4096
-             done
-           with End_of_file -> ());
-          let err = Buffer.create 256 in
-          (try
-             while true do
-               Buffer.add_channel err cmd_stderr 4096
-             done
-           with End_of_file -> ());
-          let proc_status =
-            Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-          in
-          Alcotest.(check string) "output" expected (Buffer.contents out);
+          let out, err, proc_status = run_cmd (Filename.quote out_bin) in
+          Alcotest.(check string) "output" expected out;
           match proc_status with
           | Unix.WEXITED 0 -> ()
           | s ->
@@ -1199,7 +1068,7 @@ let c_examples_tests =
                    | Unix.WEXITED n -> string_of_int n
                    | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
-                   (Buffer.contents err))))
+                   err)))
     c_goldens
 
 (* T23.8: the c target's direct C ABI. A foreign def declares the C
@@ -1266,20 +1135,8 @@ println(triple(14))
           "defs header has the void foreign"
           (List.exists (String.equal "extern void srand(int64_t);") lines)
           true;
-        let cmd_stdout, _cmd_stdin, cmd_stderr =
-          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
-        in
-        let out = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel out cmd_stdout 4096
-           done
-         with End_of_file -> ());
-        let proc_status =
-          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-        in
-        Alcotest.(check string)
-          "output" "2.0\n42\nhello ffi\n5\n42\n" (Buffer.contents out);
+        let out, _, proc_status = run_cmd (Filename.quote out_bin) in
+        Alcotest.(check string) "output" "2.0\n42\nhello ffi\n5\n42\n" out;
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -1345,19 +1202,8 @@ println(counter_close(c))
             ~cclibs:[ lib_a ] ~target:"c"
         in
         Alcotest.(check int) "build exit" 0 exit_code;
-        let cmd_stdout, _cmd_stdin, cmd_stderr =
-          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
-        in
-        let out = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel out cmd_stdout 4096
-           done
-         with End_of_file -> ());
-        let proc_status =
-          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-        in
-        Alcotest.(check string) "output" "42\n42\n" (Buffer.contents out);
+        let out, _, proc_status = run_cmd (Filename.quote out_bin) in
+        Alcotest.(check string) "output" "42\n42\n" out;
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -1451,28 +1297,10 @@ run_greet(Polite.new(), 1)
             ~cclibs:[ obj ] ~target:"c"
         in
         Alcotest.(check int) "build exit" 0 exit_code;
-        let cmd_stdout, _cmd_stdin, cmd_stderr =
-          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
-        in
-        let out = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel out cmd_stdout 4096
-           done
-         with End_of_file -> ());
-        let err = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel err cmd_stderr 4096
-           done
-         with End_of_file -> ());
-        let proc_status =
-          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-        in
+        let out, err, proc_status = run_cmd (Filename.quote out_bin) in
         Alcotest.(check string)
           "output"
-          "greet: LOUD world x0\ngreet: LOUD world x1\ngreet: hi world\n"
-          (Buffer.contents out);
+          "greet: LOUD world x0\ngreet: LOUD world x1\ngreet: hi world\n" out;
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -1481,7 +1309,7 @@ run_greet(Polite.new(), 1)
                  (match s with
                  | Unix.WEXITED n -> string_of_int n
                  | _ -> "signal")
-                 (Buffer.contents err)));
+                 err));
   ]
 
 (* The struct shapes (CHECK.md, 2026-10-11): a tuple or a carrier class
@@ -1539,19 +1367,8 @@ println(keep.length())
             ~target:"c"
         in
         Alcotest.(check int) "build exit" 0 exit_code;
-        let cmd_stdout, _cmd_stdin, cmd_stderr =
-          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
-        in
-        let out = Buffer.create 64 in
-        (try
-           while true do
-             Buffer.add_channel out cmd_stdout 4096
-           done
-         with End_of_file -> ());
-        let proc_status =
-          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-        in
-        Alcotest.(check string) "output" "0\n1\n" (Buffer.contents out);
+        let out, _, proc_status = run_cmd (Filename.quote out_bin) in
+        Alcotest.(check string) "output" "0\n1\n" out;
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -1626,26 +1443,8 @@ println(stretch(((1.0, 2.0), 3.0)))
             ~cclibs:[ obj ] ~target:"c"
         in
         Alcotest.(check int) "build exit" 0 exit_code;
-        let cmd_stdout, _cmd_stdin, cmd_stderr =
-          Unix.open_process_full (Filename.quote out_bin) (Unix.environment ())
-        in
-        let out = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel out cmd_stdout 4096
-           done
-         with End_of_file -> ());
-        let err = Buffer.create 256 in
-        (try
-           while true do
-             Buffer.add_channel err cmd_stderr 4096
-           done
-         with End_of_file -> ());
-        let proc_status =
-          Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-        in
-        Alcotest.(check string)
-          "output" "5.0\n(1.5, 2.5)\n(3.0, 6.0)\n" (Buffer.contents out);
+        let out, err, proc_status = run_cmd (Filename.quote out_bin) in
+        Alcotest.(check string) "output" "5.0\n(1.5, 2.5)\n(3.0, 6.0)\n" out;
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -1654,7 +1453,7 @@ println(stretch(((1.0, 2.0), 3.0)))
                  (match s with
                  | Unix.WEXITED n -> string_of_int n
                  | _ -> "signal")
-                 (Buffer.contents err)));
+                 err));
   ]
 
 (* ---- publish: the upload is dogfooded through the stdlib http client ----
@@ -2288,27 +2087,8 @@ let riscv64_examples_tests =
               "qemu-system-riscv64 -machine virt -nographic -kernel %s"
               (Filename.quote out_elf)
           in
-          let cmd_stdout, _cmd_stdin, cmd_stderr =
-            Unix.open_process_full cmd (Unix.environment ())
-          in
-          let serial = Buffer.create 4096 in
-          (try
-             while true do
-               Buffer.add_channel serial cmd_stdout 4096
-             done
-           with End_of_file -> ());
-          let err = Buffer.create 256 in
-          (try
-             while true do
-               Buffer.add_channel err cmd_stderr 4096
-             done
-           with End_of_file -> ());
-          let proc_status =
-            Unix.close_process_full (cmd_stdout, _cmd_stdin, cmd_stderr)
-          in
-          Alcotest.(check string)
-            "output" expected
-            (riscv64_payload (Buffer.contents serial));
+          let serial, err, proc_status = run_cmd cmd in
+          Alcotest.(check string) "output" expected (riscv64_payload serial);
           match proc_status with
           | Unix.WEXITED 0 -> ()
           | s ->
@@ -2318,7 +2098,7 @@ let riscv64_examples_tests =
                    | Unix.WEXITED n -> string_of_int n
                    | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
-                   (Buffer.contents err))))
+                   err)))
     [
       "hello_world";
       "fib";
@@ -2561,12 +2341,9 @@ let new_tests =
           "build exit" 0
           (Emo_cli.build_file ~entry ~output:bin ~specialize:true ~cclibs:[]
              ~target:"c");
-        let cmd_stdout, _cmd_stdin, _cmd_stderr =
-          Unix.open_process_full (Filename.quote bin) (Unix.environment ())
-        in
-        let out = input_line cmd_stdout in
-        ignore (Unix.close_process_full (cmd_stdout, _cmd_stdin, _cmd_stderr));
-        Alcotest.(check string) "binary output" "Hello, world!" out);
+        let out, _, _ = run_cmd (Filename.quote bin) in
+        let first_line = List.hd (String.split_on_char '\n' out) in
+        Alcotest.(check string) "binary output" "Hello, world!" first_line);
     tc "an owner/name argument names the package fully" (fun () ->
         let old_cwd = Sys.getcwd () in
         Sys.chdir scratch;

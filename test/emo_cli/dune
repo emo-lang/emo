@@ -4,6 +4,7 @@
   alcotest
   unix
   threads
+  emo_test_support
   emo_cli
   emo_project
   emo_support
