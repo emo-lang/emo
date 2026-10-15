@@ -4668,6 +4668,10 @@ let assemble (program : Emo_ir.program) : W.module_ =
   let lowered =
     List.map
       (fun (f : Emo_ir.func) ->
+        if f.Emo_ir.fforeign <> None then
+          raise
+            (Emo_ir.Lower_error
+               "the wasm target does not support `foreign def` yet");
         let idx = List.assoc f.Emo_ir.fname env.funcs in
         (idx, emit_func env f))
       program.Emo_ir.pfuncs

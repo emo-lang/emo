@@ -63,7 +63,8 @@ before starting the gated work:
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
 | EmoUI native UI packaging (per-package compile flags / `pkg_config`) | T48.7–T48.9 | direction settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). The field surface (`pkg_config`, compile/link flags, whether `.m` is collected) stays T48.7's own work |
 | `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). Until it lands the native UI backends are demo scale with the limit documented, not gated on this |
-| EmoUI browser runtime path | T48.10–T48.11 | open — `docs/emo-ui.md`; the TypeScript runtime is Node-only and the wasm host has three imports, so a browser-safe split plus a `dom_*` layer (or new wasm imports) and a bundling step are the choice |
+| EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). Where the bundling step lives in the toolchain stays T48.10's own work |
+| Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
 
 ---
@@ -447,7 +448,7 @@ shares the tagged-word value model.
 - [x] **T23.3** — The scalar runtime: length-prefixed strings (NUL-terminated only at the FFI boundary), the `%g` float rule, `Bool`/`Char`, interpolation, scalar content equality. Goldens: numerics, if_expr. (Done 2026-10-06: if_expr is the first full-example golden; numerics itself waits on `foreign def` (T23.8) and tuples (T23.4) — the `c_scalar` fixture cross-checks the printing rules against the interpreter's own rendering instead. The string layout and the runtime-in-C decisions are recorded in CHECK.md.)
 - [x] **T23.4** — The dynamic value model: step 19's tagged word (8-byte-aligned cells, 3 tag bits; `Int64`/`Float64` boxed two-word cells; no NaN-boxing), bump/arena allocator (provisional), tuples, value-semantic arrays, `Box`. Golden: objects. (Done 2026-10-06: the tagged word is live — one `emo_value` word, low bits 000/001/011 for pointer/Bool/Char, cell kinds in the header word — with bump allocation and malloc-leak documented in CHECK.md's provisional profile. Regime conversion (`emo_box_*`/`emo_unbox_*`) bridges native and dynamic code at every call, binding, return, and operator; dynamic `+`/comparisons/equality dispatch in the runtime per the interpreter's rules; `to_string` renders tuples `(a, b)`, arrays `[a, b]`, Box as `<box>`. The objects golden waits on classes (T23.5) — the `c_dynamic` fixture cross-checks the dynamic world against the interpreter's own rendering instead.)
 - [x] **T23.5** — Classes, enums, interfaces, closures: instances with compile-time vtables, enum singletons, structural `is()`, patterns with guards; the reclamation decision lands in CHECK.md before this merges. Golden: language_tour. (Done 2026-10-06: language_tour AND objects both full-example goldens, byte-for-byte. Vtables carry method sigs with dynamic-convention thunks — class-typed receivers dispatch directly, interface/Unknown receivers through `emo_send`; `is()` compares vtable identity (classes) or shape (interfaces); closures take the canonical dynamic convention `[header][fn][captured...]` with creation-site capture analysis and direct dynamic returns; `case` lowers to sequential test/bind/guard blocks with goto-chained fall-through. The reclamation decision settled in CHECK.md: reference counting over the identity objects, arena for value-semantic data — the retain/release emitter work lands before T23.9 makes long-running programs real.)
-- [x] **T23.6** — Modules and exceptions: multi-file module references, `raise`, uncaught-exception exit codes (`begin`/`catch`/`ensure` stays unscheduled — out of scope). Goldens: shop, function_group (free via IR lowering — claim the golden). (Done 2026-10-06: both goldens claimed byte-for-byte. Multi-file references needed two call-site fixes — funsigs now carries the callee's declared result so a cross-module call the checker types Unknown still converts, and the IR no longer lowers module-alias const bindings as thunks (they bound a path, not a value); group-const thunks return Unknown, not Void. `raise` renders the interpreter's E3010 message to stderr and exits 1 — no unwinder until `begin`/`catch` lands.)
+- [x] **T23.6** — Modules and exceptions: multi-file module references, `raise`, uncaught-exception exit codes (`begin`/`catch`/`ensure` stays unscheduled — out of scope). Goldens: shop, function_group (free via IR lowering — claim the golden). (Done 2026-10-06: both goldens claimed byte-for-byte. Multi-file references needed two call-site fixes — funsigs now carries the callee's declared result so a cross-module call the checker types Unknown still converts, and the IR no longer lowers module-alias const bindings as thunks (they bound a path, not a value); group-const thunks return Unknown, not Void. `raise` renders the interpreter's E3010 message to stderr and exits 1 in the root process — no unwinder until `begin`/`catch` lands; a spawned process's raise ends only that process, per step 50.)
 - [x] **T23.7** — The systems-layer surface: `Bytes` with little-endian accessors, the bitwise operators, `Byte`, `Int64`/`Float64` bit-casts. Goldens: bit_ops, bytes, fixed_width. (Done 2026-10-06: all three full-example goldens byte-for-byte. `&`/`|`/`^` are exact two's-complement on int64_t; `<<`/`>>` guard the count (negative errors, ≥64 gives 0/sign-fill) in the runtime; Byte is uint8_t with wrap-by-truncation and the Int64 div/shift guards; a Byte in the dynamic world materializes as an Int64 cell. Bytes is a new cell kind with in-cell storage, `to_bytes`/`to_string` interop, and a runtime `to_string` method dispatch (Bytes content vs value rendering) — the interpreter's runtime dispatch, mirrored. The checker now types `Unknown + Unknown` as Unknown (the runtime dispatches `+` per the values — neither result is provable); C reserved words in Emo defs get a `_c` suffix.)
 - [x] **T23.8** — C FFI rungs 1–3 on the direct C ABI (no wrapper generator): scalars, width types as they land, opaque handles + copied buffers; the capability table flips `c` to honoring `foreign def`. Goldens: a libm `sqrt` fixture and a tiny C opaque-handle fixture under `test/`. (Done 2026-10-06: the c backend emits `extern` declarations and calls the symbol directly — no wrappers. Strings cross with a NUL terminator (`emo_str_cstr` out, `emo_str_from_cstr` in, per CHECK.md's layout decision); Int64 crosses as `int64_t` — the capability table is now target-aware in the checker (`c` admits Int64, the OCaml backend stays Float64/String/Bool); opaque handles ride pointer-sized Int64s behind a tiny externally-owned counter library, explicitly closed, in the `c_foreign` test group alongside the libm fixture.)
 - [x] **T23.9** — Processes and the cooperative scheduler: `do` / `<-` / `receive`, mailboxes, selective receive, `self_pid`, `halt`; single-threaded cooperative loop; traces diffed against `emo_sched_det`. Goldens: pipeline, showcase. (Done 2026-10-06: both full-example goldens byte-for-byte. Each Emo process is a ucontext fiber with its own stack; the scheduler keeps emo_sched_det's policy — FIFO run queue, spawn enqueues the child without suspending the spawner, send delivers + wakes + re-queues the sender at the tail, receive scans the mailbox in generated code for the first message a branch accepts (a failed guard leaves the message queued) and parks the fiber when nothing matches; an empty run queue with parked fibers is a reported deadlock. Pids are an EMO_PID cell (rendered `<pid N>`); `EMO_TRACE=1` prints spawn/send/park/dispatch/exit/reap events for diffing. Also fixed en route: the entry file discovered twice (root + tree copies, keyed by a `/.`-carrying path) lowered every symbol under two manglings — the walk now normalizes file paths and the IR dedupes module copies by the parsed items' physical identity.)
@@ -1667,3 +1668,69 @@ and the non-`c` targets are untouched.
       target, with `dune test` green.
 - [ ] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
       mirror, and step 48's demo-scale notes updated to point here.
+
+---
+
+## M17 — Cross-target conformance
+
+A 2026-10-14 target-feasibility survey checked the concurrency promises
+against every implementation and found three places where the rules and
+the code disagreed (`CHECK.md`, cross-target invariants). Two of them
+were never open design questions: `docs/intro/concurrency.md` already
+promises that an unhandled error "kills only the offending process", and
+`docs/intro/syntax.md` already promises a snapshot copy at the process
+boundary for Map, Box, List and ArrayBuilder — with the interpreter, the
+standalone OCaml runtime and BEAM all honouring both, and
+`stdlib/registry/sync/0.1.0/sync.emo` stating the send rule outright for
+a handle. The `c` target was the one implementation that diverged, so
+the work here is conformance, not language design: no promise moves and
+no README changes. The third item is the same shape on the emitter side —
+the capability table is the intended sole gate on `foreign def`, but it
+admits `Float64`/`String`/`Bool` on every target, so a `foreign def`
+reached the `wasm` and `beam` emitters past it. The milestone's own
+finding is that the survey's cost estimate for the `raise` gap was
+wrong, and by a wide margin: the mechanism it assumed — `setjmp` /
+`longjmp` plus a reference-count drain at every unwound C frame — was
+never needed, because the runtime's autorelease pool is already a
+heap-allocated frame chain hung off the fiber, and the fiber teardown
+path already existed. Everything here is runtime- and emitter-local.
+
+### Step 50 — Cross-target conformance · `plan/step-50-cross-target-conformance.md`
+
+**Prereq:** none.
+**Done when:** a spawned `c`-target process that raises dies alone while
+its parent runs on; a mutable value sent between `c`-target processes
+arrives as a snapshot; `foreign def` refuses by name on `wasm` and
+`beam` with exit 65; every existing golden on every target is
+byte-identical; and `CHECK.md` records all three as settled with the
+`typescript` send gap named as the remainder.
+
+- [x] **T50.1** — The `foreign def` refusal: `emo_wasm.ml` and
+      `emo_beam.ml` refuse a `foreign def` per function, beside the code
+      that would have lowered it, with `Emo_ir.Lower_error` — the
+      riscv precedent — so the CLI renders it as exit 65. The survey's
+      open guess ("a clean refusal downstream or a silently absent
+      symbol") resolved to the second: the IR carries the symbol on an
+      otherwise ordinary `func` record with an empty body, so both
+      emitters were emitting a real function for a declaration that has
+      no Emo body.
+- [x] **T50.2** — The `c` target's `raise` ends the logical process:
+      `emo_raise` drains the current fiber's frame chain and halts it
+      when it is not the root, keeping the render-and-`exit(1)` path for
+      a raise outside the scheduler or in the root (`docs/intro/
+      concurrency.md`). `halt()` routes through the same drain — it
+      leaked its whole frame chain, the one other site with the same
+      shape. No emitter change and no unwinder: the frame chain is on the
+      heap and the fiber-teardown path already existed.
+- [x] **T50.3** — The `c` target's `send` snapshots: `emo_deep_copy`
+      rebuilds the mutable kinds at the send and the mailbox owns the
+      copy, following the interpreter's own rule over the kinds this
+      runtime has. One emitter line followed from it — the mailbox take
+      releases its only claim, so the receive scan now holds its own.
+- [x] **T50.4** — Docs: `CHECK.md`'s cross-target entry rewritten as
+      settled with the corrected cost estimate, `docs/intro/
+      concurrency.md`'s by-reference sentence fixed, T23.6's note
+      updated, the gates table updated, and this milestone added. The
+      `typescript` target's share-on-send is recorded as the entry's open
+      remainder rather than fixed here, because the fix belongs with the
+      browser-runtime split (T48.10).

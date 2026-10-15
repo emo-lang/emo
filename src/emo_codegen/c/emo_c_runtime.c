@@ -1425,12 +1425,6 @@ static int64_t emo_length_bytes(emo_value v) {
   return (int64_t)*emo_payload(v);
 }
 
-void emo_raise(emo_value v) {
-  emo_str s = emo_to_string_dyn(v);
-  fprintf(stderr, "uncaught exception: %.*s\n", (int)s.len, s.bytes);
-  exit(1);
-}
-
 void emo_no_match(void) {
   emo_fatal("no pattern matched the case scrutinee");
 }
@@ -1953,6 +1947,26 @@ void emo_drain(void) {
   f->pool.count = 0;
 }
 
+/* Releases every frame of the running fiber's chain. A statement
+   boundary drains one frame; a fiber that ends mid-stack — a raise, a
+   halt — never reaches its own `emo_pool_exit`, and the frames it
+   abandons are the last holders of its pooled identities. The chain is
+   walked instead of unwinding the C stack, which nothing does: the
+   frames are heap-resident and the fiber is simply discarded. */
+static void emo_fiber_release_frames(void) {
+  if (emo_current == NULL) return;
+  emo_frame *f = emo_current->top_frame;
+  while (f != NULL) {
+    emo_frame *parent = f->parent;
+    for (int64_t i = 0; i < f->pool.count; i++) emo_release(f->pool.items[i]);
+    free(f->pool.items);
+    f->parent = emo_frame_free;
+    emo_frame_free = f;
+    f = parent;
+  }
+  emo_current->top_frame = NULL;
+}
+
 int64_t emo_identity_live_count(void) { return emo_identity_live; }
 
 static int64_t emo_next_pid = 1;
@@ -2055,9 +2069,138 @@ static void emo_yield_to_sched(void) {
 }
 
 void emo_process_halt_current(void) {
+  emo_fiber_release_frames();
   emo_current->finished = 1;
   swapcontext(&emo_current->ctx, &emo_sched_ctx);
   abort(); /* unreachable */
+}
+
+/* An uncaught raise. The root's is the program's outcome (T23.6): render
+   the interpreter's E3010 message and exit 1. A spawned process's ends
+   only that process, the interpreter's `Exit_raised` — the scheduler
+   reaps the fiber and the program runs on, so a bad event cannot kill a
+   whole UI. Nothing unwinds the C stack either way, which is why the
+   `setjmp`/`longjmp` the error-handling decision priced in is not
+   needed: a dead fiber's pooled identities are released from its frame
+   chain (emo_fiber_release_frames), and its stack is discarded whole. */
+void emo_raise(emo_value v) {
+  if (emo_current == NULL || emo_current->pid == emo_root_pid) {
+    emo_str s = emo_to_string_dyn(v);
+    fprintf(stderr, "uncaught exception: %.*s\n", (int)s.len, s.bytes);
+    exit(1);
+  }
+  emo_process_halt_current();
+}
+
+/* ---- The send snapshot (T12.4) ----
+
+   A message crosses a process boundary by copy, never by reference: the
+   receiver must not observe a write the sender makes after the send.
+   The rule is the interpreter's `snapshot` (emo_eval.ml), over the kinds
+   this runtime has — immutable data and identity-bearing values pass
+   through, everything mutable is rebuilt. An aggregate's constructor
+   retains what it stores, so a copy releases its own claim on a child
+   once the child is stored; a cell built here directly needs no such
+   step, the child's claim simply becomes the cell's. */
+
+static emo_value emo_deep_copy(emo_value v) {
+  if (v == 0) return v; /* the absent word, which every helper lets by */
+  switch (emo_cell_kind(v)) {
+  case EMO_BOX: {
+    emo_value inner = emo_deep_copy((emo_value)*emo_payload(v));
+    emo_value copy = emo_box_new(inner);
+    emo_release(inner);
+    return copy;
+  }
+  case EMO_BYTES: {
+    /* [header][len][bytes...] */
+    int64_t len = (int64_t)emo_payload(v)[0];
+    emo_value copy = emo_bytes_new(len);
+    memcpy(emo_payload(copy) + 1, emo_payload(v) + 1, (size_t)len);
+    return copy;
+  }
+  case EMO_TUPLE: {
+    /* [header][arity][elements...] */
+    uintptr_t *p = emo_payload(v);
+    int64_t arity = (int64_t)p[0];
+    emo_value copy = emo_cell_new(EMO_TUPLE, arity + 1);
+    uintptr_t *q = emo_payload(copy);
+    q[0] = (uintptr_t)arity;
+    for (int64_t i = 0; i < arity; i++)
+      q[i + 1] = emo_deep_copy((emo_value)p[i + 1]);
+    return copy;
+  }
+  case EMO_ARRAY: {
+    /* [header][len][elements...] */
+    uintptr_t *p = emo_payload(v);
+    int64_t len = (int64_t)p[0];
+    emo_value copy = emo_cell_new(EMO_ARRAY, len + 1);
+    uintptr_t *q = emo_payload(copy);
+    q[0] = (uintptr_t)len;
+    for (int64_t i = 0; i < len; i++)
+      q[i + 1] = emo_deep_copy((emo_value)p[i + 1]);
+    return copy;
+  }
+  case EMO_LIST: {
+    emo_list *src = emo_list_of(v);
+    emo_list *l = emo_alloc(sizeof(emo_list));
+    l->head = NULL;
+    l->tail = NULL;
+    l->size = 0;
+    for (emo_list_node *n = src->head; n != NULL; n = n->next) {
+      emo_list_node *node = emo_alloc(sizeof(emo_list_node));
+      node->v = emo_deep_copy(n->v); /* the node holds the copy's claim */
+      node->prev = l->tail;
+      node->next = NULL;
+      if (l->tail != NULL)
+        l->tail->next = node;
+      else
+        l->head = node;
+      l->tail = node;
+      l->size++;
+    }
+    return emo_box_kind(EMO_LIST, (int64_t)(uintptr_t)l);
+  }
+  case EMO_BUILDER: {
+    emo_value copy = emo_builder_new();
+    uintptr_t *p = emo_builder_words(v);
+    for (int64_t i = 0; i < (int64_t)p[0]; i++) {
+      emo_value item = emo_deep_copy(((emo_value *)p[2])[i]);
+      emo_builder_push(copy, item);
+      emo_release(item);
+    }
+    return copy;
+  }
+  case EMO_MAP: {
+    /* Entries never move in the append-only entry array, so index order
+       is insertion order — copying in that order preserves it. */
+    emo_value copy = emo_map_new(0, NULL);
+    uintptr_t *p = emo_payload(v);
+    emo_map_entry *entries = (emo_map_entry *)p[2];
+    for (int64_t i = 0; i < (int64_t)p[1]; i++) {
+      if (entries[i].key == 0) continue; /* a removed entry */
+      emo_value value = emo_deep_copy(entries[i].value);
+      emo_map_set(copy, entries[i].key, value);
+      emo_release(value);
+    }
+    return copy;
+  }
+  case EMO_INSTANCE: {
+    /* the class stays, the fields are copied (the interpreter's rule) */
+    const emo_vtable *vt = (const emo_vtable *)*emo_payload(v);
+    emo_value copy = emo_instance_new(vt, vt->field_count);
+    for (int64_t i = 0; i < vt->field_count; i++)
+      /* a fresh instance cell is zeroed, so its fields read as 0 and the
+         store takes the child's own claim without a barrier */
+      emo_payload(copy)[i + 1] = emo_deep_copy((emo_value)emo_payload(v)[i + 1]);
+    return copy;
+  }
+  default:
+    /* Int64, Float64, String, Enum, Closure, Pid: immutable data, or an
+       identity the boundary deliberately shares (the interpreter's
+       `| v -> v`) */
+    return v;
+  }
 }
 
 void emo_process_send(int64_t pid, emo_value message) {
@@ -2077,8 +2220,7 @@ void emo_process_send(int64_t pid, emo_value message) {
   emo_msg *m = malloc(sizeof(emo_msg));
   if (m == NULL) abort();
   m->next = NULL;
-  m->v = message;
-  emo_retain(message); /* the mailbox owns the message until it's taken */
+  m->v = emo_deep_copy(message); /* the mailbox owns the snapshot (T12.4) */
   if (target->inbox_tail == NULL) target->inbox_head = m;
   else target->inbox_tail->next = m;
   target->inbox_tail = m;
@@ -2126,7 +2268,7 @@ void emo_mailbox_take_current(void *m) {
       emo_current->inbox_tail = n;
     }
   }
-  emo_release(dead->v); /* the mailbox drops its send-time reference */
+  emo_release(dead->v); /* the mailbox drops its claim on the snapshot */
   free(dead);
 }
 

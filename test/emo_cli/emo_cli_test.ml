@@ -600,7 +600,7 @@ println("root done")
 
 (* Each program gets its own directory: a build compiles every sibling
    .emo, and the emitters write their artifacts beside the entry. *)
-let root_end_entry name source =
+let scratch_entry name source =
   let dir = Filename.concat scratch name in
   if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
   let entry = Filename.concat dir "main.emo" in
@@ -642,7 +642,7 @@ let root_end_tests =
   [
     tc "the c root ending drops a runnable process" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
-        let entry = root_end_entry "root-end-c" root_end_runnable in
+        let entry = scratch_entry "root-end-c" root_end_runnable in
         let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
         Alcotest.(check int)
           "build exit" 0
@@ -651,7 +651,7 @@ let root_end_tests =
         check_run "c" (run_cmd (Filename.quote bin)) "root done\n");
     tc "the wasm root ending drops a woken process" (fun () ->
         if not (Lazy.force node_available) then Alcotest.skip ();
-        let entry = root_end_entry "root-end-wasm" root_end_woken in
+        let entry = scratch_entry "root-end-wasm" root_end_woken in
         let out_wasm = Filename.concat (Filename.dirname entry) "main.wasm" in
         Alcotest.(check int)
           "build exit" 0
@@ -665,7 +665,7 @@ let root_end_tests =
           "root done\n");
     tc "the typescript root ending drops a woken process" (fun () ->
         if not (Lazy.force node_available) then Alcotest.skip ();
-        let entry = root_end_entry "root-end-ts" root_end_woken in
+        let entry = scratch_entry "root-end-ts" root_end_woken in
         let out_ts = Filename.concat (Filename.dirname entry) "main" in
         Alcotest.(check int)
           "build exit" 0
@@ -676,7 +676,7 @@ let root_end_tests =
           "root done\n");
     tc "the beam root ending leaves nothing it spawned alive" (fun () ->
         if not (Lazy.force erl_available) then Alcotest.skip ();
-        let entry = root_end_entry "root-end-beam" root_end_parked in
+        let entry = scratch_entry "root-end-beam" root_end_parked in
         let out_core =
           Filename.concat (Filename.dirname entry) "emo_main.core"
         in
@@ -995,6 +995,45 @@ println(dyn_sum)
 println("n=" + vals[0].to_string())
 |}
 
+(* The two cross-target invariants the interpreter already keeps and the
+   `c` target used to break (M17): an uncaught raise in a spawned process
+   ends only that process, and a message reaches the receiver as a
+   snapshot. The programs are the scheduler suite's own fixtures, run
+   here through the `c` target. *)
+let c_child_raise_source =
+  {|
+def bomber() Int64 {
+  receive {
+    _ -> { raise Exception.new(message: "boom") }
+  }
+}
+
+const b = do bomber()
+b <- "light the fuse"
+println("still here")
+|}
+
+let c_send_snapshot_source =
+  {|
+def reader(reply_to Pid) Int64 {
+  receive {
+    b -> {
+      reply_to <- b.read()
+      return halt()
+    }
+  }
+}
+
+const box = Box.new(1)
+const r = do reader(self_pid())
+r <- box
+box.replace(99)
+receive {
+  v -> { println(v) }
+}
+println(box.read())
+|}
+
 let c_dynamic_tests =
   [
     tc "an uncaught raise exits 1 with the interpreter's message" (fun () ->
@@ -1094,6 +1133,25 @@ println("not reached")
                  | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
                  | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
                  (Buffer.contents err)));
+    tc "a spawned process that raises dies alone; the parent continues"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry = scratch_entry "c-child-raise" c_child_raise_source in
+        let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (Emo_cli.build_file ~entry ~output:bin ~specialize:false ~cclibs:[]
+             ~target:"c");
+        check_run "c" (run_cmd (Filename.quote bin)) "still here\n");
+    tc "a sent Box reaches the receiver as a snapshot" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry = scratch_entry "c-send-snapshot" c_send_snapshot_source in
+        let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (Emo_cli.build_file ~entry ~output:bin ~specialize:false ~cclibs:[]
+             ~target:"c");
+        check_run "c" (run_cmd (Filename.quote bin)) "1\n99\n");
   ]
 
 let c_examples_tests =
@@ -2360,6 +2418,108 @@ do work()|},
           ]);
   ]
 
+(* `foreign def` on a backend that has no emitter for it (M17): the
+   checker admits the declaration — its FFI types are legal on every
+   target — so the refusal rides the emitter's own Lower_error and the
+   CLI renders it as exit 65, the shape riscv64's refusals above take. *)
+let foreign_def_source =
+  {|
+foreign def host_floor(x Float64) Float64 = "floor"
+
+println(host_floor(2.5))
+|}
+
+let foreign_refusal_tests =
+  let build target =
+    let dir = Filename.concat scratch ("foreign-def-" ^ target) in
+    if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+    let entry = Filename.concat dir "main.emo" in
+    let oc = open_out_bin entry in
+    output_string oc foreign_def_source;
+    close_out oc;
+    Emo_cli.build_file ~entry
+      ~output:(Filename.concat dir "out")
+      ~specialize:false ~cclibs:[] ~target
+  in
+  let refusal target emit =
+    let items, parse_diags =
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo"
+        ~source:foreign_def_source
+    in
+    (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+    let diags, _refs, _requires, types =
+      Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+    in
+    match diags with
+    | _ :: _ -> Alcotest.fail "unexpected check errors"
+    | [] -> (
+        let program =
+          Emo_ir.lower
+            {
+              Emo_ir.modules =
+                [ { Emo_ir.mpath = []; mitems = items; mtypes = types } ];
+              entry = [];
+              packages = [];
+            }
+        in
+        try
+          ignore (emit program);
+          None
+        with Emo_ir.Lower_error message -> Some message)
+  in
+  [
+    (* The bug the refusal closed was a silent stub, not a missing
+       symbol: `foreign def` reaches an emitter as an ordinary `func`
+       record with an empty body, so a target that never reads `fforeign`
+       emits a real function and the build succeeds. The rule is therefore
+       a disjunction over the whole matrix — refuse by name, or honor the
+       declaration and really call through — not a list of the targets
+       known to have been broken. *)
+    tc "a `foreign def` is refused by name or really called, never stubbed"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry = scratch_entry "foreign-def-honored" foreign_def_source in
+        let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        Alcotest.(check int)
+          "c build exit" 0
+          (Emo_cli.build_file ~entry ~output:bin ~specialize:false ~cclibs:[]
+             ~target:"c");
+        check_run "c" (run_cmd (Filename.quote bin)) "2.0\n";
+        List.iter
+          (fun (target, emit) ->
+            Alcotest.(check int) (target ^ " build exit") 65 (build target);
+            match refusal target emit with
+            | None -> Alcotest.fail (target ^ ": expected a refusal")
+            | Some _ -> ())
+          [
+            ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
+            ("beam", fun p -> ignore (Emo_codegen.Beam.emit p));
+            ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
+            ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
+          ]);
+    tc "`foreign def` refuses on wasm and beam" (fun () ->
+        List.iter
+          (fun (target, emit) ->
+            Alcotest.(check int) (target ^ " build exit") 65 (build target);
+            match refusal target emit with
+            | None -> Alcotest.fail (target ^ ": expected a refusal")
+            | Some message ->
+                Alcotest.(check bool)
+                  target true
+                  (contains message "does not support"
+                  && contains message "foreign def"))
+          [
+            ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
+            ("beam", fun p -> ignore (Emo_codegen.Beam.emit p));
+          ]);
+    tc "the c and ocaml targets still build the same program" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        List.iter
+          (fun target ->
+            Alcotest.(check int) (target ^ " build exit") 0 (build target))
+          [ "c"; "ocaml" ]);
+  ]
+
 (* ---- new: the project scaffold (T24.3) ---- *)
 
 let read_file path =
@@ -2625,6 +2785,7 @@ let () =
       ("c_recycle", c_recycle_tests);
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
+      ("foreign_refusal", foreign_refusal_tests);
       ("publish", publish_tests);
       ("login", login_tests);
       ("new", new_tests);

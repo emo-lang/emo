@@ -34,6 +34,7 @@
 | M14 — CSV 读写 | 47 | 随编译器交付的 `csv` 包——RFC 4180 记录,只认 UTF-8——像其他 stdlib 包一样解析,在全部五个 target 上逐字节一致,并附 API 参考与可运行金测。 |
 | M15 — EmoUI | 48 | 一套声明式 EmoUI 树渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口(浏览器 DOM 随后按其运行时路径接入),各自只落在一个薄薄的每平台入口后面;共享 app 模块是可移植的 Emo,组合语法处处一致,各平台组件库共享收敛命名。 |
 | M16 — 值语义家族的回收 | 49 | `c` 目标回收值语义的那些种类,而不只是身份格:长跑程序每次渲染的 arena 字节与身份存活数保持平坦,而不是随事件上涨;数组增长是线性而非二次;每个 target 上既有的金测逐字节不变(`spike/arena-scope`、`CHECK.md`)。 |
+| M17 — 跨 target 一致性 | 50 | 兑现已经做出的承诺,而不是新设计:`c` 目标里子进程 raise 只结束子进程、`send` 送的是快照,`foreign def` 在 `wasm` 与 `beam` 上按名拒绝;每个 target 上既有的金测逐字节不变(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -55,7 +56,8 @@
 | ocaml 运行时的依赖策略 | T25.4 | 核心用 OCaml 标准库加 `unix`;`ssl` 是唯一的 opam 依赖,缺失时以清晰消息拒绝;不用 eio |
 | EmoUI 原生 UI 打包(per-package 编译 flags / `pkg_config`) | T48.7–T48.9 | 方向已定(2026-10-14)——manifest 长出 per-package 原生字段,原生后端不再以应用级构建脚本发布(`CHECK.md`、`docs/emo-ui.md`)。字段面(`pkg_config`、编译/链接 flags、`.m` 是否收集)仍属 T48.7 自己的范围 |
 | `c` 目标的长跑内存(值语义家族的回收) | T48.8–T48.9(demo 尺度)、step 49 | 已定(2026-10-14)——region 回收不可行;值语义家族需要引用计数,作为 step 49 排期(`CHECK.md`、`spike/arena-scope/`)。在它落地之前,原生 UI 后端停在 demo 尺度并把限制写进文档,而不是被它闸住 |
-| EmoUI 浏览器运行时路径 | T48.10–T48.11 | 开放 —— `docs/emo-ui.md`;TypeScript 运行时只面向 Node、wasm 宿主只有三个 import,选项是拆出浏览器安全版加 `dom_*` 层(或新增 wasm import)再配打包步骤 |
+| EmoUI 浏览器运行时路径 | T48.10–T48.11 | 已定(2026-10-15)——走拆分路线:把 TypeScript 运行时拆出浏览器安全子集、加 `dom_*` 家族,再配一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`、`docs/emo-ui.md`)。打包步骤在工具链里的落点仍属 T48.10 自己的范围 |
+| 跨 target 一致性(`c` 的 raise、`c` 的 send、`foreign def` 在 `wasm`/`beam` 上) | step 50 | 已定(2026-10-15)——这是对已经做出的承诺的一致性修复,不是新设计:子进程 raise 只结束子进程、`send` 送快照、两个 emitter 按名拒绝 `foreign def`(`CHECK.md`)。`typescript` 目标 send 仍共享这一项保持开放 |
 | 数组增长(O(1) 的 append 还是一个 builder) | T48.1、T49.4 | 已定(2026-10-15,T49.3)——走 builder,并且是语言层的新类型 `ArrayBuilder`,而不是 `Array` 的表示层改动(`CHECK.md`、`docs/intro/syntax.md`);从 `List` 转回 `Array` 那一半刻意不做 |
 
 ---
@@ -407,7 +409,7 @@
 - [x] **T23.3** — 标量运行时:长度前缀字符串(仅在 FFI 边界 NUL 结尾)、`%g` 浮点规则、`Bool`/`Char`、插值、标量内容相等。金测:numerics、if_expr。(2026-10-06 完成:if_expr 是首个完整例子金测;numerics 本身等 `foreign def`(T23.8)与元组(T23.4)——`c_scalar` 夹具改为与解释器自身的渲染交叉对拍打印规则。字符串布局与运行时用 C 写两项决策已记入 CHECK.md。)
 - [x] **T23.4** — 动态值模型:Step 19 的标签字(8 字节对齐堆块、3 个低位标签位;`Int64`/`Float64` 装箱双字单元;不做 NaN-boxing);bump/arena 分配器(临时画像);元组、值语义数组、`Box`。金测:objects。(2026-10-06 完成:标签字已落地——一个 `emo_value` 字,低位 000/001/011 区分指针/Bool/Char,堆块种类记在头字——bump 分配、malloc 泄漏按 CHECK.md 临时画像记录。regime 转换(`emo_box_*`/`emo_unbox_*`)在每个调用、绑定、返回与运算符处桥接本地与动态代码;动态 `+`/比较/相等按解释器规则在运行时分派;`to_string` 渲染元组 `(a, b)`、数组 `[a, b]`、Box 为 `<box>`。objects 金测等 classes(T23.5)——`c_dynamic` 夹具改为与解释器自身的渲染交叉对拍动态世界。)
 - [x] **T23.5** — 类、枚举、接口、闭包:编译期 vtable 的实例、枚举单例、结构化 `is()`、带守卫的模式;合并前回收模型决策须已落在 CHECK.md。金测:language_tour。(2026-10-06 完成:language_tour 与 objects 双双成为完整例子金测,逐字节一致。vtable 携带方法签名与动态约定 thunk——类类型接收者直接分派,接口/Unknown 接收者经 `emo_send`;`is()` 按 vtable 身份(类)或形状(接口)比较;闭包采用规范动态约定 `[header][fn][captured...]`,创建点做捕获分析,直接动态返回;`case` 降为顺序的测试/绑定/守卫块,以 goto 链落空下落。回收模型决策已在 CHECK.md 落定:身份对象用引用计数、值语义数据走 arena——retain/release 发射工作在 T23.9 让长驻程序成真之前落地。)
-- [x] **T23.6** — 模块与异常:跨文件模块引用、`raise`、未捕获异常退出码(`begin`/`catch`/`ensure` 仍未排期——不在范围内)。金测:shop、function_group(经 IR 降级免费获得——认领金测)。(2026-10-06 完成:两个金测逐字节认领。跨文件引用需要两处调用点修复——funsigs 现在携带被调方的声明结果,checker 定型为 Unknown 的跨模块调用仍能转换;IR 不再把模块别名 const 绑定降为 thunk(它们绑定的是路径而非值);组常量 thunk 返回 Unknown 而非 Void。`raise` 向 stderr 渲染解释器的 E3010 消息并以 1 退出——`begin`/`catch` 落地前无展开器。)
+- [x] **T23.6** — 模块与异常:跨文件模块引用、`raise`、未捕获异常退出码(`begin`/`catch`/`ensure` 仍未排期——不在范围内)。金测:shop、function_group(经 IR 降级免费获得——认领金测)。(2026-10-06 完成:两个金测逐字节认领。跨文件引用需要两处调用点修复——funsigs 现在携带被调方的声明结果,checker 定型为 Unknown 的跨模块调用仍能转换;IR 不再把模块别名 const 绑定降为 thunk(它们绑定的是路径而非值);组常量 thunk 返回 Unknown 而非 Void。`raise` 在根进程向 stderr 渲染解释器的 E3010 消息并以 1 退出——`begin`/`catch` 落地前无展开器;派生的进程 raise 只结束它自己,见 step 50。)
 - [x] **T23.7** — 系统层表面:带小端访问器的 `Bytes`、位运算符、`Byte`、`Int64`/`Float64` 位转换。金测:bit_ops、bytes、fixed_width。(2026-10-06 完成:三个完整例子金测逐字节通过。`&`/`|`/`^` 在 int64_t 上精确二补码;`<<`/`>>` 在运行时守卫计数(负数报错、≥64 得 0/符号填充);Byte 是 uint8_t,截断回绕,复用 Int64 的除法/移位守卫;动态世界中的 Byte 物化为存 0-255 的 Int64 单元。Bytes 是新的堆块种类,存储在单元内,`to_bytes`/`to_string` 互操作,运行时 `to_string` 方法分派(Bytes 出内容、其他值出渲染)——对应解释器的运行时分派。checker 现把 `Unknown + Unknown` 定型为 Unknown(运行时按值分派 `+`——两个结果都不可证明);Emo 定义名撞 C 保留字时加 `_c` 后缀。)
 - [x] **T23.8** — 直接 C ABI 上的 C FFI 第 1–3 级(不再需要包装器生成器):标量、随语言落地的宽度类型、不透明句柄 + 拷贝缓冲区;能力表中 `c` 翻转为支持 `foreign def`。金测:libm `sqrt` fixture 与一个小型 C 不透明句柄 fixture。(2026-10-06 完成:c 后端发射 `extern` 声明并直调符号——无包装。字符串跨界带 NUL 终止(出经 `emo_str_cstr`、入经 `emo_str_from_cstr`,按 CHECK.md 的布局决策);Int64 以 `int64_t` 直过——能力表在 checker 中目标感知(`c` 接纳 Int64,OCaml 后端保持 Float64/String/Bool);不透明句柄以指针尺寸的 Int64 承载,在 `c_foreign` 测试组中与 libm 夹具并列,配一个外部所有的计数器库、显式关闭。)
 - [x] **T23.9** — 进程与协作式调度器:`do` / `<-` / `receive`、邮箱、选择性 receive、`self_pid`、`halt`;单线程协作循环;执行轨迹与 `emo_sched_det` 做 diff。金测:pipeline、showcase。(2026-10-06 完成:两个完整例子金测逐字节通过。每个 Emo 进程是一个 ucontext 纤维,拥有独立栈;调度器沿用 emo_sched_det 的策略——FIFO 运行队列,spawn 入队子进程而不挂起父进程,send 投递 + 唤醒 + 把发送者重新排在队尾,receive 在生成代码中扫描邮箱取第一条被某分支接受的消息(守卫失败的消息留在队中),无匹配时停靠纤维;运行队列空而有纤维停靠即报告死锁。Pid 是 EMO_PID 单元(渲染 `<pid N>`);`EMO_TRACE=1` 打印 spawn/send/park/dispatch/exit/reap 事件供 diff。顺带修复:入口文件被双发现(根副本 + 树副本,键上带 `/.` 路径)导致每个符号按两种 mangling 降级——walk 现规范化文件路径,IR 按 parsed items 的物理同一性去重模块副本。)
@@ -800,3 +802,19 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 - [x] **T49.3** — 数组的形状:一个 O(1) 的 append 或一个 builder,让 k 元素数组的增长在字节与 retain 上都不是二次的;T48.1 的 children 表示取决于这个答案。**2026-10-15 已定 —— 走 builder,并且是语言层的新类型(`ArrayBuilder`),而不是 `Array` 的表示层改动。** 方法面 `new()` / `push` / `length` / `get` / `to_array`,解释器与五个宿主目标全上(`riscv64` 按名拒绝,退出码 65,`Map` 的先例);第一条静态可知类型的 `push` 钉住被 push 链最底端那个 `const` 绑定的元素类型(`docs/intro/syntax.md`,可变性)。这一项点名的第二种形状——从 `List` 转回可索引的 `Array`——刻意不做。数组这一半由此在没有动运行时的前提下得到回答,所以 step 49「数组增长是线性而非二次」这条判据现在可以从语言侧达成,而不必等 T49.1;T48.1 的表示问题是解除了阻塞,不是得到了答案。
 - [ ] **T49.4** — 闸门:把 spike 的渲染阶梯与 region 探针做成签入的测试——今天失败、之后通过,只针对 `c` 目标,且 `dune test` 全绿。
 - [ ] **T49.5** — 文档:`CHECK.md`、`docs/emo-ui.md` 及其 zh-CN 镜像,以及 step 48 的 demo 尺度注记都改为指向此处。
+
+---
+
+## M17 — 跨 target 一致性
+
+2026-10-14 的一次 target 可行性调查,把并发相关的承诺逐条对照了每个实现,发现三处规则与代码不一致(`CHECK.md`,跨 target 不变量)。其中两处从来就不是开放的设计问题:`docs/intro/concurrency.md` 早就承诺未捕获的错误「只杀掉出错的那个进程」,`docs/intro/syntax.md` 早就承诺 Map、Box、List 与 ArrayBuilder 在进程边界上按快照复制——解释器、独立 OCaml 运行时与 BEAM 都遵守这两条,`stdlib/registry/sync/0.1.0/sync.emo` 更是白纸黑字写明了句柄的发送规则。`c` 目标是唯一跑偏的实现,所以这里做的是**一致性修复,不是语言设计**:没有承诺被改动,README 也没有变化。第三处是同一形状的 emitter 侧问题——能力表本该是 `foreign def` 的唯一闸门,但它对每个 target 都放行 `Float64`/`String`/`Bool`,于是一个 `foreign def` 绕过了闸门,直接抵达 `wasm` 与 `beam` 两个 emitter。本里程碑自己的发现是:调查对 `raise` 缺口的代价估算是错的,而且错得很远——它设想的机制(`setjmp`/`longjmp`,外加沿每个被展开的 C 帧做引用计数排空)从来就不需要,因为运行时的 autorelease pool 本就是挂在 fiber 上的堆分配帧链,而 fiber 的收尾路径早已存在。这里的一切都局限在运行时与 emitter 内部。
+
+### Step 50 — 跨 target 一致性 · `plan/step-50-cross-target-conformance.md`
+
+**前置:** 无。
+**完成标准:** `c` 目标里派生的进程 raise 后独自死亡、父进程继续运行;可变值在 `c` 目标进程之间发送后送达的是快照;`foreign def` 在 `wasm` 与 `beam` 上按名拒绝并以 65 退出;每个 target 上既有的金测逐字节不变;`CHECK.md` 把三处都记为已定,并把 `typescript` 的 send 缺口点名列为剩余项。
+
+- [x] **T50.1** — `foreign def` 的拒绝:`emo_wasm.ml` 与 `emo_beam.ml` 逐函数、就在本该降级它的代码旁,用 `Emo_ir.Lower_error` 拒绝 `foreign def`——riscv 的先例——于是 CLI 把它渲染成退出码 65。调查留下的悬念(「最后是干净的拒绝,还是一个悄悄缺席的符号」)答案是后者:IR 把符号挂在一条其余部分普通的 `func` 记录上、函数体为空,所以两个 emitter 都在为一条没有 Emo 函数体的声明发射一个真实的函数。
+- [x] **T50.2** — `c` 目标的 `raise` 结束逻辑进程:`emo_raise` 在当前 fiber 不是根的时候排空它的帧链并停掉它,而调度器之外或根进程里的 raise 保持「渲染并 `exit(1)`」这条路(`docs/intro/concurrency.md`)。`halt()` 走同一个排空——它此前泄漏整条帧链,是另一处形状完全相同的站点。没有 emitter 改动,也没有展开器:帧链在堆上,而 fiber 的收尾路径早已存在。
+- [x] **T50.3** — `c` 目标的 `send` 送快照:`emo_deep_copy` 在发送处重建可变的那些种类,信箱持有这份副本,遵循解释器自己的规则,覆盖本运行时装有的那些种类。随之而来的是一行 emitter 改动——信箱的 take 会释放它唯一的那份持有,所以 receive 的扫描现在自己持有一份。
+- [x] **T50.4** — 文档:`CHECK.md` 的跨 target 条目改写为已定并修正代价估算,`docs/intro/concurrency.md` 里按引用传递那句修掉,T23.6 的注记更新,设计闸门表更新,本里程碑补上。`typescript` 目标 send 仍共享这一项记为条目的开放剩余项,而不在这里修,因为修它属于浏览器运行时拆分(T48.10)的工作。

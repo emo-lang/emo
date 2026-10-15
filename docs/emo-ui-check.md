@@ -86,11 +86,14 @@ In dependency order, each gate with its evidence:
    (`spike/arena-scope`, CHECK.md); the native backends are demo scale
    with the limit documented, and reclamation is scheduled as its own
    milestone — step 49, not a prerequisite for them.
-3. **First-class callbacks** — today a C callback re-enters Emo
-   through a fixed extern name with state threaded through its
-   signature (the spikes' pattern). Blocks crossing the FFI (E4200)
-   plus the existing `emo_closure_fn` convention would let components
-   take handlers as values.
+3. **Callbacks — settled, not first-class** (`CHECK.md`, the `c`
+   target's call discipline). A component takes a handler as a
+   single-method interface, and the native side enters Emo through the
+   trampoline pair generated for it; the `c` target's call discipline is
+   plain symbol calls, so closures are deliberately not first-class and
+   blocks do not cross the FFI. This item proposed the opposite —
+   blocks across the FFI (E4200) plus `emo_closure_fn` — which the
+   settled contract rejected. No longer a gate.
 4. **Rendering depth** — full repaint per event is fine at demo
    scale; reconciliation, style-key validation (today style maps are
    stringly Float64 pairs), and struct marshaling for toolkit-native

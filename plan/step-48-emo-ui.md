@@ -212,6 +212,9 @@ Listed as open questions in `docs/emo-ui.md`:
    or later.
 4. **A checked block/function type** — whether the component API earns
    it after a first package shows the friction.
-5. **The browser path boundary** — a `dom_*` layer in the existing
-   TypeScript runtime versus a browser-specific runtime variant, and
-   where the bundling step lives in the toolchain. Gates T48.10–T48.11.
+5. **The browser path boundary** — settled 2026-10-15 to a browser-safe
+   subset of the existing TypeScript runtime plus a `dom_*` family,
+   rather than a browser-specific runtime variant (`CHECK.md`, step 50).
+   Where the bundling step lives in the toolchain stays T48.10's own
+   work, the shape T48.7 already has for its field surface. Gates
+   T48.10–T48.11, now unblocked.

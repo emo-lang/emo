@@ -250,9 +250,11 @@ bool emo_is_tuple(emo_value v);
 /* A case expression with no matching branch. */
 void emo_no_match(void);
 
-/* An uncaught raise (T23.6): render the value like the interpreter's
-   E3010 and exit 1. `begin`/`catch`/`ensure` is unscheduled — until
-   then every raise terminates the process, so no unwinder exists. */
+/* An uncaught raise (T23.6): the root process renders the value like the
+   interpreter's E3010 and exits 1; a spawned process's ends only that
+   process, the interpreter's `Exit_raised`. `begin`/`catch`/`ensure`
+   stays unscheduled, so nothing unwinds — a dead fiber is discarded and
+   its pooled identities reclaimed from its frame chain. */
 void emo_raise(emo_value v);
 
 /* Enums (T23.5): a member is (enum name, member name), compared and

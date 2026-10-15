@@ -3421,6 +3421,10 @@ let emit (program : Emo_ir.program) : string =
     program.Emo_ir.pclasses;
   List.iter
     (fun (f : Emo_ir.func) ->
+      if f.Emo_ir.fforeign <> None then
+        raise
+          (Emo_ir.Lower_error
+             "the beam target does not support `foreign def` yet");
       emit_def ~cc:None
         ~params:
           (List.mapi

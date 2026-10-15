@@ -530,11 +530,13 @@ design choices:
   messages into a process). The synchronous Elm loop the spike used
   sidesteps it and is the right v1: processes and supervision arrive
   after the loop is proven.
-- **Backend consistency.** The `c` target's `raise` ends the process
-  rather than the offending process, and `send` shares rather than
-  snapshots — both recorded as open in `CHECK.md`. A GUI is the consumer
-  that makes both visible; a UI that raises while holding the toolkit
-  must not take the window down silently.
+- **Backend consistency.** The `c` target's `raise` ended the process
+  rather than the offending process, and `send` shared rather than
+  snapshotted — both closed 2026-10-15 (`CHECK.md`, step 50). A GUI was
+  the consumer that made both visible; a UI that raises while holding
+  the toolkit must not take the window down silently, and now it does
+  not. The `typescript` target's share-on-send is the same gap on the
+  Web path.
 - **Long-running memory.** The `c` target does not reclaim the value
   families a render allocates, and a UI re-renders per event, so this is
   the caveat that bounds the platform rather than the design:
@@ -716,12 +718,19 @@ mid-implementation:
    ruled out (`spike/arena-scope`, `CHECK.md`); it is scheduled as its
    own milestone (step 49) and is explicitly **not** a gate for the
    native backends, which ship at demo scale with the limit documented.
-5. **`raise` and `send` on the `c` target** (open in `CHECK.md`). A UI
-   must not die wholesale on one bad event, and event payloads crossing
-   processes must not be silently shared.
-6. **A browser path for the Web (T1).** Either a browser-safe split of
-   the TypeScript runtime plus a `dom_*` family and a bundling
-   step, or new wasm host imports. Not needed for SSR (T0).
+5. **`raise` and `send` on the `c` target — settled 2026-10-15 to the
+   promise already made** (`CHECK.md`, step 50). A UI must not die
+   wholesale on one bad event, and event payloads crossing processes must
+   not be silently shared — both are what `docs/intro/concurrency.md`
+   and `docs/intro/syntax.md` already say. The `c` target was the one
+   implementation that diverged; a child's `raise` now ends only that
+   child and `send` snapshots. The `typescript` target's share-on-send is
+   the same gap on the Web path below.
+6. **A browser path for the Web (T1) — settled 2026-10-15 to the split
+   route:** a browser-safe subset of the TypeScript runtime, a `dom_*`
+   family, and a bundling step, rather than new wasm host imports
+   (`CHECK.md`). Where the bundling step lives in the toolchain is
+   T48.10's own work. Not needed for SSR (T0).
 7. **Terminal input.** Raw mode and key events for the TUI (a small
    termios binding, or a terminal runtime implementation).
 8. **No new syntax.** The tree is already expressible; if it is not, the
@@ -870,9 +879,12 @@ tracked as **M16 — Value-family reclamation (step 49)**, spec in
    or later.
 4. **The checked block/function type** — whether the component API
    earns it after a first package shows the friction.
-5. **The Web T1 boundary** — a `dom_*` layer in the existing TS runtime
-   versus a browser-specific runtime variant, and where the bundling
-   step lives in the toolchain.
+5. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
+   subset of the TypeScript runtime plus a `dom_*` family, not a
+   browser-specific runtime variant (`CHECK.md`). What stays open is
+   mechanical: where the bundling step lives in the toolchain, which is
+   T48.10's own work. The `typescript` target's share-on-send
+   (`CHECK.md`, cross-target invariants) is on this path too.
 6. **The tree spelling** — whether the array child form gets a literal
    spelling at all, and if so whether it belongs in Emo's own grammar or
    in an external translator that emits `.emo`. The mechanisms that are

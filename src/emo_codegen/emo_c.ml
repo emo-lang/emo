@@ -2024,7 +2024,11 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       put env "    goto %s;\n  }\n" retry;
       put env "  {\n    void *__m = emo_mailbox_first();\n";
       put env "    while (__m != NULL) {\n";
-      put env "      %s = emo_msg_value(__m);\n" s;
+      (* The scan holds its own claim on the candidate (pooled, like every
+         other expression result): the mailbox holds the snapshot alone
+         until the take, and the take drops that claim before the branch
+         binds the value. *)
+      put env "      %s = emo_autorelease(emo_retain(emo_msg_value(__m)));\n" s;
       List.iteri
         (fun i (b : Emo_ir.branch) ->
           let test = pattern_test env s b.Emo_ir.pattern in

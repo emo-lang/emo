@@ -11,6 +11,6 @@ The concurrency semantics are shaped by the following decisions:
 - **`halt()` stops the current process.** So does an unhandled error, and either kills only the offending process; core provides the process-exit signal a supervisor needs and nothing more — kill, wait, and restart policies are library territory.
 - **The root process is the program.** When it ends — normally, by `halt()`, or by an uncaught raise — the program ends with it, and processes still runnable or parked are dropped. A program that waits for spawned work keeps its root alive, normally parked in `receive`; the rule holds on every target, including BEAM.
 - Message passing is the core concurrency primitive; shared-memory primitives are not part of the core semantics.
-- Data is immutable by default, so messages can be passed by copying on BEAM and by reference on the `ocaml` and `c` backends while keeping identical observable semantics.
+- Data is immutable by default, so a message crosses a process boundary by copy on every backend — `send` never shares a mutable value, and the sender's later changes are invisible to the receiver.
 - Tail calls are guaranteed; recursion is the idiomatic shape of a receive loop.
 - Crash isolation and supervision are library-level on both backends: an unhandled error kills only the offending process.
