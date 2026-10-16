@@ -1766,6 +1766,49 @@ let publish_tests =
                    Alcotest.(check (option string))
                      "error code" (Some "version_exists")
                      (Emo_cli.json_string_field "code" response_body))));
+    tc "publish reads the endpoint from the manifest's registry field"
+      (fun () ->
+        let dir = Filename.concat scratch "publish-manifest-registry" in
+        let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
+        let old_token = Sys.getenv_opt "EMO_TOKEN" in
+        let set var = function
+          | Some v -> Unix.putenv var v
+          | None -> Unix.putenv var ""
+        in
+        set "EMO_REGISTRY" None;
+        set "EMO_TOKEN" (Some "emo_manifest_token");
+        let captured =
+          with_captive_server ~status:201 ~body:"{}" (fun port ->
+              write_file
+                (Filename.concat dir "package.emo")
+                (Printf.sprintf
+                   {|package {
+  name = "acme/probe"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  registry = "http://127.0.0.1:%d"
+
+  deps {}
+}
+|}
+                   port);
+              write_file
+                (Filename.concat dir "probe.emo")
+                "def one() Int64 {\n  return 1\n}\n";
+              in_dir dir (fun () ->
+                  Alcotest.(check int)
+                    "publish exits 0" 0
+                    (Emo_cli.publish ~registry_opt:None ~token_opt:None
+                       ~dry_run:false)))
+        in
+        set "EMO_REGISTRY" old_registry;
+        set "EMO_TOKEN" old_token;
+        Alcotest.(check bool)
+          "posts to the manifest's endpoint" true
+          (contains captured "POST /api/v1/packages HTTP/1.1\r\n");
+        Alcotest.(check bool)
+          "the env token rides along" true
+          (contains captured "Authorization: Bearer emo_manifest_token"));
   ]
 
 (* ---- login: the account exchange behind `emo emoji login` ----
@@ -2133,7 +2176,8 @@ username = "u"|}
                 Alcotest.(check string)
                   "second token" "emo_b" second.Emo_project.c_token
             | _ -> Alcotest.fail "expected two entries"));
-    tc "publish resolves flags, then env, then stored logins" (fun () ->
+    tc "publish resolves flags, then env, then the manifest, then logins"
+      (fun () ->
         let stored =
           [
             {
@@ -2150,14 +2194,16 @@ username = "u"|}
             };
           ]
         in
-        let resolve ~registry_opt ~env_registry ~token_opt ~env_token =
-          Emo_cli.resolve_publish_auth ~registry_opt ~env_registry ~token_opt
-            ~env_token ~stored
+        let resolve ~registry_opt ~env_registry ~manifest_registry ~token_opt
+            ~env_token =
+          Emo_cli.resolve_publish_auth ~registry_opt ~env_registry
+            ~manifest_registry ~token_opt ~env_token ~stored
         in
         (match
            resolve ~registry_opt:(Some "http://f.example")
-             ~env_registry:(Some "http://e.example") ~token_opt:(Some "emo_f")
-             ~env_token:(Some "emo_e")
+             ~env_registry:(Some "http://e.example")
+             ~manifest_registry:(Some "http://a.example")
+             ~token_opt:(Some "emo_f") ~env_token:(Some "emo_e")
          with
         | Ok got ->
             Alcotest.(check (pair string string))
@@ -2167,17 +2213,40 @@ username = "u"|}
         | Error e -> Alcotest.fail e);
         (match
            resolve ~registry_opt:None ~env_registry:(Some "http://b.example")
-             ~token_opt:None ~env_token:None
+             ~manifest_registry:(Some "http://a.example") ~token_opt:None
+             ~env_token:None
          with
         | Ok got ->
             Alcotest.(check (pair string string))
-              "the env registry picks its own stored token, slash-insensitively"
+              "the env registry outranks the manifest and picks its own token"
               ("http://b.example", "emo_b")
               got
         | Error e -> Alcotest.fail e);
         (match
-           resolve ~registry_opt:None ~env_registry:None ~token_opt:None
+           resolve ~registry_opt:None ~env_registry:None
+             ~manifest_registry:(Some "http://a.example") ~token_opt:None
              ~env_token:None
+         with
+        | Ok got ->
+            Alcotest.(check (pair string string))
+              "the manifest's registry outranks the most recent login and \
+               picks its own token"
+              ("http://a.example", "emo_a")
+              got
+        | Error e -> Alcotest.fail e);
+        (match
+           resolve ~registry_opt:None ~env_registry:None
+             ~manifest_registry:(Some "http://c.example") ~token_opt:None
+             ~env_token:None
+         with
+        | Ok _ -> Alcotest.fail "expected a missing-token error"
+        | Error e ->
+            Alcotest.(check bool)
+              "a manifest registry with no stored token refuses" true
+              (contains e "no API token"));
+        (match
+           resolve ~registry_opt:None ~env_registry:None ~manifest_registry:None
+             ~token_opt:None ~env_token:None
          with
         | Ok got ->
             Alcotest.(check (pair string string))
@@ -2187,7 +2256,7 @@ username = "u"|}
         | Error e -> Alcotest.fail e);
         (match
            resolve ~registry_opt:None ~env_registry:(Some "http://c.example")
-             ~token_opt:None ~env_token:None
+             ~manifest_registry:None ~token_opt:None ~env_token:None
          with
         | Ok _ -> Alcotest.fail "expected a missing-token error"
         | Error e ->
@@ -2196,13 +2265,75 @@ username = "u"|}
               (contains e "no API token"));
         match
           Emo_cli.resolve_publish_auth ~registry_opt:None ~env_registry:None
-            ~token_opt:None ~env_token:None ~stored:[]
+            ~manifest_registry:None ~token_opt:None ~env_token:None ~stored:[]
         with
         | Ok _ -> Alcotest.fail "expected a no-registry error"
         | Error e ->
             Alcotest.(check bool)
               "nothing configured names the registry" true
               (contains e "no registry"));
+    tc "login resolves the flag, then the env, then the manifest" (fun () ->
+        let dir = Filename.concat scratch "login-registry-resolution" in
+        let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
+        let restore = function
+          | Some v -> Unix.putenv "EMO_REGISTRY" v
+          | None -> Unix.putenv "EMO_REGISTRY" ""
+        in
+        Unix.putenv "EMO_REGISTRY" "";
+        Fun.protect
+          ~finally:(fun () -> restore old_registry)
+          (fun () ->
+            (* No manifest here: nothing configured is an error. *)
+            write_file (Filename.concat dir "placeholder.emo") "const x = 1\n";
+            in_dir dir (fun () ->
+                match Emo_cli.resolve_login_registry ~registry_opt:None with
+                | Ok None -> ()
+                | Ok (Some _) -> Alcotest.fail "expected no registry"
+                | Error e -> Alcotest.fail e);
+            write_file
+              (Filename.concat dir "package.emo")
+              {|package {
+  name = "acme/hello"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  registry = "http://manifest.example"
+
+  deps {}
+}
+|};
+            in_dir dir (fun () ->
+                (match
+                   Emo_cli.resolve_login_registry
+                     ~registry_opt:(Some "http://flag.example")
+                 with
+                | Ok (Some r) ->
+                    Alcotest.(check string)
+                      "the flag wins" "http://flag.example" r
+                | _ -> Alcotest.fail "expected the flag's registry");
+                Unix.putenv "EMO_REGISTRY" "http://env.example";
+                (match Emo_cli.resolve_login_registry ~registry_opt:None with
+                | Ok (Some r) ->
+                    Alcotest.(check string)
+                      "the env outranks the manifest" "http://env.example" r
+                | _ -> Alcotest.fail "expected the env's registry");
+                Unix.putenv "EMO_REGISTRY" "";
+                (match Emo_cli.resolve_login_registry ~registry_opt:None with
+                | Ok (Some r) ->
+                    Alcotest.(check string)
+                      "the manifest answers last" "http://manifest.example" r
+                | _ -> Alcotest.fail "expected the manifest's registry");
+                (* A damaged manifest is an error, not a silent skip —
+                   asserted while EMO_REGISTRY is still unset, or the
+                   environment would answer before the file is read. *)
+                write_file
+                  (Filename.concat dir "package.emo")
+                  {|package { name = "acme/hello"|};
+                match Emo_cli.resolve_login_registry ~registry_opt:None with
+                | Ok _ -> Alcotest.fail "expected a manifest error"
+                | Error e ->
+                    Alcotest.(check bool)
+                      "the manifest error is named" true
+                      (String.length e > 0))));
   ]
 
 (* ---- The riscv64 goldens (T19.1): the freestanding ELF boots under

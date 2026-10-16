@@ -33,10 +33,10 @@ type manifest = {
   link : string list;
       (* system libraries the c target links (bare names, `-l`-style) *)
   registry : string option;
-      (* the HTTP(S) registry the project pulls dependencies from. Only the
-         project root's field is read; a dependency's manifest is fetched
-         from the registry the consumer already chose, so its field is
-         ignored. *)
+      (* the HTTP(S) registry this project pulls dependencies from and
+         publishes to. Only the project root's field is read; a dependency's
+         manifest is fetched from the registry the consumer already chose,
+         so its field is ignored. *)
   deps : (string * Version.t) list; (* exact versions *)
 }
 
@@ -55,7 +55,8 @@ let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
    manifest is data, not program logic. `link` is optional (default []): the
    system libraries the c target links, as bare names. `registry` is optional
    (default none): the HTTP(S) endpoint this project resolves dependencies
-   against — read only when the manifest is the project root. *)
+   against and publishes to — read only when the manifest is the project
+   root. *)
 (* The budget for restricted manifest evaluation: generous but finite. *)
 let manifest_budget = 10_000
 
@@ -283,9 +284,10 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                  hint = None;
                }))
     link;
-  (* The project's pull endpoint: an HTTP(S) URL only. A filesystem registry
-     is a developer/test affordance and stays with EMO_REGISTRY — a committed
-     manifest must name an endpoint every machine can reach the same way. *)
+  (* The project's registry endpoint — pulls and publishes: an HTTP(S) URL
+     only. A filesystem registry is a developer/test affordance and stays
+     with EMO_REGISTRY — a committed manifest must name an endpoint every
+     machine can reach the same way. *)
   let registry =
     match Emo_eval.lookup_opt env "registry" with
     | None -> None

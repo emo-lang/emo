@@ -1391,22 +1391,27 @@ let apply_login ~(file : string) ~(registry : string) ~(email : string)
   | Ok (_, _, status, body) -> Rejected (describe_refusal status body)
 
 (* Resolves publish's endpoint and token: the flags win, then the
-   environment, then the stored `emo emoji login` entries — the registry
-   falls back to the most recent login, and a token is only ever taken
-   from the entry belonging to the resolved registry, never another
-   registry's. *)
+   environment, then the manifest's `registry` field, then the stored
+   `emo emoji login` entries — the manifest is the project's own committed
+   choice, so it outranks the machine-local most-recent-login fallback, and
+   a token is only ever taken from the entry belonging to the resolved
+   registry, never another registry's. *)
 let resolve_publish_auth ~(registry_opt : string option)
-    ~(env_registry : string option) ~(token_opt : string option)
-    ~(env_token : string option) ~(stored : Emo_project.stored_login list) :
-    (string * string, string) result =
+    ~(env_registry : string option) ~(manifest_registry : string option)
+    ~(token_opt : string option) ~(env_token : string option)
+    ~(stored : Emo_project.stored_login list) : (string * string, string) result
+    =
   let registry =
     match (registry_opt, env_registry) with
     | Some r, _ -> Some r
     | None, Some r when r <> "" -> Some r
     | _ -> (
-        match List.rev stored with
-        | e :: _ -> Some e.Emo_project.c_registry
-        | [] -> None)
+        match manifest_registry with
+        | Some r -> Some r
+        | None -> (
+            match List.rev stored with
+            | e :: _ -> Some e.Emo_project.c_registry
+            | [] -> None))
   in
   let token =
     match (token_opt, env_token) with
@@ -1429,8 +1434,8 @@ let resolve_publish_auth ~(registry_opt : string option)
   match (registry, token) with
   | None, _ ->
       Error
-        "no registry configured — pass --registry or set EMO_REGISTRY (or run \
-         `emo emoji login`)"
+        "no registry configured — pass --registry, set EMO_REGISTRY, set \
+         `registry` in package.emo, or run `emo emoji login`"
   | _, None ->
       Error
         "no API token — pass --token, set EMO_TOKEN, or run `emo emoji login`"
@@ -1469,6 +1474,7 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
             | Some r when r <> "" -> Some r
             | _ -> None
           in
+          let manifest_registry = m.Emo_pkg.registry in
           let env_token =
             match Sys.getenv_opt "EMO_TOKEN" with
             | Some t when t <> "" -> Some t
@@ -1476,10 +1482,13 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
           in
           (* The stored logins are consulted only when a fallback is
              actually needed; a damaged file then surfaces instead of
-             being silently ignored. *)
+             being silently ignored. The manifest's field can satisfy the
+             registry half, but the token may still have to come from the
+             entry minted for it. *)
           match
             if
-              (registry_opt = None && env_registry = None)
+              registry_opt = None && env_registry = None
+              && manifest_registry = None
               || (token_opt = None && env_token = None)
             then
               Emo_project.load_credentials
@@ -1491,8 +1500,8 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
               65
           | Ok stored -> (
               match
-                resolve_publish_auth ~registry_opt ~env_registry ~token_opt
-                  ~env_token ~stored
+                resolve_publish_auth ~registry_opt ~env_registry
+                  ~manifest_registry ~token_opt ~env_token ~stored
               with
               | Error message ->
                   prerr_endline ("emo publish: " ^ message);
@@ -1541,7 +1550,8 @@ let publish_cmd =
       & info [ "registry" ] ~docv:"URL"
           ~doc:
             "Registry endpoint (default: the EMO_REGISTRY environment \
-             variable, then the most recent `emo emoji login`).")
+             variable, then the manifest's `registry` field, then the most \
+             recent `emo emoji login`).")
   in
   let token =
     Arg.(
@@ -2013,6 +2023,31 @@ let emoji_build_cmd =
    neither --token nor EMO_TOKEN. The email and password come from the
    terminal (the password read with the echo disabled) or, when stdin is
    piped, as two plain lines. *)
+
+(* The endpoint the login authenticates against: the flag wins, then the
+   environment, then the manifest's `registry` field — the same field
+   `emo publish` and dependency pulls read, so a project names its registry
+   once. A damaged manifest is an error rather than a silent skip: the
+   field cannot be read past it. *)
+let resolve_login_registry ~(registry_opt : string option) :
+    (string option, string) result =
+  match registry_opt with
+  | Some r -> Ok (Some r)
+  | None -> (
+      match Sys.getenv_opt "EMO_REGISTRY" with
+      | Some r when r <> "" -> Ok (Some r)
+      | _ -> (
+          let path = Filename.concat (Sys.getcwd ()) "package.emo" in
+          if not (Sys.file_exists path) then Ok None
+          else
+            match
+              Emo_pkg.parse_manifest ~file:path
+                ~source:(Emo_project.read_file path)
+            with
+            | exception Emo_pkg.Manifest_error d ->
+                Error d.Emo_support.Diagnostic.message
+            | m -> Ok m.Emo_pkg.registry))
+
 let emoji_login ~(registry_opt : string option) ~(expires_in_days : int) : int =
   if expires_in_days < 0 then begin
     prerr_endline
@@ -2021,19 +2056,16 @@ let emoji_login ~(registry_opt : string option) ~(expires_in_days : int) : int =
     65
   end
   else
-    let registry =
-      match (registry_opt, Sys.getenv_opt "EMO_REGISTRY") with
-      | Some r, _ -> Some r
-      | None, Some r when r <> "" -> Some r
-      | _ -> None
-    in
-    match registry with
-    | None ->
-        prerr_endline
-          "emo emoji login: no registry configured — pass --registry or set \
-           EMO_REGISTRY";
+    match resolve_login_registry ~registry_opt with
+    | Error message ->
+        prerr_endline ("emo emoji login: " ^ message);
         65
-    | Some registry -> (
+    | Ok None ->
+        prerr_endline
+          "emo emoji login: no registry configured — pass --registry, set \
+           EMO_REGISTRY, or set `registry` in package.emo";
+        65
+    | Ok (Some registry) -> (
         let interactive = Unix.isatty Unix.stdin in
         let read_line_of prompt =
           if interactive then begin
@@ -2103,7 +2135,7 @@ let emoji_login_cmd =
       & info [ "registry" ] ~docv:"URL"
           ~doc:
             "Registry endpoint (default: the EMO_REGISTRY environment \
-             variable).")
+             variable, then the manifest's `registry` field).")
   in
   let expires_in_days =
     Arg.(
