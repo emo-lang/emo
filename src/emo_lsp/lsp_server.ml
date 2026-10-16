@@ -40,8 +40,8 @@ let warning_message state message =
 
 let no_manifest_message dir =
   Printf.sprintf
-    "%s has no package.emo, so the editor indexes no project there. Run \
-     `emo new <name>` to scaffold one, or run the `emo.package.init` command."
+    "%s has no package.emo, so the editor indexes no project there. Run `emo \
+     new <name>` to scaffold one, or run the `emo.package.init` command."
     dir
 
 let note_no_manifest (state : state) (dir : string) : unit =
@@ -234,8 +234,8 @@ let compute_diagnostics (state : state) (file : string) (text : string) :
 let publish_diagnostics (state : state) (uri : string) (file : string)
     (text : string) : unit =
   let starts = Lsp_util.line_starts text in
-  (if root_for_file state file = None then
-     note_no_manifest state (Filename.dirname file));
+  if root_for_file state file = None then
+    note_no_manifest state (Filename.dirname file);
   let diagnostics =
     List.map
       (diagnostic_to_lsp text starts)
@@ -1075,7 +1075,7 @@ let handle_execute_command (state : state) (params : Yojson.Safe.t) :
             {|package {
   // The package name — this init defaulted it to local/<directory>.
   // A plain name works while the project stays local; publishing
-  // (`emo publish`) asks for the owner/name form, e.g. "acme/hello".
+  // (`emo emoji publish`) asks for the owner/name form, e.g. "acme/hello".
   name = "%s"
   // This package's own version: exact major.minor.patch.
   version = "0.1.0"

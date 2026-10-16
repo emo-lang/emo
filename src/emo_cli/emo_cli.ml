@@ -1093,7 +1093,7 @@ let install_cmd =
           match install () with 0 -> Cmd.Exit.ok | code -> exit code)
       $ const ())
 
-(* `emo publish`: pack the package rooted at the working directory and POST
+(* `emo emoji publish`: pack the package rooted at the working directory and POST
    it to the registry. The upload is dogfooded: the request is made by the
    standard library's own http client, running as an embedded Emo program
    under the toolchain's scheduler. The endpoint, token, and archive bytes
@@ -1696,7 +1696,7 @@ let doctor_cmd =
    holds: an existing
    directory or clashing files refuse; nothing is ever overwritten. The
    manifest carries the plain name when no owner is given — running,
-   checking, and building work at once, and `emo publish` names the
+   checking, and building work at once, and `emo emoji publish` names the
    owner/name rule when the package is published. *)
 let scaffold ~(path : string) : int =
   let leaf = Filename.basename path in
@@ -1713,7 +1713,7 @@ let scaffold ~(path : string) : int =
   else begin
     (* The manifest name: an `owner/name` argument is taken as given;
        anything else is the leaf name — running and building work at
-       once, and `emo publish` names the owner/name rule when it is
+       once, and `emo emoji publish` names the owner/name rule when it is
        time to publish. *)
     let stripped =
       let n = String.length path in
@@ -1748,7 +1748,7 @@ let scaffold ~(path : string) : int =
       (Printf.sprintf
          {|package {
   // The package name. A plain name works while the project stays local;
-  // publishing (`emo publish`) asks for the owner/name form,
+  // publishing (`emo emoji publish`) asks for the owner/name form,
   // e.g. "acme/hello".
   name = "%s"
   // This package's own version: exact major.minor.patch.
@@ -2033,14 +2033,16 @@ let emoji_build_cmd =
       $ const ())
 
 (* `emo emoji login`: verify the account against the registry, mint a
-   push/yank/read API token, and store it — afterwards `emo publish` needs
+   push/yank/read API token, and store it — afterwards `emo emoji publish`
+   needs
    neither --token nor EMO_TOKEN. The email and password come from the
    terminal (the password read with the echo disabled) or, when stdin is
    piped, as two plain lines. *)
 
 (* The endpoint the login authenticates against: the flag wins, then the
    environment, then the manifest's `registry` field — the same field
-   `emo publish` and dependency pulls read, so a project names its registry
+   `emo emoji publish` and dependency pulls read, so a project names its
+   registry
    once. A damaged manifest is an error rather than a silent skip: the
    field cannot be read past it. *)
 let resolve_login_registry ~(registry_opt : string option) :
@@ -2156,16 +2158,16 @@ let emoji_login_cmd =
           ~doc:
             "Expire the minted token after this many days (default: 0, the \
              token never expires). The expiry is recorded alongside the token; \
-             when it passes, the registry refuses the token and `emo publish` \
-             says to log in again.")
+             when it passes, the registry refuses the token and `emo emoji\n\
+            \             publish` says to log in again.")
   in
   Cmd.v
     (Cmd.info "login"
        ~doc:
          "Sign in to a registry: verifies the account and stores a \
-          push/yank/read API token, so `emo publish` needs neither --token nor \
-          EMO_TOKEN. With a terminal, asks for the email and password; \
-          otherwise reads them as two lines from stdin.")
+          push/yank/read API token, so `emo emoji publish` needs neither\n\
+         \          --token nor EMO_TOKEN. With a terminal, asks for the email \
+          and password; otherwise reads them as two lines from stdin.")
     Term.(
       const (fun r days ->
           match emoji_login ~registry_opt:r ~expires_in_days:days with
@@ -2190,7 +2192,6 @@ let cmd =
       build;
       deps;
       install_cmd;
-      publish_cmd;
       emoji;
       new_cmd;
       doctor_cmd;
