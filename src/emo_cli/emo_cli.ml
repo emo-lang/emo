@@ -206,7 +206,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         ~hint:"`emo emoji build` builds a package from its manifest"
   | true -> (
       try
-        let inputs, entry_path, packages, _manifest, (dep_csources, dep_links) =
+        let inputs, entry_path, packages, (dep_csources, dep_links) =
           Emo_project.compile_inputs ~entry_file:entry ~target
         in
         let program =

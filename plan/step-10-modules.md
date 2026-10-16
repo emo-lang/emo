@@ -13,10 +13,13 @@ and incremental builds. After this step, multi-file projects work end to end.
 
 ### In
 
-- **Root discovery** — the project root is the nearest ancestor directory
-  containing the package manifest (step 11 introduces the manifest itself;
-  until then the root is the entry file's directory, a transitional rule
-  replaced in step 11 — documented in both steps).
+- **Root discovery** — the project root is the working directory, which
+  must hold the package manifest (step 11 introduces the manifest itself;
+  until then the root is the working directory alone, a transitional rule
+  replaced in step 11 — documented in both steps). The rule settled on
+  2026-10-16 is the cwd-only one: no ancestor is ever consulted, a missing
+  `./package.emo` is E5010, and an entry that is not a module of that
+  package is E5011.
 - **Module loading** — `shop/order.emo` is module `shop.order`:
   - A directory or file referenced as a member path evaluates to a `Module`
     value — a namespace whose members load lazily on first access.
@@ -94,5 +97,6 @@ def checkout(cart Cart) Decimal {
 
 ## Open design items
 
-- Transitional root rule (entry file's directory) must be swapped for
-  manifest-based roots in step 11 — do not let it fossilize.
+- Transitional root rule — **closed (2026-10-16, T11.10)**. The entry file's
+  directory never became the rule; the root went to the manifest, and then to
+  the working directory alone (above), so nothing fossilized.

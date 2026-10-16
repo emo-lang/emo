@@ -1,0 +1,7 @@
+package {
+  name = "emo/spike_gtk"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}

@@ -1,0 +1,7 @@
+package {
+  name = "emo/error_matching"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "wasm", "beam", "riscv64"]
+
+  deps {}
+}

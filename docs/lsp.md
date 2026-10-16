@@ -105,7 +105,10 @@ the options table.
 - **Diagnostics.** Lex, parse, and type-check errors, plus a check that every
   scoped `require` is paired with a `deps` entry in `package.emo` (E5006) and
   that an unscoped `require` names a published standard-library package
-  (E5009). The pairing error carries a quick fix that adds the dependency.
+  (E5009). The pairing error carries a quick fix that adds the dependency. A
+  buffer outside any package — no `package.emo` at the root the server was
+  given — gets none of them: no project is indexed there, and one message
+  says so rather than leaving the silence unexplained.
 - **Hover and go-to-definition.** Signatures and cross-module jumps.
 - **Document and workspace symbols.** A file outline and project-wide symbol
   search.
@@ -130,10 +133,15 @@ by the extension's package view:
 
 ## Design notes
 
-- **The directory tree is the module tree.** The server roots the project at
-  the nearest `package.emo` (falling back to the client's workspace root) and
-  indexes every `.emo` file under it, exactly as the compiler discovers
-  modules.
+- **The directory tree is the module tree.** The server indexes a project only
+  when the root it was given holds `package.emo` — the root the compiler would
+  occupy, which is where you stand and never an ancestor it guesses at. It
+  then indexes every `.emo` file under that root, skipping a nested directory
+  that carries a manifest of its own, exactly as the compiler discovers
+  modules. A root without a manifest is not a project: the server publishes no
+  diagnostics for it and says so once — a `window/showMessage` warning when
+  `initialize` finds none, and a deduplicated `window/logMessage` per
+  manifest-less directory a buffer arrives in, pointing at `emo.package.init`.
 - **Unsaved buffers win.** Completion, hover, and diagnostics use the open
   document's text; the on-disk project index supplies everything else.
 - **Positions are UTF-16.** Emo spans are byte offsets into UTF-8 source; the

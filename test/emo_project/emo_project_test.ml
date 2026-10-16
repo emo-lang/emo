@@ -43,7 +43,19 @@ let fresh_scratch () =
        (int_of_float (Sys.time () *. 1000.))
        !scratch_counter)
 
-(* Writes files into a fresh scratch project and returns its directory. *)
+(* Writes files into a fresh scratch project and returns its directory.
+   Every project carries a manifest — the root rule makes a package.emo
+   the price of being a project at all — so one lands first; a test that
+   needs its own writes it in [files] and overwrites this default. *)
+let default_manifest =
+  {|package {
+  name = "local/test"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  deps {}
+}
+|}
+
 let write_project files =
   let scratch = fresh_scratch () in
   List.iter
@@ -55,15 +67,15 @@ let write_project files =
       let oc = open_out_bin path in
       output_string oc source;
       close_out oc)
-    files;
+    (("package.emo", default_manifest) :: files);
   scratch
 
 (* Writes files into a fresh scratch project and discovers it with the
    scratch directory as the working-directory root. *)
-let discover files entry =
+let discover files =
   let scratch = write_project files in
   Sys.chdir scratch;
-  Emo_project.discover ~entry_file:entry
+  Emo_project.discover ()
 
 let with_project files entry =
   let scratch = write_project files in
@@ -110,7 +122,6 @@ let resolution_tests =
               ("shop/internal/discounts.emo", "");
               ("shop/checkout.emo", "");
             ]
-            "shop/checkout.emo"
         in
         let resolve path = Emo_project.resolve p path in
         Alcotest.(check bool)
@@ -137,7 +148,7 @@ let resolution_tests =
           | Some (Dir _) -> true
           | _ -> false));
     tc "a missing module resolves to nothing" (fun () ->
-        let p = discover [ ("shop/order.emo", "") ] "shop/order.emo" in
+        let p = discover [ ("shop/order.emo", "") ] in
         Alcotest.(check bool)
           "nope" false
           (match Emo_project.resolve p [ "shop"; "nope" ] with
@@ -147,13 +158,12 @@ let resolution_tests =
         let p =
           discover
             [ ("shop/order.emo", ""); ("shop/order/util.emo", "") ]
-            "shop/order.emo"
         in
         Alcotest.(check bool)
           "E5005" true
           (List.mem "E5005" (codes_of (Emo_project.diagnostics p))));
     tc "module paths resolve from the working directory" (fun () ->
-        let p = discover [ ("shop/order.emo", "") ] "shop/order.emo" in
+        let p = discover [ ("shop/order.emo", "") ] in
         Alcotest.(check bool)
           "elided resolves" true
           (match Emo_project.resolve p [ "shop"; "order" ] with
@@ -249,9 +259,8 @@ let privacy_tests =
               ("shop/pricing.emo", {|const rate = shop.internal.discounts.rate|});
               ("shop/internal/discounts.emo", {|const rate = 1|});
             ]
-            "shop/pricing.emo"
         in
-        let _, _, _, errors = Emo_project.check_project ~manifest:None p in
+        let _, _, _, errors = Emo_project.check_project p in
         if List.length errors > 0 then
           Alcotest.fail ("codes: " ^ codes_dump errors);
         Alcotest.(check int) "count" 0 (List.length errors));
@@ -263,9 +272,8 @@ let privacy_tests =
               ("shop/internal/discounts.emo", {|const rate = 1|});
               ("other/thing.emo", {|const rate = shop.internal.discounts.rate|});
             ]
-            "other/thing.emo"
         in
-        let _, _, _, errors = Emo_project.check_project ~manifest:None p in
+        let _, _, _, errors = Emo_project.check_project p in
         if not (has_code errors "E5001") then
           Alcotest.fail ("codes: " ^ codes_dump errors);
         let message =
@@ -387,9 +395,8 @@ let cycle_tests =
 const once = 1|});
               ("other/b.emo", {|const back = a.once|});
             ]
-            "a.emo"
         in
-        let _, _, _, errors = Emo_project.check_project ~manifest:None p in
+        let _, _, _, errors = Emo_project.check_project p in
         if not (has_code errors "E5003") then
           Alcotest.fail ("codes: " ^ codes_dump errors);
         let message =
@@ -407,9 +414,8 @@ const once = 1|});
   return 1
 }|});
             ]
-            "main.emo"
         in
-        let _, _, _, errors = Emo_project.check_project ~manifest:None p in
+        let _, _, _, errors = Emo_project.check_project p in
         Alcotest.(check int) "count" 0 (List.length errors));
   ]
 
@@ -445,8 +451,8 @@ let cache_tests =
            by the load and the check. *)
         Alcotest.(check int) "parses" 2 p.Emo_project.parses);
     tc "changed content invalidates the cache entry" (fun () ->
-        let entry = with_project [ ("m.emo", "const x = 1") ] "m.emo" in
-        let p = Emo_project.discover ~entry_file:entry in
+        ignore (with_project [ ("m.emo", "const x = 1") ] "m.emo");
+        let p = Emo_project.discover () in
         let file = Filename.concat p.Emo_project.root "m.emo" in
         let (_ : Emo_support.Diagnostic.t list) =
           Emo_check.check_parsed (Emo_project.parse_cached p file)
@@ -1274,7 +1280,7 @@ println(helper.twice(21))
       (fun () ->
         let entry = shadow_app () in
         with_registry (fun () ->
-            let inputs, entry_path, packages, _, _ =
+            let inputs, entry_path, packages, _ =
               Emo_project.compile_inputs ~entry_file:entry ~target:"c"
             in
             let program =
@@ -1627,6 +1633,9 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
           | None -> Alcotest.fail "EMO_EXAMPLES_DIR is not set"
         in
         let entry = Filename.concat examples "http_roundtrip/main.emo" in
+        (* The root is where the compiler stands: the example's own
+           directory, which is the package the entry belongs to. *)
+        Sys.chdir (Filename.concat examples "http_roundtrip");
         let output =
           capture_output (fun () ->
               match
@@ -2153,7 +2162,7 @@ println(native_tools.halve_floor(9.0))
             "main.emo"
         in
         with_registry (fun () ->
-            let _inputs, _entry, _packages, _manifest, (c_sources, link_libs) =
+            let _inputs, _entry, _packages, (c_sources, link_libs) =
               Emo_project.compile_inputs ~entry_file:entry ~target:"c"
             in
             Alcotest.(check (list string)) "link" [ "m" ] link_libs;
@@ -2223,10 +2232,13 @@ let capture_program_output f =
 
 (* Builds the example from [root] (the build cache lands in the root's
    .emo-build directory) and returns (status, build output, binary
-   path). *)
+   path). The binary lands outside the example — the examples are a
+   source tree dune links into its sandbox, and a build output written
+   into a hardlinked tree cannot be replaced. *)
 let build_example root entry name =
   let emo_exe = emo_exe_path () in
-  let bin = Filename.concat root (name ^ "-bin") in
+  let bin = Filename.concat (fresh_scratch ()) (name ^ "-bin") in
+  ignore (Sys.command ("mkdir -p " ^ Filename.quote (Filename.dirname bin)));
   let out, _, status =
     Emo_test_support.run_cmd
       (Printf.sprintf "exec 2>&1; cd %s && %s build %s --target ocaml -o %s"
@@ -2237,8 +2249,8 @@ let build_example root entry name =
 
 (* The bootstrap assertion for one example: the interpreter run and the
    compiled binary agree with the example's golden text. [root] is the
-   project root discovery walks from — the examples/ directory, except
-   http_roundtrip which is a package of its own. *)
+   project root — the example's own directory, which holds its
+   package.emo. *)
 let bootstrap_example root name entry =
   let golden =
     (* Root projects keep their golden beside the entry inside
@@ -2287,32 +2299,48 @@ let bootstrap_tests =
   [
     tc "alias_demo compiles to a binary with the interpreter's output"
       (fun () ->
-        bootstrap_example (examples_dir ()) "alias_demo" "alias_demo/main.emo");
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "alias_demo")
+          "alias_demo" "main.emo");
     tc "fib compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "fib" "fib/main.emo");
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "fib")
+          "fib" "main.emo");
     tc "hello_world compiles to a binary with the interpreter's output"
       (fun () ->
-        bootstrap_example (examples_dir ()) "hello_world" "hello_world/main.emo");
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "hello_world")
+          "hello_world" "main.emo");
     tc "objects compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "objects" "objects/main.emo");
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "objects")
+          "objects" "main.emo");
     tc "language_tour compiles to a binary with the interpreter's output"
       (fun () ->
-        bootstrap_example (examples_dir ()) "language_tour"
-          "language_tour/main.emo");
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "language_tour")
+          "language_tour" "main.emo");
     tc "shop compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example
           (Filename.concat (examples_dir ()) "shop")
           "shop" "main.emo");
     tc "pipeline compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "pipeline" "pipeline/main.emo");
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "pipeline")
+          "pipeline" "main.emo");
     tc "list compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "list" "list/main.emo");
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "list")
+          "list" "main.emo");
     tc "array_builder compiles to a binary with the interpreter's output"
       (fun () ->
-        bootstrap_example (examples_dir ()) "array_builder"
-          "array_builder/main.emo");
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "array_builder")
+          "array_builder" "main.emo");
     tc "loops compiles to a binary with the interpreter's output" (fun () ->
-        bootstrap_example (examples_dir ()) "loops" "loops/main.emo");
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "loops")
+          "loops" "main.emo");
     tc "tcp_echo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example

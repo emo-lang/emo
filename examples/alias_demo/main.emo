@@ -1,7 +1,14 @@
 // Local module aliases: `const name = module.path` binds a namespace,
-// not a value — calls through it are direct cross-module calls.
-const math = alias_demo.math
-const advanced = alias_demo.internal.advanced
+// not a value — calls through it are direct cross-module calls, exactly
+// like the plain sibling reference beside it.
+//
+//   emo run main.emo
+//
+// Run it from this directory: the working directory is the project root
+// — its `package.emo` is what makes it one — and every `.emo` file under
+// it is a module at its path, named against that root.
+
+const advanced = internal.advanced
 
 def app() Int64 {
   return math.f(1) + advanced.g(10)

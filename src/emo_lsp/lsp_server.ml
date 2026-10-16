@@ -23,7 +23,32 @@ type state = {
   mutable registry : string option;
   mutable emo_path : string;
   mutable shutdown : bool;
+  (* Directories already told about their missing package.emo, so the
+     notice is said once per directory rather than on every keystroke. *)
+  mutable untold_dirs : string list;
 }
+
+(* ---- Telling the client why nothing is indexed ---------------------- *)
+
+let log_message state message =
+  Protocol.notify state.oc ~method_:"window/logMessage"
+    (`Assoc [ ("type", `Int 3); ("message", `String message) ])
+
+let warning_message state message =
+  Protocol.notify state.oc ~method_:"window/showMessage"
+    (`Assoc [ ("type", `Int 2); ("message", `String message) ])
+
+let no_manifest_message dir =
+  Printf.sprintf
+    "%s has no package.emo, so the editor indexes no project there. Run \
+     `emo new <name>` to scaffold one, or run the `emo.package.init` command."
+    dir
+
+let note_no_manifest (state : state) (dir : string) : unit =
+  let dir = Lsp_util.normalize_path dir in
+  if not (List.mem dir state.untold_dirs) then (
+    state.untold_dirs <- dir :: state.untold_dirs;
+    log_message state (no_manifest_message dir))
 
 (* ---- Position helpers ----------------------------------------------- *)
 
@@ -63,7 +88,7 @@ let parse (file : string) (text : string) : Ast.item list * Diagnostic.t list =
 
 (* ---- Project root and module path ----------------------------------- *)
 
-let root_for_file (state : state) (file : string) : string =
+let root_for_file (state : state) (file : string) : string option =
   Ix.find_root ?fallback:state.root file
 
 let module_path_of_file (root : string) (file : string) : string list =
@@ -83,7 +108,9 @@ let module_path_of_file (root : string) (file : string) : string list =
       String.split_on_char '/' no_ext
 
 let index_for_file (state : state) (file : string) : Ix.t =
-  Ix.get ?registry:state.registry (root_for_file state file)
+  match root_for_file state file with
+  | Some root -> Ix.get ?registry:state.registry root
+  | None -> Ix.empty
 
 (* ---- Diagnostics ---------------------------------------------------- *)
 
@@ -183,27 +210,32 @@ let compute_diagnostics (state : state) (file : string) (text : string) :
     let items, parse_diags = parse file text in
     match parse_diags with
     | _ :: _ -> parse_diags
-    | [] ->
-        let root = root_for_file state file in
-        let ix = Ix.get ?registry:state.registry root in
-        let modules = List.map fst ix.modules in
-        let current = module_path_of_file root file in
-        (* Pre-register every indexed module — project and dependency alike —
-           so a qualified member (`sync.done`, `json.decode`) resolves in
-           diagnostics, exactly as it does in a full project check. *)
-        let units = Ix.units_for ix ~current items in
-        let program, _ =
-          Emo_check.preregister_types ~packages:[] ~package_deps:[] ~units
-        in
-        let check_diags, _, _, _ =
-          Emo_check.check_module_typed ~modules ~current ~program items
-        in
-        check_diags
-        @ missing_dep_diagnostics ?registry:state.registry root items
+    | [] -> (
+        match root_for_file state file with
+        | None -> []
+        | Some root ->
+            let ix = Ix.get ?registry:state.registry root in
+            let modules = List.map fst ix.modules in
+            let current = module_path_of_file root file in
+            (* Pre-register every indexed module — project and dependency
+               alike — so a qualified member (`sync.done`, `json.decode`)
+               resolves in diagnostics, exactly as it does in a full
+               project check. *)
+            let units = Ix.units_for ix ~current items in
+            let program, _ =
+              Emo_check.preregister_types ~packages:[] ~package_deps:[] ~units
+            in
+            let check_diags, _, _, _ =
+              Emo_check.check_module_typed ~modules ~current ~program items
+            in
+            check_diags
+            @ missing_dep_diagnostics ?registry:state.registry root items)
 
 let publish_diagnostics (state : state) (uri : string) (file : string)
     (text : string) : unit =
   let starts = Lsp_util.line_starts text in
+  (if root_for_file state file = None then
+     note_no_manifest state (Filename.dirname file));
   let diagnostics =
     List.map
       (diagnostic_to_lsp text starts)
@@ -697,29 +729,29 @@ let dep_edit (state : state) (root : string) (name : string) :
 
 let code_actions (state : state) (file : string) (text : string) :
     Yojson.Safe.t list =
-  let _ = text in
-  let root = root_for_file state file in
-  if not (Lsp_util.file_exists (Filename.concat root "package.emo")) then []
-  else
-    let items, _ = parse file text in
-    let deps = manifest_deps root in
-    List.filter_map
-      (fun (name, _) ->
-        if List.mem_assoc name deps then None
-        else
-          match dep_edit state root name with
-          | None -> None
-          | Some edit ->
-              Some
-                (`Assoc
-                   [
-                     ( "title",
-                       `String
-                         (Printf.sprintf "Add `%s` to package.emo deps" name) );
-                     ("kind", `String "quickfix");
-                     ("edit", edit);
-                   ]))
-      (requires_of items)
+  match root_for_file state file with
+  | None -> []
+  | Some root ->
+      let items, _ = parse file text in
+      let deps = manifest_deps root in
+      List.filter_map
+        (fun (name, _) ->
+          if List.mem_assoc name deps then None
+          else
+            match dep_edit state root name with
+            | None -> None
+            | Some edit ->
+                Some
+                  (`Assoc
+                     [
+                       ( "title",
+                         `String
+                           (Printf.sprintf "Add `%s` to package.emo deps" name)
+                       );
+                       ("kind", `String "quickfix");
+                       ("edit", edit);
+                     ]))
+        (requires_of items)
 
 (* ---- Capabilities --------------------------------------------------- *)
 
@@ -1095,10 +1127,6 @@ let handle_package_info (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t
 
 (* ---- Dispatch ------------------------------------------------------- *)
 
-let log_message state message =
-  Protocol.notify state.oc ~method_:"window/logMessage"
-    (`Assoc [ ("type", `Int 3); ("message", `String message) ])
-
 let handle_request (state : state) ~(id : Yojson.Safe.t) ~(method_ : string)
     (params : Yojson.Safe.t) : unit =
   let reply json = Protocol.respond state.oc ~id json in
@@ -1123,6 +1151,11 @@ let handle_request (state : state) ~(id : Yojson.Safe.t) ~(method_ : string)
                 | _ -> None))
       in
       state.root <- root;
+      (match root with
+      | Some dir
+        when not (Lsp_util.file_exists (Filename.concat dir "package.emo")) ->
+          warning_message state (no_manifest_message dir)
+      | _ -> ());
       (* LSP InitializeResult: the capabilities must sit under a
          `capabilities` member, with optional serverInfo alongside. *)
       reply (initialize_result ())
@@ -1198,7 +1231,9 @@ let handle_notification (state : state) ~(method_ : string)
       in
       match Lsp_document.find uri with
       | Some doc ->
-          Ix.invalidate ~root:(root_for_file state doc.Lsp_document.path) ();
+          (match root_for_file state doc.Lsp_document.path with
+          | Some root -> Ix.invalidate ~root ()
+          | None -> ());
           publish_diagnostics state uri doc.Lsp_document.path
             doc.Lsp_document.text
       | None -> ())
@@ -1237,6 +1272,7 @@ let main () : unit =
         | _ -> None);
       emo_path = default_emo_path ();
       shutdown = false;
+      untold_dirs = [];
     }
   in
   let rec loop () =

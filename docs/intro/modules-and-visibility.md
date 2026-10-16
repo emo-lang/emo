@@ -11,6 +11,7 @@ shop/
   checkout.emo        # module shop.checkout
 ```
 
+- **The tree is rooted where the manifest is, and the manifest is where you stand.** The working directory is the project root and must hold `package.emo`; nothing above it is ever searched (E5010), and an entry outside that package's tree is refused (E5011). So the tree above is read from `shop/`, and `emo run order.emo` from anywhere else does not mean the same thing — it either names no module of the package there or stops for want of a manifest.
 - **The path is the module.** A file automatically becomes the module at its path — no registration, no declaration.
 - **References are qualified paths.** Nothing is imported; paths are used directly, like URLs. When a path is long, an ordinary `const` binding aliases it — no new syntax, since an import statement was only ever an alias assignment:
 

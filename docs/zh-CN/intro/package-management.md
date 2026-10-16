@@ -14,6 +14,8 @@ def parse_config(text String) json_tools.Json {
 - **包的模块树挂载在短名之下。** 包根的 `<short>.emo` 就是 `require` 绑定的模块 `<short>`;其余文件或目录都是它的子节点——`plot/internal/svg.emo` 就是 `plot.internal.svg`,`plot/mark.emo` 就是 `plot.mark`——所以两个包的 `internal` 和 `mark` 永不冲突。包内部引用以包根为基准书写(`plot.emo` 里的 `internal.scale` 即 `plot.internal.scale`),因此一个包无论单独构建还是挂载在前缀下,编译结果一致。
 - **标准库无需 manifest 条目,第三方包需要。** 官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）并随编译器一起发布，所以 `require "json"` 隐式解析——连同这个依赖所拉入的标准库包。带 scope 的包（`acme/json_tools`）必须钉在 `deps` 里：require 一个没有钉的包是编译错误——严格优先，manifest 只因显式操作而改变。
 
+- **包扎根于你站的地方。** 根就是工作目录，它必须放着 `package.emo`——编译器从不向上看，所以在一个没有 manifest 的目录里启动的命令会以 E5010 停下（``run `emo new <name>` to scaffold a project here``），而不属于那里所扎根的包的入口是 E5011。先 `cd` 进包里：那个目录就是模块树，每条命令都从那里读它，于是同一个文件无论命令在哪里敲下都指同一件事。
+
 - **中心注册表，端点可配置。** 包按 `name@version` 通过中心注册表寻址，由全局内容寻址缓存支撑、跨项目共享——没有每项目的依赖副本。注册表端点读 `EMO_REGISTRY` 环境变量——全局或每项目设置——服务私有与本地部署；未设置时，标准库的内置注册表随编译器附带并默认服务。
 - **限定作用域的包名。** 第三方包在 scope 前缀下命名，归属显式，抢注无立足之地；scope 前缀成为模块路径前缀。官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）。
 - **manifest 是 Emo 配置文件**，以受限 profile 书写（可终止、密闭、无副作用）。没有任何读取方会把它当模块遍历：依赖解析、`emo publish`、`emo check` 与编辑器的诊断都按这个 profile 读它；而需要程序的命令会直接拒绝它——`emo run`、`emo build` 拿到 `package.emo` 作入口时以 66 退出，不会把它的字段当代码读。**依赖是精确版本**——开发与测试所用的版本——并且 **targets 声明包支持的编译目标**。绑定原生代码的包还在可选的 `link` 字段里声明要链接的系统库：

@@ -7,8 +7,10 @@ import, no export, no registration.
 emo run main.emo
 ```
 
-Run it from this directory: the working directory is the project root,
-and every `.emo` file becomes the module at its path.
+Run it from this directory: the working directory is the project root —
+nothing above it is ever searched — and every `.emo` file under it becomes
+the module at its path. This directory's `package.emo` is what makes it a
+project; from anywhere else `emo run main.emo` stops with E5010.
 
 What to notice:
 

@@ -1,0 +1,7 @@
+package {
+  name = "emo/fib"
+  version = "0.1.0"
+  targets = ["ocaml", "typescript", "wasm", "beam", "riscv64"]
+
+  deps {}
+}

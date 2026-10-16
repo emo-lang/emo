@@ -3,7 +3,13 @@
 
    The directory tree is the module tree (README, Modules and Visibility),
    so a path like `shop.order` is just `shop/order.emo`. The index is
-   rebuilt lazily and cached by a fingerprint of the tree's mtimes. *)
+   rebuilt lazily and cached by a fingerprint of the tree's mtimes.
+
+   The root is the directory the file's project stands in, and a project
+   is a directory holding a package.emo — the compiler's root rule
+   (E5010). A file under no such directory has no index: the editor
+   answers from nothing rather than from a tree the compiler would
+   refuse. *)
 
 module Ast = Emo_ast
 module Span = Emo_support.Span
@@ -330,6 +336,10 @@ let index_of ?(units = []) (root : string)
     built_at = Unix.gettimeofday ();
   }
 
+(* The index for a file that stands outside any project: the editor still
+   answers requests, it simply has no declarations to resolve against. *)
+let empty : t = index_of "" ~modules:[] ~symbols:[]
+
 (* The parsed items of every indexed module, with [items] substituted for
    the module [current]: a diagnostic check runs against the editor's own
    text for the file being checked while every other module — project or
@@ -393,7 +403,10 @@ let skip_dir name =
   || name = "node_modules" || name = ".emobuild"
 
 (* Collects (module path, file) under [root]. The module path is the
-   root-relative path without the `.emo` extension. *)
+   root-relative path without the `.emo` extension. A child directory
+   holding its own package.emo is a project of its own — the compiler's
+   walk leaves it out, so the index does too: resolving a reference the
+   compiler refuses is worse than resolving nothing. *)
 let scan (root : string) : (string list * string) list =
   let acc = ref [] in
   let rec walk (rel : string list) (dir : string) =
@@ -403,7 +416,10 @@ let scan (root : string) : (string list * string) list =
         else
           let path = Filename.concat dir entry in
           if Lsp_util.is_directory path then
-            if skip_dir entry then () else walk (rel @ [ entry ]) path
+            if skip_dir entry then ()
+            else if Lsp_util.file_exists (Filename.concat path "package.emo")
+            then ()
+            else walk (rel @ [ entry ]) path
           else if Filename.check_suffix entry ".emo" then
             let name = Filename.remove_extension entry in
             acc := (rel @ [ name ], Lsp_util.normalize_path path) :: !acc)
@@ -592,17 +608,18 @@ let invalidate ?root () : unit =
 
 (* ---- Locating the project root for a file --------------------------- *)
 
-(* The nearest ancestor (inclusive) holding a package.emo manifest, else
-   the fallback supplied by the client (its workspace root), else the
-   file's own directory. *)
-let find_root ?(fallback : string option) (file : string) : string =
-  let rec up dir =
-    if Lsp_util.file_exists (Filename.concat dir "package.emo") then dir
-    else
-      let parent = Filename.dirname dir in
-      if parent = dir then dir else up parent
+(* The directory the file's project is rooted at: the workspace root the
+   client named, else the file's own directory — and only when that
+   directory holds a package.emo. Nothing is looked up above it: the
+   compiler's root rule reads the directory it runs in and no ancestor
+   (E5010), so the editor makes the same single guess rather than
+   indexing a tree the compiler would refuse. *)
+let find_root ?(fallback : string option) (file : string) : string option =
+  let candidate =
+    match fallback with
+    | Some dir -> dir
+    | None -> Filename.dirname (Lsp_util.normalize_path file)
   in
-  let start = Filename.dirname (Lsp_util.normalize_path file) in
-  match up start with
-  | dir when Lsp_util.file_exists (Filename.concat dir "package.emo") -> dir
-  | _ -> ( match fallback with Some d -> d | None -> start)
+  if Lsp_util.file_exists (Filename.concat candidate "package.emo") then
+    Some candidate
+  else None

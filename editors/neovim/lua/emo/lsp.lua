@@ -38,15 +38,17 @@ function M.config()
   local cfg = config.get()
 
   -- The project root is the directory the compiler would treat as the
-  -- module tree: the nearest manifest, then the repository, then the
-  -- file's own directory, so a loose `.emo` file still gets a server.
+  -- module tree: the nearest manifest, else the file's own directory.
+  -- Nothing above a manifest-less directory is guessed — the compiler
+  -- refuses such a tree (E5010) and the server says so rather than
+  -- indexing one it would never build.
   local root_dir = function(bufnr, on_dir)
     local file = vim.api.nvim_buf_get_name(bufnr)
     if file == '' then
       on_dir(vim.uv.cwd())
       return
     end
-    local root = vim.fs.root(file, { 'package.emo' }) or vim.fs.root(file, { '.git' })
+    local root = vim.fs.root(file, { 'package.emo' })
     on_dir(root or vim.fs.dirname(file))
   end
 

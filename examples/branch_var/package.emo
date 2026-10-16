@@ -1,0 +1,7 @@
+package {
+  name = "emo/branch_var"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "wasm", "beam"]
+
+  deps {}
+}

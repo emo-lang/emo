@@ -580,12 +580,20 @@ let collect ctx (items : Ast.item list) : unit =
               ignore (decl_to_type ctx p.Ast.param_type);
               let span = p.Ast.param_type.Ast.type_span in
               match p.Ast.param_type.Ast.type_desc with
-              | Ast.Named_type name
-                when ctx.target = "c" && Hashtbl.mem ctx.interfaces name ->
-                  callback_ok span name
-              | Ast.Named_type name
-                when ctx.target = "c" && Hashtbl.mem ctx.classes name ->
-                  struct_class_ok span name
+              (* A named parameter type resolves the way any other type
+                 reference does — `Greeter` written in module `main` is
+                 `main.Greeter` — so the contract is looked up under the
+                 qualified name the declaration registered. *)
+              | Ast.Named_type name when ctx.target = "c" -> (
+                  match resolve_type_ref ctx span name with
+                  | Some (InterfaceType q) -> callback_ok span q
+                  | Some (ClassType q) -> struct_class_ok span q
+                  | _ ->
+                      if not (ffi_ok (Ast.Named_type name)) then
+                        report ctx span "E4200"
+                          (Printf.sprintf
+                             "foreign parameter `%s` must be %s on this target"
+                             p.Ast.param_name allowed))
               | Ast.Tuple_type _ as desc when ctx.target = "c" ->
                   struct_tuple_ok span desc
               | desc ->

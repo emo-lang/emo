@@ -21,8 +21,8 @@
 set -e
 cd "$(dirname "$0")"
 EMO=${EMO:-../../_build/default/src/emo_cli/emo.exe}
-# the probes build from build/<name>/, so the compiler path must be
-# absolute before it travels
+# this directory is the project root (its package.emo is the manifest),
+# so the compiler path must be absolute before it travels
 case "$EMO" in
   /*) ;;
   *) EMO="$PWD/$EMO" ;;
@@ -36,9 +36,11 @@ for p in $probes; do
   mkdir -p "$d"
 
   # The link is meant to fail here; `|| true` is not papering over a bug.
-  (cd "$d" && "$EMO" build "../../$p.emo" -o "$p") >"$d/stock-pass.log" 2>&1 || true
+  # `emo build` runs from this directory — the package root — and writes
+  # .emo-build/ here, so the binary goes to build/<probe>/ by path.
+  "$EMO" build "$p.emo" -o "$d/$p" >"$d/stock-pass.log" 2>&1 || true
 
-  main="$d/.emo-build/main.c"
+  main=".emo-build/main.c"
   if [ ! -f "$main" ] || [ "$main" -ot "$p.emo" ]; then
     echo "build.sh: $p: no fresh main.c emitted (see $d/stock-pass.log)" >&2
     exit 1
@@ -48,8 +50,8 @@ for p in $probes; do
   # directory first, so the copy of main.c and the appended runtime pair
   # must sit together — and away from .emo-build's stock header.
   cp "$main" "$d/main.c"
-  cat "$d/.emo-build/emo_c_runtime.h" runtime/probe_arena.h >"$d/emo_c_runtime.h"
-  cat "$d/.emo-build/emo_c_runtime.c" runtime/probe_arena.c >"$d/emo_c_runtime.c"
+  cat .emo-build/emo_c_runtime.h runtime/probe_arena.h >"$d/emo_c_runtime.h"
+  cat .emo-build/emo_c_runtime.c runtime/probe_arena.c >"$d/emo_c_runtime.c"
 
   # the flags `emo build` uses for the c target, so the probe binary
   # differs from a stock one in nothing but the appended probes

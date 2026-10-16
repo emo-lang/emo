@@ -212,7 +212,8 @@ Follow-up: the chosen `var`-escape approximation is documented in `docs/var-esca
 - [x] **T10.7** — In-process caching keyed by content hash.
 - [x] **T10.8** — Multi-file test project under `examples/` mirroring the README's `shop/` tree.
 
-Caution: resolved in step 11 — a project roots at its nearest `package.emo`; manifest-less trees keep the working-directory rule.
+Caution: resolved in step 11 — a project roots at the working directory, which
+must hold `package.emo` (T11.10); no ancestor is ever consulted.
 
 ### Step 11 — Packages & version resolution · `plan/step-11-packages.md`
 
@@ -256,7 +257,30 @@ Caution: resolved in step 11 — a project roots at its nearest `package.emo`; m
       wherever it is read, and a command that needs a program says which
       module to name.
 
-Also here: swap step 10's transitional root rule for manifest-based roots — done; the root rule now prefers the nearest `package.emo`.
+- [x] **T11.10** — The root is where you stand: a project is the working
+      directory, which must hold `package.emo`. **Landed 2026-10-16.** The
+      nearest-manifest search above the entry file is deleted — the rule
+      settled that day is cwd-only, so a missing `./package.emo` is **E5010**
+      (``run `emo new <name>` to scaffold a project here``, spanned on the
+      directory) and an entry that is not a module of the package rooted
+      there is **E5011** (spanned on the entry), both through
+      `Static_errors` → 65. Reason: the old search let a manifest-less tree
+      silently become a project rooted at cwd — `emo check
+      examples/alias_demo/main.emo` from the repository root checked the
+      whole repository and reported other examples' errors — and let the
+      same file mean different things depending on where the command was
+      typed. Every runnable tree that lacked a manifest got one (16
+      `examples/`, 7 `benchmarks/`, 6 `spike/`, the release workflow's smoke
+      project), and every test invocation now stands in the directory it
+      roots at. The LSP tightened the same way: it indexes a project only
+      when the root it was handed holds `package.emo`, says so once per
+      workspace, and `scan` skips a nested package the way the compiler's
+      walk does. Also here: a foreign parameter's contract is now looked up
+      under its qualified name, so `foreign def` on a type declared in the
+      entry module resolves on the `c` target — a latent bug the standalone
+      entry build had hidden.
+
+Also here: swap step 10's transitional root rule for manifest-based roots — done; the root is the working directory, and it must hold `package.emo`.
 
 ---
 

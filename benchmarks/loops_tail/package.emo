@@ -1,0 +1,7 @@
+package {
+  name = "emo/bench_loops_tail"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {}
+}

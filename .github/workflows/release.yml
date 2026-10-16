@@ -80,6 +80,7 @@ jobs:
             mkdir -p /verify && cd /verify
             tar xzf /dist/$name.tar.gz
             ./$name/bin/emo version
+            printf 'package {\n  name = "emo/smoke"\n  version = "0.1.0"\n  targets = ["ocaml"]\n\n  deps {}\n}\n' > package.emo
             printf 'println(6 * 7)\n' > smoke.emo
             ./$name/bin/emo run smoke.emo | grep 42
           "

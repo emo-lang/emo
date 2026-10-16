@@ -1,13 +1,15 @@
 module Ast = Emo_ast
 
 (* The project layer: the directory tree is the module tree. Discovers the
-   module table under the entry file's directory and resolves qualified
-   paths. Codes for this stage are E5xxx.
+   module table under the working directory and resolves qualified paths.
+   Codes for this stage are E5xxx.
 
-   The root rule: a project is rooted at its nearest package.emo manifest —
-   the module tree is the package. Manifest-less trees (the README's shop
-   demo) stay rooted at the working directory, so `emo run
-   shop/checkout.emo` resolves `shop.order` to ./shop/order.emo verbatim. *)
+   The root rule: the project root is where the compiler stands. The
+   working directory must hold a package.emo — that directory is the
+   package, and every .emo file under it is a module at its path. The
+   search never walks upward: a directory without a manifest is not a
+   project (E5010), and an entry file that is not a module of the package
+   is not part of one (E5011). *)
 
 (* Raised when the static stages of any module found errors. *)
 exception Static_errors of Emo_support.Diagnostic.t list
@@ -139,7 +141,7 @@ let rec walk ?(body : string option) p rel fs_dir =
     (entries fs_dir)
 
 (* Discovers the module tree under the working directory. *)
-let discover ~entry_file : project =
+let discover () : project =
   let root = Sys.getcwd () in
   let p =
     {
@@ -418,7 +420,7 @@ let find_cycle (graph : (string list, string list list) Hashtbl.t) :
   in
   anywhere (Hashtbl.fold (fun path _ acc -> path :: acc) graph [])
 
-let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
+let check_project (p : project) :
     string list list
     * (string list * string list list * (string * Emo_support.Span.t) list) list
     * Emo_check.program_types
@@ -490,59 +492,37 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
             };
         ]
   in
-  (* Strict pairing: every require must name a manifest dependency. *)
+  (* Strict pairing: every require must name a dependency its own
+     package's manifest declares. The require is paired against the
+     requiring module's package, not the project's: a package's internal
+     `require` answers to that package's deps block. *)
   let pairing_errors =
     List.concat_map
       (fun (path, requires) ->
-        match (manifest, requires) with
-        | None, _ :: _ ->
-            [
-              {
-                Emo_support.Diagnostic.severity = Error;
-                code = Some "E5006";
-                message =
-                  "this project has `require`s but no package.emo manifest";
-                span =
-                  (match requires with
-                  | (_, s) :: _ -> s
-                  | [] ->
-                      Emo_support.Span.make ~file:p.root ~line:1 ~col:1 ~start:0
-                        ~stop:0);
-                hint =
-                  Some "create a package.emo manifest beside the entry file";
-              };
-            ]
-        | Some _, _ ->
-            (* The require is paired against the requiring module's own
-               package manifest, not the project's: a package's internal
-               `require` answers to that package's deps block. *)
-            let pkg = package_of p path in
-            let declared =
-              match List.assoc_opt pkg p.package_deps with
-              | Some ds -> ds
-              | None -> []
-            in
-            List.filter_map
-              (fun (dep, span) ->
-                if List.mem dep declared then None
-                else
-                  Some
-                    {
-                      Emo_support.Diagnostic.severity = Error;
-                      code = Some "E5006";
-                      message =
-                        Printf.sprintf
-                          "module `%s` requires `%s`, but its package's \
-                           manifest (package.emo) does not list it in deps"
-                          (String.concat "." path) dep;
-                      span;
-                      hint =
-                        Some
-                          "add the package to the manifest's deps block, or \
-                           remove the require";
-                    })
-              requires
-        | None, [] -> [])
+        let pkg = package_of p path in
+        let declared =
+          match List.assoc_opt pkg p.package_deps with Some ds -> ds | None -> []
+        in
+        List.filter_map
+          (fun (dep, span) ->
+            if List.mem dep declared then None
+            else
+              Some
+                {
+                  Emo_support.Diagnostic.severity = Error;
+                  code = Some "E5006";
+                  message =
+                    Printf.sprintf
+                      "module `%s` requires `%s`, but its package's manifest \
+                       (package.emo) does not list it in deps"
+                      (String.concat "." path) dep;
+                  span;
+                  hint =
+                    Some
+                      "add the package to the manifest's deps block, or remove \
+                       the require";
+                })
+          requires)
       (Hashtbl.fold (fun k v acc -> (k, v) :: acc) requires_table [])
   in
   let entries =
@@ -566,28 +546,32 @@ let check_project ~(manifest : Emo_pkg.manifest option) (p : project) :
    immediately), modules load lazily on first access with load-once
    semantics, and the entry's own items evaluate in file order. With
    ~check:true every module is checked first. *)
-(* The manifest is the nearest package.emo at or above [dir]; None when
-   the tree has no manifest. *)
-let find_manifest_in ~(dir : string) : string option =
-  let dir = ref dir in
-  let rec walk () =
-    let candidate = Filename.concat !dir "package.emo" in
-    if Sys.file_exists candidate then Some candidate
-    else if Filename.dirname !dir = !dir then None
-    else (
-      dir := Filename.dirname !dir;
-      walk ())
-  in
-  walk ()
+(* The manifest of the project at the working directory. The root rule
+   reads only this directory: a project is where you stand, never where
+   some ancestor's manifest happens to sit. *)
+let manifest_here () : string option =
+  let candidate = Filename.concat (Sys.getcwd ()) "package.emo" in
+  if Sys.file_exists candidate then Some candidate else None
 
-let find_manifest ~entry_file : string option =
-  find_manifest_in ~dir:(Filename.dirname entry_file)
+let no_manifest_error () =
+  Static_errors
+    [
+      {
+        Emo_support.Diagnostic.severity = Error;
+        code = Some "E5010";
+        message = "no package.emo in the current directory";
+        span =
+          Emo_support.Span.make ~file:(Sys.getcwd ()) ~line:1 ~col:1 ~start:0
+            ~stop:0;
+        hint = Some "run `emo new <name>` to scaffold a project here";
+      };
+    ]
 
 (* Parses the manifest at [manifest_path] and re-roots the project's
-   module tree at the manifest's directory — the package, not whatever
-   directory the compiler ran in, is the module tree's root. *)
+   module tree at the manifest's directory — the package is the module
+   tree's root, not whatever directory the compiler ran in. *)
 let use_manifest (p : project) (manifest_path : string) :
-    project * (Emo_pkg.manifest * string (* its directory *)) option =
+    project * (Emo_pkg.manifest * string (* its directory *)) =
   let manifest =
     match
       Emo_pkg.parse_manifest ~file:manifest_path
@@ -611,27 +595,16 @@ let use_manifest (p : project) (manifest_path : string) :
   walk p [] dir;
   (* The project's own manifest is data, not a module. *)
   Hashtbl.remove p.files [ "package" ];
-  (p, Some (manifest, dir))
+  (p, (manifest, dir))
 
-(* Discovers the project, parses the nearest manifest, and re-roots the
-   module tree at the manifest's directory — the package, not whatever
-   directory the compiler ran in, is the module tree's root. *)
-let prepare ~entry_file :
-    project * (Emo_pkg.manifest * string (* its directory *)) option =
-  let p = discover ~entry_file in
+(* Discovers the project and parses the manifest at the working directory.
+   Without one there is no project: E5010 names the missing manifest
+   rather than guessing at an ancestor's. *)
+let prepare () : project * (Emo_pkg.manifest * string (* its directory *)) =
+  let p = discover () in
   (match diagnostics p with [] -> () | ds -> raise (Static_errors ds));
-  match find_manifest ~entry_file with
-  | None -> (p, None)
-  | Some manifest_path -> use_manifest p manifest_path
-
-(* The entry-less prepare: `emo test` runs the project at the working
-   directory, so discovery and the manifest search both start there. *)
-let prepare_root () :
-    project * (Emo_pkg.manifest * string (* its directory *)) option =
-  let p = discover ~entry_file:"." in
-  (match diagnostics p with [] -> () | ds -> raise (Static_errors ds));
-  match find_manifest_in ~dir:(Sys.getcwd ()) with
-  | None -> (p, None)
+  match manifest_here () with
+  | None -> raise (no_manifest_error ())
   | Some manifest_path -> use_manifest p manifest_path
 
 let dep_error ~(manifest_dir : string) (message : string) =
@@ -971,6 +944,46 @@ let same_file (id : (int * int) option) (file : string) : bool =
       | Some st -> st.Unix.st_dev = dev && st.Unix.st_ino = ino
       | None -> false)
 
+let entry_outside_error ~(root : string) (entry_file : string) =
+  Static_errors
+    [
+      {
+        Emo_support.Diagnostic.severity = Error;
+        code = Some "E5011";
+        message =
+          Printf.sprintf "the entry `%s` is not a module of the package rooted \
+                          at %s"
+            entry_file root;
+        span =
+          Emo_support.Span.make ~file:(entry_path entry_file) ~line:1 ~col:1
+            ~start:0 ~stop:0;
+        hint =
+          Some
+            "run the command from the package directory that contains the \
+             entry";
+      };
+    ]
+
+(* The entry's module path in [p]. An entry that is not one of the
+   package's modules is not part of the project at all — E5011, rather
+   than a silent fallback that compiles it as a root module of its own.
+   A file registered under two paths answers with the shorter one, which
+   is the one [compile_inputs] keeps as its unit. *)
+let entry_module_in_project (p : project) (entry_file : string) : string list =
+  let id = entry_file_id entry_file in
+  let paths =
+    Hashtbl.fold
+      (fun path file acc -> if same_file id file then path :: acc else acc)
+      p.files []
+  in
+  match
+    List.sort
+      (fun a b -> compare (List.length a) (List.length b))
+      paths
+  with
+  | path :: _ -> path
+  | [] -> raise (entry_outside_error ~root:p.root entry_file)
+
 (* The backend's lowering input: every module in the project, parsed and
    checked (the backend runs the full check), plus the entry module's
    path and the dependencies' native inputs (C sources to compile,
@@ -982,14 +995,10 @@ let compile_inputs ~entry_file ~target :
     Emo_ir.module_input list
     * string list
     * string list list
-    * Emo_pkg.manifest option
     * (string list * string list) =
-  let p, prepared = prepare ~entry_file in
-  let native_deps =
-    match prepared with
-    | None -> []
-    | Some (m, dir) -> load_deps ~manifest:m ~manifest_dir:dir ~target p
-  in
+  let p, (manifest, dir) = prepare () in
+  ignore (entry_module_in_project p entry_file);
+  let native_deps = load_deps ~manifest ~manifest_dir:dir ~target p in
   let c_sources = List.concat_map (fun d -> d.nd_csources) native_deps in
   let link_libs = List.concat_map (fun d -> d.nd_link) native_deps in
   let native_carrying =
@@ -1053,21 +1062,7 @@ let compile_inputs ~entry_file ~target :
             end)
       p.files []
   in
-  let entry_id = entry_file_id entry_file in
-  let entry_module =
-    Hashtbl.fold
-      (fun path file acc -> if same_file entry_id file then Some path else acc)
-      p.files None
-  in
-  let units, entry =
-    match entry_module with
-    | Some path -> (units, path)
-    | None ->
-        (* The entry lives outside the discovered tree: it becomes the
-           root module, like the interpreter's root environment, and
-           its types pre-register with the rest. *)
-        (([], parse_cached p (entry_path entry_file)) :: units, [])
-  in
+  let entry = entry_module_in_project p entry_file in
   (* The program's type tables (CHECK.md, cross-module types) come
    * before any module is checked, so every module's type declarations
    * resolve against every declaration. *)
@@ -1089,46 +1084,16 @@ let compile_inputs ~entry_file ~target :
       [] units
   in
   (match !diagnostics with [] -> () | ds -> raise (Static_errors ds));
-  (inputs, entry, p.packages, Option.map fst prepared, (c_sources, link_libs))
-
-(* The deps commands operate on the project at the working directory — the
-   root rule makes the manifest's directory the project root. *)
-let manifest_here () : string option =
-  let candidate = Filename.concat (Sys.getcwd ()) "package.emo" in
-  if Sys.file_exists candidate then Some candidate else None
+  (inputs, entry, p.packages, (c_sources, link_libs))
 
 (* `emo check`: the static stages over the whole module tree, including the
    dependency side, without evaluating. *)
 let check_entry ~entry_file : Emo_support.Diagnostic.t list =
-  let p, prepared = prepare ~entry_file in
-  Option.iter
-    (fun (m, dir) ->
-      ignore (load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p))
-    prepared;
-  let manifest = Option.map fst prepared in
-  let items = parse_cached p (entry_path entry_file) in
-  let module_paths = module_paths p in
-  let _paths, _graph, program, errors = check_project ~manifest p in
-  (* A tree-rooted entry is already among check_project's modules; only
-     an entry outside the discovered tree (an absolute path, the root
-     module) needs its own check. *)
-  let entry_id = entry_file_id entry_file in
-  let entry_in_tree =
-    Hashtbl.fold
-      (fun path file acc -> if same_file entry_id file then Some path else acc)
-      p.files None
-  in
-  let entry_diags =
-    match entry_in_tree with
-    | Some _ -> []
-    | None ->
-        let diags, _refs, _requires =
-          Emo_check.check_module ~modules:module_paths ~packages:p.packages
-            ~package_deps:p.package_deps ~current:[] ~program items
-        in
-        diags
-  in
-  diagnostics p @ errors @ entry_diags
+  let p, (manifest, dir) = prepare () in
+  ignore (entry_module_in_project p entry_file);
+  ignore (load_deps ~manifest ~manifest_dir:dir ~target:"c" p);
+  let _paths, _graph, _program, errors = check_project p in
+  diagnostics p @ errors
 
 (* How the entry's evaluation is scheduled. [`Sequential] runs under the
    guard handler — process operations report E3009; [`Eio] is the phase A
@@ -1138,38 +1103,22 @@ type sched = Sequential | Eio | Own
 
 let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
     ?(globals : (string * Emo_eval.value) list = []) () : project =
-  let p, prepared = prepare ~entry_file in
-  Option.iter
-    (fun (m, dir) ->
-      ignore (load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p))
-    prepared;
-  let manifest = Option.map fst prepared in
+  let p, (manifest, dir) = prepare () in
+  let entry = entry_module_in_project p entry_file in
+  ignore (load_deps ~manifest ~manifest_dir:dir ~target:"c" p);
   install_hooks p;
-  let items = parse_cached p (entry_path entry_file) in
+  (* Parsed through the path the walk registered, not the one the caller
+     spelled: the two name the same file, but only the registered spelling
+     shares the content-hash cache with the check below — the caller's can
+     arrive through a symlinked directory (`/var` for `/private/var`). *)
+  let entry_file =
+    Option.value ~default:(entry_path entry_file)
+      (Hashtbl.find_opt p.files entry)
+  in
+  let items = parse_cached p entry_file in
   (if check then
-     let module_paths = module_paths p in
-     let _paths, _graph, program, errors = check_project ~manifest p in
-     (* The entry file itself may live outside the discovered tree (an
-        absolute path); it is checked too — a tree-rooted entry was
-        already among check_project's modules. *)
-     let entry_id = entry_file_id entry_file in
-     let entry_in_tree =
-       Hashtbl.fold
-         (fun path file acc ->
-           if same_file entry_id file then Some path else acc)
-         p.files None
-     in
-     let entry_diags =
-       match entry_in_tree with
-       | Some _ -> []
-       | None ->
-           let diags, _refs, _requires =
-             Emo_check.check_module ~modules:module_paths ~packages:p.packages
-               ~package_deps:p.package_deps ~current:[] ~program items
-           in
-           diags
-     in
-     match errors @ entry_diags with [] -> () | ds -> raise (Static_errors ds));
+     let _paths, _graph, _program, errors = check_project p in
+     match errors with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
   (* Host-injected bindings: the CLI's internal tooling (publish's uploader)
      passes data in without a language-level channel. *)
@@ -1210,13 +1159,9 @@ type test_result = {
    and tests in sorted order. Any lex/parse/check failure in the tree
    raises [Static_errors], like [run_entry ~check:true]. *)
 let run_tests () : test_result list =
-  let p, prepared = prepare_root () in
-  Option.iter
-    (fun (m, dir) ->
-      ignore (load_deps ~manifest:m ~manifest_dir:dir ~target:"c" p))
-    prepared;
-  let manifest = Option.map fst prepared in
-  let _paths, _graph, _program, errors = check_project ~manifest p in
+  let p, (manifest, dir) = prepare () in
+  ignore (load_deps ~manifest ~manifest_dir:dir ~target:"c" p);
+  let _paths, _graph, _program, errors = check_project p in
   (match errors with [] -> () | ds -> raise (Static_errors ds));
   install_hooks p;
   let test_modules =

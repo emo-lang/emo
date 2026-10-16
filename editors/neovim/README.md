@@ -164,9 +164,11 @@ set `lsp = false` and call `vim.lsp.enable('emo')` when you want it. The plugin
 ships an `lsp/emo.lua` for that path, so `vim.lsp.enable('emo')` alone is
 enough.
 
-The project root is the nearest `package.emo`, then the nearest `.git`, then
-the file's own directory — the last so that a loose `.emo` file still gets a
-server.
+The project root is the nearest `package.emo` above the buffer, or the file's
+own directory when there is none — the last so that a loose `.emo` file still
+attaches. The server indexes a project only when its root holds `package.emo`
+(the directory the compiler would root at), so a buffer outside any package
+gets no diagnostics and one message saying why.
 
 ## Development
 

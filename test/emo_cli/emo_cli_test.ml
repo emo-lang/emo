@@ -12,44 +12,76 @@ let contains hay needle =
 let scratch =
   Filename.concat (Filename.get_temp_dir_name ()) "emo-cli-test-fixtures"
 
-let fixture name source =
-  if not (Sys.file_exists scratch) then Unix.mkdir scratch 0o755;
-  let path = Filename.concat scratch name in
+(* The registry arrives relative to the directory dune runs the tests in,
+   and a fixture resolves its dependencies from inside its own project
+   directory, so pin the path before anything else runs. *)
+let () =
+  match Sys.getenv_opt "EMO_REGISTRY" with
+  | Some dir when dir <> "" -> Unix.putenv "EMO_REGISTRY" (Unix.realpath dir)
+  | _ -> ()
+
+(* The manifest every scratch project carries: without a package.emo in
+   the working directory there is no project at all (E5010). *)
+let default_manifest =
+  {|package {
+  name = "local/scratch"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {}
+}
+|}
+
+let write_file path source =
+  let dir = Filename.dirname path in
+  if not (Sys.file_exists dir) then
+    ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
   let oc = open_out_bin path in
   output_string oc source;
-  close_out oc;
+  close_out oc
+
+let in_dir dir f =
+  let previous = Sys.getcwd () in
+  Sys.chdir dir;
+  Fun.protect ~finally:(fun () -> Sys.chdir previous) f
+
+(* A fixture lives in a project of its own: its own directory, its own
+   package.emo. Discovery reads the whole rooted tree, so fixtures sharing
+   a root would let one broken file poison every sibling. The manifest is
+   overridable for a snippet whose own package declares dependencies. *)
+let fixture ?(manifest = default_manifest) name source =
+  let dir = Filename.concat scratch (Filename.remove_extension name) in
+  let path = Filename.concat dir name in
+  write_file (Filename.concat dir "package.emo") manifest;
+  write_file path source;
   path
+
+(* The commands root themselves where they stand, so every call runs from
+   the fixture's own project directory. *)
+let run_fixture file =
+  in_dir (Filename.dirname file) (fun () ->
+      Emo_cli.run_file ~file ~color:false ~error_limit:20)
 
 let run_tests =
   [
     tc "a successful program exits 0" (fun () ->
         let file = fixture "ok.emo" "const x = 1\nprintln(x + 1)\n" in
-        Alcotest.(check int)
-          "exit" 0
-          (Emo_cli.run_file ~file ~color:false ~error_limit:20));
+        Alcotest.(check int) "exit" 0 (run_fixture file));
     tc "a parse error exits 65" (fun () ->
         let file = fixture "parse.emo" "const x =\n1\n" in
-        Alcotest.(check int)
-          "exit" 65
-          (Emo_cli.run_file ~file ~color:false ~error_limit:20));
+        Alcotest.(check int) "exit" 65 (run_fixture file));
     tc "a runtime type error exits 70" (fun () ->
         (* The element type is Unknown to the checker; the runtime hits it. *)
         let file = fixture "runtime.emo" {|println([1, "a"][1] + 1)|} in
-        Alcotest.(check int)
-          "exit" 70
-          (Emo_cli.run_file ~file ~color:false ~error_limit:20));
+        Alcotest.(check int) "exit" 70 (run_fixture file));
     tc "a certain type error exits 65 before running" (fun () ->
         let file = fixture "checked.emo" {|println(1 + "a")|} in
-        Alcotest.(check int)
-          "exit" 65
-          (Emo_cli.run_file ~file ~color:false ~error_limit:20));
+        Alcotest.(check int) "exit" 65 (run_fixture file));
     tc "an uncaught exception exits 1" (fun () ->
         let file =
           fixture "raise.emo" {|raise Exception.new(message: "boom")|}
         in
-        Alcotest.(check int)
-          "exit" 1
-          (Emo_cli.run_file ~file ~color:false ~error_limit:20));
+        Alcotest.(check int) "exit" 1 (run_fixture file));
     tc "an unreadable file exits 66" (fun () ->
         Alcotest.(check int)
           "exit" 66
@@ -155,23 +187,54 @@ let smoke_tests =
 (* Every examples/<name>/ runs end to end and prints its expected.txt. *)
 let examples_dir = "../../examples"
 
-(* A directory with its own package.emo is a package project — it runs
-   through resolution and the scheduler in test/emo_project, not here. *)
-(* A directory holding .emo submodules is a multi-module tree — it
-   runs through project semantics in test/emo_project, not here. *)
-let has_emo_subdir dir =
-  Sys.readdir dir |> Array.to_list
-  |> List.exists (fun e ->
-      Sys.file_exists (Filename.concat dir e)
-      && Sys.is_directory (Filename.concat dir e))
+(* A program that requires nothing needs no project resolution, so it runs
+   through the bare interpreter; one that requires a package runs through
+   the rooted tree in test/emo_project, not here. *)
+let requires_nothing source =
+  not
+    (String.split_on_char '\n' source
+    |> List.exists (fun line ->
+           String.length (String.trim line) >= 7
+           && String.sub (String.trim line) 0 7 = "require"))
 
+(* The bare interpreter resolves no package, links no C symbol, and runs
+   no scheduler, so three examples cannot go through it: `numerics` binds
+   the C math library, `file_read` writes and reads a file, and
+   `pipeline` runs four processes. Each runs end to end in test/emo_project
+   instead, compiled and interpreted. *)
+let beyond_the_interpreter = [ "numerics"; "file_read"; "pipeline" ]
+
+(* Every examples/<name>/ holding one self-contained program runs end to
+   end through the bare interpreter and prints its expected.txt. A
+   directory holding .emo submodules is a multi-module tree — it runs
+   through project semantics in test/emo_project, not here. The two are
+   told apart by what sits beside main.emo: a second .emo file (a
+   sibling module — a package.emo is a manifest, not a module) or a real
+   subdirectory. A dot-directory is the compiler's own scratch
+   (.emo-build) and does not count. *)
 let example_names () =
   Sys.readdir examples_dir |> Array.to_list |> List.sort compare
   |> List.filter (fun name ->
       let dir = Filename.concat examples_dir name in
-      Sys.file_exists (Filename.concat dir "main.emo")
-      && (not (Sys.file_exists (Filename.concat dir "package.emo")))
-      && not (has_emo_subdir dir))
+      Sys.is_directory dir
+      && Sys.file_exists (Filename.concat dir "main.emo")
+      && not (List.mem name beyond_the_interpreter)
+      && requires_nothing (read_file (Filename.concat dir "main.emo"))
+      &&
+      let entries = Sys.readdir dir |> Array.to_list in
+      let modules =
+        List.filter
+          (fun e ->
+            Filename.check_suffix e ".emo" && not (e = "package.emo"))
+          entries
+      in
+      List.length modules = 1
+      && not
+           (List.exists
+              (fun e ->
+                String.length e > 0 && e.[0] <> '.'
+                && Sys.is_directory (Filename.concat dir e))
+              entries))
 
 let examples_tests =
   List.map
@@ -195,11 +258,16 @@ let examples_tests =
    `emo run` pipeline: check first, then evaluate. The examples carry no
    main.emo, so the automatic interpreter golden skips them — matching
    and binding exit 0, and the violation's raise is the E3010 crash
-   report, exit 1. Each snippet runs from a scratch copy so the
-   project scan never sees the examples tree. *)
+   report, exit 1. Each snippet runs from a scratch copy so the project
+   scan never sees the examples tree — carrying the errors package's own
+   manifest, whose `file` dependency the snippets require. *)
 let errors_examples_tests =
+  let errors_manifest = read_file (Filename.concat examples_dir "errors/package.emo") in
+  let snippet_source name =
+    read_file (Filename.concat examples_dir ("errors/" ^ name ^ ".emo"))
+  in
   let run_snippet name =
-    let file = Filename.concat examples_dir ("errors/" ^ name ^ ".emo") in
+    let file = fixture ~manifest:errors_manifest (name ^ ".emo") (snippet_source name) in
     let out = Buffer.create 256 in
     Emo_eval.set_output (Buffer.add_string out);
     let exit_code =
@@ -208,7 +276,7 @@ let errors_examples_tests =
           Emo_eval.set_output (fun s ->
               print_string s;
               flush stdout))
-        (fun () -> Emo_cli.run_file ~file ~color:false ~error_limit:20)
+        (fun () -> run_fixture file)
     in
     (exit_code, Buffer.contents out)
   in
@@ -222,13 +290,14 @@ let errors_examples_tests =
         Alcotest.(check int) "exit" 0 exit_code;
         Alcotest.(check string) "output" "13\n" out);
     tc "the violation raises and the crash report carries the data" (fun () ->
-        let source =
-          read_file (Filename.concat examples_dir "errors/violation.emo")
+        let file =
+          fixture ~manifest:errors_manifest "errors-violation.emo"
+            (snippet_source "violation")
         in
-        let file = fixture "errors-violation.emo" source in
         match
-          Emo_project.run_entry ~entry_file:file ~check:true
-            ~sched:Emo_project.Own ()
+          in_dir (Filename.dirname file) (fun () ->
+              Emo_project.run_entry ~entry_file:file ~check:true
+                ~sched:Emo_project.Own ())
         with
         | _ -> Alcotest.fail "expected the raise to end the program"
         | exception Emo_project.Static_errors [ diagnostic ] ->
@@ -323,6 +392,11 @@ let erl_available =
    builds for beam has to skip where `erlc` is absent rather than fail. *)
 let erlc_available = lazy (Sys.command "erlc -v >/dev/null 2>&1" = 0)
 
+(* An example builds and runs from its own directory: that directory is
+   its project root, so the entry is `main.emo` there and the manifest
+   the build reads is the example's own. *)
+let in_example name f = in_dir (Filename.concat examples_dir name) f
+
 let beam_examples_tests =
   List.map
     (fun name ->
@@ -334,9 +408,9 @@ let beam_examples_tests =
              the module atom, so each example builds under its own name. *)
           let out = Filename.concat scratch name in
           let exit_code =
-            Emo_cli.build_file
-              ~entry:(Filename.concat dir "main.emo")
-              ~output:out ~specialize:false ~cclibs:[] ~target:"beam"
+            in_example name (fun () ->
+                Emo_cli.build_file ~entry:"main.emo" ~output:out
+                  ~specialize:false ~cclibs:[] ~target:"beam")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -432,9 +506,9 @@ let wasm_examples_tests =
           let expected = read_file (Filename.concat dir "expected.txt") in
           let out_wasm = Filename.concat scratch (name ^ "-wasm-main.wasm") in
           let exit_code =
-            Emo_cli.build_file
-              ~entry:(Filename.concat dir "main.emo")
-              ~output:out_wasm ~specialize:false ~cclibs:[] ~target:"wasm"
+            in_example name (fun () ->
+                Emo_cli.build_file ~entry:"main.emo" ~output:out_wasm
+                  ~specialize:false ~cclibs:[] ~target:"wasm")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let out, err, proc_status =
@@ -572,16 +646,23 @@ do child()
 println("root done")
 |}
 
-(* Each program gets its own directory: a build compiles every sibling
-   .emo, and the emitters write their artifacts beside the entry. *)
+(* Each program gets its own directory and its own manifest: a build
+   compiles every sibling .emo, and the emitters write their artifacts
+   beside the entry. The manifest makes the directory the package the
+   build roots itself in (E5010). *)
 let scratch_entry name source =
   let dir = Filename.concat scratch name in
   if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
   let entry = Filename.concat dir "main.emo" in
-  let oc = open_out_bin entry in
-  output_string oc source;
-  close_out oc;
+  write_file (Filename.concat dir "package.emo") default_manifest;
+  write_file entry source;
   entry
+
+(* Builds a scratch entry from the project directory that holds it: the
+   directory is the package root, so the build has to stand there. *)
+let build_entry ~target ?(specialize = false) ?(cclibs = []) entry output =
+  in_dir (Filename.dirname entry) (fun () ->
+      Emo_cli.build_file ~entry ~output ~specialize ~cclibs ~target)
 
 let check_run what (out, err, status) expected =
   Alcotest.(check string) (what ^ " output") expected out;
@@ -605,9 +686,7 @@ let beam_naming_tests =
         let dir = Filename.dirname entry in
         Alcotest.(check int)
           "build exit" 0
-          (Emo_cli.build_file ~entry
-             ~output:(Filename.concat dir "app")
-             ~specialize:false ~cclibs:[] ~target:"beam");
+          (build_entry ~target:"beam" entry (Filename.concat dir "app"));
         let exists name = Sys.file_exists (Filename.concat dir name) in
         Alcotest.(check bool) "app.core" true (exists "app.core");
         Alcotest.(check bool) "app.beam" true (exists "app.beam");
@@ -626,9 +705,7 @@ let beam_naming_tests =
         (* The stem would be `my-app`, which erlc can never load. *)
         Alcotest.(check int)
           "build exit" 65
-          (Emo_cli.build_file ~entry
-             ~output:(Filename.concat dir "my-app")
-             ~specialize:false ~cclibs:[] ~target:"beam");
+          (build_entry ~target:"beam" entry (Filename.concat dir "my-app"));
         Alcotest.(check bool)
           "nothing was written" false
           (Sys.file_exists (Filename.concat dir "my-app.core")));
@@ -642,8 +719,7 @@ let root_end_tests =
         let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
         Alcotest.(check int)
           "build exit" 0
-          (Emo_cli.build_file ~entry ~output:bin ~specialize:false ~cclibs:[]
-             ~target:"c");
+          (build_entry ~target:"c" entry bin);
         check_run "c" (run_cmd (Filename.quote bin)) "root done\n");
     tc "the wasm root ending drops a woken process" (fun () ->
         if not (Lazy.force node_available) then Alcotest.skip ();
@@ -651,8 +727,7 @@ let root_end_tests =
         let out_wasm = Filename.concat (Filename.dirname entry) "main.wasm" in
         Alcotest.(check int)
           "build exit" 0
-          (Emo_cli.build_file ~entry ~output:out_wasm ~specialize:false
-             ~cclibs:[] ~target:"wasm");
+          (build_entry ~target:"wasm" entry out_wasm);
         check_run "wasm"
           (run_cmd
              (Printf.sprintf "node %s %s"
@@ -665,8 +740,7 @@ let root_end_tests =
         let out_ts = Filename.concat (Filename.dirname entry) "main" in
         Alcotest.(check int)
           "build exit" 0
-          (Emo_cli.build_file ~entry ~output:out_ts ~specialize:false ~cclibs:[]
-             ~target:"typescript");
+          (build_entry ~target:"typescript" entry out_ts);
         check_run "typescript"
           (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
           "root done\n");
@@ -678,8 +752,7 @@ let root_end_tests =
         in
         Alcotest.(check int)
           "build exit" 0
-          (Emo_cli.build_file ~entry ~output:out_core ~specialize:false
-             ~cclibs:[] ~target:"beam");
+          (build_entry ~target:"beam" entry out_core);
         check_run "beam"
           (run_cmd
              (Printf.sprintf
@@ -767,18 +840,9 @@ let c_integer_tests =
   [
     tc "the c integer core: fib, flat 1M tails, wrap-around Int64" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
-        (* its own directory: a build compiles every sibling .emo *)
-        let dir = Filename.concat scratch "c-int-core" in
-        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-        let entry = Filename.concat dir "main.emo" in
-        let oc = open_out_bin entry in
-        output_string oc c_integer_core_source;
-        close_out oc;
-        let out_bin = Filename.concat dir "main-c-bin" in
-        let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
-            ~target:"c"
-        in
+        let entry = scratch_entry "c-int-core" c_integer_core_source in
+        let out_bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        let exit_code = build_entry ~target:"c" entry out_bin in
         Alcotest.(check int) "build exit" 0 exit_code;
         let cmd =
           Printf.sprintf "sh -c 'ulimit -s 1024; exec %s'"
@@ -865,17 +929,9 @@ let c_scalar_tests =
                 ~source:c_scalar_core_source);
           Buffer.contents out
         in
-        let dir = Filename.concat scratch "c-scalar" in
-        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-        let entry = Filename.concat dir "main.emo" in
-        let oc = open_out_bin entry in
-        output_string oc c_scalar_core_source;
-        close_out oc;
-        let out_bin = Filename.concat dir "main-c-bin" in
-        let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
-            ~target:"c"
-        in
+        let entry = scratch_entry "c-scalar" c_scalar_core_source in
+        let out_bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        let exit_code = build_entry ~target:"c" entry out_bin in
         Alcotest.(check int) "build exit" 0 exit_code;
         Unix.putenv "EMO_FFI_PROBE" "hello ffi";
         let out, err, proc_status = run_cmd (Filename.quote out_bin) in
@@ -999,20 +1055,14 @@ let c_dynamic_tests =
   [
     tc "an uncaught raise exits 1 with the interpreter's message" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
-        let dir = Filename.concat scratch "c-raise" in
-        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-        let entry = Filename.concat dir "main.emo" in
-        let oc = open_out_bin entry in
-        output_string oc
-          {|raise Exception.new(message: "boom")
+        let entry =
+          scratch_entry "c-raise"
+            {|raise Exception.new(message: "boom")
 println("not reached")
-|};
-        close_out oc;
-        let out_bin = Filename.concat dir "main-c-bin" in
-        let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
-            ~target:"c"
+|}
         in
+        let out_bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        let exit_code = build_entry ~target:"c" entry out_bin in
         Alcotest.(check int) "build exit" 0 exit_code;
         let _, err, proc_status = run_cmd (Filename.quote out_bin) in
         Alcotest.(check bool)
@@ -1042,17 +1092,9 @@ println("not reached")
                 ~source:c_dynamic_core_source);
           Buffer.contents out
         in
-        let dir = Filename.concat scratch "c-dynamic" in
-        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-        let entry = Filename.concat dir "main.emo" in
-        let oc = open_out_bin entry in
-        output_string oc c_dynamic_core_source;
-        close_out oc;
-        let out_bin = Filename.concat dir "main-c-bin" in
-        let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
-            ~target:"c"
-        in
+        let entry = scratch_entry "c-dynamic" c_dynamic_core_source in
+        let out_bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        let exit_code = build_entry ~target:"c" entry out_bin in
         Alcotest.(check int) "build exit" 0 exit_code;
         let out, err, proc_status = run_cmd (Filename.quote out_bin) in
         Alcotest.(check string) "output" expected out;
@@ -1071,19 +1113,13 @@ println("not reached")
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let entry = scratch_entry "c-child-raise" c_child_raise_source in
         let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
-        Alcotest.(check int)
-          "build exit" 0
-          (Emo_cli.build_file ~entry ~output:bin ~specialize:false ~cclibs:[]
-             ~target:"c");
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry bin);
         check_run "c" (run_cmd (Filename.quote bin)) "still here\n");
     tc "a sent Box reaches the receiver as a snapshot" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let entry = scratch_entry "c-send-snapshot" c_send_snapshot_source in
         let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
-        Alcotest.(check int)
-          "build exit" 0
-          (Emo_cli.build_file ~entry ~output:bin ~specialize:false ~cclibs:[]
-             ~target:"c");
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry bin);
         check_run "c" (run_cmd (Filename.quote bin)) "1\n99\n");
   ]
 
@@ -1098,9 +1134,9 @@ let c_examples_tests =
           let expected = read_file (Filename.concat dir "expected.txt") in
           let out_bin = Filename.concat scratch (name ^ "-c-bin") in
           let exit_code =
-            Emo_cli.build_file
-              ~entry:(Filename.concat dir "main.emo")
-              ~output:out_bin ~specialize:false ~cclibs:[] ~target:"c"
+            in_example name (fun () ->
+                Emo_cli.build_file ~entry:"main.emo" ~output:out_bin
+                  ~specialize:false ~cclibs:[] ~target:"c")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let out, err, proc_status = run_cmd (Filename.quote out_bin) in
@@ -1127,9 +1163,11 @@ let c_foreign_tests =
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let dir = Filename.concat scratch "c-ffi" in
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file (Filename.concat dir "package.emo") default_manifest;
         (* A stale defs header would survive a broken build, so the
-           assertion below starts from nothing. *)
-        let defs_h = Filename.concat (Sys.getcwd ()) ".emo-build/emo_defs.h" in
+           assertion below starts from nothing. The build stands in
+           [dir], so that is where its .emo-build lands. *)
+        let defs_h = Filename.concat dir ".emo-build/emo_defs.h" in
         (try Sys.remove defs_h with Sys_error _ -> ());
         let entry = Filename.concat dir "main.emo" in
         let oc = open_out_bin entry in
@@ -1156,8 +1194,7 @@ println(triple(14))
         close_out oc;
         let out_bin = Filename.concat dir "main-c-bin" in
         let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
-            ~cclibs:[ "m" ] ~target:"c"
+          build_entry ~target:"c" ~cclibs:[ "m" ] entry out_bin
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         (* The defs header declares the program's def and the foreign
@@ -1173,9 +1210,11 @@ println(triple(14))
           in
           go []
         in
+        (* `main.emo` in the package root is the module `main`, so the
+           def it declares is spelled `main__triple` in the header. *)
         Alcotest.(check bool)
           "defs header has the def"
-          (List.exists (String.equal "int64_t triple(int64_t x);") lines)
+          (List.exists (String.equal "int64_t main__triple(int64_t x);") lines)
           true;
         Alcotest.(check bool)
           "defs header has the void foreign"
@@ -1193,6 +1232,7 @@ println(triple(14))
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let dir = Filename.concat scratch "c-ffi-handle" in
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file (Filename.concat dir "package.emo") default_manifest;
         let c_src = Filename.concat dir "emo_handle.c" in
         let oc = open_out_bin c_src in
         output_string oc
@@ -1244,8 +1284,7 @@ println(counter_close(c))
         close_out oc;
         let out_bin = Filename.concat dir "main-c-bin" in
         let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
-            ~cclibs:[ lib_a ] ~target:"c"
+          build_entry ~target:"c" ~cclibs:[ lib_a ] entry out_bin
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         let out, _, proc_status = run_cmd (Filename.quote out_bin) in
@@ -1257,20 +1296,14 @@ println(counter_close(c))
               (Printf.sprintf "exited %d"
                  (match s with Unix.WEXITED n -> n | _ -> -1)));
     tc "the native target still refuses Int64 foreign defs" (fun () ->
-        let dir = Filename.concat scratch "c-ffi-refuse" in
-        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-        let entry = Filename.concat dir "main.emo" in
-        let oc = open_out_bin entry in
-        output_string oc
-          {|foreign def ident(x Int64) Int64 = "ident"
+        let entry =
+          scratch_entry "c-ffi-refuse"
+            {|foreign def ident(x Int64) Int64 = "ident"
 println(ident(1))
-|};
-        close_out oc;
-        let out_bin = Filename.concat dir "native-bin" in
-        let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
-            ~target:"ocaml"
+|}
         in
+        let out_bin = Filename.concat (Filename.dirname entry) "native-bin" in
+        let exit_code = build_entry ~target:"ocaml" entry out_bin in
         Alcotest.(check int) "refused" 65 exit_code);
   ]
 
@@ -1286,6 +1319,7 @@ let c_callback_tests =
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let dir = Filename.concat scratch "c-callback" in
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file (Filename.concat dir "package.emo") default_manifest;
         let c_src = Filename.concat dir "emo_greet.c" in
         let oc = open_out_bin c_src in
         output_string oc
@@ -1338,10 +1372,7 @@ run_greet(Polite.new(), 1)
 |};
         close_out oc;
         let out_bin = Filename.concat dir "main-c-bin" in
-        let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
-            ~cclibs:[ obj ] ~target:"c"
-        in
+        let exit_code = build_entry ~target:"c" ~cclibs:[ obj ] entry out_bin in
         Alcotest.(check int) "build exit" 0 exit_code;
         let out, err, proc_status = run_cmd (Filename.quote out_bin) in
         Alcotest.(check string)
@@ -1378,6 +1409,7 @@ let c_recycle_tests =
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let dir = Filename.concat scratch "c-recycle" in
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file (Filename.concat dir "package.emo") default_manifest;
         let entry = Filename.concat dir "main.emo" in
         let oc = open_out_bin entry in
         output_string oc
@@ -1408,10 +1440,7 @@ println(keep.length())
 |};
         close_out oc;
         let out_bin = Filename.concat dir "main-c-bin" in
-        let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false ~cclibs:[]
-            ~target:"c"
-        in
+        let exit_code = build_entry ~target:"c" entry out_bin in
         Alcotest.(check int) "build exit" 0 exit_code;
         let out, _, proc_status = run_cmd (Filename.quote out_bin) in
         Alcotest.(check string) "output" "0\n1\n" out;
@@ -1431,6 +1460,7 @@ let c_shape_tests =
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let dir = Filename.concat scratch "c-shape" in
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file (Filename.concat dir "package.emo") default_manifest;
         let c_src = Filename.concat dir "emo_shape.c" in
         let oc = open_out_bin c_src in
         output_string oc
@@ -1484,10 +1514,7 @@ println(stretch(((1.0, 2.0), 3.0)))
 |};
         close_out oc;
         let out_bin = Filename.concat dir "main-c-bin" in
-        let exit_code =
-          Emo_cli.build_file ~entry ~output:out_bin ~specialize:false
-            ~cclibs:[ obj ] ~target:"c"
-        in
+        let exit_code = build_entry ~target:"c" ~cclibs:[ obj ] entry out_bin in
         Alcotest.(check int) "build exit" 0 exit_code;
         let out, err, proc_status = run_cmd (Filename.quote out_bin) in
         Alcotest.(check string) "output" "5.0\n(1.5, 2.5)\n(3.0, 6.0)\n" out;
@@ -2123,9 +2150,9 @@ let riscv64_examples_tests =
           let expected = read_file (Filename.concat dir "expected.txt") in
           let out_elf = Filename.concat scratch (name ^ "-riscv64.elf") in
           let exit_code =
-            Emo_cli.build_file
-              ~entry:(Filename.concat dir "main.emo")
-              ~output:out_elf ~specialize:false ~cclibs:[] ~target:"riscv64"
+            in_example name (fun () ->
+                Emo_cli.build_file ~entry:"main.emo" ~output:out_elf
+                  ~specialize:false ~cclibs:[] ~target:"riscv64")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -2161,33 +2188,24 @@ let riscv64_examples_tests =
 let riscv64_refusal_tests =
   [
     tc "a map literal refuses with a clear diagnostic" (fun () ->
-        let dir = Filename.concat scratch "riscv-map" in
-        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-        let entry = Filename.concat dir "main.emo" in
-        let oc = open_out_bin entry in
-        output_string oc {|println({ "a": 1 })|};
-        close_out oc;
+        let entry = scratch_entry "riscv-map" {|println({ "a": 1 })|} in
         Alcotest.(check int)
           "exit" 65
-          (Emo_cli.build_file ~entry
-             ~output:(Filename.concat dir "out")
-             ~specialize:false ~cclibs:[] ~target:"riscv64"));
+          (build_entry ~target:"riscv64" entry
+             (Filename.concat (Filename.dirname entry) "out")));
     tc "spawn refuses with a clear diagnostic" (fun () ->
-        let dir = Filename.concat scratch "riscv-spawn" in
-        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-        let entry = Filename.concat dir "main.emo" in
-        let oc = open_out_bin entry in
-        output_string oc {|
+        let entry =
+          scratch_entry "riscv-spawn"
+            {|
 def work() {
   println("nope")
 }
-do work()|};
-        close_out oc;
+do work()|}
+        in
         Alcotest.(check int)
           "exit" 65
-          (Emo_cli.build_file ~entry
-             ~output:(Filename.concat dir "out")
-             ~specialize:false ~cclibs:[] ~target:"riscv64"));
+          (build_entry ~target:"riscv64" entry
+             (Filename.concat (Filename.dirname entry) "out")));
     tc "the refusals name the construct" (fun () ->
         let refusal src =
           let items, parse_diags =
@@ -2257,15 +2275,10 @@ println(host_floor(2.5))
 
 let foreign_refusal_tests =
   let build target =
-    let dir = Filename.concat scratch ("foreign-def-" ^ target) in
-    if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
-    let entry = Filename.concat dir "main.emo" in
-    let oc = open_out_bin entry in
-    output_string oc foreign_def_source;
-    close_out oc;
-    Emo_cli.build_file ~entry
-      ~output:(Filename.concat dir "out")
-      ~specialize:false ~cclibs:[] ~target
+    let entry =
+      scratch_entry ("foreign-def-" ^ target) foreign_def_source
+    in
+    build_entry ~target entry (Filename.concat (Filename.dirname entry) "out")
   in
   let refusal target emit =
     let items, parse_diags =
@@ -2308,8 +2321,7 @@ let foreign_refusal_tests =
         let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
         Alcotest.(check int)
           "c build exit" 0
-          (Emo_cli.build_file ~entry ~output:bin ~specialize:false ~cclibs:[]
-             ~target:"c");
+          (build_entry ~target:"c" entry bin);
         check_run "c" (run_cmd (Filename.quote bin)) "2.0\n";
         List.iter
           (fun (target, emit) ->
@@ -2381,16 +2393,17 @@ let new_tests =
           (contains
              (read_file (Filename.concat dir ".gitignore"))
              ".emo-build/");
-        (* checked, built, and run the moment it exists *)
+        (* checked, built, and run the moment it exists — from the
+           scaffolded directory, which is the package root *)
         let entry = Filename.concat dir "main.emo" in
-        Alcotest.(check int)
-          "check exit" 0
-          (Emo_cli.check_file ~file:entry ~color:false ~error_limit:20);
         let bin = Filename.concat dir "scaffold-bin" in
         Alcotest.(check int)
+          "check exit" 0
+          (in_dir dir (fun () ->
+               Emo_cli.check_file ~file:entry ~color:false ~error_limit:20));
+        Alcotest.(check int)
           "build exit" 0
-          (Emo_cli.build_file ~entry ~output:bin ~specialize:true ~cclibs:[]
-             ~target:"c");
+          (build_entry ~target:"c" ~specialize:true entry bin);
         let out, _, _ = run_cmd (Filename.quote bin) in
         let first_line = List.hd (String.split_on_char '\n' out) in
         Alcotest.(check string) "binary output" "Hello, world!" first_line);
@@ -2542,6 +2555,8 @@ let doctor_tests =
 
 (* ---- test: the `emo test` subcommand (step 46) ---- *)
 
+(* The manifest comes first, so a caller that supplies its own still
+   wins. *)
 let write_fixture_project name files =
   let dir = Filename.concat scratch name in
   if Sys.file_exists dir then Emo_cli.remove_tree dir;
@@ -2554,13 +2569,8 @@ let write_fixture_project name files =
       let oc = open_out_bin path in
       output_string oc source;
       close_out oc)
-    files;
+    (("package.emo", default_manifest) :: files);
   dir
-
-let in_dir dir f =
-  let old_cwd = Sys.getcwd () in
-  Sys.chdir dir;
-  Fun.protect ~finally:(fun () -> Sys.chdir old_cwd) f
 
 let add_main =
   ("main.emo", "def add(a Int64, b Int64) Int64 {\n  return a + b\n}\n")
@@ -2645,9 +2655,9 @@ let check_tests =
         in
         Alcotest.(check int)
           "exit" 0
-          (Emo_cli.check_file
-             ~file:(Filename.concat dir "package.emo")
-             ~color:false ~error_limit:20));
+          (in_dir dir (fun () ->
+               Emo_cli.check_file ~file:"package.emo" ~color:false
+                 ~error_limit:20)));
     tc "a malformed manifest reports its manifest error" (fun () ->
         let dir =
           write_fixture_project "check-manifest-bad"
@@ -2667,9 +2677,9 @@ let check_tests =
         in
         Alcotest.(check int)
           "exit" 65
-          (Emo_cli.check_file
-             ~file:(Filename.concat dir "package.emo")
-             ~color:false ~error_limit:20));
+          (in_dir dir (fun () ->
+               Emo_cli.check_file ~file:"package.emo" ~color:false
+                 ~error_limit:20)));
   ]
 
 (* ---- manifest as an entry: run and build refuse it (step 11) ---- *)

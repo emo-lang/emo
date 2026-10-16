@@ -412,6 +412,37 @@ let test_dep_insertion () =
     "a fresh block does too" "\n  deps {\n    \"json\" = \"2.3.1\"\n  }\n"
     insert
 
+(* ---- Root discovery ------------------------------------------------- *)
+
+let mkdir dir = if not (Sys.file_exists dir) then Unix.mkdir dir 0o755
+
+let touch path =
+  let oc = open_out path in
+  close_out oc
+
+(* The compiler's root rule, mirrored: a directory is a project when it
+   holds a package.emo, and no ancestor is ever consulted. *)
+let test_find_root () =
+  let base = Filename.concat (Sys.getcwd ()) "root-discovery-fixture" in
+  let bare = Filename.concat base "bare" in
+  let pkg = Filename.concat base "pkg" in
+  mkdir base;
+  mkdir bare;
+  mkdir pkg;
+  touch (Filename.concat pkg "package.emo");
+  Alcotest.(check (option string))
+    "the directory holding the manifest is the root" (Some pkg)
+    (Lsp_index.find_root ~fallback:pkg (Filename.concat pkg "main.emo"));
+  Alcotest.(check (option string))
+    "the file's own directory is the other candidate" (Some pkg)
+    (Lsp_index.find_root (Filename.concat pkg "main.emo"));
+  Alcotest.(check (option string))
+    "a manifest-less directory is no root" None
+    (Lsp_index.find_root ~fallback:bare (Filename.concat bare "main.emo"));
+  Alcotest.(check (option string))
+    "and nothing above it is consulted either" None
+    (Lsp_index.find_root (Filename.concat bare "main.emo"))
+
 let test_initialize_result () =
   let result = Lsp_server.initialize_result () in
   let capabilities = Yojson.Safe.Util.member "capabilities" result in
@@ -454,4 +485,5 @@ let () =
           tc "dep insertion" test_dep_insertion;
           tc "initialize result" test_initialize_result;
         ] );
+      ("root", [ tc "find_root" test_find_root ]);
     ]
