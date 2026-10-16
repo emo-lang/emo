@@ -175,6 +175,15 @@ let probe_first_line ?(timeout = Emo_tool.probe_deadline) (cmd : string) :
 let tool_exists (name : string) : bool =
   probe_first_line (Printf.sprintf "command -v %s" (Filename.quote name)) <> ""
 
+(* The riscv64 target's assembler and linker: the GNU cross binutils
+   arrive under the upstream prefix or a distribution's shorter one
+   (Homebrew ships riscv64-elf). The build and the doctor must agree on
+   the answer, so both ask here. *)
+let riscv_binutils_prefix () : string option =
+  List.find_opt
+    (fun p -> tool_exists (p ^ "-as") && tool_exists (p ^ "-ld"))
+    [ "riscv64-unknown-elf"; "riscv64-elf" ]
+
 let ocaml_target_ok () : bool =
   let found = find_ocamlfind () in
   (if found = "ocamlfind" then tool_exists "ocamlfind" else true)
@@ -568,16 +577,12 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             in
             write asm_file asm;
             write ld_file Emo_codegen.Riscv.linker_script;
-            let prefix =
-              List.find_opt
-                (fun p -> tool_exists (p ^ "-as") && tool_exists (p ^ "-ld"))
-                [ "riscv64-unknown-elf"; "riscv64-elf" ]
-            in
+            let prefix = riscv_binutils_prefix () in
             begin match prefix with
             | None ->
                 prerr_endline
                   "emo build: the riscv64 target needs the GNU cross binutils \
-                   on PATH — riscv64-unknown-elf-as and riscv64-unknown-elf-ld";
+                   on PATH — riscv64-unknown-elf-as/-ld or riscv64-elf-as/-ld";
                 69
             | Some prefix ->
                 let as_cmd =
@@ -1958,18 +1963,17 @@ let doctor ~(emit : string -> unit) : int =
   if tool_exists "erlc" then line "beam:" "ok"
   else line "beam:" "unavailable — erlc not found";
   line "wasm:" "ok — no external tools needed";
-  if
-    tool_exists "riscv64-unknown-elf-as" && tool_exists "riscv64-unknown-elf-ld"
-  then
-    if tool_exists "qemu-system-riscv64" then
-      line "riscv64:" ("ok" ^ tool_version "qemu-system-riscv64")
-    else
+  (match riscv_binutils_prefix () with
+  | None ->
       line "riscv64:"
-        "unavailable — qemu-system-riscv64 not found (the dev loop needs it)"
-  else
-    line "riscv64:"
-      "unavailable — the riscv64 target needs the GNU cross binutils on PATH \
-       (riscv64-unknown-elf-as and riscv64-unknown-elf-ld)";
+        "unavailable — the riscv64 target needs the GNU cross binutils on PATH \
+         (riscv64-unknown-elf-as/-ld or riscv64-elf-as/-ld)"
+  | Some _ ->
+      if tool_exists "qemu-system-riscv64" then
+        line "riscv64:" ("ok" ^ tool_version "qemu-system-riscv64")
+      else
+        line "riscv64:"
+          "unavailable — qemu-system-riscv64 not found (the dev loop needs it)");
   if !broken then 1 else 0
 
 let doctor_cmd =

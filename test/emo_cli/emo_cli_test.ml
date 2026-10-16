@@ -2197,13 +2197,13 @@ username = "u"|}
    (QEMU's default BIOS) prints its banner on the same serial stream —
    the payload starts after the banner's last Boot HART line — and the
    SBI console renders every newline as CRLF. Skips when QEMU or the
-   cross binutils are absent. ---- *)
+   cross binutils are absent; the binutils answer is the build's own
+   probe, so the two cannot disagree on which prefix is installed. ---- *)
 
 let riscv64_available =
   lazy
     (Sys.command "qemu-system-riscv64 --version >/dev/null 2>&1" = 0
-    && Sys.command "riscv64-unknown-elf-as --version >/dev/null 2>&1" = 0
-    && Sys.command "riscv64-unknown-elf-ld --version >/dev/null 2>&1" = 0)
+    && Emo_cli.riscv_binutils_prefix () <> None)
 
 (* The payload's serial output: everything after OpenSBI's banner, with
    the console's CRLF rendered back to LF. Without a banner (a bare-metal
