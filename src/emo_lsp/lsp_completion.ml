@@ -119,25 +119,33 @@ let is_version_dir name =
   match Emo_pkg.Version.parse name with Ok _ -> true | Error _ -> false
 
 (* Package names published at a filesystem registry endpoint. Handles both
-   flat (`http`) and scoped (`acme/json_tools`) layouts. *)
+   flat (`http`) and scoped (`acme/json_tools`) layouts. An HTTP(S) endpoint
+   contributes nothing: completion must never block on the network — the
+   editor falls back to what the local tree and lockfile already name. *)
 let registry_packages (endpoint : string) : string list =
-  let out = ref [] in
-  let rec walk rel dir depth =
-    if depth > 4 then ()
-    else
-      let entries = Lsp_util.readdir dir in
-      if List.exists is_version_dir entries then
-        out := String.concat "/" rel :: !out
+  if
+    String.starts_with ~prefix:"http://" endpoint
+    || String.starts_with ~prefix:"https://" endpoint
+  then []
+  else begin
+    let out = ref [] in
+    let rec walk rel dir depth =
+      if depth > 4 then ()
       else
-        List.iter
-          (fun entry ->
-            let path = Filename.concat dir entry in
-            if Lsp_util.is_directory path then
-              walk (rel @ [ entry ]) path (depth + 1))
-          entries
-  in
-  walk [] endpoint 0;
-  List.sort_uniq String.compare !out
+        let entries = Lsp_util.readdir dir in
+        if List.exists is_version_dir entries then
+          out := String.concat "/" rel :: !out
+        else
+          List.iter
+            (fun entry ->
+              let path = Filename.concat dir entry in
+              if Lsp_util.is_directory path then
+                walk (rel @ [ entry ]) path (depth + 1))
+            entries
+    in
+    walk [] endpoint 0;
+    List.sort_uniq String.compare !out
+  end
 
 let package_items (endpoint : string) : item list =
   let latest name =

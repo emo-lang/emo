@@ -32,6 +32,11 @@ type manifest = {
   targets : string list;
   link : string list;
       (* system libraries the c target links (bare names, `-l`-style) *)
+  registry : string option;
+      (* the HTTP(S) registry the project pulls dependencies from. Only the
+         project root's field is read; a dependency's manifest is fetched
+         from the registry the consumer already chose, so its field is
+         ignored. *)
   deps : (string * Version.t) list; (* exact versions *)
 }
 
@@ -43,11 +48,14 @@ let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
        version = "0.1.0"
        targets = ["ocaml", "wasm"]
        link = ["sqlite3"]
+       registry = "https://packages.example.com"
        deps { "json" = "2.3.1" }
      }
    Unknown fields, missing fields, and non-literal values are errors — the
    manifest is data, not program logic. `link` is optional (default []): the
-   system libraries the c target links, as bare names. *)
+   system libraries the c target links, as bare names. `registry` is optional
+   (default none): the HTTP(S) endpoint this project resolves dependencies
+   against — read only when the manifest is the project root. *)
 (* The budget for restricted manifest evaluation: generous but finite. *)
 let manifest_budget = 10_000
 
@@ -111,8 +119,9 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
               (manifest_error ~span "E5102"
                  "a package field's name is not a string"
                  ~hint:
-                   "the package block defines `name`, `version`, `targets` and \
-                    `link`; a dependency's name belongs in `deps`")
+                   "the package block defines `name`, `version`, `targets`, \
+                    `link` and `registry`; a dependency's name belongs in \
+                    `deps`")
         | Emo_eval.Dep_entry_expected ->
             raise
               (manifest_error ~hint:dep_key ~span "E5104"
@@ -122,14 +131,15 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
         raise
           (Manifest_error { d with Emo_support.Diagnostic.code = Some "E5103" })
   in
-  (* Strict fixed schema: nothing besides name, version, targets, and link
-     may be defined in the package block. *)
+  (* Strict fixed schema: nothing besides name, version, targets, link, and
+     registry may be defined in the package block. *)
   Hashtbl.iter
     (fun k _ ->
       if
         not
           (String.equal k "name" || String.equal k "version"
-         || String.equal k "targets" || String.equal k "link")
+         || String.equal k "targets" || String.equal k "link"
+         || String.equal k "registry")
       then
         raise (manifest_error "E5100" (Printf.sprintf "unknown field `%s`" k)))
     env.Emo_eval.frame;
@@ -273,6 +283,31 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                  hint = None;
                }))
     link;
+  (* The project's pull endpoint: an HTTP(S) URL only. A filesystem registry
+     is a developer/test affordance and stays with EMO_REGISTRY — a committed
+     manifest must name an endpoint every machine can reach the same way. *)
+  let registry =
+    match Emo_eval.lookup_opt env "registry" with
+    | None -> None
+    | Some (Emo_eval.String s) ->
+        if
+          String.starts_with ~prefix:"http://" s
+          || String.starts_with ~prefix:"https://" s
+        then Some s
+        else
+          raise
+            (manifest_error "E5103"
+               (Printf.sprintf
+                  "field `registry` must be an http(s) URL, got `%s`" s)
+               ~hint:
+                 "a filesystem registry is set with the EMO_REGISTRY \
+                  environment variable, not the manifest")
+    | Some v ->
+        raise
+          (manifest_error "E5103"
+             (Printf.sprintf "field `registry` must be a string, got %s"
+                (Emo_eval.type_name v)))
+  in
   let deps =
     List.map
       (fun (dep, raw) ->
@@ -293,7 +328,7 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                    }))
       deps_pairs
   in
-  { name; version; targets; link; deps }
+  { name; version; targets; link; registry; deps }
 
 (* A `package.emo` is the manifest: data in the restricted profile, never a
    module. A reader that walks Emo sources has to know that, or it reads
@@ -315,6 +350,9 @@ module Resolve = struct
     pv_version : Version.t;
     pv_targets : string list;
     pv_deps : (string * Version.t) list; (* its own exact pins *)
+    pv_checksum : string;
+        (* the content digest this version must unpack to — what the
+           lockfile records, verified on every fetch *)
   }
 
   (* index: dependency name → every published version with its target list
@@ -488,15 +526,19 @@ end
    future HTTPS client will use: <endpoint>/<owner>/<name>/<version>/
    holding the package's manifest (package.emo) and source files. *)
 module Registry = struct
-  (* A registry endpoint: a filesystem directory, or the standard
-     library carried in the compiler binary itself (T24.2) — a lone emo
-     binary resolves stdlib packages with nothing beside it. *)
-  type t = Fs_dir of string | Embedded
+  (* A registry endpoint: a filesystem directory, the standard library
+     carried in the compiler binary itself (T24.2), or an HTTP(S) service
+     speaking the frozen pull protocol (B.1 versions / B.2 dependencies /
+     B.3 downloads). The pure operations below serve the local kinds; the
+     HTTP kind is fetched through [Http_registry] with a caller-supplied
+     transport. *)
+  type t = Fs_dir of string | Embedded | Http of string
 
   (* The name the diagnostics show for the endpoint. *)
   let describe = function
     | Fs_dir dir -> dir
     | Embedded -> "the bundled standard library"
+    | Http url -> url
 
   type fetched = {
     f_name : string;
@@ -575,6 +617,11 @@ module Registry = struct
                 Some (String.sub path plen (String.length path - plen), content)
               else None)
             Emo_stdlib_data.files
+      | Http _ ->
+          (* The project pipeline routes HTTP endpoints through
+             [Http_registry]; reaching this arm means a caller skipped the
+             routing. *)
+          []
     in
     if files = [] then
       Error
@@ -629,6 +676,9 @@ module Registry = struct
             else None)
           Emo_stdlib_data.files
         |> List.sort_uniq Version.compare
+    | Http _ ->
+        (* Routed through [Http_registry] by the project pipeline. *)
+        []
 
   (* Builds a resolver index for [names] by reading each published version's
      manifest. Versions with unreadable manifests are skipped — resolution
@@ -656,6 +706,7 @@ module Registry = struct
                               Resolve.pv_version = version;
                               pv_targets = m.targets;
                               pv_deps = m.deps;
+                              pv_checksum = f.f_checksum;
                             }
                       | exception Manifest_error _ -> None)))
             (versions t ~name) ))
@@ -743,7 +794,10 @@ end
    zeroed, and the gzip stream carries no timestamp. The deflate payload
    uses stored (uncompressed) blocks: publishing favors a byte-stable,
    dependency-free encoding over compression ratio, and every gzip reader
-   accepts stored blocks. *)
+   accepts stored blocks. The decoder is the general one — the registry
+   service re-packs uploads into its canonical archive (a compressed
+   deflate stream plus an EMO-METADATA.json member), so pulling must accept
+   any valid deflate encoding, not just this encoder's. *)
 module Archive = struct
   let crc32_table =
     Array.init 256 (fun i ->
@@ -864,6 +918,893 @@ module Archive = struct
 
   (* The published artifact: sorted tar inside a timestamp-free gzip. *)
   let build (files : (string * string) list) : string = gzip (tar files)
+
+  (* Malformed input to the decoder — never a partial result. *)
+  exception Bad_archive of string
+
+  (* ---- inflate: the general RFC 1951 decoder ----
+
+     Bit-level reading (LSB-first) and canonical Huffman decoding in the
+     style of zlib's puff: per-length counts plus symbols sorted by code
+     assignment order, no tables. *)
+
+  type bitstream = { bs_data : string; mutable bs_pos : int (* in bits *) }
+
+  let get_bit bs =
+    let byte = bs.bs_pos / 8 in
+    if byte >= String.length bs.bs_data then
+      raise (Bad_archive "truncated deflate stream");
+    let bit = (Char.code bs.bs_data.[byte] lsr (bs.bs_pos land 7)) land 1 in
+    bs.bs_pos <- bs.bs_pos + 1;
+    bit
+
+  (* Deflate packs an n-bit value LSB-first. *)
+  let get_bits bs n =
+    let v = ref 0 in
+    for i = 0 to n - 1 do
+      v := !v lor (get_bit bs lsl i)
+    done;
+    !v
+
+  (* Stored blocks start on a byte boundary. *)
+  let align_byte bs = bs.bs_pos <- (bs.bs_pos + 7) land lnot 7
+
+  type huffman = {
+    h_count : int array; (* per code length, 1..15 *)
+    h_symbol : int array; (* symbols in code-assignment order *)
+  }
+
+  let build_huffman (lengths : int array) : huffman =
+    let count = Array.make 16 0 in
+    Array.iter (fun l -> if l > 0 then count.(l) <- count.(l) + 1) lengths;
+    let offs = Array.make 16 0 in
+    for l = 1 to 15 do
+      offs.(l) <- offs.(l - 1) + count.(l - 1)
+    done;
+    let nsyms = Array.fold_left ( + ) 0 count in
+    let symbol = Array.make nsyms 0 in
+    Array.iteri
+      (fun sym l ->
+        if l > 0 then begin
+          symbol.(offs.(l)) <- sym;
+          offs.(l) <- offs.(l) + 1
+        end)
+      lengths;
+    { h_count = count; h_symbol = symbol }
+
+  (* Walks the canonical code one bit at a time: [code] accumulates the
+     bits most-significant-first, [first] is the first code of each
+     length. *)
+  let decode_huffman bs h =
+    let code = ref 0 and first = ref 0 and index = ref 0 in
+    let rec step len =
+      if len > 15 then raise (Bad_archive "deflate: no such Huffman code");
+      code := !code lor get_bit bs;
+      let count = h.h_count.(len) in
+      if !code - !first < count then h.h_symbol.(!index + (!code - !first))
+      else begin
+        index := !index + count;
+        first := (!first + count) lsl 1;
+        code := !code lsl 1;
+        step (len + 1)
+      end
+    in
+    step 1
+
+  let length_base =
+    [|
+      3;
+      4;
+      5;
+      6;
+      7;
+      8;
+      9;
+      10;
+      11;
+      13;
+      15;
+      17;
+      19;
+      23;
+      27;
+      31;
+      35;
+      43;
+      51;
+      59;
+      67;
+      83;
+      99;
+      115;
+      131;
+      163;
+      195;
+      227;
+      258;
+    |]
+
+  let length_extra =
+    [|
+      0;
+      0;
+      0;
+      0;
+      0;
+      0;
+      0;
+      0;
+      1;
+      1;
+      1;
+      1;
+      2;
+      2;
+      2;
+      2;
+      3;
+      3;
+      3;
+      3;
+      4;
+      4;
+      4;
+      4;
+      5;
+      5;
+      5;
+      5;
+      0;
+    |]
+
+  let dist_base =
+    [|
+      1;
+      2;
+      3;
+      4;
+      5;
+      7;
+      9;
+      13;
+      17;
+      25;
+      33;
+      49;
+      65;
+      97;
+      129;
+      193;
+      257;
+      385;
+      513;
+      769;
+      1025;
+      1537;
+      2049;
+      3073;
+      4097;
+      6145;
+      8193;
+      12289;
+      16385;
+      24577;
+    |]
+
+  let dist_extra =
+    [|
+      0;
+      0;
+      0;
+      0;
+      1;
+      1;
+      2;
+      2;
+      3;
+      3;
+      4;
+      4;
+      5;
+      5;
+      6;
+      6;
+      7;
+      7;
+      8;
+      8;
+      9;
+      9;
+      10;
+      10;
+      11;
+      11;
+      12;
+      12;
+      13;
+      13;
+    |]
+
+  let fixed_litlen =
+    let lengths = Array.make 288 8 in
+    for i = 144 to 255 do
+      lengths.(i) <- 9
+    done;
+    for i = 256 to 279 do
+      lengths.(i) <- 7
+    done;
+    build_huffman lengths
+
+  let fixed_dist = build_huffman (Array.make 30 5)
+
+  (* The dynamic block header: the code-length code's lengths arrive in a
+     fixed scrambling order, then the literal/length and distance lengths
+     ride it with the copy/zero repeats. *)
+  let read_dynamic_header bs =
+    let hlit = get_bits bs 5 + 257 in
+    let hdist = get_bits bs 5 + 1 in
+    let hclen = get_bits bs 4 + 4 in
+    if hlit > 286 || hdist > 30 then
+      raise (Bad_archive "deflate: too many length/distance symbols");
+    let order =
+      [| 16; 17; 18; 0; 8; 7; 9; 6; 10; 5; 11; 4; 12; 3; 13; 2; 14; 1; 15 |]
+    in
+    let cl_lengths = Array.make 19 0 in
+    for i = 0 to hclen - 1 do
+      cl_lengths.(order.(i)) <- get_bits bs 3
+    done;
+    let cl = build_huffman cl_lengths in
+    let total = hlit + hdist in
+    let lengths = Array.make total 0 in
+    let i = ref 0 in
+    while !i < total do
+      let sym = decode_huffman bs cl in
+      if sym < 16 then begin
+        lengths.(!i) <- sym;
+        incr i
+      end
+      else begin
+        let fill, value =
+          match sym with
+          | 16 ->
+              if !i = 0 then
+                raise (Bad_archive "deflate: a repeat with no previous length");
+              (3 + get_bits bs 2, lengths.(!i - 1))
+          | 17 -> (3 + get_bits bs 3, 0)
+          | 18 -> (11 + get_bits bs 7, 0)
+          | _ -> raise (Bad_archive "deflate: bad code-length symbol")
+        in
+        if !i + fill > total then
+          raise (Bad_archive "deflate: code lengths overrun the header");
+        for _ = 1 to fill do
+          lengths.(!i) <- value;
+          incr i
+        done
+      end
+    done;
+    if lengths.(256) = 0 then
+      raise (Bad_archive "deflate: the end-of-block code is missing");
+    ( build_huffman (Array.sub lengths 0 hlit),
+      build_huffman (Array.sub lengths hlit hdist) )
+
+  (* One compressed block: literals copy out; length/distance pairs reach
+     back into the output. *)
+  let inflate_block bs out litlen dist_h =
+    let rec loop () =
+      let sym = decode_huffman bs litlen in
+      if sym < 256 then begin
+        Buffer.add_char out (Char.chr sym);
+        loop ()
+      end
+      else if sym = 256 then () (* end of block *)
+      else begin
+        if sym > 285 then
+          raise (Bad_archive "deflate: invalid literal/length symbol");
+        let li = sym - 257 in
+        let len = length_base.(li) + get_bits bs length_extra.(li) in
+        let dsym = decode_huffman bs dist_h in
+        if dsym > 29 then raise (Bad_archive "deflate: invalid distance symbol");
+        let dist = dist_base.(dsym) + get_bits bs dist_extra.(dsym) in
+        if dist > Buffer.length out then
+          raise (Bad_archive "deflate: distance reaches before the output");
+        for _ = 1 to len do
+          Buffer.add_char out (Buffer.nth out (Buffer.length out - dist))
+        done;
+        loop ()
+      end
+    in
+    loop ()
+
+  (* The gzip wrapper: header walk, the deflate stream (stored, fixed, or
+     dynamic blocks), then both trailers verified. *)
+  let gunzip (data : string) : (string, string) result =
+    let n = String.length data in
+    let u16 i = Char.code data.[i] lor (Char.code data.[i + 1] lsl 8) in
+    let u32 i =
+      Int32.logor
+        (Int32.of_int (u16 i))
+        (Int32.shift_left (Int32.of_int (u16 (i + 2))) 16)
+    in
+    let need i k = if i + k > n then raise (Bad_archive "truncated archive") in
+    try
+      need 0 18;
+      if Char.code data.[0] <> 0x1f || Char.code data.[1] <> 0x8b then
+        raise (Bad_archive "not a gzip stream");
+      if Char.code data.[2] <> 8 then
+        raise (Bad_archive "the gzip member is not deflate");
+      let flg = Char.code data.[3] in
+      if flg land 0xE0 <> 0 then raise (Bad_archive "gzip reserved flags set");
+      let pos = ref 10 in
+      if flg land 0x04 <> 0 then begin
+        (* FEXTRA: a length, then that many bytes. *)
+        need !pos 2;
+        let xlen = u16 !pos in
+        pos := !pos + 2;
+        need !pos xlen;
+        pos := !pos + xlen
+      end;
+      let skip_cstr () =
+        let rec scan i =
+          need i 1;
+          if data.[i] = '\000' then i + 1 else scan (i + 1)
+        in
+        pos := scan !pos
+      in
+      if flg land 0x08 <> 0 then skip_cstr () (* FNAME *);
+      if flg land 0x10 <> 0 then skip_cstr () (* FCOMMENT *);
+      if flg land 0x02 <> 0 then begin
+        (* FHCRC *)
+        need !pos 2;
+        pos := !pos + 2
+      end;
+      let bs = { bs_data = data; bs_pos = !pos * 8 } in
+      let out = Buffer.create (String.length data * 3) in
+      let finished = ref false in
+      while not !finished do
+        finished := get_bit bs = 1;
+        match get_bits bs 2 with
+        | 0 ->
+            (* stored: byte-aligned LEN/NLEN then the raw bytes *)
+            align_byte bs;
+            let p = bs.bs_pos / 8 in
+            need p 4;
+            let len = u16 p and nlen = u16 (p + 2) in
+            if len lxor 0xFFFF <> nlen then
+              raise (Bad_archive "deflate stored block: LEN/NLEN disagree");
+            need (p + 4) len;
+            Buffer.add_substring out data (p + 4) len;
+            bs.bs_pos <- (p + 4 + len) * 8
+        | 1 -> inflate_block bs out fixed_litlen fixed_dist
+        | 2 ->
+            let litlen, dist_h = read_dynamic_header bs in
+            inflate_block bs out litlen dist_h
+        | _ -> raise (Bad_archive "deflate: reserved block type")
+      done;
+      let data_end = (bs.bs_pos + 7) / 8 in
+      need data_end 8;
+      let crc = u32 data_end and size = u32 (data_end + 4) in
+      let payload = Buffer.contents out in
+      if crc32 payload <> crc then raise (Bad_archive "gzip CRC mismatch");
+      if Int32.of_int (String.length payload land 0xFFFFFFFF) <> size then
+        raise (Bad_archive "the gzip size trailer disagrees with the payload");
+      Ok payload
+    with Bad_archive m -> Error ("archive: " ^ m)
+
+  (* The ustar walk: 512-byte headers, regular files only, every header
+     checksum verified, a zero block ends the archive. *)
+  let untar (data : string) : ((string * string) list, string) result =
+    let n = String.length data in
+    let need i k = if i + k > n then raise (Bad_archive "truncated archive") in
+    let cstr off len =
+      let raw = String.sub data off len in
+      match String.index_opt raw '\000' with
+      | Some i -> String.sub raw 0 i
+      | None -> raw
+    in
+    let octal off len =
+      let acc = ref 0 in
+      for i = off to off + len - 1 do
+        match data.[i] with
+        | '0' .. '7' as c -> acc := (!acc * 8) + Char.code c - Char.code '0'
+        | ' ' | '\000' -> ()
+        | _ -> raise (Bad_archive "tar header: a numeric field is not octal")
+      done;
+      !acc
+    in
+    try
+      let rec walk pos acc =
+        need pos 512;
+        let zero =
+          let rec check i stop =
+            i >= stop || (data.[i] = '\000' && check (i + 1) stop)
+          in
+          check pos (pos + 512)
+        in
+        if zero then Ok (List.rev acc)
+        else begin
+          let checksum = octal (pos + 148) 8 in
+          let sum = ref 0 in
+          for i = pos to pos + 511 do
+            sum :=
+              !sum
+              +
+              if i >= pos + 148 && i < pos + 156 then 32 else Char.code data.[i]
+          done;
+          if !sum <> checksum then
+            raise (Bad_archive "tar header: checksum mismatch");
+          (match data.[pos + 156] with
+          | '0' | '\000' -> ()
+          | _ -> raise (Bad_archive "tar entry is not a regular file"));
+          if String.sub data (pos + 257) 5 <> "ustar" then
+            raise (Bad_archive "tar header: not a ustar entry");
+          let name = cstr pos 100 and prefix = cstr (pos + 345) 155 in
+          let path = if prefix = "" then name else prefix ^ "/" ^ name in
+          if path = "" then raise (Bad_archive "tar entry with no name");
+          let size = octal (pos + 124) 12 in
+          let data_off = pos + 512 in
+          need data_off size;
+          let content = String.sub data data_off size in
+          let pad = (512 - (size mod 512)) mod 512 in
+          walk (data_off + size + pad) ((path, content) :: acc)
+        end
+      in
+      walk 0 []
+    with Bad_archive m -> Error ("archive: " ^ m)
+
+  (* The inverse of [build]: the bytes a registry serves back into the
+     package's (path, content) list. *)
+  let unpack (data : string) : ((string * string) list, string) result =
+    match gunzip data with Error _ as e -> e | Ok payload -> untar payload
+end
+
+(* The HTTP(S) pull client: the consumer half of the registry service's
+   frozen protocol (registry/docs/design.md §5) — B.1 lists a package's
+   versions with checksums and targets, B.2 answers dependencies in batch,
+   B.3 serves the archive. The transport is injected: [runner] runs an
+   embedded Emo program against the bundled standard library (the publish
+   uploader's mechanism), so the client needs no HTTP stack of its own and
+   works from a lone emo binary. Each program prints the HTTP status on its
+   first line and a line-oriented payload after it; the parsers below are
+   the payload's only readers. *)
+module Http_registry = struct
+  type runner =
+    program:string ->
+    globals:(string * Emo_eval.value) list ->
+    (string, string) result
+
+  (* Every request is a GET with an optional bearer token — a public
+     package needs none, a private one is 404 without it, so the token is
+     simply sent whenever the caller has one. A transport failure raises
+     inside the program and comes back as the runner's Error, the same
+     mapping publish's uploader uses. *)
+  let versions_program =
+    {|require "http"
+require "json"
+
+var headers = []
+if __token != "" {
+  headers = [("Authorization", "Bearer " + __token)]
+}
+const resp = http.request("GET", __url, headers, "", 60.0)
+case resp {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, ok)     -> {
+    println(ok.status)
+    if ok.status == 200 {
+      case json.decode(ok.body) {
+        (R.error, why) -> { raise Exception.new(message: "registry answered invalid JSON: " + why) }
+        (R.ok, doc)    -> {
+          const versions = doc.get("versions").items()
+          var i = 0
+          while i < versions.length() {
+            const v = versions[i]
+            const targets = v.get("targets").items()
+            var tlist = ""
+            var t = 0
+            while t < targets.length() {
+              if t > 0 { tlist = tlist + "," }
+              tlist = tlist + targets[t].as_string()
+              t = t + 1
+            }
+            var yanked = "false"
+            if v.get("yanked").as_bool() { yanked = "true" }
+            println(v.get("version").as_string() + "\t" + v.get("checksum").as_string() + "\t" + tlist + "\t" + yanked)
+            i = i + 1
+          }
+        }
+      }
+    }
+  }
+}
+|}
+
+  let deps_program =
+    {|require "http"
+require "json"
+
+var headers = []
+if __token != "" {
+  headers = [("Authorization", "Bearer " + __token)]
+}
+const resp = http.request("GET", __url, headers, "", 60.0)
+case resp {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, ok)     -> {
+    println(ok.status)
+    if ok.status == 200 {
+      case json.decode(ok.body) {
+        (R.error, why) -> { raise Exception.new(message: "registry answered invalid JSON: " + why) }
+        (R.ok, doc)    -> {
+          const pkgs = doc.entries()
+          var p = 0
+          while p < pkgs.length() {
+            const entry = pkgs[p]
+            const versions = entry[1].items()
+            var i = 0
+            while i < versions.length() {
+              const v = versions[i]
+              const deps = v.get("deps").entries()
+              var dlist = ""
+              var d = 0
+              while d < deps.length() {
+                if d > 0 { dlist = dlist + "," }
+                dlist = dlist + deps[d][0] + "=" + deps[d][1].as_string()
+                d = d + 1
+              }
+              var yanked = "false"
+              if v.get("yanked").as_bool() { yanked = "true" }
+              println(entry[0] + "\t" + v.get("version").as_string() + "\t" + dlist + "\t" + yanked)
+              i = i + 1
+            }
+            p = p + 1
+          }
+        }
+      }
+    }
+  }
+}
+|}
+
+  (* The archive body rides the same framing — status line, then the raw
+     bytes; println's one trailing newline is stripped by the reader. Emo
+     strings are byte strings (publish's upload test pins binary intactness
+     through this channel), so the archive arrives verbatim. *)
+  let download_program =
+    {|require "http"
+
+var headers = []
+if __token != "" {
+  headers = [("Authorization", "Bearer " + __token)]
+}
+const resp = http.request("GET", __url, headers, "", 120.0)
+case resp {
+  (R.error, why) -> { raise Exception.new(message: why) }
+  (R.ok, ok)     -> {
+    println(ok.status)
+    println(ok.body)
+  }
+}
+|}
+
+  (* Splits one exchange's printed output into the status line and the body
+     that follows it; println's trailing newline is not the body's. The
+     publish/login programs share the framing. *)
+  let parse_exchange (text : string) : (int * string, string) result =
+    match String.index_opt text '\n' with
+    | None -> Error ("the fetch printed no status: " ^ text)
+    | Some i -> (
+        match int_of_string_opt (String.trim (String.sub text 0 i)) with
+        | None -> Error ("the fetch printed no status: " ^ text)
+        | Some status ->
+            let body = String.sub text (i + 1) (String.length text - i - 1) in
+            let body =
+              if String.length body > 0 && body.[String.length body - 1] = '\n'
+              then String.sub body 0 (String.length body - 1)
+              else body
+            in
+            Ok (status, body))
+
+  (* Strips one trailing slash, so joining endpoint paths never doubles it. *)
+  let base_url (base : string) : string =
+    let n = String.length base in
+    if n > 0 && base.[n - 1] = '/' then String.sub base 0 (n - 1) else base
+
+  let token_global = function
+    | Some t -> Emo_eval.String t
+    | None -> Emo_eval.String ""
+
+  let exchange (runner : runner) ~(program : string) ~(url : string)
+      ~(token : string option) : (int * string, string) result =
+    match
+      runner ~program
+        ~globals:
+          [ ("__url", Emo_eval.String url); ("__token", token_global token) ]
+    with
+    | Error _ as e -> e
+    | Ok text -> parse_exchange text
+
+  let split_scoped ~(base : string) (name : string) :
+      (string * string, string) result =
+    match String.split_on_char '/' name with
+    | [ owner; short ] -> Ok (owner, short)
+    | _ ->
+        Error
+          (Printf.sprintf
+             "registry `%s` serves scoped (owner/name) packages only; `%s` is \
+              not one"
+             base name)
+
+  (* One published version as B.1 reports it. *)
+  type version_info = {
+    vi_version : Version.t;
+    vi_checksum : string;
+    vi_targets : string list;
+    vi_yanked : bool;
+  }
+
+  (* The versions payload's lines: version, checksum, comma-separated
+     targets, yanked — tab-separated, one version per line. *)
+  let parse_versions_payload ~(base : string) (body : string) :
+      (version_info list, string) result =
+    let malformed () =
+      Error
+        (Printf.sprintf "registry `%s` answered a malformed versions payload"
+           base)
+    in
+    let rec parse_lines acc = function
+      | [] -> Ok (List.rev acc)
+      | line :: rest -> (
+          if String.trim line = "" then parse_lines acc rest
+          else
+            match String.split_on_char '\t' line with
+            | [ version; checksum; targets; yanked ] -> (
+                match Version.parse version with
+                | Error _ -> malformed ()
+                | Ok v -> (
+                    match yanked with
+                    | "true" | "false" ->
+                        let vi =
+                          {
+                            vi_version = v;
+                            vi_checksum = checksum;
+                            vi_targets =
+                              (if targets = "" then []
+                               else String.split_on_char ',' targets);
+                            vi_yanked = yanked = "true";
+                          }
+                        in
+                        parse_lines (vi :: acc) rest
+                    | _ -> malformed ()))
+            | _ -> malformed ())
+    in
+    parse_lines [] (String.split_on_char '\n' body)
+
+  let versions (runner : runner) ~(base : string) ~(token : string option)
+      ~(name : string) : (version_info list, string) result =
+    match split_scoped ~base name with
+    | Error _ as e -> e
+    | Ok (owner, short) -> (
+        let url =
+          Printf.sprintf "%s/api/v1/packages/%s/%s/versions" (base_url base)
+            owner short
+        in
+        match exchange runner ~program:versions_program ~url ~token with
+        | Error _ as e -> e
+        | Ok (200, body) -> parse_versions_payload ~base body
+        | Ok (404, _) ->
+            Error (Printf.sprintf "registry `%s` has no package `%s`" base name)
+        | Ok (status, body) ->
+            Error
+              (Printf.sprintf "registry `%s` answered HTTP %d for `%s`: %s" base
+                 status name (String.trim body)))
+
+  (* B.2: one row per (package, version): the version's own exact pins and
+     its yank flag. *)
+  type deps_info = {
+    di_name : string;
+    di_version : Version.t;
+    di_deps : (string * Version.t) list;
+    di_yanked : bool;
+  }
+
+  (* The dependencies payload's lines: name, version, comma-separated
+     dep=version pairs, yanked — tab-separated. *)
+  let parse_deps_payload ~(base : string) (body : string) :
+      (deps_info list, string) result =
+    let malformed () =
+      Error
+        (Printf.sprintf
+           "registry `%s` answered a malformed dependencies payload" base)
+    in
+    let parse_dep_pairs text =
+      if text = "" then Ok []
+      else
+        let rec go acc = function
+          | [] -> Ok (List.rev acc)
+          | pair :: rest -> (
+              match String.split_on_char '=' pair with
+              | [ dep; version ] -> (
+                  match Version.parse version with
+                  | Error _ -> malformed ()
+                  | Ok v -> go ((dep, v) :: acc) rest)
+              | _ -> malformed ())
+        in
+        go [] (String.split_on_char ',' text)
+    in
+    let rec parse_lines acc = function
+      | [] -> Ok (List.rev acc)
+      | line :: rest -> (
+          if String.trim line = "" then parse_lines acc rest
+          else
+            match String.split_on_char '\t' line with
+            | [ name; version; dep_pairs; yanked ] -> (
+                match Version.parse version with
+                | Error _ -> malformed ()
+                | Ok v -> (
+                    match parse_dep_pairs dep_pairs with
+                    | Error _ as e -> e
+                    | Ok deps -> (
+                        match yanked with
+                        | "true" | "false" ->
+                            parse_lines
+                              ({
+                                 di_name = name;
+                                 di_version = v;
+                                 di_deps = deps;
+                                 di_yanked = yanked = "true";
+                               }
+                              :: acc)
+                              rest
+                        | _ -> malformed ())))
+            | _ -> malformed ())
+    in
+    parse_lines [] (String.split_on_char '\n' body)
+
+  let deps (runner : runner) ~(base : string) ~(token : string option)
+      ~(names : string list) : (deps_info list, string) result =
+    if names = [] then Ok []
+    else
+      let url =
+        Printf.sprintf "%s/api/v1/dependencies?packages=%s" (base_url base)
+          (String.concat "," names)
+      in
+      match exchange runner ~program:deps_program ~url ~token with
+      | Error _ as e -> e
+      | Ok (200, body) -> parse_deps_payload ~base body
+      | Ok (status, body) ->
+          Error
+            (Printf.sprintf
+               "registry `%s` answered HTTP %d for the dependencies of %s: %s"
+               base status (String.concat ", " names) (String.trim body))
+
+  (* The resolver index for one batch of scoped names: B.1 per name joined
+     with one batched B.2. Yanked versions are excluded — a fresh resolution
+     never selects one, while an existing lockfile's pin still downloads.
+     The closure walk across dependency edges is the caller's (routing may
+     send a discovered name to a different endpoint kind). *)
+  let index (runner : runner) ~(base : string) ~(token : string option)
+      (names : string list) : (Resolve.index, string) result =
+    let rec collect_versions acc = function
+      | [] -> Ok (List.rev acc)
+      | name :: rest -> (
+          match versions runner ~base ~token ~name with
+          | Error _ as e -> e
+          | Ok vs -> collect_versions ((name, vs) :: acc) rest)
+    in
+    match collect_versions [] names with
+    | Error _ as e -> e
+    | Ok version_lists -> (
+        match deps runner ~base ~token ~names with
+        | Error _ as e -> e
+        | Ok dep_rows ->
+            let rec join acc = function
+              | [] -> Ok (List.rev acc)
+              | (name, vs) :: rest -> (
+                  let rec join_versions vacc = function
+                    | [] -> Ok (List.rev vacc)
+                    | vi :: vrest -> (
+                        if vi.vi_yanked then join_versions vacc vrest
+                        else
+                          match
+                            List.find_opt
+                              (fun di ->
+                                di.di_name = name
+                                && di.di_version = vi.vi_version)
+                              dep_rows
+                          with
+                          | Some di ->
+                              join_versions
+                                ({
+                                   Resolve.pv_version = vi.vi_version;
+                                   pv_targets = vi.vi_targets;
+                                   pv_deps = di.di_deps;
+                                   pv_checksum = vi.vi_checksum;
+                                 }
+                                :: vacc)
+                                vrest
+                          | None ->
+                              Error
+                                (Printf.sprintf
+                                   "registry `%s` metadata for `%s` is \
+                                    inconsistent: the versions list has %s but \
+                                    the dependencies endpoint does not — retry"
+                                   base name
+                                   (Version.to_string vi.vi_version)))
+                  in
+                  match join_versions [] vs with
+                  | Error _ as e -> e
+                  | Ok pvs -> join ((name, pvs) :: acc) rest)
+            in
+            join [] version_lists)
+
+  (* B.3: download the archive, unpack it, and pin the content digest to
+     what the index advertised. A README.md rides along but is not package
+     content — the collected-source filter drops it before the digest,
+     matching publish and the fs registry. *)
+  let fetch (runner : runner) ~(base : string) ~(token : string option)
+      ~(expected_checksum : string option) ~(name : string)
+      ~(version : Version.t) : (Registry.fetched, string) result =
+    match split_scoped ~base name with
+    | Error _ as e -> e
+    | Ok (owner, short) -> (
+        let url =
+          Printf.sprintf "%s/downloads/%s--%s--%s.emoji" (base_url base) owner
+            short
+            (Version.to_string version)
+        in
+        match exchange runner ~program:download_program ~url ~token with
+        | Error _ as e -> e
+        | Ok (404, _) ->
+            Error
+              (Printf.sprintf "registry `%s` has no package %s@%s" base name
+                 (Version.to_string version))
+        | Ok (200, archive) -> (
+            match Archive.unpack archive with
+            | Error _ as e -> e
+            | Ok members -> (
+                let files =
+                  List.filter
+                    (fun (path, _) ->
+                      Filename.check_suffix path ".emo"
+                      || Filename.check_suffix path ".c"
+                      || Filename.check_suffix path ".h")
+                    members
+                in
+                if
+                  not
+                    (List.exists
+                       (fun (p, _) -> Filename.basename p = "package.emo")
+                       files)
+                then
+                  Error
+                    (Printf.sprintf "package %s@%s has no manifest" name
+                       (Version.to_string version))
+                else
+                  let checksum = Registry.digest files in
+                  match expected_checksum with
+                  | Some expected when expected <> checksum ->
+                      Error
+                        (Printf.sprintf
+                           "checksum mismatch for %s@%s: the registry \
+                            advertises %s but the archive unpacks to %s"
+                           name
+                           (Version.to_string version)
+                           expected checksum)
+                  | _ ->
+                      Ok
+                        {
+                          Registry.f_name = name;
+                          f_version = version;
+                          f_checksum = checksum;
+                          f_files = files;
+                        }))
+        | Ok (status, body) ->
+            Error
+              (Printf.sprintf
+                 "registry `%s` answered HTTP %d downloading %s@%s: %s" base
+                 status name
+                 (Version.to_string version)
+                 (String.trim body)))
 end
 
 (* Publishing: the client side of the registry's publish protocol.

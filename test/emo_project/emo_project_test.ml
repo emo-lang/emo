@@ -156,8 +156,7 @@ let resolution_tests =
           | None -> false));
     tc "a file and directory with one stem collide" (fun () ->
         let p =
-          discover
-            [ ("shop/order.emo", ""); ("shop/order/util.emo", "") ]
+          discover [ ("shop/order.emo", ""); ("shop/order/util.emo", "") ]
         in
         Alcotest.(check bool)
           "E5005" true
@@ -2682,6 +2681,185 @@ if s.kind() == geo.Color.green {
         | _ -> Alcotest.fail ("c build failed: " ^ build_out));
         let compiled, _, _ = Emo_test_support.run_cmd (Filename.quote bin) in
         Alcotest.(check string) "c target" interpreted compiled);
+  ]
+
+(* The registry endpoint a project resolves against: EMO_REGISTRY wins (an
+   http(s) value selects the service over HTTP, anything else a filesystem
+   directory), then the manifest's `registry` field, then the bundled
+   standard library. Under an HTTP registry, unscoped (stdlib-owned) names
+   route to the bundled stdlib. *)
+let with_env var value f =
+  let old = Sys.getenv_opt var in
+  Unix.putenv var value;
+  Fun.protect
+    ~finally:(fun () ->
+      match old with Some v -> Unix.putenv var v | None -> Unix.putenv var "")
+    f
+
+let manifest_with_registry field_line =
+  Emo_pkg.parse_manifest ~file:"package.emo"
+    ~source:
+      (Printf.sprintf
+         {|package {
+  name = "acme/app"
+  version = "0.1.0"
+  targets = ["c"]
+  %s
+  deps {}
+}|}
+         field_line)
+
+(* Maps the request URL's suffix to the embedded program's printed output;
+   any uncanned URL fails, so a misrouted request is loud. *)
+let fake_runner ~(routes : (string * (int * string)) list) :
+    Emo_pkg.Http_registry.runner =
+ fun ~program:_ ~globals ->
+  let url =
+    match List.assoc_opt "__url" globals with
+    | Some (Emo_eval.String u) -> u
+    | _ -> ""
+  in
+  match
+    List.find_opt
+      (fun (suffix, _) ->
+        let n = String.length suffix in
+        String.length url >= n
+        && String.sub url (String.length url - n) n = suffix)
+      routes
+  with
+  | Some (_, (status, body)) -> Ok (Printf.sprintf "%d\n%s" status body)
+  | None -> Error ("no canned response for " ^ url)
+
+let registry_routing_tests =
+  [
+    tc "an endpoint string is a URL registry or a directory" (fun () ->
+        (match Emo_project.endpoint_of_string "https://pkgs.example" with
+        | Emo_pkg.Registry.Http url ->
+            Alcotest.(check string) "url" "https://pkgs.example" url
+        | _ -> Alcotest.fail "expected Http");
+        (match Emo_project.endpoint_of_string "http://127.0.0.1:1905" with
+        | Emo_pkg.Registry.Http _ -> ()
+        | _ -> Alcotest.fail "expected Http");
+        match Emo_project.endpoint_of_string "/srv/registry" with
+        | Emo_pkg.Registry.Fs_dir dir ->
+            Alcotest.(check string) "dir" "/srv/registry" dir
+        | _ -> Alcotest.fail "expected Fs_dir");
+    tc "EMO_REGISTRY wins over the manifest field" (fun () ->
+        let m = manifest_with_registry {|registry = "https://pkgs.example"|} in
+        with_env "EMO_REGISTRY" "/tmp/fs-registry" (fun () ->
+            match Emo_project.registry ~manifest:m with
+            | Emo_pkg.Registry.Fs_dir dir ->
+                Alcotest.(check string) "env dir" "/tmp/fs-registry" dir
+            | _ -> Alcotest.fail "expected the env registry"));
+    tc "the manifest field is used when EMO_REGISTRY is unset" (fun () ->
+        let m = manifest_with_registry {|registry = "https://pkgs.example"|} in
+        with_env "EMO_REGISTRY" "" (fun () ->
+            match Emo_project.registry ~manifest:m with
+            | Emo_pkg.Registry.Http url ->
+                Alcotest.(check string)
+                  "manifest url" "https://pkgs.example" url
+            | _ -> Alcotest.fail "expected the manifest registry"));
+    tc "the bundled stdlib serves by default" (fun () ->
+        with_env "EMO_REGISTRY" "" (fun () ->
+            match
+              Emo_project.registry ~manifest:(manifest_with_registry "")
+            with
+            | Emo_pkg.Registry.Embedded -> ()
+            | _ -> Alcotest.fail "expected Embedded"));
+    tc "under HTTP, unscoped names route to the bundled stdlib" (fun () ->
+        let reg = Emo_pkg.Registry.Http "http://pkgs.test" in
+        (match Emo_project.registry_for_name ~registry:reg "json" with
+        | Emo_pkg.Registry.Embedded -> ()
+        | _ -> Alcotest.fail "expected Embedded for the stdlib name");
+        (match Emo_project.registry_for_name ~registry:reg "acme/p" with
+        | Emo_pkg.Registry.Http url ->
+            Alcotest.(check string) "stays HTTP" "http://pkgs.test" url
+        | _ -> Alcotest.fail "expected Http for the scoped name");
+        let fs = Emo_pkg.Registry.Fs_dir "/x" in
+        match Emo_project.registry_for_name ~registry:fs "json" with
+        | Emo_pkg.Registry.Fs_dir _ -> ()
+        | _ -> Alcotest.fail "a filesystem registry keeps stdlib names");
+    tc "the closure merges an HTTP package's stdlib dependency" (fun () ->
+        (* acme/p@1.0.0 depends on stdlib's json: the index covers both —
+           acme/p from the HTTP endpoint, json from the bundled stdlib. *)
+        let runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/api/v1/packages/acme/p/versions",
+                  (200, "1.0.0\tsum1\tc\tfalse\n") );
+                ( "/api/v1/dependencies?packages=acme/p",
+                  (200, "acme/p\t1.0.0\tjson=0.1.0\tfalse\n") );
+              ]
+        in
+        let index =
+          Emo_project.index_closure_routed ~runner
+            ~registry:(Emo_pkg.Registry.Http "http://pkgs.test")
+            ~manifest_dir:"/tmp" [ "acme/p" ]
+        in
+        (match List.assoc_opt "acme/p" index with
+        | Some [ pv ] ->
+            Alcotest.(check string)
+              "checksum" "sum1" pv.Emo_pkg.Resolve.pv_checksum
+        | _ -> Alcotest.fail "expected acme/p in the index");
+        match List.assoc_opt "json" index with
+        | Some (_ :: _) -> ()
+        | _ -> Alcotest.fail "expected json from the bundled stdlib");
+    tc "an unscoped fetch under HTTP needs no request" (fun () ->
+        let runner = fake_runner ~routes:[] in
+        let json_version =
+          match
+            List.rev
+              (Emo_pkg.Registry.versions Emo_pkg.Registry.Embedded ~name:"json")
+          with
+          | version :: _ -> version
+          | [] -> Alcotest.fail "the bundled stdlib has no json"
+        in
+        let f =
+          Emo_project.fetch_routed ~runner
+            ~registry:(Emo_pkg.Registry.Http "http://pkgs.test")
+            ~manifest_dir:"/tmp" ~name:"json" ~version:json_version
+            ~expected_checksum:None
+        in
+        Alcotest.(check string) "name" "json" f.Emo_pkg.Registry.f_name);
+    tc "a lockfile checksum is enforced on fetch" (fun () ->
+        let runner = fake_runner ~routes:[] in
+        let reg = Emo_pkg.Registry.Fs_dir registry_dir in
+        let version =
+          match Emo_pkg.Version.parse "2.3.1" with
+          | Ok version -> version
+          | Error m -> Alcotest.fail m
+        in
+        let good =
+          match Emo_pkg.Registry.fetch reg ~name:"acme/json_tools" ~version with
+          | Ok f -> f.Emo_pkg.Registry.f_checksum
+          | Error m -> Alcotest.fail m
+        in
+        (match
+           Emo_project.fetch_routed ~runner ~registry:reg ~manifest_dir:"/tmp"
+             ~name:"acme/json_tools" ~version
+             ~expected_checksum:(Some (String.make 64 '0'))
+         with
+        | _ -> Alcotest.fail "expected a checksum mismatch"
+        | exception Emo_project.Static_errors ds -> (
+            match ds with
+            | [ d ] ->
+                Alcotest.(check string)
+                  "code" "E5007"
+                  (match d.Emo_support.Diagnostic.code with
+                  | Some c -> c
+                  | None -> "?");
+                Alcotest.(check bool)
+                  "names the mismatch" true
+                  (contains_substring d.Emo_support.Diagnostic.message
+                     "checksum mismatch")
+            | _ -> Alcotest.fail "expected exactly one diagnostic"));
+        (* the recorded checksum passes the same gate *)
+        let f =
+          Emo_project.fetch_routed ~runner ~registry:reg ~manifest_dir:"/tmp"
+            ~name:"acme/json_tools" ~version ~expected_checksum:(Some good)
+        in
+        Alcotest.(check string) "fetched" good f.Emo_pkg.Registry.f_checksum);
   ]
 
 let () =

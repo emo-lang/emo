@@ -16,9 +16,9 @@ def parse_config(text String) json_tools.Json {
 
 - **包扎根于你站的地方。** 根就是工作目录，它必须放着 `package.emo`——编译器从不向上看，所以在一个没有 manifest 的目录里启动的命令会以 E5010 停下（``run `emo new <name>` to scaffold a project here``），而不属于那里所扎根的包的入口是 E5011。先 `cd` 进包里：那个目录就是模块树，每条命令都从那里读它，于是同一个文件无论命令在哪里敲下都指同一件事。
 
-- **中心注册表，端点可配置。** 包按 `name@version` 通过中心注册表寻址，由全局内容寻址缓存支撑、跨项目共享——没有每项目的依赖副本。注册表端点读 `EMO_REGISTRY` 环境变量——全局或每项目设置——服务私有与本地部署；未设置时，标准库的内置注册表随编译器附带并默认服务。
+- **中心注册表，端点可配置。** 包按 `name@version` 通过中心注册表寻址，由全局内容寻址缓存支撑、跨项目共享——没有每项目的依赖副本。项目拉取所用的端点按序取自：`EMO_REGISTRY` 环境变量、manifest 的可选 `registry` 字段，最后是随编译器附带的标准库内置注册表。该字段只接受 `http(s)` URL——纳入版本控制的 manifest 必须命名一台每台机器都能以同样方式抵达的端点，所以文件系统注册表（协议的裸文件布局所导出到的目录）只经 `EMO_REGISTRY` 使用，留给测试与离线开发。HTTP 注册表服务带 scope 的（`owner/name`）包；顶层短名属于标准库，永远从内置副本解析——即使配置了远程注册表。被 yank 的版本不参与新的解析，但保持可下载，所以既有的 `package.lock` 仍能安装。每次拉取都把内容摘要与 lockfile 核对（全新解析时则与注册表自己公布的校验和核对）——不匹配就是错误，绝不静默替换。
 - **限定作用域的包名。** 第三方包在 scope 前缀下命名，归属显式，抢注无立足之地；scope 前缀成为模块路径前缀。官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）。
-- **manifest 是 Emo 配置文件**，以受限 profile 书写（可终止、密闭、无副作用）。没有任何读取方会把它当模块遍历：依赖解析、`emo publish`、`emo check` 与编辑器的诊断都按这个 profile 读它；而需要程序的命令会直接拒绝它——`emo run`、`emo build` 拿到 `package.emo` 作入口时以 66 退出，不会把它的字段当代码读。**依赖是精确版本**——开发与测试所用的版本——并且 **targets 声明包支持的编译目标**。绑定原生代码的包还在可选的 `link` 字段里声明要链接的系统库：
+- **manifest 是 Emo 配置文件**，以受限 profile 书写（可终止、密闭、无副作用）。没有任何读取方会把它当模块遍历：依赖解析、`emo publish`、`emo check` 与编辑器的诊断都按这个 profile 读它；而需要程序的命令会直接拒绝它——`emo run`、`emo build` 拿到 `package.emo` 作入口时以 66 退出，不会把它的字段当代码读。**依赖是精确版本**——开发与测试所用的版本——并且 **targets 声明包支持的编译目标**。绑定原生代码的包还在可选的 `link` 字段里声明要链接的系统库，从非默认注册表拉取的项目则在可选的 `registry` 字段里命名端点：
 
   ```emo
   package {
@@ -26,6 +26,7 @@ def parse_config(text String) json_tools.Json {
     version = "0.1.0"
     targets = ["ocaml", "wasm"]
     link = ["sqlite3"]
+    registry = "https://packages.example.com"
 
     deps {
       "json" = "2.3.1"
@@ -34,7 +35,9 @@ def parse_config(text String) json_tools.Json {
   }
   ```
 
-- **`deps` 的键是字符串字面量**——这个块唯一的写法。包名在这里和在其它所有地方一样是数据(`name` 字段、`require`、lockfile、注册表),所以 scope 能叫什么不取决于词法:owner 是关键字(`emo`)或带连字符都写得出来。包字段(`name`、`version`、`targets`、`link`)仍是标识符绑定——一边是固定 schema 的字段,另一边是 名字→版本 的映射。
+  `registry` 字段只在 manifest 是项目根时被读取——依赖的 manifest 是从消费方已选定的注册表抓取的，它的字段在那里被忽略；`emo publish` 的端点选择保持 `--registry`、`EMO_REGISTRY` 或已存登录不变。
+
+- **`deps` 的键是字符串字面量**——这个块唯一的写法。包名在这里和在其它所有地方一样是数据(`name` 字段、`require`、lockfile、注册表),所以 scope 能叫什么不取决于词法:owner 是关键字(`emo`)或带连字符都写得出来。包字段(`name`、`version`、`targets`、`link`、`registry`)仍是标识符绑定——一边是固定 schema 的字段,另一边是 名字→版本 的映射。
 
 - **包可以自带原生代码。** 包目录树里的 `.c`、`.h` 文件是包的一部分——与 `.emo` 模块一同被收集、校验、发布。c 目标会把依赖包的 C 源文件编进程序，并链接其 `link` 字段声明的库，所以消费 `sqlite3` 这类原生绑定包只需 `require`——不用 `--cclib`，不用手写 shim。`link` 只接受裸库名。包的原生输入只有 c 目标兑现；其他目标在构建期拒绝这样的依赖，manifest 的 `targets` 则在解析期拒绝。
 

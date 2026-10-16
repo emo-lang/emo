@@ -501,7 +501,9 @@ let check_project (p : project) :
       (fun (path, requires) ->
         let pkg = package_of p path in
         let declared =
-          match List.assoc_opt pkg p.package_deps with Some ds -> ds | None -> []
+          match List.assoc_opt pkg p.package_deps with
+          | Some ds -> ds
+          | None -> []
         in
         List.filter_map
           (fun (dep, span) ->
@@ -621,26 +623,416 @@ let dep_error ~(manifest_dir : string) (message : string) =
       };
     ]
 
-(* With EMO_REGISTRY unset, the standard library rides the compiler
-   binary itself (T24.2) — EMO_REGISTRY names a filesystem registry and
-   overrides the bundled default. *)
+(* ---- registry endpoints, credentials, and the HTTP transport ---- *)
+
+(* With EMO_REGISTRY unset and no manifest `registry` field, the standard
+   library rides the compiler binary itself (T24.2) — a lone emo binary
+   resolves stdlib packages with nothing beside it. *)
 let bundled_registry () : Emo_pkg.Registry.t = Emo_pkg.Registry.Embedded
 
-let registry () =
+(* Strips one trailing slash, so joining endpoint paths never doubles it. *)
+let registry_base (registry : string) : string =
+  let n = String.length registry in
+  if n > 0 && registry.[n - 1] = '/' then String.sub registry 0 (n - 1)
+  else registry
+
+(* `emo emoji login` stores one block per registry — registry, token,
+   username — in a key = "value" file under the user's config directory.
+   Entries never cross registries: publish and HTTP pulls match the entry
+   against the resolved endpoint, so a token minted for one host is never
+   sent to another. The file holds API tokens in plaintext and is written
+   0600. *)
+
+type stored_login = {
+  c_registry : string;
+  c_token : string;
+  c_username : string;
+  c_expires_at : string; (* RFC 3339, or "" when the token never expires *)
+}
+
+(* Parses the credentials file: `key = "value"` lines with the keys
+   registry, token, username and the optional expires_at; blank lines and #
+   comments are layout only. A new block starts at each `registry` line.
+   Strict — any malformed or unknown line is an error naming the line
+   number, never a silent skip. *)
+let parse_credentials (content : string) : (stored_login list, string) result =
+  let error line message =
+    Error (Printf.sprintf "credentials: line %d: %s" line message)
+  in
+  let unquote line key rest =
+    let n = String.length rest in
+    if
+      n < 2
+      || rest.[0] <> '"'
+      || rest.[n - 1] <> '"'
+      ||
+        try String.index (String.sub rest 1 (n - 2)) '"' <> -1
+        with Not_found -> false
+    then
+      error line
+        (Printf.sprintf "`%s` must be a quoted value without quotes" key)
+    else Ok (String.sub rest 1 (n - 2))
+  in
+  let complete line entry =
+    match (entry.c_registry, entry.c_token, entry.c_username) with
+    | r, t, u when r <> "" && t <> "" && u <> "" -> Ok entry
+    | r, _, _ when r <> "" ->
+        error line
+          (Printf.sprintf "the `%s` block is missing a token or username" r)
+    | _ -> error line "a block must start with `registry`"
+  in
+  let parse_line line text entry entries =
+    let trimmed = String.trim text in
+    if trimmed = "" || trimmed.[0] = '#' then Ok (entry, entries)
+    else
+      match String.index_opt trimmed '=' with
+      | None -> error line "expected `key = \"value\"`"
+      | Some i -> (
+          let key = String.trim (String.sub trimmed 0 i) in
+          let rest =
+            String.trim
+              (String.sub trimmed (i + 1) (String.length trimmed - i - 1))
+          in
+          match key with
+          | "registry" -> (
+              match entry.c_registry with
+              | "" -> (
+                  match unquote line key rest with
+                  | Ok v -> Ok ({ entry with c_registry = v }, entries)
+                  | Error e -> Error e)
+              | _ -> (
+                  (* A repeated `registry` opens the next block; the current
+                     one must be complete before it is set aside. *)
+                  match complete line entry with
+                  | Ok full -> (
+                      match unquote line key rest with
+                      | Ok v ->
+                          Ok
+                            ( {
+                                c_registry = v;
+                                c_token = "";
+                                c_username = "";
+                                c_expires_at = "";
+                              },
+                              full :: entries )
+                      | Error e -> Error e)
+                  | Error e -> Error e))
+          | "token" -> (
+              match unquote line key rest with
+              | Ok v -> Ok ({ entry with c_token = v }, entries)
+              | Error e -> Error e)
+          | "username" -> (
+              match unquote line key rest with
+              | Ok v -> Ok ({ entry with c_username = v }, entries)
+              | Error e -> Error e)
+          | "expires_at" -> (
+              match unquote line key rest with
+              | Ok v -> Ok ({ entry with c_expires_at = v }, entries)
+              | Error e -> Error e)
+          | other -> error line (Printf.sprintf "unknown key `%s`" other))
+  in
+  let rec go line entry entries lines =
+    match lines with
+    | [] -> (
+        if entry.c_registry = "" && entry.c_token = "" && entry.c_username = ""
+        then Ok (List.rev entries)
+        else
+          match complete line entry with
+          | Ok full -> Ok (List.rev (full :: entries))
+          | Error e -> Error e)
+    | text :: rest -> (
+        match parse_line line text entry entries with
+        | Ok (entry, entries) -> go (line + 1) entry entries rest
+        | Error e -> Error e)
+  in
+  (* A trailing empty element (the newline-terminated file's last line) is
+     just a blank line to skip; the final block flushes at the end either
+     way, and line numbers stay honest. *)
+  go 1
+    { c_registry = ""; c_token = ""; c_username = ""; c_expires_at = "" }
+    []
+    (String.split_on_char '\n' content)
+
+let load_credentials ~(file : string) : (stored_login list, string) result =
+  if not (Sys.file_exists file) then Ok []
+  else
+    let ic = open_in_bin file in
+    Fun.protect
+      ~finally:(fun () -> close_in_noerr ic)
+      (fun () ->
+        parse_credentials (really_input_string ic (in_channel_length ic)))
+
+(* Replaces the block for [registry] in place, or appends one, and rewrites
+   the file 0600. Values are checked before anything is written: the format
+   has no escapes, so a quote or newline cannot be smuggled in. *)
+let store_credentials ~(file : string) ~(registry : string) ~(token : string)
+    ~(username : string) ~(expires_at : string) : (unit, string) result =
+  let entry =
+    {
+      c_registry = registry_base registry;
+      c_token = token;
+      c_username = username;
+      c_expires_at = expires_at;
+    }
+  in
+  let plain (label : string) (v : string) =
+    if v = "" then Error (label ^ " is empty")
+    else if String.contains v '"' || String.contains v '\n' then
+      Error (label ^ " must not contain quotes or newlines")
+    else Ok ()
+  in
+  (* The expiry may be empty — a token that never expires. *)
+  let expiry =
+    if entry.c_expires_at = "" then Ok ()
+    else if
+      String.contains entry.c_expires_at '"'
+      || String.contains entry.c_expires_at '\n'
+    then Error "expires_at must not contain quotes or newlines"
+    else Ok ()
+  in
+  match
+    ( plain "registry" entry.c_registry,
+      plain "token" entry.c_token,
+      plain "username" entry.c_username,
+      expiry )
+  with
+  | Error e, _, _, _ | _, Error e, _, _ | _, _, Error e, _ | _, _, _, Error e ->
+      Error e
+  | Ok (), Ok (), Ok (), Ok () -> (
+      match load_credentials ~file with
+      | Error e -> Error e
+      | Ok stored -> (
+          let entries =
+            match
+              List.partition (fun e -> e.c_registry = entry.c_registry) stored
+            with
+            | _, kept -> entry :: kept
+          in
+          let buf = Buffer.create 256 in
+          Buffer.add_string buf
+            "# Emo registry credentials, written by `emo emoji login`.\n\
+             # One block per registry; publish only sends a token to its own \
+             registry.\n\
+             # Keep this file private — it holds API tokens in plaintext.\n";
+          List.iter
+            (fun e ->
+              Buffer.add_char buf '\n';
+              Buffer.add_string buf
+                (Printf.sprintf "registry = \"%s\"\n" e.c_registry);
+              Buffer.add_string buf
+                (Printf.sprintf "token = \"%s\"\n" e.c_token);
+              Buffer.add_string buf
+                (Printf.sprintf "username = \"%s\"\n" e.c_username);
+              Buffer.add_string buf
+                (Printf.sprintf "expires_at = \"%s\"\n" e.c_expires_at))
+            entries;
+          let dir = Filename.dirname file in
+          let rec ensure_dir d =
+            if not (Sys.file_exists d) then begin
+              ensure_dir (Filename.dirname d);
+              try Unix.mkdir d 0o755 with Sys_error _ -> ()
+            end
+          in
+          (try ensure_dir dir with Sys_error _ -> ());
+          match open_out_bin file with
+          | exception Sys_error m -> Error m
+          | oc ->
+              Fun.protect
+                ~finally:(fun () -> close_out_noerr oc)
+                (fun () ->
+                  output_string oc (Buffer.contents buf);
+                  close_out_noerr oc;
+                  match Unix.chmod file 0o600 with
+                  | () -> Ok ()
+                  | exception Unix.Unix_error (e, _, _) ->
+                      Error (Unix.error_message e))))
+
+(* The credentials file: $EMO_CONFIG_DIR, then the XDG config home, then the
+   user's .config — mirroring the cache directory's resolution. *)
+let credentials_file () : string =
+  let dir =
+    match Sys.getenv_opt "EMO_CONFIG_DIR" with
+    | Some d when d <> "" -> d
+    | _ ->
+        let config_home =
+          match Sys.getenv_opt "XDG_CONFIG_HOME" with
+          | Some d when d <> "" -> d
+          | _ -> (
+              match Sys.getenv_opt "HOME" with
+              | Some home -> Filename.concat home ".config"
+              | None -> Filename.get_temp_dir_name ())
+        in
+        Filename.concat config_home "emo"
+  in
+  Filename.concat dir "credentials"
+
+(* An endpoint string: an http(s) URL selects the registry service over
+   HTTP; anything else is a filesystem registry directory. *)
+let endpoint_of_string (endpoint : string) : Emo_pkg.Registry.t =
+  if
+    String.starts_with ~prefix:"http://" endpoint
+    || String.starts_with ~prefix:"https://" endpoint
+  then Emo_pkg.Registry.Http endpoint
+  else Emo_pkg.Registry.Fs_dir endpoint
+
+(* The registry a project resolves against: EMO_REGISTRY wins, then the
+   manifest's `registry` field, then the bundled standard library. *)
+let registry ~(manifest : Emo_pkg.manifest) : Emo_pkg.Registry.t =
   match Sys.getenv_opt "EMO_REGISTRY" with
-  | Some endpoint when endpoint <> "" -> Emo_pkg.Registry.Fs_dir endpoint
-  | _ -> bundled_registry ()
+  | Some endpoint when endpoint <> "" -> endpoint_of_string endpoint
+  | _ -> (
+      match manifest.Emo_pkg.registry with
+      | Some url -> Emo_pkg.Registry.Http url
+      | None -> bundled_registry ())
+
+(* With an HTTP registry configured, unscoped names — the top-level short
+   names the official standard library owns, which the publish name rule
+   can never host — resolve from the bundled standard library; scoped names
+   go to the configured endpoint. A filesystem registry keeps serving both
+   (test fixtures carry stdlib copies). *)
+let registry_for_name ~(registry : Emo_pkg.Registry.t) (name : string) :
+    Emo_pkg.Registry.t =
+  match registry with
+  | Emo_pkg.Registry.Http _ when not (String.contains name '/') ->
+      bundled_registry ()
+  | _ -> registry
+
+(* The embedded HTTP transport runs fetch programs against the bundled
+   standard library through [run_embedded] — which sits at the end of this
+   file (it needs [run_entry]). The cell breaks the ordering; module
+   initialization fills it, so by any call time it is set. *)
+let embedded_runner_cell : Emo_pkg.Http_registry.runner option ref = ref None
+
+let http_transport ~program ~globals =
+  match !embedded_runner_cell with
+  | Some run -> run ~program ~globals
+  | None -> Error "the embedded HTTP transport is not initialized"
+
+(* The token an HTTP registry call rides with: EMO_TOKEN wins, then the
+   stored login minted for this endpoint — never another registry's. No
+   token is fine: public packages read anonymously, and a private one
+   answers 404 either way. A damaged credentials file surfaces rather than
+   being silently ignored. *)
+let token_for ~(manifest_dir : string) ~(endpoint : string) : string option =
+  match Sys.getenv_opt "EMO_TOKEN" with
+  | Some t when t <> "" -> Some t
+  | _ -> (
+      match load_credentials ~file:(credentials_file ()) with
+      | Error m -> raise (dep_error ~manifest_dir m)
+      | Ok stored -> (
+          match
+            List.find_opt
+              (fun e ->
+                String.equal
+                  (registry_base e.c_registry)
+                  (registry_base endpoint))
+              stored
+          with
+          | Some e -> Some e.c_token
+          | None -> None))
+
+(* Fetch one package through its name's route, verifying the content digest
+   against [expected_checksum] — the index's on a fresh resolve, the
+   lockfile's on install/run. The lockfile's checksum is enforced, never
+   just recorded: content that digests differently is an E5007, whatever
+   endpoint kind served it. *)
+let fetch_routed ~(runner : Emo_pkg.Http_registry.runner)
+    ~(registry : Emo_pkg.Registry.t) ~(manifest_dir : string) ~(name : string)
+    ~(version : Emo_pkg.Version.t) ~(expected_checksum : string option) :
+    Emo_pkg.Registry.fetched =
+  match registry_for_name ~registry name with
+  | Emo_pkg.Registry.Http base -> (
+      match
+        Emo_pkg.Http_registry.fetch runner ~base
+          ~token:(token_for ~manifest_dir ~endpoint:base)
+          ~expected_checksum ~name ~version
+      with
+      | Error m -> raise (dep_error ~manifest_dir m)
+      | Ok f -> f)
+  | reg -> (
+      match Emo_pkg.Registry.fetch reg ~name ~version with
+      | Error m -> raise (dep_error ~manifest_dir m)
+      | Ok f -> (
+          match expected_checksum with
+          | Some expected
+            when not (String.equal expected f.Emo_pkg.Registry.f_checksum) ->
+              raise
+                (dep_error ~manifest_dir
+                   (Printf.sprintf
+                      "checksum mismatch for %s@%s: the lockfile records %s \
+                       but %s serves content digesting to %s"
+                      name
+                      (Emo_pkg.Version.to_string version)
+                      expected
+                      (Emo_pkg.Registry.describe reg)
+                      f.Emo_pkg.Registry.f_checksum))
+          | _ -> f))
+
+(* Builds the resolver index for [names] and their transitive closure,
+   routing each name to its endpoint kind: scoped names over HTTP when the
+   configured registry is HTTP, unscoped names from the bundled stdlib,
+   everything local otherwise. One merged index feeds one solve, so a
+   scoped package's transitive pin of a stdlib package resolves in the same
+   pass. *)
+let index_closure_routed ?(runner = http_transport)
+    ~(registry : Emo_pkg.Registry.t) ~(manifest_dir : string)
+    (names : string list) : Emo_pkg.Resolve.index =
+  let rec go seen acc pending =
+    let fresh = List.filter (fun n -> not (List.mem n seen)) pending in
+    if fresh = [] then acc
+    else
+      let http_names, local_names =
+        List.partition
+          (fun n ->
+            match registry_for_name ~registry n with
+            | Emo_pkg.Registry.Http _ -> true
+            | _ -> false)
+          fresh
+      in
+      let http_entries =
+        match (registry, http_names) with
+        | _, [] -> []
+        | Emo_pkg.Registry.Http base, _ -> (
+            match
+              Emo_pkg.Http_registry.index runner ~base
+                ~token:(token_for ~manifest_dir ~endpoint:base)
+                http_names
+            with
+            | Error m -> raise (dep_error ~manifest_dir m)
+            | Ok entries -> entries)
+        | _, _ -> [] (* local registries never route a name to HTTP *)
+      in
+      let local_entries =
+        List.concat_map
+          (fun n ->
+            Emo_pkg.Registry.index (registry_for_name ~registry n) [ n ])
+          local_names
+      in
+      let entries = http_entries @ local_entries in
+      let deps =
+        List.concat_map
+          (fun (_, pvs) ->
+            List.concat_map
+              (fun pv -> List.map fst pv.Emo_pkg.Resolve.pv_deps)
+              pvs)
+          entries
+      in
+      go (fresh @ seen) (acc @ entries) deps
+  in
+  go [] [] names
 
 (* Solves [roots] against the registry and fetches every resolved package
    — the shared body of the explicit resolution (`emo deps resolve`) and
    the build-time resolution that carries the standard library's implicit
    pins. The target filters which published versions qualify. *)
-let solved_entries ~(registry : Emo_pkg.Registry.t) ~(manifest_dir : string)
-    ~(target : string) (roots : (string * Emo_pkg.Version.t) list) :
-    Emo_pkg.Lockfile.entry list =
+let solved_entries ?(runner = http_transport) ~(registry : Emo_pkg.Registry.t)
+    ~(manifest_dir : string) ~(target : string)
+    (roots : (string * Emo_pkg.Version.t) list) : Emo_pkg.Lockfile.entry list =
   if roots = [] then []
   else
-    let index = Emo_pkg.Registry.index_closure registry (List.map fst roots) in
+    let index =
+      index_closure_routed ~runner ~registry ~manifest_dir (List.map fst roots)
+    in
     match Emo_pkg.Resolve.solve ~target ~roots ~index with
     | Error errors ->
         raise
@@ -654,21 +1046,36 @@ let solved_entries ~(registry : Emo_pkg.Registry.t) ~(manifest_dir : string)
     | Ok r ->
         List.map
           (fun (dep, version) ->
-            match Emo_pkg.Registry.fetch registry ~name:dep ~version with
-            | Error m -> raise (dep_error ~manifest_dir m)
-            | Ok f ->
-                {
-                  Emo_pkg.Lockfile.dep;
-                  version;
-                  checksum = f.Emo_pkg.Registry.f_checksum;
-                })
+            (* The checksum the lockfile will record: what the index
+               advertised for this exact version, verified at fetch. *)
+            let expected_checksum =
+              match List.assoc_opt dep index with
+              | Some pvs -> (
+                  match
+                    List.find_opt
+                      (fun pv -> pv.Emo_pkg.Resolve.pv_version = version)
+                      pvs
+                  with
+                  | Some pv -> Some pv.Emo_pkg.Resolve.pv_checksum
+                  | None -> None)
+              | None -> None
+            in
+            let f =
+              fetch_routed ~runner ~registry ~manifest_dir ~name:dep ~version
+                ~expected_checksum
+            in
+            {
+              Emo_pkg.Lockfile.dep;
+              version;
+              checksum = f.Emo_pkg.Registry.f_checksum;
+            })
           r.Emo_pkg.Resolve.resolved
 
 (* Resolves the manifest's exact pins against the registry, fresh — the
    explicit regeneration path (`emo deps resolve`). *)
 let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) : Emo_pkg.Lockfile.entry list =
-  solved_entries ~registry:(registry ()) ~manifest_dir ~target
+  solved_entries ~registry:(registry ~manifest) ~manifest_dir ~target
     manifest.Emo_pkg.deps
 
 (* Unscoped requires name standard-library packages: the official standard
@@ -709,7 +1116,10 @@ let stdlib_pins (registry : Emo_pkg.Registry.t) ~(explicit : string list)
     (fun (name, span) ->
       if List.mem name explicit then None
       else
-        match Emo_pkg.Registry.versions registry ~name with
+        (* Unscoped names are standard-library-owned; under an HTTP
+           registry they route to the bundled standard library. *)
+        let reg = registry_for_name ~registry name in
+        match Emo_pkg.Registry.versions reg ~name with
         | [] ->
             raise
               (Static_errors
@@ -722,7 +1132,7 @@ let stdlib_pins (registry : Emo_pkg.Registry.t) ~(explicit : string list)
                          "`require \"%s\"` names no standard-library package \
                           in %s"
                          name
-                         (Emo_pkg.Registry.describe registry);
+                         (Emo_pkg.Registry.describe reg);
                      span;
                      hint =
                        Some
@@ -795,28 +1205,30 @@ let install_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
   if manifest.Emo_pkg.deps = [] then
     [ "nothing to install — the manifest declares no dependencies" ]
   else
-    let reg = registry () in
+    let reg = registry ~manifest in
     let entries = resolve_deps ~manifest ~manifest_dir ~target in
     let cache_dir = Emo_pkg.Registry.default_cache_dir () in
     let fetched =
       List.map
         (fun (entry : Emo_pkg.Lockfile.entry) ->
-          match
-            Emo_pkg.Registry.fetch reg ~name:entry.Emo_pkg.Lockfile.dep
+          (* The lockfile's checksum is enforced on every fetch — the
+             registry's content must digest to exactly what resolved. *)
+          let f =
+            fetch_routed ~runner:http_transport ~registry:reg ~manifest_dir
+              ~name:entry.Emo_pkg.Lockfile.dep
               ~version:entry.Emo_pkg.Lockfile.version
-          with
+              ~expected_checksum:(Some entry.Emo_pkg.Lockfile.checksum)
+          in
+          let cached = Emo_pkg.Registry.is_cached ~cache_dir f in
+          match Emo_pkg.Registry.materialize ~cache_dir f with
           | Error m -> raise (dep_error ~manifest_dir m)
-          | Ok f -> (
-              let cached = Emo_pkg.Registry.is_cached ~cache_dir f in
-              match Emo_pkg.Registry.materialize ~cache_dir f with
-              | Error m -> raise (dep_error ~manifest_dir m)
-              | Ok _ ->
-                  Printf.sprintf "fetched %s %s%s" entry.Emo_pkg.Lockfile.dep
-                    (Emo_pkg.Version.to_string entry.Emo_pkg.Lockfile.version)
-                    (if cached then " (already cached)"
-                     else
-                       Printf.sprintf " (%s)"
-                         (String.sub f.Emo_pkg.Registry.f_checksum 0 12))))
+          | Ok _ ->
+              Printf.sprintf "fetched %s %s%s" entry.Emo_pkg.Lockfile.dep
+                (Emo_pkg.Version.to_string entry.Emo_pkg.Lockfile.version)
+                (if cached then " (already cached)"
+                 else
+                   Printf.sprintf " (%s)"
+                     (String.sub f.Emo_pkg.Registry.f_checksum 0 12)))
         entries
     in
     let lock_path = Filename.concat manifest_dir Emo_pkg.Lockfile.filename in
@@ -862,7 +1274,7 @@ type native_dep = {
    a native-carrying package off the c target). *)
 let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) (p : project) : native_dep list =
-  let reg = registry () in
+  let reg = registry ~manifest in
   let explicit = List.map fst manifest.Emo_pkg.deps in
   (* The standard library needs no manifest pin: every unscoped require
      resolves from the registry implicitly (README, Package Management). *)
@@ -880,45 +1292,45 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     in
     List.map
       (fun entry ->
-        match
-          Emo_pkg.Registry.fetch reg ~name:entry.Emo_pkg.Lockfile.dep
+        (* The lockfile's (or the fresh resolution's) checksum is enforced
+           on every fetch. *)
+        let f =
+          fetch_routed ~runner:http_transport ~registry:reg ~manifest_dir
+            ~name:entry.Emo_pkg.Lockfile.dep
             ~version:entry.Emo_pkg.Lockfile.version
+            ~expected_checksum:(Some entry.Emo_pkg.Lockfile.checksum)
+        in
+        match
+          Emo_pkg.Registry.materialize
+            ~cache_dir:(Emo_pkg.Registry.default_cache_dir ())
+            f
         with
         | Error m -> raise (dep_error ~manifest_dir m)
-        | Ok f -> (
-            match
-              Emo_pkg.Registry.materialize
-                ~cache_dir:(Emo_pkg.Registry.default_cache_dir ())
-                f
-            with
-            | Error m -> raise (dep_error ~manifest_dir m)
-            | Ok dir ->
-                let pkg_file = Filename.concat dir "package.emo" in
-                let pkg =
-                  Emo_pkg.parse_manifest ~file:pkg_file
-                    ~source:(read_file pkg_file)
-                in
-                if not (List.mem target pkg.Emo_pkg.targets) then
-                  raise
-                    (dep_error ~manifest_dir
-                       (Printf.sprintf
-                          "package %s does not declare the `%s` target"
-                          entry.Emo_pkg.Lockfile.dep target));
-                let short = Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep in
-                register_package p short dir;
-                p.package_deps <-
-                  ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps;
-                {
-                  nd_name = entry.Emo_pkg.Lockfile.dep;
-                  nd_csources =
-                    List.filter_map
-                      (fun (rel, _) ->
-                        if Filename.check_suffix rel ".c" then
-                          Some (Filename.concat dir rel)
-                        else None)
-                      f.Emo_pkg.Registry.f_files;
-                  nd_link = pkg.Emo_pkg.link;
-                }))
+        | Ok dir ->
+            let pkg_file = Filename.concat dir "package.emo" in
+            let pkg =
+              Emo_pkg.parse_manifest ~file:pkg_file ~source:(read_file pkg_file)
+            in
+            if not (List.mem target pkg.Emo_pkg.targets) then
+              raise
+                (dep_error ~manifest_dir
+                   (Printf.sprintf "package %s does not declare the `%s` target"
+                      entry.Emo_pkg.Lockfile.dep target));
+            let short = Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep in
+            register_package p short dir;
+            p.package_deps <-
+              ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps;
+            {
+              nd_name = entry.Emo_pkg.Lockfile.dep;
+              nd_csources =
+                List.filter_map
+                  (fun (rel, _) ->
+                    if Filename.check_suffix rel ".c" then
+                      Some (Filename.concat dir rel)
+                    else None)
+                  f.Emo_pkg.Registry.f_files;
+              nd_link = pkg.Emo_pkg.link;
+            })
       entries
   end
 
@@ -951,16 +1363,15 @@ let entry_outside_error ~(root : string) (entry_file : string) =
         Emo_support.Diagnostic.severity = Error;
         code = Some "E5011";
         message =
-          Printf.sprintf "the entry `%s` is not a module of the package rooted \
-                          at %s"
+          Printf.sprintf
+            "the entry `%s` is not a module of the package rooted at %s"
             entry_file root;
         span =
           Emo_support.Span.make ~file:(entry_path entry_file) ~line:1 ~col:1
             ~start:0 ~stop:0;
         hint =
           Some
-            "run the command from the package directory that contains the \
-             entry";
+            "run the command from the package directory that contains the entry";
       };
     ]
 
@@ -977,9 +1388,7 @@ let entry_module_in_project (p : project) (entry_file : string) : string list =
       p.files []
   in
   match
-    List.sort
-      (fun a b -> compare (List.length a) (List.length b))
-      paths
+    List.sort (fun a b -> compare (List.length a) (List.length b)) paths
   with
   | path :: _ -> path
   | [] -> raise (entry_outside_error ~root:p.root entry_file)
@@ -1268,3 +1677,105 @@ let run_tests () : test_result list =
             (List.sort compare tests))
     test_modules;
   List.rev !results
+
+(* ---- embedded programs: internal tooling run against the bundled stdlib ----
+
+   The CLI's own network tooling (publish's uploader, the HTTP registry's
+   fetch programs) is written in Emo and interpreted here, resolving `http`
+   and friends from the standard library shipped inside the binary — so a
+   lone emo binary uploads and pulls with no HTTP stack of its own. *)
+
+(* Splits one embedded program's printed output into the status line and
+   the body that follows it — the framing every exchange program uses. *)
+let parse_exchange = Emo_pkg.Http_registry.parse_exchange
+
+let rec remove_tree path =
+  if Sys.file_exists path && Sys.is_directory path then begin
+    Sys.readdir path
+    |> Array.iter (fun e -> remove_tree (Filename.concat path e));
+    Unix.rmdir path
+  end
+  else if Sys.file_exists path then Sys.remove path
+
+(* Runs one embedded program and returns everything it printed. The program
+   resolves `http` against the standard library shipped with the binary —
+   never the user's EMO_REGISTRY or manifest registry, which may point at a
+   remote endpoint or a fixture the bundled packages are not in. *)
+let run_embedded ~(tag : string) ~(program : string)
+    ~(globals : (string * Emo_eval.value) list) : (string, string) result =
+  let reg = bundled_registry () in
+  match List.rev (Emo_pkg.Registry.versions reg ~name:"http") with
+  | [] -> Error "the bundled standard library has no http package"
+  | http_version :: _ -> (
+      match List.rev (Emo_pkg.Registry.versions reg ~name:"net") with
+      | [] -> Error "the bundled standard library has no net package"
+      | net_version :: _ ->
+          (* The resolver indexes manifest roots only, so both packages are
+             pinned explicitly — same as a user project. *)
+          let dir =
+            Filename.concat
+              (Filename.get_temp_dir_name ())
+              (Printf.sprintf "emo-%s-%d-%d" tag (Unix.getpid ())
+                 (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF))
+          in
+          Unix.mkdir dir 0o755;
+          let write name content =
+            let oc = open_out_bin (Filename.concat dir name) in
+            output_string oc content;
+            close_out oc
+          in
+          write "package.emo"
+            (Printf.sprintf
+               {|package {
+  name = "internal/%s"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "http" = "%s"
+    "net" = "%s"
+  }
+}
+|}
+               tag
+               (Emo_pkg.Version.to_string http_version)
+               (Emo_pkg.Version.to_string net_version));
+          write "main.emo" program;
+          let out = Buffer.create 256 in
+          let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
+          let old_cwd = Sys.getcwd () in
+          (* The embedded program's resolution must see the bundled stdlib,
+             never the user's EMO_REGISTRY — blank the variable for the run
+             (an empty value means unset to the registry lookup). *)
+          Unix.putenv "EMO_REGISTRY" "";
+          Emo_eval.set_output (Buffer.add_string out);
+          Sys.chdir dir;
+          Fun.protect
+            ~finally:(fun () ->
+              Sys.chdir old_cwd;
+              (match old_registry with
+              | Some v -> Unix.putenv "EMO_REGISTRY" v
+              | None -> ());
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout);
+              remove_tree dir)
+            (fun () ->
+              match
+                run_entry ~entry_file:"main.emo" ~check:false ~sched:Own
+                  ~globals ()
+              with
+              | exception Static_errors ds ->
+                  Error
+                    (String.concat "; "
+                       (List.map (fun d -> d.Emo_support.Diagnostic.message) ds))
+              | exception Emo_eval.Error d ->
+                  Error d.Emo_support.Diagnostic.message
+              | _ -> Ok (Buffer.contents out)))
+
+(* The HTTP registry's transport: [run_embedded] under a fixed tag. Filled
+   at module initialization — the cell exists because [run_embedded] needs
+   [run_entry], whose own dependency loading reaches [http_transport]. *)
+let () =
+  embedded_runner_cell :=
+    Some (fun ~program ~globals -> run_embedded ~tag:"fetch" ~program ~globals)
