@@ -399,6 +399,69 @@ loop()|}
               "code" "E5200"
               (match d.Diagnostic.code with Some c -> c | None -> "?")
         | Ok _ -> Alcotest.fail "expected E5200");
+    tc "an optional registry URL parses" (fun () ->
+        match
+          check
+            {|package {
+  name = "acme/json_tools"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  registry = "https://packages.example.com"
+  deps {}
+}|}
+        with
+        | Error d -> Alcotest.fail (codes_of (Error d))
+        | Ok m ->
+            Alcotest.(check (option string))
+              "registry" (Some "https://packages.example.com")
+              m.Emo_pkg.registry);
+    tc "the registry field defaults to none" (fun () ->
+        match
+          check
+            {|package {
+  name = "acme/json_tools"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  deps {}
+}|}
+        with
+        | Error d -> Alcotest.fail (codes_of (Error d))
+        | Ok m ->
+            Alcotest.(check (option string)) "none" None m.Emo_pkg.registry);
+    tc "the registry field is a URL, not a filesystem path" (fun () ->
+        (* A committed manifest must name an endpoint every machine reaches
+           the same way; filesystem registries stay an EMO_REGISTRY affair. *)
+        match
+          check
+            {|package {
+  name = "acme/json_tools"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  registry = "/srv/registry"
+  deps {}
+}|}
+        with
+        | Ok _ -> Alcotest.fail "expected the path to be refused"
+        | Error d ->
+            Alcotest.(check string) "code" "E5103" (codes_of (Error d));
+            Alcotest.(check bool)
+              "points at EMO_REGISTRY" true
+              (match d.Diagnostic.hint with
+              | Some h -> contains_substring h "EMO_REGISTRY"
+              | None -> false));
+    tc "the registry field rejects non-strings" (fun () ->
+        match
+          check
+            {|package {
+  name = "acme/json_tools"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  registry = 42
+  deps {}
+}|}
+        with
+        | Ok _ -> Alcotest.fail "expected a type error"
+        | Error d -> Alcotest.(check string) "code" "E5103" (codes_of (Error d)));
   ]
 
 let lockfile_tests =
@@ -478,6 +541,7 @@ let resolve_tests =
                       | _ -> assert false );
                   R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [];
+                  R.pv_checksum = "";
                 };
               ] );
           ]
@@ -513,11 +577,13 @@ let resolve_tests =
                   R.pv_version = v "1.0.0";
                   R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [];
+                  R.pv_checksum = "";
                 };
                 {
                   R.pv_version = v "1.2.0";
                   R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [];
+                  R.pv_checksum = "";
                 };
               ] );
           ]
@@ -547,6 +613,7 @@ let resolve_tests =
                   R.pv_version = v "3.0.0";
                   R.pv_targets = [ "wasm" ];
                   R.pv_deps = [];
+                  R.pv_checksum = "";
                 };
               ] );
           ]
@@ -574,6 +641,7 @@ let resolve_tests =
                   R.pv_version = v "1.0.0";
                   R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [ ("lib", v "2.0.0") ];
+                  R.pv_checksum = "";
                 };
               ] );
             ( "lib",
@@ -582,6 +650,7 @@ let resolve_tests =
                   R.pv_version = v "2.0.0";
                   R.pv_targets = [ "ocaml" ];
                   R.pv_deps = [];
+                  R.pv_checksum = "";
                 };
               ] );
           ]
@@ -754,6 +823,81 @@ let archive_tests =
         in
         Alcotest.(check bool) "tar reads it" true (status = Unix.WEXITED 0);
         Alcotest.(check string) "path round-trips" (path ^ "\n") listing);
+    tc "unpack is the inverse of build" (fun () ->
+        let archive = Emo_pkg.Archive.build archive_files in
+        match Emo_pkg.Archive.unpack archive with
+        | Error m -> Alcotest.fail m
+        | Ok files ->
+            Alcotest.(check (list (pair string string)))
+              "round-trip"
+              (List.sort
+                 (fun (a, _) (b, _) -> String.compare a b)
+                 archive_files)
+              (List.sort (fun (a, _) (b, _) -> String.compare a b) files));
+    tc "unpack rejects a truncated archive" (fun () ->
+        let archive = Emo_pkg.Archive.build archive_files in
+        let short = String.sub archive 0 (String.length archive - 40) in
+        match Emo_pkg.Archive.unpack short with
+        | Ok _ -> Alcotest.fail "expected a truncation error"
+        | Error m ->
+            Alcotest.(check bool)
+              "names the truncation" true
+              (contains_substring m "truncated"));
+    tc "unpack rejects a corrupted CRC" (fun () ->
+        (* One payload byte flipped; the gzip trailer must catch it. *)
+        let archive = Bytes.of_string (Emo_pkg.Archive.build archive_files) in
+        Bytes.set archive 20 'x';
+        match Emo_pkg.Archive.unpack (Bytes.to_string archive) with
+        | Ok _ -> Alcotest.fail "expected a CRC error"
+        | Error m ->
+            Alcotest.(check bool)
+              "names the CRC" true
+              (contains_substring m "CRC"));
+    tc "unpack decodes a system-gzip member" (fun () ->
+        (* The registry service re-packs uploads with a real compressor, so
+           the decoder must handle dynamic-Huffman deflate streams, not just
+           this encoder's stored blocks. *)
+        let tmp = Filename.temp_file "emo-tar-" ".tar" in
+        let oc = open_out_bin tmp in
+        output_string oc (Emo_pkg.Archive.tar archive_files);
+        close_out oc;
+        let gzipped, status =
+          run_capture (Printf.sprintf "gzip -9 -c %s" (Filename.quote tmp))
+        in
+        Alcotest.(check bool) "gzip ran" true (status = Unix.WEXITED 0);
+        match Emo_pkg.Archive.unpack gzipped with
+        | Error m -> Alcotest.fail m
+        | Ok files ->
+            Alcotest.(check (list (pair string string)))
+              "same members"
+              (List.sort
+                 (fun (a, _) (b, _) -> String.compare a b)
+                 archive_files)
+              (List.sort (fun (a, _) (b, _) -> String.compare a b) files));
+    tc "unpack rejects a reserved deflate block type" (fun () ->
+        let reserved =
+          "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff" ^ "\x07\x00"
+          ^ "\x00\x00\x00\x00\x00\x00\x00\x00"
+        in
+        match Emo_pkg.Archive.unpack reserved with
+        | Ok _ -> Alcotest.fail "expected a deflate block-type error"
+        | Error m ->
+            Alcotest.(check bool)
+              "names the block type" true
+              (contains_substring m "reserved block type"));
+    tc "unpack rejects a corrupted tar header" (fun () ->
+        (* Corrupt the tar stream, then wrap it in a fresh gzip member so
+           the gzip layer stays consistent and the header checksum is what
+           fails. *)
+        let tar = Bytes.of_string (Emo_pkg.Archive.tar archive_files) in
+        Bytes.set tar 1 'Z';
+        let archive = Emo_pkg.Archive.gzip (Bytes.to_string tar) in
+        match Emo_pkg.Archive.unpack archive with
+        | Ok _ -> Alcotest.fail "expected a tar header error"
+        | Error m ->
+            Alcotest.(check bool)
+              "names the header" true
+              (contains_substring m "tar header: checksum mismatch"));
   ]
 
 let publish_tests =
@@ -874,6 +1018,228 @@ let embedded_stdlib_tests =
         | Error m -> Alcotest.fail m);
   ]
 
+(* The HTTP pull client (Protocol B): the runner is faked — it maps the
+   request's URL (a host-injected global) to the embedded program's printed
+   output, so no socket is involved. The wire format itself is exercised by
+   the captive-server tests in emo_cli. *)
+let fake_runner ~(routes : (string * (int * string)) list) :
+    Emo_pkg.Http_registry.runner =
+ fun ~program:_ ~globals ->
+  let url =
+    match List.assoc_opt "__url" globals with
+    | Some (Emo_eval.String u) -> u
+    | _ -> ""
+  in
+  match
+    List.find_opt
+      (fun (suffix, _) ->
+        let n = String.length suffix in
+        String.length url >= n
+        && String.sub url (String.length url - n) n = suffix)
+      routes
+  with
+  | Some (_, (status, body)) -> Ok (Printf.sprintf "%d\n%s" status body)
+  | None -> Error ("no canned response for " ^ url)
+
+let http_pkg_files =
+  [
+    ( "package.emo",
+      "package {\n\
+      \  name = \"acme/p\"\n\
+      \  version = \"1.0.0\"\n\
+      \  targets = [\"c\"]\n\
+      \  deps {}\n\
+       }\n" );
+    ("p.emo", "def one() Int64 {\n  return 1\n}\n");
+  ]
+
+let http_registry_tests =
+  let base = "http://pkgs.test" in
+  [
+    tc "versions parses a B.1 payload" (fun () ->
+        let runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/api/v1/packages/acme/p/versions",
+                  (200, "1.0.0\taaa\tocaml,c\tfalse\n2.0.0\tbbb\tc\ttrue\n") );
+              ]
+        in
+        match
+          Emo_pkg.Http_registry.versions runner ~base ~token:None ~name:"acme/p"
+        with
+        | Error m -> Alcotest.fail m
+        | Ok [ a; b ] ->
+            Alcotest.(check string)
+              "first" "1.0.0"
+              (Emo_pkg.Version.to_string a.Emo_pkg.Http_registry.vi_version);
+            Alcotest.(check string) "checksum" "aaa" a.vi_checksum;
+            Alcotest.(check (list string))
+              "targets" [ "ocaml"; "c" ] a.vi_targets;
+            Alcotest.(check bool) "not yanked" false a.vi_yanked;
+            Alcotest.(check bool) "yanked" true b.vi_yanked
+        | Ok vs ->
+            Alcotest.fail
+              (Printf.sprintf "expected 2 versions, got %d" (List.length vs)));
+    tc "versions maps a 404 to a missing package" (fun () ->
+        let runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/api/v1/packages/acme/missing/versions",
+                  (404, {|{"error":{"code":"package_not_found"}}|}) );
+              ]
+        in
+        match
+          Emo_pkg.Http_registry.versions runner ~base ~token:None
+            ~name:"acme/missing"
+        with
+        | Ok _ -> Alcotest.fail "expected a 404 error"
+        | Error m ->
+            Alcotest.(check bool)
+              "names the package" true
+              (contains_substring m "has no package `acme/missing`"));
+    tc "an unscoped name is refused before any request" (fun () ->
+        let runner = fake_runner ~routes:[] in
+        match
+          Emo_pkg.Http_registry.versions runner ~base ~token:None ~name:"json"
+        with
+        | Ok _ -> Alcotest.fail "expected a scoping error"
+        | Error m ->
+            Alcotest.(check bool)
+              "names the scope rule" true
+              (contains_substring m "scoped (owner/name)"));
+    tc "index joins B.1 with B.2 and drops yanked versions" (fun () ->
+        let runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/api/v1/packages/acme/p/versions",
+                  (200, "1.0.0\tsum1\tc\tfalse\n0.9.0\tsum0\tc\ttrue\n") );
+                ( "/api/v1/dependencies?packages=acme/p",
+                  ( 200,
+                    "acme/p\t1.0.0\tjson=2.3.1,net=0.1.0\tfalse\n\
+                     acme/p\t0.9.0\t\ttrue\n" ) );
+              ]
+        in
+        match
+          Emo_pkg.Http_registry.index runner ~base ~token:None [ "acme/p" ]
+        with
+        | Error m -> Alcotest.fail m
+        | Ok [ ("acme/p", [ pv ]) ] ->
+            Alcotest.(check string)
+              "only the live version" "1.0.0"
+              (Emo_pkg.Version.to_string pv.Emo_pkg.Resolve.pv_version);
+            Alcotest.(check string) "checksum" "sum1" pv.pv_checksum;
+            Alcotest.(check (list string))
+              "deps" [ "json"; "net" ] (List.map fst pv.pv_deps)
+        | Ok idx ->
+            Alcotest.fail
+              (Printf.sprintf "expected one package, got %d" (List.length idx)));
+    tc "index refuses metadata skew between B.1 and B.2" (fun () ->
+        let runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/api/v1/packages/acme/p/versions",
+                  (200, "1.0.0\tsum1\tc\tfalse\n") );
+                ("/api/v1/dependencies?packages=acme/p", (200, ""));
+              ]
+        in
+        match
+          Emo_pkg.Http_registry.index runner ~base ~token:None [ "acme/p" ]
+        with
+        | Ok _ -> Alcotest.fail "expected an inconsistency error"
+        | Error m ->
+            Alcotest.(check bool)
+              "says to retry" true
+              (contains_substring m "inconsistent"));
+    tc "fetch downloads, unpacks and pins the digest" (fun () ->
+        let archive = Emo_pkg.Archive.build http_pkg_files in
+        let checksum = Emo_pkg.Registry.digest http_pkg_files in
+        let runner =
+          fake_runner
+            ~routes:[ ("/downloads/acme--p--1.0.0.emoji", (200, archive)) ]
+        in
+        match
+          Emo_pkg.Http_registry.fetch runner ~base ~token:None
+            ~expected_checksum:(Some checksum) ~name:"acme/p"
+            ~version:(v "1.0.0")
+        with
+        | Error m -> Alcotest.fail m
+        | Ok f ->
+            Alcotest.(check string)
+              "checksum" checksum f.Emo_pkg.Registry.f_checksum;
+            Alcotest.(check int)
+              "files" 2
+              (List.length f.Emo_pkg.Registry.f_files));
+    tc "fetch drops a README from the digest but a corrupt archive fails"
+      (fun () ->
+        let with_readme = http_pkg_files @ [ ("README.md", "# p\n") ] in
+        let archive = Emo_pkg.Archive.build with_readme in
+        let checksum = Emo_pkg.Registry.digest http_pkg_files in
+        let runner =
+          fake_runner
+            ~routes:[ ("/downloads/acme--p--1.0.0.emoji", (200, archive)) ]
+        in
+        (match
+           Emo_pkg.Http_registry.fetch runner ~base ~token:None
+             ~expected_checksum:(Some checksum) ~name:"acme/p"
+             ~version:(v "1.0.0")
+         with
+        | Error m -> Alcotest.fail m
+        | Ok f ->
+            Alcotest.(check int)
+              "the README is not package content" 2
+              (List.length f.Emo_pkg.Registry.f_files));
+        let corrupt = Bytes.of_string archive in
+        Bytes.set corrupt 20 'x';
+        let bad_runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/downloads/acme--p--1.0.0.emoji",
+                  (200, Bytes.to_string corrupt) );
+              ]
+        in
+        match
+          Emo_pkg.Http_registry.fetch bad_runner ~base ~token:None
+            ~expected_checksum:(Some checksum) ~name:"acme/p"
+            ~version:(v "1.0.0")
+        with
+        | Ok _ -> Alcotest.fail "expected the corruption to surface"
+        | Error m ->
+            Alcotest.(check bool)
+              "the gzip CRC catches it" true
+              (contains_substring m "CRC"));
+    tc "fetch rejects content that does not match the advertised digest"
+      (fun () ->
+        let archive = Emo_pkg.Archive.build http_pkg_files in
+        let runner =
+          fake_runner
+            ~routes:[ ("/downloads/acme--p--1.0.0.emoji", (200, archive)) ]
+        in
+        match
+          Emo_pkg.Http_registry.fetch runner ~base ~token:None
+            ~expected_checksum:(Some (String.make 64 '0'))
+            ~name:"acme/p" ~version:(v "1.0.0")
+        with
+        | Ok _ -> Alcotest.fail "expected a checksum mismatch"
+        | Error m ->
+            Alcotest.(check bool)
+              "names the mismatch" true
+              (contains_substring m "checksum mismatch"));
+    tc "parse_exchange strips exactly the framing newline" (fun () ->
+        (* A body that itself ends in a newline keeps it — only println's
+           framing newline is stripped. *)
+        match Emo_pkg.Http_registry.parse_exchange "200\npayload-bytes\n\n" with
+        | Error m -> Alcotest.fail m
+        | Ok (status, body) ->
+            Alcotest.(check int) "status" 200 status;
+            Alcotest.(check string)
+              "body keeps its own newline" "payload-bytes\n" body);
+  ]
+
 let () =
   Alcotest.run "emo_pkg"
     [
@@ -887,4 +1253,5 @@ let () =
       ("archive", archive_tests);
       ("publish", publish_tests);
       ("embedded_stdlib", embedded_stdlib_tests);
+      ("http_registry", http_registry_tests);
     ]

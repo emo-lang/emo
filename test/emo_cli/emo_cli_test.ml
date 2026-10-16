@@ -194,8 +194,8 @@ let requires_nothing source =
   not
     (String.split_on_char '\n' source
     |> List.exists (fun line ->
-           String.length (String.trim line) >= 7
-           && String.sub (String.trim line) 0 7 = "require"))
+        String.length (String.trim line) >= 7
+        && String.sub (String.trim line) 0 7 = "require"))
 
 (* The bare interpreter resolves no package, links no C symbol, and runs
    no scheduler, so three examples cannot go through it: `numerics` binds
@@ -218,21 +218,21 @@ let example_names () =
       let dir = Filename.concat examples_dir name in
       Sys.is_directory dir
       && Sys.file_exists (Filename.concat dir "main.emo")
-      && not (List.mem name beyond_the_interpreter)
+      && (not (List.mem name beyond_the_interpreter))
       && requires_nothing (read_file (Filename.concat dir "main.emo"))
       &&
       let entries = Sys.readdir dir |> Array.to_list in
       let modules =
         List.filter
-          (fun e ->
-            Filename.check_suffix e ".emo" && not (e = "package.emo"))
+          (fun e -> Filename.check_suffix e ".emo" && not (e = "package.emo"))
           entries
       in
       List.length modules = 1
       && not
            (List.exists
               (fun e ->
-                String.length e > 0 && e.[0] <> '.'
+                String.length e > 0
+                && e.[0] <> '.'
                 && Sys.is_directory (Filename.concat dir e))
               entries))
 
@@ -262,12 +262,16 @@ let examples_tests =
    scan never sees the examples tree — carrying the errors package's own
    manifest, whose `file` dependency the snippets require. *)
 let errors_examples_tests =
-  let errors_manifest = read_file (Filename.concat examples_dir "errors/package.emo") in
+  let errors_manifest =
+    read_file (Filename.concat examples_dir "errors/package.emo")
+  in
   let snippet_source name =
     read_file (Filename.concat examples_dir ("errors/" ^ name ^ ".emo"))
   in
   let run_snippet name =
-    let file = fixture ~manifest:errors_manifest (name ^ ".emo") (snippet_source name) in
+    let file =
+      fixture ~manifest:errors_manifest (name ^ ".emo") (snippet_source name)
+    in
     let out = Buffer.create 256 in
     Emo_eval.set_output (Buffer.add_string out);
     let exit_code =
@@ -807,9 +811,7 @@ let root_end_tests =
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let entry = scratch_entry "root-end-c" root_end_runnable in
         let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
-        Alcotest.(check int)
-          "build exit" 0
-          (build_entry ~target:"c" entry bin);
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry bin);
         check_run "c" (run_cmd (Filename.quote bin)) "root done\n");
     tc "the wasm root ending drops a woken process" (fun () ->
         if not (Lazy.force node_available) then Alcotest.skip ();
@@ -1283,9 +1285,7 @@ println(triple(14))
 |};
         close_out oc;
         let out_bin = Filename.concat dir "main-c-bin" in
-        let exit_code =
-          build_entry ~target:"c" ~cclibs:[ "m" ] entry out_bin
-        in
+        let exit_code = build_entry ~target:"c" ~cclibs:[ "m" ] entry out_bin in
         Alcotest.(check int) "build exit" 0 exit_code;
         (* The defs header declares the program's def and the foreign
            symbols — the contract an FFI shim compiles against. *)
@@ -1967,20 +1967,20 @@ let login_tests =
         Alcotest.(check bool) "the file exists" true (Sys.file_exists file);
         Alcotest.(check int)
           "the file is 0600" 0o600 (Unix.stat file).Unix.st_perm;
-        match Emo_cli.load_credentials ~file with
+        match Emo_project.load_credentials ~file with
         | Error e -> Alcotest.fail e
         | Ok
             [
               {
-                Emo_cli.c_registry;
-                Emo_cli.c_token;
-                Emo_cli.c_username;
-                Emo_cli.c_expires_at;
+                Emo_project.c_registry;
+                Emo_project.c_token;
+                Emo_project.c_username;
+                Emo_project.c_expires_at;
               };
             ] ->
             Alcotest.(check string)
               "the stored registry keeps no trailing slash" c_registry
-              (Emo_cli.registry_base !registry_ref);
+              (Emo_project.registry_base !registry_ref);
             Alcotest.(check string)
               "the stored token" "emo_secret_token" c_token;
             Alcotest.(check string) "the stored username" "alice" c_username;
@@ -2005,9 +2005,9 @@ let login_tests =
             Alcotest.(check string) "token" "emo_eternal_token" token;
             Alcotest.(check string) "no expiry" "" expires_at
         | _ -> Alcotest.fail "expected a successful login");
-        match Emo_cli.load_credentials ~file with
+        match Emo_project.load_credentials ~file with
         | Error e -> Alcotest.fail e
-        | Ok [ { Emo_cli.c_expires_at; _ } ] ->
+        | Ok [ { Emo_project.c_expires_at; _ } ] ->
             Alcotest.(check string)
               "the stored expiry stays empty" "" c_expires_at
         | Ok _ -> Alcotest.fail "expected exactly one stored entry");
@@ -2035,7 +2035,7 @@ let login_tests =
         | _ -> Alcotest.fail "expected a refusal");
     tc "the credentials parser is strict" (fun () ->
         match
-          Emo_cli.parse_credentials
+          Emo_project.parse_credentials
             {|
 registry = "http://a.example"
 # a comment line
@@ -2046,13 +2046,19 @@ username = "alice"
         | Error e -> Alcotest.fail e
         | Ok entries -> (
             (match entries with
-            | [ { Emo_cli.c_registry; Emo_cli.c_token; Emo_cli.c_username } ] ->
+            | [
+             {
+               Emo_project.c_registry;
+               Emo_project.c_token;
+               Emo_project.c_username;
+             };
+            ] ->
                 Alcotest.(check string) "registry" "http://a.example" c_registry;
                 Alcotest.(check string) "token" "emo_one" c_token;
                 Alcotest.(check string) "username" "alice" c_username
             | _ -> Alcotest.fail "expected exactly one entry");
             match
-              Emo_cli.parse_credentials
+              Emo_project.parse_credentials
                 {|
 registry = "http://a.example"
 surprise = "x"
@@ -2063,7 +2069,7 @@ surprise = "x"
                 Alcotest.(check bool)
                   "names the unknown key" true (contains e "surprise");
                 match
-                  Emo_cli.parse_credentials
+                  Emo_project.parse_credentials
                     {|
 registry = "http://a.example"
 token = "emo_one"
@@ -2076,7 +2082,7 @@ token = "emo_one"
             ));
     tc "a file without a trailing newline parses completely" (fun () ->
         match
-          Emo_cli.parse_credentials
+          Emo_project.parse_credentials
             {|registry = "http://n.example"
 token = "emo_n"
 username = "u"|}
@@ -2084,7 +2090,13 @@ username = "u"|}
         | Error e -> Alcotest.fail e
         | Ok entries -> (
             match entries with
-            | [ { Emo_cli.c_registry; Emo_cli.c_token; Emo_cli.c_username } ] ->
+            | [
+             {
+               Emo_project.c_registry;
+               Emo_project.c_token;
+               Emo_project.c_username;
+             };
+            ] ->
                 Alcotest.(check string) "registry" "http://n.example" c_registry;
                 Alcotest.(check string) "token" "emo_n" c_token;
                 Alcotest.(check string) "username" "u" c_username
@@ -2093,7 +2105,7 @@ username = "u"|}
         let file = Filename.concat scratch (unique "credentials-order") in
         let store r t u x =
           match
-            Emo_cli.store_credentials ~file ~registry:r ~token:t ~username:u
+            Emo_project.store_credentials ~file ~registry:r ~token:t ~username:u
               ~expires_at:x
           with
           | Error e -> Alcotest.fail e
@@ -2102,37 +2114,39 @@ username = "u"|}
         store "http://a.example" "emo_a" "alice" "2026-10-19T00:00:00Z";
         store "http://b.example" "emo_b" "bob" "";
         store "http://a.example" "emo_a2" "alice2" "";
-        match Emo_cli.load_credentials ~file with
+        match Emo_project.load_credentials ~file with
         | Error e -> Alcotest.fail e
         | Ok entries -> (
             Alcotest.(check int) "two blocks" 2 (List.length entries);
             match entries with
             | [ first; second ] ->
                 Alcotest.(check string)
-                  "first registry" "http://a.example" first.Emo_cli.c_registry;
+                  "first registry" "http://a.example"
+                  first.Emo_project.c_registry;
                 Alcotest.(check string)
-                  "first token" "emo_a2" first.Emo_cli.c_token;
+                  "first token" "emo_a2" first.Emo_project.c_token;
                 Alcotest.(check string)
-                  "first expiry replaced" "" first.Emo_cli.c_expires_at;
+                  "first expiry replaced" "" first.Emo_project.c_expires_at;
                 Alcotest.(check string)
-                  "second registry" "http://b.example" second.Emo_cli.c_registry;
+                  "second registry" "http://b.example"
+                  second.Emo_project.c_registry;
                 Alcotest.(check string)
-                  "second token" "emo_b" second.Emo_cli.c_token
+                  "second token" "emo_b" second.Emo_project.c_token
             | _ -> Alcotest.fail "expected two entries"));
     tc "publish resolves flags, then env, then stored logins" (fun () ->
         let stored =
           [
             {
-              Emo_cli.c_registry = "http://a.example";
-              Emo_cli.c_token = "emo_a";
-              Emo_cli.c_username = "alice";
-              Emo_cli.c_expires_at = "2026-10-19T00:00:00Z";
+              Emo_project.c_registry = "http://a.example";
+              Emo_project.c_token = "emo_a";
+              Emo_project.c_username = "alice";
+              Emo_project.c_expires_at = "2026-10-19T00:00:00Z";
             };
             {
-              Emo_cli.c_registry = "http://b.example/";
-              Emo_cli.c_token = "emo_b";
-              Emo_cli.c_username = "bob";
-              Emo_cli.c_expires_at = "";
+              Emo_project.c_registry = "http://b.example/";
+              Emo_project.c_token = "emo_b";
+              Emo_project.c_username = "bob";
+              Emo_project.c_expires_at = "";
             };
           ]
         in
@@ -2365,9 +2379,7 @@ println(host_floor(2.5))
 
 let foreign_refusal_tests =
   let build target =
-    let entry =
-      scratch_entry ("foreign-def-" ^ target) foreign_def_source
-    in
+    let entry = scratch_entry ("foreign-def-" ^ target) foreign_def_source in
     build_entry ~target entry (Filename.concat (Filename.dirname entry) "out")
   in
   let refusal target emit =
@@ -2452,6 +2464,209 @@ let foreign_refusal_tests =
           [ "c"; "ocaml" ]);
   ]
 
+(* ---- HTTP registry pull: `registry = "..."` in the manifest ----
+
+   A routing captive server answers Protocol B requests by path — one
+   connection per request, as the stdlib http client sends Connection:
+   close. The project under test names the server in its manifest's
+   `registry` field, so the whole pull path (embedded fetch programs, JSON
+   parsing, archive unpack, digest pinning, the lockfile and the cache) is
+   exercised over a real socket. *)
+
+let with_registry_server ~(handler : string -> int * string) (f : int -> unit) :
+    string list =
+  let srv = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.setsockopt srv Unix.SO_REUSEADDR true;
+  Unix.bind srv (Unix.ADDR_INET (Unix.inet_addr_of_string "127.0.0.1", 0));
+  Unix.listen srv 8;
+  let port =
+    match Unix.getsockname srv with
+    | Unix.ADDR_INET (_, p) -> p
+    | _ -> assert false
+  in
+  let captured = ref [] in
+  let stop = ref false in
+  let rec serve () =
+    if !stop then ()
+    else
+      match Unix.select [ srv ] [] [] 0.2 with
+      | [], _, _ -> serve ()
+      | _ ->
+          let conn, _ = Unix.accept srv in
+          let request = read_request conn in
+          captured := request :: !captured;
+          let path =
+            let line =
+              match find_sub request "\r\n" with
+              | Some i -> String.sub request 0 i
+              | None -> request
+            in
+            match String.split_on_char ' ' line with
+            | _ :: path :: _ -> path
+            | _ -> ""
+          in
+          let status, body = handler path in
+          let head =
+            Printf.sprintf "HTTP/1.1 %d X\r\nContent-Length: %d\r\n\r\n" status
+              (String.length body)
+          in
+          let bytes = Bytes.of_string (head ^ body) in
+          let written = ref 0 in
+          while !written < Bytes.length bytes do
+            written :=
+              !written
+              + Unix.write conn bytes !written (Bytes.length bytes - !written)
+          done;
+          Unix.close conn;
+          serve ()
+  in
+  let th = Thread.create serve () in
+  Fun.protect
+    ~finally:(fun () ->
+      stop := true;
+      Thread.join th;
+      Unix.close srv)
+    (fun () -> f port);
+  List.rev !captured
+
+(* Environment plumbing for the pull tests: the suite runs with
+   EMO_REGISTRY pointing at the filesystem stdlib, which would override the
+   manifest field under test; the cache and credentials go to scratch so
+   the user's real ~/.cache/emo and login store stay untouched. *)
+let with_pull_env f =
+  let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
+  let old_cache = Sys.getenv_opt "EMO_CACHE_DIR" in
+  let old_config = Sys.getenv_opt "EMO_CONFIG_DIR" in
+  let restore var = function
+    | Some v -> Unix.putenv var v
+    | None -> Unix.putenv var ""
+  in
+  Unix.putenv "EMO_REGISTRY" "";
+  Unix.putenv "EMO_CACHE_DIR" (Filename.concat scratch "pull-cache");
+  Unix.putenv "EMO_CONFIG_DIR" (Filename.concat scratch "pull-config");
+  Fun.protect
+    ~finally:(fun () ->
+      restore "EMO_REGISTRY" old_registry;
+      restore "EMO_CACHE_DIR" old_cache;
+      restore "EMO_CONFIG_DIR" old_config)
+    f
+
+let http_pull_tests =
+  let p_files =
+    [
+      ( "package.emo",
+        "package {\n\
+        \  name = \"acme/p\"\n\
+        \  version = \"1.0.0\"\n\
+        \  targets = [\"c\"]\n\
+        \  deps {}\n\
+         }\n" );
+      ("p.emo", "def one() Int64 {\n  return 1\n}\n");
+    ]
+  in
+  let p_checksum = Emo_pkg.Registry.digest p_files in
+  let p_archive = Emo_pkg.Archive.build p_files in
+  let handler path =
+    if path = "/api/v1/packages/acme/p/versions" then
+      ( 200,
+        Printf.sprintf
+          {|{"package":"acme/p","versions":[{"version":"1.0.0","checksum":"%s","archive_sha256":"","targets":["c"],"yanked":false,"published_at":"2026-10-16T00:00:00Z"}]}|}
+          p_checksum )
+    else if path = "/api/v1/dependencies?packages=acme/p" then
+      (200, {|{"acme/p":[{"version":"1.0.0","deps":{},"yanked":false}]}|})
+    else if path = "/downloads/acme--p--1.0.0.emoji" then (200, p_archive)
+    else (404, {|{"error":{"code":"not_found","message":"not found"}}|})
+  in
+  let write_project dir ~registry_url =
+    ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+    let write rel content =
+      let oc = open_out_bin (Filename.concat dir rel) in
+      output_string oc content;
+      close_out oc
+    in
+    write "package.emo"
+      (Printf.sprintf
+         {|package {
+  name = "acme/app"
+  version = "0.1.0"
+  targets = ["c"]
+  registry = "%s"
+
+  deps {
+    "acme/p" = "1.0.0"
+  }
+}
+|}
+         registry_url);
+    write "main.emo"
+      {|require "acme/p"
+
+def main() Int64 {
+  return p.one()
+}
+
+main()
+|}
+  in
+  [
+    tc "a manifest registry field resolves, locks, installs and runs" (fun () ->
+        with_pull_env (fun () ->
+            ignore
+              (with_registry_server ~handler (fun port ->
+                   let dir = Filename.concat scratch (unique "pull-app") in
+                   write_project dir
+                     ~registry_url:(Printf.sprintf "http://127.0.0.1:%d" port);
+                   in_dir dir (fun () ->
+                       Alcotest.(check int)
+                         "resolve exits 0" 0
+                         (Emo_cli.deps_resolve ~name:None);
+                       let lock = read_file "package.lock" in
+                       Alcotest.(check string)
+                         "the lockfile pins the digest"
+                         (Printf.sprintf "acme/p 1.0.0 %s\n" p_checksum)
+                         lock;
+                       Alcotest.(check int)
+                         "install exits 0" 0 (Emo_cli.install ());
+                       Alcotest.(check bool)
+                         "the package materialized in the cache" true
+                         (Sys.file_exists
+                            (Filename.concat
+                               (Filename.concat scratch "pull-cache")
+                               (Printf.sprintf "acme/p-1.0.0-%s/p.emo"
+                                  p_checksum)));
+                       Alcotest.(check int)
+                         "the program runs against the pulled package" 0
+                         (Emo_cli.run_file ~file:"main.emo" ~color:false
+                            ~error_limit:20))))));
+    tc "a missing package reports 65 with the registry's answer" (fun () ->
+        with_pull_env (fun () ->
+            ignore
+              (with_registry_server ~handler (fun port ->
+                   let dir = Filename.concat scratch (unique "pull-missing") in
+                   write_project dir
+                     ~registry_url:(Printf.sprintf "http://127.0.0.1:%d" port);
+                   let oc = open_out_bin (Filename.concat dir "package.emo") in
+                   output_string oc
+                     (Printf.sprintf
+                        {|package {
+  name = "acme/app"
+  version = "0.1.0"
+  targets = ["c"]
+  registry = "http://127.0.0.1:%d"
+
+  deps {
+    "acme/missing" = "9.9.9"
+  }
+}
+|}
+                        port);
+                   close_out oc;
+                   in_dir dir (fun () ->
+                       Alcotest.(check int)
+                         "resolve exits 65" 65
+                         (Emo_cli.deps_resolve ~name:None))))));
+  ]
+
 (* ---- new: the project scaffold (T24.3) ---- *)
 
 let read_file path =
@@ -2465,7 +2680,7 @@ let new_tests =
   [
     tc "the scaffold is green the moment it exists" (fun () ->
         let dir = Filename.concat scratch "scaffold-hello" in
-        if Sys.file_exists dir then Emo_cli.remove_tree dir
+        if Sys.file_exists dir then Emo_project.remove_tree dir
         else if Sys.file_exists scratch then ()
         else Unix.mkdir scratch 0o755;
         Alcotest.(check int) "exit" 0 (Emo_cli.scaffold ~path:dir);
@@ -2508,7 +2723,7 @@ let new_tests =
             Alcotest.(check bool)
               "owner/name manifest" true
               (contains manifest {|name = "acme/owned"|});
-            Emo_cli.remove_tree "acme"));
+            Emo_project.remove_tree "acme"));
     tc "an existing directory refuses" (fun () ->
         let dir = Filename.concat scratch "scaffold-clash" in
         if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
@@ -2521,7 +2736,7 @@ let emoji_tests =
   [
     tc "emoji new scaffolds a publishable package" (fun () ->
         let dir = Filename.concat scratch "emoji-hello" in
-        if Sys.file_exists dir then Emo_cli.remove_tree dir
+        if Sys.file_exists dir then Emo_project.remove_tree dir
         else if Sys.file_exists scratch then ()
         else Unix.mkdir scratch 0o755;
         Alcotest.(check int)
@@ -2592,7 +2807,7 @@ let emoji_tests =
            targets never did. *)
         if not (Lazy.force erlc_available) then Alcotest.skip ();
         let dir = Filename.concat scratch "emoji-targets" in
-        if Sys.file_exists dir then Emo_cli.remove_tree dir;
+        if Sys.file_exists dir then Emo_project.remove_tree dir;
         Unix.mkdir dir 0o755;
         let write name contents =
           let oc = open_out_bin (Filename.concat dir name) in
@@ -2649,7 +2864,7 @@ let doctor_tests =
    wins. *)
 let write_fixture_project name files =
   let dir = Filename.concat scratch name in
-  if Sys.file_exists dir then Emo_cli.remove_tree dir;
+  if Sys.file_exists dir then Emo_project.remove_tree dir;
   Unix.mkdir dir 0o755;
   List.iter
     (fun (rel, source) ->
@@ -2713,7 +2928,7 @@ let test_cmd_tests =
                Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
     tc "the scaffold's own test passes" (fun () ->
         let dir = Filename.concat scratch "scaffold-tested" in
-        if Sys.file_exists dir then Emo_cli.remove_tree dir;
+        if Sys.file_exists dir then Emo_project.remove_tree dir;
         Alcotest.(check int) "scaffold" 0 (Emo_cli.scaffold ~path:dir);
         Alcotest.(check bool)
           "the scaffold ships a test" true
@@ -2842,6 +3057,7 @@ let () =
       ("foreign_refusal", foreign_refusal_tests);
       ("publish", publish_tests);
       ("login", login_tests);
+      ("http_pull", http_pull_tests);
       ("new", new_tests);
       ("test_cmd", test_cmd_tests);
       ("check", check_tests);
