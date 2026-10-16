@@ -2740,7 +2740,7 @@ main()
 |}
   in
   [
-    tc "a manifest registry field resolves, locks, installs and runs" (fun () ->
+    tc "a manifest registry field resolves, locks, and runs" (fun () ->
         with_pull_env (fun () ->
             ignore
               (with_registry_server ~handler (fun port ->
@@ -2757,18 +2757,16 @@ main()
                          (Printf.sprintf "acme/p 1.0.0 %s\n" p_checksum)
                          lock;
                        Alcotest.(check int)
-                         "install exits 0" 0 (Emo_cli.install ());
+                         "the program runs against the pulled package" 0
+                         (Emo_cli.run_file ~file:"main.emo" ~color:false
+                            ~error_limit:20);
                        Alcotest.(check bool)
                          "the package materialized in the cache" true
                          (Sys.file_exists
                             (Filename.concat
                                (Filename.concat scratch "pull-cache")
                                (Printf.sprintf "acme/p-1.0.0-%s/p.emo"
-                                  p_checksum)));
-                       Alcotest.(check int)
-                         "the program runs against the pulled package" 0
-                         (Emo_cli.run_file ~file:"main.emo" ~color:false
-                            ~error_limit:20))))));
+                                  p_checksum))))))));
     tc "a missing package reports 65 with the registry's answer" (fun () ->
         with_pull_env (fun () ->
             ignore

@@ -797,11 +797,11 @@ let parsed_app_manifest dir =
   | m -> m
   | exception Emo_pkg.Manifest_error d -> Alcotest.fail d.Diagnostic.message
 
-(* ---- install: the project-dependencies front end (T24.4) ---- *)
+(* ---- deps resolve: the explicit lockfile writer ---- *)
 
-let install_tests =
+let resolve_tests =
   [
-    tc "install resolves, fetches, and locks idempotently" (fun () ->
+    tc "resolve answers the same entries every time" (fun () ->
         let entry =
           with_project
             [ ("package.emo", app_manifest); ("main.emo", app_main) ]
@@ -810,30 +810,19 @@ let install_tests =
         let dir = Filename.dirname entry in
         Sys.chdir dir;
         with_registry (fun () ->
-            let manifest = parsed_app_manifest dir in
             let first =
-              Emo_project.install_deps ~manifest ~manifest_dir:dir ~target:"c"
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
             in
-            Alcotest.(check bool)
-              "resolved line" true
-              (contains_substring (List.nth first 0) "resolved 1 dependencies");
-            Alcotest.(check bool)
-              "fetched line carries the checksum" true
-              (contains_substring (List.nth first 1)
-                 "fetched acme/c_tools 1.0.0");
-            Alcotest.(check bool)
-              "lock written" true
-              (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename));
+            Alcotest.(check int) "one entry" 1 (List.length first);
+            (* Writing the lockfile is `emo deps resolve`'s explicit job,
+               one layer up; a bare resolve answers entries alone. *)
             let second =
-              Emo_project.install_deps ~manifest ~manifest_dir:dir ~target:"c"
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
             in
             Alcotest.(check bool)
-              "second run hits the cache" true
-              (contains_substring (List.nth second 1) "(already cached)");
-            Alcotest.(check bool)
-              "second run leaves the lock" true
-              (contains_substring (List.nth second 2)
-                 "package.lock is up to date")));
+              "a second resolve answers the same entries" true (first = second)));
     tc "an unsatisfiable pin fails at resolution" (fun () ->
         let bad =
           String.concat "\n"
@@ -858,7 +847,7 @@ let install_tests =
         Sys.chdir dir;
         with_registry (fun () ->
             match
-              Emo_project.install_deps ~manifest:(parsed_app_manifest dir)
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
                 ~manifest_dir:dir ~target:"c"
             with
             | _ -> Alcotest.fail "expected the pin to fail"
@@ -869,7 +858,7 @@ let install_tests =
                       "code" "E5007"
                       (match d.Diagnostic.code with Some c -> c | None -> "?")
                 | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
-    tc "an empty manifest reports nothing to install" (fun () ->
+    tc "an empty manifest resolves to nothing" (fun () ->
         let bare =
           {|package {
   name = "local/bare"
@@ -889,13 +878,11 @@ let install_tests =
         Sys.chdir dir;
         with_registry (fun () ->
             match
-              Emo_project.install_deps ~manifest:(parsed_app_manifest dir)
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
                 ~manifest_dir:dir ~target:"c"
             with
-            | lines ->
-                Alcotest.(check bool)
-                  "nothing to install" true
-                  (contains_substring (List.hd lines) "nothing to install")
+            | entries ->
+                Alcotest.(check int) "no entries" 0 (List.length entries)
             | exception Emo_project.Static_errors ds ->
                 Alcotest.fail ("codes: " ^ codes_dump ds)));
   ]
@@ -2871,7 +2858,7 @@ let () =
       ("cycle", cycle_tests);
       ("cache", cache_tests);
       ("deps", deps_tests);
-      ("install", install_tests);
+      ("resolve", resolve_tests);
       ("sched", sched_tests);
       ("test_runner", test_runner_tests);
       ("shop_golden", shop_golden_tests);
