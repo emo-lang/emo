@@ -1,0 +1,9 @@
+package {
+  name = "emo/ui_tui"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "beam"]
+
+  deps {
+    "emo/ui" = "0.1.0"
+  }
+}

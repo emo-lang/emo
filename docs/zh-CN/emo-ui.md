@@ -53,7 +53,7 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 |---|---|---|---|
 | macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已证明**(`spike/macos-gui`、`spike/components`) | 打包:`.m`、`-fobjc-arc`、`-framework` |
 | GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已证明**(`spike/gtk`、`spike/components`) | 打包:`pkg-config gtk4` |
-| TUI | 纯 Emo,输出 ANSI 转义 | **未建,廉价** | 终端输入(raw mode、按键事件) |
+| TUI | 纯 Emo,输出 ANSI 转义 | **已落地**(T48.4) | 终端输入(raw mode、按键事件) |
 | Web | HTML/CSS(SSR)→ DOM(浏览器 TS)→ wasm + DOM | **最不成熟** | TS 目标只面向 Node;wasm 宿主只有 3 个 import |
 
 ### macOS 与 GTK 4
@@ -74,7 +74,9 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 
 四个平台里最便宜的,也是最好的第一个目标。渲染就是带 ANSI 转义的 `printf`——纯 Emo,在任何能写 stdout 的目标上都能跑,不需要 FFI,也不需要新的包机制。单元格网格本身就是一套布局(以字符格为单位的行/列/宽/高),正是 `plot` 终端渲染器已经规划的那类格式无关表面(`docs/visualization.md`,Layer 5)。终端后端也是检验「核心确实与工具包解耦」的最好办法:如果节点模型与 update 循环能在字符网格上跑,它们就真的是后端中立的。
 
-缺口在**输入**,不在输出。今天没有 raw mode 或按键事件运行时实现:`os` 包给的是 fd 级 `read`,`os` 只面向原生,而且没有 termios 绑定。读一行今天可行;方向键、resize 事件、Ctrl-C-as-a-message 想要 raw mode,那是一个到 `termios` 的小 `foreign def`(c/ocaml)或一个终端运行时实现。有界,但必须排期,不能假定。**2026-10-15 已定**——排期为一个标准库包,形状同 `sqlite3`(见下方诉求 7)。
+缺口在**输入**,不在输出。今天没有 raw mode 或按键事件运行时实现:`os` 包给的是 fd 级 `read`,`os` 只面向原生,而且没有 termios 绑定。读一行今天可行;方向键、resize 事件、Ctrl-C-as-a-message 想要 raw mode,那是一个到 `termios` 的小 `foreign def`(c/ocaml)或一个终端运行时实现。有界,但必须排期,不能假定。**2026-10-15 已定**——排期为一个标准库包,形状同 `sqlite3`(见下方诉求 7)。它替换的是 `ui_tui` 的输入源,而不是那条接缝:`Script` 与 raw-mode reader 都是 `Input`。
+
+**2026-10-16 已落地(T48.4)**为 `projects/emo-ui/tui/`(包 `emo/ui_tui`)。盒模型以字符格为单位度量核心的 `Style`——列是纵向堆叠、行是横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置——`screen(root, w, h)` 把网格作为数据交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI。因为字符串字面量的转义是最小集合、0x1b 不在其中,转义字节经 `printf("%c", [27])` 发出。`Tui` 在其之上实现 `Backend`,`Input`/`Script` 就是金标所跑的脚本化事件源:字节固定,不碰终端——`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——T48.2 留下的那个决定,如今深了三个 target。金标逼出的两个 `beam` 降级缺陷(`Block` 值的裸 def 被发射成不可调用的远程 fun;循环体里的 `case` 没有把外层 `var` 的重绑穿出)随后端一起修好,记在 `CHECK.md`。
 
 ### Web
 
@@ -279,7 +281,7 @@ interface Backend {
 每个平台实现它:
 
 - **macOS / GTK:** 一个 Emo 类,其方法调用 `foreign def` shim。shim 实现各原语(`window_make`、`label_make`、`place`、`connect`、……);Emo 侧遍历树并把节点映射到原生 handle。
-- **TUI:** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 读输入并分派 tag。
+- **TUI(已落地,T48.4):** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 从脚本化输入拉取 tag 并交给循环的 sink。`projects/emo-ui/tui/` 是这个包,`tui/golden/` 是那段脚本化输入的金标:`screen` 把网格作为数据交回,`paint` 写出字节,同一块界面在解释器、`ocaml`、`typescript` 与 `beam` 上逐字节相同。
 - **Debug(已落地,T48.3):** 无头的那一个,也是这条接缝的参考实现。它把循环交给它的每一棵树渲染进一份日志而不是打印——于是何时让文本到达 stdout 由调用方决定,金标不会被一个恰好挂上去的后端搅动——而 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。`projects/emo-ui/golden/` 就是它为的东西:一块界面经核心、以消费者抵达核心的方式走一遍,再以文本出来,在解释器、`ocaml`、`c`、`typescript`、`beam` 上逐字节相同(`wasm` 根本降不下核心——即上面循环的形状)。这个形态之所以这么窄是被 target 逼的、不是选的:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为枚举或元组在两个 target 上打印出的字节并不相同(`CHECK.md`,枚举的显示形式);它的金标也先在建树之前用独立语句取好 tag,因为操作数求值顺序由 target 决定(`CHECK.md`)。
 - **SSR:** 一个纯 Emo 类,把树序列化成 HTML/CSS;`run()` 就是渲染一次。
 - **DOM(之后):** 一个 Emo 类,压在运行时的 `dom_*` 调用上;`run()` 把控制权交给浏览器后返回。
@@ -362,7 +364,7 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 
 ## 风险
 
-- **后端间的语义漂移。** 语法收敛并不让一个 `row` 处处同义。缓解:一套小的声明式布局词汇表、收敛命名规则,以及一个一致性语料(一个 app、每个后端)——**已落地为 `debug` 后端与 `projects/emo-ui/golden/`(T48.3)**,它们把一块界面钉成在所有跑得动的 target 上逐字节相同,并且在第二个后端出现之前就找出了第一批分歧:操作数求值顺序与枚举的显示形式,今天在这两个 target 上并非同样的字节(`CHECK.md`)。
+- **后端间的语义漂移。** 语法收敛并不让一个 `row` 处处同义。缓解:一套小的声明式布局词汇表、收敛命名规则,以及一个一致性语料(一个 app、每个后端)——**已落地为 `debug` 后端与 `projects/emo-ui/golden/`(T48.3)**,它们把一块界面钉成在所有跑得动的 target 上逐字节相同,并且在第二个后端出现之前就找出了第一批分歧:操作数求值顺序与枚举的显示形式,今天在这两个 target 上并非同样的字节(`CHECK.md`)。**终端后端与它的脚本化金标(T48.4)**把这条线延长——一块界面经过一个真正的盒模型,在五个托管目标中的四个上逐字节相同——并逼出、修掉了它记下(`CHECK.md`)的两个 `beam` 降级缺陷。
 - **文本。** 可移植的自动布局需要文本度量;设计通过把布局委托给平台(而 TUI 数格子)来避免需要它们。未来的 canvas 或像素一致模式会重新引入 `docs/visualization.md` 拒绝过的字体度量问题。
 - **原生打包。** 在 manifest 长出 flags 之前,macOS/GTK 应用要扛构建脚本;这是需求「下载即用」上的摩擦。manifest 字段这条路已定(T48.7),所以风险在排期,不在方向。
 - **两个事件循环**(Emo 调度器 vs. 工具包/浏览器),如上。

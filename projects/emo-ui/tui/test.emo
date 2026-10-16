@@ -1,0 +1,161 @@
+// The TUI package's own test: the box model's arithmetic and the
+// scripted input, checked as values rather than as bytes. Painting is
+// what `golden/` pins byte for byte; here `screen` returns the grid, so
+// a position that drifts fails with a readable row instead of a diff
+// of escape sequences.
+//
+//   emo run test.emo
+//
+// It is a module of the package, not a package of its own, so
+// `emo check ui_tui.emo` checks it and `./check.sh` runs it.
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+def assert_rows(want Array[String], what String, got Array[String]) {
+  if want == got {
+    check(true, what)
+  } else {
+    raise Exception.new(message: "the rows differ: ${what}")
+  }
+}
+
+// ---- padding, gap, and the column's own size ------------------------
+
+def padded() ui.Node {
+  return ui.column([
+    ui.text("ab", ui.style()),
+    ui.text("c", ui.style())
+  ], ui.style().with_padding(1.0).with_gap(1.0))
+}
+
+// ---- a row lines its children up, one gap apart ---------------------
+
+def paired(a ui.Align) ui.Node {
+  return ui.row([
+    ui.image("i.png", ui.style()),
+    ui.column([
+      ui.text("x", ui.style()),
+      ui.text("y", ui.style()),
+      ui.text("z", ui.style())
+    ], ui.style())
+  ], ui.style().with_gap(1.0).with_align(a))
+}
+
+// ---- a column places a child across its width -----------------------
+
+def placed(a ui.Align) ui.Node {
+  return ui.column([
+    ui.text("a", ui.style())
+  ], ui.style().with_align(a))
+}
+
+// ---- `grow` takes the height a column has left over -----------------
+
+def growing() ui.Node {
+  return ui.column([
+    ui.text("a", ui.style()),
+    ui.column([
+      ui.text("b", ui.style())
+    ], ui.style().with_grow(true)),
+    ui.text("c", ui.style())
+  ], ui.style())
+}
+
+// ---- the style's fixed width wins over the intrinsic size -----------
+
+def wide_input() ui.Node {
+  return ui.text_input("n", ui.style().with_width(4.0))
+}
+
+def long_text() ui.Node {
+  return ui.text("abcdef", ui.style())
+}
+
+// ---- the scripted input ---------------------------------------------
+
+def script_checks() {
+  const s = ui_tui.script([4, 5])
+  check(s.next() == (R.ok, 4), "the script hands back the first tag")
+  check(s.next() == (R.ok, 5), "and the second")
+  check(s.next() == (R.error, 0), "then says there is no more")
+  check(s.next() == (R.error, 0), "and keeps saying it")
+}
+
+def layout_checks() {
+  assert_rows([
+    "      ",
+    " ab   ",
+    "      ",
+    " c    ",
+    "      ",
+    "      "
+  ], "padding and gap place a column's children",
+    ui_tui.screen(padded(), 6, 6))
+
+  assert_rows([
+    "[i.png] x   ",
+    "        y   ",
+    "        z   ",
+    "            ",
+    "            "
+  ], "start puts the shorter child at the top",
+    ui_tui.screen(paired(ui.Align.start), 12, 5))
+
+  assert_rows([
+    "            ",
+    "        x   ",
+    "[i.png] y   ",
+    "        z   ",
+    "            "
+  ], "a row centers a shorter child down its height",
+    ui_tui.screen(paired(ui.Align.center), 12, 5))
+
+  assert_rows([
+    "            ",
+    "            ",
+    "        x   ",
+    "        y   ",
+    "[i.png] z   "
+  ], "and end puts it at the bottom",
+    ui_tui.screen(paired(ui.Align.end), 12, 5))
+
+  assert_rows([
+    "  a  "
+  ], "a column centers a narrower child",
+    ui_tui.screen(placed(ui.Align.center), 5, 1))
+
+  assert_rows([
+    "    a"
+  ], "and flushes it to the end",
+    ui_tui.screen(placed(ui.Align.end), 5, 1))
+
+  assert_rows([
+    "a  ",
+    "b  ",
+    "   ",
+    "   ",
+    "   ",
+    "   ",
+    "c  "
+  ], "grow takes the column's leftover height",
+    ui_tui.screen(growing(), 3, 7))
+
+  assert_rows([
+    "n   "
+  ], "a fixed width overrides the intrinsic one",
+    ui_tui.screen(wide_input(), 4, 1))
+
+  assert_rows([
+    "abc"
+  ], "text longer than the screen is truncated",
+    ui_tui.screen(long_text(), 3, 1))
+}
+
+layout_checks()
+script_checks()

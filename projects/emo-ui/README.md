@@ -38,8 +38,9 @@ Whether the array form later earns a literal spelling of its own is still open
 
 ## Status
 
-The portable **`ui` core** (T48.1), the **Elm loop** (T48.2) and the headless
-**`debug` backend with its golden** (T48.3) have landed.
+The portable **`ui` core** (T48.1), the **Elm loop** (T48.2), the headless
+**`debug` backend with its golden** (T48.3) and the **terminal `ui_tui` backend
+with its scripted-input golden** (T48.4) have landed.
 `ui.emo` is the node spine — a `Node` interface plus the `Column`, `Row`, `Text`,
 `Button`, `TextInput`, `Image`, `Spacer` and `Scroll` classes with their
 positional lowercase constructors — the typed `Style` with its `style()` factory
@@ -73,17 +74,20 @@ operands are evaluated in the target's order — `ocaml`'s is the reverse of eve
 other target's — so a tag taken from an argument position is a different tag per
 target (`CHECK.md`, operand evaluation order).
 
-The loop compiles on `ocaml`, `typescript` and `beam`. It does not compile on
-`c` or `wasm` yet, and what stands in the way is its spelling rather than its
-structure: a bare def name is the only expression that yields the `Block` value
-`ui.run` takes, and `c` has no def-as-value (`Global`) while `wasm` refuses a
-dynamic call with more than one parameter. `probe/` holds that gap as a minimal
-pair — `def_shape/` is the landed shape and reaches both refusals,
+The loop compiles and runs on `ocaml`, `typescript` and `beam`. It does not
+compile on `c` or `wasm` yet, and what stands in the way is its spelling rather
+than its structure: a bare def name is the only expression that yields the
+`Block` value `ui.run` takes, and `c` has no def-as-value (`Global`) while `wasm`
+refuses a dynamic call with more than one parameter. `probe/` holds that gap as a
+minimal pair — `def_shape/` is the landed shape and reaches both refusals,
 `handler_shape/` is the same loop with the application's two functions behind a
 `Handler` interface, and it builds on all five targets, printing what `emo run`
-prints on `c` and `ocaml` (`CHECK.md`, the Elm loop's shape). Which way to close
-it — grow the two targets, or move the application's functions behind an
-interface — is the open decision T48.4 onward waits on.
+prints on `c` and `ocaml` (`CHECK.md`, the Elm loop's shape). On `beam` the loop
+built but did not run until T48.4: a bare def became a remote fun to a
+non-exported function, which `erlc` accepted and the loader left uncallable;
+that is fixed, and the TUI golden is what proves it. Which way to close the
+remaining gap — grow the two targets, or move the application's functions behind
+an interface — is the open decision T48.4 leaves standing.
 
 `debug.emo` is the headless backend (T48.3): `render(node)` turns a tree into
 stable text — one node per line, two spaces per level, the node's own props then
@@ -117,10 +121,33 @@ target. Both are recorded, with a minimal pair each, in `CHECK.md`
 
 `./check.sh` is the gate: the package type-checks, the loop's seventeen
 assertions run, every target's build — and every refusal — is pinned there, and
-the golden's bytes are compared on each of the four targets that can run it.
+the golden's bytes are compared on each of the four targets that can run it. It
+ends by running `tui/check.sh`, so the project keeps one entry point.
 
-Still to come: one package per platform behind the browser runtime path
-(T48.4–T48.12). The design and its evidence:
+`tui/` is the terminal backend (T48.4), a package of its own — `emo/ui_tui`,
+pinned against `emo/ui` — because it carries a platform the core does not. The
+terminal has no native layout engine, so the box model lives here: the core's
+`Style` measured in character cells, a column stacking, a row lining up, and
+`padding`/`gap`/`align`/`grow`/`width`/`height` placing each child.
+`screen(root, w, h)` returns the grid as `Array[String]`, so the arithmetic is
+testable without bytes; `paint(root, w, h)` writes a frame as ANSI — clear, home,
+one row per line — with the escape byte reaching stdout through
+`printf("%c", [27])`, because a string literal's escapes are the minimal set and
+0x1b is not one of them. `Tui` implements `ui.Backend` over that, and
+`Input`/`Script` are the scripted event source: `run()` pulls tags from the input
+and hands them to the loop's sink until the input says there are no more. T48.5
+replaces that source with raw-mode terminal reads, not the seam — both are
+`Input`. The package declares the four hosted targets that can write stdout;
+`wasm` has no `printf`, so it is not one. `tui/golden/` is a consumer of both
+packages, holding one screen driven by a script that clicks Add, Add, Sub, and
+its `expected.txt` is the interpreter's output, identical on `ocaml`,
+`typescript` and `beam`. `c` compiles the backend and refuses the golden's loop
+shape (`Global`) — the decision above, now three targets deep. `tui/check.sh` is
+the package's gate; the `beam` lowering defects the golden forced are fixed and
+recorded in `CHECK.md`.
+
+Still to come: the remaining per-platform packages and the browser runtime path
+(T48.5–T48.12). The design and its evidence:
 
 - [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.

@@ -1,0 +1,52 @@
+[2J[H                                  
+ EmoUI terminal                   
+                                  
+ [avatar.png]  Ada Lovelace       
+               count 0            
+                                  
+ older lines                      
+                                  
+                                  
+ name                             
+                                  
+ [ Add ]  [ Sub ]                 
+                                  
+[2J[H                                  
+ EmoUI terminal                   
+                                  
+ [avatar.png]  Ada Lovelace       
+               count 1            
+                                  
+ older lines                      
+                                  
+                                  
+ name                             
+                                  
+ [ Add ]  [ Sub ]                 
+                                  
+[2J[H                                  
+ EmoUI terminal                   
+                                  
+ [avatar.png]  Ada Lovelace       
+               count 2            
+                                  
+ older lines                      
+                                  
+                                  
+ name                             
+                                  
+ [ Add ]  [ Sub ]                 
+                                  
+[2J[H                                  
+ EmoUI terminal                   
+                                  
+ [avatar.png]  Ada Lovelace       
+               count 1            
+                                  
+ older lines                      
+                                  
+                                  
+ name                             
+                                  
+ [ Add ]  [ Sub ]                 
+                                  

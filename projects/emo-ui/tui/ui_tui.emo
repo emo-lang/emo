@@ -1,0 +1,490 @@
+require "emo/ui"
+
+// The terminal backend (T48.4): the cell-grid layout and ANSI painting.
+//
+// The terminal has no native layout engine, so unlike every other
+// backend the box model lives here (docs/emo-ui.md, Layer 3): the
+// portable `Style` measures in character cells, a column stacks and a
+// row lines up, and `padding`, `gap`, `align`, `grow`, `width` and
+// `height` are the same vocabulary the other backends map to their own
+// engines. Painting is `printf` with ANSI escapes — pure Emo, no FFI —
+// so this backend needs nothing from the toolchain that the language
+// does not already have.
+//
+// A cell grid is one row per line, each row a `String` of exactly the
+// screen's width; a draw overwrites a span of a row. The screen is a
+// `Box` of rows because a class's fields are assigned once, in `init`.
+//
+// `wasm` is the one hosted target this package does not declare: its
+// runtime has no `printf`, so it cannot write to a terminal at all
+// (`CHECK.md`). Every target that can write stdout compiles this module.
+
+// ---- the box model: positions in character cells ----
+
+// A layout result: the width and height a node measures to, in cells.
+class Extent {
+  def init(w Int64, h Int64) {
+    self.w = w
+    self.h = h
+  }
+
+  def w() Int64 {
+    return self.w
+  }
+
+  def h() Int64 {
+    return self.h
+  }
+}
+
+// One leaf's text and where it landed. Container nodes produce no draw
+// of their own; the walk flattens them.
+class Draw {
+  def init(x Int64, y Int64, text String) {
+    self.x = x
+    self.y = y
+    self.text = text
+  }
+
+  def x() Int64 {
+    return self.x
+  }
+
+  def y() Int64 {
+    return self.y
+  }
+
+  def text() String {
+    return self.text
+  }
+}
+
+// A fixed extent from the style's `(R, Float64)` slot: `(R.ok, n)` is n
+// cells, `(R.error, _)` is the node's own size. The slot is a pair, not
+// a magic sentinel, exactly as the core's `Style` carries it.
+def fixed(slot (R, Float64)) Int64 {
+  case slot {
+    (R.ok, v) -> { return v.to_int64() }
+    (R.error, _) -> { return -1 }
+  }
+}
+
+// The cells a leaf occupies. A button is bracketed with a space either
+// side so it reads as a control; a text input carries one trailing cell
+// for the cursor; an image shows its source because a terminal has no
+// pixels to put the real thing in. `Spacer` paints nothing, so it
+// measures to nothing unless the style gives it an extent.
+def label_of(n ui.Node) String {
+  if n.is(ui.Text) {
+    return n.body()
+  }
+  if n.is(ui.Button) {
+    return "[ " + n.label() + " ]"
+  }
+  if n.is(ui.TextInput) {
+    return n.value() + " "
+  }
+  if n.is(ui.Image) {
+    return "[" + n.src() + "]"
+  }
+  return ""
+}
+
+def intrinsic(n ui.Node) Extent {
+  if n.is(ui.Spacer) {
+    return Extent.new(w: 0, h: 0)
+  }
+  return Extent.new(w: label_of(n).length(), h: 1)
+}
+
+// A node's own size: the style's fixed width/height when set, the
+// intrinsic size otherwise. `avail_w` is the width the parent has to
+// offer (-1 when unbounded), which a column needs to measure its
+// children against.
+def measure(n ui.Node, avail_w Int64) Extent {
+  const s = n.style()
+  const fw = fixed(s.width())
+  const fh = fixed(s.height())
+  if n.is(ui.Column) {
+    return measure_column(n, s, fw, fh, avail_w)
+  }
+  // A `Scroll` is a vertical box at a fixed viewport height: without a
+  // scroll offset (a later interaction concern, T48.5's) it measures and
+  // places exactly like a column, and the frame's own bounds are what
+  // clip it.
+  if n.is(ui.Scroll) {
+    return measure_column(n, s, fw, fh, avail_w)
+  }
+  if n.is(ui.Row) {
+    return measure_row(n, s, fw, fh)
+  }
+  const e = intrinsic(n)
+  const w = if fw >= 0 { fw } else { e.w() }
+  const h = if fh >= 0 { fh } else { e.h() }
+  return Extent.new(w: w, h: h)
+}
+
+def measure_column(n ui.Node, s ui.Style, fw Int64, fh Int64,
+                   avail_w Int64) Extent {
+  const pad = s.padding().to_int64()
+  const gap = s.gap().to_int64()
+  const kids = n.children()
+  const inner = if avail_w >= 0 { avail_w - pad * 2 } else { -1 }
+  var maxw = 0
+  var total = 0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], inner)
+    if e.w() > maxw {
+      maxw = e.w()
+    }
+    total = total + e.h()
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  const w = if fw >= 0 { fw } else { maxw + pad * 2 }
+  const h = if fh >= 0 { fh } else { total + pad * 2 }
+  return Extent.new(w: w, h: h)
+}
+
+def measure_row(n ui.Node, s ui.Style, fw Int64, fh Int64) Extent {
+  const pad = s.padding().to_int64()
+  const gap = s.gap().to_int64()
+  const kids = n.children()
+  var total = 0
+  var maxh = 0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], -1)
+    total = total + e.w()
+    if e.h() > maxh {
+      maxh = e.h()
+    }
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  const w = if fw >= 0 { fw } else { total + pad * 2 }
+  const h = if fh >= 0 { fh } else { maxh + pad * 2 }
+  return Extent.new(w: w, h: h)
+}
+
+// Lay one node into the rectangle `(x, y, w, h)` and append its leaves
+// to `out`. The builder is threaded back as the return value so the
+// container cases can hand each other the same one — a `Void` def may
+// not `return`, and four orthogonal cases would otherwise nest.
+def place(n ui.Node, x Int64, y Int64, w Int64, h Int64,
+          out ArrayBuilder) ArrayBuilder {
+  if n.is(ui.Column) {
+    return place_column(n, x, y, w, h, out)
+  }
+  // `Scroll`, as above: a vertical box, not yet a viewport with an offset.
+  if n.is(ui.Scroll) {
+    return place_column(n, x, y, w, h, out)
+  }
+  if n.is(ui.Row) {
+    return place_row(n, x, y, w, h, out)
+  }
+  const text = label_of(n)
+  if text.length() > 0 {
+    out.push(Draw.new(x: x, y: y, text: text))
+  }
+  return out
+}
+
+// A column's children stack downward inside its padding, one gap apart.
+// A child with `grow` takes an equal share of the height the column has
+// left over; the last one takes the remainder so the box stays flush.
+// The column's `align` places each child across its width.
+def place_column(n ui.Node, x Int64, y Int64, w Int64, h Int64,
+                 out ArrayBuilder) ArrayBuilder {
+  const s = n.style()
+  const pad = s.padding().to_int64()
+  const gap = s.gap().to_int64()
+  const kids = n.children()
+  const inner_w = w - pad * 2
+  const inner_h = h - pad * 2
+  var total = 0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    total = total + measure(kids[i], inner_w).h()
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  var growers = 0
+  var last_grower = -1
+  for var i = 0; i < kids.length(); i = i + 1 {
+    if kids[i].style().grow() {
+      growers = growers + 1
+      last_grower = i
+    }
+  }
+  const leftover = inner_h - total
+  const align = s.align()
+  var cursor = y + pad
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], inner_w)
+    var ch = e.h()
+    if growers > 0 && kids[i].style().grow() {
+      ch = ch + leftover / growers
+      if i == last_grower {
+        ch = ch + leftover - leftover / growers * growers
+      }
+    }
+    var cw = e.w()
+    var cx = x + pad
+    if align == ui.Align.center {
+      cx = x + pad + (inner_w - cw) / 2
+    }
+    if align == ui.Align.end {
+      cx = x + pad + (inner_w - cw)
+    }
+    if align == ui.Align.stretch {
+      cw = inner_w
+    }
+    place(kids[i], cx, cursor, cw, ch, out)
+    cursor = cursor + ch + gap
+  }
+  return out
+}
+
+// A row's children line up to the right inside its padding, one gap
+// apart, with `grow` and the leftover share working across the width and
+// `align` placing each child down the row's height.
+def place_row(n ui.Node, x Int64, y Int64, w Int64, h Int64,
+              out ArrayBuilder) ArrayBuilder {
+  const s = n.style()
+  const pad = s.padding().to_int64()
+  const gap = s.gap().to_int64()
+  const kids = n.children()
+  const inner_w = w - pad * 2
+  const inner_h = h - pad * 2
+  var total = 0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    total = total + measure(kids[i], -1).w()
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1)
+  }
+  var growers = 0
+  var last_grower = -1
+  for var i = 0; i < kids.length(); i = i + 1 {
+    if kids[i].style().grow() {
+      growers = growers + 1
+      last_grower = i
+    }
+  }
+  const leftover = inner_w - total
+  const align = s.align()
+  var cursor = x + pad
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], -1)
+    var cw = e.w()
+    if growers > 0 && kids[i].style().grow() {
+      cw = cw + leftover / growers
+      if i == last_grower {
+        cw = cw + leftover - leftover / growers * growers
+      }
+    }
+    var ch = e.h()
+    var cy = y + pad
+    if align == ui.Align.center {
+      cy = y + pad + (inner_h - ch) / 2
+    }
+    if align == ui.Align.end {
+      cy = y + pad + (inner_h - ch)
+    }
+    if align == ui.Align.stretch {
+      ch = inner_h
+    }
+    place(kids[i], cursor, cy, cw, ch, out)
+    cursor = cursor + cw + gap
+  }
+  return out
+}
+
+// ---- the cell grid and its painting ----
+
+def blank(w Int64) String {
+  var out = ""
+  for var i = 0; i < w; i = i + 1 {
+    out = out + " "
+  }
+  return out
+}
+
+// A string padded with spaces to exactly `w` columns (truncated if it is
+// already longer): the whole reason a row is a fixed-width string.
+def fit(text String, w Int64) String {
+  if text.length() >= w {
+    return text.substring(0, w)
+  }
+  return text + blank(w - text.length())
+}
+
+// `text` written over columns `x..x+len` of `row`, everything else kept.
+def splice(row String, x Int64, text String, width Int64) String {
+  const head = fit(row, x).substring(0, x)
+  const tail_start = x + text.length()
+  var tail = ""
+  if row.length() > tail_start {
+    tail = row.substring(tail_start, row.length() - tail_start)
+  }
+  return fit(head + text + tail, width)
+}
+
+// Replacing one row: `Array` is a value, so a new one is built rather
+// than assigned into.
+def with_row(rows Array[String], index Int64, value String) Array[String] {
+  const out = ArrayBuilder.new()
+  for var i = 0; i < rows.length(); i = i + 1 {
+    if i == index {
+      out.push(value)
+    } else {
+      out.push(rows[i])
+    }
+  }
+  return out.to_array()
+}
+
+// The blank screen's rows. `Screen.init` calls this rather than looping
+// itself: on `beam` a `for` loop inside a class `init` lowers with an
+// unbound `self` (`CHECK.md`, a loop in a class init).
+def blank_rows(width Int64, height Int64) Array[String] {
+  const out = ArrayBuilder.new()
+  for var y = 0; y < height; y = y + 1 {
+    out.push(blank(width))
+  }
+  return out.to_array()
+}
+
+// The screen: a height of fixed-width rows. A class rather than a bare
+// array because painting is many small writes, and each one replaces the
+// row it touched.
+class Screen {
+  def init(width Int64, height Int64) {
+    self.width = width
+    self.height = height
+    self.rows = Box.new(blank_rows(width, height))
+  }
+
+  def width() Int64 {
+    return self.width
+  }
+
+  def height() Int64 {
+    return self.height
+  }
+
+  def rows() Array[String] {
+    return self.rows.read()
+  }
+
+  def put(x Int64, y Int64, text String) {
+    if y >= 0 && y < self.height && x >= 0 && x < self.width {
+      const rows = self.rows.read()
+      self.rows.replace(with_row(rows, y, splice(rows[y], x, text,
+        self.width)))
+    }
+  }
+}
+
+def fill(s Screen, ds Array[Draw], i Int64) {
+  if i < ds.length() {
+    s.put(ds[i].x(), ds[i].y(), ds[i].text())
+    fill(s, ds, i + 1)
+  }
+}
+
+// The frame as data: `height` rows of `width` columns, each a String —
+// the pure half of painting, and what a test reads instead of bytes.
+def screen(root ui.Node, width Int64, height Int64) Array[String] {
+  const s = Screen.new(width: width, height: height)
+  const out = ArrayBuilder.new()
+  place(root, 0, 0, width, height, out)
+  fill(s, out.to_array(), 0)
+  return s.rows()
+}
+
+// The frame as ANSI on stdout: clear, home, then one row per line. Every
+// frame repaints from scratch — `patch`'s `old` tree is an offer, and a
+// terminal is the backend that never needs it (docs/emo-ui.md, Layer 6).
+// The escape byte is emitted through `printf("%c", [27])` because a
+// string literal's escapes are the minimal set and 0x1b is not one of
+// them (`docs/intro/syntax.md`).
+def paint(root ui.Node, width Int64, height Int64) {
+  const rows = screen(root, width, height)
+  printf("%c[2J%c[H", [27, 27])
+  for var y = 0; y < rows.length(); y = y + 1 {
+    printf("%s\n", [rows[y]])
+  }
+}
+
+// ---- the backend and its input ----
+
+// Where a backend's events come from. Reading a terminal in raw mode is
+// T48.5's own work, in its own standard-library package; a backend only
+// needs a stream of event tags, so the seam is here and `Script` is the
+// source a golden runs on — no terminal, no timing, the same bytes every
+// time.
+interface Input {
+  def next() (R, Int64)
+}
+
+// A fixed list of tags, consumed once, then `(R.error, _)` forever.
+class Script {
+  def init(tags Array[Int64]) {
+    self.tags = tags
+    self.pos = Box.new(0)
+  }
+
+  def next() (R, Int64) {
+    if self.pos.read() >= self.tags.length() {
+      return (R.error, 0)
+    }
+    const tag = self.tags[self.pos.read()]
+    self.pos.replace(self.pos.read() + 1)
+    return (R.ok, tag)
+  }
+}
+
+def script(tags Array[Int64]) Input {
+  return Script.new(tags: tags)
+}
+
+// The backend itself. `mount` and `patch` paint; `run` pulls the input
+// and hands each tag to the loop's sink, which is the whole of what a
+// backend knows about the application (`ui.Events`, one integer per
+// event). A screen is a size in cells — the terminal's size, which T48.5
+// will read from the terminal rather than take as an argument.
+class Tui {
+  def init(width Int64, height Int64, input Input) {
+    self.width = width
+    self.height = height
+    self.input = input
+    self.sink = Box.new(0)
+  }
+
+  def mount(root ui.Node, events ui.Events) {
+    self.sink.replace(events)
+    paint(root, self.width, self.height)
+  }
+
+  def patch(old ui.Node, next ui.Node) {
+    paint(next, self.width, self.height)
+  }
+
+  def run() {
+    var more = true
+    while more {
+      const step = self.input.next()
+      case step {
+        (R.ok, tag) -> { self.sink.read().deliver(tag) }
+        (R.error, _) -> { more = false }
+      }
+    }
+  }
+}
+
+def backend(width Int64, height Int64, input Input) ui.Backend {
+  return Tui.new(width: width, height: height, input: input)
+}

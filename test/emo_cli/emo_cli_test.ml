@@ -711,6 +711,96 @@ let beam_naming_tests =
           (Sys.file_exists (Filename.concat dir "my-app.core")));
   ]
 
+(* A bare def is a value, and until this regression a `fun 'mod':'name'/a`
+   literal named a function the module does not export, so the emitted
+   module loaded with `main/0` uncallable. The fun has to be local. *)
+let beam_block_tests =
+  [
+    tc "a bare def crosses as a Block and runs on erl" (fun () ->
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let source =
+          {|
+def apply2(f Block, a Int64, b Int64) Int64 {
+  return f(a, b)
+}
+
+def add(a Int64, b Int64) Int64 {
+  return a + b
+}
+
+def main() {
+  const r = apply2(add, 20, 22)
+  println(r)
+}
+main()
+|}
+        in
+        let entry = scratch_entry "beam-block" source in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                (Filename.quote dir)))
+          "42\n");
+  ]
+
+(* A `var` set inside a `case` that sits inside a loop body has to
+   thread back out of the loop: without it a `while` never sees the
+   exit its branch sets, and a loop's accumulation is dropped. *)
+let beam_var_tests =
+  [
+    tc "a var set in a case inside a loop leaves the loop" (fun () ->
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let source =
+          {|
+def stops_at_three() Int64 {
+  var i = 0
+  var more = true
+  while more {
+    i = i + 1
+    case i {
+      3 -> { more = false }
+      _ -> { }
+    }
+  }
+  return i
+}
+
+def weighted(n Int64) Int64 {
+  var acc = 0
+  for var i = 0; i < n; i = i + 1 {
+    case i {
+      2 -> { acc = acc + 100 }
+      _ -> { acc = acc + i }
+    }
+  }
+  return acc
+}
+
+def main() {
+  println(stops_at_three())
+  println(weighted(4))
+}
+main()
+|}
+        in
+        let entry = scratch_entry "beam-var" source in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                (Filename.quote dir)))
+          "3\n104\n");
+  ]
+
 let root_end_tests =
   [
     tc "the c root ending drops a runnable process" (fun () ->
@@ -2736,6 +2826,8 @@ let () =
       ("wasm_examples", wasm_examples_tests);
       ("beam_examples", beam_examples_tests);
       ("beam_naming", beam_naming_tests);
+      ("beam_block", beam_block_tests);
+      ("beam_var", beam_var_tests);
       ("c_examples", c_examples_tests);
       ("root_end", root_end_tests);
       ("c_integer", c_integer_tests);

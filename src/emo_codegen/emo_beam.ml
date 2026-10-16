@@ -142,13 +142,24 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | Some v -> put env v
       | None -> failwith ("beam: unbound local " ^ name ^ " in " ^ env.fname))
   | Global name -> (
-      (* a first-class def: its fun literal *)
+      (* A first-class def: a local closure over its function. The whole
+         program lowers into one BEAM module and a def is not exported,
+         so `fun 'mod':'name'/a` names a function the module does not
+         export — erlc accepts it, but loading leaves every function
+         uncallable (`undef`), so a bare def passed as a `Block` ran
+         nowhere on this target. A lambda that applies the plain local
+         function is always callable. *)
       match List.assoc_opt name env.funcs with
       | Some a ->
+          let vs =
+            List.init a (fun _ ->
+                env.fresh <- env.fresh + 1;
+                Printf.sprintf "_blk%d" env.fresh)
+          in
+          let args = String.concat ", " vs in
           put env
-            (Printf.sprintf "fun '%s':'%s'/%d" env.module_name
-               (Emo_ir.sanitize_ident name)
-               a)
+            (Printf.sprintf "fun (%s) -> apply '%s'/%d (%s)" args
+               (Emo_ir.sanitize_ident name) a args)
       | None -> failwith ("beam: unbound global " ^ name))
   | Call { func; args } -> (
       match List.assoc_opt func env.funcs with
@@ -1341,7 +1352,7 @@ and emit_loop_body env ~(leaf : unit -> unit) (xs : Emo_ir.stmt list) : unit =
       put env "\n\t\tend"
   | ((Emo_ir.While _ | Emo_ir.For _) as loop) :: rest ->
       emit_loop env loop rest ~leaf
-  | Emo_ir.Case { branches; _ } :: rest ->
+  | (Emo_ir.Case { branches; _ } as s) :: rest ->
       if
         List.exists
           (fun (b : Emo_ir.branch) ->
@@ -1349,9 +1360,38 @@ and emit_loop_body env ~(leaf : unit -> unit) (xs : Emo_ir.stmt list) : unit =
           branches
       then
         failwith "beam: a `case` branch jumps out of a loop — not supported yet"
+      else if
+        List.exists
+          (fun n -> List.mem_assoc n env.local_map)
+          (assigned_names s)
+      then (
+        (* A branch that rebinds an outer `var` threads the new bindings
+           out of the `case`, exactly like one at statement level: without
+           this a `while` whose exit a branch sets never sees it, because
+           the branch's `let` shadows only inside the branch. *)
+        let assigned =
+          unique_names
+            (List.filter
+               (fun n -> List.mem_assoc n env.local_map)
+               (assigned_names s))
+        in
+        let slot = fresh_var env "__thread" in
+        put env ("let <" ^ slot ^ "> =\n");
+        emit_threaded_control env assigned s;
+        put env "\nin ";
+        List.iteri
+          (fun i name ->
+            let v = fresh_var env name in
+            put env
+              (Printf.sprintf
+                 "let <%s> =\n  call 'erlang':'element'(%d, %s)\nin " v
+                 (i + 1) slot);
+            env.local_map <- (name, v) :: env.local_map)
+          assigned;
+        emit_loop_body env rest ~leaf)
       else (
         put env "do\n";
-        stmt env (List.hd xs);
+        stmt env s;
         put env "\n";
         emit_loop_body env rest ~leaf)
   | Emo_ir.Let { name; init; _ } :: rest ->

@@ -145,7 +145,7 @@ This note does not re-open what earlier work closed.
 |---|---|---|---|
 | macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **proven** (`spike/macos-gui`, `spike/components`) | packaging: `.m`, `-fobjc-arc`, `-framework` |
 | GTK 4 | `c` target + C shim via `foreign def` | **proven** (`spike/gtk`, `spike/components`) | packaging: `pkg-config gtk4` |
-| TUI | pure Emo, ANSI escape output | **not built, cheap** | terminal input (raw mode, key events) |
+| TUI | pure Emo, ANSI escape output | **landed** (T48.4) | terminal input (raw mode, key events) |
 | Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **least ready** | TS target is Node-only; wasm host has 3 imports |
 
 ### macOS and GTK 4
@@ -198,6 +198,26 @@ backend is also the best test that the core really is decoupled from
 the toolkit: if the node model and the update loop run on a cell grid,
 they are genuinely backend-neutral.
 
+**Landed 2026-10-16 (T48.4)** as `projects/emo-ui/tui/` (package
+`emo/ui_tui`). The box model measures the core's `Style` in cells — a
+column stacks, a row lines up, `padding`/`gap`/`align`/`grow`/`width`/
+`height` place each child — and `screen(root, w, h)` hands back the
+grid as data so the arithmetic is testable without bytes while
+`paint(root, w, h)` writes the frame as ANSI. Because a string literal's
+escapes are the minimal set and 0x1b is not one of them, the escape
+byte is emitted through `printf("%c", [27])`. `Tui` implements
+`Backend` over that, and `Input`/`Script` are the scripted event source
+the golden runs on, so the bytes are fixed and no terminal is touched:
+`run()` pulls tags and hands them to the loop's sink until the input
+says there are no more. The package declares the four hosted targets
+that can write stdout; `wasm` has no `printf`, so it is not one. `c`
+compiles the backend and refuses the golden's loop shape (`Global`) —
+the decision T48.2 left open, now three targets deep. Two `beam`
+lowering defects the golden forced (a `Block`-valued bare def emitted as
+an uncallable remote fun, and a loop-body `case` that did not thread an
+outer `var` rebinding) are fixed with the backend and recorded in
+`CHECK.md`.
+
 The gap is **input**, not output. The runtime implements no raw mode and
 no key events: the `os` package gives fd-level `read`, `os` is
 native-only, and there is no termios binding. Reading a line is possible
@@ -205,7 +225,8 @@ today; arrow keys, resize events, and Ctrl-C-as-a-message want raw mode,
 which is a small `foreign def` to `termios` (c/ocaml) or a terminal
 runtime implementation. Bounded, but it must be scheduled, not assumed.
 **Settled 2026-10-15** — scheduled as a standard-library package in the
-`sqlite3` shape (ask 7 below).
+`sqlite3` shape (ask 7 below). It replaces the `ui_tui` input source
+rather than the seam: a `Script` and a raw-mode reader are both `Input`.
 
 ### Web
 
@@ -606,8 +627,12 @@ Each platform implements it:
   The shims implement the primitives (`window_make`, `label_make`,
   `place`, `connect`, …); the Emo side walks the tree and maps nodes to
   native handles.
-- **TUI:** a pure-Emo class that lays the tree out on a cell grid and
-  writes ANSI; `run()` reads input and dispatches tags.
+- **TUI (landed, T48.4):** a pure-Emo class that lays the tree out on a
+  cell grid and writes ANSI; `run()` pulls a scripted input's tags and
+  hands them to the loop's sink. `projects/emo-ui/tui/` is the package
+  and `tui/golden/` the scripted-input golden: `screen` returns the grid
+  as data, `paint` writes the bytes, and the same screen is byte-
+  identical on the interpreter, `ocaml`, `typescript` and `beam`.
 - **Debug (landed, T48.3):** the headless one, and the seam's reference
   implementation. It renders every tree the loop hands it into a log
   instead of printing — so a caller decides when text reaches stdout and
@@ -819,7 +844,11 @@ mid-implementation:
   one screen to identical bytes on every target that can run it, and
   which found the first divergences before a second backend existed:
   operand evaluation order and the enum display form are not the same
-  bytes on two of the targets today (`CHECK.md`).
+  bytes on two of the targets today (`CHECK.md`). The **terminal
+  backend and its scripted golden (T48.4)** extend it — one screen
+  through a real box model, byte-identical on four of the five hosted
+  targets — and forced the two `beam` lowering defects it fixed
+  (`CHECK.md`).
 - **Text.** Portable automatic layout needs text metrics; the design
   avoids needing them by delegating layout to the platform (and the TUI
   counts cells). A future canvas or a pixel-identical mode reintroduces

@@ -28,7 +28,7 @@ def inbox(users Array[User]) ui.Node {
 
 ## 状态
 
-可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)与无头 **`debug` 后端及其金标**(T48.3)都已落地。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
+可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)与终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)都已落地。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
 
 一个应用就是 model、纯 `update`、纯 `view` 加一个后端:
 
@@ -46,7 +46,7 @@ def main() {
 
 tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 草拟的模块级 `ui.on(msg)` 表:模块级 `const` 在编译目标上每次读取都会重跑初始化式,模块级 `var` 又只有 `ocaml` 支持,表放在那里等于每次读取都拿到一张新的空表(`CHECK.md`,模块级绑定)。这张表属于某一个正在跑的循环,由循环把它交给 `view`。tag 一律在建树之前用独立语句取好,而不是写在构成树的那些实参里:`on` 是副作用,而操作数按 target 的顺序求值——`ocaml` 与其它每个 target 相反——所以从实参位置取的 tag 会因 target 而异(`CHECK.md`,操作数求值顺序)。
 
-循环在 `ocaml`、`typescript`、`beam` 上可编译;在 `c` 与 `wasm` 上还不行,而挡路的是它的拼写而不是它的结构:裸 def 名是唯一能产出 `ui.run` 所收 `Block` 值的表达式,而 `c` 没有 def 当值(`Global`),`wasm` 又拒绝参数多于一个的动态调用。`probe/` 把这个缺口做成一对最小对照——`def_shape/` 是已落地的写法,两个拒绝都能撞到;`handler_shape/` 把应用那两个函数放到 `Handler` 接口后面,是同一个循环,五个 target 全部可编译,在 `c` 与 `ocaml` 上打印出的结果与 `emo run` 一致(`CHECK.md`,Elm 循环的形状)。往哪边收口——把这两个 target 补起来,还是把应用的函数移到接口后面——是 T48.4 起要等的那个开放决定。
+循环在 `ocaml`、`typescript`、`beam` 上可编译并运行;在 `c` 与 `wasm` 上还不行,而挡路的是它的拼写而不是它的结构:裸 def 名是唯一能产出 `ui.run` 所收 `Block` 值的表达式,而 `c` 没有 def 当值(`Global`),`wasm` 又拒绝参数多于一个的动态调用。`probe/` 把这个缺口做成一对最小对照——`def_shape/` 是已落地的写法,两个拒绝都能撞到;`handler_shape/` 把应用那两个函数放到 `Handler` 接口后面,是同一个循环,五个 target 全部可编译,在 `c` 与 `ocaml` 上打印出的结果与 `emo run` 一致(`CHECK.md`,Elm 循环的形状)。在 `beam` 上,循环以前只是能构建、不能运行:裸 def 会变成指向未导出函数的远程 fun,`erlc` 接受但加载器让它无法调用;那个缺陷已修好,TUI 金标就是证据。往哪边收口——把这两个 target 补起来,还是把应用的函数移到接口后面——是 T48.4 留下来、仍未收口的那个开放决定。
 
 `debug.emo` 是无头后端(T48.3):`render(node)` 把一棵树变成稳定文本——一个节点一行、每层两个空格,先节点自己的属性,再一份字段顺序固定的样式摘要——而 `Debug` 类就在这份文本之上实现 `Backend`,把循环交给它的每一棵树记进日志而不是打印出来,于是何时让文本到达 stdout 由调用方决定。它的 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。
 
@@ -56,7 +56,9 @@ tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 �
 
 `./check.sh` 是它的关口:包能通过类型检查、循环的十七条断言会跑,每个 target 的构建结果——以及每一次拒绝——都在里面钉死,金标的字节也在四个跑得动的 target 上逐一比对。
 
-接下来:每平台一个包加浏览器运行时路径(T48.4–T48.12)。设计与证据:
+`tui/` 是终端后端(T48.4),是一个自己的包——`emo/ui_tui`,对 `emo/ui` 取版本——因为它带一个核心没有的平台。终端没有原生布局引擎,所以盒模型就在这里:以字符格为单位度量核心的 `Style`,列纵向堆叠、行横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置。`screen(root, w, h)` 把网格作为 `Array[String]` 交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI(清屏、归位、每行一行),转义字节经 `printf("%c", [27])` 到达 stdout,因为字符串字面量的转义是最小集合、0x1b 不在其中。`Tui` 在其之上实现 `ui.Backend`,`Input`/`Script` 是脚本化事件源:`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。T48.5 把那个源换成 raw-mode 终端读取,而不是换那条接缝——两者都是 `Input`。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`tui/golden/` 是两个包的消费者,里面一块界面由一段点击 Add、Add、Sub 的脚本驱动,它的 `expected.txt` 是解释器的输出,在 `ocaml`、`typescript`、`beam` 上相同。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——就是上面那个决定,如今深了三个 target。`tui/check.sh` 是这个包的关口;金标逼出的 `beam` 降级缺陷已修好,记在 `CHECK.md`。根目录的 `./check.sh` 最后会接着跑 `tui/check.sh`,让整个项目只留一个入口。
+
+接下来:剩下的每平台包与浏览器运行时路径(T48.5–T48.12)。设计与证据:
 
 - [`docs/zh-CN/emo-ui.md`](../../docs/zh-CN/emo-ui.md) —— 评估与设计方向。
 - [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md) —— 一棵树怎么写出来:子节点为什么是数组而不是块式写法。

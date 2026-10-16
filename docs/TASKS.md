@@ -1682,8 +1682,42 @@ required.
       others', and an enum does not interpolate to the same bytes on
       `typescript` or at all on `beam` (`probe/eval_order`,
       `probe/enum_print`).
-- [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
-      model) and ANSI painting; a scripted-input golden.
+- [x] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
+      model) and ANSI painting; a scripted-input golden. **Landed
+      2026-10-16** as `projects/emo-ui/tui/` (package `emo/ui_tui`:
+      `ui_tui.emo` and `test.emo`), declaring the four hosted targets
+      that can write stdout — `wasm`'s runtime has no `printf`, so the
+      terminal backend is not a `wasm` package. The box model is the
+      core's `Style` measured in cells: a column stacks, a row lines up,
+      and `padding`, `gap`, `align`, `grow`, `width` and `height` place
+      every child; `screen(root, w, h)` returns the grid as
+      `Array[String]` so the arithmetic is testable without bytes, and
+      `paint(root, w, h)` writes the frame as ANSI (clear, home, one row
+      per line), the escape byte coming through `printf("%c", [27])`
+      because a string literal's escapes are the minimal set and 0x1b is
+      not one of them. `Tui` implements `ui.Backend` over that, and
+      `Input`/`Script` are the scripted event source: `run()` pulls tags
+      from the input and hands them to the loop's sink until the input
+      says there are no more, which is what makes the golden terminal-
+      free (T48.5 replaces the source, not the seam). `tui/golden/` is a
+      consumer of both packages (`deps` on `emo/ui` and `emo/ui_tui`):
+      one screen carrying a row with a centered shorter child, a scroll
+      with a growing spacer, a fixed-width text input and two buttons,
+      driven by a script that clicks Add, Add, Sub. `expected.txt` is
+      the interpreter's output, identical on `ocaml`, `typescript` and
+      `beam`; `c` compiles the backend and refuses the golden's loop
+      shape (`Global`), which is T48.2's open decision now three targets
+      deep rather than two. `tui/check.sh` is the gate (the package
+      type-checks, thirteen assertions run, the four declared targets
+      build, `wasm`'s `printf` refusal is pinned, and the golden's bytes
+      are compared). Two `beam` defects the golden forced are fixed here,
+      both recorded in `CHECK.md`: a bare def as a `Block` was emitted as
+      a remote fun to a non-exported function, which `erlc` accepted but
+      the loader left uncallable (`main/0` raised `undef`), and a `case`
+      inside a loop body that rebound an outer `var` never threaded the
+      rebinding out, so a `while` whose exit a branch set never ended.
+      `test/emo_cli`'s `beam_block` and `beam_var` groups are the
+      regressions.
 - [ ] **T48.5** — Terminal input: raw mode and key events, as a
       **standard-library package in the `sqlite3` shape** —
       package-carried `.c`/`.h` reached through `foreign def`, gated by

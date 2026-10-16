@@ -243,4 +243,11 @@ got=$(grep -o -m1 "only one-parameter closures are supported" "$OUT.log" || true
 expect "only one-parameter closures are supported" "the golden --target wasm says why" \
   "$got"
 
+# --- the terminal backend's package gate --------------------------------
+#
+# `tui/` is a package of its own — it carries a platform the core does
+# not — and has its own gate (T48.4). Run it here too, so the project
+# keeps one entry point.
+EMO="$EMO" ./tui/check.sh || fail=1
+
 exit $fail

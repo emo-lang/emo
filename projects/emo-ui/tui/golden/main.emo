@@ -1,0 +1,102 @@
+require "emo/ui"
+require "emo/ui_tui"
+
+// The terminal backend's golden (T48.4): one screen through the box
+// model and out as ANSI, from a scripted input rather than a terminal.
+//
+// The input is a list of event tags, not keystrokes: reading a terminal
+// in raw mode is T48.5's own work, so this file drives the backend with
+// `ui_tui.script` — the same tags a terminal would deliver, in a fixed
+// order, so the bytes are the same on every run.
+//
+// The script names the controls, not the tags: `tag_of` reads each
+// button's tag off the tree the app builds, then the loop's own `view`
+// hands out the same tags because it registers the messages in the same
+// order. The tags are taken in statements of their own, never in an
+// argument position, because operand evaluation order is the target's
+// (`CHECK.md`, operand evaluation order).
+//
+//   emo run main.emo                       -> the golden, from the interpreter
+//   emo build main.emo --target <t> -o …   -> the same bytes, from the target
+
+enum Msg { add, sub }
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+
+  def with_count(c Int64) Model {
+    return Model.new(count: c)
+  }
+}
+
+def update(msg Msg, m Model) Model {
+  case msg {
+    Msg.add -> { return m.with_count(m.count() + 1) }
+    Msg.sub -> { return m.with_count(m.count() - 1) }
+  }
+}
+
+// The portable view: no terminal name anywhere in it. The box model is
+// the backend's, so the same tree renders through every other backend.
+def view(reg ui.Registry, m Model) ui.Node {
+  const add = reg.on(Msg.add)
+  const sub = reg.on(Msg.sub)
+
+  return ui.column([
+    ui.text("EmoUI terminal", ui.style()),
+    ui.row([
+      ui.image("avatar.png", ui.style()),
+      ui.column([
+        ui.text("Ada Lovelace", ui.style()),
+        ui.text("count ${m.count()}", ui.style())
+      ], ui.style())
+    ], ui.style().with_gap(2.0).with_align(ui.Align.center)),
+    ui.scroll([
+      ui.text("older lines", ui.style()),
+      ui.spacer(ui.style().with_grow(true))
+    ], ui.style().with_height(2.0)),
+    ui.text_input("name", ui.style().with_width(12.0)),
+    ui.row([
+      ui.button("Add", add, ui.style()),
+      ui.button("Sub", sub, ui.style())
+    ], ui.style().with_gap(2.0))
+  ], ui.style().with_padding(1.0).with_gap(1.0))
+}
+
+def tag_of(n ui.Node, label String) Int64 {
+  if n.is(ui.Button) {
+    if n.label() == label {
+      return n.event()
+    }
+    return -1
+  }
+  return tag_in(n.children(), label, 0)
+}
+
+def tag_in(kids Array[ui.Node], label String, i Int64) Int64 {
+  if i >= kids.length() {
+    return -1
+  }
+  const found = tag_of(kids[i], label)
+  if found >= 0 {
+    return found
+  }
+  return tag_in(kids, label, i + 1)
+}
+
+def main() {
+  const probe = view(ui.Registry.new(), Model.new(0))
+  const tags = [tag_of(probe, "Add"), tag_of(probe, "Add"),
+    tag_of(probe, "Sub")]
+  const tui = ui_tui.backend(width: 34, height: 13,
+    input: ui_tui.script(tags))
+  ui.run(view, update, Model.new(0), tui)
+}
+
+main()

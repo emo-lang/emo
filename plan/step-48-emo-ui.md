@@ -8,17 +8,20 @@ and design direction), `docs/emo-ui-check.md` (the gate checklist),
 `spike/components` (the two-platform component spike),
 `spike/emo-ui-probe` (the language probes) · **Status:** in progress —
 the layout is settled, T48.1's two codegen defects have landed, and the
-portable `ui` core (T48.1), the Elm loop with its tests (T48.2) and the
-headless `debug` backend with its byte-identical golden (T48.3) have
-landed in `projects/emo-ui/`; T48.4 onward are not started. T48.2 turned
+portable `ui` core (T48.1), the Elm loop with its tests (T48.2), the
+headless `debug` backend with its byte-identical golden (T48.3) and the
+terminal `ui_tui` backend with its scripted-input golden (T48.4) have
+landed in `projects/emo-ui/`; T48.5 onward are not started. T48.2 turned
 up the first language-side gap this step has hit: the loop's shape — the
 application's `update` and `view` arriving as `Block` values — is what
-`c` and `wasm` cannot compile yet (`CHECK.md`, the Elm loop's shape).
-T48.3 turned up two more, both silent rather than refusing: operands are
-evaluated in the target's order and `ocaml`'s is the reverse of the
-others', and an enum does not interpolate to the same bytes on
-`typescript` or at all on `beam` (`CHECK.md`, operand evaluation order
-and the enum display form; `probe/eval_order`, `probe/enum_print`).
+`c` and `wasm` cannot compile yet, and T48.4 found that `beam` compiles
+it but could not run it, which is fixed here (`CHECK.md`, the Elm loop's
+shape). T48.3 turned up two more, both silent rather than refusing:
+operands are evaluated in the target's order and `ocaml`'s is the
+reverse of the others', and an enum does not interpolate to the same
+bytes on `typescript` or at all on `beam` (`CHECK.md`, operand
+evaluation order and the enum display form; `probe/eval_order`,
+`probe/enum_print`).
 
 ## Why this step exists
 
@@ -213,7 +216,11 @@ placement; `docs/emo-ui.md`, ask 7).
       `ocaml` (`CHECK.md`, the Elm loop's shape). The decision those two
       probes hand back — grow `c` and `wasm`, or move the application's
       functions behind an interface (which revises Layer 5) — wants
-      settling before T48.4 onward build backends on the loop.
+      settling before T48.4 onward build backends on the loop. T48.4
+      built one anyway, on the targets the loop reaches (`ocaml`,
+      `typescript` and — once the fix below landed — `beam`), and left
+      the decision standing: `c` and `wasm` stay the gap, and the TUI
+      golden is byte-identical on the other three.
 - [x] **T48.3** — The headless `debug` backend: renders the tree to a
       stable text form, the byte-identical golden harness the core and
       the other backends share. **Landed 2026-10-15.**
@@ -248,8 +255,42 @@ placement; `docs/emo-ui.md`, ask 7).
       enum interpolates to different bytes on `typescript` (qualified)
       and raises on `beam`, which is why `debug.emo` interpolates no enum
       and no tuple, destructuring instead (`probe/enum_print`).
-- [ ] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
-      model) and ANSI painting; a scripted-input golden.
+- [x] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
+      model) and ANSI painting; a scripted-input golden. **Landed
+      2026-10-16** as `projects/emo-ui/tui/` (package `emo/ui_tui`:
+      `ui_tui.emo` and `test.emo`), declaring the four hosted targets
+      that can write stdout — `wasm`'s runtime has no `printf`, so the
+      terminal backend is not a `wasm` package. The box model is the
+      core's `Style` measured in cells: a column stacks, a row lines up,
+      and `padding`, `gap`, `align`, `grow`, `width` and `height` place
+      every child; `screen(root, w, h)` returns the grid as
+      `Array[String]` so the arithmetic is testable without bytes, and
+      `paint(root, w, h)` writes the frame as ANSI (clear, home, one row
+      per line), the escape byte coming through `printf("%c", [27])`
+      because a string literal's escapes are the minimal set and 0x1b is
+      not one of them. `Tui` implements `ui.Backend` over that, and
+      `Input`/`Script` are the scripted event source: `run()` pulls tags
+      from the input and hands them to the loop's sink until the input
+      says there are no more, which is what makes the golden terminal-
+      free (T48.5 replaces the source, not the seam). `tui/golden/` is a
+      consumer of both packages (`deps` on `emo/ui` and `emo/ui_tui`):
+      one screen carrying a row with a centered shorter child, a scroll
+      with a growing spacer, a fixed-width text input and two buttons,
+      driven by a script that clicks Add, Add, Sub. `expected.txt` is
+      the interpreter's output, identical on `ocaml`, `typescript` and
+      `beam`; `c` compiles the backend and refuses the golden's loop
+      shape (`Global`), which is T48.2's open decision now three targets
+      deep rather than two. `tui/check.sh` is the gate (the package
+      type-checks, thirteen assertions run, the four declared targets
+      build, `wasm`'s `printf` refusal is pinned, and the golden's bytes
+      are compared). Two `beam` defects the golden forced are fixed here,
+      both recorded in `CHECK.md`: a bare def as a `Block` was emitted as
+      a remote fun to a non-exported function, which `erlc` accepted but
+      the loader left uncallable (`main/0` raised `undef`), and a `case`
+      inside a loop body that rebound an outer `var` never threaded the
+      rebinding out, so a `while` whose exit a branch set never ended.
+      `test/emo_cli`'s `beam_block` and `beam_var` groups are the
+      regressions.
 - [ ] **T48.5** — Terminal input: raw mode and key events, as a
       **standard-library package in the `sqlite3` shape** — package-carried
       `.c`/`.h` reached through `foreign def`, gated by `targets` — not a
