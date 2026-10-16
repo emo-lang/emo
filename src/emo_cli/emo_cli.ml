@@ -1185,6 +1185,21 @@ case resp {
 }
 |}
 
+(* The two origins an error in the registry flow can have: this CLI (a
+   manifest problem, missing credentials, a transport failure) and the
+   registry (a refusal it answered with). Each prints under its own
+   highlighted label, so the scrollback shows at a glance who is
+   complaining; color rides only on a terminal stderr. *)
+let cli_error (message : string) : unit =
+  let color = Unix.isatty Unix.stderr in
+  prerr_endline
+    (Emo_support.Render.styled color "31;1" "Emo CLI:" ^ " " ^ message)
+
+let registry_error (message : string) : unit =
+  let color = Unix.isatty Unix.stderr in
+  prerr_endline
+    (Emo_support.Render.styled color "35;1" "Registry Remote:" ^ " " ^ message)
+
 (* POSTs [archive] to {registry}/api/v1/packages and returns the HTTP status
    and response body. The embedded-program machinery ([run_embedded],
    [parse_exchange], [registry_base]) lives in Emo_project — the HTTP
@@ -1445,13 +1460,13 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
     ~(dry_run : bool) : int =
   let dir = Sys.getcwd () in
   if not (Sys.file_exists (Filename.concat dir "package.emo")) then begin
-    prerr_endline "no package.emo in the current directory";
+    cli_error "no package.emo in the current directory";
     66
   end
   else
     match Emo_pkg.Publish.prepare ~dir with
     | Error message ->
-        prerr_endline ("emo publish: " ^ message);
+        cli_error message;
         65
     | Ok p -> (
         let m = p.Emo_pkg.Publish.p_manifest in
@@ -1496,7 +1511,7 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
             else Ok []
           with
           | Error m ->
-              prerr_endline ("emo publish: " ^ m);
+              cli_error m;
               65
           | Ok stored -> (
               match
@@ -1504,12 +1519,12 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
                   ~manifest_registry ~token_opt ~env_token ~stored
               with
               | Error message ->
-                  prerr_endline ("emo publish: " ^ message);
+                  cli_error message;
                   65
               | Ok (registry, token) -> (
                   match upload ~registry ~token ~archive:p.p_archive with
                   | Error message ->
-                      prerr_endline ("emo publish: upload failed: " ^ message);
+                      cli_error ("upload failed: " ^ message);
                       70
                   | Ok (201, _) ->
                       Printf.printf "published %s %s\n" m.Emo_pkg.name version;
@@ -1522,8 +1537,7 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
                       let message = json_string_field "message" body in
                       match (code, message) with
                       | Some code, Some message ->
-                          prerr_endline
-                            (Printf.sprintf "emo publish: %s: %s" code message);
+                          registry_error (code ^ ": " ^ message);
                           if code = "version_exists" then
                             prerr_endline
                               "hint: versions are immutable — bump `version` \
@@ -1537,8 +1551,8 @@ let publish ~(registry_opt : string option) ~(token_opt : string option)
                                  (Emo_project.registry_base registry));
                           1
                       | _ ->
-                          prerr_endline
-                            (Printf.sprintf "emo publish: HTTP %d: %s" status
+                          registry_error
+                            (Printf.sprintf "HTTP %d: %s" status
                                (String.trim body));
                           1))))
 
@@ -2050,20 +2064,19 @@ let resolve_login_registry ~(registry_opt : string option) :
 
 let emoji_login ~(registry_opt : string option) ~(expires_in_days : int) : int =
   if expires_in_days < 0 then begin
-    prerr_endline
-      "emo emoji login: --expires-in-days must not be negative (0 = the token \
-       never expires)";
+    cli_error
+      "--expires-in-days must not be negative (0 = the token never expires)";
     65
   end
   else
     match resolve_login_registry ~registry_opt with
     | Error message ->
-        prerr_endline ("emo emoji login: " ^ message);
+        cli_error message;
         65
     | Ok None ->
-        prerr_endline
-          "emo emoji login: no registry configured — pass --registry, set \
-           EMO_REGISTRY, or set `registry` in package.emo";
+        cli_error
+          "no registry configured — pass --registry, set EMO_REGISTRY, or set \
+           `registry` in package.emo";
         65
     | Ok (Some registry) -> (
         let interactive = Unix.isatty Unix.stdin in
@@ -2088,16 +2101,15 @@ let emoji_login ~(registry_opt : string option) ~(expires_in_days : int) : int =
           with End_of_file -> None
         with
         | None ->
-            prerr_endline
-              "emo emoji login: expected an email and a password on stdin";
+            cli_error "expected an email and a password on stdin";
             65
         | Some (email, password) -> (
             if email = "" then begin
-              prerr_endline "emo emoji login: an email is required";
+              cli_error "an email is required";
               65
             end
             else if password = "" then begin
-              prerr_endline "emo emoji login: a password is required";
+              cli_error "a password is required";
               65
             end
             else
@@ -2118,13 +2130,13 @@ let emoji_login ~(registry_opt : string option) ~(expires_in_days : int) : int =
                     file;
                   0
               | Rejected message ->
-                  prerr_endline ("emo emoji login: " ^ message);
+                  registry_error message;
                   65
               | Unreachable message ->
-                  prerr_endline ("emo emoji login: " ^ message);
+                  cli_error message;
                   70
               | Not_stored message ->
-                  prerr_endline ("emo emoji login: " ^ message);
+                  cli_error message;
                   65))
 
 let emoji_login_cmd =
