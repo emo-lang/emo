@@ -44,7 +44,7 @@ let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
 
 (* The manifest's shape:
      package {
-       name = "acme/json_tools"
+       name = "acme/jsontools"
        version = "0.1.0"
        targets = ["ocaml", "wasm"]
        link = ["sqlite3"]
@@ -102,14 +102,14 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
              (Printf.sprintf "field `%s` must be literal data" name))
     | Emo_eval.Manifest_shape_error (shape, span) -> (
         let dep_key =
-          {|write a dependency's name as a string: "acme/json_tools" = "1.2.3"|}
+          {|write a dependency's name as a string: "acme/jsontools" = "1.2.3"|}
         in
         match shape with
         | Emo_eval.Dep_key_empty ->
             raise
               (manifest_error ~span "E5102" "a dependency's name is empty"
                  ~hint:
-                   {|name the package you depend on: "acme/json_tools" = "1.2.3"|})
+                   {|name the package you depend on: "acme/jsontools" = "1.2.3"|})
         | Emo_eval.Dep_key_not_string ->
             raise
               (manifest_error ~hint:dep_key ~span "E5102"
@@ -337,7 +337,7 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
 let is_manifest_file (file : string) : bool =
   String.equal (Filename.basename file) "package.emo"
 
-(* `acme/json_tools` binds as `json_tools`: the scoped name's short name is
+(* `acme/jsontools` binds as `jsontools`: the scoped name's short name is
    what a require brings into scope. Centralized here for a later
    scope-format swap. *)
 let short_name (name : string) : string =
@@ -1748,7 +1748,7 @@ case resp {
     | Error _ as e -> e
     | Ok (owner, short) -> (
         let url =
-          Printf.sprintf "%s/downloads/%s--%s--%s.emoji" (base_url base) owner
+          Printf.sprintf "%s/downloads/%s-%s-%s.emoji" (base_url base) owner
             short
             (Version.to_string version)
         in
@@ -1819,15 +1819,16 @@ module Publish = struct
     p_files : (string * string) list; (* archive members, sorted by path *)
     p_checksum : string;
     p_archive : string; (* the .emoji bytes *)
-    p_archive_name : string; (* owner--name--version.emoji *)
+    p_archive_name : string; (* owner-name-version.emoji *)
   }
 
   (* The registry's name rule: owner/name, each segment 1–64 chars of
-     [a-z0-9_-]. Plain (stdlib-style) names are not publishable. *)
+     [a-z0-9]. The short name binds in code as the module identifier, so
+     no separator characters; dash-free segments also keep the archive
+     filename's single-dash joins unambiguous. Plain (stdlib-style) names
+     are not publishable. *)
   let valid_name_part (s : string) : bool =
-    let ok c =
-      (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '_' || c = '-'
-    in
+    let ok c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') in
     String.length s >= 1 && String.length s <= 64 && String.for_all ok s
 
   let validate_name (name : string) : (string * string, string) result =
@@ -1838,7 +1839,7 @@ module Publish = struct
         Error
           (Printf.sprintf
              "package name `%s` is not publishable: expected owner/name, each \
-              part 1-64 lowercase letters, digits, `_` or `-`"
+              part 1-64 lowercase letters or digits"
              name)
 
   let read_file path =
@@ -1876,6 +1877,6 @@ module Publish = struct
                   p_checksum = Registry.digest emo_files;
                   p_archive = Archive.build files;
                   p_archive_name =
-                    Printf.sprintf "%s--%s--%s.emoji" owner short version;
+                    Printf.sprintf "%s-%s-%s.emoji" owner short version;
                 })
 end

@@ -1415,14 +1415,14 @@ let require_tests =
     tc "require parses with the package name" (fun () ->
         match
           parse_program
-            {|require "acme/json_tools"
-println(json_tools.parse("{}"))|}
+            {|require "acme/jsontools"
+println(jsontools.parse("{}"))|}
         with
         | [ req; call ] ->
             Alcotest.(check string)
-              "require" "(require acme/json_tools)" (render pp_item req);
+              "require" "(require acme/jsontools)" (render pp_item req);
             Alcotest.(check string)
-              "call" "(println call ((json_tools.parse) call \"{}\"))"
+              "call" "(println call ((jsontools.parse) call \"{}\"))"
               (render pp_item call)
         | items ->
             Alcotest.fail
@@ -1484,7 +1484,7 @@ let manifest_tests =
             Alcotest.fail
               (Printf.sprintf "expected 1 item, got %d" (List.length items)));
     tc "a manifest rejects the old scoped key" (fun () ->
-        let diagnostic = manifest_err {|acme/json_tools = "2.3.1"|} in
+        let diagnostic = manifest_err {|acme/jsontools = "2.3.1"|} in
         Alcotest.(check string) "code" "E2015" (code_of diagnostic));
     tc "a manifest rejects an interpolated key" (fun () ->
         let diagnostic = manifest_err {|"acme/${short}" = "2.3.1"|} in
@@ -1493,7 +1493,7 @@ let manifest_tests =
         let diagnostic = program_err {|"json" = "1"|} in
         Alcotest.(check string) "code" "E2015" (code_of diagnostic));
     tc "a module rejects the old scoped key" (fun () ->
-        let diagnostic = program_err {|acme/json_tools = "2.3.1"|} in
+        let diagnostic = program_err {|acme/jsontools = "2.3.1"|} in
         Alcotest.(check string) "code" "E2015" (code_of diagnostic));
     tc "a for-header post clause takes no string target" (fun () ->
         let diagnostic =

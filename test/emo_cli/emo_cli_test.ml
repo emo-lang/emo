@@ -2574,7 +2574,7 @@ let http_pull_tests =
           p_checksum )
     else if path = "/api/v1/dependencies?packages=acme/p" then
       (200, {|{"acme/p":[{"version":"1.0.0","deps":{},"yanked":false}]}|})
-    else if path = "/downloads/acme--p--1.0.0.emoji" then (200, p_archive)
+    else if path = "/downloads/acme-p-1.0.0.emoji" then (200, p_archive)
     else (404, {|{"error":{"code":"not_found","message":"not found"}}|})
   in
   let write_project dir ~registry_url =
@@ -2735,18 +2735,18 @@ let new_tests =
 let emoji_tests =
   [
     tc "emoji new scaffolds a publishable package" (fun () ->
-        let dir = Filename.concat scratch "emoji-hello" in
+        let dir = Filename.concat scratch "emojihello" in
         if Sys.file_exists dir then Emo_project.remove_tree dir
         else if Sys.file_exists scratch then ()
         else Unix.mkdir scratch 0o755;
         Alcotest.(check int)
           "exit" 0
-          (Emo_cli.scaffold_package ~name:"acme/emoji-hello" ~path:dir);
+          (Emo_cli.scaffold_package ~name:"acme/emojihello" ~path:dir);
         let manifest = read_file (Filename.concat dir "package.emo") in
         Alcotest.(check bool)
           "manifest names the package owner/name" true
-          (contains manifest {|name = "acme/emoji-hello"|});
-        let module_src = read_file (Filename.concat dir "emoji-hello.emo") in
+          (contains manifest {|name = "acme/emojihello"|});
+        let module_src = read_file (Filename.concat dir "emojihello.emo") in
         Alcotest.(check bool)
           "the public module greets" true
           (contains module_src "hello");
@@ -2772,7 +2772,7 @@ let emoji_tests =
           (Emo_cli.scaffold_package ~name:"acme/emoji-clash" ~path:dir));
     tc "emoji build passes the scaffolded package" (fun () ->
         let old_cwd = Sys.getcwd () in
-        let dir = Filename.concat scratch "emoji-hello" in
+        let dir = Filename.concat scratch "emojihello" in
         Sys.chdir dir;
         Fun.protect
           ~finally:(fun () -> Sys.chdir old_cwd)
@@ -2782,8 +2782,8 @@ let emoji_tests =
               (Emo_cli.emoji_build ~dir:(Sys.getcwd ()))));
     tc "emoji build fails on a broken module" (fun () ->
         let old_cwd = Sys.getcwd () in
-        let dir = Filename.concat scratch "emoji-hello" in
-        let module_file = Filename.concat dir "emoji-hello.emo" in
+        let dir = Filename.concat scratch "emojihello" in
+        let module_file = Filename.concat dir "emojihello.emo" in
         let good = read_file module_file in
         let oc = open_out_bin module_file in
         output_string oc "def broken( {\n";
@@ -2806,7 +2806,7 @@ let emoji_tests =
            The beam half of that needs `erlc`, which the scaffold's two
            targets never did. *)
         if not (Lazy.force erlc_available) then Alcotest.skip ();
-        let dir = Filename.concat scratch "emoji-targets" in
+        let dir = Filename.concat scratch "emojitargets" in
         if Sys.file_exists dir then Emo_project.remove_tree dir;
         Unix.mkdir dir 0o755;
         let write name contents =
@@ -2816,14 +2816,14 @@ let emoji_tests =
         in
         write "package.emo"
           {|package {
-  name = "acme/emoji-targets"
+  name = "acme/emojitargets"
   version = "0.1.0"
   targets = ["ocaml", "c", "typescript", "wasm", "beam"]
 
   deps {}
 }
 |};
-        write "emoji-targets.emo" "def greet() String {\n  return \"hi\"\n}\n";
+        write "emojitargets.emo" "def greet() String {\n  return \"hi\"\n}\n";
         let old_cwd = Sys.getcwd () in
         Sys.chdir dir;
         Fun.protect

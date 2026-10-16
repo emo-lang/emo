@@ -55,7 +55,7 @@ let manifest_tests =
         match
           check
             {|package {
-  name = "acme/json_tools"
+  name = "acme/jsontools"
   version = "0.1.0"
   targets = ["ocaml", "wasm"]
 
@@ -69,7 +69,7 @@ let manifest_tests =
             Alcotest.fail
               (match d.Diagnostic.code with Some c -> c | None -> "?")
         | Ok m ->
-            Alcotest.(check string) "name" "acme/json_tools" m.Emo_pkg.name;
+            Alcotest.(check string) "name" "acme/jsontools" m.Emo_pkg.name;
             Alcotest.(check string)
               "version" "0.1.0"
               (Emo_pkg.Version.to_string m.Emo_pkg.version);
@@ -79,7 +79,7 @@ let manifest_tests =
         match
           check
             {|package {
-  name = "emo/ui_golden"
+  name = "emo/uigolden"
   version = "0.1.0"
   targets = ["ocaml"]
 
@@ -117,7 +117,7 @@ let manifest_tests =
             Alcotest.(check (option string))
               "the hint names the string form"
               (Some
-                 {|write a dependency's name as a string: "acme/json_tools" = "1.2.3"|})
+                 {|write a dependency's name as a string: "acme/jsontools" = "1.2.3"|})
               d.Diagnostic.hint);
     tc "the old scoped key is refused" (fun () ->
         match
@@ -128,7 +128,7 @@ let manifest_tests =
   targets = ["ocaml"]
 
   deps {
-    acme/json_tools = "2.3.1"
+    acme/jsontools = "2.3.1"
   }
 }|}
         with
@@ -186,7 +186,7 @@ let manifest_tests =
         match
           check
             {|package {
-  name = "acme/json_tools"
+  name = "acme/jsontools"
   version = "0.1.0"
   targets = ["ocaml"]
   deps {}
@@ -403,7 +403,7 @@ loop()|}
         match
           check
             {|package {
-  name = "acme/json_tools"
+  name = "acme/jsontools"
   version = "0.1.0"
   targets = ["ocaml"]
   registry = "https://packages.example.com"
@@ -419,7 +419,7 @@ loop()|}
         match
           check
             {|package {
-  name = "acme/json_tools"
+  name = "acme/jsontools"
   version = "0.1.0"
   targets = ["ocaml"]
   deps {}
@@ -434,7 +434,7 @@ loop()|}
         match
           check
             {|package {
-  name = "acme/json_tools"
+  name = "acme/jsontools"
   version = "0.1.0"
   targets = ["ocaml"]
   registry = "/srv/registry"
@@ -453,7 +453,7 @@ loop()|}
         match
           check
             {|package {
-  name = "acme/json_tools"
+  name = "acme/jsontools"
   version = "0.1.0"
   targets = ["ocaml"]
   registry = 42
@@ -675,7 +675,7 @@ let registry_tests =
         in
         let pkg_dir =
           Filename.concat root
-            (Filename.concat "acme" (Filename.concat "json_tools" "2.3.1"))
+            (Filename.concat "acme" (Filename.concat "jsontools" "2.3.1"))
         in
         ignore (Sys.command ("mkdir -p " ^ Filename.quote pkg_dir));
         let write rel content =
@@ -687,18 +687,17 @@ let registry_tests =
         in
         write [ "package.emo" ]
           {|package {
-  name = "acme/json_tools"
+  name = "acme/jsontools"
   version = "2.3.1"
   targets = ["ocaml"]
   deps {}
 }|};
-        write [ "json_tools.emo" ] {|def parse(s String) String {
+        write [ "jsontools.emo" ] {|def parse(s String) String {
   return s
 }|};
         let reg = Emo_pkg.Registry.Fs_dir root in
         match
-          Emo_pkg.Registry.fetch reg ~name:"acme/json_tools"
-            ~version:(v "2.3.1")
+          Emo_pkg.Registry.fetch reg ~name:"acme/jsontools" ~version:(v "2.3.1")
         with
         | Ok fetched -> (
             Alcotest.(check int)
@@ -927,7 +926,7 @@ let publish_tests =
         | Error m -> Alcotest.fail m
         | Ok p ->
             Alcotest.(check string)
-              "archive name" "acme--hello--0.1.0.emoji"
+              "archive name" "acme-hello-0.1.0.emoji"
               p.Emo_pkg.Publish.p_archive_name;
             Alcotest.(check int) "files" 3 (List.length p.p_files);
             (* the README rides along but never feeds the digest *)
@@ -959,6 +958,36 @@ let publish_tests =
             Alcotest.(check bool)
               "mentions owner/name" true
               (contains_substring m "owner/name"));
+    tc "a name with `_` or `-` in a part is not publishable" (fun () ->
+        List.iter
+          (fun name ->
+            let dir =
+              Filename.concat
+                (Filename.get_temp_dir_name ())
+                (Printf.sprintf "emo-publish-sep-%s"
+                   (String.concat "" (String.split_on_char '/' name)))
+            in
+            ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+            let oc = open_out_bin (Filename.concat dir "package.emo") in
+            output_string oc
+              (Printf.sprintf
+                 {|package {
+  name = "%s"
+  version = "0.1.0"
+  targets = ["ocaml"]
+  deps {}
+}|}
+                 name);
+            close_out oc;
+            match Emo_pkg.Publish.prepare ~dir with
+            | Ok _ ->
+                Alcotest.fail
+                  (Printf.sprintf "expected `%s` to be refused" name)
+            | Error m ->
+                Alcotest.(check bool)
+                  "names the letter-or-digit rule" true
+                  (contains_substring m "lowercase letters or digits"))
+          [ "acme/json_tools"; "acme/emoji-hello"; "ac-me/tools" ]);
     tc "a directory without a manifest fails" (fun () ->
         match Emo_pkg.Publish.prepare ~dir:(Filename.get_temp_dir_name ()) with
         | Ok _ -> Alcotest.fail "expected a manifest error"
@@ -1159,7 +1188,7 @@ let http_registry_tests =
         let checksum = Emo_pkg.Registry.digest http_pkg_files in
         let runner =
           fake_runner
-            ~routes:[ ("/downloads/acme--p--1.0.0.emoji", (200, archive)) ]
+            ~routes:[ ("/downloads/acme-p-1.0.0.emoji", (200, archive)) ]
         in
         match
           Emo_pkg.Http_registry.fetch runner ~base ~token:None
@@ -1180,7 +1209,7 @@ let http_registry_tests =
         let checksum = Emo_pkg.Registry.digest http_pkg_files in
         let runner =
           fake_runner
-            ~routes:[ ("/downloads/acme--p--1.0.0.emoji", (200, archive)) ]
+            ~routes:[ ("/downloads/acme-p-1.0.0.emoji", (200, archive)) ]
         in
         (match
            Emo_pkg.Http_registry.fetch runner ~base ~token:None
@@ -1198,8 +1227,7 @@ let http_registry_tests =
           fake_runner
             ~routes:
               [
-                ( "/downloads/acme--p--1.0.0.emoji",
-                  (200, Bytes.to_string corrupt) );
+                ("/downloads/acme-p-1.0.0.emoji", (200, Bytes.to_string corrupt));
               ]
         in
         match
@@ -1217,7 +1245,7 @@ let http_registry_tests =
         let archive = Emo_pkg.Archive.build http_pkg_files in
         let runner =
           fake_runner
-            ~routes:[ ("/downloads/acme--p--1.0.0.emoji", (200, archive)) ]
+            ~routes:[ ("/downloads/acme-p-1.0.0.emoji", (200, archive)) ]
         in
         match
           Emo_pkg.Http_registry.fetch runner ~base ~token:None
