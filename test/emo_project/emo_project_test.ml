@@ -505,38 +505,38 @@ let registry_dir =
   in
   let pkg_dir =
     Filename.concat dir
-      (Filename.concat "acme" (Filename.concat "jsontools" "2.3.1"))
+      (Filename.concat "acme" (Filename.concat "json_tools" "2.3.1"))
   in
   write_file
     (Filename.concat pkg_dir "package.emo")
     {|package {
-  name = "acme/jsontools"
+  name = "acme/json_tools"
   version = "2.3.1"
   targets = ["ocaml"]
   deps {}
 }
 |};
   write_file
-    (Filename.concat pkg_dir "jsontools.emo")
+    (Filename.concat pkg_dir "json_tools.emo")
     {|def parse(s String) String {
   return s
 }
 |};
   let wasm_dir =
     Filename.concat dir
-      (Filename.concat "acme" (Filename.concat "wasmtools" "1.0.0"))
+      (Filename.concat "acme" (Filename.concat "wasm_tools" "1.0.0"))
   in
   write_file
     (Filename.concat wasm_dir "package.emo")
     {|package {
-  name = "acme/wasmtools"
+  name = "acme/wasm_tools"
   version = "1.0.0"
   targets = ["ocaml", "wasm"]
   deps {}
 }
 |};
   write_file
-    (Filename.concat wasm_dir "wasmtools.emo")
+    (Filename.concat wasm_dir "wasm_tools.emo")
     {|def shrink(n Int64) Int64 {
   return n - 1
 }
@@ -736,7 +736,7 @@ let app_manifest =
   (* The run path resolves dependencies for the default target (`c`,
      the T24.1 flip), so the mechanism fixture deps a package that
      declares it; the gate-refusal tests below use the ocaml-only
-     jsontools. *)
+     json_tools. *)
   {|package {
   name = "local/app"
   version = "0.1.0"
@@ -1015,7 +1015,7 @@ let deps_tests =
   targets = ["ocaml"]
 
   deps {
-    "acme/jsontools" = "9.8.7"
+    "acme/json_tools" = "9.8.7"
   }
 }
 |}
@@ -1036,7 +1036,7 @@ let deps_tests =
                     Alcotest.(check bool)
                       "names the dep and the cause" true
                       (contains_substring d.Diagnostic.message
-                         "acme/jsontools: no such version")
+                         "acme/json_tools: no such version")
                 | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
     tc "a wasm build refuses a package without a wasm build" (fun () ->
         let entry =
@@ -1049,14 +1049,14 @@ let deps_tests =
   targets = ["ocaml", "wasm"]
 
   deps {
-    "acme/jsontools" = "2.3.1"
+    "acme/json_tools" = "2.3.1"
   }
 }
 |}
               );
               ( "main.emo",
-                {|require "acme/jsontools"
-println(jsontools.parse("hello"))
+                {|require "acme/json_tools"
+println(json_tools.parse("hello"))
 |}
               );
             ]
@@ -1075,7 +1075,7 @@ println(jsontools.parse("hello"))
                       (match d.Diagnostic.code with Some c -> c | None -> "?");
                     Alcotest.(check bool)
                       "names the dep and the target" true
-                      (contains_substring d.Diagnostic.message "acme/jsontools"
+                      (contains_substring d.Diagnostic.message "acme/json_tools"
                       && contains_substring d.Diagnostic.message "wasm")
                 | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
     tc "a wasm build accepts a package that declares the target" (fun () ->
@@ -1089,14 +1089,14 @@ println(jsontools.parse("hello"))
   targets = ["ocaml", "wasm"]
 
   deps {
-    "acme/wasmtools" = "1.0.0"
+    "acme/wasm_tools" = "1.0.0"
   }
 }
 |}
               );
               ( "main.emo",
-                {|require "acme/wasmtools"
-println(wasmtools.shrink(4))
+                {|require "acme/wasm_tools"
+println(wasm_tools.shrink(4))
 |} );
             ]
             "main.emo"
@@ -1119,14 +1119,14 @@ println(wasmtools.shrink(4))
   targets = ["ocaml", "c"]
 
   deps {
-    "acme/jsontools" = "2.3.1"
+    "acme/json_tools" = "2.3.1"
   }
 }
 |}
               );
               ( "main.emo",
-                {|require "acme/jsontools"
-println(jsontools.parse("hello"))
+                {|require "acme/json_tools"
+println(json_tools.parse("hello"))
 |}
               );
             ]
@@ -1143,7 +1143,7 @@ println(jsontools.parse("hello"))
                       (match d.Diagnostic.code with Some c -> c | None -> "?");
                     Alcotest.(check bool)
                       "names the dep and the target" true
-                      (contains_substring d.Diagnostic.message "acme/jsontools"
+                      (contains_substring d.Diagnostic.message "acme/json_tools"
                       && contains_substring d.Diagnostic.message "`c`")
                 | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
     tc "a c build accepts a package that declares the target" (fun () ->
@@ -2831,13 +2831,13 @@ let registry_routing_tests =
           | Error m -> Alcotest.fail m
         in
         let good =
-          match Emo_pkg.Registry.fetch reg ~name:"acme/jsontools" ~version with
+          match Emo_pkg.Registry.fetch reg ~name:"acme/json_tools" ~version with
           | Ok f -> f.Emo_pkg.Registry.f_checksum
           | Error m -> Alcotest.fail m
         in
         (match
            Emo_project.fetch_routed ~runner ~registry:reg ~manifest_dir:"/tmp"
-             ~name:"acme/jsontools" ~version
+             ~name:"acme/json_tools" ~version
              ~expected_checksum:(Some (String.make 64 '0'))
          with
         | _ -> Alcotest.fail "expected a checksum mismatch"
@@ -2857,7 +2857,7 @@ let registry_routing_tests =
         (* the recorded checksum passes the same gate *)
         let f =
           Emo_project.fetch_routed ~runner ~registry:reg ~manifest_dir:"/tmp"
-            ~name:"acme/jsontools" ~version ~expected_checksum:(Some good)
+            ~name:"acme/json_tools" ~version ~expected_checksum:(Some good)
         in
         Alcotest.(check string) "fetched" good f.Emo_pkg.Registry.f_checksum);
   ]

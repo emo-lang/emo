@@ -55,7 +55,7 @@ let manifest_tests =
         match
           check
             {|package {
-  name = "acme/jsontools"
+  name = "acme/json_tools"
   version = "0.1.0"
   targets = ["ocaml", "wasm"]
 
@@ -69,7 +69,7 @@ let manifest_tests =
             Alcotest.fail
               (match d.Diagnostic.code with Some c -> c | None -> "?")
         | Ok m ->
-            Alcotest.(check string) "name" "acme/jsontools" m.Emo_pkg.name;
+            Alcotest.(check string) "name" "acme/json_tools" m.Emo_pkg.name;
             Alcotest.(check string)
               "version" "0.1.0"
               (Emo_pkg.Version.to_string m.Emo_pkg.version);
@@ -79,7 +79,7 @@ let manifest_tests =
         match
           check
             {|package {
-  name = "emo/uigolden"
+  name = "emo/ui_golden"
   version = "0.1.0"
   targets = ["ocaml"]
 
@@ -117,7 +117,7 @@ let manifest_tests =
             Alcotest.(check (option string))
               "the hint names the string form"
               (Some
-                 {|write a dependency's name as a string: "acme/jsontools" = "1.2.3"|})
+                 {|write a dependency's name as a string: "acme/json_tools" = "1.2.3"|})
               d.Diagnostic.hint);
     tc "the old scoped key is refused" (fun () ->
         match
@@ -128,7 +128,7 @@ let manifest_tests =
   targets = ["ocaml"]
 
   deps {
-    acme/jsontools = "2.3.1"
+    acme/json_tools = "2.3.1"
   }
 }|}
         with
@@ -186,7 +186,7 @@ let manifest_tests =
         match
           check
             {|package {
-  name = "acme/jsontools"
+  name = "acme/json_tools"
   version = "0.1.0"
   targets = ["ocaml"]
   deps {}
@@ -403,7 +403,7 @@ loop()|}
         match
           check
             {|package {
-  name = "acme/jsontools"
+  name = "acme/json_tools"
   version = "0.1.0"
   targets = ["ocaml"]
   registry = "https://packages.example.com"
@@ -419,7 +419,7 @@ loop()|}
         match
           check
             {|package {
-  name = "acme/jsontools"
+  name = "acme/json_tools"
   version = "0.1.0"
   targets = ["ocaml"]
   deps {}
@@ -434,7 +434,7 @@ loop()|}
         match
           check
             {|package {
-  name = "acme/jsontools"
+  name = "acme/json_tools"
   version = "0.1.0"
   targets = ["ocaml"]
   registry = "/srv/registry"
@@ -453,7 +453,7 @@ loop()|}
         match
           check
             {|package {
-  name = "acme/jsontools"
+  name = "acme/json_tools"
   version = "0.1.0"
   targets = ["ocaml"]
   registry = 42
@@ -675,7 +675,7 @@ let registry_tests =
         in
         let pkg_dir =
           Filename.concat root
-            (Filename.concat "acme" (Filename.concat "jsontools" "2.3.1"))
+            (Filename.concat "acme" (Filename.concat "json_tools" "2.3.1"))
         in
         ignore (Sys.command ("mkdir -p " ^ Filename.quote pkg_dir));
         let write rel content =
@@ -687,17 +687,18 @@ let registry_tests =
         in
         write [ "package.emo" ]
           {|package {
-  name = "acme/jsontools"
+  name = "acme/json_tools"
   version = "2.3.1"
   targets = ["ocaml"]
   deps {}
 }|};
-        write [ "jsontools.emo" ] {|def parse(s String) String {
+        write [ "json_tools.emo" ] {|def parse(s String) String {
   return s
 }|};
         let reg = Emo_pkg.Registry.Fs_dir root in
         match
-          Emo_pkg.Registry.fetch reg ~name:"acme/jsontools" ~version:(v "2.3.1")
+          Emo_pkg.Registry.fetch reg ~name:"acme/json_tools"
+            ~version:(v "2.3.1")
         with
         | Ok fetched -> (
             Alcotest.(check int)
@@ -958,7 +959,7 @@ let publish_tests =
             Alcotest.(check bool)
               "mentions owner/name" true
               (contains_substring m "owner/name"));
-    tc "a name with `_` or `-` in a part is not publishable" (fun () ->
+    tc "a name that is not a lowercase identifier is not publishable" (fun () ->
         List.iter
           (fun name ->
             let dir =
@@ -985,9 +986,15 @@ let publish_tests =
                   (Printf.sprintf "expected `%s` to be refused" name)
             | Error m ->
                 Alcotest.(check bool)
-                  "names the letter-or-digit rule" true
-                  (contains_substring m "lowercase letters or digits"))
-          [ "acme/json_tools"; "acme/emoji-hello"; "ac-me/tools" ]);
+                  "names the identifier rule" true
+                  (contains_substring m "lowercase identifier"))
+          [
+            "_acme/tools";
+            "9lives/tools";
+            "acme/_tools";
+            "acme/emoji-hello";
+            "ac-me/tools";
+          ]);
     tc "a directory without a manifest fails" (fun () ->
         match Emo_pkg.Publish.prepare ~dir:(Filename.get_temp_dir_name ()) with
         | Ok _ -> Alcotest.fail "expected a manifest error"

@@ -1841,8 +1841,8 @@ let scaffold_package ~(name : string) ~(path : string) : int =
         write "package.emo"
           (Printf.sprintf
              {|package {
-  // The publishable package name: owner/name, each part 1-64 lowercase
-  // letters or digits.
+  // The publishable package name: owner/name, each part a lowercase
+  // identifier — a letter, then letters, digits or `_`.
   name = "%s/%s"
   // This package's own version: exact major.minor.patch. Publishing an
   // existing version is rejected — bump it before re-publishing.
@@ -1894,9 +1894,9 @@ let emoji_new_cmd =
       & pos 0 (some string) None
       & info [] ~docv:"OWNER/NAME"
           ~doc:
-            "The publishable package name — owner/name, each part 1-64 \
-             lowercase letters or digits. The directory is named after the \
-             second part.")
+            "The publishable package name — owner/name, each part a lowercase \
+             identifier: a letter, then letters, digits or `_`. The directory \
+             is named after the second part.")
   in
   Cmd.v
     (Cmd.info "new" ~doc:"Scaffold a shareable package.")

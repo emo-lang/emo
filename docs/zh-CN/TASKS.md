@@ -210,7 +210,7 @@
 ### 步骤 11 — 包与版本解析 · `plan/step-11-packages.md`
 
 **前置:** 步骤 01–10。
-**完成标准:** README 的 `require "acme/jsontools"` 场景对固定注册表(fixture registry)可跑通;从 `deps` 移除依赖但 `require` 仍在是编译错误;冲突的精确版本解析为最高版本且第二次运行校验锁文件校验和;`targets` 不含当前目标的依赖在解析期报错。**达成 M2 完成标准。**
+**完成标准:** README 的 `require "acme/json_tools"` 场景对固定注册表(fixture registry)可跑通;从 `deps` 移除依赖但 `require` 仍在是编译错误;冲突的精确版本解析为最高版本且第二次运行校验锁文件校验和;`targets` 不含当前目标的依赖在解析期报错。**达成 M2 完成标准。**
 
 - [x] **T11.1** — `require` 解析 + 作用域规则。
 - [x] **T11.2** — 清单阶段 A:严格 schema 解析器,带 span 报错。

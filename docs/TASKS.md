@@ -218,7 +218,7 @@ must hold `package.emo` (T11.10); no ancestor is ever consulted.
 ### Step 11 — Packages & version resolution · `plan/step-11-packages.md`
 
 **Prereq:** Steps 01–10.
-**Done when:** the README's `require "acme/jsontools"` scenario runs against a fixture registry; removing a dep from `deps` while its `require` remains is a compile error; conflicting exact pins resolve to the highest and the lockfile checksums verify on a second run; a dep whose `targets` exclude the current target fails at resolution time. **M2 exit criteria met.**
+**Done when:** the README's `require "acme/json_tools"` scenario runs against a fixture registry; removing a dep from `deps` while its `require` remains is a compile error; conflicting exact pins resolve to the highest and the lockfile checksums verify on a second run; a dep whose `targets` exclude the current target fails at resolution time. **M2 exit criteria met.**
 
 - [x] **T11.1** — `require` parsing + scope rules.
 - [x] **T11.2** — Manifest phase A: strict schema parser, errors with spans.

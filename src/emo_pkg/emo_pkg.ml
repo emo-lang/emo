@@ -44,7 +44,7 @@ let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
 
 (* The manifest's shape:
      package {
-       name = "acme/jsontools"
+       name = "acme/json_tools"
        version = "0.1.0"
        targets = ["ocaml", "wasm"]
        link = ["sqlite3"]
@@ -102,14 +102,14 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
              (Printf.sprintf "field `%s` must be literal data" name))
     | Emo_eval.Manifest_shape_error (shape, span) -> (
         let dep_key =
-          {|write a dependency's name as a string: "acme/jsontools" = "1.2.3"|}
+          {|write a dependency's name as a string: "acme/json_tools" = "1.2.3"|}
         in
         match shape with
         | Emo_eval.Dep_key_empty ->
             raise
               (manifest_error ~span "E5102" "a dependency's name is empty"
                  ~hint:
-                   {|name the package you depend on: "acme/jsontools" = "1.2.3"|})
+                   {|name the package you depend on: "acme/json_tools" = "1.2.3"|})
         | Emo_eval.Dep_key_not_string ->
             raise
               (manifest_error ~hint:dep_key ~span "E5102"
@@ -337,7 +337,7 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
 let is_manifest_file (file : string) : bool =
   String.equal (Filename.basename file) "package.emo"
 
-(* `acme/jsontools` binds as `jsontools`: the scoped name's short name is
+(* `acme/json_tools` binds as `json_tools`: the scoped name's short name is
    what a require brings into scope. Centralized here for a later
    scope-format swap. *)
 let short_name (name : string) : string =
@@ -1822,14 +1822,20 @@ module Publish = struct
     p_archive_name : string; (* owner-name-version.emoji *)
   }
 
-  (* The registry's name rule: owner/name, each segment 1–64 chars of
-     [a-z0-9]. The short name binds in code as the module identifier, so
-     no separator characters; dash-free segments also keep the archive
+  (* The registry's name rule: owner/name, each segment a lowercase
+     identifier — 1–64 chars, a letter first, then letters, digits or `_`.
+     The short name binds in code as the module identifier, so the segment
+     alphabet is exactly the identifier alphabet; `-` is excluded (no
+     identifier can spell it), and dash-free segments keep the archive
      filename's single-dash joins unambiguous. Plain (stdlib-style) names
      are not publishable. *)
   let valid_name_part (s : string) : bool =
-    let ok c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') in
-    String.length s >= 1 && String.length s <= 64 && String.for_all ok s
+    String.length s >= 1
+    && String.length s <= 64
+    && (match s.[0] with 'a' .. 'z' -> true | _ -> false)
+    && String.for_all
+         (fun c -> (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '_')
+         s
 
   let validate_name (name : string) : (string * string, string) result =
     match String.split_on_char '/' name with
@@ -1839,7 +1845,8 @@ module Publish = struct
         Error
           (Printf.sprintf
              "package name `%s` is not publishable: expected owner/name, each \
-              part 1-64 lowercase letters or digits"
+              part a lowercase identifier: a letter, then letters, digits or \
+              `_`"
              name)
 
   let read_file path =
