@@ -752,6 +752,31 @@ let app_main = {|require "acme/c_tools"
 println(c_tools.halve(84))
 |}
 
+(* The transitive-dependency app's manifest: one declared root whose own
+   manifest requires another package. *)
+let trans_app_manifest =
+  {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/trans_tools" = "1.0.0"
+  }
+}
+|}
+
+(* An app declaring the transitive-dependency package as its one root. *)
+let trans_app () =
+  with_project
+    [
+      ("package.emo", trans_app_manifest);
+      ("main.emo", {|require "acme/trans_tools"
+println(trans_tools.span())
+|});
+    ]
+    "main.emo"
+
 (* The own-subtree-first shadowing fixture's app: it depends on both the dep
    package `q` and `shadow`, whose own submodule is also named `q`. *)
 let shadow_app () =
@@ -964,6 +989,74 @@ let deps_tests =
                     Alcotest.(check string)
                       "code" "E5007"
                       (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "prompts regeneration" true
+                      (contains_substring d.Diagnostic.message "regenerate")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+    tc "a lockfile recording the closure runs its transitive dep" (fun () ->
+        let entry = trans_app () in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            (* The lockfile records the whole resolution: the requirement and
+               the package its own manifest pulls in. A run reads both. *)
+            let entries =
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            in
+            Alcotest.(check int) "the closure is locked" 2 (List.length entries);
+            Emo_pkg.Lockfile.write
+              ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
+              entries;
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            Alcotest.(check string) "output" "7\n" output));
+    tc "a lockfile entry the manifest no longer reaches is stale" (fun () ->
+        let entry = trans_app () in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            let entries =
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            in
+            Emo_pkg.Lockfile.write
+              ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
+              entries;
+            (* The manifest drops the root that pulled `trans_tools` in; the
+               lockfile still carries it, and nothing reaches it now. *)
+            write_file
+              (Filename.concat dir "package.emo")
+              {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/leaf_tools" = "1.0.0"
+  }
+}
+|};
+            write_file
+              (Filename.concat dir "main.emo")
+              {|require "acme/leaf_tools"
+println(leaf_tools.leaf())
+|};
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected a stale lockfile error"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "names the abandoned entry" true
+                      (contains_substring d.Diagnostic.message
+                         "acme/trans_tools");
                     Alcotest.(check bool)
                       "prompts regeneration" true
                       (contains_substring d.Diagnostic.message "regenerate")

@@ -525,6 +525,75 @@ let lockfile_tests =
           "clean" 0
           (List.length
              (Emo_pkg.Lockfile.verify ~roots:[ ("json", v "2.3.1") ] t)));
+    tc "verify accepts the roots' transitive closure" (fun () ->
+        let t =
+          [
+            {
+              Emo_pkg.Lockfile.dep = "acme/trans_tools";
+              version = v "1.0.0";
+              checksum = "x";
+            };
+            {
+              Emo_pkg.Lockfile.dep = "acme/leaf_tools";
+              version = v "1.0.0";
+              checksum = "y";
+            };
+          ]
+        in
+        Alcotest.(check int)
+          "the closure is the resolution, not extra pins" 0
+          (List.length
+             (Emo_pkg.Lockfile.verify
+                ~roots:[ ("acme/trans_tools", v "1.0.0") ]
+                t)));
+    tc "unreachable flags an entry no root reaches" (fun () ->
+        let t =
+          [
+            {
+              Emo_pkg.Lockfile.dep = "acme/leaf_tools";
+              version = v "1.0.0";
+              checksum = "y";
+            };
+            {
+              Emo_pkg.Lockfile.dep = "acme/trans_tools";
+              version = v "1.0.0";
+              checksum = "x";
+            };
+          ]
+        in
+        Alcotest.(check (list string))
+          "the abandoned closure member" [ "acme/trans_tools" ]
+          (Emo_pkg.Lockfile.unreachable ~roots:[ "acme/leaf_tools" ]
+             ~declared:
+               [
+                 ("acme/leaf_tools", []);
+                 ("acme/trans_tools", [ "acme/leaf_tools" ]);
+               ]
+             t));
+    tc "unreachable follows the declared edges" (fun () ->
+        let t =
+          [
+            {
+              Emo_pkg.Lockfile.dep = "acme/leaf_tools";
+              version = v "1.0.0";
+              checksum = "y";
+            };
+            {
+              Emo_pkg.Lockfile.dep = "acme/trans_tools";
+              version = v "1.0.0";
+              checksum = "x";
+            };
+          ]
+        in
+        Alcotest.(check (list string))
+          "a reachable transitive dep is not stale" []
+          (Emo_pkg.Lockfile.unreachable ~roots:[ "acme/trans_tools" ]
+             ~declared:
+               [
+                 ("acme/leaf_tools", []);
+                 ("acme/trans_tools", [ "acme/leaf_tools" ]);
+               ]
+             t));
   ]
 
 let resolve_tests =

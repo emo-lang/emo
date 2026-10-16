@@ -484,8 +484,12 @@ module Lockfile = struct
         in
         parse [] lines
 
-  (* Verify: every manifest root must be present at the pinned version, and
-     the resolution must match entry for entry. Returns [] when satisfied. *)
+  (* Verify: every manifest root must be present at the pinned version.
+     Returns [] when satisfied. The lockfile records the whole resolution,
+     so its other entries are the roots' transitive closure — not something
+     this check can weigh; that the closure is the one the roots induce is
+     [unreachable]'s question, asked once the packages' own manifests have
+     been read. *)
   let verify ~(roots : (string * Version.t) list) (t : t) :
       string list (* human-readable mismatch errors *) =
     let errors = ref [] in
@@ -510,17 +514,33 @@ module Lockfile = struct
                 dep (Version.to_string v)
               :: !errors)
       roots;
-    List.iter
-      (fun e ->
-        if not (List.mem_assoc e.dep roots) then
-          errors :=
-            Printf.sprintf
-              "lockfile pins `%s` but the manifest does not list it — run `emo \
-               deps resolve` to regenerate"
-              e.dep
-            :: !errors)
-      t;
     !errors
+
+  (* The closure check, the strict half of the lockfile/manifest agreement:
+     the resolution's every entry must be reachable from [roots] by
+     following the [declared] edges — the dependencies each fetched
+     package's own manifest states. An entry nothing reaches is one the
+     manifest has moved past (a removed root leaving its old closure
+     behind), so the recorded resolution is no longer this manifest's.
+     Returns the unreachable entries' names. *)
+  let unreachable ~(roots : string list)
+      ~(declared : (string * string list) list) (t : t) : string list =
+    let rec go reached = function
+      | [] -> reached
+      | name :: rest ->
+          if List.mem name reached then go reached rest
+          else
+            let deps =
+              match List.assoc_opt name declared with
+              | Some deps -> deps
+              | None -> []
+            in
+            go (name :: reached) (deps @ rest)
+    in
+    let reached = go [] roots in
+    List.filter_map
+      (fun e -> if List.mem e.dep reached then None else Some e.dep)
+      t
 end
 
 (* The registry and the global content-addressed cache. A directory

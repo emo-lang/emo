@@ -1243,48 +1243,79 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
         resolution_with_stdlib ~manifest ~manifest_dir ~target ~registry:reg
           ~implicit
     in
+    let fetched =
+      List.map
+        (fun entry ->
+          (* The lockfile's (or the fresh resolution's) checksum is enforced
+             on every fetch. *)
+          let f =
+            fetch_routed ~runner:http_transport ~registry:reg ~manifest_dir
+              ~name:entry.Emo_pkg.Lockfile.dep
+              ~version:entry.Emo_pkg.Lockfile.version
+              ~expected_checksum:(Some entry.Emo_pkg.Lockfile.checksum)
+          in
+          match
+            Emo_pkg.Registry.materialize
+              ~cache_dir:(Emo_pkg.Registry.default_cache_dir ())
+              f
+          with
+          | Error m -> raise (dep_error ~manifest_dir m)
+          | Ok dir ->
+              let pkg_file = Filename.concat dir "package.emo" in
+              let pkg =
+                Emo_pkg.parse_manifest ~file:pkg_file
+                  ~source:(read_file pkg_file)
+              in
+              if not (List.mem target pkg.Emo_pkg.targets) then
+                raise
+                  (dep_error ~manifest_dir
+                     (Printf.sprintf
+                        "package %s does not declare the `%s` target"
+                        entry.Emo_pkg.Lockfile.dep target));
+              (entry, dir, pkg, f))
+        entries
+    in
+    (* The resolution's entries are the closure the roots induced; one the
+       roots no longer reach through the fetched packages' own manifests is
+       a stale record of an earlier resolution. Recomputation stays the
+       explicit command's job — this only refuses to build a closure the
+       manifest has moved past. *)
+    (match
+       Emo_pkg.Lockfile.unreachable
+         ~roots:(explicit @ List.map fst implicit)
+         ~declared:
+           (List.map
+              (fun (entry, _, pkg, _) ->
+                (entry.Emo_pkg.Lockfile.dep, List.map fst pkg.Emo_pkg.deps))
+              fetched)
+         entries
+     with
+    | [] -> ()
+    | stale ->
+        raise
+          (dep_error ~manifest_dir
+             (Printf.sprintf
+                "lockfile pins %s, which the manifest's dependencies no longer \
+                 reach — run `emo deps resolve` to regenerate"
+                (String.concat ", " (List.map (fun d -> "`" ^ d ^ "`") stale)))));
     List.map
-      (fun entry ->
-        (* The lockfile's (or the fresh resolution's) checksum is enforced
-           on every fetch. *)
-        let f =
-          fetch_routed ~runner:http_transport ~registry:reg ~manifest_dir
-            ~name:entry.Emo_pkg.Lockfile.dep
-            ~version:entry.Emo_pkg.Lockfile.version
-            ~expected_checksum:(Some entry.Emo_pkg.Lockfile.checksum)
-        in
-        match
-          Emo_pkg.Registry.materialize
-            ~cache_dir:(Emo_pkg.Registry.default_cache_dir ())
-            f
-        with
-        | Error m -> raise (dep_error ~manifest_dir m)
-        | Ok dir ->
-            let pkg_file = Filename.concat dir "package.emo" in
-            let pkg =
-              Emo_pkg.parse_manifest ~file:pkg_file ~source:(read_file pkg_file)
-            in
-            if not (List.mem target pkg.Emo_pkg.targets) then
-              raise
-                (dep_error ~manifest_dir
-                   (Printf.sprintf "package %s does not declare the `%s` target"
-                      entry.Emo_pkg.Lockfile.dep target));
-            let short = Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep in
-            register_package p short dir;
-            p.package_deps <-
-              ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps;
-            {
-              nd_name = entry.Emo_pkg.Lockfile.dep;
-              nd_csources =
-                List.filter_map
-                  (fun (rel, _) ->
-                    if Filename.check_suffix rel ".c" then
-                      Some (Filename.concat dir rel)
-                    else None)
-                  f.Emo_pkg.Registry.f_files;
-              nd_link = pkg.Emo_pkg.link;
-            })
-      entries
+      (fun (entry, dir, pkg, f) ->
+        let short = Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep in
+        register_package p short dir;
+        p.package_deps <-
+          ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps;
+        {
+          nd_name = entry.Emo_pkg.Lockfile.dep;
+          nd_csources =
+            List.filter_map
+              (fun (rel, _) ->
+                if Filename.check_suffix rel ".c" then
+                  Some (Filename.concat dir rel)
+                else None)
+              f.Emo_pkg.Registry.f_files;
+          nd_link = pkg.Emo_pkg.link;
+        })
+      fetched
   end
 
 let entry_path (entry_file : string) : string =
