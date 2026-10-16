@@ -102,23 +102,6 @@ why . ui_tui.emo wasm "builtin \`printf\` is not available on the wasm target" \
 # to produce those bytes exactly, so a box model that places a child
 # differently — or an ANSI sequence that drifts — fails here.
 
-G=$PWD/.emo-build/check/golden
-mkdir -p "$G"
-
-golden_build() {
-  ( cd golden && EMO_REGISTRY="$REG" "$EMO" build main.emo --target "$1" -o \
-      "$2/out" ) >"$OUT.log" 2>&1
-}
-
-run_golden() {
-  case $1 in
-    ocaml)      "$G/ocaml/out" >"$G/$1.txt" 2>&1 && rc=0 || rc=$? ;;
-    typescript) node "$G/typescript/out.ts" >"$G/$1.txt" 2>&1 && rc=0 || rc=$? ;;
-    beam)       erl -noshell -pa "$G/beam" \
-                  -eval 'out:main(), erlang:halt(0).' >"$G/$1.txt" 2>&1 && rc=0 || rc=$? ;;
-  esac
-}
-
 expect_same_file() {
   if cmp -s "$1" "$2"; then
     printf 'ok   %s\n' "$3"
@@ -129,35 +112,62 @@ expect_same_file() {
   fi
 }
 
-( cd golden && EMO_REGISTRY="$REG" "$EMO" run main.emo ) >"$G/interp.txt" 2>&1 \
-  && rc=0 || rc=$?
-expect 0 "the golden runs on the interpreter" "$rc"
-expect_same_file golden/expected.txt "$G/interp.txt" \
-  "and prints the file it is pinned to"
+# A frame corpus is one consumer program run end to end: build it for
+# every target that lowers the loop, run each artifact its own way, and
+# compare the bytes to the interpreter's file. `c` and `wasm` cannot run
+# it — one refuses the loop's spelling, the other has no `ui_tui`
+# (`CHECK.md`) — so their refusals are what is pinned instead.
+corpus_build() {
+  mkdir -p "$3"
+  ( cd "$1" && EMO_REGISTRY="$REG" "$EMO" build main.emo --target "$2" -o \
+      "$3/out" ) >"$OUT.log" 2>&1
+}
 
-for t in ocaml typescript beam; do
-  mkdir -p "$G/$t"
-  golden_build "$t" "$G/$t" && rc=0 || rc=$?
-  expect 0 "the golden builds for $t" "$rc"
-  run_golden "$t"
-  expect 0 "the golden exits 0 on $t" "$rc"
-  expect_same_file golden/expected.txt "$G/$t.txt" \
-    "the golden's bytes on $t are the interpreter's"
-done
+run_target() {
+  case $1 in
+    ocaml)      "$2/ocaml/out" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
+    typescript) node "$2/typescript/out.ts" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
+    beam)       erl -noshell -pa "$2/beam" \
+                  -eval 'out:main(), erlang:halt(0).' >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
+  esac
+}
 
-# `c` refuses the loop's shape, not the backend: `ui.run` takes the
-# application's `view` and `update` as `Block` values, and a bare def name
-# is the only expression that yields one (`CHECK.md`, the Elm loop's
-# shape). The TUI backend itself compiles there.
-golden_build c "$G/c" && rc=0 || rc=$?
-got=$(grep -o -m1 "does not support this expression form (Global)" "$OUT.log" || true)
-expect "does not support this expression form (Global)" \
-  "the golden --target c says why" "$got"
+check_corpus() {
+  dir=$1
+  want=$2
+  root=$3
+  what=$4
+  mkdir -p "$root"
+  ( cd "$dir" && EMO_REGISTRY="$REG" "$EMO" run main.emo ) >"$root/interp.txt" 2>&1 \
+    && rc=0 || rc=$?
+  expect 0 "the $what runs on the interpreter" "$rc"
+  expect_same_file "$want" "$root/interp.txt" \
+    "and prints the file it is pinned to"
+  for t in ocaml typescript beam; do
+    corpus_build "$dir" "$t" "$root/$t" && rc=0 || rc=$?
+    expect 0 "the $what builds for $t" "$rc"
+    run_target "$t" "$root"
+    expect 0 "the $what exits 0 on $t" "$rc"
+    expect_same_file "$want" "$root/$t.txt" \
+      "the $what's bytes on $t are the interpreter's"
+  done
+  corpus_build "$dir" c "$root/c" && rc=0 || rc=$?
+  got=$(grep -o -m1 "does not support this expression form (Global)" "$OUT.log" \
+    || true)
+  expect "does not support this expression form (Global)" \
+    "the $what --target c says why" "$got"
+  corpus_build "$dir" wasm "$root/wasm" && rc=0 || rc=$?
+  got=$(grep -o -m1 "no build for target \`wasm\`" "$OUT.log" | head -1 || true)
+  expect "no build for target \`wasm\`" "the $what --target wasm says why" "$got"
+}
 
-# `wasm` is refused at resolution: the backend declares the four targets
-# that can write stdout and `wasm` is not one of them.
-golden_build wasm "$G/wasm" && rc=0 || rc=$?
-got=$(grep -o -m1 "no build for target \`wasm\`" "$OUT.log" | head -1 || true)
-expect "no build for target \`wasm\`" "the golden --target wasm says why" "$got"
+# `golden/` is the byte-for-byte screen; `examples/tui_menu/` is the
+# usage demo, a package of its own with the same two deps, so the same
+# registry serves it. It is not part of the compiler's example suites —
+# it needs EmoUI's registry, which those suites do not carry — so this
+# gate is where it is checked.
+check_corpus golden golden/expected.txt "$PWD/.emo-build/check/golden" "golden"
+EX=$PWD/../../../examples/tui_menu
+check_corpus "$EX" "$EX/expected.txt" "$PWD/.emo-build/check/example" "example"
 
 exit $fail

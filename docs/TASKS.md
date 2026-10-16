@@ -1717,7 +1717,9 @@ required.
       inside a loop body that rebound an outer `var` never threaded the
       rebinding out, so a `while` whose exit a branch set never ended.
       `test/emo_cli`'s `beam_block` and `beam_var` groups are the
-      regressions.
+      regressions. `examples/tui_menu/` is the usage demo — the same
+      pattern with a four-row menu and a longer script — and the same
+      gate checks it on every target it declares.
 - [ ] **T48.5** — Terminal input: raw mode and key events, as a
       **standard-library package in the `sqlite3` shape** —
       package-carried `.c`/`.h` reached through `foreign def`, gated by

@@ -76,7 +76,7 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 
 缺口在**输入**,不在输出。今天没有 raw mode 或按键事件运行时实现:`os` 包给的是 fd 级 `read`,`os` 只面向原生,而且没有 termios 绑定。读一行今天可行;方向键、resize 事件、Ctrl-C-as-a-message 想要 raw mode,那是一个到 `termios` 的小 `foreign def`(c/ocaml)或一个终端运行时实现。有界,但必须排期,不能假定。**2026-10-15 已定**——排期为一个标准库包,形状同 `sqlite3`(见下方诉求 7)。它替换的是 `ui_tui` 的输入源,而不是那条接缝:`Script` 与 raw-mode reader 都是 `Input`。
 
-**2026-10-16 已落地(T48.4)**为 `projects/emo-ui/tui/`(包 `emo/ui_tui`)。盒模型以字符格为单位度量核心的 `Style`——列是纵向堆叠、行是横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置——`screen(root, w, h)` 把网格作为数据交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI。因为字符串字面量的转义是最小集合、0x1b 不在其中,转义字节经 `printf("%c", [27])` 发出。`Tui` 在其之上实现 `Backend`,`Input`/`Script` 就是金标所跑的脚本化事件源:字节固定,不碰终端——`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——T48.2 留下的那个决定,如今深了三个 target。金标逼出的两个 `beam` 降级缺陷(`Block` 值的裸 def 被发射成不可调用的远程 fun;循环体里的 `case` 没有把外层 `var` 的重绑穿出)随后端一起修好,记在 `CHECK.md`。
+**2026-10-16 已落地(T48.4)**为 `projects/emo-ui/tui/`(包 `emo/ui_tui`)。盒模型以字符格为单位度量核心的 `Style`——列是纵向堆叠、行是横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置——`screen(root, w, h)` 把网格作为数据交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI。因为字符串字面量的转义是最小集合、0x1b 不在其中,转义字节经 `printf("%c", [27])` 发出。`Tui` 在其之上实现 `Backend`,`Input`/`Script` 就是金标所跑的脚本化事件源:字节固定,不碰终端——`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——T48.2 留下的那个决定,如今深了三个 target。金标逼出的两个 `beam` 降级缺陷(`Block` 值的裸 def 被发射成不可调用的远程 fun;循环体里的 `case` 没有把外层 `var` 的重绑穿出)随后端一起修好,记在 `CHECK.md`。`examples/tui_menu/` 是用法示例:一个由脚本化输入驱动的终端菜单,同一个关口在它声明的每个 target 上检查它。
 
 ### Web
 

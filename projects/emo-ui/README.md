@@ -144,7 +144,8 @@ its `expected.txt` is the interpreter's output, identical on `ocaml`,
 `typescript` and `beam`. `c` compiles the backend and refuses the golden's loop
 shape (`Global`) — the decision above, now three targets deep. `tui/check.sh` is
 the package's gate; the `beam` lowering defects the golden forced are fixed and
-recorded in `CHECK.md`.
+recorded in `CHECK.md`. The usage demo lives at `examples/tui_menu/` — a
+terminal menu driven by a scripted input — and the same gate checks it.
 
 Still to come: the remaining per-platform packages and the browser runtime path
 (T48.5–T48.12). The design and its evidence:

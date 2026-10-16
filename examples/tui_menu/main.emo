@@ -1,0 +1,121 @@
+require "emo/ui"
+require "emo/ui_tui"
+
+// A terminal menu: the smallest complete use of the TUI backend.
+//
+// The view is portable. `menu` names no terminal — a model, a pure
+// `update`, a pure `view`, and `ui.run` are the whole program — so the
+// same function renders through the debug, SSR, macOS, GTK and browser
+// backends unchanged. What is terminal-specific is one argument to
+// `ui.run: ui_tui.backend(...)`.
+//
+// The input is a script, not the keyboard. Reading a terminal in raw
+// mode is its own standard-library package (T48.5), and until it lands
+// the backend takes the same `Int64` event tags a keypress would
+// deliver, in order. The public seam is the `Input` interface, so
+// swapping the script for the terminal reader later changes one
+// argument, not the application.
+//
+//   emo run main.emo     (with EmoUI's registry on EMO_REGISTRY)
+//
+// `projects/emo-ui/tui/check.sh` stages that registry and runs this
+// example on every target it declares.
+
+enum Msg { up, down }
+
+def items() Array[String] {
+  return ["New file", "Open", "Save", "Quit"]
+}
+
+class Model {
+  def init(index Int64) {
+    self.index = index
+  }
+
+  def index() Int64 {
+    return self.index
+  }
+
+  def with_index(i Int64) Model {
+    return Model.new(index: i)
+  }
+}
+
+def clamp(n Int64, low Int64, high Int64) Int64 {
+  if n < low {
+    return low
+  }
+  if n > high {
+    return high
+  }
+  return n
+}
+
+// Pure, and typed to `Msg`: the loop turns an event tag back into the
+// message before it gets here, so only the backend ever sees an integer.
+def update(msg Msg, m Model) Model {
+  const last = items().length() - 1
+  case msg {
+    Msg.up -> { return m.with_index(clamp(m.index() - 1, 0, last)) }
+    Msg.down -> { return m.with_index(clamp(m.index() + 1, 0, last)) }
+  }
+}
+
+// A title, the menu with a marker on the selected row, and two buttons.
+// The rows are built with `ArrayBuilder` because the list is walked, and
+// the selection marker is ordinary string work — a terminal shows
+// selection with a character, not a color, so nothing platform-specific
+// enters the tree. The events are registered in statements before the
+// tree is built: `on` is a side effect, and operands are evaluated in
+// the target's order (`CHECK.md`, operand evaluation order).
+def menu(reg ui.Registry, m Model) ui.Node {
+  const up = reg.on(Msg.up)
+  const down = reg.on(Msg.down)
+  const entries = items()
+  const rows = ArrayBuilder.new()
+  for var i = 0; i < entries.length(); i = i + 1 {
+    const marker = if i == m.index() { "> " } else { "  " }
+    rows.push(ui.text(marker + entries[i], ui.style()))
+  }
+  return ui.column([
+    ui.text("File", ui.style()),
+    ui.column(rows.to_array(), ui.style()),
+    ui.row([
+      ui.button("Up", up, ui.style()),
+      ui.button("Down", down, ui.style())
+    ], ui.style().with_gap(1.0))
+  ], ui.style().with_padding(1.0).with_gap(1.0))
+}
+
+// The script names the controls, and `tag_of` reads each button's tag off
+// the tree, so no tag number is written down here.
+def tag_of(n ui.Node, label String) Int64 {
+  if n.is(ui.Button) {
+    if n.label() == label {
+      return n.event()
+    }
+    return -1
+  }
+  return tag_in(n.children(), label, 0)
+}
+
+def tag_in(kids Array[ui.Node], label String, i Int64) Int64 {
+  if i >= kids.length() {
+    return -1
+  }
+  const found = tag_of(kids[i], label)
+  if found >= 0 {
+    return found
+  }
+  return tag_in(kids, label, i + 1)
+}
+
+def main() {
+  const tree = menu(ui.Registry.new(), Model.new(0))
+  const script = [tag_of(tree, "Down"), tag_of(tree, "Down"),
+    tag_of(tree, "Up"), tag_of(tree, "Down")]
+  ui.run(menu, update, Model.new(0),
+    ui_tui.backend(width: 20, height: 10, input: ui_tui.script(script)))
+}
+
+main()

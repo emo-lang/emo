@@ -43,3 +43,13 @@ language's design, not just its features.
 
 Each demo that produces deterministic output carries an
 `expected.txt`; run the program and compare.
+
+## Project examples
+
+- **[`tui_menu/`](tui_menu/)** — a terminal menu built on the EmoUI
+  project's portable `ui` core and its `ui_tui` backend: a model, a
+  pure `update`, a pure `view`, and `ui.run` with a scripted input. It
+  is the one example that depends on a **project package**
+  (`projects/emo-ui/`) rather than the standard library, so the
+  compiler's suites skip it; `projects/emo-ui/tui/check.sh` stages the
+  registry it needs and checks it on every target it declares.

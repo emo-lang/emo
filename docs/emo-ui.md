@@ -216,7 +216,9 @@ the decision T48.2 left open, now three targets deep. Two `beam`
 lowering defects the golden forced (a `Block`-valued bare def emitted as
 an uncallable remote fun, and a loop-body `case` that did not thread an
 outer `var` rebinding) are fixed with the backend and recorded in
-`CHECK.md`.
+`CHECK.md`. `examples/tui_menu/` is the usage demo: a terminal menu
+with a scripted input, checked by the same gate on every target it
+declares.
 
 The gap is **input**, not output. The runtime implements no raw mode and
 no key events: the `os` package gives fd-level `read`, `os` is

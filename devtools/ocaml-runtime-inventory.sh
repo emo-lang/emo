@@ -22,6 +22,13 @@ mkdir -p "$scratch"
 
 for d in "$repo"/examples/*/; do
   [ -f "${d}expected.txt" ] || continue
+  # An example whose package depends on a project package (a scoped
+  # dependency like `emo/ui`, carried by `examples/tui_menu/`) needs that
+  # project's own registry; this tool measures the standard library
+  # corpus, where an unscoped dep is what resolves.
+  if grep -q '^[[:space:]]*"[a-z_][a-z_]*/' "${d}package.emo" 2>/dev/null; then
+    continue
+  fi
   name=$(basename "$d")
   entry=main.emo
   [ -f "${d}main.emo" ] || entry=$(ls "$d"*.emo | head -1 | xargs basename)
