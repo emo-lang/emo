@@ -35,6 +35,7 @@
 | M15 — EmoUI | 48 | 一套声明式 EmoUI 树渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口(浏览器 DOM 随后按其运行时路径接入),各自只落在一个薄薄的每平台入口后面;共享 app 模块是可移植的 Emo,组合语法处处一致,各平台组件库共享收敛命名。EmoUI 各包活在本仓库的 `projects/emo-ui/` 下,编译器侧关口与终端输入包也落在本仓库(`CHECK.md`,in-tree 项目布局)。 |
 | M16 — 值语义家族的回收 | 49 | `c` 目标回收值语义的那些种类,而不只是身份格:长跑程序每次渲染的 arena 字节与身份存活数保持平坦,而不是随事件上涨;数组增长是线性而非二次;每个 target 上既有的金测逐字节不变(`spike/arena-scope`、`CHECK.md`)。 |
 | M17 — 跨 target 一致性 | 50 | 兑现已经做出的承诺,而不是新设计:`c` 目标里子进程 raise 只结束子进程、`send` 送的是快照,`foreign def` 在 `wasm` 与 `beam` 上按名拒绝;每个 target 上既有的金测逐字节不变(`CHECK.md`)。 |
+| M18 — `c` 目标上的 TLS | 51 | 既有三个 `net` TLS 内建在默认 target 上运行:C 运行时以手写原型与按 IR 判定的条件链接落在系统 OpenSSL/LibreSSL 上(不用 TLS 的构建绝不链接 OpenSSL),ocaml 调度器的语义与 reason 约定保持一致,`http` 的 `https://` 在 `c` 上端到端可用(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -61,6 +62,7 @@
 | 数组增长(O(1) 的 append 还是一个 builder) | T48.1、T49.4 | 已定(2026-10-15,T49.3)——走 builder,并且是语言层的新类型 `ArrayBuilder`,而不是 `Array` 的表示层改动(`CHECK.md`、`docs/intro/syntax.md`);从 `List` 转回 `Array` 那一半刻意不做 |
 | in-tree 项目布局(`projects/`) | M15 全部 | 已定(2026-10-15)——仓库根的 `projects/<仓库名>/` 存放每个具名 Emo 项目(EmoUI、EmoOS、EmoShell),以它将来可拆分出去的仓库命名;EmoUI 仍不是标准库包(`CHECK.md`) |
 | 终端输入的位置(T48.5) | T48.5 | 已定(2026-10-15)——raw mode 是一个标准库包,形状同 `sqlite3`(包自带 `.c`/`.h`,经 `foreign def` 调用,由 `targets` 把关),不是 UI 框架侧或编译器侧的产物(`CHECK.md`、`docs/emo-ui.md`) |
+| `c` 目标上的 TLS(链接判定、原型、Windows) | step 51 | 已定(2026-10-17)——既有三个 `net` TLS 内建落在 C 运行时、链系统 OpenSSL/LibreSSL:`c` emitter 的 IR 走查闸住 `EMO_HAS_TLS` + `-lssl -lcrypto`,原型全部手写(不依赖任何 OpenSSL 头文件),下限是 API 子集(OpenSSL ≥ 1.1.1 / LibreSSL ≥ 3.5.0),Windows 保持拒绝(`CHECK.md`、`plan/step-51-tls-c-target.md`) |
 
 ---
 
@@ -824,3 +826,21 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 - [x] **T50.2** — `c` 目标的 `raise` 结束逻辑进程:`emo_raise` 在当前 fiber 不是根的时候排空它的帧链并停掉它,而调度器之外或根进程里的 raise 保持「渲染并 `exit(1)`」这条路(`docs/intro/concurrency.md`)。`halt()` 走同一个排空——它此前泄漏整条帧链,是另一处形状完全相同的站点。没有 emitter 改动,也没有展开器:帧链在堆上,而 fiber 的收尾路径早已存在。
 - [x] **T50.3** — `c` 目标的 `send` 送快照:`emo_deep_copy` 在发送处重建可变的那些种类,信箱持有这份副本,遵循解释器自己的规则,覆盖本运行时装有的那些种类。随之而来的是一行 emitter 改动——信箱的 take 会释放它唯一的那份持有,所以 receive 的扫描现在自己持有一份。
 - [x] **T50.4** — 文档:`CHECK.md` 的跨 target 条目改写为已定并修正代价估算,`docs/intro/concurrency.md` 里按引用传递那句修掉,T23.6 的注记更新,设计闸门表更新,本里程碑补上。`typescript` 目标 send 仍共享这一项记为条目的开放剩余项,而不在这里修,因为修它属于浏览器运行时拆分(T48.10)的工作。
+
+---
+
+## M18 — `c` 目标上的 TLS
+
+TLS 从来不缺位于标准库——`net_tls_connect`、`net_tls_connect_insecure` 与 `net_listen_tls` 早已是内建,解释器的调度器与独立 OCaml 运行时通过 opam `ssl` 库实现了它们,`typescript` 映射到 `node:tls`,`http` 的 `https://` 更是在纯 Emo 源码里路由到 `net.tls_connect`。缺口在 `c` 目标——也就是默认 target:三个名字落进 `emo_unsupported`,`https` 恰好死在 `emo build` 默认运行的地方。这里做的是一致性,不是新表面:C 运行时以 ocaml 调度器为语义基准,把三个内建落在系统 OpenSSL/LibreSSL 之上;链接按 IR 的实际使用闸住,不碰 TLS 的程序绝不链接 OpenSSL;原型全部手写,因为没有哪个 target 平台欠我们一份 OpenSSL 头文件;用户级 FFI 路线经过评估后被拒绝(`CHECK.md`)。
+
+### 步骤 51 — `c` 目标上的 TLS · `plan/step-51-tls-c-target.md`
+
+**前置:** 无。
+**完成标准:** `https://` 请求在 `c` 上端到端跑通(captive TLS server,与解释器的 `expected.txt` 逐字节一致);验证通过的握手、verify-fail 钉子、insecure 轮转与服务端 TLS echo 在解释器与 `c` 上全绿;不用 TLS 的 `c` 构建既不链接也不依赖 OpenSSL(`nm` 钉子),每个 target 上既有的金测逐字节不变;运行时自造的 reason 字符串在 interp / `c` / 独立 ocaml 运行时三方逐字节一致;文档把故事讲全(`docs/stdlib/net.md`、`docs/stdlib/http.md`、zh-CN 镜像)。
+
+- [ ] **T51.1** — 链接闸门:`emo_c_runtime.c`/`.h` 里圈出的 TLS 段——手写原型加冻结常量,`EMO_HAS_TLS` 下是真实现,否则是 `emo_unsupported` 函数体——emitter 为三个名字开显式臂并翻起 IR 走查的 `uses_tls` 旗标,CLI 经 cclib 槽位有条件地追加 `-DEMO_HAS_TLS` + `-lssl -lcrypto`,前置一个探测调用、失败时报出修复办法;c_goldens 里用 `nm` 钉住「不用 TLS 的构建不引用任何 `SSL_` 符号」。
+- [ ] **T51.2** — 客户端握手:TCP 复用既有的 `emo_net_connect`,随后非阻塞 `SSL_connect` 按 `WANT_READ`/`WANT_WRITE` 停车(调度器的 poll 循环补上可写等待钩子);`TLS_client_method`、TLS 1.2–1.3 窗口、系统信任库、SNI、`SSL_set1_host` + `SSL_get_verify_result`、带库自身版本串的版本下限拒绝、`the TLS handshake with <host>: ` reason 前缀,以及 CA + 服务端证书夹具(`SAN=localhost,127.0.0.1`)经 `SSL_CERT_FILE` 驱动的验证通过回环握手。
+- [ ] **T51.3** — 数据面与 insecure 变体:读/写按 `fd → SSL*` 侧表分流,停车纪律与握手相同;`close()` 走 `SSL_shutdown` 并释放;超时语义对齐 ocaml 侧 conn;`net_tls_connect_insecure` 是同一条路只关验证。
+- [ ] **T51.4** — 服务端:`net_listen_tls` 加载 PEM 对(失败时报 ocaml 同形的 `cannot load the TLS certificate for <host>:<port>`),监听 fd 登记上下文,`accept` 执行 `SSL_accept` 并登记连接;解释器与 `c` 各跑一个程序内的 TLS echo 服务端 + 客户端,落在本机 `127.0.0.1:0`。
+- [ ] **T51.5** — 金测:`examples/https_roundtrip` 打 harness 的 captive ocaml-ssl TLS 服务端,`expected.txt` 取自解释器、在 `c` 上逐字节一致,挂进 c_goldens;独立 OCaml 运行时补上它自己的 TLS 轮转测试——那条路实现了 TLS 却从来没测过。
+- [ ] **T51.6** — 文档:`docs/stdlib/net.md` 的 TLS 限制改成已实现的故事(ocaml-ssl / node:tls / 系统 OpenSSL-LibreSSL,写明版本下限),`docs/stdlib/http.md` 的「`https` 需要 TLS,而 `c` 拒绝」退场,zh-CN 镜像、闸门表与 `plan/README.md` 状态表同步。

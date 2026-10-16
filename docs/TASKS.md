@@ -41,6 +41,8 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M14 — CSV read/write | 47 | The bundled `csv` package — RFC 4180 records, UTF-8 only — resolving like any stdlib package, answering byte-for-byte on all five targets, with the API reference and runnable goldens. |
 | M15 — EmoUI | 48 | One declarative EmoUI tree renders on a terminal, a server-rendered page, a macOS/AppKit window, and a GTK 4 window (the browser DOM following its runtime path), each behind a thin per-platform entry; the shared app module is portable Emo, the composition syntax is identical everywhere, and per-platform component libraries share convergent names. The EmoUI packages live in this repository under `projects/emo-ui/`, and the compiler-side gates and the terminal-input package land in the tree (`CHECK.md`, the in-tree project layout). |
 | M16 — Value-family reclamation | 49 | The `c` target reclaims the value-semantic kinds, not only the identity cells: a long-running program's arena bytes and identity liveness stay flat across renders instead of rising per event, array growth is linear rather than quadratic, and every existing golden on every target stays byte-identical (`spike/arena-scope`, `CHECK.md`). |
+| M17 — Cross-target conformance | 50 | Conformance to promises already made, not new design: a spawned `c`-target process that raises dies alone, `send` delivers a snapshot, and `foreign def` refuses by name on `wasm` and `beam`; every existing golden on every target stays byte-identical (`CHECK.md`). |
+| M18 — TLS on the `c` target | 51 | The three existing `net` TLS builtins run on the default target: the C runtime lands them against the system OpenSSL/LibreSSL behind hand-declared prototypes and IR-keyed conditional linkage (a non-TLS build never links OpenSSL), the ocaml scheduler's semantics and reason conventions hold, and `http`'s `https://` works end-to-end on `c` (`CHECK.md`). |
 
 ## Design gates
 
@@ -68,6 +70,7 @@ before starting the gated work:
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
 | The in-tree project layout (`projects/`) | all of M15 | settled 2026-10-15 — `projects/<repo-name>/` at the repository root holds each named Emo project (EmoUI, EmoOS, EmoShell), named for the repository it can later be split out into; EmoUI stays not a standard-library package (`CHECK.md`) |
 | Terminal input's placement (T48.5) | T48.5 | settled 2026-10-15 — raw mode is a standard-library package in the `sqlite3` shape (package-carried `.c`/`.h` reached through `foreign def`, gated by `targets`), not a UI-framework or compiler-side artifact (`CHECK.md`, `docs/emo-ui.md`) |
+| TLS on the `c` target (linkage detection, prototypes, Windows) | step 51 | settled 2026-10-17 — the three `net` TLS builtins land in the C runtime against the system OpenSSL/LibreSSL: the `c` emitter's IR walk gates `EMO_HAS_TLS` + `-lssl -lcrypto`, the prototypes are hand-declared (no OpenSSL headers anywhere), the floor is the API subset (OpenSSL ≥ 1.1.1 / LibreSSL ≥ 3.5.0), and Windows stays refused (`CHECK.md`, `plan/step-51-tls-c-target.md`) |
 
 ---
 
@@ -1879,3 +1882,78 @@ byte-identical; and `CHECK.md` records all three as settled with the
       `typescript` target's share-on-send is recorded as the entry's open
       remainder rather than fixed here, because the fix belongs with the
       browser-runtime split (T48.10).
+
+---
+
+## M18 — TLS on the `c` target
+
+TLS was never missing from the standard library — `net_tls_connect`,
+`net_tls_connect_insecure` and `net_listen_tls` exist as builtins, the
+interpreter's scheduler and the standalone OCaml runtime implement them
+through the opam `ssl` library, `typescript` maps them onto
+`node:tls`, and `http`'s `https://` routes through `net.tls_connect`
+in plain Emo source. The gap was the `c` target, the default: the
+three names fell to `emo_unsupported`, so `https` was dead precisely
+where `emo build` runs by default. The work is conformance, not
+surface: the C runtime lands the three builtins against the system
+OpenSSL/LibreSSL with the ocaml scheduler as the semantic reference,
+the linkage keys on IR use so a program that never touches TLS never
+links OpenSSL, the prototypes are hand-declared because no target
+platform owes the build OpenSSL headers, and the user-level-FFI route
+was evaluated and refused (`CHECK.md`).
+
+### Step 51 — TLS on the `c` target · `plan/step-51-tls-c-target.md`
+
+**Prereq:** none.
+**Done when:** an `https://` request runs end-to-end on `c` (the
+captive TLS server, byte-identical to the interpreter's
+`expected.txt`); the verified handshake, the verify-fail pin, the
+insecure roundtrip and the server-side TLS echo are green on the
+interpreter and on `c`; a non-TLS `c` build neither links nor requires
+OpenSSL (the `nm` pin) and every existing golden on every target stays
+byte-identical; the runtime-manufactured reason strings are
+byte-identical across interp / `c` / the standalone ocaml runtime; and
+the docs carry the story (`docs/stdlib/net.md`, `docs/stdlib/http.md`,
+the zh-CN mirrors).
+
+- [ ] **T51.1** — The linkage gate: the fenced TLS section in
+      `emo_c_runtime.c`/`.h` — hand-written prototypes plus the frozen
+      constants, real bodies under `EMO_HAS_TLS` and `emo_unsupported`
+      bodies without — the emitter's explicit arms for the three names
+      with its IR-walk `uses_tls` flag, and the CLI's conditional
+      `-DEMO_HAS_TLS` + `-lssl -lcrypto` through the cclib slot behind
+      a pre-flight probe whose failure names the fix; the c_goldens
+      `nm` pin proving a non-TLS build references no `SSL_` symbol.
+- [ ] **T51.2** — The client handshake: TCP via the existing
+      `emo_net_connect`, then nonblocking `SSL_connect` parking on
+      `WANT_READ`/`WANT_WRITE` (a wait-writable hook joins the
+      scheduler's poll loop); `TLS_client_method`, the TLS 1.2–1.3
+      window, the system trust store, SNI, `SSL_set1_host` +
+      `SSL_get_verify_result`, the version-floor refusal carrying the
+      library's own version string, the
+      `the TLS handshake with <host>: ` reason prefix, and the CA +
+      server-certificate fixture (`SAN=localhost,127.0.0.1`) with a
+      verified loopback handshake driven through `SSL_CERT_FILE`.
+- [ ] **T51.3** — The data plane and the insecure variant: read/write
+      route through the `fd → SSL*` side table with the same parking
+      discipline, `close()` runs `SSL_shutdown` and frees, timeouts
+      match the ocaml conn's semantics, and
+      `net_tls_connect_insecure` is the same path with verification
+      off.
+- [ ] **T51.4** — The server side: `net_listen_tls` loads the PEM pair
+      (refusing with the ocaml-matching
+      `cannot load the TLS certificate for <host>:<port>` shape),
+      listeners register fd → context, `accept` performs `SSL_accept`
+      and registers the conn; an in-program TLS echo server + client
+      on `127.0.0.1:0`, on the interpreter and on `c`.
+- [ ] **T51.5** — The goldens: `examples/https_roundtrip` against the
+      harness's captive ocaml-ssl TLS server, `expected.txt` taken
+      from the interpreter and byte-identical on `c`, registered in
+      c_goldens; a TLS roundtrip test for the standalone OCaml
+      runtime, which implemented TLS but never tested it.
+- [ ] **T51.6** — Docs: `docs/stdlib/net.md`'s TLS limitation becomes
+      the implemented story (ocaml-ssl / node:tls / system
+      OpenSSL-LibreSSL, with the floor stated),
+      `docs/stdlib/http.md`'s "`https` needs TLS, which `c` refuses"
+      retired, the zh-CN mirrors, the gates table and
+      `plan/README.md`'s status table updated.
