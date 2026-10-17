@@ -2859,6 +2859,157 @@ let read_file path =
   close_in ic;
   s
 
+let contains_sub text sub =
+  let n = String.length text and m = String.length sub in
+  let rec go i =
+    if i + m > n then false
+    else if String.sub text i m = sub then true
+    else go (i + 1)
+  in
+  m = 0 || go 0
+
+(* ---- `emo deps add`: pin in the manifest, lock the resolution ---- *)
+
+let deps_add_tests =
+  let write dir rel content =
+    let oc = open_out_bin (Filename.concat dir rel) in
+    output_string oc content;
+    close_out oc
+  in
+  let with_env var value f =
+    let old = Sys.getenv_opt var in
+    Unix.putenv var value;
+    Fun.protect
+      ~finally:(fun () ->
+          match old with
+          | Some v -> Unix.putenv var v
+          | None -> Unix.putenv var "")
+      f
+  in
+  let app ?(deps_block = "  deps {}\n") () =
+    let dir = Filename.concat scratch (unique "add-app") in
+    ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+    write dir "package.emo"
+      (Printf.sprintf
+         {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["c"]
+
+%s}
+|}
+         deps_block);
+    write dir "main.emo" "println(1)\n";
+    dir
+  in
+  let fixture_registry f =
+    let dir = Filename.concat scratch (unique "add-registry") in
+    let pkg = Filename.concat dir "david/hack_it/0.2.3" in
+    ignore (Sys.command ("mkdir -p " ^ Filename.quote pkg));
+    write pkg "package.emo"
+      {|package {
+  name = "david/hack_it"
+  version = "0.2.3"
+  targets = ["c"]
+
+  deps {}
+}
+|};
+    write pkg "hack_it.emo" "def boom() Int64 {\n  return 7\n}\n";
+    with_env "EMO_REGISTRY" dir (fun () ->
+        with_env "EMO_CACHE_DIR" (Filename.concat dir "cache") f)
+  in
+  [
+    tc "add pins a standard-library package and locks its closure" (fun () ->
+        let dir = app () in
+        in_dir dir (fun () ->
+            Alcotest.(check int)
+              "exits 0" 0
+              (Emo_cli.deps_add ~name:"json" ~version:"0.1.0");
+            let manifest = read_file "package.emo" in
+            Alcotest.(check bool)
+              "the manifest carries the pin" true
+              (contains_sub manifest "\"json\" = \"0.1.0\"");
+            Alcotest.(check bool)
+              "the manifest around it is untouched" true
+              (contains_sub manifest "name = \"local/app\""
+              && contains_sub manifest "targets = [\"c\"]");
+            let lock = read_file "package.lock" in
+            Alcotest.(check bool)
+              "the lockfile carries the closure" true
+              (contains_sub lock "json 0.1.0 " && contains_sub lock "float 0.1.0 ")));
+    tc "add pins a scoped package from the registry" (fun () ->
+        fixture_registry (fun () ->
+            let dir = app () in
+            in_dir dir (fun () ->
+                Alcotest.(check int)
+                  "exits 0" 0
+                  (Emo_cli.deps_add ~name:"david/hack_it" ~version:"0.2.3");
+                Alcotest.(check bool)
+                  "the manifest carries the pin" true
+                  (contains_sub (read_file "package.emo") "\"david/hack_it\" = \"0.2.3\"");
+                Alcotest.(check bool)
+                  "the lockfile carries it" true
+                  (contains_sub (read_file "package.lock") "david/hack_it 0.2.3 "))));
+    tc "a manifest with no deps block gains one" (fun () ->
+        let dir =
+          app
+            ~deps_block:"  link = []\n"
+            ()
+        in
+        in_dir dir (fun () ->
+            Alcotest.(check int)
+              "exits 0" 0
+              (Emo_cli.deps_add ~name:"json" ~version:"0.1.0");
+            Alcotest.(check bool)
+              "a deps block is born" true
+              (contains_sub (read_file "package.emo") "deps {")));
+    tc "an already-pinned package is refused, manifest untouched" (fun () ->
+        let dir = app () in
+        in_dir dir (fun () ->
+            ignore (Emo_cli.deps_add ~name:"json" ~version:"0.1.0");
+            let before = read_file "package.emo" in
+            Alcotest.(check int)
+              "second add exits 65" 65
+              (Emo_cli.deps_add ~name:"json" ~version:"0.2.0");
+            Alcotest.(check string)
+              "the manifest is unchanged" before (read_file "package.emo")));
+    tc "a version the registry does not publish is refused" (fun () ->
+        let dir = app () in
+        in_dir dir (fun () ->
+            Alcotest.(check int)
+              "exits 65" 65
+              (Emo_cli.deps_add ~name:"json" ~version:"9.9.9");
+            Alcotest.(check bool)
+              "no lockfile is written" false
+              (Sys.file_exists "package.lock")));
+    tc "a malformed version is refused" (fun () ->
+        let dir = app () in
+        in_dir dir (fun () ->
+            Alcotest.(check int)
+              "exits 65" 65
+              (Emo_cli.deps_add ~name:"json" ~version:"latest");
+            Alcotest.(check bool)
+              "no lockfile is written" false
+              (Sys.file_exists "package.lock")));
+    tc "a one-line deps block is refused, manifest untouched" (fun () ->
+        let dir = app ~deps_block:"  deps { \"json\" = \"0.1.0\" }\n" () in
+        in_dir dir (fun () ->
+            Alcotest.(check int)
+              "exits 65" 65
+              (Emo_cli.deps_add ~name:"base64" ~version:"0.1.0");
+            Alcotest.(check bool)
+              "no second deps block" false
+              (contains_sub (read_file "package.emo") "deps {\n")));
+    tc "no manifest in the directory exits 66" (fun () ->
+        let dir = Filename.concat scratch (unique "add-empty") in
+        ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+        in_dir dir (fun () ->
+            Alcotest.(check int)
+              "exits 66" 66
+              (Emo_cli.deps_add ~name:"json" ~version:"0.1.0")));
+  ]
+
 let new_tests =
   [
     tc "the scaffold is green the moment it exists" (fun () ->
@@ -3242,6 +3393,7 @@ let () =
       ("login", login_tests);
       ("http_pull", http_pull_tests);
       ("locked", locked_tests);
+      ("deps_add", deps_add_tests);
       ("new", new_tests);
       ("test_cmd", test_cmd_tests);
       ("check", check_tests);

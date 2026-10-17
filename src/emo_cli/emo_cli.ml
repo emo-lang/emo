@@ -1022,25 +1022,44 @@ let test_cmd =
 
 (* `emo deps`: regeneration is an explicit command. A run writes the
    lockfile only when none exists — an existing one is never rewritten. *)
+
+(* The manifest of the project at the working directory, for the deps
+   commands: a missing one exits 66, a malformed one renders and exits
+   65. *)
+let manifest_here_or_exit ~(color : bool) : string * Emo_pkg.manifest =
+  match Emo_project.manifest_here () with
+  | Some path -> (
+      match
+        Emo_pkg.parse_manifest ~file:path
+          ~source:(Emo_project.read_file path)
+      with
+      | m -> (path, m)
+      | exception Emo_pkg.Manifest_error d ->
+          render_errors ~color ~error_limit:20 [ d ];
+          exit 65)
+  | None ->
+      prerr_endline "no package.emo in the current directory";
+      exit 66
+
+(* Writes package.lock and prints the resolution — the shared tail of the
+   deps commands that establish one. *)
+let write_lock ~(dir : string) (entries : Emo_pkg.Lockfile.entry list) : unit
+    =
+  Emo_pkg.Lockfile.write
+    ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
+    entries;
+  List.iter
+    (fun e ->
+      Printf.printf "%s %s %s\n" e.Emo_pkg.Lockfile.dep
+        (Emo_pkg.Version.to_string e.Emo_pkg.Lockfile.version)
+        e.Emo_pkg.Lockfile.checksum)
+    entries
+
 let deps_resolve ~(name : string option) : int =
   let dir = Sys.getcwd () in
   let color = Unix.isatty Unix.stderr in
   try
-    let manifest =
-      match Emo_project.manifest_here () with
-      | Some path -> (
-          match
-            Emo_pkg.parse_manifest ~file:path
-              ~source:(Emo_project.read_file path)
-          with
-          | m -> m
-          | exception Emo_pkg.Manifest_error d ->
-              render_errors ~color ~error_limit:20 [ d ];
-              exit 65)
-      | None ->
-          prerr_endline "no package.emo in the current directory";
-          exit 66
-    in
+    let _, manifest = manifest_here_or_exit ~color in
     (match name with
     | Some n ->
         if not (List.mem_assoc n manifest.Emo_pkg.deps) then (
@@ -1050,15 +1069,7 @@ let deps_resolve ~(name : string option) : int =
     let entries =
       Emo_project.resolve_deps ~manifest ~manifest_dir:dir ~target:"c"
     in
-    Emo_pkg.Lockfile.write
-      ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
-      entries;
-    List.iter
-      (fun e ->
-        Printf.printf "%s %s %s\n" e.Emo_pkg.Lockfile.dep
-          (Emo_pkg.Version.to_string e.Emo_pkg.Lockfile.version)
-          e.Emo_pkg.Lockfile.checksum)
-      entries;
+    write_lock ~dir entries;
     Cmd.Exit.ok
   with Emo_project.Static_errors diagnostics ->
     render_errors ~color ~error_limit:20 diagnostics;
@@ -1094,6 +1105,156 @@ let deps_update_cmd =
     (Cmd.info "update" ~doc:"Regenerate package.lock after changing a pin.")
     Term.(const (fun n -> deps_resolve ~name:(Some n)) $ name)
 
+(* Inserts `"name" = "version"` into the manifest's deps block, leaving
+   the rest of the file byte-for-byte: after the `deps {` opener when the
+   project has one; an empty `deps {}` on one line becomes the three-line
+   block; a project with none gains one before the package's closing
+   brace. None when the shape is not editable in place — an opener that
+   carries its entries on one line — so the caller refuses rather than
+   reformat the manifest; a second block beside a one-line one parses
+   (the reader merges them), which is exactly why the shape check, not
+   the re-parse, is what refuses it. *)
+let insert_dep (source : string) (name : string) (version : string) :
+    string option =
+  let lines = Array.of_list (String.split_on_char '\n' source) in
+  let trimmed line = String.trim line in
+  let starts_with prefix t =
+    let m = String.length prefix in
+    String.length t >= m && String.sub t 0 m = prefix
+  in
+  let indent_of line =
+    let n = ref 0 in
+    while !n < String.length line && line.[!n] = ' ' do incr n done;
+    !n
+  in
+  let pad n = String.make n ' ' in
+  let entry_line indent =
+    pad indent ^ Printf.sprintf "\"%s\" = \"%s\"" name version
+  in
+  let block_lines indent =
+    [| pad indent ^ "deps {"; entry_line (indent + 2); pad indent ^ "}" |]
+  in
+  (* A deps opener of any shape: a line the insert can grow, or a
+     one-line block carrying entries it must refuse. *)
+  let deps_shaped line =
+    let t = trimmed line in
+    starts_with "deps " t || starts_with "deps{" t
+  in
+  let rec find_shaped i =
+    if i >= Array.length lines then None
+    else if deps_shaped lines.(i) then Some i
+    else find_shaped (i + 1)
+  in
+  let splice ~at ~remove block =
+    let keep = Array.sub lines 0 at in
+    let rest =
+      Array.sub lines (at + remove) (Array.length lines - at - remove)
+    in
+    String.concat "\n"
+      (Array.to_list (Array.append (Array.append keep block) rest))
+  in
+  (match find_shaped 0 with
+  | Some i -> (
+      let indent = indent_of lines.(i) in
+      match trimmed lines.(i) with
+      | "deps {" | "deps{" ->
+          Some (splice ~at:(i + 1) ~remove:0 [| entry_line (indent + 2) |])
+      | "deps {}" | "deps{}" -> Some (splice ~at:i ~remove:1 (block_lines indent))
+      | _ -> None)
+  | None -> (
+      let last_close =
+        let best = ref None in
+        Array.iteri
+          (fun i line -> if String.equal (trimmed line) "}" then best := Some i)
+          lines;
+        !best
+      in
+      match last_close with
+      | Some i -> Some (splice ~at:i ~remove:0 (block_lines (indent_of lines.(i))))
+      | None -> None))
+
+(* `emo deps add <package> <version>`: pin a package in the manifest and
+   lock the resolution. The pin is proven against the registry before
+   the manifest moves — the resolve runs on the candidate dependency set
+   — and the edited manifest is re-parsed and compared before it is
+   written, so nothing but the intended line ever reaches disk. *)
+let deps_add ~(name : string) ~(version : string) : int =
+  let dir = Sys.getcwd () in
+  let color = Unix.isatty Unix.stderr in
+  let exception Refusal of int * string in
+  let refuse code text = raise (Refusal (code, text)) in
+  try
+    let path, manifest, source =
+      match Emo_project.manifest_here () with
+      | None -> refuse 66 "no package.emo in the current directory"
+      | Some path -> (
+          let source = Emo_project.read_file path in
+          match Emo_pkg.parse_manifest ~file:path ~source with
+          | m -> (path, m, source)
+          | exception Emo_pkg.Manifest_error d ->
+              render_errors ~color ~error_limit:20 [ d ];
+              refuse 65 "the manifest could not be read")
+    in
+    let pinned_version =
+      match Emo_pkg.Version.parse version with
+      | Ok v -> v
+      | Error m -> refuse 65 m
+    in
+    (match List.assoc_opt name manifest.Emo_pkg.deps with
+    | Some pinned ->
+        refuse
+          65
+          (Printf.sprintf
+             "`%s` is already pinned at %s — edit package.emo to change the pin"
+             name
+             (Emo_pkg.Version.to_string pinned))
+    | None -> ());
+    let candidate =
+      { manifest with
+        Emo_pkg.deps = manifest.Emo_pkg.deps @ [ (name, pinned_version) ]
+      }
+    in
+    let entries =
+      Emo_project.resolve_deps ~manifest:candidate ~manifest_dir:dir
+        ~target:"c"
+    in
+    let unexpected_shape () =
+      refuse
+        65
+        "package.emo's deps block does not have the expected shape — add the \
+         pin by hand"
+    in
+    (match insert_dep source name version with
+    | None -> unexpected_shape ()
+    | Some source -> (
+        let pins m = List.sort compare m.Emo_pkg.deps in
+        match Emo_pkg.parse_manifest ~file:path ~source with
+        | m when pins m = pins candidate ->
+            let oc = open_out_bin path in
+            output_string oc source;
+            close_out oc
+        | _ -> unexpected_shape ()));
+    write_lock ~dir entries;
+    Cmd.Exit.ok
+  with
+  | Refusal (code, text) ->
+      prerr_endline text;
+      code
+  | Emo_project.Static_errors diagnostics ->
+      render_errors ~color ~error_limit:20 diagnostics;
+      65
+
+let deps_add_cmd =
+  let name =
+    Arg.(required & pos 0 (some string) None & info [] ~docv:"PACKAGE")
+  in
+  let version =
+    Arg.(required & pos 1 (some string) None & info [] ~docv:"VERSION")
+  in
+  Cmd.v
+    (Cmd.info "add" ~doc:"Pin a package in the manifest and write package.lock.")
+    Term.(const (fun n v -> deps_add ~name:n ~version:v) $ name $ version)
+
 let deps_list_cmd =
   Cmd.v
     (Cmd.info "list" ~doc:"List the locked dependencies.")
@@ -1102,7 +1263,7 @@ let deps_list_cmd =
 let deps =
   Cmd.group
     (Cmd.info "deps" ~doc:"Manage dependencies.")
-    [ deps_resolve_cmd; deps_update_cmd; deps_list_cmd ]
+    [ deps_add_cmd; deps_resolve_cmd; deps_update_cmd; deps_list_cmd ]
 
 (* `emo emoji publish`: pack the package rooted at the working directory and POST
    it to the registry. The upload is dogfooded: the request is made by the
@@ -1750,7 +1911,8 @@ let scaffold ~(path : string) : int =
     // "json" = "0.1.0"       then:  require "json"       binds `json`
     // "acme/leaf" = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
   }
-  // After editing deps: `emo deps resolve` writes package.lock,
+  // After editing deps: `emo deps add <name> <version>` pins a package
+  // and locks it, `emo deps resolve` writes package.lock,
   // `emo deps update <name>` regenerates it after one pin changes, and
   // `emo deps list` shows the locked versions — builds never rewrite
   // the lockfile silently.
@@ -1868,7 +2030,8 @@ let scaffold_package ~(name : string) ~(path : string) : int =
     // "json" = "0.1.0"       then:  require "json"       binds `json`
     // "acme/leaf" = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
   }
-  // After editing deps: `emo deps resolve` writes package.lock,
+  // After editing deps: `emo deps add <name> <version>` pins a package
+  // and locks it, `emo deps resolve` writes package.lock,
   // `emo deps update <name>` regenerates it after one pin changes, and
   // `emo deps list` shows the locked versions — builds never rewrite
   // the lockfile silently.

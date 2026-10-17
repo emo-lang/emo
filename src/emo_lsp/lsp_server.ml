@@ -1114,7 +1114,8 @@ let handle_execute_command (state : state) (params : Yojson.Safe.t) :
     // "json" = "0.1.0"       then:  require "json"       binds `json`
     // "acme/leaf" = "1.0.0"  then:  require "acme/leaf"  binds `leaf`
   }
-  // After editing deps: `emo deps resolve` writes package.lock,
+  // After editing deps: `emo deps add <name> <version>` pins a package
+  // and locks it, `emo deps resolve` writes package.lock,
   // `emo deps update <name>` regenerates it after one pin changes, and
   // `emo deps list` shows the locked versions — builds never rewrite
   // the lockfile silently.
