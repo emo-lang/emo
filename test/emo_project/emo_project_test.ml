@@ -2008,8 +2008,8 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
 let stdlib_require_tests =
   [
     tc
-      "an unscoped require resolves the standard library without a manifest pin"
-      (fun () ->
+      "an unscoped require without a manifest pin is E5006 naming the version \
+       to add" (fun () ->
         ignore (use_workspace_registry ());
         let entry =
           with_project
@@ -2037,19 +2037,29 @@ println("ok")
             "main.emo"
         in
         let dir = Filename.dirname entry in
-        let output =
-          capture_output (fun () ->
-              ignore
-                (Emo_project.run_entry ~entry_file:entry ~check:true
-                   ~sched:Emo_project.Own ()))
-        in
-        Alcotest.(check string) "output" "ok\n" output;
+        (match
+           Emo_project.run_entry ~entry_file:entry ~check:true
+             ~sched:Emo_project.Own ()
+         with
+        | _ -> Alcotest.fail "expected E5006"
+        | exception Emo_project.Static_errors ds ->
+            if not (has_code ds "E5006") then
+              Alcotest.fail ("codes: " ^ codes_dump ds);
+            Alcotest.(check bool)
+              "the hint names the pin to add" true
+              (List.exists
+                 (fun (d : Emo_support.Diagnostic.t) ->
+                   match d.Emo_support.Diagnostic.hint with
+                   | Some hint ->
+                       contains_substring hint "add `\"sync\" = \"0.1.0\"`"
+                   | None -> false)
+                 ds));
         Alcotest.(check bool)
-          "an implicit stdlib pin never enters package.lock" false
+          "a refused run writes no package.lock" false
           (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename)));
     tc
-      "a standard-library package resolves its own transitive dependency \
-       implicitly" (fun () ->
+      "a pinned standard-library package resolves its own transitive \
+       dependency" (fun () ->
         ignore (use_workspace_registry ());
         let entry =
           with_project
@@ -2060,7 +2070,9 @@ println("ok")
   version = "0.1.0"
   targets = ["ocaml", "c"]
 
-  deps {}
+  deps {
+    "json" = "0.1.0"
+  }
 }
 |}
               );
@@ -2103,8 +2115,7 @@ println("ok")
         | exception Emo_project.Static_errors ds ->
             if not (has_code ds "E5009") then
               Alcotest.fail ("codes: " ^ codes_dump ds));
-    tc "an explicit manifest pin still overrides the implicit resolution"
-      (fun () ->
+    tc "a pinned standard-library package resolves and runs" (fun () ->
         ignore (use_workspace_registry ());
         let entry =
           with_project

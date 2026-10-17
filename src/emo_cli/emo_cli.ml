@@ -1691,9 +1691,9 @@ let scaffold ~(path : string) : int =
 
   // Dependencies — one per line, as  "name" = "exact version".
   // Versions are exact major.minor.patch pins, never ranges. The name
-  // is what `require` names in your .emo files: a standard-library
-  // short name like "json" needs no entry (the compiler ships it); a
-  // registry package's owner/name is pinned here. Either way the
+  // is what `require` names in your .emo files, and every one is
+  // pinned here: a standard-library short name like "json" (the
+  // compiler ships it) and a registry package's owner/name alike. The
   // package binds in code under its short name.
   deps {
     // "json" = "0.1.0"       then:  require "json"       binds `json`
@@ -1809,9 +1809,9 @@ let scaffold_package ~(name : string) ~(path : string) : int =
 
   // Dependencies — one per line, as  "name" = "exact version".
   // Versions are exact major.minor.patch pins, never ranges. The name
-  // is what `require` names in your .emo files: a standard-library
-  // short name like "json" needs no entry (the compiler ships it); a
-  // registry package's owner/name is pinned here. Either way the
+  // is what `require` names in your .emo files, and every one is
+  // pinned here: a standard-library short name like "json" (the
+  // compiler ships it) and a registry package's owner/name alike. The
   // package binds in code under its short name.
   deps {
     // "json" = "0.1.0"       then:  require "json"       binds `json`

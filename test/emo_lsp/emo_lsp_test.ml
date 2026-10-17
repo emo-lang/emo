@@ -228,10 +228,7 @@ let test_dependency_modules () =
         \  deps {}\n\
          }\n";
       write (Filename.concat pkg "foo.emo") "def bar() Int64 {\n  return 1\n}\n";
-      let modules =
-        Lsp_index.dependency_modules ~root ~registry:(Some reg)
-          ~project_modules:[]
-      in
+      let modules = Lsp_index.dependency_modules ~root ~registry:(Some reg) in
       let paths = List.map fst modules in
       Alcotest.(check bool)
         "package file registers under its short name" true
@@ -252,39 +249,59 @@ let diagnostic_codes ds =
     (fun (d : Lsp_server.Diagnostic.t) -> d.Lsp_server.Diagnostic.code)
     ds
 
-(* A scoped require still needs a manifest pin (E5006); an unscoped one needs
-   no entry, but a name the registry does not publish is E5009. *)
+(* Every require needs a manifest pin: a scoped name and a standard-library
+   short name alike are E5006, the latter's hint naming the version to add;
+   a name the registry does not publish is E5009. *)
 let test_missing_dep_diagnostics () =
   with_temp_dir (fun root ->
       let reg = Filename.concat root "registry" in
       Unix.mkdir reg 0o755;
       Unix.mkdir (Filename.concat reg "sync") 0o755;
       Unix.mkdir (Filename.concat reg "sync/0.1.0") 0o755;
-      write
-        (Filename.concat root "package.emo")
-        "package {\n\
-        \  name = \"local/demo\"\n\
-        \  version = \"0.1.0\"\n\
-        \  targets = [\"ocaml\"]\n\
-        \  deps {}\n\
-         }\n";
-      let check source =
+      let manifest deps =
+        write
+          (Filename.concat root "package.emo")
+          (Printf.sprintf
+             "package {\n\
+             \  name = \"local/demo\"\n\
+             \  version = \"0.1.0\"\n\
+             \  targets = [\"ocaml\"]\n\
+             \  deps {%s}\n\
+              }\n"
+             deps)
+      in
+      let diagnostics source =
         Lsp_server.missing_dep_diagnostics ~registry:reg root
           (parse_items source)
-        |> diagnostic_codes
       in
+      let check source = diagnostic_codes (diagnostics source) in
+      manifest "";
       Alcotest.(check (list string))
         "a scoped require needs a pin" [ "E5006" ]
         (check "require \"acme/tools\"\n");
       Alcotest.(check (list string))
-        "an unpinned stdlib require is fine" []
+        "an unpinned stdlib require needs a pin too" [ "E5006" ]
         (check "require \"sync\"\n");
+      (match diagnostics "require \"sync\"\n" with
+      | [ d ] ->
+          Alcotest.(check (option string))
+            "the hint names the version to add"
+            (Some "add `\"sync\" = \"0.1.0\"` to the manifest's deps block")
+            d.Lsp_server.Diagnostic.hint
+      | _ -> Alcotest.fail "expected one diagnostic");
       Alcotest.(check (list string))
         "an unknown unscoped name" [ "E5009" ]
-        (check "require \"nope\"\n"))
+        (check "require \"nope\"\n");
+      manifest " \"sync\" = \"0.1.0\" ";
+      Alcotest.(check (list string))
+        "a pinned stdlib require is fine" []
+        (check "require \"sync\"\n"))
 
 (* ---- Protocol -------------------------------------------------------- *)
 
+(* The index follows the manifest's pins and nothing else: an unscoped
+   require the manifest does not pin contributes no modules (the compiler
+   refuses it), and the same require pinned registers its package. *)
 let test_stdlib_requires_indexed () =
   with_temp_dir (fun root ->
       let reg = Filename.concat root "registry" in
@@ -292,14 +309,18 @@ let test_stdlib_requires_indexed () =
       let pkg = Filename.concat reg "sync/0.1.0" in
       Unix.mkdir (Filename.concat reg "sync") 0o755;
       Unix.mkdir pkg 0o755;
-      write
-        (Filename.concat root "package.emo")
-        "package {\n\
-        \  name = \"local/demo\"\n\
-        \  version = \"0.1.0\"\n\
-        \  targets = [\"ocaml\"]\n\
-        \  deps {}\n\
-         }\n";
+      let manifest deps =
+        write
+          (Filename.concat root "package.emo")
+          (Printf.sprintf
+             "package {\n\
+             \  name = \"local/demo\"\n\
+             \  version = \"0.1.0\"\n\
+             \  targets = [\"ocaml\"]\n\
+             \  deps {%s}\n\
+              }\n"
+             deps)
+      in
       write
         (Filename.concat pkg "package.emo")
         "package {\n\
@@ -312,14 +333,17 @@ let test_stdlib_requires_indexed () =
         (Filename.concat pkg "sync.emo")
         "def wait_group(n Int64) Pid {\n  return self_pid()\n}\n";
       write (Filename.concat root "main.emo") "require \"sync\"\n";
-      let project_modules = Lsp_index.scan root in
-      let modules =
-        Lsp_index.dependency_modules ~root ~registry:(Some reg) ~project_modules
+      let indexed () =
+        Lsp_index.dependency_modules ~root ~registry:(Some reg)
+        |> List.map fst
+        |> List.mem [ "sync" ]
       in
-      let paths = List.map fst modules in
+      manifest "";
       Alcotest.(check bool)
-        "an unpinned stdlib require registers its package" true
-        (List.mem [ "sync" ] paths))
+        "an unpinned stdlib require registers nothing" false (indexed ());
+      manifest " \"sync\" = \"0.1.0\" ";
+      Alcotest.(check bool)
+        "a pinned stdlib require registers its package" true (indexed ()))
 
 (* A dependency published from a project carries a `main.emo`: that file is
    the module a `require` binds, and the index mounts it under its own name
@@ -337,7 +361,7 @@ let test_dependency_main_entry () =
         \  name = \"local/demo\"\n\
         \  version = \"0.1.0\"\n\
         \  targets = [\"ocaml\"]\n\
-        \  deps {}\n\
+        \  deps { \"foo\" = \"0.1.0\" }\n\
          }\n";
       write
         (Filename.concat reg "foo/0.1.0/package.emo")
@@ -351,10 +375,7 @@ let test_dependency_main_entry () =
         (Filename.concat reg "foo/0.1.0/main.emo")
         "def bar() Int64 {\n  return 1\n}\n";
       write (Filename.concat root "main.emo") "require \"foo\"\n";
-      let project_modules = Lsp_index.scan root in
-      let modules =
-        Lsp_index.dependency_modules ~root ~registry:(Some reg) ~project_modules
-      in
+      let modules = Lsp_index.dependency_modules ~root ~registry:(Some reg) in
       let paths = List.map fst modules in
       Alcotest.(check bool)
         "the entry file is the module a require binds" true
@@ -378,7 +399,7 @@ let test_dependency_members_resolve () =
         \  name = \"local/demo\"\n\
         \  version = \"0.1.0\"\n\
         \  targets = [\"ocaml\"]\n\
-        \  deps {}\n\
+        \  deps { \"foo\" = \"0.1.0\" }\n\
          }\n";
       write
         (Filename.concat reg "foo/0.1.0/package.emo")
@@ -517,7 +538,8 @@ let () =
           tc "locals" test_locals_not_members;
           tc "members" test_members_of;
           tc "dependency modules" test_dependency_modules;
-          tc "unpinned stdlib require" test_stdlib_requires_indexed;
+          tc "stdlib requires index only when pinned"
+            test_stdlib_requires_indexed;
           tc "dependency main entry" test_dependency_main_entry;
           tc "missing dep diagnostics" test_missing_dep_diagnostics;
           tc "dependency members resolve" test_dependency_members_resolve;

@@ -150,51 +150,69 @@ let manifest_deps (root : string) : (string * Emo_pkg.Version.t) list =
       | m -> m.Emo_pkg.deps
       | exception Emo_pkg.Manifest_error _ -> [])
 
-(* A scoped require (`acme/tools`) with no manifest entry is a compile
-   error in the compiler (E5006); surface it here as a quick-fixable
-   diagnostic. An unscoped require names a standard-library package and
-   needs no pin; a name the registry does not publish is E5009. *)
+(* Every require pairs with a manifest pin — a scoped name (`acme/tools`)
+   and a standard-library short name alike — and a missing pin is a
+   compile error in the compiler (E5006); surface it here as a
+   quick-fixable diagnostic. For a standard-library name the hint names
+   the version to add, read from a filesystem registry when one is
+   configured and from the bundled standard library otherwise (an HTTP
+   endpoint never hosts the top-level names, and the editor never waits
+   on the network); a name the registry does not publish is E5009. *)
 let missing_dep_diagnostics ?(registry : string option) (root : string)
     (items : Ast.item list) : Diagnostic.t list =
   if not (Lsp_util.file_exists (Filename.concat root "package.emo")) then []
   else
     let deps = manifest_deps root in
+    let stdlib_registry =
+      match registry with
+      | Some endpoint when Lsp_util.is_directory endpoint ->
+          Emo_pkg.Registry.Fs_dir endpoint
+      | _ -> Emo_pkg.Registry.Embedded
+    in
     List.filter_map
       (fun (name, span) ->
-        if String.contains name '/' then
-          if List.mem_assoc name deps then None
-          else
-            Some
-              {
-                Diagnostic.severity = Error;
-                code = Some "E5006";
-                message =
-                  Printf.sprintf
-                    "`require \"%s\"` is not listed in package.emo deps" name;
-                span;
-                hint = Some "add the package to the manifest's deps block";
-              }
+        if List.mem_assoc name deps then None
+        else if String.contains name '/' then
+          Some
+            {
+              Diagnostic.severity = Error;
+              code = Some "E5006";
+              message =
+                Printf.sprintf
+                  "`require \"%s\"` is not listed in package.emo deps" name;
+              span;
+              hint = Some "add the package to the manifest's deps block";
+            }
         else
-          match registry with
-          | None -> None
-          | Some endpoint -> (
-              match
-                Emo_pkg.Registry.versions (Emo_pkg.Registry.Fs_dir endpoint)
-                  ~name
-              with
-              | [] ->
-                  Some
-                    {
-                      Diagnostic.severity = Error;
-                      code = Some "E5009";
-                      message =
-                        Printf.sprintf
-                          "`require \"%s\"` names no standard-library package"
-                          name;
-                      span;
-                      hint = Some "check the package name";
-                    }
-              | _ -> None))
+          match Emo_pkg.Registry.versions stdlib_registry ~name with
+          | [] ->
+              Some
+                {
+                  Diagnostic.severity = Error;
+                  code = Some "E5009";
+                  message =
+                    Printf.sprintf
+                      "`require \"%s\"` names no standard-library package" name;
+                  span;
+                  hint = Some "check the package name";
+                }
+          | versions ->
+              let highest = List.nth versions (List.length versions - 1) in
+              Some
+                {
+                  Diagnostic.severity = Error;
+                  code = Some "E5006";
+                  message =
+                    Printf.sprintf
+                      "`require \"%s\"` is not listed in package.emo deps" name;
+                  span;
+                  hint =
+                    Some
+                      (Printf.sprintf
+                         "add `\"%s\" = \"%s\"` to the manifest's deps block"
+                         name
+                         (Emo_pkg.Version.to_string highest));
+                })
       (requires_of items)
 
 let manifest_diagnostics ~(file : string) (text : string) : Diagnostic.t list =
@@ -1088,9 +1106,9 @@ let handle_execute_command (state : state) (params : Yojson.Safe.t) :
 
   // Dependencies — one per line, as  "name" = "exact version".
   // Versions are exact major.minor.patch pins, never ranges. The name
-  // is what `require` names in your .emo files: a standard-library
-  // short name like "json" needs no entry (the compiler ships it); a
-  // registry package's owner/name is pinned here. Either way the
+  // is what `require` names in your .emo files, and every one is
+  // pinned here: a standard-library short name like "json" (the
+  // compiler ships it) and a registry package's owner/name alike. The
   // package binds in code under its short name.
   deps {
     // "json" = "0.1.0"       then:  require "json"       binds `json`

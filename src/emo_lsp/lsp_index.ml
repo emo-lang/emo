@@ -471,40 +471,17 @@ let build (root : string) : t =
 
 let cache : (string, string * t) Hashtbl.t = Hashtbl.create 4
 
-(* Unscoped requires name standard-library packages: the official stdlib
-   owns the top-level short names, ships with the compiler, and needs no
-   manifest pin (they resolve automatically at build time). The index
-   still has to carry their modules, so the editor can resolve `sync`,
-   `json`, and friends. *)
-let stdlib_requires (modules : (string list * string) list) : string list =
-  let local_top =
-    List.filter_map
-      (fun (path, _) -> match path with name :: _ -> Some name | [] -> None)
-      modules
-  in
-  List.concat_map
-    (fun (_, file) ->
-      parse_tolerant file
-      |> List.filter_map (fun (item : Ast.item) ->
-          match item.Ast.item_desc with
-          | Ast.Item_require name when not (String.contains name '/') ->
-              Some name
-          | _ -> None))
-    modules
-  |> List.filter (fun name -> not (List.mem name local_top))
-  |> List.sort_uniq String.compare
-
-(* Module files contributed by the manifest's dependencies. A package's
-   directory tree is its public module tree — `walk`-style — so a package
-   registers its files relative to its own root: when the root holds a
-   `main.emo`, that file is the module a `require` binds and stays
+(* Module files contributed by the manifest's dependencies — the standard
+   library's packages among them, pinned in `deps` like any other. A
+   package's directory tree is its public module tree — `walk`-style — so
+   a package registers its files relative to its own root: when the root
+   holds a `main.emo`, that file is the module a `require` binds and stays
    reachable by its own name beside it (the compiler's `register_package`
    registers it at both paths, and the two are one module); otherwise the
    file named after the package's short name is the module a require
    binds. Transitive dependencies are walked through each package's
    manifest. *)
-let dependency_modules ~(root : string) ~(registry : string option)
-    ~(project_modules : (string list * string) list) :
+let dependency_modules ~(root : string) ~(registry : string option) :
     (string list * string) list =
   match registry with
   | None | Some "" -> []
@@ -584,18 +561,6 @@ let dependency_modules ~(root : string) ~(registry : string option)
                 end
               in
               List.iter (fun (n, v) -> go (n, v) 0) manifest.Emo_pkg.deps;
-              (* Implicit standard-library pins: each unscoped require
-                 resolves at the highest version the registry publishes. *)
-              List.iter
-                (fun name ->
-                  match
-                    Emo_pkg.Registry.versions (Emo_pkg.Registry.Fs_dir endpoint)
-                      ~name
-                    |> List.rev
-                  with
-                  | v :: _ -> go (name, v) 0
-                  | [] -> ())
-                (stdlib_requires project_modules);
               !out))
 
 (* The index for [root], rebuilt only when the tree's fingerprint moves.
@@ -604,7 +569,7 @@ let dependency_modules ~(root : string) ~(registry : string option)
 let get ?registry (root : string) : t =
   let root = Lsp_util.normalize_path root in
   let project_modules = scan root in
-  let dep_modules = dependency_modules ~root ~registry ~project_modules in
+  let dep_modules = dependency_modules ~root ~registry in
   let modules = project_modules @ dep_modules in
   let key = root ^ "|" ^ Option.value ~default:"" registry in
   let fp = fingerprint root modules in

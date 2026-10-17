@@ -12,7 +12,7 @@ def parse_config(text String) json_tools.Json {
 
 - **`require` 是把包的短名带入作用域的文件级语句。** 包侧无需对应物——包的公开面就是它的模块树。完全限定的路径永远可用。
 - **包的模块树挂载在短名之下。** 包根的 `main.emo` 就是 `require` 绑定的模块 `<short>`,包根没有 `main.emo` 时则是 `<short>.emo`——从一个项目发布出来的包保留它当初写就的入口文件;这个文件在包内也仍以当初的名字可达:`main.emo` 的兄弟文件写 `main.tagged()`,两种写法是同一个模块、同一份定义。其余文件或目录都是它的子节点——`plot/internal/svg.emo` 就是 `plot.internal.svg`,`plot/mark.emo` 就是 `plot.mark`——所以两个包的 `internal` 和 `mark` 永不冲突。包内部引用以包根为基准书写(`plot.emo` 里的 `internal.scale` 即 `plot.internal.scale`),因此一个包无论单独构建还是挂载在前缀下,编译结果一致。
-- **标准库无需 manifest 条目,第三方包需要。** 官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）并随编译器一起发布，所以 `require "json"` 隐式解析——连同这个依赖所拉入的标准库包。带 scope 的包（`acme/json_tools`）必须钉在 `deps` 里：require 一个没有钉的包是编译错误——严格优先，manifest 只因显式操作而改变。
+- **每个 `require` 都要在 `deps` 里有对应的 pin——标准库也不例外。** 官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）并内嵌在编译器里发布，但它的包和其他包一样带版本号、彼此之间也以精确版本相互钉住，所以 `require "json"` 需要在 `deps` 里写 `"json" = "0.1.0"`，和 `acme/json_tools` 完全一样；被钉住的包自己依赖的包则通过它自己的 manifest 进来。require 一个 manifest 没有钉的包是编译错误，报错信息会直接给出要加的那一行；标准库没有发布的短名在 require 处报错。pin 的意义在于编译器升级不会把程序的依赖挪走：内嵌 registry 只增不删，旧的 pin 在新编译器上始终可解析，要挪动它是一次有意为之的 `emo deps update`——严格优先，manifest 只因显式操作而改变。
 
 - **包扎根于你站的地方。** 根就是工作目录，它必须放着 `package.emo`——编译器从不向上看，所以在一个没有 manifest 的目录里启动的命令会以 E5010 停下（``run `emo new <name>` to scaffold a project here``），而不属于那里所扎根的包的入口是 E5011。先 `cd` 进包里：那个目录就是模块树，每条命令都从那里读它，于是同一个文件无论命令在哪里敲下都指同一件事。
 
