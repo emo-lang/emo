@@ -2464,12 +2464,17 @@ void emo_net_wait_writable(int64_t fd) {
    call answers (R.ok, fd) or (R.error, reason) — the reason the same
    text the fatal print carried. */
 
-emo_value emo_net_listen(emo_str host, int64_t port) {
+/* The TCP listen shared by the plain and TLS listeners: socket,
+   resolve, bind, listen, nonblocking. Returns the fd or -1 with the
+   refusal in [why] — the text the plain listen has always printed. */
+static int emo_net_listen_fd(emo_str host, int64_t port, char *why,
+                             size_t whyn) {
   char *h = (char *)emo_str_cstr(host);
   int fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0)
-    return emo_os_pair("error",
-                       emo_box_str(emo_str_from_cstr("listen failed")));
+  if (fd < 0) {
+    snprintf(why, whyn, "listen failed");
+    return -1;
+  }
   int one = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
   struct sockaddr_in addr;
@@ -2478,19 +2483,24 @@ emo_value emo_net_listen(emo_str host, int64_t port) {
   addr.sin_port = htons((uint16_t)port);
   if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
     close(fd);
-    char buf[512];
-    snprintf(buf, sizeof buf, "cannot resolve host `%s`", h);
-    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(buf)));
+    snprintf(why, whyn, "cannot resolve host `%s`", h);
+    return -1;
   }
   if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0 ||
       listen(fd, 16) < 0) {
-    char what[512];
-    snprintf(what, sizeof what, "cannot listen on %s:%d: %s", h, (int)port,
+    snprintf(why, whyn, "cannot listen on %s:%d: %s", h, (int)port,
              strerror(errno));
     close(fd);
-    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+    return -1;
   }
   emo_net_nonblock(fd);
+  return fd;
+}
+
+emo_value emo_net_listen(emo_str host, int64_t port) {
+  char why[512];
+  int fd = emo_net_listen_fd(host, port, why, sizeof why);
+  if (fd < 0) return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
@@ -2502,21 +2512,41 @@ int64_t emo_net_port(int64_t listener) {
   return ntohs(addr.sin_port);
 }
 
-emo_value emo_net_accept(int64_t listener) {
+/* The raw accept shared by both planes: parks on readability until a
+   connection arrives. Returns the fd or -1 with the refusal in [why]. */
+static int emo_net_accept_fd(int64_t listener, char *why, size_t whyn) {
   for (;;) {
     int fd = accept((int)listener, NULL, NULL);
     if (fd >= 0) {
       emo_net_nonblock(fd);
-      return emo_os_pair("ok", emo_box_i64(fd));
+      return fd;
     }
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
       emo_net_wait_readable(listener);
       continue;
     }
-    char what[512];
-    snprintf(what, sizeof what, "cannot accept: %s", strerror(errno));
-    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+    snprintf(why, whyn, "cannot accept: %s", strerror(errno));
+    return -1;
   }
+}
+
+/* The TLS listeners' hooks, defined with the fence below: the
+   listener's registered context, and the accepting handshake. */
+#ifdef EMO_HAS_TLS
+typedef struct ssl_ctx_st SSL_CTX;
+static SSL_CTX *emo_tls_listener_ctx(int64_t listener);
+static emo_value emo_net_accept_tls(int64_t listener, SSL_CTX *lctx);
+#endif
+
+emo_value emo_net_accept(int64_t listener) {
+#ifdef EMO_HAS_TLS
+  SSL_CTX *lctx = emo_tls_listener_ctx(listener);
+  if (lctx != NULL) return emo_net_accept_tls(listener, lctx);
+#endif
+  char why[512];
+  int fd = emo_net_accept_fd(listener, why, sizeof why);
+  if (fd < 0) return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  return emo_os_pair("ok", emo_box_i64(fd));
 }
 
 /* The TCP leg shared by the plain and TLS connects: the socket, the
@@ -2676,7 +2706,8 @@ static void emo_tls_attach(int fd, SSL *ssl, SSL_CTX *ctx) {
   emo_tls_slot *s = emo_alloc(sizeof *s);
   s->fd = fd;
   s->ssl = ssl;
-  s->ctx = ctx;
+  s->ctx = ctx; /* NULL for an accepted conn: the context belongs to
+                   the listener and outlives it */
   s->next = emo_tls_slots;
   emo_tls_slots = s;
 }
@@ -2739,6 +2770,128 @@ static SSL_CTX *emo_tls_client_ctx(int insecure) {
     SSL_CTX_set_default_verify_paths(ctx);
   }
   return ctx;
+}
+
+/* The second table: listener fd → context, standing where the ocaml
+   scheduler's tls_listener record stands. */
+typedef struct emo_tls_listener_slot {
+  int fd;
+  SSL_CTX *ctx;
+  struct emo_tls_listener_slot *next;
+} emo_tls_listener_slot;
+
+static emo_tls_listener_slot *emo_tls_listeners = NULL;
+
+static void emo_tls_listener_attach(int fd, SSL_CTX *ctx) {
+  emo_tls_listener_slot *s = emo_alloc(sizeof *s);
+  s->fd = fd;
+  s->ctx = ctx;
+  s->next = emo_tls_listeners;
+  emo_tls_listeners = s;
+}
+
+static SSL_CTX *emo_tls_listener_ctx(int64_t listener) {
+  for (emo_tls_listener_slot *s = emo_tls_listeners; s != NULL;
+       s = s->next)
+    if (s->fd == (int)listener) return s->ctx;
+  return NULL;
+}
+
+/* The server context: the same negotiate-all profile, plus the PEM
+   pair. Returns NULL with [why] carrying the drained library detail —
+   the caller wraps it in the ocaml-matching certificate reason. */
+static SSL_CTX *emo_tls_server_ctx(emo_str cert_path, emo_str key_path,
+                                   char *why, size_t whyn) {
+  SSL_CTX *ctx = SSL_CTX_new(TLS_method());
+  if (ctx == NULL) {
+    emo_tls_drain(why, whyn);
+    return NULL;
+  }
+  SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, NULL);
+  SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, TLS1_3_VERSION, NULL);
+  char *cert = (char *)emo_str_cstr(cert_path);
+  char *key = (char *)emo_str_cstr(key_path);
+  if (SSL_CTX_use_certificate_file(ctx, cert, SSL_FILETYPE_PEM) != 1 ||
+      SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1) {
+    emo_tls_drain(why, whyn);
+    SSL_CTX_free(ctx);
+    return NULL;
+  }
+  return ctx;
+}
+
+/* The accepting handshake: SSL_accept with the same parking loop as
+   the client's, so a loopback handshake on one scheduler progresses
+   from both ends. The conn registers before the accept returns, so
+   the ocaml scheduler's tls_listener shape is met. */
+static emo_value emo_net_accept_tls(int64_t listener, SSL_CTX *lctx) {
+  char why[512];
+  int fd = emo_net_accept_fd(listener, why, sizeof why);
+  if (fd < 0) return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  SSL *ssl = SSL_new(lctx);
+  if (ssl == NULL || SSL_set_fd(ssl, fd) != 1) {
+    char drained[256], what[512];
+    emo_tls_drain(drained, sizeof drained);
+    snprintf(what, sizeof what, "cannot start the TLS handshake: %s", drained);
+    if (ssl != NULL) SSL_free(ssl);
+    close(fd);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+  }
+  for (;;) {
+    ERR_clear_error();
+    int r = SSL_accept(ssl);
+    if (r == 1) {
+      emo_tls_attach(fd, ssl, NULL);
+      return emo_os_pair("ok", emo_box_i64(fd));
+    }
+    int err = SSL_get_error(ssl, r);
+    if (err == SSL_ERROR_WANT_READ) {
+      emo_net_wait_readable(fd);
+      continue;
+    }
+    if (err == SSL_ERROR_WANT_WRITE) {
+      emo_net_wait_writable(fd);
+      continue;
+    }
+    char local[64], drained[256], what[768];
+    struct sockaddr_in addr;
+    socklen_t len = sizeof addr;
+    if (getsockname((int)listener, (struct sockaddr *)&addr, &len) == 0)
+      snprintf(local, sizeof local, "%s:%d", inet_ntoa(addr.sin_addr),
+               (int)ntohs(addr.sin_port));
+    else
+      snprintf(local, sizeof local, "the listener");
+    emo_tls_drain(drained, sizeof drained);
+    snprintf(what, sizeof what, "the TLS handshake with %s failed: %s", local,
+             drained);
+    SSL_free(ssl);
+    close(fd);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+  }
+}
+
+/* net_listen_tls: the PEM pair loads into a server context first (a
+   missing or rejected certificate answers before the socket exists,
+   the ocaml tls_listener's order), then the plain listen, then the
+   listener registers in the second table. */
+emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
+                             emo_str key_path) {
+  char *h = (char *)emo_str_cstr(host);
+  char why[512];
+  SSL_CTX *ctx = emo_tls_server_ctx(cert_path, key_path, why, sizeof why);
+  if (ctx == NULL) {
+    char what[640];
+    snprintf(what, sizeof what, "cannot load the TLS certificate for %s:%d: %s",
+             h, (int)port, why);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+  }
+  int fd = emo_net_listen_fd(host, port, why, sizeof why);
+  if (fd < 0) {
+    SSL_CTX_free(ctx);
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  }
+  emo_tls_listener_attach(fd, ctx);
+  return emo_os_pair("ok", emo_box_i64(fd));
 }
 
 /* net_tls_connect: the TCP leg of the plain connect, then the
@@ -2991,9 +3144,9 @@ emo_value emo_net_close(int64_t fd) {
 }
 
 #ifndef EMO_HAS_TLS
-/* Without the gate, the client handshake is today's honest refusal,
-   byte-identical to the catch-all it left; the fence above carries the
-   real body. */
+/* Without the gate, both builtins are today's honest refusal,
+   byte-identical to the catch-all they left; the fence above carries
+   the real bodies. */
 emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
                               int insecure) {
   (void)host;
@@ -3002,10 +3155,7 @@ emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
   (void)insecure;
   return emo_unsupported("net_tls_connect");
 }
-#endif /* !EMO_HAS_TLS */
 
-/* The listener refuses unconditionally until T51.4 lands its body in
-   the fence. */
 emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
                              emo_str key_path) {
   (void)host;
@@ -3014,6 +3164,7 @@ emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
   (void)key_path;
   return emo_unsupported("net_listen_tls");
 }
+#endif /* !EMO_HAS_TLS */
 
 /* ---- String methods ---- */
 
