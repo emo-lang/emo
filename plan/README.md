@@ -28,7 +28,8 @@ incrementally shippable steps — one file per step, executed in order.
   byte-for-byte, the composition syntax is identical everywhere, and
   per-platform component libraries share convergent names. The design is
   `docs/emo-ui.md`.
-- **M16 — Value-family reclamation (step 49):** the `c` target reclaims
+- **M16 — Value-family reclamation (step 49):** landed 2026-10-17 —
+  the `c` target reclaims
   the value-semantic kinds as well as the identity cells, so a
   long-running program's arena bytes and identity liveness stay flat
   across renders; array growth becomes linear. Scheduled when the

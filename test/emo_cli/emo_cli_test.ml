@@ -1767,6 +1767,198 @@ println(keep.length())
                  | _ -> "signal")));
   ]
 
+(* The flat-working-set gate (T49.4; the arena-scope spike's render
+   ladder, checked in). A render-shaped loop — view() rebuilds the
+   tree per event, style maps, append-built children, a layout walk —
+   must leave the process where it found it: every dropped frame
+   reclaims its bytes and its cells. Before step 49 both deltas rose
+   per render (~1 MB and ~820 identities at 400 nodes); the gate pins
+   them at exactly zero, two rungs, and so fails on any regression.
+   Skips without cc. *)
+let c_flat_working_set_tests =
+  [
+    tc "the render loop holds a flat working set" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let dir = Filename.concat scratch "c-flat-set" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file (Filename.concat dir "package.emo") default_manifest;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc
+          {|
+foreign def live() Int64 = "emo_identity_live_count"
+foreign def arena() Int64 = "emo_arena_bytes"
+
+interface VNode {
+  def kind() String
+  def text() String
+  def style() Map[String, Float64]
+}
+
+class VLeaf {
+  def init(kind String, text String, style Map[String, Float64]) {
+    self.kind = kind
+    self.text = text
+    self.style = style
+  }
+
+  def kind() String {
+    return self.kind
+  }
+
+  def text() String {
+    return self.text
+  }
+
+  def style() Map[String, Float64] {
+    return self.style
+  }
+}
+
+class VColumn {
+  def init(style Map[String, Float64], children Array[VNode]) {
+    self.style = style
+    self.children = children
+  }
+
+  def kind() String {
+    return "column"
+  }
+
+  def text() String {
+    return ""
+  }
+
+  def style() Map[String, Float64] {
+    return self.style
+  }
+
+  def children() Array[VNode] {
+    return self.children
+  }
+}
+
+def label(text String) VNode {
+  return VLeaf.new(kind: "label", text: text,
+    style: Map.new(("height", 24.0)))
+}
+
+def column(children Array[VNode]) VNode {
+  return VColumn.new(style: Map.new(("gap", 4.0), ("padding", 8.0)),
+    children: children)
+}
+
+def leaves(into Array[VNode], i Int64, per Int64) Array[VNode] {
+  if i == per {
+    return into
+  }
+  return leaves(into.append(label("row ${i}")), i + 1, per)
+}
+
+def panels(into Array[VNode], i Int64, count Int64, per Int64) Array[VNode] {
+  if i == count {
+    return into
+  }
+  return panels(into.append(column(leaves([], 0, per))), i + 1, count, per)
+}
+
+def view(nodes Int64) VNode {
+  return column(panels([], 0, nodes / 20, 20))
+}
+
+class Draw {
+  def init(kind String, text String, y Float64) {
+    self.kind = kind
+    self.text = text
+    self.y = y
+  }
+}
+
+class Laid {
+  def init(cmds Array[Draw], cursor Float64) {
+    self.cmds = cmds
+    self.cursor = cursor
+  }
+}
+
+def style_num(style Map[String, Float64], key String, fallback Float64) Float64 {
+  if style.has(key) {
+    return style.get(key)
+  }
+  return fallback
+}
+
+def layout_step(kids Array[VNode], i Int64, cmds Array[Draw],
+                cursor Float64, gap Float64) Laid {
+  if i == kids.length() {
+    return Laid.new(cmds: cmds, cursor: cursor)
+  }
+  const r = layout_node(kids[i], cmds, cursor, gap)
+  return layout_step(kids, i + 1, r.cmds, r.cursor + gap, gap)
+}
+
+def layout_node(node VNode, cmds Array[Draw], y Float64, gap Float64) Laid {
+  const style = node.style()
+  const pad = style_num(style, "padding", 0.0)
+  if node.is(VColumn) {
+    const kids = node.children()
+    return layout_step(kids, 0, cmds, y + pad, style_num(style, "gap", gap))
+  }
+  const h = style_num(style, "height", 24.0)
+  return Laid.new(
+    cmds: cmds.append(Draw.new(kind: node.kind(), text: node.text(), y: y)),
+    cursor: y + h)
+}
+
+def paint(root VNode, width Float64) Float64 {
+  const r = layout_node(root, [], 0.0, 12.0)
+  return r.cursor + width * 0.0
+}
+
+def on_event(nodes Int64, tag Int64, count Int64) Int64 {
+  const cursor = paint(view(nodes), 480.0)
+  if cursor < 0.0 {
+    return count - 1
+  }
+  return count + 1
+}
+
+// One rung of the ladder: sample, render, print the two deltas. Both
+// are zero — the dropped frame reclaims every byte and every cell.
+def rung(nodes Int64, renders Int64) Int64 {
+  const b0 = arena()
+  const l0 = live()
+  var count = 0
+  for var i = 0; i < renders; i = i + 1 {
+    count = on_event(nodes, 1, count)
+  }
+  println(arena() - b0)
+  println(live() - l0)
+  return count
+}
+
+const c1 = rung(40, 40)
+const c2 = rung(80, 40)
+if c1 == c2 {
+  println("model stable")
+}
+|};
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code = build_entry ~target:"c" entry out_bin in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let out, _, proc_status = run_cmd (Filename.quote out_bin) in
+        Alcotest.(check string) "output" "0\n0\n0\n0\nmodel stable\n" out;
+        match proc_status with
+        | Unix.WEXITED 0 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "exited %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | _ -> "signal")));
+  ]
+
 let c_shape_tests =
   [
     tc "the c target marshals struct shapes by value both ways" (fun () ->
@@ -3748,6 +3940,7 @@ let () =
       ("c_callback", c_callback_tests);
       ("c_shape", c_shape_tests);
       ("c_recycle", c_recycle_tests);
+      ("c_flat_working_set", c_flat_working_set_tests);
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
       ("foreign_refusal", foreign_refusal_tests);

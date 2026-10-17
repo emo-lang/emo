@@ -64,7 +64,7 @@ before starting the gated work:
 | The runtime-independence principle | T25.1 | a target's runtime is written in the target's language, carried as generated data inside the compiler; the host contributes only the emitter |
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
 | EmoUI native UI packaging (per-package compile flags / `pkg_config`) | T48.7–T48.9 | direction settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). The field surface (`pkg_config`, compile/link flags, whether `.m` is collected) stays T48.7's own work |
-| `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). Until it lands the native UI backends are demo scale with the limit documented, not gated on this |
+| `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). **Landed 2026-10-17 (T49.1–T49.4)**: the working set is flat and the demo-scale note is retired |
 | EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). Where the bundling step lives in the toolchain stays T48.10's own work |
 | Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
@@ -1580,6 +1580,7 @@ thing a UI forces and the one it does not get for free: the 2026-10-14
 arena-scope spike settled that the cheap fix does not exist, so it is
 scheduled separately (**M16**, step 49) and the native backends are
 demo scale until it lands — the limit documented, not papered over.
+(It landed 2026-10-17; the demo-scale note is retired — see M16.)
 
 ### Step 48 — EmoUI · `plan/step-48-emo-ui.md`
 
@@ -1774,7 +1775,8 @@ them across its boundary — and the reset strands those refcounts
 permanently. The real fix is refcounting the value families, and it is
 this milestone (`CHECK.md`, `spike/arena-scope/`). Nothing here is a
 prerequisite for step 48: the native backends are built at demo scale
-with the limit documented.
+with the limit documented. (The note retired 2026-10-17 — the
+milestone landed and the working set is flat; the T49.4 gate pins it.)
 
 ### Step 49 — Value-family reclamation · `plan/step-49-value-reclamation.md`
 
@@ -1785,7 +1787,7 @@ the live tree — array growth is linear rather than quadratic, every
 existing golden on every target is byte-identical, and the interpreter
 and the non-`c` targets are untouched.
 
-- [ ] **T49.1** — The runtime: extend the identity discipline
+- [x] **T49.1** — The runtime: extend the identity discipline
       (`emo_identity_kind`, `emo_retain`/`emo_release`, and the
       constructors that store into aggregates) from the three identity
       kinds to the value families, so a value cell can reach refcount
@@ -1793,10 +1795,31 @@ and the non-`c` targets are untouched.
       that no value-family construction can form a cycle. The emitter
       already retains and releases every dynamic binding
       (`emo_c.ml:1851`, `:423`), so this starts runtime-side.
-- [ ] **T49.2** — The granularity: decide what the autorelease pool owns
+      **Landed 2026-10-17.** Every cell is counted and individually
+      freed; the emitter's `may_own` widened to every dynamic type, so
+      each construction pools its birth and each claim handout lands in
+      the statement's pool; the tail-rebind and hoisted-binding
+      barriers take the new claim before dropping the old; `Map.remove`
+      hands back a claim; the dynamic→native String crossing copies.
+      The cycle audit: the immutable families are structurally acyclic,
+      the mutable identities join the documented cycle-leak class. The
+      live-count probe returns to baseline across a value-family churn;
+      the native transient buffers stay the T49.2 remainder.
+- [x] **T49.2** — The granularity: decide what the autorelease pool owns
       now that every dynamic type may own memory, and implement it —
       expression-internal temporaries are the hard half, `may_own` plus
       the constructor audit that follows (`emo_c_runtime.c:1753`).
+      **Landed 2026-10-17: String joined the dynamic world** (`CHECK.md`
+      carries the written weighing — the wider pool and the smarter
+      emitter were rejected as unsound or as the ownership analysis the
+      pool exists to erase). Typed `String` positions are cells; the
+      leaf string builders answer self-pooled births (no arena
+      intermediate, no frame of their own); the general constructors
+      still pool at the emitter; the runtime's own transients (printf
+      buffer, file/net reads, argv, list_dir names) are malloc'd and
+      freed within their calls. The churn probe holds RSS flat across
+      3 000 / 30 000 / 120 000 iterations with the live count at zero,
+      and every golden stays byte-identical.
 - [x] **T49.3** — The array shape: an O(1) append or a builder, so
       growing a k-element array is not quadratic in bytes and retains;
       T48.1's children representation depends on the answer. **Settled
@@ -1815,11 +1838,22 @@ and the non-`c` targets are untouched.
       question was unblocked here and is **answered** by the core
       (2026-10-15): children are an explicit `Array[Node]`, and the
       container is what builds a dynamic child list.
-- [ ] **T49.4** — The gate: the spike's render ladder and region probes
+- [x] **T49.4** — The gate: the spike's render ladder and region probes
       as a checked-in test that fails today and passes after, on the `c`
-      target, with `dune test` green.
-- [ ] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
+      target, with `dune test` green. **Landed 2026-10-17** —
+      `emo_arena_bytes` joined the runtime's probes, and the
+      `c_flat_working_set` group runs the spike's render shape (view
+      rebuild, style maps, append-built children, a layout walk) at two
+      rungs: both deltas — arena bytes and live cells — pin at exactly
+      zero. The region probes' work is done by the refcount model
+      itself (`arena_mark`/`arena_reset` stayed out of the shipped
+      runtime).
+- [x] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
       mirror, and step 48's demo-scale notes updated to point here.
+      Landed 2026-10-17 — `CHECK.md`'s entry reads as the landed
+      decision, `docs/emo-ui.md`'s ask 4 and the layer caveats point at
+      the flat working set, and every demo-scale note carries its
+      retirement.
 
 ---
 

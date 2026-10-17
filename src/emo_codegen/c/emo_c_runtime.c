@@ -48,10 +48,12 @@ static EMO_NORETURN void emo_fatal(const char *message) {
   exit(70);
 }
 
-/* ---- The bump allocator (CHECK.md's provisional profile) ----
-   Chunks from malloc; the bump pointer never retreats and nothing is
-   ever freed — the documented leakage until the reclamation decision
-   settles. Large requests get a chunk of their own. */
+/* ---- The bump allocator ----
+   Chunks from malloc; the bump pointer never retreats. Since step 49
+   every dynamic cell is malloc'd individually with a refcount, so the
+   arena serves only native transient buffers — string bytes on their
+   way into a cell, the printf buffer, cstr copies. Large requests get
+   a chunk of their own. */
 
 typedef struct emo_chunk {
   struct emo_chunk *next;
@@ -86,30 +88,29 @@ typedef struct {
   uintptr_t header;
 } emo_cell;
 
-static emo_value emo_cell_new(uintptr_t kind, int64_t words) {
-  emo_cell *c =
-      emo_alloc(sizeof(emo_cell) + (size_t)words * sizeof(emo_value));
-  c->header = kind;
-  return (uintptr_t)c; /* 8-byte aligned: low bits 000 */
-}
-
 static uintptr_t *emo_payload(emo_value v) {
   return (uintptr_t *)(((emo_cell *)v) + 1);
 }
 
-/* ---- Reclamation (CHECK.md, the T23.5 gate) ----
+/* ---- Reclamation (CHECK.md, the T23.5 gate; step 49) ----
 
-   Reference counting over the identity-bearing objects; the
-   value-semantic data stays in the bump arena for the process
-   lifetime. Three cell kinds carry identity — instances, closures, and
-   Box — and they alone are malloc'd individually with a refcount ahead
-   of the cell header, so release can hand them back to the system.
-   Everything else (strings, tuples, arrays, maps, lists, bytes) is
-   never freed and needs no bookkeeping; the constructors of the
-   arena-resident aggregates retain the identity words they store, so
-   an object captured by arena data lives as long as the arena — the
-   documented shape. Cycles among instances and closures leak (the
-   Swift model). */
+   Reference counting over every dynamic cell. T23.5 counted the
+   identity-bearing kinds — instances, closures, Box — and left the
+   value families (strings, tuples, arrays, maps, lists, bytes, enums,
+   boxed scalars) bump-arena resident; step 49 extends the same
+   discipline to them, because a long-running program (the UI render
+   loop) rebuilds exactly those kinds per frame. Every cell is now
+   malloc'd individually with a refcount ahead of the header, so a
+   value cell reaches zero and frees, and an aggregate's release frees
+   what it holds — tuple and array elements, list nodes, map entries
+   and buckets, builder item buffers. The aggregate constructors retain
+   the words they store; the emitter pools expression births at
+   statement boundaries and retains at every longer-lived slot. Cycles
+   leak, documented (the Swift model): the immutable families are
+   structurally acyclic — an element word is evaluated before its
+   container exists — and the mutable identities (Box, List, Map,
+   ArrayBuilder, instances, closures) can cycle only the way instances
+   already could. */
 
 typedef struct {
   int64_t rc;
@@ -118,7 +119,19 @@ typedef struct {
 
 static int64_t emo_identity_live = 0;
 
-static emo_value emo_idcell_new(uintptr_t kind, int64_t words) {
+/* Memory a cell owns besides its own payload — a list's struct and
+   nodes, a map's entry and bucket arrays, a builder's item buffer —
+   allocated here and freed by the owning cell's release. */
+static void *emo_owned_alloc(size_t n) {
+  void *p = malloc(n);
+  if (p == NULL) {
+    fputs("emo: out of memory\n", stderr);
+    abort();
+  }
+  return p;
+}
+
+static emo_value emo_cell_new(uintptr_t kind, int64_t words) {
   /* zeroed: the field write barrier releases the previous word, so a
      fresh cell's fields must read as 0, not as malloc garbage */
   emo_idhead *h = calloc(1, sizeof(emo_idhead) + sizeof(emo_cell) +
@@ -140,45 +153,30 @@ static int64_t *emo_rc_of(emo_value v) {
 
 static uintptr_t emo_cell_kind(emo_value v); /* defined with the accessors */
 
-static int emo_identity_kind(uintptr_t kind) {
-  return kind == EMO_INSTANCE || kind == EMO_CLOSURE || kind == EMO_BOX;
-}
-
 emo_value emo_retain(emo_value v) {
   if (v == 0 || (v & 7) != 0) return v; /* immediates carry no count */
-  if (!emo_identity_kind(emo_cell_kind(v))) return v;
   (*emo_rc_of(v))++;
   return v;
 }
 
-void emo_release(emo_value v) {
-  if (v == 0 || (v & 7) != 0) return;
-  if (!emo_identity_kind(emo_cell_kind(v))) return;
-  if (--*emo_rc_of(v) > 0) return;
-  emo_identity_live--;
-  uintptr_t *p = emo_payload(v);
-  switch (emo_cell_kind(v)) {
-  case EMO_INSTANCE: {
-    /* [header][vtable][fields...] */
-    const emo_vtable *vt = (const emo_vtable *)p[0];
-    for (int64_t i = 0; i < vt->field_count; i++)
-      emo_release((emo_value)p[i + 1]);
-    break;
-  }
-  case EMO_CLOSURE: {
-    /* [header][fn][ncaps][captured...] */
-    int64_t ncaps = (int64_t)p[1];
-    for (int64_t i = 0; i < ncaps; i++) emo_release((emo_value)p[i + 2]);
-    break;
-  }
-  default: /* EMO_BOX: [header][payload] */
-    emo_release((emo_value)p[0]);
-    break;
-  }
-  free((emo_idhead *)((emo_cell *)v - 1));
-}
+/* The release half is defined after the aggregate layouts it walks
+   (the list, map, and builder sections): every cell frees its holdings
+   at zero. The header's declaration covers the callers above. */
 
 /* ---- Hosted startup and println ---- */
+
+/* A measurement probe (the T49.4 gate; the spike's fuller set lives in
+   spike/arena-scope/runtime/): the arena's live byte count. Since step
+   49 the arena serves only native transients, so a render-shaped loop
+   holds this flat — the property the gate pins. Read-only on purpose:
+   the spike's arena_mark/arena_reset stayed out of the shipped runtime
+   when the region was rejected. */
+int64_t emo_arena_bytes(void) {
+  int64_t total = 0;
+  for (emo_chunk *c = emo_heap; c != NULL; c = c->next)
+    total += (int64_t)c->used;
+  return total;
+}
 
 void emo_startup(void) {
   /* Line-buffered stdout keeps program output interleaved with
@@ -292,6 +290,10 @@ bool emo_str_eq(emo_str a, emo_str b) {
   return a.len == b.len && memcmp(a.bytes, b.bytes, (size_t)a.len) == 0;
 }
 
+/* A malloc'd copy of n bytes as a native string — the shape every
+   dynamic→native crossing hands out, so the view owns its bytes. */
+static emo_str emo_str_from_parts(const char *p, int64_t n);
+
 const char *emo_str_cstr(emo_str s) {
   char *p = emo_alloc(s.len + 1);
   memcpy(p, s.bytes, (size_t)s.len);
@@ -333,13 +335,150 @@ emo_value emo_vchar(int32_t v) {
 }
 
 emo_value emo_box_str(emo_str s) {
-  /* The cell: [header][len][bytes...] — the bytes share the cell, so
-     the borrowed emo_str below stays valid for the program's life. */
+  /* The cell: [header][len][bytes...] — the bytes share the cell,
+     which owns them from here on; an emo_str borrowed back out
+     (emo_str_of) is valid as long as the cell lives. */
   emo_value v = emo_cell_new(EMO_STRING, 1 + (s.len + 7) / 8);
   uintptr_t *p = emo_payload(v);
   p[0] = (uintptr_t)s.len;
   memcpy(p + 1, s.bytes, (size_t)s.len);
   return v;
+}
+
+/* ---- Cell-native strings (step 49) ----
+
+   Every string the generated code builds is a cell: the builders
+   allocate the result cell directly and copy the bytes in, so no
+   bump-arena intermediate ever exists. The [emo_str] views here read
+   the operands' own bytes and die with the expression. */
+
+/* The raw concat behind `+` on two strings: a plain birth — the
+   dyn-arithmetic caller pools it. */
+emo_value emo_cell_concat_raw(emo_value a, emo_value b) {
+  emo_str sa = emo_str_of(a), sb = emo_str_of(b);
+  if (sa.len > INT64_MAX - sb.len) abort(); /* length overflow */
+  emo_value v = emo_cell_new(EMO_STRING, 1 + (sa.len + sb.len + 7) / 8);
+  uintptr_t *p = emo_payload(v);
+  p[0] = (uintptr_t)(sa.len + sb.len);
+  memcpy(p + 1, sa.bytes, (size_t)sa.len);
+  memcpy((char *)(p + 1) + sa.len, sb.bytes, (size_t)sb.len);
+  return v;
+}
+
+/* The leaf builders answer pooled births: they open no pool frame of
+   their own, so the claim lands in the calling statement's frame and
+   dies at its boundary; a result that crosses a frame re-claims
+   through the return's __ret. */
+emo_value emo_cell_concat(emo_value a, emo_value b) {
+  return emo_autorelease(emo_cell_concat_raw(a, b));
+}
+
+emo_value emo_cell_from_i64(int64_t v) {
+  char buf[24];
+  int n = snprintf(buf, sizeof buf, "%" PRId64, v);
+  return emo_autorelease(emo_box_str((emo_str){n, buf}));
+}
+
+emo_value emo_cell_from_f64(double v) {
+  char buf[48];
+  int n = snprintf(buf, sizeof buf, emo_f64_format(v, false), v);
+  return emo_autorelease(emo_box_str((emo_str){n, buf}));
+}
+
+emo_value emo_cell_from_char(int32_t v) {
+  char buf[4];
+  int32_t n = emo_utf8_put(buf, v);
+  return emo_autorelease(emo_box_str((emo_str){n, buf}));
+}
+
+emo_value emo_cell_from_cstr(const char *cs) {
+  /* a plain birth — like emo_box_str, this wraps a general
+     constructor, so the caller pools the claim where it fits */
+  return emo_box_str((emo_str){(int64_t)strlen(cs), cs});
+}
+
+emo_value emo_cell_substring(emo_value s, int64_t start, int64_t len) {
+  emo_str src = emo_str_of(s);
+  if (start < 0 || len < 0 || start + len > src.len)
+    emo_fatal("substring is out of bounds for the string");
+  return emo_autorelease(emo_box_str((emo_str){len, src.bytes + start}));
+}
+
+emo_value emo_cell_lower(emo_value s) {
+  emo_str src = emo_str_of(s);
+  emo_value v = emo_cell_new(EMO_STRING, 1 + (src.len + 7) / 8);
+  uintptr_t *p = emo_payload(v);
+  p[0] = (uintptr_t)src.len;
+  for (int64_t i = 0; i < src.len; i++) {
+    char c = src.bytes[i];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    ((char *)(p + 1))[i] = c;
+  }
+  return emo_autorelease(v);
+}
+
+emo_value emo_cell_trim(emo_value s) {
+  emo_str src = emo_str_of(s);
+  int64_t lo = 0, hi = src.len;
+  while (lo < hi && (unsigned char)src.bytes[lo] <= ' ') lo++;
+  while (hi > lo && (unsigned char)src.bytes[hi - 1] <= ' ') hi--;
+  return emo_autorelease(emo_box_str((emo_str){hi - lo, src.bytes + lo}));
+}
+
+emo_value emo_cell_split(emo_value s, emo_value sep) {
+  emo_str str = emo_str_of(s);
+  emo_str mark = emo_str_of(sep);
+  if (mark.len == 0) emo_fatal("the separator must not be empty");
+  int64_t parts = 1;
+  for (int64_t i = 0; i + mark.len <= str.len;)
+    if (memcmp(str.bytes + i, mark.bytes, (size_t)mark.len) == 0) {
+      parts++;
+      i += mark.len;
+    } else
+      i++;
+  /* the element array is a transient: malloc'd, copied out by
+     emo_array_new, freed here */
+  emo_value *elems = malloc((size_t)parts * sizeof(emo_value));
+  if (elems == NULL) abort();
+  int64_t count = 0, start = 0;
+  for (int64_t i = 0; i + mark.len <= str.len;) {
+    if (memcmp(str.bytes + i, mark.bytes, (size_t)mark.len) == 0) {
+      elems[count++] = emo_box_str((emo_str){i - start, str.bytes + start});
+      i += mark.len;
+      start = i;
+    } else
+      i++;
+  }
+  elems[count++] =
+      emo_box_str((emo_str){str.len - start, str.bytes + start});
+  emo_value out = emo_array_new(count, elems);
+  free(elems);
+  return emo_autorelease(out);
+}
+
+/* The to_string surface over a dynamic value: the rendered bytes copy
+   into a cell, and the memstream transient dies here. */
+emo_value emo_to_string_cell(emo_value v) {
+  if (emo_cell_kind(v) == EMO_BYTES) {
+    /* the content, not the Bytes[n] rendering — the interpreter's
+       to_string over Bytes yields the raw bytes */
+    emo_str s = emo_str_of_bytes(v);
+    return emo_box_str(s);
+  }
+  emo_str s = emo_to_string_dyn(v);
+  emo_value cell = emo_box_str(s);
+  free((void *)s.bytes);
+  return cell;
+}
+
+/* A malloc'd C copy of a borrowed string — free() it after the POSIX
+   call; the underlying cell's claim may not outlive the statement. */
+static char *emo_cstr_owned(emo_str s) {
+  char *p = malloc((size_t)s.len + 1);
+  if (p == NULL) abort();
+  memcpy(p, s.bytes, (size_t)s.len);
+  p[s.len] = '\0';
+  return p;
 }
 
 static uintptr_t emo_cell_kind(emo_value v) {
@@ -419,7 +558,7 @@ emo_value emo_array_append(emo_value arr, emo_value v) {
 }
 
 emo_value emo_box_new(emo_value v) {
-  emo_value box = emo_idcell_new(EMO_BOX, 1);
+  emo_value box = emo_cell_new(EMO_BOX, 1);
   *emo_payload(box) = (uintptr_t)v;
   emo_retain(v); /* the box owns its contents */
   return box;
@@ -446,8 +585,8 @@ emo_value emo_box_replace(emo_value box, emo_value v) {
 
    A List is an identity, like a Box: [header][emo_list *], the struct
    owning a doubly-linked node chain — O(1) push and pop at both ends.
-   Nodes ride the bump allocator like every cell, under the same
-   provisional reclamation profile (CHECK.md frees nothing). */
+   The struct and the nodes are the list cell's own memory: release
+   frees the chain element by element and the struct with it. */
 
 typedef struct emo_list_node {
   emo_value v;
@@ -468,13 +607,13 @@ static emo_list *emo_list_of(emo_value l) {
 emo_value emo_list_new(emo_value arr) {
   if (emo_cell_kind(arr) != EMO_ARRAY)
     emo_fatal("`List.new` expects an Array");
-  emo_list *l = emo_alloc(sizeof(emo_list));
+  emo_list *l = emo_owned_alloc(sizeof(emo_list));
   l->head = NULL;
   l->tail = NULL;
   l->size = 0;
   int64_t n = (int64_t)emo_payload(arr)[0];
   for (int64_t i = 0; i < n; i++) {
-    emo_list_node *node = emo_alloc(sizeof(emo_list_node));
+    emo_list_node *node = emo_owned_alloc(sizeof(emo_list_node));
     node->v = (emo_value)emo_payload(arr)[i + 1];
     emo_retain(node->v); /* the list holds its elements */
     node->prev = l->tail;
@@ -491,7 +630,7 @@ emo_value emo_list_new(emo_value arr) {
 
 emo_value emo_list_push_front(emo_value l, emo_value v) {
   emo_list *list = emo_list_of(l);
-  emo_list_node *node = emo_alloc(sizeof(emo_list_node));
+  emo_list_node *node = emo_owned_alloc(sizeof(emo_list_node));
   node->v = v;
   emo_retain(v);
   node->prev = NULL;
@@ -507,7 +646,7 @@ emo_value emo_list_push_front(emo_value l, emo_value v) {
 
 emo_value emo_list_push_back(emo_value l, emo_value v) {
   emo_list *list = emo_list_of(l);
-  emo_list_node *node = emo_alloc(sizeof(emo_list_node));
+  emo_list_node *node = emo_owned_alloc(sizeof(emo_list_node));
   node->v = v;
   emo_retain(v);
   node->prev = list->tail;
@@ -531,7 +670,7 @@ emo_value emo_list_pop_front(emo_value l) {
   else
     list->tail = NULL;
   list->size--;
-  return node->v;
+  return node->v; /* the element's claim transfers */
 }
 
 emo_value emo_list_pop_back(emo_value l) {
@@ -555,9 +694,10 @@ int64_t emo_list_length(emo_value l) { return emo_list_of(l)->size; }
    [size][cap][items]: a push past the capacity allocates a doubled
    items buffer, copies, and repoints — the same amortized doubling the
    Map below uses, and for the same reason (a k-element build must not
-   be quadratic). The builder is an identity, like a List, and rides the
-   arena under the same provisional reclamation profile: a superseded
-   items buffer is never freed (CHECK.md). */
+   be quadratic). The builder is an identity, like a List, and the
+   items buffer is the builder cell's own memory: growth frees the
+   superseded buffer, and release frees the last one with its
+   elements. */
 
 static uintptr_t *emo_builder_words(emo_value b) {
   return emo_payload(emo_expect_kind(b, EMO_BUILDER));
@@ -572,20 +712,28 @@ emo_value emo_builder_new(void) {
   return v;
 }
 
-emo_value emo_builder_push(emo_value b, emo_value v) {
+/* The store behind `push`, shared with the deep copy: the element's
+   claim transfers (no retain), growth reuses the doubled buffer, and
+   nothing is handed out. */
+static void emo_builder_store(emo_value b, emo_value v) {
   uintptr_t *p = emo_builder_words(b);
   int64_t size = (int64_t)p[0];
   int64_t cap = (int64_t)p[1];
   if (size == cap) {
     int64_t ncap = cap < 8 ? 8 : cap * 2;
-    emo_value *items = emo_alloc((size_t)ncap * sizeof(emo_value));
-    if (cap > 0) memcpy(items, (void *)p[2], (size_t)cap * sizeof(emo_value));
+    emo_value *items =
+        realloc((void *)p[2], (size_t)ncap * sizeof(emo_value));
+    if (items == NULL) abort();
     p[1] = (uintptr_t)ncap;
     p[2] = (uintptr_t)items;
   }
   ((emo_value *)p[2])[size] = v;
-  emo_retain(v); /* the builder holds its elements */
   p[0] = (uintptr_t)(size + 1);
+}
+
+emo_value emo_builder_push(emo_value b, emo_value v) {
+  emo_builder_store(b, v);
+  emo_retain(v); /* the builder holds its elements */
   return emo_retain(b); /* the chained call hands the caller its own claim */
 }
 
@@ -603,7 +751,8 @@ emo_value emo_builder_get(emo_value b, int64_t i) {
             (long long)i, (long long)size);
     exit(70);
   }
-  return ((emo_value *)p[2])[i];
+  /* the read hands the caller its own claim, like get on a Map */
+  return emo_retain(((emo_value *)p[2])[i]);
 }
 
 emo_value emo_builder_to_array(emo_value b) {
@@ -621,7 +770,10 @@ emo_value emo_builder_to_array(emo_value b) {
    order; a removed entry's key becomes 0), chained through `next`
    into an open bucket array rehashed at a 0.5 load factor. Keys are
    the primitive kinds only — the same rule the checker enforces when
-   it can prove one — validated at every insertion. */
+   it can prove one — validated at every insertion. The entry and
+   bucket arrays are the map cell's own memory: growth frees the
+   superseded array, and release frees both with the entries' keys and
+   values. */
 
 typedef struct {
   emo_value key; /* 0 marks a removed entry */
@@ -696,6 +848,10 @@ static void emo_map_rehash(emo_value m);
 
 emo_value emo_map_set(emo_value m, emo_value key, emo_value value);
 
+/* The fresh-insert behind `Map.new` (defined with set): the map takes
+   its own claims, nothing is handed out. */
+static void emo_map_insert(emo_value m, emo_value key, emo_value value);
+
 emo_value emo_map_new(int64_t npairs, emo_value *pairs) {
   emo_value m = emo_cell_new(EMO_MAP, 5);
   uintptr_t *p = emo_payload(m);
@@ -708,8 +864,8 @@ emo_value emo_map_new(int64_t npairs, emo_value *pairs) {
     emo_value pair = pairs[i];
     if (emo_cell_kind(pair) != EMO_TUPLE || emo_length(pair) != 2)
       emo_fatal("`Map.new` takes (key, value) pairs of two elements");
-    emo_map_set(m, (emo_value)emo_payload(pair)[1],
-                (emo_value)emo_payload(pair)[2]);
+    emo_map_insert(m, (emo_value)emo_payload(pair)[1],
+                   (emo_value)emo_payload(pair)[2]);
   }
   return m;
 }
@@ -731,30 +887,35 @@ emo_value emo_map_get(emo_value m, emo_value key) {
   return emo_retain(((emo_map_entry *)emo_payload(m)[2])[i].value);
 }
 
-emo_value emo_map_set(emo_value m, emo_value key, emo_value value) {
+/* The store behind `set` and the deep copy: a fresh insert takes the
+   map's own claims on the key and the value; a replacement keeps the
+   old entries alive until the new ones are in when [replace_barrier]
+   is set (self-assignment survives). Nothing is handed out. */
+static void emo_map_store(emo_value m, emo_value key, emo_value value,
+                          bool replace_barrier) {
   emo_expect_kind(m, EMO_MAP);
-  if (!emo_map_key_ok(key)) emo_fatal(emo_map_key_rule);
   int64_t i = emo_map_find(m, key);
   uintptr_t *p = emo_payload(m);
   if (i >= 0) {
     /* the write barrier: the map owns its entries */
-    emo_retain(key);
-    emo_retain(value);
     emo_map_entry *slot = (emo_map_entry *)p[2];
+    if (replace_barrier) {
+      emo_retain(key);
+      emo_retain(value);
+    }
     emo_release(slot[i].key);
     emo_release(slot[i].value);
     slot[i].key = key;
     slot[i].value = value;
-    return emo_retain(m);
+    return;
   }
   int64_t cap = (int64_t)p[1];
   int64_t count = (int64_t)p[0];
   if (cap == count) {
     int64_t ncap = cap < 8 ? 8 : cap * 2;
     emo_map_entry *entries =
-        emo_alloc((size_t)ncap * sizeof(emo_map_entry));
-    if (cap > 0)
-      memcpy(entries, (void *)p[2], (size_t)cap * sizeof(emo_map_entry));
+        realloc((void *)p[2], (size_t)ncap * sizeof(emo_map_entry));
+    if (entries == NULL) abort();
     memset(entries + cap, 0, (size_t)(ncap - cap) * sizeof(emo_map_entry));
     p[1] = (uintptr_t)ncap;
     p[2] = (uintptr_t)entries;
@@ -765,7 +926,6 @@ emo_value emo_map_set(emo_value m, emo_value key, emo_value value) {
   emo_retain(key); /* the map owns its entries */
   emo_retain(value);
   entries[count].next = -1;
-  emo_retain(m); /* the chained call hands the caller its own claim */
   p[0] = (uintptr_t)(count + 1);
   uintptr_t mask = p[3];
   if (p[4] == (uintptr_t)NULL ||
@@ -777,7 +937,19 @@ emo_value emo_map_set(emo_value m, emo_value key, emo_value value) {
     entries[count].next = buckets[h & mask];
     buckets[h & mask] = count;
   }
-  return m;
+}
+
+/* The insert `Map.new` and the deep copy use: fresh inserts only, so
+   the map takes its own claims, and no result is handed out. */
+static void emo_map_insert(emo_value m, emo_value key, emo_value value) {
+  emo_map_store(m, key, value, false);
+}
+
+emo_value emo_map_set(emo_value m, emo_value key, emo_value value) {
+  emo_expect_kind(m, EMO_MAP);
+  if (!emo_map_key_ok(key)) emo_fatal(emo_map_key_rule);
+  emo_map_store(m, key, value, true);
+  return emo_retain(m); /* the chained call hands the caller its own claim */
 }
 
 /* Rehashes every live entry into a bucket array sized for the load. */
@@ -786,7 +958,7 @@ static void emo_map_rehash(emo_value m) {
   int64_t cap = (int64_t)p[1];
   int64_t nbuckets = 8;
   while ((uint64_t)cap * 2 > (uint64_t)nbuckets) nbuckets <<= 1;
-  int64_t *buckets = emo_alloc((size_t)nbuckets * sizeof(int64_t));
+  int64_t *buckets = emo_owned_alloc((size_t)nbuckets * sizeof(int64_t));
   for (int64_t i = 0; i < nbuckets; i++) buckets[i] = -1;
   emo_map_entry *entries = (emo_map_entry *)p[2];
   uintptr_t mask = (uintptr_t)(nbuckets - 1);
@@ -796,6 +968,7 @@ static void emo_map_rehash(emo_value m) {
     entries[i].next = buckets[h & mask];
     buckets[h & mask] = i;
   }
+  free((void *)p[4]); /* the superseded bucket array */
   p[3] = mask;
   p[4] = (uintptr_t)buckets;
 }
@@ -808,9 +981,9 @@ bool emo_map_has(emo_value m, emo_value key) {
 
 emo_value emo_map_remove(emo_value m, emo_value key) {
   emo_expect_kind(m, EMO_MAP);
-  if (!emo_map_key_ok(key)) return m; /* never storable, so never present */
+  if (!emo_map_key_ok(key)) return emo_retain(m);
   uintptr_t *p = emo_payload(m);
-  if (p[4] == (uintptr_t)NULL) return m;
+  if (p[4] == (uintptr_t)NULL) return emo_retain(m);
   emo_map_entry *entries = (emo_map_entry *)p[2];
   int64_t *buckets = (int64_t *)p[4];
   uintptr_t mask = p[3];
@@ -823,11 +996,11 @@ emo_value emo_map_remove(emo_value m, emo_value key) {
       e->key = 0;
       *link = e->next;
       p[0] = (uintptr_t)((int64_t)p[0] - 1);
-      return m;
+      return emo_retain(m);
     }
     link = &e->next;
   }
-  return m;
+  return emo_retain(m);
 }
 
 int64_t emo_map_length(emo_value m) {
@@ -860,11 +1033,88 @@ emo_value emo_map_values(emo_value m) {
   return emo_map_collect(m, true);
 }
 
+/* ---- Reclamation, the release half (step 49) ----
+
+   Every cell frees its holdings at zero: a tuple or array its
+   elements, a List its struct and nodes, a Map its entries and
+   buckets, an ArrayBuilder its items and buffer, an instance its
+   fields, a closure its captures, a Box its contents. The remaining
+   kinds — String, Bytes, Enum, Int64, Float64, Pid — hold no cell
+   words, so their release is the free alone. */
+
+void emo_release(emo_value v) {
+  if (v == 0 || (v & 7) != 0) return;
+  if (--*emo_rc_of(v) > 0) return;
+  emo_identity_live--;
+  uintptr_t *p = emo_payload(v);
+  switch (emo_cell_kind(v)) {
+  case EMO_TUPLE:
+  case EMO_ARRAY: {
+    /* [header][len][elements...] */
+    int64_t n = (int64_t)p[0];
+    for (int64_t i = 0; i < n; i++) emo_release((emo_value)p[i + 1]);
+    break;
+  }
+  case EMO_INSTANCE: {
+    /* [header][vtable][fields...] */
+    const emo_vtable *vt = (const emo_vtable *)p[0];
+    for (int64_t i = 0; i < vt->field_count; i++)
+      emo_release((emo_value)p[i + 1]);
+    break;
+  }
+  case EMO_CLOSURE: {
+    /* [header][fn][ncaps][captured...] */
+    int64_t ncaps = (int64_t)p[1];
+    for (int64_t i = 0; i < ncaps; i++) emo_release((emo_value)p[i + 2]);
+    break;
+  }
+  case EMO_LIST: {
+    /* [header][emo_list *] — the struct and every node */
+    emo_list *l = (emo_list *)*p;
+    for (emo_list_node *n = l->head; n != NULL;) {
+      emo_list_node *next = n->next;
+      emo_release(n->v);
+      free(n);
+      n = next;
+    }
+    free(l);
+    break;
+  }
+  case EMO_MAP: {
+    /* [header][count][cap][entries][bucket_mask][buckets] */
+    emo_map_entry *entries = (emo_map_entry *)p[2];
+    int64_t cap = (int64_t)p[1];
+    for (int64_t i = 0; i < cap; i++)
+      if (entries[i].key != 0) {
+        emo_release(entries[i].key);
+        emo_release(entries[i].value);
+      }
+    free(entries);
+    free((void *)p[4]);
+    break;
+  }
+  case EMO_BUILDER: {
+    /* [header][size][cap][items] */
+    int64_t size = (int64_t)p[0];
+    for (int64_t i = 0; i < size; i++) emo_release(((emo_value *)p[2])[i]);
+    free((void *)p[2]);
+    break;
+  }
+  case EMO_BOX:
+    /* [header][payload] */
+    emo_release((emo_value)p[0]);
+    break;
+  default:
+    break; /* String, Bytes, Enum, Int64, Float64, Pid */
+  }
+  free((emo_idhead *)((emo_cell *)v - 1));
+}
+
 /* ---- Instances (T23.5) ---- */
 
 emo_value emo_instance_new(const emo_vtable *vt, int64_t nfields) {
   /* [header][vtable][fields...] */
-  emo_value v = emo_idcell_new(EMO_INSTANCE, nfields + 1);
+  emo_value v = emo_cell_new(EMO_INSTANCE, nfields + 1);
   *emo_payload(v) = (uintptr_t)vt;
   return v;
 }
@@ -966,7 +1216,7 @@ emo_value emo_closure_new(emo_closure_fn fn, int64_t ncaps,
                           const emo_value *caps) {
   /* [header][fn][ncaps][captured...] — the capture count rides in the
      cell so release can free the captures */
-  emo_value v = emo_idcell_new(EMO_CLOSURE, ncaps + 2);
+  emo_value v = emo_cell_new(EMO_CLOSURE, ncaps + 2);
   uintptr_t *p = emo_payload(v);
   *p++ = (uintptr_t)fn;
   *p++ = (uintptr_t)ncaps;
@@ -989,7 +1239,7 @@ emo_value emo_closure_get(emo_value closure, int64_t i) {
 
 emo_value emo_closure_call0(emo_value f) {
   emo_closure_fn fn = emo_closure_fn_of(f);
-  return fn(f, NULL);
+  return fn(f, NULL); /* the body's __ret claim */
 }
 
 emo_value emo_closure_call1(emo_value f, emo_value a) {
@@ -1072,8 +1322,8 @@ static void emo_printf_reserve(emo_printf_buf *b, size_t extra) {
   if (b->len + extra <= b->cap) return;
   size_t cap = b->cap ? b->cap : 128;
   while (cap < b->len + extra) cap *= 2;
-  char *nb = emo_alloc(cap);
-  if (b->bytes != NULL) memcpy(nb, b->bytes, b->len);
+  char *nb = realloc(b->bytes, cap);
+  if (nb == NULL) abort();
   b->bytes = nb;
   b->cap = cap;
 }
@@ -1419,6 +1669,7 @@ void emo_printf(emo_str fmt, emo_value args) {
     emo_fatal(message);
   }
   fwrite(b.bytes, 1, b.len, stdout);
+  free(b.bytes); /* the render buffer dies with the call */
 }
 
 static int64_t emo_length_bytes(emo_value v) {
@@ -1437,7 +1688,7 @@ emo_value emo_send(emo_value recv, const char *name, int64_t arity,
         vt->methods[i].method_arity == arity) {
       if (vt->methods[i].thunk == NULL)
         emo_fatal("message not understood");
-      return vt->methods[i].thunk(recv, args);
+      return vt->methods[i].thunk(recv, args); /* the body's __ret claim */
     }
   }
   fprintf(stderr, "runtime error: message not understood: %s/%lld\n", name,
@@ -1453,7 +1704,7 @@ emo_value emo_send(emo_value recv, const char *name, int64_t arity,
 emo_value emo_add_dyn(emo_value a, emo_value b) {
   uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
   if (ka == EMO_STRING && kb == EMO_STRING)
-    return emo_box_str(emo_str_concat(emo_str_of(a), emo_str_of(b)));
+    return emo_cell_concat_raw(a, b);
   if (ka == EMO_INT64 && kb == EMO_INT64) {
     int64_t r = (int64_t)((uint64_t)emo_unbox_i64(a) +
                           (uint64_t)emo_unbox_i64(b));
@@ -1533,12 +1784,8 @@ bool emo_eq_dyn(emo_value a, emo_value b) {
     return true;
   }
   case EMO_BOX: {
-    /* the reads hand each caller a claim; drop them after comparing */
-    emo_value va = emo_box_read(a), vb = emo_box_read(b);
-    bool eq = emo_eq_dyn(va, vb);
-    emo_release(va);
-    emo_release(vb);
-    return eq;
+    /* the contents borrow their owners' claims; no handout here */
+    return emo_eq_dyn((emo_value)*emo_payload(a), (emo_value)*emo_payload(b));
   }
   case EMO_LIST: {
     /* element-wise, front to back — the Box rule generalized */
@@ -1819,11 +2066,6 @@ void emo_println_dyn(emo_value v) {
   fputc('\n', stdout);
 }
 
-emo_str emo_to_string_method(emo_value v) {
-  if (emo_cell_kind(v) == EMO_BYTES) return emo_str_of_bytes(v);
-  return emo_to_string_dyn(v);
-}
-
 /* ---- Processes and the cooperative scheduler ---- */
 
 typedef struct emo_msg {
@@ -1831,7 +2073,7 @@ typedef struct emo_msg {
   emo_value v;
 } emo_msg;
 
-/* The autorelease pool: identity words handed out inside one statement
+/* The autorelease pool: dynamic words handed out inside one statement
    wait here and release together at the statement boundary (the
    generated `emo_drain`). The ObjC shape — it lets every call site
    pass borrowed words without ownership analysis. */
@@ -1937,7 +2179,6 @@ static emo_pool *emo_pool_of(void) {
 
 emo_value emo_autorelease(emo_value v) {
   if (v == 0 || (v & 7) != 0) return v;
-  if (!emo_identity_kind(emo_cell_kind(v))) return v;
   emo_pool_push(emo_pool_of(), v);
   return v;
 }
@@ -2146,12 +2387,12 @@ static emo_value emo_deep_copy(emo_value v) {
   }
   case EMO_LIST: {
     emo_list *src = emo_list_of(v);
-    emo_list *l = emo_alloc(sizeof(emo_list));
+    emo_list *l = emo_owned_alloc(sizeof(emo_list));
     l->head = NULL;
     l->tail = NULL;
     l->size = 0;
     for (emo_list_node *n = src->head; n != NULL; n = n->next) {
-      emo_list_node *node = emo_alloc(sizeof(emo_list_node));
+      emo_list_node *node = emo_owned_alloc(sizeof(emo_list_node));
       node->v = emo_deep_copy(n->v); /* the node holds the copy's claim */
       node->prev = l->tail;
       node->next = NULL;
@@ -2168,9 +2409,8 @@ static emo_value emo_deep_copy(emo_value v) {
     emo_value copy = emo_builder_new();
     uintptr_t *p = emo_builder_words(v);
     for (int64_t i = 0; i < (int64_t)p[0]; i++) {
-      emo_value item = emo_deep_copy(((emo_value *)p[2])[i]);
-      emo_builder_push(copy, item);
-      emo_release(item);
+      /* the store takes the copy's own claim */
+      emo_builder_store(copy, emo_deep_copy(((emo_value *)p[2])[i]));
     }
     return copy;
   }
@@ -2183,7 +2423,7 @@ static emo_value emo_deep_copy(emo_value v) {
     for (int64_t i = 0; i < (int64_t)p[1]; i++) {
       if (entries[i].key == 0) continue; /* a removed entry */
       emo_value value = emo_deep_copy(entries[i].value);
-      emo_map_set(copy, entries[i].key, value);
+      emo_map_insert(copy, entries[i].key, value);
       emo_release(value);
     }
     return copy;
@@ -2201,8 +2441,12 @@ static emo_value emo_deep_copy(emo_value v) {
   default:
     /* Int64, Float64, String, Enum, Closure, Pid: immutable data, or an
        identity the boundary deliberately shares (the interpreter's
-       `| v -> v`) */
-    return v;
+       `| v -> v`). Since the value families refcount, sharing takes a
+       claim — the copy's parent owns this word's shared reference and
+       releases it when the copy dies; a bare pass-through would leave
+       the mailbox holding the sender's claim, freed when the send
+       statement drains. */
+    return emo_retain(v);
   }
 }
 
@@ -2384,40 +2628,49 @@ static emo_value emo_os_fail(const char *what, const char *arg) {
 }
 
 emo_value emo_file_read(emo_str path) {
-  char *clean = (char *)emo_str_cstr(path);
+  char *clean = emo_cstr_owned(path);
   FILE *f = fopen(clean, "rb");
   if (f == NULL) {
     char why[512];
     snprintf(why, sizeof why, "file: cannot read %s: %s", clean,
              strerror(errno));
+    free(clean);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
   }
   fseek(f, 0, SEEK_END);
   long n = ftell(f);
   fseek(f, 0, SEEK_SET);
-  emo_str out = emo_str_from_parts("", n);
-  size_t got = fread((char *)out.bytes, 1, (size_t)n, f);
+  char *buf = malloc(n > 0 ? (size_t)n : 1);
+  if (buf == NULL) abort();
+  size_t got = fread(buf, 1, (size_t)n, f);
   fclose(f);
-  if ((long)got != n)
+  free(clean);
+  if ((long)got != n) {
+    free(buf);
     return emo_os_pair(
         "error",
         emo_box_str(emo_str_concat(
             emo_str_from_cstr("file: cannot read "),
             emo_str_concat(path, emo_str_from_cstr(": short read")))));
-  return emo_os_pair("ok", emo_box_str(out));
+  }
+  emo_value out = emo_box_str((emo_str){(int64_t)n, buf});
+  free(buf);
+  return emo_os_pair("ok", out);
 }
 
 emo_value emo_file_write(emo_str path, emo_str contents) {
-  char *clean = (char *)emo_str_cstr(path);
+  char *clean = emo_cstr_owned(path);
   FILE *f = fopen(clean, "wb");
   if (f == NULL) {
     char why[512];
     snprintf(why, sizeof why, "file: cannot write %s: %s", clean,
              strerror(errno));
+    free(clean);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
   }
   size_t put = fwrite(contents.bytes, 1, (size_t)contents.len, f);
   fclose(f);
+  free(clean);
   if ((int64_t)put != contents.len)
     return emo_os_pair(
         "error",
@@ -2469,10 +2722,11 @@ void emo_net_wait_writable(int64_t fd) {
    refusal in [why] — the text the plain listen has always printed. */
 static int emo_net_listen_fd(emo_str host, int64_t port, char *why,
                              size_t whyn) {
-  char *h = (char *)emo_str_cstr(host);
+  char *h = emo_cstr_owned(host);
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {
     snprintf(why, whyn, "listen failed");
+    free(h);
     return -1;
   }
   int one = 1;
@@ -2484,6 +2738,7 @@ static int emo_net_listen_fd(emo_str host, int64_t port, char *why,
   if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
     close(fd);
     snprintf(why, whyn, "cannot resolve host `%s`", h);
+    free(h);
     return -1;
   }
   if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0 ||
@@ -2491,8 +2746,10 @@ static int emo_net_listen_fd(emo_str host, int64_t port, char *why,
     snprintf(why, whyn, "cannot listen on %s:%d: %s", h, (int)port,
              strerror(errno));
     close(fd);
+    free(h);
     return -1;
   }
+  free(h);
   emo_net_nonblock(fd);
   return fd;
 }
@@ -2555,10 +2812,11 @@ emo_value emo_net_accept(int64_t listener) {
    the same text the plain connect has always printed. */
 static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
                               char *why, size_t whyn) {
-  char *h = (char *)emo_str_cstr(host);
+  char *h = emo_cstr_owned(host);
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {
     snprintf(why, whyn, "connect failed");
+    free(h);
     return -1;
   }
   struct sockaddr_in addr;
@@ -2568,6 +2826,7 @@ static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
   if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
     close(fd);
     snprintf(why, whyn, "cannot resolve host `%s`", h);
+    free(h);
     return -1;
   }
   if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
@@ -2577,8 +2836,10 @@ static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
       snprintf(why, whyn, "cannot connect to %s:%d: %s", h, (int)port,
                strerror(errno));
     close(fd);
+    free(h);
     return -1;
   }
+  free(h);
   emo_net_set_timeout(fd, timeout);
   emo_net_nonblock(fd);
   return fd;
@@ -3044,69 +3305,102 @@ static int emo_net_write_once(int64_t fd, const void *buf, size_t n,
 }
 
 /* One byte at a time is slow but exact; the arena absorbs the growth. */
+/* One byte at a time is slow but exact; the line buffer is a malloc'd
+   transient that the boxing copies out and frees. */
 emo_value emo_net_read_line(int64_t fd) {
-  emo_str out = emo_str_from_parts("", 0);
+  size_t cap = 64;
+  char *buf = malloc(cap);
+  if (buf == NULL) abort();
+  int64_t len = 0;
   for (;;) {
     char detail[256];
     detail[0] = '\0';
     char c;
     int got = emo_net_read_once(fd, &c, 1, detail, sizeof detail);
-    if (got == 0) return emo_os_pair("ok", emo_box_str(out)); /* EOF ends the line */
+    if (got == 0) { /* EOF ends the line */
+      emo_value out = emo_box_str((emo_str){len, buf});
+      free(buf);
+      return emo_os_pair("ok", out);
+    }
     if (got < 0) {
       char what[512];
       snprintf(what, sizeof what, "cannot read: %s", detail);
+      free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
-    if (c == '\n') return emo_os_pair("ok", emo_box_str(out));
+    if (c == '\n') {
+      emo_value out = emo_box_str((emo_str){len, buf});
+      free(buf);
+      return emo_os_pair("ok", out);
+    }
     if (c == '\r') continue;
-    char *bigger = emo_alloc(out.len + 1);
-    memcpy(bigger, out.bytes, (size_t)out.len);
-    bigger[out.len] = c;
-    out.bytes = bigger;
-    out.len += 1;
+    if ((size_t)len + 1 > cap) {
+      cap *= 2;
+      char *bigger = realloc(buf, cap);
+      if (bigger == NULL) abort();
+      buf = bigger;
+    }
+    buf[len++] = c;
   }
 }
 
 emo_value emo_net_read_exactly(int64_t fd, int64_t n) {
-  emo_str out = emo_str_from_parts("", n);
+  char *buf = malloc(n > 0 ? (size_t)n : 1);
+  if (buf == NULL) abort();
   int64_t got_total = 0;
   while (got_total < n) {
     char detail[256];
     detail[0] = '\0';
-    int got = emo_net_read_once(fd, (char *)out.bytes + got_total,
+    int got = emo_net_read_once(fd, buf + got_total,
                                 (size_t)(n - got_total), detail, sizeof detail);
-    if (got == 0)
+    if (got == 0) {
+      free(buf);
       return emo_os_pair(
           "error",
           emo_box_str(emo_str_from_cstr("the connection closed early")));
+    }
     if (got < 0) {
       char what[512];
       snprintf(what, sizeof what, "cannot read: %s", detail);
+      free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
     got_total += got;
   }
-  return emo_os_pair("ok", emo_box_str(out));
+  emo_value out = emo_box_str((emo_str){n, buf});
+  free(buf);
+  return emo_os_pair("ok", out);
 }
 
 emo_value emo_net_read_all(int64_t fd) {
-  emo_str out = emo_str_from_parts("", 0);
+  size_t cap = 4096;
+  char *buf = malloc(cap);
+  if (buf == NULL) abort();
+  int64_t len = 0;
   for (;;) {
     char detail[256];
     detail[0] = '\0';
     char chunk[4096];
     int got = emo_net_read_once(fd, chunk, sizeof chunk, detail, sizeof detail);
-    if (got == 0) return emo_os_pair("ok", emo_box_str(out));
+    if (got == 0) {
+      emo_value out = emo_box_str((emo_str){len, buf});
+      free(buf);
+      return emo_os_pair("ok", out);
+    }
     if (got < 0) {
       char what[512];
       snprintf(what, sizeof what, "cannot read: %s", detail);
+      free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
-    char *bigger = emo_alloc(out.len + got);
-    memcpy(bigger, out.bytes, (size_t)out.len);
-    memcpy(bigger + out.len, chunk, (size_t)got);
-    out.bytes = bigger;
-    out.len += got;
+    if ((size_t)len + (size_t)got > cap) {
+      while ((size_t)len + (size_t)got > cap) cap *= 2;
+      char *bigger = realloc(buf, cap);
+      if (bigger == NULL) abort();
+      buf = bigger;
+    }
+    memcpy(buf + len, chunk, (size_t)got);
+    len += got;
   }
 }
 
@@ -3250,8 +3544,9 @@ EMO_NORETURN int64_t emo_unsupported(const char *what) {
   exit(70);
 }
 
-emo_value emo_make_exception(emo_str message) {
-  return emo_box_str(message);
+emo_value emo_make_exception(emo_value message) {
+  /* the Exception value IS the message cell; the claim passes through */
+  return message;
 }
 
 /* ---- The integer core ---- */
@@ -3271,8 +3566,8 @@ int64_t emo_mod_i64(int64_t a, int64_t b) {
 /* ---- The systems layer ---- */
 
 emo_value emo_bytes_new(int64_t len) {
-  /* [header][len][bytes...] — zero-filled by the bump allocator's
-     fresh malloc? malloc does not zero: clear explicitly. */
+  /* [header][len][bytes...] — the cell arrives zeroed; the explicit
+     clear keeps the contract local to the constructor. */
   emo_value v = emo_cell_new(EMO_BYTES, 1 + (len + 7) / 8);
   uintptr_t *p = emo_payload(v);
   p[0] = (uintptr_t)len;
@@ -3315,11 +3610,12 @@ int64_t emo_bytes_set(emo_value b, int64_t i, int64_t v) {
   return v;
 }
 
-emo_value emo_bytes_of_str(emo_str s) {
-  emo_value v = emo_cell_new(EMO_BYTES, 1 + (s.len + 7) / 8);
+emo_value emo_bytes_of_str(emo_value s) {
+  emo_str str = emo_str_of(s); /* a borrow: the cell outlives the call */
+  emo_value v = emo_cell_new(EMO_BYTES, 1 + (str.len + 7) / 8);
   uintptr_t *p = emo_payload(v);
-  p[0] = (uintptr_t)s.len;
-  memcpy(p + 1, s.bytes, (size_t)s.len);
+  p[0] = (uintptr_t)str.len;
+  memcpy(p + 1, str.bytes, (size_t)str.len);
   return v;
 }
 
@@ -3412,7 +3708,7 @@ int64_t emo_os_waitpid(int64_t pid) {
   if (waitpid((pid_t)pid, &st, 0) < 0) {
     char buf[512];
     snprintf(buf, sizeof buf, "os: waitpid: %s", strerror(errno));
-    emo_raise(emo_make_exception(emo_str_from_cstr(buf)));
+    emo_raise(emo_make_exception(emo_cell_from_cstr(buf)));
   }
   emo_value elems[2];
   elems[0] = emo_box_i64(pid);
@@ -3431,58 +3727,75 @@ emo_value emo_os_pipe(void) {
 }
 
 int64_t emo_os_execv(emo_str path, emo_value argv) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   int64_t count = emo_length(argv);
-  char **argv_c = (char **)emo_alloc(sizeof(char *) * (size_t)(count + 1));
+  char **argv_c = malloc(sizeof(char *) * (size_t)(count + 1));
+  if (argv_c == NULL) abort();
   for (int64_t i = 0; i < count; i++) {
-    emo_str item = emo_str_of(emo_index(argv, i));
-    char *copied = (char *)emo_alloc((size_t)item.len + 1);
-    memcpy(copied, item.bytes, (size_t)item.len);
-    copied[item.len] = 0;
-    argv_c[i] = copied;
+    argv_c[i] = emo_cstr_owned(emo_str_of(emo_index(argv, i)));
   }
   argv_c[count] = NULL;
   execv(p, argv_c);
   /* Failure is a data-driven value: the call returns (the value is
      discarded) — the fork child's cue to `_exit` (a raise here would
      run the parent's cleanup a second time). */
+  for (int64_t i = 0; i < count; i++) free(argv_c[i]);
+  free(argv_c);
+  free(p);
   return 0;
 }
 
 void emo_os__exit(int64_t status) { _exit((int)status); }
 
 emo_value emo_os_open_read(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   int fd = open(p, O_RDONLY);
-  if (fd < 0)
-    return emo_os_fail("open", p);
+  if (fd < 0) {
+    emo_value out = emo_os_fail("open", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(fd));
 }
 
 emo_value emo_os_open_write(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-  if (fd < 0)
-    return emo_os_fail("open", p);
+  if (fd < 0) {
+    emo_value out = emo_os_fail("open", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(fd));
 }
 
 emo_value emo_os_open_append(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   int fd = open(p, O_WRONLY | O_CREAT | O_APPEND, 0644);
-  if (fd < 0)
-    return emo_os_fail("open", p);
+  if (fd < 0) {
+    emo_value out = emo_os_fail("open", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(fd));
 }
 
 emo_value emo_os_read(int64_t fd, int64_t n) {
   if (n <= 0)
     return emo_os_ok(emo_box_str((emo_str){0, ""}));
-  char *buf = (char *)emo_alloc((size_t)n);
+  char *buf = malloc((size_t)n);
+  if (buf == NULL) abort();
   ssize_t got = read((int)fd, buf, (size_t)n);
-  if (got < 0)
+  if (got < 0) {
+    free(buf);
     return emo_os_fail("read", "");
-  return emo_os_ok(emo_box_str((emo_str){(int64_t)got, buf}));
+  }
+  emo_value out = emo_box_str((emo_str){(int64_t)got, buf});
+  free(buf);
+  return emo_os_ok(out);
 }
 
 emo_value emo_os_write(int64_t fd, emo_str data) {
@@ -3503,10 +3816,14 @@ static int emo_os_cmp_cstr(const void *a, const void *b) {
 }
 
 emo_value emo_os_list_dir(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   DIR *d = opendir(p);
-  if (d == NULL)
-    return emo_os_fail("opendir", p);
+  if (d == NULL) {
+    emo_value out = emo_os_fail("opendir", p);
+    free(p);
+    return out;
+  }
+  free(p);
   size_t count = 0;
   struct dirent *ent;
   while ((ent = readdir(d)) != NULL) {
@@ -3515,64 +3832,97 @@ emo_value emo_os_list_dir(emo_str path) {
     count++;
   }
   size_t slot = count > 0 ? count : 1;
-  char **names = (char **)emo_alloc(sizeof(char *) * slot);
+  char **names = malloc(sizeof(char *) * slot);
+  if (names == NULL) abort();
   rewinddir(d);
   size_t i = 0;
   while ((ent = readdir(d)) != NULL) {
     if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
       continue;
-    names[i] = (char *)emo_alloc(strlen(ent->d_name) + 1);
-    strcpy(names[i], ent->d_name);
+    names[i] = strdup(ent->d_name);
+    if (names[i] == NULL) abort();
     i++;
   }
   closedir(d);
   qsort(names, count, sizeof(char *), emo_os_cmp_cstr);
-  emo_value *elems = (emo_value *)emo_alloc(sizeof(emo_value) * slot);
-  for (size_t k = 0; k < count; k++)
-    elems[k] = emo_box_str(emo_str_from_cstr(names[k]));
-  return emo_os_ok(emo_array_new((int64_t)count, elems));
+  emo_value *elems = malloc(sizeof(emo_value) * slot);
+  if (elems == NULL) abort();
+  for (size_t k = 0; k < count; k++) {
+    elems[k] = emo_cell_from_cstr(names[k]);
+    free(names[k]);
+  }
+  free(names);
+  emo_value out = emo_array_new((int64_t)count, elems);
+  free(elems);
+  return emo_os_ok(out);
 }
 
 emo_value emo_os_mkdir(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
-  if (mkdir(p, 0755) != 0)
-    return emo_os_fail("mkdir", p);
+  char *p = emo_cstr_owned(path);
+  int rc = mkdir(p, 0755);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("mkdir", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(0));
 }
 
 emo_value emo_os_rmdir(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
-  if (rmdir(p) != 0)
-    return emo_os_fail("rmdir", p);
+  char *p = emo_cstr_owned(path);
+  int rc = rmdir(p);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("rmdir", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(0));
 }
 
 emo_value emo_os_unlink(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
-  if (unlink(p) != 0)
-    return emo_os_fail("unlink", p);
+  char *p = emo_cstr_owned(path);
+  int rc = unlink(p);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("unlink", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(0));
 }
 
 emo_value emo_os_rename(emo_str old_path, emo_str new_path) {
-  char *o = (char *)emo_str_cstr(old_path);
-  char *n = (char *)emo_str_cstr(new_path);
-  if (rename(o, n) != 0)
-    return emo_os_fail("rename", o);
+  char *o = emo_cstr_owned(old_path);
+  char *n = emo_cstr_owned(new_path);
+  int rc = rename(o, n);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("rename", o);
+    free(o);
+    free(n);
+    return out;
+  }
+  free(o);
+  free(n);
   return emo_os_ok(emo_box_i64(0));
 }
 
-emo_str emo_os_getcwd(void) {
+emo_value emo_os_getcwd(void) {
   char buf[4096];
-  if (getcwd(buf, sizeof buf) == NULL)
-    emo_os_fail("getcwd", "");
-  return emo_str_from_cstr(buf);
+  if (getcwd(buf, sizeof buf) == NULL) emo_fatal("getcwd failed");
+  return emo_box_str((emo_str){(int64_t)strlen(buf), buf});
 }
 
 emo_value emo_os_chdir(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
-  if (chdir(p) != 0)
-    return emo_os_fail("chdir", p);
+  char *p = emo_cstr_owned(path);
+  int rc = chdir(p);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("chdir", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(0));
 }
 
@@ -3622,7 +3972,8 @@ static emo_value emo_bm_to_int64(emo_value recv, const emo_value *args) {
     case EMO_FLOAT64:
       return emo_box_i64((int64_t)emo_unbox_f64(recv));
     case EMO_INT64:
-      return recv;
+      return emo_retain(recv); /* the pass-through is a claim, like every
+                                  builtin answer */
     default:
       return emo_box_i64(emo_str_to_int64(emo_str_of(recv)));
   }
@@ -3695,7 +4046,7 @@ static emo_value emo_bm_length(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_to_string(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_box_str(emo_to_string_method(recv));
+  return emo_to_string_cell(recv); /* the answer is a cell */
 }
 
 /* The gradual call sites dispatch through the name/arity table when the
@@ -3785,7 +4136,7 @@ static emo_value emo_bm_append(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_to_bytes(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_bytes_of_str(emo_str_of(recv));
+  return emo_bytes_of_str(recv);
 }
 
 static emo_value emo_bm_to_bits(emo_value recv, const emo_value *args) {
@@ -3880,7 +4231,7 @@ emo_value emo_dynamic_builtin(emo_value recv, const char *name, int64_t arity,
        i++) {
     const emo_builtin_method *m = &emo_builtin_methods[i];
     if ((int64_t)m->arity == arity && strcmp(m->name, name) == 0)
-      return m->fn(recv, args);
+      return m->fn(recv, args); /* every builtin hands the caller a claim */
   }
   fprintf(stderr, "runtime error: message not understood: %s/%lld\n", name,
           (long long)arity);

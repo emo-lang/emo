@@ -5,10 +5,11 @@
    println, the integer core's wrap-around helpers (T23.2), the scalar
    runtime (T23.3), and the dynamic value model (T23.4): one tagged
    word per value, 8-byte-aligned heap cells, boxed Int64/Float64
-   two-word cells, Bool/Char immediates, and the bump allocator (the
-   provisional reclamation profile — CHECK.md; nothing is ever
-   freed). Classes, enums, interfaces, and closures extend the cell
-   kind set in T23.5. */
+   two-word cells, Bool/Char immediates. Classes, enums, interfaces,
+   and closures extend the cell kind set in T23.5, and step 49 extends
+   the T23.5 refcounting to every cell kind: each cell is malloc'd
+   with a refcount header and freed at zero, while the bump allocator
+   serves only native transient buffers. */
 
 #ifndef EMO_C_RUNTIME_H
 #define EMO_C_RUNTIME_H
@@ -105,6 +106,10 @@ typedef emo_value (*emo_closure_fn)(emo_value closure, const emo_value *args);
    initialization hooks in here (T23.9). */
 void emo_startup(void);
 
+/* A measurement probe (the T49.4 gate): the arena's live byte count.
+   A render-shaped loop on the c target holds this flat. */
+int64_t emo_arena_bytes(void);
+
 /* println over stdio, one line per value. The integer form is exact
    over the full Int64 range, INT64_MIN included. */
 void emo_println_str(emo_str s);
@@ -179,8 +184,8 @@ int64_t emo_list_length(emo_value l);
    like a List. Push returns the builder (so pushes chain), get reads an
    element back, and to_array hands out a fresh Array copy — the builder
    stays free to grow without touching the array it already returned.
-   Growth is the Map's amortized doubling; the superseded buffer rides
-   the arena like every other dead cell. */
+   Growth is the Map's amortized doubling; the superseded buffer frees
+   at the growth, and release frees the last one with its elements. */
 emo_value emo_builder_new(void);
 emo_value emo_builder_push(emo_value b, emo_value v);
 int64_t emo_builder_length(emo_value b);
@@ -215,21 +220,24 @@ emo_value emo_field_by_name(emo_value instance, const char *name);
 bool emo_is_iface(emo_value instance, const emo_iface *ifc);
 int emo_is_instance(emo_value v);
 
-/* Reclamation (CHECK.md, the T23.5 gate): reference counting over the
-   identity-bearing cells — instances, closures, Box. Everything else
-   is arena-resident and these are no-ops on it. The emitter owns the
-   discipline: retain on capture into a longer-lived slot (bindings,
-   fields — a barrier inside set_field/box_replace — closures,
-   aggregates), release at binding-scope exit and on overwrite, and an
-   autorelease pool draining at statement boundaries carries
-   expression-internal temporaries. Cycles leak, documented. */
+/* Reclamation (CHECK.md, the T23.5 gate; step 49): reference counting
+   over every dynamic cell — the T23.5 identity discipline (instances,
+   closures, Box) extended to the value families, so a value cell
+   reaches refcount zero and frees, and an aggregate's release frees
+   what it holds. The emitter owns the discipline: retain on capture
+   into a longer-lived slot (bindings, fields — a barrier inside
+   set_field/box_replace — closures, aggregates), release at
+   binding-scope exit and on overwrite, and an autorelease pool
+   draining at statement boundaries carries expression-internal
+   temporaries. Cycles leak, documented. */
 emo_value emo_retain(emo_value v); /* pass-through */
 void emo_release(emo_value v);
 emo_value emo_autorelease(emo_value v); /* pass-through: pools the word */
 void emo_drain(void);
 void emo_pool_enter(void); /* every generated body opens a frame pool */
 void emo_pool_exit(void);  /* and closes it at every return */
-int64_t emo_identity_live_count(void); /* a reclamation probe for tests */
+int64_t emo_identity_live_count(void); /* a reclamation probe for tests;
+                                          counts every live cell */
 
 /* The dynamic builtin send: an untyped receiver answers through its
    vtable when it is an instance, and through the builtin that owns the
@@ -307,10 +315,22 @@ void emo_println_dyn(emo_value v);
    arguments are fatal runtime errors. */
 void emo_printf(emo_str fmt, emo_value args);
 
-/* The to_string METHOD over a dynamic receiver: a Bytes cell yields
-   its content, every other kind renders (the interpreter dispatches
-   the same way at runtime). */
-emo_str emo_to_string_method(emo_value v);
+/* The to_string surface over a dynamic value: the rendered bytes copy
+   into a fresh cell (the memstream transient dies inside). */
+emo_value emo_to_string_cell(emo_value v);
+
+/* Cell-native string builders (step 49): the result cell is allocated
+   directly and the bytes copied in — no bump-arena intermediate. The
+   operands are borrowed; the answer's claim is the caller's to pool. */
+emo_value emo_cell_concat(emo_value a, emo_value b);
+emo_value emo_cell_from_i64(int64_t v);
+emo_value emo_cell_from_f64(double v);
+emo_value emo_cell_from_char(int32_t v);
+emo_value emo_cell_from_cstr(const char *cs);
+emo_value emo_cell_substring(emo_value s, int64_t start, int64_t len);
+emo_value emo_cell_lower(emo_value s);
+emo_value emo_cell_trim(emo_value s);
+emo_value emo_cell_split(emo_value s, emo_value sep); /* an Array of cells */
 
 /* ---- The systems layer (T23.7) ---- */
 
@@ -323,7 +343,7 @@ emo_value emo_bytes_new(int64_t len);
 int64_t emo_bytes_length(emo_value b);
 int64_t emo_bytes_get(emo_value b, int64_t i);
 int64_t emo_bytes_set(emo_value b, int64_t i, int64_t v); /* returns v */
-emo_value emo_bytes_of_str(emo_str s); /* copies into a cell */
+emo_value emo_bytes_of_str(emo_value s); /* copies into a cell */
 emo_str emo_str_of_bytes(emo_value b); /* borrows the cell's bytes */
 
 int64_t emo_bytes_get_u16_le(emo_value b, int64_t i);
@@ -435,7 +455,8 @@ int64_t emo_unsupported(const char *what);
 
 /* `Exception.new(message: ...)`: the value carries the message;
    emo_raise prints it. */
-emo_value emo_make_exception(emo_str message);
+emo_value emo_make_exception(emo_value message); /* the value is the
+                                                    message cell */
 
 /* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- */
 int64_t emo_os_getpid(void);
@@ -456,7 +477,7 @@ emo_value emo_os_mkdir(emo_str path);
 emo_value emo_os_rmdir(emo_str path);
 emo_value emo_os_unlink(emo_str path);
 emo_value emo_os_rename(emo_str old_path, emo_str new_path);
-emo_str emo_os_getcwd(void);
+emo_value emo_os_getcwd(void); /* the working directory as a cell */
 emo_value emo_os_chdir(emo_str path);
 
 /* ---- The integer core (T23.2) ---- */
