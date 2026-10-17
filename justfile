@@ -83,11 +83,24 @@ notarize TAG:
     fi
     devtools/notarize-release.sh {{TAG}}
 
+# Publish a release's archives to the download site — the pipeline's
+# last leg, after `notarize`. GitHub stays behind the scenes (the
+# build farm and the draft hand-off); www.emo-lang.cn is the only
+# public download channel. See devtools/publish-release.sh for the
+# knobs: EMO_RELEASE_HOST, EMO_RELEASE_STATIC_ROOT.
+#
+# publish: upload a release's archives to the download site (TAG, e.g. v0.26.8)
+publish TAG:
+    devtools/publish-release.sh {{TAG}}
+
 # Ship a release end to end from the signing Mac: cut the annotated
 # tag at HEAD (must match the VERSION file), push it, wait for the
 # Release workflow to draft the archives, notarize the macOS zips
-# locally, then publish the draft. Run on the machine whose keychain
-# holds the Developer ID identity and the emo-notary profile.
+# locally, then publish the release to the download site. The GitHub
+# release stays a draft forever — it is internal hand-off, not the
+# public channel. Run on the machine whose keychain holds the
+# Developer ID identity, the emo-notary profile, and the SSH key the
+# site accepts.
 #
 # release: tag, wait for CI, notarize, and publish (TAG, e.g. v0.26.8)
 release TAG:
@@ -130,12 +143,11 @@ release TAG:
     if [ "$(gh release view "{{TAG}}" --repo "$repo" --json isDraft --jq .isDraft)" = true ]; then
         echo "release: notarizing the macOS archives"
         just notarize "{{TAG}}"
-        echo "release: publishing"
-        gh release edit "{{TAG}}" --repo "$repo" --draft=false
     else
-        echo "release: {{TAG}} is already published — skipping notarize and publish"
+        echo "release: {{TAG}} is not a draft — skipping notarize"
     fi
-    echo "release: {{TAG}} live at https://github.com/$repo/releases/tag/{{TAG}}"
+    just publish "{{TAG}}"
+    echo "release: {{TAG}} live at https://www.emo-lang.cn/cdn/dist/{{TAG}}/"
 
 # test: run the full test suite
 test:
