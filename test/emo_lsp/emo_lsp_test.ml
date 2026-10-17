@@ -335,8 +335,7 @@ let test_stdlib_requires_indexed () =
       write (Filename.concat root "main.emo") "require \"sync\"\n";
       let indexed () =
         Lsp_index.dependency_modules ~root ~registry:(Some reg)
-        |> List.map fst
-        |> List.mem [ "sync" ]
+        |> List.map fst |> List.mem [ "sync" ]
       in
       manifest "";
       Alcotest.(check bool)

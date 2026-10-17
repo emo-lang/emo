@@ -162,7 +162,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
           let args = String.concat ", " vs in
           put env
             (Printf.sprintf "fun (%s) -> apply '%s'/%d (%s)" args
-               (Emo_ir.sanitize_ident name) a args)
+               (Emo_ir.sanitize_ident name)
+               a args)
       | None -> failwith ("beam: unbound global " ^ name))
   | Call { func; args } -> (
       match List.assoc_opt func env.funcs with
@@ -1352,9 +1353,7 @@ and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
       then
         failwith "beam: a `case` branch jumps out of a loop — not supported yet"
       else if
-        List.exists
-          (fun n -> List.mem_assoc n env.local_map)
-          (assigned_names s)
+        List.exists (fun n -> List.mem_assoc n env.local_map) (assigned_names s)
       then (
         (* A branch that rebinds an outer `var` threads the new bindings
            out of the `case`, exactly like one at statement level: without
@@ -1375,8 +1374,8 @@ and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
             let v = fresh_var env name in
             put env
               (Printf.sprintf
-                 "let <%s> =\n  call 'erlang':'element'(%d, %s)\nin " v
-                 (i + 1) slot);
+                 "let <%s> =\n  call 'erlang':'element'(%d, %s)\nin " v (i + 1)
+                 slot);
             env.local_map <- (name, v) :: env.local_map)
           assigned;
         emit_loop_body env ~tail rest ~leaf)

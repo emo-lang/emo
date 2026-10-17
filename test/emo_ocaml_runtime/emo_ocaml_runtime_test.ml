@@ -425,6 +425,55 @@ let () =
 
 let udp_out = "datagram\n"
 
+(* The TLS roundtrip: the standalone runtime implements TLS but had no
+   test of it. Server and client meet through one scheduler; the
+   insecure client variant keeps the verify callback's stderr chatter
+   out of the captured output — the verified handshake is pinned by
+   the sched suite. The fixtures ride the sched suite's checked-in
+   pair. *)
+let tls_main =
+  {|let p v = ignore (Emo_eval.call_builtin "println" [ v ])
+
+let () =
+  let exit_code =
+    Emo_runtime.run (fun () ->
+        let answered =
+          Emo_eval.call_runtime_impl "net_listen_tls"
+            [ Emo_eval.String "127.0.0.1";
+              Emo_eval.Int64 0L;
+              Emo_eval.String Sys.argv.(1);
+              Emo_eval.String Sys.argv.(2)
+            ]
+        in
+        let listener = Emo_runtime.index answered (Emo_eval.Int64 1L) in
+        let port = Emo_runtime.method_call listener "port" [] in
+        ignore
+          (Emo_runtime.spawn (fun () ->
+               let answered = Emo_runtime.method_call listener "accept" [] in
+               let conn = Emo_runtime.index answered (Emo_eval.Int64 1L) in
+               let requested = Emo_runtime.method_call conn "read_line" [] in
+               let request = Emo_runtime.index requested (Emo_eval.Int64 1L) in
+               let body =
+                 Emo_eval.String ("hello " ^ Emo_eval.to_string request ^ "\n")
+               in
+               ignore (Emo_runtime.method_call conn "write" [ body ]);
+               ignore (Emo_runtime.method_call conn "close" [])));
+        let answered =
+          Emo_eval.call_runtime_impl "net_tls_connect_insecure"
+            [ Emo_eval.String "127.0.0.1"; port; Emo_eval.Float 5.0 ]
+        in
+        let conn = Emo_runtime.index answered (Emo_eval.Int64 1L) in
+        ignore
+          (Emo_runtime.method_call conn "write" [ Emo_eval.String "tls\n" ]);
+        let received = Emo_runtime.method_call conn "read_line" [] in
+        p (Emo_runtime.index received (Emo_eval.Int64 1L));
+        ignore (Emo_runtime.method_call conn "close" []))
+  in
+  if exit_code <> 0 then exit exit_code
+|}
+
+let tls_out = "hello tls\n"
+
 let program_tests =
   [
     Alcotest.test_case "values render by the one stringification rule" `Quick
@@ -454,6 +503,11 @@ let program_tests =
           ~args:[ "fixture.txt" ]);
     Alcotest.test_case "a udp datagram loops back" `Quick (fun () ->
         program ~main:udp_main ~expect_exit:0 ~expect_out:udp_out ~args:[]);
+    Alcotest.test_case "a tls roundtrip rides the scheduler" `Quick (fun () ->
+        let fixture = Sys.getcwd () ^ "/../../test/emo_sched/fixtures/" in
+        program ~main:tls_main ~expect_exit:0 ~expect_out:tls_out
+          ~args:
+            [ fixture ^ "tls-server-cert.pem"; fixture ^ "tls-server-key.pem" ]);
   ]
 
 let () =
