@@ -40,7 +40,10 @@ Whether the array form later earns a literal spelling of its own is still open
 
 The portable **`ui` core** (T48.1), the **Elm loop** (T48.2), the headless
 **`debug` backend with its golden** (T48.3) and the **terminal `ui_tui` backend
-with its scripted-input golden** (T48.4) have landed.
+with its scripted-input golden** (T48.4) have landed. So has terminal input
+itself (T48.5), as the standard-library **`term` package** in `stdlib/` —
+line reads, raw mode, decoded key events, and the terminal's size, in the
+`sqlite3` shape and reached by an ordinary `require`.
 `ui.emo` is the node spine — a `Node` interface plus the `Column`, `Row`, `Text`,
 `Button`, `TextInput`, `Image`, `Spacer` and `Scroll` classes with their
 positional lowercase constructors — the typed `Style` with its `style()` factory
@@ -136,9 +139,9 @@ one row per line — with the escape byte reaching stdout through
 `printf("%c", [27])`, because a string literal's escapes are the minimal set and
 0x1b is not one of them. `Tui` implements `ui.Backend` over that, and
 `Input`/`Script` are the scripted event source: `run()` pulls tags from the input
-and hands them to the loop's sink until the input says there are no more. T48.5
-replaces that source with raw-mode terminal reads, not the seam — both are
-`Input`. The package declares the four hosted targets that can write stdout;
+and hands them to the loop's sink until the input says there are no more. The
+`term` package (T48.5) supplies raw-mode terminal reads for a real source;
+adopting it replaces that source, not the seam — both are `Input`. The package declares the four hosted targets that can write stdout;
 `wasm` has no `printf`, so it is not one. `tui/golden/` is a consumer of both
 packages, holding one screen driven by a script that clicks Add, Add, Sub, and
 its `expected.txt` is the interpreter's output, identical on `ocaml`,
@@ -161,8 +164,8 @@ The grammar and the lowering rules live in `translator/README.md`; where
 this sits in the C-versus-D question is recorded in
 [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md).
 
-Still to come: the remaining per-platform packages and the browser runtime path
-(T48.5–T48.12). The design and its evidence:
+Still to come: wiring `term` into `ui_tui`'s input source, the remaining
+per-platform packages, and the browser runtime path (T48.6–T48.12). The design and its evidence:
 
 - [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.

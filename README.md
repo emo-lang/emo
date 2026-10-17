@@ -107,7 +107,7 @@ Documentation lives under `docs/`. The Chinese translation of this README is [`d
 - [`docs/numeric-width.md`](docs/numeric-width.md) — width-explicit numeric types on every target.
 - [`docs/var-escape.md`](docs/var-escape.md) — the `var`-escape rule.
 - [`docs/stdlib.md`](docs/stdlib.md) — a tour of the standard library: every package, what it is for, and the surface it exposes.
-- [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`file`, `os`, `bufio`, `net`, `http`, `json`, `yaml`, `xml`, `base64`, `csv`, `float`, `math`, `plot`, `slog`, `sync`, `sql`, `sqlite3`).
+- [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`file`, `os`, `bufio`, `net`, `http`, `json`, `yaml`, `xml`, `base64`, `csv`, `float`, `math`, `plot`, `slog`, `sync`, `sql`, `sqlite3`, `term`).
 - [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
 - [`docs/emo-ui.md`](docs/emo-ui.md) — the EmoUI assessment and design direction: one declarative tree for Web, TUI, macOS, and GTK 4.
 - [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) — how an EmoUI tree gets written: why components return children instead of emitting them, and the one spelling question left open.

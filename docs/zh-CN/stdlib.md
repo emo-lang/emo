@@ -40,6 +40,7 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 | [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | `ocaml`、`c`、`typescript` |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
 | [`sql`](#sql-包) | SQL 文本解析为抽象语法树 | 全部五个 |
+| [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
 
 所有包版本均为 0.1.0。每个包在 [`docs/stdlib/`](../stdlib/) 下有完整的 API 参考(中文翻译在 [`docs/zh-CN/stdlib/`](stdlib/));程序直接调用的每个包在 `examples/` 下有可运行的示例。
 
@@ -570,3 +571,31 @@ SQLite 自己的错误文本;而行读到尽头是值(`step()` 回答
 所以 `emo run` 跑不了用到这个包的程序;请用 `emo build` 构建。参
 考:[`docs/zh-CN/stdlib/sqlite3.md`](stdlib/sqlite3.md) · 示例:
 `examples/sqlite3_demo`。
+
+## term 包
+
+stdin 上的终端输入:按行读取、raw mode、解码后的按键事件,以及终端
+尺寸。它是标准库里另一个原生绑定包——调用是 `foreign def`,绑定到
+包自带的一小段 C shim——使用它只需普通 `require`。
+
+```emo
+def is_tty() Bool
+def size() (R, (Int64, Int64))
+def read_line() (R, String)
+def enable_raw() (R, Int64)
+def restore() (R, Int64)
+def read_key() (R, (Key, Int64))
+```
+
+`read_line` 保留行终止符,和 `bufio` 一样,所以空行与输入结束是两个
+不同的答案。`enable_raw` 关掉行规程、回显与键盘信号;`restore` 恢复
+保存的设置,进程的退出路径也会恢复。`read_key` 回答一个 `Key` 成员
+加一段 code——`Key.char` 是 Unicode 标量值,`Key.ctrl` 是 `0`–`26`——
+并解码方向键、Home/End、Insert/Delete、Page Up/Page Down、F1–F12、
+Shift-Tab 与 Alt+按键背后的序列。raw mode 下 Ctrl-C 是按键事件,不是
+信号。
+
+目标:`["c"]`——这些调用是 foreign def,解释器拒绝执行(E3009),
+所以 `emo run` 跑不了用到这个包的程序;请用 `emo build` 构建。参
+考:[`docs/zh-CN/stdlib/term.md`](stdlib/term.md) · 示例:
+`examples/term_demo`。

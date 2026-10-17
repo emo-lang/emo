@@ -11,7 +11,8 @@ the layout is settled, T48.1's two codegen defects have landed, and the
 portable `ui` core (T48.1), the Elm loop with its tests (T48.2), the
 headless `debug` backend with its byte-identical golden (T48.3) and the
 terminal `ui_tui` backend with its scripted-input golden (T48.4) have
-landed in `projects/emo-ui/`; T48.5 onward are not started. T48.2 turned
+landed in `projects/emo-ui/`, and terminal input (T48.5) has landed in
+`stdlib/` as the `term` package; T48.6 onward are not started. T48.2 turned
 up the first language-side gap this step has hit: the loop's shape — the
 application's `update` and `view` arriving as `Block` values — is what
 `c` and `wasm` cannot compile yet, and T48.4 found that `beam` compiles
@@ -297,11 +298,17 @@ placement; `docs/emo-ui.md`, ask 7).
       pattern with a four-row menu and a longer script, a package that
       depends on `emo/ui` and `emo/ui_tui` — and this gate checks it on
       every target it declares.
-- [ ] **T48.5** — Terminal input: raw mode and key events, as a
+- [x] **T48.5** — Terminal input: raw mode and key events, as a
       **standard-library package in the `sqlite3` shape** — package-carried
       `.c`/`.h` reached through `foreign def`, gated by `targets` — not a
       UI-framework or compiler-side artifact (`CHECK.md`); line mode first,
-      raw mode behind it.
+      raw mode behind it. **Landed 2026-10-18** as
+      `stdlib/registry/term/0.1.0/` (package `term`): line input, raw
+      mode, decoded key events, `size` and `is_tty`, reached by an
+      ordinary `require` and refused by the interpreter with E3009.
+      `test/emo_cli`'s `term` group checks the pipe paths and the
+      failure values; `examples/term_demo` is the runnable demo;
+      reference at `docs/stdlib/term.md`.
 - [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
       byte-identical on all five hosted targets; forms and links as the
       interaction model.

@@ -591,6 +591,7 @@ let c_goldens =
     "sqlite3_demo";
     "sql_demo";
     "sql_edge";
+    "term_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
@@ -4073,6 +4074,162 @@ main()
         check_run "ocaml" (run_cmd (Filename.quote bin)) "12 = 3\n");
   ]
 
+(* The term package (T48.5): line input and key decoding need no
+   terminal to be checked — a pipe carries the bytes and the program
+   reads them exactly as it would read a keyboard. Raw mode itself is
+   the one terminal-only path; this group pins its refusal off a tty,
+   and the mode was exercised over a pty while the package was built. *)
+let term_manifest =
+  {|package {
+  name = "local/term_probe"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "term" = "0.1.0"
+  }
+}
+|}
+
+let term_entry name source =
+  let entry = fixture ~manifest:term_manifest (name ^ ".emo") source in
+  let bin = Filename.concat (Filename.dirname entry) (name ^ "-c-bin") in
+  entry, bin
+
+let term_tests =
+  let build_term name source =
+    let entry, bin = term_entry name source in
+    Alcotest.(check int) "build exit" 0
+      (build_entry ~target:"c" entry bin);
+    bin
+  in
+  let run_with_input bin input =
+    let input_path = Filename.concat (Filename.dirname bin) "stdin" in
+    write_file input_path input;
+    run_cmd
+      (Printf.sprintf "%s < %s" (Filename.quote bin)
+         (Filename.quote input_path))
+  in
+  [
+    tc "term keeps the line terminator, so an empty line is not end of input"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let bin =
+          build_term "term-lines"
+            {|require "term"
+
+def show(r (R, String)) {
+  case r {
+    (R.ok, line) -> { println("ok[${line}]") }
+    (R.error, why) -> { println("err[${why}]") }
+  }
+}
+
+def main() {
+  show(term.read_line())
+  show(term.read_line())
+  show(term.read_line())
+  show(term.read_line())
+}
+main()
+|}
+        in
+        check_run "term lines" (run_with_input bin "alpha\n\nbeta")
+          "ok[alpha\n]\nok[\n]\nok[beta]\nok[]\n");
+    tc "term decodes keys, escape sequences, and UTF-8 from the byte stream"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let bin =
+          build_term "term-keys"
+            {|require "term"
+
+def name_of(k term.Key) String {
+  if k == term.Key.char {
+    return "char"
+  }
+  if k == term.Key.ctrl {
+    return "ctrl"
+  }
+  if k == term.Key.enter {
+    return "enter"
+  }
+  if k == term.Key.tab {
+    return "tab"
+  }
+  if k == term.Key.backspace {
+    return "backspace"
+  }
+  if k == term.Key.escape {
+    return "escape"
+  }
+  if k == term.Key.up {
+    return "up"
+  }
+  if k == term.Key.delete {
+    return "delete"
+  }
+  if k == term.Key.f1 {
+    return "f1"
+  }
+  if k == term.Key.alt {
+    return "alt"
+  }
+  if k == term.Key.eof {
+    return "eof"
+  }
+  return "other"
+}
+
+def main() {
+  var more = true
+  while more {
+    const (R.ok, key) = term.read_key()
+    println("${name_of(key[0])} ${key[1]}")
+    if key[0] == term.Key.eof {
+      more = false
+    }
+  }
+}
+main()
+|}
+        in
+        check_run "term keys"
+          (run_with_input bin "a\r\t\127\001\027[A\027[3~\027OP\u{00e9}\027x\027")
+          "char 97\nenter 0\ntab 0\nbackspace 0\nctrl 1\nup 0\ndelete 0\n\
+           f1 0\nchar 233\nalt 120\nescape 0\neof 0\n");
+    tc "term reports data failures as values and refuses raw mode off a tty"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let bin =
+          build_term "term-errors"
+            {|require "term"
+
+def say(label String, r (R, Int64)) {
+  case r {
+    (R.ok, n) -> { println("${label} ok ${n}") }
+    (R.error, why) -> { println("${label} ${why}") }
+  }
+}
+
+def main() {
+  println("tty ${term.is_tty()}")
+  say("raw", term.enable_raw())
+  say("restore", term.restore())
+  case term.size() {
+    (R.ok, dims) -> { println("size ${dims[0]}x${dims[1]}") }
+    (R.error, why) -> { println("size ${why.starts_with("term: size:")}") }
+  }
+  const (R.ok, key) = term.read_key()
+  println("key ${key[0] == term.Key.eof}")
+}
+main()
+|}
+        in
+        check_run "term errors" (run_with_input bin "")
+          "tty false\nraw term: enable_raw: not a terminal\nrestore ok 0\n\
+           size true\nkey true\n");
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -4094,6 +4251,7 @@ let () =
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
       ("c_foreign", c_foreign_tests);
+      ("term", term_tests);
       ("c_callback", c_callback_tests);
       ("c_shape", c_shape_tests);
       ("c_recycle", c_recycle_tests);

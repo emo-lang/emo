@@ -107,7 +107,7 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 - [`docs/zh-CN/numeric-width.md`](numeric-width.md) —— 所有目标上显式位宽的数值类型。
 - [`docs/zh-CN/var-escape.md`](var-escape.md) —— `var` 逃逸规则。
 - [`docs/zh-CN/stdlib.md`](stdlib.md) —— 标准库导览:每个包的用途与对外接口。
-- [`docs/zh-CN/stdlib/`](stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`json`、`yaml`、`xml`、`base64`、`csv`、`float`、`math`、`plot`、`slog`、`sync`、`sql`、`sqlite3`)。
+- [`docs/zh-CN/stdlib/`](stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`json`、`yaml`、`xml`、`base64`、`csv`、`float`、`math`、`plot`、`slog`、`sync`、`sql`、`sqlite3`、`term`)。
 - [`docs/zh-CN/lsp.md`](lsp.md) —— 语言服务器与 VS Code 扩展。
 - [`docs/zh-CN/emo-ui.md`](emo-ui.md) —— EmoUI 的评估与设计方向:一套声明式树渲染到 Web、TUI、macOS 与 GTK 4。
 - [`docs/zh-CN/emo-ui-composition.md`](emo-ui-composition.md) —— 一棵 EmoUI 树怎么写出来:组件为什么是返回子节点而不是发射,以及唯一还没定的那个写法问题。

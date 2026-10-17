@@ -53,7 +53,7 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 |---|---|---|---|
 | macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已证明**(`spike/macos-gui`、`spike/components`) | 打包:`.m`、`-fobjc-arc`、`-framework` |
 | GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已证明**(`spike/gtk`、`spike/components`) | 打包:`pkg-config gtk4` |
-| TUI | 纯 Emo,输出 ANSI 转义 | **已落地**(T48.4) | 终端输入(raw mode、按键事件) |
+| TUI | 纯 Emo,输出 ANSI 转义;输入用 `term` | **已落地**(T48.4、T48.5) | 把 `term` 接进 `ui_tui` 的输入源 |
 | Web | HTML/CSS(SSR)→ DOM(浏览器 TS)→ wasm + DOM | **最不成熟** | TS 目标只面向 Node;wasm 宿主只有 3 个 import |
 
 ### macOS 与 GTK 4
@@ -74,7 +74,7 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 
 四个平台里最便宜的,也是最好的第一个目标。渲染就是带 ANSI 转义的 `printf`——纯 Emo,在任何能写 stdout 的目标上都能跑,不需要 FFI,也不需要新的包机制。单元格网格本身就是一套布局(以字符格为单位的行/列/宽/高),正是 `plot` 终端渲染器已经规划的那类格式无关表面(`docs/visualization.md`,Layer 5)。终端后端也是检验「核心确实与工具包解耦」的最好办法:如果节点模型与 update 循环能在字符网格上跑,它们就真的是后端中立的。
 
-缺口在**输入**,不在输出。今天没有 raw mode 或按键事件运行时实现:`os` 包给的是 fd 级 `read`,`os` 只面向原生,而且没有 termios 绑定。读一行今天可行;方向键、resize 事件、Ctrl-C-as-a-message 想要 raw mode,那是一个到 `termios` 的小 `foreign def`(c/ocaml)或一个终端运行时实现。有界,但必须排期,不能假定。**2026-10-15 已定**——排期为一个标准库包,形状同 `sqlite3`(见下方诉求 7)。它替换的是 `ui_tui` 的输入源,而不是那条接缝:`Script` 与 raw-mode reader 都是 `Input`。
+输入已不再是缺口:**T48.5 于 2026-10-18 落地**为标准库 `term` 包,形状同 `sqlite3`(见下方诉求 7)——包自带 C 代码,经 `foreign def` 调用,只支持 `c` target,普通 `require` 即可到达。它提供按行读取、带退出路径恢复的 raw mode、解码后的按键事件(方向键、Home/End、Insert/Delete、Page Up/Page Down、F1–F12、Shift-Tab、Alt、UTF-8 字符)以及终端尺寸;raw mode 下 Ctrl-C 是按键事件。它替换的是 `ui_tui` 的输入源,而不是那条接缝:`Script` 与 `term` 驱动的 reader 都是 `Input`。剩下的是这层接线——`ui_tui` 仍在脚本化输入源上跑——以及 resize 事件(`SIGWINCH`),后者由包留给 UI 层。
 
 **2026-10-16 已落地(T48.4)**为 `projects/emo-ui/tui/`(包 `emo/ui_tui`)。盒模型以字符格为单位度量核心的 `Style`——列是纵向堆叠、行是横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置——`screen(root, w, h)` 把网格作为数据交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI。因为字符串字面量的转义是最小集合、0x1b 不在其中,转义字节经 `printf("%c", [27])` 发出。`Tui` 在其之上实现 `Backend`,`Input`/`Script` 就是金标所跑的脚本化事件源:字节固定,不碰终端——`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——T48.2 留下的那个决定,如今深了三个 target。金标逼出的两个 `beam` 降级缺陷(`Block` 值的裸 def 被发射成不可调用的远程 fun;循环体里的 `case` 没有把外层 `var` 的重绑穿出)随后端一起修好,记在 `CHECK.md`。`examples/tui_menu/` 是用法示例:一个由脚本化输入驱动的终端菜单,同一个关口在它声明的每个 target 上检查它。
 
@@ -359,7 +359,7 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 4. **`c` 目标的内存回收——已定(2026-10-14)走值语义家族的引用计数;2026-10-17 落地(step 49)。** region 那条路已被实测并排除(`spike/arena-scope`、`CHECK.md`);原生后端交付时附带的 demo 尺度注记已退役——渲染形状的循环持有平坦的工作集,由 T49.4 闸门钉住。
 5. **`c` 目标的 `raise` 与 `send`——已定(2026-10-15),兑现已经做出的承诺**(`CHECK.md`,step 50)。UI 不能因为一个坏事件整体死掉,跨进程的事件载荷也不能被静默共享——这两条正是 `docs/intro/concurrency.md` 与 `docs/intro/syntax.md` 早已写下的。`c` 目标是唯一跑偏的实现;现在子进程的 `raise` 只结束它自己,`send` 送快照。`typescript` 目标的 send 共享是下面 Web 路径上的同一个缺口。
 6. **Web 的浏览器路径(T1)——已定(2026-10-15)走拆分路线:** 把 TypeScript runtime 拆出一个浏览器安全子集、加一个 `dom_*` 家族与一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`)。打包步骤落在工具链的哪里属于 T48.10 自己的范围。SSR(T0)不需要。
-7. **终端输入。** TUI 的 raw mode 与按键事件(一个小的 termios 绑定或一个终端运行时实现)。**2026-10-15 已定:做成一个标准库包,按 `sqlite3` 的方式发布**(`CHECK.md`)——包自带 `.c`/`.h` 源码,经 `foreign def` 调用,由 manifest 的 `targets` 把关,随其余 stdlib 一起内嵌。raw mode 是任何 TUI 程序都需要的能力,该跟 `os`、`file` 放在一起,而不是塞进恰好第一个用到它的那个 UI 框架里。
+7. **终端输入。** TUI 的 raw mode 与按键事件(一个小的 termios 绑定或一个终端运行时实现)。**2026-10-15 已定:做成一个标准库包,按 `sqlite3` 的方式发布**(`CHECK.md`)——包自带 `.c`/`.h` 源码,经 `foreign def` 调用,由 manifest 的 `targets` 把关,随其余 stdlib 一起内嵌。raw mode 是任何 TUI 程序都需要的能力,该跟 `os`、`file` 放在一起,而不是塞进恰好第一个用到它的那个 UI 框架里。**2026-10-18 已落地**为 `term` 包(`docs/stdlib/term.md`)。
 8. **不加新语法。** 树已经可表达;如果不可,缺口是一个类型或一个库函数,不是一条构造。
 
 ## 风险

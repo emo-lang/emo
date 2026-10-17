@@ -28,7 +28,7 @@ def inbox(users Array[User]) ui.Node {
 
 ## 状态
 
-可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)与终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)都已落地。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
+可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)与终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)都已落地。终端输入本身(T48.5)也已落地,是 `stdlib/` 里的标准库 **`term` 包**——按行读取、raw mode、解码后的按键事件与终端尺寸,形状同 `sqlite3`,普通 `require` 即可到达。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
 
 一个应用就是 model、纯 `update`、纯 `view` 加一个后端:
 
@@ -56,11 +56,11 @@ tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 �
 
 `./check.sh` 是它的关口:包能通过类型检查、循环的十七条断言会跑,每个 target 的构建结果——以及每一次拒绝——都在里面钉死,金标的字节也在四个跑得动的 target 上逐一比对。
 
-`tui/` 是终端后端(T48.4),是一个自己的包——`emo/ui_tui`,对 `emo/ui` 取版本——因为它带一个核心没有的平台。终端没有原生布局引擎,所以盒模型就在这里:以字符格为单位度量核心的 `Style`,列纵向堆叠、行横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置。`screen(root, w, h)` 把网格作为 `Array[String]` 交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI(清屏、归位、每行一行),转义字节经 `printf("%c", [27])` 到达 stdout,因为字符串字面量的转义是最小集合、0x1b 不在其中。`Tui` 在其之上实现 `ui.Backend`,`Input`/`Script` 是脚本化事件源:`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。T48.5 把那个源换成 raw-mode 终端读取,而不是换那条接缝——两者都是 `Input`。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`tui/golden/` 是两个包的消费者,里面一块界面由一段点击 Add、Add、Sub 的脚本驱动,它的 `expected.txt` 是解释器的输出,在 `ocaml`、`typescript`、`beam` 上相同。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——就是上面那个决定,如今深了三个 target。`tui/check.sh` 是这个包的关口;金标逼出的 `beam` 降级缺陷已修好,记在 `CHECK.md`。根目录的 `./check.sh` 最后会接着跑 `tui/check.sh`,让整个项目只留一个入口。用法示例在 `examples/tui_menu/`——一个由脚本化输入驱动的终端菜单——同一个关口也会检查它。
+`tui/` 是终端后端(T48.4),是一个自己的包——`emo/ui_tui`,对 `emo/ui` 取版本——因为它带一个核心没有的平台。终端没有原生布局引擎,所以盒模型就在这里:以字符格为单位度量核心的 `Style`,列纵向堆叠、行横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置。`screen(root, w, h)` 把网格作为 `Array[String]` 交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI(清屏、归位、每行一行),转义字节经 `printf("%c", [27])` 到达 stdout,因为字符串字面量的转义是最小集合、0x1b 不在其中。`Tui` 在其之上实现 `ui.Backend`,`Input`/`Script` 是脚本化事件源:`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。`term` 包(T48.5)为真实输入源提供 raw mode 的终端读取;接入它换的是那个源,而不是那条接缝——两者都是 `Input`。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`tui/golden/` 是两个包的消费者,里面一块界面由一段点击 Add、Add、Sub 的脚本驱动,它的 `expected.txt` 是解释器的输出,在 `ocaml`、`typescript`、`beam` 上相同。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——就是上面那个决定,如今深了三个 target。`tui/check.sh` 是这个包的关口;金标逼出的 `beam` 降级缺陷已修好,记在 `CHECK.md`。根目录的 `./check.sh` 最后会接着跑 `tui/check.sh`,让整个项目只留一个入口。用法示例在 `examples/tui_menu/`——一个由脚本化输入驱动的终端菜单——同一个关口也会检查它。
 
 `translator/` 是 `.emoui` 的试验(2026-10-18):一个 stdin 到 stdout 的过滤器,把树字面量——带块的容器、`list(src) -> (x T) { ... }`、`if`——降级成已定案的拼法(嵌套调用、显式 `Array[Node]` children),让 README 的示例形态不必动编译器就能写。它的 `demo/` 把拼写 spike 的两块屏幕用字面量重写,并经 debug 后端断言生成的树与旁边手写的 A 拼法在四个模型上相等;`demo/check.sh` 是关口,重新生成已提交的产物并与翻译器 diff。语法与降级规则见 `translator/README.md`;它在 C 与 D 之争中的位置记在 [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md)。
 
-接下来:剩下的每平台包与浏览器运行时路径(T48.5–T48.12)。设计与证据:
+接下来:把 `term` 接进 `ui_tui` 的输入源、剩下的每平台包与浏览器运行时路径(T48.6–T48.12)。设计与证据:
 
 - [`docs/zh-CN/emo-ui.md`](../../docs/zh-CN/emo-ui.md) —— 评估与设计方向。
 - [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md) —— 一棵树怎么写出来:子节点为什么是数组而不是块式写法。

@@ -1728,12 +1728,33 @@ required.
       regressions. `examples/tui_menu/` is the usage demo — the same
       pattern with a four-row menu and a longer script — and the same
       gate checks it on every target it declares.
-- [ ] **T48.5** — Terminal input: raw mode and key events, as a
+- [x] **T48.5** — Terminal input: raw mode and key events, as a
       **standard-library package in the `sqlite3` shape** —
       package-carried `.c`/`.h` reached through `foreign def`, gated by
       the manifest's `targets` — rather than a UI-framework or
       compiler-side artifact (settled 2026-10-15, `CHECK.md`); line mode
-      first.
+      first. **Landed 2026-10-18** as `stdlib/registry/term/0.1.0/`
+      (package `term`, `targets = ["c"]`): `term.emo` is the surface,
+      `internal/ffi.emo` the `foreign def`s, and `emo_term_shim.c` the
+      C side of the exact ABI, checked against the generated
+      `emo_defs.h` at compile time. `read_line` keeps its terminator,
+      so a blank line and the end of input are different answers;
+      `enable_raw` and `restore` save and put back the termios setting,
+      and the exit path restores it too; `read_key` answers a `Key`
+      member plus a code (a Unicode scalar for `char`, `0`–`26` for
+      `ctrl`) and decodes the arrow, Home/End, Insert/Delete, Page
+      Up/Page Down, F1–F12, Shift-Tab and Alt sequences, with a lone
+      Esc settled after 50 ms. `size` and `is_tty` answer from the
+      terminal driver. Scalar and String returns keep the generated
+      struct names out of the ABI; the tuples are shaped in Emo. A
+      plain `require` reaches the package — the embedded registry
+      carries it — and the interpreter refuses it with E3009.
+      `test/emo_cli`'s `term` group carries a pipe through line mode,
+      key decoding, and the failure values; `examples/term_demo` is the
+      runnable demo and rides in `c_goldens`. Raw mode is the one path
+      a pipe cannot carry: the group pins its refusal off a tty, and
+      the mode itself was checked over a pty while the package was
+      built. Reference: `docs/stdlib/term.md`.
 - [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
       byte-identical on all five hosted targets; forms and links as the
       interaction model.

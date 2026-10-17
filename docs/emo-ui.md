@@ -145,7 +145,7 @@ This note does not re-open what earlier work closed.
 |---|---|---|---|
 | macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **proven** (`spike/macos-gui`, `spike/components`) | packaging: `.m`, `-fobjc-arc`, `-framework` |
 | GTK 4 | `c` target + C shim via `foreign def` | **proven** (`spike/gtk`, `spike/components`) | packaging: `pkg-config gtk4` |
-| TUI | pure Emo, ANSI escape output | **landed** (T48.4) | terminal input (raw mode, key events) |
+| TUI | pure Emo, ANSI escape output; `term` for input | **landed** (T48.4, T48.5) | wiring `term` into `ui_tui`'s input source |
 | Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **least ready** | TS target is Node-only; wasm host has 3 imports |
 
 ### macOS and GTK 4
@@ -220,15 +220,17 @@ outer `var` rebinding) are fixed with the backend and recorded in
 with a scripted input, checked by the same gate on every target it
 declares.
 
-The gap is **input**, not output. The runtime implements no raw mode and
-no key events: the `os` package gives fd-level `read`, `os` is
-native-only, and there is no termios binding. Reading a line is possible
-today; arrow keys, resize events, and Ctrl-C-as-a-message want raw mode,
-which is a small `foreign def` to `termios` (c/ocaml) or a terminal
-runtime implementation. Bounded, but it must be scheduled, not assumed.
-**Settled 2026-10-15** — scheduled as a standard-library package in the
-`sqlite3` shape (ask 7 below). It replaces the `ui_tui` input source
-rather than the seam: a `Script` and a raw-mode reader are both `Input`.
+Input is no longer the gap: **T48.5 landed 2026-10-18** as the
+standard-library `term` package in the `sqlite3` shape (ask 7 below) —
+package-carried C reached through `foreign def`, `c`-target only,
+reached by an ordinary `require`. It gives line reads, raw mode with an
+exit-path restore, decoded key events (arrows, Home/End, Insert/Delete,
+Page Up/Page Down, F1–F12, Shift-Tab, Alt, UTF-8 characters), and the
+terminal's size; Ctrl-C is a key event while raw mode is on. It
+replaces the `ui_tui` input source rather than the seam: a `Script` and
+a `term`-backed reader are both `Input`. What remains is that wiring —
+`ui_tui` still runs on the scripted source — plus resize events
+(`SIGWINCH`), which the package leaves to the UI layer.
 
 ### Web
 
@@ -834,7 +836,8 @@ mid-implementation:
    `foreign def`, gated by the manifest's `targets`, embedded with the
    rest of the stdlib. Raw mode is a capability any TUI program needs,
    so it belongs beside `os` and `file` rather than inside the UI
-   framework that happens to be its first consumer.
+   framework that happens to be its first consumer. **Landed
+   2026-10-18** as the `term` package (`docs/stdlib/term.md`).
 8. **No new syntax.** The tree is already expressible; if it is not, the
    gap is a type or a library function, not a construct.
 
