@@ -53,3 +53,9 @@ Each demo that produces deterministic output carries an
   (`projects/emo-ui/`) rather than the standard library, so the
   compiler's suites skip it; `projects/emo-ui/tui/check.sh` stages the
   registry it needs and checks it on every target it declares.
+- **[`ssr_page/`](ssr_page/)** — a server-rendered page built on the
+  same core and the EmoUI project's `ui_ssr` backend: one model, one
+  pure `view`, a full document for the first request, and the fragment
+  the browser swaps in after a form submits. Like `tui_menu/` it needs
+  the project's registry, and `projects/emo-ui/ssr/check.sh` checks it
+  on all five hosted targets.

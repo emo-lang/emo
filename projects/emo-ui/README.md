@@ -39,11 +39,12 @@ Whether the array form later earns a literal spelling of its own is still open
 ## Status
 
 The portable **`ui` core** (T48.1), the **Elm loop** (T48.2), the headless
-**`debug` backend with its golden** (T48.3) and the **terminal `ui_tui` backend
-with its scripted-input golden** (T48.4) have landed. So has terminal input
-itself (T48.5), as the standard-library **`term` package** in `stdlib/` —
-line reads, raw mode, decoded key events, and the terminal's size, in the
-`sqlite3` shape and reached by an ordinary `require`.
+**`debug` backend with its golden** (T48.3), the **terminal `ui_tui` backend
+with its scripted-input golden** (T48.4) and the **server-rendered `ui_ssr`
+backend** (T48.6) have landed. So has terminal input itself (T48.5), as the
+standard-library **`term` package** in `stdlib/` — line reads, raw mode,
+decoded key events, and the terminal's size, in the `sqlite3` shape and
+reached by an ordinary `require`.
 `ui.emo` is the node spine — a `Node` interface plus the `Column`, `Row`, `Text`,
 `Button`, `TextInput`, `Image`, `Spacer` and `Scroll` classes with their
 positional lowercase constructors — the typed `Style` with its `style()` factory
@@ -77,20 +78,23 @@ operands are evaluated in the target's order — `ocaml`'s is the reverse of eve
 other target's — so a tag taken from an argument position is a different tag per
 target (`CHECK.md`, operand evaluation order).
 
-The loop compiles and runs on `ocaml`, `typescript` and `beam`. It does not
-compile on `c` or `wasm` yet, and what stands in the way is its spelling rather
-than its structure: a bare def name is the only expression that yields the
-`Block` value `ui.run` takes, and `c` has no def-as-value (`Global`) while `wasm`
-refuses a dynamic call with more than one parameter. `probe/` holds that gap as a
-minimal pair — `def_shape/` is the landed shape and reaches both refusals,
-`handler_shape/` is the same loop with the application's two functions behind a
-`Handler` interface, and it builds on all five targets, printing what `emo run`
-prints on `c` and `ocaml` (`CHECK.md`, the Elm loop's shape). On `beam` the loop
-built but did not run until T48.4: a bare def became a remote fun to a
-non-exported function, which `erlc` accepted and the loader left uncallable;
-that is fixed, and the TUI golden is what proves it. Which way to close the
-remaining gap — grow the two targets, or move the application's functions behind
-an interface — is the open decision T48.4 leaves standing.
+The loop compiles and runs on `ocaml`, `typescript`, `wasm` and `beam`. It does
+not compile on `c`, and what stands in the way is its spelling rather than its
+structure: a bare def name is the only expression that yields the `Block` value
+`ui.run` takes, and `c` has no def-as-value (`Global`). `wasm` refused the same
+shape until T48.6, when its closures grew any arity: `Call_value`, `Closure`
+and a `Global`'s lifted function now allocate a function/struct type pair per
+arity (`closure_type`), so a `Block` value is first-class however many
+parameters it takes. `probe/` keeps the remaining gap as a minimal pair —
+`def_shape/` is the landed shape and reaches `c`'s refusal, `handler_shape/` is
+the same loop with the application's two functions behind a `Handler`
+interface, and it builds on all five targets, printing what `emo run` prints on
+`c` and `ocaml` (`CHECK.md`, the Elm loop's shape). On `beam` the loop built
+but did not run until T48.4: a bare def became a remote fun to a non-exported
+function, which `erlc` accepted and the loader left uncallable; that is fixed,
+and the TUI golden is what proves it. Which way to close the remaining gap —
+give `c` def-as-value, or move the application's functions behind an interface
+— is the open decision T48.4 leaves standing.
 
 `debug.emo` is the headless backend (T48.3): `render(node)` turns a tree into
 stable text — one node per line, two spaces per level, the node's own props then
@@ -125,8 +129,9 @@ the rule.
 
 `./check.sh` is the gate: the package type-checks, the loop's seventeen
 assertions run, every target's build — and every refusal — is pinned there, and
-the golden's bytes are compared on each of the four targets that can run it. It
-ends by running `tui/check.sh`, so the project keeps one entry point.
+the golden's bytes are compared on all five hosted targets (the `wasm`
+artifact under the host boundary in `wasm-runner.mjs`). It ends by running
+`tui/check.sh` and `ssr/check.sh`, so the project keeps one entry point.
 
 `tui/` is the terminal backend (T48.4), a package of its own — `emo/ui_tui`,
 pinned against `emo/ui` — because it carries a platform the core does not. The
@@ -164,8 +169,29 @@ The grammar and the lowering rules live in `translator/README.md`; where
 this sits in the C-versus-D question is recorded in
 [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md).
 
+`ssr/` is the server-rendered backend (T48.6), a package of its own —
+`emo/ui_ssr`, pinned against `emo/ui`. It turns the portable tree into HTML
+plus the stylesheet its styles intern into: `page(title, root)` for a whole
+document, `fragment(root)` for a region a browser swaps in, and
+`stylesheet(root)` for the CSS alone, all walking the tree pre-order so the
+classes a page's markup carries are the ones its stylesheet defines. A node's
+class comes from interning on its base declarations and its `Style` — equal
+styles share one rule, while a `row` and a `column` stay distinct — and every
+prop reaching markup is escaped byte by byte, so a multi-byte character rides
+through unchanged. The interaction model is the two things a browser can do
+without a client runtime: a `form` posts its fields and the event tag of the
+button that submitted it, and a `link` navigates. Three nodes live here rather
+than in the core — `form`, `link` and `field` — because only a server round
+trip has anywhere to put them. `Ssr` implements `ui.Backend` with `mount`
+printing the document, `patch` the fragment, and `run()` returning, because a
+server has no input source; `deliver(tag)` is the request that steps one
+event. `test.emo` pins escaping, the rule shape, interning and one assertion
+per node kind in twelve assertions, and `golden/` — a consumer of both
+packages — is byte-identical on all five hosted targets. `ssr/check.sh` is the
+package's gate; the usage demo is `examples/ssr_page/`.
+
 Still to come: wiring `term` into `ui_tui`'s input source, the remaining
-per-platform packages, and the browser runtime path (T48.6–T48.12). The design and its evidence:
+per-platform packages, and the browser runtime path (T48.7–T48.13). The design and its evidence:
 
 - [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.

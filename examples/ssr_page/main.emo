@@ -1,0 +1,71 @@
+require "emo/ui"
+require "emo/ui_ssr"
+
+// A server-rendered page: the smallest complete use of the SSR backend.
+//
+// The view is portable. `notes` names no server — a model, a pure
+// `update`, a pure `view` — and the page is one call to `ui_ssr.page`,
+// which is what a request handler does with the tree. The interaction
+// model is the two things a browser can do without a client runtime: a
+// form posts its fields and the event tag of the button that submitted
+// it, and a link navigates.
+//
+//   emo run main.emo     (with EmoUI's registry on EMO_REGISTRY)
+//
+// `projects/emo-ui/ssr/check.sh` stages that registry and runs this
+// example on every target it declares.
+
+enum Msg { save }
+
+class Model {
+  def init(title String, saves Int64) {
+    self.title = title
+    self.saves = saves
+  }
+
+  def title() String {
+    return self.title
+  }
+
+  def saves() Int64 {
+    return self.saves
+  }
+
+  def with_saves(n Int64) Model {
+    return Model.new(title: self.title, saves: n)
+  }
+}
+
+def update(msg Msg, m Model) Model {
+  case msg {
+    Msg.save -> { return m.with_saves(m.saves() + 1) }
+  }
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  const save = reg.on(Msg.save)
+  const card = ui.style().with_padding(16.0).with_gap(8.0)
+  const field_style = ui.style().with_width(320.0)
+
+  return ui.column([
+    ui.text("Notes", ui.style().with_padding(8.0)),
+    ui_ssr.link("/", "Home", ui.style()),
+    ui_ssr.form("/notes/save", [
+      ui_ssr.field("title", m.title(), field_style),
+      ui.text("saved ${m.saves()} times", ui.style()),
+      ui.button("Save", save, ui.style())
+    ], card)
+  ], ui.style().with_padding(24.0).with_gap(12.0))
+}
+
+// One request, then the one that follows it: a full page, then the
+// fragment the browser swaps in. The tag table outlives both renders,
+// which is what keeps the button's `value` the same across them.
+def main() {
+  const reg = ui.Registry.new()
+  const first = Model.new("Ada", 0)
+  println(ui_ssr.page("EmoUI notes", view(reg, first)))
+  println(ui_ssr.fragment(view(reg, update(Msg.save, first))))
+}
+
+main()

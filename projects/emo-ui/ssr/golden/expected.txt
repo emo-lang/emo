@@ -1,0 +1,54 @@
+--- stylesheet
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; }
+.e0 { display: flex; flex-direction: column; padding: 24.0px; gap: 12.0px; align-items: stretch; flex-grow: 0; }
+.e1 { display: inline; padding: 12.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e2 { display: flex; flex-direction: row; padding: 0.0px; gap: 8.0px; align-items: center; flex-grow: 0; }
+.e3 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; width: 32.0px; }
+.e4 { display: flex; flex-direction: column; padding: 0.0px; gap: 4.0px; align-items: flex-start; flex-grow: 0; }
+.e5 { display: inline; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 1; }
+.e6 { display: inline; padding: 0.0px; gap: 0.0px; align-items: flex-end; flex-grow: 0; }
+.e7 { display: block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; width: 8.0px; height: 8.0px; }
+.e8 { display: flex; flex-direction: column; overflow: auto; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; height: 120.0px; }
+.e9 { display: inline; padding: 2.5px; gap: 0.0px; align-items: stretch; flex-grow: 0; }
+.e10 { display: inline; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e11 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; width: 200.0px; }
+.e12 { display: flex; flex-direction: column; padding: 16.0px; gap: 6.5px; align-items: flex-end; flex-grow: 0; }
+.e13 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; width: 240.0px; }
+.e14 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e15 { display: inline; padding: 0.0px; gap: 0.0px; align-items: center; flex-grow: 0; }
+
+--- fragment
+<div class="e0"><span class="e1">EmoUI inbox</span><div class="e2"><img class="e3" src="/avatar.png" alt=""><div class="e4"><span class="e5">Ada Lovelace</span><span class="e6">ada@example.com</span></div><span class="e7"></span></div><div class="e8"><span class="e9">No messages</span><span class="e10"></span></div><span class="e10">Tom &amp; Jerry &lt;&quot;quoted&quot;&gt; &#39;single&#39; — 世界</span><input class="e11" type="text" value="draft" readonly><form class="e12" method="post" action="/send"><input class="e13" type="text" name="message" value="a &amp; b &lt;c&gt;"><input class="e14" type="text" name="empty" value=""><button class="e14" type="submit" name="event" value="7">Send</button><a class="e15" href="/help?topic=forms&amp;page=2">Help</a></form></div>
+--- page
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EmoUI &amp; inbox</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; }
+.e0 { display: flex; flex-direction: column; padding: 24.0px; gap: 12.0px; align-items: stretch; flex-grow: 0; }
+.e1 { display: inline; padding: 12.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e2 { display: flex; flex-direction: row; padding: 0.0px; gap: 8.0px; align-items: center; flex-grow: 0; }
+.e3 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; width: 32.0px; }
+.e4 { display: flex; flex-direction: column; padding: 0.0px; gap: 4.0px; align-items: flex-start; flex-grow: 0; }
+.e5 { display: inline; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 1; }
+.e6 { display: inline; padding: 0.0px; gap: 0.0px; align-items: flex-end; flex-grow: 0; }
+.e7 { display: block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; width: 8.0px; height: 8.0px; }
+.e8 { display: flex; flex-direction: column; overflow: auto; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; height: 120.0px; }
+.e9 { display: inline; padding: 2.5px; gap: 0.0px; align-items: stretch; flex-grow: 0; }
+.e10 { display: inline; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e11 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; width: 200.0px; }
+.e12 { display: flex; flex-direction: column; padding: 16.0px; gap: 6.5px; align-items: flex-end; flex-grow: 0; }
+.e13 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; width: 240.0px; }
+.e14 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e15 { display: inline; padding: 0.0px; gap: 0.0px; align-items: center; flex-grow: 0; }
+</style>
+</head>
+<body>
+<div class="e0"><span class="e1">EmoUI inbox</span><div class="e2"><img class="e3" src="/avatar.png" alt=""><div class="e4"><span class="e5">Ada Lovelace</span><span class="e6">ada@example.com</span></div><span class="e7"></span></div><div class="e8"><span class="e9">No messages</span><span class="e10"></span></div><span class="e10">Tom &amp; Jerry &lt;&quot;quoted&quot;&gt; &#39;single&#39; — 世界</span><input class="e11" type="text" value="draft" readonly><form class="e12" method="post" action="/send"><input class="e13" type="text" name="message" value="a &amp; b &lt;c&gt;"><input class="e14" type="text" name="empty" value=""><button class="e14" type="submit" name="event" value="7">Send</button><a class="e15" href="/help?topic=forms&amp;page=2">Help</a></form></div>
+</body>
+</html>

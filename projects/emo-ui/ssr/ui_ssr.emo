@@ -1,0 +1,469 @@
+// The server-side rendering backend (T48.6): the node tree as HTML plus
+// the stylesheet its styles intern into, and the interaction model a
+// server can carry — forms post event tags, links navigate.
+//
+// The renderer is pure Emo and names no host, so all five hosted targets
+// produce the same bytes; `golden/` pins that byte for byte. There is no
+// DOM, no JavaScript and no client runtime: the browser is the viewer,
+// exactly as it is for the SVG a plotting package hands back
+// (docs/emo-ui.md, T0).
+//
+// The tree stays the portable one. Three nodes exist here rather than in
+// the core because only a server round trip has anywhere to put them: a
+// form's action, a link's href and a field's name are the interaction
+// model itself, and the core's `button`/`text_input` carry only an event
+// tag and the model's value. An application that wants them spells the
+// names at the call site (`ui_ssr.form`), the way every platform node is
+// namespaced, so a portable component never grows an SSR-only name.
+
+require "emo/ui"
+
+// ---- nodes this backend adds -----------------------------------------
+
+// The round trip. Its children submit together: a `ui.button` inside it
+// contributes the event tag under the name `event`, and every `field`
+// contributes its own name and value. POST is the method because a form
+// changes state; reading a page is a link's job.
+class Form {
+  def init(action String, children Array[ui.Node], style ui.Style) {
+    self.action = action
+    self.children = children
+    self.style = style
+  }
+
+  def style() ui.Style {
+    return self.style
+  }
+
+  def children() Array[ui.Node] {
+    return self.children
+  }
+
+  def action() String {
+    return self.action
+  }
+}
+
+// The other interaction: a GET to another page, carrying nothing back.
+class Link {
+  def init(href String, label String, style ui.Style) {
+    self.href = href
+    self.label = label
+    self.style = style
+  }
+
+  def style() ui.Style {
+    return self.style
+  }
+
+  def children() Array[ui.Node] {
+    return []
+  }
+
+  def href() String {
+    return self.href
+  }
+
+  def label() String {
+    return self.label
+  }
+}
+
+// A named control. The core's `text_input` shows the model's value and
+// has no name — a backend that owns input reads it back some other way —
+// so the control a submitted body carries is this one.
+class Field {
+  def init(name String, value String, style ui.Style) {
+    self.name = name
+    self.value = value
+    self.style = style
+  }
+
+  def style() ui.Style {
+    return self.style
+  }
+
+  def children() Array[ui.Node] {
+    return []
+  }
+
+  def name() String {
+    return self.name
+  }
+
+  def value() String {
+    return self.value
+  }
+}
+
+def form(action String, children Array[ui.Node], style ui.Style) ui.Node {
+  return Form.new(action: action, children: children, style: style)
+}
+
+def link(href String, label String, style ui.Style) ui.Node {
+  return Link.new(href: href, label: label, style: style)
+}
+
+def field(name String, value String, style ui.Style) ui.Node {
+  return Field.new(name: name, value: value, style: style)
+}
+
+// ---- escaping --------------------------------------------------------
+//
+// Every prop that reaches markup is escaped byte by byte: the language
+// has no `String.replace`, and rebuilding through `substring(i, 1)` is
+// byte-preserving, so a multi-byte character rides through unchanged
+// instead of being split or re-encoded per target. The five entities are
+// the full set that matters inside an attribute (which is always
+// double-quoted here) and in element text; `&` is replaced on its own
+// first so an entity's own ampersand is never produced twice.
+def escape_char(c String) String {
+  if c == "&" {
+    return "&amp;"
+  }
+  if c == "<" {
+    return "&lt;"
+  }
+  if c == ">" {
+    return "&gt;"
+  }
+  if c == "\"" {
+    return "&quot;"
+  }
+  if c == "'" {
+    return "&#39;"
+  }
+  return c
+}
+
+def escape(s String) String {
+  var out = ""
+  for var i = 0; i < s.length(); i = i + 1 {
+    out = out + escape_char(s.substring(i, 1))
+  }
+  return out
+}
+
+// ---- the stylesheet --------------------------------------------------
+//
+// Each distinct (base declarations, style) pair becomes one class, in
+// document order, so the CSS is deterministic without a sort and the
+// same tree always yields the same bytes. The base is part of the key
+// because the class has to say how the node lays out — a `row` and a
+// `column` with equal styles are not the same box — and the style is
+// part of it so a style is written once no matter how many nodes carry
+// it. Keying on the declarations themselves rather than on the node
+// kind is what lets a `button` and a `field` with equal styles share a
+// rule: the elements differ, the box does not.
+//
+// A rule is a total description in a fixed order: the base display,
+// then padding, gap, alignment, growth, width and height. The layout
+// properties an inline node cannot honor are still emitted; CSS ignores
+// what does not apply, and a rule that means the same thing everywhere
+// is worth more than a shorter one that has to be read per kind.
+
+def same_extent(a (R, Float64), b (R, Float64)) Bool {
+  const (ra, va) = a
+  const (rb, vb) = b
+  if ra != rb {
+    return false
+  }
+  case ra {
+    R.ok -> { return va == vb }
+    R.error -> { return true }
+  }
+}
+
+def same_style(a ui.Style, b ui.Style) Bool {
+  if a.padding() != b.padding() {
+    return false
+  }
+  if a.gap() != b.gap() {
+    return false
+  }
+  if a.align() != b.align() {
+    return false
+  }
+  if a.grow() != b.grow() {
+    return false
+  }
+  if !same_extent(a.width(), b.width()) {
+    return false
+  }
+  return same_extent(a.height(), b.height())
+}
+
+class Sheet {
+  def init() {
+    self.bases = Box.new([])
+    self.styles = Box.new([])
+  }
+
+  def count() Int64 {
+    return self.bases.read().length()
+  }
+
+  def base_at(i Int64) String {
+    return self.bases.read()[i]
+  }
+
+  def style_at(i Int64) ui.Style {
+    return self.styles.read()[i]
+  }
+
+  def matching(base String, s ui.Style, i Int64) Int64 {
+    const bs = self.bases.read()
+    if i >= bs.length() {
+      return -1
+    }
+    if bs[i] == base {
+      const known = self.styles.read()[i]
+      if same_style(known, s) {
+        return i
+      }
+    }
+    return self.matching(base, s, i + 1)
+  }
+
+  def class_of(kind String, s ui.Style) String {
+    const base = base_css(kind)
+    const known = self.matching(base, s, 0)
+    if known >= 0 {
+      return class_name(known)
+    }
+    const n = self.count()
+    self.bases.replace(self.bases.read().append(base))
+    self.styles.replace(self.styles.read().append(s))
+    return class_name(n)
+  }
+}
+
+def class_name(i Int64) String {
+  return "e" + i.to_string()
+}
+
+def align_css(a ui.Align) String {
+  case a {
+    ui.Align.start -> { return "flex-start" }
+    ui.Align.center -> { return "center" }
+    ui.Align.end -> { return "flex-end" }
+    ui.Align.stretch -> { return "stretch" }
+  }
+}
+
+def grow_css(g Bool) String {
+  if g {
+    return "1"
+  }
+  return "0"
+}
+
+def size_css(name String, slot (R, Float64)) String {
+  case slot {
+    (R.ok, v) -> { return " " + name + ": " + v.to_string() + "px;" }
+    (R.error, _) -> { return "" }
+  }
+}
+
+def base_css(kind String) String {
+  if kind == "column" {
+    return "display: flex; flex-direction: column;"
+  }
+  if kind == "row" {
+    return "display: flex; flex-direction: row;"
+  }
+  if kind == "scroll" {
+    return "display: flex; flex-direction: column; overflow: auto;"
+  }
+  if kind == "form" {
+    return "display: flex; flex-direction: column;"
+  }
+  if kind == "button" {
+    return "display: inline-block;"
+  }
+  if kind == "input" {
+    return "display: inline-block;"
+  }
+  if kind == "field" {
+    return "display: inline-block;"
+  }
+  if kind == "image" {
+    return "display: inline-block;"
+  }
+  if kind == "spacer" {
+    return "display: block;"
+  }
+  return "display: inline;"
+}
+
+def css_rule(selector String, base String, s ui.Style) String {
+  return selector + " { " + base
+    + " padding: " + s.padding().to_string() + "px;"
+    + " gap: " + s.gap().to_string() + "px;"
+    + " align-items: " + align_css(s.align()) + ";"
+    + " flex-grow: " + grow_css(s.grow()) + ";"
+    + size_css("width", s.width())
+    + size_css("height", s.height())
+    + " }\n"
+}
+
+def css_rules(sheet Sheet, i Int64) String {
+  if i >= sheet.count() {
+    return ""
+  }
+  return css_rule("." + class_name(i), sheet.base_at(i), sheet.style_at(i))
+    + css_rules(sheet, i + 1)
+}
+
+// The two elements every page gets: `border-box` makes the style's
+// width and height mean the box the backend's other renderers draw,
+// and the body reset removes the margin a browser would otherwise add
+// around the tree.
+def base_rules() String {
+  return "* { box-sizing: border-box; }\n"
+    + "body { margin: 0; font-family: system-ui, sans-serif; }\n"
+}
+
+def css(sheet Sheet) String {
+  return base_rules() + css_rules(sheet, 0)
+}
+
+// ---- the renderer ----------------------------------------------------
+
+def class_attr(sheet Sheet, kind String, s ui.Style) String {
+  return " class=\"" + sheet.class_of(kind, s) + "\""
+}
+
+def render_kids(sheet Sheet, kids Array[ui.Node]) String {
+  var out = ""
+  for var i = 0; i < kids.length(); i = i + 1 {
+    out = out + render_at(sheet, kids[i])
+  }
+  return out
+}
+
+def container(sheet Sheet, kind String, style ui.Style,
+              kids Array[ui.Node]) String {
+  return "<div" + class_attr(sheet, kind, style) + ">"
+    + render_kids(sheet, kids) + "</div>"
+}
+
+// The walk is pre-order: a node interns its own class before its
+// children, so the class numbers follow document order from the root
+// down. Every entry point walks the same way, which is what lets
+// `stylesheet(root)` and `page(title, root)` name the same classes.
+def render_at(sheet Sheet, n ui.Node) String {
+  if n.is(ui.Text) {
+    return "<span" + class_attr(sheet, "text", n.style()) + ">"
+      + escape(n.body()) + "</span>"
+  }
+  if n.is(ui.Button) {
+    return "<button" + class_attr(sheet, "button", n.style())
+      + " type=\"submit\" name=\"event\" value=\""
+      + n.event().to_string() + "\">" + escape(n.label()) + "</button>"
+  }
+  if n.is(ui.TextInput) {
+    return "<input" + class_attr(sheet, "input", n.style())
+      + " type=\"text\" value=\"" + escape(n.value()) + "\" readonly>"
+  }
+  if n.is(ui.Image) {
+    return "<img" + class_attr(sheet, "image", n.style())
+      + " src=\"" + escape(n.src()) + "\" alt=\"\">"
+  }
+  if n.is(ui.Spacer) {
+    return "<span" + class_attr(sheet, "spacer", n.style()) + "></span>"
+  }
+  if n.is(ui.Column) {
+    return container(sheet, "column", n.style(), n.children())
+  }
+  if n.is(ui.Row) {
+    return container(sheet, "row", n.style(), n.children())
+  }
+  if n.is(ui.Scroll) {
+    return container(sheet, "scroll", n.style(), n.children())
+  }
+  if n.is(Form) {
+    return "<form" + class_attr(sheet, "form", n.style())
+      + " method=\"post\" action=\"" + escape(n.action()) + "\">"
+      + render_kids(sheet, n.children()) + "</form>"
+  }
+  if n.is(Link) {
+    return "<a" + class_attr(sheet, "link", n.style())
+      + " href=\"" + escape(n.href()) + "\">" + escape(n.label()) + "</a>"
+  }
+  if n.is(Field) {
+    return "<input" + class_attr(sheet, "field", n.style())
+      + " type=\"text\" name=\"" + escape(n.name()) + "\" value=\""
+      + escape(n.value()) + "\">"
+  }
+  // An unknown node class is a broken contract, not data: unlike the
+  // debug backend, which prints `Unknown` for its own diagnostics, a
+  // renderer that does not know a node cannot guess markup for it.
+  raise Exception.new(message: "ui_ssr: this renderer does not know the node class")
+}
+
+// ---- the three entry points -----------------------------------------
+
+// A partial: the tree's markup alone, for a server that swaps a region
+// of a page in place of the whole document.
+def fragment(root ui.Node) String {
+  const sheet = Sheet.new()
+  return render_at(sheet, root)
+}
+
+// The CSS for a tree, with the page's own base rules in front of the
+// interned classes.
+def stylesheet(root ui.Node) String {
+  const sheet = Sheet.new()
+  render_at(sheet, root)
+  return css(sheet)
+}
+
+// A whole document, titled. The title is the one prop not carried by
+// the tree — a document has exactly one, and it is not a node — so it
+// is an argument here.
+def page(title String, root ui.Node) String {
+  const sheet = Sheet.new()
+  const body = render_at(sheet, root)
+  return "<!doctype html>\n<html lang=\"en\">\n<head>\n"
+    + "<meta charset=\"utf-8\">\n"
+    + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+    + "<title>" + escape(title) + "</title>\n"
+    + "<style>\n" + css(sheet) + "</style>\n</head>\n<body>\n"
+    + body + "\n</body>\n</html>"
+}
+
+// ---- the backend half of the seam ------------------------------------
+//
+// A server request is two shapes: the first response is a whole
+// document, and every later round trip is the fragment the browser
+// swaps in (the htmx shape docs/emo-ui.md settles on). `mount` prints
+// the first, `patch` prints the second, and `run` returns without
+// driving anything — there is no input source on a server; the request
+// is what delivers an event, through `deliver`.
+class Ssr {
+  def init(title String) {
+    self.title = title
+    self.sink = Box.new(0)
+  }
+
+  def mount(root ui.Node, events ui.Events) {
+    self.sink.replace(events)
+    println(page(self.title, root))
+  }
+
+  def patch(old ui.Node, next ui.Node) {
+    println(fragment(next))
+  }
+
+  def run() {
+  }
+
+  def deliver(tag Int64) {
+    self.sink.read().deliver(tag)
+  }
+}
+
+def backend(title String) Ssr {
+  return Ssr.new(title: title)
+}

@@ -1,0 +1,69 @@
+require "emo/ui"
+require "emo/ui_ssr"
+
+// The SSR golden (T48.6): one page rendered three ways — its
+// stylesheet, its fragment, and the whole document — from one tree.
+//
+// The tree carries every portable primitive and every node this backend
+// adds, all four `Align` values, both `w=`/`h=` branches, fractional
+// padding and gap, an empty string prop, nested containers, and props
+// that need escaping including a multi-byte character. Classes are
+// interned, so repeated styles show up as one rule; the three sections
+// are printed in that order because the document's CSS is the same
+// stylesheet the first section pins.
+//
+//   emo run main.emo                       -> the golden, from the interpreter
+//   emo build main.emo --target <t> -o …   -> the same bytes, from the target
+
+def inbox() ui.Node {
+  const root_base = ui.style().with_padding(24.0).with_gap(12.0)
+  const root_style = root_base.with_align(ui.Align.stretch)
+  const head_style = ui.style().with_padding(12.0).with_align(ui.Align.start)
+  const row_style = ui.style().with_gap(8.0).with_align(ui.Align.center)
+  const who_style = ui.style().with_gap(4.0)
+  const mail_style = ui.style().with_align(ui.Align.end)
+  const spacer_style = ui.style().with_width(8.0).with_height(8.0)
+  const feed_style = ui.style().with_height(120.0)
+  const quiet_style = ui.style().with_padding(2.5).with_align(ui.Align.stretch)
+  const input_style = ui.style().with_width(200.0)
+  const form_base = ui.style().with_padding(16.0).with_gap(6.5)
+  const form_style = form_base.with_align(ui.Align.end)
+  const field_style = ui.style().with_width(240.0)
+  const help_style = ui.style().with_align(ui.Align.center)
+
+  return ui.column([
+    ui.text("EmoUI inbox", head_style),
+    ui.row([
+      ui.image("/avatar.png", ui.style().with_width(32.0)),
+      ui.column([
+        ui.text("Ada Lovelace", ui.style().with_grow(true)),
+        ui.text("ada@example.com", mail_style)
+      ], who_style),
+      ui.spacer(spacer_style)
+    ], row_style),
+    ui.scroll([
+      ui.text("No messages", quiet_style),
+      ui.text("", ui.style())
+    ], feed_style),
+    ui.text("Tom & Jerry <\"quoted\"> 'single' — 世界", ui.style()),
+    ui.text_input("draft", input_style),
+    ui_ssr.form("/send", [
+      ui_ssr.field("message", "a & b <c>", field_style),
+      ui_ssr.field("empty", "", ui.style()),
+      ui.button("Send", 7, ui.style()),
+      ui_ssr.link("/help?topic=forms&page=2", "Help", help_style)
+    ], form_style)
+  ], root_style)
+}
+
+def main() {
+  const root = inbox()
+  println("--- stylesheet")
+  println(ui_ssr.stylesheet(root))
+  println("--- fragment")
+  println(ui_ssr.fragment(root))
+  println("--- page")
+  println(ui_ssr.page("EmoUI & inbox", root))
+}
+
+main()

@@ -1755,9 +1755,44 @@ required.
       a pipe cannot carry: the group pins its refusal off a tty, and
       the mode itself was checked over a pty while the package was
       built. Reference: `docs/stdlib/term.md`.
-- [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
+- [x] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
       byte-identical on all five hosted targets; forms and links as the
-      interaction model.
+      interaction model. **Landed 2026-10-18** as
+      `projects/emo-ui/ssr/` (package `emo/ui_ssr`: `ui_ssr.emo` and
+      `test.emo`), declaring all five hosted targets. The renderer is
+      pure Emo and names no host: three entry points — `page(title,
+      root)` for a whole document, `fragment(root)` for a region a
+      browser swaps in, `stylesheet(root)` for the CSS alone — walk the
+      same pre-order tree, so the classes a page's markup carries are
+      the ones its stylesheet defines. A node's class comes from
+      interning on its base declarations and its `Style`
+      (`e0`, `e1`, … in document order), which writes an equal style
+      once and still keeps a `row` and a `column` apart; every prop
+      reaching markup is escaped byte by byte through `substring(i, 1)`,
+      so a multi-byte character rides through unchanged. The renderer
+      adds the three nodes only a server round trip has anywhere to put
+      — `form(action, children, style)`, `link(href, label, style)`,
+      `field(name, value, style)` — while a `ui.button` inside a form
+      submits its event tag as `event` and the core's `text_input`
+      stays a read-only view of the model. `Ssr` implements `ui.Backend`
+      by printing the document on `mount` and the fragment on `patch`;
+      `run()` returns because a server has no input source, and
+      `deliver(tag)` is the request that steps one event. `test.emo`
+      pins escaping, the rule shape, interning and one assertion per
+      node kind in twelve assertions; `golden/` renders a tree with
+      every primitive, every `Align`, fractional extents and escapable
+      text, and its bytes are the interpreter's on all five targets;
+      `examples/ssr_page/` is the usage demo. `ssr/check.sh` is the gate
+      and `../check.sh` runs it.
+      The task also closed the `wasm` half of T48.2's open finding: its
+      `Call_value`, `Closure` and `Global` lowering now allocate a
+      function/struct type pair per arity (`closure_type`,
+      `emo_wasm.ml`), so a `Block` value is first-class at any arity —
+      the core loop's two-argument calls now lower. The core golden and
+      `probe/def_shape` therefore build for `wasm`, and the core golden's
+      bytes are the interpreter's on all five targets; `c` still refuses
+      a bare def name (`Global`), which is the one refusal the gates pin
+      (the SSR package's own `test.emo` reaches it through `ui.run`).
 - [ ] **T48.7** — The native packaging mechanism: per-package manifest
       fields (`pkg_config` and/or compile/link flags, plus whatever
       collects `.m`); the app-level build-script path is not the

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EmoUI notes</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; }
+.e0 { display: flex; flex-direction: column; padding: 24.0px; gap: 12.0px; align-items: flex-start; flex-grow: 0; }
+.e1 { display: inline; padding: 8.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e2 { display: inline; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e3 { display: flex; flex-direction: column; padding: 16.0px; gap: 8.0px; align-items: flex-start; flex-grow: 0; }
+.e4 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; width: 320.0px; }
+.e5 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+</style>
+</head>
+<body>
+<div class="e0"><span class="e1">Notes</span><a class="e2" href="/">Home</a><form class="e3" method="post" action="/notes/save"><input class="e4" type="text" name="title" value="Ada"><span class="e2">saved 0 times</span><button class="e5" type="submit" name="event" value="0">Save</button></form></div>
+</body>
+</html>
+<div class="e0"><span class="e1">Notes</span><a class="e2" href="/">Home</a><form class="e3" method="post" action="/notes/save"><input class="e4" type="text" name="title" value="Ada"><span class="e2">saved 1 times</span><button class="e5" type="submit" name="event" value="0">Save</button></form></div>

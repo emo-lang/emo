@@ -12,12 +12,17 @@ portable `ui` core (T48.1), the Elm loop with its tests (T48.2), the
 headless `debug` backend with its byte-identical golden (T48.3) and the
 terminal `ui_tui` backend with its scripted-input golden (T48.4) have
 landed in `projects/emo-ui/`, and terminal input (T48.5) has landed in
-`stdlib/` as the `term` package; T48.6 onward are not started. T48.2 turned
+`stdlib/` as the `term` package; the server-side `ui_ssr` renderer
+(T48.6) has landed beside the debug and TUI backends; T48.7 onward are
+not started. T48.2 turned
 up the first language-side gap this step has hit: the loop's shape — the
 application's `update` and `view` arriving as `Block` values — is what
-`c` and `wasm` cannot compile yet, and T48.4 found that `beam` compiles
+`c` and `wasm` could not compile, and T48.4 found that `beam` compiles
 it but could not run it, which is fixed here (`CHECK.md`, the Elm loop's
-shape). T48.3 turned up two more, both silent rather than refusing:
+shape). T48.6 closed the `wasm` half — its closures now take any arity,
+so the core golden is byte-identical on all five hosted targets and only
+`c` still refuses the bare def names. T48.3 turned up two more, both
+silent rather than refusing:
 operands were evaluated in the target's order, `ocaml`'s being the
 reverse of the others' — fixed 2026-10-17, left to right everywhere —
 and an enum does not interpolate to the same
@@ -222,7 +227,8 @@ placement; `docs/emo-ui.md`, ask 7).
       built one anyway, on the targets the loop reaches (`ocaml`,
       `typescript` and — once the fix below landed — `beam`), and left
       the decision standing: `c` and `wasm` stay the gap, and the TUI
-      golden is byte-identical on the other three.
+      golden is byte-identical on the other three. (T48.6 later closed
+      the `wasm` half; `c` stays the gap.)
 - [x] **T48.3** — The headless `debug` backend: renders the tree to a
       stable text form, the byte-identical golden harness the core and
       the other backends share. **Landed 2026-10-15.**
@@ -309,9 +315,22 @@ placement; `docs/emo-ui.md`, ask 7).
       `test/emo_cli`'s `term` group checks the pipe paths and the
       failure values; `examples/term_demo` is the runnable demo;
       reference at `docs/stdlib/term.md`.
-- [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
+- [x] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
       byte-identical on all five hosted targets; forms and links as the
-      interaction model.
+      interaction model. **Landed 2026-10-18** as
+      `projects/emo-ui/ssr/` (package `emo/ui_ssr`): `page`, `fragment`
+      and `stylesheet` walk the portable tree pre-order and intern each
+      node's base declarations plus `Style` into `e0`, `e1`, …; escaping
+      is a byte walk, so multi-byte text is unchanged; the renderer adds
+      `form`/`link`/`field`, while a `ui.button` in a form submits its
+      tag as `event`. `Ssr` implements `ui.Backend` (`mount` prints the
+      document, `patch` the fragment, `run` returns, `deliver` steps one
+      request); twelve assertions pin the rules and every node kind, and
+      `golden/` plus `examples/ssr_page/` are byte-identical on all five
+      targets. The task also gave `wasm` closures any arity
+      (`closure_type`, `emo_wasm.ml`), which lets the core golden and
+      `probe/def_shape` build for `wasm` and closes the `wasm` half of
+      T48.2's finding; `c` remains the one refusal.
 - [ ] **T48.7** — The native packaging mechanism: per-package manifest
       fields (`pkg_config` and/or compile/link flags, plus whatever
       collects `.m`); the app-level build-script path is not the

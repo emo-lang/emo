@@ -146,7 +146,7 @@ This note does not re-open what earlier work closed.
 | macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **proven** (`spike/macos-gui`, `spike/components`) | packaging: `.m`, `-fobjc-arc`, `-framework` |
 | GTK 4 | `c` target + C shim via `foreign def` | **proven** (`spike/gtk`, `spike/components`) | packaging: `pkg-config gtk4` |
 | TUI | pure Emo, ANSI escape output; `term` for input | **landed** (T48.4, T48.5) | wiring `term` into `ui_tui`'s input source |
-| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **least ready** | TS target is Node-only; wasm host has 3 imports |
+| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); DOM least ready | TS target is Node-only; wasm host has 3 imports |
 
 ### macOS and GTK 4
 
@@ -261,6 +261,19 @@ only one of them is close.
   `println`, `abort`, and `float_str`; a DOM backend on wasm means new
   host imports and a JS glue layer. Later, and only if T1 proves
   insufficient.
+
+**T0 landed 2026-10-18** as the `emo/ui_ssr` package
+(`projects/emo-ui/ssr/`): `page`, `fragment` and `stylesheet` walk the
+portable tree pre-order, intern each node's base declarations and
+`Style` into `e0`, `e1`, …, and escape every prop byte by byte, so the
+bytes are the interpreter's on all five hosted targets (`golden/`,
+`examples/ssr_page/`). The interaction model is concrete: a `form`
+posts its fields and the event tag of the button that submitted it, and
+a `link` navigates; `Ssr` implements `ui.Backend` with `mount` printing
+the document, `patch` the fragment, and `run` returning because a
+server has no input source. The `wasm` target's closures grew any arity
+for this task, so the portable loop now lowers on all five targets and
+only `c` still refuses a bare def name (`CHECK.md`).
 
 There is a further semantic point specific to the Web and to native
 toolkits: **the platform owns the event loop.** A browser page or an
@@ -584,16 +597,18 @@ The facts that bound this layer are honest caveats, not design choices:
   (`projects/emo-ui/`, T48.2) and runs on the interpreter, but the shape
   above — the application's `update` and `view` passed in as `Block`
   values — compiles only where a bare def can be a value: `ocaml`,
-  `typescript` and `beam` do; `c` refuses it (`Global`) and `wasm`
-  refuses the two-argument dynamic call `update` needs (one-parameter
-  closures only). The same loop with those two functions behind a
-  `Handler` interface — ordinary interface dispatch, no `Block`-valued
-  function, the application still narrowing its model with `is()` as a
-  backend narrows a node — builds on all five targets and prints what the
-  interpreter prints (`projects/emo-ui/probe/`, `CHECK.md`, the Elm
-  loop's shape). Which way to close it — grow the two targets, or move
-  the application's functions behind an interface and revise this layer's
-  spelling — is open.
+  `typescript`, `wasm` and `beam` do; `c` refuses it (`Global`). `wasm`
+  refused the two-argument dynamic call `update` needs until T48.6, when
+  its closures grew any arity (`closure_type`), so a `Block` value is
+  now first-class however many parameters it takes; the core golden's
+  bytes are the interpreter's on all five targets. The same loop with
+  those two functions behind a `Handler` interface — ordinary interface
+  dispatch, no `Block`-valued function, the application still narrowing
+  its model with `is()` as a backend narrows a node — builds on all five
+  targets and prints what the interpreter prints (`projects/emo-ui/probe/`,
+  `CHECK.md`, the Elm loop's shape). Which way to close the remaining
+  `c` half — give it def-as-value, or move the application's functions
+  behind an interface and revise this layer's spelling — is open.
 - **Long-running memory.** The `c` target does not reclaim the value
   families a render allocates, and a UI re-renders per event, so this is
   the caveat that bounds the platform rather than the design:
@@ -646,15 +661,23 @@ Each platform implements it:
   event is stepped by hand through `deliver` on the sink `mount` was
   given. `projects/emo-ui/golden/` is what it is for: one screen through
   the core as a consumer reaches it, out as text, byte-identical on the
-  interpreter, `ocaml`, `c`, `typescript` and `beam` (`wasm` cannot lower
-  the core — the loop's shape, above). The form's narrowness is forced by
+  interpreter and all five hosted targets (the `wasm` half of the loop's
+  shape closed in T48.6; `c` still refuses the loop's bare def names but
+  not this golden, which calls the renderer directly). The form's
+  narrowness is forced by
   the targets rather than chosen: it interpolates only `String`, `Int64`,
   `Bool` and `Float64`, because an enum or a tuple does not print the
   same bytes on every target (`CHECK.md`, the enum display form), and its
   golden takes the event tags in statements before building the tree,
   because operand evaluation order is the target's (`CHECK.md`).
-- **SSR:** a pure-Emo class that serializes the tree to HTML/CSS;
-  `run()` is one render.
+- **SSR (landed, T48.6):** `projects/emo-ui/ssr/` renders the tree to
+  HTML and an interned stylesheet, byte-identical on all five targets.
+  `mount` prints a whole document and `patch` prints the fragment a
+  browser swaps in; `run()` returns, because a server has no input
+  source, and `deliver(tag)` is the request that steps one event. Forms
+  and links are the interaction model, and the three nodes only a
+  server round trip can honor (`form`, `link`, `field`) live in this
+  package rather than in the core.
 - **DOM (later):** an Emo class over the runtime's `dom_*` calls;
   `run()` hands control to the browser and returns.
 
@@ -744,8 +767,8 @@ A bare def is a value — locally and module-qualified (probe 5) — so
 parameters, which are `Unknown`, so the entry's wiring is the same
 unchecked-callback boundary as Layer 1. `view` takes the loop's
 `Registry` first because the table is the loop's (Layer 5). This is the
-shape `ui.run` landed with (T48.2) — and the one two targets cannot
-compile yet, which is the open item Layer 5 records.
+shape `ui.run` landed with (T48.2) — and the one `c` cannot compile yet
+(`wasm` closed in T48.6), which is the open item Layer 5 records.
 
 `app.emo` is the same file for all three; only the entry module differs,
 and it is a handful of lines. A platform-specific app that wants
@@ -855,7 +878,9 @@ mid-implementation:
   backend and its scripted golden (T48.4)** extend it — one screen
   through a real box model, byte-identical on four of the five hosted
   targets — and forced the two `beam` lowering defects it fixed
-  (`CHECK.md`).
+  (`CHECK.md`). The **server-rendered backend (T48.6)** extends it once
+  more: a whole tree's HTML and stylesheet are byte-identical on all
+  five targets, and closing that required the `wasm` closures' arity.
 - **Text.** Portable automatic layout needs text metrics; the design
   avoids needing them by delegating layout to the platform (and the TUI
   counts cells). A future canvas or a pixel-identical mode reintroduces
@@ -1000,10 +1025,10 @@ tracked as **M16 — Value-family reclamation (step 49)**, spec in
 4. **The checked block/function type** — whether the component API
    earns it after a first package shows the friction. The loop has now
    shown the friction's other face: its `Block`-valued `view`/`update`
-   is what `c` and `wasm` cannot compile (`CHECK.md`, the Elm loop's
-   shape), so the alternative to a checked function type — putting the
-   application's two functions behind an interface — is also the
-   alternative to growing those two targets.
+   is what `c` alone cannot compile (`wasm` closed in T48.6;
+   `CHECK.md`, the Elm loop's shape), so the alternative to a checked
+   function type — putting the application's two functions behind an
+   interface — is also the alternative to giving `c` def-as-value.
 5. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
    subset of the TypeScript runtime plus a `dom_*` family, not a
    browser-specific runtime variant (`CHECK.md`). What stays open is
