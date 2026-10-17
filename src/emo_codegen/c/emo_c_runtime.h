@@ -311,16 +311,22 @@ void emo_println_dyn(emo_value v);
    arguments are fatal runtime errors. */
 void emo_printf(emo_str fmt, emo_value args);
 
-/* The to_string METHOD over a dynamic receiver: a Bytes cell yields
-   its content, every other kind renders (the interpreter dispatches
-   the same way at runtime). Both are owned copies — a native emo_str
-   escapes the statement that produced it, so it never points into a
-   cell. */
-emo_str emo_to_string_method(emo_value v);
+/* The to_string surface over a dynamic value: the rendered bytes copy
+   into a fresh cell (the memstream transient dies inside). */
+emo_value emo_to_string_cell(emo_value v);
 
-/* The dynamic→native String crossing: the bytes copied out of the
-   cell, since the native value outlives the cell's claim. */
-emo_str emo_str_owned_of(emo_value v);
+/* Cell-native string builders (step 49): the result cell is allocated
+   directly and the bytes copied in — no bump-arena intermediate. The
+   operands are borrowed; the answer's claim is the caller's to pool. */
+emo_value emo_cell_concat(emo_value a, emo_value b);
+emo_value emo_cell_from_i64(int64_t v);
+emo_value emo_cell_from_f64(double v);
+emo_value emo_cell_from_char(int32_t v);
+emo_value emo_cell_from_cstr(const char *cs);
+emo_value emo_cell_substring(emo_value s, int64_t start, int64_t len);
+emo_value emo_cell_lower(emo_value s);
+emo_value emo_cell_trim(emo_value s);
+emo_value emo_cell_split(emo_value s, emo_value sep); /* an Array of cells */
 
 /* ---- The systems layer (T23.7) ---- */
 
@@ -333,7 +339,7 @@ emo_value emo_bytes_new(int64_t len);
 int64_t emo_bytes_length(emo_value b);
 int64_t emo_bytes_get(emo_value b, int64_t i);
 int64_t emo_bytes_set(emo_value b, int64_t i, int64_t v); /* returns v */
-emo_value emo_bytes_of_str(emo_str s); /* copies into a cell */
+emo_value emo_bytes_of_str(emo_value s); /* copies into a cell */
 emo_str emo_str_of_bytes(emo_value b); /* borrows the cell's bytes */
 
 int64_t emo_bytes_get_u16_le(emo_value b, int64_t i);
@@ -445,7 +451,8 @@ int64_t emo_unsupported(const char *what);
 
 /* `Exception.new(message: ...)`: the value carries the message;
    emo_raise prints it. */
-emo_value emo_make_exception(emo_str message);
+emo_value emo_make_exception(emo_value message); /* the value is the
+                                                    message cell */
 
 /* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- */
 int64_t emo_os_getpid(void);
@@ -466,7 +473,7 @@ emo_value emo_os_mkdir(emo_str path);
 emo_value emo_os_rmdir(emo_str path);
 emo_value emo_os_unlink(emo_str path);
 emo_value emo_os_rename(emo_str old_path, emo_str new_path);
-emo_str emo_os_getcwd(void);
+emo_value emo_os_getcwd(void); /* the working directory as a cell */
 emo_value emo_os_chdir(emo_str path);
 
 /* ---- The integer core (T23.2) ---- */

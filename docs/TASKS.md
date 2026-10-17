@@ -1803,10 +1803,21 @@ and the non-`c` targets are untouched.
       the mutable identities join the documented cycle-leak class. The
       live-count probe returns to baseline across a value-family churn;
       the native transient buffers stay the T49.2 remainder.
-- [ ] **T49.2** — The granularity: decide what the autorelease pool owns
+- [x] **T49.2** — The granularity: decide what the autorelease pool owns
       now that every dynamic type may own memory, and implement it —
       expression-internal temporaries are the hard half, `may_own` plus
       the constructor audit that follows (`emo_c_runtime.c:1753`).
+      **Landed 2026-10-17: String joined the dynamic world** (`CHECK.md`
+      carries the written weighing — the wider pool and the smarter
+      emitter were rejected as unsound or as the ownership analysis the
+      pool exists to erase). Typed `String` positions are cells; the
+      leaf string builders answer self-pooled births (no arena
+      intermediate, no frame of their own); the general constructors
+      still pool at the emitter; the runtime's own transients (printf
+      buffer, file/net reads, argv, list_dir names) are malloc'd and
+      freed within their calls. The churn probe holds RSS flat across
+      3 000 / 30 000 / 120 000 iterations with the live count at zero,
+      and every golden stays byte-identical.
 - [x] **T49.3** — The array shape: an O(1) append or a builder, so
       growing a k-element array is not quadratic in bytes and retains;
       T48.1's children representation depends on the answer. **Settled

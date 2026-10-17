@@ -332,6 +332,142 @@ emo_value emo_box_str(emo_str s) {
   return v;
 }
 
+/* ---- Cell-native strings (step 49) ----
+
+   Every string the generated code builds is a cell: the builders
+   allocate the result cell directly and copy the bytes in, so no
+   bump-arena intermediate ever exists. The [emo_str] views here read
+   the operands' own bytes and die with the expression. */
+
+/* The raw concat behind `+` on two strings: a plain birth — the
+   dyn-arithmetic caller pools it. */
+emo_value emo_cell_concat_raw(emo_value a, emo_value b) {
+  emo_str sa = emo_str_of(a), sb = emo_str_of(b);
+  if (sa.len > INT64_MAX - sb.len) abort(); /* length overflow */
+  emo_value v = emo_cell_new(EMO_STRING, 1 + (sa.len + sb.len + 7) / 8);
+  uintptr_t *p = emo_payload(v);
+  p[0] = (uintptr_t)(sa.len + sb.len);
+  memcpy(p + 1, sa.bytes, (size_t)sa.len);
+  memcpy((char *)(p + 1) + sa.len, sb.bytes, (size_t)sb.len);
+  return v;
+}
+
+/* The leaf builders answer pooled births: they open no pool frame of
+   their own, so the claim lands in the calling statement's frame and
+   dies at its boundary; a result that crosses a frame re-claims
+   through the return's __ret. */
+emo_value emo_cell_concat(emo_value a, emo_value b) {
+  return emo_autorelease(emo_cell_concat_raw(a, b));
+}
+
+emo_value emo_cell_from_i64(int64_t v) {
+  char buf[24];
+  int n = snprintf(buf, sizeof buf, "%" PRId64, v);
+  return emo_autorelease(emo_box_str((emo_str){n, buf}));
+}
+
+emo_value emo_cell_from_f64(double v) {
+  char buf[48];
+  int n = snprintf(buf, sizeof buf, emo_f64_format(v, false), v);
+  return emo_autorelease(emo_box_str((emo_str){n, buf}));
+}
+
+emo_value emo_cell_from_char(int32_t v) {
+  char buf[4];
+  int32_t n = emo_utf8_put(buf, v);
+  return emo_autorelease(emo_box_str((emo_str){n, buf}));
+}
+
+emo_value emo_cell_from_cstr(const char *cs) {
+  /* a plain birth — like emo_box_str, this wraps a general
+     constructor, so the caller pools the claim where it fits */
+  return emo_box_str((emo_str){(int64_t)strlen(cs), cs});
+}
+
+emo_value emo_cell_substring(emo_value s, int64_t start, int64_t len) {
+  emo_str src = emo_str_of(s);
+  if (start < 0 || len < 0 || start + len > src.len)
+    emo_fatal("substring is out of bounds for the string");
+  return emo_autorelease(emo_box_str((emo_str){len, src.bytes + start}));
+}
+
+emo_value emo_cell_lower(emo_value s) {
+  emo_str src = emo_str_of(s);
+  emo_value v = emo_cell_new(EMO_STRING, 1 + (src.len + 7) / 8);
+  uintptr_t *p = emo_payload(v);
+  p[0] = (uintptr_t)src.len;
+  for (int64_t i = 0; i < src.len; i++) {
+    char c = src.bytes[i];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    ((char *)(p + 1))[i] = c;
+  }
+  return emo_autorelease(v);
+}
+
+emo_value emo_cell_trim(emo_value s) {
+  emo_str src = emo_str_of(s);
+  int64_t lo = 0, hi = src.len;
+  while (lo < hi && (unsigned char)src.bytes[lo] <= ' ') lo++;
+  while (hi > lo && (unsigned char)src.bytes[hi - 1] <= ' ') hi--;
+  return emo_autorelease(emo_box_str((emo_str){hi - lo, src.bytes + lo}));
+}
+
+emo_value emo_cell_split(emo_value s, emo_value sep) {
+  emo_str str = emo_str_of(s);
+  emo_str mark = emo_str_of(sep);
+  if (mark.len == 0) emo_fatal("the separator must not be empty");
+  int64_t parts = 1;
+  for (int64_t i = 0; i + mark.len <= str.len;)
+    if (memcmp(str.bytes + i, mark.bytes, (size_t)mark.len) == 0) {
+      parts++;
+      i += mark.len;
+    } else
+      i++;
+  /* the element array is a transient: malloc'd, copied out by
+     emo_array_new, freed here */
+  emo_value *elems = malloc((size_t)parts * sizeof(emo_value));
+  if (elems == NULL) abort();
+  int64_t count = 0, start = 0;
+  for (int64_t i = 0; i + mark.len <= str.len;) {
+    if (memcmp(str.bytes + i, mark.bytes, (size_t)mark.len) == 0) {
+      elems[count++] = emo_box_str((emo_str){i - start, str.bytes + start});
+      i += mark.len;
+      start = i;
+    } else
+      i++;
+  }
+  elems[count++] =
+      emo_box_str((emo_str){str.len - start, str.bytes + start});
+  emo_value out = emo_array_new(count, elems);
+  free(elems);
+  return emo_autorelease(out);
+}
+
+/* The to_string surface over a dynamic value: the rendered bytes copy
+   into a cell, and the memstream transient dies here. */
+emo_value emo_to_string_cell(emo_value v) {
+  if (emo_cell_kind(v) == EMO_BYTES) {
+    /* the content, not the Bytes[n] rendering — the interpreter's
+       to_string over Bytes yields the raw bytes */
+    emo_str s = emo_str_of_bytes(v);
+    return emo_box_str(s);
+  }
+  emo_str s = emo_to_string_dyn(v);
+  emo_value cell = emo_box_str(s);
+  free((void *)s.bytes);
+  return cell;
+}
+
+/* A malloc'd C copy of a borrowed string — free() it after the POSIX
+   call; the underlying cell's claim may not outlive the statement. */
+static char *emo_cstr_owned(emo_str s) {
+  char *p = malloc((size_t)s.len + 1);
+  if (p == NULL) abort();
+  memcpy(p, s.bytes, (size_t)s.len);
+  p[s.len] = '\0';
+  return p;
+}
+
 static uintptr_t emo_cell_kind(emo_value v) {
   if ((v & 7) != 0) return 0;
   return ((emo_cell *)v)->header;
@@ -1173,8 +1309,8 @@ static void emo_printf_reserve(emo_printf_buf *b, size_t extra) {
   if (b->len + extra <= b->cap) return;
   size_t cap = b->cap ? b->cap : 128;
   while (cap < b->len + extra) cap *= 2;
-  char *nb = emo_alloc(cap);
-  if (b->bytes != NULL) memcpy(nb, b->bytes, b->len);
+  char *nb = realloc(b->bytes, cap);
+  if (nb == NULL) abort();
   b->bytes = nb;
   b->cap = cap;
 }
@@ -1520,6 +1656,7 @@ void emo_printf(emo_str fmt, emo_value args) {
     emo_fatal(message);
   }
   fwrite(b.bytes, 1, b.len, stdout);
+  free(b.bytes); /* the render buffer dies with the call */
 }
 
 static int64_t emo_length_bytes(emo_value v) {
@@ -1554,7 +1691,7 @@ emo_value emo_send(emo_value recv, const char *name, int64_t arity,
 emo_value emo_add_dyn(emo_value a, emo_value b) {
   uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
   if (ka == EMO_STRING && kb == EMO_STRING)
-    return emo_box_str(emo_str_concat(emo_str_of(a), emo_str_of(b)));
+    return emo_cell_concat_raw(a, b);
   if (ka == EMO_INT64 && kb == EMO_INT64) {
     int64_t r = (int64_t)((uint64_t)emo_unbox_i64(a) +
                           (uint64_t)emo_unbox_i64(b));
@@ -1914,26 +2051,6 @@ emo_str emo_to_string_dyn(emo_value v) {
 void emo_println_dyn(emo_value v) {
   emo_render_dyn(v, stdout);
   fputc('\n', stdout);
-}
-
-emo_str emo_to_string_method(emo_value v) {
-  if (emo_cell_kind(v) == EMO_BYTES) {
-    /* an owned copy, not a view: the native emo_str escapes this
-       statement, and the cell's claim may not outlive it */
-    emo_str s = emo_str_of_bytes(v);
-    return emo_str_from_parts(s.bytes, s.len);
-  }
-  return emo_to_string_dyn(v);
-}
-
-/* The dynamic→native String crossing: a copy, for the same reason —
-   the cell behind a borrowed view may be released at the statement
-   boundary, and the native value outlives it. Like the string
-   builders' arena bytes, the copy is a native transient. */
-emo_str emo_str_owned_of(emo_value v) {
-  v = emo_expect_kind(v, EMO_STRING);
-  emo_str s = emo_str_of(v);
-  return emo_str_from_parts(s.bytes, s.len);
 }
 
 /* ---- Processes and the cooperative scheduler ---- */
@@ -2498,40 +2615,49 @@ static emo_value emo_os_fail(const char *what, const char *arg) {
 }
 
 emo_value emo_file_read(emo_str path) {
-  char *clean = (char *)emo_str_cstr(path);
+  char *clean = emo_cstr_owned(path);
   FILE *f = fopen(clean, "rb");
   if (f == NULL) {
     char why[512];
     snprintf(why, sizeof why, "file: cannot read %s: %s", clean,
              strerror(errno));
+    free(clean);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
   }
   fseek(f, 0, SEEK_END);
   long n = ftell(f);
   fseek(f, 0, SEEK_SET);
-  emo_str out = emo_str_from_parts("", n);
-  size_t got = fread((char *)out.bytes, 1, (size_t)n, f);
+  char *buf = malloc(n > 0 ? (size_t)n : 1);
+  if (buf == NULL) abort();
+  size_t got = fread(buf, 1, (size_t)n, f);
   fclose(f);
-  if ((long)got != n)
+  free(clean);
+  if ((long)got != n) {
+    free(buf);
     return emo_os_pair(
         "error",
         emo_box_str(emo_str_concat(
             emo_str_from_cstr("file: cannot read "),
             emo_str_concat(path, emo_str_from_cstr(": short read")))));
-  return emo_os_pair("ok", emo_box_str(out));
+  }
+  emo_value out = emo_box_str((emo_str){(int64_t)n, buf});
+  free(buf);
+  return emo_os_pair("ok", out);
 }
 
 emo_value emo_file_write(emo_str path, emo_str contents) {
-  char *clean = (char *)emo_str_cstr(path);
+  char *clean = emo_cstr_owned(path);
   FILE *f = fopen(clean, "wb");
   if (f == NULL) {
     char why[512];
     snprintf(why, sizeof why, "file: cannot write %s: %s", clean,
              strerror(errno));
+    free(clean);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
   }
   size_t put = fwrite(contents.bytes, 1, (size_t)contents.len, f);
   fclose(f);
+  free(clean);
   if ((int64_t)put != contents.len)
     return emo_os_pair(
         "error",
@@ -2583,10 +2709,11 @@ void emo_net_wait_writable(int64_t fd) {
    refusal in [why] — the text the plain listen has always printed. */
 static int emo_net_listen_fd(emo_str host, int64_t port, char *why,
                              size_t whyn) {
-  char *h = (char *)emo_str_cstr(host);
+  char *h = emo_cstr_owned(host);
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {
     snprintf(why, whyn, "listen failed");
+    free(h);
     return -1;
   }
   int one = 1;
@@ -2598,6 +2725,7 @@ static int emo_net_listen_fd(emo_str host, int64_t port, char *why,
   if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
     close(fd);
     snprintf(why, whyn, "cannot resolve host `%s`", h);
+    free(h);
     return -1;
   }
   if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0 ||
@@ -2605,8 +2733,10 @@ static int emo_net_listen_fd(emo_str host, int64_t port, char *why,
     snprintf(why, whyn, "cannot listen on %s:%d: %s", h, (int)port,
              strerror(errno));
     close(fd);
+    free(h);
     return -1;
   }
+  free(h);
   emo_net_nonblock(fd);
   return fd;
 }
@@ -2669,10 +2799,11 @@ emo_value emo_net_accept(int64_t listener) {
    the same text the plain connect has always printed. */
 static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
                               char *why, size_t whyn) {
-  char *h = (char *)emo_str_cstr(host);
+  char *h = emo_cstr_owned(host);
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {
     snprintf(why, whyn, "connect failed");
+    free(h);
     return -1;
   }
   struct sockaddr_in addr;
@@ -2682,6 +2813,7 @@ static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
   if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
     close(fd);
     snprintf(why, whyn, "cannot resolve host `%s`", h);
+    free(h);
     return -1;
   }
   if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
@@ -2691,8 +2823,10 @@ static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
       snprintf(why, whyn, "cannot connect to %s:%d: %s", h, (int)port,
                strerror(errno));
     close(fd);
+    free(h);
     return -1;
   }
+  free(h);
   emo_net_set_timeout(fd, timeout);
   emo_net_nonblock(fd);
   return fd;
@@ -3158,69 +3292,102 @@ static int emo_net_write_once(int64_t fd, const void *buf, size_t n,
 }
 
 /* One byte at a time is slow but exact; the arena absorbs the growth. */
+/* One byte at a time is slow but exact; the line buffer is a malloc'd
+   transient that the boxing copies out and frees. */
 emo_value emo_net_read_line(int64_t fd) {
-  emo_str out = emo_str_from_parts("", 0);
+  size_t cap = 64;
+  char *buf = malloc(cap);
+  if (buf == NULL) abort();
+  int64_t len = 0;
   for (;;) {
     char detail[256];
     detail[0] = '\0';
     char c;
     int got = emo_net_read_once(fd, &c, 1, detail, sizeof detail);
-    if (got == 0) return emo_os_pair("ok", emo_box_str(out)); /* EOF ends the line */
+    if (got == 0) { /* EOF ends the line */
+      emo_value out = emo_box_str((emo_str){len, buf});
+      free(buf);
+      return emo_os_pair("ok", out);
+    }
     if (got < 0) {
       char what[512];
       snprintf(what, sizeof what, "cannot read: %s", detail);
+      free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
-    if (c == '\n') return emo_os_pair("ok", emo_box_str(out));
+    if (c == '\n') {
+      emo_value out = emo_box_str((emo_str){len, buf});
+      free(buf);
+      return emo_os_pair("ok", out);
+    }
     if (c == '\r') continue;
-    char *bigger = emo_alloc(out.len + 1);
-    memcpy(bigger, out.bytes, (size_t)out.len);
-    bigger[out.len] = c;
-    out.bytes = bigger;
-    out.len += 1;
+    if ((size_t)len + 1 > cap) {
+      cap *= 2;
+      char *bigger = realloc(buf, cap);
+      if (bigger == NULL) abort();
+      buf = bigger;
+    }
+    buf[len++] = c;
   }
 }
 
 emo_value emo_net_read_exactly(int64_t fd, int64_t n) {
-  emo_str out = emo_str_from_parts("", n);
+  char *buf = malloc(n > 0 ? (size_t)n : 1);
+  if (buf == NULL) abort();
   int64_t got_total = 0;
   while (got_total < n) {
     char detail[256];
     detail[0] = '\0';
-    int got = emo_net_read_once(fd, (char *)out.bytes + got_total,
+    int got = emo_net_read_once(fd, buf + got_total,
                                 (size_t)(n - got_total), detail, sizeof detail);
-    if (got == 0)
+    if (got == 0) {
+      free(buf);
       return emo_os_pair(
           "error",
           emo_box_str(emo_str_from_cstr("the connection closed early")));
+    }
     if (got < 0) {
       char what[512];
       snprintf(what, sizeof what, "cannot read: %s", detail);
+      free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
     got_total += got;
   }
-  return emo_os_pair("ok", emo_box_str(out));
+  emo_value out = emo_box_str((emo_str){n, buf});
+  free(buf);
+  return emo_os_pair("ok", out);
 }
 
 emo_value emo_net_read_all(int64_t fd) {
-  emo_str out = emo_str_from_parts("", 0);
+  size_t cap = 4096;
+  char *buf = malloc(cap);
+  if (buf == NULL) abort();
+  int64_t len = 0;
   for (;;) {
     char detail[256];
     detail[0] = '\0';
     char chunk[4096];
     int got = emo_net_read_once(fd, chunk, sizeof chunk, detail, sizeof detail);
-    if (got == 0) return emo_os_pair("ok", emo_box_str(out));
+    if (got == 0) {
+      emo_value out = emo_box_str((emo_str){len, buf});
+      free(buf);
+      return emo_os_pair("ok", out);
+    }
     if (got < 0) {
       char what[512];
       snprintf(what, sizeof what, "cannot read: %s", detail);
+      free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
-    char *bigger = emo_alloc(out.len + got);
-    memcpy(bigger, out.bytes, (size_t)out.len);
-    memcpy(bigger + out.len, chunk, (size_t)got);
-    out.bytes = bigger;
-    out.len += got;
+    if ((size_t)len + (size_t)got > cap) {
+      while ((size_t)len + (size_t)got > cap) cap *= 2;
+      char *bigger = realloc(buf, cap);
+      if (bigger == NULL) abort();
+      buf = bigger;
+    }
+    memcpy(buf + len, chunk, (size_t)got);
+    len += got;
   }
 }
 
@@ -3364,8 +3531,9 @@ EMO_NORETURN int64_t emo_unsupported(const char *what) {
   exit(70);
 }
 
-emo_value emo_make_exception(emo_str message) {
-  return emo_box_str(message);
+emo_value emo_make_exception(emo_value message) {
+  /* the Exception value IS the message cell; the claim passes through */
+  return message;
 }
 
 /* ---- The integer core ---- */
@@ -3429,11 +3597,12 @@ int64_t emo_bytes_set(emo_value b, int64_t i, int64_t v) {
   return v;
 }
 
-emo_value emo_bytes_of_str(emo_str s) {
-  emo_value v = emo_cell_new(EMO_BYTES, 1 + (s.len + 7) / 8);
+emo_value emo_bytes_of_str(emo_value s) {
+  emo_str str = emo_str_of(s); /* a borrow: the cell outlives the call */
+  emo_value v = emo_cell_new(EMO_BYTES, 1 + (str.len + 7) / 8);
   uintptr_t *p = emo_payload(v);
-  p[0] = (uintptr_t)s.len;
-  memcpy(p + 1, s.bytes, (size_t)s.len);
+  p[0] = (uintptr_t)str.len;
+  memcpy(p + 1, str.bytes, (size_t)str.len);
   return v;
 }
 
@@ -3526,7 +3695,7 @@ int64_t emo_os_waitpid(int64_t pid) {
   if (waitpid((pid_t)pid, &st, 0) < 0) {
     char buf[512];
     snprintf(buf, sizeof buf, "os: waitpid: %s", strerror(errno));
-    emo_raise(emo_make_exception(emo_str_from_cstr(buf)));
+    emo_raise(emo_make_exception(emo_cell_from_cstr(buf)));
   }
   emo_value elems[2];
   elems[0] = emo_box_i64(pid);
@@ -3545,58 +3714,75 @@ emo_value emo_os_pipe(void) {
 }
 
 int64_t emo_os_execv(emo_str path, emo_value argv) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   int64_t count = emo_length(argv);
-  char **argv_c = (char **)emo_alloc(sizeof(char *) * (size_t)(count + 1));
+  char **argv_c = malloc(sizeof(char *) * (size_t)(count + 1));
+  if (argv_c == NULL) abort();
   for (int64_t i = 0; i < count; i++) {
-    emo_str item = emo_str_of(emo_index(argv, i));
-    char *copied = (char *)emo_alloc((size_t)item.len + 1);
-    memcpy(copied, item.bytes, (size_t)item.len);
-    copied[item.len] = 0;
-    argv_c[i] = copied;
+    argv_c[i] = emo_cstr_owned(emo_str_of(emo_index(argv, i)));
   }
   argv_c[count] = NULL;
   execv(p, argv_c);
   /* Failure is a data-driven value: the call returns (the value is
      discarded) — the fork child's cue to `_exit` (a raise here would
      run the parent's cleanup a second time). */
+  for (int64_t i = 0; i < count; i++) free(argv_c[i]);
+  free(argv_c);
+  free(p);
   return 0;
 }
 
 void emo_os__exit(int64_t status) { _exit((int)status); }
 
 emo_value emo_os_open_read(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   int fd = open(p, O_RDONLY);
-  if (fd < 0)
-    return emo_os_fail("open", p);
+  if (fd < 0) {
+    emo_value out = emo_os_fail("open", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(fd));
 }
 
 emo_value emo_os_open_write(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-  if (fd < 0)
-    return emo_os_fail("open", p);
+  if (fd < 0) {
+    emo_value out = emo_os_fail("open", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(fd));
 }
 
 emo_value emo_os_open_append(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   int fd = open(p, O_WRONLY | O_CREAT | O_APPEND, 0644);
-  if (fd < 0)
-    return emo_os_fail("open", p);
+  if (fd < 0) {
+    emo_value out = emo_os_fail("open", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(fd));
 }
 
 emo_value emo_os_read(int64_t fd, int64_t n) {
   if (n <= 0)
     return emo_os_ok(emo_box_str((emo_str){0, ""}));
-  char *buf = (char *)emo_alloc((size_t)n);
+  char *buf = malloc((size_t)n);
+  if (buf == NULL) abort();
   ssize_t got = read((int)fd, buf, (size_t)n);
-  if (got < 0)
+  if (got < 0) {
+    free(buf);
     return emo_os_fail("read", "");
-  return emo_os_ok(emo_box_str((emo_str){(int64_t)got, buf}));
+  }
+  emo_value out = emo_box_str((emo_str){(int64_t)got, buf});
+  free(buf);
+  return emo_os_ok(out);
 }
 
 emo_value emo_os_write(int64_t fd, emo_str data) {
@@ -3617,10 +3803,14 @@ static int emo_os_cmp_cstr(const void *a, const void *b) {
 }
 
 emo_value emo_os_list_dir(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
+  char *p = emo_cstr_owned(path);
   DIR *d = opendir(p);
-  if (d == NULL)
-    return emo_os_fail("opendir", p);
+  if (d == NULL) {
+    emo_value out = emo_os_fail("opendir", p);
+    free(p);
+    return out;
+  }
+  free(p);
   size_t count = 0;
   struct dirent *ent;
   while ((ent = readdir(d)) != NULL) {
@@ -3629,64 +3819,97 @@ emo_value emo_os_list_dir(emo_str path) {
     count++;
   }
   size_t slot = count > 0 ? count : 1;
-  char **names = (char **)emo_alloc(sizeof(char *) * slot);
+  char **names = malloc(sizeof(char *) * slot);
+  if (names == NULL) abort();
   rewinddir(d);
   size_t i = 0;
   while ((ent = readdir(d)) != NULL) {
     if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
       continue;
-    names[i] = (char *)emo_alloc(strlen(ent->d_name) + 1);
-    strcpy(names[i], ent->d_name);
+    names[i] = strdup(ent->d_name);
+    if (names[i] == NULL) abort();
     i++;
   }
   closedir(d);
   qsort(names, count, sizeof(char *), emo_os_cmp_cstr);
-  emo_value *elems = (emo_value *)emo_alloc(sizeof(emo_value) * slot);
-  for (size_t k = 0; k < count; k++)
-    elems[k] = emo_box_str(emo_str_from_cstr(names[k]));
-  return emo_os_ok(emo_array_new((int64_t)count, elems));
+  emo_value *elems = malloc(sizeof(emo_value) * slot);
+  if (elems == NULL) abort();
+  for (size_t k = 0; k < count; k++) {
+    elems[k] = emo_cell_from_cstr(names[k]);
+    free(names[k]);
+  }
+  free(names);
+  emo_value out = emo_array_new((int64_t)count, elems);
+  free(elems);
+  return emo_os_ok(out);
 }
 
 emo_value emo_os_mkdir(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
-  if (mkdir(p, 0755) != 0)
-    return emo_os_fail("mkdir", p);
+  char *p = emo_cstr_owned(path);
+  int rc = mkdir(p, 0755);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("mkdir", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(0));
 }
 
 emo_value emo_os_rmdir(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
-  if (rmdir(p) != 0)
-    return emo_os_fail("rmdir", p);
+  char *p = emo_cstr_owned(path);
+  int rc = rmdir(p);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("rmdir", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(0));
 }
 
 emo_value emo_os_unlink(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
-  if (unlink(p) != 0)
-    return emo_os_fail("unlink", p);
+  char *p = emo_cstr_owned(path);
+  int rc = unlink(p);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("unlink", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(0));
 }
 
 emo_value emo_os_rename(emo_str old_path, emo_str new_path) {
-  char *o = (char *)emo_str_cstr(old_path);
-  char *n = (char *)emo_str_cstr(new_path);
-  if (rename(o, n) != 0)
-    return emo_os_fail("rename", o);
+  char *o = emo_cstr_owned(old_path);
+  char *n = emo_cstr_owned(new_path);
+  int rc = rename(o, n);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("rename", o);
+    free(o);
+    free(n);
+    return out;
+  }
+  free(o);
+  free(n);
   return emo_os_ok(emo_box_i64(0));
 }
 
-emo_str emo_os_getcwd(void) {
+emo_value emo_os_getcwd(void) {
   char buf[4096];
-  if (getcwd(buf, sizeof buf) == NULL)
-    emo_os_fail("getcwd", "");
-  return emo_str_from_cstr(buf);
+  if (getcwd(buf, sizeof buf) == NULL) emo_fatal("getcwd failed");
+  return emo_box_str((emo_str){(int64_t)strlen(buf), buf});
 }
 
 emo_value emo_os_chdir(emo_str path) {
-  char *p = (char *)emo_str_cstr(path);
-  if (chdir(p) != 0)
-    return emo_os_fail("chdir", p);
+  char *p = emo_cstr_owned(path);
+  int rc = chdir(p);
+  if (rc != 0) {
+    emo_value out = emo_os_fail("chdir", p);
+    free(p);
+    return out;
+  }
+  free(p);
   return emo_os_ok(emo_box_i64(0));
 }
 
@@ -3810,7 +4033,7 @@ static emo_value emo_bm_length(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_to_string(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_box_str(emo_to_string_method(recv));
+  return emo_to_string_cell(recv); /* the answer is a cell */
 }
 
 /* The gradual call sites dispatch through the name/arity table when the
@@ -3900,7 +4123,7 @@ static emo_value emo_bm_append(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_to_bytes(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_bytes_of_str(emo_str_of(recv));
+  return emo_bytes_of_str(recv);
 }
 
 static emo_value emo_bm_to_bits(emo_value recv, const emo_value *args) {

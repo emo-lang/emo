@@ -215,8 +215,9 @@ let c_float (f : float) : string =
     if s <> "" && digits then s ^ ".0" else s
 
 (* Native Emo types cross as C scalars — Int64/Float64/Bool/Char as
-   machine words, String as the runtime's length-prefixed [emo_str].
-   The dynamic world — Unknown, tuples, arrays, Box — crosses as one
+   machine words. The dynamic world — Unknown, String (step 49: a
+   native view cannot own its bytes across statements, so strings are
+   cells like everything else), tuples, arrays, Box — crosses as one
    tagged [emo_value] word (T23.4). [Void] is a result type only. *)
 let c_type (t : Emo_check.t) : string option =
   match t with
@@ -228,7 +229,7 @@ let c_type (t : Emo_check.t) : string option =
   | Emo_check.Pid -> Some "int64_t"
   | Emo_check.TcpConn | Emo_check.TcpListener | Emo_check.UdpSocket ->
       Some "int64_t"
-  | Emo_check.String -> Some "emo_str"
+  | Emo_check.String -> Some "emo_value"
   | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
   | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
   | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
@@ -240,10 +241,11 @@ let c_type (t : Emo_check.t) : string option =
    native one (a C scalar). *)
 let is_dyn (t : Emo_check.t) : bool =
   match t with
-  | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
-  | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
-  | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
+  | Emo_check.Unknown | Emo_check.String | Emo_check.TupleType _
+  | Emo_check.ArrayType _ | Emo_check.MapType _ | Emo_check.BoxType _
+  | Emo_check.ListType _ | Emo_check.BuilderType _ | Emo_check.ClassType _
+  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
+  | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -264,11 +266,10 @@ let dummy_value (t : Emo_check.t) : string =
   match t with
   | Emo_check.Float64 -> "0.0"
   | Emo_check.Bool -> "false"
-  | Emo_check.String -> "(emo_str){INT64_C(0), \"\"}"
-  | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
-  | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
-  | Emo_check.EnumType _ | Emo_check.FuncType _ ->
+  | Emo_check.Unknown | Emo_check.String | Emo_check.TupleType _
+  | Emo_check.ArrayType _ | Emo_check.MapType _ | Emo_check.BoxType _
+  | Emo_check.ListType _ | Emo_check.BuilderType _ | Emo_check.ClassType _
+  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _ ->
       "(emo_value)0"
   | _ -> "0"
 
@@ -279,7 +280,6 @@ let zero_value (c_ty : string) : string =
   match c_ty with
   | "double" -> "0.0"
   | "bool" -> "false"
-  | "emo_str" -> "(emo_str){INT64_C(0), \"\"}"
   | "emo_value" -> "(emo_value)0"
   | _ -> "0"
 
@@ -410,10 +410,11 @@ let shape_make_name env (t : Emo_check.t) : string =
    included. *)
 let may_own (t : Emo_check.t) : bool =
   match t with
-  | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
-  | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
-  | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
-  | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
+  | Emo_check.Unknown | Emo_check.String | Emo_check.TupleType _
+  | Emo_check.ArrayType _ | Emo_check.MapType _ | Emo_check.BoxType _
+  | Emo_check.ListType _ | Emo_check.BuilderType _ | Emo_check.ClassType _
+  | Emo_check.InterfaceType _ | Emo_check.EnumType _ | Emo_check.FuncType _
+  | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -467,14 +468,14 @@ let arith_text (op : Ast.binop) : string =
   | _ -> assert false
 
 (* One value as C code of a native scalar type: what a use site needs
-   when the static type is native. *)
+   when the static type is native. String is not on this list — since
+   step 49 it lives in the dynamic world. *)
 let rec box_code (v : string) (ty : Emo_check.t) : string =
   match ty with
   | Emo_check.Int64 -> Printf.sprintf "emo_box_i64(%s)" v
   | Emo_check.Float64 -> Printf.sprintf "emo_box_f64(%s)" v
   | Emo_check.Bool -> Printf.sprintf "emo_vbool(%s)" v
   | Emo_check.Char -> Printf.sprintf "emo_vchar(%s)" v
-  | Emo_check.String -> Printf.sprintf "emo_box_str(%s)" v
   (* a Byte in the dynamic world is an Int64 cell carrying 0-255 *)
   | Emo_check.Byte -> Printf.sprintf "emo_box_i64((int64_t)(%s))" v
   | Emo_check.Pid -> Printf.sprintf "emo_box_pid(%s)" v
@@ -491,8 +492,9 @@ and unbox_code (v : string) (ty : Emo_check.t) : string =
   | Emo_check.Float64 -> Printf.sprintf "emo_unbox_f64(%s)" v
   | Emo_check.Bool -> Printf.sprintf "emo_bool_of(%s)" v
   | Emo_check.Char -> Printf.sprintf "emo_char_of(%s)" v
-  (* a String copies out: the native value outlives the cell's claim *)
-  | Emo_check.String -> Printf.sprintf "emo_str_owned_of(%s)" v
+  (* the one String crossing left: a borrow for the duration of the
+     call whose parameter takes it (a POSIX path, a C string) *)
+  | Emo_check.String -> Printf.sprintf "emo_str_of(%s)" v
   | Emo_check.Byte -> Printf.sprintf "(uint8_t)emo_unbox_i64(%s)" v
   | Emo_check.Pid -> Printf.sprintf "emo_unbox_pid(%s)" v
   | Emo_check.TcpConn | Emo_check.TcpListener | Emo_check.UdpSocket ->
@@ -649,9 +651,7 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
   | "os_rename" ->
       Printf.sprintf "emo_os_rename(%s, %s)" (arg 0 Emo_check.String)
         (arg 1 Emo_check.String)
-  | "os_getcwd" ->
-      let v = Printf.sprintf "emo_os_getcwd()" in
-      if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+  | "os_getcwd" -> Printf.sprintf "emo_os_getcwd()" (* a cell *)
   | "os_chdir" -> Printf.sprintf "emo_os_chdir(%s)" (arg 0 Emo_check.String)
   | other -> Printf.sprintf "emo_unsupported(\"%s\")" other
 
@@ -716,10 +716,10 @@ and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
       refuse "a class-typed foreign return"
   | _ ->
       if f.Emo_ir.fresult = Emo_check.String then
-        (* the C result is a char *: copy into a cell first — every Emo
-           String representation is an emo_str from here on *)
-        let v = Printf.sprintf "emo_str_from_cstr(%s)" call in
-        if is_dyn use_ty then Printf.sprintf "emo_box_str(%s)" v else v
+        (* the C result is a char *: copy into a cell — every Emo
+           String is a cell from here on *)
+        if is_dyn use_ty then Printf.sprintf "emo_cell_from_cstr(%s)" call
+        else refuse "a native String use of a foreign call"
       else if is_dyn use_ty then box_code call f.Emo_ir.fresult
       else call
 
@@ -733,7 +733,11 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Const (Ast.L_float f) -> c_float f
   | Const (Ast.L_char c) -> Printf.sprintf "INT32_C(%d)" (Char.code c)
   | Const (Ast.L_byte n) -> Printf.sprintf "UINT8_C(%d)" n
-  | Const (Ast.L_string s) -> c_str_literal s
+  (* a String literal is a cell whose claim pools with the statement;
+     the bytes copy out of the static compound literal *)
+  | Const (Ast.L_string s) ->
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_box_str(%s)" (c_str_literal s))
   | Var name -> (
       (* the binding's regime may differ from this use's type — a
          closure parameter or pattern binding is dynamic while its
@@ -762,15 +766,18 @@ and emit_expr env (e : Emo_ir.expr) : string =
         List.map
           (fun (part : Emo_ir.expr) ->
             match part.Emo_ir.desc with
-            | Const (Ast.L_string s) -> c_str_literal s
+            | Const (Ast.L_string s) ->
+                Printf.sprintf "emo_autorelease(emo_box_str(%s))"
+                  (c_str_literal s)
             | _ -> to_str env part)
           parts
       in
       match rendered with
-      | [] -> c_str_literal ""
+      | [] ->
+          Printf.sprintf "emo_autorelease(emo_box_str(%s))" (c_str_literal "")
       | x :: rest ->
           List.fold_left
-            (fun acc part -> Printf.sprintf "emo_str_concat(%s, %s)" acc part)
+            (fun acc part -> Printf.sprintf "emo_cell_concat(%s, %s)" acc part)
             x rest)
   | Method { self_; name; args } ->
       (* The wrap lives inside emit_method: the runtime's dispatch
@@ -930,23 +937,26 @@ and emit_expr env (e : Emo_ir.expr) : string =
            | Emo_ir.Spawn_value _ -> "Spawn_value"
            | Emo_ir.Closure _ -> "Closure"))
 
-(* One value as an emo_str expression — what an interpolation part
-   and a scalar to_string() lower to. Dynamic values render through
-   the runtime's kind dispatch. *)
+(* One value as a String CELL — what an interpolation part and a
+   scalar to_string() lower to. Dynamic values render through the
+   runtime's kind dispatch (the memstream transient dies inside); the
+   scalars render off the stack. *)
 and to_str env (e : Emo_ir.expr) : string =
-  if is_dyn e.Emo_ir.ety then
-    Printf.sprintf "emo_to_string_dyn(%s)" (emit_expr env e)
-  else
-    let v = emit_expr env e in
-    match e.Emo_ir.ety with
-    | Emo_check.String -> v
-    | Emo_check.Int64 -> Printf.sprintf "emo_str_from_i64(%s)" v
-    | Emo_check.Float64 -> Printf.sprintf "emo_str_from_f64(%s)" v
-    | Emo_check.Bool -> Printf.sprintf "emo_str_from_bool(%s)" v
-    | Emo_check.Char -> Printf.sprintf "emo_str_from_char(%s)" v
-    | t ->
-        refuse
-          (Printf.sprintf "`%s` values in a string" (Emo_check.to_string t))
+  (* the String case passes the word through: it is either a borrow (a
+     slot read) or a birth already pooled where it was built. Every
+     other case builds a cell right here, and the claim pools. *)
+  let v = emit_expr env e in
+  match e.Emo_ir.ety with
+  | Emo_check.String -> v
+  | Emo_check.Int64 -> Printf.sprintf "emo_cell_from_i64(%s)" v
+  | Emo_check.Float64 -> Printf.sprintf "emo_cell_from_f64(%s)" v
+  | Emo_check.Bool ->
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_box_str(emo_str_from_bool(%s))" v)
+  | Emo_check.Char -> Printf.sprintf "emo_cell_from_char(%s)" v
+  | t when is_dyn t -> Printf.sprintf "emo_to_string_cell(%s)" v
+  | t ->
+      refuse (Printf.sprintf "`%s` values in a string" (Emo_check.to_string t))
 
 (* The supported methods of the dynamic world: Box's read/replace,
    sequence length, and the scalar to_string. Instances arrive with
@@ -998,7 +1008,8 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
   | _ -> (
       match (name, args) with
       | "to_string", [] when self_.Emo_ir.ety = Emo_check.Bytes ->
-          Printf.sprintf "emo_to_string_method(%s)" (as_dyn env self_)
+          wrap_owned result_ty
+            (Printf.sprintf "emo_to_string_cell(%s)" (as_dyn env self_))
       | "to_string", []
         when self_.Emo_ir.ety <> Emo_check.Unknown
              &&
@@ -1007,10 +1018,11 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
              | _ -> true ->
           (* Instances keep out of the builtin conversion: the class's
              own `to_string` answers first (the interpreter's rule), the
-             conversion only when no method carries the name. *)
-          if is_dyn self_.Emo_ir.ety then
-            Printf.sprintf "emo_to_string_dyn(%s)" (emit_expr env self_)
-          else to_str env self_
+             conversion only when no method carries the name. to_str
+             self-regulates: its scalar builders pool their own births,
+             and its String pass-through is a borrow or an
+             already-pooled word. *)
+          to_str env self_
       | "read", [] ->
           finish_claim (Printf.sprintf "emo_box_read(%s)" (as_dyn env self_))
       | "replace", [ v ] ->
@@ -1272,31 +1284,38 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                    (as_native env t Emo_check.Float64))
           | _ -> refuse (Printf.sprintf "this method on a socket handle"))
       | _, _ when self_.Emo_ir.ety = Emo_check.String -> (
-          (* The interpreter's String method set. *)
+          (* The interpreter's String method set over a cell receiver:
+             the builders answer cells, the searches borrow. *)
+          let recv = as_dyn env self_ in
           match (name, args) with
           | "substring", [ start; len ] ->
-              Printf.sprintf "emo_str_substring(%s, %s, %s)"
-                (emit_expr env self_)
+              Printf.sprintf "emo_cell_substring(%s, %s, %s)" recv
                 (as_native env start Emo_check.Int64)
                 (as_native env len Emo_check.Int64)
           | "index_of", [ needle ] ->
-              Printf.sprintf "emo_str_index_of(%s, %s)" (emit_expr env self_)
-                (as_native env needle Emo_check.String)
+              box_int env result_ty
+                (Printf.sprintf
+                   "emo_str_index_of(emo_str_of(%s), emo_str_of(%s))" recv
+                   (as_dyn env needle))
           | "starts_with", [ prefix ] ->
-              Printf.sprintf "emo_str_starts_with(%s, %s)" (emit_expr env self_)
-                (as_native env prefix Emo_check.String)
-          | "lower", [] ->
-              Printf.sprintf "emo_str_lower(%s)" (emit_expr env self_)
-          | "trim", [] ->
-              Printf.sprintf "emo_str_trim(%s)" (emit_expr env self_)
+              let v =
+                Printf.sprintf
+                  "emo_str_starts_with(emo_str_of(%s), emo_str_of(%s))" recv
+                  (as_dyn env prefix)
+              in
+              if is_dyn result_ty then
+                wrap_owned result_ty (Printf.sprintf "emo_vbool(%s)" v)
+              else v
+          | "lower", [] -> Printf.sprintf "emo_cell_lower(%s)" recv
+          | "trim", [] -> Printf.sprintf "emo_cell_trim(%s)" recv
           | "to_int64", [] ->
-              Printf.sprintf "emo_str_to_int64(%s)" (emit_expr env self_)
+              box_int env result_ty
+                (Printf.sprintf "emo_str_to_int64(emo_str_of(%s))" recv)
           | "length", [] ->
-              Printf.sprintf "emo_str_length(%s)" (emit_expr env self_)
+              box_int env result_ty
+                (Printf.sprintf "emo_str_length(emo_str_of(%s))" recv)
           | "split", [ sep ] ->
-              wrap_owned result_ty
-                (Printf.sprintf "emo_str_split(%s, %s)" (emit_expr env self_)
-                   (as_native env sep Emo_check.String))
+              Printf.sprintf "emo_cell_split(%s, %s)" recv (as_dyn env sep)
           | _ -> refuse (Printf.sprintf "the String method `%s`" name))
       | _, _
         when match self_.Emo_ir.ety with
@@ -1364,7 +1383,9 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                   | None when String.equal name "to_string" ->
                       (* the builtin conversion answers when the class
                          carries no method of the name *)
-                      Printf.sprintf "emo_to_string_dyn(%s)" (as_dyn env self_)
+                      wrap_owned result_ty
+                        (Printf.sprintf "emo_to_string_cell(%s)"
+                           (as_dyn env self_))
                   | None ->
                       refuse
                         (Printf.sprintf "the method `%s` on `%s`" name display))
@@ -1731,7 +1752,6 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
     | Emo_check.Bool, Or -> plain "||"
     | Emo_check.Bool, _ -> refuse "this Boolean operation"
     (* String: concatenation and content equality. *)
-    | Emo_check.String, Add -> Printf.sprintf "emo_str_concat(%s, %s)" a b
     | Emo_check.String, Eq -> Printf.sprintf "emo_str_eq(%s, %s)" a b
     | Emo_check.String, Ne -> Printf.sprintf "(!emo_str_eq(%s, %s))" a b
     | Emo_check.String, _ -> refuse "this String operation"
@@ -2443,7 +2463,7 @@ let shape_scalar_make (member : string) (t : Emo_check.t) : string =
   | Emo_check.Float64 -> Printf.sprintf "emo_box_f64(%s)" member
   | Emo_check.Bool -> Printf.sprintf "emo_vbool(%s)" member
   | Emo_check.String ->
-      Printf.sprintf "emo_box_str(emo_str_from_cstr(%s))" member
+      Printf.sprintf "emo_autorelease(emo_cell_from_cstr(%s))" member
   | _ ->
       refuse (Printf.sprintf "`%s` as a struct member" (Emo_check.to_string t))
 
@@ -2566,7 +2586,7 @@ let emit_cb_trampoline (out : Buffer.t)
               | Emo_check.Float64 -> Printf.sprintf "emo_box_f64(__p%d)" i
               | Emo_check.Bool -> Printf.sprintf "emo_vbool(__p%d)" i
               | Emo_check.String ->
-                  Printf.sprintf "emo_box_str(emo_str_from_cstr(__p%d))" i
+                  Printf.sprintf "emo_autorelease(emo_cell_from_cstr(__p%d))" i
               | t ->
                   refuse
                     (Printf.sprintf "`%s` across the callback boundary"
