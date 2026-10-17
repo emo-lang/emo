@@ -495,7 +495,8 @@ let lockfile_tests =
               (match read_back with
               | e :: _ -> String.equal e.Emo_pkg.Lockfile.dep "http"
               | [] -> false)
-        | Error m -> Alcotest.fail m);
+        | Error Emo_pkg.Lockfile.Missing -> Alcotest.fail "lockfile missing"
+        | Error (Emo_pkg.Lockfile.Malformed m) -> Alcotest.fail m);
     tc "verify flags a version mismatch" (fun () ->
         let t =
           [
@@ -525,6 +526,75 @@ let lockfile_tests =
           "clean" 0
           (List.length
              (Emo_pkg.Lockfile.verify ~roots:[ ("json", v "2.3.1") ] t)));
+    tc "verify accepts the roots' transitive closure" (fun () ->
+        let t =
+          [
+            {
+              Emo_pkg.Lockfile.dep = "acme/trans_tools";
+              version = v "1.0.0";
+              checksum = "x";
+            };
+            {
+              Emo_pkg.Lockfile.dep = "acme/leaf_tools";
+              version = v "1.0.0";
+              checksum = "y";
+            };
+          ]
+        in
+        Alcotest.(check int)
+          "the closure is the resolution, not extra pins" 0
+          (List.length
+             (Emo_pkg.Lockfile.verify
+                ~roots:[ ("acme/trans_tools", v "1.0.0") ]
+                t)));
+    tc "unreachable flags an entry no root reaches" (fun () ->
+        let t =
+          [
+            {
+              Emo_pkg.Lockfile.dep = "acme/leaf_tools";
+              version = v "1.0.0";
+              checksum = "y";
+            };
+            {
+              Emo_pkg.Lockfile.dep = "acme/trans_tools";
+              version = v "1.0.0";
+              checksum = "x";
+            };
+          ]
+        in
+        Alcotest.(check (list string))
+          "the abandoned closure member" [ "acme/trans_tools" ]
+          (Emo_pkg.Lockfile.unreachable ~roots:[ "acme/leaf_tools" ]
+             ~declared:
+               [
+                 ("acme/leaf_tools", []);
+                 ("acme/trans_tools", [ "acme/leaf_tools" ]);
+               ]
+             t));
+    tc "unreachable follows the declared edges" (fun () ->
+        let t =
+          [
+            {
+              Emo_pkg.Lockfile.dep = "acme/leaf_tools";
+              version = v "1.0.0";
+              checksum = "y";
+            };
+            {
+              Emo_pkg.Lockfile.dep = "acme/trans_tools";
+              version = v "1.0.0";
+              checksum = "x";
+            };
+          ]
+        in
+        Alcotest.(check (list string))
+          "a reachable transitive dep is not stale" []
+          (Emo_pkg.Lockfile.unreachable ~roots:[ "acme/trans_tools" ]
+             ~declared:
+               [
+                 ("acme/leaf_tools", []);
+                 ("acme/trans_tools", [ "acme/leaf_tools" ]);
+               ]
+             t));
   ]
 
 let resolve_tests =
@@ -1117,13 +1187,14 @@ let http_registry_tests =
         | Ok vs ->
             Alcotest.fail
               (Printf.sprintf "expected 2 versions, got %d" (List.length vs)));
-    tc "versions maps a 404 to a missing package" (fun () ->
+    tc "versions formats a refusal's code and message" (fun () ->
         let runner =
           fake_runner
             ~routes:
               [
                 ( "/api/v1/packages/acme/missing/versions",
-                  (404, {|{"error":{"code":"package_not_found"}}|}) );
+                  ( 404,
+                    {|{"error":{"code":"package_not_found","message":"acme/missing is not published"}}|} ) );
               ]
         in
         match
@@ -1133,8 +1204,47 @@ let http_registry_tests =
         | Ok _ -> Alcotest.fail "expected a 404 error"
         | Error m ->
             Alcotest.(check bool)
-              "names the package" true
-              (contains_substring m "has no package `acme/missing`"));
+              "the shared error shape renders" true
+              (contains_substring m
+                 "answered 404 error: `acme/missing` (package_not_found) \
+                  acme/missing is not published"));
+    tc "a locked scope surfaces the registry's lock message" (fun () ->
+        let runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/api/v1/packages/acme/p/versions",
+                  ( 403,
+                    {|{"error":{"code":"owner_locked","message":"该账号(组织）已被锁定"}}|} ) );
+              ]
+        in
+        match
+          Emo_pkg.Http_registry.versions runner ~base ~token:None ~name:"acme/p"
+        with
+        | Ok _ -> Alcotest.fail "expected a 403 error"
+        | Error m ->
+            Alcotest.(check bool)
+              "the lock's code and message show" true
+              (contains_substring m
+                 "answered 403 error: `acme/p` (owner_locked) 该账号(组织）已被锁定"));
+    tc "an unparseable refusal body keeps the raw text" (fun () ->
+        let runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/api/v1/packages/acme/p/versions",
+                    (500, "<html>gateway error</html>") );
+              ]
+        in
+        match
+          Emo_pkg.Http_registry.versions runner ~base ~token:None ~name:"acme/p"
+        with
+        | Ok _ -> Alcotest.fail "expected a 500 error"
+        | Error m ->
+            Alcotest.(check bool)
+              "no JSON shape, raw body" true
+              (contains_substring m
+                 "answered 500 error: `acme/p` <html>gateway error</html>"));
     tc "an unscoped name is refused before any request" (fun () ->
         let runner = fake_runner ~routes:[] in
         match
@@ -1190,6 +1300,46 @@ let http_registry_tests =
             Alcotest.(check bool)
               "says to retry" true
               (contains_substring m "inconsistent"));
+    tc "deps formats a batch refusal with the joined names" (fun () ->
+        let runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/api/v1/dependencies?packages=acme/p,acme/q",
+                  ( 403,
+                    {|{"error":{"code":"owner_locked","message":"该账号(组织）已被锁定"}}|} ) );
+              ]
+        in
+        match
+          Emo_pkg.Http_registry.deps runner ~base ~token:None
+            ~names:[ "acme/p"; "acme/q" ]
+        with
+        | Ok _ -> Alcotest.fail "expected a 403 error"
+        | Error m ->
+            Alcotest.(check bool)
+              "the batch is the subject" true
+              (contains_substring m
+                 "answered 403 error: `acme/p, acme/q` (owner_locked)"));
+    tc "fetch formats a refusal with the pinned name@version" (fun () ->
+        let runner =
+          fake_runner
+            ~routes:
+              [
+                ( "/downloads/acme-p-1.0.0.emoji",
+                  ( 403,
+                    {|{"error":{"code":"owner_locked","message":"该账号(组织）已被锁定"}}|} ) );
+              ]
+        in
+        match
+          Emo_pkg.Http_registry.fetch runner ~base ~token:None
+            ~expected_checksum:None ~name:"acme/p" ~version:(v "1.0.0")
+        with
+        | Ok _ -> Alcotest.fail "expected a 403 error"
+        | Error m ->
+            Alcotest.(check bool)
+              "the pin is the subject" true
+              (contains_substring m
+                 "answered 403 error: `acme/p@1.0.0` (owner_locked)"));
     tc "fetch downloads, unpacks and pins the digest" (fun () ->
         let archive = Emo_pkg.Archive.build http_pkg_files in
         let checksum = Emo_pkg.Registry.digest http_pkg_files in

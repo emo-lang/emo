@@ -35,6 +35,11 @@ type project = {
          deps, and a `require` is paired against the owning package's
          manifest, so a package cannot reach a sibling or transitive
          dependency it never declared *)
+  mutable aliases : (string list * string list) list;
+      (* module path → the path it resolves to: a package's entry file is
+         reachable by its own name beside the module `<short>` a require
+         binds, and both name the one module — one env, one type
+         identity, one diagnostic, whichever spelling a file uses *)
   diagnostics : Emo_support.Diagnostic.t list ref;
   cache : (string, string * Ast.item list) Hashtbl.t;
       (* file → (content hash, parsed items): unchanged modules skip
@@ -150,6 +155,7 @@ let discover () : project =
       dirs = Hashtbl.create 8;
       packages = [];
       package_deps = [];
+      aliases = [];
       diagnostics = ref [];
       cache = Hashtbl.create 8;
       parses = 0;
@@ -273,6 +279,11 @@ let install_hooks p =
     Hashtbl.create 8
   in
   let handle_of path =
+    (* An alias and the path it resolves to are one module: the same handle,
+       so the same namespace, the same load, the same declarations. *)
+    let path =
+      match List.assoc_opt path p.aliases with Some to_ -> to_ | None -> path
+    in
     match Hashtbl.find_opt handles path with
     | Some h -> Some h
     | None -> (
@@ -420,6 +431,25 @@ let find_cycle (graph : (string list, string list list) Hashtbl.t) :
   in
   anywhere (Hashtbl.fold (fun path _ acc -> path :: acc) graph [])
 
+(* One unit per distinct file, under the shorter of its paths: a file
+   registered under two paths — a package's entry file, reachable as the
+   module a require binds and by its own name beside it — is parsed,
+   pre-registered and checked once, under the path that names it most
+   directly. Its alias path still resolves (through [aliases]) and joins
+   the module table, so a reference written either way lands on this unit's
+   declarations. *)
+let units_of (p : project) : (string list * Ast.item list) list =
+  let shortest : (string, string list) Hashtbl.t = Hashtbl.create 8 in
+  Hashtbl.iter
+    (fun path file ->
+      match Hashtbl.find_opt shortest file with
+      | Some kept when List.length kept <= List.length path -> ()
+      | _ -> Hashtbl.replace shortest file path)
+    p.files;
+  Hashtbl.fold
+    (fun file path acc -> (path, parse_cached p file) :: acc)
+    shortest []
+
 let check_project (p : project) :
     string list list
     * (string list * string list list * (string * Emo_support.Span.t) list) list
@@ -434,32 +464,18 @@ let check_project (p : project) :
   (* Parse every module first: the program's type tables (CHECK.md,
      cross-module types) need every declaration before any module is
      checked. *)
-  let units =
-    Hashtbl.fold
-      (fun path file acc ->
-        let source = read_file file in
-        let items =
-          match Emo_parser.parse_program_with_diagnostics ~file ~source with
-          | exception Emo_lexer.Error d -> raise (Static_errors [ d ])
-          | (_, first :: _) as parsed ->
-              let _, diagnostics = parsed in
-              ignore first;
-              raise (Static_errors diagnostics)
-          | items, [] -> items
-        in
-        (path, items) :: acc)
-      p.files []
-  in
+  let units = units_of p in
   let program, preregister_errors =
     Emo_check.preregister_types ~packages:p.packages
-      ~package_deps:p.package_deps ~units
+      ~package_deps:p.package_deps ~aliases:p.aliases ~units
   in
   let errors, entries =
     List.fold_left
       (fun (errors, entries) (path, items) ->
         let diagnostics, refs, requires =
           Emo_check.check_module ~modules:module_paths ~packages:p.packages
-            ~package_deps:p.package_deps ~current:path ~program items
+            ~package_deps:p.package_deps ~aliases:p.aliases ~current:path
+            ~program items
         in
         Hashtbl.replace graph path refs;
         Hashtbl.replace requires_table path requires;
@@ -1023,8 +1039,8 @@ let index_closure_routed ?(runner = http_transport)
 
 (* Solves [roots] against the registry and fetches every resolved package
    — the shared body of the explicit resolution (`emo deps resolve`) and
-   the build-time resolution that carries the standard library's implicit
-   pins. The target filters which published versions qualify. *)
+   the build-time resolution. The target filters which published versions
+   qualify. *)
 let solved_entries ?(runner = http_transport) ~(registry : Emo_pkg.Registry.t)
     ~(manifest_dir : string) ~(target : string)
     (roots : (string * Emo_pkg.Version.t) list) : Emo_pkg.Lockfile.entry list =
@@ -1078,16 +1094,19 @@ let resolve_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
   solved_entries ~registry:(registry ~manifest) ~manifest_dir ~target
     manifest.Emo_pkg.deps
 
-(* Unscoped requires name standard-library packages: the official standard
-   library owns the top-level short names (README, Package Management),
-   ships with the compiler, and needs no manifest pin. A scoped require
-   (`acme/tools`) still pairs with the manifest's deps strictly. Each name
-   appears once, with the span of its first require; a name the project
-   already defines as a module is left to that module. *)
-let stdlib_requires (p : project) : (string * Emo_support.Span.t) list =
-  let seen : (string, Emo_support.Span.t) Hashtbl.t = Hashtbl.create 8 in
+(* The root project's unscoped requires — the standard-library short names
+   — each once, with the module and span of its first require; a name the
+   project already defines as a module is left to that module. A scoped
+   require pairs with the manifest through the strict pairing check; an
+   unscoped one is pinned the same way and is checked here, where the
+   registry can name the version to add. *)
+let stdlib_requires (p : project) :
+    (string * (string list * Emo_support.Span.t)) list =
+  let seen : (string, string list * Emo_support.Span.t) Hashtbl.t =
+    Hashtbl.create 8
+  in
   Hashtbl.iter
-    (fun _ file ->
+    (fun path file ->
       let items = try parse_cached p file with _ -> [] in
       List.iter
         (fun (item : Ast.item) ->
@@ -1097,23 +1116,27 @@ let stdlib_requires (p : project) : (string * Emo_support.Span.t) list =
                  && (not (Hashtbl.mem p.files [ name ]))
                  && not (Hashtbl.mem p.dirs [ name ]) ->
               if not (Hashtbl.mem seen name) then
-                Hashtbl.replace seen name item.Ast.item_span
+                Hashtbl.replace seen name (path, item.Ast.item_span)
           | _ -> ())
         items)
     p.files;
-  Hashtbl.fold (fun name span acc -> (name, span) :: acc) seen []
+  Hashtbl.fold (fun name at acc -> (name, at) :: acc) seen []
   |> List.sort (fun (a, _) (b, _) -> String.compare a b)
 
-(* The implicit pins for the project's standard-library requires: the
-   highest version the registry publishes for each name the manifest does
-   not already pin. A name the registry does not publish is neither a
-   standard-library package nor (being unscoped) a third-party one — an
-   error at the require. *)
-let stdlib_pins (registry : Emo_pkg.Registry.t) ~(explicit : string list)
-    (requires : (string * Emo_support.Span.t) list) :
-    (string * Emo_pkg.Version.t) list =
+(* Every require pairs with a manifest pin, the standard library included:
+   its packages are versioned like any other and ship in the bundled
+   registry, so a compiler upgrade must not move a program's `json` any
+   more than its `acme/tools`. An unscoped require the manifest does not
+   pin is E5006 — the code the strict pairing reports for a scoped one —
+   naming the version to add; a name the registry does not publish is
+   neither a standard-library package nor (being unscoped) a third-party
+   one, E5009 at the require. *)
+let unpinned_stdlib_errors (registry : Emo_pkg.Registry.t)
+    ~(explicit : string list)
+    (requires : (string * (string list * Emo_support.Span.t)) list) :
+    Emo_support.Diagnostic.t list =
   List.filter_map
-    (fun (name, span) ->
+    (fun (name, (path, span)) ->
       if List.mem name explicit then None
       else
         (* Unscoped names are standard-library-owned; under an HTTP
@@ -1121,32 +1144,49 @@ let stdlib_pins (registry : Emo_pkg.Registry.t) ~(explicit : string list)
         let reg = registry_for_name ~registry name in
         match Emo_pkg.Registry.versions reg ~name with
         | [] ->
-            raise
-              (Static_errors
-                 [
-                   {
-                     Emo_support.Diagnostic.severity = Error;
-                     code = Some "E5009";
-                     message =
-                       Printf.sprintf
-                         "`require \"%s\"` names no standard-library package \
-                          in %s"
-                         name
-                         (Emo_pkg.Registry.describe reg);
-                     span;
-                     hint =
-                       Some
-                         "check the package name; a third-party package needs \
-                          its scoped name and a manifest deps entry";
-                   };
-                 ])
-        | versions -> Some (name, List.nth versions (List.length versions - 1)))
+            Some
+              {
+                Emo_support.Diagnostic.severity = Error;
+                code = Some "E5009";
+                message =
+                  Printf.sprintf
+                    "`require \"%s\"` names no standard-library package in %s"
+                    name
+                    (Emo_pkg.Registry.describe reg);
+                span;
+                hint =
+                  Some
+                    "check the package name; a third-party package needs its \
+                     scoped name and a manifest deps entry";
+              }
+        | versions ->
+            let highest = List.nth versions (List.length versions - 1) in
+            Some
+              {
+                Emo_support.Diagnostic.severity = Error;
+                code = Some "E5006";
+                message =
+                  Printf.sprintf
+                    "module `%s` requires `%s`, but its package's manifest \
+                     (package.emo) does not list it in deps"
+                    (String.concat "." path) name;
+                span;
+                hint =
+                  Some
+                    (Printf.sprintf
+                       "add `\"%s\" = \"%s\"` to the manifest's deps block, or \
+                        remove the require"
+                       name
+                       (Emo_pkg.Version.to_string highest));
+              })
     requires
 
 (* The build-time resolution: a satisfied lockfile is used as recorded; a
    mismatch is an error prompting explicit regeneration — never a silent
-   re-resolve. With no lockfile at all, the run resolves in memory and
-   writes nothing. *)
+   re-resolve — and a damaged lockfile is refused the same way, never
+   quietly replaced. With no lockfile at all, the run resolves and records
+   the resolution: the file's first appearance, never a rewrite of one,
+   announced on stderr so it is not silent. *)
 let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) : Emo_pkg.Lockfile.entry list =
   let lock_path = Filename.concat manifest_dir Emo_pkg.Lockfile.filename in
@@ -1155,55 +1195,50 @@ let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
       match Emo_pkg.Lockfile.verify ~roots:manifest.Emo_pkg.deps entries with
       | [] -> entries
       | message :: _ -> raise (dep_error ~manifest_dir message))
-  | Error _ -> resolve_deps ~manifest ~manifest_dir ~target
-
-(* The build-time resolution when the project also carries implicit
-   standard-library pins: the manifest's own resolution is established
-   first (a satisfied lockfile is used as recorded, a mismatch still
-   fails), and the implicit pins join it in one solve, so a stdlib package
-   a declared dependency also needs resolves once. Implicit pins never
-   enter package.lock: the standard library ships with the compiler, so
-   the manifest stays the recorded resolution. *)
-let resolution_with_stdlib ~(manifest : Emo_pkg.manifest)
-    ~(manifest_dir : string) ~(target : string) ~(registry : Emo_pkg.Registry.t)
-    ~(implicit : (string * Emo_pkg.Version.t) list) :
-    Emo_pkg.Lockfile.entry list =
-  ignore (resolution_for_run ~manifest ~manifest_dir ~target);
-  let entries =
-    solved_entries ~registry ~manifest_dir ~target
-      (manifest.Emo_pkg.deps @ implicit)
-  in
-  (* An implicit pin must not silently move a manifest pin: MVS takes the
-     highest exact version named, so a stdlib closure demanding a higher
-     one than the manifest states is a conflict the manifest must settle. *)
-  List.iter
-    (fun (dep, pinned) ->
-      match
-        List.find_opt (fun e -> String.equal e.Emo_pkg.Lockfile.dep dep) entries
-      with
-      | Some e when e.Emo_pkg.Lockfile.version = pinned -> ()
-      | Some e ->
-          raise
-            (dep_error ~manifest_dir
-               (Printf.sprintf
-                  "the standard library requires `%s` at %s, but the manifest \
-                   pins it at %s — update the manifest pin"
-                  dep
-                  (Emo_pkg.Version.to_string e.Emo_pkg.Lockfile.version)
-                  (Emo_pkg.Version.to_string pinned)))
-      | None -> ())
-    manifest.Emo_pkg.deps;
-  entries
+  | Error Emo_pkg.Lockfile.Missing ->
+      let entries = resolve_deps ~manifest ~manifest_dir ~target in
+      (* A tree the run cannot write to still runs: the lockfile is a
+         record of the resolution, not a prerequisite for it. *)
+      let wrote =
+        try
+          Emo_pkg.Lockfile.write ~path:lock_path entries;
+          true
+        with Sys_error message ->
+          prerr_endline
+            ("could not write " ^ Emo_pkg.Lockfile.filename ^ ": " ^ message);
+          false
+      in
+      if wrote then
+        prerr_endline
+          ("wrote " ^ Emo_pkg.Lockfile.filename ^ " — commit it beside the manifest");
+      entries
+  | Error (Emo_pkg.Lockfile.Malformed message) ->
+      raise
+        (dep_error ~manifest_dir
+           (message ^ " — run `emo deps resolve` to regenerate"))
 
 (* Registers a fetched package's module tree under its short name — the
    package name is a module-path prefix (README: "a package name becomes a
-   top-level module path prefix"). The package root's `<short>.emo` is the
-   module `<short>` a require binds; every other entry becomes a child
+   top-level module path prefix"). The package root's `main.emo` is the
+   module `<short>` a require binds, and `<short>.emo` when the root has no
+   `main.emo` — a package published from a project keeps the entry file it
+   was written as. That entry file keeps its own name beside the others
+   (`<short>.main`), so a sibling that names it the way the package's own
+   files do — a `test/` module calling `main.tagged()` — still resolves
+   when the package is mounted here. Every other entry becomes a child
    (`<short>.internal`, `<short>.mark`), so two packages' `internal` and
    `mark` no longer collide. The package's own manifest is data, not a
    module, and is skipped. *)
 let register_package (p : project) (short : string) (dir : string) : unit =
-  walk ~body:short p [ short ] dir;
+  let from_project = Sys.file_exists (Filename.concat dir "main.emo") in
+  walk ~body:(if from_project then "main" else short) p [ short ] dir;
+  (* The second pass under no body adds `main.emo` its own path back; every
+     other entry is already registered and skipped. The two paths name one
+     module, so the second is recorded as an alias of the first. *)
+  if from_project then begin
+    walk p [ short ] dir;
+    p.aliases <- ([ short; "main" ], [ short ]) :: p.aliases
+  end;
   p.packages <- [ short ] :: p.packages;
   match diagnostics p with [] -> () | ds -> raise (Static_errors ds)
 
@@ -1229,62 +1264,92 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) (p : project) : native_dep list =
   let reg = registry ~manifest in
   let explicit = List.map fst manifest.Emo_pkg.deps in
-  (* The standard library needs no manifest pin: every unscoped require
-     resolves from the registry implicitly (README, Package Management). *)
-  let implicit = stdlib_pins reg ~explicit (stdlib_requires p) in
+  (* Every require pairs with a manifest pin, the standard library
+     included: an unscoped require the manifest leaves out is reported
+     here with the version to add; a scoped one answers to the strict
+     pairing check. *)
+  (match unpinned_stdlib_errors reg ~explicit (stdlib_requires p) with
+  | [] -> ()
+  | ds -> raise (Static_errors ds));
   (* The root project's own deps, for the visibility rule and the
-     require/manifest pairing — declared and implicit alike. *)
-  p.package_deps <- ([], explicit @ List.map fst implicit) :: p.package_deps;
-  if explicit = [] && implicit = [] then []
+     require/manifest pairing. *)
+  p.package_deps <- ([], explicit) :: p.package_deps;
+  if explicit = [] then []
   else begin
-    let entries =
-      if implicit = [] then resolution_for_run ~manifest ~manifest_dir ~target
-      else
-        resolution_with_stdlib ~manifest ~manifest_dir ~target ~registry:reg
-          ~implicit
+    let entries = resolution_for_run ~manifest ~manifest_dir ~target in
+    let fetched =
+      List.map
+        (fun entry ->
+          (* The lockfile's (or the fresh resolution's) checksum is enforced
+             on every fetch. *)
+          let f =
+            fetch_routed ~runner:http_transport ~registry:reg ~manifest_dir
+              ~name:entry.Emo_pkg.Lockfile.dep
+              ~version:entry.Emo_pkg.Lockfile.version
+              ~expected_checksum:(Some entry.Emo_pkg.Lockfile.checksum)
+          in
+          match
+            Emo_pkg.Registry.materialize
+              ~cache_dir:(Emo_pkg.Registry.default_cache_dir ())
+              f
+          with
+          | Error m -> raise (dep_error ~manifest_dir m)
+          | Ok dir ->
+              let pkg_file = Filename.concat dir "package.emo" in
+              let pkg =
+                Emo_pkg.parse_manifest ~file:pkg_file
+                  ~source:(read_file pkg_file)
+              in
+              if not (List.mem target pkg.Emo_pkg.targets) then
+                raise
+                  (dep_error ~manifest_dir
+                     (Printf.sprintf
+                        "package %s does not declare the `%s` target"
+                        entry.Emo_pkg.Lockfile.dep target));
+              (entry, dir, pkg, f))
+        entries
     in
+    (* The resolution's entries are the closure the roots induced; one the
+       roots no longer reach through the fetched packages' own manifests is
+       a stale record of an earlier resolution. Recomputation stays the
+       explicit command's job — this only refuses to build a closure the
+       manifest has moved past. *)
+    (match
+       Emo_pkg.Lockfile.unreachable
+         ~roots:explicit
+         ~declared:
+           (List.map
+              (fun (entry, _, pkg, _) ->
+                (entry.Emo_pkg.Lockfile.dep, List.map fst pkg.Emo_pkg.deps))
+              fetched)
+         entries
+     with
+    | [] -> ()
+    | stale ->
+        raise
+          (dep_error ~manifest_dir
+             (Printf.sprintf
+                "lockfile pins %s, which the manifest's dependencies no longer \
+                 reach — run `emo deps resolve` to regenerate"
+                (String.concat ", " (List.map (fun d -> "`" ^ d ^ "`") stale)))));
     List.map
-      (fun entry ->
-        (* The lockfile's (or the fresh resolution's) checksum is enforced
-           on every fetch. *)
-        let f =
-          fetch_routed ~runner:http_transport ~registry:reg ~manifest_dir
-            ~name:entry.Emo_pkg.Lockfile.dep
-            ~version:entry.Emo_pkg.Lockfile.version
-            ~expected_checksum:(Some entry.Emo_pkg.Lockfile.checksum)
-        in
-        match
-          Emo_pkg.Registry.materialize
-            ~cache_dir:(Emo_pkg.Registry.default_cache_dir ())
-            f
-        with
-        | Error m -> raise (dep_error ~manifest_dir m)
-        | Ok dir ->
-            let pkg_file = Filename.concat dir "package.emo" in
-            let pkg =
-              Emo_pkg.parse_manifest ~file:pkg_file ~source:(read_file pkg_file)
-            in
-            if not (List.mem target pkg.Emo_pkg.targets) then
-              raise
-                (dep_error ~manifest_dir
-                   (Printf.sprintf "package %s does not declare the `%s` target"
-                      entry.Emo_pkg.Lockfile.dep target));
-            let short = Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep in
-            register_package p short dir;
-            p.package_deps <-
-              ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps;
-            {
-              nd_name = entry.Emo_pkg.Lockfile.dep;
-              nd_csources =
-                List.filter_map
-                  (fun (rel, _) ->
-                    if Filename.check_suffix rel ".c" then
-                      Some (Filename.concat dir rel)
-                    else None)
-                  f.Emo_pkg.Registry.f_files;
-              nd_link = pkg.Emo_pkg.link;
-            })
-      entries
+      (fun (entry, dir, pkg, f) ->
+        let short = Emo_pkg.short_name entry.Emo_pkg.Lockfile.dep in
+        register_package p short dir;
+        p.package_deps <-
+          ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps;
+        {
+          nd_name = entry.Emo_pkg.Lockfile.dep;
+          nd_csources =
+            List.filter_map
+              (fun (rel, _) ->
+                if Filename.check_suffix rel ".c" then
+                  Some (Filename.concat dir rel)
+                else None)
+              f.Emo_pkg.Registry.f_files;
+          nd_link = pkg.Emo_pkg.link;
+        })
+      fetched
   end
 
 let entry_path (entry_file : string) : string =
@@ -1390,47 +1455,14 @@ let compile_inputs ~entry_file ~target :
            ]));
   let module_paths = module_paths p in
   let diagnostics = ref [] in
-  (* The entry file is reachable via two paths (the project root and
-     its own name); keep one module_input per distinct file, preferring
-     the shorter path so the entry module stays rooted. *)
-  let seen_files = Hashtbl.create 8 in
-  let units =
-    Hashtbl.fold
-      (fun path file acc ->
-        match Hashtbl.find_opt seen_files file with
-        | Some kept when List.length kept <= List.length path -> acc
-        | kept ->
-            let keep =
-              match kept with
-              | Some k when List.length k <= List.length path -> false
-              | _ -> true
-            in
-            if not keep then acc
-            else begin
-              let acc =
-                match kept with
-                | Some old_path ->
-                    List.filter
-                      (fun (unit_path, _) ->
-                        not
-                          (String.equal
-                             (String.concat "/" unit_path)
-                             (String.concat "/" old_path)))
-                      acc
-                | None -> acc
-              in
-              Hashtbl.replace seen_files file path;
-              (path, parse_cached p file) :: acc
-            end)
-      p.files []
-  in
+  let units = units_of p in
   let entry = entry_module_in_project p entry_file in
   (* The program's type tables (CHECK.md, cross-module types) come
    * before any module is checked, so every module's type declarations
    * resolve against every declaration. *)
   let program, preregister_errors =
     Emo_check.preregister_types ~packages:p.packages
-      ~package_deps:p.package_deps ~units
+      ~package_deps:p.package_deps ~aliases:p.aliases ~units
   in
   diagnostics := preregister_errors;
   let inputs =
@@ -1438,8 +1470,8 @@ let compile_inputs ~entry_file ~target :
       (fun acc (path, items) ->
         let diags, _refs, _requires, types =
           Emo_check.check_module_typed ~modules:module_paths
-            ~packages:p.packages ~package_deps:p.package_deps ~current:path
-            ~program ~target items
+            ~packages:p.packages ~package_deps:p.package_deps ~aliases:p.aliases
+            ~current:path ~program ~target items
         in
         diagnostics := !diagnostics @ diags;
         { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc)
@@ -1657,74 +1689,79 @@ let rec remove_tree path =
 let run_embedded ~(tag : string) ~(program : string)
     ~(globals : (string * Emo_eval.value) list) : (string, string) result =
   let reg = bundled_registry () in
-  match List.rev (Emo_pkg.Registry.versions reg ~name:"http") with
-  | [] -> Error "the bundled standard library has no http package"
-  | http_version :: _ -> (
-      match List.rev (Emo_pkg.Registry.versions reg ~name:"net") with
-      | [] -> Error "the bundled standard library has no net package"
-      | net_version :: _ ->
-          (* The resolver indexes manifest roots only, so both packages are
-             pinned explicitly — same as a user project. *)
-          let dir =
-            Filename.concat
-              (Filename.get_temp_dir_name ())
-              (Printf.sprintf "emo-%s-%d-%d" tag (Unix.getpid ())
-                 (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF))
-          in
-          Unix.mkdir dir 0o755;
-          let write name content =
-            let oc = open_out_bin (Filename.concat dir name) in
-            output_string oc content;
-            close_out oc
-          in
-          write "package.emo"
-            (Printf.sprintf
-               {|package {
+  (* The embedded programs require `http` and `json`, and every require
+     pairs with a manifest pin — same as a user project — at the highest
+     version the bundled standard library ships; their own dependencies
+     (`net`, `float`) come through the packages' manifests. *)
+  let highest name =
+    match List.rev (Emo_pkg.Registry.versions reg ~name) with
+    | [] ->
+        Error
+          (Printf.sprintf "the bundled standard library has no %s package" name)
+    | v :: _ -> Ok v
+  in
+  match (highest "http", highest "json") with
+  | Error m, _ | _, Error m -> Error m
+  | Ok http_version, Ok json_version ->
+      let dir =
+        Filename.concat
+          (Filename.get_temp_dir_name ())
+          (Printf.sprintf "emo-%s-%d-%d" tag (Unix.getpid ())
+             (int_of_float (Unix.gettimeofday () *. 1e6) land 0xFFFFFF))
+      in
+      Unix.mkdir dir 0o755;
+      let write name content =
+        let oc = open_out_bin (Filename.concat dir name) in
+        output_string oc content;
+        close_out oc
+      in
+      write "package.emo"
+        (Printf.sprintf
+           {|package {
   name = "internal/%s"
   version = "0.1.0"
   targets = ["ocaml", "c"]
 
   deps {
     "http" = "%s"
-    "net" = "%s"
+    "json" = "%s"
   }
 }
 |}
-               tag
-               (Emo_pkg.Version.to_string http_version)
-               (Emo_pkg.Version.to_string net_version));
-          write "main.emo" program;
-          let out = Buffer.create 256 in
-          let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
-          let old_cwd = Sys.getcwd () in
-          (* The embedded program's resolution must see the bundled stdlib,
-             never the user's EMO_REGISTRY — blank the variable for the run
-             (an empty value means unset to the registry lookup). *)
-          Unix.putenv "EMO_REGISTRY" "";
-          Emo_eval.set_output (Buffer.add_string out);
-          Sys.chdir dir;
-          Fun.protect
-            ~finally:(fun () ->
-              Sys.chdir old_cwd;
-              (match old_registry with
-              | Some v -> Unix.putenv "EMO_REGISTRY" v
-              | None -> ());
-              Emo_eval.set_output (fun s ->
-                  print_string s;
-                  flush stdout);
-              remove_tree dir)
-            (fun () ->
-              match
-                run_entry ~entry_file:"main.emo" ~check:false ~sched:Own
-                  ~globals ()
-              with
-              | exception Static_errors ds ->
-                  Error
-                    (String.concat "; "
-                       (List.map (fun d -> d.Emo_support.Diagnostic.message) ds))
-              | exception Emo_eval.Error d ->
-                  Error d.Emo_support.Diagnostic.message
-              | _ -> Ok (Buffer.contents out)))
+           tag
+           (Emo_pkg.Version.to_string http_version)
+           (Emo_pkg.Version.to_string json_version));
+      write "main.emo" program;
+      let out = Buffer.create 256 in
+      let old_registry = Sys.getenv_opt "EMO_REGISTRY" in
+      let old_cwd = Sys.getcwd () in
+      (* The embedded program's resolution must see the bundled stdlib,
+         never the user's EMO_REGISTRY — blank the variable for the run
+         (an empty value means unset to the registry lookup). *)
+      Unix.putenv "EMO_REGISTRY" "";
+      Emo_eval.set_output (Buffer.add_string out);
+      Sys.chdir dir;
+      Fun.protect
+        ~finally:(fun () ->
+          Sys.chdir old_cwd;
+          (match old_registry with
+          | Some v -> Unix.putenv "EMO_REGISTRY" v
+          | None -> ());
+          Emo_eval.set_output (fun s ->
+              print_string s;
+              flush stdout);
+          remove_tree dir)
+        (fun () ->
+          match
+            run_entry ~entry_file:"main.emo" ~check:false ~sched:Own ~globals
+              ()
+          with
+          | exception Static_errors ds ->
+              Error
+                (String.concat "; "
+                   (List.map (fun d -> d.Emo_support.Diagnostic.message) ds))
+          | exception Emo_eval.Error d -> Error d.Emo_support.Diagnostic.message
+          | _ -> Ok (Buffer.contents out))
 
 (* The HTTP registry's transport: [run_embedded] under a fixed tag. Filled
    at module initialization — the cell exists because [run_embedded] needs

@@ -436,7 +436,9 @@ end
 (* The lockfile: one line per resolved dependency, `dep version checksum`,
    sorted — belongs in version control. A mismatch between the lockfile and
    the manifest's requirements is an error prompting explicit
-   regeneration; it is never silently re-resolved. *)
+   regeneration; it is never silently re-resolved. A project with no
+   lockfile yet records its first resolution on the run that establishes
+   it — a missing file is created, an existing one is never rewritten. *)
 module Lockfile = struct
   (* The lockfile's on-disk name, beside package.emo. *)
   let filename = "package.lock"
@@ -455,7 +457,15 @@ module Lockfile = struct
       (String.concat "\n" (to_lines t) ^ if t = [] then "" else "\n");
     close_out oc
 
-  let read (path : string) : (t, string) result =
+  (* Why a read fails: the file is absent, or its content is not a
+     lockfile. Two different facts — an absent lockfile is a project's
+     first run (its resolution records itself), a damaged one is a
+     lockfile the build must refuse, never quietly replace. *)
+  type read_error =
+    | Missing
+    | Malformed of string
+
+  let read (path : string) : (t, read_error) result =
     let read_file path =
       let ic = open_in_bin path in
       Fun.protect
@@ -463,7 +473,7 @@ module Lockfile = struct
         (fun () -> really_input_string ic (in_channel_length ic))
     in
     match read_file path with
-    | exception Sys_error message -> Error message
+    | exception Sys_error _ -> Error Missing
     | source ->
         let lines =
           String.split_on_char '\n' source
@@ -471,7 +481,7 @@ module Lockfile = struct
               let l = String.trim l in
               if l = "" then None else Some l)
         in
-        let bad = Error (path ^ ": malformed lockfile line") in
+        let bad = Error (Malformed (path ^ ": malformed lockfile line")) in
         let rec parse acc = function
           | [] -> Ok (List.rev acc)
           | line :: rest -> (
@@ -479,13 +489,17 @@ module Lockfile = struct
               | [ dep; version; checksum ] -> (
                   match Version.parse version with
                   | Ok v -> parse ({ dep; version = v; checksum } :: acc) rest
-                  | Error m -> Error (path ^ ": " ^ m))
+                  | Error m -> Error (Malformed (path ^ ": " ^ m)))
               | _ -> bad)
         in
         parse [] lines
 
-  (* Verify: every manifest root must be present at the pinned version, and
-     the resolution must match entry for entry. Returns [] when satisfied. *)
+  (* Verify: every manifest root must be present at the pinned version.
+     Returns [] when satisfied. The lockfile records the whole resolution,
+     so its other entries are the roots' transitive closure — not something
+     this check can weigh; that the closure is the one the roots induce is
+     [unreachable]'s question, asked once the packages' own manifests have
+     been read. *)
   let verify ~(roots : (string * Version.t) list) (t : t) :
       string list (* human-readable mismatch errors *) =
     let errors = ref [] in
@@ -510,17 +524,33 @@ module Lockfile = struct
                 dep (Version.to_string v)
               :: !errors)
       roots;
-    List.iter
-      (fun e ->
-        if not (List.mem_assoc e.dep roots) then
-          errors :=
-            Printf.sprintf
-              "lockfile pins `%s` but the manifest does not list it — run `emo \
-               deps resolve` to regenerate"
-              e.dep
-            :: !errors)
-      t;
     !errors
+
+  (* The closure check, the strict half of the lockfile/manifest agreement:
+     the resolution's every entry must be reachable from [roots] by
+     following the [declared] edges — the dependencies each fetched
+     package's own manifest states. An entry nothing reaches is one the
+     manifest has moved past (a removed root leaving its old closure
+     behind), so the recorded resolution is no longer this manifest's.
+     Returns the unreachable entries' names. *)
+  let unreachable ~(roots : string list)
+      ~(declared : (string * string list) list) (t : t) : string list =
+    let rec go reached = function
+      | [] -> reached
+      | name :: rest ->
+          if List.mem name reached then go reached rest
+          else
+            let deps =
+              match List.assoc_opt name declared with
+              | Some deps -> deps
+              | None -> []
+            in
+            go (name :: reached) (deps @ rest)
+    in
+    let reached = go [] roots in
+    List.filter_map
+      (fun e -> if List.mem e.dep reached then None else Some e.dep)
+      t
 end
 
 (* The registry and the global content-addressed cache. A directory
@@ -1359,6 +1389,43 @@ module Archive = struct
     match gunzip data with Error _ as e -> e | Ok payload -> untar payload
 end
 
+(* Extracts a string field from a flat JSON object (the registry's frozen
+   error shape); None when the field is absent or the body is not JSON. The
+   publish/login flows in emo_cli read it through this same definition. *)
+let json_string_field (key : string) (json : string) : string option =
+  let pat = "\"" ^ key ^ "\"" in
+  let n = String.length json and p = String.length pat in
+  let rec find i =
+    if i + p > n then None
+    else if String.sub json i p = pat then Some (i + p)
+    else find (i + 1)
+  in
+  match find 0 with
+  | None -> None
+  | Some i ->
+      let rec skip i =
+        if i < n && (json.[i] = ' ' || json.[i] = ':' || json.[i] = '\t') then
+          skip (i + 1)
+        else i
+      in
+      let i = skip i in
+      if i >= n || json.[i] <> '"' then None
+      else
+        let buf = Buffer.create 16 in
+        let rec read i =
+          if i >= n then None
+          else
+            match json.[i] with
+            | '\\' when i + 1 < n ->
+                Buffer.add_char buf json.[i + 1];
+                read (i + 2)
+            | '"' -> Some (Buffer.contents buf)
+            | c ->
+                Buffer.add_char buf c;
+                read (i + 1)
+        in
+        read (i + 1)
+
 (* The HTTP(S) pull client: the consumer half of the registry service's
    frozen protocol (registry/docs/design.md §5) — B.1 lists a package's
    versions with checksums and targets, B.2 answers dependencies in batch,
@@ -1378,7 +1445,9 @@ module Http_registry = struct
      package needs none, a private one is 404 without it, so the token is
      simply sent whenever the caller has one. A transport failure raises
      inside the program and comes back as the runner's Error, the same
-     mapping publish's uploader uses. *)
+     mapping publish's uploader uses. A non-200 status prints the raw body
+     after the status line, so the registry's error JSON reaches the host
+     for [refused] to format. *)
   let versions_program =
     {|require "http"
 require "json"
@@ -1415,6 +1484,8 @@ case resp {
           }
         }
       }
+    } else {
+      println(ok.body)
     }
   }
 }
@@ -1462,6 +1533,8 @@ case resp {
           }
         }
       }
+    } else {
+      println(ok.body)
     }
   }
 }
@@ -1536,6 +1609,22 @@ case resp {
               not one"
              base name)
 
+  (* One registry refusal, formatted for an error diagnostic. The frozen
+     error shape — {"error":{"code":...,"message":...}} — becomes
+     "answered <status> error: `<subject>` (<code>) <message>", so the code
+     and the human text stay visible instead of a raw JSON blob; any other
+     body keeps the trimmed raw text. *)
+  let refused ~(base : string) ~(status : int) ~(subject : string)
+      (body : string) : string =
+    match (json_string_field "code" body, json_string_field "message" body)
+    with
+    | Some code, Some message ->
+        Printf.sprintf "registry `%s` answered %d error: `%s` (%s) %s" base
+          status subject code (String.trim message)
+    | _ ->
+        Printf.sprintf "registry `%s` answered %d error: `%s` %s" base status
+          subject (String.trim body)
+
   (* One published version as B.1 reports it. *)
   type version_info = {
     vi_version : Version.t;
@@ -1593,12 +1682,7 @@ case resp {
         match exchange runner ~program:versions_program ~url ~token with
         | Error _ as e -> e
         | Ok (200, body) -> parse_versions_payload ~base body
-        | Ok (404, _) ->
-            Error (Printf.sprintf "registry `%s` has no package `%s`" base name)
-        | Ok (status, body) ->
-            Error
-              (Printf.sprintf "registry `%s` answered HTTP %d for `%s`: %s" base
-                 status name (String.trim body)))
+        | Ok (status, body) -> Error (refused ~base ~status ~subject:name body))
 
   (* B.2: one row per (package, version): the version's own exact pins and
      its yank flag. *)
@@ -1675,9 +1759,7 @@ case resp {
       | Ok (200, body) -> parse_deps_payload ~base body
       | Ok (status, body) ->
           Error
-            (Printf.sprintf
-               "registry `%s` answered HTTP %d for the dependencies of %s: %s"
-               base status (String.concat ", " names) (String.trim body))
+            (refused ~base ~status ~subject:(String.concat ", " names) body)
 
   (* The resolver index for one batch of scoped names: B.1 per name joined
      with one batched B.2. Yanked versions are excluded — a fresh resolution
@@ -1756,10 +1838,6 @@ case resp {
         in
         match exchange runner ~program:download_program ~url ~token with
         | Error _ as e -> e
-        | Ok (404, _) ->
-            Error
-              (Printf.sprintf "registry `%s` has no package %s@%s" base name
-                 (Version.to_string version))
         | Ok (200, archive) -> (
             match Archive.unpack archive with
             | Error _ as e -> e
@@ -1802,11 +1880,9 @@ case resp {
                         }))
         | Ok (status, body) ->
             Error
-              (Printf.sprintf
-                 "registry `%s` answered HTTP %d downloading %s@%s: %s" base
-                 status name
-                 (Version.to_string version)
-                 (String.trim body)))
+              (refused ~base ~status
+                 ~subject:(name ^ "@" ^ Version.to_string version)
+                 body))
 end
 
 (* Publishing: the client side of the registry's publish protocol.

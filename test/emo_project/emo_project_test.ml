@@ -680,6 +680,83 @@ def span() Int64 {
   return leaf_tools.leaf()
 }
 |};
+  (* A package published from a project: its public module is the `main.emo`
+     it was written as, with no file named after the short name. *)
+  let entry_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "entry_tools" "2.0.0"))
+  in
+  write_file
+    (Filename.concat entry_dir "package.emo")
+    {|package {
+  name = "acme/entry_tools"
+  version = "2.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat entry_dir "main.emo")
+    {|def tagged() Int64 {
+  return 5
+}
+|};
+  (* The entry file keeps its own name inside the package: a sibling refers to
+     the module a consumer's require binds as `main`, the name it was written
+     under, and the two spellings are one module. *)
+  write_file
+    (Filename.concat (Filename.concat entry_dir "test") "smoke.emo")
+    {|def smoke() Int64 {
+  return main.tagged()
+}
+|};
+  (* A package whose entry file does not check: the consumer sees the fault
+     once, not once per spelling its entry file is reachable by. *)
+  let broken_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "broken_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat broken_dir "package.emo")
+    {|package {
+  name = "acme/broken_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat broken_dir "main.emo")
+    {|def broken() Int64 {
+  return missing_thing
+}
+|};
+  (* Both entry files present: `main.emo` is the module a require binds. *)
+  let both_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "both_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat both_dir "package.emo")
+    {|package {
+  name = "acme/both_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat both_dir "main.emo")
+    {|def pick() Int64 {
+  return 1
+}
+|};
+  write_file
+    (Filename.concat both_dir "both_tools.emo")
+    {|def pick() Int64 {
+  return 2
+}
+|};
   (* A package that reaches a dependency it never declared. *)
   let rogue_dir =
     Filename.concat dir
@@ -751,6 +828,31 @@ let app_manifest =
 let app_main = {|require "acme/c_tools"
 println(c_tools.halve(84))
 |}
+
+(* The transitive-dependency app's manifest: one declared root whose own
+   manifest requires another package. *)
+let trans_app_manifest =
+  {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/trans_tools" = "1.0.0"
+  }
+}
+|}
+
+(* An app declaring the transitive-dependency package as its one root. *)
+let trans_app () =
+  with_project
+    [
+      ("package.emo", trans_app_manifest);
+      ("main.emo", {|require "acme/trans_tools"
+println(trans_tools.span())
+|});
+    ]
+    "main.emo"
 
 (* The own-subtree-first shadowing fixture's app: it depends on both the dep
    package `q` and `shadow`, whose own submodule is also named `q`. *)
@@ -903,11 +1005,152 @@ let deps_tests =
                     (Emo_project.run_entry ~entry_file:entry ~check:true ()))
             in
             Alcotest.(check string) "output" "42\n" output;
-            (* A run resolves in memory when no lockfile exists; writing the
-               lockfile is `emo deps resolve`'s explicit job. *)
+            (* The first run records the resolution it just established —
+               the lockfile `emo deps resolve` would write. *)
+            let lock_path = Filename.concat dir Emo_pkg.Lockfile.filename in
             Alcotest.(check bool)
-              "no lockfile written by a run" false
-              (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename))));
+              "the first run writes the lockfile" true
+              (Sys.file_exists lock_path);
+            let expected =
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            in
+            Alcotest.(check (list string))
+              "the run's lockfile is resolve's"
+              (Emo_pkg.Lockfile.to_lines expected)
+              (match Emo_pkg.Lockfile.read lock_path with
+              | Ok entries -> Emo_pkg.Lockfile.to_lines entries
+              | Error _ -> [])));
+    tc "a damaged lockfile is refused, never overwritten" (fun () ->
+        let entry =
+          with_project
+            [ ("package.emo", app_manifest); ("main.emo", app_main) ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        let lock_path = Filename.concat dir Emo_pkg.Lockfile.filename in
+        write_file lock_path "this is not a lockfile\n";
+        with_registry (fun () ->
+            (match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected a malformed lockfile error"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "names the damage" true
+                      (contains_substring d.Diagnostic.message "malformed");
+                    Alcotest.(check bool)
+                      "prompts regeneration" true
+                      (contains_substring d.Diagnostic.message "regenerate")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds)));
+            Alcotest.(check string)
+              "the damaged file is left as it was" "this is not a lockfile\n"
+              (Emo_project.read_file lock_path)));
+    tc "a package's main.emo is the module a require binds" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/entry_tools" = "2.0.0"
+    "acme/both_tools" = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/entry_tools"
+require "acme/both_tools"
+println(entry_tools.tagged())
+println(both_tools.pick())
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            (* main.emo wins over both_tools.emo when a package ships both. *)
+            Alcotest.(check string) "output" "5\n1\n" output));
+    tc "a dependency's own file reaches its entry module by name" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/entry_tools" = "2.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/entry_tools"
+println(entry_tools.tagged())
+println(entry_tools.test.smoke.smoke())
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            (* `entry_tools/test/smoke.emo` is mounted with the package and
+               checked here: it calls `main.tagged()`, and `main` is the entry
+               file the `require` also binds as `entry_tools`. Running it
+               exercises the same one-module answer through the loader. *)
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            Alcotest.(check string) "output" "5\n5\n" output));
+    tc "a dependency's uncheckable entry file reports once" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/broken_tools" = "1.0.0"
+  }
+}
+|}
+              );
+              ("main.emo", {|println(broken_tools.broken())|});
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected `missing_thing` to be undefined"
+            | exception Emo_project.Static_errors ds ->
+                (* The entry file is one module under two spellings: it is
+                   checked once, so its fault is reported once. *)
+                Alcotest.(check int)
+                  ("one diagnostic, got: " ^ codes_dump ds)
+                  1 (List.length ds);
+                if not (has_code ds "E4003") then
+                  Alcotest.fail ("codes: " ^ codes_dump ds)));
     tc "the lockfile pins the resolution and a run verifies it" (fun () ->
         let entry =
           with_project
@@ -964,6 +1207,74 @@ let deps_tests =
                     Alcotest.(check string)
                       "code" "E5007"
                       (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "prompts regeneration" true
+                      (contains_substring d.Diagnostic.message "regenerate")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+    tc "a lockfile recording the closure runs its transitive dep" (fun () ->
+        let entry = trans_app () in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            (* The lockfile records the whole resolution: the requirement and
+               the package its own manifest pulls in. A run reads both. *)
+            let entries =
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            in
+            Alcotest.(check int) "the closure is locked" 2 (List.length entries);
+            Emo_pkg.Lockfile.write
+              ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
+              entries;
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            Alcotest.(check string) "output" "7\n" output));
+    tc "a lockfile entry the manifest no longer reaches is stale" (fun () ->
+        let entry = trans_app () in
+        let dir = Filename.dirname entry in
+        Sys.chdir dir;
+        with_registry (fun () ->
+            let entries =
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            in
+            Emo_pkg.Lockfile.write
+              ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
+              entries;
+            (* The manifest drops the root that pulled `trans_tools` in; the
+               lockfile still carries it, and nothing reaches it now. *)
+            write_file
+              (Filename.concat dir "package.emo")
+              {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/leaf_tools" = "1.0.0"
+  }
+}
+|};
+            write_file
+              (Filename.concat dir "main.emo")
+              {|require "acme/leaf_tools"
+println(leaf_tools.leaf())
+|};
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected a stale lockfile error"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "names the abandoned entry" true
+                      (contains_substring d.Diagnostic.message
+                         "acme/trans_tools");
                     Alcotest.(check bool)
                       "prompts regeneration" true
                       (contains_substring d.Diagnostic.message "regenerate")
@@ -1736,8 +2047,8 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
 let stdlib_require_tests =
   [
     tc
-      "an unscoped require resolves the standard library without a manifest pin"
-      (fun () ->
+      "an unscoped require without a manifest pin is E5006 naming the version \
+       to add" (fun () ->
         ignore (use_workspace_registry ());
         let entry =
           with_project
@@ -1765,19 +2076,29 @@ println("ok")
             "main.emo"
         in
         let dir = Filename.dirname entry in
-        let output =
-          capture_output (fun () ->
-              ignore
-                (Emo_project.run_entry ~entry_file:entry ~check:true
-                   ~sched:Emo_project.Own ()))
-        in
-        Alcotest.(check string) "output" "ok\n" output;
+        (match
+           Emo_project.run_entry ~entry_file:entry ~check:true
+             ~sched:Emo_project.Own ()
+         with
+        | _ -> Alcotest.fail "expected E5006"
+        | exception Emo_project.Static_errors ds ->
+            if not (has_code ds "E5006") then
+              Alcotest.fail ("codes: " ^ codes_dump ds);
+            Alcotest.(check bool)
+              "the hint names the pin to add" true
+              (List.exists
+                 (fun (d : Emo_support.Diagnostic.t) ->
+                   match d.Emo_support.Diagnostic.hint with
+                   | Some hint ->
+                       contains_substring hint "add `\"sync\" = \"0.1.0\"`"
+                   | None -> false)
+                 ds));
         Alcotest.(check bool)
-          "an implicit stdlib pin never enters package.lock" false
+          "a refused run writes no package.lock" false
           (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename)));
     tc
-      "a standard-library package resolves its own transitive dependency \
-       implicitly" (fun () ->
+      "a pinned standard-library package resolves its own transitive \
+       dependency" (fun () ->
         ignore (use_workspace_registry ());
         let entry =
           with_project
@@ -1788,7 +2109,9 @@ println("ok")
   version = "0.1.0"
   targets = ["ocaml", "c"]
 
-  deps {}
+  deps {
+    "json" = "0.1.0"
+  }
 }
 |}
               );
@@ -1831,8 +2154,7 @@ println("ok")
         | exception Emo_project.Static_errors ds ->
             if not (has_code ds "E5009") then
               Alcotest.fail ("codes: " ^ codes_dump ds));
-    tc "an explicit manifest pin still overrides the implicit resolution"
-      (fun () ->
+    tc "a pinned standard-library package resolves and runs" (fun () ->
         ignore (use_workspace_registry ());
         let entry =
           with_project

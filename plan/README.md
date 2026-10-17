@@ -36,6 +36,15 @@ incrementally shippable steps — one file per step, executed in order.
   (`spike/arena-scope`, `CHECK.md`). Not a prerequisite for step 48 —
   the native UI backends are built at demo scale with the limit
   documented.
+- **M18 — TLS on the `c` target (step 51):** the three existing `net`
+  TLS builtins — implemented on the interpreter, the standalone OCaml
+  runtime and `typescript` since step 13 — land on the default target,
+  the C runtime binding the system OpenSSL/LibreSSL behind
+  hand-declared prototypes and IR-keyed conditional linkage, so
+  `http`'s `https://` works end-to-end on `c` while a non-TLS build
+  never links OpenSSL. Conformance, not surface: the ocaml scheduler
+  is the semantic reference. Decisions settled 2026-10-17
+  (`CHECK.md`, `plan/step-51-tls-c-target.md`).
 
 ## Ground rules
 
@@ -99,5 +108,6 @@ incrementally shippable steps — one file per step, executed in order.
 | 38 | The standard library: `sqlite3` | done on c — the first native-binding package: the manifest's `link` field and package-carried C sources land with it; every other target refuses at resolution, the interpreter at run time (E3009) |
 | 48 | EmoUI | planned — decisions settled 2026-10-14 (`docs/emo-ui.md`, `plan/step-48-emo-ui.md`); the compiler-side gates are the native packaging mechanism, the browser runtime path, and terminal raw mode; the native backends are demo scale until step 49 lands |
 | 49 | Value-family reclamation | planned — scheduled 2026-10-14 after the arena-scope spike ruled out region reclamation (`spike/arena-scope`, `CHECK.md`); direction settled, nothing implemented |
+| 51 | TLS on the `c` target | planned — the three `net` TLS builtins land in the C runtime against the system OpenSSL/LibreSSL; decisions settled 2026-10-17 (`CHECK.md`, `plan/step-51-tls-c-target.md`); direction settled, nothing implemented |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.
