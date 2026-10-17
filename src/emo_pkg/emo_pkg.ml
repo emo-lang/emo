@@ -436,7 +436,9 @@ end
 (* The lockfile: one line per resolved dependency, `dep version checksum`,
    sorted — belongs in version control. A mismatch between the lockfile and
    the manifest's requirements is an error prompting explicit
-   regeneration; it is never silently re-resolved. *)
+   regeneration; it is never silently re-resolved. A project with no
+   lockfile yet records its first resolution on the run that establishes
+   it — a missing file is created, an existing one is never rewritten. *)
 module Lockfile = struct
   (* The lockfile's on-disk name, beside package.emo. *)
   let filename = "package.lock"
@@ -455,7 +457,15 @@ module Lockfile = struct
       (String.concat "\n" (to_lines t) ^ if t = [] then "" else "\n");
     close_out oc
 
-  let read (path : string) : (t, string) result =
+  (* Why a read fails: the file is absent, or its content is not a
+     lockfile. Two different facts — an absent lockfile is a project's
+     first run (its resolution records itself), a damaged one is a
+     lockfile the build must refuse, never quietly replace. *)
+  type read_error =
+    | Missing
+    | Malformed of string
+
+  let read (path : string) : (t, read_error) result =
     let read_file path =
       let ic = open_in_bin path in
       Fun.protect
@@ -463,7 +473,7 @@ module Lockfile = struct
         (fun () -> really_input_string ic (in_channel_length ic))
     in
     match read_file path with
-    | exception Sys_error message -> Error message
+    | exception Sys_error _ -> Error Missing
     | source ->
         let lines =
           String.split_on_char '\n' source
@@ -471,7 +481,7 @@ module Lockfile = struct
               let l = String.trim l in
               if l = "" then None else Some l)
         in
-        let bad = Error (path ^ ": malformed lockfile line") in
+        let bad = Error (Malformed (path ^ ": malformed lockfile line")) in
         let rec parse acc = function
           | [] -> Ok (List.rev acc)
           | line :: rest -> (
@@ -479,7 +489,7 @@ module Lockfile = struct
               | [ dep; version; checksum ] -> (
                   match Version.parse version with
                   | Ok v -> parse ({ dep; version = v; checksum } :: acc) rest
-                  | Error m -> Error (path ^ ": " ^ m))
+                  | Error m -> Error (Malformed (path ^ ": " ^ m)))
               | _ -> bad)
         in
         parse [] lines

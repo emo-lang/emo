@@ -495,7 +495,8 @@ let lockfile_tests =
               (match read_back with
               | e :: _ -> String.equal e.Emo_pkg.Lockfile.dep "http"
               | [] -> false)
-        | Error m -> Alcotest.fail m);
+        | Error Emo_pkg.Lockfile.Missing -> Alcotest.fail "lockfile missing"
+        | Error (Emo_pkg.Lockfile.Malformed m) -> Alcotest.fail m);
     tc "verify flags a version mismatch" (fun () ->
         let t =
           [

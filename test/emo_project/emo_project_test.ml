@@ -1005,11 +1005,50 @@ let deps_tests =
                     (Emo_project.run_entry ~entry_file:entry ~check:true ()))
             in
             Alcotest.(check string) "output" "42\n" output;
-            (* A run resolves in memory when no lockfile exists; writing the
-               lockfile is `emo deps resolve`'s explicit job. *)
+            (* The first run records the resolution it just established —
+               the lockfile `emo deps resolve` would write. *)
+            let lock_path = Filename.concat dir Emo_pkg.Lockfile.filename in
             Alcotest.(check bool)
-              "no lockfile written by a run" false
-              (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename))));
+              "the first run writes the lockfile" true
+              (Sys.file_exists lock_path);
+            let expected =
+              Emo_project.resolve_deps ~manifest:(parsed_app_manifest dir)
+                ~manifest_dir:dir ~target:"c"
+            in
+            Alcotest.(check (list string))
+              "the run's lockfile is resolve's"
+              (Emo_pkg.Lockfile.to_lines expected)
+              (match Emo_pkg.Lockfile.read lock_path with
+              | Ok entries -> Emo_pkg.Lockfile.to_lines entries
+              | Error _ -> [])));
+    tc "a damaged lockfile is refused, never overwritten" (fun () ->
+        let entry =
+          with_project
+            [ ("package.emo", app_manifest); ("main.emo", app_main) ]
+            "main.emo"
+        in
+        let dir = Filename.dirname entry in
+        let lock_path = Filename.concat dir Emo_pkg.Lockfile.filename in
+        write_file lock_path "this is not a lockfile\n";
+        with_registry (fun () ->
+            (match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected a malformed lockfile error"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "names the damage" true
+                      (contains_substring d.Diagnostic.message "malformed");
+                    Alcotest.(check bool)
+                      "prompts regeneration" true
+                      (contains_substring d.Diagnostic.message "regenerate")
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds)));
+            Alcotest.(check string)
+              "the damaged file is left as it was" "this is not a lockfile\n"
+              (Emo_project.read_file lock_path)));
     tc "a package's main.emo is the module a require binds" (fun () ->
         let entry =
           with_project

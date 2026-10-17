@@ -973,8 +973,8 @@ let test_cmd =
           expect_fail builtins; a failed assertion fails only its own test.")
     Term.(const test $ no_color $ error_limit)
 
-(* `emo deps`: resolution and regeneration are explicit commands — the
-   lockfile is written only here. *)
+(* `emo deps`: regeneration is an explicit command. A run writes the
+   lockfile only when none exists — an existing one is never rewritten. *)
 let deps_resolve ~(name : string option) : int =
   let dir = Sys.getcwd () in
   let color = Unix.isatty Unix.stderr in
@@ -1028,7 +1028,11 @@ let deps_list () : int =
             e.Emo_pkg.Lockfile.checksum)
         entries;
       Cmd.Exit.ok
-  | Error message ->
+  | Error Emo_pkg.Lockfile.Missing ->
+      prerr_endline
+        "no package.lock in the current directory — run `emo deps resolve`";
+      66
+  | Error (Emo_pkg.Lockfile.Malformed message) ->
       prerr_endline message;
       66
 

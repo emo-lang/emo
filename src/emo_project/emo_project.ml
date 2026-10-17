@@ -1183,8 +1183,10 @@ let unpinned_stdlib_errors (registry : Emo_pkg.Registry.t)
 
 (* The build-time resolution: a satisfied lockfile is used as recorded; a
    mismatch is an error prompting explicit regeneration — never a silent
-   re-resolve. With no lockfile at all, the run resolves in memory and
-   writes nothing. *)
+   re-resolve — and a damaged lockfile is refused the same way, never
+   quietly replaced. With no lockfile at all, the run resolves and records
+   the resolution: the file's first appearance, never a rewrite of one,
+   announced on stderr so it is not silent. *)
 let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
     ~(target : string) : Emo_pkg.Lockfile.entry list =
   let lock_path = Filename.concat manifest_dir Emo_pkg.Lockfile.filename in
@@ -1193,7 +1195,27 @@ let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
       match Emo_pkg.Lockfile.verify ~roots:manifest.Emo_pkg.deps entries with
       | [] -> entries
       | message :: _ -> raise (dep_error ~manifest_dir message))
-  | Error _ -> resolve_deps ~manifest ~manifest_dir ~target
+  | Error Emo_pkg.Lockfile.Missing ->
+      let entries = resolve_deps ~manifest ~manifest_dir ~target in
+      (* A tree the run cannot write to still runs: the lockfile is a
+         record of the resolution, not a prerequisite for it. *)
+      let wrote =
+        try
+          Emo_pkg.Lockfile.write ~path:lock_path entries;
+          true
+        with Sys_error message ->
+          prerr_endline
+            ("could not write " ^ Emo_pkg.Lockfile.filename ^ ": " ^ message);
+          false
+      in
+      if wrote then
+        prerr_endline
+          ("wrote " ^ Emo_pkg.Lockfile.filename ^ " — commit it beside the manifest");
+      entries
+  | Error (Emo_pkg.Lockfile.Malformed message) ->
+      raise
+        (dep_error ~manifest_dir
+           (message ^ " — run `emo deps resolve` to regenerate"))
 
 (* Registers a fetched package's module tree under its short name — the
    package name is a module-path prefix (README: "a package name becomes a
