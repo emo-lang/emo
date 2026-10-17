@@ -2569,103 +2569,10 @@ int64_t emo_net_set_timeout(int64_t fd, double seconds) {
   return fd;
 }
 
-/* One byte at a time is slow but exact; the arena absorbs the growth. */
-emo_value emo_net_read_line(int64_t fd) {
-  emo_str out = emo_str_from_parts("", 0);
-  for (;;) {
-    char c;
-    ssize_t got = recv((int)fd, &c, 1, 0);
-    if (got == 0) return emo_os_pair("ok", emo_box_str(out)); /* EOF ends the line */
-    if (got < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        emo_net_wait_readable(fd);
-        continue;
-      }
-      char what[512];
-      snprintf(what, sizeof what, "cannot read: %s", strerror(errno));
-      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
-    }
-    if (c == '\n') return emo_os_pair("ok", emo_box_str(out));
-    if (c == '\r') continue;
-    char *bigger = emo_alloc(out.len + 1);
-    memcpy(bigger, out.bytes, (size_t)out.len);
-    bigger[out.len] = c;
-    out.bytes = bigger;
-    out.len += 1;
-  }
-}
-
-emo_value emo_net_read_exactly(int64_t fd, int64_t n) {
-  emo_str out = emo_str_from_parts("", n);
-  int64_t got_total = 0;
-  while (got_total < n) {
-    ssize_t got = recv((int)fd, (char *)out.bytes + got_total,
-                       (size_t)(n - got_total), 0);
-    if (got == 0)
-      return emo_os_pair(
-          "error",
-          emo_box_str(emo_str_from_cstr("the connection closed early")));
-    if (got < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        emo_net_wait_readable(fd);
-        continue;
-      }
-      char what[512];
-      snprintf(what, sizeof what, "cannot read: %s", strerror(errno));
-      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
-    }
-    got_total += got;
-  }
-  return emo_os_pair("ok", emo_box_str(out));
-}
-
-emo_value emo_net_read_all(int64_t fd) {
-  emo_str out = emo_str_from_parts("", 0);
-  for (;;) {
-    char chunk[4096];
-    ssize_t got = recv((int)fd, chunk, sizeof chunk, 0);
-    if (got == 0) return emo_os_pair("ok", emo_box_str(out));
-    if (got < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        emo_net_wait_readable(fd);
-        continue;
-      }
-      char what[512];
-      snprintf(what, sizeof what, "cannot read: %s", strerror(errno));
-      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
-    }
-    char *bigger = emo_alloc(out.len + got);
-    memcpy(bigger, out.bytes, (size_t)out.len);
-    memcpy(bigger + out.len, chunk, (size_t)got);
-    out.bytes = bigger;
-    out.len += got;
-  }
-}
-
-emo_value emo_net_write(int64_t fd, emo_str data) {
-  int64_t sent_total = 0;
-  while (sent_total < data.len) {
-    ssize_t sent =
-        send((int)fd, data.bytes + sent_total, (size_t)(data.len - sent_total), 0);
-    if (sent < 0) {
-      char what[512];
-      snprintf(what, sizeof what, "cannot write: %s", strerror(errno));
-      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
-    }
-    sent_total += sent;
-  }
-  return emo_os_pair("ok", emo_box_i64(fd));
-}
-
-emo_value emo_net_close(int64_t fd) {
-  close((int)fd);
-  return emo_os_pair("ok", emo_box_i64(fd));
-}
-
 /* ---- TLS (step 51) ----
 
    The three net TLS builtins ride the same cooperative scheduler as
-   the TCP tier above. Everything OpenSSL-shaped lives behind this
+   the TCP tier below. Everything OpenSSL-shaped lives behind this
    gate:
 
    - No OpenSSL header is included anywhere, so no platform needs
@@ -2777,6 +2684,20 @@ static void emo_tls_attach(int fd, SSL *ssl, SSL_CTX *ctx) {
 static SSL *emo_tls_lookup(int64_t fd) {
   for (emo_tls_slot *s = emo_tls_slots; s != NULL; s = s->next)
     if (s->fd == (int)fd) return s->ssl;
+  return NULL;
+}
+
+/* Unlinks the slot, handing back the SSL and its context for the
+   caller's shutdown-and-free (the slot cell itself stays in the
+   arena, like everything else). */
+static SSL *emo_tls_detach(int64_t fd, SSL_CTX **ctx_out) {
+  for (emo_tls_slot **p = &emo_tls_slots; *p != NULL; p = &(*p)->next)
+    if ((*p)->fd == (int)fd) {
+      emo_tls_slot *dead = *p;
+      *p = dead->next;
+      *ctx_out = dead->ctx;
+      return dead->ssl;
+    }
   return NULL;
 }
 
@@ -2895,6 +2816,179 @@ emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
 }
 
 #endif /* EMO_HAS_TLS */
+
+/* One read of the fd, TLS-aware when the fence carries the fd in its
+   side table: the TLS branch parks on WANT_READ/WANT_WRITE, the raw
+   branch on would-block — the same parking discipline both planes
+   already share. Returns the byte count, 0 on a clean close, or -1
+   with [detail] filled (the library's wording for TLS, errno's for
+   raw). */
+static int emo_net_read_once(int64_t fd, void *buf, size_t n, char *detail,
+                             size_t detailn) {
+#ifdef EMO_HAS_TLS
+  SSL *ssl = emo_tls_lookup(fd);
+  if (ssl != NULL) {
+    for (;;) {
+      ERR_clear_error();
+      int r = SSL_read(ssl, buf, (int)n);
+      if (r > 0) return r;
+      if (r == 0) return 0;
+      int err = SSL_get_error(ssl, r);
+      if (err == SSL_ERROR_WANT_READ) {
+        emo_net_wait_readable(fd);
+        continue;
+      }
+      if (err == SSL_ERROR_WANT_WRITE) {
+        emo_net_wait_writable(fd);
+        continue;
+      }
+      emo_tls_drain(detail, detailn);
+      return -1;
+    }
+  }
+#endif
+  for (;;) {
+    ssize_t got = recv((int)fd, buf, n, 0);
+    if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      emo_net_wait_readable(fd);
+      continue;
+    }
+    if (got < 0) snprintf(detail, detailn, "%s", strerror(errno));
+    return (int)got;
+  }
+}
+
+/* One write of the fd, TLS-aware when the fence carries it. The TLS
+   branch parks on WANT_READ/WANT_WRITE; the raw branch stays today's
+   plain send — would-block surfaces as the caller's error, exactly as
+   before. Returns bytes written, or -1 with [detail] filled. */
+static int emo_net_write_once(int64_t fd, const void *buf, size_t n,
+                              char *detail, size_t detailn) {
+#ifdef EMO_HAS_TLS
+  SSL *ssl = emo_tls_lookup(fd);
+  if (ssl != NULL) {
+    for (;;) {
+      ERR_clear_error();
+      int r = SSL_write(ssl, buf, (int)n);
+      if (r > 0) return r;
+      int err = SSL_get_error(ssl, r);
+      if (err == SSL_ERROR_WANT_READ) {
+        emo_net_wait_readable(fd);
+        continue;
+      }
+      if (err == SSL_ERROR_WANT_WRITE) {
+        emo_net_wait_writable(fd);
+        continue;
+      }
+      emo_tls_drain(detail, detailn);
+      return -1;
+    }
+  }
+#endif
+  ssize_t sent = send((int)fd, buf, n, 0);
+  if (sent < 0) snprintf(detail, detailn, "%s", strerror(errno));
+  return (int)sent;
+}
+
+/* One byte at a time is slow but exact; the arena absorbs the growth. */
+emo_value emo_net_read_line(int64_t fd) {
+  emo_str out = emo_str_from_parts("", 0);
+  for (;;) {
+    char detail[256];
+    detail[0] = '\0';
+    char c;
+    int got = emo_net_read_once(fd, &c, 1, detail, sizeof detail);
+    if (got == 0) return emo_os_pair("ok", emo_box_str(out)); /* EOF ends the line */
+    if (got < 0) {
+      char what[512];
+      snprintf(what, sizeof what, "cannot read: %s", detail);
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+    }
+    if (c == '\n') return emo_os_pair("ok", emo_box_str(out));
+    if (c == '\r') continue;
+    char *bigger = emo_alloc(out.len + 1);
+    memcpy(bigger, out.bytes, (size_t)out.len);
+    bigger[out.len] = c;
+    out.bytes = bigger;
+    out.len += 1;
+  }
+}
+
+emo_value emo_net_read_exactly(int64_t fd, int64_t n) {
+  emo_str out = emo_str_from_parts("", n);
+  int64_t got_total = 0;
+  while (got_total < n) {
+    char detail[256];
+    detail[0] = '\0';
+    int got = emo_net_read_once(fd, (char *)out.bytes + got_total,
+                                (size_t)(n - got_total), detail, sizeof detail);
+    if (got == 0)
+      return emo_os_pair(
+          "error",
+          emo_box_str(emo_str_from_cstr("the connection closed early")));
+    if (got < 0) {
+      char what[512];
+      snprintf(what, sizeof what, "cannot read: %s", detail);
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+    }
+    got_total += got;
+  }
+  return emo_os_pair("ok", emo_box_str(out));
+}
+
+emo_value emo_net_read_all(int64_t fd) {
+  emo_str out = emo_str_from_parts("", 0);
+  for (;;) {
+    char detail[256];
+    detail[0] = '\0';
+    char chunk[4096];
+    int got = emo_net_read_once(fd, chunk, sizeof chunk, detail, sizeof detail);
+    if (got == 0) return emo_os_pair("ok", emo_box_str(out));
+    if (got < 0) {
+      char what[512];
+      snprintf(what, sizeof what, "cannot read: %s", detail);
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+    }
+    char *bigger = emo_alloc(out.len + got);
+    memcpy(bigger, out.bytes, (size_t)out.len);
+    memcpy(bigger + out.len, chunk, (size_t)got);
+    out.bytes = bigger;
+    out.len += got;
+  }
+}
+
+emo_value emo_net_write(int64_t fd, emo_str data) {
+  int64_t sent_total = 0;
+  while (sent_total < data.len) {
+    char detail[256];
+    detail[0] = '\0';
+    int sent =
+        emo_net_write_once(fd, data.bytes + sent_total,
+                           (size_t)(data.len - sent_total), detail,
+                           sizeof detail);
+    if (sent < 0) {
+      char what[512];
+      snprintf(what, sizeof what, "cannot write: %s", detail);
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+    }
+    sent_total += sent;
+  }
+  return emo_os_pair("ok", emo_box_i64(fd));
+}
+
+emo_value emo_net_close(int64_t fd) {
+#ifdef EMO_HAS_TLS
+  SSL_CTX *ctx = NULL;
+  SSL *ssl = emo_tls_detach(fd, &ctx);
+  if (ssl != NULL) {
+    SSL_shutdown(ssl); /* best effort: no parking on the way out */
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+  }
+#endif
+  close((int)fd);
+  return emo_os_pair("ok", emo_box_i64(fd));
+}
 
 #ifndef EMO_HAS_TLS
 /* Without the gate, the client handshake is today's honest refusal,
