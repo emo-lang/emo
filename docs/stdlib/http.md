@@ -14,9 +14,11 @@ coverage; `https` in particular needs TLS, which `c` refuses.
 require "http"
 ```
 
-The standard library ships with the compiler: `require "http"` needs
-no `package.emo` entry — the `net` package it builds on resolves with
-it. The package declares the `ocaml`, `c`, and `typescript` targets.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "http"` needs `"http" = "0.1.0"` in
+the manifest's `deps` block; the `net` package it builds on comes
+through `http`'s own manifest. The package declares the `ocaml`, `c`,
+and `typescript` targets.
 
 ## Client
 

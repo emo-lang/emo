@@ -8,7 +8,7 @@
 require "plot"
 ```
 
-标准库随编译器一起发布:`require "plot"` 无需在 `package.emo` 中声明。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "plot"` 需要在 manifest 的 `deps` 块里钉上 `"plot" = "0.1.0"`。
 
 这个包有两个公开模块:`plot`(图的表面)与 `mark`(mark)。一个 `require "plot"` 把两者都带进作用域。
 

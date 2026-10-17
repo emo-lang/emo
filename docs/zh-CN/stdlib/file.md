@@ -10,7 +10,7 @@
 require "file"
 ```
 
-标准库随编译器一起发布:`require "file"` 无需在 `package.emo` 中声明。本包声明 `ocaml` 和 `c` 两个目标,其他目标的构建会拒绝它。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "file"` 需要在 manifest 的 `deps` 块里钉上 `"file" = "0.1.0"`。本包声明 `ocaml` 和 `c` 两个目标,其他目标的构建会拒绝它。
 
 ## 接口
 

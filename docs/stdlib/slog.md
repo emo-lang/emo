@@ -17,8 +17,9 @@ state anywhere in the package.
 require "slog"
 ```
 
-The standard library ships with the compiler: `require "slog"` needs no
-`package.emo` entry. The package declares the `ocaml`, `c`, and
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "slog"` needs `"slog" = "0.1.0"` in
+the manifest's `deps` block. The package declares the `ocaml`, `c`, and
 `typescript` targets.
 
 The declared targets are the ones that work today: the wasm and beam

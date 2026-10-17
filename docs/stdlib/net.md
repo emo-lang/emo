@@ -25,8 +25,9 @@ Match it; don't let it crash the process.
 require "net"
 ```
 
-The standard library ships with the compiler: `require "net"` needs no
-`package.emo` entry. The package declares the `ocaml`, `c`, and
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "net"` needs `"net" = "0.1.0"` in
+the manifest's `deps` block. The package declares the `ocaml`, `c`, and
 `typescript` targets.
 
 ## Functions

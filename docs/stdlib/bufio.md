@@ -17,9 +17,10 @@ runs on: the ocaml and c targets, the ones with a Unix-shaped host.
 require "bufio"
 ```
 
-The standard library ships with the compiler: `require "bufio"` needs
-no `package.emo` entry — the `os` package it builds on resolves with
-it.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "bufio"` needs `"bufio" = "0.1.0"`
+in the manifest's `deps` block; the `os` package it builds on comes
+through `bufio`'s own manifest.
 
 ## The stream shapes
 

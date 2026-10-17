@@ -11,8 +11,9 @@ language answers identically, byte for byte.
 require "csv"
 ```
 
-The standard library ships with the compiler: `require "csv"` needs no
-`package.emo` entry.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "csv"` needs `"csv" = "0.1.0"` in
+the manifest's `deps` block.
 
 ## The surface
 

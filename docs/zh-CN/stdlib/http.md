@@ -8,7 +8,7 @@
 require "http"
 ```
 
-标准库随编译器一起发布:`require "http"` 无需在 `package.emo` 中声明——它依赖的 `net` 会一并解析。本包声明 `ocaml`、`c`、`typescript` 三个目标。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "http"` 需要在 manifest 的 `deps` 块里钉上 `"http" = "0.1.0"`;它依赖的 `net` 由 `http` 自己的 manifest 带入。本包声明 `ocaml`、`c`、`typescript` 三个目标。
 
 ## 客户端
 

@@ -10,7 +10,7 @@ IEEE binary64 值与它的十进制文本之间的精确转换,中途不经过�
 require "float"
 ```
 
-标准库随编译器一起发布:`require "float"` 无需在 `package.emo` 中声明。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "float"` 需要在 manifest 的 `deps` 块里钉上 `"float" = "0.1.0"`。
 
 ## 表面
 

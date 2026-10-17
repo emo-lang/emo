@@ -16,7 +16,7 @@ incrementally shippable steps — one file per step, executed in order.
   passing on an effects-based scheduler, plus the direct-style networking API.
 - **M4 — Compilation targets (steps 14–19):** native code generation, then
   wasm / TypeScript / BEAM / riscv64.
-- **M13 — The standard library (steps 31–38):** the bundled stdlib
+- **M11 — The standard library (steps 31–38):** the bundled stdlib
   packages — `json`, `yaml`, `xml`, `os`, `base64`, `slog`, `bufio`, and the
   native-binding `sqlite3` — each with a full API reference and a runnable
   golden, on every target it declares. (The full milestone list is in
@@ -59,12 +59,11 @@ incrementally shippable steps — one file per step, executed in order.
   `README.md` *before* implementing that task.
 - Strictness first: when in doubt, reject early with a clear diagnostic. No
   auto-fixing, no implicit additions, no silent fallbacks.
-- Loop forms are being added: the decided direction (2026-10-06) is to keep
-  guaranteed tail calls *and* add C-style `for`/`while`; the surface is settled
-  (README, Syntax and `CHECK.md`) and implementation is unscheduled. The Go pre-1.22
-  loop-capture trap is already prevented — a `var` cannot escape its block,
-  and capturing one in a closure that outlives the block is a compile error
-  (README, Syntax) — so the earlier fresh-binding caution is subsumed.
+- Loop forms landed: C-style `for`/`while` run on the interpreter and every
+  target (steps 26–27), keeping guaranteed tail calls (README, Syntax and
+  `CHECK.md`). The Go pre-1.22 loop-capture trap is prevented — a `var`
+  cannot escape its block, and capturing one in a closure that outlives the
+  block is a compile error (README, Syntax).
 - Compiler sources live under `src/` as dune libraries; `website/` is the
   docs site and unrelated to the compiler. Acceptance example programs live
   under `examples/` once step 07 creates it.
@@ -87,17 +86,22 @@ incrementally shippable steps — one file per step, executed in order.
 | 12 | Processes & message passing | done |
 | 13 | Networking library | done |
 | 14 | Native backend | done |
-| 15 | Other targets (wasm / TS / BEAM / riscv64) | in progress (TS, Wasm promoted) |
-| 16 | Wasm target (WasmGC) | in progress |
-| 17 | TypeScript target | in progress |
+| 15 | Other targets (wasm / TS / BEAM / riscv64) | in progress — all four targets promoted to their own steps (16–19); T15.2, the decision trail, open |
+| 16 | Wasm target (WasmGC) | in progress — T16.5 (the WASI and IO audit) open |
+| 17 | TypeScript target | in progress — T17.2 and T17.5 open |
 | 18 | BEAM target (Core Erlang) | done |
 | 19 | RISC-V target (freestanding RV64) | done (T19.1–T19.4; the `%g` float to-string lands as its own follow-up) |
 | 20 | The systems layer (wasm runtime) | done |
 | 21 | Wasm runtime: decoder & validator | done |
-| 22 | Wasm runtime: interpreter core & spec goldens | in progress (tasks written) |
+| 22 | Wasm runtime: interpreter core & spec goldens | done — 25135 runs claimed, 0 pending, 0 failed; a smoke slice rides `dune test` |
 | 23 | C target (emit C) | done (close-out recorded; the native → ocaml rename landed; aligned 2026-10-10 — Void foreign returns, `emo_defs.h`, content-keyed caches, cross-module calls and types) |
 | 24 | Toolchain distribution & release | done (M7 complete) |
 | 25 | Target independence (runtimes decoupled from the host) | done (M8 complete; every runtime embedded, the ocaml target installation-independent) |
+| 26 | Loop surface: lexer, parser, checker, interpreter | done |
+| 27 | Loops on every target: IR and the six backends | done |
+| 28 | Error-handling surface: `R`, binding patterns, raise discipline | done |
+| 29 | The stdlib migration: tuples replace raises, package by package | done |
+| 30 | Checker strictness: Box typing and cross-module value signatures | done |
 | 31 | The standard library: `json` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — the landing flushed the c Bytes-arm guess on gradual receivers and the vtable's `_q`/`?` spelling); wasm, beam wait on their own capability walls |
 | 32 | The standard library: `yaml` | done on interpreter/ocaml/typescript/c (2026-10-10 on c — flushed the trampoline's cluster-scope collision); wasm, beam wait on their own capability walls |
 | 33 | The standard library: `xml` | done on interpreter/ocaml/typescript/c; the cross-module-types gate resolved (2026-10-10); wasm, beam wait on their own capability walls |
@@ -106,8 +110,18 @@ incrementally shippable steps — one file per step, executed in order.
 | 36 | The standard library: `slog` | done on interpreter/ocaml/c/typescript; wasm, beam wait on `Map` support (attrs are a Map); loggers are values, no state, no clock — the first package whose golden needed zero compiler changes |
 | 37 | The standard library: `bufio` | done on interpreter/ocaml/c; the package rides `os`, so wasm/beam/typescript refuse it at resolution like `os` does |
 | 38 | The standard library: `sqlite3` | done on c — the first native-binding package: the manifest's `link` field and package-carried C sources land with it; every other target refuses at resolution, the interpreter at run time (E3009) |
-| 48 | EmoUI | planned — decisions settled 2026-10-14 (`docs/emo-ui.md`, `plan/step-48-emo-ui.md`); the compiler-side gates are the native packaging mechanism, the browser runtime path, and terminal raw mode; the native backends are demo scale until step 49 lands |
-| 49 | Value-family reclamation | planned — scheduled 2026-10-14 after the arena-scope spike ruled out region reclamation (`spike/arena-scope`, `CHECK.md`); direction settled, nothing implemented |
+| 39 | Compiler and language enablers for plotting | planned |
+| 40 | T0 completion: continuous axes and the remaining marks | planned |
+| 41 | Figure fidelity: scales, domains, legend, grid, themes, color | planned |
+| 42 | Table and channels | planned |
+| 43 | T1 dataset charts | planned |
+| 44 | Terminal renderer | planned |
+| 45 | PNG renderer | planned |
+| 46 | Unit test framework: `emo test` and the `expect_*` builtins | done |
+| 47 | The standard library: `csv` | done |
+| 48 | EmoUI | in progress — T48.1–T48.4 landed (portable core, Elm loop, debug and TUI backends); T48.5–T48.13 open (`docs/emo-ui.md`, `plan/step-48-emo-ui.md`); the native backends are demo scale until step 49 lands |
+| 49 | Value-family reclamation | in progress — T49.3 landed (`ArrayBuilder`); T49.1, T49.2, T49.4, and T49.5 open (`spike/arena-scope`, `CHECK.md`) |
+| 50 | Cross-target conformance | done — `foreign def` refusal, snapshot `send`, and the raising child process settled (`CHECK.md`) |
 | 51 | TLS on the `c` target | planned — the three `net` TLS builtins land in the C runtime against the system OpenSSL/LibreSSL; decisions settled 2026-10-17 (`CHECK.md`, `plan/step-51-tls-c-target.md`); direction settled, nothing implemented |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

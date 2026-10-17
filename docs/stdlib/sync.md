@@ -20,8 +20,9 @@ to guard. A wait group guards nothing; it only counts.
 require "sync"
 ```
 
-The standard library ships with the compiler: `require "sync"` needs no
-`package.emo` entry.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "sync"` needs `"sync" = "0.1.0"` in
+the manifest's `deps` block.
 
 The wait group is pure message passing over primitives every target
 implements, so the package declares all five targets.

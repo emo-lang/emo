@@ -8,7 +8,7 @@
 require "math"
 ```
 
-标准库随编译器一起发布:`require "math"` 无需在 `package.emo` 中声明。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "math"` 需要在 manifest 的 `deps` 块里钉上 `"math" = "0.1.0"`。
 
 ## 常量
 

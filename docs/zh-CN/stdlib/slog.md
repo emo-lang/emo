@@ -15,7 +15,7 @@
 require "slog"
 ```
 
-标准库随编译器一起发布:`require "slog"` 无需在 `package.emo` 中声明。本包声明 `ocaml`、`c`、`typescript` 三个目标。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "slog"` 需要在 manifest 的 `deps` 块里钉上 `"slog" = "0.1.0"`。本包声明 `ocaml`、`c`、`typescript` 三个目标。
 
 声明的目标就是今天可用的目标:wasm 和 beam 运行时尚未实现 `Map`,
 而 attrs 是一个 `Map`。它们落地之日,清单随之加宽。

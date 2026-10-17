@@ -10,7 +10,7 @@
 require "net"
 ```
 
-标准库随编译器一起发布:`require "net"` 无需在 `package.emo` 中声明。本包声明 `ocaml`、`c`、`typescript` 三个目标。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "net"` 需要在 manifest 的 `deps` 块里钉上 `"net" = "0.1.0"`。本包声明 `ocaml`、`c`、`typescript` 三个目标。
 
 ## 函数
 

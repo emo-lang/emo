@@ -15,9 +15,10 @@ browser or bytecode targets is a package error before any code runs.
 require "os"
 ```
 
-The standard library ships with the compiler: `require "os"` needs no
-`package.emo` entry. The package declares the `ocaml` and `c` targets,
-so a build for another target refuses it.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "os"` needs `"os" = "0.1.0"` in the
+manifest's `deps` block. The package declares the `ocaml` and `c`
+targets, so a build for another target refuses it.
 
 ## Errors
 

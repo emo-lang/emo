@@ -1,12 +1,19 @@
 # 标准库
 
-标准库是编译器自带的一组包:它们随编译器内置的 registry 一起分发,像普通依赖一样参与解析,并且无需在 `package.emo` 里声明。使用一个包就是 `require`:
+标准库是编译器自带的一组包:它们随编译器内置的 registry 一起分发,像普通依赖一样参与解析——每个包都带版本,并且都要在 manifest 的 `deps` 块里钉住。使用一个包,就是这条钉住的版本加上 `require`:
+
+```emo
+// package.emo
+deps {
+  "json" = "0.1.0"
+}
+```
 
 ```emo
 require "json"
 ```
 
-不带 scope 的 `require` 命名的是标准库包,编译器会自动解析它——以及它自身依赖的标准库包。带 scope 的第三方包仍与 manifest 严格配对:必须钉在 `deps` 下。包的 `targets` 不含本次构建目标的,在解析阶段直接拒绝——格式类包在所有目标上运行,系统类包只声明拥有 Unix 形态宿主的目标,网络类包声明 `ocaml`、`c` 与 `typescript`。
+manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指出要补哪一行;被引入的包自身依赖什么,由它自己的 manifest 带入。包的 `targets` 不含本次构建目标的,在解析阶段直接拒绝——格式类包在所有目标上运行,系统类包只声明拥有 Unix 形态宿主的目标,网络类包声明 `ocaml`、`c` 与 `typescript`。
 
 两条约定贯穿所有包:
 
@@ -143,7 +150,7 @@ w.reset(sink)   // 先刷出,再改挂到 sink
 
 流结束是一个值——空字符串——绝不是异常;`read_line` 保留终止符,空行因此始终可以和流结束区分。`Writer` 在流结束前必须 `flush`:缓冲里的尾巴属于调用方。
 
-目标:`["ocaml", "c"]`(构建在 `os` 之上,清单里一起固定)。参考:[`docs/zh-CN/stdlib/bufio.md`](stdlib/bufio.md) · 示例:`examples/bufio_demo`。
+目标:`["ocaml", "c"]`(构建在 `os` 之上,由它自己的 manifest 固定)。参考:[`docs/zh-CN/stdlib/bufio.md`](stdlib/bufio.md) · 示例:`examples/bufio_demo`。
 
 ## net 包
 
@@ -229,7 +236,7 @@ http.serve_requests(listener) -> (req HttpRequest) {
 }
 ```
 
-目标:`["ocaml", "c", "typescript"]`(清单里同时固定 `net`)。在 `c` 上它只覆盖 TCP,继承自 `net`。参考:[`docs/zh-CN/stdlib/http.md`](stdlib/http.md) · 示例:`examples/http_roundtrip`。
+目标:`["ocaml", "c", "typescript"]`(构建在 `net` 之上,由它自己的 manifest 固定)。在 `c` 上它只覆盖 TCP,继承自 `net`。参考:[`docs/zh-CN/stdlib/http.md`](stdlib/http.md) · 示例:`examples/http_roundtrip`。
 
 ## json 包
 

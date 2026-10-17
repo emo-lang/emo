@@ -115,7 +115,7 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 - [`docs/zh-CN/toolchain-distribution.md`](toolchain-distribution.md) —— 工具链如何分发：OCaml 依赖、`emo doctor`、以及推迟 `c` 后端。
 - [`docs/zh-CN/runtime-and-freestanding.md`](runtime-and-freestanding.md) —— "runtime" 与 "freestanding" 各指什么,以及它们如何对应 Emo 的各目标。
 - [`docs/zh-CN/numeric-width.md`](numeric-width.md) —— 所有目标上显式位宽的数值类型。
-- [`docs/var-escape.md`](../var-escape.md) —— `var` 逃逸规则(暂无中文)。
+- [`docs/zh-CN/var-escape.md`](var-escape.md) —— `var` 逃逸规则。
 - [`docs/zh-CN/stdlib.md`](stdlib.md) —— 标准库导览:每个包的用途与对外接口。
 - [`docs/zh-CN/stdlib/`](stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`json`、`yaml`、`xml`、`base64`、`csv`、`float`、`math`、`plot`、`slog`、`sync`、`sql`、`sqlite3`)。
 - [`docs/zh-CN/lsp.md`](lsp.md) —— 语言服务器与 VS Code 扩展。

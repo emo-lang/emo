@@ -12,8 +12,9 @@ byte for byte.
 require "sql"
 ```
 
-The standard library ships with the compiler: `require "sql"` needs no
-`package.emo` entry.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "sql"` needs `"sql" = "0.1.0"` in
+the manifest's `deps` block.
 
 ## The tree
 
