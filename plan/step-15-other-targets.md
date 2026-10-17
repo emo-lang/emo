@@ -1,24 +1,31 @@
 # Step 15 — Other Targets: Wasm, TypeScript, BEAM, RISC-V Bare Metal
 
 **Milestone:** M4 roadmap · **Prereq:** steps 01–14 (per target, below) ·
-**Status:** not started
+**Status:** complete (2026-10-17 — all four targets promoted to steps
+16–19 and their decision trails recorded; T16.5's WASI/IO audit
+continues in `plan/step-16-wasm.md`)
 
 ## Goal
 
 The remaining README compilation targets, each a sub-project with its own
-prerequisites and risk profile. Unlike steps 01–14 these are **roadmap
-entries, not execution-ready plans** — each gets its own detailed step file
-when scheduled, following the same format. Order within the step is by
-recommended priority.
+prerequisites and risk profile. This file began as the roadmap entry —
+not an execution-ready plan — for all four, with the recommendation to
+schedule each as its own detailed step file in the same format. That
+split has happened: Wasm is step 16, TypeScript step 17, BEAM step 18,
+and riscv64 step 19. The notes below stay as the design record for the
+questions the roadmap posed, and the promotion trail at the end records
+where each was settled.
 
-## WebAssembly (recommended first)
+## WebAssembly
 
 - **Strategy:** compile the step 14 IR to Wasm; start with WASI
   (command-line programs, filesystem, sockets via WASI where available),
   browser embedding (`fetch` / WebSocket bridging) after.
 - **Key decisions:** WasmGC vs a custom GC for Emo values (WasmGC aligns
   with every-value-carries-a-tag only partially — struct-of-payload designs
-  need care); module loading under the WASI sandbox.
+  need care); module loading under the WASI sandbox. *Settled: WasmGC,
+  no custom heap; the WASI/IO question is T16.5 in step 16 — see the
+  promotion trail.*
 - **Prereq:** IR from step 14; stdlib target metadata extended with
   `"wasm"`.
 - **Risk:** GC strategy is the whole game; prototype both before choosing.
@@ -32,6 +39,8 @@ recommended priority.
 - **Key decisions:** the direct-style problem — step 13's blocking calls
   must map onto the event loop (Promise-returning internals with an
   ergonomic surface); how processes map to workers or cooperative tasks.
+  *Settled: lowering from the IR, a uniform async mapping, and
+  cooperative tasks (step 17) — see the promotion trail.*
 - **Prereq:** step 09 (checker feeds type declarations); no IR dependency — the
   AST suffices, or reuse IR if it simplifies.
 - **Risk:** function coloring leaks backwards from TS's ecosystem; keep
@@ -45,7 +54,9 @@ recommended priority.
 - **Key decisions:** value semantics for classes vs Erlang maps;
   exceptions → errors; tail calls are native; the mutable cell →
   process-dictionary-free design (an ordinary process-held state pattern),
-  snapshots already match BEAM copying.
+  snapshots already match BEAM copying. *Settled in step 18's Scope and
+  "Decisions settled here": instances are tagged maps, and Box is a
+  holding process.*
 - **Prereq:** steps 09 and 11 (semantics frozen); stdlib surface audit for
   BEAM-unsupported operations.
 - **Risk:** low semantically, moderate in tooling (rebar/OTP integration,
@@ -89,10 +100,11 @@ of re-deriving it.
   no-hardware dev loop), not part of the target — the same image runs
   on real RISC-V hardware (decided 2026-10-05, replacing the earlier
   `qemu` name).
-- Declaration-only today: `known_targets` in `emo_pkg.ml` admits
-  `"riscv64"` for manifest resolution; no backend exists. `riscv32`
-  does not exist and is not scheduled — it follows `riscv64` only when
-  real hardware demands it.
+- At assessment time (2026-10-05) it was declaration-only: `known_targets`
+  in `emo_pkg.ml` admitted `"riscv64"` for manifest resolution, with no
+  backend. The backend landed in step 19 (2026-10-11); `riscv32` does
+  not exist and is not scheduled — it follows `riscv64` only when real
+  hardware demands it.
 - Freestanding contract: no OS, no libc, no default runtime; allocator,
   GC, and scheduler are replaceable components; `core` is the only
   library layer available to kernel code; `peek`/`poke` are the
@@ -120,10 +132,12 @@ of re-deriving it.
   (binary32, per-operation rounding — correctly rounded via a binary64
   ALU) joins later for C `float` FFI, device registers, and memory
   bandwidth.
-- Open decision (tracked in `CHECK.md`): the native backend's route to
-  64-bit integer arithmetic on OCaml's 63-bit `int` — emit OCaml's
-  boxed `Int64` vs unboxed two-word hi/lo emulation. The RV32 codegen
-  shares the hi/lo technique, so the work compounds.
+- Settled (2026-10-11, `CHECK.md` "Numeric width"): the native
+  backend's route to 64-bit integer arithmetic on OCaml's 63-bit `int`
+  is boxed `Int64` — already the shipped route. The unboxed two-word
+  hi/lo emulation was not taken; its RV32 motivation is moot now that
+  the freestanding target is `riscv64` with native 64-bit registers, and
+  the `c` target answers the performance question.
 - FFI relevance: the width types are the landing types `foreign def`
   needs on bare metal (`int64_t`/`int32_t`/`double`/`float`); today
   only `Float`/`String`/`Bool` cross (E4200 otherwise).
@@ -272,21 +286,72 @@ what already exists (firmware, driver code, legacy libraries).
       the full standard format (goal / scope / tasks / acceptance) and
       update `plan/README.md`'s status table. (riscv64 →
       `plan/step-19-riscv64.md`, 2026-10-05.)
-- [ ] Record here which key decision each target settled and where
-      (README / CHECK.md / docs) — keep the trail.
+- [x] Record here which key decision each target settled and where
+      (README / CHECK.md / docs) — keep the trail. (Done 2026-10-17:
+      four entries in the promotion trail below, one per target, each
+      pointing at its step file's decisions and at the cross-cutting
+      `README.md` / `CHECK.md` / `docs/` records.)
 
 ## Promotion trail
 
+Every target this file scheduled now has its own step file, and every
+step file carries a "Decisions settled here (the trail)" section. This
+section records, per target, the decisions that closed the roadmap
+questions above and where each one lives. Cross-cutting decisions that
+belong to the language rather than one backend stay in `CHECK.md` /
+`docs/` and are linked from the entries.
+
 - **TypeScript → `plan/step-17-typescript.md`** (scheduled 2026-10-02,
-  first target). Its key decisions are settled in that file's
-  "Decisions settled here": lowering from the IR (superseding this
-  file's earlier "the AST suffices" note), uniform async mapping, and
-  cooperative tasks.
+  first target; step 17 complete). That file's "Decisions settled
+  here" records: lowering from the IR, not the AST (superseding this
+  file's earlier "the AST suffices" note); the uniform
+  `async`/`await` mapping with no coloring analysis; cooperative tasks
+  rather than workers; and networking over Node's
+  `net`/`dgram`/`tls`/`dns` modules. The value model (tagged JS
+  objects; JS numbers with the 2^53 integer-precision caveat) and the
+  direct-style/event-loop mapping are in its Scope. Target naming and
+  the resolution gate are the `CHECK.md` "Backend naming" entry; the
+  manifest `targets` gate itself is T17.5's refusing/accepting tests.
 - **Wasm → `plan/step-16-wasm.md`** (scheduled 2026-10-02, second
-  target). The GC question is settled: **WasmGC** — structs and arrays
-  with RTT dispatch, no custom heap. The i31-vs-i64 and unboxing
-  details are that file's recorded follow-ups. BEAM is next in the
-  recommended order; the bare-metal `riscv64` target stays last.
+  target). That file's "Decisions settled here" records: GC =
+  **WasmGC** — Emo values are WasmGC structs and arrays with RTT
+  dispatch, no custom heap and no shadow stack (this closes the
+  roadmap's "prototype both" question); Int boxes an i64 rather than
+  i31; binary `.wasm` and text `.wat` are serialized from one
+  intermediate with no external assembler; Node is the reference host.
+  The remaining WASI and IO question is T16.5 in that file — the one
+  open task among M4's four target steps.
+- **BEAM → `plan/step-18-beam.md`** (scheduled after TypeScript and
+  Wasm, the recommended order; step 18 complete). Its decisions are
+  recorded in Scope, closing the roadmap questions directly: emission
+  as Core Erlang text assembled by the pinned OTP's `erlc`, not direct
+  `.beam`; one BEAM module per program with mangled atoms; Int as a
+  masked wrap-around i64; String as a UTF-8 binary (data never in
+  atoms); Array as a tagged immutable list; enums as
+  `{emo_enum, Name, Member}`; instances as
+  `{emo_inst, Class, #{field => Value}}`, so map equality is already
+  Emo's content equality (the "class value semantics vs Erlang maps"
+  question); Box as a holding process; `==` anchored to tagged
+  structural equality; processes mapped onto
+  `spawn`/`!`/selective receive/exit. net/http and `foreign def` are
+  explicitly out, each pending its own decision. Cross-target value
+  rules — error handling, type layering, numeric width — are the
+  corresponding `CHECK.md` entries.
+- **riscv64 → `plan/step-19-riscv64.md`** (scheduled 2026-10-05,
+  last; step 19 complete with the `%g` follow-up recorded). Its
+  "Decisions settled here" plus the T19.1–T19.3 trails record: boot
+  profile A (OpenSBI-hosted S-mode at 0x80200000, no UART driver;
+  profile B is the later kernel-ownership step — this fixes the M1
+  line above); dynamic values as tagged words with boxed
+  `Int64`/`Float64` two-word cells (NaN-boxing rejected); four-bit tags
+  with 16-byte alignment and field access on the untagged pointer; a
+  bump heap that is GC-ready by construction; the psABI as Emo's
+  internal convention; a whole-program single artifact. The target's
+  identity (`riscv64`, QEMU as default runner not part of the target)
+  and the target-independent numeric-width rule are recorded in
+  `README.md` and `docs/numeric-width.md`; the emission-time capability
+  refusals are in `CHECK.md` ("Type layering", "`foreign def` on
+  non-native targets").
 
 ## Acceptance
 
@@ -296,5 +361,8 @@ what already exists (firmware, driver code, legacy libraries).
 
 ## Open design items
 
-- None block this file; every target's key decisions are listed above and
-  gate their own promotion to a full step.
+- None. All four targets are promoted to their own steps and their key
+  decisions are recorded in the promotion trail above. The open
+  follow-ups live inside those steps: T16.5 (the WASI and IO audit) in
+  `plan/step-16-wasm.md`, and the riscv64 `%g` float to-string recorded
+  in `plan/step-19-riscv64.md`'s close-out.

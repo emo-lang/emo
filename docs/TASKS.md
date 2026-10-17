@@ -337,14 +337,14 @@ Close-out: Stage A emits OCaml source (tradeoff documented in `docs/ocaml-backen
 
 ### Step 15 — Other targets: Wasm, TypeScript, BEAM, RISC-V · `plan/step-15-other-targets.md`
 
-**Prereq:** Steps 01–14 (per target). These are roadmap entries, not execution-ready plans — each target gets its own step file when scheduled. Recommended order: Wasm → TypeScript → BEAM → RISC-V.
+**Prereq:** Steps 01–14 (per target). These began as roadmap entries, not execution-ready plans; all four are now promoted to their own step files — TypeScript first (the lowest toolchain risk, 2026-10-02), then Wasm, BEAM, and riscv64.
 
 - [x] **T15.1** — When a target is scheduled, split it into `step-NN-<target>.md` with the full standard format (goal / scope / tasks / acceptance) and update `plan/README.md`'s status table; its tasks continue the numbering (`T17.*`, …).
-- [ ] **T15.2** — Record which key decision each target settled and where (README / `CHECK.md` / docs) — keep the trail.
+- [x] **T15.2** — Record which key decision each target settled and where (README / `CHECK.md` / docs) — keep the trail. (Done 2026-10-17: the promotion trail below now covers all four targets and points at each step file's "Decisions settled here" section plus the cross-cutting `README.md` / `CHECK.md` / `docs/numeric-width.md` records.)
 
-Key decisions to settle per target: Wasm — WasmGC vs custom GC (prototype both); TypeScript — direct-style mapping onto the event loop, process mapping; BEAM — class value semantics vs Erlang maps; RISC-V — pluggable runtime, linker scripts (highest risk; pull the `core`-library layering earlier).
+Key decisions each target settled: Wasm — **WasmGC** (structs and arrays with RTT dispatch, no custom heap; the custom-GC branch removed) and Int boxing an i64; TypeScript — lowering from the IR, a uniform `async`/`await` mapping with no coloring analysis, and cooperative tasks rather than workers; BEAM — class instances as tagged maps (map equality is Emo's content equality), Core Erlang text assembled by `erlc`, and processes mapped natively; riscv64 — boot profile A, tagged-word dynamic values with boxed `Int64`/`Float64`, the psABI as Emo's internal convention, and a whole-program single artifact.
 
-Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, first target; its key decisions — IR lowering, uniform async, cooperative tasks — are settled in that file). **Wasm → `plan/step-16-wasm.md`** (2026-10-02, second target; the GC question is settled — WasmGC, structs and arrays with RTT dispatch, no custom heap). BEAM is next in the recommended order.
+Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, first target; its key decisions — IR lowering, uniform async, cooperative tasks, Node networking — are settled in that file). **Wasm → `plan/step-16-wasm.md`** (2026-10-02, second target; GC settled as WasmGC, structs and arrays with RTT dispatch, no custom heap; T16.5's WASI/IO audit remains open there). **BEAM → `plan/step-18-beam.md`** (Core Erlang emission, the value model, native process mapping; net/http and FFI explicitly out). **riscv64 → `plan/step-19-riscv64.md`** (2026-10-05, last; per-task decision trails, close-out recorded, the `%g` float to-string is the one follow-up). Full pointers, including `CHECK.md`'s cross-target entries, are in `plan/step-15-other-targets.md`.
 
 ### Step 16 — Wasm target (WasmGC) · `plan/step-16-wasm.md`
 

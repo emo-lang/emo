@@ -282,14 +282,14 @@
 
 ### 步骤 15 — 其余目标:wasm、TypeScript、BEAM、riscv64 裸机 · `plan/step-15-other-targets.md`
 
-**前置:** 步骤 01–14(按目标)。这些是路线条目,不是可直接执行的计划——每个目标排期时独立成步骤文件。推荐顺序:Wasm → TypeScript → BEAM → riscv64。
+**前置:** 步骤 01–14(按目标)。这些最初是路线条目,不是可直接执行的计划;四个目标现在都已拆成独立步骤文件——TypeScript 最先(工具链风险最低,2026-10-02),然后是 Wasm、BEAM 和 riscv64。
 
 - [x] **T15.1** — 某目标排期时,把它拆成完整标准格式(目标 / 范围 / 任务 / 验收)的 `step-NN-<target>.md`,并更新 `plan/README.md` 的状态表;其任务延续编号(`T17.*`,……)。
-- [ ] **T15.2** — 记录每个目标落定了哪些关键决策、落定在哪(README / `CHECK.md` / docs)——保留轨迹。
+- [x] **T15.2** — 记录每个目标落定了哪些关键决策、落定在哪(README / `CHECK.md` / docs)——保留轨迹。(2026-10-17 完成:下面的晋升轨迹已覆盖全部四个目标,并指向各步骤文件的「Decisions settled here」小节以及 `README.md` / `CHECK.md` / `docs/numeric-width.md` 中的跨目标记录。)
 
-各目标需落定的关键决策:Wasm —— WasmGC vs 自定义 GC(两者都先做原型);TypeScript —— 直风格到事件循环的映射、进程映射;BEAM —— 类的值语义 vs Erlang maps;riscv64 —— 可插拔运行时、链接脚本(风险最高;`core` 库分层应提前)。
+各目标落定的关键决策:Wasm —— **WasmGC**(结构体与数组 + RTT 分派,无自定义堆;自定义 GC 分支已排除),Int 装箱为 i64;TypeScript —— 从 IR 降级,统一 `async`/`await` 映射、不做着色分析,协作式任务而非 workers;BEAM —— 类实例为带标签的 map(map 相等即 Emo 的内容相等),Core Erlang 文本由 `erlc` 汇编,进程原生映射;riscv64 —— 启动剖面 A,标签字动态值、`Int64`/`Float64` 装箱,psABI 作为 Emo 的内部约定,整程序单一产物。
 
-晋升轨迹:**TypeScript → `plan/step-17-typescript.md`**(2026-10-02,首个目标;其关键决策——IR 降级、统一 async、协作式任务——已在那个文件落定)。**Wasm → `plan/step-16-wasm.md`**(2026-10-02,第二个目标;GC 问题已落定——WasmGC,结构体与数组 + RTT 分派,无自定义堆)。推荐顺序中下一个是 BEAM。
+晋升轨迹:**TypeScript → `plan/step-17-typescript.md`**(2026-10-02,首个目标;其关键决策——IR 降级、统一 async、协作式任务、Node 网络——已在那个文件落定)。**Wasm → `plan/step-16-wasm.md`**(2026-10-02,第二个目标;GC 已落定为 WasmGC,结构体与数组 + RTT 分派,无自定义堆;该文件的 T16.5 WASI/IO 审计仍未完成)。**BEAM → `plan/step-18-beam.md`**(Core Erlang 发射、值模型、原生进程映射;net/http 与 FFI 明确排除)。**riscv64 → `plan/step-19-riscv64.md`**(2026-10-05,最后一个;逐任务决策轨迹与收尾已记录,`%g` 浮点转字符串是唯一后续项)。完整指针(含 `CHECK.md` 的跨目标条目)在 `plan/step-15-other-targets.md`。
 
 ### 步骤 16 — Wasm 目标(WasmGC)· `plan/step-16-wasm.md`
 

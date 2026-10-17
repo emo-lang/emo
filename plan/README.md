@@ -86,7 +86,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 12 | Processes & message passing | done |
 | 13 | Networking library | done |
 | 14 | Native backend | done |
-| 15 | Other targets (wasm / TS / BEAM / riscv64) | in progress — all four targets promoted to their own steps (16–19); T15.2, the decision trail, open |
+| 15 | Other targets (wasm / TS / BEAM / riscv64) | done — all four targets promoted to their own steps (16–19); the decision trail is recorded in `plan/step-15-other-targets.md` |
 | 16 | Wasm target (WasmGC) | in progress — T16.5 (the WASI and IO audit) open |
 | 17 | TypeScript target | done |
 | 18 | BEAM target (Core Erlang) | done |
