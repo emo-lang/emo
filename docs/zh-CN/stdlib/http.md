@@ -122,7 +122,7 @@ case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/
 
 ## 限制
 
-- **三个目标。** 包声明了 `targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期就会被拒绝。在 `c` 上它只覆盖 TCP,继承自 `net`。
+- **三个目标。** 包声明了 `targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期就会被拒绝。在 `c` 上它只覆盖 TCP,继承自 `net`。在 `wasm` 上它继承 `net` 的宿主限制:没有可用的 socket API 能到达核心模块(`plan/step-16-wasm.md`,T16.5)。
 - **无连接池。** 每个请求一条 TCP 连接,交换完即关。
 - **不跟随重定向。** 3xx 响应原样返回。
 - **HTTP/1.1,`Content-Length`  body。** 没有 `Content-Length` 头的请求与响应,body 按连接剩余字节读取(客户端)或视为空(服务端);不支持 chunked 传输编码。

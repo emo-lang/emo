@@ -157,7 +157,9 @@ case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/
 
 - **Three targets.** The package declares `targets = ["ocaml", "c", "typescript"]`;
   resolution refuses it for wasm, BEAM, and riscv64 builds. On `c` it is
-  TCP-only, inherited from `net`.
+  TCP-only, inherited from `net`. On `wasm` it shares `net`'s host
+  limitation: no usable socket API reaches the core module
+  (`plan/step-16-wasm.md`, T16.5).
 - **No connection pooling.** One TCP connection per request, closed after
   the exchange.
 - **No redirect following.** 3xx responses are returned as-is.

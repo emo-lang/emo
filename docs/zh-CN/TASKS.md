@@ -289,7 +289,7 @@
 
 各目标落定的关键决策:Wasm —— **WasmGC**(结构体与数组 + RTT 分派,无自定义堆;自定义 GC 分支已排除),Int 装箱为 i64;TypeScript —— 从 IR 降级,统一 `async`/`await` 映射、不做着色分析,协作式任务而非 workers;BEAM —— 类实例为带标签的 map(map 相等即 Emo 的内容相等),Core Erlang 文本由 `erlc` 汇编,进程原生映射;riscv64 —— 启动剖面 A,标签字动态值、`Int64`/`Float64` 装箱,psABI 作为 Emo 的内部约定,整程序单一产物。
 
-晋升轨迹:**TypeScript → `plan/step-17-typescript.md`**(2026-10-02,首个目标;其关键决策——IR 降级、统一 async、协作式任务、Node 网络——已在那个文件落定)。**Wasm → `plan/step-16-wasm.md`**(2026-10-02,第二个目标;GC 已落定为 WasmGC,结构体与数组 + RTT 分派,无自定义堆;该文件的 T16.5 WASI/IO 审计仍未完成)。**BEAM → `plan/step-18-beam.md`**(Core Erlang 发射、值模型、原生进程映射;net/http 与 FFI 明确排除)。**riscv64 → `plan/step-19-riscv64.md`**(2026-10-05,最后一个;逐任务决策轨迹与收尾已记录,`%g` 浮点转字符串是唯一后续项)。完整指针(含 `CHECK.md` 的跨目标条目)在 `plan/step-15-other-targets.md`。
+晋升轨迹:**TypeScript → `plan/step-17-typescript.md`**(2026-10-02,首个目标;其关键决策——IR 降级、统一 async、协作式任务、Node 网络——已在那个文件落定)。**Wasm → `plan/step-16-wasm.md`**(2026-10-02,第二个目标;GC 已落定为 WasmGC,结构体与数组 + RTT 分派,无自定义堆;T16.5 的 WASI/IO 审计以拒绝 `net`/`http` 收尾——参考宿主上没有可用的 socket 路径)。**BEAM → `plan/step-18-beam.md`**(Core Erlang 发射、值模型、原生进程映射;net/http 与 FFI 明确排除)。**riscv64 → `plan/step-19-riscv64.md`**(2026-10-05,最后一个;逐任务决策轨迹与收尾已记录,`%g` 浮点转字符串是唯一后续项)。完整指针(含 `CHECK.md` 的跨目标条目)在 `plan/step-15-other-targets.md`。
 
 ### 步骤 16 — Wasm 目标(WasmGC)· `plan/step-16-wasm.md`
 
@@ -300,7 +300,9 @@
 - [x] **T16.2** — 完整核心语义:模式与守卫、元组、数组、Box、插值、内容相等、接口窄化、跨文件模块引用。金测:language_tour、shop。
 - [x] **T16.3** — 引导:CI 中的 wasm 子集金测,以及缺 `"wasm"` 包的解析门拒绝测试。
 - [x] **T16.4** — 并发:模块内协作式驱动实现 `do` / `<-` / `receive`,宿主定时器抢占点。金测:pipeline。(以 T16.2 为前置。)
-- [ ] **T16.5** — WASI 与 IO 审计:标准库 `"wasm"` 元数据,以及宿主支持范围内的 io 金测。
+- [x] **T16.5** — WASI 与 IO 审计:标准库 `"wasm"` 元数据,以及宿主支持范围内的 io 金测。(2026-10-17 完成:宿主不支持任何网络金测。Node 的 preview1 WASI 没有可用的 socket 调用,而可用的 socket API——preview2 的 `wasi:sockets`——是组件模型形态,当前核心 WasmGC 模块无法触及;wasmtime 的 preview1 对旧式调用返回 `notsock`。`net`/`http` 因此不声明 `wasm`,在解析期拒绝;纯标准库包已声明 `"wasm"` 并跑在 golden 组里,现由两侧的解析测试钉住。)
+
+**步骤 16 验收达成。** `emo build --target wasm` 产出 `.wasm` 及其 `.wat` 兄弟文件,在 Node 的 WasmGC 下运行;核心子集与纯标准库示例的输出与 `emo run` 逐字节一致;未声明 `"wasm"` 的包在发射前被解析拒绝。WASI/IO 审计以诚实拒绝收尾:参考宿主上无法进行网络金测,IO 包的元数据如实反映了这一点。
 
 ### 步骤 17 — TypeScript 目标 · `plan/step-17-typescript.md`
 

@@ -45,8 +45,8 @@ itself with no external toolchain.
   the resolution gate reads the target (finishing the T17.1 remainder):
   a program requiring a package that does not declare `"wasm"` fails
   resolution before any emission — the standard library packages
-  (net/http) declare only `native`, so IO programs refuse honestly
-  until the WASI audit lands.
+  (net/http) declare three other targets, so IO programs refuse honestly;
+  T16.5's audit confirmed they stay refused.
 - **Examples subset green.** hello_world, fib, objects, language_tour,
   shop — byte-for-byte against the interpreter, in CI.
 
@@ -55,8 +55,9 @@ itself with no external toolchain.
 - Processes and message passing on Wasm (the cooperative scheduler
   needs a driver story — host timers vs. a module-level loop; its own
   task after the core is golden).
-- Networking (WASI sockets audit; stdlib metadata for `wasm` comes with
-  it, not before).
+- Networking (WASI sockets audit — closed by T16.5 in favor of refusing:
+  no socket path reaches the core-module host boundary; stdlib metadata
+  for `wasm` covers the pure packages only).
 - Specialization/unboxing (i31 fast paths for ints, unboxed f64
   registers in fully-typed functions) — recorded, not gated.
 - Browser embedding, JS string builtins, WASI CLI args/env.
@@ -78,9 +79,13 @@ itself with no external toolchain.
 - [x] **T16.4** — Concurrency: a cooperative driver for
       `do` / `<-` / `receive` inside the module, host-timer imports
       for preemption points. Golden: pipeline. (Gated on T16.2.)
-- [ ] **T16.5** — The WASI and IO audit: what `net`/`http` can mean
+- [x] **T16.5** — The WASI and IO audit: what `net`/`http` can mean
       under WASI, stdlib metadata for `"wasm"`, and the io goldens
-      (tcp_echo, http_roundtrip) where the host supports it.
+      (tcp_echo, http_roundtrip) where the host supports it. (Done
+      2026-10-17: the host supports neither — see the trail. `net` and
+      `http` stay undeclared for `wasm`; resolution refuses them before
+      emission. The pure stdlib packages already declare `"wasm"` and
+      run in the golden group; a resolution test now pins both sides.)
 
 ## Acceptance
 
@@ -103,4 +108,23 @@ itself with no external toolchain.
   assembler; the two serializations are cross-checked by the golden
   tests.
 - **Node is the reference host**; wasmtime follows when installed.
+- **No WASI socket path; `net`/`http` stay refused** (T16.5, the
+  audit). Node's `node:wasi` implements `wasi_snapshot_preview1`, whose
+  socket calls are not usable — probing `sock_accept` after
+  `WASI.start` crashed the Node process; wasmtime 49 answers the same
+  legacy call with `notsock`, because the working socket surface is
+  WASI preview2's `wasi:sockets`, which is component-model/WIT shaped
+  and unreachable from the core WasmGC module this backend emits. An
+  off-the-shelf WASI host also cannot supply the module's three `emo`
+  imports (`println`, `abort`, `float_str`). So `tcp_echo` and
+  `http_roundtrip` have no host on the reference toolchain and no io
+  goldens are added; both packages stay out of `targets` and
+  resolution refuses them before emission. Revisit when the Node host
+  gains wasm sockets or the backend grows a preview2/component
+  lowering plus a host shim.
+- **The `wasm` stdlib set is the pure one** (T16.5). `json`, `yaml`,
+  `xml`, `csv`, `base64`, `float`, `math`, `plot`, `sql`, and `sync`
+  declare `"wasm"` and run in the golden group; `slog` waits on `Map`,
+  `os`/`bufio`/`file` on process and file IO, `sqlite3` on FFI, and
+  `net`/`http` on sockets. Nothing is declared optimistically.
 - Promoted from step 15 per its T15.1 (2026-10-02, second target).

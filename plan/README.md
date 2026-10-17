@@ -87,7 +87,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 13 | Networking library | done |
 | 14 | Native backend | done |
 | 15 | Other targets (wasm / TS / BEAM / riscv64) | done — all four targets promoted to their own steps (16–19); the decision trail is recorded in `plan/step-15-other-targets.md` |
-| 16 | Wasm target (WasmGC) | in progress — T16.5 (the WASI and IO audit) open |
+| 16 | Wasm target (WasmGC) | done — T16.5's WASI/IO audit closed in favor of refusing `net`/`http`; the socket API is preview2/component-shaped and no reference host supplies it |
 | 17 | TypeScript target | done |
 | 18 | BEAM target (Core Erlang) | done |
 | 19 | RISC-V target (freestanding RV64) | done (T19.1–T19.4; the `%g` float to-string lands as its own follow-up) |

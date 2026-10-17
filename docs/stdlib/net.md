@@ -224,6 +224,10 @@ case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
 - **Three targets** — `targets = ["ocaml", "c", "typescript"]`; wasm, BEAM,
   and riscv64 builds are refused at resolution time. The `c` target
   implements TCP only; the other operations are refused at runtime there.
+  On `wasm` the refusal is the host's: Node's preview1 WASI has no
+  usable socket API, and the working socket surface — preview2's
+  `wasi:sockets` — is component-model-shaped, out of reach for the core
+  module the backend emits (`plan/step-16-wasm.md`, T16.5).
 - **DNS is forward-only.** On `ocaml` it runs inline in the scheduler loop —
   `getaddrinfo` blocks the loop for its duration; on `typescript` Node's
   resolver runs on the event loop. There is no reverse lookup.

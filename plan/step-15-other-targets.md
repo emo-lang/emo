@@ -2,8 +2,8 @@
 
 **Milestone:** M4 roadmap · **Prereq:** steps 01–14 (per target, below) ·
 **Status:** complete (2026-10-17 — all four targets promoted to steps
-16–19 and their decision trails recorded; T16.5's WASI/IO audit
-continues in `plan/step-16-wasm.md`)
+16–19, their decision trails recorded, and step 16's WASI/IO audit
+closed with an honest refusal)
 
 ## Goal
 
@@ -24,8 +24,8 @@ where each was settled.
 - **Key decisions:** WasmGC vs a custom GC for Emo values (WasmGC aligns
   with every-value-carries-a-tag only partially — struct-of-payload designs
   need care); module loading under the WASI sandbox. *Settled: WasmGC,
-  no custom heap; the WASI/IO question is T16.5 in step 16 — see the
-  promotion trail.*
+  no custom heap; T16.5's WASI/IO audit closed the remaining question in
+  favor of refusing network packages — see the promotion trail.*
 - **Prereq:** IR from step 14; stdlib target metadata extended with
   `"wasm"`.
 - **Risk:** GC strategy is the whole game; prototype both before choosing.
@@ -319,8 +319,10 @@ belong to the language rather than one backend stay in `CHECK.md` /
   roadmap's "prototype both" question); Int boxes an i64 rather than
   i31; binary `.wasm` and text `.wat` are serialized from one
   intermediate with no external assembler; Node is the reference host.
-  The remaining WASI and IO question is T16.5 in that file — the one
-  open task among M4's four target steps.
+  The WASI/IO audit (T16.5) closed in favor of refusing: Node's
+  preview1 WASI has no usable socket calls and preview2's sockets are
+  component-model-shaped, so `net`/`http` stay undeclared and no io
+  goldens are possible on the reference host.
 - **BEAM → `plan/step-18-beam.md`** (scheduled after TypeScript and
   Wasm, the recommended order; step 18 complete). Its decisions are
   recorded in Scope, closing the roadmap questions directly: emission
@@ -362,7 +364,7 @@ belong to the language rather than one backend stay in `CHECK.md` /
 ## Open design items
 
 - None. All four targets are promoted to their own steps and their key
-  decisions are recorded in the promotion trail above. The open
-  follow-ups live inside those steps: T16.5 (the WASI and IO audit) in
-  `plan/step-16-wasm.md`, and the riscv64 `%g` float to-string recorded
-  in `plan/step-19-riscv64.md`'s close-out.
+  decisions are recorded in the promotion trail above. The one open
+  follow-up is the riscv64 `%g` float to-string recorded in
+  `plan/step-19-riscv64.md`'s close-out; step 16's WASI/IO audit closed
+  with the refusal recorded in that step.

@@ -165,7 +165,7 @@ case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
 
 ## 限制
 
-- **三个目标**——`targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期被拒绝。`c` 只实现 TCP,其余操作在 `c` 上运行时被拒绝。
+- **三个目标**——`targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期被拒绝。`c` 只实现 TCP,其余操作在 `c` 上运行时被拒绝。`wasm` 上的拒绝来自宿主:Node 的 preview1 WASI 没有可用的 socket API,而可用的 socket 表面——preview2 的 `wasi:sockets`——是组件模型形态,后端发射的核心模块无法触及(`plan/step-16-wasm.md`,T16.5)。
 - **DNS 只有正向解析。** 在 `ocaml` 上它在调度循环内同步执行——`getaddrinfo` 期间整个循环阻塞;在 `typescript` 上由 Node 的解析器在事件循环中执行。没有反向解析。
 - **TLS 的原因文本来自各自的库**——`ocaml` 上是 OpenSSL,`typescript` 上是 Node;两者的证书验证默认都开启。
 - **UDP 只有非连接的收发**——没有 `connect` 式数据报,没有组播,没有广播助手。
