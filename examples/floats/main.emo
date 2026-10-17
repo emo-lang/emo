@@ -1,0 +1,19 @@
+// Float64 printing, the rule every target shares: integral values
+// below 1e16 get one decimal place, everything else six significant
+// digits with trailing zeros trimmed and the exponent form at the
+// edges.
+//
+//   emo run main.emo
+
+println(2.0)
+println(0.0 - 2.0)
+println(0.0 * (0.0 - 1.0))
+println(1.0 / 4.0)
+println(1.0 / 3.0)
+println(10.0 / 3.0)
+println(1.0 / 100000.0)
+println((0.0 - 1.0) / 100000.0)
+println(1000000.0 + 0.5)
+println(123456789.0 + 0.5)
+println(100.25)
+println("pi is about ${10.0 / 3.0}")

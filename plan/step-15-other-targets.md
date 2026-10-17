@@ -340,7 +340,8 @@ belong to the language rather than one backend stay in `CHECK.md` /
   rules — error handling, type layering, numeric width — are the
   corresponding `CHECK.md` entries.
 - **riscv64 → `plan/step-19-riscv64.md`** (scheduled 2026-10-05,
-  last; step 19 complete with the `%g` follow-up recorded). Its
+  last; step 19 complete, including the `%g` float to-string
+  follow-up that landed 2026-10-17). Its
   "Decisions settled here" plus the T19.1–T19.3 trails record: boot
   profile A (OpenSBI-hosted S-mode at 0x80200000, no UART driver;
   profile B is the later kernel-ownership step — this fixes the M1
@@ -364,7 +365,7 @@ belong to the language rather than one backend stay in `CHECK.md` /
 ## Open design items
 
 - None. All four targets are promoted to their own steps and their key
-  decisions are recorded in the promotion trail above. The one open
-  follow-up is the riscv64 `%g` float to-string recorded in
-  `plan/step-19-riscv64.md`'s close-out; step 16's WASI/IO audit closed
-  with the refusal recorded in that step.
+  decisions are recorded in the promotion trail above. The riscv64 `%g`
+  float to-string follow-up recorded in `plan/step-19-riscv64.md`'s
+  close-out landed 2026-10-17; step 16's WASI/IO audit closed with the
+  refusal recorded in that step.

@@ -289,7 +289,7 @@
 
 各目标落定的关键决策:Wasm —— **WasmGC**(结构体与数组 + RTT 分派,无自定义堆;自定义 GC 分支已排除),Int 装箱为 i64;TypeScript —— 从 IR 降级,统一 `async`/`await` 映射、不做着色分析,协作式任务而非 workers;BEAM —— 类实例为带标签的 map(map 相等即 Emo 的内容相等),Core Erlang 文本由 `erlc` 汇编,进程原生映射;riscv64 —— 启动剖面 A,标签字动态值、`Int64`/`Float64` 装箱,psABI 作为 Emo 的内部约定,整程序单一产物。
 
-晋升轨迹:**TypeScript → `plan/step-17-typescript.md`**(2026-10-02,首个目标;其关键决策——IR 降级、统一 async、协作式任务、Node 网络——已在那个文件落定)。**Wasm → `plan/step-16-wasm.md`**(2026-10-02,第二个目标;GC 已落定为 WasmGC,结构体与数组 + RTT 分派,无自定义堆;T16.5 的 WASI/IO 审计以拒绝 `net`/`http` 收尾——参考宿主上没有可用的 socket 路径)。**BEAM → `plan/step-18-beam.md`**(Core Erlang 发射、值模型、原生进程映射;net/http 与 FFI 明确排除)。**riscv64 → `plan/step-19-riscv64.md`**(2026-10-05,最后一个;逐任务决策轨迹与收尾已记录,`%g` 浮点转字符串是唯一后续项)。完整指针(含 `CHECK.md` 的跨目标条目)在 `plan/step-15-other-targets.md`。
+晋升轨迹:**TypeScript → `plan/step-17-typescript.md`**(2026-10-02,首个目标;其关键决策——IR 降级、统一 async、协作式任务、Node 网络——已在那个文件落定)。**Wasm → `plan/step-16-wasm.md`**(2026-10-02,第二个目标;GC 已落定为 WasmGC,结构体与数组 + RTT 分派,无自定义堆;T16.5 的 WASI/IO 审计以拒绝 `net`/`http` 收尾——参考宿主上没有可用的 socket 路径)。**BEAM → `plan/step-18-beam.md`**(Core Erlang 发射、值模型、原生进程映射;net/http 与 FFI 明确排除)。**riscv64 → `plan/step-19-riscv64.md`**(2026-10-05,最后一个;逐任务决策轨迹与收尾已记录,`%g` 浮点转字符串后续项已于 2026-10-17 落地)。完整指针(含 `CHECK.md` 的跨目标条目)在 `plan/step-15-other-targets.md`。
 
 ### 步骤 16 — Wasm 目标(WasmGC)· `plan/step-16-wasm.md`
 
@@ -334,10 +334,10 @@
 
 - [x] **T19.1** — 后端骨架:`--target riscv64` 管线(发射器模块;CLI 分支写出 `main.s`、调 `as`/`ld` 并附生成的链接脚本;`emo run` 在 QEMU 下引导该 ELF);入口桩、BSS 清零、SBI 控制台。金测:hello_world(串口输出与 `emo run` 逐字节一致)。
 - [x] **T19.2** — 值模型与算术:带标签字的动态表示(`Int64`/`Float64` 装箱单元,Bool/Char 立即数)与 bump 分配器;回绕算术、比较、`if`、整数格式化(`INT64_MIN` 正确);有保证的尾调用编译为 `tail`。金测:fib。
-- [x] **T19.3** — 动态世界数据结构:元组、数组、Box、枚举、实例 + vtable 分派、闭包与一等函数;带守卫的模式;按 `%g` 浮点规则的插值。金测:objects、language_tour。
+- [x] **T19.3** — 动态世界数据结构:元组、数组、Box、枚举、实例 + vtable 分派、闭包与一等函数;带守卫的模式;按 `%g` 浮点规则的插值。金测:objects、language_tour、floats。
 - [x] **T19.4** — 引导:CI `riscv64_examples` 组(运行器装 QEMU + cross-binutils)、缺 `"riscv64"` 包的解析门拒绝测试、发射期拒绝诊断、收尾。
 
-**Step 19 验收达成。** freestanding RV64 后端交付——hello_world、fib、objects、language_tour 在 QEMU 下以逐字节一致的 golden 引导,拒绝响亮,解析门约束包。`%g` 浮点 to_string 作为独立后续落地(plan/step-19 收尾)。
+**Step 19 验收达成。** freestanding RV64 后端交付——hello_world、fib、objects、language_tour、floats 在 QEMU 下以逐字节一致的 golden 引导,拒绝响亮,解析门约束包。`%g` 浮点 to_string 后续项已于 2026-10-17 落地(plan/step-19 收尾)。
 
 ## M5 — Wasm 运行时
 

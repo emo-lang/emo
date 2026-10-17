@@ -90,7 +90,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 16 | Wasm target (WasmGC) | done — T16.5's WASI/IO audit closed in favor of refusing `net`/`http`; the socket API is preview2/component-shaped and no reference host supplies it |
 | 17 | TypeScript target | done |
 | 18 | BEAM target (Core Erlang) | done |
-| 19 | RISC-V target (freestanding RV64) | done (T19.1–T19.4; the `%g` float to-string lands as its own follow-up) |
+| 19 | RISC-V target (freestanding RV64) | done (T19.1–T19.4; the `%g` float to-string follow-up landed 2026-10-17) |
 | 20 | The systems layer (wasm runtime) | done |
 | 21 | Wasm runtime: decoder & validator | done |
 | 22 | Wasm runtime: interpreter core & spec goldens | done — 25135 runs claimed, 0 pending, 0 failed; a smoke slice rides `dune test` |

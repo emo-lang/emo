@@ -344,7 +344,7 @@ Close-out: Stage A emits OCaml source (tradeoff documented in `docs/ocaml-backen
 
 Key decisions each target settled: Wasm — **WasmGC** (structs and arrays with RTT dispatch, no custom heap; the custom-GC branch removed) and Int boxing an i64; TypeScript — lowering from the IR, a uniform `async`/`await` mapping with no coloring analysis, and cooperative tasks rather than workers; BEAM — class instances as tagged maps (map equality is Emo's content equality), Core Erlang text assembled by `erlc`, and processes mapped natively; riscv64 — boot profile A, tagged-word dynamic values with boxed `Int64`/`Float64`, the psABI as Emo's internal convention, and a whole-program single artifact.
 
-Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, first target; its key decisions — IR lowering, uniform async, cooperative tasks, Node networking — are settled in that file). **Wasm → `plan/step-16-wasm.md`** (2026-10-02, second target; GC settled as WasmGC, structs and arrays with RTT dispatch, no custom heap; T16.5's WASI/IO audit closed in favor of refusing `net`/`http` — no usable socket path on the reference host). **BEAM → `plan/step-18-beam.md`** (Core Erlang emission, the value model, native process mapping; net/http and FFI explicitly out). **riscv64 → `plan/step-19-riscv64.md`** (2026-10-05, last; per-task decision trails, close-out recorded, the `%g` float to-string is the one follow-up). Full pointers, including `CHECK.md`'s cross-target entries, are in `plan/step-15-other-targets.md`.
+Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, first target; its key decisions — IR lowering, uniform async, cooperative tasks, Node networking — are settled in that file). **Wasm → `plan/step-16-wasm.md`** (2026-10-02, second target; GC settled as WasmGC, structs and arrays with RTT dispatch, no custom heap; T16.5's WASI/IO audit closed in favor of refusing `net`/`http` — no usable socket path on the reference host). **BEAM → `plan/step-18-beam.md`** (Core Erlang emission, the value model, native process mapping; net/http and FFI explicitly out). **riscv64 → `plan/step-19-riscv64.md`** (2026-10-05, last; per-task decision trails, close-out recorded, the `%g` float to-string follow-up landed 2026-10-17). Full pointers, including `CHECK.md`'s cross-target entries, are in `plan/step-15-other-targets.md`.
 
 ### Step 16 — Wasm target (WasmGC) · `plan/step-16-wasm.md`
 
@@ -406,17 +406,17 @@ green.
 - [x] **T19.3** — Dynamic-world data structures: tuples, arrays, Box,
       enums, instances with vtable dispatch, closures and first-class
       functions; patterns with guards; interpolation with the `%g`
-      float rule. Golden: objects, language_tour.
+      float rule. Goldens: objects, language_tour, floats.
 - [x] **T19.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
       cross-binutils on the runner), the resolution-gate refusal test
       for packages lacking `"riscv64"`, the emission-time refusal
       diagnostics, close-out.
 
 **Step 19 acceptance met.** The freestanding RV64 backend
-ships — hello_world, fib, objects, and language_tour boot under QEMU
-as byte-for-byte goldens, the refusals are loud, and resolution gates
-packages. The `%g` float to-string lands as its own follow-up
-(plan/step-19 close-out).
+ships — hello_world, fib, objects, language_tour, and floats boot
+under QEMU as byte-for-byte goldens, the refusals are loud, and
+resolution gates packages. The `%g` float to-string follow-up landed
+2026-10-17 (plan/step-19 close-out).
 
 ## M5 — Wasm Runtime
 

@@ -2414,6 +2414,7 @@ let riscv64_examples_tests =
       "language_tour";
       "loops";
       "error_matching";
+      "floats";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the
