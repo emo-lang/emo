@@ -366,13 +366,24 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               output_string oc contents;
               close_out oc
             in
-            let main_c_contents, defs_h_contents = Emo_codegen.C.emit program in
+            let main_c_contents, defs_h_contents, uses_tls =
+              Emo_codegen.C.emit program
+            in
             (* The resolved packages' native inputs ride the cclib
                mechanism: a package's .c sources pass to cc verbatim
                (absolute existing paths) and enter the cache key by
                content, its `link` libraries become -l flags. Sources
                come before libraries so the link resolves. *)
             let cclibs = cclibs @ dep_csources @ dep_links in
+            (* The TLS gate (step 51): the emitter flips the flag at
+               genuine Runtime_impl nodes, and the conditional flags
+               ride the cclib slot — so they enter the cache key by the
+               mechanism that already keys cclib, and a TLS build and
+               its non-TLS twin never share a cached binary. *)
+            let cclibs =
+              if uses_tls then cclibs @ [ "-DEMO_HAS_TLS"; "ssl"; "crypto" ]
+              else cclibs
+            in
             (* Incremental, same scheme as the ocaml arm: the digest of
                the emitted C, the runtime sources, and the link inputs
                names the cached binary — an unchanged program skips cc.
@@ -429,35 +440,76 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                        else "-l" ^ lib)
                      cclibs)
               in
-              (* -lm carries the runtime's math functions (sqrt,
-                 floor, ceil, trunc); macOS folds libm into libSystem,
-                 so the flag is a no-op there and the fix on glibc,
-                 where those symbols live in a separate library. It
-                 stays after cclib_flags so a package's own library
-                 (sqlite3, say) resolves its math imports too. *)
-              let cmd =
-                Printf.sprintf
-                  "cc -O2 -ffp-contract=off -std=c11 -Wall \
-                   -Wno-deprecated-declarations -I %s %s %s                  \
-                   %s -lm -o %s"
-                  (Filename.quote build_dir) (Filename.quote main_c)
-                  (Filename.quote runtime_c) cclib_flags (Filename.quote output)
+              (* The TLS pre-flight probe (step 51): the runtime's own
+                 TLS section, compiled and linked with the TLS
+                 libraries before the real build — a machine without
+                 them, or with one older than the fence's floor, is
+                 refused with the fix instead of raw linker output.
+                 The flags ride the same cclib slot, so a user's -L
+                 reaches the probe too. *)
+              let tls_linked =
+                if not uses_tls then true
+                else begin
+                  let probe_c = Filename.concat build_dir "emo_tls_probe.c" in
+                  write probe_c "int main(void) { return 0; }\n";
+                  let probe_bin =
+                    Filename.concat build_dir "emo_tls_probe-bin"
+                  in
+                  let probe_cmd =
+                    Printf.sprintf
+                      "cc -std=c11 -DEMO_HAS_TLS -I %s %s %s %s -lm -o %s \
+                       >/dev/null 2>&1"
+                      (Filename.quote build_dir)
+                      (Filename.quote runtime_c)
+                      (Filename.quote probe_c)
+                      cclib_flags
+                      (Filename.quote probe_bin)
+                  in
+                  Emo_tool.run_status probe_cmd = 0
+                end
               in
-              let exit_code = Emo_tool.run_status cmd in
-              if exit_code <> 0 then begin
+              if not tls_linked then begin
                 prerr_endline
-                  (Printf.sprintf "emo build: the C compiler failed (exit %d)"
-                     exit_code);
-                70
+                  "emo build: linking the program's TLS failed — install the \
+                   OpenSSL development files (Linux: the libssl-dev package or \
+                   its equivalent), or pass a custom location with --cclib \
+                   -L<dir> --cclib -lssl --cclib -lcrypto (Homebrew's \
+                   openssl@3, say). Headers are never needed — the runtime \
+                   declares its TLS subset itself.";
+                69
               end
-              else begin
-                ignore
-                  (Emo_tool.run_or_warn ~what:"emo build"
-                     (Printf.sprintf "cp %s %s" (Filename.quote output)
-                        (Filename.quote cache_binary)));
-                Printf.printf "built %s\n" output;
-                0
-              end
+              else
+                (* -lm carries the runtime's math functions (sqrt,
+                   floor, ceil, trunc); macOS folds libm into libSystem,
+                   so the flag is a no-op there and the fix on glibc,
+                   where those symbols live in a separate library. It
+                   stays after cclib_flags so a package's own library
+                   (sqlite3, say) resolves its math imports too. *)
+                let cmd =
+                  Printf.sprintf
+                    "cc -O2 -ffp-contract=off -std=c11 -Wall \
+                     -Wno-deprecated-declarations -I %s %s %s                  \
+                     %s -lm -o %s"
+                    (Filename.quote build_dir) (Filename.quote main_c)
+                    (Filename.quote runtime_c) cclib_flags
+                    (Filename.quote output)
+                in
+                let exit_code = Emo_tool.run_status cmd in
+                if exit_code <> 0 then begin
+                  prerr_endline
+                    (Printf.sprintf
+                       "emo build: the C compiler failed (exit %d)"
+                       exit_code);
+                  70
+                end
+                else begin
+                  ignore
+                    (Emo_tool.run_or_warn ~what:"emo build"
+                       (Printf.sprintf "cp %s %s" (Filename.quote output)
+                          (Filename.quote cache_binary)));
+                  Printf.printf "built %s\n" output;
+                  0
+                end
             end
         | "ocaml" ->
             (* The refusal is installation-independent (step 25): the

@@ -2634,6 +2634,120 @@ emo_value emo_net_close(int64_t fd) {
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
+/* ---- TLS (step 51) ----
+
+   The three net TLS builtins ride the same cooperative scheduler as
+   the TCP tier above. Everything OpenSSL-shaped lives behind this
+   gate:
+
+   - No OpenSSL header is included anywhere, so no platform needs
+     TLS headers: the subset of the frozen 1.1-era client/server core
+     the handshakes walk is hand-declared below. The libraries are the
+     machine's own — Linux links the distro OpenSSL through the dev
+     package's -lssl/-lcrypto symlinks, while macOS has shipped no
+     system TLS library for years (no headers since Xcode 10, and the
+     /usr/lib dylibs are gone from current releases), so its OpenSSL
+     comes from Homebrew or similar and rides --cclib -L<dir>. The
+     pre-flight probe (emo_cli) catches a machine without either and
+     names the fix instead of surfacing raw linker output.
+
+   - The constants are pinned with provenance: verified once against
+     the OpenSSL 3.x headers (ssl.h, tls1.h, prov_ssl.h, x509_vfy.h)
+     and held there by the TLS goldens on every CI platform.
+
+   - The CLI defines EMO_HAS_TLS — with -lssl -lcrypto — only when the
+     program's IR genuinely reaches one of the three builtins, so a
+     program that never touches TLS neither links nor requires
+     OpenSSL: the mirror image of the sqlite3 settle, which refused
+     baking SQLite into the always-linked runtime; here the runtime is
+     the native carrier, so the gate is a compile-time flag rather
+     than a package.
+
+   The supported floor is the API subset, not a pinned release:
+   OpenSSL >= 1.1.1, LibreSSL >= 3.5.0 (SSL_set1_host completed its
+   port there — libressl/portable issue 381). The first context
+   creation reads OpenSSL_version_num and refuses below the floor with
+   the library's own OpenSSL_version(OPENSSL_VERSION) string. */
+
+#ifdef EMO_HAS_TLS
+
+typedef struct ssl_method_st SSL_METHOD;
+typedef struct ssl_ctx_st SSL_CTX;
+typedef struct ssl_st SSL;
+typedef struct x509_store_ctx_st X509_STORE_CTX;
+
+/* The frozen 1.1-era client/server core, and the ERR_* drain. */
+const SSL_METHOD *TLS_method(void);
+SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth);
+void SSL_CTX_free(SSL_CTX *ctx);
+long SSL_CTX_ctrl(SSL_CTX *ctx, int cmd, long larg, void *parg);
+void SSL_CTX_set_verify(SSL_CTX *ctx, int mode,
+                        int (*callback)(int, X509_STORE_CTX *));
+int SSL_CTX_set_default_verify_paths(SSL_CTX *ctx);
+int SSL_CTX_use_certificate_file(SSL_CTX *ctx, const char *file, int type);
+int SSL_CTX_use_PrivateKey_file(SSL_CTX *ctx, const char *file, int type);
+SSL *SSL_new(SSL_CTX *ctx);
+void SSL_free(SSL *ssl);
+int SSL_set_fd(SSL *ssl, int fd);
+long SSL_ctrl(SSL *ssl, int cmd, long larg, void *parg);
+int SSL_set1_host(SSL *ssl, const char *host);
+int SSL_connect(SSL *ssl);
+int SSL_accept(SSL *ssl);
+int SSL_read(SSL *ssl, void *buf, int num);
+int SSL_write(SSL *ssl, const void *buf, int num);
+int SSL_shutdown(SSL *ssl);
+int SSL_get_error(const SSL *ssl, int ret_code);
+long SSL_get_verify_result(const SSL *ssl);
+unsigned long OpenSSL_version_num(void);
+const char *OpenSSL_version(int type);
+unsigned long ERR_get_error(void);
+void ERR_error_string_n(unsigned long e, char *buf, size_t len);
+void ERR_clear_error(void);
+
+/* Verified against the OpenSSL 3.x headers; see the section comment. */
+#define SSL_VERIFY_NONE 0x00
+#define SSL_VERIFY_PEER 0x01
+#define SSL_VERIFY_FAIL_IF_NO_PEER_CERT 0x02
+#define SSL_ERROR_NONE 0
+#define SSL_ERROR_SSL 1
+#define SSL_ERROR_WANT_READ 2
+#define SSL_ERROR_WANT_WRITE 3
+#define SSL_ERROR_SYSCALL 5
+#define SSL_ERROR_ZERO_RETURN 6
+#define X509_V_OK 0
+#define SSL_CTRL_SET_MIN_PROTO_VERSION 123
+#define SSL_CTRL_SET_MAX_PROTO_VERSION 124
+#define SSL_CTRL_SET_TLSEXT_HOSTNAME 55
+#define TLSEXT_NAMETYPE_host_name 0
+#define TLS1_2_VERSION 0x0303
+#define TLS1_3_VERSION 0x0304
+#define SSL_FILETYPE_PEM 1
+#define OPENSSL_VERSION 0
+
+#endif /* EMO_HAS_TLS */
+
+/* The three builtins, always linked: today's honest refusal until
+   their real bodies land in the fence above (T51.2 the client
+   handshake, T51.4 the listener), byte-identical to the catch-all
+   they leave. */
+emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
+                              int insecure) {
+  (void)host;
+  (void)port;
+  (void)timeout;
+  (void)insecure;
+  return emo_unsupported("net_tls_connect");
+}
+
+emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
+                             emo_str key_path) {
+  (void)host;
+  (void)port;
+  (void)cert_path;
+  (void)key_path;
+  return emo_unsupported("net_listen_tls");
+}
+
 /* ---- String methods ---- */
 
 emo_str emo_str_substring(emo_str s, int64_t start, int64_t len) {

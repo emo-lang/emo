@@ -407,6 +407,15 @@ int64_t emo_net_set_timeout(int64_t fd, double seconds); /* returns fd */
    readable. */
 void emo_net_wait_readable(int64_t fd);
 
+/* TLS (step 51): the three net TLS builtins. Without EMO_HAS_TLS the
+   bodies are today's honest refusal; with it the handshake runs on
+   the system OpenSSL/LibreSSL — the fence in the .c carries the
+   hand-declared subset, the version floor, and the constants. */
+emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
+                              int insecure);
+emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
+                             emo_str key_path);
+
 /* Strings: the interpreter's method set over length-prefixed bytes. */
 emo_str emo_str_substring(emo_str s, int64_t start, int64_t len);
 int64_t emo_str_index_of(emo_str s, emo_str needle);
@@ -417,7 +426,7 @@ int64_t emo_str_length(emo_str s);
 int64_t emo_str_to_int64(emo_str s);
 emo_value emo_str_split(emo_str s, emo_str sep); /* array of Strings */
 
-/* An unimplemented surface (unix sockets, TLS, resolve, UDP on this
+/* An unimplemented surface (unix sockets, resolve, UDP on this
    tier): the call compiles in any value position (noreturn) and fails
    at runtime, honestly. */
 int64_t emo_unsupported(const char *what);

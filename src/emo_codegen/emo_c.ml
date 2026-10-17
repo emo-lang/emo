@@ -90,6 +90,10 @@ let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
    copies would give every function's sites the same names. *)
 let spawn_counter = ref 0
 let closure_counter = ref 0
+(* The TLS gate (step 51): set by the reachability walk at the top of
+   `emit` — the Runtime_impl nodes the program can genuinely execute —
+   and riding the emit result to the CLI. *)
+let uses_tls = ref false
 
 (* Callback trampoline numbering, keyed by the marshaled method
    signature so identical callback shapes share one function. *)
@@ -550,8 +554,12 @@ and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
       else pid_expr
 
 (* The runtime implementations (T23.10): files and TCP over the hosted OS.
-   The net surface beyond this tier — TLS, unix sockets, UDP, DNS —
-   compiles and fails at runtime, honestly. *)
+   The TLS builtins ride their own gate (step 51): the arms below lower
+   to the runtime's fenced TLS bodies, and the CLI defines EMO_HAS_TLS
+   — with the TLS libraries — only when the reachability walk at the
+   top of `emit` says the program genuinely reaches one of them. The
+   net surface beyond this tier — unix sockets, UDP, DNS — compiles
+   and fails at runtime, honestly. *)
 and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
     (args : Emo_ir.expr list) : string =
   let arg n (ty : Emo_check.t) =
@@ -570,6 +578,29 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
   | "net_connect" ->
       Printf.sprintf "emo_net_connect(%s, %s, %s)" (arg 0 Emo_check.String)
         (arg 1 Emo_check.Int64) (arg 2 Emo_check.Float64)
+  (* ---- TLS (step 51): the gate arms. One C body serves both client
+     names — the insecure variant is the whole path with verification
+     off — and the runtime's `EMO_HAS_TLS` fence carries the real
+     bodies. Whether the program links the TLS libraries is decided by
+     the reachability walk at the top of `emit`, not here: a call in
+     dead code compiles against the fence's refusal body and costs no
+     linkage. ---- *)
+  | "net_tls_connect" ->
+      Printf.sprintf "emo_net_tls_connect(%s, %s, %s, 0)"
+        (arg 0 Emo_check.String)
+        (arg 1 Emo_check.Int64)
+        (arg 2 Emo_check.Float64)
+  | "net_tls_connect_insecure" ->
+      Printf.sprintf "emo_net_tls_connect(%s, %s, %s, 1)"
+        (arg 0 Emo_check.String)
+        (arg 1 Emo_check.Int64)
+        (arg 2 Emo_check.Float64)
+  | "net_listen_tls" ->
+      Printf.sprintf "emo_net_listen_tls(%s, %s, %s, %s)"
+        (arg 0 Emo_check.String)
+        (arg 1 Emo_check.Int64)
+        (arg 2 Emo_check.String)
+        (arg 3 Emo_check.String)
   (* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- *)
   | "os_getpid" ->
       let v = Printf.sprintf "emo_os_getpid()" in
@@ -2876,9 +2907,145 @@ let emit_thunk env0 (c : Emo_ir.class_) (m : Emo_ir.func) : unit =
    can include it instead of hand-writing externs: a signature that
    drifts breaks at cc time in both directions instead of silently at
    run time. Static helpers (the __dyn thunks) stay TU-local. *)
-let emit (program : Emo_ir.program) : string * string =
+(* Emits one main.c and the defs header; the third component is the
+   TLS gate (step 51) — whether the program's IR genuinely reaches one
+   of the three net TLS builtins. *)
+let emit (program : Emo_ir.program) : string * string * bool =
   spawn_counter := 0;
   closure_counter := 0;
+  uses_tls := false;
+  (* The TLS gate's reachability walk (step 51): the flag flips only at
+     a Runtime_impl node the program can genuinely execute — reached
+     from the entry module's top level and the global initializers
+     through static calls, spawns, and function values. Method calls
+     dispatch by name at runtime, so a reachable method call
+     conservatively reaches every body carrying the method's name. A
+     function that is only emitted, never reached — the rest of the
+     net package's surface, say — neither flips the flag nor costs the
+     program its linkage. *)
+  let () =
+    let tls_names =
+      [ "net_tls_connect"; "net_tls_connect_insecure"; "net_listen_tls" ]
+    in
+    let funcs_tbl = Hashtbl.create 32 in
+    List.iter
+      (fun (f : Emo_ir.func) -> Hashtbl.replace funcs_tbl f.Emo_ir.fname f)
+      program.pfuncs;
+    let all_methods =
+      List.concat_map
+        (fun (c : Emo_ir.class_) ->
+          (match c.Emo_ir.cinit with Some i -> [ i ] | None -> [])
+          @ c.Emo_ir.cmethods)
+        program.pclasses
+    in
+    let reached = Hashtbl.create 32 in
+    let flag = ref false in
+    let queue = Queue.create () in
+    let mark name =
+      match Hashtbl.find_opt funcs_tbl name with
+      | Some f when not (Hashtbl.mem reached name) ->
+          Hashtbl.replace reached name ();
+          Queue.push f queue
+      | _ -> ()
+    in
+    let mark_method name =
+      List.iter
+        (fun (m : Emo_ir.func) ->
+          if String.ends_with ~suffix:("__" ^ name) m.Emo_ir.fname then
+            mark m.Emo_ir.fname)
+        all_methods
+    in
+    let rec ex (e : Emo_ir.expr) =
+      match e.Emo_ir.desc with
+      | Const _ | Type_ref _ | Global_var _ | Builder_new | Make_enum _ -> ()
+      | Global g -> mark g
+      | Var _ -> ()
+      | Unary (_, x) -> ex x
+      | Binary (_, l, r) ->
+          ex l;
+          ex r
+      | Tuple es | Array_lit es -> List.iter ex es
+      | Map_lit pairs -> List.iter ex pairs
+      | Interpolate es -> List.iter ex es
+      | Cond { c; t; e } ->
+          ex c;
+          ex t;
+          ex e
+      | Index (b, i) ->
+          ex b;
+          ex i
+      | Field_read { obj; _ } -> ex obj
+      | Call { func; args } ->
+          mark func;
+          List.iter ex args
+      | Call_value { f; args } ->
+          ex f;
+          List.iter ex args
+      | Method { self_; name; args } ->
+          ex self_;
+          mark_method name;
+          List.iter ex args
+      | Runtime_impl { name; args } ->
+          if List.mem name tls_names then flag := true;
+          List.iter ex args
+      | Builtin { args; _ } -> List.iter ex args
+      | Box_new x | Bytes_new x | List_new x -> ex x
+      | Make_exception { message; data } ->
+          ex message;
+          Option.iter ex data
+      | Do_spawn { func; args } ->
+          mark func;
+          List.iter ex args
+      | Spawn_value { f; args } ->
+          ex f;
+          List.iter ex args
+      | Closure { cbody; _ } -> List.iter st cbody
+    and st (s : Emo_ir.stmt) =
+      match s with
+      | Effect e -> ex e
+      | Let { init; _ } -> ex init
+      | Assign_var { value; _ } -> ex value
+      | Set_global_var { value; _ } -> ex value
+      | Set_field { self_; value; _ } ->
+          ex self_;
+          ex value
+      | If { cond; then_; else_ } ->
+          ex cond;
+          List.iter st then_;
+          List.iter st else_
+      | While { cond; body; _ } ->
+          ex cond;
+          List.iter st body
+      | For { init; post; body; _ } ->
+          List.iter st [ init; post ];
+          List.iter st body
+      | Case { scrutinee; branches } ->
+          ex scrutinee;
+          List.iter
+            (fun (b : Emo_ir.branch) ->
+              Option.iter ex b.Emo_ir.guard;
+              List.iter st b.Emo_ir.body)
+            branches
+      | Receive { branches } ->
+          List.iter
+            (fun (b : Emo_ir.branch) ->
+              Option.iter ex b.Emo_ir.guard;
+              List.iter st b.Emo_ir.body)
+            branches
+      | Send { target; message } ->
+          ex target;
+          ex message
+      | Raise e -> ex e
+      | Return_stmt e -> ex e
+      | Break | Continue -> ()
+    in
+    List.iter st program.Emo_ir.pinit;
+    List.iter (fun (_, e) -> ex e) program.Emo_ir.pglobals;
+    while not (Queue.is_empty queue) do
+      List.iter st (Queue.pop queue).Emo_ir.fbody
+    done;
+    uses_tls := !flag
+  in
   cb_counter := 0;
   Hashtbl.reset cb_table;
   shape_counter := 0;
@@ -3279,4 +3446,5 @@ let emit (program : Emo_ir.program) : string * string =
       (Buffer.contents forward) decls
       (Buffer.contents env0.closures)
       (Buffer.contents buf),
-    Buffer.contents defs_h )
+    Buffer.contents defs_h,
+    !uses_tls )

@@ -604,6 +604,35 @@ let sqlite3_available =
           >/dev/null 2>&1"
        = 0)
 
+(* The goldens whose reachable code genuinely reaches the TLS builtins
+   (http_roundtrip's https branch; https_roundtrip from T51.5) need the
+   TLS libraries linked: the CLI's gate flips on them, and the build
+   runs the pre-flight probe. This probe mirrors the fix message the
+   CLI prints — bare -lssl first, the Linux dev-package shape, then the
+   Homebrew kegs. None means the machine has neither, and those goldens
+   skip like sqlite3_demo does. *)
+let tls_goldens = [ "http_roundtrip" ]
+
+let tls_cclibs =
+  lazy
+    (let probe flags =
+       Lazy.force cc_available
+       && Sys.command
+            (Printf.sprintf
+               "echo 'int main(void){return 0;}' | cc -x c - %s -lssl \
+                -lcrypto -o /dev/null >/dev/null 2>&1"
+               flags)
+       = 0
+     in
+     if probe "" then Some []
+     else if probe "-L/opt/homebrew/opt/openssl@3/lib" then
+       Some [ "-L/opt/homebrew/opt/openssl@3/lib" ]
+     else if probe "-L/opt/homebrew/opt/openssl@4/lib" then
+       Some [ "-L/opt/homebrew/opt/openssl@4/lib" ]
+     else if probe "-L/usr/local/opt/openssl@3/lib" then
+       Some [ "-L/usr/local/opt/openssl@3/lib" ]
+     else None)
+
 (* The root process is the program, on every target. Both programs
    below spawn work and let the root end without waiting for it; the
    work must never print. Which program a target runs depends on when
@@ -1222,17 +1251,36 @@ let c_examples_tests =
           if not (Lazy.force cc_available) then Alcotest.skip ();
           if name = "sqlite3_demo" && not (Lazy.force sqlite3_available) then
             Alcotest.skip ();
+          let tls_needed = List.mem name tls_goldens in
+          if tls_needed && not (Option.is_some (Lazy.force tls_cclibs)) then
+            Alcotest.skip ();
           let dir = Filename.concat examples_dir name in
           let expected = read_file (Filename.concat dir "expected.txt") in
           let out_bin = Filename.concat scratch (name ^ "-c-bin") in
+          let cclibs =
+            if tls_needed then Option.value (Lazy.force tls_cclibs) ~default: []
+            else []
+          in
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_bin
-                  ~specialize:false ~cclibs:[] ~target:"c")
+                  ~specialize:false ~cclibs ~target:"c")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let out, err, proc_status = run_cmd (Filename.quote out_bin) in
           Alcotest.(check string) "output" expected out;
+          (* The TLS gate pin (step 51): a program that never touches
+             TLS links with no SSL_ symbol undefined, so the
+             conditional linkage cannot silently rot into
+             always-linked. A TLS golden links the libraries by
+             design, so the pin is theirs to skip. *)
+          if not tls_needed then begin
+            let nm_out, _, _ =
+              run_cmd (Printf.sprintf "nm -u %s" (Filename.quote out_bin))
+            in
+            Alcotest.(check bool)
+              "no SSL_ symbol undefined" false (contains nm_out "SSL_")
+          end;
           match proc_status with
           | Unix.WEXITED 0 -> ()
           | s ->

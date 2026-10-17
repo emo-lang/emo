@@ -52,10 +52,16 @@ refused baking SQLite into the always-linked runtime), same reason,
 opposite face: here the runtime is the native carrier, so the gate is a
 compile-time flag rather than a package.
 
-**The prototypes are hand-written.** No `<openssl/*.h>` include appears
-anywhere — macOS has shipped no OpenSSL headers since Xcode 10, while
-`/usr/lib/libssl.dylib` (the system LibreSSL) links with no `-L`, and
-Linux needs only the shared libraries present. The subset is the
+**The prototypes are hand-written.** No `<openssl/*.h>` include
+appears anywhere, so no platform needs TLS headers: the subset of the
+frozen 1.1-era client/server core is declared once in the runtime,
+and the libraries are the machine's own — Linux links the distro
+OpenSSL through the dev package's `-lssl`/`-lcrypto` symlinks, while
+macOS has shipped no OpenSSL headers since Xcode 10 and current
+releases no longer ship the `/usr/lib` TLS dylibs at all, so its
+OpenSSL comes from Homebrew or similar and rides `--cclib -L<dir>`
+(the settle's original no-`-L` premise was caught by this step's own
+probe and corrected in `CHECK.md`). The subset is the
 frozen 1.1-era client/server core, roughly fifteen functions:
 `TLS_method`, `SSL_CTX_new`/`free`, `SSL_CTX_ctrl` (the min/max
 protocol-version ctrl codes), `SSL_CTX_set_verify`,
@@ -102,13 +108,20 @@ at genuine `Runtime_impl` nodes, riding the flag through the emit
 result. The CLI (`emo_cli.ml`, the `c` branch of `build_file`) appends
 `-DEMO_HAS_TLS` and `-lssl -lcrypto` through the cclib slot — so the
 conditional flags enter the build's cache key by the mechanism that
-already keys cclib — and runs a pre-flight probe first: a trivial
-invocation linking `-lssl -lcrypto`, whose failure renders the
-fix-naming message (install the OpenSSL development files, or pass
-`--cclib -L…/-lssl` for custom locations such as Homebrew's
-`openssl@3`) instead of raw linker output. macOS links the system
-LibreSSL with no `-L`; Linux uses the distro OpenSSL, the probe
-catching a missing dev symlink by name.
+already keys cclib — and runs a pre-flight probe first: the runtime's
+own TLS section compiled and linked with the TLS libraries, whose
+failure renders the fix-naming message (install the OpenSSL
+development files, or pass `--cclib -L…/-lssl` for custom locations
+such as Homebrew's `openssl@3`) instead of raw linker output. The
+probe compiles the runtime itself rather than an empty main so a
+library below the fence's floor — one missing a symbol the subset
+names — is caught with the same fix message. Linux uses the distro
+OpenSSL, the probe catching a missing dev symlink by name; macOS
+names its Homebrew location. The gate's detector is the emitter's
+walk over the entry-reachable call graph: whole-module emission puts
+the net package's unused surface in every net-consuming program's IR,
+so flag-at-any-node would demand OpenSSL of every one of them — the
+walk keeps `tcp_echo` and friends linkage-free.
 
 Boundary pin: the c_goldens harness asserts a non-TLS build links and
 runs with no `SSL_` symbol undefined (`nm` on the produced binary), so
