@@ -106,6 +106,10 @@ typedef emo_value (*emo_closure_fn)(emo_value closure, const emo_value *args);
    initialization hooks in here (T23.9). */
 void emo_startup(void);
 
+/* A measurement probe (the T49.4 gate): the arena's live byte count.
+   A render-shaped loop on the c target holds this flat. */
+int64_t emo_arena_bytes(void);
+
 /* println over stdio, one line per value. The integer form is exact
    over the full Int64 range, INT64_MIN included. */
 void emo_println_str(emo_str s);

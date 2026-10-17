@@ -165,6 +165,19 @@ emo_value emo_retain(emo_value v) {
 
 /* ---- Hosted startup and println ---- */
 
+/* A measurement probe (the T49.4 gate; the spike's fuller set lives in
+   spike/arena-scope/runtime/): the arena's live byte count. Since step
+   49 the arena serves only native transients, so a render-shaped loop
+   holds this flat — the property the gate pins. Read-only on purpose:
+   the spike's arena_mark/arena_reset stayed out of the shipped runtime
+   when the region was rejected. */
+int64_t emo_arena_bytes(void) {
+  int64_t total = 0;
+  for (emo_chunk *c = emo_heap; c != NULL; c = c->next)
+    total += (int64_t)c->used;
+  return total;
+}
+
 void emo_startup(void) {
   /* Line-buffered stdout keeps program output interleaved with
      runtime diagnostics when a terminal is attached; elsewhere the

@@ -60,10 +60,10 @@ Four findings shape everything below:
    rebuilds it per event. `spike/arena-scope` measured ~1 MB and ~820
    objects per render at 400 nodes, both unbounded: ~60 MB/s and
    ~49,000 objects/s at 60 fps. A region reclaims the bytes and none of
-   the objects, and strands those refcounts permanently. The native
-   backends are therefore **demo scale with the limit documented**, and
-   refcounting the value families is scheduled as its own milestone
-   (step 49, `CHECK.md`).
+   the objects, and strands those refcounts permanently. **Step 49
+   landed the fix (2026-10-17): every dynamic value reclaims, and a
+   render-shaped loop holds the working set flat** (`CHECK.md`) — the
+   demo-scale caveat is retired.
 5. **`Array` has no O(1) append**, and `List` does not convert back to
    an indexable `Array`, so the decided children spelling — an
    `Array[Node]` grown by `.append` and rebuilt per render — is O(k²)
@@ -598,8 +598,9 @@ The facts that bound this layer are honest caveats, not design choices:
   `spike/arena-scope` measured ~1 MB and ~820 objects per render at 400
   nodes, both unbounded. A region does not fix it — it reclaims the
   bytes and none of the objects, and strands those refcounts — so the
-  native backends are demo scale and refcounting the value families is
-  scheduled as its own milestone (step 49, `CHECK.md`).
+  native backends' demo-scale note is retired — step 49 landed
+  (2026-10-17) and a render drops everything it builds; the working
+  set stays flat (`CHECK.md`).
 
 ### Layer 6 — the backend seam
 
@@ -808,10 +809,11 @@ mid-implementation:
    app-level build-script route** (`CHECK.md`); the field surface is
    T48.7's own work.
 4. **Memory reclamation on the `c` target — settled 2026-10-14 to
-   refcounting the value families.** The region route was tested and
-   ruled out (`spike/arena-scope`, `CHECK.md`); it is scheduled as its
-   own milestone (step 49) and is explicitly **not** a gate for the
-   native backends, which ship at demo scale with the limit documented.
+   refcounting the value families; landed 2026-10-17 (step 49).** The
+   region route was tested and ruled out (`spike/arena-scope`,
+   `CHECK.md`); the demo-scale note the native backends shipped with is
+   retired — a render-shaped loop holds the working set flat, pinned by
+   the T49.4 gate.
 5. **`raise` and `send` on the `c` target — settled 2026-10-15 to the
    promise already made** (`CHECK.md`, step 50). A UI must not die
    wholesale on one bad event, and event payloads crossing processes must
@@ -867,15 +869,12 @@ mid-implementation:
 - **No generics and no default parameters.** Node arrays are `Array[Node]`
   (fine — the interface is the element type), but style factories carry
   `N` copy methods, exactly as `plot` accepted. Bounded boilerplate.
-- **Long-running memory on the `c` target.** A UI allocates a tree per
-  event, and the value-semantic half of that is never freed; a region
-  reclaims the bytes and not the identity leak (`spike/arena-scope`).
-  v1's mitigation is scope — native backends at demo scale — with
-  refcounting the value families scheduled as its own milestone
-  (step 49). The quadratic `Array` build is the same finding's second
-  edge; `ArrayBuilder` answers it (T49.3), and the portable core takes
-  it up — a child list is grown with `push` rather than rebuilt per
-  child (T48.1).
+- **Long-running memory on the `c` target.** Retired: step 49 landed
+  (2026-10-17) and the per-event tree reclaims in full —
+  `spike/arena-scope` measured what it used to leak. The quadratic
+  `Array` build was the same finding's second edge; `ArrayBuilder`
+  answers it (T49.3), and the portable core takes it up — a child list
+  is grown with `push` rather than rebuilt per child (T48.1).
 
 ## Prior art, and what to borrow
 
@@ -915,9 +914,9 @@ interface) plus one package per platform. Sequence: (1) the core and the
 TUI backend (pure Emo, no toolchain, it proves backend-neutrality);
 (2) the SSR HTML/CSS backend (pure Emo, byte-identical goldens); (3)
 macOS and GTK 4 backends over the proven `foreign def` shims, with the
-packaging question settled first and the `c` target's memory limit
-documented — demo scale until value-family reclamation lands as its own
-milestone (step 49); (4) the browser DOM backend on the
+packaging question settled first and the `c` target's memory question
+answered — value-family reclamation landed as its own milestone
+(step 49); (4) the browser DOM backend on the
 TypeScript target, which needs a browser-safe runtime, a `dom_*`
 capability layer, and a bundling step. Children are an explicit
 `Array[Node]`; trailing blocks are for `each`/callbacks and return their
@@ -969,10 +968,12 @@ backends are four different programs.
     Settled 2026-10-14 by the arena-scope spike: a region reclaims 100%
     of the arena's bytes and 0% of the identity leak, and strands those
     refcounts permanently; the fix is refcounting the value families.
-    T48.8/T48.9 therefore proceed at demo scale with the limit
-    documented, and reclamation is its own milestone — **not** a
+    T48.8/T48.9 therefore proceeded at demo scale with the limit
+    documented, and reclamation was its own milestone — **not** a
     prerequisite for the native backends (`CHECK.md`,
-    `spike/arena-scope/`).
+    `spike/arena-scope/`). **Landed 2026-10-17** (T49.1–T49.4): every
+    dynamic cell reclaims, the render loop holds a flat working set,
+    and the demo-scale note is retired; the T49.4 gate pins it.
 
 Decisions 1–11 are tracked as **M15 — EmoUI (step 48)** in
 [`TASKS.md`](TASKS.md), with the full step spec in

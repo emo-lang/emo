@@ -64,7 +64,7 @@ before starting the gated work:
 | The runtime-independence principle | T25.1 | a target's runtime is written in the target's language, carried as generated data inside the compiler; the host contributes only the emitter |
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
 | EmoUI native UI packaging (per-package compile flags / `pkg_config`) | T48.7–T48.9 | direction settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). The field surface (`pkg_config`, compile/link flags, whether `.m` is collected) stays T48.7's own work |
-| `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). Until it lands the native UI backends are demo scale with the limit documented, not gated on this |
+| `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). **Landed 2026-10-17 (T49.1–T49.4)**: the working set is flat and the demo-scale note is retired |
 | EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). Where the bundling step lives in the toolchain stays T48.10's own work |
 | Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
@@ -1580,6 +1580,7 @@ thing a UI forces and the one it does not get for free: the 2026-10-14
 arena-scope spike settled that the cheap fix does not exist, so it is
 scheduled separately (**M16**, step 49) and the native backends are
 demo scale until it lands — the limit documented, not papered over.
+(It landed 2026-10-17; the demo-scale note is retired — see M16.)
 
 ### Step 48 — EmoUI · `plan/step-48-emo-ui.md`
 
@@ -1774,7 +1775,8 @@ them across its boundary — and the reset strands those refcounts
 permanently. The real fix is refcounting the value families, and it is
 this milestone (`CHECK.md`, `spike/arena-scope/`). Nothing here is a
 prerequisite for step 48: the native backends are built at demo scale
-with the limit documented.
+with the limit documented. (The note retired 2026-10-17 — the
+milestone landed and the working set is flat; the T49.4 gate pins it.)
 
 ### Step 49 — Value-family reclamation · `plan/step-49-value-reclamation.md`
 
@@ -1836,11 +1838,22 @@ and the non-`c` targets are untouched.
       question was unblocked here and is **answered** by the core
       (2026-10-15): children are an explicit `Array[Node]`, and the
       container is what builds a dynamic child list.
-- [ ] **T49.4** — The gate: the spike's render ladder and region probes
+- [x] **T49.4** — The gate: the spike's render ladder and region probes
       as a checked-in test that fails today and passes after, on the `c`
-      target, with `dune test` green.
-- [ ] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
+      target, with `dune test` green. **Landed 2026-10-17** —
+      `emo_arena_bytes` joined the runtime's probes, and the
+      `c_flat_working_set` group runs the spike's render shape (view
+      rebuild, style maps, append-built children, a layout walk) at two
+      rungs: both deltas — arena bytes and live cells — pin at exactly
+      zero. The region probes' work is done by the refcount model
+      itself (`arena_mark`/`arena_reset` stayed out of the shipped
+      runtime).
+- [x] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
       mirror, and step 48's demo-scale notes updated to point here.
+      Landed 2026-10-17 — `CHECK.md`'s entry reads as the landed
+      decision, `docs/emo-ui.md`'s ask 4 and the layer caveats point at
+      the flat working set, and every demo-scale note carries its
+      retirement.
 
 ---
 

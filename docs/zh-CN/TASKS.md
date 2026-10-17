@@ -56,7 +56,7 @@
 | 运行时独立原则 | T25.1 | target 的运行时用 target 的语言写,以生成数据随编译器内嵌;宿主只贡献发射器 |
 | ocaml 运行时的依赖策略 | T25.4 | 核心用 OCaml 标准库加 `unix`;`ssl` 是唯一的 opam 依赖,缺失时以清晰消息拒绝;不用 eio |
 | EmoUI 原生 UI 打包(per-package 编译 flags / `pkg_config`) | T48.7–T48.9 | 方向已定(2026-10-14)——manifest 长出 per-package 原生字段,原生后端不再以应用级构建脚本发布(`CHECK.md`、`docs/emo-ui.md`)。字段面(`pkg_config`、编译/链接 flags、`.m` 是否收集)仍属 T48.7 自己的范围 |
-| `c` 目标的长跑内存(值语义家族的回收) | T48.8–T48.9(demo 尺度)、step 49 | 已定(2026-10-14)——region 回收不可行;值语义家族需要引用计数,作为 step 49 排期(`CHECK.md`、`spike/arena-scope/`)。在它落地之前,原生 UI 后端停在 demo 尺度并把限制写进文档,而不是被它闸住 |
+| `c` 目标的长跑内存(值语义家族的回收) | T48.8–T48.9(demo 尺度)、step 49 | 已定(2026-10-14)——region 回收不可行;值语义家族需要引用计数,作为 step 49 排期(`CHECK.md`、`spike/arena-scope/`)。**已于 2026-10-17 落地(T49.1–T49.4)**:工作集平坦,demo 尺度注记退役 |
 | EmoUI 浏览器运行时路径 | T48.10–T48.11 | 已定(2026-10-15)——走拆分路线:把 TypeScript 运行时拆出浏览器安全子集、加 `dom_*` 家族,再配一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`、`docs/emo-ui.md`)。打包步骤在工具链里的落点仍属 T48.10 自己的范围 |
 | 跨 target 一致性(`c` 的 raise、`c` 的 send、`foreign def` 在 `wasm`/`beam` 上) | step 50 | 已定(2026-10-15)——这是对已经做出的承诺的一致性修复,不是新设计:子进程 raise 只结束子进程、`send` 送快照、两个 emitter 按名拒绝 `foreign def`(`CHECK.md`)。`typescript` 目标 send 仍共享这一项保持开放 |
 | 数组增长(O(1) 的 append 还是一个 builder) | T48.1、T49.4 | 已定(2026-10-15,T49.3)——走 builder,并且是语言层的新类型 `ArrayBuilder`,而不是 `Array` 的表示层改动(`CHECK.md`、`docs/intro/syntax.md`);从 `List` 转回 `Array` 那一半刻意不做 |
@@ -763,7 +763,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 
 ## M15 — EmoUI
 
-EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从显式状态渲染,没有模板语言——UI 就是普通 Emo。一个共享的应用模块(组件、`update`、`view`,对着可移植的 `ui` 核心写)渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口;浏览器 DOM 随后按自己的运行时路径接入。每个平台可以有各自的组件库,但组件的调用与组合方式完全一致。设计与证据是 `docs/emo-ui.md`、`docs/emo-ui-check.md`、`spike/components` 与 `spike/emo-ui-probe`;EmoUI 各包活在本仓库的 `projects/emo-ui/` 下(`CHECK.md`,in-tree 项目布局),而设计发现的那几道编译器侧关口(原生打包机制、浏览器运行时路径)与终端输入包也落在本仓库。`c` 目标的长跑内存是 UI 逼出来的第四条,也是它拿不到白送的一条:2026-10-14 的 arena-scope spike 落定「廉价的解法不存在」,所以它被单独排期(**M16**,step 49),在它落地之前原生后端停在 demo 尺度——限制写进文档,而不是糊过去。
+EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从显式状态渲染,没有模板语言——UI 就是普通 Emo。一个共享的应用模块(组件、`update`、`view`,对着可移植的 `ui` 核心写)渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口;浏览器 DOM 随后按自己的运行时路径接入。每个平台可以有各自的组件库,但组件的调用与组合方式完全一致。设计与证据是 `docs/emo-ui.md`、`docs/emo-ui-check.md`、`spike/components` 与 `spike/emo-ui-probe`;EmoUI 各包活在本仓库的 `projects/emo-ui/` 下(`CHECK.md`,in-tree 项目布局),而设计发现的那几道编译器侧关口(原生打包机制、浏览器运行时路径)与终端输入包也落在本仓库。`c` 目标的长跑内存是 UI 逼出来的第四条,也是它拿不到白送的一条:2026-10-14 的 arena-scope spike 落定「廉价的解法不存在」,所以它被单独排期(**M16**,step 49),在它落地之前原生后端停在 demo 尺度——限制写进文档,而不是糊过去。(已于 2026-10-17 落地;demo 尺度注记退役——见 M16。)
 
 ### Step 48 — EmoUI
 
@@ -802,7 +802,7 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 
 ## M16 — 值语义家族的回收
 
-`c` 目标的回收模型(T23.5,2026-10-11)只对带身份的那些格做引用计数——实例、闭包、`Box`——而所有值语义的种类(字符串、元组、数组、map、list、bytes、枚举、装箱标量)都住在 bump arena 里,直到进程退出才释放。UI 每个事件重跑一次 `view()`,用的恰好就是这些种类——这就是把一个整洁度问题变成产品问题的原因。2026-10-14 的 arena-scope spike 实测了代价、排除了廉价的解法,并落定了方向:region 回收 100% 的 arena 字节与 0% 的泄漏,因为身份是在 region 之外 `malloc` 的,而 arena 的聚合体跨过它的边界 retain 它们——reset 于是把那些引用计数永久搁死。真正的解法是值语义家族的引用计数,也就是本里程碑(`CHECK.md`、`spike/arena-scope/`)。这里没有任何东西是 step 48 的先决条件:原生后端以 demo 尺度构建,限制写进文档。
+`c` 目标的回收模型(T23.5,2026-10-11)只对带身份的那些格做引用计数——实例、闭包、`Box`——而所有值语义的种类(字符串、元组、数组、map、list、bytes、枚举、装箱标量)都住在 bump arena 里,直到进程退出才释放。UI 每个事件重跑一次 `view()`,用的恰好就是这些种类——这就是把一个整洁度问题变成产品问题的原因。2026-10-14 的 arena-scope spike 实测了代价、排除了廉价的解法,并落定了方向:region 回收 100% 的 arena 字节与 0% 的泄漏,因为身份是在 region 之外 `malloc` 的,而 arena 的聚合体跨过它的边界 retain 它们——reset 于是把那些引用计数永久搁死。真正的解法是值语义家族的引用计数,也就是本里程碑(`CHECK.md`、`spike/arena-scope/`)。这里没有任何东西是 step 48 的先决条件:原生后端以 demo 尺度构建,限制写进文档。(该注记已于 2026-10-17 退役——里程碑落地,工作集平坦;T49.4 闸门钉住它。)
 
 ### Step 49 — 值语义家族的回收 · `plan/step-49-value-reclamation.md`
 
@@ -812,8 +812,8 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 - [x] **T49.1** — 运行时:把身份纪律(`emo_identity_kind`、`emo_retain`/`emo_release`,以及往聚合体里存值的那些构造器)从三种身份格扩展到值语义家族,让一个值格能走到引用计数归零、聚合体释放它所持有的东西;包含「值语义的构造不会成环」这一审计。发射器本来就对每个动态绑定做 retain 与 release(`emo_c.ml:1851`、`:423`),所以这一项从运行时侧起步。**2026-10-17 落地。**每个格都计数并单独释放;发射器的 `may_own` 加宽到全部动态类型,每次构造把自己的出生权入池、每个发放的 claim 落进语句的池;尾递归重绑与提升绑定的屏障先拿新 claim 再放旧的;`Map.remove` 交回 claim;动态→原生的 String 跨越改为拷贝。无环审计:不可变族结构性无环,可变身份族并入既文档化的循环泄漏类。live count 探针在值族 churn 后回到基线;原生瞬态缓冲仍是 T49.2 的剩余项。
 - [x] **T49.2** — 粒度:在每种动态类型都可能持有内存之后,决定 autorelease pool 拥有什么并实现它——表达式内部的临时值是难的那一半,`may_own` 加上随之而来的构造器审计(`emo_c_runtime.c:1753`)。**2026-10-17 落地:String 并入动态世界**(书面权衡在 `CHECK.md`——更宽的池不可靠,更聪明的发射器正是 pool 要消灭的那类分析)。typed `String` 位置全部是 cell;leaf 字符串构造器直接产出自入池的出生(无 arena 中转、无自己的池帧);通用构造器仍由发射器入池;运行时自身的瞬态(printf 缓冲、文件/网络读、argv、list_dir 名单)在调用内部 malloc/free。churn 探针在 3 000 / 30 000 / 120 000 轮下 RSS 全平坦、live count 归零,所有金测逐字节不变。
 - [x] **T49.3** — 数组的形状:一个 O(1) 的 append 或一个 builder,让 k 元素数组的增长在字节与 retain 上都不是二次的;T48.1 的 children 表示取决于这个答案。**2026-10-15 已定 —— 走 builder,并且是语言层的新类型(`ArrayBuilder`),而不是 `Array` 的表示层改动。** 方法面 `new()` / `push` / `length` / `get` / `to_array`,解释器与五个宿主目标全上(`riscv64` 按名拒绝,退出码 65,`Map` 的先例);第一条静态可知类型的 `push` 钉住被 push 链最底端那个 `const` 绑定的元素类型(`docs/intro/syntax.md`,可变性)。这一项点名的第二种形状——从 `List` 转回可索引的 `Array`——刻意不做。数组这一半由此在没有动运行时的前提下得到回答,所以 step 49「数组增长是线性而非二次」这条判据现在可以从语言侧达成,而不必等 T49.1;T48.1 的表示问题是解除了阻塞,并已由核心包给出答案(2026-10-15):children 是一份显式的 `Array[Node]`,而动态的子节点列表由容器自己攒。
-- [ ] **T49.4** — 闸门:把 spike 的渲染阶梯与 region 探针做成签入的测试——今天失败、之后通过,只针对 `c` 目标,且 `dune test` 全绿。
-- [ ] **T49.5** — 文档:`CHECK.md`、`docs/emo-ui.md` 及其 zh-CN 镜像,以及 step 48 的 demo 尺度注记都改为指向此处。
+- [x] **T49.4** — 闸门:把 spike 的渲染阶梯与 region 探针做成签入的测试——今天失败、之后通过,只针对 `c` 目标,且 `dune test` 全绿。**2026-10-17 落地**——`emo_arena_bytes` 加入运行时探针,`c_flat_working_set` 组按 spike 的渲染形状(view 重建、样式 map、append 攒子节点、布局遍历)跑两档:arena 字节与 live cell 两个增量都精确钉在零。region 探针的职责由引用计数模型本身承担(`arena_mark`/`arena_reset` 未进随附运行时)。
+- [x] **T49.5** — 文档:`CHECK.md`、`docs/emo-ui.md` 及其 zh-CN 镜像,以及 step 48 的 demo 尺度注记都改为指向此处。2026-10-17 落地——`CHECK.md` 的条目读作已落地的决定,`docs/emo-ui.md` 的 ask 4 与各层告诫都指向平坦工作集,每条 demo 尺度注记都带上退役标记。
 
 ---
 
