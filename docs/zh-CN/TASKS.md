@@ -308,7 +308,7 @@
 **完成标准:** `emo build --target typescript` 发射的 TypeScript 在 Node 上运行,示例子集(hello_world、fib、objects、language_tour、shop、pipeline、tcp_echo、http_roundtrip)的输出与 `emo run` 逐字节一致(CI 金测),且依赖缺少该 target 的包在发射前就被解析门拒绝。
 
 - [x] **T17.1** — 目标管线与核心发射器:`--target` 贯穿 CLI、项目与解析门;IR → TypeScript 核心子集发射器;带标签值的运行时。金测:hello_world、fib、objects。
-- [ ] **T17.2** — 完整核心语义:模式与守卫、元组、数组、Box、插值、内容相等、跨文件模块引用。金测:language_tour、shop。
+- [x] **T17.2** — 完整核心语义:模式与守卫、元组、数组、Box、插值、内容相等、跨文件模块引用。金测:language_tour、shop。(2026-10-17 完成:两个示例加入 `ts_golden_tests`,其 manifest 声明 `"typescript"`。emitter 本身已覆盖这些语义,缺的是金测钉住,因此没有后端改动。)
 - [x] **T17.3** — 并发:协作式任务、邮箱、选择性 receive、`self_pid`、`halt`。金测:pipeline。
 - [x] **T17.4** — 直风格 IO:socket 与 HTTP 经 Node API 包装为 await 的 promise;标准库 target 元数据加 `"typescript"`。金测:tcp_echo、http_roundtrip。(2026-10-12 完成:`net` 的全部能力经 `E.builtin` 搭在 `node:net`/`node:dgram`/`node:tls`/`node:dns` 上,每连接一个常驻 reader。root 进程结束时释放存活的 handle,让事件循环自然排空,与原生规则一致。`net`、`http` 声明 `"typescript"`;tcp_echo 与 http_roundtrip 进入该目标的金测。`c` 目标仍只覆盖 TCP;`http` 服务端块重复关闭连接的问题——原生调度器掩盖、TypeScript 目标暴露——已修复。)
 - [ ] **T17.5** — 引导:CI 中的按 target 金测套件,以及缺 target 包的解析门测试。

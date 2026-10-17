@@ -78,9 +78,12 @@ GC question as the only open front.
       interfaces, enums, exceptions, closures, modules); the tagged-value
       runtime; `emo build --target typescript` emits and runs under
       Node. Golden: hello_world, fib, objects.
-- [ ] **T17.2** — Full core semantics: patterns and guards, tuples,
+- [x] **T17.2** — Full core semantics: patterns and guards, tuples,
       arrays, Box, string interpolation, content equality, module
-      references across files. Golden: language_tour, shop.
+      references across files. Golden: language_tour, shop. (Done
+      2026-10-17: both examples join the `ts_golden` group and declare
+      `"typescript"`; both already matched the interpreter, so the
+      emitter needed no change.)
 - [x] **T17.3** — Concurrency: tasks, mailboxes, selective receive,
       `self_pid`, `halt`. Golden: pipeline.
 - [x] **T17.4** — Direct-style IO: sockets and HTTP over Node's APIs as

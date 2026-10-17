@@ -2781,6 +2781,8 @@ let ts_golden_tests =
       ("hello_world", "main.emo");
       ("fib", "main.emo");
       ("objects", "main.emo");
+      ("language_tour", "main.emo");
+      ("shop", "main.emo");
       ("function_group", "main.emo");
       ("showcase", "main.emo");
       ("bit_ops", "main.emo");
