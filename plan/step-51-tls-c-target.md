@@ -7,8 +7,10 @@ reference — the ocaml scheduler is the spec), `src/emo_codegen/c/
 emo_c_runtime.c` (the carrier), `src/emo_cli/emo_cli.ml` (the single cc
 invocation the linkage gate joins), `docs/stdlib/net.md` /
 `docs/stdlib/http.md` (the limitation notes this step retires) ·
-**Status:** planned — decisions settled 2026-10-17 (`CHECK.md`);
-direction settled, nothing implemented.
+**Status:** done 2026-10-17 — T51.1 through T51.6 landed on
+`feat/m18-c-target-tls`; the settle's macOS-linkage premise (the system
+LibreSSL reachable with no `-L`) was caught by T51.1's own probe and
+corrected in `CHECK.md`.
 
 ## Why this step exists
 

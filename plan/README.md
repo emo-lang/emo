@@ -122,6 +122,6 @@ incrementally shippable steps — one file per step, executed in order.
 | 48 | EmoUI | in progress — T48.1–T48.4 landed (portable core, Elm loop, debug and TUI backends); T48.5–T48.13 open (`docs/emo-ui.md`, `plan/step-48-emo-ui.md`); the native backends are demo scale until step 49 lands |
 | 49 | Value-family reclamation | in progress — T49.3 landed (`ArrayBuilder`); T49.1, T49.2, T49.4, and T49.5 open (`spike/arena-scope`, `CHECK.md`) |
 | 50 | Cross-target conformance | done — `foreign def` refusal, snapshot `send`, and the raising child process settled (`CHECK.md`) |
-| 51 | TLS on the `c` target | planned — the three `net` TLS builtins land in the C runtime against the system OpenSSL/LibreSSL; decisions settled 2026-10-17 (`CHECK.md`, `plan/step-51-tls-c-target.md`); direction settled, nothing implemented |
+| 51 | TLS on the `c` target | done — the three `net` TLS builtins run on the C runtime against the machine's OpenSSL/LibreSSL behind `EMO_HAS_TLS` conditional linkage; `https_roundtrip` byte-identical interp-to-c; the macOS-linkage premise the settle predates corrected in `CHECK.md` |
 
 The deep-C-FFI assessment (`plan/hosted-native-ffi.md`) precedes step 23; it is a design record, not a numbered step.

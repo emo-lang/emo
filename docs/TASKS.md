@@ -1920,7 +1920,7 @@ byte-identical across interp / `c` / the standalone ocaml runtime; and
 the docs carry the story (`docs/stdlib/net.md`, `docs/stdlib/http.md`,
 the zh-CN mirrors).
 
-- [ ] **T51.1** — The linkage gate: the fenced TLS section in
+- [x] **T51.1** — The linkage gate: the fenced TLS section in
       `emo_c_runtime.c`/`.h` — hand-written prototypes plus the frozen
       constants, real bodies under `EMO_HAS_TLS` and `emo_unsupported`
       bodies without — the emitter's explicit arms for the three names
@@ -1928,7 +1928,7 @@ the zh-CN mirrors).
       `-DEMO_HAS_TLS` + `-lssl -lcrypto` through the cclib slot behind
       a pre-flight probe whose failure names the fix; the c_goldens
       `nm` pin proving a non-TLS build references no `SSL_` symbol.
-- [ ] **T51.2** — The client handshake: TCP via the existing
+- [x] **T51.2** — The client handshake: TCP via the existing
       `emo_net_connect`, then nonblocking `SSL_connect` parking on
       `WANT_READ`/`WANT_WRITE` (a wait-writable hook joins the
       scheduler's poll loop); `TLS_client_method`, the TLS 1.2–1.3
@@ -1938,24 +1938,24 @@ the zh-CN mirrors).
       `the TLS handshake with <host>: ` reason prefix, and the CA +
       server-certificate fixture (`SAN=localhost,127.0.0.1`) with a
       verified loopback handshake driven through `SSL_CERT_FILE`.
-- [ ] **T51.3** — The data plane and the insecure variant: read/write
+- [x] **T51.3** — The data plane and the insecure variant: read/write
       route through the `fd → SSL*` side table with the same parking
       discipline, `close()` runs `SSL_shutdown` and frees, timeouts
       match the ocaml conn's semantics, and
       `net_tls_connect_insecure` is the same path with verification
       off.
-- [ ] **T51.4** — The server side: `net_listen_tls` loads the PEM pair
+- [x] **T51.4** — The server side: `net_listen_tls` loads the PEM pair
       (refusing with the ocaml-matching
       `cannot load the TLS certificate for <host>:<port>` shape),
       listeners register fd → context, `accept` performs `SSL_accept`
       and registers the conn; an in-program TLS echo server + client
       on `127.0.0.1:0`, on the interpreter and on `c`.
-- [ ] **T51.5** — The goldens: `examples/https_roundtrip` against the
+- [x] **T51.5** — The goldens: `examples/https_roundtrip` against the
       harness's captive ocaml-ssl TLS server, `expected.txt` taken
       from the interpreter and byte-identical on `c`, registered in
       c_goldens; a TLS roundtrip test for the standalone OCaml
       runtime, which implemented TLS but never tested it.
-- [ ] **T51.6** — Docs: `docs/stdlib/net.md`'s TLS limitation becomes
+- [x] **T51.6** — Docs: `docs/stdlib/net.md`'s TLS limitation becomes
       the implemented story (ocaml-ssl / node:tls / system
       OpenSSL-LibreSSL, with the floor stated),
       `docs/stdlib/http.md`'s "`https` needs TLS, which `c` refuses"

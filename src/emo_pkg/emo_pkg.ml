@@ -461,9 +461,7 @@ module Lockfile = struct
      lockfile. Two different facts — an absent lockfile is a project's
      first run (its resolution records itself), a damaged one is a
      lockfile the build must refuse, never quietly replace. *)
-  type read_error =
-    | Missing
-    | Malformed of string
+  type read_error = Missing | Malformed of string
 
   let read (path : string) : (t, read_error) result =
     let read_file path =
@@ -1616,8 +1614,7 @@ case resp {
      body keeps the trimmed raw text. *)
   let refused ~(base : string) ~(status : int) ~(subject : string)
       (body : string) : string =
-    match (json_string_field "code" body, json_string_field "message" body)
-    with
+    match (json_string_field "code" body, json_string_field "message" body) with
     | Some code, Some message ->
         Printf.sprintf "registry `%s` answered %d error: `%s` (%s) %s" base
           status subject code (String.trim message)
@@ -1758,8 +1755,7 @@ case resp {
       | Error _ as e -> e
       | Ok (200, body) -> parse_deps_payload ~base body
       | Ok (status, body) ->
-          Error
-            (refused ~base ~status ~subject:(String.concat ", " names) body)
+          Error (refused ~base ~status ~subject:(String.concat ", " names) body)
 
   (* The resolver index for one batch of scoped names: B.1 per name joined
      with one batched B.2. Yanked versions are excluded — a fresh resolution

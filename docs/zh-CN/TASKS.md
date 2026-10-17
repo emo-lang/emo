@@ -842,9 +842,9 @@ TLS 从来不缺位于标准库——`net_tls_connect`、`net_tls_connect_insecu
 **前置:** 无。
 **完成标准:** `https://` 请求在 `c` 上端到端跑通(captive TLS server,与解释器的 `expected.txt` 逐字节一致);验证通过的握手、verify-fail 钉子、insecure 轮转与服务端 TLS echo 在解释器与 `c` 上全绿;不用 TLS 的 `c` 构建既不链接也不依赖 OpenSSL(`nm` 钉子),每个 target 上既有的金测逐字节不变;运行时自造的 reason 字符串在 interp / `c` / 独立 ocaml 运行时三方逐字节一致;文档把故事讲全(`docs/stdlib/net.md`、`docs/stdlib/http.md`、zh-CN 镜像)。
 
-- [ ] **T51.1** — 链接闸门:`emo_c_runtime.c`/`.h` 里圈出的 TLS 段——手写原型加冻结常量,`EMO_HAS_TLS` 下是真实现,否则是 `emo_unsupported` 函数体——emitter 为三个名字开显式臂并翻起 IR 走查的 `uses_tls` 旗标,CLI 经 cclib 槽位有条件地追加 `-DEMO_HAS_TLS` + `-lssl -lcrypto`,前置一个探测调用、失败时报出修复办法;c_goldens 里用 `nm` 钉住「不用 TLS 的构建不引用任何 `SSL_` 符号」。
-- [ ] **T51.2** — 客户端握手:TCP 复用既有的 `emo_net_connect`,随后非阻塞 `SSL_connect` 按 `WANT_READ`/`WANT_WRITE` 停车(调度器的 poll 循环补上可写等待钩子);`TLS_client_method`、TLS 1.2–1.3 窗口、系统信任库、SNI、`SSL_set1_host` + `SSL_get_verify_result`、带库自身版本串的版本下限拒绝、`the TLS handshake with <host>: ` reason 前缀,以及 CA + 服务端证书夹具(`SAN=localhost,127.0.0.1`)经 `SSL_CERT_FILE` 驱动的验证通过回环握手。
-- [ ] **T51.3** — 数据面与 insecure 变体:读/写按 `fd → SSL*` 侧表分流,停车纪律与握手相同;`close()` 走 `SSL_shutdown` 并释放;超时语义对齐 ocaml 侧 conn;`net_tls_connect_insecure` 是同一条路只关验证。
-- [ ] **T51.4** — 服务端:`net_listen_tls` 加载 PEM 对(失败时报 ocaml 同形的 `cannot load the TLS certificate for <host>:<port>`),监听 fd 登记上下文,`accept` 执行 `SSL_accept` 并登记连接;解释器与 `c` 各跑一个程序内的 TLS echo 服务端 + 客户端,落在本机 `127.0.0.1:0`。
-- [ ] **T51.5** — 金测:`examples/https_roundtrip` 打 harness 的 captive ocaml-ssl TLS 服务端,`expected.txt` 取自解释器、在 `c` 上逐字节一致,挂进 c_goldens;独立 OCaml 运行时补上它自己的 TLS 轮转测试——那条路实现了 TLS 却从来没测过。
-- [ ] **T51.6** — 文档:`docs/stdlib/net.md` 的 TLS 限制改成已实现的故事(ocaml-ssl / node:tls / 系统 OpenSSL-LibreSSL,写明版本下限),`docs/stdlib/http.md` 的「`https` 需要 TLS,而 `c` 拒绝」退场,zh-CN 镜像、闸门表与 `plan/README.md` 状态表同步。
+- [x] **T51.1** — 链接闸门:`emo_c_runtime.c`/`.h` 里圈出的 TLS 段——手写原型加冻结常量,`EMO_HAS_TLS` 下是真实现,否则是 `emo_unsupported` 函数体——emitter 为三个名字开显式臂并翻起 IR 走查的 `uses_tls` 旗标,CLI 经 cclib 槽位有条件地追加 `-DEMO_HAS_TLS` + `-lssl -lcrypto`,前置一个探测调用、失败时报出修复办法;c_goldens 里用 `nm` 钉住「不用 TLS 的构建不引用任何 `SSL_` 符号」。
+- [x] **T51.2** — 客户端握手:TCP 复用既有的 `emo_net_connect`,随后非阻塞 `SSL_connect` 按 `WANT_READ`/`WANT_WRITE` 停车(调度器的 poll 循环补上可写等待钩子);`TLS_client_method`、TLS 1.2–1.3 窗口、系统信任库、SNI、`SSL_set1_host` + `SSL_get_verify_result`、带库自身版本串的版本下限拒绝、`the TLS handshake with <host>: ` reason 前缀,以及 CA + 服务端证书夹具(`SAN=localhost,127.0.0.1`)经 `SSL_CERT_FILE` 驱动的验证通过回环握手。
+- [x] **T51.3** — 数据面与 insecure 变体:读/写按 `fd → SSL*` 侧表分流,停车纪律与握手相同;`close()` 走 `SSL_shutdown` 并释放;超时语义对齐 ocaml 侧 conn;`net_tls_connect_insecure` 是同一条路只关验证。
+- [x] **T51.4** — 服务端:`net_listen_tls` 加载 PEM 对(失败时报 ocaml 同形的 `cannot load the TLS certificate for <host>:<port>`),监听 fd 登记上下文,`accept` 执行 `SSL_accept` 并登记连接;解释器与 `c` 各跑一个程序内的 TLS echo 服务端 + 客户端,落在本机 `127.0.0.1:0`。
+- [x] **T51.5** — 金测:`examples/https_roundtrip` 打 harness 的 captive ocaml-ssl TLS 服务端,`expected.txt` 取自解释器、在 `c` 上逐字节一致,挂进 c_goldens;独立 OCaml 运行时补上它自己的 TLS 轮转测试——那条路实现了 TLS 却从来没测过。
+- [x] **T51.6** — 文档:`docs/stdlib/net.md` 的 TLS 限制改成已实现的故事(ocaml-ssl / node:tls / 系统 OpenSSL-LibreSSL,写明版本下限),`docs/stdlib/http.md` 的「`https` 需要 TLS,而 `c` 拒绝」退场,zh-CN 镜像、闸门表与 `plan/README.md` 状态表同步。

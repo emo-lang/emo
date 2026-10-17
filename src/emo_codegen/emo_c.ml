@@ -90,6 +90,7 @@ let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
    copies would give every function's sites the same names. *)
 let spawn_counter = ref 0
 let closure_counter = ref 0
+
 (* The TLS gate (step 51): set by the reachability walk at the top of
    `emit` — the Runtime_impl nodes the program can genuinely execute —
    and riding the emit result to the CLI. *)
@@ -587,20 +588,16 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
      linkage. ---- *)
   | "net_tls_connect" ->
       Printf.sprintf "emo_net_tls_connect(%s, %s, %s, 0)"
-        (arg 0 Emo_check.String)
-        (arg 1 Emo_check.Int64)
+        (arg 0 Emo_check.String) (arg 1 Emo_check.Int64)
         (arg 2 Emo_check.Float64)
   | "net_tls_connect_insecure" ->
       Printf.sprintf "emo_net_tls_connect(%s, %s, %s, 1)"
-        (arg 0 Emo_check.String)
-        (arg 1 Emo_check.Int64)
+        (arg 0 Emo_check.String) (arg 1 Emo_check.Int64)
         (arg 2 Emo_check.Float64)
   | "net_listen_tls" ->
       Printf.sprintf "emo_net_listen_tls(%s, %s, %s, %s)"
-        (arg 0 Emo_check.String)
-        (arg 1 Emo_check.Int64)
-        (arg 2 Emo_check.String)
-        (arg 3 Emo_check.String)
+        (arg 0 Emo_check.String) (arg 1 Emo_check.Int64)
+        (arg 2 Emo_check.String) (arg 3 Emo_check.String)
   (* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- *)
   | "os_getpid" ->
       let v = Printf.sprintf "emo_os_getpid()" in

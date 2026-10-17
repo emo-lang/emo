@@ -1210,7 +1210,8 @@ let resolution_for_run ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
       in
       if wrote then
         prerr_endline
-          ("wrote " ^ Emo_pkg.Lockfile.filename ^ " — commit it beside the manifest");
+          ("wrote " ^ Emo_pkg.Lockfile.filename
+         ^ " — commit it beside the manifest");
       entries
   | Error (Emo_pkg.Lockfile.Malformed message) ->
       raise
@@ -1315,8 +1316,7 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
        explicit command's job — this only refuses to build a closure the
        manifest has moved past. *)
     (match
-       Emo_pkg.Lockfile.unreachable
-         ~roots:explicit
+       Emo_pkg.Lockfile.unreachable ~roots:explicit
          ~declared:
            (List.map
               (fun (entry, _, pkg, _) ->
@@ -1753,8 +1753,7 @@ let run_embedded ~(tag : string) ~(program : string)
           remove_tree dir)
         (fun () ->
           match
-            run_entry ~entry_file:"main.emo" ~check:false ~sched:Own ~globals
-              ()
+            run_entry ~entry_file:"main.emo" ~check:false ~sched:Own ~globals ()
           with
           | exception Static_errors ds ->
               Error

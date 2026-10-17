@@ -28,8 +28,7 @@ let static_flags () =
    the missing one is the single hole this guard closes. *)
 let locked_flag () =
   Arg.(
-    value
-    & flag
+    value & flag
     & info [ "locked" ]
         ~doc:"Refuse a missing package.lock (the run must not resolve fresh).")
 
@@ -459,10 +458,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                     Printf.sprintf
                       "cc -std=c11 -DEMO_HAS_TLS -I %s %s %s %s -lm -o %s \
                        >/dev/null 2>&1"
-                      (Filename.quote build_dir)
-                      (Filename.quote runtime_c)
-                      (Filename.quote probe_c)
-                      cclib_flags
+                      (Filename.quote build_dir) (Filename.quote runtime_c)
+                      (Filename.quote probe_c) cclib_flags
                       (Filename.quote probe_bin)
                   in
                   Emo_tool.run_status probe_cmd = 0
@@ -497,8 +494,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                 let exit_code = Emo_tool.run_status cmd in
                 if exit_code <> 0 then begin
                   prerr_endline
-                    (Printf.sprintf
-                       "emo build: the C compiler failed (exit %d)"
+                    (Printf.sprintf "emo build: the C compiler failed (exit %d)"
                        exit_code);
                   70
                 end
@@ -762,9 +758,7 @@ let build =
              riscv64.")
   in
   let build entry output no_specialize cclibs target locked =
-    (match locked_guard ~locked with
-    | Some code -> exit code
-    | None -> ());
+    (match locked_guard ~locked with Some code -> exit code | None -> ());
     let out =
       match output with
       | Some o -> o
@@ -781,7 +775,9 @@ let build =
   in
   Cmd.v
     (Cmd.info "build" ~doc:"Compile an Emo program.")
-    Term.(const build $ entry $ output $ no_specialize $ cclib $ target $ locked_flag ())
+    Term.(
+      const build $ entry $ output $ no_specialize $ cclib $ target
+      $ locked_flag ())
 
 (* `emo check`: the static stages only, over the whole module tree. A
    `package.emo` is a manifest rather than a module, so it is read the way
@@ -832,9 +828,7 @@ let run =
              boots under qemu-system-riscv64).")
   in
   let run file no_color error_limit target locked =
-    (match locked_guard ~locked with
-    | Some code -> exit code
-    | None -> ());
+    (match locked_guard ~locked with Some code -> exit code | None -> ());
     let color = (not no_color) && Unix.isatty Unix.stderr in
     match target with
     | Some "riscv64" ->
@@ -968,9 +962,7 @@ let check =
   let file = Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE") in
   let no_color, error_limit = static_flags () in
   let check file no_color error_limit locked =
-    (match locked_guard ~locked with
-    | Some code -> exit code
-    | None -> ());
+    (match locked_guard ~locked with Some code -> exit code | None -> ());
     let color = (not no_color) && Unix.isatty Unix.stderr in
     match check_file ~file ~color ~error_limit with
     | 0 -> Cmd.Exit.ok
@@ -1055,9 +1047,7 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
 let test_cmd =
   let no_color, error_limit = static_flags () in
   let test no_color error_limit locked =
-    (match locked_guard ~locked with
-    | Some code -> exit code
-    | None -> ());
+    (match locked_guard ~locked with Some code -> exit code | None -> ());
     let color = (not no_color) && Unix.isatty Unix.stderr in
     match run_tests_cmd ~color ~error_limit with
     | 0 -> Cmd.Exit.ok
@@ -1082,8 +1072,7 @@ let manifest_here_or_exit ~(color : bool) : string * Emo_pkg.manifest =
   match Emo_project.manifest_here () with
   | Some path -> (
       match
-        Emo_pkg.parse_manifest ~file:path
-          ~source:(Emo_project.read_file path)
+        Emo_pkg.parse_manifest ~file:path ~source:(Emo_project.read_file path)
       with
       | m -> (path, m)
       | exception Emo_pkg.Manifest_error d ->
@@ -1095,8 +1084,7 @@ let manifest_here_or_exit ~(color : bool) : string * Emo_pkg.manifest =
 
 (* Writes package.lock and prints the resolution — the shared tail of the
    deps commands that establish one. *)
-let write_lock ~(dir : string) (entries : Emo_pkg.Lockfile.entry list) : unit
-    =
+let write_lock ~(dir : string) (entries : Emo_pkg.Lockfile.entry list) : unit =
   Emo_pkg.Lockfile.write
     ~path:(Filename.concat dir Emo_pkg.Lockfile.filename)
     entries;
@@ -1176,7 +1164,9 @@ let insert_dep (source : string) (name : string) (version : string) :
   in
   let indent_of line =
     let n = ref 0 in
-    while !n < String.length line && line.[!n] = ' ' do incr n done;
+    while !n < String.length line && line.[!n] = ' ' do
+      incr n
+    done;
     !n
   in
   let pad n = String.make n ' ' in
@@ -1205,13 +1195,14 @@ let insert_dep (source : string) (name : string) (version : string) :
     String.concat "\n"
       (Array.to_list (Array.append (Array.append keep block) rest))
   in
-  (match find_shaped 0 with
+  match find_shaped 0 with
   | Some i -> (
       let indent = indent_of lines.(i) in
       match trimmed lines.(i) with
       | "deps {" | "deps{" ->
           Some (splice ~at:(i + 1) ~remove:0 [| entry_line (indent + 2) |])
-      | "deps {}" | "deps{}" -> Some (splice ~at:i ~remove:1 (block_lines indent))
+      | "deps {}" | "deps{}" ->
+          Some (splice ~at:i ~remove:1 (block_lines indent))
       | _ -> None)
   | None -> (
       let last_close =
@@ -1222,8 +1213,9 @@ let insert_dep (source : string) (name : string) (version : string) :
         !best
       in
       match last_close with
-      | Some i -> Some (splice ~at:i ~remove:0 (block_lines (indent_of lines.(i))))
-      | None -> None))
+      | Some i ->
+          Some (splice ~at:i ~remove:0 (block_lines (indent_of lines.(i))))
+      | None -> None)
 
 (* `emo deps add <package> <version>`: pin a package in the manifest and
    lock the resolution. The pin is proven against the registry before
@@ -1254,25 +1246,23 @@ let deps_add ~(name : string) ~(version : string) : int =
     in
     (match List.assoc_opt name manifest.Emo_pkg.deps with
     | Some pinned ->
-        refuse
-          65
+        refuse 65
           (Printf.sprintf
              "`%s` is already pinned at %s — edit package.emo to change the pin"
              name
              (Emo_pkg.Version.to_string pinned))
     | None -> ());
     let candidate =
-      { manifest with
-        Emo_pkg.deps = manifest.Emo_pkg.deps @ [ (name, pinned_version) ]
+      {
+        manifest with
+        Emo_pkg.deps = manifest.Emo_pkg.deps @ [ (name, pinned_version) ];
       }
     in
     let entries =
-      Emo_project.resolve_deps ~manifest:candidate ~manifest_dir:dir
-        ~target:"c"
+      Emo_project.resolve_deps ~manifest:candidate ~manifest_dir:dir ~target:"c"
     in
     let unexpected_shape () =
-      refuse
-        65
+      refuse 65
         "package.emo's deps block does not have the expected shape — add the \
          pin by hand"
     in

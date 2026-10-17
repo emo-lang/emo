@@ -4,8 +4,9 @@
 
 (rule
  (alias runtest)
- (deps emo_ocaml_runtime_test.exe
-       ../emo_sched/fixtures/tls-server-cert.pem
-       ../emo_sched/fixtures/tls-server-key.pem)
+ (deps
+  emo_ocaml_runtime_test.exe
+  ../emo_sched/fixtures/tls-server-cert.pem
+  ../emo_sched/fixtures/tls-server-key.pem)
  (action
   (run %{exe:emo_ocaml_runtime_test.exe})))

@@ -4,11 +4,12 @@
 
 (rule
  (alias runtest)
- (deps emo_sched_test.exe
-       fixtures/tls-cert.pem
-       fixtures/tls-key.pem
-       fixtures/tls-ca.pem
-       fixtures/tls-server-cert.pem
-       fixtures/tls-server-key.pem)
+ (deps
+  emo_sched_test.exe
+  fixtures/tls-cert.pem
+  fixtures/tls-key.pem
+  fixtures/tls-ca.pem
+  fixtures/tls-server-cert.pem
+  fixtures/tls-server-key.pem)
  (action
   (run %{exe:emo_sched_test.exe})))

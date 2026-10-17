@@ -2208,8 +2208,8 @@ println("ok")
           "a refused run writes no package.lock" false
           (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename)));
     tc
-      "a pinned standard-library package resolves its own transitive \
-       dependency" (fun () ->
+      "a pinned standard-library package resolves its own transitive dependency"
+      (fun () ->
         ignore (use_workspace_registry ());
         let entry =
           with_project
