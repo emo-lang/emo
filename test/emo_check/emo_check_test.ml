@@ -1159,7 +1159,7 @@ let check_program (modules : (string * string) list) :
     Emo_support.Diagnostic.t list =
   let units = units_of modules in
   let program, pre_errors =
-    Emo_check.preregister_types ~packages:[] ~package_deps:[] ~units
+    Emo_check.preregister_types ~packages:[] ~package_deps:[] ~aliases:[] ~units
   in
   let paths = List.map fst units in
   List.concat_map

@@ -680,6 +680,83 @@ def span() Int64 {
   return leaf_tools.leaf()
 }
 |};
+  (* A package published from a project: its public module is the `main.emo`
+     it was written as, with no file named after the short name. *)
+  let entry_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "entry_tools" "2.0.0"))
+  in
+  write_file
+    (Filename.concat entry_dir "package.emo")
+    {|package {
+  name = "acme/entry_tools"
+  version = "2.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat entry_dir "main.emo")
+    {|def tagged() Int64 {
+  return 5
+}
+|};
+  (* The entry file keeps its own name inside the package: a sibling refers to
+     the module a consumer's require binds as `main`, the name it was written
+     under, and the two spellings are one module. *)
+  write_file
+    (Filename.concat (Filename.concat entry_dir "test") "smoke.emo")
+    {|def smoke() Int64 {
+  return main.tagged()
+}
+|};
+  (* A package whose entry file does not check: the consumer sees the fault
+     once, not once per spelling its entry file is reachable by. *)
+  let broken_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "broken_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat broken_dir "package.emo")
+    {|package {
+  name = "acme/broken_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat broken_dir "main.emo")
+    {|def broken() Int64 {
+  return missing_thing
+}
+|};
+  (* Both entry files present: `main.emo` is the module a require binds. *)
+  let both_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "both_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat both_dir "package.emo")
+    {|package {
+  name = "acme/both_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "c"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat both_dir "main.emo")
+    {|def pick() Int64 {
+  return 1
+}
+|};
+  write_file
+    (Filename.concat both_dir "both_tools.emo")
+    {|def pick() Int64 {
+  return 2
+}
+|};
   (* A package that reaches a dependency it never declared. *)
   let rogue_dir =
     Filename.concat dir
@@ -933,6 +1010,108 @@ let deps_tests =
             Alcotest.(check bool)
               "no lockfile written by a run" false
               (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename))));
+    tc "a package's main.emo is the module a require binds" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/entry_tools" = "2.0.0"
+    "acme/both_tools" = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/entry_tools"
+require "acme/both_tools"
+println(entry_tools.tagged())
+println(both_tools.pick())
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            (* main.emo wins over both_tools.emo when a package ships both. *)
+            Alcotest.(check string) "output" "5\n1\n" output));
+    tc "a dependency's own file reaches its entry module by name" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/entry_tools" = "2.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/entry_tools"
+println(entry_tools.tagged())
+println(entry_tools.test.smoke.smoke())
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            (* `entry_tools/test/smoke.emo` is mounted with the package and
+               checked here: it calls `main.tagged()`, and `main` is the entry
+               file the `require` also binds as `entry_tools`. Running it
+               exercises the same one-module answer through the loader. *)
+            let output =
+              capture_output (fun () ->
+                  ignore
+                    (Emo_project.run_entry ~entry_file:entry ~check:true ()))
+            in
+            Alcotest.(check string) "output" "5\n5\n" output));
+    tc "a dependency's uncheckable entry file reports once" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "acme/broken_tools" = "1.0.0"
+  }
+}
+|}
+              );
+              ("main.emo", {|println(broken_tools.broken())|});
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match Emo_project.run_entry ~entry_file:entry ~check:true () with
+            | _ -> Alcotest.fail "expected `missing_thing` to be undefined"
+            | exception Emo_project.Static_errors ds ->
+                (* The entry file is one module under two spellings: it is
+                   checked once, so its fault is reported once. *)
+                Alcotest.(check int)
+                  ("one diagnostic, got: " ^ codes_dump ds)
+                  1 (List.length ds);
+                if not (has_code ds "E4003") then
+                  Alcotest.fail ("codes: " ^ codes_dump ds)));
     tc "the lockfile pins the resolution and a run verifies it" (fun () ->
         let entry =
           with_project

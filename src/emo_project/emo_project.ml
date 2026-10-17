@@ -35,6 +35,11 @@ type project = {
          deps, and a `require` is paired against the owning package's
          manifest, so a package cannot reach a sibling or transitive
          dependency it never declared *)
+  mutable aliases : (string list * string list) list;
+      (* module path → the path it resolves to: a package's entry file is
+         reachable by its own name beside the module `<short>` a require
+         binds, and both name the one module — one env, one type
+         identity, one diagnostic, whichever spelling a file uses *)
   diagnostics : Emo_support.Diagnostic.t list ref;
   cache : (string, string * Ast.item list) Hashtbl.t;
       (* file → (content hash, parsed items): unchanged modules skip
@@ -150,6 +155,7 @@ let discover () : project =
       dirs = Hashtbl.create 8;
       packages = [];
       package_deps = [];
+      aliases = [];
       diagnostics = ref [];
       cache = Hashtbl.create 8;
       parses = 0;
@@ -273,6 +279,11 @@ let install_hooks p =
     Hashtbl.create 8
   in
   let handle_of path =
+    (* An alias and the path it resolves to are one module: the same handle,
+       so the same namespace, the same load, the same declarations. *)
+    let path =
+      match List.assoc_opt path p.aliases with Some to_ -> to_ | None -> path
+    in
     match Hashtbl.find_opt handles path with
     | Some h -> Some h
     | None -> (
@@ -420,6 +431,25 @@ let find_cycle (graph : (string list, string list list) Hashtbl.t) :
   in
   anywhere (Hashtbl.fold (fun path _ acc -> path :: acc) graph [])
 
+(* One unit per distinct file, under the shorter of its paths: a file
+   registered under two paths — a package's entry file, reachable as the
+   module a require binds and by its own name beside it — is parsed,
+   pre-registered and checked once, under the path that names it most
+   directly. Its alias path still resolves (through [aliases]) and joins
+   the module table, so a reference written either way lands on this unit's
+   declarations. *)
+let units_of (p : project) : (string list * Ast.item list) list =
+  let shortest : (string, string list) Hashtbl.t = Hashtbl.create 8 in
+  Hashtbl.iter
+    (fun path file ->
+      match Hashtbl.find_opt shortest file with
+      | Some kept when List.length kept <= List.length path -> ()
+      | _ -> Hashtbl.replace shortest file path)
+    p.files;
+  Hashtbl.fold
+    (fun file path acc -> (path, parse_cached p file) :: acc)
+    shortest []
+
 let check_project (p : project) :
     string list list
     * (string list * string list list * (string * Emo_support.Span.t) list) list
@@ -434,32 +464,18 @@ let check_project (p : project) :
   (* Parse every module first: the program's type tables (CHECK.md,
      cross-module types) need every declaration before any module is
      checked. *)
-  let units =
-    Hashtbl.fold
-      (fun path file acc ->
-        let source = read_file file in
-        let items =
-          match Emo_parser.parse_program_with_diagnostics ~file ~source with
-          | exception Emo_lexer.Error d -> raise (Static_errors [ d ])
-          | (_, first :: _) as parsed ->
-              let _, diagnostics = parsed in
-              ignore first;
-              raise (Static_errors diagnostics)
-          | items, [] -> items
-        in
-        (path, items) :: acc)
-      p.files []
-  in
+  let units = units_of p in
   let program, preregister_errors =
     Emo_check.preregister_types ~packages:p.packages
-      ~package_deps:p.package_deps ~units
+      ~package_deps:p.package_deps ~aliases:p.aliases ~units
   in
   let errors, entries =
     List.fold_left
       (fun (errors, entries) (path, items) ->
         let diagnostics, refs, requires =
           Emo_check.check_module ~modules:module_paths ~packages:p.packages
-            ~package_deps:p.package_deps ~current:path ~program items
+            ~package_deps:p.package_deps ~aliases:p.aliases ~current:path
+            ~program items
         in
         Hashtbl.replace graph path refs;
         Hashtbl.replace requires_table path requires;
@@ -1197,13 +1213,26 @@ let resolution_with_stdlib ~(manifest : Emo_pkg.manifest)
 
 (* Registers a fetched package's module tree under its short name — the
    package name is a module-path prefix (README: "a package name becomes a
-   top-level module path prefix"). The package root's `<short>.emo` is the
-   module `<short>` a require binds; every other entry becomes a child
+   top-level module path prefix"). The package root's `main.emo` is the
+   module `<short>` a require binds, and `<short>.emo` when the root has no
+   `main.emo` — a package published from a project keeps the entry file it
+   was written as. That entry file keeps its own name beside the others
+   (`<short>.main`), so a sibling that names it the way the package's own
+   files do — a `test/` module calling `main.tagged()` — still resolves
+   when the package is mounted here. Every other entry becomes a child
    (`<short>.internal`, `<short>.mark`), so two packages' `internal` and
    `mark` no longer collide. The package's own manifest is data, not a
    module, and is skipped. *)
 let register_package (p : project) (short : string) (dir : string) : unit =
-  walk ~body:short p [ short ] dir;
+  let from_project = Sys.file_exists (Filename.concat dir "main.emo") in
+  walk ~body:(if from_project then "main" else short) p [ short ] dir;
+  (* The second pass under no body adds `main.emo` its own path back; every
+     other entry is already registered and skipped. The two paths name one
+     module, so the second is recorded as an alias of the first. *)
+  if from_project then begin
+    walk p [ short ] dir;
+    p.aliases <- ([ short; "main" ], [ short ]) :: p.aliases
+  end;
   p.packages <- [ short ] :: p.packages;
   match diagnostics p with [] -> () | ds -> raise (Static_errors ds)
 
@@ -1421,47 +1450,14 @@ let compile_inputs ~entry_file ~target :
            ]));
   let module_paths = module_paths p in
   let diagnostics = ref [] in
-  (* The entry file is reachable via two paths (the project root and
-     its own name); keep one module_input per distinct file, preferring
-     the shorter path so the entry module stays rooted. *)
-  let seen_files = Hashtbl.create 8 in
-  let units =
-    Hashtbl.fold
-      (fun path file acc ->
-        match Hashtbl.find_opt seen_files file with
-        | Some kept when List.length kept <= List.length path -> acc
-        | kept ->
-            let keep =
-              match kept with
-              | Some k when List.length k <= List.length path -> false
-              | _ -> true
-            in
-            if not keep then acc
-            else begin
-              let acc =
-                match kept with
-                | Some old_path ->
-                    List.filter
-                      (fun (unit_path, _) ->
-                        not
-                          (String.equal
-                             (String.concat "/" unit_path)
-                             (String.concat "/" old_path)))
-                      acc
-                | None -> acc
-              in
-              Hashtbl.replace seen_files file path;
-              (path, parse_cached p file) :: acc
-            end)
-      p.files []
-  in
+  let units = units_of p in
   let entry = entry_module_in_project p entry_file in
   (* The program's type tables (CHECK.md, cross-module types) come
    * before any module is checked, so every module's type declarations
    * resolve against every declaration. *)
   let program, preregister_errors =
     Emo_check.preregister_types ~packages:p.packages
-      ~package_deps:p.package_deps ~units
+      ~package_deps:p.package_deps ~aliases:p.aliases ~units
   in
   diagnostics := preregister_errors;
   let inputs =
@@ -1469,8 +1465,8 @@ let compile_inputs ~entry_file ~target :
       (fun acc (path, items) ->
         let diags, _refs, _requires, types =
           Emo_check.check_module_typed ~modules:module_paths
-            ~packages:p.packages ~package_deps:p.package_deps ~current:path
-            ~program ~target items
+            ~packages:p.packages ~package_deps:p.package_deps ~aliases:p.aliases
+            ~current:path ~program ~target items
         in
         diagnostics := !diagnostics @ diags;
         { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc)

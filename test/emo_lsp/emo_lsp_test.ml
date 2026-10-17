@@ -321,6 +321,48 @@ let test_stdlib_requires_indexed () =
         "an unpinned stdlib require registers its package" true
         (List.mem [ "sync" ] paths))
 
+(* A dependency published from a project carries a `main.emo`: that file is
+   the module a `require` binds, and the index mounts it under its own name
+   beside it too — the compiler's `register_package` registers both paths,
+   and the editor has to see the same two spellings. *)
+let test_dependency_main_entry () =
+  with_temp_dir (fun root ->
+      let reg = Filename.concat root "registry" in
+      Unix.mkdir reg 0o755;
+      Unix.mkdir (Filename.concat reg "foo") 0o755;
+      Unix.mkdir (Filename.concat reg "foo/0.1.0") 0o755;
+      write
+        (Filename.concat root "package.emo")
+        "package {\n\
+        \  name = \"local/demo\"\n\
+        \  version = \"0.1.0\"\n\
+        \  targets = [\"ocaml\"]\n\
+        \  deps {}\n\
+         }\n";
+      write
+        (Filename.concat reg "foo/0.1.0/package.emo")
+        "package {\n\
+        \  name = \"foo\"\n\
+        \  version = \"0.1.0\"\n\
+        \  targets = [\"ocaml\"]\n\
+        \  deps {}\n\
+         }\n";
+      write
+        (Filename.concat reg "foo/0.1.0/main.emo")
+        "def bar() Int64 {\n  return 1\n}\n";
+      write (Filename.concat root "main.emo") "require \"foo\"\n";
+      let project_modules = Lsp_index.scan root in
+      let modules =
+        Lsp_index.dependency_modules ~root ~registry:(Some reg) ~project_modules
+      in
+      let paths = List.map fst modules in
+      Alcotest.(check bool)
+        "the entry file is the module a require binds" true
+        (List.mem [ "foo" ] paths);
+      Alcotest.(check bool)
+        "the entry file keeps its own name beside it" true
+        (List.mem [ "foo"; "main" ] paths))
+
 (* A dependency's members resolve when the check runs against the index's
    pre-registered program — the mechanism behind live diagnostics for
    `require "sync"` and every declared dependency. *)
@@ -355,7 +397,8 @@ let test_dependency_members_resolve () =
       let items = parse_items source in
       let units = Lsp_index.units_for ix ~current:[ "main" ] items in
       let program, _ =
-        Emo_check.preregister_types ~packages:[] ~package_deps:[] ~units
+        Emo_check.preregister_types ~packages:[] ~package_deps:[] ~aliases:[]
+          ~units
       in
       let modules = List.map fst ix.modules in
       let diags, _, _, _ =
@@ -475,6 +518,7 @@ let () =
           tc "members" test_members_of;
           tc "dependency modules" test_dependency_modules;
           tc "unpinned stdlib require" test_stdlib_requires_indexed;
+          tc "dependency main entry" test_dependency_main_entry;
           tc "missing dep diagnostics" test_missing_dep_diagnostics;
           tc "dependency members resolve" test_dependency_members_resolve;
           tc "manifest diagnostics" test_manifest_diagnostics;

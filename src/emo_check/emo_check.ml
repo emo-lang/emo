@@ -92,6 +92,12 @@ type ctx = {
       (* a package prefix → the scoped names it declares in its manifest
          (the root project uses []): a module may name only its own
          package's subtree and its own declared deps *)
+  aliases : (string list * string list) list;
+      (* module path → the path it resolves to: a package's entry file is
+         reachable both as the module a require binds and by its own name
+         beside it, and the two are one module — resolution answers the
+         path the declarations are keyed by, so both spellings reach the
+         same types, members, and refs *)
   current : string list; (* the module being checked *)
   refs : string list list ref; (* module paths referenced by this module *)
   requires : (string * Emo_support.Span.t) list ref;
@@ -228,12 +234,22 @@ let package_label ctx : string =
 
 (* Normalize a module path to its absolute form: the package-relative form
    first (`internal` in `json.emo` → `json.internal`), then the absolute
-   path when it is visible. [None] when the path names no module here. *)
+   path when it is visible. A path that is an alias answers the one it
+   resolves to, which is where the module is registered. [None] when the
+   path names no module here. *)
 let normalize_module ctx (path : string list) : string list option =
-  let pkg = package_of ctx ctx.current in
-  if pkg <> [] && module_prefix_known ctx (pkg @ path) then Some (pkg @ path)
-  else if module_prefix_known ctx path && visible ctx pkg path then Some path
-  else None
+  let resolved =
+    let pkg = package_of ctx ctx.current in
+    if pkg <> [] && module_prefix_known ctx (pkg @ path) then Some (pkg @ path)
+    else if module_prefix_known ctx path && visible ctx pkg path then Some path
+    else None
+  in
+  Option.map
+    (fun path ->
+      match List.assoc_opt path ctx.aliases with
+      | Some target -> target
+      | None -> path)
+    resolved
 
 (* ---- Type references ---- *)
 
@@ -651,6 +667,7 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       modules = [];
       packages = [];
       package_deps = [];
+      aliases = [];
       current = [];
       refs = ref [];
       requires = ref [];
@@ -3264,7 +3281,7 @@ type program_types = {
    unit being typed, so a bare type name qualifies to that unit's module
    and a package-relative one resolves against it. *)
 let preregister_ctx tables diagnostics ~current ~modules ~packages ~package_deps
-    =
+    ~aliases =
   {
     file = "<program>";
     classes = tables.pclasses;
@@ -3277,6 +3294,7 @@ let preregister_ctx tables diagnostics ~current ~modules ~packages ~package_deps
     modules;
     packages;
     package_deps;
+    aliases;
     current;
     refs = ref [];
     requires = ref [];
@@ -3296,6 +3314,7 @@ let preregister_ctx tables diagnostics ~current ~modules ~packages ~package_deps
    short name; the qualified key keeps them apart. *)
 let preregister_types ~(packages : string list list)
     ~(package_deps : (string list * string list) list)
+    ~(aliases : (string list * string list) list)
     ~(units : (string list * Ast.item list) list) :
     program_types * Emo_support.Diagnostic.t list =
   let tables =
@@ -3316,7 +3335,7 @@ let preregister_types ~(packages : string list list)
        resolves nowhere (or crosses an internal boundary) re-reports in
        its owning module's own check, which has the full environment. *)
     preregister_ctx tables (ref []) ~current:path ~modules:module_paths
-      ~packages ~package_deps
+      ~packages ~package_deps ~aliases
   in
   List.iter
     (fun (path, items) ->
@@ -3492,8 +3511,8 @@ let preregister_types ~(packages : string list list)
 let check_module_typed ~(modules : string list list)
     ?(packages : string list list = [])
     ?(package_deps : (string list * string list) list = [])
-    ~(current : string list) ?(program : program_types option) ?(target = "c")
-    (items : Ast.item list) :
+    ?(aliases : (string list * string list) list = []) ~(current : string list)
+    ?(program : program_types option) ?(target = "c") (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list
@@ -3520,6 +3539,7 @@ let check_module_typed ~(modules : string list list)
       modules;
       packages;
       package_deps;
+      aliases;
       current;
       refs = ref [];
       requires = ref [];
@@ -3552,13 +3572,14 @@ let check_module_typed ~(modules : string list list)
 let check_module ~(modules : string list list)
     ?(packages : string list list = [])
     ?(package_deps : (string list * string list) list = [])
-    ~(current : string list) ?(program : program_types option)
-    (items : Ast.item list) :
+    ?(aliases : (string list * string list) list = []) ~(current : string list)
+    ?(program : program_types option) (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list =
   let diagnostics, refs, requires, _types =
-    check_module_typed ~modules ~packages ~package_deps ~current ?program items
+    check_module_typed ~modules ~packages ~package_deps ~aliases ~current
+      ?program items
   in
   (diagnostics, refs, requires)
 

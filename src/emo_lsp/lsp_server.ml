@@ -223,7 +223,8 @@ let compute_diagnostics (state : state) (file : string) (text : string) :
                project check. *)
             let units = Ix.units_for ix ~current items in
             let program, _ =
-              Emo_check.preregister_types ~packages:[] ~package_deps:[] ~units
+              Emo_check.preregister_types ~packages:[] ~package_deps:[]
+                ~aliases:[] ~units
             in
             let check_diags, _, _, _ =
               Emo_check.check_module_typed ~modules ~current ~program items

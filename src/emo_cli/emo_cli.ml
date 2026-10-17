@@ -1920,16 +1920,19 @@ let emoji_build ~(dir : string) : int =
                 (String.length m.Emo_pkg.name - i - 1)
           | None -> m.Emo_pkg.name
         in
+        (* The entry module is the one a consumer's require binds: the
+           package root's `main.emo`, else the file named after the short
+           name. *)
         let entry =
-          if Sys.file_exists (Filename.concat dir (short ^ ".emo")) then
-            Filename.concat dir (short ^ ".emo")
-          else if Sys.file_exists (Filename.concat dir "main.emo") then
+          if Sys.file_exists (Filename.concat dir "main.emo") then
             Filename.concat dir "main.emo"
+          else if Sys.file_exists (Filename.concat dir (short ^ ".emo")) then
+            Filename.concat dir (short ^ ".emo")
           else begin
             prerr_endline
               (Printf.sprintf
-                 "emo emoji build: no entry module — expected `%s.emo` beside \
-                  the manifest"
+                 "emo emoji build: no entry module — expected `main.emo` or \
+                  `%s.emo` beside the manifest"
                  short);
             exit 66
           end
