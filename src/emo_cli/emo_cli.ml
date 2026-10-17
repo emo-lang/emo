@@ -1061,40 +1061,10 @@ let deps =
    the gzip body is binary. *)
 
 (* Extracts a string field from a flat JSON object (the registry's frozen
-   error shape); None when the field is absent or the body is not JSON. *)
-let json_string_field (key : string) (json : string) : string option =
-  let pat = "\"" ^ key ^ "\"" in
-  let n = String.length json and p = String.length pat in
-  let rec find i =
-    if i + p > n then None
-    else if String.sub json i p = pat then Some (i + p)
-    else find (i + 1)
-  in
-  match find 0 with
-  | None -> None
-  | Some i ->
-      let rec skip i =
-        if i < n && (json.[i] = ' ' || json.[i] = ':' || json.[i] = '\t') then
-          skip (i + 1)
-        else i
-      in
-      let i = skip i in
-      if i >= n || json.[i] <> '"' then None
-      else
-        let buf = Buffer.create 16 in
-        let rec read i =
-          if i >= n then None
-          else
-            match json.[i] with
-            | '\\' when i + 1 < n ->
-                Buffer.add_char buf json.[i + 1];
-                read (i + 2)
-            | '"' -> Some (Buffer.contents buf)
-            | c ->
-                Buffer.add_char buf c;
-                read (i + 1)
-        in
-        read (i + 1)
+   error shape); None when the field is absent or the body is not JSON.
+   Defined in Emo_pkg, where the HTTP pull client formats non-200 bodies
+   with the same reader. *)
+let json_string_field = Emo_pkg.json_string_field
 
 (* The registry conversation rides embedded Emo programs: `__url` and the
    other `__`-prefixed names are bound by the host before the program runs.

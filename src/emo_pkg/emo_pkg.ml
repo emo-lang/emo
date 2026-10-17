@@ -1379,6 +1379,43 @@ module Archive = struct
     match gunzip data with Error _ as e -> e | Ok payload -> untar payload
 end
 
+(* Extracts a string field from a flat JSON object (the registry's frozen
+   error shape); None when the field is absent or the body is not JSON. The
+   publish/login flows in emo_cli read it through this same definition. *)
+let json_string_field (key : string) (json : string) : string option =
+  let pat = "\"" ^ key ^ "\"" in
+  let n = String.length json and p = String.length pat in
+  let rec find i =
+    if i + p > n then None
+    else if String.sub json i p = pat then Some (i + p)
+    else find (i + 1)
+  in
+  match find 0 with
+  | None -> None
+  | Some i ->
+      let rec skip i =
+        if i < n && (json.[i] = ' ' || json.[i] = ':' || json.[i] = '\t') then
+          skip (i + 1)
+        else i
+      in
+      let i = skip i in
+      if i >= n || json.[i] <> '"' then None
+      else
+        let buf = Buffer.create 16 in
+        let rec read i =
+          if i >= n then None
+          else
+            match json.[i] with
+            | '\\' when i + 1 < n ->
+                Buffer.add_char buf json.[i + 1];
+                read (i + 2)
+            | '"' -> Some (Buffer.contents buf)
+            | c ->
+                Buffer.add_char buf c;
+                read (i + 1)
+        in
+        read (i + 1)
+
 (* The HTTP(S) pull client: the consumer half of the registry service's
    frozen protocol (registry/docs/design.md §5) — B.1 lists a package's
    versions with checksums and targets, B.2 answers dependencies in batch,
@@ -1398,7 +1435,9 @@ module Http_registry = struct
      package needs none, a private one is 404 without it, so the token is
      simply sent whenever the caller has one. A transport failure raises
      inside the program and comes back as the runner's Error, the same
-     mapping publish's uploader uses. *)
+     mapping publish's uploader uses. A non-200 status prints the raw body
+     after the status line, so the registry's error JSON reaches the host
+     for [refused] to format. *)
   let versions_program =
     {|require "http"
 require "json"
@@ -1435,6 +1474,8 @@ case resp {
           }
         }
       }
+    } else {
+      println(ok.body)
     }
   }
 }
@@ -1482,6 +1523,8 @@ case resp {
           }
         }
       }
+    } else {
+      println(ok.body)
     }
   }
 }
@@ -1556,6 +1599,22 @@ case resp {
               not one"
              base name)
 
+  (* One registry refusal, formatted for an error diagnostic. The frozen
+     error shape — {"error":{"code":...,"message":...}} — becomes
+     "answered <status> error: `<subject>` (<code>) <message>", so the code
+     and the human text stay visible instead of a raw JSON blob; any other
+     body keeps the trimmed raw text. *)
+  let refused ~(base : string) ~(status : int) ~(subject : string)
+      (body : string) : string =
+    match (json_string_field "code" body, json_string_field "message" body)
+    with
+    | Some code, Some message ->
+        Printf.sprintf "registry `%s` answered %d error: `%s` (%s) %s" base
+          status subject code (String.trim message)
+    | _ ->
+        Printf.sprintf "registry `%s` answered %d error: `%s` %s" base status
+          subject (String.trim body)
+
   (* One published version as B.1 reports it. *)
   type version_info = {
     vi_version : Version.t;
@@ -1613,12 +1672,7 @@ case resp {
         match exchange runner ~program:versions_program ~url ~token with
         | Error _ as e -> e
         | Ok (200, body) -> parse_versions_payload ~base body
-        | Ok (404, _) ->
-            Error (Printf.sprintf "registry `%s` has no package `%s`" base name)
-        | Ok (status, body) ->
-            Error
-              (Printf.sprintf "registry `%s` answered HTTP %d for `%s`: %s" base
-                 status name (String.trim body)))
+        | Ok (status, body) -> Error (refused ~base ~status ~subject:name body))
 
   (* B.2: one row per (package, version): the version's own exact pins and
      its yank flag. *)
@@ -1695,9 +1749,7 @@ case resp {
       | Ok (200, body) -> parse_deps_payload ~base body
       | Ok (status, body) ->
           Error
-            (Printf.sprintf
-               "registry `%s` answered HTTP %d for the dependencies of %s: %s"
-               base status (String.concat ", " names) (String.trim body))
+            (refused ~base ~status ~subject:(String.concat ", " names) body)
 
   (* The resolver index for one batch of scoped names: B.1 per name joined
      with one batched B.2. Yanked versions are excluded — a fresh resolution
@@ -1776,10 +1828,6 @@ case resp {
         in
         match exchange runner ~program:download_program ~url ~token with
         | Error _ as e -> e
-        | Ok (404, _) ->
-            Error
-              (Printf.sprintf "registry `%s` has no package %s@%s" base name
-                 (Version.to_string version))
         | Ok (200, archive) -> (
             match Archive.unpack archive with
             | Error _ as e -> e
@@ -1822,11 +1870,9 @@ case resp {
                         }))
         | Ok (status, body) ->
             Error
-              (Printf.sprintf
-                 "registry `%s` answered HTTP %d downloading %s@%s: %s" base
-                 status name
-                 (Version.to_string version)
-                 (String.trim body)))
+              (refused ~base ~status
+                 ~subject:(name ^ "@" ^ Version.to_string version)
+                 body))
 end
 
 (* Publishing: the client side of the registry's publish protocol.
