@@ -403,9 +403,11 @@ emo_value emo_net_write(int64_t fd, emo_str data);
 emo_value emo_net_close(int64_t fd); /* (R.ok, fd) */
 int64_t emo_net_set_timeout(int64_t fd, double seconds); /* returns fd */
 
-/* The scheduler hook: park the current fiber until its fd is
-   readable. */
+/* The scheduler hooks: park the current fiber until its fd is
+   readable (the reads), or writable (the TLS handshake's
+   WANT_WRITE). */
 void emo_net_wait_readable(int64_t fd);
+void emo_net_wait_writable(int64_t fd);
 
 /* TLS (step 51): the three net TLS builtins. Without EMO_HAS_TLS the
    bodies are today's honest refusal; with it the handshake runs on

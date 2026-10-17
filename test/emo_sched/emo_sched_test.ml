@@ -1156,6 +1156,52 @@ case net_tls_connect_insecure("localhost", listener.port(), 0.0) {
 |}
         in
         Alcotest.(check string) "output" "secret over tls\ndone\n" output);
+    tc "a verified TLS handshake rides SSL_CERT_FILE's CA" (fun () ->
+        (* The fixture CA signs fixtures/tls-server-cert.pem (SAN:
+           localhost, 127.0.0.1), so the default verify paths — pointed
+           at the CA by the environment — verify the handshake that the
+           self-signed pair above can never pass. The same fixture
+           serves the c binary from T51.5. *)
+        let old = Sys.getenv_opt "SSL_CERT_FILE" in
+        Unix.putenv "SSL_CERT_FILE" "fixtures/tls-ca.pem";
+        let output, _events =
+          run_det
+            {|
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write("verified: " + line + "\n")
+          conn.close()
+        }
+      }
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
+do serve(listener)
+case net_tls_connect("localhost", listener.port(), 0.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    conn.close()
+    println("done")
+  }
+}
+|}
+        in
+        (match old with
+        | Some v -> Unix.putenv "SSL_CERT_FILE" v
+        | None -> Unix.unsetenv "SSL_CERT_FILE");
+        Alcotest.(check string) "output" "verified: hello\ndone\n" output);
     tc "a TLS listener with a missing certificate answers a precise reason"
       (fun () ->
         let output, _events =
