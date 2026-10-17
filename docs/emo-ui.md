@@ -46,14 +46,13 @@ Four findings shape everything below:
    Node-only (`node:net`, `node:fs` imported at the top of the emitted
    runtime) and the wasm target's entire host interface is three
    imports (`println`, `abort`, `float_str`).
-3. **Packaging an EmoUI backend is not expressible yet.** A package
-   may carry `.c`/`.h` and link bare `-l` names only. An AppKit backend
-   is Objective-C (`.m`, `-fobjc-arc`, `-framework AppKit`); a GTK
-   backend needs `pkg-config --cflags --libs gtk4`. Neither fits. The
-   direction is settled — the manifest grows per-package native fields,
-   not app-level build scripts (`CHECK.md`) — and the field surface is
-   T48.7's own work; until it lands, the native backends fall back to
-   the app-level scripts the spikes use.
+3. **Packaging an EmoUI backend is expressible now (T48.7).** A package
+   may carry `.m` beside `.c`/`.h` (compiled under ARC), name bare
+   pkg-config modules in `pkg_config`, and link bare macOS frameworks
+   in `frameworks`. An AppKit backend is Objective-C
+   (`.m`, `-fobjc-arc`, `-framework AppKit`); a GTK backend names
+   `pkg_config = ["gtk4"]`. Neither needs an app-level build script, and
+   the manifest stays data.
 4. **A render's memory is not reclaimed on the `c` target, and the cheap
    fix does not exist.** A tree is built from exactly the kinds the
    arena never frees — children arrays, style maps, strings — and a UI
@@ -143,8 +142,8 @@ This note does not re-open what earlier work closed.
 
 | Platform | Route | Status | The gap |
 |---|---|---|---|
-| macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **proven** (`spike/macos-gui`, `spike/components`) | packaging: `.m`, `-fobjc-arc`, `-framework` |
-| GTK 4 | `c` target + C shim via `foreign def` | **proven** (`spike/gtk`, `spike/components`) | packaging: `pkg-config gtk4` |
+| macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **proven** (`spike/macos-gui`, `spike/components`) | packaging landed (T48.7): `.m`, ARC, `frameworks` |
+| GTK 4 | `c` target + C shim via `foreign def` | **proven** (`spike/gtk`, `spike/components`) | packaging landed (T48.7): `pkg_config` |
 | TUI | pure Emo, ANSI escape output; `term` for input | **landed** (T48.4, T48.5) | wiring `term` into `ui_tui`'s input source |
 | Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); DOM least ready | TS target is Node-only; wasm host has 3 imports |
 
@@ -158,33 +157,35 @@ because GTK names are already C-shaped). The nine-verb `ui_*` contract
 `connect`, `root`, `run`, `autotest_arm`) is the portable seam the
 spike proved, and the per-platform delta is a ~100-line painter.
 
-The real blocker is packaging, and it is a manifest gap, not a
+The real blocker was packaging, and it was a manifest gap, not a
 toolchain gap:
 
-- `docs/intro/package-management.md` (and `docs/c-backend.md`'s
-  "Package-carried native code") allow `.c`/`.h` files in a package and
-  a `link` field of **bare library names** only.
+- Before T48.7, `docs/intro/package-management.md` (and
+  `docs/c-backend.md`'s "Package-carried native code") allowed `.c`/`.h`
+  files in a package and a `link` field of **bare library names** only.
 - AppKit needs an Objective-C translation unit compiled with
   `-fobjc-arc -framework AppKit` (or `-framework Cocoa`); a bare `-l`
-  name cannot say that, and a `.m` file is not collected.
+  name cannot say that, and a `.m` file was not collected.
 - GTK 4 needs the `pkg-config gtk4` cflags and libs; a bare `-lgtk-4`
   is not enough (glib, gobject, gio, pango, gdk, and include paths).
 
-Until the manifest gains a per-package compile/link flag mechanism (or a
-`pkg_config = ["gtk4"]` field), the native backends cannot be ordinary
-consumable packages. The spikes sidestep this with app-level build
-scripts that pass `--cclib="$PWD/shim.o"` and `--cclib="-framework
-AppKit"`. That works, but it makes every EmoUI-for-macOS app carry a
-build script instead of a `require`. This is the single most concrete
-piece of toolchain work the requirement implies.
+Before the manifest gained a per-package native mechanism, the native
+backends could not be ordinary consumable packages. The spikes sidestep
+this with app-level build scripts that pass
+`--cclib="$PWD/shim.o"` and `--cclib="-framework AppKit"`. That works,
+but it makes every EmoUI-for-macOS app carry a build script instead of a
+`require`.
 
-**Settled 2026-10-14: manifest fields are that mechanism and the
-build-script path is not** (`CHECK.md`). A native backend stays an
-ordinary package a program reaches with a `require`, so what AppKit and
-GTK 4 need is declared in the manifest rather than restated in each
-consumer's script. The field surface — `pkg_config` versus explicit
-compile/link flag lists, and whether `.m` joins the collected `.c`/`.h`
-— is T48.7's own work.
+**Settled 2026-10-14 and landed 2026-10-18 (T48.7): manifest fields are
+that mechanism and the build-script path is not** (`CHECK.md`). A
+native backend stays an ordinary package a program reaches with a
+`require`, so what AppKit and GTK 4 need is declared in the manifest
+rather than restated in each consumer's script: `pkg_config` names bare
+pkg-config modules (their `--cflags` compile the package's sources,
+their `--libs` join the link), `frameworks` names bare macOS frameworks
+(`-framework NAME`), and `.m` joins `.c`/`.h` in the collected set,
+compiled under ARC. No raw flag field exists, so the manifest stays
+data.
 
 ### TUI
 
@@ -827,12 +828,12 @@ mid-implementation:
    that collects a block's expression statements. That is a template
    language, and the array argument already expresses the tree
    explicitly.
-3. **Package native-input extension (a real gate for native backends).**
-   `.c`/`.h` plus bare `-l` cannot express AppKit (`.m`, frameworks) or
-   GTK (`pkg-config`). Add a per-package compile-flags / `pkg_config`
-   mechanism — **settled 2026-10-14 to this route, not the documented
-   app-level build-script route** (`CHECK.md`); the field surface is
-   T48.7's own work.
+3. **Package native-input extension (landed, T48.7).** `.c`/`.h` plus
+   bare `-l` could not express AppKit (`.m`, frameworks) or GTK
+   (`pkg-config`); the manifest now carries `pkg_config` and
+   `frameworks` for exactly those, and `.m` joins the collected set —
+   **settled 2026-10-14 to this route, not the app-level build-script
+   route** (`CHECK.md`).
 4. **Memory reclamation on the `c` target — settled 2026-10-14 to
    refcounting the value families; landed 2026-10-17 (step 49).** The
    region route was tested and ruled out (`spike/arena-scope`,
@@ -885,10 +886,11 @@ mid-implementation:
   avoids needing them by delegating layout to the platform (and the TUI
   counts cells). A future canvas or a pixel-identical mode reintroduces
   the font-metrics problem `docs/visualization.md` declined.
-- **Native packaging.** Until the manifest grows flags, macOS/GTK apps
-  carry build scripts; that is friction on the requirement's "just
-  download and use". The manifest-field route is settled (T48.7), so the
-  risk is the schedule, not the direction.
+- **Native packaging.** The manifest fields landed (T48.7), so
+  macOS/GTK apps need no build scripts; the requirement's "just
+  download and use" no longer has that friction. The remaining risk is
+  the machinery's portability (pkg-config must be present), not the
+  design.
 - **Two event loops** (Emo scheduler vs. toolkit/browser), as above.
 - **Scope.** A UI framework is unbounded. The tier table is the defense:
   portable core + TUI + SSR first, native toolkits next, DOM last; no
@@ -1011,31 +1013,26 @@ tracked as **M16 — Value-family reclamation (step 49)**, spec in
 
 ## Remaining open questions
 
-1. **The native packaging mechanism** — direction settled 2026-10-14 to
-   per-package manifest fields, superseding the app-level build-script
-   alternative; the field surface (`pkg_config`, compile/link flags,
-   whether `.m` is collected) is T48.7's own work. This gates item 3 of
-   the sequencing.
-2. **Reconciliation** — when the retained backends get a keyed diff
+1. **Reconciliation** — when the retained backends get a keyed diff
    instead of a full rebuild, and whether the compiler's targeted
    refresh lands with it.
-3. **The two-event-loop integration** — how a UI process and a toolkit
+2. **The two-event-loop integration** — how a UI process and a toolkit
    loop coexist, and whether events become real process messages in v1
    or later.
-4. **The checked block/function type** — whether the component API
+3. **The checked block/function type** — whether the component API
    earns it after a first package shows the friction. The loop has now
    shown the friction's other face: its `Block`-valued `view`/`update`
    is what `c` alone cannot compile (`wasm` closed in T48.6;
    `CHECK.md`, the Elm loop's shape), so the alternative to a checked
    function type — putting the application's two functions behind an
    interface — is also the alternative to giving `c` def-as-value.
-5. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
+4. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
    subset of the TypeScript runtime plus a `dom_*` family, not a
    browser-specific runtime variant (`CHECK.md`). What stays open is
    mechanical: where the bundling step lives in the toolchain, which is
    T48.10's own work. The `typescript` target's share-on-send
    (`CHECK.md`, cross-target invariants) is on this path too.
-6. **The tree spelling** — whether the array child form gets a literal
+5. **The tree spelling** — whether the array child form gets a literal
    spelling at all, and if so whether it belongs in Emo's own grammar or
    in an external translator that emits `.emo`. The mechanisms that are
    *closed* (emission, self-rebinding, an ambient collector, and a

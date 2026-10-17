@@ -796,9 +796,10 @@ def span() Int64 {
   return leaf_tools.leaf()
 }
 |};
-  (* A package with native inputs: a C source and a `link` library. Its
-     manifest declares both native targets, so only the link gate —
-     never target resolution — can refuse it. *)
+  (* A package with native inputs: C and Objective-C sources, a `link`
+     library, a framework and a pkg-config module. Its manifest declares
+     both native targets, so only the link gate — never target
+     resolution — can refuse it. *)
   let native_dir =
     Filename.concat dir
       (Filename.concat "acme" (Filename.concat "native_tools" "1.0.0"))
@@ -810,6 +811,8 @@ def span() Int64 {
   version = "1.0.0"
   targets = ["ocaml", "c"]
   link = ["m"]
+  pkg_config = ["glib-2.0"]
+  frameworks = ["AppKit"]
   deps {}
 }
 |};
@@ -825,6 +828,10 @@ def halve_floor(x Float64) Float64 {
     (Filename.concat native_dir "shim.c")
     {|#include <math.h>
 double emo_native_floor(double x) { return floor(x); }
+|};
+  write_file
+    (Filename.concat native_dir "extra.m")
+    {|long emo_native_extra(void) { return 0; }
 |};
   dir
 
@@ -2684,9 +2691,10 @@ def test_never() {
                  ds));
   ]
 
-(* Packages with native inputs (C sources, a `link` library): the c
-   target carries them; every other target refuses the program rather
-   than silently dropping the link. *)
+(* Packages with native inputs (C and Objective-C sources, a `link`
+   library, frameworks, pkg-config modules): the c target carries them;
+   every other target refuses the program rather than silently dropping
+   the link. *)
 let native_dep_tests =
   [
     tc "the c target collects a package's C sources and link libraries"
@@ -2715,14 +2723,18 @@ println(native_tools.halve_floor(9.0))
             "main.emo"
         in
         with_registry (fun () ->
-            let _inputs, _entry, _packages, (c_sources, link_libs) =
+            let _inputs, _entry, _packages, native =
               Emo_project.compile_inputs ~entry_file:entry ~target:"c"
             in
-            Alcotest.(check (list string)) "link" [ "m" ] link_libs;
-            Alcotest.(check int) "one c source" 1 (List.length c_sources);
-            Alcotest.(check bool)
-              "the shim's path" true
-              (String.equal (Filename.basename (List.hd c_sources)) "shim.c")));
+            Alcotest.(check (list string))
+              "link" [ "m" ] native.Emo_project.ni_link;
+            Alcotest.(check (list string))
+              "frameworks" [ "AppKit" ] native.Emo_project.ni_frameworks;
+            Alcotest.(check (list string))
+              "pkg_config" [ "glib-2.0" ] native.Emo_project.ni_pkg_config;
+            Alcotest.(check (list string))
+              "the C and Objective-C sources" [ "extra.m"; "shim.c" ]
+              (List.map Filename.basename native.Emo_project.ni_sources)));
     tc "a native-carrying package is refused off the c target" (fun () ->
         let entry =
           with_project

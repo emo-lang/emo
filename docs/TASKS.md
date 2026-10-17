@@ -63,7 +63,7 @@ before starting the gated work:
 | `emo install` semantics | T24.4 | settled then superseded 2026-10-17 — the command was removed; `emo deps` and the build path own resolve/fetch/lock, and installing global executables stays out of scope for 1.0 |
 | The runtime-independence principle | T25.1 | a target's runtime is written in the target's language, carried as generated data inside the compiler; the host contributes only the emitter |
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
-| EmoUI native UI packaging (per-package compile flags / `pkg_config`) | T48.7–T48.9 | direction settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). The field surface (`pkg_config`, compile/link flags, whether `.m` is collected) stays T48.7's own work |
+| EmoUI native UI packaging (per-package native fields) | T48.7–T48.9 | settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.7)**: `pkg_config` (bare modules; `--cflags` compile, `--libs` link), `frameworks` (bare names; `-framework NAME`), and `.m` collected beside `.c`/`.h` and compiled under ARC |
 | `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). **Landed 2026-10-17 (T49.1–T49.4)**: the working set is flat and the demo-scale note is retired |
 | EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). Where the bundling step lives in the toolchain stays T48.10's own work |
 | Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
@@ -1793,10 +1793,22 @@ required.
       bytes are the interpreter's on all five targets; `c` still refuses
       a bare def name (`Global`), which is the one refusal the gates pin
       (the SSR package's own `test.emo` reaches it through `ui.run`).
-- [ ] **T48.7** — The native packaging mechanism: per-package manifest
+- [x] **T48.7** — The native packaging mechanism: per-package manifest
       fields (`pkg_config` and/or compile/link flags, plus whatever
       collects `.m`); the app-level build-script path is not the
-      supported one. The gate for T48.8 and T48.9.
+      supported one. The gate for T48.8 and T48.9. **Landed 2026-10-18**:
+      the manifest gains `pkg_config` — bare pkg-config modules whose
+      `--cflags` compile the package's sources and whose `--libs` join
+      the link — and `frameworks` — bare macOS frameworks, linked as
+      `-framework NAME`; both refuse empty, flag-shaped, and
+      path-shaped entries, so the manifest stays data. `.m` joins
+      `.c`/`.h` in the collected set (dependency resolution, the
+      embedded stdlib, and publish) and is compiled under `-fobjc-arc`,
+      the c target's fixed Objective-C policy. Resolved flags enter the
+      c build's cache key, an unresolvable module exits 69 with the
+      install prompt, and `emo emoji build` passes a package's own
+      native inputs the way a dependency's are passed, so the
+      pre-publish gate links what consumers get.
 - [ ] **T48.8** — `ui-macos`: the nine-verb AppKit shim over the callback
       contract; the convergence corpus runs. Demo scale — the `c`
       target's long-running memory is step 49 (`CHECK.md`).

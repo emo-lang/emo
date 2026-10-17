@@ -414,7 +414,8 @@ let beam_examples_tests =
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out
-                  ~specialize:false ~cclibs:[] ~target:"beam")
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"beam")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -512,7 +513,8 @@ let wasm_examples_tests =
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_wasm
-                  ~specialize:false ~cclibs:[] ~target:"wasm")
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"wasm")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let out, err, proc_status =
@@ -697,7 +699,8 @@ let scratch_entry name source =
    directory is the package root, so the build has to stand there. *)
 let build_entry ~target ?(specialize = false) ?(cclibs = []) entry output =
   in_dir (Filename.dirname entry) (fun () ->
-      Emo_cli.build_file ~entry ~output ~specialize ~cclibs ~target)
+      Emo_cli.build_file ~entry ~output ~specialize ~cclibs
+        ~native:Emo_project.no_native_inputs ~target)
 
 let check_run what (out, err, status) expected =
   Alcotest.(check string) (what ^ " output") expected out;
@@ -1266,7 +1269,8 @@ let c_examples_tests =
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_bin
-                  ~specialize:false ~cclibs ~target:"c")
+                  ~specialize:false ~cclibs ~native:Emo_project.no_native_inputs
+                  ~target:"c")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           (* A TLS golden runs from its own directory: the program
@@ -2884,7 +2888,8 @@ let riscv64_examples_tests =
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_elf
-                  ~specialize:false ~cclibs:[] ~target:"riscv64")
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"riscv64")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -3861,12 +3866,14 @@ let manifest_entry_tests =
           "exit" 66
           (in_dir dir (fun () ->
                Emo_cli.build_file ~entry:"package.emo" ~output:"manifest-entry"
-                 ~specialize:false ~cclibs:[] ~target:"wasm"));
+                 ~specialize:false ~cclibs:[]
+                 ~native:Emo_project.no_native_inputs ~target:"wasm"));
         Alcotest.(check int)
           "exit" 0
           (in_dir dir (fun () ->
                Emo_cli.build_file ~entry:"main.emo" ~output:"manifest-entry"
-                 ~specialize:false ~cclibs:[] ~target:"wasm")));
+                 ~specialize:false ~cclibs:[]
+                 ~native:Emo_project.no_native_inputs ~target:"wasm")));
   ]
 
 (* The defects CHECK.md recorded and their fixes: a message sent on
@@ -4094,13 +4101,12 @@ let term_manifest =
 let term_entry name source =
   let entry = fixture ~manifest:term_manifest (name ^ ".emo") source in
   let bin = Filename.concat (Filename.dirname entry) (name ^ "-c-bin") in
-  entry, bin
+  (entry, bin)
 
 let term_tests =
   let build_term name source =
     let entry, bin = term_entry name source in
-    Alcotest.(check int) "build exit" 0
-      (build_entry ~target:"c" entry bin);
+    Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry bin);
     bin
   in
   let run_with_input bin input =
@@ -4134,7 +4140,8 @@ def main() {
 main()
 |}
         in
-        check_run "term lines" (run_with_input bin "alpha\n\nbeta")
+        check_run "term lines"
+          (run_with_input bin "alpha\n\nbeta")
           "ok[alpha\n]\nok[\n]\nok[beta]\nok[]\n");
     tc "term decodes keys, escape sequences, and UTF-8 from the byte stream"
       (fun () ->
@@ -4194,9 +4201,20 @@ main()
 |}
         in
         check_run "term keys"
-          (run_with_input bin "a\r\t\127\001\027[A\027[3~\027OP\u{00e9}\027x\027")
-          "char 97\nenter 0\ntab 0\nbackspace 0\nctrl 1\nup 0\ndelete 0\n\
-           f1 0\nchar 233\nalt 120\nescape 0\neof 0\n");
+          (run_with_input bin
+             "a\r\t\127\001\027[A\027[3~\027OP\u{00e9}\027x\027")
+          "char 97\n\
+           enter 0\n\
+           tab 0\n\
+           backspace 0\n\
+           ctrl 1\n\
+           up 0\n\
+           delete 0\n\
+           f1 0\n\
+           char 233\n\
+           alt 120\n\
+           escape 0\n\
+           eof 0\n");
     tc "term reports data failures as values and refuses raw mode off a tty"
       (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
@@ -4226,8 +4244,11 @@ main()
 |}
         in
         check_run "term errors" (run_with_input bin "")
-          "tty false\nraw term: enable_raw: not a terminal\nrestore ok 0\n\
-           size true\nkey true\n");
+          "tty false\n\
+           raw term: enable_raw: not a terminal\n\
+           restore ok 0\n\
+           size true\n\
+           key true\n");
   ]
 
 let () =

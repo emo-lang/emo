@@ -13,8 +13,10 @@ headless `debug` backend with its byte-identical golden (T48.3) and the
 terminal `ui_tui` backend with its scripted-input golden (T48.4) have
 landed in `projects/emo-ui/`, and terminal input (T48.5) has landed in
 `stdlib/` as the `term` package; the server-side `ui_ssr` renderer
-(T48.6) has landed beside the debug and TUI backends; T48.7 onward are
-not started. T48.2 turned
+(T48.6) has landed beside the debug and TUI backends; the native
+packaging mechanism (T48.7) has landed in the manifest and the `c`
+target, so the native backends are unblocked; T48.8 onward are not
+started. T48.2 turned
 up the first language-side gap this step has hit: the loop's shape — the
 application's `update` and `view` arriving as `Block` values — is what
 `c` and `wasm` could not compile, and T48.4 found that `beam` compiles
@@ -331,10 +333,21 @@ placement; `docs/emo-ui.md`, ask 7).
       (`closure_type`, `emo_wasm.ml`), which lets the core golden and
       `probe/def_shape` build for `wasm` and closes the `wasm` half of
       T48.2's finding; `c` remains the one refusal.
-- [ ] **T48.7** — The native packaging mechanism: per-package manifest
+- [x] **T48.7** — The native packaging mechanism: per-package manifest
       fields (`pkg_config` and/or compile/link flags, plus whatever
       collects `.m`); the app-level build-script path is not the
       supported one. The gate for T48.8 and T48.9.
+      Landed 2026-10-18: the manifest gains `pkg_config` (bare
+      pkg-config modules whose `--cflags` compile the package's sources
+      and whose `--libs` join the link) and `frameworks` (bare macOS
+      frameworks, linked as `-framework NAME`), both refusing empty,
+      flag-shaped, and path-shaped entries; `.m` joins `.c`/`.h` in the
+      collected set and is compiled under `-fobjc-arc`, the c target's
+      fixed Objective-C policy; the resolved flags enter the c build's
+      cache key, and an unresolvable module is exit 69 with the install
+      prompt. `emo emoji build` passes a package's own native inputs as
+      a dependency's would be passed, so the pre-publish gate links what
+      consumers get.
 - [ ] **T48.8** — `ui-macos`: the nine-verb AppKit shim over the
       callback contract; the convergence corpus runs. Demo scale — the
       `c` target's long-running memory is step 49 (`CHECK.md`).
@@ -377,20 +390,16 @@ placement; `docs/emo-ui.md`, ask 7).
 
 Listed as open questions in `docs/emo-ui.md`:
 
-1. **The native packaging mechanism** — direction settled to
-   per-package manifest fields (2026-10-14, `CHECK.md`); the field
-   surface is T48.7's own work. Gates T48.7–T48.9.
-2. **Reconciliation** — when the retained backends get a keyed diff
+1. **Reconciliation** — when the retained backends get a keyed diff
    instead of a full rebuild, and whether the compiler's targeted
    refresh lands with it.
-3. **The two-event-loop integration** — how a UI process and a toolkit
+2. **The two-event-loop integration** — how a UI process and a toolkit
    loop coexist, and whether events become real process messages in v1
    or later.
-4. **A checked block/function type** — whether the component API earns
+3. **A checked block/function type** — whether the component API earns
    it after a first package shows the friction.
-5. **The browser path boundary** — settled 2026-10-15 to a browser-safe
+4. **The browser path boundary** — settled 2026-10-15 to a browser-safe
    subset of the existing TypeScript runtime plus a `dom_*` family,
    rather than a browser-specific runtime variant (`CHECK.md`, step 50).
    Where the bundling step lives in the toolchain stays T48.10's own
-   work, the shape T48.7 already has for its field surface. Gates
-   T48.10–T48.11, now unblocked.
+   work. Gates T48.10–T48.11, now unblocked.

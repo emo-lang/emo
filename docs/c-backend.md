@@ -102,21 +102,31 @@ manifest and its tree, so consumers pass no flags at all:
   `link = ["sqlite3"]` turns into `-lsqlite3` on the c target's cc
   invocation. Bare names only — a flag- or path-shaped entry is refused
   at manifest read (`--cclib` keeps the verbatim-flag role).
-- **`.c`/`.h` files in the package's tree are part of the package.**
-  They are collected, checksummed, embedded in the compiler's bundled
-  stdlib, and published beside the `.emo` modules, and the c target
-  compiles a dependency's C sources in the program's one cc invocation.
-  This is where the out-parameter shims live: a package's
-  `foreign def`s bind the shim's exact-ABI wrappers (as the `sqlite3`
-  package does), and the shim compiles against the generated
-  `emo_defs.h`, so a signature drift breaks at cc time in both
-  directions.
+- **`pkg_config` names pkg-config modules; `frameworks` names macOS
+  frameworks.** The modules' `--cflags` join the compile and their
+  `--libs` join the link, and each framework becomes `-framework NAME`.
+  Both fields hold bare names, refused at manifest read when an entry is
+  empty, flag-shaped, or path-shaped, so no flag fragment rides a
+  manifest. A module pkg-config cannot resolve fails the build with 69
+  and the install prompt, not raw compiler output.
+- **`.c`, `.h`, and `.m` files in the package's tree are part of the
+  package.** They are collected, checksummed, embedded in the compiler's
+  bundled stdlib, and published beside the `.emo` modules, and the c
+  target compiles a dependency's C and Objective-C sources in the
+  program's one cc invocation. This is where the out-parameter shims
+  live: a package's `foreign def`s bind the shim's exact-ABI wrappers
+  (as the `sqlite3` package does), and the shim compiles against the
+  generated `emo_defs.h`, so a signature drift breaks at cc time in
+  both directions. Objective-C is compiled under ARC (`-fobjc-arc`),
+  the c target's fixed policy for `.m`; clang ignores the flag on `.c`
+  translation units, so one command still builds both.
 - **Only the c target honors a package's native inputs.** The
   manifest's `targets` refuses the package at resolution on the other
   targets; a package that declares the current target while carrying
-  native inputs makes the build refuse with E5007 rather than silently
-  dropping the link. Sources enter the build's cache key by content,
-  libraries by name.
+  native sources, `link`, `pkg_config`, or `frameworks` makes the build
+  refuse with E5007 rather than silently dropping them. Sources enter
+  the build's cache key by content, libraries and resolved flags by
+  name, so changing a pkg-config module's flags rebuilds.
 
 A target that cannot honor a `foreign def` refuses it at check time
 rather than compiling a broken call: today the c target and the `ocaml`

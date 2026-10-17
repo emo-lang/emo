@@ -1243,15 +1243,23 @@ let register_package (p : project) (short : string) (dir : string) : unit =
   p.packages <- [ short ] :: p.packages;
   match diagnostics p with [] -> () | ds -> raise (Static_errors ds)
 
-(* The native side of one resolved dependency: the C sources it carries
-   (absolute paths into the materialized cache dir — the c target compiles
-   them into the program) and the system libraries its manifest links.
-   Both are empty for a pure-Emo package. *)
-type native_dep = {
-  nd_name : string;
-  nd_csources : string list;
-  nd_link : string list;
+(* A package's native inputs, as the c target consumes them: the C and
+   Objective-C sources it carries (absolute paths into the materialized
+   cache dir), the system libraries and macOS frameworks its manifest
+   links, and the pkg-config modules whose cflags/libs it applies. Every
+   list is empty for a pure-Emo package. *)
+type native_inputs = {
+  ni_sources : string list;
+  ni_link : string list;
+  ni_frameworks : string list;
+  ni_pkg_config : string list;
 }
+
+let no_native_inputs =
+  { ni_sources = []; ni_link = []; ni_frameworks = []; ni_pkg_config = [] }
+
+(* The native side of one resolved dependency. *)
+type native_dep = { nd_name : string; nd_inputs : native_inputs }
 
 (* The dependency side of a run: resolve or verify, then fetch every
    resolved package into the shared cache and register its modules.
@@ -1340,14 +1348,21 @@ let load_deps ~(manifest : Emo_pkg.manifest) ~(manifest_dir : string)
           ([ short ], List.map fst pkg.Emo_pkg.deps) :: p.package_deps;
         {
           nd_name = entry.Emo_pkg.Lockfile.dep;
-          nd_csources =
-            List.filter_map
-              (fun (rel, _) ->
-                if Filename.check_suffix rel ".c" then
-                  Some (Filename.concat dir rel)
-                else None)
-              f.Emo_pkg.Registry.f_files;
-          nd_link = pkg.Emo_pkg.link;
+          nd_inputs =
+            {
+              ni_sources =
+                List.filter_map
+                  (fun (rel, _) ->
+                    if
+                      Filename.check_suffix rel ".c"
+                      || Filename.check_suffix rel ".m"
+                    then Some (Filename.concat dir rel)
+                    else None)
+                  f.Emo_pkg.Registry.f_files;
+              ni_link = pkg.Emo_pkg.link;
+              ni_frameworks = pkg.Emo_pkg.frameworks;
+              ni_pkg_config = pkg.Emo_pkg.pkg_config;
+            };
         })
       fetched
   end
@@ -1420,18 +1435,17 @@ let is_test_module = function "test" :: _ :: _ -> true | _ -> false
 
 (* The backend's lowering input: every module in the project, parsed and
    checked (the backend runs the full check), plus the entry module's
-   path and the dependencies' native inputs (C sources to compile,
-   libraries to link). Test modules are left out — they are not part of a
-   compiled program, and their assertions are interpreter-only. Raises
-   [Static_errors] on any diagnostic. A native-carrying package (C sources
-   or a `link` list) is honored by the c target alone; any other target
+   path and the dependencies' native inputs (C and Objective-C sources to
+   compile, libraries and frameworks to link, pkg-config modules to
+   resolve). Test modules are left out — they are not part of a compiled
+   program, and their assertions are interpreter-only. Raises
+   [Static_errors] on any diagnostic. A native-carrying package (sources,
+   `link`, `pkg_config`, or `frameworks`) is honored by the c target alone;
+   any other target
    refuses the program outright — dropping the native inputs would be a
    silent fallback. *)
 let compile_inputs ~entry_file ~target :
-    Emo_ir.module_input list
-    * string list
-    * string list list
-    * (string list * string list) =
+    Emo_ir.module_input list * string list * string list list * native_inputs =
   let p, (manifest, dir) = prepare () in
   let entry = entry_module_in_project p entry_file in
   if is_test_module entry then
@@ -1455,10 +1469,17 @@ let compile_inputs ~entry_file ~target :
            };
          ]);
   let native_deps = load_deps ~manifest ~manifest_dir:dir ~target p in
-  let c_sources = List.concat_map (fun d -> d.nd_csources) native_deps in
-  let link_libs = List.concat_map (fun d -> d.nd_link) native_deps in
+  let merge acc d =
+    {
+      ni_sources = acc.ni_sources @ d.nd_inputs.ni_sources;
+      ni_link = acc.ni_link @ d.nd_inputs.ni_link;
+      ni_frameworks = acc.ni_frameworks @ d.nd_inputs.ni_frameworks;
+      ni_pkg_config = acc.ni_pkg_config @ d.nd_inputs.ni_pkg_config;
+    }
+  in
+  let native = List.fold_left merge no_native_inputs native_deps in
   let native_carrying =
-    List.filter (fun d -> d.nd_csources <> [] || d.nd_link <> []) native_deps
+    List.filter (fun d -> d.nd_inputs <> no_native_inputs) native_deps
   in
   (match native_carrying with
   | [] -> ()
@@ -1474,7 +1495,8 @@ let compile_inputs ~entry_file ~target :
                message =
                  Printf.sprintf
                    "the %s target cannot link native dependencies (%s) — only \
-                    the c target carries a package's C sources and libraries"
+                    the c target carries a package's native sources and \
+                    libraries"
                    target names;
                span =
                  Emo_support.Span.make ~file:p.root ~line:1 ~col:1 ~start:0
@@ -1510,7 +1532,7 @@ let compile_inputs ~entry_file ~target :
       [] units
   in
   (match !diagnostics with [] -> () | ds -> raise (Static_errors ds));
-  (inputs, entry, p.packages, (c_sources, link_libs))
+  (inputs, entry, p.packages, native)
 
 (* `emo check`: the static stages over the whole module tree, including the
    dependency side, without evaluating. *)

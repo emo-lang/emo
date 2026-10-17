@@ -18,7 +18,7 @@
 
 1. **声明式树今天不受类型检查,而且它最漂亮的那种写法不成立。** 声明为 `Block` 的参数对检查器来说是 `Unknown`,所以尾随 block 里的内容是动态检查的(顶多如此);而一个 body 是一串子节点调用的 block 产出 `void`,子节点被悄悄丢弃。README 里那份示意树(`page(...) { navbar() { ... } }`)不是一个可执行程序。子节点要么是显式的 `Array[Node]`,要么 block 必须 `return` 它们。
 2. **四个平台并不同等地就绪。** macOS/AppKit 与 GTK 4 已经经 `foreign def` shim 证明可行;终端渲染器是廉价的纯 Emo;Web 最不成熟——TypeScript 目标只面向 Node(发射出的 runtime 顶部 import `node:net`、`node:fs`),而 wasm 目标的整个宿主接口只有三个 import(`println`、`abort`、`float_str`)。
-3. **EmoUI 后端今天无法用包表达。** 一个包只能携带 `.c`/`.h`,并且只能链接裸 `-l` 名。AppKit 后端是 Objective-C(`.m`、`-fobjc-arc`、`-framework AppKit`);GTK 后端需要 `pkg-config --cflags --libs gtk4`。两者都装不进。方向已定——manifest 长出 per-package 原生字段,而不是应用级构建脚本(`CHECK.md`)——字段面属于 T48.7 自己的工作;在它落地之前,原生后端退回到 spike 用的应用级脚本。
+3. **EmoUI 后端现在可以用包表达了(T48.7)。** 一个包可以在 `.c`/`.h` 之外携带 `.m`(在 ARC 下编译),用 `pkg_config` 命名裸的 pkg-config 模块,用 `frameworks` 链接裸的 macOS framework。AppKit 后端是 Objective-C(`.m`、`-fobjc-arc`、`-framework AppKit`);GTK 后端写 `pkg_config = ["gtk4"]`。两者都不需要应用级构建脚本,而 manifest 仍然只是数据。
 4. **`c` 目标上一次渲染的内存不会被回收,而廉价的解法并不存在。** 树恰好由 arena 永不释放的那些种类搭成——子节点数组、样式 map、字符串——而 UI 每个事件重建一次。`spike/arena-scope` 实测:400 节点时每次渲染约 1 MB、约 820 个对象,两者都无界——60 fps 下约 60 MB/s、每秒约 49,000 个对象。region 能回收字节,回收不了对象,并且会把那些引用计数永久搁死。**step 49 已于 2026-10-17 落地修复:每个动态值都可回收,渲染形状的循环持有平坦的工作集**(`CHECK.md`)——demo 尺度的告诫就此退役。
 5. **`Array` 没有 O(1) append**,而 `List` 无法转回可索引的 `Array`,所以已定的 children 写法——`Array[Node]` 靠 `.append` 增长、每次渲染重建——在字节与 retain 两面都是 O(k²)。T48.1 应当先定 children 的表示,或者给语言补一个廉价的数组 builder。**这后半句现在有答案了**:语言有了 `ArrayBuilder`(T49.3),用 `push` 以摊还 O(1) 把 `Array[T]` 长出来,再用 `to_array()` 交出。构造 child 列表不再为每个 child 付一次拷贝,所以 `children_of` 式的累加可以不必再绕那道嵌套 `.append` 的弯。T48.1 的表示问题——children 到底是不是数组——已由可移植核心给出答案(2026-10-15):children 仍是显式的 `Array[Node]`,而走到哪才知道的子节点列表用 `ArrayBuilder` 攒。
 
@@ -51,8 +51,8 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 
 | 平台 | 路径 | 状态 | 缺口 |
 |---|---|---|---|
-| macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已证明**(`spike/macos-gui`、`spike/components`) | 打包:`.m`、`-fobjc-arc`、`-framework` |
-| GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已证明**(`spike/gtk`、`spike/components`) | 打包:`pkg-config gtk4` |
+| macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已证明**(`spike/macos-gui`、`spike/components`) | 打包已落地(T48.7):`.m`、ARC、`frameworks` |
+| GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已证明**(`spike/gtk`、`spike/components`) | 打包已落地(T48.7):`pkg_config` |
 | TUI | 纯 Emo,输出 ANSI 转义;输入用 `term` | **已落地**(T48.4、T48.5) | 把 `term` 接进 `ui_tui` 的输入源 |
 | Web | HTML/CSS(SSR)→ DOM(浏览器 TS)→ wasm + DOM | **SSR 已落地**(T48.6);DOM 最不成熟 | TS 目标只面向 Node;wasm 宿主只有 3 个 import |
 
@@ -60,15 +60,15 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 
 两者都是 C ABI 上的 `foreign def`,两者都在 spike 里跑通了。差别在 shim 的厚度,不在架构:C 工具包不需要词汇表翻译(GTK 的 shim 约为 AppKit 的三分之一,因为 GTK 的名字本来就是 C 形状的)。九动词 `ui_*` 契约(`window_make`、`label_make`、`button_make`、`place`、`clear`、`connect`、`root`、`run`、`autotest_arm`)是 spike 证明过的可移植接缝,每平台的差异是一个约 100 行的 painter。
 
-真正的阻塞是打包,而它是 manifest 的缺口,不是工具链的缺口:
+真正的阻塞曾是打包,而它是 manifest 的缺口,不是工具链的缺口:
 
-- `docs/intro/package-management.md`(以及 `docs/c-backend.md` 的「Package-carried native code」)允许包里有 `.c`/`.h`,并且 `link` 字段只收**裸库名**。
+- 在 T48.7 之前,`docs/intro/package-management.md`(以及 `docs/c-backend.md` 的「Package-carried native code」)允许包里有 `.c`/`.h`,并且 `link` 字段只收**裸库名**。
 - AppKit 需要一个用 `-fobjc-arc -framework AppKit`(或 `-framework Cocoa`)编译的 Objective-C 翻译单元;裸 `-l` 名说不出这些,而 `.m` 文件不会被收集。
 - GTK 4 需要 `pkg-config gtk4` 的 cflags 与 libs;裸 `-lgtk-4` 不够(还有 glib、gobject、gio、pango、gdk 以及 include 路径)。
 
-在 manifest 长出 per-package 编译/链接 flag 机制(或一个 `pkg_config = \["gtk4"\]` 字段)之前,原生后端无法成为普通的可消费包。spike 绕开的方式是应用级构建脚本,传 `--cclib="$PWD/shim.o"` 与 `--cclib="-framework AppKit"`。这能工作,但它让每个 macOS 版 EmoUI 应用都得扛一份构建脚本,而不是一个 `require`。这是需求隐含的全部工具链工作中最具体的一块。
+在 manifest 长出 per-package 原生机制之前,原生后端无法成为普通的可消费包。spike 绕开的方式是应用级构建脚本,传 `--cclib="$PWD/shim.o"` 与 `--cclib="-framework AppKit"`。这能工作,但它让每个 macOS 版 EmoUI 应用都得扛一份构建脚本,而不是一个 `require`。
 
-**已定(2026-10-14):这个机制就是 manifest 字段,构建脚本那条路不是**(`CHECK.md`)。原生后端仍然是一个普通的包,程序用 `require` 就能取到,所以 AppKit 与 GTK 4 需要的东西声明在 manifest 里,而不是在每个使用者的脚本里重述一遍。字段面——`pkg_config` 与显式编译/链接 flag 列表之间怎么选、`.m` 是否加入被收集的 `.c`/`.h`——是 T48.7 自己的范围。
+**已定(2026-10-14)并已落地(2026-10-18,T48.7):这个机制就是 manifest 字段,构建脚本那条路不是**(`CHECK.md`)。原生后端仍然是一个普通的包,程序用 `require` 就能取到,所以 AppKit 与 GTK 4 需要的东西声明在 manifest 里,而不是在每个使用者的脚本里重述一遍:`pkg_config` 命名裸的 pkg-config 模块(它们的 `--cflags` 编译包的源码,`--libs` 进入链接),`frameworks` 命名裸的 macOS framework(`-framework NAME`),`.m` 加入 `.c`/`.h` 的收集集合并按 ARC 编译。不存在原始 flag 字段,所以 manifest 仍然只是数据。
 
 ### TUI
 
@@ -357,7 +357,7 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 
 1. **带检查的 block/函数类型(可选)。** `Block` 是 `Unknown`,所以组件 API 的回调与树 block 不受检。带类型的 block 能让 `each(xs, f: (T) Node)` 受检。便利项,不是关口;数组子节点形式不用它也能让树受检。
 2. **没有隐式子节点收集——这是设计。** 不要新增一种收集 block 表达式语句的构造。那是模板语言,而数组参数已经把树表达清楚了。
-3. **包原生输入的扩展(原生后端的真正关口)。** `.c`/`.h` 加裸 `-l` 表达不了 AppKit(`.m`、frameworks)或 GTK(`pkg-config`)。新增 per-package 编译 flag / `pkg_config` 机制——**已定(2026-10-14)走这条路,不走「写明使用应用级构建脚本」那条**(`CHECK.md`);字段面是 T48.7 自己的范围。
+3. **包原生输入的扩展(已落地,T48.7)。** `.c`/`.h` 加裸 `-l` 表达不了 AppKit(`.m`、frameworks)或 GTK(`pkg-config`);manifest 现在为这两者携带 `pkg_config` 与 `frameworks`,`.m` 也加入了收集集合——**已定(2026-10-14)走这条路,不走「写明使用应用级构建脚本」那条**(`CHECK.md`)。
 4. **`c` 目标的内存回收——已定(2026-10-14)走值语义家族的引用计数;2026-10-17 落地(step 49)。** region 那条路已被实测并排除(`spike/arena-scope`、`CHECK.md`);原生后端交付时附带的 demo 尺度注记已退役——渲染形状的循环持有平坦的工作集,由 T49.4 闸门钉住。
 5. **`c` 目标的 `raise` 与 `send`——已定(2026-10-15),兑现已经做出的承诺**(`CHECK.md`,step 50)。UI 不能因为一个坏事件整体死掉,跨进程的事件载荷也不能被静默共享——这两条正是 `docs/intro/concurrency.md` 与 `docs/intro/syntax.md` 早已写下的。`c` 目标是唯一跑偏的实现;现在子进程的 `raise` 只结束它自己,`send` 送快照。`typescript` 目标的 send 共享是下面 Web 路径上的同一个缺口。
 6. **Web 的浏览器路径(T1)——已定(2026-10-15)走拆分路线:** 把 TypeScript runtime 拆出一个浏览器安全子集、加一个 `dom_*` 家族与一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`)。打包步骤落在工具链的哪里属于 T48.10 自己的范围。SSR(T0)不需要。
@@ -368,7 +368,7 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 
 - **后端间的语义漂移。** 语法收敛并不让一个 `row` 处处同义。缓解:一套小的声明式布局词汇表、收敛命名规则,以及一个一致性语料(一个 app、每个后端)——**已落地为 `debug` 后端与 `projects/emo-ui/golden/`(T48.3)**,它们把一块界面钉成在所有跑得动的 target 上逐字节相同,并且在第二个后端出现之前就找出了第一批分歧:操作数求值顺序与枚举的显示形式,今天在这两个 target 上并非同样的字节(`CHECK.md`)。**终端后端与它的脚本化金标(T48.4)**把这条线延长——一块界面经过一个真正的盒模型,在五个托管目标中的四个上逐字节相同——并逼出、修掉了它记下(`CHECK.md`)的两个 `beam` 降级缺陷。**服务端渲染后端(T48.6)**再延长一次:整棵树的 HTML 与样式表在全部五个 target 上逐字节相同,而关掉它需要 `wasm` 闭包的参数个数。
 - **文本。** 可移植的自动布局需要文本度量;设计通过把布局委托给平台(而 TUI 数格子)来避免需要它们。未来的 canvas 或像素一致模式会重新引入 `docs/visualization.md` 拒绝过的字体度量问题。
-- **原生打包。** 在 manifest 长出 flags 之前,macOS/GTK 应用要扛构建脚本;这是需求「下载即用」上的摩擦。manifest 字段这条路已定(T48.7),所以风险在排期,不在方向。
+- **原生打包。** manifest 字段已落地(T48.7),macOS/GTK 应用不再需要构建脚本;需求「下载即用」上的这层摩擦已经消除。剩下的风险是机制的可用环境(机器上要有 pkg-config),不是设计。
 - **两个事件循环**(Emo 调度器 vs. 工具包/浏览器),如上。
 - **范围。** UI 框架是无界的。分档表是防线:可移植核心 + TUI + SSR 先行,原生工具包其次,DOM 最后;不承诺布局一致、不做动画、v1 的无障碍不超出原生控件自带的部分。
 - **没有泛型、没有默认参数。** 节点数组是 `Array[Node]`(没问题——接口就是元素类型),但样式工厂带 `N` 个复制方法,恰如 `plot` 接受的那样。有界样板。
@@ -416,9 +416,8 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 
 ## 仍开放的问题
 
-1. **原生打包机制** —— 方向已定(2026-10-14)走 per-package 的 manifest 字段,取代应用级构建脚本那条路;字段面(`pkg_config`、编译/链接 flags、`.m` 是否收集)是 T48.7 自己的范围。这卡住顺序里的第 3 项。
-2. **协调** —— 保留式后端何时从全量重建换成带 key 的 diff,以及编译器的定向刷新是否与它同时落地。
-3. **两个事件循环的集成** —— UI 进程与工具包循环如何共存,以及事件在 v1 还是更晚变成真正的进程消息。
-4. **带检查的 block/函数类型** —— 在第一个包显出摩擦之后,组件 API 是否值得它。循环现在露出了这份摩擦的另一面:它那两个 `Block` 值的 `view`/`update` 只剩 `c` 编译不了(`wasm` 那一半已于 T48.6 关闭,`CHECK.md`,Elm 循环的形状),所以「不加带检查的函数类型」的那条替代路——把应用的两个函数放到接口后面——同时也是「不给 `c` 补 def-as-value」的那条替代路。
-5. **Web T1 的边界** —— 路线已定(2026-10-15):把 TypeScript runtime 拆出一个浏览器安全子集加一个 `dom_*` 家族,不做浏览器专属的 runtime 变体(`CHECK.md`)。仍然开放的是机械问题:打包步骤落在工具链的哪里,属于 T48.10 自己的范围。`typescript` 目标的 send 共享(`CHECK.md`,跨 target 不变量)也在这条路径上。
-6. **树的拼法** —— 数组式 children 到底要不要一个字面量写法;如果要,它属于 Emo 自己的语法,还是属于一个产出 `.emo` 的外部翻译器。已经**关掉**的机制(发射、self 重绑定、环境式收集器、自带走作用域求值的模板引擎)记在 [`emo-ui-composition.md`](emo-ui-composition.md),那里也写明了能了结这个问题的证据是什么。
+1. **协调** —— 保留式后端何时从全量重建换成带 key 的 diff,以及编译器的定向刷新是否与它同时落地。
+2. **两个事件循环的集成** —— UI 进程与工具包循环如何共存,以及事件在 v1 还是更晚变成真正的进程消息。
+3. **带检查的 block/函数类型** —— 在第一个包显出摩擦之后,组件 API 是否值得它。循环现在露出了这份摩擦的另一面:它那两个 `Block` 值的 `view`/`update` 只剩 `c` 编译不了(`wasm` 那一半已于 T48.6 关闭,`CHECK.md`,Elm 循环的形状),所以「不加带检查的函数类型」的那条替代路——把应用的两个函数放到接口后面——同时也是「不给 `c` 补 def-as-value」的那条替代路。
+4. **Web T1 的边界** —— 路线已定(2026-10-15):把 TypeScript runtime 拆出一个浏览器安全子集加一个 `dom_*` 家族,不做浏览器专属的 runtime 变体(`CHECK.md`)。仍然开放的是机械问题:打包步骤落在工具链的哪里,属于 T48.10 自己的范围。`typescript` 目标的 send 共享(`CHECK.md`,跨 target 不变量)也在这条路径上。
+5. **树的拼法** —— 数组式 children 到底要不要一个字面量写法;如果要,它属于 Emo 自己的语法,还是属于一个产出 `.emo` 的外部翻译器。已经**关掉**的机制(发射、self 重绑定、环境式收集器、自带走作用域求值的模板引擎)记在 [`emo-ui-composition.md`](emo-ui-composition.md),那里也写明了能了结这个问题的证据是什么。
