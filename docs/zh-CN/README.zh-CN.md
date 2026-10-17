@@ -17,10 +17,10 @@ Emo 是**简洁、显式、直观**的。它汲取了三十年开源编程语言
 macOS 或 Linux（含 WSL2）上一行搞定——脚本会识别平台、下载最新 release、校验其 SHA256，并安装到 `~/.emo/bin`：
 
 ```console
-curl -fsSL https://raw.githubusercontent.com/emo-lang/emo/develop/scripts/install.sh | sh
+curl -fsSL https://www.emo-lang.cn/cdn/install.sh | sh
 ```
 
-预编译归档同样可以。二进制内嵌标准库——无需安装其他东西（用 `emo build` 构建时才需要 C 编译器，那是默认 target）。从 [GitHub Releases](https://github.com/emo-lang/emo/releases) 下载你平台的归档，然后：
+预编译归档同样可以。二进制内嵌标准库——无需安装其他东西（用 `emo build` 构建时才需要 C 编译器，那是默认 target）。从[下载站点](https://www.emo-lang.cn/cdn/dist/releases.json)获取你平台的归档，然后：
 
 ```console
 $ unzip emo-<version>-macos-arm64.zip

@@ -17,10 +17,10 @@ Emo is **clean, explicit, and intuitive**. It draws on three decades of open-sou
 One line, on macOS or Linux (WSL2 included) — the script detects the platform, downloads the latest release, verifies its SHA256, and installs to `~/.emo/bin`:
 
 ```console
-curl -fsSL https://raw.githubusercontent.com/emo-lang/emo/develop/scripts/install.sh | sh
+curl -fsSL https://www.emo-lang.cn/cdn/install.sh | sh
 ```
 
-Prebuilt archives work too. The binary carries the standard library inside it — nothing else to install (a C compiler joins the picture when you build with `emo build`, the default target). Grab the archive for your platform from [GitHub Releases](https://github.com/emo-lang/emo/releases), then:
+Prebuilt archives work too. The binary carries the standard library inside it — nothing else to install (a C compiler joins the picture when you build with `emo build`, the default target). Grab the archive for your platform from the [download site](https://www.emo-lang.cn/cdn/dist/releases.json), then:
 
 ```console
 $ unzip emo-<version>-macos-arm64.zip
