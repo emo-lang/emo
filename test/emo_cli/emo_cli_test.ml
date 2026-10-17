@@ -1384,6 +1384,88 @@ case net_tls_connect("127.0.0.1", listener.port(), 5.0) {
              (Printf.sprintf "env SSL_CERT_FILE=%s %s" (Filename.quote ca)
                 (Filename.quote bin)))
           "echo: loopback\ndone\n");
+    tc "the verify-fail pin and the insecure roundtrip hold on c" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let cclibs =
+          match Lazy.force tls_cclibs with
+          | Some libs -> libs
+          | None -> Alcotest.skip ()
+        in
+        let dir = Filename.concat scratch "c-tls-pins" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file
+          (Filename.concat dir "package.emo")
+          {|
+package {
+  name = "emo/scratch_c_tls_pins"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "net" = "0.1.0"
+  }
+}
+|};
+        let fixture = "../../test/emo_sched/fixtures/" in
+        let entry = Filename.concat dir "main.emo" in
+        (* One program, both pins: the verified connect to the
+           self-signed listener fails closed (the interp suite's pin),
+           and the insecure variant to the same listener round-trips. *)
+        write_file entry
+          (Printf.sprintf
+             {|require "net"
+
+def echo_lines(conn TcpConn) Void {
+  case conn.read_line() {
+    (R.error, why) -> {
+      println("server read failed: ${why}")
+      conn.close()
+    }
+    (R.ok, line)   -> {
+      conn.write("echo: " + line + "\n")
+      echo_lines(conn)
+    }
+  }
+}
+
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, _)  -> { serve(listener) }
+    (R.ok, conn)  -> { echo_lines(conn) }
+  }
+}
+
+const (R.ok, ca_listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
+const (R.ok, self_listener) = net_listen_tls("127.0.0.1", 0, "%stls-cert.pem", "%stls-key.pem")
+do serve(ca_listener)
+do serve(self_listener)
+case net_tls_connect("127.0.0.1", self_listener.port(), 5.0) {
+  (R.error, why) -> { println("verify failed as expected") }
+  (R.ok, conn)   -> { println("handshook?!") }
+}
+case net_tls_connect_insecure("127.0.0.1", self_listener.port(), 5.0) {
+  (R.error, why) -> { println("insecure failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("insecure\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    conn.close()
+  }
+}
+|}
+             fixture fixture fixture fixture);
+        let bin = Filename.concat dir "main-c-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"c" ~cclibs entry bin);
+        let ca = fixture ^ "tls-ca.pem" in
+        check_run "c tls pins"
+          (run_cmd
+             (Printf.sprintf "env SSL_CERT_FILE=%s %s" (Filename.quote ca)
+                (Filename.quote bin)))
+          "verify failed as expected\necho: insecure\n");
   ]
 
 (* T23.8: the c target's direct C ABI. A foreign def declares the C
