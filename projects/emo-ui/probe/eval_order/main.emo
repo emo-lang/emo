@@ -1,26 +1,19 @@
 // Operand evaluation order, isolated. A side effect sitting in an
 // operand position happens in whatever order the target evaluates
-// operands in, and `ocaml` is the one target that goes the other way:
+// operands in; the rule is left to right, everywhere:
 //
 //   emo run main.emo           -> 12 = 3
-//   build --target ocaml       -> 21 = 3
+//   build --target ocaml       -> 12 = 3
 //   build --target c / typescript / beam / wasm   -> 12 = 3
 //
-// The value is the same everywhere — only the trace differs — which is
-// what makes it worth a probe: nothing fails, and a program that hands
-// out ids, counters or event tags from an operand position answers
-// differently on one target. `c`, `typescript` and `beam` were each run
-// against this program when the finding was recorded; `check.sh` pins
-// the interpreter and `ocaml`, because they are the disagreement.
-//
-// The cause is the emitted source, not a decision: `emo_codegen.ml`
-// writes a call as `func [a1; a2]` and OCaml evaluates a constructor's
-// arguments right to left, so the host language's rule reaches Emo's.
-// The reversal covers all five operand positions — a call's arguments,
-// an array literal's elements, a binary operator's operands, an
-// interpolation's parts, and named arguments, each of which the recorded
-// finding lists. `CHECK.md` records it; `golden/main.emo` takes its tags
-// in statements of their own so no operand position can decide them.
+// `ocaml` used to print `21 = 3` for this program: `emo_codegen.ml`
+// wrote a call as `func [a1; a2]`, OCaml evaluates a constructor's
+// arguments right to left, and the host language's rule reached Emo's.
+// The emitter now binds each operand to a local in source order, so all
+// five operand positions — a call's arguments, an array literal's
+// elements, a binary operator's operands, an interpolation's parts, and
+// named arguments — run left to right. This probe is what caught it, and
+// `check.sh` pins the interpreter and `ocaml` to the same line.
 
 def note(trace Box[String], i Int64) Int64 {
   trace.replace(trace.read() + "${i}")

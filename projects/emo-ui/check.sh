@@ -96,8 +96,11 @@ why . ui.emo wasm "only one-parameter closures are supported" \
 # target compiles it. Neither is a package of the core: each has its own
 # `package.emo`, so the walk leaves them out of `ui`'s package.
 
+# Only stdout is the program's bytes. The first run of a dependency-carrying
+# package also writes a missing `package.lock` and says so on stderr; that
+# notice must not join the output a target is compared against.
 run_of() {
-  ( cd "$1" && "$EMO" run "$2" ) >"$OUT.run" 2>&1 && rc=0 || rc=$?
+  ( cd "$1" && "$EMO" run "$2" ) >"$OUT.run" 2>"$OUT.err" && rc=0 || rc=$?
   expect "$3" "$1 -- emo run prints what the test expects" "$(cat "$OUT.run")"
   expect 0 "$1 -- emo run exits 0" "$rc"
 }
@@ -129,23 +132,24 @@ for t in ocaml c; do
   expect "count 1" "handler_shape --target $t prints what emo run prints" "$got"
 done
 
-# --- two divergences the golden is written around ------------------------
+# --- the divergence the golden is written around, and a fixed one --------
 #
-# Both were found while building the golden and both are silent: nothing
-# refuses, nothing fails, and the program still computes the same values —
-# only the order of its side effects, or the bytes it prints, differ by
-# target. `CHECK.md` records each; these pins are what keep its paragraphs
-# from going stale.
+# Both were found while building the golden and both were silent: nothing
+# refused, nothing failed, and the program still computed the same values —
+# only the order of its side effects, or the bytes it printed, differed by
+# target. Operand order is fixed now — pinned below — while the enum's
+# display form remains open. `CHECK.md` records both; these pins are what
+# keep its paragraphs from going stale.
 
 # A side effect in an operand position lands in the order the target
-# evaluates operands in, and `ocaml` is the target that goes the other
-# way. When it is fixed, these two expectations flip.
+# evaluates operands in. Every target, `ocaml` included, now evaluates
+# left to right and prints the interpreter's line.
 run_of probe/eval_order main.emo "12 = 3"
 
 build probe/eval_order main.emo ocaml && rc=0 || rc=$?
 expect 0 "eval_order --target ocaml builds" "$rc"
 got=$("$OUT" 2>&1 || true)
-expect "21 = 3" "eval_order -- ocaml reverses the order, not the value" "$got"
+expect "12 = 3" "eval_order -- ocaml evaluates operands left to right" "$got"
 
 # An enum's display form: bare on the interpreter, module-qualified on
 # `typescript`, and `beam` has no conversion for the kind and raises.
@@ -218,8 +222,8 @@ expect_same_file() {
   fi
 }
 
-( cd golden && EMO_REGISTRY="$REG" "$EMO" run main.emo ) >"$G/interp.txt" 2>&1 \
-  && rc=0 || rc=$?
+( cd golden && EMO_REGISTRY="$REG" "$EMO" run main.emo ) >"$G/interp.txt" \
+  2>"$G/interp.err" && rc=0 || rc=$?
 expect 0 "the golden runs on the interpreter" "$rc"
 expect_same_file golden/expected.txt "$G/interp.txt" \
   "and prints the file it is pinned to"

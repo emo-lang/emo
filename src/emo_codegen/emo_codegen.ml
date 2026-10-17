@@ -69,6 +69,15 @@ let fresh_loop () =
   incr loop_counter;
   !loop_counter
 
+(* Operand locals for left-to-right evaluation. The prime cannot appear
+   in an Emo identifier, so the name never collides with a user binding
+   (every user local carries the `v_` prefix). *)
+let operand_counter = ref 0
+
+let fresh_operand () =
+  incr operand_counter;
+  Printf.sprintf "v_op'%d" !operand_counter
+
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
 
 (* statement sequencing: [emit_stmts env stmts ~tail] produces one OCaml
@@ -125,13 +134,18 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
   | Emo_ir.Set_global_var { name; value } ->
       Printf.sprintf "%s := %s" name (emit_expr env value)
   | Emo_ir.Set_field { self_; name; value } ->
-      if tail then
-        Printf.sprintf
-          "(Emo_runtime.obj_set_field (%s) \"%s\" (%s);\nEmo_eval.Int64 0L)"
-          (emit_expr env self_) name (emit_expr env value)
-      else
-        Printf.sprintf "Emo_runtime.obj_set_field (%s) \"%s\" (%s)"
-          (emit_expr env self_) name (emit_expr env value)
+      emit_operands env [ self_; value ] (fun vs ->
+          match vs with
+          | [ sv; vv ] ->
+              if tail then
+                Printf.sprintf
+                  "(Emo_runtime.obj_set_field (%s) \"%s\" (%s);\n\
+                   Emo_eval.Int64 0L)"
+                  sv name vv
+              else
+                Printf.sprintf "Emo_runtime.obj_set_field (%s) \"%s\" (%s)" sv
+                  name vv
+          | _ -> assert false)
   | Emo_ir.If { cond; then_; else_ } ->
       let then_code = emit_stmts env then_ ~tail in
       let else_code = emit_stmts env else_ ~tail in
@@ -144,12 +158,14 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
       (* `send` is unit in the runtime, so a send that ends a body is
          sequenced and the body still yields a value — a bare tail
          expression would type as unit. *)
-      if tail then
-        Printf.sprintf "(Emo_runtime.send (%s) (%s);\nEmo_eval.Void)"
-          (emit_expr env target) (emit_expr env message)
-      else
-        Printf.sprintf "(Emo_runtime.send (%s) (%s))" (emit_expr env target)
-          (emit_expr env message)
+      emit_operands env [ target; message ] (fun vs ->
+          match vs with
+          | [ tv; mv ] ->
+              if tail then
+                Printf.sprintf "(Emo_runtime.send (%s) (%s);\nEmo_eval.Void)" tv
+                  mv
+              else Printf.sprintf "(Emo_runtime.send (%s) (%s))" tv mv
+          | _ -> assert false)
   | Emo_ir.Raise e -> Printf.sprintf "Emo_runtime.raise_ %s" (emit_expr env e)
   | Emo_ir.Return_stmt e ->
       let code = emit_expr env e in
@@ -457,19 +473,20 @@ and emit_expr env (e : Emo_ir.expr) : string =
         g g
   | Emo_ir.Global_var g -> "(!" ^ g ^ ")"
   | Emo_ir.Tuple es ->
-      Printf.sprintf "Emo_eval.Tuple [%s]"
-        (String.concat "; " (List.map (emit_expr env) es))
+      emit_operands env es (fun vs ->
+          Printf.sprintf "Emo_eval.Tuple [%s]" (String.concat "; " vs))
   | Emo_ir.Array_lit es ->
-      Printf.sprintf "Emo_eval.Array (Array.of_list [%s])"
-        (String.concat "; " (List.map (emit_expr env) es))
+      emit_operands env es (fun vs ->
+          Printf.sprintf "Emo_eval.Array (Array.of_list [%s])"
+            (String.concat "; " vs))
   | Emo_ir.Map_lit pairs ->
-      Printf.sprintf "(Emo_runtime.map_new [%s])"
-        (String.concat "; " (List.map (emit_expr env) pairs))
+      emit_operands env pairs (fun vs ->
+          Printf.sprintf "(Emo_runtime.map_new [%s])" (String.concat "; " vs))
   | Emo_ir.Make_enum { enum_name; member } ->
       Printf.sprintf "Emo_eval.EnumMember (%S, %S)" enum_name member
   | Emo_ir.Interpolate es ->
-      Printf.sprintf "Emo_runtime.interpolate [%s]"
-        (String.concat "; " (List.map (emit_expr env) es))
+      emit_operands env es (fun vs ->
+          Printf.sprintf "Emo_runtime.interpolate [%s]" (String.concat "; " vs))
   | Emo_ir.Unary (Ast.Not, x) ->
       Printf.sprintf "(Emo_runtime.not_ (%s))" (emit_expr env x)
   | Emo_ir.Unary (Ast.Bit_not, x) ->
@@ -490,57 +507,61 @@ and emit_expr env (e : Emo_ir.expr) : string =
       Printf.sprintf "(Emo_runtime.%s (%s) (fun () -> (%s)))" fn
         (emit_expr env l) (emit_expr env r)
   | Emo_ir.Binary (op, l, r) ->
-      let lname = emit_expr env l in
-      let rname = emit_expr env r in
-      let native =
-        env.native
-        && e.Emo_ir.ety = Emo_check.Int64
-        &&
-        match op with
-        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod -> true
-        | _ -> false
-      in
-      if native then
-        Printf.sprintf "(%s %s %s)" lname
-          (match op with
-          | Ast.Add -> "+"
-          | Ast.Sub -> "-"
-          | Ast.Mul -> "*"
-          | Ast.Div -> "/"
-          | Ast.Mod -> "mod"
-          | _ -> "+")
-          rname
-      else
-        let fn =
-          match op with
-          | Ast.Eq -> "eq"
-          | Ast.Ne -> "ne"
-          | Ast.Lt -> "lt"
-          | Ast.Le -> "le"
-          | Ast.Gt -> "gt"
-          | Ast.Ge -> "ge"
-          | Ast.Add -> "add"
-          | Ast.Sub -> "sub"
-          | Ast.Mul -> "mul"
-          | Ast.Div -> "div"
-          | Ast.Mod -> "modulo"
-          | Ast.Bit_and -> "bit_and"
-          | Ast.Bit_or -> "bit_or"
-          | Ast.Bit_xor -> "bit_xor"
-          | Ast.Shl -> "shl"
-          | Ast.Shr -> "shr"
-          (* `&&`/`||` never reach this arm: the short-circuit arm
-             above emits them. *)
-          | Ast.And | Ast.Or -> failwith "unreachable: `&&`/`||` short-circuit"
-        in
-        Printf.sprintf "(Emo_runtime.%s (%s) (%s))" fn lname rname
+      emit_operands env [ l; r ] (fun vs ->
+          match vs with
+          | [ lname; rname ] ->
+              let native =
+                env.native
+                && e.Emo_ir.ety = Emo_check.Int64
+                &&
+                match op with
+                | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod -> true
+                | _ -> false
+              in
+              if native then
+                Printf.sprintf "(%s %s %s)" lname
+                  (match op with
+                  | Ast.Add -> "+"
+                  | Ast.Sub -> "-"
+                  | Ast.Mul -> "*"
+                  | Ast.Div -> "/"
+                  | Ast.Mod -> "mod"
+                  | _ -> "+")
+                  rname
+              else
+                let fn =
+                  match op with
+                  | Ast.Eq -> "eq"
+                  | Ast.Ne -> "ne"
+                  | Ast.Lt -> "lt"
+                  | Ast.Le -> "le"
+                  | Ast.Gt -> "gt"
+                  | Ast.Ge -> "ge"
+                  | Ast.Add -> "add"
+                  | Ast.Sub -> "sub"
+                  | Ast.Mul -> "mul"
+                  | Ast.Div -> "div"
+                  | Ast.Mod -> "modulo"
+                  | Ast.Bit_and -> "bit_and"
+                  | Ast.Bit_or -> "bit_or"
+                  | Ast.Bit_xor -> "bit_xor"
+                  | Ast.Shl -> "shl"
+                  | Ast.Shr -> "shr"
+                  (* `&&`/`||` never reach this arm: the short-circuit
+                     arm above emits them. *)
+                  | Ast.And | Ast.Or ->
+                      failwith "unreachable: `&&`/`||` short-circuit"
+                in
+                Printf.sprintf "(Emo_runtime.%s (%s) (%s))" fn lname rname
+          | _ -> assert false)
   | Emo_ir.Index (b, i) ->
-      Printf.sprintf "(Emo_runtime.index (%s) (%s))" (emit_expr env b)
-        (emit_expr env i)
+      emit_operands env [ b; i ] (fun vs ->
+          match vs with
+          | [ bv; iv ] -> Printf.sprintf "(Emo_runtime.index (%s) (%s))" bv iv
+          | _ -> assert false)
   | Emo_ir.Field_read { obj; name } ->
       Printf.sprintf "(Emo_runtime.field (%s) %S)" (emit_expr env obj) name
   | Emo_ir.Call { func; args } ->
-      let args_code = String.concat "; " (List.map (emit_expr env) args) in
       if
         env.native
         && List.exists
@@ -548,21 +569,34 @@ and emit_expr env (e : Emo_ir.expr) : string =
              !specializables
       then
         (* Native context: direct specialized call with native args. *)
-        sp_apply func (String.concat " " (List.map (emit_native_expr env) args))
-      else Printf.sprintf "%s [%s]" func args_code
+        emit_native_operands env args (fun vs ->
+            sp_apply func
+              (String.concat " " (List.map (fun v -> "(" ^ v ^ ")") vs)))
+      else
+        emit_operands env args (fun vs ->
+            Printf.sprintf "%s [%s]" func (String.concat "; " vs))
   | Emo_ir.Call_value { f; args } ->
-      Printf.sprintf "Emo_runtime.apply_value %s [%s]" (emit_expr env f)
-        (String.concat "; " (List.map (emit_expr env) args))
+      emit_operands env (f :: args) (fun vs ->
+          match vs with
+          | fv :: avs ->
+              Printf.sprintf "Emo_runtime.apply_value %s [%s]" fv
+                (String.concat "; " avs)
+          | [] -> assert false)
   | Emo_ir.Method { self_; name; args } ->
-      Printf.sprintf "(Emo_runtime.method_call (%s) %S [%s])"
-        (emit_expr env self_) name
-        (String.concat "; " (List.map (emit_expr env) args))
+      emit_operands env (self_ :: args) (fun vs ->
+          match vs with
+          | sv :: avs ->
+              Printf.sprintf "(Emo_runtime.method_call (%s) %S [%s])" sv name
+                (String.concat "; " avs)
+          | [] -> assert false)
   | Emo_ir.Builtin { name; args } ->
-      Printf.sprintf "Emo_eval.call_builtin %S [%s]" name
-        (String.concat "; " (List.map (emit_expr env) args))
+      emit_operands env args (fun vs ->
+          Printf.sprintf "Emo_eval.call_builtin %S [%s]" name
+            (String.concat "; " vs))
   | Emo_ir.Runtime_impl { name; args } ->
-      Printf.sprintf "Emo_eval.call_runtime_impl %S [%s]" name
-        (String.concat "; " (List.map (emit_expr env) args))
+      emit_operands env args (fun vs ->
+          Printf.sprintf "Emo_eval.call_runtime_impl %S [%s]" name
+            (String.concat "; " vs))
   | Emo_ir.Box_new e ->
       Printf.sprintf "(Emo_runtime.box_new (%s))" (emit_expr env e)
   | Emo_ir.Bytes_new e ->
@@ -570,27 +604,31 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.List_new e ->
       Printf.sprintf "(Emo_runtime.list_new (%s))" (emit_expr env e)
   | Emo_ir.Builder_new -> "(Emo_runtime.builder_new ())"
-  | Emo_ir.Make_exception { message; data } -> (
-      match data with
-      | None ->
-          Printf.sprintf "(Emo_runtime.exception_new (%s) None)"
-            (emit_expr env message)
-      | Some d ->
-          Printf.sprintf "(Emo_runtime.exception_new (%s) (Some (%s)))"
-            (emit_expr env message) (emit_expr env d))
+  | Emo_ir.Make_exception { message; data } ->
+      let parts =
+        match data with None -> [ message ] | Some d -> [ message; d ]
+      in
+      emit_operands env parts (fun vs ->
+          match (vs, data) with
+          | [ mv ], None ->
+              Printf.sprintf "(Emo_runtime.exception_new (%s) None)" mv
+          | [ mv; dv ], Some _ ->
+              Printf.sprintf "(Emo_runtime.exception_new (%s) (Some (%s)))" mv
+                dv
+          | _ -> assert false)
   | Emo_ir.Do_spawn { func; args } ->
       (* Arguments evaluate eagerly in the spawning process; the spawned
          process only runs the call. *)
-      Printf.sprintf
-        "(Emo_runtime.spawn_args [%s] (fun args -> ignore (%s args)))"
-        (String.concat "; " (List.map (emit_expr env) args))
-        func
+      emit_operands env args (fun vs ->
+          Printf.sprintf
+            "(Emo_runtime.spawn_args [%s] (fun args -> ignore (%s args)))"
+            (String.concat "; " vs) func)
   | Emo_ir.Spawn_value { f; args } ->
-      Printf.sprintf
-        "(Emo_runtime.spawn_args [%s] (fun args -> ignore \
-         (Emo_runtime.apply_value %s args)))"
-        (String.concat "; " (List.map (emit_expr env) args))
-        (emit_expr env f)
+      emit_operands env args (fun vs ->
+          Printf.sprintf
+            "(Emo_runtime.spawn_args [%s] (fun args -> ignore \
+             (Emo_runtime.apply_value %s args)))"
+            (String.concat "; " vs) (emit_expr env f))
   | Emo_ir.Closure { cparams; cbody } ->
       let names = List.map fst cparams in
       let arity = List.length names in
@@ -608,6 +646,34 @@ and emit_expr env (e : Emo_ir.expr) : string =
          Emo_runtime.Return_signal v -> v) | _ -> Emo_runtime.arity_error \
          \"<block>\" %d (List.length args)) })"
         arity params_pattern body arity
+
+(* Operands evaluate left to right on every other target and in the
+   interpreter; OCaml evaluates a call's arguments, a list literal's
+   elements, and an operator's operands right to left. Each operand
+   therefore binds to a local in source order — the let chain runs them
+   in that order — and the construct uses the locals. *)
+and bind_operands (names : string list) (codes : string list)
+    (k : string list -> string) : string =
+  let rec chain acc names codes =
+    match (names, codes) with
+    | [], [] -> k (List.rev acc)
+    | n :: ns, c :: cs ->
+        Printf.sprintf "(let %s = %s in %s)" n c (chain (n :: acc) ns cs)
+    | _ -> assert false
+  in
+  chain [] names codes
+
+and emit_operands env (es : Emo_ir.expr list) (k : string list -> string) :
+    string =
+  let codes = List.map (emit_expr env) es in
+  let names = List.map (fun _ -> fresh_operand ()) es in
+  bind_operands names codes k
+
+and emit_native_operands env (es : Emo_ir.expr list) (k : string list -> string)
+    : string =
+  let codes = List.map (emit_native_expr env) es in
+  let names = List.map (fun _ -> fresh_operand ()) es in
+  bind_operands names codes k
 
 (* ---- Specialized (Stage B) emission ---- *)
 
@@ -637,48 +703,60 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Var name ->
       let n = local name in
       if List.mem n env.nrefs then "!" ^ n else n
-  | Emo_ir.Binary (op, l, r) -> (
+  | Emo_ir.Binary (op, l, r) ->
       (* Comparisons and `&&`/`||` are polymorphic; arithmetic and bit
          operations are Int64 unless an operand is Float64, and `+` on
          Strings is concatenation. *)
-      let le = "(" ^ emit_native_expr env l ^ ")" in
-      let re = "(" ^ emit_native_expr env r ^ ")" in
       let float =
         e.Emo_ir.ety = Emo_check.Float64
         || l.Emo_ir.ety = Emo_check.Float64
         || r.Emo_ir.ety = Emo_check.Float64
       in
-      match op with
-      | Ast.Lt -> Printf.sprintf "(%s < %s)" le re
-      | Ast.Le -> Printf.sprintf "(%s <= %s)" le re
-      | Ast.Gt -> Printf.sprintf "(%s > %s)" le re
-      | Ast.Ge -> Printf.sprintf "(%s >= %s)" le re
-      | Ast.Eq -> Printf.sprintf "(%s = %s)" le re
-      | Ast.Ne -> Printf.sprintf "(%s <> %s)" le re
-      | Ast.And -> Printf.sprintf "(%s && %s)" le re
-      | Ast.Or -> Printf.sprintf "(%s || %s)" le re
-      | Ast.Add ->
-          if e.Emo_ir.ety = Emo_check.String then
-            Printf.sprintf "(%s ^ %s)" le re
-          else if float then Printf.sprintf "(%s +. %s)" le re
-          else Printf.sprintf "(Int64.add %s %s)" le re
-      | Ast.Sub ->
-          if float then Printf.sprintf "(%s -. %s)" le re
-          else Printf.sprintf "(Int64.sub %s %s)" le re
-      | Ast.Mul ->
-          if float then Printf.sprintf "(%s *. %s)" le re
-          else Printf.sprintf "(Int64.mul %s %s)" le re
-      | Ast.Div ->
-          if float then Printf.sprintf "(%s /. %s)" le re
-          else Printf.sprintf "(Int64.div %s %s)" le re
-      | Ast.Mod ->
-          if float then Printf.sprintf "(Float.rem %s %s)" le re
-          else Printf.sprintf "(Int64.rem %s %s)" le re
-      | Ast.Bit_and -> Printf.sprintf "(Int64.logand %s %s)" le re
-      | Ast.Bit_or -> Printf.sprintf "(Int64.logor %s %s)" le re
-      | Ast.Bit_xor -> Printf.sprintf "(Int64.logxor %s %s)" le re
-      | Ast.Shl -> Printf.sprintf "(Emo_runtime.shl_i64 %s %s)" le re
-      | Ast.Shr -> Printf.sprintf "(Emo_runtime.shr_i64 %s %s)" le re)
+      if op = Ast.And || op = Ast.Or then
+        (* `&&`/`||` short-circuit in OCaml as in Emo, so a plain
+           operator evaluates the left operand first. *)
+        emit_native_operands env [ l; r ] (fun vs ->
+            match vs with
+            | [ le; re ] ->
+                Printf.sprintf
+                  (if op = Ast.And then "(%s && %s)" else "(%s || %s)")
+                  le re
+            | _ -> assert false)
+      else
+        emit_native_operands env [ l; r ] (fun vs ->
+            match vs with
+            | [ le; re ] -> (
+                match op with
+                | Ast.Lt -> Printf.sprintf "(%s < %s)" le re
+                | Ast.Le -> Printf.sprintf "(%s <= %s)" le re
+                | Ast.Gt -> Printf.sprintf "(%s > %s)" le re
+                | Ast.Ge -> Printf.sprintf "(%s >= %s)" le re
+                | Ast.Eq -> Printf.sprintf "(%s = %s)" le re
+                | Ast.Ne -> Printf.sprintf "(%s <> %s)" le re
+                | Ast.And | Ast.Or -> assert false
+                | Ast.Add ->
+                    if e.Emo_ir.ety = Emo_check.String then
+                      Printf.sprintf "(%s ^ %s)" le re
+                    else if float then Printf.sprintf "(%s +. %s)" le re
+                    else Printf.sprintf "(Int64.add %s %s)" le re
+                | Ast.Sub ->
+                    if float then Printf.sprintf "(%s -. %s)" le re
+                    else Printf.sprintf "(Int64.sub %s %s)" le re
+                | Ast.Mul ->
+                    if float then Printf.sprintf "(%s *. %s)" le re
+                    else Printf.sprintf "(Int64.mul %s %s)" le re
+                | Ast.Div ->
+                    if float then Printf.sprintf "(%s /. %s)" le re
+                    else Printf.sprintf "(Int64.div %s %s)" le re
+                | Ast.Mod ->
+                    if float then Printf.sprintf "(Float.rem %s %s)" le re
+                    else Printf.sprintf "(Int64.rem %s %s)" le re
+                | Ast.Bit_and -> Printf.sprintf "(Int64.logand %s %s)" le re
+                | Ast.Bit_or -> Printf.sprintf "(Int64.logor %s %s)" le re
+                | Ast.Bit_xor -> Printf.sprintf "(Int64.logxor %s %s)" le re
+                | Ast.Shl -> Printf.sprintf "(Emo_runtime.shl_i64 %s %s)" le re
+                | Ast.Shr -> Printf.sprintf "(Emo_runtime.shr_i64 %s %s)" le re)
+            | _ -> assert false)
   | Emo_ir.Unary (Ast.Neg, x) ->
       let xe = "(" ^ emit_native_expr env x ^ ")" in
       if e.Emo_ir.ety = Emo_check.Float64 then Printf.sprintf "(-. %s)" xe
@@ -693,33 +771,30 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Unary (Ast.Not, x) ->
       Printf.sprintf "(not (%s))" (emit_native_expr env x)
   | Emo_ir.Call { func; args } ->
-      Printf.sprintf "(%s)"
-        (sp_apply func
-           (String.concat " "
-              (List.map (fun a -> "(" ^ emit_native_expr env a ^ ")") args)))
+      emit_native_operands env args (fun vs ->
+          Printf.sprintf "(%s)"
+            (sp_apply func
+               (String.concat " " (List.map (fun v -> "(" ^ v ^ ")") vs))))
   | Emo_ir.Interpolate es ->
       (* parts render through the shared runtime; the result is a
          native string *)
-      Printf.sprintf
-        "(match Emo_runtime.interpolate [ %s ] with Emo_eval.String s -> s | _ \
-         -> assert false)"
-        (String.concat "; "
-           (List.map
-              (fun part ->
+      emit_native_operands env es (fun vs ->
+          let parts =
+            List.map2
+              (fun part v ->
                 Printf.sprintf "Emo_eval.%s"
                   (match part.Emo_ir.ety with
-                  | Emo_check.Int64 ->
-                      Printf.sprintf "Int64 (%s)" (emit_native_expr env part)
-                  | Emo_check.Float64 ->
-                      Printf.sprintf "Float (%s)" (emit_native_expr env part)
-                  | Emo_check.String ->
-                      Printf.sprintf "String (%s)" (emit_native_expr env part)
-                  | Emo_check.Bool ->
-                      Printf.sprintf "Bool (%s)" (emit_native_expr env part)
-                  | _ ->
-                      Printf.sprintf "String (Emo_runtime.to_string %s)"
-                        (emit_native_expr env part)))
-              es))
+                  | Emo_check.Int64 -> Printf.sprintf "Int64 (%s)" v
+                  | Emo_check.Float64 -> Printf.sprintf "Float (%s)" v
+                  | Emo_check.String -> Printf.sprintf "String (%s)" v
+                  | Emo_check.Bool -> Printf.sprintf "Bool (%s)" v
+                  | _ -> Printf.sprintf "String (Emo_runtime.to_string %s)" v))
+              es vs
+          in
+          Printf.sprintf
+            "(match Emo_runtime.interpolate [ %s ] with Emo_eval.String s -> s \
+             | _ -> assert false)"
+            (String.concat "; " parts))
   | other ->
       let kind =
         match other with
@@ -811,17 +886,20 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
       | [ Emo_ir.Return_stmt e ] -> emit_native_expr env e
       | [ Emo_ir.Effect { desc = Emo_ir.Do_spawn { func; args } } ] ->
           let spawn =
-            Printf.sprintf
-              "(Emo_runtime.spawn_args [%s] (fun args -> ignore (%s args)))"
-              (String.concat "; " (List.map (emit_expr env) args))
-              func
+            emit_operands env args (fun vs ->
+                Printf.sprintf
+                  "(Emo_runtime.spawn_args [%s] (fun args -> ignore (%s args)))"
+                  (String.concat "; " vs) func)
           in
           if arm_unit then Printf.sprintf "(let _ = %s in ())" spawn
           else Printf.sprintf "(let _ = %s in\n%s)" spawn (fall ())
       | [ Emo_ir.Send { target; message } ] ->
           let send_code =
-            Printf.sprintf "(Emo_runtime.send (%s) (%s))" (emit_expr env target)
-              (emit_expr env message)
+            emit_operands env [ target; message ] (fun vs ->
+                match vs with
+                | [ tv; mv ] ->
+                    Printf.sprintf "(Emo_runtime.send (%s) (%s))" tv mv
+                | _ -> assert false)
           in
           if arm_unit then Printf.sprintf "(let _ = %s in ())" send_code
           else Printf.sprintf "(let _ = %s in\n%s)" send_code (fall ())

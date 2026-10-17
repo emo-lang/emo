@@ -346,9 +346,8 @@ def with_row(rows Array[String], index Int64, value String) Array[String] {
   return out.to_array()
 }
 
-// The blank screen's rows. `Screen.init` calls this rather than looping
-// itself: on `beam` a `for` loop inside a class `init` lowers with an
-// unbound `self` (`CHECK.md`, a loop in a class init).
+// The blank screen's rows, built in one place so `init` stays a list of
+// field assignments.
 def blank_rows(width Int64, height Int64) Array[String] {
   const out = ArrayBuilder.new()
   for var y = 0; y < height; y = y + 1 {

@@ -130,14 +130,14 @@ table updated; this milestone added. The zh-CN mirrors follow.
 
 ## Left open, deliberately
 
-- **The `typescript` target still shares on send.**
-  `ts_runtime.ts:2378-2389` stores the reference, verified by running the
-  T12.4 program under `node`: interp/ocaml/c print `1\n99\n`, typescript
-  prints `99\n99\n`. `wasm`'s `rt_send` (`emo_wasm.ml`) does the same,
-  though that target refuses this program's shape for unrelated reasons.
-  The same conformance gap, on the target whose runtime is being split
-  for the browser — the fix belongs with that split (T48.10), so it is
-  recorded rather than fixed here.
+- **The `typescript` target shared on send — fixed 2026-10-17.**
+  `ts_runtime.ts:2378-2389` stored the reference, verified by running the
+  T12.4 program under `node`: interp/ocaml/c printed `1\n99\n`, typescript
+  printed `99\n99\n`. `send` now deep-copies the message with the runtime's
+  `deepCopy`, and `test/emo_cli`'s `cross_target` group pins the snapshot.
+  `wasm`'s `rt_send` (`emo_wasm.ml`) still stores the reference, though
+  that target refuses this program's shape for unrelated reasons; the fix
+  there belongs with the runtime split (T48.10).
 - **A process-exit signal on `c`.** `docs/intro/concurrency.md:11`
   promises "the process-exit signal a supervisor needs"; the interpreter
   has it (`exit_info`, `exit_hooks`) while the `c` runtime has only

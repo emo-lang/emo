@@ -3364,6 +3364,141 @@ let manifest_entry_tests =
                  ~specialize:false ~cclibs:[] ~target:"wasm")));
   ]
 
+(* The defects CHECK.md recorded and their fixes: a message sent on
+   typescript arrives as a snapshot, an Int64 pattern literal compares as
+   a big integer, a `for` loop in a class `init` keeps its value on beam,
+   a module-level `var` is refused cleanly where it is not implemented,
+   and `ocaml` evaluates operands in source order. *)
+let cross_target_tests =
+  [
+    tc "a message on typescript arrives as a snapshot" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry "cross-ts-send" c_send_snapshot_source in
+        let out_ts = Filename.concat (Filename.dirname entry) "main" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"typescript" entry out_ts);
+        check_run "typescript"
+          (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
+          "1\n99\n");
+    tc "typescript compares Int64 case patterns as big integers" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "cross-ts-int64-case"
+            {|def bucket(n Int64) Int64 {
+  var out = 0
+  for var i = 0; i < n; i = i + 1 {
+    case i {
+      0 -> { out = out + 10 }
+      1 -> { out = out + 20 }
+      _ -> { out = out + 30 }
+    }
+  }
+  return out
+}
+
+def main() {
+  println(bucket(3))
+}
+main()
+|}
+        in
+        let out_ts = Filename.concat (Filename.dirname entry) "main" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"typescript" entry out_ts);
+        check_run "typescript"
+          (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
+          "60\n");
+    tc "a for loop in a class init keeps its value on beam" (fun () ->
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "beam-init-loop"
+            {|class Grid {
+  def init(n Int64) {
+    self.n = n
+    const out = ArrayBuilder.new()
+    for var y = 0; y < n; y = y + 1 {
+      out.push(y)
+    }
+    self.rows = Box.new(out.to_array())
+  }
+}
+
+def main() {
+  const g = Grid.new(3)
+  println(g.rows.read())
+}
+main()
+|}
+        in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                (Filename.quote dir)))
+          "[0, 1, 2]\n");
+    tc "a module-level var is refused with exit 65, not an internal error"
+      (fun () ->
+        let entry =
+          scratch_entry "module-var-refusal"
+            {|def main() {
+  println(counter.bump())
+}
+main()
+|}
+        in
+        write_file
+          (Filename.concat (Filename.dirname entry) "counter.emo")
+          {|var count = 0
+
+def bump() Int64 {
+  count = count + 1
+  return count
+}
+|};
+        (* Exit 65 is the CLI's rendering of Lower_error; a `failwith`
+           escaping the emitter would exit 125. *)
+        List.iter
+          (fun target ->
+            let out =
+              Filename.concat (Filename.dirname entry) ("out-" ^ target)
+            in
+            Alcotest.(check int)
+              (target ^ " build exit") 65
+              (build_entry ~target entry out))
+          [ "typescript"; "wasm"; "beam" ]);
+    tc "ocaml evaluates operands left to right" (fun () ->
+        let entry =
+          scratch_entry "ocaml-eval-order"
+            {|def note(trace Box[String], i Int64) Int64 {
+  trace.replace(trace.read() + "${i}")
+  return i
+}
+
+def two(a Int64, b Int64) Int64 {
+  return a + b
+}
+
+def main() {
+  const trace = Box.new("")
+  const sum = two(note(trace, 1), note(trace, 2))
+  println("${trace.read()} = ${sum}")
+}
+main()
+|}
+        in
+        let bin = Filename.concat (Filename.dirname entry) "main-ocaml-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"ocaml" entry bin);
+        check_run "ocaml" (run_cmd (Filename.quote bin)) "12 = 3\n");
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -3379,6 +3514,7 @@ let () =
       ("beam_var", beam_var_tests);
       ("c_examples", c_examples_tests);
       ("root_end", root_end_tests);
+      ("cross_target", cross_target_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);

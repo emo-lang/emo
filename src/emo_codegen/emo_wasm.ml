@@ -347,7 +347,10 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Struct_new t_vchar)
   | Const (L_string s) -> string_const env s
   | Type_ref name -> string_const env name
-  | Emo_ir.Global_var _ -> failwith "wasm: module-level `var` is not supported"
+  | Emo_ir.Global_var _ ->
+      raise
+        (Emo_ir.Lower_error
+           "the wasm target does not support module-level `var` yet")
   | Var name -> (
       match List.assoc_opt name env.binders with
       | Some instrs -> es env instrs
@@ -1220,7 +1223,9 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
       | Some idx -> expr_block env value @ [ W.Local_set idx ]
       | None -> failwith ("wasm: assignment to unbound " ^ name))
   | Emo_ir.Set_global_var _ ->
-      failwith "wasm: module-level `var` is not supported"
+      raise
+        (Emo_ir.Lower_error
+           "the wasm target does not support module-level `var` yet")
   | Emo_ir.Set_field { self_; name; value } -> (
       let class_name =
         match self_.Emo_ir.ety with

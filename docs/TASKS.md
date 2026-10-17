@@ -1680,11 +1680,11 @@ required.
       `expected.txt` is the interpreter's output, identical on `ocaml`,
       `c`, `typescript` and `beam`, while `wasm` cannot lower the core
       (the loop's shape, T48.2). Two silent cross-target divergences fell
-      out and are recorded with minimal pairs (`CHECK.md`): operands are
-      evaluated in the target's order and `ocaml`'s is the reverse of the
-      others', and an enum does not interpolate to the same bytes on
-      `typescript` or at all on `beam` (`probe/eval_order`,
-      `probe/enum_print`).
+      out and are recorded with minimal pairs (`CHECK.md`): operands were
+      evaluated in the target's order, `ocaml`'s being the reverse of the
+      others' — fixed 2026-10-17, left to right on every target — and an
+      enum does not interpolate to the same bytes on `typescript` or at
+      all on `beam` (`probe/eval_order`, `probe/enum_print`).
 - [x] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
       model) and ANSI painting; a scripted-input golden. **Landed
       2026-10-16** as `projects/emo-ui/tui/` (package `emo/ui_tui`:

@@ -112,12 +112,13 @@ interpolates only `String`, `Int64`, `Bool` and `Float64`, because interpolating
 an enum or a tuple does not produce the same bytes on every target — `typescript`
 qualifies the name and `beam` has no conversion for the kind at all — so the
 style summary destructures (`align_name`, `extent`) and spells the names it
-prints itself. The golden also takes its event tags in statements before it
-builds a tree, never inside the argument list the tree is made of, because
-operands are evaluated in the target's order and `ocaml`'s is the reverse of
-every other target's, which would hand the same message a different tag per
-target. Both are recorded, with a minimal pair each, in `CHECK.md`
-(`probe/eval_order`, `probe/enum_print`).
+prints itself. That divergence is recorded, with a minimal pair, in `CHECK.md`
+(`probe/enum_print`). The golden also takes its event tags in statements before
+it builds a tree, never inside the argument list the tree is made of: `on` is a
+side effect, and the statements keep the registration order visible at the call
+site. Operand order itself is no longer a cross-target variable — the language
+states left to right, and every target obeys it — and `probe/eval_order` pins
+the rule.
 
 `./check.sh` is the gate: the package type-checks, the loop's seventeen
 assertions run, every target's build — and every refusal — is pinned there, and
