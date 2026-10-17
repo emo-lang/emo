@@ -21,6 +21,41 @@ let static_flags () =
   in
   (no_color, error_limit)
 
+(* `--locked`: the recorded resolution is a prerequisite, not something
+   this run may establish. A project with dependencies owes a package.lock;
+   a project with none owes nothing — there is no resolution to record.
+   Stale and damaged lockfiles already fail the build on every path, so
+   the missing one is the single hole this guard closes. *)
+let locked_flag () =
+  Arg.(
+    value
+    & flag
+    & info [ "locked" ]
+        ~doc:"Refuse a missing package.lock (the run must not resolve fresh).")
+
+let locked_guard ~(locked : bool) : int option =
+  if not locked then None
+  else
+    match Emo_project.manifest_here () with
+    | None -> None
+    | Some path -> (
+        match
+          Emo_pkg.parse_manifest ~file:path ~source:(Emo_project.read_file path)
+        with
+        | exception Emo_pkg.Manifest_error _ -> None
+        | manifest ->
+            if manifest.Emo_pkg.deps = [] then None
+            else if
+              Sys.file_exists
+                (Filename.concat (Filename.dirname path)
+                   Emo_pkg.Lockfile.filename)
+            then None
+            else (
+              prerr_endline
+                "package.lock is missing — run `emo deps resolve`, or drop \
+                 --locked";
+              Some 66))
+
 let render_diagnostic source diagnostic =
   prerr_endline (Emo_support.Render.render ~source diagnostic)
 
@@ -674,7 +709,10 @@ let build =
             "The compilation target: c, ocaml, typescript, wasm, beam, or \
              riscv64.")
   in
-  let build entry output no_specialize cclibs target =
+  let build entry output no_specialize cclibs target locked =
+    (match locked_guard ~locked with
+    | Some code -> exit code
+    | None -> ());
     let out =
       match output with
       | Some o -> o
@@ -691,7 +729,7 @@ let build =
   in
   Cmd.v
     (Cmd.info "build" ~doc:"Compile an Emo program.")
-    Term.(const build $ entry $ output $ no_specialize $ cclib $ target)
+    Term.(const build $ entry $ output $ no_specialize $ cclib $ target $ locked_flag ())
 
 (* `emo check`: the static stages only, over the whole module tree. A
    `package.emo` is a manifest rather than a module, so it is read the way
@@ -741,7 +779,10 @@ let run =
             "Compile first and run the artifact (only riscv64 today: the ELF \
              boots under qemu-system-riscv64).")
   in
-  let run file no_color error_limit target =
+  let run file no_color error_limit target locked =
+    (match locked_guard ~locked with
+    | Some code -> exit code
+    | None -> ());
     let color = (not no_color) && Unix.isatty Unix.stderr in
     match target with
     | Some "riscv64" ->
@@ -788,7 +829,7 @@ let run =
   in
   Cmd.v
     (Cmd.info "run" ~doc:"Run an Emo program.")
-    Term.(const run $ file $ no_color $ error_limit $ target)
+    Term.(const run $ file $ no_color $ error_limit $ target $ locked_flag ())
 
 (* True while the source still has open brackets or an unterminated string —
    the REPL keeps reading with a continuation prompt. *)
@@ -874,7 +915,10 @@ let repl =
 let check =
   let file = Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE") in
   let no_color, error_limit = static_flags () in
-  let check file no_color error_limit =
+  let check file no_color error_limit locked =
+    (match locked_guard ~locked with
+    | Some code -> exit code
+    | None -> ());
     let color = (not no_color) && Unix.isatty Unix.stderr in
     match check_file ~file ~color ~error_limit with
     | 0 -> Cmd.Exit.ok
@@ -883,7 +927,7 @@ let check =
   Cmd.v
     (Cmd.info "check"
        ~doc:"Check an Emo file, or a package.emo manifest, without running it.")
-    Term.(const check $ file $ no_color $ error_limit)
+    Term.(const check $ file $ no_color $ error_limit $ locked_flag ())
 
 (* `emo test`: the project's test convention — every `def test_*` under
    the test/ directory runs, each in its own scheduler run. A failing
@@ -958,7 +1002,10 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
 
 let test_cmd =
   let no_color, error_limit = static_flags () in
-  let test no_color error_limit =
+  let test no_color error_limit locked =
+    (match locked_guard ~locked with
+    | Some code -> exit code
+    | None -> ());
     let color = (not no_color) && Unix.isatty Unix.stderr in
     match run_tests_cmd ~color ~error_limit with
     | 0 -> Cmd.Exit.ok
@@ -971,7 +1018,7 @@ let test_cmd =
           module under the test/ directory, each in its own scheduler run. \
           Assertions are the expect_equal / expect_true / expect_false / \
           expect_fail builtins; a failed assertion fails only its own test.")
-    Term.(const test $ no_color $ error_limit)
+    Term.(const test $ no_color $ error_limit $ locked_flag ())
 
 (* `emo deps`: regeneration is an explicit command. A run writes the
    lockfile only when none exists — an existing one is never rewritten. *)

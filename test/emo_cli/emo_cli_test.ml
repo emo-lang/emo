@@ -2796,6 +2796,60 @@ main()
                          (Emo_cli.deps_resolve ~name:None))))));
   ]
 
+(* ---- --locked: the recorded resolution is a prerequisite ---- *)
+
+let locked_tests =
+  let app ~deps =
+    let dir = Filename.concat scratch (unique "locked-app") in
+    ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+    let write rel content =
+      let oc = open_out_bin (Filename.concat dir rel) in
+      output_string oc content;
+      close_out oc
+    in
+    write "package.emo"
+      (Printf.sprintf
+         {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {%s}
+}
+|}
+         deps);
+    write "main.emo" "require \"base64\"\n";
+    dir
+  in
+  let with_deps = " \"base64\" = \"0.1.0\" " in
+  [
+    tc "--locked refuses a project with dependencies and no lockfile"
+      (fun () ->
+        let dir = app ~deps:with_deps in
+        in_dir dir (fun () ->
+            Alcotest.(check (option int))
+              "refused with 66" (Some 66)
+              (Emo_cli.locked_guard ~locked:true)));
+    tc "--locked passes once the lockfile exists" (fun () ->
+        let dir = app ~deps:with_deps in
+        let oc = open_out_bin (Filename.concat dir Emo_pkg.Lockfile.filename) in
+        output_string oc "";
+        close_out oc;
+        in_dir dir (fun () ->
+            Alcotest.(check (option int))
+              "passes" None (Emo_cli.locked_guard ~locked:true)));
+    tc "a project without dependencies owes no lockfile" (fun () ->
+        let dir = app ~deps:"" in
+        in_dir dir (fun () ->
+            Alcotest.(check (option int))
+              "passes" None (Emo_cli.locked_guard ~locked:true)));
+    tc "without --locked nothing is refused" (fun () ->
+        let dir = app ~deps:with_deps in
+        in_dir dir (fun () ->
+            Alcotest.(check (option int))
+              "passes" None (Emo_cli.locked_guard ~locked:false)));
+  ]
+
 (* ---- new: the project scaffold (T24.3) ---- *)
 
 let read_file path =
@@ -3187,6 +3241,7 @@ let () =
       ("publish", publish_tests);
       ("login", login_tests);
       ("http_pull", http_pull_tests);
+      ("locked", locked_tests);
       ("new", new_tests);
       ("test_cmd", test_cmd_tests);
       ("check", check_tests);
