@@ -20,6 +20,7 @@ http.post(url, body)                         // POST,带 body
 http.put(url, body)                          // PUT,带 body
 http.delete(url)                             // DELETE,无 body
 http.request(method, url, headers, body, timeout)
+http.request_with(method, url, headers, body, timeout, tls_options)
 ```
 
 `http.request` 的完整签名:
@@ -41,6 +42,8 @@ class HttpResponse {
 }
 ```
 
+`http.request_with` 就是 `http.request` 加上逐连接 TLS 策略:`tls_options` 是 `net.tls_client_options()` 给出的 `net.TlsClientOptions`(`with_ca_file`、`with_client_certificate`、`with_server_name`、`without_verification`),`https://` URL 经 `net.tls_connect_with` 连接。普通 `http://` URL 没有 TLS 环节,所以策略只作用于 `https`。
+
 ```emo
 require "http"
 
@@ -60,7 +63,7 @@ case http.get("http://127.0.0.1:8901/hello.txt") {
 
 ## 服务端
 
-两个助手,都建立在 `net.listen(host, port)` 给出的 `TcpListener` 之上:
+两个助手,都建立在 `net.listen(host, port)` 或 `net.listen_tls(host, port, cert_path, key_path)` 给出的 `TcpListener` 之上——监听者的传输层决定 scheme,所以同一个 handler 在监听者来自 `net.listen_tls`(或 `net.listen_tls_with`)时就以 HTTPS 提供服务:
 
 - `http.serve(listener) -> (conn TcpConn) { ... }`——每连接一进程的助手。每个 accepted 连接运行自己的进程,handler 拿到的是原始连接:读请求、写响应字节都是 handler 的活。handler 返回时连接关闭。
 - `http.serve_requests(listener) -> (req HttpRequest) { ... }`——请求级服务器。每条连接上的请求被解析成 `HttpRequest` 交给 handler,handler 返回的 `HttpResponse` 被写回;每次交换后连接关闭。
@@ -120,9 +123,30 @@ case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/
 }
 ```
 
+同一个服务器走 TLS——handler 不变,变的只有监听者和客户端的信任库:
+
+```emo
+require "http"
+require "net"
+
+const (R.ok, listener) = net.listen_tls("127.0.0.1", 0, "tls-cert.pem", "tls-key.pem")
+
+do http.serve_requests(listener) -> (req HttpRequest) {
+  return http.response(200, [], "hello over https\n")
+}
+
+const options = net.tls_client_options().with_ca_file("tls-cert.pem")
+case http.request_with("GET", "https://localhost:" + listener.port().to_string() + "/", [], "", 5.0, options) {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> { println(resp.body) }  // hello over https
+}
+```
+
+`examples/https_roundtrip` 就是这个程序,附带签入的证书对。
+
 ## 限制
 
-- **三个目标。** 包声明了 `targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期就会被拒绝。在 `c` 上 UDP 与名字解析仍被拒绝(继承自 `net`);`https` 可用。在 `wasm` 上它继承 `net` 的宿主限制:没有可用的 socket API 能到达核心模块(`plan/step-16-wasm.md`,T16.5)。
+- **三个目标。** 包声明了 `targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期就会被拒绝。在 `c` 上 UDP 与 Unix 域 socket 仍被拒绝(继承自 `net`),名字只解析为 IPv4 地址;`https` 可用。在 `wasm` 上它继承 `net` 的宿主限制:没有可用的 socket API 能到达核心模块(`plan/step-16-wasm.md`,T16.5)。
 - **无连接池。** 每个请求一条 TCP 连接,交换完即关。
 - **不跟随重定向。** 3xx 响应原样返回。
 - **HTTP/1.1,`Content-Length`  body。** 没有 `Content-Length` 头的请求与响应,body 按连接剩余字节读取(客户端)或视为空(服务端);不支持 chunked 传输编码。

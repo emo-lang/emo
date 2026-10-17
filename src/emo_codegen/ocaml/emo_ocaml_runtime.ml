@@ -180,6 +180,26 @@ module Emo_eval = struct
      call is a suspension point. (The compiler-side spans drop out of
      the standalone shapes.) *)
 
+  type tls_client_options = {
+    tls_ca_file : string;
+    tls_client_cert_file : string;
+    tls_client_key_file : string;
+    tls_server_name : string;
+    tls_insecure : bool;
+  }
+
+  type tls_server_options = {
+    tls_client_ca_file : string;
+    tls_require_client_cert : bool;
+  }
+
+  let default_tls_client_options =
+    { tls_ca_file = ""; tls_client_cert_file = ""; tls_client_key_file = "";
+      tls_server_name = ""; tls_insecure = false }
+
+  let default_tls_server_options =
+    { tls_client_ca_file = ""; tls_require_client_cert = false }
+
   type _ Effect.t +=
     | Spawn : (unit -> unit) -> int Effect.t
     | Send : int * value -> unit Effect.t
@@ -207,13 +227,13 @@ module Emo_eval = struct
     | Net_udp_recv_from : udp -> value Effect.t
     | Net_udp_close : udp -> value Effect.t
     | Net_tls_connect :
-        string
-        * int
-        * float
-        * bool
-        (* host, port, timeout, insecure *)
+        string * int * float * tls_client_options
+        (* host, port, timeout, options *)
         -> value Effect.t
-    | Net_tls_listen : string * int * string * string -> value Effect.t
+    | Net_tls_listen :
+        string * int * string * string * tls_server_options
+        (* host, port, cert, key, options *)
+        -> value Effect.t
     | File_read : string -> value Effect.t
     | File_write : string * string -> value Effect.t
 
@@ -1551,7 +1571,9 @@ let pf_hash_float conv minus plus space width prec f =
     | "net_tls_connect", [ String host; Int64 port; Float timeout ] ->
         (* The handler resolves the host, then connects and shakes
            hands; failure rides back in the tuple. *)
-        Effect.perform (Net_tls_connect (host, Int64.to_int port, timeout, false))
+        Effect.perform
+          (Net_tls_connect
+             (host, Int64.to_int port, timeout, default_tls_client_options))
     | "net_tls_connect", _ ->
         error "E3001"
           "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
@@ -1562,11 +1584,52 @@ let pf_hash_float conv minus plus space width prec f =
               timeout Float64), got %d arguments"
              (List.length args))
     | "net_tls_connect_insecure", [ String host; Int64 port; Float timeout ] ->
-        Effect.perform (Net_tls_connect (host, Int64.to_int port, timeout, true))
+        Effect.perform
+          (Net_tls_connect
+             ( host,
+               Int64.to_int port,
+               timeout,
+               { default_tls_client_options with tls_insecure = true } ))
     | "net_tls_connect_insecure", _ ->
         error "E3001"
           "`net_tls_connect_insecure` expects (host String, port Int64, \
            timeout Float64)"
+    | "net_tls_connect_with", args when List.length args <> 8 ->
+        error "E3007"
+          (Printf.sprintf
+             "`net_tls_connect_with` expects (host String, port Int64, timeout \
+              Float64, ca_file String, client_cert_file String, \
+              client_key_file String, server_name String, insecure Bool), got \
+              %d arguments"
+             (List.length args))
+    | ( "net_tls_connect_with",
+        [
+          String host;
+          Int64 port;
+          Float timeout;
+          String ca_file;
+          String cert_file;
+          String key_file;
+          String server_name;
+          Bool insecure;
+        ] ) ->
+        Effect.perform
+          (Net_tls_connect
+             ( host,
+               Int64.to_int port,
+               timeout,
+               {
+                 tls_ca_file = ca_file;
+                 tls_client_cert_file = cert_file;
+                 tls_client_key_file = key_file;
+                 tls_server_name = server_name;
+                 tls_insecure = insecure;
+               } ))
+    | "net_tls_connect_with", _ ->
+        error "E3001"
+          "`net_tls_connect_with` expects (host String, port Int64, timeout \
+           Float64, ca_file String, client_cert_file String, client_key_file \
+           String, server_name String, insecure Bool)"
     | "net_listen_tls", args when List.length args <> 4 ->
         error "E3007"
           (Printf.sprintf
@@ -1574,11 +1637,47 @@ let pf_hash_float conv minus plus space width prec f =
               String, key_path String), got %d arguments"
              (List.length args))
     | "net_listen_tls", [ String host; Int64 port; String cert; String key ] ->
-        Effect.perform (Net_tls_listen (host, Int64.to_int port, cert, key))
+        Effect.perform
+          (Net_tls_listen
+             ( host,
+               Int64.to_int port,
+               cert,
+               key,
+               default_tls_server_options ))
     | "net_listen_tls", _ ->
         error "E3001"
           "`net_listen_tls` expects (host String, port Int64, cert_path \
            String, key_path String)"
+    | "net_listen_tls_with", args when List.length args <> 6 ->
+        error "E3007"
+          (Printf.sprintf
+             "`net_listen_tls_with` expects (host String, port Int64, cert_path \
+              String, key_path String, ca_file String, require_client_cert \
+              Bool), got %d arguments"
+             (List.length args))
+    | ( "net_listen_tls_with",
+        [
+          String host;
+          Int64 port;
+          String cert;
+          String key;
+          String ca_file;
+          Bool require_client_cert;
+        ] ) ->
+        Effect.perform
+          (Net_tls_listen
+             ( host,
+               Int64.to_int port,
+               cert,
+               key,
+               {
+                 tls_client_ca_file = ca_file;
+                 tls_require_client_cert = require_client_cert;
+               } ))
+    | "net_listen_tls_with", _ ->
+        error "E3001"
+          "`net_listen_tls_with` expects (host String, port Int64, cert_path \
+           String, key_path String, ca_file String, require_client_cert Bool)"
     | _ ->
         error "E3007"
           (Printf.sprintf "unknown runtime implementation `%s`" name)
@@ -2795,10 +2894,10 @@ module Emo_runtime = struct
                       Effect.Shallow.continue_with k
                         (Emo_eval.net_ok (Emo_eval.TcpListener l))
                         (handler state proc ()))
-          | Emo_eval.Net_tls_listen (host, port, cert_path, key_path) ->
+          | Emo_eval.Net_tls_listen (host, port, cert_path, key_path, options) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
-                  match tls_listener ~host ~port ~cert_path ~key_path with
+                  match tls_listener ~host ~port ~cert_path ~key_path options with
                   | Error reason ->
                       Effect.Shallow.continue_with k
                         (Emo_eval.net_error reason)
@@ -2820,7 +2919,7 @@ module Emo_runtime = struct
                       Effect.Shallow.continue_with k
                         (Emo_eval.net_ok (Emo_eval.TcpListener l))
                         (handler state proc ()))
-          | Emo_eval.Net_tls_connect (host, port, timeout, insecure) ->
+          | Emo_eval.Net_tls_connect (host, port, timeout, options) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
                   match resolve_addrs host with
@@ -2831,7 +2930,7 @@ module Emo_runtime = struct
                         (handler state proc ())
                   | addrs ->
                       connect_tls_entry state proc k ~host ~port ~timeout
-                        ~insecure addrs)
+                        ~options addrs)
           | Emo_eval.Net_accept l ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -3152,35 +3251,58 @@ module Emo_runtime = struct
     let message =
       Printf.sprintf "timed out after %gs connecting to %s" timeout target
     in
-    connect_next state proc k ~target ~deadline ~message ~tls:None
-      ~last_error:None addrs
+    connect_next state proc k ~target ~deadline ~message ~tls:None ~tls_name:""
+      ~tls_verify:false ~last_error:None addrs
 
   (* A TLS connect runs the same connect machinery; on a connected socket
      the TLS handshake takes over, parking through the scheduler. *)
   and connect_tls_entry state proc
       (k : (Emo_eval.value, unit) Effect.Shallow.continuation) ~(host : string)
-      ~(port : int) ~(timeout : float) ~(insecure : bool)
-      (addresses : string list) : Emo_eval.exit_info option =
-    let ctx = client_tls_ctx ~insecure in
-    let target = Printf.sprintf "%s:%d" host port in
-    let addrs =
-      List.map
-        (fun a ->
-          {
-            cfam =
-              (if String.contains a ':' then Unix.PF_INET6 else Unix.PF_INET);
-            caddr = Unix.ADDR_INET (Unix.inet_addr_of_string a, port);
-          })
-        addresses
+      ~(port : int) ~(timeout : float)
+      ~(options : Emo_eval.tls_client_options) (addresses : string list) :
+      Emo_eval.exit_info option =
+    let tls_name =
+      if options.Emo_eval.tls_server_name = "" then host
+      else options.Emo_eval.tls_server_name
     in
-    let deadline =
-      if timeout > 0.0 then Some (Unix.gettimeofday () +. timeout) else None
-    in
-    let message =
-      Printf.sprintf "timed out after %gs connecting to %s" timeout target
-    in
-    connect_next state proc k ~target ~deadline ~message ~tls:(Some ctx)
-      ~last_error:None addrs
+    if (not options.Emo_eval.tls_insecure) && tls_name_is_ip_literal tls_name
+    then
+      Effect.Shallow.continue_with k
+        (Emo_eval.net_error
+           (Printf.sprintf
+              "tls: cannot verify a certificate for the IP address `%s`; pass \
+               server_name with the certificate's DNS name"
+              tls_name))
+        (handler state proc ())
+    else
+      match client_tls_ctx options with
+      | Error reason ->
+          Effect.Shallow.continue_with k
+            (Emo_eval.net_error reason)
+            (handler state proc ())
+      | Ok ctx ->
+          let target = Printf.sprintf "%s:%d" host port in
+          let addrs =
+            List.map
+              (fun a ->
+                {
+                  cfam =
+                    (if String.contains a ':' then Unix.PF_INET6
+                     else Unix.PF_INET);
+                  caddr = Unix.ADDR_INET (Unix.inet_addr_of_string a, port);
+                })
+              addresses
+          in
+          let deadline =
+            if timeout > 0.0 then Some (Unix.gettimeofday () +. timeout)
+            else None
+          in
+          let message =
+            Printf.sprintf "timed out after %gs connecting to %s" timeout target
+          in
+          connect_next state proc k ~target ~deadline ~message ~tls:(Some ctx)
+            ~tls_name ~tls_verify:(not options.Emo_eval.tls_insecure)
+            ~last_error:None addrs
 
   (* A unix-domain connect has one candidate address: the path itself. *)
   and connect_unix_entry state proc
@@ -3193,12 +3315,13 @@ module Emo_runtime = struct
     let message =
       Printf.sprintf "timed out after %gs connecting to %s" timeout target
     in
-    connect_next state proc k ~target ~deadline ~message ~tls:None
-      ~last_error:None
+    connect_next state proc k ~target ~deadline ~message ~tls:None ~tls_name:""
+      ~tls_verify:false ~last_error:None
       [ { cfam = Unix.PF_UNIX; caddr = Unix.ADDR_UNIX path } ]
 
   and connect_next state proc k ~target ~deadline ~message
-      ~(tls : Ssl.context option) ~(last_error : Unix.error option) addrs =
+      ~(tls : Ssl.context option) ~(tls_name : string) ~(tls_verify : bool)
+      ~(last_error : Unix.error option) addrs =
     match addrs with
     | [] ->
         (* Every candidate failed; the last OS error is the precise
@@ -3238,16 +3361,20 @@ module Emo_runtime = struct
               cleanup st;
               (* This address failed; the refusal is only final when the
                  last candidate said it. *)
-              connect_next st proc k ~target ~deadline ~message ~tls
-                ~last_error:(Some err) rest
-          | None -> connect_tls_upgrade st proc k finished fd target tls
+              connect_next st proc k ~target ~deadline ~message ~tls ~tls_name
+                ~tls_verify ~last_error:(Some err) rest
+          | None ->
+              connect_tls_upgrade st proc k finished fd target tls tls_name
+                tls_verify
         in
         let timeout_step st =
           cleanup st;
           finish_w finished st proc k (Emo_eval.net_error message)
         in
         match Unix.connect fd addr.caddr with
-        | () -> connect_tls_upgrade state proc k finished fd target tls
+        | () ->
+            connect_tls_upgrade state proc k finished fd target tls tls_name
+              tls_verify
         | exception Unix.Unix_error (Unix.EINPROGRESS, _, _) ->
             add_io state fd `W (fun () ->
                 Queue.add (Io (proc, step)) state.runq);
@@ -3264,8 +3391,8 @@ module Emo_runtime = struct
               finish_w finished state proc k
                 (Emo_eval.net_error (refusal err))
             else
-              connect_next state proc k ~target ~deadline ~message ~tls
-                ~last_error:(Some err) rest)
+              connect_next state proc k ~target ~deadline ~message ~tls ~tls_name
+                ~tls_verify ~last_error:(Some err) rest)
 
   (* One negotiate-all profile for both ends of a TLS connection: TLS 1.2
      up to 1.3. The two SSL-2.0/3.0-era constants of this binding are the
@@ -3278,30 +3405,72 @@ module Emo_runtime = struct
 
   (* A verifying client context, or one that explicitly skips
      verification (`net_tls_connect_insecure` — visibly dangerous, never
-     a default). *)
-  and client_tls_ctx ~(insecure : bool) : Ssl.context =
+     a default). The trust store is the configured CA file, or the
+     system's when the option is empty; a client certificate turns the
+     connect into mTLS. *)
+  and client_tls_ctx (options : Emo_eval.tls_client_options) :
+      (Ssl.context, string) result =
     let ctx = tls_context Ssl.Client_context in
-    if insecure then Ssl.set_verify ctx [] None
-    else (
-      ignore (Ssl.set_default_verify_paths ctx);
-      Ssl.set_verify ctx
-        [ Ssl.Verify_peer; Ssl.Verify_fail_if_no_peer_cert ]
-        (Some Ssl.client_verify_callback));
-    ctx
+    if options.Emo_eval.tls_insecure then (
+      Ssl.set_verify ctx [] None;
+      Ok ctx)
+    else
+      match
+        if options.Emo_eval.tls_ca_file = "" then (
+          ignore (Ssl.set_default_verify_paths ctx);
+          Ok ())
+        else
+          try
+            Ssl.load_verify_locations ctx options.Emo_eval.tls_ca_file "";
+            Ok ()
+          with Invalid_argument message ->
+            Error
+              (Printf.sprintf "cannot load the TLS CA file `%s`: %s"
+                 options.Emo_eval.tls_ca_file message)
+      with
+      | Error reason -> Error reason
+      | Ok () -> (
+          try
+            if options.Emo_eval.tls_client_cert_file <> "" then
+              Ssl.use_certificate ctx options.Emo_eval.tls_client_cert_file
+                options.Emo_eval.tls_client_key_file;
+            Ssl.set_verify ctx
+              [ Ssl.Verify_peer; Ssl.Verify_fail_if_no_peer_cert ]
+              None;
+            Ok ctx
+          with
+          | Ssl.Certificate_error message | Ssl.Private_key_error message ->
+              Error
+                (Printf.sprintf
+                   "cannot load the TLS client certificate `%s`: %s"
+                   options.Emo_eval.tls_client_cert_file message))
+
+  (* An address literal needs no SNI name; a hostname does. *)
+  and tls_name_is_ip_literal (name : string) : bool =
+    try
+      ignore (Unix.inet_addr_of_string name);
+      true
+    with Failure _ -> false
 
   (* Upgrades a just-connected socket: plain connects finish
      immediately; TLS hands the socket to OpenSSL and shakes hands
-     asynchronously. *)
+     asynchronously. The verification name is set on the socket before
+     the handshake, so a certificate for another host fails closed; SNI
+     carries the same name unless it is an address literal. *)
   and connect_tls_upgrade state proc
       (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
       (finished : bool ref) (fd : Unix.file_descr) (target : string)
-      (tls : Ssl.context option) : Emo_eval.exit_info option =
+      (tls : Ssl.context option) (tls_name : string) (tls_verify : bool) :
+      Emo_eval.exit_info option =
     match tls with
     | None ->
         finish_w finished state proc k
           (Emo_eval.net_ok (Emo_eval.TcpConn (make_conn state fd target)))
     | Some ctx ->
         let ssl = Ssl.embed_socket fd ctx in
+        if tls_verify then Ssl.set_host ssl tls_name;
+        if not (tls_name_is_ip_literal tls_name) then
+          Ssl.set_client_SNI_hostname ssl tls_name;
         handshake state proc k finished fd ssl target Ssl.connect
 
   (* Drives a nonblocking TLS handshake to completion: want_read /
@@ -3338,21 +3507,49 @@ module Emo_runtime = struct
       (fun st -> handshake st proc k finished fd ssl desc once)
 
   (* The setup half of a TLS listener: TCP listen plus a server context
-     holding the certificate. *)
+     holding the certificate. A client-CA file turns on peer
+     verification; requiring it makes a peer without a certificate fail
+     the handshake. *)
   and tls_listener ~(host : string) ~(port : int) ~(cert_path : string)
-      ~(key_path : string) :
+      ~(key_path : string) (options : Emo_eval.tls_server_options) :
       (Unix.file_descr * int * Ssl.context, string) result =
+    if
+      options.Emo_eval.tls_require_client_cert
+      && options.Emo_eval.tls_client_ca_file = ""
+    then Error "tls: require_client_cert needs a ca_file to verify against"
+    else
     let ctx = tls_context Ssl.Server_context in
-    match Ssl.use_certificate ctx cert_path key_path with
-    | () -> (
-        match listen_on host port with
-        | Ok (fd, bound) -> Ok (fd, bound, ctx)
-        | Error reason -> Error reason)
-    | exception (Ssl.Certificate_error message | Ssl.Private_key_error message)
-      ->
-        Error
-          (Printf.sprintf "cannot load the TLS certificate for %s:%d: %s" host
-             port message)
+    let trusted =
+      if options.Emo_eval.tls_client_ca_file = "" then Ok ()
+      else
+        try
+          Ssl.set_client_CA_list_from_file ctx
+            options.Emo_eval.tls_client_ca_file;
+          Ssl.load_verify_locations ctx options.Emo_eval.tls_client_ca_file "";
+          Ssl.set_verify ctx
+            (if options.Emo_eval.tls_require_client_cert then
+               [ Ssl.Verify_peer; Ssl.Verify_fail_if_no_peer_cert ]
+             else [ Ssl.Verify_peer ])
+            None;
+          Ok ()
+        with Invalid_argument message ->
+          Error
+            (Printf.sprintf "cannot load the TLS client CA file `%s`: %s"
+               options.Emo_eval.tls_client_ca_file message)
+    in
+    match trusted with
+    | Error reason -> Error reason
+    | Ok () -> (
+        match Ssl.use_certificate ctx cert_path key_path with
+        | () -> (
+            match listen_on host port with
+            | Ok (fd, bound) -> Ok (fd, bound, ctx)
+            | Error reason -> Error reason)
+        | exception (Ssl.Certificate_error message | Ssl.Private_key_error message)
+          ->
+            Error
+              (Printf.sprintf "cannot load the TLS certificate for %s:%d: %s"
+                 host port message))
 
   and accept_loop state proc
       (k : (Emo_eval.value, unit) Effect.Shallow.continuation)

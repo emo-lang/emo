@@ -263,7 +263,9 @@ let rec expr env (e : Emo_ir.expr) : string =
       else if name = "halt" then "E.halt()"
       else Printf.sprintf "E.builtin(%S, [%s])" name args_code
   | Runtime_impl { name; args } ->
-      Printf.sprintf "E.runtimeImpl(%S, [%s])" name
+      (* The network implementations answer promises; awaiting every one
+         keeps a direct builtin call usable wherever an expression goes. *)
+      Printf.sprintf "(await E.runtimeImpl(%S, [%s]))" name
         (String.concat ", " (List.map (expr env) args))
   | Box_new e -> Printf.sprintf "E.box(%s)" (expr env e)
   | Bytes_new e -> Printf.sprintf "E.bytesNew(%s)" (expr env e)

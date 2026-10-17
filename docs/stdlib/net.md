@@ -9,7 +9,8 @@ The package declares the `ocaml`, `c`, and `typescript` targets (`targets
 every other target.
 Coverage differs by target: `ocaml` and `typescript` implement the whole
 surface, while `c` implements TCP and TLS — UDP, Unix-domain sockets,
-and `net.resolve` are refused at runtime there. The `c` target's TLS
+and `net.resolve` are refused at runtime there, and the names `connect`
+and `listen` accept resolve to IPv4 addresses only. The `c` target's TLS
 rides the machine's own OpenSSL/LibreSSL through hand-declared
 prototypes (no headers, no extra packages): Linux links the distro
 OpenSSL through its development package, macOS takes Homebrew's
@@ -47,7 +48,11 @@ net.connect_unix(path, timeout)                     // (R, TcpConn)
 net.listen_unix(path)                               // (R, TcpListener)
 net.tls_connect(host, port, timeout)                // (R, TcpConn)
 net.tls_connect_insecure(host, port, timeout)       // (R, TcpConn)
+net.tls_client_options()                            // TlsClientOptions
+net.tls_connect_with(host, port, timeout, options)  // (R, TcpConn)
 net.listen_tls(host, port, cert_path, key_path)     // (R, TcpListener)
+net.tls_server_options()                            // TlsServerOptions
+net.listen_tls_with(host, port, cert_path, key_path, options)
 net.udp_bind(host, port)                            // (R, UdpSocket)
 ```
 
@@ -71,9 +76,26 @@ net.udp_bind(host, port)                            // (R, UdpSocket)
   `net.tls_connect_insecure` skips verification; it is the explicit,
   visibly dangerous opt-out, meant for tests and self-signed
   development setups.
+- `net.tls_connect_with` is the same connect with a per-connection
+  policy — `net.tls_client_options()` starts from the defaults, and the
+  `with_ca_file`, `with_client_certificate`, `with_server_name`, and
+  `without_verification` methods derive a configured value from it.
+  `ca_file` replaces the system trust store, the certificate/key pair
+  (both or neither) turns the connect into mutual TLS, and `server_name`
+  is the name SNI and verification use when it differs from the host the
+  socket connects to. Verification needs a DNS certificate name:
+  connecting to an IP literal while verifying is refused unless
+  `server_name` supplies that name. An unloadable CA or certificate
+  file is the error tuple, not a panic.
 - `net.listen_tls(host, port, cert_path, key_path)` serves TLS from a PEM
   certificate/key pair; unloadable certificates fail with a precise
   reason (``cannot load the TLS certificate for ... ``).
+  `net.listen_tls_with` takes a `TlsServerOptions` from
+  `net.tls_server_options()`: `with_client_ca(ca_file)` sets the
+  client-certificate trust store, and `with_required_client_cert(true)`
+  rejects a peer that presents none. Without a client CA, client
+  certificates stay off; requiring one without a trust store is the
+  error tuple.
 - `net.udp_bind(host, port)` binds a datagram socket; port `0` picks a free
   one.
 
@@ -228,18 +250,42 @@ case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
 }
 ```
 
+TLS against a private trust store, with a client certificate and a
+verification name that differs from the address being dialed:
+
+```emo
+require "net"
+
+const options = net.tls_client_options().with_ca_file("internal-ca.pem").with_client_certificate("client.pem", "client-key.pem").with_server_name("api.internal.example")
+
+case net.tls_connect_with("10.0.0.7", 443, 5.0, options) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello\n")
+    conn.close()
+  }
+}
+```
+
+The server side takes the matching options: `net.listen_tls_with(host,
+port, cert_path, key_path, options)` with `net.tls_server_options()
+.with_client_ca("client-ca.pem").with_required_client_cert(true)`.
+`examples/https_roundtrip` runs the whole path — `https://` client,
+`http.serve_requests` over `net.listen_tls` — in one program.
+
 ## Limitations
 
 - **Three targets** — `targets = ["ocaml", "c", "typescript"]`; wasm, BEAM,
   and riscv64 builds are refused at resolution time. The `c` target
-  implements TCP only; the other operations are refused at runtime there.
+  implements TCP and TLS; the other operations are refused at runtime
+  there.
   On `wasm` the refusal is the host's: Node's preview1 WASI has no
   usable socket API, and the working socket surface — preview2's
   `wasi:sockets` — is component-model-shaped, out of reach for the core
   module the backend emits (`plan/step-16-wasm.md`, T16.5).
-- **DNS is forward-only.** On `ocaml` it runs inline in the scheduler loop —
-  `getaddrinfo` blocks the loop for its duration; on `typescript` Node's
-  resolver runs on the event loop. There is no reverse lookup.
+- **DNS is forward-only.** On `ocaml` and `c` it runs inline in the scheduler
+  loop — `getaddrinfo` blocks the loop for its duration; on `typescript`
+  Node's resolver runs on the event loop. There is no reverse lookup.
 - **The TLS reason text is the library's** — OpenSSL's on `ocaml`, Node's on
   `typescript`; verification itself is on by default on both.
 - **UDP is unconnected send/receive only** — no `connect`ed datagrams, no

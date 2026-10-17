@@ -1,6 +1,6 @@
 # `net` 包
 
-标准库的 socket 包:TCP、UDP、Unix 域 socket、DNS 与 TLS。它是运行时网络实现之上一层薄薄的、可读的 Emo 源码——这里每个函数都只是对运行时实现的一次调用,语义(超时、EOF、错误)就是运行时的语义。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。各目标覆盖面不同:`ocaml` 与 `typescript` 实现完整能力,`c` 实现 TCP 与 TLS——UDP、Unix 域 socket 与 `net.resolve` 在 `c` 上运行时被拒绝。`c` 目标的 TLS 通过手写原型调用本机的 OpenSSL/LibreSSL(不需要头文件,不新增包):Linux 经发行版的开发包装上 distro OpenSSL,macOS 经 `--cclib -L<dir>` 使用 Homebrew 的 openssl@3 等同类安装,两者皆无的机器会在构建期得到指明修法的拒绝,而不是裸链接器报错。库版本下限为 OpenSSL 1.1.1 / LibreSSL 3.5.0;从不触碰 TLS 的程序既不链接也不依赖它。
+标准库的 socket 包:TCP、UDP、Unix 域 socket、DNS 与 TLS。它是运行时网络实现之上一层薄薄的、可读的 Emo 源码——这里每个函数都只是对运行时实现的一次调用,语义(超时、EOF、错误)就是运行时的语义。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。各目标覆盖面不同:`ocaml` 与 `typescript` 实现完整能力,`c` 实现 TCP 与 TLS——UDP、Unix 域 socket 与 `net.resolve` 在 `c` 上运行时被拒绝,`connect` 与 `listen` 接受的名字只解析为 IPv4 地址。`c` 目标的 TLS 通过手写原型调用本机的 OpenSSL/LibreSSL(不需要头文件,不新增包):Linux 经发行版的开发包装上 distro OpenSSL,macOS 经 `--cclib -L<dir>` 使用 Homebrew 的 openssl@3 等同类安装,两者皆无的机器会在构建期得到指明修法的拒绝,而不是裸链接器报错。库版本下限为 OpenSSL 1.1.1 / LibreSSL 3.5.0;从不触碰 TLS 的程序既不链接也不依赖它。
 
 网络是**直接风格**:阻塞调用读起来就是普通函数调用,socket 忙碌时调度器把进程挂起。没有 `async`/`await`,没有回调注册。每一种失败——连接被拒、名字解析不出、超过期限、socket 已关——都以 `(R.error, reason)` 返回:reason 是 String,写明操作、对端与原因。用 `case` 匹配它,别让它崩掉进程。
 
@@ -22,7 +22,11 @@ net.connect_unix(path, timeout)                     // (R, TcpConn)
 net.listen_unix(path)                               // (R, TcpListener)
 net.tls_connect(host, port, timeout)                // (R, TcpConn)
 net.tls_connect_insecure(host, port, timeout)       // (R, TcpConn)
+net.tls_client_options()                            // TlsClientOptions
+net.tls_connect_with(host, port, timeout, options)  // (R, TcpConn)
 net.listen_tls(host, port, cert_path, key_path)     // (R, TcpListener)
+net.tls_server_options()                            // TlsServerOptions
+net.listen_tls_with(host, port, cert_path, key_path, options)
 net.udp_bind(host, port)                            // (R, UdpSocket)
 ```
 
@@ -31,7 +35,9 @@ net.udp_bind(host, port)                            // (R, UdpSocket)
 - `net.listen(host, port)` 绑定并监听,回答 `TcpListener`。端口 `0` 让内核分配空闲端口,用 `listener.port()` 读回。
 - `net.connect_unix(path, timeout)` 与 `net.listen_unix(path)` 是 Unix 域的一对;Unix listener 没有端口。
 - `net.tls_connect` 以 TLS 连接并**按系统信任库校验对端证书**——自签证书会让握手失败,失败即错误元组。`SSL_CERT_FILE`/`SSL_CERT_DIR` 在所有实现了 TLS 的目标上都可以改指信任库。`net.tls_connect_insecure` 跳过校验;它是显式的、看起来就危险的逃生门,只用于测试与自签开发环境。
+- `net.tls_connect_with` 是同样的连接,外加逐连接策略——`net.tls_client_options()` 从默认值出发,由 `with_ca_file`、`with_client_certificate`、`with_server_name`、`without_verification` 派生出配置好的值。`ca_file` 替换系统信任库,证书/私钥对(两者都给或都不给)把连接变成双向 TLS,`server_name` 是对端名字与 socket 实际连接的地址不同时,SNI 与校验使用的名字。校验需要一个 DNS 证书名:在开启校验时连接 IP 字面量会被拒绝,除非 `server_name` 给出该名字。CA 或证书文件加载失败是错误元组,不是 panic。
 - `net.listen_tls(host, port, cert_path, key_path)` 用 PEM 证书/私钥对服务 TLS;证书加载失败以精确 reason 报错(``cannot load the TLS certificate for ... ``)。
+  `net.listen_tls_with` 接收 `net.tls_server_options()` 给出的 `TlsServerOptions`:`with_client_ca(ca_file)` 设置客户端证书信任库,`with_required_client_cert(true)` 拒绝不提供证书的对端。没有客户端 CA 时客户端证书保持关闭;要求证书却没有信任库是错误元组。
 - `net.udp_bind(host, port)` 绑定数据报 socket;端口 `0` 挑选空闲端口。
 
 ## 连接:`TcpConn`
@@ -163,10 +169,28 @@ case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
 }
 ```
 
+使用私有信任库、带客户端证书、且校验名与实际拨号地址不同的 TLS:
+
+```emo
+require "net"
+
+const options = net.tls_client_options().with_ca_file("internal-ca.pem").with_client_certificate("client.pem", "client-key.pem").with_server_name("api.internal.example")
+
+case net.tls_connect_with("10.0.0.7", 443, 5.0, options) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello\n")
+    conn.close()
+  }
+}
+```
+
+服务端用相互匹配的选项:`net.listen_tls_with(host, port, cert_path, key_path, options)`,其中 options 来自 `net.tls_server_options().with_client_ca("client-ca.pem").with_required_client_cert(true)`。`examples/https_roundtrip` 在一个程序里跑通整条路径——`https://` 客户端、架在 `net.listen_tls` 上的 `http.serve_requests`。
+
 ## 限制
 
-- **三个目标**——`targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期被拒绝。`c` 只实现 TCP,其余操作在 `c` 上运行时被拒绝。`wasm` 上的拒绝来自宿主:Node 的 preview1 WASI 没有可用的 socket API,而可用的 socket 表面——preview2 的 `wasi:sockets`——是组件模型形态,后端发射的核心模块无法触及(`plan/step-16-wasm.md`,T16.5)。
-- **DNS 只有正向解析。** 在 `ocaml` 上它在调度循环内同步执行——`getaddrinfo` 期间整个循环阻塞;在 `typescript` 上由 Node 的解析器在事件循环中执行。没有反向解析。
+- **三个目标**——`targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期被拒绝。`c` 实现 TCP 与 TLS,其余操作在 `c` 上运行时被拒绝。`wasm` 上的拒绝来自宿主:Node 的 preview1 WASI 没有可用的 socket API,而可用的 socket 表面——preview2 的 `wasi:sockets`——是组件模型形态,后端发射的核心模块无法触及(`plan/step-16-wasm.md`,T16.5)。
+- **DNS 只有正向解析。** 在 `ocaml` 与 `c` 上它在调度循环内同步执行——`getaddrinfo` 期间整个循环阻塞;在 `typescript` 上由 Node 的解析器在事件循环中执行。没有反向解析。
 - **TLS 的原因文本来自各自的库**——`ocaml` 上是 OpenSSL,`typescript` 上是 Node;两者的证书验证默认都开启。
 - **UDP 只有非连接的收发**——没有 `connect` 式数据报,没有组播,没有广播助手。
 - **没有原始 socket,没有 socket 选项**——超出上面操作暴露范围的一律没有。

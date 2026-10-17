@@ -427,10 +427,10 @@ let udp_out = "datagram\n"
 
 (* The TLS roundtrip: the standalone runtime implements TLS but had no
    test of it. Server and client meet through one scheduler; the
-   insecure client variant keeps the verify callback's stderr chatter
-   out of the captured output — the verified handshake is pinned by
-   the sched suite. The fixtures ride the sched suite's checked-in
-   pair. *)
+   client names the fixture CA and pins the certificate's DNS name
+   through the per-connection options, so the verified path — not just
+   the insecure one — is exercised here. The fixtures ride the sched
+   suite's checked-in pair. *)
 let tls_main =
   {|let p v = ignore (Emo_eval.call_builtin "println" [ v ])
 
@@ -459,8 +459,16 @@ let () =
                ignore (Emo_runtime.method_call conn "write" [ body ]);
                ignore (Emo_runtime.method_call conn "close" [])));
         let answered =
-          Emo_eval.call_runtime_impl "net_tls_connect_insecure"
-            [ Emo_eval.String "127.0.0.1"; port; Emo_eval.Float 5.0 ]
+          Emo_eval.call_runtime_impl "net_tls_connect_with"
+            [ Emo_eval.String "127.0.0.1";
+              port;
+              Emo_eval.Float 5.0;
+              Emo_eval.String Sys.argv.(3);
+              Emo_eval.String "";
+              Emo_eval.String "";
+              Emo_eval.String "localhost";
+              Emo_eval.Bool false
+            ]
         in
         let conn = Emo_runtime.index answered (Emo_eval.Int64 1L) in
         ignore
@@ -507,7 +515,11 @@ let program_tests =
         let fixture = Sys.getcwd () ^ "/../../test/emo_sched/fixtures/" in
         program ~main:tls_main ~expect_exit:0 ~expect_out:tls_out
           ~args:
-            [ fixture ^ "tls-server-cert.pem"; fixture ^ "tls-server-key.pem" ]);
+            [
+              fixture ^ "tls-server-cert.pem";
+              fixture ^ "tls-server-key.pem";
+              fixture ^ "tls-ca.pem";
+            ]);
   ]
 
 let () =

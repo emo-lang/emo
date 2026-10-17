@@ -859,6 +859,40 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        ( "net_tls_connect_with",
+          {
+            vtype =
+              FuncType
+                ( [
+                    ("host", String);
+                    ("port", Int64);
+                    ("timeout", Float64);
+                    ("ca_file", String);
+                    ("client_cert_file", String);
+                    ("client_key_file", String);
+                    ("server_name", String);
+                    ("insecure", Bool);
+                  ],
+                  TupleType [ EnumType "R"; TcpConn ] );
+            is_var = false;
+            depth = 0;
+          } );
+        ( "net_listen_tls_with",
+          {
+            vtype =
+              FuncType
+                ( [
+                    ("host", String);
+                    ("port", Int64);
+                    ("cert_path", String);
+                    ("key_path", String);
+                    ("ca_file", String);
+                    ("require_client_cert", Bool);
+                  ],
+                  TupleType [ EnumType "R"; TcpListener ] );
+            is_var = false;
+            depth = 0;
+          } );
         ( "file_read",
           {
             vtype =

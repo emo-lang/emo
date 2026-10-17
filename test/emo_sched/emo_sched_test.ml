@@ -1235,7 +1235,7 @@ def serve(listener TcpListener) Void {
 
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
-case net_tls_connect("127.0.0.1", listener.port(), 5.0) {
+case net_tls_connect("localhost", listener.port(), 5.0) {
   (R.error, why) -> { println("connect failed: ${why}") }
   (R.ok, conn)   -> {
     conn.write("loopback\n")
@@ -1272,6 +1272,212 @@ case net_listen_tls("127.0.0.1", 0, "fixtures/absent-cert.pem", "fixtures/absent
           (String.length output >= String.length expected_prefix
           && String.sub output 0 (String.length expected_prefix)
              = expected_prefix));
+    tc "a TLS client trusts its own CA file" (fun () ->
+        (* The same handshake as the SSL_CERT_FILE test, with the trust
+           store named per connection instead of by the environment. *)
+        let output, _events =
+          run_det
+            {|
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write("own ca: " + line + "\n")
+          conn.close()
+        }
+      }
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
+do serve(listener)
+case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "", false) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("client read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    conn.close()
+    println("done")
+  }
+}
+|}
+        in
+        Alcotest.(check string) "output" "own ca: hello\ndone\n" output);
+    tc "server_name lets an IP connect verify against a DNS name" (fun () ->
+        (* The fixture's SAN is DNS:localhost, so connecting to the IP
+           verifies only when server_name names the certificate. *)
+        let output, _events =
+          run_det
+            {|
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write("named: " + line + "\n")
+          conn.close()
+        }
+      }
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
+do serve(listener)
+case net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "localhost", false) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("client read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    conn.close()
+    println("done")
+  }
+}
+|}
+        in
+        Alcotest.(check string) "output" "named: hello\ndone\n" output);
+    tc "a server_name the certificate does not name fails verification"
+      (fun () ->
+        let output, _events =
+          run_det
+            {|
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      conn.write("unexpected\n")
+      conn.close()
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
+do serve(listener)
+case net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "wrong.example", false) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    println("unexpected success")
+    conn.close()
+  }
+}
+|}
+        in
+        Alcotest.(check bool)
+          "client refused the certificate" true
+          (contains_substring output
+             "connect failed: the TLS handshake with 127.0.0.1:");
+        Alcotest.(check bool)
+          "no response crossed the failed handshake" false
+          (contains_substring output "unexpected"));
+    tc "verifying an IP literal is refused with an actionable reason" (fun () ->
+        (* X509_VERIFY_PARAM_set1_host, which ocaml-ssl's set_host uses,
+           checks DNS names only; silently skipping verification for an
+           address would make the same call verify on one target and not
+           on another, so every target refuses it up front. *)
+        let output, _events =
+          run_det
+            {|
+case net_tls_connect("127.0.0.1", 9, 1.0) {
+  (R.error, why) -> { println(why) }
+  (R.ok, _)      -> { println("connected?!") }
+}
+|}
+        in
+        Alcotest.(check string)
+          "output"
+          "tls: cannot verify a certificate for the IP address `127.0.0.1`; \
+           pass server_name with the certificate's DNS name\n"
+          output);
+    tc "mutual TLS admits a client whose certificate the server trusts"
+      (fun () ->
+        (* fixtures/tls-cert.pem is self-signed, so it doubles as the
+           client certificate and the server's one-entry client CA. *)
+        let output, _events =
+          run_det
+            {|
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write("mutual: " + line + "\n")
+          conn.close()
+        }
+      }
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen_tls_with("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem", "fixtures/tls-cert.pem", true)
+do serve(listener)
+case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "fixtures/tls-cert.pem", "fixtures/tls-key.pem", "", false) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("client read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    conn.close()
+    println("done")
+  }
+}
+|}
+        in
+        Alcotest.(check string) "output" "mutual: hello\ndone\n" output);
+    tc "mutual TLS rejects a client that presents no certificate" (fun () ->
+        let output, _events =
+          run_det
+            {|
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write("unexpected: " + line + "\n")
+          conn.close()
+        }
+      }
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen_tls_with("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem", "fixtures/tls-cert.pem", true)
+do serve(listener)
+case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "", false) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    case conn.read_line() {
+      (R.error, why) -> { println("client read failed: ${why}") }
+      (R.ok, line)   -> { println("unexpected: ${line}") }
+    }
+    conn.close()
+  }
+}
+|}
+        in
+        Alcotest.(check bool)
+          "the connection failed somewhere" true
+          (contains_substring output "failed");
+        Alcotest.(check bool)
+          "no request reached the handler" false
+          (contains_substring output "unexpected"));
     tc "networking is refused outside a scheduler" (fun () ->
         let diagnostic =
           match

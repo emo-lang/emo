@@ -1360,7 +1360,7 @@ def serve(listener TcpListener) Void {
 
 const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
 do serve(listener)
-case net_tls_connect("127.0.0.1", listener.port(), 5.0) {
+case net_tls_connect("localhost", listener.port(), 5.0) {
   (R.error, why) -> { println("connect failed: ${why}") }
   (R.ok, conn)   -> {
     conn.write("loopback\n")
@@ -1466,6 +1466,80 @@ case net_tls_connect_insecure("127.0.0.1", self_listener.port(), 5.0) {
              (Printf.sprintf "env SSL_CERT_FILE=%s %s" (Filename.quote ca)
                 (Filename.quote bin)))
           "verify failed as expected\necho: insecure\n");
+    tc "the per-connection TLS policy holds on c" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let cclibs =
+          match Lazy.force tls_cclibs with
+          | Some libs -> libs
+          | None -> Alcotest.skip ()
+        in
+        let dir = Filename.concat scratch "c-tls-policy" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file
+          (Filename.concat dir "package.emo")
+          {|
+package {
+  name = "emo/scratch_c_tls_policy"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "net" = "0.1.0"
+  }
+}
+|};
+        (* Mutual TLS, a private CA, and server_name pinning through the
+           option objects: the client trusts the fixture CA, presents
+           fixtures/tls-cert.pem as its own certificate, and verifies
+           the certificate's DNS name while connecting to the IP. The
+           server trusts that self-signed certificate as its client CA
+           and requires one. *)
+        let fixture = "../../test/emo_sched/fixtures/" in
+        let entry = Filename.concat dir "main.emo" in
+        write_file entry
+          (Printf.sprintf
+             {|require "net"
+
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write("policy: " + line + "\n")
+          conn.close()
+        }
+      }
+    }
+  }
+}
+
+const server_options = net.tls_server_options().with_client_ca("%stls-cert.pem").with_required_client_cert(true)
+const (R.ok, listener) = net.listen_tls_with("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem", server_options)
+do serve(listener)
+const client_options = net.tls_client_options().with_ca_file("%stls-ca.pem").with_client_certificate("%stls-cert.pem", "%stls-key.pem").with_server_name("localhost")
+case net.tls_connect_with("127.0.0.1", listener.port(), 5.0, client_options) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    conn.close()
+    println("done")
+  }
+}
+|}
+             fixture fixture fixture fixture fixture fixture);
+        let bin = Filename.concat dir "main-c-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"c" ~cclibs entry bin);
+        check_run "c tls policy"
+          (run_cmd (Filename.quote bin))
+          "policy: hello\ndone\n");
   ]
 
 (* T23.8: the c target's direct C ABI. A foreign def declares the C
@@ -3840,6 +3914,48 @@ main()
         check_run "typescript"
           (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
           "60\n");
+    tc "a direct builtin net call resolves on typescript" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "cross-ts-net-builtin"
+            {|def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> {
+      case conn.read_line() {
+        (R.error, why) -> { println("read failed: ${why}") }
+        (R.ok, line)   -> {
+          conn.write("echo: " + line + "\n")
+          conn.close()
+        }
+      }
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
+do serve(listener)
+case net_connect("127.0.0.1", listener.port(), 5.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("hello\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    conn.close()
+    println("done")
+  }
+}
+|}
+        in
+        let out_ts = Filename.concat (Filename.dirname entry) "main" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"typescript" entry out_ts);
+        check_run "typescript"
+          (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
+          "echo: hello\ndone\n");
     tc "a for loop in a class init keeps its value on beam" (fun () ->
         if not (Lazy.force erl_available) then Alcotest.skip ();
         let entry =

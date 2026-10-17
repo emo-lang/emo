@@ -74,6 +74,33 @@ def get(url String) (R, HttpResponse) {
   return request("GET", url, [], "", 0.0)
 }
 
+// The general form with the per-connection TLS policy: everything
+// `request` does, plus the trust store, client certificate, and
+// server-name override `net.tls_connect_with` takes. A plain `http`
+// url has no TLS leg, so the policy applies only to `https`.
+def request_with(method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse) {
+  case parse_url(url) {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, parts)  -> {
+      case parts {
+        ("http", host, port, path) -> {
+          case net.connect(host, port, timeout) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, conn)   -> { return exchange(conn, method, host, path, headers, body) }
+          }
+        }
+        ("https", host, port, path) -> {
+          case net.tls_connect_with(host, port, timeout, tls_options) {
+            (R.error, why) -> { return (R.error, why) }
+            (R.ok, conn)   -> { return exchange(conn, method, host, path, headers, body) }
+          }
+        }
+        _ -> { return (R.error, "http: unsupported url scheme in `" + url + "`") }
+      }
+    }
+  }
+}
+
 def post(url String, body String) (R, HttpResponse) {
   return request("POST", url, [], body, 0.0)
 }
