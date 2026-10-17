@@ -1,6 +1,6 @@
 # Step 17 — TypeScript Target
 
-**Milestone:** M4 · **Prereq:** steps 01–16 · **Status:** in progress
+**Milestone:** M4 · **Prereq:** steps 01–16 · **Status:** complete
 
 ## Goal
 
@@ -99,9 +99,12 @@ GC question as the only open front.
       scheduler hid and the TypeScript target surfaced — the block now
       returns the connection for `handle_connection` to close. The
       `c` target keeps TCP only.)
-- [ ] **T17.5** — Bootstrap: the target-aware golden suite in CI (each
+- [x] **T17.5** — Bootstrap: the target-aware golden suite in CI (each
       example's TypeScript run matches the interpreter byte-for-byte),
       and the resolution gate test for packages that lack the target.
+      (Done 2026-10-17: `pipeline` joins the `ts_golden` group, so the
+      subset above is complete; the gate has both a refusing and an
+      accepting test, mirroring the `wasm` pair.)
 
 ## Acceptance
 

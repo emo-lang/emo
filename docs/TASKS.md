@@ -366,7 +366,9 @@ Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, fi
 - [x] **T17.2** — Full core semantics: patterns and guards, tuples, arrays, Box, interpolation, content equality, multi-file module references. Golden: language_tour, shop. (Done 2026-10-17: both examples join `ts_golden_tests` and declare `"typescript"` in their manifests. The emitter already handled the surface — the gap was the pin, so no backend change.)
 - [x] **T17.3** — Concurrency: cooperative tasks, mailboxes, selective receive, `self_pid`, `halt`. Golden: pipeline.
 - [x] **T17.4** — Direct-style IO: sockets and HTTP over Node's APIs as awaited promises; stdlib target metadata gains `"typescript"`. Golden: tcp_echo, http_roundtrip. (Done 2026-10-12: the whole `net` surface rides `node:net`/`node:dgram`/`node:tls`/`node:dns` behind `E.builtin` with one persistent per-connection reader; the root process finishing releases the live handles so the loop drains, matching the native rule. `net` and `http` declare `"typescript"`; tcp_echo and http_roundtrip join the target's goldens. The `c` target stays TCP-only, and the `http` server block's double close — hidden by the native scheduler, surfaced by the TypeScript target — is fixed.)
-- [ ] **T17.5** — Bootstrap: the target-aware golden suite in CI, plus the resolution-gate test for packages lacking the target.
+- [x] **T17.5** — Bootstrap: the target-aware golden suite in CI, plus the resolution-gate test for packages lacking the target. (Done 2026-10-17: `pipeline` joins the `ts_golden` group, completing the subset above; the gate now has a refusing and an accepting test, mirroring the `wasm` pair.)
+
+Close-out: the target-aware golden group (`ts_golden`) pins the subset named above — 25 examples — and the resolution gate is tested both ways. Decisions are in `plan/step-17-typescript.md` (the trail). **Step 17 acceptance met.**
 
 ### Step 18 — BEAM target (Core Erlang) · `plan/step-18-beam.md`
 
