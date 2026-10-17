@@ -1,0 +1,10 @@
+package {
+  name = "emo/https_roundtrip"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "http" = "0.1.0"
+    "net" = "0.1.0"
+  }
+}
