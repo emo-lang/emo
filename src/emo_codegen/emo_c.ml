@@ -397,19 +397,23 @@ let shape_make_name env (t : Emo_check.t) : string =
         (Printf.sprintf "the struct make converter for `%s`"
            (Emo_check.to_string t))
 
-(* ---- The reclamation discipline (CHECK.md, 2026-10-11) ----
+(* ---- The reclamation discipline (CHECK.md, 2026-10-11; step 49) ----
 
-   The runtime refcounts identity cells; the emitter owns the counts.
-   The convention keeps every site local: an identity word handed
+   The runtime refcounts every dynamic cell; the emitter owns the
+   counts. The convention keeps every site local: a dynamic word handed
    across an expression is owned by the statement's autorelease pool
    (released together at the next statement boundary); a binding, a
    field, a capture, or an aggregate element is a longer-lived slot and
    retains what it stores; a slot's exit releases. A type is
-   identity-capable when a value of it may be a refcounted cell. *)
+   identity-capable when a value of it may be a refcounted cell —
+   since step 49 that is every dynamic type, the value families
+   included. *)
 let may_own (t : Emo_check.t) : bool =
   match t with
-  | Emo_check.Unknown | Emo_check.ClassType _ | Emo_check.InterfaceType _
-  | Emo_check.FuncType _ | Emo_check.BoxType _ ->
+  | Emo_check.Unknown | Emo_check.TupleType _ | Emo_check.ArrayType _
+  | Emo_check.MapType _ | Emo_check.BoxType _ | Emo_check.ListType _
+  | Emo_check.BuilderType _ | Emo_check.ClassType _ | Emo_check.InterfaceType _
+  | Emo_check.EnumType _ | Emo_check.FuncType _ | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -487,7 +491,8 @@ and unbox_code (v : string) (ty : Emo_check.t) : string =
   | Emo_check.Float64 -> Printf.sprintf "emo_unbox_f64(%s)" v
   | Emo_check.Bool -> Printf.sprintf "emo_bool_of(%s)" v
   | Emo_check.Char -> Printf.sprintf "emo_char_of(%s)" v
-  | Emo_check.String -> Printf.sprintf "emo_str_of(%s)" v
+  (* a String copies out: the native value outlives the cell's claim *)
+  | Emo_check.String -> Printf.sprintf "emo_str_owned_of(%s)" v
   | Emo_check.Byte -> Printf.sprintf "(uint8_t)emo_unbox_i64(%s)" v
   | Emo_check.Pid -> Printf.sprintf "emo_unbox_pid(%s)" v
   | Emo_check.TcpConn | Emo_check.TcpListener | Emo_check.UdpSocket ->
@@ -496,10 +501,12 @@ and unbox_code (v : string) (ty : Emo_check.t) : string =
       refuse
         (Printf.sprintf "`%s` out of the dynamic world" (Emo_check.to_string t))
 
-(* e as a dynamic word: no conversion when it already is one. *)
+(* e as a dynamic word: no conversion when it already is one; a boxed
+   crossing births a cell, whose claim pools with the statement. *)
 and as_dyn env (e : Emo_ir.expr) : string =
   let v = emit_expr env e in
-  if is_dyn e.Emo_ir.ety then v else box_code v e.Emo_ir.ety
+  if is_dyn e.Emo_ir.ety then v
+  else wrap_owned Emo_check.Unknown (box_code v e.Emo_ir.ety)
 
 (* e as a native scalar of type ty — the crossing is checked at
    runtime. *)
@@ -542,16 +549,17 @@ and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
       let call =
         Printf.sprintf "%s(%s)" (c_ident func) (String.concat ", " call_args)
       in
-      (* `do f(..)` discards the result — an identity result releases
+      (* `do f(..)` discards the result — a dynamic result releases
          here, owned by nobody else *)
-      if is_dyn fres && may_own fres then put wenv "  emo_release(%s);\n" call
+      if is_dyn fres then put wenv "  emo_release(%s);\n" call
       else put wenv "  (void)(%s);\n" call;
       put wenv "}\n\n";
       let pid_expr =
         Printf.sprintf "emo_spawn_process(%s, INT64_C(%d), (emo_value[]){%s})"
           wrapper (List.length words) (String.concat ", " words)
       in
-      if is_dyn use_ty then Printf.sprintf "emo_box_pid(%s)" pid_expr
+      if is_dyn use_ty then
+        wrap_owned use_ty (Printf.sprintf "emo_box_pid(%s)" pid_expr)
       else pid_expr
 
 (* The runtime implementations (T23.10): files and TCP over the hosted OS.
@@ -696,6 +704,8 @@ and foreign_call env (use_ty : Emo_check.t) (f : Emo_ir.func)
          args f.Emo_ir.fparams)
   in
   let call = Printf.sprintf "%s(%s)" symbol (String.concat ", " arg_code) in
+  (* The boxed crossings here are births; the CALL SITES pool them (the
+     expression case, the effect case), so this returns raw code. *)
   match f.Emo_ir.fresult with
   | Emo_check.TupleType _ ->
       (* the returned struct becomes the tuple word *)
@@ -763,10 +773,15 @@ and emit_expr env (e : Emo_ir.expr) : string =
             (fun acc part -> Printf.sprintf "emo_str_concat(%s, %s)" acc part)
             x rest)
   | Method { self_; name; args } ->
-      wrap_owned e.Emo_ir.ety (emit_method env e.Emo_ir.ety self_ name args)
+      (* The wrap lives inside emit_method: the runtime's dispatch
+         boundaries pool their own handouts, and the textual births wrap
+         where they are built — a method result is never pooled twice. *)
+      emit_method env e.Emo_ir.ety self_ name args
   | Builtin { name = "self_pid"; args = [] } ->
       let v = "emo_process_self_pid()" in
-      if is_dyn e.Emo_ir.ety then Printf.sprintf "emo_box_pid(%s)" v else v
+      if is_dyn e.Emo_ir.ety then
+        wrap_owned e.Emo_ir.ety (Printf.sprintf "emo_box_pid(%s)" v)
+      else v
   | Builtin { name = "self_pid"; _ } -> refuse "self_pid with arguments"
   | Builtin { name = "halt"; _ } ->
       (* `return halt()` / `do halt()`: the process never resumes —
@@ -775,11 +790,15 @@ and emit_expr env (e : Emo_ir.expr) : string =
       refuse "halt in a value position"
   | Builtin { name = "printf"; args } -> emit_printf env args
   | Builtin { name; _ } -> emit_builtin_unsupported name
-  | Runtime_impl { name; args } -> emit_runtime_impl env e.Emo_ir.ety name args
+  | Runtime_impl { name; args } ->
+      let v = emit_runtime_impl env e.Emo_ir.ety name args in
+      if is_dyn e.Emo_ir.ety then wrap_owned e.Emo_ir.ety v else v
   | Call { func; args } -> (
       (* A foreign def calls its C symbol directly (T23.8). *)
       match Hashtbl.find_opt env.forfuncs func with
-      | Some f -> foreign_call env e.Emo_ir.ety f args
+      | Some f ->
+          let v = foreign_call env e.Emo_ir.ety f args in
+          if is_dyn e.Emo_ir.ety then wrap_owned e.Emo_ir.ety v else v
       | None -> (
           (* The callee's declared regime governs: a cross-module call the
          checker types Unknown still returns the callee's native
@@ -800,10 +819,9 @@ and emit_expr env (e : Emo_ir.expr) : string =
                       (String.concat ", " arg_code)
                   in
                   let call =
-                    (* a dynamic identity result lands in the pool; the
-                       use site retains what it keeps *)
-                    if is_dyn fres && may_own fres then wrap_owned fres call
-                    else call
+                    (* a dynamic result lands in the pool; the use site
+                       retains what it keeps *)
+                    if is_dyn fres then wrap_owned fres call else call
                   in
                   if fres = e.Emo_ir.ety then call
                   else if is_dyn fres && is_dyn e.Emo_ir.ety then call
@@ -820,16 +838,19 @@ and emit_expr env (e : Emo_ir.expr) : string =
                 (String.concat ", " arg_code)))
   | Tuple es ->
       let elems = String.concat ", " (List.map (as_dyn env) es) in
-      Printf.sprintf "emo_tuple_new(INT64_C(%d), (emo_value[]){%s})"
-        (List.length es) elems
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_tuple_new(INT64_C(%d), (emo_value[]){%s})"
+           (List.length es) elems)
   | Array_lit es ->
       let elems = String.concat ", " (List.map (as_dyn env) es) in
-      Printf.sprintf "emo_array_new(INT64_C(%d), (emo_value[]){%s})"
-        (List.length es) elems
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_array_new(INT64_C(%d), (emo_value[]){%s})"
+           (List.length es) elems)
   | Map_lit pairs ->
       let elems = String.concat ", " (List.map (as_dyn env) pairs) in
-      Printf.sprintf "emo_map_new(INT64_C(%d), (emo_value[]){%s})"
-        (List.length pairs) elems
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_map_new(INT64_C(%d), (emo_value[]){%s})"
+           (List.length pairs) elems)
   | Index (base, idx) ->
       let v =
         Printf.sprintf "emo_index(%s, %s)" (as_dyn env base)
@@ -844,12 +865,16 @@ and emit_expr env (e : Emo_ir.expr) : string =
       wrap_owned e.Emo_ir.ety
         (Printf.sprintf "emo_box_new(%s)" (as_dyn env arg))
   | Bytes_new n ->
-      Printf.sprintf "emo_bytes_new(%s)" (as_native env n Emo_check.Int64)
-  | List_new arg -> Printf.sprintf "emo_list_new(%s)" (as_dyn env arg)
-  | Builder_new -> "emo_builder_new()"
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_bytes_new(%s)" (as_native env n Emo_check.Int64))
+  | List_new arg ->
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_list_new(%s)" (as_dyn env arg))
+  | Builder_new -> wrap_owned e.Emo_ir.ety "emo_builder_new()"
   | Make_enum { enum_name; member } ->
-      Printf.sprintf "emo_enum_new(%s, %s)" (c_string enum_name)
-        (c_string member)
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_enum_new(%s, %s)" (c_string enum_name)
+           (c_string member))
   | Field_read { obj; name } when is_dyn obj.Emo_ir.ety ->
       (* cross-module field access: the checker lost the class, but the
          instance's vtable carries the field names *)
@@ -860,14 +885,16 @@ and emit_expr env (e : Emo_ir.expr) : string =
       if is_dyn e.Emo_ir.ety then v else v (* fields are dynamic words *)
   | Field_read { obj; name } -> emit_field_read env e.Emo_ir.ety obj name
   | Call_value { f; args } ->
+      (* the call hands back the block's __ret claim *)
       let v = closure_call env f args in
       if is_dyn e.Emo_ir.ety then wrap_owned e.Emo_ir.ety v
-      else unbox_code v e.Emo_ir.ety
+      else unbox_code (wrap_owned Emo_check.Unknown v) e.Emo_ir.ety
   | Closure { cparams; cbody } ->
       wrap_owned e.Emo_ir.ety (emit_closure env cparams cbody)
   | Spawn_value _ -> refuse "spawning a first-class block yet"
   | Make_exception { message; data = None } ->
-      Printf.sprintf "emo_make_exception(%s)" (to_str env message)
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_make_exception(%s)" (to_str env message))
   | Make_exception _ ->
       refuse "the c target does not support exception data yet"
   | other ->
@@ -927,13 +954,20 @@ and to_str env (e : Emo_ir.expr) : string =
 (* The Bytes accessors return native int64_t; a dynamic use site
    takes the boxed form. *)
 and box_int env (result_ty : Emo_check.t) (v : string) : string =
-  if is_dyn result_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  if is_dyn result_ty then
+    wrap_owned result_ty (Printf.sprintf "emo_box_i64(%s)" v)
+  else v
 
 and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
     (name : string) (args : Emo_ir.expr list) : string =
-  let finish v =
-    if result_ty = Emo_check.Void || is_dyn result_ty then v
-    else unbox_code v result_ty
+  let finish_claim v =
+    (* a static handout (Map get/set, Box read, a List pop) hands the
+       caller a claim: pool it for a dynamic use, pool-then-unbox for a
+       native one (the pool claim dies with the statement; the unboxed
+       native owns itself — a String copies out) *)
+    if result_ty = Emo_check.Void || is_dyn result_ty then
+      wrap_owned result_ty v
+    else unbox_code (wrap_owned Emo_check.Unknown v) result_ty
   in
   let arity = List.length args in
   (* The type-level methods (`Byte.from_int64`, `Float64.from_bits`)
@@ -949,14 +983,17 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
             Printf.sprintf "(uint8_t)((%s) & 255)"
               (as_native env x Emo_check.Int64)
           in
-          if is_dyn result_ty then Printf.sprintf "emo_box_i64((int64_t)(%s))" v
+          if is_dyn result_ty then
+            wrap_owned result_ty (Printf.sprintf "emo_box_i64((int64_t)(%s))" v)
           else v
       | "Float64", "from_bits", [ x ] ->
           let v =
             Printf.sprintf "emo_f64_from_bits(%s)"
               (as_native env x Emo_check.Int64)
           in
-          if is_dyn result_ty then box_code v Emo_check.Float64 else v
+          if is_dyn result_ty then
+            wrap_owned result_ty (box_code v Emo_check.Float64)
+          else v
       | _ -> refuse (Printf.sprintf "the type-level method `%s.%s`" t name))
   | _ -> (
       match (name, args) with
@@ -975,9 +1012,9 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
             Printf.sprintf "emo_to_string_dyn(%s)" (emit_expr env self_)
           else to_str env self_
       | "read", [] ->
-          finish (Printf.sprintf "emo_box_read(%s)" (as_dyn env self_))
+          finish_claim (Printf.sprintf "emo_box_read(%s)" (as_dyn env self_))
       | "replace", [ v ] ->
-          finish
+          finish_claim
             (Printf.sprintf "emo_box_replace(%s, %s)" (as_dyn env self_)
                (as_dyn env v))
       (* The List deque: O(1) push and pop at both ends. Push returns the
@@ -987,24 +1024,28 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
         when match self_.Emo_ir.ety with
              | Emo_check.ListType _ -> true
              | _ -> false ->
-          Printf.sprintf "emo_list_push_front(%s, %s)" (as_dyn env self_)
-            (as_dyn env v)
+          finish_claim
+            (Printf.sprintf "emo_list_push_front(%s, %s)" (as_dyn env self_)
+               (as_dyn env v))
       | "push_back", [ v ]
         when match self_.Emo_ir.ety with
              | Emo_check.ListType _ -> true
              | _ -> false ->
-          Printf.sprintf "emo_list_push_back(%s, %s)" (as_dyn env self_)
-            (as_dyn env v)
+          finish_claim
+            (Printf.sprintf "emo_list_push_back(%s, %s)" (as_dyn env self_)
+               (as_dyn env v))
       | "pop_front", []
         when match self_.Emo_ir.ety with
              | Emo_check.ListType _ -> true
              | _ -> false ->
-          finish (Printf.sprintf "emo_list_pop_front(%s)" (as_dyn env self_))
+          finish_claim
+            (Printf.sprintf "emo_list_pop_front(%s)" (as_dyn env self_))
       | "pop_back", []
         when match self_.Emo_ir.ety with
              | Emo_check.ListType _ -> true
              | _ -> false ->
-          finish (Printf.sprintf "emo_list_pop_back(%s)" (as_dyn env self_))
+          finish_claim
+            (Printf.sprintf "emo_list_pop_back(%s)" (as_dyn env self_))
       (* The ArrayBuilder: push and pop-free reads over a doubling
          buffer. Push hands back the builder itself, so it answers in the
          dynamic world like its receiver; get yields the element (a
@@ -1013,20 +1054,22 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
         when match self_.Emo_ir.ety with
              | Emo_check.BuilderType _ -> true
              | _ -> false ->
-          Printf.sprintf "emo_builder_push(%s, %s)" (as_dyn env self_)
-            (as_dyn env v)
+          finish_claim
+            (Printf.sprintf "emo_builder_push(%s, %s)" (as_dyn env self_)
+               (as_dyn env v))
       | "get", [ i ]
         when match self_.Emo_ir.ety with
              | Emo_check.BuilderType _ -> true
              | _ -> false ->
-          finish
+          finish_claim
             (Printf.sprintf "emo_builder_get(%s, %s)" (as_dyn env self_)
                (as_native env i Emo_check.Int64))
       | "to_array", []
         when match self_.Emo_ir.ety with
              | Emo_check.BuilderType _ -> true
              | _ -> false ->
-          Printf.sprintf "emo_builder_to_array(%s)" (as_dyn env self_)
+          finish_claim
+            (Printf.sprintf "emo_builder_to_array(%s)" (as_dyn env self_))
       | "length", [] when self_.Emo_ir.ety = Emo_check.Bytes ->
           Printf.sprintf "emo_bytes_length(%s)" (as_dyn env self_)
       | "length", []
@@ -1041,8 +1084,9 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
         when match self_.Emo_ir.ety with
              | Emo_check.ArrayType _ -> true
              | _ -> false ->
-          Printf.sprintf "emo_array_append(%s, %s)" (as_dyn env self_)
-            (as_dyn env v)
+          finish_claim
+            (Printf.sprintf "emo_array_append(%s, %s)" (as_dyn env self_)
+               (as_dyn env v))
       (* The map's methods: the receiver's MapType keys the arm, and the
          runtime dispatches by kind — an Unknown receiver's `get` stays
          the Bytes accessor. *)
@@ -1050,14 +1094,14 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
         when match self_.Emo_ir.ety with
              | Emo_check.MapType _ -> true
              | _ -> false ->
-          finish
+          finish_claim
             (Printf.sprintf "emo_map_get(%s, %s)" (as_dyn env self_)
                (as_dyn env k))
       | "set", [ k; v ]
         when match self_.Emo_ir.ety with
              | Emo_check.MapType _ -> true
              | _ -> false ->
-          finish
+          finish_claim
             (Printf.sprintf "emo_map_set(%s, %s, %s)" (as_dyn env self_)
                (as_dyn env k) (as_dyn env v))
       | "has", [ k ]
@@ -1075,7 +1119,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
         when match self_.Emo_ir.ety with
              | Emo_check.MapType _ -> true
              | _ -> false ->
-          finish
+          finish_claim
             (Printf.sprintf "emo_map_remove(%s, %s)" (as_dyn env self_)
                (as_dyn env k))
       | "length", []
@@ -1088,12 +1132,12 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
         when match self_.Emo_ir.ety with
              | Emo_check.MapType _ -> true
              | _ -> false ->
-          finish (Printf.sprintf "emo_map_keys(%s)" (as_dyn env self_))
+          finish_claim (Printf.sprintf "emo_map_keys(%s)" (as_dyn env self_))
       | "values", []
         when match self_.Emo_ir.ety with
              | Emo_check.MapType _ -> true
              | _ -> false ->
-          finish (Printf.sprintf "emo_map_values(%s)" (as_dyn env self_))
+          finish_claim (Printf.sprintf "emo_map_values(%s)" (as_dyn env self_))
       (* The systems layer: Bytes accessors, conversions, and bit-casts.
      The type-level methods (`Byte.from_int64`, `Float64.from_bits`)
      arrive with a Type_ref receiver. *)
@@ -1145,14 +1189,17 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                (as_native env i Emo_check.Int64)
                (as_native env v Emo_check.Int64))
       | "to_bytes", [] when self_.Emo_ir.ety = Emo_check.String ->
-          Printf.sprintf "emo_bytes_of_str(%s)" (emit_expr env self_)
+          wrap_owned result_ty
+            (Printf.sprintf "emo_bytes_of_str(%s)" (emit_expr env self_))
       | (("sqrt" | "floor" | "ceil" | "trunc") as mname), []
         when self_.Emo_ir.ety = Emo_check.Float64 ->
           let v =
             Printf.sprintf "emo_f64_%s(%s)" mname
               (as_native env self_ Emo_check.Float64)
           in
-          if is_dyn result_ty then box_code v Emo_check.Float64 else v
+          if is_dyn result_ty then
+            wrap_owned result_ty (box_code v Emo_check.Float64)
+          else v
       | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
           box_int env result_ty
             (Printf.sprintf "((int64_t)(%s))"
@@ -1162,7 +1209,9 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
             Printf.sprintf "((double)(%s))"
               (as_native env self_ Emo_check.Int64)
           in
-          if is_dyn result_ty then box_code v Emo_check.Float64 else v
+          if is_dyn result_ty then
+            wrap_owned result_ty (box_code v Emo_check.Float64)
+          else v
       | "to_bits", [] when self_.Emo_ir.ety = Emo_check.Float64 ->
           Printf.sprintf "emo_f64_bits(%s)" (emit_expr env self_)
       | "to_byte", [] when self_.Emo_ir.ety = Emo_check.Int64 ->
@@ -1199,21 +1248,24 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
              helpers state their type so a dynamic use site takes the
              boxed form. *)
           let ret (t : Emo_check.t) (v : string) : string =
-            if is_dyn result_ty then box_code v t else v
+            if is_dyn result_ty then wrap_owned result_ty (box_code v t) else v
           in
+          let tup v = if is_dyn result_ty then wrap_owned result_ty v else v in
           match (name, args) with
-          | "accept", [] -> Printf.sprintf "emo_net_accept(%s)" recv
+          | "accept", [] -> tup (Printf.sprintf "emo_net_accept(%s)" recv)
           | "port", [] ->
               ret Emo_check.Int64 (Printf.sprintf "emo_net_port(%s)" recv)
-          | "read_line", [] -> Printf.sprintf "emo_net_read_line(%s)" recv
+          | "read_line", [] -> tup (Printf.sprintf "emo_net_read_line(%s)" recv)
           | "read_exactly", [ n ] ->
-              Printf.sprintf "emo_net_read_exactly(%s, %s)" recv
-                (as_native env n Emo_check.Int64)
-          | "read_all", [] -> Printf.sprintf "emo_net_read_all(%s)" recv
+              tup
+                (Printf.sprintf "emo_net_read_exactly(%s, %s)" recv
+                   (as_native env n Emo_check.Int64))
+          | "read_all", [] -> tup (Printf.sprintf "emo_net_read_all(%s)" recv)
           | "write", [ data ] ->
-              Printf.sprintf "emo_net_write(%s, %s)" recv
-                (as_native env data Emo_check.String)
-          | "close", [] -> Printf.sprintf "emo_net_close(%s)" recv
+              tup
+                (Printf.sprintf "emo_net_write(%s, %s)" recv
+                   (as_native env data Emo_check.String))
+          | "close", [] -> tup (Printf.sprintf "emo_net_close(%s)" recv)
           | "set_timeout", [ t ] ->
               ret Emo_check.Int64
                 (Printf.sprintf "emo_net_set_timeout(%s, %s)" recv
@@ -1242,8 +1294,9 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           | "length", [] ->
               Printf.sprintf "emo_str_length(%s)" (emit_expr env self_)
           | "split", [ sep ] ->
-              Printf.sprintf "emo_str_split(%s, %s)" (emit_expr env self_)
-                (as_native env sep Emo_check.String)
+              wrap_owned result_ty
+                (Printf.sprintf "emo_str_split(%s, %s)" (emit_expr env self_)
+                   (as_native env sep Emo_check.String))
           | _ -> refuse (Printf.sprintf "the String method `%s`" name))
       | _, _
         when match self_.Emo_ir.ety with
@@ -1264,7 +1317,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
               Printf.sprintf "(emo_value[]){%s}"
                 (String.concat ", " (List.map (as_dyn env) args))
           in
-          finish
+          finish_claim
             (Printf.sprintf "emo_dynamic_builtin(%s, %s, INT64_C(%d), %s)"
                recv_dyn (c_string name) (List.length args) dyn_args)
       | _ when is_dyn self_.Emo_ir.ety -> (
@@ -1299,11 +1352,15 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                       (* A Void method keeps its call: in statement
                          position the discard is the wrapper's job, and
                          dropping the call here would drop the side
-                         effect. *)
+                         effect. A dynamic answer is a claim — pooled
+                         for a dynamic use, pooled-then-unboxed for a
+                         native one. *)
                       if m.Emo_ir.fresult = Emo_check.Void then v
-                      else if is_dyn result_ty = is_dyn m.Emo_ir.fresult then v
-                      else if is_dyn result_ty then box_code v m.Emo_ir.fresult
-                      else unbox_code v m.Emo_ir.fresult
+                      else if is_dyn result_ty = is_dyn m.Emo_ir.fresult then
+                        if is_dyn result_ty then wrap_owned result_ty v else v
+                      else if is_dyn result_ty then
+                        wrap_owned result_ty (box_code v m.Emo_ir.fresult)
+                      else unbox_code (wrap_owned m.Emo_ir.fresult v) result_ty
                   | None when String.equal name "to_string" ->
                       (* the builtin conversion answers when the class
                          carries no method of the name *)
@@ -1322,8 +1379,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                   (if args = [] then "NULL"
                    else Printf.sprintf "(emo_value[]){%s}" arg_code)
               in
-              if result_ty = Emo_check.Void || is_dyn result_ty then v
-              else unbox_code v result_ty)
+              finish_claim v)
       | _ -> refuse "method calls")
 
 (* The class a field access resolves against: the receiver's static
@@ -1569,10 +1625,13 @@ and pattern_bind_native env (s : string) (ty : Emo_check.t) (p : Ast.pattern) :
 
 and emit_unary env (result_ty : Emo_check.t) (op : Ast.unop) (x : Emo_ir.expr) :
     string =
-  let finish v = if is_dyn result_ty then v else unbox_code v result_ty in
   if is_dyn x.Emo_ir.ety then
     match op with
-    | Ast.Neg -> finish (Printf.sprintf "emo_neg_dyn(%s)" (as_dyn env x))
+    | Ast.Neg ->
+        (* the dynamic negation answers a fresh boxed word either way *)
+        let code = Printf.sprintf "emo_neg_dyn(%s)" (as_dyn env x) in
+        if is_dyn result_ty then wrap_owned result_ty code
+        else unbox_code (wrap_owned Emo_check.Unknown code) result_ty
     | Ast.Not -> Printf.sprintf "(!emo_bool_of(%s))" (as_dyn env x)
     | Ast.Bit_not -> refuse "the bitwise operators"
   else
@@ -1598,7 +1657,11 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
     let a = as_dyn env l and b = as_dyn env r in
     let dyn_arith helper =
       let code = Printf.sprintf "%s(%s, %s)" helper a b in
-      if is_dyn result_ty then code else unbox_code code result_ty
+      (* the dynamic arithmetic answers a fresh boxed word either way:
+         pooled when the use keeps the word, pooled-then-unboxed when
+         the use only reads the scalar *)
+      if is_dyn result_ty then wrap_owned result_ty code
+      else unbox_code (wrap_owned Emo_check.Unknown code) result_ty
     in
     match op with
     | Add -> dyn_arith "emo_add_dyn"
@@ -1812,11 +1875,16 @@ and emit_tail_rebind env (callee : string) (args : Emo_ir.expr list) : unit =
             pairs;
           List.iteri
             (fun i (c_name, ty) ->
-              if is_dyn ty && may_own ty then
+              if is_dyn ty then (
                 (* the slot keeps owning across the jump: the barrier
-                   swaps its reference *)
-                put env "    emo_release(%s);\n    %s = emo_retain(__t%d);\n"
-                  c_name c_name i
+                   takes the new claim BEFORE dropping the old — the
+                   temporary may be the slot's own word, and a
+                   release-first order would free it out from under
+                   the retain *)
+                let swap = fresh_c env "__swap" in
+                put env "    emo_value %s = %s;\n" swap c_name;
+                put env "    %s = emo_retain(__t%d);\n" c_name i;
+                put env "    emo_release(%s);\n" swap)
               else put env "    %s = __t%d;\n" c_name i)
             slots);
       (* the statement's pooled temporaries release here — the jump
@@ -1854,20 +1922,34 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
   | Effect { desc = Builtin { name = "halt"; args = [] }; _ } ->
       emit_builtin env "halt" []
   | Effect { desc = Builtin { name = "self_pid"; args = [] }; _ } ->
-      put env "  (void)(emo_box_pid(emo_process_self_pid()));\n"
+      put env
+        "  (void)(emo_autorelease(emo_box_pid(emo_process_self_pid())));\n"
   | Effect { ety; desc = Builtin { name; args }; _ } ->
       emit_builtin env name args
   | Effect { ety; desc = Runtime_impl { name; args }; _ } ->
-      put env "  (void)(%s);\n" (emit_runtime_impl env ety name args)
+      let code = emit_runtime_impl env ety name args in
+      (* a discarded dynamic answer pools with the statement; a native
+         one is no word at all *)
+      if is_dyn ety then put env "  (void)(%s);\n" (wrap_owned ety code)
+      else put env "  (void)(%s);\n" code
   | Effect { ety; desc = Do_spawn { func; args }; _ } ->
       let code = emit_spawn_site env func args ety in
       put env "  (void)(%s);\n" code
   | Effect { ety; desc = Call { func; args }; _ } -> (
       match Hashtbl.find_opt env.forfuncs func with
-      | Some f -> put env "  (void)(%s);\n" (foreign_call env ety f args)
+      | Some f ->
+          let code = foreign_call env ety f args in
+          if is_dyn ety then put env "  (void)(%s);\n" (wrap_owned ety code)
+          else put env "  (void)(%s);\n" code
       | None -> (
+          let discard fres c =
+            (* a dynamic answer is the callee's __ret claim: pool it for
+               the statement boundary *)
+            if is_dyn fres then put env "  (void)(%s);\n" (wrap_owned fres c)
+            else put env "  %s;\n" c
+          in
           match Hashtbl.find_opt env.funsigs func with
-          | Some (param_types, _fres) -> (
+          | Some (param_types, fres) -> (
               match List.combine args param_types with
               | pairs ->
                   let arg_code =
@@ -1877,25 +1959,29 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
                         else as_native env arg pty)
                       pairs
                   in
-                  put env "  %s(%s);\n" (c_ident func)
-                    (String.concat ", " arg_code)
+                  discard fres
+                    (Printf.sprintf "%s(%s)" (c_ident func)
+                       (String.concat ", " arg_code))
               | exception Invalid_argument _ ->
                   let arg_code =
                     String.concat ", " (List.map (emit_expr env) args)
                   in
-                  put env "  %s(%s);\n" (c_ident func) arg_code)
+                  discard fres (Printf.sprintf "%s(%s)" (c_ident func) arg_code)
+              )
           | None ->
               let arg_code =
                 String.concat ", " (List.map (emit_expr env) args)
               in
               put env "  %s(%s);\n" (c_ident func) arg_code))
   | Effect { ety; desc = Method { self_; name; args; _ }; _ } ->
+      (* emit_method's arms own their wraps; a discarded answer is
+         already pooled or a native *)
       let code = emit_method env ety self_ name args in
       put env "  (void)(%s);\n" code
   | Effect { ety; desc = Call_value { f; args }; _ } ->
       let code = closure_call env f args in
-      let code = if is_dyn ety then code else unbox_code code ety in
-      put env "  (void)(%s);\n" code
+      if is_dyn ety then put env "  (void)(%s);\n" (wrap_owned ety code)
+      else put env "  emo_release(%s);\n" code
   | Effect _ -> refuse "this expression statement"
   | Let { name; init; _ } -> (
       let value = emit_expr env init in
@@ -1916,8 +2002,13 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
               env.hoist <-
                 Printf.sprintf "  emo_value %s = (emo_value)0;" c_name
                 :: env.hoist;
-              put env "  emo_release(%s);\n  %s = emo_retain(%s);\n" c_name
-                c_name value
+              (* the new claim lands before the old releases: the init
+                 may read the slot it redeclares, and a release-first
+                 order would free it mid-expression *)
+              let swap = fresh_c env "__swap" in
+              put env "  {\n    emo_value %s = emo_retain(%s);\n" swap value;
+              put env "    emo_release(%s);\n    %s = %s;\n  }\n" c_name c_name
+                swap
             end
             else put env "  emo_value %s = emo_retain(%s);\n" c_name value;
             env.owned <- (c_name, init.Emo_ir.ety) :: env.owned
@@ -2639,14 +2730,13 @@ let emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
       hoist_on = self_tail;
     }
   in
-  (* a re-entered body owns its identity parameters: the parameter
+  (* a re-entered body owns its dynamic parameters: the parameter
      retains at entry (once), the rebind barrier swaps, the exit
      releases — no fresh slot needed, the parameter is the slot *)
   if env.hoist_on then
     List.iter
       (fun (n, ty) ->
-        if is_dyn ty && may_own ty then
-          env.owned <- (c_ident n, ty) :: env.owned)
+        if is_dyn ty then env.owned <- (c_ident n, ty) :: env.owned)
       f.Emo_ir.fparams;
   let body = Buffer.create (4 * 1024) in
   env.buf <- body;
@@ -2662,7 +2752,7 @@ let emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
   if env.hoist_on then begin
     List.iter
       (fun (n, ty) ->
-        if is_dyn ty && may_own ty then
+        if is_dyn ty then
           put env0 "  %s = emo_retain(%s);\n" (c_ident n) (c_ident n))
       f.Emo_ir.fparams;
     (* the rebind target: past the entry retain, which runs once *)
@@ -2794,7 +2884,7 @@ let emit_cluster env0 (index : int) (members : Emo_ir.func list) : unit =
       List.iter (fun l -> put env0 "%s\n" l) (List.rev env.hoist);
       List.iter
         (fun (n, ty) ->
-          if is_dyn ty && may_own ty then
+          if is_dyn ty then
             put env0 "  %s = emo_retain(%s);\n"
               (slot_name m.Emo_ir.fname n)
               (slot_name m.Emo_ir.fname n))

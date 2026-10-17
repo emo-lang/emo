@@ -1785,7 +1785,7 @@ the live tree — array growth is linear rather than quadratic, every
 existing golden on every target is byte-identical, and the interpreter
 and the non-`c` targets are untouched.
 
-- [ ] **T49.1** — The runtime: extend the identity discipline
+- [x] **T49.1** — The runtime: extend the identity discipline
       (`emo_identity_kind`, `emo_retain`/`emo_release`, and the
       constructors that store into aggregates) from the three identity
       kinds to the value families, so a value cell can reach refcount
@@ -1793,6 +1793,16 @@ and the non-`c` targets are untouched.
       that no value-family construction can form a cycle. The emitter
       already retains and releases every dynamic binding
       (`emo_c.ml:1851`, `:423`), so this starts runtime-side.
+      **Landed 2026-10-17.** Every cell is counted and individually
+      freed; the emitter's `may_own` widened to every dynamic type, so
+      each construction pools its birth and each claim handout lands in
+      the statement's pool; the tail-rebind and hoisted-binding
+      barriers take the new claim before dropping the old; `Map.remove`
+      hands back a claim; the dynamic→native String crossing copies.
+      The cycle audit: the immutable families are structurally acyclic,
+      the mutable identities join the documented cycle-leak class. The
+      live-count probe returns to baseline across a value-family churn;
+      the native transient buffers stay the T49.2 remainder.
 - [ ] **T49.2** — The granularity: decide what the autorelease pool owns
       now that every dynamic type may own memory, and implement it —
       expression-internal temporaries are the hard half, `may_own` plus
