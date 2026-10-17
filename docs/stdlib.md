@@ -1,21 +1,28 @@
 # The Standard Library
 
 The standard library is a set of packages the compiler ships with:
-they live in the bundled registry, resolve like any other dependency,
-and need no `package.emo` entry. Using one is `require`:
+they live in the bundled registry and resolve like any other
+dependency — every one is versioned, and every one is pinned in the
+manifest's `deps` block. Using one is that pin plus `require`:
+
+```emo
+// package.emo
+deps {
+  "json" = "0.1.0"
+}
+```
 
 ```emo
 require "json"
 ```
 
-An unscoped `require` names a standard-library package, and the
-compiler resolves it — along with that package's own standard-library
-dependencies — on its own. A scoped third-party package still pairs
-with the manifest strictly: it must be pinned under `deps`. A package
-whose `targets` do not include the build's target is refused at
-resolution time — the format packages run everywhere, the systems
-packages declare a Unix-shaped host, and the network packages declare
-`ocaml`, `c`, and `typescript`.
+A `require` the manifest does not pin is a compile error (E5006) whose
+message names the line to add; the packages the required one depends
+on come through its own manifest. A package whose `targets` do not
+include the build's target is refused at resolution time — the format
+packages run everywhere, the systems packages declare a Unix-shaped
+host, and the network packages declare `ocaml`, `c`, and
+`typescript`.
 
 Two conventions hold across every package:
 
@@ -200,8 +207,8 @@ distinguishable from the end of the stream. A `Writer` must be
 `flush`-ed before the stream ends: the tail in the buffer belongs to
 the caller.
 
-Targets: `["ocaml", "c"]` (it builds on `os`, which the manifest
-pins alongside it). Reference:
+Targets: `["ocaml", "c"]` (it builds on `os`, which its own manifest
+pins). Reference:
 [`docs/stdlib/bufio.md`](stdlib/bufio.md) · Demo:
 `examples/bufio_demo`.
 
@@ -311,7 +318,8 @@ http.serve_requests(listener) -> (req HttpRequest) {
 }
 ```
 
-Targets: `["ocaml", "c", "typescript"]` (it pins `net` alongside it). On `c`
+Targets: `["ocaml", "c", "typescript"]` (it builds on `net`, which its own
+manifest pins). On `c`
 it is TCP-only, inherited from `net`. Reference:
 [`docs/stdlib/http.md`](stdlib/http.md) · Demo:
 `examples/http_roundtrip`.

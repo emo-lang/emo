@@ -20,9 +20,10 @@ touches it; build with `emo build` (the default target is `c`).
 require "sqlite3"
 ```
 
-The standard library ships with the compiler: `require "sqlite3"` needs
-no `package.emo` entry. The package declares the `c` target — it carries
-native code, so only the `c` target can build it.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "sqlite3"` needs `"sqlite3" = "0.1.0"`
+in the manifest's `deps` block. The package declares the `c` target —
+it carries native code, so only the `c` target can build it.
 
 ## Errors
 

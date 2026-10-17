@@ -11,8 +11,9 @@ targets answer byte-for-byte.
 require "plot"
 ```
 
-The standard library ships with the compiler: `require "plot"` needs no
-`package.emo` entry.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "plot"` needs `"plot" = "0.1.0"` in
+the manifest's `deps` block.
 
 The package carries two public modules: `plot` (the figure surface) and
 `mark` (the marks). One `require "plot"` brings both into scope.

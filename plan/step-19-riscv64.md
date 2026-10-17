@@ -3,7 +3,7 @@
 **Milestone:** M4 · **Prereq:** steps 01–14 (the specialization pass);
 the step-15 RISC-V reference note is the design record ·
 **Status:** done (2026-10-11 — T19.1–T19.4, close-out recorded; the
-`%g` float to-string lands as its own follow-up)
+`%g` float to-string follow-up landed 2026-10-17)
 
 ## Goal
 
@@ -177,9 +177,24 @@ scheduler is the following step.
 - The static method/field index paths still serve ClassType-typed
   receivers; `Case` binds pattern variables into frame slots (staging
   in temp slot 1, the scrutinee in slot 0), guards evaluate at depth 2.
-- Still refusing: maps, Bytes, List, exceptions, processes, float
-  to-string (a `%g` dtoa is the remaining T19.3-adjacent piece);
+- Still refusing: maps, Bytes, List, exceptions, processes;
   everything refused names the construct.
+- **The `%g` float to-string is a decimal conversion written in RV64
+  assembly.** The algorithm scales the absolute value to six
+  significant digits by a table power of ten, then formats the digits
+  in plain or scientific style by the rule the interpreter, the C
+  runtime, and the wasm/BEAM hosts already share: an integral value
+  below 1e16 prints with one decimal, `%g` renders everything else
+  (six significant digits, trailing fractional zeros trimmed, exponent
+  form when the exponent is below -4 or at least 6, the exponent signed
+  and at least two digits), and the specials print as `nan`, `inf`,
+  `-inf`, `0.0`, `-0.0`. The power table stores each `10^k` as a
+  double-double (hi/lo) pair so the scaled value keeps enough bits to
+  round the sixth digit; when the scaled value lands near a half, a
+  true tie is recognised exactly — the significand is compared against
+  the scaled odd integer built from `5^m` — and rounds ties-to-even,
+  while a value merely near a half follows the residual's sign. The
+  `floats` golden pins the rule under QEMU.
 
 ## Tasks
 
@@ -191,17 +206,14 @@ scheduler is the following step.
 - [x] **T19.2** — The value model and arithmetic: the tagged-word
       representation (numeric cells, Bool/Char immediates) and the
       bump allocator; wrap-around `Int64`/`Float64` arithmetic,
-      comparisons, `if`, integer formatting (`INT64_MIN` correct);
-      guaranteed tail calls as `tail`. Golden: fib.
-- [ ] **T19.2** — The value model and arithmetic: the tagged-word
-      representation (numeric cells, Bool/Char immediates) and the
-      bump allocator; wrap-around `Int64`/`Float64` arithmetic,
       comparisons, `if`, integer formatting (signed, `INT64_MIN`
       correct); guaranteed tail calls as `tail`. Golden: fib.
-- [ ] **T19.3** — Dynamic-world data structures: tuples, arrays, Box,
+- [x] **T19.3** — Dynamic-world data structures: tuples, arrays, Box,
       enums, instances with vtable dispatch, closures and first-class
-      functions; patterns with guards; interpolation with the `%g`
-      float rule. Golden: objects, language_tour.
+      functions; patterns with guards; interpolation. Golden: objects,
+      language_tour. (The `%g` float interpolation was the close-out's
+      recorded follow-up; it landed 2026-10-17 with the `floats`
+      golden.)
 - [x] **T19.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
       cross-binutils on the runner), the resolution-gate refusal test
       for packages lacking `"riscv64"`, the emission-time refusal
@@ -225,12 +237,13 @@ def` refuse loudly (check-time for `foreign def` via the capability
 table; emission-time for the rest), and packages without `"riscv64"`
 fail resolution before any emission.
 
-**Remaining (recorded, not silently dropped):** the `%g` float
-to-string — a decimal dtoa in freestanding RV64 assembly is its own
-piece of work; today a Float64 in a `println` or interpolation fails
-at run time with a named message ("cannot convert a Float64 to a
-string yet"), never a wrong answer. Everything else on this page is
-landed.
+**Follow-up landed (2026-10-17):** the `%g` float to-string — the one
+item this close-out left open — is now part of the backend, with the
+`floats` golden in the `riscv64_examples` group (float literals,
+negative zero, plain and scientific style, and interpolation). The
+routine is a decimal dtoa in freestanding RV64 assembly; the
+algorithm and the tie rule are recorded under T19.3's decisions above.
+Everything on this page is landed.
 
 ## Acceptance
 

@@ -138,8 +138,10 @@ check_corpus() {
   root=$3
   what=$4
   mkdir -p "$root"
-  ( cd "$dir" && EMO_REGISTRY="$REG" "$EMO" run main.emo ) >"$root/interp.txt" 2>&1 \
-    && rc=0 || rc=$?
+  # Only stdout is the program's bytes; a first run may say on stderr that
+  # it wrote a missing `package.lock`.
+  ( cd "$dir" && EMO_REGISTRY="$REG" "$EMO" run main.emo ) >"$root/interp.txt" \
+    2>"$root/interp.err" && rc=0 || rc=$?
   expect 0 "the $what runs on the interpreter" "$rc"
   expect_same_file "$want" "$root/interp.txt" \
     "and prints the file it is pinned to"
@@ -157,8 +159,12 @@ check_corpus() {
   expect "does not support this expression form (Global)" \
     "the $what --target c says why" "$got"
   corpus_build "$dir" wasm "$root/wasm" && rc=0 || rc=$?
-  got=$(grep -o -m1 "no build for target \`wasm\`" "$OUT.log" | head -1 || true)
-  expect "no build for target \`wasm\`" "the $what --target wasm says why" "$got"
+  # The consumer reaches its dependency's manifest first: `emo/ui_tui`
+  # leaves `wasm` out, so resolution refuses before any emitter runs.
+  got=$(grep -o -m1 "does not declare the \`wasm\` target" "$OUT.log" \
+    | head -1 || true)
+  expect "does not declare the \`wasm\` target" \
+    "the $what --target wasm says why" "$got"
 }
 
 # `golden/` is the byte-for-byte screen; `examples/tui_menu/` is the

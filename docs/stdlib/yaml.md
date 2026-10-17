@@ -13,8 +13,9 @@ independent — requiring yaml does not require json.
 require "yaml"
 ```
 
-The standard library ships with the compiler: `require "yaml"` needs no
-`package.emo` entry.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "yaml"` needs `"yaml" = "0.1.0"` in
+the manifest's `deps` block.
 
 ## Values
 

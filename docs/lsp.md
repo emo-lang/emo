@@ -103,9 +103,9 @@ the options table.
   methods, function-group members, module members), and package names inside
   `require "..."`.
 - **Diagnostics.** Lex, parse, and type-check errors, plus a check that every
-  scoped `require` is paired with a `deps` entry in `package.emo` (E5006) and
-  that an unscoped `require` names a published standard-library package
-  (E5009). The pairing error carries a quick fix that adds the dependency. A
+  `require` — standard library or scoped — is paired with a `deps` entry in
+  `package.emo` (E5006) and that an unscoped `require` names a published
+  standard-library package (E5009). The pairing error carries a quick fix that adds the dependency. A
   buffer outside any package — no `package.emo` at the root the server was
   given — gets none of them: no project is indexed there, and one message
   says so rather than leaving the silence unexplained.

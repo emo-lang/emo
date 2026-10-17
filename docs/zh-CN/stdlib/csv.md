@@ -10,7 +10,7 @@ UTF-8。纯 Emo 写在共享运行时之上——字节与数组——所以每�
 require "csv"
 ```
 
-标准库随编译器一起发布:`require "csv"` 无需在 `package.emo` 中声明。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "csv"` 需要在 manifest 的 `deps` 块里钉上 `"csv" = "0.1.0"`。
 
 ## 接口
 

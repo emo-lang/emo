@@ -3,8 +3,9 @@
 **Milestone:** M16 — Value-family reclamation · **Related:**
 `spike/arena-scope` (the feasibility spike and every number below),
 `CHECK.md` (the settled decision), `docs/TASKS.md` M15 (the consumer
-that forced the question) · **Status:** planned — the direction is
-settled and the shape of the work is measured; nothing is implemented.
+that forced the question) · **Status:** landed 2026-10-17 — T49.1
+through T49.5 complete on `feat/m16-value-family-reclamation`; the
+render loop holds a flat working set and the T49.4 gate pins it.
 
 ## Why this step exists
 
@@ -120,14 +121,14 @@ render loop; the property is measured, not asserted.
 
 ## Tasks
 
-- [ ] **T49.1** — The runtime: extend the identity discipline to the
+- [x] **T49.1** — The runtime: extend the identity discipline to the
       value families, so a value cell can reach refcount zero and an
       aggregate releases what it stores. The emitter already retains
       every dynamic binding on entry (`emo_c.ml:1851`) and releases it
       at scope exit (`:423`), so this starts as a runtime-side change;
       where the emitter must change is what T49.2 finds. Includes the
       audit that no value-family construction can form a cycle.
-- [ ] **T49.2** — The granularity: decide what the pool owns now that
+- [x] **T49.2** — The granularity: decide what the pool owns now that
       every dynamic type may own memory, and implement it —
       expression-internal temporaries are the hard half, `may_own` and
       the constructor audit that follows.
@@ -145,11 +146,11 @@ render loop; the property is measured, not asserted.
       still T49.1's. The builder's growth follows the `Map` doubling and
       its retired buffers stay arena-resident, so the leak this step
       exists to close is unchanged by it.
-- [ ] **T49.4** — The gate: the render loop and the region probes as a
+- [x] **T49.4** — The gate: the render loop and the region probes as a
       checked-in test that fails today and passes after, on the `c`
       target, with every existing golden byte-identical and `dune test`
       green.
-- [ ] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
+- [x] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
       mirror, and step 48's demo-scale notes updated to point here.
 
 ## Acceptance

@@ -73,7 +73,7 @@ that shares it natively.
 
 ## Tasks
 
-- [ ] **T18.1** — The backend skeleton: probes recorded (this file);
+- [x] **T18.1** — The backend skeleton: probes recorded (this file);
       `--target beam` plumbing; the Core Erlang emitter (module, defs,
       literals, call/apply, sequencing); hello_world golden under an
       `erl` runner.
@@ -86,3 +86,24 @@ that shares it natively.
 - [x] **T18.4** — Processes (`do`/`<-`/`receive` via the primop
       dance), shop multi-module, pipeline golden; the CI `beam_examples`
       group and the resolution-gate test for `"beam"`.
+
+## Decisions settled here (the trail)
+
+- **Core Erlang text + `erlc` as assembler, not direct `.beam`** —
+  the Code chunk is OTP-version-locked; the pinned OTP's Core reader
+  is the spec (Scope).
+- **One BEAM module per program, mangled atoms** — the wasm
+  single-artifact precedent; multi-module interop stays out (Scope).
+- **The value model** — masked i64 Int, binary String, tagged-list
+  Array, `{emo_enum, Name, Member}` enums, instances as
+  `{emo_inst, Class, #{field => Value}}`, Box as a holding process,
+  closures as funs, `==` anchored to structural equality (Scope).
+  This closes step 15's "class value semantics vs Erlang maps"
+  question in favor of the map, whose equality is already content
+  equality.
+- **Processes map natively** — spawn/`!`/selective receive/exit; the
+  entry process runs `pinit` and ends with `erlang:halt(0)` (Scope).
+- **net/http and `foreign def` are out**, each pending its own
+  decision (Scope, Out).
+- Promoted from step 15 per its T15.1 (after TypeScript and Wasm,
+  step 15's recommended order).

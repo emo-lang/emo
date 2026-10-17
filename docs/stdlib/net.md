@@ -8,8 +8,15 @@ The package declares the `ocaml`, `c`, and `typescript` targets (`targets
 = ["ocaml", "c", "typescript"]`); dependency resolution refuses it on
 every other target.
 Coverage differs by target: `ocaml` and `typescript` implement the whole
-surface, while `c` implements TCP only — UDP, Unix-domain sockets,
-`net.resolve`, and TLS are refused at runtime there.
+surface, while `c` implements TCP and TLS — UDP, Unix-domain sockets,
+and `net.resolve` are refused at runtime there. The `c` target's TLS
+rides the machine's own OpenSSL/LibreSSL through hand-declared
+prototypes (no headers, no extra packages): Linux links the distro
+OpenSSL through its development package, macOS takes Homebrew's
+openssl@3 or similar via `--cclib -L<dir>`, and a machine with neither
+is refused at build time with the fix, not a raw linker error. The
+library floor is OpenSSL 1.1.1 / LibreSSL 3.5.0; a program that never
+touches TLS neither links nor requires any of it.
 
 Networking is **direct style**: a blocking call reads like any other
 function call, and the scheduler parks the process while the socket is
@@ -25,8 +32,9 @@ Match it; don't let it crash the process.
 require "net"
 ```
 
-The standard library ships with the compiler: `require "net"` needs no
-`package.emo` entry. The package declares the `ocaml`, `c`, and
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "net"` needs `"net" = "0.1.0"` in
+the manifest's `deps` block. The package declares the `ocaml`, `c`, and
 `typescript` targets.
 
 ## Functions
@@ -58,9 +66,11 @@ net.udp_bind(host, port)                            // (R, UdpSocket)
   Unix-domain pair; a Unix listener has no port.
 - `net.tls_connect` connects with TLS and **verifies the peer certificate
   against the system trust store** — a self-signed certificate fails the
-  handshake, as the error tuple. `net.tls_connect_insecure` skips
-  verification; it is the explicit, visibly dangerous opt-out, meant
-  for tests and self-signed development setups.
+  handshake, as the error tuple. `SSL_CERT_FILE`/`SSL_CERT_DIR` point
+  the trust store elsewhere on every target that implements TLS.
+  `net.tls_connect_insecure` skips verification; it is the explicit,
+  visibly dangerous opt-out, meant for tests and self-signed
+  development setups.
 - `net.listen_tls(host, port, cert_path, key_path)` serves TLS from a PEM
   certificate/key pair; unloadable certificates fail with a precise
   reason (``cannot load the TLS certificate for ... ``).
@@ -223,6 +233,10 @@ case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
 - **Three targets** — `targets = ["ocaml", "c", "typescript"]`; wasm, BEAM,
   and riscv64 builds are refused at resolution time. The `c` target
   implements TCP only; the other operations are refused at runtime there.
+  On `wasm` the refusal is the host's: Node's preview1 WASI has no
+  usable socket API, and the working socket surface — preview2's
+  `wasi:sockets` — is component-model-shaped, out of reach for the core
+  module the backend emits (`plan/step-16-wasm.md`, T16.5).
 - **DNS is forward-only.** On `ocaml` it runs inline in the scheduler loop —
   `getaddrinfo` blocks the loop for its duration; on `typescript` Node's
   resolver runs on the event loop. There is no reverse lookup.

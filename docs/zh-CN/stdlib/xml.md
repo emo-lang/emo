@@ -11,7 +11,7 @@
 require "xml"
 ```
 
-标准库随编译器一起发布:`require "xml"` 无需在 `package.emo` 中声明。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "xml"` 需要在 manifest 的 `deps` 块里钉上 `"xml" = "0.1.0"`。
 
 ## 值
 

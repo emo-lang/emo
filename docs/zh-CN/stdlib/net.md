@@ -1,6 +1,6 @@
 # `net` 包
 
-标准库的 socket 包:TCP、UDP、Unix 域 socket、DNS 与 TLS。它是运行时网络实现之上一层薄薄的、可读的 Emo 源码——这里每个函数都只是对运行时实现的一次调用,语义(超时、EOF、错误)就是运行时的语义。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。各目标覆盖面不同:`ocaml` 与 `typescript` 实现完整能力,`c` 只实现 TCP——UDP、Unix 域 socket、`net.resolve` 与 TLS 在 `c` 上运行时被拒绝。
+标准库的 socket 包:TCP、UDP、Unix 域 socket、DNS 与 TLS。它是运行时网络实现之上一层薄薄的、可读的 Emo 源码——这里每个函数都只是对运行时实现的一次调用,语义(超时、EOF、错误)就是运行时的语义。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。各目标覆盖面不同:`ocaml` 与 `typescript` 实现完整能力,`c` 实现 TCP 与 TLS——UDP、Unix 域 socket 与 `net.resolve` 在 `c` 上运行时被拒绝。`c` 目标的 TLS 通过手写原型调用本机的 OpenSSL/LibreSSL(不需要头文件,不新增包):Linux 经发行版的开发包装上 distro OpenSSL,macOS 经 `--cclib -L<dir>` 使用 Homebrew 的 openssl@3 等同类安装,两者皆无的机器会在构建期得到指明修法的拒绝,而不是裸链接器报错。库版本下限为 OpenSSL 1.1.1 / LibreSSL 3.5.0;从不触碰 TLS 的程序既不链接也不依赖它。
 
 网络是**直接风格**:阻塞调用读起来就是普通函数调用,socket 忙碌时调度器把进程挂起。没有 `async`/`await`,没有回调注册。每一种失败——连接被拒、名字解析不出、超过期限、socket 已关——都以 `(R.error, reason)` 返回:reason 是 String,写明操作、对端与原因。用 `case` 匹配它,别让它崩掉进程。
 
@@ -10,7 +10,7 @@
 require "net"
 ```
 
-标准库随编译器一起发布:`require "net"` 无需在 `package.emo` 中声明。本包声明 `ocaml`、`c`、`typescript` 三个目标。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "net"` 需要在 manifest 的 `deps` 块里钉上 `"net" = "0.1.0"`。本包声明 `ocaml`、`c`、`typescript` 三个目标。
 
 ## 函数
 
@@ -30,7 +30,7 @@ net.udp_bind(host, port)                            // (R, UdpSocket)
 - `net.connect(host, port, timeout)` 解析并连接,以 `(R.ok, conn)` 回答 `TcpConn`。`timeout` 以秒计;`0.0` 表示无限等待。连接被拒是错误元组(`connection refused to host:port`)。
 - `net.listen(host, port)` 绑定并监听,回答 `TcpListener`。端口 `0` 让内核分配空闲端口,用 `listener.port()` 读回。
 - `net.connect_unix(path, timeout)` 与 `net.listen_unix(path)` 是 Unix 域的一对;Unix listener 没有端口。
-- `net.tls_connect` 以 TLS 连接并**按系统信任库校验对端证书**——自签证书会让握手失败,失败即错误元组。`net.tls_connect_insecure` 跳过校验;它是显式的、看起来就危险的逃生门,只用于测试与自签开发环境。
+- `net.tls_connect` 以 TLS 连接并**按系统信任库校验对端证书**——自签证书会让握手失败,失败即错误元组。`SSL_CERT_FILE`/`SSL_CERT_DIR` 在所有实现了 TLS 的目标上都可以改指信任库。`net.tls_connect_insecure` 跳过校验;它是显式的、看起来就危险的逃生门,只用于测试与自签开发环境。
 - `net.listen_tls(host, port, cert_path, key_path)` 用 PEM 证书/私钥对服务 TLS;证书加载失败以精确 reason 报错(``cannot load the TLS certificate for ... ``)。
 - `net.udp_bind(host, port)` 绑定数据报 socket;端口 `0` 挑选空闲端口。
 
@@ -165,7 +165,7 @@ case net.tls_connect_insecure("localhost", listener.port(), 5.0) {
 
 ## 限制
 
-- **三个目标**——`targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期被拒绝。`c` 只实现 TCP,其余操作在 `c` 上运行时被拒绝。
+- **三个目标**——`targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期被拒绝。`c` 只实现 TCP,其余操作在 `c` 上运行时被拒绝。`wasm` 上的拒绝来自宿主:Node 的 preview1 WASI 没有可用的 socket API,而可用的 socket 表面——preview2 的 `wasi:sockets`——是组件模型形态,后端发射的核心模块无法触及(`plan/step-16-wasm.md`,T16.5)。
 - **DNS 只有正向解析。** 在 `ocaml` 上它在调度循环内同步执行——`getaddrinfo` 期间整个循环阻塞;在 `typescript` 上由 Node 的解析器在事件循环中执行。没有反向解析。
 - **TLS 的原因文本来自各自的库**——`ocaml` 上是 OpenSSL,`typescript` 上是 Node;两者的证书验证默认都开启。
 - **UDP 只有非连接的收发**——没有 `connect` 式数据报,没有组播,没有广播助手。

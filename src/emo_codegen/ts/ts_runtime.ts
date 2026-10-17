@@ -241,6 +241,50 @@ class EPid {
   }
 }
 
+// A message crosses a process boundary by copy: the receiver must not
+// observe a write the sender makes after the send. The rule is the
+// interpreter's `snapshot` (emo_eval.ml) — every mutable aggregate is
+// rebuilt, while primitive data (Int64, Float64, String, Char, Bool),
+// an Enum, a Pid, and a Closure pass through as-is (the closure is an
+// identity the boundary deliberately shares).
+function deepCopy(v: any): any {
+  if (v instanceof EBox) return new EBox(deepCopy(v.v));
+  if (v instanceof EBytes) {
+    const copy = new EBytes(v.data.length);
+    copy.data.set(v.data);
+    return copy;
+  }
+  if (v instanceof ETuple) return new ETuple(v.items.map(deepCopy));
+  if (v instanceof EArray) return new EArray(v.items.map(deepCopy));
+  if (v instanceof EList) {
+    const copy = new EList();
+    for (let n = v.head; n; n = n.next) listPushBack(copy, deepCopy(n.v));
+    return copy;
+  }
+  if (v instanceof EBuilder) {
+    const copy = new EBuilder();
+    copy.items = v.items.map(deepCopy);
+    return copy;
+  }
+  if (v instanceof EMap) {
+    const copy = new EMap();
+    for (const [key, pair] of v.entries)
+      copy.entries.set(key, [pair[0], deepCopy(pair[1])]);
+    return copy;
+  }
+  // An Emo class instance: the class stays, the fields are copied.
+  // Emitted classes carry their display name as a static `__emo`.
+  const proto =
+    v !== null && typeof v === "object" ? Object.getPrototypeOf(v) : null;
+  const ctor = proto ? proto.constructor : null;
+  if (ctor && typeof ctor.__emo === "string") {
+    const copy = Object.create(proto);
+    for (const key of Object.keys(v)) copy[key] = deepCopy(v[key]);
+    return copy;
+  }
+  return v;
+}
+
 class EEmoException extends Error {
   messageValue: any;
   dataValue: any;
@@ -2377,15 +2421,16 @@ const E: any = {
 
   send(to: any, msg: any): any {
     const id = to instanceof EPid ? to.id : to;
+    const snapshot = deepCopy(msg);
     const waiter = _waiters.get(id);
     const q = _mailboxes.get(id) || [];
     if (waiter) {
       _waiters.delete(id);
-      waiter(msg);
+      waiter(snapshot);
     } else {
-      q.push(msg);
+      q.push(snapshot);
     }
-    return msg;
+    return snapshot;
   },
 
   // Selective receive: the dispatch runs each branch's body for the

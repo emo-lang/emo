@@ -59,7 +59,9 @@ let rec pattern_test s (p : Emo_ast.pattern) : string =
   match p.Ast.pattern_desc with
   | Ast.Wildcard | Ast.Pattern_binding _ -> "true"
   | Ast.Pattern_literal (L_int n) ->
-      Printf.sprintf "(%s === %s)" s (Int64.to_string n)
+      (* Int64 values are BigInt on this target: `0n === 0` is false in
+         JavaScript, so the literal must carry the suffix. *)
+      Printf.sprintf "(%s === %sn)" s (Int64.to_string n)
   | Ast.Pattern_literal (L_byte n) -> Printf.sprintf "(%s === %d)" s n
   | Ast.Pattern_literal (L_float f) ->
       Printf.sprintf "(%s instanceof EFloat && %s.v === %s)" s s
@@ -329,7 +331,10 @@ let rec expr env (e : Emo_ir.expr) : string =
       env.refs <- saved;
       env.in_loop <- saved_loop;
       Printf.sprintf "(async (%s) => {\n%s\n})" params body
-  | Emo_ir.Global_var _ -> failwith "ts: module-level `var` is not supported"
+  | Emo_ir.Global_var _ ->
+      raise
+        (Emo_ir.Lower_error
+           "the typescript target does not support module-level `var` yet")
 
 (* Sequenced statements: every line ends with `;`; a tail position
    returns. *)
@@ -368,7 +373,10 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       if List.mem name env.refs then
         Printf.sprintf "%s.v = %s;" name (expr env value)
       else Printf.sprintf "const %s = %s;" name (expr env value)
-  | Set_global_var _ -> failwith "ts: module-level `var` is not supported"
+  | Set_global_var _ ->
+      raise
+        (Emo_ir.Lower_error
+           "the typescript target does not support module-level `var` yet")
   | Set_field { self_; name; value } ->
       Printf.sprintf "(%s).%s = %s;" (expr env self_) name (expr env value)
   | If { cond; then_; else_ } ->

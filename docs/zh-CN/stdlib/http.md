@@ -1,6 +1,6 @@
 # `http` 包
 
-标准库的 HTTP 客户端与服务器,用纯 Emo 写在 `net` 包之上。通篇直接风格:一次请求读起来就是普通函数调用,socket 忙碌时调度器在底层挂起进程。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。在 `c` 上它继承 `net` 只覆盖 TCP 的限制;`https` 尤其需要 TLS,而 `c` 会拒绝。
+标准库的 HTTP 客户端与服务器,用纯 Emo 写在 `net` 包之上。通篇直接风格:一次请求读起来就是普通函数调用,socket 忙碌时调度器在底层挂起进程。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。`https://` 在三者之上都走 `net` 的 TLS——`ocaml` 上是 ocaml-ssl,`typescript` 上是 `node:tls`,`c` 上是系统 OpenSSL/LibreSSL(覆盖面细节见 `net` 包文档)。
 
 ## 引入
 
@@ -8,7 +8,7 @@
 require "http"
 ```
 
-标准库随编译器一起发布:`require "http"` 无需在 `package.emo` 中声明——它依赖的 `net` 会一并解析。本包声明 `ocaml`、`c`、`typescript` 三个目标。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "http"` 需要在 manifest 的 `deps` 块里钉上 `"http" = "0.1.0"`;它依赖的 `net` 由 `http` 自己的 manifest 带入。本包声明 `ocaml`、`c`、`typescript` 三个目标。
 
 ## 客户端
 
@@ -122,7 +122,7 @@ case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/
 
 ## 限制
 
-- **三个目标。** 包声明了 `targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期就会被拒绝。在 `c` 上它只覆盖 TCP,继承自 `net`。
+- **三个目标。** 包声明了 `targets = ["ocaml", "c", "typescript"]`;wasm、BEAM、riscv64 构建在解析期就会被拒绝。在 `c` 上 UDP 与名字解析仍被拒绝(继承自 `net`);`https` 可用。在 `wasm` 上它继承 `net` 的宿主限制:没有可用的 socket API 能到达核心模块(`plan/step-16-wasm.md`,T16.5)。
 - **无连接池。** 每个请求一条 TCP 连接,交换完即关。
 - **不跟随重定向。** 3xx 响应原样返回。
 - **HTTP/1.1,`Content-Length`  body。** 没有 `Content-Length` 头的请求与响应,body 按连接剩余字节读取(客户端)或视为空(服务端);不支持 chunked 传输编码。

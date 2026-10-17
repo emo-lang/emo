@@ -11,8 +11,9 @@ first standard-library package that does.
 require "base64"
 ```
 
-The standard library ships with the compiler: `require "base64"` needs
-no `package.emo` entry.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "base64"` needs `"base64" = "0.1.0"`
+in the manifest's `deps` block.
 
 ## The surface
 

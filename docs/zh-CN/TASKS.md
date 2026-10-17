@@ -24,7 +24,7 @@
 | M4 — 编译目标 | 14–19 | 通过 `emo build` 生成原生代码;随后是 wasm / TypeScript / BEAM / riscv64。 |
 | M5 — Wasm 运行时 | 20–22 | 用 Emo 编写的 WebAssembly 运行时:共享系统层,随后是二进制解码器/验证器,再是解释器与 spec 套件金测。 |
 | M6 — 自包含托管后端 | 23 | `emo build --target c` 发射 C、自带运行时、直接 C ABI——hosted-native-FFI 评估已排期;解锁自包含工具分发(CHECK.md)。 |
-| M7 — 工具链 | 24 | 工具链发布:GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo install` / `emo doctor` 补齐命令集。 |
+| M7 — 工具链 | 24 | 工具链发布:GitHub Releases 上的按平台签名 `emo` 二进制(brew/opam 作为源码构建渠道);仅有二进制的机器即可运行并构建 Emo 程序;`emo new` / `emo deps` / `emo doctor` 补齐命令集。 |
 | M8 — Target 独立 | 25 | 每个 target 的运行时都活在 target 自己的生态里——以内嵌生成数据(c、ocaml、typescript)或编译进发射模块(wasm、beam)的形态存在——绝不在二进制旁、也绝不在宿主构建树里;宿主只贡献发射器。 |
 | M9 — For / While 循环 | 26–27 | 已定案的循环面在解释器与全部六个 target 上逐字节运行:`for`(三子句,头部 `var` 作用域限定在循环)与 `while`,搭配裸 `break`/`continue`;循环在任何栈上都不增长;尾调用保证不变。 |
 | M10 — 错误处理 | 28–30 | Erlang 式分界落地:预期内的失败返回 `(R.ok, value)` / `(R.error, reason)`,用 `case` 匹配或用绑定模式断言绑定;违例抛出唯一的 `Exception` 类;stdlib 的 raise 点逐包迁移到新约定——所有 target 逐字节一致,`R` 一并抵达 freestanding 层。 |
@@ -52,11 +52,11 @@
 | 动态世界的回收模型(无追踪 GC) | T23.5 | 已落定——身份对象用引用计数、值语义数据走 arena(`CHECK.md`,T23.5 落定) |
 | `emo build` 默认 target | T24.1 | 由 `ocaml` 翻转为 `c`:分发的二进制不携带 OCaml 工具链;`ocaml` target 保留给源码构建安装 |
 | 标准库:内嵌 vs 旁挂目录 | T24.2 | 内嵌为编译器内的生成数据(C 运行时的同一机制);`EMO_REGISTRY` 覆盖保留 |
-| `emo install` 语义 | T24.4 | `emo install` 是 `emo deps` 的 resolve/fetch/lock 之上的项目依赖前端;全局可执行文件安装不进 1.0 范围 |
+| `emo install` 语义 | T24.4 | 已落定后被取代(2026-10-17)——该命令已移除;resolve/fetch/lock 由 `emo deps` 与构建路径承担,全局可执行文件安装仍不进 1.0 范围 |
 | 运行时独立原则 | T25.1 | target 的运行时用 target 的语言写,以生成数据随编译器内嵌;宿主只贡献发射器 |
 | ocaml 运行时的依赖策略 | T25.4 | 核心用 OCaml 标准库加 `unix`;`ssl` 是唯一的 opam 依赖,缺失时以清晰消息拒绝;不用 eio |
 | EmoUI 原生 UI 打包(per-package 编译 flags / `pkg_config`) | T48.7–T48.9 | 方向已定(2026-10-14)——manifest 长出 per-package 原生字段,原生后端不再以应用级构建脚本发布(`CHECK.md`、`docs/emo-ui.md`)。字段面(`pkg_config`、编译/链接 flags、`.m` 是否收集)仍属 T48.7 自己的范围 |
-| `c` 目标的长跑内存(值语义家族的回收) | T48.8–T48.9(demo 尺度)、step 49 | 已定(2026-10-14)——region 回收不可行;值语义家族需要引用计数,作为 step 49 排期(`CHECK.md`、`spike/arena-scope/`)。在它落地之前,原生 UI 后端停在 demo 尺度并把限制写进文档,而不是被它闸住 |
+| `c` 目标的长跑内存(值语义家族的回收) | T48.8–T48.9(demo 尺度)、step 49 | 已定(2026-10-14)——region 回收不可行;值语义家族需要引用计数,作为 step 49 排期(`CHECK.md`、`spike/arena-scope/`)。**已于 2026-10-17 落地(T49.1–T49.4)**:工作集平坦,demo 尺度注记退役 |
 | EmoUI 浏览器运行时路径 | T48.10–T48.11 | 已定(2026-10-15)——走拆分路线:把 TypeScript 运行时拆出浏览器安全子集、加 `dom_*` 家族,再配一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`、`docs/emo-ui.md`)。打包步骤在工具链里的落点仍属 T48.10 自己的范围 |
 | 跨 target 一致性(`c` 的 raise、`c` 的 send、`foreign def` 在 `wasm`/`beam` 上) | step 50 | 已定(2026-10-15)——这是对已经做出的承诺的一致性修复,不是新设计:子进程 raise 只结束子进程、`send` 送快照、两个 emitter 按名拒绝 `foreign def`(`CHECK.md`)。`typescript` 目标 send 仍共享这一项保持开放 |
 | 数组增长(O(1) 的 append 还是一个 builder) | T48.1、T49.4 | 已定(2026-10-15,T49.3)——走 builder,并且是语言层的新类型 `ArrayBuilder`,而不是 `Array` 的表示层改动(`CHECK.md`、`docs/intro/syntax.md`);从 `List` 转回 `Array` 那一半刻意不做 |
@@ -282,14 +282,14 @@
 
 ### 步骤 15 — 其余目标:wasm、TypeScript、BEAM、riscv64 裸机 · `plan/step-15-other-targets.md`
 
-**前置:** 步骤 01–14(按目标)。这些是路线条目,不是可直接执行的计划——每个目标排期时独立成步骤文件。推荐顺序:Wasm → TypeScript → BEAM → riscv64。
+**前置:** 步骤 01–14(按目标)。这些最初是路线条目,不是可直接执行的计划;四个目标现在都已拆成独立步骤文件——TypeScript 最先(工具链风险最低,2026-10-02),然后是 Wasm、BEAM 和 riscv64。
 
 - [x] **T15.1** — 某目标排期时,把它拆成完整标准格式(目标 / 范围 / 任务 / 验收)的 `step-NN-<target>.md`,并更新 `plan/README.md` 的状态表;其任务延续编号(`T17.*`,……)。
-- [ ] **T15.2** — 记录每个目标落定了哪些关键决策、落定在哪(README / `CHECK.md` / docs)——保留轨迹。
+- [x] **T15.2** — 记录每个目标落定了哪些关键决策、落定在哪(README / `CHECK.md` / docs)——保留轨迹。(2026-10-17 完成:下面的晋升轨迹已覆盖全部四个目标,并指向各步骤文件的「Decisions settled here」小节以及 `README.md` / `CHECK.md` / `docs/numeric-width.md` 中的跨目标记录。)
 
-各目标需落定的关键决策:Wasm —— WasmGC vs 自定义 GC(两者都先做原型);TypeScript —— 直风格到事件循环的映射、进程映射;BEAM —— 类的值语义 vs Erlang maps;riscv64 —— 可插拔运行时、链接脚本(风险最高;`core` 库分层应提前)。
+各目标落定的关键决策:Wasm —— **WasmGC**(结构体与数组 + RTT 分派,无自定义堆;自定义 GC 分支已排除),Int 装箱为 i64;TypeScript —— 从 IR 降级,统一 `async`/`await` 映射、不做着色分析,协作式任务而非 workers;BEAM —— 类实例为带标签的 map(map 相等即 Emo 的内容相等),Core Erlang 文本由 `erlc` 汇编,进程原生映射;riscv64 —— 启动剖面 A,标签字动态值、`Int64`/`Float64` 装箱,psABI 作为 Emo 的内部约定,整程序单一产物。
 
-晋升轨迹:**TypeScript → `plan/step-17-typescript.md`**(2026-10-02,首个目标;其关键决策——IR 降级、统一 async、协作式任务——已在那个文件落定)。**Wasm → `plan/step-16-wasm.md`**(2026-10-02,第二个目标;GC 问题已落定——WasmGC,结构体与数组 + RTT 分派,无自定义堆)。推荐顺序中下一个是 BEAM。
+晋升轨迹:**TypeScript → `plan/step-17-typescript.md`**(2026-10-02,首个目标;其关键决策——IR 降级、统一 async、协作式任务、Node 网络——已在那个文件落定)。**Wasm → `plan/step-16-wasm.md`**(2026-10-02,第二个目标;GC 已落定为 WasmGC,结构体与数组 + RTT 分派,无自定义堆;T16.5 的 WASI/IO 审计以拒绝 `net`/`http` 收尾——参考宿主上没有可用的 socket 路径)。**BEAM → `plan/step-18-beam.md`**(Core Erlang 发射、值模型、原生进程映射;net/http 与 FFI 明确排除)。**riscv64 → `plan/step-19-riscv64.md`**(2026-10-05,最后一个;逐任务决策轨迹与收尾已记录,`%g` 浮点转字符串后续项已于 2026-10-17 落地)。完整指针(含 `CHECK.md` 的跨目标条目)在 `plan/step-15-other-targets.md`。
 
 ### 步骤 16 — Wasm 目标(WasmGC)· `plan/step-16-wasm.md`
 
@@ -300,7 +300,9 @@
 - [x] **T16.2** — 完整核心语义:模式与守卫、元组、数组、Box、插值、内容相等、接口窄化、跨文件模块引用。金测:language_tour、shop。
 - [x] **T16.3** — 引导:CI 中的 wasm 子集金测,以及缺 `"wasm"` 包的解析门拒绝测试。
 - [x] **T16.4** — 并发:模块内协作式驱动实现 `do` / `<-` / `receive`,宿主定时器抢占点。金测:pipeline。(以 T16.2 为前置。)
-- [ ] **T16.5** — WASI 与 IO 审计:标准库 `"wasm"` 元数据,以及宿主支持范围内的 io 金测。
+- [x] **T16.5** — WASI 与 IO 审计:标准库 `"wasm"` 元数据,以及宿主支持范围内的 io 金测。(2026-10-17 完成:宿主不支持任何网络金测。Node 的 preview1 WASI 没有可用的 socket 调用,而可用的 socket API——preview2 的 `wasi:sockets`——是组件模型形态,当前核心 WasmGC 模块无法触及;wasmtime 的 preview1 对旧式调用返回 `notsock`。`net`/`http` 因此不声明 `wasm`,在解析期拒绝;纯标准库包已声明 `"wasm"` 并跑在 golden 组里,现由两侧的解析测试钉住。)
+
+**步骤 16 验收达成。** `emo build --target wasm` 产出 `.wasm` 及其 `.wat` 兄弟文件,在 Node 的 WasmGC 下运行;核心子集与纯标准库示例的输出与 `emo run` 逐字节一致;未声明 `"wasm"` 的包在发射前被解析拒绝。WASI/IO 审计以诚实拒绝收尾:参考宿主上无法进行网络金测,IO 包的元数据如实反映了这一点。
 
 ### 步骤 17 — TypeScript 目标 · `plan/step-17-typescript.md`
 
@@ -308,10 +310,12 @@
 **完成标准:** `emo build --target typescript` 发射的 TypeScript 在 Node 上运行,示例子集(hello_world、fib、objects、language_tour、shop、pipeline、tcp_echo、http_roundtrip)的输出与 `emo run` 逐字节一致(CI 金测),且依赖缺少该 target 的包在发射前就被解析门拒绝。
 
 - [x] **T17.1** — 目标管线与核心发射器:`--target` 贯穿 CLI、项目与解析门;IR → TypeScript 核心子集发射器;带标签值的运行时。金测:hello_world、fib、objects。
-- [ ] **T17.2** — 完整核心语义:模式与守卫、元组、数组、Box、插值、内容相等、跨文件模块引用。金测:language_tour、shop。
+- [x] **T17.2** — 完整核心语义:模式与守卫、元组、数组、Box、插值、内容相等、跨文件模块引用。金测:language_tour、shop。(2026-10-17 完成:两个示例加入 `ts_golden_tests`,其 manifest 声明 `"typescript"`。emitter 本身已覆盖这些语义,缺的是金测钉住,因此没有后端改动。)
 - [x] **T17.3** — 并发:协作式任务、邮箱、选择性 receive、`self_pid`、`halt`。金测:pipeline。
 - [x] **T17.4** — 直风格 IO:socket 与 HTTP 经 Node API 包装为 await 的 promise;标准库 target 元数据加 `"typescript"`。金测:tcp_echo、http_roundtrip。(2026-10-12 完成:`net` 的全部能力经 `E.builtin` 搭在 `node:net`/`node:dgram`/`node:tls`/`node:dns` 上,每连接一个常驻 reader。root 进程结束时释放存活的 handle,让事件循环自然排空,与原生规则一致。`net`、`http` 声明 `"typescript"`;tcp_echo 与 http_roundtrip 进入该目标的金测。`c` 目标仍只覆盖 TCP;`http` 服务端块重复关闭连接的问题——原生调度器掩盖、TypeScript 目标暴露——已修复。)
-- [ ] **T17.5** — 引导:CI 中的按 target 金测套件,以及缺 target 包的解析门测试。
+- [x] **T17.5** — 引导:CI 中的按 target 金测套件,以及缺 target 包的解析门测试。(2026-10-17 完成:`pipeline` 加入 `ts_golden` 组,补全上述子集;解析门补齐拒绝与接受两个测试,与 `wasm` 的那一对同形。)
+
+收尾:按 target 的金测组(`ts_golden`)钉住了上述子集——共 25 个示例——解析门的拒绝与接受两种情况都有测试。决策见 `plan/step-17-typescript.md`(决策轨迹)。**Step 17 验收达成。**
 
 ### Step 18 — BEAM 目标(Core Erlang)· `plan/step-18-beam.md`
 
@@ -330,10 +334,10 @@
 
 - [x] **T19.1** — 后端骨架:`--target riscv64` 管线(发射器模块;CLI 分支写出 `main.s`、调 `as`/`ld` 并附生成的链接脚本;`emo run` 在 QEMU 下引导该 ELF);入口桩、BSS 清零、SBI 控制台。金测:hello_world(串口输出与 `emo run` 逐字节一致)。
 - [x] **T19.2** — 值模型与算术:带标签字的动态表示(`Int64`/`Float64` 装箱单元,Bool/Char 立即数)与 bump 分配器;回绕算术、比较、`if`、整数格式化(`INT64_MIN` 正确);有保证的尾调用编译为 `tail`。金测:fib。
-- [x] **T19.3** — 动态世界数据结构:元组、数组、Box、枚举、实例 + vtable 分派、闭包与一等函数;带守卫的模式;按 `%g` 浮点规则的插值。金测:objects、language_tour。
+- [x] **T19.3** — 动态世界数据结构:元组、数组、Box、枚举、实例 + vtable 分派、闭包与一等函数;带守卫的模式;按 `%g` 浮点规则的插值。金测:objects、language_tour、floats。
 - [x] **T19.4** — 引导:CI `riscv64_examples` 组(运行器装 QEMU + cross-binutils)、缺 `"riscv64"` 包的解析门拒绝测试、发射期拒绝诊断、收尾。
 
-**Step 19 验收达成。** freestanding RV64 后端交付——hello_world、fib、objects、language_tour 在 QEMU 下以逐字节一致的 golden 引导,拒绝响亮,解析门约束包。`%g` 浮点 to_string 作为独立后续落地(plan/step-19 收尾)。
+**Step 19 验收达成。** freestanding RV64 后端交付——hello_world、fib、objects、language_tour、floats 在 QEMU 下以逐字节一致的 golden 引导,拒绝响亮,解析门约束包。`%g` 浮点 to_string 后续项已于 2026-10-17 落地(plan/step-19 收尾)。
 
 ## M5 — Wasm 运行时
 
@@ -425,24 +429,24 @@
 
 ## M7 — 工具链
 
-自包含故事的最后一公里,也是工具链发布——正式的 1.0 随后。M6 把 OCaml 工具链从*程序*里移除了;M7 把安装负担从*工具*身上移除——`CHECK.md` 中"发布工具链本身未排期"的部分就此排期,按已定的方向(`docs/toolchain-distribution.md` 是设计记录):GitHub Releases 上的按平台预编译二进制为主渠道,`opam` 与 Homebrew formula 作为源码构建渠道,并补齐产品所需的命令集——`emo new`、`emo install`、`emo doctor` 加入 `run`/`repl`/`check`/`build`/`deps`/`publish`——让一台只有二进制的机器就能运行、检查、构建(经 `c` target)、安装依赖、发布包。
+自包含故事的最后一公里,也是工具链发布——正式的 1.0 随后。M6 把 OCaml 工具链从*程序*里移除了;M7 把安装负担从*工具*身上移除——`CHECK.md` 中"发布工具链本身未排期"的部分就此排期,按已定的方向(`docs/toolchain-distribution.md` 是设计记录):GitHub Releases 上的按平台预编译二进制为主渠道,`opam` 与 Homebrew formula 作为源码构建渠道,并补齐产品所需的命令集——`emo new`、`emo deps`、`emo doctor` 加入 `run`/`repl`/`check`/`build`/`publish`——让一台只有二进制的机器就能运行、检查、构建(经 `c` target)、钉住并解析依赖、发布包。
 
 边界,明说:公共 registry *服务*是另一个里程碑——工具随包发布时只讲文件系统 registry 加内置标准库(`publish` 已经讲 HTTP;HTTP 拉取与它对话的服务一起落地);原生 Windows 不在本次发布内——WSL2 是受支持的 Windows 路径,C 运行时的 ucontext/socket 移植是记录在案的阻塞点(Microsoft Trusted Signing 仍是它落地时的既定签名路线);c 后端的记录在案的后续工作(retain/release 发射、零拷贝缓冲区 rung、跨模块类型传播)属于后端线,不随本里程碑。
 
 ### Step 24 — 工具链分发与发布 · `plan/step-24-toolchain.md`
 
 **前置:** 步骤 23(`c` target;`native` → `ocaml` 改名已随其落地)。
-**完成标准:** 发布工作流在版本 tag 上运行,产出经签名的按平台归档(Linux x86_64/aarch64、macOS x86_64/arm64),其制品在每个平台都通过端到端验收;一台只有安装好的二进制的机器——无 OCaml、无 opam、无仓库——就能经 `c` target 运行、检查、构建 Emo 程序,用 `emo new` 脚手架、`emo install` 装依赖、`emo doctor` 诊断环境;`dune test` 全绿。
+**完成标准:** 发布工作流在版本 tag 上运行,产出经签名的按平台归档(Linux x86_64/aarch64、macOS x86_64/arm64),其制品在每个平台都通过端到端验收;一台只有安装好的二进制的机器——无 OCaml、无 opam、无仓库——就能经 `c` target 运行、检查、构建 Emo 程序,用 `emo new` 脚手架、`emo deps add` 钉住依赖、`emo doctor` 诊断环境;`dune test` 全绿。
 
-- [x] **T24.1** — 设计闸门关闭与默认 target:四项落定记入 `CHECK.md`——构建默认由 `ocaml` 翻转为 `c`;标准库内嵌为生成数据(C 运行时的机制),不做旁挂目录;`emo install` 是项目依赖前端(全局可执行文件安装不进 1.0);依赖缓存离开临时目录,换持久的用户缓存。翻转在此落地,解析门测试与 CI 组随之改指——c 金测已覆盖该 target,移动的只是默认值。 (2026-10-07 完成:四项全部落定 CHECK.md;翻转把每条默认路径移到 c,并暴露出内容哈希缓存原本只在 ocaml 分支实现——c 分支补齐;ocaml 后端测试夹具与基准脚本钉住 --target ocaml;树级 @fmt 漂移一并晋升。)
+- [x] **T24.1** — 设计闸门关闭与默认 target:四项落定记入 `CHECK.md`——构建默认由 `ocaml` 翻转为 `c`;标准库内嵌为生成数据(C 运行时的机制),不做旁挂目录;`emo install` 是项目依赖前端(全局可执行文件安装不进 1.0);依赖缓存离开临时目录,换持久的用户缓存。翻转在此落地,解析门测试与 CI 组随之改指——c 金测已覆盖该 target,移动的只是默认值。 (2026-10-07 完成:四项全部落定 CHECK.md;翻转把每条默认路径移到 c,并暴露出内容哈希缓存原本只在 ocaml 分支实现——c 分支补齐;ocaml 后端测试夹具与基准脚本钉住 --target ocaml;树级 @fmt 漂移一并晋升。2026-10-17 修订:`emo install` 命令已移除;resolve/fetch/lock 由 `emo deps` 与构建路径承担。)
 - [x] **T24.2** — 自包含二进制:内置标准库作为编译器内的生成数据;registry endpoint 成为文件系统目录或内嵌标准库二者之一;`EMO_REGISTRY` 仍可覆盖。验证:一个孤零零的 `emo` 拷进空目录,即可运行、检查、构建带标准库导入的程序——`publish` 的内嵌上传器也能从它工作。 (2026-10-07 完成:经 devtools/gen-stdlib-data.sh 生成数据;macOS 沙箱把 source_tree 依赖物化为符号链接——生成器以 -type f -o -type l 遍历,靠探针发现而非猜测;endpoint 为 Fs_dir 或 Embedded;孤二进制验证通过(run/check/build/publish);内嵌与文件系统的校验和对拍由测试钉住。)
 - [x] **T24.3** — `emo new <name>`:脚手架——`package.emo`(名称、版本、targets)与 hello-world `main.emo`,外加 `.gitignore`。严格性保持:目录已存在或文件冲突一律以清晰错误拒绝,不设 `--force`。脚手架生成的瞬间就是绿的——CI 创建、检查、运行并构建一个。 (2026-10-07 完成:CI 脚手架、检查、构建并运行一个;owner/name 在相对单斜杠参数下按原样采用;拒绝以 65 退出。)
-- [x] **T24.4** — `emo install`:读 manifest,对 registry 解析,取入用户缓存,写 `package.lock`;重复执行幂等不变;每种失败形态——未配置 registry、无法满足的 pin、依赖缺所请求的 target——各有清晰报错。`emo deps` 保留 resolve/update/list 作为显式路径。 (2026-10-07 完成:幂等;lockfile 仅在会变化时写入;缓存默认迁往 ~/.cache/emo(尊重 XDG,EMO_CACHE_DIR 覆盖)。)
+- [x] **T24.4** — `emo install`:读 manifest,对 registry 解析,取入用户缓存,写 `package.lock`;重复执行幂等不变;每种失败形态——未配置 registry、无法满足的 pin、依赖缺所请求的 target——各有清晰报错。`emo deps` 保留 resolve/update/list 作为显式路径。 (2026-10-07 完成:幂等;lockfile 仅在会变化时写入;缓存默认迁往 ~/.cache/emo(尊重 XDG,EMO_CACHE_DIR 覆盖)。2026-10-17 修订:`emo install` 命令已移除,它承载的 resolve/fetch/lock 现由 `emo deps resolve` 与构建路径自身的解析承担。)
 - [x] **T24.5** — `emo doctor`:target 感知的环境检查,取代 `CHECK.md` 中过渡期的仅 ocaml 形态。按 target:`c`——cc 编译并运行的冒烟;`ocaml`——运行时 `.cmxa` 在 switch 中找到,或诚实的"预编译安装:ocaml target 需要源码构建安装(`opam install emo`)";`typescript`——node;`beam`——erlc;`wasm`——无需任何。外加安装形态(预编译 vs 源码)、标准库在位、版本号。只在真正损坏处才以非零退出。 (2026-10-07 完成:源码 vs 预编译以二进制旁的运行时 .cmxa 集探测;c 冒烟决定退出码;ocaml 不可用时报告 opam 安装修复。)
 - [x] **T24.6** — 发布打包与 CI:现有 CI 旁的 tag 触发工作流——按平台矩阵构建(Linux x86_64/aarch64、macOS x86_64/arm64),经 dune 产出发布二进制,T24.1 落定的归档布局、`SHA256SUMS`、GitHub Release 草稿。Linux 二进制可移植——静态或最旧的可用 glibc——在干净容器中验证,而非构建机上。 (2026-10-07 完成:package-release.sh 本机端到端验证;矩阵 = linux x86_64/aarch64(ubuntu-22.04,glibc 2.35)+ macOS x86_64/arm64,打包前先跑测试套件,Linux 在干净 ubuntu:22.04 容器中验证。)
 - [x] **T24.7** — 签名与平台闸门:macOS codesign(hardened runtime)→ notarytool → staple,凭据在 CI secrets——`CHECK.md` 中"已解决、非阻塞"的一项就此排期。Windows:WSL2 记录为受支持路径,原生预编译记录为推迟,ucontext/socket 移植点名为阻塞;`docs/toolchain-distribution.md` 同步更新(双语)。 (2026-10-07 完成:四个密钥把 codesign → notarytool → staple 设为条件路径;密钥缺席以未签名发布并出 notice;分发文档双语更新。)
 - [x] **T24.8** — 供给渠道与安装文档:Homebrew formula(先自有 tap;项目够格后进 core)与 opam 包——带来 `ocaml` target 的源码渠道。README 安装章节双语更新:预编译归档优先,其后 brew、opam、WSL2。 (2026-10-07 完成:公式在 devtools/homebrew/emo.rb 供自有 tap 使用,校验和发布时填写;dune-project 生成 emo.opam(stanza 无 dev_repo 字段——弃之);README 安装章节双语落地。)
-- [x] **T24.9** — 发布验收与剪出:对每个已发布制品端到端——下载、解包、`emo doctor`、`emo new`、`emo run`、`emo install`、`emo build`(`c` target)——包括一个带标准库导入的程序与从安装后的二进制执行的金测子集。发布 commit 携带发布的 VERSION;annotated tag、发布说明、收尾。 (2026-10-07 完成:验收对着打包并解压的归档执行——doctor 以预编译形态全绿;new → run → build 全通;install 经内嵌标准库解析;金测 14/14 出自安装后的二进制(13 个经 emo run 逐字节,numerics 走其设计的编译路径——它跨 foreign def,emo run 按设计拒绝;http_roundtrip/tcp_echo 依托树内套件)。)
+- [x] **T24.9** — 发布验收与剪出:对每个已发布制品端到端——下载、解包、`emo doctor`、`emo new`、`emo run`、依赖解析、`emo build`(`c` target)——包括一个带标准库导入的程序与从安装后的二进制执行的金测子集。发布 commit 携带发布的 VERSION;annotated tag、发布说明、收尾。 (2026-10-07 完成:验收对着打包并解压的归档执行——doctor 以预编译形态全绿;new → run → build 全通,`emo install` 经内嵌标准库解析(该命令已于 2026-10-17 移除,这一步现由 `emo deps resolve` 与构建路径承担);金测 14/14 出自安装后的二进制(13 个经 emo run 逐字节,numerics 走其设计的编译路径——它跨 foreign def,emo run 按设计拒绝;http_roundtrip/tcp_echo 依托树内套件)。)
 
 收尾:2026-10-07 记于 `plan/step-24-toolchain.md`——验收对着打包制品而非构建树执行;默认 target 翻转把每条默认路径移到 `c`(并暴露出内容哈希缓存原本只在 ocaml 分支实现),内嵌的 dune 规则需要 `-type f -o -type l`(macOS 沙箱把 source_tree 依赖物化为符号链接),归档不带安装脚本发布。**步骤 24 验收达成。** M7 完成:工具链发布随正式的 1.0 一起。
 
@@ -759,7 +763,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 
 ## M15 — EmoUI
 
-EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从显式状态渲染,没有模板语言——UI 就是普通 Emo。一个共享的应用模块(组件、`update`、`view`,对着可移植的 `ui` 核心写)渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口;浏览器 DOM 随后按自己的运行时路径接入。每个平台可以有各自的组件库,但组件的调用与组合方式完全一致。设计与证据是 `docs/emo-ui.md`、`docs/emo-ui-check.md`、`spike/components` 与 `spike/emo-ui-probe`;EmoUI 各包活在本仓库的 `projects/emo-ui/` 下(`CHECK.md`,in-tree 项目布局),而设计发现的那几道编译器侧关口(原生打包机制、浏览器运行时路径)与终端输入包也落在本仓库。`c` 目标的长跑内存是 UI 逼出来的第四条,也是它拿不到白送的一条:2026-10-14 的 arena-scope spike 落定「廉价的解法不存在」,所以它被单独排期(**M16**,step 49),在它落地之前原生后端停在 demo 尺度——限制写进文档,而不是糊过去。
+EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从显式状态渲染,没有模板语言——UI 就是普通 Emo。一个共享的应用模块(组件、`update`、`view`,对着可移植的 `ui` 核心写)渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口;浏览器 DOM 随后按自己的运行时路径接入。每个平台可以有各自的组件库,但组件的调用与组合方式完全一致。设计与证据是 `docs/emo-ui.md`、`docs/emo-ui-check.md`、`spike/components` 与 `spike/emo-ui-probe`;EmoUI 各包活在本仓库的 `projects/emo-ui/` 下(`CHECK.md`,in-tree 项目布局),而设计发现的那几道编译器侧关口(原生打包机制、浏览器运行时路径)与终端输入包也落在本仓库。`c` 目标的长跑内存是 UI 逼出来的第四条,也是它拿不到白送的一条:2026-10-14 的 arena-scope spike 落定「廉价的解法不存在」,所以它被单独排期(**M16**,step 49),在它落地之前原生后端停在 demo 尺度——限制写进文档,而不是糊过去。(已于 2026-10-17 落地;demo 尺度注记退役——见 M16。)
 
 ### Step 48 — EmoUI
 
@@ -782,7 +786,7 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 
 - [x] **T48.1** — 可移植 `ui` 核心包:`Node` 树脊与原语、带类型 `Style` 及其 `with_*` 复制、布局词汇表、`Backend` 接口。纯 Emo,全部五个托管 target —— 这也让 A/B 拼写 spike 发现的两个 codegen 缺陷成为本任务的一部分。**两项均已于 2026-10-15 落地:** `c` 的类元数据表移出方法符号所在的 `<cname>__<member>` 命名空间(现为 `vt_<cname>_fields` / `vt_<cname>_methods`,归入 `vt_<cname>` 与 `iface_<name>` 惯例),以及 `ocaml` 原生 `String` 的 `+` 补上它的 `= Emo_check.String` 分支(在 `emit_native_expr` 里产出 `(^)`);`spike/emo-ui-spelling/codegen/` 下的两个夹具就是回归,其 `check.sh` 断言两者的构建与运行。**核心包已于 2026-10-15 落地**:`projects/emo-ui/` 下 `ui.emo` 与它自己的 `package.emo`(`emo/ui`,声明全部五个托管 target)并列;它回答了 spike 留给它的 children 问题——children 仍是显式的 `Array[Node]`,而遍历之前不知道的子节点列表用 `ArrayBuilder` 攒,不是用 Emo 的 `Array.append` 循环。`projects/emo-ui/check.sh` 是这个包的关口。写它时又翻出一个工具链缺陷,已在此修掉:`emo emoji build` 把每个 target 的产物命名为 `emoji-<target>`,而 `beam` target 拒绝这样的模块名,于是任何声明了全部五个 target 的包都过不了发版前置关口。
 - [x] **T48.2** — Elm 循环:`App`(model/`update`/`view`)、`ui.on(msg)` tag 登记表与 `ui.dispatch(tag)`、`ui.run(view, update, model, backend)`;tag 往返测试,以及保留式 `patch` 对全量重建。**已于 2026-10-15 落地**:`projects/emo-ui/ui.emo` 连同它的 `test.emo`(十四条断言,由 `./check.sh` 跑)。tag 登记表是循环自己持有、并交给 `view` 的 `Registry` 对象,而不是 Layer 5 草拟的模块级表——模块级 `const` 在编译目标上每次读取都会重跑初始化式,而模块级 `var` 只有 `ocaml` 支持(`CHECK.md`)。循环在 `ocaml`、`typescript`、`beam` 上可编译;`c` 拒绝 `ui.run` 收下的裸 def,`wasm` 拒绝 `update` 需要的双参动态调用——把这两个函数放到 `Handler` 接口后面之后,同一个循环五个 target 全部可编译(`CHECK.md`、`projects/emo-ui/probe/`)。
-- [x] **T48.3** — 无头 `debug` 后端:把树渲染成稳定文本,作为逐字节一致的金测 harness。**2026-10-15 落地**为 `projects/emo-ui/debug.emo`(核心自己那个包里的一个模块,好让核心的测试也能用它)加 `projects/emo-ui/golden/`(处在消费者位置上的包,`deps { "emo/ui" = "0.1.0" }`,经 `./check.sh` 现场搭出的 registry 抵达核心)。文本形式是一个节点一行、每层两个空格,先属性再一份字段顺序固定的样式摘要;`Debug` 就在这份文本之上实现 `Backend`,把循环交给它的每一棵树记进日志,而它的 `run()` 什么也不驱动——无头意味着没有输入源,事件靠手工步进。`golden/main.emo` 是一块涵盖每个原语、`w=`/`h=` 两个分支、全部四个 `Align` 取值、一个空属性与嵌套容器的界面;`expected.txt` 是解释器的输出,在 `ocaml`、`c`、`typescript`、`beam` 上相同,而 `wasm` 根本降不下核心(即 T48.2 的循环形状)。过程中掉出两处静默的跨 target 分歧,已连同最小对照记下(`CHECK.md`):操作数按 target 的顺序求值,而 `ocaml` 与其它 target 相反;枚举在 `typescript` 上插值出的字节不同、在 `beam` 上根本插不了(`probe/eval_order`、`probe/enum_print`)。
+- [x] **T48.3** — 无头 `debug` 后端:把树渲染成稳定文本,作为逐字节一致的金测 harness。**2026-10-15 落地**为 `projects/emo-ui/debug.emo`(核心自己那个包里的一个模块,好让核心的测试也能用它)加 `projects/emo-ui/golden/`(处在消费者位置上的包,`deps { "emo/ui" = "0.1.0" }`,经 `./check.sh` 现场搭出的 registry 抵达核心)。文本形式是一个节点一行、每层两个空格,先属性再一份字段顺序固定的样式摘要;`Debug` 就在这份文本之上实现 `Backend`,把循环交给它的每一棵树记进日志,而它的 `run()` 什么也不驱动——无头意味着没有输入源,事件靠手工步进。`golden/main.emo` 是一块涵盖每个原语、`w=`/`h=` 两个分支、全部四个 `Align` 取值、一个空属性与嵌套容器的界面;`expected.txt` 是解释器的输出,在 `ocaml`、`c`、`typescript`、`beam` 上相同,而 `wasm` 根本降不下核心(即 T48.2 的循环形状)。过程中掉出两处静默的跨 target 分歧,已连同最小对照记下(`CHECK.md`):操作数曾按 target 的顺序求值,`ocaml` 与其它 target 相反——2026-10-17 已修,所有 target 统一从左到右;枚举在 `typescript` 上插值出的字节不同、在 `beam` 上根本插不了(`probe/eval_order`、`probe/enum_print`)。
 - [x] **T48.4** — `ui-tui`:字符网格布局(那个小 Emo 盒模型)与 ANSI 绘制;一段脚本化输入的金测。**2026-10-16 落地**为 `projects/emo-ui/tui/`(包 `emo/ui_tui`:`ui_tui.emo` 与 `test.emo`),声明四个能写 stdout 的托管目标——`wasm` 的运行时没有 `printf`,所以终端后端不是 `wasm` 包。盒模型以字符格为单位度量核心的 `Style`:列是纵向堆叠、行是横向排列,`padding`、`gap`、`align`、`grow`、`width`、`height` 决定每个子节点的位置;`screen(root, w, h)` 把网格作为 `Array[String]` 交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI(清屏、归位、每行一行),转义字节经 `printf("%c", [27])` 发出,因为字符串字面量的转义是最小集合、0x1b 不在其中。`Tui` 在其之上实现 `ui.Backend`,`Input`/`Script` 是脚本化事件源:`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了,这就是金标不碰终端的原因(T48.5 替换的是源,不是接缝)。`tui/golden/` 是两个包的消费者(`deps` 指向 `emo/ui` 与 `emo/ui_tui`):一块界面包含一行带居中较矮子节点的 row、一个带 grow spacer 的 scroll、一个定宽 text input 与两个按钮,由一段点击 Add、Add、Sub 的脚本驱动。`expected.txt` 是解释器的输出,在 `ocaml`、`typescript` 与 `beam` 上相同;`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——T48.2 留下的那个决定,如今深了三个 target。`tui/check.sh` 是关口(包通过类型检查、十三条断言跑过、四个声明的 target 都能构建、`wasm` 的 `printf` 拒绝被钉住、金标字节被比对)。金标逼出的两个 `beam` 缺陷在这里修好,都记在 `CHECK.md`:`Block` 值的裸 def 被发射成指向未导出函数的远程 fun,`erlc` 接受但加载器让它无法调用(`main/0` 报 `undef`);循环体里的 `case` 重绑外层 `var` 时没有把重绑穿出,于是分支里设置的 `while` 退出永远看不到。`test/emo_cli` 的 `beam_block` 与 `beam_var` 两组是回归。`examples/tui_menu/` 是用法示例——同样的模式,换成一个四行菜单与更长的脚本——同一个关口在它声明的每个 target 上检查它。
 - [ ] **T48.5** — 终端输入:raw mode 与按键事件,做成 **`sqlite3` 形状的标准库包**——包自带 `.c`/`.h`,经 `foreign def` 调用,由 manifest 的 `targets` 把关——而不是 UI 框架侧或编译器侧的产物(已定 2026-10-15,`CHECK.md`);行模式先行。
 - [ ] **T48.6** — `ui-ssr`:节点树到 HTML 加样式表,在全部五个托管 target 上逐字节一致;交互模型是表单与链接。
@@ -798,18 +802,18 @@ EmoUI 是语言语法为之塑形的声明式 UI 框架:UI 是组件的树,从�
 
 ## M16 — 值语义家族的回收
 
-`c` 目标的回收模型(T23.5,2026-10-11)只对带身份的那些格做引用计数——实例、闭包、`Box`——而所有值语义的种类(字符串、元组、数组、map、list、bytes、枚举、装箱标量)都住在 bump arena 里,直到进程退出才释放。UI 每个事件重跑一次 `view()`,用的恰好就是这些种类——这就是把一个整洁度问题变成产品问题的原因。2026-10-14 的 arena-scope spike 实测了代价、排除了廉价的解法,并落定了方向:region 回收 100% 的 arena 字节与 0% 的泄漏,因为身份是在 region 之外 `malloc` 的,而 arena 的聚合体跨过它的边界 retain 它们——reset 于是把那些引用计数永久搁死。真正的解法是值语义家族的引用计数,也就是本里程碑(`CHECK.md`、`spike/arena-scope/`)。这里没有任何东西是 step 48 的先决条件:原生后端以 demo 尺度构建,限制写进文档。
+`c` 目标的回收模型(T23.5,2026-10-11)只对带身份的那些格做引用计数——实例、闭包、`Box`——而所有值语义的种类(字符串、元组、数组、map、list、bytes、枚举、装箱标量)都住在 bump arena 里,直到进程退出才释放。UI 每个事件重跑一次 `view()`,用的恰好就是这些种类——这就是把一个整洁度问题变成产品问题的原因。2026-10-14 的 arena-scope spike 实测了代价、排除了廉价的解法,并落定了方向:region 回收 100% 的 arena 字节与 0% 的泄漏,因为身份是在 region 之外 `malloc` 的,而 arena 的聚合体跨过它的边界 retain 它们——reset 于是把那些引用计数永久搁死。真正的解法是值语义家族的引用计数,也就是本里程碑(`CHECK.md`、`spike/arena-scope/`)。这里没有任何东西是 step 48 的先决条件:原生后端以 demo 尺度构建,限制写进文档。(该注记已于 2026-10-17 退役——里程碑落地,工作集平坦;T49.4 闸门钉住它。)
 
 ### Step 49 — 值语义家族的回收 · `plan/step-49-value-reclamation.md`
 
 **前置:** 无——明确不是 step 48 的先决条件。
 **完成判定:** 一个长跑的 `c` 目标程序持有平坦的工作集——arena 字节与身份存活数不再随每次渲染上涨,而是跟随活着的树;数组增长是线性而非二次;每个 target 上既有的金测逐字节不变;解释器与非 `c` 目标不受影响。
 
-- [ ] **T49.1** — 运行时:把身份纪律(`emo_identity_kind`、`emo_retain`/`emo_release`,以及往聚合体里存值的那些构造器)从三种身份格扩展到值语义家族,让一个值格能走到引用计数归零、聚合体释放它所持有的东西;包含「值语义的构造不会成环」这一审计。发射器本来就对每个动态绑定做 retain 与 release(`emo_c.ml:1851`、`:423`),所以这一项从运行时侧起步。
-- [ ] **T49.2** — 粒度:在每种动态类型都可能持有内存之后,决定 autorelease pool 拥有什么并实现它——表达式内部的临时值是难的那一半,`may_own` 加上随之而来的构造器审计(`emo_c_runtime.c:1753`)。
+- [x] **T49.1** — 运行时:把身份纪律(`emo_identity_kind`、`emo_retain`/`emo_release`,以及往聚合体里存值的那些构造器)从三种身份格扩展到值语义家族,让一个值格能走到引用计数归零、聚合体释放它所持有的东西;包含「值语义的构造不会成环」这一审计。发射器本来就对每个动态绑定做 retain 与 release(`emo_c.ml:1851`、`:423`),所以这一项从运行时侧起步。**2026-10-17 落地。**每个格都计数并单独释放;发射器的 `may_own` 加宽到全部动态类型,每次构造把自己的出生权入池、每个发放的 claim 落进语句的池;尾递归重绑与提升绑定的屏障先拿新 claim 再放旧的;`Map.remove` 交回 claim;动态→原生的 String 跨越改为拷贝。无环审计:不可变族结构性无环,可变身份族并入既文档化的循环泄漏类。live count 探针在值族 churn 后回到基线;原生瞬态缓冲仍是 T49.2 的剩余项。
+- [x] **T49.2** — 粒度:在每种动态类型都可能持有内存之后,决定 autorelease pool 拥有什么并实现它——表达式内部的临时值是难的那一半,`may_own` 加上随之而来的构造器审计(`emo_c_runtime.c:1753`)。**2026-10-17 落地:String 并入动态世界**(书面权衡在 `CHECK.md`——更宽的池不可靠,更聪明的发射器正是 pool 要消灭的那类分析)。typed `String` 位置全部是 cell;leaf 字符串构造器直接产出自入池的出生(无 arena 中转、无自己的池帧);通用构造器仍由发射器入池;运行时自身的瞬态(printf 缓冲、文件/网络读、argv、list_dir 名单)在调用内部 malloc/free。churn 探针在 3 000 / 30 000 / 120 000 轮下 RSS 全平坦、live count 归零,所有金测逐字节不变。
 - [x] **T49.3** — 数组的形状:一个 O(1) 的 append 或一个 builder,让 k 元素数组的增长在字节与 retain 上都不是二次的;T48.1 的 children 表示取决于这个答案。**2026-10-15 已定 —— 走 builder,并且是语言层的新类型(`ArrayBuilder`),而不是 `Array` 的表示层改动。** 方法面 `new()` / `push` / `length` / `get` / `to_array`,解释器与五个宿主目标全上(`riscv64` 按名拒绝,退出码 65,`Map` 的先例);第一条静态可知类型的 `push` 钉住被 push 链最底端那个 `const` 绑定的元素类型(`docs/intro/syntax.md`,可变性)。这一项点名的第二种形状——从 `List` 转回可索引的 `Array`——刻意不做。数组这一半由此在没有动运行时的前提下得到回答,所以 step 49「数组增长是线性而非二次」这条判据现在可以从语言侧达成,而不必等 T49.1;T48.1 的表示问题是解除了阻塞,并已由核心包给出答案(2026-10-15):children 是一份显式的 `Array[Node]`,而动态的子节点列表由容器自己攒。
-- [ ] **T49.4** — 闸门:把 spike 的渲染阶梯与 region 探针做成签入的测试——今天失败、之后通过,只针对 `c` 目标,且 `dune test` 全绿。
-- [ ] **T49.5** — 文档:`CHECK.md`、`docs/emo-ui.md` 及其 zh-CN 镜像,以及 step 48 的 demo 尺度注记都改为指向此处。
+- [x] **T49.4** — 闸门:把 spike 的渲染阶梯与 region 探针做成签入的测试——今天失败、之后通过,只针对 `c` 目标,且 `dune test` 全绿。**2026-10-17 落地**——`emo_arena_bytes` 加入运行时探针,`c_flat_working_set` 组按 spike 的渲染形状(view 重建、样式 map、append 攒子节点、布局遍历)跑两档:arena 字节与 live cell 两个增量都精确钉在零。region 探针的职责由引用计数模型本身承担(`arena_mark`/`arena_reset` 未进随附运行时)。
+- [x] **T49.5** — 文档:`CHECK.md`、`docs/emo-ui.md` 及其 zh-CN 镜像,以及 step 48 的 demo 尺度注记都改为指向此处。2026-10-17 落地——`CHECK.md` 的条目读作已落地的决定,`docs/emo-ui.md` 的 ask 4 与各层告诫都指向平坦工作集,每条 demo 尺度注记都带上退役标记。
 
 ---
 
@@ -838,9 +842,9 @@ TLS 从来不缺位于标准库——`net_tls_connect`、`net_tls_connect_insecu
 **前置:** 无。
 **完成标准:** `https://` 请求在 `c` 上端到端跑通(captive TLS server,与解释器的 `expected.txt` 逐字节一致);验证通过的握手、verify-fail 钉子、insecure 轮转与服务端 TLS echo 在解释器与 `c` 上全绿;不用 TLS 的 `c` 构建既不链接也不依赖 OpenSSL(`nm` 钉子),每个 target 上既有的金测逐字节不变;运行时自造的 reason 字符串在 interp / `c` / 独立 ocaml 运行时三方逐字节一致;文档把故事讲全(`docs/stdlib/net.md`、`docs/stdlib/http.md`、zh-CN 镜像)。
 
-- [ ] **T51.1** — 链接闸门:`emo_c_runtime.c`/`.h` 里圈出的 TLS 段——手写原型加冻结常量,`EMO_HAS_TLS` 下是真实现,否则是 `emo_unsupported` 函数体——emitter 为三个名字开显式臂并翻起 IR 走查的 `uses_tls` 旗标,CLI 经 cclib 槽位有条件地追加 `-DEMO_HAS_TLS` + `-lssl -lcrypto`,前置一个探测调用、失败时报出修复办法;c_goldens 里用 `nm` 钉住「不用 TLS 的构建不引用任何 `SSL_` 符号」。
-- [ ] **T51.2** — 客户端握手:TCP 复用既有的 `emo_net_connect`,随后非阻塞 `SSL_connect` 按 `WANT_READ`/`WANT_WRITE` 停车(调度器的 poll 循环补上可写等待钩子);`TLS_client_method`、TLS 1.2–1.3 窗口、系统信任库、SNI、`SSL_set1_host` + `SSL_get_verify_result`、带库自身版本串的版本下限拒绝、`the TLS handshake with <host>: ` reason 前缀,以及 CA + 服务端证书夹具(`SAN=localhost,127.0.0.1`)经 `SSL_CERT_FILE` 驱动的验证通过回环握手。
-- [ ] **T51.3** — 数据面与 insecure 变体:读/写按 `fd → SSL*` 侧表分流,停车纪律与握手相同;`close()` 走 `SSL_shutdown` 并释放;超时语义对齐 ocaml 侧 conn;`net_tls_connect_insecure` 是同一条路只关验证。
-- [ ] **T51.4** — 服务端:`net_listen_tls` 加载 PEM 对(失败时报 ocaml 同形的 `cannot load the TLS certificate for <host>:<port>`),监听 fd 登记上下文,`accept` 执行 `SSL_accept` 并登记连接;解释器与 `c` 各跑一个程序内的 TLS echo 服务端 + 客户端,落在本机 `127.0.0.1:0`。
-- [ ] **T51.5** — 金测:`examples/https_roundtrip` 打 harness 的 captive ocaml-ssl TLS 服务端,`expected.txt` 取自解释器、在 `c` 上逐字节一致,挂进 c_goldens;独立 OCaml 运行时补上它自己的 TLS 轮转测试——那条路实现了 TLS 却从来没测过。
-- [ ] **T51.6** — 文档:`docs/stdlib/net.md` 的 TLS 限制改成已实现的故事(ocaml-ssl / node:tls / 系统 OpenSSL-LibreSSL,写明版本下限),`docs/stdlib/http.md` 的「`https` 需要 TLS,而 `c` 拒绝」退场,zh-CN 镜像、闸门表与 `plan/README.md` 状态表同步。
+- [x] **T51.1** — 链接闸门:`emo_c_runtime.c`/`.h` 里圈出的 TLS 段——手写原型加冻结常量,`EMO_HAS_TLS` 下是真实现,否则是 `emo_unsupported` 函数体——emitter 为三个名字开显式臂并翻起 IR 走查的 `uses_tls` 旗标,CLI 经 cclib 槽位有条件地追加 `-DEMO_HAS_TLS` + `-lssl -lcrypto`,前置一个探测调用、失败时报出修复办法;c_goldens 里用 `nm` 钉住「不用 TLS 的构建不引用任何 `SSL_` 符号」。
+- [x] **T51.2** — 客户端握手:TCP 复用既有的 `emo_net_connect`,随后非阻塞 `SSL_connect` 按 `WANT_READ`/`WANT_WRITE` 停车(调度器的 poll 循环补上可写等待钩子);`TLS_client_method`、TLS 1.2–1.3 窗口、系统信任库、SNI、`SSL_set1_host` + `SSL_get_verify_result`、带库自身版本串的版本下限拒绝、`the TLS handshake with <host>: ` reason 前缀,以及 CA + 服务端证书夹具(`SAN=localhost,127.0.0.1`)经 `SSL_CERT_FILE` 驱动的验证通过回环握手。
+- [x] **T51.3** — 数据面与 insecure 变体:读/写按 `fd → SSL*` 侧表分流,停车纪律与握手相同;`close()` 走 `SSL_shutdown` 并释放;超时语义对齐 ocaml 侧 conn;`net_tls_connect_insecure` 是同一条路只关验证。
+- [x] **T51.4** — 服务端:`net_listen_tls` 加载 PEM 对(失败时报 ocaml 同形的 `cannot load the TLS certificate for <host>:<port>`),监听 fd 登记上下文,`accept` 执行 `SSL_accept` 并登记连接;解释器与 `c` 各跑一个程序内的 TLS echo 服务端 + 客户端,落在本机 `127.0.0.1:0`。
+- [x] **T51.5** — 金测:`examples/https_roundtrip` 打 harness 的 captive ocaml-ssl TLS 服务端,`expected.txt` 取自解释器、在 `c` 上逐字节一致,挂进 c_goldens;独立 OCaml 运行时补上它自己的 TLS 轮转测试——那条路实现了 TLS 却从来没测过。
+- [x] **T51.6** — 文档:`docs/stdlib/net.md` 的 TLS 限制改成已实现的故事(ocaml-ssl / node:tls / 系统 OpenSSL-LibreSSL,写明版本下限),`docs/stdlib/http.md` 的「`https` 需要 TLS,而 `c` 拒绝」退场,zh-CN 镜像、闸门表与 `plan/README.md` 状态表同步。

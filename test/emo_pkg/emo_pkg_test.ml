@@ -1194,7 +1194,8 @@ let http_registry_tests =
               [
                 ( "/api/v1/packages/acme/missing/versions",
                   ( 404,
-                    {|{"error":{"code":"package_not_found","message":"acme/missing is not published"}}|} ) );
+                    {|{"error":{"code":"package_not_found","message":"acme/missing is not published"}}|}
+                  ) );
               ]
         in
         match
@@ -1215,7 +1216,8 @@ let http_registry_tests =
               [
                 ( "/api/v1/packages/acme/p/versions",
                   ( 403,
-                    {|{"error":{"code":"owner_locked","message":"该账号(组织）已被锁定"}}|} ) );
+                    {|{"error":{"code":"owner_locked","message":"该账号(组织）已被锁定"}}|}
+                  ) );
               ]
         in
         match
@@ -1233,7 +1235,7 @@ let http_registry_tests =
             ~routes:
               [
                 ( "/api/v1/packages/acme/p/versions",
-                    (500, "<html>gateway error</html>") );
+                  (500, "<html>gateway error</html>") );
               ]
         in
         match
@@ -1307,7 +1309,8 @@ let http_registry_tests =
               [
                 ( "/api/v1/dependencies?packages=acme/p,acme/q",
                   ( 403,
-                    {|{"error":{"code":"owner_locked","message":"该账号(组织）已被锁定"}}|} ) );
+                    {|{"error":{"code":"owner_locked","message":"该账号(组织）已被锁定"}}|}
+                  ) );
               ]
         in
         match
@@ -1327,7 +1330,8 @@ let http_registry_tests =
               [
                 ( "/downloads/acme-p-1.0.0.emoji",
                   ( 403,
-                    {|{"error":{"code":"owner_locked","message":"该账号(组织）已被锁定"}}|} ) );
+                    {|{"error":{"code":"owner_locked","message":"该账号(组织）已被锁定"}}|}
+                  ) );
               ]
         in
         match

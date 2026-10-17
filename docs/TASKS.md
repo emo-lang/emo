@@ -31,7 +31,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M4 — Compilation targets | 14–19 | Native code generation via `emo build`; then Wasm / TypeScript / BEAM / RISC-V. |
 | M5 — Wasm Runtime | 20–22 | A WebAssembly runtime written in Emo: the shared systems layer, then the binary decoder/validator, then the interpreter with spec-suite goldens. |
 | M6 — Self-contained hosted backend | 23 | `emo build --target c`: emit C, Emo's own runtime, direct C ABI — the hosted-native-FFI assessment scheduled; unblocks self-contained tool distribution (CHECK.md). |
-| M7 — Toolchain | 24 | The toolchain release: signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo install` / `emo doctor` complete the command set. |
+| M7 — Toolchain | 24 | The toolchain release: signed per-platform `emo` binaries on GitHub Releases (brew/opam as the source channels); a binary-only machine runs and builds Emo programs; `emo new` / `emo deps` / `emo doctor` complete the command set. |
 | M8 — Target independence | 25 | Every target's runtime lives in the target's own ecosystem — embedded as generated data (c, ocaml, typescript) or inside the emitted module (wasm, beam) — never beside the binary or in the host build tree; the host contributes only the emitters. |
 | M9 — For / While loops | 26–27 | The settled loop surface runs on the interpreter and all six targets byte-for-byte: `for` (three clauses, the header `var` scoped to the loop) and `while`, with bare `break`/`continue`; loops never grow any stack; guaranteed tail calls unchanged. |
 | M10 — Error handling | 28–30 | The Erlang split lands: expected failures return `(R.ok, value)` / `(R.error, reason)` matched by `case` or assert-bound by pattern, violations raise the one `Exception` class, and the stdlib's raise sites migrate to the convention — every target byte-for-byte, `R` reaching the freestanding tier with them. |
@@ -60,11 +60,11 @@ before starting the gated work:
 | Reclamation model for the dynamic world (no tracing GC) | T23.5 | settled — reference counting for identity objects, arena for value-semantic data (`CHECK.md`, at T23.5) |
 | `emo build` default target | T24.1 | flip `ocaml` → `c`: a distributed binary carries no OCaml toolchain; the `ocaml` target stays for source installs |
 | Stdlib: embed vs sidecar tree | T24.2 | embed as generated data inside the compiler (the C runtime's mechanism); `EMO_REGISTRY` override stays |
-| `emo install` semantics | T24.4 | `emo install` is the project-dependency frontend over `emo deps`'s resolve/fetch/lock; installing global executables is out of scope for 1.0 |
+| `emo install` semantics | T24.4 | settled then superseded 2026-10-17 — the command was removed; `emo deps` and the build path own resolve/fetch/lock, and installing global executables stays out of scope for 1.0 |
 | The runtime-independence principle | T25.1 | a target's runtime is written in the target's language, carried as generated data inside the compiler; the host contributes only the emitter |
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
 | EmoUI native UI packaging (per-package compile flags / `pkg_config`) | T48.7–T48.9 | direction settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). The field surface (`pkg_config`, compile/link flags, whether `.m` is collected) stays T48.7's own work |
-| `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). Until it lands the native UI backends are demo scale with the limit documented, not gated on this |
+| `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). **Landed 2026-10-17 (T49.1–T49.4)**: the working set is flat and the demo-scale note is retired |
 | EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). Where the bundling step lives in the toolchain stays T48.10's own work |
 | Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
@@ -337,14 +337,14 @@ Close-out: Stage A emits OCaml source (tradeoff documented in `docs/ocaml-backen
 
 ### Step 15 — Other targets: Wasm, TypeScript, BEAM, RISC-V · `plan/step-15-other-targets.md`
 
-**Prereq:** Steps 01–14 (per target). These are roadmap entries, not execution-ready plans — each target gets its own step file when scheduled. Recommended order: Wasm → TypeScript → BEAM → RISC-V.
+**Prereq:** Steps 01–14 (per target). These began as roadmap entries, not execution-ready plans; all four are now promoted to their own step files — TypeScript first (the lowest toolchain risk, 2026-10-02), then Wasm, BEAM, and riscv64.
 
 - [x] **T15.1** — When a target is scheduled, split it into `step-NN-<target>.md` with the full standard format (goal / scope / tasks / acceptance) and update `plan/README.md`'s status table; its tasks continue the numbering (`T17.*`, …).
-- [ ] **T15.2** — Record which key decision each target settled and where (README / `CHECK.md` / docs) — keep the trail.
+- [x] **T15.2** — Record which key decision each target settled and where (README / `CHECK.md` / docs) — keep the trail. (Done 2026-10-17: the promotion trail below now covers all four targets and points at each step file's "Decisions settled here" section plus the cross-cutting `README.md` / `CHECK.md` / `docs/numeric-width.md` records.)
 
-Key decisions to settle per target: Wasm — WasmGC vs custom GC (prototype both); TypeScript — direct-style mapping onto the event loop, process mapping; BEAM — class value semantics vs Erlang maps; RISC-V — pluggable runtime, linker scripts (highest risk; pull the `core`-library layering earlier).
+Key decisions each target settled: Wasm — **WasmGC** (structs and arrays with RTT dispatch, no custom heap; the custom-GC branch removed) and Int boxing an i64; TypeScript — lowering from the IR, a uniform `async`/`await` mapping with no coloring analysis, and cooperative tasks rather than workers; BEAM — class instances as tagged maps (map equality is Emo's content equality), Core Erlang text assembled by `erlc`, and processes mapped natively; riscv64 — boot profile A, tagged-word dynamic values with boxed `Int64`/`Float64`, the psABI as Emo's internal convention, and a whole-program single artifact.
 
-Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, first target; its key decisions — IR lowering, uniform async, cooperative tasks — are settled in that file). **Wasm → `plan/step-16-wasm.md`** (2026-10-02, second target; the GC question is settled — WasmGC, structs and arrays with RTT dispatch, no custom heap). BEAM is next in the recommended order.
+Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, first target; its key decisions — IR lowering, uniform async, cooperative tasks, Node networking — are settled in that file). **Wasm → `plan/step-16-wasm.md`** (2026-10-02, second target; GC settled as WasmGC, structs and arrays with RTT dispatch, no custom heap; T16.5's WASI/IO audit closed in favor of refusing `net`/`http` — no usable socket path on the reference host). **BEAM → `plan/step-18-beam.md`** (Core Erlang emission, the value model, native process mapping; net/http and FFI explicitly out). **riscv64 → `plan/step-19-riscv64.md`** (2026-10-05, last; per-task decision trails, close-out recorded, the `%g` float to-string follow-up landed 2026-10-17). Full pointers, including `CHECK.md`'s cross-target entries, are in `plan/step-15-other-targets.md`.
 
 ### Step 16 — Wasm target (WasmGC) · `plan/step-16-wasm.md`
 
@@ -355,7 +355,9 @@ Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, fi
 - [x] **T16.2** — Full core semantics: patterns and guards, tuples, arrays, Box, interpolation, content equality, interface narrowing, multi-file module references. Golden: language_tour, shop.
 - [x] **T16.3** — Bootstrap: the wasm subset in CI, plus the resolution-gate refusal test for packages lacking `"wasm"`.
 - [x] **T16.4** — Concurrency: a cooperative driver for `do` / `<-` / `receive`, host-timer preemption points. Golden: pipeline. (Gated on T16.2.)
-- [ ] **T16.5** — The WASI and IO audit: stdlib metadata for `"wasm"`, and the io goldens where the host supports it.
+- [x] **T16.5** — The WASI and IO audit: stdlib metadata for `"wasm"`, and the io goldens where the host supports it. (Done 2026-10-17: the host supports neither network golden. Node's preview1 WASI has no usable socket calls, and the working socket API — preview2's `wasi:sockets` — is component-model-shaped, unreachable from this core WasmGC module; wasmtime's preview1 answers the legacy call `notsock`. `net`/`http` stay undeclared and refuse at resolution; the pure stdlib packages already declare `"wasm"` and run in the golden group, now pinned by resolution tests on both sides.)
+
+**Step 16 acceptance met.** `emo build --target wasm` emits a `.wasm` plus its `.wat` sibling that runs under Node's WasmGC; the core subset and the pure stdlib demos print byte-for-byte what `emo run` prints; packages lacking `"wasm"` fail resolution before emission. The WASI/IO audit closed with an honest refusal: no network goldens are possible on the reference host, and the IO packages' metadata says so.
 
 ### Step 17 — TypeScript target · `plan/step-17-typescript.md`
 
@@ -363,10 +365,12 @@ Promotion trail: **TypeScript → `plan/step-17-typescript.md`** (2026-10-02, fi
 **Done when:** `emo build --target typescript` emits TypeScript that runs on Node, the examples subset (hello_world, fib, objects, language_tour, shop, pipeline, tcp_echo, http_roundtrip) prints byte-for-byte what `emo run` prints (golden in CI), and a package lacking the target fails resolution before emission.
 
 - [x] **T17.1** — Target plumbing and core emitter: `--target` through CLI, project, and the resolution gate; the IR → TypeScript emitter for the core subset; the tagged-value runtime. Golden: hello_world, fib, objects.
-- [ ] **T17.2** — Full core semantics: patterns and guards, tuples, arrays, Box, interpolation, content equality, multi-file module references. Golden: language_tour, shop.
+- [x] **T17.2** — Full core semantics: patterns and guards, tuples, arrays, Box, interpolation, content equality, multi-file module references. Golden: language_tour, shop. (Done 2026-10-17: both examples join `ts_golden_tests` and declare `"typescript"` in their manifests. The emitter already handled the surface — the gap was the pin, so no backend change.)
 - [x] **T17.3** — Concurrency: cooperative tasks, mailboxes, selective receive, `self_pid`, `halt`. Golden: pipeline.
 - [x] **T17.4** — Direct-style IO: sockets and HTTP over Node's APIs as awaited promises; stdlib target metadata gains `"typescript"`. Golden: tcp_echo, http_roundtrip. (Done 2026-10-12: the whole `net` surface rides `node:net`/`node:dgram`/`node:tls`/`node:dns` behind `E.builtin` with one persistent per-connection reader; the root process finishing releases the live handles so the loop drains, matching the native rule. `net` and `http` declare `"typescript"`; tcp_echo and http_roundtrip join the target's goldens. The `c` target stays TCP-only, and the `http` server block's double close — hidden by the native scheduler, surfaced by the TypeScript target — is fixed.)
-- [ ] **T17.5** — Bootstrap: the target-aware golden suite in CI, plus the resolution-gate test for packages lacking the target.
+- [x] **T17.5** — Bootstrap: the target-aware golden suite in CI, plus the resolution-gate test for packages lacking the target. (Done 2026-10-17: `pipeline` joins the `ts_golden` group, completing the subset above; the gate now has a refusing and an accepting test, mirroring the `wasm` pair.)
+
+Close-out: the target-aware golden group (`ts_golden`) pins the subset named above — 25 examples — and the resolution gate is tested both ways. Decisions are in `plan/step-17-typescript.md` (the trail). **Step 17 acceptance met.**
 
 ### Step 18 — BEAM target (Core Erlang) · `plan/step-18-beam.md`
 
@@ -402,17 +406,17 @@ green.
 - [x] **T19.3** — Dynamic-world data structures: tuples, arrays, Box,
       enums, instances with vtable dispatch, closures and first-class
       functions; patterns with guards; interpolation with the `%g`
-      float rule. Golden: objects, language_tour.
+      float rule. Goldens: objects, language_tour, floats.
 - [x] **T19.4** — Bootstrap: the `riscv64_examples` CI group (QEMU +
       cross-binutils on the runner), the resolution-gate refusal test
       for packages lacking `"riscv64"`, the emission-time refusal
       diagnostics, close-out.
 
 **Step 19 acceptance met.** The freestanding RV64 backend
-ships — hello_world, fib, objects, and language_tour boot under QEMU
-as byte-for-byte goldens, the refusals are loud, and resolution gates
-packages. The `%g` float to-string lands as its own follow-up
-(plan/step-19 close-out).
+ships — hello_world, fib, objects, language_tour, and floats boot
+under QEMU as byte-for-byte goldens, the refusals are loud, and
+resolution gates packages. The `%g` float to-string follow-up landed
+2026-10-17 (plan/step-19 close-out).
 
 ## M5 — Wasm Runtime
 
@@ -522,10 +526,10 @@ installation burden from the *tool* — the release engineering
 (`docs/toolchain-distribution.md` is the design record): prebuilt
 binaries per platform on GitHub Releases as the primary channel,
 `opam` and a Homebrew formula as the source-building alternatives,
-and the command set a product needs — `emo new`, `emo install`,
-`emo doctor` join `run`/`repl`/`check`/`build`/`deps`/`publish` — so
+and the command set a product needs — `emo new`, `emo deps`,
+`emo doctor` join `run`/`repl`/`check`/`build`/`publish` — so
 a machine with nothing but the binary runs, checks, builds (through
-the `c` target), installs dependencies, and publishes.
+the `c` target), pins and resolves dependencies, and publishes.
 
 Boundaries, stated plainly: the public registry *service* is a
 separate milestone — the tool ships speaking the filesystem registry
@@ -546,8 +550,8 @@ signed per-platform archives (Linux x86_64/aarch64, macOS
 x86_64/arm64) whose binaries pass the end-to-end acceptance on every
 platform; a machine with only the installed binary — no OCaml, no
 opam, no repository — runs, checks, and builds Emo programs through
-the `c` target, scaffolds with `emo new`, installs dependencies with
-`emo install`, and diagnoses its environment with `emo doctor`;
+the `c` target, scaffolds with `emo new`, pins dependencies with
+`emo deps add`, and diagnoses its environment with `emo doctor`;
 `dune test` green.
 
 - [x] **T24.1** — Design-gate closure and the default target: the
@@ -559,7 +563,7 @@ the `c` target, scaffolds with `emo new`, installs dependencies with
       leaves the temp directory for a durable user location. The
       flip lands here, with the resolution-gate tests and the CI
       groups re-pointed — the c goldens already cover the target;
-      only the default moves. (Done 2026-10-07: all four settled in CHECK.md; the flip moved every default path to c and exposed that the content-hash cache lived only in the ocaml arm — the c arm gained it; ocaml-backend harnesses and benchmarks pinned --target ocaml; tree-wide @fmt drift promoted.)
+      only the default moves. (Done 2026-10-07: all four settled in CHECK.md; the flip moved every default path to c and exposed that the content-hash cache lived only in the ocaml arm — the c arm gained it; ocaml-backend harnesses and benchmarks pinned --target ocaml; tree-wide @fmt drift promoted. Amended 2026-10-17: the `emo install` command was removed; `emo deps` and the build path own resolve/fetch/lock.)
 - [x] **T24.2** — The self-contained binary: the bundled stdlib as
       generated data inside the compiler; the registry endpoint
       becomes a filesystem directory or the embedded stdlib;
@@ -579,7 +583,7 @@ the `c` target, scaffolds with `emo new`, installs dependencies with
       failure mode — no registry configured, unsatisfiable pin, a
       dependency lacking the requested target — gets its own clear
       message. `emo deps` keeps resolve/update/list as the explicit
-      paths. (Done 2026-10-07: idempotent; lockfile written only when it would change; cache default moved to ~/.cache/emo (XDG honored, EMO_CACHE_DIR overrides).)
+      paths. (Done 2026-10-07: idempotent; lockfile written only when it would change; cache default moved to ~/.cache/emo (XDG honored, EMO_CACHE_DIR overrides). Amended 2026-10-17: the `emo install` command was removed; the resolve/fetch/lock behavior it fronted lives in `emo deps resolve` and in the build path's own resolution.)
 - [x] **T24.5** — `emo doctor`: the target-aware environment check,
       replacing the interim ocaml-only shape in `CHECK.md`. Per
       target: `c` — a cc compile-and-run smoke; `ocaml` — the
@@ -610,11 +614,11 @@ the `c` target, scaffolds with `emo new`, installs dependencies with
       prebuilt archives first, then brew, opam, WSL2. (Done 2026-10-07: formula at devtools/homebrew/emo.rb for the own tap, checksums filled at release; dune-project generates emo.opam (no dev_repo field in the stanza — dropped); README install sections in both languages.)
 - [x] **T24.9** — Release acceptance and the release cut: on every shipped
       artifact, end to end — download, unpack, `emo doctor`,
-      `emo new`, `emo run`, `emo install`, `emo build` (the `c`
+      `emo new`, `emo run`, dependency resolution, `emo build` (the `c`
       target) — including a stdlib-importing program and the golden
       subset executed from the installed binary. the release commit
       carries the released VERSION; annotated tag, release notes,
-      close-out. (Done 2026-10-07: acceptance ran against the packaged-and-unpacked archive — doctor healthy in the prebuilt shape; new → run → build green; install resolves through the embedded stdlib; goldens 14/14 from the installed binary (13 via emo run byte-for-byte, numerics via its designed compiled path — it crosses foreign def, which emo run refuses; http_roundtrip/tcp_echo ride the in-tree suite).)
+      close-out. (Done 2026-10-07: acceptance ran against the packaged-and-unpacked archive — doctor healthy in the prebuilt shape; new → run → build green, with `emo install` resolving through the embedded stdlib (the `emo install` command was removed 2026-10-17; `emo deps resolve` and the build path now own that step); goldens 14/14 from the installed binary (13 via emo run byte-for-byte, numerics via its designed compiled path — it crosses foreign def, which emo run refuses; http_roundtrip/tcp_echo ride the in-tree suite).)
 
 Close-out: recorded 2026-10-07 in `plan/step-24-toolchain.md` — the
 acceptance ran against the packaged artifact, not the build tree; the
@@ -1576,6 +1580,7 @@ thing a UI forces and the one it does not get for free: the 2026-10-14
 arena-scope spike settled that the cheap fix does not exist, so it is
 scheduled separately (**M16**, step 49) and the native backends are
 demo scale until it lands — the limit documented, not papered over.
+(It landed 2026-10-17; the demo-scale note is retired — see M16.)
 
 ### Step 48 — EmoUI · `plan/step-48-emo-ui.md`
 
@@ -1680,11 +1685,11 @@ required.
       `expected.txt` is the interpreter's output, identical on `ocaml`,
       `c`, `typescript` and `beam`, while `wasm` cannot lower the core
       (the loop's shape, T48.2). Two silent cross-target divergences fell
-      out and are recorded with minimal pairs (`CHECK.md`): operands are
-      evaluated in the target's order and `ocaml`'s is the reverse of the
-      others', and an enum does not interpolate to the same bytes on
-      `typescript` or at all on `beam` (`probe/eval_order`,
-      `probe/enum_print`).
+      out and are recorded with minimal pairs (`CHECK.md`): operands were
+      evaluated in the target's order, `ocaml`'s being the reverse of the
+      others' — fixed 2026-10-17, left to right on every target — and an
+      enum does not interpolate to the same bytes on `typescript` or at
+      all on `beam` (`probe/eval_order`, `probe/enum_print`).
 - [x] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
       model) and ANSI painting; a scripted-input golden. **Landed
       2026-10-16** as `projects/emo-ui/tui/` (package `emo/ui_tui`:
@@ -1770,7 +1775,8 @@ them across its boundary — and the reset strands those refcounts
 permanently. The real fix is refcounting the value families, and it is
 this milestone (`CHECK.md`, `spike/arena-scope/`). Nothing here is a
 prerequisite for step 48: the native backends are built at demo scale
-with the limit documented.
+with the limit documented. (The note retired 2026-10-17 — the
+milestone landed and the working set is flat; the T49.4 gate pins it.)
 
 ### Step 49 — Value-family reclamation · `plan/step-49-value-reclamation.md`
 
@@ -1781,7 +1787,7 @@ the live tree — array growth is linear rather than quadratic, every
 existing golden on every target is byte-identical, and the interpreter
 and the non-`c` targets are untouched.
 
-- [ ] **T49.1** — The runtime: extend the identity discipline
+- [x] **T49.1** — The runtime: extend the identity discipline
       (`emo_identity_kind`, `emo_retain`/`emo_release`, and the
       constructors that store into aggregates) from the three identity
       kinds to the value families, so a value cell can reach refcount
@@ -1789,10 +1795,31 @@ and the non-`c` targets are untouched.
       that no value-family construction can form a cycle. The emitter
       already retains and releases every dynamic binding
       (`emo_c.ml:1851`, `:423`), so this starts runtime-side.
-- [ ] **T49.2** — The granularity: decide what the autorelease pool owns
+      **Landed 2026-10-17.** Every cell is counted and individually
+      freed; the emitter's `may_own` widened to every dynamic type, so
+      each construction pools its birth and each claim handout lands in
+      the statement's pool; the tail-rebind and hoisted-binding
+      barriers take the new claim before dropping the old; `Map.remove`
+      hands back a claim; the dynamic→native String crossing copies.
+      The cycle audit: the immutable families are structurally acyclic,
+      the mutable identities join the documented cycle-leak class. The
+      live-count probe returns to baseline across a value-family churn;
+      the native transient buffers stay the T49.2 remainder.
+- [x] **T49.2** — The granularity: decide what the autorelease pool owns
       now that every dynamic type may own memory, and implement it —
       expression-internal temporaries are the hard half, `may_own` plus
       the constructor audit that follows (`emo_c_runtime.c:1753`).
+      **Landed 2026-10-17: String joined the dynamic world** (`CHECK.md`
+      carries the written weighing — the wider pool and the smarter
+      emitter were rejected as unsound or as the ownership analysis the
+      pool exists to erase). Typed `String` positions are cells; the
+      leaf string builders answer self-pooled births (no arena
+      intermediate, no frame of their own); the general constructors
+      still pool at the emitter; the runtime's own transients (printf
+      buffer, file/net reads, argv, list_dir names) are malloc'd and
+      freed within their calls. The churn probe holds RSS flat across
+      3 000 / 30 000 / 120 000 iterations with the live count at zero,
+      and every golden stays byte-identical.
 - [x] **T49.3** — The array shape: an O(1) append or a builder, so
       growing a k-element array is not quadratic in bytes and retains;
       T48.1's children representation depends on the answer. **Settled
@@ -1811,11 +1838,22 @@ and the non-`c` targets are untouched.
       question was unblocked here and is **answered** by the core
       (2026-10-15): children are an explicit `Array[Node]`, and the
       container is what builds a dynamic child list.
-- [ ] **T49.4** — The gate: the spike's render ladder and region probes
+- [x] **T49.4** — The gate: the spike's render ladder and region probes
       as a checked-in test that fails today and passes after, on the `c`
-      target, with `dune test` green.
-- [ ] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
+      target, with `dune test` green. **Landed 2026-10-17** —
+      `emo_arena_bytes` joined the runtime's probes, and the
+      `c_flat_working_set` group runs the spike's render shape (view
+      rebuild, style maps, append-built children, a layout walk) at two
+      rungs: both deltas — arena bytes and live cells — pin at exactly
+      zero. The region probes' work is done by the refcount model
+      itself (`arena_mark`/`arena_reset` stayed out of the shipped
+      runtime).
+- [x] **T49.5** — Docs: `CHECK.md`, `docs/emo-ui.md` and its zh-CN
       mirror, and step 48's demo-scale notes updated to point here.
+      Landed 2026-10-17 — `CHECK.md`'s entry reads as the landed
+      decision, `docs/emo-ui.md`'s ask 4 and the layer caveats point at
+      the flat working set, and every demo-scale note carries its
+      retirement.
 
 ---
 
@@ -1916,7 +1954,7 @@ byte-identical across interp / `c` / the standalone ocaml runtime; and
 the docs carry the story (`docs/stdlib/net.md`, `docs/stdlib/http.md`,
 the zh-CN mirrors).
 
-- [ ] **T51.1** — The linkage gate: the fenced TLS section in
+- [x] **T51.1** — The linkage gate: the fenced TLS section in
       `emo_c_runtime.c`/`.h` — hand-written prototypes plus the frozen
       constants, real bodies under `EMO_HAS_TLS` and `emo_unsupported`
       bodies without — the emitter's explicit arms for the three names
@@ -1924,7 +1962,7 @@ the zh-CN mirrors).
       `-DEMO_HAS_TLS` + `-lssl -lcrypto` through the cclib slot behind
       a pre-flight probe whose failure names the fix; the c_goldens
       `nm` pin proving a non-TLS build references no `SSL_` symbol.
-- [ ] **T51.2** — The client handshake: TCP via the existing
+- [x] **T51.2** — The client handshake: TCP via the existing
       `emo_net_connect`, then nonblocking `SSL_connect` parking on
       `WANT_READ`/`WANT_WRITE` (a wait-writable hook joins the
       scheduler's poll loop); `TLS_client_method`, the TLS 1.2–1.3
@@ -1934,24 +1972,24 @@ the zh-CN mirrors).
       `the TLS handshake with <host>: ` reason prefix, and the CA +
       server-certificate fixture (`SAN=localhost,127.0.0.1`) with a
       verified loopback handshake driven through `SSL_CERT_FILE`.
-- [ ] **T51.3** — The data plane and the insecure variant: read/write
+- [x] **T51.3** — The data plane and the insecure variant: read/write
       route through the `fd → SSL*` side table with the same parking
       discipline, `close()` runs `SSL_shutdown` and frees, timeouts
       match the ocaml conn's semantics, and
       `net_tls_connect_insecure` is the same path with verification
       off.
-- [ ] **T51.4** — The server side: `net_listen_tls` loads the PEM pair
+- [x] **T51.4** — The server side: `net_listen_tls` loads the PEM pair
       (refusing with the ocaml-matching
       `cannot load the TLS certificate for <host>:<port>` shape),
       listeners register fd → context, `accept` performs `SSL_accept`
       and registers the conn; an in-program TLS echo server + client
       on `127.0.0.1:0`, on the interpreter and on `c`.
-- [ ] **T51.5** — The goldens: `examples/https_roundtrip` against the
+- [x] **T51.5** — The goldens: `examples/https_roundtrip` against the
       harness's captive ocaml-ssl TLS server, `expected.txt` taken
       from the interpreter and byte-identical on `c`, registered in
       c_goldens; a TLS roundtrip test for the standalone OCaml
       runtime, which implemented TLS but never tested it.
-- [ ] **T51.6** — Docs: `docs/stdlib/net.md`'s TLS limitation becomes
+- [x] **T51.6** — Docs: `docs/stdlib/net.md`'s TLS limitation becomes
       the implemented story (ocaml-ssl / node:tls / system
       OpenSSL-LibreSSL, with the floor stated),
       `docs/stdlib/http.md`'s "`https` needs TLS, which `c` refuses"

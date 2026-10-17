@@ -55,11 +55,9 @@ def update(msg Msg, m Model) Model {
 
 def view(reg ui.Registry, m Model) ui.Node {
   // The tags are taken in statements of their own, before the tree is
-  // built. `on` is a side effect, and the order operands are evaluated in
-  // is the target's, not the source's — `ocaml` goes right to left where
-  // the other four targets go left to right — so a `reg.on(...)` sitting
-  // in an argument position would hand the messages different tags on
-  // different targets (`CHECK.md`, evaluation order).
+  // built: `on` is a side effect, and a statement of its own makes the
+  // registration order visible at the call site (`docs/intro/syntax.md`,
+  // operands evaluate left to right).
   const inc = reg.on(Msg.inc)
   const dec = reg.on(Msg.dec)
 

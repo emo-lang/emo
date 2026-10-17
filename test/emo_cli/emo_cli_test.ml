@@ -566,6 +566,7 @@ let c_goldens =
     "file_read";
     "tcp_echo";
     "http_roundtrip";
+    "https_roundtrip";
     "list";
     "array_builder";
     "os_demo";
@@ -603,6 +604,35 @@ let sqlite3_available =
          "echo 'int main(void){return 0;}' | cc -x c - -lsqlite3 -o /dev/null \
           >/dev/null 2>&1"
        = 0)
+
+(* The goldens whose reachable code genuinely reaches the TLS builtins
+   (http_roundtrip's https branch; https_roundtrip's whole wire) need
+   the TLS libraries linked: the CLI's gate flips on them, and the
+   build runs the pre-flight probe. This probe mirrors the fix message
+   the CLI prints — bare -lssl first, the Linux dev-package shape,
+   then the Homebrew kegs. None means the machine has neither, and
+   those goldens skip like sqlite3_demo does. *)
+let tls_goldens = [ "http_roundtrip"; "https_roundtrip" ]
+
+let tls_cclibs =
+  lazy
+    (let probe flags =
+       Lazy.force cc_available
+       && Sys.command
+            (Printf.sprintf
+               "echo 'int main(void){return 0;}' | cc -x c - %s -lssl -lcrypto \
+                -o /dev/null >/dev/null 2>&1"
+               flags)
+          = 0
+     in
+     if probe "" then Some []
+     else if probe "-L/opt/homebrew/opt/openssl@3/lib" then
+       Some [ "-L/opt/homebrew/opt/openssl@3/lib" ]
+     else if probe "-L/opt/homebrew/opt/openssl@4/lib" then
+       Some [ "-L/opt/homebrew/opt/openssl@4/lib" ]
+     else if probe "-L/usr/local/opt/openssl@3/lib" then
+       Some [ "-L/usr/local/opt/openssl@3/lib" ]
+     else None)
 
 (* The root process is the program, on every target. Both programs
    below spawn work and let the root end without waiting for it; the
@@ -1222,17 +1252,46 @@ let c_examples_tests =
           if not (Lazy.force cc_available) then Alcotest.skip ();
           if name = "sqlite3_demo" && not (Lazy.force sqlite3_available) then
             Alcotest.skip ();
+          let tls_needed = List.mem name tls_goldens in
+          if tls_needed && not (Option.is_some (Lazy.force tls_cclibs)) then
+            Alcotest.skip ();
           let dir = Filename.concat examples_dir name in
           let expected = read_file (Filename.concat dir "expected.txt") in
           let out_bin = Filename.concat scratch (name ^ "-c-bin") in
+          let cclibs =
+            if tls_needed then Option.value (Lazy.force tls_cclibs) ~default:[]
+            else []
+          in
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_bin
-                  ~specialize:false ~cclibs:[] ~target:"c")
+                  ~specialize:false ~cclibs ~target:"c")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
-          let out, err, proc_status = run_cmd (Filename.quote out_bin) in
+          (* A TLS golden runs from its own directory: the program
+             opens its checked-in fixtures by their relative names and
+             the client verifies against the CA through
+             SSL_CERT_FILE. *)
+          let run_it =
+            if tls_needed then
+              Printf.sprintf "cd %s && env SSL_CERT_FILE=fixtures/tls-ca.pem %s"
+                (Filename.quote dir) (Filename.quote out_bin)
+            else Filename.quote out_bin
+          in
+          let out, err, proc_status = run_cmd run_it in
           Alcotest.(check string) "output" expected out;
+          (* The TLS gate pin (step 51): a program that never touches
+             TLS links with no SSL_ symbol undefined, so the
+             conditional linkage cannot silently rot into
+             always-linked. A TLS golden links the libraries by
+             design, so the pin is theirs to skip. *)
+          if not tls_needed then begin
+            let nm_out, _, _ =
+              run_cmd (Printf.sprintf "nm -u %s" (Filename.quote out_bin))
+            in
+            Alcotest.(check bool)
+              "no SSL_ symbol undefined" false (contains nm_out "SSL_")
+          end;
           match proc_status with
           | Unix.WEXITED 0 -> ()
           | s ->
@@ -1244,6 +1303,170 @@ let c_examples_tests =
                    | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
                    err)))
     c_goldens
+
+(* T51.4: the c runtime's own TLS server and client in one binary —
+   the loopback handshake parks both ends through one scheduler. The
+   fixtures ride the sched suite's checked-in CA; the build skips
+   where the machine has no TLS libraries, like the TLS goldens. *)
+let c_tls_tests =
+  [
+    tc "a TLS loopback runs inside one c binary" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let cclibs =
+          match Lazy.force tls_cclibs with
+          | Some libs -> libs
+          | None -> Alcotest.skip ()
+        in
+        let dir = Filename.concat scratch "c-tls-loopback" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file
+          (Filename.concat dir "package.emo")
+          {|
+package {
+  name = "emo/scratch_c_tls"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "net" = "0.1.0"
+  }
+}
+|};
+        let fixture = "../../test/emo_sched/fixtures/" in
+        let entry = Filename.concat dir "main.emo" in
+        write_file entry
+          (Printf.sprintf
+             {|require "net"
+
+def echo_lines(conn TcpConn) Void {
+  case conn.read_line() {
+    (R.error, why) -> {
+      println("server read failed: ${why}")
+      conn.close()
+    }
+    (R.ok, line)   -> {
+      conn.write("echo: " + line + "\n")
+      echo_lines(conn)
+    }
+  }
+}
+
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) -> { println("accept failed: ${why}") }
+    (R.ok, conn)   -> { echo_lines(conn) }
+  }
+}
+
+const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
+do serve(listener)
+case net_tls_connect("127.0.0.1", listener.port(), 5.0) {
+  (R.error, why) -> { println("connect failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("loopback\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    conn.close()
+    println("done")
+  }
+}
+|}
+             fixture fixture);
+        let bin = Filename.concat dir "main-c-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"c" ~cclibs entry bin);
+        let ca = fixture ^ "tls-ca.pem" in
+        check_run "c loopback"
+          (run_cmd
+             (Printf.sprintf "env SSL_CERT_FILE=%s %s" (Filename.quote ca)
+                (Filename.quote bin)))
+          "echo: loopback\ndone\n");
+    tc "the verify-fail pin and the insecure roundtrip hold on c" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let cclibs =
+          match Lazy.force tls_cclibs with
+          | Some libs -> libs
+          | None -> Alcotest.skip ()
+        in
+        let dir = Filename.concat scratch "c-tls-pins" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file
+          (Filename.concat dir "package.emo")
+          {|
+package {
+  name = "emo/scratch_c_tls_pins"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "net" = "0.1.0"
+  }
+}
+|};
+        let fixture = "../../test/emo_sched/fixtures/" in
+        let entry = Filename.concat dir "main.emo" in
+        (* One program, both pins: the verified connect to the
+           self-signed listener fails closed (the interp suite's pin),
+           and the insecure variant to the same listener round-trips. *)
+        write_file entry
+          (Printf.sprintf
+             {|require "net"
+
+def echo_lines(conn TcpConn) Void {
+  case conn.read_line() {
+    (R.error, why) -> {
+      println("server read failed: ${why}")
+      conn.close()
+    }
+    (R.ok, line)   -> {
+      conn.write("echo: " + line + "\n")
+      echo_lines(conn)
+    }
+  }
+}
+
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, _)  -> { serve(listener) }
+    (R.ok, conn)  -> { echo_lines(conn) }
+  }
+}
+
+const (R.ok, ca_listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
+const (R.ok, self_listener) = net_listen_tls("127.0.0.1", 0, "%stls-cert.pem", "%stls-key.pem")
+do serve(ca_listener)
+do serve(self_listener)
+case net_tls_connect("127.0.0.1", self_listener.port(), 5.0) {
+  (R.error, why) -> { println("verify failed as expected") }
+  (R.ok, conn)   -> { println("handshook?!") }
+}
+case net_tls_connect_insecure("127.0.0.1", self_listener.port(), 5.0) {
+  (R.error, why) -> { println("insecure failed: ${why}") }
+  (R.ok, conn)   -> {
+    conn.write("insecure\n")
+    case conn.read_line() {
+      (R.error, why) -> { println("read failed: ${why}") }
+      (R.ok, line)   -> { println(line) }
+    }
+    conn.close()
+  }
+}
+|}
+             fixture fixture fixture fixture);
+        let bin = Filename.concat dir "main-c-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"c" ~cclibs entry bin);
+        let ca = fixture ^ "tls-ca.pem" in
+        check_run "c tls pins"
+          (run_cmd
+             (Printf.sprintf "env SSL_CERT_FILE=%s %s" (Filename.quote ca)
+                (Filename.quote bin)))
+          "verify failed as expected\necho: insecure\n");
+  ]
 
 (* T23.8: the c target's direct C ABI. A foreign def declares the C
    symbol and calls it — no wrapper generator. Strings cross with a
@@ -1534,6 +1757,198 @@ println(keep.length())
         Alcotest.(check int) "build exit" 0 exit_code;
         let out, _, proc_status = run_cmd (Filename.quote out_bin) in
         Alcotest.(check string) "output" "0\n1\n" out;
+        match proc_status with
+        | Unix.WEXITED 0 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "exited %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | _ -> "signal")));
+  ]
+
+(* The flat-working-set gate (T49.4; the arena-scope spike's render
+   ladder, checked in). A render-shaped loop — view() rebuilds the
+   tree per event, style maps, append-built children, a layout walk —
+   must leave the process where it found it: every dropped frame
+   reclaims its bytes and its cells. Before step 49 both deltas rose
+   per render (~1 MB and ~820 identities at 400 nodes); the gate pins
+   them at exactly zero, two rungs, and so fails on any regression.
+   Skips without cc. *)
+let c_flat_working_set_tests =
+  [
+    tc "the render loop holds a flat working set" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let dir = Filename.concat scratch "c-flat-set" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file (Filename.concat dir "package.emo") default_manifest;
+        let entry = Filename.concat dir "main.emo" in
+        let oc = open_out_bin entry in
+        output_string oc
+          {|
+foreign def live() Int64 = "emo_identity_live_count"
+foreign def arena() Int64 = "emo_arena_bytes"
+
+interface VNode {
+  def kind() String
+  def text() String
+  def style() Map[String, Float64]
+}
+
+class VLeaf {
+  def init(kind String, text String, style Map[String, Float64]) {
+    self.kind = kind
+    self.text = text
+    self.style = style
+  }
+
+  def kind() String {
+    return self.kind
+  }
+
+  def text() String {
+    return self.text
+  }
+
+  def style() Map[String, Float64] {
+    return self.style
+  }
+}
+
+class VColumn {
+  def init(style Map[String, Float64], children Array[VNode]) {
+    self.style = style
+    self.children = children
+  }
+
+  def kind() String {
+    return "column"
+  }
+
+  def text() String {
+    return ""
+  }
+
+  def style() Map[String, Float64] {
+    return self.style
+  }
+
+  def children() Array[VNode] {
+    return self.children
+  }
+}
+
+def label(text String) VNode {
+  return VLeaf.new(kind: "label", text: text,
+    style: Map.new(("height", 24.0)))
+}
+
+def column(children Array[VNode]) VNode {
+  return VColumn.new(style: Map.new(("gap", 4.0), ("padding", 8.0)),
+    children: children)
+}
+
+def leaves(into Array[VNode], i Int64, per Int64) Array[VNode] {
+  if i == per {
+    return into
+  }
+  return leaves(into.append(label("row ${i}")), i + 1, per)
+}
+
+def panels(into Array[VNode], i Int64, count Int64, per Int64) Array[VNode] {
+  if i == count {
+    return into
+  }
+  return panels(into.append(column(leaves([], 0, per))), i + 1, count, per)
+}
+
+def view(nodes Int64) VNode {
+  return column(panels([], 0, nodes / 20, 20))
+}
+
+class Draw {
+  def init(kind String, text String, y Float64) {
+    self.kind = kind
+    self.text = text
+    self.y = y
+  }
+}
+
+class Laid {
+  def init(cmds Array[Draw], cursor Float64) {
+    self.cmds = cmds
+    self.cursor = cursor
+  }
+}
+
+def style_num(style Map[String, Float64], key String, fallback Float64) Float64 {
+  if style.has(key) {
+    return style.get(key)
+  }
+  return fallback
+}
+
+def layout_step(kids Array[VNode], i Int64, cmds Array[Draw],
+                cursor Float64, gap Float64) Laid {
+  if i == kids.length() {
+    return Laid.new(cmds: cmds, cursor: cursor)
+  }
+  const r = layout_node(kids[i], cmds, cursor, gap)
+  return layout_step(kids, i + 1, r.cmds, r.cursor + gap, gap)
+}
+
+def layout_node(node VNode, cmds Array[Draw], y Float64, gap Float64) Laid {
+  const style = node.style()
+  const pad = style_num(style, "padding", 0.0)
+  if node.is(VColumn) {
+    const kids = node.children()
+    return layout_step(kids, 0, cmds, y + pad, style_num(style, "gap", gap))
+  }
+  const h = style_num(style, "height", 24.0)
+  return Laid.new(
+    cmds: cmds.append(Draw.new(kind: node.kind(), text: node.text(), y: y)),
+    cursor: y + h)
+}
+
+def paint(root VNode, width Float64) Float64 {
+  const r = layout_node(root, [], 0.0, 12.0)
+  return r.cursor + width * 0.0
+}
+
+def on_event(nodes Int64, tag Int64, count Int64) Int64 {
+  const cursor = paint(view(nodes), 480.0)
+  if cursor < 0.0 {
+    return count - 1
+  }
+  return count + 1
+}
+
+// One rung of the ladder: sample, render, print the two deltas. Both
+// are zero — the dropped frame reclaims every byte and every cell.
+def rung(nodes Int64, renders Int64) Int64 {
+  const b0 = arena()
+  const l0 = live()
+  var count = 0
+  for var i = 0; i < renders; i = i + 1 {
+    count = on_event(nodes, 1, count)
+  }
+  println(arena() - b0)
+  println(live() - l0)
+  return count
+}
+
+const c1 = rung(40, 40)
+const c2 = rung(80, 40)
+if c1 == c2 {
+  println("model stable")
+}
+|};
+        close_out oc;
+        let out_bin = Filename.concat dir "main-c-bin" in
+        let exit_code = build_entry ~target:"c" entry out_bin in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        let out, _, proc_status = run_cmd (Filename.quote out_bin) in
+        Alcotest.(check string) "output" "0\n0\n0\n0\nmodel stable\n" out;
         match proc_status with
         | Unix.WEXITED 0 -> ()
         | s ->
@@ -2414,6 +2829,7 @@ let riscv64_examples_tests =
       "language_tour";
       "loops";
       "error_matching";
+      "floats";
     ]
 
 (* T19.4's honest refusals: a program the checker admits but the
@@ -2823,8 +3239,7 @@ let locked_tests =
   in
   let with_deps = " \"base64\" = \"0.1.0\" " in
   [
-    tc "--locked refuses a project with dependencies and no lockfile"
-      (fun () ->
+    tc "--locked refuses a project with dependencies and no lockfile" (fun () ->
         let dir = app ~deps:with_deps in
         in_dir dir (fun () ->
             Alcotest.(check (option int))
@@ -2837,17 +3252,20 @@ let locked_tests =
         close_out oc;
         in_dir dir (fun () ->
             Alcotest.(check (option int))
-              "passes" None (Emo_cli.locked_guard ~locked:true)));
+              "passes" None
+              (Emo_cli.locked_guard ~locked:true)));
     tc "a project without dependencies owes no lockfile" (fun () ->
         let dir = app ~deps:"" in
         in_dir dir (fun () ->
             Alcotest.(check (option int))
-              "passes" None (Emo_cli.locked_guard ~locked:true)));
+              "passes" None
+              (Emo_cli.locked_guard ~locked:true)));
     tc "without --locked nothing is refused" (fun () ->
         let dir = app ~deps:with_deps in
         in_dir dir (fun () ->
             Alcotest.(check (option int))
-              "passes" None (Emo_cli.locked_guard ~locked:false)));
+              "passes" None
+              (Emo_cli.locked_guard ~locked:false)));
   ]
 
 (* ---- new: the project scaffold (T24.3) ---- *)
@@ -2881,9 +3299,9 @@ let deps_add_tests =
     Unix.putenv var value;
     Fun.protect
       ~finally:(fun () ->
-          match old with
-          | Some v -> Unix.putenv var v
-          | None -> Unix.putenv var "")
+        match old with
+        | Some v -> Unix.putenv var v
+        | None -> Unix.putenv var "")
       f
   in
   let app ?(deps_block = "  deps {}\n") () =
@@ -2937,7 +3355,8 @@ let deps_add_tests =
             let lock = read_file "package.lock" in
             Alcotest.(check bool)
               "the lockfile carries the closure" true
-              (contains_sub lock "json 0.1.0 " && contains_sub lock "float 0.1.0 ")));
+              (contains_sub lock "json 0.1.0 "
+              && contains_sub lock "float 0.1.0 ")));
     tc "add pins a scoped package from the registry" (fun () ->
         fixture_registry (fun () ->
             let dir = app () in
@@ -2947,16 +3366,14 @@ let deps_add_tests =
                   (Emo_cli.deps_add ~name:"david/hack_it" ~version:"0.2.3");
                 Alcotest.(check bool)
                   "the manifest carries the pin" true
-                  (contains_sub (read_file "package.emo") "\"david/hack_it\" = \"0.2.3\"");
+                  (contains_sub (read_file "package.emo")
+                     "\"david/hack_it\" = \"0.2.3\"");
                 Alcotest.(check bool)
                   "the lockfile carries it" true
-                  (contains_sub (read_file "package.lock") "david/hack_it 0.2.3 "))));
+                  (contains_sub (read_file "package.lock")
+                     "david/hack_it 0.2.3 "))));
     tc "a manifest with no deps block gains one" (fun () ->
-        let dir =
-          app
-            ~deps_block:"  link = []\n"
-            ()
-        in
+        let dir = app ~deps_block:"  link = []\n" () in
         in_dir dir (fun () ->
             Alcotest.(check int)
               "exits 0" 0
@@ -3364,6 +3781,141 @@ let manifest_entry_tests =
                  ~specialize:false ~cclibs:[] ~target:"wasm")));
   ]
 
+(* The defects CHECK.md recorded and their fixes: a message sent on
+   typescript arrives as a snapshot, an Int64 pattern literal compares as
+   a big integer, a `for` loop in a class `init` keeps its value on beam,
+   a module-level `var` is refused cleanly where it is not implemented,
+   and `ocaml` evaluates operands in source order. *)
+let cross_target_tests =
+  [
+    tc "a message on typescript arrives as a snapshot" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry "cross-ts-send" c_send_snapshot_source in
+        let out_ts = Filename.concat (Filename.dirname entry) "main" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"typescript" entry out_ts);
+        check_run "typescript"
+          (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
+          "1\n99\n");
+    tc "typescript compares Int64 case patterns as big integers" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "cross-ts-int64-case"
+            {|def bucket(n Int64) Int64 {
+  var out = 0
+  for var i = 0; i < n; i = i + 1 {
+    case i {
+      0 -> { out = out + 10 }
+      1 -> { out = out + 20 }
+      _ -> { out = out + 30 }
+    }
+  }
+  return out
+}
+
+def main() {
+  println(bucket(3))
+}
+main()
+|}
+        in
+        let out_ts = Filename.concat (Filename.dirname entry) "main" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"typescript" entry out_ts);
+        check_run "typescript"
+          (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
+          "60\n");
+    tc "a for loop in a class init keeps its value on beam" (fun () ->
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "beam-init-loop"
+            {|class Grid {
+  def init(n Int64) {
+    self.n = n
+    const out = ArrayBuilder.new()
+    for var y = 0; y < n; y = y + 1 {
+      out.push(y)
+    }
+    self.rows = Box.new(out.to_array())
+  }
+}
+
+def main() {
+  const g = Grid.new(3)
+  println(g.rows.read())
+}
+main()
+|}
+        in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                (Filename.quote dir)))
+          "[0, 1, 2]\n");
+    tc "a module-level var is refused with exit 65, not an internal error"
+      (fun () ->
+        let entry =
+          scratch_entry "module-var-refusal"
+            {|def main() {
+  println(counter.bump())
+}
+main()
+|}
+        in
+        write_file
+          (Filename.concat (Filename.dirname entry) "counter.emo")
+          {|var count = 0
+
+def bump() Int64 {
+  count = count + 1
+  return count
+}
+|};
+        (* Exit 65 is the CLI's rendering of Lower_error; a `failwith`
+           escaping the emitter would exit 125. *)
+        List.iter
+          (fun target ->
+            let out =
+              Filename.concat (Filename.dirname entry) ("out-" ^ target)
+            in
+            Alcotest.(check int)
+              (target ^ " build exit") 65
+              (build_entry ~target entry out))
+          [ "typescript"; "wasm"; "beam" ]);
+    tc "ocaml evaluates operands left to right" (fun () ->
+        let entry =
+          scratch_entry "ocaml-eval-order"
+            {|def note(trace Box[String], i Int64) Int64 {
+  trace.replace(trace.read() + "${i}")
+  return i
+}
+
+def two(a Int64, b Int64) Int64 {
+  return a + b
+}
+
+def main() {
+  const trace = Box.new("")
+  const sum = two(note(trace, 1), note(trace, 2))
+  println("${trace.read()} = ${sum}")
+}
+main()
+|}
+        in
+        let bin = Filename.concat (Filename.dirname entry) "main-ocaml-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"ocaml" entry bin);
+        check_run "ocaml" (run_cmd (Filename.quote bin)) "12 = 3\n");
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -3378,7 +3930,9 @@ let () =
       ("beam_block", beam_block_tests);
       ("beam_var", beam_var_tests);
       ("c_examples", c_examples_tests);
+      ("c_tls", c_tls_tests);
       ("root_end", root_end_tests);
+      ("cross_target", cross_target_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
@@ -3386,6 +3940,7 @@ let () =
       ("c_callback", c_callback_tests);
       ("c_shape", c_shape_tests);
       ("c_recycle", c_recycle_tests);
+      ("c_flat_working_set", c_flat_working_set_tests);
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
       ("foreign_refusal", foreign_refusal_tests);

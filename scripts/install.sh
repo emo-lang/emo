@@ -1,21 +1,22 @@
 #!/bin/sh
 # The Emo toolchain installer — the one-line channel:
 #
-#   curl -fsSL https://raw.githubusercontent.com/emo-lang/emo/develop/scripts/install.sh | sh
+#   curl -fsSL https://www.emo-lang.cn/cdn/install.sh | sh
 #
-# Detects the platform, fetches the matching archive from the latest
-# GitHub Release, verifies its SHA256 against the release's
-# SHA256SUMS, and installs the binary (plus the macOS dylibs it loads
-# through @executable_path) under EMO_PREFIX, default ~/.emo:
+# Detects the platform, fetches the matching archive for the latest
+# release from the download site, verifies its SHA256 against the
+# release's SHA256SUMS, and installs the binary (plus the macOS dylibs
+# it loads through @executable_path) under EMO_PREFIX, default ~/.emo:
 #
 #   ~/.emo/bin/emo
 #   ~/.emo/lib/*.dylib    (macOS only — the archive is self-contained)
 #
-# Re-running upgrades in place; EMO_REPO and EMO_PREFIX redirect the
-# source and destination for testing.
+# Re-running upgrades in place; EMO_BASE_URL and EMO_PREFIX redirect
+# the source and destination for testing, EMO_VERSION pins a tag
+# instead of the latest release.
 set -e
 
-repo=${EMO_REPO:-emo-lang/emo}
+base=${EMO_BASE_URL:-https://www.emo-lang.cn/cdn}
 prefix=${EMO_PREFIX:-$HOME/.emo}
 
 case "$(uname -s)" in
@@ -40,15 +41,20 @@ arm64 | aarch64)
   ;;
 esac
 
-# releases/latest redirects to the newest tag — no API call, no rate
-# limit.
-latest=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
-  "https://github.com/$repo/releases/latest")
-tag=${latest##*/}
+# The download site's dist/releases.json carries the latest-version
+# pointer. The file has one fixed shape — written by
+# publish-release.sh, first key on its own line — so a plain sed
+# resolves it without a jq dependency.
+if [ -n "${EMO_VERSION:-}" ]; then
+  tag=$EMO_VERSION
+else
+  releases=$(curl -fsSL "$base/dist/releases.json")
+  tag=$(printf '%s\n' "$releases" | sed -n 's/^  "latest": "\([^"]*\)",$/\1/p')
+fi
 case $tag in
 v*) ;;
 *)
-  echo "install.sh: could not resolve the latest release of $repo" >&2
+  echo "install.sh: could not resolve the latest release from $base/dist/releases.json" >&2
   exit 1
   ;;
 esac
@@ -61,8 +67,7 @@ archive=emo-$tag-$os-$arch.$ext
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/emo-install.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-curl -fsSL -o "$tmp/$archive" \
-  "https://github.com/$repo/releases/download/$tag/$archive"
+curl -fsSL -o "$tmp/$archive" "$base/dist/$tag/$archive"
 
 if command -v sha256sum >/dev/null 2>&1; then
   checksum=sha256sum
@@ -72,8 +77,7 @@ else
   checksum=
 fi
 if [ -n "$checksum" ]; then
-  curl -fsSL -o "$tmp/SHA256SUMS" \
-    "https://github.com/$repo/releases/download/$tag/SHA256SUMS"
+  curl -fsSL -o "$tmp/SHA256SUMS" "$base/dist/$tag/SHA256SUMS"
   expected=$(sed -n "s/^\([0-9a-f]*\)  $archive\$/\1/p" "$tmp/SHA256SUMS")
   if [ -z "$expected" ]; then
     echo "install.sh: $tag's SHA256SUMS has no entry for $archive" >&2

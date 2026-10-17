@@ -29,13 +29,10 @@ def field(label String, value String) ui.Node {
 }
 
 def screen(reg ui.Registry, name String) ui.Node {
-  // The tags are taken first, in statements of their own. `on` is a side
-  // effect, and an operand's evaluation order is the target's, not the
-  // source's — `ocaml` evaluates operands right to left while the other
-  // four targets evaluate them left to right — so a `reg.on(...)` inside
-  // an argument position would register the messages in an order this
-  // file does not fix, and the tags, which are the message's index in
-  // the table, would differ per target (`CHECK.md`, evaluation order).
+  // The tags are taken first, in statements of their own: `on` is a side
+  // effect, and the statements make the registration order visible at the
+  // call site (`docs/intro/syntax.md`, operands evaluate left to right).
+  // The tags are the message's index in the table.
   const save = reg.on(Msg.save)
   const cancel = reg.on(Msg.cancel)
   const retry = reg.on(Msg.retry)

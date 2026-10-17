@@ -19,8 +19,9 @@ home to fix.
 require "float"
 ```
 
-The standard library ships with the compiler: `require "float"` needs no
-`package.emo` entry.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "float"` needs `"float" = "0.1.0"`
+in the manifest's `deps` block.
 
 ## The surface
 

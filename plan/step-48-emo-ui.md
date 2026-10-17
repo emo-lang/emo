@@ -17,8 +17,9 @@ application's `update` and `view` arriving as `Block` values — is what
 `c` and `wasm` cannot compile yet, and T48.4 found that `beam` compiles
 it but could not run it, which is fixed here (`CHECK.md`, the Elm loop's
 shape). T48.3 turned up two more, both silent rather than refusing:
-operands are evaluated in the target's order and `ocaml`'s is the
-reverse of the others', and an enum does not interpolate to the same
+operands were evaluated in the target's order, `ocaml`'s being the
+reverse of the others' — fixed 2026-10-17, left to right everywhere —
+and an enum does not interpolate to the same
 bytes on `typescript` or at all on `beam` (`CHECK.md`, operand
 evaluation order and the enum display form; `probe/eval_order`,
 `probe/enum_print`).
@@ -248,13 +249,15 @@ placement; `docs/emo-ui.md`, ask 7).
       the core at all — `App.deliver` calls a `Block` value with two
       arguments — and the gate pins that refusal's text. Two divergences
       the form had to be written around fell out, both recorded in
-      `CHECK.md` with minimal pairs pinned by `./check.sh`: operands are
-      evaluated in the target's order, and `ocaml`'s is the reverse of
+      `CHECK.md` with minimal pairs pinned by `./check.sh`: operands were
+      evaluated in the target's order, and `ocaml`'s was the reverse of
       every other target's, so a `reg.on(...)` in an argument position
-      hands out different tags per target (`probe/eval_order`); and an
-      enum interpolates to different bytes on `typescript` (qualified)
-      and raises on `beam`, which is why `debug.emo` interpolates no enum
-      and no tuple, destructuring instead (`probe/enum_print`).
+      handed out different tags per target (`probe/eval_order`) — fixed
+      2026-10-17, left to right on every target, and the pin now asserts
+      that; and an enum interpolates to different bytes on `typescript`
+      (qualified) and raises on `beam`, which is why `debug.emo`
+      interpolates no enum and no tuple, destructuring instead
+      (`probe/enum_print`).
 - [x] **T48.4** — `ui-tui`: the cell-grid layout (the small Emo box
       model) and ANSI painting; a scripted-input golden. **Landed
       2026-10-16** as `projects/emo-ui/tui/` (package `emo/ui_tui`:

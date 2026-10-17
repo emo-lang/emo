@@ -2271,9 +2271,10 @@ emo_to_string:
     call emo_i64_to_string
     j .Lts_done
 .Lts_f64:
-    la a0, msg_float
-    la a1, msg_float_end
-    call emo_fail
+    andi t0, a0, -16
+    fld fa0, 8(t0)
+    call emo_f64_to_string
+    j .Lts_done
 .Lts_imm:
     srli t1, a0, 1
     andi t1, t1, 7
@@ -2310,6 +2311,443 @@ emo_to_string:
     addi sp, sp, 16
     ret
 
+# emo_f64_to_string: fa0 = the double; a0 = a String. The rule every
+# target shares: an integral value below 1e16 in magnitude is written
+# with one decimal place ("2.0", "-0.0"); everything else takes %g —
+# six significant digits, trailing fractional zeros trimmed, the
+# exponent form below 1e-4 or at 1e6 and above.
+#
+# The exponent comes from the binary exponent (log10(2) in 12-bit
+# fixed point), then a down loop and an up loop against the pow10 table
+# settle it. The six digits are y * 10^(5-e) rounded to an integer; the
+# product rides as a double-double pair (the table holds each power as
+# hi + lo and FMSUB recovers the high product's exact residual), so
+# a value close to a half-integer still rounds as %g rounds it, and a
+# true tie (a half with nothing after it) rounds to even. Values
+# below 1e-300 are first multiplied by 1e300 (the result is still
+# normal) and the exponent is offset back.
+    .globl emo_f64_to_string
+emo_f64_to_string:
+    addi sp, sp, -128
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    fmv.x.d t0, fa0
+    li t1, 0x7ff0000000000000
+    and t2, t0, t1
+    beq t2, t1, .Lfs_special
+    li t2, 0x7fffffffffffffff
+    and t2, t0, t2
+    beqz t2, .Lfs_zero
+    srli t2, t0, 63
+    sd t2, 48(sp)
+    # integral and |f| < 1e16?
+    fabs.d fa1, fa0
+    la t2, emo_f64_1e16
+    fld fa2, 0(t2)
+    flt.d t2, fa1, fa2
+    beqz t2, .Lfs_g6
+    fcvt.l.d a0, fa0, rtz
+    fcvt.d.l fa2, a0, rtz
+    feq.d t2, fa2, fa0
+    beqz t2, .Lfs_g6
+    # the integer, then ".0" appended to a fresh block
+    call emo_i64_to_string
+    andi t0, a0, -16
+    ld t1, 8(t0)
+    sd t0, 56(sp)
+    sd t1, 64(sp)
+    addi a0, t1, 2
+    call emo_alloc_string
+    andi t2, a0, -16
+    addi t2, t2, 16
+    ld t0, 56(sp)
+    ld t1, 64(sp)
+    addi t3, t0, 16
+.Lfs_int_copy:
+    beqz t1, .Lfs_int_dot
+    lbu t4, 0(t3)
+    sb t4, 0(t2)
+    addi t3, t3, 1
+    addi t2, t2, 1
+    addi t1, t1, -1
+    j .Lfs_int_copy
+.Lfs_int_dot:
+    li t4, 46
+    sb t4, 0(t2)
+    li t4, 48
+    sb t4, 1(t2)
+    j .Lfs_done
+.Lfs_special:
+    li t2, 0x000fffffffffffff
+    and t2, t0, t2
+    bnez t2, .Lfs_nan
+    bltz t0, .Lfs_neg_inf
+    la a0, msg_inf
+    li a1, 3
+    call emo_string_lit
+    j .Lfs_done
+.Lfs_neg_inf:
+    la a0, msg_neg_inf
+    li a1, 4
+    call emo_string_lit
+    j .Lfs_done
+.Lfs_nan:
+    la a0, msg_nan
+    li a1, 3
+    call emo_string_lit
+    j .Lfs_done
+.Lfs_zero:
+    bltz t0, .Lfs_neg_zero
+    la a0, msg_zero
+    li a1, 3
+    call emo_string_lit
+    j .Lfs_done
+.Lfs_neg_zero:
+    la a0, msg_neg_zero
+    li a1, 4
+    call emo_string_lit
+    j .Lfs_done
+.Lfs_g6:
+    fabs.d fa0, fa0
+    li t0, 0
+    sd t0, 72(sp)
+    la t0, emo_f64_1e_300
+    fld fa1, 0(t0)
+    flt.d t0, fa0, fa1
+    beqz t0, .Lfs_norm
+    la t0, emo_f64_1e300
+    fld fa1, 0(t0)
+    fmul.d fa0, fa0, fa1
+    li t0, -300
+    sd t0, 72(sp)
+.Lfs_norm:
+    fmv.x.d t0, fa0
+    srli t0, t0, 52
+    andi t0, t0, 0x7ff
+    addi t0, t0, -1023
+    li t1, 1233
+    mul t0, t0, t1
+    srai t0, t0, 12
+    sd t0, 80(sp)
+    # settle the decimal exponent against the table's powers of ten
+.Lfs_e_down:
+    ld t0, 80(sp)
+    li t1, -303
+    ble t0, t1, .Lfs_e_up
+    addi t2, t0, 303
+    slli t2, t2, 3
+    la t1, emo_pow10
+    add t1, t1, t2
+    fld fa1, 0(t1)
+    flt.d t2, fa0, fa1
+    beqz t2, .Lfs_e_up
+    addi t0, t0, -1
+    sd t0, 80(sp)
+    j .Lfs_e_down
+.Lfs_e_up:
+    ld t0, 80(sp)
+    li t1, 308
+    bge t0, t1, .Lfs_scale
+    addi t2, t0, 1
+    addi t2, t2, 303
+    slli t2, t2, 3
+    la t1, emo_pow10
+    add t1, t1, t2
+    fld fa1, 0(t1)
+    flt.d t2, fa0, fa1
+    bnez t2, .Lfs_scale
+    addi t0, t0, 1
+    sd t0, 80(sp)
+    j .Lfs_e_up
+.Lfs_scale:
+    ld t0, 80(sp)
+    li t1, 5
+    sub t2, t1, t0
+    addi t2, t2, 303
+    slli t2, t2, 3
+    la t1, emo_pow10
+    add t3, t1, t2
+    fld fa1, 0(t3)
+    la t1, emo_pow10_lo
+    add t3, t1, t2
+    fld fa2, 0(t3)
+    fmul.d fa3, fa0, fa1
+    fmsub.d fa4, fa0, fa1, fa3
+    fmul.d fa5, fa0, fa2
+    fadd.d fa4, fa4, fa5
+    fcvt.l.d s0, fa3, rdn
+    fcvt.d.l fa5, s0
+    fsub.d fa5, fa3, fa5
+    la t1, emo_f64_half
+    fld fa6, 0(t1)
+    la t1, emo_f64_eps
+    fld fa2, 0(t1)
+    fsub.d fa7, fa5, fa6
+    fabs.d fa7, fa7
+    flt.d t0, fa7, fa2
+    beqz t0, .Lfs_round_plain
+    # A value within a rounding error of a half may still be an exact
+    # decimal tie (x = odd * 5^m * 2^(m-1) up to the significand's
+    # trailing zeros, with m = e - 5): compare the double's significand
+    # against the scaled odd integer and round a true tie to even.
+    ld t0, 72(sp)
+    bnez t0, .Lfs_tie_sign
+    ld t0, 80(sp)
+    addi t0, t0, -5
+    blez t0, .Lfs_tie_sign
+    li t1, 16
+    blt t1, t0, .Lfs_tie_sign
+    fmv.x.d t1, fa0
+    srli t2, t1, 52
+    andi t2, t2, 0x7ff
+    addi t2, t2, -1075
+    li t3, 0x000fffffffffffff
+    and t1, t1, t3
+    li t3, 0x0010000000000000
+    or t1, t1, t3
+    addi t2, t2, 1
+    sub t2, t0, t2
+    bltz t2, .Lfs_tie_sign
+    li t3, 52
+    blt t3, t2, .Lfs_tie_sign
+    srl t3, t1, t2
+    li t4, 1
+    sll t4, t4, t2
+    addi t4, t4, -1
+    and t4, t1, t4
+    bnez t4, .Lfs_tie_sign
+    slli t4, s0, 1
+    addi t4, t4, 1
+    la t5, emo_pow5
+    addi t6, t0, -1
+    slli t6, t6, 3
+    add t5, t5, t6
+    ld t5, 0(t5)
+    mul t4, t4, t5
+    bne t3, t4, .Lfs_tie_sign
+    andi t0, s0, 1
+    beqz t0, .Lfs_round_keep
+    j .Lfs_round_up
+.Lfs_tie_sign:
+    flt.d t0, fa6, fa5
+    bnez t0, .Lfs_round_up
+    flt.d t0, fa5, fa6
+    bnez t0, .Lfs_round_keep
+    fmv.d.x fa6, x0
+    flt.d t0, fa6, fa4
+    bnez t0, .Lfs_round_up
+    flt.d t0, fa4, fa6
+    bnez t0, .Lfs_round_keep
+    andi t0, s0, 1
+    beqz t0, .Lfs_round_keep
+    j .Lfs_round_up
+.Lfs_round_plain:
+    flt.d t0, fa6, fa5
+    beqz t0, .Lfs_round_keep
+.Lfs_round_up:
+    addi s0, s0, 1
+.Lfs_round_keep:
+    li t0, 1000000
+    bne s0, t0, .Lfs_digits
+    li s0, 100000
+    ld t0, 80(sp)
+    addi t0, t0, 1
+    sd t0, 80(sp)
+.Lfs_digits:
+    addi t1, sp, 101
+    li t2, 10
+    mv t3, s0
+    li t4, 6
+.Lfs_digit_loop:
+    remu t5, t3, t2
+    addi t5, t5, 48
+    sb t5, 0(t1)
+    divu t3, t3, t2
+    addi t1, t1, -1
+    addi t4, t4, -1
+    bnez t4, .Lfs_digit_loop
+    addi s1, sp, 96
+    li s2, 6
+.Lfs_trim:
+    li t0, 1
+    ble s2, t0, .Lfs_form
+    add t0, s1, s2
+    lbu t0, -1(t0)
+    li t1, 48
+    bne t0, t1, .Lfs_form
+    addi s2, s2, -1
+    j .Lfs_trim
+.Lfs_form:
+    ld t0, 80(sp)
+    ld t1, 72(sp)
+    add t0, t0, t1
+    sd t0, 80(sp)
+    li t1, -4
+    blt t0, t1, .Lfs_sci
+    li t1, 6
+    bge t0, t1, .Lfs_sci
+    j .Lfs_plain
+.Lfs_plain:
+    addi s3, sp, 104
+    ld t0, 48(sp)
+    beqz t0, .Lfs_plain_dot
+    li t1, 45
+    sb t1, 0(s3)
+    addi s3, s3, 1
+.Lfs_plain_dot:
+    ld t0, 80(sp)
+    bgez t0, .Lfs_plain_int
+    li t1, 48
+    sb t1, 0(s3)
+    li t1, 46
+    sb t1, 1(s3)
+    addi s3, s3, 2
+    sub t2, x0, t0
+    addi t2, t2, -1
+.Lfs_plain_zero:
+    beqz t2, .Lfs_plain_frac
+    li t1, 48
+    sb t1, 0(s3)
+    addi s3, s3, 1
+    addi t2, t2, -1
+    j .Lfs_plain_zero
+.Lfs_plain_frac:
+    mv t2, s2
+    mv t3, s1
+.Lfs_plain_fcopy:
+    beqz t2, .Lfs_emit
+    lbu t1, 0(t3)
+    sb t1, 0(s3)
+    addi t3, t3, 1
+    addi s3, s3, 1
+    addi t2, t2, -1
+    j .Lfs_plain_fcopy
+.Lfs_plain_int:
+    addi t2, t0, 1
+    mv t3, s1
+.Lfs_plain_icopy:
+    beqz t2, .Lfs_plain_idone
+    lbu t1, 0(t3)
+    sb t1, 0(s3)
+    addi t3, t3, 1
+    addi s3, s3, 1
+    addi t2, t2, -1
+    j .Lfs_plain_icopy
+.Lfs_plain_idone:
+    addi t2, t0, 1
+    sub t2, s2, t2
+    blez t2, .Lfs_emit
+    li t1, 46
+    sb t1, 0(s3)
+    addi s3, s3, 1
+    add t3, s1, t0
+    addi t3, t3, 1
+.Lfs_plain_dcopy:
+    beqz t2, .Lfs_emit
+    lbu t1, 0(t3)
+    sb t1, 0(s3)
+    addi t3, t3, 1
+    addi s3, s3, 1
+    addi t2, t2, -1
+    j .Lfs_plain_dcopy
+.Lfs_sci:
+    addi s3, sp, 104
+    ld t0, 48(sp)
+    beqz t0, .Lfs_sci_head
+    li t1, 45
+    sb t1, 0(s3)
+    addi s3, s3, 1
+.Lfs_sci_head:
+    lbu t1, 0(s1)
+    sb t1, 0(s3)
+    addi s3, s3, 1
+    li t2, 1
+    ble s2, t2, .Lfs_sci_exp
+    li t1, 46
+    sb t1, 0(s3)
+    addi s3, s3, 1
+    addi t3, s1, 1
+    addi t2, s2, -1
+.Lfs_sci_fcopy:
+    beqz t2, .Lfs_sci_exp
+    lbu t1, 0(t3)
+    sb t1, 0(s3)
+    addi t3, t3, 1
+    addi s3, s3, 1
+    addi t2, t2, -1
+    j .Lfs_sci_fcopy
+.Lfs_sci_exp:
+    li t1, 101
+    sb t1, 0(s3)
+    addi s3, s3, 1
+    ld t0, 80(sp)
+    bgez t0, .Lfs_sci_plus
+    li t1, 45
+    sb t1, 0(s3)
+    sub t0, x0, t0
+    j .Lfs_sci_sign
+.Lfs_sci_plus:
+    li t1, 43
+    sb t1, 0(s3)
+.Lfs_sci_sign:
+    addi s3, s3, 1
+    addi t1, sp, 127
+    li t2, 10
+    mv t3, t0
+    li t4, 0
+.Lfs_sci_digit:
+    remu t5, t3, t2
+    addi t5, t5, 48
+    addi t1, t1, -1
+    sb t5, 0(t1)
+    divu t3, t3, t2
+    addi t4, t4, 1
+    bnez t3, .Lfs_sci_digit
+    li t5, 2
+    bge t4, t5, .Lfs_sci_ecopy
+    li t5, 48
+    addi t1, t1, -1
+    sb t5, 0(t1)
+    addi t4, t4, 1
+.Lfs_sci_ecopy:
+    beqz t4, .Lfs_emit
+    lbu t5, 0(t1)
+    sb t5, 0(s3)
+    addi t1, t1, 1
+    addi s3, s3, 1
+    addi t4, t4, -1
+    j .Lfs_sci_ecopy
+.Lfs_emit:
+    addi t0, sp, 104
+    sub t1, s3, t0
+    sd t0, 56(sp)
+    sd t1, 64(sp)
+    mv a0, t1
+    call emo_alloc_string
+    andi t2, a0, -16
+    addi t2, t2, 16
+    ld t0, 56(sp)
+    ld t1, 64(sp)
+.Lfs_emit_copy:
+    beqz t1, .Lfs_done
+    lbu t3, 0(t0)
+    sb t3, 0(t2)
+    addi t0, t0, 1
+    addi t2, t2, 1
+    addi t1, t1, -1
+    j .Lfs_emit_copy
+.Lfs_done:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    addi sp, sp, 128
+    ret
+
 # emo_println: a0 = any dynamic value; the string form, a newline.
     .globl emo_println
 emo_println:
@@ -2343,9 +2781,16 @@ msg_false_end:
 msg_heap:
     .ascii "the value heap is exhausted"
 msg_heap_end:
-msg_float:
-    .ascii "cannot convert a Float64 to a string yet"
-msg_float_end:
+msg_nan:
+    .ascii "nan"
+msg_inf:
+    .ascii "inf"
+msg_neg_inf:
+    .ascii "-inf"
+msg_zero:
+    .ascii "0.0"
+msg_neg_zero:
+    .ascii "-0.0"
 msg_kind:
     .ascii "cannot convert this value to a string yet"
 msg_kind_end:
@@ -2431,6 +2876,92 @@ emo_heap_end:
 emo_heap_cursor:
     .zero 8
 |asm}
+
+(* The float formatter's tables: 10^k for every exponent the rule can
+   produce (indexed by k + 303), as a double-double pair so the digit
+   product carries about twice a double's precision, plus the constants
+   the integral check and the deep-subnormal rescale read. The pairs
+   come from double-double exponentiation by squaring; every power the
+   tie rule can meet (|k| small) is exact, so its low half is zero. *)
+let float_tables_asm =
+  let split a =
+    if a = 0.0 then (0.0, 0.0)
+    else
+      let s, inv =
+        if Float.abs a > 1e292 then (3.725290298461914e-9, 268435456.0)
+        else if Float.abs a < 1e-292 then (268435456.0, 3.725290298461914e-9)
+        else (1.0, 1.0)
+      in
+      let a' = a *. s in
+      let c = 134217729.0 *. a' in
+      let hi = c -. (c -. a') in
+      let lo = a' -. hi in
+      (hi *. inv, lo *. inv)
+  in
+  let dd_mul (a, ae) (b, be) =
+    let p = a *. b in
+    let ah, al = split a in
+    let bh, bl = split b in
+    let err = (ah *. bh) -. p +. (ah *. bl) +. (al *. bh) +. (al *. bl) in
+    let e = err +. (a *. be) +. (ae *. b) +. (ae *. be) in
+    let s = p +. e in
+    (s, p -. s +. e)
+  in
+  let dd_div (a, ae) (b, be) =
+    let q = a /. b in
+    let p, pe = dd_mul (q, 0.0) (b, be) in
+    let r = a -. p +. (ae -. pe) in
+    let q2 = r /. b in
+    let s = q +. q2 in
+    (s, q -. s +. q2)
+  in
+  let rec pow10 k =
+    if k >= 0 then
+      let rec go acc base n =
+        if n = 0 then acc
+        else
+          let acc = if n land 1 = 1 then dd_mul acc base else acc in
+          let base = if n > 1 then dd_mul base base else base in
+          go acc base (n lsr 1)
+      in
+      go (1.0, 0.0) (10.0, 0.0) k
+    else dd_div (1.0, 0.0) (pow10 (-k))
+  in
+  let lo = -303 and hi = 308 in
+  let b = Buffer.create 32768 in
+  Buffer.add_string b
+    ("\n# ---- Float64 formatting tables ----\n\n"
+   ^ "    .section .rodata\n    .align 3\nemo_pow10:\n");
+  for k = lo to hi do
+    let h, _ = pow10 k in
+    Buffer.add_string b
+      (Printf.sprintf "    .quad 0x%016Lx\n" (Int64.bits_of_float h))
+  done;
+  Buffer.add_string b "emo_pow10_lo:\n";
+  for k = lo to hi do
+    let _, l = pow10 k in
+    Buffer.add_string b
+      (Printf.sprintf "    .quad 0x%016Lx\n" (Int64.bits_of_float l))
+  done;
+  Buffer.add_string b "emo_pow5:\n";
+  let p5 = ref 1L in
+  for _ = 1 to 16 do
+    p5 := Int64.mul !p5 5L;
+    Buffer.add_string b (Printf.sprintf "    .dword %Ld\n" !p5)
+  done;
+  List.iter
+    (fun (label, v) ->
+      Buffer.add_string b
+        (Printf.sprintf "%s:\n    .quad 0x%016Lx\n" label
+           (Int64.bits_of_float v)))
+    [
+      ("emo_f64_1e16", 1e16);
+      ("emo_f64_1e300", 1e300);
+      ("emo_f64_1e_300", 1e-300);
+      ("emo_f64_half", 0.5);
+      ("emo_f64_eps", 1e-6);
+    ];
+  Buffer.contents b
 
 (* Walk every body, collecting the enum members the program names
    (Make_enum expressions and Enum_member patterns share one id space). *)
@@ -2605,6 +3136,7 @@ let emit (program : Emo_ir.program) : string =
     program.pclasses;
   walk_stmts_enum env program.pinit;
   gput env "%s\n" runtime_asm;
+  gput env "%s\n" float_tables_asm;
   (* The runtime's message block ends in .rodata; the program's code is
      text. *)
   gput env "\n    .section .text\n";

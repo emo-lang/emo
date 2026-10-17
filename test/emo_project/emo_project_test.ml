@@ -560,6 +560,25 @@ let registry_dir =
   return n / 2
 }
 |};
+  let ts_dir =
+    Filename.concat dir
+      (Filename.concat "acme" (Filename.concat "ts_tools" "1.0.0"))
+  in
+  write_file
+    (Filename.concat ts_dir "package.emo")
+    {|package {
+  name = "acme/ts_tools"
+  version = "1.0.0"
+  targets = ["ocaml", "typescript"]
+  deps {}
+}
+|};
+  write_file
+    (Filename.concat ts_dir "ts_tools.emo")
+    {|def bump(n Int64) Int64 {
+  return n + 1
+}
+|};
   (* A package with a submodule and an internal subtree: its body references
      the internal relative to the package root, and a consumer addresses the
      submodule under the short-name prefix. *)
@@ -1471,6 +1490,79 @@ println(c_tools.halve(8))
             | _ -> ()
             | exception Emo_project.Static_errors ds ->
                 Alcotest.fail ("codes: " ^ codes_dump ds)));
+    tc "a typescript build refuses a package without a typescript build"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "typescript"]
+
+  deps {
+    "acme/json_tools" = "2.3.1"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/json_tools"
+println(json_tools.parse("hello"))
+|}
+              );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"typescript"
+            with
+            | _ -> Alcotest.fail "expected the typescript gate to refuse"
+            | exception Emo_project.Static_errors ds -> (
+                match ds with
+                | [ d ] ->
+                    Alcotest.(check string)
+                      "code" "E5007"
+                      (match d.Diagnostic.code with Some c -> c | None -> "?");
+                    Alcotest.(check bool)
+                      "names the dep and the target" true
+                      (contains_substring d.Diagnostic.message "acme/json_tools"
+                      && contains_substring d.Diagnostic.message "`typescript`"
+                      )
+                | _ -> Alcotest.fail ("codes: " ^ codes_dump ds))));
+    tc "a typescript build accepts a package that declares the target"
+      (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["ocaml", "typescript"]
+
+  deps {
+    "acme/ts_tools" = "1.0.0"
+  }
+}
+|}
+              );
+              ( "main.emo",
+                {|require "acme/ts_tools"
+println(ts_tools.bump(41))
+|} );
+            ]
+            "main.emo"
+        in
+        with_registry (fun () ->
+            match
+              Emo_project.compile_inputs ~entry_file:entry ~target:"typescript"
+            with
+            | _ -> ()
+            | exception Emo_project.Static_errors ds ->
+                Alcotest.fail ("codes: " ^ codes_dump ds)));
     tc
       "a package submodule resolves under the short name and its internal is \
        relative" (fun () ->
@@ -2023,6 +2115,25 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
             in
             Alcotest.(check string)
               "wasm refusal" "no build for target `wasm`" messages);
+    tc "the stdlib targets are honest: wasm resolves a pure package" (fun () ->
+        let registry = use_workspace_registry () in
+        let reg = Emo_pkg.Registry.Fs_dir registry in
+        let index = Emo_pkg.Registry.index reg [ "base64" ] in
+        let roots =
+          match Emo_pkg.Version.parse "0.1.0" with
+          | Ok v -> [ ("base64", v) ]
+          | Error _ -> Alcotest.fail "bad fixture version"
+        in
+        match Emo_pkg.Resolve.solve ~target:"wasm" ~roots ~index with
+        | Ok _ -> ()
+        | Error errors ->
+            Alcotest.fail
+              (String.concat "; "
+                 (List.map
+                    (fun e ->
+                      Printf.sprintf "%s: %s" e.Emo_pkg.Resolve.e_dep
+                        e.Emo_pkg.Resolve.e_message)
+                    errors)));
     tc "the stdlib targets are honest: riscv64 refuses until declared"
       (fun () ->
         let registry = use_workspace_registry () in
@@ -2097,8 +2208,8 @@ println("ok")
           "a refused run writes no package.lock" false
           (Sys.file_exists (Filename.concat dir Emo_pkg.Lockfile.filename)));
     tc
-      "a pinned standard-library package resolves its own transitive \
-       dependency" (fun () ->
+      "a pinned standard-library package resolves its own transitive dependency"
+      (fun () ->
         ignore (use_workspace_registry ());
         let entry =
           with_project
@@ -2781,6 +2892,9 @@ let ts_golden_tests =
       ("hello_world", "main.emo");
       ("fib", "main.emo");
       ("objects", "main.emo");
+      ("language_tour", "main.emo");
+      ("shop", "main.emo");
+      ("pipeline", "main.emo");
       ("function_group", "main.emo");
       ("showcase", "main.emo");
       ("bit_ops", "main.emo");

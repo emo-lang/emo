@@ -10,6 +10,19 @@ unscheduled" is what this step changes), `plan/step-23-c-target.md`
 milestone was written against v1.0.0, and the toolchain release
 accompanies the official 1.0)
 
+> **Amended 2026-10-17 — `emo install` was removed.** The command
+> duplicated what the build path already does (resolve, fetch, write
+> the lockfile) and what `emo deps resolve` does explicitly, under a
+> name that read as the never-built install-binaries-into-PATH
+> shape. The dependency workflow today: `emo deps add <name>
+> <version>` pins and locks, `emo deps resolve` writes
+> `package.lock`, `emo deps update` regenerates it, and every
+> `run`/`build`/`check`/`test` resolves on its own — a project with
+> no lockfile writes one on its first run, with a note on stderr.
+> The task records below are left as written, with notes where they
+> named the removed command; global executable installation remains
+> out of scope for 1.0.
+
 ## Why this step exists
 
 M6 made *built programs* self-contained: `emo build --target c`
@@ -22,6 +35,7 @@ uploads through an embedded uploader program — but nothing assembles
 them into something downloadable, and three commands a product
 needs (`emo new`, `emo install`, `emo doctor`) do not exist. The CLI
 today is `run`/`repl`/`check`/`build`/`deps`/`publish`/`version`.
+(The middle command was later removed — see the amendment above.)
 
 Meanwhile the defaults still assume a source install: `emo build`
 defaults to `--target ocaml`, which a binary-only machine can never
@@ -41,8 +55,8 @@ per-platform archives (Linux x86_64/aarch64, macOS x86_64/arm64)
 whose binaries pass end-to-end acceptance on every platform. A
 machine with only the installed binary — no OCaml, no opam, no
 repository — runs, checks, and builds Emo programs through the `c`
-target, scaffolds with `emo new`, installs dependencies with
-`emo install`, and diagnoses its environment with `emo doctor`.
+target, scaffolds with `emo new`, pins dependencies with
+`emo deps add`, and diagnoses its environment with `emo doctor`.
 
 Boundaries, stated plainly:
 
@@ -79,6 +93,8 @@ All four close in `CHECK.md` at T24.1:
 - **`emo install` semantics.** It is the project-dependencies front
   end — resolve, fetch, lock, ready to run. Global executable
   installation (the cargo-install shape) is out of scope for 1.0.
+  (Superseded 2026-10-17: the command was removed; `emo deps` and
+  the build path own resolve/fetch/lock.)
 - **The dependency cache location.** The temp-directory default
   becomes a durable user cache; `$TMPDIR` is wiped by the OS and a
   product cannot re-fetch on every build.
@@ -109,7 +125,7 @@ All four close in `CHECK.md` at T24.1:
       failure mode — no registry configured, unsatisfiable pin, a
       dependency lacking the requested target — gets its own clear
       message. `emo deps` keeps resolve/update/list as the explicit
-      paths. (Done 2026-10-07: idempotent — the second run reports `(already cached)` and `package.lock is up to date`, and the lockfile is written only when it would change; the cache default moved to `~/.cache/emo` honoring `XDG_CACHE_HOME`, `EMO_CACHE_DIR` still overriding.)
+      paths. (Done 2026-10-07: idempotent — the second run reports `(already cached)` and `package.lock is up to date`, and the lockfile is written only when it would change; the cache default moved to `~/.cache/emo` honoring `XDG_CACHE_HOME`, `EMO_CACHE_DIR` still overriding.) (Amended 2026-10-17: `emo install` was removed; the resolve/fetch/lock behavior it fronted lives in `emo deps resolve` and in the build path's own resolution, and the cache default it established stays.)
 - [x] **T24.5** — `emo doctor`: the target-aware environment check,
       replacing the interim ocaml-only shape in `CHECK.md`. Per
       target: `c` — a cc compile-and-run smoke; `ocaml` — the
@@ -142,7 +158,9 @@ All four close in `CHECK.md` at T24.1:
       artifact, end to end — download, unpack, `emo doctor`,
       `emo new`, `emo run`, `emo install`, `emo build` (the `c`
       target) — including a stdlib-importing program and the golden
-      subset executed from the installed binary. VERSION becomes
+      subset executed from the installed binary. (The `emo install`
+      step of this acceptance is now covered by `emo deps resolve`
+      and the build path's own resolution.) VERSION becomes
       1.0.0 in the release commit; annotated tag, release notes,
       close-out.
  (Done 2026-10-07: from the packaged-and-unpacked archive — doctor healthy in the prebuilt shape, `emo new` → run → build green, `emo install` resolving through the embedded stdlib, and the golden subset 14/14 from the installed binary: 13 via `emo run` byte-for-byte, numerics through its designed compiled path (it crosses `foreign def`, which `emo run` refuses by design); http_roundtrip and tcp_echo ride the in-tree suite, needing live network clients.)
@@ -156,15 +174,18 @@ repository secrets exist (the workflow notices):
   drafted as a GitHub Release — the packaging script verified end to
   end locally (macOS arm64: build → package → extract → run).
 - On every shipped artifact: `emo doctor` healthy; `emo new` →
-  `emo run` → `emo install` → `emo build` green on a machine with
+  `emo run` → dependency resolution (then via `emo install`, now
+  `emo deps resolve`) → `emo build` green on a machine with
   nothing but the archive's contents; a stdlib-importing program and
   the golden subset print byte-for-byte what the source tree prints.
 - A binary-only machine (no OCaml, no opam) runs, checks, and builds
   through the `c` target; `--target ocaml` refuses with the
   source-install guidance.
-- `emo new`, `emo install`, `emo doctor` exist with the strictness
-  rules above; the CLI is `run`/`repl`/`check`/`build`/`deps`/
-  `publish`/`new`/`install`/`doctor`/`version`.
+- `emo new`, `emo install`, `emo doctor` existed with the strictness
+  rules above; the CLI was `run`/`repl`/`check`/`build`/`deps`/
+  `publish`/`new`/`install`/`doctor`/`version`. (`emo install` was
+  removed 2026-10-17, leaving `run`/`repl`/`check`/`build`/`deps`/
+  `test`/`emoji`/`new`/`doctor`/`version`.)
 - `dune test` green; the default-target flip carries the
   resolution-gate and CI groups with it.
 
@@ -174,6 +195,8 @@ repository secrets exist (the workflow notices):
 - ~~Stdlib embed vs sidecar~~ — settled at T24.1: embed.
 - ~~`emo install` semantics~~ — settled at T24.1: the project
   frontend; global executable installation out of scope for 1.0.
+  The command itself was removed 2026-10-17; `emo deps` and the
+  build path own resolve/fetch/lock.
 - ~~Whether a pinned, checksummed install script rides T24.8~~ —
   settled at close-out: the archives alone ship. The install-script
   question returns with the registry service milestone, which is

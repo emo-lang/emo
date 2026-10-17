@@ -15,7 +15,7 @@ c 这两个有 Unix 形态宿主的目标。
 require "bufio"
 ```
 
-标准库随编译器一起发布:`require "bufio"` 无需在 `package.emo` 中声明——它依赖的 `os` 会一并解析。
+标准库随编译器一起发布,但它的包和其他依赖一样带版本:`require "bufio"` 需要在 manifest 的 `deps` 块里钉上 `"bufio" = "0.1.0"`;它依赖的 `os` 由 `bufio` 自己的 manifest 带入。
 
 ## 流的两个形状
 

@@ -13,8 +13,9 @@ encode(decode(x)) reproduces the tree.
 require "xml"
 ```
 
-The standard library ships with the compiler: `require "xml"` needs no
-`package.emo` entry.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "xml"` needs `"xml" = "0.1.0"` in
+the manifest's `deps` block.
 
 ## Values
 

@@ -11,8 +11,9 @@ compiles the language answers identically, byte for byte.
 require "json"
 ```
 
-The standard library ships with the compiler: `require "json"` needs no
-`package.emo` entry.
+The standard library ships with the compiler, but its packages are
+versioned like any other: `require "json"` needs `"json" = "0.1.0"` in
+the manifest's `deps` block.
 
 ## Values
 

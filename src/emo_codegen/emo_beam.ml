@@ -136,7 +136,10 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Const (L_char c) -> put env (one_byte_lit (Char.code c))
   | Const (L_string s) -> put env (binary_lit s)
   | Type_ref a -> put env ("'" ^ a ^ "'")
-  | Emo_ir.Global_var _ -> failwith "beam: module-level `var` is not supported"
+  | Emo_ir.Global_var _ ->
+      raise
+        (Emo_ir.Lower_error
+           "the beam target does not support module-level `var` yet")
   | Var name -> (
       match List.assoc_opt name env.local_map with
       | Some v -> put env v
@@ -159,7 +162,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
           let args = String.concat ", " vs in
           put env
             (Printf.sprintf "fun (%s) -> apply '%s'/%d (%s)" args
-               (Emo_ir.sanitize_ident name) a args)
+               (Emo_ir.sanitize_ident name)
+               a args)
       | None -> failwith ("beam: unbound global " ^ name))
   | Call { func; args } -> (
       match List.assoc_opt func env.funcs with
@@ -838,7 +842,7 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
   | ((Emo_ir.While _ | Emo_ir.For _) as loop) :: rest ->
       (* a loop rebinds its threaded bindings over the rest of the
          chain, so it consumes the rest like a let *)
-      emit_loop env loop rest ~leaf:(fun () -> put env "'ok'")
+      emit_loop env ~tail:false loop rest ~leaf:(fun () -> put env "'ok'")
   | [ s ] -> stmt env s
   | Emo_ir.Let { name; init; _ } :: rest ->
       (* a let scopes over everything after it *)
@@ -861,39 +865,11 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
   | Emo_ir.Set_field { self_; name; value } :: rest ->
       (* the instance tuple is rebuilt with setelement; self rebinds
          over the rest of the block *)
-      let class_name =
-        match self_.Emo_ir.ety with
-        | Emo_check.ClassType c -> (
-            match mangled_of_display env.classes c with
-            | Some cname -> cname
-            | None -> (
-                match env.current_class with
-                | Some c -> c
-                | None -> failwith "beam: field set without a known class"))
-        | _ -> (
-            match env.current_class with
-            | Some c -> c
-            | None -> failwith "beam: field set without a known class")
-      in
-      let fidx =
-        match List.assoc_opt class_name env.class_field with
-        | Some fields -> (
-            match List.assoc_opt name fields with
-            | Some i -> i
-            | None -> failwith ("beam: unknown field " ^ class_name ^ "." ^ name)
-            )
-        | None -> failwith ("beam: unknown class " ^ class_name)
-      in
-      let self_code = expr_block env self_ in
-      let value_code = expr_block env value in
+      let call = set_field_call env self_ name value in
       let v = fresh_var env "self" in
       put env ("let <" ^ v ^ "> =\n");
-      put env (Printf.sprintf "call 'erlang':'setelement'(%d, " (fidx + 3));
-      put env self_code;
-      put env ", ";
-      put env value_code;
-      put env ")\nin ";
-      env.local_map <- ("self", v) :: env.local_map;
+      put env call;
+      put env "\nin ";
       stmts env rest
   | ((Emo_ir.If _ | Emo_ir.Case _) as s) :: rest
     when List.exists
@@ -937,7 +913,7 @@ and emit_threaded_body env (assigned : string list) (body : Emo_ir.stmt list) :
      tuple of final bindings — the same continuation trick the loop
      body uses, so the tuple lands inside the last binding's scope. *)
   let saved = env.local_map in
-  emit_loop_body env body ~leaf:(fun () ->
+  emit_loop_body env ~tail:true body ~leaf:(fun () ->
       put env "{";
       put env
         (String.concat ", "
@@ -1000,6 +976,38 @@ and emit_threaded_control env (assigned : string list) (s : Emo_ir.stmt) : unit
       put env "end"
   | _ -> assert false
 
+(* The instance tuple a field set rebuilds: `setelement(index, self,
+   value)`. The class and the field index resolve from the receiver's
+   type, falling back to the class whose body is being emitted. *)
+and set_field_call env (self_ : Emo_ir.expr) name (value : Emo_ir.expr) :
+    string =
+  let class_name =
+    match self_.Emo_ir.ety with
+    | Emo_check.ClassType c -> (
+        match mangled_of_display env.classes c with
+        | Some cname -> cname
+        | None -> (
+            match env.current_class with
+            | Some c -> c
+            | None -> failwith "beam: field set without a known class"))
+    | _ -> (
+        match env.current_class with
+        | Some c -> c
+        | None -> failwith "beam: field set without a known class")
+  in
+  let fidx =
+    match List.assoc_opt class_name env.class_field with
+    | Some fields -> (
+        match List.assoc_opt name fields with
+        | Some i -> i
+        | None -> failwith ("beam: unknown field " ^ class_name ^ "." ^ name))
+    | None -> failwith ("beam: unknown class " ^ class_name)
+  in
+  let self_code = expr_block env self_ in
+  let value_code = expr_block env value in
+  Printf.sprintf "call 'erlang':'setelement'(%d, %s, %s)" (fidx + 3) self_code
+    value_code
+
 and stmt env (s : Emo_ir.stmt) : unit =
   match s with
   | Emo_ir.Effect x -> expr env x
@@ -1021,40 +1029,15 @@ and stmt env (s : Emo_ir.stmt) : unit =
       put env "\nin ";
       put env v
   | Emo_ir.Set_global_var _ ->
-      failwith "beam: module-level `var` is not supported"
+      raise
+        (Emo_ir.Lower_error
+           "the beam target does not support module-level `var` yet")
   | Emo_ir.Set_field { self_; name; value } ->
-      let class_name =
-        match self_.Emo_ir.ety with
-        | Emo_check.ClassType c -> (
-            match mangled_of_display env.classes c with
-            | Some cname -> cname
-            | None -> (
-                match env.current_class with
-                | Some c -> c
-                | None -> failwith "beam: field set without a known class"))
-        | _ -> (
-            match env.current_class with
-            | Some c -> c
-            | None -> failwith "beam: field set without a known class")
-      in
-      let fidx =
-        match List.assoc_opt class_name env.class_field with
-        | Some fields -> (
-            match List.assoc_opt name fields with
-            | Some i -> i
-            | None -> failwith ("beam: unknown field " ^ class_name ^ "." ^ name)
-            )
-        | None -> failwith ("beam: unknown class " ^ class_name)
-      in
-      let self_code = expr_block env self_ in
-      let value_code = expr_block env value in
+      let call = set_field_call env self_ name value in
       let v = fresh_var env "self" in
       put env ("let <" ^ v ^ "> =\n");
-      put env (Printf.sprintf "call 'erlang':'setelement'(%d, " (fidx + 3));
-      put env self_code;
-      put env ", ";
-      put env value_code;
-      put env ")\nin ";
+      put env call;
+      put env "\nin ";
       put env v
   | Emo_ir.Return_stmt x ->
       (* the function-body try wrapper turns this into the result *)
@@ -1334,24 +1317,33 @@ and has_direct_jump env (s : Emo_ir.stmt) : bool =
    statements sequence through `do`. Every fall-through path ends in
    [leaf] — the threaded jump, a genuine tail call — so a jump never
    sits in a scrutinee or a `do` head where it could return. *)
-and emit_loop_body env ~(leaf : unit -> unit) (xs : Emo_ir.stmt list) : unit =
+and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
+    (xs : Emo_ir.stmt list) : unit =
   match xs with
   | [] -> leaf ()
   | Emo_ir.Break :: _ -> stmt env Emo_ir.Break
   | Emo_ir.Continue :: _ -> stmt env Emo_ir.Continue
+  | [ ((Emo_ir.While _ | Emo_ir.For _) as loop) ] when not tail ->
+      (* The loop is the last statement of a value chain: its value is
+         the list's value, so no jump follows it. *)
+      emit_loop env ~tail ~leaf:(fun () -> put env "'ok'") loop []
+  | [ s ] when not tail ->
+      (* Outside a loop body the last statement's own value is the
+         list's value; the tail chain's leaf does not follow it. *)
+      stmt env s
   | Emo_ir.If { cond; then_; else_; _ } :: rest ->
       put env "\t\tcase ";
       expr env cond;
       put env " of\n\t\t  <'true'> when 'true' ->\n\t\t";
       let saved = env.local_map in
-      emit_loop_body env (then_ @ rest) ~leaf;
+      emit_loop_body env ~tail (then_ @ rest) ~leaf;
       env.local_map <- saved;
       put env "\n\t\t  <'false'> when 'true' ->\n\t\t";
-      emit_loop_body env (else_ @ rest) ~leaf;
+      emit_loop_body env ~tail (else_ @ rest) ~leaf;
       env.local_map <- saved;
       put env "\n\t\tend"
   | ((Emo_ir.While _ | Emo_ir.For _) as loop) :: rest ->
-      emit_loop env loop rest ~leaf
+      emit_loop env ~tail loop rest ~leaf
   | (Emo_ir.Case { branches; _ } as s) :: rest ->
       if
         List.exists
@@ -1361,9 +1353,7 @@ and emit_loop_body env ~(leaf : unit -> unit) (xs : Emo_ir.stmt list) : unit =
       then
         failwith "beam: a `case` branch jumps out of a loop — not supported yet"
       else if
-        List.exists
-          (fun n -> List.mem_assoc n env.local_map)
-          (assigned_names s)
+        List.exists (fun n -> List.mem_assoc n env.local_map) (assigned_names s)
       then (
         (* A branch that rebinds an outer `var` threads the new bindings
            out of the `case`, exactly like one at statement level: without
@@ -1384,23 +1374,23 @@ and emit_loop_body env ~(leaf : unit -> unit) (xs : Emo_ir.stmt list) : unit =
             let v = fresh_var env name in
             put env
               (Printf.sprintf
-                 "let <%s> =\n  call 'erlang':'element'(%d, %s)\nin " v
-                 (i + 1) slot);
+                 "let <%s> =\n  call 'erlang':'element'(%d, %s)\nin " v (i + 1)
+                 slot);
             env.local_map <- (name, v) :: env.local_map)
           assigned;
-        emit_loop_body env rest ~leaf)
+        emit_loop_body env ~tail rest ~leaf)
       else (
         put env "do\n";
         stmt env s;
         put env "\n";
-        emit_loop_body env rest ~leaf)
+        emit_loop_body env ~tail rest ~leaf)
   | Emo_ir.Let { name; init; _ } :: rest ->
       (* the binding scopes over the rest of the body *)
       let v = fresh_var env name in
       put env ("let <" ^ v ^ "> =\n");
       expr env init;
       put env "\nin ";
-      emit_loop_body env rest ~leaf
+      emit_loop_body env ~tail rest ~leaf
   | Emo_ir.Assign_var { name; value } :: rest ->
       (* the rebinding scopes over the rest: an accumulation
          (`line = line + ...`) must reach the later reads *)
@@ -1409,18 +1399,29 @@ and emit_loop_body env ~(leaf : unit -> unit) (xs : Emo_ir.stmt list) : unit =
       put env ("let <" ^ v ^ "> =\n");
       put env value_code;
       put env "\nin ";
-      emit_loop_body env rest ~leaf
+      emit_loop_body env ~tail rest ~leaf
+  | Emo_ir.Set_field { self_; name; value } :: rest ->
+      (* A field set rebinds `self` over the rest, exactly like a
+         `var` rebinding: the rest rides the let's body. A `do` would
+         not scope it, so the rebound `self` read unbound after the
+         loop (the class-init shape). *)
+      let call = set_field_call env self_ name value in
+      let v = fresh_var env "self" in
+      put env ("let <" ^ v ^ "> =\n");
+      put env call;
+      put env "\nin ";
+      emit_loop_body env ~tail rest ~leaf
   | s :: rest ->
       put env "do\n";
       stmt env s;
       put env "\n";
-      emit_loop_body env rest ~leaf
+      emit_loop_body env ~tail rest ~leaf
 
 (* One loop statement: a tail-recursive module function. The site calls
    it with the header's init and the current threaded bindings; every
    exit returns them (the header included), and the site rebinds them
    over the rest of the chain. *)
-and emit_loop env ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
+and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
     (rest : Emo_ir.stmt list) : unit =
   let header, init, cond, post, body =
     match loop with
@@ -1523,7 +1524,7 @@ and emit_loop env ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
     put env "\n\t        end";
     env.local_map <- saved_leaf
   in
-  emit_loop_body env body ~leaf:emit_thread_case;
+  emit_loop_body env ~tail:true body ~leaf:emit_thread_case;
   put env "\n";
   put env (Printf.sprintf "\t      <'false'> when 'true' -> %s\n" exit_value);
   put env "\t    end\n";
@@ -1558,7 +1559,7 @@ and emit_loop env ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
     put env "do\n";
     emit_initial_call ();
     put env "\n";
-    if rest = [] then leaf () else emit_loop_body env rest ~leaf)
+    if rest = [] then leaf () else emit_loop_body env ~tail rest ~leaf)
   else (
     put env "case ";
     emit_initial_call ();
@@ -1567,7 +1568,7 @@ and emit_loop env ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
     let rebound = List.map (fun name -> fresh_var env name) frees in
     put env (String.concat "," rebound);
     put env "}> when 'true' ->\n";
-    if rest = [] then leaf () else emit_loop_body env rest ~leaf;
+    if rest = [] then leaf () else emit_loop_body env ~tail rest ~leaf;
     (* the pattern bindings scope to this arm *)
     env.local_map <- saved_site;
     put env "\nend")

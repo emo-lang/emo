@@ -20,6 +20,7 @@
  (deps
   (source_tree ../../examples)
   (source_tree ../../stdlib)
+  (source_tree ../../test/emo_sched/fixtures)
   (file ../../VERSION)
   emo_cli_test.exe)
  (action
