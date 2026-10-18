@@ -2201,8 +2201,12 @@ def test_greet() {
 }
 |};
     write ".gitignore" ".emo-build/\n";
-    Printf.printf "created %s — next: cd %s && emo run main.emo, or emo test\n"
-      path path;
+    let next = Printf.sprintf "cd %s && emo run main.emo, or emo test" path in
+    let next =
+      Emo_support.Render.styled (Unix.isatty Unix.stdout) "38;2;239;191;107"
+        next
+    in
+    Printf.printf "created %s — next: %s\n" path next;
     0
   end
 
