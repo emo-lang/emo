@@ -3988,6 +3988,34 @@ main()
                 "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
                 (Filename.quote dir)))
           "[0, 1, 2]\n");
+    tc "a compiled build leaves the test/ tree out" (fun () ->
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "beam-excludes-tests"
+            {|def main() {
+  println("built")
+}
+main()
+|}
+        in
+        let dir = Filename.dirname entry in
+        let test_dir = Filename.concat dir "test" in
+        if not (Sys.file_exists test_dir) then Unix.mkdir test_dir 0o755;
+        write_file
+          (Filename.concat test_dir "arithmetic.emo")
+          {|def test_add() {
+  expect_equal(2, 1 + 1)
+}
+|};
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                (Filename.quote dir)))
+          "built\n");
     tc "a module-level var is refused with exit 65, not an internal error"
       (fun () ->
         let entry =

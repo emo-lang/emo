@@ -36,6 +36,7 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 每一块设计都有自己的文档：
 
 - [`docs/zh-CN/intro/syntax.md`](intro/syntax.md) —— 语言语法：调用与其尾随块、`def` 与绑定、控制流、值，以及类型定义构造。
+- [`docs/reserved_words.md`](../reserved_words.md) —— 保留字、保留字面量与编译器保留名的完整清单（英文）。
 - [`docs/zh-CN/intro/type-system.md`](intro/type-system.md) —— 渐近类型、显式位宽的数值类型、结构化收窄。
 - [`docs/zh-CN/intro/modules-and-visibility.md`](intro/modules-and-visibility.md) —— 目录树即模块树、`internal/` 私有、显式依赖。
 - [`docs/zh-CN/intro/package-management.md`](intro/package-management.md) —— 包即模块前缀、精确版本按 MVS 解析、发布。
@@ -43,6 +44,7 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 - [`docs/zh-CN/intro/networking.md`](intro/networking.md) —— 基于 `net` 与 `http` 包的直接风格异步网络 API。
 - [`docs/zh-CN/intro/native-builds.md`](intro/native-builds.md) —— `emo build`、随二进制附带的运行时、`foreign def` C 互操作。
 - [`docs/zh-CN/intro/testing.md`](intro/testing.md) —— `emo test`、`test/` 约定、`expect_*` 断言。
+- [`docs/emo-testing-guide.md`](../emo-testing-guide.md) —— 测试指南：发现规则、四个断言内建、报告与隔离（英文）。
 - [`docs/zh-CN/intro/configuration.md`](intro/configuration.md) —— 配置即 Emo 表达式，在受限 profile 下求值。
 
 ## EmoUI

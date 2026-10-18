@@ -2615,6 +2615,73 @@ def test_never() {
             | Emo_project.Passed -> ()
             | _ -> Alcotest.fail (r.Emo_project.t_name ^ " should pass"))
           results);
+    tc "a compiled build leaves test modules out" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {}
+}
+|}
+              );
+              main_add;
+              ( "test/arithmetic.emo",
+                {|def test_add() {
+  expect_equal(2, main.add(1, 1))
+}
+|} );
+            ]
+            "main.emo"
+        in
+        let inputs, _entry, _packages, _native =
+          Emo_project.compile_inputs ~entry_file:entry ~target:"c"
+        in
+        let paths =
+          List.map (fun (m : Emo_ir.module_input) -> m.mpath) inputs
+        in
+        Alcotest.(check bool) "main is lowered" true (List.mem [ "main" ] paths);
+        Alcotest.(check bool)
+          "no test module is lowered" true
+          (List.for_all (function "test" :: _ -> false | _ -> true) paths));
+    tc "a test module is not a compiled entry" (fun () ->
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "local/app"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {}
+}
+|}
+              );
+              main_add;
+              ( "test/arithmetic.emo",
+                {|def test_add() {
+  expect_equal(2, main.add(1, 1))
+}
+|} );
+            ]
+            "test/arithmetic.emo"
+        in
+        match Emo_project.compile_inputs ~entry_file:entry ~target:"c" with
+        | _ -> Alcotest.fail "expected a test entry to be refused"
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.(check bool)
+              "E5012" true
+              (List.exists
+                 (fun d ->
+                   d.Emo_support.Diagnostic.code = Some "E5012"
+                   && contains_substring d.Emo_support.Diagnostic.message
+                        "tests are not part of a compiled program")
+                 ds));
   ]
 
 (* Packages with native inputs (C sources, a `link` library): the c

@@ -1411,20 +1411,49 @@ let entry_module_in_project (p : project) (entry_file : string) : string list =
   | path :: _ -> path
   | [] -> raise (entry_outside_error ~root:p.root entry_file)
 
+(* The test/ convention, shared by the runner and the build: every module
+   under the root's test/ directory is a test module, and a root-level
+   `test.emo` is an ordinary module. A compiled program is the project
+   minus its tests: the compiled targets do not lower the assertion
+   builtins, and a test is not part of the program's entry anyway. *)
+let is_test_module = function "test" :: _ :: _ -> true | _ -> false
+
 (* The backend's lowering input: every module in the project, parsed and
    checked (the backend runs the full check), plus the entry module's
    path and the dependencies' native inputs (C sources to compile,
-   libraries to link). Raises [Static_errors] on any diagnostic.
-   A native-carrying package (C sources or a `link` list) is honored by
-   the c target alone; any other target refuses the program outright —
-   dropping the native inputs would be a silent fallback. *)
+   libraries to link). Test modules are left out — they are not part of a
+   compiled program, and their assertions are interpreter-only. Raises
+   [Static_errors] on any diagnostic. A native-carrying package (C sources
+   or a `link` list) is honored by the c target alone; any other target
+   refuses the program outright — dropping the native inputs would be a
+   silent fallback. *)
 let compile_inputs ~entry_file ~target :
     Emo_ir.module_input list
     * string list
     * string list list
     * (string list * string list) =
   let p, (manifest, dir) = prepare () in
-  ignore (entry_module_in_project p entry_file);
+  let entry = entry_module_in_project p entry_file in
+  if is_test_module entry then
+    raise
+      (Static_errors
+         [
+           {
+             Emo_support.Diagnostic.severity = Error;
+             code = Some "E5012";
+             message =
+               Printf.sprintf
+                 "the entry `%s` is a test module; tests are not part of a \
+                  compiled program"
+                 entry_file;
+             span =
+               Emo_support.Span.make ~file:(entry_path entry_file) ~line:1
+                 ~col:1 ~start:0 ~stop:0;
+             hint =
+               Some
+                 "build the program's own entry (for example main.emo) instead";
+           };
+         ]);
   let native_deps = load_deps ~manifest ~manifest_dir:dir ~target p in
   let c_sources = List.concat_map (fun d -> d.nd_csources) native_deps in
   let link_libs = List.concat_map (fun d -> d.nd_link) native_deps in
@@ -1453,10 +1482,13 @@ let compile_inputs ~entry_file ~target :
                hint = None;
              };
            ]));
-  let module_paths = module_paths p in
+  let module_paths =
+    List.filter (fun path -> not (is_test_module path)) (module_paths p)
+  in
   let diagnostics = ref [] in
-  let units = units_of p in
-  let entry = entry_module_in_project p entry_file in
+  let units =
+    List.filter (fun (path, _) -> not (is_test_module path)) (units_of p)
+  in
   (* The program's type tables (CHECK.md, cross-module types) come
    * before any module is checked, so every module's type declarations
    * resolve against every declaration. *)
@@ -1559,15 +1591,7 @@ let run_tests () : test_result list =
   (match errors with [] -> () | ds -> raise (Static_errors ds));
   install_hooks p;
   let test_modules =
-    List.sort compare
-      (List.filter
-         (fun path ->
-           (* Under test/ means two segments at least — a root-level
-              test.emo file is an ordinary module, not a test file. *)
-           match path with
-           | "test" :: _ :: _ -> true
-           | _ -> false)
-         (module_paths p))
+    List.sort compare (List.filter is_test_module (module_paths p))
   in
   let results = ref [] in
   let push r = results := r :: !results in
