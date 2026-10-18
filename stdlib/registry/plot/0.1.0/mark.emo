@@ -2,7 +2,7 @@
 // its data spans. The span is named on both axes — a continuous x and y
 // range through `x_min`/`x_max`/`y_min`/`y_max`, a categorical x through
 // `bands` and `x_labels` — so the axes can scale to every mark at once.
-// `bar` and `line` are the implementations so far.
+// `bar`, `line`, and `scatter` are the implementations so far.
 
 interface Mark {
   def draw(ctx internal.ctx.DrawContext) Void
@@ -130,6 +130,34 @@ def dash_array(d Dash) String {
   return out
 }
 
+// One marker stamp in pixel space, shared by the marks that place a
+// shape at every point. A cross or plus strokes its arms at a quarter
+// of the marker size; `Marker.none` stamps nothing.
+def stamp_marker(r internal.svg.SvgRenderer, cx Float64, cy Float64, m Marker, size Float64, color (Int64, Int64, Int64)) Void {
+  const half = size / 2.0
+  const stroke = size / 4.0
+  if m == Marker.circle {
+    r.circle(cx, cy, half, color)
+  }
+  if m == Marker.square {
+    r.rect(cx - half, cy - half, size, size, color)
+  }
+  if m == Marker.triangle {
+    r.polygon([cx, cx - half, cx + half], [cy - half, cy + half, cy + half], color)
+  }
+  if m == Marker.diamond {
+    r.polygon([cx, cx + half, cx, cx - half], [cy - half, cy, cy + half, cy], color)
+  }
+  if m == Marker.cross {
+    r.line(cx - half, cy - half, cx + half, cy + half, color, stroke, "")
+    r.line(cx + half, cy - half, cx - half, cy + half, color, stroke, "")
+  }
+  if m == Marker.plus {
+    r.line(cx - half, cy, cx + half, cy, color, stroke, "")
+    r.line(cx, cy - half, cx, cy + half, color, stroke, "")
+  }
+}
+
 class LineStyle {
   def init(color (Int64, Int64, Int64), width Float64, dash Dash, marker Marker, marker_size Float64, opacity Float64, label String) {
     self.color = color
@@ -187,33 +215,8 @@ class Line {
     for var i = 0; i < n - 1; i = i + 1 {
       ctx.renderer.line(ctx.px(self.x[i]), ctx.py(self.y[i]), ctx.px(self.x[i + 1]), ctx.py(self.y[i + 1]), self.style.color, self.style.width, pattern)
     }
-    const s = self.style.marker_size
-    const half = s / 2.0
-    const color = self.style.color
-    const m = self.style.marker
     for var i = 0; i < n; i = i + 1 {
-      const cx = ctx.px(self.x[i])
-      const cy = ctx.py(self.y[i])
-      if m == Marker.circle {
-        ctx.renderer.circle(cx, cy, half, color)
-      }
-      if m == Marker.square {
-        ctx.renderer.rect(cx - half, cy - half, s, s, color)
-      }
-      if m == Marker.triangle {
-        ctx.renderer.polygon([cx, cx - half, cx + half], [cy - half, cy + half, cy + half], color)
-      }
-      if m == Marker.diamond {
-        ctx.renderer.polygon([cx, cx + half, cx, cx - half], [cy - half, cy, cy + half, cy], color)
-      }
-      if m == Marker.cross {
-        ctx.renderer.line(cx - half, cy - half, cx + half, cy + half, color, self.style.width, "")
-        ctx.renderer.line(cx + half, cy - half, cx - half, cy + half, color, self.style.width, "")
-      }
-      if m == Marker.plus {
-        ctx.renderer.line(cx - half, cy, cx + half, cy, color, self.style.width, "")
-        ctx.renderer.line(cx, cy - half, cx, cy + half, color, self.style.width, "")
-      }
+      stamp_marker(ctx.renderer, ctx.px(self.x[i]), ctx.py(self.y[i]), self.style.marker, self.style.marker_size, self.style.color)
     }
   }
 
@@ -284,4 +287,120 @@ class Line {
 
 def line(x Array[Float64], y Array[Float64]) Line {
   return Line.new(x: x, y: y, style: line_style())
+}
+
+class ScatterStyle {
+  def init(color (Int64, Int64, Int64), size Float64, marker Marker, opacity Float64, label String) {
+    self.color = color
+    self.size = size
+    self.marker = marker
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) ScatterStyle {
+    return ScatterStyle.new(color: c, size: self.size, marker: self.marker, opacity: self.opacity, label: self.label)
+  }
+
+  def with_size(s Float64) ScatterStyle {
+    return ScatterStyle.new(color: self.color, size: s, marker: self.marker, opacity: self.opacity, label: self.label)
+  }
+
+  def with_marker(m Marker) ScatterStyle {
+    return ScatterStyle.new(color: self.color, size: self.size, marker: m, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) ScatterStyle {
+    return ScatterStyle.new(color: self.color, size: self.size, marker: self.marker, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) ScatterStyle {
+    return ScatterStyle.new(color: self.color, size: self.size, marker: self.marker, opacity: self.opacity, label: s)
+  }
+}
+
+def scatter_style() ScatterStyle {
+  return ScatterStyle.new(color: (85, 168, 104), size: 6.0, marker: Marker.circle, opacity: 1.0, label: "")
+}
+
+class Scatter {
+  def init(x Array[Float64], y Array[Float64], style ScatterStyle) {
+    self.x = x
+    self.y = y
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    for var i = 0; i < self.y.length(); i = i + 1 {
+      stamp_marker(ctx.renderer, ctx.px(self.x[i]), ctx.py(self.y[i]), self.style.marker, self.style.size, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var lo = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] < lo {
+        lo = self.x[i]
+      }
+    }
+    return lo
+  }
+
+  def x_max() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var hi = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] > hi {
+        hi = self.x[i]
+      }
+    }
+    return hi
+  }
+
+  def y_min() Float64 {
+    if self.y.length() == 0 {
+      return 0.0
+    }
+    var lo = self.y[0]
+    for var i = 1; i < self.y.length(); i = i + 1 {
+      if self.y[i] < lo {
+        lo = self.y[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.y.length() == 0 {
+      return 0.0
+    }
+    var hi = self.y[0]
+    for var i = 1; i < self.y.length(); i = i + 1 {
+      if self.y[i] > hi {
+        hi = self.y[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def with_style(s ScatterStyle) Scatter {
+    return Scatter.new(x: self.x, y: self.y, style: s)
+  }
+}
+
+def scatter(x Array[Float64], y Array[Float64]) Scatter {
+  return Scatter.new(x: x, y: y, style: scatter_style())
 }

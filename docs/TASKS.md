@@ -1364,7 +1364,7 @@ panels and stays byte-identical on all five targets; `dune test` green.
       point/line primitives a `DrawContext` needs), keeping `Bar` as its
       first implementation.
 - [x] **T40.2** — `plot.mark.line` and `LineStyle`.
-- [ ] **T40.3** — `plot.mark.scatter` and `ScatterStyle`.
+- [x] **T40.3** — `plot.mark.scatter` and `ScatterStyle`.
 - [ ] **T40.4** — `plot.mark.area` and `AreaStyle`.
 - [ ] **T40.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
 - [ ] **T40.6** — `Axes` draw: a continuous x scale, the y domain

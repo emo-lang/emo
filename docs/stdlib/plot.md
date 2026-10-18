@@ -52,7 +52,8 @@ enum Share { all, none }
 ## Marks
 
 The marks live in the `plot.mark` submodule — a package's submodules are
-addressed under its short name. T0 ships the bar and line marks:
+addressed under its short name. T0 ships the bar, line, and scatter
+marks:
 
 ```emo
 def bar(labels Array[String], values Array[Float64]) Bar
@@ -60,6 +61,9 @@ def bar_style() BarStyle
 
 def line(x Array[Float64], y Array[Float64]) Line
 def line_style() LineStyle
+
+def scatter(x Array[Float64], y Array[Float64]) Scatter
+def scatter_style() ScatterStyle
 ```
 
 A mark is a value too. `Bar.with_style(s BarStyle)` and the style's
@@ -83,6 +87,11 @@ plot.mark.line(years, revenue).with_style(
   plot.mark.line_style().with_dash(plot.mark.Dash.dashed)
     .with_marker(plot.mark.Marker.circle))
 ```
+
+A scatter stamps its marker at every `(x, y)` point and connects
+nothing. `ScatterStyle` carries `color`, `size`, `marker`, `opacity`,
+and `label` — the marker vocabulary is the same `Marker` enum the line
+stamps with, and a scatter with `Marker.none` draws nothing.
 
 **Colors are `(Int64, Int64, Int64)` sRGB triples**, each channel 0–255.
 Opacity is a separate `Float64` on the style, never baked into the
@@ -130,11 +139,11 @@ are identical on every target.
 
 Targets: all five (`ocaml`, `c`, `typescript`, `wasm`, `beam`).
 
-T0 — what exists today — is the bar and line marks, linear axes with
-nice-number ticks, a title, axis labels, and SVG output. The remaining
-pieces the surface carries are reserved and not rendered yet:
+T0 — what exists today — is the bar, line, and scatter marks, linear
+axes with nice-number ticks, a title, axis labels, and SVG output. The
+remaining pieces the surface carries are reserved and not rendered yet:
 `Scale.log`, `Domain`, faceting via `Share`, legends, and the other mark
-families (scatter, area, histogram). The SVG renderer sits behind an
+families (area, histogram). The SVG renderer sits behind an
 internal `Renderer` contract, so a terminal or raster backend can join
 later without disturbing the figure or the marks.
 
