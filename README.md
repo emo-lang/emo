@@ -36,6 +36,7 @@ Wherever you installed from, `emo doctor` checks the environment per target and 
 Each area of the design has its own document:
 
 - [`docs/intro/syntax.md`](docs/intro/syntax.md) — the language syntax: calls and their trailing blocks, `def` and bindings, control flow, values, and the type-definition constructs.
+- [`docs/reserved_words.md`](docs/reserved_words.md) — the complete list of reserved words, reserved literals, and built-in names the compiler holds back.
 - [`docs/intro/type-system.md`](docs/intro/type-system.md) — gradual typing, width-explicit numeric types, structural narrowing.
 - [`docs/intro/modules-and-visibility.md`](docs/intro/modules-and-visibility.md) — the directory tree as the module tree, `internal/` privacy, explicit dependencies.
 - [`docs/intro/package-management.md`](docs/intro/package-management.md) — packages as module prefixes, exact versions resolved by MVS, publishing.

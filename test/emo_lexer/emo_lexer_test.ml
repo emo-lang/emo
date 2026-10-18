@@ -187,14 +187,15 @@ let ident_tests =
           (kinds (lex_all "doing classX")));
     tc "every keyword lexes" (fun () ->
         let source =
-          "def const var class interface enum if else for while break continue \
-           case when receive return raise self do"
+          "def const var emo class interface enum if else for while break \
+           continue case when receive require return raise self do"
         in
         let expected =
           [
             Token.Keyword Token.Def;
             Token.Keyword Token.Const;
             Token.Keyword Token.Var;
+            Token.Keyword Token.Emo;
             Token.Keyword Token.Class;
             Token.Keyword Token.Interface;
             Token.Keyword Token.Enum;
@@ -207,6 +208,7 @@ let ident_tests =
             Token.Keyword Token.Case;
             Token.Keyword Token.When;
             Token.Keyword Token.Receive;
+            Token.Keyword Token.Require;
             Token.Keyword Token.Return;
             Token.Keyword Token.Raise;
             Token.Keyword Token.Self;
