@@ -68,21 +68,14 @@ expect 12 "all twelve assertions pass" "$n"
 
 # --- which targets can compile the package ------------------------------
 #
-# The renderer names no host, so every target can lower it. The one
-# refusal is the package's own test: it hands `ui.run` two bare defs, and
-# `c` has no def-as-value (`Global`). `../check.sh` pins the same shape in
-# the core's package and in `probe/def_shape`.
+# The renderer names no host, so every target can lower it — the
+# package's own test included: it hands `ui.run` two bare defs, and every
+# target has def-as-value since `c` grew it (T48.8).
 
-for t in ocaml typescript wasm beam; do
+for t in ocaml c typescript wasm beam; do
   build . ui_ssr.emo "$t" && rc=0 || rc=$?
   expect 0 "package --target $t builds" "$rc"
 done
-
-build . ui_ssr.emo c && rc=0 || rc=$?
-got=$(grep -o -m1 "does not support this expression form (Global)" "$OUT.log" \
-  || true)
-expect "does not support this expression form (Global)" \
-  "package --target c says why" "$got"
 
 # --- the golden: one page, the same bytes from every target -------------
 #

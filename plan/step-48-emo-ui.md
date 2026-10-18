@@ -15,15 +15,17 @@ landed in `projects/emo-ui/`, and terminal input (T48.5) has landed in
 `stdlib/` as the `term` package; the server-side `ui_ssr` renderer
 (T48.6) has landed beside the debug and TUI backends; the native
 packaging mechanism (T48.7) has landed in the manifest and the `c`
-target, so the native backends are unblocked; T48.8 onward are not
-started. T48.2 turned
+target; the macOS backend (T48.8) has landed on it, and the `c`
+target's def-as-value closed the loop's last refusal; T48.9 onward are
+not started. T48.2 turned
 up the first language-side gap this step has hit: the loop's shape — the
 application's `update` and `view` arriving as `Block` values — is what
 `c` and `wasm` could not compile, and T48.4 found that `beam` compiles
 it but could not run it, which is fixed here (`CHECK.md`, the Elm loop's
-shape). T48.6 closed the `wasm` half — its closures now take any arity,
-so the core golden is byte-identical on all five hosted targets and only
-`c` still refuses the bare def names. T48.3 turned up two more, both
+shape). T48.6 closed the `wasm` half — its closures now take any arity —
+and T48.8 closed the `c` half, giving that target def-as-value, so the
+core golden is byte-identical on all five hosted targets and the loop
+lowers everywhere. T48.3 turned up two more, both
 silent rather than refusing:
 operands were evaluated in the target's order, `ocaml`'s being the
 reverse of the others' — fixed 2026-10-17, left to right everywhere —
@@ -225,7 +227,9 @@ placement; `docs/emo-ui.md`, ask 7).
       `ocaml` (`CHECK.md`, the Elm loop's shape). The decision those two
       probes hand back — grow `c` and `wasm`, or move the application's
       functions behind an interface (which revises Layer 5) — wants
-      settling before T48.4 onward build backends on the loop. T48.4
+      settling before T48.4 onward build backends on the loop. It was
+      settled in favour of growing the targets: `wasm` in T48.6, `c` in
+      T48.8, so all five now compile the whole package. T48.4
       built one anyway, on the targets the loop reaches (`ocaml`,
       `typescript` and — once the fix below landed — `beam`), and left
       the decision standing: `c` and `wasm` stay the gap, and the TUI
@@ -290,9 +294,10 @@ placement; `docs/emo-ui.md`, ask 7).
       with a growing spacer, a fixed-width text input and two buttons,
       driven by a script that clicks Add, Add, Sub. `expected.txt` is
       the interpreter's output, identical on `ocaml`, `typescript` and
-      `beam`; `c` compiles the backend and refuses the golden's loop
-      shape (`Global`), which is T48.2's open decision now three targets
-      deep rather than two. `tui/check.sh` is the gate (the package
+      `beam`; `c` compiled the backend but refused the golden's loop
+      shape (`Global`), which was T48.2's open decision now three targets
+      deep rather than two — T48.8 closed that, and the golden's
+      corpus runs on `c` too. `tui/check.sh` is the gate (the package
       type-checks, thirteen assertions run, the four declared targets
       build, `wasm`'s `printf` refusal is pinned, and the golden's bytes
       are compared). Two `beam` defects the golden forced are fixed here,
@@ -332,7 +337,7 @@ placement; `docs/emo-ui.md`, ask 7).
       targets. The task also gave `wasm` closures any arity
       (`closure_type`, `emo_wasm.ml`), which lets the core golden and
       `probe/def_shape` build for `wasm` and closes the `wasm` half of
-      T48.2's finding; `c` remains the one refusal.
+      T48.2's finding; `c` remained the one refusal until T48.8.
 - [x] **T48.7** — The native packaging mechanism: per-package manifest
       fields (`pkg_config` and/or compile/link flags, plus whatever
       collects `.m`); the app-level build-script path is not the
@@ -348,9 +353,18 @@ placement; `docs/emo-ui.md`, ask 7).
       prompt. `emo emoji build` passes a package's own native inputs as
       a dependency's would be passed, so the pre-publish gate links what
       consumers get.
-- [ ] **T48.8** — `ui-macos`: the nine-verb AppKit shim over the
+- [x] **T48.8** — `ui-macos`: the nine-verb AppKit shim over the
       callback contract; the convergence corpus runs. Demo scale — the
       `c` target's long-running memory is step 49 (`CHECK.md`).
+      Landed 2026-10-18: `projects/emo-ui/macos/` carries the point
+      box model (`box.emo`, pure and interpreter-testable), the nine
+      foreign verbs (`ui_macos.emo`, the `ui.Events` sink crossing as
+      the callback pair) and `shim.m`, the only Objective-C outside
+      `spike/`; `corpus/` runs one portable application on it under
+      `EMO_GUI_AUTOTEST` and prints the same bytes any other backend
+      would. The `c` target grew def-as-value (`Global`) to get there:
+      `emo_closure_new` over a per-def dynamic thunk, which closed the
+      loop's last refusal and let `c` join every corpus run.
 - [ ] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`;
       the convergence corpus runs. Demo scale, as T48.8.
 - [ ] **T48.10** — The browser runtime path: a browser-safe split of

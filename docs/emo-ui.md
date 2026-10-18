@@ -142,7 +142,7 @@ This note does not re-open what earlier work closed.
 
 | Platform | Route | Status | The gap |
 |---|---|---|---|
-| macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **proven** (`spike/macos-gui`, `spike/components`) | packaging landed (T48.7): `.m`, ARC, `frameworks` |
+| macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **landed** (T48.8), package `emo/ui_macos` | demo scale; the `c` target's long-running memory is step 49 |
 | GTK 4 | `c` target + C shim via `foreign def` | **proven** (`spike/gtk`, `spike/components`) | packaging landed (T48.7): `pkg_config` |
 | TUI | pure Emo, ANSI escape output; `term` for input | **landed** (T48.4, T48.5) | wiring `term` into `ui_tui`'s input source |
 | Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); DOM least ready | TS target is Node-only; wasm host has 3 imports |
@@ -211,9 +211,10 @@ byte is emitted through `printf("%c", [27])`. `Tui` implements
 the golden runs on, so the bytes are fixed and no terminal is touched:
 `run()` pulls tags and hands them to the loop's sink until the input
 says there are no more. The package declares the four hosted targets
-that can write stdout; `wasm` has no `printf`, so it is not one. `c`
-compiles the backend and refuses the golden's loop shape (`Global`) —
-the decision T48.2 left open, now three targets deep. Two `beam`
+that can write stdout; `wasm` has no `printf`, so it is not one. `c` compiled the backend but
+refused the golden's loop shape (`Global`) — the decision T48.2 left
+open — until T48.8 gave that target def-as-value; the corpus now runs
+on `c` too. Two `beam`
 lowering defects the golden forced (a `Block`-valued bare def emitted as
 an uncallable remote fun, and a loop-body `case` that did not thread an
 outer `var` rebinding) are fixed with the backend and recorded in
@@ -273,8 +274,8 @@ posts its fields and the event tag of the button that submitted it, and
 a `link` navigates; `Ssr` implements `ui.Backend` with `mount` printing
 the document, `patch` the fragment, and `run` returning because a
 server has no input source. The `wasm` target's closures grew any arity
-for this task, so the portable loop now lowers on all five targets and
-only `c` still refuses a bare def name (`CHECK.md`).
+for this task, and `c` grew def-as-value in T48.8, so the portable loop
+lowers on all five targets (`CHECK.md`).
 
 There is a further semantic point specific to the Web and to native
 toolkits: **the platform owns the event loop.** A browser page or an
@@ -594,22 +595,23 @@ The facts that bound this layer are honest caveats, not design choices:
   the toolkit must not take the window down silently, and now it does
   not. The `typescript` target's share-on-send is the same gap on the
   Web path.
-- **The loop's shape on the hosted targets.** The loop is landed
-  (`projects/emo-ui/`, T48.2) and runs on the interpreter, but the shape
-  above — the application's `update` and `view` passed in as `Block`
-  values — compiles only where a bare def can be a value: `ocaml`,
-  `typescript`, `wasm` and `beam` do; `c` refuses it (`Global`). `wasm`
-  refused the two-argument dynamic call `update` needs until T48.6, when
-  its closures grew any arity (`closure_type`), so a `Block` value is
-  now first-class however many parameters it takes; the core golden's
-  bytes are the interpreter's on all five targets. The same loop with
-  those two functions behind a `Handler` interface — ordinary interface
-  dispatch, no `Block`-valued function, the application still narrowing
-  its model with `is()` as a backend narrows a node — builds on all five
-  targets and prints what the interpreter prints (`projects/emo-ui/probe/`,
-  `CHECK.md`, the Elm loop's shape). Which way to close the remaining
-  `c` half — give it def-as-value, or move the application's functions
-  behind an interface and revise this layer's spelling — is open.
+- **The loop's shape on the hosted targets.** *Closed.* The loop is
+  landed (`projects/emo-ui/`, T48.2) and runs on the interpreter; the
+  shape above — the application's `update` and `view` passed in as
+  `Block` values — compiles on every hosted target. `wasm` refused the
+  two-argument dynamic call `update` needs until T48.6, when its
+  closures grew any arity (`closure_type`); `c` refused the bare def
+  name itself (`Global`) until T48.8, when a def used as a value became
+  a capture-less closure over a per-def dynamic thunk. A `Block` value
+  is first-class however many parameters it takes, and every corpus and
+  golden runs on all five targets (`CHECK.md`, the Elm loop's shape).
+  The same loop with those two functions behind a `Handler` interface —
+  ordinary interface dispatch, no `Block`-valued function, the
+  application still narrowing its model with `is()` as a backend
+  narrows a node — remains as the alternative the decision did not take
+  (`projects/emo-ui/probe/`). The choice between the two was settled in
+  favour of growing the target: def-as-value was a backend gap, not new
+  syntax, and it keeps the landed `ui.run` spelling.
 - **Long-running memory.** The `c` target does not reclaim the value
   families a render allocates, and a UI re-renders per event, so this is
   the caveat that bounds the platform rather than the design:
@@ -644,10 +646,16 @@ trampoline as any other callback. Landed as `ui.Backend`/`ui.Events`
 
 Each platform implements it:
 
-- **macOS / GTK:** an Emo class whose methods call `foreign def` shims.
-  The shims implement the primitives (`window_make`, `label_make`,
-  `place`, `connect`, …); the Emo side walks the tree and maps nodes to
-  native handles.
+- **macOS (landed, T48.8):** an Emo class whose methods call `foreign
+  def` shims, and an AppKit shim on the other side of the C ABI. The nine
+  verbs are `window_make`, `label_make`, `button_make`, `place`, `clear`,
+  `connect`, `root`, `run` and `autotest_arm`; the Emo side measures the
+  tree in points (`box.emo`), walks it, and maps nodes to native handles.
+  `projects/emo-ui/macos/` is the package, and `corpus/` its convergence
+  consumer — every primitive on one screen, driven by a comma-separated
+  tag script the shim clicks under `EMO_GUI_AUTOTEST` before terminating,
+  so its bytes are checked without a keyboard or a screenshot. GTK 4 is
+  the same shape, still to land (T48.9).
 - **TUI (landed, T48.4):** a pure-Emo class that lays the tree out on a
   cell grid and writes ANSI; `run()` pulls a scripted input's tags and
   hands them to the loop's sink. `projects/emo-ui/tui/` is the package
@@ -662,9 +670,8 @@ Each platform implements it:
   event is stepped by hand through `deliver` on the sink `mount` was
   given. `projects/emo-ui/golden/` is what it is for: one screen through
   the core as a consumer reaches it, out as text, byte-identical on the
-  interpreter and all five hosted targets (the `wasm` half of the loop's
-  shape closed in T48.6; `c` still refuses the loop's bare def names but
-  not this golden, which calls the renderer directly). The form's
+  interpreter and all five hosted targets (the loop's `wasm` half closed
+  in T48.6 and its `c` half in T48.8). The form's
   narrowness is forced by
   the targets rather than chosen: it interpolates only `String`, `Int64`,
   `Bool` and `Float64`, because an enum or a tuple does not print the

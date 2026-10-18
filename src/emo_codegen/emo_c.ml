@@ -909,6 +909,13 @@ and emit_expr env (e : Emo_ir.expr) : string =
       else unbox_code (wrap_owned Emo_check.Unknown v) e.Emo_ir.ety
   | Closure { cparams; cbody } ->
       wrap_owned e.Emo_ir.ety (emit_closure env cparams cbody)
+  | Global g ->
+      (* A def used as a value: a capture-less closure over the def's
+         dynamic thunk, which `emit_def_thunk` emits for every such
+         name the program carries. *)
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_closure_new(&%s__dyn, INT64_C(0), NULL)"
+           (c_ident g))
   | Spawn_value _ -> refuse "spawning a first-class block yet"
   | Make_exception { message; data = None } ->
       wrap_owned e.Emo_ir.ety
@@ -3017,6 +3024,166 @@ let emit_thunk env0 (c : Emo_ir.class_) (m : Emo_ir.func) : unit =
   in
   put env0 "  return %s;\n}\n\n" result
 
+(* The dynamic-convention thunk for one def used as a value: the same
+   conversion the methods' thunks do, but over a free function with no
+   receiver. The call itself goes through the ordinary `Call` lowering,
+   so a foreign def keeps its C-symbol conversions. *)
+let emit_def_thunk env0 (f : Emo_ir.func) : unit =
+  let thunk = c_ident f.Emo_ir.fname ^ "__dyn" in
+  put env0 "static emo_value %s(emo_value __self, const emo_value *__args) {\n"
+    thunk;
+  put env0 "  (void)__self;\n  (void)__args;\n";
+  let scope =
+    List.mapi
+      (fun i (n, ty) ->
+        let c = c_ident n in
+        if is_dyn ty then put env0 "  emo_value %s = __args[%d];\n" c i
+        else
+          put env0 "  %s %s = %s;\n" (param_type ty) c
+            (unbox_code (Printf.sprintf "__args[%d]" i) ty);
+        (n, c, ty))
+      f.Emo_ir.fparams
+  in
+  let env =
+    {
+      env0 with
+      fresh = 0;
+      fresh_prefix = "";
+      fname = f.Emo_ir.fname;
+      fresult = Emo_check.Unknown;
+      fclass = None;
+      tail_rebinds = [];
+      in_main = false;
+      owned = [];
+      loops = [];
+      hoist = [];
+      hoist_on = false;
+      scope;
+    }
+  in
+  let call =
+    Emo_ir.Call
+      {
+        func = f.Emo_ir.fname;
+        args =
+          List.map
+            (fun (n, ty) -> { Emo_ir.ety = ty; desc = Emo_ir.Var n })
+            f.Emo_ir.fparams;
+      }
+  in
+  let call = { Emo_ir.ety = f.Emo_ir.fresult; desc = call } in
+  put env "  emo_pool_enter();\n";
+  if f.Emo_ir.fresult = Emo_check.Void then begin
+    emit_stmts env [ Emo_ir.Effect call ];
+    put env "  emo_drain();\n  emo_pool_exit();\n";
+    put env "  return emo_vbool(false);\n}\n\n"
+  end
+  else begin
+    emit_stmts env [ Emo_ir.Return_stmt call ];
+    put env "  return emo_vbool(false);\n}\n\n"
+  end
+
+(* Every def the program uses as a value (`Global`). The expression
+   itself becomes a capture-less closure over that def's dynamic
+   thunk, so every such def needs one emitted — and the walk covers
+   every tree the emitter lowers, not only the reachable ones. *)
+let globals_as_values (program : Emo_ir.program) : string list =
+  let seen = Hashtbl.create 16 in
+  let found = ref [] in
+  let add g =
+    if not (Hashtbl.mem seen g) then begin
+      Hashtbl.replace seen g ();
+      found := g :: !found
+    end
+  in
+  let rec ex (e : Emo_ir.expr) =
+    match e.Emo_ir.desc with
+    | Global g -> add g
+    | Const _ | Type_ref _ | Var _ | Global_var _ | Builder_new | Make_enum _ ->
+        ()
+    | Unary (_, x) | Box_new x | Bytes_new x | List_new x -> ex x
+    | Binary (_, l, r) ->
+        ex l;
+        ex r
+    | Tuple es | Array_lit es | Interpolate es -> List.iter ex es
+    | Map_lit pairs -> List.iter ex pairs
+    | Cond { c; t; e } ->
+        ex c;
+        ex t;
+        ex e
+    | Index (a, b) ->
+        ex a;
+        ex b
+    | Field_read { obj; _ } -> ex obj
+    | Call { args; _ } -> List.iter ex args
+    | Call_value { f; args } ->
+        ex f;
+        List.iter ex args
+    | Method { self_; args; _ } ->
+        ex self_;
+        List.iter ex args
+    | Builtin { args; _ } | Runtime_impl { args; _ } -> List.iter ex args
+    | Make_exception { message; data } ->
+        ex message;
+        Option.iter ex data
+    | Do_spawn { args; _ } -> List.iter ex args
+    | Spawn_value { f; args } ->
+        ex f;
+        List.iter ex args
+    | Closure { cbody; _ } -> List.iter st cbody
+  and st (s : Emo_ir.stmt) =
+    match s with
+    | Effect e -> ex e
+    | Let { init; _ } -> ex init
+    | Assign_var { value; _ } -> ex value
+    | Set_global_var { value; _ } -> ex value
+    | Set_field { self_; value; _ } ->
+        ex self_;
+        ex value
+    | If { cond; then_; else_ } ->
+        ex cond;
+        List.iter st then_;
+        List.iter st else_
+    | While { cond; body; _ } ->
+        ex cond;
+        List.iter st body
+    | For { init; post; body; _ } ->
+        List.iter st [ init; post ];
+        List.iter st body
+    | Case { scrutinee; branches } ->
+        ex scrutinee;
+        List.iter
+          (fun (b : Emo_ir.branch) ->
+            Option.iter ex b.Emo_ir.guard;
+            List.iter st b.Emo_ir.body)
+          branches
+    | Receive { branches } ->
+        List.iter
+          (fun (b : Emo_ir.branch) ->
+            Option.iter ex b.Emo_ir.guard;
+            List.iter st b.Emo_ir.body)
+          branches
+    | Send { target; message } ->
+        ex target;
+        ex message
+    | Raise e -> ex e
+    | Return_stmt e -> ex e
+    | Break | Continue -> ()
+  in
+  List.iter st program.Emo_ir.pinit;
+  List.iter (fun (_, e) -> ex e) program.Emo_ir.pglobals;
+  List.iter (fun (f : Emo_ir.func) -> List.iter st f.Emo_ir.fbody) program.pfuncs;
+  List.iter
+    (fun (c : Emo_ir.class_) ->
+      Option.iter
+        (fun (i : Emo_ir.func) -> List.iter st i.Emo_ir.fbody)
+        c.Emo_ir.cinit;
+      List.iter
+        (fun (m : Emo_ir.func) -> List.iter st m.Emo_ir.fbody)
+        c.Emo_ir.cmethods)
+    program.pclasses;
+  List.rev !found
+
 (* ---- The program ---- *)
 
 (* Emit the program as (main.c, emo_defs.h). The defs header carries
@@ -3194,6 +3361,11 @@ let emit (program : Emo_ir.program) : string * string * bool =
       (fun f -> if List.mem f.Emo_ir.fname members then Some f else None)
       program.pfuncs
   in
+  let globals = globals_as_values program in
+  let funcs_tbl = Hashtbl.create 32 in
+  List.iter
+    (fun (f : Emo_ir.func) -> Hashtbl.replace funcs_tbl f.Emo_ir.fname f)
+    program.pfuncs;
   (* Class metadata: field names in init-assignment order, and the
      interface contracts. *)
   let fields_of (c : Emo_ir.class_) : string list =
@@ -3300,6 +3472,14 @@ let emit (program : Emo_ir.program) : string * string * bool =
           put env0 "%s" line;
           Buffer.add_string defs_h line)
     program.pfuncs;
+  (* The defs used as values: their dynamic-convention thunks are
+     static helpers beside the methods', declared ahead of the bodies
+     that take their addresses. *)
+  List.iter
+    (fun g ->
+      put env0 "static emo_value %s__dyn(emo_value, const emo_value *);\n"
+        (c_ident g))
+    globals;
   List.iteri
     (fun i members ->
       let cluster, ret, cluster_params, _ =
@@ -3541,6 +3721,12 @@ let emit (program : Emo_ir.program) : string * string * bool =
         c.Emo_ir.cmethods;
       List.iter (emit_thunk env0 c) c.Emo_ir.cmethods)
     program.pclasses;
+  List.iter
+    (fun g ->
+      match Hashtbl.find_opt funcs_tbl g with
+      | Some f -> emit_def_thunk env0 f
+      | None -> ())
+    globals;
   (* The entry module's top level runs in the root process's fiber;
      every generated main ends in the scheduler loop. *)
   let env =

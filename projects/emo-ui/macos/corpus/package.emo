@@ -1,0 +1,10 @@
+package {
+  name = "corpus"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "emo/ui" = "0.1.0"
+    "emo/ui_macos" = "0.1.0"
+  }
+}

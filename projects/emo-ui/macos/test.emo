@@ -1,0 +1,121 @@
+// The macOS package's own test: the point box model, checked as values
+// rather than as a window. The AppKit half is what the corpus gate runs
+// under EMO_GUI_AUTOTEST; here `layout` returns the frames, so a
+// position that drifts fails with a readable number.
+//
+//   emo run test.emo
+//
+// The module is pure, so the interpreter runs it: `ui_macos.emo`'s
+// foreign defs are not loaded (E3009).
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+def at(ds Array[box.Draw], text String) box.Draw {
+  for var i = 0; i < ds.length(); i = i + 1 {
+    if ds[i].text() == text {
+      return ds[i]
+    }
+  }
+  raise Exception.new(message: "no draw for ${text}")
+}
+
+// ---- padding and gap ------------------------------------------------
+
+def padded() ui.Node {
+  return ui.column([
+    ui.text("ab", ui.style()),
+    ui.text("c", ui.style())
+  ], ui.style().with_padding(10.0).with_gap(5.0))
+}
+
+// ---- a row lines its children up ------------------------------------
+
+def paired(a ui.Align) ui.Node {
+  return ui.row([
+    ui.image("i.png", ui.style()),
+    ui.column([
+      ui.text("x", ui.style()),
+      ui.text("y", ui.style()),
+      ui.text("z", ui.style())
+    ], ui.style())
+  ], ui.style().with_align(a))
+}
+
+// ---- `grow` takes the height a column has left over -----------------
+
+def growing() ui.Node {
+  return ui.column([
+    ui.text("a", ui.style()),
+    ui.column([
+      ui.text("b", ui.style())
+    ], ui.style().with_grow(true)),
+    ui.text("c", ui.style())
+  ], ui.style())
+}
+
+// ---- controls carry their intrinsic size and their tag --------------
+
+def controls() ui.Node {
+  return ui.row([
+    ui.button("go", 7, ui.style()),
+    ui.text("x", ui.style())
+  ], ui.style())
+}
+
+def fixed_input() ui.Node {
+  return ui.row([
+    ui.text_input("n", ui.style().with_width(120.0))
+  ], ui.style())
+}
+
+def empty() ui.Node {
+  return ui.spacer(ui.style())
+}
+
+def layout_checks() {
+  const ds = box.layout(padded(), 100.0, 100.0)
+  const a = at(ds, "ab")
+  check(ds.length() == 2, "a column flattens to its two leaves")
+  check(a.x() == 10.0, "padding moves a child right")
+  check(a.y() == 10.0, "and down")
+  check(a.w() == 16.0, "a text leaf is eight points per character wide")
+  check(a.h() == 20.0, "and one line high")
+  const c = at(ds, "c")
+  check(c.y() == 35.0, "the gap separates the two children")
+
+  const start = at(box.layout(paired(ui.Align.start), 200.0, 100.0), "x")
+  check(start.y() == 0.0, "start puts a shorter child at the top")
+  const center = at(box.layout(paired(ui.Align.center), 200.0, 100.0), "x")
+  check(center.y() == 20.0, "a row centers a shorter child down its height")
+  const end = at(box.layout(paired(ui.Align.end), 200.0, 100.0), "x")
+  check(end.y() == 40.0, "and end puts it at the bottom")
+
+  const grow = box.layout(growing(), 200.0, 100.0)
+  check(at(grow, "b").y() == 20.0, "a grower starts where the child above ends")
+  check(at(grow, "c").y() == 80.0,
+    "and takes the column's leftover height")
+
+  const cs = box.layout(controls(), 200.0, 60.0)
+  const go = at(cs, "go")
+  check(go.kind() == box.Kind.button, "a button is a button")
+  check(go.event() == 7, "and carries its event tag")
+  check(go.w() == 48.0, "a button is eight points per character plus its chrome")
+  check(go.h() == 30.0, "and one control high")
+  check(at(cs, "x").x() == 48.0, "the next child follows the button")
+
+  const input = at(box.layout(fixed_input(), 200.0, 60.0), "n")
+  check(input.w() == 120.0, "a fixed width overrides the intrinsic one")
+  check(input.h() == 24.0, "an input is one control high")
+  check(input.kind() == box.Kind.input, "and says it is an input")
+
+  check(box.layout(empty(), 200.0, 60.0).length() == 0,
+    "a spacer paints nothing")
+}
+
+layout_checks()

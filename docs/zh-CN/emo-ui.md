@@ -51,7 +51,7 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 
 | 平台 | 路径 | 状态 | 缺口 |
 |---|---|---|---|
-| macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已证明**(`spike/macos-gui`、`spike/components`) | 打包已落地(T48.7):`.m`、ARC、`frameworks` |
+| macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已落地**(T48.8),包为 `emo/ui_macos` | 示例规模;`c` 目标的长时间运行内存是第 49 步 |
 | GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已证明**(`spike/gtk`、`spike/components`) | 打包已落地(T48.7):`pkg_config` |
 | TUI | 纯 Emo,输出 ANSI 转义;输入用 `term` | **已落地**(T48.4、T48.5) | 把 `term` 接进 `ui_tui` 的输入源 |
 | Web | HTML/CSS(SSR)→ DOM(浏览器 TS)→ wasm + DOM | **SSR 已落地**(T48.6);DOM 最不成熟 | TS 目标只面向 Node;wasm 宿主只有 3 个 import |
@@ -76,7 +76,7 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 
 输入已不再是缺口:**T48.5 于 2026-10-18 落地**为标准库 `term` 包,形状同 `sqlite3`(见下方诉求 7)——包自带 C 代码,经 `foreign def` 调用,只支持 `c` target,普通 `require` 即可到达。它提供按行读取、带退出路径恢复的 raw mode、解码后的按键事件(方向键、Home/End、Insert/Delete、Page Up/Page Down、F1–F12、Shift-Tab、Alt、UTF-8 字符)以及终端尺寸;raw mode 下 Ctrl-C 是按键事件。它替换的是 `ui_tui` 的输入源,而不是那条接缝:`Script` 与 `term` 驱动的 reader 都是 `Input`。剩下的是这层接线——`ui_tui` 仍在脚本化输入源上跑——以及 resize 事件(`SIGWINCH`),后者由包留给 UI 层。
 
-**2026-10-16 已落地(T48.4)**为 `projects/emo-ui/tui/`(包 `emo/ui_tui`)。盒模型以字符格为单位度量核心的 `Style`——列是纵向堆叠、行是横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置——`screen(root, w, h)` 把网格作为数据交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI。因为字符串字面量的转义是最小集合、0x1b 不在其中,转义字节经 `printf("%c", [27])` 发出。`Tui` 在其之上实现 `Backend`,`Input`/`Script` 就是金标所跑的脚本化事件源:字节固定,不碰终端——`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——T48.2 留下的那个决定,如今深了三个 target。金标逼出的两个 `beam` 降级缺陷(`Block` 值的裸 def 被发射成不可调用的远程 fun;循环体里的 `case` 没有把外层 `var` 的重绑穿出)随后端一起修好,记在 `CHECK.md`。`examples/tui_menu/` 是用法示例:一个由脚本化输入驱动的终端菜单,同一个关口在它声明的每个 target 上检查它。
+**2026-10-16 已落地(T48.4)**为 `projects/emo-ui/tui/`(包 `emo/ui_tui`)。盒模型以字符格为单位度量核心的 `Style`——列是纵向堆叠、行是横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置——`screen(root, w, h)` 把网格作为数据交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI。因为字符串字面量的转义是最小集合、0x1b 不在其中,转义字节经 `printf("%c", [27])` 发出。`Tui` 在其之上实现 `Backend`,`Input`/`Script` 就是金标所跑的脚本化事件源:字节固定,不碰终端——`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`c` 当时能编译后端,却拒绝金标那个循环形状(`Global`)——T48.2 留下的那个决定;T48.8 给该 target 补上 def-as-value 之后,语料如今也在 `c` 上跑通。金标逼出的两个 `beam` 降级缺陷(`Block` 值的裸 def 被发射成不可调用的远程 fun;循环体里的 `case` 没有把外层 `var` 的重绑穿出)随后端一起修好,记在 `CHECK.md`。`examples/tui_menu/` 是用法示例:一个由脚本化输入驱动的终端菜单,同一个关口在它声明的每个 target 上检查它。
 
 ### Web
 
@@ -263,7 +263,7 @@ reg.dispatch(tag Int64) Msg // the driver's lookup
 
 - **两个事件循环。** 在 AppKit/GTK 上,`ui_run()` 阻塞在工具包循环里,事件经回调契约重入。Emo 自己的协作式调度器(进程、邮箱)不持有那个线程。一个带邮箱的 UI 进程与一个工具包循环需要一个集成方案(工具包循环驱动调度器,或事件作为消息投递进一个进程)。spike 用的同步 Elm 循环绕开了它,也是正确的 v1:进程与监督在循环被证明之后再来。
 - **后端一致性。** `c` 目标的 `raise` 曾经结束的是程序而不是出错的那个进程,`send` 曾经是共享而不是快照——两者已于 2026-10-15 关闭(`CHECK.md`,step 50)。GUI 是让两者都显形的消费者;一个在握着工具包时 raise 的 UI 不能悄悄把窗口一起带走,现在它也不会了。`typescript` 目标的 send 共享是 Web 路径上同一个缺口。
-- **循环在各个托管 target 上的形状。** 循环已经落地(`projects/emo-ui/`,T48.2),在解释器上跑得起来;但上面这个形状——应用的 `update` 与 `view` 以 `Block` 值传进来——只在「裸 def 可以当值」的地方能编译:`ocaml`、`typescript`、`wasm`、`beam` 可以;`c` 拒绝(`Global`)。`wasm` 这一半已于 2026-10-18 关闭(T48.6):`Call_value`、`Closure` 与 `Global` 按参数个数分配一对函数/struct 类型(`closure_type`),任意参数个数的 `Block` 值都是一等值,核心金标的字节因此在五个 target 上一致。把这两个函数放到 `Handler` 接口后面——普通的接口分发,没有任何 `Block` 值函数,应用照旧用 `is()` 收窄自己的 model,正如后端收窄节点——仍是剩下那条替代路,五个 target 全部可编译,打印结果与解释器一致(`projects/emo-ui/probe/`、`CHECK.md`,Elm 循环的形状)。往哪边收口——给 `c` 补上 def-as-value,还是把应用的函数移到接口后面并改写本层的拼写——仍然开放。
+- **循环在各个托管 target 上的形状。** *已关闭。* 循环已经落地(`projects/emo-ui/`,T48.2),在解释器上跑得起来;上面这个形状——应用的 `update` 与 `view` 以 `Block` 值传进来——在每一个托管 target 上都能编译。`wasm` 这一半于 2026-10-18 关闭(T48.6):`Call_value`、`Closure` 与 `Global` 按参数个数分配一对函数/struct 类型(`closure_type`),任意参数个数的 `Block` 值都是一等值。`c` 曾经连裸 def 名本身都拒绝(`Global`),直到 T48.8 把「def 当值」落成一层无捕获闭包、包住每个 def 自己的动态 thunk。五个 target 上每一份金标与语料都跑通(`CHECK.md`,Elm 循环的形状)。把这两个函数放到 `Handler` 接口后面——普通的接口分发,没有任何 `Block` 值函数,应用照旧用 `is()` 收窄自己的 model,正如后端收窄节点——保留为那个决定没有选走的替代路(`projects/emo-ui/probe/`)。两者之间最终选了补 target:def-as-value 是后端的缺口而非新语法,而且保住了已落地的 `ui.run` 拼写。
 - **长跑内存。** `c` 目标不回收一次渲染分配的值语义家族,而 UI 每个事件重渲染一次,所以这是约束平台而非约束设计的那条告诫:`spike/arena-scope` 实测 400 节点时每次渲染约 1 MB、约 820 个对象,两者都无界。region 修不了它——它回收字节、回收不了对象,还会搁死那些引用计数。原生后端的 demo 尺度注记已退役——step 49 于 2026-10-17 落地,一次渲染会把它构建的一切全部释放,工作集保持平坦(`CHECK.md`)。
 
 ### Layer 6 —— 后端接缝
@@ -282,7 +282,7 @@ interface Backend {
 
 每个平台实现它:
 
-- **macOS / GTK:** 一个 Emo 类,其方法调用 `foreign def` shim。shim 实现各原语(`window_make`、`label_make`、`place`、`connect`、……);Emo 侧遍历树并把节点映射到原生 handle。
+- **macOS(已落地,T48.8):** 一个 Emo 类,其方法调用 `foreign def` shim,另一边是 C ABI 上的 AppKit shim。九个动词是 `window_make`、`label_make`、`button_make`、`place`、`clear`、`connect`、`root`、`run` 与 `autotest_arm`;Emo 侧以 point 度量这棵树(`box.emo`),遍历它,并把节点映射到原生 handle。`projects/emo-ui/macos/` 是这个包,`corpus/` 是它的收敛消费者——一块界面用尽每个原语,由一段逗号分隔的 tag 脚本驱动,shim 在 `EMO_GUI_AUTOTEST` 下逐次点击后结束进程,所以它的字节不用键盘、也不用截图就能检查。GTK 4 是同一个形状,仍待落地(T48.9)。
 - **TUI(已落地,T48.4):** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 从脚本化输入拉取 tag 并交给循环的 sink。`projects/emo-ui/tui/` 是这个包,`tui/golden/` 是那段脚本化输入的金标:`screen` 把网格作为数据交回,`paint` 写出字节,同一块界面在解释器、`ocaml`、`typescript` 与 `beam` 上逐字节相同。
 - **Debug(已落地,T48.3):** 无头的那一个,也是这条接缝的参考实现。它把循环交给它的每一棵树渲染进一份日志而不是打印——于是何时让文本到达 stdout 由调用方决定,金标不会被一个恰好挂上去的后端搅动——而 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。`projects/emo-ui/golden/` 就是它为的东西:一块界面经核心、以消费者抵达核心的方式走一遍,再以文本出来,在解释器与全部五个托管 target 上逐字节相同(`wasm` 那一半的循环形状已于 T48.6 关闭;`c` 仍拒绝循环的裸 def 名,但不拒绝这个直接调用渲染器的金标)。这个形态之所以这么窄是被 target 逼的、不是选的:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为枚举或元组在两个 target 上打印出的字节并不相同(`CHECK.md`,枚举的显示形式);它的金标也先在建树之前用独立语句取好 tag,因为操作数求值顺序由 target 决定(`CHECK.md`)。
 - **SSR(已落地,T48.6):** `projects/emo-ui/ssr/` 把树渲染成 HTML 与驻留的样式表,在全部五个 target 上逐字节一致。`mount` 打印整份文档,`patch` 打印浏览器换入的片段;`run()` 直接返回,因为服务端没有输入源,`deliver(tag)` 就是推进一个事件的那次请求。交互模型是表单与链接,只有服务端往返才放得下的三个节点(`form`、`link`、`field`)就住在这个包里,而不是核心。

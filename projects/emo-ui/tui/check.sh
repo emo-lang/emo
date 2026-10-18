@@ -114,9 +114,9 @@ expect_same_file() {
 
 # A frame corpus is one consumer program run end to end: build it for
 # every target that lowers the loop, run each artifact its own way, and
-# compare the bytes to the interpreter's file. `c` and `wasm` cannot run
-# it — one refuses the loop's spelling, the other has no `ui_tui`
-# (`CHECK.md`) — so their refusals are what is pinned instead.
+# compare the bytes to the interpreter's file. `wasm` cannot run it —
+# the package has no `ui_tui` there (`CHECK.md`) — so its refusal is
+# what is pinned instead.
 corpus_build() {
   mkdir -p "$3"
   ( cd "$1" && EMO_REGISTRY="$REG" "$EMO" build main.emo --target "$2" -o \
@@ -126,6 +126,7 @@ corpus_build() {
 run_target() {
   case $1 in
     ocaml)      "$2/ocaml/out" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
+    c)          "$2/c/out" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
     typescript) node "$2/typescript/out.ts" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
     beam)       erl -noshell -pa "$2/beam" \
                   -eval 'out:main(), erlang:halt(0).' >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
@@ -145,7 +146,7 @@ check_corpus() {
   expect 0 "the $what runs on the interpreter" "$rc"
   expect_same_file "$want" "$root/interp.txt" \
     "and prints the file it is pinned to"
-  for t in ocaml typescript beam; do
+  for t in ocaml c typescript beam; do
     corpus_build "$dir" "$t" "$root/$t" && rc=0 || rc=$?
     expect 0 "the $what builds for $t" "$rc"
     run_target "$t" "$root"
@@ -153,11 +154,6 @@ check_corpus() {
     expect_same_file "$want" "$root/$t.txt" \
       "the $what's bytes on $t are the interpreter's"
   done
-  corpus_build "$dir" c "$root/c" && rc=0 || rc=$?
-  got=$(grep -o -m1 "does not support this expression form (Global)" "$OUT.log" \
-    || true)
-  expect "does not support this expression form (Global)" \
-    "the $what --target c says why" "$got"
   corpus_build "$dir" wasm "$root/wasm" && rc=0 || rc=$?
   # The consumer reaches its dependency's manifest first: `emo/ui_tui`
   # leaves `wasm` out, so resolution refuses before any emitter runs.

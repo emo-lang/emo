@@ -1,0 +1,81 @@
+require "emo/ui"
+
+// The macOS backend (T48.8): the nine-verb AppKit shim over the
+// callback contract.
+//
+// `shim.m` is the only Objective-C outside `spike/`. Every verb below is one
+// `foreign def` naming a C symbol it defines; the box model in `box.emo`
+// is pure Emo, so the app builds without a window server and a test
+// reads the frame it would paint (docs/emo-ui.md, Layer 3).
+//
+// The sink is the callback contract's worked case: `ui.Events` is a
+// single-method interface, so a foreign def's parameter of that type
+// crosses as a function pointer plus its userdata (`CHECK.md`). The
+// shim stores the pair, and a click calls it with nothing but the
+// event tag — the application's types never cross the FFI.
+
+foreign def ui_window_make(title String, w Float64, h Float64) Int64 = "ui_window_make"
+foreign def ui_label_make(text String) Int64 = "ui_label_make"
+foreign def ui_button_make(text String) Int64 = "ui_button_make"
+foreign def ui_place(child Int64, x Float64, y Float64, w Float64, h Float64) Void = "ui_place"
+foreign def ui_clear() Void = "ui_clear"
+foreign def ui_connect(child Int64, tag Int64) Void = "ui_connect"
+foreign def ui_root() Int64 = "ui_root"
+foreign def ui_run(events ui.Events) Void = "ui_run"
+foreign def ui_autotest_arm(script String) Void = "ui_autotest_arm"
+
+// The backend itself. A window is a size in points, which this backend
+// takes as an argument today; reading it from the screen and reflowing
+// on resize is the same interaction work `ui_tui` leaves to T48.5.
+//
+// `script` is the self-driving input, the counterpart of the terminal's
+// `Script`: a comma-separated list of event tags clicked in order. It is
+// honored only when `EMO_GUI_AUTOTEST` is set, so a real application
+// passes `""` and a person drives the window.
+class Mac {
+  def init(title String, width Float64, height Float64, script String) {
+    self.title = title
+    self.width = width
+    self.height = height
+    self.script = script
+    self.sink = Box.new(0)
+  }
+
+  def mount(root ui.Node, events ui.Events) {
+    self.sink.replace(events)
+    ui_window_make(self.title, self.width, self.height)
+    self.paint(root)
+  }
+
+  // Every frame is a full rebuild: `old` is an offer, and a clear plus
+  // fresh widgets is the one policy both the terminal and AppKit can
+  // honor (docs/emo-ui.md, Layer 6). A retained diff is T48.12's.
+  def patch(old ui.Node, next ui.Node) {
+    self.paint(next)
+  }
+
+  def paint(root ui.Node) {
+    const draws = box.layout(root, self.width, self.height)
+    ui_clear()
+    for var i = 0; i < draws.length(); i = i + 1 {
+      const d = draws[i]
+      var handle = 0
+      if d.kind() == box.Kind.button {
+        handle = ui_button_make(d.text())
+        ui_connect(handle, d.event())
+      } else {
+        handle = ui_label_make(d.text())
+      }
+      ui_place(handle, d.x(), d.y(), d.w(), d.h())
+    }
+  }
+
+  def run() {
+    ui_autotest_arm(self.script)
+    ui_run(self.sink.read())
+  }
+}
+
+def backend(title String, width Float64, height Float64, script String) ui.Backend {
+  return Mac.new(title: title, width: width, height: height, script: script)
+}

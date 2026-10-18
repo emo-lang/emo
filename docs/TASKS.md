@@ -1809,9 +1809,19 @@ required.
       install prompt, and `emo emoji build` passes a package's own
       native inputs the way a dependency's are passed, so the
       pre-publish gate links what consumers get.
-- [ ] **T48.8** — `ui-macos`: the nine-verb AppKit shim over the callback
+- [x] **T48.8** — `ui-macos`: the nine-verb AppKit shim over the callback
       contract; the convergence corpus runs. Demo scale — the `c`
       target's long-running memory is step 49 (`CHECK.md`).
+      **Landed 2026-10-18**: `projects/emo-ui/macos/` carries the
+      point box model (`box.emo`, pure, so the interpreter tests it),
+      the nine foreign verbs (`ui_macos.emo`, with `ui.Events` crossing
+      as the callback pair) and `shim.m`, the only Objective-C outside
+      `spike/`;
+      `corpus/` runs one portable application on it under
+      `EMO_GUI_AUTOTEST` and prints the pinned bytes. Getting there
+      gave the `c` target def-as-value (`Global`): a capture-less
+      closure over a per-def dynamic thunk, which closed the loop's
+      last refusal and put `c` in every corpus run.
 - [ ] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`; the
       convergence corpus runs. Demo scale, as T48.8.
 - [ ] **T48.10** — The browser runtime path: a browser-safe split of the

@@ -1,0 +1,65 @@
+require "emo/ui"
+require "emo/ui_macos"
+
+// A convergence corpus entry (T48.8): one application, written against
+// the portable core only, run on the macOS backend under
+// `EMO_GUI_AUTOTEST`. The tree uses every primitive, so a backend that
+// cannot build it fails at the window; `update` prints each state
+// transition, so the run's stdout is the loop's, not the toolkit's.
+//
+// The script is the tags in registration order — `view` registers inc,
+// dec and submit on every frame and `Registry.on` hands back the same
+// index, so "0,0,1,2" is inc, inc, dec, submit.
+
+enum Msg { inc, dec, submit }
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+}
+
+def update(msg Msg, m Model) Model {
+  if msg == Msg.inc {
+    println("inc ${m.count() + 1}")
+    return Model.new(count: m.count() + 1)
+  }
+  if msg == Msg.dec {
+    println("dec ${m.count() - 1}")
+    return Model.new(count: m.count() - 1)
+  }
+  println("submit ${m.count()}")
+  return Model.new(count: m.count())
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  const inc = reg.on(Msg.inc)
+  const dec = reg.on(Msg.dec)
+  const submit = reg.on(Msg.submit)
+  const items = ArrayBuilder.new()
+  items.push(ui.text("first", ui.style()))
+  items.push(ui.text("second", ui.style()))
+  items.push(ui.image("logo.png", ui.style()))
+  return ui.column([
+    ui.text("Emo counter", ui.style()),
+    ui.row([
+      ui.button("inc", inc, ui.style()),
+      ui.button("dec", dec, ui.style())
+    ], ui.style().with_gap(8.0)),
+    ui.text_input("count = ${m.count()}", ui.style()),
+    ui.scroll(items.to_array(), ui.style().with_height(120.0)),
+    ui.button("submit", submit, ui.style()),
+    ui.spacer(ui.style().with_grow(true))
+  ], ui.style().with_padding(12.0).with_gap(8.0))
+}
+
+def main() {
+  ui.run(view, update, Model.new(count: 0),
+    ui_macos.backend("Emo counter", 360.0, 480.0, "0,0,1,2"))
+}
+
+main()

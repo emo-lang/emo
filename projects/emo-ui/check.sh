@@ -6,14 +6,11 @@
 #
 # Every expectation is stated before it is compared, so a change that
 # moves one shows up as a FAIL here rather than as a silently stale
-# paragraph in README.md. The one live gap is the loop's own shape: the
-# application's `update` and `view` arrive as `Block` values, and a bare
-# def name is the only expression that produces one — which the `c`
-# target refuses (`Global`). The `wasm` target used to refuse the same
-# shape once the function took more than one parameter; its closures now
-# take any arity (T48.6), so `c` is the last refusal. `probe/` holds the
-# gap as a minimal pair, and the pin here keeps the paragraph honest.
-# `CHECK.md` records the finding.
+# paragraph in README.md. The loop's own shape — the application's
+# `update` and `view` arriving as `Block` values — lowers on every
+# target: `wasm` closed it in T48.6 and `c` in T48.8 (`probe/def_shape`
+# is the shape in miniature). The one refusal left in the table is
+# `wasm` for `ui_tui`, whose `printf` its runtime does not carry.
 #
 # Usage: ./check.sh
 
@@ -60,40 +57,22 @@ expect 17 "all seventeen assertions pass" "$n"
 # --- which targets can compile the package -------------------------------
 #
 # The package is `ui.emo` plus `test.emo`, and the test is what calls
-# `ui.run` with two bare defs. So the refusal below is the loop's shape,
-# not the core's: `probe/` splits it apart.
+# `ui.run` with two bare defs. Every target lowers it since `c` grew
+# def-as-value (T48.8), so the whole table builds.
 
 for t in ocaml c typescript wasm beam; do
   build . ui.emo "$t" && rc=0 || rc=$?
-  if [ "$rc" -eq 0 ]; then got=builds; else got=fails; fi
-  case $t in
-    c)  want=fails ;;
-    *)  want=builds ;;
-  esac
-  expect "$want" "package --target $t" "$got"
+  expect 0 "package --target $t builds" "$rc"
 done
 
-# --- and each refusal names its cause ------------------------------------
-#
-# The line is the whole diagnostic the target prints, so a drift in the
-# message fails here.
-
-why() {
-  build "$1" "$2" "$3" && rc=0 || rc=$?
-  got=$(grep -o -m1 "$4" "$OUT.log" || true)
-  expect "$5" "$1 --target $3 says why" "$got"
-}
-
-why . ui.emo c "does not support this expression form (Global)" \
-  "does not support this expression form (Global)"
-
-# --- the gap as a minimal pair -------------------------------------------
+# --- the loop's shape as a minimal pair ----------------------------------
 #
 # `def_shape` is the landed shape in miniature — two defs handed over as
-# `Block` values — so it reaches the remaining refusal. `handler_shape`
-# is the same loop with those two functions behind an interface, and
-# every target compiles it. Neither is a package of the core: each has
-# its own `package.emo`, so the walk leaves them out of `ui`'s package.
+# `Block` values — and it is the case the `c` target used to refuse.
+# `handler_shape` is the same loop with those two functions behind an
+# interface; every target compiles that too. Neither is a package of the
+# core: each has its own `package.emo`, so the walk leaves them out of
+# `ui`'s package.
 
 # Only stdout is the program's bytes. The first run of a dependency-carrying
 # package also writes a missing `package.lock` and says so on stderr; that
@@ -108,13 +87,14 @@ run_of probe/def_shape main.emo "count 1"
 
 for t in ocaml c typescript wasm beam; do
   build probe/def_shape main.emo "$t" && rc=0 || rc=$?
-  if [ "$rc" -eq 0 ]; then got=builds; else got=fails; fi
-  case $t in
-    c)  want=fails ;;
-    *)  want=builds ;;
-  esac
-  expect "$want" "def_shape --target $t" "$got"
+  expect 0 "def_shape --target $t builds" "$rc"
 done
+
+# The `c` half is the T48.8 gate: the same def-as-value the backend needs
+# must also print the interpreter's line, not merely link.
+build probe/def_shape main.emo c && rc=0 || rc=$?
+got=$("$OUT" 2>&1 || true)
+expect "count 1" "def_shape --target c prints what emo run prints" "$got"
 
 run_of probe/handler_shape main.emo "count 1"
 
@@ -245,10 +225,13 @@ done
 
 # --- the backends' package gates ----------------------------------------
 #
-# `tui/` and `ssr/` are packages of their own — they carry nodes and a
-# renderer the core does not — and each has its own gate (T48.4, T48.6).
-# Run them here too, so the project keeps one entry point.
+# `tui/`, `ssr/` and `macos/` are packages of their own — they carry a
+# renderer or a shim the core does not — and each has its own gate
+# (T48.4, T48.6, T48.8). Run them here too, so the project keeps one
+# entry point. The macOS gate needs a Darwin host and a logged-in
+# session; it says so and passes on any other host.
 EMO="$EMO" ./tui/check.sh || fail=1
 EMO="$EMO" ./ssr/check.sh || fail=1
+EMO="$EMO" ./macos/check.sh || fail=1
 
 exit $fail
