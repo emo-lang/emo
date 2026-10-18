@@ -700,7 +700,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 **前置:** Step 41–42。
 **完成标准:** decision 17 里的每个 `plot.*` 图表都在 T0 mark 上实现,fixture 在全部五个 target 上逐字节一致。
 
-- [ ] **T43.1** — 统计:描述统计、分箱、KDE、ECDF、箱线统计,以及带置信带的 OLS;`normal_quantile` 与 `normal_cdf` 作为 `plot` 内部(decision 13)。
+- [x] **T43.1** — 统计:描述统计、分箱、KDE、ECDF、箱线统计,以及带置信带的 OLS;`normal_quantile` 与 `normal_cdf` 作为 `plot` 内部(decision 13)。落在 `internal/stats.emo`:`sort`(ArrayBuilder 上的自底向上归并排序)、`quantile`、`describe`、`histogram_bins`(复用 `hist` mark 的 `bin_index`,列与 mark 的分箱恒一致)、`ecdf`、`box_stats`(Tukey 须与离群点)、`ols` 与 `ols_band`(大样本置信带,临界值来自 Acklam 的 `normal_quantile`)、`normal_cdf`(Zelen–Severo),以及 KDE 背后的 `exp`——按 `scale.log10` 的先例内化,`plot` 保持零依赖。已验证六条路径——interp、c、ocaml、ts、wasm、beam——手算核对值与抛错路径逐字节一致。
 - [ ] **T43.2** — 关系型:`plot.scatter`、`plot.line`、`plot.reg`。
 - [ ] **T43.3** — 分布型:`plot.hist`、`plot.kde`、`plot.ecdf`、`plot.box`、`plot.violin`。
 - [ ] **T43.4** — 分类型:`plot.bar`、`plot.count`、`plot.strip`、`plot.point`。

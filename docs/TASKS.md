@@ -1436,9 +1436,19 @@ against the `Renderer` interface, not `SvgRenderer`.
 **Done when:** every `plot.*` chart in decision 17 is implemented on the
 T0 marks, with fixtures byte-identical on all five targets.
 
-- [ ] **T43.1** — Statistics: descriptives, binning, KDE, ECDF, box
+- [x] **T43.1** — Statistics: descriptives, binning, KDE, ECDF, box
       statistics, and OLS with a confidence band; `normal_quantile` and
-      `normal_cdf` internal to `plot` (decision 13).
+      `normal_cdf` internal to `plot` (decision 13). Landed in
+      `internal/stats.emo`: `sort` (a bottom-up merge sort through the
+      ArrayBuilder), `quantile`, `describe`, `histogram_bins` (the
+      `hist` mark's own `bin_index`, so a column and a mark built from
+      it always agree), `ecdf`, `box_stats` (Tukey whiskers and fliers),
+      `ols` with `ols_band` (the large-sample band, its critical value
+      the Acklam `normal_quantile`), `normal_cdf` (Zelen–Severo), and
+      the `exp` behind the KDE, carried internal by the
+      `scale.log10` precedent so `plot` stays dependency-free. Verified
+      on all six paths — interp, c, ocaml, ts, wasm, beam — with
+      hand-checked values and the raise paths byte-identical.
 - [ ] **T43.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
 - [ ] **T43.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
       `plot.box`, `plot.violin`.
