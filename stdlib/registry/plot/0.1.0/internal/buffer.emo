@@ -25,6 +25,9 @@ class Buffer {
   }
 
   def write_color(c (Int64, Int64, Int64)) Buffer {
+    if c[0] < 0 || c[0] > 255 || c[1] < 0 || c[1] > 255 || c[2] < 0 || c[2] > 255 {
+      raise Exception.new(message: "plot: a color's channels live in 0 to 255, got (${c[0]}, ${c[1]}, ${c[2]})")
+    }
     return self.write("rgb(" + c[0].to_string() + "," + c[1].to_string() + "," + c[2].to_string() + ")")
   }
 

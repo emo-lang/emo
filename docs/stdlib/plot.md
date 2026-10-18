@@ -43,6 +43,7 @@ def with_marks(m Array[Mark]) Axes
 def with_legend(on Bool) Axes
 
 def grid_style() GridStyle
+def rgb(r Int64, g Int64, b Int64) (Int64, Int64, Int64)
 ```
 
 `figure()` and `axes()` build the defaults, and `with_*` refines a value.
@@ -183,9 +184,12 @@ and raises. `HistStyle` carries `color` (the fill), `edge_color` and
 `opacity`, and `label`.
 
 **Colors are `(Int64, Int64, Int64)` sRGB triples**, each channel 0–255.
-Opacity is a separate `Float64` on the style, never baked into the
-triple. It rides every style but is not rendered yet — the renderer's
-primitives do not carry an opacity knob yet.
+`plot.rgb(r, g, b)` builds one with the range checked — an
+out-of-range channel raises — and a raw triple is accepted and
+validated when it is drawn. Opacity is a separate `Float64` on the
+style, never baked into the triple. It rides every style but is not
+rendered yet — the renderer's primitives do not carry an opacity knob
+yet.
 
 A mark draws itself into an axes through the `Mark` interface — `draw`,
 plus the data span it asks the axes to cover: a continuous x and y

@@ -378,6 +378,21 @@ def tick_text(x Float64) String {
   return x.to_string()
 }
 
+// The validated color constructor: every channel must be 0–255. A raw
+// triple skips this check and is validated when it is drawn.
+def rgb(r Int64, g Int64, b Int64) (Int64, Int64, Int64) {
+  if r < 0 || r > 255 {
+    raise Exception.new(message: "plot: rgb channels live in 0 to 255, got red ${r}")
+  }
+  if g < 0 || g > 255 {
+    raise Exception.new(message: "plot: rgb channels live in 0 to 255, got green ${g}")
+  }
+  if b < 0 || b > 255 {
+    raise Exception.new(message: "plot: rgb channels live in 0 to 255, got blue ${b}")
+  }
+  return (r, g, b)
+}
+
 def svg_anchor(a Anchor) internal.svg.Anchor {
   var r = internal.svg.Anchor.start
   case a {

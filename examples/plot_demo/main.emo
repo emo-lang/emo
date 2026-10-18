@@ -46,7 +46,7 @@ const plan_ax = plot.axes().with_x_label("Quarter").with_y_label("Units").with_m
   plot.mark.line([1.0, 2.0, 3.0, 4.0], [20.0, 28.0, 26.0, 34.0]).with_style(
     plot.mark.line_style().with_label("plan")),
   plot.mark.line([1.0, 2.0, 3.0, 4.0], [18.0, 30.0, 24.0, 37.0]).with_style(
-    plot.mark.line_style().with_label("actual").with_dash(plot.mark.Dash.dashed).with_color((47, 111, 179)))
+    plot.mark.line_style().with_label("actual").with_dash(plot.mark.Dash.dashed).with_color(plot.rgb(47, 111, 179)))
 ])
 println(plot.svg(plot.figure().with_title("Plan vs actual").with_axes([plan_ax])))
 
@@ -54,6 +54,6 @@ const dark_ax = plot.axes().with_x_label("Quarter").with_y_label("Units").with_m
   plot.mark.line([1.0, 2.0, 3.0, 4.0], [20.0, 28.0, 26.0, 34.0]).with_style(
     plot.mark.line_style().with_label("plan")),
   plot.mark.line([1.0, 2.0, 3.0, 4.0], [18.0, 30.0, 24.0, 37.0]).with_style(
-    plot.mark.line_style().with_label("actual").with_dash(plot.mark.Dash.dashed).with_color((233, 196, 106)))
+    plot.mark.line_style().with_label("actual").with_dash(plot.mark.Dash.dashed).with_color(plot.rgb(233, 196, 106)))
 ])
 println(plot.svg(plot.figure().with_title("Plan vs actual, dark").with_theme(plot.dark_theme()).with_axes([dark_ax])))

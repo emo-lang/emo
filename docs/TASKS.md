@@ -1392,9 +1392,10 @@ against the `Renderer` interface, not `SvgRenderer`.
       foreground, the grid/axis/title/label styles, a palette, a
       colormap, spacing, the default size; decision 24) with
       `with_theme`.
-- [ ] **T41.6** — Palettes and colormaps (decision 21/24): interpolation
-      in `Float64`, the `color` channel dispatching on the column's kind,
-      and `plot.rgb` validating the 0–255 range.
+- [x] **T41.6** — `plot.rgb` validating the 0–255 range and draw-time
+      validation of raw triples (decision 21), on the T41.5 colormaps'
+      `Float64` interpolation; the `color` channel's column-kind
+      dispatch rides T42.3's channels (decision 24).
 - [ ] **T41.7** — Faceting (decision 23): sorted levels, rows × cols,
       `Share.all` by default, one legend, per-panel labels, blank cells
       for mismatched levels.
@@ -1418,7 +1419,8 @@ against the `Renderer` interface, not `SvgRenderer`.
 - [ ] **T42.3** — Channels `Map[String, String]` (decision 16): the
       vocabulary `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,
       unknown channels an error, each family reading only the channels it
-      supports.
+      supports — carrying T41.6's column-kind `color` dispatch through
+      the theme's palette and colormap (decision 24).
 
 ### Step 43 — T1 dataset charts
 
