@@ -52,11 +52,14 @@ enum Share { all, none }
 ## Marks
 
 The marks live in the `plot.mark` submodule — a package's submodules are
-addressed under its short name. T0 ships the bar mark:
+addressed under its short name. T0 ships the bar and line marks:
 
 ```emo
 def bar(labels Array[String], values Array[Float64]) Bar
 def bar_style() BarStyle
+
+def line(x Array[Float64], y Array[Float64]) Line
+def line_style() LineStyle
 ```
 
 A mark is a value too. `Bar.with_style(s BarStyle)` and the style's
@@ -68,9 +71,23 @@ plot.mark.bar(months, sales).with_style(
   plot.mark.bar_style().with_color((192, 57, 43)).with_width(0.6))
 ```
 
+A line draws a stroked polyline through the `(x, y)` points and stamps
+its marker shape at every point. `LineStyle` carries `color`, `width`,
+`dash` (`Dash.solid` / `dashed` / `dotted` / `dash_dot`), `marker`
+(`Marker.none` / `circle` / `square` / `triangle` / `diamond` / `cross` /
+`plus`), `marker_size`, `opacity`, and `label`, refined through the same
+`with_*` copy methods:
+
+```emo
+plot.mark.line(years, revenue).with_style(
+  plot.mark.line_style().with_dash(plot.mark.Dash.dashed)
+    .with_marker(plot.mark.Marker.circle))
+```
+
 **Colors are `(Int64, Int64, Int64)` sRGB triples**, each channel 0–255.
 Opacity is a separate `Float64` on the style, never baked into the
-triple.
+triple. It rides every style but is not rendered yet — the renderer's
+primitives do not carry an opacity knob yet.
 
 A mark draws itself into an axes through the `Mark` interface — `draw`,
 plus the data span it asks the axes to cover: a continuous x and y
@@ -113,11 +130,11 @@ are identical on every target.
 
 Targets: all five (`ocaml`, `c`, `typescript`, `wasm`, `beam`).
 
-T0 — what exists today — is the bar mark, linear axes with nice-number
-ticks, a title, axis labels, and SVG output. The remaining pieces the
-surface carries are reserved and not rendered yet: `Scale.log`,
-`Domain`, faceting via `Share`, legends, and the other mark families
-(line, scatter, area, histogram). The SVG renderer sits behind an
+T0 — what exists today — is the bar and line marks, linear axes with
+nice-number ticks, a title, axis labels, and SVG output. The remaining
+pieces the surface carries are reserved and not rendered yet:
+`Scale.log`, `Domain`, faceting via `Share`, legends, and the other mark
+families (scatter, area, histogram). The SVG renderer sits behind an
 internal `Renderer` contract, so a terminal or raster backend can join
 later without disturbing the figure or the marks.
 

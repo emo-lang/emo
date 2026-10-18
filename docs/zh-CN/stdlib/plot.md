@@ -42,11 +42,14 @@ enum Share { all, none }
 
 ## mark
 
-mark 在 `plot.mark` 子模块里——包的子模块以包的短名为前缀寻址。T0 只有柱状 mark:
+mark 在 `plot.mark` 子模块里——包的子模块以包的短名为前缀寻址。T0 有柱状与折线两个 mark:
 
 ```emo
 def bar(labels Array[String], values Array[Float64]) Bar
 def bar_style() BarStyle
+
+def line(x Array[Float64], y Array[Float64]) Line
+def line_style() LineStyle
 ```
 
 mark 也是值。`Bar.with_style(s BarStyle)` 以及样式上的 `with_color` / `with_width` / `with_label` 细化它,不改动任何东西:
@@ -56,7 +59,15 @@ plot.mark.bar(months, sales).with_style(
   plot.mark.bar_style().with_color((192, 57, 43)).with_width(0.6))
 ```
 
-**颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组**,每通道 0–255。不透明度是样式上单独的 `Float64`,绝不煍进三元组。
+折线沿 `(x, y)` 点画一条描边折线,并在每个数据点盖上 marker 形状。`LineStyle` 携带 `color`、`width`、`dash`(`Dash.solid`/`dashed`/`dotted`/`dash_dot`)、`marker`(`Marker.none`/`circle`/`square`/`triangle`/`diamond`/`cross`/`plus`)、`marker_size`、`opacity` 与 `label`,用同一套 `with_*` 拷贝方法细化:
+
+```emo
+plot.mark.line(years, revenue).with_style(
+  plot.mark.line_style().with_dash(plot.mark.Dash.dashed)
+    .with_marker(plot.mark.Marker.circle))
+```
+
+**颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组**,每通道 0–255。不透明度是样式上单独的 `Float64`,绝不煍进三元组。它随每个样式携带,但**尚未渲染**——渲染器图元还没有不透明度旋钮。
 
 mark 通过 `Mark` 接口把自己画进坐标轴——`draw`,加上它要求坐标轴覆盖的数据跨度:连续的 x、y 范围走 `x_min`/`x_max`/`y_min`/`y_max`,类别的 x 面走 `bands` 和 `x_labels`——所以新增一种 mark 就是新增一个满足该形状的类。
 
@@ -89,6 +100,6 @@ println(plot.svg(chart))
 
 目标:全部五个(`ocaml`、`c`、`typescript`、`wasm`、`beam`)。
 
-T0——今天已有的——是柱状 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签,以及 SVG 输出。表面上还带着的其余部分是**预留、尚未渲染**的:`Scale.log`、`Domain`、经 `Share` 的分面、图例,以及其它 mark 家族(折线、散点、面积、直方图)。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状与折线 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签,以及 SVG 输出。表面上还带着的其余部分是**预留、尚未渲染**的:`Scale.log`、`Domain`、经 `Share` 的分面、图例,以及其它 mark 家族(散点、面积、直方图)。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

@@ -113,13 +113,13 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
   const ts = scale.ticks(0.0, top, 5)
   for var t = 0; t < ts.length(); t = t + 1 {
     const y = ctx.py(ts[t])
-    r.line(ml, y, ml + pw, y, (230, 230, 230), 1.0)
+    r.line(ml, y, ml + pw, y, (230, 230, 230), 1.0, "")
     r.text(ml - 8.0, y + 4.0, tick_text(ts[t]), 12.0, internal.svg.Anchor.end, internal.svg.Weight.regular, (85, 85, 85))
   }
   for var k = 0; k < marks.length(); k = k + 1 {
     marks[k].draw(ctx)
   }
-  r.line(ml, mt + ph, ml + pw, mt + ph, (136, 136, 136), 1.0)
+  r.line(ml, mt + ph, ml + pw, mt + ph, (136, 136, 136), 1.0, "")
   const labels = first_labels(marks)
   for var b = 0; b < labels.length(); b = b + 1 {
     const cx = ctx.px(b.to_float64() + 0.5)

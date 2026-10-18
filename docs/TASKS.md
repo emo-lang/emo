@@ -1363,7 +1363,7 @@ panels and stays byte-identical on all five targets; `dune test` green.
       `y_max`/`bands`/`x_labels` (continuous x and y ranges, `y_min`, the
       point/line primitives a `DrawContext` needs), keeping `Bar` as its
       first implementation.
-- [ ] **T40.2** — `plot.mark.line` and `LineStyle`.
+- [x] **T40.2** — `plot.mark.line` and `LineStyle`.
 - [ ] **T40.3** — `plot.mark.scatter` and `ScatterStyle`.
 - [ ] **T40.4** — `plot.mark.area` and `AreaStyle`.
 - [ ] **T40.5** — `plot.mark.hist` (bin counting) and `HistStyle`.

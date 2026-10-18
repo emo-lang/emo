@@ -665,7 +665,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 **完成标准:** `examples/plot_demo` 增加 line/scatter/area/histogram 面板,并在全部五个 target 上逐字节一致;`dune test` 全绿。
 
 - [x] **T40.1** — 把 `Mark` 接口从分类式的 `y_max`/`bands`/`x_labels` 扩展出去(连续的 x 与 y 范围、`y_min`、`DrawContext` 所需的点/线图元),并让 `Bar` 保持首个实现。
-- [ ] **T40.2** — `plot.mark.line` 与 `LineStyle`。
+- [x] **T40.2** — `plot.mark.line` 与 `LineStyle`。
 - [ ] **T40.3** — `plot.mark.scatter` 与 `ScatterStyle`。
 - [ ] **T40.4** — `plot.mark.area` 与 `AreaStyle`。
 - [ ] **T40.5** — `plot.mark.hist`(分箱计数)与 `HistStyle`。

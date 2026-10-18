@@ -2,7 +2,7 @@
 // its data spans. The span is named on both axes — a continuous x and y
 // range through `x_min`/`x_max`/`y_min`/`y_max`, a categorical x through
 // `bands` and `x_labels` — so the axes can scale to every mark at once.
-// `bar` is the first implementation.
+// `bar` and `line` are the implementations so far.
 
 interface Mark {
   def draw(ctx internal.ctx.DrawContext) Void
@@ -107,4 +107,181 @@ class Bar {
 
 def bar(labels Array[String], values Array[Float64]) Bar {
   return Bar.new(labels: labels, values: values, style: bar_style())
+}
+
+// The stroke vocabulary of a line: the dash pattern and the point
+// marker stamped at every data point.
+enum Dash { solid, dashed, dotted, dash_dot }
+enum Marker { none, circle, square, triangle, diamond, cross, plus }
+
+// The dash gap lengths a Dash name stands for, handed to the renderer's
+// line primitive verbatim; a solid stroke carries the empty pattern.
+def dash_array(d Dash) String {
+  var out = ""
+  if d == Dash.dashed {
+    out = "7 4"
+  }
+  if d == Dash.dotted {
+    out = "1.5 3.5"
+  }
+  if d == Dash.dash_dot {
+    out = "7 3 1.5 3"
+  }
+  return out
+}
+
+class LineStyle {
+  def init(color (Int64, Int64, Int64), width Float64, dash Dash, marker Marker, marker_size Float64, opacity Float64, label String) {
+    self.color = color
+    self.width = width
+    self.dash = dash
+    self.marker = marker
+    self.marker_size = marker_size
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) LineStyle {
+    return LineStyle.new(color: c, width: self.width, dash: self.dash, marker: self.marker, marker_size: self.marker_size, opacity: self.opacity, label: self.label)
+  }
+
+  def with_width(w Float64) LineStyle {
+    return LineStyle.new(color: self.color, width: w, dash: self.dash, marker: self.marker, marker_size: self.marker_size, opacity: self.opacity, label: self.label)
+  }
+
+  def with_dash(d Dash) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: d, marker: self.marker, marker_size: self.marker_size, opacity: self.opacity, label: self.label)
+  }
+
+  def with_marker(m Marker) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: self.dash, marker: m, marker_size: self.marker_size, opacity: self.opacity, label: self.label)
+  }
+
+  def with_marker_size(s Float64) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: self.dash, marker: self.marker, marker_size: s, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: self.dash, marker: self.marker, marker_size: self.marker_size, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) LineStyle {
+    return LineStyle.new(color: self.color, width: self.width, dash: self.dash, marker: self.marker, marker_size: self.marker_size, opacity: self.opacity, label: s)
+  }
+}
+
+def line_style() LineStyle {
+  return LineStyle.new(color: (192, 57, 43), width: 1.5, dash: Dash.solid, marker: Marker.none, marker_size: 6.0, opacity: 1.0, label: "")
+}
+
+class Line {
+  def init(x Array[Float64], y Array[Float64], style LineStyle) {
+    self.x = x
+    self.y = y
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.y.length()
+    const pattern = dash_array(self.style.dash)
+    for var i = 0; i < n - 1; i = i + 1 {
+      ctx.renderer.line(ctx.px(self.x[i]), ctx.py(self.y[i]), ctx.px(self.x[i + 1]), ctx.py(self.y[i + 1]), self.style.color, self.style.width, pattern)
+    }
+    const s = self.style.marker_size
+    const half = s / 2.0
+    const color = self.style.color
+    const m = self.style.marker
+    for var i = 0; i < n; i = i + 1 {
+      const cx = ctx.px(self.x[i])
+      const cy = ctx.py(self.y[i])
+      if m == Marker.circle {
+        ctx.renderer.circle(cx, cy, half, color)
+      }
+      if m == Marker.square {
+        ctx.renderer.rect(cx - half, cy - half, s, s, color)
+      }
+      if m == Marker.triangle {
+        ctx.renderer.polygon([cx, cx - half, cx + half], [cy - half, cy + half, cy + half], color)
+      }
+      if m == Marker.diamond {
+        ctx.renderer.polygon([cx, cx + half, cx, cx - half], [cy - half, cy, cy + half, cy], color)
+      }
+      if m == Marker.cross {
+        ctx.renderer.line(cx - half, cy - half, cx + half, cy + half, color, self.style.width, "")
+        ctx.renderer.line(cx + half, cy - half, cx - half, cy + half, color, self.style.width, "")
+      }
+      if m == Marker.plus {
+        ctx.renderer.line(cx - half, cy, cx + half, cy, color, self.style.width, "")
+        ctx.renderer.line(cx, cy - half, cx, cy + half, color, self.style.width, "")
+      }
+    }
+  }
+
+  def x_min() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var lo = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] < lo {
+        lo = self.x[i]
+      }
+    }
+    return lo
+  }
+
+  def x_max() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var hi = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] > hi {
+        hi = self.x[i]
+      }
+    }
+    return hi
+  }
+
+  def y_min() Float64 {
+    if self.y.length() == 0 {
+      return 0.0
+    }
+    var lo = self.y[0]
+    for var i = 1; i < self.y.length(); i = i + 1 {
+      if self.y[i] < lo {
+        lo = self.y[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.y.length() == 0 {
+      return 0.0
+    }
+    var hi = self.y[0]
+    for var i = 1; i < self.y.length(); i = i + 1 {
+      if self.y[i] > hi {
+        hi = self.y[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def with_style(s LineStyle) Line {
+    return Line.new(x: self.x, y: self.y, style: s)
+  }
+}
+
+def line(x Array[Float64], y Array[Float64]) Line {
+  return Line.new(x: x, y: y, style: line_style())
 }
