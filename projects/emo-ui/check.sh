@@ -232,10 +232,15 @@ done
 # host and a logged-in session; it says so and passes on any other host.
 # The GTK gate needs GTK 4 or Docker; it says so and passes with
 # neither. The browser gate needs Node >= 22.13 for the bundling step.
+# `corpus/` is the convergence corpus's gate (T48.12): the shared
+# application on the debug, SSR and terminal backends on every host they
+# declare; the macOS, GTK 4 and browser entries are run by their packages'
+# gates above.
 EMO="$EMO" ./tui/check.sh || fail=1
 EMO="$EMO" ./ssr/check.sh || fail=1
 EMO="$EMO" ./macos/check.sh || fail=1
 EMO="$EMO" ./gtk/check.sh || fail=1
 EMO="$EMO" ./browser/check.sh || fail=1
+EMO="$EMO" ./corpus/check.sh || fail=1
 
 exit $fail

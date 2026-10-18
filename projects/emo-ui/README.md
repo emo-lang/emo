@@ -42,8 +42,10 @@ The portable **`ui` core** (T48.1), the **Elm loop** (T48.2), the headless
 **`debug` backend with its golden** (T48.3), the **terminal `ui_tui` backend
 with its scripted-input golden** (T48.4), the **server-rendered `ui_ssr`
 backend** (T48.6), the **native `ui_macos` backend with its self-driving
-corpus** (T48.8), the **GTK 4 `ui_gtk` backend** (T48.9) and the **browser
-`ui_browser` backend with its DOM corpus** (T48.10, T48.11) have landed. So
+corpus** (T48.8), the **GTK 4 `ui_gtk` backend** (T48.9), the **browser
+`ui_browser` backend with its DOM corpus** (T48.10, T48.11) and the
+**convergence corpus** of one shared application on every backend (T48.12)
+have landed. So
 has terminal input itself (T48.5), as the
 standard-library **`term` package** in `stdlib/` — line reads, raw mode,
 decoded key events, and the terminal's size, in the `sqlite3` shape and
@@ -208,9 +210,9 @@ trampoline and a userdata pair; a click carries its tag back through that pair.
 `place` flips y, because AppKit's origin is the bottom left. `autotest_arm`
 takes a comma-separated tag script and, only under `EMO_GUI_AUTOTEST`, an
 `NSTimer` clicks each tag in turn and terminates, so the gate needs no one at
-the keyboard and no screenshot. `corpus/` is the convergence consumer — every
-primitive on one screen, the script `0,0,1,2`, and `expected.txt` holding the
-loop's bytes. `macos/check.sh` is the package's gate and runs only on Darwin;
+the keyboard and no screenshot. `corpus/` is the macOS entry into the
+convergence corpus — the shared application on one screen, the script
+`0,0,1,2`, and `expected.txt` holding the loop's bytes. `macos/check.sh` is the package's gate and runs only on Darwin;
 the shim is the project's only Objective-C outside `spike/`. Demo scale: the
 `c` target's long-running memory is step 49 (`CHECK.md`).
 
@@ -221,8 +223,9 @@ model, `ui_gtk.emo` the nine foreign verbs and the `Gtk` class, and `shim.c`
 the C side. GTK is already C, so the shim is thinner — the signal handler and
 the self-driving script are what Emo cannot name — and `place` applies x and y
 unchanged, because GtkFixed's origin is already the top left. The loop's sink
-crosses the FFI as the same `ui.Events` pair. `corpus/` is the same convergence
-consumer, with the same `0,0,1,2` script and `expected.txt`. `gtk/check.sh` is
+crosses the FFI as the same `ui.Events` pair. `corpus/` is the GTK 4 entry
+into the convergence corpus — the same shared application, `0,0,1,2` script
+and `expected.txt` as macOS. `gtk/check.sh` is
 the package's gate: it builds and runs natively where `pkg-config gtk4`
 answers, and otherwise compiles and runs the same generated C in the
 `emo-ui-gtk-build` container (GTK 4 plus Xvfb), which is how a macOS host
@@ -239,15 +242,32 @@ page-root declarations and the sink; `render` builds one element per node — a
 `text` is a span, a `button` carries its tag as the `name`/`value` pair
 `ui_ssr`'s markup uses, an `input` is a read-only view, an `image` is an `img`
 — and `patch` rebuilds the tree, as every backend does. `run()` returns,
-because the page owns the loop. `corpus/` is the convergence consumer — the
-same application, the same `0,0,1,2` script and `expected.txt` — and `page.mjs`
-is the stub page the gate runs it in: a `document`/`window` just large enough
-for the host, then the script's tags clicked in order. `browser/check.sh` is
-the package's gate; it needs Node >= 22.13 for `emo build --target browser`'s
-bundling step, and says so and passes where that is missing.
+because the page owns the loop. `corpus/` is the browser entry into the
+convergence corpus — the same shared application, `0,0,1,2` script and
+`expected.txt` — and `page.mjs` is the stub page the gate runs it in: a
+`document`/`window` just large enough for the host, then the script's tags
+clicked in order. `browser/check.sh` is the package's gate; it needs Node >=
+22.13 for `emo build --target browser`'s bundling step, and says so and passes
+where that is missing.
+
+`corpus/` is the convergence corpus itself (T48.12), the package
+`emo/ui_corpus`. It is the one application every backend runs: a counter as
+its state, an input showing it and a submit button as its form, a scrolled
+list, and the three tags `view` registers. `update` prints each transition, so
+`expected.txt` is the loop's bytes rather than a rendering, and the same file
+is pinned on every entry. Only the backend package and the entry module name
+the platform — `corpus/debug`, `corpus/ssr` and `corpus/tui` under this
+package's `check.sh`, and `macos/corpus`, `gtk/corpus` and `browser/corpus`
+under their backends' gates. The debug and SSR entries are byte-identical on
+all five hosted targets (`ocaml`, `c`, `typescript`, `wasm` and `beam`); the
+terminal entry on the four that can run it, with its `wasm` refusal pinned by
+name. The shared entry also found a `wasm` codegen defect: a def named as a
+value is a `ref.func`, and only the hidden closures were in the declarative
+element segment, so the validator rejected the corpus until every defined
+function was declared (`CHECK.md`).
 
 Still to come: wiring `term` into `ui_tui`'s input source, and the
-cross-backend convergence corpus (T48.12–T48.13). The design and its evidence:
+documentation pass (T48.13). The design and its evidence:
 
 - [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.

@@ -901,6 +901,45 @@ let root_end_tests =
           "root done\n[false]\n");
   ]
 
+(* A bare def named as a value is a `ref.func`, and the validator
+   requires every `ref.func` target to appear in the declarative element
+   segment. Only the hidden closures were declared, so a program def
+   handed over as a `Block` — the shape `ui.run` takes, here across a
+   module boundary — failed to compile. *)
+let wasm_block_tests =
+  [
+    tc "a bare def crosses as a Block and runs on Node" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let source =
+          {|
+def apply2(f Block, a Int64, b Int64) Int64 {
+  return f(a, b)
+}
+
+def main() {
+  const r = apply2(lib.add, 20, 22)
+  println(r)
+}
+main()
+|}
+        in
+        let entry = scratch_entry "wasm-block" source in
+        let dir = Filename.dirname entry in
+        write_file
+          (Filename.concat dir "lib.emo")
+          "def add(a Int64, b Int64) Int64 {\n  return a + b\n}\n";
+        let out_wasm = Filename.concat dir "main.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote out_wasm)))
+          "42\n");
+  ]
+
 (* T23.2's integer core: fib's plain recursion, the 1M-deep tail
    count_down, a mutual-tail ping/pong cluster, wrap-around Int64
    (INT64_MIN formatting, division and remainder by -1, overflow on
@@ -4486,6 +4525,7 @@ let () =
       ("c_examples", c_examples_tests);
       ("c_tls", c_tls_tests);
       ("root_end", root_end_tests);
+      ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);

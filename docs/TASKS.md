@@ -1879,8 +1879,24 @@ required.
       same `0,0,1,2` script and `expected.txt` — and `page.mjs` is the
       stub page the gate runs it in. `browser/check.sh` is the package's
       gate and skips where Node < 22.13 leaves no bundle to build.
-- [ ] **T48.12** — The convergence corpus: one sample application on
+- [x] **T48.12** — The convergence corpus: one sample application on
       every backend, with the same portable app module throughout.
+      **Landed 2026-10-18**: `projects/emo-ui/corpus/` is the package
+      `emo/ui_corpus`, the shared application — a counter as its state,
+      an input and a submit button as its form, a scrolled list, and
+      the three tags `view` registers — written once and consumed by
+      every backend. `corpus/debug`, `corpus/ssr` and `corpus/tui` are
+      thin entries under its own gate; `macos/corpus`, `gtk/corpus` and
+      `browser/corpus` are thin entries under their packages' gates. Only
+      the backend package and the entry module name the platform.
+      `corpus/check.sh` pins the debug and SSR entries byte-for-byte on
+      all five hosted targets (`ocaml`, `c`, `typescript`, `wasm`,
+      `beam`) and the terminal entry on `ocaml`, `c`, `typescript` and
+      `beam`, with its `wasm` refusal stated by name. The
+      corpus also exposed a `wasm` codegen defect — a `ref.func` to a
+      program def was absent from the declarative element segment — now
+      fixed and pinned by a CLI test (`CHECK.md`). No language change
+      was required.
 - [ ] **T48.13** — Docs: the README's EmoUI section revised to the
       array-children spelling and the settled decisions; `docs/emo-ui.md`
       settled into decided design where README-eligible; the EmoUI

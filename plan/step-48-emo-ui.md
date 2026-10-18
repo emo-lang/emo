@@ -17,7 +17,10 @@ landed in `projects/emo-ui/`, and terminal input (T48.5) has landed in
 packaging mechanism (T48.7) has landed in the manifest and the `c`
 target; the macOS backend (T48.8) and the GTK 4 backend (T48.9) have
 landed on it, and the `c` target's def-as-value closed the loop's last
-refusal; T48.10 onward are not started. T48.2 turned
+refusal; the browser runtime path (T48.10) and its DOM backend (T48.11)
+have landed, and the convergence corpus (T48.12) now runs one shared
+application on every backend — only T48.13's documentation is open.
+T48.2 turned
 up the first language-side gap this step has hit: the loop's shape — the
 application's `update` and `view` arriving as `Block` values — is what
 `c` and `wasm` could not compile, and T48.4 found that `beam` compiles
@@ -420,9 +423,33 @@ placement; `docs/emo-ui.md`, ask 7).
       enough for the host, then the script's tags clicked in order.
       `browser/check.sh` is the package's gate; it says so and passes
       where Node < 22.13 leaves no bundle to build.
-- [ ] **T48.12** — The convergence corpus: one sample application
+- [x] **T48.12** — The convergence corpus: one sample application
       (state, a form, a list, an event) on every backend, with the same
       portable app module throughout.
+      Landed 2026-10-18: `corpus/` is the package `emo/ui_corpus`, the
+      shared application; between backends only the backend package and
+      each entry's own `main.emo` differ. It carries the counter
+      (`Model`), the three messages (`Msg.inc`, `Msg.dec`, `Msg.submit`),
+      an `update` that prints every transition, and a `view` that nests
+      a title, two buttons in a row, an input showing the count, a
+      scrolled list and a spacer, all with `Array[Node]` children and
+      the same `ui.*` calls on every backend. Five entries consume it:
+      `corpus/debug`, `corpus/ssr` and `corpus/tui` under this package's
+      gate, and `macos/corpus`, `gtk/corpus` and `browser/corpus` under
+      their backends' own gates; each entry is a `require` of the shared
+      package plus a single `ui.run` over that backend.
+      `corpus/check.sh` stages the core, the corpus, `ui_ssr` and
+      `ui_tui` into a content-named registry and pins one
+      `expected.txt` per entry: the debug and SSR entries are
+      byte-identical on `ocaml`, `c`, `typescript`, `wasm` and `beam` —
+      `c` and `ocaml` included — and the terminal entry on `ocaml`, `c`,
+      `typescript` and `beam`, with its `wasm` refusal pinned by name.
+      The shared entry also exposed a `wasm` codegen defect: a def
+      named as a value is a `ref.func`, and only the hidden closures
+      were in the declarative element segment, so the validator
+      rejected the corpus on `wasm` until every defined function was
+      declared (`CHECK.md`); `test/emo_cli/emo_cli_test.ml` pins the
+      shape, which no wasm golden had exercised.
 - [ ] **T48.13** — Docs: the README's EmoUI section revised to the
       array-children spelling and the settled decisions; `docs/emo-ui.md`
       settled into decided design where README-eligible; the EmoUI

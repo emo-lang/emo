@@ -1,0 +1,64 @@
+// The convergence corpus application (T48.12): one portable module that
+// every backend runs, unchanged. It carries the four things a UI is made
+// of — state (the counter), a form (the input showing it and the button
+// that submits it), a list (the scrolled items) and events (the tags
+// `view` registers).
+//
+// Nothing here names a platform. Each backend's entry module requires
+// `emo/ui_corpus` and hands these three functions to `ui.run`; the only
+// per-platform code is the backend package and that entry. `update`
+// prints each state transition, so every backend's run has the same
+// bytes on stdout whatever it does with the tree.
+
+enum Msg { inc, dec, submit }
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+}
+
+def initial() Model {
+  return Model.new(count: 0)
+}
+
+def update(msg Msg, m Model) Model {
+  if msg == Msg.inc {
+    println("inc ${m.count() + 1}")
+    return Model.new(count: m.count() + 1)
+  }
+  if msg == Msg.dec {
+    println("dec ${m.count() - 1}")
+    return Model.new(count: m.count() - 1)
+  }
+  println("submit ${m.count()}")
+  return Model.new(count: m.count())
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  // The tags are taken in statements of their own: `on` is a side effect,
+  // and this registration order is what fixes inc, dec and submit at
+  // tags 0, 1 and 2 on every run.
+  const inc = reg.on(Msg.inc)
+  const dec = reg.on(Msg.dec)
+  const submit = reg.on(Msg.submit)
+  const items = ArrayBuilder.new()
+  items.push(ui.text("first", ui.style()))
+  items.push(ui.text("second", ui.style()))
+  items.push(ui.image("logo.png", ui.style()))
+  return ui.column([
+    ui.text("Emo counter", ui.style()),
+    ui.row([
+      ui.button("inc", inc, ui.style()),
+      ui.button("dec", dec, ui.style())
+    ], ui.style().with_gap(8.0)),
+    ui.text_input("count = ${m.count()}", ui.style()),
+    ui.scroll(items.to_array(), ui.style().with_height(120.0)),
+    ui.button("submit", submit, ui.style()),
+    ui.spacer(ui.style().with_grow(true))
+  ], ui.style().with_padding(12.0).with_gap(8.0))
+}

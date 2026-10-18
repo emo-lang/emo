@@ -1,0 +1,25 @@
+require "emo/ui"
+require "emo/ui_corpus"
+
+// The headless entry of the convergence corpus (T48.12): the shared
+// application, run through the debug backend. The backend has no input
+// source, so the script — inc, inc, dec, submit, the tags `view`
+// registers — is stepped by hand through `deliver`, and the trees the
+// loop handed the backend are printed at the end. The interpreter's
+// output is `expected.txt`, and every hosted target has to produce those
+// bytes exactly.
+
+def main() {
+  const backend = ui.debug.Debug.new()
+  ui.run(ui_corpus.view, ui_corpus.update, ui_corpus.initial(), backend)
+  backend.deliver(0)
+  backend.deliver(0)
+  backend.deliver(1)
+  backend.deliver(2)
+  const trees = backend.log()
+  for var i = 0; i < trees.length(); i = i + 1 {
+    println(trees[i])
+  }
+}
+
+main()

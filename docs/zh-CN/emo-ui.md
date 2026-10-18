@@ -282,12 +282,14 @@ interface Backend {
 
 每个平台实现它:
 
-- **macOS(已落地,T48.8):** 一个 Emo 类,其方法调用 `foreign def` shim,另一边是 C ABI 上的 AppKit shim。九个动词是 `window_make`、`label_make`、`button_make`、`place`、`clear`、`connect`、`root`、`run` 与 `autotest_arm`;Emo 侧以 point 度量这棵树(`box.emo`),遍历它,并把节点映射到原生 handle。`projects/emo-ui/macos/` 是这个包,`corpus/` 是它的收敛消费者——一块界面用尽每个原语,由一段逗号分隔的 tag 脚本驱动,shim 在 `EMO_GUI_AUTOTEST` 下逐次点击后结束进程,所以它的字节不用键盘、也不用截图就能检查。
-- **GTK 4(已落地,T48.9):** 同一个九动词 `ui_*` 契约、同一套 point 盒模型,落在 C ABI 的另一侧。`projects/emo-ui/gtk/` 是这个包,`corpus/` 是它的收敛消费者——同一个应用、同样的脚本与钉住的字节。GTK 本来就是 C,所以 shim 更薄:Emo 命名不了的只有信号处理函数与自驱动脚本,而 `place` 原样施加 frame,因为 GtkFixed 的原点在左上角。manifest 的 `pkg_config = ["gtk4"]` 就是打包的全部故事;关口在 GTK 4 能回答的宿主上本机构建,否则在容器(GTK 4 加 Xvfb)里编译同一份生成的 C,所以 macOS 宿主也能检查这个后端。
-- **TUI(已落地,T48.4):** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 从脚本化输入拉取 tag 并交给循环的 sink。`projects/emo-ui/tui/` 是这个包,`tui/golden/` 是那段脚本化输入的金标:`screen` 把网格作为数据交回,`paint` 写出字节,同一块界面在解释器、`ocaml`、`typescript` 与 `beam` 上逐字节相同。
+- **macOS(已落地,T48.8):** 一个 Emo 类,其方法调用 `foreign def` shim,另一边是 C ABI 上的 AppKit shim。九个动词是 `window_make`、`label_make`、`button_make`、`place`、`clear`、`connect`、`root`、`run` 与 `autotest_arm`;Emo 侧以 point 度量这棵树(`box.emo`),遍历它,并把节点映射到原生 handle。`projects/emo-ui/macos/` 是这个包,`corpus/` 是它进入收敛语料(T48.12)的入口——共享应用摆在一块界面上,由一段逗号分隔的 tag 脚本驱动,shim 在 `EMO_GUI_AUTOTEST` 下逐次点击后结束进程,所以它的字节不用键盘、也不用截图就能检查。
+- **GTK 4(已落地,T48.9):** 同一个九动词 `ui_*` 契约、同一套 point 盒模型,落在 C ABI 的另一侧。`projects/emo-ui/gtk/` 是这个包,`corpus/` 是它进入收敛语料的入口——与 macOS 同一个共享应用、同样的脚本与钉住的字节。GTK 本来就是 C,所以 shim 更薄:Emo 命名不了的只有信号处理函数与自驱动脚本,而 `place` 原样施加 frame,因为 GtkFixed 的原点在左上角。manifest 的 `pkg_config = ["gtk4"]` 就是打包的全部故事;关口在 GTK 4 能回答的宿主上本机构建,否则在容器(GTK 4 加 Xvfb)里编译同一份生成的 C,所以 macOS 宿主也能检查这个后端。
+- **TUI(已落地,T48.4):** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 从脚本化输入拉取 tag 并交给循环的 sink。`projects/emo-ui/tui/` 是这个包,`tui/golden/` 是那段脚本化输入的金标,`corpus/` 是它进入收敛语料的入口:`screen` 把网格作为数据交回,`paint` 写出字节,同一块界面在解释器、`ocaml`、`typescript` 与 `beam` 上逐字节相同。
 - **Debug(已落地,T48.3):** 无头的那一个,也是这条接缝的参考实现。它把循环交给它的每一棵树渲染进一份日志而不是打印——于是何时让文本到达 stdout 由调用方决定,金标不会被一个恰好挂上去的后端搅动——而 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。`projects/emo-ui/golden/` 就是它为的东西:一块界面经核心、以消费者抵达核心的方式走一遍,再以文本出来,在解释器与全部五个托管 target 上逐字节相同(`wasm` 那一半的循环形状已于 T48.6 关闭,`c` 那一半已于 T48.8 关闭)。这个形态之所以这么窄是被 target 逼的、不是选的:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为枚举或元组在两个 target 上打印出的字节并不相同(`CHECK.md`,枚举的显示形式);它的金标也先在建树之前用独立语句取好 tag,因为操作数求值顺序由 target 决定(`CHECK.md`)。
-- **SSR(已落地,T48.6):** `projects/emo-ui/ssr/` 把树渲染成 HTML 与驻留的样式表,在全部五个 target 上逐字节一致。`mount` 打印整份文档,`patch` 打印浏览器换入的片段;`run()` 直接返回,因为服务端没有输入源,`deliver(tag)` 就是推进一个事件的那次请求。交互模型是表单与链接,只有服务端往返才放得下的三个节点(`form`、`link`、`field`)就住在这个包里,而不是核心。
-- **DOM(已落地,T48.11):** `projects/emo-ui/browser/` 是包 `emo/ui_browser`,一个压在运行时 `dom_*` 调用上的 Emo 类(这些调用随浏览器路径于 T48.10 落地)。布局由浏览器自己的布局引擎完成,所以这个包带的是样式映射(`css.emo`),而不是 point 盒模型;`run()` 把控制权交给浏览器后返回。`corpus/` 是收敛消费者,`page.mjs` 是关口点击脚本所在的 stub 页面。
+- **SSR(已落地,T48.6):** `projects/emo-ui/ssr/` 把树渲染成 HTML 与驻留的样式表,在全部五个 target 上逐字节一致。`mount` 打印整份文档,`patch` 打印浏览器换入的片段;`run()` 直接返回,因为服务端没有输入源,`deliver(tag)` 就是推进一个事件的那次请求。`corpus/` 是它进入收敛语料的入口。交互模型是表单与链接,只有服务端往返才放得下的三个节点(`form`、`link`、`field`)就住在这个包里,而不是核心。
+- **DOM(已落地,T48.11):** `projects/emo-ui/browser/` 是包 `emo/ui_browser`,一个压在运行时 `dom_*` 调用上的 Emo 类(这些调用随浏览器路径于 T48.10 落地)。布局由浏览器自己的布局引擎完成,所以这个包带的是样式映射(`css.emo`),而不是 point 盒模型;`run()` 把控制权交给浏览器后返回。`corpus/` 是它进入收敛语料的入口,`page.mjs` 是关口点击脚本所在的 stub 页面。
+
+如今它们跑的是同一个应用。`projects/emo-ui/corpus/` 是包 `emo/ui_corpus`(T48.12):状态是计数器,表单是显示计数的一个输入框与一个提交按钮,列表是可滚动列表,另有 `view` 注册的三个 tag——一个模块,里面没有平台的名字。每个后端的 `corpus/` 都是薄入口:`require` 共享包、构建该后端、把 `ui_corpus.view` 与 `ui_corpus.update` 交给 `ui.run`。debug、SSR 与 TUI 入口由 `corpus/check.sh` 在各自 manifest 声明的每个托管 target 上检查;macOS、GTK 4 与浏览器入口由各自包的关口检查,跑同一段自驱动脚本、对照同一份钉住的字节。
 
 `patch` 是成长边缘。spike 每个事件做全量重建(`clear` 加重新 `place`),对终端与静态 HTML 渲染没问题,对保留式工具包是错的(丢焦点、选区、滚动位置),对 DOM 也浪费。v1 可以对 TUI/SSR 先上全量重建、对原生/DOM 用保留式;带 key 的协调是后续项,而编译器的「静态可判定的定向刷新」是它的长期形态。
 
@@ -367,7 +369,7 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 
 ## 风险
 
-- **后端间的语义漂移。** 语法收敛并不让一个 `row` 处处同义。缓解:一套小的声明式布局词汇表、收敛命名规则,以及一个一致性语料(一个 app、每个后端)——**已落地为 `debug` 后端与 `projects/emo-ui/golden/`(T48.3)**,它们把一块界面钉成在所有跑得动的 target 上逐字节相同,并且在第二个后端出现之前就找出了第一批分歧:操作数求值顺序与枚举的显示形式,今天在这两个 target 上并非同样的字节(`CHECK.md`)。**终端后端与它的脚本化金标(T48.4)**把这条线延长——一块界面经过一个真正的盒模型,在五个托管目标中的四个上逐字节相同——并逼出、修掉了它记下(`CHECK.md`)的两个 `beam` 降级缺陷。**服务端渲染后端(T48.6)**再延长一次:整棵树的 HTML 与样式表在全部五个 target 上逐字节相同,而关掉它需要 `wasm` 闭包的参数个数。
+- **后端间的语义漂移。** 语法收敛并不让一个 `row` 处处同义。缓解:一套小的声明式布局词汇表、收敛命名规则,以及一个一致性语料(一个 app、每个后端)——**已落地为 `debug` 后端与 `projects/emo-ui/golden/`(T48.3)**,它们把一块界面钉成在所有跑得动的 target 上逐字节相同,并且在第二个后端出现之前就找出了第一批分歧:操作数求值顺序与枚举的显示形式,今天在这两个 target 上并非同样的字节(`CHECK.md`)。**终端后端与它的脚本化金标(T48.4)**把这条线延长——一块界面经过一个真正的盒模型,在五个托管目标中的四个上逐字节相同——并逼出、修掉了它记下(`CHECK.md`)的两个 `beam` 降级缺陷。**服务端渲染后端(T48.6)**再延长一次:整棵树的 HTML 与样式表在全部五个 target 上逐字节相同,而关掉它需要 `wasm` 闭包的参数个数。**收敛语料(T48.12)**是这条缓解措施的最终形态:一个可移植应用(`projects/emo-ui/corpus/`,包 `emo/ui_corpus`),带计数器、表单、列表与事件,被 debug、SSR、TUI、macOS、GTK 4 与浏览器入口原样消费。它找出了一个金标从未触到的 `wasm` codegen 缺陷——指向普通 def 的 `ref.func` 不在声明式 element 段里——如今逐入口钉住。
 - **文本。** 可移植的自动布局需要文本度量;设计通过把布局委托给平台(而 TUI 数格子)来避免需要它们。未来的 canvas 或像素一致模式会重新引入 `docs/visualization.md` 拒绝过的字体度量问题。
 - **原生打包。** manifest 字段已落地(T48.7),macOS/GTK 应用不再需要构建脚本;需求「下载即用」上的这层摩擦已经消除。剩下的风险是机制的可用环境(机器上要有 pkg-config),不是设计。
 - **两个事件循环**(Emo 调度器 vs. 工具包/浏览器),如上。

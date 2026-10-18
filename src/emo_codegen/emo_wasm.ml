@@ -4879,7 +4879,13 @@ let assemble (program : Emo_ir.program) : W.module_ =
     funcs;
     memory = 1;
     export_mem = true;
-    declared_funcs = List.map fst hidden;
+    (* Every defined function, not only the hidden closures: a def named
+       as a value is a `ref.func` to a program function or a class
+       method, and the validator requires the target of `ref.func` to be
+       in the declarative element segment whatever kind of function it
+       is. Declaring the whole defined range costs one small segment and
+       cannot go stale as lowering grows new `ref.func` sites. *)
+    declared_funcs = List.init (List.length funcs) (fun i -> 3 + i);
     globals =
       (W.I32, true)
       :: List.map (fun _ -> (W.RefNull t_vstring, true)) string_pool

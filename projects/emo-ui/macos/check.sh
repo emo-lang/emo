@@ -67,16 +67,19 @@ expect_same_file() {
   fi
 }
 
-# --- the registry: the core and this package, staged from source --------
+# --- the registry: the core, the corpus and this package ---------------
 #
 # The directory is named for the sources' content, so a run can never
 # serve a module the package no longer has. `shim.m` is part of the
 # digest too: the c target keys native sources by content.
 sum=$(cat "$UP/package.emo" "$UP/ui.emo" "$UP/debug.emo" | cksum | awk '{print $1}')
+csum=$(cat "$UP/corpus/package.emo" "$UP/corpus/main.emo" | cksum | awk '{print $1}')
 msum=$(cat package.emo ui_macos.emo box.emo shim.m | cksum | awk '{print $1}')
-REG=$PWD/.emo-build/registry-$sum-$msum
-mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_macos/0.1.0"
+REG=$PWD/.emo-build/registry-$sum-$csum-$msum
+mkdir -p "$REG/emo/ui/0.1.0" "$REG/emo/ui_corpus/0.1.0" \
+  "$REG/emo/ui_macos/0.1.0"
 cp "$UP/package.emo" "$UP/ui.emo" "$UP/debug.emo" "$REG/emo/ui/0.1.0/"
+cp "$UP/corpus/package.emo" "$UP/corpus/main.emo" "$REG/emo/ui_corpus/0.1.0/"
 cp package.emo ui_macos.emo box.emo shim.m "$REG/emo/ui_macos/0.1.0/"
 
 # --- the box model type-checks, and its test runs ------------------------
@@ -113,12 +116,12 @@ done
 
 # --- the convergence corpus ---------------------------------------------
 #
-# `corpus/` is a consumer of both packages — a package of its own, with
-# `emo/ui` and `emo/ui_macos` as dependencies — so the application is
-# written against the portable core and only the entry module names the
-# backend. It uses every primitive, and its `update` prints each state
-# transition, so `expected.txt` is the loop's bytes: the same file any
-# other backend's corpus entry prints.
+# `corpus/` is the macOS entry of the convergence corpus (T48.12): a
+# package of its own, with the shared application `emo/ui_corpus` and
+# this backend as dependencies, so only the entry module names the
+# platform. The shared `update` prints each state transition, so
+# `expected.txt` is the loop's bytes — the same file every other
+# backend's entry is pinned to.
 #
 # `EMO_GUI_AUTOTEST` makes the shim click the tags in the script and
 # then terminate, so the run needs no one at the keyboard and no

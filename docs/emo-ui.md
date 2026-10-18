@@ -662,14 +662,16 @@ Each platform implements it:
   verbs are `window_make`, `label_make`, `button_make`, `place`, `clear`,
   `connect`, `root`, `run` and `autotest_arm`; the Emo side measures the
   tree in points (`box.emo`), walks it, and maps nodes to native handles.
-  `projects/emo-ui/macos/` is the package, and `corpus/` its convergence
-  consumer — every primitive on one screen, driven by a comma-separated
-  tag script the shim clicks under `EMO_GUI_AUTOTEST` before terminating,
-  so its bytes are checked without a keyboard or a screenshot.
+  `projects/emo-ui/macos/` is the package, and `corpus/` its entry into
+  the convergence corpus (T48.12) — the shared application on one
+  screen, driven by a comma-separated tag script the shim clicks under
+  `EMO_GUI_AUTOTEST` before terminating, so its bytes are checked
+  without a keyboard or a screenshot.
 - **GTK 4 (landed, T48.9):** the same nine-verb `ui_*` contract and the
   same point box model as the macOS backend, on the other side of the C
-  ABI. `projects/emo-ui/gtk/` is the package and `corpus/` its
-  convergence consumer — the same application, script and pinned bytes.
+  ABI. `projects/emo-ui/gtk/` is the package and `corpus/` its entry
+  into the convergence corpus — the same shared application, script and
+  pinned bytes as macOS.
   GTK is already C, so the shim is thinner: the signal handler and the
   self-driving script are what Emo cannot name, and `place` applies the
   frame unchanged because GtkFixed's origin is the top left. The
@@ -679,10 +681,11 @@ Each platform implements it:
   checkable from a macOS host.
 - **TUI (landed, T48.4):** a pure-Emo class that lays the tree out on a
   cell grid and writes ANSI; `run()` pulls a scripted input's tags and
-  hands them to the loop's sink. `projects/emo-ui/tui/` is the package
-  and `tui/golden/` the scripted-input golden: `screen` returns the grid
-  as data, `paint` writes the bytes, and the same screen is byte-
-  identical on the interpreter, `ocaml`, `typescript` and `beam`.
+  hands them to the loop's sink. `projects/emo-ui/tui/` is the package,
+  `tui/golden/` the scripted-input golden, and `corpus/` its entry into
+  the convergence corpus: `screen` returns the grid as data, `paint`
+  writes the bytes, and the same screen is byte-identical on the
+  interpreter, `ocaml`, `typescript` and `beam`.
 - **Debug (landed, T48.3):** the headless one, and the seam's reference
   implementation. It renders every tree the loop hands it into a log
   instead of printing — so a caller decides when text reaches stdout and
@@ -706,7 +709,8 @@ Each platform implements it:
   source, and `deliver(tag)` is the request that steps one event. Forms
   and links are the interaction model, and the three nodes only a
   server round trip can honor (`form`, `link`, `field`) live in this
-  package rather than in the core.
+  package rather than in the core. `corpus/` is its entry into the
+  convergence corpus.
 - **DOM (landed, T48.11):** `projects/emo-ui/browser/` is the package
   `emo/ui_browser`, an Emo class over the runtime's `dom_*` calls, which
   landed with the browser path (T48.10). The browser's own layout
@@ -714,6 +718,17 @@ Each platform implements it:
   (`css.emo`) rather than a point box model; `run()` hands control to
   the browser and returns. `corpus/` is the convergence consumer, and
   `page.mjs` is the stub page its gate clicks the script in.
+
+All of them now run the same application. `projects/emo-ui/corpus/` is
+the package `emo/ui_corpus` (T48.12): a counter as its state, an input
+and a submit button as its form, a scrolled list, and the tags `view`
+registers — one module, with no platform name in it. Each backend's
+`corpus/` is the thin entry: `require` the shared package, build that
+backend, hand `ui_corpus.view` and `ui_corpus.update` to `ui.run`. The
+debug, SSR and TUI entries are checked by `corpus/check.sh` on every
+hosted target their manifests declare; the macOS, GTK 4 and browser
+entries are checked by their packages' gates, under the same
+self-driving script and against the same pinned bytes.
 
 `patch` is the growth edge. The spike did a full rebuild per event
 (`clear` plus re-place), which is fine for a terminal and a static HTML
@@ -917,6 +932,13 @@ mid-implementation:
   (`CHECK.md`). The **server-rendered backend (T48.6)** extends it once
   more: a whole tree's HTML and stylesheet are byte-identical on all
   five targets, and closing that required the `wasm` closures' arity.
+  The **convergence corpus (T48.12)** is the mitigation in its final
+  form: one portable application (`projects/emo-ui/corpus/`, the package
+  `emo/ui_corpus`) with a counter, a form, a list and events, consumed
+  unchanged by the debug, SSR, TUI, macOS, GTK 4 and browser entries.
+  It found a `wasm` codegen defect the golden never reached — a
+  `ref.func` to a program def was absent from the declarative element
+  segment — and is now pinned entry by entry.
 - **Text.** Portable automatic layout needs text metrics; the design
   avoids needing them by delegating layout to the platform (and the TUI
   counts cells). A future canvas or a pixel-identical mode reintroduces
