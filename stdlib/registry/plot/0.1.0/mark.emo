@@ -2,7 +2,8 @@
 // its data spans. The span is named on both axes — a continuous x and y
 // range through `x_min`/`x_max`/`y_min`/`y_max`, a categorical x through
 // `bands` and `x_labels` — so the axes can scale to every mark at once.
-// `bar`, `line`, `scatter`, and `area` are the implementations so far.
+// `bar`, `line`, `scatter`, `area`, and `hist` are the implementations
+// so far.
 
 interface Mark {
   def draw(ctx internal.ctx.DrawContext) Void
@@ -529,4 +530,161 @@ class Area {
 
 def area(x Array[Float64], y Array[Float64]) Area {
   return Area.new(x: x, y: y, style: area_style())
+}
+
+class HistStyle {
+  def init(color (Int64, Int64, Int64), edge_color (Int64, Int64, Int64), edge_width Float64, opacity Float64, label String) {
+    self.color = color
+    self.edge_color = edge_color
+    self.edge_width = edge_width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) HistStyle {
+    return HistStyle.new(color: c, edge_color: self.edge_color, edge_width: self.edge_width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_color(c (Int64, Int64, Int64)) HistStyle {
+    return HistStyle.new(color: self.color, edge_color: c, edge_width: self.edge_width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_width(w Float64) HistStyle {
+    return HistStyle.new(color: self.color, edge_color: self.edge_color, edge_width: w, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) HistStyle {
+    return HistStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) HistStyle {
+    return HistStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, opacity: self.opacity, label: s)
+  }
+}
+
+def hist_style() HistStyle {
+  return HistStyle.new(color: (230, 145, 56), edge_color: (255, 255, 255), edge_width: 1.0, opacity: 1.0, label: "")
+}
+
+// A histogram carries the counting, not the raw values: `counts` are the
+// bin heights over the tiled extent `lo` .. `lo + counts * width`, and
+// the bars sit on the zero baseline.
+class Hist {
+  def init(counts Array[Float64], lo Float64, width Float64, style HistStyle) {
+    self.counts = counts
+    self.lo = lo
+    self.width = width
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const base = ctx.py(0.0)
+    for var i = 0; i < self.counts.length(); i = i + 1 {
+      const x0 = ctx.px(self.lo + i.to_float64() * self.width)
+      const x1 = ctx.px(self.lo + (i + 1).to_float64() * self.width)
+      const top = ctx.py(self.counts[i])
+      ctx.renderer.rect(x0, top, x1 - x0, base - top, self.style.color)
+    }
+    if self.style.edge_width > 0.0 {
+      for var i = 0; i < self.counts.length(); i = i + 1 {
+        const x0 = ctx.px(self.lo + i.to_float64() * self.width)
+        const x1 = ctx.px(self.lo + (i + 1).to_float64() * self.width)
+        const top = ctx.py(self.counts[i])
+        ctx.renderer.line(x0, base, x0, top, self.style.edge_color, self.style.edge_width, "")
+        ctx.renderer.line(x0, top, x1, top, self.style.edge_color, self.style.edge_width, "")
+        ctx.renderer.line(x1, top, x1, base, self.style.edge_color, self.style.edge_width, "")
+        ctx.renderer.line(x1, base, x0, base, self.style.edge_color, self.style.edge_width, "")
+      }
+    }
+  }
+
+  def x_min() Float64 {
+    return self.lo
+  }
+
+  def x_max() Float64 {
+    return self.lo + self.counts.length().to_float64() * self.width
+  }
+
+  def y_min() Float64 {
+    return 0.0
+  }
+
+  def y_max() Float64 {
+    var hi = 0.0
+    for var i = 0; i < self.counts.length(); i = i + 1 {
+      if self.counts[i] > hi {
+        hi = self.counts[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def with_style(s HistStyle) Hist {
+    return Hist.new(counts: self.counts, lo: self.lo, width: self.width, style: s)
+  }
+}
+
+// The bin a value falls into across the span [lo, lo + span]: even
+// widths, the maximum clamping into the last bin. A zero span — every
+// value identical — sends everything to the last bin.
+def bin_index(v Float64, lo Float64, span Float64, bins Int64) Int64 {
+  if span <= 0.0 {
+    return bins - 1
+  }
+  var b = ((v - lo) / span * bins.to_float64()).floor().to_int64()
+  if b < 0 {
+    b = 0
+  }
+  if b > bins - 1 {
+    b = bins - 1
+  }
+  return b
+}
+
+// Bins the values across their own span and counts them.
+def hist(values Array[Float64], bins Int64) Hist {
+  if bins < 1 {
+    raise Exception.new(message: "plot: a histogram needs at least one bin, got ${bins}")
+  }
+  var lo = 0.0
+  var hi = 0.0
+  if values.length() > 0 {
+    lo = values[0]
+    hi = values[0]
+    for var i = 1; i < values.length(); i = i + 1 {
+      if values[i] < lo {
+        lo = values[i]
+      }
+      if values[i] > hi {
+        hi = values[i]
+      }
+    }
+  }
+  const span = hi - lo
+  var first = 0.0
+  for var j = 0; j < values.length(); j = j + 1 {
+    if bin_index(values[j], lo, span, bins) == 0 {
+      first = first + 1.0
+    }
+  }
+  var counts = [first]
+  for var i = 1; i < bins; i = i + 1 {
+    var c = 0.0
+    for var j = 0; j < values.length(); j = j + 1 {
+      if bin_index(values[j], lo, span, bins) == i {
+        c = c + 1.0
+      }
+    }
+    counts = counts.append(c)
+  }
+  return Hist.new(counts: counts, lo: lo, width: span / bins.to_float64(), style: hist_style())
 }

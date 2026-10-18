@@ -42,7 +42,7 @@ enum Share { all, none }
 
 ## mark
 
-mark 在 `plot.mark` 子模块里——包的子模块以包的短名为前缀寻址。T0 有柱状、折线、散点、面积四个 mark:
+mark 在 `plot.mark` 子模块里——包的子模块以包的短名为前缀寻址。T0 有柱状、折线、散点、面积、直方图五个 mark:
 
 ```emo
 def bar(labels Array[String], values Array[Float64]) Bar
@@ -56,6 +56,9 @@ def scatter_style() ScatterStyle
 
 def area(x Array[Float64], y Array[Float64]) Area
 def area_style() AreaStyle
+
+def hist(values Array[Float64], bins Int64) Hist
+def hist_style() HistStyle
 ```
 
 mark 也是值。`Bar.with_style(s BarStyle)` 以及样式上的 `with_color` / `with_width` / `with_label` 细化它,不改动任何东西:
@@ -76,6 +79,8 @@ plot.mark.line(years, revenue).with_style(
 散点在每个 `(x, y)` 点盖上 marker,不连任何线。`ScatterStyle` 携带 `color`、`size`、`marker`、`opacity` 与 `label`——marker 词汇与折线用的是同一个 `Marker` 枚举,`Marker.none` 的散点什么都不画。
 
 面积填充折线与零基线之间的闭合区域,负值落到基线下方。`AreaStyle` 携带 `color`(填充)、`edge_color` 与 `edge_width`(沿曲线本身的描边;默认 `0.0` 宽度不画边)、`opacity` 与 `label`。
+
+直方图把值数进横跨数据的等宽箱,把箱子作为柱子铺在零基线上。等于最大值的数落进最后一箱;全同值跨度塌缩为零,也堆进最后一箱。`bins < 1` 是契约违例,直接 raise。`HistStyle` 携带 `color`(填充)、`edge_color` 与 `edge_width`(柱子描边;默认白色、宽度 1.0)、`opacity` 与 `label`。
 
 **颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组**,每通道 0–255。不透明度是样式上单独的 `Float64`,绝不煍进三元组。它随每个样式携带,但**尚未渲染**——渲染器图元还没有不透明度旋钮。
 
@@ -110,6 +115,6 @@ println(plot.svg(chart))
 
 目标:全部五个(`ocaml`、`c`、`typescript`、`wasm`、`beam`)。
 
-T0——今天已有的——是柱状、折线、散点、面积 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签,以及 SVG 输出。表面上还带着的其余部分是**预留、尚未渲染**的:`Scale.log`、`Domain`、经 `Share` 的分面、图例,以及直方图 mark。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签,以及 SVG 输出。表面上还带着的其余部分是**预留、尚未渲染**的:`Scale.log`、`Domain`、经 `Share` 的分面、图例。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

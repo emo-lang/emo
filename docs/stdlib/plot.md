@@ -52,8 +52,8 @@ enum Share { all, none }
 ## Marks
 
 The marks live in the `plot.mark` submodule — a package's submodules are
-addressed under its short name. T0 ships the bar, line, scatter, and
-area marks:
+addressed under its short name. T0 ships the bar, line, scatter, area,
+and hist marks:
 
 ```emo
 def bar(labels Array[String], values Array[Float64]) Bar
@@ -67,6 +67,9 @@ def scatter_style() ScatterStyle
 
 def area(x Array[Float64], y Array[Float64]) Area
 def area_style() AreaStyle
+
+def hist(values Array[Float64], bins Int64) Hist
+def hist_style() HistStyle
 ```
 
 A mark is a value too. `Bar.with_style(s BarStyle)` and the style's
@@ -100,6 +103,14 @@ An area fills the closed region between its polyline and the zero
 baseline, negative values dipping below it. `AreaStyle` carries `color`
 (the fill), `edge_color` and `edge_width` (a stroke along the curve
 itself; the default `0.0` width draws no edge), `opacity`, and `label`.
+
+A histogram counts its values into equal-width bins spanning the data
+and tiles the bins as bars on the zero baseline. A value equal to the
+maximum counts into the last bin; identical values pile into it too,
+since their span collapses to zero. `bins < 1` is a contract violation
+and raises. `HistStyle` carries `color` (the fill), `edge_color` and
+`edge_width` (the bar outlines; white by default at width 1.0),
+`opacity`, and `label`.
 
 **Colors are `(Int64, Int64, Int64)` sRGB triples**, each channel 0–255.
 Opacity is a separate `Float64` on the style, never baked into the
@@ -147,11 +158,11 @@ are identical on every target.
 
 Targets: all five (`ocaml`, `c`, `typescript`, `wasm`, `beam`).
 
-T0 — what exists today — is the bar, line, scatter, and area marks,
-linear axes with nice-number ticks, a title, axis labels, and SVG
-output. The remaining pieces the surface carries are reserved and not
-rendered yet: `Scale.log`, `Domain`, faceting via `Share`, legends, and
-the histogram mark. The SVG renderer sits behind an
+T0 — what exists today — is the bar, line, scatter, area, and hist
+marks, linear axes with nice-number ticks, a title, axis labels, and
+SVG output. The remaining pieces the surface carries are reserved and
+not rendered yet: `Scale.log`, `Domain`, faceting via `Share`, and
+legends. The SVG renderer sits behind an
 internal `Renderer` contract, so a terminal or raster backend can join
 later without disturbing the figure or the marks.
 
