@@ -60,6 +60,13 @@ let class_fields (c : Emo_ir.class_) : string list =
           match st with Emo_ir.Set_field { name; _ } -> Some name | _ -> None)
         init.Emo_ir.fbody
 
+(* The emitter's own statement-local scratch names. Their `let`s
+   close within the statement that mints them, so they never thread
+   through loop functions or continuations — only real source
+   bindings do. *)
+let beam_temps =
+  [ "__recv"; "__thread"; "_spawnarg"; "_spawnpid"; "_spawnself"; "case" ]
+
 let fresh_var env name =
   env.fresh <- env.fresh + 1;
   let v = Printf.sprintf "_%s%d" (Emo_ir.sanitize_ident name) env.fresh in
@@ -1380,15 +1387,79 @@ and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
       (* Outside a loop body the last statement's own value is the
          list's value; the tail chain's leaf does not follow it. *)
       stmt env s
-  | Emo_ir.If { cond; then_; else_; _ } :: rest ->
+  | Emo_ir.If { cond; then_; else_ } :: rest when rest <> [] ->
+      (* The branches join before the rest: the rest becomes a shared
+         continuation that each branch tail-calls with every binding
+         live at the join — nested joins and the enclosing loop's
+         fall-through all read current values through the parameters,
+         and the enclosing loop threads them (see `emit_loop`). One
+         copy of the rest instead of one per branch, which a chain of
+         ifs would otherwise multiply 2^ifs times. Emitter temporaries
+         never thread: their lets close within their statement. *)
+      let rec live_uniq acc = function
+        | [] -> List.rev acc
+        | name :: tl ->
+            if
+              List.mem name acc
+              || List.mem name beam_temps
+              || List.mem name tl
+            then live_uniq acc tl
+            else live_uniq (name :: acc) tl
+      in
+      let live = live_uniq [] (List.map fst env.local_map) in
+      let n2 = env.fresh + 1 in
+      env.fresh <- n2;
+      let cname = Printf.sprintf "'__cont_%d'" n2 in
+      let saved_map = env.local_map in
+      let saved_loops = env.loops in
+      let before = Buffer.length env.buf in
+      let param_of =
+        List.map (fun name -> (name, fresh_var env name)) live
+      in
+      put env
+        (Printf.sprintf "%s/%d =\n    fun (%s) ->\n" cname
+           (List.length param_of)
+           (String.concat ", " (List.map snd param_of)));
+      env.local_map <- param_of;
+      emit_loop_body env ~tail rest ~leaf;
+      env.local_map <- saved_map;
+      env.loops <- saved_loops;
+      let slice = Buffer.sub env.buf before (Buffer.length env.buf - before) in
+      Buffer.truncate env.buf before;
+      Buffer.add_string env.loops_buf slice;
+      Buffer.add_string env.loops_buf "\n\n";
+      let emit_branch (branch_body : Emo_ir.stmt list) =
+        let saved = env.local_map in
+        emit_loop_body env ~tail:true branch_body ~leaf:(fun () ->
+            put env
+              (Printf.sprintf "apply %s/%d (%s)" cname
+                 (List.length param_of)
+                 (String.concat ", "
+                    (List.map
+                       (fun (name, _) ->
+                         match List.assoc_opt name env.local_map with
+                         | Some v -> v
+                         | None ->
+                             failwith ("beam: unbound cont var " ^ name))
+                       param_of))));
+        env.local_map <- saved
+      in
+      put env "\t\tcase ";
+      expr env cond;
+      put env " of\n\t\t  <'true'> when 'true' ->\n\t\t";
+      emit_branch then_;
+      put env "\n\t\t  <'false'> when 'true' ->\n\t\t";
+      emit_branch else_;
+      put env "\n\t\tend"
+  | Emo_ir.If { cond; then_; else_ } :: rest ->
       put env "\t\tcase ";
       expr env cond;
       put env " of\n\t\t  <'true'> when 'true' ->\n\t\t";
       let saved = env.local_map in
-      emit_loop_body env ~tail (then_ @ rest) ~leaf;
+      emit_loop_body env ~tail (then_ @ []) ~leaf;
       env.local_map <- saved;
       put env "\n\t\t  <'false'> when 'true' ->\n\t\t";
-      emit_loop_body env ~tail (else_ @ rest) ~leaf;
+      emit_loop_body env ~tail (else_ @ []) ~leaf;
       env.local_map <- saved;
       put env "\n\t\tend"
   | ((Emo_ir.While _ | Emo_ir.For _) as loop) :: rest ->
@@ -1500,7 +1571,24 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
         && match header with Some h -> n <> h | None -> true)
       frees
   in
-  let var_names = (match header with Some h -> [ h ] | None -> []) @ frees in
+  (* Every live binding threads, not just the loop's own reads: a join
+     inside the body may need a binding the loop never reads (one that
+     only the code after the loop uses), and the loop function's def is
+     self-contained — whatever the body's continuations reference must
+     ride the parameters. *)
+  let rec live_uniq acc = function
+    | [] -> List.rev acc
+    | name :: tl ->
+        if
+          List.mem name acc
+          || List.mem name beam_temps
+          || List.mem name frees
+          || (match header with Some h -> name = h | None -> false)
+        then live_uniq acc tl
+        else live_uniq (name :: acc) tl
+  in
+  let live_names = live_uniq [] (List.map fst env.local_map) in
+  let var_names = (match header with Some h -> [ h ] | None -> []) @ frees @ live_names in
   let n = env.fresh + 1 in
   env.fresh <- n;
   let lname = Printf.sprintf "'__loop_%d'" n in
@@ -1515,7 +1603,7 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
   in
   env.loops <- (lname, var_names, post) :: env.loops;
   let exit_value =
-    match frees with
+    match var_names with
     | [] -> "'ok'"
     | ws ->
         "{"
@@ -1600,11 +1688,11 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
         match List.assoc_opt name env.local_map with
         | Some v -> put env v
         | None -> failwith ("beam: unbound loop var " ^ name))
-      frees;
+      (match header with Some _ -> List.tl var_names | None -> var_names);
     comma ();
     put env "'false')"
   in
-  if frees = [] then (
+  if var_names = [] then (
     put env "do\n";
     emit_initial_call ();
     put env "\n";
@@ -1614,7 +1702,7 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
     emit_initial_call ();
     put env " of\n\t  <{";
     let saved_site = env.local_map in
-    let rebound = List.map (fun name -> fresh_var env name) frees in
+    let rebound = List.map (fun name -> fresh_var env name) var_names in
     put env (String.concat "," rebound);
     put env "}> when 'true' ->\n";
     if rest = [] then leaf () else emit_loop_body env ~tail rest ~leaf;
