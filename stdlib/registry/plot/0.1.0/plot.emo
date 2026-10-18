@@ -77,13 +77,6 @@ def tick_text(x Float64) String {
   return x.to_string()
 }
 
-def first_labels(marks Array[mark.Mark]) Array[String] {
-  if marks.length() == 0 {
-    return []
-  }
-  return marks[0].x_labels()
-}
-
 def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
   const ml = 64.0
   const mr = 24.0
@@ -92,25 +85,39 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
   const pw = fig.width - ml - mr
   const ph = fig.height - mt - mb
   const marks = ax.marks
-  var n = 1
+  var xlo = 0.0
+  var xhi = 1.0
+  var ylo = 0.0
   var ymax = 0.0
+  if marks.length() > 0 {
+    xlo = marks[0].x_min()
+    xhi = marks[0].x_max()
+    ylo = marks[0].y_min()
+    ymax = marks[0].y_max()
+  }
   for var k = 0; k < marks.length(); k = k + 1 {
-    if marks[k].bands() > n {
-      n = marks[k].bands()
+    if marks[k].x_min() < xlo {
+      xlo = marks[k].x_min()
+    }
+    if marks[k].x_max() > xhi {
+      xhi = marks[k].x_max()
+    }
+    if marks[k].y_min() < ylo {
+      ylo = marks[k].y_min()
     }
     if marks[k].y_max() > ymax {
       ymax = marks[k].y_max()
     }
   }
   const top = scale.nice_ceil(ymax)
-  const ctx = internal.ctx.DrawContext.new(renderer: r, x0: ml, y0: mt, plot_w: pw, plot_h: ph, x_min: 0.0, x_max: n.to_float64(), y_min: 0.0, y_max: top)
+  const ctx = internal.ctx.DrawContext.new(renderer: r, x0: ml, y0: mt, plot_w: pw, plot_h: ph, x_min: xlo, x_max: xhi, y_min: ylo, y_max: top)
   if fig.title != "" {
     r.text(ml, 30.0, fig.title, 18.0, internal.svg.Anchor.start, internal.svg.Weight.bold, (34, 34, 34))
   }
   if ax.y_label != "" {
     r.text(ml, 52.0, ax.y_label, 13.0, internal.svg.Anchor.start, internal.svg.Weight.regular, (85, 85, 85))
   }
-  const ts = scale.ticks(0.0, top, 5)
+  const ts = scale.ticks(ylo, top, 5)
   for var t = 0; t < ts.length(); t = t + 1 {
     const y = ctx.py(ts[t])
     r.line(ml, y, ml + pw, y, (230, 230, 230), 1.0, "")
@@ -120,10 +127,28 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
     marks[k].draw(ctx)
   }
   r.line(ml, mt + ph, ml + pw, mt + ph, (136, 136, 136), 1.0, "")
-  const labels = first_labels(marks)
-  for var b = 0; b < labels.length(); b = b + 1 {
-    const cx = ctx.px(b.to_float64() + 0.5)
-    r.text(cx, mt + ph + 18.0, labels[b], 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
+  // The first mark carrying categorical labels owns the x annotation;
+  // without one, the continuous domain ticks numerically.
+  var li = -1
+  for var k = 0; k < marks.length(); k = k + 1 {
+    if li < 0 {
+      if marks[k].x_labels().length() > 0 {
+        li = k
+      }
+    }
+  }
+  if li >= 0 {
+    const labels = marks[li].x_labels()
+    for var b = 0; b < labels.length(); b = b + 1 {
+      const cx = ctx.px(b.to_float64() + 0.5)
+      r.text(cx, mt + ph + 18.0, labels[b], 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
+    }
+  } else {
+    const xs = scale.ticks(xlo, xhi, 5)
+    for var t = 0; t < xs.length(); t = t + 1 {
+      const cx = ctx.px(xs[t])
+      r.text(cx, mt + ph + 18.0, tick_text(xs[t]), 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
+    }
   }
   if ax.x_label != "" {
     r.text(ml + pw / 2.0, mt + ph + 44.0, ax.x_label, 13.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))

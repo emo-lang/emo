@@ -131,10 +131,7 @@ require "plot"
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
 const sales = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0]
 
-const ax = plot.axes()
-  .with_x_label("Month")
-  .with_y_label("Sales")
-  .with_marks([plot.mark.bar(months, sales)])
+const ax = plot.axes().with_x_label("Month").with_y_label("Sales").with_marks([plot.mark.bar(months, sales)])
 const chart = plot.figure().with_title("Monthly sales").with_axes([ax])
 
 println(plot.svg(chart))
@@ -160,9 +157,11 @@ Targets: all five (`ocaml`, `c`, `typescript`, `wasm`, `beam`).
 
 T0 — what exists today — is the bar, line, scatter, area, and hist
 marks, linear axes with nice-number ticks, a title, axis labels, and
-SVG output. The remaining pieces the surface carries are reserved and
-not rendered yet: `Scale.log`, `Domain`, faceting via `Share`, and
-legends. The SVG renderer sits behind an
+SVG output. Both axes scale to the marks' declared spans: the y domain
+covers every mark's range, and the x axis ticks numerically unless a
+mark supplies categorical labels. The remaining pieces the surface
+carries are reserved and not rendered yet: `Scale.log`, `Domain`,
+faceting via `Share`, and legends. The SVG renderer sits behind an
 internal `Renderer` contract, so a terminal or raster backend can join
 later without disturbing the figure or the marks.
 

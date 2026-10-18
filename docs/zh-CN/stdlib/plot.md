@@ -94,10 +94,7 @@ require "plot"
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
 const sales = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0]
 
-const ax = plot.axes()
-  .with_x_label("Month")
-  .with_y_label("Sales")
-  .with_marks([plot.mark.bar(months, sales)])
+const ax = plot.axes().with_x_label("Month").with_y_label("Sales").with_marks([plot.mark.bar(months, sales)])
 const chart = plot.figure().with_title("Monthly sales").with_axes([ax])
 
 println(plot.svg(chart))
@@ -115,6 +112,6 @@ println(plot.svg(chart))
 
 目标:全部五个(`ocaml`、`c`、`typescript`、`wasm`、`beam`)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签,以及 SVG 输出。表面上还带着的其余部分是**预留、尚未渲染**的:`Scale.log`、`Domain`、经 `Share` 的分面、图例。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签,以及 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:`Scale.log`、`Domain`、经 `Share` 的分面、图例。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

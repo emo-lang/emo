@@ -1367,7 +1367,7 @@ panels and stays byte-identical on all five targets; `dune test` green.
 - [x] **T40.3** — `plot.mark.scatter` and `ScatterStyle`.
 - [x] **T40.4** — `plot.mark.area` and `AreaStyle`.
 - [x] **T40.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
-- [ ] **T40.6** — `Axes` draw: a continuous x scale, the y domain
+- [x] **T40.6** — `Axes` draw: a continuous x scale, the y domain
       inferred from every mark's range, and per-mark dispatch (replacing
       today's bar-only `first_labels`/`bands` path).
 - [ ] **T40.7** — Demos and goldens: one figure per new mark, all five
