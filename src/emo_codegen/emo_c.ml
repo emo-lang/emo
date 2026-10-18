@@ -1417,8 +1417,9 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                         (Printf.sprintf "the method `%s` on `%s`" name display))
               | None -> refuse (Printf.sprintf "the class `%s`" display))
           | _ ->
-              if arity > 4 then
-                refuse "method calls with more than four arguments";
+              (* the Renderer contract's line/text carry seven arguments *)
+              if arity > 8 then
+                refuse "method calls with more than eight arguments";
               let arg_code = String.concat ", " (List.map (as_dyn env) args) in
               let v =
                 Printf.sprintf "emo_send(%s, %s, INT64_C(%d), %s)"
