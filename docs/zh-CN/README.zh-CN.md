@@ -108,6 +108,7 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 
 - [`docs/zh-CN/c-backend.md`](c-backend.md) —— 默认目标：发射 C、C 运行时，以及 C FFI。
 - [`docs/zh-CN/ocaml-backend.md`](ocaml-backend.md) —— 发射 OCaml 的后端，以及 OCaml 工具链要求。
+- [`docs/zh-CN/demo-targets.md`](demo-targets.md) —— 用一个脚手架项目走遍所有 target 的运行方式，包括怎样执行 `beam` 与 `wasm` 产物。
 - [`docs/zh-CN/toolchain.md`](toolchain.md) —— `emo` CLI 的构建与安装:为何 dune 是唯一需要 OCaml 的一步,以及 justfile 自动化。
 - [`docs/zh-CN/toolchain-distribution.md`](toolchain-distribution.md) —— 工具链如何分发：OCaml 依赖、`emo doctor`、以及推迟 `c` 后端。
 - [`docs/zh-CN/runtime-and-freestanding.md`](runtime-and-freestanding.md) —— "runtime" 与 "freestanding" 各指什么,以及它们如何对应 Emo 的各目标。
