@@ -590,6 +590,7 @@ let c_goldens =
     "array_builder";
     "os_demo";
     "base64_demo";
+    "math_native";
     "csv_demo";
     "json_demo";
     "yaml_demo";
@@ -3056,26 +3057,43 @@ do work()|},
           ]);
   ]
 
-(* `foreign def` on a backend that has no emitter for it (M17): the
-   checker admits the declaration — its FFI types are legal on every
-   target — so the refusal rides the emitter's own Lower_error and the
-   CLI renders it as exit 65, the shape riscv64's refusals above take. *)
-let foreign_def_source =
+(* A `foreign def` binds a host symbol on `c` and `ocaml`. On the other
+   targets the definition is inert: the checker admits the declaration —
+   its FFI types are legal on every target — the emitter skips the
+   binding, and only a call to it refuses through the emitter's own
+   Lower_error, which the CLI renders as exit 65 (the shape riscv64's
+   refusals above take). *)
+let foreign_decl_source =
+  {|
+foreign def host_floor(x Float64) Float64 = "floor"
+
+println("ok")
+|}
+
+let foreign_call_source =
   {|
 foreign def host_floor(x Float64) Float64 = "floor"
 
 println(host_floor(2.5))
 |}
 
-let foreign_refusal_tests =
-  let build target =
-    let entry = scratch_entry ("foreign-def-" ^ target) foreign_def_source in
-    build_entry ~target entry (Filename.concat (Filename.dirname entry) "out")
+let foreign_value_source =
+  {|
+foreign def host_floor(x Float64) Float64 = "floor"
+
+const f = host_floor
+
+println("ok")
+|}
+
+let foreign_tests =
+  let build source target suffix =
+    let entry = scratch_entry ("foreign-" ^ suffix ^ "-" ^ target) source in
+    build_entry ~target entry (Filename.concat (Filename.dirname entry) suffix)
   in
-  let refusal target emit =
+  let refusal target source emit =
     let items, parse_diags =
-      Emo_parser.parse_program_with_diagnostics ~file:"main.emo"
-        ~source:foreign_def_source
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
     in
     (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
     let diags, _refs, _requires, types =
@@ -3099,28 +3117,18 @@ let foreign_refusal_tests =
         with Emo_ir.Lower_error message -> Some message)
   in
   [
-    (* The bug the refusal closed was a silent stub, not a missing
-       symbol: `foreign def` reaches an emitter as an ordinary `func`
-       record with an empty body, so a target that never reads `fforeign`
-       emits a real function and the build succeeds. The rule is therefore
-       a disjunction over the whole matrix — refuse by name, or honor the
-       declaration and really call through — not a list of the targets
-       known to have been broken. *)
-    tc "a `foreign def` is refused by name or really called, never stubbed"
+    (* A declaration reaches an emitter as an ordinary `func` record
+       with an empty body. Emitting a real function for it would be a
+       silent stub, so the target must either bind the host symbol or
+       leave the name unbound — and only a call may refuse. *)
+    tc "a foreign declaration alone is inert off the native targets"
       (fun () ->
-        if not (Lazy.force cc_available) then Alcotest.skip ();
-        let entry = scratch_entry "foreign-def-honored" foreign_def_source in
-        let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
-        Alcotest.(check int)
-          "c build exit" 0
-          (build_entry ~target:"c" entry bin);
-        check_run "c" (run_cmd (Filename.quote bin)) "2.0\n";
         List.iter
           (fun (target, emit) ->
-            Alcotest.(check int) (target ^ " build exit") 65 (build target);
-            match refusal target emit with
-            | None -> Alcotest.fail (target ^ ": expected a refusal")
-            | Some _ -> ())
+            match refusal target foreign_decl_source emit with
+            | None -> ()
+            | Some message ->
+                Alcotest.fail (target ^ ": unexpected refusal: " ^ message))
           [
             ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
             ( "beam",
@@ -3129,29 +3137,55 @@ let foreign_refusal_tests =
             ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
             ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
           ]);
-    tc "`foreign def` refuses on wasm and beam" (fun () ->
+    tc "the c and ocaml targets build a declaration-only program" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        List.iter
+          (fun target ->
+            Alcotest.(check int)
+              (target ^ " build exit") 0
+              (build foreign_decl_source target "main-decl"))
+          [ "c"; "ocaml" ]);
+    tc "a call to a foreign definition refuses off the native targets"
+      (fun () ->
+        let build_call target = build foreign_call_source target "main-call" in
         List.iter
           (fun (target, emit) ->
-            Alcotest.(check int) (target ^ " build exit") 65 (build target);
-            match refusal target emit with
+            Alcotest.(check int) (target ^ " build exit") 65 (build_call target);
+            match refusal target foreign_call_source emit with
             | None -> Alcotest.fail (target ^ ": expected a refusal")
             | Some message ->
                 Alcotest.(check bool)
                   target true
                   (contains message "does not support"
-                  && contains message "foreign def"))
+                  && contains message "foreign def"
+                  && contains message "host_floor"))
           [
             ("wasm", fun p -> ignore (Emo_codegen.Wasm.assemble p));
             ( "beam",
               fun p -> ignore (Emo_codegen.Beam.emit ~module_name:"emo_main" p)
             );
+            ("typescript", fun p -> ignore (Emo_codegen.Ts.emit_ts p));
+            ("riscv64", fun p -> ignore (Emo_codegen.Riscv.emit p));
           ]);
-    tc "the c and ocaml targets still build the same program" (fun () ->
-        if not (Lazy.force cc_available) then Alcotest.skip ();
+    tc "taking a foreign definition's value refuses off the native targets"
+      (fun () ->
         List.iter
           (fun target ->
-            Alcotest.(check int) (target ^ " build exit") 0 (build target))
-          [ "c"; "ocaml" ]);
+            Alcotest.(check int)
+              (target ^ " build exit") 65
+              (build foreign_value_source target "main-value"))
+          [ "wasm"; "beam"; "typescript"; "riscv64" ]);
+    tc "the c and ocaml targets really call through" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry = scratch_entry "foreign-call-c" foreign_call_source in
+        let bin = Filename.concat (Filename.dirname entry) "main-call" in
+        Alcotest.(check int)
+          "c build exit" 0
+          (build_entry ~target:"c" entry bin);
+        check_run "c" (run_cmd (Filename.quote bin)) "2.0\n";
+        Alcotest.(check int)
+          "ocaml build exit" 0
+          (build foreign_call_source "ocaml" "main-call"));
   ]
 
 (* ---- HTTP registry pull: `registry = "..."` in the manifest ----
@@ -4544,7 +4578,7 @@ let () =
       ("c_flat_working_set", c_flat_working_set_tests);
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
-      ("foreign_refusal", foreign_refusal_tests);
+      ("foreign", foreign_tests);
       ("publish", publish_tests);
       ("login", login_tests);
       ("http_pull", http_pull_tests);

@@ -58,7 +58,7 @@
 | EmoUI 原生 UI 打包(per-package 原生字段) | T48.7–T48.9 | 已定(2026-10-14)——manifest 长出 per-package 原生字段,原生后端不再以应用级构建脚本发布(`CHECK.md`、`docs/emo-ui.md`)。**已于 2026-10-18 落地(T48.7)**:`pkg_config`(裸模块名;`--cflags` 进编译、`--libs` 进链接)、`frameworks`(裸名;`-framework NAME`),`.m` 与 `.c`/`.h` 一起收集并在 ARC 下编译 |
 | `c` 目标的长跑内存(值语义家族的回收) | T48.8–T48.9(demo 尺度)、step 49 | 已定(2026-10-14)——region 回收不可行;值语义家族需要引用计数,作为 step 49 排期(`CHECK.md`、`spike/arena-scope/`)。**已于 2026-10-17 落地(T49.1–T49.4)**:工作集平坦,demo 尺度注记退役 |
 | EmoUI 浏览器运行时路径 | T48.10–T48.11 | 已定(2026-10-15)——走拆分路线:把 TypeScript 运行时拆出浏览器安全子集、加 `dom_*` 家族,再配一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`、`docs/emo-ui.md`)。**已于 2026-10-18 落地(T48.10–T48.11)**:打包步骤是一个构建 target(`emo build --target browser`),拆分是无宿主的 core 加 Node 与页面两个 host,`dom_*` 家族是十三个基于 Int64 句柄的调用,`emo/ui_browser` 是压在其上的 DOM 后端,一致性语料在 stub 页面里跑通 |
-| 跨 target 一致性(`c` 的 raise、`c` 的 send、`foreign def` 在 `wasm`/`beam` 上) | step 50 | 已定(2026-10-15)——这是对已经做出的承诺的一致性修复,不是新设计:子进程 raise 只结束子进程、`send` 送快照、两个 emitter 按名拒绝 `foreign def`(`CHECK.md`)。`typescript` 目标 send 仍共享这一项保持开放 |
+| 跨 target 一致性(`c` 的 raise、`c` 的 send、`foreign def` 在 `wasm`/`beam` 上) | step 50 | 已定(2026-10-15)——这是对已经做出的承诺的一致性修复,不是新设计:子进程 raise 只结束子进程、`send` 送快照、两个 emitter 按名拒绝 `foreign def`(`CHECK.md`)。T39.3 进一步细化:在非原生目标上声明是惰性的,拒绝发生在调用处。`typescript` 目标 send 仍共享这一项保持开放 |
 | 数组增长(O(1) 的 append 还是一个 builder) | T48.1、T49.4 | 已定(2026-10-15,T49.3)——走 builder,并且是语言层的新类型 `ArrayBuilder`,而不是 `Array` 的表示层改动(`CHECK.md`、`docs/intro/syntax.md`);从 `List` 转回 `Array` 那一半刻意不做 |
 | in-tree 项目布局(`projects/`) | M15 全部 | 已定(2026-10-15)——仓库根的 `projects/<仓库名>/` 存放每个具名 Emo 项目(EmoUI、EmoOS、EmoShell),以它将来可拆分出去的仓库命名;EmoUI 仍不是标准库包(`CHECK.md`) |
 | 终端输入的位置(T48.5) | T48.5 | 已定(2026-10-15)——raw mode 是一个标准库包,形状同 `sqlite3`(包自带 `.c`/`.h`,经 `foreign def` 调用,由 `targets` 把关),不是 UI 框架侧或编译器侧的产物(`CHECK.md`、`docs/emo-ui.md`) |
@@ -656,7 +656,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 
 - [x] **T39.1** — 精确类型化 `self.field`(`docs/temp-visual-check.md` 的 R2)并同步发射器,使 mark 的样式字段不必再扁平存储。今天在动态接收者上读取原生类型字段仍会被装箱,而发射器只按表达式的静态类型来决定原生/动态路径。
 - [x] **T39.2** — 与运行时方法同名的类方法不被遮蔽(R3)。`length` 在每个目标上都由实例自己的方法作答;`examples/length_method` 是回归。
-- [ ] **T39.3** — `math` 的可选原生快路径:在 `c`/`ocaml` 上分设 `*_native` 的 `foreign def` 函数(`math.exp` 纯净且逐字节一致,`math.exp_native` 为钉定的快路径;decision 15),并记明其 target 钉定。
+- [x] **T39.3** — `math` 的可选原生快路径:在 `c`/`ocaml` 上分设 `*_native` 的 `foreign def` 函数(`math.exp` 纯净且逐字节一致,`math.exp_native` 为钉定的快路径;decision 15),并记明其 target 钉定。在非原生目标上这些定义是惰性的:解释器在调用时抛 E3009,发射器拒绝调用。`examples/math_native` 是回归。
 - [ ] **T39.4** — 归档并修复绘图 spike 撞上的 `ocaml` 特化缺陷(`non-native expression in specialized body`、`Type_ref`),使特化后的原生体与解释器下降结果一致。
 
 ### Step 40 — T0 收尾:连续轴与其余 mark

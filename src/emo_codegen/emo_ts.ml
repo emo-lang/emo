@@ -20,6 +20,8 @@ type env = {
   mutable fname : string; (* the function being emitted, for trampolining *)
   mutable fparams : string list; (* its parameters, in order *)
   browser : bool; (* the browser target: the page host, not Node *)
+  fforeigns : string list;
+      (* `foreign def` names: the binding is skipped, a call refuses *)
 }
 
 (* The two targets share one emitter and one core runtime; they differ
@@ -194,7 +196,16 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Type_ref name -> Printf.sprintf "%S" name
   | Var name ->
       if List.mem name env.refs then Printf.sprintf "%s.v" name else name
-  | Global name -> name
+  | Global name ->
+      if List.mem name env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the %s target does not support taking the value of the \
+                 foreign definition `%s`"
+                (if env.browser then "browser" else "typescript")
+                name));
+      name
   | Tuple es ->
       Printf.sprintf "E.tuple(%s)" (String.concat ", " (List.map (expr env) es))
   | Array_lit es ->
@@ -260,6 +271,14 @@ let rec expr env (e : Emo_ir.expr) : string =
   | Index (b, i) -> Printf.sprintf "E.index(%s, %s)" (expr env b) (expr env i)
   | Field_read { obj; name } -> Printf.sprintf "(%s).%s" (expr env obj) name
   | Call { func; args } ->
+      if List.mem func env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the %s target does not support a call to the foreign \
+                 definition `%s`"
+                (if env.browser then "browser" else "typescript")
+                func));
       Printf.sprintf "(await %s(%s))" func
         (String.concat ", " (List.map (expr env) args))
   | Call_value { f; args } ->
@@ -727,12 +746,6 @@ let ts_browser_prelude = Emo_ts_runtime_data.ts_browser_prelude
 
 let emit_program ~(browser : bool) ~(prelude : string)
     (program : Emo_ir.program) : string =
-  let target = if browser then "browser" else "typescript" in
-  if List.exists (fun f -> f.Emo_ir.fforeign <> None) program.Emo_ir.pfuncs then
-    raise
-      (Emo_ir.Lower_error
-         (Printf.sprintf
-            "foreign definitions are not supported on the %s target yet" target));
   let buf = Buffer.create (16 * 1024) in
   let env =
     {
@@ -744,6 +757,11 @@ let emit_program ~(browser : bool) ~(prelude : string)
       in_receive = false;
       in_loop = false;
       browser;
+      fforeigns =
+        List.filter_map
+          (fun (f : Emo_ir.func) ->
+            if f.Emo_ir.fforeign <> None then Some f.Emo_ir.fname else None)
+          program.Emo_ir.pfuncs;
     }
   in
   Buffer.add_string buf prelude;
@@ -761,7 +779,10 @@ let emit_program ~(browser : bool) ~(prelude : string)
       put env "%s\n" (emit_class env c);
       put env "%s\n" (emit_ctor_factory env c))
     program.Emo_ir.pclasses;
-  List.iter (fun f -> put env "%s\n" (emit_func env f)) program.Emo_ir.pfuncs;
+  List.iter
+    (fun (f : Emo_ir.func) ->
+      if f.Emo_ir.fforeign = None then put env "%s\n" (emit_func env f))
+    program.Emo_ir.pfuncs;
   (* A browser page has no exit code: an uncaught failure is reported
      and the page keeps running, like a native UI loop survives one bad
      event. Node reports it and exits 70, the compiler's external-step

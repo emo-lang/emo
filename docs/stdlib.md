@@ -559,12 +559,14 @@ uses `log(x) = e*ln2 + log(m)` with the atanh series. Out-of-domain
 arguments are contract violations, not values — `log` of a non-positive
 number and `exp`'s overflow raise, because the beam target's Erlang
 floats cannot represent NaN or infinity at all, so returning one is not
-an option. A native fast path (the host libm through `foreign def`) is
-deliberately absent: it would refuse the wasm/typescript/beam targets
-and pin the output to a platform.
+an option. The opt-in native fast path lives under distinct `*_native`
+names (`exp_native`, `log_native`, `log10_native`, `pow_native`) and is
+pinned to `c`/`ocaml`; off those targets the definitions are inert and
+only a call refuses, so the package still imports everywhere.
 
-Targets: all five. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
-Demo: `examples/math_demo`.
+Targets: all five for the plain functions; the `*_native` functions run
+on `c` and `ocaml`. Reference: [`docs/stdlib/math.md`](stdlib/math.md) ·
+Demos: `examples/math_demo`, `examples/math_native`.
 
 ## The `plot` package
 

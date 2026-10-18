@@ -1,11 +1,13 @@
 # The `math` Package
 
 The elementary float functions the rest of the standard library builds
-on, with no package dependencies. Everything is pure Emo over the
-scalar operations all five hosted targets share, so each function
-answers byte-for-byte: the transcendentals use fixed-order series and
-range reduction, and the same operations in the same order produce the
-same bits everywhere — the property the plotting goldens rely on.
+on, with no package dependencies. The plain functions are pure Emo over
+the scalar operations all five hosted targets share, so each answers
+byte-for-byte: the transcendentals use fixed-order series and range
+reduction, and the same operations in the same order produce the same
+bits everywhere — the property the plotting goldens rely on. A separate,
+opt-in `*_native` path calls the host `libm` and is pinned to `c` and
+`ocaml`.
 
 ## Using the package
 
@@ -36,6 +38,10 @@ def exp(x Float64) Float64
 def log(x Float64) Float64
 def log10(x Float64) Float64
 def pow(base Float64, exponent Float64) Float64
+foreign def exp_native(x Float64) Float64 = "exp"
+foreign def log_native(x Float64) Float64 = "log"
+foreign def log10_native(x Float64) Float64 = "log10"
+foreign def pow_native(base Float64, exponent Float64) Float64 = "pow"
 ```
 
 `abs` answers the magnitude, `min`/`max` the smaller/larger of two
@@ -54,6 +60,21 @@ written into the exponent field.
 `[sqrt(1/2), sqrt(2))` and evaluates `log(m)` with the atanh series
 `2 * (z + z^3/3 + z^5/5 + ...)`, `z = (m-1)/(m+1)`. `log10` multiplies
 `log` by `1 / ln10`. `pow(base, exponent)` is `exp(exponent * log(base))`.
+
+## The native fast path
+
+`exp_native`, `log_native`, `log10_native`, and `pow_native` bind the
+host C library's `exp`, `log`, `log10`, and `pow` through `foreign
+def`. They are pinned to the `c` and `ocaml` targets, the two that can
+bind a host symbol; their results follow the host `libm`, so they are
+not byte-identical across platforms.
+
+On every other target the definitions are inert rather than a load-time
+error, so `require "math"` keeps working: the interpreter binds a value
+that raises E3009 when called, and the `typescript`, `wasm`, `beam`, and
+`riscv64` emitters skip the binding and refuse only a call to it. The
+names are distinct on purpose — a call site shows which implementation
+it chose.
 
 ## Domains are contract violations
 
@@ -75,11 +96,9 @@ values, and a kernel density estimate keeps its exponent in range.
 
 Targets: all five (`ocaml`, `c`, `typescript`, `wasm`, `beam`).
 
-The package deliberately carries no native fast path. Calling the host
-`libm` through `foreign def` would refuse the wasm/typescript/beam
-targets and pin output to a platform, which is exactly what this
-package exists to avoid. A native path, if one is ever wanted, belongs
-in a separate native-only package under distinct `*_native` names, so
-the choice is visible at the call site.
+The plain functions run on every target. The `*_native` functions run
+only on `c` and `ocaml`; elsewhere they declare cleanly and refuse when
+called, so importing the package costs nothing until one is used.
 
-See also: `examples/math_demo`.
+See also: `examples/math_demo` for the pure functions and
+`examples/math_native` for the native path.

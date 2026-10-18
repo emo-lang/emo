@@ -73,6 +73,8 @@ type env = {
       (* each enclosing loop's (exit label, continue label), innermost
          first: break jumps to the exit, continue to the head — or to
          the post label, on a `for`, so the post runs first *)
+  fforeigns : string list;
+      (* `foreign def` names: the binding is skipped, a call refuses *)
 }
 
 let gput env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
@@ -418,6 +420,13 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       emit_expr env d e;
       put env "%s:\n" l_end
   | Call { func; args } ->
+      if List.mem func env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the riscv64 target does not support a call to the foreign \
+                 definition `%s` yet"
+                func));
       emit_args env d args;
       put env "    call %s\n" (func_label func)
   | Call_value { f; args } ->
@@ -3123,6 +3132,11 @@ let emit (program : Emo_ir.program) : string =
       ifaces = program.pinterfaces;
       enums = [];
       loops = [];
+      fforeigns =
+        List.filter_map
+          (fun (f : Emo_ir.func) ->
+            if f.fforeign <> None then Some f.fname else None)
+          program.pfuncs;
     }
   in
   (* Enum member ids over the whole program, first-seen order. *)
@@ -3142,10 +3156,10 @@ let emit (program : Emo_ir.program) : string =
   gput env "\n    .section .text\n";
   List.iter
     (fun (f : Emo_ir.func) ->
-      if f.fforeign <> None then refuse "`foreign def`";
-      emit_function env
-        ~label:(func_label f.Emo_ir.fname)
-        ~params:f.fparams ~captures:[] ~body:f.fbody)
+      if f.fforeign = None then
+        emit_function env
+          ~label:(func_label f.Emo_ir.fname)
+          ~params:f.fparams ~captures:[] ~body:f.fbody)
     program.pfuncs;
   (* Constructors and methods, per class. *)
   List.iter

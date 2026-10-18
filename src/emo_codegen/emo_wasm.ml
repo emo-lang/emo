@@ -253,6 +253,8 @@ type env = {
   mutable func_arity : (string * int) list;
   mutable closure_types : (int * (int * int)) list;
   mutable nfuncs : int;
+  mutable fforeigns : string list;
+      (* `foreign def` names: the binding is skipped, a call refuses *)
   mutable strings : (string * int) list;
   mutable string_pool : string list;
   mutable iface_classes : (string * string list) list;
@@ -384,6 +386,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
                 ("wasm: unbound local " ^ name ^ " in " ^ env.fname ^ " map="
                 ^ String.concat "," (List.map fst env.local_map))))
   | Global name -> (
+      if List.mem name env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the wasm target does not support taking the value of the \
+                 foreign definition `%s`"
+                name));
       match List.assoc_opt name env.funcs with
       | Some fidx ->
           let arity =
@@ -571,6 +580,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
                   failwith ("wasm: unknown field " ^ class_name ^ "." ^ name))
           | _ -> failwith ("wasm: unknown class " ^ class_name)))
   | Call { func; args } -> (
+      if List.mem func env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the wasm target does not support a call to the foreign \
+                 definition `%s`"
+                func));
       List.iter (expr env) args;
       match List.assoc_opt func env.funcs with
       | Some fidx -> e env (W.Call fidx)
@@ -626,6 +642,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
          parent's bindings already on the stack, then parks or ends.
          The pid lands below the call — stashed so it survives as the
          spawn's value. *)
+      if List.mem func env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the wasm target does not support a call to the foreign \
+                 definition `%s`"
+                func));
       match List.assoc_opt func env.funcs with
       | Some fidx ->
           (* the arguments evaluate in the parent's context — before
@@ -4639,6 +4662,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
       func_arity = [];
       closure_types = [];
       nfuncs = runtime_count;
+      fforeigns = [];
       strings = [];
       string_pool = [];
       depth = 0;
@@ -4648,14 +4672,23 @@ let assemble (program : Emo_ir.program) : W.module_ =
       hidden = [];
     }
   in
+  (* A `foreign def` has no body here: it gets no index, and the call
+     sites refuse by name. *)
+  env.fforeigns <-
+    List.filter_map
+      (fun (f : Emo_ir.func) ->
+        if f.Emo_ir.fforeign <> None then Some f.Emo_ir.fname else None)
+      program.Emo_ir.pfuncs;
   (* Register program functions first: every func gets an index
      regardless of whether its body lowers (bodies lower in order). *)
   let program_funcs =
-    List.map
+    List.filter_map
       (fun (f : Emo_ir.func) ->
-        let idx = env.nfuncs in
-        env.nfuncs <- env.nfuncs + 1;
-        (f.Emo_ir.fname, idx))
+        if f.Emo_ir.fforeign <> None then None
+        else
+          let idx = env.nfuncs in
+          env.nfuncs <- env.nfuncs + 1;
+          Some (f.Emo_ir.fname, idx))
       program.Emo_ir.pfuncs
   in
   env.funcs <- program_funcs;
@@ -4723,14 +4756,12 @@ let assemble (program : Emo_ir.program) : W.module_ =
     (fun i c -> emit_class_decls env c ~pad:(class_pad max_fields i c))
     program.Emo_ir.pclasses;
   let lowered =
-    List.map
+    List.filter_map
       (fun (f : Emo_ir.func) ->
-        if f.Emo_ir.fforeign <> None then
-          raise
-            (Emo_ir.Lower_error
-               "the wasm target does not support `foreign def` yet");
-        let idx = List.assoc f.Emo_ir.fname env.funcs in
-        (idx, emit_func env f))
+        if f.Emo_ir.fforeign <> None then None
+        else
+          let idx = List.assoc f.Emo_ir.fname env.funcs in
+          Some (idx, emit_func env f))
       program.Emo_ir.pfuncs
   in
   let class_funcs =

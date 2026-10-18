@@ -1,15 +1,19 @@
 // The elementary math package: the float functions and constants the
 // rest of the standard library builds on, with no package dependencies.
 //
-// Every function is pure Emo over the scalar operations all five hosted
-// targets share, so each answers byte-for-byte. The transcendental
-// functions use fixed-order series and range reduction built on the
-// bit-level pair `Float64.to_bits` / `Float64.from_bits`: the same
-// operations in the same order on every target produce the same bits,
-// which is what the SVG goldens rely on. A native fast path (calling
-// the host libm through `foreign def`) is deliberately not here: it
-// would refuse the wasm/typescript/beam targets and pin output to a
-// platform.
+// The plain functions are pure Emo over the scalar operations all five
+// hosted targets share, so each answers byte-for-byte. The
+// transcendental functions use fixed-order series and range reduction
+// built on the bit-level pair `Float64.to_bits` /
+// `Float64.from_bits`: the same operations in the same order on every
+// target produce the same bits, which is what the SVG goldens rely on.
+//
+// The opt-in native fast path lives under distinct `*_native` names and
+// is pinned to `c` and `ocaml`, the two targets that bind a host
+// symbol. On the other targets the definitions are inert: `require
+// "math"` still works, and only a call is refused — by the interpreter
+// (E3009) and by the emitters (a lower error). Its output follows the
+// host libm, so it is not byte-identical across platforms.
 //
 // The functions have domains, and an out-of-domain argument is a
 // contract violation, not a value: `log` of a non-positive number and
@@ -159,3 +163,13 @@ def pow(base Float64, exponent Float64) Float64 {
   }
   return exp(exponent * log(base))
 }
+
+// ---- native fast path (pinned to `c` and `ocaml`) ----
+
+// The host libm, called directly. The names are separate from the pure
+// functions above so a call site shows which one it means; these are
+// not available on wasm, typescript, beam, or riscv64.
+foreign def exp_native(x Float64) Float64 = "exp"
+foreign def log_native(x Float64) Float64 = "log"
+foreign def log10_native(x Float64) Float64 = "log10"
+foreign def pow_native(base Float64, exponent Float64) Float64 = "pow"

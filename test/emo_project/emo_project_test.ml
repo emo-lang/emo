@@ -2398,7 +2398,7 @@ println(sqrt(2.0))|}
         Alcotest.(check bool)
           "sqrt(2.0)" true
           (String.length second >= 6 && String.sub second 0 6 = "1.4142"));
-    tc "the interpreter refuses foreign defs with E3009" (fun () ->
+    tc "the interpreter refuses a foreign call with E3009" (fun () ->
         use_workspace_registry () |> ignore;
         let entry =
           with_project
@@ -2414,12 +2414,14 @@ println(sqrt(4.0))|}
           Emo_project.run_entry ~entry_file:entry ~check:true
             ~sched:Emo_project.Own ()
         with
-        | _ -> Alcotest.fail "expected the interpreter to refuse foreign defs"
+        | _ -> Alcotest.fail "expected the interpreter to refuse the call"
         | exception Emo_eval.Error d ->
             Alcotest.(check (option string))
               "code" (Some "E3009") d.Emo_support.Diagnostic.code;
+            (* The declaration on line 1 is inert; the call on line 2 is
+               the mistake. *)
             Alcotest.(check int)
-              "line" 1 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
+              "line" 2 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
   ]
 
 (* ---- Step 46: the `emo test` runner core ----

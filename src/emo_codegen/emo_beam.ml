@@ -27,6 +27,8 @@ type env = {
   mutable iface_classes : (string * string list) list;
   mutable class_field : (string * (string * int) list) list;
   mutable current_class : string option;
+  mutable fforeigns : string list;
+      (* `foreign def` names: the binding is skipped, a call refuses *)
 }
 
 (* The class-member name behind a mangled method fname: the mangled
@@ -145,6 +147,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | Some v -> put env v
       | None -> failwith ("beam: unbound local " ^ name ^ " in " ^ env.fname))
   | Global name -> (
+      if List.mem name env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the beam target does not support taking the value of the \
+                 foreign definition `%s`"
+                name));
       (* A first-class def: a local closure over its function. The whole
          program lowers into one BEAM module and a def is not exported,
          so `fun 'mod':'name'/a` names a function the module does not
@@ -166,6 +175,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
                a args)
       | None -> failwith ("beam: unbound global " ^ name))
   | Call { func; args } -> (
+      if List.mem func env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the beam target does not support a call to the foreign \
+                 definition `%s`"
+                func));
       match List.assoc_opt func env.funcs with
       | Some a ->
           put env
@@ -380,6 +396,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
       (* the arguments evaluate in the spawner; the fun closes over
          them lexically. The wrapper turns a `halt` into a clean
          process end. *)
+      if List.mem func env.fforeigns then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the beam target does not support a call to the foreign \
+                 definition `%s`"
+                func));
       match List.assoc_opt func env.funcs with
       | Some a ->
           let arg_locals = List.map (fun _ -> fresh_var env "_spawnarg") args in
@@ -3376,6 +3399,11 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
       class_field = [];
       iface_classes = [];
       current_class = None;
+      fforeigns =
+        List.filter_map
+          (fun (f : Emo_ir.func) ->
+            if f.Emo_ir.fforeign <> None then Some f.Emo_ir.fname else None)
+          program.Emo_ir.pfuncs;
     }
   in
   let class_fields_assoc =
@@ -3517,16 +3545,13 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
     program.Emo_ir.pclasses;
   List.iter
     (fun (f : Emo_ir.func) ->
-      if f.Emo_ir.fforeign <> None then
-        raise
-          (Emo_ir.Lower_error
-             "the beam target does not support `foreign def` yet");
-      emit_def ~cc:None
-        ~params:
-          (List.mapi
-             (fun i (pname, _) -> (pname, Printf.sprintf "_p%d" i))
-             f.Emo_ir.fparams)
-        ~fname:f.Emo_ir.fname ~body:f.Emo_ir.fbody)
+      if f.Emo_ir.fforeign = None then
+        emit_def ~cc:None
+          ~params:
+            (List.mapi
+               (fun i (pname, _) -> (pname, Printf.sprintf "_p%d" i))
+               f.Emo_ir.fparams)
+          ~fname:f.Emo_ir.fname ~body:f.Emo_ir.fbody)
     program.Emo_ir.pfuncs;
   env.fname <- "main";
   env.local_map <- [];

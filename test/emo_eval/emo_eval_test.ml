@@ -377,6 +377,21 @@ println(tick())|}));
           program_err "receive {\n  (from, msg) -> { return msg }\n}"
         in
         Alcotest.(check string) "code" "E3009" (code_of diagnostic));
+    tc "a foreign definition is inert until it is called" (fun () ->
+        Alcotest.(check string)
+          "declaration only" "ok\n"
+          (run_program
+             {|foreign def host_exp(x Float64) Float64 = "exp"
+println("ok")|});
+        let diagnostic =
+          program_err
+            {|foreign def host_exp(x Float64) Float64 = "exp"
+println(host_exp(1.0))|}
+        in
+        Alcotest.(check string) "call code" "E3009" (code_of diagnostic);
+        Alcotest.(check bool)
+          "the message names the definition" true
+          (contains_substring diagnostic.Diagnostic.message "host_exp"));
   ]
 
 let tail_call_tests =

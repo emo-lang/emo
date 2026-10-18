@@ -66,7 +66,7 @@ before starting the gated work:
 | EmoUI native UI packaging (per-package native fields) | T48.7–T48.9 | settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.7)**: `pkg_config` (bare modules; `--cflags` compile, `--libs` link), `frameworks` (bare names; `-framework NAME`), and `.m` collected beside `.c`/`.h` and compiled under ARC |
 | `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). **Landed 2026-10-17 (T49.1–T49.4)**: the working set is flat and the demo-scale note is retired |
 | EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.10–T48.11)**: the bundling step is a build target (`emo build --target browser`), the split is a host-free core plus Node and page hosts, the `dom_*` family is thirteen calls over Int64 handles, and `emo/ui_browser` is the DOM backend over them, with the convergence corpus running in a stub page |
-| Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
+| Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). Refined by T39.3: the declaration is inert off the native targets, and the refusal is at the call. The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
 | The in-tree project layout (`projects/`) | all of M15 | settled 2026-10-15 — `projects/<repo-name>/` at the repository root holds each named Emo project (EmoUI, EmoOS, EmoShell), named for the repository it can later be split out into; EmoUI stays not a standard-library package (`CHECK.md`) |
 | Terminal input's placement (T48.5) | T48.5 | settled 2026-10-15 — raw mode is a standard-library package in the `sqlite3` shape (package-carried `.c`/`.h` reached through `foreign def`, gated by `targets`), not a UI-framework or compiler-side artifact (`CHECK.md`, `docs/emo-ui.md`) |
@@ -1337,10 +1337,13 @@ uses it.
 - [x] **T39.2** — A class method named like a runtime method is not
       shadowed (R3). `length` answers its own method on every target;
       `examples/length_method` is the regression.
-- [ ] **T39.3** — `math`'s opt-in native fast path: separate `*_native`
+- [x] **T39.3** — `math`'s opt-in native fast path: separate `*_native`
       `foreign def` functions on `c`/`ocaml` (`math.exp` pure and
       byte-identical, `math.exp_native` the pinned fast path; decision
-      15), documented as target-pinned.
+      15), documented as target-pinned. Off the native targets the
+      definitions are inert: the interpreter raises E3009 at the call
+      and the emitters refuse the call.
+      `examples/math_native` is the regression.
 - [ ] **T39.4** — File and fix the `ocaml` specialization defect the
       plot spike hit (`non-native expression in specialized body`,
       `Type_ref`), so specialized native bodies lower the same as the
@@ -2065,7 +2068,8 @@ byte-identical; and `CHECK.md` records all three as settled with the
       symbol") resolved to the second: the IR carries the symbol on an
       otherwise ordinary `func` record with an empty body, so both
       emitters were emitting a real function for a declaration that has
-      no Emo body.
+      no Emo body. Refined by T39.3: the declaration now imports cleanly
+      on every target, and the refusal moved to the call.
 - [x] **T50.2** — The `c` target's `raise` ends the logical process:
       `emo_raise` drains the current fiber's frame chain and halts it
       when it is not the root, keeping the render-and-`exit(1)` path for

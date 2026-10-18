@@ -78,11 +78,11 @@ it touches, and the plot package uses the one that changes its shape
 - [x] T39.2 — a class method named like a runtime method is not
   shadowed (R3): the c emitter's guards, the beam and wasm `length`
   instance arms; `examples/length_method` on every target.
-- [ ] T39.3 — `math`'s opt-in native fast path: `exp_native`,
+- [x] T39.3 — `math`'s opt-in native fast path: `exp_native`,
   `log_native`, `log10_native`, `pow_native` as `foreign def`s;
   foreign definitions inert off the native targets (interpreter
   E3009 at the call, emitters refusing the call); docs pinned to
-  `c`/`ocaml`.
+  `c`/`ocaml`; `examples/math_native` is the regression.
 - [ ] T39.4 — the ocaml specialization defect: the native emitter
   lowers `Type_ref`/`Make_enum`/`Field_read`/`Global`, the predicate
   drops the container literals; `examples/specialize_shapes` on the

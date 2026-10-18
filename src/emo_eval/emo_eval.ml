@@ -36,6 +36,8 @@ type value =
   | ArrowBlock of closure
   | BuiltinFn of string
   | RuntimeImplFn of string
+  | ForeignFn of string
+      (* a `foreign def` binding: inert at load time, E3009 when called *)
   | ClassDef of class_def_value
   | Instance of instance_value
   | EnumType of enum_type_value
@@ -201,6 +203,7 @@ let type_name = function
   | ArrowBlock _ -> "an arrow block"
   | BuiltinFn _ -> "a builtin"
   | RuntimeImplFn _ -> "a runtime implementation"
+  | ForeignFn _ -> "a foreign definition"
   | ClassDef _ -> "a class"
   | Instance _ -> "an instance"
   | EnumType _ -> "an enum"
@@ -279,6 +282,7 @@ let rec equal_value a b =
   | ArrowBlock x, ArrowBlock y -> x == y (* closures are identities *)
   | BuiltinFn x, BuiltinFn y -> String.equal x y
   | RuntimeImplFn x, RuntimeImplFn y -> String.equal x y
+  | ForeignFn x, ForeignFn y -> String.equal x y
   | _ -> false
 
 (* The map's key rule and its insertion order live beside equality:
@@ -616,6 +620,7 @@ let rec to_string v =
   | ArrowBlock _ -> "<arrow block>"
   | BuiltinFn name -> Printf.sprintf "<builtin %s>" name
   | RuntimeImplFn name -> Printf.sprintf "<runtime implementation %s>" name
+  | ForeignFn name -> Printf.sprintf "<foreign %s>" name
   | ClassDef c -> c.cname
   | Instance i ->
       if
@@ -2290,6 +2295,12 @@ and apply f span args =
   | RuntimeImplFn name ->
       check_positional "runtime implementation" name;
       apply_runtime_impl span name (List.map snd args)
+  | ForeignFn name ->
+      error span "E3009"
+        (Printf.sprintf
+           "the foreign definition `%s` runs only in compiled programs (use \
+            emo build)"
+           name)
   | v ->
       error span "E3007"
         (Printf.sprintf "%s is not callable"
@@ -3669,10 +3680,10 @@ let eval_item ?(module_path = []) env item =
       define env g.Ast.group_name ~mutable_:false (EmoGroup member_values);
       Hashtbl.replace !group_registry g.Ast.group_name member_values
   | Ast.Item_foreign f ->
-      (* The compiled backend emits the external declaration; the
-         interpreter has no C linkage. *)
-      error f.Ast.foreign_span "E3009"
-        "foreign definitions run only in compiled programs (use emo build)"
+      (* Inert at load time: a package may declare a native binding on
+         every target it names, and only a call to it is a mistake. *)
+      define env f.Ast.foreign_name ~mutable_:false
+        (ForeignFn f.Ast.foreign_name)
 
 (* Restricted-profile schema errors: the manifest reader maps them onto the
    E51xx codes. A field defined twice, and a value that is not literal data
