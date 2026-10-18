@@ -1384,7 +1384,7 @@ against the `Renderer` interface, not `SvgRenderer`.
       formatting.
 - [x] **T41.2** — `Domain.auto` / `Domain.fixed`: domain fields on
       `Axes` and inference from the marks (decision 19).
-- [ ] **T41.3** — Legend rendering for `with_legend` (decision 20's
+- [x] **T41.3** — Legend rendering for `with_legend` (decision 20's
       draw-order rule; one shared legend under faceting, T41.7).
 - [ ] **T41.4** — Grid rendering from `Figure.grid`, driven by the
       theme's grid style.

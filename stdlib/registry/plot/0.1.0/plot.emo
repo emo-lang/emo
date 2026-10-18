@@ -245,6 +245,41 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
   if ax.x_label != "" {
     r.text(ml + pw / 2.0, mt + ph + 44.0, ax.x_label, 13.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
   }
+  // The legend: marks array order, drawn last, one white panel in the
+  // plot's top-right corner. Only labeled marks join; entry offsets use
+  // an approximate per-character advance, since the package carries no
+  // font metrics.
+  if ax.legend {
+    var count = 0
+    var wide = 0.0
+    for var k = 0; k < marks.length(); k = k + 1 {
+      const lbl = marks[k].legend_label()
+      if lbl != "" {
+        count = count + 1
+        const w = 26.0 + lbl.length().to_float64() * 7.0
+        if w > wide {
+          wide = w
+        }
+      }
+    }
+    if count > 0 {
+      const row = 20.0
+      const bw = wide + 16.0
+      const bh = count.to_float64() * row
+      const bx = ml + pw - bw - 8.0
+      const by = mt + 8.0
+      r.rect(bx, by, bw, bh, (255, 255, 255))
+      var at = by + row / 2.0
+      for var k = 0; k < marks.length(); k = k + 1 {
+        const lbl = marks[k].legend_label()
+        if lbl != "" {
+          marks[k].legend_sample(r, bx + 8.0, at)
+          r.text(bx + 8.0 + 26.0, at + 4.0, lbl, 12.0, internal.svg.Anchor.start, internal.svg.Weight.regular, (85, 85, 85))
+          at = at + row
+        }
+      }
+    }
+  }
 }
 
 def svg(fig Figure) String {

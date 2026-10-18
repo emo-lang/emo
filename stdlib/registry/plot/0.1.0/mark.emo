@@ -13,6 +13,8 @@ interface Mark {
   def y_max() Float64
   def bands() Int64
   def x_labels() Array[String]
+  def legend_label() String
+  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void
 }
 
 class BarStyle {
@@ -99,6 +101,14 @@ class Bar {
 
   def x_labels() Array[String] {
     return self.labels
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
   }
 
   def with_style(s BarStyle) Bar {
@@ -281,6 +291,15 @@ class Line {
     return []
   }
 
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+    r.line(x, y, x + 18.0, y, self.style.color, self.style.width, dash_array(self.style.dash))
+    stamp_marker(r, x + 9.0, y, self.style.marker, self.style.marker_size, self.style.color)
+  }
+
   def with_style(s LineStyle) Line {
     return Line.new(x: self.x, y: self.y, style: s)
   }
@@ -395,6 +414,14 @@ class Scatter {
 
   def x_labels() Array[String] {
     return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+    stamp_marker(r, x + 9.0, y, self.style.marker, self.style.size, self.style.color)
   }
 
   def with_style(s ScatterStyle) Scatter {
@@ -523,6 +550,14 @@ class Area {
     return []
   }
 
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
   def with_style(s AreaStyle) Area {
     return Area.new(x: self.x, y: self.y, style: s)
   }
@@ -626,6 +661,14 @@ class Hist {
 
   def x_labels() Array[String] {
     return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
   }
 
   def with_style(s HistStyle) Hist {

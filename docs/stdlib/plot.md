@@ -138,8 +138,16 @@ primitives do not carry an opacity knob yet.
 A mark draws itself into an axes through the `Mark` interface — `draw`,
 plus the data span it asks the axes to cover: a continuous x and y
 range through `x_min` / `x_max` / `y_min` / `y_max`, and the categorical
-x face through `bands` and `x_labels` — so a new mark family is a new
-class that satisfies that shape.
+x face through `bands` and `x_labels` — and it feeds the legend:
+`legend_label()` answers the style's label, `legend_sample` draws the
+family's swatch. A new mark family is a new class that satisfies that
+shape.
+
+With `legend` on (the default), the labeled marks list into a legend in
+the plot's top-right corner — marks array order, drawn last, one white
+panel behind them. Marks whose label is empty stay out of it. Entry
+offsets use an approximate per-character advance, since the package
+carries no font metrics.
 
 ## A worked example
 
@@ -185,7 +193,7 @@ SVG output. Both axes scale to the marks' declared spans: the y domain
 covers every mark's range, and the x axis ticks numerically unless a
 mark supplies categorical labels. The remaining pieces the surface
 carries are reserved and not rendered yet:
-faceting via `Share`, and legends. The SVG renderer sits behind an
+faceting via `Share`. The SVG renderer sits behind an
 internal `Renderer` contract, so a terminal or raster backend can join
 later without disturbing the figure or the marks.
 
