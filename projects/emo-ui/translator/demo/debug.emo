@@ -1,0 +1,145 @@
+// The headless debug backend (T48.3): the tree as stable text, and the
+// golden harness the core and every later backend share — a `row` that
+// means two different things on two backends shows up here first.
+//
+// The form is one node per line, two spaces per level: the node's own
+// props, then a style summary in a fixed field order. The order is fixed
+// because nothing about a map's iteration order may reach a golden, and
+// the whole summary is one line because a golden is read as a diff.
+//
+// What may be interpolated is deliberately narrow — `String`, `Int64`,
+// `Bool` and a `Float64` — because printing an enum or a tuple is not
+// the same bytes on every target: `(R.ok, 12.5)` prints as `(ok, 12.5)`
+// on the interpreter, `ocaml` and `c`, and as `(R.ok, 12.5)` on
+// `typescript` (`CHECK.md`, cross-target printing). So `align_name` and
+// `extent` destructure instead of interpolating, and a style's enum and
+// pair slots never reach a golden as themselves.
+//
+// A string prop is quoted verbatim, not escaped. A value carrying a
+// newline therefore spans lines, which the form accepts: it stays
+// byte-identical, and the language has no `String.replace` to build an
+// escape with for less than a per-character rebuild.
+
+def indent(depth Int64) String {
+  if depth <= 0 {
+    return ""
+  }
+  return "  " + indent(depth - 1)
+}
+
+def align_name(a ui.Align) String {
+  case a {
+    ui.Align.start -> { return "start" }
+    ui.Align.center -> { return "center" }
+    ui.Align.end -> { return "end" }
+    ui.Align.stretch -> { return "stretch" }
+  }
+}
+
+// The `(R, Float64)` slot: `(R.ok, 12.0)` is a width or height, a
+// `R.error` one is the platform's own. Only the ok branch has a value to
+// print, which is why the slot is destructured rather than interpolated.
+def extent(slot (R, Float64)) String {
+  case slot {
+    (R.ok, v) -> { return v.to_string() }
+    (R.error, _) -> { return "auto" }
+  }
+}
+
+def brief(s ui.Style) String {
+  return "pad=" + s.padding().to_string() + " gap=" + s.gap().to_string()
+    + " align=" + align_name(s.align()) + " grow=" + s.grow().to_string()
+    + " w=" + extent(s.width()) + " h=" + extent(s.height())
+}
+
+def render_kids(kids Array[ui.Node], depth Int64) String {
+  var out = ""
+  for var i = 0; i < kids.length(); i = i + 1 {
+    out = out + render_at(kids[i], depth)
+  }
+  return out
+}
+
+// The harness's entry point: a whole tree, from its root. `render_at` is
+// the walk, and is the name a caller who has a subtree and its depth
+// reaches for. There is no overloading to lean on — a def name carries
+// one signature — so the two are separate names.
+def render(n ui.Node) String {
+  return render_at(n, 0)
+}
+
+def render_at(n ui.Node, depth Int64) String {
+  const pad = indent(depth)
+  if n.is(ui.Text) {
+    return pad + "Text \"" + n.body() + "\" " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.Button) {
+    return pad + "Button \"" + n.label() + "\" #" + n.event().to_string()
+      + " " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.TextInput) {
+    return pad + "Input \"" + n.value() + "\" " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.Image) {
+    return pad + "Image \"" + n.src() + "\" " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.Spacer) {
+    return pad + "Spacer " + brief(n.style()) + "\n"
+  }
+  if n.is(ui.Column) {
+    return pad + "Column " + brief(n.style()) + "\n"
+      + render_kids(n.children(), depth + 1)
+  }
+  if n.is(ui.Row) {
+    return pad + "Row " + brief(n.style()) + "\n"
+      + render_kids(n.children(), depth + 1)
+  }
+  if n.is(ui.Scroll) {
+    return pad + "Scroll " + brief(n.style()) + "\n"
+      + render_kids(n.children(), depth + 1)
+  }
+  // A node class this walk does not know. It is not a slot for a
+  // non-node: `is()` raises on a value that is not an instance, so an
+  // array smuggled into a child slot ends the walk here rather than
+  // rendering as Unknown (spike/emo-ui-spelling, naive_crash.emo). The
+  // line interpolates the value, so how it reads is the target's own
+  // `to_string` — a diagnostic, never golden material.
+  return pad + "Unknown ${n}\n"
+}
+
+// The backend half of the seam (docs/emo-ui.md, Layer 6). It renders
+// every tree the loop hands it into a log rather than printing, so a
+// caller decides when the text reaches stdout and a golden is never
+// disturbed by a backend that happens to be attached.
+//
+// `run` drives nothing: the debug backend has no input source, which is
+// what headless means here. An event is delivered by hand, through
+// `deliver` — the loop hands its sink to `mount` and `ui.run` does not
+// hand the loop back, so this is the only way to step one event at a
+// time from outside.
+class Debug {
+  def init() {
+    self.trees = Box.new([])
+    self.sink = Box.new(0)
+  }
+
+  def mount(root ui.Node, events ui.Events) {
+    self.sink.replace(events)
+    self.trees.replace(self.trees.read().append(render(root)))
+  }
+
+  def patch(old ui.Node, next ui.Node) {
+    self.trees.replace(self.trees.read().append(render(next)))
+  }
+
+  def run() {
+  }
+
+  def deliver(tag Int64) {
+    self.sink.read().deliver(tag)
+  }
+
+  def log() Array[String] {
+    return self.trees.read()
+  }
+}

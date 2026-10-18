@@ -1,0 +1,35 @@
+// The translator's entry point: a `.emoui` source on stdin, generated
+// Emo on stdout. An Emo program cannot read its own command line (the
+// os package has no argv), so the translator is a filter:
+//
+//   emo run translate.emo < screens.emoui > screens.emo
+//
+// Diagnostics go out as a raised Exception — a non-zero exit the
+// harness sees — and every message carries the 1-based source line it
+// came from.
+
+require "os"
+
+def read_all(acc String) String {
+  case os.read(0, 65536) {
+    (R.ok, "")    -> { return acc }
+    (R.ok, chunk) -> { return read_all(acc + chunk) }
+    (R.error, why) -> {
+      raise Exception.new(message: "emoui: reading stdin: " + why)
+    }
+  }
+}
+
+def write_all(out String) {
+  case os.write(1, out) {
+    (R.error, why) -> {
+      raise Exception.new(message: "emoui: writing stdout: " + why)
+    }
+    (R.ok, _) -> {
+    }
+  }
+}
+
+const source = read_all("")
+
+write_all(lower.translate(source))

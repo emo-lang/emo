@@ -1,0 +1,77 @@
+ok   screen_profile: the .emoui tree equals the A spelling
+ok   screen_inbox: the .emoui tree equals the A spelling
+ok   screen_inbox: still equal with no messages
+ok   screen_profile: still equal with the banner shown
+
+== screen_profile, the .emoui spelling ==
+Column pad=16.0 gap=12.0 align=start grow=false w=auto h=auto
+  Text "Profile" pad=4.0 gap=0.0 align=start grow=false w=auto h=auto
+  Row pad=8.0 gap=12.0 align=start grow=false w=auto h=auto
+    Image "ada.png" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+    Column pad=0.0 gap=2.0 align=start grow=false w=auto h=auto
+      Text "Ada Lovelace" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "ada@example.com" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Column pad=0.0 gap=6.0 align=start grow=false w=auto h=auto
+    Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Full name" pad=0.0 gap=0.0 align=start grow=false w=120.0 h=auto
+      Input "Ada Lovelace" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Email" pad=0.0 gap=0.0 align=start grow=false w=120.0 h=auto
+      Input "ada@example.com" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Timezone" pad=0.0 gap=0.0 align=start grow=false w=120.0 h=auto
+      Input "Europe/London" pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+  Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+    Button "Save" #1 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+    Button "Cancel" #2 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+  Spacer pad=0.0 gap=0.0 align=start grow=false w=auto h=12.0
+  Scroll pad=8.0 gap=0.0 align=start grow=false w=auto h=auto
+    Text "This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY." pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Text "See the license for the specific language governing permissions and limitations." pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+
+== screen_inbox, the .emoui spelling ==
+Column pad=16.0 gap=12.0 align=start grow=false w=auto h=auto
+  Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+    Text "Inbox" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Input "" pad=0.0 gap=0.0 align=start grow=false w=160.0 h=auto
+  Scroll pad=8.0 gap=0.0 align=start grow=false w=auto h=auto
+    Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Grace" pad=0.0 gap=0.0 align=start grow=false w=96.0 h=auto
+      Column pad=0.0 gap=2.0 align=start grow=true w=auto h=auto
+        Text "Compiler notes" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+        Text "The backend split looks right" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "2h" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+    Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Barbara" pad=0.0 gap=0.0 align=start grow=false w=96.0 h=auto
+      Column pad=0.0 gap=2.0 align=start grow=true w=auto h=auto
+        Text "Re: codegen" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+        Text "Ship the arena change first" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "1d" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+    Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+      Text "Margaret" pad=0.0 gap=0.0 align=start grow=false w=96.0 h=auto
+      Column pad=0.0 gap=2.0 align=start grow=true w=auto h=auto
+        Text "Review request" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+        Text "Can you look at the layout pass?" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+      Text "3d" pad=0.0 gap=0.0 align=start grow=false w=48.0 h=auto
+  Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+    Text "3 messages" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Button "Compose" #3 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+
+== screen_inbox with no messages ==
+Column pad=16.0 gap=12.0 align=start grow=false w=auto h=auto
+  Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+    Text "Inbox" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Input "" pad=0.0 gap=0.0 align=start grow=false w=160.0 h=auto
+  Scroll pad=8.0 gap=0.0 align=start grow=false w=auto h=auto
+    Column pad=0.0 gap=6.0 align=start grow=false w=auto h=auto
+      Image "inbox-empty.png" pad=0.0 gap=0.0 align=start grow=false w=64.0 h=auto
+      Text "No messages" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Row pad=4.0 gap=8.0 align=start grow=false w=auto h=auto
+    Text "0 messages" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+    Button "Compose" #3 pad=6.0 gap=0.0 align=start grow=false w=auto h=auto
+
+exit=0

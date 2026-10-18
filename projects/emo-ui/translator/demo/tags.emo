@@ -1,0 +1,46 @@
+// The event seam (docs/emo-ui.md, Layer 5). A node carries an Int64 tag
+// and never a closure — closures cannot cross the FFI. Building the tree
+// registers the typed message here and stamps the node with its index, so
+// `update` stays typed to Msg while a backend only ever sees an integer.
+//
+// A message keeps the tag it was first given: a tree rebuilt on every
+// event must stamp the same button with the same integer, or a backend
+// sees a new widget each frame instead of the same one.
+//
+// The registry is an array indexed by tag rather than a Map because an
+// enum member cannot be a Map key — `by_msg.set(msg, tag)` is E3001, "a
+// map key must be a String, Int64, Byte, Bool, Char, or Float64". Keying
+// on `msg.to_string()` would work and would key `Msg.save` and any other
+// enum's `save` to the same slot, since `to_string` of a member is the
+// bare member name (emo_eval.ml:571). The array keeps the key typed.
+
+def no_tags() Array[model.Msg] {
+  return []
+}
+
+const registered = Box.new(no_tags())
+
+def index_of(msg model.Msg, i Int64) Int64 {
+  const reg = registered.read()
+  if i >= reg.length() {
+    return -1
+  }
+  if reg[i] == msg {
+    return i
+  }
+  return index_of(msg, i + 1)
+}
+
+def on(msg model.Msg) Int64 {
+  const known = index_of(msg, 0)
+  if known >= 0 {
+    return known + 1
+  }
+  const reg = registered.read()
+  registered.replace(reg.append(msg))
+  return reg.length() + 1
+}
+
+def dispatch(tag Int64) model.Msg {
+  return registered.read()[tag - 1]
+}
