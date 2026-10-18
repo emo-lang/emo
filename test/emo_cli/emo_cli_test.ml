@@ -3204,7 +3204,8 @@ let specialization_tests =
         let exit_code =
           in_example "specialize_shapes" (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:bin ~specialize:true
-                ~cclibs:[] ~target:"ocaml")
+                ~cclibs:[] ~native:Emo_project.no_native_inputs
+                ~target:"ocaml")
         in
         Alcotest.(check int) "build exit" 0 exit_code;
         check_run "ocaml" (run_cmd (Filename.quote bin)) expected);
