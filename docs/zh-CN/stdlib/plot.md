@@ -32,8 +32,11 @@ def with_x_scale(s Scale) Axes
 def with_y_scale(s Scale) Axes
 def with_x_domain(a Float64, b Float64) Axes
 def with_y_domain(a Float64, b Float64) Axes
+def with_grid_style(s GridStyle) Axes
 def with_marks(m Array[Mark]) Axes
 def with_legend(on Bool) Axes
+
+def grid_style() GridStyle
 ```
 
 `figure()` 与 `axes()` 建出默认值,`with_*` 细化一个值。类是不可变的,所以每个 `with_*` 返回一个新值;整张图就是一个普通的值图。`svg(fig)` 遍历它,返回 SVG 文档(`String`)。
@@ -47,6 +50,8 @@ enum Share { all, none }
 刻度枚举经 `with_x_scale` / `with_y_scale` 落到坐标轴上。log 轴横跨整十进位:域钳到包住数据的那两个十次方,刻度落在每十进位的 1-2-5 步上(跨度不超过两个十进位时 2 和 5 步才加入),非正值或非正的域直接 raise——log 轴只映射正数,没有例外。
 
 域要么是 `Domain.auto`——从每个 mark 的跨度推断,也是默认——要么经 `with_x_domain(a, b)` / `with_y_domain(a, b)` 落成 `Domain.fixed`,原样携带调用者给的两端:刻度尊重固定后的两端,倒置的域(`lo >= hi`)直接 raise。mark 目前不会裁剪进坐标轴矩形,固定域之外的数据会画出界外。
+
+网格画在 mark 背后:y 刻度上的横线与 x 刻度上的竖线,由 `GridStyle` 定样式——`color`、`width`、`dash`(与折线 mark 同一个 `Dash` 枚举)、`visible`(`false` 时完全不画网格)。默认是宽度 1.0 的浅色实线。
 
 ## mark
 

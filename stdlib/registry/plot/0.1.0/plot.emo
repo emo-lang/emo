@@ -34,10 +34,42 @@ class Figure {
   }
 }
 
+// The style of an axes's gridlines: the tick-aligned lines behind the
+// marks, horizontal for y ticks and vertical for x ticks. `visible`
+// false draws no grid at all.
+class GridStyle {
+  def init(color (Int64, Int64, Int64), width Float64, dash mark.Dash, visible Bool) {
+    self.color = color
+    self.width = width
+    self.dash = dash
+    self.visible = visible
+  }
+
+  def with_color(c (Int64, Int64, Int64)) GridStyle {
+    return GridStyle.new(color: c, width: self.width, dash: self.dash, visible: self.visible)
+  }
+
+  def with_width(w Float64) GridStyle {
+    return GridStyle.new(color: self.color, width: w, dash: self.dash, visible: self.visible)
+  }
+
+  def with_dash(d mark.Dash) GridStyle {
+    return GridStyle.new(color: self.color, width: self.width, dash: d, visible: self.visible)
+  }
+
+  def with_visible(v Bool) GridStyle {
+    return GridStyle.new(color: self.color, width: self.width, dash: self.dash, visible: v)
+  }
+}
+
+def grid_style() GridStyle {
+  return GridStyle.new(color: (230, 230, 230), width: 1.0, dash: mark.Dash.solid, visible: true)
+}
+
 class Axes {
   def init(x_label String, y_label String, x_scale Scale, y_scale Scale,
            x_domain (Domain, Float64, Float64), y_domain (Domain, Float64, Float64),
-           legend Bool, marks Array[mark.Mark]) {
+           legend Bool, grid GridStyle, marks Array[mark.Mark]) {
     self.x_label = x_label
     self.y_label = y_label
     self.x_scale = x_scale
@@ -45,39 +77,44 @@ class Axes {
     self.x_domain = x_domain
     self.y_domain = y_domain
     self.legend = legend
+    self.grid = grid
     self.marks = marks
   }
 
+  def with_grid_style(s GridStyle) Axes {
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: s, marks: self.marks)
+  }
+
   def with_x_label(s String) Axes {
-    return Axes.new(x_label: s, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: s, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
   }
 
   def with_y_label(s String) Axes {
-    return Axes.new(x_label: self.x_label, y_label: s, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: s, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
   }
 
   def with_x_scale(s Scale) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: s, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: s, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
   }
 
   def with_y_scale(s Scale) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: s, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: s, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
   }
 
   def with_x_domain(a Float64, b Float64) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: (Domain.fixed, a, b), y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: (Domain.fixed, a, b), y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
   }
 
   def with_y_domain(a Float64, b Float64) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: (Domain.fixed, a, b), legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: (Domain.fixed, a, b), legend: self.legend, grid: self.grid, marks: self.marks)
   }
 
   def with_marks(m Array[mark.Mark]) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: m)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: m)
   }
 
   def with_legend(on Bool) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: on, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: on, grid: self.grid, marks: self.marks)
   }
 }
 
@@ -86,7 +123,7 @@ def figure() Figure {
 }
 
 def axes() Axes {
-  return Axes.new(x_label: "", y_label: "", x_scale: Scale.linear, y_scale: Scale.linear, x_domain: (Domain.auto, 0.0, 0.0), y_domain: (Domain.auto, 0.0, 0.0), legend: true, marks: [])
+  return Axes.new(x_label: "", y_label: "", x_scale: Scale.linear, y_scale: Scale.linear, x_domain: (Domain.auto, 0.0, 0.0), y_domain: (Domain.auto, 0.0, 0.0), legend: true, grid: grid_style(), marks: [])
 }
 
 // A tick label: an integral value loses its trailing ".0".
@@ -189,28 +226,12 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
   if ax.y_label != "" {
     r.text(ml, 52.0, ax.y_label, 13.0, internal.svg.Anchor.start, internal.svg.Weight.regular, (85, 85, 85))
   }
+  // Tick positions for both axes, then the grid behind everything:
+  // horizontal lines at the y ticks, vertical lines at the x ticks.
+  var yt = scale.ticks(ylo, top, 5)
   if y_log {
-    const yt = scale.log_ticks(ylo, top)
-    for var t = 0; t < yt.length(); t = t + 1 {
-      const y = ctx.py(yt[t])
-      r.line(ml, y, ml + pw, y, (230, 230, 230), 1.0, "")
-      r.text(ml - 8.0, y + 4.0, tick_text(yt[t]), 12.0, internal.svg.Anchor.end, internal.svg.Weight.regular, (85, 85, 85))
-    }
-  } else {
-    const yt = scale.ticks(ylo, top, 5)
-    for var t = 0; t < yt.length(); t = t + 1 {
-      const y = ctx.py(yt[t])
-      r.line(ml, y, ml + pw, y, (230, 230, 230), 1.0, "")
-      r.text(ml - 8.0, y + 4.0, tick_text(yt[t]), 12.0, internal.svg.Anchor.end, internal.svg.Weight.regular, (85, 85, 85))
-    }
+    yt = scale.log_ticks(ylo, top)
   }
-  for var k = 0; k < marks.length(); k = k + 1 {
-    marks[k].draw(ctx)
-  }
-  r.line(ml, mt + ph, ml + pw, mt + ph, (136, 136, 136), 1.0, "")
-  // A log x axis always ticks numerically; otherwise the first mark
-  // carrying categorical labels owns the x annotation, and without one
-  // the continuous domain ticks numerically.
   var li = -1
   if !x_log {
     for var k = 0; k < marks.length(); k = k + 1 {
@@ -221,25 +242,52 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
       }
     }
   }
-  if li >= 0 {
+  // A log x axis always ticks numerically; otherwise the first mark
+  // carrying categorical labels owns the x annotation at its band
+  // centers, and without one the continuous domain ticks numerically.
+  var categorical = false
+  var xt = scale.ticks(xlo, xhi, 5)
+  if x_log {
+    xt = scale.log_ticks(xlo, xhi)
+  } else {
+    if li >= 0 && marks[li].bands() > 0 {
+      categorical = true
+      xt = [0.5]
+      for var b = 1; b < marks[li].bands(); b = b + 1 {
+        xt = xt.append(b.to_float64() + 0.5)
+      }
+    }
+  }
+  const gs = ax.grid
+  if gs.visible {
+    const pattern = mark.dash_array(gs.dash)
+    for var t = 0; t < yt.length(); t = t + 1 {
+      const y = ctx.py(yt[t])
+      r.line(ml, y, ml + pw, y, gs.color, gs.width, pattern)
+    }
+    for var t = 0; t < xt.length(); t = t + 1 {
+      const cx = ctx.px(xt[t])
+      r.line(cx, mt, cx, mt + ph, gs.color, gs.width, pattern)
+    }
+  }
+  for var k = 0; k < marks.length(); k = k + 1 {
+    marks[k].draw(ctx)
+  }
+  r.line(ml, mt + ph, ml + pw, mt + ph, (136, 136, 136), 1.0, "")
+  for var t = 0; t < yt.length(); t = t + 1 {
+    const y = ctx.py(yt[t])
+    r.text(ml - 8.0, y + 4.0, tick_text(yt[t]), 12.0, internal.svg.Anchor.end, internal.svg.Weight.regular, (85, 85, 85))
+  }
+  if categorical {
     const labels = marks[li].x_labels()
     for var b = 0; b < labels.length(); b = b + 1 {
       const cx = ctx.px(b.to_float64() + 0.5)
       r.text(cx, mt + ph + 18.0, labels[b], 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
     }
   } else {
-    if x_log {
-      const xt = scale.log_ticks(xlo, xhi)
-      for var t = 0; t < xt.length(); t = t + 1 {
-        const cx = ctx.px(xt[t])
-        r.text(cx, mt + ph + 18.0, tick_text(xt[t]), 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
-      }
-    } else {
-      const xt = scale.ticks(xlo, xhi, 5)
-      for var t = 0; t < xt.length(); t = t + 1 {
-        const cx = ctx.px(xt[t])
-        r.text(cx, mt + ph + 18.0, tick_text(xt[t]), 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
-      }
+    for var t = 0; t < xt.length(); t = t + 1 {
+      const cx = ctx.px(xt[t])
+      r.text(cx, mt + ph + 18.0, tick_text(xt[t]), 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
     }
   }
   if ax.x_label != "" {

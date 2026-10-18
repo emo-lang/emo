@@ -38,8 +38,11 @@ def with_x_scale(s Scale) Axes
 def with_y_scale(s Scale) Axes
 def with_x_domain(a Float64, b Float64) Axes
 def with_y_domain(a Float64, b Float64) Axes
+def with_grid_style(s GridStyle) Axes
 def with_marks(m Array[Mark]) Axes
 def with_legend(on Bool) Axes
+
+def grid_style() GridStyle
 ```
 
 `figure()` and `axes()` build the defaults, and `with_*` refines a value.
@@ -66,6 +69,12 @@ default — or `Domain.fixed` through `with_x_domain(a, b)` /
 respect the fixed ends, and an inverted domain (`lo >= hi`) raises.
 Marks are not clipped to the axes rectangle yet, so data outside a
 fixed domain draws past it.
+
+The grid draws behind the marks: horizontal lines at the y ticks and
+vertical lines at the x ticks, styled by a `GridStyle` — `color`,
+`width`, `dash` (the same `Dash` enum the line mark strokes with), and
+`visible` (`false` draws no grid at all). The default is a light solid
+line at width 1.0.
 
 ## Marks
 

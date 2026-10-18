@@ -1386,7 +1386,7 @@ against the `Renderer` interface, not `SvgRenderer`.
       `Axes` and inference from the marks (decision 19).
 - [x] **T41.3** — Legend rendering for `with_legend` (decision 20's
       draw-order rule; one shared legend under faceting, T41.7).
-- [ ] **T41.4** — Grid rendering from `Figure.grid`, driven by the
+- [x] **T41.4** — Grid rendering from `Figure.grid`, driven by the
       theme's grid style.
 - [ ] **T41.5** — `Theme` as a value on `Figure` (background and
       foreground, the grid/axis/title/label styles, a palette, a
