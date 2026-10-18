@@ -73,8 +73,10 @@ Opacity is a separate `Float64` on the style, never baked into the
 triple.
 
 A mark draws itself into an axes through the `Mark` interface — `draw`,
-`y_max`, `bands`, `x_labels` — so a new mark family is a new class that
-satisfies that shape.
+plus the data span it asks the axes to cover: a continuous x and y
+range through `x_min` / `x_max` / `y_min` / `y_max`, and the categorical
+x face through `bands` and `x_labels` — so a new mark family is a new
+class that satisfies that shape.
 
 ## A worked example
 

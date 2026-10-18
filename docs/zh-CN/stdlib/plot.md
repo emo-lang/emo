@@ -58,7 +58,7 @@ plot.mark.bar(months, sales).with_style(
 
 **颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组**,每通道 0–255。不透明度是样式上单独的 `Float64`,绝不煍进三元组。
 
-mark 通过 `Mark` 接口把自己画进坐标轴——`draw`、`y_max`、`bands`、`x_labels`——所以新增一种 mark 就是新增一个满足该形状的类。
+mark 通过 `Mark` 接口把自己画进坐标轴——`draw`,加上它要求坐标轴覆盖的数据跨度:连续的 x、y 范围走 `x_min`/`x_max`/`y_min`/`y_max`,类别的 x 面走 `bands` 和 `x_labels`——所以新增一种 mark 就是新增一个满足该形状的类。
 
 ## 完整例子
 

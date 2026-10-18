@@ -1,8 +1,14 @@
 // A mark is a value that knows how to draw itself into an axes and what
-// its data spans. `bar` is the T0 bar mark.
+// its data spans. The span is named on both axes — a continuous x and y
+// range through `x_min`/`x_max`/`y_min`/`y_max`, a categorical x through
+// `bands` and `x_labels` — so the axes can scale to every mark at once.
+// `bar` is the first implementation.
 
 interface Mark {
   def draw(ctx internal.ctx.DrawContext) Void
+  def x_min() Float64
+  def x_max() Float64
+  def y_min() Float64
   def y_max() Float64
   def bands() Int64
   def x_labels() Array[String]
@@ -48,8 +54,32 @@ class Bar {
       const cx = ctx.px(i.to_float64() + 0.5)
       const half = band * self.style.width / 2.0
       const top = ctx.py(self.values[i])
-      ctx.renderer.rect(cx - half, top, half * 2.0, base - top, self.style.color)
+      var y = top
+      var h = base - top
+      if h < 0.0 {
+        y = base
+        h = 0.0 - h
+      }
+      ctx.renderer.rect(cx - half, y, half * 2.0, h, self.style.color)
     }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.values.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    var lo = 0.0
+    for var i = 0; i < self.values.length(); i = i + 1 {
+      if self.values[i] < lo {
+        lo = self.values[i]
+      }
+    }
+    return lo
   }
 
   def y_max() Float64 {
