@@ -143,7 +143,7 @@ This note does not re-open what earlier work closed.
 | Platform | Route | Status | The gap |
 |---|---|---|---|
 | macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **landed** (T48.8), package `emo/ui_macos` | demo scale; the `c` target's long-running memory is step 49 |
-| GTK 4 | `c` target + C shim via `foreign def` | **proven** (`spike/gtk`, `spike/components`) | packaging landed (T48.7): `pkg_config` |
+| GTK 4 | `c` target + C shim via `foreign def` | **landed** (T48.9), package `emo/ui_gtk` | demo scale; the `c` target's long-running memory is step 49 |
 | TUI | pure Emo, ANSI escape output; `term` for input | **landed** (T48.4, T48.5) | wiring `term` into `ui_tui`'s input source |
 | Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); DOM least ready | TS target is Node-only; wasm host has 3 imports |
 
@@ -654,8 +654,18 @@ Each platform implements it:
   `projects/emo-ui/macos/` is the package, and `corpus/` its convergence
   consumer — every primitive on one screen, driven by a comma-separated
   tag script the shim clicks under `EMO_GUI_AUTOTEST` before terminating,
-  so its bytes are checked without a keyboard or a screenshot. GTK 4 is
-  the same shape, still to land (T48.9).
+  so its bytes are checked without a keyboard or a screenshot.
+- **GTK 4 (landed, T48.9):** the same nine-verb `ui_*` contract and the
+  same point box model as the macOS backend, on the other side of the C
+  ABI. `projects/emo-ui/gtk/` is the package and `corpus/` its
+  convergence consumer — the same application, script and pinned bytes.
+  GTK is already C, so the shim is thinner: the signal handler and the
+  self-driving script are what Emo cannot name, and `place` applies the
+  frame unchanged because GtkFixed's origin is the top left. The
+  manifest's `pkg_config = ["gtk4"]` is the whole packaging story; the
+  gate builds natively where GTK 4 answers and otherwise compiles the
+  same generated C in a container (GTK 4 plus Xvfb), so the backend is
+  checkable from a macOS host.
 - **TUI (landed, T48.4):** a pure-Emo class that lays the tree out on a
   cell grid and writes ANSI; `run()` pulls a scripted input's tags and
   hands them to the loop's sink. `projects/emo-ui/tui/` is the package

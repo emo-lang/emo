@@ -1822,8 +1822,19 @@ required.
       gave the `c` target def-as-value (`Global`): a capture-less
       closure over a per-def dynamic thunk, which closed the loop's
       last refusal and put `c` in every corpus run.
-- [ ] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`; the
-      convergence corpus runs. Demo scale, as T48.8.
+- [x] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`;
+      the convergence corpus runs. Demo scale, as T48.8.
+      **Landed 2026-10-18**: `projects/emo-ui/gtk/` is the package
+      `emo/ui_gtk`, declaring the `c` target and
+      `pkg_config = ["gtk4"]`; the point box model (`box.emo`), the nine
+      foreign verbs and the `Gtk` class (`ui_gtk.emo`), and `shim.c`
+      mirror the macOS backend, with GtkFixed's top-left origin needing
+      no y flip and the same `ui.Events` callback pair crossing the ABI.
+      `corpus/` runs the same application, script, and pinned bytes.
+      `gtk/check.sh` builds and runs natively where `pkg-config gtk4`
+      answers, and otherwise compiles the same generated C in the
+      `emo-ui-gtk-build` container (GTK 4 plus Xvfb), so the gate runs
+      from a macOS host too.
 - [ ] **T48.10** — The browser runtime path: a browser-safe split of the
       TypeScript runtime (or a `dom_*` family in the runtime) plus the
       bundling step; the gate for T48.11.

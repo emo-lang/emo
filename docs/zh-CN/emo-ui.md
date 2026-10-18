@@ -52,7 +52,7 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 | 平台 | 路径 | 状态 | 缺口 |
 |---|---|---|---|
 | macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已落地**(T48.8),包为 `emo/ui_macos` | 示例规模;`c` 目标的长时间运行内存是第 49 步 |
-| GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已证明**(`spike/gtk`、`spike/components`) | 打包已落地(T48.7):`pkg_config` |
+| GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已落地**(T48.9),包为 `emo/ui_gtk` | 示例规模;`c` 目标的长时间运行内存是第 49 步 |
 | TUI | 纯 Emo,输出 ANSI 转义;输入用 `term` | **已落地**(T48.4、T48.5) | 把 `term` 接进 `ui_tui` 的输入源 |
 | Web | HTML/CSS(SSR)→ DOM(浏览器 TS)→ wasm + DOM | **SSR 已落地**(T48.6);DOM 最不成熟 | TS 目标只面向 Node;wasm 宿主只有 3 个 import |
 
@@ -282,7 +282,8 @@ interface Backend {
 
 每个平台实现它:
 
-- **macOS(已落地,T48.8):** 一个 Emo 类,其方法调用 `foreign def` shim,另一边是 C ABI 上的 AppKit shim。九个动词是 `window_make`、`label_make`、`button_make`、`place`、`clear`、`connect`、`root`、`run` 与 `autotest_arm`;Emo 侧以 point 度量这棵树(`box.emo`),遍历它,并把节点映射到原生 handle。`projects/emo-ui/macos/` 是这个包,`corpus/` 是它的收敛消费者——一块界面用尽每个原语,由一段逗号分隔的 tag 脚本驱动,shim 在 `EMO_GUI_AUTOTEST` 下逐次点击后结束进程,所以它的字节不用键盘、也不用截图就能检查。GTK 4 是同一个形状,仍待落地(T48.9)。
+- **macOS(已落地,T48.8):** 一个 Emo 类,其方法调用 `foreign def` shim,另一边是 C ABI 上的 AppKit shim。九个动词是 `window_make`、`label_make`、`button_make`、`place`、`clear`、`connect`、`root`、`run` 与 `autotest_arm`;Emo 侧以 point 度量这棵树(`box.emo`),遍历它,并把节点映射到原生 handle。`projects/emo-ui/macos/` 是这个包,`corpus/` 是它的收敛消费者——一块界面用尽每个原语,由一段逗号分隔的 tag 脚本驱动,shim 在 `EMO_GUI_AUTOTEST` 下逐次点击后结束进程,所以它的字节不用键盘、也不用截图就能检查。
+- **GTK 4(已落地,T48.9):** 同一个九动词 `ui_*` 契约、同一套 point 盒模型,落在 C ABI 的另一侧。`projects/emo-ui/gtk/` 是这个包,`corpus/` 是它的收敛消费者——同一个应用、同样的脚本与钉住的字节。GTK 本来就是 C,所以 shim 更薄:Emo 命名不了的只有信号处理函数与自驱动脚本,而 `place` 原样施加 frame,因为 GtkFixed 的原点在左上角。manifest 的 `pkg_config = ["gtk4"]` 就是打包的全部故事;关口在 GTK 4 能回答的宿主上本机构建,否则在容器(GTK 4 加 Xvfb)里编译同一份生成的 C,所以 macOS 宿主也能检查这个后端。
 - **TUI(已落地,T48.4):** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 从脚本化输入拉取 tag 并交给循环的 sink。`projects/emo-ui/tui/` 是这个包,`tui/golden/` 是那段脚本化输入的金标:`screen` 把网格作为数据交回,`paint` 写出字节,同一块界面在解释器、`ocaml`、`typescript` 与 `beam` 上逐字节相同。
 - **Debug(已落地,T48.3):** 无头的那一个,也是这条接缝的参考实现。它把循环交给它的每一棵树渲染进一份日志而不是打印——于是何时让文本到达 stdout 由调用方决定,金标不会被一个恰好挂上去的后端搅动——而 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。`projects/emo-ui/golden/` 就是它为的东西:一块界面经核心、以消费者抵达核心的方式走一遍,再以文本出来,在解释器与全部五个托管 target 上逐字节相同(`wasm` 那一半的循环形状已于 T48.6 关闭;`c` 仍拒绝循环的裸 def 名,但不拒绝这个直接调用渲染器的金标)。这个形态之所以这么窄是被 target 逼的、不是选的:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为枚举或元组在两个 target 上打印出的字节并不相同(`CHECK.md`,枚举的显示形式);它的金标也先在建树之前用独立语句取好 tag,因为操作数求值顺序由 target 决定(`CHECK.md`)。
 - **SSR(已落地,T48.6):** `projects/emo-ui/ssr/` 把树渲染成 HTML 与驻留的样式表,在全部五个 target 上逐字节一致。`mount` 打印整份文档,`patch` 打印浏览器换入的片段;`run()` 直接返回,因为服务端没有输入源,`deliver(tag)` 就是推进一个事件的那次请求。交互模型是表单与链接,只有服务端往返才放得下的三个节点(`form`、`link`、`field`)就住在这个包里,而不是核心。

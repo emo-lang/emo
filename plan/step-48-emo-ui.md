@@ -15,9 +15,9 @@ landed in `projects/emo-ui/`, and terminal input (T48.5) has landed in
 `stdlib/` as the `term` package; the server-side `ui_ssr` renderer
 (T48.6) has landed beside the debug and TUI backends; the native
 packaging mechanism (T48.7) has landed in the manifest and the `c`
-target; the macOS backend (T48.8) has landed on it, and the `c`
-target's def-as-value closed the loop's last refusal; T48.9 onward are
-not started. T48.2 turned
+target; the macOS backend (T48.8) and the GTK 4 backend (T48.9) have
+landed on it, and the `c` target's def-as-value closed the loop's last
+refusal; T48.10 onward are not started. T48.2 turned
 up the first language-side gap this step has hit: the loop's shape — the
 application's `update` and `view` arriving as `Block` values — is what
 `c` and `wasm` could not compile, and T48.4 found that `beam` compiles
@@ -365,8 +365,20 @@ placement; `docs/emo-ui.md`, ask 7).
       would. The `c` target grew def-as-value (`Global`) to get there:
       `emo_closure_new` over a per-def dynamic thunk, which closed the
       loop's last refusal and let `c` join every corpus run.
-- [ ] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`;
+- [x] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`;
       the convergence corpus runs. Demo scale, as T48.8.
+      Landed 2026-10-18: `projects/emo-ui/gtk/` is the package
+      `emo/ui_gtk`, declaring the `c` target and `pkg_config =
+      ["gtk4"]`; it carries the same point box model (`box.emo`), the
+      nine foreign verbs and `Gtk` class (`ui_gtk.emo`), and `shim.c`,
+      which is thinner than AppKit's because GTK is already C —
+      GtkFixed's top-left origin means `place` needs no y flip, and the
+      loop's sink crosses the ABI as the same `ui.Events` pair.
+      `corpus/` runs one portable application with the same tag script
+      and pinned bytes as the macOS entry. `gtk/check.sh` builds and
+      runs natively where `pkg-config gtk4` answers and otherwise
+      compiles the same generated C in the `emo-ui-gtk-build` container
+      (GTK 4 plus Xvfb), so a macOS host runs the gate too.
 - [ ] **T48.10** — The browser runtime path: a browser-safe split of
       the TypeScript runtime (or a `dom_*` family in the runtime) plus the
       output-bundling step; the gate for T48.11.

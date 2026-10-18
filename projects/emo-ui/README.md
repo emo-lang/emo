@@ -133,8 +133,8 @@ the rule.
 assertions run, every target's build — and every refusal — is pinned there, and
 the golden's bytes are compared on all five hosted targets (the `wasm`
 artifact under the host boundary in `wasm-runner.mjs`). It ends by running
-`tui/check.sh`, `ssr/check.sh` and `macos/check.sh`, so the project keeps one
-entry point.
+`tui/check.sh`, `ssr/check.sh`, `macos/check.sh` and `gtk/check.sh`, so the
+project keeps one entry point.
 
 `tui/` is the terminal backend (T48.4), a package of its own — `emo/ui_tui`,
 pinned against `emo/ui` — because it carries a platform the core does not. The
@@ -212,9 +212,23 @@ loop's bytes. `macos/check.sh` is the package's gate and runs only on Darwin;
 the shim is the project's only Objective-C outside `spike/`. Demo scale: the
 `c` target's long-running memory is step 49 (`CHECK.md`).
 
-Still to come: wiring `term` into `ui_tui`'s input source, the GTK 4 backend,
-the browser runtime path and its DOM backend, and the cross-backend
-convergence corpus (T48.9–T48.13). The design and its evidence:
+`gtk/` is the GTK 4 backend (T48.9), a package of its own — `emo/ui_gtk`,
+pinned against `emo/ui`, declaring the `c` target and the `gtk4` pkg-config
+module. It is the same shape as the macOS package: `box.emo` carries the point
+model, `ui_gtk.emo` the nine foreign verbs and the `Gtk` class, and `shim.c`
+the C side. GTK is already C, so the shim is thinner — the signal handler and
+the self-driving script are what Emo cannot name — and `place` applies x and y
+unchanged, because GtkFixed's origin is already the top left. The loop's sink
+crosses the FFI as the same `ui.Events` pair. `corpus/` is the same convergence
+consumer, with the same `0,0,1,2` script and `expected.txt`. `gtk/check.sh` is
+the package's gate: it builds and runs natively where `pkg-config gtk4`
+answers, and otherwise compiles and runs the same generated C in the
+`emo-ui-gtk-build` container (GTK 4 plus Xvfb), which is how a macOS host
+checks it; with neither it says so and passes.
+
+Still to come: wiring `term` into `ui_tui`'s input source, the browser runtime
+path and its DOM backend, and the cross-backend convergence corpus
+(T48.10–T48.13). The design and its evidence:
 
 - [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.
