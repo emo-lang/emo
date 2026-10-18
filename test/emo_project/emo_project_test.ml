@@ -2911,6 +2911,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "field_types")
           "field_types" "main.emo");
+    tc "length_method compiles to a binary with the interpreter's output"
+      (fun () ->
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "length_method")
+          "length_method" "main.emo");
     tc "tcp_echo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
         bootstrap_example
@@ -3044,6 +3049,7 @@ let ts_golden_tests =
       ("fib", "main.emo");
       ("objects", "main.emo");
       ("field_types", "main.emo");
+      ("length_method", "main.emo");
       ("language_tour", "main.emo");
       ("shop", "main.emo");
       ("pipeline", "main.emo");

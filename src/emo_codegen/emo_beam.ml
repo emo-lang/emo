@@ -499,28 +499,54 @@ and method_call env self_ name args =
   | "push", [ _ ] -> bytes_only 2 "emo_builder_push"
   | "to_array", [] -> bytes_only 1 "emo_builder_to_array"
   | "length", [] ->
-      put env "case ";
+      (* Instances answer their own `length` first — the interpreter's
+         rule; the builtin length answers only when no class carries the
+         name. The receiver is bound once, so a chained, side-effecting
+         receiver is not re-evaluated. *)
+      let recv = fresh_var env "__recv" in
+      put env ("let <" ^ recv ^ "> =\n");
       expr env self_;
+      put env ("\nin case " ^ recv ^ " of\n");
+      let method_arms =
+        List.filter_map
+          (fun (c : Emo_ir.class_) ->
+            if
+              List.exists
+                (fun (m : Emo_ir.func) ->
+                  String.equal (member_name c m) "length"
+                  && List.length m.Emo_ir.fparams - 1 = 0)
+                c.Emo_ir.cmethods
+            then
+              Some
+                (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/1 (%s)\n"
+                   (instance_pattern env.classes c.Emo_ir.cname)
+                   (Emo_ir.sanitize_ident (c.Emo_ir.cname ^ "__length"))
+                   recv)
+            else None)
+          env.classes
+      in
+      put env (String.concat "" method_arms);
       put env
-        " of\n\
-        \  <{'emo_bytes', _k}> when 'true' ->\n\
-        \    apply 'emo_bytes_len'/1 ";
-      args_list env [ self_ ];
+        (Printf.sprintf
+           "  <{'emo_bytes', _k}> when 'true' ->\n\
+           \    apply 'emo_bytes_len'/1 (%s)\n"
+           recv);
       put env
-        "\n  <{'emo_list', _k}> when 'true' ->\n    apply 'emo_list_len'/1 ";
-      args_list env [ self_ ];
+        (Printf.sprintf
+           "  <{'emo_list', _k}> when 'true' ->\n\
+           \    apply 'emo_list_len'/1 (%s)\n"
+           recv);
       put env
-        "\n\
-        \  <{'emo_builder', _k}> when 'true' ->\n\
-        \    apply 'emo_builder_len'/1 ";
-      args_list env [ self_ ];
+        (Printf.sprintf
+           "  <{'emo_builder', _k}> when 'true' ->\n\
+           \    apply 'emo_builder_len'/1 (%s)\n"
+           recv);
       put env
-        "\n\
-        \  <_str> when call 'erlang':'is_binary'(_str) ->\n\
-        \    call 'erlang':'byte_size'(_str)";
-      put env "\n  <_> when 'true' ->\n    call 'erlang':'length'(";
-      expr env self_;
-      put env ")\nend"
+        "  <_str> when call 'erlang':'is_binary'(_str) ->\n\
+        \    call 'erlang':'byte_size'(_str)\n";
+      put env
+        (Printf.sprintf
+           "  <_> when 'true' ->\n    call 'erlang':'length'(%s)\nend" recv)
   | "to_string", [] ->
       (* Instances answer their own `to_string` first — the interpreter's
          rule; the builtin conversion answers only when no class carries

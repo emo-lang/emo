@@ -1334,8 +1334,9 @@ uses it.
       style fields need not be stored flat. Today a native-typed field
       read on a dynamic receiver is still boxed, and the emitters key
       their native/dynamic choice on the expression's static type alone.
-- [ ] **T39.2** — A class method named like a runtime method is not
-      shadowed (R3). `to_string` is fixed; `length` is not.
+- [x] **T39.2** — A class method named like a runtime method is not
+      shadowed (R3). `length` answers its own method on every target;
+      `examples/length_method` is the regression.
 - [ ] **T39.3** — `math`'s opt-in native fast path: separate `*_native`
       `foreign def` functions on `c`/`ocaml` (`math.exp` pure and
       byte-identical, `math.exp_native` the pinned fast path; decision

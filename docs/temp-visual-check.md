@@ -169,9 +169,13 @@ five targets.
 ### R3 — a class method named like a runtime method is shadowed
 
 `to_string` and `length` are emitted by name ahead of class dispatch, so
-a class method with that name would be shadowed. `to_string` is fixed
-(the class answers first on beam and wasm); `length` is not, and no
-library hits it yet.
+a class method with that name would be shadowed. Both are resolved: the
+class answers first on beam and wasm (the `to_string` arms already
+carried the instance cases, and the `length` arms now do too), and the c
+emitter pins `read`/`replace` to a `Box` receiver while its `length` arm
+no longer claims an `Unknown` one, so an instance reaches its vtable
+either directly or through `emo_dynamic_builtin`.
+`examples/length_method` is the regression on all five targets.
 
 ## 5. Checklist
 
@@ -191,6 +195,7 @@ library hits it yet.
 - [x] **R2** — type `self.field` precisely, with the emitters aligned;
       `examples/field_types` and `plot.mark.Bar`'s `BarStyle` are the
       proof.
-- [ ] **R3** — the runtime-method-vs-class-method shadowing (`length` first).
+- [x] **R3** — the runtime-method-vs-class-method shadowing (`length` first);
+      `examples/length_method` is the proof.
 - [ ] Then: further plot work — T1 statistics, the other mark families,
       and the terminal/PNG renderers (the design note's later steps).

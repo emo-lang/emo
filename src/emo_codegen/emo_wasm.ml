@@ -710,13 +710,14 @@ and method_call env self_ name args =
       in
       es env (if matching = [] then builtin () else chain matching)
   | "length", [] ->
-      (* arrays, tuples, and strings carry a length; the arms rebuild
-         from a scratch local — the if's arms cannot see the caller's
-         stack *)
+      (* arrays, tuples, strings, Bytes, lists, and builders carry a
+         length; an instance answers its own `length` first — the
+         interpreter's rule. The arms rebuild from a scratch local — the
+         if's arms cannot see the caller's stack *)
       let recv = fresh_local env "__len_recv" W.Anyref in
       expr env self_;
       e env (W.Local_set recv);
-      let rec chain = function
+      let rec builtin_chain = function
         | [] -> [ W.Unreachable ]
         | (t, unwrap) :: rest ->
             [
@@ -724,56 +725,85 @@ and method_call env self_ name args =
                 ( W.Result W.I32,
                   [ W.Local_get recv; W.Ref_test t ],
                   unwrap recv,
+                  builtin_chain rest );
+            ]
+      in
+      let builtin () =
+        builtin_chain
+          [
+            ( t_anyarray,
+              fun l ->
+                [ W.Local_get l; W.Ref_cast t_anyarray; W.Array_len t_anyarray ]
+            );
+            ( t_vtuple,
+              fun l ->
+                [
+                  W.Local_get l;
+                  W.Ref_cast t_vtuple;
+                  W.Struct_get (t_vtuple, 0);
+                  W.Array_len t_anyarray;
+                ] );
+            ( t_vstring,
+              fun l ->
+                [
+                  W.Local_get l;
+                  W.Ref_cast t_vstring;
+                  W.Struct_get (t_vstring, 0);
+                  W.Array_len t_bytes;
+                ] );
+            ( t_vbytes,
+              fun l ->
+                [
+                  W.Local_get l;
+                  W.Ref_cast t_vbytes;
+                  W.Struct_get (t_vbytes, 0);
+                  W.Array_len t_bytes;
+                ] );
+            ( t_vlist,
+              fun l ->
+                [ W.Local_get l; W.Ref_cast t_vlist; W.Struct_get (t_vlist, 2) ]
+            );
+            ( t_vbuilder,
+              fun l ->
+                [
+                  W.Local_get l;
+                  W.Ref_cast t_vbuilder;
+                  W.Struct_get (t_vbuilder, 1);
+                ] );
+          ]
+        @ [ W.I64_extend_i32_s; W.Struct_new t_vint ]
+      in
+      let matching =
+        List.filter_map
+          (fun (c : Emo_ir.class_) ->
+            if
+              List.exists
+                (fun (m : Emo_ir.func) ->
+                  String.equal (member_name c m) "length"
+                  && List.length m.Emo_ir.fparams - 1 = 0)
+                c.Emo_ir.cmethods
+            then
+              match
+                ( List.assoc_opt c.Emo_ir.cname env.class_type,
+                  List.assoc_opt (c.Emo_ir.cname ^ "__length") env.funcs )
+              with
+              | Some tidx, Some fidx -> Some (tidx, fidx)
+              | _ -> None
+            else None)
+          env.classes
+      in
+      let rec chain = function
+        | [] -> builtin ()
+        | (tidx, fidx) :: rest ->
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [ W.Local_get recv; W.Ref_test tidx ],
+                  [ W.Local_get recv; W.Ref_cast tidx; W.Call fidx ],
                   chain rest );
             ]
       in
-      es env
-        (chain
-           [
-             ( t_anyarray,
-               fun l ->
-                 [
-                   W.Local_get l; W.Ref_cast t_anyarray; W.Array_len t_anyarray;
-                 ] );
-             ( t_vtuple,
-               fun l ->
-                 [
-                   W.Local_get l;
-                   W.Ref_cast t_vtuple;
-                   W.Struct_get (t_vtuple, 0);
-                   W.Array_len t_anyarray;
-                 ] );
-             ( t_vstring,
-               fun l ->
-                 [
-                   W.Local_get l;
-                   W.Ref_cast t_vstring;
-                   W.Struct_get (t_vstring, 0);
-                   W.Array_len t_bytes;
-                 ] );
-             ( t_vbytes,
-               fun l ->
-                 [
-                   W.Local_get l;
-                   W.Ref_cast t_vbytes;
-                   W.Struct_get (t_vbytes, 0);
-                   W.Array_len t_bytes;
-                 ] );
-             ( t_vlist,
-               fun l ->
-                 [
-                   W.Local_get l; W.Ref_cast t_vlist; W.Struct_get (t_vlist, 2);
-                 ] );
-             ( t_vbuilder,
-               fun l ->
-                 [
-                   W.Local_get l;
-                   W.Ref_cast t_vbuilder;
-                   W.Struct_get (t_vbuilder, 1);
-                 ] );
-           ]);
-      e env W.I64_extend_i32_s;
-      e env (W.Struct_new t_vint)
+      es env (chain matching)
   | "substring", [ start; len ] ->
       expr env self_;
       expr env start;

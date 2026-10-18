@@ -328,6 +328,7 @@ let wasm_goldens =
     "fib";
     "objects";
     "field_types";
+    "length_method";
     "language_tour";
     "shop";
     "pipeline";
@@ -375,6 +376,7 @@ let beam_goldens =
     "fib";
     "objects";
     "field_types";
+    "length_method";
     "language_tour";
     "shop";
     "pipeline";
@@ -570,6 +572,7 @@ let c_goldens =
     "if_expr";
     "objects";
     "field_types";
+    "length_method";
     "language_tour";
     "shop";
     "function_group";

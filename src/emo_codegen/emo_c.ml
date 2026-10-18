@@ -1043,9 +1043,15 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
              and its String pass-through is a borrow or an
              already-pooled word. *)
           to_str env self_
-      | "read", [] ->
+      | "read", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.BoxType _ -> true
+             | _ -> false ->
           finish_claim (Printf.sprintf "emo_box_read(%s)" (as_dyn env self_))
-      | "replace", [ v ] ->
+      | "replace", [ v ]
+        when match self_.Emo_ir.ety with
+             | Emo_check.BoxType _ -> true
+             | _ -> false ->
           finish_claim
             (Printf.sprintf "emo_box_replace(%s, %s)" (as_dyn env self_)
                (as_dyn env v))
@@ -1106,7 +1112,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           Printf.sprintf "emo_bytes_length(%s)" (as_dyn env self_)
       | "length", []
         when match self_.Emo_ir.ety with
-             | Emo_check.ArrayType _ | Emo_check.TupleType _ | Emo_check.Unknown
+             | Emo_check.ArrayType _ | Emo_check.TupleType _
              | Emo_check.ListType _ | Emo_check.BuilderType _ ->
                  true
              | _ -> false ->

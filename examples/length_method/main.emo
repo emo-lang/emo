@@ -1,0 +1,24 @@
+// A class method named like a runtime method: `length` is the runtime
+// builtin on strings, arrays, tuples, Lists, and builders, but an
+// instance that defines `length` answers its own method first — the
+// interpreter's rule — on every target. The dynamic call through an
+// untyped array element is the same rule where the checker cannot name
+// the receiver's class.
+
+class Words {
+  def init(text String) {
+    self.text = text
+  }
+
+  def length() Int64 {
+    return 100 + self.text.length()
+  }
+}
+
+const w = Words.new(text: "abcd")
+println(w.length())
+println(w.length() + 1)
+
+const mixed = [w, "plain"]
+println(mixed[1].length())
+println(mixed[0].length())

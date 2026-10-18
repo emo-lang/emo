@@ -75,7 +75,7 @@ it touches, and the plot package uses the one that changes its shape
   records field types from `init`; the checker answers them for
   class-typed receivers; `examples/field_types` on every target;
   `plot.mark.Bar` carries a `BarStyle`.
-- [ ] T39.2 — a class method named like a runtime method is not
+- [x] T39.2 — a class method named like a runtime method is not
   shadowed (R3): the c emitter's guards, the beam and wasm `length`
   instance arms; `examples/length_method` on every target.
 - [ ] T39.3 — `math`'s opt-in native fast path: `exp_native`,
