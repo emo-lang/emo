@@ -20,7 +20,7 @@ One line, on macOS or Linux (WSL2 included) — the script detects the platform,
 curl -fsSL https://www.emo-lang.cn/cdn/install.sh | sh
 ```
 
-Prebuilt archives work too. The binary carries the standard library inside it — nothing else to install (a C compiler joins the picture when you build with `emo build`, the default target). Grab the archive for your platform from the [download site](https://www.emo-lang.cn/cdn/dist/releases.json), then:
+Prebuilt archives work too. They cover Apple Silicon Macs and Linux on x86_64 and aarch64 — Intel Macs are not a shipping target. The binary carries the standard library inside it — nothing else to install (a C compiler joins the picture when you build with `emo build`, the default target). Grab the archive for your platform from the [download site](https://www.emo-lang.cn/cdn/dist/releases.json), then:
 
 ```console
 $ unzip emo-<version>-macos-arm64.zip

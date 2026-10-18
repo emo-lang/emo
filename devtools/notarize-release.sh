@@ -1,12 +1,12 @@
 #!/bin/sh
-# Notarizes a draft GitHub Release's macOS archives from this machine
-# — the local half of T24.7. CI runners hold no Developer ID private
-# key, so release.yml drafts the release unsigned; this script signs
-# the binaries with the keychain's Developer ID Application identity,
-# submits the rebuilt zips to the notary service, re-uploads the
-# archives, and refreshes SHA256SUMS.
+# Notarizes the release's macOS archive from this machine. The archive
+# is a local file now — built by devtools/build-release.sh into the
+# dist dir, no forge release in between. This script signs the binary
+# and its bundled dylibs with the keychain's Developer ID Application
+# identity, submits the rebuilt zip to the notary service, and
+# refreshes the dist's SHA256SUMS.
 #
-# Usage: notarize-release.sh <tag> [--dry-run]
+# Usage: notarize-release.sh [dist-dir] [--dry-run]
 #
 # The signing identity is auto-detected from the keychain (override
 # with EMO_CODESIGN_IDENTITY). The notary credential follows
@@ -14,17 +14,22 @@
 # key trio, or the Apple ID quartet. Store the profile once with:
 #   xcrun notarytool store-credentials emo-notary \
 #     --apple-id <id> --team-id <team> --password <app-specific-password>
-# then run: EMO_NOTARY_PROFILE=emo-notary just notarize v0.26.7
+# then run: EMO_NOTARY_PROFILE=emo-notary just notarize dist
 set -e
 
-tag=$1
+dist=dist
 dry_run=false
-[ "${2:-}" = "--dry-run" ] && dry_run=true
-if [ -z "$tag" ]; then
-  echo "usage: notarize-release.sh <tag> [--dry-run]" >&2
+for arg in "$@"; do
+  case $arg in
+  --dry-run) dry_run=true ;;
+  *) dist=$arg ;;
+  esac
+done
+if [ ! -d "$dist" ]; then
+  echo "usage: notarize-release.sh [dist-dir] [--dry-run]" >&2
   exit 64
 fi
-repo=${EMO_REPO:-emo-lang/emo}
+dist=$(CDPATH= cd -- "$dist" && pwd)
 
 identity=${EMO_CODESIGN_IDENTITY:-}
 if [ -z "$identity" ]; then
@@ -64,11 +69,14 @@ submit() {
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/emo-notarize.XXXXXX")
 trap 'rm -rf "$work"' EXIT
-gh release download "$tag" --repo "$repo" --pattern '*.zip' --dir "$work" --clobber
 
-set -- "$work"/*.zip
+set -- "$dist"/emo-*.zip
 if [ ! -e "$1" ]; then
-  echo "notarize-release.sh: release $tag has no macOS zips" >&2
+  echo "notarize-release.sh: $dist has no macOS zip — build first" >&2
+  exit 65
+fi
+if [ "$#" -ne 1 ]; then
+  echo "notarize-release.sh: expected exactly one macOS zip in $dist, found $#" >&2
   exit 65
 fi
 
@@ -87,9 +95,9 @@ for zip in "$@"; do
   # The archive must be self-contained: every non-system dylib the
   # binary or its bundled libraries reference rides in lib/, pointed
   # at through @executable_path. Anything still pointing at an
-  # absolute path (a runner's Homebrew, say) breaks on users' Macs
-  # and dies under library validation — refuse rather than notarize
-  # a broken archive.
+  # absolute path (a stray Homebrew library, say) breaks on users'
+  # Macs and dies under library validation — refuse rather than
+  # notarize a broken archive.
   stray() {
     otool -L "$1" | awk 'NR>1 {print $1}' |
       grep '^/' | grep -v -e '^/usr/lib/' -e '^/System/'
@@ -112,10 +120,10 @@ for zip in "$@"; do
   codesign --force --options runtime --timestamp -s "$identity" "$bin"
   codesign --verify --strict "$bin"
   # Rebuild the zip from the same root — via a fresh file so no stale
-  # entry can survive from the download.
+  # entry can survive from the original packaging.
   (cd "$stage" && zip -q -r "$zip.new" "$name" && mv "$zip.new" "$zip")
   if [ "$dry_run" = true ]; then
-    echo "dry run: would notarize and re-upload $zip"
+    echo "dry run: would notarize $(basename "$zip")"
     continue
   fi
   # Accepted is all a bare executable gets: stapler embeds tickets
@@ -125,16 +133,19 @@ for zip in "$@"; do
 done
 
 if [ "$dry_run" = true ]; then
-  echo "dry run: would re-upload the zips and refresh SHA256SUMS"
+  echo "dry run: would refresh $dist/SHA256SUMS"
   exit 0
 fi
 
-gh release upload "$tag" --repo "$repo" "$work"/*.zip --clobber
+# The re-zipped archive changed, so the checksum file must change with
+# it — recompute the sums over the whole release set.
+(
+  cd "$dist" &&
+    if command -v sha256sum >/dev/null 2>&1; then
+      sha256sum emo-*.zip emo-*.tar.gz >SHA256SUMS
+    else
+      shasum -a 256 emo-*.zip emo-*.tar.gz >SHA256SUMS
+    fi
+)
 
-# The re-zipped archives changed, so the checksum file must change
-# with them — pull every asset back and recompute the sums whole.
-gh release download "$tag" --repo "$repo" --dir "$work" --clobber
-(cd "$work" && shasum -a 256 *.zip *.tar.gz >SHA256SUMS)
-gh release upload "$tag" --repo "$repo" "$work/SHA256SUMS" --clobber
-
-echo "notarized and re-uploaded $tag's macOS archives"
+echo "notarized $(basename "$1") and refreshed $dist/SHA256SUMS"

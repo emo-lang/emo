@@ -33,7 +33,8 @@ phrase means its opposite — the division of labor is:
 | `just install [PREFIX]` | The c-target install: the standalone binary into `~/.local/bin` by default, atomically replaced and stripped. Re-runnable; verify with `emo doctor`. |
 | `just install-dev` | The source install through the opam switch. |
 | `just uninstall [PREFIX]` | Remove the standalone binary. |
-| `just package` | Assemble this platform's distributable archive into `dist/` — the artifact `release.yml` drafts a GitHub Release from. |
+| `just package` | Assemble this platform's distributable archive into `dist/` — one platform, for quick checks; a release builds all three through `devtools/build-release.sh`. |
+| `just release TAG` | The whole release on this machine: tag and push to the source host, build and test all three archives (macOS arm64 natively, both Linux architectures in Docker — `just release-image` builds their images once), notarize, and publish to the download site. |
 | `just test` | The full test suite. |
 
 ## The ocaml target needs only the OCaml toolchain
@@ -69,5 +70,10 @@ otherwise resolve from inside the staging directory and fail.
 - [`plan/step-25-target-independence.md`](../plan/step-25-target-independence.md)
   — the step that freed the targets from the installation shape (M8 —
   Target independence).
-- [`.github/workflows/release.yml`](../.github/workflows/release.yml)
-  — the per-platform release automation.
+- [`devtools/build-release.sh`](../devtools/build-release.sh) — the
+  local release pipeline's build leg: all three archives, tested and
+  smoke-verified on this machine.
+- [`devtools/notarize-release.sh`](../devtools/notarize-release.sh)
+  and [`devtools/publish-release.sh`](../devtools/publish-release.sh)
+  — the legs that carry a built release through Apple notarization
+  and onto the download site.

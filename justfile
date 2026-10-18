@@ -46,7 +46,8 @@ uninstall PREFIX="$HOME/.local/bin":
     rm -f {{PREFIX}}/emo
 
 # Assemble the distributable release archive for this platform into
-# dist/ — the artifact `release.yml` drafts a GitHub Release from.
+# dist/ — one platform, for quick checks; the release itself builds
+# all three through devtools/build-release.sh.
 #
 # package: build the distributable archive into dist/
 package:
@@ -61,16 +62,26 @@ package:
     devtools/package-release.sh _build/default/src/emo_cli/emo.exe \
       "$(cat VERSION)" "$os" "$(uname -m)" dist
 
-# Notarize a draft release's macOS archives from this machine — the
-# local half of the signing story, since CI runners hold no Developer
-# ID private key. Signs with the keychain's Developer ID Application
-# identity, notarizes, re-uploads, and refreshes SHA256SUMS.
-# Needs a notary credential: EMO_NOTARY_PROFILE (defaulting to
-# emo-notary; see devtools/notarize-release.sh), the ASC key trio, or
-# the Apple ID quartet.
+# Build a local Linux builder image — the one-time setup behind
+# `just release`'s Docker builds. arm64 runs natively; amd64 under
+# Rosetta. Rerun after devtools/release-builder.Dockerfile changes.
 #
-# notarize: notarize a draft release's macOS archives (TAG, e.g. v0.26.8)
-notarize TAG:
+# release-image: build a Linux builder image (ARCH, arm64 or amd64)
+release-image ARCH:
+    docker build --platform linux/{{ARCH}} \
+      -t emo-release:ubuntu22.04-{{ARCH}} \
+      -f devtools/release-builder.Dockerfile .
+
+# Notarize the release's macOS archive from this machine — the local
+# half of the signing story; the archive is a dist file built by
+# devtools/build-release.sh. Signs with the keychain's Developer ID
+# Application identity, notarizes, and refreshes the dist's
+# SHA256SUMS. Needs a notary credential: EMO_NOTARY_PROFILE
+# (defaulting to emo-notary; see devtools/notarize-release.sh), the
+# ASC key trio, or the Apple ID quartet.
+#
+# notarize: notarize the macOS archive in a dist dir (DIR, default dist)
+notarize DIR="dist":
     #!/bin/sh
     set -e
     : "${EMO_NOTARY_PROFILE:=emo-notary}"
@@ -81,28 +92,29 @@ notarize TAG:
         echo "the ASC key trio (EMO_NOTARY_KEY/_KEY_ID/_ISSUER), or the Apple ID quartet" >&2
         exit 64
     fi
-    devtools/notarize-release.sh {{TAG}}
+    devtools/notarize-release.sh {{DIR}}
 
 # Publish a release's archives to the download site — the pipeline's
-# last leg, after `notarize`. GitHub stays behind the scenes (the
-# build farm and the draft hand-off); www.emo-lang.cn is the only
-# public download channel. See devtools/publish-release.sh for the
-# knobs: EMO_RELEASE_HOST, EMO_RELEASE_STATIC_ROOT.
+# last leg, after `notarize`. The archives are local files; the site
+# is the only public download channel. See devtools/publish-release.sh
+# for the knobs: EMO_RELEASE_HOST, EMO_RELEASE_STATIC_ROOT.
 #
 # publish: upload a release's archives to the download site (TAG, e.g. v0.26.8)
-publish TAG:
-    devtools/publish-release.sh {{TAG}}
+publish TAG DIST="dist":
+    devtools/publish-release.sh {{TAG}} {{DIST}}
 
 # Ship a release end to end from the signing Mac: cut the annotated
-# tag at HEAD (must match the VERSION file), push it, wait for the
-# Release workflow to draft the archives, notarize the macOS zips
-# locally, then publish the release to the download site. The GitHub
-# release stays a draft forever — it is internal hand-off, not the
-# public channel. Run on the machine whose keychain holds the
-# Developer ID identity, the emo-notary profile, and the SSH key the
-# site accepts.
+# tag at HEAD (must match a committed VERSION file), push the branch
+# and the tag to AtomGit — the source host; nothing else observes the
+# release — then build and test all three archives on this machine
+# (macOS arm64 natively, both Linux architectures in Docker),
+# notarize the macOS zip, and publish everything to the download
+# site. No forge hosts any part of the pipeline. Run on the machine whose keychain
+# holds the Developer ID identity, the emo-notary profile, and the
+# SSH key the site accepts — with Docker Desktop up and both builder
+# images built (just release-image arm64 / amd64).
 #
-# release: tag, wait for CI, notarize, and publish (TAG, e.g. v0.26.8)
+# release: tag, build, notarize, and publish (TAG, e.g. v0.26.1018-alpha)
 release TAG:
     #!/bin/sh
     set -e
@@ -115,38 +127,25 @@ release TAG:
         echo "release: VERSION says $version, not {{TAG}}" >&2
         exit 64
     }
-    repo=${EMO_REPO:-emo-lang/emo}
+    git diff --quiet HEAD -- VERSION || {
+        echo "release: VERSION has uncommitted changes — commit the bump first" >&2
+        exit 64
+    }
+    remote=${EMO_RELEASE_REMOTE:-atom}
+    branch=$(git rev-parse --abbrev-ref HEAD)
 
     if ! git rev-parse -q --verify "{{TAG}}^{tag}" >/dev/null 2>&1; then
         git tag -a "{{TAG}}" -m "Emo {{TAG}}"
         echo "release: cut {{TAG}} at $(git rev-parse --short HEAD)"
     fi
-    if ! git ls-remote --exit-code --tags origin "refs/tags/{{TAG}}" >/dev/null 2>&1; then
-        git push origin "{{TAG}}"
-    fi
+    git push "$remote" "$branch" "{{TAG}}"
 
-    echo "release: waiting for the Release workflow"
-    run_id=
-    tries=0
-    while [ -z "$run_id" ] && [ "$tries" -lt 60 ]; do
-        run_id=$(gh run list --repo "$repo" --workflow release.yml \
-          --branch "{{TAG}}" --limit 1 --json databaseId \
-          --jq '.[0].databaseId' 2>/dev/null || true)
-        [ -z "$run_id" ] && { sleep 5; tries=$((tries + 1)); }
-    done
-    [ -n "$run_id" ] || {
-        echo "release: no Release run appeared for {{TAG}}" >&2
-        exit 65
-    }
-    gh run watch "$run_id" --repo "$repo" --exit-status --interval 60
-
-    if [ "$(gh release view "{{TAG}}" --repo "$repo" --json isDraft --jq .isDraft)" = true ]; then
-        echo "release: notarizing the macOS archives"
-        just notarize "{{TAG}}"
-    else
-        echo "release: {{TAG}} is not a draft — skipping notarize"
-    fi
-    just publish "{{TAG}}"
+    echo "release: building and testing the archives"
+    devtools/build-release.sh "{{TAG}}" dist
+    echo "release: notarizing the macOS archive"
+    just notarize dist
+    echo "release: publishing to the download site"
+    devtools/publish-release.sh "{{TAG}}" dist
     echo "release: {{TAG}} live at https://www.emo-lang.cn/cdn/dist/{{TAG}}/"
 
 # test: run the full test suite

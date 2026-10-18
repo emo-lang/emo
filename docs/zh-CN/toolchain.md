@@ -29,7 +29,8 @@
 | `just install [PREFIX]` | c target 安装:独立二进制装入 `~/.local/bin`(默认),原子替换并 strip。可重复执行;用 `emo doctor` 验证。 |
 | `just install-dev` | 经 opam switch 的源码安装。 |
 | `just uninstall [PREFIX]` | 移除独立二进制。 |
-| `just package` | 把本平台的分发归档装配到 `dist/`——即 `release.yml` 据以起草 GitHub Release 的制品。 |
+| `just package` | 把本平台的分发归档装配到 `dist/`——单平台,供快速检查;正式发布通过 `devtools/build-release.sh` 构建全部三个平台。 |
+| `just release TAG` | 在本机完成整个发布：打 tag 并推送到源码托管平台，在本机构建并测试全部三个归档（macOS arm64 原生、两个 Linux 架构走 Docker——镜像用 `just release-image` 一次性构建），公证，再发布到下载站点。 |
 | `just test` | 全量测试套件。 |
 
 实现中的两个要点:dune 的产物是只读的,所以 install recipe 先拷贝
@@ -61,5 +62,8 @@ release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`,带 runtim
 - [`plan/step-25-target-independence.md`](../../plan/step-25-target-independence.md)
   —— 把各 target 从安装形态中解放出来的步骤(M8 — Target
   independence)。
-- [`.github/workflows/release.yml`](../../.github/workflows/release.yml)
-  —— 按平台的发布自动化。
+- [`devtools/build-release.sh`](../../devtools/build-release.sh)
+  —— 本地发布管线的构建环节：三个归档全部在本机构建、测试并冒烟验证。
+- [`devtools/notarize-release.sh`](../../devtools/notarize-release.sh)
+  与 [`devtools/publish-release.sh`](../../devtools/publish-release.sh)
+  —— 把构建好的发布送过 Apple 公证、再送上下载站点的后续环节。

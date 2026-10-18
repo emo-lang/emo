@@ -1,11 +1,10 @@
 #!/bin/sh
-# Publishes a release to the download site — the pipeline's last leg.
-# GitHub stays behind the scenes: CI drafts the release, the signing
-# Mac notarizes it, and this script carries the finished assets to
-# www.emo-lang.cn, the only public download channel — GitHub is
-# unreachable for much of the audience this release is for.
+# Publishes the release to the download site — the pipeline's last
+# leg. The archives are built and notarized on this machine (see
+# build-release.sh and notarize-release.sh); this script carries them
+# to www.emo-lang.cn, the only public download channel.
 #
-# Usage: publish-release.sh <tag> [--dry-run]
+# Usage: publish-release.sh <tag> [dist-dir] [--dry-run]
 #
 # Archives land on the site first; dist/releases.json — the
 # latest-version pointer install.sh resolves — is rewritten last,
@@ -16,38 +15,44 @@
 # The upload rides SSH — no stored credentials here: EMO_RELEASE_HOST
 # (default ubuntu@www.emo-lang.cn) must already accept your key.
 # EMO_RELEASE_STATIC_ROOT is the site's static root (default
-# /home/ubuntu/sites/website-cn/static, served at /cdn); EMO_REPO is
-# the GitHub repository the draft lives under (default emo-lang/emo).
+# /home/ubuntu/sites/website-cn/static, served at /cdn).
 set -e
 
-tag=$1
+tag=
+dist=dist
 dry_run=false
-[ "${2:-}" = "--dry-run" ] && dry_run=true
+for arg in "$@"; do
+  case $arg in
+  --dry-run) dry_run=true ;;
+  *) if [ -z "$tag" ]; then tag=$arg; else dist=$arg; fi ;;
+  esac
+done
 if [ -z "$tag" ]; then
-  echo "usage: publish-release.sh <tag> [--dry-run]" >&2
+  echo "usage: publish-release.sh <tag> [dist-dir] [--dry-run]" >&2
   exit 64
 fi
-repo=${EMO_REPO:-emo-lang/emo}
 host=${EMO_RELEASE_HOST:-ubuntu@www.emo-lang.cn}
 root=${EMO_RELEASE_STATIC_ROOT:-/home/ubuntu/sites/website-cn/static}
+if [ ! -d "$dist" ]; then
+  echo "publish-release.sh: no dist dir at $dist — build first" >&2
+  exit 64
+fi
+dist=$(CDPATH= cd -- "$dist" && pwd)
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/emo-publish.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
-echo "publish: downloading $tag's assets from the $repo draft"
-gh release download "$tag" --repo "$repo" --dir "$work" --clobber
-
-# The draft must carry the whole release: four archives and the
-# checksums covering them — anything less means CI or notarize
-# stopped midway.
-sums=$work/SHA256SUMS
+# The dist must carry the whole release: one macOS zip, two Linux
+# tar.gz — all named for this tag — and the checksums covering them.
+# Anything less means the build or notarize stopped midway.
+sums=$dist/SHA256SUMS
 if [ ! -f "$sums" ]; then
-  echo "publish-release.sh: release $tag has no SHA256SUMS" >&2
+  echo "publish-release.sh: $dist has no SHA256SUMS" >&2
   exit 65
 fi
-set -- $(cd "$work" && ls emo-* 2>/dev/null | grep -v '\.sha256$')
-if [ "$#" -ne 4 ]; then
-  echo "publish-release.sh: expected 4 archives in release $tag, found $#" >&2
+set -- $(cd "$dist" && ls emo-*.zip emo-*.tar.gz 2>/dev/null)
+if [ "$#" -ne 3 ]; then
+  echo "publish-release.sh: expected 3 archives in $dist, found $#" >&2
   exit 65
 fi
 for archive in "$@"; do
@@ -63,10 +68,16 @@ done
 # Verify the sums whole before anything leaves this machine — the
 # same check install.sh performs at the far end.
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$work" && sha256sum -c SHA256SUMS) || exit 65
+  (cd "$dist" && sha256sum -c SHA256SUMS) || exit 65
 else
-  (cd "$work" && shasum -a 256 -c SHA256SUMS) || exit 65
+  (cd "$dist" && shasum -a 256 -c SHA256SUMS) || exit 65
 fi
+
+# Stage the upload set together: the three archives and the sums.
+for archive in "$@"; do
+  cp "$dist/$archive" "$work/$archive"
+done
+cp "$sums" "$work/SHA256SUMS"
 
 # Merge this tag into dist/releases.json. The file has one fixed
 # shape — written here, read by scripts/install.sh: "latest" is the

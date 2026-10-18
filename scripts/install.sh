@@ -41,6 +41,13 @@ arm64 | aarch64)
   ;;
 esac
 
+# Intel Macs are not a shipping target — say so here rather than let
+# the download 404.
+if [ "$os" = macos ] && [ "$arch" = x86_64 ]; then
+  echo "install.sh: no Intel macOS build — Emo ships macOS for Apple Silicon only" >&2
+  exit 1
+fi
+
 # The download site's dist/releases.json carries the latest-version
 # pointer. The file has one fixed shape — written by
 # publish-release.sh, first key on its own line — so a plain sed

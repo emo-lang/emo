@@ -20,7 +20,7 @@ macOS 或 Linux（含 WSL2）上一行搞定——脚本会识别平台、下载
 curl -fsSL https://www.emo-lang.cn/cdn/install.sh | sh
 ```
 
-预编译归档同样可以。二进制内嵌标准库——无需安装其他东西（用 `emo build` 构建时才需要 C 编译器，那是默认 target）。从[下载站点](https://www.emo-lang.cn/cdn/dist/releases.json)获取你平台的归档，然后：
+预编译归档同样可以。覆盖 Apple Silicon Mac 与 x86_64/aarch64 的 Linux——Intel Mac 不是发布目标。二进制内嵌标准库——无需安装其他东西（用 `emo build` 构建时才需要 C 编译器，那是默认 target）。从[下载站点](https://www.emo-lang.cn/cdn/dist/releases.json)获取你平台的归档，然后：
 
 ```console
 $ unzip emo-<version>-macos-arm64.zip
