@@ -23,6 +23,7 @@ def svg(fig Figure) String
 def with_title(t String) Figure
 def with_size(w Float64, h Float64) Figure
 def with_theme(t Theme) Figure
+def with_grid(rows Int64, cols Int64) Figure
 def with_axes(a Array[Axes]) Figure
 def with_share(s Share) Figure
 
@@ -77,6 +78,19 @@ def diverging() Colormap
 `Palette` 包一组颜色,`color(i)` 按列表取模应答。`Colormap` 把 stops 钉在 0.0–1.0 的位置上,`at(t)` 把 `t` 钳进该区间、按夹住它的两个 stops 在 `Float64` 里插值应答;空列表、越界位置或倒序位置直接 raise。内置的都是起点:`palette()` 列出五个 mark 族的默认色,`viridis()`/`sequential()`/`diverging()` 各用五个 stops 逼近各自的目标。
 
 主题只供默认值;mark 最终画什么,仍是它自己的 `plot.mark` 样式值。
+
+## 面板网格
+
+`Figure.grid` 把图里的 axes 排成 rows × cols 的面板,面板之间隔主题间距;`with_grid(rows, cols)` 负责设置,默认的 `(1, 1)` 就是一块全尺寸面板。格子按行优先填充,格子多于 axes 时尾部留空;axes 多于格子直接 raise,行或列数小于 1 同样 raise。图题坐在网格上方,只画一次。
+
+`Share.all`——默认——先把每个面板自己的域解出来,再让每个面板都画在并集上,面板与面板因此共享同一把标尺;`Share.none` 让各面板各用各的。
+
+```emo
+plot.figure().with_title("Quarterly review").with_grid(2, 2)
+  .with_axes([units_ax, revenue_ax, costs_ax])
+```
+
+把一份数据按某列的水平拆成多块、逐面板用水平标注、只画一份共享图例,是图表层的工作——图携带网格,图表函数往里填。
 
 ## mark
 

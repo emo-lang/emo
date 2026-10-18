@@ -32,6 +32,10 @@ class Figure {
     return Figure.new(width: self.width, height: self.height, title: self.title, theme: t, axes: self.axes, grid: self.grid, share: self.share)
   }
 
+  def with_grid(rows Int64, cols Int64) Figure {
+    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: self.axes, grid: (rows, cols), share: self.share)
+  }
+
   def with_axes(a Array[Axes]) Figure {
     return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: a, grid: self.grid, share: self.share)
   }
@@ -412,98 +416,118 @@ def svg_weight(w Weight) internal.svg.Weight {
   return r
 }
 
-def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
+// The panel's y domain: fixed carries the caller's ends verbatim; auto
+// infers from every mark — decade bounds under a log scale, the
+// nice-ceiling top on a linear one. Either way a log axis maps positive
+// values only.
+def resolved_y(ax Axes) (Float64, Float64) {
+  const marks = ax.marks
+  var lo = 0.0
+  var hi = 0.0
+  if marks.length() > 0 {
+    lo = marks[0].y_min()
+    hi = marks[0].y_max()
+  }
+  for var k = 0; k < marks.length(); k = k + 1 {
+    if marks[k].y_min() < lo {
+      lo = marks[k].y_min()
+    }
+    if marks[k].y_max() > hi {
+      hi = marks[k].y_max()
+    }
+  }
+  const y_log = ax.y_scale == Scale.log
+  var top = 1.0
+  if ax.y_domain[0] == Domain.fixed {
+    lo = ax.y_domain[1]
+    top = ax.y_domain[2]
+    if lo >= top {
+      raise Exception.new(message: "plot: the fixed y domain needs lo < hi, got ${lo} to ${top}")
+    }
+  } else {
+    if y_log {
+      if lo <= 0.0 {
+        raise Exception.new(message: "plot: the log y axis needs positive values, got ${lo}")
+      }
+      lo = scale.pow10(scale.magnitude(lo))
+      var e = scale.magnitude(hi)
+      if hi > scale.pow10(e) {
+        e = e + 1
+      }
+      top = scale.pow10(e)
+    } else {
+      top = scale.nice_ceil(hi)
+    }
+  }
+  if y_log && lo <= 0.0 {
+    raise Exception.new(message: "plot: the log y axis needs positive values, got ${lo}")
+  }
+  return (lo, top)
+}
+
+// The panel's x domain: fixed carries the caller's ends verbatim, auto
+// infers from every mark — snapped to decades under a log scale, raw
+// ends on a linear one.
+def resolved_x(ax Axes) (Float64, Float64) {
+  const marks = ax.marks
+  var lo = 0.0
+  var hi = 1.0
+  if marks.length() > 0 {
+    lo = marks[0].x_min()
+    hi = marks[0].x_max()
+  }
+  for var k = 0; k < marks.length(); k = k + 1 {
+    if marks[k].x_min() < lo {
+      lo = marks[k].x_min()
+    }
+    if marks[k].x_max() > hi {
+      hi = marks[k].x_max()
+    }
+  }
+  const x_log = ax.x_scale == Scale.log
+  if ax.x_domain[0] == Domain.fixed {
+    lo = ax.x_domain[1]
+    hi = ax.x_domain[2]
+    if lo >= hi {
+      raise Exception.new(message: "plot: the fixed x domain needs lo < hi, got ${lo} to ${hi}")
+    }
+  } else {
+    if x_log {
+      if lo <= 0.0 {
+        raise Exception.new(message: "plot: the log x axis needs positive values, got ${lo}")
+      }
+      lo = scale.pow10(scale.magnitude(lo))
+      var e = scale.magnitude(hi)
+      if hi > scale.pow10(e) {
+        e = e + 1
+      }
+      hi = scale.pow10(e)
+    }
+  }
+  if x_log && lo <= 0.0 {
+    raise Exception.new(message: "plot: the log x axis needs positive values, got ${lo}")
+  }
+  return (lo, hi)
+}
+
+def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes, x0 Float64, y0 Float64, cw Float64, ch Float64, xd (Float64, Float64), yd (Float64, Float64)) Void {
   const t = fig.theme
   const ml = 64.0
   const mr = 24.0
   const mt = 64.0
   const mb = 72.0
-  const pw = fig.width - ml - mr
-  const ph = fig.height - mt - mb
+  const pw = cw - ml - mr
+  const ph = ch - mt - mb
   const marks = ax.marks
-  var xlo = 0.0
-  var xhi = 1.0
-  var ylo = 0.0
-  var ymax = 0.0
-  var top = 1.0
-  if marks.length() > 0 {
-    xlo = marks[0].x_min()
-    xhi = marks[0].x_max()
-    ylo = marks[0].y_min()
-    ymax = marks[0].y_max()
-  }
-  for var k = 0; k < marks.length(); k = k + 1 {
-    if marks[k].x_min() < xlo {
-      xlo = marks[k].x_min()
-    }
-    if marks[k].x_max() > xhi {
-      xhi = marks[k].x_max()
-    }
-    if marks[k].y_min() < ylo {
-      ylo = marks[k].y_min()
-    }
-    if marks[k].y_max() > ymax {
-      ymax = marks[k].y_max()
-    }
-  }
-  // The domain: fixed carries the caller's ends verbatim; auto infers
-  // from every mark — decade bounds under a log scale, the nice-ceiling
-  // top on a linear one. Either way a log axis maps positive values
-  // only.
+  const xlo = xd[0]
+  const xhi = xd[1]
+  const ylo = yd[0]
+  const top = yd[1]
   const y_log = ax.y_scale == Scale.log
   const x_log = ax.x_scale == Scale.log
-  if ax.y_domain[0] == Domain.fixed {
-    ylo = ax.y_domain[1]
-    top = ax.y_domain[2]
-    if ylo >= top {
-      raise Exception.new(message: "plot: the fixed y domain needs lo < hi, got ${ylo} to ${top}")
-    }
-  } else {
-    if y_log {
-      if ylo <= 0.0 {
-        raise Exception.new(message: "plot: the log y axis needs positive values, got ${ylo}")
-      }
-      ylo = scale.pow10(scale.magnitude(ylo))
-      var e = scale.magnitude(ymax)
-      if ymax > scale.pow10(e) {
-        e = e + 1
-      }
-      top = scale.pow10(e)
-    } else {
-      top = scale.nice_ceil(ymax)
-    }
-  }
-  if y_log && ylo <= 0.0 {
-    raise Exception.new(message: "plot: the log y axis needs positive values, got ${ylo}")
-  }
-  if ax.x_domain[0] == Domain.fixed {
-    xlo = ax.x_domain[1]
-    xhi = ax.x_domain[2]
-    if xlo >= xhi {
-      raise Exception.new(message: "plot: the fixed x domain needs lo < hi, got ${xlo} to ${xhi}")
-    }
-  } else {
-    if x_log {
-      if xlo <= 0.0 {
-        raise Exception.new(message: "plot: the log x axis needs positive values, got ${xlo}")
-      }
-      xlo = scale.pow10(scale.magnitude(xlo))
-      var xe = scale.magnitude(xhi)
-      if xhi > scale.pow10(xe) {
-        xe = xe + 1
-      }
-      xhi = scale.pow10(xe)
-    }
-  }
-  if x_log && xlo <= 0.0 {
-    raise Exception.new(message: "plot: the log x axis needs positive values, got ${xlo}")
-  }
-  const ctx = internal.ctx.DrawContext.new(renderer: r, x0: ml, y0: mt, plot_w: pw, plot_h: ph, x_min: xlo, x_max: xhi, y_min: ylo, y_max: top, x_log: x_log, y_log: y_log)
-  if fig.title != "" {
-    r.text(ml, 30.0, fig.title, t.title.size, svg_anchor(t.title.anchor), svg_weight(t.title.weight), t.title.color)
-  }
+  const ctx = internal.ctx.DrawContext.new(renderer: r, x0: x0 + ml, y0: y0 + mt, plot_w: pw, plot_h: ph, x_min: xlo, x_max: xhi, y_min: ylo, y_max: top, x_log: x_log, y_log: y_log)
   if ax.y_label != "" {
-    r.text(ml, 52.0, ax.y_label, t.axis.label_size, internal.svg.Anchor.start, svg_weight(t.label.weight), t.label.color)
+    r.text(x0 + ml, y0 + 52.0, ax.y_label, t.axis.label_size, internal.svg.Anchor.start, svg_weight(t.label.weight), t.label.color)
   }
   // Tick positions for both axes, then the grid behind everything:
   // horizontal lines at the y ticks, vertical lines at the x ticks.
@@ -542,45 +566,45 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
     const pattern = mark.dash_array(gs.dash)
     for var k = 0; k < yt.length(); k = k + 1 {
       const y = ctx.py(yt[k])
-      r.line(ml, y, ml + pw, y, gs.color, gs.width, pattern)
+      r.line(x0 + ml, y, x0 + ml + pw, y, gs.color, gs.width, pattern)
     }
     for var k = 0; k < xt.length(); k = k + 1 {
       const cx = ctx.px(xt[k])
-      r.line(cx, mt, cx, mt + ph, gs.color, gs.width, pattern)
+      r.line(cx, y0 + mt, cx, y0 + mt + ph, gs.color, gs.width, pattern)
     }
   }
   for var k = 0; k < marks.length(); k = k + 1 {
     marks[k].draw(ctx)
   }
-  r.line(ml, mt + ph, ml + pw, mt + ph, t.axis.color, t.axis.width, "")
+  r.line(x0 + ml, y0 + mt + ph, x0 + ml + pw, y0 + mt + ph, t.axis.color, t.axis.width, "")
   if t.axis.tick_len > 0.0 {
     for var k = 0; k < yt.length(); k = k + 1 {
       const y = ctx.py(yt[k])
-      r.line(ml - t.axis.tick_len, y, ml, y, t.axis.color, t.axis.width, "")
+      r.line(x0 + ml - t.axis.tick_len, y, x0 + ml, y, t.axis.color, t.axis.width, "")
     }
     for var k = 0; k < xt.length(); k = k + 1 {
       const cx = ctx.px(xt[k])
-      r.line(cx, mt + ph, cx, mt + ph + t.axis.tick_len, t.axis.color, t.axis.width, "")
+      r.line(cx, y0 + mt + ph, cx, y0 + mt + ph + t.axis.tick_len, t.axis.color, t.axis.width, "")
     }
   }
   for var k = 0; k < yt.length(); k = k + 1 {
     const y = ctx.py(yt[k])
-    r.text(ml - 8.0, y + 4.0, tick_text(yt[k]), t.label.size, internal.svg.Anchor.end, svg_weight(t.label.weight), t.label.color)
+    r.text(x0 + ml - 8.0, y + 4.0, tick_text(yt[k]), t.label.size, internal.svg.Anchor.end, svg_weight(t.label.weight), t.label.color)
   }
   if categorical {
     const labels = marks[li].x_labels()
     for var b = 0; b < labels.length(); b = b + 1 {
       const cx = ctx.px(b.to_float64() + 0.5)
-      r.text(cx, mt + ph + 18.0, labels[b], t.label.size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
+      r.text(cx, y0 + mt + ph + 18.0, labels[b], t.label.size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
     }
   } else {
     for var k = 0; k < xt.length(); k = k + 1 {
       const cx = ctx.px(xt[k])
-      r.text(cx, mt + ph + 18.0, tick_text(xt[k]), t.label.size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
+      r.text(cx, y0 + mt + ph + 18.0, tick_text(xt[k]), t.label.size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
     }
   }
   if ax.x_label != "" {
-    r.text(ml + pw / 2.0, mt + ph + 44.0, ax.x_label, t.axis.label_size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
+    r.text(x0 + ml + pw / 2.0, y0 + mt + ph + 44.0, ax.x_label, t.axis.label_size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
   }
   // The legend: marks array order, drawn last, one panel in the plot's
   // top-right corner inset by the theme spacing, filled with the theme
@@ -604,8 +628,8 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
       const row = 20.0
       const bw = wide + 16.0
       const bh = count.to_float64() * row
-      const bx = ml + pw - bw - t.spacing
-      const by = mt + t.spacing
+      const bx = x0 + ml + pw - bw - t.spacing
+      const by = y0 + mt + t.spacing
       r.rect(bx, by, bw, bh, t.background)
       var at = by + row / 2.0
       for var k = 0; k < marks.length(); k = k + 1 {
@@ -623,8 +647,73 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
 def svg(fig Figure) String {
   const r = internal.svg.SvgRenderer.new(fig.width, fig.height)
   r.rect(0.0, 0.0, fig.width, fig.height, fig.theme.background)
-  for var i = 0; i < fig.axes.length(); i = i + 1 {
-    draw_axes(r, fig, fig.axes[i])
+  const rows = fig.grid[0]
+  const cols = fig.grid[1]
+  if rows < 1 || cols < 1 {
+    raise Exception.new(message: "plot: the grid needs rows and cols of at least 1, got ${rows} × ${cols}")
+  }
+  const n = fig.axes.length()
+  if n > rows * cols {
+    raise Exception.new(message: "plot: a ${rows} × ${cols} grid fits ${rows * cols} panels, got ${n} axes")
+  }
+  // The figure title sits above the grid, drawn once.
+  if fig.title != "" {
+    const t = fig.theme
+    r.text(64.0, 30.0, fig.title, t.title.size, svg_anchor(t.title.anchor), svg_weight(t.title.weight), t.title.color)
+  }
+  // Every panel resolves its own domain first; under Share.all each
+  // then draws on the union — the point of a shared grid is comparing
+  // panels on one domain.
+  var doms_y = [(0.0, 1.0)]
+  var doms_x = [(0.0, 1.0)]
+  if n > 0 {
+    doms_y = [resolved_y(fig.axes[0])]
+    doms_x = [resolved_x(fig.axes[0])]
+    for var i = 1; i < n; i = i + 1 {
+      doms_y = doms_y.append(resolved_y(fig.axes[i]))
+      doms_x = doms_x.append(resolved_x(fig.axes[i]))
+    }
+    if fig.share == Share.all {
+      var xlo = doms_x[0][0]
+      var xhi = doms_x[0][1]
+      var ylo = doms_y[0][0]
+      var yhi = doms_y[0][1]
+      for var i = 1; i < n; i = i + 1 {
+        if doms_x[i][0] < xlo {
+          xlo = doms_x[i][0]
+        }
+        if doms_x[i][1] > xhi {
+          xhi = doms_x[i][1]
+        }
+        if doms_y[i][0] < ylo {
+          ylo = doms_y[i][0]
+        }
+        if doms_y[i][1] > yhi {
+          yhi = doms_y[i][1]
+        }
+      }
+      var uni_x = [(xlo, xhi)]
+      var uni_y = [(ylo, yhi)]
+      for var i = 1; i < n; i = i + 1 {
+        uni_x = uni_x.append((xlo, xhi))
+        uni_y = uni_y.append((ylo, yhi))
+      }
+      doms_x = uni_x
+      doms_y = uni_y
+    }
+  }
+  // The cells: rows × cols panels separated by the theme spacing, row
+  // major; a grid with more cells than axes leaves the tail blank.
+  const gap = fig.theme.spacing
+  const cw = (fig.width - gap * (cols - 1).to_float64()) / cols.to_float64()
+  const ch = (fig.height - gap * (rows - 1).to_float64()) / rows.to_float64()
+  for var row = 0; row < rows; row = row + 1 {
+    for var col = 0; col < cols; col = col + 1 {
+      const idx = row * cols + col
+      if idx < n {
+        draw_axes(r, fig, fig.axes[idx], (cw + gap) * col.to_float64(), (ch + gap) * row.to_float64(), cw, ch, doms_x[idx], doms_y[idx])
+      }
+    }
   }
   return r.finish()
 }

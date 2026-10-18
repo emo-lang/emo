@@ -29,6 +29,7 @@ def svg(fig Figure) String
 def with_title(t String) Figure
 def with_size(w Float64, h Float64) Figure
 def with_theme(t Theme) Figure
+def with_grid(rows Int64, cols Int64) Figure
 def with_axes(a Array[Axes]) Figure
 def with_share(s Share) Figure
 
@@ -119,6 +120,29 @@ stops each.
 
 The theme only supplies defaults; what a mark finally draws is still a
 `plot.mark` style value.
+
+## The panel grid
+
+`Figure.grid` lays the figure's axes out as rows × cols panels,
+separated by the theme spacing; `with_grid(rows, cols)` sets it, and
+the default `(1, 1)` is one full-size panel. Cells fill row major and a
+grid with more cells than axes leaves the tail blank; more axes than
+cells raises, as does a row or column count below 1. The figure title
+sits above the grid, drawn once.
+
+`Share.all` — the default — resolves every panel's own domain first and
+then draws each on the union, so panels compare against one scale;
+`Share.none` leaves each panel on its own.
+
+```emo
+plot.figure().with_title("Quarterly review").with_grid(2, 2)
+  .with_axes([units_ax, revenue_ax, costs_ax])
+```
+
+Splitting one dataset into panels by a column's levels, labelling each
+panel from its levels, and drawing one shared legend are the chart
+layer's work — the figure carries the grid, the chart functions fill
+it.
 
 ## Marks
 
@@ -250,8 +274,10 @@ marks, the grid, the theme that dresses it all, and SVG output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
 categorical labels. The remaining pieces the surface carries are
-reserved and not rendered yet: faceting via `Share`, and the
-palette/colormap wiring behind the `color` channel. The SVG renderer
+reserved and not rendered yet: the chart-layer half of faceting —
+splitting a dataset by a column's levels, per-panel level labels, and
+the one shared legend — and the palette/colormap wiring behind the
+`color` channel. The SVG renderer
 sits behind an internal `Renderer` contract, so a terminal or raster
 backend can join later without disturbing the figure or the marks.
 

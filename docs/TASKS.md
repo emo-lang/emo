@@ -1396,9 +1396,12 @@ against the `Renderer` interface, not `SvgRenderer`.
       validation of raw triples (decision 21), on the T41.5 colormaps'
       `Float64` interpolation; the `color` channel's column-kind
       dispatch rides T42.3's channels (decision 24).
-- [ ] **T41.7** — Faceting (decision 23): sorted levels, rows × cols,
-      `Share.all` by default, one legend, per-panel labels, blank cells
-      for mismatched levels.
+- [x] **T41.7** — The figure half of faceting (decision 23): the
+      `rows × cols` panel grid separated by the theme spacing, blank
+      cells for the missing tail, `Share.all` drawing every panel on
+      the union domain, and the title above the grid; sorted levels,
+      per-panel level labels, and the one shared legend ride the chart
+      layer (T43.6, through T42.3's `facet_*` channels).
 - [ ] **T41.8** — Decouple `DrawContext` from the concrete
       `SvgRenderer`: type it against the `internal` `Renderer` interface
       so a terminal or raster renderer can join (the prerequisite for
@@ -1438,7 +1441,8 @@ T0 marks, with fixtures byte-identical on all five targets.
       `plot.point`.
 - [ ] **T43.5** — Matrix: `plot.heatmap`, `plot.clustermap`.
 - [ ] **T43.6** — Apply faceting, palettes, and themes at the chart
-      layer; demos and byte-identical goldens.
+      layer; demos and byte-identical goldens — carrying T41.7's level
+      splitting, per-panel level labels, and the one shared legend.
 
 ### Step 44 — Terminal renderer
 
