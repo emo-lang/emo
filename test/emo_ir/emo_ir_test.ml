@@ -291,6 +291,105 @@ def probe(n Int64) Int64 {
               (Printf.sprintf "expected a trailing return, got %d stmts"
                  (List.length other)));
         ignore program);
+    tc "a def's value stays native when the target specializes" (fun () ->
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+def twice(x Int64) Int64 {
+  return x * 2
+}
+
+def keep(n Int64) Int64 {
+  const f = twice
+  return n
+}
+|}
+              );
+            ]
+            ~entry:[]
+        in
+        Alcotest.(check bool)
+          "twice specialized" true
+          (find_func program "twice").Emo_ir.fspecializable;
+        Alcotest.(check bool)
+          "keep specialized" true
+          (find_func program "keep").Emo_ir.fspecializable);
+    tc "a def's value of a dynamic def keeps the body dynamic" (fun () ->
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+def apply_it(f Block, n Int64) Int64 {
+  return n
+}
+
+def keep(n Int64) Int64 {
+  const f = apply_it
+  return n
+}
+|}
+              );
+            ]
+            ~entry:[]
+        in
+        Alcotest.(check bool)
+          "apply_it dynamic" false
+          (find_func program "apply_it").Emo_ir.fspecializable;
+        Alcotest.(check bool)
+          "keep dynamic" false (find_func program "keep").Emo_ir.fspecializable);
+    tc "container literals keep a body dynamic" (fun () ->
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+def tuple_holder(n Int64) Int64 {
+  const p = (n, n + 1)
+  return n
+}
+
+def array_holder(n Int64) Int64 {
+  const a = [n, n]
+  return n
+}
+|}
+              );
+            ]
+            ~entry:[]
+        in
+        Alcotest.(check bool)
+          "tuple dynamic" false
+          (find_func program "tuple_holder").Emo_ir.fspecializable;
+        Alcotest.(check bool)
+          "array dynamic" false
+          (find_func program "array_holder").Emo_ir.fspecializable);
+    tc "enum members and type values stay native" (fun () ->
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+enum Kind { fast, slow }
+
+def pick(n Int64) String {
+  const k = Kind.fast
+  const t = Kind
+  case k {
+    Kind.fast -> { return "fast" }
+    Kind.slow -> { return "slow" }
+  }
+}
+|}
+              );
+            ]
+            ~entry:[]
+        in
+        Alcotest.(check bool)
+          "pick specialized" true
+          (find_func program "pick").Emo_ir.fspecializable);
   ]
 
 let () = Alcotest.run "emo_ir" [ ("ir", ir_tests) ]

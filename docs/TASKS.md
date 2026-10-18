@@ -1344,10 +1344,14 @@ uses it.
       definitions are inert: the interpreter raises E3009 at the call
       and the emitters refuse the call.
       `examples/math_native` is the regression.
-- [ ] **T39.4** — File and fix the `ocaml` specialization defect the
+- [x] **T39.4** — File and fix the `ocaml` specialization defect the
       plot spike hit (`non-native expression in specialized body`,
       `Type_ref`), so specialized native bodies lower the same as the
-      interpreter.
+      interpreter. The native emitter lowers type values, enum members,
+      field reads, and def values (the last when its def specializes,
+      with the wrappers in the native rec group); container literals
+      leave the predicate, so those bodies stay dynamic.
+      `examples/specialize_shapes` is the regression.
 
 ### Step 40 — T0 completion: continuous axes and the remaining marks
 

@@ -3121,8 +3121,7 @@ let foreign_tests =
        with an empty body. Emitting a real function for it would be a
        silent stub, so the target must either bind the host symbol or
        leave the name unbound — and only a call may refuse. *)
-    tc "a foreign declaration alone is inert off the native targets"
-      (fun () ->
+    tc "a foreign declaration alone is inert off the native targets" (fun () ->
         List.iter
           (fun (target, emit) ->
             match refusal target foreign_decl_source emit with
@@ -3186,6 +3185,71 @@ let foreign_tests =
         Alcotest.(check int)
           "ocaml build exit" 0
           (build foreign_call_source "ocaml" "main-call"));
+  ]
+
+(* Stage B's native emitter lowers an enum `case`'s member and a def
+   taken as a value; a body it cannot model — container literals, or a
+   value of a def that stays dynamic — keeps its dynamic lowerer instead
+   of refusing at emit time. `examples/specialize_shapes` carries the
+   shapes on the ocaml target; the interpreter half runs through the
+   ordinary examples suite. *)
+let specialization_tests =
+  [
+    tc "the shapes example specializes and runs on the ocaml target" (fun () ->
+        let expected =
+          read_file
+            (Filename.concat examples_dir "specialize_shapes/expected.txt")
+        in
+        let bin = Filename.concat scratch "specialize-shapes-bin" in
+        let exit_code =
+          in_example "specialize_shapes" (fun () ->
+              Emo_cli.build_file ~entry:"main.emo" ~output:bin ~specialize:true
+                ~cclibs:[] ~target:"ocaml")
+        in
+        Alcotest.(check int) "build exit" 0 exit_code;
+        check_run "ocaml" (run_cmd (Filename.quote bin)) expected);
+    tc "a body with container literals stays dynamic and runs" (fun () ->
+        let entry =
+          scratch_entry "specialize-containers"
+            {|def pair(n Int64) Int64 {
+  const p = (n, n + 1)
+  return n
+}
+
+def arr(n Int64) Int64 {
+  const a = [n, n]
+  return n
+}
+
+println(pair(7))
+println(arr(8))
+|}
+        in
+        let bin = Filename.concat (Filename.dirname entry) "main-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"ocaml" ~specialize:true entry bin);
+        check_run "ocaml" (run_cmd (Filename.quote bin)) "7\n8\n");
+    tc "a value of a dynamic def keeps the body dynamic" (fun () ->
+        let entry =
+          scratch_entry "specialize-dynamic-value"
+            {|def apply_it(f Block, n Int64) Int64 {
+  return n
+}
+
+def keep(n Int64) Int64 {
+  const f = apply_it
+  return n
+}
+
+println(keep(5))
+|}
+        in
+        let bin = Filename.concat (Filename.dirname entry) "main-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"ocaml" ~specialize:true entry bin);
+        check_run "ocaml" (run_cmd (Filename.quote bin)) "5\n");
   ]
 
 (* ---- HTTP registry pull: `registry = "..."` in the manifest ----
@@ -4579,6 +4643,7 @@ let () =
       ("riscv64_examples", riscv64_examples_tests);
       ("riscv64_refusal", riscv64_refusal_tests);
       ("foreign", foreign_tests);
+      ("specialization", specialization_tests);
       ("publish", publish_tests);
       ("login", login_tests);
       ("http_pull", http_pull_tests);

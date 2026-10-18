@@ -657,7 +657,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 - [x] **T39.1** — 精确类型化 `self.field`(`docs/temp-visual-check.md` 的 R2)并同步发射器,使 mark 的样式字段不必再扁平存储。今天在动态接收者上读取原生类型字段仍会被装箱,而发射器只按表达式的静态类型来决定原生/动态路径。
 - [x] **T39.2** — 与运行时方法同名的类方法不被遮蔽(R3)。`length` 在每个目标上都由实例自己的方法作答;`examples/length_method` 是回归。
 - [x] **T39.3** — `math` 的可选原生快路径:在 `c`/`ocaml` 上分设 `*_native` 的 `foreign def` 函数(`math.exp` 纯净且逐字节一致,`math.exp_native` 为钉定的快路径;decision 15),并记明其 target 钉定。在非原生目标上这些定义是惰性的:解释器在调用时抛 E3009,发射器拒绝调用。`examples/math_native` 是回归。
-- [ ] **T39.4** — 归档并修复绘图 spike 撞上的 `ocaml` 特化缺陷(`non-native expression in specialized body`、`Type_ref`),使特化后的原生体与解释器下降结果一致。
+- [x] **T39.4** — 归档并修复绘图 spike 撞上的 `ocaml` 特化缺陷(`non-native expression in specialized body`、`Type_ref`),使特化后的原生体与解释器下降结果一致。原生发射器现在下降类型值、枚举成员、字段读取和 def 值(后者仅当其 def 被特化,包装函数与原生递归组同组);容器字面量退出谓词,这些函数保持动态。`examples/specialize_shapes` 是回归。
 
 ### Step 40 — T0 收尾:连续轴与其余 mark
 

@@ -881,9 +881,13 @@ let is_native = function
 let rec expr_native (special : string list) (e : expr) : bool =
   match e.desc with
   | Const _ | Type_ref _ -> true
-  | Var _ | Global _ -> true
-  | Tuple es | Array_lit es | Interpolate es ->
-      List.for_all (expr_native special) es
+  | Var _ -> true
+  (* A def's value is its dynamic wrapper; the wrapper of a specialized
+     def sits in the same rec group as the native bodies. *)
+  | Global g -> List.mem g special
+  | Interpolate es -> List.for_all (expr_native special) es
+  | Tuple _ | Array_lit _ ->
+      false (* the specialized emitter has no container literals *)
   | Map_lit _ -> false (* dynamic: the hash table is an identity *)
   | Make_enum _ -> true
   | Unary (_, x) -> expr_native special x

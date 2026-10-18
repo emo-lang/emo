@@ -1,0 +1,22 @@
+enum Kind { fast, slow }
+
+def twice(x Int64) Int64 {
+  return x * 2
+}
+
+def label(n Int64) String {
+  const k = Kind.fast
+  const t = Kind
+  case k {
+    Kind.fast -> { return "fast:${n}" }
+    Kind.slow -> { return "slow:${n}" }
+  }
+}
+
+def keep(n Int64) Int64 {
+  const f = twice
+  return n + 1
+}
+
+println(label(1))
+println(keep(41))

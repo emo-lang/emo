@@ -61,13 +61,16 @@ it touches, and the plot package uses the one that changes its shape
   keeps working everywhere and the native name is visibly different
   at the call site (decision 15).
 - **The ocaml specializer and its predicate agree.** `expr_native`
-  admits `Type_ref`, `Make_enum`, `Field_read`, and `Global`; the
-  native emitter lowers them exactly as the dynamic emitter does (an
-  `Emo_eval` value flowing through a native body — the shape an enum
-  `case` over a native-typed function already needs). The container
-  literals the native emitter cannot model (`Tuple`, `Array_lit`)
-  leave the predicate, so such a function stays dynamic instead of
-  dying at emit time.
+  admits `Type_ref`, `Make_enum`, `Field_read`, and `Global` — the
+  last when the referenced def is itself specialized, because a def
+  value is its dynamic wrapper and the wrapper joins the native rec
+  group. The native emitter lowers them exactly as the dynamic
+  emitter does (an `Emo_eval` value flowing through a native body —
+  the shape an enum `case` over a native-typed function already
+  needs); interpolation boxes only the native-typed parts. The
+  container literals the native emitter cannot model (`Tuple`,
+  `Array_lit`) leave the predicate, so such a function stays dynamic
+  instead of dying at emit time.
 
 ## Tasks
 
@@ -83,7 +86,7 @@ it touches, and the plot package uses the one that changes its shape
   foreign definitions inert off the native targets (interpreter
   E3009 at the call, emitters refusing the call); docs pinned to
   `c`/`ocaml`; `examples/math_native` is the regression.
-- [ ] T39.4 — the ocaml specialization defect: the native emitter
+- [x] T39.4 — the ocaml specialization defect: the native emitter
   lowers `Type_ref`/`Make_enum`/`Field_read`/`Global`, the predicate
   drops the container literals; `examples/specialize_shapes` on the
   interpreter and the ocaml target.
