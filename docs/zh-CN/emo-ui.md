@@ -2,6 +2,8 @@
 
 写于 2026-10-14。这是一份技术可行性评估外加一个设计方向,不是已定设计。文中关于项目状态的描述以写作日期的仓库为准(`develop`)。定下来的决定会进入 `README.md`;本文档记录评估、评估背后的证据,以及开放问题。
 
+**状态(2026-10-18)。** 设计已经落地,其中已定的部分现在按已定设计陈述:`README.md` 的 EmoUI 一节承载数组子节点写法与整体架构,[`projects/emo-ui/`](../../projects/emo-ui) 承载实现与各包的参考文档。本文档保留为产出这些决定的评估与讨论记录——证据、被否掉的备选方案,以及仍然开放的问题。在已定问题上,若本文档与 README 不一致,以 README 为准。
+
 问题:**一套声明式 EmoUI 语法,渲染到 Web、终端(TUI)、macOS(AppKit)与 GTK 4——每个平台可以有自己的组件库,但组件的调用与组合方式完全一致。**
 
 让项目走到今天的关口清单见
@@ -16,7 +18,7 @@
 
 四条发现决定了下面的一切:
 
-1. **声明式树今天不受类型检查,而且它最漂亮的那种写法不成立。** 声明为 `Block` 的参数对检查器来说是 `Unknown`,所以尾随 block 里的内容是动态检查的(顶多如此);而一个 body 是一串子节点调用的 block 产出 `void`,子节点被悄悄丢弃。README 里那份示意树(`page(...) { navbar() { ... } }`)不是一个可执行程序。子节点要么是显式的 `Array[Node]`,要么 block 必须 `return` 它们。
+1. **声明式树今天不受类型检查,而且它最漂亮的那种写法不成立。** 声明为 `Block` 的参数对检查器来说是 `Unknown`,所以尾随 block 里的内容是动态检查的(顶多如此);而一个 body 是一串子节点调用的 block 产出 `void`,子节点被悄悄丢弃。README 里那份示意树(`page(...) { navbar() { ... } }`)不是一个可执行程序。子节点要么是显式的 `Array[Node]`,要么 block 必须 `return` 它们。(README 后来已改成数组写法;T48.13。)
 2. **四个平台并不同等地就绪。** macOS/AppKit 与 GTK 4 已经经 `foreign def` shim 证明可行;终端渲染器是廉价的纯 Emo;Web 最不成熟——TypeScript 目标只面向 Node(发射出的 runtime 顶部 import `node:net`、`node:fs`),而 wasm 目标的整个宿主接口只有三个 import(`println`、`abort`、`float_str`)。
 3. **EmoUI 后端现在可以用包表达了(T48.7)。** 一个包可以在 `.c`/`.h` 之外携带 `.m`(在 ARC 下编译),用 `pkg_config` 命名裸的 pkg-config 模块,用 `frameworks` 链接裸的 macOS framework。AppKit 后端是 Objective-C(`.m`、`-fobjc-arc`、`-framework AppKit`);GTK 后端写 `pkg_config = ["gtk4"]`。两者都不需要应用级构建脚本,而 manifest 仍然只是数据。
 4. **`c` 目标上一次渲染的内存不会被回收,而廉价的解法并不存在。** 树恰好由 arena 永不释放的那些种类搭成——子节点数组、样式 map、字符串——而 UI 每个事件重建一次。`spike/arena-scope` 实测:400 节点时每次渲染约 1 MB、约 820 个对象,两者都无界——60 fps 下约 60 MB/s、每秒约 49,000 个对象。region 能回收字节,回收不了对象,并且会把那些引用计数永久搁死。**step 49 已于 2026-10-17 落地修复:每个动态值都可回收,渲染形状的循环持有平坦的工作集**(`CHECK.md`)——demo 尺度的告诫就此退役。
@@ -45,16 +47,16 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 - **跨模块类型。** 2026-10-14 定案为模块路径限定:`ui.VNode`、`sync.WaitGroup`;两个模块可以声明同名短名,各自是不同类型。这正是库与应用能成为独立模块与包的原因。
 - **递归节点。** 树需要的两种形状如今都能通过检查:`class Node { def init(kind String, children Array[Node]) }`,以及接口在签名里指称自己(`def kids() Array[VNode]`)。spike 当年的 E4005 变通(接口 + 各自独立的具体容器)不再是被迫的选择——见 `spike/emo-ui-probe` 的 probe 2。
 - **C→Emo 回调契约。** 2026-10-11 定案:单方法结构接口就是回调类型;`c` 目标发射一个 trampoline 加一个不透明 userdata handle,这一对写进 `.emo-build/emo_defs.h`。
-- **README 的承诺。** 无模板语言(UI 就是普通 Emo);组件是小写 def,树里永不出现 `.new`;props 由渐进检查器检查;响应式原语是显式的;UI 事件是进程消息;后端消费树及其更新;语言层不知道任何平台。
+- **README 的承诺**(写作时的说法;README 后来已改成已定设计)。无模板语言(UI 就是普通 Emo);组件是小写 def,树里永不出现 `.new`;props 由渐进检查器检查;响应式原语是显式的;UI 事件是进程消息;后端消费树及其更新;语言层不知道任何平台。
 
 ## 四个平台
 
 | 平台 | 路径 | 状态 | 缺口 |
 |---|---|---|---|
-| macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已落地**(T48.8),包为 `emo/ui_macos` | 示例规模;`c` 目标的长时间运行内存是第 49 步 |
-| GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已落地**(T48.9),包为 `emo/ui_gtk` | 示例规模;`c` 目标的长时间运行内存是第 49 步 |
+| macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已落地**(T48.8),包为 `emo/ui_macos` | 回收已落地(step 49) |
+| GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已落地**(T48.9),包为 `emo/ui_gtk` | 回收已落地(step 49) |
 | TUI | 纯 Emo,输出 ANSI 转义;输入用 `term` | **已落地**(T48.4、T48.5) | 把 `term` 接进 `ui_tui` 的输入源 |
-| Web | HTML/CSS(SSR)→ DOM(浏览器 TS)→ wasm + DOM | **SSR 已落地**(T48.6);浏览器路径与它的 DOM 后端已落地(T48.10、T48.11) | wasm 宿主只有 3 个 import |
+| Web | HTML/CSS(SSR)→ DOM(浏览器 TS)→ wasm + DOM | **SSR 已落地**(T48.6);浏览器路径与它的 DOM 后端已落地(T48.10、T48.11) | `typescript` 目标的 send 共享仍然开放 |
 
 ### macOS 与 GTK 4
 
@@ -170,7 +172,7 @@ const rows = each_users(users) -> (u String) { return card(u) }
 3. **一个让 block 往里追加的 builder**(`card(user) { children.push(a) }`)。能用,但把可变状态与一个环境收集器塞进树里——隐式状态,违背设计哲学。这条仍然被否掉:反对针对的是 block 在被没被告知的情况下就能取到的那个收集器,而语言自己的 `ArrayBuilder` 并不提供这样的东西——builder 是传进来的值、在调用点被写名字,所以这条选项只有写成「选项 1、但把数组换成 builder」才算可以接受。
 4. **给 block 加一条「最后一个表达式即值」的隐式规则。** 这是模板语言机制,与显式 `return` 规则相悖(`docs/intro/syntax.md`)。拒绝。
 
-因此设计说:**子节点列表是显式的 `Array[Node]`;尾随 block 用于回调与迭代,block 产生值时它 `return` 出来。** README 的 EmoUI 示例应改成这种写法,或者把 block 形式定义为必须 `return`。这是需求中「声明式语法」唯一一处实际上是 API 约定而非语法的地方,而这个约定必须写清。
+因此设计说:**子节点列表是显式的 `Array[Node]`;尾随 block 用于回调与迭代,block 产生值时它 `return` 出来。** README 的 EmoUI 示例已改成这种写法(T48.13)。这是需求中「声明式语法」唯一一处实际上是 API 约定而非语法的地方,而这个约定必须写清。
 
 相关的语言缺口:`Block` 是 `Unknown`,意味着 block 参数不受检。一个**带检查的函数类型**能让组件声明它要求的回调形状(`def each(xs Array[T], f (T) Node)`),并让树 block 对着它受检。今天 Emo 只有 `Block` 这一种写法,而 `Block` 被刻意定为 `Unknown`。新增一个带检查的 block/函数类型是一项实打实的语言改动(语法、合一、每个后端的闭包表示);它值得掂量,因为它是受检与不受检组件 API 之别,但它不是第一个包的关口。
 
@@ -401,7 +403,7 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 
 1. **EmoUI 是独立项目**,不是标准库包;可移植核心与纯 Emo 后端搬进标准库是一个可能的后续分拆,不是 v1。**2026-10-15 修订:** 它托管在本仓库的 `projects/emo-ui/` 下,而不是一开始就另建一个独立仓库(`CHECK.md`,in-tree 项目布局)。「不是标准库包」这一半不变——stdlib 内嵌只走 `stdlib/registry`,所以 in-tree 的 `projects/emo-ui` 不会进入编译器二进制。
 2. **树类型是多模块的 `ui.Node`**(接口树脊 + 带类型 props 的具体类),不是一个字符串化的单类,也不是每平台一套节点类、没有核心。
-3. **子节点是显式的 `Array[Node]`。** 尾随 block 用于回调与迭代,且必须 `return` 其值;没有隐式子节点收集,README 的示意树改成这种写法。
+3. **子节点是显式的 `Array[Node]`。** 尾随 block 用于回调与迭代,且必须 `return` 其值;没有隐式子节点收集,README 的示意树已改成这种写法(T48.13)。
 4. **布局是一套映射到平台原生布局的可移植词汇表**,不是一个共享 Emo 布局引擎。TUI 保留一个小 Emo 盒模型,因为它没有原生引擎。
 5. **样式是带类型值,配工厂与 `with_*` 复制**,不用字符串 map,不用默认参数。
 6. **状态是 Elm**(model、`update`、`view`),压在显式语言原语(`Box`/`List`/`Map`)上;事件是登记在 Emo 侧的带类型消息,以后端可见的 `Int64` tag 暴露。
@@ -416,6 +418,8 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 步骤规格在 [`plan/step-48-emo-ui.md`](../../plan/step-48-emo-ui.md);决定 12 作为
 **M16 — 值语义家族的回收(step 49)** 追踪,规格在
 [`plan/step-49-value-reclamation.md`](../../plan/step-49-value-reclamation.md)。
+这些决定产出的已定设计陈述在 [`README.md`](../../README.md) 与
+[`projects/emo-ui/docs/`](../../projects/emo-ui/docs/) 下的各包参考文档里;本文档保留它们背后的论证。
 
 ## 仍开放的问题
 

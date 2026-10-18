@@ -49,32 +49,39 @@ Each area of the design has its own document:
 
 ## EmoUI
 
-[EmoUI](projects/emo-ui) is the component-based UI framework written in Emo: UIs composed as trees of components that render from reactive state. Emo's syntax is shaped to serve it, and the principle is **no template language — the UI is plain Emo code**, the same philosophy as configuration. A component tree is nested calls with blocks (illustrative syntax):
+[EmoUI](projects/emo-ui) is the component-based UI framework written in Emo: one declarative tree of components rendering on a terminal, a server-rendered page, a macOS/AppKit window, a GTK 4 window, and the browser DOM. Emo's syntax is shaped to serve it, and the principle is **no template language — the UI is plain Emo code**, the same philosophy as configuration. A component tree is nested calls over an explicit `Array[ui.Node]`:
 
 ```emo
-page(title: "Home") {
-  navbar() {
-    logo()
-    menu(routes)
-  }
+def card(user User) ui.Node {
+  return ui.row([
+    ui.image(user.avatar(), ui.style().with_width(32.0)),
+    ui.text(user.name(), ui.style())
+  ], ui.style().with_gap(8.0))
+}
 
-  list(users) -> (user User) {
-    card(user) {
-      text(user.name)
-      text(user.bio)
-    }
+def inbox(users Array[User]) ui.Node {
+  const rows = ArrayBuilder.new()
+  for var i = 0; i < users.length(); i = i + 1 {
+    rows.push(card(users[i]))
   }
+  return ui.column([
+    ui.text("Inbox", ui.style()),
+    ui.column(rows.to_array(), ui.style().with_padding(12.0))
+  ], ui.style())
 }
 ```
 
-Everything here is ordinary syntax (see [`docs/intro/syntax.md`](docs/intro/syntax.md)): calls with explicit parentheses, single-form blocks, named arguments. A component tree consists of plain function calls — components are defined as functions (`def card(user User) Component { ... }`), or as classes exposed through a same-named lowercase factory function (`def card(user User) Component { return Card.new(user) }`). From the caller's side, every component is a lowercase function; capitalized types are never invoked, and `.new` never appears in a tree. One rule specific to this domain: structured literals are immutable, so props and component trees are plain immutable data.
+Everything here is ordinary syntax (see [`docs/intro/syntax.md`](docs/intro/syntax.md)): calls with explicit parentheses, named arguments, immutable data. Children are an argument, never a block: a trailing block is for callbacks and iteration, and where it produces a value it returns it. A child list that is not known until it is walked is built with the language's `ArrayBuilder` and handed over as `to_array()`. There is no implicit child collection, and components are ordinary functions — capitalized types are never invoked, and `.new` never appears in a tree.
 
-Reactivity is explicit rather than implicit:
+The framework is settled design:
 
-- Reactivity primitives live in the standard library with explicit, predictable semantics — no hidden dependency graphs.
-- Compiler awareness optimizes them: statically decidable updates compile into targeted refreshes instead of runtime diffing.
+- **One tree type.** `ui.Node` is an interface; `Column`, `Row`, `Text`, `Button`, `TextInput`, `Image`, `Spacer` and `Scroll` are classes with typed props, reached through lowercase constructors (`ui.column`, `ui.text`, `ui.button`, …). A name means the same component on every backend.
+- **Typed styles.** `ui.Style` is a typed value built by `ui.style()` and copied with `with_padding`, `with_gap`, `with_align`, `with_grow`, `with_width` and `with_height` — no stringly map and no default parameters. Its properties are the portable layout vocabulary each backend maps onto its platform's own layout engine.
+- **Elm state.** An application is a model, a pure `update`, a pure `view`, and a backend: `ui.run(view, update, model, backend)`. `view` receives the loop's `Registry`, registers each typed message with `reg.on(msg)`, and gets back the `Int64` tag the backend delivers — the application's types never cross the backend seam.
+- **One backend seam.** A backend implements `ui.Backend` — `mount(root, events)`, `patch(old, new)`, `run()` — and knows an event as one integer. The backend packages are `ui_tui`, `ui_ssr`, `ui_macos`, `ui_gtk` and `ui_browser`, plus the headless `ui.debug`.
+- **One app, every backend.** `emo/ui_corpus` is a shared application the gates run unchanged on every backend; its debug and SSR entries produce identical bytes on all five hosted compilation targets.
 
-These decisions interlock with the core design: props are checked by the built-in type checker (gradual typing), UI events are process messages (a UI process plus its mailbox yields the Elm architecture on top of Emo's concurrency), and platform backends only consume the component tree and its reactive updates — the language layer knows no platform details.
+EmoUI is a project of its own under [`projects/emo-ui/`](projects/emo-ui), not a standard-library package, because its native backends carry per-platform shims and manifest fields (`.m`, `frameworks`, `pkg_config`) the standard library does not use. The package references live there: [`ui`](projects/emo-ui/docs/ui.md), [`debug`](projects/emo-ui/docs/debug.md), [`ui_tui`](projects/emo-ui/docs/ui_tui.md), [`ui_ssr`](projects/emo-ui/docs/ui_ssr.md), [`ui_macos`](projects/emo-ui/docs/ui_macos.md), [`ui_gtk`](projects/emo-ui/docs/ui_gtk.md), [`ui_browser`](projects/emo-ui/docs/ui_browser.md), [`ui_corpus`](projects/emo-ui/docs/ui_corpus.md).
 
 ## EmoOS
 
@@ -109,8 +116,8 @@ Documentation lives under `docs/`. The Chinese translation of this README is [`d
 - [`docs/stdlib.md`](docs/stdlib.md) — a tour of the standard library: every package, what it is for, and the surface it exposes.
 - [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`file`, `os`, `bufio`, `net`, `http`, `json`, `yaml`, `xml`, `base64`, `csv`, `float`, `math`, `plot`, `slog`, `sync`, `sql`, `sqlite3`, `term`).
 - [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
-- [`docs/emo-ui.md`](docs/emo-ui.md) — the EmoUI assessment and design direction: one declarative tree for Web, TUI, macOS, and GTK 4.
-- [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) — how an EmoUI tree gets written: why components return children instead of emitting them, and the one spelling question left open.
+- [`docs/emo-ui.md`](docs/emo-ui.md) — the EmoUI assessment and the evidence: why one declarative tree works across TUI, server-rendered HTML, macOS, GTK 4, and the DOM, and what remains open.
+- [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) — how an EmoUI tree gets written: why children are an array rather than a block form, and whether the array form earns a literal spelling.
 - [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md), [`docs/rtos-assessment.md`](docs/rtos-assessment.md), [`docs/xv6.md`](docs/xv6.md), [`docs/visualization.md`](docs/visualization.md) — feasibility and market assessments.
 - [`docs/TASKS.md`](docs/TASKS.md) — the implementation task checklist.
 

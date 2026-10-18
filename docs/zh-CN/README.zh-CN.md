@@ -49,32 +49,39 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 
 ## EmoUI
 
-[EmoUI](projects/emo-ui) 是用 Emo 写的组件式 UI 框架：UI 组合为组件树，从响应式状态渲染。Emo 的语法就是为它塑形的，原则是**没有模板语言——UI 就是普通的 Emo 代码**，与配置同一哲学。组件树是带块的嵌套调用（示意语法）：
+[EmoUI](../../projects/emo-ui) 是用 Emo 写的组件式 UI 框架:一棵声明式组件树,渲染到终端、服务端页面、macOS/AppKit 窗口、GTK 4 窗口与浏览器 DOM。Emo 的语法就是为它塑形的,原则是**没有模板语言——UI 就是普通的 Emo 代码**,与配置同一哲学。组件树是嵌套调用,子节点是一份显式的 `Array[ui.Node]`:
 
 ```emo
-page(title: "Home") {
-  navbar() {
-    logo()
-    menu(routes)
-  }
+def card(user User) ui.Node {
+  return ui.row([
+    ui.image(user.avatar(), ui.style().with_width(32.0)),
+    ui.text(user.name(), ui.style())
+  ], ui.style().with_gap(8.0))
+}
 
-  list(users) -> (user User) {
-    card(user) {
-      text(user.name)
-      text(user.bio)
-    }
+def inbox(users Array[User]) ui.Node {
+  const rows = ArrayBuilder.new()
+  for var i = 0; i < users.length(); i = i + 1 {
+    rows.push(card(users[i]))
   }
+  return ui.column([
+    ui.text("Inbox", ui.style()),
+    ui.column(rows.to_array(), ui.style().with_padding(12.0))
+  ], ui.style())
 }
 ```
 
-这里的一切都是普通语法（见 [`docs/zh-CN/intro/syntax.md`](intro/syntax.md)）：显式括号的调用、单一形式的块、具名参数。组件树由普通函数调用组成——组件定义为函数（`def card(user User) Component { ... }`），或作为类通过同名小写工厂函数暴露（`def card(user User) Component { return Card.new(user) }`）。从调用者一侧，每个组件都是小写函数；大写类型从不被调用，`.new` 从不出现在树里。属于这个领域的一条规则：结构化字面量不可变，所以 props 与组件树是普通的不可变数据。
+这里的一切都是普通语法(见 [`docs/zh-CN/intro/syntax.md`](intro/syntax.md)):显式括号的调用、具名参数、不可变数据。子节点是一个实参,永远不是一个块:尾随块是给回调和迭代用的,它产出值时自己 `return`。要到遍历时才知道的子节点列表,用语言自带的 `ArrayBuilder` 攒起来、以 `to_array()` 交出去。没有隐式子节点收集,组件就是普通函数——大写类型从不被调用,`.new` 从不出现在树里。
 
-响应式是显式的而非隐式的：
+这个框架是已定设计:
 
-- 响应式原语住在标准库里，语义显式、可预测——没有隐藏的依赖图。
-- 编译器感知优化它们：静态可判定的更新编译为定向刷新，而非运行时 diff。
+- **一种树类型。** `ui.Node` 是接口;`Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer` 与 `Scroll` 是带类型化属性的类,经小写构造函数(`ui.column`、`ui.text`、`ui.button`……)建起。同一个名字在每个后端上都是同一个组件。
+- **带类型的样式。** `ui.Style` 是由 `ui.style()` 建起、经 `with_padding`、`with_gap`、`with_align`、`with_grow`、`with_width` 与 `with_height` 拷贝的带类型值——没有字符串 map,也没有默认参数。它的属性就是那套可移植的布局词汇,每个后端把它映射到平台自己的布局引擎。
+- **Elm 状态。** 一个应用是 model、纯 `update`、纯 `view` 加一个后端:`ui.run(view, update, model, backend)`。`view` 收到循环自己的 `Registry`,用 `reg.on(msg)` 登记每条带类型消息并拿回后端投递的 `Int64` tag——应用的类型从不跨过后端接缝。
+- **一条后端接缝。** 后端实现 `ui.Backend`——`mount(root, events)`、`patch(old, new)`、`run()`——它只知道一个整数代表一个事件。后端包是 `ui_tui`、`ui_ssr`、`ui_macos`、`ui_gtk` 与 `ui_browser`,外加无头的 `ui.debug`。
+- **一个应用,每个后端。** `emo/ui_corpus` 是各关口在每个后端上原样运行的共享应用;它的 debug 与 SSR 入口在全部五个托管编译目标上产出相同的字节。
 
-这些决策与核心设计互相咬合：props 由内置类型检查器检查（渐近类型），UI 事件是进程消息（一个 UI 进程加信箱，在 Emo 并发之上给出 Elm 架构），平台后端只消费组件树及其响应式更新——语言层不知道任何平台细节。
+EmoUI 是 [`projects/emo-ui/`](../../projects/emo-ui) 下的独立项目,不是标准库包——它的原生后端带着每平台 shim 与标准库用不到的 manifest 字段(`.m`、`frameworks`、`pkg_config`)。各包的参考文档就在那里:[`ui`](../../projects/emo-ui/docs/ui.md)、[`debug`](../../projects/emo-ui/docs/debug.md)、[`ui_tui`](../../projects/emo-ui/docs/ui_tui.md)、[`ui_ssr`](../../projects/emo-ui/docs/ui_ssr.md)、[`ui_macos`](../../projects/emo-ui/docs/ui_macos.md)、[`ui_gtk`](../../projects/emo-ui/docs/ui_gtk.md)、[`ui_browser`](../../projects/emo-ui/docs/ui_browser.md)、[`ui_corpus`](../../projects/emo-ui/docs/ui_corpus.md)。
 
 ## EmoOS
 
@@ -109,8 +116,8 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 - [`docs/zh-CN/stdlib.md`](stdlib.md) —— 标准库导览:每个包的用途与对外接口。
 - [`docs/zh-CN/stdlib/`](stdlib/) —— 标准库 API 文档(`file`、`os`、`bufio`、`net`、`http`、`json`、`yaml`、`xml`、`base64`、`csv`、`float`、`math`、`plot`、`slog`、`sync`、`sql`、`sqlite3`、`term`)。
 - [`docs/zh-CN/lsp.md`](lsp.md) —— 语言服务器与 VS Code 扩展。
-- [`docs/zh-CN/emo-ui.md`](emo-ui.md) —— EmoUI 的评估与设计方向:一套声明式树渲染到 Web、TUI、macOS 与 GTK 4。
-- [`docs/zh-CN/emo-ui-composition.md`](emo-ui-composition.md) —— 一棵 EmoUI 树怎么写出来:组件为什么是返回子节点而不是发射,以及唯一还没定的那个写法问题。
+- [`docs/zh-CN/emo-ui.md`](emo-ui.md) —— EmoUI 的评估与证据:为什么一棵声明式树能跨 TUI、服务端 HTML、macOS、GTK 4 与 DOM 工作,以及还有什么仍然开放。
+- [`docs/zh-CN/emo-ui-composition.md`](emo-ui-composition.md) —— 一棵 EmoUI 树怎么写出来:子节点为什么是数组而不是块式写法,以及数组写法是否该再长出字面量拼法。
 - [`docs/zh-CN/industrial-software.md`](industrial-software.md)、[`docs/zh-CN/sql-database.md`](sql-database.md)、[`docs/zh-CN/rtos-assessment.md`](rtos-assessment.md)、[`docs/zh-CN/xv6.md`](xv6.md)、[`docs/zh-CN/visualization.md`](visualization.md) —— 可行性与市场评估。
 - [`docs/zh-CN/TASKS.md`](TASKS.md) —— 实现任务清单。
 

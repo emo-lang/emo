@@ -78,10 +78,11 @@ initializer on every read on the compiled targets, and a module-level `var` is
 `ocaml`-only, so a table kept there would hand every read a fresh, empty one
 (`CHECK.md`, module-level bindings). The table belongs to one running loop, and
 `view` is handed it. The tags are taken in statements before the tree is built
-rather than inside the arguments the tree is made of: `on` is a side effect, and
-operands are evaluated in the target's order — `ocaml`'s is the reverse of every
-other target's — so a tag taken from an argument position is a different tag per
-target (`CHECK.md`, operand evaluation order).
+rather than inside the arguments the tree is made of: `on` is a side effect, so
+a statement of its own keeps the registration order visible at the call site.
+Operand order is no longer a cross-target variable — the language states left
+to right and every target obeys it; the defect that made the two differ, and
+its fix, are in `CHECK.md` and `probe/eval_order`.
 
 The loop compiles and runs on all five hosted targets. A bare def name is the
 only expression that yields the `Block` value `ui.run` takes, and `c` had no
@@ -213,8 +214,8 @@ takes a comma-separated tag script and, only under `EMO_GUI_AUTOTEST`, an
 the keyboard and no screenshot. `corpus/` is the macOS entry into the
 convergence corpus — the shared application on one screen, the script
 `0,0,1,2`, and `expected.txt` holding the loop's bytes. `macos/check.sh` is the package's gate and runs only on Darwin;
-the shim is the project's only Objective-C outside `spike/`. Demo scale: the
-`c` target's long-running memory is step 49 (`CHECK.md`).
+the shim is the project's only Objective-C outside `spike/`. Reclamation
+on the `c` target landed with step 49 (`CHECK.md`).
 
 `gtk/` is the GTK 4 backend (T48.9), a package of its own — `emo/ui_gtk`,
 pinned against `emo/ui`, declaring the `c` target and the `gtk4` pkg-config
@@ -266,10 +267,12 @@ value is a `ref.func`, and only the hidden closures were in the declarative
 element segment, so the validator rejected the corpus until every defined
 function was declared (`CHECK.md`).
 
-Still to come: wiring `term` into `ui_tui`'s input source, and the
-documentation pass (T48.13). The design and its evidence:
+Still to come: wiring `term` into `ui_tui`'s input source. The package
+references are in [`docs/`](docs/README.md), one page per package. The
+design and its evidence:
 
-- [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
+- [`docs/`](docs/README.md) — the package references, one page per package.
+- [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the evidence behind the design.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.
 - [`plan/step-48-emo-ui.md`](../../plan/step-48-emo-ui.md) — the execution plan, T48.1–T48.13.
 - [`spike/emo-ui-spelling/`](../../spike/emo-ui-spelling/) — the two-screen measurement that settled the spelling, and the prototype this core came from.

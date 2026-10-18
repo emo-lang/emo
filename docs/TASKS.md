@@ -1897,10 +1897,31 @@ required.
       program def was absent from the declarative element segment — now
       fixed and pinned by a CLI test (`CHECK.md`). No language change
       was required.
-- [ ] **T48.13** — Docs: the README's EmoUI section revised to the
+- [x] **T48.13** — Docs: the README's EmoUI section revised to the
       array-children spelling and the settled decisions; `docs/emo-ui.md`
       settled into decided design where README-eligible; the EmoUI
       package references in its own repository.
+      **Landed 2026-10-18**: the README's EmoUI section states the
+      settled design — `Array[ui.Node]` children (with `ArrayBuilder`
+      for a list that is walked), one `ui.Node` tree type and its
+      lowercase constructors, the typed `Style` with `with_*` copies,
+      the Elm loop over the loop's `Registry` and `Int64` tags, the
+      `ui.Backend` seam, the backend packages, and the convergence
+      corpus — and drops the stale claims that reactivity primitives
+      live in the standard library and that UI events are process
+      messages. `docs/emo-ui.md` now opens with a status note: the
+      settled design lives in the README and the package references,
+      and the note is kept as the assessment, the evidence, the
+      rejected alternatives and the open questions, with the README
+      authoritative on settled points; finding 1, the recommendation
+      and decision 3 record that the README tree has been revised. The
+      EmoUI repository carries the package references under
+      `projects/emo-ui/docs/` — `ui`, `debug`, `ui_tui`, `ui_ssr`,
+      `ui_macos`, `ui_gtk`, `ui_browser` and `ui_corpus` — in the
+      `docs/stdlib/term.md` format: manifest, `def` signatures, and the
+      behavior a caller can rely on, with an index. The Chinese
+      translations of both READMEs and the two design docs were updated
+      in step.
 
 ---
 

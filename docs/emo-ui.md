@@ -6,6 +6,15 @@ repository as of that date (`develop`). Decisions that get settled move
 into `README.md`; this note records the evaluation, the evidence behind
 it, and the open questions.
 
+**Status (2026-10-18).** The design has landed, and its settled parts
+are now stated as decided design: the `README.md` EmoUI section carries
+the array-children spelling and the architecture, and
+[`projects/emo-ui/`](../projects/emo-ui) carries the implementation and
+the package references. This note is kept as the assessment and the
+discussion that produced them — the evidence, the rejected
+alternatives, and the questions that are still open. Where this note
+and the README differ on a settled point, the README is authoritative.
+
 The question: **one declarative EmoUI syntax, rendering to the Web, a
 terminal (TUI), macOS (AppKit), and GTK 4 — where each platform may
 have its own component library, but the way components are called and
@@ -39,7 +48,8 @@ Four findings shape everything below:
    calls yields `void`, so the children are silently discarded. The
    README's illustrative tree (`page(...) { navbar() { ... } }`) is not
    an executable program. Children are either an explicit
-   `Array[Node]` or the block must `return` them.
+   `Array[Node]` or the block must `return` them. (The README has since
+   been revised to the array spelling; T48.13.)
 2. **The four platforms are not equally ready.** macOS/AppKit and GTK 4
    are proven through `foreign def` shims; a terminal renderer is cheap
    pure Emo; the Web is the least ready — the TypeScript target is
@@ -132,9 +142,10 @@ This note does not re-open what earlier work closed.
   structural interface is the callback type; the `c` target emits a
   trampoline plus an opaque userdata handle, and the pair lands in
   `.emo-build/emo_defs.h`.
-- **The README's commitments.** No template language (the UI is plain
-  Emo); components are lowercase defs, `.new` never appears in a tree;
-  props checked by the gradual checker; reactivity primitives are
+- **The README's commitments** (as written then; the README has since
+  been revised to the settled design). No template language (the UI is
+  plain Emo); components are lowercase defs, `.new` never appears in a
+  tree; props checked by the gradual checker; reactivity primitives are
   explicit; UI events are process messages; backends consume the tree
   and its updates; the language layer knows no platform.
 
@@ -142,10 +153,10 @@ This note does not re-open what earlier work closed.
 
 | Platform | Route | Status | The gap |
 |---|---|---|---|
-| macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **landed** (T48.8), package `emo/ui_macos` | demo scale; the `c` target's long-running memory is step 49 |
-| GTK 4 | `c` target + C shim via `foreign def` | **landed** (T48.9), package `emo/ui_gtk` | demo scale; the `c` target's long-running memory is step 49 |
+| macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **landed** (T48.8), package `emo/ui_macos` | reclamation landed (step 49) |
+| GTK 4 | `c` target + C shim via `foreign def` | **landed** (T48.9), package `emo/ui_gtk` | reclamation landed (step 49) |
 | TUI | pure Emo, ANSI escape output; `term` for input | **landed** (T48.4, T48.5) | wiring `term` into `ui_tui`'s input source |
-| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); the browser path and its DOM backend landed (T48.10, T48.11) | wasm host has 3 imports |
+| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); the browser path and its DOM backend landed (T48.10, T48.11) | the `typescript` target's share-on-send remains open |
 
 ### macOS and GTK 4
 
@@ -423,10 +434,9 @@ four ways to make a block-bodied tree real, and three are wrong:
 The design therefore says: **the child list is an explicit
 `Array[Node]`; trailing blocks are for callbacks and iteration, and
 where a block produces a value it returns it.** The README's EmoUI
-example should be revised to this spelling, or the block form should be
-defined as requiring `return`. This is the one place where the
-requirement's "declarative syntax" is really an API convention rather
-than syntax, and the convention must be spelled out.
+example has been revised to this spelling (T48.13). This is the one
+place where the requirement's "declarative syntax" is really an API
+convention rather than syntax, and the convention must be spelled out.
 
 The related language gap: `Block` being `Unknown` means a block argument
 is not checked. A **checked function type** would let a component declare
@@ -1028,8 +1038,8 @@ backends are four different programs.
    class and not one class per platform with no core.
 3. **Children are an explicit `Array[Node]`.** Trailing blocks are for
    callbacks and iteration and must `return` their value; no implicit
-   child collection, and the README's illustrative tree is revised to
-   this spelling.
+   child collection, and the README's illustrative tree has been
+   revised to this spelling (T48.13).
 4. **Layout is a portable vocabulary mapped to the platform's native
    layout**, not a shared Emo layout engine. The TUI keeps a small Emo
    box model because it has no native engine.
@@ -1067,6 +1077,10 @@ Decisions 1–11 are tracked as **M15 — EmoUI (step 48)** in
 [`plan/step-48-emo-ui.md`](../plan/step-48-emo-ui.md); decision 12 is
 tracked as **M16 — Value-family reclamation (step 49)**, spec in
 [`plan/step-49-value-reclamation.md`](../plan/step-49-value-reclamation.md).
+The decided design these decisions produce is stated in
+[`README.md`](../README.md) and in the package references under
+[`projects/emo-ui/docs/`](../projects/emo-ui/docs/); this note keeps the
+reasoning behind them.
 
 ## Remaining open questions
 

@@ -19,7 +19,8 @@ target; the macOS backend (T48.8) and the GTK 4 backend (T48.9) have
 landed on it, and the `c` target's def-as-value closed the loop's last
 refusal; the browser runtime path (T48.10) and its DOM backend (T48.11)
 have landed, and the convergence corpus (T48.12) now runs one shared
-application on every backend — only T48.13's documentation is open.
+application on every backend; the documentation pass (T48.13) has
+settled the README, the design note and the package references.
 T48.2 turned
 up the first language-side gap this step has hit: the loop's shape — the
 application's `update` and `view` arriving as `Block` values — is what
@@ -165,7 +166,8 @@ Recorded in `docs/emo-ui.md` and carried by this step:
   by that spike. Reclamation is its own milestone (step 49,
   `plan/step-49-value-reclamation.md`) and **not a prerequisite for
   this step**: the native backends ship at demo scale with the limit
-  documented (`CHECK.md`).
+  documented (`CHECK.md`). (Step 49 landed 2026-10-17; the note is
+  retired.)
 
 ## Tasks
 
@@ -433,7 +435,7 @@ placement; `docs/emo-ui.md`, ask 7).
       an `update` that prints every transition, and a `view` that nests
       a title, two buttons in a row, an input showing the count, a
       scrolled list and a spacer, all with `Array[Node]` children and
-      the same `ui.*` calls on every backend. Five entries consume it:
+      the same `ui.*` calls on every backend. Six entries consume it:
       `corpus/debug`, `corpus/ssr` and `corpus/tui` under this package's
       gate, and `macos/corpus`, `gtk/corpus` and `browser/corpus` under
       their backends' own gates; each entry is a `require` of the shared
@@ -450,10 +452,30 @@ placement; `docs/emo-ui.md`, ask 7).
       rejected the corpus on `wasm` until every defined function was
       declared (`CHECK.md`); `test/emo_cli/emo_cli_test.ml` pins the
       shape, which no wasm golden had exercised.
-- [ ] **T48.13** — Docs: the README's EmoUI section revised to the
+- [x] **T48.13** — Docs: the README's EmoUI section revised to the
       array-children spelling and the settled decisions; `docs/emo-ui.md`
       settled into decided design where README-eligible; the EmoUI
       package references in its own repository.
+      Landed 2026-10-18: the README's EmoUI section now states the
+      settled design — the `Array[ui.Node]` children with an
+      `ArrayBuilder` for walked lists, the one `ui.Node` tree type and
+      its lowercase constructors, the typed `Style` with `with_*`
+      copies, the Elm loop over the loop's `Registry` and `Int64` tags,
+      the `ui.Backend` seam, the backend packages, and the convergence
+      corpus — and drops the two stale claims (reactivity primitives in
+      the standard library, UI events as process messages).
+      `docs/emo-ui.md` gained a status note: the settled design now
+      lives in the README and the package references, and the note is
+      kept as the assessment, evidence, rejected alternatives and open
+      questions, with the README authoritative on settled points; its
+      finding 1, the recommendation paragraph and decision 3 record
+      that the README tree has been revised. The EmoUI repository
+      carries the package references under `projects/emo-ui/docs/`:
+      `ui`, `debug`, `ui_tui`, `ui_ssr`, `ui_macos`, `ui_gtk`,
+      `ui_browser` and `ui_corpus`, in the `docs/stdlib/term.md` format
+      — manifest, `def` signatures, behavior — with an index and its
+      Chinese mirror. The Chinese translations of the README, the two
+      design docs and the EmoUI README were updated in step.
 
 ## Acceptance
 
@@ -469,10 +491,10 @@ placement; `docs/emo-ui.md`, ask 7).
   grows per-package native fields, not app-level build scripts
   (`CHECK.md`) — so `require`-ing a native UI backend is a supported
   story, not a hand-copied shim build.
-- The native backends are **demo scale, and say so**: the `c` target
-  does not yet reclaim the value families a render allocates, so the
-  limit is documented rather than papered over and reclamation is
-  scheduled as its own milestone (step 49).
+- The native backends were **demo scale, and said so**, until step 49
+  landed (2026-10-17): value-family reclamation now holds the render
+  loop's working set flat, and the demo-scale note is retired
+  (`CHECK.md`).
 - No language change was required.
 
 ## Open design items
