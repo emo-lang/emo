@@ -1365,7 +1365,7 @@ panels and stays byte-identical on all five targets; `dune test` green.
       first implementation.
 - [x] **T40.2** — `plot.mark.line` and `LineStyle`.
 - [x] **T40.3** — `plot.mark.scatter` and `ScatterStyle`.
-- [ ] **T40.4** — `plot.mark.area` and `AreaStyle`.
+- [x] **T40.4** — `plot.mark.area` and `AreaStyle`.
 - [ ] **T40.5** — `plot.mark.hist` (bin counting) and `HistStyle`.
 - [ ] **T40.6** — `Axes` draw: a continuous x scale, the y domain
       inferred from every mark's range, and per-mark dispatch (replacing

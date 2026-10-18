@@ -667,7 +667,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 - [x] **T40.1** — 把 `Mark` 接口从分类式的 `y_max`/`bands`/`x_labels` 扩展出去(连续的 x 与 y 范围、`y_min`、`DrawContext` 所需的点/线图元),并让 `Bar` 保持首个实现。
 - [x] **T40.2** — `plot.mark.line` 与 `LineStyle`。
 - [x] **T40.3** — `plot.mark.scatter` 与 `ScatterStyle`。
-- [ ] **T40.4** — `plot.mark.area` 与 `AreaStyle`。
+- [x] **T40.4** — `plot.mark.area` 与 `AreaStyle`。
 - [ ] **T40.5** — `plot.mark.hist`(分箱计数)与 `HistStyle`。
 - [ ] **T40.6** — `Axes` 绘制:连续 x 标度、从每个 mark 的范围推断出的 y 域,以及逐 mark 分派(取代今天只支持柱的 `first_labels`/`bands` 路径)。
 - [ ] **T40.7** — 示例与金测:每个新 mark 一张图,全部五个 target 逐字节。

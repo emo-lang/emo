@@ -2,7 +2,7 @@
 // its data spans. The span is named on both axes — a continuous x and y
 // range through `x_min`/`x_max`/`y_min`/`y_max`, a categorical x through
 // `bands` and `x_labels` — so the axes can scale to every mark at once.
-// `bar`, `line`, and `scatter` are the implementations so far.
+// `bar`, `line`, `scatter`, and `area` are the implementations so far.
 
 interface Mark {
   def draw(ctx internal.ctx.DrawContext) Void
@@ -403,4 +403,130 @@ class Scatter {
 
 def scatter(x Array[Float64], y Array[Float64]) Scatter {
   return Scatter.new(x: x, y: y, style: scatter_style())
+}
+
+class AreaStyle {
+  def init(color (Int64, Int64, Int64), edge_color (Int64, Int64, Int64), edge_width Float64, opacity Float64, label String) {
+    self.color = color
+    self.edge_color = edge_color
+    self.edge_width = edge_width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) AreaStyle {
+    return AreaStyle.new(color: c, edge_color: self.edge_color, edge_width: self.edge_width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_color(c (Int64, Int64, Int64)) AreaStyle {
+    return AreaStyle.new(color: self.color, edge_color: c, edge_width: self.edge_width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_width(w Float64) AreaStyle {
+    return AreaStyle.new(color: self.color, edge_color: self.edge_color, edge_width: w, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) AreaStyle {
+    return AreaStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) AreaStyle {
+    return AreaStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, opacity: self.opacity, label: s)
+  }
+}
+
+def area_style() AreaStyle {
+  return AreaStyle.new(color: (148, 103, 189), edge_color: (74, 51, 95), edge_width: 0.0, opacity: 1.0, label: "")
+}
+
+class Area {
+  def init(x Array[Float64], y Array[Float64], style AreaStyle) {
+    self.x = x
+    self.y = y
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.y.length()
+    if n > 0 {
+      var pxs = [ctx.px(self.x[0])]
+      var pys = [ctx.py(self.y[0])]
+      for var i = 1; i < n; i = i + 1 {
+        pxs = pxs.append(ctx.px(self.x[i]))
+        pys = pys.append(ctx.py(self.y[i]))
+      }
+      pxs = pxs.append(ctx.px(self.x[n - 1]))
+      pys = pys.append(ctx.py(0.0))
+      pxs = pxs.append(ctx.px(self.x[0]))
+      pys = pys.append(ctx.py(0.0))
+      ctx.renderer.polygon(pxs, pys, self.style.color)
+      if self.style.edge_width > 0.0 {
+        for var i = 0; i < n - 1; i = i + 1 {
+          ctx.renderer.line(ctx.px(self.x[i]), ctx.py(self.y[i]), ctx.px(self.x[i + 1]), ctx.py(self.y[i + 1]), self.style.edge_color, self.style.edge_width, "")
+        }
+      }
+    }
+  }
+
+  def x_min() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var lo = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] < lo {
+        lo = self.x[i]
+      }
+    }
+    return lo
+  }
+
+  def x_max() Float64 {
+    if self.x.length() == 0 {
+      return 0.0
+    }
+    var hi = self.x[0]
+    for var i = 1; i < self.x.length(); i = i + 1 {
+      if self.x[i] > hi {
+        hi = self.x[i]
+      }
+    }
+    return hi
+  }
+
+  def y_min() Float64 {
+    var lo = 0.0
+    for var i = 0; i < self.y.length(); i = i + 1 {
+      if self.y[i] < lo {
+        lo = self.y[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    var hi = 0.0
+    for var i = 0; i < self.y.length(); i = i + 1 {
+      if self.y[i] > hi {
+        hi = self.y[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def with_style(s AreaStyle) Area {
+    return Area.new(x: self.x, y: self.y, style: s)
+  }
+}
+
+def area(x Array[Float64], y Array[Float64]) Area {
+  return Area.new(x: x, y: y, style: area_style())
 }
