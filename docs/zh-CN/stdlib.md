@@ -192,7 +192,7 @@ socket.set_timeout(seconds)
 
 EOF 绝不是静默的部分结果:对端提前关闭时 `read_exactly` 以 reason 失败,行中途中闭是错误元组,`read_all` 是唯一把 EOF 当作正常读完的读取。Unix 域监听器没有端口——对它调 `port()` 是错误。
 
-目标:`["ocaml", "c", "typescript"]`。在 `c` 上本包只覆盖 TCP;UDP、Unix 域套接字、`net.resolve` 与 TLS 在 `c` 上运行时被拒绝。参考:[`docs/zh-CN/stdlib/net.md`](stdlib/net.md) · 示例:`examples/tcp_echo`。
+目标:`["ocaml", "c", "typescript"]`。在 `c` 上本包覆盖 TCP 与 TLS;UDP、Unix 域套接字与 `net.resolve` 在 `c` 上运行时被拒绝。参考:[`docs/zh-CN/stdlib/net.md`](stdlib/net.md) · 示例:`examples/tcp_echo`。
 
 ## http 包
 
@@ -204,9 +204,10 @@ def post(url String, body String) (R, HttpResponse)
 def put(url String, body String) (R, HttpResponse)
 def delete(url String) (R, HttpResponse)
 def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
+def request_with(method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse)
 ```
 
-URL 必须带显式的 `http://` 或 `https://` scheme;`https` 走 `net.tls_connect`——证书验证开启。响应:
+URL 必须带显式的 `http://` 或 `https://` scheme;`https` 走 `net.tls_connect`——证书验证开启。`request_with` 把逐连接 TLS 策略(`net.tls_client_options()`)传给 `net.tls_connect_with`:私有信任库、客户端证书,或校验名覆盖。响应:
 
 ```emo
 class HttpResponse {
@@ -223,7 +224,7 @@ http.serve_requests(listener) -> (req HttpRequest) { ... }
 def response(status Int64, headers Array[(String, String)], body String) HttpResponse
 ```
 
-`serve` 每条连接起一个进程,把裸连接交给处理者;`serve_requests` 把每个请求解析成 `HttpRequest`(`method`、`path`、`headers`、`body`,外加 `header(name)`),写回处理者的 `HttpResponse` 然后关闭。多数处理者要的是 `serve_requests`。
+`serve` 每条连接起一个进程,把裸连接交给处理者;`serve_requests` 把每个请求解析成 `HttpRequest`(`method`、`path`、`headers`、`body`,外加 `header(name)`),写回处理者的 `HttpResponse` 然后关闭。多数处理者要的是 `serve_requests`。监听者可以来自 `net.listen`,也可以来自 `net.listen_tls`/`net.listen_tls_with`——同一个处理者就以 HTTPS 提供服务。
 
 ```emo
 require "http"
@@ -236,7 +237,7 @@ http.serve_requests(listener) -> (req HttpRequest) {
 }
 ```
 
-目标:`["ocaml", "c", "typescript"]`(构建在 `net` 之上,由它自己的 manifest 固定)。在 `c` 上它只覆盖 TCP,继承自 `net`。参考:[`docs/zh-CN/stdlib/http.md`](stdlib/http.md) · 示例:`examples/http_roundtrip`。
+目标:`["ocaml", "c", "typescript"]`(构建在 `net` 之上,由它自己的 manifest 固定)。在 `c` 上覆盖范围继承自 `net`:TCP 与 TLS。参考:[`docs/zh-CN/stdlib/http.md`](stdlib/http.md) · 示例:`examples/http_roundtrip`、`examples/https_roundtrip`。
 
 ## json 包
 

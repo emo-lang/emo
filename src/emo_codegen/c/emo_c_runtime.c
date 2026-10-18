@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -2717,38 +2718,56 @@ void emo_net_wait_writable(int64_t fd) {
    call answers (R.ok, fd) or (R.error, reason) — the reason the same
    text the fatal print carried. */
 
-/* The TCP listen shared by the plain and TLS listeners: socket,
-   resolve, bind, listen, nonblocking. Returns the fd or -1 with the
+/* The IPv4 address list getaddrinfo answers, or NULL with [why] set:
+   the one place the runtime touches the resolver, so a name means the
+   same thing to connect and listen. */
+static struct addrinfo *emo_net_resolve(const char *h, int64_t port,
+                                        int flags, char *why, size_t whyn) {
+  char service[16];
+  snprintf(service, sizeof service, "%d", (int)port);
+  struct addrinfo hints;
+  memset(&hints, 0, sizeof hints);
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = flags;
+  struct addrinfo *res = NULL;
+  if (getaddrinfo(h, service, &hints, &res) != 0 || res == NULL) {
+    snprintf(why, whyn, "cannot resolve host `%s`", h);
+    if (res != NULL) freeaddrinfo(res);
+    return NULL;
+  }
+  return res;
+}
+
+/* The TCP listen shared by the plain and TLS listeners: resolve,
+   socket, bind, listen, nonblocking. Returns the fd or -1 with the
    refusal in [why] — the text the plain listen has always printed. */
 static int emo_net_listen_fd(emo_str host, int64_t port, char *why,
                              size_t whyn) {
   char *h = emo_cstr_owned(host);
-  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  struct addrinfo *res = emo_net_resolve(h, port, AI_PASSIVE, why, whyn);
+  if (res == NULL) {
+    free(h);
+    return -1;
+  }
+  int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
   if (fd < 0) {
     snprintf(why, whyn, "listen failed");
+    freeaddrinfo(res);
     free(h);
     return -1;
   }
   int one = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
-  struct sockaddr_in addr;
-  memset(&addr, 0, sizeof addr);
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons((uint16_t)port);
-  if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
-    close(fd);
-    snprintf(why, whyn, "cannot resolve host `%s`", h);
-    free(h);
-    return -1;
-  }
-  if (bind(fd, (struct sockaddr *)&addr, sizeof addr) < 0 ||
-      listen(fd, 16) < 0) {
+  if (bind(fd, res->ai_addr, res->ai_addrlen) < 0 || listen(fd, 16) < 0) {
     snprintf(why, whyn, "cannot listen on %s:%d: %s", h, (int)port,
              strerror(errno));
     close(fd);
+    freeaddrinfo(res);
     free(h);
     return -1;
   }
+  freeaddrinfo(res);
   free(h);
   emo_net_nonblock(fd);
   return fd;
@@ -2806,39 +2825,37 @@ emo_value emo_net_accept(int64_t listener) {
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
-/* The TCP leg shared by the plain and TLS connects: the socket, the
-   dotted-quad resolve, the blocking connect, the timeout, the
-   nonblocking flag. Returns the fd, or -1 with the refusal in [why] —
-   the same text the plain connect has always printed. */
+/* The TCP leg shared by the plain and TLS connects: resolve, socket,
+   the blocking connect, the timeout, the nonblocking flag. Returns the
+   fd, or -1 with the refusal in [why] — the same text the plain
+   connect has always printed. */
 static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
                               char *why, size_t whyn) {
   char *h = emo_cstr_owned(host);
-  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  struct addrinfo *res = emo_net_resolve(h, port, 0, why, whyn);
+  if (res == NULL) {
+    free(h);
+    return -1;
+  }
+  int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
   if (fd < 0) {
     snprintf(why, whyn, "connect failed");
+    freeaddrinfo(res);
     free(h);
     return -1;
   }
-  struct sockaddr_in addr;
-  memset(&addr, 0, sizeof addr);
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons((uint16_t)port);
-  if (inet_pton(AF_INET, h, &addr.sin_addr) != 1) {
-    close(fd);
-    snprintf(why, whyn, "cannot resolve host `%s`", h);
-    free(h);
-    return -1;
-  }
-  if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
+  if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
     if (errno == ECONNREFUSED)
       snprintf(why, whyn, "connection refused to %s:%d", h, (int)port);
     else
       snprintf(why, whyn, "cannot connect to %s:%d: %s", h, (int)port,
                strerror(errno));
     close(fd);
+    freeaddrinfo(res);
     free(h);
     return -1;
   }
+  freeaddrinfo(res);
   free(h);
   emo_net_set_timeout(fd, timeout);
   emo_net_nonblock(fd);
@@ -2910,7 +2927,10 @@ long SSL_CTX_ctrl(SSL_CTX *ctx, int cmd, long larg, void *parg);
 void SSL_CTX_set_verify(SSL_CTX *ctx, int mode,
                         int (*callback)(int, X509_STORE_CTX *));
 int SSL_CTX_set_default_verify_paths(SSL_CTX *ctx);
+int SSL_CTX_load_verify_locations(SSL_CTX *ctx, const char *cafile,
+                                  const char *capath);
 int SSL_CTX_use_certificate_file(SSL_CTX *ctx, const char *file, int type);
+int SSL_CTX_use_certificate_chain_file(SSL_CTX *ctx, const char *file);
 int SSL_CTX_use_PrivateKey_file(SSL_CTX *ctx, const char *file, int type);
 SSL *SSL_new(SSL_CTX *ctx);
 void SSL_free(SSL *ssl);
@@ -3017,19 +3037,46 @@ static void emo_tls_drain(char *buf, size_t n) {
 }
 
 /* The ocaml scheduler's client_tls_ctx: one negotiate-all profile (TLS
-   1.2 up to 1.3), verification on with the system trust store — or off
-   entirely for the insecure variant, its set_verify [] shape. */
-static SSL_CTX *emo_tls_client_ctx(int insecure) {
+   1.2 up to 1.3). The trust store is the configured CA file, or the
+   system's when it is empty; a client certificate turns the connect
+   into mTLS. Verification is off entirely only for the insecure
+   variant, its set_verify [] shape. */
+static SSL_CTX *emo_tls_client_ctx(int insecure, const char *ca_file,
+                                   const char *cert_file, const char *key_file,
+                                   char *why, size_t whyn) {
   SSL_CTX *ctx = SSL_CTX_new(TLS_method());
-  if (ctx == NULL) return NULL;
+  if (ctx == NULL) {
+    emo_tls_drain(why, whyn);
+    return NULL;
+  }
   SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, NULL);
   SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, TLS1_3_VERSION, NULL);
-  if (insecure) SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
-  else {
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-                       NULL);
-    SSL_CTX_set_default_verify_paths(ctx);
+  if (insecure) {
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    return ctx;
   }
+  if (ca_file[0] == '\0') {
+    SSL_CTX_set_default_verify_paths(ctx);
+  } else if (SSL_CTX_load_verify_locations(ctx, ca_file, NULL) != 1) {
+    char drained[256];
+    emo_tls_drain(drained, sizeof drained);
+    snprintf(why, whyn, "cannot load the TLS CA file `%s`: %s", ca_file,
+             drained);
+    SSL_CTX_free(ctx);
+    return NULL;
+  }
+  if (cert_file[0] != '\0' &&
+      (SSL_CTX_use_certificate_chain_file(ctx, cert_file) != 1 ||
+       SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) != 1)) {
+    char drained[256];
+    emo_tls_drain(drained, sizeof drained);
+    snprintf(why, whyn, "cannot load the TLS client certificate `%s`: %s",
+             cert_file, drained);
+    SSL_CTX_free(ctx);
+    return NULL;
+  }
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+                     NULL);
   return ctx;
 }
 
@@ -3059,10 +3106,13 @@ static SSL_CTX *emo_tls_listener_ctx(int64_t listener) {
 }
 
 /* The server context: the same negotiate-all profile, plus the PEM
-   pair. Returns NULL with [why] carrying the drained library detail —
-   the caller wraps it in the ocaml-matching certificate reason. */
+   pair. A client-CA file turns on peer verification; requiring it makes
+   a peer without a certificate fail the handshake. Returns NULL with
+   [why] carrying the reason — the caller wraps it in the ocaml-matching
+   certificate reason. */
 static SSL_CTX *emo_tls_server_ctx(emo_str cert_path, emo_str key_path,
-                                   char *why, size_t whyn) {
+                                   emo_str ca_file, int require_client_cert,
+                                   char *why, size_t whyn, int *ca_failure) {
   SSL_CTX *ctx = SSL_CTX_new(TLS_method());
   if (ctx == NULL) {
     emo_tls_drain(why, whyn);
@@ -3070,9 +3120,27 @@ static SSL_CTX *emo_tls_server_ctx(emo_str cert_path, emo_str key_path,
   }
   SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MIN_PROTO_VERSION, TLS1_2_VERSION, NULL);
   SSL_CTX_ctrl(ctx, SSL_CTRL_SET_MAX_PROTO_VERSION, TLS1_3_VERSION, NULL);
+  if (ca_file.len > 0) {
+    const char *ca = emo_str_cstr(ca_file);
+    if (SSL_CTX_load_verify_locations(ctx, ca, NULL) != 1) {
+      char drained[256];
+      emo_tls_drain(drained, sizeof drained);
+      snprintf(why, whyn, "cannot load the TLS client CA file `%s`: %s", ca,
+               drained);
+      *ca_failure = 1;
+      SSL_CTX_free(ctx);
+      return NULL;
+    }
+    SSL_CTX_set_verify(ctx,
+                       SSL_VERIFY_PEER |
+                           (require_client_cert
+                                ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+                                : 0),
+                       NULL);
+  }
   char *cert = (char *)emo_str_cstr(cert_path);
   char *key = (char *)emo_str_cstr(key_path);
-  if (SSL_CTX_use_certificate_file(ctx, cert, SSL_FILETYPE_PEM) != 1 ||
+  if (SSL_CTX_use_certificate_chain_file(ctx, cert) != 1 ||
       SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) != 1) {
     emo_tls_drain(why, whyn);
     SSL_CTX_free(ctx);
@@ -3131,17 +3199,28 @@ static emo_value emo_net_accept_tls(int64_t listener, SSL_CTX *lctx) {
   }
 }
 
-/* net_listen_tls: the PEM pair loads into a server context first (a
-   missing or rejected certificate answers before the socket exists,
-   the ocaml tls_listener's order), then the plain listen, then the
-   listener registers in the second table. */
-emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
-                             emo_str key_path) {
+/* net_listen_tls_with: the PEM pair loads into a server context first (a
+   missing or rejected certificate answers before the socket exists, the
+   ocaml tls_listener's order), then the plain listen, then the listener
+   registers in the second table. */
+emo_value emo_net_listen_tls_with(emo_str host, int64_t port,
+                                  emo_str cert_path, emo_str key_path,
+                                  emo_str ca_file, int require_client_cert) {
   char *h = (char *)emo_str_cstr(host);
+  if (require_client_cert && ca_file.len == 0)
+    return emo_os_pair(
+        "error", emo_box_str(emo_str_from_cstr(
+                     "tls: require_client_cert needs a ca_file to verify "
+                     "against")));
   char why[512];
-  SSL_CTX *ctx = emo_tls_server_ctx(cert_path, key_path, why, sizeof why);
+  int ca_failure = 0;
+  SSL_CTX *ctx =
+      emo_tls_server_ctx(cert_path, key_path, ca_file, require_client_cert, why,
+                         sizeof why, &ca_failure);
   if (ctx == NULL) {
     char what[640];
+    if (ca_failure)
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
     snprintf(what, sizeof what, "cannot load the TLS certificate for %s:%d: %s",
              h, (int)port, why);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
@@ -3155,16 +3234,33 @@ emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
-/* net_tls_connect: the TCP leg of the plain connect, then the
+emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
+                             emo_str key_path) {
+  return emo_net_listen_tls_with(host, port, cert_path, key_path,
+                                 (emo_str){0, NULL}, 0);
+}
+
+/* An address literal needs no SNI name; a hostname does. */
+static int emo_tls_addr_literal(const char *name) {
+  unsigned char buf[16];
+  return inet_pton(AF_INET, name, buf) == 1 ||
+         inet_pton(AF_INET6, name, buf) == 1;
+}
+
+/* net_tls_connect_with: the TCP leg of the plain connect, then the
    nonblocking handshake — WANT_READ/WANT_WRITE park the fiber through
    the scheduler, exactly where the interpreter parks on ocaml-ssl's
    want_read/want_write. Hostname verification rides the connect
-   hostname (skipped, like every check, for the insecure variant); SNI
-   skips IP literals. The failure reason keeps the ocaml scheduler's
-   prefix — `the TLS handshake with <host>: ` — with the library's own
-   wording after it, the one spot byte parity is not claimed. */
-emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
-                              int insecure) {
+   hostname unless the options name another (`server_name`); SNI carries
+   that same name and skips IP literals. The failure reason keeps the
+   ocaml scheduler's prefix — `the TLS handshake with <host>: ` — with
+   the library's own wording after it, the one spot byte parity is not
+   claimed. */
+static emo_value emo_tls_connect_impl(emo_str host, int64_t port,
+                                      double timeout, const char *ca_file,
+                                      const char *cert_file,
+                                      const char *key_file,
+                                      const char *server_name, int insecure) {
   char *h = (char *)emo_str_cstr(host);
   if (!emo_tls_floor_ok()) {
     char what[512];
@@ -3174,14 +3270,21 @@ emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
              OpenSSL_version(OPENSSL_VERSION));
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
   }
-  SSL_CTX *ctx = emo_tls_client_ctx(insecure);
-  if (ctx == NULL) {
-    char drained[256], what[512];
-    emo_tls_drain(drained, sizeof drained);
-    snprintf(what, sizeof what, "cannot create the TLS context: %s", drained);
+  char why[512];
+  char *name = (char *)(server_name[0] == '\0' ? h : server_name);
+  if (!insecure && emo_tls_addr_literal(name)) {
+    char what[640];
+    snprintf(what, sizeof what,
+             "tls: cannot verify a certificate for the IP address `%s`; pass "
+             "server_name with the certificate's DNS name",
+             name);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
   }
-  char why[512];
+  SSL_CTX *ctx =
+      emo_tls_client_ctx(insecure, ca_file, cert_file, key_file, why,
+                         sizeof why);
+  if (ctx == NULL)
+    return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
   int fd = emo_net_connect_fd(host, port, timeout, why, sizeof why);
   if (fd < 0) {
     SSL_CTX_free(ctx);
@@ -3197,11 +3300,10 @@ emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
     SSL_CTX_free(ctx);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
   }
-  if (!insecure) SSL_set1_host(ssl, h);
-  struct sockaddr_in skip;
-  if (inet_pton(AF_INET, h, &skip.sin_addr) != 1)
+  if (!insecure) SSL_set1_host(ssl, name);
+  if (!emo_tls_addr_literal(name))
     SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name,
-             (void *)h);
+             (void *)name);
   for (;;) {
     ERR_clear_error();
     int r = SSL_connect(ssl);
@@ -3227,6 +3329,20 @@ emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
     SSL_CTX_free(ctx);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
   }
+}
+
+emo_value emo_net_tls_connect_with(emo_str host, int64_t port, double timeout,
+                                   emo_str ca_file, emo_str cert_file,
+                                   emo_str key_file, emo_str server_name,
+                                   int insecure) {
+  return emo_tls_connect_impl(host, port, timeout, emo_str_cstr(ca_file),
+                              emo_str_cstr(cert_file), emo_str_cstr(key_file),
+                              emo_str_cstr(server_name), insecure);
+}
+
+emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
+                              int insecure) {
+  return emo_tls_connect_impl(host, port, timeout, "", "", "", "", insecure);
 }
 
 #endif /* EMO_HAS_TLS */
@@ -3450,6 +3566,21 @@ emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
   return emo_unsupported("net_tls_connect");
 }
 
+emo_value emo_net_tls_connect_with(emo_str host, int64_t port, double timeout,
+                                   emo_str ca_file, emo_str cert_file,
+                                   emo_str key_file, emo_str server_name,
+                                   int insecure) {
+  (void)host;
+  (void)port;
+  (void)timeout;
+  (void)ca_file;
+  (void)cert_file;
+  (void)key_file;
+  (void)server_name;
+  (void)insecure;
+  return emo_unsupported("net_tls_connect_with");
+}
+
 emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
                              emo_str key_path) {
   (void)host;
@@ -3457,6 +3588,18 @@ emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
   (void)cert_path;
   (void)key_path;
   return emo_unsupported("net_listen_tls");
+}
+
+emo_value emo_net_listen_tls_with(emo_str host, int64_t port,
+                                  emo_str cert_path, emo_str key_path,
+                                  emo_str ca_file, int require_client_cert) {
+  (void)host;
+  (void)port;
+  (void)cert_path;
+  (void)key_path;
+  (void)ca_file;
+  (void)require_client_cert;
+  return emo_unsupported("net_listen_tls_with");
 }
 #endif /* !EMO_HAS_TLS */
 

@@ -374,6 +374,10 @@ let global_env () =
     { bound = RuntimeImplFn "net_tls_connect_insecure"; mutable_ = false };
   Hashtbl.replace env.frame "net_listen_tls"
     { bound = RuntimeImplFn "net_listen_tls"; mutable_ = false };
+  Hashtbl.replace env.frame "net_tls_connect_with"
+    { bound = RuntimeImplFn "net_tls_connect_with"; mutable_ = false };
+  Hashtbl.replace env.frame "net_listen_tls_with"
+    { bound = RuntimeImplFn "net_listen_tls_with"; mutable_ = false };
   Hashtbl.replace env.frame "file_read"
     { bound = RuntimeImplFn "file_read"; mutable_ = false };
   Hashtbl.replace env.frame "file_write"
@@ -950,6 +954,31 @@ type _ Effect.t +=
    finishes the parked continuation with it, and the refusals below are
    the only raising path left. *)
 
+type tls_client_options = {
+  tls_ca_file : string;
+  tls_client_cert_file : string;
+  tls_client_key_file : string;
+  tls_server_name : string;
+  tls_insecure : bool;
+}
+
+type tls_server_options = {
+  tls_client_ca_file : string;
+  tls_require_client_cert : bool;
+}
+
+let default_tls_client_options =
+  {
+    tls_ca_file = "";
+    tls_client_cert_file = "";
+    tls_client_key_file = "";
+    tls_server_name = "";
+    tls_insecure = false;
+  }
+
+let default_tls_server_options =
+  { tls_client_ca_file = ""; tls_require_client_cert = false }
+
 type _ Effect.t +=
   | Net_resolve : string * Emo_support.Span.t -> value Effect.t
   | Net_connect : (string * int * float * Emo_support.Span.t) -> value Effect.t
@@ -972,11 +1001,11 @@ type _ Effect.t +=
   | File_read : string * Emo_support.Span.t -> value Effect.t
   | File_write : string * string * Emo_support.Span.t -> value Effect.t
   | Net_tls_connect :
-      (string * int * float * bool * Emo_support.Span.t)
+      (string * int * float * tls_client_options * Emo_support.Span.t)
       -> value Effect.t
-  | (* host, port, timeout, insecure *)
+  | (* host, port, timeout, options *)
       Net_tls_listen :
-      (string * int * string * string * Emo_support.Span.t)
+      (string * int * string * string * tls_server_options * Emo_support.Span.t)
       -> value Effect.t
   | Compiled_receive :
       (value -> (int * value list) option)
@@ -1197,7 +1226,7 @@ let run_without_scheduler (body : unit -> unit) : unit =
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_tls_connect`")
-            | Net_tls_listen (_, _, _, _, span) ->
+            | Net_tls_listen (_, _, _, _, _, span) ->
                 Some
                   (fun (_ : (a, _) continuation) ->
                     refused span "`net_listen_tls`")
@@ -3016,7 +3045,8 @@ and apply_runtime_impl span name args =
       (* The handler resolves the host, then connects and shakes hands;
          failure rides back in the tuple. *)
       Effect.perform
-        (Net_tls_connect (host, Int64.to_int port, timeout, false, span))
+        (Net_tls_connect
+           (host, Int64.to_int port, timeout, default_tls_client_options, span))
   | "net_tls_connect", _ ->
       error span "E3001"
         "`net_tls_connect` expects (host String, port Int64, timeout Float64)"
@@ -3028,11 +3058,52 @@ and apply_runtime_impl span name args =
            (List.length args))
   | "net_tls_connect_insecure", [ String host; Int64 port; Float timeout ] ->
       Effect.perform
-        (Net_tls_connect (host, Int64.to_int port, timeout, true, span))
+        (Net_tls_connect
+           ( host,
+             Int64.to_int port,
+             timeout,
+             { default_tls_client_options with tls_insecure = true },
+             span ))
   | "net_tls_connect_insecure", _ ->
       error span "E3001"
         "`net_tls_connect_insecure` expects (host String, port Int64, \
          timeout          Float64)"
+  | "net_tls_connect_with", args when List.length args <> 8 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_tls_connect_with` expects (host String, port Int64, timeout \
+            Float64, ca_file String, client_cert_file String, client_key_file \
+            String, server_name String, insecure Bool), got %d arguments"
+           (List.length args))
+  | ( "net_tls_connect_with",
+      [
+        String host;
+        Int64 port;
+        Float timeout;
+        String ca_file;
+        String cert_file;
+        String key_file;
+        String server_name;
+        Bool insecure;
+      ] ) ->
+      Effect.perform
+        (Net_tls_connect
+           ( host,
+             Int64.to_int port,
+             timeout,
+             {
+               tls_ca_file = ca_file;
+               tls_client_cert_file = cert_file;
+               tls_client_key_file = key_file;
+               tls_server_name = server_name;
+               tls_insecure = insecure;
+             },
+             span ))
+  | "net_tls_connect_with", _ ->
+      error span "E3001"
+        "`net_tls_connect_with` expects (host String, port Int64, timeout \
+         Float64, ca_file String, client_cert_file String, client_key_file \
+         String, server_name String, insecure Bool)"
   | "net_listen_tls", args when List.length args <> 4 ->
       error span "E3007"
         (Printf.sprintf
@@ -3040,11 +3111,44 @@ and apply_runtime_impl span name args =
             String,             key_path String), got %d arguments"
            (List.length args))
   | "net_listen_tls", [ String host; Int64 port; String cert; String key ] ->
-      Effect.perform (Net_tls_listen (host, Int64.to_int port, cert, key, span))
+      Effect.perform
+        (Net_tls_listen
+           (host, Int64.to_int port, cert, key, default_tls_server_options, span))
   | "net_listen_tls", _ ->
       error span "E3001"
         "`net_listen_tls` expects (host String, port Int64, cert_path \
          String,          key_path String)"
+  | "net_listen_tls_with", args when List.length args <> 6 ->
+      error span "E3007"
+        (Printf.sprintf
+           "`net_listen_tls_with` expects (host String, port Int64, cert_path \
+            String, key_path String, ca_file String, require_client_cert \
+            Bool), got %d arguments"
+           (List.length args))
+  | ( "net_listen_tls_with",
+      [
+        String host;
+        Int64 port;
+        String cert;
+        String key;
+        String ca_file;
+        Bool require_client_cert;
+      ] ) ->
+      Effect.perform
+        (Net_tls_listen
+           ( host,
+             Int64.to_int port,
+             cert,
+             key,
+             {
+               tls_client_ca_file = ca_file;
+               tls_require_client_cert = require_client_cert;
+             },
+             span ))
+  | "net_listen_tls_with", _ ->
+      error span "E3001"
+        "`net_listen_tls_with` expects (host String, port Int64, cert_path \
+         String, key_path String, ca_file String, require_client_cert Bool)"
   | _, _ ->
       error span "E3007"
         (Printf.sprintf "unknown runtime implementation `%s`" name)

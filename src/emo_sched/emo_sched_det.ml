@@ -434,10 +434,13 @@ let rec handler state (proc : Emo_eval.process) () :
                     Effect.Shallow.continue_with k
                       (Emo_eval.net_ok (Emo_eval.TcpListener l))
                       (handler state proc ()))
-        | Emo_eval.Net_tls_listen (host, port, cert_path, key_path, span) ->
+        | Emo_eval.Net_tls_listen
+            (host, port, cert_path, key_path, tls_options, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
-                match tls_listener ~host ~port ~cert_path ~key_path with
+                match
+                  tls_listener ~host ~port ~cert_path ~key_path tls_options
+                with
                 | Error reason ->
                     Effect.Shallow.continue_with k
                       (Emo_eval.net_error reason)
@@ -458,7 +461,7 @@ let rec handler state (proc : Emo_eval.process) () :
                     Effect.Shallow.continue_with k
                       (Emo_eval.net_ok (Emo_eval.TcpListener l))
                       (handler state proc ()))
-        | Emo_eval.Net_tls_connect (host, port, timeout, insecure, span) ->
+        | Emo_eval.Net_tls_connect (host, port, timeout, tls_options, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
                 match resolve_addrs span host with
@@ -469,7 +472,7 @@ let rec handler state (proc : Emo_eval.process) () :
                       (handler state proc ())
                 | addrs ->
                     connect_tls_entry state proc k ~host ~port ~timeout
-                      ~insecure span addrs)
+                      ~tls_options span addrs)
         | Emo_eval.Net_accept (l, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -805,34 +808,61 @@ and connect_entry state proc
   let message =
     Printf.sprintf "timed out after %gs connecting to %s" timeout target
   in
-  connect_next state proc k ~target ~deadline ~message ~tls:None
-    ~last_error:None span addrs
+  connect_next state proc k ~target ~deadline ~message ~tls:None ~tls_name:""
+    ~tls_verify:false ~last_error:None span addrs
 
 (* A TLS connect runs the same connect machinery; on a connected socket
    the TLS handshake takes over, parking through the scheduler. *)
 and connect_tls_entry state proc
     (k : (Emo_eval.value, unit) Effect.Shallow.continuation) ~(host : string)
-    ~(port : int) ~(timeout : float) ~(insecure : bool)
-    (span : Emo_support.Span.t) (addresses : string list) : outcome =
-  let ctx = client_tls_ctx ~insecure in
-  let target = Printf.sprintf "%s:%d" host port in
-  let addrs =
-    List.map
-      (fun a ->
-        {
-          cfam = (if String.contains a ':' then Unix.PF_INET6 else Unix.PF_INET);
-          caddr = Unix.ADDR_INET (Unix.inet_addr_of_string a, port);
-        })
-      addresses
+    ~(port : int) ~(timeout : float)
+    ~(tls_options : Emo_eval.tls_client_options) (span : Emo_support.Span.t)
+    (addresses : string list) : outcome =
+  let tls_name =
+    if tls_options.Emo_eval.tls_server_name = "" then host
+    else tls_options.Emo_eval.tls_server_name
   in
-  let deadline =
-    if timeout > 0.0 then Some (Unix.gettimeofday () +. timeout) else None
-  in
-  let message =
-    Printf.sprintf "timed out after %gs connecting to %s" timeout target
-  in
-  connect_next state proc k ~target ~deadline ~message ~tls:(Some ctx)
-    ~last_error:None span addrs
+  (* An address literal cannot match a certificate with the binding's
+     name check, so a verifying connect to one needs the certificate's
+     own name; silently skipping the check would be the hole this
+     connect exists to close. *)
+  if (not tls_options.Emo_eval.tls_insecure) && tls_name_is_ip_literal tls_name
+  then
+    Effect.Shallow.continue_with k
+      (Emo_eval.net_error
+         (Printf.sprintf
+            "tls: cannot verify a certificate for the IP address `%s`; pass \
+             server_name with the certificate's DNS name"
+            tls_name))
+      (handler state proc ())
+  else
+    match client_tls_ctx tls_options with
+    | Error reason ->
+        Effect.Shallow.continue_with k
+          (Emo_eval.net_error reason)
+          (handler state proc ())
+    | Ok ctx ->
+        let target = Printf.sprintf "%s:%d" host port in
+        let addrs =
+          List.map
+            (fun a ->
+              {
+                cfam =
+                  (if String.contains a ':' then Unix.PF_INET6 else Unix.PF_INET);
+                caddr = Unix.ADDR_INET (Unix.inet_addr_of_string a, port);
+              })
+            addresses
+        in
+        let deadline =
+          if timeout > 0.0 then Some (Unix.gettimeofday () +. timeout) else None
+        in
+        let message =
+          Printf.sprintf "timed out after %gs connecting to %s" timeout target
+        in
+        connect_next state proc k ~target ~deadline ~message ~tls:(Some ctx)
+          ~tls_name
+          ~tls_verify:(not tls_options.Emo_eval.tls_insecure)
+          ~last_error:None span addrs
 
 (* A unix-domain connect has one candidate address: the path itself. *)
 and connect_unix_entry state proc
@@ -845,12 +875,13 @@ and connect_unix_entry state proc
   let message =
     Printf.sprintf "timed out after %gs connecting to %s" timeout target
   in
-  connect_next state proc k ~target ~deadline ~message ~tls:None
-    ~last_error:None span
+  connect_next state proc k ~target ~deadline ~message ~tls:None ~tls_name:""
+    ~tls_verify:false ~last_error:None span
     [ { cfam = Unix.PF_UNIX; caddr = Unix.ADDR_UNIX path } ]
 
 and connect_next state proc k ~target ~deadline ~message
-    ~(tls : Ssl.context option) ~(last_error : Unix.error option) span addrs =
+    ~(tls : Ssl.context option) ~(tls_name : string) ~(tls_verify : bool)
+    ~(last_error : Unix.error option) span addrs =
   match addrs with
   | [] ->
       (* Every candidate failed; the last OS error is the precise reason. *)
@@ -889,16 +920,20 @@ and connect_next state proc k ~target ~deadline ~message
             cleanup st;
             (* This address failed; the refusal is only final when the
                last candidate said it. *)
-            connect_next st proc k ~target ~deadline ~message ~tls
-              ~last_error:(Some err) span rest
-        | None -> connect_tls_upgrade st proc k finished fd target tls span
+            connect_next st proc k ~target ~deadline ~message ~tls ~tls_name
+              ~tls_verify ~last_error:(Some err) span rest
+        | None ->
+            connect_tls_upgrade st proc k finished fd target tls tls_name
+              tls_verify span
       in
       let timeout_step st =
         cleanup st;
         finish_w finished st proc k (Emo_eval.net_error message)
       in
       match Unix.connect fd addr.caddr with
-      | () -> connect_tls_upgrade state proc k finished fd target tls span
+      | () ->
+          connect_tls_upgrade state proc k finished fd target tls tls_name
+            tls_verify span
       | exception Unix.Unix_error (Unix.EINPROGRESS, _, _) ->
           add_io state fd `W (fun () -> Queue.add (Io (proc, step)) state.runq);
           (match deadline with
@@ -913,8 +948,8 @@ and connect_next state proc k ~target ~deadline ~message
           if rest = [] then
             finish_w finished state proc k (Emo_eval.net_error (refusal err))
           else
-            connect_next state proc k ~target ~deadline ~message ~tls
-              ~last_error:(Some err) span rest)
+            connect_next state proc k ~target ~deadline ~message ~tls ~tls_name
+              ~tls_verify ~last_error:(Some err) span rest)
 
 (* One negotiate-all profile for both ends of a TLS connection: TLS 1.2 up to
    1.3. The two SSL-2.0/3.0-era constants of this binding are the only ones
@@ -926,29 +961,70 @@ and tls_context (kind : Ssl.context_type) : Ssl.context =
   ctx
 
 (* A verifying client context, or one that explicitly skips verification
-   (`net_tls_connect_insecure` — visibly dangerous, never a default). *)
-and client_tls_ctx ~(insecure : bool) : Ssl.context =
+   (`net_tls_connect_insecure` — visibly dangerous, never a default).
+   The trust store is the configured CA file, or the system's when the
+   option is empty; a client certificate turns the connect into mTLS. *)
+and client_tls_ctx (options : Emo_eval.tls_client_options) :
+    (Ssl.context, string) result =
   let ctx = tls_context Ssl.Client_context in
-  if insecure then Ssl.set_verify ctx [] None
-  else (
-    ignore (Ssl.set_default_verify_paths ctx);
-    Ssl.set_verify ctx
-      [ Ssl.Verify_peer; Ssl.Verify_fail_if_no_peer_cert ]
-      (Some Ssl.client_verify_callback));
-  ctx
+  if options.Emo_eval.tls_insecure then (
+    Ssl.set_verify ctx [] None;
+    Ok ctx)
+  else
+    match
+      if options.Emo_eval.tls_ca_file = "" then (
+        ignore (Ssl.set_default_verify_paths ctx);
+        Ok ())
+      else
+        try
+          Ssl.load_verify_locations ctx options.Emo_eval.tls_ca_file "";
+          Ok ()
+        with Invalid_argument message ->
+          Error
+            (Printf.sprintf "cannot load the TLS CA file `%s`: %s"
+               options.Emo_eval.tls_ca_file message)
+    with
+    | Error reason -> Error reason
+    | Ok () -> (
+        try
+          if options.Emo_eval.tls_client_cert_file <> "" then
+            Ssl.use_certificate ctx options.Emo_eval.tls_client_cert_file
+              options.Emo_eval.tls_client_key_file;
+          Ssl.set_verify ctx
+            [ Ssl.Verify_peer; Ssl.Verify_fail_if_no_peer_cert ]
+            None;
+          Ok ctx
+        with Ssl.Certificate_error message | Ssl.Private_key_error message ->
+          Error
+            (Printf.sprintf "cannot load the TLS client certificate `%s`: %s"
+               options.Emo_eval.tls_client_cert_file message))
+
+(* An address literal needs no SNI name; a hostname does. *)
+and tls_name_is_ip_literal (name : string) : bool =
+  try
+    ignore (Unix.inet_addr_of_string name);
+    true
+  with Failure _ -> false
 
 (* Upgrades a just-connected socket: plain connects finish immediately;
-   TLS hands the socket to OpenSSL and shakes hands asynchronously. *)
+   TLS hands the socket to OpenSSL and shakes hands asynchronously. The
+   verification name is set on the socket before the handshake, so a
+   certificate for another host fails closed; SNI carries the same name
+   unless it is an address literal. *)
 and connect_tls_upgrade state proc
     (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
     (finished : bool ref) (fd : Unix.file_descr) (target : string)
-    (tls : Ssl.context option) (span : Emo_support.Span.t) : outcome =
+    (tls : Ssl.context option) (tls_name : string) (tls_verify : bool)
+    (span : Emo_support.Span.t) : outcome =
   match tls with
   | None ->
       finish_w finished state proc k
         (Emo_eval.net_ok (Emo_eval.TcpConn (make_conn state fd target)))
   | Some ctx ->
       let ssl = Ssl.embed_socket fd ctx in
+      if tls_verify then Ssl.set_host ssl tls_name;
+      if not (tls_name_is_ip_literal tls_name) then
+        Ssl.set_client_SNI_hostname ssl tls_name;
       handshake state proc k finished fd ssl target span Ssl.connect
 
 (* Drives a nonblocking TLS handshake to completion: want_read /
@@ -986,20 +1062,48 @@ and park_and_handshake state proc k finished fd ssl desc span kind once =
     (fun st -> handshake st proc k finished fd ssl desc span once)
 
 (* The setup half of a TLS listener: TCP listen plus a server context
-   holding the certificate. *)
+   holding the certificate. A client-CA file turns on peer verification;
+   requiring it makes a peer without a certificate fail the handshake. *)
 and tls_listener ~(host : string) ~(port : int) ~(cert_path : string)
-    ~(key_path : string) : (Unix.file_descr * int * Ssl.context, string) result
-    =
-  let ctx = tls_context Ssl.Server_context in
-  match Ssl.use_certificate ctx cert_path key_path with
-  | () -> (
-      match listen_on host port with
-      | Ok (fd, bound) -> Ok (fd, bound, ctx)
-      | Error reason -> Error reason)
-  | exception (Ssl.Certificate_error message | Ssl.Private_key_error message) ->
-      Error
-        (Printf.sprintf "cannot load the TLS certificate for %s:%d: %s" host
-           port message)
+    ~(key_path : string) (options : Emo_eval.tls_server_options) :
+    (Unix.file_descr * int * Ssl.context, string) result =
+  if
+    options.Emo_eval.tls_require_client_cert
+    && options.Emo_eval.tls_client_ca_file = ""
+  then Error "tls: require_client_cert needs a ca_file to verify against"
+  else
+    let ctx = tls_context Ssl.Server_context in
+    let trusted =
+      if options.Emo_eval.tls_client_ca_file = "" then Ok ()
+      else
+        try
+          Ssl.set_client_CA_list_from_file ctx
+            options.Emo_eval.tls_client_ca_file;
+          Ssl.load_verify_locations ctx options.Emo_eval.tls_client_ca_file "";
+          Ssl.set_verify ctx
+            (if options.Emo_eval.tls_require_client_cert then
+               [ Ssl.Verify_peer; Ssl.Verify_fail_if_no_peer_cert ]
+             else [ Ssl.Verify_peer ])
+            None;
+          Ok ()
+        with Invalid_argument message ->
+          Error
+            (Printf.sprintf "cannot load the TLS client CA file `%s`: %s"
+               options.Emo_eval.tls_client_ca_file message)
+    in
+    match trusted with
+    | Error reason -> Error reason
+    | Ok () -> (
+        match Ssl.use_certificate ctx cert_path key_path with
+        | () -> (
+            match listen_on host port with
+            | Ok (fd, bound) -> Ok (fd, bound, ctx)
+            | Error reason -> Error reason)
+        | exception
+            (Ssl.Certificate_error message | Ssl.Private_key_error message) ->
+            Error
+              (Printf.sprintf "cannot load the TLS certificate for %s:%d: %s"
+                 host port message))
 
 and accept_loop state proc
     (k : (Emo_eval.value, unit) Effect.Shallow.continuation)

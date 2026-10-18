@@ -2,8 +2,9 @@
 // target — a TLS server and an https:// client in one program, the
 // way http_roundtrip pairs plain TCP. The listener takes the checked-in
 // test certificate (signed by fixtures/tls-ca.pem, SAN: localhost and
-// 127.0.0.1); the client verifies it through the default verify paths,
-// which SSL_CERT_FILE points at the CA.
+// 127.0.0.1); the client connects by the DNS name so verification has a
+// name to check, and trusts the CA through the default verify paths,
+// which SSL_CERT_FILE points at.
 //
 //   SSL_CERT_FILE=fixtures/tls-ca.pem \
 //   EMO_REGISTRY=<repo>/stdlib/registry emo run main.emo
@@ -21,7 +22,7 @@ do http.serve_requests(listener) -> (req HttpRequest) {
   return http.response(200, [], "hello over tls")
 }
 
-case http.get("https://127.0.0.1:" + listener.port().to_string() + "/hello") {
+case http.get("https://localhost:" + listener.port().to_string() + "/hello") {
   (R.error, why) -> { println("request failed: ${why}") }
   (R.ok, resp)   -> {
     println(resp.body)

@@ -37,6 +37,80 @@ def listen_tls(host String, port Int64, cert_path String, key_path String) (R, T
   return net_listen_tls(host, port, cert_path, key_path)
 }
 
+// The per-connection TLS policy the simple calls leave at the defaults:
+// a private trust store (`ca_file`, "" for the system store), a client
+// certificate for mutual TLS (both files, or neither), the name SNI and
+// verification use when it differs from the connect host (`server_name`,
+// "" for the host itself), and the explicit verification opt-out.
+class TlsClientOptions {
+  def init(ca_file String, client_cert_file String, client_key_file String, server_name String, insecure Bool) {
+    self.ca_file = ca_file
+    self.client_cert_file = client_cert_file
+    self.client_key_file = client_key_file
+    self.server_name = server_name
+    self.insecure = insecure
+  }
+
+  def with_ca_file(path String) TlsClientOptions {
+    return TlsClientOptions.new(ca_file: path, client_cert_file: self.client_cert_file, client_key_file: self.client_key_file, server_name: self.server_name, insecure: self.insecure)
+  }
+
+  def with_client_certificate(cert_file String, key_file String) TlsClientOptions {
+    return TlsClientOptions.new(ca_file: self.ca_file, client_cert_file: cert_file, client_key_file: key_file, server_name: self.server_name, insecure: self.insecure)
+  }
+
+  def with_server_name(name String) TlsClientOptions {
+    return TlsClientOptions.new(ca_file: self.ca_file, client_cert_file: self.client_cert_file, client_key_file: self.client_key_file, server_name: name, insecure: self.insecure)
+  }
+
+  def without_verification() TlsClientOptions {
+    return TlsClientOptions.new(ca_file: self.ca_file, client_cert_file: self.client_cert_file, client_key_file: self.client_key_file, server_name: self.server_name, insecure: true)
+  }
+}
+
+def tls_client_options() TlsClientOptions {
+  return TlsClientOptions.new(ca_file: "", client_cert_file: "", client_key_file: "", server_name: "", insecure: false)
+}
+
+def tls_connect_with(host String, port Int64, timeout Float64, options TlsClientOptions) (R, TcpConn) {
+  if options.client_cert_file != "" && options.client_key_file == "" {
+    return (R.error, "tls: a client certificate needs both client_cert_file and client_key_file")
+  }
+  if options.client_cert_file == "" && options.client_key_file != "" {
+    return (R.error, "tls: a client certificate needs both client_cert_file and client_key_file")
+  }
+  return net_tls_connect_with(host, port, timeout, options.ca_file, options.client_cert_file, options.client_key_file, options.server_name, options.insecure)
+}
+
+// The server-side policy: `ca_file` is the client-certificate trust
+// store for mutual TLS ("" leaves client certificates off), and
+// `require_client_cert` rejects a peer that presents none.
+class TlsServerOptions {
+  def init(ca_file String, require_client_cert Bool) {
+    self.ca_file = ca_file
+    self.require_client_cert = require_client_cert
+  }
+
+  def with_client_ca(path String) TlsServerOptions {
+    return TlsServerOptions.new(ca_file: path, require_client_cert: self.require_client_cert)
+  }
+
+  def with_required_client_cert(required Bool) TlsServerOptions {
+    return TlsServerOptions.new(ca_file: self.ca_file, require_client_cert: required)
+  }
+}
+
+def tls_server_options() TlsServerOptions {
+  return TlsServerOptions.new(ca_file: "", require_client_cert: false)
+}
+
+def listen_tls_with(host String, port Int64, cert_path String, key_path String, options TlsServerOptions) (R, TcpListener) {
+  if options.require_client_cert && options.ca_file == "" {
+    return (R.error, "tls: require_client_cert needs a ca_file to verify against")
+  }
+  return net_listen_tls_with(host, port, cert_path, key_path, options.ca_file, options.require_client_cert)
+}
+
 def udp_bind(host String, port Int64) (R, UdpSocket) {
   return net_udp_bind(host, port)
 }

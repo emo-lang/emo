@@ -263,8 +263,8 @@ reason when the peer closes early, a close mid-line is the error
 tuple, and `read_all` is the one read that treats EOF as normal. A
 Unix-domain listener has no port — `port()` on one is an error.
 
-Targets: `["ocaml", "c", "typescript"]`. On `c` the package is TCP-only;
-UDP, Unix-domain sockets, `net.resolve`, and TLS are refused at runtime
+Targets: `["ocaml", "c", "typescript"]`. On `c` the package is TCP and
+TLS; UDP, Unix-domain sockets, and `net.resolve` are refused at runtime
 there. Reference:
 [`docs/stdlib/net.md`](stdlib/net.md) · Demo: `examples/tcp_echo`.
 
@@ -280,10 +280,14 @@ def post(url String, body String) (R, HttpResponse)
 def put(url String, body String) (R, HttpResponse)
 def delete(url String) (R, HttpResponse)
 def request(method String, url String, headers Array[(String, String)], body String, timeout Float64) (R, HttpResponse)
+def request_with(method String, url String, headers Array[(String, String)], body String, timeout Float64, tls_options net.TlsClientOptions) (R, HttpResponse)
 ```
 
 The URL must carry an explicit `http://` or `https://` scheme;
-`https` rides `net.tls_connect` — verification on. The response:
+`https` rides `net.tls_connect` — verification on. `request_with`
+passes a per-connection TLS policy (`net.tls_client_options()`) to
+`net.tls_connect_with`: a private trust store, a client certificate,
+or a verification-name override. The response:
 
 ```emo
 class HttpResponse {
@@ -305,7 +309,9 @@ def response(status Int64, headers Array[(String, String)], body String) HttpRes
 connection; `serve_requests` parses each request into an `HttpRequest`
 (`method`, `path`, `headers`, `body`, plus `header(name)`), writes the
 handler's `HttpResponse` back, and closes. Most handlers want
-`serve_requests`.
+`serve_requests`. The listener can come from `net.listen`, or from
+`net.listen_tls`/`net.listen_tls_with` to serve the same handler over
+HTTPS.
 
 ```emo
 require "http"
@@ -319,10 +325,10 @@ http.serve_requests(listener) -> (req HttpRequest) {
 ```
 
 Targets: `["ocaml", "c", "typescript"]` (it builds on `net`, which its own
-manifest pins). On `c`
-it is TCP-only, inherited from `net`. Reference:
-[`docs/stdlib/http.md`](stdlib/http.md) · Demo:
-`examples/http_roundtrip`.
+manifest pins). On `c` it inherits `net`'s coverage: TCP and TLS.
+Reference:
+[`docs/stdlib/http.md`](stdlib/http.md) · Demos:
+`examples/http_roundtrip`, `examples/https_roundtrip`.
 
 ## The `json` package
 

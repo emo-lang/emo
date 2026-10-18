@@ -7,6 +7,7 @@
  (deps
   emo_ocaml_runtime_test.exe
   ../emo_sched/fixtures/tls-server-cert.pem
-  ../emo_sched/fixtures/tls-server-key.pem)
+  ../emo_sched/fixtures/tls-server-key.pem
+  ../emo_sched/fixtures/tls-ca.pem)
  (action
   (run %{exe:emo_ocaml_runtime_test.exe})))

@@ -32,6 +32,7 @@ http.post(url, body)                         // POST with a body
 http.put(url, body)                          // PUT with a body
 http.delete(url)                             // DELETE, no body
 http.request(method, url, headers, body, timeout)
+http.request_with(method, url, headers, body, timeout, tls_options)
 ```
 
 `http.request`'s full signature:
@@ -60,6 +61,13 @@ class HttpResponse {
 }
 ```
 
+`http.request_with` is `http.request` plus the per-connection TLS
+policy: `tls_options` is a `net.TlsClientOptions` from
+`net.tls_client_options()` (`with_ca_file`, `with_client_certificate`,
+`with_server_name`, `without_verification`), and an `https://` URL
+connects through `net.tls_connect_with`. A plain `http://` URL has no
+TLS leg, so the policy applies only to `https`.
+
 ```emo
 require "http"
 
@@ -83,7 +91,10 @@ about.
 
 ## Server
 
-Two helpers, both built on a `TcpListener` from `net.listen(host, port)`:
+Two helpers, both built on a `TcpListener` from `net.listen(host, port)`
+or `net.listen_tls(host, port, cert_path, key_path)` — the listener's
+transport decides the scheme, so the same handler serves HTTPS when the
+listener came from `net.listen_tls` (or `net.listen_tls_with`):
 
 - `http.serve(listener) -> (conn TcpConn) { ... }` — the
   process-per-connection helper. Every accepted connection runs its own
@@ -154,12 +165,36 @@ case http.request("POST", "http://127.0.0.1:" + listener.port().to_string() + "/
 }
 ```
 
+The same server over TLS — the handler is unchanged; only the listener
+and the client's trust store differ:
+
+```emo
+require "http"
+require "net"
+
+const (R.ok, listener) = net.listen_tls("127.0.0.1", 0, "tls-cert.pem", "tls-key.pem")
+
+do http.serve_requests(listener) -> (req HttpRequest) {
+  return http.response(200, [], "hello over https\n")
+}
+
+const options = net.tls_client_options().with_ca_file("tls-cert.pem")
+case http.request_with("GET", "https://localhost:" + listener.port().to_string() + "/", [], "", 5.0, options) {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> { println(resp.body) }  // hello over https
+}
+```
+
+`examples/https_roundtrip` is this program with its certificate pair
+checked in.
+
 ## Limitations
 
 - **Three targets.** The package declares `targets = ["ocaml", "c", "typescript"]`;
   resolution refuses it for wasm, BEAM, and riscv64 builds. On `c`, UDP
-  and name resolution stay refused (inherited from `net`); `https`
-  works. On `wasm` it shares `net`'s host limitation: no usable socket
+  and Unix-domain sockets stay refused (inherited from `net`), and names
+  resolve to IPv4 addresses only; `https` works. On `wasm` it shares
+  `net`'s host limitation: no usable socket
   API reaches the core module (`plan/step-16-wasm.md`, T16.5).
 - **No connection pooling.** One TCP connection per request, closed after
   the exchange.

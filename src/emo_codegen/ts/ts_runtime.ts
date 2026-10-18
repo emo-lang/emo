@@ -1649,11 +1649,46 @@ function netTlsErrorValue(host: string, port: number, e: any): any {
   );
 }
 
+// The per-connection TLS policy the options record carries: a private
+// trust store, a client certificate for mutual TLS, the name SNI and
+// verification use, and the explicit verification opt-out. A missing
+// or unreadable file is the (R.error, reason) the simple calls give.
+function netTlsClientOptions(
+  verify: boolean,
+  caFile: any,
+  certFile: any,
+  keyFile: any,
+  serverName: any
+): any {
+  const opts: any = { rejectUnauthorized: verify };
+  if (caFile !== "") {
+    try {
+      opts.ca = nodeFs.readFileSync(caFile);
+    } catch (e) {
+      netFail("cannot load the TLS CA file `" + caFile + "`: " + netReason(e));
+    }
+  }
+  if (certFile !== "") {
+    try {
+      opts.cert = nodeFs.readFileSync(certFile);
+      opts.key = nodeFs.readFileSync(keyFile);
+    } catch (e) {
+      netFail(
+        "cannot load the TLS client certificate `" +
+          certFile +
+          "`: " +
+          netReason(e)
+      );
+    }
+  }
+  if (serverName !== "") opts.servername = serverName;
+  return opts;
+}
+
 function netConnectOne(
   addr: string,
   port: number,
-  useTls: boolean,
-  verify: boolean,
+  tlsOpts: any,
   host: string,
   deadline: number | null,
   message: string
@@ -1668,13 +1703,10 @@ function netConnectOne(
       if (timer) clearTimeout(timer);
       fn();
     };
-    if (useTls) {
-      const opts: any = {
-        host: addr,
-        port: port,
-        rejectUnauthorized: verify,
-      };
-      if (!netIsIpLiteral(host)) opts.servername = host;
+    if (tlsOpts !== null) {
+      const opts: any = Object.assign({}, tlsOpts, { host: addr, port: port });
+      const name = tlsOpts.servername || host;
+      opts.servername = netIsIpLiteral(name) ? undefined : name;
       sock = nodeTls.connect(opts);
       sock.once("secureConnect", () => finish(() => resolve(sock)));
       sock.once("error", (e: any) =>
@@ -1705,11 +1737,19 @@ async function netConnect(
   host: any,
   port: any,
   timeout: any,
-  useTls: boolean,
-  verify: boolean
+  tlsOpts: any
 ): Promise<EConn> {
   const p = netInt(port);
   const t = netFloat(timeout);
+  if (tlsOpts !== null && tlsOpts.rejectUnauthorized) {
+    const name = tlsOpts.servername || host;
+    if (netIsIpLiteral(name))
+      netFail(
+        "tls: cannot verify a certificate for the IP address `" +
+          name +
+          "`; pass server_name with the certificate's DNS name"
+      );
+  }
   const addrs = await netResolveAddrs(host);
   _endIfShutdown();
   if (addrs.length === 0) netFail("cannot resolve host `" + host + "`");
@@ -1723,14 +1763,13 @@ async function netConnect(
       const sock = await netConnectOne(
         addr,
         p,
-        useTls,
-        verify,
+        tlsOpts,
         host,
         deadline,
         message
       );
       _endIfShutdown(sock);
-      return new EConn(sock, netPeerDesc(sock), useTls);
+      return new EConn(sock, netPeerDesc(sock), tlsOpts !== null);
     } catch (e) {
       if (e instanceof EProgramEnd) throw e;
       last = e;
@@ -1834,9 +1873,13 @@ async function netListenTls(
   host: any,
   port: any,
   certPath: any,
-  keyPath: any
+  keyPath: any,
+  caFile: any,
+  requireClientCert: boolean
 ): Promise<EListener> {
   const p = netInt(port);
+  if (requireClientCert && caFile === "")
+    netFail("tls: require_client_cert needs a ca_file to verify against");
   let cert: any;
   let key: any;
   try {
@@ -1852,8 +1895,20 @@ async function netListenTls(
         netReason(e)
     );
   }
+  const serverOpts: any = { cert: cert, key: key };
+  if (caFile !== "") {
+    try {
+      serverOpts.ca = nodeFs.readFileSync(caFile);
+    } catch (e) {
+      netFail(
+        "cannot load the TLS client CA file `" + caFile + "`: " + netReason(e)
+      );
+    }
+    serverOpts.requestCert = true;
+    serverOpts.rejectUnauthorized = requireClientCert;
+  }
   const l = new EListener(
-    nodeTls.createServer({ cert: cert, key: key }),
+    nodeTls.createServer(serverOpts),
     "",
     0,
     false,
@@ -2366,9 +2421,7 @@ const E: any = {
       case "net_resolve":
         return netResult(() => netResolve(args[0]));
       case "net_connect":
-        return netResult(() =>
-          netConnect(args[0], args[1], args[2], false, false)
-        );
+        return netResult(() => netConnect(args[0], args[1], args[2], null));
       case "net_connect_unix":
         return netResult(() => netConnectUnix(args[0], args[1]));
       case "net_listen":
@@ -2379,15 +2432,44 @@ const E: any = {
         return netResult(() => netUdpBind(args[0], args[1]));
       case "net_tls_connect":
         return netResult(() =>
-          netConnect(args[0], args[1], args[2], true, true)
+          netConnect(
+            args[0],
+            args[1],
+            args[2],
+            netTlsClientOptions(true, "", "", "", "")
+          )
         );
       case "net_tls_connect_insecure":
         return netResult(() =>
-          netConnect(args[0], args[1], args[2], true, false)
+          netConnect(
+            args[0],
+            args[1],
+            args[2],
+            netTlsClientOptions(false, "", "", "", "")
+          )
+        );
+      case "net_tls_connect_with":
+        return netResult(() =>
+          netConnect(
+            args[0],
+            args[1],
+            args[2],
+            netTlsClientOptions(
+              !args[7],
+              args[3],
+              args[4],
+              args[5],
+              args[6]
+            )
+          )
         );
       case "net_listen_tls":
         return netResult(() =>
-          netListenTls(args[0], args[1], args[2], args[3])
+          netListenTls(args[0], args[1], args[2], args[3], "", false)
+        );
+      case "net_listen_tls_with":
+        return netResult(() =>
+          netListenTls(args[0], args[1], args[2], args[3], args[4], args[5])
         );
       default:
         throw new Error(

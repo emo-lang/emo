@@ -2013,6 +2013,73 @@ case http.get("http://127.0.0.1:" + listener.port().to_string() + "/hello") {
                           ds)))
         in
         Alcotest.(check string) "output" "hello from emo\n200\n" output);
+    tc "an https server and client round-trip on localhost" (fun () ->
+        use_workspace_registry () |> ignore;
+        let fixtures = from_original_cwd "../../test/emo_sched/fixtures" in
+        let fixture name = Filename.concat fixtures name in
+        let entry =
+          with_project
+            [
+              ( "package.emo",
+                {|package {
+  name = "tls_roundtrip"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    "http" = "0.1.0"
+    "net" = "0.1.0"
+  }
+}|}
+              );
+              ( "main.emo",
+                Printf.sprintf
+                  {|require "http"
+require "net"
+
+const (R.ok, listener) = net.listen_tls("127.0.0.1", 0, "%s", "%s")
+
+do http.serve_requests(listener) -> (req HttpRequest) {
+  return http.response(200, [("Content-Type", "text/plain")], "hello over https")
+}
+
+const options = net.tls_client_options().with_ca_file("%s")
+case http.request_with("GET", "https://localhost:" + listener.port().to_string() + "/hello", [], "", 5.0, options) {
+  (R.error, why) -> { println("request failed: ${why}") }
+  (R.ok, resp)   -> {
+    println(resp.body)
+    println(resp.status)
+  }
+}
+|}
+                  (fixture "tls-server-cert.pem")
+                  (fixture "tls-server-key.pem")
+                  (fixture "tls-ca.pem") );
+            ]
+            "main.emo"
+        in
+        let output =
+          capture_output (fun () ->
+              match
+                Emo_project.run_entry ~entry_file:entry ~check:true
+                  ~sched:Emo_project.Own ()
+              with
+              | _project -> ()
+              | exception Emo_project.Static_errors ds ->
+                  Alcotest.fail
+                    (String.concat "\n"
+                       (List.map
+                          (fun d ->
+                            Printf.sprintf "%s at %s: %s"
+                              (match d.Emo_support.Diagnostic.code with
+                              | Some c -> c
+                              | None -> "?")
+                              (Emo_support.Span.to_string
+                                 d.Emo_support.Diagnostic.span)
+                              d.Emo_support.Diagnostic.message)
+                          ds)))
+        in
+        Alcotest.(check string) "output" "hello over https\n200\n" output);
     tc "the http_roundtrip example runs through the committed lockfile"
       (fun () ->
         use_workspace_registry () |> ignore;

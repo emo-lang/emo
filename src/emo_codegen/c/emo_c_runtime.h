@@ -435,8 +435,15 @@ void emo_net_wait_writable(int64_t fd);
    hand-declared subset, the version floor, and the constants. */
 emo_value emo_net_tls_connect(emo_str host, int64_t port, double timeout,
                               int insecure);
+emo_value emo_net_tls_connect_with(emo_str host, int64_t port, double timeout,
+                                   emo_str ca_file, emo_str cert_file,
+                                   emo_str key_file, emo_str server_name,
+                                   int insecure);
 emo_value emo_net_listen_tls(emo_str host, int64_t port, emo_str cert_path,
                              emo_str key_path);
+emo_value emo_net_listen_tls_with(emo_str host, int64_t port,
+                                  emo_str cert_path, emo_str key_path,
+                                  emo_str ca_file, int require_client_cert);
 
 /* Strings: the interpreter's method set over length-prefixed bytes. */
 emo_str emo_str_substring(emo_str s, int64_t start, int64_t len);
