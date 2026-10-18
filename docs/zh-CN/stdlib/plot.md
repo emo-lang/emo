@@ -22,6 +22,7 @@ def svg(fig Figure) String
 // Figure
 def with_title(t String) Figure
 def with_size(w Float64, h Float64) Figure
+def with_theme(t Theme) Figure
 def with_axes(a Array[Axes]) Figure
 def with_share(s Share) Figure
 
@@ -32,7 +33,6 @@ def with_x_scale(s Scale) Axes
 def with_y_scale(s Scale) Axes
 def with_x_domain(a Float64, b Float64) Axes
 def with_y_domain(a Float64, b Float64) Axes
-def with_grid_style(s GridStyle) Axes
 def with_marks(m Array[Mark]) Axes
 def with_legend(on Bool) Axes
 
@@ -51,7 +51,31 @@ enum Share { all, none }
 
 域要么是 `Domain.auto`——从每个 mark 的跨度推断,也是默认——要么经 `with_x_domain(a, b)` / `with_y_domain(a, b)` 落成 `Domain.fixed`,原样携带调用者给的两端:刻度尊重固定后的两端,倒置的域(`lo >= hi`)直接 raise。mark 目前不会裁剪进坐标轴矩形,固定域之外的数据会画出界外。
 
-网格画在 mark 背后:y 刻度上的横线与 x 刻度上的竖线,由 `GridStyle` 定样式——`color`、`width`、`dash`(与折线 mark 同一个 `Dash` 枚举)、`visible`(`false` 时完全不画网格)。默认是宽度 1.0 的浅色实线。
+网格画在 mark 背后:y 刻度上的横线与 x 刻度上的竖线,由主题的 `GridStyle` 定样式——`color`、`width`、`dash`(与折线 mark 同一个 `Dash` 枚举)、`visible`(`false` 时完全不画网格)。默认是宽度 1.0 的浅色实线,经 `Theme.with_grid` 细化。
+
+## 主题
+
+主题装扮整张图:背景与前景墨色、网格、坐标轴、标题、标签样式,color 通道将要经过的 palette 与 colormap、面板间距,以及 `figure()` 出发的默认尺寸。`figure()` 建出默认的浅色主题,`with_theme` 把另一套换上图:
+
+```emo
+plot.figure().with_theme(plot.dark_theme())
+```
+
+```emo
+def theme() Theme
+def dark_theme() Theme
+
+def palette() Palette
+def viridis() Colormap
+def sequential() Colormap
+def diverging() Colormap
+```
+
+`Theme` 携带 `background` 与 `foreground`(sRGB 三元组)、`grid`(一个 `GridStyle`)、`axis`(一个 `AxisStyle`:轴线颜色与宽度、刻度线长度、x/y 轴标签字号)、`title` 与 `label`(两个 `TextStyle`:颜色、字号、锚点、字重)、`palette`、`cmap`、`spacing` 与 `width`/`height`。每个字段都有对应的 `with_*` 拷贝方法:`with_background`、`with_foreground`、`with_grid`、`with_axis`、`with_title`、`with_label`、`with_palette`、`with_cmap`、`with_spacing`。
+
+`Palette` 包一组颜色,`color(i)` 按列表取模应答。`Colormap` 把 stops 钉在 0.0–1.0 的位置上,`at(t)` 把 `t` 钳进该区间、按夹住它的两个 stops 在 `Float64` 里插值应答;空列表、越界位置或倒序位置直接 raise。内置的都是起点:`palette()` 列出五个 mark 族的默认色,`viridis()`/`sequential()`/`diverging()` 各用五个 stops 逼近各自的目标。
+
+主题只供默认值;mark 最终画什么,仍是它自己的 `plot.mark` 样式值。
 
 ## mark
 
@@ -99,7 +123,7 @@ plot.mark.line(years, revenue).with_style(
 
 mark 通过 `Mark` 接口把自己画进坐标轴——`draw`,加上它要求坐标轴覆盖的数据跨度:连续的 x、y 范围走 `x_min`/`x_max`/`y_min`/`y_max`,类别的 x 面走 `bands` 和 `x_labels`——还要喂养图例:`legend_label()` 应答样式上的 label,`legend_sample` 画该族自己的样例。新增一种 mark 就是新增一个满足该形状的类。
 
-`legend` 开着时(默认),带 label 的 mark 列进绘图区右上角的图例——按 marks 数组序、最后绘制,背后垫一块白板。label 为空的 mark 不进图例。条目的偏移用近似的单字符宽度估算,因为这个包不带字体度量。
+`legend` 开着时(默认),带 label 的 mark 列进绘图区右上角的图例——按 marks 数组序、最后绘制,背后垫一块主题背景色的面板、按主题间距内缩。label 为空的 mark 不进图例。条目的偏移用近似的单字符宽度估算,因为这个包不带字体度量。
 
 ## 完整例子
 
@@ -127,6 +151,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签,以及 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:经 `Share` 的分面。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格,以及装扮这一切的主题,还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:经 `Share` 的分面,以及 `color` 通道背后的 palette/colormap 接线。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

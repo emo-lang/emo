@@ -1388,7 +1388,7 @@ against the `Renderer` interface, not `SvgRenderer`.
       draw-order rule; one shared legend under faceting, T41.7).
 - [x] **T41.4** — Grid rendering from `Figure.grid`, driven by the
       theme's grid style.
-- [ ] **T41.5** — `Theme` as a value on `Figure` (background and
+- [x] **T41.5** — `Theme` as a value on `Figure` (background and
       foreground, the grid/axis/title/label styles, a palette, a
       colormap, spacing, the default size; decision 24) with
       `with_theme`.

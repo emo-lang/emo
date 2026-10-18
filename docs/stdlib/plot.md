@@ -28,6 +28,7 @@ def svg(fig Figure) String
 // Figure
 def with_title(t String) Figure
 def with_size(w Float64, h Float64) Figure
+def with_theme(t Theme) Figure
 def with_axes(a Array[Axes]) Figure
 def with_share(s Share) Figure
 
@@ -38,7 +39,6 @@ def with_x_scale(s Scale) Axes
 def with_y_scale(s Scale) Axes
 def with_x_domain(a Float64, b Float64) Axes
 def with_y_domain(a Float64, b Float64) Axes
-def with_grid_style(s GridStyle) Axes
 def with_marks(m Array[Mark]) Axes
 def with_legend(on Bool) Axes
 
@@ -71,10 +71,53 @@ Marks are not clipped to the axes rectangle yet, so data outside a
 fixed domain draws past it.
 
 The grid draws behind the marks: horizontal lines at the y ticks and
-vertical lines at the x ticks, styled by a `GridStyle` — `color`,
-`width`, `dash` (the same `Dash` enum the line mark strokes with), and
-`visible` (`false` draws no grid at all). The default is a light solid
-line at width 1.0.
+vertical lines at the x ticks, styled by the theme's `GridStyle` —
+`color`, `width`, `dash` (the same `Dash` enum the line mark strokes
+with), and `visible` (`false` draws no grid at all). The default is a
+light solid line at width 1.0, refined through `Theme.with_grid`.
+
+## Themes
+
+A theme dresses the whole figure: the background and foreground inks,
+the grid, axis, title, and label styles, the palette and colormap the
+`color` channel will resolve through, the spacing between panels, and
+the default size a `figure()` starts at. `figure()` builds the default
+light theme, and `with_theme` swaps it on a figure:
+
+```emo
+plot.figure().with_theme(plot.dark_theme())
+```
+
+```emo
+def theme() Theme
+def dark_theme() Theme
+
+def palette() Palette
+def viridis() Colormap
+def sequential() Colormap
+def diverging() Colormap
+```
+
+`Theme` carries `background` and `foreground` (sRGB triples), `grid`
+(a `GridStyle`), `axis` (an `AxisStyle`: the spine color and width, the
+tick mark length, and the x/y axis label size), `title` and `label`
+(`TextStyle`s: color, size, anchor, weight), `palette`, `cmap`,
+`spacing`, and `width` / `height`. Every field refines through a
+`with_*` copy method: `with_background`, `with_foreground`, `with_grid`,
+`with_axis`, `with_title`, `with_label`, `with_palette`, `with_cmap`,
+`with_spacing`.
+
+A `Palette` wraps a list of colors and answers `color(i)` wrapping
+around the list. A `Colormap` pins stops at positions across 0.0–1.0
+and answers `at(t)` by interpolating the bracketing stops' channels in
+`Float64`; an empty list, an out-of-range position, or a descending
+position raises. The built-ins are starting points: `palette()` lists
+the five mark families' default colors, and `viridis()` /
+`sequential()` / `diverging()` approximate their targets with five
+stops each.
+
+The theme only supplies defaults; what a mark finally draws is still a
+`plot.mark` style value.
 
 ## Marks
 
@@ -153,10 +196,11 @@ family's swatch. A new mark family is a new class that satisfies that
 shape.
 
 With `legend` on (the default), the labeled marks list into a legend in
-the plot's top-right corner — marks array order, drawn last, one white
-panel behind them. Marks whose label is empty stay out of it. Entry
-offsets use an approximate per-character advance, since the package
-carries no font metrics.
+the plot's top-right corner — marks array order, drawn last, one panel
+behind them filled with the theme background and inset by the theme
+spacing. Marks whose label is empty stay out of it. Entry offsets use
+an approximate per-character advance, since the package carries no font
+metrics.
 
 ## A worked example
 
@@ -197,14 +241,15 @@ whole story, target by target, is
 [`docs/demo-targets.md`](../demo-targets.md).
 
 T0 — what exists today — is the bar, line, scatter, area, and hist
-marks, linear axes with nice-number ticks, a title, axis labels, and
-SVG output. Both axes scale to the marks' declared spans: the y domain
-covers every mark's range, and the x axis ticks numerically unless a
-mark supplies categorical labels. The remaining pieces the surface
-carries are reserved and not rendered yet:
-faceting via `Share`. The SVG renderer sits behind an
-internal `Renderer` contract, so a terminal or raster backend can join
-later without disturbing the figure or the marks.
+marks, linear axes with nice-number ticks, a title, axis labels, tick
+marks, the grid, the theme that dresses it all, and SVG output. Both
+axes scale to the marks' declared spans: the y domain covers every
+mark's range, and the x axis ticks numerically unless a mark supplies
+categorical labels. The remaining pieces the surface carries are
+reserved and not rendered yet: faceting via `Share`, and the
+palette/colormap wiring behind the `color` channel. The SVG renderer
+sits behind an internal `Renderer` contract, so a terminal or raster
+backend can join later without disturbing the figure or the marks.
 
 See also: `examples/plot_demo`, and the design note
 [`docs/visualization.md`](../visualization.md).

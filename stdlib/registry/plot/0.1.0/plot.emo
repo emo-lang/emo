@@ -6,37 +6,43 @@ const scale = internal.scale
 enum Scale { linear, log }
 enum Domain { auto, fixed }
 enum Share { all, none }
+enum Anchor { start, middle, end }
+enum Weight { regular, bold }
 
 class Figure {
-  def init(width Float64, height Float64, title String, axes Array[Axes], grid (Int64, Int64), share Share) {
+  def init(width Float64, height Float64, title String, theme Theme, axes Array[Axes], grid (Int64, Int64), share Share) {
     self.width = width
     self.height = height
     self.title = title
+    self.theme = theme
     self.axes = axes
     self.grid = grid
     self.share = share
   }
 
   def with_title(t String) Figure {
-    return Figure.new(width: self.width, height: self.height, title: t, axes: self.axes, grid: self.grid, share: self.share)
+    return Figure.new(width: self.width, height: self.height, title: t, theme: self.theme, axes: self.axes, grid: self.grid, share: self.share)
   }
 
   def with_size(w Float64, h Float64) Figure {
-    return Figure.new(width: w, height: h, title: self.title, axes: self.axes, grid: self.grid, share: self.share)
+    return Figure.new(width: w, height: h, title: self.title, theme: self.theme, axes: self.axes, grid: self.grid, share: self.share)
+  }
+
+  def with_theme(t Theme) Figure {
+    return Figure.new(width: self.width, height: self.height, title: self.title, theme: t, axes: self.axes, grid: self.grid, share: self.share)
   }
 
   def with_axes(a Array[Axes]) Figure {
-    return Figure.new(width: self.width, height: self.height, title: self.title, axes: a, grid: self.grid, share: self.share)
+    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: a, grid: self.grid, share: self.share)
   }
 
   def with_share(s Share) Figure {
-    return Figure.new(width: self.width, height: self.height, title: self.title, axes: self.axes, grid: self.grid, share: s)
+    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: self.axes, grid: self.grid, share: s)
   }
 }
 
-// The style of an axes's gridlines: the tick-aligned lines behind the
-// marks, horizontal for y ticks and vertical for x ticks. `visible`
-// false draws no grid at all.
+// The style of the gridlines behind the marks: horizontal at the y
+// ticks, vertical at the x ticks. `visible` false draws no grid at all.
 class GridStyle {
   def init(color (Int64, Int64, Int64), width Float64, dash mark.Dash, visible Bool) {
     self.color = color
@@ -66,10 +72,252 @@ def grid_style() GridStyle {
   return GridStyle.new(color: (230, 230, 230), width: 1.0, dash: mark.Dash.solid, visible: true)
 }
 
+// The style of a piece of figure text. The figure places every text at
+// its own spot — tick labels end toward the axis, axis labels center
+// under it — and reads color, size, and weight from here.
+class TextStyle {
+  def init(color (Int64, Int64, Int64), size Float64, anchor Anchor, weight Weight) {
+    self.color = color
+    self.size = size
+    self.anchor = anchor
+    self.weight = weight
+  }
+
+  def with_color(c (Int64, Int64, Int64)) TextStyle {
+    return TextStyle.new(color: c, size: self.size, anchor: self.anchor, weight: self.weight)
+  }
+
+  def with_size(s Float64) TextStyle {
+    return TextStyle.new(color: self.color, size: s, anchor: self.anchor, weight: self.weight)
+  }
+
+  def with_anchor(a Anchor) TextStyle {
+    return TextStyle.new(color: self.color, size: self.size, anchor: a, weight: self.weight)
+  }
+
+  def with_weight(w Weight) TextStyle {
+    return TextStyle.new(color: self.color, size: self.size, anchor: self.anchor, weight: w)
+  }
+}
+
+// The style of the axes frame: the bottom spine, the tick marks at each
+// tick, and the size of the x/y axis label text.
+class AxisStyle {
+  def init(color (Int64, Int64, Int64), width Float64, tick_len Float64, label_size Float64) {
+    self.color = color
+    self.width = width
+    self.tick_len = tick_len
+    self.label_size = label_size
+  }
+
+  def with_color(c (Int64, Int64, Int64)) AxisStyle {
+    return AxisStyle.new(color: c, width: self.width, tick_len: self.tick_len, label_size: self.label_size)
+  }
+
+  def with_width(w Float64) AxisStyle {
+    return AxisStyle.new(color: self.color, width: w, tick_len: self.tick_len, label_size: self.label_size)
+  }
+
+  def with_tick_len(l Float64) AxisStyle {
+    return AxisStyle.new(color: self.color, width: self.width, tick_len: l, label_size: self.label_size)
+  }
+
+  def with_label_size(s Float64) AxisStyle {
+    return AxisStyle.new(color: self.color, width: self.width, tick_len: self.tick_len, label_size: s)
+  }
+}
+
+// A categorical palette: `color(i)` answers entry `i` wrapping around
+// the list. The chart layer resolves a categorical color column through
+// it by the level's sorted position.
+class Palette {
+  def init(colors Array[(Int64, Int64, Int64)]) {
+    if colors.length() == 0 {
+      raise Exception.new(message: "plot: a palette needs at least one color")
+    }
+    self.colors = colors
+  }
+
+  def color(i Int64) (Int64, Int64, Int64) {
+    return self.colors[i % self.colors.length()]
+  }
+
+  def with_colors(cs Array[(Int64, Int64, Int64)]) Palette {
+    return Palette.new(colors: cs)
+  }
+}
+
+def palette() Palette {
+  return Palette.new(colors: [(47, 111, 179), (192, 57, 43), (85, 168, 104), (230, 145, 56), (148, 103, 189)])
+}
+
+// A continuous colormap: stops pinned at positions across 0.0–1.0, and
+// `at(t)` clamps `t` to that span and interpolates the bracketing
+// stops' channels in Float64. The built-in maps approximate their
+// targets with a handful of stops, not point for point.
+class Colormap {
+  def init(stops Array[(Float64, (Int64, Int64, Int64))]) {
+    if stops.length() == 0 {
+      raise Exception.new(message: "plot: a colormap needs at least one stop")
+    }
+    if stops[0][0] < 0.0 || stops[stops.length() - 1][0] > 1.0 {
+      raise Exception.new(message: "plot: colormap stop positions live in 0.0 to 1.0")
+    }
+    for var s = 1; s < stops.length(); s = s + 1 {
+      if stops[s][0] <= stops[s - 1][0] {
+        raise Exception.new(message: "plot: colormap stops need ascending positions, got ${stops[s - 1][0]} then ${stops[s][0]}")
+      }
+    }
+    self.stops = stops
+  }
+
+  def at(t Float64) (Int64, Int64, Int64) {
+    const stops = self.stops
+    var v = t
+    if v < 0.0 {
+      v = 0.0
+    }
+    if v > 1.0 {
+      v = 1.0
+    }
+    var lo = 0
+    var hi = stops.length() - 1
+    for var s = 0; s < stops.length(); s = s + 1 {
+      if stops[s][0] <= v {
+        lo = s
+      }
+      if stops[s][0] >= v && s < hi {
+        hi = s
+      }
+    }
+    if lo == hi {
+      return stops[lo][1]
+    }
+    const a = stops[lo]
+    const b = stops[hi]
+    const f = (v - a[0]) / (b[0] - a[0])
+    const r = a[1][0].to_float64() + (b[1][0].to_float64() - a[1][0].to_float64()) * f
+    const g = a[1][1].to_float64() + (b[1][1].to_float64() - a[1][1].to_float64()) * f
+    const bl = a[1][2].to_float64() + (b[1][2].to_float64() - a[1][2].to_float64()) * f
+    return ((r + 0.5).floor().to_int64(), (g + 0.5).floor().to_int64(), (bl + 0.5).floor().to_int64())
+  }
+
+  def with_stops(ss Array[(Float64, (Int64, Int64, Int64))]) Colormap {
+    return Colormap.new(stops: ss)
+  }
+}
+
+def viridis() Colormap {
+  return Colormap.new(stops: [
+    (0.0, (68, 1, 84)),
+    (0.25, (59, 82, 139)),
+    (0.5, (33, 145, 140)),
+    (0.75, (94, 201, 98)),
+    (1.0, (253, 231, 37))
+  ])
+}
+
+def sequential() Colormap {
+  return Colormap.new(stops: [
+    (0.0, (247, 251, 255)),
+    (0.25, (198, 219, 239)),
+    (0.5, (107, 174, 214)),
+    (0.75, (49, 130, 189)),
+    (1.0, (8, 81, 156))
+  ])
+}
+
+def diverging() Colormap {
+  return Colormap.new(stops: [
+    (0.0, (178, 24, 43)),
+    (0.25, (244, 165, 130)),
+    (0.5, (247, 247, 247)),
+    (0.75, (146, 197, 222)),
+    (1.0, (33, 102, 172))
+  ])
+}
+
+// The figure's dress: background and foreground ink, the grid, axis,
+// title, and label styles, the categorical palette and the continuous
+// colormap the color channel resolves through, the spacing between
+// panels, and the default size a `figure()` starts at. The theme only
+// supplies defaults; what a mark finally draws is still a `plot.mark`
+// style value.
+class Theme {
+  def init(background (Int64, Int64, Int64), foreground (Int64, Int64, Int64), grid GridStyle, axis AxisStyle,
+           title TextStyle, label TextStyle, palette Palette, cmap Colormap, spacing Float64,
+           width Float64, height Float64) {
+    self.background = background
+    self.foreground = foreground
+    self.grid = grid
+    self.axis = axis
+    self.title = title
+    self.label = label
+    self.palette = palette
+    self.cmap = cmap
+    self.spacing = spacing
+    self.width = width
+    self.height = height
+  }
+
+  def with_background(c (Int64, Int64, Int64)) Theme {
+    return Theme.new(background: c, foreground: self.foreground, grid: self.grid, axis: self.axis, title: self.title, label: self.label, palette: self.palette, cmap: self.cmap, spacing: self.spacing, width: self.width, height: self.height)
+  }
+
+  def with_foreground(c (Int64, Int64, Int64)) Theme {
+    return Theme.new(background: self.background, foreground: c, grid: self.grid, axis: self.axis, title: self.title, label: self.label, palette: self.palette, cmap: self.cmap, spacing: self.spacing, width: self.width, height: self.height)
+  }
+
+  def with_grid(s GridStyle) Theme {
+    return Theme.new(background: self.background, foreground: self.foreground, grid: s, axis: self.axis, title: self.title, label: self.label, palette: self.palette, cmap: self.cmap, spacing: self.spacing, width: self.width, height: self.height)
+  }
+
+  def with_axis(s AxisStyle) Theme {
+    return Theme.new(background: self.background, foreground: self.foreground, grid: self.grid, axis: s, title: self.title, label: self.label, palette: self.palette, cmap: self.cmap, spacing: self.spacing, width: self.width, height: self.height)
+  }
+
+  def with_title(s TextStyle) Theme {
+    return Theme.new(background: self.background, foreground: self.foreground, grid: self.grid, axis: self.axis, title: s, label: self.label, palette: self.palette, cmap: self.cmap, spacing: self.spacing, width: self.width, height: self.height)
+  }
+
+  def with_label(s TextStyle) Theme {
+    return Theme.new(background: self.background, foreground: self.foreground, grid: self.grid, axis: self.axis, title: self.title, label: s, palette: self.palette, cmap: self.cmap, spacing: self.spacing, width: self.width, height: self.height)
+  }
+
+  def with_palette(p Palette) Theme {
+    return Theme.new(background: self.background, foreground: self.foreground, grid: self.grid, axis: self.axis, title: self.title, label: self.label, palette: p, cmap: self.cmap, spacing: self.spacing, width: self.width, height: self.height)
+  }
+
+  def with_cmap(c Colormap) Theme {
+    return Theme.new(background: self.background, foreground: self.foreground, grid: self.grid, axis: self.axis, title: self.title, label: self.label, palette: self.palette, cmap: c, spacing: self.spacing, width: self.width, height: self.height)
+  }
+
+  def with_spacing(s Float64) Theme {
+    return Theme.new(background: self.background, foreground: self.foreground, grid: self.grid, axis: self.axis, title: self.title, label: self.label, palette: self.palette, cmap: self.cmap, spacing: s, width: self.width, height: self.height)
+  }
+}
+
+def theme() Theme {
+  return Theme.new(background: (255, 255, 255), foreground: (34, 34, 34), grid: grid_style(),
+    axis: AxisStyle.new(color: (136, 136, 136), width: 1.0, tick_len: 4.0, label_size: 13.0),
+    title: TextStyle.new(color: (34, 34, 34), size: 18.0, anchor: Anchor.start, weight: Weight.bold),
+    label: TextStyle.new(color: (85, 85, 85), size: 12.0, anchor: Anchor.start, weight: Weight.regular),
+    palette: palette(), cmap: viridis(), spacing: 8.0, width: 640.0, height: 480.0)
+}
+
+def dark_theme() Theme {
+  return Theme.new(background: (24, 26, 32), foreground: (226, 230, 238),
+    grid: GridStyle.new(color: (56, 60, 70), width: 1.0, dash: mark.Dash.solid, visible: true),
+    axis: AxisStyle.new(color: (110, 116, 128), width: 1.0, tick_len: 4.0, label_size: 13.0),
+    title: TextStyle.new(color: (238, 240, 246), size: 18.0, anchor: Anchor.start, weight: Weight.bold),
+    label: TextStyle.new(color: (164, 170, 182), size: 12.0, anchor: Anchor.start, weight: Weight.regular),
+    palette: palette(), cmap: viridis(), spacing: 8.0, width: 640.0, height: 480.0)
+}
+
 class Axes {
   def init(x_label String, y_label String, x_scale Scale, y_scale Scale,
            x_domain (Domain, Float64, Float64), y_domain (Domain, Float64, Float64),
-           legend Bool, grid GridStyle, marks Array[mark.Mark]) {
+           legend Bool, marks Array[mark.Mark]) {
     self.x_label = x_label
     self.y_label = y_label
     self.x_scale = x_scale
@@ -77,53 +325,49 @@ class Axes {
     self.x_domain = x_domain
     self.y_domain = y_domain
     self.legend = legend
-    self.grid = grid
     self.marks = marks
   }
 
-  def with_grid_style(s GridStyle) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: s, marks: self.marks)
-  }
-
   def with_x_label(s String) Axes {
-    return Axes.new(x_label: s, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
+    return Axes.new(x_label: s, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
   }
 
   def with_y_label(s String) Axes {
-    return Axes.new(x_label: self.x_label, y_label: s, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: s, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
   }
 
   def with_x_scale(s Scale) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: s, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: s, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
   }
 
   def with_y_scale(s Scale) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: s, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: s, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
   }
 
   def with_x_domain(a Float64, b Float64) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: (Domain.fixed, a, b), y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: (Domain.fixed, a, b), y_domain: self.y_domain, legend: self.legend, marks: self.marks)
   }
 
   def with_y_domain(a Float64, b Float64) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: (Domain.fixed, a, b), legend: self.legend, grid: self.grid, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: (Domain.fixed, a, b), legend: self.legend, marks: self.marks)
   }
 
   def with_marks(m Array[mark.Mark]) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, grid: self.grid, marks: m)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: m)
   }
 
   def with_legend(on Bool) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: on, grid: self.grid, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: on, marks: self.marks)
   }
 }
 
 def figure() Figure {
-  return Figure.new(width: 640.0, height: 480.0, title: "", axes: [axes()], grid: (1, 1), share: Share.all)
+  const t = theme()
+  return Figure.new(width: t.width, height: t.height, title: "", theme: t, axes: [axes()], grid: (1, 1), share: Share.all)
 }
 
 def axes() Axes {
-  return Axes.new(x_label: "", y_label: "", x_scale: Scale.linear, y_scale: Scale.linear, x_domain: (Domain.auto, 0.0, 0.0), y_domain: (Domain.auto, 0.0, 0.0), legend: true, grid: grid_style(), marks: [])
+  return Axes.new(x_label: "", y_label: "", x_scale: Scale.linear, y_scale: Scale.linear, x_domain: (Domain.auto, 0.0, 0.0), y_domain: (Domain.auto, 0.0, 0.0), legend: true, marks: [])
 }
 
 // A tick label: an integral value loses its trailing ".0".
@@ -134,7 +378,27 @@ def tick_text(x Float64) String {
   return x.to_string()
 }
 
+def svg_anchor(a Anchor) internal.svg.Anchor {
+  var r = internal.svg.Anchor.start
+  case a {
+    Anchor.start -> { r = internal.svg.Anchor.start }
+    Anchor.middle -> { r = internal.svg.Anchor.middle }
+    Anchor.end -> { r = internal.svg.Anchor.end }
+  }
+  return r
+}
+
+def svg_weight(w Weight) internal.svg.Weight {
+  var r = internal.svg.Weight.regular
+  case w {
+    Weight.regular -> { r = internal.svg.Weight.regular }
+    Weight.bold -> { r = internal.svg.Weight.bold }
+  }
+  return r
+}
+
 def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
+  const t = fig.theme
   const ml = 64.0
   const mr = 24.0
   const mt = 64.0
@@ -221,10 +485,10 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
   }
   const ctx = internal.ctx.DrawContext.new(renderer: r, x0: ml, y0: mt, plot_w: pw, plot_h: ph, x_min: xlo, x_max: xhi, y_min: ylo, y_max: top, x_log: x_log, y_log: y_log)
   if fig.title != "" {
-    r.text(ml, 30.0, fig.title, 18.0, internal.svg.Anchor.start, internal.svg.Weight.bold, (34, 34, 34))
+    r.text(ml, 30.0, fig.title, t.title.size, svg_anchor(t.title.anchor), svg_weight(t.title.weight), t.title.color)
   }
   if ax.y_label != "" {
-    r.text(ml, 52.0, ax.y_label, 13.0, internal.svg.Anchor.start, internal.svg.Weight.regular, (85, 85, 85))
+    r.text(ml, 52.0, ax.y_label, t.axis.label_size, internal.svg.Anchor.start, svg_weight(t.label.weight), t.label.color)
   }
   // Tick positions for both axes, then the grid behind everything:
   // horizontal lines at the y ticks, vertical lines at the x ticks.
@@ -258,44 +522,55 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
       }
     }
   }
-  const gs = ax.grid
+  const gs = t.grid
   if gs.visible {
     const pattern = mark.dash_array(gs.dash)
-    for var t = 0; t < yt.length(); t = t + 1 {
-      const y = ctx.py(yt[t])
+    for var k = 0; k < yt.length(); k = k + 1 {
+      const y = ctx.py(yt[k])
       r.line(ml, y, ml + pw, y, gs.color, gs.width, pattern)
     }
-    for var t = 0; t < xt.length(); t = t + 1 {
-      const cx = ctx.px(xt[t])
+    for var k = 0; k < xt.length(); k = k + 1 {
+      const cx = ctx.px(xt[k])
       r.line(cx, mt, cx, mt + ph, gs.color, gs.width, pattern)
     }
   }
   for var k = 0; k < marks.length(); k = k + 1 {
     marks[k].draw(ctx)
   }
-  r.line(ml, mt + ph, ml + pw, mt + ph, (136, 136, 136), 1.0, "")
-  for var t = 0; t < yt.length(); t = t + 1 {
-    const y = ctx.py(yt[t])
-    r.text(ml - 8.0, y + 4.0, tick_text(yt[t]), 12.0, internal.svg.Anchor.end, internal.svg.Weight.regular, (85, 85, 85))
+  r.line(ml, mt + ph, ml + pw, mt + ph, t.axis.color, t.axis.width, "")
+  if t.axis.tick_len > 0.0 {
+    for var k = 0; k < yt.length(); k = k + 1 {
+      const y = ctx.py(yt[k])
+      r.line(ml - t.axis.tick_len, y, ml, y, t.axis.color, t.axis.width, "")
+    }
+    for var k = 0; k < xt.length(); k = k + 1 {
+      const cx = ctx.px(xt[k])
+      r.line(cx, mt + ph, cx, mt + ph + t.axis.tick_len, t.axis.color, t.axis.width, "")
+    }
+  }
+  for var k = 0; k < yt.length(); k = k + 1 {
+    const y = ctx.py(yt[k])
+    r.text(ml - 8.0, y + 4.0, tick_text(yt[k]), t.label.size, internal.svg.Anchor.end, svg_weight(t.label.weight), t.label.color)
   }
   if categorical {
     const labels = marks[li].x_labels()
     for var b = 0; b < labels.length(); b = b + 1 {
       const cx = ctx.px(b.to_float64() + 0.5)
-      r.text(cx, mt + ph + 18.0, labels[b], 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
+      r.text(cx, mt + ph + 18.0, labels[b], t.label.size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
     }
   } else {
-    for var t = 0; t < xt.length(); t = t + 1 {
-      const cx = ctx.px(xt[t])
-      r.text(cx, mt + ph + 18.0, tick_text(xt[t]), 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
+    for var k = 0; k < xt.length(); k = k + 1 {
+      const cx = ctx.px(xt[k])
+      r.text(cx, mt + ph + 18.0, tick_text(xt[k]), t.label.size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
     }
   }
   if ax.x_label != "" {
-    r.text(ml + pw / 2.0, mt + ph + 44.0, ax.x_label, 13.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
+    r.text(ml + pw / 2.0, mt + ph + 44.0, ax.x_label, t.axis.label_size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
   }
-  // The legend: marks array order, drawn last, one white panel in the
-  // plot's top-right corner. Only labeled marks join; entry offsets use
-  // an approximate per-character advance, since the package carries no
+  // The legend: marks array order, drawn last, one panel in the plot's
+  // top-right corner inset by the theme spacing, filled with the theme
+  // background. Only labeled marks join; entry offsets use an
+  // approximate per-character advance, since the package carries no
   // font metrics.
   if ax.legend {
     var count = 0
@@ -314,15 +589,15 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
       const row = 20.0
       const bw = wide + 16.0
       const bh = count.to_float64() * row
-      const bx = ml + pw - bw - 8.0
-      const by = mt + 8.0
-      r.rect(bx, by, bw, bh, (255, 255, 255))
+      const bx = ml + pw - bw - t.spacing
+      const by = mt + t.spacing
+      r.rect(bx, by, bw, bh, t.background)
       var at = by + row / 2.0
       for var k = 0; k < marks.length(); k = k + 1 {
         const lbl = marks[k].legend_label()
         if lbl != "" {
           marks[k].legend_sample(r, bx + 8.0, at)
-          r.text(bx + 8.0 + 26.0, at + 4.0, lbl, 12.0, internal.svg.Anchor.start, internal.svg.Weight.regular, (85, 85, 85))
+          r.text(bx + 8.0 + 26.0, at + 4.0, lbl, t.label.size, internal.svg.Anchor.start, svg_weight(t.label.weight), t.label.color)
           at = at + row
         }
       }
@@ -332,7 +607,7 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
 
 def svg(fig Figure) String {
   const r = internal.svg.SvgRenderer.new(fig.width, fig.height)
-  r.rect(0.0, 0.0, fig.width, fig.height, (255, 255, 255))
+  r.rect(0.0, 0.0, fig.width, fig.height, fig.theme.background)
   for var i = 0; i < fig.axes.length(); i = i + 1 {
     draw_axes(r, fig, fig.axes[i])
   }
