@@ -1,0 +1,65 @@
+// Field types: a class declares no field types — a field is born with
+// the type `init` first assigns it, and every read of that field
+// answers it: `self.w` in a method, `r.w` from outside the class, a
+// field of a field (`self.style.width`) once the inner field holds a
+// class, and a field of a class another module declares. A field whose
+// static type is native unboxes where it is read, on every target.
+
+class Style {
+  def init(color (Int64, Int64, Int64), width Float64, filled Bool, label String) {
+    self.color = color
+    self.width = width
+    self.filled = filled
+    self.label = label
+  }
+}
+
+class Rect {
+  def init(w Float64, h Float64, count Int64, style Style) {
+    self.w = w
+    self.h = h
+    self.count = count
+    self.style = style
+  }
+
+  def area() Float64 {
+    return self.w * self.h
+  }
+
+  def stroke_area() Float64 {
+    const pad = self.style.width * 2.0
+    return (self.w + pad) * (self.h + pad)
+  }
+
+  def total(n Int64) Int64 {
+    return self.count * n + 1
+  }
+
+  def describe() String {
+    const (r, g, b) = self.style.color
+    return "${self.style.label}: ${self.w}x${self.h} rgb(${r},${g},${b}) filled=${self.style.filled}"
+  }
+}
+
+const s = Style.new(color: (10, 20, 30), width: 1.5, filled: true, label: "box")
+const r = Rect.new(w: 4.0, h: 2.5, count: 3, style: s)
+println(r.area())
+println(r.stroke_area())
+println(r.total(7))
+println(r.describe())
+
+// reads from outside the class, on a class-typed receiver
+println(r.w + r.h)
+println(r.style.width / 3.0)
+println(r.count + 1)
+if r.style.filled {
+  println("filled")
+}
+const w2 = r.style.width
+println(w2 * w2)
+
+// a class another module declares: its fields type the same way
+const p = geo.point(3.0, 4.0)
+println(p.x * p.y)
+println(geo.norm2(p))
+println(p.norm2() == 25.0)

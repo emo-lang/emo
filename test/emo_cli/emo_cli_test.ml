@@ -327,6 +327,7 @@ let wasm_goldens =
     "if_expr";
     "fib";
     "objects";
+    "field_types";
     "language_tour";
     "shop";
     "pipeline";
@@ -373,6 +374,7 @@ let beam_goldens =
     "if_expr";
     "fib";
     "objects";
+    "field_types";
     "language_tour";
     "shop";
     "pipeline";
@@ -567,6 +569,7 @@ let c_goldens =
     "hello_world";
     "if_expr";
     "objects";
+    "field_types";
     "language_tour";
     "shop";
     "function_group";

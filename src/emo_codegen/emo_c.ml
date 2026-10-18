@@ -894,13 +894,15 @@ and emit_expr env (e : Emo_ir.expr) : string =
         (Printf.sprintf "emo_enum_new(%s, %s)" (c_string enum_name)
            (c_string member))
   | Field_read { obj; name } when is_dyn obj.Emo_ir.ety ->
-      (* cross-module field access: the checker lost the class, but the
-         instance's vtable carries the field names *)
+      (* a field read through the instance's vtable, which carries the
+         field names: the slot holds a dynamic word whatever the
+         field's static type, so a native use unboxes it here — the
+         checker types the read from the class's `init` *)
       let v =
         Printf.sprintf "emo_field_by_name(%s, %s)" (as_dyn env obj)
           (c_string name)
       in
-      if is_dyn e.Emo_ir.ety then v else v (* fields are dynamic words *)
+      if is_dyn e.Emo_ir.ety then v else unbox_code v e.Emo_ir.ety
   | Field_read { obj; name } -> emit_field_read env e.Emo_ir.ety obj name
   | Call_value { f; args } ->
       (* the call hands back the block's __ret claim *)

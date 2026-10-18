@@ -34,13 +34,10 @@ def bar_style() BarStyle {
 }
 
 class Bar {
-  def init(labels Array[String], values Array[Float64], color (Int64, Int64, Int64), width Float64, opacity Float64, label String) {
+  def init(labels Array[String], values Array[Float64], style BarStyle) {
     self.labels = labels
     self.values = values
-    self.color = color
-    self.width = width
-    self.opacity = opacity
-    self.label = label
+    self.style = style
   }
 
   def draw(ctx internal.ctx.DrawContext) Void {
@@ -49,9 +46,9 @@ class Bar {
     const base = ctx.py(0.0)
     for var i = 0; i < n; i = i + 1 {
       const cx = ctx.px(i.to_float64() + 0.5)
-      const half = band * self.width / 2.0
+      const half = band * self.style.width / 2.0
       const top = ctx.py(self.values[i])
-      ctx.renderer.rect(cx - half, top, half * 2.0, base - top, self.color)
+      ctx.renderer.rect(cx - half, top, half * 2.0, base - top, self.style.color)
     }
   }
 
@@ -74,11 +71,10 @@ class Bar {
   }
 
   def with_style(s BarStyle) Bar {
-    return Bar.new(labels: self.labels, values: self.values, color: s.color, width: s.width, opacity: s.opacity, label: s.label)
+    return Bar.new(labels: self.labels, values: self.values, style: s)
   }
 }
 
 def bar(labels Array[String], values Array[Float64]) Bar {
-  const s = bar_style()
-  return Bar.new(labels: labels, values: values, color: s.color, width: s.width, opacity: s.opacity, label: s.label)
+  return Bar.new(labels: labels, values: values, style: bar_style())
 }

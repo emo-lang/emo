@@ -1618,6 +1618,140 @@ println(Float64.from_bits(4614256656552045848))|}
           Alcotest.fail ("codes: " ^ codes_dump diagnostics));
   ]
 
+(* T39.1 — a class declares no field types; the type `init` first
+   assigns is the field's type, so `self.width` inside a method and
+   `r.style.color` from outside both read as more than Unknown. A read
+   is asserted the way the signature tests assert a type: a member the
+   type does not have reports E4001, where Unknown stays silent. *)
+let field_type_tests =
+  let shapes =
+    {|class Style {
+  def init(color (Int64, Int64, Int64), width Float64) {
+    self.color = color
+    self.width = width
+  }
+}
+
+class Rect {
+  def init(w Float64, style Style) {
+    self.w = w
+    self.style = style
+  }
+
+  def stroke() Float64 {
+    return (self.w + self.style.width * 2.0) * 2.0
+  }
+
+  def color_sum() Int64 {
+    return self.style.color[0] + self.style.color[1]
+  }
+}
+
+const r = Rect.new(w: 4.0, style: Style.new(color: (1, 2, 3), width: 0.5))
+println(r.stroke())
+println(r.color_sum())
+|}
+  in
+  let with_tail tail = check (shapes ^ "\n" ^ tail) in
+  [
+    tc "the field shapes check clean" (fun () ->
+        Alcotest.(check int)
+          "count" 0
+          (List.length (check shapes)));
+    tc "a method's self.field carries the init type" (fun () ->
+        let diagnostics =
+          check
+            {|class Probe {
+  def init() {
+    self.n = 0
+  }
+
+  def bad() Int64 {
+    return self.n.nope()
+  }
+}
+|}
+        in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
+    tc "a field read from outside the class carries its type" (fun () ->
+        Alcotest.(check bool)
+          "E4001" true
+          (has_code (with_tail "println(r.w.nope())") "E4001"));
+    tc "a field of a field carries the inner field's type" (fun () ->
+        Alcotest.(check bool)
+          "E4001" true
+          (has_code (with_tail "println(r.style.width.nope())") "E4001"));
+    tc "a class-typed field reads as its class" (fun () ->
+        Alcotest.(check bool)
+          "E4001" true
+          (has_code (with_tail "println(r.style.nope())") "E4001"));
+    tc "a tuple-typed field reads as its tuple" (fun () ->
+        Alcotest.(check bool)
+          "E4001" true
+          (has_code (with_tail "println(r.style.color.nope())") "E4001"));
+    tc "another module's class fields type the same way" (fun () ->
+        let diagnostics =
+          check_program
+            [
+              ( "lib",
+                {|class Point {
+  def init(x Float64, y Float64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+def make(x Float64, y Float64) Point {
+  return Point.new(x: x, y: y)
+}
+|} );
+              ("app", {|const p = lib.make(1.0, 2.0)
+println(p.x.nope())|});
+            ]
+        in
+        Alcotest.(check bool) "E4001" true (has_code diagnostics "E4001"));
+    tc "a later assignment must store the first assignment's type" (fun () ->
+        let diagnostics =
+          check
+            {|class Bad {
+  def init() {
+    self.x = 1.0
+    self.x = "s"
+  }
+}
+|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a native field stores its own type, not a widened one" (fun () ->
+        let diagnostics =
+          check
+            {|class Bad {
+  def init(flag Bool) {
+    if flag {
+      self.x = 1.0
+    } else {
+      self.x = 1
+    }
+  }
+}
+|}
+        in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "a dynamic field takes a conforming value" (fun () ->
+        let diagnostics =
+          check
+            {|class Good {
+  def init(label String, other String) {
+    self.label = label
+    self.label = other
+  }
+}
+|}
+        in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics));
+  ]
+
 (* The callback contract (CHECK.md, 2026-10-11): a foreign parameter may
    name a single-method interface on the c target — its method stays in
    the marshaling tier with Void added to the return — while every
@@ -2155,6 +2289,7 @@ let () =
       ("box", box_tests);
       ("array_builder", array_builder_tests);
       ("member_signature", member_signature_tests);
+      ("field_type", field_type_tests);
       ("cross_module", cross_module_tests);
       ("callback", callback_tests);
       ("shape", shape_tests);

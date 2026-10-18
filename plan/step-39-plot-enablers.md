@@ -33,11 +33,16 @@ it touches, and the plot package uses the one that changes its shape
   `self` and the init parameters, and records `(class, field) → type`.
   A field read on a class-typed receiver — `self.width`,
   `ctx.plot_w`, `self.style.color` — answers that type; an
-  unrecorded field stays `Unknown` (the old behavior). The emitters
-  needed no new rule: a field is a dynamic word at runtime, and every
-  back end already unboxes a dynamic word where the static type is
-  native (the c emitter's `emit_field_read` does it explicitly; the
-  others are dynamic throughout).
+  unrecorded field stays `Unknown` (the old behavior). A later
+  `self.field = ...` outside `init` must store a type the field can
+  hold: width-conforming for a class or container field, but exactly
+  the declared type for a native field (`Int64`, `Float64`, ...),
+  because the read unboxes by the declared kind. The c emitter
+  follows: a class-typed receiver is dynamic, so its field read goes
+  through `emo_field_by_name`, and where the field's static type is
+  native the emitter unboxes the word it returns, as
+  `emit_field_read` already did for static receivers. The other back
+  ends are dynamic throughout.
 - **A runtime-method name never shadows a class method.** The c
   emitter's `read`/`replace` arms gain a `BoxType` guard and its
   `length` arm drops `Unknown`, so an untyped receiver falls to the
@@ -66,7 +71,7 @@ it touches, and the plot package uses the one that changes its shape
 
 ## Tasks
 
-- [ ] T39.1 — type `self.field` precisely (R2): `preregister_types`
+- [x] T39.1 — type `self.field` precisely (R2): `preregister_types`
   records field types from `init`; the checker answers them for
   class-typed receivers; `examples/field_types` on every target;
   `plot.mark.Bar` carries a `BarStyle`.
