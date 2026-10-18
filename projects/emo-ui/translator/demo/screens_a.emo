@@ -1,0 +1,65 @@
+// The same two screens in spelling A — the settled form: children are
+// an explicit `Array[Node]`, and a list that is walked is assembled
+// with per-element-type defs over `.append` (the spike's A) or, for a
+// child list with a conditional splice, the `ArrayBuilder` (T49.3).
+// This file is the reference: show.emo holds the .emoui spelling to it.
+
+def field_rows(xs Array[model.Field], i Int64,
+               into Array[ui.Node]) Array[ui.Node] {
+  if i == xs.length() {
+    return into
+  }
+  return field_rows(xs, i + 1, into.append(components.field_row(xs[i])))
+}
+
+def action_buttons(xs Array[model.Action], i Int64,
+                   into Array[ui.Node]) Array[ui.Node] {
+  if i == xs.length() {
+    return into
+  }
+  return action_buttons(xs, i + 1, into.append(
+    components.action_button(xs[i].label(), tags.on(xs[i].msg()))))
+}
+
+def message_rows(xs Array[model.Message], i Int64,
+                 into Array[ui.Node]) Array[ui.Node] {
+  if i == xs.length() {
+    return into
+  }
+  return message_rows(xs, i + 1, into.append(components.message_row(xs[i])))
+}
+
+def profile_kids(m model.Model) Array[ui.Node] {
+  const kids = ArrayBuilder.new()
+  kids.push(components.heading("Profile"))
+  kids.push(components.avatar_band(m))
+  if m.error() != "" {
+    kids.push(components.error_banner(m))
+  }
+  kids.push(ui.column(field_rows(m.fields(), 0, []),
+    ui.style().with_gap(6.0)))
+  kids.push(ui.row(action_buttons(m.actions(), 0, []),
+    ui.style().with_gap(8.0)))
+  kids.push(ui.spacer(ui.style().with_height(12.0)))
+  kids.push(components.license_block())
+  return kids.to_array()
+}
+
+def screen_profile(m model.Model) ui.Node {
+  return ui.column(profile_kids(m), components.root_style())
+}
+
+def inbox_body(m model.Model) Array[ui.Node] {
+  if m.messages().length() == 0 {
+    return [components.empty_state()]
+  }
+  return message_rows(m.messages(), 0, [])
+}
+
+def screen_inbox(m model.Model) ui.Node {
+  return ui.column([
+    components.toolbar(m),
+    ui.scroll(inbox_body(m), ui.style().with_padding(8.0)),
+    components.footer(m, tags.on(model.Msg.compose))
+  ], components.root_style())
+}

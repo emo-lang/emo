@@ -1,0 +1,162 @@
+// The application's data: the Elm model and the messages it carries. No
+// UI here — screens_a, screens_b and components all read these values.
+
+enum Msg { save, cancel, filter, compose, open_profile }
+
+class Field {
+  def init(label String, value String) {
+    self.label = label
+    self.value = value
+  }
+
+  def label() String {
+    return self.label
+  }
+
+  def value() String {
+    return self.value
+  }
+}
+
+class Action {
+  def init(label String, msg Msg) {
+    self.label = label
+    self.msg = msg
+  }
+
+  def label() String {
+    return self.label
+  }
+
+  def msg() Msg {
+    return self.msg
+  }
+}
+
+class Message {
+  def init(sender String, subject String, preview String, age String) {
+    self.sender = sender
+    self.subject = subject
+    self.preview = preview
+    self.age = age
+  }
+
+  def sender() String {
+    return self.sender
+  }
+
+  def subject() String {
+    return self.subject
+  }
+
+  def preview() String {
+    return self.preview
+  }
+
+  def age() String {
+    return self.age
+  }
+}
+
+class Model {
+  def init(name String, email String, avatar String, error String,
+           fields Array[Field], actions Array[Action],
+           messages Array[Message], draft String, filter String) {
+    self.name = name
+    self.email = email
+    self.avatar = avatar
+    self.error = error
+    self.fields = fields
+    self.actions = actions
+    self.messages = messages
+    self.draft = draft
+    self.filter = filter
+  }
+
+  def name() String {
+    return self.name
+  }
+
+  def email() String {
+    return self.email
+  }
+
+  def avatar() String {
+    return self.avatar
+  }
+
+  def error() String {
+    return self.error
+  }
+
+  def fields() Array[Field] {
+    return self.fields
+  }
+
+  def actions() Array[Action] {
+    return self.actions
+  }
+
+  def messages() Array[Message] {
+    return self.messages
+  }
+
+  def draft() String {
+    return self.draft
+  }
+
+  def filter() String {
+    return self.filter
+  }
+
+  def with_draft(d String) Model {
+    return Model.new(name: self.name, email: self.email, avatar: self.avatar,
+      error: self.error, fields: self.fields, actions: self.actions,
+      messages: self.messages, draft: d, filter: self.filter)
+  }
+
+  def with_filter(f String) Model {
+    return Model.new(name: self.name, email: self.email, avatar: self.avatar,
+      error: self.error, fields: self.fields, actions: self.actions,
+      messages: self.messages, draft: self.draft, filter: f)
+  }
+
+  def with_messages(ms Array[Message]) Model {
+    return Model.new(name: self.name, email: self.email, avatar: self.avatar,
+      error: self.error, fields: self.fields, actions: self.actions,
+      messages: ms, draft: self.draft, filter: self.filter)
+  }
+
+  def with_error(e String) Model {
+    return Model.new(name: self.name, email: self.email, avatar: self.avatar,
+      error: e, fields: self.fields, actions: self.actions,
+      messages: self.messages, draft: self.draft, filter: self.filter)
+  }
+}
+
+def sample_model() Model {
+  return Model.new(
+    name: "Ada Lovelace",
+    email: "ada@example.com",
+    avatar: "ada.png",
+    error: "",
+    fields: [
+      Field.new(label: "Full name", value: "Ada Lovelace"),
+      Field.new(label: "Email", value: "ada@example.com"),
+      Field.new(label: "Timezone", value: "Europe/London")
+    ],
+    actions: [
+      Action.new(label: "Save", msg: Msg.save),
+      Action.new(label: "Cancel", msg: Msg.cancel)
+    ],
+    messages: [
+      Message.new(sender: "Grace", subject: "Compiler notes",
+        preview: "The backend split looks right", age: "2h"),
+      Message.new(sender: "Barbara", subject: "Re: codegen",
+        preview: "Ship the arena change first", age: "1d"),
+      Message.new(sender: "Margaret", subject: "Review request",
+        preview: "Can you look at the layout pass?", age: "3d")
+    ],
+    draft: "",
+    filter: "")
+}

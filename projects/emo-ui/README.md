@@ -148,6 +148,19 @@ the package's gate; the `beam` lowering defects the golden forced are fixed and
 recorded in `CHECK.md`. The usage demo lives at `examples/tui_menu/` — a
 terminal menu driven by a scripted input — and the same gate checks it.
 
+`translator/` is the `.emoui` experiment (2026-10-18): a stdin-to-stdout
+filter that lowers a tree literal — containers with blocks,
+`list(src) -> (x T) { ... }`, `if` — into the settled spelling of nested
+calls with explicit `Array[Node]` children, making the README's
+illustrative form writable with no compiler change. Its `demo/` rewrites
+the spelling spike's two screens in the literal form and asserts, through
+the debug backend, that the generated trees equal the hand-written A
+spelling beside them on four models; `demo/check.sh` is the gate,
+regenerating the committed output and diffing it against the translator.
+The grammar and the lowering rules live in `translator/README.md`; where
+this sits in the C-versus-D question is recorded in
+[`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md).
+
 Still to come: the remaining per-platform packages and the browser runtime path
 (T48.5–T48.12). The design and its evidence:
 

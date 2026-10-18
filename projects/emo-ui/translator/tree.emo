@@ -1,0 +1,512 @@
+// The tree parser (module `tree`): turns a `.emoui` source into the
+// small node model the lowering walks. A file is require lines (kept
+// verbatim) plus view defs; a view def keeps its header verbatim and
+// holds exactly one tree. A tree is one of four items — a leaf call, a
+// container with a children block, an iteration (`name(src) -> (x T)
+// { ... }`, whose call vanishes in the output), or a conditional — and
+// every argument, condition and iteration source is an opaque span the
+// scanner captured verbatim. Nothing here understands Emo expressions;
+// the checker downstream does.
+//
+// Diagnostics carry the 1-based source line of the construct they name.
+
+interface TreeItem {
+  def line() Int64
+}
+
+class Arg {
+  def init(name String, expr String) {
+    self.name = name
+    self.expr = expr
+  }
+
+  def name() String {
+    return self.name
+  }
+
+  def expr() String {
+    return self.expr
+  }
+}
+
+class LeafCall {
+  def init(path String, args Array[Arg], line Int64) {
+    self.path = path
+    self.args = args
+    self.line = line
+  }
+
+  def path() String {
+    return self.path
+  }
+
+  def args() Array[Arg] {
+    return self.args
+  }
+
+  def line() Int64 {
+    return self.line
+  }
+}
+
+class Container {
+  def init(path String, args Array[Arg], kids Array[TreeItem], line Int64) {
+    self.path = path
+    self.args = args
+    self.kids = kids
+    self.line = line
+  }
+
+  def path() String {
+    return self.path
+  }
+
+  def args() Array[Arg] {
+    return self.args
+  }
+
+  def kids() Array[TreeItem] {
+    return self.kids
+  }
+
+  def line() Int64 {
+    return self.line
+  }
+}
+
+// The iteration form. The call's name never reaches the output — the
+// shape is the syntax, and the children land in the enclosing builder.
+class Iter {
+  def init(src String, bind String, kids Array[TreeItem], line Int64) {
+    self.src = src
+    self.bind = bind
+    self.kids = kids
+    self.line = line
+  }
+
+  def src() String {
+    return self.src
+  }
+
+  def bind() String {
+    return self.bind
+  }
+
+  def kids() Array[TreeItem] {
+    return self.kids
+  }
+
+  def line() Int64 {
+    return self.line
+  }
+}
+
+class Cond {
+  def init(cond String, kids Array[TreeItem], else_kids Array[TreeItem],
+           line Int64) {
+    self.cond = cond
+    self.kids = kids
+    self.else_kids = else_kids
+    self.line = line
+  }
+
+  def cond() String {
+    return self.cond
+  }
+
+  def kids() Array[TreeItem] {
+    return self.kids
+  }
+
+  def else_kids() Array[TreeItem] {
+    return self.else_kids
+  }
+
+  def line() Int64 {
+    return self.line
+  }
+}
+
+class ViewDef {
+  def init(header String, line Int64, body TreeItem) {
+    self.header = header
+    self.line = line
+    self.body = body
+  }
+
+  // The def line through the closing parenthesis of the signature and
+  // the return type, verbatim: `def screen_profile(m model.Model) ui.Node`.
+  def header() String {
+    return self.header
+  }
+
+  def line() Int64 {
+    return self.line
+  }
+
+  def body() TreeItem {
+    return self.body
+  }
+}
+
+class FileModel {
+  def init(header String, defs Array[ViewDef]) {
+    self.header = header
+    self.defs = defs
+  }
+
+  // The require lines and comments before the first def, verbatim.
+  def header() String {
+    return self.header
+  }
+
+  def defs() Array[ViewDef] {
+    return self.defs
+  }
+}
+
+// Emo has no generics, so each parse function's error shape carries its
+// own constructor; the message is shared.
+def fail_msg(line Int64, what String) String {
+  return "line " + line.to_string() + ": " + what
+}
+
+def fail_file(line Int64, what String) (R, FileModel) {
+  return (R.error, fail_msg(line, what))
+}
+
+def fail_def(line Int64, what String) (R, (ViewDef, Int64)) {
+  return (R.error, fail_msg(line, what))
+}
+
+def fail_block(line Int64, what String) (R, (Array[TreeItem], Int64)) {
+  return (R.error, fail_msg(line, what))
+}
+
+def fail_item(line Int64, what String) (R, (TreeItem, Int64)) {
+  return (R.error, fail_msg(line, what))
+}
+
+def fail_args(line Int64, what String) (R, (Array[Arg], Int64)) {
+  return (R.error, fail_msg(line, what))
+}
+
+def fail_arg(line Int64, what String) (R, (Arg, Int64)) {
+  return (R.error, fail_msg(line, what))
+}
+
+// ---- file ----
+
+def parse(data Bytes) (R, FileModel) {
+  return parse_top(data, lex.skip_ws(data, 0), "", [])
+}
+
+def parse_top(data Bytes, i Int64, header String,
+              defs Array[ViewDef]) (R, FileModel) {
+  if i >= data.length() {
+    return (R.ok, FileModel.new(header: header, defs: defs))
+  }
+  if lex.starts_with(data, i, "def") && word_end(data, i + 3) {
+    const r = parse_def(data, i)
+    case r {
+      (R.error, why)      -> { return (R.error, why) }
+      (R.ok, found)       -> {
+        return parse_top(data, found[1], header, defs.append(found[0]))
+      }
+    }
+  }
+  // Anything else at the top is a verbatim header line: `require`, a
+  // comment, a blank line. A construct that is none of those is refused
+  // — a .emoui file holds requires and view defs, nothing else.
+  const eol = line_end(data, i)
+  const text = lex.slice(data, i, eol)
+  const trimmed = lex.trim(data, i, eol)
+  if trimmed == "" || lex.starts_with(trimmed.to_bytes(), 0, "require ")
+    || lex.starts_with(trimmed.to_bytes(), 0, "//") {
+    return parse_top(data, lex.skip_ws(data, eol),
+      header + text + "\n", defs)
+  }
+  return fail_file(lex.line_of(data, i),
+    "a .emoui file holds require lines and view defs, not \""
+    + first_word(trimmed) + "\"")
+}
+
+def word_end(data Bytes, i Int64) Bool {
+  const b = lex.peek(data, i)
+  if b < 0 {
+    return true
+  }
+  return !lex.is_ident(b)
+}
+
+def line_end(data Bytes, i Int64) Int64 {
+  if i >= data.length() || data.get(i) == 10 {
+    return i
+  }
+  return line_end(data, i + 1)
+}
+
+def first_word(s String) String {
+  var end = 0
+  const b = s.to_bytes()
+  while end < b.length() && !lex.is_ws(b.get(end)) {
+    end = end + 1
+  }
+  return lex.slice(b, 0, end)
+}
+
+// ---- defs ----
+
+def parse_def(data Bytes, i Int64) (R, (ViewDef, Int64)) {
+  const at = lex.line_of(data, i)
+  const j = i + 3
+  const r = lex.span_to(data, j, "{")
+  case r {
+    (R.error, x) -> {
+      return fail_def(at, "unterminated def header")
+    }
+    (R.ok, found) -> {
+      const header = "def" + " " + found[0]
+      const body = parse_block(data, found[1] + 1)
+      case body {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, got)     -> {
+          if got[0].length() != 1 {
+            return fail_def(at,
+              "the body of a view def is exactly one tree, not "
+              + got[0].length().to_string())
+          }
+          return (R.ok, (ViewDef.new(header: header, line: at,
+            body: got[0][0]), got[1] + 1))
+        }
+      }
+    }
+  }
+}
+
+// ---- blocks ----
+
+// `Array.append` takes one element, so joining two arrays is a walk
+// (the docs' own concat builder).
+def concat_items(a Array[TreeItem], b Array[TreeItem],
+                 i Int64) Array[TreeItem] {
+  if i >= b.length() {
+    return a
+  }
+  return concat_items(a.append(b[i]), b, i + 1)
+}
+
+def concat_args(a Array[Arg], b Array[Arg], i Int64) Array[Arg] {
+  if i >= b.length() {
+    return a
+  }
+  return concat_args(a.append(b[i]), b, i + 1)
+}
+
+// Parses tree items up to the block's closing `}`; returns the items
+// and the index of that `}`.
+def parse_block(data Bytes, i Int64) (R, (Array[TreeItem], Int64)) {
+  const j = lex.skip_ws(data, i)
+  if lex.peek(data, j) == 125 {
+    return (R.ok, ([], j))
+  }
+  if j >= data.length() {
+    return fail_block(lex.line_of(data, j), "unterminated block")
+  }
+  const r = parse_item(data, j)
+  case r {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, got)     -> {
+      const rest = parse_block(data, got[1])
+      case rest {
+        (R.error, why2) -> { return (R.error, why2) }
+        (R.ok, tail)    -> {
+          return (R.ok, (concat_items([got[0]], tail[0], 0), tail[1]))
+        }
+      }
+    }
+  }
+}
+
+// ---- items ----
+
+def parse_item(data Bytes, i Int64) (R, (TreeItem, Int64)) {
+  if lex.starts_with(data, i, "if") && word_end(data, i + 2) {
+    return parse_cond(data, i)
+  }
+  const at = lex.line_of(data, i)
+  const p = lex.read_path(data, i)
+  const j = lex.skip_ws(data, p[1])
+  if lex.peek(data, j) != 40 {
+    return fail_item(at, "expected ( after \"" + p[0] + "\"")
+  }
+  const a = parse_args(data, j + 1)
+  case a {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, got)    -> {
+      // parse_args answers the index of the closing `)`; the tail
+      // starts after it.
+      return parse_tail(data, got[1] + 1, p[0], got[0], at)
+    }
+  }
+}
+
+// After the call's `)`: a `{` makes a container, `->` makes an
+// iteration, anything else ends a leaf — the next item or the block's
+// `}` belongs to the level above, which resumes by skipping whitespace.
+def parse_tail(data Bytes, i Int64, path String, args Array[Arg],
+               at Int64) (R, (TreeItem, Int64)) {
+  const j = lex.skip_ws(data, i)
+  const b = lex.peek(data, j)
+  if b == 123 {
+    const kids = parse_block(data, j + 1)
+    case kids {
+      (R.error, why) -> { return (R.error, why) }
+      (R.ok, got)     -> {
+        return (R.ok, (Container.new(path: path, args: args, kids: got[0],
+          line: at), got[1] + 1))
+      }
+    }
+  }
+  if b == 45 && lex.peek(data, j + 1) == 62 {
+    return parse_iter(data, j + 2, path, args, at)
+  }
+  return (R.ok, (LeafCall.new(path: path, args: args, line: at), i))
+}
+
+def parse_iter(data Bytes, i Int64, path String, args Array[Arg],
+               at Int64) (R, (TreeItem, Int64)) {
+  if args.length() != 1 || args[0].name() != "" || args[0].expr() == "" {
+    return fail_item(at,
+      "an iteration takes exactly one positional source, the array to walk")
+  }
+  const j = lex.skip_ws(data, i)
+  if lex.peek(data, j) != 40 {
+    return fail_item(at, "expected ( after ->")
+  }
+  const k = lex.skip_ws(data, j + 1)
+  const bind = lex.read_ident(data, k)
+  if bind == "" {
+    return fail_item(at, "expected the iteration's binding name")
+  }
+  const t = lex.span_to(data, k + bind.length(), ")")
+  case t {
+    (R.error, x) -> { return fail_item(at, "unterminated binding") }
+    (R.ok, found) -> {
+      const b = lex.skip_ws(data, found[1] + 1)
+      if lex.peek(data, b) != 123 {
+        return fail_item(at, "expected { to open the iteration's body")
+      }
+      const kids = parse_block(data, b + 1)
+      case kids {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, got)     -> {
+          return (R.ok, (Iter.new(src: args[0].expr(), bind: bind,
+            kids: got[0], line: at), got[1] + 1))
+        }
+      }
+    }
+  }
+}
+
+def parse_cond(data Bytes, i Int64) (R, (TreeItem, Int64)) {
+  const at = lex.line_of(data, i)
+  const c = lex.span_to(data, i + 2, "{")
+  case c {
+    (R.error, x) -> { return fail_item(at, "unterminated if condition") }
+    (R.ok, found) -> {
+      const kids = parse_block(data, found[1] + 1)
+      case kids {
+        (R.error, why) -> { return (R.error, why) }
+        (R.ok, got)     -> {
+          const e = parse_else(data, got[1] + 1, at)
+          case e {
+            (R.error, why2) -> { return (R.error, why2) }
+            (R.ok, tail)    -> {
+              // parse_else answers the position after what it
+              // consumed: after its block's `}` when an else is
+              // present, its own position when not.
+              return (R.ok, (Cond.new(cond: found[0], kids: got[0],
+                else_kids: tail[0], line: at), tail[1]))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+def parse_else(data Bytes, i Int64, at Int64) (R, (Array[TreeItem], Int64)) {
+  const j = lex.skip_ws(data, i)
+  if !lex.starts_with(data, j, "else") || !word_end(data, j + 4) {
+    return (R.ok, ([], j))
+  }
+  const b = lex.skip_ws(data, j + 4)
+  if lex.peek(data, b) != 123 {
+    return fail_block(at, "expected { after else")
+  }
+  const kids = parse_block(data, b + 1)
+  case kids {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, got)    -> { return (R.ok, (got[0], got[1] + 1)) }
+  }
+}
+
+// ---- arguments ----
+
+// Parses `,`-separated arguments up to the call's `)`; returns the
+// arguments and the index of that `)`.
+def parse_args(data Bytes, i Int64) (R, (Array[Arg], Int64)) {
+  const j = lex.skip_ws(data, i)
+  if lex.peek(data, j) == 41 {
+    return (R.ok, ([], j))
+  }
+  const r = parse_arg(data, j)
+  case r {
+    (R.error, why) -> { return (R.error, why) }
+    (R.ok, got)    -> {
+      const sep = lex.skip_ws(data, got[1])
+      const b = lex.peek(data, sep)
+      if b == 44 {
+        const rest = parse_args(data, sep + 1)
+        case rest {
+          (R.error, why2) -> { return (R.error, why2) }
+          (R.ok, tail)    -> {
+            return (R.ok, (concat_args([got[0]], tail[0], 0), tail[1]))
+          }
+        }
+      }
+      if b == 41 {
+        return (R.ok, ([got[0]], sep))
+      }
+      return fail_args(lex.line_of(data, sep),
+        "expected , or ) in the arguments")
+    }
+  }
+}
+
+// One argument: either `name: expr` or `expr`, the expression an opaque
+// balanced span. Returns the argument and the index of the `,` or `)`
+// that ended it.
+def parse_arg(data Bytes, i Int64) (R, (Arg, Int64)) {
+  const at = lex.line_of(data, i)
+  const name_start = lex.read_ident(data, i)
+  var name = ""
+  var j = i
+  if name_start != "" {
+    const colon = lex.skip_ws(data, i + name_start.length())
+    if lex.peek(data, colon) == 58 {
+      name = name_start
+      j = colon + 1
+    }
+  }
+  const e = lex.span_to(data, j, ",)")
+  case e {
+    (R.error, x) -> {
+      return fail_arg(at, "unterminated argument")
+    }
+    (R.ok, found) -> {
+      return (R.ok, (Arg.new(name: name, expr: found[0]), found[1]))
+    }
+  }
+}

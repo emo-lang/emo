@@ -1,0 +1,37 @@
+// The gate's program: render both spellings and hold them to each
+// other. The .emoui source must produce the tree the A spelling
+// produces — on the base model and on the variants that take the other
+// branch of each conditional. The printed renders are the golden
+// (expected_show.txt); a failed assertion raises rather than printing a
+// wrong golden.
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+const m = model.sample_model()
+
+check(debug.render(screens.screen_profile(m))
+  == debug.render(screens_a.screen_profile(m)),
+  "screen_profile: the .emoui tree equals the A spelling")
+check(debug.render(screens.screen_inbox(m))
+  == debug.render(screens_a.screen_inbox(m)),
+  "screen_inbox: the .emoui tree equals the A spelling")
+check(debug.render(screens.screen_inbox(m.with_messages([])))
+  == debug.render(screens_a.screen_inbox(m.with_messages([]))),
+  "screen_inbox: still equal with no messages")
+check(debug.render(screens.screen_profile(m.with_error("boom")))
+  == debug.render(screens_a.screen_profile(m.with_error("boom"))),
+  "screen_profile: still equal with the banner shown")
+
+println("")
+println("== screen_profile, the .emoui spelling ==")
+println(debug.render(screens.screen_profile(m)))
+println("== screen_inbox, the .emoui spelling ==")
+println(debug.render(screens.screen_inbox(m)))
+println("== screen_inbox with no messages ==")
+println(debug.render(screens.screen_inbox(m.with_messages([]))))

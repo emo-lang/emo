@@ -1,0 +1,52 @@
+// The spelling spike's two screens, in the .emoui spelling: containers
+// take their children from a block, `list(src) -> (x T) { ... }` walks
+// an array, and an `if` picks children. The translator lowers all of it
+// to the settled spelling — nested calls with explicit `Array[Node]`
+// children, an `ArrayBuilder` wherever a child list is walked:
+//
+//   emo run translate.emo < screens.emoui > screens.emo
+//
+// The generated screens.emo is committed, and the A spelling beside it
+// (screens_a.emo) is the reference: show.emo asserts the two produce
+// equal trees and expected_show.txt pins the render. The modules the
+// trees name — ui, components, model, tags — are sibling files, so no
+// require lines are needed; a file that consumed the packaged core
+// would carry its requires verbatim into the generated output.
+
+def screen_profile(m model.Model) ui.Node {
+  ui.column(style: components.root_style()) {
+    components.heading("Profile")
+    components.avatar_band(m)
+    if m.error() != "" {
+      components.error_banner(m)
+    }
+    ui.column(style: ui.style().with_gap(6.0)) {
+      list(m.fields()) -> (f model.Field) {
+        components.field_row(f)
+      }
+    }
+    ui.row(style: ui.style().with_gap(8.0)) {
+      list(m.actions()) -> (a model.Action) {
+        components.action_button(a.label(), tags.on(a.msg()))
+      }
+    }
+    ui.spacer(style: ui.style().with_height(12.0))
+    components.license_block()
+  }
+}
+
+def screen_inbox(m model.Model) ui.Node {
+  ui.column(style: components.root_style()) {
+    components.toolbar(m)
+    ui.scroll(style: ui.style().with_padding(8.0)) {
+      if m.messages().length() == 0 {
+        components.empty_state()
+      } else {
+        list(m.messages()) -> (msg model.Message) {
+          components.message_row(msg)
+        }
+      }
+    }
+    components.footer(m, tags.on(model.Msg.compose))
+  }
+}

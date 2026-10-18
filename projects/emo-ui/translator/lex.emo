@@ -1,0 +1,317 @@
+// The byte scanner the translator parses through (module `lex`). The
+// technique is the xml decoder's: the source becomes `Bytes`, positions
+// are indexes, spans materialize through a fresh `Bytes` and
+// `to_string()`. Everything here is pure and recursive, matching the
+// stdlib packages' house style.
+//
+// One scanner question does the work: **where does a verbatim span
+// end?** A def header runs to the `{` that opens its body; an `if`
+// condition runs to the `{` that opens its branch; a call argument runs
+// to `,` or the call's `)`. In every case the endpoint is a byte at
+// bracket depth zero — and brackets inside strings, `${...}`
+// interpolations (which hold code, which holds strings again), char
+// literals and `//` comments never count. The scanner walks with a mode
+// stack: each entry is (mode, depth) where mode is 0 code, 1 string,
+// 2 char, 3 interpolation; a string or char entry stores the depth of
+// the level below it, restored when the literal closes.
+
+// ---- byte classes ----
+
+def is_ws(b Int64) Bool {
+  return b == 32 || b == 9 || b == 10 || b == 13
+}
+
+def is_ident_start(b Int64) Bool {
+  return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || b == 95
+}
+
+def is_ident(b Int64) Bool {
+  return is_ident_start(b) || (b >= 48 && b <= 57)
+}
+
+// ---- whitespace and comments ----
+
+def skip_ws(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return i
+  }
+  const b = data.get(i)
+  if is_ws(b) {
+    return skip_ws(data, i + 1)
+  }
+  if b == 47 && i + 1 < data.length() && data.get(i + 1) == 47 {
+    return skip_ws(data, skip_line(data, i + 2))
+  }
+  return i
+}
+
+def skip_line(data Bytes, i Int64) Int64 {
+  if i >= data.length() || data.get(i) == 10 {
+    return i
+  }
+  return skip_line(data, i + 1)
+}
+
+// The 1-based line a position sits on — diagnostics only, so the linear
+// walk does not matter.
+def line_of(data Bytes, upto Int64) Int64 {
+  return line_count(data, 0, upto, 1)
+}
+
+def line_count(data Bytes, i Int64, upto Int64, n Int64) Int64 {
+  if i >= upto {
+    return n
+  }
+  if data.get(i) == 10 {
+    return line_count(data, i + 1, upto, n + 1)
+  }
+  return line_count(data, i + 1, upto, n)
+}
+
+// ---- atoms ----
+
+def peek(data Bytes, i Int64) Int64 {
+  if i >= data.length() {
+    return -1
+  }
+  return data.get(i)
+}
+
+def starts_with(data Bytes, i Int64, word String) Bool {
+  const w = word.to_bytes()
+  return prefix_at(data, i, w, 0)
+}
+
+def prefix_at(data Bytes, i Int64, w Bytes, j Int64) Bool {
+  if j >= w.length() {
+    return true
+  }
+  if i >= data.length() || data.get(i) != w.get(j) {
+    return false
+  }
+  return prefix_at(data, i + 1, w, j + 1)
+}
+
+// The identifier starting at i (no bounds check — the caller peeked).
+def read_ident(data Bytes, i Int64) String {
+  const stop = ident_end(data, i)
+  return slice(data, i, stop)
+}
+
+def ident_end(data Bytes, i Int64) Int64 {
+  if i < data.length() && is_ident(data.get(i)) {
+    return ident_end(data, i + 1)
+  }
+  return i
+}
+
+// A path is `a.b.c`; the segments are read one ident and dot at a time.
+def read_path(data Bytes, i Int64) (String, Int64) {
+  const name = read_ident(data, i)
+  const j = i + name.length()
+  if peek(data, j) == 46 && is_ident_start(peek(data, j + 1)) {
+    const rest = read_path(data, j + 1)
+    return (name + "." + rest[0], rest[1])
+  }
+  return (name, j)
+}
+
+// ---- spans ----
+
+// Materializes data[start, end) as a String.
+def slice(data Bytes, start Int64, end Int64) String {
+  const buf = Bytes.new(end - start)
+  copy_range(data, buf, start, 0, end - start)
+  return buf.to_string()
+}
+
+def copy_range(src Bytes, dst Bytes, si Int64, di Int64, n Int64) {
+  if n > 0 {
+    dst.set(di, src.get(si))
+    copy_range(src, dst, si + 1, di + 1, n - 1)
+  }
+}
+
+// A balanced span: from `i` (already past whitespace) up to, but not
+// through, any byte of `stops` at bracket depth zero. Returns the
+// trimmed span text and the index of the stop byte. The empty stack
+// answers (R.error, -1); the caller turns that into a diagnostic with
+// the line it started from.
+def span_to(data Bytes, i Int64, stops String) (R, (String, Int64)) {
+  const r = span_walk(data, i, stops.to_bytes(), 0, List.new([]))
+  case r {
+    (R.ok, end) -> { return (R.ok, (trim(data, i, end), end)) }
+    (R.error, x) -> { return (R.error, x) }
+  }
+}
+
+def span_walk(data Bytes, i Int64, stops Bytes, depth Int64,
+              modes List) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, 0 - 1)
+  }
+  if modes.length() == 0 {
+    return span_code(data, i, stops, depth, modes)
+  }
+  const top = modes.pop_front()
+  modes.push_front(top)
+  if top[0] == 1 {
+    return span_string(data, i, stops, depth, modes)
+  }
+  if top[0] == 2 {
+    return span_char(data, i, stops, depth, modes)
+  }
+  if top[0] == 3 {
+    return span_interp(data, i, stops, depth, modes)
+  }
+  return span_code(data, i, stops, depth, modes)
+}
+
+// Code: stop bytes end the span at depth zero; brackets count; strings,
+// chars and comments hand off.
+def span_code(data Bytes, i Int64, stops Bytes, depth Int64,
+              modes List) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, 0 - 1)
+  }
+  const b = data.get(i)
+  if depth == 0 && stop_at(stops, 0, b) {
+    return (R.ok, i)
+  }
+  if b == 34 {
+    modes.push_front((1, depth))
+    return span_walk(data, i + 1, stops, depth, modes)
+  }
+  if b == 39 {
+    modes.push_front((2, depth))
+    return span_walk(data, i + 1, stops, depth, modes)
+  }
+  if b == 47 && i + 1 < data.length() && data.get(i + 1) == 47 {
+    return span_code(data, skip_line(data, i + 2), stops, depth, modes)
+  }
+  if b == 40 || b == 91 || b == 123 {
+    return span_code(data, i + 1, stops, depth + 1, modes)
+  }
+  if b == 41 || b == 93 || b == 125 {
+    if depth == 0 {
+      return (R.error, 0 - 1)
+    }
+    return span_code(data, i + 1, stops, depth - 1, modes)
+  }
+  return span_code(data, i + 1, stops, depth, modes)
+}
+
+// Interpolation code, entered from a string through `${`: brackets
+// count, strings nest, and a `}` at depth zero hands control back to
+// the string that opened it.
+def span_interp(data Bytes, i Int64, stops Bytes, depth Int64,
+                modes List) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, 0 - 1)
+  }
+  const b = data.get(i)
+  if b == 34 {
+    modes.push_front((1, depth))
+    return span_walk(data, i + 1, stops, depth, modes)
+  }
+  if b == 40 || b == 91 || b == 123 {
+    return span_interp(data, i + 1, stops, depth + 1, modes)
+  }
+  if b == 41 || b == 93 {
+    if depth == 0 {
+      return (R.error, 0 - 1)
+    }
+    return span_interp(data, i + 1, stops, depth - 1, modes)
+  }
+  if b == 125 {
+    if depth == 0 {
+      modes.pop_front()
+      // Control returns to the string that opened this interpolation;
+      // that string's own depth lives in its stack entry.
+      const outer = modes.pop_front()
+      modes.push_front(outer)
+      return span_walk(data, i + 1, stops, outer[1], modes)
+    }
+    return span_interp(data, i + 1, stops, depth - 1, modes)
+  }
+  return span_interp(data, i + 1, stops, depth, modes)
+}
+
+// Inside a string only `\`, `${`, and the closing quote act; the entry's
+// saved depth is restored when the string closes.
+def span_string(data Bytes, i Int64, stops Bytes, depth Int64,
+                modes List) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, 0 - 1)
+  }
+  const b = data.get(i)
+  if b == 92 {
+    if i + 1 >= data.length() {
+      return (R.error, 0 - 1)
+    }
+    return span_string(data, i + 2, stops, depth, modes)
+  }
+  if b == 36 && i + 1 < data.length() && data.get(i + 1) == 123 {
+    modes.push_front((3, 0))
+    return span_walk(data, i + 2, stops, 0, modes)
+  }
+  if b == 34 {
+    modes.pop_front()
+    return span_walk(data, i + 1, stops, depth, modes)
+  }
+  return span_string(data, i + 1, stops, depth, modes)
+}
+
+// Inside a char literal only `\` and the closing quote act.
+def span_char(data Bytes, i Int64, stops Bytes, depth Int64,
+              modes List) (R, Int64) {
+  if i >= data.length() {
+    return (R.error, 0 - 1)
+  }
+  const b = data.get(i)
+  if b == 92 {
+    if i + 1 >= data.length() {
+      return (R.error, 0 - 1)
+    }
+    return span_char(data, i + 2, stops, depth, modes)
+  }
+  if b == 39 {
+    modes.pop_front()
+    return span_walk(data, i + 1, stops, depth, modes)
+  }
+  return span_char(data, i + 1, stops, depth, modes)
+}
+
+def stop_at(stops Bytes, j Int64, b Int64) Bool {
+  if j >= stops.length() {
+    return false
+  }
+  if stops.get(j) == b {
+    return true
+  }
+  return stop_at(stops, j + 1, b)
+}
+
+// The span text without leading and trailing whitespace.
+def trim(data Bytes, start Int64, end Int64) String {
+  const lo = trim_lo(data, start, end)
+  const hi = trim_hi(data, lo, end)
+  if hi <= lo {
+    return ""
+  }
+  return slice(data, lo, hi)
+}
+
+def trim_lo(data Bytes, i Int64, end Int64) Int64 {
+  if i < end && is_ws(data.get(i)) {
+    return trim_lo(data, i + 1, end)
+  }
+  return i
+}
+
+def trim_hi(data Bytes, i Int64, end Int64) Int64 {
+  if end > i && is_ws(data.get(end - 1)) {
+    return trim_hi(data, i, end - 1)
+  }
+  return end
+}

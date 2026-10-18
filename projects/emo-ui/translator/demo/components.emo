@@ -1,0 +1,84 @@
+// The widgets both spellings call. Every child list here is FIXED — no
+// iteration, no conditionals, nothing dynamic. That is deliberate: it
+// makes the A-versus-B source comparison a comparison of how the dynamic
+// lists are assembled and nothing else, because these definitions are
+// byte-identical under both spellings.
+
+// Both screens are a root Column with the same padding and gap, under
+// both spellings, so the style lives here rather than being written twice
+// in each of the four screen definitions.
+def root_style() ui.Style {
+  return ui.style().with_padding(16.0).with_gap(12.0)
+}
+
+def heading(s String) ui.Node {
+  return ui.text(s, ui.style().with_padding(4.0))
+}
+
+def avatar_band(m model.Model) ui.Node {
+  return ui.row([
+    ui.image(m.avatar(), ui.style().with_width(48.0)),
+    ui.column([
+      ui.text(m.name(), ui.style()),
+      ui.text(m.email(), ui.style())
+    ], ui.style().with_gap(2.0))
+  ], ui.style().with_gap(12.0).with_padding(8.0))
+}
+
+def error_banner(m model.Model) ui.Node {
+  return ui.text(m.error(), ui.style().with_padding(8.0))
+}
+
+def field_row(f model.Field) ui.Node {
+  return ui.row([
+    ui.text(f.label(), ui.style().with_width(120.0)),
+    ui.text_input(f.value(), ui.style().with_grow(true))
+  ], ui.style().with_gap(8.0))
+}
+
+def action_button(label String, tag Int64) ui.Node {
+  return ui.button(label, tag, ui.style().with_padding(6.0))
+}
+
+def toolbar(m model.Model) ui.Node {
+  return ui.row([
+    ui.text("Inbox", ui.style()),
+    ui.spacer(ui.style().with_grow(true)),
+    ui.text_input(m.filter(), ui.style().with_width(160.0))
+  ], ui.style().with_gap(8.0).with_padding(4.0))
+}
+
+def empty_state() ui.Node {
+  return ui.column([
+    ui.image("inbox-empty.png", ui.style().with_width(64.0)),
+    ui.text("No messages", ui.style())
+  ], ui.style().with_gap(6.0))
+}
+
+def message_row(m model.Message) ui.Node {
+  return ui.row([
+    ui.text(m.sender(), ui.style().with_width(96.0)),
+    ui.column([
+      ui.text(m.subject(), ui.style()),
+      ui.text(m.preview(), ui.style())
+    ], ui.style().with_gap(2.0).with_grow(true)),
+    ui.text(m.age(), ui.style().with_width(48.0))
+  ], ui.style().with_gap(8.0).with_padding(4.0))
+}
+
+def footer(m model.Model, tag Int64) ui.Node {
+  return ui.row([
+    ui.text("${m.messages().length()} messages", ui.style()),
+    ui.spacer(ui.style().with_grow(true)),
+    action_button("Compose", tag)
+  ], ui.style().with_gap(8.0).with_padding(4.0))
+}
+
+def license_block() ui.Node {
+  return ui.scroll([
+    ui.text("This program is distributed in the hope that it will be "
+      + "useful, but WITHOUT ANY WARRANTY.", ui.style()),
+    ui.text("See the license for the specific language governing "
+      + "permissions and limitations.", ui.style())
+  ], ui.style().with_padding(8.0))
+}

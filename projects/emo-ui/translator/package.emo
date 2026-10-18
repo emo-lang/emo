@@ -1,0 +1,9 @@
+package {
+  name = "emo/emo_ui_translator"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "os" = "0.1.0"
+  }
+}
