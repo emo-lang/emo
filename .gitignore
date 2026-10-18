@@ -2,6 +2,7 @@
 *.emo-bin
 *.emo-bin-nospec
 *.c-bin
+*.elf
 
 # Benchmark baselines
 benchmarks/baselines/build/
