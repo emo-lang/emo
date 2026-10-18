@@ -354,6 +354,17 @@ let wasm_goldens =
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
 
+(* The browser target's bundling step: Node's own type stripper, which
+   landed in 22.13. The browser tests skip where it is missing, like the
+   BEAM and riscv64 groups skip without their toolchains. *)
+let node_strip_available =
+  lazy
+    (Sys.command
+       "node --no-warnings -e 'process.exit(typeof \
+        require(\"node:module\").stripTypeScriptTypes === \"function\" ? 0 : \
+        1)' >/dev/null 2>&1"
+     = 0)
+
 (* The BEAM goldens: Core Erlang text assembled by the pinned erlc,
    run under `erl -noshell`. Skips when Erlang is absent. *)
 let beam_goldens =
@@ -3693,13 +3704,221 @@ let doctor_tests =
         List.iter
           (fun name ->
             Alcotest.(check bool) ("reports " ^ name) true (contains text name))
-          [ "c:"; "ocaml:"; "typescript:"; "beam:"; "wasm:" ];
+          [ "c:"; "ocaml:"; "typescript:"; "browser:"; "beam:"; "wasm:" ];
         Alcotest.(check bool)
           "the ocaml line names the toolchain, not the installation shape" true
           (contains text "ok — ocamlfind" || contains text "unavailable");
         Alcotest.(check bool)
           "wasm needs nothing" true
           (contains text "no external tools"));
+  ]
+
+(* ---- browser: the page bundle (T48.10) ---- *)
+
+(* A stub page — just enough of document and window for the dom family.
+   The bundle is a plain script with no imports, so require runs it; the
+   timeout lets the root's microtasks and the event's promise settle
+   before the harness reports what the page now holds. *)
+let browser_page_harness =
+  {|const body = {
+  children: [],
+  firstChild: null,
+  appendChild(c) {
+    this.children.push(c);
+    this.firstChild = this.children[0];
+  },
+  removeChild(c) {
+    this.children = this.children.filter((x) => x !== c);
+    this.firstChild = this.children[0] || null;
+  },
+};
+global.document = {
+  title: "",
+  body,
+  getElementById: (id) => (id === "emo-root" ? body : null),
+  createElement: (tag) => ({
+    tagName: tag,
+    children: [],
+    style: { props: {}, setProperty(n, v) { this.props[n] = v; } },
+    addEventListener(ev, fn) {
+      this.listeners = this.listeners || {};
+      (this.listeners[ev] = this.listeners[ev] || []).push(fn);
+    },
+    appendChild(c) { this.children.push(c); },
+    removeChild(c) { this.children = this.children.filter((x) => x !== c); },
+  }),
+  createTextNode: (text) => ({ data: text }),
+};
+global.window = { innerWidth: 800, innerHeight: 600 };
+require("./app.js");
+setTimeout(() => {
+  console.log(
+    "title=" +
+      document.title +
+      " children=" +
+      body.children.map((c) => c.data ?? c.tagName).join(",")
+  );
+}, 10);
+|}
+
+let browser_event_harness =
+  {|const body = {
+  children: [],
+  firstChild: null,
+  appendChild(c) {
+    this.children.push(c);
+    this.firstChild = this.children[0];
+  },
+  removeChild(c) {
+    this.children = this.children.filter((x) => x !== c);
+    this.firstChild = this.children[0] || null;
+  },
+};
+global.document = {
+  title: "",
+  body,
+  getElementById: (id) => (id === "emo-root" ? body : null),
+  createElement: (tag) => ({
+    tagName: tag,
+    children: [],
+    style: { props: {}, setProperty() {} },
+    addEventListener(ev, fn) {
+      this.listeners = this.listeners || {};
+      (this.listeners[ev] = this.listeners[ev] || []).push(fn);
+    },
+    appendChild(c) { this.children.push(c); },
+    removeChild(c) { this.children = this.children.filter((x) => x !== c); },
+  }),
+  createTextNode: (text) => ({ data: text }),
+};
+global.window = { innerWidth: 800, innerHeight: 600 };
+require("./app.js");
+setTimeout(() => {
+  body.children[0].listeners.click[0]();
+  setTimeout(() => console.log("fired"), 10);
+}, 10);
+|}
+
+(* The emitter's refusals are checked by name, like the foreign-def
+   matrix: the build exit alone would not say which rule fired. *)
+let browser_emit_refusal source emit =
+  let items, parse_diags =
+    Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+  in
+  (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+  let diags, _refs, _requires, types =
+    Emo_check.check_module_typed ~modules:[] ~current:[] ~target:"browser"
+      items
+  in
+  (match diags with _ :: _ -> Alcotest.fail "unexpected check errors" | [] -> ());
+  let program =
+    Emo_ir.lower
+      {
+        Emo_ir.modules =
+          [ { Emo_ir.mpath = []; mitems = items; mtypes = types } ];
+        entry = [];
+        packages = [];
+      }
+  in
+  try
+    ignore (emit program);
+    None
+  with Emo_ir.Lower_error message -> Some message
+
+let browser_tests =
+  [
+    tc "browser: one bundle with no host imports, run against a page"
+      (fun () ->
+        if not (Lazy.force node_strip_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "browser-page"
+            {|const root = dom_root()
+const label = dom_text("hello")
+dom_append(root, label)
+dom_title("Page title")
+println("ready")
+|}
+        in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"browser" entry (Filename.concat dir "app"));
+        let bundle = Filename.concat dir "app.js" in
+        Alcotest.(check bool) "one bundle" true (Sys.file_exists bundle);
+        let text = read_file bundle in
+        List.iter
+          (fun marker ->
+            Alcotest.(check bool)
+              ("bundle contains no `" ^ marker ^ "`") false
+              (contains text marker))
+          [ "require("; "from \"node:"; "process."; "_als" ];
+        write_file (Filename.concat dir "run.js") browser_page_harness;
+        check_run "browser"
+          (run_cmd
+             ("node " ^ Filename.quote (Filename.concat dir "run.js")))
+          "ready\ntitle=Page title children=hello\n");
+    tc "browser: an event reaches the sink with its tag" (fun () ->
+        if not (Lazy.force node_strip_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "browser-event"
+            {|const root = dom_root()
+const button = dom_element("button")
+dom_set_text(button, "press")
+dom_append(root, button)
+dom_connect(button, "click", 7)
+dom_sink() -> (tag Int64) { println("event ${tag}") }
+|}
+        in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"browser" entry (Filename.concat dir "app"));
+        write_file (Filename.concat dir "run.js") browser_event_harness;
+        check_run "browser event"
+          (run_cmd
+             ("node " ^ Filename.quote (Filename.concat dir "run.js")))
+          "event 7\nfired\n");
+    tc "browser refuses Node's runtime capabilities by name" (fun () ->
+        match
+          browser_emit_refusal
+            "const x = file_read(\"a\")\nprintln(x)\n"
+            Emo_codegen.Ts.emit_browser
+        with
+        | None -> Alcotest.fail "expected a refusal"
+        | Some message ->
+            Alcotest.(check bool)
+              "names the capability and the target" true
+              (contains message
+                 "`file_read` runtime implementation is not available on the \
+                  browser target"));
+    tc "typescript refuses the DOM capabilities by name" (fun () ->
+        match
+          browser_emit_refusal "const root = dom_root()\n" Emo_codegen.Ts.emit_ts
+        with
+        | None -> Alcotest.fail "expected a refusal"
+        | Some message ->
+            Alcotest.(check bool)
+              "names the capability and points at the browser target" true
+              (contains message
+                 "`dom_root` runtime implementation is not available on the \
+                  typescript target; build for the browser target"));
+    tc "browser refuses a spawned process by name" (fun () ->
+        match
+          browser_emit_refusal
+            {|def worker() {
+  println("w")
+}
+do worker()
+|}
+            Emo_codegen.Ts.emit_browser
+        with
+        | None -> Alcotest.fail "expected a refusal"
+        | Some message ->
+            Alcotest.(check bool)
+              "names the construct and the target" true
+              (contains message
+                 "a spawned process (`do`) is not available on the browser \
+                  target"));
   ]
 
 (* ---- test: the `emo test` subcommand (step 46) ---- *)
@@ -4291,4 +4510,5 @@ let () =
       ("manifest_entry", manifest_entry_tests);
       ("emoji", emoji_tests);
       ("doctor", doctor_tests);
+      ("browser", browser_tests);
     ]

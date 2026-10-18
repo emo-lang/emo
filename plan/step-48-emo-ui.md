@@ -379,9 +379,27 @@ placement; `docs/emo-ui.md`, ask 7).
       runs natively where `pkg-config gtk4` answers and otherwise
       compiles the same generated C in the `emo-ui-gtk-build` container
       (GTK 4 plus Xvfb), so a macOS host runs the gate too.
-- [ ] **T48.10** — The browser runtime path: a browser-safe split of
+- [x] **T48.10** — The browser runtime path: a browser-safe split of
       the TypeScript runtime (or a `dom_*` family in the runtime) plus the
       output-bundling step; the gate for T48.11.
+      Landed 2026-10-18: the runtime is three files concatenated two
+      ways — `ts_core.ts` is host-free and reaches the platform only
+      through an `EHost` object (output, process context, shutdown,
+      method dispatch, runtime implementations), `ts_node.ts` holds the
+      networking section, `AsyncLocalStorage` and the net method table,
+      and `ts_browser.ts` holds line-buffered console output, one page
+      pid, and the thirteen `dom_*` calls. `ts_prelude` is core+node,
+      `ts_browser_prelude` is core+browser, and both ride the generated
+      data rule. The bundling step is a build target, `emo build
+      --target browser`: it emits one `.js`, refusing processes (`do`,
+      `<-`, `receive`) and non-`dom_` runtime implementations by name,
+      and strips types with Node's own `module.stripTypeScriptTypes`
+      (Node >= 22.13), caching the JavaScript under `.emo-build/` and
+      reporting 69 when Node is missing or old. The `typescript` target
+      refuses `dom_*` in turn, so neither output carries a binding the
+      other's host cannot serve. `emo doctor` reports the browser
+      capability; the CLI tests pin the bundle's lack of host imports,
+      an event reaching the sink with its tag, and every refusal.
 - [ ] **T48.11** — `ui-browser`: the DOM backend over the browser path;
       the convergence corpus runs.
 - [ ] **T48.12** — The convergence corpus: one sample application

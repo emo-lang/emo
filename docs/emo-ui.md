@@ -247,18 +247,22 @@ only one of them is close.
   and server round-trips (the htmx shape), or a later SSE/WebSocket
   channel. This is cheap, testable, and gives "Web" immediately for
   content and form UIs. It is the right T0.
-- **T1 — the DOM backend.** An Emo program compiled by the TypeScript
-  target, running in the browser against `document`/`Element`. This is
-  where real interactivity lives, and it is not ready: the emitted
-  runtime imports `node:async_hooks`, `node:net`, `node:dgram`,
-  `node:tls`, `node:dns`, and `node:fs` at the top (`ts_runtime.ts`),
-  so it does not load in a browser; step 17's scope explicitly lists
-  "browser embedding (`fetch`/WebSocket bridging)" as out; and browsers
-  cannot execute `.ts`, so an output-bundling step enters the toolchain.
-  Getting there means a DOM capability layer (a `dom_*` family in the TS
-  runtime, or a browser-only runtime variant), a browser-safe
-  entry, and a build step. All are real work, none is architecturally
-  blocked.
+- **T1 — the DOM backend.** An Emo program compiled to a browser
+  bundle, running against `document`/`Element`. This is where real
+  interactivity lives. **The runtime path landed 2026-10-18 (T48.10)**:
+  the TypeScript runtime split into a host-free `ts_core.ts`, a Node
+  host (`ts_node.ts`), and a page host (`ts_browser.ts`); the compiler
+  concatenates core+node into the `typescript` target's prelude and
+  core+browser into the `browser` target's, and `emo build --target
+  browser` emits one `.js` bundle with its types stripped by Node's own
+  `module.stripTypeScriptTypes` (Node >= 22.13). The bundle imports no
+  host module and never touches `process`; the page host supplies
+  line-buffered console output, one page pid, and the thirteen-call
+  `dom_*` family, whose Int64 handles index a host-side node table. The
+  emitter keeps the two hosts honest by name: the browser target
+  refuses processes (`do`, `<-`, `receive`) and every non-`dom_`
+  runtime implementation, and the `typescript` target refuses `dom_*`.
+  The `ui-browser` package over those calls is T48.11.
 - **T2 — wasm + DOM.** The `wasm` target's module imports exactly
   `println`, `abort`, and `float_str`; a DOM backend on wasm means new
   host imports and a JS glue layer. Later, and only if T1 proves
@@ -696,8 +700,9 @@ Each platform implements it:
   and links are the interaction model, and the three nodes only a
   server round trip can honor (`form`, `link`, `field`) live in this
   package rather than in the core.
-- **DOM (later):** an Emo class over the runtime's `dom_*` calls;
-  `run()` hands control to the browser and returns.
+- **DOM (T48.11):** an Emo class over the runtime's `dom_*` calls,
+  which landed with the browser path (T48.10); `run()` hands control to
+  the browser and returns.
 
 `patch` is the growth edge. The spike did a full rebuild per event
 (`clear` plus re-place), which is fine for a terminal and a static HTML
@@ -868,8 +873,10 @@ mid-implementation:
 6. **A browser path for the Web (T1) — settled 2026-10-15 to the split
    route:** a browser-safe subset of the TypeScript runtime, a `dom_*`
    family, and a bundling step, rather than new wasm host imports
-   (`CHECK.md`). Where the bundling step lives in the toolchain is
-   T48.10's own work. Not needed for SSR (T0).
+   (`CHECK.md`). **Landed 2026-10-18 (T48.10):** the split is a
+   host-free core plus Node and page hosts, the `dom_*` family is
+   thirteen calls over Int64 handles, and the bundling step is a build
+   target — `emo build --target browser`. Not needed for SSR (T0).
 7. **Terminal input.** Raw mode and key events for the TUI (a small
    termios binding, or a terminal runtime implementation). **Settled
    2026-10-15: a standard-library package, shipped the `sqlite3` way**
@@ -1045,10 +1052,11 @@ tracked as **M16 — Value-family reclamation (step 49)**, spec in
    interface — is also the alternative to giving `c` def-as-value.
 4. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
    subset of the TypeScript runtime plus a `dom_*` family, not a
-   browser-specific runtime variant (`CHECK.md`). What stays open is
-   mechanical: where the bundling step lives in the toolchain, which is
-   T48.10's own work. The `typescript` target's share-on-send
-   (`CHECK.md`, cross-target invariants) is on this path too.
+   browser-specific runtime variant (`CHECK.md`); landed 2026-10-18
+   (T48.10), with the bundling step as `emo build --target browser`.
+   What stays open is the DOM backend itself (T48.11) and the
+   `typescript` target's share-on-send (`CHECK.md`, cross-target
+   invariants), which the browser target does not carry.
 5. **The tree spelling** — whether the array child form gets a literal
    spelling at all, and if so whether it belongs in Emo's own grammar or
    in an external translator that emits `.emo`. The mechanisms that are

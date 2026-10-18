@@ -234,8 +234,10 @@ let ocaml_target_ok () : bool =
    backend: ocaml (default) emits OCaml compiled by the OCaml
    toolchain; c emits C compiled by the system cc into a standalone
    binary; typescript emits one self-contained .ts file that runs on
-   Node. A `package.emo` is a manifest rather than a program, so it is
-   refused like one (66) — `emo emoji build` is what builds a package. *)
+   Node; browser emits one .js bundle that runs in a page (the same
+   runtime with the browser host, types stripped by Node). A
+   `package.emo` is a manifest rather than a program, so it is refused
+   like one (66) — `emo emoji build` is what builds a package. *)
 (* The cache key's compiler component: the running executable's own
    content digest, so a new compiler invalidates every cached build —
    codegen changes otherwise ride stale cache-* binaries forever (the
@@ -448,6 +450,82 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                       (Filename.quote out)));
               Printf.printf "built %s\n" out;
               0
+            end
+        | "browser" ->
+            (* One bundle for the page: the shared runtime core plus the
+               browser host, then the program. Browsers run no
+               TypeScript, so the build step strips the types with
+               Node's own stripper — Node >= 22.13, where
+               module.stripTypeScriptTypes landed. The cache keeps the
+               JavaScript keyed by the source, and the intermediate
+               .ts stays in the build directory, never beside the
+               output. *)
+            let source = Emo_codegen.Ts.emit_browser program in
+            let digest =
+              Digest.to_hex
+                (Digest.string
+                   (Printf.sprintf "browser|%s|%s" source
+                      Emo_codegen.Ts.ts_browser_prelude))
+            in
+            let cache_file =
+              Filename.concat build_dir ("browser-" ^ digest ^ ".js")
+            in
+            let out =
+              if Filename.check_suffix output ".js" then output
+              else output ^ ".js"
+            in
+            if Sys.file_exists cache_file then begin
+              ignore
+                (Emo_tool.run_or_warn ~what:"emo build"
+                   (Printf.sprintf "cp %s %s"
+                      (Filename.quote cache_file)
+                      (Filename.quote out)));
+              Printf.printf "built %s (cached)\n" out;
+              0
+            end
+            else if not (tool_exists "node") then begin
+              prerr_endline
+                "emo build: the browser target needs Node with \
+                 module.stripTypeScriptTypes (Node >= 22.13) to strip the \
+                 bundle's types, and node was not found";
+              69
+            end
+            else begin
+              let ts_file =
+                Filename.concat build_dir ("browser-" ^ digest ^ ".ts")
+              in
+              let oc = open_out_bin ts_file in
+              output_string oc source;
+              close_out oc;
+              let strip =
+                "const {stripTypeScriptTypes}=require(\"node:module\");\
+                 const fs=require(\"node:fs\");\
+                 fs.writeFileSync(process.argv[2],\
+                 stripTypeScriptTypes(fs.readFileSync(process.argv[1],\"utf8\")));"
+              in
+              let rc =
+                Emo_tool.run_status
+                  (Printf.sprintf "node --no-warnings -e %s %s %s"
+                     (Filename.quote strip)
+                     (Filename.quote ts_file)
+                     (Filename.quote cache_file))
+              in
+              if rc <> 0 then begin
+                prerr_endline
+                  "emo build: node could not strip the bundle's types — the \
+                   browser target needs Node >= 22.13 \
+                   (module.stripTypeScriptTypes)";
+                69
+              end
+              else begin
+                ignore
+                  (Emo_tool.run_or_warn ~what:"emo build"
+                     (Printf.sprintf "cp %s %s"
+                        (Filename.quote cache_file)
+                        (Filename.quote out)));
+                Printf.printf "built %s\n" out;
+                0
+              end
             end
         | "c" ->
             (* Emit one main.c plus the Emo runtime sources, compile
@@ -821,8 +899,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         | other ->
             prerr_endline
               (Printf.sprintf
-                 "emo build: unknown target `%s` (ocaml, c, typescript, wasm, \
-                  beam, riscv64)"
+                 "emo build: unknown target `%s` (ocaml, c, typescript, \
+                  browser, wasm, beam, riscv64)"
                  other);
             65
       with
@@ -882,8 +960,8 @@ let build =
       value & opt string "c"
       & info [ "target" ] ~docv:"TARGET"
           ~doc:
-            "The compilation target: c, ocaml, typescript, wasm, beam, or \
-             riscv64.")
+            "The compilation target: c, ocaml, typescript, browser, wasm, \
+             beam, or riscv64.")
   in
   let build entry output no_specialize cclibs target locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());
@@ -1953,6 +2031,16 @@ let cc_smoke () : (unit, string) result =
       if out = "emo" then Ok () else Error "the cc smoke binary did not run"
     end
 
+(* The browser target's one external requirement: Node's own TypeScript
+   stripper, which arrived in 22.13. *)
+let node_strip_ok () : bool =
+  tool_exists "node"
+  && Emo_tool.run_status
+       "node --no-warnings -e 'process.exit(typeof \
+        require(\"node:module\").stripTypeScriptTypes === \"function\" ? 0 : \
+        1)'"
+     = 0
+
 (* The ocaml target's check: ocamlfind with the unix and ssl packages
    the runtime itself uses — the same question on every installation
    shape, since the runtime rides the compiler (step 25). *)
@@ -1975,6 +2063,11 @@ let doctor ~(emit : string -> unit) : int =
        (ocamlfind with the unix and ssl packages)";
   if tool_exists "node" then line "typescript:" ("ok" ^ tool_version "node")
   else line "typescript:" "unavailable — node not found";
+  if node_strip_ok () then line "browser:" ("ok" ^ tool_version "node")
+  else
+    line "browser:"
+      "unavailable — the browser target needs Node >= 22.13 \
+       (module.stripTypeScriptTypes)";
   if tool_exists "erlc" then line "beam:" "ok"
   else line "beam:" "unavailable — erlc not found";
   line "wasm:" "ok — no external tools needed";
@@ -2066,7 +2159,7 @@ let scaffold ~(path : string) : int =
   // This package's own version: exact major.minor.patch.
   version = "0.1.0"
   // The backends this package runs and builds on. Known targets:
-  // "ocaml", "c", "wasm", "typescript", "beam", "riscv64".
+  // "ocaml", "c", "wasm", "typescript", "browser", "beam", "riscv64".
   targets = ["ocaml", "c"]
   // Optional: system libraries the c target links, as bare names.
   // link = ["sqlite3"]
@@ -2185,7 +2278,7 @@ let scaffold_package ~(name : string) ~(path : string) : int =
   // existing version is rejected — bump it before re-publishing.
   version = "0.1.0"
   // The backends this package runs and builds on. Known targets:
-  // "ocaml", "c", "wasm", "typescript", "beam", "riscv64".
+  // "ocaml", "c", "wasm", "typescript", "browser", "beam", "riscv64".
   targets = ["ocaml", "c"]
   // Optional: system libraries the c target links, as bare names.
   // link = ["sqlite3"]

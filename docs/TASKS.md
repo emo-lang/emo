@@ -65,7 +65,7 @@ before starting the gated work:
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
 | EmoUI native UI packaging (per-package native fields) | T48.7–T48.9 | settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.7)**: `pkg_config` (bare modules; `--cflags` compile, `--libs` link), `frameworks` (bare names; `-framework NAME`), and `.m` collected beside `.c`/`.h` and compiled under ARC |
 | `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). **Landed 2026-10-17 (T49.1–T49.4)**: the working set is flat and the demo-scale note is retired |
-| EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). Where the bundling step lives in the toolchain stays T48.10's own work |
+| EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.10)**: the bundling step is a build target (`emo build --target browser`), the split is a host-free core plus Node and page hosts, and the `dom_*` family is thirteen calls over Int64 handles |
 | Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
 | The in-tree project layout (`projects/`) | all of M15 | settled 2026-10-15 — `projects/<repo-name>/` at the repository root holds each named Emo project (EmoUI, EmoOS, EmoShell), named for the repository it can later be split out into; EmoUI stays not a standard-library package (`CHECK.md`) |
@@ -1835,9 +1835,33 @@ required.
       answers, and otherwise compiles the same generated C in the
       `emo-ui-gtk-build` container (GTK 4 plus Xvfb), so the gate runs
       from a macOS host too.
-- [ ] **T48.10** — The browser runtime path: a browser-safe split of the
+- [x] **T48.10** — The browser runtime path: a browser-safe split of the
       TypeScript runtime (or a `dom_*` family in the runtime) plus the
       bundling step; the gate for T48.11.
+      **Landed 2026-10-18**: the TypeScript runtime is now `ts_core.ts`
+      — host-free, with a host object for output, process context,
+      shutdown, method dispatch, and runtime implementations — plus
+      `ts_node.ts` (the networking section, AsyncLocalStorage, the net
+      method table) and `ts_browser.ts` (line-buffered console output,
+      one page pid, the `dom_*` family). The compiler concatenates
+      core+node into `ts_prelude` and core+browser into
+      `ts_browser_prelude`, both as generated data.
+      The `dom_*` family is thirteen calls — root, element, text,
+      set_text, set_style, set_prop, append, clear, connect, value,
+      sink, title, viewport — over Int64 handles into a host-side node
+      table; the checker types them in every frame and the IR treats the
+      prefix as a runtime implementation like `net_`. `emo build
+      --target browser` emits one `.js` bundle: the emitter refuses
+      processes (`do`, `<-`, `receive`) and every non-`dom_` runtime
+      implementation by name, and the `typescript` target refuses
+      `dom_*` by name. The bundling step is the CLI's — it strips the
+      types with Node's own `module.stripTypeScriptTypes` (Node >=
+      22.13), caches the JavaScript, and reports 69 when Node is
+      missing or too old. The `browser` target joins `known_targets` and
+      `emo/ui`'s manifest, and `emo doctor` reports it. Tests pin a
+      bundle with no host imports running against a stub page, an event
+      reaching the sink with its tag, the three refusals by name, and
+      the doctor line.
 - [ ] **T48.11** — `ui-browser`: the DOM backend over the browser path;
       the convergence corpus runs.
 - [ ] **T48.12** — The convergence corpus: one sample application on

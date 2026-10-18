@@ -45,7 +45,8 @@ type manifest = {
   deps : (string * Version.t) list; (* exact versions *)
 }
 
-let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
+let known_targets =
+  [ "ocaml"; "c"; "wasm"; "typescript"; "browser"; "beam"; "riscv64" ]
 
 (* The manifest's shape:
      package {

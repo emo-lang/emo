@@ -893,6 +893,89 @@ let empty_env =
             is_var = false;
             depth = 0;
           } );
+        (* The DOM capability family: the browser target's implementations
+           of the dom package. Handles are Int64s into the runtime's node
+           table; the page's own objects never cross into Emo. *)
+        ( "dom_root",
+          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+        ( "dom_element",
+          {
+            vtype = FuncType ([ ("tag", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_text",
+          {
+            vtype = FuncType ([ ("text", String) ], Int64);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_set_text",
+          {
+            vtype = FuncType ([ ("node", Int64); ("text", String) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_set_style",
+          {
+            vtype =
+              FuncType
+                ([ ("node", Int64); ("name", String); ("value", String) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_set_prop",
+          {
+            vtype =
+              FuncType
+                ([ ("node", Int64); ("name", String); ("value", Unknown) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_append",
+          {
+            vtype = FuncType ([ ("parent", Int64); ("child", Int64) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_clear",
+          {
+            vtype = FuncType ([ ("node", Int64) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_connect",
+          {
+            vtype =
+              FuncType
+                ([ ("node", Int64); ("event", String); ("tag", Int64) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_value",
+          {
+            vtype = FuncType ([ ("node", Int64) ], String);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_sink",
+          {
+            vtype = FuncType ([ ("sink", Unknown) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_title",
+          {
+            vtype = FuncType ([ ("title", String) ], Void);
+            is_var = false;
+            depth = 0;
+          } );
+        ( "dom_viewport",
+          {
+            vtype = FuncType ([], TupleType [ Float64; Float64 ]);
+            is_var = false;
+            depth = 0;
+          } );
         ( "file_read",
           {
             vtype =
