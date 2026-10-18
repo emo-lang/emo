@@ -391,6 +391,24 @@ experiment on two screens supports a claim that size, and no more. The
 target matrix there is not incidental either — of the five hosted
 targets, only `typescript` compiles the core today.
 
+**An update, 2026-10-18: D exists.** `projects/emo-ui/translator/`
+lowers a `.emoui` tree file to the settled spelling — a
+stdin-to-stdout filter, 1,239 lines of Emo across four modules, no
+compiler change. The demo (`translator/demo/`) writes this note's two
+screens in the literal form and holds the result to the A spelling
+beside it: `show.emo` asserts equal trees through `debug.render` on
+four models (base, empty inbox, shown banner), `check.sh` regenerates
+the committed output and diffs it, and `expected_show.txt` pins the
+render. The literal file is 52 lines against the A reference's 65 —
+the delta is the three per-element-type defs and the builder
+statements the translator writes instead; the sample is the same size,
+so the claim stays the same size too. What the prototype settles about
+D's shape: the translator itself stays cheap, because leaf expressions
+are opaque spans and it never parses Emo — the second-toolchain cost
+lives elsewhere, in editor support for `.emoui` and span-accurate
+error mapping, both still undone. The mechanisms this note closes stay
+closed: the lowering emits into a named builder, never into a context.
+
 ## References
 
 - [`emo-ui.md`](emo-ui.md) — the assessment; Layer 1 is the composition
