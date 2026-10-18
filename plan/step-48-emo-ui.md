@@ -400,8 +400,26 @@ placement; `docs/emo-ui.md`, ask 7).
       other's host cannot serve. `emo doctor` reports the browser
       capability; the CLI tests pin the bundle's lack of host imports,
       an event reaching the sink with its tag, and every refusal.
-- [ ] **T48.11** — `ui-browser`: the DOM backend over the browser path;
+- [x] **T48.11** — `ui-browser`: the DOM backend over the browser path;
       the convergence corpus runs.
+      Landed 2026-10-18: `browser/` is the package `emo/ui_browser`,
+      declaring the `browser` target and pinned against `emo/ui` (T48.10's
+      gate). `css.emo` maps a `Style` to the declarations the browser's
+      own layout engine consumes, so no point box model lives here as it
+      does on macOS and GTK; `test.emo` checks that mapping as values on
+      the interpreter, in 27 assertions. `ui_browser.emo` is the `Dom`
+      class over the `dom_*` calls: `mount` sets the title, the page-root
+      declarations and the sink, `render` builds one element per node (a
+      `text` is a span, a `button` carries its tag as the `name`/`value`
+      pair the SSR markup uses, an `input` is a read-only view, an
+      `image` is an `img`), and `patch` rebuilds the tree, as every
+      backend does. `run()` returns, because the page owns the loop.
+      `corpus/` is the convergence consumer — the same application, the
+      same `0,0,1,2` script and `expected.txt` — and `page.mjs` is the
+      stub page the gate runs it in: a `document`/`window` just large
+      enough for the host, then the script's tags clicked in order.
+      `browser/check.sh` is the package's gate; it says so and passes
+      where Node < 22.13 leaves no bundle to build.
 - [ ] **T48.12** — The convergence corpus: one sample application
       (state, a form, a list, an event) on every backend, with the same
       portable app module throughout.

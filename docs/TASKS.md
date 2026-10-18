@@ -65,7 +65,7 @@ before starting the gated work:
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
 | EmoUI native UI packaging (per-package native fields) | T48.7–T48.9 | settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.7)**: `pkg_config` (bare modules; `--cflags` compile, `--libs` link), `frameworks` (bare names; `-framework NAME`), and `.m` collected beside `.c`/`.h` and compiled under ARC |
 | `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). **Landed 2026-10-17 (T49.1–T49.4)**: the working set is flat and the demo-scale note is retired |
-| EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.10)**: the bundling step is a build target (`emo build --target browser`), the split is a host-free core plus Node and page hosts, and the `dom_*` family is thirteen calls over Int64 handles |
+| EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.10–T48.11)**: the bundling step is a build target (`emo build --target browser`), the split is a host-free core plus Node and page hosts, the `dom_*` family is thirteen calls over Int64 handles, and `emo/ui_browser` is the DOM backend over them, with the convergence corpus running in a stub page |
 | Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
 | The in-tree project layout (`projects/`) | all of M15 | settled 2026-10-15 — `projects/<repo-name>/` at the repository root holds each named Emo project (EmoUI, EmoOS, EmoShell), named for the repository it can later be split out into; EmoUI stays not a standard-library package (`CHECK.md`) |
@@ -1862,8 +1862,23 @@ required.
       bundle with no host imports running against a stub page, an event
       reaching the sink with its tag, the three refusals by name, and
       the doctor line.
-- [ ] **T48.11** — `ui-browser`: the DOM backend over the browser path;
-      the convergence corpus runs.
+- [x] **T48.11** — `ui-browser`: the DOM backend over the browser path;
+      the convergence corpus runs. **Landed 2026-10-18**:
+      `projects/emo-ui/browser/` is the package `emo/ui_browser`,
+      declaring the `browser` target and pinned against `emo/ui`.
+      `css.emo` maps a `Style` to the declarations the browser's own
+      layout engine consumes — no point box model lives here, unlike
+      macOS and GTK — and `test.emo` checks that mapping as values on
+      the interpreter in 27 assertions. `ui_browser.emo` is the `Dom`
+      class over the `dom_*` calls: `mount` sets the title, the
+      page-root declarations and the sink; `render` builds one element
+      per node, with a `button` carrying its tag as the `name`/`value`
+      pair the SSR markup uses; `patch` rebuilds the tree, as every
+      backend does; `run()` returns, because the page owns the loop.
+      `corpus/` is the convergence consumer — the same application, the
+      same `0,0,1,2` script and `expected.txt` — and `page.mjs` is the
+      stub page the gate runs it in. `browser/check.sh` is the package's
+      gate and skips where Node < 22.13 leaves no bundle to build.
 - [ ] **T48.12** — The convergence corpus: one sample application on
       every backend, with the same portable app module throughout.
 - [ ] **T48.13** — Docs: the README's EmoUI section revised to the

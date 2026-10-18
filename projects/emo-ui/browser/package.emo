@@ -1,0 +1,9 @@
+package {
+  name = "emo/ui_browser"
+  version = "0.1.0"
+  targets = ["browser"]
+
+  deps {
+    "emo/ui" = "0.1.0"
+  }
+}

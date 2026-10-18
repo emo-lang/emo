@@ -145,7 +145,7 @@ This note does not re-open what earlier work closed.
 | macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **landed** (T48.8), package `emo/ui_macos` | demo scale; the `c` target's long-running memory is step 49 |
 | GTK 4 | `c` target + C shim via `foreign def` | **landed** (T48.9), package `emo/ui_gtk` | demo scale; the `c` target's long-running memory is step 49 |
 | TUI | pure Emo, ANSI escape output; `term` for input | **landed** (T48.4, T48.5) | wiring `term` into `ui_tui`'s input source |
-| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); DOM least ready | TS target is Node-only; wasm host has 3 imports |
+| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); the browser path and its DOM backend landed (T48.10, T48.11) | wasm host has 3 imports |
 
 ### macOS and GTK 4
 
@@ -262,7 +262,14 @@ only one of them is close.
   emitter keeps the two hosts honest by name: the browser target
   refuses processes (`do`, `<-`, `receive`) and every non-`dom_`
   runtime implementation, and the `typescript` target refuses `dom_*`.
-  The `ui-browser` package over those calls is T48.11.
+  **The `ui-browser` package over those calls landed 2026-10-18
+  (T48.11)**: `emo/ui_browser` maps a `Style` to the declarations the
+  browser's own layout engine consumes (`css.emo`), builds one element
+  per node over the `dom_*` calls, and rebuilds the tree on every
+  `patch` as the other backends do. A `button` carries its tag as the
+  `name`/`value` pair the SSR markup uses, so a page harness can find
+  the element an event belongs to; the convergence corpus runs in a
+  stub page.
 - **T2 — wasm + DOM.** The `wasm` target's module imports exactly
   `println`, `abort`, and `float_str`; a DOM backend on wasm means new
   host imports and a JS glue layer. Later, and only if T1 proves
@@ -700,9 +707,13 @@ Each platform implements it:
   and links are the interaction model, and the three nodes only a
   server round trip can honor (`form`, `link`, `field`) live in this
   package rather than in the core.
-- **DOM (T48.11):** an Emo class over the runtime's `dom_*` calls,
-  which landed with the browser path (T48.10); `run()` hands control to
-  the browser and returns.
+- **DOM (landed, T48.11):** `projects/emo-ui/browser/` is the package
+  `emo/ui_browser`, an Emo class over the runtime's `dom_*` calls, which
+  landed with the browser path (T48.10). The browser's own layout
+  engine does the layout, so the package carries a style mapping
+  (`css.emo`) rather than a point box model; `run()` hands control to
+  the browser and returns. `corpus/` is the convergence consumer, and
+  `page.mjs` is the stub page its gate clicks the script in.
 
 `patch` is the growth edge. The spike did a full rebuild per event
 (`clear` plus re-place), which is fine for a terminal and a static HTML
@@ -1053,10 +1064,10 @@ tracked as **M16 — Value-family reclamation (step 49)**, spec in
 4. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
    subset of the TypeScript runtime plus a `dom_*` family, not a
    browser-specific runtime variant (`CHECK.md`); landed 2026-10-18
-   (T48.10), with the bundling step as `emo build --target browser`.
-   What stays open is the DOM backend itself (T48.11) and the
-   `typescript` target's share-on-send (`CHECK.md`, cross-target
-   invariants), which the browser target does not carry.
+   (T48.10–T48.11), with the bundling step as `emo build --target
+   browser` and `emo/ui_browser` over the `dom_*` calls. What stays
+   open is the `typescript` target's share-on-send (`CHECK.md`,
+   cross-target invariants), which the browser target does not carry.
 5. **The tree spelling** — whether the array child form gets a literal
    spelling at all, and if so whether it belongs in Emo's own grammar or
    in an external translator that emits `.emo`. The mechanisms that are

@@ -1,8 +1,8 @@
 # EmoUI
 
 The component-based UI framework written in Emo: one declarative tree rendering
-on a terminal, a server-rendered page, a macOS/AppKit window, and a GTK 4 window
-— the browser DOM following its runtime path. Emo's syntax is shaped to serve
+on a terminal, a server-rendered page, a macOS/AppKit window, a GTK 4 window,
+and the browser DOM. Emo's syntax is shaped to serve
 it, and the principle is **no template language — the UI is plain Emo code**,
 the same philosophy as configuration.
 
@@ -41,8 +41,10 @@ Whether the array form later earns a literal spelling of its own is still open
 The portable **`ui` core** (T48.1), the **Elm loop** (T48.2), the headless
 **`debug` backend with its golden** (T48.3), the **terminal `ui_tui` backend
 with its scripted-input golden** (T48.4), the **server-rendered `ui_ssr`
-backend** (T48.6) and the **native `ui_macos` backend with its self-driving
-corpus** (T48.8) have landed. So has terminal input itself (T48.5), as the
+backend** (T48.6), the **native `ui_macos` backend with its self-driving
+corpus** (T48.8), the **GTK 4 `ui_gtk` backend** (T48.9) and the **browser
+`ui_browser` backend with its DOM corpus** (T48.10, T48.11) have landed. So
+has terminal input itself (T48.5), as the
 standard-library **`term` package** in `stdlib/` — line reads, raw mode,
 decoded key events, and the terminal's size, in the `sqlite3` shape and
 reached by an ordinary `require`.
@@ -133,8 +135,8 @@ the rule.
 assertions run, every target's build — and every refusal — is pinned there, and
 the golden's bytes are compared on all five hosted targets (the `wasm`
 artifact under the host boundary in `wasm-runner.mjs`). It ends by running
-`tui/check.sh`, `ssr/check.sh`, `macos/check.sh` and `gtk/check.sh`, so the
-project keeps one entry point.
+`tui/check.sh`, `ssr/check.sh`, `macos/check.sh`, `gtk/check.sh` and
+`browser/check.sh`, so the project keeps one entry point.
 
 `tui/` is the terminal backend (T48.4), a package of its own — `emo/ui_tui`,
 pinned against `emo/ui` — because it carries a platform the core does not. The
@@ -226,9 +228,26 @@ answers, and otherwise compiles and runs the same generated C in the
 `emo-ui-gtk-build` container (GTK 4 plus Xvfb), which is how a macOS host
 checks it; with neither it says so and passes.
 
-Still to come: wiring `term` into `ui_tui`'s input source, the browser runtime
-path and its DOM backend, and the cross-backend convergence corpus
-(T48.10–T48.13). The design and its evidence:
+`browser/` is the DOM backend (T48.11), a package of its own —
+`emo/ui_browser`, pinned against `emo/ui`, declaring the `browser` target and
+reached through the runtime path T48.10 added. The browser has a layout engine,
+so the package carries no box model: `css.emo` maps a `Style` to the
+declarations the page's own layout consumes, and it is pure Emo, so the
+interpreter runs `test.emo`'s twenty-seven assertions. `ui_browser.emo` is the
+`Dom` class over the thirteen `dom_*` calls: `mount` sets the title, the
+page-root declarations and the sink; `render` builds one element per node — a
+`text` is a span, a `button` carries its tag as the `name`/`value` pair
+`ui_ssr`'s markup uses, an `input` is a read-only view, an `image` is an `img`
+— and `patch` rebuilds the tree, as every backend does. `run()` returns,
+because the page owns the loop. `corpus/` is the convergence consumer — the
+same application, the same `0,0,1,2` script and `expected.txt` — and `page.mjs`
+is the stub page the gate runs it in: a `document`/`window` just large enough
+for the host, then the script's tags clicked in order. `browser/check.sh` is
+the package's gate; it needs Node >= 22.13 for `emo build --target browser`'s
+bundling step, and says so and passes where that is missing.
+
+Still to come: wiring `term` into `ui_tui`'s input source, and the
+cross-backend convergence corpus (T48.12–T48.13). The design and its evidence:
 
 - [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.

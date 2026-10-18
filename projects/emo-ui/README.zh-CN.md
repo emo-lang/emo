@@ -1,6 +1,6 @@
 # EmoUI
 
-用 Emo 写的组件式 UI 框架:一棵声明式树渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口——浏览器 DOM 随后按自己的运行时路径接入。Emo 的语法就是为它塑形的,原则是**没有模板语言——UI 就是普通的 Emo 代码**,与配置同一哲学。
+用 Emo 写的组件式 UI 框架:一棵声明式树渲染到终端、服务端页面、macOS/AppKit 窗口、GTK 4 窗口与浏览器 DOM。Emo 的语法就是为它塑形的,原则是**没有模板语言——UI 就是普通的 Emo 代码**,与配置同一哲学。
 
 组件树是嵌套调用,子节点是一份显式的 `Array[ui.Node]`:
 
@@ -28,7 +28,7 @@ def inbox(users Array[User]) ui.Node {
 
 ## 状态
 
-可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)、终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)、服务端渲染的 **`ui_ssr` 后端**(T48.6)与原生 **`ui_macos` 后端及其自驱动语料**(T48.8)都已落地。终端输入本身(T48.5)也已落地,是 `stdlib/` 里的标准库 **`term` 包**——按行读取、raw mode、解码后的按键事件与终端尺寸,形状同 `sqlite3`,普通 `require` 即可到达。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
+可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)、终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)、服务端渲染的 **`ui_ssr` 后端**(T48.6)、原生 **`ui_macos` 后端及其自驱动语料**(T48.8)、**GTK 4 `ui_gtk` 后端**(T48.9)与浏览器 **`ui_browser` 后端及其 DOM 语料**(T48.10、T48.11)都已落地。终端输入本身(T48.5)也已落地,是 `stdlib/` 里的标准库 **`term` 包**——按行读取、raw mode、解码后的按键事件与终端尺寸,形状同 `sqlite3`,普通 `require` 即可到达。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
 
 一个应用就是 model、纯 `update`、纯 `view` 加一个后端:
 
@@ -53,7 +53,7 @@ tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 �
 
 这份文本形式比看上去要窄,原因在 target:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为插值枚举或元组在每个 target 上产出的字节并不相同——`typescript` 会带上限定名,`beam` 干脆没有这个类别的转换——所以那份样式摘要改用解构(`align_name`、`extent`)并自己拼出要打印的名字;这处分歧连同最小对照记在 `CHECK.md` 里(`probe/enum_print`)。金标也先在建树之前用独立语句取好事件 tag,绝不写在构成树的实参表里:`on` 是副作用,独立语句让注册顺序在调用处一眼可见。操作数顺序本身不再是跨 target 的变量——语言已写明从左到右,每个 target 都遵守——`probe/eval_order` 钉住的正是这条规则。
 
-`./check.sh` 是它的关口:包能通过类型检查、循环的十七条断言会跑,每个 target 的构建结果——以及每一次拒绝——都在里面钉死,金标的字节也在全部五个托管 target 上逐一比对(`wasm` 产物跑在 `wasm-runner.mjs` 的宿主边界下)。最后接着跑 `tui/check.sh`、`ssr/check.sh`、`macos/check.sh` 与 `gtk/check.sh`,让整个项目只留一个入口。
+`./check.sh` 是它的关口:包能通过类型检查、循环的十七条断言会跑,每个 target 的构建结果——以及每一次拒绝——都在里面钉死,金标的字节也在全部五个托管 target 上逐一比对(`wasm` 产物跑在 `wasm-runner.mjs` 的宿主边界下)。最后接着跑 `tui/check.sh`、`ssr/check.sh`、`macos/check.sh`、`gtk/check.sh` 与 `browser/check.sh`,让整个项目只留一个入口。
 
 `tui/` 是终端后端(T48.4),是一个自己的包——`emo/ui_tui`,对 `emo/ui` 取版本——因为它带一个核心没有的平台。终端没有原生布局引擎,所以盒模型就在这里:以字符格为单位度量核心的 `Style`,列纵向堆叠、行横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置。`screen(root, w, h)` 把网格作为 `Array[String]` 交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI(清屏、归位、每行一行),转义字节经 `printf("%c", [27])` 到达 stdout,因为字符串字面量的转义是最小集合、0x1b 不在其中。`Tui` 在其之上实现 `ui.Backend`,`Input`/`Script` 是脚本化事件源:`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。`term` 包(T48.5)为真实输入源提供 raw mode 的终端读取;接入它换的是那个源,而不是那条接缝——两者都是 `Input`。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`tui/golden/` 是两个包的消费者,里面一块界面由一段点击 Add、Add、Sub 的脚本驱动,它的 `expected.txt` 是解释器的输出,在 `ocaml`、`typescript`、`beam` 上相同。`c` 也能编译后端;金标那个循环形状以前被它拒绝(`Global`),直到 T48.8 给该 target 补上 def-as-value,如今它的字节也在 `c` 上比对。`tui/check.sh` 是这个包的关口;金标逼出的 `beam` 降级缺陷已修好,记在 `CHECK.md`。用法示例在 `examples/tui_menu/`——一个由脚本化输入驱动的终端菜单——同一个关口也会检查它。
 
@@ -65,7 +65,9 @@ tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 �
 
 `gtk/` 是 GTK 4 后端(T48.9),是一个自己的包——`emo/ui_gtk`,对 `emo/ui` 取版本,声明 `c` target 与 `gtk4` 这个 pkg-config 模块。形状与 macOS 包相同:`box.emo` 带 point 盒模型,`ui_gtk.emo` 是九个 foreign 动词与 `Gtk` 类,`shim.c` 是 C 一侧。GTK 本来就是 C,所以 shim 更薄——Emo 命名不了的只有信号处理函数与自驱动脚本——而 `place` 原样施加 x 与 y,因为 GtkFixed 的原点本来就在左上角。循环的 sink 以同一对 `ui.Events` 跨过 FFI。`corpus/` 是同一个收敛消费者,同样是 `0,0,1,2` 脚本与 `expected.txt`。`gtk/check.sh` 是这个包的关口:`pkg-config gtk4` 能回答时就在本机构建并运行,否则在 `emo-ui-gtk-build` 容器(GTK 4 加 Xvfb)里编译并运行同一份生成的 C——macOS 宿主就是这样检查它的;两者都没有时它明说并直接通过。
 
-接下来:把 `term` 接进 `ui_tui` 的输入源、浏览器运行时路径与它的 DOM 后端,以及跨后端的收敛语料(T48.10–T48.13)。设计与证据:
+`browser/` 是 DOM 后端(T48.11),是一个自己的包——`emo/ui_browser`,对 `emo/ui` 取版本,声明 `browser` target,经 T48.10 加进来的运行时路径抵达。浏览器自己有布局引擎,所以这个包不带盒模型:`css.emo` 把 `Style` 映射成页面自己的布局所消费的声明,而它是纯 Emo,解释器就能跑 `test.emo` 的二十七条断言。`ui_browser.emo` 是压在十三个 `dom_*` 调用上的 `Dom` 类:`mount` 设置标题、页面根声明与 sink;`render` 为每个节点建一个元素——`text` 是 span,`button` 像 `ui_ssr` 的标记那样把 tag 放进 `name`/`value` 这一对,`input` 是只读视图,`image` 是 `img`——`patch` 全量重建树,与每个后端一致。`run()` 直接返回,因为事件循环归页面所有。`corpus/` 是收敛消费者——同一个应用、同一段 `0,0,1,2` 脚本与同一份 `expected.txt`——`page.mjs` 是关口运行它的 stub 页面:一个刚好够宿主用的 `document`/`window`,然后按顺序点击脚本里的 tag。`browser/check.sh` 是这个包的关口;`emo build --target browser` 的打包步骤需要 Node >= 22.13,缺失时它明说并直接通过。
+
+接下来:把 `term` 接进 `ui_tui` 的输入源,以及跨后端的收敛语料(T48.12–T48.13)。设计与证据:
 
 - [`docs/zh-CN/emo-ui.md`](../../docs/zh-CN/emo-ui.md) —— 评估与设计方向。
 - [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md) —— 一棵树怎么写出来:子节点为什么是数组而不是块式写法。

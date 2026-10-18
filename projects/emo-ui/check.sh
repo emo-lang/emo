@@ -225,15 +225,17 @@ done
 
 # --- the backends' package gates ----------------------------------------
 #
-# `tui/`, `ssr/`, `macos/` and `gtk/` are packages of their own — they
-# carry a renderer or a shim the core does not — and each has its own
-# gate (T48.4, T48.6, T48.8, T48.9). Run them here too, so the project
-# keeps one entry point. The macOS gate needs a Darwin host and a
-# logged-in session; it says so and passes on any other host. The GTK
-# gate needs GTK 4 or Docker; it says so and passes with neither.
+# `tui/`, `ssr/`, `macos/`, `gtk/` and `browser/` are packages of their
+# own — they carry a renderer or a shim the core does not — and each has
+# its own gate (T48.4, T48.6, T48.8, T48.9, T48.11). Run them here too,
+# so the project keeps one entry point. The macOS gate needs a Darwin
+# host and a logged-in session; it says so and passes on any other host.
+# The GTK gate needs GTK 4 or Docker; it says so and passes with
+# neither. The browser gate needs Node >= 22.13 for the bundling step.
 EMO="$EMO" ./tui/check.sh || fail=1
 EMO="$EMO" ./ssr/check.sh || fail=1
 EMO="$EMO" ./macos/check.sh || fail=1
 EMO="$EMO" ./gtk/check.sh || fail=1
+EMO="$EMO" ./browser/check.sh || fail=1
 
 exit $fail

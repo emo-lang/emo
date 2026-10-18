@@ -1,0 +1,103 @@
+// The DOM package's own test: the style mapping, checked as values
+// rather than as a page. The DOM half is what the corpus gate runs in a
+// stub page; here `css.declarations` returns the declarations, so an
+// alignment or a size that drifts fails with a readable string.
+//
+//   emo run test.emo
+//
+// The module is pure, so the interpreter runs it: `ui_browser.emo` is
+// not loaded, and the `dom_*` calls in it never run.
+
+require "emo/ui"
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+def at(ds Array[(String, String)], name String) String {
+  for var i = 0; i < ds.length(); i = i + 1 {
+    const pair = ds[i]
+    if pair[0] == name {
+      return pair[1]
+    }
+  }
+  raise Exception.new(message: "no declaration `${name}`")
+}
+
+def has(ds Array[(String, String)], name String) Bool {
+  for var i = 0; i < ds.length(); i = i + 1 {
+    const pair = ds[i]
+    if pair[0] == name {
+      return true
+    }
+  }
+  return false
+}
+
+def styled() ui.Style {
+  const spaced = ui.style().with_padding(10.0).with_gap(5.0)
+  const aligned = spaced.with_align(ui.Align.center).with_grow(true)
+  return aligned.with_width(120.0).with_height(60.0)
+}
+
+def mapping_checks() {
+  const styled_ds = css.declarations("column", styled())
+  check(at(styled_ds, "box-sizing") == "border-box",
+    "every box is border-box")
+  check(at(styled_ds, "display") == "flex", "a column is a flex box")
+  check(at(styled_ds, "flex-direction") == "column",
+    "and stacks its children")
+  check(at(styled_ds, "padding") == "10.0px", "padding is a length")
+  check(at(styled_ds, "gap") == "5.0px", "gap is a length")
+  check(at(styled_ds, "align-items") == "center", "align is a cross-axis rule")
+  check(at(styled_ds, "flex-grow") == "1", "grow asks for the leftover space")
+  check(at(styled_ds, "width") == "120.0px", "a width is a length")
+  check(at(styled_ds, "height") == "60.0px", "a height is a length")
+
+  const plain = ui.style()
+  check(at(css.declarations("row", plain), "flex-direction") == "row",
+    "a row lines its children up")
+  check(at(css.declarations("scroll", plain), "overflow") == "auto",
+    "a scroll clips and scrolls")
+  check(at(css.declarations("scroll", plain), "flex-direction") == "column",
+    "and stacks like the column it is")
+  check(at(css.declarations("text", plain), "display") == "inline",
+    "text is inline")
+  check(at(css.declarations("button", plain), "display") == "inline-block",
+    "a button is inline-block")
+  check(at(css.declarations("input", plain), "display") == "inline-block",
+    "an input is inline-block")
+  check(at(css.declarations("image", plain), "display") == "inline-block",
+    "an image is inline-block")
+  check(at(css.declarations("spacer", plain), "display") == "block",
+    "a spacer is a block")
+
+  check(at(css.declarations("row", plain), "align-items") == "flex-start",
+    "start is the cross-axis default")
+  check(at(css.declarations("row", plain.with_align(ui.Align.end)),
+    "align-items") == "flex-end", "end is flex-end")
+  check(at(css.declarations("row", plain.with_align(ui.Align.stretch)),
+    "align-items") == "stretch", "stretch is stretch")
+  check(at(css.declarations("column", plain), "flex-grow") == "0",
+    "the default does not grow")
+  check(at(css.declarations("text", plain.with_padding(2.5)), "padding")
+    == "2.5px", "a fractional length keeps its fraction")
+
+  check(!has(css.declarations("column", plain), "width"),
+    "an unset width is not emitted")
+  check(!has(css.declarations("column", plain), "height"),
+    "an unset height is not emitted")
+
+  const root_ds = css.root_declarations()
+  check(at(root_ds, "box-sizing") == "border-box",
+    "the mount point is border-box too")
+  check(at(root_ds, "margin") == "0", "and carries no page margin")
+  check(at(root_ds, "font-family") == "system-ui, sans-serif",
+    "and the Web backends' font")
+}
+
+mapping_checks()
