@@ -677,7 +677,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 **前置:** Step 39–40。
 **完成标准:** T0 值已声明的每个字段都被渲染出来——对数标度、域、网格、图例、主题——且 `DrawContext` 按 `Renderer` 接口类型化,而非 `SvgRenderer`。
 
-- [ ] **T41.1** — `Scale.log`:对数轴,刻度位置与格式正确。
+- [x] **T41.1** — `Scale.log`:对数轴,刻度位置与格式正确。
 - [ ] **T41.2** — `Domain.auto` / `Domain.fixed`:`Axes` 上的域字段,以及从 mark 推断(decision 19)。
 - [ ] **T41.3** — `with_legend` 的图例渲染(decision 20 的绘制顺序规则;分面(faceting)下共用一份图例,T41.7)。
 - [ ] **T41.4** — 从 `Figure.grid` 渲染网格,由主题的网格样式驱动。

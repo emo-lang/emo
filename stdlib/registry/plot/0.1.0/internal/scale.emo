@@ -96,3 +96,60 @@ def ticks(lo Float64, hi Float64, want Int64) Array[Float64] {
   }
   return out
 }
+
+// log10 of a positive value: the decade from magnitude(), the fraction
+// folded in by square-and-compare over halving roots of ten. Every step
+// is an IEEE multiply, sqrt, or compare, so all targets land on the
+// same double. A nonpositive value answers 0.0; a log axis refuses
+// nonpositive domains before mapping reaches here.
+def log10(v Float64) Float64 {
+  if v <= 0.0 {
+    return 0.0
+  }
+  const m = magnitude(v)
+  var rest = v / pow10(m)
+  var f = 0.0
+  var acc = 1.0
+  var root = 10.0.sqrt()
+  var half = 0.5
+  while half > 0.000000000001 {
+    if acc * root <= rest {
+      acc = acc * root
+      f = f + half
+    }
+    root = root.sqrt()
+    half = half / 2.0
+  }
+  return m.to_float64() + f
+}
+
+// The next tick after v on a log axis: 1-2-5 through each decade when
+// minors are wanted, decade steps alone otherwise. v sits on a tick.
+def next_log_tick(v Float64, minors Bool) Float64 {
+  const k = magnitude(v)
+  const m = v / pow10(k)
+  if minors {
+    if m == 1.0 {
+      return 2.0 * pow10(k)
+    }
+    if m == 2.0 {
+      return 5.0 * pow10(k)
+    }
+  }
+  return 10.0 * pow10(k)
+}
+
+// Tick values across the decade-aligned [lo, hi]: one per decade, plus
+// the 2 and 5 multiples while the span is short enough to crowd.
+def log_ticks(lo Float64, hi Float64) Array[Float64] {
+  const minors = log10(hi) - log10(lo) <= 2.0
+  var out = [lo]
+  var v = lo
+  while v < hi {
+    v = next_log_tick(v, minors)
+    if v <= hi {
+      out = out.append(v)
+    }
+  }
+  return out
+}

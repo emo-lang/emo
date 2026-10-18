@@ -52,6 +52,14 @@ class Axes {
     return Axes.new(x_label: self.x_label, y_label: s, x_scale: self.x_scale, y_scale: self.y_scale, legend: self.legend, marks: self.marks)
   }
 
+  def with_x_scale(s Scale) Axes {
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: s, y_scale: self.y_scale, legend: self.legend, marks: self.marks)
+  }
+
+  def with_y_scale(s Scale) Axes {
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: s, legend: self.legend, marks: self.marks)
+  }
+
   def with_marks(m Array[mark.Mark]) Axes {
     return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, legend: self.legend, marks: m)
   }
@@ -89,6 +97,7 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
   var xhi = 1.0
   var ylo = 0.0
   var ymax = 0.0
+  var top = 1.0
   if marks.length() > 0 {
     xlo = marks[0].x_min()
     xhi = marks[0].x_max()
@@ -109,31 +118,70 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
       ymax = marks[k].y_max()
     }
   }
-  const top = scale.nice_ceil(ymax)
-  const ctx = internal.ctx.DrawContext.new(renderer: r, x0: ml, y0: mt, plot_w: pw, plot_h: ph, x_min: xlo, x_max: xhi, y_min: ylo, y_max: top)
+  // A log axis spans whole decades and refuses nonpositive data; a
+  // linear axis keeps the nice-ceiling top from T0.
+  const y_log = ax.y_scale == Scale.log
+  const x_log = ax.x_scale == Scale.log
+  if y_log {
+    if ylo <= 0.0 {
+      raise Exception.new(message: "plot: the log y axis needs positive values, got ${ylo}")
+    }
+    ylo = scale.pow10(scale.magnitude(ylo))
+    var e = scale.magnitude(ymax)
+    if ymax > scale.pow10(e) {
+      e = e + 1
+    }
+    top = scale.pow10(e)
+  } else {
+    top = scale.nice_ceil(ymax)
+  }
+  if x_log {
+    if xlo <= 0.0 {
+      raise Exception.new(message: "plot: the log x axis needs positive values, got ${xlo}")
+    }
+    xlo = scale.pow10(scale.magnitude(xlo))
+    var xe = scale.magnitude(xhi)
+    if xhi > scale.pow10(xe) {
+      xe = xe + 1
+    }
+    xhi = scale.pow10(xe)
+  }
+  const ctx = internal.ctx.DrawContext.new(renderer: r, x0: ml, y0: mt, plot_w: pw, plot_h: ph, x_min: xlo, x_max: xhi, y_min: ylo, y_max: top, x_log: x_log, y_log: y_log)
   if fig.title != "" {
     r.text(ml, 30.0, fig.title, 18.0, internal.svg.Anchor.start, internal.svg.Weight.bold, (34, 34, 34))
   }
   if ax.y_label != "" {
     r.text(ml, 52.0, ax.y_label, 13.0, internal.svg.Anchor.start, internal.svg.Weight.regular, (85, 85, 85))
   }
-  const ts = scale.ticks(ylo, top, 5)
-  for var t = 0; t < ts.length(); t = t + 1 {
-    const y = ctx.py(ts[t])
-    r.line(ml, y, ml + pw, y, (230, 230, 230), 1.0, "")
-    r.text(ml - 8.0, y + 4.0, tick_text(ts[t]), 12.0, internal.svg.Anchor.end, internal.svg.Weight.regular, (85, 85, 85))
+  if y_log {
+    const yt = scale.log_ticks(ylo, top)
+    for var t = 0; t < yt.length(); t = t + 1 {
+      const y = ctx.py(yt[t])
+      r.line(ml, y, ml + pw, y, (230, 230, 230), 1.0, "")
+      r.text(ml - 8.0, y + 4.0, tick_text(yt[t]), 12.0, internal.svg.Anchor.end, internal.svg.Weight.regular, (85, 85, 85))
+    }
+  } else {
+    const yt = scale.ticks(ylo, top, 5)
+    for var t = 0; t < yt.length(); t = t + 1 {
+      const y = ctx.py(yt[t])
+      r.line(ml, y, ml + pw, y, (230, 230, 230), 1.0, "")
+      r.text(ml - 8.0, y + 4.0, tick_text(yt[t]), 12.0, internal.svg.Anchor.end, internal.svg.Weight.regular, (85, 85, 85))
+    }
   }
   for var k = 0; k < marks.length(); k = k + 1 {
     marks[k].draw(ctx)
   }
   r.line(ml, mt + ph, ml + pw, mt + ph, (136, 136, 136), 1.0, "")
-  // The first mark carrying categorical labels owns the x annotation;
-  // without one, the continuous domain ticks numerically.
+  // A log x axis always ticks numerically; otherwise the first mark
+  // carrying categorical labels owns the x annotation, and without one
+  // the continuous domain ticks numerically.
   var li = -1
-  for var k = 0; k < marks.length(); k = k + 1 {
-    if li < 0 {
-      if marks[k].x_labels().length() > 0 {
-        li = k
+  if !x_log {
+    for var k = 0; k < marks.length(); k = k + 1 {
+      if li < 0 {
+        if marks[k].x_labels().length() > 0 {
+          li = k
+        }
       }
     }
   }
@@ -144,10 +192,18 @@ def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes) Void {
       r.text(cx, mt + ph + 18.0, labels[b], 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
     }
   } else {
-    const xs = scale.ticks(xlo, xhi, 5)
-    for var t = 0; t < xs.length(); t = t + 1 {
-      const cx = ctx.px(xs[t])
-      r.text(cx, mt + ph + 18.0, tick_text(xs[t]), 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
+    if x_log {
+      const xt = scale.log_ticks(xlo, xhi)
+      for var t = 0; t < xt.length(); t = t + 1 {
+        const cx = ctx.px(xt[t])
+        r.text(cx, mt + ph + 18.0, tick_text(xt[t]), 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
+      }
+    } else {
+      const xt = scale.ticks(xlo, xhi, 5)
+      for var t = 0; t < xt.length(); t = t + 1 {
+        const cx = ctx.px(xt[t])
+        r.text(cx, mt + ph + 18.0, tick_text(xt[t]), 12.0, internal.svg.Anchor.middle, internal.svg.Weight.regular, (85, 85, 85))
+      }
     }
   }
   if ax.x_label != "" {

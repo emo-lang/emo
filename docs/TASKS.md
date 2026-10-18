@@ -1380,7 +1380,7 @@ panels and stays byte-identical on all five targets; `dune test` green.
 log scales, domains, grid, legend, theme — and `DrawContext` is typed
 against the `Renderer` interface, not `SvgRenderer`.
 
-- [ ] **T41.1** — `Scale.log`: log axes with correct tick placement and
+- [x] **T41.1** — `Scale.log`: log axes with correct tick placement and
       formatting.
 - [ ] **T41.2** — `Domain.auto` / `Domain.fixed`: domain fields on
       `Axes` and inference from the marks (decision 19).

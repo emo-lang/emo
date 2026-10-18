@@ -171,3 +171,42 @@
 <text x="340.0" y="452.0" text-anchor="middle" font-family="sans-serif" font-size="13.0" font-weight="normal" fill="rgb(85,85,85)">Score</text>
 </svg>
 
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+<rect x="0.0" y="0.0" width="640.0" height="480.0" fill="rgb(255,255,255)"/>
+<text x="64.0" y="30.0" text-anchor="start" font-family="sans-serif" font-size="18.0" font-weight="bold" fill="rgb(34,34,34)">Views in the first week</text>
+<text x="64.0" y="52.0" text-anchor="start" font-family="sans-serif" font-size="13.0" font-weight="normal" fill="rgb(85,85,85)">Views</text>
+<line x1="64.0" y1="408.0" x2="616.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="412.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">10</text>
+<line x1="64.0" y1="350.667" x2="616.0" y2="350.667" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="354.667" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">100</text>
+<line x1="64.0" y1="293.333" x2="616.0" y2="293.333" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="297.333" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">1000</text>
+<line x1="64.0" y1="236.0" x2="616.0" y2="236.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="240.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">10000</text>
+<line x1="64.0" y1="178.667" x2="616.0" y2="178.667" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="182.667" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">100000</text>
+<line x1="64.0" y1="121.333" x2="616.0" y2="121.333" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="125.333" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">1000000</text>
+<line x1="64.0" y1="64.0" x2="616.0" y2="64.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<text x="56.0" y="68.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">10000000</text>
+<line x1="64.0" y1="408.0" x2="174.4" y2="346.127" stroke="rgb(192,57,43)" stroke-width="1.5"/>
+<line x1="174.4" y1="346.127" x2="284.8" y2="295.957" stroke="rgb(192,57,43)" stroke-width="1.5"/>
+<line x1="284.8" y1="295.957" x2="395.2" y2="240.047" stroke="rgb(192,57,43)" stroke-width="1.5"/>
+<line x1="395.2" y1="240.047" x2="505.6" y2="181.015" stroke="rgb(192,57,43)" stroke-width="1.5"/>
+<line x1="505.6" y1="181.015" x2="616.0" y2="116.794" stroke="rgb(192,57,43)" stroke-width="1.5"/>
+<circle cx="64.0" cy="408.0" r="3.0" fill="rgb(192,57,43)"/>
+<circle cx="174.4" cy="346.127" r="3.0" fill="rgb(192,57,43)"/>
+<circle cx="284.8" cy="295.957" r="3.0" fill="rgb(192,57,43)"/>
+<circle cx="395.2" cy="240.047" r="3.0" fill="rgb(192,57,43)"/>
+<circle cx="505.6" cy="181.015" r="3.0" fill="rgb(192,57,43)"/>
+<circle cx="616.0" cy="116.794" r="3.0" fill="rgb(192,57,43)"/>
+<line x1="64.0" y1="408.0" x2="616.0" y2="408.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<text x="64.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">1</text>
+<text x="174.4" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">2</text>
+<text x="284.8" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">3</text>
+<text x="395.2" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">4</text>
+<text x="505.6" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">5</text>
+<text x="616.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">6</text>
+<text x="340.0" y="452.0" text-anchor="middle" font-family="sans-serif" font-size="13.0" font-weight="normal" fill="rgb(85,85,85)">Day</text>
+</svg>
+

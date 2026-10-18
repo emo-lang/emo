@@ -29,3 +29,9 @@ println(plot.svg(plot.figure().with_title("Requests through the day").with_axes(
 const scores = [62.0, 70.0, 75.0, 81.0, 88.0, 94.0, 58.0, 66.0, 73.0, 79.0, 85.0, 91.0, 55.0, 68.0, 77.0, 83.0, 90.0, 97.0, 61.0, 72.0]
 const hist_ax = plot.axes().with_x_label("Score").with_y_label("Students").with_marks([plot.mark.hist(scores, 5)])
 println(plot.svg(plot.figure().with_title("Exam score distribution").with_axes([hist_ax])))
+
+const views_ax = plot.axes().with_x_label("Day").with_y_label("Views").with_y_scale(plot.Scale.log).with_marks([
+  plot.mark.line([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [10.0, 120.0, 900.0, 8500.0, 91000.0, 1200000.0]).with_style(
+    plot.mark.line_style().with_marker(plot.mark.Marker.circle))
+])
+println(plot.svg(plot.figure().with_title("Views in the first week").with_axes([views_ax])))
