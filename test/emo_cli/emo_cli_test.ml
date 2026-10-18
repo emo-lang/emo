@@ -2098,18 +2098,25 @@ let with_captive_server ~status ~body f =
   in
   let captured = ref "" in
   let serve () =
-    match Unix.select [ srv ] [] [] 10.0 with
-    | [], _, _ -> () (* the client never connected; the test failed earlier *)
-    | _ ->
-        let conn, _ = Unix.accept srv in
-        captured := read_request conn;
-        let head =
-          Printf.sprintf "HTTP/1.1 %d X\r\nContent-Length: %d\r\n\r\n" status
-            (String.length body)
-        in
-        let bytes = Bytes.of_string (head ^ body) in
-        ignore (Unix.write conn bytes 0 (Bytes.length bytes));
-        Unix.close conn
+    (* A select in a multithreaded process can transiently fail on
+       Linux (EAGAIN and friends); retry a bounded number of times
+       rather than kill the server thread. *)
+    let rec await tries =
+      match Unix.select [ srv ] [] [] 10.0 with
+      | [], _, _ -> () (* the client never connected; the test failed earlier *)
+      | exception Unix.Unix_error _ when tries > 0 -> await (tries - 1)
+      | _ ->
+          let conn, _ = Unix.accept srv in
+          captured := read_request conn;
+          let head =
+            Printf.sprintf "HTTP/1.1 %d X\r\nContent-Length: %d\r\n\r\n" status
+              (String.length body)
+          in
+          let bytes = Bytes.of_string (head ^ body) in
+          ignore (Unix.write conn bytes 0 (Bytes.length bytes));
+          Unix.close conn
+    in
+    await 5
   in
   let th = Thread.create serve () in
   Fun.protect
@@ -3036,9 +3043,15 @@ let with_registry_server ~(handler : string -> int * string) (f : int -> unit) :
   let rec serve () =
     if !stop then ()
     else
-      match Unix.select [ srv ] [] [] 0.2 with
-      | [], _, _ -> serve ()
-      | _ ->
+      (* A select in a multithreaded process can transiently fail on
+         Linux (EAGAIN and friends); the loop itself absorbs it. *)
+      match
+        match Unix.select [ srv ] [] [] 0.2 with
+        | r -> Some r
+        | exception Unix.Unix_error _ -> None
+      with
+      | Some ([], _, _) | None -> serve ()
+      | Some (_, _, _) ->
           let conn, _ = Unix.accept srv in
           let request = read_request conn in
           captured := request :: !captured;

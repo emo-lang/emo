@@ -1334,7 +1334,33 @@ let pump_io state =
         (fun acc (d, _) -> min acc (max 0.001 (d -. now)))
         1.0 later
     in
-    let readable, writable, _ = Unix.select read_fds write_fds [] timeout in
+    let readable, writable, _ =
+      (* A fd closed out from under its wait — an error path elsewhere
+         closing it — must not poison the whole select with EBADF: drop
+         the stale registration and wake its waiters, whose next read
+         or write observes the closure for itself. *)
+      let alive fd =
+        match Unix.fstat fd with
+        | _ -> true
+        | exception Unix.Unix_error (Unix.EBADF, _, _) -> false
+      in
+      let wake_dead fds =
+        List.iter
+          (fun fd ->
+            if not (alive fd) then
+              match Hashtbl.find_opt state.io fd with
+              | Some l ->
+                  Hashtbl.remove state.io fd;
+                  List.iter (fun w -> w.iowake ()) l
+              | None -> ())
+          fds
+      in
+      wake_dead read_fds;
+      wake_dead write_fds;
+      let read_fds = List.filter alive read_fds in
+      let write_fds = List.filter alive write_fds in
+      Unix.select read_fds write_fds [] timeout
+    in
     let take_ready fd kind =
       match Hashtbl.find_opt state.io fd with
       | None -> ()
