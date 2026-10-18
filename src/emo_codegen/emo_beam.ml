@@ -899,7 +899,7 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
       (* a loop rebinds its threaded bindings over the rest of the
          chain, so it consumes the rest like a let *)
       emit_loop env ~tail:false loop rest ~leaf:(fun () -> put env "'ok'")
-  | [ s ] -> stmt env s
+  | [ s ] -> emit_scoped_stmt env s (fun () -> stmt env s)
   | Emo_ir.Let { name; init; _ } :: rest ->
       (* a let scopes over everything after it *)
       let v = fresh_var env name in
@@ -956,9 +956,24 @@ and stmts env (xs : Emo_ir.stmt list) : unit =
       stmts env rest
   | s :: rest ->
       put env "do\n";
-      stmt env s;
+      emit_scoped_stmt env s (fun () -> stmt env s);
       put env "\n";
       stmts env rest
+
+(* An `if`/`case` statement's branch bindings die with their arms: the
+   arms' Core lets close inside the `case`, so the names must leave the
+   map with them — a later loop lifts with every map entry as a
+   threaded parameter, and a dead name would be read at its call site
+   after its let has closed. Names that existed before the statement
+   stay (a rebinding `if` never reaches here; it threads through the
+   assigned-names path above). *)
+and emit_scoped_stmt env s k =
+  match s with
+  | Emo_ir.If _ | Emo_ir.Case _ ->
+      let pre = List.map fst env.local_map in
+      k ();
+      env.local_map <- List.filter (fun (n, _) -> List.mem n pre) env.local_map
+  | _ -> k ()
 
 (* A branch body of a threaded `if`/`case`: run it, then answer the
    tuple of the threaded bindings' final values. The branch's own
