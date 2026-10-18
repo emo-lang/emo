@@ -30,6 +30,8 @@ def with_x_label(s String) Axes
 def with_y_label(s String) Axes
 def with_x_scale(s Scale) Axes
 def with_y_scale(s Scale) Axes
+def with_x_domain(a Float64, b Float64) Axes
+def with_y_domain(a Float64, b Float64) Axes
 def with_marks(m Array[Mark]) Axes
 def with_legend(on Bool) Axes
 ```
@@ -43,6 +45,8 @@ enum Share { all, none }
 ```
 
 刻度枚举经 `with_x_scale` / `with_y_scale` 落到坐标轴上。log 轴横跨整十进位:域钳到包住数据的那两个十次方,刻度落在每十进位的 1-2-5 步上(跨度不超过两个十进位时 2 和 5 步才加入),非正值或非正的域直接 raise——log 轴只映射正数,没有例外。
+
+域要么是 `Domain.auto`——从每个 mark 的跨度推断,也是默认——要么经 `with_x_domain(a, b)` / `with_y_domain(a, b)` 落成 `Domain.fixed`,原样携带调用者给的两端:刻度尊重固定后的两端,倒置的域(`lo >= hi`)直接 raise。mark 目前不会裁剪进坐标轴矩形,固定域之外的数据会画出界外。
 
 ## mark
 
@@ -116,6 +120,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签,以及 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:`Domain`、经 `Share` 的分面、图例。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签,以及 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:经 `Share` 的分面、图例。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

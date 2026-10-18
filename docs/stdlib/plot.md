@@ -36,6 +36,8 @@ def with_x_label(s String) Axes
 def with_y_label(s String) Axes
 def with_x_scale(s Scale) Axes
 def with_y_scale(s Scale) Axes
+def with_x_domain(a Float64, b Float64) Axes
+def with_y_domain(a Float64, b Float64) Axes
 def with_marks(m Array[Mark]) Axes
 def with_legend(on Bool) Axes
 ```
@@ -57,6 +59,13 @@ powers of ten, ticks sit on the 1-2-5 steps through each decade (the
 2 and 5 steps join only while the span is two decades or less), and a
 nonpositive value or domain raises — a log axis maps positive numbers
 and nothing else.
+
+A domain is `Domain.auto` — inferred from every mark's span, the
+default — or `Domain.fixed` through `with_x_domain(a, b)` /
+`with_y_domain(a, b)`, which carries the caller's ends verbatim: ticks
+respect the fixed ends, and an inverted domain (`lo >= hi`) raises.
+Marks are not clipped to the axes rectangle yet, so data outside a
+fixed domain draws past it.
 
 ## Marks
 
@@ -175,7 +184,7 @@ marks, linear axes with nice-number ticks, a title, axis labels, and
 SVG output. Both axes scale to the marks' declared spans: the y domain
 covers every mark's range, and the x axis ticks numerically unless a
 mark supplies categorical labels. The remaining pieces the surface
-carries are reserved and not rendered yet: `Domain`,
+carries are reserved and not rendered yet:
 faceting via `Share`, and legends. The SVG renderer sits behind an
 internal `Renderer` contract, so a terminal or raster backend can join
 later without disturbing the figure or the marks.

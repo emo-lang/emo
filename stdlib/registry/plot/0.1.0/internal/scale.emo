@@ -139,12 +139,21 @@ def next_log_tick(v Float64, minors Bool) Float64 {
   return 10.0 * pow10(k)
 }
 
-// Tick values across the decade-aligned [lo, hi]: one per decade, plus
-// the 2 and 5 multiples while the span is short enough to crowd.
+// Tick values across [lo, hi] on a log axis: the 1-2-5 steps inside
+// the span, one per decade plus the 2 and 5 multiples while the span is
+// short enough to crowd. A domain whose ends sit off the steps — only
+// possible when fixed — ticks its ends alone if no step fits inside.
 def log_ticks(lo Float64, hi Float64) Array[Float64] {
   const minors = log10(hi) - log10(lo) <= 2.0
-  var out = [lo]
-  var v = lo
+  var first = pow10(magnitude(lo))
+  if first < lo {
+    first = pow10(magnitude(lo) + 1)
+  }
+  if first > hi {
+    return [lo, hi]
+  }
+  var out = [first]
+  var v = first
   while v < hi {
     v = next_log_tick(v, minors)
     if v <= hi {

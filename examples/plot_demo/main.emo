@@ -35,3 +35,9 @@ const views_ax = plot.axes().with_x_label("Day").with_y_label("Views").with_y_sc
     plot.mark.line_style().with_marker(plot.mark.Marker.circle))
 ])
 println(plot.svg(plot.figure().with_title("Views in the first week").with_axes([views_ax])))
+
+const fixed_ax = plot.axes().with_x_label("Year").with_y_label("Revenue").with_y_domain(40.0, 80.0).with_marks([
+  plot.mark.line([2020.0, 2021.0, 2022.0, 2023.0, 2024.0], [42.0, 51.0, 47.0, 62.0, 71.0]).with_style(
+    plot.mark.line_style().with_marker(plot.mark.Marker.circle))
+])
+println(plot.svg(plot.figure().with_title("Revenue, fixed domain").with_axes([fixed_ax])))

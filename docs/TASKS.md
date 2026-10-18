@@ -1382,7 +1382,7 @@ against the `Renderer` interface, not `SvgRenderer`.
 
 - [x] **T41.1** — `Scale.log`: log axes with correct tick placement and
       formatting.
-- [ ] **T41.2** — `Domain.auto` / `Domain.fixed`: domain fields on
+- [x] **T41.2** — `Domain.auto` / `Domain.fixed`: domain fields on
       `Axes` and inference from the marks (decision 19).
 - [ ] **T41.3** — Legend rendering for `with_legend` (decision 20's
       draw-order rule; one shared legend under faceting, T41.7).
