@@ -10,7 +10,7 @@ Emo 是**简洁、显式、直观**的。它汲取了三十年开源编程语言
 
 - **高表达力的语法。** 代码应当读起来自然，说它所做的事。
 - **最小惊讶原则。** 语言规则应当符合程序员直觉；事物应当按你期望的方式工作。
-- **多编译目标。** Emo 编译为原生可执行文件、WebAssembly、其他语言（如 TypeScript）、BEAM 虚拟机，以及裸机（`riscv64` 目标——见 EmoOS）。
+- **多编译目标。** Emo 编译为原生可执行文件、WebAssembly、其他语言（如 TypeScript）、可直接放进页面的浏览器包、BEAM 虚拟机,以及裸机(`riscv64` 目标——见 EmoOS)。解释器直接运行程序,无需产物;[`demo-targets.md`](demo-targets.md) 用一个项目走遍全部七个构建目标。
 
 ## 安装
 
@@ -79,7 +79,7 @@ def inbox(users Array[User]) ui.Node {
 - **带类型的样式。** `ui.Style` 是由 `ui.style()` 建起、经 `with_padding`、`with_gap`、`with_align`、`with_grow`、`with_width` 与 `with_height` 拷贝的带类型值——没有字符串 map,也没有默认参数。它的属性就是那套可移植的布局词汇,每个后端把它映射到平台自己的布局引擎。
 - **Elm 状态。** 一个应用是 model、纯 `update`、纯 `view` 加一个后端:`ui.run(view, update, model, backend)`。`view` 收到循环自己的 `Registry`,用 `reg.on(msg)` 登记每条带类型消息并拿回后端投递的 `Int64` tag——应用的类型从不跨过后端接缝。
 - **一条后端接缝。** 后端实现 `ui.Backend`——`mount(root, events)`、`patch(old, new)`、`run()`——它只知道一个整数代表一个事件。后端包是 `ui_tui`、`ui_ssr`、`ui_macos`、`ui_gtk` 与 `ui_browser`,外加无头的 `ui.debug`。
-- **一个应用,每个后端。** `emo/ui_corpus` 是各关口在每个后端上原样运行的共享应用;它的 debug 与 SSR 入口在全部五个托管编译目标上产出相同的字节。
+- **一个应用,每个后端。** `emo/ui_corpus` 是各关口在每个后端上原样运行的共享应用;它的 debug 与 SSR 入口在 `c`、`ocaml`、`typescript`、`wasm`、`beam` 这五个托管目标上产出相同的字节。
 
 EmoUI 是 [`projects/emo-ui/`](../../projects/emo-ui) 下的独立项目,不是标准库包——它的原生后端带着每平台 shim 与标准库用不到的 manifest 字段(`.m`、`frameworks`、`pkg_config`)。各包的参考文档就在那里:[`ui`](../../projects/emo-ui/docs/ui.md)、[`debug`](../../projects/emo-ui/docs/debug.md)、[`ui_tui`](../../projects/emo-ui/docs/ui_tui.md)、[`ui_ssr`](../../projects/emo-ui/docs/ui_ssr.md)、[`ui_macos`](../../projects/emo-ui/docs/ui_macos.md)、[`ui_gtk`](../../projects/emo-ui/docs/ui_gtk.md)、[`ui_browser`](../../projects/emo-ui/docs/ui_browser.md)、[`ui_corpus`](../../projects/emo-ui/docs/ui_corpus.md)。
 

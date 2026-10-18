@@ -67,6 +67,13 @@ The packages:
 | [`sql`](#the-sql-package) | SQL text to an abstract syntax tree | all five |
 | [`term`](#the-term-package) | terminal input: lines, raw mode, key events, size | `c` |
 
+"all five" names the hosted targets those packages declare — `c`,
+`ocaml`, `typescript`, `wasm`, and `beam`. It is the package's list, not
+the language's: the interpreter evaluates a program without producing an
+artifact, and the full build-target set — `c`, `ocaml`, `typescript`,
+`browser`, `wasm`, `beam`, `riscv64` — is walked end to end in
+[`docs/demo-targets.md`](demo-targets.md).
+
 All packages are version 0.1.0. Each has a full API reference under
 [`docs/stdlib/`](stdlib/) (Chinese translations under
 [`docs/zh-CN/stdlib/`](zh-CN/stdlib/)), and every package a program

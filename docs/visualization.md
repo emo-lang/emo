@@ -156,8 +156,10 @@ The `SvgRenderer` is the only shipped implementation in T0. A
 terminal renderer (braille/block characters, in the spirit of
 `UnicodePlot`) and a PNG rasterizer are later implementations of the
 same interface. `Renderer` is a plotting-side abstraction, not an Emo
-target: Emo's targets are `ocaml`/`c`/`typescript`/`wasm`/`beam`/
-`riscv64`, while EmoUI is a library over them whose platform backends
+target: Emo's build targets are `c`/`ocaml`/`typescript`/`browser`/
+`wasm`/`beam`/`riscv64` (the interpreter runs a program directly and
+produces no artifact; see `docs/demo-targets.md`), while EmoUI is a
+library over them whose platform backends
 are OS toolkits (AppKit, GTK 4). EmoUI's current contract places
 widgets and has no drawing verb, so it is not a plotting backend
 today (see Layer 5). This split is Matplotlib's Artist/Renderer.

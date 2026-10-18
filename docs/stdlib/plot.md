@@ -2,8 +2,8 @@
 
 The declarative 2D charting package. A figure is a value — a `Figure`
 holding `Axes`, each holding marks — and one call renders it to SVG.
-Everything is pure Emo over the shared runtimes, so all five hosted
-targets answer byte-for-byte.
+Everything is pure Emo over the shared runtimes, so the five hosted
+targets the package declares answer byte-for-byte.
 
 ## Using the package
 
@@ -142,9 +142,9 @@ println(plot.svg(chart))
 ## Output
 
 `svg` hands back the document; writing it to a file is the caller's step.
-The package runs on all five targets, while file IO belongs to the
-native-only `file` and `os` packages — on a native target,
-`file.write("chart.svg", plot.svg(chart))`.
+The package runs on the five hosted targets it declares, while file IO
+belongs to the native-only `file` and `os` packages — on a native
+target, `file.write("chart.svg", plot.svg(chart))`.
 
 Text is delegated to the viewer: every label is an SVG `<text>` element,
 so the package carries no font engine. Coordinates and values are
@@ -153,7 +153,13 @@ are identical on every target.
 
 ## Targets and what is landed
 
-Targets: all five (`ocaml`, `c`, `typescript`, `wasm`, `beam`).
+Targets: the five hosted targets the package declares — `c`, `ocaml`,
+`typescript`, `wasm`, `beam`. That list is the package's, not the
+language's: the interpreter evaluates a program without an artifact, and
+the full build-target set adds `browser` and the freestanding
+`riscv64`, which stays outside this list because it refuses `Map`. The
+whole story, target by target, is
+[`docs/demo-targets.md`](../demo-targets.md).
 
 T0 — what exists today — is the bar, line, scatter, area, and hist
 marks, linear axes with nice-number ticks, a title, axis labels, and

@@ -42,6 +42,8 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 | [`sql`](#sql-包) | SQL 文本解析为抽象语法树 | 全部五个 |
 | [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
 
+"全部五个"指这些包各自声明的那组托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这是包的清单,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合——`c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64`——在 [`demo-targets.md`](demo-targets.md) 里被逐一走通。
+
 所有包版本均为 0.1.0。每个包在 [`docs/stdlib/`](../stdlib/) 下有完整的 API 参考(中文翻译在 [`docs/zh-CN/stdlib/`](stdlib/));程序直接调用的每个包在 `examples/` 下有可运行的示例。
 
 ## file 包
