@@ -1,0 +1,27 @@
+require "term"
+
+// Line mode, the package's first surface: read stdin a line at a time
+// and echo each one back with its byte count. Typing a line and pressing
+// Enter answers it; Ctrl-D (or any end of input) ends the loop.
+//
+//   emo build main.emo --target c -o term_demo
+//   ./term_demo
+//
+// The text keeps its terminator, so an empty line ("\n") is never
+// mistaken for the end of the input (""). Raw mode and key events are
+// term.enable_raw() and term.read_key().
+
+def main() {
+  var more = true
+  while more {
+    const (R.ok, line) = term.read_line()
+    if line == "" {
+      more = false
+      println("end of input")
+    } else {
+      println("${line.length()} bytes: ${line}")
+    }
+  }
+}
+
+main()

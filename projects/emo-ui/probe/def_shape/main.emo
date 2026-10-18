@@ -1,16 +1,17 @@
 // The loop's landed shape, isolated: `ui.run` takes the application's
 // `update` and `view` as `Block` values, and the only expression that
-// produces one is a bare def name. That name is what the `c` target
-// refuses (`Global`), and what the `wasm` target refuses as soon as the
-// function takes more than one parameter.
+// produces one is a bare def name. `wasm` refused the shape until its
+// closures took any arity (T48.6); `c` refused it (`Global`) until it
+// grew def-as-value (T48.8). Both build it now, so every target lowers
+// the loop.
 //
-//   emo build main.emo --target c      -> refused (Global)
-//   emo build main.emo --target wasm   -> refused (one-parameter closures)
+//   emo build main.emo --target c      -> builds
+//   emo build main.emo --target wasm   -> builds
 //   emo run main.emo                   -> count 1
 //
 // `handler_shape/` is the same loop with the two functions behind an
-// interface; every target compiles that one. The pair is what pins the
-// gap `projects/emo-ui/CHECK.md` records.
+// interface; every target compiles that one too. The pair stays as the
+// record of where the gap was.
 
 class Model {
   def init(count Int64) {

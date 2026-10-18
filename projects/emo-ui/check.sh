@@ -6,13 +6,11 @@
 #
 # Every expectation is stated before it is compared, so a change that
 # moves one shows up as a FAIL here rather than as a silently stale
-# paragraph in README.md. The one live gap is the loop's own shape: the
-# application's `update` and `view` arrive as `Block` values, and a bare
-# def name is the only expression that produces one — which the `c`
-# target refuses (`Global`) and the `wasm` target refuses once the
-# function takes more than one parameter. `probe/` holds that gap as a
-# minimal pair, and the pin here is what keeps the paragraph honest.
-# `CHECK.md` records the finding.
+# paragraph in README.md. The loop's own shape — the application's
+# `update` and `view` arriving as `Block` values — lowers on every
+# target: `wasm` closed it in T48.6 and `c` in T48.8 (`probe/def_shape`
+# is the shape in miniature). The one refusal left in the table is
+# `wasm` for `ui_tui`, whose `printf` its runtime does not carry.
 #
 # Usage: ./check.sh
 
@@ -59,42 +57,22 @@ expect 17 "all seventeen assertions pass" "$n"
 # --- which targets can compile the package -------------------------------
 #
 # The package is `ui.emo` plus `test.emo`, and the test is what calls
-# `ui.run` with two bare defs. So the two refusals below are the loop's
-# shape, not the core's: `probe/` splits them apart.
+# `ui.run` with two bare defs. Every target lowers it since `c` grew
+# def-as-value (T48.8), so the whole table builds.
 
 for t in ocaml c typescript wasm beam; do
   build . ui.emo "$t" && rc=0 || rc=$?
-  if [ "$rc" -eq 0 ]; then got=builds; else got=fails; fi
-  case $t in
-    c | wasm) want=fails ;;
-    *)        want=builds ;;
-  esac
-  expect "$want" "package --target $t" "$got"
+  expect 0 "package --target $t builds" "$rc"
 done
 
-# --- and each refusal names its cause ------------------------------------
-#
-# The line is the whole diagnostic the target prints, so a drift in the
-# message fails here.
-
-why() {
-  build "$1" "$2" "$3" && rc=0 || rc=$?
-  got=$(grep -o -m1 "$4" "$OUT.log" || true)
-  expect "$5" "$1 --target $3 says why" "$got"
-}
-
-why . ui.emo c "does not support this expression form (Global)" \
-  "does not support this expression form (Global)"
-why . ui.emo wasm "only one-parameter closures are supported" \
-  "only one-parameter closures are supported"
-
-# --- the gap as a minimal pair -------------------------------------------
+# --- the loop's shape as a minimal pair ----------------------------------
 #
 # `def_shape` is the landed shape in miniature — two defs handed over as
-# `Block` values — so it reaches both refusals. `handler_shape` is the
-# same loop with those two functions behind an interface, and every
-# target compiles it. Neither is a package of the core: each has its own
-# `package.emo`, so the walk leaves them out of `ui`'s package.
+# `Block` values — and it is the case the `c` target used to refuse.
+# `handler_shape` is the same loop with those two functions behind an
+# interface; every target compiles that too. Neither is a package of the
+# core: each has its own `package.emo`, so the walk leaves them out of
+# `ui`'s package.
 
 # Only stdout is the program's bytes. The first run of a dependency-carrying
 # package also writes a missing `package.lock` and says so on stderr; that
@@ -109,13 +87,14 @@ run_of probe/def_shape main.emo "count 1"
 
 for t in ocaml c typescript wasm beam; do
   build probe/def_shape main.emo "$t" && rc=0 || rc=$?
-  if [ "$rc" -eq 0 ]; then got=builds; else got=fails; fi
-  case $t in
-    c | wasm) want=fails ;;
-    *)        want=builds ;;
-  esac
-  expect "$want" "def_shape --target $t" "$got"
+  expect 0 "def_shape --target $t builds" "$rc"
 done
+
+# The `c` half is the T48.8 gate: the same def-as-value the backend needs
+# must also print the interpreter's line, not merely link.
+build probe/def_shape main.emo c && rc=0 || rc=$?
+got=$("$OUT" 2>&1 || true)
+expect "count 1" "def_shape --target c prints what emo run prints" "$got"
 
 run_of probe/handler_shape main.emo "count 1"
 
@@ -170,9 +149,8 @@ expect "emo_no_to_str" "enum_print -- and names the conversion it lacks" "$got"
 #
 # `golden/` is a consumer of the core — a package of its own, with
 # `emo/ui` as a dependency — so it is built the way an application
-# is: through a registry, out of `require`-d code. It is also the only
-# build here that can reach every target, because the core's own package
-# lowers `test.emo`, and `test.emo` hands the loop two bare defs.
+# is: through a registry, out of `require`-d code. It is the build that
+# proves the bytes, so it is the one the gate runs on every target.
 #
 # The registry is staged from the sources under test into a directory
 # named for their content, so a run can never serve a module the package
@@ -206,6 +184,8 @@ run_golden() {
     ocaml)      "$G/ocaml/out" >"$G/$1.txt" 2>&1 && rc=0 || rc=$? ;;
     c)          "$G/c/out" >"$G/$1.txt" 2>&1 && rc=0 || rc=$? ;;
     typescript) node "$G/typescript/out.ts" >"$G/$1.txt" 2>&1 && rc=0 || rc=$? ;;
+    wasm)       node "$PWD/wasm-runner.mjs" "$G/wasm/out.wasm" >"$G/$1.txt" \
+                  2>&1 && rc=0 || rc=$? ;;
     beam)       erl -noshell -pa "$G/beam" \
                   -eval 'out:main(), erlang:halt(0).' >"$G/$1.txt" 2>&1 && rc=0 || rc=$? ;;
   esac
@@ -228,7 +208,12 @@ expect 0 "the golden runs on the interpreter" "$rc"
 expect_same_file golden/expected.txt "$G/interp.txt" \
   "and prints the file it is pinned to"
 
-for t in ocaml c typescript beam; do
+# Every hosted target, `c` and `wasm` included: this golden calls the
+# renderer directly rather than handing `ui.run` two defs, so no target
+# refuses it. The wasm artifact runs under the host boundary in
+# `wasm-runner.mjs`; the loop's own spelling is what `c` refuses, and
+# `probe/` pins that separately.
+for t in ocaml c typescript wasm beam; do
   mkdir -p "$G/$t"
   golden_build "$t" "$G/$t" && rc=0 || rc=$?
   expect 0 "the golden builds for $t" "$rc"
@@ -238,20 +223,24 @@ for t in ocaml c typescript beam; do
     "the golden's bytes on $t are the interpreter's"
 done
 
-# wasm is the one target that cannot lower the core at all: `App.deliver`
-# calls a `Block` value with two arguments (`view_fn.read()(registry,
-# next)`), and wasm's closures take one parameter. `probe/` pins the same
-# refusal on its own; here it is pinned as what the golden inherits.
-golden_build wasm "$G/wasm" && rc=0 || rc=$?
-got=$(grep -o -m1 "only one-parameter closures are supported" "$OUT.log" || true)
-expect "only one-parameter closures are supported" "the golden --target wasm says why" \
-  "$got"
-
-# --- the terminal backend's package gate --------------------------------
+# --- the backends' package gates ----------------------------------------
 #
-# `tui/` is a package of its own — it carries a platform the core does
-# not — and has its own gate (T48.4). Run it here too, so the project
-# keeps one entry point.
+# `tui/`, `ssr/`, `macos/`, `gtk/` and `browser/` are packages of their
+# own — they carry a renderer or a shim the core does not — and each has
+# its own gate (T48.4, T48.6, T48.8, T48.9, T48.11). Run them here too,
+# so the project keeps one entry point. The macOS gate needs a Darwin
+# host and a logged-in session; it says so and passes on any other host.
+# The GTK gate needs GTK 4 or Docker; it says so and passes with
+# neither. The browser gate needs Node >= 22.13 for the bundling step.
+# `corpus/` is the convergence corpus's gate (T48.12): the shared
+# application on the debug, SSR and terminal backends on every host they
+# declare; the macOS, GTK 4 and browser entries are run by their packages'
+# gates above.
 EMO="$EMO" ./tui/check.sh || fail=1
+EMO="$EMO" ./ssr/check.sh || fail=1
+EMO="$EMO" ./macos/check.sh || fail=1
+EMO="$EMO" ./gtk/check.sh || fail=1
+EMO="$EMO" ./browser/check.sh || fail=1
+EMO="$EMO" ./corpus/check.sh || fail=1
 
 exit $fail

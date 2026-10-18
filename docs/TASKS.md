@@ -63,9 +63,9 @@ before starting the gated work:
 | `emo install` semantics | T24.4 | settled then superseded 2026-10-17 — the command was removed; `emo deps` and the build path own resolve/fetch/lock, and installing global executables stays out of scope for 1.0 |
 | The runtime-independence principle | T25.1 | a target's runtime is written in the target's language, carried as generated data inside the compiler; the host contributes only the emitter |
 | The ocaml runtime's dependency policy | T25.4 | the OCaml standard library plus `unix` for the core; `ssl` as the one opam dep, refused with a clear message when absent; no eio |
-| EmoUI native UI packaging (per-package compile flags / `pkg_config`) | T48.7–T48.9 | direction settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). The field surface (`pkg_config`, compile/link flags, whether `.m` is collected) stays T48.7's own work |
+| EmoUI native UI packaging (per-package native fields) | T48.7–T48.9 | settled 2026-10-14 — the manifest grows per-package native fields; a native backend does not ship an app-level build script (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.7)**: `pkg_config` (bare modules; `--cflags` compile, `--libs` link), `frameworks` (bare names; `-framework NAME`), and `.m` collected beside `.c`/`.h` and compiled under ARC |
 | `c` target long-running memory (value-family reclamation) | T48.8–T48.9 (demo scale), step 49 | settled 2026-10-14 — region reclamation is not viable; the value families need refcounting, scheduled as step 49 (`CHECK.md`, `spike/arena-scope/`). **Landed 2026-10-17 (T49.1–T49.4)**: the working set is flat and the demo-scale note is retired |
-| EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). Where the bundling step lives in the toolchain stays T48.10's own work |
+| EmoUI browser runtime path | T48.10–T48.11 | settled 2026-10-15 — the split route: a browser-safe subset of the TypeScript runtime, a `dom_*` family, and a bundling step, rather than new wasm host imports (`CHECK.md`, `docs/emo-ui.md`). **Landed 2026-10-18 (T48.10–T48.11)**: the bundling step is a build target (`emo build --target browser`), the split is a host-free core plus Node and page hosts, the `dom_*` family is thirteen calls over Int64 handles, and `emo/ui_browser` is the DOM backend over them, with the convergence corpus running in a stub page |
 | Cross-target conformance (`c` raise, `c` send, `foreign def` on `wasm`/`beam`) | step 50 | settled 2026-10-15 — conformance to promises already made, not new design: a child's raise ends only that child, `send` snapshots, and the two emitters refuse `foreign def` by name (`CHECK.md`). The `typescript` target's share-on-send stays open |
 | Array growth (O(1) append vs a builder) | T48.1, T49.4 | settled 2026-10-15 (T49.3) — a builder, as a new language-level `ArrayBuilder` type rather than an `Array` representation change (`CHECK.md`, `docs/intro/syntax.md`); the `List` → `Array` conversion half is deliberately not taken |
 | The in-tree project layout (`projects/`) | all of M15 | settled 2026-10-15 — `projects/<repo-name>/` at the repository root holds each named Emo project (EmoUI, EmoOS, EmoShell), named for the repository it can later be split out into; EmoUI stays not a standard-library package (`CHECK.md`) |
@@ -1728,35 +1728,200 @@ required.
       regressions. `examples/tui_menu/` is the usage demo — the same
       pattern with a four-row menu and a longer script — and the same
       gate checks it on every target it declares.
-- [ ] **T48.5** — Terminal input: raw mode and key events, as a
+- [x] **T48.5** — Terminal input: raw mode and key events, as a
       **standard-library package in the `sqlite3` shape** —
       package-carried `.c`/`.h` reached through `foreign def`, gated by
       the manifest's `targets` — rather than a UI-framework or
       compiler-side artifact (settled 2026-10-15, `CHECK.md`); line mode
-      first.
-- [ ] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
+      first. **Landed 2026-10-18** as `stdlib/registry/term/0.1.0/`
+      (package `term`, `targets = ["c"]`): `term.emo` is the surface,
+      `internal/ffi.emo` the `foreign def`s, and `emo_term_shim.c` the
+      C side of the exact ABI, checked against the generated
+      `emo_defs.h` at compile time. `read_line` keeps its terminator,
+      so a blank line and the end of input are different answers;
+      `enable_raw` and `restore` save and put back the termios setting,
+      and the exit path restores it too; `read_key` answers a `Key`
+      member plus a code (a Unicode scalar for `char`, `0`–`26` for
+      `ctrl`) and decodes the arrow, Home/End, Insert/Delete, Page
+      Up/Page Down, F1–F12, Shift-Tab and Alt sequences, with a lone
+      Esc settled after 50 ms. `size` and `is_tty` answer from the
+      terminal driver. Scalar and String returns keep the generated
+      struct names out of the ABI; the tuples are shaped in Emo. A
+      plain `require` reaches the package — the embedded registry
+      carries it — and the interpreter refuses it with E3009.
+      `test/emo_cli`'s `term` group carries a pipe through line mode,
+      key decoding, and the failure values; `examples/term_demo` is the
+      runnable demo and rides in `c_goldens`. Raw mode is the one path
+      a pipe cannot carry: the group pins its refusal off a tty, and
+      the mode itself was checked over a pty while the package was
+      built. Reference: `docs/stdlib/term.md`.
+- [x] **T48.6** — `ui-ssr`: the node tree to HTML plus a stylesheet,
       byte-identical on all five hosted targets; forms and links as the
-      interaction model.
-- [ ] **T48.7** — The native packaging mechanism: per-package manifest
+      interaction model. **Landed 2026-10-18** as
+      `projects/emo-ui/ssr/` (package `emo/ui_ssr`: `ui_ssr.emo` and
+      `test.emo`), declaring all five hosted targets. The renderer is
+      pure Emo and names no host: three entry points — `page(title,
+      root)` for a whole document, `fragment(root)` for a region a
+      browser swaps in, `stylesheet(root)` for the CSS alone — walk the
+      same pre-order tree, so the classes a page's markup carries are
+      the ones its stylesheet defines. A node's class comes from
+      interning on its base declarations and its `Style`
+      (`e0`, `e1`, … in document order), which writes an equal style
+      once and still keeps a `row` and a `column` apart; every prop
+      reaching markup is escaped byte by byte through `substring(i, 1)`,
+      so a multi-byte character rides through unchanged. The renderer
+      adds the three nodes only a server round trip has anywhere to put
+      — `form(action, children, style)`, `link(href, label, style)`,
+      `field(name, value, style)` — while a `ui.button` inside a form
+      submits its event tag as `event` and the core's `text_input`
+      stays a read-only view of the model. `Ssr` implements `ui.Backend`
+      by printing the document on `mount` and the fragment on `patch`;
+      `run()` returns because a server has no input source, and
+      `deliver(tag)` is the request that steps one event. `test.emo`
+      pins escaping, the rule shape, interning and one assertion per
+      node kind in twelve assertions; `golden/` renders a tree with
+      every primitive, every `Align`, fractional extents and escapable
+      text, and its bytes are the interpreter's on all five targets;
+      `examples/ssr_page/` is the usage demo. `ssr/check.sh` is the gate
+      and `../check.sh` runs it.
+      The task also closed the `wasm` half of T48.2's open finding: its
+      `Call_value`, `Closure` and `Global` lowering now allocate a
+      function/struct type pair per arity (`closure_type`,
+      `emo_wasm.ml`), so a `Block` value is first-class at any arity —
+      the core loop's two-argument calls now lower. The core golden and
+      `probe/def_shape` therefore build for `wasm`, and the core golden's
+      bytes are the interpreter's on all five targets; `c` still refuses
+      a bare def name (`Global`), which is the one refusal the gates pin
+      (the SSR package's own `test.emo` reaches it through `ui.run`).
+- [x] **T48.7** — The native packaging mechanism: per-package manifest
       fields (`pkg_config` and/or compile/link flags, plus whatever
       collects `.m`); the app-level build-script path is not the
-      supported one. The gate for T48.8 and T48.9.
-- [ ] **T48.8** — `ui-macos`: the nine-verb AppKit shim over the callback
+      supported one. The gate for T48.8 and T48.9. **Landed 2026-10-18**:
+      the manifest gains `pkg_config` — bare pkg-config modules whose
+      `--cflags` compile the package's sources and whose `--libs` join
+      the link — and `frameworks` — bare macOS frameworks, linked as
+      `-framework NAME`; both refuse empty, flag-shaped, and
+      path-shaped entries, so the manifest stays data. `.m` joins
+      `.c`/`.h` in the collected set (dependency resolution, the
+      embedded stdlib, and publish) and is compiled under `-fobjc-arc`,
+      the c target's fixed Objective-C policy. Resolved flags enter the
+      c build's cache key, an unresolvable module exits 69 with the
+      install prompt, and `emo emoji build` passes a package's own
+      native inputs the way a dependency's are passed, so the
+      pre-publish gate links what consumers get.
+- [x] **T48.8** — `ui-macos`: the nine-verb AppKit shim over the callback
       contract; the convergence corpus runs. Demo scale — the `c`
       target's long-running memory is step 49 (`CHECK.md`).
-- [ ] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`; the
-      convergence corpus runs. Demo scale, as T48.8.
-- [ ] **T48.10** — The browser runtime path: a browser-safe split of the
+      **Landed 2026-10-18**: `projects/emo-ui/macos/` carries the
+      point box model (`box.emo`, pure, so the interpreter tests it),
+      the nine foreign verbs (`ui_macos.emo`, with `ui.Events` crossing
+      as the callback pair) and `shim.m`, the only Objective-C outside
+      `spike/`;
+      `corpus/` runs one portable application on it under
+      `EMO_GUI_AUTOTEST` and prints the pinned bytes. Getting there
+      gave the `c` target def-as-value (`Global`): a capture-less
+      closure over a per-def dynamic thunk, which closed the loop's
+      last refusal and put `c` in every corpus run.
+- [x] **T48.9** — `ui-gtk`: the GTK 4 shim, built with `pkg-config`;
+      the convergence corpus runs. Demo scale, as T48.8.
+      **Landed 2026-10-18**: `projects/emo-ui/gtk/` is the package
+      `emo/ui_gtk`, declaring the `c` target and
+      `pkg_config = ["gtk4"]`; the point box model (`box.emo`), the nine
+      foreign verbs and the `Gtk` class (`ui_gtk.emo`), and `shim.c`
+      mirror the macOS backend, with GtkFixed's top-left origin needing
+      no y flip and the same `ui.Events` callback pair crossing the ABI.
+      `corpus/` runs the same application, script, and pinned bytes.
+      `gtk/check.sh` builds and runs natively where `pkg-config gtk4`
+      answers, and otherwise compiles the same generated C in the
+      `emo-ui-gtk-build` container (GTK 4 plus Xvfb), so the gate runs
+      from a macOS host too.
+- [x] **T48.10** — The browser runtime path: a browser-safe split of the
       TypeScript runtime (or a `dom_*` family in the runtime) plus the
       bundling step; the gate for T48.11.
-- [ ] **T48.11** — `ui-browser`: the DOM backend over the browser path;
-      the convergence corpus runs.
-- [ ] **T48.12** — The convergence corpus: one sample application on
+      **Landed 2026-10-18**: the TypeScript runtime is now `ts_core.ts`
+      — host-free, with a host object for output, process context,
+      shutdown, method dispatch, and runtime implementations — plus
+      `ts_node.ts` (the networking section, AsyncLocalStorage, the net
+      method table) and `ts_browser.ts` (line-buffered console output,
+      one page pid, the `dom_*` family). The compiler concatenates
+      core+node into `ts_prelude` and core+browser into
+      `ts_browser_prelude`, both as generated data.
+      The `dom_*` family is thirteen calls — root, element, text,
+      set_text, set_style, set_prop, append, clear, connect, value,
+      sink, title, viewport — over Int64 handles into a host-side node
+      table; the checker types them in every frame and the IR treats the
+      prefix as a runtime implementation like `net_`. `emo build
+      --target browser` emits one `.js` bundle: the emitter refuses
+      processes (`do`, `<-`, `receive`) and every non-`dom_` runtime
+      implementation by name, and the `typescript` target refuses
+      `dom_*` by name. The bundling step is the CLI's — it strips the
+      types with Node's own `module.stripTypeScriptTypes` (Node >=
+      22.13), caches the JavaScript, and reports 69 when Node is
+      missing or too old. The `browser` target joins `known_targets` and
+      `emo/ui`'s manifest, and `emo doctor` reports it. Tests pin a
+      bundle with no host imports running against a stub page, an event
+      reaching the sink with its tag, the three refusals by name, and
+      the doctor line.
+- [x] **T48.11** — `ui-browser`: the DOM backend over the browser path;
+      the convergence corpus runs. **Landed 2026-10-18**:
+      `projects/emo-ui/browser/` is the package `emo/ui_browser`,
+      declaring the `browser` target and pinned against `emo/ui`.
+      `css.emo` maps a `Style` to the declarations the browser's own
+      layout engine consumes — no point box model lives here, unlike
+      macOS and GTK — and `test.emo` checks that mapping as values on
+      the interpreter in 27 assertions. `ui_browser.emo` is the `Dom`
+      class over the `dom_*` calls: `mount` sets the title, the
+      page-root declarations and the sink; `render` builds one element
+      per node, with a `button` carrying its tag as the `name`/`value`
+      pair the SSR markup uses; `patch` rebuilds the tree, as every
+      backend does; `run()` returns, because the page owns the loop.
+      `corpus/` is the convergence consumer — the same application, the
+      same `0,0,1,2` script and `expected.txt` — and `page.mjs` is the
+      stub page the gate runs it in. `browser/check.sh` is the package's
+      gate and skips where Node < 22.13 leaves no bundle to build.
+- [x] **T48.12** — The convergence corpus: one sample application on
       every backend, with the same portable app module throughout.
-- [ ] **T48.13** — Docs: the README's EmoUI section revised to the
+      **Landed 2026-10-18**: `projects/emo-ui/corpus/` is the package
+      `emo/ui_corpus`, the shared application — a counter as its state,
+      an input and a submit button as its form, a scrolled list, and
+      the three tags `view` registers — written once and consumed by
+      every backend. `corpus/debug`, `corpus/ssr` and `corpus/tui` are
+      thin entries under its own gate; `macos/corpus`, `gtk/corpus` and
+      `browser/corpus` are thin entries under their packages' gates. Only
+      the backend package and the entry module name the platform.
+      `corpus/check.sh` pins the debug and SSR entries byte-for-byte on
+      all five hosted targets (`ocaml`, `c`, `typescript`, `wasm`,
+      `beam`) and the terminal entry on `ocaml`, `c`, `typescript` and
+      `beam`, with its `wasm` refusal stated by name. The
+      corpus also exposed a `wasm` codegen defect — a `ref.func` to a
+      program def was absent from the declarative element segment — now
+      fixed and pinned by a CLI test (`CHECK.md`). No language change
+      was required.
+- [x] **T48.13** — Docs: the README's EmoUI section revised to the
       array-children spelling and the settled decisions; `docs/emo-ui.md`
       settled into decided design where README-eligible; the EmoUI
       package references in its own repository.
+      **Landed 2026-10-18**: the README's EmoUI section states the
+      settled design — `Array[ui.Node]` children (with `ArrayBuilder`
+      for a list that is walked), one `ui.Node` tree type and its
+      lowercase constructors, the typed `Style` with `with_*` copies,
+      the Elm loop over the loop's `Registry` and `Int64` tags, the
+      `ui.Backend` seam, the backend packages, and the convergence
+      corpus — and drops the stale claims that reactivity primitives
+      live in the standard library and that UI events are process
+      messages. `docs/emo-ui.md` now opens with a status note: the
+      settled design lives in the README and the package references,
+      and the note is kept as the assessment, the evidence, the
+      rejected alternatives and the open questions, with the README
+      authoritative on settled points; finding 1, the recommendation
+      and decision 3 record that the README tree has been revised. The
+      EmoUI repository carries the package references under
+      `projects/emo-ui/docs/` — `ui`, `debug`, `ui_tui`, `ui_ssr`,
+      `ui_macos`, `ui_gtk`, `ui_browser` and `ui_corpus` — in the
+      `docs/stdlib/term.md` format: manifest, `def` signatures, and the
+      behavior a caller can rely on, with an index. The Chinese
+      translations of both READMEs and the two design docs were updated
+      in step.
 
 ---
 

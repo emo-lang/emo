@@ -354,6 +354,17 @@ let wasm_goldens =
 
 let node_available = lazy (Sys.command "node --version >/dev/null 2>&1" = 0)
 
+(* The browser target's bundling step: Node's own type stripper, which
+   landed in 22.13. The browser tests skip where it is missing, like the
+   BEAM and riscv64 groups skip without their toolchains. *)
+let node_strip_available =
+  lazy
+    (Sys.command
+       "node --no-warnings -e 'process.exit(typeof \
+        require(\"node:module\").stripTypeScriptTypes === \"function\" ? 0 : \
+        1)' >/dev/null 2>&1"
+     = 0)
+
 (* The BEAM goldens: Core Erlang text assembled by the pinned erlc,
    run under `erl -noshell`. Skips when Erlang is absent. *)
 let beam_goldens =
@@ -414,7 +425,8 @@ let beam_examples_tests =
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out
-                  ~specialize:false ~cclibs:[] ~target:"beam")
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"beam")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -512,7 +524,8 @@ let wasm_examples_tests =
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_wasm
-                  ~specialize:false ~cclibs:[] ~target:"wasm")
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"wasm")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let out, err, proc_status =
@@ -591,6 +604,7 @@ let c_goldens =
     "sqlite3_demo";
     "sql_demo";
     "sql_edge";
+    "term_demo";
   ]
 
 let cc_available = lazy (Sys.command "cc --version >/dev/null 2>&1" = 0)
@@ -696,7 +710,8 @@ let scratch_entry name source =
    directory is the package root, so the build has to stand there. *)
 let build_entry ~target ?(specialize = false) ?(cclibs = []) entry output =
   in_dir (Filename.dirname entry) (fun () ->
-      Emo_cli.build_file ~entry ~output ~specialize ~cclibs ~target)
+      Emo_cli.build_file ~entry ~output ~specialize ~cclibs
+        ~native:Emo_project.no_native_inputs ~target)
 
 let check_run what (out, err, status) expected =
   Alcotest.(check string) (what ^ " output") expected out;
@@ -884,6 +899,45 @@ let root_end_tests =
                  erlang:halt(0).'"
                 (Filename.quote (Filename.dirname out_core))))
           "root done\n[false]\n");
+  ]
+
+(* A bare def named as a value is a `ref.func`, and the validator
+   requires every `ref.func` target to appear in the declarative element
+   segment. Only the hidden closures were declared, so a program def
+   handed over as a `Block` — the shape `ui.run` takes, here across a
+   module boundary — failed to compile. *)
+let wasm_block_tests =
+  [
+    tc "a bare def crosses as a Block and runs on Node" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let source =
+          {|
+def apply2(f Block, a Int64, b Int64) Int64 {
+  return f(a, b)
+}
+
+def main() {
+  const r = apply2(lib.add, 20, 22)
+  println(r)
+}
+main()
+|}
+        in
+        let entry = scratch_entry "wasm-block" source in
+        let dir = Filename.dirname entry in
+        write_file
+          (Filename.concat dir "lib.emo")
+          "def add(a Int64, b Int64) Int64 {\n  return a + b\n}\n";
+        let out_wasm = Filename.concat dir "main.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote out_wasm)))
+          "42\n");
   ]
 
 (* T23.2's integer core: fib's plain recursion, the 1M-deep tail
@@ -1265,7 +1319,8 @@ let c_examples_tests =
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_bin
-                  ~specialize:false ~cclibs ~target:"c")
+                  ~specialize:false ~cclibs ~native:Emo_project.no_native_inputs
+                  ~target:"c")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           (* A TLS golden runs from its own directory: the program
@@ -2883,7 +2938,8 @@ let riscv64_examples_tests =
           let exit_code =
             in_example name (fun () ->
                 Emo_cli.build_file ~entry:"main.emo" ~output:out_elf
-                  ~specialize:false ~cclibs:[] ~target:"riscv64")
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"riscv64")
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
@@ -3687,13 +3743,221 @@ let doctor_tests =
         List.iter
           (fun name ->
             Alcotest.(check bool) ("reports " ^ name) true (contains text name))
-          [ "c:"; "ocaml:"; "typescript:"; "beam:"; "wasm:" ];
+          [ "c:"; "ocaml:"; "typescript:"; "browser:"; "beam:"; "wasm:" ];
         Alcotest.(check bool)
           "the ocaml line names the toolchain, not the installation shape" true
           (contains text "ok — ocamlfind" || contains text "unavailable");
         Alcotest.(check bool)
           "wasm needs nothing" true
           (contains text "no external tools"));
+  ]
+
+(* ---- browser: the page bundle (T48.10) ---- *)
+
+(* A stub page — just enough of document and window for the dom family.
+   The bundle is a plain script with no imports, so require runs it; the
+   timeout lets the root's microtasks and the event's promise settle
+   before the harness reports what the page now holds. *)
+let browser_page_harness =
+  {|const body = {
+  children: [],
+  firstChild: null,
+  appendChild(c) {
+    this.children.push(c);
+    this.firstChild = this.children[0];
+  },
+  removeChild(c) {
+    this.children = this.children.filter((x) => x !== c);
+    this.firstChild = this.children[0] || null;
+  },
+};
+global.document = {
+  title: "",
+  body,
+  getElementById: (id) => (id === "emo-root" ? body : null),
+  createElement: (tag) => ({
+    tagName: tag,
+    children: [],
+    style: { props: {}, setProperty(n, v) { this.props[n] = v; } },
+    addEventListener(ev, fn) {
+      this.listeners = this.listeners || {};
+      (this.listeners[ev] = this.listeners[ev] || []).push(fn);
+    },
+    appendChild(c) { this.children.push(c); },
+    removeChild(c) { this.children = this.children.filter((x) => x !== c); },
+  }),
+  createTextNode: (text) => ({ data: text }),
+};
+global.window = { innerWidth: 800, innerHeight: 600 };
+require("./app.js");
+setTimeout(() => {
+  console.log(
+    "title=" +
+      document.title +
+      " children=" +
+      body.children.map((c) => c.data ?? c.tagName).join(",")
+  );
+}, 10);
+|}
+
+let browser_event_harness =
+  {|const body = {
+  children: [],
+  firstChild: null,
+  appendChild(c) {
+    this.children.push(c);
+    this.firstChild = this.children[0];
+  },
+  removeChild(c) {
+    this.children = this.children.filter((x) => x !== c);
+    this.firstChild = this.children[0] || null;
+  },
+};
+global.document = {
+  title: "",
+  body,
+  getElementById: (id) => (id === "emo-root" ? body : null),
+  createElement: (tag) => ({
+    tagName: tag,
+    children: [],
+    style: { props: {}, setProperty() {} },
+    addEventListener(ev, fn) {
+      this.listeners = this.listeners || {};
+      (this.listeners[ev] = this.listeners[ev] || []).push(fn);
+    },
+    appendChild(c) { this.children.push(c); },
+    removeChild(c) { this.children = this.children.filter((x) => x !== c); },
+  }),
+  createTextNode: (text) => ({ data: text }),
+};
+global.window = { innerWidth: 800, innerHeight: 600 };
+require("./app.js");
+setTimeout(() => {
+  body.children[0].listeners.click[0]();
+  setTimeout(() => console.log("fired"), 10);
+}, 10);
+|}
+
+(* The emitter's refusals are checked by name, like the foreign-def
+   matrix: the build exit alone would not say which rule fired. *)
+let browser_emit_refusal source emit =
+  let items, parse_diags =
+    Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+  in
+  (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+  let diags, _refs, _requires, types =
+    Emo_check.check_module_typed ~modules:[] ~current:[] ~target:"browser"
+      items
+  in
+  (match diags with _ :: _ -> Alcotest.fail "unexpected check errors" | [] -> ());
+  let program =
+    Emo_ir.lower
+      {
+        Emo_ir.modules =
+          [ { Emo_ir.mpath = []; mitems = items; mtypes = types } ];
+        entry = [];
+        packages = [];
+      }
+  in
+  try
+    ignore (emit program);
+    None
+  with Emo_ir.Lower_error message -> Some message
+
+let browser_tests =
+  [
+    tc "browser: one bundle with no host imports, run against a page"
+      (fun () ->
+        if not (Lazy.force node_strip_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "browser-page"
+            {|const root = dom_root()
+const label = dom_text("hello")
+dom_append(root, label)
+dom_title("Page title")
+println("ready")
+|}
+        in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"browser" entry (Filename.concat dir "app"));
+        let bundle = Filename.concat dir "app.js" in
+        Alcotest.(check bool) "one bundle" true (Sys.file_exists bundle);
+        let text = read_file bundle in
+        List.iter
+          (fun marker ->
+            Alcotest.(check bool)
+              ("bundle contains no `" ^ marker ^ "`") false
+              (contains text marker))
+          [ "require("; "from \"node:"; "process."; "_als" ];
+        write_file (Filename.concat dir "run.js") browser_page_harness;
+        check_run "browser"
+          (run_cmd
+             ("node " ^ Filename.quote (Filename.concat dir "run.js")))
+          "ready\ntitle=Page title children=hello\n");
+    tc "browser: an event reaches the sink with its tag" (fun () ->
+        if not (Lazy.force node_strip_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "browser-event"
+            {|const root = dom_root()
+const button = dom_element("button")
+dom_set_text(button, "press")
+dom_append(root, button)
+dom_connect(button, "click", 7)
+dom_sink() -> (tag Int64) { println("event ${tag}") }
+|}
+        in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"browser" entry (Filename.concat dir "app"));
+        write_file (Filename.concat dir "run.js") browser_event_harness;
+        check_run "browser event"
+          (run_cmd
+             ("node " ^ Filename.quote (Filename.concat dir "run.js")))
+          "event 7\nfired\n");
+    tc "browser refuses Node's runtime capabilities by name" (fun () ->
+        match
+          browser_emit_refusal
+            "const x = file_read(\"a\")\nprintln(x)\n"
+            Emo_codegen.Ts.emit_browser
+        with
+        | None -> Alcotest.fail "expected a refusal"
+        | Some message ->
+            Alcotest.(check bool)
+              "names the capability and the target" true
+              (contains message
+                 "`file_read` runtime implementation is not available on the \
+                  browser target"));
+    tc "typescript refuses the DOM capabilities by name" (fun () ->
+        match
+          browser_emit_refusal "const root = dom_root()\n" Emo_codegen.Ts.emit_ts
+        with
+        | None -> Alcotest.fail "expected a refusal"
+        | Some message ->
+            Alcotest.(check bool)
+              "names the capability and points at the browser target" true
+              (contains message
+                 "`dom_root` runtime implementation is not available on the \
+                  typescript target; build for the browser target"));
+    tc "browser refuses a spawned process by name" (fun () ->
+        match
+          browser_emit_refusal
+            {|def worker() {
+  println("w")
+}
+do worker()
+|}
+            Emo_codegen.Ts.emit_browser
+        with
+        | None -> Alcotest.fail "expected a refusal"
+        | Some message ->
+            Alcotest.(check bool)
+              "names the construct and the target" true
+              (contains message
+                 "a spawned process (`do`) is not available on the browser \
+                  target"));
   ]
 
 (* ---- test: the `emo test` subcommand (step 46) ---- *)
@@ -3860,12 +4124,14 @@ let manifest_entry_tests =
           "exit" 66
           (in_dir dir (fun () ->
                Emo_cli.build_file ~entry:"package.emo" ~output:"manifest-entry"
-                 ~specialize:false ~cclibs:[] ~target:"wasm"));
+                 ~specialize:false ~cclibs:[]
+                 ~native:Emo_project.no_native_inputs ~target:"wasm"));
         Alcotest.(check int)
           "exit" 0
           (in_dir dir (fun () ->
                Emo_cli.build_file ~entry:"main.emo" ~output:"manifest-entry"
-                 ~specialize:false ~cclibs:[] ~target:"wasm")));
+                 ~specialize:false ~cclibs:[]
+                 ~native:Emo_project.no_native_inputs ~target:"wasm")));
   ]
 
 (* The defects CHECK.md recorded and their fixes: a message sent on
@@ -4073,6 +4339,176 @@ main()
         check_run "ocaml" (run_cmd (Filename.quote bin)) "12 = 3\n");
   ]
 
+(* The term package (T48.5): line input and key decoding need no
+   terminal to be checked — a pipe carries the bytes and the program
+   reads them exactly as it would read a keyboard. Raw mode itself is
+   the one terminal-only path; this group pins its refusal off a tty,
+   and the mode was exercised over a pty while the package was built. *)
+let term_manifest =
+  {|package {
+  name = "local/term_probe"
+  version = "0.1.0"
+  targets = ["c"]
+
+  deps {
+    "term" = "0.1.0"
+  }
+}
+|}
+
+let term_entry name source =
+  let entry = fixture ~manifest:term_manifest (name ^ ".emo") source in
+  let bin = Filename.concat (Filename.dirname entry) (name ^ "-c-bin") in
+  (entry, bin)
+
+let term_tests =
+  let build_term name source =
+    let entry, bin = term_entry name source in
+    Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry bin);
+    bin
+  in
+  let run_with_input bin input =
+    let input_path = Filename.concat (Filename.dirname bin) "stdin" in
+    write_file input_path input;
+    run_cmd
+      (Printf.sprintf "%s < %s" (Filename.quote bin)
+         (Filename.quote input_path))
+  in
+  [
+    tc "term keeps the line terminator, so an empty line is not end of input"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let bin =
+          build_term "term-lines"
+            {|require "term"
+
+def show(r (R, String)) {
+  case r {
+    (R.ok, line) -> { println("ok[${line}]") }
+    (R.error, why) -> { println("err[${why}]") }
+  }
+}
+
+def main() {
+  show(term.read_line())
+  show(term.read_line())
+  show(term.read_line())
+  show(term.read_line())
+}
+main()
+|}
+        in
+        check_run "term lines"
+          (run_with_input bin "alpha\n\nbeta")
+          "ok[alpha\n]\nok[\n]\nok[beta]\nok[]\n");
+    tc "term decodes keys, escape sequences, and UTF-8 from the byte stream"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let bin =
+          build_term "term-keys"
+            {|require "term"
+
+def name_of(k term.Key) String {
+  if k == term.Key.char {
+    return "char"
+  }
+  if k == term.Key.ctrl {
+    return "ctrl"
+  }
+  if k == term.Key.enter {
+    return "enter"
+  }
+  if k == term.Key.tab {
+    return "tab"
+  }
+  if k == term.Key.backspace {
+    return "backspace"
+  }
+  if k == term.Key.escape {
+    return "escape"
+  }
+  if k == term.Key.up {
+    return "up"
+  }
+  if k == term.Key.delete {
+    return "delete"
+  }
+  if k == term.Key.f1 {
+    return "f1"
+  }
+  if k == term.Key.alt {
+    return "alt"
+  }
+  if k == term.Key.eof {
+    return "eof"
+  }
+  return "other"
+}
+
+def main() {
+  var more = true
+  while more {
+    const (R.ok, key) = term.read_key()
+    println("${name_of(key[0])} ${key[1]}")
+    if key[0] == term.Key.eof {
+      more = false
+    }
+  }
+}
+main()
+|}
+        in
+        check_run "term keys"
+          (run_with_input bin
+             "a\r\t\127\001\027[A\027[3~\027OP\u{00e9}\027x\027")
+          "char 97\n\
+           enter 0\n\
+           tab 0\n\
+           backspace 0\n\
+           ctrl 1\n\
+           up 0\n\
+           delete 0\n\
+           f1 0\n\
+           char 233\n\
+           alt 120\n\
+           escape 0\n\
+           eof 0\n");
+    tc "term reports data failures as values and refuses raw mode off a tty"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let bin =
+          build_term "term-errors"
+            {|require "term"
+
+def say(label String, r (R, Int64)) {
+  case r {
+    (R.ok, n) -> { println("${label} ok ${n}") }
+    (R.error, why) -> { println("${label} ${why}") }
+  }
+}
+
+def main() {
+  println("tty ${term.is_tty()}")
+  say("raw", term.enable_raw())
+  say("restore", term.restore())
+  case term.size() {
+    (R.ok, dims) -> { println("size ${dims[0]}x${dims[1]}") }
+    (R.error, why) -> { println("size ${why.starts_with("term: size:")}") }
+  }
+  const (R.ok, key) = term.read_key()
+  println("key ${key[0] == term.Key.eof}")
+}
+main()
+|}
+        in
+        check_run "term errors" (run_with_input bin "")
+          "tty false\n\
+           raw term: enable_raw: not a terminal\n\
+           restore ok 0\n\
+           size true\n\
+           key true\n");
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -4089,11 +4525,13 @@ let () =
       ("c_examples", c_examples_tests);
       ("c_tls", c_tls_tests);
       ("root_end", root_end_tests);
+      ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
       ("c_foreign", c_foreign_tests);
+      ("term", term_tests);
       ("c_callback", c_callback_tests);
       ("c_shape", c_shape_tests);
       ("c_recycle", c_recycle_tests);
@@ -4112,4 +4550,5 @@ let () =
       ("manifest_entry", manifest_entry_tests);
       ("emoji", emoji_tests);
       ("doctor", doctor_tests);
+      ("browser", browser_tests);
     ]

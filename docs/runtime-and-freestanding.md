@@ -84,8 +84,10 @@ different thing: the runtime-independence principle (2026-10-07) writes
 it in the target's language, carries it as generated data inside the
 compiler, and compiles it with the target's own toolchain — `c` carries
 `src/emo_codegen/c/emo_c_runtime.c`, `ocaml` carries
-`src/emo_codegen/ocaml/emo_ocaml_runtime.ml`, `typescript` carries
-`src/emo_codegen/ts/ts_runtime.ts`, and `wasm`/`beam` carry theirs inside
+`src/emo_codegen/ocaml/emo_ocaml_runtime.ml`, `typescript` and
+`browser` carry `src/emo_codegen/ts/ts_core.ts` plus a host file
+(`ts_node.ts` and `ts_browser.ts`, concatenated after the core), and
+`wasm`/`beam` carry theirs inside
 the emitted module. (The `ocaml` file is the scheduler and the
 runtime implementations; the
 collector and value model underneath are still OCaml's — the borrowed

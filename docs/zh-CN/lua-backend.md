@@ -55,7 +55,7 @@ Lua 5.1 或 Luau,全都没有整数子类型,因此全都满足不了这条不�
   声明全部五个 hosted 目标,原样可用;`os`、`file`、`bufio` 声明
   `ocaml, c`;`net`、`http`、`slog` 声明 `ocaml, c, typescript`;
   `sqlite3` 只有 `c`。Lua 目标要么实作 `os_*`/`file_*` 这一组(20 个
-  加 2 个运行时实现),要么像 TypeScript 那样整组拒绝——`ts_runtime.ts`
+  加 2 个运行时实现),要么像 TypeScript 那样整组拒绝——`ts_core.ts`
   一个 `os_*`/`file_*` 运行时实现都没实作。
 - **CI。**release 矩阵是四个平台(linux x86_64/aarch64、macos
   x86_64/arm64,`release.yml:26-32`),每台要装一个 Lua 解释器;而且

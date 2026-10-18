@@ -1,0 +1,168 @@
+// The SSR package's own test: escaping, the stylesheet's rule shape,
+// class interning, and one assertion per node kind's markup, checked as
+// values rather than as bytes. `golden/` pins a whole page byte for
+// byte; here a drifted class name or attribute order fails with the two
+// strings side by side.
+//
+//   emo run test.emo
+//
+// It is a module of the package, not a package of its own, so
+// `emo check ui_ssr.emo` checks it and `./check.sh` runs it.
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+def same(want String, what String, got String) {
+  if want == got {
+    check(true, what)
+  } else {
+    raise Exception.new(message: "expected [${want}], got [${got}]: ${what}")
+  }
+}
+
+def style() ui.Style {
+  return ui.style()
+}
+
+// ---- escaping --------------------------------------------------------
+
+def escaping() {
+  same("<span class=\"e0\">a &amp; b &lt; c &gt; d &quot; e &#39; f</span>",
+    "every markup character in text is escaped",
+    ui_ssr.fragment(ui.text("a & b < c > d \" e ' f", style())))
+
+  same("<span class=\"e0\">héllo 世界</span>",
+    "a multi-byte character survives the byte walk",
+    ui_ssr.fragment(ui.text("héllo 世界", style())))
+}
+
+// ---- the stylesheet --------------------------------------------------
+
+def stylesheet_checks() {
+  const fancy = ui.style().with_padding(12.5).with_gap(4.0).with_align(ui.Align.center).with_grow(true).with_width(30.0)
+  same("* { box-sizing: border-box; }\n"
+    + "body { margin: 0; font-family: system-ui, sans-serif; }\n"
+    + ".e0 { display: inline; padding: 12.5px; gap: 4.0px;"
+    + " align-items: center; flex-grow: 1; width: 30.0px; }\n",
+    "a style becomes one rule in a fixed order",
+    ui_ssr.stylesheet(ui.text("x", fancy)))
+
+  const plain = style()
+  same("<div class=\"e0\"><span class=\"e1\">a</span>"
+    + "<span class=\"e1\">b</span></div>",
+    "equal styles intern into one class, and a different kind does not",
+    ui_ssr.fragment(ui.row([
+      ui.text("a", plain),
+      ui.text("b", plain)
+    ], plain)))
+}
+
+// ---- one assertion per node kind's markup ----------------------------
+
+def markup_checks() {
+  same("<button class=\"e0\" type=\"submit\" name=\"event\" value=\"7\">Go</button>",
+    "a button submits its event tag", ui_ssr.fragment(ui.button("Go", 7, style())))
+
+  same("<input class=\"e0\" type=\"text\" value=\"Ada &amp; Bob\" readonly>",
+    "a core text input shows the model's value and submits nothing",
+    ui_ssr.fragment(ui.text_input("Ada & Bob", style())))
+
+  same("<img class=\"e0\" src=\"a&amp;b.png\" alt=\"\">",
+    "an image carries its escaped source", ui_ssr.fragment(ui.image("a&b.png", style())))
+
+  same("<span class=\"e0\"></span>",
+    "a spacer is an empty box", ui_ssr.fragment(ui.spacer(style())))
+
+  same("<div class=\"e0\"><div class=\"e1\"><div class=\"e2\"></div></div></div>",
+    "column, row and scroll are nested flex boxes",
+    ui_ssr.fragment(ui.column([
+      ui.row([ui.scroll([], style())], style())
+    ], style())))
+}
+
+// ---- the interaction model -------------------------------------------
+
+def interaction_checks() {
+  same("<form class=\"e0\" method=\"post\" action=\"/save?x=1&amp;y=2\">"
+    + "<input class=\"e1\" type=\"text\" name=\"na&lt;me\" value=\"v&amp;1\">"
+    + "<button class=\"e1\" type=\"submit\" name=\"event\" value=\"3\">Save</button>"
+    + "<a class=\"e2\" href=\"/it&#39;s?a=1&amp;b=2\">Back</a>"
+    + "</form>",
+    "a form carries a named field, an event button and a link",
+    ui_ssr.fragment(ui_ssr.form("/save?x=1&y=2", [
+      ui_ssr.field("na<me", "v&1", style()),
+      ui.button("Save", 3, style()),
+      ui_ssr.link("/it's?a=1&b=2", "Back", style())
+    ], style())))
+}
+
+// ---- the document ----------------------------------------------------
+
+def document_checks() {
+  const doc = ui_ssr.page("A & B", ui.text("hi", style()))
+  same("<!doctype html>\n<html lang=\"en\">\n<head>\n"
+    + "<meta charset=\"utf-8\">\n"
+    + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+    + "<title>A &amp; B</title>\n<style>\n"
+    + ui_ssr.stylesheet(ui.text("hi", style()))
+    + "</style>\n</head>\n<body>\n<span class=\"e0\">hi</span>\n"
+    + "</body>\n</html>",
+    "a page wraps the tree in a document whose CSS is the tree's stylesheet",
+    doc)
+}
+
+// ---- the backend -----------------------------------------------------
+//
+// `ui.run` mounts one document and returns, because a server has no
+// input source; `deliver` is the request that steps one event, and its
+// response is the fragment the browser swaps in. Both reach stdout, so
+// the assertion is that the round trip runs to the end.
+
+enum Msg { bump }
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+
+  def with_count(c Int64) Model {
+    return Model.new(count: c)
+  }
+}
+
+def update(msg Msg, m Model) Model {
+  case msg {
+    Msg.bump -> { return m.with_count(m.count() + 1) }
+  }
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  const bump = reg.on(Msg.bump)
+  return ui_ssr.form("/bump", [
+    ui.text("count ${m.count()}", ui.style()),
+    ui.button("Bump", bump, ui.style())
+  ], ui.style())
+}
+
+def backend_checks() {
+  const be = ui_ssr.backend("Test page")
+  ui.run(view, update, Model.new(0), be)
+  be.deliver(0)
+  check(true, "the backend mounts a page and patches a fragment")
+}
+
+escaping()
+stylesheet_checks()
+markup_checks()
+interaction_checks()
+document_checks()
+backend_checks()

@@ -70,8 +70,10 @@ runtime 是面下面的机器。
 另一回事:runtime 独立性原则(2026-10-07)要求它用目标语言书写、
 以生成数据的形式随编译器携带、并由目标自己的工具链编译——`c` 携带
 `src/emo_codegen/c/emo_c_runtime.c`,`ocaml` 携带
-`src/emo_codegen/ocaml/emo_ocaml_runtime.ml`,`typescript` 携带
-`src/emo_codegen/ts/ts_runtime.ts`,而 `wasm`/`beam` 的 runtime 就在
+`src/emo_codegen/ocaml/emo_ocaml_runtime.ml`,`typescript` 与
+`browser` 携带 `src/emo_codegen/ts/ts_core.ts` 再加一个 host 文件
+(分别是 `ts_node.ts` 与 `ts_browser.ts`,拼接在 core 之后),而
+`wasm`/`beam` 的 runtime 就在
 发射出的模块里。（`ocaml` 那个文件是调度器与运行时实现;它脚下的回收器与
 值模型仍是 OCaml 的——即上文第 2 点的 borrowed host runtime。）
 这正是 README 说的"随二进制一起发布":编译产物

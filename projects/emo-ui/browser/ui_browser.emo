@@ -1,0 +1,134 @@
+require "emo/ui"
+
+// The DOM backend (T48.11): the portable tree rendered into the page,
+// over the browser runtime's `dom_*` family.
+//
+// There is no shim here and no C ABI. The runtime's browser host already
+// owns the `document`, and a DOM node crosses into Emo as an Int64
+// handle into its node table, so the whole backend is one Emo class: the
+// layout is the browser's, the style mapping is `css.emo`'s, and an
+// event is the tag a listener carries back to the loop's sink.
+//
+// `run()` returns. A page owns the event loop, so `mount` installs the
+// listeners and hands control back; the loop runs again when the
+// browser calls one of them, not because the backend blocks.
+
+// The tag rides the button's `name`/`value` pair — the same markup
+// contract `ui_ssr` emits — so the page, and a test driving it, can see
+// which event an element carries without reaching into the runtime.
+
+def apply_styles(handle Int64, kind String, s ui.Style) {
+  const ds = css.declarations(kind, s)
+  for var i = 0; i < ds.length(); i = i + 1 {
+    const pair = ds[i]
+    dom_set_style(handle, pair[0], pair[1])
+  }
+}
+
+class Dom {
+  def init(title String) {
+    self.title = title
+    self.sink = Box.new(0)
+    self.root = Box.new(0)
+  }
+
+  def mount(root ui.Node, events ui.Events) {
+    self.sink.replace(events)
+    const point = dom_root()
+    self.root.replace(point)
+    dom_title(self.title)
+    const rs = css.root_declarations()
+    for var i = 0; i < rs.length(); i = i + 1 {
+      const pair = rs[i]
+      dom_set_style(point, pair[0], pair[1])
+    }
+    dom_sink() -> (tag Int64) {
+      self.sink.read().deliver(tag)
+    }
+    dom_append(point, self.render(root))
+  }
+
+  // Every frame is a full rebuild, as it is on the other backends:
+  // `old` is an offer, and a retained DOM diff is the reconciliation
+  // work docs/emo-ui.md leaves open. The listeners are rebuilt with the
+  // elements, so the tree a click delivers from is always the tree the
+  // loop last rendered.
+  def patch(old ui.Node, next ui.Node) {
+    const point = self.root.read()
+    dom_clear(point)
+    dom_append(point, self.render(next))
+  }
+
+  def render(n ui.Node) Int64 {
+    if n.is(ui.Text) {
+      const h = dom_element("span")
+      dom_set_text(h, n.body())
+      apply_styles(h, "text", n.style())
+      return h
+    }
+    if n.is(ui.Button) {
+      const h = dom_element("button")
+      dom_set_text(h, n.label())
+      dom_set_prop(h, "type", "button")
+      dom_set_prop(h, "name", "event")
+      dom_set_prop(h, "value", n.event().to_string())
+      dom_connect(h, "click", n.event())
+      apply_styles(h, "button", n.style())
+      return h
+    }
+    if n.is(ui.TextInput) {
+      // The core's text input shows the model's value and carries no
+      // event tag, so it is read-only here for the same reason `ui_ssr`
+      // renders it read-only: typing has nowhere to go until a node
+      // with an event of its own exists.
+      const h = dom_element("input")
+      dom_set_prop(h, "type", "text")
+      dom_set_prop(h, "value", n.value())
+      dom_set_prop(h, "readOnly", true)
+      apply_styles(h, "input", n.style())
+      return h
+    }
+    if n.is(ui.Image) {
+      const h = dom_element("img")
+      dom_set_prop(h, "src", n.src())
+      dom_set_prop(h, "alt", "")
+      apply_styles(h, "image", n.style())
+      return h
+    }
+    if n.is(ui.Spacer) {
+      const h = dom_element("div")
+      apply_styles(h, "spacer", n.style())
+      return h
+    }
+    if n.is(ui.Column) {
+      return self.container("column", n)
+    }
+    if n.is(ui.Row) {
+      return self.container("row", n)
+    }
+    if n.is(ui.Scroll) {
+      return self.container("scroll", n)
+    }
+    // An unknown node class is a broken contract, not data: a renderer
+    // that does not know a node cannot guess an element for it.
+    raise Exception.new(message:
+      "ui_browser: this renderer does not know the node class")
+  }
+
+  def container(kind String, n ui.Node) Int64 {
+    const h = dom_element("div")
+    apply_styles(h, kind, n.style())
+    const kids = n.children()
+    for var i = 0; i < kids.length(); i = i + 1 {
+      dom_append(h, self.render(kids[i]))
+    }
+    return h
+  }
+
+  def run() {
+  }
+}
+
+def backend(title String) ui.Backend {
+  return Dom.new(title: title)
+}

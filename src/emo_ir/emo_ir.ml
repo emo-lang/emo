@@ -164,11 +164,18 @@ let is_builtin = function
    package, the name that package's own Emo source calls underneath. Never
    an API — nothing in the AST records which package a bare name belongs
    to, so the prefix is the whole of the association. *)
+(* The DOM family: the browser target's capability layer. It is part of
+   the same implementation namespace, but only the browser host defines
+   its functions, so the emitter gates each target by prefix. *)
+let is_dom_impl name =
+  String.length name >= 4 && String.sub name 0 4 = "dom_"
+
 let is_runtime_impl = function
   | name ->
       (String.length name >= 4 && String.sub name 0 4 = "net_")
       || (String.length name >= 5 && String.sub name 0 5 = "file_")
       || (String.length name >= 3 && String.sub name 0 3 = "os_")
+      || is_dom_impl name
 
 let type_of env (span : Emo_support.Span.t) : Emo_check.t =
   match

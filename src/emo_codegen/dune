@@ -13,12 +13,12 @@
 
 (rule
  (target emo_ts_runtime_data.ml)
- (deps ts/ts_runtime.ts)
+ (deps ts/ts_core.ts ts/ts_node.ts ts/ts_browser.ts)
  (action
   (with-stdout-to
    emo_ts_runtime_data.ml
    (bash
-    "printf '(* Generated from src/emo_codegen/ts — edit there, not here. *)\\n\\nlet ts_prelude = {ts|' && cat ts/ts_runtime.ts && printf '|ts}\\n'"))))
+    "printf '(* Generated from src/emo_codegen/ts — edit there, not here. *)\\n\\nlet ts_prelude = {ts|' && cat ts/ts_core.ts ts/ts_node.ts && printf '|ts}\\n\\nlet ts_browser_prelude = {ts|' && cat ts/ts_core.ts ts/ts_browser.ts && printf '|ts}\\n'"))))
 
 (rule
  (target emo_c_runtime_data.ml)

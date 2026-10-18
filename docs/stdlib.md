@@ -65,6 +65,7 @@ The packages:
 | [`slog`](#the-slog-package) | structured logging, logfmt or JSON | `ocaml`, `c`, `typescript` |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
 | [`sql`](#the-sql-package) | SQL text to an abstract syntax tree | all five |
+| [`term`](#the-term-package) | terminal input: lines, raw mode, key events, size | `c` |
 
 All packages are version 0.1.0. Each has a full API reference under
 [`docs/stdlib/`](stdlib/) (Chinese translations under
@@ -781,3 +782,34 @@ refuses (E3009), so `emo run` cannot execute a program that touches the
 package; build it with `emo build`. Reference:
 [`docs/stdlib/sqlite3.md`](stdlib/sqlite3.md) · Demo:
 `examples/sqlite3_demo`.
+
+## The `term` package
+
+Terminal input on stdin: lines, raw mode, decoded key events, and the
+terminal's size. It is the standard library's other native-binding
+package — the calls are `foreign def`s against a C shim the package
+carries — and consuming it is plain `require`.
+
+```emo
+def is_tty() Bool
+def size() (R, (Int64, Int64))
+def read_line() (R, String)
+def enable_raw() (R, Int64)
+def restore() (R, Int64)
+def read_key() (R, (Key, Int64))
+```
+
+`read_line` keeps its terminator, like `bufio`, so a blank line and the
+end of the input are different answers. `enable_raw` turns off
+canonical processing, echo, and keyboard signals; `restore` puts the
+saved setting back, and the process's exit path restores it too.
+`read_key` answers a `Key` member and a code — a Unicode scalar value
+for `Key.char`, `0`–`26` for `Key.ctrl` — decoding the sequences behind
+the arrows, Home/End, Insert/Delete, Page Up/Page Down, F1–F12,
+Shift-Tab, and Alt+key. Ctrl-C is a key event while raw mode is on, not
+a signal.
+
+Targets: `["c"]` — the calls are foreign defs, which the interpreter
+refuses (E3009), so `emo run` cannot execute a program that touches the
+package; build it with `emo build`. Reference:
+[`docs/stdlib/term.md`](stdlib/term.md) · Demo: `examples/term_demo`.

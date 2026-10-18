@@ -32,6 +32,11 @@ type manifest = {
   targets : string list;
   link : string list;
       (* system libraries the c target links (bare names, `-l`-style) *)
+  pkg_config : string list;
+      (* pkg-config modules: their cflags compile the package's sources and
+         their libs join the link *)
+  frameworks : string list;
+      (* macOS frameworks the c target links (bare names, `-framework`-style) *)
   registry : string option;
       (* the HTTP(S) registry this project pulls dependencies from and
          publishes to. Only the project root's field is read; a dependency's
@@ -40,7 +45,8 @@ type manifest = {
   deps : (string * Version.t) list; (* exact versions *)
 }
 
-let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
+let known_targets =
+  [ "ocaml"; "c"; "wasm"; "typescript"; "browser"; "beam"; "riscv64" ]
 
 (* The manifest's shape:
      package {
@@ -48,15 +54,19 @@ let known_targets = [ "ocaml"; "c"; "wasm"; "typescript"; "beam"; "riscv64" ]
        version = "0.1.0"
        targets = ["ocaml", "wasm"]
        link = ["sqlite3"]
+       pkg_config = ["gtk4"]
+       frameworks = ["AppKit"]
        registry = "https://packages.example.com"
        deps { "json" = "2.3.1" }
      }
    Unknown fields, missing fields, and non-literal values are errors — the
    manifest is data, not program logic. `link` is optional (default []): the
-   system libraries the c target links, as bare names. `registry` is optional
-   (default none): the HTTP(S) endpoint this project resolves dependencies
-   against and publishes to — read only when the manifest is the project
-   root. *)
+   system libraries the c target links, as bare names. `pkg_config` and
+   `frameworks` are optional too (default []): the pkg-config modules whose
+   cflags/lib the c target applies, and the macOS frameworks it links, as
+   bare names. `registry` is optional (default none): the HTTP(S) endpoint
+   this project resolves dependencies against and publishes to — read only
+   when the manifest is the project root. *)
 (* The budget for restricted manifest evaluation: generous but finite. *)
 let manifest_budget = 10_000
 
@@ -121,8 +131,8 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                  "a package field's name is not a string"
                  ~hint:
                    "the package block defines `name`, `version`, `targets`, \
-                    `link` and `registry`; a dependency's name belongs in \
-                    `deps`")
+                    `link`, `pkg_config`, `frameworks` and `registry`; a \
+                    dependency's name belongs in `deps`")
         | Emo_eval.Dep_entry_expected ->
             raise
               (manifest_error ~hint:dep_key ~span "E5104"
@@ -132,15 +142,18 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
         raise
           (Manifest_error { d with Emo_support.Diagnostic.code = Some "E5103" })
   in
-  (* Strict fixed schema: nothing besides name, version, targets, link, and
-     registry may be defined in the package block. *)
+  (* Strict fixed schema: nothing besides name, version, targets, link,
+     pkg_config, frameworks, and registry may be defined in the package
+     block. *)
   Hashtbl.iter
     (fun k _ ->
       if
         not
           (String.equal k "name" || String.equal k "version"
          || String.equal k "targets" || String.equal k "link"
-         || String.equal k "registry")
+          || String.equal k "pkg_config"
+          || String.equal k "frameworks"
+          || String.equal k "registry")
       then
         raise (manifest_error "E5100" (Printf.sprintf "unknown field `%s`" k)))
     env.Emo_eval.frame;
@@ -284,6 +297,40 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                  hint = None;
                }))
     link;
+  (* The pkg-config modules the package's sources need, and the macOS
+     frameworks it links: bare names again. pkg-config owns the flag
+     spelling (`--cflags`, `--libs`), the framework field says only which
+     framework, and neither lets a manifest carry a flag fragment. *)
+  let read_bare_names ~field ~example =
+    let names = read_string_list ~field ~missing_code:None in
+    List.iter
+      (fun name ->
+        let bad =
+          name = ""
+          || name.[0] = '-'
+          || String.contains name '/'
+          || String.exists (fun c -> c = ' ' || c = '\t' || c = '\n') name
+        in
+        if bad then
+          raise
+            (Manifest_error
+               Emo_support.Diagnostic.
+                 {
+                   severity = Error;
+                   code = Some "E5103";
+                   message =
+                     Printf.sprintf
+                       "%s entry `%s` must be a bare name (like \"%s\")" field
+                       name example;
+                   span =
+                     Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0;
+                   hint = None;
+                 }))
+      names;
+    names
+  in
+  let pkg_config = read_bare_names ~field:"pkg_config" ~example:"gtk4" in
+  let frameworks = read_bare_names ~field:"frameworks" ~example:"AppKit" in
   (* The project's registry endpoint — pulls and publishes: an HTTP(S) URL
      only. A filesystem registry is a developer/test affordance and stays
      with EMO_REGISTRY — a committed manifest must name an endpoint every
@@ -330,7 +377,7 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                    }))
       deps_pairs
   in
-  { name; version; targets; link; registry; deps }
+  { name; version; targets; link; pkg_config; frameworks; registry; deps }
 
 (* A `package.emo` is the manifest: data in the restricted profile, never a
    module. A reader that walks Emo sources has to know that, or it reads
@@ -589,10 +636,10 @@ module Registry = struct
     |> Digestif.SHA256.to_hex
 
   (* Collects every package file under [dir], relative paths as keys: the
-     .emo modules plus the .c/.h sources a native-binding package carries
-     (the c target compiles them into the program — CHECK.md, 2026-10-12).
-     Build output (.emo-build) and dune's tree (_build) are not package
-     content. *)
+     .emo modules plus the .c/.h/.m sources a native-binding package carries
+     (the c target compiles them into the program — CHECK.md, 2026-10-12;
+     `.m` joins them with the native packaging mechanism, T48.7). Build
+     output (.emo-build) and dune's tree (_build) are not package content. *)
   let collect_files (dir : string) : (string * string) list =
     let rec walk rel =
       let dir_path = Filename.concat dir (String.concat "/" rel) in
@@ -614,6 +661,7 @@ module Registry = struct
               Filename.check_suffix entry ".emo"
               || Filename.check_suffix entry ".c"
               || Filename.check_suffix entry ".h"
+              || Filename.check_suffix entry ".m"
             then
               let ic = open_in_bin path in
               let content =
@@ -1843,7 +1891,8 @@ case resp {
                     (fun (path, _) ->
                       Filename.check_suffix path ".emo"
                       || Filename.check_suffix path ".c"
-                      || Filename.check_suffix path ".h")
+                      || Filename.check_suffix path ".h"
+                      || Filename.check_suffix path ".m")
                     members
                 in
                 if
@@ -1885,7 +1934,7 @@ end
    [prepare] validates the package rooted at [dir] and builds the .emoji
    archive — the CLI ships the bytes over HTTP. The content digest is the
    Registry digest over the package's collected sources (.emo plus any
-   .c/.h); a root README.md rides along but is never digested, matching
+   .c/.h/.m); a root README.md rides along but is never digested, matching
    the server. *)
 module Publish = struct
   type prepared = {

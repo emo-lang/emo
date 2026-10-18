@@ -1,0 +1,231 @@
+// The term package: line input, raw mode, and key events for a
+// terminal on stdin (file descriptor 0).
+//
+// Line mode comes first and is the ordinary read: read_line keeps the
+// terminator, exactly like bufio's reader, so an empty line ("\n") and
+// the end of the input ("") are never the same answer. Raw mode is
+// behind it: enable_raw() puts stdin in raw mode — no canonical
+// processing, no echo, no signals from the keyboard — and read_key()
+// answers one decoded key at a time. Ctrl-C is a key event, not a
+// signal, while raw mode is on.
+//
+// Following the standard library's convention, data-driven failures
+// are values: (R.ok, …) or (R.error, reason), the reason a string that
+// begins with the package name and names the operation. End of input
+// is not one of them: read_line answers "" and read_key answers
+// Key.eof. The package is c-target only — its calls are `foreign def`s
+// against emo_term_shim.c, which the build compiles and links by
+// itself; the interpreter refuses foreign code (E3009), so build with
+// `emo build` rather than `emo run`.
+//
+// Raw mode restores the terminal automatically at process exit; call
+// restore() earlier when the program knows it is done.
+
+// A decoded key. The tuple read_key returns carries one of these and
+// a code whose meaning depends on the member:
+//
+//   Key.char       the character's Unicode scalar value
+//   Key.ctrl       Ctrl-@ through Ctrl-Z as 0 through 26
+//   Key.alt        the following ASCII byte's value (1-26 for a
+//                  control key)
+//   Key.unknown    the final byte of an escape sequence this package
+//                  does not decode
+//   Key.eof        end of input; the code is 0
+//
+// Every other member carries 0.
+enum Key {
+  char,
+  ctrl,
+  enter,
+  tab,
+  back_tab,
+  backspace,
+  escape,
+  up,
+  down,
+  left,
+  right,
+  home,
+  end,
+  insert,
+  delete,
+  page_up,
+  page_down,
+  f1,
+  f2,
+  f3,
+  f4,
+  f5,
+  f6,
+  f7,
+  f8,
+  f9,
+  f10,
+  f11,
+  f12,
+  alt,
+  unknown,
+  eof
+}
+
+// True when stdin is a terminal.
+def is_tty() Bool {
+  return internal.ffi.is_tty()
+}
+
+// The terminal's size in cells, (columns, rows), or (R.error, reason)
+// when stdin is not a terminal or the query fails.
+def size() (R, (Int64, Int64)) {
+  const columns = internal.ffi.columns()
+  const rows = internal.ffi.rows()
+  if columns <= 0 || rows <= 0 {
+    return (R.error, internal.ffi.error())
+  }
+  return (R.ok, (columns, rows))
+}
+
+// One line from stdin, terminator included. A blank line is "\n"; the
+// empty string is the end of the input. A string carrying an embedded
+// NUL truncates there, as at every C boundary.
+def read_line() (R, String) {
+  const rc = internal.ffi.read_line()
+  if rc == 0 {
+    return (R.ok, internal.ffi.line())
+  }
+  if rc == 1 {
+    return (R.ok, "")
+  }
+  return (R.error, internal.ffi.error())
+}
+
+// Puts stdin in raw mode: bytes arrive unbuffered, echo is off, and
+// Ctrl-C and Ctrl-Z are keys rather than signals. Idempotent. The
+// previous setting is restored automatically when the process exits.
+def enable_raw() (R, Int64) {
+  const rc = internal.ffi.enable_raw()
+  if rc != 0 {
+    return (R.error, internal.ffi.error())
+  }
+  return (R.ok, 0)
+}
+
+// Restores the terminal setting saved by enable_raw(). Call it when
+// the program is done with raw input; a call with raw mode off is a
+// no-op. The process's exit path calls it too.
+def restore() (R, Int64) {
+  const rc = internal.ffi.restore()
+  if rc != 0 {
+    return (R.error, internal.ffi.error())
+  }
+  return (R.ok, 0)
+}
+
+// Blocks for the next key and answers (Key, code). Raw mode makes keys
+// arrive as they are pressed; without it, the terminal's line
+// discipline still applies. End of input is Key.eof, not an error.
+def read_key() (R, (Key, Int64)) {
+  const packed = internal.ffi.read_key()
+  if packed < 0 {
+    return (R.error, internal.ffi.error())
+  }
+  const kind = packed >> 32
+  const code = packed & 4294967295
+  return (R.ok, (key_of(kind), code))
+}
+
+def key_of(kind Int64) Key {
+  if kind == 0 {
+    return Key.char
+  }
+  if kind == 1 {
+    return Key.ctrl
+  }
+  if kind == 2 {
+    return Key.enter
+  }
+  if kind == 3 {
+    return Key.tab
+  }
+  if kind == 4 {
+    return Key.back_tab
+  }
+  if kind == 5 {
+    return Key.backspace
+  }
+  if kind == 6 {
+    return Key.escape
+  }
+  if kind == 7 {
+    return Key.up
+  }
+  if kind == 8 {
+    return Key.down
+  }
+  if kind == 9 {
+    return Key.left
+  }
+  if kind == 10 {
+    return Key.right
+  }
+  if kind == 11 {
+    return Key.home
+  }
+  if kind == 12 {
+    return Key.end
+  }
+  if kind == 13 {
+    return Key.insert
+  }
+  if kind == 14 {
+    return Key.delete
+  }
+  if kind == 15 {
+    return Key.page_up
+  }
+  if kind == 16 {
+    return Key.page_down
+  }
+  if kind == 17 {
+    return Key.f1
+  }
+  if kind == 18 {
+    return Key.f2
+  }
+  if kind == 19 {
+    return Key.f3
+  }
+  if kind == 20 {
+    return Key.f4
+  }
+  if kind == 21 {
+    return Key.f5
+  }
+  if kind == 22 {
+    return Key.f6
+  }
+  if kind == 23 {
+    return Key.f7
+  }
+  if kind == 24 {
+    return Key.f8
+  }
+  if kind == 25 {
+    return Key.f9
+  }
+  if kind == 26 {
+    return Key.f10
+  }
+  if kind == 27 {
+    return Key.f11
+  }
+  if kind == 28 {
+    return Key.f12
+  }
+  if kind == 29 {
+    return Key.alt
+  }
+  if kind == 30 {
+    return Key.unknown
+  }
+  return Key.eof
+}

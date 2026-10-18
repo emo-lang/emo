@@ -13,9 +13,16 @@ components emit into a context instead of returning values?* and *does
 EmoUI need a template language?* — and both have answers whose reasons
 are not recoverable from the decision alone.
 
+**Update (2026-10-18, T48.13).** The README now publishes the settled
+array-children spelling; the tree quoted below is kept as the form this
+note was written to examine. The composition decision and the list of
+closed mechanisms are unchanged; the one open question — whether the
+array form earns a literal spelling — is still open.
+
 ## The question
 
-[`README.md`](../README.md) publishes this as illustrative EmoUI syntax:
+[`README.md`](../README.md) published this as illustrative EmoUI syntax
+(revised since; kept here as the record the argument starts from):
 
 ```emo
 page(title: "Home") {

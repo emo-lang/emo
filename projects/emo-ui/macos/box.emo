@@ -1,0 +1,353 @@
+// The macOS backend's box model, in points.
+//
+// AppKit has a layout engine, but a tree that is rebuilt on every event
+// is not what Auto Layout is for: the backend clears its content view
+// and places every leaf at an absolute frame, exactly as the terminal
+// backend repaints its grid. So the measurement is the same arithmetic
+// as `ui_tui`'s, in points instead of cells — `padding`, `gap`, `align`,
+// `grow`, `width` and `height` mean what the core says they mean — and
+// this module stays pure, so a test reads it without a window server
+// (docs/emo-ui.md, Layer 3).
+//
+// It is a module of its own because the interpreter refuses a foreign
+// def at load time (E3009): the package's test can require the layout
+// without pulling in the AppKit verbs.
+
+require "emo/ui"
+
+enum Kind { label, button, input, image }
+
+// A layout result: the size a node measures to, in points.
+class Extent {
+  def init(w Float64, h Float64) {
+    self.w = w
+    self.h = h
+  }
+
+  def w() Float64 {
+    return self.w
+  }
+
+  def h() Float64 {
+    return self.h
+  }
+}
+
+// One leaf and where it landed. Container nodes produce no draw of
+// their own; the walk flattens them.
+class Draw {
+  def init(x Float64, y Float64, w Float64, h Float64, kind Kind,
+           text String, event Int64) {
+    self.x = x
+    self.y = y
+    self.w = w
+    self.h = h
+    self.kind = kind
+    self.text = text
+    self.event = event
+  }
+
+  def x() Float64 {
+    return self.x
+  }
+
+  def y() Float64 {
+    return self.y
+  }
+
+  def w() Float64 {
+    return self.w
+  }
+
+  def h() Float64 {
+    return self.h
+  }
+
+  def kind() Kind {
+    return self.kind
+  }
+
+  def text() String {
+    return self.text
+  }
+
+  def event() Int64 {
+    return self.event
+  }
+}
+
+// The point sizes a leaf asks for: the system font's line height, a
+// control's height, and enough width for its text. AppKit would measure
+// a real string more precisely, but a rebuilt frame wants a stable
+// number, and the corpus compares structure, not typography.
+def line_of(n ui.Node) String {
+  if n.is(ui.Text) {
+    return n.body()
+  }
+  if n.is(ui.Button) {
+    return n.label()
+  }
+  if n.is(ui.TextInput) {
+    return n.value()
+  }
+  if n.is(ui.Image) {
+    return n.src()
+  }
+  return ""
+}
+
+def kind_of(n ui.Node) Kind {
+  if n.is(ui.Button) {
+    return Kind.button
+  }
+  if n.is(ui.TextInput) {
+    return Kind.input
+  }
+  if n.is(ui.Image) {
+    return Kind.image
+  }
+  return Kind.label
+}
+
+def event_of(n ui.Node) Int64 {
+  if n.is(ui.Button) {
+    return n.event()
+  }
+  return 0 - 1
+}
+
+// A fixed extent from the style's `(R, Float64)` slot, or -1.0 for auto.
+def fixed(slot (R, Float64)) Float64 {
+  case slot {
+    (R.ok, v) -> { return v }
+    (R.error, _) -> { return 0.0 - 1.0 }
+  }
+}
+
+def intrinsic(n ui.Node) Extent {
+  if n.is(ui.Spacer) {
+    return Extent.new(w: 0.0, h: 0.0)
+  }
+  const chars = line_of(n).length().to_float64()
+  if n.is(ui.Button) {
+    return Extent.new(w: chars * 8.0 + 32.0, h: 30.0)
+  }
+  if n.is(ui.TextInput) {
+    return Extent.new(w: chars * 8.0 + 24.0, h: 24.0)
+  }
+  if n.is(ui.Image) {
+    return Extent.new(w: 80.0, h: 80.0)
+  }
+  return Extent.new(w: chars * 8.0, h: 20.0)
+}
+
+// A node's own size: the style's fixed width/height when set, the
+// intrinsic size otherwise. `avail_w` is the width the parent has to
+// offer (-1.0 when unbounded).
+def measure(n ui.Node, avail_w Float64) Extent {
+  const s = n.style()
+  const fw = fixed(s.width())
+  const fh = fixed(s.height())
+  if n.is(ui.Column) {
+    return measure_column(n, s, fw, fh, avail_w)
+  }
+  // A `Scroll` is a vertical box at a fixed viewport height: without a
+  // scroll offset it measures and places exactly like a column.
+  if n.is(ui.Scroll) {
+    return measure_column(n, s, fw, fh, avail_w)
+  }
+  if n.is(ui.Row) {
+    return measure_row(n, s, fw, fh)
+  }
+  const e = intrinsic(n)
+  const w = if fw >= 0.0 { fw } else { e.w() }
+  const h = if fh >= 0.0 { fh } else { e.h() }
+  return Extent.new(w: w, h: h)
+}
+
+def measure_column(n ui.Node, s ui.Style, fw Float64, fh Float64,
+                   avail_w Float64) Extent {
+  const pad = s.padding()
+  const gap = s.gap()
+  const kids = n.children()
+  const inner = if avail_w >= 0.0 { avail_w - pad * 2.0 } else { 0.0 - 1.0 }
+  var maxw = 0.0
+  var total = 0.0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], inner)
+    if e.w() > maxw {
+      maxw = e.w()
+    }
+    total = total + e.h()
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1).to_float64()
+  }
+  const w = if fw >= 0.0 { fw } else { maxw + pad * 2.0 }
+  const h = if fh >= 0.0 { fh } else { total + pad * 2.0 }
+  return Extent.new(w: w, h: h)
+}
+
+def measure_row(n ui.Node, s ui.Style, fw Float64, fh Float64) Extent {
+  const pad = s.padding()
+  const gap = s.gap()
+  const kids = n.children()
+  var total = 0.0
+  var maxh = 0.0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], 0.0 - 1.0)
+    total = total + e.w()
+    if e.h() > maxh {
+      maxh = e.h()
+    }
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1).to_float64()
+  }
+  const w = if fw >= 0.0 { fw } else { total + pad * 2.0 }
+  const h = if fh >= 0.0 { fh } else { maxh + pad * 2.0 }
+  return Extent.new(w: w, h: h)
+}
+
+// Lay one node into `(x, y, w, h)` from the window's top-left and
+// append its leaves to `out`. The builder is threaded back as the
+// return value, the same shape the terminal backend uses.
+def place(n ui.Node, x Float64, y Float64, w Float64, h Float64,
+          out ArrayBuilder) ArrayBuilder {
+  if n.is(ui.Column) {
+    return place_column(n, x, y, w, h, out)
+  }
+  if n.is(ui.Scroll) {
+    return place_column(n, x, y, w, h, out)
+  }
+  if n.is(ui.Row) {
+    return place_row(n, x, y, w, h, out)
+  }
+  const text = line_of(n)
+  if text.length() > 0 {
+    out.push(Draw.new(x: x, y: y, w: w, h: h, kind: kind_of(n), text: text,
+      event: event_of(n)))
+  }
+  return out
+}
+
+// A column's children stack downward inside its padding, one gap apart.
+// A child with `grow` takes an equal share of the height left over; the
+// last one takes the remainder so the box stays flush.
+def place_column(n ui.Node, x Float64, y Float64, w Float64, h Float64,
+                 out ArrayBuilder) ArrayBuilder {
+  const s = n.style()
+  const pad = s.padding()
+  const gap = s.gap()
+  const kids = n.children()
+  const inner_w = w - pad * 2.0
+  const inner_h = h - pad * 2.0
+  var total = 0.0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    total = total + measure(kids[i], inner_w).h()
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1).to_float64()
+  }
+  var growers = 0
+  var last_grower = 0 - 1
+  for var i = 0; i < kids.length(); i = i + 1 {
+    if kids[i].style().grow() {
+      growers = growers + 1
+      last_grower = i
+    }
+  }
+  const leftover = inner_h - total
+  const share = if growers > 0 { leftover / growers.to_float64() } else { 0.0 }
+  const align = s.align()
+  var cursor = y + pad
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], inner_w)
+    var ch = e.h()
+    if growers > 0 && kids[i].style().grow() {
+      ch = ch + share
+      if i == last_grower {
+        ch = ch + leftover - share * growers.to_float64()
+      }
+    }
+    var cw = e.w()
+    var cx = x + pad
+    if align == ui.Align.center {
+      cx = x + pad + (inner_w - cw) / 2.0
+    }
+    if align == ui.Align.end {
+      cx = x + pad + (inner_w - cw)
+    }
+    if align == ui.Align.stretch {
+      cw = inner_w
+    }
+    place(kids[i], cx, cursor, cw, ch, out)
+    cursor = cursor + ch + gap
+  }
+  return out
+}
+
+// A row's children line up to the right inside its padding, one gap
+// apart, with `grow` and the leftover share working across the width
+// and `align` placing each child down the row's height.
+def place_row(n ui.Node, x Float64, y Float64, w Float64, h Float64,
+              out ArrayBuilder) ArrayBuilder {
+  const s = n.style()
+  const pad = s.padding()
+  const gap = s.gap()
+  const kids = n.children()
+  const inner_w = w - pad * 2.0
+  const inner_h = h - pad * 2.0
+  var total = 0.0
+  for var i = 0; i < kids.length(); i = i + 1 {
+    total = total + measure(kids[i], 0.0 - 1.0).w()
+  }
+  if kids.length() > 0 {
+    total = total + gap * (kids.length() - 1).to_float64()
+  }
+  var growers = 0
+  var last_grower = 0 - 1
+  for var i = 0; i < kids.length(); i = i + 1 {
+    if kids[i].style().grow() {
+      growers = growers + 1
+      last_grower = i
+    }
+  }
+  const leftover = inner_w - total
+  const share = if growers > 0 { leftover / growers.to_float64() } else { 0.0 }
+  const align = s.align()
+  var cursor = x + pad
+  for var i = 0; i < kids.length(); i = i + 1 {
+    const e = measure(kids[i], 0.0 - 1.0)
+    var cw = e.w()
+    if growers > 0 && kids[i].style().grow() {
+      cw = cw + share
+      if i == last_grower {
+        cw = cw + leftover - share * growers.to_float64()
+      }
+    }
+    var ch = e.h()
+    var cy = y + pad
+    if align == ui.Align.center {
+      cy = y + pad + (inner_h - ch) / 2.0
+    }
+    if align == ui.Align.end {
+      cy = y + pad + (inner_h - ch)
+    }
+    if align == ui.Align.stretch {
+      ch = inner_h
+    }
+    place(kids[i], cursor, cy, cw, ch, out)
+    cursor = cursor + cw + gap
+  }
+  return out
+}
+
+// The frame as data: every leaf with its absolute frame, in points from
+// the window's top-left. The pure half of painting, and what a test
+// reads instead of a window.
+def layout(root ui.Node, width Float64, height Float64) Array[Draw] {
+  const out = ArrayBuilder.new()
+  place(root, 0.0, 0.0, width, height, out)
+  return out.to_array()
+}

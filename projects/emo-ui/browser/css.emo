@@ -1,0 +1,90 @@
+// The DOM backend's stylesheet half (T48.11): one portable kind and one
+// `ui.Style` as the declarations `dom_set_style` applies.
+//
+// The vocabulary is the SSR backend's (`ui_ssr`'s `base_css`/`css_rule`),
+// so the two Web backends agree on what a `row`, a `grow` or a `padding`
+// means. Unlike the native backends there is no point box model here:
+// the browser's own layout engine is the one the core's vocabulary maps
+// to, so this module is pure data and the interpreter tests it.
+
+require "emo/ui"
+
+def align_css(a ui.Align) String {
+  case a {
+    ui.Align.start -> { return "flex-start" }
+    ui.Align.center -> { return "center" }
+    ui.Align.end -> { return "flex-end" }
+    ui.Align.stretch -> { return "stretch" }
+  }
+}
+
+def grow_css(g Bool) String {
+  if g {
+    return "1"
+  }
+  return "0"
+}
+
+def px(v Float64) String {
+  return v.to_string() + "px"
+}
+
+// The mount point's own reset: the three rules the SSR page emits as
+// `*` and `body`, applied to the one element the backend is given. A
+// page that supplies `#emo-root` inside a styled body still owns its
+// own reset; this reaches only what the backend controls.
+def root_declarations() Array[(String, String)] {
+  return [("box-sizing", "border-box"), ("margin", "0"),
+    ("font-family", "system-ui, sans-serif")]
+}
+
+// A total description of a node's box, in a fixed order: the base
+// display, then padding, gap, alignment, growth, width and height.
+// The properties an inline element cannot honor are still emitted; CSS
+// ignores what does not apply, and a rule that means the same thing
+// everywhere is worth more than a shorter one read per kind.
+def declarations(kind String, s ui.Style) Array[(String, String)] {
+  const out = ArrayBuilder.new()
+  out.push(("box-sizing", "border-box"))
+  if kind == "column" {
+    out.push(("display", "flex"))
+    out.push(("flex-direction", "column"))
+  }
+  if kind == "row" {
+    out.push(("display", "flex"))
+    out.push(("flex-direction", "row"))
+  }
+  if kind == "scroll" {
+    out.push(("display", "flex"))
+    out.push(("flex-direction", "column"))
+    out.push(("overflow", "auto"))
+  }
+  if kind == "text" {
+    out.push(("display", "inline"))
+  }
+  if kind == "button" {
+    out.push(("display", "inline-block"))
+  }
+  if kind == "input" {
+    out.push(("display", "inline-block"))
+  }
+  if kind == "image" {
+    out.push(("display", "inline-block"))
+  }
+  if kind == "spacer" {
+    out.push(("display", "block"))
+  }
+  out.push(("padding", px(s.padding())))
+  out.push(("gap", px(s.gap())))
+  out.push(("align-items", align_css(s.align())))
+  out.push(("flex-grow", grow_css(s.grow())))
+  case s.width() {
+    (R.ok, v) -> { out.push(("width", px(v))) }
+    (R.error, _) -> { }
+  }
+  case s.height() {
+    (R.ok, v) -> { out.push(("height", px(v))) }
+    (R.error, _) -> { }
+  }
+  return out.to_array()
+}

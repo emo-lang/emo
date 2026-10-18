@@ -1,8 +1,8 @@
 # EmoUI
 
 The component-based UI framework written in Emo: one declarative tree rendering
-on a terminal, a server-rendered page, a macOS/AppKit window, and a GTK 4 window
-— the browser DOM following its runtime path. Emo's syntax is shaped to serve
+on a terminal, a server-rendered page, a macOS/AppKit window, a GTK 4 window,
+and the browser DOM. Emo's syntax is shaped to serve
 it, and the principle is **no template language — the UI is plain Emo code**,
 the same philosophy as configuration.
 
@@ -39,8 +39,17 @@ Whether the array form later earns a literal spelling of its own is still open
 ## Status
 
 The portable **`ui` core** (T48.1), the **Elm loop** (T48.2), the headless
-**`debug` backend with its golden** (T48.3) and the **terminal `ui_tui` backend
-with its scripted-input golden** (T48.4) have landed.
+**`debug` backend with its golden** (T48.3), the **terminal `ui_tui` backend
+with its scripted-input golden** (T48.4), the **server-rendered `ui_ssr`
+backend** (T48.6), the **native `ui_macos` backend with its self-driving
+corpus** (T48.8), the **GTK 4 `ui_gtk` backend** (T48.9), the **browser
+`ui_browser` backend with its DOM corpus** (T48.10, T48.11) and the
+**convergence corpus** of one shared application on every backend (T48.12)
+have landed. So
+has terminal input itself (T48.5), as the
+standard-library **`term` package** in `stdlib/` — line reads, raw mode,
+decoded key events, and the terminal's size, in the `sqlite3` shape and
+reached by an ordinary `require`.
 `ui.emo` is the node spine — a `Node` interface plus the `Column`, `Row`, `Text`,
 `Button`, `TextInput`, `Image`, `Spacer` and `Scroll` classes with their
 positional lowercase constructors — the typed `Style` with its `style()` factory
@@ -69,25 +78,30 @@ initializer on every read on the compiled targets, and a module-level `var` is
 `ocaml`-only, so a table kept there would hand every read a fresh, empty one
 (`CHECK.md`, module-level bindings). The table belongs to one running loop, and
 `view` is handed it. The tags are taken in statements before the tree is built
-rather than inside the arguments the tree is made of: `on` is a side effect, and
-operands are evaluated in the target's order — `ocaml`'s is the reverse of every
-other target's — so a tag taken from an argument position is a different tag per
-target (`CHECK.md`, operand evaluation order).
+rather than inside the arguments the tree is made of: `on` is a side effect, so
+a statement of its own keeps the registration order visible at the call site.
+Operand order is no longer a cross-target variable — the language states left
+to right and every target obeys it; the defect that made the two differ, and
+its fix, are in `CHECK.md` and `probe/eval_order`.
 
-The loop compiles and runs on `ocaml`, `typescript` and `beam`. It does not
-compile on `c` or `wasm` yet, and what stands in the way is its spelling rather
-than its structure: a bare def name is the only expression that yields the
-`Block` value `ui.run` takes, and `c` has no def-as-value (`Global`) while `wasm`
-refuses a dynamic call with more than one parameter. `probe/` holds that gap as a
-minimal pair — `def_shape/` is the landed shape and reaches both refusals,
+The loop compiles and runs on all five hosted targets. A bare def name is the
+only expression that yields the `Block` value `ui.run` takes, and `c` had no
+def-as-value (`Global`); T48.8 gave it one — every def gets a dynamic thunk,
+and a def named as a value becomes an empty-capture closure over it — so the
+`c`-hosted backends compile the same loop as the rest. `wasm` had refused the
+shape until T48.6, when its closures grew any arity: `Call_value`, `Closure`
+and a `Global`'s lifted function allocate a function/struct type pair per
+arity (`closure_type`), so a `Block` value is first-class however many
+parameters it takes. `probe/` keeps both shapes as a minimal pair —
+`def_shape/` is the landed spelling and now builds on all five targets,
 `handler_shape/` is the same loop with the application's two functions behind a
-`Handler` interface, and it builds on all five targets, printing what `emo run`
-prints on `c` and `ocaml` (`CHECK.md`, the Elm loop's shape). On `beam` the loop
-built but did not run until T48.4: a bare def became a remote fun to a
-non-exported function, which `erlc` accepted and the loader left uncallable;
-that is fixed, and the TUI golden is what proves it. Which way to close the
-remaining gap — grow the two targets, or move the application's functions behind
-an interface — is the open decision T48.4 leaves standing.
+`Handler` interface, and it prints what `emo run` prints on `c` and `ocaml`
+(`CHECK.md`, the Elm loop's shape). The decision went to growing the target:
+def-as-value was a backend gap rather than new syntax, and it kept the landed
+`ui.run` spelling. On `beam` the loop built but did not run until T48.4: a bare
+def became a remote fun to a non-exported function, which `erlc` accepted and
+the loader left uncallable; that is fixed, and the TUI golden is what proves
+it.
 
 `debug.emo` is the headless backend (T48.3): `render(node)` turns a tree into
 stable text — one node per line, two spaces per level, the node's own props then
@@ -122,8 +136,10 @@ the rule.
 
 `./check.sh` is the gate: the package type-checks, the loop's seventeen
 assertions run, every target's build — and every refusal — is pinned there, and
-the golden's bytes are compared on each of the four targets that can run it. It
-ends by running `tui/check.sh`, so the project keeps one entry point.
+the golden's bytes are compared on all five hosted targets (the `wasm`
+artifact under the host boundary in `wasm-runner.mjs`). It ends by running
+`tui/check.sh`, `ssr/check.sh`, `macos/check.sh`, `gtk/check.sh` and
+`browser/check.sh`, so the project keeps one entry point.
 
 `tui/` is the terminal backend (T48.4), a package of its own — `emo/ui_tui`,
 pinned against `emo/ui` — because it carries a platform the core does not. The
@@ -136,15 +152,14 @@ one row per line — with the escape byte reaching stdout through
 `printf("%c", [27])`, because a string literal's escapes are the minimal set and
 0x1b is not one of them. `Tui` implements `ui.Backend` over that, and
 `Input`/`Script` are the scripted event source: `run()` pulls tags from the input
-and hands them to the loop's sink until the input says there are no more. T48.5
-replaces that source with raw-mode terminal reads, not the seam — both are
-`Input`. The package declares the four hosted targets that can write stdout;
+and hands them to the loop's sink until the input says there are no more. The
+`term` package (T48.5) supplies raw-mode terminal reads for a real source;
+adopting it replaces that source, not the seam — both are `Input`. The package declares the four hosted targets that can write stdout;
 `wasm` has no `printf`, so it is not one. `tui/golden/` is a consumer of both
 packages, holding one screen driven by a script that clicks Add, Add, Sub, and
 its `expected.txt` is the interpreter's output, identical on `ocaml`,
-`typescript` and `beam`. `c` compiles the backend and refuses the golden's loop
-shape (`Global`) — the decision above, now three targets deep. `tui/check.sh` is
-the package's gate; the `beam` lowering defects the golden forced are fixed and
+`typescript` and `beam` — `c` refused the golden's loop shape (`Global`) until
+T48.8 gave the target def-as-value. `tui/check.sh` is the package's gate; the `beam` lowering defects the golden forced are fixed and
 recorded in `CHECK.md`. The usage demo lives at `examples/tui_menu/` — a
 terminal menu driven by a scripted input — and the same gate checks it.
 
@@ -161,10 +176,103 @@ The grammar and the lowering rules live in `translator/README.md`; where
 this sits in the C-versus-D question is recorded in
 [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md).
 
-Still to come: the remaining per-platform packages and the browser runtime path
-(T48.5–T48.12). The design and its evidence:
+`ssr/` is the server-rendered backend (T48.6), a package of its own —
+`emo/ui_ssr`, pinned against `emo/ui`. It turns the portable tree into HTML
+plus the stylesheet its styles intern into: `page(title, root)` for a whole
+document, `fragment(root)` for a region a browser swaps in, and
+`stylesheet(root)` for the CSS alone, all walking the tree pre-order so the
+classes a page's markup carries are the ones its stylesheet defines. A node's
+class comes from interning on its base declarations and its `Style` — equal
+styles share one rule, while a `row` and a `column` stay distinct — and every
+prop reaching markup is escaped byte by byte, so a multi-byte character rides
+through unchanged. The interaction model is the two things a browser can do
+without a client runtime: a `form` posts its fields and the event tag of the
+button that submitted it, and a `link` navigates. Three nodes live here rather
+than in the core — `form`, `link` and `field` — because only a server round
+trip has anywhere to put them. `Ssr` implements `ui.Backend` with `mount`
+printing the document, `patch` the fragment, and `run()` returning, because a
+server has no input source; `deliver(tag)` is the request that steps one
+event. `test.emo` pins escaping, the rule shape, interning and one assertion
+per node kind in twelve assertions, and `golden/` — a consumer of both
+packages — is byte-identical on all five hosted targets. `ssr/check.sh` is the
+package's gate; the usage demo is `examples/ssr_page/`.
 
-- [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the design direction.
+`macos/` is the native backend (T48.8), a package of its own — `emo/ui_macos`,
+pinned against `emo/ui`, declaring the `c` target and the `AppKit` framework.
+The window has no layout engine the core can reach either, so the box model
+lives here as `box.emo`: the core's `Style` measured in points, and
+`layout(root, w, h)` returning the `Array[Draw]` whose positions `place`
+applies — arithmetic the interpreter runs without a session. `shim.m` is the
+AppKit side of the nine verbs `ui_macos.emo` declares as foreign defs:
+`window_make`, `label_make` and `button_make`, `place`, `clear`, `connect`,
+`root`, `run` and `autotest_arm`. The loop's sink crosses the FFI as
+`ui.Events`, a single-method interface, which the C ABI hands over as a
+trampoline and a userdata pair; a click carries its tag back through that pair.
+`place` flips y, because AppKit's origin is the bottom left. `autotest_arm`
+takes a comma-separated tag script and, only under `EMO_GUI_AUTOTEST`, an
+`NSTimer` clicks each tag in turn and terminates, so the gate needs no one at
+the keyboard and no screenshot. `corpus/` is the macOS entry into the
+convergence corpus — the shared application on one screen, the script
+`0,0,1,2`, and `expected.txt` holding the loop's bytes. `macos/check.sh` is the package's gate and runs only on Darwin;
+the shim is the project's only Objective-C outside `spike/`. Reclamation
+on the `c` target landed with step 49 (`CHECK.md`).
+
+`gtk/` is the GTK 4 backend (T48.9), a package of its own — `emo/ui_gtk`,
+pinned against `emo/ui`, declaring the `c` target and the `gtk4` pkg-config
+module. It is the same shape as the macOS package: `box.emo` carries the point
+model, `ui_gtk.emo` the nine foreign verbs and the `Gtk` class, and `shim.c`
+the C side. GTK is already C, so the shim is thinner — the signal handler and
+the self-driving script are what Emo cannot name — and `place` applies x and y
+unchanged, because GtkFixed's origin is already the top left. The loop's sink
+crosses the FFI as the same `ui.Events` pair. `corpus/` is the GTK 4 entry
+into the convergence corpus — the same shared application, `0,0,1,2` script
+and `expected.txt` as macOS. `gtk/check.sh` is
+the package's gate: it builds and runs natively where `pkg-config gtk4`
+answers, and otherwise compiles and runs the same generated C in the
+`emo-ui-gtk-build` container (GTK 4 plus Xvfb), which is how a macOS host
+checks it; with neither it says so and passes.
+
+`browser/` is the DOM backend (T48.11), a package of its own —
+`emo/ui_browser`, pinned against `emo/ui`, declaring the `browser` target and
+reached through the runtime path T48.10 added. The browser has a layout engine,
+so the package carries no box model: `css.emo` maps a `Style` to the
+declarations the page's own layout consumes, and it is pure Emo, so the
+interpreter runs `test.emo`'s twenty-seven assertions. `ui_browser.emo` is the
+`Dom` class over the thirteen `dom_*` calls: `mount` sets the title, the
+page-root declarations and the sink; `render` builds one element per node — a
+`text` is a span, a `button` carries its tag as the `name`/`value` pair
+`ui_ssr`'s markup uses, an `input` is a read-only view, an `image` is an `img`
+— and `patch` rebuilds the tree, as every backend does. `run()` returns,
+because the page owns the loop. `corpus/` is the browser entry into the
+convergence corpus — the same shared application, `0,0,1,2` script and
+`expected.txt` — and `page.mjs` is the stub page the gate runs it in: a
+`document`/`window` just large enough for the host, then the script's tags
+clicked in order. `browser/check.sh` is the package's gate; it needs Node >=
+22.13 for `emo build --target browser`'s bundling step, and says so and passes
+where that is missing.
+
+`corpus/` is the convergence corpus itself (T48.12), the package
+`emo/ui_corpus`. It is the one application every backend runs: a counter as
+its state, an input showing it and a submit button as its form, a scrolled
+list, and the three tags `view` registers. `update` prints each transition, so
+`expected.txt` is the loop's bytes rather than a rendering, and the same file
+is pinned on every entry. Only the backend package and the entry module name
+the platform — `corpus/debug`, `corpus/ssr` and `corpus/tui` under this
+package's `check.sh`, and `macos/corpus`, `gtk/corpus` and `browser/corpus`
+under their backends' gates. The debug and SSR entries are byte-identical on
+all five hosted targets (`ocaml`, `c`, `typescript`, `wasm` and `beam`); the
+terminal entry on the four that can run it, with its `wasm` refusal pinned by
+name. The shared entry also found a `wasm` codegen defect: a def named as a
+value is a `ref.func`, and only the hidden closures were in the declarative
+element segment, so the validator rejected the corpus until every defined
+function was declared (`CHECK.md`).
+
+Still to come: wiring `term` into `ui_tui`'s input source. The package
+references are in [`docs/`](docs/README.md), one page per package. The
+design and its evidence:
+
+- [`docs/`](docs/README.md) — the package references, one page per package.
+- [`docs/emo-ui.md`](../../docs/emo-ui.md) — the assessment and the evidence behind the design.
 - [`docs/emo-ui-composition.md`](../../docs/emo-ui-composition.md) — how a tree gets written: why children are an array rather than a block form.
 - [`plan/step-48-emo-ui.md`](../../plan/step-48-emo-ui.md) — the execution plan, T48.1–T48.13.
 - [`spike/emo-ui-spelling/`](../../spike/emo-ui-spelling/) — the two-screen measurement that settled the spelling, and the prototype this core came from.

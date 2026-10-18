@@ -250,6 +250,8 @@ type env = {
   mutable class_type : (string * int) list;
   mutable class_field : (string * (string * int) list) list;
   mutable funcs : (string * int) list;
+  mutable func_arity : (string * int) list;
+  mutable closure_types : (int * (int * int)) list;
   mutable nfuncs : int;
   mutable strings : (string * int) list;
   mutable string_pool : string list;
@@ -283,6 +285,26 @@ let type_idx env (t : W.typ) : int =
       env.types <- t :: env.types;
       env.ntypes <- i + 1;
       i
+
+(* A first-class function's value type. Arity one keeps the fixed
+   `$vfun`/`sig1` pair; every other arity gets a struct around a
+   function type with that many anyref parameters. Both ends of a
+   dynamic call know the arity statically — the closure's parameter
+   list and the call's argument list — so the struct type is what each
+   end casts to. *)
+let closure_type env n =
+  if n = 1 then (t_vfun, t_sig1)
+  else
+    match List.assoc_opt n env.closure_types with
+    | Some pair -> pair
+    | None ->
+        let sig_t =
+          type_idx env
+            (W.FuncT (List.init n (fun _ -> W.Anyref), [ W.Anyref ]))
+        in
+        let struct_t = type_idx env (W.StructT [ (W.RefNull sig_t, false) ]) in
+        env.closure_types <- (n, (struct_t, sig_t)) :: env.closure_types;
+        (struct_t, sig_t)
 
 let fresh_local env name (t : W.valtype) : int =
   let idx = List.length env.local_decls in
@@ -364,8 +386,12 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Global name -> (
       match List.assoc_opt name env.funcs with
       | Some fidx ->
+          let arity =
+            match List.assoc_opt name env.func_arity with Some n -> n | None -> 1
+          in
+          let struct_t, _ = closure_type env arity in
           e env (W.Ref_func fidx);
-          e env (W.Struct_new t_vfun)
+          e env (W.Struct_new struct_t)
       | None -> failwith ("wasm: unbound global " ^ name))
   | Tuple es ->
       List.iter (expr env) es;
@@ -549,19 +575,14 @@ let rec expr env (x : Emo_ir.expr) : unit =
       match List.assoc_opt func env.funcs with
       | Some fidx -> e env (W.Call fidx)
       | None -> failwith ("wasm: unbound call " ^ func))
-  | Call_value { f; args } -> (
-      match args with
-      | [ arg ] ->
-          expr env arg;
-          expr env f;
-          e env (W.Ref_cast t_vfun);
-          e env (W.Struct_get (t_vfun, 0));
-          e env (W.Ref_cast t_sig1);
-          e env (W.Call_ref t_sig1)
-      | _ ->
-          raise
-            (Emo_ir.Lower_error
-               "wasm: only one-parameter closures are supported yet"))
+  | Call_value { f; args } ->
+      let struct_t, sig_t = closure_type env (List.length args) in
+      List.iter (expr env) args;
+      expr env f;
+      e env (W.Ref_cast struct_t);
+      e env (W.Struct_get (struct_t, 0));
+      e env (W.Ref_cast sig_t);
+      e env (W.Call_ref sig_t)
   | Method { self_; name; args } -> method_call env self_ name args
   | Builtin { name; args } -> (
       match (name, args) with
@@ -630,16 +651,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
       | None -> failwith ("wasm: unbound spawn " ^ func))
   | Spawn_value _ ->
       raise (Emo_ir.Lower_error "wasm: `do` lowers from a call only")
-  | Closure { cparams; cbody } -> (
-      match cparams with
-      | [ (p, _) ] ->
-          let fidx = emit_closure env p cbody in
-          e env (W.Ref_func fidx);
-          e env (W.Struct_new t_vfun)
-      | _ ->
-          raise
-            (Emo_ir.Lower_error
-               "wasm: only one-parameter closures are supported yet"))
+  | Closure { cparams; cbody } ->
+      let fidx = emit_closure env cparams cbody in
+      let struct_t, _ = closure_type env (List.length cparams) in
+      e env (W.Ref_func fidx);
+      e env (W.Struct_new struct_t)
 
 and method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
@@ -1129,7 +1145,7 @@ and method_call env self_ name args =
 
 (* ---- Statement lowering ---- *)
 
-and emit_closure env p cbody : int =
+and emit_closure env params cbody : int =
   let fidx = env.nfuncs in
   env.nfuncs <- env.nfuncs + 1;
   let saved_rev = env.rev in
@@ -1138,16 +1154,17 @@ and emit_closure env p cbody : int =
   let saved_binders = env.binders in
   let saved_fname = env.fname in
   let saved_fparams = env.fparams in
+  let names = List.map fst params in
   env.rev <- [];
-  env.local_decls <- [ W.Anyref ];
-  env.local_map <- [ (p, 0) ];
+  env.local_decls <- List.map (fun _ -> W.Anyref) names;
+  env.local_map <- List.mapi (fun i n -> (n, i)) names;
   env.binders <- [];
   env.fname <- "";
   env.fparams <- [];
   let body = stmts_value env cbody ~tail:true in
+  let _, sig_t = closure_type env (List.length names) in
   env.hidden <-
-    ( fidx,
-      { W.ftype_idx = t_sig1; fparams = [ "x" ]; flocals = []; fbody = body } )
+    (fidx, { W.ftype_idx = sig_t; fparams = names; flocals = []; fbody = body })
     :: env.hidden;
   env.rev <- saved_rev;
   env.local_decls <- saved_locals;
@@ -1210,13 +1227,9 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
       | Emo_ir.Builtin { name = "println"; _ } -> code
       | _ -> code @ [ W.Drop ])
   | Emo_ir.Let { mutable_ = _; name; init } ->
-      (* a closure value is a $vfun struct — funcref is not under any *)
-      let t =
-        match init.Emo_ir.desc with
-        | Emo_ir.Closure _ -> W.RefNull t_vfun
-        | _ -> W.Anyref
-      in
-      let idx = fresh_local env name t in
+      (* Every value, a closure struct included, fits anyref; a dynamic
+         call casts it to the struct type the arity calls for. *)
+      let idx = fresh_local env name W.Anyref in
       expr_block env init @ [ W.Local_set idx ]
   | Emo_ir.Assign_var { name; value } -> (
       match List.assoc_opt name env.local_map with
@@ -1301,12 +1314,7 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
       | Emo_ir.Let { mutable_ = true; name; init = init_expr } ->
           let d = env.depth in
           let saved = env.loops in
-          let t =
-            match init_expr.Emo_ir.desc with
-            | Emo_ir.Closure _ -> W.RefNull t_vfun
-            | _ -> W.Anyref
-          in
-          let idx = fresh_local env name t in
+          let idx = fresh_local env name W.Anyref in
           let init_code = expr_block env init_expr @ [ W.Local_set idx ] in
           env.loops <- (d, d + 2) :: env.loops;
           env.depth <- d + 1;
@@ -4598,6 +4606,8 @@ let assemble (program : Emo_ir.program) : W.module_ =
       class_type = [];
       class_field = [];
       funcs = [];
+      func_arity = [];
+      closure_types = [];
       nfuncs = runtime_count;
       strings = [];
       string_pool = [];
@@ -4619,6 +4629,11 @@ let assemble (program : Emo_ir.program) : W.module_ =
       program.Emo_ir.pfuncs
   in
   env.funcs <- program_funcs;
+  env.func_arity <-
+    List.map
+      (fun (f : Emo_ir.func) ->
+        (f.Emo_ir.fname, List.length f.Emo_ir.fparams))
+      program.Emo_ir.pfuncs;
   (* Interface → implementing classes, computed structurally: same
      (method name, arity-excluding-self) shape the runtime's is()
      uses. Set before any body lowers: `is` and dispatch need it. *)
@@ -4649,14 +4664,21 @@ let assemble (program : Emo_ir.program) : W.module_ =
      any closure can (bodies lower after this). *)
   List.iter
     (fun (c : Emo_ir.class_) ->
-      let register name =
+      let register name arity =
         env.funcs <- (name, env.nfuncs) :: env.funcs;
+        env.func_arity <- (name, arity) :: env.func_arity;
         env.nfuncs <- env.nfuncs + 1
       in
       List.iter
-        (fun (m : Emo_ir.func) -> register m.Emo_ir.fname)
+        (fun (m : Emo_ir.func) ->
+          register m.Emo_ir.fname (List.length m.Emo_ir.fparams))
         c.Emo_ir.cmethods;
-      register (c.Emo_ir.cname ^ "__new"))
+      let ctor_arity =
+        match c.Emo_ir.cinit with
+        | Some init -> List.length init.Emo_ir.fparams - 1
+        | None -> 0
+      in
+      register (c.Emo_ir.cname ^ "__new") ctor_arity)
     program.Emo_ir.pclasses;
   (* Struct types and field maps must exist before any body lowers. *)
   (* Distinct shapes per class: pad encodes the class ordinal in a
@@ -4857,7 +4879,13 @@ let assemble (program : Emo_ir.program) : W.module_ =
     funcs;
     memory = 1;
     export_mem = true;
-    declared_funcs = List.map fst hidden;
+    (* Every defined function, not only the hidden closures: a def named
+       as a value is a `ref.func` to a program function or a class
+       method, and the validator requires the target of `ref.func` to be
+       in the declarative element segment whatever kind of function it
+       is. Declaring the whole defined range costs one small segment and
+       cannot go stale as lowering grows new `ref.func` sites. *)
+    declared_funcs = List.init (List.length funcs) (fun i -> 3 + i);
     globals =
       (W.I32, true)
       :: List.map (fun _ -> (W.RefNull t_vstring, true)) string_pool

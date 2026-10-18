@@ -82,6 +82,10 @@ let render_errors ~(color : bool) ~(error_limit : int)
 (* Raised when compiling the generated FFI wrappers with cc fails. *)
 exception Stub_cc_failed
 
+(* Raised after a package's `pkg_config` module could not be resolved;
+   the fix has already been printed. *)
+exception Pkg_config_failed
+
 (* Raised when the build directory cannot be created. Every arm of the
    build needs it, so the failure is named once here rather than
    surfacing as a write error from whichever step reached it first. *)
@@ -230,16 +234,98 @@ let ocaml_target_ok () : bool =
    backend: ocaml (default) emits OCaml compiled by the OCaml
    toolchain; c emits C compiled by the system cc into a standalone
    binary; typescript emits one self-contained .ts file that runs on
-   Node. A `package.emo` is a manifest rather than a program, so it is
-   refused like one (66) — `emo emoji build` is what builds a package. *)
+   Node; browser emits one .js bundle that runs in a page (the same
+   runtime with the browser host, types stripped by Node). A
+   `package.emo` is a manifest rather than a program, so it is refused
+   like one (66) — `emo emoji build` is what builds a package. *)
 (* The cache key's compiler component: the running executable's own
    content digest, so a new compiler invalidates every cached build —
    codegen changes otherwise ride stale cache-* binaries forever (the
    latch-era gotcha, hit for real by the cross-module fix). *)
 let compiler_key = lazy (Digest.to_hex (Digest.file Sys.executable_name))
 
+(* pkg-config answers in shell-word form: whitespace separates words, and
+   quotes or backslashes protect a space inside one. Splitting here keeps
+   the answer out of the shell as a fragment; the words are re-quoted when
+   the cc command is built. *)
+let shell_words (s : string) : string list =
+  let words = ref [] and word = Buffer.create 16 and in_word = ref false in
+  let push () =
+    if !in_word then begin
+      words := Buffer.contents word :: !words;
+      Buffer.clear word;
+      in_word := false
+    end
+  in
+  let rec go i quote =
+    if i >= String.length s then push ()
+    else
+      match quote with
+      | Some q ->
+          if s.[i] = q then go (i + 1) None
+          else if s.[i] = '\\' && q = '"' && i + 1 < String.length s then begin
+            Buffer.add_char word s.[i + 1];
+            in_word := true;
+            go (i + 2) quote
+          end
+          else begin
+            Buffer.add_char word s.[i];
+            in_word := true;
+            go (i + 1) quote
+          end
+      | None -> (
+          match s.[i] with
+          | ' ' | '\t' | '\n' | '\r' ->
+              push ();
+              go (i + 1) None
+          | '\'' ->
+              in_word := true;
+              go (i + 1) (Some '\'')
+          | '"' ->
+              in_word := true;
+              go (i + 1) (Some '"')
+          | '\\' when i + 1 < String.length s ->
+              Buffer.add_char word s.[i + 1];
+              in_word := true;
+              go (i + 2) None
+          | c ->
+              Buffer.add_char word c;
+              in_word := true;
+              go (i + 1) None)
+  in
+  go 0 None;
+  List.rev !words
+
+(* A package's pkg-config modules, resolved into the two flag lists the c
+   target applies: `--cflags` for the one cc invocation, `--libs` at link.
+   The module names come from a manifest and are bare by then; they are
+   quoted for the probe and the answer is split into words. [None] means
+   pkg-config could not answer and the fix has been printed. *)
+let pkg_config_flags (modules : string list) :
+    (string list * string list) option =
+  if modules = [] then Some ([], [])
+  else
+    let names = String.concat " " (List.map Filename.quote modules) in
+    let capture flag =
+      let out, status =
+        Emo_tool.run_capture (Printf.sprintf "pkg-config %s %s" flag names)
+      in
+      match status with Unix.WEXITED 0 -> Some (shell_words out) | _ -> None
+    in
+    match (capture "--cflags", capture "--libs") with
+    | Some cflags, Some libs -> Some (cflags, libs)
+    | _ ->
+        prerr_endline
+          (Printf.sprintf
+             "emo build: pkg-config could not resolve `%s` — install the \
+              development package that provides it and make sure pkg-config is \
+              on PATH"
+             (String.concat ", " modules));
+        None
+
 let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
-    ~(cclibs : string list) ~(target : string) : int =
+    ~(cclibs : string list) ~(native : Emo_project.native_inputs)
+    ~(target : string) : int =
   match Sys.file_exists entry with
   | false ->
       prerr_endline (Printf.sprintf "%s: No such file or directory" entry);
@@ -249,8 +335,17 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         ~hint:"`emo emoji build` builds a package from its manifest"
   | true -> (
       try
-        let inputs, entry_path, packages, (dep_csources, dep_links) =
+        let inputs, entry_path, packages, dep_native =
           Emo_project.compile_inputs ~entry_file:entry ~target
+        in
+        let native =
+          {
+            Emo_project.ni_sources =
+              native.Emo_project.ni_sources @ dep_native.Emo_project.ni_sources;
+            ni_link = native.ni_link @ dep_native.ni_link;
+            ni_frameworks = native.ni_frameworks @ dep_native.ni_frameworks;
+            ni_pkg_config = native.ni_pkg_config @ dep_native.ni_pkg_config;
+          }
         in
         let program =
           Emo_ir.lower { Emo_ir.modules = inputs; entry = entry_path; packages }
@@ -356,6 +451,82 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               Printf.printf "built %s\n" out;
               0
             end
+        | "browser" ->
+            (* One bundle for the page: the shared runtime core plus the
+               browser host, then the program. Browsers run no
+               TypeScript, so the build step strips the types with
+               Node's own stripper — Node >= 22.13, where
+               module.stripTypeScriptTypes landed. The cache keeps the
+               JavaScript keyed by the source, and the intermediate
+               .ts stays in the build directory, never beside the
+               output. *)
+            let source = Emo_codegen.Ts.emit_browser program in
+            let digest =
+              Digest.to_hex
+                (Digest.string
+                   (Printf.sprintf "browser|%s|%s" source
+                      Emo_codegen.Ts.ts_browser_prelude))
+            in
+            let cache_file =
+              Filename.concat build_dir ("browser-" ^ digest ^ ".js")
+            in
+            let out =
+              if Filename.check_suffix output ".js" then output
+              else output ^ ".js"
+            in
+            if Sys.file_exists cache_file then begin
+              ignore
+                (Emo_tool.run_or_warn ~what:"emo build"
+                   (Printf.sprintf "cp %s %s"
+                      (Filename.quote cache_file)
+                      (Filename.quote out)));
+              Printf.printf "built %s (cached)\n" out;
+              0
+            end
+            else if not (tool_exists "node") then begin
+              prerr_endline
+                "emo build: the browser target needs Node with \
+                 module.stripTypeScriptTypes (Node >= 22.13) to strip the \
+                 bundle's types, and node was not found";
+              69
+            end
+            else begin
+              let ts_file =
+                Filename.concat build_dir ("browser-" ^ digest ^ ".ts")
+              in
+              let oc = open_out_bin ts_file in
+              output_string oc source;
+              close_out oc;
+              let strip =
+                "const {stripTypeScriptTypes}=require(\"node:module\");\
+                 const fs=require(\"node:fs\");\
+                 fs.writeFileSync(process.argv[2],\
+                 stripTypeScriptTypes(fs.readFileSync(process.argv[1],\"utf8\")));"
+              in
+              let rc =
+                Emo_tool.run_status
+                  (Printf.sprintf "node --no-warnings -e %s %s %s"
+                     (Filename.quote strip)
+                     (Filename.quote ts_file)
+                     (Filename.quote cache_file))
+              in
+              if rc <> 0 then begin
+                prerr_endline
+                  "emo build: node could not strip the bundle's types — the \
+                   browser target needs Node >= 22.13 \
+                   (module.stripTypeScriptTypes)";
+                69
+              end
+              else begin
+                ignore
+                  (Emo_tool.run_or_warn ~what:"emo build"
+                     (Printf.sprintf "cp %s %s"
+                        (Filename.quote cache_file)
+                        (Filename.quote out)));
+                Printf.printf "built %s\n" out;
+                0
+              end
+            end
         | "c" ->
             (* Emit one main.c plus the Emo runtime sources, compile
                with the system cc: a standalone binary with no OCaml
@@ -369,11 +540,38 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
               Emo_codegen.C.emit program
             in
             (* The resolved packages' native inputs ride the cclib
-               mechanism: a package's .c sources pass to cc verbatim
+               mechanism: a package's .c/.m sources pass to cc verbatim
                (absolute existing paths) and enter the cache key by
-               content, its `link` libraries become -l flags. Sources
-               come before libraries so the link resolves. *)
-            let cclibs = cclibs @ dep_csources @ dep_links in
+               content, its `link` libraries become -l flags, its
+               frameworks become `-framework NAME` pairs, and its
+               pkg_config modules answer their own cflags and libs.
+               Sources come before libraries so the link resolves. A
+               package's Objective-C is compiled under ARC — the c
+               target's policy for `.m`, the ownership model Emo's
+               dynamic world already follows. *)
+            let pkg_cflags, pkg_libs =
+              match pkg_config_flags native.Emo_project.ni_pkg_config with
+              | Some pair -> pair
+              | None -> raise Pkg_config_failed
+            in
+            let framework_flags =
+              List.map
+                (fun f -> "-framework " ^ f)
+                native.Emo_project.ni_frameworks
+            in
+            let cflags =
+              (if
+                 List.exists
+                   (fun src -> Filename.check_suffix src ".m")
+                   native.Emo_project.ni_sources
+               then [ "-fobjc-arc" ]
+               else [])
+              @ pkg_cflags
+            in
+            let cclibs =
+              cclibs @ native.Emo_project.ni_sources
+              @ native.Emo_project.ni_link @ framework_flags @ pkg_libs
+            in
             (* The TLS gate (step 51): the emitter flips the flag at
                genuine Runtime_impl nodes, and the conditional flags
                ride the cclib slot — so they enter the cache key by the
@@ -406,9 +604,9 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             let digest =
               Digest.to_hex
                 (Digest.string
-                   (Printf.sprintf "%s|%s|%s|%s|%s" main_c_contents
+                   (Printf.sprintf "%s|%s|%s|%s|%s|%s" main_c_contents
                       Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h cclib_key
-                      (Lazy.force compiler_key)))
+                      (String.concat "," cflags) (Lazy.force compiler_key)))
             in
             let cache_binary = Filename.concat build_dir ("cache-" ^ digest) in
             if Sys.file_exists cache_binary then begin
@@ -482,14 +680,17 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                    where those symbols live in a separate library. It
                    stays after cclib_flags so a package's own library
                    (sqlite3, say) resolves its math imports too. *)
+                let cflag_flags =
+                  String.concat " " (List.map Filename.quote cflags)
+                in
                 let cmd =
                   Printf.sprintf
                     "cc -O2 -ffp-contract=off -std=c11 -Wall \
-                     -Wno-deprecated-declarations -I %s %s %s                  \
+                     -Wno-deprecated-declarations -I %s %s %s %s              \
                      %s -lm -o %s"
-                    (Filename.quote build_dir) (Filename.quote main_c)
-                    (Filename.quote runtime_c) cclib_flags
-                    (Filename.quote output)
+                    (Filename.quote build_dir) cflag_flags
+                    (Filename.quote main_c) (Filename.quote runtime_c)
+                    cclib_flags (Filename.quote output)
                 in
                 let exit_code = Emo_tool.run_status cmd in
                 if exit_code <> 0 then begin
@@ -698,8 +899,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
         | other ->
             prerr_endline
               (Printf.sprintf
-                 "emo build: unknown target `%s` (ocaml, c, typescript, wasm, \
-                  beam, riscv64)"
+                 "emo build: unknown target `%s` (ocaml, c, typescript, \
+                  browser, wasm, beam, riscv64)"
                  other);
             65
       with
@@ -718,6 +919,11 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
       | Stub_cc_failed ->
           prerr_endline "emo build: the C stub compilation failed";
           70
+      | Pkg_config_failed ->
+          (* The missing-tool / missing-module case (an environment
+             gap), not a compiler failure: 69, like the riscv binutils
+             and TLS probes. *)
+          69
       | Build_dir_failed dir ->
           prerr_endline (Printf.sprintf "emo build: cannot create %s" dir);
           70
@@ -754,8 +960,8 @@ let build =
       value & opt string "c"
       & info [ "target" ] ~docv:"TARGET"
           ~doc:
-            "The compilation target: c, ocaml, typescript, wasm, beam, or \
-             riscv64.")
+            "The compilation target: c, ocaml, typescript, browser, wasm, \
+             beam, or riscv64.")
   in
   let build entry output no_specialize cclibs target locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());
@@ -768,7 +974,7 @@ let build =
     in
     match
       build_file ~entry ~output:out ~specialize:(not no_specialize) ~cclibs
-        ~target
+        ~native:Emo_project.no_native_inputs ~target
     with
     | 0 -> Cmd.Exit.ok
     | code -> exit code
@@ -845,7 +1051,7 @@ let run =
         let elf = Filename.concat build_dir "emo_run.elf" in
         let code =
           build_file ~entry:file ~output:elf ~specialize:false ~cclibs:[]
-            ~target:"riscv64"
+            ~native:Emo_project.no_native_inputs ~target:"riscv64"
         in
         if code <> 0 then exit code
         else if not (tool_exists "qemu-system-riscv64") then begin
@@ -1825,6 +2031,16 @@ let cc_smoke () : (unit, string) result =
       if out = "emo" then Ok () else Error "the cc smoke binary did not run"
     end
 
+(* The browser target's one external requirement: Node's own TypeScript
+   stripper, which arrived in 22.13. *)
+let node_strip_ok () : bool =
+  tool_exists "node"
+  && Emo_tool.run_status
+       "node --no-warnings -e 'process.exit(typeof \
+        require(\"node:module\").stripTypeScriptTypes === \"function\" ? 0 : \
+        1)'"
+     = 0
+
 (* The ocaml target's check: ocamlfind with the unix and ssl packages
    the runtime itself uses — the same question on every installation
    shape, since the runtime rides the compiler (step 25). *)
@@ -1847,6 +2063,11 @@ let doctor ~(emit : string -> unit) : int =
        (ocamlfind with the unix and ssl packages)";
   if tool_exists "node" then line "typescript:" ("ok" ^ tool_version "node")
   else line "typescript:" "unavailable — node not found";
+  if node_strip_ok () then line "browser:" ("ok" ^ tool_version "node")
+  else
+    line "browser:"
+      "unavailable — the browser target needs Node >= 22.13 \
+       (module.stripTypeScriptTypes)";
   if tool_exists "erlc" then line "beam:" "ok"
   else line "beam:" "unavailable — erlc not found";
   line "wasm:" "ok — no external tools needed";
@@ -1938,7 +2159,7 @@ let scaffold ~(path : string) : int =
   // This package's own version: exact major.minor.patch.
   version = "0.1.0"
   // The backends this package runs and builds on. Known targets:
-  // "ocaml", "c", "wasm", "typescript", "beam", "riscv64".
+  // "ocaml", "c", "wasm", "typescript", "browser", "beam", "riscv64".
   targets = ["ocaml", "c"]
   // Optional: system libraries the c target links, as bare names.
   // link = ["sqlite3"]
@@ -2057,7 +2278,7 @@ let scaffold_package ~(name : string) ~(path : string) : int =
   // existing version is rejected — bump it before re-publishing.
   version = "0.1.0"
   // The backends this package runs and builds on. Known targets:
-  // "ocaml", "c", "wasm", "typescript", "beam", "riscv64".
+  // "ocaml", "c", "wasm", "typescript", "browser", "beam", "riscv64".
   targets = ["ocaml", "c"]
   // Optional: system libraries the c target links, as bare names.
   // link = ["sqlite3"]
@@ -2165,15 +2386,24 @@ let emoji_build ~(dir : string) : int =
         in
         (* The package's own native inputs ride the build too — the
            pre-publish gate must link what the package's consumers will
-           get: its tree's .c sources and its manifest's link
-           libraries. The dependency mechanism in build_file covers a
-           package's deps; the package itself is not its own dep. *)
-        let own_csources =
-          Emo_pkg.Registry.collect_files dir
-          |> List.filter_map (fun (rel, _) ->
-              if Filename.check_suffix rel ".c" then
-                Some (Filename.concat dir rel)
-              else None)
+           get: its tree's .c/.m sources, its manifest's link libraries,
+           frameworks and pkg-config modules. The dependency mechanism
+           in build_file covers a package's deps; the package itself is
+           not its own dep. *)
+        let own_native =
+          {
+            Emo_project.ni_sources =
+              Emo_pkg.Registry.collect_files dir
+              |> List.filter_map (fun (rel, _) ->
+                  if
+                    Filename.check_suffix rel ".c"
+                    || Filename.check_suffix rel ".m"
+                  then Some (Filename.concat dir rel)
+                  else None);
+            ni_link = m.Emo_pkg.link;
+            ni_frameworks = m.Emo_pkg.frameworks;
+            ni_pkg_config = m.Emo_pkg.pkg_config;
+          }
         in
         let results =
           List.map
@@ -2185,9 +2415,8 @@ let emoji_build ~(dir : string) : int =
                   (Filename.concat ".emo-build" ("emoji_" ^ target))
               in
               let code =
-                build_file ~entry ~output ~specialize:true
-                  ~cclibs:(own_csources @ m.Emo_pkg.link)
-                  ~target
+                build_file ~entry ~output ~specialize:true ~cclibs:[]
+                  ~native:own_native ~target
               in
               (target, code))
             m.Emo_pkg.targets

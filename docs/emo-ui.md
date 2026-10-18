@@ -6,6 +6,15 @@ repository as of that date (`develop`). Decisions that get settled move
 into `README.md`; this note records the evaluation, the evidence behind
 it, and the open questions.
 
+**Status (2026-10-18).** The design has landed, and its settled parts
+are now stated as decided design: the `README.md` EmoUI section carries
+the array-children spelling and the architecture, and
+[`projects/emo-ui/`](../projects/emo-ui) carries the implementation and
+the package references. This note is kept as the assessment and the
+discussion that produced them — the evidence, the rejected
+alternatives, and the questions that are still open. Where this note
+and the README differ on a settled point, the README is authoritative.
+
 The question: **one declarative EmoUI syntax, rendering to the Web, a
 terminal (TUI), macOS (AppKit), and GTK 4 — where each platform may
 have its own component library, but the way components are called and
@@ -39,21 +48,21 @@ Four findings shape everything below:
    calls yields `void`, so the children are silently discarded. The
    README's illustrative tree (`page(...) { navbar() { ... } }`) is not
    an executable program. Children are either an explicit
-   `Array[Node]` or the block must `return` them.
+   `Array[Node]` or the block must `return` them. (The README has since
+   been revised to the array spelling; T48.13.)
 2. **The four platforms are not equally ready.** macOS/AppKit and GTK 4
    are proven through `foreign def` shims; a terminal renderer is cheap
    pure Emo; the Web is the least ready — the TypeScript target is
    Node-only (`node:net`, `node:fs` imported at the top of the emitted
    runtime) and the wasm target's entire host interface is three
    imports (`println`, `abort`, `float_str`).
-3. **Packaging an EmoUI backend is not expressible yet.** A package
-   may carry `.c`/`.h` and link bare `-l` names only. An AppKit backend
-   is Objective-C (`.m`, `-fobjc-arc`, `-framework AppKit`); a GTK
-   backend needs `pkg-config --cflags --libs gtk4`. Neither fits. The
-   direction is settled — the manifest grows per-package native fields,
-   not app-level build scripts (`CHECK.md`) — and the field surface is
-   T48.7's own work; until it lands, the native backends fall back to
-   the app-level scripts the spikes use.
+3. **Packaging an EmoUI backend is expressible now (T48.7).** A package
+   may carry `.m` beside `.c`/`.h` (compiled under ARC), name bare
+   pkg-config modules in `pkg_config`, and link bare macOS frameworks
+   in `frameworks`. An AppKit backend is Objective-C
+   (`.m`, `-fobjc-arc`, `-framework AppKit`); a GTK backend names
+   `pkg_config = ["gtk4"]`. Neither needs an app-level build script, and
+   the manifest stays data.
 4. **A render's memory is not reclaimed on the `c` target, and the cheap
    fix does not exist.** A tree is built from exactly the kinds the
    arena never frees — children arrays, style maps, strings — and a UI
@@ -133,9 +142,10 @@ This note does not re-open what earlier work closed.
   structural interface is the callback type; the `c` target emits a
   trampoline plus an opaque userdata handle, and the pair lands in
   `.emo-build/emo_defs.h`.
-- **The README's commitments.** No template language (the UI is plain
-  Emo); components are lowercase defs, `.new` never appears in a tree;
-  props checked by the gradual checker; reactivity primitives are
+- **The README's commitments** (as written then; the README has since
+  been revised to the settled design). No template language (the UI is
+  plain Emo); components are lowercase defs, `.new` never appears in a
+  tree; props checked by the gradual checker; reactivity primitives are
   explicit; UI events are process messages; backends consume the tree
   and its updates; the language layer knows no platform.
 
@@ -143,10 +153,10 @@ This note does not re-open what earlier work closed.
 
 | Platform | Route | Status | The gap |
 |---|---|---|---|
-| macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **proven** (`spike/macos-gui`, `spike/components`) | packaging: `.m`, `-fobjc-arc`, `-framework` |
-| GTK 4 | `c` target + C shim via `foreign def` | **proven** (`spike/gtk`, `spike/components`) | packaging: `pkg-config gtk4` |
-| TUI | pure Emo, ANSI escape output | **landed** (T48.4) | terminal input (raw mode, key events) |
-| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **least ready** | TS target is Node-only; wasm host has 3 imports |
+| macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **landed** (T48.8), package `emo/ui_macos` | reclamation landed (step 49) |
+| GTK 4 | `c` target + C shim via `foreign def` | **landed** (T48.9), package `emo/ui_gtk` | reclamation landed (step 49) |
+| TUI | pure Emo, ANSI escape output; `term` for input | **landed** (T48.4, T48.5) | wiring `term` into `ui_tui`'s input source |
+| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); the browser path and its DOM backend landed (T48.10, T48.11) | the `typescript` target's share-on-send remains open |
 
 ### macOS and GTK 4
 
@@ -158,33 +168,35 @@ because GTK names are already C-shaped). The nine-verb `ui_*` contract
 `connect`, `root`, `run`, `autotest_arm`) is the portable seam the
 spike proved, and the per-platform delta is a ~100-line painter.
 
-The real blocker is packaging, and it is a manifest gap, not a
+The real blocker was packaging, and it was a manifest gap, not a
 toolchain gap:
 
-- `docs/intro/package-management.md` (and `docs/c-backend.md`'s
-  "Package-carried native code") allow `.c`/`.h` files in a package and
-  a `link` field of **bare library names** only.
+- Before T48.7, `docs/intro/package-management.md` (and
+  `docs/c-backend.md`'s "Package-carried native code") allowed `.c`/`.h`
+  files in a package and a `link` field of **bare library names** only.
 - AppKit needs an Objective-C translation unit compiled with
   `-fobjc-arc -framework AppKit` (or `-framework Cocoa`); a bare `-l`
-  name cannot say that, and a `.m` file is not collected.
+  name cannot say that, and a `.m` file was not collected.
 - GTK 4 needs the `pkg-config gtk4` cflags and libs; a bare `-lgtk-4`
   is not enough (glib, gobject, gio, pango, gdk, and include paths).
 
-Until the manifest gains a per-package compile/link flag mechanism (or a
-`pkg_config = ["gtk4"]` field), the native backends cannot be ordinary
-consumable packages. The spikes sidestep this with app-level build
-scripts that pass `--cclib="$PWD/shim.o"` and `--cclib="-framework
-AppKit"`. That works, but it makes every EmoUI-for-macOS app carry a
-build script instead of a `require`. This is the single most concrete
-piece of toolchain work the requirement implies.
+Before the manifest gained a per-package native mechanism, the native
+backends could not be ordinary consumable packages. The spikes sidestep
+this with app-level build scripts that pass
+`--cclib="$PWD/shim.o"` and `--cclib="-framework AppKit"`. That works,
+but it makes every EmoUI-for-macOS app carry a build script instead of a
+`require`.
 
-**Settled 2026-10-14: manifest fields are that mechanism and the
-build-script path is not** (`CHECK.md`). A native backend stays an
-ordinary package a program reaches with a `require`, so what AppKit and
-GTK 4 need is declared in the manifest rather than restated in each
-consumer's script. The field surface — `pkg_config` versus explicit
-compile/link flag lists, and whether `.m` joins the collected `.c`/`.h`
-— is T48.7's own work.
+**Settled 2026-10-14 and landed 2026-10-18 (T48.7): manifest fields are
+that mechanism and the build-script path is not** (`CHECK.md`). A
+native backend stays an ordinary package a program reaches with a
+`require`, so what AppKit and GTK 4 need is declared in the manifest
+rather than restated in each consumer's script: `pkg_config` names bare
+pkg-config modules (their `--cflags` compile the package's sources,
+their `--libs` join the link), `frameworks` names bare macOS frameworks
+(`-framework NAME`), and `.m` joins `.c`/`.h` in the collected set,
+compiled under ARC. No raw flag field exists, so the manifest stays
+data.
 
 ### TUI
 
@@ -210,9 +222,10 @@ byte is emitted through `printf("%c", [27])`. `Tui` implements
 the golden runs on, so the bytes are fixed and no terminal is touched:
 `run()` pulls tags and hands them to the loop's sink until the input
 says there are no more. The package declares the four hosted targets
-that can write stdout; `wasm` has no `printf`, so it is not one. `c`
-compiles the backend and refuses the golden's loop shape (`Global`) —
-the decision T48.2 left open, now three targets deep. Two `beam`
+that can write stdout; `wasm` has no `printf`, so it is not one. `c` compiled the backend but
+refused the golden's loop shape (`Global`) — the decision T48.2 left
+open — until T48.8 gave that target def-as-value; the corpus now runs
+on `c` too. Two `beam`
 lowering defects the golden forced (a `Block`-valued bare def emitted as
 an uncallable remote fun, and a loop-body `case` that did not thread an
 outer `var` rebinding) are fixed with the backend and recorded in
@@ -220,15 +233,17 @@ outer `var` rebinding) are fixed with the backend and recorded in
 with a scripted input, checked by the same gate on every target it
 declares.
 
-The gap is **input**, not output. The runtime implements no raw mode and
-no key events: the `os` package gives fd-level `read`, `os` is
-native-only, and there is no termios binding. Reading a line is possible
-today; arrow keys, resize events, and Ctrl-C-as-a-message want raw mode,
-which is a small `foreign def` to `termios` (c/ocaml) or a terminal
-runtime implementation. Bounded, but it must be scheduled, not assumed.
-**Settled 2026-10-15** — scheduled as a standard-library package in the
-`sqlite3` shape (ask 7 below). It replaces the `ui_tui` input source
-rather than the seam: a `Script` and a raw-mode reader are both `Input`.
+Input is no longer the gap: **T48.5 landed 2026-10-18** as the
+standard-library `term` package in the `sqlite3` shape (ask 7 below) —
+package-carried C reached through `foreign def`, `c`-target only,
+reached by an ordinary `require`. It gives line reads, raw mode with an
+exit-path restore, decoded key events (arrows, Home/End, Insert/Delete,
+Page Up/Page Down, F1–F12, Shift-Tab, Alt, UTF-8 characters), and the
+terminal's size; Ctrl-C is a key event while raw mode is on. It
+replaces the `ui_tui` input source rather than the seam: a `Script` and
+a `term`-backed reader are both `Input`. What remains is that wiring —
+`ui_tui` still runs on the scripted source — plus resize events
+(`SIGWINCH`), which the package leaves to the UI layer.
 
 ### Web
 
@@ -243,22 +258,46 @@ only one of them is close.
   and server round-trips (the htmx shape), or a later SSE/WebSocket
   channel. This is cheap, testable, and gives "Web" immediately for
   content and form UIs. It is the right T0.
-- **T1 — the DOM backend.** An Emo program compiled by the TypeScript
-  target, running in the browser against `document`/`Element`. This is
-  where real interactivity lives, and it is not ready: the emitted
-  runtime imports `node:async_hooks`, `node:net`, `node:dgram`,
-  `node:tls`, `node:dns`, and `node:fs` at the top (`ts_runtime.ts`),
-  so it does not load in a browser; step 17's scope explicitly lists
-  "browser embedding (`fetch`/WebSocket bridging)" as out; and browsers
-  cannot execute `.ts`, so an output-bundling step enters the toolchain.
-  Getting there means a DOM capability layer (a `dom_*` family in the TS
-  runtime, or a browser-only runtime variant), a browser-safe
-  entry, and a build step. All are real work, none is architecturally
-  blocked.
+- **T1 — the DOM backend.** An Emo program compiled to a browser
+  bundle, running against `document`/`Element`. This is where real
+  interactivity lives. **The runtime path landed 2026-10-18 (T48.10)**:
+  the TypeScript runtime split into a host-free `ts_core.ts`, a Node
+  host (`ts_node.ts`), and a page host (`ts_browser.ts`); the compiler
+  concatenates core+node into the `typescript` target's prelude and
+  core+browser into the `browser` target's, and `emo build --target
+  browser` emits one `.js` bundle with its types stripped by Node's own
+  `module.stripTypeScriptTypes` (Node >= 22.13). The bundle imports no
+  host module and never touches `process`; the page host supplies
+  line-buffered console output, one page pid, and the thirteen-call
+  `dom_*` family, whose Int64 handles index a host-side node table. The
+  emitter keeps the two hosts honest by name: the browser target
+  refuses processes (`do`, `<-`, `receive`) and every non-`dom_`
+  runtime implementation, and the `typescript` target refuses `dom_*`.
+  **The `ui-browser` package over those calls landed 2026-10-18
+  (T48.11)**: `emo/ui_browser` maps a `Style` to the declarations the
+  browser's own layout engine consumes (`css.emo`), builds one element
+  per node over the `dom_*` calls, and rebuilds the tree on every
+  `patch` as the other backends do. A `button` carries its tag as the
+  `name`/`value` pair the SSR markup uses, so a page harness can find
+  the element an event belongs to; the convergence corpus runs in a
+  stub page.
 - **T2 — wasm + DOM.** The `wasm` target's module imports exactly
   `println`, `abort`, and `float_str`; a DOM backend on wasm means new
   host imports and a JS glue layer. Later, and only if T1 proves
   insufficient.
+
+**T0 landed 2026-10-18** as the `emo/ui_ssr` package
+(`projects/emo-ui/ssr/`): `page`, `fragment` and `stylesheet` walk the
+portable tree pre-order, intern each node's base declarations and
+`Style` into `e0`, `e1`, …, and escape every prop byte by byte, so the
+bytes are the interpreter's on all five hosted targets (`golden/`,
+`examples/ssr_page/`). The interaction model is concrete: a `form`
+posts its fields and the event tag of the button that submitted it, and
+a `link` navigates; `Ssr` implements `ui.Backend` with `mount` printing
+the document, `patch` the fragment, and `run` returning because a
+server has no input source. The `wasm` target's closures grew any arity
+for this task, and `c` grew def-as-value in T48.8, so the portable loop
+lowers on all five targets (`CHECK.md`).
 
 There is a further semantic point specific to the Web and to native
 toolkits: **the platform owns the event loop.** A browser page or an
@@ -395,10 +434,9 @@ four ways to make a block-bodied tree real, and three are wrong:
 The design therefore says: **the child list is an explicit
 `Array[Node]`; trailing blocks are for callbacks and iteration, and
 where a block produces a value it returns it.** The README's EmoUI
-example should be revised to this spelling, or the block form should be
-defined as requiring `return`. This is the one place where the
-requirement's "declarative syntax" is really an API convention rather
-than syntax, and the convention must be spelled out.
+example has been revised to this spelling (T48.13). This is the one
+place where the requirement's "declarative syntax" is really an API
+convention rather than syntax, and the convention must be spelled out.
 
 The related language gap: `Block` being `Unknown` means a block argument
 is not checked. A **checked function type** would let a component declare
@@ -578,20 +616,23 @@ The facts that bound this layer are honest caveats, not design choices:
   the toolkit must not take the window down silently, and now it does
   not. The `typescript` target's share-on-send is the same gap on the
   Web path.
-- **The loop's shape on the hosted targets.** The loop is landed
-  (`projects/emo-ui/`, T48.2) and runs on the interpreter, but the shape
-  above — the application's `update` and `view` passed in as `Block`
-  values — compiles only where a bare def can be a value: `ocaml`,
-  `typescript` and `beam` do; `c` refuses it (`Global`) and `wasm`
-  refuses the two-argument dynamic call `update` needs (one-parameter
-  closures only). The same loop with those two functions behind a
-  `Handler` interface — ordinary interface dispatch, no `Block`-valued
-  function, the application still narrowing its model with `is()` as a
-  backend narrows a node — builds on all five targets and prints what the
-  interpreter prints (`projects/emo-ui/probe/`, `CHECK.md`, the Elm
-  loop's shape). Which way to close it — grow the two targets, or move
-  the application's functions behind an interface and revise this layer's
-  spelling — is open.
+- **The loop's shape on the hosted targets.** *Closed.* The loop is
+  landed (`projects/emo-ui/`, T48.2) and runs on the interpreter; the
+  shape above — the application's `update` and `view` passed in as
+  `Block` values — compiles on every hosted target. `wasm` refused the
+  two-argument dynamic call `update` needs until T48.6, when its
+  closures grew any arity (`closure_type`); `c` refused the bare def
+  name itself (`Global`) until T48.8, when a def used as a value became
+  a capture-less closure over a per-def dynamic thunk. A `Block` value
+  is first-class however many parameters it takes, and every corpus and
+  golden runs on all five targets (`CHECK.md`, the Elm loop's shape).
+  The same loop with those two functions behind a `Handler` interface —
+  ordinary interface dispatch, no `Block`-valued function, the
+  application still narrowing its model with `is()` as a backend
+  narrows a node — remains as the alternative the decision did not take
+  (`projects/emo-ui/probe/`). The choice between the two was settled in
+  favour of growing the target: def-as-value was a backend gap, not new
+  syntax, and it keeps the landed `ui.run` spelling.
 - **Long-running memory.** The `c` target does not reclaim the value
   families a render allocates, and a UI re-renders per event, so this is
   the caveat that bounds the platform rather than the design:
@@ -626,16 +667,35 @@ trampoline as any other callback. Landed as `ui.Backend`/`ui.Events`
 
 Each platform implements it:
 
-- **macOS / GTK:** an Emo class whose methods call `foreign def` shims.
-  The shims implement the primitives (`window_make`, `label_make`,
-  `place`, `connect`, …); the Emo side walks the tree and maps nodes to
-  native handles.
+- **macOS (landed, T48.8):** an Emo class whose methods call `foreign
+  def` shims, and an AppKit shim on the other side of the C ABI. The nine
+  verbs are `window_make`, `label_make`, `button_make`, `place`, `clear`,
+  `connect`, `root`, `run` and `autotest_arm`; the Emo side measures the
+  tree in points (`box.emo`), walks it, and maps nodes to native handles.
+  `projects/emo-ui/macos/` is the package, and `corpus/` its entry into
+  the convergence corpus (T48.12) — the shared application on one
+  screen, driven by a comma-separated tag script the shim clicks under
+  `EMO_GUI_AUTOTEST` before terminating, so its bytes are checked
+  without a keyboard or a screenshot.
+- **GTK 4 (landed, T48.9):** the same nine-verb `ui_*` contract and the
+  same point box model as the macOS backend, on the other side of the C
+  ABI. `projects/emo-ui/gtk/` is the package and `corpus/` its entry
+  into the convergence corpus — the same shared application, script and
+  pinned bytes as macOS.
+  GTK is already C, so the shim is thinner: the signal handler and the
+  self-driving script are what Emo cannot name, and `place` applies the
+  frame unchanged because GtkFixed's origin is the top left. The
+  manifest's `pkg_config = ["gtk4"]` is the whole packaging story; the
+  gate builds natively where GTK 4 answers and otherwise compiles the
+  same generated C in a container (GTK 4 plus Xvfb), so the backend is
+  checkable from a macOS host.
 - **TUI (landed, T48.4):** a pure-Emo class that lays the tree out on a
   cell grid and writes ANSI; `run()` pulls a scripted input's tags and
-  hands them to the loop's sink. `projects/emo-ui/tui/` is the package
-  and `tui/golden/` the scripted-input golden: `screen` returns the grid
-  as data, `paint` writes the bytes, and the same screen is byte-
-  identical on the interpreter, `ocaml`, `typescript` and `beam`.
+  hands them to the loop's sink. `projects/emo-ui/tui/` is the package,
+  `tui/golden/` the scripted-input golden, and `corpus/` its entry into
+  the convergence corpus: `screen` returns the grid as data, `paint`
+  writes the bytes, and the same screen is byte-identical on the
+  interpreter, `ocaml`, `typescript` and `beam`.
 - **Debug (landed, T48.3):** the headless one, and the seam's reference
   implementation. It renders every tree the loop hands it into a log
   instead of printing — so a caller decides when text reaches stdout and
@@ -644,17 +704,41 @@ Each platform implements it:
   event is stepped by hand through `deliver` on the sink `mount` was
   given. `projects/emo-ui/golden/` is what it is for: one screen through
   the core as a consumer reaches it, out as text, byte-identical on the
-  interpreter, `ocaml`, `c`, `typescript` and `beam` (`wasm` cannot lower
-  the core — the loop's shape, above). The form's narrowness is forced by
+  interpreter and all five hosted targets (the loop's `wasm` half closed
+  in T48.6 and its `c` half in T48.8). The form's
+  narrowness is forced by
   the targets rather than chosen: it interpolates only `String`, `Int64`,
   `Bool` and `Float64`, because an enum or a tuple does not print the
   same bytes on every target (`CHECK.md`, the enum display form), and its
   golden takes the event tags in statements before building the tree,
   because operand evaluation order is the target's (`CHECK.md`).
-- **SSR:** a pure-Emo class that serializes the tree to HTML/CSS;
-  `run()` is one render.
-- **DOM (later):** an Emo class over the runtime's `dom_*` calls;
-  `run()` hands control to the browser and returns.
+- **SSR (landed, T48.6):** `projects/emo-ui/ssr/` renders the tree to
+  HTML and an interned stylesheet, byte-identical on all five targets.
+  `mount` prints a whole document and `patch` prints the fragment a
+  browser swaps in; `run()` returns, because a server has no input
+  source, and `deliver(tag)` is the request that steps one event. Forms
+  and links are the interaction model, and the three nodes only a
+  server round trip can honor (`form`, `link`, `field`) live in this
+  package rather than in the core. `corpus/` is its entry into the
+  convergence corpus.
+- **DOM (landed, T48.11):** `projects/emo-ui/browser/` is the package
+  `emo/ui_browser`, an Emo class over the runtime's `dom_*` calls, which
+  landed with the browser path (T48.10). The browser's own layout
+  engine does the layout, so the package carries a style mapping
+  (`css.emo`) rather than a point box model; `run()` hands control to
+  the browser and returns. `corpus/` is the convergence consumer, and
+  `page.mjs` is the stub page its gate clicks the script in.
+
+All of them now run the same application. `projects/emo-ui/corpus/` is
+the package `emo/ui_corpus` (T48.12): a counter as its state, an input
+and a submit button as its form, a scrolled list, and the tags `view`
+registers — one module, with no platform name in it. Each backend's
+`corpus/` is the thin entry: `require` the shared package, build that
+backend, hand `ui_corpus.view` and `ui_corpus.update` to `ui.run`. The
+debug, SSR and TUI entries are checked by `corpus/check.sh` on every
+hosted target their manifests declare; the macOS, GTK 4 and browser
+entries are checked by their packages' gates, under the same
+self-driving script and against the same pinned bytes.
 
 `patch` is the growth edge. The spike did a full rebuild per event
 (`clear` plus re-place), which is fine for a terminal and a static HTML
@@ -742,8 +826,8 @@ A bare def is a value — locally and module-qualified (probe 5) — so
 parameters, which are `Unknown`, so the entry's wiring is the same
 unchecked-callback boundary as Layer 1. `view` takes the loop's
 `Registry` first because the table is the loop's (Layer 5). This is the
-shape `ui.run` landed with (T48.2) — and the one two targets cannot
-compile yet, which is the open item Layer 5 records.
+shape `ui.run` landed with (T48.2) — and the one `c` cannot compile yet
+(`wasm` closed in T48.6), which is the open item Layer 5 records.
 
 `app.emo` is the same file for all three; only the entry module differs,
 and it is a handful of lines. A platform-specific app that wants
@@ -802,12 +886,12 @@ mid-implementation:
    that collects a block's expression statements. That is a template
    language, and the array argument already expresses the tree
    explicitly.
-3. **Package native-input extension (a real gate for native backends).**
-   `.c`/`.h` plus bare `-l` cannot express AppKit (`.m`, frameworks) or
-   GTK (`pkg-config`). Add a per-package compile-flags / `pkg_config`
-   mechanism — **settled 2026-10-14 to this route, not the documented
-   app-level build-script route** (`CHECK.md`); the field surface is
-   T48.7's own work.
+3. **Package native-input extension (landed, T48.7).** `.c`/`.h` plus
+   bare `-l` could not express AppKit (`.m`, frameworks) or GTK
+   (`pkg-config`); the manifest now carries `pkg_config` and
+   `frameworks` for exactly those, and `.m` joins the collected set —
+   **settled 2026-10-14 to this route, not the app-level build-script
+   route** (`CHECK.md`).
 4. **Memory reclamation on the `c` target — settled 2026-10-14 to
    refcounting the value families; landed 2026-10-17 (step 49).** The
    region route was tested and ruled out (`spike/arena-scope`,
@@ -825,8 +909,10 @@ mid-implementation:
 6. **A browser path for the Web (T1) — settled 2026-10-15 to the split
    route:** a browser-safe subset of the TypeScript runtime, a `dom_*`
    family, and a bundling step, rather than new wasm host imports
-   (`CHECK.md`). Where the bundling step lives in the toolchain is
-   T48.10's own work. Not needed for SSR (T0).
+   (`CHECK.md`). **Landed 2026-10-18 (T48.10):** the split is a
+   host-free core plus Node and page hosts, the `dom_*` family is
+   thirteen calls over Int64 handles, and the bundling step is a build
+   target — `emo build --target browser`. Not needed for SSR (T0).
 7. **Terminal input.** Raw mode and key events for the TUI (a small
    termios binding, or a terminal runtime implementation). **Settled
    2026-10-15: a standard-library package, shipped the `sqlite3` way**
@@ -834,7 +920,8 @@ mid-implementation:
    `foreign def`, gated by the manifest's `targets`, embedded with the
    rest of the stdlib. Raw mode is a capability any TUI program needs,
    so it belongs beside `os` and `file` rather than inside the UI
-   framework that happens to be its first consumer.
+   framework that happens to be its first consumer. **Landed
+   2026-10-18** as the `term` package (`docs/stdlib/term.md`).
 8. **No new syntax.** The tree is already expressible; if it is not, the
    gap is a type or a library function, not a construct.
 
@@ -852,15 +939,25 @@ mid-implementation:
   backend and its scripted golden (T48.4)** extend it — one screen
   through a real box model, byte-identical on four of the five hosted
   targets — and forced the two `beam` lowering defects it fixed
-  (`CHECK.md`).
+  (`CHECK.md`). The **server-rendered backend (T48.6)** extends it once
+  more: a whole tree's HTML and stylesheet are byte-identical on all
+  five targets, and closing that required the `wasm` closures' arity.
+  The **convergence corpus (T48.12)** is the mitigation in its final
+  form: one portable application (`projects/emo-ui/corpus/`, the package
+  `emo/ui_corpus`) with a counter, a form, a list and events, consumed
+  unchanged by the debug, SSR, TUI, macOS, GTK 4 and browser entries.
+  It found a `wasm` codegen defect the golden never reached — a
+  `ref.func` to a program def was absent from the declarative element
+  segment — and is now pinned entry by entry.
 - **Text.** Portable automatic layout needs text metrics; the design
   avoids needing them by delegating layout to the platform (and the TUI
   counts cells). A future canvas or a pixel-identical mode reintroduces
   the font-metrics problem `docs/visualization.md` declined.
-- **Native packaging.** Until the manifest grows flags, macOS/GTK apps
-  carry build scripts; that is friction on the requirement's "just
-  download and use". The manifest-field route is settled (T48.7), so the
-  risk is the schedule, not the direction.
+- **Native packaging.** The manifest fields landed (T48.7), so
+  macOS/GTK apps need no build scripts; the requirement's "just
+  download and use" no longer has that friction. The remaining risk is
+  the machinery's portability (pkg-config must be present), not the
+  design.
 - **Two event loops** (Emo scheduler vs. toolkit/browser), as above.
 - **Scope.** A UI framework is unbounded. The tier table is the defense:
   portable core + TUI + SSR first, native toolkits next, DOM last; no
@@ -941,8 +1038,8 @@ backends are four different programs.
    class and not one class per platform with no core.
 3. **Children are an explicit `Array[Node]`.** Trailing blocks are for
    callbacks and iteration and must `return` their value; no implicit
-   child collection, and the README's illustrative tree is revised to
-   this spelling.
+   child collection, and the README's illustrative tree has been
+   revised to this spelling (T48.13).
 4. **Layout is a portable vocabulary mapped to the platform's native
    layout**, not a shared Emo layout engine. The TUI keeps a small Emo
    box model because it has no native engine.
@@ -980,34 +1077,34 @@ Decisions 1–11 are tracked as **M15 — EmoUI (step 48)** in
 [`plan/step-48-emo-ui.md`](../plan/step-48-emo-ui.md); decision 12 is
 tracked as **M16 — Value-family reclamation (step 49)**, spec in
 [`plan/step-49-value-reclamation.md`](../plan/step-49-value-reclamation.md).
+The decided design these decisions produce is stated in
+[`README.md`](../README.md) and in the package references under
+[`projects/emo-ui/docs/`](../projects/emo-ui/docs/); this note keeps the
+reasoning behind them.
 
 ## Remaining open questions
 
-1. **The native packaging mechanism** — direction settled 2026-10-14 to
-   per-package manifest fields, superseding the app-level build-script
-   alternative; the field surface (`pkg_config`, compile/link flags,
-   whether `.m` is collected) is T48.7's own work. This gates item 3 of
-   the sequencing.
-2. **Reconciliation** — when the retained backends get a keyed diff
+1. **Reconciliation** — when the retained backends get a keyed diff
    instead of a full rebuild, and whether the compiler's targeted
    refresh lands with it.
-3. **The two-event-loop integration** — how a UI process and a toolkit
+2. **The two-event-loop integration** — how a UI process and a toolkit
    loop coexist, and whether events become real process messages in v1
    or later.
-4. **The checked block/function type** — whether the component API
+3. **The checked block/function type** — whether the component API
    earns it after a first package shows the friction. The loop has now
    shown the friction's other face: its `Block`-valued `view`/`update`
-   is what `c` and `wasm` cannot compile (`CHECK.md`, the Elm loop's
-   shape), so the alternative to a checked function type — putting the
-   application's two functions behind an interface — is also the
-   alternative to growing those two targets.
-5. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
+   is what `c` alone cannot compile (`wasm` closed in T48.6;
+   `CHECK.md`, the Elm loop's shape), so the alternative to a checked
+   function type — putting the application's two functions behind an
+   interface — is also the alternative to giving `c` def-as-value.
+4. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
    subset of the TypeScript runtime plus a `dom_*` family, not a
-   browser-specific runtime variant (`CHECK.md`). What stays open is
-   mechanical: where the bundling step lives in the toolchain, which is
-   T48.10's own work. The `typescript` target's share-on-send
-   (`CHECK.md`, cross-target invariants) is on this path too.
-6. **The tree spelling** — whether the array child form gets a literal
+   browser-specific runtime variant (`CHECK.md`); landed 2026-10-18
+   (T48.10–T48.11), with the bundling step as `emo build --target
+   browser` and `emo/ui_browser` over the `dom_*` calls. What stays
+   open is the `typescript` target's share-on-send (`CHECK.md`,
+   cross-target invariants), which the browser target does not carry.
+5. **The tree spelling** — whether the array child form gets a literal
    spelling at all, and if so whether it belongs in Emo's own grammar or
    in an external translator that emits `.emo`. The mechanisms that are
    *closed* (emission, self-rebinding, an ambient collector, and a

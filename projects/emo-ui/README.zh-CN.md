@@ -1,6 +1,6 @@
 # EmoUI
 
-用 Emo 写的组件式 UI 框架:一棵声明式树渲染到终端、服务端页面、macOS/AppKit 窗口与 GTK 4 窗口——浏览器 DOM 随后按自己的运行时路径接入。Emo 的语法就是为它塑形的,原则是**没有模板语言——UI 就是普通的 Emo 代码**,与配置同一哲学。
+用 Emo 写的组件式 UI 框架:一棵声明式树渲染到终端、服务端页面、macOS/AppKit 窗口、GTK 4 窗口与浏览器 DOM。Emo 的语法就是为它塑形的,原则是**没有模板语言——UI 就是普通的 Emo 代码**,与配置同一哲学。
 
 组件树是嵌套调用,子节点是一份显式的 `Array[ui.Node]`:
 
@@ -28,7 +28,7 @@ def inbox(users Array[User]) ui.Node {
 
 ## 状态
 
-可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)与终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)都已落地。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
+可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)、终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)、服务端渲染的 **`ui_ssr` 后端**(T48.6)、原生 **`ui_macos` 后端及其自驱动语料**(T48.8)、**GTK 4 `ui_gtk` 后端**(T48.9)、浏览器 **`ui_browser` 后端及其 DOM 语料**(T48.10、T48.11)与**收敛语料**——同一个共享应用跑在每个后端上(T48.12)——都已落地。终端输入本身(T48.5)也已落地,是 `stdlib/` 里的标准库 **`term` 包**——按行读取、raw mode、解码后的按键事件与终端尺寸,形状同 `sqlite3`,普通 `require` 即可到达。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
 
 一个应用就是 model、纯 `update`、纯 `view` 加一个后端:
 
@@ -44,25 +44,35 @@ def main() {
 }
 ```
 
-tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 草拟的模块级 `ui.on(msg)` 表:模块级 `const` 在编译目标上每次读取都会重跑初始化式,模块级 `var` 又只有 `ocaml` 支持,表放在那里等于每次读取都拿到一张新的空表(`CHECK.md`,模块级绑定)。这张表属于某一个正在跑的循环,由循环把它交给 `view`。tag 一律在建树之前用独立语句取好,而不是写在构成树的那些实参里:`on` 是副作用,而操作数按 target 的顺序求值——`ocaml` 与其它每个 target 相反——所以从实参位置取的 tag 会因 target 而异(`CHECK.md`,操作数求值顺序)。
+tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 草拟的模块级 `ui.on(msg)` 表:模块级 `const` 在编译目标上每次读取都会重跑初始化式,模块级 `var` 又只有 `ocaml` 支持,表放在那里等于每次读取都拿到一张新的空表(`CHECK.md`,模块级绑定)。这张表属于某一个正在跑的循环,由循环把它交给 `view`。tag 一律在建树之前用独立语句取好,而不是写在构成树的那些实参里:`on` 是副作用,独立语句让注册顺序在调用处一眼可见。操作数顺序本身不再是跨 target 的变量——语言已写明从左到右,每个 target 都遵守——曾经让两者不同的那个缺陷及其修复记在 `CHECK.md` 与 `probe/eval_order`。
 
-循环在 `ocaml`、`typescript`、`beam` 上可编译并运行;在 `c` 与 `wasm` 上还不行,而挡路的是它的拼写而不是它的结构:裸 def 名是唯一能产出 `ui.run` 所收 `Block` 值的表达式,而 `c` 没有 def 当值(`Global`),`wasm` 又拒绝参数多于一个的动态调用。`probe/` 把这个缺口做成一对最小对照——`def_shape/` 是已落地的写法,两个拒绝都能撞到;`handler_shape/` 把应用那两个函数放到 `Handler` 接口后面,是同一个循环,五个 target 全部可编译,在 `c` 与 `ocaml` 上打印出的结果与 `emo run` 一致(`CHECK.md`,Elm 循环的形状)。在 `beam` 上,循环以前只是能构建、不能运行:裸 def 会变成指向未导出函数的远程 fun,`erlc` 接受但加载器让它无法调用;那个缺陷已修好,TUI 金标就是证据。往哪边收口——把这两个 target 补起来,还是把应用的函数移到接口后面——是 T48.4 留下来、仍未收口的那个开放决定。
-
+循环在全部五个托管 target 上都能编译并运行。裸 def 名是唯一能产出 `ui.run` 所收 `Block` 值的表达式,而 `c` 以前没有 def 当值(`Global`);T48.8 给它补上了——每个 def 一条动态 thunk,把 def 当作值时得到的是一层空捕获闭包——于是托管在 `c` 上的后端编译的是同一个循环。`wasm` 以前也拒绝同一个形状,直到 T48.6 让它的闭包长出任意参数个数:`Call_value`、`Closure` 与 `Global` 提上来的函数按参数个数分配一对函数/struct 类型(`closure_type`),于是无论收几个参数,`Block` 值都是一等值。`probe/` 把两种写法做成一对最小对照——`def_shape/` 是已落地的写法,如今五个 target 全部可编译;`handler_shape/` 把应用那两个函数放到 `Handler` 接口后面,是同一个循环,五个 target 全部可编译,在 `c` 与 `ocaml` 上打印出的结果与 `emo run` 一致(`CHECK.md`,Elm 循环的形状)。最终选了补 target:def-as-value 是后端的缺口而非新语法,而且保住了已落地的 `ui.run` 拼写。在 `beam` 上,循环以前只是能构建、不能运行:裸 def 会变成指向未导出函数的远程 fun,`erlc` 接受但加载器让它无法调用;那个缺陷已修好,TUI 金标就是证据。
 `debug.emo` 是无头后端(T48.3):`render(node)` 把一棵树变成稳定文本——一个节点一行、每层两个空格,先节点自己的属性,再一份字段顺序固定的样式摘要——而 `Debug` 类就在这份文本之上实现 `Backend`,把循环交给它的每一棵树记进日志而不是打印出来,于是何时让文本到达 stdout 由调用方决定。它的 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。
 
 `golden/` 就是这份文本形式要服务的东西:核心与之后每个后端都要拿它来量的那套标尺。它是一个处在消费者位置上的包——`deps { "emo/ui" = "0.1.0" }` 加一条 `require`,经关口从被测源码现场搭出的 registry 抵达核心——里面装着唯一一块界面,涵盖每个原语、`w=`/`h=` 的两个分支、全部四个 `Align` 取值、一个空字符串属性以及嵌套容器。`expected.txt` 是解释器自己的输出;`./check.sh` 在每个 target 上构建并运行这块界面,要求逐字节相同——所以一个把树渲染得不一样的后端会在这里失败,而不是在截图里。
 
 这份文本形式比看上去要窄,原因在 target:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为插值枚举或元组在每个 target 上产出的字节并不相同——`typescript` 会带上限定名,`beam` 干脆没有这个类别的转换——所以那份样式摘要改用解构(`align_name`、`extent`)并自己拼出要打印的名字;这处分歧连同最小对照记在 `CHECK.md` 里(`probe/enum_print`)。金标也先在建树之前用独立语句取好事件 tag,绝不写在构成树的实参表里:`on` 是副作用,独立语句让注册顺序在调用处一眼可见。操作数顺序本身不再是跨 target 的变量——语言已写明从左到右,每个 target 都遵守——`probe/eval_order` 钉住的正是这条规则。
 
-`./check.sh` 是它的关口:包能通过类型检查、循环的十七条断言会跑,每个 target 的构建结果——以及每一次拒绝——都在里面钉死,金标的字节也在四个跑得动的 target 上逐一比对。
+`./check.sh` 是它的关口:包能通过类型检查、循环的十七条断言会跑,每个 target 的构建结果——以及每一次拒绝——都在里面钉死,金标的字节也在全部五个托管 target 上逐一比对(`wasm` 产物跑在 `wasm-runner.mjs` 的宿主边界下)。最后接着跑 `tui/check.sh`、`ssr/check.sh`、`macos/check.sh`、`gtk/check.sh` 与 `browser/check.sh`,让整个项目只留一个入口。
 
-`tui/` 是终端后端(T48.4),是一个自己的包——`emo/ui_tui`,对 `emo/ui` 取版本——因为它带一个核心没有的平台。终端没有原生布局引擎,所以盒模型就在这里:以字符格为单位度量核心的 `Style`,列纵向堆叠、行横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置。`screen(root, w, h)` 把网格作为 `Array[String]` 交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI(清屏、归位、每行一行),转义字节经 `printf("%c", [27])` 到达 stdout,因为字符串字面量的转义是最小集合、0x1b 不在其中。`Tui` 在其之上实现 `ui.Backend`,`Input`/`Script` 是脚本化事件源:`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。T48.5 把那个源换成 raw-mode 终端读取,而不是换那条接缝——两者都是 `Input`。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`tui/golden/` 是两个包的消费者,里面一块界面由一段点击 Add、Add、Sub 的脚本驱动,它的 `expected.txt` 是解释器的输出,在 `ocaml`、`typescript`、`beam` 上相同。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——就是上面那个决定,如今深了三个 target。`tui/check.sh` 是这个包的关口;金标逼出的 `beam` 降级缺陷已修好,记在 `CHECK.md`。根目录的 `./check.sh` 最后会接着跑 `tui/check.sh`,让整个项目只留一个入口。用法示例在 `examples/tui_menu/`——一个由脚本化输入驱动的终端菜单——同一个关口也会检查它。
+`tui/` 是终端后端(T48.4),是一个自己的包——`emo/ui_tui`,对 `emo/ui` 取版本——因为它带一个核心没有的平台。终端没有原生布局引擎,所以盒模型就在这里:以字符格为单位度量核心的 `Style`,列纵向堆叠、行横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置。`screen(root, w, h)` 把网格作为 `Array[String]` 交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI(清屏、归位、每行一行),转义字节经 `printf("%c", [27])` 到达 stdout,因为字符串字面量的转义是最小集合、0x1b 不在其中。`Tui` 在其之上实现 `ui.Backend`,`Input`/`Script` 是脚本化事件源:`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。`term` 包(T48.5)为真实输入源提供 raw mode 的终端读取;接入它换的是那个源,而不是那条接缝——两者都是 `Input`。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`tui/golden/` 是两个包的消费者,里面一块界面由一段点击 Add、Add、Sub 的脚本驱动,它的 `expected.txt` 是解释器的输出,在 `ocaml`、`typescript`、`beam` 上相同。`c` 也能编译后端;金标那个循环形状以前被它拒绝(`Global`),直到 T48.8 给该 target 补上 def-as-value,如今它的字节也在 `c` 上比对。`tui/check.sh` 是这个包的关口;金标逼出的 `beam` 降级缺陷已修好,记在 `CHECK.md`。用法示例在 `examples/tui_menu/`——一个由脚本化输入驱动的终端菜单——同一个关口也会检查它。
 
 `translator/` 是 `.emoui` 的试验(2026-10-18):一个 stdin 到 stdout 的过滤器,把树字面量——带块的容器、`list(src) -> (x T) { ... }`、`if`——降级成已定案的拼法(嵌套调用、显式 `Array[Node]` children),让 README 的示例形态不必动编译器就能写。它的 `demo/` 把拼写 spike 的两块屏幕用字面量重写,并经 debug 后端断言生成的树与旁边手写的 A 拼法在四个模型上相等;`demo/check.sh` 是关口,重新生成已提交的产物并与翻译器 diff。语法与降级规则见 `translator/README.md`;它在 C 与 D 之争中的位置记在 [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md)。
 
-接下来:剩下的每平台包与浏览器运行时路径(T48.5–T48.12)。设计与证据:
+`ssr/` 是服务端渲染后端(T48.6),是一个自己的包——`emo/ui_ssr`,对 `emo/ui` 取版本。它把可移植树变成 HTML 加上样式驻留出来的样式表:整份文档用 `page(title, root)`,浏览器换入的某个区域用 `fragment(root)`,只要 CSS 用 `stylesheet(root)`,三者都按先序走同一棵树,所以页面标记里的 class 就是样式表里定义的那些。节点的 class 由「基础声明 + `Style`」的驻留决定——相等的样式共用一条规则,而 `row` 与 `column` 保持区分——进入标记的每个属性值都逐字节转义,多字节字符原样穿过。交互模型是浏览器在没有客户端运行时时能做的两件事:表单提交它的字段与提交它的那个按钮的事件 tag,链接导航。有三个节点住在这里而不是核心——`form`、`link`、`field`——因为只有服务端往返才放得下它们。`Ssr` 实现 `ui.Backend`:`mount` 打印整份文档,`patch` 打印片段,`run()` 直接返回,因为服务端没有输入源;`deliver(tag)` 就是推进一个事件的那次请求。`test.emo` 用十二条断言钉住转义、规则形状、驻留与每种节点的标记,`golden/`——两个包的消费者——在全部五个托管 target 上逐字节一致。`ssr/check.sh` 是这个包的关口;用法示例在 `examples/ssr_page/`。
 
-- [`docs/zh-CN/emo-ui.md`](../../docs/zh-CN/emo-ui.md) —— 评估与设计方向。
+`macos/` 是原生后端(T48.8),是一个自己的包——`emo/ui_macos`,对 `emo/ui` 取版本,声明 `c` target 与 `AppKit` framework。窗口同样没有核心够得着的布局引擎,所以盒模型住在这里的 `box.emo`:以 point 为单位度量核心的 `Style`,`layout(root, w, h)` 交回 `Array[Draw]`,由 `place` 施加这些位置——这套算术不必开会话,解释器就能跑。`shim.m` 是九个动词的 AppKit 一侧,`ui_macos.emo` 把它们声明为 foreign def:`window_make`、`label_make`、`button_make`、`place`、`clear`、`connect`、`root`、`run` 与 `autotest_arm`。循环的 sink 以 `ui.Events` 这个单方法接口跨过 FFI,C ABI 交给 shim 的是一对 trampoline 与 userdata;一次点击经这对值把它的 tag 带回循环。`place` 会翻转 y,因为 AppKit 的原点在左下角。`autotest_arm` 收一段逗号分隔的 tag 脚本,且只在 `EMO_GUI_AUTOTEST` 下,由一个 `NSTimer` 逐次点击每个 tag 后结束进程,所以关口既不用人守键盘,也不用截图。`corpus/` 是 macOS 进入收敛语料的入口——共享应用摆在一块界面上,脚本是 `0,0,1,2`,`expected.txt` 钉住循环的字节。`macos/check.sh` 是这个包的关口,只在 Darwin 上跑;这份 shim 是 `spike/` 之外项目里唯一的 Objective-C。`c` 目标的回收已随 step 49 落地(`CHECK.md`)。
+
+`gtk/` 是 GTK 4 后端(T48.9),是一个自己的包——`emo/ui_gtk`,对 `emo/ui` 取版本,声明 `c` target 与 `gtk4` 这个 pkg-config 模块。形状与 macOS 包相同:`box.emo` 带 point 盒模型,`ui_gtk.emo` 是九个 foreign 动词与 `Gtk` 类,`shim.c` 是 C 一侧。GTK 本来就是 C,所以 shim 更薄——Emo 命名不了的只有信号处理函数与自驱动脚本——而 `place` 原样施加 x 与 y,因为 GtkFixed 的原点本来就在左上角。循环的 sink 以同一对 `ui.Events` 跨过 FFI。`corpus/` 是 GTK 4 进入收敛语料的入口——与 macOS 同一个共享应用,同样是 `0,0,1,2` 脚本与 `expected.txt`。`gtk/check.sh` 是这个包的关口:`pkg-config gtk4` 能回答时就在本机构建并运行,否则在 `emo-ui-gtk-build` 容器(GTK 4 加 Xvfb)里编译并运行同一份生成的 C——macOS 宿主就是这样检查它的;两者都没有时它明说并直接通过。
+
+`browser/` 是 DOM 后端(T48.11),是一个自己的包——`emo/ui_browser`,对 `emo/ui` 取版本,声明 `browser` target,经 T48.10 加进来的运行时路径抵达。浏览器自己有布局引擎,所以这个包不带盒模型:`css.emo` 把 `Style` 映射成页面自己的布局所消费的声明,而它是纯 Emo,解释器就能跑 `test.emo` 的二十七条断言。`ui_browser.emo` 是压在十三个 `dom_*` 调用上的 `Dom` 类:`mount` 设置标题、页面根声明与 sink;`render` 为每个节点建一个元素——`text` 是 span,`button` 像 `ui_ssr` 的标记那样把 tag 放进 `name`/`value` 这一对,`input` 是只读视图,`image` 是 `img`——`patch` 全量重建树,与每个后端一致。`run()` 直接返回,因为事件循环归页面所有。`corpus/` 是浏览器进入收敛语料的入口——同一个共享应用、同一段 `0,0,1,2` 脚本与同一份 `expected.txt`——`page.mjs` 是关口运行它的 stub 页面:一个刚好够宿主用的 `document`/`window`,然后按顺序点击脚本里的 tag。`browser/check.sh` 是这个包的关口;`emo build --target browser` 的打包步骤需要 Node >= 22.13,缺失时它明说并直接通过。
+
+`corpus/` 就是收敛语料本身(T48.12),包名 `emo/ui_corpus`。它是每个后端都跑的那一个应用:状态是计数器,表单是显示计数的一个输入框与一个提交按钮,列表是可滚动列表,另有 `view` 注册的三个 tag。`update` 打印每次状态转移,所以 `expected.txt` 是循环的字节而不是某次渲染,同一份文件钉在每个入口上。只有后端包与入口模块提到平台——`corpus/debug`、`corpus/ssr` 与 `corpus/tui` 在本包的 `check.sh` 下,`macos/corpus`、`gtk/corpus` 与 `browser/corpus` 在各自后端的关口下。debug 与 SSR 入口在全部五个托管 target(`ocaml`、`c`、`typescript`、`wasm`、`beam`)上逐字节相同;终端入口在跑得动它的四个上相同,并按其名钉住 `wasm` 的拒绝。共享入口还找出了一个 `wasm` codegen 缺陷:以值的形式出现的 def 是一个 `ref.func`,而声明式 element 段里只有隐藏闭包,所以校验器一直拒绝这份语料,直到把所有已定义的函数都声明进去(`CHECK.md`)。
+
+接下来:把 `term` 接进 `ui_tui` 的输入源。各包的参考文档在 [`docs/`](docs/README.zh-CN.md),每个包一页。设计与证据:
+
+- [`docs/`](docs/README.zh-CN.md) —— 各包的参考文档,每个包一页。
+- [`docs/zh-CN/emo-ui.md`](../../docs/zh-CN/emo-ui.md) —— 设计背后的评估与证据。
 - [`docs/zh-CN/emo-ui-composition.md`](../../docs/zh-CN/emo-ui-composition.md) —— 一棵树怎么写出来:子节点为什么是数组而不是块式写法。
 - [`plan/step-48-emo-ui.md`](../../plan/step-48-emo-ui.md) —— 执行计划,T48.1–T48.13。
 - [`spike/emo-ui-spelling/`](../../spike/emo-ui-spelling/) —— 定下写法的两屏度量,以及这个核心所自来的原型。

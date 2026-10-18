@@ -1,0 +1,17 @@
+require "emo/ui"
+require "emo/ui_macos"
+require "emo/ui_corpus"
+
+// The macOS entry of the convergence corpus (T48.12): the shared
+// application is `emo/ui_corpus`, and this module is the only
+// platform-specific code — the backend and its script. The script is the
+// tags in registration order, so "0,0,1,2" is inc, inc, dec, submit.
+// `expected.txt` is `update`'s own output, the same file every other
+// backend's entry is pinned to.
+
+def main() {
+  ui.run(ui_corpus.view, ui_corpus.update, ui_corpus.initial(),
+    ui_macos.backend("Emo counter", 360.0, 480.0, "0,0,1,2"))
+}
+
+main()

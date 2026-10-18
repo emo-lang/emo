@@ -381,6 +381,100 @@ let manifest_tests =
                   (match d.Diagnostic.code with Some c -> c | None -> "?")
             | Ok _ -> Alcotest.fail ("expected E5103 for " ^ bad))
           [ "-lsqlite3"; "/usr/lib/libsqlite3.dylib"; "" ]);
+    tc "pkg-config modules and frameworks parse" (fun () ->
+        match
+          check
+            {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  pkg_config = ["gtk4", "glib-2.0"]
+  frameworks = ["AppKit"]
+  deps {}
+}|}
+        with
+        | Error d ->
+            Alcotest.fail
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | Ok m ->
+            Alcotest.(check (list string))
+              "pkg_config" [ "gtk4"; "glib-2.0" ] m.Emo_pkg.pkg_config;
+            Alcotest.(check (list string))
+              "frameworks" [ "AppKit" ] m.Emo_pkg.frameworks);
+    tc "pkg-config modules and frameworks default to empty" (fun () ->
+        match
+          check
+            {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  deps {}
+}|}
+        with
+        | Error d ->
+            Alcotest.fail
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | Ok m ->
+            Alcotest.(check (list string)) "pkg_config" [] m.Emo_pkg.pkg_config;
+            Alcotest.(check (list string)) "frameworks" [] m.Emo_pkg.frameworks);
+    tc "a non-array pkg_config is rejected" (fun () ->
+        match
+          check
+            {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  pkg_config = "gtk4"
+  deps {}
+}|}
+        with
+        | Error d ->
+            Alcotest.(check string)
+              "code" "E5103"
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | Ok _ -> Alcotest.fail "expected E5103");
+    tc "non-string framework entries are rejected" (fun () ->
+        match
+          check
+            {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  frameworks = [3]
+  deps {}
+}|}
+        with
+        | Error d ->
+            Alcotest.(check string)
+              "code" "E5103"
+              (match d.Diagnostic.code with Some c -> c | None -> "?")
+        | Ok _ -> Alcotest.fail "expected E5103");
+    tc "flag-shaped pkg_config and framework entries are rejected" (fun () ->
+        List.iter
+          (fun (field, bad) ->
+            match
+              check
+                (Printf.sprintf
+                   {|package {
+  name = "x/y"
+  version = "0.1.0"
+  targets = ["c"]
+  %s = ["%s"]
+  deps {}
+}|}
+                   field bad)
+            with
+            | Error d ->
+                Alcotest.(check string)
+                  "code" "E5103"
+                  (match d.Diagnostic.code with Some c -> c | None -> "?")
+            | Ok _ -> Alcotest.fail ("expected E5103 for " ^ field ^ " " ^ bad))
+          [
+            ("pkg_config", "--cflags");
+            ("pkg_config", "/usr/lib/pkgconfig");
+            ("pkg_config", "");
+            ("frameworks", "-framework");
+          ]);
     tc "runaway evaluation hits the step budget" (fun () ->
         match
           check

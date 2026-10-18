@@ -1,0 +1,16 @@
+// The raw bindings behind the term package: one `foreign def` per
+// operation against emo_term_shim.c, whose exact-ABI wrappers hide the
+// struct and pointer shapes of <termios.h> behind Int64 results and
+// NUL-terminated strings. The shim includes the compiler's generated
+// emo_defs.h, so a signature drift breaks at cc time in both
+// directions.
+
+foreign def is_tty() Bool = "emo_term_is_tty"
+foreign def columns() Int64 = "emo_term_columns"
+foreign def rows() Int64 = "emo_term_rows"
+foreign def read_line() Int64 = "emo_term_read_line"
+foreign def line() String = "emo_term_line"
+foreign def error() String = "emo_term_error"
+foreign def enable_raw() Int64 = "emo_term_enable_raw"
+foreign def restore() Int64 = "emo_term_restore"
+foreign def read_key() Int64 = "emo_term_read_key"

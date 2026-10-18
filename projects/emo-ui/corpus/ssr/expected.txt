@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emo counter</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; }
+.e0 { display: flex; flex-direction: column; padding: 12.0px; gap: 8.0px; align-items: flex-start; flex-grow: 0; }
+.e1 { display: inline; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e2 { display: flex; flex-direction: row; padding: 0.0px; gap: 8.0px; align-items: flex-start; flex-grow: 0; }
+.e3 { display: inline-block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; }
+.e4 { display: flex; flex-direction: column; overflow: auto; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 0; height: 120.0px; }
+.e5 { display: block; padding: 0.0px; gap: 0.0px; align-items: flex-start; flex-grow: 1; }
+</style>
+</head>
+<body>
+<div class="e0"><span class="e1">Emo counter</span><div class="e2"><button class="e3" type="submit" name="event" value="0">inc</button><button class="e3" type="submit" name="event" value="1">dec</button></div><input class="e3" type="text" value="count = 0" readonly><div class="e4"><span class="e1">first</span><span class="e1">second</span><img class="e3" src="logo.png" alt=""></div><button class="e3" type="submit" name="event" value="2">submit</button><span class="e5"></span></div>
+</body>
+</html>
+inc 1
+<div class="e0"><span class="e1">Emo counter</span><div class="e2"><button class="e3" type="submit" name="event" value="0">inc</button><button class="e3" type="submit" name="event" value="1">dec</button></div><input class="e3" type="text" value="count = 1" readonly><div class="e4"><span class="e1">first</span><span class="e1">second</span><img class="e3" src="logo.png" alt=""></div><button class="e3" type="submit" name="event" value="2">submit</button><span class="e5"></span></div>
+inc 2
+<div class="e0"><span class="e1">Emo counter</span><div class="e2"><button class="e3" type="submit" name="event" value="0">inc</button><button class="e3" type="submit" name="event" value="1">dec</button></div><input class="e3" type="text" value="count = 2" readonly><div class="e4"><span class="e1">first</span><span class="e1">second</span><img class="e3" src="logo.png" alt=""></div><button class="e3" type="submit" name="event" value="2">submit</button><span class="e5"></span></div>
+dec 1
+<div class="e0"><span class="e1">Emo counter</span><div class="e2"><button class="e3" type="submit" name="event" value="0">inc</button><button class="e3" type="submit" name="event" value="1">dec</button></div><input class="e3" type="text" value="count = 1" readonly><div class="e4"><span class="e1">first</span><span class="e1">second</span><img class="e3" src="logo.png" alt=""></div><button class="e3" type="submit" name="event" value="2">submit</button><span class="e5"></span></div>
+submit 1
+<div class="e0"><span class="e1">Emo counter</span><div class="e2"><button class="e3" type="submit" name="event" value="0">inc</button><button class="e3" type="submit" name="event" value="1">dec</button></div><input class="e3" type="text" value="count = 1" readonly><div class="e4"><span class="e1">first</span><span class="e1">second</span><img class="e3" src="logo.png" alt=""></div><button class="e3" type="submit" name="event" value="2">submit</button><span class="e5"></span></div>

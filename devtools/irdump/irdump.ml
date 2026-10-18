@@ -189,7 +189,7 @@ and dump_s indent s =
   | Break -> indent @@@ "Break"
   | Continue -> indent @@@ "Continue"
 
-let inputs, entry, packages, _, _ =
+let inputs, entry, packages, _ =
   Emo_project.compile_inputs ~entry_file:"main.emo" ~target:"ocaml"
 
 let p = Emo_ir.lower { Emo_ir.modules = inputs; entry; packages }

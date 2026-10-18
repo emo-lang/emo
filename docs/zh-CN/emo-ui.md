@@ -2,6 +2,8 @@
 
 写于 2026-10-14。这是一份技术可行性评估外加一个设计方向,不是已定设计。文中关于项目状态的描述以写作日期的仓库为准(`develop`)。定下来的决定会进入 `README.md`;本文档记录评估、评估背后的证据,以及开放问题。
 
+**状态(2026-10-18)。** 设计已经落地,其中已定的部分现在按已定设计陈述:`README.md` 的 EmoUI 一节承载数组子节点写法与整体架构,[`projects/emo-ui/`](../../projects/emo-ui) 承载实现与各包的参考文档。本文档保留为产出这些决定的评估与讨论记录——证据、被否掉的备选方案,以及仍然开放的问题。在已定问题上,若本文档与 README 不一致,以 README 为准。
+
 问题:**一套声明式 EmoUI 语法,渲染到 Web、终端(TUI)、macOS(AppKit)与 GTK 4——每个平台可以有自己的组件库,但组件的调用与组合方式完全一致。**
 
 让项目走到今天的关口清单见
@@ -16,9 +18,9 @@
 
 四条发现决定了下面的一切:
 
-1. **声明式树今天不受类型检查,而且它最漂亮的那种写法不成立。** 声明为 `Block` 的参数对检查器来说是 `Unknown`,所以尾随 block 里的内容是动态检查的(顶多如此);而一个 body 是一串子节点调用的 block 产出 `void`,子节点被悄悄丢弃。README 里那份示意树(`page(...) { navbar() { ... } }`)不是一个可执行程序。子节点要么是显式的 `Array[Node]`,要么 block 必须 `return` 它们。
+1. **声明式树今天不受类型检查,而且它最漂亮的那种写法不成立。** 声明为 `Block` 的参数对检查器来说是 `Unknown`,所以尾随 block 里的内容是动态检查的(顶多如此);而一个 body 是一串子节点调用的 block 产出 `void`,子节点被悄悄丢弃。README 里那份示意树(`page(...) { navbar() { ... } }`)不是一个可执行程序。子节点要么是显式的 `Array[Node]`,要么 block 必须 `return` 它们。(README 后来已改成数组写法;T48.13。)
 2. **四个平台并不同等地就绪。** macOS/AppKit 与 GTK 4 已经经 `foreign def` shim 证明可行;终端渲染器是廉价的纯 Emo;Web 最不成熟——TypeScript 目标只面向 Node(发射出的 runtime 顶部 import `node:net`、`node:fs`),而 wasm 目标的整个宿主接口只有三个 import(`println`、`abort`、`float_str`)。
-3. **EmoUI 后端今天无法用包表达。** 一个包只能携带 `.c`/`.h`,并且只能链接裸 `-l` 名。AppKit 后端是 Objective-C(`.m`、`-fobjc-arc`、`-framework AppKit`);GTK 后端需要 `pkg-config --cflags --libs gtk4`。两者都装不进。方向已定——manifest 长出 per-package 原生字段,而不是应用级构建脚本(`CHECK.md`)——字段面属于 T48.7 自己的工作;在它落地之前,原生后端退回到 spike 用的应用级脚本。
+3. **EmoUI 后端现在可以用包表达了(T48.7)。** 一个包可以在 `.c`/`.h` 之外携带 `.m`(在 ARC 下编译),用 `pkg_config` 命名裸的 pkg-config 模块,用 `frameworks` 链接裸的 macOS framework。AppKit 后端是 Objective-C(`.m`、`-fobjc-arc`、`-framework AppKit`);GTK 后端写 `pkg_config = ["gtk4"]`。两者都不需要应用级构建脚本,而 manifest 仍然只是数据。
 4. **`c` 目标上一次渲染的内存不会被回收,而廉价的解法并不存在。** 树恰好由 arena 永不释放的那些种类搭成——子节点数组、样式 map、字符串——而 UI 每个事件重建一次。`spike/arena-scope` 实测:400 节点时每次渲染约 1 MB、约 820 个对象,两者都无界——60 fps 下约 60 MB/s、每秒约 49,000 个对象。region 能回收字节,回收不了对象,并且会把那些引用计数永久搁死。**step 49 已于 2026-10-17 落地修复:每个动态值都可回收,渲染形状的循环持有平坦的工作集**(`CHECK.md`)——demo 尺度的告诫就此退役。
 5. **`Array` 没有 O(1) append**,而 `List` 无法转回可索引的 `Array`,所以已定的 children 写法——`Array[Node]` 靠 `.append` 增长、每次渲染重建——在字节与 retain 两面都是 O(k²)。T48.1 应当先定 children 的表示,或者给语言补一个廉价的数组 builder。**这后半句现在有答案了**:语言有了 `ArrayBuilder`(T49.3),用 `push` 以摊还 O(1) 把 `Array[T]` 长出来,再用 `to_array()` 交出。构造 child 列表不再为每个 child 付一次拷贝,所以 `children_of` 式的累加可以不必再绕那道嵌套 `.append` 的弯。T48.1 的表示问题——children 到底是不是数组——已由可移植核心给出答案(2026-10-15):children 仍是显式的 `Array[Node]`,而走到哪才知道的子节点列表用 `ArrayBuilder` 攒。
 
@@ -45,46 +47,48 @@ C1 是白送的(它就是普通的 Emo)。C2 需要递归节点类型,而它如�
 - **跨模块类型。** 2026-10-14 定案为模块路径限定:`ui.VNode`、`sync.WaitGroup`;两个模块可以声明同名短名,各自是不同类型。这正是库与应用能成为独立模块与包的原因。
 - **递归节点。** 树需要的两种形状如今都能通过检查:`class Node { def init(kind String, children Array[Node]) }`,以及接口在签名里指称自己(`def kids() Array[VNode]`)。spike 当年的 E4005 变通(接口 + 各自独立的具体容器)不再是被迫的选择——见 `spike/emo-ui-probe` 的 probe 2。
 - **C→Emo 回调契约。** 2026-10-11 定案:单方法结构接口就是回调类型;`c` 目标发射一个 trampoline 加一个不透明 userdata handle,这一对写进 `.emo-build/emo_defs.h`。
-- **README 的承诺。** 无模板语言(UI 就是普通 Emo);组件是小写 def,树里永不出现 `.new`;props 由渐进检查器检查;响应式原语是显式的;UI 事件是进程消息;后端消费树及其更新;语言层不知道任何平台。
+- **README 的承诺**(写作时的说法;README 后来已改成已定设计)。无模板语言(UI 就是普通 Emo);组件是小写 def,树里永不出现 `.new`;props 由渐进检查器检查;响应式原语是显式的;UI 事件是进程消息;后端消费树及其更新;语言层不知道任何平台。
 
 ## 四个平台
 
 | 平台 | 路径 | 状态 | 缺口 |
 |---|---|---|---|
-| macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已证明**(`spike/macos-gui`、`spike/components`) | 打包:`.m`、`-fobjc-arc`、`-framework` |
-| GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已证明**(`spike/gtk`、`spike/components`) | 打包:`pkg-config gtk4` |
-| TUI | 纯 Emo,输出 ANSI 转义 | **已落地**(T48.4) | 终端输入(raw mode、按键事件) |
-| Web | HTML/CSS(SSR)→ DOM(浏览器 TS)→ wasm + DOM | **最不成熟** | TS 目标只面向 Node;wasm 宿主只有 3 个 import |
+| macOS(AppKit) | `c` 目标 + Objective-C shim,经 `foreign def` | **已落地**(T48.8),包为 `emo/ui_macos` | 回收已落地(step 49) |
+| GTK 4 | `c` 目标 + C shim,经 `foreign def` | **已落地**(T48.9),包为 `emo/ui_gtk` | 回收已落地(step 49) |
+| TUI | 纯 Emo,输出 ANSI 转义;输入用 `term` | **已落地**(T48.4、T48.5) | 把 `term` 接进 `ui_tui` 的输入源 |
+| Web | HTML/CSS(SSR)→ DOM(浏览器 TS)→ wasm + DOM | **SSR 已落地**(T48.6);浏览器路径与它的 DOM 后端已落地(T48.10、T48.11) | `typescript` 目标的 send 共享仍然开放 |
 
 ### macOS 与 GTK 4
 
 两者都是 C ABI 上的 `foreign def`,两者都在 spike 里跑通了。差别在 shim 的厚度,不在架构:C 工具包不需要词汇表翻译(GTK 的 shim 约为 AppKit 的三分之一,因为 GTK 的名字本来就是 C 形状的)。九动词 `ui_*` 契约(`window_make`、`label_make`、`button_make`、`place`、`clear`、`connect`、`root`、`run`、`autotest_arm`)是 spike 证明过的可移植接缝,每平台的差异是一个约 100 行的 painter。
 
-真正的阻塞是打包,而它是 manifest 的缺口,不是工具链的缺口:
+真正的阻塞曾是打包,而它是 manifest 的缺口,不是工具链的缺口:
 
-- `docs/intro/package-management.md`(以及 `docs/c-backend.md` 的「Package-carried native code」)允许包里有 `.c`/`.h`,并且 `link` 字段只收**裸库名**。
+- 在 T48.7 之前,`docs/intro/package-management.md`(以及 `docs/c-backend.md` 的「Package-carried native code」)允许包里有 `.c`/`.h`,并且 `link` 字段只收**裸库名**。
 - AppKit 需要一个用 `-fobjc-arc -framework AppKit`(或 `-framework Cocoa`)编译的 Objective-C 翻译单元;裸 `-l` 名说不出这些,而 `.m` 文件不会被收集。
 - GTK 4 需要 `pkg-config gtk4` 的 cflags 与 libs;裸 `-lgtk-4` 不够(还有 glib、gobject、gio、pango、gdk 以及 include 路径)。
 
-在 manifest 长出 per-package 编译/链接 flag 机制(或一个 `pkg_config = \["gtk4"\]` 字段)之前,原生后端无法成为普通的可消费包。spike 绕开的方式是应用级构建脚本,传 `--cclib="$PWD/shim.o"` 与 `--cclib="-framework AppKit"`。这能工作,但它让每个 macOS 版 EmoUI 应用都得扛一份构建脚本,而不是一个 `require`。这是需求隐含的全部工具链工作中最具体的一块。
+在 manifest 长出 per-package 原生机制之前,原生后端无法成为普通的可消费包。spike 绕开的方式是应用级构建脚本,传 `--cclib="$PWD/shim.o"` 与 `--cclib="-framework AppKit"`。这能工作,但它让每个 macOS 版 EmoUI 应用都得扛一份构建脚本,而不是一个 `require`。
 
-**已定(2026-10-14):这个机制就是 manifest 字段,构建脚本那条路不是**(`CHECK.md`)。原生后端仍然是一个普通的包,程序用 `require` 就能取到,所以 AppKit 与 GTK 4 需要的东西声明在 manifest 里,而不是在每个使用者的脚本里重述一遍。字段面——`pkg_config` 与显式编译/链接 flag 列表之间怎么选、`.m` 是否加入被收集的 `.c`/`.h`——是 T48.7 自己的范围。
+**已定(2026-10-14)并已落地(2026-10-18,T48.7):这个机制就是 manifest 字段,构建脚本那条路不是**(`CHECK.md`)。原生后端仍然是一个普通的包,程序用 `require` 就能取到,所以 AppKit 与 GTK 4 需要的东西声明在 manifest 里,而不是在每个使用者的脚本里重述一遍:`pkg_config` 命名裸的 pkg-config 模块(它们的 `--cflags` 编译包的源码,`--libs` 进入链接),`frameworks` 命名裸的 macOS framework(`-framework NAME`),`.m` 加入 `.c`/`.h` 的收集集合并按 ARC 编译。不存在原始 flag 字段,所以 manifest 仍然只是数据。
 
 ### TUI
 
 四个平台里最便宜的,也是最好的第一个目标。渲染就是带 ANSI 转义的 `printf`——纯 Emo,在任何能写 stdout 的目标上都能跑,不需要 FFI,也不需要新的包机制。单元格网格本身就是一套布局(以字符格为单位的行/列/宽/高),正是 `plot` 终端渲染器已经规划的那类格式无关表面(`docs/visualization.md`,Layer 5)。终端后端也是检验「核心确实与工具包解耦」的最好办法:如果节点模型与 update 循环能在字符网格上跑,它们就真的是后端中立的。
 
-缺口在**输入**,不在输出。今天没有 raw mode 或按键事件运行时实现:`os` 包给的是 fd 级 `read`,`os` 只面向原生,而且没有 termios 绑定。读一行今天可行;方向键、resize 事件、Ctrl-C-as-a-message 想要 raw mode,那是一个到 `termios` 的小 `foreign def`(c/ocaml)或一个终端运行时实现。有界,但必须排期,不能假定。**2026-10-15 已定**——排期为一个标准库包,形状同 `sqlite3`(见下方诉求 7)。它替换的是 `ui_tui` 的输入源,而不是那条接缝:`Script` 与 raw-mode reader 都是 `Input`。
+输入已不再是缺口:**T48.5 于 2026-10-18 落地**为标准库 `term` 包,形状同 `sqlite3`(见下方诉求 7)——包自带 C 代码,经 `foreign def` 调用,只支持 `c` target,普通 `require` 即可到达。它提供按行读取、带退出路径恢复的 raw mode、解码后的按键事件(方向键、Home/End、Insert/Delete、Page Up/Page Down、F1–F12、Shift-Tab、Alt、UTF-8 字符)以及终端尺寸;raw mode 下 Ctrl-C 是按键事件。它替换的是 `ui_tui` 的输入源,而不是那条接缝:`Script` 与 `term` 驱动的 reader 都是 `Input`。剩下的是这层接线——`ui_tui` 仍在脚本化输入源上跑——以及 resize 事件(`SIGWINCH`),后者由包留给 UI 层。
 
-**2026-10-16 已落地(T48.4)**为 `projects/emo-ui/tui/`(包 `emo/ui_tui`)。盒模型以字符格为单位度量核心的 `Style`——列是纵向堆叠、行是横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置——`screen(root, w, h)` 把网格作为数据交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI。因为字符串字面量的转义是最小集合、0x1b 不在其中,转义字节经 `printf("%c", [27])` 发出。`Tui` 在其之上实现 `Backend`,`Input`/`Script` 就是金标所跑的脚本化事件源:字节固定,不碰终端——`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`c` 能编译后端,却拒绝金标那个循环形状(`Global`)——T48.2 留下的那个决定,如今深了三个 target。金标逼出的两个 `beam` 降级缺陷(`Block` 值的裸 def 被发射成不可调用的远程 fun;循环体里的 `case` 没有把外层 `var` 的重绑穿出)随后端一起修好,记在 `CHECK.md`。`examples/tui_menu/` 是用法示例:一个由脚本化输入驱动的终端菜单,同一个关口在它声明的每个 target 上检查它。
+**2026-10-16 已落地(T48.4)**为 `projects/emo-ui/tui/`(包 `emo/ui_tui`)。盒模型以字符格为单位度量核心的 `Style`——列是纵向堆叠、行是横向排列,`padding`/`gap`/`align`/`grow`/`width`/`height` 决定每个子节点的位置——`screen(root, w, h)` 把网格作为数据交回,于是这套算术不必靠字节就能测;`paint(root, w, h)` 把一帧写成 ANSI。因为字符串字面量的转义是最小集合、0x1b 不在其中,转义字节经 `printf("%c", [27])` 发出。`Tui` 在其之上实现 `Backend`,`Input`/`Script` 就是金标所跑的脚本化事件源:字节固定,不碰终端——`run()` 从输入拉取 tag,交给循环的 sink,直到输入说没有了。这个包声明四个能写 stdout 的托管目标;`wasm` 没有 `printf`,不在其中。`c` 当时能编译后端,却拒绝金标那个循环形状(`Global`)——T48.2 留下的那个决定;T48.8 给该 target 补上 def-as-value 之后,语料如今也在 `c` 上跑通。金标逼出的两个 `beam` 降级缺陷(`Block` 值的裸 def 被发射成不可调用的远程 fun;循环体里的 `case` 没有把外层 `var` 的重绑穿出)随后端一起修好,记在 `CHECK.md`。`examples/tui_menu/` 是用法示例:一个由脚本化输入驱动的终端菜单,同一个关口在它声明的每个 target 上检查它。
 
 ### Web
 
 诚实的答案是:「Web」是三个不同的产品,只有一个是近的。
 
 - **T0 —— 服务端渲染的 HTML/CSS。** 一个纯 Emo 渲染器,把节点树变成 HTML 与样式表,在五个托管目标上逐字节一致。没有 DOM、没有 JavaScript、没有浏览器 runtime——这正是 `plot` 选择 SVG 时的那一步架构动作:渲染归查看器,场景归库。交互是表单、链接与服务端往返(htmx 形状),或之后的一条 SSE/WebSocket 通道。这廉价、可测,立刻给内容与表单类 UI 带来「Web」。它是正确的 T0。
-- **T1 —— DOM 后端。** 一个 Emo 程序,由 TypeScript 目标编译,在浏览器里对着 `document`/`Element` 运行。真正的交互在这里,而它没就绪:发射出的 runtime 顶部 import `node:async_hooks`、`node:net`、`node:dgram`、`node:tls`、`node:dns`、`node:fs`(`ts_runtime.ts`),所以在浏览器里加载不了;step 17 的范围明确把「browser embedding(`fetch`/WebSocket bridging)」列为 out;而浏览器不能执行 `.ts`,所以一个输出打包步骤会进入工具链。要走到那里,需要一层 DOM 能力(TS runtime 里一个 `dom_*` 家族,或一个仅浏览器用的 runtime 变体)、一个浏览器安全的入口,以及一个构建步骤。都是实打实的工作,但没有一个是架构上被堵死的。
+- **T1 —— DOM 后端。** 一个 Emo 程序,编译成浏览器 bundle,在浏览器里对着 `document`/`Element` 运行。真正的交互在这里。**运行时路径已于 2026-10-18 落地(T48.10)**:TypeScript runtime 拆成无宿主的 `ts_core.ts`、Node host(`ts_node.ts`)与页面 host(`ts_browser.ts`);编译器把 core+node 拼成 `typescript` 目标的前导、core+browser 拼成 `browser` 目标的前导,`emo build --target browser` 发射一个 `.js` bundle,其类型由 Node 自带的 `module.stripTypeScriptTypes` 剥掉(Node >= 22.13)。bundle 不 import 任何宿主模块、也从不碰 `process`;页面 host 提供按行缓冲的 console 输出、页面唯一的 pid,以及十三个调用的 `dom_*` 家族——它们的 Int64 句柄索引宿主侧的节点表。emitter 按名让两个 host 各守其位:浏览器目标拒绝进程(`do`、`<-`、`receive`)与所有非 `dom_` 的 runtime implementation,`typescript` 目标拒绝 `dom_*`。**压在这些调用上的 `ui-browser` 包已于 2026-10-18 落地(T48.11)**:`emo/ui_browser` 把 `Style` 映射成浏览器自己的布局引擎消费的声明(`css.emo`),经 `dom_*` 调用为每个节点建一个元素,并像其它后端一样在每次 `patch` 时全量重建树。`button` 像 SSR 标记那样把 tag 放进 `name`/`value` 这一对,于是页面 harness 能找到事件所属的元素;一致性语料在 stub 页面里跑通。
 - **T2 —— wasm + DOM。** `wasm` 目标的模块只 import `println`、`abort`、`float_str`;wasm 上的 DOM 后端意味着新的宿主 import 与一层 JS 胶水。更晚,而且只在 T1 被证明不够时才做。
+
+**T0 已于 2026-10-18 落地(T48.6)**为 `emo/ui_ssr` 包(`projects/emo-ui/ssr/`):`page`、`fragment` 与 `stylesheet` 按先序走一遍可移植树,把每个节点的基础声明与 `Style` 驻留成 `e0`、`e1`……,每个属性值都逐字节转义,所以字节在全部五个托管目标上都是解释器的(`golden/`、`examples/ssr_page/`)。交互模型是具体的:表单提交它的字段和提交它的那个按钮的事件 tag,链接导航;`Ssr` 实现 `ui.Backend`:`mount` 打印整份文档,`patch` 打印片段,`run()` 直接返回,因为服务端没有输入源。为了这个任务,`wasm` 目标的闭包长出了任意参数个数,于是可移植循环现在五个 target 都能降级,只剩 `c` 仍拒绝裸 def 名(`CHECK.md`)。
 
 Web 与原生工具包还有一个共同的语义要点:**平台持有事件循环。** 浏览器页面或 AppKit 应用不能交给 Emo 一个阻塞的 `ui_run()`、然后让 Emo 自己的协作式调度器持有线程。`c` 目标的工具包主循环确实阻塞在 `ui_run` 里,事件经回调重入;浏览器不会。这会影响下面的状态设计。
 
@@ -168,7 +172,7 @@ const rows = each_users(users) -> (u String) { return card(u) }
 3. **一个让 block 往里追加的 builder**(`card(user) { children.push(a) }`)。能用,但把可变状态与一个环境收集器塞进树里——隐式状态,违背设计哲学。这条仍然被否掉:反对针对的是 block 在被没被告知的情况下就能取到的那个收集器,而语言自己的 `ArrayBuilder` 并不提供这样的东西——builder 是传进来的值、在调用点被写名字,所以这条选项只有写成「选项 1、但把数组换成 builder」才算可以接受。
 4. **给 block 加一条「最后一个表达式即值」的隐式规则。** 这是模板语言机制,与显式 `return` 规则相悖(`docs/intro/syntax.md`)。拒绝。
 
-因此设计说:**子节点列表是显式的 `Array[Node]`;尾随 block 用于回调与迭代,block 产生值时它 `return` 出来。** README 的 EmoUI 示例应改成这种写法,或者把 block 形式定义为必须 `return`。这是需求中「声明式语法」唯一一处实际上是 API 约定而非语法的地方,而这个约定必须写清。
+因此设计说:**子节点列表是显式的 `Array[Node]`;尾随 block 用于回调与迭代,block 产生值时它 `return` 出来。** README 的 EmoUI 示例已改成这种写法(T48.13)。这是需求中「声明式语法」唯一一处实际上是 API 约定而非语法的地方,而这个约定必须写清。
 
 相关的语言缺口:`Block` 是 `Unknown`,意味着 block 参数不受检。一个**带检查的函数类型**能让组件声明它要求的回调形状(`def each(xs Array[T], f (T) Node)`),并让树 block 对着它受检。今天 Emo 只有 `Block` 这一种写法,而 `Block` 被刻意定为 `Unknown`。新增一个带检查的 block/函数类型是一项实打实的语言改动(语法、合一、每个后端的闭包表示);它值得掂量,因为它是受检与不受检组件 API 之别,但它不是第一个包的关口。
 
@@ -261,7 +265,7 @@ reg.dispatch(tag Int64) Msg // the driver's lookup
 
 - **两个事件循环。** 在 AppKit/GTK 上,`ui_run()` 阻塞在工具包循环里,事件经回调契约重入。Emo 自己的协作式调度器(进程、邮箱)不持有那个线程。一个带邮箱的 UI 进程与一个工具包循环需要一个集成方案(工具包循环驱动调度器,或事件作为消息投递进一个进程)。spike 用的同步 Elm 循环绕开了它,也是正确的 v1:进程与监督在循环被证明之后再来。
 - **后端一致性。** `c` 目标的 `raise` 曾经结束的是程序而不是出错的那个进程,`send` 曾经是共享而不是快照——两者已于 2026-10-15 关闭(`CHECK.md`,step 50)。GUI 是让两者都显形的消费者;一个在握着工具包时 raise 的 UI 不能悄悄把窗口一起带走,现在它也不会了。`typescript` 目标的 send 共享是 Web 路径上同一个缺口。
-- **循环在各个托管 target 上的形状。** 循环已经落地(`projects/emo-ui/`,T48.2),在解释器上跑得起来;但上面这个形状——应用的 `update` 与 `view` 以 `Block` 值传进来——只在「裸 def 可以当值」的地方能编译:`ocaml`、`typescript`、`beam` 可以;`c` 拒绝(`Global`),`wasm` 拒绝 `update` 需要的双参动态调用(只支持单参闭包)。把这两个函数放到 `Handler` 接口后面——普通的接口分发,没有任何 `Block` 值函数,应用照旧用 `is()` 收窄自己的 model,正如后端收窄节点——就是同一个循环,五个 target 全部可编译,打印结果与解释器一致(`projects/emo-ui/probe/`、`CHECK.md`,Elm 循环的形状)。往哪边收口——把这两个 target 补起来,还是把应用的函数移到接口后面并改写本层的拼写——仍然开放。
+- **循环在各个托管 target 上的形状。** *已关闭。* 循环已经落地(`projects/emo-ui/`,T48.2),在解释器上跑得起来;上面这个形状——应用的 `update` 与 `view` 以 `Block` 值传进来——在每一个托管 target 上都能编译。`wasm` 这一半于 2026-10-18 关闭(T48.6):`Call_value`、`Closure` 与 `Global` 按参数个数分配一对函数/struct 类型(`closure_type`),任意参数个数的 `Block` 值都是一等值。`c` 曾经连裸 def 名本身都拒绝(`Global`),直到 T48.8 把「def 当值」落成一层无捕获闭包、包住每个 def 自己的动态 thunk。五个 target 上每一份金标与语料都跑通(`CHECK.md`,Elm 循环的形状)。把这两个函数放到 `Handler` 接口后面——普通的接口分发,没有任何 `Block` 值函数,应用照旧用 `is()` 收窄自己的 model,正如后端收窄节点——保留为那个决定没有选走的替代路(`projects/emo-ui/probe/`)。两者之间最终选了补 target:def-as-value 是后端的缺口而非新语法,而且保住了已落地的 `ui.run` 拼写。
 - **长跑内存。** `c` 目标不回收一次渲染分配的值语义家族,而 UI 每个事件重渲染一次,所以这是约束平台而非约束设计的那条告诫:`spike/arena-scope` 实测 400 节点时每次渲染约 1 MB、约 820 个对象,两者都无界。region 修不了它——它回收字节、回收不了对象,还会搁死那些引用计数。原生后端的 demo 尺度注记已退役——step 49 于 2026-10-17 落地,一次渲染会把它构建的一切全部释放,工作集保持平坦(`CHECK.md`)。
 
 ### Layer 6 —— 后端接缝
@@ -280,11 +284,14 @@ interface Backend {
 
 每个平台实现它:
 
-- **macOS / GTK:** 一个 Emo 类,其方法调用 `foreign def` shim。shim 实现各原语(`window_make`、`label_make`、`place`、`connect`、……);Emo 侧遍历树并把节点映射到原生 handle。
-- **TUI(已落地,T48.4):** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 从脚本化输入拉取 tag 并交给循环的 sink。`projects/emo-ui/tui/` 是这个包,`tui/golden/` 是那段脚本化输入的金标:`screen` 把网格作为数据交回,`paint` 写出字节,同一块界面在解释器、`ocaml`、`typescript` 与 `beam` 上逐字节相同。
-- **Debug(已落地,T48.3):** 无头的那一个,也是这条接缝的参考实现。它把循环交给它的每一棵树渲染进一份日志而不是打印——于是何时让文本到达 stdout 由调用方决定,金标不会被一个恰好挂上去的后端搅动——而 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。`projects/emo-ui/golden/` 就是它为的东西:一块界面经核心、以消费者抵达核心的方式走一遍,再以文本出来,在解释器、`ocaml`、`c`、`typescript`、`beam` 上逐字节相同(`wasm` 根本降不下核心——即上面循环的形状)。这个形态之所以这么窄是被 target 逼的、不是选的:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为枚举或元组在两个 target 上打印出的字节并不相同(`CHECK.md`,枚举的显示形式);它的金标也先在建树之前用独立语句取好 tag,因为操作数求值顺序由 target 决定(`CHECK.md`)。
-- **SSR:** 一个纯 Emo 类,把树序列化成 HTML/CSS;`run()` 就是渲染一次。
-- **DOM(之后):** 一个 Emo 类,压在运行时的 `dom_*` 调用上;`run()` 把控制权交给浏览器后返回。
+- **macOS(已落地,T48.8):** 一个 Emo 类,其方法调用 `foreign def` shim,另一边是 C ABI 上的 AppKit shim。九个动词是 `window_make`、`label_make`、`button_make`、`place`、`clear`、`connect`、`root`、`run` 与 `autotest_arm`;Emo 侧以 point 度量这棵树(`box.emo`),遍历它,并把节点映射到原生 handle。`projects/emo-ui/macos/` 是这个包,`corpus/` 是它进入收敛语料(T48.12)的入口——共享应用摆在一块界面上,由一段逗号分隔的 tag 脚本驱动,shim 在 `EMO_GUI_AUTOTEST` 下逐次点击后结束进程,所以它的字节不用键盘、也不用截图就能检查。
+- **GTK 4(已落地,T48.9):** 同一个九动词 `ui_*` 契约、同一套 point 盒模型,落在 C ABI 的另一侧。`projects/emo-ui/gtk/` 是这个包,`corpus/` 是它进入收敛语料的入口——与 macOS 同一个共享应用、同样的脚本与钉住的字节。GTK 本来就是 C,所以 shim 更薄:Emo 命名不了的只有信号处理函数与自驱动脚本,而 `place` 原样施加 frame,因为 GtkFixed 的原点在左上角。manifest 的 `pkg_config = ["gtk4"]` 就是打包的全部故事;关口在 GTK 4 能回答的宿主上本机构建,否则在容器(GTK 4 加 Xvfb)里编译同一份生成的 C,所以 macOS 宿主也能检查这个后端。
+- **TUI(已落地,T48.4):** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 从脚本化输入拉取 tag 并交给循环的 sink。`projects/emo-ui/tui/` 是这个包,`tui/golden/` 是那段脚本化输入的金标,`corpus/` 是它进入收敛语料的入口:`screen` 把网格作为数据交回,`paint` 写出字节,同一块界面在解释器、`ocaml`、`typescript` 与 `beam` 上逐字节相同。
+- **Debug(已落地,T48.3):** 无头的那一个,也是这条接缝的参考实现。它把循环交给它的每一棵树渲染进一份日志而不是打印——于是何时让文本到达 stdout 由调用方决定,金标不会被一个恰好挂上去的后端搅动——而 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。`projects/emo-ui/golden/` 就是它为的东西:一块界面经核心、以消费者抵达核心的方式走一遍,再以文本出来,在解释器与全部五个托管 target 上逐字节相同(`wasm` 那一半的循环形状已于 T48.6 关闭,`c` 那一半已于 T48.8 关闭)。这个形态之所以这么窄是被 target 逼的、不是选的:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为枚举或元组在两个 target 上打印出的字节并不相同(`CHECK.md`,枚举的显示形式);它的金标也先在建树之前用独立语句取好 tag,因为操作数求值顺序由 target 决定(`CHECK.md`)。
+- **SSR(已落地,T48.6):** `projects/emo-ui/ssr/` 把树渲染成 HTML 与驻留的样式表,在全部五个 target 上逐字节一致。`mount` 打印整份文档,`patch` 打印浏览器换入的片段;`run()` 直接返回,因为服务端没有输入源,`deliver(tag)` 就是推进一个事件的那次请求。`corpus/` 是它进入收敛语料的入口。交互模型是表单与链接,只有服务端往返才放得下的三个节点(`form`、`link`、`field`)就住在这个包里,而不是核心。
+- **DOM(已落地,T48.11):** `projects/emo-ui/browser/` 是包 `emo/ui_browser`,一个压在运行时 `dom_*` 调用上的 Emo 类(这些调用随浏览器路径于 T48.10 落地)。布局由浏览器自己的布局引擎完成,所以这个包带的是样式映射(`css.emo`),而不是 point 盒模型;`run()` 把控制权交给浏览器后返回。`corpus/` 是它进入收敛语料的入口,`page.mjs` 是关口点击脚本所在的 stub 页面。
+
+如今它们跑的是同一个应用。`projects/emo-ui/corpus/` 是包 `emo/ui_corpus`(T48.12):状态是计数器,表单是显示计数的一个输入框与一个提交按钮,列表是可滚动列表,另有 `view` 注册的三个 tag——一个模块,里面没有平台的名字。每个后端的 `corpus/` 都是薄入口:`require` 共享包、构建该后端、把 `ui_corpus.view` 与 `ui_corpus.update` 交给 `ui.run`。debug、SSR 与 TUI 入口由 `corpus/check.sh` 在各自 manifest 声明的每个托管 target 上检查;macOS、GTK 4 与浏览器入口由各自包的关口检查,跑同一段自驱动脚本、对照同一份钉住的字节。
 
 `patch` 是成长边缘。spike 每个事件做全量重建(`clear` 加重新 `place`),对终端与静态 HTML 渲染没问题,对保留式工具包是错的(丢焦点、选区、滚动位置),对 DOM 也浪费。v1 可以对 TUI/SSR 先上全量重建、对原生/DOM 用保留式;带 key 的协调是后续项,而编译器的「静态可判定的定向刷新」是它的长期形态。
 
@@ -329,8 +336,8 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 `app.update` 可以直接传进去。它们落在 `Block` 参数里,而那是
 `Unknown`,所以入口的接线和 Layer 1 一样是那条不受检的回调边界。
 `view` 先收循环的 `Registry`,因为那张表是循环的(Layer 5)。这就是
-`ui.run` 落地时的形状(T48.2)——也是有两个 target 还编译不了的形状,
-即 Layer 5 记下的那个开放项。
+`ui.run` 落地时的形状(T48.2)——也是 `c` 还编译不了的形状(`wasm`
+已于 T48.6 关闭),即 Layer 5 记下的那个开放项。
 
 `app.emo` 对所有三个都是同一个文件;只有入口模块不同,而它只有几行。一个想要 `ui_macos.table` 的平台特有应用把它写在入口里或一个 macOS 专属组件模块里;可移植组件从不提到它。这就是对需求的直接回答:**组合方式相同,组件库按平台,差异被隔离到一个小入口模块与一个包依赖里。**
 
@@ -355,18 +362,18 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 
 1. **带检查的 block/函数类型(可选)。** `Block` 是 `Unknown`,所以组件 API 的回调与树 block 不受检。带类型的 block 能让 `each(xs, f: (T) Node)` 受检。便利项,不是关口;数组子节点形式不用它也能让树受检。
 2. **没有隐式子节点收集——这是设计。** 不要新增一种收集 block 表达式语句的构造。那是模板语言,而数组参数已经把树表达清楚了。
-3. **包原生输入的扩展(原生后端的真正关口)。** `.c`/`.h` 加裸 `-l` 表达不了 AppKit(`.m`、frameworks)或 GTK(`pkg-config`)。新增 per-package 编译 flag / `pkg_config` 机制——**已定(2026-10-14)走这条路,不走「写明使用应用级构建脚本」那条**(`CHECK.md`);字段面是 T48.7 自己的范围。
+3. **包原生输入的扩展(已落地,T48.7)。** `.c`/`.h` 加裸 `-l` 表达不了 AppKit(`.m`、frameworks)或 GTK(`pkg-config`);manifest 现在为这两者携带 `pkg_config` 与 `frameworks`,`.m` 也加入了收集集合——**已定(2026-10-14)走这条路,不走「写明使用应用级构建脚本」那条**(`CHECK.md`)。
 4. **`c` 目标的内存回收——已定(2026-10-14)走值语义家族的引用计数;2026-10-17 落地(step 49)。** region 那条路已被实测并排除(`spike/arena-scope`、`CHECK.md`);原生后端交付时附带的 demo 尺度注记已退役——渲染形状的循环持有平坦的工作集,由 T49.4 闸门钉住。
 5. **`c` 目标的 `raise` 与 `send`——已定(2026-10-15),兑现已经做出的承诺**(`CHECK.md`,step 50)。UI 不能因为一个坏事件整体死掉,跨进程的事件载荷也不能被静默共享——这两条正是 `docs/intro/concurrency.md` 与 `docs/intro/syntax.md` 早已写下的。`c` 目标是唯一跑偏的实现;现在子进程的 `raise` 只结束它自己,`send` 送快照。`typescript` 目标的 send 共享是下面 Web 路径上的同一个缺口。
-6. **Web 的浏览器路径(T1)——已定(2026-10-15)走拆分路线:** 把 TypeScript runtime 拆出一个浏览器安全子集、加一个 `dom_*` 家族与一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`)。打包步骤落在工具链的哪里属于 T48.10 自己的范围。SSR(T0)不需要。
-7. **终端输入。** TUI 的 raw mode 与按键事件(一个小的 termios 绑定或一个终端运行时实现)。**2026-10-15 已定:做成一个标准库包,按 `sqlite3` 的方式发布**(`CHECK.md`)——包自带 `.c`/`.h` 源码,经 `foreign def` 调用,由 manifest 的 `targets` 把关,随其余 stdlib 一起内嵌。raw mode 是任何 TUI 程序都需要的能力,该跟 `os`、`file` 放在一起,而不是塞进恰好第一个用到它的那个 UI 框架里。
+6. **Web 的浏览器路径(T1)——已定(2026-10-15)走拆分路线:** 把 TypeScript runtime 拆出一个浏览器安全子集、加一个 `dom_*` 家族与一个打包步骤,而不是新增 wasm 宿主 import(`CHECK.md`)。**已于 2026-10-18 落地(T48.10):**拆分是无宿主的 core 加 Node 与页面两个 host,`dom_*` 家族是十三个基于 Int64 句柄的调用,打包步骤是一个构建 target——`emo build --target browser`。SSR(T0)不需要。
+7. **终端输入。** TUI 的 raw mode 与按键事件(一个小的 termios 绑定或一个终端运行时实现)。**2026-10-15 已定:做成一个标准库包,按 `sqlite3` 的方式发布**(`CHECK.md`)——包自带 `.c`/`.h` 源码,经 `foreign def` 调用,由 manifest 的 `targets` 把关,随其余 stdlib 一起内嵌。raw mode 是任何 TUI 程序都需要的能力,该跟 `os`、`file` 放在一起,而不是塞进恰好第一个用到它的那个 UI 框架里。**2026-10-18 已落地**为 `term` 包(`docs/stdlib/term.md`)。
 8. **不加新语法。** 树已经可表达;如果不可,缺口是一个类型或一个库函数,不是一条构造。
 
 ## 风险
 
-- **后端间的语义漂移。** 语法收敛并不让一个 `row` 处处同义。缓解:一套小的声明式布局词汇表、收敛命名规则,以及一个一致性语料(一个 app、每个后端)——**已落地为 `debug` 后端与 `projects/emo-ui/golden/`(T48.3)**,它们把一块界面钉成在所有跑得动的 target 上逐字节相同,并且在第二个后端出现之前就找出了第一批分歧:操作数求值顺序与枚举的显示形式,今天在这两个 target 上并非同样的字节(`CHECK.md`)。**终端后端与它的脚本化金标(T48.4)**把这条线延长——一块界面经过一个真正的盒模型,在五个托管目标中的四个上逐字节相同——并逼出、修掉了它记下(`CHECK.md`)的两个 `beam` 降级缺陷。
+- **后端间的语义漂移。** 语法收敛并不让一个 `row` 处处同义。缓解:一套小的声明式布局词汇表、收敛命名规则,以及一个一致性语料(一个 app、每个后端)——**已落地为 `debug` 后端与 `projects/emo-ui/golden/`(T48.3)**,它们把一块界面钉成在所有跑得动的 target 上逐字节相同,并且在第二个后端出现之前就找出了第一批分歧:操作数求值顺序与枚举的显示形式,今天在这两个 target 上并非同样的字节(`CHECK.md`)。**终端后端与它的脚本化金标(T48.4)**把这条线延长——一块界面经过一个真正的盒模型,在五个托管目标中的四个上逐字节相同——并逼出、修掉了它记下(`CHECK.md`)的两个 `beam` 降级缺陷。**服务端渲染后端(T48.6)**再延长一次:整棵树的 HTML 与样式表在全部五个 target 上逐字节相同,而关掉它需要 `wasm` 闭包的参数个数。**收敛语料(T48.12)**是这条缓解措施的最终形态:一个可移植应用(`projects/emo-ui/corpus/`,包 `emo/ui_corpus`),带计数器、表单、列表与事件,被 debug、SSR、TUI、macOS、GTK 4 与浏览器入口原样消费。它找出了一个金标从未触到的 `wasm` codegen 缺陷——指向普通 def 的 `ref.func` 不在声明式 element 段里——如今逐入口钉住。
 - **文本。** 可移植的自动布局需要文本度量;设计通过把布局委托给平台(而 TUI 数格子)来避免需要它们。未来的 canvas 或像素一致模式会重新引入 `docs/visualization.md` 拒绝过的字体度量问题。
-- **原生打包。** 在 manifest 长出 flags 之前,macOS/GTK 应用要扛构建脚本;这是需求「下载即用」上的摩擦。manifest 字段这条路已定(T48.7),所以风险在排期,不在方向。
+- **原生打包。** manifest 字段已落地(T48.7),macOS/GTK 应用不再需要构建脚本;需求「下载即用」上的这层摩擦已经消除。剩下的风险是机制的可用环境(机器上要有 pkg-config),不是设计。
 - **两个事件循环**(Emo 调度器 vs. 工具包/浏览器),如上。
 - **范围。** UI 框架是无界的。分档表是防线:可移植核心 + TUI + SSR 先行,原生工具包其次,DOM 最后;不承诺布局一致、不做动画、v1 的无障碍不超出原生控件自带的部分。
 - **没有泛型、没有默认参数。** 节点数组是 `Array[Node]`(没问题——接口就是元素类型),但样式工厂带 `N` 个复制方法,恰如 `plot` 接受的那样。有界样板。
@@ -396,7 +403,7 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 
 1. **EmoUI 是独立项目**,不是标准库包;可移植核心与纯 Emo 后端搬进标准库是一个可能的后续分拆,不是 v1。**2026-10-15 修订:** 它托管在本仓库的 `projects/emo-ui/` 下,而不是一开始就另建一个独立仓库(`CHECK.md`,in-tree 项目布局)。「不是标准库包」这一半不变——stdlib 内嵌只走 `stdlib/registry`,所以 in-tree 的 `projects/emo-ui` 不会进入编译器二进制。
 2. **树类型是多模块的 `ui.Node`**(接口树脊 + 带类型 props 的具体类),不是一个字符串化的单类,也不是每平台一套节点类、没有核心。
-3. **子节点是显式的 `Array[Node]`。** 尾随 block 用于回调与迭代,且必须 `return` 其值;没有隐式子节点收集,README 的示意树改成这种写法。
+3. **子节点是显式的 `Array[Node]`。** 尾随 block 用于回调与迭代,且必须 `return` 其值;没有隐式子节点收集,README 的示意树已改成这种写法(T48.13)。
 4. **布局是一套映射到平台原生布局的可移植词汇表**,不是一个共享 Emo 布局引擎。TUI 保留一个小 Emo 盒模型,因为它没有原生引擎。
 5. **样式是带类型值,配工厂与 `with_*` 复制**,不用字符串 map,不用默认参数。
 6. **状态是 Elm**(model、`update`、`view`),压在显式语言原语(`Box`/`List`/`Map`)上;事件是登记在 Emo 侧的带类型消息,以后端可见的 `Int64` tag 暴露。
@@ -411,12 +418,13 @@ ui.run(app.view, app.update, Model.new(0), ui_tui.backend())
 步骤规格在 [`plan/step-48-emo-ui.md`](../../plan/step-48-emo-ui.md);决定 12 作为
 **M16 — 值语义家族的回收(step 49)** 追踪,规格在
 [`plan/step-49-value-reclamation.md`](../../plan/step-49-value-reclamation.md)。
+这些决定产出的已定设计陈述在 [`README.md`](../../README.md) 与
+[`projects/emo-ui/docs/`](../../projects/emo-ui/docs/) 下的各包参考文档里;本文档保留它们背后的论证。
 
 ## 仍开放的问题
 
-1. **原生打包机制** —— 方向已定(2026-10-14)走 per-package 的 manifest 字段,取代应用级构建脚本那条路;字段面(`pkg_config`、编译/链接 flags、`.m` 是否收集)是 T48.7 自己的范围。这卡住顺序里的第 3 项。
-2. **协调** —— 保留式后端何时从全量重建换成带 key 的 diff,以及编译器的定向刷新是否与它同时落地。
-3. **两个事件循环的集成** —— UI 进程与工具包循环如何共存,以及事件在 v1 还是更晚变成真正的进程消息。
-4. **带检查的 block/函数类型** —— 在第一个包显出摩擦之后,组件 API 是否值得它。循环现在露出了这份摩擦的另一面:它那两个 `Block` 值的 `view`/`update` 正是 `c` 与 `wasm` 编译不了的东西(`CHECK.md`,Elm 循环的形状),所以「不加带检查的函数类型」的那条替代路——把应用的两个函数放到接口后面——同时也是「不补这两个 target」的那条替代路。
-5. **Web T1 的边界** —— 路线已定(2026-10-15):把 TypeScript runtime 拆出一个浏览器安全子集加一个 `dom_*` 家族,不做浏览器专属的 runtime 变体(`CHECK.md`)。仍然开放的是机械问题:打包步骤落在工具链的哪里,属于 T48.10 自己的范围。`typescript` 目标的 send 共享(`CHECK.md`,跨 target 不变量)也在这条路径上。
-6. **树的拼法** —— 数组式 children 到底要不要一个字面量写法;如果要,它属于 Emo 自己的语法,还是属于一个产出 `.emo` 的外部翻译器。已经**关掉**的机制(发射、self 重绑定、环境式收集器、自带走作用域求值的模板引擎)记在 [`emo-ui-composition.md`](emo-ui-composition.md),那里也写明了能了结这个问题的证据是什么。
+1. **协调** —— 保留式后端何时从全量重建换成带 key 的 diff,以及编译器的定向刷新是否与它同时落地。
+2. **两个事件循环的集成** —— UI 进程与工具包循环如何共存,以及事件在 v1 还是更晚变成真正的进程消息。
+3. **带检查的 block/函数类型** —— 在第一个包显出摩擦之后,组件 API 是否值得它。循环现在露出了这份摩擦的另一面:它那两个 `Block` 值的 `view`/`update` 只剩 `c` 编译不了(`wasm` 那一半已于 T48.6 关闭,`CHECK.md`,Elm 循环的形状),所以「不加带检查的函数类型」的那条替代路——把应用的两个函数放到接口后面——同时也是「不给 `c` 补 def-as-value」的那条替代路。
+4. **Web T1 的边界** —— 路线已定(2026-10-15):把 TypeScript runtime 拆出一个浏览器安全子集加一个 `dom_*` 家族,不做浏览器专属的 runtime 变体(`CHECK.md`);已于 2026-10-18 落地(T48.10–T48.11),打包步骤是 `emo build --target browser`,DOM 后端是压在其上的 `emo/ui_browser`。仍然开放的只有 `typescript` 目标的 send 共享(`CHECK.md`,跨 target 不变量)——后者不在浏览器目标上。
+5. **树的拼法** —— 数组式 children 到底要不要一个字面量写法;如果要,它属于 Emo 自己的语法,还是属于一个产出 `.emo` 的外部翻译器。已经**关掉**的机制(发射、self 重绑定、环境式收集器、自带走作用域求值的模板引擎)记在 [`emo-ui-composition.md`](emo-ui-composition.md),那里也写明了能了结这个问题的证据是什么。

@@ -19,7 +19,21 @@ type env = {
          receive arms and arrow blocks cross a boundary and reset it *)
   mutable fname : string; (* the function being emitted, for trampolining *)
   mutable fparams : string list; (* its parameters, in order *)
+  browser : bool; (* the browser target: the page host, not Node *)
 }
+
+(* The two targets share one emitter and one core runtime; they differ
+   in the host half prepended to the program and in which capabilities
+   the emitted calls may name. A browser has no processes, no sockets,
+   and no filesystem, so the constructs that need them are refused at
+   build time rather than left to fail in the page. *)
+let is_dom = Emo_ir.is_dom_impl
+
+let refuse_browser env what =
+  if env.browser then
+    raise
+      (Emo_ir.Lower_error
+         (Printf.sprintf "%s is not available on the browser target" what))
 
 let put env fmt = Printf.ksprintf (Buffer.add_string env.buf) fmt
 
@@ -263,8 +277,22 @@ let rec expr env (e : Emo_ir.expr) : string =
       else if name = "halt" then "E.halt()"
       else Printf.sprintf "E.builtin(%S, [%s])" name args_code
   | Runtime_impl { name; args } ->
-      (* The network implementations answer promises; awaiting every one
-         keeps a direct builtin call usable wherever an expression goes. *)
+      if env.browser && not (is_dom name) then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the `%s` runtime implementation is not available on the \
+                 browser target"
+                name));
+      if (not env.browser) && is_dom name then
+        raise
+          (Emo_ir.Lower_error
+             (Printf.sprintf
+                "the `%s` runtime implementation is not available on the \
+                 typescript target; build for the browser target"
+                name));
+      (* The implementations answer promises; awaiting every one keeps a
+         direct builtin call usable wherever an expression goes. *)
       Printf.sprintf "(await E.runtimeImpl(%S, [%s]))" name
         (String.concat ", " (List.map (expr env) args))
   | Box_new e -> Printf.sprintf "E.box(%s)" (expr env e)
@@ -278,6 +306,7 @@ let rec expr env (e : Emo_ir.expr) : string =
           Printf.sprintf "E.throwException(%s, %s)" (expr env message)
             (expr env d))
   | Do_spawn { func; args } ->
+      refuse_browser env "a spawned process (`do`)";
       (* the arguments evaluate in the spawner (matching the other
          targets), so they are hoisted above the E.spawn call *)
       let arg_locals = List.map (fun _ -> fresh env) args in
@@ -300,6 +329,7 @@ let rec expr env (e : Emo_ir.expr) : string =
         (Emo_ir.sanitize_ident func)
         (String.concat ", " arg_locals)
   | Spawn_value { f; args } ->
+      refuse_browser env "a spawned process (`do`)";
       let arg_locals = List.map (fun _ -> fresh env) args in
       let pre =
         String.concat "\n"
@@ -386,8 +416,10 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
         (block env then_) (block env else_)
   | Case { scrutinee; branches } -> case env scrutinee branches ~tail
   | Send { target; message } ->
+      refuse_browser env "a `<-` message send";
       Printf.sprintf "E.send(%s, %s);" (expr env target) (expr env message)
   | Receive { branches } ->
+      refuse_browser env "`receive`";
       let saved = env.in_receive in
       let saved_loop = env.in_loop in
       env.in_receive <- true;
@@ -685,16 +717,22 @@ let emit_class env (c : Emo_ir.class_) : string =
 
 (* ---- The program ---- *)
 
-(* The prelude rides the compiler as generated data
+(* The preludes ride the compiler as generated data
    (src/emo_codegen/ts, the C runtime's mechanism); nothing is read
-   from beside the binary or the host build tree. *)
+   from beside the binary or the host build tree. Each is the shared
+   core plus one host: Node for the typescript target, the page host
+   for the browser target. *)
 let ts_prelude = Emo_ts_runtime_data.ts_prelude
+let ts_browser_prelude = Emo_ts_runtime_data.ts_browser_prelude
 
-let emit_ts (program : Emo_ir.program) : string =
+let emit_program ~(browser : bool) ~(prelude : string)
+    (program : Emo_ir.program) : string =
+  let target = if browser then "browser" else "typescript" in
   if List.exists (fun f -> f.Emo_ir.fforeign <> None) program.Emo_ir.pfuncs then
     raise
       (Emo_ir.Lower_error
-         "foreign definitions are not supported on the typescript target yet");
+         (Printf.sprintf
+            "foreign definitions are not supported on the %s target yet" target));
   let buf = Buffer.create (16 * 1024) in
   let env =
     {
@@ -705,9 +743,10 @@ let emit_ts (program : Emo_ir.program) : string =
       fparams = [];
       in_receive = false;
       in_loop = false;
+      browser;
     }
   in
-  Buffer.add_string buf ts_prelude;
+  Buffer.add_string buf prelude;
   Buffer.add_string buf "\n// ---- program ----\n";
   List.iter
     (fun (name, sigs) ->
@@ -723,6 +762,10 @@ let emit_ts (program : Emo_ir.program) : string =
       put env "%s\n" (emit_ctor_factory env c))
     program.Emo_ir.pclasses;
   List.iter (fun f -> put env "%s\n" (emit_func env f)) program.Emo_ir.pfuncs;
+  (* A browser page has no exit code: an uncaught failure is reported
+     and the page keeps running, like a native UI loop survives one bad
+     event. Node reports it and exits 70, the compiler's external-step
+     code. *)
   put env
     "\n\
      E.runMain(async () => {\n\
@@ -734,7 +777,14 @@ let emit_ts (program : Emo_ir.program) : string =
      }).catch((e: any) => {\n\
      if (e instanceof EHalt || e instanceof EReturn) return;\n\
     \      console.error(E.renderError(e));\n\
-    \  process.exitCode = 70;\n\
+    \  %s\n\
      });\n"
-    (stmts env program.Emo_ir.pinit ~tail:false);
+    (stmts env program.Emo_ir.pinit ~tail:false)
+    (if browser then "" else "process.exitCode = 70;");
   Buffer.contents buf
+
+let emit_ts (program : Emo_ir.program) : string =
+  emit_program ~browser:false ~prelude:ts_prelude program
+
+let emit_browser (program : Emo_ir.program) : string =
+  emit_program ~browser:true ~prelude:ts_browser_prelude program
