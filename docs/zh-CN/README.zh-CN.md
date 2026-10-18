@@ -44,6 +44,7 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 - [`docs/zh-CN/intro/networking.md`](intro/networking.md) —— 基于 `net` 与 `http` 包的直接风格异步网络 API。
 - [`docs/zh-CN/intro/native-builds.md`](intro/native-builds.md) —— `emo build`、随二进制附带的运行时、`foreign def` C 互操作。
 - [`docs/zh-CN/intro/testing.md`](intro/testing.md) —— `emo test`、`test/` 约定、`expect_*` 断言。
+- [`docs/emo-testing-guide.md`](../emo-testing-guide.md) —— 测试指南：发现规则、四个断言内建、报告与隔离（英文）。
 - [`docs/zh-CN/intro/configuration.md`](intro/configuration.md) —— 配置即 Emo 表达式，在受限 profile 下求值。
 
 ## EmoUI
