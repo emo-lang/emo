@@ -1,0 +1,18 @@
+// The statistics sublayer's floor: how a column with missing entries is
+// read. Every statistic observes a numeric column through `observed`,
+// which drops the entries the parallel presence column names `absent`
+// (decision: missing numbers are presence tags, not NaN — the beam
+// target's floats cannot carry one).
+
+def observed(numbers Array[Float64], presence Array[plot.Presence]) Array[Float64] {
+  if numbers.length() != presence.length() {
+    raise Exception.new(message: "plot: a presence column must match its numbers, got ${presence.length()} entries for ${numbers.length()} values")
+  }
+  var out = []
+  for var i = 0; i < numbers.length(); i = i + 1 {
+    if presence[i] == plot.Presence.present {
+      out = out.append(numbers[i])
+    }
+  }
+  return out
+}

@@ -9,6 +9,12 @@ enum Share { all, none }
 enum Anchor { start, middle, end }
 enum Weight { regular, bold }
 
+// A numeric column's missing marker. Erlang floats cannot carry NaN, so
+// a missing number keeps its slot in the values array and a parallel
+// presence entry names the slot `absent`; the statistics drop the
+// absent entries before any of them runs.
+enum Presence { present, absent }
+
 class Figure {
   def init(width Float64, height Float64, title String, theme Theme, axes Array[Axes], grid (Int64, Int64), share Share) {
     self.width = width

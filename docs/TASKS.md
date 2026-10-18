@@ -1413,9 +1413,14 @@ against the `Renderer` interface, not `SvgRenderer`.
 **Done when:** `plot.table` / `plot.table_missing` build a validated
 `Table`, and the chart layer resolves channels through the vocabulary.
 
-- [ ] **T42.1** — `enum Presence { present, absent }` and the parallel
+- [x] **T42.1** — `enum Presence { present, absent }` and the parallel
       `Map[String, Array[Presence]]` for missing numbers, with the
-      statistics skipping `absent` entries (decision 25).
+      statistics skipping `absent` entries (decision 25). The type is
+      public at the `plot` root; the statistics read a numeric column
+      through `internal.stats.observed`, which drops the `absent`
+      entries and raises when a presence array disagrees with its
+      values. Verified on all six paths — interp, c, ocaml, ts, wasm,
+      beam — with the skip and the mismatch raise byte-identical.
 - [ ] **T42.2** — `plot.table(numbers, labels)` and
       `plot.table_missing(numbers, presence, labels)`: column-oriented
       `Table`, shape violations raising (decision 4/10).

@@ -78,6 +78,21 @@ vertical lines at the x ticks, styled by the theme's `GridStyle` —
 with), and `visible` (`false` draws no grid at all). The default is a
 light solid line at width 1.0, refined through `Theme.with_grid`.
 
+## Missing numbers
+
+A missing number is a presence tag, not `NaN` — the beam target's
+Erlang floats cannot carry one. A numeric column keeps its slot in the
+values array, and a parallel presence array names the empty slots:
+
+```emo
+enum Presence { present, absent }
+```
+
+The statistics read a column beside its presence array and skip the
+`absent` entries, so one missing value costs an observation, not the
+whole column. The parallel presence column rides the `Table` the
+dataset layer builds (`plot.table` / `plot.table_missing`).
+
 ## Themes
 
 A theme dresses the whole figure: the background and foreground inks,

@@ -55,6 +55,16 @@ enum Share { all, none }
 
 网格画在 mark 背后:y 刻度上的横线与 x 刻度上的竖线,由主题的 `GridStyle` 定样式——`color`、`width`、`dash`(与折线 mark 同一个 `Dash` 枚举)、`visible`(`false` 时完全不画网格)。默认是宽度 1.0 的浅色实线,经 `Theme.with_grid` 细化。
 
+## 缺失数字
+
+缺失的数字用 presence 标签表示,不用 `NaN`——beam 目标的 Erlang 浮点装不下它。数值列在值数组里保留自己的槽位,由一条并行的 presence 数组指出空槽:
+
+```emo
+enum Presence { present, absent }
+```
+
+统计读一列时连同它的 presence 数组一起读,跳过 `absent` 的条目,一个缺失值损失的是一个观测,而不是整列。并行的 presence 列搭载数据集层建出的 `Table` 而来(`plot.table` / `plot.table_missing`)。
+
 ## 主题
 
 主题装扮整张图:背景与前景墨色、网格、坐标轴、标题、标签样式,color 通道将要经过的 palette 与 colormap、面板间距,以及 `figure()` 出发的默认尺寸。`figure()` 建出默认的浅色主题,`with_theme` 把另一套换上图:
