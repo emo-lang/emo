@@ -248,7 +248,8 @@ the tests must not observe each other.
 - **No parameterized tests, filtering, or hooks.** There is no setup/teardown;
   tests are ordinary functions, so call a shared helper instead.
 - **Interpreter only.** `emo test` always interprets. The compiled backends do
-  not lower the assertion builtins: a program that reaches one is refused by
-  the backend (wasm, beam, riscv64) or fails at runtime (`c`, `ocaml`,
-  `typescript`). Keep assertions in `test/` modules, which the entry points of
-  compiled builds do not reach.
+  not lower the assertion builtins, and a compiled build leaves every module
+  under `test/` out of the program — tests are not checked, lowered, or
+  shipped. A product module that calls an assertion still reaches the
+  backend's refusal (wasm, beam, riscv64) or a runtime failure (`c`, `ocaml`,
+  `typescript`), so keep assertions in `test/`.

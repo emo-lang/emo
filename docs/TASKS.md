@@ -1517,9 +1517,9 @@ targets; `emo new` scaffolds a passing test; `dune test` green.
       mentions `emo test`; scaffold goldens updated.
 - [x] **T46.7** — `examples/test_demo/`: a small module, passing
       tests under `test/`, `expected.txt` for the golden harness;
-      reconcile the per-target golden builds (they lower every module
-      in the tree — the example's test modules must not break the
-      compiled goldens while `expect_*` refuses there).
+      reconcile the per-target golden builds (a compiled build leaves
+      every `test/` module out, so the example's tests cannot reach a
+      backend that refuses `expect_*`; product code still does).
 - [x] **T46.8** — Docs: README gains the Testing section (the
       convention, the command, the builtins, a raise failing only the
       one test), mirrored in `docs/zh-CN/README.zh-CN.md`.
