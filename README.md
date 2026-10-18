@@ -27,18 +27,6 @@ $ unzip emo-<version>-macos-arm64.zip
 $ ./emo-<version>-macos-arm64/bin/emo run hello.emo
 ```
 
-Homebrew, from the project's own tap:
-
-```console
-$ brew install emo-lang/tap/emo
-```
-
-opam builds from source and additionally brings the `ocaml` compilation target:
-
-```console
-$ opam install emo
-```
-
 Windows: WSL2 is the supported path — install inside WSL as you would on Linux; a native Windows build is pending the runtime port (see `docs/toolchain-distribution.md`).
 
 Wherever you installed from, `emo doctor` checks the environment per target and names what is missing.

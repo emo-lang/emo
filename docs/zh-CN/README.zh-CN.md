@@ -27,18 +27,6 @@ $ unzip emo-<version>-macos-arm64.zip
 $ ./emo-<version>-macos-arm64/bin/emo run hello.emo
 ```
 
-Homebrew，来自项目自有 tap：
-
-```console
-$ brew install emo-lang/tap/emo
-```
-
-opam 从源码构建，并额外带来 `ocaml` 编译目标：
-
-```console
-$ opam install emo
-```
-
 Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；原生 Windows 构建在等待运行时移植（见 `docs/toolchain-distribution.md`）。
 
 无论从哪个渠道安装，`emo doctor` 都会按 target 检查环境并说出缺什么。
