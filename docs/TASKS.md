@@ -1370,7 +1370,7 @@ panels and stays byte-identical on all five targets; `dune test` green.
 - [x] **T40.6** — `Axes` draw: a continuous x scale, the y domain
       inferred from every mark's range, and per-mark dispatch (replacing
       today's bar-only `first_labels`/`bands` path).
-- [ ] **T40.7** — Demos and goldens: one figure per new mark, all five
+- [x] **T40.7** — Demos and goldens: one figure per new mark, all five
       targets byte-for-byte.
 
 ### Step 41 — Figure fidelity: scales, domains, legend, grid, themes, color

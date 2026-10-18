@@ -3012,6 +3012,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "sync_demo")
           "sync_demo" "main.emo");
+    tc "plot_demo compiles to a binary with the interpreter's output" (fun () ->
+        use_workspace_registry () |> ignore;
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "plot_demo")
+          "plot_demo" "main.emo");
   ]
 
 (* ---- The TypeScript target (step 17) ----
@@ -3071,6 +3076,7 @@ let ts_golden_tests =
       ("slog_demo", "main.emo");
       ("printf_demo", "main.emo");
       ("sync_demo", "main.emo");
+      ("plot_demo", "main.emo");
       ("loops", "main.emo");
       ("tcp_echo", "main.emo");
       ("http_roundtrip", "main.emo");
