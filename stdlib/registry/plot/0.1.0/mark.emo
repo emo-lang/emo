@@ -14,7 +14,7 @@ interface Mark {
   def bands() Int64
   def x_labels() Array[String]
   def legend_label() String
-  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void
 }
 
 class BarStyle {
@@ -107,7 +107,7 @@ class Bar {
     return self.style.label
   }
 
-  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
     r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
   }
 
@@ -144,7 +144,7 @@ def dash_array(d Dash) String {
 // One marker stamp in pixel space, shared by the marks that place a
 // shape at every point. A cross or plus strokes its arms at a quarter
 // of the marker size; `Marker.none` stamps nothing.
-def stamp_marker(r internal.svg.SvgRenderer, cx Float64, cy Float64, m Marker, size Float64, color (Int64, Int64, Int64)) Void {
+def stamp_marker(r internal.svg.Renderer, cx Float64, cy Float64, m Marker, size Float64, color (Int64, Int64, Int64)) Void {
   const half = size / 2.0
   const stroke = size / 4.0
   if m == Marker.circle {
@@ -295,7 +295,7 @@ class Line {
     return self.style.label
   }
 
-  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
     r.line(x, y, x + 18.0, y, self.style.color, self.style.width, dash_array(self.style.dash))
     stamp_marker(r, x + 9.0, y, self.style.marker, self.style.marker_size, self.style.color)
   }
@@ -420,7 +420,7 @@ class Scatter {
     return self.style.label
   }
 
-  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
     stamp_marker(r, x + 9.0, y, self.style.marker, self.style.size, self.style.color)
   }
 
@@ -554,7 +554,7 @@ class Area {
     return self.style.label
   }
 
-  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
     r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
   }
 
@@ -667,7 +667,7 @@ class Hist {
     return self.style.label
   }
 
-  def legend_sample(r internal.svg.SvgRenderer, x Float64, y Float64) Void {
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
     r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
   }
 

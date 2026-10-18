@@ -277,9 +277,10 @@ categorical labels. The remaining pieces the surface carries are
 reserved and not rendered yet: the chart-layer half of faceting —
 splitting a dataset by a column's levels, per-panel level labels, and
 the one shared legend — and the palette/colormap wiring behind the
-`color` channel. The SVG renderer
-sits behind an internal `Renderer` contract, so a terminal or raster
-backend can join later without disturbing the figure or the marks.
+`color` channel. The marks and the axes draw through the internal
+`Renderer` interface — `DrawContext` carries a `Renderer`, not the
+concrete SVG class — so a terminal or raster backend can join later
+without disturbing the figure or the marks.
 
 See also: `examples/plot_demo`, and the design note
 [`docs/visualization.md`](../visualization.md).

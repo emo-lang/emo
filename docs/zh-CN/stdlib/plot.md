@@ -166,6 +166,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格,以及装扮这一切的主题,还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:经 `Share` 的分面,以及 `color` 通道背后的 palette/colormap 接线。SVG 渲染器位于一个内部的 `Renderer` 契约之后,所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格,以及装扮这一切的主题,还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例——以及 `color` 通道背后的 palette/colormap 接线。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

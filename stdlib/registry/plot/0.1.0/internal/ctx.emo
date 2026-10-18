@@ -3,7 +3,7 @@
 // through log10 with the domain's ends pre-transformed; the linear
 // path is untouched arithmetic.
 class DrawContext {
-  def init(renderer internal.svg.SvgRenderer, x0 Float64, y0 Float64, plot_w Float64, plot_h Float64,
+  def init(renderer internal.svg.Renderer, x0 Float64, y0 Float64, plot_w Float64, plot_h Float64,
            x_min Float64, x_max Float64, y_min Float64, y_max Float64,
            x_log Bool, y_log Bool) {
     self.renderer = renderer

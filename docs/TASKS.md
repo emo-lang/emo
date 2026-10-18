@@ -1402,7 +1402,7 @@ against the `Renderer` interface, not `SvgRenderer`.
       the union domain, and the title above the grid; sorted levels,
       per-panel level labels, and the one shared legend ride the chart
       layer (T43.6, through T42.3's `facet_*` channels).
-- [ ] **T41.8** — Decouple `DrawContext` from the concrete
+- [x] **T41.8** — Decouple `DrawContext` from the concrete
       `SvgRenderer`: type it against the `internal` `Renderer` interface
       so a terminal or raster renderer can join (the prerequisite for
       Steps 44–45).

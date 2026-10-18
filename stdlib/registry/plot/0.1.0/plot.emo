@@ -510,7 +510,7 @@ def resolved_x(ax Axes) (Float64, Float64) {
   return (lo, hi)
 }
 
-def draw_axes(r internal.svg.SvgRenderer, fig Figure, ax Axes, x0 Float64, y0 Float64, cw Float64, ch Float64, xd (Float64, Float64), yd (Float64, Float64)) Void {
+def draw_axes(r internal.svg.Renderer, fig Figure, ax Axes, x0 Float64, y0 Float64, cw Float64, ch Float64, xd (Float64, Float64), yd (Float64, Float64)) Void {
   const t = fig.theme
   const ml = 64.0
   const mr = 24.0

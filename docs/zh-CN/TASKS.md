@@ -684,7 +684,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 - [x] **T41.5** — `Theme` 作为 `Figure` 上的值(背景与前景,网格/轴/标题/标签样式,调色板、colormap、间距、默认尺寸;decision 24),配 `with_theme`。
 - [x] **T41.6** — `plot.rgb` 校验 0–255 范围,裸三元组在绘制时校验(decision 21),叠在 T41.5 colormap 的 `Float64` 插值之上;`color` 通道按列类型分派随 T42.3 的通道落地(decision 24)。
 - [x] **T41.7** — 分面(faceting,decision 23)的图这一半:`rows × cols` 面板网格、主题间距分隔、多出的格子留空、`Share.all` 让每个面板画在并集域上、图题居网格上方;排序水平、逐面板水平标注、单份共享图例随图表层落地(T43.6,经 T42.3 的 `facet_*` 通道)。
-- [ ] **T41.8** — 把 `DrawContext` 与具体 `SvgRenderer` 解耦:按 `internal` 的 `Renderer` 接口类型化,好让终端或栅格渲染器接入(Steps 44–45 的前置)。
+- [x] **T41.8** — 把 `DrawContext` 与具体 `SvgRenderer` 解耦:按 `internal` 的 `Renderer` 接口类型化,好让终端或栅格渲染器接入(Steps 44–45 的前置)。
 
 ### Step 42 — Table 与通道
 
