@@ -1323,7 +1323,7 @@ work touches in `docs/temp-visual-check.md`. Out of scope (decision 9):
 interactive/GUI charts, an EmoUI canvas, 3D, animation. Each step's plan
 file is written when the step starts.
 
-### Step 39 — Compiler and language enablers for plotting
+### Step 39 — Compiler and language enablers for plotting · `plan/step-39-plot-enablers.md`
 
 Independent of the plot steps; each unblocks or de-risks work below.
 **Done when:** the enabler's own tests pass and the affected plot code

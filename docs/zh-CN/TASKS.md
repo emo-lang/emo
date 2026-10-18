@@ -649,7 +649,7 @@ Step 38 收尾(2026-10-12,`feat/sqlite3` 分支):包系统学会携带原生代�
 
 T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上逐字节一致,构建在内部 `Buffer`、标度/刻度、带 `SvgRenderer` 的 `Renderer` 接口,以及声明式的 `figure`/`axes`/`mark` 值之上。数值底座与 `math` 包(sequencing A)已完成。本 milestone 完成设计的 sequencing B–E:T0 表面的其余部分、`Table` 与通道(channels)、T1 数据集图表,最后是终端与 PNG 渲染器。设计与定案记录在 `docs/visualization.md`;包当前表面在 `docs/stdlib/plot.md`;本工作触及的语言使能项在 `docs/temp-visual-check.md`。范围之外(decision 9):交互/GUI 图表、EmoUI 画布、3D、动画。每个步骤的 plan 文件在步骤启动时编写。
 
-### Step 39 — 绘图所需的编译器与语言使能项
+### Step 39 — 绘图所需的编译器与语言使能项 · `plan/step-39-plot-enablers.md`
 
 与绘图各步骤相互独立;每一项要么解除下面工作的阻塞,要么降低其风险。
 **完成标准:** 使能项自身的测试通过,且受影响的绘图代码用上它。
