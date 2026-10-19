@@ -49,6 +49,7 @@ let t_list2 = 33
 let t_vbuilder = 34
 let t_builder_new = 35
 let t_vmap = 36
+let t_str_slice = 37
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -156,6 +157,8 @@ let runtime_types : W.typ list =
       ];
     (* $vmap: keys, values, count, cap — two parallel doubling buffers,
        the key array's order is the insertion order *)
+    W.FuncT ([ W.RefNull t_bytes; W.I32; W.I32 ], [ W.RefNull t_bytes ]);
+    (* str_slice: src, start, len -> bytes *)
   ]
 
 let i_print = 0
@@ -249,6 +252,9 @@ let rt = function
   | "str_quote" -> 86
   | "bytes_str" -> 87
   | "deep_copy" -> 88
+  | "str_slice" -> 89
+  | "str_starts_with" -> 90
+  | "str_split" -> 91
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
@@ -258,12 +264,8 @@ let rt = function
    them for the same reason, as do the array and builder renderings
    (73..74) the `to_str` chain calls, the Map ops (75..86) after
    those, the Bytes rendering (87), and the send snapshot's deep
-   copy (88) last. *)
-let runtime_count = 89
-(* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 12
-     + list ops 7 + the String substring + the ArrayBuilder ops
-     + the array and builder renderings + the Map ops + the Bytes
-     rendering + the send snapshot *)
+   copy (88) last; the String split surface (89..91) follows. *)
+let runtime_count = 92
 
 (* ---- Lowering state ---- *)
 
@@ -952,6 +954,14 @@ and method_call env self_ name args =
       expr env start;
       expr env len;
       e env (W.Call (rt "str_substring"))
+  | "starts_with", [ prefix ] ->
+      expr env self_;
+      expr env prefix;
+      e env (W.Call (rt "str_starts_with"))
+  | "split", [ sep ] ->
+      expr env self_;
+      expr env sep;
+      e env (W.Call (rt "str_split"))
   | "append", [ v ] ->
       expr env self_;
       expr env v;
@@ -4325,6 +4335,255 @@ let rt_str_substring : W.func_type =
       ];
   }
 
+(* slice(src, start, len) -> bytes: the internal helper str_split's
+   parts materialize through — the callers compute in-bounds ranges.
+   Locals: 3 dest, 4 k. *)
+let rt_str_slice : W.func_type =
+  {
+    W.ftype_idx = t_str_slice;
+    fparams = [ "src"; "start"; "len" ];
+    flocals = [ (1, W.RefNull t_bytes); (1, W.I32) ];
+    fbody =
+      [
+        W.Local_get 2;
+        W.Array_new_default t_bytes;
+        W.Local_set 3;
+        W.I32_const 0;
+        W.Local_set 4;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 4;
+                    W.Local_get 2;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 3;
+                    W.Local_get 4;
+                    W.Local_get 0;
+                    W.Local_get 1;
+                    W.Local_get 4;
+                    W.I32_add;
+                    W.Array_get_u t_bytes;
+                    W.Array_set t_bytes;
+                    W.Local_get 4;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 4;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 3;
+      ];
+  }
+
+(* starts_with(recv, prefix) -> $vbool: a byte-prefix test, the c
+   runtime's emo_str_starts_with rule — an empty prefix holds, a
+   prefix longer than the receiver does not. Locals: 2 src, 3 prefix,
+   4 i. *)
+let rt_str_starts_with : W.func_type =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "s"; "prefix" ];
+    flocals = [ (1, W.RefNull t_bytes); (1, W.RefNull t_bytes); (1, W.I32) ];
+    fbody =
+      bytes_of 0 @ [ W.Local_set 2 ] @ bytes_of 1
+      @ [
+          W.Local_set 3;
+          W.I32_const 0;
+          W.Local_set 4;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      (* the prefix is exhausted: every byte matched *)
+                      W.Local_get 4;
+                      W.Local_get 3;
+                      W.Array_len t_bytes;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      (* the receiver ran out first: no *)
+                      W.Local_get 4;
+                      W.Local_get 2;
+                      W.Array_len t_bytes;
+                      W.I32_ge;
+                      W.If
+                        ( W.Void,
+                          [ W.I32_const 0; W.Struct_new t_vbool; W.Return ],
+                          [] );
+                      (* a differing byte: no *)
+                      W.Local_get 2;
+                      W.Local_get 4;
+                      W.Array_get_u t_bytes;
+                      W.Local_get 3;
+                      W.Local_get 4;
+                      W.Array_get_u t_bytes;
+                      W.I32_ne;
+                      W.If
+                        ( W.Void,
+                          [ W.I32_const 0; W.Struct_new t_vbool; W.Return ],
+                          [] );
+                      W.Local_get 4;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 4;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.I32_const 1;
+          W.Struct_new t_vbool;
+        ];
+  }
+
+(* split(recv, sep) -> Array[String]: the c runtime's emo_cell_split
+   rule — non-overlapping left-to-right, adjacent separators leaving
+   an empty part between, the tail always emitted. An empty separator
+   raises the interpreter's message. The parts collect into a builder
+   so count and copy are one pass. Locals: 2 src, 3 sep, 4 scratch
+   (the message constants), 5 total, 6 seplen, 7 i, 8 start, 9 out,
+   10 j, 11 matched. *)
+let rt_str_split : W.func_type =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "s"; "sep" ];
+    flocals =
+      [
+        (1, W.RefNull t_bytes);
+        (1, W.RefNull t_bytes);
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.RefNull t_vbuilder);
+        (1, W.I32);
+        (1, W.I32);
+      ];
+    fbody =
+      bytes_of 0 @ [ W.Local_set 2 ] @ bytes_of 1 @ [ W.Local_set 3 ]
+      @ [
+          W.Local_get 2;
+          W.Array_len t_bytes;
+          W.Local_set 5;
+          W.Local_get 3;
+          W.Array_len t_bytes;
+          W.Local_set 6;
+          (* the separator must not be empty *)
+          W.Local_get 6;
+          W.I32_eqz;
+          W.If
+            ( W.Void,
+              bytes_const "the separator must not be empty"
+              @ [ W.Struct_new t_vstring; W.Call (rt "throw"); W.Unreachable ],
+              [] );
+          W.Call (rt "builder_new");
+          W.Ref_cast t_vbuilder;
+          W.Local_set 9;
+          W.I32_const 0;
+          W.Local_set 7;
+          W.I32_const 0;
+          W.Local_set 8;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      (* i + seplen beyond the source: only the tail is
+                         left *)
+                      W.Local_get 7;
+                      W.Local_get 6;
+                      W.I32_add;
+                      W.Local_get 5;
+                      W.I32_gt;
+                      W.Br_if 1;
+                      (* does sep match at i? *)
+                      W.I32_const 1;
+                      W.Local_set 11;
+                      W.I32_const 0;
+                      W.Local_set 10;
+                      W.Block
+                        ( W.Void,
+                          [
+                            W.Loop
+                              ( W.Void,
+                                [
+                                  W.Local_get 10;
+                                  W.Local_get 6;
+                                  W.I32_ge;
+                                  W.Br_if 1;
+                                  W.Local_get 2;
+                                  W.Local_get 7;
+                                  W.Local_get 10;
+                                  W.I32_add;
+                                  W.Array_get_u t_bytes;
+                                  W.Local_get 3;
+                                  W.Local_get 10;
+                                  W.Array_get_u t_bytes;
+                                  W.I32_ne;
+                                  W.If
+                                    ( W.Void,
+                                      [ W.I32_const 0; W.Local_set 11; W.Br 2 ],
+                                      [] );
+                                  W.Local_get 10;
+                                  W.I32_const 1;
+                                  W.I32_add;
+                                  W.Local_set 10;
+                                  W.Br 0;
+                                ] );
+                          ] );
+                      W.If_else
+                        ( W.Void,
+                          [ W.Local_get 11 ],
+                          [
+                            (* the part before the separator, and the
+                               scan resumes past the match *)
+                            W.Local_get 9;
+                            W.Local_get 2;
+                            W.Local_get 8;
+                            W.Local_get 7;
+                            W.Local_get 8;
+                            W.I32_sub;
+                            W.Call (rt "str_slice");
+                            W.Struct_new t_vstring;
+                            W.Call (rt "builder_push");
+                            W.Drop;
+                            W.Local_get 7;
+                            W.Local_get 6;
+                            W.I32_add;
+                            W.Local_set 7;
+                            W.Local_get 7;
+                            W.Local_set 8;
+                          ],
+                          [
+                            W.Local_get 7;
+                            W.I32_const 1;
+                            W.I32_add;
+                            W.Local_set 7;
+                          ] );
+                      W.Br 0;
+                    ] );
+              ] );
+          (* the tail part is always emitted *)
+          W.Local_get 9;
+          W.Local_get 2;
+          W.Local_get 8;
+          W.Local_get 5;
+          W.Local_get 8;
+          W.I32_sub;
+          W.Call (rt "str_slice");
+          W.Struct_new t_vstring;
+          W.Call (rt "builder_push");
+          W.Drop;
+          W.Local_get 9;
+          W.Call (rt "builder_to_array");
+        ];
+  }
+
 (* ---- The ArrayBuilder ----
 
    A doubling buffer: `$vbuilder` holds the backing array, the live
@@ -6344,6 +6603,9 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_str_quote;
         rt_bytes_str;
         rt_deep_copy;
+        rt_str_slice;
+        rt_str_starts_with;
+        rt_str_split;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

@@ -20,9 +20,8 @@
 // formats. Every rejection raises an ordinary Emo exception saying
 // exactly what failed; filtering is the only silence.
 //
-// The wasm and beam runtimes do not implement Map yet, so the
-// manifest declares the targets that work today and widens when they
-// land.
+// The manifest declares the five targets Map reached — the runtimes
+// that answer every call this package makes.
 
 // ---- levels and formats ----
 

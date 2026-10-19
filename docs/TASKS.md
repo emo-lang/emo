@@ -2283,7 +2283,7 @@ stays byte-identical; the docs carry the story.
       `data` — `expected.txt` taken from the interpreter and
       byte-identical in all five golden lists; the check-time key-kind
       pin (E4020) rides the existing diagnostics tests.
-- [ ] **T52.7** — The stdlib widening: `slog`'s manifest gains `wasm`
+- [x] **T52.7** — The stdlib widening: `slog`'s manifest gains `wasm`
       and `beam` (its close-out's recorded condition — declares the
       targets that work today, widens when the gap closes), and
       `slog_demo` joins the wasm and beam golden lists byte-for-byte.

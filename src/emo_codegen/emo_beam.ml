@@ -711,6 +711,12 @@ and method_call env self_ name args =
       | "substring", [ start; len ] ->
           put env "apply 'emo_str_substring'/3 ";
           args_list env [ self_; start; len ]
+      | "starts_with", [ prefix ] ->
+          put env "apply 'emo_str_starts_with'/2 ";
+          args_list env [ self_; prefix ]
+      | "split", [ sep ] ->
+          put env "apply 'emo_str_split'/2 ";
+          args_list env [ self_; sep ]
       | "read", [] ->
           put env "call 'erlang':'get'(";
           expr env self_;
@@ -2503,6 +2509,25 @@ let rt_source =
 			  call 'erlang':'error'({'emo_bad_substring', _start, _len})
 		    end
 	      end
+	end
+
+'emo_str_starts_with'/2 =
+    fun (_s, _p) ->
+	case call 'erlang':'>='(call 'erlang':'byte_size'(_s), call 'erlang':'byte_size'(_p)) of
+	  <'false'> when 'true' -> 'false'
+	  <'true'> when 'true' ->
+	      call 'erlang':'=:='(call 'binary':'part'(_s, 0, call 'erlang':'byte_size'(_p)), _p)
+	end
+
+'emo_str_split'/2 =
+    fun (_s, _sep) ->
+	case _sep of
+	  <_e> when call 'erlang':'=='(call 'erlang':'byte_size'(_e), 0) ->
+	      call 'erlang':'error'
+		({'emo_empty_sep',
+		  call 'erlang':'iolist_to_binary'([116, 104, 101, 32, 115, 101, 112, 97, 114, 97, 116, 111, 114, 32, 109, 117, 115, 116, 32, 110, 111, 116, 32, 98, 101, 32, 101, 109, 112, 116, 121])})
+	  <_other> when 'true' ->
+	      call 'binary':'split'(_s, _sep, ['global'])
 	end
 
 'emo_bytes_label'/1 =

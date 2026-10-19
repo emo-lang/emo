@@ -344,6 +344,7 @@ let wasm_goldens =
     "json_demo";
     "yaml_demo";
     "xml_demo";
+    "slog_demo";
     "sync_demo";
     "loops";
     "error_matching";
@@ -393,6 +394,7 @@ let beam_goldens =
     "json_demo";
     "yaml_demo";
     "xml_demo";
+    "slog_demo";
     "sync_demo";
     "printf_demo";
     "loops";
