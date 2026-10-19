@@ -248,6 +248,7 @@ let rt = function
   | "map_dbg" -> 85
   | "str_quote" -> 86
   | "bytes_str" -> 87
+  | "deep_copy" -> 88
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
@@ -256,12 +257,13 @@ let rt = function
    substring runtime (68) and the ArrayBuilder ops (69..72) sit after
    them for the same reason, as do the array and builder renderings
    (73..74) the `to_str` chain calls, the Map ops (75..86) after
-   those, and the Bytes rendering (87) last. *)
-let runtime_count = 88
+   those, the Bytes rendering (87), and the send snapshot's deep
+   copy (88) last. *)
+let runtime_count = 89
 (* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 12
      + list ops 7 + the String substring + the ArrayBuilder ops
      + the array and builder renderings + the Map ops + the Bytes
-     rendering *)
+     rendering + the send snapshot *)
 
 (* ---- Lowering state ---- *)
 
@@ -3789,6 +3791,322 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
       fbody = body;
     } )
 
+(* The send snapshot's deep copy (T52.3): every mutable kind in a
+   message — Box, Map, List, ArrayBuilder, Tuple, Array, Bytes, and a
+   class instance's fields — reaches the mailbox rebuilt, so a write on
+   either side of the boundary stays unobservable to the other. The
+   immutable kinds ($vint, $vfloat, $vbool, $vchar, $vstring, $venum,
+   closures) and Pid fall through as the same reference. The rule is
+   the interpreter's `snapshot` and the c runtime's `emo_deep_copy`; a
+   map copy inserts in index order, which is the insertion order, and
+   a list or builder copy goes through push_back/builder_push, whose
+   doubling keeps the fresh buffer ordinary. Locals: 1 map, 2 fresh
+   aggregate, 3 i, 4 list, 5 cursor, 6/7 array, 8/9 bytes, 10 len,
+   11 instance. *)
+let rt_deep_copy_func (env : env) : W.func_type =
+  let passes t = [ W.Local_get 0; W.Ref_test t ] in
+  let class_arms =
+    List.filter_map
+      (fun (cname, tidx) ->
+        match List.assoc_opt cname env.class_field with
+        | Some fields ->
+            (* the class stays, the fields are copied: struct.new_default
+               leaves every field null — the layout's pad dummies among
+               them — and the real fields store one by one. The scratch
+               is an anyref, so each store casts it back to the class —
+               struct.set wants the narrow reference *)
+            let produce =
+              [ W.Struct_new_default tidx; W.Local_set 11 ]
+              @ List.concat_map
+                  (fun (_, fidx) ->
+                    [
+                      W.Local_get 11;
+                      W.Ref_cast tidx;
+                      W.Local_get 0;
+                      W.Ref_cast tidx;
+                      W.Struct_get (tidx, fidx);
+                      W.Call (rt "deep_copy");
+                      W.Struct_set (tidx, fidx);
+                    ])
+                  fields
+              @ [ W.Local_get 11 ]
+            in
+            Some (passes tidx, produce)
+        | None -> None)
+      env.class_type
+  in
+  let arms =
+    [
+      ( passes t_vbox,
+        [
+          W.Local_get 0;
+          W.Ref_cast t_vbox;
+          W.Struct_get (t_vbox, 0);
+          W.Call (rt "deep_copy");
+          W.Struct_new t_vbox;
+        ] );
+      ( passes t_vmap,
+        [ W.Call (rt "map_new"); W.Local_set 2 ]
+        @ [
+            W.Local_get 0;
+            W.Ref_cast t_vmap;
+            W.Local_set 1;
+            W.I32_const 0;
+            W.Local_set 3;
+          ]
+        @ [
+            W.Block
+              ( W.Void,
+                [
+                  W.Loop
+                    ( W.Void,
+                      [
+                        W.Local_get 3;
+                        W.Local_get 1;
+                        W.Struct_get (t_vmap, 2);
+                        W.I32_ge;
+                        W.Br_if 1;
+                        W.Local_get 2;
+                        W.Local_get 1;
+                        W.Struct_get (t_vmap, 0);
+                        W.Ref_cast t_anyarray;
+                        W.Local_get 3;
+                        W.Array_get t_anyarray;
+                        W.Local_get 1;
+                        W.Struct_get (t_vmap, 1);
+                        W.Ref_cast t_anyarray;
+                        W.Local_get 3;
+                        W.Array_get t_anyarray;
+                        W.Call (rt "deep_copy");
+                        W.Call (rt "map_set");
+                        W.Drop;
+                        W.Local_get 3;
+                        W.I32_const 1;
+                        W.I32_add;
+                        W.Local_set 3;
+                        W.Br 0;
+                      ] );
+                ] );
+            W.Local_get 2;
+          ] );
+      ( passes t_vlist,
+        [
+          W.I32_const 0; W.Array_new_default t_anyarray; W.Call (rt "list_new");
+        ]
+        @ [
+            W.Local_set 2;
+            W.Local_get 0;
+            W.Ref_cast t_vlist;
+            W.Local_set 4;
+            W.Local_get 4;
+            W.Struct_get (t_vlist, 0);
+            W.Local_set 5;
+          ]
+        @ [
+            W.Block
+              ( W.Void,
+                [
+                  W.Loop
+                    ( W.Void,
+                      [
+                        W.Local_get 5;
+                        W.Ref_is_null;
+                        W.Br_if 1;
+                        W.Local_get 2;
+                        W.Local_get 5;
+                        W.Struct_get (t_lnode, 0);
+                        W.Call (rt "deep_copy");
+                        W.Call (rt "list_push_back");
+                        W.Drop;
+                        W.Local_get 5;
+                        W.Struct_get (t_lnode, 2);
+                        W.Local_set 5;
+                        W.Br 0;
+                      ] );
+                ] );
+            W.Local_get 2;
+          ] );
+      ( passes t_vbuilder,
+        [
+          W.Call (rt "builder_new");
+          W.Local_set 2;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 0;
+                      W.Ref_cast t_vbuilder;
+                      W.Struct_get (t_vbuilder, 1);
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 2;
+                      W.Local_get 0;
+                      W.Ref_cast t_vbuilder;
+                      W.Struct_get (t_vbuilder, 0);
+                      W.Ref_cast t_anyarray;
+                      W.Local_get 3;
+                      W.Array_get t_anyarray;
+                      W.Call (rt "deep_copy");
+                      W.Call (rt "builder_push");
+                      W.Drop;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Local_get 2;
+        ] );
+      ( passes t_vtuple,
+        [
+          W.Local_get 0;
+          W.Ref_cast t_vtuple;
+          W.Struct_get (t_vtuple, 0);
+          W.Local_set 6;
+          W.Local_get 6;
+          W.Array_len t_anyarray;
+          W.Array_new_default t_anyarray;
+          W.Local_set 7;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 6;
+                      W.Array_len t_anyarray;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 7;
+                      W.Local_get 3;
+                      W.Local_get 6;
+                      W.Local_get 3;
+                      W.Array_get t_anyarray;
+                      W.Call (rt "deep_copy");
+                      W.Array_set t_anyarray;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Local_get 7;
+          W.Struct_new t_vtuple;
+        ] );
+      ( passes t_anyarray,
+        [
+          W.Local_get 0;
+          W.Ref_cast t_anyarray;
+          W.Local_set 6;
+          W.Local_get 6;
+          W.Array_len t_anyarray;
+          W.Array_new_default t_anyarray;
+          W.Local_set 7;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 6;
+                      W.Array_len t_anyarray;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 7;
+                      W.Local_get 3;
+                      W.Local_get 6;
+                      W.Local_get 3;
+                      W.Array_get t_anyarray;
+                      W.Call (rt "deep_copy");
+                      W.Array_set t_anyarray;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Local_get 7;
+        ] );
+      ( passes t_vbytes,
+        [
+          W.Local_get 0;
+          W.Ref_cast t_vbytes;
+          W.Struct_get (t_vbytes, 0);
+          W.Local_set 8;
+          W.Local_get 8;
+          W.Array_len t_bytes;
+          W.Local_set 10;
+          W.Local_get 10;
+          W.Array_new_default t_bytes;
+          W.Local_set 9;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 10;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 9;
+                      W.Local_get 3;
+                      W.Local_get 8;
+                      W.Local_get 3;
+                      W.Array_get_u t_bytes;
+                      W.Array_set t_bytes;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Local_get 9;
+          W.Struct_new t_vbytes;
+        ] );
+    ]
+    @ class_arms
+  in
+  let rec chain = function
+    | [] -> [ W.Local_get 0 ]
+    | (test, produce) :: rest ->
+        [ W.If_else (W.Result W.Anyref, test, produce, chain rest) ]
+  in
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "v" ];
+    flocals =
+      [
+        (1, W.RefNull t_vmap);
+        (1, W.Anyref);
+        (1, W.I32);
+        (1, W.RefNull t_vlist);
+        (1, W.RefNull t_lnode);
+        (2, W.RefNull t_anyarray);
+        (2, W.RefNull t_bytes);
+        (1, W.I32);
+        (1, W.Anyref);
+      ];
+    fbody = chain arms;
+  }
+
 (* append(xs, v) -> a new array: every element copied, v at the end.
    Arrays are never mutated. Locals: 2 src, 3 elem, 4 fresh, 5 i. *)
 let rt_append : W.func_type =
@@ -5331,6 +5649,9 @@ let rt_spawn_end (g : driver_globals) : W.func_type =
   }
 
 let rt_send (g : driver_globals) : W.func_type =
+  (* send(to, msg): the message deep-copies on entry — the mailbox
+     receives the snapshot, not the sender's cells — then walks the
+     process list and joins the target's FIFO. *)
   {
     W.ftype_idx = t_numop;
     fparams = [ "to"; "msg" ];
@@ -5340,6 +5661,9 @@ let rt_send (g : driver_globals) : W.func_type =
       ];
     fbody =
       [
+        W.Local_get 1;
+        W.Call (rt "deep_copy");
+        W.Local_set 1;
         W.Local_get 0;
         W.Ref_cast t_vint;
         W.Struct_get (t_vint, 0);
@@ -5870,6 +6194,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
   (* Types: the fixed runtime head first, then the program's appended
      types (env.types accumulates in reverse). *)
   let rt_eq, rt_ne, rt_deep_eq = rt_equality_funcs env in
+  let rt_deep_copy = rt_deep_copy_func env in
   let rt_funcs =
     [
       rt_add;
@@ -6018,6 +6343,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_map_dbg;
         rt_str_quote;
         rt_bytes_str;
+        rt_deep_copy;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

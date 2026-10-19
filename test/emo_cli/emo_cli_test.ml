@@ -4256,6 +4256,98 @@ let cross_target_tests =
         check_run "typescript"
           (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
           "1\n99\n");
+    tc "a message on wasm arrives as a snapshot" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        (* the wasm twin of the send above: the receive parks the entry,
+           so it trails the body and the sender's side prints first *)
+        let entry =
+          scratch_entry "cross-wasm-send"
+            {|
+def reader(reply_to Pid) {
+  receive {
+    b -> {
+      reply_to <- b.read()
+      halt()
+    }
+  }
+}
+
+const box = Box.new(1)
+const r = do reader(self_pid())
+r <- box
+box.replace(99)
+println(box.read())
+receive {
+  v -> { println(v) }
+}
+|}
+        in
+        let out_wasm = Filename.concat (Filename.dirname entry) "main.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote out_wasm)))
+          "99\n1\n");
+    tc "every mutable kind in a message on wasm arrives rebuilt" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        (* the snapshot reaches inside the Map: the sender's post-send
+           writes — the replaced key in place, the new key, the list
+           push, the builder push, the byte set — stay on its side, and
+           the echoed copy keeps its insertion order *)
+        let entry =
+          scratch_entry "cross-wasm-send-kinds"
+            {|
+def echo(reply_to Pid) {
+  receive {
+    msg -> {
+      reply_to <- msg
+      halt()
+    }
+  }
+}
+
+const m = { "a": 1, "b": 2, "c": 3 }
+const l = List.new([10, 20])
+const b = ArrayBuilder.new()
+b.push(30)
+const bytes = Bytes.new(3)
+bytes.set(0, 65)
+const msg = { "m": m, "l": l, "b": b, "bytes": bytes }
+const r = do echo(self_pid())
+r <- msg
+m.set("a", 99)
+m.set("d", 4)
+l.push_front(11)
+b.push(31)
+bytes.set(0, 66)
+println(m.get("a"))
+println(m.get("d"))
+println(l.pop_front())
+println(b.length())
+receive {
+  v -> { println(v) }
+}
+|}
+        in
+        let out_wasm = Filename.concat (Filename.dirname entry) "main.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote out_wasm)))
+          "99\n\
+           4\n\
+           11\n\
+           2\n\
+           {\"m\": {\"a\": 1, \"b\": 2, \"c\": 3}, \"l\": List[10, 20], \"b\": \
+           ArrayBuilder[30], \"bytes\": Bytes[3]}\n");
     tc "typescript compares Int64 case patterns as big integers" (fun () ->
         if not (Lazy.force node_available) then Alcotest.skip ();
         let entry =

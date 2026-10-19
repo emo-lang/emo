@@ -2251,7 +2251,7 @@ stays byte-identical; the docs carry the story.
       `emo_wasm.ml` (the `Map_lit` arm and the `MapType` method arm)
       deleted, and the stale `Make_exception` comment updated so
       `Exception.new(data:)` lowers.
-- [ ] **T52.3** — The wasm send snapshot: `rt_send` deep-copies the
+- [x] **T52.3** — The wasm send snapshot: `rt_send` deep-copies the
       message before it joins the mailbox — Map, Box, List, and
       ArrayBuilder rebuilt (a map copy preserving insertion order), the
       immutable kinds and `Pid` passing through — the `c` runtime's
