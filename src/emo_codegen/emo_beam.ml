@@ -330,8 +330,16 @@ let rec expr env (x : Emo_ir.expr) : unit =
           expr env e)
         es;
       put env "]"
-  | Map_lit _ ->
-      raise (Emo_ir.Lower_error "the beam target does not support Map yet")
+  | Map_lit pairs ->
+      (* the pairs lower as Erlang 2-tuples in the literal's order —
+         the insertion order emo_map_new records *)
+      put env "apply 'emo_map_new'/1 ([";
+      List.iteri
+        (fun i e ->
+          if i > 0 then put env ", ";
+          expr env e)
+        pairs;
+      put env "])"
   | Index (b, i) ->
       (* a tuple is an Erlang tuple and answers element/2; a list (an
          array literal) is 1-based and answers lists:nth *)
@@ -445,9 +453,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Make_exception { message; data } ->
       (* Exception.new's object is its message, and the construction
          never returns — the throw happens right here, so a Raise
-         wrapping this never reaches its own wrapper. The data element
-         lowers only to refuse: the beam target does not support Map
-         yet, so any data expression errors before this tuple closes. *)
+         wrapping this never reaches its own wrapper. The data, when
+         present, lowers like any expression — a Map literal goes
+         through emo_map_new — and rides the throw tuple. *)
       put env "call 'erlang':'throw'({'emo_raise', ";
       expr env message;
       Option.iter
@@ -468,12 +476,12 @@ and method_call env self_ name args =
   in
   match (name, args) with
   | "get", [ i ] ->
-      (* `get` names both the Bytes accessor and a class method (the
-         format packages' object types, say). The interpreter checks
-         the receiver's class first, so dispatch at runtime: a Bytes
-         receiver takes the builtin and every instance takes its
-         class's method. When no class defines `get`, the builtin is
-         the whole call. *)
+      (* `get` names the Bytes accessor, the Builder accessor, Map's
+         lookup, and a class method (the format packages' object types,
+         say). The interpreter checks the receiver's class first, so
+         dispatch at runtime: a Bytes, Builder, or Map receiver takes
+         its builtin and every instance takes its class's method. When
+         no class defines `get`, the builtins are the whole call. *)
       let candidates =
         List.filter_map
           (fun (c : Emo_ir.class_) ->
@@ -509,12 +517,39 @@ and method_call env self_ name args =
            recv);
       expr env i;
       put env ")\n";
+      put env
+        (Printf.sprintf
+           "  <{'emo_map', _k}> when 'true' ->\n    apply 'emo_map_get'/2 (%s, "
+           recv);
+      expr env i;
+      put env ")\n";
       put env "  <_> when 'true' ->\n    apply 'emo_bytes_get'/2 (";
       put env recv;
       put env ", ";
       expr env i;
       put env ")\nend"
-  | "set", [ _; _ ] -> bytes_only 3 "emo_bytes_set"
+  | "set", [ k; v ] ->
+      (* `set` names both the Bytes writer and Map's insert; the tag
+         picks at run time *)
+      let recv = fresh_var env "__recv" in
+      put env ("let <" ^ recv ^ "> =\n");
+      expr env self_;
+      put env ("\nin case " ^ recv ^ " of\n");
+      put env
+        "  <{'emo_bytes', _k}> when 'true' ->\n    apply 'emo_bytes_set'/3 (";
+      put env recv;
+      put env ", ";
+      expr env k;
+      put env ", ";
+      expr env v;
+      put env ")\n";
+      put env "  <{'emo_map', _k}> when 'true' ->\n    apply 'emo_map_set'/3 (";
+      put env recv;
+      put env ", ";
+      expr env k;
+      put env ", ";
+      expr env v;
+      put env ")\nend"
   | "get_u16_le", [ _ ] -> bytes_only 2 "emo_bytes_u16_get"
   | "get_u32_le", [ _ ] -> bytes_only 2 "emo_bytes_u32_get"
   | "get_u64_le", [ _ ] -> bytes_only 2 "emo_bytes_u64_get"
@@ -526,6 +561,10 @@ and method_call env self_ name args =
   | "push_back", [ _ ] -> bytes_only 2 "emo_list_push_back"
   | "pop_front", [] -> bytes_only 1 "emo_list_pop_front"
   | "pop_back", [] -> bytes_only 1 "emo_list_pop_back"
+  | "has", [ _ ] -> bytes_only 2 "emo_map_has"
+  | "remove", [ _ ] -> bytes_only 2 "emo_map_remove"
+  | "keys", [] -> bytes_only 1 "emo_map_keys"
+  | "values", [] -> bytes_only 1 "emo_map_values"
   | "push", [ _ ] -> bytes_only 2 "emo_builder_push"
   | "to_array", [] -> bytes_only 1 "emo_builder_to_array"
   | "length", [] ->
@@ -565,6 +604,11 @@ and method_call env self_ name args =
         (Printf.sprintf
            "  <{'emo_list', _k}> when 'true' ->\n\
            \    apply 'emo_list_len'/1 (%s)\n"
+           recv);
+      put env
+        (Printf.sprintf
+           "  <{'emo_map', _k}> when 'true' ->\n\
+           \    apply 'emo_map_length'/1 (%s)\n"
            recv);
       put env
         (Printf.sprintf
@@ -614,6 +658,11 @@ and method_call env self_ name args =
         (Printf.sprintf
            "  <{'emo_list', _k}> when 'true' ->\n\
            \    apply 'emo_list_to_str'/1 (%s)\n"
+           recv);
+      put env
+        (Printf.sprintf
+           "  <{'emo_map', _k}> when 'true' ->\n\
+           \    apply 'emo_map_str'/1 (%s)\n"
            recv);
       put env
         (Printf.sprintf

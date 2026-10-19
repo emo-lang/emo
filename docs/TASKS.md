@@ -2269,7 +2269,7 @@ stays byte-identical; the docs carry the story.
       `emo_map_str/1`, and `emo_map_equal/2` (same size, per-key value
       equality, order irrelevant); keys are the six hashable primitives
       compared with `=:=`, so `1` and `1.0` stay distinct.
-- [ ] **T52.5** — The beam lowering: `Map_lit` → `emo_map_new`, the
+- [x] **T52.5** — The beam lowering: `Map_lit` → `emo_map_new`, the
       method arms splitting on the `{'emo_map', K}` tag where a name
       serves several types (`get`, `length`, `to_string` — the bytes
       precedent), structural `==` through `emo_map_equal`, and the
