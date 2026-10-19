@@ -1870,6 +1870,8 @@ let rt_source =
 	      apply 'emo_list_to_str'/1 ({'emo_list', _k})
 	  <{'emo_builder', _k}> when 'true' ->
 	      apply 'emo_builder_to_str'/1 ({'emo_builder', _k})
+	  <{'emo_map', _k}> when 'true' ->
+	      apply 'emo_map_str'/1 ({'emo_map', _k})
 	  <_a> when call 'erlang':'is_list'(_a) ->
 	      apply 'emo_array_to_str'/1 (_a)
 	  <_s> when call 'erlang':'is_binary'(_s) -> _s
@@ -2745,11 +2747,285 @@ let rt_source =
 		    call 'erlang':'=:='(apply 'emo_builder_elems'/1 (_a), apply 'emo_builder_elems'/1 (_b))
 		<_other> when 'true' -> 'false'
 	      end
+	  <{'emo_map', _ka}> when 'true' ->
+	      case _b of
+		<{'emo_map', _kb}> when 'true' ->
+		    apply 'emo_map_equal'/2 (_a, _b)
+		<_other> when 'true' -> 'false'
+	      end
 	  <_other> when 'true' -> call 'erlang':'=:='(_a, _b)
 	end
 
 'emo_ne'/2 =
     fun (_a, _b) -> call 'erlang':'=/='(_a, _b)
+
+%% ---- Map ----
+%%
+%%   The Map is a {'emo_map', Key} tag over a per-process {Order, Pairs}
+%%   pair in the process dictionary — the same mechanism emo_list_new
+%%   uses. Order is the insertion-order key list; Pairs an Erlang map
+%%   key→value. An existing key replaces in place and keeps its first
+%%   position. Keys are the six hashable primitives, compared with =:=,
+%%   so 1 and 1.0 stay distinct.
+
+'emo_map_new'/1 =
+    fun (_pairs) ->
+	apply 'emo_map_new_walk'/3 (_pairs, call 'maps':'from_list'([]), [])
+
+'emo_map_new_walk'/3 =
+    fun (_pairs, _m, _order) ->
+	case _pairs of
+	  <[{_k, _v} | _rest]> when 'true' ->
+	      case call 'maps':'is_key'(_k, _m) of
+		<'true'> when 'true' ->
+		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(_k, _v, _m), _order)
+		<'false'> when 'true' ->
+		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(_k, _v, _m), call 'erlang':'++'(_order, [_k]))
+	      end
+	  <[]> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in do call 'erlang':'put'(_k, {_order, _m})
+		 {'emo_map', _k}
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_map_pairs', _other})
+	end
+
+'emo_map_get'/2 =
+    fun (_m, _k) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    case call 'maps':'find'(_k, _pairs) of
+		      <{'ok', _v}> when 'true' -> _v
+		      <'error'> when 'true' ->
+			  call 'erlang':'error'
+			    ({'emo_no_key',
+			      call 'erlang':'iolist_to_binary'
+				([110, 111, 32, 107, 101, 121, 32,
+				  apply 'emo_map_dbg'/1 (_k),
+				  32, 105, 110, 32, 116, 104, 105, 115, 32, 77, 97, 112])})
+		    end
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_set'/3 =
+    fun (_m, _k, _v) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    case call 'maps':'is_key'(_k, _pairs) of
+		      <'true'> when 'true' ->
+			  do call 'erlang':'put'(_mk, {_order, call 'maps':'put'(_k, _v, _pairs)})
+			     _m
+		      <'false'> when 'true' ->
+			  do call 'erlang':'put'(_mk, {call 'erlang':'++'(_order, [_k]), call 'maps':'put'(_k, _v, _pairs)})
+			     _m
+		    end
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_has'/2 =
+    fun (_m, _k) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    call 'maps':'is_key'(_k, _pairs)
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_remove'/2 =
+    fun (_m, _k) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    case call 'maps':'is_key'(_k, _pairs) of
+		      <'true'> when 'true' ->
+			  do call 'erlang':'put'(_mk, {apply 'emo_map_order_drop'/2 (_order, _k), call 'maps':'remove'(_k, _pairs)})
+			     _m
+		      <'false'> when 'true' -> _m
+		    end
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_order_drop'/2 =
+    fun (_keys, _k) ->
+	case _keys of
+	  <[_h | _t]> when 'true' ->
+	      case call 'erlang':'=:='(_h, _k) of
+		<'true'> when 'true' -> _t
+		<'false'> when 'true' ->
+		    [_h | apply 'emo_map_order_drop'/2 (_t, _k)]
+	      end
+	  <[]> when 'true' -> []
+	end
+
+'emo_map_length'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    call 'maps':'size'(_pairs)
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_keys'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' -> _order
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_values'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    apply 'emo_map_values_walk'/2 (_order, _pairs)
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_values_walk'/2 =
+    fun (_keys, _pairs) ->
+	case _keys of
+	  <[_k | _rest]> when 'true' ->
+	      [call 'maps':'get'(_k, _pairs)
+	       | apply 'emo_map_values_walk'/2 (_rest, _pairs)]
+	  <[]> when 'true' -> []
+	end
+
+'emo_map_str'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _mk}> when 'true' ->
+	      case call 'erlang':'get'(_mk) of
+		<{_order, _pairs}> when 'true' ->
+		    call 'erlang':'iolist_to_binary'
+		      (apply 'emo_map_str_walk'/3 (_order, _pairs, 1))
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_str_walk'/3 =
+    fun (_keys, _pairs, _first) ->
+	case _keys of
+	  <[_k | _rest]> when 'true' ->
+	      let <_kd> = apply 'emo_map_dbg'/1 (_k)
+	      in let <_vd> = apply 'emo_map_dbg'/1 (call 'maps':'get'(_k, _pairs))
+		 in case _first of
+		      <1> when 'true' ->
+			  [123, _kd, 58, 32, _vd
+			   | apply 'emo_map_str_walk'/3 (_rest, _pairs, 0)]
+		      <_> when 'true' ->
+			  [44, 32, _kd, 58, 32, _vd
+			   | apply 'emo_map_str_walk'/3 (_rest, _pairs, 0)]
+		    end
+	  <[]> when 'true' ->
+	      case _first of
+		<1> when 'true' -> [123, 125]
+		<_> when 'true' -> [125]
+	      end
+	end
+
+'emo_map_equal'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <{'emo_map', _ka}> when 'true' ->
+	      case _b of
+		<{'emo_map', _kb}> when 'true' ->
+		    case call 'erlang':'get'(_ka) of
+		      <{_oa, _pa}> when 'true' ->
+			  case call 'erlang':'get'(_kb) of
+			    <{_ob, _pb}> when 'true' ->
+				case call 'erlang':'=:='(call 'maps':'size'(_pa), call 'maps':'size'(_pb)) of
+				  <'false'> when 'true' -> 'false'
+				  <'true'> when 'true' ->
+				      apply 'emo_map_equal_walk'/3 (_oa, _pa, _pb)
+				end
+			  end
+		    end
+		<_other> when 'true' -> 'false'
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _a})
+	end
+
+'emo_map_equal_walk'/3 =
+    fun (_keys, _pa, _pb) ->
+	case _keys of
+	  <[_k | _rest]> when 'true' ->
+	      case call 'maps':'is_key'(_k, _pb) of
+		<'false'> when 'true' -> 'false'
+		<'true'> when 'true' ->
+		    case apply 'emo_eq'/2 (call 'maps':'get'(_k, _pa), call 'maps':'get'(_k, _pb)) of
+		      <'false'> when 'true' -> 'false'
+		      <'true'> when 'true' ->
+			  apply 'emo_map_equal_walk'/3 (_rest, _pa, _pb)
+		    end
+	      end
+	  <[]> when 'true' -> 'true'
+	end
+
+%% Inside a Map's rendering and its get-miss message, a string shows
+%% quoted — the interpreter's debug form; everything else goes through
+%% the shared to_str. On this target a string is a raw binary (a Char
+%% is a one-byte one), so the quote walk is what draws the line.
+
+'emo_map_dbg'/1 =
+    fun (_v) ->
+	case call 'erlang':'is_binary'(_v) of
+	  <'true'> when 'true' ->
+	      call 'erlang':'iolist_to_binary'
+		(apply 'emo_map_quote'/1 (_v))
+	  <'false'> when 'true' ->
+	      apply 'emo_to_str'/1 (_v)
+	end
+
+'emo_map_quote'/1 =
+    fun (_s) -> [34 | apply 'emo_map_quote_walk'/2 (_s, 0)]
+
+'emo_map_quote_walk'/2 =
+    fun (_s, _i) ->
+	case call 'erlang':'>='(_i, call 'erlang':'byte_size'(_s)) of
+	  <'true'> when 'true' -> [34]
+	  <'false'> when 'true' ->
+	      case call 'binary':'at'(_s, _i) of
+		<34> when 'true' ->
+		    [92, 34 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<92> when 'true' ->
+		    [92, 92 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<10> when 'true' ->
+		    [92, 110 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<9> when 'true' ->
+		    [92, 116 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<13> when 'true' ->
+		    [92, 114 | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+		<_c> when 'true' ->
+		    [_c | apply 'emo_map_quote_walk'/2 (_s, call 'erlang':'+'(_i, 1))]
+	      end
+	end
 
 %% ---- printf ----
 %% 
