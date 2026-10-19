@@ -84,3 +84,10 @@ const rainfall = plot.table_missing(
 println(rainfall.rows)
 println(rainfall.presence("mm"))
 println(rainfall.number("mm"))
+
+// The color channel resolves a column through the theme: a label column
+// by its levels' sorted position in the palette, a number column
+// normalized over its observed span and read through the colormap.
+println(plot.channel_colors(tips, "time", plot.theme()))
+println(plot.channel_colors(tips, "total_bill", plot.theme()))
+println(plot.channel_colors(rainfall, "mm", plot.theme()))

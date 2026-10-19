@@ -150,6 +150,64 @@ def table_missing(numbers Map[String, Array[Float64]], presence Map[String, Arra
   return Table.new(numbers: numbers, presence: presence, labels: labels, rows: rows)
 }
 
+// The color channel's per-row colors (decision 24): the dispatch on the
+// column's kind. A label column resolves through the theme palette by
+// the level's sorted position; a number column normalizes its observed
+// values over their span and reads the theme colormap — a column whose
+// values all agree sits at the map's low end. An absent slot keeps its
+// place with the low end too, since the chart layer never draws it.
+def channel_colors(t Table, name String, theme Theme) Array[(Int64, Int64, Int64)] {
+  if t.numbers.has(name) {
+    const vals = t.number(name)
+    const pres = t.presence(name)
+    var lo = 0.0
+    var hi = 0.0
+    var seen = false
+    for var i = 0; i < vals.length(); i = i + 1 {
+      if pres[i] == Presence.present {
+        if !seen {
+          lo = vals[i]
+          hi = vals[i]
+          seen = true
+        } else {
+          if vals[i] < lo {
+            lo = vals[i]
+          }
+          if vals[i] > hi {
+            hi = vals[i]
+          }
+        }
+      }
+    }
+    if !seen {
+      raise Exception.new(message: "plot: the color column \"${name}\" carries no values")
+    }
+    var out = []
+    for var i = 0; i < vals.length(); i = i + 1 {
+      var f = 0.0
+      if pres[i] == Presence.present && hi > lo {
+        f = (vals[i] - lo) / (hi - lo)
+      }
+      out = out.append(theme.cmap.at(f))
+    }
+    return out
+  }
+  if t.labels.has(name) {
+    const col = t.label(name)
+    const levels = internal.channels.sorted_levels(col)
+    var out = []
+    for var i = 0; i < col.length(); i = i + 1 {
+      var idx = 0
+      while idx < levels.length() && levels[idx] != col[i] {
+        idx = idx + 1
+      }
+      out = out.append(theme.palette.color(idx))
+    }
+    return out
+  }
+  raise Exception.new(message: "plot: no column named \"${name}\"")
+}
+
 class Figure {
   def init(width Float64, height Float64, title String, theme Theme, axes Array[Axes], grid (Int64, Int64), share Share) {
     self.width = width

@@ -138,11 +138,44 @@ data-frame: the data-facing entry points added later (a CSV or JSON
 reader) will return `(R.error, reason)` instead of raising, because
 data read from outside is not programmer intent.
 
+## Channels
+
+The dataset charts name their columns through a channel mapping — a
+`Map[String, String]` whose keys are channels and whose values are
+column names, so a key left out is simply a channel unused:
+
+```emo
+{ "x": "total_bill", "y": "tip", "color": "time" }
+```
+
+The vocabulary is eight words — `x`, `y`, `color`, `size`, `marker`,
+`dash`, `facet_row`, `facet_col` — and a mapping that carries anything
+else raises. Each chart family reads only the channels it supports: the
+relational charts read the full set, the distribution and categorical
+charts read `x`, `y`, `color`, and the two facet channels, and the
+matrix charts read only the facets. A mapping that carries a channel
+its family does not read raises. Channel values are column names only:
+a constant belongs in the mark style, never in the mapping.
+
+The `color` channel dispatches on the column's kind, and the dispatch
+is a function on its own:
+
+```emo
+plot.channel_colors(tips, "time", plot.theme())
+```
+
+A label column resolves through the theme palette by the level's
+sorted position — levels are distinct and ordered by their bytes — and
+a number column normalizes its observed values over their span and
+reads the theme colormap, a column whose values all agree sitting at
+the map's low end. An absent slot keeps its place with the low end
+too, since the chart layer never draws it. An unknown column raises.
+
 ## Themes
 
 A theme dresses the whole figure: the background and foreground inks,
 the grid, axis, title, and label styles, the palette and colormap the
-`color` channel will resolve through, the spacing between panels, and
+`color` channel resolves through, the spacing between panels, and
 the default size a `figure()` starts at. `figure()` builds the default
 light theme, and `with_theme` swaps it on a figure:
 
@@ -331,14 +364,15 @@ whole story, target by target, is
 T0 — what exists today — is the bar, line, scatter, area, and hist
 marks, linear axes with nice-number ticks, a title, axis labels, tick
 marks, the grid, the theme that dresses it all, the validating `Table`
-the dataset charts will read, and SVG output. Both
+the dataset charts will read, the channel vocabulary and the `color`
+channel's kind dispatch, and SVG output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
 categorical labels. The remaining pieces the surface carries are
-reserved and not rendered yet: the chart-layer half of faceting —
+reserved and not rendered yet: the chart functions that take a table
+and a channel mapping, and the chart-layer half of faceting —
 splitting a dataset by a column's levels, per-panel level labels, and
-the one shared legend — and the palette/colormap wiring behind the
-`color` channel. The marks and the axes draw through the internal
+the one shared legend. The marks and the axes draw through the internal
 `Renderer` interface — `DrawContext` carries a `Renderer`, not the
 concrete SVG class — so a terminal or raster backend can join later
 without disturbing the figure or the marks.

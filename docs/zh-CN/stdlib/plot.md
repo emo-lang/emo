@@ -93,9 +93,27 @@ tips.label("time")
 
 `Table` 住在 `plot` 根上,不许长成 data-frame:以后加的数据入口(CSV 或 JSON 读取器)返回 `(R.error, reason)` 而不 raise,因为从外面读进来的数据不是程序员的意图。
 
+## 通道
+
+数据集图用通道映射点名自己的列——一个 `Map[String, String]`,键是通道、值是列名,少写的键就是没用到的通道:
+
+```emo
+{ "x": "total_bill", "y": "tip", "color": "time" }
+```
+
+词表是八个词——`x`、`y`、`color`、`size`、`marker`、`dash`、`facet_row`、`facet_col`——映射里出现别的词直接 raise。每个图族只读它支持的通道:关系图读全套,分布图与类别图读 `x`、`y`、`color` 和两个分面通道,矩阵图只读分面。映射里出现图族不读的通道同样 raise。通道的值只能是列名:常量属于 mark 样式,绝不进映射。
+
+`color` 通道按列的种类分派,这份分派本身就是一个独立的函数:
+
+```emo
+plot.channel_colors(tips, "time", plot.theme())
+```
+
+类别列按水平的排序位置从主题 palette 取色——水平先去重、再按字节排序;数值列把在场值在自己跨度上归一化、从主题 colormap 取色,所有值都相同的列落在 map 的低端。缺席的槽位同样以低端占位,因为图表层永远不会画它。未知的列名直接 raise。
+
 ## 主题
 
-主题装扮整张图:背景与前景墨色、网格、坐标轴、标题、标签样式,color 通道将要经过的 palette 与 colormap、面板间距,以及 `figure()` 出发的默认尺寸。`figure()` 建出默认的浅色主题,`with_theme` 把另一套换上图:
+主题装扮整张图:背景与前景墨色、网格、坐标轴、标题、标签样式,color 通道经过的 palette 与 colormap、面板间距,以及 `figure()` 出发的默认尺寸。`figure()` 建出默认的浅色主题,`with_theme` 把另一套换上图:
 
 ```emo
 plot.figure().with_theme(plot.dark_theme())
@@ -204,6 +222,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图将要读取的带校验的 `Table`,还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例——以及 `color` 通道背后的 palette/colormap 接线。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图将要读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派,还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:接收表与通道映射的图表函数,以及图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

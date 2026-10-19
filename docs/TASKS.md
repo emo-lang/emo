@@ -1436,11 +1436,26 @@ against the `Renderer` interface, not `SvgRenderer`.
       rendering the qualified name on `ts` and having no rendering at
       all on `wasm`/`beam`; all three now render the bare member — the
       interpreter's rule — so the golden holds byte-for-byte.
-- [ ] **T42.3** — Channels `Map[String, String]` (decision 16): the
+- [x] **T42.3** — Channels `Map[String, String]` (decision 16): the
       vocabulary `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,
       unknown channels an error, each family reading only the channels it
       supports — carrying T41.6's column-kind `color` dispatch through
-      the theme's palette and colormap (decision 24).
+      the theme's palette and colormap (decision 24). The checks live in
+      `internal/channels.emo` — the vocabulary and the per-family reads
+      (relational full set; distributions and categorical without the
+      point aesthetics; matrix facets only), plus the byte-order
+      comparison and `sorted_levels` the categorical color reads the
+      palette through, since a `String` answers `==` but not `<`. The
+      dispatch is public at the root as `plot.channel_colors(table,
+      name, theme)`: a label column through the palette by the level's
+      sorted position, a number column normalized over its observed span
+      through the colormap (a constant column at the low end), absent
+      slots keeping their place at the low end. Verified on all six
+      paths — interp, c, ocaml, ts, wasm, beam — with the happy outputs
+      and five raise messages byte-identical: unknown channel, two family
+      violations, unknown column, all-absent color column. The demo grew
+      a channels section; the chart functions that take the mapping
+      arrive with Step 43.
 
 ### Step 43 — T1 dataset charts
 

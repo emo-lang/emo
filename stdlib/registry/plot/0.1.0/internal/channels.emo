@@ -1,0 +1,97 @@
+// The dataset channel vocabulary: the words a chart's channel mapping
+// may carry, the per-family reads, and the level order a categorical
+// column resolves through. Everything here is plain strings and bytes,
+// so the answers are byte-identical on every target.
+
+// A mapping carries channel names as keys and column names as values —
+// constants belong in the mark styles, never in the mapping.
+def check(ch Map[String, String], family String, supported Array[String]) Void {
+  const keys = ch.keys()
+  for var k = 0; k < keys.length(); k = k + 1 {
+    const name = keys[k]
+    if !member(["x", "y", "color", "size", "marker", "dash", "facet_row", "facet_col"], name) {
+      raise Exception.new(message: "plot: \"${name}\" is not a channel; the channels are x, y, color, size, marker, dash, facet_row, facet_col")
+    }
+    if !member(supported, name) {
+      raise Exception.new(message: "plot: the ${family} charts do not read the \"${name}\" channel")
+    }
+  }
+}
+
+// Each chart family reads only the channels it supports; a mapping that
+// carries one the family does not read raises.
+def check_relational(ch Map[String, String]) Void {
+  check(ch, "relational", ["x", "y", "color", "size", "marker", "dash", "facet_row", "facet_col"])
+}
+
+def check_distributions(ch Map[String, String]) Void {
+  check(ch, "distributions", ["x", "y", "color", "facet_row", "facet_col"])
+}
+
+def check_categorical(ch Map[String, String]) Void {
+  check(ch, "categorical", ["x", "y", "color", "facet_row", "facet_col"])
+}
+
+def check_matrix(ch Map[String, String]) Void {
+  check(ch, "matrix", ["facet_row", "facet_col"])
+}
+
+def member(xs Array[String], s String) Bool {
+  for var k = 0; k < xs.length(); k = k + 1 {
+    if xs[k] == s {
+      return true
+    }
+  }
+  return false
+}
+
+// Byte order: the language orders numbers, and a String answers `==`
+// only, so lexicographic order reads the UTF-8 bytes.
+def less(a String, b String) Bool {
+  const x = a.to_bytes()
+  const y = b.to_bytes()
+  var n = x.length()
+  if y.length() < n {
+    n = y.length()
+  }
+  for var k = 0; k < n; k = k + 1 {
+    if x.get(k) < y.get(k) {
+      return true
+    }
+    if x.get(k) > y.get(k) {
+      return false
+    }
+  }
+  return x.length() < y.length()
+}
+
+// A label column's levels — distinct, ascending by byte order. The
+// sorted position is what a categorical color reads the palette
+// through, so the same column resolves to the same colors everywhere.
+def sorted_levels(col Array[String]) Array[String] {
+  var seen = []
+  for var i = 0; i < col.length(); i = i + 1 {
+    const s = col[i]
+    if !member(seen, s) {
+      seen = seen.append(s)
+    }
+  }
+  var out = []
+  while seen.length() > 0 {
+    var lo = 0
+    for var k = 1; k < seen.length(); k = k + 1 {
+      if less(seen[k], seen[lo]) {
+        lo = k
+      }
+    }
+    out = out.append(seen[lo])
+    var rest = []
+    for var k = 0; k < seen.length(); k = k + 1 {
+      if k != lo {
+        rest = rest.append(seen[k])
+      }
+    }
+    seen = rest
+  }
+  return out
+}
