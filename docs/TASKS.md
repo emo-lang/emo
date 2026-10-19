@@ -43,6 +43,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M16 — Value-family reclamation | 49 | The `c` target reclaims the value-semantic kinds, not only the identity cells: a long-running program's arena bytes and identity liveness stay flat across renders instead of rising per event, array growth is linear rather than quadratic, and every existing golden on every target stays byte-identical (`spike/arena-scope`, `CHECK.md`). |
 | M17 — Cross-target conformance | 50 | Conformance to promises already made, not new design: a spawned `c`-target process that raises dies alone, `send` delivers a snapshot, and `foreign def` refuses by name on `wasm` and `beam`; every existing golden on every target stays byte-identical (`CHECK.md`). |
 | M18 — TLS on the `c` target | 51 | The three existing `net` TLS builtins run on the default target: the C runtime lands them against the system OpenSSL/LibreSSL behind hand-declared prototypes and IR-keyed conditional linkage (a non-TLS build never links OpenSSL), the ocaml scheduler's semantics and reason conventions hold, and `http`'s `https://` works end-to-end on `c` (`CHECK.md`). |
+| M19 — Map on `wasm` and `beam` | 52 | The last two hosted targets implement the `Map` builtin through their existing mutable-kind mechanisms — insertion order, the six key kinds, structural `==`, and the `{key: value}` rendering byte-identical with the four targets that have it — `send` delivers a snapshot on `wasm` (the recorded remainder the new mutability makes reachable), `slog` widens to the two targets, `Exception.new(data:)` carries crash context everywhere but `riscv64`, and the `plot` package's Map-shaped `Table` and channels (Step 42) unblock (`CHECK.md`). |
 
 ## Design gates
 
@@ -2190,3 +2191,105 @@ the zh-CN mirrors).
       `docs/stdlib/http.md`'s "`https` needs TLS, which `c` refuses"
       retired, the zh-CN mirrors, the gates table and
       `plan/README.md`'s status table updated.
+
+## M19 — Map on `wasm` and `beam`
+
+`Map` is the one capability builtin the two remaining hosted targets
+refuse: the interpreter, `c`, `ocaml`, and `typescript` implement it,
+while `wasm` and `beam` reject a map literal at lowering (`the
+wasm/beam target does not support Map yet`, a refusal dating from when
+the two runtimes shipped in T16–T18). The refusal has grown
+load-bearing: the `plot` package's `Table` and channel vocabulary are
+Map-shaped (decision 4/10/16, Step 42 blocked on it), `slog`'s manifest
+narrows itself while the gap stands, and `Exception.new(data:)` — a
+Map — cannot carry crash context on either target (`CHECK.md` records
+the standing note). The mechanism exists on both sides already: `wasm`
+lowers the mutable `List` through WasmGC structs (`$vlist` over `$lnode`
+nodes, runtime functions 61–67) and `beam` through the process
+dictionary keyed by a fresh ref (`emo_list_new`, the `{'emo_list', K}`
+tag), each with the same shape of method surface Map needs. M19 lands
+Map through those precedents — the insertion order, the six key kinds,
+structural `==` (content equality, insertion order irrelevant, the
+interpreter's rule), and the `{key: value}` rendering byte-identical
+with the four targets that have it — and closes the recorded `wasm`
+send-snapshot remainder that the new mutability makes reachable
+(`CHECK.md`, step 50). Mutable kinds stay process-local on `beam` (the
+`List` precedent — a tag sent across processes fails loudly at first
+use, `emo_no_list` today, `emo_no_map` beside it); `riscv64` stays the
+one refusal, the capability tier frozen.
+
+### Step 52 — Map on `wasm` and `beam`
+
+**Prereq:** none (the interpreter and the `c`/`typescript`
+implementations are the semantic reference).
+**Done when:** a map program — literals, `Map.new`, the seven methods,
+structural `==`, the `{key: value}` print, aliasing through two
+bindings — runs byte-identical on all six paths (interp, c, ocaml, ts,
+wasm, beam); `Exception.new(data:)` carries data on `wasm` and `beam`;
+`send` delivers a snapshot on `wasm`; `slog` declares the two targets
+and its golden joins their lists; every existing golden on every target
+stays byte-identical; the docs carry the story.
+
+- [ ] **T52.1** — The wasm runtime's map structures: a `$vmap` — key
+      array, value array, count, in the `$vbuilder` doubling-buffer
+      shape, linear-scan lookup (plot-scale maps are small, and the
+      array order *is* the insertion order) — with the runtime
+      functions `map_new`, `map_get` (E3004
+      `no key ... in this Map` on a miss, the interpreter's error),
+      `map_set` (an existing key keeps its first-insert position),
+      `map_has`, `map_remove` (compaction preserving relative order),
+      `map_len`, `map_keys`, `map_values`, `map_str` (the
+      `{key: value}` rendering in insertion order, elements and keys
+      through the shared `to_str`), and the boxed-primitive key
+      equality helper; appended after the array/builder renderings with
+      the index table and `runtime_count` updated (main stays at 60,
+      List at 61–67, the map ops following).
+- [ ] **T52.2** — The wasm lowering: `Map_lit` builds through
+      `map_new` (the emitter packs `Map.new`'s variadic pairs), the
+      seven methods dispatched on the receiver's `MapType`, structural
+      `==`, and `to_string` wired; the two `Lower_error` refusals in
+      `emo_wasm.ml` (the `Map_lit` arm and the `MapType` method arm)
+      deleted, and the stale `Make_exception` comment updated so
+      `Exception.new(data:)` lowers.
+- [ ] **T52.3** — The wasm send snapshot: `rt_send` deep-copies the
+      message before it joins the mailbox — Map, Box, List, and
+      ArrayBuilder rebuilt (a map copy preserving insertion order), the
+      immutable kinds and `Pid` passing through — the `c` runtime's
+      `emo_deep_copy` rule, closing the recorded conformance remainder
+      (`CHECK.md`, step 50); the `cross_target` corpus pins it on
+      `wasm`.
+- [ ] **T52.4** — The beam runtime's map helpers under the
+      `emo_list_new` discipline: `emo_map_new/1` mints a fresh ref and
+      stores `{Order, Pairs}` — the insertion-order key list and an
+      Erlang map key→value — in the process dictionary behind
+      `{'emo_map', K}`; `emo_map_get/2` (the interpreter's E3004
+      message on a miss), `emo_map_set/3` (first-insert position kept),
+      `emo_map_has/2`, `emo_map_remove/2` (the order list filtered),
+      `emo_map_length/1`, `emo_map_keys/1`, `emo_map_values/1`,
+      `emo_map_str/1`, and `emo_map_equal/2` (same size, per-key value
+      equality, order irrelevant); keys are the six hashable primitives
+      compared with `=:=`, so `1` and `1.0` stay distinct.
+- [ ] **T52.5** — The beam lowering: `Map_lit` → `emo_map_new`, the
+      method arms splitting on the `{'emo_map', K}` tag where a name
+      serves several types (`get`, `length`, `to_string` — the bytes
+      precedent), structural `==` through `emo_map_equal`, and the
+      stale `Make_exception` comment updated so `Exception.new(data:)`
+      carries data on `beam`.
+- [ ] **T52.6** — The golden: `examples/map_demo` — a literal,
+      `Map.new(pairs)`, the seven methods, insertion order through
+      `keys()`/`values()`, first-insert positions, removal, aliasing,
+      `==` (equal content in different insertion order, and unequal
+      maps), the `{key: value}` print, and an `Exception.new` carrying
+      `data` — `expected.txt` taken from the interpreter and
+      byte-identical in all five golden lists; the check-time key-kind
+      pin (E4020) rides the existing diagnostics tests.
+- [ ] **T52.7** — The stdlib widening: `slog`'s manifest gains `wasm`
+      and `beam` (its close-out's recorded condition — declares the
+      targets that work today, widens when the gap closes), and
+      `slog_demo` joins the wasm and beam golden lists byte-for-byte.
+- [ ] **T52.8** — The docs: `docs/demo-targets.md`'s capability story
+      (the `wasm`/`beam` Map refusals retire; `riscv64` stays the one),
+      `docs/stdlib.md`'s slog row, `docs/visualization.md`'s
+      five-target Table claim now literally true, `CHECK.md`'s T16.5
+      note (`slog` waits on `Map`) recording its resolution, the zh-CN
+      mirrors, and `plan/README.md`'s status table.

@@ -36,6 +36,7 @@
 | M16 — 值语义家族的回收 | 49 | `c` 目标回收值语义的那些种类,而不只是身份格:长跑程序每次渲染的 arena 字节与身份存活数保持平坦,而不是随事件上涨;数组增长是线性而非二次;每个 target 上既有的金测逐字节不变(`spike/arena-scope`、`CHECK.md`)。 |
 | M17 — 跨 target 一致性 | 50 | 兑现已经做出的承诺,而不是新设计:`c` 目标里子进程 raise 只结束子进程、`send` 送的是快照,`foreign def` 在 `wasm` 与 `beam` 上按名拒绝;每个 target 上既有的金测逐字节不变(`CHECK.md`)。 |
 | M18 — `c` 目标上的 TLS | 51 | 既有三个 `net` TLS 内建在默认 target 上运行:C 运行时以手写原型与按 IR 判定的条件链接落在系统 OpenSSL/LibreSSL 上(不用 TLS 的构建绝不链接 OpenSSL),ocaml 调度器的语义与 reason 约定保持一致,`http` 的 `https://` 在 `c` 上端到端可用(`CHECK.md`)。 |
+| M19 — `wasm` 与 `beam` 上的 Map | 52 | 最后两个宿主 target 用各自既有的可变种类机制实现 `Map` 内建——插入序、六种键类型、结构化 `==`、`{key: value}` 渲染与已有实现的四个 target 逐字节一致——`send` 在 `wasm` 上送快照(新可变性使之可达的那条记录在案的遗留),`slog` 加宽到这两个 target,`Exception.new(data:)` 在除 `riscv64` 外的每个 target 上都能携带崩溃上下文,`plot` 包的 Map 形状 `Table` 与通道(Step 42)由此解除阻塞(`CHECK.md`)。 |
 
 ## 设计闸门
 
@@ -849,3 +850,23 @@ TLS 从来不缺位于标准库——`net_tls_connect`、`net_tls_connect_insecu
 - [x] **T51.4** — 服务端:`net_listen_tls` 加载 PEM 对(失败时报 ocaml 同形的 `cannot load the TLS certificate for <host>:<port>`),监听 fd 登记上下文,`accept` 执行 `SSL_accept` 并登记连接;解释器与 `c` 各跑一个程序内的 TLS echo 服务端 + 客户端,落在本机 `127.0.0.1:0`。
 - [x] **T51.5** — 金测:`examples/https_roundtrip` 打 harness 的 captive ocaml-ssl TLS 服务端,`expected.txt` 取自解释器、在 `c` 上逐字节一致,挂进 c_goldens;独立 OCaml 运行时补上它自己的 TLS 轮转测试——那条路实现了 TLS 却从来没测过。
 - [x] **T51.6** — 文档:`docs/stdlib/net.md` 的 TLS 限制改成已实现的故事(ocaml-ssl / node:tls / 系统 OpenSSL-LibreSSL,写明版本下限),`docs/stdlib/http.md` 的「`https` 需要 TLS,而 `c` 拒绝」退场,zh-CN 镜像、闸门表与 `plan/README.md` 状态表同步。
+
+---
+
+## M19 — `wasm` 与 `beam` 上的 Map
+
+`Map` 是仅剩的两个宿主 target 都拒绝的唯一能力内建:解释器、`c`、`ocaml` 与 `typescript` 都实现了它,而 `wasm` 与 `beam` 在降级阶段就拒绝 map 字面量(`the wasm/beam target does not support Map yet`,这条拒绝从 T16–T18 两个运行时诞生起就在)。它如今已经承重:`plot` 包的 `Table` 与通道词表是 Map 形状的(decision 4/10/16,Step 42 因此阻塞),`slog` 的 manifest 在缺口合上之前主动收窄自己,而 `Exception.new(data:)`——一个 Map——在这两个 target 上无法携带崩溃上下文(`CHECK.md` 记有常设注记)。机制在两边都已有蓝本:`wasm` 用 WasmGC 结构体降级可变的 `List`(`$vlist` 叠 `$lnode` 节点,运行时函数 61–67),`beam` 用新 ref 作键的进程字典(`emo_list_new`,`{'emo_list', K}` 标签),两者的方法面形状正是 Map 需要的。M19 沿这两个先例落地 Map——插入序、六种键类型、结构化 `==`(内容相等、与插入序无关,解释器的规则)、`{key: value}` 渲染与已有实现的四个 target 逐字节一致——并顺手关掉新可变性使之可达的那条 `wasm` send 快照遗留(`CHECK.md`,step 50)。可变种类在 `beam` 上保持进程内(这是 `List` 的先例——标签跨进程发送后,首次使用时响亮报错,今天是 `emo_no_list`,`emo_no_map` 与之并列);`riscv64` 仍是唯一的拒绝,能力层维持冻结。
+
+### 步骤 52 — `wasm` 与 `beam` 上的 Map
+
+**前置:** 无(解释器与 `c`/`typescript` 的实现是语义基准)。
+**完成标准:** 一个 map 程序——字面量、`Map.new`、七个方法、结构化 `==`、`{key: value}` 打印、双绑定上的别名——在全部六条路径(interp、c、ocaml、ts、wasm、beam)上逐字节一致;`Exception.new(data:)` 在 `wasm` 与 `beam` 上携带 data;`send` 在 `wasm` 上送快照;`slog` 声明这两个 target、其金测进入两个名单;每个 target 上既有的金测逐字节不变;文档把故事讲全。
+
+- [ ] **T52.1** — wasm 运行时的 map 结构:`$vmap`——键数组、值数组、计数,采用 `$vbuilder` 倍增缓冲的形状,线性扫描查找(plot 尺度的 map 很小,而数组顺序*就是*插入序)——加运行时函数 `map_new`、`map_get`(未命中报 E3004 `no key ... in this Map`,解释器的错误)、`map_set`(已存在的键保留首次插入的位置)、`map_has`、`map_remove`(压缩时保持相对顺序)、`map_len`、`map_keys`、`map_values`、`map_str`(按插入序渲染 `{key: value}`,键与值都走共享的 `to_str`),以及装箱原始值的键相等助手;追加在数组/builder 渲染之后,索引表与 `runtime_count` 机械更新(main 保持 60,List 保持 61–67,map 操作随后)。
+- [ ] **T52.2** — wasm 降级:`Map_lit` 经 `map_new` 构建(emitter 负责把 `Map.new` 的变长 pairs 打包),七个方法按接收者的 `MapType` 分派,结构化 `==` 与 `to_string` 接线;`emo_wasm.ml` 里两处 `Lower_error` 拒绝(`Map_lit` 臂与 `MapType` 方法臂)删除,过时的 `Make_exception` 注记更新,`Exception.new(data:)` 得以降级。
+- [ ] **T52.3** — wasm 的 send 快照:`rt_send` 在消息进信箱前深拷贝——Map、Box、List、ArrayBuilder 重建(map 副本保持插入序),不可变种类与 `Pid` 原样通过——即 `c` 运行时 `emo_deep_copy` 的规则,关掉记录在案的一致性遗留(`CHECK.md`,step 50);`cross_target` 语料在 `wasm` 上钉住它。
+- [ ] **T52.4** — beam 运行时的 map 助手,走 `emo_list_new` 的纪律:`emo_map_new/1` 铸新 ref,把 `{Order, Pairs}`——插入序键表与 Erlang map 键→值——存进进程字典,标签 `{'emo_map', K}`;`emo_map_get/2`(未命中报解释器的 E3004 消息)、`emo_map_set/3`(已存在的键保留首次插入位置)、`emo_map_has/2`、`emo_map_remove/2`(过滤顺序表)、`emo_map_length/1`、`emo_map_keys/1`、`emo_map_values/1`、`emo_map_str/1`,以及 `emo_map_equal/2`(同尺寸、逐键值相等、与顺序无关);键限于六种可哈希原始类型、以 `=:=` 比较,`1` 与 `1.0` 保持不同。
+- [ ] **T52.5** — beam 降级:`Map_lit` → `emo_map_new`,方法臂在名字服务多个类型处按 `{'emo_map', K}` 标签分派(`get`、`length`、`to_string`——bytes 的先例),结构化 `==` 经 `emo_map_equal`,过时的 `Make_exception` 注记更新,`Exception.new(data:)` 在 `beam` 上携带 data。
+- [ ] **T52.6** — 金测:`examples/map_demo`——字面量、`Map.new(pairs)`、七个方法、经 `keys()`/`values()` 看插入序、首次插入位置、删除、别名、`==`(同内容不同插入序相等、不等的 map 不等)、`{key: value}` 打印,以及一个携带 `data` 的 `Exception.new`——`expected.txt` 取自解释器,在全部五个金测名单里逐字节一致;检查期键类型钉子(E4020)走既有的诊断测试。
+- [ ] **T52.7** — 标准库加宽:`slog` 的 manifest 增至 `wasm` 与 `beam`(它收口时记下的条件——今天声明能跑的 target,缺口合上时加宽),`slog_demo` 进入 wasm 与 beam 金测名单,逐字节一致。
+- [ ] **T52.8** — 文档:`docs/demo-targets.md` 的能力故事(`wasm`/`beam` 的 Map 拒绝退场;`riscv64` 仍是唯一)、`docs/stdlib.md` 的 slog 行、`docs/visualization.md` 的五 target Table 主张就此字面为真、`CHECK.md` 的 T16.5 注记(`slog` 等待 `Map`)记录其解决、zh-CN 镜像,以及 `plan/README.md` 的状态表。
