@@ -2794,8 +2794,9 @@ let rec emit_const_thunk env0 (f : Emo_ir.func) : unit =
          release at its next drain, exactly as they do when the same
          expression runs as a top-level statement. A spawn's fiber state
          is released by that same window — an extra frame here would end
-         the child's arena with it. *)
-      put env0 "    emo_drain();\n";
+         the child's arena with it. No drain of our own either: a first
+         read mid-expression would release the caller's already-pooled
+         operands out from under the rest of the expression. *)
       let v = as_dyn env init in
       put env "    emo_const_val = emo_retain(%s);\n" v;
       put env "    emo_const_done = 1;\n";
