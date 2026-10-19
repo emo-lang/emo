@@ -96,6 +96,11 @@ let closure_counter = ref 0
    and riding the emit result to the CLI. *)
 let uses_tls = ref false
 
+(* The current program's const thunks (mangled names); set by [emit].
+   A const thunk memoizes into function-local statics: the initializer
+   runs once, and every read returns the same value. *)
+let const_thunks : string list ref = ref []
+
 (* Callback trampoline numbering, keyed by the marshaled method
    signature so identical callback shapes share one function. *)
 let cb_counter = ref 0
@@ -2753,10 +2758,68 @@ let signature (f : Emo_ir.func) : string * string =
   in
   (result_type f, params)
 
+(* A const thunk: function-local statics memoize the initializer's
+   value. The cached claim is the thunk's own and is never released — a
+   const lives as long as the program — and every call returns a fresh
+   retained claim, the same +1 contract an ordinary dynamic result
+   gives its caller. The body is exactly one `return <init>` by
+   construction (the IR's pass 2 and the group-const lowering), and a
+   const's result is always Unknown — the dynamic word. *)
+let rec emit_const_thunk env0 (f : Emo_ir.func) : unit =
+  match f.Emo_ir.fbody with
+  | [ Emo_ir.Return_stmt init ] when is_dyn f.Emo_ir.fresult ->
+      let env =
+        {
+          env0 with
+          fresh = 0;
+          fresh_prefix = "";
+          fname = f.Emo_ir.fname;
+          fresult = f.Emo_ir.fresult;
+          fclass = None;
+          tail_rebinds = [];
+          in_main = false;
+          owned = [];
+          loops = [];
+          hoist = [];
+          hoist_on = false;
+          scope = [];
+        }
+      in
+      put env0 "%s %s(void) {\n" (result_type f) (c_ident f.Emo_ir.fname);
+      put env0 "  static int emo_const_done = 0;\n";
+      put env0 "  static emo_value emo_const_val;\n";
+      put env0 "  if (!emo_const_done) {\n";
+      (* The statement-boundary discipline, not a pool frame of its own:
+         the initializer's temporaries pool in the caller's window and
+         release at its next drain, exactly as they do when the same
+         expression runs as a top-level statement. A spawn's fiber state
+         is released by that same window — an extra frame here would end
+         the child's arena with it. *)
+      put env0 "    emo_drain();\n";
+      let v = as_dyn env init in
+      put env "    emo_const_val = emo_retain(%s);\n" v;
+      put env "    emo_const_done = 1;\n";
+      put env0 "  }\n";
+      put env0 "  return emo_retain(emo_const_val);\n}\n\n"
+  | _ ->
+      (* Not the memo shape: the ordinary standalone path, which
+         re-runs the body per call. *)
+      emit_single_body env0 f
+
 (* A standalone function: the head label carries the tail-call
    rebind, and every exit releases the body's owned bindings. [fclass]
-   makes `self` resolve fields when emitting a method. *)
-let emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
+   makes `self` resolve fields when emitting a method. A const thunk
+   (a zero-param def named in [pconsts]) memoizes instead. *)
+and emit_single env0 ?(fclass : string option = None) (f : Emo_ir.func) : unit =
+  if
+    fclass = None
+    && f.Emo_ir.fparams = []
+    && List.mem f.Emo_ir.fname !const_thunks
+  then emit_const_thunk env0 f
+  else emit_single_body env0 ~fclass f
+
+and emit_single_body env0 ?(fclass : string option = None)
+    (f : Emo_ir.func) : unit =
   let ret, params = signature f in
   let self_tail = List.mem f.Emo_ir.fname (tail_callees f.Emo_ir.fbody) in
   let env =
@@ -3210,6 +3273,7 @@ let emit (program : Emo_ir.program) : string * string * bool =
   spawn_counter := 0;
   closure_counter := 0;
   uses_tls := false;
+  const_thunks := program.Emo_ir.pconsts;
   (* The TLS gate's reachability walk (step 51): the flag flips only at
      a Runtime_impl node the program can genuinely execute — reached
      from the entry module's top level and the global initializers

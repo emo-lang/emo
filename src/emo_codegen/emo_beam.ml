@@ -1927,8 +1927,10 @@ let rt_source =
 	      apply 'emo_builder_to_str'/1 ({'emo_builder', _k})
 	  <{'emo_map', _k}> when 'true' ->
 	      apply 'emo_map_str'/1 ({'emo_map', _k})
-	  <{'emo_enum', _m, _t}> when 'true' ->
-	      call 'erlang':'atom_to_binary'(_t, 'utf8')
+	  <{'emo_enum', _n, _m}> when 'true' ->
+	      call 'erlang':'atom_to_binary'(_m, 'utf8')
+	  <_t> when call 'erlang':'is_tuple'(_t) ->
+	      apply 'emo_tuple_to_str'/1 (_t)
 	  <_a> when call 'erlang':'is_list'(_a) ->
 	      apply 'emo_array_to_str'/1 (_a)
 	  <_s> when call 'erlang':'is_binary'(_s) -> _s
@@ -2757,6 +2759,29 @@ let rt_source =
 		<1> when 'true' ->
 		    [65, 114, 114, 97, 121, 66, 117, 105, 108, 100, 101, 114, 91, 93]
 		<_> when 'true' -> [93]
+	      end
+	end
+
+'emo_tuple_to_str'/1 =
+    fun (_t) ->
+	call 'erlang':'iolist_to_binary'
+	    (apply 'emo_tuple_join'/2 (call 'erlang':'tuple_to_list'(_t), 1))
+
+'emo_tuple_join'/2 =
+    fun (_elems, _first) ->
+	case _elems of
+	  <[_e | _rest]> when 'true' ->
+	      let <_piece> = apply 'emo_to_str'/1 (_e)
+	      in case _first of
+		   <1> when 'true' ->
+		       [[40], _piece | apply 'emo_tuple_join'/2 (_rest, 0)]
+		   <_> when 'true' ->
+		       [[44, 32], _piece | apply 'emo_tuple_join'/2 (_rest, 0)]
+		 end
+	  <[]> when 'true' ->
+	      case _first of
+		<1> when 'true' -> [40, 41]
+		<_> when 'true' -> [41]
 	      end
 	end
 
@@ -3925,7 +3950,32 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
     stmts env body;
     let body_text = Buffer.sub buf before (Buffer.length buf - before) in
     Buffer.truncate buf before;
-    put env (body_wrapper body_text);
+    let inner = body_wrapper body_text in
+    (* A const thunk memoizes in persistent_term: the initializer runs
+       once per node, and every later read returns the same value — the
+       identity an allocating initializer hands out survives, as in the
+       interpreter. 'undefined' is the sentinel: no Emo value is ever
+       the bare undefined atom (bools are 'true'/'false', instances are
+       tagged tuples). The key carries the module name, so two programs
+       on one node keep separate slots. *)
+    let memo name text =
+      let key = Printf.sprintf "{%s, %s}" (atom module_name) (atom name) in
+      Printf.sprintf
+        "case call 'persistent_term':'get'(%s, 'undefined') of\n\
+        \  <'undefined'> when 'true' ->\n\
+        \      let <_emo_const_v> = %s\n\
+        \      in case call 'persistent_term':'put'(%s, _emo_const_v) of\n\
+        \           <_emo_ignored> when 'true' -> _emo_const_v\n\
+        \         end\n\
+        \  <_emo_cached> when 'true' -> _emo_cached\nend"
+        key text key
+    in
+    let inner =
+      if params = [] && List.mem fname program.Emo_ir.pconsts then
+        memo name inner
+      else inner
+    in
+    put env inner;
     put env "\n\n";
     env.local_map <- [];
     env.current_class <- None

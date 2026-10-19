@@ -613,6 +613,11 @@ and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) : string =
 
 (* ---- Declarations ---- *)
 
+(* The current program's const thunks (mangled names); set by
+   [emit_program]. A const thunk memoizes into a module-level cache: the
+   initializer runs once, every read returns the same value. *)
+let const_thunks : string list ref = ref []
+
 let emit_func env (f : Emo_ir.func) : string =
   env.refs <- [];
   let params = String.concat ", " (List.map fst f.fparams) in
@@ -624,7 +629,18 @@ let emit_func env (f : Emo_ir.func) : string =
   let body = stmts env f.Emo_ir.fbody ~tail:true in
   env.fname <- saved_name;
   env.fparams <- saved_params;
-  if tramp then
+  if f.Emo_ir.fparams = [] && List.mem f.Emo_ir.fname !const_thunks then
+    (* A const thunk: the initializer runs once, the module-level cache
+       serves every later read — an allocating initializer keeps its
+       identity, as in the interpreter. No Emo value is ever the JS
+       undefined, so it is the not-yet-run sentinel. *)
+    Printf.sprintf
+      "async function %s() {\n\
+      \  if (%s__emo_cache === undefined) {\n\
+      \    %s__emo_cache = await (async () => {\n%s\n    })();\n  }\n\
+      \  return %s__emo_cache;\n}"
+      f.Emo_ir.fname f.Emo_ir.fname f.Emo_ir.fname body f.Emo_ir.fname
+  else if tramp then
     Printf.sprintf
       "async function %s(%s) {\n  __emo_driver: for (;;) {\n%s\n  }\n}"
       f.Emo_ir.fname params body
@@ -746,6 +762,7 @@ let ts_browser_prelude = Emo_ts_runtime_data.ts_browser_prelude
 
 let emit_program ~(browser : bool) ~(prelude : string)
     (program : Emo_ir.program) : string =
+  const_thunks := program.Emo_ir.pconsts;
   let buf = Buffer.create (16 * 1024) in
   let env =
     {
@@ -779,6 +796,11 @@ let emit_program ~(browser : bool) ~(prelude : string)
       put env "%s\n" (emit_class env c);
       put env "%s\n" (emit_ctor_factory env c))
     program.Emo_ir.pclasses;
+  (* A const thunk's module-level cache: declared before the functions
+     that read and fill it. *)
+  List.iter
+    (fun c -> put env "let %s__emo_cache;\n" c)
+    program.Emo_ir.pconsts;
   List.iter
     (fun (f : Emo_ir.func) ->
       if f.Emo_ir.fforeign = None then put env "%s\n" (emit_func env f))

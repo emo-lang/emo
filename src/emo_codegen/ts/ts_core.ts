@@ -546,6 +546,9 @@ function toStr(v: any): string {
         .join(", ") +
       "}"
     );
+  // The bare tag — the interpreter's form, and every other target's
+  // (CHECK.md, the enum display entry): the qualified spelling is the
+  // vocabulary's written form, not a value's.
   if (v instanceof EEnum) return v.member;
   if (v instanceof EPid) return "<pid " + v.id + ">";
   if (v instanceof EEmoException) return toStr(v.messageValue);

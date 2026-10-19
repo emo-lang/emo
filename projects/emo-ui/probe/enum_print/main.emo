@@ -1,22 +1,11 @@
-// Interpolating an enum, isolated. The display form does not agree
-// across targets, and neither does whether there is one at all:
+// Interpolating an enum uses the interpreter's bare-tag display form on
+// every hosted target. The tuple carrying R.ok follows the same rule:
 //
-//   emo run main.emo              -> red (ok, 12.5)
-//   build --target ocaml / c      -> red (ok, 12.5)
-//   build --target typescript     -> main.Color.red (R.ok, 12.5)
-//   build --target beam           -> raises emo_no_to_str
+//   emo run / ocaml / c / typescript / wasm / beam -> red (ok, 12.5)
 //
-// `typescript` prints the module-qualified name where the others print
-// the bare tag, and a tuple carrying an enum rides along with it; `beam`
-// has no clause for the kind at all and ends the process instead of
-// printing. Both are silent in the sense that matters — a program that
-// prints an enum is not wrong anywhere, it just does not agree, and its
-// bytes stop matching across targets.
-//
-// `debug.emo` interpolates an enum nowhere for this reason: it
-// destructures (`align_name`, `extent`) and prints a name it spelled
-// itself, so the trees it renders are byte-identical on every target
-// that can run them. `CHECK.md` records the divergence.
+// This probe is the regression case for T48.3. `wasm` handles both the
+// enum value and the tuple wrapper; `beam` handles the enum conversion
+// instead of raising `emo_no_to_str`.
 
 enum Color { red, green }
 

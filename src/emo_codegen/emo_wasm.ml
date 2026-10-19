@@ -255,6 +255,7 @@ let rt = function
   | "str_slice" -> 89
   | "str_starts_with" -> 90
   | "str_split" -> 91
+  | "tuple_str" -> 92
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
@@ -263,9 +264,10 @@ let rt = function
    substring runtime (68) and the ArrayBuilder ops (69..72) sit after
    them for the same reason, as do the array and builder renderings
    (73..74) the `to_str` chain calls, the Map ops (75..86) after
-   those, the Bytes rendering (87), and the send snapshot's deep
-   copy (88) last; the String split surface (89..91) follows. *)
-let runtime_count = 92
+   those, the Bytes rendering (87), the send snapshot's deep copy
+   (88), the String split surface (89..91), and the tuple rendering
+   (92) last. *)
+let runtime_count = 93
 
 (* ---- Lowering state ---- *)
 
@@ -300,6 +302,12 @@ type env = {
       (* each enclosing loop's (exit depth, continue depth) — the env
          depth outside the frame that carries each label, innermost
          first; break/continue branch by the difference *)
+  mutable consts : string list;
+      (* the program's const-thunk names; a thunk memoizes into two
+         module globals (see [memo_cell]) *)
+  mutable memo_idx : (string * (int * int)) list;
+      (* const thunk → (done-flag global, value global), assigned in
+         first-emission order, most recent first *)
 }
 
 let e env i = env.rev <- i :: env.rev
@@ -355,10 +363,33 @@ let string_const env (s : string) =
   match List.assoc_opt s env.strings with
   | Some g -> e env (W.Global_get g)
   | None ->
-      let g = 1 + List.length env.string_pool in
+      (* The memo slots of every const thunk sit between the scheduler
+         cursor (global 0) and the pool, so the pool's base shifts by
+         two words per thunk — known up front from the IR's [pconsts]. *)
+      let g = 1 + (2 * List.length env.consts) + List.length env.string_pool in
       env.strings <- (s, g) :: env.strings;
       env.string_pool <- s :: env.string_pool;
       e env (W.Global_get g)
+
+(* A const thunk's memo globals: the done flag (i32) and the value slot
+   (anyref). The slot pair is fixed by the const's position in the
+   program's const list, so every index in the module — string pool,
+   driver globals, pool init — agrees without depending on emission
+   order. Both sit after global 0 and before the string pool. *)
+let memo_cell env fname =
+  match List.assoc_opt fname env.memo_idx with
+  | Some pair -> pair
+  | None ->
+      let k =
+        let rec pos i = function
+          | [] -> failwith ("const thunk not registered: " ^ fname)
+          | c :: rest -> if c = fname then i else pos (i + 1) rest
+        in
+        pos 0 env.consts
+      in
+      let pair = (1 + (2 * k), 2 + (2 * k)) in
+      env.memo_idx <- (fname, pair) :: env.memo_idx;
+      pair
 
 (* The i32 truthiness of a bool-struct value: the value arrives as
    anyref, so it is narrowed to $vbool before the field read. *)
@@ -1895,18 +1926,47 @@ let emit_func env (f : Emo_ir.func) : W.func_type =
     | None -> None
   in
   env.current_class <- owner;
-  let body = stmts_value env f.Emo_ir.fbody ~tail:true in
-  let param_types = List.map (fun _ -> W.Anyref) f.Emo_ir.fparams in
-  (* local_decls opens with one entry per parameter; only the rest are
-     declared locals *)
-  let nparams = List.length f.Emo_ir.fparams in
-  let scratches = List.filteri (fun i _ -> i >= nparams) env.local_decls in
-  {
-    W.ftype_idx = type_idx env (W.FuncT (param_types, [ W.Anyref ]));
-    fparams = List.map fst f.Emo_ir.fparams;
-    flocals = List.map (fun t -> (1, t)) scratches;
-    fbody = body;
-  }
+  if f.Emo_ir.fparams = [] && List.mem f.Emo_ir.fname env.consts then
+    (* A const thunk: the done flag picks between running the
+       initializer once into the value global and returning it — every
+       read after the first returns the same value, so an allocating
+       initializer keeps its identity. No Emo value is ever null, so
+       the null default is never observable. *)
+    let done_i, val_i = memo_cell env f.Emo_ir.fname in
+    let init = stmts_value env f.Emo_ir.fbody ~tail:true in
+    {
+      W.ftype_idx = type_idx env (W.FuncT ([], [ W.Anyref ]));
+      fparams = [];
+      flocals = List.map (fun t -> (1, t)) env.local_decls;
+      fbody =
+        [
+          W.Global_get done_i;
+          W.I32_eqz;
+          W.If
+            ( W.Result W.Anyref,
+              init
+              @ [
+                  W.Global_set val_i;
+                  W.I32_const 1;
+                  W.Global_set done_i;
+                  W.Global_get val_i;
+                ],
+              [ W.Global_get val_i ] );
+        ];
+    }
+  else
+    let body = stmts_value env f.Emo_ir.fbody ~tail:true in
+    let param_types = List.map (fun _ -> W.Anyref) f.Emo_ir.fparams in
+    (* local_decls opens with one entry per parameter; only the rest are
+       declared locals *)
+    let nparams = List.length f.Emo_ir.fparams in
+    let scratches = List.filteri (fun i _ -> i >= nparams) env.local_decls in
+    {
+      W.ftype_idx = type_idx env (W.FuncT (param_types, [ W.Anyref ]));
+      fparams = List.map fst f.Emo_ir.fparams;
+      flocals = List.map (fun t -> (1, t)) scratches;
+      fbody = body;
+    }
 
 (* ---- Classes ----
 
@@ -2100,11 +2160,24 @@ let rt_to_str : W.func_type =
       [ W.Local_get 0; W.Call (rt "array_str") ]
       [ map_branch ]
   in
+  let tuple_branch =
+    branch (test_of t_vtuple)
+      [ W.Local_get 0; W.Call (rt "tuple_str") ]
+      [ array_branch ]
+  in
   {
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
     flocals = [];
-    fbody = [ array_branch ];
+    fbody = [
+      branch (test_of t_venum)
+        [
+          W.Local_get 0;
+          W.Ref_cast t_venum;
+          W.Struct_get (t_venum, 1);
+        ]
+        [ tuple_branch ];
+    ];
   }
 
 (* int_str(n i64) -> (ref null $bytes): digits LSB-first into the
@@ -2492,7 +2565,8 @@ type driver_globals = {
   g_root_done : int;
 }
 
-let rt_init (pool : string list) ~(g : driver_globals) : W.func_type =
+let rt_init (pool : string list) ~(pool_base : int)
+    ~(g : driver_globals) : W.func_type =
   {
     W.ftype_idx = t_main;
     fparams = [];
@@ -2502,7 +2576,7 @@ let rt_init (pool : string list) ~(g : driver_globals) : W.func_type =
         (fun s -> string_bytes_instrs s @ [ W.Struct_new t_vstring ])
         pool
       @ List.mapi
-          (fun i _ -> W.Global_set (1 + (List.length pool - 1 - i)))
+          (fun i _ -> W.Global_set (pool_base + (List.length pool - 1 - i)))
           pool
       @ [
           W.I32_const 0;
@@ -4864,6 +4938,72 @@ let rt_array_str : W.func_type =
         ];
   }
 
+(* tuple_str(t) -> $vstring: "(a, b, c)". Tuples are the runtime
+   tuple wrapper around the same anyref array used by array_str. *)
+let rt_tuple_str : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "t" ];
+    flocals =
+      [
+        (1, W.RefNull t_bytes);
+        (1, W.RefNull t_anyarray);
+        (1, W.I32);
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+      ];
+    fbody =
+      bytes_const "(" @ [ W.Local_set 1 ]
+      @ [
+          W.Local_get 0;
+          W.Ref_cast t_vtuple;
+          W.Struct_get (t_vtuple, 0);
+          W.Local_set 2;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.I32_const 1;
+          W.Local_set 5;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 2;
+                      W.Array_len t_anyarray;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 5;
+                      W.I32_eqz;
+                      W.If
+                        ( W.Void,
+                          (W.Local_get 1 :: bytes_const ", ")
+                          @ [ W.Call (rt "strcat"); W.Local_set 1 ],
+                          [] );
+                      W.I32_const 0;
+                      W.Local_set 5;
+                      W.Local_get 1;
+                      W.Local_get 2;
+                      W.Local_get 3;
+                      W.Array_get t_anyarray;
+                      W.Call (rt "to_str");
+                      W.Ref_cast t_vstring;
+                      W.Struct_get (t_vstring, 0);
+                      W.Call (rt "strcat");
+                      W.Local_set 1;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+        ]
+      @ (W.Local_get 1 :: bytes_const ")")
+      @ [ W.Call (rt "strcat"); W.Local_set 1; W.Local_get 1; W.Struct_new t_vstring ];
+  }
+
 (* builder_str(b) -> $vstring: "ArrayBuilder[a, b, c]" over the live
    prefix. Locals: 1 result, 2 builder, 3 i, 4 scratch, 5 first. *)
 let rt_builder_str : W.func_type =
@@ -6354,6 +6494,8 @@ let assemble (program : Emo_ir.program) : W.module_ =
       iface_classes = [];
       classes = [];
       hidden = [];
+      consts = program.Emo_ir.pconsts;
+      memo_idx = [];
     }
   in
   (* A `foreign def` has no body here: it gets no index, and the call
@@ -6515,9 +6657,13 @@ let assemble (program : Emo_ir.program) : W.module_ =
   (* The pool fills while the entry lowers; init and globals read it
      after. *)
   let string_pool = List.rev env.string_pool in
-  (* the driver's globals sit after the string pool *)
+  (* the driver's globals sit after the string pool and the const
+     thunks' memo slots; the memo slot count follows the program's const
+     list, the same math string_const and memo_cell use *)
   let g =
-    let base = 1 + List.length string_pool in
+    let base =
+      1 + (2 * List.length env.consts) + List.length string_pool
+    in
     {
       g_cur = base;
       g_next = base + 1;
@@ -6552,7 +6698,11 @@ let assemble (program : Emo_ir.program) : W.module_ =
   let t_void_anyref = type_idx env (W.FuncT ([], [ W.Anyref ])) in
   let t_void_i32 = type_idx env (W.FuncT ([], [ W.I32 ])) in
   let t_i32_void = type_idx env (W.FuncT ([ W.I32 ], [])) in
-  let init_func = rt_init string_pool ~g in
+  let init_func =
+    rt_init string_pool
+      ~pool_base:(1 + (2 * List.length env.consts))
+      ~g
+  in
   let hidden = List.rev env.hidden in
   let funcs =
     rt_funcs
@@ -6620,6 +6770,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_str_slice;
         rt_str_starts_with;
         rt_str_split;
+        rt_tuple_str;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in
@@ -6650,7 +6801,10 @@ let assemble (program : Emo_ir.program) : W.module_ =
     declared_funcs = List.init (List.length funcs) (fun i -> 3 + i);
     globals =
       (W.I32, true)
-      :: List.map (fun _ -> (W.RefNull t_vstring, true)) string_pool
+      :: List.concat_map
+           (fun _ -> [ (W.I32, true); (W.Anyref, true) ])
+           env.consts
+      @ List.map (fun _ -> (W.RefNull t_vstring, true)) string_pool
       @ [
           (W.I32, true);
           (W.I32, true);

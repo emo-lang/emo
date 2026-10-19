@@ -4710,6 +4710,90 @@ main()
            key true\n");
   ]
 
+(* T48.2 and T48.3's shared invariant: a program the interpreter runs has
+   one answer on every hosted target. `check_hosted` builds the same entry
+   for each of them, runs what the build produced, and holds the bytes
+   against the interpreter's line; a target whose host is missing is
+   skipped rather than failed. *)
+let check_hosted ?(files = []) name source expected =
+  let entry = scratch_entry name source in
+  let dir = Filename.dirname entry in
+  List.iter
+    (fun (file, text) -> write_file (Filename.concat dir file) text)
+    files;
+  let target which output run =
+    match build_entry ~target:which entry (Filename.concat dir output) with
+    | 0 -> check_run which (run ()) expected
+    | n -> Alcotest.fail (Printf.sprintf "%s build exited %d" which n)
+  in
+  target "ocaml" "app-ocaml" (fun () ->
+      run_cmd (Filename.quote (Filename.concat dir "app-ocaml")));
+  if Lazy.force cc_available then
+    target "c" "app-c" (fun () ->
+        run_cmd (Filename.quote (Filename.concat dir "app-c")));
+  if Lazy.force node_available then begin
+    target "typescript" "app-ts" (fun () ->
+        run_cmd ("node " ^ Filename.quote (Filename.concat dir "app-ts.ts")));
+    target "wasm" "app.wasm" (fun () ->
+        run_cmd
+          (Printf.sprintf "node %s %s"
+             (Filename.quote (Lazy.force wasm_runner_path))
+             (Filename.quote (Filename.concat dir "app.wasm"))))
+  end;
+  if Lazy.force erl_available then
+    target "beam" "app" (fun () ->
+        run_cmd
+          (Printf.sprintf
+             "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+             (Filename.quote dir)))
+
+let hosted_bindings_tests =
+  [
+    tc "a module-level const keeps its identity on every hosted target"
+      (fun () ->
+        check_hosted "hosted-const-identity"
+          ~files:
+            [
+              ( "lib.emo",
+                {|const b = Box.new(0)
+
+def bump() Int64 {
+  b.replace(b.read() + 1)
+  return b.read()
+}
+|}
+              );
+            ]
+          {|const greeting = "hi"
+
+def say() String {
+  return greeting
+}
+
+println(say())
+println(lib.bump())
+println(lib.bump())
+println(lib.bump())
+|}
+          "hi\n1\n2\n3\n");
+    tc "an enum interpolates as its bare tag on every hosted target" (fun () ->
+        check_hosted "hosted-enum-display"
+          {|enum Color { red, green }
+
+def slot() (R, Float64) {
+  return (R.ok, 12.5)
+}
+
+def main() {
+  const s = slot()
+  println("${Color.red} ${s}")
+}
+
+main()
+|}
+          "red (ok, 12.5)\n");
+  ]
+
 let () =
   Alcotest.run "emo_cli"
     [
@@ -4728,6 +4812,7 @@ let () =
       ("root_end", root_end_tests);
       ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
+      ("hosted_bindings", hosted_bindings_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);

@@ -99,6 +99,12 @@ type program = {
          (CHECK.md, 2026-10-11) *)
   pinit : stmt list; (* the entry module's top-level statements *)
   pglobals : (string * expr) list; (* module-level `var` ref cells *)
+  pconsts : string list;
+      (* mangled names of the const thunks — module-level `const`
+         bindings and `emo` group consts, in every module. Their value
+         must initialize exactly once per program run (the
+         interpreter's rule), so a backend memoizes the first call's
+         result instead of re-running the initializer per read. *)
   pentry : string list; (* the entry module's path *)
 }
 
@@ -376,11 +382,12 @@ and lower_expr env (e : Ast.expr) : expr =
         match lookup_symbol env env.current name with
         | Some (S_func { mangled; params }) when params = [] ->
             (* A const binding (e.g. `const order = shop.order`): calling
-               the zero-arg function evaluates it. *)
-            {
-              ety = Emo_check.Unknown;
-              desc = Call { func = mangled; args = [] };
-            }
+               the zero-arg function evaluates it. The read keeps the
+               checker's type for this span — a const thunk's result is
+               the binding's type, and a field read off a const (or a
+               read inside another const's initializer) needs it to know
+               the class. *)
+            expr (Call { func = mangled; args = [] })
         | Some (S_func { mangled; _ }) | Some (S_class { mangled; _ }) ->
             expr (Global mangled)
         | Some (S_global { gname }) -> expr (Global_var gname)
@@ -979,12 +986,126 @@ type input = {
 (* Lowers a whole program: symbols from every module first (forward
    references work), then const bindings, functions, classes, and the
    entry's top-level statements. *)
+(* ---- The const-thunk dependency scan ----
+
+   An entry-module `const` becomes a zero-arg thunk, which is what lets a
+   def read it and what makes every read return the same memoized value.
+   The thunk is a function of its own, though, so its initializer cannot
+   read a top-level *local* — a name a destructured binding
+   (`const (R.ok, v) = …`) introduces here, which lives in the entry's
+   statement scope. A const whose initializer mentions one keeps the
+   plain top-level binding it always had. *)
+let rec pattern_names (p : Ast.pattern) : string list =
+  match p.Ast.pattern_desc with
+  | Ast.Pattern_binding n -> [ n ]
+  | Ast.Tuple_pattern ps -> List.concat_map pattern_names ps
+  | Ast.Enum_member _ | Ast.Pattern_literal _ | Ast.Wildcard -> []
+
+(* A name no Emo identifier can spell: the scan drops it into the list
+   when it meets a `do` expression, which is how a spawn reaches the
+   caller. *)
+let spawn_marker = "\000spawn"
+
+let rec mentioned_expr (e : Ast.expr) (acc : string list) : string list =
+  match e.Ast.desc with
+  | Ast.Ident n | Ast.Type_ident n -> n :: acc
+  | Ast.Int64 _ | Ast.Byte _ | Ast.Float _ | Ast.Char _ | Ast.Bool _
+  | Ast.String _ | Ast.Self ->
+      acc
+  | Ast.Interpolated parts ->
+      List.fold_left
+        (fun a -> function
+          | Ast.Literal_text _ -> a
+          | Ast.Part_expr e -> mentioned_expr e a)
+        acc parts
+  | Ast.Member (inner, _) -> mentioned_expr inner acc
+  | Ast.Index (a, b) -> mentioned_expr b (mentioned_expr a acc)
+  | Ast.Call (f, args) ->
+      List.fold_left
+        (fun a (arg : Ast.arg) -> mentioned_expr arg.Ast.arg_value a)
+        (mentioned_expr f acc) args
+  | Ast.Arrow_block (_, body) -> mentioned_stmts body acc
+  | Ast.Tuple es | Ast.Array_literal es ->
+      List.fold_left (fun a x -> mentioned_expr x a) acc es
+  | Ast.Map_literal pairs ->
+      List.fold_left
+        (fun a (k, v) -> mentioned_expr v (mentioned_expr k a))
+        acc pairs
+  | Ast.Unary (_, x) -> mentioned_expr x acc
+  | Ast.Do x ->
+      (* A `do` spawns: the marker keeps such a const off the thunk
+         path (see [thunk_unsafe]). *)
+      spawn_marker :: mentioned_expr x acc
+  | Ast.Binary (_, l, r) -> mentioned_expr r (mentioned_expr l acc)
+  | Ast.If_expr { cond; then_expr; else_expr } ->
+      mentioned_expr else_expr
+        (mentioned_expr then_expr (mentioned_expr cond acc))
+
+and mentioned_stmts (ss : Ast.stmt list) acc =
+  List.fold_left (fun a s -> mentioned_stmt s a) acc ss
+
+and mentioned_stmt (s : Ast.stmt) acc =
+  match s.Ast.stmt_desc with
+  | Ast.Expr_stmt e -> mentioned_expr e acc
+  | Ast.Binding { init; _ } -> mentioned_expr init acc
+  | Ast.Assign { target; value } ->
+      mentioned_expr value (mentioned_expr target acc)
+  | Ast.Return (Some e) -> mentioned_expr e acc
+  | Ast.Return None | Ast.Break | Ast.Continue -> acc
+  | Ast.Raise e -> mentioned_expr e acc
+  | Ast.If { cond; then_body; else_body } ->
+      let acc = mentioned_stmts then_body (mentioned_expr cond acc) in
+      (match else_body with None -> acc | Some b -> mentioned_stmts b acc)
+  | Ast.While { cond; body } -> mentioned_stmts body (mentioned_expr cond acc)
+  | Ast.For { init; cond; post; body } ->
+      mentioned_stmts body
+        (mentioned_stmt post (mentioned_expr cond (mentioned_stmt init acc)))
+  | Ast.Case { scrutinee; branches } ->
+      mentioned_branches branches (mentioned_expr scrutinee acc)
+  | Ast.Receive branches -> mentioned_branches branches acc
+  | Ast.Send { target; message } ->
+      mentioned_expr message (mentioned_expr target acc)
+
+and mentioned_branches (bs : Ast.branch list) acc =
+  List.fold_left
+    (fun a (b : Ast.branch) ->
+      let a =
+        match b.Ast.guard with None -> a | Some g -> mentioned_expr g a
+      in
+      mentioned_stmts b.Ast.body a)
+    acc bs
+
 let lower (input : input) : program =
   let symbols : (string list * string, symbol) Hashtbl.t = Hashtbl.create 16 in
   (* The built-in `R` enum: no module declares it, so its symbol is
      seeded — `R.ok` / `R.error` lower as the enum constructions they
      are, on every target. *)
   Hashtbl.replace symbols ([], "R") S_enum;
+  (* The names the entry module binds by destructuring: top-level locals
+     with no symbol, which a const thunk — a function of its own — cannot
+     read. A const that mentions one keeps its plain binding. *)
+  let entry_locals =
+    List.concat_map
+      (fun (m : module_input) ->
+        if m.mpath <> input.entry then []
+        else
+          List.concat_map
+            (fun (item : Ast.item) ->
+              match item.Ast.item_desc with
+              | Ast.Item_stmt
+                  { stmt_desc = Ast.Binding { pattern; _ }; _ } -> (
+                  match pattern.Ast.pattern_desc with
+                  | Ast.Pattern_binding _ -> []
+                  | _ -> pattern_names pattern)
+              | _ -> [])
+            m.mitems)
+      input.modules
+  in
+  let thunk_unsafe (init : Ast.expr) : bool =
+    let names = mentioned_expr init [] in
+    List.mem spawn_marker names
+    || List.exists (fun n -> List.mem n entry_locals) names
+  in
   (* pass 1: every program-wide symbol *)
   List.iter
     (fun (m : module_input) ->
@@ -1082,13 +1203,18 @@ let lower (input : input) : program =
                     {
                       mutable_ = false;
                       pattern = { pattern_desc = Ast.Pattern_binding name; _ };
-                      _;
+                      init;
                     };
                 _;
               }
-            when m.mpath <> input.entry ->
-              (* A const binding in a non-entry module becomes a zero-arg
-                 function other modules can call. *)
+            when m.mpath <> input.entry || not (thunk_unsafe init) ->
+              (* A const binding in any module becomes a zero-arg
+                 function other modules can call; the entry module's own
+                 defs read it through the same call, which is why the
+                 symbol registers here and not only for non-entry
+                 modules. An entry const whose initializer reads a
+                 destructured local stays a plain binding: the thunk
+                 could not see that local. *)
               Hashtbl.replace symbols (m.mpath, name)
                 (S_func { mangled = mangle m.mpath name; params = [] })
           | _ -> ())
@@ -1133,6 +1259,7 @@ let lower (input : input) : program =
       input.modules
   in
   let funcs = ref [] in
+  let consts = ref [] in
   let classes = ref [] in
   let interfaces = ref [] in
   let iface_sigs = ref [] in
@@ -1161,7 +1288,9 @@ let lower (input : input) : program =
           input.modules;
     }
   in
-  (* pass 2: non-entry const bindings lower to zero-arg functions *)
+  (* pass 2: module-level const bindings lower to zero-arg functions,
+     the entry module's included — its own defs read them through the
+     same call (finding (2) of the module-level-bindings entry). *)
   List.iter
     (fun (m : module_input) ->
       let const_env =
@@ -1189,34 +1318,44 @@ let lower (input : input) : program =
                       _;
                     };
                 _;
-              }
-            when m.mpath <> input.entry ->
+              } ->
               (* A module alias (`const d = internal.discounts`) binds a
                  path, not a value: uses resolve through the alias, so
                  no thunk lowers (lowering would hit the Type_ref the
                  module reference is). *)
               if
-                match
-                  Option.bind (full_chain init) (fun chain ->
-                      let chain = relativize const_env chain in
-                      if is_module_path const_env chain then Some chain
-                      else None)
-                with
-                | Some _ -> true
-                | None -> false
+                (m.mpath = input.entry && thunk_unsafe init)
+                || (match
+                      Option.bind (full_chain init) (fun chain ->
+                          let chain = relativize const_env chain in
+                          if is_module_path const_env chain then Some chain
+                          else None)
+                    with
+                   | Some _ -> true
+                   | None -> false)
               then ()
-              else
+              else begin
+                let mangled = mangle m.mpath name in
+                (* The thunk's name rides [pconsts]: the value must
+                   initialize once per run, so the backends memoize the
+                   first call's result. *)
+                consts := mangled :: !consts;
                 funcs :=
                   {
-                    fname = mangle m.mpath name;
+                    fname = mangled;
                     fmodule = m.mpath;
                     fparams = [];
-                    fresult = Emo_check.Unknown;
+                    (* The checker's type for the initializer, so a
+                       const holding a native value (a pid, an Int64)
+                       stays native through the thunk instead of being
+                       boxed on every read. *)
+                    fresult = type_of const_env init.Ast.span;
                     fbody = [ Return_stmt (lower_expr const_env init) ];
                     fspecializable = false;
                     fforeign = None;
                   }
                   :: !funcs
+              end
           | Ast.Item_stmt
               {
                 stmt_desc =
@@ -1323,6 +1462,10 @@ let lower (input : input) : program =
                     | Some (S_func { mangled; _ }) -> mangled
                     | _ -> mangle m.mpath (g.Ast.group_name ^ "__" ^ cname)
                   in
+                  (* A group const memoizes like a module-level one: the
+                     interpreter runs the group's items once, so every
+                     read after the first returns the same value. *)
+                  consts := mangled :: !consts;
                   (* the thunk returns the const's value: Unknown, like
                      every other const binding (Void would lose it) *)
                   let thunk =
@@ -1419,9 +1562,54 @@ let lower (input : input) : program =
                 }
               when List.mem_assoc name pre_aliases ->
                 None
+            | Ast.Binding
+                {
+                  mutable_ = false;
+                  pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                  _;
+                }
+              when
+                (match Hashtbl.find_opt symbols (input.entry, name) with
+                | Some (S_func { params = []; _ }) -> true
+                | _ -> false) ->
+                (* The const's binding stays: top-level reads resolve to
+                   the local, which is what keeps a const holding a
+                   callable (`const f = -> …`, then `f(x)`) a value call
+                   rather than a call of the thunk. Its initializer is
+                   replaced below by the memoized thunk's call, so the
+                   local and every def reading the symbol share one
+                   value — the interpreter initializes the const once. *)
+                Some s
             | _ -> Some s)
         | _ -> None)
     |> lower_stmts env
+    |> List.map (fun (s : stmt) ->
+           (* An entry-module const's local now reads the same memoized
+              thunk a def's read of the symbol calls, so the program
+              initializes it exactly once. The discarded initializer is
+              still lowered (a compile-time cost only): the thunk's own
+              body is the copy that runs. *)
+           match s with
+           | Let { mutable_ = false; name; _ } -> (
+               match Hashtbl.find_opt symbols (input.entry, name) with
+               | Some (S_func { mangled; params = [] }) ->
+                   (* The read's type is the thunk's own result, so a
+                      const holding a native value stays native at the
+                      binding site instead of being boxed and unboxed
+                      around every use. *)
+                   let ety =
+                     match List.find_opt (fun f -> f.fname = mangled) !funcs with
+                     | Some f -> f.fresult
+                     | None -> Emo_check.Unknown
+                   in
+                   Let
+                     {
+                       mutable_ = false;
+                       name;
+                       init = { ety; desc = Call { func = mangled; args = [] } };
+                     }
+               | _ -> s)
+           | _ -> s)
   in
   (* The entry module can be discovered under two paths, lowering its
      items twice; dedupe functions by name, keeping the first. *)
@@ -1442,5 +1630,6 @@ let lower (input : input) : program =
     piface_sigs = !iface_sigs;
     pinit;
     pglobals = List.rev !globals;
+    pconsts = List.rev !consts;
     pentry = input.entry;
   }

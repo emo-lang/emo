@@ -31,6 +31,11 @@ let float_lit (f : float) : string =
 (* The current program's specialized functions; set by [emit]. *)
 let specializables : Emo_ir.func list ref = ref []
 
+(* The current program's const thunks (mangled names); set by [emit].
+   A const thunk's body memoizes: the initializer runs once, every read
+   returns the same value. *)
+let const_thunks : string list ref = ref []
+
 let keywordish name =
   (* Emo locals that would collide with OCaml words get a prefix anyway;
      every local carries [v_] so this is belt and braces. *)
@@ -1123,15 +1128,38 @@ and emit_func env (f : Emo_ir.func) : string =
   let body = emit_stmts env f.Emo_ir.fbody ~tail:true in
   env.refs <- fst saved;
   env.immutables <- snd saved;
-  Printf.sprintf
-    "%s (args : Emo_eval.value list) : Emo_eval.value =\n\
-    \  match args with\n\
-    \  | [ %s ] ->\n\
-    \    (try\n\
-     %s\n\
-     with Emo_runtime.Return_signal v -> v)\n\
-    \  | _ -> Emo_runtime.arity_error %S %d (List.length args)"
-    f.Emo_ir.fname params_pattern (indented body) f.Emo_ir.fname arity
+  if f.Emo_ir.fparams = [] && List.mem f.Emo_ir.fname !const_thunks then
+    (* A const thunk: the initializer runs once, and the memo slot's
+       value serves every later read — the identity an allocating
+       initializer hands out survives across reads, as in the
+       interpreter. *)
+    Printf.sprintf
+      "%s (args : Emo_eval.value list) : Emo_eval.value =\n\
+      \  match args with\n\
+      \  | [] ->\n\
+      \    if !%s'emo_done then !%s'emo_val\n\
+      \    else\n\
+      \      let __emo_v =\n\
+      \        (try\n\
+       %s\n\
+       with Emo_runtime.Return_signal v -> v)\n\
+      \      in\n\
+      \      %s'emo_val := __emo_v;\n\
+      \      %s'emo_done := true;\n\
+      \      __emo_v\n\
+      \  | _ -> Emo_runtime.arity_error %S %d (List.length args)"
+      f.Emo_ir.fname f.Emo_ir.fname f.Emo_ir.fname (indented body)
+      f.Emo_ir.fname f.Emo_ir.fname f.Emo_ir.fname arity
+  else
+    Printf.sprintf
+      "%s (args : Emo_eval.value list) : Emo_eval.value =\n\
+      \  match args with\n\
+      \  | [ %s ] ->\n\
+      \    (try\n\
+       %s\n\
+       with Emo_runtime.Return_signal v -> v)\n\
+      \  | _ -> Emo_runtime.arity_error %S %d (List.length args)"
+      f.Emo_ir.fname params_pattern (indented body) f.Emo_ir.fname arity
 
 and emit_specialized_func (f : Emo_ir.func) : string =
   let env =
@@ -1262,6 +1290,7 @@ let ffi_stubs (program : Emo_ir.program) : string =
 let emit ~(specialize : bool) (program : Emo_ir.program) : string =
   specializables :=
     List.filter (fun f -> f.Emo_ir.fspecializable) program.Emo_ir.pfuncs;
+  const_thunks := program.Emo_ir.pconsts;
   let env =
     {
       buf = Buffer.create 4096;
@@ -1385,6 +1414,16 @@ let emit ~(specialize : bool) (program : Emo_ir.program) : string =
   List.iter
     (fun (g, _) -> put env "let %s = ref (Emo_eval.Void)\n" g)
     program.Emo_ir.pglobals;
+  (* Module-level `const`s: a memo slot each — a value cell plus a done
+     flag (the prime suffix is no Emo identifier, so neither collides
+     with a mangled name). The thunk runs its initializer exactly once —
+     the interpreter's rule — and every read after the first returns the
+     same value, so an allocating initializer keeps its identity. *)
+  List.iter
+    (fun c ->
+      put env "let %s'emo_val = ref (Emo_eval.Void)\n" c;
+      put env "let %s'emo_done = ref false\n" c)
+    program.Emo_ir.pconsts;
   (* Dynamic functions: one rec group. *)
   put env "\n";
   let dynamic =
