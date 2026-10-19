@@ -2230,7 +2230,7 @@ wasm, beam); `Exception.new(data:)` carries data on `wasm` and `beam`;
 and its golden joins their lists; every existing golden on every target
 stays byte-identical; the docs carry the story.
 
-- [ ] **T52.1** — The wasm runtime's map structures: a `$vmap` — key
+- [x] **T52.1** — The wasm runtime's map structures: a `$vmap` — key
       array, value array, count, in the `$vbuilder` doubling-buffer
       shape, linear-scan lookup (plot-scale maps are small, and the
       array order *is* the insertion order) — with the runtime

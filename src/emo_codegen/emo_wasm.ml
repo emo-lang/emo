@@ -48,6 +48,7 @@ let t_vlist = 32
 let t_list2 = 33
 let t_vbuilder = 34
 let t_builder_new = 35
+let t_vmap = 36
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -142,6 +143,15 @@ let runtime_types : W.typ list =
     (* $vbuilder: items, len, cap — a doubling buffer *)
     W.FuncT ([], [ W.Anyref ]);
     (* builder_new: () -> builder *)
+    W.StructT
+      [
+        (W.RefNull t_anyarray, true);
+        (W.RefNull t_anyarray, true);
+        (W.I32, true);
+        (W.I32, true);
+      ];
+    (* $vmap: keys, values, count, cap — two parallel doubling buffers,
+       the key array's order is the insertion order *)
   ]
 
 let i_print = 0
@@ -221,6 +231,18 @@ let rt = function
   | "builder_to_array" -> 72
   | "array_str" -> 73
   | "builder_str" -> 74
+  | "map_new" -> 75
+  | "map_get" -> 76
+  | "map_set" -> 77
+  | "map_has" -> 78
+  | "map_remove" -> 79
+  | "map_len" -> 80
+  | "map_keys" -> 81
+  | "map_values" -> 82
+  | "map_str" -> 83
+  | "map_key_eq" -> 84
+  | "map_dbg" -> 85
+  | "str_quote" -> 86
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
@@ -228,11 +250,12 @@ let rt = function
    stays at 60 so the exported entry keeps its index. The String
    substring runtime (68) and the ArrayBuilder ops (69..72) sit after
    them for the same reason, as do the array and builder renderings
-   (73..74) the `to_str` chain calls. *)
-let runtime_count = 75
+   (73..74) the `to_str` chain calls, and the Map ops (75..86) after
+   those. *)
+let runtime_count = 87
 (* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 12
      + list ops 7 + the String substring + the ArrayBuilder ops
-     + the array and builder renderings *)
+     + the array and builder renderings + the Map ops *)
 
 (* ---- Lowering state ---- *)
 
@@ -301,8 +324,7 @@ let closure_type env n =
     | Some pair -> pair
     | None ->
         let sig_t =
-          type_idx env
-            (W.FuncT (List.init n (fun _ -> W.Anyref), [ W.Anyref ]))
+          type_idx env (W.FuncT (List.init n (fun _ -> W.Anyref), [ W.Anyref ]))
         in
         let struct_t = type_idx env (W.StructT [ (W.RefNull sig_t, false) ]) in
         env.closure_types <- (n, (struct_t, sig_t)) :: env.closure_types;
@@ -396,7 +418,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
       match List.assoc_opt name env.funcs with
       | Some fidx ->
           let arity =
-            match List.assoc_opt name env.func_arity with Some n -> n | None -> 1
+            match List.assoc_opt name env.func_arity with
+            | Some n -> n
+            | None -> 1
           in
           let struct_t, _ = closure_type env arity in
           e env (W.Ref_func fidx);
@@ -1944,10 +1968,15 @@ let rt_to_str : W.func_type =
       [ W.Local_get 0; W.Call (rt "builder_str") ]
       [ list_branch ]
   in
+  let map_branch =
+    branch (test_of t_vmap)
+      [ W.Local_get 0; W.Call (rt "map_str") ]
+      [ builder_branch ]
+  in
   let array_branch =
     branch (test_of t_anyarray)
       [ W.Local_get 0; W.Call (rt "array_str") ]
-      [ builder_branch ]
+      [ map_branch ]
   in
   {
     W.ftype_idx = t_sig1;
@@ -4116,6 +4145,833 @@ let rt_builder_str : W.func_type =
         ];
   }
 
+(* ---- The Map ----
+
+   A `$vmap` is two parallel `$anyarray` buffers — keys and values —
+   with the live count and the capacity, the `$vbuilder` doubling
+   shape. The key array's order is the insertion order: `set` on an
+   existing key replaces in place, a new key appends, `remove`
+   compacts by shifting the tail left one slot. Lookup is a linear
+   scan with `map_key_eq` — plot-scale maps are small, and the scan
+   is what keeps the order an array order. A `get` miss raises
+   through `throw` with the interpreter's message; `map_dbg` is the
+   debug form the map's rendering and message share (strings quoted,
+   everything else through `to_str`), and `str_quote` is its quoted
+   shape. *)
+
+let rt_map_new : W.func_type =
+  (* map_new() -> map. Empty, with room for the first eight. *)
+  {
+    W.ftype_idx = t_builder_new;
+    fparams = [];
+    flocals = [];
+    fbody =
+      [
+        W.I32_const 8;
+        W.Array_new_default t_anyarray;
+        W.I32_const 8;
+        W.Array_new_default t_anyarray;
+        W.I32_const 0;
+        W.I32_const 8;
+        W.Struct_new t_vmap;
+      ];
+  }
+
+let rt_map_get : W.func_type =
+  (* map_get(m, k) -> v; a miss raises the interpreter's E3004 message.
+     Locals: 2 map, 3 i, 4 scratch (the message constants), 5 message. *)
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "m"; "k" ];
+    flocals =
+      [
+        (1, W.RefNull t_vmap);
+        (1, W.I32);
+        (1, W.RefNull t_bytes);
+        (1, W.RefNull t_bytes);
+      ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vmap;
+        W.Local_set 2;
+        W.I32_const 0;
+        W.Local_set 3;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 3;
+                    W.Local_get 2;
+                    W.Struct_get (t_vmap, 2);
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 2;
+                    W.Struct_get (t_vmap, 0);
+                    W.Ref_cast t_anyarray;
+                    W.Local_get 3;
+                    W.Array_get t_anyarray;
+                    W.Local_get 1;
+                    W.Call (rt "map_key_eq");
+                    W.If
+                      ( W.Void,
+                        [
+                          W.Local_get 2;
+                          W.Struct_get (t_vmap, 1);
+                          W.Ref_cast t_anyarray;
+                          W.Local_get 3;
+                          W.Array_get t_anyarray;
+                          W.Return;
+                        ],
+                        [] );
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0;
+                  ] );
+            ] );
+      ]
+      (* no key <debug k> in this Map *)
+      @ (bytes_const "no key " @ [ W.Local_set 5 ])
+      @ [
+          W.Local_get 5;
+          W.Local_get 1;
+          W.Call (rt "map_dbg");
+          W.Ref_cast t_vstring;
+          W.Struct_get (t_vstring, 0);
+          W.Call (rt "strcat");
+          W.Local_set 5;
+        ]
+      @ (W.Local_get 5 :: bytes_const " in this Map")
+      @ [
+          W.Call (rt "strcat");
+          W.Local_set 5;
+          W.Local_get 5;
+          W.Struct_new t_vstring;
+          W.Call (rt "throw");
+          W.Unreachable;
+        ];
+  }
+
+let rt_map_set : W.func_type =
+  (* map_set(m, k, v) -> m: an existing key replaces in place and keeps
+     its position, a new key appends — doubling both buffers first when
+     they are full. Locals: 3 map, 4 i, 5 new capacity, 6 fresh keys,
+     7 fresh values, 8 copy index. *)
+  {
+    W.ftype_idx = t_bytes_set;
+    fparams = [ "m"; "k"; "v" ];
+    flocals =
+      [
+        (1, W.RefNull t_vmap);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+        (1, W.I32);
+      ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vmap;
+        W.Local_set 3;
+        W.I32_const 0;
+        W.Local_set 4;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 4;
+                    W.Local_get 3;
+                    W.Struct_get (t_vmap, 2);
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 3;
+                    W.Struct_get (t_vmap, 0);
+                    W.Ref_cast t_anyarray;
+                    W.Local_get 4;
+                    W.Array_get t_anyarray;
+                    W.Local_get 1;
+                    W.Call (rt "map_key_eq");
+                    W.If
+                      ( W.Void,
+                        [
+                          W.Local_get 3;
+                          W.Struct_get (t_vmap, 1);
+                          W.Ref_cast t_anyarray;
+                          W.Local_get 4;
+                          W.Local_get 2;
+                          W.Array_set t_anyarray;
+                          W.Local_get 0;
+                          W.Return;
+                        ],
+                        [] );
+                    W.Local_get 4;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 4;
+                    W.Br 0;
+                  ] );
+            ] );
+        (* full: both buffers double and the live prefix copies over *)
+        W.Local_get 3;
+        W.Struct_get (t_vmap, 2);
+        W.Local_get 3;
+        W.Struct_get (t_vmap, 3);
+        W.I32_eq;
+        W.If
+          ( W.Void,
+            [
+              W.Local_get 3;
+              W.Struct_get (t_vmap, 3);
+              W.I32_const 2;
+              W.I32_mul;
+              W.Local_set 5;
+              W.Local_get 5;
+              W.Array_new_default t_anyarray;
+              W.Local_set 6;
+              W.Local_get 5;
+              W.Array_new_default t_anyarray;
+              W.Local_set 7;
+              W.I32_const 0;
+              W.Local_set 8;
+              W.Block
+                ( W.Void,
+                  [
+                    W.Loop
+                      ( W.Void,
+                        [
+                          (* the bound reads the map's capacity field,
+                             still the old value until the copy is over *)
+                          W.Local_get 8;
+                          W.Local_get 3;
+                          W.Struct_get (t_vmap, 3);
+                          W.I32_ge;
+                          W.Br_if 1;
+                          W.Local_get 6;
+                          W.Local_get 8;
+                          W.Local_get 3;
+                          W.Struct_get (t_vmap, 0);
+                          W.Ref_cast t_anyarray;
+                          W.Local_get 8;
+                          W.Array_get t_anyarray;
+                          W.Array_set t_anyarray;
+                          W.Local_get 7;
+                          W.Local_get 8;
+                          W.Local_get 3;
+                          W.Struct_get (t_vmap, 1);
+                          W.Ref_cast t_anyarray;
+                          W.Local_get 8;
+                          W.Array_get t_anyarray;
+                          W.Array_set t_anyarray;
+                          W.Local_get 8;
+                          W.I32_const 1;
+                          W.I32_add;
+                          W.Local_set 8;
+                          W.Br 0;
+                        ] );
+                  ] );
+              W.Local_get 3;
+              W.Local_get 6;
+              W.Struct_set (t_vmap, 0);
+              W.Local_get 3;
+              W.Local_get 7;
+              W.Struct_set (t_vmap, 1);
+              W.Local_get 3;
+              W.Local_get 5;
+              W.Struct_set (t_vmap, 3);
+            ],
+            [] );
+        (* keys[count] = k; values[count] = v; count = count + 1 *)
+        W.Local_get 3;
+        W.Struct_get (t_vmap, 0);
+        W.Ref_cast t_anyarray;
+        W.Local_get 3;
+        W.Struct_get (t_vmap, 2);
+        W.Local_get 1;
+        W.Array_set t_anyarray;
+        W.Local_get 3;
+        W.Struct_get (t_vmap, 1);
+        W.Ref_cast t_anyarray;
+        W.Local_get 3;
+        W.Struct_get (t_vmap, 2);
+        W.Local_get 2;
+        W.Array_set t_anyarray;
+        W.Local_get 3;
+        W.Local_get 3;
+        W.Struct_get (t_vmap, 2);
+        W.I32_const 1;
+        W.I32_add;
+        W.Struct_set (t_vmap, 2);
+        W.Local_get 0;
+      ];
+  }
+
+let rt_map_has : W.func_type =
+  (* map_has(m, k) -> Bool; a key the map could never store is simply
+     not present, the interpreter's rule. Locals: 2 map, 3 i. *)
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "m"; "k" ];
+    flocals = [ (1, W.RefNull t_vmap); (1, W.I32) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vmap;
+        W.Local_set 2;
+        W.I32_const 0;
+        W.Local_set 3;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 3;
+                    W.Local_get 2;
+                    W.Struct_get (t_vmap, 2);
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 2;
+                    W.Struct_get (t_vmap, 0);
+                    W.Ref_cast t_anyarray;
+                    W.Local_get 3;
+                    W.Array_get t_anyarray;
+                    W.Local_get 1;
+                    W.Call (rt "map_key_eq");
+                    W.If
+                      ( W.Void,
+                        [ W.I32_const 1; W.Struct_new t_vbool; W.Return ],
+                        [] );
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.I32_const 0;
+        W.Struct_new t_vbool;
+      ];
+  }
+
+let rt_map_remove : W.func_type =
+  (* map_remove(m, k) -> m: the tail shifts left one slot from the
+     removed position, so the relative order survives. Locals: 2 map,
+     3 i, 4 shift cursor. *)
+  {
+    W.ftype_idx = t_list2;
+    fparams = [ "m"; "k" ];
+    flocals = [ (1, W.RefNull t_vmap); (2, W.I32) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vmap;
+        W.Local_set 2;
+        W.I32_const 0;
+        W.Local_set 3;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 3;
+                    W.Local_get 2;
+                    W.Struct_get (t_vmap, 2);
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 2;
+                    W.Struct_get (t_vmap, 0);
+                    W.Ref_cast t_anyarray;
+                    W.Local_get 3;
+                    W.Array_get t_anyarray;
+                    W.Local_get 1;
+                    W.Call (rt "map_key_eq");
+                    W.If
+                      ( W.Void,
+                        [
+                          W.Local_get 3;
+                          W.Local_set 4;
+                          W.Block
+                            ( W.Void,
+                              [
+                                W.Loop
+                                  ( W.Void,
+                                    [
+                                      W.Local_get 4;
+                                      W.Local_get 2;
+                                      W.Struct_get (t_vmap, 2);
+                                      W.I32_const 1;
+                                      W.I32_sub;
+                                      W.I32_ge;
+                                      W.Br_if 1;
+                                      (* keys[i] = keys[i + 1] *)
+                                      W.Local_get 2;
+                                      W.Struct_get (t_vmap, 0);
+                                      W.Ref_cast t_anyarray;
+                                      W.Local_get 4;
+                                      W.Local_get 2;
+                                      W.Struct_get (t_vmap, 0);
+                                      W.Ref_cast t_anyarray;
+                                      W.Local_get 4;
+                                      W.I32_const 1;
+                                      W.I32_add;
+                                      W.Array_get t_anyarray;
+                                      W.Array_set t_anyarray;
+                                      (* values[i] = values[i + 1] *)
+                                      W.Local_get 2;
+                                      W.Struct_get (t_vmap, 1);
+                                      W.Ref_cast t_anyarray;
+                                      W.Local_get 4;
+                                      W.Local_get 2;
+                                      W.Struct_get (t_vmap, 1);
+                                      W.Ref_cast t_anyarray;
+                                      W.Local_get 4;
+                                      W.I32_const 1;
+                                      W.I32_add;
+                                      W.Array_get t_anyarray;
+                                      W.Array_set t_anyarray;
+                                      W.Local_get 4;
+                                      W.I32_const 1;
+                                      W.I32_add;
+                                      W.Local_set 4;
+                                      W.Br 0;
+                                    ] );
+                              ] );
+                          W.Local_get 2;
+                          W.Local_get 2;
+                          W.Struct_get (t_vmap, 2);
+                          W.I32_const 1;
+                          W.I32_sub;
+                          W.Struct_set (t_vmap, 2);
+                          W.Local_get 0;
+                          W.Return;
+                        ],
+                        [] );
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 0;
+      ];
+  }
+
+let rt_map_len : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "m" ];
+    flocals = [];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vmap;
+        W.Struct_get (t_vmap, 2);
+        W.I64_extend_i32_s;
+        W.Struct_new t_vint;
+      ];
+  }
+
+(* map_keys / map_values(m) -> a fresh Array in insertion order. *)
+let rt_map_collect (field : int) : W.func_type =
+  (* Locals: 1 map, 2 fresh, 3 i. *)
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "m" ];
+    flocals = [ (1, W.RefNull t_vmap); (1, W.RefNull t_anyarray); (1, W.I32) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vmap;
+        W.Local_set 1;
+        W.Local_get 1;
+        W.Struct_get (t_vmap, 2);
+        W.Array_new_default t_anyarray;
+        W.Local_set 2;
+        W.I32_const 0;
+        W.Local_set 3;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 3;
+                    W.Local_get 1;
+                    W.Struct_get (t_vmap, 2);
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 2;
+                    W.Local_get 3;
+                    W.Local_get 1;
+                    W.Struct_get (t_vmap, field);
+                    W.Ref_cast t_anyarray;
+                    W.Local_get 3;
+                    W.Array_get t_anyarray;
+                    W.Array_set t_anyarray;
+                    W.Local_get 3;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 3;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 2;
+      ];
+  }
+
+let rt_map_keys = rt_map_collect 0
+let rt_map_values = rt_map_collect 1
+
+(* str_quote(s) -> $vstring: the debug form's quoted string — double
+   quotes around, backslash and quote escaped, the three common control
+   characters spelled, everything else raw. Two passes: the escaped
+   length first, then the fill. Locals: 1 source, 2 length, 3 output,
+   4 i, 5 o, 6 byte. *)
+let rt_str_quote : W.func_type =
+  let is_esc =
+    [
+      W.Local_get 6;
+      W.I32_const 34;
+      W.I32_eq;
+      W.Local_get 6;
+      W.I32_const 92;
+      W.I32_eq;
+      W.I32_or;
+      W.Local_get 6;
+      W.I32_const 10;
+      W.I32_eq;
+      W.I32_or;
+      W.Local_get 6;
+      W.I32_const 9;
+      W.I32_eq;
+      W.I32_or;
+      W.Local_get 6;
+      W.I32_const 13;
+      W.I32_eq;
+      W.I32_or;
+    ]
+  in
+  let second =
+    [
+      W.If_else
+        ( W.Result W.I32,
+          [ W.Local_get 6; W.I32_const 10; W.I32_eq ],
+          [ W.I32_const 110 ],
+          [
+            W.If_else
+              ( W.Result W.I32,
+                [ W.Local_get 6; W.I32_const 9; W.I32_eq ],
+                [ W.I32_const 116 ],
+                [
+                  W.If_else
+                    ( W.Result W.I32,
+                      [ W.Local_get 6; W.I32_const 13; W.I32_eq ],
+                      [ W.I32_const 114 ],
+                      [ W.Local_get 6 ] );
+                ] );
+          ] );
+    ]
+  in
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "s" ];
+    flocals =
+      [
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+        (1, W.RefNull t_bytes);
+        (2, W.I32);
+        (1, W.I32);
+      ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+        W.Local_set 1;
+        W.Local_get 1;
+        W.Array_len t_bytes;
+        W.Local_set 2;
+        (* the escaped length: two quotes plus one or two per byte *)
+        W.I32_const 2;
+        W.Local_set 5;
+        W.I32_const 0;
+        W.Local_set 4;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 4;
+                    W.Local_get 2;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 1;
+                    W.Local_get 4;
+                    W.Array_get_u t_bytes;
+                    W.Local_set 6;
+                    W.If_else
+                      ( W.Void,
+                        is_esc,
+                        [
+                          W.Local_get 5; W.I32_const 2; W.I32_add; W.Local_set 5;
+                        ],
+                        [
+                          W.Local_get 5; W.I32_const 1; W.I32_add; W.Local_set 5;
+                        ] );
+                    W.Local_get 4;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 4;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 5;
+        W.Array_new_default t_bytes;
+        W.Local_set 3;
+        W.Local_get 3;
+        W.I32_const 0;
+        W.I32_const 34;
+        W.Array_set t_bytes;
+        W.I32_const 1;
+        W.Local_set 5;
+        W.I32_const 0;
+        W.Local_set 4;
+        W.Block
+          ( W.Void,
+            [
+              W.Loop
+                ( W.Void,
+                  [
+                    W.Local_get 4;
+                    W.Local_get 2;
+                    W.I32_ge;
+                    W.Br_if 1;
+                    W.Local_get 1;
+                    W.Local_get 4;
+                    W.Array_get_u t_bytes;
+                    W.Local_set 6;
+                    W.If_else
+                      ( W.Void,
+                        is_esc,
+                        [
+                          W.Local_get 3;
+                          W.Local_get 5;
+                          W.I32_const 92;
+                          W.Array_set t_bytes;
+                          W.Local_get 3;
+                          W.Local_get 5;
+                          W.I32_const 1;
+                          W.I32_add;
+                        ]
+                        @ second
+                        @ [
+                            W.Array_set t_bytes;
+                            W.Local_get 5;
+                            W.I32_const 2;
+                            W.I32_add;
+                            W.Local_set 5;
+                          ],
+                        [
+                          W.Local_get 3;
+                          W.Local_get 5;
+                          W.Local_get 6;
+                          W.Array_set t_bytes;
+                          W.Local_get 5;
+                          W.I32_const 1;
+                          W.I32_add;
+                          W.Local_set 5;
+                        ] );
+                    W.Local_get 4;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set 4;
+                    W.Br 0;
+                  ] );
+            ] );
+        W.Local_get 3;
+        W.Local_get 5;
+        W.I32_const 34;
+        W.Array_set t_bytes;
+        W.Local_get 3;
+        W.Struct_new t_vstring;
+      ];
+  }
+
+(* map_dbg(v) -> $vstring: the debug form the map's rendering and
+   get-miss message share — a string shows quoted, everything else
+   through the shared to_str. *)
+let rt_map_dbg : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "v" ];
+    flocals = [];
+    fbody =
+      [
+        W.If_else
+          ( W.Result W.Anyref,
+            [ W.Local_get 0; W.Ref_test t_vstring ],
+            [ W.Local_get 0; W.Call (rt "str_quote") ],
+            [ W.Local_get 0; W.Call (rt "to_str") ] );
+      ];
+  }
+
+let rt_map_str : W.func_type =
+  (* map_str(m) -> $vstring: "{key: value}" in insertion order, keys
+     and values through map_dbg. Locals: 1 map, 2 result, 3 i,
+     4 scratch (the constants), 5 first. *)
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "m" ];
+    flocals =
+      [
+        (1, W.RefNull t_vmap);
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+      ];
+    fbody =
+      bytes_const "{" @ [ W.Local_set 2 ]
+      @ [
+          W.Local_get 0;
+          W.Ref_cast t_vmap;
+          W.Local_set 1;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.I32_const 1;
+          W.Local_set 5;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 1;
+                      W.Struct_get (t_vmap, 2);
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 5;
+                      W.I32_eqz;
+                      W.If
+                        ( W.Void,
+                          (W.Local_get 2 :: bytes_const ", ")
+                          @ [ W.Call (rt "strcat"); W.Local_set 2 ],
+                          [] );
+                      W.I32_const 0;
+                      W.Local_set 5;
+                      W.Local_get 2;
+                      W.Local_get 1;
+                      W.Struct_get (t_vmap, 0);
+                      W.Ref_cast t_anyarray;
+                      W.Local_get 3;
+                      W.Array_get t_anyarray;
+                      W.Call (rt "map_dbg");
+                      W.Ref_cast t_vstring;
+                      W.Struct_get (t_vstring, 0);
+                      W.Call (rt "strcat");
+                      W.Local_set 2;
+                    ]
+                    @ (W.Local_get 2 :: bytes_const ": ")
+                    @ [
+                        W.Call (rt "strcat");
+                        W.Local_set 2;
+                        W.Local_get 2;
+                        W.Local_get 1;
+                        W.Struct_get (t_vmap, 1);
+                        W.Ref_cast t_anyarray;
+                        W.Local_get 3;
+                        W.Array_get t_anyarray;
+                        W.Call (rt "map_dbg");
+                        W.Ref_cast t_vstring;
+                        W.Struct_get (t_vstring, 0);
+                        W.Call (rt "strcat");
+                        W.Local_set 2;
+                        W.Local_get 3;
+                        W.I32_const 1;
+                        W.I32_add;
+                        W.Local_set 3;
+                        W.Br 0;
+                      ] );
+              ] );
+        ]
+      @ (W.Local_get 2 :: bytes_const "}")
+      @ [
+          W.Call (rt "strcat");
+          W.Local_set 2;
+          W.Local_get 2;
+          W.Struct_new t_vstring;
+        ];
+  }
+
+(* map_key_eq(a, b) -> i32: two boxed keys compare by content within a
+   kind; different kinds never compare equal, so the scan walks past.
+   One integer kind here — a Byte key is a $vint. *)
+let rt_map_key_eq : W.func_type =
+  let both t a b =
+    [ W.Local_get a; W.Ref_test t; W.Local_get b; W.Ref_test t; W.I32_and ]
+  in
+  let prim t op =
+    [
+      W.Local_get 0;
+      W.Ref_cast t;
+      W.Struct_get (t, 0);
+      W.Local_get 1;
+      W.Ref_cast t;
+      W.Struct_get (t, 0);
+      op;
+    ]
+  in
+  {
+    W.ftype_idx = t_sig2;
+    fparams = [ "a"; "b" ];
+    flocals = [];
+    fbody =
+      [
+        W.If_else
+          ( W.Result W.I32,
+            both t_vint 0 1,
+            prim t_vint W.I64_eq,
+            [
+              W.If_else
+                ( W.Result W.I32,
+                  both t_vfloat 0 1,
+                  prim t_vfloat W.F64_eq,
+                  [
+                    W.If_else
+                      ( W.Result W.I32,
+                        both t_vbool 0 1,
+                        prim t_vbool W.I32_eq,
+                        [
+                          W.If_else
+                            ( W.Result W.I32,
+                              both t_vchar 0 1,
+                              prim t_vchar W.I32_eq,
+                              [
+                                W.If_else
+                                  ( W.Result W.I32,
+                                    both t_vstring 0 1,
+                                    bytes_of 0 @ bytes_of 1
+                                    @ [ W.Call (rt "str_eq") ],
+                                    [ W.I32_const 0 ] );
+                              ] );
+                        ] );
+                  ] );
+            ] );
+      ];
+  }
+
 (* box(v) -> (ref null $vbox). *)
 let rt_box : W.func_type =
   {
@@ -4694,8 +5550,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
   env.funcs <- program_funcs;
   env.func_arity <-
     List.map
-      (fun (f : Emo_ir.func) ->
-        (f.Emo_ir.fname, List.length f.Emo_ir.fparams))
+      (fun (f : Emo_ir.func) -> (f.Emo_ir.fname, List.length f.Emo_ir.fparams))
       program.Emo_ir.pfuncs;
   (* Interface → implementing classes, computed structurally: same
      (method name, arity-excluding-self) shape the runtime's is()
@@ -4919,6 +5774,18 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_builder_to_array;
         rt_array_str;
         rt_builder_str;
+        rt_map_new;
+        rt_map_get;
+        rt_map_set;
+        rt_map_has;
+        rt_map_remove;
+        rt_map_len;
+        rt_map_keys;
+        rt_map_values;
+        rt_map_str;
+        rt_map_key_eq;
+        rt_map_dbg;
+        rt_str_quote;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in
