@@ -2287,7 +2287,7 @@ stays byte-identical; the docs carry the story.
       and `beam` (its close-out's recorded condition — declares the
       targets that work today, widens when the gap closes), and
       `slog_demo` joins the wasm and beam golden lists byte-for-byte.
-- [ ] **T52.8** — The docs: `docs/demo-targets.md`'s capability story
+- [x] **T52.8** — The docs: `docs/demo-targets.md`'s capability story
       (the `wasm`/`beam` Map refusals retire; `riscv64` stays the one),
       `docs/stdlib.md`'s slog row, `docs/visualization.md`'s
       five-target Table claim now literally true, `CHECK.md`'s T16.5

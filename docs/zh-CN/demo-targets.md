@@ -180,7 +180,7 @@ Hello, world!
 
 - 宿主必须支持 **WasmGC**（Node 22+ 的 V8 默认支持）。只支持 MVP 或只有 WASI 的运行时跑不了这个模块。
 - `mem` 在实例化之后才存在，而 `start` 段在实例化期间执行。宿主回调要放在闭包变量后面，等 `WebAssembly.instantiate` 完成后再赋值。
-- 没有 argv、文件系统和网络。纯计算和 `println` 可用；该子集之外的 stdlib 包会被解析门拒绝。
+- 没有 argv、文件系统和网络。纯计算和 `println` 可用，纯 Emo 的标准库包都能跑——格式包、`float`、`math`、`plot`、`sql`、`sync`、`slog`；需要进程、文件、socket 或 FFI 的包会被解析门拒绝。
 - 仓库里的 `runtime/wasm/` 是另一回事：它是用 Emo 写的 WebAssembly 解码/解释器，覆盖 MVP 和少数扩展。它明确**不能**运行 `emo build --target wasm` 发射的 GC 模块。
 
 ## `beam`
@@ -204,7 +204,7 @@ Hello, world!
 `-pa .` 把当前目录加入 code path（所以 `demo.beam` 要在那里），`-noshell` 不进入交互 shell，`erlang:halt(0)` 显式结束 VM——没有它 `erl` 会一直挂着。BEAM 金测用的就是这条命令。
 
 - 产物就是标准 `.beam`，可以直接放进 release，或被其他 Erlang/Elixir 模块调用 `demo:main()`。CLI 不生成 escript 或 release。
-- Emo 的进程模型映射到 BEAM 原生进程（`do` → `spawn`、`<-` → `!`、`receive` → selective receive），所以这个 target 上的并发是真并发。`foreign def` 和 net/http 包目前会被拒绝。
+- Emo 的进程模型映射到 BEAM 原生进程（`do` → `spawn`、`<-` → `!`、`receive` → selective receive），所以这个 target 上的并发是真并发。`foreign def` 和 net/http 包目前会被拒绝；纯 Emo 的标准库包（包括 `slog`）都能跑。
 
 ## `riscv64`
 
@@ -227,7 +227,7 @@ $ emo run --target riscv64 main.emo
 - 产物是 freestanding ELF：无 OS、无 libc、无默认 runtime。`println` 走 SBI console ecall。
 - 构建需要 GNU cross binutils：`riscv64-unknown-elf-as`/`-ld` 或 `riscv64-elf-as`/`-ld`。开发循环需要 `qemu-system-riscv64`。
 - 同一镜像能在真实 RISC-V 硬件上启动，OpenSBI 由板子提供；QEMU 只是开发循环的默认 runner，不属于 target 本身。
-- `spawn`/`send`/`receive` 和 `foreign def` 在这个 target 上会以清晰诊断拒绝。
+- `spawn`/`send`/`receive` 和 `foreign def` 在这个 target 上会以清晰诊断拒绝——它也是唯一拒绝 `Map` 的 target。
 
 ## 两个容易踩的坑
 

@@ -62,7 +62,7 @@ The packages:
 | [`float`](#the-float-package) | exact binary64 and decimal-text conversion | all five |
 | [`math`](#the-math-package) | float scalars and elementary functions | all five |
 | [`plot`](#the-plot-package) | declarative 2D charts rendered to SVG | all five |
-| [`slog`](#the-slog-package) | structured logging, logfmt or JSON | `ocaml`, `c`, `typescript` |
+| [`slog`](#the-slog-package) | structured logging, logfmt or JSON | all five |
 | [`sync`](#the-sync-package) | a wait group: let a process wait for N units of work | all five |
 | [`sql`](#the-sql-package) | SQL text to an abstract syntax tree | all five |
 | [`term`](#the-term-package) | terminal input: lines, raw mode, key events, size | `c` |
@@ -660,7 +660,7 @@ Attrs are a `Map[String, String]`; keys are ASCII letters, digits,
 before filtering — a bad key is a mistake even when the record would
 not have printed.
 
-Targets: `["ocaml", "c", "typescript"]`. Reference:
+Targets: all five. Reference:
 [`docs/stdlib/slog.md`](stdlib/slog.md) · Demo: `examples/slog_demo`.
 
 ## The `sync` package

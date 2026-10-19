@@ -576,8 +576,9 @@ mark 在子模块:
 - 比例尺、刻度、统计辅助、SVG 渲染器、输出缓冲都在 `internal/`。
 
 该包声明**全部五个宿主目标**(`ocaml`、`c`、`typescript`、`wasm`、
-`beam`;freestanding 的 `riscv64` 不在范围内——它拒绝 `Map`),和那些
-格式包完全一致。
+`beam`;freestanding 的 `riscv64` 不在范围内——它仍是唯一拒绝 `Map` 的
+target),和那些格式包完全一致。`Table` 所依赖的 `Map` 地基在 step 52
+(2026-10-19)到达 wasm 与 beam,五 target 的主张自此对数据集层也字面成立。
 
 ## 工作顺序
 

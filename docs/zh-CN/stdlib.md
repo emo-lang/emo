@@ -37,7 +37,7 @@ manifest 没有钉住的 `require` 是编译错误(E5006),错误消息直接指�
 | [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
 | [`math`](#math-包) | 浮点标量与初等函数 | 全部五个 |
 | [`plot`](#plot-包) | 声明式二维图表,渲染为 SVG | 全部五个 |
-| [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | `ocaml`、`c`、`typescript` |
+| [`slog`](#slog-包) | 结构化日志,logfmt 或 JSON | 全部五个 |
 | [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
 | [`sql`](#sql-包) | SQL 文本解析为抽象语法树 | 全部五个 |
 | [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
@@ -452,7 +452,7 @@ slog.warn(cache, "slow query", {"ms": "412"})
 
 attrs 是 `Map[String, String]`;键只能是 ASCII 字母、数字、`_`、`.`、`-`,每次调用先校验句柄和键再过滤——即使记录本来不会打印,坏键也是错误。
 
-目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/slog.md`](stdlib/slog.md) · 示例:`examples/slog_demo`。
+目标:全部五个。参考:[`docs/zh-CN/stdlib/slog.md`](stdlib/slog.md) · 示例:`examples/slog_demo`。
 
 ## sync 包
 

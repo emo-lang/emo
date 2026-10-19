@@ -655,7 +655,10 @@ root and the low-level marks in a submodule:
 
 The package declares **all five hosted targets** (`ocaml`, `c`,
 `typescript`, `wasm`, `beam`; the freestanding `riscv64` target is out
-of scope — it refuses `Map`), exactly as the format packages do.
+of scope — it stays the one target that refuses `Map`), exactly as the
+format packages do. The `Map` substrate the `Table` rests on reached
+`wasm` and `beam` in step 52 (2026-10-19), which makes the five-target
+claim literal for the dataset layer too.
 
 ## Sequencing
 

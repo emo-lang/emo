@@ -180,7 +180,7 @@ Points to keep in mind:
 
 - The host must support **WasmGC** (Node 22+ enables it in V8 by default). An MVP-only runtime, or a WASI-only one, cannot run the module.
 - `mem` exists only after instantiation, while the `start` section runs during instantiation. Keep host callbacks behind a closure variable assigned after `WebAssembly.instantiate` resolves.
-- There is no argv, filesystem, or network. Pure computation and `println` work; stdlib packages outside that subset are refused by the resolution gate.
+- There is no argv, filesystem, or network. Pure computation and `println` work, and the pure standard-library packages run — the format packages, `float`, `math`, `plot`, `sql`, `sync`, `slog`; anything needing a process, file, socket, or FFI is refused by the resolution gate.
 - The in-repo `runtime/wasm/` is a different thing: an Emo-written WebAssembly decoder/interpreter covering the MVP and a few extensions. It explicitly cannot run the GC modules `emo build --target wasm` emits.
 
 ## `beam`
@@ -204,7 +204,7 @@ Hello, world!
 `-pa .` adds the current directory to the code path (so `demo.beam` must be there), `-noshell` skips the interactive shell, and `erlang:halt(0)` ends the VM explicitly — without it `erl` keeps running. This is the command the BEAM golden tests use.
 
 - The artifact is an ordinary `.beam`, ready for a release or for another Erlang/Elixir module to call `demo:main()`. The CLI does not generate an escript or a release.
-- Emo processes map onto native BEAM processes (`do` to `spawn`, `<-` to `!`, `receive` to selective receive), so concurrency is real on this target. `foreign def` and the net/http packages are refused for now.
+- Emo processes map onto native BEAM processes (`do` to `spawn`, `<-` to `!`, `receive` to selective receive), so concurrency is real on this target. `foreign def` and the net/http packages are refused for now; the pure standard-library packages — `slog` among them — run.
 
 ## `riscv64`
 
@@ -227,7 +227,7 @@ It writes the ELF to `.emo-build/emo_run.elf` and runs the QEMU command above.
 - The artifact is a freestanding ELF: no OS, no libc, no default runtime. `println` goes through the SBI console ecall.
 - Building needs the GNU cross binutils: `riscv64-unknown-elf-as`/`-ld` or `riscv64-elf-as`/`-ld`. The development loop needs `qemu-system-riscv64`.
 - The same image boots on real RISC-V hardware, where the board supplies OpenSBI; QEMU is the default runner for the loop, not part of the target.
-- `spawn`/`send`/`receive` and `foreign def` are refused on this target with clear diagnostics.
+- `spawn`/`send`/`receive` and `foreign def` are refused on this target with clear diagnostics — and it stays the one target that refuses `Map`.
 
 ## Two things that trip people up
 

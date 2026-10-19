@@ -869,4 +869,4 @@ TLS 从来不缺位于标准库——`net_tls_connect`、`net_tls_connect_insecu
 - [x] **T52.5** — beam 降级:`Map_lit` → `emo_map_new`,方法臂在名字服务多个类型处按 `{'emo_map', K}` 标签分派(`get`、`length`、`to_string`——bytes 的先例),结构化 `==` 经 `emo_map_equal`,过时的 `Make_exception` 注记更新,`Exception.new(data:)` 在 `beam` 上携带 data。
 - [x] **T52.6** — 金测:`examples/map_demo`——字面量、`Map.new(pairs)`、七个方法、经 `keys()`/`values()` 看插入序、首次插入位置、删除、别名、`==`(同内容不同插入序相等、不等的 map 不等)、`{key: value}` 打印,以及一个携带 `data` 的 `Exception.new`——`expected.txt` 取自解释器,在全部五个金测名单里逐字节一致;检查期键类型钉子(E4020)走既有的诊断测试。
 - [x] **T52.7** — 标准库加宽:`slog` 的 manifest 增至 `wasm` 与 `beam`(它收口时记下的条件——今天声明能跑的 target,缺口合上时加宽),`slog_demo` 进入 wasm 与 beam 金测名单,逐字节一致。
-- [ ] **T52.8** — 文档:`docs/demo-targets.md` 的能力故事(`wasm`/`beam` 的 Map 拒绝退场;`riscv64` 仍是唯一)、`docs/stdlib.md` 的 slog 行、`docs/visualization.md` 的五 target Table 主张就此字面为真、`CHECK.md` 的 T16.5 注记(`slog` 等待 `Map`)记录其解决、zh-CN 镜像,以及 `plan/README.md` 的状态表。
+- [x] **T52.8** — 文档:`docs/demo-targets.md` 的能力故事(`wasm`/`beam` 的 Map 拒绝退场;`riscv64` 仍是唯一)、`docs/stdlib.md` 的 slog 行、`docs/visualization.md` 的五 target Table 主张就此字面为真、`CHECK.md` 的 T16.5 注记(`slog` 等待 `Map`)记录其解决、zh-CN 镜像,以及 `plan/README.md` 的状态表。
