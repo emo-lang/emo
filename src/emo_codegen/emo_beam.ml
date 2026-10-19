@@ -2757,7 +2757,7 @@ let rt_source =
 	end
 
 'emo_ne'/2 =
-    fun (_a, _b) -> call 'erlang':'=/='(_a, _b)
+    fun (_a, _b) -> apply 'emo_not'/1 (apply 'emo_eq'/2 (_a, _b))
 
 %% ---- Map ----
 %%
