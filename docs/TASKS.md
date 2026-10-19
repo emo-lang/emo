@@ -2258,7 +2258,7 @@ stays byte-identical; the docs carry the story.
       `emo_deep_copy` rule, closing the recorded conformance remainder
       (`CHECK.md`, step 50); the `cross_target` corpus pins it on
       `wasm`.
-- [ ] **T52.4** — The beam runtime's map helpers under the
+- [x] **T52.4** — The beam runtime's map helpers under the
       `emo_list_new` discipline: `emo_map_new/1` mints a fresh ref and
       stores `{Order, Pairs}` — the insertion-order key list and an
       Erlang map key→value — in the process dictionary behind
