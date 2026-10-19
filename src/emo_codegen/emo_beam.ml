@@ -1927,6 +1927,8 @@ let rt_source =
 	      apply 'emo_builder_to_str'/1 ({'emo_builder', _k})
 	  <{'emo_map', _k}> when 'true' ->
 	      apply 'emo_map_str'/1 ({'emo_map', _k})
+	  <{'emo_enum', _m, _t}> when 'true' ->
+	      call 'erlang':'atom_to_binary'(_t, 'utf8')
 	  <_a> when call 'erlang':'is_list'(_a) ->
 	      apply 'emo_array_to_str'/1 (_a)
 	  <_s> when call 'erlang':'is_binary'(_s) -> _s

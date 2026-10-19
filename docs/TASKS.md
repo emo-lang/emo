@@ -1422,9 +1422,20 @@ against the `Renderer` interface, not `SvgRenderer`.
       entries and raises when a presence array disagrees with its
       values. Verified on all six paths — interp, c, ocaml, ts, wasm,
       beam — with the skip and the mismatch raise byte-identical.
-- [ ] **T42.2** — `plot.table(numbers, labels)` and
+- [x] **T42.2** — `plot.table(numbers, labels)` and
       `plot.table_missing(numbers, presence, labels)`: column-oriented
-      `Table`, shape violations raising (decision 4/10).
+      `Table`, shape violations raising (decision 4/10). The builders
+      share one shape check — no name claimed by both kinds, one length
+      across every column, a presence column beside each numeric column
+      with no strays — and the accessors check the column's kind
+      (`number` / `presence` / `label`, beside the `rows` count).
+      Verified on all six paths — interp, c, ocaml, ts, wasm, beam —
+      with the demo golden byte-identical (`plot_demo` grew a table
+      section) and eight shape violations raising the same message on
+      every path. Printing the presence columns exposed enum `to_str`
+      rendering the qualified name on `ts` and having no rendering at
+      all on `wasm`/`beam`; all three now render the bare member — the
+      interpreter's rule — so the golden holds byte-for-byte.
 - [ ] **T42.3** — Channels `Map[String, String]` (decision 16): the
       vocabulary `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,
       unknown channels an error, each family reading only the channels it

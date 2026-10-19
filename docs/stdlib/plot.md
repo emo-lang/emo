@@ -93,6 +93,51 @@ The statistics read a column beside its presence array and skip the
 whole column. The parallel presence column rides the `Table` the
 dataset layer builds (`plot.table` / `plot.table_missing`).
 
+## Tables
+
+The dataset charts read a `Table` — the one data structure the package
+owns: column-oriented, minimal, and built only through its two
+validating builders.
+
+```emo
+def table(numbers Map[String, Array[Float64]], labels Map[String, Array[String]]) Table
+def table_missing(numbers Map[String, Array[Float64]], presence Map[String, Array[Presence]], labels Map[String, Array[String]]) Table
+```
+
+Numeric columns and categorical columns live in maps keyed by column
+name, and every column shares one row count. `table` builds the
+all-present table — each numeric column gets its presence array built
+beside it; `table_missing` takes the presence columns the caller
+wrote. Both validate the shape and raise on a violation, because a
+table written as a literal is programmer intent: two columns of
+different lengths, one name claimed by both kinds, a numeric column
+with no presence column — or a stray presence column, or one whose
+length disagrees with its numbers — are all contract violations.
+
+Access goes through the column's kind:
+
+```emo
+const tips = plot.table(
+  { "total_bill": [16.99, 10.34, 21.01], "tip": [1.01, 1.66, 3.50] },
+  { "time": ["Lunch", "Dinner", "Dinner"] }
+)
+tips.rows
+tips.number("total_bill")
+tips.presence("total_bill")
+tips.label("time")
+```
+
+`number(name)` answers a numeric column's values, `presence(name)` the
+parallel presence array beside it, and `label(name)` a categorical
+column's values; `rows` is the row count. Reading a name the table
+carries under the other kind, or a name it does not carry, raises. An
+empty pair of maps is a table of zero rows.
+
+`Table` lives at the `plot` root, and it must not grow into a
+data-frame: the data-facing entry points added later (a CSV or JSON
+reader) will return `(R.error, reason)` instead of raising, because
+data read from outside is not programmer intent.
+
 ## Themes
 
 A theme dresses the whole figure: the background and foreground inks,
@@ -285,7 +330,8 @@ whole story, target by target, is
 
 T0 — what exists today — is the bar, line, scatter, area, and hist
 marks, linear axes with nice-number ticks, a title, axis labels, tick
-marks, the grid, the theme that dresses it all, and SVG output. Both
+marks, the grid, the theme that dresses it all, the validating `Table`
+the dataset charts will read, and SVG output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
 categorical labels. The remaining pieces the surface carries are

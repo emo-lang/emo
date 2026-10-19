@@ -546,7 +546,7 @@ function toStr(v: any): string {
         .join(", ") +
       "}"
     );
-  if (v instanceof EEnum) return v.type + "." + v.member;
+  if (v instanceof EEnum) return v.member;
   if (v instanceof EPid) return "<pid " + v.id + ">";
   if (v instanceof EEmoException) return toStr(v.messageValue);
   if (v && typeof v === "object" && v.constructor && v.constructor.__emo)

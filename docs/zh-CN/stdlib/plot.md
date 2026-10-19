@@ -65,6 +65,34 @@ enum Presence { present, absent }
 
 统计读一列时连同它的 presence 数组一起读,跳过 `absent` 的条目,一个缺失值损失的是一个观测,而不是整列。并行的 presence 列搭载数据集层建出的 `Table` 而来(`plot.table` / `plot.table_missing`)。
 
+## 表
+
+数据集图读的是 `Table`——这个包拥有的唯一数据结构:列式、极简、只能从两个带校验的构造器来。
+
+```emo
+def table(numbers Map[String, Array[Float64]], labels Map[String, Array[String]]) Table
+def table_missing(numbers Map[String, Array[Float64]], presence Map[String, Array[Presence]], labels Map[String, Array[String]]) Table
+```
+
+数值列与类别列都放在以列名作键的 map 里,所有列共享同一个行数。`table` 建出全在场的表——每个数值列旁边都配好一条 presence 数组;`table_missing` 收调用者写好的 presence 列。两者都校验形状,违例即 raise:手写的表字面量是程序员的意图,两列长度不一、一个名字被两种列同时认领、数值列没有 presence 列——或多出一条游离的 presence 列、或长度与自己的数值对不上——都是违约。
+
+访问按列的种类走:
+
+```emo
+const tips = plot.table(
+  { "total_bill": [16.99, 10.34, 21.01], "tip": [1.01, 1.66, 3.50] },
+  { "time": ["Lunch", "Dinner", "Dinner"] }
+)
+tips.rows
+tips.number("total_bill")
+tips.presence("total_bill")
+tips.label("time")
+```
+
+`number(name)` 答数值列的值,`presence(name)` 答它旁边那条并行的 presence 数组,`label(name)` 答类别列的值;`rows` 是行数。读一个表里属于另一种类的名字、或表里没有的名字,都 raise。两副空 map 是零行的表。
+
+`Table` 住在 `plot` 根上,不许长成 data-frame:以后加的数据入口(CSV 或 JSON 读取器)返回 `(R.error, reason)` 而不 raise,因为从外面读进来的数据不是程序员的意图。
+
 ## 主题
 
 主题装扮整张图:背景与前景墨色、网格、坐标轴、标题、标签样式,color 通道将要经过的 palette 与 colormap、面板间距,以及 `figure()` 出发的默认尺寸。`figure()` 建出默认的浅色主题,`with_theme` 把另一套换上图:
@@ -176,6 +204,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格,以及装扮这一切的主题,还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例——以及 `color` 通道背后的 palette/colormap 接线。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图将要读取的带校验的 `Table`,还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例——以及 `color` 通道背后的 palette/colormap 接线。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

@@ -63,3 +63,24 @@ const units_ax = plot.axes().with_x_label("Quarter").with_y_label("Units").with_
 const revenue_ax = plot.axes().with_x_label("Quarter").with_y_label("Revenue").with_marks([plot.mark.bar(quarters, [180.0, 220.0, 190.0, 260.0])])
 const costs_ax = plot.axes().with_x_label("Quarter").with_y_label("Costs").with_marks([plot.mark.bar(quarters, [120.0, 160.0, 140.0, 190.0])])
 println(plot.svg(plot.figure().with_title("Quarterly review").with_grid(2, 2).with_axes([units_ax, revenue_ax, costs_ax])))
+
+// The dataset layer: a table is the value the chart functions read —
+// numeric columns, categorical columns, one shared row count — and the
+// builders validate the shape.
+const tips = plot.table(
+  { "total_bill": [16.99, 10.34, 21.01], "tip": [1.01, 1.66, 3.50] },
+  { "time": ["Lunch", "Dinner", "Dinner"] }
+)
+println(tips.rows)
+println(tips.number("total_bill"))
+println(tips.presence("tip"))
+println(tips.label("time"))
+
+const rainfall = plot.table_missing(
+  { "mm": [0.0, 2.5, 11.2, 4.0] },
+  { "mm": [plot.Presence.present, plot.Presence.absent, plot.Presence.present, plot.Presence.present] },
+  { "city": ["Lisbon", "Oslo", "Kyoto", "Lima"] }
+)
+println(rainfall.rows)
+println(rainfall.presence("mm"))
+println(rainfall.number("mm"))

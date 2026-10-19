@@ -2005,7 +2005,21 @@ let rt_to_str : W.func_type =
     W.If_else (W.Result W.Anyref, test, produce, cont)
   in
   let test_of t = [ W.Local_get 0; W.Ref_test t ] in
-  let innermost = [ W.Local_get 0; W.Call (rt "instance_str") ] in
+  (* An enum renders its member alone — the interpreter's rule. Field 1
+     of a $venum is the member $vstring; field 0 carries the enum's
+     name, which no printed form includes. *)
+  let innermost =
+    branch (test_of t_venum)
+      [
+        W.Local_get 0;
+        W.Ref_cast t_venum;
+        W.Struct_get (t_venum, 1);
+        W.Ref_cast t_vstring;
+        W.Struct_get (t_vstring, 0);
+        W.Struct_new t_vstring;
+      ]
+      [ W.Local_get 0; W.Call (rt "instance_str") ]
+  in
   let char_branch =
     branch (test_of t_vchar)
       [
@@ -2015,7 +2029,7 @@ let rt_to_str : W.func_type =
         W.Call (rt "char_str");
         W.Struct_new t_vstring;
       ]
-      innermost
+      [ innermost ]
   in
   let bool_branch =
     branch (test_of t_vbool)

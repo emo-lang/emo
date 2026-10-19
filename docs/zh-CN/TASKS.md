@@ -693,7 +693,7 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
 **完成标准:** `plot.table` / `plot.table_missing` 构建出经校验的 `Table`,图表层通过词表解析通道。
 
 - [x] **T42.1** — `enum Presence { present, absent }` 与用于缺失数字的并行 `Map[String, Array[Presence]]`,统计跳过 `absent` 项(decision 25)。类型公开在 `plot` 根上;统计经 `internal.stats.observed` 读数值列,丢掉 `absent` 条目,presence 数组与值不等长时 raise。已验证六条路径——interp、c、ocaml、ts、wasm、beam——跳过与不匹配抛错逐字节一致。
-- [ ] **T42.2** — `plot.table(numbers, labels)` 与 `plot.table_missing(numbers, presence, labels)`:列式 `Table`,形状违例抛出(decision 4/10)。
+- [x] **T42.2** — `plot.table(numbers, labels)` 与 `plot.table_missing(numbers, presence, labels)`:列式 `Table`,形状违例抛出(decision 4/10)。两个构造器共享同一套形状检查——没有名字被两种列同时认领、所有列同一个长度、每个数值列旁边各有一条 presence 列且无游离项——访问器按列的种类受查(`number` / `presence` / `label`,旁边是 `rows` 行数)。已在六条路径上验证——interp、c、ocaml、ts、wasm、beam——demo 金测逐字节一致(`plot_demo` 增加了表一节),八个形状违例在每条路径上抛出同一条消息。打印 presence 列暴露了枚举 `to_str` 的缺口:`ts` 渲染全限定名,`wasm`/`beam` 干脆没有渲染;三者现在都渲染裸成员——解释器的规则——金测逐字节成立。
 - [ ] **T42.3** — 通道 `Map[String, String]`(decision 16):词表 `x`/`y`/`color`/`size`/`marker`/`dash`/`facet_row`/`facet_col`,未知通道报错,每族只读它支持的通道——并接手 T41.6 的按列类型 `color` 分派(经主题的 palette 与 colormap,decision 24)。
 
 ### Step 43 — T1 数据集图表

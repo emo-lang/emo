@@ -15,6 +15,141 @@ enum Weight { regular, bold }
 // absent entries before any of them runs.
 enum Presence { present, absent }
 
+// The minimal column-oriented table the dataset charts read: numeric
+// columns, categorical columns, and the one row count every column
+// shares. It is programmer intent made data — a literal written by hand
+// that disagrees with itself is a contract violation, so the builders
+// validate the shape and raise — and it must not grow into a
+// data-frame.
+class Table {
+  def init(numbers Map[String, Array[Float64]], presence Map[String, Array[Presence]], labels Map[String, Array[String]], rows Int64) {
+    self.numbers = numbers
+    self.presence = presence
+    self.labels = labels
+    self.rows = rows
+  }
+
+  // A numeric column's values. Reading a name the table carries under
+  // the other kind, or a name it does not carry, raises.
+  def number(name String) Array[Float64] {
+    if self.numbers.has(name) {
+      return self.numbers.get(name)
+    }
+    if self.labels.has(name) {
+      raise Exception.new(message: "plot: \"${name}\" is a label column, not a number column")
+    }
+    raise Exception.new(message: "plot: no column named \"${name}\"")
+  }
+
+  // The presence array beside a numeric column: which of its slots
+  // carry a value and which are missing.
+  def presence(name String) Array[Presence] {
+    if self.presence.has(name) {
+      return self.presence.get(name)
+    }
+    if self.labels.has(name) {
+      raise Exception.new(message: "plot: \"${name}\" is a label column, not a number column")
+    }
+    raise Exception.new(message: "plot: no column named \"${name}\"")
+  }
+
+  // A categorical column's values, under the same discipline.
+  def label(name String) Array[String] {
+    if self.labels.has(name) {
+      return self.labels.get(name)
+    }
+    if self.numbers.has(name) {
+      raise Exception.new(message: "plot: \"${name}\" is a number column, not a label column")
+    }
+    raise Exception.new(message: "plot: no column named \"${name}\"")
+  }
+}
+
+// The builders' shared shape check: no name in both kinds, and every
+// column the same length — the first column's length is the table's
+// row count. An empty pair of maps is a table of zero rows.
+def table_rows(numbers Map[String, Array[Float64]], labels Map[String, Array[String]]) Int64 {
+  var rows = -1
+  var first = ""
+  const num_names = numbers.keys()
+  for var k = 0; k < num_names.length(); k = k + 1 {
+    const name = num_names[k]
+    if labels.has(name) {
+      raise Exception.new(message: "plot: the name \"${name}\" is both a number column and a label column")
+    }
+    const len = numbers.get(name).length()
+    if rows < 0 {
+      rows = len
+      first = name
+    } else {
+      if len != rows {
+        raise Exception.new(message: "plot: a table's columns share one length, got \"${name}\" with ${len} rows but \"${first}\" has ${rows}")
+      }
+    }
+  }
+  const label_names = labels.keys()
+  for var k = 0; k < label_names.length(); k = k + 1 {
+    const name = label_names[k]
+    const len = labels.get(name).length()
+    if rows < 0 {
+      rows = len
+      first = name
+    } else {
+      if len != rows {
+        raise Exception.new(message: "plot: a table's columns share one length, got \"${name}\" with ${len} rows but \"${first}\" has ${rows}")
+      }
+    }
+  }
+  if rows < 0 {
+    return 0
+  }
+  return rows
+}
+
+// The table with every value present: the presence columns are built
+// all-present beside the numbers.
+def table(numbers Map[String, Array[Float64]], labels Map[String, Array[String]]) Table {
+  const rows = table_rows(numbers, labels)
+  var presence = {}
+  const num_names = numbers.keys()
+  for var k = 0; k < num_names.length(); k = k + 1 {
+    const col = numbers.get(num_names[k])
+    var present = []
+    for var i = 0; i < col.length(); i = i + 1 {
+      present = present.append(Presence.present)
+    }
+    presence.set(num_names[k], present)
+  }
+  return Table.new(numbers: numbers, presence: presence, labels: labels, rows: rows)
+}
+
+// The table with missing numbers: each numeric column carries its
+// parallel presence column, and the builders' shape check grows the
+// presence half — a presence column per numeric column, no strays, and
+// each the length of its numbers.
+def table_missing(numbers Map[String, Array[Float64]], presence Map[String, Array[Presence]], labels Map[String, Array[String]]) Table {
+  const rows = table_rows(numbers, labels)
+  const num_names = numbers.keys()
+  for var k = 0; k < num_names.length(); k = k + 1 {
+    const name = num_names[k]
+    if !presence.has(name) {
+      raise Exception.new(message: "plot: the number column \"${name}\" has no presence column")
+    }
+    const n = numbers.get(name).length()
+    const p = presence.get(name).length()
+    if p != n {
+      raise Exception.new(message: "plot: the presence column \"${name}\" must match its numbers, got ${p} entries for ${n} values")
+    }
+  }
+  const pres_names = presence.keys()
+  for var k = 0; k < pres_names.length(); k = k + 1 {
+    if !numbers.has(pres_names[k]) {
+      raise Exception.new(message: "plot: the presence column \"${pres_names[k]}\" has no numbers")
+    }
+  }
+  return Table.new(numbers: numbers, presence: presence, labels: labels, rows: rows)
+}
+
 class Figure {
   def init(width Float64, height Float64, title String, theme Theme, axes Array[Axes], grid (Int64, Int64), share Share) {
     self.width = width
