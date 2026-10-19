@@ -338,6 +338,7 @@ let wasm_goldens =
     "fixed_width";
     "list";
     "array_builder";
+    "map";
     "base64_demo";
     "csv_demo";
     "json_demo";
@@ -386,6 +387,7 @@ let beam_goldens =
     "fixed_width";
     "list";
     "array_builder";
+    "map";
     "base64_demo";
     "csv_demo";
     "json_demo";

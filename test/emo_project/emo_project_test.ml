@@ -2904,6 +2904,10 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "array_builder")
           "array_builder" "main.emo");
+    tc "map compiles to a binary with the interpreter's output" (fun () ->
+        bootstrap_example
+          (Filename.concat (examples_dir ()) "map")
+          "map" "main.emo");
     tc "loops compiles to a binary with the interpreter's output" (fun () ->
         bootstrap_example
           (Filename.concat (examples_dir ()) "loops")

@@ -2275,7 +2275,7 @@ stays byte-identical; the docs carry the story.
       precedent), structural `==` through `emo_map_equal`, and the
       stale `Make_exception` comment updated so `Exception.new(data:)`
       carries data on `beam`.
-- [ ] **T52.6** — The golden: `examples/map_demo` — a literal,
+- [x] **T52.6** — The golden: `examples/map_demo` — a literal,
       `Map.new(pairs)`, the seven methods, insertion order through
       `keys()`/`values()`, first-insert positions, removal, aliasing,
       `==` (equal content in different insertion order, and unequal

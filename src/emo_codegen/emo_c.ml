@@ -922,8 +922,10 @@ and emit_expr env (e : Emo_ir.expr) : string =
   | Make_exception { message; data = None } ->
       wrap_owned e.Emo_ir.ety
         (Printf.sprintf "emo_make_exception(%s)" (to_str env message))
-  | Make_exception _ ->
-      refuse "the c target does not support exception data yet"
+  | Make_exception { message; data = Some d } ->
+      wrap_owned e.Emo_ir.ety
+        (Printf.sprintf "emo_make_exception_data(%s, %s)" (to_str env message)
+           (as_dyn env d))
   | other ->
       refuse
         (Printf.sprintf "this expression form (%s)"
