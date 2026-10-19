@@ -2244,7 +2244,7 @@ stays byte-identical; the docs carry the story.
       equality helper; appended after the array/builder renderings with
       the index table and `runtime_count` updated (main stays at 60,
       List at 61–67, the map ops following).
-- [ ] **T52.2** — The wasm lowering: `Map_lit` builds through
+- [x] **T52.2** — The wasm lowering: `Map_lit` builds through
       `map_new` (the emitter packs `Map.new`'s variadic pairs), the
       seven methods dispatched on the receiver's `MapType`, structural
       `==`, and `to_string` wired; the two `Lower_error` refusals in

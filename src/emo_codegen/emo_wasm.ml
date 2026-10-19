@@ -80,8 +80,11 @@ let runtime_types : W.typ list =
     (* $vfloat *)
     W.StructT [ (W.I32, false) ];
     (* $vbool *)
-    W.StructT [ (W.I32, false) ];
-    (* $vchar *)
+    W.StructT [ (W.I32, true) ];
+    (* $vchar — the mutable field is what keeps this type distinct from
+       $vbool: WasmGC's iso-recursive equivalence makes two separately
+       declared structs of the same shape one type, and ref.test could
+       not tell a char from a bool *)
     W.ArrayT (W.Anyref, true);
     (* $anyarray *)
     W.StructT [ (W.RefNull t_anyarray, false) ];
@@ -125,8 +128,9 @@ let runtime_types : W.typ list =
     (* $proc: id, alive, parked, mailbox head/tail, handler, args *)
     W.StructT [ (W.Anyref, true); (W.Anyref, true) ];
     (* $cons: a message-list cell, also the saved-current stack *)
-    W.StructT [ (W.RefNull t_bytes, false) ];
-    (* $vbytes — same payload shape as $vstring, mutable by convention *)
+    W.StructT [ (W.RefNull t_bytes, true) ];
+    (* $vbytes — the mutable field is what keeps this type distinct from
+       $vstring under WasmGC's iso-recursive equivalence *)
     W.FuncT ([ W.Anyref; W.Anyref; W.Anyref ], [ W.Anyref ]);
     (* bytes_set: recv, index, value -> value *)
     W.StructT
@@ -243,6 +247,7 @@ let rt = function
   | "map_key_eq" -> 84
   | "map_dbg" -> 85
   | "str_quote" -> 86
+  | "bytes_str" -> 87
   | _ -> failwith "wasm: bad runtime function"
 
 (* imports 3 + runtime funcs 3..46 + bytes ops 47..58 + init + main;
@@ -250,12 +255,13 @@ let rt = function
    stays at 60 so the exported entry keeps its index. The String
    substring runtime (68) and the ArrayBuilder ops (69..72) sit after
    them for the same reason, as do the array and builder renderings
-   (73..74) the `to_str` chain calls, and the Map ops (75..86) after
-   those. *)
-let runtime_count = 87
+   (73..74) the `to_str` chain calls, the Map ops (75..86) after
+   those, and the Bytes rendering (87) last. *)
+let runtime_count = 88
 (* imports 3 + rt 38 + init + main + bit ops 6 + bytes ops 12
      + list ops 7 + the String substring + the ArrayBuilder ops
-     + the array and builder renderings + the Map ops *)
+     + the array and builder renderings + the Map ops + the Bytes
+     rendering *)
 
 (* ---- Lowering state ---- *)
 
@@ -433,8 +439,25 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Array_lit es ->
       List.iter (expr env) es;
       e env (W.Array_new_fixed (t_anyarray, List.length es))
-  | Map_lit _ ->
-      raise (Emo_ir.Lower_error "the wasm target does not support Map yet")
+  | Map_lit pairs ->
+      (* the emitter packs the pairs: map_new, then a set per pair —
+         each pair's key evaluates before its value, and the literal's
+         order is the insertion order *)
+      e env (W.Call (rt "map_new"));
+      let m = fresh_local env "__map_lit" W.Anyref in
+      e env (W.Local_set m);
+      List.iter
+        (fun pair ->
+          match pair.Emo_ir.desc with
+          | Emo_ir.Tuple [ k; v ] ->
+              e env (W.Local_get m);
+              expr env k;
+              expr env v;
+              e env (W.Call (rt "map_set"));
+              e env (W.Local_set m)
+          | _ -> failwith "wasm: a map literal pair is not a (key, value) tuple")
+        pairs;
+      e env (W.Local_get m)
   | Make_enum { enum_name; member } ->
       string_const env enum_name;
       string_const env member;
@@ -650,17 +673,53 @@ let rec expr env (x : Emo_ir.expr) : unit =
       expr env v;
       e env (W.Call (rt "list_new"))
   | Builder_new -> e env (W.Call (rt "builder_new"))
-  | Make_exception { message; data } ->
-      expr env message;
-      (* The data lowers only to refuse: the wasm target does not support
-         Map yet, so any data expression errors before this drop. *)
-      Option.iter
-        (fun d ->
+  | Make_exception { message; data } -> (
+      match data with
+      | None ->
+          expr env message;
+          e env (W.Call (rt "throw"));
+          e env W.Unreachable
+      | Some d ->
+          (* a non-empty data Map rides the crash the way the
+             interpreter's diagnostic renders it: message, then
+             ` (data: {...})` *)
+          let msg = fresh_local env "__exc_msg" W.Anyref in
+          let payload = fresh_local env "__exc_data" W.Anyref in
+          expr env message;
+          e env (W.Local_set msg);
           expr env d;
-          e env W.Drop)
-        data;
-      e env (W.Call (rt "throw"));
-      e env W.Unreachable
+          e env (W.Local_set payload);
+          e env (W.Local_get payload);
+          e env (W.Ref_cast t_vmap);
+          e env (W.Struct_get (t_vmap, 2));
+          let msg_bytes =
+            [
+              W.Local_get msg; W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0);
+            ]
+          in
+          let data_bytes =
+            [
+              W.Local_get payload;
+              W.Call (rt "to_str");
+              W.Ref_cast t_vstring;
+              W.Struct_get (t_vstring, 0);
+            ]
+          in
+          e env
+            (W.If
+               ( W.Void,
+                 msg_bytes
+                 @ string_bytes_instrs " (data: "
+                 @ [ W.Call (rt "strcat") ]
+                 @ data_bytes
+                 @ [ W.Call (rt "strcat") ]
+                 @ string_bytes_instrs ")"
+                 @ [ W.Call (rt "strcat") ]
+                 @ [ W.Struct_new t_vstring; W.Local_set msg ],
+                 [] ));
+          e env (W.Local_get msg);
+          e env (W.Call (rt "throw"));
+          e env W.Unreachable)
   | Do_spawn { func; args } -> (
       (* the child's first turn runs here: it evaluates with the
          parent's bindings already on the stack, then parks or ends.
@@ -706,7 +765,36 @@ let rec expr env (x : Emo_ir.expr) : unit =
 
 and method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
+  let map_recv =
+    match self_.Emo_ir.ety with Emo_check.MapType _ -> true | _ -> false
+  in
   match (name, args) with
+  | "get", [ k ] when map_recv ->
+      expr env self_;
+      expr env k;
+      e env (W.Call (rt "map_get"))
+  | "set", [ k; v ] when map_recv ->
+      expr env self_;
+      expr env k;
+      expr env v;
+      e env (W.Call (rt "map_set"))
+  | "has", [ k ] when map_recv ->
+      expr env self_;
+      expr env k;
+      e env (W.Call (rt "map_has"))
+  | "remove", [ k ] when map_recv ->
+      expr env self_;
+      expr env k;
+      e env (W.Call (rt "map_remove"))
+  | "length", [] when map_recv ->
+      expr env self_;
+      e env (W.Call (rt "map_len"))
+  | "keys", [] when map_recv ->
+      expr env self_;
+      e env (W.Call (rt "map_keys"))
+  | "values", [] when map_recv ->
+      expr env self_;
+      e env (W.Call (rt "map_values"))
   | "to_string", [] ->
       (* Instances answer their own `to_string` first — the interpreter's
          rule; the builtin conversion answers otherwise. A Bytes receiver
@@ -716,14 +804,20 @@ and method_call env self_ name args =
       expr env self_;
       e env (W.Local_set scratch);
       let builtin () =
-        [
-          W.Local_get scratch;
-          W.Call
-            (rt
-               (match self_.Emo_ir.ety with
-               | Emo_check.Bytes -> "bytes_to_str"
-               | _ -> "to_str"));
-        ]
+        (* A statically-Bytes receiver takes the content form; anything
+           else dispatches at run time, because a receiver the checker
+           could not type may still be Bytes — and its to_string is the
+           content, where the generic to_str spells "Bytes[n]". *)
+        if self_.Emo_ir.ety = Emo_check.Bytes then
+          [ W.Local_get scratch; W.Call (rt "bytes_to_str") ]
+        else
+          [
+            W.If_else
+              ( W.Result W.Anyref,
+                [ W.Local_get scratch; W.Ref_test t_vbytes ],
+                [ W.Local_get scratch; W.Call (rt "bytes_to_str") ],
+                [ W.Local_get scratch; W.Call (rt "to_str") ] );
+          ]
       in
       let matching =
         List.filter_map
@@ -1119,9 +1213,6 @@ and method_call env self_ name args =
               e env W.I32_or)
             rest;
           e env (W.Struct_new t_vbool))
-  | _, _
-    when match self_.Emo_ir.ety with Emo_check.MapType _ -> true | _ -> false ->
-      raise (Emo_ir.Lower_error "the wasm target does not support Map yet")
   | _ -> (
       let recv_class =
         (* The checker's ClassType carries the display name; the
@@ -1963,10 +2054,15 @@ let rt_to_str : W.func_type =
       [ W.Local_get 0; W.Call (rt "list_str") ]
       [ string_branch ]
   in
+  let bytes_branch =
+    branch (test_of t_vbytes)
+      [ W.Local_get 0; W.Call (rt "bytes_str") ]
+      [ list_branch ]
+  in
   let builder_branch =
     branch (test_of t_vbuilder)
       [ W.Local_get 0; W.Call (rt "builder_str") ]
-      [ list_branch ]
+      [ bytes_branch ]
   in
   let map_branch =
     branch (test_of t_vmap)
@@ -3545,6 +3641,110 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
           ] );
     ]
   in
+  let map_arm =
+    (* both receivers are $vmap: sizes equal, then every key of the left
+       finds its key in the right with a deep-equal value — order is
+       presentation. Locals: 2 left count, 3 left index, 6 right count,
+       7 right index. The scan block is what a found key's "keep
+       looking" branches to: a br to a loop label would restart the
+       outer loop, not leave the inner one. *)
+    [
+      W.Block
+        ( W.Result W.I32,
+          [
+            W.Block
+              ( W.Void,
+                [
+                  W.Local_get 0;
+                  W.Ref_cast t_vmap;
+                  W.Struct_get (t_vmap, 2);
+                  W.Local_set 2;
+                  W.Local_get 1;
+                  W.Ref_cast t_vmap;
+                  W.Struct_get (t_vmap, 2);
+                  W.Local_set 6;
+                  W.Local_get 6;
+                  W.Local_get 2;
+                  W.I32_ne;
+                  W.Br_if 0;
+                  W.I32_const 0;
+                  W.Local_set 3;
+                  W.Block
+                    ( W.Void,
+                      [
+                        W.Loop
+                          ( W.Void,
+                            [
+                              W.I32_const 1;
+                              W.Local_get 3;
+                              W.Local_get 2;
+                              W.I32_ge;
+                              W.Br_if 3;
+                              W.I32_const 0;
+                              W.Local_set 7;
+                              W.Block
+                                ( W.Void,
+                                  [
+                                    W.Loop
+                                      ( W.Void,
+                                        [
+                                          W.Local_get 7;
+                                          W.Local_get 6;
+                                          W.I32_ge;
+                                          W.Br_if 3;
+                                          W.Local_get 0;
+                                          W.Ref_cast t_vmap;
+                                          W.Struct_get (t_vmap, 0);
+                                          W.Ref_cast t_anyarray;
+                                          W.Local_get 3;
+                                          W.Array_get t_anyarray;
+                                          W.Local_get 1;
+                                          W.Ref_cast t_vmap;
+                                          W.Struct_get (t_vmap, 0);
+                                          W.Ref_cast t_anyarray;
+                                          W.Local_get 7;
+                                          W.Array_get t_anyarray;
+                                          W.Call (rt "map_key_eq");
+                                          W.If
+                                            ( W.Void,
+                                              [
+                                                W.Local_get 0;
+                                                W.Ref_cast t_vmap;
+                                                W.Struct_get (t_vmap, 1);
+                                                W.Ref_cast t_anyarray;
+                                                W.Local_get 3;
+                                                W.Array_get t_anyarray;
+                                                W.Local_get 1;
+                                                W.Ref_cast t_vmap;
+                                                W.Struct_get (t_vmap, 1);
+                                                W.Ref_cast t_anyarray;
+                                                W.Local_get 7;
+                                                W.Array_get t_anyarray;
+                                                W.Call (rt "deep_eq");
+                                                W.I32_eqz;
+                                                W.Br_if 4;
+                                                W.Br 2;
+                                              ],
+                                              [] );
+                                          W.Local_get 7;
+                                          W.I32_const 1;
+                                          W.I32_add;
+                                          W.Local_set 7;
+                                          W.Br 0;
+                                        ] );
+                                  ] );
+                              W.Local_get 3;
+                              W.I32_const 1;
+                              W.I32_add;
+                              W.Local_set 3;
+                              W.Br 0;
+                            ] );
+                      ] );
+                ] );
+            W.I32_const 0;
+          ] );
+    ]
+  in
   let arms =
     [
       (both t_vint 0 1, i64_of 0 @ i64_of 1 @ [ W.I64_eq ]);
@@ -3560,6 +3760,7 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
       (both t_anyarray 0 1, array_arm);
       (both t_vbytes 0 1, bytes_arm);
       (both t_vlist 0 1, list_arm);
+      (both t_vmap 0 1, map_arm);
     ]
     @ class_arms
   in
@@ -3572,19 +3773,19 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
   ( {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [ (2, W.I32); (2, W.RefNull t_lnode) ];
+      flocals = [ (2, W.I32); (2, W.RefNull t_lnode); (2, W.I32) ];
       fbody = body @ [ W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_numop;
       fparams = [ "a"; "b" ];
-      flocals = [ (2, W.I32); (2, W.RefNull t_lnode) ];
+      flocals = [ (2, W.I32); (2, W.RefNull t_lnode); (2, W.I32) ];
       fbody = body @ [ W.I32_eqz; W.Struct_new t_vbool ];
     },
     {
       W.ftype_idx = t_sig2;
       fparams = [ "a"; "b" ];
-      flocals = [ (2, W.I32); (2, W.RefNull t_lnode) ];
+      flocals = [ (2, W.I32); (2, W.RefNull t_lnode); (2, W.I32) ];
       fbody = body;
     } )
 
@@ -4808,6 +5009,36 @@ let rt_str_quote : W.func_type =
       ];
   }
 
+(* bytes_str(b) -> $vstring: "Bytes[n]", the interpreter's rendering.
+   Locals: 2 accumulator, 3 the length as bytes, 4 scratch (the
+   constants). *)
+let rt_bytes_str : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "b" ];
+    flocals =
+      [ (1, W.RefNull t_bytes); (1, W.RefNull t_bytes); (2, W.RefNull t_bytes) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vbytes;
+        W.Struct_get (t_vbytes, 0);
+        W.Array_len t_bytes;
+        W.I64_extend_i32_u;
+        W.Call (rt "int_str");
+        W.Local_set 3;
+      ]
+      @ (bytes_const "Bytes[" @ [ W.Local_set 2 ])
+      @ [ W.Local_get 2; W.Local_get 3; W.Call (rt "strcat"); W.Local_set 2 ]
+      @ (W.Local_get 2 :: bytes_const "]")
+      @ [
+          W.Call (rt "strcat");
+          W.Local_set 2;
+          W.Local_get 2;
+          W.Struct_new t_vstring;
+        ];
+  }
+
 (* map_dbg(v) -> $vstring: the debug form the map's rendering and
    get-miss message share — a string shows quoted, everything else
    through the shared to_str. *)
@@ -5786,6 +6017,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
         rt_map_key_eq;
         rt_map_dbg;
         rt_str_quote;
+        rt_bytes_str;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in
