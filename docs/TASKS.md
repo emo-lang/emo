@@ -1464,6 +1464,26 @@ against the `Renderer` interface, not `SvgRenderer`.
       own supported list, since the charts of one family read different
       aesthetics — so the four family wrappers are gone and the
       unsupported-channel message names the chart.)
+
+### Step 43 — T1 dataset charts
+
+**Prereq:** Steps 41–42.
+**Done when:** every `plot.*` chart in decision 17 is implemented on the
+T0 marks, with fixtures byte-identical on all five targets.
+
+- [x] **T43.1** — Statistics: descriptives, binning, KDE, ECDF, box
+      statistics, and OLS with a confidence band; `normal_quantile` and
+      `normal_cdf` internal to `plot` (decision 13). Landed in
+      `internal/stats.emo`: `sort` (a bottom-up merge sort through the
+      ArrayBuilder), `quantile`, `describe`, `histogram_bins` (the
+      `hist` mark's own `bin_index`, so a column and a mark built from
+      it always agree), `ecdf`, `box_stats` (Tukey whiskers and fliers),
+      `ols` with `ols_band` (the large-sample band, its critical value
+      the Acklam `normal_quantile`), `normal_cdf` (Zelen–Severo), and
+      the `exp` behind the KDE, carried internal by the
+      `scale.log10` precedent so `plot` stays dependency-free. Verified
+      on all six paths — interp, c, ocaml, ts, wasm, beam — with
+      hand-checked values and the raise paths byte-identical.
 - [x] **T43.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
       Each chart reads a `Table` through the channel mapping and answers
       a whole `Figure` — one axes, labelled from the channel's column
@@ -1494,27 +1514,6 @@ against the `Renderer` interface, not `SvgRenderer`.
       (`plot_demo` grew a relational section: a grouped scatter with the
       size channel, a two-level line with the dash channel, a reg with
       its band) and thirteen raise messages byte-identical.
-
-### Step 43 — T1 dataset charts
-
-**Prereq:** Steps 41–42.
-**Done when:** every `plot.*` chart in decision 17 is implemented on the
-T0 marks, with fixtures byte-identical on all five targets.
-
-- [x] **T43.1** — Statistics: descriptives, binning, KDE, ECDF, box
-      statistics, and OLS with a confidence band; `normal_quantile` and
-      `normal_cdf` internal to `plot` (decision 13). Landed in
-      `internal/stats.emo`: `sort` (a bottom-up merge sort through the
-      ArrayBuilder), `quantile`, `describe`, `histogram_bins` (the
-      `hist` mark's own `bin_index`, so a column and a mark built from
-      it always agree), `ecdf`, `box_stats` (Tukey whiskers and fliers),
-      `ols` with `ols_band` (the large-sample band, its critical value
-      the Acklam `normal_quantile`), `normal_cdf` (Zelen–Severo), and
-      the `exp` behind the KDE, carried internal by the
-      `scale.log10` precedent so `plot` stays dependency-free. Verified
-      on all six paths — interp, c, ocaml, ts, wasm, beam — with
-      hand-checked values and the raise paths byte-identical.
-- [ ] **T43.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
 - [ ] **T43.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
       `plot.box`, `plot.violin`.
 - [ ] **T43.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
