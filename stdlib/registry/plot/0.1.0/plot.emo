@@ -208,6 +208,25 @@ def channel_colors(t Table, name String, theme Theme) Array[(Int64, Int64, Int64
   raise Exception.new(message: "plot: no column named \"${name}\"")
 }
 
+// The floor every statistic reads a numeric column through: the entries
+// the parallel presence column names `absent` drop out before any of
+// them runs. It lives at the root, not in `internal.stats`, so the
+// statistics stay free of references to the package root — the root
+// calls into the statistics, and one direction is all a module graph
+// may bend.
+def observed(numbers Array[Float64], presence Array[Presence]) Array[Float64] {
+  if numbers.length() != presence.length() {
+    raise Exception.new(message: "plot: a presence column must match its numbers, got ${presence.length()} entries for ${numbers.length()} values")
+  }
+  var out = []
+  for var i = 0; i < numbers.length(); i = i + 1 {
+    if presence[i] == Presence.present {
+      out = out.append(numbers[i])
+    }
+  }
+  return out
+}
+
 class Figure {
   def init(width Float64, height Float64, title String, theme Theme, axes Array[Axes], grid (Int64, Int64), share Share) {
     self.width = width

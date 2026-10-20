@@ -1417,11 +1417,15 @@ against the `Renderer` interface, not `SvgRenderer`.
 - [x] **T42.1** — `enum Presence { present, absent }` and the parallel
       `Map[String, Array[Presence]]` for missing numbers, with the
       statistics skipping `absent` entries (decision 25). The type is
-      public at the `plot` root; the statistics read a numeric column
-      through `internal.stats.observed`, which drops the `absent`
+      public at the `plot` root; a numeric column is read through
+      `plot.observed`, which drops the `absent`
       entries and raises when a presence array disagrees with its
       values. Verified on all six paths — interp, c, ocaml, ts, wasm,
       beam — with the skip and the mismatch raise byte-identical.
+      (`observed` landed as `internal.stats.observed`; the 2026-10-20
+      refactor moved it to the root so the statistics module references
+      nothing from the package root — the root calls in, and one
+      direction is all a module graph may bend.)
 - [x] **T42.2** — `plot.table(numbers, labels)` and
       `plot.table_missing(numbers, presence, labels)`: column-oriented
       `Table`, shape violations raising (decision 4/10). The builders
