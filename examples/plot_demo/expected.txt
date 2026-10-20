@@ -1361,3 +1361,93 @@
 <text x="340.0" y="452.0" text-anchor="middle" font-family="sans-serif" font-size="13.0" font-weight="normal" fill="rgb(85,85,85)">region</text>
 </svg>
 
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+<rect x="0.0" y="0.0" width="640.0" height="480.0" fill="rgb(255,255,255)"/>
+<line x1="64.0" y1="365.0" x2="616.0" y2="365.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="64.0" y1="279.0" x2="616.0" y2="279.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="64.0" y1="193.0" x2="616.0" y2="193.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="64.0" y1="107.0" x2="616.0" y2="107.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="133.0" y1="64.0" x2="133.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="271.0" y1="64.0" x2="271.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="409.0" y1="64.0" x2="409.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="547.0" y1="64.0" x2="547.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<rect x="64.0" y="322.0" width="138.0" height="86.0" fill="rgb(253,231,37)"/>
+<rect x="202.0" y="322.0" width="138.0" height="86.0" fill="rgb(36,138,140)"/>
+<rect x="340.0" y="322.0" width="138.0" height="86.0" fill="rgb(57,87,139)"/>
+<rect x="478.0" y="322.0" width="138.0" height="86.0" fill="rgb(68,1,84)"/>
+<rect x="64.0" y="236.0" width="138.0" height="86.0" fill="rgb(36,138,140)"/>
+<rect x="202.0" y="236.0" width="138.0" height="86.0" fill="rgb(253,231,37)"/>
+<rect x="340.0" y="236.0" width="138.0" height="86.0" fill="rgb(57,167,124)"/>
+<rect x="478.0" y="236.0" width="138.0" height="86.0" fill="rgb(64,41,112)"/>
+<rect x="64.0" y="150.0" width="138.0" height="86.0" fill="rgb(57,87,139)"/>
+<rect x="202.0" y="150.0" width="138.0" height="86.0" fill="rgb(57,167,124)"/>
+<rect x="340.0" y="150.0" width="138.0" height="86.0" fill="rgb(253,231,37)"/>
+<rect x="478.0" y="150.0" width="138.0" height="86.0" fill="rgb(43,120,140)"/>
+<rect x="64.0" y="64.0" width="138.0" height="86.0" fill="rgb(68,1,84)"/>
+<rect x="202.0" y="64.0" width="138.0" height="86.0" fill="rgb(64,41,112)"/>
+<rect x="340.0" y="64.0" width="138.0" height="86.0" fill="rgb(43,120,140)"/>
+<rect x="478.0" y="64.0" width="138.0" height="86.0" fill="rgb(253,231,37)"/>
+<line x1="64.0" y1="408.0" x2="616.0" y2="408.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="60.0" y1="365.0" x2="64.0" y2="365.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="60.0" y1="279.0" x2="64.0" y2="279.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="60.0" y1="193.0" x2="64.0" y2="193.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="60.0" y1="107.0" x2="64.0" y2="107.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="133.0" y1="408.0" x2="133.0" y2="412.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="271.0" y1="408.0" x2="271.0" y2="412.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="409.0" y1="408.0" x2="409.0" y2="412.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="547.0" y1="408.0" x2="547.0" y2="412.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<text x="56.0" y="369.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">alpha</text>
+<text x="56.0" y="283.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">beta</text>
+<text x="56.0" y="197.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">gamma</text>
+<text x="56.0" y="111.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">delta</text>
+<text x="133.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">alpha</text>
+<text x="271.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">beta</text>
+<text x="409.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">gamma</text>
+<text x="547.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">delta</text>
+</svg>
+
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+<rect x="0.0" y="0.0" width="640.0" height="480.0" fill="rgb(255,255,255)"/>
+<line x1="64.0" y1="365.0" x2="616.0" y2="365.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="64.0" y1="279.0" x2="616.0" y2="279.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="64.0" y1="193.0" x2="616.0" y2="193.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="64.0" y1="107.0" x2="616.0" y2="107.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="133.0" y1="64.0" x2="133.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="271.0" y1="64.0" x2="271.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="409.0" y1="64.0" x2="409.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<line x1="547.0" y1="64.0" x2="547.0" y2="408.0" stroke="rgb(230,230,230)" stroke-width="1.0"/>
+<rect x="64.0" y="322.0" width="138.0" height="86.0" fill="rgb(253,231,37)"/>
+<rect x="202.0" y="322.0" width="138.0" height="86.0" fill="rgb(36,138,140)"/>
+<rect x="340.0" y="322.0" width="138.0" height="86.0" fill="rgb(57,87,139)"/>
+<rect x="478.0" y="322.0" width="138.0" height="86.0" fill="rgb(68,1,84)"/>
+<rect x="64.0" y="236.0" width="138.0" height="86.0" fill="rgb(36,138,140)"/>
+<rect x="202.0" y="236.0" width="138.0" height="86.0" fill="rgb(253,231,37)"/>
+<rect x="340.0" y="236.0" width="138.0" height="86.0" fill="rgb(57,167,124)"/>
+<rect x="478.0" y="236.0" width="138.0" height="86.0" fill="rgb(64,41,112)"/>
+<rect x="64.0" y="150.0" width="138.0" height="86.0" fill="rgb(57,87,139)"/>
+<rect x="202.0" y="150.0" width="138.0" height="86.0" fill="rgb(57,167,124)"/>
+<rect x="340.0" y="150.0" width="138.0" height="86.0" fill="rgb(253,231,37)"/>
+<rect x="478.0" y="150.0" width="138.0" height="86.0" fill="rgb(43,120,140)"/>
+<rect x="64.0" y="64.0" width="138.0" height="86.0" fill="rgb(68,1,84)"/>
+<rect x="202.0" y="64.0" width="138.0" height="86.0" fill="rgb(64,41,112)"/>
+<rect x="340.0" y="64.0" width="138.0" height="86.0" fill="rgb(43,120,140)"/>
+<rect x="478.0" y="64.0" width="138.0" height="86.0" fill="rgb(253,231,37)"/>
+<line x1="64.0" y1="408.0" x2="616.0" y2="408.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="60.0" y1="365.0" x2="64.0" y2="365.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="60.0" y1="279.0" x2="64.0" y2="279.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="60.0" y1="193.0" x2="64.0" y2="193.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="60.0" y1="107.0" x2="64.0" y2="107.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="133.0" y1="408.0" x2="133.0" y2="412.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="271.0" y1="408.0" x2="271.0" y2="412.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="409.0" y1="408.0" x2="409.0" y2="412.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<line x1="547.0" y1="408.0" x2="547.0" y2="412.0" stroke="rgb(136,136,136)" stroke-width="1.0"/>
+<text x="56.0" y="369.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">alpha</text>
+<text x="56.0" y="283.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">beta</text>
+<text x="56.0" y="197.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">gamma</text>
+<text x="56.0" y="111.0" text-anchor="end" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">delta</text>
+<text x="133.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">alpha</text>
+<text x="271.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">beta</text>
+<text x="409.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">gamma</text>
+<text x="547.0" y="426.0" text-anchor="middle" font-family="sans-serif" font-size="12.0" font-weight="normal" fill="rgb(85,85,85)">delta</text>
+</svg>
+

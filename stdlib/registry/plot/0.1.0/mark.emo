@@ -13,6 +13,7 @@ interface Mark {
   def y_max() Float64
   def bands() Int64
   def x_labels() Array[String]
+  def y_labels() Array[String]
   def legend_label() String
   def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void
 }
@@ -101,6 +102,10 @@ class Bar {
 
   def x_labels() Array[String] {
     return self.labels
+  }
+
+  def y_labels() Array[String] {
+    return []
   }
 
   def legend_label() String {
@@ -291,6 +296,10 @@ class Line {
     return []
   }
 
+  def y_labels() Array[String] {
+    return []
+  }
+
   def legend_label() String {
     return self.style.label
   }
@@ -430,6 +439,10 @@ class Scatter {
     return []
   }
 
+  def y_labels() Array[String] {
+    return []
+  }
+
   def legend_label() String {
     return self.style.label
   }
@@ -564,6 +577,10 @@ class Area {
     return []
   }
 
+  def y_labels() Array[String] {
+    return []
+  }
+
   def legend_label() String {
     return self.style.label
   }
@@ -674,6 +691,10 @@ class Hist {
   }
 
   def x_labels() Array[String] {
+    return []
+  }
+
+  def y_labels() Array[String] {
     return []
   }
 
@@ -842,6 +863,10 @@ class Band {
   }
 
   def x_labels() Array[String] {
+    return []
+  }
+
+  def y_labels() Array[String] {
     return []
   }
 
@@ -1018,6 +1043,10 @@ class BoxPlot {
     return self.labels
   }
 
+  def y_labels() Array[String] {
+    return []
+  }
+
   def legend_label() String {
     return self.style.label
   }
@@ -1146,6 +1175,10 @@ class Violin {
     return self.labels
   }
 
+  def y_labels() Array[String] {
+    return []
+  }
+
   def legend_label() String {
     return self.style.label
   }
@@ -1227,6 +1260,10 @@ class Strip {
 
   def x_labels() Array[String] {
     return self.labels
+  }
+
+  def y_labels() Array[String] {
+    return []
   }
 
   def legend_label() String {
@@ -1314,6 +1351,10 @@ class Point {
     return self.labels
   }
 
+  def y_labels() Array[String] {
+    return []
+  }
+
   def legend_label() String {
     return self.style.label
   }
@@ -1338,4 +1379,71 @@ def point(labels Array[String], xs Array[Float64], ys Array[Float64]) Point {
 
 def point_style() LineStyle {
   return LineStyle.new(color: (47, 111, 179), width: 1.5, dash: Dash.solid, marker: Marker.circle, marker_size: 6.0, opacity: 1.0, label: "")
+}
+
+// A grid of cells: the values are row major over the column names
+// across and the row names down, each cell pre-colored by the chart
+// layer through its colormap — the mark stays dumb about scales. The
+// column names ride the categorical x face and the row names the y
+// face, so both axes label the cells instead of ticking numbers.
+class Heatmap {
+  def init(col_names Array[String], row_names Array[String], values Array[Float64], colors Array[(Int64, Int64, Int64)]) {
+    const n = col_names.length() * row_names.length()
+    if row_names.length() < 1 || col_names.length() < 1 {
+      raise Exception.new(message: "plot: a heatmap needs at least one row and one column")
+    }
+    if values.length() != n || colors.length() != n {
+      raise Exception.new(message: "plot: a heatmap's arrays must carry ${n} entries, got ${values.length()} values and ${colors.length()} colors")
+    }
+    self.col_names = col_names
+    self.row_names = row_names
+    self.values = values
+    self.colors = colors
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const nr = self.row_names.length()
+    const nc = self.col_names.length()
+    for var r = 0; r < nr; r = r + 1 {
+      for var c = 0; c < nc; c = c + 1 {
+        ctx.renderer.rect(ctx.px(c.to_float64()), ctx.py((r + 1).to_float64()), ctx.px((c + 1).to_float64()) - ctx.px(c.to_float64()), ctx.py(r.to_float64()) - ctx.py((r + 1).to_float64()), self.colors[r * nc + c])
+      }
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.col_names.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    return 0.0
+  }
+
+  def y_max() Float64 {
+    return self.row_names.length().to_float64()
+  }
+
+  def bands() Int64 {
+    return self.col_names.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.col_names
+  }
+
+  def y_labels() Array[String] {
+    return self.row_names
+  }
+
+  def legend_label() String {
+    return ""
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.colors[0])
+  }
 }

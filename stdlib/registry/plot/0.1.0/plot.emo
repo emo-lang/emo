@@ -1142,6 +1142,125 @@ def point(t Table, ch Map[String, String]) Figure {
   return chart_figure(x_name, y_name, [m])
 }
 
+// ---- the matrix charts ----
+
+// The matrix the heatmap charts read: the table's numeric columns are
+// the cells' columns and its rows the cells' rows; one label column
+// names the rows, and with none — or several — the rows number from 1.
+class Matrix {
+  def init(col_names Array[String], row_names Array[String], values Array[Float64]) {
+    self.col_names = col_names
+    self.row_names = row_names
+    self.values = values
+  }
+}
+
+def matrix_of(t Table, kind String) Matrix {
+  const col_names = t.numbers.keys()
+  if col_names.length() == 0 {
+    raise Exception.new(message: "plot: the ${kind} chart needs at least one number column")
+  }
+  const nr = t.rows
+  if nr == 0 {
+    raise Exception.new(message: "plot: the ${kind} chart has no rows to draw")
+  }
+  var row_names = []
+  const label_names = t.labels.keys()
+  if label_names.length() == 1 {
+    row_names = t.label(label_names[0])
+  } else {
+    for var r = 0; r < nr; r = r + 1 {
+      row_names = row_names.append((r + 1).to_string())
+    }
+  }
+  var values = []
+  for var r = 0; r < nr; r = r + 1 {
+    for var c = 0; c < col_names.length(); c = c + 1 {
+      values = values.append(t.number(col_names[c])[r])
+    }
+  }
+  return Matrix.new(col_names: col_names, row_names: row_names, values: values)
+}
+
+// The matrix's cell colors: every value normalized over the cells' own
+// span and read through the theme colormap, a constant matrix sitting
+// at the map's low end.
+def matrix_colors(values Array[Float64], t0 Theme) Array[(Int64, Int64, Int64)] {
+  var lo = 0.0
+  var hi = 0.0
+  for var k = 0; k < values.length(); k = k + 1 {
+    if k == 0 {
+      lo = values[k]
+      hi = values[k]
+    } else {
+      if values[k] < lo {
+        lo = values[k]
+      }
+      if values[k] > hi {
+        hi = values[k]
+      }
+    }
+  }
+  var colors = []
+  for var k = 0; k < values.length(); k = k + 1 {
+    var f = 0.0
+    if hi > lo {
+      f = (values[k] - lo) / (hi - lo)
+    }
+    colors = colors.append(t0.cmap.at(f))
+  }
+  return colors
+}
+
+// The heatmap: one cell per row and column, the value's color where it
+// sits on the cells' own span, the column names labeling the x bands
+// and the row names the y bands.
+def heatmap(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "heatmap", ["facet_row", "facet_col"])
+  refuse_facets(ch)
+  const m = matrix_of(t, "heatmap")
+  const t0 = theme()
+  const cells = mark.Heatmap.new(col_names: m.col_names, row_names: m.row_names, values: m.values, colors: matrix_colors(m.values, t0))
+  const ax = axes().with_x_domain(0.0, m.col_names.length().to_float64()).with_y_domain(0.0, m.row_names.length().to_float64()).with_marks([cells])
+  return figure().with_axes([ax])
+}
+
+// The clustermap: the heatmap's cells in the average-linkage merge
+// order, the rows and the columns each reordered by their euclidean
+// distances so neighbors are the similar ones. The trees themselves are
+// not drawn; the order is the clustering.
+def clustermap(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "clustermap", ["facet_row", "facet_col"])
+  refuse_facets(ch)
+  const m = matrix_of(t, "clustermap")
+  const nc = m.col_names.length()
+  const nr = m.row_names.length()
+  var transposed = []
+  for var c = 0; c < nc; c = c + 1 {
+    for var r = 0; r < nr; r = r + 1 {
+      transposed = transposed.append(m.values[r * nc + c])
+    }
+  }
+  const row_order = internal.stats.cluster_order(m.values, nr, nc)
+  const col_order = internal.stats.cluster_order(transposed, nc, nr)
+  var col_names = []
+  var row_names = []
+  var values = []
+  for var r = 0; r < nr; r = r + 1 {
+    row_names = row_names.append(m.row_names[row_order[r]])
+    for var c = 0; c < nc; c = c + 1 {
+      if r == 0 {
+        col_names = col_names.append(m.col_names[col_order[c]])
+      }
+      values = values.append(m.values[row_order[r] * nc + col_order[c]])
+    }
+  }
+  const t0 = theme()
+  const cells = mark.Heatmap.new(col_names: col_names, row_names: row_names, values: values, colors: matrix_colors(values, t0))
+  const ax = axes().with_x_domain(0.0, nc.to_float64()).with_y_domain(0.0, nr.to_float64()).with_marks([cells])
+  return figure().with_axes([ax])
+}
+
 class Figure {
   def init(width Float64, height Float64, title String, theme Theme, axes Array[Axes], grid (Int64, Int64), share Share) {
     self.width = width
@@ -1668,6 +1787,24 @@ def draw_axes(r internal.svg.Renderer, fig Figure, ax Axes, x0 Float64, y0 Float
   if y_log {
     yt = scale.log_ticks(ylo, top)
   }
+  // A mark carrying y labels owns the y annotation at its band centers,
+  // like the categorical x face — the heatmap's row names, not numbers.
+  var yi = 0 - 1
+  var ytl = []
+  for var k = 0; k < marks.length(); k = k + 1 {
+    if yi < 0 {
+      if marks[k].y_labels().length() > 0 {
+        yi = k
+      }
+    }
+  }
+  if yi >= 0 {
+    ytl = marks[yi].y_labels()
+    yt = []
+    for var b = 0; b < ytl.length(); b = b + 1 {
+      yt = yt.append(b.to_float64() + 0.5)
+    }
+  }
   var li = -1
   if !x_log {
     for var k = 0; k < marks.length(); k = k + 1 {
@@ -1722,7 +1859,11 @@ def draw_axes(r internal.svg.Renderer, fig Figure, ax Axes, x0 Float64, y0 Float
   }
   for var k = 0; k < yt.length(); k = k + 1 {
     const y = ctx.py(yt[k])
-    r.text(x0 + ml - 8.0, y + 4.0, tick_text(yt[k]), t.label.size, internal.svg.Anchor.end, svg_weight(t.label.weight), t.label.color)
+    if yi >= 0 {
+      r.text(x0 + ml - 8.0, y + 4.0, ytl[k], t.label.size, internal.svg.Anchor.end, svg_weight(t.label.weight), t.label.color)
+    } else {
+      r.text(x0 + ml - 8.0, y + 4.0, tick_text(yt[k]), t.label.size, internal.svg.Anchor.end, svg_weight(t.label.weight), t.label.color)
+    }
   }
   if categorical {
     const labels = marks[li].x_labels()

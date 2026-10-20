@@ -250,6 +250,96 @@ def box_stats(xs Array[Float64]) BoxStats {
   return BoxStats.new(lo: lo, q1: d.q1, median: d.median, q3: d.q3, hi: hi, mean: d.mean, fliers: fliers)
 }
 
+// ---- clustering ----
+
+// The average-linkage merge order of `count` vectors of length `size`,
+// stored row-major in `values`: the leaf order a clustermap draws its
+// rows and columns in. Each merge orders its halves by their smallest
+// leaf, so the order is deterministic for any distance pattern.
+def cluster_order(values Array[Float64], count Int64, size Int64) Array[Int64] {
+  var only = []
+  if count < 2 {
+    for var i = 0; i < count; i = i + 1 {
+      only = only.append(i)
+    }
+    return only
+  }
+  var dist = []
+  for var i = 0; i < count; i = i + 1 {
+    for var j = 0; j < count; j = j + 1 {
+      var acc = 0.0
+      for var k = 0; k < size; k = k + 1 {
+        const d = values[i * size + k] - values[j * size + k]
+        acc = acc + d * d
+      }
+      dist = dist.append(acc.sqrt())
+    }
+  }
+  var clusters = []
+  var dead = {}
+  for var i = 0; i < count; i = i + 1 {
+    var leaf = []
+    leaf = leaf.append(i)
+    clusters = clusters.append(leaf)
+    dead.set(i, 0)
+  }
+  var alive = count
+  var order = []
+  while alive > 1 {
+    var ba = 0 - 1
+    var bb = 0 - 1
+    var best = 0.0
+    for var a = 0; a < clusters.length(); a = a + 1 {
+      if dead.get(a) == 0 {
+        for var b = a + 1; b < clusters.length(); b = b + 1 {
+          if dead.get(b) == 0 {
+            var sum = 0.0
+            for var i = 0; i < clusters[a].length(); i = i + 1 {
+              for var j = 0; j < clusters[b].length(); j = j + 1 {
+                sum = sum + dist[clusters[a][i] * count + clusters[b][j]]
+              }
+            }
+            const avg = sum / (clusters[a].length() * clusters[b].length()).to_float64()
+            if ba < 0 {
+              best = avg
+              ba = a
+              bb = b
+            } else {
+              if avg < best {
+                best = avg
+                ba = a
+                bb = b
+              }
+            }
+          }
+        }
+      }
+    }
+    order = []
+    if clusters[ba][0] < clusters[bb][0] {
+      for var i = 0; i < clusters[ba].length(); i = i + 1 {
+        order = order.append(clusters[ba][i])
+      }
+      for var i = 0; i < clusters[bb].length(); i = i + 1 {
+        order = order.append(clusters[bb][i])
+      }
+    } else {
+      for var i = 0; i < clusters[bb].length(); i = i + 1 {
+        order = order.append(clusters[bb][i])
+      }
+      for var i = 0; i < clusters[ba].length(); i = i + 1 {
+        order = order.append(clusters[ba][i])
+      }
+    }
+    clusters = clusters.append(order)
+    dead.set(ba, 1)
+    dead.set(bb, 1)
+    dead.set(clusters.length() - 1, 0)
+    alive = alive - 1
+  }
+  return order
+}
+
 // ---- least squares ----
 
 // ---- densities ----
@@ -270,6 +360,96 @@ def silverman(xs Array[Float64]) Float64 {
   }
   const ln_n = internal.scale.log10(n.to_float64()) * 2.302585092994046
   return 0.9 * s * exp((0.0 - ln_n) / 5.0)
+}
+
+// ---- clustering ----
+
+// The average-linkage merge order of `count` vectors of length `size`,
+// stored row-major in `values`: the leaf order a clustermap draws its
+// rows and columns in. Each merge orders its halves by their smallest
+// leaf, so the order is deterministic for any distance pattern.
+def cluster_order(values Array[Float64], count Int64, size Int64) Array[Int64] {
+  var only = []
+  if count < 2 {
+    for var i = 0; i < count; i = i + 1 {
+      only = only.append(i)
+    }
+    return only
+  }
+  var dist = []
+  for var i = 0; i < count; i = i + 1 {
+    for var j = 0; j < count; j = j + 1 {
+      var acc = 0.0
+      for var k = 0; k < size; k = k + 1 {
+        const d = values[i * size + k] - values[j * size + k]
+        acc = acc + d * d
+      }
+      dist = dist.append(acc.sqrt())
+    }
+  }
+  var clusters = []
+  var dead = {}
+  for var i = 0; i < count; i = i + 1 {
+    var leaf = []
+    leaf = leaf.append(i)
+    clusters = clusters.append(leaf)
+    dead.set(i, 0)
+  }
+  var alive = count
+  var order = []
+  while alive > 1 {
+    var ba = 0 - 1
+    var bb = 0 - 1
+    var best = 0.0
+    for var a = 0; a < clusters.length(); a = a + 1 {
+      if dead.get(a) == 0 {
+        for var b = a + 1; b < clusters.length(); b = b + 1 {
+          if dead.get(b) == 0 {
+            var sum = 0.0
+            for var i = 0; i < clusters[a].length(); i = i + 1 {
+              for var j = 0; j < clusters[b].length(); j = j + 1 {
+                sum = sum + dist[clusters[a][i] * count + clusters[b][j]]
+              }
+            }
+            const avg = sum / (clusters[a].length() * clusters[b].length()).to_float64()
+            if ba < 0 {
+              best = avg
+              ba = a
+              bb = b
+            } else {
+              if avg < best {
+                best = avg
+                ba = a
+                bb = b
+              }
+            }
+          }
+        }
+      }
+    }
+    order = []
+    if clusters[ba][0] < clusters[bb][0] {
+      for var i = 0; i < clusters[ba].length(); i = i + 1 {
+        order = order.append(clusters[ba][i])
+      }
+      for var i = 0; i < clusters[bb].length(); i = i + 1 {
+        order = order.append(clusters[bb][i])
+      }
+    } else {
+      for var i = 0; i < clusters[bb].length(); i = i + 1 {
+        order = order.append(clusters[bb][i])
+      }
+      for var i = 0; i < clusters[ba].length(); i = i + 1 {
+        order = order.append(clusters[ba][i])
+      }
+    }
+    clusters = clusters.append(order)
+    dead.set(ba, 1)
+    dead.set(bb, 1)
+    dead.set(clusters.length() - 1, 0)
+    alive = alive - 1
+  }
+  return order
 }
 
 // ---- least squares ----

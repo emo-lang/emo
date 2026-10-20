@@ -302,6 +302,36 @@ overlapping points are the data. `strip` labels its y axis from the
 `y` column and `count` labels it `count`; the facet channels raise
 until the chart layer's panel splitting lands, as everywhere.
 
+## The matrix charts
+
+`heatmap` and `clustermap` read the whole table as a matrix: the
+numeric columns are the cells' columns and the rows the cells' rows,
+and one label column — exactly one — names the rows; with none, or
+several, the rows number from 1. The channel mapping carries no column
+names here, only the facet channels, so it is normally empty:
+
+```emo
+def heatmap(t Table, ch Map[String, String]) Figure
+def clustermap(t Table, ch Map[String, String]) Figure
+```
+
+```emo
+const corr = plot.table(
+  { "alpha": [1.00, 0.41, 0.18], "beta": [0.41, 1.00, 0.55], "gamma": [0.18, 0.55, 1.00] },
+  { "row": ["alpha", "beta", "gamma"] }
+)
+plot.svg(plot.heatmap(corr, {}))
+```
+
+Every cell takes its color where its value sits on the cells' own
+span, through the theme colormap — a constant matrix sits at the map's
+low end. The column names label the x bands and the row names the y
+bands, so neither axis ticks numbers. `clustermap` draws the same cells
+with the rows and the columns each reordered by average-linkage
+clustering over their euclidean distances, so neighbors are the similar
+ones; the trees themselves are not drawn — the order is the clustering.
+A table with no number column, or with no rows, raises.
+
 ## Themes
 
 A theme dresses the whole figure: the background and foreground inks,
@@ -474,6 +504,13 @@ in band order and stamped with the style's marker; its style is a
 `LineStyle` (the line connects, the marker stamps) and a strip's is a
 `ScatterStyle`.
 
+A heatmap is a grid of pre-colored cells — the values row major over
+the column names across and the row names down, each cell's color
+handed in by the chart layer, so the mark knows nothing of colormaps.
+It is the one mark that labels both axes: the column names ride the
+categorical x face and the row names the y face. It carries no style
+and stays out of the legend.
+
 **Colors are `(Int64, Int64, Int64)` sRGB triples**, each channel 0–255.
 `plot.rgb(r, g, b)` builds one with the range checked — an
 out-of-range channel raises — and a raw triple is accepted and
@@ -484,8 +521,10 @@ yet.
 
 A mark draws itself into an axes through the `Mark` interface — `draw`,
 plus the data span it asks the axes to cover: a continuous x and y
-range through `x_min` / `x_max` / `y_min` / `y_max`, and the categorical
-x face through `bands` and `x_labels` — and it feeds the legend:
+range through `x_min` / `x_max` / `y_min` / `y_max`, the categorical
+x face through `bands` and `x_labels`, and the categorical y face
+through `y_labels` (empty for every mark but the heatmap) — and it
+feeds the legend:
 `legend_label()` answers the style's label, `legend_sample` draws the
 family's swatch. A new mark family is a new class that satisfies that
 shape.
@@ -544,13 +583,13 @@ and `reg`, with the `band` mark joining `plot.mark` for the
 regression chart — the distribution charts — `hist`, `kde`, `ecdf`,
 `box`, and `violin`, with the `box` and `violin` marks joining
 `plot.mark` — the categorical charts — `bar`, `count`, `strip`, and
-`point`, with the `strip` and `point` marks joining `plot.mark` — and
-SVG output. Both
+`point`, with the `strip` and `point` marks joining `plot.mark` — the
+matrix charts — `heatmap` and `clustermap`, with the `heatmap` mark
+and the categorical y face joining `plot.mark` — and SVG output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
-categorical labels. The remaining pieces the surface carries are
-reserved and not rendered yet: the matrix charts, and
-the chart-layer half of faceting —
+categorical labels. The remaining piece the surface carries is
+reserved and not rendered yet: the chart-layer half of faceting —
 splitting a dataset by a column's levels, per-panel level labels, and
 the one shared legend. The marks and the axes draw through the internal
 `Renderer` interface — `DrawContext` carries a `Renderer`, not the

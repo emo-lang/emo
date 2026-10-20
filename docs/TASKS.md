@@ -1568,7 +1568,32 @@ T0 marks, with fixtures byte-identical on all five targets.
       golden byte-identical (`plot_demo` grew a categorical section: a
       two-region sales table through all four charts) and eight raise
       messages byte-identical.
-- [ ] **T43.5** — Matrix: `plot.heatmap`, `plot.clustermap`.
+- [x] **T43.5** — Matrix: `plot.heatmap`, `plot.clustermap`. Both read
+      the whole table as a matrix — the numeric columns the cells'
+      columns, the rows the cells' rows, exactly one label column
+      naming the rows (none or several number them from 1) — and the
+      mapping carries only the facet channels, so it is normally empty.
+      Each cell takes its color where its value sits on the cells' own
+      span through the theme colormap, a constant matrix at the low end.
+      `clustermap` reorders the rows and the columns by average-linkage
+      clustering over their euclidean distances (new
+      `internal.stats.cluster_order`: the base distance matrix, then
+      merges of the closest alive pair by mean pairwise distance, each
+      merge ordering its halves by their smallest leaf, the dead flags
+      a `Map` since arrays do not index-assign); the trees are not
+      drawn, the order is the clustering. The `Heatmap` mark joined
+      `plot.mark` — pre-colored cells row major, no style, out of the
+      legend — and the `Mark` interface grew `y_labels`, the categorical
+      y face: `draw_axes` lets a mark carrying row names own the y
+      annotation at its band centers, the way `x_labels` owns the x
+      one, so a heatmap ticks names on both axes while every other mark
+      answers an empty list. The charts pin the axes domains to the
+      exact cell counts through `with_x_domain`/`with_y_domain`, so no
+      nice ceiling leaves a dead band. Verified on all six paths —
+      interp, c, ocaml, ts, wasm, beam — with the demo golden
+      byte-identical (`plot_demo` grew a matrix section: a 4 × 4
+      correlation table as heatmap and clustermap) and five raise
+      messages byte-identical.
 - [ ] **T43.6** — Apply faceting, palettes, and themes at the chart
       layer; demos and byte-identical goldens — carrying T41.7's level
       splitting, per-panel level labels, and the one shared legend.

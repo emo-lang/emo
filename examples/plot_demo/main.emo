@@ -146,3 +146,16 @@ println(plot.svg(plot.bar(regions_t, { "x": "region", "y": "revenue" })))
 println(plot.svg(plot.count(regions_t, { "x": "region" })))
 println(plot.svg(plot.strip(regions_t, { "x": "region", "y": "revenue", "color": "kind" })))
 println(plot.svg(plot.point(regions_t, { "x": "region", "y": "revenue" })))
+
+// The matrix charts: the numeric columns are the cells' columns and the
+// rows the cells' rows, one label column naming the rows; clustermap
+// reorders rows and columns by their average-linkage distances.
+const corr = plot.table(
+  { "alpha": [1.00, 0.41, 0.18, -0.12],
+    "beta": [0.41, 1.00, 0.55, 0.02],
+    "gamma": [0.18, 0.55, 1.00, 0.33],
+    "delta": [-0.12, 0.02, 0.33, 1.00] },
+  { "row": ["alpha", "beta", "gamma", "delta"] }
+)
+println(plot.svg(plot.heatmap(corr, {})))
+println(plot.svg(plot.clustermap(corr, {})))

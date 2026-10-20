@@ -173,6 +173,25 @@ def point(t Table, ch Map[String, String]) Figure
 
 `bar` 与 `point` 需要 `y` 通道,把每个水平的在场 y 值按均值聚合——每个水平一根柱;point 是沿 band 顺序行走、逐个盖章的均值连线。`count` 完全不需要 `y`:每个水平一根柱,高度是该水平的行数。`strip` 在各 band 中心画原始点,每个 `color` 水平一条系列——拆分方式与关系型一致——点不抖动、按行自身顺序画,重叠的点就是数据。`strip` 的 y 轴标签取自 `y` 列,`count` 的 y 轴标签是 `count`;分面通道照旧在图表层的面板拆分落地之前直接 raise。
 
+## 矩阵型图表
+
+`heatmap` 与 `clustermap` 把整张表当矩阵读:数值列是单元格的列、行是单元格的行,一个——且仅一个——类别列给行命名;没有或有多个类别列时,行按 1 起编号。这里的通道映射不带列名、只认分面通道,所以通常为空:
+
+```emo
+def heatmap(t Table, ch Map[String, String]) Figure
+def clustermap(t Table, ch Map[String, String]) Figure
+```
+
+```emo
+const corr = plot.table(
+  { "alpha": [1.00, 0.41, 0.18], "beta": [0.41, 1.00, 0.55], "gamma": [0.18, 0.55, 1.00] },
+  { "row": ["alpha", "beta", "gamma"] }
+)
+plot.svg(plot.heatmap(corr, {}))
+```
+
+每个单元格按它的值在全部单元格跨度上的位置经主题 colormap 取色——常数矩阵落在 map 的低端。列名标注 x 的 band、行名标注 y 的 band,两条轴都不打数字刻度。`clustermap` 画同一批单元格,但行与列各按欧氏距离做平均联接聚类重排,相邻的就是相似的;树本身不画——顺序即聚类。没有数值列或没有行的表直接 raise。
+
 ## 主题
 
 主题装扮整张图:背景与前景墨色、网格、坐标轴、标题、标签样式,color 通道经过的 palette 与 colormap、面板间距,以及 `figure()` 出发的默认尺寸。`figure()` 建出默认的浅色主题,`with_theme` 把另一套换上图:
@@ -274,9 +293,11 @@ band 在同一段升序 `xs` 上填充下曲线与上曲线之间的区域——
 
 strip 是类别面上的散点:原始点落在各 band 中心,xs 是 band 坐标、两个数组等长。point 一排沿 band 前进——每个标签一个值、按 band 顺序连线并以样式的 marker 盖章;它的样式是 `LineStyle`(线连接、marker 盖章),strip 的样式是 `ScatterStyle`。
 
+heatmap 是一格预先着色的单元格网——值按行主序排在横向的列名与纵向的行名之上,每格颜色由图表层递入,mark 对 colormap 一无所知。它是唯一同时标注两条轴的 mark:列名走类别 x 面,行名走 y 面。它不带样式、不进图例。
+
 **颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组**,每通道 0–255。`plot.rgb(r, g, b)` 构造经过范围检查的三元组——越界通道直接 raise;裸三元组也接受,在绘制时校验。不透明度是样式上单独的 `Float64`,绝不煍进三元组。它随每个样式携带,但**尚未渲染**——渲染器图元还没有不透明度旋钮。
 
-mark 通过 `Mark` 接口把自己画进坐标轴——`draw`,加上它要求坐标轴覆盖的数据跨度:连续的 x、y 范围走 `x_min`/`x_max`/`y_min`/`y_max`,类别的 x 面走 `bands` 和 `x_labels`——还要喂养图例:`legend_label()` 应答样式上的 label,`legend_sample` 画该族自己的样例。新增一种 mark 就是新增一个满足该形状的类。
+mark 通过 `Mark` 接口把自己画进坐标轴——`draw`,加上它要求坐标轴覆盖的数据跨度:连续的 x、y 范围走 `x_min`/`x_max`/`y_min`/`y_max`,类别的 x 面走 `bands` 和 `x_labels`,类别的 y 面走 `y_labels`(除 heatmap 外全是空)——还要喂养图例:`legend_label()` 应答样式上的 label,`legend_sample` 画该族自己的样例。新增一种 mark 就是新增一个满足该形状的类。
 
 `legend` 开着时(默认),带 label 的 mark 列进绘图区右上角的图例——按 marks 数组序、最后绘制,背后垫一块主题背景色的面板、按主题间距内缩。label 为空的 mark 不进图例。条目的偏移用近似的单字符宽度估算,因为这个包不带字体度量。
 
@@ -306,6 +327,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——分类型图表——`bar`、`count`、`strip`、`point`,`strip` 与 `point` mark 随之加入 `plot.mark`——还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:矩阵图表,以及图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——分类型图表——`bar`、`count`、`strip`、`point`,`strip` 与 `point` mark 随之加入 `plot.mark`——矩阵型图表——`heatmap`、`clustermap`,`heatmap` mark 与类别 y 面随之加入 `plot.mark`——还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。
