@@ -233,7 +233,8 @@ def observed(numbers Array[Float64], presence Array[Presence]) Array[Float64] {
 // The dataset charts: a chart reads a Table through a channel mapping
 // and answers a Figure — one axes, labelled from the channel's column
 // names, carrying the marks the mapping builds. `scatter`, `line`, and
-// `reg` are the relational family; the other families arrive with their
+// `reg` are the relational family, `hist`, `kde`, `ecdf`, `box`, and
+// `violin` the distribution one; the other families arrive with their
 // steps.
 
 // The marker a grouping level stamps with: the six shapes in the
@@ -647,6 +648,359 @@ def reg(t Table, ch Map[String, String]) Figure {
   const pts = mark.Scatter.new(x: fit_x, y: fit_y, style: mark.scatter_style(), colors: [], sizes: [])
   const fit_line = mark.Line.new(x: [xlo, xhi], y: [fit.slope * xlo + fit.intercept, fit.slope * xhi + fit.intercept], style: mark.line_style().with_label("fit"))
   return chart_figure(x_name, y_name, [band, pts, fit_line])
+}
+
+// ---- the distribution charts ----
+
+// `hist`, `kde`, and `ecdf` read one numeric column, optionally split
+// into one mark per label level by the `color` channel; `box` and
+// `violin` group a numeric column by a label one.
+
+// The x channel name the single-column charts read: required.
+def x_name(ch Map[String, String], kind String) String {
+  if !ch.has("x") {
+    raise Exception.new(message: "plot: the ${kind} chart needs the \"x\" channel")
+  }
+  return ch.get("x")
+}
+
+// The rows a single-column chart draws: the slots where its column
+// carries a value.
+def kept_rows_x(t Table, x_name String, kind String) Array[Int64] {
+  const xp = t.presence(x_name)
+  var rows = []
+  for var i = 0; i < xp.length(); i = i + 1 {
+    if xp[i] == Presence.present {
+      rows = rows.append(i)
+    }
+  }
+  if rows.length() == 0 {
+    raise Exception.new(message: "plot: the ${kind} chart has no rows to draw")
+  }
+  return rows
+}
+
+// The categorical column a grouping chart reads on x: a label column or
+// a raise — the boxes and violins sit on the levels, not on numbers.
+def categorical_column(t Table, name String) Array[String] {
+  if t.numbers.has(name) {
+    raise Exception.new(message: "plot: the \"x\" channel needs a label column, \"${name}\" is a number column")
+  }
+  return t.label(name)
+}
+
+// The kept rows' values of one numeric column, in the rows' own order.
+def column_values(vals Array[Float64], rows Array[Int64]) Array[Float64] {
+  var out = []
+  for var r = 0; r < rows.length(); r = r + 1 {
+    out = out.append(vals[rows[r]])
+  }
+  return out
+}
+
+// The histogram: the kept values counted into equal-width bins spanning
+// their shared range, the square root of the count of them — one
+// histogram per color level over the shared grid, one when the mapping
+// groups nothing. A level's legend entry names the level.
+def hist(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "hist", ["x", "color", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const x_col = x_name(ch, "hist")
+  const xs = t.number(x_col)
+  const rows = kept_rows_x(t, x_col, "hist")
+  const t0 = theme()
+  const g = grouping(t, ch, rows, ch.has("color"))
+  var lo = 0.0
+  var hi = 0.0
+  for var r = 0; r < rows.length(); r = r + 1 {
+    const v = xs[rows[r]]
+    if r == 0 {
+      lo = v
+      hi = v
+    } else {
+      if v < lo {
+        lo = v
+      }
+      if v > hi {
+        hi = v
+      }
+    }
+  }
+  var nb = rows.length().to_float64().sqrt().ceil().to_int64()
+  if nb < 1 {
+    nb = 1
+  }
+  const span = hi - lo
+  var buckets = {}
+  for var r = 0; r < rows.length(); r = r + 1 {
+    const key = group_key(g, r)
+    if buckets.has(key) {
+      buckets.set(key, buckets.get(key).append(r))
+    } else {
+      buckets.set(key, [r])
+    }
+  }
+  const order = sorted_keys(buckets.keys())
+  var marks = []
+  for var k = 0; k < order.length(); k = k + 1 {
+    const idxs = buckets.get(order[k])
+    const at = idxs[0]
+    var style = mark.hist_style()
+    if g.color_idx[at] >= 0 {
+      style = style.with_color(t0.palette.color(g.color_idx[at]))
+      style = style.with_label(g.colors[g.color_idx[at]])
+    }
+    var tally = {}
+    for var j = 0; j < idxs.length(); j = j + 1 {
+      const b = mark.bin_index(xs[rows[idxs[j]]], lo, span, nb)
+      if tally.has(b) {
+        tally.set(b, tally.get(b) + 1.0)
+      } else {
+        tally.set(b, 1.0)
+      }
+    }
+    var counts = []
+    for var b = 0; b < nb; b = b + 1 {
+      if tally.has(b) {
+        counts = counts.append(tally.get(b))
+      } else {
+        counts = counts.append(0.0)
+      }
+    }
+    marks = marks.append(mark.Hist.new(counts: counts, lo: lo, width: span / nb.to_float64(), style: style))
+  }
+  return chart_figure(x_col, "count", marks)
+}
+
+// The kernel density estimate: one curve per color level, the bandwidth
+// Silverman's rule answers, the grid spanning the level's own values
+// three bandwidths past each end at a hundred points.
+def kde(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "kde", ["x", "color", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const x_col = x_name(ch, "kde")
+  const xs = t.number(x_col)
+  const rows = kept_rows_x(t, x_col, "kde")
+  const t0 = theme()
+  const g = grouping(t, ch, rows, ch.has("color"))
+  var buckets = {}
+  for var r = 0; r < rows.length(); r = r + 1 {
+    const key = group_key(g, r)
+    if buckets.has(key) {
+      buckets.set(key, buckets.get(key).append(r))
+    } else {
+      buckets.set(key, [r])
+    }
+  }
+  const order = sorted_keys(buckets.keys())
+  var marks = []
+  for var k = 0; k < order.length(); k = k + 1 {
+    const idxs = buckets.get(order[k])
+    const at = idxs[0]
+    var style = mark.line_style()
+    if g.color_idx[at] >= 0 {
+      style = style.with_color(t0.palette.color(g.color_idx[at]))
+      style = style.with_label(g.colors[g.color_idx[at]])
+    }
+    const vals = column_values(xs, rows_at(idxs, rows))
+    const h = internal.stats.silverman(vals)
+    var lo = vals[0]
+    var hi = vals[0]
+    for var j = 1; j < vals.length(); j = j + 1 {
+      if vals[j] < lo {
+        lo = vals[j]
+      }
+      if vals[j] > hi {
+        hi = vals[j]
+      }
+    }
+    const d = internal.stats.kde(vals, h, lo - 3.0 * h, hi + 3.0 * h, 100)
+    marks = marks.append(mark.Line.new(x: d.xs, y: d.density, style: style))
+  }
+  return chart_figure(x_col, "density", marks)
+}
+
+// The kept-row positions behind one group's positions in the bucket
+// arrays: the table rows the group draws.
+def rows_at(idxs Array[Int64], rows Array[Int64]) Array[Int64] {
+  var out = []
+  for var j = 0; j < idxs.length(); j = j + 1 {
+    out = out.append(rows[idxs[j]])
+  }
+  return out
+}
+
+// The empirical CDF: one staircase per color level, each kept value's
+// cumulative proportion stepping up at the value.
+def ecdf(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "ecdf", ["x", "color", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const x_col = x_name(ch, "ecdf")
+  const xs = t.number(x_col)
+  const rows = kept_rows_x(t, x_col, "ecdf")
+  const t0 = theme()
+  const g = grouping(t, ch, rows, ch.has("color"))
+  var buckets = {}
+  for var r = 0; r < rows.length(); r = r + 1 {
+    const key = group_key(g, r)
+    if buckets.has(key) {
+      buckets.set(key, buckets.get(key).append(r))
+    } else {
+      buckets.set(key, [r])
+    }
+  }
+  const order = sorted_keys(buckets.keys())
+  var marks = []
+  for var k = 0; k < order.length(); k = k + 1 {
+    const idxs = buckets.get(order[k])
+    const at = idxs[0]
+    var style = mark.line_style()
+    if g.color_idx[at] >= 0 {
+      style = style.with_color(t0.palette.color(g.color_idx[at]))
+      style = style.with_label(g.colors[g.color_idx[at]])
+    }
+    const vals = column_values(xs, rows_at(idxs, rows))
+    const e = internal.stats.ecdf(vals)
+    var sx = [e.xs[0]]
+    var sy = [0.0]
+    for var i = 0; i < e.xs.length(); i = i + 1 {
+      sx = sx.append(e.xs[i])
+      sy = sy.append(e.ps[i])
+      if i < e.xs.length() - 1 {
+        sx = sx.append(e.xs[i + 1])
+        sy = sy.append(e.ps[i])
+      }
+    }
+    marks = marks.append(mark.Line.new(x: sx, y: sy, style: style))
+  }
+  return chart_figure(x_col, "proportion", marks)
+}
+
+// The grouped read the box and violin charts share: the label column's
+// kept values and the numeric column's kept values, aligned. The levels
+// come from the kept rows alone, so a level with nothing to draw never
+// appears.
+class Grouped {
+  def init(levels Array[String], kept_cats Array[String], vals Array[Float64]) {
+    self.levels = levels
+    self.kept_cats = kept_cats
+    self.vals = vals
+  }
+}
+
+def grouped(t Table, x_name String, y_name String, kind String) Grouped {
+  const cats = categorical_column(t, x_name)
+  const ys = t.number(y_name)
+  const yp = t.presence(y_name)
+  var rows = []
+  for var i = 0; i < yp.length(); i = i + 1 {
+    if yp[i] == Presence.present {
+      rows = rows.append(i)
+    }
+  }
+  if rows.length() == 0 {
+    raise Exception.new(message: "plot: the ${kind} chart has no rows to draw")
+  }
+  var kept_cats = []
+  for var r = 0; r < rows.length(); r = r + 1 {
+    kept_cats = kept_cats.append(cats[rows[r]])
+  }
+  return Grouped.new(levels: internal.channels.sorted_levels(kept_cats), kept_cats: kept_cats, vals: column_values(ys, rows))
+}
+
+// The values of one level, in the kept rows' order.
+def level_values(g Grouped, level String) Array[Float64] {
+  var out = []
+  for var r = 0; r < g.kept_cats.length(); r = r + 1 {
+    if g.kept_cats[r] == level {
+      out = out.append(g.vals[r])
+    }
+  }
+  return out
+}
+
+// The box plot: one box per level of the x column, the level's y values
+// summarized by the Tukey statistics — whiskers at the most extreme
+// values still inside 1.5·IQR of the quartiles, the fliers stamped
+// beyond them.
+def box(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "box", ["x", "y", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const names = xy_names(ch, "box")
+  const x_name = names[0]
+  const y_name = names[1]
+  const g = grouped(t, x_name, y_name, "box")
+  var lows = []
+  var q1s = []
+  var medians = []
+  var q3s = []
+  var his = []
+  var flier_xs = []
+  var fliers = []
+  for var k = 0; k < g.levels.length(); k = k + 1 {
+    const s = internal.stats.box_stats(level_values(g, g.levels[k]))
+    lows = lows.append(s.lo)
+    q1s = q1s.append(s.q1)
+    medians = medians.append(s.median)
+    q3s = q3s.append(s.q3)
+    his = his.append(s.hi)
+    for var f = 0; f < s.fliers.length(); f = f + 1 {
+      flier_xs = flier_xs.append(k.to_float64() + 0.5)
+      fliers = fliers.append(s.fliers[f])
+    }
+  }
+  const m = mark.box(g.levels, lows, q1s, medians, q3s, his, flier_xs, fliers)
+  return chart_figure(x_name, y_name, [m])
+}
+
+// The violin plot: one mirrored density per level of the x column, the
+// bandwidth Silverman's rule answers over the level's own values, the
+// grid three bandwidths past each end at a hundred points, every
+// density normalized across the row so the violins compare. A level
+// whose y values do not spread has no density and raises.
+def violin(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "violin", ["x", "y", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const names = xy_names(ch, "violin")
+  const x_name = names[0]
+  const y_name = names[1]
+  const g = grouped(t, x_name, y_name, "violin")
+  const points = 100
+  var grid = []
+  var dens = []
+  var top = 0.0
+  for var k = 0; k < g.levels.length(); k = k + 1 {
+    const vals = level_values(g, g.levels[k])
+    const d = internal.stats.describe(vals)
+    if d.std == 0.0 || d.q3 == d.q1 {
+      raise Exception.new(message: "plot: the violin needs the \"y\" values of \"${g.levels[k]}\" to spread")
+    }
+    const h = internal.stats.silverman(vals)
+    var lo = vals[0]
+    var hi = vals[0]
+    for var j = 1; j < vals.length(); j = j + 1 {
+      if vals[j] < lo {
+        lo = vals[j]
+      }
+      if vals[j] > hi {
+        hi = vals[j]
+      }
+    }
+    const e = internal.stats.kde(vals, h, lo - 3.0 * h, hi + 3.0 * h, points)
+    for var p = 0; p < points; p = p + 1 {
+      grid = grid.append(e.xs[p])
+      dens = dens.append(e.density[p])
+      if e.density[p] > top {
+        top = e.density[p]
+      }
+    }
+  }
+  var norm = []
+  for var p = 0; p < dens.length(); p = p + 1 {
+    norm = norm.append(dens[p] / top)
+  }
+  const m = mark.violin(g.levels, points, grid, norm)
+  return chart_figure(x_name, y_name, [m])
 }
 
 class Figure {

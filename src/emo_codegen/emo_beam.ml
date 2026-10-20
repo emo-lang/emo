@@ -1964,15 +1964,29 @@ let rt_source =
 		      <'true'> when 'true' -> apply 'emo_g6_sci'/2 (_m, _e)
 		      <'false'> when 'true' ->
 			  case call 'erlang':'<'(_e, 6) of
-			    <'true'> when 'true' ->
-				call 'erlang':'float_to_binary'(_x, [{'decimals', call 'erlang':'-'(5, _e)}, 'compact'])
+			    <'true'> when 'true' -> apply 'emo_g6_dec'/2 (_x, _e)
 			    <'false'> when 'true' -> apply 'emo_g6_sci'/2 (_m, _e)
 			  end
 		    end
 
+%% The %g decimal tail: 'compact' keeps one decimal digit, so a value
+%%   rounding to an integer at six significant digits answers "204.0"
+%%   where %g says "204" — strip that pair.
+'emo_g6_dec'/2 =
+    fun (_x, _e) ->
+	let <_s> = call 'erlang':'float_to_binary'(_x, [{'decimals', call 'erlang':'-'(5, _e)}, 'compact'])
+	in case call 'erlang':'=<'(2, call 'erlang':'byte_size'(_s)) of
+	     <'true'> when 'true' ->
+		 case call 'erlang':'=='(call 'binary':'part'(_s, call 'erlang':'-'(call 'erlang':'byte_size'(_s), 2), 2), #{#<46>(8,1,'integer',['unsigned'|['big']]),#<48>(8,1,'integer',['unsigned'|['big']])}#) of
+		   <'true'> when 'true' -> call 'binary':'part'(_s, 0, call 'erlang':'-'(call 'erlang':'byte_size'(_s), 2))
+		   <'false'> when 'true' -> _s
+		 end
+	     <'false'> when 'true' -> _s
+	   end
+
 'emo_g6_sci'/2 =
     fun (_m, _e) ->
-	let <_t> = call 'string':'trim'(_m, 'trailing', #{#<48>(8,1,'integer',['unsigned'|['big']])}#)
+	let <_t> = call 'string':'trim'(_m, 'trailing', [48])
 	in let <_mt> =
 	       case call 'binary':'last'(_t) of
 		 <_c> when call 'erlang':'=='(_c, 46) ->

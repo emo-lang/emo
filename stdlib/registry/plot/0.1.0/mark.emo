@@ -2,8 +2,8 @@
 // its data spans. The span is named on both axes — a continuous x and y
 // range through `x_min`/`x_max`/`y_min`/`y_max`, a categorical x through
 // `bands` and `x_labels` — so the axes can scale to every mark at once.
-// `bar`, `line`, `scatter`, `area`, `hist`, and `band` are the
-// implementations so far.
+// `bar`, `line`, `scatter`, `area`, `hist`, `band`, `box`, and `violin`
+// are the implementations so far.
 
 interface Mark {
   def draw(ctx internal.ctx.DrawContext) Void
@@ -873,4 +873,298 @@ def band(xs Array[Float64], lo Array[Float64], hi Array[Float64]) Band {
     }
   }
   return Band.new(xs: xs, lo: lo, hi: hi, style: band_style())
+}
+
+class BoxStyle {
+  def init(color (Int64, Int64, Int64), edge_color (Int64, Int64, Int64), edge_width Float64, width Float64, opacity Float64, label String) {
+    self.color = color
+    self.edge_color = edge_color
+    self.edge_width = edge_width
+    self.width = width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) BoxStyle {
+    return BoxStyle.new(color: c, edge_color: self.edge_color, edge_width: self.edge_width, width: self.width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_color(c (Int64, Int64, Int64)) BoxStyle {
+    return BoxStyle.new(color: self.color, edge_color: c, edge_width: self.edge_width, width: self.width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_edge_width(w Float64) BoxStyle {
+    return BoxStyle.new(color: self.color, edge_color: self.edge_color, edge_width: w, width: self.width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_width(w Float64) BoxStyle {
+    return BoxStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, width: w, opacity: self.opacity, label: self.label)
+  }
+
+  def with_label(s String) BoxStyle {
+    return BoxStyle.new(color: self.color, edge_color: self.edge_color, edge_width: self.edge_width, width: self.width, opacity: self.opacity, label: s)
+  }
+}
+
+def box_style() BoxStyle {
+  return BoxStyle.new(color: (47, 111, 179), edge_color: (34, 34, 34), edge_width: 1.0, width: 0.5, opacity: 1.0, label: "")
+}
+
+// A row of boxes over the categorical face: one box per label at its
+// band center — the whiskers, the filled quartile box, the median line,
+// and the fliers stamped beyond the whiskers. The five statistics
+// arrays share the labels' length; the flier arrays share their own.
+class BoxPlot {
+  def init(labels Array[String], lows Array[Float64], q1s Array[Float64], medians Array[Float64], q3s Array[Float64], his Array[Float64], flier_xs Array[Float64], fliers Array[Float64], style BoxStyle) {
+    self.labels = labels
+    self.lows = lows
+    self.q1s = q1s
+    self.medians = medians
+    self.q3s = q3s
+    self.his = his
+    self.flier_xs = flier_xs
+    self.fliers = fliers
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.labels.length()
+    const band = ctx.plot_w / n.to_float64()
+    const half = band * self.style.width / 2.0
+    for var i = 0; i < n; i = i + 1 {
+      const cx = ctx.px(i.to_float64() + 0.5)
+      const q1y = ctx.py(self.q1s[i])
+      const q3y = ctx.py(self.q3s[i])
+      const my = ctx.py(self.medians[i])
+      ctx.renderer.line(cx, ctx.py(self.lows[i]), cx, q1y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx, q3y, cx, ctx.py(self.his[i]), self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.rect(cx - half, q3y, half * 2.0, q1y - q3y, self.style.color)
+      ctx.renderer.line(cx - half, q3y, cx + half, q3y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx - half, q1y, cx + half, q1y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx - half, q3y, cx - half, q1y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx + half, q3y, cx + half, q1y, self.style.edge_color, self.style.edge_width, "")
+      ctx.renderer.line(cx - half, my, cx + half, my, self.style.edge_color, self.style.edge_width, "")
+    }
+    for var k = 0; k < self.fliers.length(); k = k + 1 {
+      stamp_marker(ctx.renderer, ctx.px(self.flier_xs[k]), ctx.py(self.fliers[k]), Marker.circle, 6.0, self.style.edge_color)
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.labels.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    var lo = 0.0
+    var seen = false
+    for var i = 0; i < self.lows.length(); i = i + 1 {
+      if !seen {
+        lo = self.lows[i]
+        seen = true
+      } else {
+        if self.lows[i] < lo {
+          lo = self.lows[i]
+        }
+      }
+    }
+    for var k = 0; k < self.fliers.length(); k = k + 1 {
+      if !seen {
+        lo = self.fliers[k]
+        seen = true
+      } else {
+        if self.fliers[k] < lo {
+          lo = self.fliers[k]
+        }
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    var hi = 0.0
+    var seen = false
+    for var i = 0; i < self.his.length(); i = i + 1 {
+      if !seen {
+        hi = self.his[i]
+        seen = true
+      } else {
+        if self.his[i] > hi {
+          hi = self.his[i]
+        }
+      }
+    }
+    for var k = 0; k < self.fliers.length(); k = k + 1 {
+      if !seen {
+        hi = self.fliers[k]
+        seen = true
+      } else {
+        if self.fliers[k] > hi {
+          hi = self.fliers[k]
+        }
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return self.labels.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.labels
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
+  def with_style(s BoxStyle) BoxPlot {
+    return BoxPlot.new(labels: self.labels, lows: self.lows, q1s: self.q1s, medians: self.medians, q3s: self.q3s, his: self.his, flier_xs: self.flier_xs, fliers: self.fliers, style: s)
+  }
+}
+
+// The box factory: the five statistics arrays share the labels' length
+// and the flier arrays share their own.
+def box(labels Array[String], lows Array[Float64], q1s Array[Float64], medians Array[Float64], q3s Array[Float64], his Array[Float64], flier_xs Array[Float64], fliers Array[Float64]) BoxPlot {
+  const n = labels.length()
+  if lows.length() != n || q1s.length() != n || medians.length() != n || q3s.length() != n || his.length() != n {
+    raise Exception.new(message: "plot: a box's statistics arrays must match its labels, got ${lows.length()} / ${q1s.length()} / ${medians.length()} / ${q3s.length()} / ${his.length()} for ${n}")
+  }
+  if flier_xs.length() != fliers.length() {
+    raise Exception.new(message: "plot: a box's flier arrays must match, got ${flier_xs.length()} positions for ${fliers.length()} fliers")
+  }
+  return BoxPlot.new(labels: labels, lows: lows, q1s: q1s, medians: medians, q3s: q3s, his: his, flier_xs: flier_xs, fliers: fliers, style: box_style())
+}
+
+class ViolinStyle {
+  def init(color (Int64, Int64, Int64), width Float64, opacity Float64, label String) {
+    self.color = color
+    self.width = width
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) ViolinStyle {
+    return ViolinStyle.new(color: c, width: self.width, opacity: self.opacity, label: self.label)
+  }
+
+  def with_width(w Float64) ViolinStyle {
+    return ViolinStyle.new(color: self.color, width: w, opacity: self.opacity, label: self.label)
+  }
+
+  def with_label(s String) ViolinStyle {
+    return ViolinStyle.new(color: self.color, width: self.width, opacity: self.opacity, label: s)
+  }
+}
+
+def violin_style() ViolinStyle {
+  return ViolinStyle.new(color: (85, 168, 104), width: 0.9, opacity: 1.0, label: "")
+}
+
+// A row of violins over the categorical face: one mirrored density per
+// label at its band center. The grids and the densities are flat, so
+// many points per label — `points` each — and the densities are
+// fractions of the half width, 0.0 to 1.0, normalized across the whole
+// row so the violins compare.
+class Violin {
+  def init(labels Array[String], points Int64, xs Array[Float64], density Array[Float64], style ViolinStyle) {
+    self.labels = labels
+    self.points = points
+    self.xs = xs
+    self.density = density
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.labels.length()
+    const band = ctx.plot_w / n.to_float64()
+    const half = band * self.style.width / 2.0
+    for var i = 0; i < n; i = i + 1 {
+      const cx = ctx.px(i.to_float64() + 0.5)
+      const base = i * self.points
+      var rxs = []
+      var rys = []
+      for var g = 0; g < self.points; g = g + 1 {
+        rxs = rxs.append(cx + self.density[base + g] * half)
+        rys = rys.append(ctx.py(self.xs[base + g]))
+      }
+      for var g = self.points - 1; g >= 0; g = g - 1 {
+        rxs = rxs.append(cx - self.density[base + g] * half)
+        rys = rys.append(ctx.py(self.xs[base + g]))
+      }
+      ctx.renderer.polygon(rxs, rys, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.labels.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    if self.xs.length() == 0 {
+      return 0.0
+    }
+    var lo = self.xs[0]
+    for var k = 1; k < self.xs.length(); k = k + 1 {
+      if self.xs[k] < lo {
+        lo = self.xs[k]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.xs.length() == 0 {
+      return 0.0
+    }
+    var hi = self.xs[0]
+    for var k = 1; k < self.xs.length(); k = k + 1 {
+      if self.xs[k] > hi {
+        hi = self.xs[k]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return self.labels.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.labels
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
+  def with_style(s ViolinStyle) Violin {
+    return Violin.new(labels: self.labels, points: self.points, xs: self.xs, density: self.density, style: s)
+  }
+}
+
+// The violin factory: the grid and the density arrays each carry one
+// run of `points` per label.
+def violin(labels Array[String], points Int64, xs Array[Float64], density Array[Float64]) Violin {
+  const n = labels.length()
+  if xs.length() != n * points || density.length() != n * points {
+    raise Exception.new(message: "plot: a violin's arrays must carry ${n * points} entries, got ${xs.length()} grid values and ${density.length()} densities")
+  }
+  return Violin.new(labels: labels, points: points, xs: xs, density: density, style: violin_style())
 }

@@ -237,6 +237,47 @@ grouping channel handed a number column, a `size` or number `color`
 column with no observed values, a chart with no drawable rows, and a
 `reg` with fewer than two.
 
+## The distribution charts
+
+`hist`, `kde`, and `ecdf` read one numeric column and draw one mark
+per `color` level — the split working like the relational charts' —
+and `box` and `violin` group a numeric column by a label one:
+
+```emo
+def hist(t Table, ch Map[String, String]) Figure
+def kde(t Table, ch Map[String, String]) Figure
+def ecdf(t Table, ch Map[String, String]) Figure
+def box(t Table, ch Map[String, String]) Figure
+def violin(t Table, ch Map[String, String]) Figure
+```
+
+`hist` counts the kept values into equal-width bins spanning their
+shared range — the square root of the count of them, at least one —
+one histogram per level over the shared grid, so the levels compare.
+`kde` draws one density curve per level, the bandwidth Silverman's
+rule of thumb answers over the level's own values, the grid three
+bandwidths past each end at a hundred points. `ecdf` draws one
+staircase per level, each value's cumulative proportion stepping up at
+the value. The three label their y axes `count`, `density`, and
+`proportion`.
+
+`box` and `violin` sit on the `x` column's levels — a number column
+there raises, the boxes sit on the levels, not on numbers. Each level's
+`y` values summarize through the Tukey statistics: `box` draws the
+whiskers, the filled quartile box, the median line, and the fliers
+stamped beyond the whiskers; `violin` draws a mirrored density per
+level, the same Silverman bandwidth and grid shape the `kde` chart
+reads, every density normalized across the row so the violins compare.
+A level with no observed `y` values never appears; a level whose values
+do not spread has no density and raises. The `color` channel is not
+read by `box` or `violin` yet.
+
+The single-column charts need the `x` channel, the grouped pair needs
+both; the absent rows drop out as everywhere, a chart with no drawable
+row raises, and an unknown channel, an unread channel, or a `color`
+mapping to a number column raises too. A constant column has no
+density: the `kde` chart raises rather than drawing a spike.
+
 ## Themes
 
 A theme dresses the whole figure: the background and foreground inks,
@@ -327,6 +368,12 @@ def hist_style() HistStyle
 
 def band(xs Array[Float64], lo Array[Float64], hi Array[Float64]) Band
 def band_style() BandStyle
+
+def box(labels Array[String], lows Array[Float64], q1s Array[Float64], medians Array[Float64], q3s Array[Float64], his Array[Float64], flier_xs Array[Float64], fliers Array[Float64]) BoxPlot
+def box_style() BoxStyle
+
+def violin(labels Array[String], points Int64, xs Array[Float64], density Array[Float64]) Violin
+def violin_style() ViolinStyle
 ```
 
 A mark is a value too. `Bar.with_style(s BarStyle)` and the style's
@@ -378,6 +425,18 @@ lower one back — and the regression chart draws its confidence band as
 one. The factory checks that the low and high arrays match the xs and
 that the xs ascend. `BandStyle` carries `color` (the fill), `opacity`,
 and `label`.
+
+A box row sits on the categorical face — one box per label at its band
+center: whiskers, the filled quartile box, the median line, and the
+fliers stamped beyond the whiskers. The five statistics arrays share
+the labels' length and the flier arrays their own; the factories check.
+`BoxStyle` carries the fill and edge `color`s, `edge_width`, the band
+fraction `width`, `opacity`, and `label`.
+
+A violin row mirrors a density per label — the grids and densities are
+flat, one run of `points` per label, the densities fractions of the
+band's half width. `ViolinStyle` carries `color` (the fill), the band
+fraction `width`, `opacity`, and `label`.
 
 **Colors are `(Int64, Int64, Int64)` sRGB triples**, each channel 0–255.
 `plot.rgb(r, g, b)` builds one with the range checked — an
@@ -446,12 +505,14 @@ marks, the grid, the theme that dresses it all, the validating `Table`
 the dataset charts read, the channel vocabulary and the `color`
 channel's kind dispatch, the relational charts — `scatter`, `line`,
 and `reg`, with the `band` mark joining `plot.mark` for the
-regression chart — and SVG output. Both
+regression chart — the distribution charts — `hist`, `kde`, `ecdf`,
+`box`, and `violin`, with the `box` and `violin` marks joining
+`plot.mark` — and SVG output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
 categorical labels. The remaining pieces the surface carries are
-reserved and not rendered yet: the distribution, categorical, and
-matrix charts, and the chart-layer half of faceting —
+reserved and not rendered yet: the categorical and matrix charts, and
+the chart-layer half of faceting —
 splitting a dataset by a column's levels, per-panel level labels, and
 the one shared legend. The marks and the axes draw through the internal
 `Renderer` interface — `DrawContext` carries a `Renderer`, not the

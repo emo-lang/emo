@@ -1514,8 +1514,40 @@ T0 marks, with fixtures byte-identical on all five targets.
       (`plot_demo` grew a relational section: a grouped scatter with the
       size channel, a two-level line with the dash channel, a reg with
       its band) and thirteen raise messages byte-identical.
-- [ ] **T43.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
-      `plot.box`, `plot.violin`.
+- [x] **T43.3** — Distributions: `plot.hist`, `plot.kde`, `plot.ecdf`,
+      `plot.box`, `plot.violin`. The first three read one numeric
+      column — required through the new single-`x` read — and draw one
+      mark per `color` level through the T43.2 grouping, the levels in
+      their sorted order: `hist` counts into equal-width bins spanning
+      the kept values' shared range, the square root of the count of
+      them, so the levels compare on one grid; `kde` draws one density
+      curve per level, the bandwidth Silverman's rule answers (new
+      `internal.stats.silverman`: 0.9 × min(σ, IQR/1.34) × n^(−1/5),
+      the fifth root through the carried `exp` and `scale.log10`, a
+      column whose values do not spread raising); `ecdf` draws the
+      staircase, each value's cumulative proportion stepping at the
+      value. `box` and `violin` sit on the `x` column's levels — a
+      number column there raises — and summarize each level's `y`
+      through the Tukey statistics: `box` draws the whiskers, the
+      quartile box, the median line, and the fliers, `violin` a
+      mirrored density per level over the same Silverman bandwidth and
+      grid shape, the densities normalized across the row — a level
+      whose values do not spread raises naming the level. Both gave
+      `plot.mark` two marks: `BoxPlot` (named for the language's `Box`)
+      and `Violin`, flat parallel arrays over the categorical face, the
+      factories checking matched lengths. The `color` channel is not
+      read by `box` or `violin` yet. Verified on all six paths —
+      interp, c, ocaml, ts, wasm, beam — with the demo golden
+      byte-identical (`plot_demo` grew a distribution section: a
+      two-class score table through all five charts) and ten raise
+      messages byte-identical. Landing the demo exposed two beam
+      runtime bugs, both fixed in the same commit: `emo_g6_sci` trimmed
+      with `string:trim(binary, trailing, binary)` — the third argument
+      is a character list, so any float whose %g form needs scientific
+      notation died in a function_clause (the KDE's small densities are
+      the first figures to draw one) — and the %g decimal tail kept
+      Erlang `compact`'s final `.0` where the interpreter's %g says
+      `204`, now stripped.
 - [ ] **T43.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
       `plot.point`.
 - [ ] **T43.5** — Matrix: `plot.heatmap`, `plot.clustermap`.

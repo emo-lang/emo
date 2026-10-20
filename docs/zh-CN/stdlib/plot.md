@@ -142,6 +142,24 @@ plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "size": 
 
 分面通道通过词表检查、但在图表层长出面板拆分之前直接 raise——按列水平拆分数据、逐面板水平标注、单份共享图例是图表层剩下的工作。其余违例直接 raise:未知通道、该图不读的通道、缺 `x` 或 `y`、分组通道拿到数值列、`size` 或数值 `color` 列没有在场值、图没有可画的行、`reg` 少于两行。
 
+## 分布型图表
+
+`hist`、`kde`、`ecdf` 读一个数值列、按 `color` 的每个水平画一个 mark——拆分方式与关系型一致;`box` 与 `violin` 把数值列按类别列分组:
+
+```emo
+def hist(t Table, ch Map[String, String]) Figure
+def kde(t Table, ch Map[String, String]) Figure
+def ecdf(t Table, ch Map[String, String]) Figure
+def box(t Table, ch Map[String, String]) Figure
+def violin(t Table, ch Map[String, String]) Figure
+```
+
+`hist` 把保留值数进横跨共同范围的等宽箱——箱数取计数的平方根、至少一箱——每个水平一个直方图、共享同一套网格,水平之间可比。`kde` 每个水平画一条密度曲线,带宽由 Silverman 经验法则按该水平自己的值给出,网格两端各越过三个带宽、取一百个点。`ecdf` 每个水平画一条阶梯线,每个值的累积比例在值处抬升。三者的 y 轴标签分别是 `count`、`density`、`proportion`。
+
+`box` 与 `violin` 落在 `x` 列的水平上——那里给数值列直接 raise,箱子落在水平上、不落在数字上。每个水平的 `y` 值经 Tukey 统计概括:`box` 画须、填充的四分位箱、中位线,以及须外盖章的离群点;`violin` 每个水平画一条镜像密度,带宽与网格形状与 `kde` 图同源,所有密度按整行归一化、小提琴之间可比。没有在场 `y` 值的水平不出现;值不铺开的水平没有密度,直接 raise。`box` 与 `violin` 目前不读 `color` 通道。
+
+单列图需要 `x` 通道,分组对需要两个都给;缺席行照旧剔除、没有可画行的图直接 raise,未知通道、该图不读的通道、`color` 映射到数值列同样 raise。常数列没有密度:`kde` 图直接 raise,不画一根针。
+
 ## 主题
 
 主题装扮整张图:背景与前景墨色、网格、坐标轴、标题、标签样式,color 通道经过的 palette 与 colormap、面板间距,以及 `figure()` 出发的默认尺寸。`figure()` 建出默认的浅色主题,`with_theme` 把另一套换上图:
@@ -201,6 +219,12 @@ def hist_style() HistStyle
 
 def band(xs Array[Float64], lo Array[Float64], hi Array[Float64]) Band
 def band_style() BandStyle
+
+def box(labels Array[String], lows Array[Float64], q1s Array[Float64], medians Array[Float64], q3s Array[Float64], his Array[Float64], flier_xs Array[Float64], fliers Array[Float64]) BoxPlot
+def box_style() BoxStyle
+
+def violin(labels Array[String], points Int64, xs Array[Float64], density Array[Float64]) Violin
+def violin_style() ViolinStyle
 ```
 
 mark 也是值。`Bar.with_style(s BarStyle)` 以及样式上的 `with_color` / `with_width` / `with_label` 细化它,不改动任何东西:
@@ -225,6 +249,10 @@ plot.mark.line(years, revenue).with_style(
 直方图把值数进横跨数据的等宽箱,把箱子作为柱子铺在零基线上。等于最大值的数落进最后一箱;全同值跨度塌缩为零,也堆进最后一箱。`bins < 1` 是契约违例,直接 raise。`HistStyle` 携带 `color`(填充)、`edge_color` 与 `edge_width`(柱子描边;默认白色、宽度 1.0)、`opacity` 与 `label`。
 
 band 在同一段升序 `xs` 上填充下曲线与上曲线之间的区域——一个多边形,上曲线正向读、下曲线反向读——回归图的置信带画的就是它。工厂检查低、高数组与 xs 等长且 xs 升序。`BandStyle` 携带 `color`(填充)、`opacity` 与 `label`。
+
+箱线一排落在类别面上——每个标签一个箱、在它的 band 中心:须、填充的四分位箱、中位线、须外盖章的离群点。五个统计数组与 labels 等长,离群点两个数组彼此等长;工厂都检查。`BoxStyle` 携带填充与边缘 `color`、`edge_width`、band 占比 `width`、`opacity` 与 `label`。
+
+小提琴一排按标签镜像密度——网格与密度都是扁平数组,每个标签一段 `points` 个点,密度是 band 半宽的分数。`ViolinStyle` 携带 `color`(填充)、band 占比 `width`、`opacity` 与 `label`。
 
 **颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组**,每通道 0–255。`plot.rgb(r, g, b)` 构造经过范围检查的三元组——越界通道直接 raise;裸三元组也接受,在绘制时校验。不透明度是样式上单独的 `Float64`,绝不煍进三元组。它随每个样式携带,但**尚未渲染**——渲染器图元还没有不透明度旋钮。
 
@@ -258,6 +286,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:分布、类别、矩阵图表,以及图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:类别与矩阵图表,以及图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

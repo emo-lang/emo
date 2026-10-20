@@ -252,6 +252,28 @@ def box_stats(xs Array[Float64]) BoxStats {
 
 // ---- least squares ----
 
+// ---- densities ----
+
+// Silverman's rule of thumb: the KDE bandwidth the distribution charts
+// read their grid through — 0.9 times the smaller of the standard
+// deviation and the IQR-scaled spread, shrunk by the fifth root of n.
+def silverman(xs Array[Float64]) Float64 {
+  const n = xs.length()
+  if n < 1 {
+    raise Exception.new(message: "plot: statistics need at least one value")
+  }
+  const d = describe(xs)
+  const iqr_h = (d.q3 - d.q1) / 1.34
+  const s = if iqr_h < d.std { iqr_h } else { d.std }
+  if s <= 0.0 {
+    raise Exception.new(message: "plot: the density needs the values to spread, they are all ${d.mean}")
+  }
+  const ln_n = internal.scale.log10(n.to_float64()) * 2.302585092994046
+  return 0.9 * s * exp((0.0 - ln_n) / 5.0)
+}
+
+// ---- least squares ----
+
 // The OLS fit of y on x: the line, the residual spread, the standard
 // errors of both coefficients, and the share of variance the line
 // explains. The confidence band reads through `ols_band`.
