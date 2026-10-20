@@ -1670,8 +1670,30 @@ value graph, proving the contract is format-agnostic.
       interp, c, ocaml, ts, wasm, beam — with four probes byte-identical
       (a bar figure, a two-line figure with a dashed legend entry, the
       heatmap, and the dark theme), and `dune test` green.
-- [ ] **T44.2** — Wire it through a CLI/demo path and test that the same
-      figure renders through SVG and the terminal.
+- [x] **T44.2** — Wire it through a CLI/demo path and test that the same
+      figure renders through SVG and the terminal. `examples/plot_demo`
+      now holds four of its figures as values — the bar figure, the
+      two-line figure with its dashed legend entry, the regression chart
+      with its band and points, and the heatmap — prints each as SVG
+      where it always did, and prints the same four values again through
+      `plot.terminal` at the end, so one `Figure` value reaches both
+      renderers and both outputs sit in one golden: `expected.txt` grew
+      by the four terminal renders (244 lines) with its SVG prefix
+      byte-identical, and the standing golden suites pin it on all six
+      paths — interp and the `c`, `ocaml`, `typescript`, `wasm`, and
+      `beam` builds — byte-for-byte (`dune test` green, 0 failures). The
+      four figures between them exercise every primitive the renderers
+      answer: `rect` fills and the frame's lines, the dashed line and the
+      legend panel, the band `polygon` with `circle` markers, and the
+      heatmap's cells across the ink levels. `docs/stdlib/plot.md` (and
+      its `zh-CN` mirror) gained `terminal` in the surface, a terminal
+      paragraph under Output — the cell geometry, `with_size(320.0, 240.0)`
+      for an 80-column terminal, the ink rule, what does not render — the
+      worked example printing both, and the landed list naming the second
+      renderer; `docs/visualization.md`'s Layer 0 records the landing;
+      `plan/README.md` marks Step 44 done. Step 44's exit holds: a figure
+      renders to a terminal through the same Layer 0 value graph, and the
+      contract is format-agnostic.
 
 ### Step 45 — PNG renderer
 

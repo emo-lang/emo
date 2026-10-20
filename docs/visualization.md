@@ -155,7 +155,12 @@ interface Renderer {
 The `SvgRenderer` is the only shipped implementation in T0. A
 terminal renderer (braille/block characters, in the spirit of
 `UnicodePlot`) and a PNG rasterizer are later implementations of the
-same interface. `Renderer` is a plotting-side abstraction, not an Emo
+same interface — the terminal one landed in Step 44 (2026-10-20) as
+`internal.term.TermRenderer`: braille cells for the marks and the
+frame, the labels in the grid's own characters, every color inked by
+its luminance contrast against the figure background, and `svg` and
+`terminal` walking one figure through one renderer-agnostic `render`.
+`Renderer` is a plotting-side abstraction, not an Emo
 target: Emo's build targets are `c`/`ocaml`/`typescript`/`browser`/
 `wasm`/`beam`/`riscv64` (the interpreter runs a program directly and
 produces no artifact; see `docs/demo-targets.md`), while EmoUI is a

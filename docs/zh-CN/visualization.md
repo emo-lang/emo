@@ -131,7 +131,11 @@ interface Renderer {
 ```
 
 T0 只交付一个实现:`SvgRenderer`。终端渲染器(盲文/方块字符,承
-`UnicodePlot` 的精神)与 PNG 光栅器是同一接口的后续实现。`Renderer`
+`UnicodePlot` 的精神)与 PNG 光栅器是同一接口的后续实现——终端这个
+已于 Step 44(2026-10-20)落地为 `internal.term.TermRenderer`:mark
+与边框用盲文格子,标签用网格自身的字符,每个颜色按它对图背景色的
+亮度对比着墨,`svg` 与 `terminal` 经同一个与渲染器无关的 `render`
+遍历同一张图。`Renderer`
 是绘图层自身的抽象,不是 Emo 的目标:Emo 的构建目标是
 `c`/`ocaml`/`typescript`/`browser`/`wasm`/`beam`/`riscv64`(解释器
 直接求值程序、不产生产物;见 `demo-targets.md`),而 EmoUI 是跑在

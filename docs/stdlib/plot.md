@@ -1,7 +1,8 @@
 # The `plot` Package
 
 The declarative 2D charting package. A figure is a value — a `Figure`
-holding `Axes`, each holding marks — and one call renders it to SVG.
+holding `Axes`, each holding marks — and one call renders it to SVG, or
+to a block of braille text for a terminal, through the same value graph.
 Everything is pure Emo over the shared runtimes, so the five hosted
 targets the package declares answer byte-for-byte.
 
@@ -24,6 +25,7 @@ The package carries two public modules: `plot` (the figure surface) and
 def figure() Figure
 def axes() Axes
 def svg(fig Figure) String
+def terminal(fig Figure) String
 
 // Figure
 def with_title(t String) Figure
@@ -52,7 +54,8 @@ def rgb(r Int64, g Int64, b Int64) (Int64, Int64, Int64)
 `figure()` and `axes()` build the defaults, and `with_*` refines a value.
 Classes are immutable, so every `with_*` answers a new value; the whole
 figure is a plain value graph. `svg(fig)` walks it and returns the SVG
-document as a `String`.
+document as a `String`; `terminal(fig)` walks the same graph and returns
+its rendering for a terminal (see Output).
 
 ```emo
 enum Scale { linear, log }
@@ -583,9 +586,12 @@ const ax = plot.axes().with_x_label("Month").with_y_label("Sales").with_marks([p
 const chart = plot.figure().with_title("Monthly sales").with_axes([ax])
 
 println(plot.svg(chart))
+println(plot.terminal(chart))
 ```
 
-`examples/plot_demo` is this program.
+`examples/plot_demo` is this program, grown to every chart kind: it
+prints each figure as SVG, then four of the same figure values again
+through `terminal`.
 
 ## Output
 
@@ -598,6 +604,24 @@ Text is delegated to the viewer: every label is an SVG `<text>` element,
 so the package carries no font engine. Coordinates and values are
 formatted with the interpreter's float rendering, which is why the bytes
 are identical on every target.
+
+`terminal` hands back the same figure as text for a terminal — rows of
+braille cells and characters, each row newline-terminated — so a chart
+shows in a CI log or at the command line with `println`. The figure's
+pixel space maps onto a character grid: four pixels of width make a
+column and eight of height a row, so each cell is two braille dots wide
+and four tall with a terminal glyph's aspect, and the default 640 × 480
+figure prints as 160 columns by 60 rows; `with_size` resizes it —
+`with_size(320.0, 240.0)` fits an 80-column terminal. Color is one ink:
+every color becomes a level from 0 to 8 — how many of a cell's eight
+dots it lights — from its luminance contrast against the theme
+background, so a filled mark halftones at its level (a heatmap reads
+as shades), a paper-colored fill paints paper, and a line draws solid,
+sparsely dotted, or not at all by the same level; a dashed line
+alternates three dots on and two off. Labels are set in the grid's own
+characters at their anchors, over the dots; text size and weight do not
+render, and a line is always one dot wide. The output is byte-identical
+on every target, like the SVG.
 
 ## Targets and what is landed
 
@@ -620,7 +644,8 @@ regression chart — the distribution charts — `hist`, `kde`, `ecdf`,
 `plot.mark` — the categorical charts — `bar`, `count`, `strip`, and
 `point`, with the `strip` and `point` marks joining `plot.mark` — the
 matrix charts — `heatmap` and `clustermap`, with the `heatmap` mark
-and the categorical y face joining `plot.mark` — and SVG output. Both
+and the categorical y face joining `plot.mark` — SVG output, and
+terminal output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
 categorical labels. Faceting rides every chart: a facet channel's
@@ -628,8 +653,10 @@ sorted levels split it into panels on one shared domain, each titled
 from its level, with one legend for the figure. The marks and the axes
 draw through the internal
 `Renderer` interface — `DrawContext` carries a `Renderer`, not the
-concrete SVG class — so a terminal or raster backend can join later
-without disturbing the figure or the marks.
+concrete SVG class — and the terminal renderer is its second
+implementation: `svg` and `terminal` walk one figure through one
+`render`, differing only in the renderer they construct, so a raster
+backend joins the same way without disturbing the figure or the marks.
 
 See also: `examples/plot_demo`, and the design note
 [`docs/visualization.md`](../visualization.md).

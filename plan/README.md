@@ -116,7 +116,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 41 | Figure fidelity: scales, domains, legend, grid, themes, color | planned |
 | 42 | Table and channels | planned |
 | 43 | T1 dataset charts | planned |
-| 44 | Terminal renderer | planned |
+| 44 | Terminal renderer | done — `internal.term.TermRenderer` is the second `Renderer` behind the internal interface (braille cells, ink levels from luminance contrast against the figure background, halftoned fills); `svg` and the new `plot.terminal` walk one figure through one `render`, and `plot_demo` prints four of its figure values both ways, byte-identical on all six paths |
 | 45 | PNG renderer | planned |
 | 46 | Unit test framework: `emo test` and the `expect_*` builtins | done |
 | 47 | The standard library: `csv` | done |

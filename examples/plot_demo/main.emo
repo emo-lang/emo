@@ -1,4 +1,5 @@
-// The plot package: one declarative figure per mark, rendered to SVG.
+// The plot package: one declarative figure per mark, rendered to SVG,
+// then the same figure values again as braille text for a terminal.
 //
 //   emo run main.emo
 
@@ -8,7 +9,8 @@ const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
 const sales = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0]
 
 const bar_ax = plot.axes().with_x_label("Month").with_y_label("Sales").with_marks([plot.mark.bar(months, sales)])
-println(plot.svg(plot.figure().with_title("Monthly sales").with_axes([bar_ax])))
+const bar_fig = plot.figure().with_title("Monthly sales").with_axes([bar_ax])
+println(plot.svg(bar_fig))
 
 const line_ax = plot.axes().with_x_label("Year").with_y_label("Revenue").with_marks([
   plot.mark.line([2020.0, 2021.0, 2022.0, 2023.0, 2024.0], [42.0, 51.0, 47.0, 62.0, 71.0]).with_style(
@@ -48,7 +50,8 @@ const plan_ax = plot.axes().with_x_label("Quarter").with_y_label("Units").with_m
   plot.mark.line([1.0, 2.0, 3.0, 4.0], [18.0, 30.0, 24.0, 37.0]).with_style(
     plot.mark.line_style().with_label("actual").with_dash(plot.mark.Dash.dashed).with_color(plot.rgb(47, 111, 179)))
 ])
-println(plot.svg(plot.figure().with_title("Plan vs actual").with_axes([plan_ax])))
+const plan_fig = plot.figure().with_title("Plan vs actual").with_axes([plan_ax])
+println(plot.svg(plan_fig))
 
 const dark_ax = plot.axes().with_x_label("Quarter").with_y_label("Units").with_marks([
   plot.mark.line([1.0, 2.0, 3.0, 4.0], [20.0, 28.0, 26.0, 34.0]).with_style(
@@ -121,7 +124,8 @@ const study = plot.table(
     "score": [52.0, 55.0, 61.0, 64.0, 66.0, 71.0, 74.0, 77.0, 83.0, 86.0] },
   {}
 )
-println(plot.svg(plot.reg(study, { "x": "hours", "y": "score" })))
+const reg_fig = plot.reg(study, { "x": "hours", "y": "score" })
+println(plot.svg(reg_fig))
 
 // The distribution charts: hist, kde, and ecdf read one numeric column
 // and draw one mark per color level; box and violin group the column by
@@ -158,7 +162,8 @@ const corr = plot.table(
     "delta": [-0.12, 0.02, 0.33, 1.00] },
   { "row": ["alpha", "beta", "gamma", "delta"] }
 )
-println(plot.svg(plot.heatmap(corr, {})))
+const heat_fig = plot.heatmap(corr, {})
+println(plot.svg(heat_fig))
 println(plot.svg(plot.clustermap(corr, {})))
 
 // Faceting: a facet channel's levels split a chart into panels on one
@@ -167,3 +172,14 @@ println(plot.svg(plot.clustermap(corr, {})))
 println(plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "facet_col": "time" })))
 println(plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "facet_row": "day", "facet_col": "time" })))
 println(plot.svg(plot.hist(exam, { "x": "score", "facet_row": "class" })))
+
+// The terminal renderer: the same figure values, drawn through the same
+// value graph, onto braille cells and text instead of SVG — four pixels
+// of figure width to a column and eight of height to a row, every color
+// inked by its contrast against the theme background. The bar figure,
+// the dashed legend, the regression band with its points, and the
+// heatmap's shades cover every primitive the renderers answer.
+println(plot.terminal(bar_fig))
+println(plot.terminal(plan_fig))
+println(plot.terminal(reg_fig))
+println(plot.terminal(heat_fig))
