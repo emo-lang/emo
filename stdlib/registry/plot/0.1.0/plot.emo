@@ -2150,8 +2150,11 @@ def draw_axes(r internal.svg.Renderer, fig Figure, ax Axes, x0 Float64, y0 Float
   }
 }
 
-def svg(fig Figure) String {
-  const r = internal.svg.SvgRenderer.new(fig.width, fig.height)
+// The figure drawn through a renderer — the background, the title, the
+// panels on their domains, the shared legend — the whole walk of the
+// value graph, with nothing in it that knows the output format. `svg`
+// and `terminal` differ only in the renderer they hand in.
+def render(r internal.svg.Renderer, fig Figure) Void {
   r.rect(0.0, 0.0, fig.width, fig.height, fig.theme.background)
   const rows = fig.grid[0]
   const cols = fig.grid[1]
@@ -2301,5 +2304,21 @@ def svg(fig Figure) String {
       at = at + 20.0
     }
   }
+}
+
+def svg(fig Figure) String {
+  const r = internal.svg.SvgRenderer.new(fig.width, fig.height)
+  render(r, fig)
+  return r.finish()
+}
+
+// The same figure as a block of text for a terminal: braille cells for
+// the marks and the frame, characters for the labels, every color inked
+// against the theme background by its contrast. Four pixels of figure
+// width make a column and eight of height a row, so the default 640 × 480
+// figure prints as 160 columns by 60 rows; `with_size` resizes it.
+def terminal(fig Figure) String {
+  const r = internal.term.TermRenderer.new(fig.width, fig.height, fig.theme.background)
+  render(r, fig)
   return r.finish()
 }

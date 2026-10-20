@@ -1,5 +1,6 @@
 // The backend contract: a small display list any output format can
-// answer. `SvgRenderer` is the only implementation in T0.
+// answer. `SvgRenderer` answers it with an SVG document; the terminal
+// renderer in `internal.term` answers the same calls with braille text.
 
 enum Anchor { start, middle, end }
 enum Weight { regular, bold }

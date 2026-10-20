@@ -1,0 +1,358 @@
+// The terminal backend: the display list the SVG renderer answers,
+// rasterized onto a grid of braille cells — two dots wide, four tall —
+// with every label set in the grid's own characters. A cell is four
+// pixels wide and eight tall in figure space, so a dot is two by two and
+// a cell has a terminal glyph's aspect; a 640 × 480 figure prints as 160
+// columns by 60 rows.
+//
+// Color is one ink. Every color becomes a level from 0 to 8 — how many
+// of a cell's eight dots it lights — from its luminance contrast against
+// the paper, the figure background the renderer is built with. A fill
+// (rect, circle, polygon) halftones at its level and clears the dots the
+// level leaves dark, so a paper-colored fill paints paper and a legend
+// panel covers what is under it. A line is one dot wide: solid from
+// level 2, every fourth dot at level 1, cleared at level 0; a dash
+// pattern alternates three dots on and two off. Text ignores its size,
+// weight, and color beyond placing its row — the row holding the middle
+// of its glyphs, 0.35 of the size above the baseline — and a character
+// always shows over the dots in its cell. Anything off the grid is
+// clipped.
+
+// Rec. 601 luma in thousandths: 0 to 255000.
+def luminance(c (Int64, Int64, Int64)) Int64 {
+  return 299 * c[0] + 587 * c[1] + 114 * c[2]
+}
+
+// The ink level 0 to 8 of a color against the paper: the luminance
+// contrast spread over the eight dots, rounded to nearest.
+def ink_level(lum Int64, paper Int64) Int64 {
+  var d = lum - paper
+  if d < 0 {
+    d = 0 - d
+  }
+  return (d * 8 + 127500) / 255000
+}
+
+// The braille bit of the dot in column c (0 or 1) and row r (0 to 3) of
+// a cell: dots 1–3 and 4–6 run down the two columns, 7 and 8 close the
+// bottom row.
+def braille_bit(c Int64, r Int64) Int64 {
+  if r == 3 {
+    return 64 << c
+  }
+  return 1 << (r + 3 * c)
+}
+
+// The dots a fill lights at a level, dispersed so a partial level reads
+// as an even tone: cumulative over (0,0) (1,3) (1,1) (0,2) (1,0) (0,3)
+// (0,1) (1,2).
+def halftone(level Int64) Int64 {
+  const masks = [0, 1, 129, 145, 149, 157, 221, 223, 255]
+  return masks[level]
+}
+
+// The cell pattern as its character: U+2800 plus the bits, UTF-8
+// encoded; an empty cell is a space.
+def braille(bits Int64) String {
+  if bits == 0 {
+    return " "
+  }
+  const cp = 10240 + bits
+  const u = Bytes.new(3)
+  u.set(0, 224 | (cp >> 12))
+  u.set(1, 128 | ((cp >> 6) & 63))
+  u.set(2, 128 | (cp & 63))
+  return u.to_string()
+}
+
+// The text split into its characters, one UTF-8 sequence each.
+def glyphs_of(body String) Array[String] {
+  const b = body.to_bytes()
+  const n = b.length()
+  var out = []
+  var i = 0
+  while i < n {
+    const lead = b.get(i)
+    var k = 1
+    if lead >= 192 && lead < 224 {
+      k = 2
+    }
+    if lead >= 224 && lead < 240 {
+      k = 3
+    }
+    if lead >= 240 {
+      k = 4
+    }
+    if i + k > n {
+      k = n - i
+    }
+    const g = Bytes.new(k)
+    for var j = 0; j < k; j = j + 1 {
+      g.set(j, b.get(i + j))
+    }
+    out = out.append(g.to_string())
+    i = i + k
+  }
+  return out
+}
+
+// The crossings of one scanline kept in ascending order.
+def insert_sorted(a Array[Float64], v Float64) Array[Float64] {
+  var out = []
+  var placed = false
+  for var i = 0; i < a.length(); i = i + 1 {
+    if !placed && v < a[i] {
+      out = out.append(v)
+      placed = true
+    }
+    out = out.append(a[i])
+  }
+  if !placed {
+    out = out.append(v)
+  }
+  return out
+}
+
+// The first dot whose center (2d + 1) lies at or past a figure
+// coordinate — the inclusive start, or the exclusive end, of a span.
+def dot_from(v Float64) Int64 {
+  return ((v - 1.0) / 2.0).ceil().to_int64()
+}
+
+class TermRenderer {
+  def init(width Float64, height Float64, paper (Int64, Int64, Int64)) {
+    self.cols = (width / 4.0).ceil().to_int64()
+    self.rows = (height / 8.0).ceil().to_int64()
+    self.dot_cols = self.cols * 2
+    self.dot_rows = self.rows * 4
+    self.cells = Bytes.new(self.cols * self.rows)
+    self.glyphs = Bytes.new(self.cols * self.rows * 4)
+    self.paper = luminance(paper)
+  }
+
+  // Lights the dot when the mask carries its bit and clears it
+  // otherwise; a dot off the grid is clipped. The cell's byte is read
+  // back from the grid, so the bit test and the update are arithmetic.
+  def paint(dx Int64, dy Int64, mask Int64) Void {
+    if dx >= 0 && dy >= 0 && dx < self.dot_cols && dy < self.dot_rows {
+      const cell = (dy / 4) * self.cols + dx / 2
+      const bit = braille_bit(dx % 2, dy % 4)
+      const cur = self.cells.get(cell)
+      const lit = (cur / bit) % 2
+      if (mask & bit) != 0 {
+        if lit == 0 {
+          self.cells.set(cell, cur + bit)
+        }
+      } else {
+        if lit == 1 {
+          self.cells.set(cell, cur - bit)
+        }
+      }
+    }
+  }
+
+  def rect(x Float64, y Float64, w Float64, h Float64, fill (Int64, Int64, Int64)) Void {
+    const mask = halftone(ink_level(luminance(fill), self.paper))
+    const x0 = dot_from(x)
+    const x1 = dot_from(x + w)
+    const y0 = dot_from(y)
+    const y1 = dot_from(y + h)
+    for var dy = y0; dy < y1; dy = dy + 1 {
+      for var dx = x0; dx < x1; dx = dx + 1 {
+        self.paint(dx, dy, mask)
+      }
+    }
+  }
+
+  def circle(cx Float64, cy Float64, r Float64, fill (Int64, Int64, Int64)) Void {
+    const mask = halftone(ink_level(luminance(fill), self.paper))
+    const ccx = cx / 2.0
+    const ccy = cy / 2.0
+    const rr = r / 2.0
+    const x0 = (ccx - rr - 1.0).floor().to_int64()
+    const x1 = (ccx + rr + 1.0).ceil().to_int64()
+    const y0 = (ccy - rr - 1.0).floor().to_int64()
+    const y1 = (ccy + rr + 1.0).ceil().to_int64()
+    for var dy = y0; dy < y1; dy = dy + 1 {
+      const ey = dy.to_float64() + 0.5 - ccy
+      for var dx = x0; dx < x1; dx = dx + 1 {
+        const ex = dx.to_float64() + 0.5 - ccx
+        if ex * ex + ey * ey <= rr * rr {
+          self.paint(dx, dy, mask)
+        }
+      }
+    }
+  }
+
+  // Bresenham between the dots holding the endpoints, one dot wide.
+  def line(x1 Float64, y1 Float64, x2 Float64, y2 Float64, stroke (Int64, Int64, Int64), width Float64, pattern String) Void {
+    const level = ink_level(luminance(stroke), self.paper)
+    var x = (x1 / 2.0).floor().to_int64()
+    var y = (y1 / 2.0).floor().to_int64()
+    const bx = (x2 / 2.0).floor().to_int64()
+    const by = (y2 / 2.0).floor().to_int64()
+    var dx = bx - x
+    if dx < 0 {
+      dx = 0 - dx
+    }
+    var dy = by - y
+    if dy > 0 {
+      dy = 0 - dy
+    }
+    var sx = 1
+    if bx < x {
+      sx = -1
+    }
+    var sy = 1
+    if by < y {
+      sy = -1
+    }
+    var err = dx + dy
+    var step = 0
+    var done = false
+    while !done {
+      var on = level >= 2
+      if level == 1 {
+        on = step % 4 == 0
+      }
+      if on && pattern != "" {
+        on = step % 5 < 3
+      }
+      var mask = 0
+      if on {
+        mask = 255
+      }
+      self.paint(x, y, mask)
+      if x == bx && y == by {
+        done = true
+      } else {
+        const e2 = 2 * err
+        if e2 >= dy {
+          err = err + dy
+          x = x + sx
+        }
+        if e2 <= dx {
+          err = err + dx
+          y = y + sy
+        }
+        step = step + 1
+      }
+    }
+  }
+
+  // Scanline fill under the even-odd rule, sampled at the dot centers.
+  def polygon(xs Array[Float64], ys Array[Float64], fill (Int64, Int64, Int64)) Void {
+    const n = xs.length()
+    if n >= 3 {
+      const mask = halftone(ink_level(luminance(fill), self.paper))
+      var ylo = ys[0]
+      var yhi = ys[0]
+      for var i = 1; i < n; i = i + 1 {
+        if ys[i] < ylo {
+          ylo = ys[i]
+        }
+        if ys[i] > yhi {
+          yhi = ys[i]
+        }
+      }
+      const r0 = dot_from(ylo)
+      const r1 = dot_from(yhi)
+      for var dy = r0; dy < r1; dy = dy + 1 {
+        const yc = (dy * 2 + 1).to_float64()
+        var crossings = []
+        var j = n - 1
+        for var i = 0; i < n; i = i + 1 {
+          const yi = ys[i]
+          const yj = ys[j]
+          if (yi <= yc && yc < yj) || (yj <= yc && yc < yi) {
+            crossings = insert_sorted(crossings, xs[i] + (yc - yi) * (xs[j] - xs[i]) / (yj - yi))
+          }
+          j = i
+        }
+        for var k = 0; k + 1 < crossings.length(); k = k + 2 {
+          const c0 = dot_from(crossings[k])
+          const c1 = dot_from(crossings[k + 1])
+          for var dx = c0; dx < c1; dx = dx + 1 {
+            self.paint(dx, dy, mask)
+          }
+        }
+      }
+    }
+  }
+
+  // The characters land on the row holding the middle of the glyphs,
+  // laid from the anchor: start runs right from x, middle centers on it,
+  // end finishes at it.
+  def text(x Float64, y Float64, body String, size Float64, anchor internal.svg.Anchor, weight internal.svg.Weight, fill (Int64, Int64, Int64)) Void {
+    const chars = glyphs_of(body)
+    const n = chars.length()
+    const row = ((y - size * 0.35) / 8.0).floor().to_int64()
+    const cx = x / 4.0
+    var col = cx.floor().to_int64()
+    if anchor == internal.svg.Anchor.middle {
+      col = (cx - n.to_float64() / 2.0 + 0.5).floor().to_int64()
+    }
+    if anchor == internal.svg.Anchor.end {
+      col = (cx - n.to_float64() + 0.5).floor().to_int64()
+    }
+    for var i = 0; i < n; i = i + 1 {
+      self.put_glyph(col + i, row, chars[i])
+    }
+  }
+
+  // A cell's glyph: up to four UTF-8 bytes, zero-padded, zero meaning
+  // no glyph.
+  def put_glyph(col Int64, row Int64, g String) Void {
+    if col >= 0 && row >= 0 && col < self.cols && row < self.rows {
+      const at = (row * self.cols + col) * 4
+      const b = g.to_bytes()
+      for var k = 0; k < 4; k = k + 1 {
+        if k < b.length() {
+          self.glyphs.set(at + k, b.get(k))
+        } else {
+          self.glyphs.set(at + k, 0)
+        }
+      }
+    }
+  }
+
+  def glyph_at(cell Int64) String {
+    const at = cell * 4
+    var k = 0
+    for var i = 0; i < 4; i = i + 1 {
+      if self.glyphs.get(at + i) != 0 {
+        k = k + 1
+      }
+    }
+    const g = Bytes.new(k)
+    for var i = 0; i < k; i = i + 1 {
+      g.set(i, self.glyphs.get(at + i))
+    }
+    return g.to_string()
+  }
+
+  // The rows top to bottom, each cut after its last glyph or lit cell,
+  // every row newline-terminated.
+  def finish() String {
+    const out = internal.buffer.Buffer.new()
+    for var row = 0; row < self.rows; row = row + 1 {
+      var last = -1
+      for var col = 0; col < self.cols; col = col + 1 {
+        const cell = row * self.cols + col
+        if self.cells.get(cell) != 0 || self.glyphs.get(cell * 4) != 0 {
+          last = col
+        }
+      }
+      for var col = 0; col <= last; col = col + 1 {
+        const cell = row * self.cols + col
+        if self.glyphs.get(cell * 4) != 0 {
+          out.write(self.glyph_at(cell))
+        } else {
+          out.write(braille(self.cells.get(cell)))
+        }
+      }
+      out.write("\n")
+    }
+    return out.to_string()
+  }
+}

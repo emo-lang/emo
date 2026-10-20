@@ -1634,9 +1634,42 @@ T0 marks, with fixtures byte-identical on all five targets.
 **Done when:** a figure renders to a terminal through the same Layer 0
 value graph, proving the contract is format-agnostic.
 
-- [ ] **T44.1** — A Unicode `Renderer` implementation (blocks or braille
+- [x] **T44.1** — A Unicode `Renderer` implementation (blocks or braille
       for marks, text labels) behind the `internal` `Renderer`
-      interface.
+      interface. `internal/term.emo`'s `TermRenderer` answers the same
+      six calls as `SvgRenderer` onto a grid of braille cells: four
+      figure pixels make a column and eight a row, so a cell is two dots
+      by four with a terminal glyph's aspect, and the default 640 × 480
+      figure prints as 160 columns by 60 rows. Color is one ink — every
+      color becomes a level from 0 to 8, how many of a cell's eight dots
+      it lights, from its Rec. 601 luminance contrast against the paper,
+      the figure background the renderer is built with, all in integer
+      arithmetic. The fills (`rect`, `circle`, and `polygon`, the last a
+      scanline even-odd fill sampled at the dot centers) halftone at
+      their level through one dispersed dot order and clear the dots the
+      level leaves dark, so a paper-colored fill paints paper — a legend
+      panel covers what is under it, and the theme's own background rect
+      is a no-op; a line is one dot wide through Bresenham, solid from
+      level 2, every fourth dot at level 1, cleared at level 0, with a
+      dash pattern three dots on and two off; text lands as characters
+      on the row holding the middle of its glyphs, from its anchor,
+      always over the dots in its cells, split by UTF-8 sequence; and
+      anything off the grid is clipped. The figure walk left `svg()` for
+      a renderer-agnostic `render(r, fig)` — `svg` and the new
+      `plot.terminal(fig)` differ only in the renderer they construct —
+      and the SVG goldens stayed byte-identical. Two target gaps
+      surfaced and were cleared on the package side: the `c` target
+      refuses the bitwise operators on a dynamic word (a byte read back
+      from a `Bytes` field), so the cell update is arithmetic —
+      `(cur / bit) % 2` tests the bit and `cur ± bit` flips it; and the
+      `typescript` runtime's `String.length()` counts UTF-16 code units
+      where every other path counts UTF-8 bytes, which overran the
+      `Buffer` the moment it carried three-byte braille — `Buffer.to_string`
+      now sums the encoded chunks' byte lengths, and the divergence
+      itself is recorded in `CHECK.md`. Verified on all six paths —
+      interp, c, ocaml, ts, wasm, beam — with four probes byte-identical
+      (a bar figure, a two-line figure with a dashed legend entry, the
+      heatmap, and the dark theme), and `dune test` green.
 - [ ] **T44.2** — Wire it through a CLI/demo path and test that the same
       figure renders through SVG and the terminal.
 
