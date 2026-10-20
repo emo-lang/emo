@@ -91,3 +91,33 @@ println(rainfall.number("mm"))
 println(plot.channel_colors(tips, "time", plot.theme()))
 println(plot.channel_colors(tips, "total_bill", plot.theme()))
 println(plot.channel_colors(rainfall, "mm", plot.theme()))
+
+// The relational charts: each reads a table through a channel mapping
+// and answers a figure. A label color column splits the points into one
+// series per level — the legend names the levels; the size channel
+// scales every point over its column's observed span.
+const meals = plot.table(
+  { "bill": [16.99, 10.34, 21.01, 23.68, 24.59, 8.77, 26.88, 15.04],
+    "tip": [1.01, 1.66, 3.50, 3.31, 3.61, 2.00, 5.00, 3.42],
+    "party": [2.0, 3.0, 2.0, 4.0, 2.0, 2.0, 3.0, 2.0] },
+  { "day": ["Sun", "Sat", "Sun", "Sat", "Sun", "Sat", "Sun", "Sat"] }
+)
+println(plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "size": "party" })))
+
+// The line chart draws one stroked series per level, the rows' own
+// order kept; a level's dash comes from the same sorted positions.
+const regions = plot.table(
+  { "quarter": [1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0],
+    "revenue": [12.0, 18.0, 15.0, 24.0, 9.0, 11.0, 16.0, 14.0] },
+  { "region": ["west", "west", "west", "west", "east", "east", "east", "east"] }
+)
+println(plot.svg(plot.line(regions, { "x": "quarter", "y": "revenue", "color": "region", "dash": "region" })))
+
+// The reg chart fits the least-squares line over the points and draws
+// the 95% confidence band for the mean response under them.
+const study = plot.table(
+  { "hours": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
+    "score": [52.0, 55.0, 61.0, 64.0, 66.0, 71.0, 74.0, 77.0, 83.0, 86.0] },
+  {}
+)
+println(plot.svg(plot.reg(study, { "x": "hours", "y": "score" })))

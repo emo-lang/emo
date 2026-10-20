@@ -171,6 +171,72 @@ reads the theme colormap, a column whose values all agree sitting at
 the map's low end. An absent slot keeps its place with the low end
 too, since the chart layer never draws it. An unknown column raises.
 
+## The relational charts
+
+The dataset charts are one function per chart kind: each takes the
+table and the channel mapping and answers a whole `Figure` — one axes
+carrying the marks the mapping builds, the axes labelled from the
+channel's column names — which `svg` renders and the `with_*` methods
+refine like any figure.
+
+```emo
+def scatter(t Table, ch Map[String, String]) Figure
+def line(t Table, ch Map[String, String]) Figure
+def reg(t Table, ch Map[String, String]) Figure
+```
+
+The `x` and `y` channels are required, and both name number columns —
+a label column there raises through the table's own kind check. A row
+where either column is absent drops out of the chart; a chart left
+with no drawable row raises. Everything else is per chart, and a
+mapping that carries a channel its chart does not read raises:
+
+- `scatter` reads `color`, `size`, and `marker`.
+- `line` reads `color`, `marker`, and `dash`.
+- `reg` reads only the pair.
+
+The `color` channel dispatches on the column's kind, the same dispatch
+`plot.channel_colors` answers. A label column splits the rows into one
+series per level — colored by the level's sorted position in the theme
+palette and named by the level in the legend, a level two grouping
+channels share named once. A number column (a scatter's) colors each
+point where it sits on the column's observed span, through the theme
+colormap. The `size` channel scales each point between half and one
+and a half times the style's size over its column's observed span. The
+`marker` and `dash` channels read label columns and pick each level's
+point stamp — circle, square, triangle, diamond, cross, plus, wrapping
+the list — and stroke pattern — solid, dashed, dotted, dash dot. The
+line chart draws each series in the rows' own order: a table's row
+order is intent, so the chart does not sort. The group colors resolve
+through the default theme while the figure is built; `with_theme`
+after the call re-dresses the figure's own inks.
+
+```emo
+const meals = plot.table(
+  { "bill": [16.99, 10.34, 21.01, 23.68], "tip": [1.01, 1.66, 3.50, 3.31],
+    "party": [2.0, 3.0, 2.0, 4.0] },
+  { "day": ["Sun", "Sat", "Sun", "Sat"] }
+)
+plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "size": "party" }))
+```
+
+`reg` fits the least-squares line over the points and draws the 95%
+confidence band for the mean response under them — the band first, so
+the points sit on it. The band is a `plot.mark.band` filled with the
+band style, sampled over the kept span at fifty grid points; the fit
+line joins the legend as `fit`, the band as `95% band`. Two drawable
+rows are the floor, and an x column whose values do not spread raises
+through the fit.
+
+The facet channels pass the vocabulary check and raise until the chart
+layer grows its panel splitting — splitting a dataset by a column's
+levels, per-panel level labels, and the one shared legend are the
+chart layer's remaining work. The other violations raise: an unknown
+channel, a channel the chart does not read, a missing `x` or `y`, a
+grouping channel handed a number column, a `size` or number `color`
+column with no observed values, a chart with no drawable rows, and a
+`reg` with fewer than two.
+
 ## Themes
 
 A theme dresses the whole figure: the background and foreground inks,
@@ -240,8 +306,8 @@ it.
 ## Marks
 
 The marks live in the `plot.mark` submodule — a package's submodules are
-addressed under its short name. T0 ships the bar, line, scatter, area,
-and hist marks:
+addressed under its short name. The bar, line, scatter, area, and hist
+marks are T0's, and `band` joined them for the regression chart:
 
 ```emo
 def bar(labels Array[String], values Array[Float64]) Bar
@@ -258,6 +324,9 @@ def area_style() AreaStyle
 
 def hist(values Array[Float64], bins Int64) Hist
 def hist_style() HistStyle
+
+def band(xs Array[Float64], lo Array[Float64], hi Array[Float64]) Band
+def band_style() BandStyle
 ```
 
 A mark is a value too. `Bar.with_style(s BarStyle)` and the style's
@@ -285,7 +354,10 @@ plot.mark.line(years, revenue).with_style(
 A scatter stamps its marker at every `(x, y)` point and connects
 nothing. `ScatterStyle` carries `color`, `size`, `marker`, `opacity`,
 and `label` — the marker vocabulary is the same `Marker` enum the line
-stamps with, and a scatter with `Marker.none` draws nothing.
+stamps with, and a scatter with `Marker.none` draws nothing. A scatter
+also carries per-point color and size overrides — the arrays the
+dataset charts read their `color` and `size` channels through; a point
+past an override's end draws the style's value.
 
 An area fills the closed region between its polyline and the zero
 baseline, negative values dipping below it. `AreaStyle` carries `color`
@@ -299,6 +371,13 @@ since their span collapses to zero. `bins < 1` is a contract violation
 and raises. `HistStyle` carries `color` (the fill), `edge_color` and
 `edge_width` (the bar outlines; white by default at width 1.0),
 `opacity`, and `label`.
+
+A band fills the region between a lower and an upper curve over one
+shared run of `xs` — one polygon, the upper curve read forward and the
+lower one back — and the regression chart draws its confidence band as
+one. The factory checks that the low and high arrays match the xs and
+that the xs ascend. `BandStyle` carries `color` (the fill), `opacity`,
+and `label`.
 
 **Colors are `(Int64, Int64, Int64)` sRGB triples**, each channel 0–255.
 `plot.rgb(r, g, b)` builds one with the range checked — an
@@ -364,13 +443,15 @@ whole story, target by target, is
 T0 — what exists today — is the bar, line, scatter, area, and hist
 marks, linear axes with nice-number ticks, a title, axis labels, tick
 marks, the grid, the theme that dresses it all, the validating `Table`
-the dataset charts will read, the channel vocabulary and the `color`
-channel's kind dispatch, and SVG output. Both
+the dataset charts read, the channel vocabulary and the `color`
+channel's kind dispatch, the relational charts — `scatter`, `line`,
+and `reg`, with the `band` mark joining `plot.mark` for the
+regression chart — and SVG output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
 categorical labels. The remaining pieces the surface carries are
-reserved and not rendered yet: the chart functions that take a table
-and a channel mapping, and the chart-layer half of faceting —
+reserved and not rendered yet: the distribution, categorical, and
+matrix charts, and the chart-layer half of faceting —
 splitting a dataset by a column's levels, per-panel level labels, and
 the one shared legend. The marks and the axes draw through the internal
 `Renderer` interface — `DrawContext` carries a `Renderer`, not the

@@ -1459,7 +1459,41 @@ against the `Renderer` interface, not `SvgRenderer`.
       and five raise messages byte-identical: unknown channel, two family
       violations, unknown column, all-absent color column. The demo grew
       a channels section; the chart functions that take the mapping
-      arrive with Step 43.
+      arrive with Step 43. (The 2026-10-20 chart layer replaced the
+      per-family reads with a per-chart check — each chart carries its
+      own supported list, since the charts of one family read different
+      aesthetics — so the four family wrappers are gone and the
+      unsupported-channel message names the chart.)
+- [x] **T43.2** — Relational: `plot.scatter`, `plot.line`, `plot.reg`.
+      Each chart reads a `Table` through the channel mapping and answers
+      a whole `Figure` — one axes, labelled from the channel's column
+      names, carrying the marks the mapping builds. `x` and `y` are
+      required and numeric; rows where either is absent drop out, and a
+      chart with no drawable row raises. The reads are per chart —
+      scatter `color`/`size`/`marker`, line `color`/`marker`/`dash`, reg
+      only the pair — and a channel the chart does not read raises. The
+      `color` dispatch rides T42.3's: a label column splits the rows
+      into one series per sorted level (palette color, the level in the
+      legend, a level two grouping channels share named once), a number
+      column colors a scatter's points through the colormap — which
+      grew the `Scatter` mark per-point color and size overrides, the
+      `size` channel's span normalization reading the same way (half to
+      one and a half times the style's size). Grouping channels read
+      label columns and pick each level's marker (the six shapes,
+      wrapping) and dash (the four patterns); groups form over the
+      channels' combined levels, ordered by their sorted positions. The
+      line draws each series in the rows' own order — row order is
+      intent. `reg` draws the points, the OLS line (`fit`), and the 95%
+      confidence band under them first, sampled over the kept span at
+      fifty grid points through `ols_band` — which gave `plot.mark` its
+      sixth mark, `band` (one polygon, upper curve forward and lower
+      back, the factory checking matched lengths and ascending xs). The
+      facet channels pass the check and raise until the chart layer's
+      panel splitting lands. Verified on all six paths — interp, c,
+      ocaml, ts, wasm, beam — with the demo golden byte-identical
+      (`plot_demo` grew a relational section: a grouped scatter with the
+      size channel, a two-level line with the dash channel, a reg with
+      its band) and thirteen raise messages byte-identical.
 
 ### Step 43 — T1 dataset charts
 

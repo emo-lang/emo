@@ -101,7 +101,7 @@ tips.label("time")
 { "x": "total_bill", "y": "tip", "color": "time" }
 ```
 
-词表是八个词——`x`、`y`、`color`、`size`、`marker`、`dash`、`facet_row`、`facet_col`——映射里出现别的词直接 raise。每个图族只读它支持的通道:关系图读全套,分布图与类别图读 `x`、`y`、`color` 和两个分面通道,矩阵图只读分面。映射里出现图族不读的通道同样 raise。通道的值只能是列名:常量属于 mark 样式,绝不进映射。
+词表是八个词——`x`、`y`、`color`、`size`、`marker`、`dash`、`facet_row`、`facet_col`——映射里出现别的词直接 raise。每个图只读它支持的通道,一张图自带支持清单,映射里出现它不读的通道同样 raise。通道的值只能是列名:常量属于 mark 样式,绝不进映射。
 
 `color` 通道按列的种类分派,这份分派本身就是一个独立的函数:
 
@@ -110,6 +110,37 @@ plot.channel_colors(tips, "time", plot.theme())
 ```
 
 类别列按水平的排序位置从主题 palette 取色——水平先去重、再按字节排序;数值列把在场值在自己跨度上归一化、从主题 colormap 取色,所有值都相同的列落在 map 的低端。缺席的槽位同样以低端占位,因为图表层永远不会画它。未知的列名直接 raise。
+
+## 关系型图表
+
+数据集图表每种一个函数:每个函数接表和通道映射,应答一整个 `Figure`——一个 axes,装着映射建出的 mark,axes 用通道的列名做标签——`svg` 渲染它,`with_*` 方法像任何图一样细化它。
+
+```emo
+def scatter(t Table, ch Map[String, String]) Figure
+def line(t Table, ch Map[String, String]) Figure
+def reg(t Table, ch Map[String, String]) Figure
+```
+
+`x` 与 `y` 通道必备,而且都必须是数值列——类别列在那里会经表自己的种类检查 raise。任一列缺席的行从图里剔除;一张图剔完之后没有可画的行也直接 raise。其余通道按图而异,映射里出现该图不读的通道直接 raise:
+
+- `scatter` 读 `color`、`size`、`marker`。
+- `line` 读 `color`、`marker`、`dash`。
+- `reg` 只读那一对。
+
+`color` 通道按列的种类分派,与 `plot.channel_colors` 应答的是同一份分派。类别列把行拆成每个水平一条系列——颜色按水平的排序位置取自主题 palette,图例里以该水平命名,两个分组通道共享的水平只命名一次。数值列(scatter 的)把每个点按它在列的观察跨度上的位置、经主题 colormap 取色。`size` 通道把每个点缩放到样式尺寸的一半到一倍半,归一化同样跨列的观察跨度。`marker` 与 `dash` 通道读类别列,按水平挑选点的形状——circle、square、triangle、diamond、cross、plus,绕列表循环——与描边样式——solid、dashed、dotted、dash dot。折线图按行自身的顺序画每条系列:表的行序就是意图,图不排序。分组的颜色在图构建时经默认主题解析;事后的 `with_theme` 只重新装扮图自己的墨色。
+
+```emo
+const meals = plot.table(
+  { "bill": [16.99, 10.34, 21.01, 23.68], "tip": [1.01, 1.66, 3.50, 3.31],
+    "party": [2.0, 3.0, 2.0, 4.0] },
+  { "day": ["Sun", "Sat", "Sun", "Sat"] }
+)
+plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "size": "party" }))
+```
+
+`reg` 在点之上拟合最小二乘直线,并在其下画出均值响应的 95% 置信带——band 先画,点落在它上面。band 是一块 `plot.mark.band`,以 band 样式填充,在保留跨度上取五十个网格点;拟合线以 `fit` 进图例,band 以 `95% band` 进图例。可画的行至少两行,x 列的值不铺开时经拟合直接 raise。
+
+分面通道通过词表检查、但在图表层长出面板拆分之前直接 raise——按列水平拆分数据、逐面板水平标注、单份共享图例是图表层剩下的工作。其余违例直接 raise:未知通道、该图不读的通道、缺 `x` 或 `y`、分组通道拿到数值列、`size` 或数值 `color` 列没有在场值、图没有可画的行、`reg` 少于两行。
 
 ## 主题
 
@@ -150,7 +181,7 @@ plot.figure().with_title("Quarterly review").with_grid(2, 2)
 
 ## mark
 
-mark 在 `plot.mark` 子模块里——包的子模块以包的短名为前缀寻址。T0 有柱状、折线、散点、面积、直方图五个 mark:
+mark 在 `plot.mark` 子模块里——包的子模块以包的短名为前缀寻址。柱状、折线、散点、面积、直方图五个 mark 是 T0 的,`band` 为回归图加入:
 
 ```emo
 def bar(labels Array[String], values Array[Float64]) Bar
@@ -167,6 +198,9 @@ def area_style() AreaStyle
 
 def hist(values Array[Float64], bins Int64) Hist
 def hist_style() HistStyle
+
+def band(xs Array[Float64], lo Array[Float64], hi Array[Float64]) Band
+def band_style() BandStyle
 ```
 
 mark 也是值。`Bar.with_style(s BarStyle)` 以及样式上的 `with_color` / `with_width` / `with_label` 细化它,不改动任何东西:
@@ -184,11 +218,13 @@ plot.mark.line(years, revenue).with_style(
     .with_marker(plot.mark.Marker.circle))
 ```
 
-散点在每个 `(x, y)` 点盖上 marker,不连任何线。`ScatterStyle` 携带 `color`、`size`、`marker`、`opacity` 与 `label`——marker 词汇与折线用的是同一个 `Marker` 枚举,`Marker.none` 的散点什么都不画。
+散点在每个 `(x, y)` 点盖上 marker,不连任何线。`ScatterStyle` 携带 `color`、`size`、`marker`、`opacity` 与 `label`——marker 词汇与折线用的是同一个 `Marker` 枚举,`Marker.none` 的散点什么都不画。散点还带逐点的颜色与尺寸覆盖——正是数据集图表读取 `color` 与 `size` 通道的那两个数组;越过覆盖数组末端的点画样式的值。
 
 面积填充折线与零基线之间的闭合区域,负值落到基线下方。`AreaStyle` 携带 `color`(填充)、`edge_color` 与 `edge_width`(沿曲线本身的描边;默认 `0.0` 宽度不画边)、`opacity` 与 `label`。
 
 直方图把值数进横跨数据的等宽箱,把箱子作为柱子铺在零基线上。等于最大值的数落进最后一箱;全同值跨度塌缩为零,也堆进最后一箱。`bins < 1` 是契约违例,直接 raise。`HistStyle` 携带 `color`(填充)、`edge_color` 与 `edge_width`(柱子描边;默认白色、宽度 1.0)、`opacity` 与 `label`。
+
+band 在同一段升序 `xs` 上填充下曲线与上曲线之间的区域——一个多边形,上曲线正向读、下曲线反向读——回归图的置信带画的就是它。工厂检查低、高数组与 xs 等长且 xs 升序。`BandStyle` 携带 `color`(填充)、`opacity` 与 `label`。
 
 **颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组**,每通道 0–255。`plot.rgb(r, g, b)` 构造经过范围检查的三元组——越界通道直接 raise;裸三元组也接受,在绘制时校验。不透明度是样式上单独的 `Float64`,绝不煍进三元组。它随每个样式携带,但**尚未渲染**——渲染器图元还没有不透明度旋钮。
 
@@ -222,6 +258,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图将要读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派,还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:接收表与通道映射的图表函数,以及图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:分布、类别、矩阵图表,以及图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

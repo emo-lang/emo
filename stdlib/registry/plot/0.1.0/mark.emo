@@ -2,8 +2,8 @@
 // its data spans. The span is named on both axes — a continuous x and y
 // range through `x_min`/`x_max`/`y_min`/`y_max`, a categorical x through
 // `bands` and `x_labels` — so the axes can scale to every mark at once.
-// `bar`, `line`, `scatter`, `area`, and `hist` are the implementations
-// so far.
+// `bar`, `line`, `scatter`, `area`, `hist`, and `band` are the
+// implementations so far.
 
 interface Mark {
   def draw(ctx internal.ctx.DrawContext) Void
@@ -343,16 +343,30 @@ def scatter_style() ScatterStyle {
   return ScatterStyle.new(color: (85, 168, 104), size: 6.0, marker: Marker.circle, opacity: 1.0, label: "")
 }
 
+// A scatter carries two per-point overrides beside its style — the
+// colors and sizes the dataset charts read their `color` and `size`
+// channels through. A point past an override array's end draws the
+// style's value.
 class Scatter {
-  def init(x Array[Float64], y Array[Float64], style ScatterStyle) {
+  def init(x Array[Float64], y Array[Float64], style ScatterStyle, colors Array[(Int64, Int64, Int64)], sizes Array[Float64]) {
     self.x = x
     self.y = y
     self.style = style
+    self.colors = colors
+    self.sizes = sizes
   }
 
   def draw(ctx internal.ctx.DrawContext) Void {
     for var i = 0; i < self.y.length(); i = i + 1 {
-      stamp_marker(ctx.renderer, ctx.px(self.x[i]), ctx.py(self.y[i]), self.style.marker, self.style.size, self.style.color)
+      var color = self.style.color
+      if i < self.colors.length() {
+        color = self.colors[i]
+      }
+      var size = self.style.size
+      if i < self.sizes.length() {
+        size = self.sizes[i]
+      }
+      stamp_marker(ctx.renderer, ctx.px(self.x[i]), ctx.py(self.y[i]), self.style.marker, size, color)
     }
   }
 
@@ -425,12 +439,12 @@ class Scatter {
   }
 
   def with_style(s ScatterStyle) Scatter {
-    return Scatter.new(x: self.x, y: self.y, style: s)
+    return Scatter.new(x: self.x, y: self.y, style: s, colors: self.colors, sizes: self.sizes)
   }
 }
 
 def scatter(x Array[Float64], y Array[Float64]) Scatter {
-  return Scatter.new(x: x, y: y, style: scatter_style())
+  return Scatter.new(x: x, y: y, style: scatter_style(), colors: [], sizes: [])
 }
 
 class AreaStyle {
@@ -730,4 +744,133 @@ def hist(values Array[Float64], bins Int64) Hist {
     counts = counts.append(c)
   }
   return Hist.new(counts: counts, lo: lo, width: span / bins.to_float64(), style: hist_style())
+}
+
+class BandStyle {
+  def init(color (Int64, Int64, Int64), opacity Float64, label String) {
+    self.color = color
+    self.opacity = opacity
+    self.label = label
+  }
+
+  def with_color(c (Int64, Int64, Int64)) BandStyle {
+    return BandStyle.new(color: c, opacity: self.opacity, label: self.label)
+  }
+
+  def with_opacity(o Float64) BandStyle {
+    return BandStyle.new(color: self.color, opacity: o, label: self.label)
+  }
+
+  def with_label(s String) BandStyle {
+    return BandStyle.new(color: self.color, opacity: self.opacity, label: s)
+  }
+}
+
+def band_style() BandStyle {
+  return BandStyle.new(color: (226, 233, 240), opacity: 1.0, label: "")
+}
+
+// A filled band between a lower and an upper curve over one shared run
+// of xs — the regression chart's confidence band. One polygon: the
+// upper curve read forward, the lower one back.
+class Band {
+  def init(xs Array[Float64], lo Array[Float64], hi Array[Float64], style BandStyle) {
+    self.xs = xs
+    self.lo = lo
+    self.hi = hi
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    var pxs = []
+    var pys = []
+    for var i = 0; i < self.xs.length(); i = i + 1 {
+      pxs = pxs.append(ctx.px(self.xs[i]))
+      pys = pys.append(ctx.py(self.hi[i]))
+    }
+    for var i = self.xs.length() - 1; i >= 0; i = i - 1 {
+      pxs = pxs.append(ctx.px(self.xs[i]))
+      pys = pys.append(ctx.py(self.lo[i]))
+    }
+    if pxs.length() > 1 {
+      ctx.renderer.polygon(pxs, pys, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    if self.xs.length() == 0 {
+      return 0.0
+    }
+    return self.xs[0]
+  }
+
+  def x_max() Float64 {
+    if self.xs.length() == 0 {
+      return 0.0
+    }
+    return self.xs[self.xs.length() - 1]
+  }
+
+  def y_min() Float64 {
+    if self.lo.length() == 0 {
+      return 0.0
+    }
+    var lo = self.lo[0]
+    for var i = 1; i < self.lo.length(); i = i + 1 {
+      if self.lo[i] < lo {
+        lo = self.lo[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.hi.length() == 0 {
+      return 0.0
+    }
+    var hi = self.hi[0]
+    for var i = 1; i < self.hi.length(); i = i + 1 {
+      if self.hi[i] > hi {
+        hi = self.hi[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return 0
+  }
+
+  def x_labels() Array[String] {
+    return []
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.rect(x, y - 5.0, 18.0, 10.0, self.style.color)
+  }
+
+  def with_style(s BandStyle) Band {
+    return Band.new(xs: self.xs, lo: self.lo, hi: self.hi, style: s)
+  }
+}
+
+// The band factory: the three arrays share one length and the xs ascend,
+// so the polygon's two curves read in one x order.
+def band(xs Array[Float64], lo Array[Float64], hi Array[Float64]) Band {
+  if lo.length() != xs.length() || hi.length() != xs.length() {
+    raise Exception.new(message: "plot: a band's low and high arrays must match its xs, got ${lo.length()} and ${hi.length()} for ${xs.length()}")
+  }
+  if xs.length() < 2 {
+    raise Exception.new(message: "plot: a band needs at least two xs, got ${xs.length()}")
+  }
+  for var i = 1; i < xs.length(); i = i + 1 {
+    if xs[i] <= xs[i - 1] {
+      raise Exception.new(message: "plot: a band's xs need to ascend, got ${xs[i - 1]} then ${xs[i]}")
+    }
+  }
+  return Band.new(xs: xs, lo: lo, hi: hi, style: band_style())
 }

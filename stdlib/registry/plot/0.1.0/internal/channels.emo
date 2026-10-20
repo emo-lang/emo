@@ -1,11 +1,13 @@
 // The dataset channel vocabulary: the words a chart's channel mapping
-// may carry, the per-family reads, and the level order a categorical
+// may carry, the per-chart reads, and the level order a categorical
 // column resolves through. Everything here is plain strings and bytes,
 // so the answers are byte-identical on every target.
 
 // A mapping carries channel names as keys and column names as values —
-// constants belong in the mark styles, never in the mapping.
-def check(ch Map[String, String], family String, supported Array[String]) Void {
+// constants belong in the mark styles, never in the mapping. `who` names
+// the chart whose reads are enforced, and the supported list is that
+// chart's own — the charts of one family read different aesthetics.
+def check(ch Map[String, String], who String, supported Array[String]) Void {
   const keys = ch.keys()
   for var k = 0; k < keys.length(); k = k + 1 {
     const name = keys[k]
@@ -13,27 +15,9 @@ def check(ch Map[String, String], family String, supported Array[String]) Void {
       raise Exception.new(message: "plot: \"${name}\" is not a channel; the channels are x, y, color, size, marker, dash, facet_row, facet_col")
     }
     if !member(supported, name) {
-      raise Exception.new(message: "plot: the ${family} charts do not read the \"${name}\" channel")
+      raise Exception.new(message: "plot: the ${who} chart does not read the \"${name}\" channel")
     }
   }
-}
-
-// Each chart family reads only the channels it supports; a mapping that
-// carries one the family does not read raises.
-def check_relational(ch Map[String, String]) Void {
-  check(ch, "relational", ["x", "y", "color", "size", "marker", "dash", "facet_row", "facet_col"])
-}
-
-def check_distributions(ch Map[String, String]) Void {
-  check(ch, "distributions", ["x", "y", "color", "facet_row", "facet_col"])
-}
-
-def check_categorical(ch Map[String, String]) Void {
-  check(ch, "categorical", ["x", "y", "color", "facet_row", "facet_col"])
-}
-
-def check_matrix(ch Map[String, String]) Void {
-  check(ch, "matrix", ["facet_row", "facet_col"])
 }
 
 def member(xs Array[String], s String) Bool {

@@ -1,5 +1,6 @@
-// The declarative figure surface and the SVG entry point. A chart is a
-// value — `figure`/`axes`/marks — rendered in one call.
+// The declarative figure surface, the dataset charts, and the SVG entry
+// point. A chart is a value — `figure`/`axes`/marks — rendered in one
+// call.
 
 const scale = internal.scale
 
@@ -225,6 +226,427 @@ def observed(numbers Array[Float64], presence Array[Presence]) Array[Float64] {
     }
   }
   return out
+}
+
+// ---- the relational charts ----
+
+// The dataset charts: a chart reads a Table through a channel mapping
+// and answers a Figure — one axes, labelled from the channel's column
+// names, carrying the marks the mapping builds. `scatter`, `line`, and
+// `reg` are the relational family; the other families arrive with their
+// steps.
+
+// The marker a grouping level stamps with: the six shapes in the
+// vocabulary's order, wrapping around the list.
+def marker_at(i Int64) mark.Marker {
+  const cycle = [mark.Marker.circle, mark.Marker.square, mark.Marker.triangle, mark.Marker.diamond, mark.Marker.cross, mark.Marker.plus]
+  return cycle[i % cycle.length()]
+}
+
+// The dash a grouping level strokes with, wrapping the four patterns.
+def dash_at(i Int64) mark.Dash {
+  const cycle = [mark.Dash.solid, mark.Dash.dashed, mark.Dash.dotted, mark.Dash.dash_dot]
+  return cycle[i % cycle.length()]
+}
+
+// The facet channels pass every chart's check — the vocabulary reads
+// them — and the chart layer's panel splitting is not written yet, so a
+// mapping that carries one raises here rather than splitting silently.
+def refuse_facets(ch Map[String, String]) Void {
+  const keys = ch.keys()
+  for var k = 0; k < keys.length(); k = k + 1 {
+    if keys[k] == "facet_row" {
+      raise Exception.new(message: "plot: the \"facet_row\" channel is not read yet")
+    }
+    if keys[k] == "facet_col" {
+      raise Exception.new(message: "plot: the \"facet_col\" channel is not read yet")
+    }
+  }
+}
+
+// The x and y channel names every relational chart reads: both are
+// required, and both must name number columns or the Table's own kind
+// check raises.
+def xy_names(ch Map[String, String], kind String) (String, String) {
+  if !ch.has("x") || !ch.has("y") {
+    raise Exception.new(message: "plot: the ${kind} chart needs the \"x\" and \"y\" channels")
+  }
+  return (ch.get("x"), ch.get("y"))
+}
+
+// The rows a relational chart draws: the slots where both the x and the
+// y column carry a value. A missing number costs its row, not the chart.
+def kept_rows(t Table, x_name String, y_name String, kind String) Array[Int64] {
+  const xp = t.presence(x_name)
+  const yp = t.presence(y_name)
+  var rows = []
+  for var i = 0; i < xp.length(); i = i + 1 {
+    if xp[i] == Presence.present {
+      if yp[i] == Presence.present {
+        rows = rows.append(i)
+      }
+    }
+  }
+  if rows.length() == 0 {
+    raise Exception.new(message: "plot: the ${kind} chart has no rows to draw")
+  }
+  return rows
+}
+
+// One grouping channel's column: empty when the channel is unused, a
+// label column otherwise — the grouping channels read levels, not
+// numbers, and a number column raises.
+def grouping_column(t Table, ch Map[String, String], channel String, used Bool) Array[String] {
+  if !used {
+    return []
+  }
+  const name = ch.get(channel)
+  if t.numbers.has(name) {
+    raise Exception.new(message: "plot: the \"${channel}\" channel needs a label column, \"${name}\" is a number column")
+  }
+  return t.label(name)
+}
+
+// A kept row's level in one grouping channel: -1 where the channel is
+// unused; a used column's values all sit in its own levels.
+def level_indices(col Array[String], levels Array[String], rows Array[Int64]) Array[Int64] {
+  var out = []
+  for var r = 0; r < rows.length(); r = r + 1 {
+    var idx = 0 - 1
+    if levels.length() > 0 {
+      var k = 0
+      while k < levels.length() && levels[k] != col[rows[r]] {
+        k = k + 1
+      }
+      idx = k
+    }
+    out = out.append(idx)
+  }
+  return out
+}
+
+// The grouping read the scatter and line charts share: per kept row, the
+// row's level in each grouping channel's sorted levels, -1 where the
+// channel is unused. The level lists ride along, so a group can name
+// itself and pick its color, marker, and dash.
+class Grouping {
+  def init(colors Array[String], color_idx Array[Int64], markers Array[String], marker_idx Array[Int64], dashes Array[String], dash_idx Array[Int64]) {
+    self.colors = colors
+    self.color_idx = color_idx
+    self.markers = markers
+    self.marker_idx = marker_idx
+    self.dashes = dashes
+    self.dash_idx = dash_idx
+  }
+}
+
+def grouping(t Table, ch Map[String, String], rows Array[Int64], color_groups Bool) Grouping {
+  const color_col = grouping_column(t, ch, "color", color_groups)
+  const marker_col = grouping_column(t, ch, "marker", ch.has("marker"))
+  const dash_col = grouping_column(t, ch, "dash", ch.has("dash"))
+  const colors = internal.channels.sorted_levels(color_col)
+  const markers = internal.channels.sorted_levels(marker_col)
+  const dashes = internal.channels.sorted_levels(dash_col)
+  return Grouping.new(colors: colors, color_idx: level_indices(color_col, colors, rows),
+    markers: markers, marker_idx: level_indices(marker_col, markers, rows),
+    dashes: dashes, dash_idx: level_indices(dash_col, dashes, rows))
+}
+
+// The group's flattened slot: each channel's level index — one more than
+// the level, so an unused channel is slot 0 — folded into one Int64.
+// Ascending keys order the groups by their levels' sorted positions.
+def group_key(g Grouping, r Int64) Int64 {
+  const c = g.color_idx[r] + 1
+  const m = g.marker_idx[r] + 1
+  const d = g.dash_idx[r] + 1
+  return (c * (g.markers.length() + 1) + m) * (g.dashes.length() + 1) + d
+}
+
+// A group's legend label: its levels, each once, joined ", ".
+def label_with(label String, part String) String {
+  if part == "" {
+    return label
+  }
+  if label == "" {
+    return part
+  }
+  if label == part {
+    return label
+  }
+  return label + ", " + part
+}
+
+// The bucket keys ascending: insertion sort — a mapping's group counts
+// are small.
+def sorted_keys(keys Array[Int64]) Array[Int64] {
+  var out = []
+  for var k = 0; k < keys.length(); k = k + 1 {
+    const key = keys[k]
+    var pos = 0
+    while pos < out.length() && out[pos] < key {
+      pos = pos + 1
+    }
+    var next = []
+    for var j = 0; j < pos; j = j + 1 {
+      next = next.append(out[j])
+    }
+    next = next.append(key)
+    for var j = pos; j < out.length(); j = j + 1 {
+      next = next.append(out[j])
+    }
+    out = next
+  }
+  return out
+}
+
+// The chart's one-panel figure.
+def chart_figure(x_name String, y_name String, marks Array[mark.Mark]) Figure {
+  const ax = axes().with_x_label(x_name).with_y_label(y_name).with_marks(marks)
+  return figure().with_axes([ax])
+}
+
+// The scatter chart: one mark per grouping level, one mark when the
+// mapping groups nothing. The `color` channel dispatches on the column's
+// kind — a label column splits the points into one series per level,
+// colored by the level's sorted position in the theme palette; a number
+// column colors every point where it sits on its observed span, through
+// the theme colormap. The `size` channel scales each point between half
+// and one and a half times the style's size, the same span normalization
+// the color dispatch reads its column through.
+def scatter(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "scatter", ["x", "y", "color", "size", "marker", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const names = xy_names(ch, "scatter")
+  const x_name = names[0]
+  const y_name = names[1]
+  const xs = t.number(x_name)
+  const ys = t.number(y_name)
+  const rows = kept_rows(t, x_name, y_name, "scatter")
+  const t0 = theme()
+  var color_groups = false
+  var point_colors = []
+  if ch.has("color") {
+    const name = ch.get("color")
+    if t.numbers.has(name) {
+      const full = channel_colors(t, name, t0)
+      for var r = 0; r < rows.length(); r = r + 1 {
+        point_colors = point_colors.append(full[rows[r]])
+      }
+    } else {
+      color_groups = true
+    }
+  }
+  var point_sizes = []
+  if ch.has("size") {
+    const name = ch.get("size")
+    const vals = t.number(name)
+    const pres = t.presence(name)
+    var lo = 0.0
+    var hi = 0.0
+    var seen = false
+    for var i = 0; i < vals.length(); i = i + 1 {
+      if pres[i] == Presence.present {
+        if !seen {
+          lo = vals[i]
+          hi = vals[i]
+          seen = true
+        } else {
+          if vals[i] < lo {
+            lo = vals[i]
+          }
+          if vals[i] > hi {
+            hi = vals[i]
+          }
+        }
+      }
+    }
+    if !seen {
+      raise Exception.new(message: "plot: the size column \"${name}\" carries no values")
+    }
+    const base = mark.scatter_style().size
+    for var r = 0; r < rows.length(); r = r + 1 {
+      const i = rows[r]
+      var f = 0.0
+      if pres[i] == Presence.present {
+        if hi > lo {
+          f = (vals[i] - lo) / (hi - lo)
+        }
+      }
+      point_sizes = point_sizes.append(base * (0.5 + f))
+    }
+  }
+  const g = grouping(t, ch, rows, color_groups)
+  var buckets = {}
+  for var r = 0; r < rows.length(); r = r + 1 {
+    const key = group_key(g, r)
+    if buckets.has(key) {
+      buckets.set(key, buckets.get(key).append(r))
+    } else {
+      buckets.set(key, [r])
+    }
+  }
+  const order = sorted_keys(buckets.keys())
+  var marks = []
+  for var k = 0; k < order.length(); k = k + 1 {
+    const idxs = buckets.get(order[k])
+    const at = idxs[0]
+    var style = mark.scatter_style()
+    if g.color_idx[at] >= 0 {
+      style = style.with_color(t0.palette.color(g.color_idx[at]))
+    }
+    if g.marker_idx[at] >= 0 {
+      style = style.with_marker(marker_at(g.marker_idx[at]))
+    }
+    var part_c = ""
+    if g.color_idx[at] >= 0 {
+      part_c = g.colors[g.color_idx[at]]
+    }
+    var part_m = ""
+    if g.marker_idx[at] >= 0 {
+      part_m = g.markers[g.marker_idx[at]]
+    }
+    const label = label_with(part_c, part_m)
+    if label != "" {
+      style = style.with_label(label)
+    }
+    var gx = []
+    var gy = []
+    var gcolors = []
+    var gsizes = []
+    for var j = 0; j < idxs.length(); j = j + 1 {
+      const i = rows[idxs[j]]
+      gx = gx.append(xs[i])
+      gy = gy.append(ys[i])
+      if point_colors.length() > 0 {
+        gcolors = gcolors.append(point_colors[idxs[j]])
+      }
+      if point_sizes.length() > 0 {
+        gsizes = gsizes.append(point_sizes[idxs[j]])
+      }
+    }
+    marks = marks.append(mark.Scatter.new(x: gx, y: gy, style: style, colors: gcolors, sizes: gsizes))
+  }
+  return chart_figure(x_name, y_name, marks)
+}
+
+// The line chart: one stroked series per grouping level, each drawn in
+// the rows' own order — a table's row order is intent, so the chart does
+// not sort. A level's color reads the theme palette by its sorted
+// position; the `marker` and `dash` channels pick a level's point stamp
+// and stroke pattern the same way.
+def line(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "line", ["x", "y", "color", "marker", "dash", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const names = xy_names(ch, "line")
+  const x_name = names[0]
+  const y_name = names[1]
+  const xs = t.number(x_name)
+  const ys = t.number(y_name)
+  const rows = kept_rows(t, x_name, y_name, "line")
+  const t0 = theme()
+  const g = grouping(t, ch, rows, ch.has("color"))
+  var buckets = {}
+  for var r = 0; r < rows.length(); r = r + 1 {
+    const key = group_key(g, r)
+    if buckets.has(key) {
+      buckets.set(key, buckets.get(key).append(r))
+    } else {
+      buckets.set(key, [r])
+    }
+  }
+  const order = sorted_keys(buckets.keys())
+  var marks = []
+  for var k = 0; k < order.length(); k = k + 1 {
+    const idxs = buckets.get(order[k])
+    const at = idxs[0]
+    var style = mark.line_style()
+    if g.color_idx[at] >= 0 {
+      style = style.with_color(t0.palette.color(g.color_idx[at]))
+    }
+    if g.marker_idx[at] >= 0 {
+      style = style.with_marker(marker_at(g.marker_idx[at]))
+    }
+    if g.dash_idx[at] >= 0 {
+      style = style.with_dash(dash_at(g.dash_idx[at]))
+    }
+    var part_c = ""
+    if g.color_idx[at] >= 0 {
+      part_c = g.colors[g.color_idx[at]]
+    }
+    var part_m = ""
+    if g.marker_idx[at] >= 0 {
+      part_m = g.markers[g.marker_idx[at]]
+    }
+    var part_d = ""
+    if g.dash_idx[at] >= 0 {
+      part_d = g.dashes[g.dash_idx[at]]
+    }
+    const label = label_with(label_with(part_c, part_m), part_d)
+    if label != "" {
+      style = style.with_label(label)
+    }
+    var gx = []
+    var gy = []
+    for var j = 0; j < idxs.length(); j = j + 1 {
+      const i = rows[idxs[j]]
+      gx = gx.append(xs[i])
+      gy = gy.append(ys[i])
+    }
+    marks = marks.append(mark.Line.new(x: gx, y: gy, style: style))
+  }
+  return chart_figure(x_name, y_name, marks)
+}
+
+// The regression chart: the points, the least-squares line over them,
+// and the 95% confidence band for the mean response — the band drawn
+// first so the points sit on it. The band samples the kept span at
+// fifty grid points, its ends the large-sample interval `ols_band`
+// answers.
+def reg(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "reg", ["x", "y", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const names = xy_names(ch, "reg")
+  const x_name = names[0]
+  const y_name = names[1]
+  const xs = t.number(x_name)
+  const ys = t.number(y_name)
+  const rows = kept_rows(t, x_name, y_name, "reg")
+  if rows.length() < 2 {
+    raise Exception.new(message: "plot: the reg chart needs at least two rows, got ${rows.length()}")
+  }
+  var fit_x = []
+  var fit_y = []
+  for var r = 0; r < rows.length(); r = r + 1 {
+    const i = rows[r]
+    fit_x = fit_x.append(xs[i])
+    fit_y = fit_y.append(ys[i])
+  }
+  var xlo = fit_x[0]
+  var xhi = fit_x[0]
+  for var r = 1; r < fit_x.length(); r = r + 1 {
+    if fit_x[r] < xlo {
+      xlo = fit_x[r]
+    }
+    if fit_x[r] > xhi {
+      xhi = fit_x[r]
+    }
+  }
+  const fit = internal.stats.ols(fit_x, fit_y)
+  const points = 50
+  var band_x = []
+  var band_lo = []
+  var band_hi = []
+  for var s = 0; s < points; s = s + 1 {
+    const x0 = xlo + (xhi - xlo) * s.to_float64() / (points - 1).to_float64()
+    const ends = internal.stats.ols_band(fit, x0, 0.95)
+    band_x = band_x.append(x0)
+    band_lo = band_lo.append(ends[0])
+    band_hi = band_hi.append(ends[2])
+  }
+  const band = mark.band(band_x, band_lo, band_hi).with_style(mark.band_style().with_label("95% band"))
+  const pts = mark.Scatter.new(x: fit_x, y: fit_y, style: mark.scatter_style(), colors: [], sizes: [])
+  const fit_line = mark.Line.new(x: [xlo, xhi], y: [fit.slope * xlo + fit.intercept, fit.slope * xhi + fit.intercept], style: mark.line_style().with_label("fit"))
+  return chart_figure(x_name, y_name, [band, pts, fit_line])
 }
 
 class Figure {
