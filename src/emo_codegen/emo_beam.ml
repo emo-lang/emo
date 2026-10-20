@@ -342,20 +342,28 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env "])"
   | Index (b, i) ->
       (* a tuple is an Erlang tuple and answers element/2; a list (an
-         array literal) is 1-based and answers lists:nth *)
-      if match b.Emo_ir.ety with Emo_check.TupleType _ -> true | _ -> false
-      then (
-        put env "call 'erlang':'element'(call 'erlang':'+'(1, ";
-        expr env i;
-        put env "), ";
-        expr env b;
-        put env ")")
-      else (
-        put env "call 'lists':'nth'(call 'erlang':'+'(1, ";
-        expr env i;
-        put env "), ";
-        expr env b;
-        put env ")")
+         array literal) is 1-based and answers lists:nth; a value whose
+         static type is dynamic — an element of an array that started
+         out as a bare `[]` — asks the runtime which it is *)
+      (match b.Emo_ir.ety with
+      | Emo_check.TupleType _ ->
+          put env "call 'erlang':'element'(call 'erlang':'+'(1, ";
+          expr env i;
+          put env "), ";
+          expr env b;
+          put env ")"
+      | Emo_check.ArrayType _ ->
+          put env "call 'lists':'nth'(call 'erlang':'+'(1, ";
+          expr env i;
+          put env "), ";
+          expr env b;
+          put env ")"
+      | _ ->
+          put env "apply 'emo_index'/2 (";
+          expr env b;
+          put env ", ";
+          expr env i;
+          put env ")")
   | Field_read { obj; name } -> (
       (* a module reference: the alias's runtime value is never used —
          qualified calls resolve statically — so the qualified path as
@@ -2327,6 +2335,15 @@ let rt_source =
 	  <'true'> when 'true' -> 'false'
 	  <'false'> when 'true' -> 'true'
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_other, _other)
+	end
+
+%% A dynamic value indexed with [k]: a tuple answers element/2, a list
+%%   (an array) is 1-based and answers lists:nth.
+'emo_index'/2 =
+    fun (_b, _i) ->
+	case call 'erlang':'is_tuple'(_b) of
+	  <'true'> when 'true' -> call 'erlang':'element'(call 'erlang':'+'(1, _i), _b)
+	  <'false'> when 'true' -> call 'lists':'nth'(call 'erlang':'+'(1, _i), _b)
 	end
 
 'emo_cmp'/2 =

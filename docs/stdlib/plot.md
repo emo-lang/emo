@@ -32,6 +32,7 @@ def with_theme(t Theme) Figure
 def with_grid(rows Int64, cols Int64) Figure
 def with_axes(a Array[Axes]) Figure
 def with_share(s Share) Figure
+def with_shared_legend(on Bool) Figure
 
 // Axes
 def with_x_label(s String) Axes
@@ -42,6 +43,7 @@ def with_x_domain(a Float64, b Float64) Axes
 def with_y_domain(a Float64, b Float64) Axes
 def with_marks(m Array[Mark]) Axes
 def with_legend(on Bool) Axes
+def with_title(s String) Axes
 
 def grid_style() GridStyle
 def rgb(r Int64, g Int64, b Int64) (Int64, Int64, Int64)
@@ -228,14 +230,12 @@ line joins the legend as `fit`, the band as `95% band`. Two drawable
 rows are the floor, and an x column whose values do not spread raises
 through the fit.
 
-The facet channels pass the vocabulary check and raise until the chart
-layer grows its panel splitting — splitting a dataset by a column's
-levels, per-panel level labels, and the one shared legend are the
-chart layer's remaining work. The other violations raise: an unknown
-channel, a channel the chart does not read, a missing `x` or `y`, a
-grouping channel handed a number column, a `size` or number `color`
-column with no observed values, a chart with no drawable rows, and a
-`reg` with fewer than two.
+The facet channels split any chart into panels — see "Faceting"
+below. The violations raise: an unknown channel, a channel the chart
+does not read, a missing `x` or `y`, a grouping or facet channel
+handed a number column, a `size` or number `color` column with no
+observed values, a chart with no drawable rows, and a `reg` with fewer
+than two.
 
 ## The distribution charts
 
@@ -299,8 +299,7 @@ level carries. `strip` draws the raw points at their bands' centers,
 one mark per `color` level — the split working like the relational
 charts' — the points unjittered and in the rows' own order, so
 overlapping points are the data. `strip` labels its y axis from the
-`y` column and `count` labels it `count`; the facet channels raise
-until the chart layer's panel splitting lands, as everywhere.
+`y` column and `count` labels it `count`.
 
 ## The matrix charts
 
@@ -331,6 +330,38 @@ with the rows and the columns each reordered by average-linkage
 clustering over their euclidean distances, so neighbors are the similar
 ones; the trees themselves are not drawn — the order is the clustering.
 A table with no number column, or with no rows, raises.
+
+## Faceting
+
+Every chart reads the `facet_row` and `facet_col` channels. Each names
+a label column, and the column's levels — distinct, in byte order like
+every other grouping — split the chart into panels: `facet_row`'s
+levels down, `facet_col`'s across, one channel alone a 1 × N or N × 1
+strip. Every cell draws the chart over the rows it holds, so a cell
+whose level combination has no rows stays blank, and the facet columns
+themselves stay out of a heatmap's row-name rule.
+
+```emo
+plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "facet_col": "time" })
+plot.hist(exam, { "x": "score", "facet_row": "class" })
+```
+
+The panels compare: the figure keeps `Share.all`, so every panel draws
+on the union of the panels' domains (the matrix charts keep their own
+cell grids under `Share.none`); each panel is titled from its levels —
+`time = Lunch`, both facets joined with a comma; the axis labels sit at
+the outer edge only, the x label on the bottom row and the y label on
+the first column; and the panels' own legends give way to one legend
+for the whole figure, at its right, listing every labeled mark once by
+label — the same level is the same color in every panel, since the
+levels sort over the whole table. A facet channel handed a number
+column raises, like the grouping channels.
+
+The pieces are ordinary figure values, so a hand-built grid can use
+them too: `Axes.with_title` is the panel title, `Figure.with_shared_legend`
+the figure-level legend, and each chart's single-panel form —
+`scatter_axes`, `hist_axes`, `heatmap_axes`, and so on for all fourteen
+— answers the `Axes` alone for a table, ready for `with_axes`.
 
 ## Themes
 
@@ -393,9 +424,13 @@ plot.figure().with_title("Quarterly review").with_grid(2, 2)
   .with_axes([units_ax, revenue_ax, costs_ax])
 ```
 
-Splitting one dataset into panels by a column's levels, labelling each
-panel from its levels, and drawing one shared legend are the chart
-layer's work — the figure carries the grid, the chart functions fill
+An axes with no marks is a blank cell: it draws nothing and stays out
+of the shared domain. `with_shared_legend(true)` draws one legend for
+the whole figure at its right — every labeled mark across the panels,
+once by label — and takes that column out of the grid's width; the
+panels' own legends are usually switched off beside it. Splitting one
+dataset into panels by a column's levels is the chart layer's work —
+see "Faceting" — the figure carries the grid, the chart functions fill
 it.
 
 ## Marks
@@ -588,10 +623,10 @@ matrix charts — `heatmap` and `clustermap`, with the `heatmap` mark
 and the categorical y face joining `plot.mark` — and SVG output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
-categorical labels. The remaining piece the surface carries is
-reserved and not rendered yet: the chart-layer half of faceting —
-splitting a dataset by a column's levels, per-panel level labels, and
-the one shared legend. The marks and the axes draw through the internal
+categorical labels. Faceting rides every chart: a facet channel's
+sorted levels split it into panels on one shared domain, each titled
+from its level, with one legend for the figure. The marks and the axes
+draw through the internal
 `Renderer` interface — `DrawContext` carries a `Renderer`, not the
 concrete SVG class — so a terminal or raster backend can join later
 without disturbing the figure or the marks.

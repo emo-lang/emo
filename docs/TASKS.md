@@ -1594,9 +1594,39 @@ T0 marks, with fixtures byte-identical on all five targets.
       byte-identical (`plot_demo` grew a matrix section: a 4 × 4
       correlation table as heatmap and clustermap) and five raise
       messages byte-identical.
-- [ ] **T43.6** — Apply faceting, palettes, and themes at the chart
+- [x] **T43.6** — Apply faceting, palettes, and themes at the chart
       layer; demos and byte-identical goldens — carrying T41.7's level
       splitting, per-panel level labels, and the one shared legend.
+      Every chart now reads the `facet_row` and `facet_col` channels:
+      each names a label column, and its sorted levels split the chart
+      into panels — rows × cols, one channel alone a strip — every cell
+      drawing the chart over the rows it holds, so a level combination
+      with no rows stays blank, and the facet columns stay out of a
+      heatmap's row-name rule. The panels compare: the figure keeps
+      `Share.all` with blank cells out of the union (the matrix charts
+      keep their own cell grids under `Share.none`); each panel is
+      titled from its levels — `time = Lunch`, both facets joined —
+      through the new `Axes.title` (`with_title`); the axis labels sit
+      at the outer edge only; and the panels' legends give way to one
+      legend for the whole figure at its right, once by label, through
+      the new `Figure.shared_legend` (`with_shared_legend`), which also
+      takes that column out of the grid's width. The chart layer's
+      palette and colormap resolution is unchanged — group colors
+      resolve through the theme palette by the level's sorted position
+      and numeric colors through the colormap at build time, so the
+      same level is the same color in every panel. Each chart also
+      answers its single-panel form as `<chart>_axes` — fourteen public
+      cores over a `panel_axes` kind dispatch the faceted assembler
+      loops through — with `rows_of` the sub-table a cell draws. The
+      landing exposed one more beam gap, fixed in the same commit:
+      indexing a value whose static type is dynamic (an array that
+      started as a bare `[]`) fell to `lists:nth` even when the value
+      was a tuple — `emo_index` now dispatches on `is_tuple` at
+      runtime. `refuse_facets` is gone. Verified on all six paths —
+      interp, c, ocaml, ts, wasm, beam — with the demo golden
+      byte-identical (`plot_demo` grew three faceted figures: a 1 × 2
+      scatter with the shared legend, a 2 × 2 with a blank cell, and a
+      2 × 1 histogram) and five probe answers byte-identical.
 
 ### Step 44 — Terminal renderer
 

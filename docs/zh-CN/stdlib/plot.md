@@ -26,6 +26,7 @@ def with_theme(t Theme) Figure
 def with_grid(rows Int64, cols Int64) Figure
 def with_axes(a Array[Axes]) Figure
 def with_share(s Share) Figure
+def with_shared_legend(on Bool) Figure
 
 // Axes
 def with_x_label(s String) Axes
@@ -36,6 +37,7 @@ def with_x_domain(a Float64, b Float64) Axes
 def with_y_domain(a Float64, b Float64) Axes
 def with_marks(m Array[Mark]) Axes
 def with_legend(on Bool) Axes
+def with_title(s String) Axes
 
 def grid_style() GridStyle
 def rgb(r Int64, g Int64, b Int64) (Int64, Int64, Int64)
@@ -140,7 +142,7 @@ plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "size": 
 
 `reg` 在点之上拟合最小二乘直线,并在其下画出均值响应的 95% 置信带——band 先画,点落在它上面。band 是一块 `plot.mark.band`,以 band 样式填充,在保留跨度上取五十个网格点;拟合线以 `fit` 进图例,band 以 `95% band` 进图例。可画的行至少两行,x 列的值不铺开时经拟合直接 raise。
 
-分面通道通过词表检查、但在图表层长出面板拆分之前直接 raise——按列水平拆分数据、逐面板水平标注、单份共享图例是图表层剩下的工作。其余违例直接 raise:未知通道、该图不读的通道、缺 `x` 或 `y`、分组通道拿到数值列、`size` 或数值 `color` 列没有在场值、图没有可画的行、`reg` 少于两行。
+分面通道把任何图拆成面板——见下文「分面」。其余违例直接 raise:未知通道、该图不读的通道、缺 `x` 或 `y`、分组或分面通道拿到数值列、`size` 或数值 `color` 列没有在场值、图没有可画的行、`reg` 少于两行。
 
 ## 分布型图表
 
@@ -171,7 +173,7 @@ def strip(t Table, ch Map[String, String]) Figure
 def point(t Table, ch Map[String, String]) Figure
 ```
 
-`bar` 与 `point` 需要 `y` 通道,把每个水平的在场 y 值按均值聚合——每个水平一根柱;point 是沿 band 顺序行走、逐个盖章的均值连线。`count` 完全不需要 `y`:每个水平一根柱,高度是该水平的行数。`strip` 在各 band 中心画原始点,每个 `color` 水平一条系列——拆分方式与关系型一致——点不抖动、按行自身顺序画,重叠的点就是数据。`strip` 的 y 轴标签取自 `y` 列,`count` 的 y 轴标签是 `count`;分面通道照旧在图表层的面板拆分落地之前直接 raise。
+`bar` 与 `point` 需要 `y` 通道,把每个水平的在场 y 值按均值聚合——每个水平一根柱;point 是沿 band 顺序行走、逐个盖章的均值连线。`count` 完全不需要 `y`:每个水平一根柱,高度是该水平的行数。`strip` 在各 band 中心画原始点,每个 `color` 水平一条系列——拆分方式与关系型一致——点不抖动、按行自身顺序画,重叠的点就是数据。`strip` 的 y 轴标签取自 `y` 列,`count` 的 y 轴标签是 `count`。
 
 ## 矩阵型图表
 
@@ -191,6 +193,19 @@ plot.svg(plot.heatmap(corr, {}))
 ```
 
 每个单元格按它的值在全部单元格跨度上的位置经主题 colormap 取色——常数矩阵落在 map 的低端。列名标注 x 的 band、行名标注 y 的 band,两条轴都不打数字刻度。`clustermap` 画同一批单元格,但行与列各按欧氏距离做平均联接聚类重排,相邻的就是相似的;树本身不画——顺序即聚类。没有数值列或没有行的表直接 raise。
+
+## 分面
+
+每个图都读 `facet_row` 与 `facet_col` 通道。两者各指一个类别列,该列的水平——去重、按字节序,与其他一切分组相同——把图拆成面板:`facet_row` 的水平向下、`facet_col` 的横向,单独一个通道就是 1 × N 或 N × 1 的条带。每格画它所持有那些行上的图,水平组合没有行的格子留白;分面列本身不参与 heatmap 的行命名规则。
+
+```emo
+plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "facet_col": "time" })
+plot.hist(exam, { "x": "score", "facet_row": "class" })
+```
+
+面板之间可比:图保持 `Share.all`,每个面板画在全部面板域的并集上(矩阵图在 `Share.none` 下保持各自的格子网格);每格从它的水平获得标题——`time = Lunch`,两个分面用逗号连接;轴标签只在外缘,x 标签在底行、y 标签在首列;面板自己的图例让位给整张图右侧的一份图例——逐标签去重列出所有带标签的 mark,同一个水平在每格都是同一个颜色,因为水平在整表上排序。分面通道拿到数值列时与分组通道同样直接 raise。
+
+这些都是普通的图值,手拼网格同样可用:`Axes.with_title` 是面板标题,`Figure.with_shared_legend` 是图级图例,而每张图的单面板形态——`scatter_axes`、`hist_axes`、`heatmap_axes` 等共十四个——对一张表应答 `Axes` 本身,随时 `with_axes`。
 
 ## 主题
 
@@ -227,7 +242,7 @@ plot.figure().with_title("Quarterly review").with_grid(2, 2)
   .with_axes([units_ax, revenue_ax, costs_ax])
 ```
 
-把一份数据按某列的水平拆成多块、逐面板用水平标注、只画一份共享图例,是图表层的工作——图携带网格,图表函数往里填。
+没有 mark 的 axes 是一个空白格:什么也不画、也不进共享域。`with_shared_legend(true)` 在整张图右侧画一份图例——逐标签去重列出所有面板中带标签的 mark——并从网格宽度里让出那一列;它旁边,面板自己的图例通常关掉。把一份数据按某列的水平拆成多块是图表层的工作——见「分面」——图携带网格,图表函数往里填。
 
 ## mark
 
@@ -327,6 +342,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——分类型图表——`bar`、`count`、`strip`、`point`,`strip` 与 `point` mark 随之加入 `plot.mark`——矩阵型图表——`heatmap`、`clustermap`,`heatmap` mark 与类别 y 面随之加入 `plot.mark`——还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——分类型图表——`bar`、`count`、`strip`、`point`,`strip` 与 `point` mark 随之加入 `plot.mark`——矩阵型图表——`heatmap`、`clustermap`,`heatmap` mark 与类别 y 面随之加入 `plot.mark`——还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。分面随每张图:一个分面通道的排序水平把它拆成共享域上的多面板,各自从水平获得标题,整图一份图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

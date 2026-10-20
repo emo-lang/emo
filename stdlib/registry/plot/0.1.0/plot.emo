@@ -250,19 +250,51 @@ def dash_at(i Int64) mark.Dash {
   return cycle[i % cycle.length()]
 }
 
-// The facet channels pass every chart's check — the vocabulary reads
-// them — and the chart layer's panel splitting is not written yet, so a
-// mapping that carries one raises here rather than splitting silently.
-def refuse_facets(ch Map[String, String]) Void {
-  const keys = ch.keys()
-  for var k = 0; k < keys.length(); k = k + 1 {
-    if keys[k] == "facet_row" {
-      raise Exception.new(message: "plot: the \"facet_row\" channel is not read yet")
+// The table's rows at the given positions, in that order: the panel a
+// faceted chart draws is the chart over this sub-table.
+def rows_of(t Table, keep Array[Int64]) Table {
+  var numbers = {}
+  var presence = {}
+  var labels = {}
+  const num_names = t.numbers.keys()
+  for var k = 0; k < num_names.length(); k = k + 1 {
+    const col = t.numbers.get(num_names[k])
+    const pre = t.presence.get(num_names[k])
+    var vals = []
+    var pres = []
+    for var i = 0; i < keep.length(); i = i + 1 {
+      vals = vals.append(col[keep[i]])
+      pres = pres.append(pre[keep[i]])
     }
-    if keys[k] == "facet_col" {
-      raise Exception.new(message: "plot: the \"facet_col\" channel is not read yet")
-    }
+    numbers.set(num_names[k], vals)
+    presence.set(num_names[k], pres)
   }
+  const label_names = t.labels.keys()
+  for var k = 0; k < label_names.length(); k = k + 1 {
+    const col = t.labels.get(label_names[k])
+    var vals = []
+    for var i = 0; i < keep.length(); i = i + 1 {
+      vals = vals.append(col[keep[i]])
+    }
+    labels.set(label_names[k], vals)
+  }
+  return Table.new(numbers: numbers, presence: presence, labels: labels, rows: keep.length())
+}
+
+// A panel's level label: the facet column's name and the level,
+// `time = Lunch`; both facets join with a comma.
+def facet_label(ch Map[String, String], row_levels Array[String], ri Int64, col_levels Array[String], ci Int64) String {
+  var label = ""
+  if row_levels.length() > 0 {
+    label = ch.get("facet_row") + " = " + row_levels[ri]
+  }
+  if col_levels.length() > 0 {
+    if label != "" {
+      label = label + ", "
+    }
+    label = label + ch.get("facet_col") + " = " + col_levels[ci]
+  }
+  return label
 }
 
 // The x and y channel names every relational chart reads: both are
@@ -400,10 +432,10 @@ def sorted_keys(keys Array[Int64]) Array[Int64] {
   return out
 }
 
-// The chart's one-panel figure.
-def chart_figure(x_name String, y_name String, marks Array[mark.Mark]) Figure {
-  const ax = axes().with_x_label(x_name).with_y_label(y_name).with_marks(marks)
-  return figure().with_axes([ax])
+// The chart's panel: the axes labelled from the channel's column
+// names, the marks in draw order.
+def chart_axes(x_name String, y_name String, marks Array[mark.Mark]) Axes {
+  return axes().with_x_label(x_name).with_y_label(y_name).with_marks(marks)
 }
 
 // The scatter chart: one mark per grouping level, one mark when the
@@ -416,7 +448,10 @@ def chart_figure(x_name String, y_name String, marks Array[mark.Mark]) Figure {
 // the color dispatch reads its column through.
 def scatter(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "scatter", ["x", "y", "color", "size", "marker", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "scatter")
+}
+
+def scatter_axes(t Table, ch Map[String, String]) Axes {
   const names = xy_names(ch, "scatter")
   const x_name = names[0]
   const y_name = names[1]
@@ -527,7 +562,7 @@ def scatter(t Table, ch Map[String, String]) Figure {
     }
     marks = marks.append(mark.Scatter.new(x: gx, y: gy, style: style, colors: gcolors, sizes: gsizes))
   }
-  return chart_figure(x_name, y_name, marks)
+  return chart_axes(x_name, y_name, marks)
 }
 
 // The line chart: one stroked series per grouping level, each drawn in
@@ -537,7 +572,10 @@ def scatter(t Table, ch Map[String, String]) Figure {
 // and stroke pattern the same way.
 def line(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "line", ["x", "y", "color", "marker", "dash", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "line")
+}
+
+def line_axes(t Table, ch Map[String, String]) Axes {
   const names = xy_names(ch, "line")
   const x_name = names[0]
   const y_name = names[1]
@@ -595,7 +633,7 @@ def line(t Table, ch Map[String, String]) Figure {
     }
     marks = marks.append(mark.Line.new(x: gx, y: gy, style: style))
   }
-  return chart_figure(x_name, y_name, marks)
+  return chart_axes(x_name, y_name, marks)
 }
 
 // The regression chart: the points, the least-squares line over them,
@@ -605,7 +643,10 @@ def line(t Table, ch Map[String, String]) Figure {
 // answers.
 def reg(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "reg", ["x", "y", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "reg")
+}
+
+def reg_axes(t Table, ch Map[String, String]) Axes {
   const names = xy_names(ch, "reg")
   const x_name = names[0]
   const y_name = names[1]
@@ -647,7 +688,7 @@ def reg(t Table, ch Map[String, String]) Figure {
   const band = mark.band(band_x, band_lo, band_hi).with_style(mark.band_style().with_label("95% band"))
   const pts = mark.Scatter.new(x: fit_x, y: fit_y, style: mark.scatter_style(), colors: [], sizes: [])
   const fit_line = mark.Line.new(x: [xlo, xhi], y: [fit.slope * xlo + fit.intercept, fit.slope * xhi + fit.intercept], style: mark.line_style().with_label("fit"))
-  return chart_figure(x_name, y_name, [band, pts, fit_line])
+  return chart_axes(x_name, y_name, [band, pts, fit_line])
 }
 
 // ---- the distribution charts ----
@@ -704,7 +745,10 @@ def column_values(vals Array[Float64], rows Array[Int64]) Array[Float64] {
 // groups nothing. A level's legend entry names the level.
 def hist(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "hist", ["x", "color", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "hist")
+}
+
+def hist_axes(t Table, ch Map[String, String]) Axes {
   const x_col = channel_x(ch, "hist")
   const xs = t.number(x_col)
   const rows = kept_rows_x(t, x_col, "hist")
@@ -769,7 +813,7 @@ def hist(t Table, ch Map[String, String]) Figure {
     }
     marks = marks.append(mark.Hist.new(counts: counts, lo: lo, width: span / nb.to_float64(), style: style))
   }
-  return chart_figure(x_col, "count", marks)
+  return chart_axes(x_col, "count", marks)
 }
 
 // The kernel density estimate: one curve per color level, the bandwidth
@@ -777,7 +821,10 @@ def hist(t Table, ch Map[String, String]) Figure {
 // three bandwidths past each end at a hundred points.
 def kde(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "kde", ["x", "color", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "kde")
+}
+
+def kde_axes(t Table, ch Map[String, String]) Axes {
   const x_col = channel_x(ch, "kde")
   const xs = t.number(x_col)
   const rows = kept_rows_x(t, x_col, "kde")
@@ -817,7 +864,7 @@ def kde(t Table, ch Map[String, String]) Figure {
     const d = internal.stats.kde(vals, h, lo - 3.0 * h, hi + 3.0 * h, 100)
     marks = marks.append(mark.Line.new(x: d.xs, y: d.density, style: style))
   }
-  return chart_figure(x_col, "density", marks)
+  return chart_axes(x_col, "density", marks)
 }
 
 // The kept-row positions behind one group's positions in the bucket
@@ -834,7 +881,10 @@ def rows_at(idxs Array[Int64], rows Array[Int64]) Array[Int64] {
 // cumulative proportion stepping up at the value.
 def ecdf(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "ecdf", ["x", "color", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "ecdf")
+}
+
+def ecdf_axes(t Table, ch Map[String, String]) Axes {
   const x_col = channel_x(ch, "ecdf")
   const xs = t.number(x_col)
   const rows = kept_rows_x(t, x_col, "ecdf")
@@ -873,7 +923,7 @@ def ecdf(t Table, ch Map[String, String]) Figure {
     }
     marks = marks.append(mark.Line.new(x: sx, y: sy, style: style))
   }
-  return chart_figure(x_col, "proportion", marks)
+  return chart_axes(x_col, "proportion", marks)
 }
 
 // The grouped read the box and violin charts share: the label column's
@@ -925,7 +975,10 @@ def level_values(g Grouped, level String) Array[Float64] {
 // beyond them.
 def box(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "box", ["x", "y", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "box")
+}
+
+def box_axes(t Table, ch Map[String, String]) Axes {
   const names = xy_names(ch, "box")
   const x_name = names[0]
   const y_name = names[1]
@@ -950,7 +1003,7 @@ def box(t Table, ch Map[String, String]) Figure {
     }
   }
   const m = mark.box(g.levels, lows, q1s, medians, q3s, his, flier_xs, fliers)
-  return chart_figure(x_name, y_name, [m])
+  return chart_axes(x_name, y_name, [m])
 }
 
 // The violin plot: one mirrored density per level of the x column, the
@@ -960,7 +1013,10 @@ def box(t Table, ch Map[String, String]) Figure {
 // whose y values do not spread has no density and raises.
 def violin(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "violin", ["x", "y", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "violin")
+}
+
+def violin_axes(t Table, ch Map[String, String]) Axes {
   const names = xy_names(ch, "violin")
   const x_name = names[0]
   const y_name = names[1]
@@ -1000,7 +1056,7 @@ def violin(t Table, ch Map[String, String]) Figure {
     norm = norm.append(dens[p] / top)
   }
   const m = mark.violin(g.levels, points, grid, norm)
-  return chart_figure(x_name, y_name, [m])
+  return chart_axes(x_name, y_name, [m])
 }
 
 // ---- the categorical charts ----
@@ -1023,7 +1079,10 @@ def band_of(col Array[String], levels Array[String], r Int64) Float64 {
 // of the level's observed y values.
 def bar(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "bar", ["x", "y", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "bar")
+}
+
+def bar_axes(t Table, ch Map[String, String]) Axes {
   const names = xy_names(ch, "bar")
   const x_name = names[0]
   const y_name = names[1]
@@ -1034,14 +1093,17 @@ def bar(t Table, ch Map[String, String]) Figure {
     means = means.append(d.mean)
   }
   const m = mark.bar(g.levels, means)
-  return chart_figure(x_name, y_name, [m])
+  return chart_axes(x_name, y_name, [m])
 }
 
 // The count chart: one bar per level of the x column, its height the
 // number of rows the level carries.
 def count(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "count", ["x", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "count")
+}
+
+def count_axes(t Table, ch Map[String, String]) Axes {
   const x_col = channel_x(ch, "count")
   const cats = categorical_column(t, x_col)
   if cats.length() == 0 {
@@ -1059,7 +1121,7 @@ def count(t Table, ch Map[String, String]) Figure {
     counts = counts.append(c)
   }
   const m = mark.bar(levels, counts)
-  return chart_figure(x_col, "count", [m])
+  return chart_axes(x_col, "count", [m])
 }
 
 // The strip chart: the raw points at their bands' centers, one mark per
@@ -1068,7 +1130,10 @@ def count(t Table, ch Map[String, String]) Figure {
 // are the data.
 def strip(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "strip", ["x", "y", "color", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "strip")
+}
+
+def strip_axes(t Table, ch Map[String, String]) Axes {
   const names = xy_names(ch, "strip")
   const x_name = names[0]
   const y_name = names[1]
@@ -1119,14 +1184,17 @@ def strip(t Table, ch Map[String, String]) Figure {
     }
     marks = marks.append(mark.Strip.new(x_levels, sx, sy, style))
   }
-  return chart_figure(x_name, y_name, marks)
+  return chart_axes(x_name, y_name, marks)
 }
 
 // The point chart: one mean per level of the x column, the means
 // connected in band order and stamped with the style's marker.
 def point(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "point", ["x", "y", "facet_row", "facet_col"])
-  refuse_facets(ch)
+  return faceted(t, ch, "point")
+}
+
+def point_axes(t Table, ch Map[String, String]) Axes {
   const names = xy_names(ch, "point")
   const x_name = names[0]
   const y_name = names[1]
@@ -1139,7 +1207,7 @@ def point(t Table, ch Map[String, String]) Figure {
     my = my.append(d.mean)
   }
   const m = mark.point(g.levels, mx, my)
-  return chart_figure(x_name, y_name, [m])
+  return chart_axes(x_name, y_name, [m])
 }
 
 // ---- the matrix charts ----
@@ -1155,7 +1223,7 @@ class Matrix {
   }
 }
 
-def matrix_of(t Table, kind String) Matrix {
+def matrix_of(t Table, ch Map[String, String], kind String) Matrix {
   const col_names = t.numbers.keys()
   if col_names.length() == 0 {
     raise Exception.new(message: "plot: the ${kind} chart needs at least one number column")
@@ -1164,8 +1232,26 @@ def matrix_of(t Table, kind String) Matrix {
   if nr == 0 {
     raise Exception.new(message: "plot: the ${kind} chart has no rows to draw")
   }
+  // The facet columns split the panels; they do not name the rows.
+  var label_names = []
+  const all_labels = t.labels.keys()
+  for var k = 0; k < all_labels.length(); k = k + 1 {
+    var is_facet = false
+    if ch.has("facet_row") {
+      if ch.get("facet_row") == all_labels[k] {
+        is_facet = true
+      }
+    }
+    if ch.has("facet_col") {
+      if ch.get("facet_col") == all_labels[k] {
+        is_facet = true
+      }
+    }
+    if !is_facet {
+      label_names = label_names.append(all_labels[k])
+    }
+  }
   var row_names = []
-  const label_names = t.labels.keys()
   if label_names.length() == 1 {
     row_names = t.label(label_names[0])
   } else {
@@ -1217,12 +1303,14 @@ def matrix_colors(values Array[Float64], t0 Theme) Array[(Int64, Int64, Int64)] 
 // and the row names the y bands.
 def heatmap(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "heatmap", ["facet_row", "facet_col"])
-  refuse_facets(ch)
-  const m = matrix_of(t, "heatmap")
+  return faceted(t, ch, "heatmap")
+}
+
+def heatmap_axes(t Table, ch Map[String, String]) Axes {
+  const m = matrix_of(t, ch, "heatmap")
   const t0 = theme()
   const cells = mark.Heatmap.new(col_names: m.col_names, row_names: m.row_names, values: m.values, colors: matrix_colors(m.values, t0))
-  const ax = axes().with_x_domain(0.0, m.col_names.length().to_float64()).with_y_domain(0.0, m.row_names.length().to_float64()).with_marks([cells])
-  return figure().with_axes([ax])
+  return axes().with_x_domain(0.0, m.col_names.length().to_float64()).with_y_domain(0.0, m.row_names.length().to_float64()).with_marks([cells])
 }
 
 // The clustermap: the heatmap's cells in the average-linkage merge
@@ -1231,8 +1319,11 @@ def heatmap(t Table, ch Map[String, String]) Figure {
 // not drawn; the order is the clustering.
 def clustermap(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "clustermap", ["facet_row", "facet_col"])
-  refuse_facets(ch)
-  const m = matrix_of(t, "clustermap")
+  return faceted(t, ch, "clustermap")
+}
+
+def clustermap_axes(t Table, ch Map[String, String]) Axes {
+  const m = matrix_of(t, ch, "clustermap")
   const nc = m.col_names.length()
   const nr = m.row_names.length()
   var transposed = []
@@ -1257,12 +1348,133 @@ def clustermap(t Table, ch Map[String, String]) Figure {
   }
   const t0 = theme()
   const cells = mark.Heatmap.new(col_names: col_names, row_names: row_names, values: values, colors: matrix_colors(values, t0))
-  const ax = axes().with_x_domain(0.0, nc.to_float64()).with_y_domain(0.0, nr.to_float64()).with_marks([cells])
-  return figure().with_axes([ax])
+  return axes().with_x_domain(0.0, nc.to_float64()).with_y_domain(0.0, nr.to_float64()).with_marks([cells])
+}
+
+// ---- faceting ----
+
+// One chart's panel over one table, by name: the dispatch the faceted
+// assembler draws every cell through.
+def panel_axes(kind String, t Table, ch Map[String, String]) Axes {
+  if kind == "scatter" {
+    return scatter_axes(t, ch)
+  }
+  if kind == "line" {
+    return line_axes(t, ch)
+  }
+  if kind == "reg" {
+    return reg_axes(t, ch)
+  }
+  if kind == "hist" {
+    return hist_axes(t, ch)
+  }
+  if kind == "kde" {
+    return kde_axes(t, ch)
+  }
+  if kind == "ecdf" {
+    return ecdf_axes(t, ch)
+  }
+  if kind == "box" {
+    return box_axes(t, ch)
+  }
+  if kind == "violin" {
+    return violin_axes(t, ch)
+  }
+  if kind == "bar" {
+    return bar_axes(t, ch)
+  }
+  if kind == "count" {
+    return count_axes(t, ch)
+  }
+  if kind == "strip" {
+    return strip_axes(t, ch)
+  }
+  if kind == "point" {
+    return point_axes(t, ch)
+  }
+  if kind == "heatmap" {
+    return heatmap_axes(t, ch)
+  }
+  return clustermap_axes(t, ch)
+}
+
+// The faceted figure (decision 23): the `facet_row` and `facet_col`
+// channels read label columns, their sorted levels lay the panels out
+// as rows × cols — one channel alone a strip — and every cell draws the
+// chart over the rows it holds, labelled from its levels. A cell with no
+// rows stays blank. The panels share one domain, keep their axis labels
+// at the outer edge only, and feed one legend at the figure's right;
+// the matrix charts keep their own cell grids instead of sharing. A
+// mapping with neither facet channel is the one-panel figure.
+def faceted(t Table, ch Map[String, String], kind String) Figure {
+  const matrix = kind == "heatmap" || kind == "clustermap"
+  if !ch.has("facet_row") && !ch.has("facet_col") {
+    const fig = figure().with_axes([panel_axes(kind, t, ch)])
+    if matrix {
+      return fig.with_share(Share.none)
+    }
+    return fig
+  }
+  const row_col = grouping_column(t, ch, "facet_row", ch.has("facet_row"))
+  const col_col = grouping_column(t, ch, "facet_col", ch.has("facet_col"))
+  const row_levels = internal.channels.sorted_levels(row_col)
+  const col_levels = internal.channels.sorted_levels(col_col)
+  var nr = row_levels.length()
+  if nr < 1 {
+    nr = 1
+  }
+  var nc = col_levels.length()
+  if nc < 1 {
+    nc = 1
+  }
+  var cells = {}
+  for var i = 0; i < t.rows; i = i + 1 {
+    var ri = 0
+    if row_levels.length() > 0 {
+      while row_levels[ri] != row_col[i] {
+        ri = ri + 1
+      }
+    }
+    var ci = 0
+    if col_levels.length() > 0 {
+      while col_levels[ci] != col_col[i] {
+        ci = ci + 1
+      }
+    }
+    const key = ri * nc + ci
+    if cells.has(key) {
+      cells.set(key, cells.get(key).append(i))
+    } else {
+      cells.set(key, [i])
+    }
+  }
+  var panels = []
+  for var ri = 0; ri < nr; ri = ri + 1 {
+    for var ci = 0; ci < nc; ci = ci + 1 {
+      const key = ri * nc + ci
+      var ax = axes()
+      if cells.has(key) {
+        ax = panel_axes(kind, rows_of(t, cells.get(key)), ch)
+      }
+      ax = ax.with_title(facet_label(ch, row_levels, ri, col_levels, ci)).with_legend(false)
+      if ri < nr - 1 {
+        ax = ax.with_x_label("")
+      }
+      if ci > 0 {
+        ax = ax.with_y_label("")
+      }
+      panels = panels.append(ax)
+    }
+  }
+  const fig = figure().with_grid(nr, nc).with_axes(panels).with_shared_legend(true)
+  if matrix {
+    return fig.with_share(Share.none)
+  }
+  return fig
 }
 
 class Figure {
-  def init(width Float64, height Float64, title String, theme Theme, axes Array[Axes], grid (Int64, Int64), share Share) {
+  def init(width Float64, height Float64, title String, theme Theme, axes Array[Axes], grid (Int64, Int64), share Share, shared_legend Bool) {
     self.width = width
     self.height = height
     self.title = title
@@ -1270,30 +1482,38 @@ class Figure {
     self.axes = axes
     self.grid = grid
     self.share = share
+    self.shared_legend = shared_legend
   }
 
   def with_title(t String) Figure {
-    return Figure.new(width: self.width, height: self.height, title: t, theme: self.theme, axes: self.axes, grid: self.grid, share: self.share)
+    return Figure.new(width: self.width, height: self.height, title: t, theme: self.theme, axes: self.axes, grid: self.grid, share: self.share, shared_legend: self.shared_legend)
   }
 
   def with_size(w Float64, h Float64) Figure {
-    return Figure.new(width: w, height: h, title: self.title, theme: self.theme, axes: self.axes, grid: self.grid, share: self.share)
+    return Figure.new(width: w, height: h, title: self.title, theme: self.theme, axes: self.axes, grid: self.grid, share: self.share, shared_legend: self.shared_legend)
   }
 
   def with_theme(t Theme) Figure {
-    return Figure.new(width: self.width, height: self.height, title: self.title, theme: t, axes: self.axes, grid: self.grid, share: self.share)
+    return Figure.new(width: self.width, height: self.height, title: self.title, theme: t, axes: self.axes, grid: self.grid, share: self.share, shared_legend: self.shared_legend)
   }
 
   def with_grid(rows Int64, cols Int64) Figure {
-    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: self.axes, grid: (rows, cols), share: self.share)
+    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: self.axes, grid: (rows, cols), share: self.share, shared_legend: self.shared_legend)
   }
 
   def with_axes(a Array[Axes]) Figure {
-    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: a, grid: self.grid, share: self.share)
+    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: a, grid: self.grid, share: self.share, shared_legend: self.shared_legend)
   }
 
   def with_share(s Share) Figure {
-    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: self.axes, grid: self.grid, share: s)
+    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: self.axes, grid: self.grid, share: s, shared_legend: self.shared_legend)
+  }
+
+  // One legend for the whole figure, at its right, listing every
+  // labeled mark across the panels once by label — the faceted charts'
+  // legend, in place of the panels' own.
+  def with_shared_legend(on Bool) Figure {
+    return Figure.new(width: self.width, height: self.height, title: self.title, theme: self.theme, axes: self.axes, grid: self.grid, share: self.share, shared_legend: on)
   }
 }
 
@@ -1573,7 +1793,7 @@ def dark_theme() Theme {
 class Axes {
   def init(x_label String, y_label String, x_scale Scale, y_scale Scale,
            x_domain (Domain, Float64, Float64), y_domain (Domain, Float64, Float64),
-           legend Bool, marks Array[mark.Mark]) {
+           legend Bool, title String, marks Array[mark.Mark]) {
     self.x_label = x_label
     self.y_label = y_label
     self.x_scale = x_scale
@@ -1581,49 +1801,56 @@ class Axes {
     self.x_domain = x_domain
     self.y_domain = y_domain
     self.legend = legend
+    self.title = title
     self.marks = marks
   }
 
   def with_x_label(s String) Axes {
-    return Axes.new(x_label: s, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: s, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, title: self.title, marks: self.marks)
   }
 
   def with_y_label(s String) Axes {
-    return Axes.new(x_label: self.x_label, y_label: s, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: s, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, title: self.title, marks: self.marks)
   }
 
   def with_x_scale(s Scale) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: s, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: s, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, title: self.title, marks: self.marks)
   }
 
   def with_y_scale(s Scale) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: s, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: s, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, title: self.title, marks: self.marks)
   }
 
   def with_x_domain(a Float64, b Float64) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: (Domain.fixed, a, b), y_domain: self.y_domain, legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: (Domain.fixed, a, b), y_domain: self.y_domain, legend: self.legend, title: self.title, marks: self.marks)
   }
 
   def with_y_domain(a Float64, b Float64) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: (Domain.fixed, a, b), legend: self.legend, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: (Domain.fixed, a, b), legend: self.legend, title: self.title, marks: self.marks)
   }
 
   def with_marks(m Array[mark.Mark]) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, marks: m)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, title: self.title, marks: m)
   }
 
   def with_legend(on Bool) Axes {
-    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: on, marks: self.marks)
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: on, title: self.title, marks: self.marks)
+  }
+
+  // The panel's own title, drawn centered over its plot area — the
+  // chart layer labels a faceted panel from its levels through it.
+  def with_title(s String) Axes {
+    return Axes.new(x_label: self.x_label, y_label: self.y_label, x_scale: self.x_scale, y_scale: self.y_scale, x_domain: self.x_domain, y_domain: self.y_domain, legend: self.legend, title: s, marks: self.marks)
   }
 }
 
 def figure() Figure {
   const t = theme()
-  return Figure.new(width: t.width, height: t.height, title: "", theme: t, axes: [axes()], grid: (1, 1), share: Share.all)
+  return Figure.new(width: t.width, height: t.height, title: "", theme: t, axes: [axes()], grid: (1, 1), share: Share.all, shared_legend: false)
 }
 
 def axes() Axes {
-  return Axes.new(x_label: "", y_label: "", x_scale: Scale.linear, y_scale: Scale.linear, x_domain: (Domain.auto, 0.0, 0.0), y_domain: (Domain.auto, 0.0, 0.0), legend: true, marks: [])
+  return Axes.new(x_label: "", y_label: "", x_scale: Scale.linear, y_scale: Scale.linear, x_domain: (Domain.auto, 0.0, 0.0), y_domain: (Domain.auto, 0.0, 0.0), legend: true, title: "", marks: [])
 }
 
 // A tick label: an integral value loses its trailing ".0".
@@ -1778,6 +2005,11 @@ def draw_axes(r internal.svg.Renderer, fig Figure, ax Axes, x0 Float64, y0 Float
   const y_log = ax.y_scale == Scale.log
   const x_log = ax.x_scale == Scale.log
   const ctx = internal.ctx.DrawContext.new(renderer: r, x0: x0 + ml, y0: y0 + mt, plot_w: pw, plot_h: ph, x_min: xlo, x_max: xhi, y_min: ylo, y_max: top, x_log: x_log, y_log: y_log)
+  // The panel's own title sits centered over its plot area, in the
+  // label style — a faceted panel's level label.
+  if ax.title != "" {
+    r.text(x0 + ml + pw / 2.0, y0 + 30.0, ax.title, t.label.size, internal.svg.Anchor.middle, svg_weight(t.label.weight), t.label.color)
+  }
   if ax.y_label != "" {
     r.text(x0 + ml, y0 + 52.0, ax.y_label, t.axis.label_size, internal.svg.Anchor.start, svg_weight(t.label.weight), t.label.color)
   }
@@ -1930,29 +2162,85 @@ def svg(fig Figure) String {
   if n > rows * cols {
     raise Exception.new(message: "plot: a ${rows} × ${cols} grid fits ${rows * cols} panels, got ${n} axes")
   }
+  const th = fig.theme
   // The figure title sits above the grid, drawn once.
   if fig.title != "" {
-    const t = fig.theme
-    r.text(64.0, 30.0, fig.title, t.title.size, svg_anchor(t.title.anchor), svg_weight(t.title.weight), t.title.color)
+    r.text(64.0, 30.0, fig.title, th.title.size, svg_anchor(th.title.anchor), svg_weight(th.title.weight), th.title.color)
+  }
+  // The shared legend's entries when the figure carries one: every
+  // labeled mark across the panels, once by label, in panel order.
+  var legend_labels = []
+  var legend_marks = []
+  var legend_w = 0.0
+  if fig.shared_legend {
+    for var i = 0; i < n; i = i + 1 {
+      const marks = fig.axes[i].marks
+      for var k = 0; k < marks.length(); k = k + 1 {
+        const lbl = marks[k].legend_label()
+        if lbl != "" {
+          var seen = false
+          for var q = 0; q < legend_labels.length(); q = q + 1 {
+            if legend_labels[q] == lbl {
+              seen = true
+            }
+          }
+          if !seen {
+            legend_labels = legend_labels.append(lbl)
+            legend_marks = legend_marks.append(marks[k])
+            const w = 26.0 + lbl.length().to_float64() * 7.0
+            if w > legend_w {
+              legend_w = w
+            }
+          }
+        }
+      }
+    }
+    if legend_labels.length() > 0 {
+      legend_w = legend_w + 16.0 + th.spacing
+    }
+  }
+  // An axes with no marks is a blank cell: it draws nothing and stays
+  // out of the shared domain.
+  var blanks = []
+  for var i = 0; i < n; i = i + 1 {
+    var blank = 0
+    if fig.axes[i].marks.length() == 0 {
+      blank = 1
+    }
+    blanks = blanks.append(blank)
   }
   // Every panel resolves its own domain first; under Share.all each
   // then draws on the union — the point of a shared grid is comparing
   // panels on one domain.
-  var doms_y = [(0.0, 1.0)]
-  var doms_x = [(0.0, 1.0)]
-  if n > 0 {
-    doms_y = [resolved_y(fig.axes[0])]
-    doms_x = [resolved_x(fig.axes[0])]
-    for var i = 1; i < n; i = i + 1 {
+  var doms_y = []
+  var doms_x = []
+  for var i = 0; i < n; i = i + 1 {
+    if blanks[i] == 1 {
+      doms_y = doms_y.append((0.0, 1.0))
+      doms_x = doms_x.append((0.0, 1.0))
+    }
+    if blanks[i] == 0 {
       doms_y = doms_y.append(resolved_y(fig.axes[i]))
       doms_x = doms_x.append(resolved_x(fig.axes[i]))
     }
-    if fig.share == Share.all {
-      var xlo = doms_x[0][0]
-      var xhi = doms_x[0][1]
-      var ylo = doms_y[0][0]
-      var yhi = doms_y[0][1]
-      for var i = 1; i < n; i = i + 1 {
+  }
+  if fig.share == Share.all {
+    var seen = false
+    var xlo = 0.0
+    var xhi = 1.0
+    var ylo = 0.0
+    var yhi = 1.0
+    for var i = 0; i < n; i = i + 1 {
+      if blanks[i] == 0 && !seen {
+        seen = true
+        xlo = doms_x[i][0]
+        xhi = doms_x[i][1]
+        ylo = doms_y[i][0]
+        yhi = doms_y[i][1]
+      }
+    }
+    for var i = 0; i < n; i = i + 1 {
+      if blanks[i] == 0 {
         if doms_x[i][0] < xlo {
           xlo = doms_x[i][0]
         }
@@ -1966,27 +2254,51 @@ def svg(fig Figure) String {
           yhi = doms_y[i][1]
         }
       }
-      var uni_x = [(xlo, xhi)]
-      var uni_y = [(ylo, yhi)]
-      for var i = 1; i < n; i = i + 1 {
+    }
+    var uni_x = []
+    var uni_y = []
+    for var i = 0; i < n; i = i + 1 {
+      if blanks[i] == 0 {
         uni_x = uni_x.append((xlo, xhi))
         uni_y = uni_y.append((ylo, yhi))
       }
-      doms_x = uni_x
-      doms_y = uni_y
+      if blanks[i] == 1 {
+        uni_x = uni_x.append(doms_x[i])
+        uni_y = uni_y.append(doms_y[i])
+      }
     }
+    doms_x = uni_x
+    doms_y = uni_y
   }
   // The cells: rows × cols panels separated by the theme spacing, row
-  // major; a grid with more cells than axes leaves the tail blank.
-  const gap = fig.theme.spacing
-  const cw = (fig.width - gap * (cols - 1).to_float64()) / cols.to_float64()
+  // major; a grid with more cells than axes leaves the tail blank, and
+  // a shared legend takes its column out of the grid's width.
+  const gap = th.spacing
+  const grid_w = fig.width - legend_w
+  const cw = (grid_w - gap * (cols - 1).to_float64()) / cols.to_float64()
   const ch = (fig.height - gap * (rows - 1).to_float64()) / rows.to_float64()
   for var row = 0; row < rows; row = row + 1 {
     for var col = 0; col < cols; col = col + 1 {
       const idx = row * cols + col
       if idx < n {
-        draw_axes(r, fig, fig.axes[idx], (cw + gap) * col.to_float64(), (ch + gap) * row.to_float64(), cw, ch, doms_x[idx], doms_y[idx])
+        if blanks[idx] == 0 {
+          draw_axes(r, fig, fig.axes[idx], (cw + gap) * col.to_float64(), (ch + gap) * row.to_float64(), cw, ch, doms_x[idx], doms_y[idx])
+        }
       }
+    }
+  }
+  // The shared legend, at the figure's right beside the first row.
+  if legend_w > 0.0 {
+    const lx = fig.width - legend_w + th.spacing
+    const ly = 64.0 + th.spacing
+    const bw = legend_w - th.spacing
+    const bh = legend_labels.length().to_float64() * 20.0
+    r.rect(lx, ly, bw, bh, th.background)
+    var at = ly + 10.0
+    for var k = 0; k < legend_labels.length(); k = k + 1 {
+      legend_marks[k].legend_sample(r, lx + 8.0, at)
+      r.text(lx + 8.0 + 26.0, at + 4.0, legend_labels[k], th.label.size, internal.svg.Anchor.start, svg_weight(th.label.weight), th.label.color)
+      at = at + 20.0
     }
   }
   return r.finish()

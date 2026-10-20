@@ -100,7 +100,8 @@ const meals = plot.table(
   { "bill": [16.99, 10.34, 21.01, 23.68, 24.59, 8.77, 26.88, 15.04],
     "tip": [1.01, 1.66, 3.50, 3.31, 3.61, 2.00, 5.00, 3.42],
     "party": [2.0, 3.0, 2.0, 4.0, 2.0, 2.0, 3.0, 2.0] },
-  { "day": ["Sun", "Sat", "Sun", "Sat", "Sun", "Sat", "Sun", "Sat"] }
+  { "day": ["Sun", "Sat", "Sun", "Sat", "Sun", "Sat", "Sun", "Sat"],
+    "time": ["Dinner", "Dinner", "Lunch", "Dinner", "Lunch", "Dinner", "Dinner", "Dinner"] }
 )
 println(plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "size": "party" })))
 
@@ -159,3 +160,10 @@ const corr = plot.table(
 )
 println(plot.svg(plot.heatmap(corr, {})))
 println(plot.svg(plot.clustermap(corr, {})))
+
+// Faceting: a facet channel's levels split a chart into panels on one
+// shared domain, each labelled from its level, with one legend for the
+// whole figure at the right; a combination with no rows stays blank.
+println(plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "color": "day", "facet_col": "time" })))
+println(plot.svg(plot.scatter(meals, { "x": "bill", "y": "tip", "facet_row": "day", "facet_col": "time" })))
+println(plot.svg(plot.hist(exam, { "x": "score", "facet_row": "class" })))
