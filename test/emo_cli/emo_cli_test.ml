@@ -4245,9 +4245,10 @@ let manifest_entry_tests =
 
 (* The defects CHECK.md recorded and their fixes: a message sent on
    typescript arrives as a snapshot, an Int64 pattern literal compares as
-   a big integer, a `for` loop in a class `init` keeps its value on beam,
-   a module-level `var` is refused cleanly where it is not implemented,
-   and `ocaml` evaluates operands in source order. *)
+   a big integer, a String on typescript is counted in UTF-8 bytes, a
+   `for` loop in a class `init` keeps its value on beam, a module-level
+   `var` is refused cleanly where it is not implemented, and `ocaml`
+   evaluates operands in source order. *)
 let cross_target_tests =
   [
     tc "a message on typescript arrives as a snapshot" (fun () ->
@@ -4381,6 +4382,34 @@ main()
         check_run "typescript"
           (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
           "60\n");
+    tc "typescript counts a String in UTF-8 bytes" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        (* the interpreter's answers: é and × are two bytes each, the
+           braille cell three, the emoji four — `length`, `substring`,
+           and `index_of` all index the encoding, never JS code units *)
+        let entry =
+          scratch_entry "cross-ts-utf8-string"
+            {|const s = "é×a⣿"
+println(s.length())
+println(s.substring(0, 2))
+println(s.substring(2, 2))
+println(s.substring(5, 3))
+println(s.index_of("×a"))
+println(s.index_of("⣿"))
+println(s.index_of("z"))
+println("日本語テキスト".length())
+println("日本語テキスト".substring(3, 6))
+println("a😀b".index_of("b"))
+println("abc".substring(1, 2))
+|}
+        in
+        let out_ts = Filename.concat (Filename.dirname entry) "main" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"typescript" entry out_ts);
+        check_run "typescript"
+          (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
+          "8\né\n×\n⣿\n2\n5\n-1\n21\n本語\n5\nbc\n");
     tc "a direct builtin net call resolves on typescript" (fun () ->
         if not (Lazy.force node_available) then Alcotest.skip ();
         let entry =

@@ -454,6 +454,56 @@ function utf8Decode(d: Uint8Array): string {
   return s;
 }
 
+// A String is a UTF-8 byte sequence on every target, so `length`,
+// `substring`, and `index_of` count bytes, never UTF-16 code units. An
+// all-ASCII string is its own encoding and takes the JS fast path; any
+// other goes through the codec, and a substring cut inside a multi-byte
+// sequence decodes to U+FFFD here where the byte targets keep the raw
+// bytes.
+const ASCII_ONLY = /^[\x00-\x7f]*$/;
+
+function utf8Length(s: string): number {
+  if (ASCII_ONLY.test(s)) return s.length;
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (
+      c >= 0xd800 &&
+      c <= 0xdbff &&
+      i + 1 < s.length &&
+      (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00
+    ) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
+
+function utf8Substring(s: string, start: number, len: number): string {
+  const total = utf8Length(s);
+  if (start < 0 || len < 0 || start + len > total)
+    throw new Error(
+      "substring (" + start + ", " + len + ") is out of bounds for a length-" +
+        total + " String"
+    );
+  if (ASCII_ONLY.test(s)) return s.substr(start, len);
+  return utf8Decode(utf8Encode(s).subarray(start, start + len));
+}
+
+function utf8IndexOf(s: string, needle: string): number {
+  if (ASCII_ONLY.test(s) && ASCII_ONLY.test(needle)) return s.indexOf(needle);
+  const h = utf8Encode(s);
+  const n = utf8Encode(needle);
+  outer: for (let i = 0; i + n.length <= h.length; i++) {
+    for (let k = 0; k < n.length; k++) if (h[i + k] !== n[k]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
 // Deep equality: primitives by value, compounds element-wise,
 // instances through their class-declared content (__eq).
 function deepEq(a: any, b: any): boolean {
@@ -1442,16 +1492,11 @@ const E: any = {
       if (name === "is") return isType(recv, args[0] as string);
     }
     if (typeof recv === "string") {
-      if (name === "length") return BigInt(recv.length);
+      if (name === "length") return BigInt(utf8Length(recv));
       if (name === "to_string") return recv;
       if (name === "is") return isType(recv, args[0] as string);
-      if (name === "substring") {
-        const start = num(args[0]);
-        const len = num(args[1]);
-        if (start < 0 || len < 0 || start + len > recv.length)
-          throw new Error("`substring` expects (start Int64, length Int64) in bounds");
-        return recv.substr(start, len);
-      }
+      if (name === "substring")
+        return utf8Substring(recv, num(args[0]), num(args[1]));
       if (name === "split") {
         const sep = args[0] as string;
         if (sep === "")
@@ -1460,7 +1505,8 @@ const E: any = {
       }
       if (name === "trim") return recv.trim();
       if (name === "lower") return recv.toLowerCase();
-      if (name === "index_of") return BigInt(recv.indexOf(args[0] as string));
+      if (name === "index_of")
+        return BigInt(utf8IndexOf(recv, args[0] as string));
       if (name === "starts_with") return recv.startsWith(args[0] as string);
       if (name === "to_int64") {
         const body = recv.startsWith("-") ? recv.slice(1) : recv;
