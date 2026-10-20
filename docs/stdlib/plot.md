@@ -278,6 +278,30 @@ row raises, and an unknown channel, an unread channel, or a `color`
 mapping to a number column raises too. A constant column has no
 density: the `kde` chart raises rather than drawing a spike.
 
+## The categorical charts
+
+`bar`, `count`, `strip`, and `point` sit on the `x` column's levels —
+a number column there raises, the marks sit on the levels, not on
+numbers:
+
+```emo
+def bar(t Table, ch Map[String, String]) Figure
+def count(t Table, ch Map[String, String]) Figure
+def strip(t Table, ch Map[String, String]) Figure
+def point(t Table, ch Map[String, String]) Figure
+```
+
+`bar` and `point` need the `y` channel and aggregate each level's
+observed y values by their mean — one bar per level, and one stamped,
+connected mean walking the bands in their sorted order. `count` needs
+no `y` at all: one bar per level, its height the number of rows the
+level carries. `strip` draws the raw points at their bands' centers,
+one mark per `color` level — the split working like the relational
+charts' — the points unjittered and in the rows' own order, so
+overlapping points are the data. `strip` labels its y axis from the
+`y` column and `count` labels it `count`; the facet channels raise
+until the chart layer's panel splitting lands, as everywhere.
+
 ## Themes
 
 A theme dresses the whole figure: the background and foreground inks,
@@ -374,6 +398,11 @@ def box_style() BoxStyle
 
 def violin(labels Array[String], points Int64, xs Array[Float64], density Array[Float64]) Violin
 def violin_style() ViolinStyle
+
+def strip(labels Array[String], xs Array[Float64], ys Array[Float64]) Strip
+
+def point(labels Array[String], xs Array[Float64], ys Array[Float64]) Point
+def point_style() LineStyle
 ```
 
 A mark is a value too. `Bar.with_style(s BarStyle)` and the style's
@@ -437,6 +466,13 @@ A violin row mirrors a density per label — the grids and densities are
 flat, one run of `points` per label, the densities fractions of the
 band's half width. `ViolinStyle` carries `color` (the fill), the band
 fraction `width`, `opacity`, and `label`.
+
+A strip is a scatter over the categorical face: raw points at their
+bands' centers, the xs band coordinates and the arrays sharing their
+length. A point row walks the bands — one value per label, connected
+in band order and stamped with the style's marker; its style is a
+`LineStyle` (the line connects, the marker stamps) and a strip's is a
+`ScatterStyle`.
 
 **Colors are `(Int64, Int64, Int64)` sRGB triples**, each channel 0–255.
 `plot.rgb(r, g, b)` builds one with the range checked — an
@@ -507,11 +543,13 @@ channel's kind dispatch, the relational charts — `scatter`, `line`,
 and `reg`, with the `band` mark joining `plot.mark` for the
 regression chart — the distribution charts — `hist`, `kde`, `ecdf`,
 `box`, and `violin`, with the `box` and `violin` marks joining
-`plot.mark` — and SVG output. Both
+`plot.mark` — the categorical charts — `bar`, `count`, `strip`, and
+`point`, with the `strip` and `point` marks joining `plot.mark` — and
+SVG output. Both
 axes scale to the marks' declared spans: the y domain covers every
 mark's range, and the x axis ticks numerically unless a mark supplies
 categorical labels. The remaining pieces the surface carries are
-reserved and not rendered yet: the categorical and matrix charts, and
+reserved and not rendered yet: the matrix charts, and
 the chart-layer half of faceting —
 splitting a dataset by a column's levels, per-panel level labels, and
 the one shared legend. The marks and the axes draw through the internal

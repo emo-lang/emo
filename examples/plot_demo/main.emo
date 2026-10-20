@@ -134,3 +134,15 @@ println(plot.svg(plot.kde(exam, { "x": "score", "color": "class" })))
 println(plot.svg(plot.ecdf(exam, { "x": "score", "color": "class" })))
 println(plot.svg(plot.box(exam, { "x": "class", "y": "score" })))
 println(plot.svg(plot.violin(exam, { "x": "class", "y": "score" })))
+
+// The categorical charts: bar and point aggregate each level's y by its
+// mean, count draws the row counts, strip the raw points per level.
+const regions_t = plot.table(
+  { "revenue": [12.0, 9.0, 18.0, 11.0, 15.0, 16.0, 24.0, 14.0] },
+  { "region": ["west", "east", "west", "east", "west", "east", "west", "east"],
+    "kind": ["store", "store", "online", "online", "store", "online", "online", "store"] }
+)
+println(plot.svg(plot.bar(regions_t, { "x": "region", "y": "revenue" })))
+println(plot.svg(plot.count(regions_t, { "x": "region" })))
+println(plot.svg(plot.strip(regions_t, { "x": "region", "y": "revenue", "color": "kind" })))
+println(plot.svg(plot.point(regions_t, { "x": "region", "y": "revenue" })))

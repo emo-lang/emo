@@ -657,7 +657,7 @@ def reg(t Table, ch Map[String, String]) Figure {
 // `violin` group a numeric column by a label one.
 
 // The x channel name the single-column charts read: required.
-def x_name(ch Map[String, String], kind String) String {
+def channel_x(ch Map[String, String], kind String) String {
   if !ch.has("x") {
     raise Exception.new(message: "plot: the ${kind} chart needs the \"x\" channel")
   }
@@ -705,7 +705,7 @@ def column_values(vals Array[Float64], rows Array[Int64]) Array[Float64] {
 def hist(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "hist", ["x", "color", "facet_row", "facet_col"])
   refuse_facets(ch)
-  const x_col = x_name(ch, "hist")
+  const x_col = channel_x(ch, "hist")
   const xs = t.number(x_col)
   const rows = kept_rows_x(t, x_col, "hist")
   const t0 = theme()
@@ -778,7 +778,7 @@ def hist(t Table, ch Map[String, String]) Figure {
 def kde(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "kde", ["x", "color", "facet_row", "facet_col"])
   refuse_facets(ch)
-  const x_col = x_name(ch, "kde")
+  const x_col = channel_x(ch, "kde")
   const xs = t.number(x_col)
   const rows = kept_rows_x(t, x_col, "kde")
   const t0 = theme()
@@ -835,7 +835,7 @@ def rows_at(idxs Array[Int64], rows Array[Int64]) Array[Int64] {
 def ecdf(t Table, ch Map[String, String]) Figure {
   internal.channels.check(ch, "ecdf", ["x", "color", "facet_row", "facet_col"])
   refuse_facets(ch)
-  const x_col = x_name(ch, "ecdf")
+  const x_col = channel_x(ch, "ecdf")
   const xs = t.number(x_col)
   const rows = kept_rows_x(t, x_col, "ecdf")
   const t0 = theme()
@@ -1000,6 +1000,145 @@ def violin(t Table, ch Map[String, String]) Figure {
     norm = norm.append(dens[p] / top)
   }
   const m = mark.violin(g.levels, points, grid, norm)
+  return chart_figure(x_name, y_name, [m])
+}
+
+// ---- the categorical charts ----
+
+// `bar` and `point` aggregate each level's y by its mean, `count` draws
+// the row counts, and `strip` draws the raw points. All four sit on the
+// x column's levels — a number column there raises.
+
+// A kept row's band coordinate: its level's position, half a band in
+// from the level's left edge.
+def band_of(col Array[String], levels Array[String], r Int64) Float64 {
+  var k = 0
+  while levels[k] != col[r] {
+    k = k + 1
+  }
+  return k.to_float64() + 0.5
+}
+
+// The bar chart: one bar per level of the x column, its height the mean
+// of the level's observed y values.
+def bar(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "bar", ["x", "y", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const names = xy_names(ch, "bar")
+  const x_name = names[0]
+  const y_name = names[1]
+  const g = grouped(t, x_name, y_name, "bar")
+  var means = []
+  for var k = 0; k < g.levels.length(); k = k + 1 {
+    const d = internal.stats.describe(level_values(g, g.levels[k]))
+    means = means.append(d.mean)
+  }
+  const m = mark.bar(g.levels, means)
+  return chart_figure(x_name, y_name, [m])
+}
+
+// The count chart: one bar per level of the x column, its height the
+// number of rows the level carries.
+def count(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "count", ["x", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const x_col = channel_x(ch, "count")
+  const cats = categorical_column(t, x_col)
+  if cats.length() == 0 {
+    raise Exception.new(message: "plot: the count chart has no rows to draw")
+  }
+  const levels = internal.channels.sorted_levels(cats)
+  var counts = []
+  for var k = 0; k < levels.length(); k = k + 1 {
+    var c = 0.0
+    for var i = 0; i < cats.length(); i = i + 1 {
+      if cats[i] == levels[k] {
+        c = c + 1.0
+      }
+    }
+    counts = counts.append(c)
+  }
+  const m = mark.bar(levels, counts)
+  return chart_figure(x_col, "count", [m])
+}
+
+// The strip chart: the raw points at their bands' centers, one mark per
+// color level — the split working like the relational charts'. The
+// points draw in the rows' own order, unjittered: overlapping points
+// are the data.
+def strip(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "strip", ["x", "y", "color", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const names = xy_names(ch, "strip")
+  const x_name = names[0]
+  const y_name = names[1]
+  const cats = categorical_column(t, x_name)
+  const ys = t.number(y_name)
+  const yp = t.presence(y_name)
+  var rows = []
+  for var i = 0; i < yp.length(); i = i + 1 {
+    if yp[i] == Presence.present {
+      rows = rows.append(i)
+    }
+  }
+  if rows.length() == 0 {
+    raise Exception.new(message: "plot: the strip chart has no rows to draw")
+  }
+  var kept_cats = []
+  for var r = 0; r < rows.length(); r = r + 1 {
+    kept_cats = kept_cats.append(cats[rows[r]])
+  }
+  const x_levels = internal.channels.sorted_levels(kept_cats)
+  const t0 = theme()
+  const g = grouping(t, ch, rows, ch.has("color"))
+  var buckets = {}
+  for var r = 0; r < rows.length(); r = r + 1 {
+    const key = group_key(g, r)
+    if buckets.has(key) {
+      buckets.set(key, buckets.get(key).append(r))
+    } else {
+      buckets.set(key, [r])
+    }
+  }
+  const order = sorted_keys(buckets.keys())
+  var marks = []
+  for var k = 0; k < order.length(); k = k + 1 {
+    const idxs = buckets.get(order[k])
+    const at = idxs[0]
+    var style = mark.scatter_style()
+    if g.color_idx[at] >= 0 {
+      style = style.with_color(t0.palette.color(g.color_idx[at]))
+      style = style.with_label(g.colors[g.color_idx[at]])
+    }
+    var sx = []
+    var sy = []
+    for var j = 0; j < idxs.length(); j = j + 1 {
+      const r = idxs[j]
+      sx = sx.append(band_of(kept_cats, x_levels, r))
+      sy = sy.append(ys[rows[r]])
+    }
+    marks = marks.append(mark.Strip.new(x_levels, sx, sy, style))
+  }
+  return chart_figure(x_name, y_name, marks)
+}
+
+// The point chart: one mean per level of the x column, the means
+// connected in band order and stamped with the style's marker.
+def point(t Table, ch Map[String, String]) Figure {
+  internal.channels.check(ch, "point", ["x", "y", "facet_row", "facet_col"])
+  refuse_facets(ch)
+  const names = xy_names(ch, "point")
+  const x_name = names[0]
+  const y_name = names[1]
+  const g = grouped(t, x_name, y_name, "point")
+  var mx = []
+  var my = []
+  for var k = 0; k < g.levels.length(); k = k + 1 {
+    const d = internal.stats.describe(level_values(g, g.levels[k]))
+    mx = mx.append(k.to_float64() + 0.5)
+    my = my.append(d.mean)
+  }
+  const m = mark.point(g.levels, mx, my)
   return chart_figure(x_name, y_name, [m])
 }
 

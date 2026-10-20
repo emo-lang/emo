@@ -160,6 +160,19 @@ def violin(t Table, ch Map[String, String]) Figure
 
 单列图需要 `x` 通道,分组对需要两个都给;缺席行照旧剔除、没有可画行的图直接 raise,未知通道、该图不读的通道、`color` 映射到数值列同样 raise。常数列没有密度:`kde` 图直接 raise,不画一根针。
 
+## 分类型图表
+
+`bar`、`count`、`strip`、`point` 落在 `x` 列的水平上——那里给数值列直接 raise,mark 落在水平上、不落在数字上:
+
+```emo
+def bar(t Table, ch Map[String, String]) Figure
+def count(t Table, ch Map[String, String]) Figure
+def strip(t Table, ch Map[String, String]) Figure
+def point(t Table, ch Map[String, String]) Figure
+```
+
+`bar` 与 `point` 需要 `y` 通道,把每个水平的在场 y 值按均值聚合——每个水平一根柱;point 是沿 band 顺序行走、逐个盖章的均值连线。`count` 完全不需要 `y`:每个水平一根柱,高度是该水平的行数。`strip` 在各 band 中心画原始点,每个 `color` 水平一条系列——拆分方式与关系型一致——点不抖动、按行自身顺序画,重叠的点就是数据。`strip` 的 y 轴标签取自 `y` 列,`count` 的 y 轴标签是 `count`;分面通道照旧在图表层的面板拆分落地之前直接 raise。
+
 ## 主题
 
 主题装扮整张图:背景与前景墨色、网格、坐标轴、标题、标签样式,color 通道经过的 palette 与 colormap、面板间距,以及 `figure()` 出发的默认尺寸。`figure()` 建出默认的浅色主题,`with_theme` 把另一套换上图:
@@ -225,6 +238,11 @@ def box_style() BoxStyle
 
 def violin(labels Array[String], points Int64, xs Array[Float64], density Array[Float64]) Violin
 def violin_style() ViolinStyle
+
+def strip(labels Array[String], xs Array[Float64], ys Array[Float64]) Strip
+
+def point(labels Array[String], xs Array[Float64], ys Array[Float64]) Point
+def point_style() LineStyle
 ```
 
 mark 也是值。`Bar.with_style(s BarStyle)` 以及样式上的 `with_color` / `with_width` / `with_label` 细化它,不改动任何东西:
@@ -253,6 +271,8 @@ band 在同一段升序 `xs` 上填充下曲线与上曲线之间的区域——
 箱线一排落在类别面上——每个标签一个箱、在它的 band 中心:须、填充的四分位箱、中位线、须外盖章的离群点。五个统计数组与 labels 等长,离群点两个数组彼此等长;工厂都检查。`BoxStyle` 携带填充与边缘 `color`、`edge_width`、band 占比 `width`、`opacity` 与 `label`。
 
 小提琴一排按标签镜像密度——网格与密度都是扁平数组,每个标签一段 `points` 个点,密度是 band 半宽的分数。`ViolinStyle` 携带 `color`(填充)、band 占比 `width`、`opacity` 与 `label`。
+
+strip 是类别面上的散点:原始点落在各 band 中心,xs 是 band 坐标、两个数组等长。point 一排沿 band 前进——每个标签一个值、按 band 顺序连线并以样式的 marker 盖章;它的样式是 `LineStyle`(线连接、marker 盖章),strip 的样式是 `ScatterStyle`。
 
 **颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组**,每通道 0–255。`plot.rgb(r, g, b)` 构造经过范围检查的三元组——越界通道直接 raise;裸三元组也接受,在绘制时校验。不透明度是样式上单独的 `Float64`,绝不煍进三元组。它随每个样式携带,但**尚未渲染**——渲染器图元还没有不透明度旋钮。
 
@@ -286,6 +306,6 @@ println(plot.svg(chart))
 
 目标:包所声明的五个托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这份清单是包的,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合还有 `browser` 和 freestanding 的 `riscv64`,后者因为拒绝 `Map` 而留在这份清单之外。逐个目标的完整故事见 [`demo-targets.md`](../../demo-targets.md)。
 
-T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:类别与矩阵图表,以及图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
+T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——分类型图表——`bar`、`count`、`strip`、`point`,`strip` 与 `point` mark 随之加入 `plot.mark`——还有 SVG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。表面上还带着的其余部分是**预留、尚未渲染**的:矩阵图表,以及图表层的那一半分面——按列水平拆分数据、逐面板水平标注、单份共享图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——所以终端或栅格后端以后可以在不扰动图与 mark 的前提下接上。
 
 另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

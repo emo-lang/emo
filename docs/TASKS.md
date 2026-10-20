@@ -1548,8 +1548,26 @@ T0 marks, with fixtures byte-identical on all five targets.
       the first figures to draw one) — and the %g decimal tail kept
       Erlang `compact`'s final `.0` where the interpreter's %g says
       `204`, now stripped.
-- [ ] **T43.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
-      `plot.point`.
+- [x] **T43.4** — Categorical: `plot.bar`, `plot.count`, `plot.strip`,
+      `plot.point`. All four sit on the `x` column's levels — a number
+      column there raises. `bar` and `point` need the `y` channel and
+      aggregate each level's observed values by their mean — one bar
+      per level, and one stamped, connected mean walking the bands in
+      their sorted order. `count` needs no `y` at all: one bar per
+      level, its height the number of rows the level carries. `strip`
+      draws the raw points at their bands' centers, one mark per
+      `color` level through the T43.2 grouping — the points unjittered
+      and in the rows' own order, so overlapping points are the data.
+      Two marks joined `plot.mark`: `Strip` (a scatter that declares
+      the bands, styled with the existing `ScatterStyle`) and `Point`
+      (a connected mean row, styled with the existing `LineStyle` plus
+      a `point_style` default) — the categorical faces of the two T0
+      marks, so the axis labels the levels they draw on. `bar`, `count`,
+      and `point` do not read the `color` channel yet. Verified on all
+      six paths — interp, c, ocaml, ts, wasm, beam — with the demo
+      golden byte-identical (`plot_demo` grew a categorical section: a
+      two-region sales table through all four charts) and eight raise
+      messages byte-identical.
 - [ ] **T43.5** — Matrix: `plot.heatmap`, `plot.clustermap`.
 - [ ] **T43.6** — Apply faceting, palettes, and themes at the chart
       layer; demos and byte-identical goldens — carrying T41.7's level

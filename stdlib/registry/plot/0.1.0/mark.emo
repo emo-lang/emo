@@ -2,8 +2,8 @@
 // its data spans. The span is named on both axes — a continuous x and y
 // range through `x_min`/`x_max`/`y_min`/`y_max`, a categorical x through
 // `bands` and `x_labels` — so the axes can scale to every mark at once.
-// `bar`, `line`, `scatter`, `area`, `hist`, `band`, `box`, and `violin`
-// are the implementations so far.
+// `bar`, `line`, `scatter`, `area`, `hist`, `band`, `box`, `violin`,
+// `strip`, and `point` are the implementations so far.
 
 interface Mark {
   def draw(ctx internal.ctx.DrawContext) Void
@@ -1167,4 +1167,175 @@ def violin(labels Array[String], points Int64, xs Array[Float64], density Array[
     raise Exception.new(message: "plot: a violin's arrays must carry ${n * points} entries, got ${xs.length()} grid values and ${density.length()} densities")
   }
   return Violin.new(labels: labels, points: points, xs: xs, density: density, style: violin_style())
+}
+
+// A strip of points over the categorical face: the raw observations at
+// their bands' centers — a scatter that declares the bands, so the
+// axis labels its levels. The xs are band coordinates (0.5, 1.5, ...)
+// and the arrays share their length.
+class Strip {
+  def init(labels Array[String], xs Array[Float64], ys Array[Float64], style ScatterStyle) {
+    self.labels = labels
+    self.xs = xs
+    self.ys = ys
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    for var i = 0; i < self.ys.length(); i = i + 1 {
+      stamp_marker(ctx.renderer, ctx.px(self.xs[i]), ctx.py(self.ys[i]), self.style.marker, self.style.size, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.labels.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    if self.ys.length() == 0 {
+      return 0.0
+    }
+    var lo = self.ys[0]
+    for var i = 1; i < self.ys.length(); i = i + 1 {
+      if self.ys[i] < lo {
+        lo = self.ys[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.ys.length() == 0 {
+      return 0.0
+    }
+    var hi = self.ys[0]
+    for var i = 1; i < self.ys.length(); i = i + 1 {
+      if self.ys[i] > hi {
+        hi = self.ys[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return self.labels.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.labels
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    stamp_marker(r, x + 9.0, y, self.style.marker, self.style.size, self.style.color)
+  }
+
+  def with_style(s ScatterStyle) Strip {
+    return Strip.new(labels: self.labels, xs: self.xs, ys: self.ys, style: s)
+  }
+}
+
+// The strip factory: the point arrays share their length.
+def strip(labels Array[String], xs Array[Float64], ys Array[Float64]) Strip {
+  if xs.length() != ys.length() {
+    raise Exception.new(message: "plot: a strip's point arrays must match, got ${xs.length()} xs for ${ys.length()} ys")
+  }
+  return Strip.new(labels: labels, xs: xs, ys: ys, style: scatter_style())
+}
+
+// Means over the categorical face: one value per label at its band
+// center, connected in band order and stamped with the style's marker —
+// a line that declares the bands, so the axis labels its levels.
+class Point {
+  def init(labels Array[String], xs Array[Float64], ys Array[Float64], style LineStyle) {
+    self.labels = labels
+    self.xs = xs
+    self.ys = ys
+    self.style = style
+  }
+
+  def draw(ctx internal.ctx.DrawContext) Void {
+    const n = self.ys.length()
+    const pattern = dash_array(self.style.dash)
+    for var i = 0; i < n - 1; i = i + 1 {
+      ctx.renderer.line(ctx.px(self.xs[i]), ctx.py(self.ys[i]), ctx.px(self.xs[i + 1]), ctx.py(self.ys[i + 1]), self.style.color, self.style.width, pattern)
+    }
+    for var i = 0; i < n; i = i + 1 {
+      stamp_marker(ctx.renderer, ctx.px(self.xs[i]), ctx.py(self.ys[i]), self.style.marker, self.style.marker_size, self.style.color)
+    }
+  }
+
+  def x_min() Float64 {
+    return 0.0
+  }
+
+  def x_max() Float64 {
+    return self.labels.length().to_float64()
+  }
+
+  def y_min() Float64 {
+    if self.ys.length() == 0 {
+      return 0.0
+    }
+    var lo = self.ys[0]
+    for var i = 1; i < self.ys.length(); i = i + 1 {
+      if self.ys[i] < lo {
+        lo = self.ys[i]
+      }
+    }
+    return lo
+  }
+
+  def y_max() Float64 {
+    if self.ys.length() == 0 {
+      return 0.0
+    }
+    var hi = self.ys[0]
+    for var i = 1; i < self.ys.length(); i = i + 1 {
+      if self.ys[i] > hi {
+        hi = self.ys[i]
+      }
+    }
+    return hi
+  }
+
+  def bands() Int64 {
+    return self.labels.length()
+  }
+
+  def x_labels() Array[String] {
+    return self.labels
+  }
+
+  def legend_label() String {
+    return self.style.label
+  }
+
+  def legend_sample(r internal.svg.Renderer, x Float64, y Float64) Void {
+    r.line(x, y, x + 18.0, y, self.style.color, self.style.width, dash_array(self.style.dash))
+    stamp_marker(r, x + 9.0, y, self.style.marker, self.style.marker_size, self.style.color)
+  }
+
+  def with_style(s LineStyle) Point {
+    return Point.new(labels: self.labels, xs: self.xs, ys: self.ys, style: s)
+  }
+}
+
+// The point factory: the arrays share their length.
+def point(labels Array[String], xs Array[Float64], ys Array[Float64]) Point {
+  if xs.length() != ys.length() || xs.length() != labels.length() {
+    raise Exception.new(message: "plot: a point's arrays must match its labels, got ${xs.length()} xs and ${ys.length()} ys for ${labels.length()}")
+  }
+  return Point.new(labels: labels, xs: xs, ys: ys, style: point_style())
+}
+
+def point_style() LineStyle {
+  return LineStyle.new(color: (47, 111, 179), width: 1.5, dash: Dash.solid, marker: Marker.circle, marker_size: 6.0, opacity: 1.0, label: "")
 }
