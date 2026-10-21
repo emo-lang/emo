@@ -85,6 +85,67 @@ let binary_lit (s : string) : string =
 
 let atom s = "'" ^ s ^ "'"
 
+(* Runs [body] for its emission and hands the text back, leaving the
+   buffer as it was — the way an arm of a run-time dispatch is built
+   from code written in the imperative style. *)
+let capturing env (body : unit -> unit) : string =
+  let mark = Buffer.length env.buf in
+  body ();
+  let text = Buffer.sub env.buf mark (Buffer.length env.buf - mark) in
+  Buffer.truncate env.buf mark;
+  text
+
+(* The builtin method arms that fire on the name alone, with no static
+   guard on the receiver's type. A class method of the same name and
+   arity would be routed to the builtin — and fail on the shape match —
+   unless the instance answers first, so [method_call] wraps these names
+   in the instance-first dispatch. Kept in step with the arms of
+   [builtin_method_call]. *)
+let unguarded_builtin_arms =
+  [
+    ("to_string", 0);
+    ("length", 0);
+    ("get", 1);
+    ("set", 2);
+    ("substring", 2);
+    ("starts_with", 1);
+    ("index_of", 1);
+    ("trim", 0);
+    ("lower", 0);
+    ("split", 1);
+    ("append", 1);
+    ("read", 0);
+    ("replace", 1);
+    ("push_front", 1);
+    ("push_back", 1);
+    ("pop_front", 0);
+    ("pop_back", 0);
+    ("to_bytes", 0);
+    ("has", 1);
+    ("remove", 1);
+    ("keys", 0);
+    ("values", 0);
+    ("push", 1);
+    ("to_array", 0);
+    ("get_u16_le", 1);
+    ("get_u32_le", 1);
+    ("get_u64_le", 1);
+    ("set_u16_le", 2);
+    ("set_u32_le", 2);
+    ("set_u64_le", 2);
+    ("sqrt", 0);
+    ("floor", 0);
+    ("ceil", 0);
+    ("trunc", 0);
+    ("to_float64", 0);
+    ("to_int64", 0);
+    ("to_byte", 0);
+    ("to_bits", 0);
+    ("from_int64", 1);
+    ("from_bits", 1);
+    ("is", 1);
+  ]
+
 (* A float literal, normalized: `%F` writes 65535.0 as `65535.`, which
    Core Erlang reads as an integer followed by a stray dot, and `%.17g`
    writes 3.14159 as 3.1415899999999999. The shortest decimal that reads
@@ -133,6 +194,53 @@ let instance_pattern (classes : Emo_ir.class_ list) (cname : string) : string =
   | _ -> Printf.sprintf "{'emo_inst', %s, %s}" (atom cname) wilds
 
 let put env s = Buffer.add_string env.buf s
+
+(* 'emo_inst_str'/1 over a whole program: an instance answers its own
+   `to_string` first — the `emo.to_string` protocol entry — and a class
+   without one renders as its structure dump. The display name and the
+   field names ride into the dump as literals; the class's method,
+   when present, is applied directly. The caller — emo_to_str's tuple
+   arm — has already established the instance shape. *)
+let inst_str_source (program : Emo_ir.program) : string =
+  let entry_bare (d : string) =
+    let drop = "main." in
+    if
+      String.starts_with ~prefix:drop d
+      && not (String.contains (String.sub d 5 (String.length d - 5)) '.')
+    then String.sub d 5 (String.length d - 5)
+    else d
+  in
+  let arms =
+    String.concat ""
+      (List.map
+         (fun (c : Emo_ir.class_) ->
+           let body =
+             if
+               List.exists
+                 (fun (m : Emo_ir.func) ->
+                   String.equal (member_name c m) "to_string"
+                   && List.length m.Emo_ir.fparams - 1 = 0)
+                 c.Emo_ir.cmethods
+             then
+               Printf.sprintf "apply 'emo_ts_answer'/1 (apply '%s'/1 (_v))"
+                 (Emo_ir.sanitize_ident (c.Emo_ir.cname ^ "__to_string"))
+             else
+               Printf.sprintf "apply 'emo_inst_dump'/3 (%s, [%s], _v)"
+                 (binary_lit (entry_bare c.Emo_ir.cdisplay))
+                 (String.concat ", " (List.map binary_lit (class_fields c)))
+           in
+           Printf.sprintf "\t\t<%s> when 'true' ->\n\t\t    %s\n"
+             (atom c.Emo_ir.cname) body)
+         program.Emo_ir.pclasses)
+  in
+  Printf.sprintf
+    "'emo_inst_str'/1 =\n\
+    \    fun (_v) ->\n\
+    \  case call 'erlang':'element'(2, _v) of\n\
+     %s    <_c> when 'true' ->\n\
+    \      call 'erlang':'error'({'emo_no_inst', _c})\n\
+    \  end\n"
+    arms
 
 (* ---- Expressions ---- *)
 
@@ -340,12 +448,12 @@ let rec expr env (x : Emo_ir.expr) : unit =
           expr env e)
         pairs;
       put env "])"
-  | Index (b, i) ->
+  | Index (b, i) -> (
       (* a tuple is an Erlang tuple and answers element/2; a list (an
          array literal) is 1-based and answers lists:nth; a value whose
          static type is dynamic — an element of an array that started
          out as a bare `[]` — asks the runtime which it is *)
-      (match b.Emo_ir.ety with
+      match b.Emo_ir.ety with
       | Emo_check.TupleType _ ->
           put env "call 'erlang':'element'(call 'erlang':'+'(1, ";
           expr env i;
@@ -474,6 +582,83 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env "})"
 
 and method_call env self_ name args =
+  (* Instances answer their own methods first, whatever the name — the
+     interpreter's rule. A receiver whose class the static type names
+     calls its method directly; a receiver the type left open (Unknown,
+     an interface) dispatches at run time over the classes carrying the
+     name, with the builtin arm as the fallback; a receiver the type
+     settled as a builtin shape never reaches the chain. *)
+  let mangled = Emo_ir.sanitize_ident name in
+  let arity = List.length args in
+  let matches =
+    List.filter_map
+      (fun (c : Emo_ir.class_) ->
+        if
+          List.exists
+            (fun (m : Emo_ir.func) ->
+              String.equal (member_name c m) mangled
+              && List.length m.Emo_ir.fparams - 1 = arity)
+            c.Emo_ir.cmethods
+        then Some c.Emo_ir.cname
+        else None)
+      env.classes
+  in
+  let recv_class =
+    match self_.Emo_ir.ety with
+    | Emo_check.ClassType c -> mangled_of_display env.classes c
+    | _ -> None
+  in
+  let open_receiver =
+    match self_.Emo_ir.ety with
+    | Emo_check.Unknown | Emo_check.ClassType _ | Emo_check.InterfaceType _ ->
+        true
+    | _ -> false
+  in
+  match
+    ( recv_class,
+      matches,
+      List.mem (name, arity) unguarded_builtin_arms,
+      open_receiver )
+  with
+  | Some c, _, _, _ when List.mem c matches ->
+      put env
+        (Printf.sprintf "apply '%s'/%d "
+           (Emo_ir.sanitize_ident (c ^ "__" ^ mangled))
+           (arity + 1));
+      args_list env (self_ :: args)
+  | None, _ :: _, true, true ->
+      (* the run-time chain: each class carrying the name tests the
+         receiver and calls its method; the builtin arm answers
+         otherwise. The receiver is bound once — the tests must not
+         re-run a side-effecting receiver — while the args ride inside
+         each arm, exactly one of which runs. *)
+      let recv = fresh_var env "__inst_recv" in
+      put env ("let <" ^ recv ^ "> =\n");
+      expr env self_;
+      put env ("\nin case " ^ recv ^ " of\n");
+      List.iter
+        (fun cname ->
+          put env
+            (Printf.sprintf "  <%s> when 'true' ->\n    apply '%s'/%d ("
+               (instance_pattern env.classes cname)
+               (Emo_ir.sanitize_ident (cname ^ "__" ^ mangled))
+               (arity + 1));
+          put env recv;
+          List.iter
+            (fun a ->
+              put env ", ";
+              expr env a)
+            args;
+          put env ")\n")
+        matches;
+      put env "  <_> when 'true' ->\n";
+      let via_local = { self_ with Emo_ir.desc = Emo_ir.Var "__inst_recv" } in
+      put env
+        (capturing env (fun () -> builtin_method_call env via_local name args));
+      put env "\nend"
+  | _ -> builtin_method_call env self_ name args
+
+and builtin_method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
   (* the Bytes method names are unambiguous, so dispatch goes by name;
      length and to_string serve several types and split at runtime on
@@ -1133,8 +1318,8 @@ and emit_threaded_control env (assigned : string list) (s : Emo_ir.stmt) : unit
 (* The instance tuple a field set rebuilds: `setelement(index, self,
    value)`. The class and the field index resolve from the receiver's
    type, falling back to the class whose body is being emitted. *)
-and set_field_call env (self_ : Emo_ir.expr) name (value : Emo_ir.expr) :
-    string =
+and set_field_call env (self_ : Emo_ir.expr) name (value : Emo_ir.expr) : string
+    =
   let class_name =
     match self_.Emo_ir.ety with
     | Emo_check.ClassType c -> (
@@ -1497,10 +1682,7 @@ and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
       let rec live_uniq acc = function
         | [] -> List.rev acc
         | name :: tl ->
-            if
-              List.mem name acc
-              || List.mem name beam_temps
-              || List.mem name tl
+            if List.mem name acc || List.mem name beam_temps || List.mem name tl
             then live_uniq acc tl
             else live_uniq (name :: acc) tl
       in
@@ -1511,9 +1693,7 @@ and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
       let saved_map = env.local_map in
       let saved_loops = env.loops in
       let before = Buffer.length env.buf in
-      let param_of =
-        List.map (fun name -> (name, fresh_var env name)) live
-      in
+      let param_of = List.map (fun name -> (name, fresh_var env name)) live in
       put env
         (Printf.sprintf "%s/%d =\n    fun (%s) ->\n" cname
            (List.length param_of)
@@ -1530,15 +1710,13 @@ and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
         let saved = env.local_map in
         emit_loop_body env ~tail:true branch_body ~leaf:(fun () ->
             put env
-              (Printf.sprintf "apply %s/%d (%s)" cname
-                 (List.length param_of)
+              (Printf.sprintf "apply %s/%d (%s)" cname (List.length param_of)
                  (String.concat ", "
                     (List.map
                        (fun (name, _) ->
                          match List.assoc_opt name env.local_map with
                          | Some v -> v
-                         | None ->
-                             failwith ("beam: unbound cont var " ^ name))
+                         | None -> failwith ("beam: unbound cont var " ^ name))
                        param_of))));
         env.local_map <- saved
       in
@@ -1678,15 +1856,15 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
     | [] -> List.rev acc
     | name :: tl ->
         if
-          List.mem name acc
-          || List.mem name beam_temps
-          || List.mem name frees
-          || (match header with Some h -> name = h | None -> false)
+          List.mem name acc || List.mem name beam_temps || List.mem name frees
+          || match header with Some h -> name = h | None -> false
         then live_uniq acc tl
         else live_uniq (name :: acc) tl
   in
   let live_names = live_uniq [] (List.map fst env.local_map) in
-  let var_names = (match header with Some h -> [ h ] | None -> []) @ frees @ live_names in
+  let var_names =
+    (match header with Some h -> [ h ] | None -> []) @ frees @ live_names
+  in
   let n = env.fresh + 1 in
   env.fresh <- n;
   let lname = Printf.sprintf "'__loop_%d'" n in
@@ -1958,12 +2136,59 @@ let rt_source =
 	  <{'emo_enum', _n, _m}> when 'true' ->
 	      call 'erlang':'atom_to_binary'(_m, 'utf8')
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
-	      apply 'emo_tuple_to_str'/1 (_t)
+	      %% an instance is a tagged tuple: it reaches the per-program
+	      %% dispatch — its own `to_string` or the structure dump
+	      case call 'erlang':'tuple_size'(_t) of
+		<0> when 'true' -> apply 'emo_tuple_to_str'/1 (_t)
+		<_> when 'true' ->
+		    case call 'erlang':'element'(1, _t) of
+		      <'emo_inst'> when 'true' -> apply 'emo_inst_str'/1 (_t)
+		      <_> when 'true' -> apply 'emo_tuple_to_str'/1 (_t)
+		    end
+	      end
 	  <_a> when call 'erlang':'is_list'(_a) ->
 	      apply 'emo_array_to_str'/1 (_a)
 	  <_s> when call 'erlang':'is_binary'(_s) -> _s
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_to_str', _other})
+	end
+
+%% A class's `to_string` must answer a String — the same E3015 the
+%% interpreter raises.
+'emo_ts_answer'/1 =
+    fun (_r) ->
+	case call 'erlang':'is_binary'(_r) of
+	  <'true'> when 'true' -> _r
+	  <'false'> when 'true' ->
+	      call 'erlang':'error'({'emo_to_string_not_a_string'})
+	end
+
+%% The structure dump — the defined default when a class carries no
+%% `to_string`: "#Name(field: value, ...)" with field values in the
+%% debug form (strings quoted). The display name and the field names
+%% ride in as literals from the per-program dispatch; the fields read
+%% by index from the instance tuple (fields start at element 3).
+'emo_inst_dump'/3 =
+    fun (_name, _names, _v) ->
+	call 'erlang':'iolist_to_binary'
+	  ([35, _name, 40
+	    | apply 'emo_inst_dump_walk'/4 (_names, _v, 3, 1)])
+
+'emo_inst_dump_walk'/4 =
+    fun (_names, _v, _i, _first) ->
+	case _names of
+	  <[_n | _rest]> when 'true' ->
+	      let <_sep> = case _first of
+			  <1> when 'true' -> []
+			  <_> when 'true' -> [44, 32]
+			end
+	      in let <_fld> =
+		     apply 'emo_map_dbg'/1 (call 'erlang':'element'(_i, _v))
+		 in [_sep, _n, 58, 32, _fld
+		     | apply 'emo_inst_dump_walk'/4
+			 (_rest, _v, call 'erlang':'+'(_i, 1), 0)]
+	  <[]> when 'true' ->
+	      [41]
 	end
 
 %% Emo prints a float the way OCaml's `%g` does — six significant digits,
@@ -4119,6 +4344,7 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   put env (Printf.sprintf "module '%s' ['main'/0]\n" module_name);
   put env "    attributes []\n";
   put env rt_source;
+  put env (inst_str_source program);
   (* a def emitter shared by program functions and class methods *)
   let emit_def ~(cc : string option) ~(params : (string * string) list)
       ~(fname : string) ~(body : Emo_ir.stmt list) : unit =
@@ -4151,7 +4377,8 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
         \      in case call 'persistent_term':'put'(%s, _emo_const_v) of\n\
         \           <_emo_ignored> when 'true' -> _emo_const_v\n\
         \         end\n\
-        \  <_emo_cached> when 'true' -> _emo_cached\nend"
+        \  <_emo_cached> when 'true' -> _emo_cached\n\
+         end"
         key text key
     in
     let inner =

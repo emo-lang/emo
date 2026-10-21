@@ -38,6 +38,7 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 - [`docs/zh-CN/intro/syntax.md`](intro/syntax.md) —— 语言语法：调用与其尾随块、`def` 与绑定、控制流、值，以及类型定义构造。
 - [`docs/reserved_words.md`](../reserved_words.md) —— 保留字、保留字面量与编译器保留名的完整清单（英文）。
 - [`docs/zh-CN/intro/type-system.md`](intro/type-system.md) —— 渐近类型、显式位宽的数值类型、结构化收窄。
+- [`docs/zh-CN/protocols.md`](protocols.md) —— 语言协议注册表：`emo.to_string` 与 `emo.length`、定义点的契约强制、以及条目如何挣得位置。
 - [`docs/zh-CN/intro/modules-and-visibility.md`](intro/modules-and-visibility.md) —— 目录树即模块树、`internal/` 私有、显式依赖。
 - [`docs/zh-CN/intro/package-management.md`](intro/package-management.md) —— 包即模块前缀、精确版本按 MVS 解析、发布。
 - [`docs/zh-CN/intro/concurrency.md`](intro/concurrency.md) —— 进程与消息传递：`do`、`<-`、`receive`。

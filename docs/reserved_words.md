@@ -24,7 +24,7 @@ Reserved words are lowercase and case-sensitive. Their capitalized spellings
 | `def` | Function or method definition. |
 | `do` | Starts a process from a call and yields its pid. |
 | `else` | The alternative branch of an `if`. |
-| `emo` | Function group declaration. |
+| `emo` | Function group declaration; in expression position, `emo.` accesses the language's protocol registry. |
 | `enum` | Enum declaration. |
 | `for` | Three-clause loop. |
 | `if` | Conditional statement, or the one-line conditional expression. |
@@ -226,3 +226,13 @@ Two words that look special are ordinary identifiers:
   ordinary name.
 - **`init`** names the constructor only as a `def` inside a class. Outside a
   class, `def init` is an error; a binding named `init` is fine.
+
+## Protocol names
+
+`to_string` and `length` are ordinary identifiers everywhere except one
+position: as a `def` name inside a class or interface body, they carry a
+language protocol's contract — `def to_string() String` and
+`def length() Int64` — and any other signature is a compile error stating
+the contract. The complete set of protocol names is the `emo` registry (see
+[protocols.md](protocols.md)); bindings, fields, parameters, top-level
+functions, and group members with either name are fine.

@@ -1,0 +1,17 @@
+// A class with the protocol method and one without: the rendering
+// rules ride the module boundary.
+class Remote {
+  def init(n Int64) {
+    self.n = n
+  }
+}
+
+class Pretty {
+  def init(n Int64) {
+    self.n = n
+  }
+
+  def to_string() String {
+    return "Remote(${self.n})"
+  }
+}

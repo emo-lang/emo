@@ -377,6 +377,26 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
                    }))
       deps_pairs
   in
+  (* The short name `emo` is the protocol registry's: no package — this
+     one or a dependency — binds under it. *)
+  let binds_as_emo n =
+    let short =
+      match String.index_opt n '/' with
+      | Some i -> String.sub n (i + 1) (String.length n - i - 1)
+      | None -> n
+    in
+    String.equal short "emo"
+  in
+  List.iter
+    (fun n ->
+      if binds_as_emo n then
+        raise
+          (manifest_error "E5105"
+             (Printf.sprintf
+                "package `%s` would bind as `emo`, the protocol registry's name"
+                n)
+             ~hint:"choose another name; `emo.to_string(x)` is the registry"))
+    (name :: List.map fst deps);
   { name; version; targets; link; pkg_config; frameworks; registry; deps }
 
 (* A `package.emo` is the manifest: data in the restricted profile, never a

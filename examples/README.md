@@ -29,6 +29,16 @@ language's design, not just its features.
 - **[`loops/`](loops/)** — the three-clause `for` and `while`, with
   `break`, `continue`, and nested loops.
 - **[`objects/`](objects/)** — classes, enums, interfaces, equality.
+- **[`builtin_names/`](builtin_names/)** — a class whose methods carry
+  names the builtins also use (`length`, `get`, `set`, `push`,
+  `to_string`), called on a statically-classed receiver and on one a
+  `Box` read leaves open: the instance answers first on every target,
+  whatever the name.
+- **[`to_string_render/`](to_string_render/)** — the `to_string`
+  protocol: a class supplying its own rendering through `println`,
+  interpolation, and containers, a class rendering as its structure
+  dump — the defined default, byte-identical on every target — and
+  both across a module boundary.
 - **[`shop/`](shop/)** — the module system: the directory tree is the
   module tree, with an `internal/` private subtree.
 - **[`http_roundtrip/`](http_roundtrip/)** — an HTTP server and client

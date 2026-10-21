@@ -318,6 +318,65 @@ type env = {
 let e env i = env.rev <- i :: env.rev
 let es env xs = env.rev <- List.rev_append xs env.rev
 
+(* Runs [body] for its emission and hands the instructions back as a
+   list, leaving the buffer as it was — the way an arm of a run-time
+   dispatch is built from code written in the imperative style. *)
+let capturing env (body : unit -> unit) : W.instr list =
+  let mark = env.rev in
+  body ();
+  let rec take cur acc =
+    if cur == mark then acc
+    else match cur with i :: rest -> take rest (i :: acc) | [] -> acc
+  in
+  let instrs = take env.rev [] in
+  env.rev <- mark;
+  instrs
+
+(* The builtin method arms that fire on the name alone, with no static
+   guard on the receiver's type. A class method of the same name and
+   arity would be routed to the builtin — and trap on the cast — unless
+   the instance answers first, so [method_call] wraps these names in the
+   instance-first dispatch. Kept in step with the arms of
+   [builtin_method_call]. *)
+let unguarded_builtin_arms =
+  [
+    ("to_string", 0);
+    ("length", 0);
+    ("get", 1);
+    ("set", 2);
+    ("substring", 2);
+    ("starts_with", 1);
+    ("index_of", 1);
+    ("trim", 0);
+    ("lower", 0);
+    ("split", 1);
+    ("append", 1);
+    ("read", 0);
+    ("replace", 1);
+    ("push_front", 1);
+    ("push_back", 1);
+    ("pop_front", 0);
+    ("pop_back", 0);
+    ("to_bytes", 0);
+    ("get_u16_le", 1);
+    ("get_u32_le", 1);
+    ("get_u64_le", 1);
+    ("set_u16_le", 2);
+    ("set_u32_le", 2);
+    ("set_u64_le", 2);
+    ("sqrt", 0);
+    ("floor", 0);
+    ("ceil", 0);
+    ("trunc", 0);
+    ("to_float64", 0);
+    ("to_int64", 0);
+    ("to_byte", 0);
+    ("to_bits", 0);
+    ("from_int64", 1);
+    ("from_bits", 1);
+    ("is", 1);
+  ]
+
 let type_idx env (t : W.typ) : int =
   (* env.types accumulates program types in reverse AFTER the fixed
      runtime head; indices are absolute (runtime head first). *)
@@ -804,6 +863,97 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Struct_new struct_t)
 
 and method_call env self_ name args =
+  (* Instances answer their own methods first, whatever the name — the
+     interpreter's rule. A receiver whose class the static type names
+     calls its method directly; a receiver the type left open (Unknown,
+     an interface) dispatches at run time over the classes carrying the
+     name, with the builtin arm as the fallback; a receiver the type
+     settled as a builtin shape never reaches the chain. *)
+  let mangled = Emo_ir.sanitize_ident name in
+  let arity = List.length args in
+  let matches =
+    List.filter_map
+      (fun (c : Emo_ir.class_) ->
+        if
+          List.exists
+            (fun (m : Emo_ir.func) ->
+              String.equal (member_name c m) mangled
+              && List.length m.Emo_ir.fparams - 1 = arity)
+            c.Emo_ir.cmethods
+        then
+          match
+            ( List.assoc_opt c.Emo_ir.cname env.class_type,
+              List.assoc_opt (c.Emo_ir.cname ^ "__" ^ mangled) env.funcs )
+          with
+          | Some tidx, Some fidx -> Some (c.Emo_ir.cname, tidx, fidx)
+          | _ -> None
+        else None)
+      env.classes
+  in
+  let recv_class =
+    match self_.Emo_ir.ety with
+    | Emo_check.ClassType c -> (
+        match
+          List.find_opt
+            (fun (cl : Emo_ir.class_) -> String.equal cl.Emo_ir.cdisplay c)
+            env.classes
+        with
+        | Some cl -> Some cl.Emo_ir.cname
+        | None -> None)
+    | _ -> None
+  in
+  let open_receiver =
+    match self_.Emo_ir.ety with
+    | Emo_check.Unknown | Emo_check.ClassType _ | Emo_check.InterfaceType _ ->
+        true
+    | _ -> false
+  in
+  let recv_match =
+    Option.bind recv_class (fun c ->
+        List.find_opt (fun (cn, _, _) -> String.equal cn c) matches)
+  in
+  match
+    ( recv_match,
+      matches,
+      List.mem (name, arity) unguarded_builtin_arms,
+      open_receiver )
+  with
+  | Some (_, _, fidx), _, _, _ ->
+      expr env self_;
+      List.iter (expr env) args;
+      e env (W.Call fidx)
+  | None, _ :: _, true, true ->
+      (* the run-time chain: each class carrying the name tests the
+         receiver and calls its method; the builtin arm answers
+         otherwise. The receiver is bound once — the tests must not
+         re-run a side-effecting receiver — while the args ride inside
+         each arm, exactly one of which runs. *)
+      let recv = fresh_local env "__inst_recv" W.Anyref in
+      let recv_name = Printf.sprintf "__inst_recv_%d" recv in
+      env.local_map <- (recv_name, recv) :: env.local_map;
+      expr env self_;
+      e env (W.Local_set recv);
+      let via_local = { self_ with Emo_ir.desc = Emo_ir.Var recv_name } in
+      let fallback =
+        capturing env (fun () -> builtin_method_call env via_local name args)
+      in
+      let rec chain = function
+        | [] -> fallback
+        | (_, tidx, fidx) :: rest ->
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [ W.Local_get recv; W.Ref_test tidx ],
+                  ([ W.Local_get recv; W.Ref_cast tidx ]
+                  @ capturing env (fun () -> List.iter (expr env) args))
+                  @ [ W.Call fidx ],
+                  chain rest );
+            ]
+      in
+      es env (chain matches)
+  | _ -> builtin_method_call env self_ name args
+
+and builtin_method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
   let map_recv =
     match self_.Emo_ir.ety with Emo_check.MapType _ -> true | _ -> false
@@ -2194,15 +2344,12 @@ let rt_to_str : W.func_type =
     W.ftype_idx = t_sig1;
     fparams = [ "v" ];
     flocals = [];
-    fbody = [
-      branch (test_of t_venum)
-        [
-          W.Local_get 0;
-          W.Ref_cast t_venum;
-          W.Struct_get (t_venum, 1);
-        ]
-        [ tuple_branch ];
-    ];
+    fbody =
+      [
+        branch (test_of t_venum)
+          [ W.Local_get 0; W.Ref_cast t_venum; W.Struct_get (t_venum, 1) ]
+          [ tuple_branch ];
+      ];
   }
 
 (* int_str(n i64) -> (ref null $bytes): digits LSB-first into the
@@ -2377,6 +2524,115 @@ let rt_instance_str : W.func_type =
         W.Call i_abort;
         W.Unreachable;
       ];
+  }
+
+(* The entry module renders bare — the interpreter names the entry
+   file's module nothing — and a main/ subdirectory keeps its full
+   path. *)
+let entry_bare (display : string) : string =
+  let drop = "main." in
+  if
+    String.starts_with ~prefix:drop display
+    && not
+         (String.contains
+            (String.sub display 5 (String.length display - 5))
+            '.')
+  then String.sub display 5 (String.length display - 5)
+  else display
+
+(* instance_str(v) over a whole program: an instance answers its own
+   `to_string` first — the `emo.to_string` protocol entry — and a class
+   without one renders as its structure dump, the interpreter's rule.
+   One ref.test per class; the fixed runtime's abort body stays as the
+   fallthrough for a value no class claims. Filled in at assembly, when
+   the class types, the method functions, and the string pool are all
+   live. *)
+let generated_instance_str (env : env) (program : Emo_ir.program) : W.func_type
+    =
+  let cat str =
+    (* [str] onto the accumulator in local 1, as $bytes for strcat *)
+    capturing env (fun () -> string_const env str)
+    @ [ W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
+  in
+  let arms =
+    List.filter_map
+      (fun (c : Emo_ir.class_) ->
+        match List.assoc_opt c.Emo_ir.cname env.class_type with
+        | None -> None
+        | Some tidx ->
+            let ts_fidx =
+              if
+                List.exists
+                  (fun (m : Emo_ir.func) ->
+                    String.equal (member_name c m) "to_string"
+                    && List.length m.Emo_ir.fparams - 1 = 0)
+                  c.Emo_ir.cmethods
+              then List.assoc_opt (c.Emo_ir.cname ^ "__to_string") env.funcs
+              else None
+            in
+            let arm =
+              match ts_fidx with
+              | Some fidx -> [ W.Local_get 0; W.Ref_cast tidx; W.Call fidx ]
+              | None ->
+                  (* "#Display(f: dbg, ...)" — fields through the debug
+                     form: strings quoted, everything else to_str. Every
+                     literal rides the string pool; bytes_const would
+                     need its own scratch local. *)
+                  let fields =
+                    match List.assoc_opt c.Emo_ir.cname env.class_field with
+                    | Some fs -> fs
+                    | None -> []
+                  in
+                  let open_ = cat ("#" ^ entry_bare c.Emo_ir.cdisplay ^ "(") in
+                  let body =
+                    List.concat_map
+                      (fun (i, (fname, fidx)) ->
+                        (if i > 0 then
+                           (W.Local_get 1 :: cat ", ")
+                           @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                         else [])
+                        @ (W.Local_get 1 :: cat fname)
+                        @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                        @ (W.Local_get 1 :: cat ": ")
+                        @ [ W.Call (rt "strcat"); W.Local_set 1 ]
+                        @ [
+                            W.Local_get 1;
+                            W.Local_get 0;
+                            W.Ref_cast tidx;
+                            W.Struct_get (tidx, fidx);
+                            W.Call (rt "map_dbg");
+                            W.Ref_cast t_vstring;
+                            W.Struct_get (t_vstring, 0);
+                            W.Call (rt "strcat");
+                            W.Local_set 1;
+                          ])
+                      (List.mapi (fun i f -> (i, f)) fields)
+                  in
+                  let close =
+                    (W.Local_get 1 :: cat ")")
+                    @ [ W.Call (rt "strcat"); W.Struct_new t_vstring ]
+                  in
+                  open_ @ [ W.Local_set 1 ] @ body @ close
+            in
+            Some (tidx, arm))
+      program.Emo_ir.pclasses
+  in
+  let rec chain = function
+    | [] -> rt_instance_str.W.fbody
+    | (tidx, arm) :: rest ->
+        [
+          W.If_else
+            ( W.Result W.Anyref,
+              [ W.Local_get 0; W.Ref_test tidx ],
+              arm,
+              chain rest );
+        ]
+  in
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "v" ];
+    flocals = [ (1, W.RefNull t_bytes) ];
+    fbody = chain arms;
   }
 
 (* bytes_from_mem(ptr, len) -> (ref null $bytes). Locals: 2 array, 3
@@ -2590,8 +2846,8 @@ type driver_globals = {
   g_root_done : int;
 }
 
-let rt_init (pool : string list) ~(pool_base : int)
-    ~(g : driver_globals) : W.func_type =
+let rt_init (pool : string list) ~(pool_base : int) ~(g : driver_globals) :
+    W.func_type =
   {
     W.ftype_idx = t_main;
     fparams = [];
@@ -5026,7 +5282,12 @@ let rt_tuple_str : W.func_type =
               ] );
         ]
       @ (W.Local_get 1 :: bytes_const ")")
-      @ [ W.Call (rt "strcat"); W.Local_set 1; W.Local_get 1; W.Struct_new t_vstring ];
+      @ [
+          W.Call (rt "strcat");
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Struct_new t_vstring;
+        ];
   }
 
 (* index_of(recv, needle) -> $vint: the byte offset of the needle's
@@ -5297,7 +5558,9 @@ let rt_str_to_int64 : W.func_type =
                 W.I32_eq;
                 W.If
                   ( W.Void,
-                    [ W.I32_const 1; W.Local_set 3; W.I32_const 1; W.Local_set 2 ],
+                    [
+                      W.I32_const 1; W.Local_set 3; W.I32_const 1; W.Local_set 2;
+                    ],
                     [] );
               ],
               [] );
@@ -7021,7 +7284,11 @@ let assemble (program : Emo_ir.program) : W.module_ =
       rt_int_str;
       rt_bool_str;
       rt_char_str;
-      rt_instance_str;
+      (* the program's own instance rendering — its class dispatches
+         and dumps fill this slot; the abort body answers when no class
+         claims the value *)
+      (if program.Emo_ir.pclasses = [] then rt_instance_str
+       else generated_instance_str env program);
       rt_write_bytes;
       rt_bytes_from_mem;
       rt_str_eq;
@@ -7050,9 +7317,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
      thunks' memo slots; the memo slot count follows the program's const
      list, the same math string_const and memo_cell use *)
   let g =
-    let base =
-      1 + (2 * List.length env.consts) + List.length string_pool
-    in
+    let base = 1 + (2 * List.length env.consts) + List.length string_pool in
     {
       g_cur = base;
       g_next = base + 1;
@@ -7088,9 +7353,7 @@ let assemble (program : Emo_ir.program) : W.module_ =
   let t_void_i32 = type_idx env (W.FuncT ([], [ W.I32 ])) in
   let t_i32_void = type_idx env (W.FuncT ([ W.I32 ], [])) in
   let init_func =
-    rt_init string_pool
-      ~pool_base:(1 + (2 * List.length env.consts))
-      ~g
+    rt_init string_pool ~pool_base:(1 + (2 * List.length env.consts)) ~g
   in
   let hidden = List.rev env.hidden in
   let funcs =
