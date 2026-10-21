@@ -732,7 +732,30 @@ T0 已落地:`plot` 把柱状图渲染成 SVG,在全部五个宿主 target 上�
       70000 字节变体——在解释器上经 Python zlib 解压与输入逐字节
       一致,c/ocaml/typescript/wasm/beam 五个目标构建各自打印的
       201,640 行与解释器逐字节一致(`dune test` 绿)。
-- [ ] **T45.2** — Fixed-Huffman DEFLATE、CRC32 与 Adler-32。
+- [x] **T45.2** — Fixed-Huffman DEFLATE、CRC32 与 Adler-32。
+      `internal/png.emo` 长出真正的压缩器:单一 fixed-Huffman 块,贪婪
+      LZ77 走哈希链——三字节哈希投 32768 个桶,更早的位置经 `prev` 表
+      穿线,两张表都是可变 `Bytes`、每槽三字节小端(零填充的槽写
+      none,因为位置 0 是真实位置)——四字节以上的匹配胜过字面量,至多
+      试十六个候选,匹配覆盖的每个位置都入链。位层是 `put_bits` 助手,
+      builder 作参数穿透、应答 `(acc, cnt)`,Huffman 码高位在前、额外
+      位低位在前,定码全部算出(`lit_code`、`len_code`、`dist_code`)——
+      长度符号要经它的 `lit_code` 表项发出,不是符号编号。
+      `crc_table`/`crc_push`/`crc32` 承载反射多项式 0xEDB88320(常数在
+      Emo 里是十进制——手算换算错过两次,直到由 Python 生成),
+      `adler32` 是 mod 65521 的两个和,`zlib_stream`、`chunk`、
+      `png_file` 组装包裹层与文件:120, 156 头、四字节大端帧、IHDR
+      8 位真彩、IDAT、IEND,每个块对 kind 与 data 求 CRC。T45.1 的
+      stored blocks 让位——LZ77 流取而代之。第一个探针抓到的是缺了块
+      头(BFINAL、BTYPE 01),第二个是符号当码;之后真相全线成立:六个
+      探针在 Python zlib 下解压逐字节精确(最大 65800 字节、45 倍),
+      校验和等于 `zlib.crc32`/`adler32`(含 `123456789` 的
+      `0xCBF43926`),拼出的 4 × 3 PNG 逐块可解析——CRC 全对、IDAT
+      还原出精确扫描线、`file`/`sips` 认其为合法图像——五个编译目标
+      各自打印的 4191 行与解释器逐字节一致(`dune test` 绿)。顺带
+      发现并记入 `CHECK.md`:遮蔽外层 `var` 的 `const` 在各路径上没有
+      一致的语义(interp 平面改绑、`c` 块作用域、其余四路拒绝)——
+      打包器改为只声明一次、分支内仅赋值。
 - [ ] **T45.3** — 带超采样的扫描线多边形/线段光栅化器。
 - [ ] **T45.4** — 经 Hershey 笔画字体的文本。
 - [ ] **T45.5** — `plot.png(fig)`、其示例与金测。

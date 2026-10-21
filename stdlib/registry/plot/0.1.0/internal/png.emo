@@ -3,39 +3,329 @@
 // host image library. The byte arrays are Array[Int64] rather than
 // Bytes: an element read stays a static Int64, and the checksums and
 // the Huffman packer need bitwise work that the dynamic world refuses.
+// Mixed arithmetic and bitwise expressions carry their parentheses —
+// the language puts `&`, `|`, and `^` at the additive level.
 
-// The raw DEFLATE stream for the bytes, stored blocks: each block
-// carries up to 65535 bytes verbatim behind its five-byte header —
-// BFINAL/BTYPE, LEN, and the one's complement of LEN.
-def deflate_stored(data Array[Int64]) Array[Int64] {
+// Three little-endian bytes of a slot in one of the chain tables.
+def get3(b Bytes, i Int64) Int64 {
+  return b.get(i * 3) + b.get(i * 3 + 1) * 256 + b.get(i * 3 + 2) * 65536
+}
+
+def set3(b Bytes, i Int64, v Int64) Void {
+  b.set(i * 3, v % 256)
+  b.set(i * 3 + 1, v / 256 % 256)
+  b.set(i * 3 + 2, v / 65536 % 256)
+}
+
+// The chain-table hash of the three bytes at i, folded to 32768 slots.
+def bhash(data Array[Int64], i Int64) Int64 {
+  return (data[i] * 65536 + data[i + 1] * 256 + data[i + 2]) % 32768
+}
+
+// nb bits of v into the shared accumulator, flushing whole bytes into
+// out as they fill: Huffman codes go out MSB first, the extra bits LSB
+// first. Answers (acc, cnt); out is the same builder the caller holds.
+def put_bits(out ArrayBuilder, acc Int64, cnt Int64, v Int64, nb Int64, msb Bool) (Int64, Int64) {
+  var a = acc
+  var c = cnt
+  var k = 0
+  if msb {
+    k = nb - 1
+  }
+  while k >= 0 && k < nb {
+    a = a + ((v >> k) % 2) * (1 << c)
+    c = c + 1
+    if c == 8 {
+      out.push(a)
+      a = 0
+      c = 0
+    }
+    if msb {
+      k = k - 1
+    }
+    if !msb {
+      k = k + 1
+    }
+  }
+  return (a, c)
+}
+
+// The fixed-Huffman code for a literal, the end of block, or a length
+// code: (code, bits), written most significant bit first.
+def lit_code(l Int64) (Int64, Int64) {
+  if l < 144 {
+    return (l + 48, 8)
+  }
+  if l < 256 {
+    return (l + 256, 9)
+  }
+  if l < 280 {
+    return (l - 256, 7)
+  }
+  return (l - 88, 8)
+}
+
+// The length code for a match of l bytes: (code, extra value, extra
+// bits), the code itself in the lit_code table.
+def len_code(l Int64) (Int64, Int64, Int64) {
+  if l < 11 {
+    return (257 + l - 3, 0, 0)
+  }
+  if l < 19 {
+    return (265 + (l - 11) / 2, (l - 11) % 2, 1)
+  }
+  if l < 35 {
+    return (269 + (l - 19) / 4, (l - 19) % 4, 2)
+  }
+  if l < 67 {
+    return (273 + (l - 35) / 8, (l - 35) % 8, 3)
+  }
+  if l < 131 {
+    return (277 + (l - 67) / 16, (l - 67) % 16, 4)
+  }
+  if l < 258 {
+    return (281 + (l - 131) / 32, (l - 131) % 32, 5)
+  }
+  return (285, 0, 0)
+}
+
+// The distance code for a match d bytes back: (code, extra value,
+// extra bits), the code a five-bit value of its own.
+def dist_code(d Int64) (Int64, Int64, Int64) {
+  const dw = d - 1
+  if dw < 4 {
+    return (dw, 0, 0)
+  }
+  var nb = 1
+  while (4 << nb) <= dw {
+    nb = nb + 1
+  }
+  const c = 2 * nb + ((dw >> nb) % 2) + 2
+  const base = (2 + c % 2) << nb
+  return (c, dw - base, nb)
+}
+
+// The DEFLATE stream for the bytes: one fixed-Huffman block, greedy
+// LZ77 over hash chains — the three bytes at a position hash to a
+// bucket in head, earlier positions with the same bucket threaded
+// through prev, both tables mutable Bytes three little-endian bytes a
+// slot, 16777215 meaning none. A match of four or more bytes wins over
+// literals; up to sixteen candidates are tried within the 32768-byte
+// window, and every position covered is chained for the matches after.
+def deflate(data Array[Int64]) Array[Int64] {
+  const out = ArrayBuilder.new()
+  var acc = 0
+  var cnt = 0
+  const n = data.length()
+  const none = 16777215
+  const head = Bytes.new(32768 * 3)
+  const prev = Bytes.new(n * 3 + 3)
+  // The tables are zero-filled and position 0 is real, so the empty
+  // slots have to say none before the first walk.
+  var s = 0
+  while s < 32768 {
+    set3(head, s, none)
+    s = s + 1
+  }
+  // The one block: BFINAL 1, BTYPE 01 fixed Huffman.
+  var r = put_bits(out, acc, cnt, 3, 3, false)
+  acc = r[0]
+  cnt = r[1]
+  var pos = 0
+  while pos < n {
+    var mlen = 0
+    var mdist = 0
+    if pos + 2 < n {
+      const h = bhash(data, pos)
+      var cand = get3(head, h)
+      var chain = 0
+      while cand != none && chain < 16 && pos - cand <= 32768 {
+        var cap = n - pos
+        if cap > 258 {
+          cap = 258
+        }
+        var l = 0
+        while l < cap && data[cand + l] == data[pos + l] {
+          l = l + 1
+        }
+        if l > mlen {
+          mlen = l
+          mdist = pos - cand
+        }
+        cand = get3(prev, cand)
+        chain = chain + 1
+      }
+      if mlen < 4 {
+        mlen = 0
+      }
+    }
+    if mlen > 0 {
+      const w = len_code(mlen)
+      const lc = lit_code(w[0])
+      r = put_bits(out, acc, cnt, lc[0], lc[1], true)
+      acc = r[0]
+      cnt = r[1]
+      if w[2] > 0 {
+        r = put_bits(out, acc, cnt, w[1], w[2], false)
+        acc = r[0]
+        cnt = r[1]
+      }
+      const g = dist_code(mdist)
+      r = put_bits(out, acc, cnt, g[0], 5, true)
+      acc = r[0]
+      cnt = r[1]
+      if g[2] > 0 {
+        r = put_bits(out, acc, cnt, g[1], g[2], false)
+        acc = r[0]
+        cnt = r[1]
+      }
+      var k = pos
+      while k < pos + mlen {
+        if k + 2 < n {
+          const hk = bhash(data, k)
+          set3(prev, k, get3(head, hk))
+          set3(head, hk, k)
+        }
+        k = k + 1
+      }
+      pos = pos + mlen
+    }
+    if mlen == 0 {
+      const w = lit_code(data[pos])
+      r = put_bits(out, acc, cnt, w[0], w[1], true)
+      acc = r[0]
+      cnt = r[1]
+      if pos + 2 < n {
+        const hk = bhash(data, pos)
+        set3(prev, pos, get3(head, hk))
+        set3(head, hk, pos)
+      }
+      pos = pos + 1
+    }
+  }
+  const e = lit_code(256)
+  r = put_bits(out, acc, cnt, e[0], e[1], true)
+  acc = r[0]
+  cnt = r[1]
+  if cnt > 0 {
+    out.push(acc)
+  }
+  return out.to_array()
+}
+
+// The CRC-32 table, the reflected polynomial 0xEDB88320 folded in
+// eight steps per entry.
+def crc_table() Array[Int64] {
+  const b = ArrayBuilder.new()
+  for var i = 0; i < 256; i = i + 1 {
+    var c = i
+    for var k = 0; k < 8; k = k + 1 {
+      var odd = 0
+      if c % 2 == 1 {
+        odd = 1
+      }
+      c = c / 2
+      if odd == 1 {
+        c = c ^ 3988292384
+      }
+    }
+    b.push(c)
+  }
+  return b.to_array()
+}
+
+// The CRC carried forward over more bytes; starts from 4294967295.
+def crc_push(c Int64, t Array[Int64], data Array[Int64]) Int64 {
+  var x = c
+  for var i = 0; i < data.length(); i = i + 1 {
+    x = (x / 256) ^ t[(x ^ data[i]) % 256]
+  }
+  return x
+}
+
+// The CRC-32 of the bytes, the final XOR folded into the subtraction —
+// the working register stays below 2^32, so inverting it is a sign-free
+// 4294967295 - c.
+def crc32(data Array[Int64]) Int64 {
+  return 4294967295 - crc_push(4294967295, crc_table(), data)
+}
+
+// The Adler-32 of the bytes: two sums mod 65521, the low one seeded
+// at 1, packed high word first.
+def adler32(data Array[Int64]) Int64 {
+  var a = 1
+  var b = 0
+  for var i = 0; i < data.length(); i = i + 1 {
+    a = (a + data[i]) % 65521
+    b = (b + a) % 65521
+  }
+  return b * 65536 + a
+}
+
+// The zlib stream for the bytes: the 120, 156 header, the DEFLATE
+// data, the Adler-32 big-endian.
+def zlib_stream(data Array[Int64]) Array[Int64] {
+  const out = ArrayBuilder.new()
+  out.push(120)
+  out.push(156)
+  const d = deflate(data)
+  for var i = 0; i < d.length(); i = i + 1 {
+    out.push(d[i])
+  }
+  const ad = adler32(data)
+  out.push(ad / 16777216 % 256)
+  out.push(ad / 65536 % 256)
+  out.push(ad / 256 % 256)
+  out.push(ad % 256)
+  return out.to_array()
+}
+
+// One PNG chunk: the length big-endian, the four kind bytes, the data,
+// the CRC-32 over kind and data.
+def chunk(kind Array[Int64], data Array[Int64]) Array[Int64] {
   const out = ArrayBuilder.new()
   const n = data.length()
-  var at = 0
-  while at < n {
-    var size = n - at
-    if size > 65535 {
-      size = 65535
-    }
-    var head = 0
-    if at + size == n {
-      head = 1
-    }
-    out.push(head)
-    out.push(size % 256)
-    out.push(size / 256)
-    out.push(255 - size % 256)
-    out.push(255 - size / 256)
-    for var i = 0; i < size; i = i + 1 {
-      out.push(data[at + i])
-    }
-    at = at + size
+  out.push(n / 16777216 % 256)
+  out.push(n / 65536 % 256)
+  out.push(n / 256 % 256)
+  out.push(n % 256)
+  for var i = 0; i < 4; i = i + 1 {
+    out.push(kind[i])
   }
-  if n == 0 {
-    out.push(1)
-    out.push(0)
-    out.push(0)
-    out.push(255)
-    out.push(255)
+  for var i = 0; i < n; i = i + 1 {
+    out.push(data[i])
+  }
+  const t = crc_table()
+  const c = crc_push(crc_push(4294967295, t, kind), t, data)
+  const crc = 4294967295 - c
+  out.push(crc / 16777216 % 256)
+  out.push(crc / 65536 % 256)
+  out.push(crc / 256 % 256)
+  out.push(crc % 256)
+  return out.to_array()
+}
+
+// The PNG file for the filtered scanlines raw — each row a filter byte
+// of 0 then width RGB triples: the signature, IHDR (8-bit truecolor),
+// IDAT, IEND.
+def png_file(width Int64, height Int64, raw Array[Int64]) Array[Int64] {
+  const out = ArrayBuilder.new()
+  const sig = [137, 80, 78, 71, 13, 10, 26, 10]
+  for var i = 0; i < 8; i = i + 1 {
+    out.push(sig[i])
+  }
+  const ihdr = [width / 16777216 % 256, width / 65536 % 256, width / 256 % 256, width % 256, height / 16777216 % 256, height / 65536 % 256, height / 256 % 256, height % 256, 8, 2, 0, 0, 0]
+  const idat = chunk([73, 72, 68, 82], ihdr)
+  for var i = 0; i < idat.length(); i = i + 1 {
+    out.push(idat[i])
+  }
+  const dat = chunk([73, 68, 65, 84], zlib_stream(raw))
+  for var i = 0; i < dat.length(); i = i + 1 {
+    out.push(dat[i])
+  }
+  const end = chunk([73, 69, 78, 68], [])
+  for var i = 0; i < end.length(); i = i + 1 {
+    out.push(end[i])
   }
   return out.to_array()
 }

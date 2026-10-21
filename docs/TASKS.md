@@ -1716,7 +1716,39 @@ from the same value graph, with no host image library.
       their inputs under Python's zlib on the interpreter, and the c,
       ocaml, typescript, wasm, and beam builds print the probe's 201,640
       lines byte-identical to it (`dune test` green).
-- [ ] **T45.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
+- [x] **T45.2** — Fixed-Huffman DEFLATE, CRC32, and Adler-32.
+      `internal/png.emo` grows the real compressor: one fixed-Huffman
+      block behind greedy LZ77 over hash chains — a three-byte hash
+      into 32768 buckets, earlier positions threaded through a `prev`
+      table, both mutable `Bytes` three little-endian bytes a slot
+      (zero-filled slots say none, because position 0 is real) — a
+      match of four or more winning over literals, sixteen candidates a
+      walk, every covered position chained. The bit layer is a
+      `put_bits` helper answering `(acc, cnt)` with the builder passed
+      through, Huffman codes MSB first and the extra bits LSB first,
+      the fixed codes computed (`lit_code`, `len_code`, `dist_code`) —
+      the length symbol goes out through its `lit_code` entry, not as
+      the symbol number. `crc_table`/`crc_push`/`crc32` carry the
+      reflected 0xEDB88320 polynomial (the constant is decimal in Emo —
+      a hand conversion was wrong twice until Python generated it),
+      `adler32` the two sums mod 65521, and `zlib_stream`, `chunk`, and
+      `png_file` assemble the wrapper and the file: the 120, 156
+      header, the four-byte big-endian frames, IHDR 8-bit truecolor,
+      IDAT, IEND, every chunk CRC'd over kind and data. The stored
+      blocks of T45.1 gave way — the LZ77 stream replaces them. The
+      missing block header (BFINAL, BTYPE 01) was the first probe's
+      finding, the symbol-for-code bug the second; then the ground
+      truth held everywhere at once: six probes decompress byte-exact
+      under Python's zlib (up to 65800 bytes at 45×), the checksums
+      equal `zlib.crc32`/`adler32` (including `0xCBF43926` for
+      `123456789`), and the assembled 4 × 3 PNG parses chunk by chunk —
+      CRCs good, IDAT back to the exact scanlines, `file`/`sips`
+      calling it a valid image — with all five compiled targets
+      printing the probe's 4191 lines byte-identical (`dune test`
+      green). Found along the way, recorded in `CHECK.md`: a `const`
+      shadowing an outer `var` has no semantics the paths agree on
+      (interp rebinds flat, `c` scopes, the other four refuse) — the
+      packer declares once and assigns in branches.
 - [ ] **T45.3** — A scanline polygon/line rasterizer with supersampling.
 - [ ] **T45.4** — Text through the Hershey stroke font.
 - [ ] **T45.5** — `plot.png(fig)`, its demo, and goldens.
