@@ -351,4 +351,4 @@ println(plot.terminal(chart))
 
 T0——今天已有的——是柱状、折线、散点、面积、直方图 mark、带 nice-number 刻度的线性坐标轴、标题、轴标签、刻度线、网格、装扮这一切的主题、数据集图表读取的带校验的 `Table`、通道词表与 `color` 通道的种类分派、关系型图表——`scatter`、`line`、`reg`,`band` mark 为回归图加入 `plot.mark`——分布型图表——`hist`、`kde`、`ecdf`、`box`、`violin`,`box` 与 `violin` mark 随之加入 `plot.mark`——分类型图表——`bar`、`count`、`strip`、`point`,`strip` 与 `point` mark 随之加入 `plot.mark`——矩阵型图表——`heatmap`、`clustermap`,`heatmap` mark 与类别 y 面随之加入 `plot.mark`——还有 SVG 输出、终端输出与 PNG 输出。两条轴都按 mark 声明的跨度定标:y 域覆盖每个 mark 的范围,x 轴在没有 mark 提供类别标签时打数字刻度。分面随每张图:一个分面通道的排序水平把它拆成共享域上的多面板,各自从水平获得标题,整图一份图例。mark 与坐标轴都经内部的 `Renderer` 接口绘制——`DrawContext` 携带的是一个 `Renderer`,不是具体的 SVG 类——终端与 PNG 渲染器就是它的第二、第三个实现:`svg`、`terminal` 与 `png` 经同一个 `render` 遍历同一张图,只差构造的渲染器,所以别的后端也能以同样的方式接上,不扰动图与 mark。
 
-另见:`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。
+另见:上手指南 [`docs/zh-CN/plot-guide.md`](../plot-guide.md)、`examples/plot_demo`,以及设计笔记 [`docs/zh-CN/visualization.md`](../visualization.md)。

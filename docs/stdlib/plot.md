@@ -675,5 +675,6 @@ through one `render`, differing only in the renderer they construct, so
 another backend joins the same way without disturbing the figure or the
 marks.
 
-See also: `examples/plot_demo`, `examples/png_demo`, and the design note
+See also: the hands-on guide [`docs/plot-guide.md`](../plot-guide.md),
+`examples/plot_demo`, `examples/png_demo`, and the design note
 [`docs/visualization.md`](../visualization.md).

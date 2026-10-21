@@ -595,19 +595,21 @@ def with_y_label(s String) Axes
 def with_marks(m Array[Mark]) Axes
 ```
 
-The `plot.mark` submodule carries the marks; T0 ships the bar mark,
-`plot.mark.bar(labels, values)`, refined through `plot.mark.bar_style()`.
-Colors
-are `(Int64, Int64, Int64)` sRGB triples, 0–255 per channel. Every label
-is an SVG `<text>` element, so the package carries no font engine.
+The `plot.mark` submodule carries the marks — bar, line, scatter,
+area, hist, band, box, violin, strip, point, and heatmap — each
+refined through its style value. Colors are `(Int64, Int64, Int64)`
+sRGB triples, 0–255 per channel. Every label is an SVG `<text>`
+element, so the package carries no font engine.
 
 `svg` returns the document; writing it to a file is the caller's step,
 since the package runs on all five targets while file IO is native-only.
+The same figure also renders as terminal text and as a PNG file.
 
-Targets: all five. T0 is the bar mark with linear axes and SVG output;
-log scales, faceting, legends, and the other mark families are reserved.
-Reference: [`docs/stdlib/plot.md`](stdlib/plot.md) · Demo:
-`examples/plot_demo`.
+Targets: all five. Fourteen dataset charts over a validating `Table` —
+relational, distribution, categorical, and matrix — with log scales,
+fixed domains, legends, faceting, themes, and hand-built marks.
+Reference: [`docs/stdlib/plot.md`](stdlib/plot.md) · Guide:
+[`docs/plot-guide.md`](plot-guide.md) · Demo: `examples/plot_demo`.
 
 ## The `slog` package
 

@@ -406,11 +406,11 @@ def with_y_label(s String) Axes
 def with_marks(m Array[Mark]) Axes
 ```
 
-`plot.mark` 子模块带着各种 mark;T0 只有柱状 mark `plot.mark.bar(labels, values)`,经 `plot.mark.bar_style()` 细化。颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组,每通道 0–255。每个标签都是 SVG `<text>` 元素,所以这个包不带字体引擎。
+`plot.mark` 子模块带着各种 mark——柱状、折线、散点、面积、直方图、置信带、箱线、小提琴、条带、均值点、热图——各自经自己的样式值细化。颜色是 `(Int64, Int64, Int64)` 的 sRGB 三元组,每通道 0–255。每个标签都是 SVG `<text>` 元素,所以这个包不带字体引擎。
 
-`svg` 返回文档;写进文件是调用方的事——这个包在五个目标上都能跑,而文件 IO 只有原生目标可用。
+`svg` 返回文档;写进文件是调用方的事——这个包在五个目标上都能跑,而文件 IO 只有原生目标可用。同一张图也能渲染成终端文本和一个 PNG 文件。
 
-目标:全部五个。T0 是柱状 mark 加线性坐标轴与 SVG 输出;对数刻度、分面、图例、以及其它 mark 家族均为预留。参考:[`docs/zh-CN/stdlib/plot.md`](stdlib/plot.md) · 示例:`examples/plot_demo`。
+目标:全部五个。带校验的 `Table` 之上有十四种数据集图表——关系型、分布型、类别型、矩阵型——外加对数刻度、固定域、图例、分面、主题,以及手搭的 mark。参考:[`docs/zh-CN/stdlib/plot.md`](stdlib/plot.md) · 指南:[`docs/zh-CN/plot-guide.md`](plot-guide.md) · 示例:`examples/plot_demo`。
 
 ## slog 包
 
