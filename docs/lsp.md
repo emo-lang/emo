@@ -57,6 +57,12 @@ The client finds the server in this order:
 
 The registry used for package completion and dependency resolution comes from
 `emo.registry`, then `EMO_REGISTRY`, then the bundled `server/registry`.
+Standard-library packages need none of them: they ride the server binary
+itself, and the editor fetches a pinned one into the shared package cache —
+the same content-addressed directory a build fetches into — so
+`require "json"` and friends resolve with nothing else configured. A scoped
+package resolves from a filesystem registry, or from the build's cache once a
+build has fetched it; the editor never waits on the network.
 
 ## The Neovim plugin
 

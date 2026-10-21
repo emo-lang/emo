@@ -54,7 +54,11 @@ or tell the extension where it is:
 }
 ```
 
-If neither is set, the extension looks for `emo-lsp` on your `PATH`.
+If neither is set, the extension looks for `emo-lsp` on your `PATH`. The
+`emo.registry` setting is for registry packages and development against a
+local `stdlib/registry` tree; the standard library itself is bundled in the
+server binary, so `require "json"` and friends resolve — completion, hover,
+go-to-definition, diagnostics — with nothing else configured.
 
 ## Commands
 

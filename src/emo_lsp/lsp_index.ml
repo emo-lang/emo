@@ -304,14 +304,24 @@ type t = {
       (* module path -> parsed items: the pre-registration input, so a
          check sees every module's declarations, dependencies included *)
   symbols : symbol list;
+  packages : string list list;
+      (* the short-name prefix of every indexed package: the checker's
+         visibility rule keys on these, exactly as a build's does *)
+  package_deps : (string list * string list) list;
+      (* package prefix -> the scoped names it declares in its manifest;
+         the root project uses [] *)
+  aliases : (string list * string list) list;
+      (* module path -> the path it resolves to: a package's `main.emo`
+         entry is reachable by both spellings and they are one module *)
   by_name : (string, symbol list) Hashtbl.t;
   by_container : (string, symbol list) Hashtbl.t;
   by_file : (string, symbol list) Hashtbl.t;
   built_at : float;
 }
 
-let index_of ?(units = []) (root : string)
-    ~(modules : (string list * string) list) ~(symbols : symbol list) : t =
+let index_of ?(units = []) ?(packages = []) ?(package_deps = []) ?(aliases = [])
+    (root : string) ~(modules : (string list * string) list)
+    ~(symbols : symbol list) : t =
   let by_name = Hashtbl.create 256 in
   let by_container = Hashtbl.create 128 in
   let by_file = Hashtbl.create 128 in
@@ -330,6 +340,9 @@ let index_of ?(units = []) (root : string)
     modules;
     units;
     symbols;
+    packages;
+    package_deps;
+    aliases;
     by_name;
     by_container;
     by_file;
@@ -461,107 +474,217 @@ let symbols_of (modules : (string list * string) list)
          @ collect_locals ~file ~module_path items)
        modules units)
 
+let cache : (string, string * t) Hashtbl.t = Hashtbl.create 4
+
+(* ---- Dependency packages -------------------------------------------- *)
+
+(* The dependency side of the index: every package the manifest pins —
+   transitively, through each package's own manifest — with the module
+   table and the three tables a check needs to resolve through them (the
+   package prefixes, the declared deps behind the visibility rule, and
+   the main-entry aliases), all mounted the way the compiler's
+   `register_package` registers a package. *)
+type dep_tree = {
+  dep_modules : (string list * string) list;
+  dep_packages : string list list;
+  dep_package_deps : (string list * string list) list;
+  dep_aliases : (string list * string list) list;
+}
+
+let empty_tree =
+  {
+    dep_modules = [];
+    dep_packages = [];
+    dep_package_deps = [];
+    dep_aliases = [];
+  }
+
+let is_http_endpoint endpoint =
+  String.starts_with ~prefix:"http://" endpoint
+  || String.starts_with ~prefix:"https://" endpoint
+
+(* The bundled standard library rides the compiler binary, so the editor
+   resolves a stdlib package with nothing beside it — a build fetches it
+   into the shared content-addressed cache, and the index reads it from
+   there. Materializing writes exactly what a build would write, once
+   per package; the embedded data cannot move for the process's
+   lifetime, so the lookup is memoized. *)
+let embedded_dirs : (string, string option) Hashtbl.t = Hashtbl.create 8
+
+let embedded_package_dir ~(name : string) ~(version : Emo_pkg.Version.t) :
+    string option =
+  let cache_dir = Emo_pkg.Registry.default_cache_dir () in
+  let key = name ^ "@" ^ Emo_pkg.Version.to_string version ^ "@" ^ cache_dir in
+  match Hashtbl.find_opt embedded_dirs key with
+  | Some dir -> dir
+  | None ->
+      let dir =
+        match
+          Emo_pkg.Registry.fetch Emo_pkg.Registry.Embedded ~name ~version
+        with
+        | Error _ -> None
+        | Ok fetched -> (
+            if Emo_pkg.Registry.is_cached ~cache_dir fetched then
+              Some (Emo_pkg.Registry.cache_path ~cache_dir fetched)
+            else
+              match Emo_pkg.Registry.materialize ~cache_dir fetched with
+              | Ok dir -> Some dir
+              | Error _ -> None)
+      in
+      Hashtbl.replace embedded_dirs key dir;
+      dir
+
+(* Where a dependency's sources stand. A configured filesystem registry
+   serves every name — its endpoint directories hold the layout. With
+   none configured (or an HTTP endpoint, which the editor never waits
+   on), an unscoped name comes from the bundled standard library; a
+   scoped name appears only when a build already fetched it — the cache
+   directory the lockfile's checksum names. [None] when nothing on disk
+   serves the name: the editor resolves no reference the compiler would
+   fetch over the network. *)
+let package_dir ~(registry : string option) ~(name : string)
+    ~(version : Emo_pkg.Version.t) ~(locked_checksum : string option) :
+    string option =
+  match registry with
+  | Some endpoint when not (is_http_endpoint endpoint) ->
+      let dir =
+        Filename.concat endpoint
+          (Filename.concat name (Emo_pkg.Version.to_string version))
+      in
+      if Lsp_util.is_directory dir then Some dir else None
+  | _ ->
+      if String.contains name '/' then
+        match locked_checksum with
+        | Some checksum ->
+            let dir =
+              Filename.concat
+                (Emo_pkg.Registry.default_cache_dir ())
+                (name ^ "-" ^ Emo_pkg.Version.to_string version ^ "-" ^ checksum)
+            in
+            if Lsp_util.is_directory dir then Some dir else None
+        | None -> None
+      else embedded_package_dir ~name ~version
+
+(* A package's files under the compiler's keying: the entry file — the
+   root's `main.emo` when it holds one, else the file named after the
+   package — is the module a require binds, and a `main.emo` keeps its
+   own name beside it (the two spellings are one module, an alias).
+   Every other file becomes a child of the short name, so two packages'
+   `internal` and `mark` do not collide. *)
+let mount_package ~(short : string) ~(dir : string) :
+    (string list * string) list * (string list * string list) list =
+  let scanned = scan dir in
+  let from_project = List.mem_assoc [ "main" ] scanned in
+  let body = if from_project then "main" else short in
+  let modules =
+    List.concat_map
+      (fun (rel, file) ->
+        match rel with
+        | [ name ] when name = body ->
+            if from_project then
+              [ ([ short ], file); ([ short; "main" ], file) ]
+            else [ ([ short ], file) ]
+        | _ -> [ (short :: rel, file) ])
+      scanned
+  in
+  let aliases =
+    if from_project then [ ([ short; "main" ], [ short ]) ] else []
+  in
+  (modules, aliases)
+
+(* Module files contributed by the manifest's dependencies — the standard
+   library's packages among them, pinned in `deps` like any other. Each
+   package's directory tree is its public module tree, registered under
+   the short name the require binds. Transitive dependencies are walked
+   through each package's manifest. *)
+let dependency_tree ~(root : string) ~(registry : string option) : dep_tree =
+  let manifest_path = Filename.concat root "package.emo" in
+  match Lsp_util.read_file manifest_path with
+  | None -> empty_tree
+  | Some source -> (
+      match Emo_pkg.parse_manifest ~file:manifest_path ~source with
+      | exception Emo_pkg.Manifest_error _ -> empty_tree
+      | manifest ->
+          let lock =
+            match
+              Emo_pkg.Lockfile.read
+                (Filename.concat root Emo_pkg.Lockfile.filename)
+            with
+            | Ok entries -> entries
+            | Error _ -> []
+          in
+          let lock_entry name =
+            List.find_opt (fun e -> e.Emo_pkg.Lockfile.dep = name) lock
+          in
+          let visited : (string, unit) Hashtbl.t = Hashtbl.create 8 in
+          let modules = ref [] in
+          let packages = ref [] in
+          let package_deps = ref [] in
+          let aliases = ref [] in
+          (* the root project's own deps, for the visibility rule *)
+          package_deps :=
+            ([], List.map fst manifest.Emo_pkg.deps) :: !package_deps;
+          let rec go (name, pinned) depth =
+            if depth > 6 || Hashtbl.mem visited name then ()
+            else begin
+              Hashtbl.replace visited name ();
+              let version =
+                match lock_entry name with
+                | Some e -> e.Emo_pkg.Lockfile.version
+                | None -> pinned
+              in
+              let locked_checksum =
+                Option.map
+                  (fun e -> e.Emo_pkg.Lockfile.checksum)
+                  (lock_entry name)
+              in
+              match package_dir ~registry ~name ~version ~locked_checksum with
+              | None -> ()
+              | Some dir -> begin
+                  let short = Emo_pkg.short_name name in
+                  let pkg_modules, pkg_aliases = mount_package ~short ~dir in
+                  modules := pkg_modules @ !modules;
+                  packages := [ short ] :: !packages;
+                  aliases := pkg_aliases @ !aliases;
+                  let pkg_manifest = Filename.concat dir "package.emo" in
+                  match Lsp_util.read_file pkg_manifest with
+                  | Some psrc -> (
+                      match
+                        Emo_pkg.parse_manifest ~file:pkg_manifest ~source:psrc
+                      with
+                      | pm ->
+                          package_deps :=
+                            ([ short ], List.map fst pm.Emo_pkg.deps)
+                            :: !package_deps;
+                          List.iter
+                            (fun (n, v) -> go (n, v) (depth + 1))
+                            pm.Emo_pkg.deps
+                      | exception Emo_pkg.Manifest_error _ -> ())
+                  | None -> ()
+                end
+            end
+          in
+          List.iter (fun (n, v) -> go (n, v) 0) manifest.Emo_pkg.deps;
+          {
+            dep_modules = !modules;
+            dep_packages = !packages;
+            dep_package_deps = !package_deps;
+            dep_aliases = !aliases;
+          })
+
+let dependency_modules ~(root : string) ~(registry : string option) :
+    (string list * string) list =
+  (dependency_tree ~root ~registry).dep_modules
+
 let build (root : string) : t =
-  let modules = scan root in
+  let tree = dependency_tree ~root ~registry:None in
+  let modules = scan root @ tree.dep_modules in
   let units =
     List.map (fun (path, file) -> (path, parse_tolerant file)) modules
   in
   let symbols = symbols_of modules units in
-  index_of root ~modules ~units ~symbols
-
-let cache : (string, string * t) Hashtbl.t = Hashtbl.create 4
-
-(* Module files contributed by the manifest's dependencies — the standard
-   library's packages among them, pinned in `deps` like any other. A
-   package's directory tree is its public module tree — `walk`-style — so
-   a package registers its files relative to its own root: when the root
-   holds a `main.emo`, that file is the module a `require` binds and stays
-   reachable by its own name beside it (the compiler's `register_package`
-   registers it at both paths, and the two are one module); otherwise the
-   file named after the package's short name is the module a require
-   binds. Transitive dependencies are walked through each package's
-   manifest. *)
-let dependency_modules ~(root : string) ~(registry : string option) :
-    (string list * string) list =
-  match registry with
-  | None | Some "" -> []
-  | Some endpoint -> (
-      let manifest_path = Filename.concat root "package.emo" in
-      match Lsp_util.read_file manifest_path with
-      | None -> []
-      | Some source -> (
-          match Emo_pkg.parse_manifest ~file:manifest_path ~source with
-          | exception Emo_pkg.Manifest_error _ -> []
-          | manifest ->
-              let lock =
-                match
-                  Emo_pkg.Lockfile.read
-                    (Filename.concat root Emo_pkg.Lockfile.filename)
-                with
-                | Ok entries -> entries
-                | Error _ -> []
-              in
-              let lock_version name =
-                match
-                  List.find_opt (fun e -> e.Emo_pkg.Lockfile.dep = name) lock
-                with
-                | Some e -> Some e.Emo_pkg.Lockfile.version
-                | None -> None
-              in
-              let visited : (string, unit) Hashtbl.t = Hashtbl.create 8 in
-              let out = ref [] in
-              let rec go (name, pinned) depth =
-                if depth > 6 || Hashtbl.mem visited name then ()
-                else begin
-                  Hashtbl.replace visited name ();
-                  let version =
-                    match lock_version name with Some v -> v | None -> pinned
-                  in
-                  let dir =
-                    Filename.concat endpoint
-                      (Filename.concat name (Emo_pkg.Version.to_string version))
-                  in
-                  if Lsp_util.is_directory dir then begin
-                    let short = Emo_pkg.short_name name in
-                    let scanned = scan dir in
-                    (* The module a require binds is the package root's
-                       `main.emo`, else the file named after the short name
-                       (the compiler's `register_package`); the index mounts
-                       them the same way so the editor sees the module the
-                       compiler binds. A `main.emo` keeps both spellings —
-                       the bound name and its own — as the compiler does. *)
-                    let entries =
-                      if List.mem_assoc [ "main" ] scanned then
-                        List.concat_map
-                          (fun (rel, file) ->
-                            if rel = [ "main" ] then
-                              [ ([ short ], file); ([ short; "main" ], file) ]
-                            else if rel = [ short ] then
-                              [ ([ short; short ], file) ]
-                            else [ (rel, file) ])
-                          scanned
-                      else scanned
-                    in
-                    List.iter
-                      (fun (rel, file) -> out := (rel, file) :: !out)
-                      entries;
-                    let pkg_manifest = Filename.concat dir "package.emo" in
-                    match Lsp_util.read_file pkg_manifest with
-                    | Some psrc -> (
-                        match
-                          Emo_pkg.parse_manifest ~file:pkg_manifest ~source:psrc
-                        with
-                        | pm ->
-                            List.iter
-                              (fun (n, v) -> go (n, v) (depth + 1))
-                              pm.Emo_pkg.deps
-                        | exception Emo_pkg.Manifest_error _ -> ())
-                    | None -> ()
-                  end
-                end
-              in
-              List.iter (fun (n, v) -> go (n, v) 0) manifest.Emo_pkg.deps;
-              !out))
+  index_of root ~modules ~units ~symbols ~packages:tree.dep_packages
+    ~package_deps:tree.dep_package_deps ~aliases:tree.dep_aliases
 
 (* The index for [root], rebuilt only when the tree's fingerprint moves.
    Dependency modules ride along so names like `http` and `net` resolve
@@ -569,8 +692,8 @@ let dependency_modules ~(root : string) ~(registry : string option) :
 let get ?registry (root : string) : t =
   let root = Lsp_util.normalize_path root in
   let project_modules = scan root in
-  let dep_modules = dependency_modules ~root ~registry in
-  let modules = project_modules @ dep_modules in
+  let tree = dependency_tree ~root ~registry in
+  let modules = project_modules @ tree.dep_modules in
   let key = root ^ "|" ^ Option.value ~default:"" registry in
   let fp = fingerprint root modules in
   match Hashtbl.find_opt cache key with
@@ -580,7 +703,10 @@ let get ?registry (root : string) : t =
         List.map (fun (path, file) -> (path, parse_tolerant file)) modules
       in
       let symbols = symbols_of modules units in
-      let ix = index_of root ~modules ~units ~symbols in
+      let ix =
+        index_of root ~modules ~units ~symbols ~packages:tree.dep_packages
+          ~package_deps:tree.dep_package_deps ~aliases:tree.dep_aliases
+      in
       Hashtbl.replace cache key (fp, ix);
       ix
 

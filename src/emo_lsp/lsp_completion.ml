@@ -171,6 +171,25 @@ let package_items (endpoint : string) : item list =
         ~detail ~insert_text:name ~sort_text:("0" ^ name) ())
     (registry_packages endpoint)
 
+(* The packages of the standard library bundled in the compiler binary,
+   each with its newest version — what a require string offers when no
+   filesystem registry is configured, the names a build resolves with
+   nothing beside it. *)
+let stdlib_package_items () : item list =
+  List.map
+    (fun name ->
+      let detail =
+        match
+          List.rev (Emo_pkg.Registry.versions Emo_pkg.Registry.Embedded ~name)
+        with
+        | v :: _ ->
+            Printf.sprintf "package %s@%s" name (Emo_pkg.Version.to_string v)
+        | [] -> "package " ^ name
+      in
+      make ~label:name ~kind:9 (* Module *)
+        ~detail ~insert_text:name ~sort_text:("0" ^ name) ())
+    (Emo_pkg.Registry.embedded_names ())
+
 (* ---- Context detection ---------------------------------------------- *)
 
 (* True when [offset] sits inside the string of a `require "..."`. *)
@@ -211,11 +230,18 @@ let member_items (ix : Ix.t) (items : Emo_ast.item list) (file : string)
          (fun (s : Ix.symbol) -> s.Ix.kind <> Ix.Kind.constructor)
          members)
 
-(* Items for a completion request selected by the cursor context. *)
+(* Items for a completion request selected by the cursor context. A
+   require string offers package names the way a build routes them: a
+   filesystem registry serves every name it publishes; with none — or an
+   HTTP endpoint, which the editor never waits on — the bundled standard
+   library's names. *)
 let items_for ~(ix : Ix.t) ~(file : string) ~(items : Emo_ast.item list)
     ~(offset : int) ~(text : string) ~(registry : string option) : item list =
   if in_require_string text offset then
-    match registry with Some endpoint -> package_items endpoint | None -> []
+    match registry with
+    | Some endpoint when not (Ix.is_http_endpoint endpoint) ->
+        package_items endpoint
+    | _ -> stdlib_package_items ()
   else
     match Resolve.receiver_segments text offset with
     | Some segments -> member_items ix items file offset segments

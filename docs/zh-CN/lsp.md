@@ -52,7 +52,10 @@ npx @vscode/vsce package       # 产出 emo-tools-lsp-0.2.2.vsix
 3. `PATH` 上的 `emo-lsp`。
 
 包补全与依赖求解所用的注册表依次取 `emo.registry`、`EMO_REGISTRY`，最后是
-内置的 `server/registry`。
+内置的 `server/registry`。标准库包不需要其中任何一个：它随服务器二进制本身
+分发，编辑器会把已 pin 的包取到共享包缓存——与一次构建所取的内容寻址目录是
+同一个——因此 `require "json"` 之类无需任何额外配置即可解析。带 scope 的包从
+文件系统注册表解析，或在构建取回之后从构建缓存解析；编辑器从不等待网络。
 
 ## Neovim 插件
 

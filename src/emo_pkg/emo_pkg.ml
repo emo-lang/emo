@@ -758,6 +758,17 @@ module Registry = struct
         (* Routed through [Http_registry] by the project pipeline. *)
         []
 
+  (* Every package the bundled standard library carries — the unscoped
+     top-level names, each the first segment of its files' paths. *)
+  let embedded_names () : string list =
+    List.filter_map
+      (fun (path, _) ->
+        match String.index_opt path '/' with
+        | Some i -> Some (String.sub path 0 i)
+        | None -> None)
+      Emo_stdlib_data.files
+    |> List.sort_uniq String.compare
+
   (* Builds a resolver index for [names] by reading each published version's
      manifest. Versions with unreadable manifests are skipped — resolution
      only considers complete publishes. *)

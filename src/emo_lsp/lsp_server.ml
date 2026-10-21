@@ -238,14 +238,19 @@ let compute_diagnostics (state : state) (file : string) (text : string) :
             (* Pre-register every indexed module — project and dependency
                alike — so a qualified member (`sync.done`, `json.decode`)
                resolves in diagnostics, exactly as it does in a full
-               project check. *)
+               project check. The dependency walk's package prefixes,
+               declared deps, and main-entry aliases ride along: the
+               checker's visibility rule keys on them, so a reference
+               into a package resolves the way a build resolves it. *)
             let units = Ix.units_for ix ~current items in
             let program, _ =
-              Emo_check.preregister_types ~packages:[] ~package_deps:[]
-                ~aliases:[] ~units
+              Emo_check.preregister_types ~packages:ix.Ix.packages
+                ~package_deps:ix.Ix.package_deps ~aliases:ix.Ix.aliases ~units
             in
             let check_diags, _, _, _ =
-              Emo_check.check_module_typed ~modules ~current ~program items
+              Emo_check.check_module_typed ~modules ~current ~program
+                ~packages:ix.Ix.packages ~package_deps:ix.Ix.package_deps
+                ~aliases:ix.Ix.aliases items
             in
             check_diags
             @ missing_dep_diagnostics ?registry:state.registry root items)
@@ -903,6 +908,32 @@ let handle_completion (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
              | other -> other)
            result)
 
+(* The declarations under the cursor: a dotted name resolves through its
+   receiver first, then as a bare name. A name no declaration carries may
+   still name a module — the package a require binds, or a module path —
+   and answers with the module's entry file. *)
+let symbols_at (ix : Ix.t) (items : Ast.item list) (file : string)
+    (text : string) (offset : int) : Ix.symbol list =
+  match Resolve.identifier_at text offset with
+  | None -> []
+  | Some (word, _, _) -> (
+      let parts = String.split_on_char '.' word in
+      let found =
+        match List.rev parts with
+        | last :: rev_recv when rev_recv <> [] ->
+            let recv = List.rev rev_recv in
+            let members = Resolve.resolve_receiver ix items file offset recv in
+            let direct =
+              List.filter (fun (s : Ix.symbol) -> s.Ix.name = last) members
+            in
+            if direct <> [] then direct
+            else Resolve.definitions_for_name ix items file word
+        | _ -> Resolve.definitions_for_name ix items file word
+      in
+      match found with
+      | _ :: _ -> found
+      | [] -> Option.to_list (Resolve.module_symbol ix word))
+
 let handle_hover (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
   let td = Yojson.Safe.Util.member "textDocument" params in
   let uri = Lsp_util.string_field "uri" td in
@@ -916,25 +947,7 @@ let handle_hover (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
       let offset = Lsp_util.position_to_offset text starts ~line ~character in
       let ix = index_for_file state file in
       let items, _ = parse file text in
-      let candidates =
-        match Resolve.identifier_at text offset with
-        | None -> []
-        | Some (word, _, _) -> (
-            let parts = String.split_on_char '.' word in
-            match List.rev parts with
-            | last :: rev_recv when rev_recv <> [] ->
-                let recv = List.rev rev_recv in
-                let members =
-                  Resolve.resolve_receiver ix items file offset recv
-                in
-                let direct =
-                  List.filter (fun (s : Ix.symbol) -> s.Ix.name = last) members
-                in
-                if direct <> [] then direct
-                else Resolve.definitions_for_name ix items file word
-            | _ -> Resolve.definitions_for_name ix items file word)
-      in
-      match candidates with
+      match symbols_at ix items file text offset with
       | [] -> `Null
       | (s : Ix.symbol) :: _ ->
           let value =
@@ -961,25 +974,7 @@ let handle_definition (state : state) (params : Yojson.Safe.t) : Yojson.Safe.t =
       let offset = Lsp_util.position_to_offset text starts ~line ~character in
       let ix = index_for_file state file in
       let items, _ = parse file text in
-      let candidates =
-        match Resolve.identifier_at text offset with
-        | None -> []
-        | Some (word, _, _) -> (
-            let parts = String.split_on_char '.' word in
-            match List.rev parts with
-            | last :: rev_recv when rev_recv <> [] ->
-                let recv = List.rev rev_recv in
-                let members =
-                  Resolve.resolve_receiver ix items file offset recv
-                in
-                let direct =
-                  List.filter (fun (s : Ix.symbol) -> s.Ix.name = last) members
-                in
-                if direct <> [] then direct
-                else Resolve.definitions_for_name ix items file word
-            | _ -> Resolve.definitions_for_name ix items file word)
-      in
-      `List (List.map location_of_symbol candidates)
+      `List (List.map location_of_symbol (symbols_at ix items file text offset))
 
 let handle_document_symbols (state : state) (params : Yojson.Safe.t) :
     Yojson.Safe.t =

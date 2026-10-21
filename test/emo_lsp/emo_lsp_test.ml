@@ -383,6 +383,63 @@ let test_dependency_main_entry () =
         "the entry file keeps its own name beside it" true
         (List.mem [ "foo"; "main" ] paths))
 
+(* A package's files register under its short-name prefix, the way the
+   compiler's `register_package` mounts them: `helper.emo` beside the
+   entry file is `foo.helper`, never a top-level `helper` colliding with
+   another package's. *)
+let test_dependency_children_prefixed () =
+  with_temp_dir (fun root ->
+      let reg = Filename.concat root "registry" in
+      Unix.mkdir reg 0o755;
+      Unix.mkdir (Filename.concat reg "foo") 0o755;
+      Unix.mkdir (Filename.concat reg "foo/0.1.0") 0o755;
+      write
+        (Filename.concat root "package.emo")
+        "package {\n\
+        \  name = \"local/demo\"\n\
+        \  version = \"0.1.0\"\n\
+        \  targets = [\"ocaml\"]\n\
+        \  deps { \"foo\" = \"0.1.0\" }\n\
+         }\n";
+      write
+        (Filename.concat reg "foo/0.1.0/package.emo")
+        "package {\n\
+        \  name = \"foo\"\n\
+        \  version = \"0.1.0\"\n\
+        \  targets = [\"ocaml\"]\n\
+        \  deps {}\n\
+         }\n";
+      write
+        (Filename.concat reg "foo/0.1.0/foo.emo")
+        "def bar() Int64 {\n  return 1\n}\n";
+      write
+        (Filename.concat reg "foo/0.1.0/helper.emo")
+        "def twice(x Int64) Int64 {\n  return x * 2\n}\n";
+      let tree = Lsp_index.dependency_tree ~root ~registry:(Some reg) in
+      let paths = List.map fst tree.Lsp_index.dep_modules in
+      Alcotest.(check bool)
+        "the entry file is the module a require binds" true
+        (List.mem [ "foo" ] paths);
+      Alcotest.(check bool)
+        "a sibling registers under the prefix" true
+        (List.mem [ "foo"; "helper" ] paths);
+      Alcotest.(check bool)
+        "no top-level sibling leaks out" false
+        (List.mem [ "helper" ] paths);
+      Alcotest.(check (list (list string)))
+        "the package prefix is reported" [ [ "foo" ] ]
+        tree.Lsp_index.dep_packages)
+
+(* Runs [f] with [key] bound to [value] in the environment, restoring the
+   previous binding afterwards. *)
+let with_env key value f =
+  let prev = Sys.getenv_opt key in
+  Unix.putenv key value;
+  Fun.protect
+    ~finally:(fun () ->
+      match prev with Some v -> Unix.putenv key v | None -> ())
+    f
+
 (* A dependency's members resolve when the check runs against the index's
    pre-registered program — the mechanism behind live diagnostics for
    `require "sync"` and every declared dependency. *)
@@ -426,6 +483,77 @@ let test_dependency_members_resolve () =
       in
       Alcotest.(check (list string))
         "a dependency member resolves" [] (diagnostic_codes diags))
+
+(* The standard library rides the compiler binary, so with no registry
+   configured a pinned stdlib require still indexes its package —
+   fetched from the embedded data into the shared cache — and its
+   members resolve in a check exactly as a build resolves them: the
+   editor never needs a registry beside it. *)
+let test_embedded_stdlib_resolves () =
+  with_temp_dir (fun dir ->
+      let root = Filename.concat dir "project" in
+      let cache = Filename.concat dir "cache" in
+      Unix.mkdir root 0o755;
+      with_env "XDG_CACHE_HOME" cache (fun () ->
+          write
+            (Filename.concat root "package.emo")
+            "package {\n\
+            \  name = \"local/demo\"\n\
+            \  version = \"0.1.0\"\n\
+            \  targets = [\"ocaml\"]\n\
+            \  deps { \"plot\" = \"0.1.0\" }\n\
+             }\n";
+          let source = "require \"plot\"\n\nconst m = plot.marker_at(0)\n" in
+          write (Filename.concat root "main.emo") source;
+          let tree = Lsp_index.dependency_tree ~root ~registry:None in
+          let paths = List.map fst tree.Lsp_index.dep_modules in
+          Alcotest.(check bool)
+            "the required package mounts with no registry" true
+            (List.mem [ "plot" ] paths);
+          Alcotest.(check bool)
+            "its modules ride under the prefix" true
+            (List.mem [ "plot"; "mark" ] paths);
+          let ix = Lsp_index.get root in
+          let items = parse_items source in
+          let units = Lsp_index.units_for ix ~current:[ "main" ] items in
+          let program, _ =
+            Emo_check.preregister_types ~packages:ix.Lsp_index.packages
+              ~package_deps:ix.Lsp_index.package_deps
+              ~aliases:ix.Lsp_index.aliases ~units
+          in
+          let modules = List.map fst ix.modules in
+          let diags, _, _, _ =
+            Emo_check.check_module_typed ~modules ~current:[ "main" ] ~program
+              ~packages:ix.Lsp_index.packages
+              ~package_deps:ix.Lsp_index.package_deps
+              ~aliases:ix.Lsp_index.aliases items
+          in
+          Alcotest.(check (list string))
+            "a stdlib member resolves with no registry" []
+            (diagnostic_codes diags)))
+
+(* An unpinned stdlib require registers nothing: the manifest's pins are
+   the only road in with or without a registry — the compiler refuses an
+   unpaired require, and the editor resolves no reference it refuses. *)
+let test_embedded_stdlib_needs_pin () =
+  with_temp_dir (fun dir ->
+      let root = Filename.concat dir "project" in
+      let cache = Filename.concat dir "cache" in
+      Unix.mkdir root 0o755;
+      with_env "XDG_CACHE_HOME" cache (fun () ->
+          write
+            (Filename.concat root "package.emo")
+            "package {\n\
+            \  name = \"local/demo\"\n\
+            \  version = \"0.1.0\"\n\
+            \  targets = [\"ocaml\"]\n\
+            \  deps {}\n\
+             }\n";
+          write (Filename.concat root "main.emo") "require \"plot\"\n";
+          let tree = Lsp_index.dependency_tree ~root ~registry:None in
+          Alcotest.(check bool)
+            "an unpinned stdlib require registers nothing" true
+            (tree.Lsp_index.dep_modules = [])))
 
 (* `package.emo` is a manifest, not a module: a valid one produces no
    diagnostics, and a malformed one reports the manifest error instead of
@@ -540,8 +668,11 @@ let () =
           tc "stdlib requires index only when pinned"
             test_stdlib_requires_indexed;
           tc "dependency main entry" test_dependency_main_entry;
+          tc "dependency children prefixed" test_dependency_children_prefixed;
           tc "missing dep diagnostics" test_missing_dep_diagnostics;
           tc "dependency members resolve" test_dependency_members_resolve;
+          tc "embedded stdlib resolves" test_embedded_stdlib_resolves;
+          tc "embedded stdlib needs a pin" test_embedded_stdlib_needs_pin;
           tc "manifest diagnostics" test_manifest_diagnostics;
         ] );
       ( "resolve",

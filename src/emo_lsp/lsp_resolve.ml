@@ -265,6 +265,35 @@ let resolve_receiver (ix : Ix.t) (items : Ast.item list) (file : string)
           | None -> [])
       | _ -> [])
 
+(* ---- Modules --------------------------------------------------------- *)
+
+(* The module a bare or dotted name names — the package a require binds
+   (`plot`), or a module path (`plot.mark`, `shop.order`) — as a symbol
+   standing for its entry file, so definition and hover reach the module
+   when no declaration carries the name. A package module reads as the
+   require that binds it; a project module as its path. *)
+let module_symbol (ix : Ix.t) (name : string) : Ix.symbol option =
+  let path = String.split_on_char '.' name in
+  match Ix.module_file ix path with
+  | None -> None
+  | Some file ->
+      let detail =
+        match path with
+        | [ short ] when List.mem [ short ] ix.Ix.packages ->
+            let declared =
+              List.find_opt
+                (fun n -> Emo_pkg.short_name n = short)
+                (List.concat_map snd ix.Ix.package_deps)
+            in
+            Printf.sprintf "require \"%s\""
+              (Option.value ~default:short declared)
+        | _ -> "module " ^ name
+      in
+      Some
+        (Ix.mk ~name ~kind:Ix.Kind.module_ ~detail ~file
+           ~span:(Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0)
+           ~container:None ~module_path:path ~local:false)
+
 (* ---- The identifier under the cursor --------------------------------- *)
 
 let identifier_at (text : string) (offset : int) : (string * int * int) option =

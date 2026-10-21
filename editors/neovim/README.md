@@ -153,7 +153,10 @@ require('emo').setup({
 
 Every option defaults to the server's own behaviour when unset: `emo-lsp` is
 looked up on the `PATH`, and `emo_path` and `registry` fall back to the
-server's `$EMO_BIN` and `$EMO_REGISTRY`.
+server's `$EMO_BIN` and `$EMO_REGISTRY`. The `registry` option is for
+registry packages and development against a local `stdlib/registry` tree;
+the standard library itself is bundled in the server binary, so
+`require "json"` and friends resolve with nothing else configured.
 
 ## Configuration
 
