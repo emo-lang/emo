@@ -357,6 +357,7 @@ and parse_primary st =
   | Tok.Keyword Tok.Self ->
       advance st |> ignore;
       node tok.Tok.span Ast.Self
+  | Tok.Keyword Tok.Emo -> parse_registry_call st tok
   | Tok.String_chunk _ | Tok.String_end | Tok.Interp_open -> parse_string st
   | Tok.Keyword Tok.Do -> (
       advance st |> ignore;
@@ -427,6 +428,80 @@ and parse_primary st =
   | t ->
       error "E2001" (span st)
         (Printf.sprintf "expected an expression, found %s" (describe_kind t))
+
+(* `emo.f(x, rest...)` — a protocol registry entry. The keyword's one
+   expression use: it lowers right here into the ordinary method call
+   `x.f(rest...)`, so every later stage — the checker, the evaluator,
+   the backends — sees nothing new; the first, positional argument
+   becomes the receiver. The entry must be called: the registry holds
+   no values. *)
+and parse_registry_call st tok =
+  advance st |> ignore;
+  if (not (at_op st Tok.Dot)) || newline_before st then
+    error "E2028" tok.Tok.span
+      "`emo` in an expression names the protocol registry: write \
+       `emo.to_string(x)`"
+      ~hint:"`emo Name { ... }` declares a function group";
+  advance st |> ignore;
+  let name =
+    match kind st with
+    | Tok.Lower_ident name ->
+        let name_span = (advance st).Tok.span in
+        (name, name_span)
+    | t ->
+        error "E2028" (span st)
+          (Printf.sprintf "expected a registry entry after `emo.`, found %s"
+             (describe_kind t))
+  in
+  let lparen = peek st in
+  if
+    (not (at_op st Tok.LParen))
+    || newline_before st
+    || lparen.Tok.span.Emo_support.Span.start > (snd name).Emo_support.Span.stop
+  then
+    error "E2028" (span st)
+      (Printf.sprintf
+         "a registry entry is called, not taken: write `emo.%s(receiver, ...)`"
+         (fst name));
+  advance st |> ignore;
+  let args = parse_args st in
+  let close_span = span st in
+  expect_op st Tok.RParen "`)`" |> ignore;
+  let receiver, rest =
+    match args with
+    | { Ast.arg_name = None; arg_value = recv } :: rest -> (recv, rest)
+    | { Ast.arg_name = Some _; _ } :: _ ->
+        error "E2028" (span st)
+          "the receiver is the registry call's first, positional argument"
+    | [] ->
+        error "E2028" (span st)
+          (Printf.sprintf
+             "a registry entry call takes the receiver first: `emo.%s(x, ...)`"
+             (fst name))
+  in
+  let callee =
+    node
+      (merge_span receiver.Ast.span (snd name))
+      (Ast.Member (receiver, fst name))
+  in
+  let call =
+    node (merge_span tok.Tok.span close_span) (Ast.Call (callee, rest))
+  in
+  match kind st with
+  | Tok.Op Tok.Arrow when not (newline_before st) ->
+      let arrow_span = span st in
+      advance st |> ignore;
+      let params = parse_params st in
+      let body, block_close = parse_block st in
+      let block =
+        node
+          (merge_span arrow_span block_close)
+          (Ast.Arrow_block (params, body))
+      in
+      node
+        (merge_span call.Ast.span block_close)
+        (Ast.Call (callee, rest @ [ { Ast.arg_name = None; arg_value = block } ]))
+  | _ -> call
 
 and parse_if_expr st =
   (* `if <cond> { <exp> } else { <exp> }` in expression position. The

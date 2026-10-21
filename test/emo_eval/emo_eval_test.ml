@@ -1088,6 +1088,25 @@ println("at ${p}")|}));
 println([Point.new(1, 2), Point.new(3, 4)])
 println({"k": Point.new(5, 6)})
 println("${(Point.new(7, 8), 9)}")|}));
+    tc "the emo registry entries are the method calls" (fun () ->
+        Alcotest.(check string)
+          "registry" "(1, 2)\n5\n3\n2\n42\n"
+          (run_program
+             {|class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+
+  def to_string() String {
+    return "(${self.x}, ${self.y})"
+  }
+}
+println(emo.to_string(Point.new(1, 2)))
+println(emo.length("hello"))
+println(emo.length([1, 2, 3]))
+println(emo.length({"a": 1, "b": 2}))
+println(emo.to_string(42))|}));
   ]
 
 let object_acceptance_tests =

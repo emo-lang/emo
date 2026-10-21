@@ -1655,9 +1655,7 @@ println(r.color_sum())
   let with_tail tail = check (shapes ^ "\n" ^ tail) in
   [
     tc "the field shapes check clean" (fun () ->
-        Alcotest.(check int)
-          "count" 0
-          (List.length (check shapes)));
+        Alcotest.(check int) "count" 0 (List.length (check shapes)));
     tc "a method's self.field carries the init type" (fun () ->
         let diagnostics =
           check
@@ -1704,7 +1702,8 @@ println(r.color_sum())
 def make(x Float64, y Float64) Point {
   return Point.new(x: x, y: y)
 }
-|} );
+|}
+              );
               ("app", {|const p = lib.make(1.0, 2.0)
 println(p.x.nope())|});
             ]
@@ -2267,6 +2266,14 @@ class Ink {
 raise Ink.new()|}
         in
         Alcotest.(check bool) "class raise" true (has_code diagnostics "E4024"));
+    tc "a require cannot bind a package as `emo`, the registry's name"
+      (fun () ->
+        let diagnostics = check {|require "acme/emo"|} in
+        Alcotest.(check bool) "E4025" true (has_code diagnostics "E4025");
+        let diagnostics = check {|require "acme/emoji"|} in
+        Alcotest.(check bool)
+          "emoji is fine" false
+          (has_code diagnostics "E4025"));
   ]
 
 let () =

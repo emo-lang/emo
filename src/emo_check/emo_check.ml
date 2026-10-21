@@ -902,8 +902,7 @@ let empty_env =
         (* The DOM capability family: the browser target's implementations
            of the dom package. Handles are Int64s into the runtime's node
            table; the page's own objects never cross into Emo. *)
-        ( "dom_root",
-          { vtype = FuncType ([], Int64); is_var = false; depth = 0 } );
+        ("dom_root", { vtype = FuncType ([], Int64); is_var = false; depth = 0 });
         ( "dom_element",
           {
             vtype = FuncType ([ ("tag", String) ], Int64);
@@ -1583,7 +1582,8 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                                  (recorded program-wide before any module
                                  is checked); a field no `init` typed
                                  stays dynamic *)
-                              match Hashtbl.find_opt ctx.field_types (c, name)
+                              match
+                                Hashtbl.find_opt ctx.field_types (c, name)
                               with
                               | Some t -> t
                               | None -> Unknown)
@@ -3345,6 +3345,19 @@ let check_items ctx (items : Ast.item list) : unit =
        (fun env item ->
          match item.Ast.item_desc with
          | Ast.Item_require name ->
+             (* the short name `emo` is the protocol registry's — a
+                require cannot bind a package under it *)
+             let short =
+               match String.index_opt name '/' with
+               | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+               | None -> name
+             in
+             if String.equal short "emo" then
+               report ctx item.Ast.item_span "E4025"
+                 (Printf.sprintf
+                    "`require \"%s\"` would bind as `emo`, the protocol \
+                     registry's name"
+                    name);
              ctx.requires := (name, item.Ast.item_span) :: !(ctx.requires);
              env
          | Ast.Item_stmt s -> check_stmt ctx env s
@@ -3673,7 +3686,8 @@ let preregister_types ~(packages : string list list)
                        match Hashtbl.find_opt ctx.classes q with
                        | Some info ->
                            List.map
-                             (fun (n, mi) -> (n, FuncType (mi.mparams, mi.mret)))
+                             (fun (n, mi) ->
+                               (n, FuncType (mi.mparams, mi.mret)))
                              info.cmethods
                        | None -> []
                      in
